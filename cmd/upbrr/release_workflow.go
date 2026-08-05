@@ -611,11 +611,21 @@ func printCLIWorkflowProjections(
 			if reason == "" {
 				reason = "none"
 			}
+			disposition := strings.TrimSpace(string(decision.Disposition))
+			if disposition == "" {
+				disposition = "unspecified"
+			}
+			evidenceStatus := strings.TrimSpace(string(decision.EvidenceStatus))
+			if evidenceStatus == "" {
+				evidenceStatus = "unspecified"
+			}
 			fmt.Printf(
-				"  policy: code=%s decision=%s blocking=%t reason=%s\n",
+				"  policy: code=%s decision=%s blocking=%t disposition=%s evidence=%s reason=%s\n",
 				strings.TrimSpace(decision.Code),
 				strings.TrimSpace(decision.Decision),
 				decision.Blocking,
+				disposition,
+				evidenceStatus,
 				reason,
 			)
 		}
@@ -665,7 +675,13 @@ func cliWorkflowProjectionForTracker(
 	return &projections.Projections[index]
 }
 
+// auditableProjectionPolicyDecision keeps explicit rule outcomes and legacy
+// blocking decisions while suppressing non-diagnostic provenance entries.
 func auditableProjectionPolicyDecision(decision api.TrackerPolicyDecision) bool {
+	switch decision.Disposition {
+	case api.RuleDispositionStrict, api.RuleDispositionWaivable, api.RuleDispositionAdvisory:
+		return true
+	}
 	return decision.Blocking ||
 		strings.EqualFold(strings.TrimSpace(decision.Decision), "ineligible") ||
 		strings.EqualFold(strings.TrimSpace(decision.Decision), "bypassed")
@@ -731,25 +747,40 @@ func (s *cliWorkflowSession) collectContinuationActionAnswers(
 	return answers, false, nil
 }
 
-func cliWorkflowContinuationError(current releaseworkflow.CommandResult) error {
+func cliWorkflowContinuationError(current releaseworkflow.CommandResult, interaction api.InteractionMode) error {
+	mode := strings.TrimSpace(string(interaction))
+	if mode == "" {
+		mode = string(api.InteractionModeInteractive)
+	}
 	for _, lane := range current.Continuation.TrackerOutcomes {
 		if len(lane.Failures) > 0 {
 			return fmt.Errorf(
-				"upbrr: release workflow tracker %s: %s",
+				"upbrr: release workflow interaction=%s tracker %s: %s",
+				mode,
 				lane.TrackerID,
 				lane.Failures[0].Failure.Message,
 			)
 		}
 	}
 	if len(current.Workflow.Failures) > 0 {
-		return fmt.Errorf("upbrr: release workflow: %s", current.Workflow.Failures[0].Failure.Message)
+		return fmt.Errorf(
+			"upbrr: release workflow interaction=%s: %s",
+			mode,
+			current.Workflow.Failures[0].Failure.Message,
+		)
 	}
 	if len(current.Continuation.RequiredActions) > 0 {
 		action := current.Continuation.RequiredActions[0]
-		return fmt.Errorf("upbrr: release workflow requires action %s: %s", action.Kind, action.Prompt)
+		return fmt.Errorf(
+			"upbrr: release workflow interaction=%s requires action %s: %s",
+			mode,
+			action.Kind,
+			action.Prompt,
+		)
 	}
 	return fmt.Errorf(
-		"upbrr: release workflow made no progress toward the requested goal (lifecycle=%s disposition=%s)",
+		"upbrr: release workflow interaction=%s made no progress toward the requested goal (lifecycle=%s disposition=%s)",
+		mode,
 		current.Continuation.Lifecycle,
 		current.Continuation.Disposition,
 	)

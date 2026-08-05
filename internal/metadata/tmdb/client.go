@@ -28,10 +28,11 @@ var errNotFound = errors.New("tmdb: not found")
 
 // Client queries TMDB and shares its HTTP transport with AniList enrichment.
 type Client struct {
-	apiKey  string
-	baseURL string
-	http    *http.Client
-	logger  api.Logger
+	apiKey     string
+	baseURL    string
+	anilistURL string
+	http       *http.Client
+	logger     api.Logger
 }
 
 // NewClient trims apiKey and substitutes a 15-second HTTP client and no-op
@@ -44,10 +45,11 @@ func NewClient(httpClient *http.Client, logger api.Logger, apiKey string) *Clien
 		logger = api.NopLogger{}
 	}
 	return &Client{
-		apiKey:  strings.TrimSpace(apiKey),
-		baseURL: defaultBaseURL,
-		http:    httpClient,
-		logger:  logger,
+		apiKey:     strings.TrimSpace(apiKey),
+		baseURL:    defaultBaseURL,
+		anilistURL: anilistURL,
+		http:       httpClient,
+		logger:     logger,
 	}
 }
 

@@ -31,6 +31,10 @@ type Profile struct {
 	BaseURL string
 	// Site contains optional site-specific payload callbacks.
 	Site SiteProfile
+	// ReleaseNamePolicy overrides the generic site BuildName policy.
+	ReleaseNamePolicy trackers.ReleaseNamePolicyBinding
+	// OmitEpisodeTitle removes generated single-episode titles before site naming.
+	OmitEpisodeTitle bool
 	// Rules contains site-specific release validation requirements.
 	Rules *trackers.RuleSet
 	// ValidationPolicy contains optional site-specific validation composed with
@@ -115,6 +119,8 @@ func (d *Definition) MetadataPolicy() *trackers.TrackerMetadataPolicy {
 	}
 }
 
+// cloneMetadataPolicy deep-copies mutable requirement slices so callers cannot
+// alter the compiled profile through a returned policy.
 func cloneMetadataPolicy(policy *trackers.TrackerMetadataPolicy) *trackers.TrackerMetadataPolicy {
 	if policy == nil {
 		return nil
@@ -204,24 +210,33 @@ func (d *Definition) Name() string {
 // TrackerFamily identifies the definition as Unit3D-backed.
 func (d *Definition) TrackerFamily() trackers.Family { return trackers.FamilyUnit3D }
 
-// ReleaseNamePolicy returns the versioned Unit3D site naming policy.
+// ReleaseNamePolicy returns the versioned Unit3D site naming policy with TMDB-authoritative movie years.
 func (d *Definition) ReleaseNamePolicy() trackers.ReleaseNamePolicyBinding {
-	if d.profile.Site.BuildName != nil {
+	var binding trackers.ReleaseNamePolicyBinding
+	switch {
+	case d.profile.ReleaseNamePolicy.Resolver != nil:
+		binding = d.profile.ReleaseNamePolicy
+	case d.profile.Site.BuildName != nil:
 		version := strings.TrimSpace(d.profile.Site.BuildNameVersion)
 		if version == "" {
 			return trackers.ReleaseNamePolicyBinding{}
 		}
-		return trackers.SubjectReleaseNamePolicy(
+		binding = trackers.SubjectReleaseNamePolicy(
 			//pathpolicy:allow release-name policy ID is slash-delimited data, not a local filesystem path
 			strings.Join([]string{"unit3d", strings.ToLower(d.profile.Name), version}, "/"),
 			func(meta api.UploadSubject, cfg config.TrackerConfig) string {
 				return buildUnit3DName(d.profile.Name, meta, cfg, d.profile.Site)
 			},
 		)
+	default:
+		binding = trackers.NewReleaseNamePolicy("unit3d/canonical/v1", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
+			return trackers.ResolvedReleaseNames{Upload: buildUnit3DName(d.profile.Name, input.Subject, input.TrackerConfig, d.profile.Site)}, nil
+		})
 	}
-	return trackers.NewReleaseNamePolicy("unit3d/canonical/v1", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
-		return trackers.ResolvedReleaseNames{Upload: buildUnit3DName(d.profile.Name, input.Subject, input.TrackerConfig, d.profile.Site)}, nil
-	})
+	if d.profile.OmitEpisodeTitle {
+		binding = trackers.WithEpisodeTitleMode(binding, api.EpisodeTitleModeOmit)
+	}
+	return trackers.WithMovieYearProvider(binding, api.IdentityProviderTMDB)
 }
 
 // UploadContentMode declares the aggregate description workflow shared by Unit3D sites.

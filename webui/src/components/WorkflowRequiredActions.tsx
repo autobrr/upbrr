@@ -8,7 +8,6 @@ const actionRoutes: Readonly<Record<string, ReleaseRoute>> = {
   answer_questionnaire: "upload",
   confirm_rescan: "input",
   reprepare: "input",
-  review_duplicates: "duplicates",
   select_metadata: "input",
   select_playlist: "input",
 };
@@ -17,10 +16,13 @@ const actionLabels: Readonly<Record<string, string>> = {
   answer_questionnaire: "Answer tracker questions",
   confirm_rescan: "Review source",
   reprepare: "Review source",
-  review_duplicates: "Review duplicates",
   select_metadata: "Review metadata",
   select_playlist: "Select playlist",
 };
+
+const actionOwnedByDupeCard = (action: RequiredAction) =>
+  action.kind === "review_duplicates" ||
+  (action.kind === "provide_tracker_input" && Boolean(action.trackerId));
 
 function actionScope(action: RequiredAction): string {
   if (action.trackerId) return `Tracker: ${action.trackerId}`;
@@ -30,7 +32,7 @@ function actionScope(action: RequiredAction): string {
   return "Workflow action";
 }
 
-/** Durable pending actions projected by the backend workflow continuation. */
+/** Shows pending workflow actions not owned by the per-tracker duplicate-review cards. */
 export function WorkflowRequiredActions({
   continuation,
   onNavigate,
@@ -39,7 +41,7 @@ export function WorkflowRequiredActions({
   onNavigate: (route: ReleaseRoute) => void;
 }>) {
   const actions = (continuation?.requiredActions || []).filter(
-    (action) => action.status === "pending",
+    (action) => action.status === "pending" && !actionOwnedByDupeCard(action),
   );
   if (!actions.length) return null;
 

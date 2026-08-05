@@ -11,29 +11,19 @@ import (
 	"strings"
 	"time"
 
-	dupechecking "github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 const workflowDupeFreshness = 30 * time.Minute
 
-type projectionDupeService interface {
-	CheckProjectionSet(
-		context.Context,
-		api.DuplicateSubject,
-		api.TrackerReleaseProjectionSet,
-		dupechecking.CheckOptions,
-	) (api.DupeCheckSummary, dupechecking.Assessment, error)
-}
-
 type workflowDupeBuilder struct {
-	service api.DupeService
+	service api.ProjectionDupeService
 	logger  api.Logger
 }
 
 type workflowDupePrivateEvidence struct {
 	Summary    api.DupeCheckSummary
-	Assessment dupechecking.Assessment
+	Assessment api.DupeAssessmentEvidence
 }
 
 func (b workflowDupeBuilder) Build(
@@ -77,11 +67,15 @@ func (b workflowDupeBuilder) Build(
 			continue
 		}
 		b.logger.Tracef(
-			"core: duplicate lane skipped tracker=%s readiness=%s preflight=%s dupe_ready=%t",
+			"core: duplicate lane skipped tracker=%s readiness=%s preflight=%s dupe_ready=%t policy_codes=%q failure_codes=%q recoveries=%q required_actions=%q",
 			projection.TrackerID,
 			projection.Readiness,
 			result.State,
 			projection.DupeReady,
+			blockingPolicyDecisionLogValues(projection.PolicyDecisions),
+			workflowFailureLogValues(result.Failures, func(failure api.OperationFailure) string { return string(failure.Code) }),
+			workflowFailureLogValues(result.Failures, func(failure api.OperationFailure) string { return string(failure.Recovery) }),
+			requiredActionLogValues(result.RequiredActions),
 		)
 	}
 	if len(eligibleProjections.Projections) == 0 {
@@ -89,17 +83,13 @@ func (b workflowDupeBuilder) Build(
 	}
 	var (
 		summary    api.DupeCheckSummary
-		assessment dupechecking.Assessment
+		assessment api.DupeAssessmentEvidence
 		err        error
 	)
-	if service, ok := b.service.(projectionDupeService); ok {
-		summary, assessment, err = service.CheckProjectionSet(ctx, subject, eligibleProjections, dupechecking.CheckOptions{
-			SkipRemote:         skipRemote,
-			BypassBannedGroups: projections.ExecutionMode == api.WorkflowExecutionModeDebug,
-		})
-	} else {
-		summary, err = checkProjectionFallback(ctx, b.service, subject, eligibleProjections)
-	}
+	summary, assessment, err = b.service.CheckProjectionSet(ctx, subject, eligibleProjections, api.ProjectionDupeCheckOptions{
+		SkipRemote:         skipRemote,
+		BypassBannedGroups: projections.ExecutionMode == api.WorkflowExecutionModeDebug,
+	})
 	if err != nil {
 		return api.DupeAssessment{}, nil, fmt.Errorf("workflow duplicate check: %w", err)
 	}
@@ -121,6 +111,10 @@ func (b workflowDupeBuilder) Build(
 			ProjectionFingerprint: projectionFingerprint,
 			CriteriaFingerprint:   projection.CriteriaFingerprint,
 			Criteria:              projection.DuplicateCriteria,
+			TargetFingerprint:     projection.DuplicateTargetFingerprint,
+			SearchFingerprint:     projection.DuplicateSearchFingerprint,
+			PolicyID:              projection.DuplicatePolicyID,
+			PolicyFingerprint:     projection.DuplicatePolicyFingerprint,
 			CheckedAt:             checkedAt,
 			FreshUntil:            freshUntil,
 		}
@@ -133,6 +127,24 @@ func (b workflowDupeBuilder) Build(
 			trackerResult.Status = api.StageStatusSkipped
 			trackerResult.RequiredActions = append([]api.RequiredAction(nil), preflightResult.RequiredActions...)
 			trackerResult.Failures = append([]api.WorkflowFailure(nil), preflightResult.Failures...)
+			if hasWorkflowDupeExtendedLineage(trackerResult) {
+				trackerResult.EvidenceFingerprint, err = api.CanonicalWorkflowFingerprint(struct {
+					ProjectionReadiness api.ReadinessStatus
+					DupeReady           bool
+					Preflight           api.TrackerPreflightResult
+				}{
+					ProjectionReadiness: projection.Readiness,
+					DupeReady:           projection.DupeReady,
+					Preflight:           preflightResult,
+				})
+				if err != nil {
+					return api.DupeAssessment{}, nil, fmt.Errorf(
+						"workflow duplicate check: fingerprint %s skipped evidence: %w",
+						projection.TrackerID,
+						err,
+					)
+				}
+			}
 			results = append(results, trackerResult)
 			continue
 		}
@@ -141,6 +153,13 @@ func (b workflowDupeBuilder) Build(
 			return api.DupeAssessment{}, nil, fmt.Errorf("workflow duplicate check: eligible tracker %s returned no result", projection.TrackerID)
 		}
 		trackerResult.Matches = publicDupeMatches(result)
+		trackerResult.Search = result.Search
+		if hasWorkflowDupeExtendedLineage(trackerResult) {
+			trackerResult.EvidenceFingerprint, err = duplicateEvidenceFingerprint(result)
+			if err != nil {
+				return api.DupeAssessment{}, nil, fmt.Errorf("workflow duplicate check: fingerprint %s evidence: %w", projection.TrackerID, err)
+			}
+		}
 		if !result.CheckedAt.IsZero() {
 			trackerResult.CheckedAt = result.CheckedAt
 		}
@@ -166,55 +185,128 @@ func (b workflowDupeBuilder) Build(
 	}, workflowDupePrivateEvidence{Summary: summary, Assessment: assessment}, nil
 }
 
-func checkProjectionFallback(
-	ctx context.Context,
-	service api.DupeService,
-	subject api.DuplicateSubject,
-	projections api.TrackerReleaseProjectionSet,
-) (api.DupeCheckSummary, error) {
-	combined := api.DupeCheckSummary{SourcePath: subject.SourcePath}
-	for _, projection := range projections.Projections {
-		trackerSubject := subject
-		trackerSubject.Projection = &projection
-		trackerSubject.ReleaseName = projection.DuplicateCriteria.Name
-		summary, err := service.Check(ctx, trackerSubject, []string{string(projection.TrackerID)})
-		if err != nil {
-			return combined, fmt.Errorf("tracker %s: %w", projection.TrackerID, err)
+func blockingPolicyDecisionLogValues(decisions []api.TrackerPolicyDecision) string {
+	values := make([]string, 0, len(decisions))
+	for _, decision := range decisions {
+		if decision.Blocking {
+			values = appendUniqueLogValue(values, decision.Code)
 		}
-		combined.Results = append(combined.Results, summary.Results...)
-		combined.Notes = append(combined.Notes, summary.Notes...)
 	}
-	return combined, nil
+	slices.Sort(values)
+	return strings.Join(values, ",")
+}
+
+func workflowFailureLogValues(failures []api.WorkflowFailure, value func(api.OperationFailure) string) string {
+	values := make([]string, 0, len(failures))
+	for _, failure := range failures {
+		values = appendUniqueLogValue(values, value(failure.Failure))
+	}
+	slices.Sort(values)
+	return strings.Join(values, ",")
+}
+
+func requiredActionLogValues(actions []api.RequiredAction) string {
+	values := make([]string, 0, len(actions))
+	for _, action := range actions {
+		values = appendUniqueLogValue(values, string(action.Kind))
+	}
+	slices.Sort(values)
+	return strings.Join(values, ",")
+}
+
+func appendUniqueLogValue(values []string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" || slices.Contains(values, value) {
+		return values
+	}
+	return append(values, value)
+}
+
+func hasWorkflowDupeExtendedLineage(result api.TrackerDupeAssessment) bool {
+	return result.PolicyID != "" || result.TargetFingerprint != "" ||
+		result.SearchFingerprint != "" || result.PolicyFingerprint != ""
+}
+
+func duplicateEvidenceFingerprint(result api.DupeCheckResult) (api.WorkflowFingerprint, error) {
+	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
+		Search      api.DupeSearchEvidence
+		Evaluations []api.DupeCandidateEvaluation
+		HasDupes    bool
+		Skipped     bool
+		SkipCode    string
+		Status      string
+		Error       string
+	}{
+		Search:      result.Search,
+		Evaluations: result.Evaluations,
+		HasDupes:    result.HasDupes,
+		Skipped:     result.Skipped,
+		SkipCode:    result.SkipCode,
+		Status:      result.Status,
+		Error:       result.Error,
+	})
+	if err != nil {
+		return "", fmt.Errorf("canonical duplicate evidence fingerprint: %w", err)
+	}
+	return fingerprint, nil
 }
 
 func publicDupeMatches(result api.DupeCheckResult) []api.DupeMatchProjection {
-	matches := make([]api.DupeMatchProjection, 0, len(result.Filtered))
-	for _, entry := range result.Filtered {
+	matches := make([]api.DupeMatchProjection, 0, len(result.Evaluations))
+	for _, evaluation := range result.Evaluations {
+		reason := ""
+		if len(evaluation.Reasons) > 0 {
+			reason = evaluation.Reasons[0].Code
+		}
 		matches = append(matches, api.DupeMatchProjection{
-			ID:        strings.TrimSpace(entry.ID),
-			Name:      strings.TrimSpace(entry.Name),
-			Link:      strings.TrimSpace(entry.Link),
-			SizeBytes: entry.SizeBytes,
-			Flags:     append([]string(nil), entry.Flags...),
-			Reason:    strings.TrimSpace(result.Match.MatchedReason),
+			ID:             strings.TrimSpace(evaluation.ID),
+			Name:           strings.TrimSpace(evaluation.Name),
+			Link:           strings.TrimSpace(evaluation.Link),
+			SizeBytes:      evaluation.SizeBytes,
+			Reason:         reason,
+			Relation:       evaluation.Relation,
+			Reasons:        append([]api.DupeReason(nil), evaluation.Reasons...),
+			Flags:          append([]string(nil), evaluation.Flags...),
+			HDR:            evaluation.HDR,
+			Category:       evaluation.Category,
+			Type:           evaluation.Type,
+			Resolution:     evaluation.Resolution,
+			Source:         evaluation.Source,
+			Codec:          evaluation.Codec,
+			Container:      evaluation.Container,
+			Provider:       evaluation.Provider,
+			Group:          evaluation.Group,
+			Edition:        evaluation.Edition,
+			Region:         evaluation.Region,
+			ThreeD:         evaluation.ThreeD,
+			Repack:         evaluation.Repack,
+			Season:         evaluation.Season,
+			Episode:        evaluation.Episode,
+			Date:           evaluation.Date,
+			Pack:           evaluation.Pack,
+			Internal:       evaluation.Internal,
+			Trumpable:      evaluation.Trumpable,
+			EvidenceStatus: evaluation.EvidenceStatus,
 		})
 	}
-	if len(matches) == 0 && (result.HasDupes || strings.TrimSpace(result.Match.MatchedReason) != "") {
-		name := strings.TrimSpace(result.Match.MatchedName)
-		if name == "" {
-			name = strings.TrimSpace(result.UploadReleaseName)
-		}
+	if len(matches) == 0 && !result.Search.Complete && !result.Skipped &&
+		!strings.EqualFold(strings.TrimSpace(result.Status), "failed") &&
+		!strings.EqualFold(strings.TrimSpace(result.Status), "bypassed") && strings.TrimSpace(result.Error) == "" {
+		name := strings.TrimSpace(result.UploadReleaseName)
 		if name == "" {
 			name = strings.TrimSpace(result.CanonicalReleaseName)
 		}
 		if name == "" {
-			name = "Existing duplicate"
+			name = "Possible duplicate"
 		}
 		matches = append(matches, api.DupeMatchProjection{
-			ID:     strings.TrimSpace(result.Match.MatchedID),
-			Name:   name,
-			Link:   strings.TrimSpace(result.Match.MatchedLink),
-			Reason: strings.TrimSpace(result.Match.MatchedReason),
+			Name:     name,
+			Reason:   "incomplete_search",
+			Relation: api.DupeRelationInsufficientEvidence,
+			Reasons: []api.DupeReason{{
+				Code:    "incomplete_search",
+				Message: "Duplicate search was incomplete; confirm tracker policy risk before continuing.",
+			}},
 		})
 	}
 	return matches
@@ -234,7 +326,7 @@ func setWorkflowDupeOutcome(target *api.TrackerDupeAssessment, result api.DupeCh
 			},
 			TrackerID: target.TrackerID,
 		}}
-	case result.HasDupes || strings.EqualFold(strings.TrimSpace(result.Match.MatchedReason), "in_client"):
+	case hasBlockingDupeRelation(result):
 		// Duplicate evidence blocks only this tracker by default. The assessment
 		// itself is complete, so unrelated trackers and downstream pages remain
 		// available. Remote matches can be explicitly ignored later; in-client
@@ -247,8 +339,27 @@ func setWorkflowDupeOutcome(target *api.TrackerDupeAssessment, result api.DupeCh
 	case result.Skipped:
 		target.Decision = api.DupeDecisionSkipped
 		target.Status = api.StageStatusSkipped
+	case result.HasDupes || !result.Search.Complete:
+		target.Decision = api.DupeDecisionPending
+		target.Status = api.StageStatusBlocked
+		target.RequiredActions = []api.RequiredAction{{
+			Kind:      api.RequiredActionReviewDuplicates,
+			Status:    api.RequiredActionStatusPending,
+			TrackerID: target.TrackerID,
+			Prompt:    "Review incomplete, same-slot, or proposed-trump duplicate evidence and acknowledge tracker policy risk.",
+			Options: []api.RequiredActionOption{
+				{Value: string(api.DupeDecisionAccepted), Label: "Treat as duplicate"},
+				{Value: string(api.DupeDecisionIgnored), Label: "Acknowledge risk and continue"},
+			},
+		}}
 	default:
 		target.Decision = api.DupeDecisionNoMatch
 		target.Status = api.StageStatusCompleted
 	}
+}
+
+func hasBlockingDupeRelation(result api.DupeCheckResult) bool {
+	return slices.ContainsFunc(result.Evaluations, func(candidate api.DupeCandidateEvaluation) bool {
+		return candidate.Relation == api.DupeRelationExactDuplicate || candidate.Relation == api.DupeRelationExistingPreferred
+	})
 }

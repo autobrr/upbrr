@@ -48,6 +48,11 @@ from fetch_metadata_api import (
 MAX_TRANSITIONS = 64
 
 
+def capabilities_url(api_url: str) -> str:
+    """Return the authenticated capability-probe URL."""
+    return f"{api_url.rstrip('/')}/capabilities"
+
+
 def workflow_url(api_url: str, workflow_id: object) -> str:
     """Return the owner-scoped workflow URL."""
     return f"{api_url.rstrip('/')}/workflows/{quote(str(workflow_id), safe='')}"
@@ -481,7 +486,21 @@ def upload_release(
     poll_interval: float,
     timeout: float,
 ) -> dict[str, Any]:
-    """Create, poll, answer, and resume one composite upload."""
+    """Validate server capabilities, then create and drive one composite upload."""
+    capabilities = request_json("GET", capabilities_url(api_url), token)
+    api_version = capabilities.get("apiVersion")
+    features = capabilities.get("features")
+    scopes = capabilities.get("scopes")
+    if not isinstance(api_version, str) or api_version.split(".", 1)[0] != "1":
+        raise APIError("server does not expose a compatible API v1 capability contract")
+    if not isinstance(features, dict) or not features.get("compositeUpload"):
+        raise APIError("server does not support composite uploads")
+    if not unattended_confirm and not features.get(
+        "strictEligibleTrackerContinuation"
+    ):
+        raise APIError("server does not support strict eligible-tracker continuation")
+    if not isinstance(scopes, list) or "workflow:execute" not in scopes:
+        raise APIError("token does not grant workflow:execute")
     payload = create_payload(
         source_path,
         trackers,
@@ -574,7 +593,10 @@ def parse_args() -> argparse.Namespace:
         action="append",
         default=[],
         metavar="TRACKER_ID",
-        help="target tracker ID; repeat for multiple trackers (default: configured defaults)",
+        help=(
+            "target tracker ID; repeat for multiple trackers "
+            "(required in strict mode)"
+        ),
     )
     parser.add_argument(
         "--mode",
@@ -638,6 +660,9 @@ def main() -> int:
             "error: --poll-interval and --timeout must be greater than zero",
             file=sys.stderr,
         )
+        return 2
+    if not args.unattended_confirm and not args.tracker:
+        print("error: strict mode requires at least one --tracker", file=sys.stderr)
         return 2
 
     try:

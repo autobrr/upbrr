@@ -14,15 +14,40 @@ func TestPreparedReleaseCloneDetachesCollections(t *testing.T) {
 			SourcePath: "Example.Release.2026.1080p-GRP.mkv",
 			Entries: []SourceManifestEntry{
 				{
-Path: "Example.Release.2026.1080p-GRP.mkv",
- Type: SourceEntryTypeFile,
- Size: 42,
-},
+					Path: "Example.Release.2026.1080p-GRP.mkv",
+					Type: SourceEntryTypeFile,
+					Size: 42,
+				},
 			},
 		},
-		Naming: NamingFacts{Codecs: []string{"H.264"}},
+		Naming: NamingFacts{
+			Codecs: []string{"H.264"},
+			GeneratedReleaseNames: GeneratedReleaseNameVariants{
+				IncludeEpisodeTitle: ReleaseNameVariant{
+					Name: "Example.Show.S01E02.Example.Episode.1080p.WEB-DL-GRP",
+				},
+				OmitEpisodeTitle: ReleaseNameVariant{
+					Name: "Example.Show.S01E02.1080p.WEB-DL-GRP",
+				},
+			},
+		},
 		ProviderMetadata: SourceScopedMetadata{
 			TMDB: &TMDBMetadata{LocalizedTitles: map[string]string{"en": "Example Release 2026"}},
+			TVDB: &TVDBMetadata{
+				TVDBID: 987650001,
+				Name:   "Example Series",
+				NameDisambiguation: TVDBNameDisambiguation{
+					CanonicalName: "Example Series",
+					SeriesYear:    2026,
+					Status:        MetadataEvidenceStatusPartial,
+					Source:        "tvdb_v4_search_unpaged",
+				},
+			},
+			ProviderAvailability: []ProviderAvailabilityEvidence{{
+				Provider: IdentityProviderTMDB,
+				Status:   ProviderAvailabilityStatusNotFound,
+				Source:   "tmdb_find/v1",
+			}},
 		},
 		Assessments: ReleaseAssessments{
 			Naming: NamingAssessment{Status: NamingStatusIncomplete, Missing: []NamingRequirement{"year"}},
@@ -35,7 +60,10 @@ Path: "Example.Release.2026.1080p-GRP.mkv",
 	}
 	cloned.Source.Entries[0].Path = "changed.mkv"
 	cloned.Naming.Codecs[0] = "changed"
+	cloned.Naming.GeneratedReleaseNames.IncludeEpisodeTitle.Name = "changed"
 	cloned.ProviderMetadata.TMDB.LocalizedTitles["en"] = "changed"
+	cloned.ProviderMetadata.TVDB.NameDisambiguation.CanonicalName = "changed"
+	cloned.ProviderMetadata.ProviderAvailability[0].Source = "changed"
 	cloned.Assessments.Naming.Missing[0] = "changed"
 
 	if source.Source.Entries[0].Path == cloned.Source.Entries[0].Path {
@@ -44,8 +72,17 @@ Path: "Example.Release.2026.1080p-GRP.mkv",
 	if source.Naming.Codecs[0] == cloned.Naming.Codecs[0] {
 		t.Fatal("naming codecs share storage")
 	}
+	if source.Naming.GeneratedReleaseNames.IncludeEpisodeTitle.Name == cloned.Naming.GeneratedReleaseNames.IncludeEpisodeTitle.Name {
+		t.Fatal("generated release-name variants were not cloned")
+	}
 	if source.ProviderMetadata.TMDB.LocalizedTitles["en"] == cloned.ProviderMetadata.TMDB.LocalizedTitles["en"] {
 		t.Fatal("provider metadata shares storage")
+	}
+	if source.ProviderMetadata.TVDB.NameDisambiguation.CanonicalName == cloned.ProviderMetadata.TVDB.NameDisambiguation.CanonicalName {
+		t.Fatal("TVDB disambiguation shares storage")
+	}
+	if source.ProviderMetadata.ProviderAvailability[0].Source == cloned.ProviderMetadata.ProviderAvailability[0].Source {
+		t.Fatal("provider availability shares storage")
 	}
 	if source.Assessments.Naming.Missing[0] == cloned.Assessments.Naming.Missing[0] {
 		t.Fatal("naming assessment shares storage")
@@ -92,6 +129,57 @@ func TestNormalizeCanonicalCategory(t *testing.T) {
 	}
 	if _, err := NormalizeCanonicalCategory("unsupported"); err == nil {
 		t.Fatal("unsupported category succeeded")
+	}
+}
+
+func TestSourceScopedMetadataIsCurrentFor(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		metadata   SourceScopedMetadata
+		sourcePath string
+		identity   ExternalIdentity
+		want       bool
+	}{
+		{
+			name:       "matching source and generation",
+			metadata:   SourceScopedMetadata{SourcePath: `C:\media\Example.Release.2026.mkv`, Generation: 3},
+			sourcePath: `c:\MEDIA\Example.Release.2026.mkv`,
+			identity:   ExternalIdentity{SourcePath: `C:\media\Example.Release.2026.mkv`, Generation: 3},
+			want:       true,
+		},
+		{
+			name:       "legacy unscoped metadata",
+			sourcePath: `C:\media\Example.Release.2026.mkv`,
+			want:       true,
+		},
+		{
+			name:       "stale metadata source",
+			metadata:   SourceScopedMetadata{SourcePath: `C:\media\Old.Release.mkv`, Generation: 3},
+			sourcePath: `C:\media\Example.Release.2026.mkv`,
+			identity:   ExternalIdentity{SourcePath: `C:\media\Example.Release.2026.mkv`, Generation: 3},
+		},
+		{
+			name:       "stale identity source",
+			metadata:   SourceScopedMetadata{SourcePath: `C:\media\Example.Release.2026.mkv`, Generation: 3},
+			sourcePath: `C:\media\Example.Release.2026.mkv`,
+			identity:   ExternalIdentity{SourcePath: `C:\media\Old.Release.mkv`, Generation: 3},
+		},
+		{
+			name:       "stale generation",
+			metadata:   SourceScopedMetadata{SourcePath: `C:\media\Example.Release.2026.mkv`, Generation: 2},
+			sourcePath: `C:\media\Example.Release.2026.mkv`,
+			identity:   ExternalIdentity{SourcePath: `C:\media\Example.Release.2026.mkv`, Generation: 3},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := test.metadata.IsCurrentFor(test.sourcePath, test.identity); got != test.want {
+				t.Fatalf("IsCurrentFor() = %t, want %t", got, test.want)
+			}
+		})
 	}
 }
 

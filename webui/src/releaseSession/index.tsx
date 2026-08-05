@@ -663,18 +663,38 @@ export function ReleaseSessionProvider({
     setWorkflowView((current) => ({ ...current, status: "running", error: "", failure: null }));
     const commandID = `workflow-dupes-${Date.now().toString(36)}-${workflowView.current.workflow.revision.toString(36)}`;
     try {
-      const projectionInstructions = Object.fromEntries(
-        state.selectedTrackers.map((tracker) => [
-          tracker,
-          {
-            questionnaire: Object.fromEntries(
-              Object.entries(state.questionnaireAnswers[tracker] || {}).map(([key, value]) => [
-                key,
-                value,
-              ]),
-            ),
-          },
+      const currentProjectionByTracker = new Map(
+        (workflowView.current.projections?.projections || []).map((projection) => [
+          projection.trackerId,
+          projection,
         ]),
+      );
+      const projectionInstructions = Object.fromEntries(
+        state.selectedTrackers.map((tracker) => {
+          const projection = currentProjectionByTracker.get(tracker);
+          const confirmationRequired = projection?.policyDecisions?.some(
+            (decision) =>
+              decision.code === "release_name_confirmation" &&
+              decision.decision === "confirmation_required",
+          );
+          const retainedName =
+            workflowView.current?.projectionInstructions?.instructions[tracker]?.uploadReleaseName;
+          const confirmedName = confirmationRequired
+            ? undefined
+            : (state.releaseNameOverrides[tracker] ?? retainedName ?? undefined);
+          return [
+            tracker,
+            {
+              questionnaire: Object.fromEntries(
+                Object.entries(state.questionnaireAnswers[tracker] || {}).map(([key, value]) => [
+                  key,
+                  value,
+                ]),
+              ),
+              ...(confirmedName !== undefined ? { uploadReleaseName: confirmedName } : {}),
+            },
+          ];
+        }),
       );
       const current = await continueBackendGoal(
         workflowView.current,
@@ -1637,13 +1657,14 @@ export function ReleaseSessionProvider({
     },
     duplicates: {
       view: {
-        status: duplicateStartPending
-          ? "running"
-          : duplicatesReady
-            ? "ready"
-            : workflowDupeAssessment?.status === "failed"
-              ? "error"
-              : "idle",
+        status:
+          duplicateStartPending || workflowView.status === "running"
+            ? "running"
+            : duplicatesReady
+              ? "ready"
+              : workflowDupeAssessment?.status === "failed"
+                ? "error"
+                : "idle",
         assessment: duplicateAssessmentCurrent ? workflowDupeAssessment : null,
         projections: duplicateAssessmentCurrent ? workflowView.current?.projections || null : null,
         preflight: duplicateAssessmentCurrent ? workflowView.current?.preflight || null : null,
@@ -1659,12 +1680,8 @@ export function ReleaseSessionProvider({
           state.selectedTrackers.length,
         ignoredTrackers: state.ignoredDupesFor,
         selectedTrackers: state.selectedTrackers,
-        error:
-          workflowView.failure?.Message ||
-          state.duplicatesError ||
-          workflowDupeAssessment?.results.flatMap((result) => result.failures || [])[0]?.failure
-            .Message ||
-          "",
+        releaseNameOverrides: state.releaseNameOverrides,
+        error: workflowView.failure?.Message || state.duplicatesError || "",
       },
       run: async () => {
         dispatch({ type: "job_command_started", kind: "duplicates" });
@@ -1696,6 +1713,42 @@ export function ReleaseSessionProvider({
         return completed;
       },
       chooseTrackers: (trackers) => dispatch({ type: "trackers_chosen", trackers }),
+      confirmReleaseName: (tracker, value) =>
+        dispatch({ type: "release_name_confirmed", tracker, value }),
+      acknowledgeReleaseName: async (tracker, acknowledged) => {
+        const normalizedTracker = tracker.trim().toUpperCase();
+        const current = workflowView.current;
+        const projection = current?.projections?.projections.find(
+          (candidate) => candidate.trackerId === normalizedTracker,
+        );
+        const action = [
+          ...(current?.workflow.requiredActions || []),
+          ...(projection?.requiredActions || []),
+        ].find(
+          (candidate) =>
+            candidate.kind === "provide_tracker_input" &&
+            candidate.trackerId === normalizedTracker &&
+            candidate.status === (acknowledged ? "pending" : "resolved"),
+        );
+        const releaseName = (
+          state.releaseNameOverrides[normalizedTracker] ??
+          projection?.uploadReleaseName ??
+          ""
+        ).trim();
+        if (!current || !projection || !action || (acknowledged && !releaseName)) return false;
+        return runBackendWorkflow((latest, commandID, signal) =>
+          continueBackendGoal(latest, "duplicates_decided", {}, commandID, signal, {
+            answers: [
+              {
+                actionId: action.id,
+                workflowRevision: latest.workflow.revision,
+                ...(acknowledged ? { textValue: releaseName } : {}),
+                confirmed: acknowledged,
+              },
+            ],
+          }),
+        );
+      },
       cancel: async () => {
         if (!workflowView.current) return false;
         return cancelBackendWorkflow("duplicate check canceled");
@@ -1709,9 +1762,12 @@ export function ReleaseSessionProvider({
         const inClient = result.matches?.some(
           (match) => match.reason?.trim().toLowerCase() === "in_client",
         );
+        const hasReviewableEvidence =
+          Boolean(result.matches?.length) ||
+          (Boolean(result.search?.pages) && result.search?.complete === false);
         const canOverride =
           !inClient &&
-          Boolean(result.matches?.length) &&
+          hasReviewableEvidence &&
           ["pending", "accepted", "ignored"].includes(result.decision);
         if (!canOverride) return;
         dispatch({ type: "dupe_ignore_changed", tracker: normalizedTracker, ignored });

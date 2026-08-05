@@ -5,6 +5,7 @@ package mtv
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -50,6 +51,7 @@ func TestMTVHandlerUsesIMDBPriorityAndParsesXML(t *testing.T) {
 			body := `<?xml version="1.0" encoding="UTF-8"?>
 <rss xmlns:torznab="http://torznab.com/schemas/2015/feed">
   <channel>
+    <response offset="0" total="2" />
     <item>
       <title>Example.Release.1080p.WEB-DL.DDP5.1.H.264-GRP</title>
       <files>3</files>
@@ -122,8 +124,8 @@ func TestMTVHandlerUsesIMDBPriorityAndParsesXML(t *testing.T) {
 	if first.Download != "https://www.morethantv.me/download.php/100?torrent_pass=abc&https=1" {
 		t.Fatalf("unexpected first entry download %q", first.Download)
 	}
-	if len(first.Files) != 1 || first.Files[0] != first.Name {
-		t.Fatalf("expected first entry files to contain release title, got %#v", first.Files)
+	if len(first.Files) != 0 {
+		t.Fatalf("expected Torznab title to remain separate from unproven file evidence, got %#v", first.Files)
 	}
 
 	second := entries[1]
@@ -148,7 +150,7 @@ func TestMTVHandlerUsesExactProjectedTitleQuery(t *testing.T) {
 			if got := query.Get("imdbid"); got != "" {
 				t.Fatalf("imdbid should be empty, got %q", got)
 			}
-			body := `<rss><channel></channel></rss>`
+			body := `<rss><channel><response offset="0" total="0" /></channel></rss>`
 			return &http.Response{
 				StatusCode: http.StatusOK,
 				Body:       io.NopCloser(strings.NewReader(body)),
@@ -184,6 +186,206 @@ func TestMTVHandlerUsesExactProjectedTitleQuery(t *testing.T) {
 	}
 }
 
+func TestMTVHandlerPaginatesUsingAdvertisedOffsets(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			calls++
+			offset := req.URL.Query().Get("offset")
+			if calls == 1 && offset != "" {
+				t.Fatalf("first offset = %q", offset)
+			}
+			if calls == 2 && offset != "100" {
+				t.Fatalf("second offset = %q", offset)
+			}
+			count := 100
+			if calls == 2 {
+				count = 1
+			}
+			var body strings.Builder
+			body.WriteString("<rss><channel>")
+			fmt.Fprintf(&body, `<response offset="%d" total="101" />`, (calls-1)*100)
+			for index := range count {
+				fmt.Fprintf(&body, "<item><title>Example.Release.%03d.1080p-GRP</title></item>", index+(calls-1)*100)
+			}
+			body.WriteString("</channel></rss>")
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body.String())),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
+	handler := dupe.NewAdapter(New(), "MTV", config.Config{
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"MTV": {APIKey: "token"},
+		}},
+	}, client, api.NopLogger{})
+
+	result := handler.Search(context.Background(), api.DuplicateSubject{
+		Identity: api.ExternalIdentity{IMDBID: 123456},
+	})
+	if err := result.Cause(); err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if calls != 2 || len(result.Entries()) != 101 {
+		t.Fatalf("calls=%d entries=%d", calls, len(result.Entries()))
+	}
+	evidence := result.SearchEvidence()
+	if !evidence.Complete || evidence.Pages != 2 {
+		t.Fatalf("search evidence = %#v", evidence)
+	}
+}
+
+func TestMTVHandlerTreatsMetadataFreeShortPageAsComplete(t *testing.T) {
+	t.Parallel()
+
+	for _, itemCount := range []int{0, 5} {
+		t.Run(fmt.Sprintf("items_%d", itemCount), func(t *testing.T) {
+			t.Parallel()
+
+			calls := 0
+			client := &http.Client{
+				Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+					calls++
+					var body strings.Builder
+					body.WriteString("<rss><channel>")
+					for index := range itemCount {
+						fmt.Fprintf(&body, "<item><title>Example.Release.%03d.1080p-GRP</title></item>", index)
+					}
+					body.WriteString("</channel></rss>")
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(body.String())),
+						Header:     make(http.Header),
+					}, nil
+				}),
+			}
+			handler := dupe.NewAdapter(New(), "MTV", config.Config{
+				Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+					"MTV": {APIKey: "token"},
+				}},
+			}, client, api.NopLogger{})
+
+			result := handler.Search(context.Background(), api.DuplicateSubject{
+				Identity: api.ExternalIdentity{IMDBID: 123456},
+			})
+			if err := result.Cause(); err != nil {
+				t.Fatalf("search: %v", err)
+			}
+			evidence := result.SearchEvidence()
+			if calls != 1 || !evidence.Complete || evidence.Pages != 1 || len(evidence.Warnings) != 0 {
+				t.Fatalf("calls=%d search evidence=%#v", calls, evidence)
+			}
+			if len(result.Entries()) != itemCount {
+				t.Fatalf("entries=%d, want %d", len(result.Entries()), itemCount)
+			}
+		})
+	}
+}
+
+func TestMTVHandlerReportsIncompletePaginationMetadata(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		response string
+		warning  string
+	}{
+		{
+			name:    "omitted response",
+			warning: "MTV search reached the result limit without pagination support; results may be truncated",
+		},
+		{
+			name:     "omitted attributes",
+			response: "<response />",
+			warning:  "MTV search returned incomplete pagination metadata",
+		},
+		{
+			name:     "inconsistent offset",
+			response: `<response offset="1" total="100" />`,
+			warning:  "MTV search returned inconsistent pagination metadata",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			calls := 0
+			client := &http.Client{
+				Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+					calls++
+					var body strings.Builder
+					body.WriteString("<rss><channel>")
+					body.WriteString(test.response)
+					for index := range 100 {
+						fmt.Fprintf(&body, "<item><title>Example.Release.%03d.1080p-GRP</title></item>", index)
+					}
+					body.WriteString("</channel></rss>")
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(body.String())),
+						Header:     make(http.Header),
+					}, nil
+				}),
+			}
+			handler := dupe.NewAdapter(New(), "MTV", config.Config{
+				Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+					"MTV": {APIKey: "token"},
+				}},
+			}, client, api.NopLogger{})
+
+			result := handler.Search(context.Background(), api.DuplicateSubject{
+				Identity: api.ExternalIdentity{IMDBID: 123456},
+			})
+			if err := result.Cause(); err != nil {
+				t.Fatalf("search: %v", err)
+			}
+			evidence := result.SearchEvidence()
+			if calls != 1 || evidence.Complete || evidence.Pages != 1 || len(evidence.Warnings) != 1 {
+				t.Fatalf("calls=%d search evidence=%#v", calls, evidence)
+			}
+			if evidence.Warnings[0] != test.warning {
+				t.Fatalf("warning=%q, want %q", evidence.Warnings[0], test.warning)
+			}
+		})
+	}
+}
+
+func TestMTVHandlerRejectsTorznabErrorResponse(t *testing.T) {
+	t.Parallel()
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`<error code="201" description="Incorrect parameter." />`)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
+	handler := dupe.NewAdapter(New(), "MTV", config.Config{
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"MTV": {APIKey: "token"},
+		}},
+	}, client, api.NopLogger{})
+
+	result := handler.Search(context.Background(), api.DuplicateSubject{
+		Identity: api.ExternalIdentity{IMDBID: 123456},
+	})
+	if result.Disposition() != dupe.DispositionFailed {
+		t.Fatalf("disposition=%v, want failed", result.Disposition())
+	}
+	if result.Code() != dupe.FailureResponseStatus {
+		t.Fatalf("code=%q, want %q", result.Code(), dupe.FailureResponseStatus)
+	}
+	if result.SafeMessage() != "MTV API rejected search" {
+		t.Fatalf("safe message=%q", result.SafeMessage())
+	}
+}
+
 func TestCleanMTVSearchTitleDirectFallback(t *testing.T) {
 	t.Parallel()
 
@@ -202,7 +404,7 @@ func TestMTVHandlerSkipsTVDBForMovie(t *testing.T) {
 			if got := query.Get("tvdbid"); got != "" {
 				t.Fatalf("tvdbid should be empty for movie category, got %q", got)
 			}
-			body := `<rss><channel></channel></rss>`
+			body := `<rss><channel><response offset="0" total="0" /></channel></rss>`
 			return &http.Response{
 				StatusCode: http.StatusOK,
 				Body:       io.NopCloser(strings.NewReader(body)),
@@ -246,7 +448,7 @@ func TestMTVHandlerUsesTVDBForTV(t *testing.T) {
 			if got := query.Get("q"); got != "" {
 				t.Fatalf("q should be empty when tvdbid is present, got %q", got)
 			}
-			body := `<rss><channel></channel></rss>`
+			body := `<rss><channel><response offset="0" total="0" /></channel></rss>`
 			return &http.Response{
 				StatusCode: http.StatusOK,
 				Body:       io.NopCloser(strings.NewReader(body)),

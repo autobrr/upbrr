@@ -5,17 +5,21 @@ package ptp
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/authmaterial/authfixture"
 	"github.com/autobrr/upbrr/internal/config"
 	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 	servicedb "github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -34,6 +38,54 @@ func TestLoadCookiesSuccessReturnsNilError(t *testing.T) {
 	}
 	if got["session"] != "abc" {
 		t.Fatalf("unexpected cookies: %#v", got)
+	}
+}
+
+func TestRequestAntiCsrfTokenRejectsBlankMarker(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		marker  string
+		want    string
+		wantErr bool
+	}{
+		{
+			name:   "valid",
+			marker: "token",
+			want:   "token",
+		},
+		{
+			name:    "empty",
+			marker:  "",
+			wantErr: true,
+		},
+		{
+			name:    "whitespace",
+			marker:  " \t ",
+			wantErr: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(`<div data-AntiCsrfToken="` + test.marker + `"></div>`))
+			}))
+			t.Cleanup(server.Close)
+
+			got, err := requestAntiCsrfToken(context.Background(), server.Client(), server.URL)
+			if test.wantErr {
+				if err == nil {
+					t.Fatalf("requestAntiCsrfToken = %q, want error", got)
+				}
+				return
+			}
+			if err != nil || got != test.want {
+				t.Fatalf("requestAntiCsrfToken = (%q, %v), want %q", got, err, test.want)
+			}
+		})
 	}
 }
 
@@ -70,24 +122,27 @@ func TestLoginAndFetchAntiCsrfTokenReturnsPersistenceError(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/ajax.php" || r.URL.RawQuery != "action=login" {
+		switch {
+		case r.URL.Path == ptpUploadPath:
+			_, _ = w.Write([]byte(`<div data-AntiCsrfToken="verified-token"></div>`))
+		case r.URL.Path == "/ajax.php" && r.URL.RawQuery == "action=login":
+			http.SetCookie(w, &http.Cookie{
+				Name:  "session",
+				Value: "new",
+				Path:  "/",
+			})
+			_, _ = w.Write([]byte(`{"Result":"Ok","AntiCsrfToken":"token"}`))
+		default:
 			http.NotFound(w, r)
-			return
 		}
-		http.SetCookie(w, &http.Cookie{
-			Name:  "session",
-			Value: "new",
-			Path:  "/",
-		})
-		_, _ = w.Write([]byte(`{"Result":"Ok","AntiCsrfToken":"token"}`))
 	}))
 	t.Cleanup(server.Close)
 
-	_, _, err := resolveSession(context.Background(), config.TrackerConfig{
+	_, _, err := loginAndFetchAntiCsrfToken(context.Background(), config.TrackerConfig{
 		Username:    "user",
 		Password:    "pass",
 		AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
-	}, filepath.Join(t.TempDir(), "upbrr.db"), server.URL, api.NopLogger{})
+	}, filepath.Join(t.TempDir(), "upbrr.db"), server.URL, api.NopLogger{}, api.TrackerAuthLoginRequest{})
 	if err == nil {
 		t.Fatal("expected persistence error")
 	}
@@ -106,7 +161,11 @@ func TestLoginAndFetchAntiCsrfTokenDoesNotOverwriteCookiesWhenTokenMissing(t *te
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == ptpUploadPath {
-			_, _ = w.Write([]byte("<html>logged out</html>"))
+			http.Redirect(w, r, "/login.php", http.StatusFound)
+			return
+		}
+		if r.URL.Path == "/login.php" {
+			_, _ = w.Write([]byte(`<form><input name="username"><input name="password"></form>`))
 			return
 		}
 		if r.URL.Path != "/ajax.php" || r.URL.RawQuery != "action=login" {
@@ -144,17 +203,22 @@ func TestLoginAndFetchAntiCsrfTokenPersistsCookiesAfterTokenGate(t *testing.T) {
 
 	ctx := context.Background()
 	dbPath := newPTPAuthDB(t)
+	var uploadPageRequests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/ajax.php" || r.URL.RawQuery != "action=login" {
+		switch {
+		case r.URL.Path == ptpUploadPath:
+			uploadPageRequests.Add(1)
+			_, _ = w.Write([]byte(`<div data-AntiCsrfToken="verified-token"></div>`))
+		case r.URL.Path == "/ajax.php" && r.URL.RawQuery == "action=login":
+			http.SetCookie(w, &http.Cookie{
+				Name:  "session",
+				Value: "new",
+				Path:  "/",
+			})
+			_, _ = w.Write([]byte(`{"Result":"Ok","AntiCsrfToken":"login-token"}`))
+		default:
 			http.NotFound(w, r)
-			return
 		}
-		http.SetCookie(w, &http.Cookie{
-			Name:  "session",
-			Value: "new",
-			Path:  "/",
-		})
-		_, _ = w.Write([]byte(`{"Result":"Ok","AntiCsrfToken":"token"}`))
 	}))
 	t.Cleanup(server.Close)
 
@@ -166,8 +230,11 @@ func TestLoginAndFetchAntiCsrfTokenPersistsCookiesAfterTokenGate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveSession: %v", err)
 	}
-	if token != "token" {
+	if token != "verified-token" {
 		t.Fatalf("unexpected token %q", token)
+	}
+	if uploadPageRequests.Load() != 1 {
+		t.Fatalf("verified upload page requests = %d, want 1", uploadPageRequests.Load())
 	}
 	values, err := loadCookies(ctx, dbPath)
 	if err != nil {
@@ -189,7 +256,7 @@ func TestLoginAndFetchAntiCsrfTokenRejectsEmptyJarWithoutReplacingCookies(t *tes
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == ptpUploadPath:
-			_, _ = w.Write([]byte("<html>logged out</html>"))
+			_, _ = w.Write([]byte(`<div data-AntiCsrfToken="verified-token"></div>`))
 		case r.URL.Path == "/ajax.php" && r.URL.RawQuery == "action=login":
 			_, _ = w.Write([]byte(`{"Result":"Ok","AntiCsrfToken":"token"}`))
 		default:
@@ -198,11 +265,11 @@ func TestLoginAndFetchAntiCsrfTokenRejectsEmptyJarWithoutReplacingCookies(t *tes
 	}))
 	t.Cleanup(server.Close)
 
-	_, _, err := resolveSession(ctx, config.TrackerConfig{
+	_, _, err := loginAndFetchAntiCsrfToken(ctx, config.TrackerConfig{
 		Username:    "user",
 		Password:    "pass",
 		AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
-	}, dbPath, server.URL, api.NopLogger{})
+	}, dbPath, server.URL, api.NopLogger{}, api.TrackerAuthLoginRequest{})
 	if err == nil || !strings.Contains(err.Error(), "no usable cookies") {
 		t.Fatalf("expected empty cookie jar error, got %v", err)
 	}
@@ -215,6 +282,41 @@ func TestLoginAndFetchAntiCsrfTokenRejectsEmptyJarWithoutReplacingCookies(t *tes
 	}
 }
 
+func TestLoginAndFetchAntiCsrfTokenDoesNotPersistUnverifiedSession(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newPTPAuthDB(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == ptpUploadPath:
+			_, _ = w.Write([]byte(`<div data-AntiCsrfToken="  "></div>`))
+		case r.URL.Path == "/ajax.php" && r.URL.RawQuery == "action=login":
+			http.SetCookie(w, &http.Cookie{
+				Name:  "session",
+				Value: "unverified",
+				Path:  "/",
+			})
+			_, _ = w.Write([]byte(`{"Result":"Ok","AntiCsrfToken":"login-token"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	_, _, err := loginAndFetchAntiCsrfToken(ctx, config.TrackerConfig{
+		Username:    "user",
+		Password:    "pass",
+		AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
+	}, dbPath, server.URL, api.NopLogger{}, api.TrackerAuthLoginRequest{})
+	if err == nil || !strings.Contains(err.Error(), "verify login session") {
+		t.Fatalf("expected session verification error, got %v", err)
+	}
+	if _, err := loadCookies(ctx, dbPath); !errors.Is(err, cookiepkg.ErrTrackerCookiesNotFound) {
+		t.Fatalf("unverified login cookies were persisted: %v", err)
+	}
+}
+
 func TestResolveSessionForTrackerAuthLoginUsesManual2FACode(t *testing.T) {
 	t.Parallel()
 
@@ -223,6 +325,10 @@ func TestResolveSessionForTrackerAuthLoginUsesManual2FACode(t *testing.T) {
 	var gotCode string
 	loginRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == ptpUploadPath {
+			_, _ = w.Write([]byte(`<div data-AntiCsrfToken="verified-token"></div>`))
+			return
+		}
 		if r.URL.Path != "/ajax.php" || r.URL.RawQuery != "action=login" {
 			http.NotFound(w, r)
 			return
@@ -266,6 +372,92 @@ func TestResolveSessionForTrackerAuthLoginUsesManual2FACode(t *testing.T) {
 	}
 }
 
+func TestResolveSessionReturnsMalformedLegacyCookieErrorWithoutLogin(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
+	var jsonPath string
+	for _, candidate := range commonhttp.CookiePathCandidates(dbPath, "PTP", ".txt", ".json") {
+		if filepath.Ext(candidate) == ".json" {
+			jsonPath = candidate
+			break
+		}
+	}
+	if jsonPath == "" {
+		t.Fatal("expected PTP JSON cookie path")
+	}
+	if err := os.MkdirAll(filepath.Dir(jsonPath), 0o755); err != nil {
+		t.Fatalf("create cookie directory: %v", err)
+	}
+	if err := os.WriteFile(jsonPath, []byte(`{"session":`), 0o600); err != nil {
+		t.Fatalf("write malformed cookies: %v", err)
+	}
+
+	var loginRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ajax.php" && r.URL.RawQuery == "action=login" {
+			loginRequests.Add(1)
+		}
+		http.Error(w, "unexpected request", http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+
+	_, _, err := resolveSession(ctx, config.TrackerConfig{
+		Username:    "user",
+		Password:    "pass",
+		AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
+	}, dbPath, server.URL, api.NopLogger{})
+	if err == nil || !strings.Contains(err.Error(), "unmarshal") {
+		t.Fatalf("expected malformed cookie error, got %v", err)
+	}
+	if loginRequests.Load() != 0 {
+		t.Fatalf("malformed cookies triggered %d login request(s)", loginRequests.Load())
+	}
+}
+
+func TestResolveSessionReturnsEncryptedCookieErrorWithoutLogin(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newPTPAuthDB(t)
+	if err := cookiepkg.SaveTrackerCookieMap(ctx, dbPath, "PTP", map[string]string{"session": "encrypted"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite db: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE tracker_cookies SET encrypted_value = 'not-base64' WHERE tracker_id = 'PTP'`); err != nil {
+		_ = db.Close()
+		t.Fatalf("corrupt encrypted cookie: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close sqlite db: %v", err)
+	}
+
+	var loginRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ajax.php" && r.URL.RawQuery == "action=login" {
+			loginRequests.Add(1)
+		}
+		http.Error(w, "unexpected request", http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+
+	_, _, err = resolveSession(ctx, config.TrackerConfig{
+		Username:    "user",
+		Password:    "pass",
+		AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
+	}, dbPath, server.URL, api.NopLogger{})
+	if err == nil || !strings.Contains(err.Error(), "load tracker PTP from db") {
+		t.Fatalf("expected encrypted cookie error, got %v", err)
+	}
+	if loginRequests.Load() != 0 {
+		t.Fatalf("corrupt encrypted cookies triggered %d login request(s)", loginRequests.Load())
+	}
+}
+
 func TestResolveSessionForTrackerAuthLoginMarksSubmitted2FARejected(t *testing.T) {
 	t.Parallel()
 
@@ -276,7 +468,14 @@ func TestResolveSessionForTrackerAuthLoginMarksSubmitted2FARejected(t *testing.T
 	}
 	loginRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/ajax.php" || r.URL.RawQuery != "action=login" {
+		switch {
+		case r.URL.Path == ptpUploadPath:
+			http.Redirect(w, r, "/login.php", http.StatusFound)
+			return
+		case r.URL.Path == "/login.php":
+			_, _ = w.Write([]byte(`<form><input name="username"><input name="password"></form>`))
+			return
+		case r.URL.Path != "/ajax.php" || r.URL.RawQuery != "action=login":
 			http.NotFound(w, r)
 			return
 		}
@@ -315,7 +514,14 @@ func TestResolveSessionForTrackerAuthLoginPreCodeFailureIsNotSubmitted2FARejecte
 		t.Fatalf("SaveTrackerCookieMap: %v", err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/ajax.php" || r.URL.RawQuery != "action=login" {
+		switch {
+		case r.URL.Path == ptpUploadPath:
+			http.Redirect(w, r, "/login.php", http.StatusFound)
+			return
+		case r.URL.Path == "/login.php":
+			_, _ = w.Write([]byte(`<form><input name="username"><input name="password"></form>`))
+			return
+		case r.URL.Path != "/ajax.php" || r.URL.RawQuery != "action=login":
 			http.NotFound(w, r)
 			return
 		}
@@ -354,7 +560,9 @@ func TestResolveSessionForTrackerAuthLoginMissing2FACodePreservesCookies(t *test
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == ptpUploadPath:
-			_, _ = w.Write([]byte("<html>logged out</html>"))
+			http.Redirect(w, r, "/login.php", http.StatusFound)
+		case r.URL.Path == "/login.php":
+			_, _ = w.Write([]byte(`<form><input name="username"><input name="password"></form>`))
 		case r.URL.Path == "/ajax.php" && r.URL.RawQuery == "action=login":
 			http.SetCookie(w, &http.Cookie{
 				Name:  "session",
@@ -382,6 +590,76 @@ func TestResolveSessionForTrackerAuthLoginMissing2FACodePreservesCookies(t *test
 	}
 	if values["session"] != "existing" {
 		t.Fatalf("missing 2FA code must preserve stored cookies, got %#v", values)
+	}
+}
+
+func TestResolveSessionForTrackerAuthDoesNotLoginDuringTrackerOutage(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newPTPAuthDB(t)
+	if err := cookiepkg.SaveTrackerCookieMap(ctx, dbPath, "PTP", map[string]string{"session": "existing"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+	var loginRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == ptpUploadPath:
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("<html>maintenance</html>"))
+		case r.URL.Path == "/ajax.php" && r.URL.RawQuery == "action=login":
+			loginRequests.Add(1)
+			http.Error(w, "unexpected login", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	err := resolveSessionForTrackerAuthAt(ctx, config.TrackerConfig{
+		Username:    "user",
+		Password:    "pass",
+		AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
+	}, dbPath, server.URL)
+	if err == nil || !strings.Contains(err.Error(), "status=503 response_kind=html") {
+		t.Fatalf("expected safe tracker-unavailable error, got %v", err)
+	}
+	if loginRequests.Load() != 0 {
+		t.Fatalf("tracker outage triggered %d credential login request(s)", loginRequests.Load())
+	}
+	values, loadErr := loadCookies(ctx, dbPath)
+	if loadErr != nil {
+		t.Fatalf("loadCookies: %v", loadErr)
+	}
+	if values["session"] != "existing" {
+		t.Fatalf("tracker outage must preserve stored cookies, got %#v", values)
+	}
+}
+
+func TestLoginAndFetchAntiCsrfTokenClassifiesHTMLResponseWithoutDecodeNoise(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/ajax.php" || r.URL.RawQuery != "action=login" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte("<html>temporary outage</html>"))
+	}))
+	t.Cleanup(server.Close)
+
+	_, _, err := resolveSession(context.Background(), config.TrackerConfig{
+		Username:    "user",
+		Password:    "pass",
+		AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
+	}, newPTPAuthDB(t), server.URL, api.NopLogger{})
+	if err == nil || !strings.Contains(err.Error(), "status=200 response_kind=html") {
+		t.Fatalf("expected safe HTML-response classification, got %v", err)
+	}
+	if strings.Contains(err.Error(), "invalid character") || strings.Contains(err.Error(), "temporary outage") {
+		t.Fatalf("HTML-response error exposed parser or remote-body detail: %v", err)
 	}
 }
 

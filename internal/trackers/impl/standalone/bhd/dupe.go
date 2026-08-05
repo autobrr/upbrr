@@ -8,8 +8,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -22,9 +24,10 @@ import (
 var seasonPattern = regexp.MustCompile(`(?i)S(\d{1,2})`)
 
 type dupeSearcher struct {
-	cfg     config.Config
-	http    *http.Client
-	baseURL string
+	cfg      config.Config
+	http     *http.Client
+	baseURL  string
+	maxPages int
 }
 
 // NewDuplicateAdapter returns a duplicate-search adapter bound to one immutable dependency set.
@@ -34,9 +37,10 @@ func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 	logger := deps.Logger()
 	_ = logger
 	return &dupeSearcher{
-		cfg:     cfg,
-		http:    httpClient,
-		baseURL: "https://beyond-hd.me/api/torrents/",
+		cfg:      cfg,
+		http:     httpClient,
+		baseURL:  "https://beyond-hd.me/api/torrents/",
+		maxPages: deps.MaxPages(100),
 	}
 }
 
@@ -54,11 +58,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		category, tmdbPrefix = "TV", "tv"
 	}
 	payload := map[string]any{"action": "search", "categories": category}
-	if searchType, ok := dupeSearchType(meta); ok {
-		payload["types"] = searchType
-	} else {
-		payload["types"] = nil
-	}
+	payload["types"] = nil
 	if dupeIsSD(meta) {
 		payload["categories"], payload["types"] = nil, nil
 	}
@@ -73,33 +73,69 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	if rss := strings.TrimSpace(cfg.BhdRSSKey); rss != "" {
 		payload["rsskey"] = rss
 	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return dupe.Failed(dupe.FailureInternal, "BHD request failed", err)
+	const pageSize = 100
+	maxPages := s.maxPages
+	if maxPages <= 0 {
+		maxPages = 100
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL+apiKey, bytes.NewReader(body))
-	if err != nil {
-		return dupe.Failed(dupe.FailureRequest, "BHD request failed", err)
+	entries := make([]api.DupeEntry, 0)
+	complete := false
+	pages := 0
+	for pageNumber := 1; pageNumber <= maxPages; pageNumber++ {
+		pagePayload := maps.Clone(payload)
+		pagePayload["page"] = pageNumber
+		body, err := json.Marshal(pagePayload)
+		if err != nil {
+			return dupe.Failed(dupe.FailureInternal, "BHD request failed", err)
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL+apiKey, bytes.NewReader(body))
+		if err != nil {
+			return dupe.Failed(dupe.FailureRequest, "BHD request failed", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := s.http.Do(req)
+		if err != nil {
+			return dupe.Failed(dupe.FailureRequest, "BHD request failed", err)
+		}
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			resp.Body.Close()
+			return dupe.Failed(dupe.FailureResponseStatus, "BHD search failed", nil)
+		}
+		var decoded map[string]any
+		decoder := json.NewDecoder(resp.Body)
+		decoder.UseNumber()
+		decodeErr := decoder.Decode(&decoded)
+		resp.Body.Close()
+		if decodeErr != nil || len(decoded) == 0 {
+			return dupe.Failed(dupe.FailureResponseParse, "BHD search failed", decodeErr)
+		}
+		if bhdInt(decoded["status_code"]) == 0 {
+			return dupe.Failed(dupe.FailureResponseStatus, "BHD api rejected search", nil)
+		}
+		pageEntries := bhdEntries(decoded)
+		entries = append(entries, pageEntries...)
+		pages++
+		totalPages := int(bhdInt(decoded["total_pages"]))
+		switch {
+		case totalPages > 0 && pageNumber >= totalPages:
+			complete = true
+		case totalPages == 0 && len(pageEntries) < pageSize:
+			complete = true
+		default:
+			continue
+		}
+		break
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := s.http.Do(req)
-	if err != nil {
-		return dupe.Failed(dupe.FailureRequest, "BHD request failed", err)
+	warnings := []string(nil)
+	if !complete {
+		warnings = []string{"BHD search reached a pagination bound or omitted completion metadata"}
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return dupe.Failed(dupe.FailureResponseStatus, "BHD search failed", nil)
-	}
-	var decoded map[string]any
-	decoder := json.NewDecoder(resp.Body)
-	decoder.UseNumber()
-	if err := decoder.Decode(&decoded); err != nil || len(decoded) == 0 {
-		return dupe.Failed(dupe.FailureResponseParse, "BHD search failed", err)
-	}
-	if bhdInt(decoded["status_code"]) == 0 {
-		return dupe.Failed(dupe.FailureResponseStatus, "BHD api rejected search", nil)
-	}
-	return dupe.Resolved(bhdEntries(decoded), nil)
+	return dupe.ResolvedWithSearch(entries, warnings, dupe.SearchEvidence{
+		Complete: complete,
+		Pages:    pages,
+		Scope:    "work_category",
+		Warnings: warnings,
+	})
 }
 
 func bhdEntries(payload map[string]any) []api.DupeEntry {
@@ -110,19 +146,131 @@ func bhdEntries(payload map[string]any) []api.DupeEntry {
 		if !ok {
 			continue
 		}
-		entry := api.DupeEntry{Name: bhdString(item["name"]), Link: bhdString(item["url"])}
+		entry := api.DupeEntry{
+			Name:     bhdString(item["name"]),
+			Link:     bhdString(item["url"]),
+			ID:       bhdString(item["id"]),
+			Category: bhdString(item["category"]),
+			Type:     bhdString(item["type"]),
+			Source:   bhdString(item["source"]),
+			Internal: bhdInt(item["internal"]) == 1,
+		}
 		if size := bhdInt(item["size"]); size > 0 {
 			entry.SizeKnown, entry.SizeBytes = true, size
 		}
-		if bhdInt(item["dv"]) == 1 {
-			entry.Flags = append(entry.Flags, "DV")
-		}
-		if bhdInt(item["hdr10"]) == 1 || bhdInt(item["hdr10+"]) == 1 {
-			entry.Flags = append(entry.Flags, "HDR")
-		}
+		entry.HDR, entry.Flags = bhdHDRFacts(item)
+		entry.FlagsPresent = len(entry.HDR.SourceFields) > 0
+		entry.FlagsComplete = entry.HDR.Status == api.HDREvidenceComplete
 		entries = append(entries, entry)
 	}
 	return entries
+}
+
+func bhdHDRFacts(item map[string]any) (api.HDRFacts, []string) {
+	facts := api.HDRFacts{
+		Origin: api.HDREvidenceTrackerAPI,
+		Status: api.HDREvidenceMissing,
+	}
+	var flags []string
+	allPresent := true
+	allValid := true
+	anyValid := false
+	for _, field := range []struct {
+		key    string
+		flag   string
+		format api.HDRFormat
+	}{
+		{
+			key:    "dv",
+			flag:   "DV",
+			format: api.HDRFormatDolbyVision,
+		},
+		{
+			key:    "hdr10",
+			flag:   "HDR10",
+			format: api.HDRFormatHDR10,
+		},
+		{
+			key:    "hdr10+",
+			flag:   "HDR10+",
+			format: api.HDRFormatHDR10Plus,
+		},
+		{
+			key:    "hlg",
+			flag:   "HLG",
+			format: api.HDRFormatHLG,
+		},
+	} {
+		value, present, valid := bhdBoolField(item, field.key)
+		if !present {
+			allPresent = false
+			continue
+		}
+		facts.SourceFields = append(facts.SourceFields, field.key)
+		if !valid {
+			allValid = false
+			continue
+		}
+		anyValid = true
+		if value {
+			facts.Formats = append(facts.Formats, field.format)
+			flags = append(flags, field.flag)
+		}
+	}
+	switch {
+	case allPresent && allValid:
+		facts.Status = api.HDREvidenceComplete
+		if len(facts.Formats) == 0 {
+			facts.Formats = []api.HDRFormat{api.HDRFormatSDR}
+		}
+	case anyValid:
+		facts.Status = api.HDREvidencePartial
+	case len(facts.SourceFields) > 0:
+		facts.Status = api.HDREvidencePartial
+	default:
+		facts.Origin = api.HDREvidenceUnknown
+		facts.Status = api.HDREvidenceMissing
+	}
+	if slices.Contains(facts.Formats, api.HDRFormatDolbyVision) {
+		if slices.Contains(facts.Formats, api.HDRFormatHDR10Plus) {
+			facts.FallbackFormats = []api.HDRFormat{api.HDRFormatHDR10Plus, api.HDRFormatHDR10}
+		} else if slices.Contains(facts.Formats, api.HDRFormatHDR10) {
+			facts.FallbackFormats = []api.HDRFormat{api.HDRFormatHDR10}
+		}
+	}
+	return facts, flags
+}
+
+func bhdBoolField(item map[string]any, key string) (bool, bool, bool) {
+	raw, present := item[key]
+	if !present {
+		return false, false, false
+	}
+	switch value := raw.(type) {
+	case bool:
+		return value, true, true
+	case json.Number:
+		parsed, err := value.Int64()
+		return parsed == 1, true, err == nil && (parsed == 0 || parsed == 1)
+	case float64:
+		return value == 1, true, value == 0 || value == 1
+	case int:
+		return value == 1, true, value == 0 || value == 1
+	case int64:
+		return value == 1, true, value == 0 || value == 1
+	case string:
+		normalized := strings.ToLower(strings.TrimSpace(value))
+		switch normalized {
+		case "1", "true":
+			return true, true, true
+		case "0", "false":
+			return false, true, true
+		default:
+			return false, true, false
+		}
+	default:
+		return false, true, false
+	}
 }
 
 func bhdConfig(cfg config.Config) (config.TrackerConfig, string) {
@@ -143,68 +291,6 @@ func bhdSeason(meta api.DuplicateSubject) string {
 		return normalizeBHDSeason(match[1])
 	}
 	return ""
-}
-
-func dupeSearchType(meta api.DuplicateSubject) (string, bool) {
-	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
-		return "", false
-	}
-	return dupeType(meta), true
-}
-
-func dupeType(meta api.DuplicateSubject) string {
-	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
-		size := 100
-		for _, candidate := range []int{25, 50, 66, 100} {
-			if meta.SourceSize > 0 && meta.SourceSize < int64(candidate)<<30 {
-				size = candidate
-				break
-			}
-		}
-		if strings.EqualFold(strings.TrimSpace(meta.UHD), "UHD") && size != 25 {
-			if size == 50 || size == 66 || size == 100 {
-				return fmt.Sprintf("UHD %d", size)
-			}
-			return "Other"
-		}
-		if size == 25 || size == 50 {
-			return fmt.Sprintf("BD %d", size)
-		}
-		return "Other"
-	}
-	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
-		upper := strings.ToUpper(strings.TrimSpace(meta.Release.Size))
-		switch {
-		case strings.Contains(upper, "DVD5"):
-			return "DVD 5"
-		case strings.Contains(upper, "DVD9"):
-			return "DVD 9"
-		default:
-			return "Other"
-		}
-	}
-	if strings.EqualFold(strings.TrimSpace(firstNonEmpty(meta.Type, meta.Release.Type)), "REMUX") {
-		source := firstNonEmpty(meta.Source, meta.Release.Source)
-		switch {
-		case isHDDVDSource(source):
-			return "Other"
-		case strings.EqualFold(strings.TrimSpace(meta.UHD), "UHD"):
-			return "UHD Remux"
-		case isDVDSource(source):
-			return "DVD Remux"
-		case strings.EqualFold(strings.TrimSpace(source), "BluRay"), strings.EqualFold(strings.TrimSpace(source), "Blu-ray"):
-			return "BD Remux"
-		default:
-			return "Other"
-		}
-	}
-	resolution := normalizeResolution(meta.Release.Resolution)
-	switch resolution {
-	case "2160p", "1080p", "1080i", "720p", "576p", "540p", "480p":
-		return resolution
-	default:
-		return "Other"
-	}
 }
 
 func dupeIsSD(meta api.DuplicateSubject) bool {

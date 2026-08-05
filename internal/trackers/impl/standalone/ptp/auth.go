@@ -4,6 +4,7 @@
 package ptp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -31,13 +32,16 @@ const (
 	ptpLoginPath   = "/ajax.php?action=login"
 	ptpCookieFile  = "PTP.json"
 	ptpUserAgent   = "upbrr"
+
+	ptpAuthResponseMaxBytes = 8 << 20
 )
 
 var (
-	ptpAntiCsrfPattern     = regexp.MustCompile(`data-AntiCsrfToken="([^"]+)"`)
-	ptpSuccessPattern      = regexp.MustCompile(`torrents\.php\?id=(\d+)&torrentid=(\d+)`)
-	newPosterHTTPClient    = newPublicPosterHTTPClient
-	reservedPosterPrefixes = []netip.Prefix{
+	ptpAntiCsrfPattern         = regexp.MustCompile(`data-AntiCsrfToken="([^"]+)"`)
+	ptpSuccessPattern          = regexp.MustCompile(`torrents\.php\?id=(\d+)&torrentid=(\d+)`)
+	errPTPStoredSessionInvalid = errors.New("trackers: PTP stored session confirmed invalid")
+	newPosterHTTPClient        = newPublicPosterHTTPClient
+	reservedPosterPrefixes     = []netip.Prefix{
 		netip.MustParsePrefix("0.0.0.0/8"),
 		netip.MustParsePrefix("100.64.0.0/10"),
 		netip.MustParsePrefix("192.0.0.0/24"),
@@ -78,10 +82,16 @@ func resolveSessionLogin(
 		if tokenErr == nil {
 			return client, token, nil
 		}
+		if !errors.Is(tokenErr, errPTPStoredSessionInvalid) {
+			return nil, "", tokenErr
+		}
 		if strings.TrimSpace(trackerConfig.Username) == "" || strings.TrimSpace(trackerConfig.Password) == "" ||
 			strings.TrimSpace(normalizedAnnounceURL(trackerConfig.AnnounceURL)) == "" {
 			return nil, "", tokenErr
 		}
+	}
+	if err != nil && !errors.Is(err, cookiepkg.ErrTrackerCookiesNotFound) {
+		return nil, "", err
 	}
 	return loginAndFetchAntiCsrfToken(ctx, trackerConfig, dbPath, baseURL, logger, login)
 }
@@ -191,9 +201,9 @@ func loginAndFetchAntiCsrfToken(
 		return nil, "", fmt.Errorf("trackers: PTP login request: %w", err)
 	}
 	defer resp.Body.Close()
-	var payload map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return nil, "", fmt.Errorf("trackers: PTP login decode: %w", err)
+	payload, err := decodePTPAuthResponse(resp, "login")
+	if err != nil {
+		return nil, "", err
 	}
 	switch strings.TrimSpace(stringFromAny(payload["Result"])) {
 	case "Ok":
@@ -215,9 +225,9 @@ func loginAndFetchAntiCsrfToken(
 			return nil, "", fmt.Errorf("trackers: PTP 2FA request: %w", err)
 		}
 		defer resp.Body.Close()
-		payload = map[string]any{}
-		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-			return nil, "", fmt.Errorf("trackers: PTP 2FA decode: %w", err)
+		payload, err = decodePTPAuthResponse(resp, "2FA")
+		if err != nil {
+			return nil, "", err
 		}
 		if strings.TrimSpace(stringFromAny(payload["Result"])) != "Ok" {
 			return nil, "", fmt.Errorf("trackers: PTP login failed: %w", ErrSubmitted2FARejected)
@@ -229,6 +239,10 @@ func loginAndFetchAntiCsrfToken(
 	token := strings.TrimSpace(stringFromAny(payload["AntiCsrfToken"]))
 	if token == "" {
 		return nil, "", errors.New("trackers: PTP login missing anti csrf token")
+	}
+	token, err = requestAntiCsrfToken(ctx, client, baseURL)
+	if err != nil {
+		return nil, "", fmt.Errorf("trackers: PTP verify login session: %w", err)
 	}
 	if err := saveCookies(ctx, dbPath, client, baseURL); err != nil {
 		return nil, "", fmt.Errorf("trackers: PTP persist login cookies: %w", err)
@@ -256,15 +270,110 @@ func requestAntiCsrfToken(ctx context.Context, client *http.Client, baseURL stri
 		return "", fmt.Errorf("trackers: PTP upload page: %w", err)
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	body, err := readPTPAuthResponseBody(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("trackers: PTP read upload page: %w", err)
 	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || ptpLoginPageResponse(resp, body) {
+		return "", errPTPStoredSessionInvalid
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return "", fmt.Errorf(
+			"trackers: PTP upload page unavailable status=%d response_kind=%s",
+			resp.StatusCode,
+			ptpAuthResponseKind(resp, body),
+		)
+	}
 	matches := ptpAntiCsrfPattern.FindStringSubmatch(string(body))
 	if len(matches) < 2 {
-		return "", errors.New("trackers: PTP anti csrf token not found")
+		return "", fmt.Errorf(
+			"trackers: PTP upload page unavailable status=%d response_kind=%s",
+			resp.StatusCode,
+			ptpAuthResponseKind(resp, body),
+		)
 	}
-	return strings.TrimSpace(matches[1]), nil
+	token := strings.TrimSpace(matches[1])
+	if token == "" {
+		return "", fmt.Errorf(
+			"trackers: PTP upload page unavailable status=%d response_kind=%s",
+			resp.StatusCode,
+			ptpAuthResponseKind(resp, body),
+		)
+	}
+	return token, nil
+}
+
+func decodePTPAuthResponse(resp *http.Response, stage string) (map[string]any, error) {
+	body, err := readPTPAuthResponseBody(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("trackers: PTP read %s response: %w", stage, err)
+	}
+	responseKind := ptpAuthResponseKind(resp, body)
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf(
+			"trackers: PTP %s unavailable status=%d response_kind=%s",
+			stage,
+			resp.StatusCode,
+			responseKind,
+		)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf(
+			"trackers: PTP %s unavailable status=%d response_kind=%s",
+			stage,
+			resp.StatusCode,
+			responseKind,
+		)
+	}
+	return payload, nil
+}
+
+func readPTPAuthResponseBody(body io.Reader) ([]byte, error) {
+	payload, err := io.ReadAll(io.LimitReader(body, ptpAuthResponseMaxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read bounded response: %w", err)
+	}
+	if len(payload) > ptpAuthResponseMaxBytes {
+		return nil, errors.New("response exceeds safe size limit")
+	}
+	return payload, nil
+}
+
+func ptpLoginPageResponse(resp *http.Response, body []byte) bool {
+	if resp != nil && resp.Request != nil && resp.Request.URL != nil &&
+		strings.Contains(strings.ToLower(resp.Request.URL.Path), "login") {
+		return true
+	}
+	lower := bytes.ToLower(body)
+	return bytes.Contains(lower, []byte(`name="username"`)) && bytes.Contains(lower, []byte(`name="password"`))
+}
+
+func ptpAuthResponseKind(resp *http.Response, body []byte) string {
+	contentType := ""
+	if resp != nil {
+		contentType = strings.ToLower(resp.Header.Get("Content-Type"))
+	}
+	switch {
+	case strings.Contains(contentType, "json"):
+		return "json"
+	case strings.Contains(contentType, "html"):
+		return "html"
+	case strings.HasPrefix(contentType, "text/"):
+		return "text"
+	}
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 {
+		return "empty"
+	}
+	switch trimmed[0] {
+	case '{', '[':
+		return "json"
+	case '<':
+		return "html"
+	default:
+		return "unknown"
+	}
 }
 
 func loadCookies(ctx context.Context, dbPath string) (map[string]string, error) {

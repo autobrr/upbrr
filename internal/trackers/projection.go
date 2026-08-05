@@ -6,6 +6,7 @@ package trackers
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -43,6 +44,8 @@ func pureReleaseProjection(input PreparationInput) api.TrackerReleaseProjection 
 		Episode:     input.Meta.EpisodeInt,
 		Date:        strings.TrimSpace(input.Meta.DailyEpisodeDate),
 	}
+	target := duplicateTarget(input.Meta)
+	target.Names = append([]string{canonicalName}, target.Names...)
 	projection := api.TrackerReleaseProjection{
 		TrackerID:            api.TrackerID(strings.ToUpper(strings.TrimSpace(input.Tracker))),
 		DisplayName:          strings.ToUpper(strings.TrimSpace(input.Tracker)),
@@ -58,6 +61,7 @@ func pureReleaseProjection(input PreparationInput) api.TrackerReleaseProjection 
 		},
 		ProviderIDs:       append([]api.TrackerProviderID(nil), criteria.ProviderIDs...),
 		DuplicateCriteria: criteria,
+		DuplicateTarget:   target,
 		Readiness:         api.ReadinessStatusUnknown,
 	}
 	if sceneName := strings.TrimSpace(input.Meta.SceneName); sceneName != "" && sceneName != canonicalName {
@@ -103,6 +107,8 @@ func projectDryRunEntry(input PreparationInput, preview api.TrackerDryRunEntry) 
 		Episode:     input.Meta.EpisodeInt,
 		Date:        strings.TrimSpace(input.Meta.DailyEpisodeDate),
 	}
+	target := duplicateTarget(input.Meta)
+	target.Names = append([]string{canonicalName, uploadName}, target.Names...)
 	criteriaFingerprint, err := api.CanonicalWorkflowFingerprint(criteria)
 	if err != nil {
 		return api.TrackerReleaseProjection{}, fmt.Errorf("tracker projection criteria fingerprint: %w", err)
@@ -128,6 +134,7 @@ func projectDryRunEntry(input PreparationInput, preview api.TrackerDryRunEntry) 
 		},
 		ProviderIDs:         append([]api.TrackerProviderID(nil), criteria.ProviderIDs...),
 		DuplicateCriteria:   criteria,
+		DuplicateTarget:     target,
 		DescriptionGroup:    strings.ToLower(strings.TrimSpace(preview.DescriptionGroup)),
 		Questionnaire:       projectQuestionnaire(preview.Questionnaire),
 		Readiness:           readiness,
@@ -346,7 +353,7 @@ func (r *Registry) ProjectRelease(
 			Blocking: true,
 			Message:  failure.Message(),
 		})
-	} else if resolvedNames, resolveErr := resolveReleaseNames(input, descriptor.ReleaseNamePolicy); resolveErr != nil {
+	} else if resolvedNames, resolveErr := resolveProjectedReleaseNames(input, descriptor.ReleaseNamePolicy); resolveErr != nil {
 		code := "name_policy"
 		if input.RequestedUploadName != nil && strings.TrimSpace(*input.RequestedUploadName) == "" {
 			code = "name_instruction"
@@ -368,6 +375,7 @@ func (r *Registry) ProjectRelease(
 	} else {
 		applyResolvedReleaseNames(&projection, resolvedNames)
 	}
+	projection.DuplicateTarget.Names = projectionDuplicateNames(projection)
 	appendReleaseNameProvenance(&projection, descriptor.ReleaseNamePolicy, input.RequestedUploadName)
 	projection.TrackerID = api.TrackerID(descriptor.Name)
 	projection.DisplayName = descriptor.DisplayName
@@ -376,6 +384,8 @@ func (r *Registry) ProjectRelease(
 	projection.InputFingerprint = inputFingerprint
 	projection.CatalogFingerprint = catalogFingerprint
 	projection.ConfigFingerprint = configFingerprint
+	projection.NamingPolicyID = descriptor.ReleaseNamePolicy.ID
+	projection.DuplicatePolicyID = duplicatePolicyID(descriptor)
 	policyFingerprint, err := descriptorPolicyFingerprint(descriptor)
 	if err != nil {
 		failure = NewPreparationFailure(input.Tracker, "fingerprint", "tracker policy fingerprint failed", err)
@@ -387,6 +397,26 @@ func (r *Registry) ProjectRelease(
 	projection.ProjectorFingerprint, err = releaseNameProjectionFingerprint(descriptor, input, projection, policyFingerprint)
 	if err != nil {
 		failure = NewPreparationFailure(input.Tracker, "fingerprint", "tracker name projection fingerprint failed", err)
+		projection.Readiness = api.ReadinessStatusBlocked
+		projection.DupeReady = false
+		projection.UploadReady = false
+		return projection, failure
+	}
+	projection.NamingFingerprint = projection.ProjectorFingerprint
+	projection.DuplicatePolicyFingerprint, err = api.CanonicalWorkflowFingerprint(struct {
+		ID     string
+		Policy *DupePolicy
+	}{ID: projection.DuplicatePolicyID, Policy: descriptor.DupePolicy})
+	if err != nil {
+		failure = NewPreparationFailure(input.Tracker, "fingerprint", "tracker duplicate policy fingerprint failed", err)
+		projection.Readiness = api.ReadinessStatusBlocked
+		projection.DupeReady = false
+		projection.UploadReady = false
+		return projection, failure
+	}
+	projection.DuplicateTargetFingerprint, err = api.CanonicalWorkflowFingerprint(projection.DuplicateTarget)
+	if err != nil {
+		failure = NewPreparationFailure(input.Tracker, "fingerprint", "tracker duplicate target fingerprint failed", err)
 		projection.Readiness = api.ReadinessStatusBlocked
 		projection.DupeReady = false
 		projection.UploadReady = false
@@ -425,7 +455,123 @@ func (r *Registry) ProjectRelease(
 			projection.UploadReady = false
 		}
 	}
+	searchScope := DupeSearchScope{MaxPages: 100}
+	if descriptor.DupePolicy != nil {
+		searchScope = descriptor.DupePolicy.SearchScope
+		if searchScope.MaxPages <= 0 {
+			searchScope.MaxPages = 100
+		}
+	}
+	projection.DuplicateSearchFingerprint, err = api.CanonicalWorkflowFingerprint(struct {
+		Criteria api.TrackerDuplicateCriteria
+		Scope    DupeSearchScope
+	}{
+		Criteria: projection.DuplicateCriteria,
+		Scope:    searchScope,
+	})
+	if err != nil {
+		failure = NewPreparationFailure(input.Tracker, "fingerprint", "tracker duplicate search fingerprint failed", err)
+		projection.Readiness = api.ReadinessStatusBlocked
+		projection.DupeReady = false
+		projection.UploadReady = false
+	}
+	if failure == nil &&
+		projection.Readiness == api.ReadinessStatusReady &&
+		releaseNameConfirmationApplies(input, descriptor.ReleaseNamePolicy) {
+		trackerName := strings.TrimSpace(projection.DisplayName)
+		if trackerName == "" {
+			trackerName = strings.TrimSpace(descriptor.Name)
+		}
+		if releaseNameConfirmationRequired(input, descriptor.ReleaseNamePolicy) {
+			projection.PolicyDecisions = append(projection.PolicyDecisions, api.TrackerPolicyDecision{
+				Code:     releaseNameConfirmationCode,
+				Decision: "confirmation_required",
+				Blocking: false,
+				Message:  fmt.Sprintf("Confirm the non-scene release name for %s.", trackerName),
+			})
+			projection.RequiredActions = append(projection.RequiredActions, api.RequiredAction{
+				Kind:           api.RequiredActionProvideTrackerInput,
+				TrackerID:      projection.TrackerID,
+				Prompt:         fmt.Sprintf("Confirm or edit the non-scene release name for %s.", trackerName),
+				Options:        []api.RequiredActionOption{{Value: projection.UploadReleaseName, Label: projection.UploadReleaseName}},
+				AllowsFreeText: true,
+			})
+			projection.UploadReady = false
+		} else {
+			projection.PolicyDecisions = append(projection.PolicyDecisions, api.TrackerPolicyDecision{
+				Code:     releaseNameConfirmationCode,
+				Decision: "confirmed",
+				Blocking: false,
+				Message:  fmt.Sprintf("Non-scene release name confirmed for %s.", trackerName),
+			})
+		}
+	}
 	return projection, failure
+}
+
+func projectionDuplicateNames(projection api.TrackerReleaseProjection) []string {
+	values := make([]string, 0, 2+len(projection.AdditionalNames)+len(projection.DuplicateTarget.Names))
+	values = append(values,
+		projection.CanonicalReleaseName,
+		projection.DuplicateCriteria.Name,
+	)
+	for _, additional := range projection.AdditionalNames {
+		values = append(values, additional.Value)
+	}
+	values = append(values, projection.DuplicateTarget.Names...)
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || slices.ContainsFunc(result, func(existing string) bool {
+			return strings.EqualFold(existing, value)
+		}) {
+			continue
+		}
+		result = append(result, value)
+	}
+	return result
+}
+
+func duplicateTarget(subject api.UploadSubject) api.TrackerDuplicateTarget {
+	return api.TrackerDuplicateTarget{
+		Names:       []string{SourceReleaseName(subject)},
+		Category:    string(subject.Identity.Category),
+		Type:        strings.TrimSpace(subject.Type),
+		Source:      strings.TrimSpace(subject.Source),
+		Provider:    firstProjectionValue(subject.Service, subject.ServiceLongName),
+		Resolution:  strings.TrimSpace(subject.Release.Resolution),
+		Container:   strings.TrimSpace(subject.Container),
+		VideoCodec:  strings.TrimSpace(subject.VideoCodec),
+		VideoEncode: strings.TrimSpace(subject.VideoEncode),
+		HDR:         subject.HDRFacts,
+		Edition:     strings.TrimSpace(subject.Edition),
+		Region:      strings.TrimSpace(subject.Region),
+		ThreeD:      strings.TrimSpace(subject.Is3D),
+		Group:       strings.TrimSpace(subject.Tag),
+		Repack:      strings.TrimSpace(subject.Repack),
+		Season:      subject.SeasonInt,
+		Episode:     subject.EpisodeInt,
+		Date:        strings.TrimSpace(subject.DailyEpisodeDate),
+		Pack:        subject.TVPack,
+		SizeBytes:   subject.SourceSize,
+		FileNames:   append([]string(nil), subject.FileList...),
+	}
+}
+
+func firstProjectionValue(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func duplicatePolicyID(descriptor Descriptor) string {
+	if descriptor.DupePolicy != nil && strings.TrimSpace(descriptor.DupePolicy.ID) != "" {
+		return strings.TrimSpace(descriptor.DupePolicy.ID)
+	}
+	return strings.ToLower(strings.TrimSpace(descriptor.Name)) + "/duplicate/v1"
 }
 
 // ApplyProjectionRuleFailures records validation failures and updates tracker
@@ -461,10 +607,12 @@ func ApplyProjectionRuleFailures(
 			})
 		}
 		projection.PolicyDecisions = append(projection.PolicyDecisions, api.TrackerPolicyDecision{
-			Code:     strings.TrimSpace(failure.Rule),
-			Decision: decision,
-			Blocking: blocking,
-			Message:  strings.TrimSpace(failure.Reason),
+			Code:           strings.TrimSpace(failure.Rule),
+			Decision:       decision,
+			Blocking:       blocking,
+			Message:        strings.TrimSpace(failure.Reason),
+			Disposition:    disposition,
+			EvidenceStatus: failure.EvidenceStatus,
 		})
 	}
 }

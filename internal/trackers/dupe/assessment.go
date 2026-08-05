@@ -87,7 +87,7 @@ type AssessmentEvidence struct {
 	Disposition Disposition
 	// Code is the stable structural reason code.
 	Code string
-	// HasDupes reports whether filtering found a blocking candidate.
+	// HasDupes reports whether evaluation found a blocking or review candidate.
 	HasDupes bool
 	// Match contains the selected candidate evidence.
 	Match api.DupeMatch
@@ -264,7 +264,7 @@ func newAssessmentEntry(
 }
 
 func defaultVerdict(entry assessmentEntry) Verdict {
-	if entry.disposition == DispositionResolved && !entry.hasDupes && entry.match.MatchedReason != "in_client" {
+	if entry.disposition == DispositionResolved && !entry.hasDupes && strings.TrimSpace(entry.match.MatchedReason) == "" {
 		return VerdictClear
 	}
 	return VerdictBlocked
@@ -289,6 +289,7 @@ func assessmentBinding(meta api.DuplicateSubject, tracker string, trackerConfig 
 		Source                string
 		Tag                   string
 		HDR                   string
+		HDRFacts              api.HDRFacts
 		UHD                   string
 		VideoEncode           string
 		SeasonInt             int
@@ -303,6 +304,9 @@ func assessmentBinding(meta api.DuplicateSubject, tracker string, trackerConfig 
 		Config                config.TrackerConfig
 		ProjectionFingerprint api.WorkflowFingerprint
 		CriteriaFingerprint   api.WorkflowFingerprint
+		TargetFingerprint     api.WorkflowFingerprint
+		SearchFingerprint     api.WorkflowFingerprint
+		PolicyFingerprint     api.WorkflowFingerprint
 	}{
 		SourcePath:           strings.TrimSpace(meta.SourcePath),
 		SourceSize:           meta.SourceSize,
@@ -321,6 +325,7 @@ func assessmentBinding(meta api.DuplicateSubject, tracker string, trackerConfig 
 		Source:               strings.TrimSpace(meta.Source),
 		Tag:                  strings.TrimSpace(meta.Tag),
 		HDR:                  strings.TrimSpace(meta.HDR),
+		HDRFacts:             meta.HDRFacts,
 		UHD:                  strings.TrimSpace(meta.UHD),
 		VideoEncode:          strings.TrimSpace(meta.VideoEncode),
 		SeasonInt:            meta.SeasonInt,
@@ -337,6 +342,9 @@ func assessmentBinding(meta api.DuplicateSubject, tracker string, trackerConfig 
 	if meta.Projection != nil {
 		bound.ProjectionFingerprint = meta.Projection.ProjectorFingerprint
 		bound.CriteriaFingerprint = meta.Projection.CriteriaFingerprint
+		bound.TargetFingerprint = meta.Projection.DuplicateTargetFingerprint
+		bound.SearchFingerprint = meta.Projection.DuplicateSearchFingerprint
+		bound.PolicyFingerprint = meta.Projection.DuplicatePolicyFingerprint
 	}
 	encoded, err := json.Marshal(bound)
 	if err != nil {

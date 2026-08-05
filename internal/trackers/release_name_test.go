@@ -28,6 +28,146 @@ func TestResolveReleaseNamesDefaultsDuplicateToUpload(t *testing.T) {
 	}
 }
 
+func TestResolveReleaseNamesUsesConfiguredMovieYearProvider(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		provider api.IdentityProvider
+		wantYear string
+	}{
+		{
+name: "TMDB",
+ provider: api.IdentityProviderTMDB,
+ wantYear: "2026",
+},
+		{
+name: "IMDb",
+ provider: api.IdentityProviderIMDB,
+ wantYear: "2024",
+},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			resolved, err := resolveReleaseNames(PreparationInput{Meta: api.UploadSubject{
+				ReleaseName: "Example Release 2025 1080p-GRP2025",
+				Identity:    api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+				Release:     api.ReleaseInfo{Category: "MOVIE", Year: 2025},
+				ProviderMetadata: api.SourceScopedMetadata{
+					TMDB: &api.TMDBMetadata{Year: 2026},
+					IMDB: &api.IMDBMetadata{Year: 2024},
+				},
+			}}, WithMovieYearProvider(CanonicalReleaseNamePolicy(), test.provider))
+			if err != nil {
+				t.Fatalf("resolve names: %v", err)
+			}
+			want := "Example Release " + test.wantYear + " 1080p-GRP2025"
+			if resolved.Upload != want || resolved.Duplicate != want {
+				t.Fatalf("resolved names = %#v, want %q", resolved, want)
+			}
+		})
+	}
+}
+
+func TestResolveReleaseNamesPreservesRequestedMovieYear(t *testing.T) {
+	t.Parallel()
+
+	requested := "Example Release 2025 1080p-GRP"
+	resolved, err := resolveProjectedReleaseNames(PreparationInput{
+		Meta: api.UploadSubject{
+			ReleaseName:     requested,
+			Identity:        api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+			Release:         api.ReleaseInfo{Category: "MOVIE", Year: 2025},
+			ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Year: 2026}},
+		},
+		RequestedUploadName: &requested,
+	}, WithMovieYearProvider(CanonicalReleaseNamePolicy(), api.IdentityProviderTMDB))
+	if err != nil {
+		t.Fatalf("resolve names: %v", err)
+	}
+	if resolved.Upload != requested || resolved.Duplicate != "Example Release 2026 1080p-GRP" {
+		t.Fatalf("resolved names = %#v", resolved)
+	}
+}
+
+func TestResolveReleaseNamesNormalizesUnspecifiedEpisodeTitleModeToInclude(t *testing.T) {
+	t.Parallel()
+
+	var observed api.ReleaseNameElementPolicy
+	binding := NewReleaseNamePolicy("standalone/example/v1", func(input ReleaseNameInput) (ResolvedReleaseNames, error) {
+		observed = input.ElementPolicy
+		return ResolvedReleaseNames{Upload: input.Subject.ReleaseName}, nil
+	})
+	_, err := resolveReleaseNames(PreparationInput{
+		Meta: api.UploadSubject{ReleaseName: "Example.Show.S01E02.Example.Episode-GRP"},
+	}, binding)
+	if err != nil {
+		t.Fatalf("resolve names: %v", err)
+	}
+	if observed.Version != api.ReleaseNameElementPolicyVersionV1 || observed.EpisodeTitleMode != api.EpisodeTitleModeInclude {
+		t.Fatalf("effective element policy = %#v", observed)
+	}
+}
+
+func TestResolveReleaseNamesAppliesEpisodeTitleOmitBeforeTrackerFormatting(t *testing.T) {
+	t.Parallel()
+
+	binding := WithEpisodeTitleMode(
+		SimpleSubjectReleaseNamePolicy("standalone/example/v1", func(subject api.UploadSubject) string {
+			return strings.ReplaceAll(subject.ReleaseName, " ", ".")
+		}),
+		api.EpisodeTitleModeOmit,
+	)
+	resolved, err := resolveReleaseNames(PreparationInput{
+		Meta: api.UploadSubject{
+			ReleaseName:      "Example Show S01E02 Example Episode 1080p-GRP",
+			ReleaseNameNoTag: "Example Show S01E02 Example Episode 1080p",
+			GeneratedReleaseNames: api.GeneratedReleaseNameVariants{
+				IncludeEpisodeTitle: api.ReleaseNameVariant{
+					Name:      "Example Show S01E02 Example Episode 1080p-GRP",
+					NameNoTag: "Example Show S01E02 Example Episode 1080p",
+				},
+				OmitEpisodeTitle: api.ReleaseNameVariant{
+					Name:      "Example Show S01E02 1080p-GRP",
+					NameNoTag: "Example Show S01E02 1080p",
+				},
+			},
+		},
+	}, binding)
+	if err != nil {
+		t.Fatalf("resolve names: %v", err)
+	}
+	if resolved.Upload != "Example.Show.S01E02.1080p-GRP" {
+		t.Fatalf("resolved upload name = %q", resolved.Upload)
+	}
+}
+
+func TestResolveReleaseNamesDoesNotMutateExactOriginalName(t *testing.T) {
+	t.Parallel()
+
+	const original = "Example.Show.S01E02.Example.Episode.1080p-GRP"
+	binding := WithEpisodeTitleMode(CanonicalReleaseNamePolicy(), api.EpisodeTitleModeOmit)
+	resolved, err := resolveReleaseNames(PreparationInput{
+		Meta: api.UploadSubject{
+			Scene:       true,
+			SceneName:   original,
+			ReleaseName: original,
+			GeneratedReleaseNames: api.GeneratedReleaseNameVariants{
+				IncludeEpisodeTitle: api.ReleaseNameVariant{Name: original},
+				OmitEpisodeTitle:    api.ReleaseNameVariant{Name: "Example.Show.S01E02.1080p-GRP"},
+			},
+		},
+	}, binding)
+	if err != nil {
+		t.Fatalf("resolve names: %v", err)
+	}
+	if resolved.Upload != original {
+		t.Fatalf("exact original name mutated to %q", resolved.Upload)
+	}
+}
+
 func TestResolveReleaseNamesPublishesExplicitSearchName(t *testing.T) {
 	t.Parallel()
 
@@ -99,6 +239,72 @@ func TestRequestedReleaseNameIsPolicyInputAndDoesNotMutateCanonicalSubject(t *te
 	}
 }
 
+func TestSourceReleaseNameDistinguishesDottedFoldersFromFiles(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		subject api.UploadSubject
+		want    string
+	}{
+		{
+			name:    "dotted folder",
+			subject: api.UploadSubject{SourcePath: "C:/media/Example.Release.2026"},
+			want:    "Example.Release.2026",
+		},
+		{
+			name:    "known media extension",
+			subject: api.UploadSubject{SourcePath: "C:/media/Example.Release.2026.mkv"},
+			want:    "Example.Release.2026",
+		},
+		{
+			name: "parser extension evidence",
+			subject: api.UploadSubject{
+				SourcePath: "C:/media/Example.Release.2026.custom",
+				Release:    api.ReleaseInfo{Ext: "custom"},
+			},
+			want: "Example.Release.2026",
+		},
+		{
+			name:    "filename fallback",
+			subject: api.UploadSubject{Filename: "Example.Release.2026.custom"},
+			want:    "Example.Release.2026",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := SourceReleaseName(test.subject); got != test.want {
+				t.Fatalf("source release name = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestPrepareInputWithReleaseNamePolicyRequiresNonSceneConfirmation(t *testing.T) {
+	t.Parallel()
+
+	binding := WithNonSceneReleaseNameConfirmation(CanonicalReleaseNamePolicy())
+	input := PreparationInput{
+		Tracker: "EXAMPLE",
+		Meta:    api.UploadSubject{ReleaseName: "Example.Release.2026-GRP"},
+	}
+	if _, failure := PrepareInputWithReleaseNamePolicy(input, binding); failure == nil ||
+		failure.Code() != releaseNameConfirmationCode {
+		t.Fatalf("confirmation failure = %#v", failure)
+	}
+
+	confirmed := "Example.Release.2026-GRP"
+	input.RequestedUploadName = &confirmed
+	prepared, failure := PrepareInputWithReleaseNamePolicy(input, binding)
+	if failure != nil {
+		t.Fatalf("confirmed preparation: %v", failure)
+	}
+	if prepared.Projection == nil || prepared.Projection.UploadReleaseName != confirmed {
+		t.Fatalf("confirmed projection = %#v", prepared.Projection)
+	}
+}
+
 func TestPrepareInputWithReleaseNamePolicyRejectsReviewedMismatch(t *testing.T) {
 	t.Parallel()
 
@@ -153,6 +359,30 @@ func TestPrepareInputWithReleaseNamePolicyRejectsReviewedAdditionalNameMismatch(
 	}
 }
 
+func TestPrepareInputWithReleaseNamePolicyRejectsStaleElementPolicy(t *testing.T) {
+	t.Parallel()
+
+	const name = "Example.Show.S01E02.1080p-GRP"
+	binding := CanonicalReleaseNamePolicy()
+	input := PreparationInput{
+		Tracker: "EXAMPLE",
+		Meta:    api.UploadSubject{ReleaseName: name},
+		Projection: &api.TrackerReleaseProjection{
+			TrackerID:                  "EXAMPLE",
+			UploadReleaseName:          name,
+			DuplicateCriteria:          api.TrackerDuplicateCriteria{Name: name},
+			NamingElementPolicyVersion: api.ReleaseNameElementPolicyVersionV1,
+			EpisodeTitleMode:           api.EpisodeTitleModeOmit,
+			Readiness:                  api.ReadinessStatusReady,
+			UploadReady:                true,
+		},
+	}
+	_, failure := PrepareInputWithReleaseNamePolicy(input, binding)
+	if failure == nil || failure.Code() != "name_projection_mismatch" {
+		t.Fatalf("stale element policy failure = %#v", failure)
+	}
+}
+
 func TestReviewedUploadNameRequiresProjection(t *testing.T) {
 	t.Parallel()
 
@@ -203,5 +433,42 @@ func TestReleaseNameProjectionFingerprintCoversPolicyAndRequestedName(t *testing
 	}
 	if first == second {
 		t.Fatal("policy version did not change release-name fingerprint")
+	}
+
+	elementChangedDescriptor := Descriptor{
+		ProjectorVersion: "standalone-v2",
+		ReleaseNamePolicy: WithEpisodeTitleMode(
+			NewReleaseNamePolicy(
+				"standalone/example/v1",
+				func(ReleaseNameInput) (ResolvedReleaseNames, error) {
+					return ResolvedReleaseNames{}, errors.New("unused")
+				},
+			),
+			api.EpisodeTitleModeOmit,
+		),
+	}
+	elementChanged, err := releaseNameProjectionFingerprint(elementChangedDescriptor, input, projection, policyFingerprint)
+	if err != nil {
+		t.Fatalf("element-changed fingerprint: %v", err)
+	}
+	if first == elementChanged {
+		t.Fatal("episode-title mode did not change release-name fingerprint")
+	}
+
+	confirmationChangedDescriptor := Descriptor{
+		ProjectorVersion: "standalone-v2",
+		ReleaseNamePolicy: WithNonSceneReleaseNameConfirmation(NewReleaseNamePolicy(
+			"standalone/example/v1",
+			func(ReleaseNameInput) (ResolvedReleaseNames, error) {
+				return ResolvedReleaseNames{}, errors.New("unused")
+			},
+		)),
+	}
+	confirmationChanged, err := releaseNameProjectionFingerprint(confirmationChangedDescriptor, input, projection, policyFingerprint)
+	if err != nil {
+		t.Fatalf("confirmation-changed fingerprint: %v", err)
+	}
+	if first == confirmationChanged {
+		t.Fatal("confirmation mode did not change release-name fingerprint")
 	}
 }

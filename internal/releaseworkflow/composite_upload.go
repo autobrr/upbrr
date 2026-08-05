@@ -1875,7 +1875,7 @@ func (m *Module) applyCompositeUploadFeedback(
 			return candidate.ID == action.ID
 		})
 	}
-	if len(state.Workflow.RequiredActions) == 0 && state.Workflow.Status == api.WorkflowStatusBlocked {
+	if !hasPendingRequiredAction(state.Workflow.RequiredActions) && state.Workflow.Status == api.WorkflowStatusBlocked {
 		state.Workflow.Status = api.WorkflowStatusActive
 	}
 	state.Composite.ActiveOperationID = ""

@@ -131,6 +131,16 @@ func hasMISettingsFailure(failures []api.RuleFailure) bool {
 	return false
 }
 
+func nonAdvisoryFailures(failures []api.RuleFailure) []api.RuleFailure {
+	filtered := make([]api.RuleFailure, 0, len(failures))
+	for _, failure := range failures {
+		if failure.Disposition != api.RuleDispositionAdvisory {
+			filtered = append(filtered, failure)
+		}
+	}
+	return filtered
+}
+
 func validationPolicyFailuresForTest(t *testing.T, tracker string, subject api.TrackerValidationSubject) []api.RuleFailure {
 	t.Helper()
 	registry, err := impl.NewRegistry()
@@ -161,7 +171,7 @@ func TestStandaloneConstructibilityAuditPoliciesRejectInvalidFacts(t *testing.T)
 		{tracker: "FF", rule: "unsupported_category"},
 		{tracker: "FL", rule: "unsupported_category"},
 		{tracker: "MTV", rule: "unsupported_category"},
-		{tracker: "NBL", rule: "prepared_media_missing"},
+		{tracker: "NBL", rule: "nbl_asset_mediainfo_text"},
 		{tracker: "THR", rule: "unsupported_category"},
 		{tracker: "TL", rule: "unsupported_category"},
 		{tracker: "GPW", rule: "prepared_media_missing"},
@@ -174,6 +184,45 @@ func TestStandaloneConstructibilityAuditPoliciesRejectInvalidFacts(t *testing.T)
 			failures := validationPolicyFailuresForTest(t, test.tracker, test.subject)
 			if !hasRuleFailure(failures, test.rule) {
 				t.Fatalf("%s validation missing %s failure: %#v", test.tracker, test.rule, failures)
+			}
+		})
+	}
+}
+
+func TestNBLPreparedMediaAssetDispositionTracksEvidence(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		subject     api.TrackerValidationSubject
+		disposition api.RuleDisposition
+	}{
+		{
+			name:        "unavailable evidence is advisory",
+			disposition: api.RuleDispositionAdvisory,
+		},
+		{
+			name: "proved missing asset is strict",
+			subject: api.TrackerValidationSubject{
+				AssetFacts: api.AssetFacts{
+					Status: api.MetadataEvidenceStatusComplete,
+					MediaInfoText: api.AssetEvidence{
+						Status: api.MetadataEvidenceStatusComplete,
+					},
+				},
+			},
+			disposition: api.RuleDispositionStrict,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			failures := validationPolicyFailuresForTest(t, "NBL", test.subject)
+			failure, ok := findRuleFailure(failures, "nbl_asset_mediainfo_text")
+			if !ok || failure.Disposition != test.disposition {
+				t.Fatalf("NBL MediaInfo asset failure=%#v, want disposition=%q", failure, test.disposition)
+			}
+			if hasRuleFailure(failures, "prepared_media_missing") {
+				t.Fatalf("obsolete prepared_media_missing failure returned: %#v", failures)
 			}
 		})
 	}
@@ -214,20 +263,20 @@ func TestUnit3DPayloadCallbacksRejectKnownInvalidFacts(t *testing.T) {
 		rule    string
 	}{
 		{
-tracker: "ACM",
- subject: api.TrackerValidationSubject{Region: "North America"},
- rule: "unsupported_region",
-},
+			tracker: "ACM",
+			subject: api.TrackerValidationSubject{Region: "North America"},
+			rule:    "unsupported_region",
+		},
 		{
-tracker: "LST",
- subject: api.TrackerValidationSubject{Edition: "Unknown Edition"},
- rule: "unsupported_edition",
-},
+			tracker: "LST",
+			subject: api.TrackerValidationSubject{Edition: "Unknown Edition"},
+			rule:    "unsupported_edition",
+		},
 		{
-tracker: "SHRI",
- subject: api.TrackerValidationSubject{DiscType: "DVD"},
- rule: "region_required",
-},
+			tracker: "SHRI",
+			subject: api.TrackerValidationSubject{DiscType: "DVD"},
+			rule:    "region_required",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.tracker, func(t *testing.T) {
@@ -333,8 +382,8 @@ func TestEvaluateRulesLanguageRuleOriginalFallback(t *testing.T) {
 		},
 	}
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "LUME", meta)
-	if len(failures) != 0 {
-		t.Fatalf("expected no failures, got %#v", failures)
+	if blocking := nonAdvisoryFailures(failures); len(blocking) != 0 {
+		t.Fatalf("expected no blocking failures, got %#v", failures)
 	}
 }
 
@@ -347,17 +396,18 @@ func TestEvaluateRulesLUMERequiresMKVForNonDisc(t *testing.T) {
 		Release:           api.ReleaseInfo{Resolution: "720p"},
 	}
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "LUME", meta)
-	if len(failures) != 1 {
-		t.Fatalf("expected 1 failure, got %#v", failures)
+	blocking := nonAdvisoryFailures(failures)
+	if len(blocking) != 1 {
+		t.Fatalf("expected 1 blocking failure, got %#v", failures)
 	}
-	if failures[0].Rule != "container" {
-		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
+	if blocking[0].Rule != "container" {
+		t.Fatalf("unexpected rule key: %s", blocking[0].Rule)
 	}
-	if failures[0].Disposition != api.RuleDispositionStrict {
-		t.Fatalf("container disposition = %q, want strict", failures[0].Disposition)
+	if blocking[0].Disposition != api.RuleDispositionStrict {
+		t.Fatalf("container disposition = %q, want strict", blocking[0].Disposition)
 	}
-	if failures[0].Reason != "LUME only allows MKV containers for non-disc uploads." {
-		t.Fatalf("unexpected failure reason: %s", failures[0].Reason)
+	if blocking[0].Reason != "LUME only allows MKV containers for non-disc uploads." {
+		t.Fatalf("unexpected failure reason: %s", blocking[0].Reason)
 	}
 }
 
@@ -370,40 +420,44 @@ func TestEvaluateRulesLUMEAllowsMKVForNonDisc(t *testing.T) {
 		Release:           api.ReleaseInfo{Resolution: "720p"},
 	}
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "LUME", meta)
-	if len(failures) != 0 {
-		t.Fatalf("expected no failures, got %#v", failures)
+	if blocking := nonAdvisoryFailures(failures); len(blocking) != 0 {
+		t.Fatalf("expected no blocking failures, got %#v", failures)
 	}
 }
 
 func TestEvaluateRulesLUMESkipsContainerRuleForDisc(t *testing.T) {
 	meta := api.RuleSubject{
-		DiscType:    "BDMV",
-		Container:   "mp4",
-		Assessments: encodeAssessments(api.EncodeSettingsStatusPresent),
-		Release:     api.ReleaseInfo{Resolution: "480p"},
+		DiscType:       "BDMV",
+		Container:      "mp4",
+		AudioLanguages: []string{"English"},
+		Assessments:    encodeAssessments(api.EncodeSettingsStatusPresent),
+		Release:        api.ReleaseInfo{Resolution: "480p"},
 	}
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "LUME", meta)
-	if len(failures) != 0 {
-		t.Fatalf("expected disc upload to skip LUME container and resolution rules, got %#v", failures)
+	if blocking := nonAdvisoryFailures(failures); len(blocking) != 0 {
+		t.Fatalf("expected disc upload to skip blocking LUME container and resolution rules, got %#v", failures)
 	}
 }
 
 func TestEvaluateRulesPTPRequiresMovieForNonPackTV(t *testing.T) {
 	meta := api.RuleSubject{Identity: api.ExternalIdentity{Category: "tv"}}
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "PTP", meta)
-	if len(failures) != 1 {
-		t.Fatalf("expected 1 failure, got %#v", failures)
-	}
-	if failures[0].Rule != "require_movie_only" {
-		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
+	for _, rule := range []string{"require_movie_only", "unsupported_category"} {
+		failure, ok := findRuleFailure(failures, rule)
+		if !ok || failure.Disposition != api.RuleDispositionStrict {
+			t.Fatalf("expected strict %s failure, got %#v", rule, failures)
+		}
 	}
 }
 
-func TestEvaluateRulesPTPAllowsTVPacks(t *testing.T) {
+func TestEvaluateRulesPTPRejectsTVPacks(t *testing.T) {
 	meta := api.RuleSubject{Identity: api.ExternalIdentity{Category: "tv"}, TVPack: true}
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "PTP", meta)
-	if len(failures) != 0 {
-		t.Fatalf("expected no failures, got %#v", failures)
+	for _, rule := range []string{"require_movie_only", "unsupported_category"} {
+		failure, ok := findRuleFailure(failures, rule)
+		if !ok || failure.Disposition != api.RuleDispositionStrict {
+			t.Fatalf("expected strict %s failure, got %#v", rule, failures)
+		}
 	}
 }
 
@@ -426,20 +480,110 @@ func TestEvaluateRulesANTAllowsMovie(t *testing.T) {
 	}
 }
 
+func TestEvaluateRulesRequestedStrictCategoryTrackers(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		tracker      string
+		category     api.CanonicalCategory
+		expectedRule string
+	}{
+		{
+			tracker:      "ANT",
+			category:     api.CanonicalCategoryTV,
+			expectedRule: "require_movie_only",
+		},
+		{
+			tracker:      "PTP",
+			category:     api.CanonicalCategoryTV,
+			expectedRule: "require_movie_only",
+		},
+		{
+			tracker:      "RF",
+			category:     api.CanonicalCategoryTV,
+			expectedRule: "require_movie_only",
+		},
+		{
+			tracker:      "BTN",
+			category:     api.CanonicalCategoryMovie,
+			expectedRule: "require_tv_only",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.tracker, func(t *testing.T) {
+			t.Parallel()
+			meta := api.RuleSubject{
+				Identity:    api.ExternalIdentity{Category: test.category},
+				Assessments: encodeAssessments(api.EncodeSettingsStatusPresent),
+			}
+			failures := evaluateNonMetadataRulesForTest(context.Background(), test.tracker, meta)
+			failure, ok := findRuleFailure(failures, test.expectedRule)
+			if !ok {
+				t.Fatalf("expected %s failure, got %#v", test.expectedRule, failures)
+			}
+			if failure.Disposition != api.RuleDispositionStrict {
+				t.Fatalf("%s disposition = %q, want strict", test.expectedRule, failure.Disposition)
+			}
+		})
+	}
+}
+
+func TestEvaluateRulesStrictCategoryTrackersRejectMissingCategory(t *testing.T) {
+	t.Parallel()
+
+	for tracker, expectedRule := range map[string]string{
+		"ANT": "require_movie_only",
+		"BTN": "require_tv_only",
+		"PTP": "require_movie_only",
+		"RF":  "require_movie_only",
+	} {
+		t.Run(tracker, func(t *testing.T) {
+			t.Parallel()
+			meta := withConstructibleTrackerFactsForTest(api.RuleSubject{
+				Assessments: encodeAssessments(api.EncodeSettingsStatusPresent),
+			})
+			meta.Identity.Category = ""
+			registry := impl.MustNewRegistry()
+			failures, err := trackers.EvaluateRulesWithRegistry(context.Background(), registry, tracker, meta, api.NopLogger{})
+			if err != nil {
+				t.Fatalf("evaluate rules: %v", err)
+			}
+			failure, ok := findRuleFailure(failures, expectedRule)
+			if !ok || failure.Disposition != api.RuleDispositionStrict {
+				t.Fatalf("expected strict %s failure, got %#v", expectedRule, failures)
+			}
+		})
+	}
+}
+
+func TestPTPConstructibilityRejectsTVPackCategory(t *testing.T) {
+	t.Parallel()
+
+	failures := validationPolicyFailuresForTest(t, "PTP", api.TrackerValidationSubject{
+		Identity: api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+		TVPack:   true,
+	})
+	failure, ok := findRuleFailure(failures, "unsupported_category")
+	if !ok || failure.Disposition != api.RuleDispositionStrict {
+		t.Fatalf("expected strict PTP category failure, got %#v", failures)
+	}
+}
+
 func TestEvaluateRulesBHDRequiresValidMISettings(t *testing.T) {
 	meta := api.RuleSubject{Assessments: encodeAssessments(api.EncodeSettingsStatusMissing)}
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "BHD", meta)
-	if len(failures) != 1 {
-		t.Fatalf("expected 1 failure, got %#v", failures)
+	blocking := nonAdvisoryFailures(failures)
+	if len(blocking) != 1 {
+		t.Fatalf("expected 1 blocking failure, got %#v", failures)
 	}
-	if failures[0].Rule != "require_valid_mi_setting" {
-		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
+	if blocking[0].Rule != "require_valid_mi_setting" {
+		t.Fatalf("unexpected rule key: %s", blocking[0].Rule)
 	}
 
 	meta.Assessments.MediaInfoEncodeSettings = api.EncodeSettingsStatusPresent
 	failures = evaluateNonMetadataRulesForTest(context.Background(), "BHD", meta)
-	if len(failures) != 0 {
-		t.Fatalf("expected no failures, got %#v", failures)
+	if blocking := nonAdvisoryFailures(failures); len(blocking) != 0 {
+		t.Fatalf("expected no blocking failures, got %#v", failures)
 	}
 }
 
@@ -456,14 +600,15 @@ func TestEvaluateRulesBHDBlocksAdultContent(t *testing.T) {
 	}
 
 	failures := evaluateBHDRulesWithRegistryForTest(context.Background(), meta)
-	if len(failures) != 1 {
-		t.Fatalf("expected 1 failure, got %#v", failures)
+	blocking := nonAdvisoryFailures(failures)
+	if len(blocking) != 1 {
+		t.Fatalf("expected 1 blocking failure, got %#v", failures)
 	}
-	if failures[0].Rule != "block_adult" {
-		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
+	if blocking[0].Rule != "block_adult" {
+		t.Fatalf("unexpected rule key: %s", blocking[0].Rule)
 	}
-	if failures[0].Reason != "Porn/xxx is not allowed at BHD." {
-		t.Fatalf("unexpected reason: %s", failures[0].Reason)
+	if blocking[0].Reason != "Porn/xxx is not allowed at BHD." {
+		t.Fatalf("unexpected reason: %s", blocking[0].Reason)
 	}
 }
 
@@ -556,20 +701,21 @@ func TestEvaluateRulesBHDRejectsInvalidContainerForUploadTypes(t *testing.T) {
 		Container:   "avi",
 	}
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "BHD", meta)
-	if len(failures) != 1 {
-		t.Fatalf("expected 1 failure, got %#v", failures)
+	blocking := nonAdvisoryFailures(failures)
+	if len(blocking) != 1 {
+		t.Fatalf("expected 1 blocking failure, got %#v", failures)
 	}
-	if failures[0].Rule != "container" {
-		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
+	if blocking[0].Rule != "container" {
+		t.Fatalf("unexpected rule key: %s", blocking[0].Rule)
 	}
-	if failures[0].Disposition != api.RuleDispositionStrict {
-		t.Fatalf("container disposition = %q, want strict", failures[0].Disposition)
+	if blocking[0].Disposition != api.RuleDispositionStrict {
+		t.Fatalf("container disposition = %q, want strict", blocking[0].Disposition)
 	}
 
 	meta.Container = "mkv"
 	failures = evaluateNonMetadataRulesForTest(context.Background(), "BHD", meta)
-	if len(failures) != 0 {
-		t.Fatalf("expected no failures for MKV, got %#v", failures)
+	if blocking := nonAdvisoryFailures(failures); len(blocking) != 0 {
+		t.Fatalf("expected no blocking failures for MKV, got %#v", failures)
 	}
 }
 
@@ -642,22 +788,24 @@ func TestEvaluateRulesBLUContainerRules(t *testing.T) {
 func TestEvaluateRulesNBLRequiresTV(t *testing.T) {
 	meta := api.RuleSubject{Identity: api.ExternalIdentity{Category: "movie"}}
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", meta)
-	if len(failures) != 2 {
-		t.Fatalf("expected 2 failures, got %#v", failures)
+	blocking := nonAdvisoryFailures(failures)
+	if len(blocking) != 2 {
+		t.Fatalf("expected 2 blocking failures, got %#v", failures)
 	}
-	if failures[0].Rule != "require_tv_only" {
-		t.Fatalf("unexpected first rule key: %s", failures[0].Rule)
+	if blocking[0].Rule != "require_tv_only" {
+		t.Fatalf("unexpected first rule key: %s", blocking[0].Rule)
 	}
 }
 
 func TestEvaluateRulesNBLAllowsTV(t *testing.T) {
 	meta := api.RuleSubject{Identity: api.ExternalIdentity{Category: "tv"}}
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", meta)
-	if len(failures) != 1 {
-		t.Fatalf("expected 1 failure because language data is missing, got %#v", failures)
+	blocking := nonAdvisoryFailures(failures)
+	if len(blocking) != 1 {
+		t.Fatalf("expected 1 blocking failure because language data is missing, got %#v", failures)
 	}
-	if failures[0].Rule != "language_rule" {
-		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
+	if blocking[0].Rule != "language_rule" {
+		t.Fatalf("unexpected rule key: %s", blocking[0].Rule)
 	}
 }
 
@@ -672,30 +820,24 @@ func TestEvaluateRulesNBLAllowsTVWithOriginalAudioAndEnglishSubs(t *testing.T) {
 		},
 	}
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", meta)
-	if len(failures) != 0 {
-		t.Fatalf("expected no failures, got %#v", failures)
+	if blocking := nonAdvisoryFailures(failures); len(blocking) != 0 {
+		t.Fatalf("expected no blocking failures, got %#v", failures)
 	}
 }
 
 func TestEvaluateRulesNBLSkipsLanguageRuleForBDMVOnly(t *testing.T) {
-	bdmv := api.RuleSubject{
-		Identity: api.ExternalIdentity{Category: "tv"},
-		DiscType: "BDMV",
-	}
-	if failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", bdmv); len(failures) != 0 {
-		t.Fatalf("expected BDMV to skip NBL language rule, got %#v", failures)
+	t.Parallel()
+
+	bdmv := api.RuleSubject{Identity: api.ExternalIdentity{Category: "tv"}, DiscType: "BDMV"}
+	if failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", bdmv); hasRuleFailure(failures, "language_rule") {
+		t.Fatalf("BDMV applied NBL language rule: %#v", failures)
 	}
 
-	dvd := api.RuleSubject{
-		Identity: api.ExternalIdentity{Category: "tv"},
-		DiscType: "DVD",
-	}
+	dvd := api.RuleSubject{Identity: api.ExternalIdentity{Category: "tv"}, DiscType: "DVD"}
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", dvd)
-	if len(failures) != 1 {
-		t.Fatalf("expected DVD to require NBL language data, got %#v", failures)
-	}
-	if failures[0].Rule != "language_rule" {
-		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
+	blocking := nonAdvisoryFailures(failures)
+	if len(blocking) != 1 || blocking[0].Rule != "language_rule" {
+		t.Fatalf("DVD missing-language failures = %#v", failures)
 	}
 }
 
@@ -854,14 +996,25 @@ func TestEvaluateRulesAitherRequiresLanguageForNonDisc(t *testing.T) {
 	}
 }
 
-func TestEvaluateRulesA4KSkipsLanguageRuleForDisc(t *testing.T) {
-	meta := api.RuleSubject{
-		DiscType:    "BDMV",
-		Assessments: encodeAssessments(api.EncodeSettingsStatusPresent),
+func TestEvaluateRulesNonDiscLanguagePoliciesSkipDiscs(t *testing.T) {
+	t.Parallel()
+
+	subjects := []api.RuleSubject{
+		{DiscType: "BDMV", Assessments: encodeAssessments(api.EncodeSettingsStatusPresent)},
+		{
+			DiscType:          "DVD",
+			AudioLanguages:    []string{"Japanese"},
+			SubtitleLanguages: []string{"French"},
+			Assessments:       encodeAssessments(api.EncodeSettingsStatusPresent),
+		},
 	}
-	failures := evaluateNonMetadataRulesForTest(context.Background(), "A4K", meta)
-	if len(failures) != 0 {
-		t.Fatalf("expected no failures for disc upload, got %#v", failures)
+	for _, tracker := range []string{"A4K", "AITHER", "LST", "LUME", "OE", "ULCX"} {
+		for _, subject := range subjects {
+			failures := evaluateNonMetadataRulesForTest(context.Background(), tracker, subject)
+			if hasRuleFailure(failures, "language_rule") {
+				t.Fatalf("%s disc applied non-disc language rule: %#v", tracker, failures)
+			}
+		}
 	}
 }
 
@@ -923,8 +1076,8 @@ func TestEvaluateRulesModifiedReleaseAcrossFamilies(t *testing.T) {
 	sceneRename.SceneRenamedReason = "source does not match its original scene release name (renamed or modified)"
 
 	// Covers a UNIT3D tracker (LST), a non-UNIT3D tracker (PTP), an AZ-family
-	// tracker (PHD), and a tracker with no rule set of its own (HDB) to prove the
-	// rule fires across every family.
+	// tracker (PHD), and a standalone tracker (HDB) to prove the rule fires
+	// across every family.
 	for _, tracker := range []string{"LST", "PTP", "PHD", "HDB"} {
 		t.Run(tracker, func(t *testing.T) {
 			t.Parallel()
@@ -965,8 +1118,8 @@ func TestEvaluateRulesMetadataPolicyReturnsEvaluatedEmpty(t *testing.T) {
 		SourcePath: "/data/movies/Example.Movie.2026.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-GRP",
 		Release:    api.ReleaseInfo{Group: "GRP", Resolution: "2160p"},
 	}
-	if got := evaluateNonMetadataRulesForTest(context.Background(), "MTV", clean); got == nil || len(got) != 0 {
-		t.Fatalf("expected evaluated empty result, got %#v", got)
+	if got := evaluateNonMetadataRulesForTest(context.Background(), "MTV", clean); got == nil || len(nonAdvisoryFailures(got)) != 0 {
+		t.Fatalf("expected evaluated result without blocking failures, got %#v", got)
 	}
 }
 
@@ -991,6 +1144,23 @@ func TestResolutionDependentRulesAreStrict(t *testing.T) {
 	tests := make([]ruleTest, 0, 20)
 	tests = append(tests, []ruleTest{
 		{
+			name:    "HDB DVD SD",
+			tracker: "HDB",
+			meta: func() api.RuleSubject {
+				meta := base("480p")
+				meta.DiscType = "DVD"
+				return meta
+			}(),
+			rule: "min_resolution",
+			want: true,
+		},
+		{
+			name:    "HDB HD boundary",
+			tracker: "HDB",
+			meta:    base("720p"),
+			rule:    "min_resolution",
+		},
+		{
 			name:    "RHD missing",
 			tracker: "RHD",
 			meta:    base(""),
@@ -1008,19 +1178,6 @@ func TestResolutionDependentRulesAreStrict(t *testing.T) {
 			name:    "RHD boundary",
 			tracker: "RHD",
 			meta:    base("720p"),
-			rule:    "min_resolution",
-		},
-		{
-			name:    "SP below",
-			tracker: "SP",
-			meta:    base("720p"),
-			rule:    "min_resolution",
-			want:    true,
-		},
-		{
-			name:    "SP boundary",
-			tracker: "SP",
-			meta:    base("1080p"),
 			rule:    "min_resolution",
 		},
 		{
@@ -1106,9 +1263,12 @@ func TestResolutionDependentRulesAreStrict(t *testing.T) {
 	}...)
 
 	ulcxHEVC := base("1080p")
+	ulcxHEVC.Type = "ENCODE"
+	ulcxHEVC.Source = "1080p Blu-ray"
 	ulcxHEVC.VideoCodec = "HEVC"
+	ulcxHEVC.VideoEncode = "x265"
 	tests = append(tests, ruleTest{
-		name:    "ULCX HEVC threshold",
+		name:    "ULCX x265 source threshold",
 		tracker: "ULCX",
 		meta:    ulcxHEVC,
 		rule:    "hevc_resolution_2160p",
@@ -1163,8 +1323,8 @@ func TestCustomRulesReturnMultipleKeyedDispositions(t *testing.T) {
 	}
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "ULCX", meta)
 	concert, hasConcert := findRuleFailure(failures, "block_concert")
-	resolution, hasResolution := findRuleFailure(failures, "hevc_resolution_2160p")
-	if !hasConcert || !hasResolution || concert.Disposition != api.RuleDispositionWaivable || resolution.Disposition != api.RuleDispositionStrict {
+	_, hasResolution := findRuleFailure(failures, "hevc_resolution_2160p")
+	if !hasConcert || hasResolution || concert.Disposition != api.RuleDispositionWaivable {
 		t.Fatalf("custom failures = %#v", failures)
 	}
 }

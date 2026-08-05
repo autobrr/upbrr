@@ -38,6 +38,28 @@ type failOnceSaveRepository struct {
 	saves int
 }
 
+type failOncePutPrivateResourceStore struct {
+	PrivateResourceStore
+	failed bool
+}
+
+func (s *failOncePutPrivateResourceStore) Put(
+	ownerID string,
+	workflowID api.WorkflowID,
+	resourceID string,
+	value any,
+	expiresAt time.Time,
+) error {
+	if !s.failed {
+		s.failed = true
+		return errors.New("synthetic private resource put failure")
+	}
+	if err := s.PrivateResourceStore.Put(ownerID, workflowID, resourceID, value, expiresAt); err != nil {
+		return fmt.Errorf("delegate private resource put: %w", err)
+	}
+	return nil
+}
+
 func (r *failOnceSaveRepository) Save(
 	ctx context.Context,
 	ownerID string,
@@ -118,6 +140,37 @@ type sequenceIDGenerator struct{ next int }
 func (g *sequenceIDGenerator) NewID(prefix string) (string, error) {
 	g.next++
 	return fmt.Sprintf("%s-%d", prefix, g.next), nil
+}
+
+func TestStampProjectionActionsPublishesDurableActionIdentity(t *testing.T) {
+	t.Parallel()
+
+	module := &Module{ids: &sequenceIDGenerator{}}
+	now := time.Date(2026, time.July, 28, 20, 0, 0, 0, time.UTC)
+	snapshot := api.TrackerReleaseProjectionSet{
+		RequiredActions: []api.RequiredAction{{Kind: api.RequiredActionProvideTrackerInput}},
+		Projections: []api.TrackerReleaseProjection{{
+			TrackerID: "AR",
+			RequiredActions: []api.RequiredAction{{
+				Kind:           api.RequiredActionProvideTrackerInput,
+				Prompt:         "Confirm release name.",
+				AllowsFreeText: true,
+			}},
+		}},
+	}
+	if err := module.stampProjectionActions(&snapshot, 7, now); err != nil {
+		t.Fatalf("stamp projection actions: %v", err)
+	}
+	if len(snapshot.RequiredActions) != 1 || len(snapshot.Projections[0].RequiredActions) != 1 {
+		t.Fatalf("stamped actions = %#v", snapshot)
+	}
+	projectionAction := snapshot.Projections[0].RequiredActions[0]
+	snapshotAction := snapshot.RequiredActions[0]
+	if projectionAction.ID == "" || snapshotAction.ID != projectionAction.ID ||
+		projectionAction.TrackerID != "AR" || projectionAction.WorkflowRevision != 7 ||
+		projectionAction.Status != api.RequiredActionStatusPending || !projectionAction.CreatedAt.Equal(now) {
+		t.Fatalf("projection action = %#v, snapshot action = %#v", projectionAction, snapshotAction)
+	}
 }
 
 type trackerProjectionBuilderFunc func(
@@ -223,6 +276,7 @@ type retainedMediaResourceFake struct {
 type retainedMediaResourceStats struct {
 	staged    int
 	deletions int
+	commitErr error
 }
 
 func (*retainedMediaResourceFake) OpenArtifact(
@@ -246,6 +300,9 @@ func (f *retainedMediaResourceFake) DeleteArtifacts(
 }
 
 func (f *retainedMediaResourceFake) Commit(context.Context) error {
+	if f.stats.commitErr != nil {
+		return f.stats.commitErr
+	}
 	if f.pending {
 		f.stats.deletions++
 		f.pending = false
@@ -961,6 +1018,290 @@ func TestModuleProjectTrackersOwnsCatalogRuntimeSelectionAndProjectionLineage(t 
 		result.Projections.Runtime != *result.Workflow.TrackerRuntime || result.Projections.Selection != *result.Workflow.Selection ||
 		result.Projections.Instructions == nil || *result.Projections.Instructions != *result.Workflow.ProjectionInstructions {
 		t.Fatalf("projection refs do not match aggregate: projections=%#v workflow=%#v", result.Projections, result.Workflow)
+	}
+}
+
+func TestModuleReviewsTrackerReleaseNameWithoutRepeatingDupeSearch(t *testing.T) {
+	t.Parallel()
+
+	const automaticName = "Example.Release.2026.ALPHA-GRP"
+	const reviewedName = "Example.Release.2026.REVIEWED-GRP"
+	catalog, err := testCatalog(t).WithFingerprint()
+	if err != nil {
+		t.Fatalf("fingerprint review catalog: %v", err)
+	}
+	projector := trackerProjectionBuilderFunc(func(
+		_ context.Context,
+		_ api.ReleaseSnapshot,
+		_ api.UploadSubject,
+		trackerIDs []api.TrackerID,
+		instructions map[api.TrackerID]api.TrackerProjectionInstructions,
+		_ api.WorkflowExecutionMode,
+	) (
+		api.TrackerCatalogSnapshot,
+		api.TrackerRuntimeSnapshot,
+		api.TrackerSelection,
+		api.TrackerReleaseProjectionSet,
+		error,
+	) {
+		projection := testProjection(t, "ALPHA", automaticName)
+		projection.PolicyDecisions = []api.TrackerPolicyDecision{{
+			Code:     releaseNameConfirmationDecisionCode,
+			Decision: "confirmation_required",
+			Blocking: false,
+		}}
+		projection.RequiredActions = []api.RequiredAction{{
+			Kind:           api.RequiredActionProvideTrackerInput,
+			TrackerID:      "ALPHA",
+			Prompt:         "Confirm the tracker release name.",
+			AllowsFreeText: true,
+		}}
+		projection.UploadReady = false
+		inputFingerprint := testFingerprint(t, "name-review-automatic")
+		policyFingerprint := testFingerprint(t, "name-review-policy-automatic")
+		if instruction := instructions["ALPHA"]; instruction.UploadReleaseName.Present {
+			projection.UploadReleaseName = instruction.UploadReleaseName.Value
+			projection.AdditionalNames = []api.TrackerReleaseName{{
+				Role:  api.TrackerReleaseNameRoleSearch,
+				Value: automaticName,
+			}}
+			projection.ProjectorFingerprint = testFingerprint(t, "ALPHA-projector-reviewed")
+			projection.PolicyDecisions = []api.TrackerPolicyDecision{{
+				Code:     releaseNameConfirmationDecisionCode,
+				Decision: "confirmed",
+				Blocking: false,
+			}}
+			projection.RequiredActions = nil
+			projection.UploadReady = true
+			inputFingerprint = testFingerprint(t, "name-review-reviewed")
+			policyFingerprint = testFingerprint(t, "name-review-policy-reviewed")
+		}
+		projection.InputFingerprint = inputFingerprint
+		return catalog, testRuntime(t), api.TrackerSelection{TrackerIDs: trackerIDs}, api.TrackerReleaseProjectionSet{
+			InputFingerprint:  inputFingerprint,
+			PolicyFingerprint: policyFingerprint,
+			Projections:       []api.TrackerReleaseProjection{projection},
+			Status:            api.StageStatusReady,
+		}, nil
+	})
+	preflight := trackerPreflightBuilderFunc(func(
+		_ context.Context,
+		_ api.UploadSubject,
+		_ api.TrackerCatalogSnapshot,
+		_ api.TrackerRuntimeSnapshot,
+		initial api.TrackerReleaseProjectionSet,
+		now time.Time,
+	) (api.TrackerPreflightAssessment, []api.TrackerReleaseProjection, error) {
+		projection := initial.Projections[0]
+		fingerprint, fingerprintErr := api.CanonicalWorkflowFingerprint(projection)
+		if fingerprintErr != nil {
+			return api.TrackerPreflightAssessment{}, nil, fmt.Errorf(
+				"fingerprint name-review preflight projection: %w",
+				fingerprintErr,
+			)
+		}
+		result := api.TrackerPreflightResult{
+			TrackerID:             projection.TrackerID,
+			State:                 api.TrackerPreflightStateReady,
+			AuthReady:             true,
+			ClaimsReady:           true,
+			BannedGroupsReady:     true,
+			RemoteMetadataReady:   true,
+			ConfigFingerprint:     projection.ConfigFingerprint,
+			ProjectionFingerprint: fingerprint,
+			RequiredActions:       append([]api.RequiredAction(nil), projection.RequiredActions...),
+			AssessedAt:            now,
+			FreshUntil:            now.Add(time.Hour),
+		}
+		return api.TrackerPreflightAssessment{
+			InputFingerprint: testFingerprint(t, "name-review-preflight"),
+			Results:          []api.TrackerPreflightResult{result},
+			ExpiresAt:        now.Add(time.Hour),
+		}, append([]api.TrackerReleaseProjection(nil), initial.Projections...), nil
+	})
+	dupeChecks := 0
+	dupeBuilder := dupeAssessmentBuilderFunc(func(
+		_ context.Context,
+		_ api.DuplicateSubject,
+		projections api.TrackerReleaseProjectionSet,
+		_ api.TrackerPreflightAssessment,
+		now time.Time,
+		_ bool,
+	) (api.DupeAssessment, any, error) {
+		dupeChecks++
+		projection := projections.Projections[0]
+		fingerprint, fingerprintErr := api.CanonicalWorkflowFingerprint(projection)
+		if fingerprintErr != nil {
+			return api.DupeAssessment{}, nil, fmt.Errorf(
+				"fingerprint name-review duplicate projection: %w",
+				fingerprintErr,
+			)
+		}
+		return api.DupeAssessment{
+			InputFingerprint: testFingerprint(t, "name-review-dupes"),
+			Results: []api.TrackerDupeAssessment{{
+				TrackerID:             projection.TrackerID,
+				UploadReleaseName:     projection.UploadReleaseName,
+				ProjectionFingerprint: fingerprint,
+				CriteriaFingerprint:   projection.CriteriaFingerprint,
+				Criteria:              projection.DuplicateCriteria,
+				Decision:              api.DupeDecisionNoMatch,
+				Status:                api.StageStatusCompleted,
+				CheckedAt:             now,
+				FreshUntil:            now.Add(time.Hour),
+			}},
+			Status:    api.StageStatusCompleted,
+			ExpiresAt: now.Add(time.Hour),
+		}, struct{ Evidence string }{Evidence: "retained"}, nil
+	})
+	module, _ := newTestModule(
+		t,
+		testPreparer(),
+		WithTrackerProjectionBuilder(projector),
+		WithTrackerPreflightBuilder(preflight),
+		WithDupeAssessmentBuilder(dupeBuilder),
+	)
+	result := executeCommand(t, module, CreateWorkflowCommand{WorkflowID: "workflow-name-review"})
+	result = executeCommand(t, module, PrepareReleaseCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Input:            api.PrepareInput{SourcePath: "C:\\releases\\Example.Release.2026.1080p-GRP"},
+	})
+	result = executeCommand(t, module, ProjectTrackersCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		TrackerIDs:       []api.TrackerID{"ALPHA"},
+		Instructions:     map[api.TrackerID]api.TrackerProjectionInstructions{"ALPHA": {}},
+	})
+	result = executeCommand(t, module, PreflightTrackersCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+	})
+	result = executeCommand(t, module, CheckDuplicatesCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+	})
+	if dupeChecks != 1 || result.Dupes == nil || len(result.Workflow.RequiredActions) != 1 {
+		t.Fatalf("initial duplicate result = %#v checks=%d", result, dupeChecks)
+	}
+	priorDupeRef := *result.Workflow.Dupes
+	action := result.Workflow.RequiredActions[0]
+	confirmed := true
+	reviewedNameValue := reviewedName
+	module.private = &failOncePutPrivateResourceStore{PrivateResourceStore: module.private}
+	_, err = module.Execute(context.Background(), testOwnerID, ResolveActionCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Answer: api.RequiredActionAnswer{
+			ActionID:         action.ID,
+			WorkflowRevision: result.Workflow.Revision,
+			TextValue:        &reviewedNameValue,
+			Confirmed:        &confirmed,
+		},
+		IdempotencyKey: "review-tracker-name-private-put-failure",
+	})
+	if err == nil || !strings.Contains(err.Error(), "retain duplicate evidence after name review") {
+		t.Fatalf("expected duplicate evidence replacement failure, got %v", err)
+	}
+	if _, err := module.private.Get(
+		testOwnerID,
+		result.Workflow.ID,
+		dupePrivateResourceID(priorDupeRef.ID),
+		module.clock.Now().UTC(),
+	); err != nil {
+		t.Fatalf("prior duplicate evidence lost after replacement failure: %v", err)
+	}
+	result = executeCommand(t, module, ResolveActionCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Answer: api.RequiredActionAnswer{
+			ActionID:         action.ID,
+			WorkflowRevision: result.Workflow.Revision,
+			TextValue:        &reviewedNameValue,
+			Confirmed:        &confirmed,
+		},
+		IdempotencyKey: "review-tracker-name",
+	})
+	if dupeChecks != 1 || result.Projections == nil || result.Dupes == nil ||
+		result.Projections.Projections[0].UploadReleaseName != reviewedName ||
+		result.Projections.Projections[0].DuplicateCriteria.Name != automaticName ||
+		result.Dupes.Results[0].UploadReleaseName != reviewedName ||
+		result.Dupes.ProjectionSet != *result.Workflow.TrackerProjections ||
+		*result.Workflow.Dupes == priorDupeRef ||
+		len(result.Workflow.RequiredActions) != 1 ||
+		result.Workflow.RequiredActions[0].Status != api.RequiredActionStatusResolved ||
+		result.Workflow.Status != api.WorkflowStatusActive {
+		t.Fatalf("reviewed tracker name result = %#v checks=%d", result, dupeChecks)
+	}
+	if _, err := module.private.Get(
+		testOwnerID,
+		result.Workflow.ID,
+		dupePrivateResourceID(result.Dupes.ID),
+		module.clock.Now().UTC(),
+	); err != nil {
+		t.Fatalf("load rebound duplicate evidence: %v", err)
+	}
+
+	confirmed = false
+	action = result.Workflow.RequiredActions[0]
+	result, err = module.Continue(context.Background(), testOwnerID, api.ContinueReleaseWorkflowRequest{
+		Authority: &api.WorkflowAuthority{
+			WorkflowID:       result.Workflow.ID,
+			ExpectedRevision: result.Workflow.Revision,
+		},
+		IdempotencyKey: "unconfirm-tracker-name",
+		Goal:           api.WorkflowGoalDuplicatesDecided,
+		Intent:         api.WorkflowIntent{Interaction: api.InteractionModeInteractive},
+		Answers: []api.RequiredActionAnswer{{
+			ActionID:         action.ID,
+			WorkflowRevision: result.Workflow.Revision,
+			Confirmed:        &confirmed,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("unconfirm tracker name: %v", err)
+	}
+	if dupeChecks != 1 || result.Projections == nil || result.Dupes == nil ||
+		result.Projections.Projections[0].UploadReleaseName != automaticName ||
+		result.Projections.Projections[0].UploadReady ||
+		result.Dupes.Results[0].UploadReleaseName != automaticName ||
+		len(result.Workflow.RequiredActions) != 1 ||
+		result.Workflow.RequiredActions[0].Status != api.RequiredActionStatusPending ||
+		result.Workflow.Status != api.WorkflowStatusBlocked ||
+		len(result.Continuation.TrackerOutcomes) != 1 ||
+		result.Continuation.TrackerOutcomes[0].Disposition != api.WorkflowDispositionNeedsAction {
+		t.Fatalf("unconfirmed tracker name result = %#v checks=%d", result, dupeChecks)
+	}
+
+	confirmed = true
+	action = result.Workflow.RequiredActions[0]
+	result, err = module.Continue(context.Background(), testOwnerID, api.ContinueReleaseWorkflowRequest{
+		Authority: &api.WorkflowAuthority{
+			WorkflowID:       result.Workflow.ID,
+			ExpectedRevision: result.Workflow.Revision,
+		},
+		IdempotencyKey: "reconfirm-tracker-name",
+		Goal:           api.WorkflowGoalDuplicatesDecided,
+		Intent:         api.WorkflowIntent{Interaction: api.InteractionModeInteractive},
+		Answers: []api.RequiredActionAnswer{{
+			ActionID:         action.ID,
+			WorkflowRevision: result.Workflow.Revision,
+			TextValue:        &reviewedNameValue,
+			Confirmed:        &confirmed,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("reconfirm tracker name: %v", err)
+	}
+	if dupeChecks != 1 || result.Projections == nil ||
+		result.Projections.Projections[0].UploadReleaseName != reviewedName ||
+		!result.Projections.Projections[0].UploadReady ||
+		len(result.Workflow.RequiredActions) != 1 ||
+		result.Workflow.RequiredActions[0].Status != api.RequiredActionStatusResolved ||
+		result.Workflow.Status != api.WorkflowStatusActive ||
+		len(result.Continuation.TrackerOutcomes) != 1 ||
+		result.Continuation.TrackerOutcomes[0].Disposition == api.WorkflowDispositionNeedsAction {
+		t.Fatalf("reconfirmed tracker name result = %#v checks=%d", result, dupeChecks)
 	}
 }
 
@@ -2811,24 +3152,224 @@ func TestModuleMediaMutationUsesOpaqueIDsAndInvalidatesDownstream(t *testing.T) 
 		ArtifactIDs:      []api.PublicResourceID{"artifact-1"},
 		IdempotencyKey:   "delete-artifact",
 	}
+	requireArtifactRetained := func(t *testing.T) {
+		t.Helper()
+		state, err := module.repository.Load(context.Background(), testOwnerID, mutated.Workflow.ID)
+		if err != nil {
+			t.Fatalf("load durable workflow state: %v", err)
+		}
+		if state.Workflow.Revision != mutated.Workflow.Revision || state.Workflow.Media == nil {
+			t.Fatalf("durable workflow advanced past failed delete: %#v", state.Workflow)
+		}
+		media, ok := state.Media[state.Workflow.Media.ID]
+		if !ok || len(media.Artifacts) != 1 || media.Artifacts[0].ID != "artifact-1" {
+			t.Fatalf("durable media lost the artifact after failed delete: %#v", media.Artifacts)
+		}
+	}
+	privateMedia.stats.commitErr = errors.New("synthetic media commit failure")
+	if _, err := module.Execute(context.Background(), testOwnerID, deletion); err == nil ||
+		!strings.Contains(err.Error(), "synthetic media commit failure") {
+		t.Fatalf("failed media finalization error = %v", err)
+	}
+	requireArtifactRetained(t)
+	privateMedia.stats.commitErr = nil
 	module.repository = &failOnceSaveRepository{Repository: module.repository}
 	if _, err := module.Execute(context.Background(), testOwnerID, deletion); err == nil ||
 		!strings.Contains(err.Error(), "synthetic repository save failure") {
-		t.Fatalf("failed media commit error = %v", err)
+		t.Fatalf("failed media save error = %v", err)
 	}
-	if privateMedia.stats.deletions != 0 {
-		t.Fatalf("filesystem deletion ran before repository commit: %d", privateMedia.stats.deletions)
+	if privateMedia.stats.deletions != 1 {
+		t.Fatalf("staged deletion did not commit before the snapshot save: %d", privateMedia.stats.deletions)
 	}
-	deleted := executeCommand(t, module, deletion)
-	if deleted.Media == nil || len(deleted.Media.Artifacts) != 0 || privateMedia.stats.deletions != 1 {
+	requireArtifactRetained(t)
+	retry := deletion
+	retry.IdempotencyKey = "delete-artifact-retry"
+	deleted := executeCommand(t, module, retry)
+	if deleted.Media == nil || len(deleted.Media.Artifacts) != 0 || privateMedia.stats.deletions != 2 {
 		t.Fatalf("deleted media = %#v deletions=%d", deleted.Media, privateMedia.stats.deletions)
 	}
-	if privateMedia.stats.staged != 2 {
-		t.Fatalf("staged deletion attempts = %d, want 2", privateMedia.stats.staged)
+	if privateMedia.stats.staged != 3 {
+		t.Fatalf("staged deletion attempts = %d, want 3", privateMedia.stats.staged)
 	}
-	replayed := executeCommand(t, module, deletion)
-	if replayed.Media == nil || replayed.Media.ID != deleted.Media.ID || privateMedia.stats.deletions != 1 {
+	replayed := executeCommand(t, module, retry)
+	if replayed.Media == nil || replayed.Media.ID != deleted.Media.ID || privateMedia.stats.deletions != 2 {
 		t.Fatalf("idempotent delete = %#v deletions=%d", replayed.Media, privateMedia.stats.deletions)
+	}
+}
+
+// readyDupeBuilder returns a dupe assessment builder that clears every selected
+// tracker, so tests can advance past duplicate checking to media commands.
+func readyDupeBuilder(t *testing.T) dupeAssessmentBuilderFunc {
+	t.Helper()
+	return func(
+		_ context.Context,
+		_ api.DuplicateSubject,
+		projections api.TrackerReleaseProjectionSet,
+		_ api.TrackerPreflightAssessment,
+		now time.Time,
+		_ bool,
+	) (api.DupeAssessment, any, error) {
+		results := make([]api.TrackerDupeAssessment, 0, len(projections.Projections))
+		for _, projection := range projections.Projections {
+			fingerprint, err := api.CanonicalWorkflowFingerprint(projection)
+			if err != nil {
+				return api.DupeAssessment{}, nil, fmt.Errorf("fingerprint synthetic dupe projection: %w", err)
+			}
+			results = append(results, api.TrackerDupeAssessment{
+				TrackerID:             projection.TrackerID,
+				UploadReleaseName:     projection.UploadReleaseName,
+				ProjectionFingerprint: fingerprint,
+				CriteriaFingerprint:   projection.CriteriaFingerprint,
+				Criteria:              projection.DuplicateCriteria,
+				Decision:              api.DupeDecisionNoMatch,
+				Status:                api.StageStatusCompleted,
+				CheckedAt:             now,
+				FreshUntil:            now.Add(time.Hour),
+			})
+		}
+		return api.DupeAssessment{
+			InputFingerprint: testFingerprint(t, "ready-dupes"),
+			Results:          results,
+			ExpiresAt:        now.Add(time.Hour),
+		}, struct{ Evidence string }{Evidence: "synthetic"}, nil
+	}
+}
+
+// TestReorderMediaArtifactsChangesOrderNotCaptureIndex pins the split that lets
+// callers reorder final media without disturbing capture slots: Order owns
+// display position, Index owns the capture slot, and Kind separates screenshots
+// from menu images.
+func TestReorderMediaArtifactsChangesOrderNotCaptureIndex(t *testing.T) {
+	t.Parallel()
+
+	privateMedia := &retainedMediaResourceFake{stats: &retainedMediaResourceStats{}}
+	mediaBuilder := mediaArtifactBuilderFunc(func(
+		_ context.Context,
+		_ api.ReleaseRef,
+		projections api.TrackerReleaseProjectionSet,
+		_ api.MediaCaptureInstructions,
+		_ time.Time,
+	) (api.MediaArtifactSet, any, error) {
+		requirements, err := mediaRequirementsFingerprint(projections.Projections)
+		if err != nil {
+			return api.MediaArtifactSet{}, nil, err
+		}
+		return api.MediaArtifactSet{
+			CaptureFingerprint:      testFingerprint(t, "reordered-media"),
+			RequirementsFingerprint: requirements,
+			Artifacts: []api.MediaArtifact{
+				{
+					ID:       "screen-a",
+					Kind:     api.MediaArtifactScreenshot,
+					Purpose:  api.ScreenshotPurposeFinal,
+					Index:    0,
+					Order:    0,
+					Selected: true,
+				},
+				{
+					ID:       "screen-b",
+					Kind:     api.MediaArtifactScreenshot,
+					Purpose:  api.ScreenshotPurposeFinal,
+					Index:    1,
+					Order:    1,
+					Selected: true,
+				},
+				{
+					ID:       "menu-a",
+					Kind:     api.MediaArtifactDVDMenu,
+					Purpose:  api.ScreenshotPurposeMenu,
+					Index:    0,
+					Order:    2,
+					Selected: true,
+				},
+			},
+			Status: api.StageStatusCompleted,
+		}, privateMedia, nil
+	})
+	module, _ := newTestModule(
+		t,
+		testPreparer(),
+		WithTrackerPreflightBuilder(readyPreflightBuilder(t)),
+		WithDupeAssessmentBuilder(readyDupeBuilder(t)),
+		WithMediaArtifactBuilder(mediaBuilder),
+		WithDescriptionBuilder(&descriptionBuilderFake{testing: t}),
+		WithUploadPlanBuilder(&uploadPlanBuilderFake{testing: t}),
+	)
+	result := executeCommand(t, module, CreateWorkflowCommand{WorkflowID: "workflow-media-reorder"})
+	result = executeCommand(t, module, PrepareReleaseCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Input:            api.PrepareInput{SourcePath: "C:\\releases\\Example.Release.2026.1080p-GRP"},
+	})
+	result = executeTestPublication(t, module, trackerContextPublication{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Catalog:          testCatalog(t),
+		Runtime:          testRuntime(t),
+		Selection:        api.TrackerSelection{TrackerIDs: []api.TrackerID{"ALPHA", "BETA"}},
+	})
+	projectionSet := testProjectionSet(t)
+	for index := range projectionSet.Projections {
+		projectionSet.Projections[index].Artifacts.ScreenshotCount = 2
+		projectionSet.Projections[index].Artifacts.DVDMenuCount = 1
+	}
+	result = executeTestPublication(t, module, projectionSetPublication{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Snapshot:         projectionSet,
+	})
+	result = executeCommand(t, module, PreflightTrackersCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+	})
+	result = executeCommand(t, module, CheckDuplicatesCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+	})
+	result = executeCommand(t, module, CaptureMediaCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Instructions:     api.MediaCaptureInstructions{ScreenshotCount: 2, Purpose: api.ScreenshotPurposeFinal},
+	})
+
+	reordered := executeCommand(t, module, ReorderMediaArtifactsCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Media:            *result.Workflow.Media,
+		ArtifactIDs:      []api.PublicResourceID{"menu-a", "screen-b", "screen-a"},
+		IdempotencyKey:   "reorder-media",
+	})
+	if reordered.Media == nil || len(reordered.Media.Artifacts) != 3 {
+		t.Fatalf("reordered media = %#v", reordered.Media)
+	}
+	wantOrder := map[api.PublicResourceID]int{
+		"menu-a":   0,
+		"screen-b": 1,
+		"screen-a": 2,
+	}
+	wantIndex := map[api.PublicResourceID]int{
+		"screen-a": 0,
+		"screen-b": 1,
+		"menu-a":   0,
+	}
+	wantKind := map[api.PublicResourceID]api.MediaArtifactKind{
+		"screen-a": api.MediaArtifactScreenshot,
+		"screen-b": api.MediaArtifactScreenshot,
+		"menu-a":   api.MediaArtifactDVDMenu,
+	}
+	for _, artifact := range reordered.Media.Artifacts {
+		if artifact.Order != wantOrder[artifact.ID] {
+			t.Fatalf("artifact %q order = %d, want %d", artifact.ID, artifact.Order, wantOrder[artifact.ID])
+		}
+		if artifact.Index != wantIndex[artifact.ID] {
+			t.Fatalf("reorder moved the capture slot: artifact %q index = %d, want %d", artifact.ID, artifact.Index, wantIndex[artifact.ID])
+		}
+		if artifact.Kind != wantKind[artifact.ID] {
+			t.Fatalf("artifact %q kind = %q, want %q", artifact.ID, artifact.Kind, wantKind[artifact.ID])
+		}
+	}
+	if privateMedia.stats.staged != 0 || privateMedia.stats.deletions != 0 {
+		t.Fatalf("reorder touched private media: %#v", privateMedia.stats)
 	}
 }
 
@@ -3305,7 +3846,7 @@ func executeTestPublicationRaw(module *Module, publication any) (CommandResult, 
 	case projectionSetPublication:
 		result, err = module.publishProjections(ctx, testOwnerID, &state, nextRevision, now, typed)
 	case dupeAssessmentPublication:
-		result, err = module.publishDupes(testOwnerID, &state, nextRevision, now, typed)
+		result, err = module.publishDupes(&state, nextRevision, now, typed)
 	}
 	if err != nil {
 		return CommandResult{}, err

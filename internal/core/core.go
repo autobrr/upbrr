@@ -343,7 +343,7 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 			resolver: preparedFacts,
 			trackers: services.Trackers,
 		}),
-		releaseworkflow.WithUploadPlanBuilder(newWorkflowUploadPlanBuilder(preparedFacts, services.Trackers, services.Torrents, services.Clients)),
+		releaseworkflow.WithUploadPlanBuilder(newWorkflowUploadPlanBuilder(cfg, preparedFacts, services.Trackers, services.Torrents, services.Clients)),
 		releaseworkflow.WithOperationErrorClassifier(classifyOperationError),
 		releaseworkflow.WithLogger(logger),
 	)

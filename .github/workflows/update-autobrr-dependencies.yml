@@ -73,16 +73,15 @@ jobs:
             "github.com/autobrr/go-qbittorrent"
             "github.com/autobrr/go-torrent"
             "github.com/autobrr/mkbrr"
+            "github.com/autobrr/rls"
           )
-          managed_module_paths=("${upgrade_modules[@]}" "github.com/moistari/rls")
-          managed_module_names=("${upgrade_modules[@]}" "github.com/autobrr/rls")
 
           module_version() {
-            go list -m -f '{{if .Replace}}{{.Replace.Path}}@{{.Replace.Version}}{{else}}{{.Path}}@{{.Version}}{{end}}' "$1"
+            go list -m -f '{{.Version}}' "$1"
           }
 
           previous_versions=()
-          for module_path in "${managed_module_paths[@]}"; do
+          for module_path in "${upgrade_modules[@]}"; do
             previous_versions+=("$(module_version "$module_path")")
           done
 
@@ -93,20 +92,6 @@ jobs:
             go_get_args+=("${module_path}@upgrade")
           done
           go get "${go_get_args[@]}"
-
-          rls_version="$(
-            git ls-remote --tags --refs https://github.com/autobrr/rls.git 'v*' \
-              | sed -E 's#.*refs/tags/##' \
-              | sort -V \
-              | tail -n 1
-          )"
-
-          if [ -z "$rls_version" ]; then
-            echo "No github.com/autobrr/rls release tags found" >&2
-            exit 1
-          fi
-
-          go mod edit -replace="github.com/moistari/rls=github.com/autobrr/rls@${rls_version}"
           go mod tidy
 
           if go list -m github.com/anacrolix/torrent >/dev/null 2>&1; then
@@ -121,11 +106,11 @@ jobs:
           fi
 
           updated_modules=()
-          for index in "${!managed_module_paths[@]}"; do
-            module_path="${managed_module_paths[$index]}"
+          for index in "${!upgrade_modules[@]}"; do
+            module_path="${upgrade_modules[$index]}"
             current_version="$(module_version "$module_path")"
             if [[ "${previous_versions[$index]}" != "$current_version" ]]; then
-              updated_modules+=("${managed_module_names[$index]}")
+              updated_modules+=("$module_path")
             fi
           done
 

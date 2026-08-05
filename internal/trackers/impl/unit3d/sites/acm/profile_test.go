@@ -50,6 +50,20 @@ func TestProfileParity(t *testing.T) {
 	}
 }
 
+func TestBuildNameDoesNotAddSubtitleTagsToDiscs(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{
+		DiscType:          "DVD",
+		ReleaseName:       "Example Release 2026 480p NTSC DVD DD 2.0-GRP",
+		SubtitleLanguages: []string{"Japanese"},
+	}
+	got := Profile().Site.BuildName(meta, config.TrackerConfig{})
+	if strings.Contains(got, "[Jpn subs only]") {
+		t.Fatalf("disc name added subtitle tag: %q", got)
+	}
+}
+
 func TestDescriptionParity(t *testing.T) {
 	meta := api.UploadSubject{Type: "WEBDL", ServiceLongName: "Example Stream"}
 	result, err := Profile().Site.BuildDescription(context.Background(), meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, "[pre]x[/pre]\n[hide=test]y[/hide]\n[img]https://img.example/z.png[/img]", nil, nil)

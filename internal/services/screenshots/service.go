@@ -6,6 +6,7 @@ package screenshots
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	_ "image/png" // register PNG decoder for screenshot metadata loading
@@ -32,6 +33,10 @@ import (
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+// sqliteBusyAttempts bounds how often a repository call is retried while SQLite
+// reports the database busy or locked.
+const sqliteBusyAttempts = 3
 
 // Service plans, captures, previews, persists, and removes release screenshots
 // beneath a managed temporary root.
@@ -643,10 +648,14 @@ func (s *Service) PreviewFrame(ctx context.Context, meta api.ScreenshotSubject, 
 	return preview, nil
 }
 
-// Delete removes an allowed image beneath the release's managed temp directory.
-// Repository screenshot, upload, final-selection, and tracker-image references
-// are then cleaned up best-effort; those cleanup failures are logged and do not
-// restore the local file or fail the call.
+// Delete removes an allowed image beneath the release's managed temp directory,
+// then cleans up its repository screenshot, upload, final-selection, and
+// tracker-image references. Cleanup covers every stored spelling that names the
+// removed file, so an accepted filesystem alias cannot delete the file while
+// leaving its records behind. Cleanup failures do not restore the local file,
+// but they are reported: a caller must be able to tell a complete delete from
+// one that left records behind, and calling Delete again converges because an
+// already-missing file is not an error.
 func (s *Service) Delete(ctx context.Context, meta api.ScreenshotSubject, imagePath string) error {
 	select {
 	case <-ctx.Done():
@@ -675,7 +684,7 @@ func (s *Service) Delete(ctx context.Context, meta api.ScreenshotSubject, imageP
 	if err != nil {
 		return fmt.Errorf("screenshots: resolve temp path: %w", err)
 	}
-	if absTarget != absTmp && !strings.HasPrefix(absTarget, absTmp+string(os.PathSeparator)) {
+	if !isPathWithinDir(tmpDir, absTarget) {
 		return internalerrors.ErrInvalidInput
 	}
 	if s.logger != nil {
@@ -684,6 +693,12 @@ func (s *Service) Delete(ctx context.Context, meta api.ScreenshotSubject, imageP
 
 	if !isAllowedImageExt(absTarget) {
 		return internalerrors.ErrInvalidInput
+	}
+
+	deleteTargets, cleanupErr := s.storedDeleteTargets(ctx, meta.SourcePath, absTarget)
+	cleanupErrs := make([]error, 0, 1)
+	if cleanupErr != nil {
+		cleanupErrs = append(cleanupErrs, cleanupErr)
 	}
 
 	if err := os.Remove(absTarget); err != nil {
@@ -696,46 +711,152 @@ func (s *Service) Delete(ctx context.Context, meta api.ScreenshotSubject, imageP
 	} else if s.logger != nil {
 		s.logger.Tracef("screenshots: image deleted from disk: %s", absTarget)
 	}
+	confirmedTargets := deleteTargets[:1]
+	for _, target := range deleteTargets[1:] {
+		_, statErr := os.Stat(target)
+		switch {
+		case statErr == nil:
+			continue
+		case errors.Is(statErr, os.ErrNotExist):
+			confirmedTargets = append(confirmedTargets, target)
+		default:
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("inspect stored delete target: %w", statErr))
+		}
+	}
+	deleteTargets = confirmedTargets
 
 	if s.repo != nil {
-		if s.logger != nil {
-			s.logger.Tracef("screenshots: deleting db records for %s", absTarget)
+		for _, target := range deleteTargets {
+			if s.logger != nil {
+				s.logger.Tracef("screenshots: deleting db records for %s", target)
+			}
+			if err := retrySQLiteBusy(ctx, func() error {
+				return s.repo.DeleteScreenshot(ctx, target)
+			}); err != nil {
+				s.logger.Warnf(
+					"screenshots: failed to delete screenshot record target=%s err=%s",
+					target,
+					redaction.RedactValue(err.Error(), nil),
+				)
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("delete screenshot record: %w", err))
+			} else if s.logger != nil {
+				s.logger.Tracef("screenshots: deleted screenshot record for %s", target)
+			}
+			if err := retrySQLiteBusy(ctx, func() error {
+				return s.repo.DeleteFinalSelection(ctx, target)
+			}); err != nil {
+				s.logger.Warnf(
+					"screenshots: failed to delete final selection target=%s err=%s",
+					target,
+					redaction.RedactValue(err.Error(), nil),
+				)
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("delete final selection: %w", err))
+			} else if s.logger != nil {
+				s.logger.Tracef("screenshots: deleted final selection for %s", target)
+			}
 		}
-		if err := retrySQLiteBusy(ctx, 3, func() error {
-			return s.repo.DeleteScreenshot(ctx, absTarget)
-		}); err != nil {
-			s.logger.Debugf("screenshots: failed to delete screenshot record: %v", err)
-		} else if s.logger != nil {
-			s.logger.Tracef("screenshots: deleted screenshot record for %s", absTarget)
+		if err := s.removeTrackerImageReference(ctx, meta, tmpDir, absTarget); err != nil {
+			cleanupErrs = append(cleanupErrs, err)
 		}
-		if err := retrySQLiteBusy(ctx, 3, func() error {
-			return s.repo.DeleteFinalSelection(ctx, absTarget)
-		}); err != nil {
-			s.logger.Debugf("screenshots: failed to delete final selection: %v", err)
-		} else if s.logger != nil {
-			s.logger.Tracef("screenshots: deleted final selection for %s", absTarget)
-		}
-		s.removeTrackerImageReference(ctx, meta, tmpDir, absTarget)
 	}
 
+	if len(cleanupErrs) > 0 {
+		return fmt.Errorf("screenshots: delete cleanup incomplete: %w", errors.Join(cleanupErrs...))
+	}
 	return nil
 }
 
-func (s *Service) removeTrackerImageReference(ctx context.Context, meta api.ScreenshotSubject, tmpDir string, absTarget string) {
+// storedDeleteTargets returns every repository spelling that names absTarget on
+// this filesystem, starting with absTarget itself. Path validation accepts
+// filesystem aliases such as Windows case variants, but image-path columns
+// compare byte-for-byte, so cleanup keyed only on the caller's spelling can
+// remove the file and leave its screenshot, upload, and selection rows behind.
+// A failed lookup returns the targets resolved so far plus an error: cleanup can
+// still run, but it can no longer be claimed complete.
+func (s *Service) storedDeleteTargets(ctx context.Context, sourcePath string, absTarget string) ([]string, error) {
+	targets := []string{absTarget}
+	if s.repo == nil || strings.TrimSpace(sourcePath) == "" {
+		return targets, nil
+	}
+	targetInfo, targetStatErr := os.Stat(absTarget)
+	addStored := func(stored string) {
+		stored = strings.TrimSpace(stored)
+		if stored == "" || slices.Contains(targets, stored) {
+			return
+		}
+		sameTarget := pathutil.SamePath(stored, absTarget)
+		if !sameTarget && targetStatErr == nil {
+			storedInfo, statErr := os.Stat(stored)
+			sameTarget = statErr == nil && os.SameFile(storedInfo, targetInfo)
+		}
+		if !sameTarget {
+			return
+		}
+		targets = append(targets, stored)
+		if s.logger != nil {
+			s.logger.Tracef("screenshots: delete alias resolved stored=%s requested=%s", stored, absTarget)
+		}
+	}
+	lookupErrs := make([]error, 0, 2)
+	var screenshots []api.Screenshot
+	if err := retrySQLiteBusy(ctx, func() error {
+		stored, err := s.repo.ListScreenshotsByPath(ctx, sourcePath)
+		if err != nil {
+			return fmt.Errorf("load screenshot records: %w", err)
+		}
+		screenshots = stored
+		return nil
+	}); err != nil {
+		s.logger.Warnf("screenshots: failed to load screenshot records for delete err=%s", redaction.RedactValue(err.Error(), nil))
+		lookupErrs = append(lookupErrs, err)
+	}
+	for _, record := range screenshots {
+		addStored(record.ImagePath)
+	}
+	var selections []api.ScreenshotFinalSelection
+	if err := retrySQLiteBusy(ctx, func() error {
+		stored, err := s.repo.ListFinalSelections(ctx, sourcePath)
+		if err != nil {
+			return fmt.Errorf("load final selections: %w", err)
+		}
+		selections = stored
+		return nil
+	}); err != nil {
+		s.logger.Warnf("screenshots: failed to load final selections for delete err=%s", redaction.RedactValue(err.Error(), nil))
+		lookupErrs = append(lookupErrs, err)
+	}
+	for _, selection := range selections {
+		addStored(selection.ImagePath)
+	}
+	if len(lookupErrs) > 0 {
+		return targets, errors.Join(lookupErrs...)
+	}
+	return targets, nil
+}
+
+// removeTrackerImageReference drops the deleted image from every stored tracker
+// image list for the release. A failure leaves a tracker pointing at an image
+// that no longer exists locally, so it is returned rather than only logged.
+func (s *Service) removeTrackerImageReference(
+	ctx context.Context,
+	meta api.ScreenshotSubject,
+	tmpDir string,
+	absTarget string,
+) error {
 	if s.repo == nil {
-		return
+		return nil
 	}
 	if strings.TrimSpace(tmpDir) == "" || strings.TrimSpace(absTarget) == "" {
-		return
+		return nil
 	}
 	fileStem := strings.ToLower(strings.TrimSuffix(filepath.Base(absTarget), filepath.Ext(absTarget)))
+	updateErrs := make([]error, 0, 1)
 	var records []api.TrackerMetadata
 	if strings.TrimSpace(meta.SourcePath) != "" {
 		stored, err := s.repo.ListTrackerMetadataByPath(ctx, meta.SourcePath)
 		if err != nil {
-			if s.logger != nil {
-				s.logger.Debugf("screenshots: failed to load tracker metadata for delete: %v", err)
-			}
+			s.logger.Warnf("screenshots: failed to load tracker metadata for delete err=%s", redaction.RedactValue(err.Error(), nil))
+			updateErrs = append(updateErrs, fmt.Errorf("load tracker metadata: %w", err))
 		} else if len(stored) > 0 {
 			records = stored
 			if s.logger != nil {
@@ -793,14 +914,23 @@ func (s *Service) removeTrackerImageReference(ctx context.Context, meta api.Scre
 		if strings.TrimSpace(record.SourcePath) == "" {
 			record.SourcePath = meta.SourcePath
 		}
-		if err := retrySQLiteBusy(ctx, 3, func() error {
+		if err := retrySQLiteBusy(ctx, func() error {
 			return s.repo.SaveTrackerMetadata(ctx, record)
 		}); err != nil {
-			s.logger.Debugf("screenshots: failed to update tracker metadata: %v", err)
+			s.logger.Warnf(
+				"screenshots: failed to update tracker metadata tracker=%s err=%s",
+				strings.TrimSpace(record.Tracker),
+				redaction.RedactValue(err.Error(), nil),
+			)
+			updateErrs = append(updateErrs, fmt.Errorf("update tracker metadata: %w", err))
 		} else if s.logger != nil {
 			s.logger.Tracef("screenshots: updated tracker metadata tracker=%s remaining=%d", strings.TrimSpace(record.Tracker), len(record.ImageURLs))
 		}
 	}
+	if len(updateErrs) > 0 {
+		return errors.Join(updateErrs...)
+	}
+	return nil
 }
 
 func (s *Service) loadTrackerMetadata(ctx context.Context, sourcePath string) []api.TrackerMetadata {
@@ -817,12 +947,11 @@ func (s *Service) loadTrackerMetadata(ctx context.Context, sourcePath string) []
 	return records
 }
 
-func retrySQLiteBusy(ctx context.Context, attempts int, fn func() error) error {
-	if attempts < 1 {
-		attempts = 1
-	}
+// retrySQLiteBusy runs fn until it succeeds, fails for a reason other than a
+// busy or locked database, or exhausts sqliteBusyAttempts.
+func retrySQLiteBusy(ctx context.Context, fn func() error) error {
 	var lastErr error
-	for i := 0; i < attempts; i++ {
+	for i := range sqliteBusyAttempts {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("screenshots: sqlite retry canceled: %w", err)
 		}

@@ -33,6 +33,7 @@ func trimEntries(entries []api.DupeEntry) []api.DupeEntry {
 		entry.Download = strings.TrimSpace(entry.Download)
 		entry.ID = strings.TrimSpace(entry.ID)
 		entry.Type = strings.TrimSpace(entry.Type)
+		entry.CanonicalType = strings.TrimSpace(entry.CanonicalType)
 		entry.Res = strings.TrimSpace(entry.Res)
 		if entry.Name == "" {
 			continue

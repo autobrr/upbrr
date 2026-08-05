@@ -128,7 +128,7 @@ export type InputFacet = Readonly<{
   selectCandidate(releaseID: string): Promise<boolean>;
 }>;
 
-/** Duplicate-check commands and exact workflow-owned tracker outcomes. */
+/** Duplicate-check commands, naming review, and exact workflow-owned tracker outcomes. */
 export type DuplicatesFacet = Readonly<{
   view: Readonly<{
     status: FacetStatus;
@@ -139,11 +139,17 @@ export type DuplicatesFacet = Readonly<{
     total: number;
     ignoredTrackers: readonly string[];
     selectedTrackers: readonly string[];
+    /** Local tracker-name edits keyed by normalized tracker ID. */
+    releaseNameOverrides: Readonly<Record<string, string>>;
     error: string;
   }>;
   run(): Promise<boolean>;
   cancel(): Promise<boolean>;
   chooseTrackers(trackers: readonly string[]): void;
+  /** Stores a tracker-name edit locally without resolving its backend action. */
+  confirmReleaseName(tracker: string, value: string): void;
+  /** Resolves or reopens the backend naming action using the current local edit. */
+  acknowledgeReleaseName(tracker: string, acknowledged: boolean): Promise<boolean>;
   setIgnored(tracker: string, ignored: boolean): void;
 }>;
 

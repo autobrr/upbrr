@@ -54,6 +54,55 @@ func (barrierPlanDefinition) UploadContentMode() UploadContentMode {
 	return UploadContentModeDescription
 }
 
+func TestOrderedReadyTrackerPlanIndexesQueuesRehashLast(t *testing.T) {
+	t.Parallel()
+
+	plan := func(tracker string) TrackerPlan {
+		return NewUploadPlan(tracker, api.TrackerDryRunEntry{}, func(context.Context) (api.UploadSummary, error) {
+			return api.UploadSummary{}, nil
+		}, nil)
+	}
+	slots := []trackerPlanSlot{
+		{tracker: "PTP", plan: plan("PTP")},
+		{tracker: "HDB", plan: plan("HDB")},
+		{tracker: "MTV", failure: &TrackerFailure{Tracker: "MTV"}},
+		{tracker: "ANT", plan: plan("ANT")},
+	}
+	ready, delayedStart := orderedReadyTrackerPlanIndexes(slots, []string{"ptp", "ANT"})
+	if delayedStart != 1 || !slices.Equal(ready, []int{1, 0, 3}) {
+		t.Fatalf("ready indexes = %v at %d", ready, delayedStart)
+	}
+}
+
+func TestSubmitTrackerPlansWaitsBetweenReusableAndRehashedBatches(t *testing.T) {
+	var reusableFinished time.Time
+	var rehashedStarted time.Time
+	plan := func(tracker string, submit func()) TrackerPlan {
+		return NewUploadPlan(tracker, api.TrackerDryRunEntry{}, func(context.Context) (api.UploadSummary, error) {
+			submit()
+			return api.UploadSummary{Uploaded: 1}, nil
+		}, nil)
+	}
+	slots := []trackerPlanSlot{
+		{tracker: "HDB", plan: plan("HDB", func() { reusableFinished = time.Now() })},
+		{tracker: "PTP", plan: plan("PTP", func() { rehashedStarted = time.Now() })},
+	}
+	svc := NewServiceWithRegistry(config.Config{
+		TorrentCreation: config.TorrentCreationConfig{RehashCooldown: 1},
+		PostUpload:      config.PostUploadConfig{MaxConcurrentTrackers: 2},
+	}, api.NopLogger{}, nil, nil)
+	svc.submitTrackerPlans(context.Background(), api.UploadSubject{
+		SourcePath:       filepath.Join(t.TempDir(), "Example.Release.2026"),
+		RehashedTrackers: []string{"PTP"},
+	}, slots)
+	if reusableFinished.IsZero() || rehashedStarted.IsZero() {
+		t.Fatal("expected both upload batches to run")
+	}
+	if delay := rehashedStarted.Sub(reusableFinished); delay < 900*time.Millisecond {
+		t.Fatalf("rehash upload started after %s, want at least 900ms", delay)
+	}
+}
+
 func (barrierPlanDefinition) DefaultBaseURL() string { return "https://tracker.example.invalid" }
 
 func (d barrierPlanDefinition) Prepare(ctx context.Context, _ PreparationInput) (TrackerPlan, *PreparationFailure) {

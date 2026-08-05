@@ -3,7 +3,9 @@
 
 package dp
 
-import "github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
+import (
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
+)
 
 // Profile returns DP's Unit3D site manifest.
 func Profile() unit3d.Profile {
@@ -14,7 +16,7 @@ func Profile() unit3d.Profile {
 		BannedGroups: BannedGroups(),
 		Site: unit3d.SiteProfile{
 			BuildName:        buildName,
-			BuildNameVersion: "v1",
+			BuildNameVersion: "v2",
 		},
 	}
 }

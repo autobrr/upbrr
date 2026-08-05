@@ -36,6 +36,25 @@ func TestTrackerProjectionInstructionsSchemaPreservesTriStateFields(t *testing.T
 	}
 }
 
+func TestWorkflowPatchStringSchemaPreservesAbsentNullAndString(t *testing.T) {
+	t.Parallel()
+
+	builder := buildContractSchemaBuilder()
+	definition := builder.schemas["WorkflowPatchstring"]
+	if definition == nil || renderTypeScript(definition, 0) != "string | null" {
+		t.Fatalf("workflow patch string schema = %#v", definition)
+	}
+	projection := builder.schemas["ReleaseWorkflowUploadTrackerProjection"]
+	if projection == nil || projection.Properties["uploadReleaseName"] == nil ||
+		projection.Properties["uploadReleaseName"].Ref != "#/components/schemas/WorkflowPatchstring" {
+		t.Fatalf("upload release name projection schema = %#v", projection)
+	}
+	generated := string(generateTypeScript(builder.schemas))
+	if !strings.Contains(generated, "export type WorkflowPatchstring = string | null;") {
+		t.Fatal("generated TypeScript does not preserve WorkflowPatch[string] null semantics")
+	}
+}
+
 func TestLegacyUploadApprovalSchemasAreDeprecated(t *testing.T) {
 	t.Parallel()
 
@@ -46,7 +65,7 @@ func TestLegacyUploadApprovalSchemasAreDeprecated(t *testing.T) {
 		}
 	}
 	for schemaName, propertyName := range map[string]string{
-		"ContinueReleaseWorkflowRequest":          "approval",
+		"ContinueReleaseWorkflowRequest":        "approval",
 		"ReleaseWorkflowUploadFeedbackResponse": "uploadApproval",
 	} {
 		definition := builder.schemas[schemaName]

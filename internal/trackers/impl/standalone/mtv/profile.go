@@ -24,7 +24,7 @@ func Profile() standalone.Profile {
 		PrepareUpload: func(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
 			return prepareUploadAt(ctx, req, mtvBaseURL)
 		},
-		ReleaseNamePolicy:   trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/mtv/v1", resolveUploadName, resolveSearchName),
+		ReleaseNamePolicy:   trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/mtv/v3", resolveUploadName, resolveSearchName),
 		NewDuplicateAdapter: newDuplicateAdapter,
 		ValidationPolicy:    validationPolicy(),
 		BannedGroups:        bannedGroups(),
@@ -32,16 +32,51 @@ func Profile() standalone.Profile {
 			RequireKnownCategory: true,
 			Requirements: []trackers.MetadataRequirement{
 				{
-					Scope:       trackers.MetadataScopeAny,
-					AnyOf:       []trackers.MetadataField{trackers.MetadataFieldTMDB, trackers.MetadataFieldIMDB, trackers.MetadataFieldTVDB},
+					Scope:       trackers.MetadataScopeMovie,
+					AnyOf:       []trackers.MetadataField{trackers.MetadataFieldTMDB, trackers.MetadataFieldIMDB},
+					Disposition: api.RuleDispositionStrict,
+				},
+				{
+					Scope:       trackers.MetadataScopeTV,
+					AnyOf:       []trackers.MetadataField{trackers.MetadataFieldTVDB},
+					Disposition: api.RuleDispositionStrict,
+				},
+				{
+					Scope:       trackers.MetadataScopeTV,
+					AnyOf:       []trackers.MetadataField{trackers.MetadataFieldTVDBTitle},
+					Disposition: api.RuleDispositionStrict,
+				},
+				{
+					Scope:       trackers.MetadataScopeTV,
+					AnyOf:       []trackers.MetadataField{trackers.MetadataFieldTVDBDisambiguation},
 					Disposition: api.RuleDispositionStrict,
 				},
 			},
 		},
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "MTV"},
-		AudioPolicy:          &trackers.AudioPolicy{BlockEnglishOriginalWithForeign: true},
-		ImageHostPolicy:      &trackers.ImageHostPolicy{AllowedHosts: []string{"imgbox", "imgbb"}},
-		DupePolicy:           &trackers.DupePolicy{ContainsFilenameMatch: true, NormalizeMTVName: true},
+		ArtifactPolicy: &trackers.ArtifactPolicy{
+			MaxPieceSizeMiB:     8,
+			PieceSizeProfileURL: mtvBaseURL,
+		},
+		AudioPolicy:     &trackers.AudioPolicy{BlockEnglishOriginalWithForeign: true},
+		ImageHostPolicy: &trackers.ImageHostPolicy{AllowedHosts: []string{"imgbox", "imgbb"}},
+		DupePolicy: &trackers.DupePolicy{
+			ID:         "mtv/duplicate/v2",
+			EvidenceID: "mtv-upload-rules",
+			SearchScope: trackers.DupeSearchScope{
+				MaxPages: 100,
+			},
+			SlotDimensions: []trackers.DupeDimension{
+				trackers.DupeDimensionResolution,
+				trackers.DupeDimensionSource,
+				trackers.DupeDimensionProvider,
+				trackers.DupeDimensionHDR,
+				trackers.DupeDimensionPack,
+			},
+			HDRPartialMode:       trackers.DupeHDRPartialExplicitTitle,
+			HDRCompatibilityMode: trackers.DupeHDRCompatibilityDirectional,
+			PrecedenceRules:      trackers.SeasonPackPrecedenceRules("mtv-upload-rules"),
+		},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{
 			TrackerURLPatterns: []string{"tracker.morethantv"}, SearchPreference: trackers.TorrentSearchPreferenceSmallPieces,
 		},

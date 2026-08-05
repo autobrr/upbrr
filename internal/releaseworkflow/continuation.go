@@ -101,7 +101,12 @@ func projectTrackerLaneOutcomes(current CommandResult) []api.TrackerLaneOutcome 
 			if lane == nil {
 				continue
 			}
-			applyLaneEvidence(lane, result.RequiredActions, result.Failures)
+			actions := slices.DeleteFunc(slices.Clone(result.RequiredActions), func(action api.RequiredAction) bool {
+				return slices.ContainsFunc(lane.RequiredActions, func(existing api.RequiredAction) bool {
+					return existing.ID == action.ID
+				})
+			})
+			applyLaneEvidence(lane, actions, result.Failures)
 			switch result.State {
 			case api.TrackerPreflightStateReady:
 				advanceLane(lane, api.WorkflowGoalTrackersAssessed)
@@ -127,7 +132,7 @@ func projectTrackerLaneOutcomes(current CommandResult) []api.TrackerLaneOutcome 
 			}
 			applyLaneEvidence(lane, result.RequiredActions, result.Failures)
 			switch {
-			case result.Decision == api.DupeDecisionPending || len(result.RequiredActions) > 0:
+			case result.Decision == api.DupeDecisionPending || hasPendingRequiredAction(result.RequiredActions):
 				lane.Lifecycle = api.OperationLifecycleWaiting
 				lane.Disposition = api.WorkflowDispositionNeedsAction
 			case result.Decision == api.DupeDecisionAccepted:
@@ -265,7 +270,7 @@ func advanceLane(lane *api.TrackerLaneOutcome, goal api.WorkflowGoal) {
 func applyLaneEvidence(lane *api.TrackerLaneOutcome, actions []api.RequiredAction, failures []api.WorkflowFailure) {
 	lane.RequiredActions = append(lane.RequiredActions, actions...)
 	lane.Failures = append(lane.Failures, failures...)
-	if len(actions) > 0 {
+	if hasPendingRequiredAction(actions) {
 		lane.Lifecycle = api.OperationLifecycleWaiting
 		lane.Disposition = api.WorkflowDispositionNeedsAction
 		return
@@ -388,7 +393,7 @@ func reduceWorkflowOutcome(
 		}
 		return api.OperationLifecycleReady, api.WorkflowDispositionNone
 	}
-	if waiting > 0 || len(current.Workflow.RequiredActions) > 0 {
+	if waiting > 0 || hasPendingRequiredAction(current.Workflow.RequiredActions) {
 		if succeeded > 0 || failed > 0 {
 			return api.OperationLifecycleWaiting, api.WorkflowDispositionPartial
 		}

@@ -5,6 +5,7 @@ package ar
 
 import (
 	"context"
+	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -23,15 +24,32 @@ func Profile() standalone.Profile {
 		UploadContentMode:  trackers.UploadContentModeDescription,
 		PrepareDescription: prepareDescription,
 		PrepareUpload:      prepareUpload,
-		ReleaseNamePolicy: trackers.NewReleaseNamePolicy("standalone/ar/v1", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
-			name := resolveARName(input.Subject)
-			if input.RequestedName != nil {
-				name = normalizeARName(*input.RequestedName, input.Subject.Tag)
-			}
-			return trackers.ResolvedReleaseNames{Upload: name, Duplicate: resolveARSearchName(input.Subject)}, nil
-		}),
+		ReleaseNamePolicy: trackers.WithNonSceneReleaseNameConfirmation(
+			trackers.NewReleaseNamePolicy("standalone/ar/v3", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
+				name := resolveARName(input.Subject)
+				if !input.Subject.Scene && input.RequestedName != nil {
+					name = strings.TrimSpace(*input.RequestedName)
+				}
+				return trackers.ResolvedReleaseNames{Upload: name, Duplicate: resolveARSearchName(input.Subject)}, nil
+			}),
+		),
 		NewDuplicateAdapter: newDuplicateAdapter,
 		ValidationPolicy:    validationPolicy(),
+		DupePolicy: &trackers.DupePolicy{
+			ID:         "ar/duplicate/v2",
+			EvidenceID: "ar-uploading-guidelines",
+			SearchScope: trackers.DupeSearchScope{
+				MaxPages: 100,
+			},
+			SlotDimensions: []trackers.DupeDimension{
+				trackers.DupeDimensionSource,
+				trackers.DupeDimensionResolution,
+				trackers.DupeDimensionCodec,
+				trackers.DupeDimensionGroup,
+			},
+			SlotContradictionsRequireManualReview: true,
+			SlotDifferencesOverrideGeneral:        true,
+		},
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,
 			Requirements: []trackers.MetadataRequirement{
@@ -51,7 +69,6 @@ func Profile() standalone.Profile {
 			},
 		},
 		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: arSourceFlag},
-		DupePolicy:            &trackers.DupePolicy{ContainsFilenameMatch: true},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{"tracker.alpharatio"}},
 		AuthCapability: &api.TrackerAuthCapability{
 			TrackerID:          "AR",

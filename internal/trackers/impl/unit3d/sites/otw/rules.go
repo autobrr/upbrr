@@ -16,15 +16,25 @@ import (
 // ValidationPolicy returns OTW's waivable genre, adult-content,
 // reality-content, and release-group restrictions.
 func ValidationPolicy() trackers.ValidationPolicyBinding {
-	return trackers.ValidationPolicyBinding{ID: "unit3d-otw-policy-v1", Check: checkGenres}
+	return trackers.ValidationPolicyBinding{ID: "unit3d-otw-policy-v2", Check: checkRequirements}
 }
 
 func checkGenres(ctx context.Context, meta api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context canceled: %w", err)
 	}
-	failures := make([]api.RuleFailure, 0, 3)
+	failures := make([]api.RuleFailure, 0, 4)
 	ruleSubject := unit3d.ValidationRuleSubject(meta)
+	hasTMDB := trackers.MetadataFieldPresent(trackers.MetadataFieldTMDB, ruleSubject)
+	hasFallback := trackers.MetadataFieldPresent(trackers.MetadataFieldIMDB, ruleSubject) ||
+		trackers.MetadataFieldPresent(trackers.MetadataFieldTVDB, ruleSubject)
+	if !hasTMDB && hasFallback && !trackers.MetadataFieldPresent(trackers.MetadataFieldTMDBUnavailable, ruleSubject) {
+		failures = append(failures, trackers.NewRuleFailure(
+			"preferred_metadata_provider",
+			"fallback provider metadata requires explicit evidence that the preferred provider has no matching entry",
+			api.RuleDispositionStrict,
+		))
+	}
 	genres := unit3d.RuleGenres(ruleSubject)
 	if !unit3d.ContainsRuleValue(genres, []string{"animation", "family"}) {
 		failures = append(failures, trackers.NewRuleFailure("genre", "Genre does not match Animation or Family for OTW.", api.RuleDispositionWaivable))

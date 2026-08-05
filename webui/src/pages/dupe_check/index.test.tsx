@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WorkflowOperationProgress } from "../../components/WorkflowOperationProgress";
 import type { DuplicatesFacet } from "../../releaseSession/types";
@@ -23,12 +23,15 @@ const facetFor = (
     total: 0,
     ignoredTrackers: [],
     selectedTrackers: ["EXAMPLE"],
+    releaseNameOverrides: {},
     error: "",
     ...view,
   },
   run: vi.fn(async () => true),
   cancel: vi.fn(async () => true),
   chooseTrackers: vi.fn(),
+  confirmReleaseName: vi.fn(),
+  acknowledgeReleaseName: vi.fn(async () => true),
   setIgnored: vi.fn(),
   ...commands,
 });
@@ -50,6 +53,137 @@ describe("DupeCheckPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
     expect(run).toHaveBeenCalledOnce();
+  });
+
+  it("keeps name review in the tracker card without blocking duplicate checking", () => {
+    const run = vi.fn(async () => true);
+    const confirmReleaseName = vi.fn();
+    const acknowledgeReleaseName = vi.fn(async () => true);
+    renderPage(
+      facetFor(
+        {
+          selectedTrackers: ["AR"],
+          assessment: {
+            results: [
+              {
+                trackerId: "AR",
+                status: "completed",
+                decision: "no_match",
+                matches: [],
+              },
+            ],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["assessment"]>,
+          projections: {
+            projections: [
+              {
+                trackerId: "AR",
+                displayName: "AR",
+                uploadReleaseName: "Example.Release.2026-GRP",
+                policyDecisions: [
+                  {
+                    code: "release_name_confirmation",
+                    decision: "confirmation_required",
+                    blocking: false,
+                  },
+                ],
+              },
+            ],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+        },
+        { acknowledgeReleaseName, run, confirmReleaseName },
+      ),
+      ["AR"],
+    );
+
+    expect(screen.queryByLabelText("Release name confirmation")).not.toBeInTheDocument();
+    const input = screen.getByRole("textbox", { name: "Release name for AR" });
+    expect(input).toHaveValue("Example.Release.2026-GRP");
+    fireEvent.change(input, { target: { value: "Example.Release.2026.EDIT-GRP" } });
+    expect(confirmReleaseName).toHaveBeenCalledWith("AR", "Example.Release.2026.EDIT-GRP");
+    fireEvent.click(screen.getByRole("switch", { name: "Confirm release name for AR" }));
+    expect(acknowledgeReleaseName).toHaveBeenCalledWith("AR", true);
+    expect(run).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it("allows a confirmed tracker name to be toggled back off", () => {
+    const acknowledgeReleaseName = vi.fn(async () => true);
+    renderPage(
+      facetFor(
+        {
+          selectedTrackers: ["AR"],
+          assessment: {
+            results: [
+              {
+                trackerId: "AR",
+                status: "completed",
+                decision: "no_match",
+                matches: [],
+              },
+            ],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["assessment"]>,
+          projections: {
+            projections: [
+              {
+                trackerId: "AR",
+                displayName: "AR",
+                uploadReleaseName: "Example.Release.2026-GRP",
+                policyDecisions: [
+                  {
+                    code: "release_name_confirmation",
+                    decision: "confirmed",
+                    blocking: false,
+                  },
+                ],
+              },
+            ],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+        },
+        { acknowledgeReleaseName },
+      ),
+      ["AR"],
+    );
+
+    const toggle = screen.getByRole("switch", { name: "Confirm release name for AR" });
+    expect(toggle).toBeChecked();
+    expect(toggle).toBeEnabled();
+    fireEvent.click(toggle);
+    expect(acknowledgeReleaseName).toHaveBeenCalledWith("AR", false);
+  });
+
+  it("shows only tracker names changed from canonical naming", () => {
+    renderPage(
+      facetFor({
+        selectedTrackers: ["RENAMED", "UNCHANGED"],
+        projections: {
+          projections: [
+            {
+              trackerId: "RENAMED",
+              displayName: "Renamed",
+              canonicalReleaseName: "Example.Release.2026-GRP",
+              uploadReleaseName: "Example.Release.2026.RENAMED-GRP",
+              duplicateCriteria: { name: "Example Release 2026 SEARCH" },
+            },
+            {
+              trackerId: "UNCHANGED",
+              displayName: "Unchanged",
+              canonicalReleaseName: "Example.Release.2026-GRP",
+              uploadReleaseName: "Example.Release.2026-GRP",
+              duplicateCriteria: { name: "Example.Release.2026-GRP" },
+            },
+          ],
+        } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+      }),
+      ["RENAMED", "UNCHANGED"],
+    );
+
+    const names = screen.getByLabelText("Modified tracker names for RENAMED");
+    expect(within(names).getByText("Example.Release.2026-GRP")).toBeInTheDocument();
+    expect(within(names).getByText("Example.Release.2026.RENAMED-GRP")).toBeInTheDocument();
+    expect(within(names).getByText("Example Release 2026 SEARCH")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Modified tracker names for UNCHANGED")).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 
   it("owns tracker selection and blocks execution while selection is empty", () => {
@@ -76,7 +210,7 @@ describe("DupeCheckPage", () => {
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
   });
 
-  it("renders exactly one layout-owned progress region with safe recovery detail", () => {
+  it("keeps duplicate operation progress out of the persistent release layout", () => {
     const operation: WorkflowOperationStatus = {
       id: "operation-1",
       workflowId: "workflow-1",
@@ -151,14 +285,13 @@ describe("DupeCheckPage", () => {
       </>,
     );
 
-    expect(screen.getAllByRole("progressbar")).toHaveLength(1);
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     expect(
-      screen.getByText("Tracker duplicate checking is temporarily unavailable."),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Recovery: retry operation.")).toBeInTheDocument();
+      screen.queryByText("Tracker duplicate checking is temporarily unavailable."),
+    ).not.toBeInTheDocument();
   });
 
-  it("shows exact upload names and deduplicated blockers without false zero matches", () => {
+  it("shows one concise tracker blocker with modified names", () => {
     renderPage(
       facetFor({
         status: "ready",
@@ -214,15 +347,71 @@ describe("DupeCheckPage", () => {
       }),
     );
 
-    expect(screen.getByText("Example Release 2026 1080p-GRP")).toBeInTheDocument();
-    expect(screen.getByText("Example.Release.2026.1080p-GRP")).toBeInTheDocument();
-    expect(screen.getByText("Example Release 2026")).toBeInTheDocument();
-    expect(screen.getByText("Preflight action_required")).toBeInTheDocument();
+    expect(screen.getByText("Example Tracker")).toBeInTheDocument();
+    expect(screen.getByText("Blocked")).toBeInTheDocument();
     expect(screen.getAllByText("Category TV is not movie.")).toHaveLength(1);
-    expect(
-      screen.getByText("Duplicate search not run because this tracker is blocked."),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/0 match\(es\)/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Projection ineligible")).not.toBeInTheDocument();
+    expect(screen.queryByText("Preflight action_required")).not.toBeInTheDocument();
+    const names = screen.getByLabelText("Modified tracker names for EXAMPLE");
+    expect(within(names).getByText("Example Release 2026 1080p-GRP")).toBeInTheDocument();
+    expect(within(names).getByText("Example.Release.2026.1080p-GRP")).toBeInTheDocument();
+    expect(within(names).getByText("Example Release 2026")).toBeInTheDocument();
+  });
+
+  it("keeps only blocking policy reasons in compact tracker details", () => {
+    renderPage(
+      facetFor({
+        status: "ready",
+        projections: {
+          projections: [
+            {
+              trackerId: "EXAMPLE",
+              displayName: "Example Tracker",
+              uploadReleaseName: "Example.Release.2026.1080p-GRP",
+              readiness: "ineligible",
+              policyDecisions: [
+                {
+                  code: "release_name_policy",
+                  decision: "standalone/example/v2",
+                  blocking: false,
+                },
+                {
+                  code: "container_support",
+                  decision: "ineligible",
+                  blocking: true,
+                  disposition: "strict",
+                  evidenceStatus: "complete",
+                  message: "Selected container is not accepted.",
+                },
+                {
+                  code: "release_identity",
+                  decision: "ineligible",
+                  blocking: true,
+                  disposition: "waivable",
+                  evidenceStatus: "partial",
+                  message: "Release identity needs manual confirmation.",
+                },
+                {
+                  code: "metadata_poster",
+                  decision: "advisory",
+                  blocking: false,
+                  disposition: "advisory",
+                  evidenceStatus: "unavailable",
+                  message: "Poster metadata is not available.",
+                },
+              ],
+            },
+          ],
+        } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+      }),
+    );
+
+    expect(screen.getByText("Selected container is not accepted.")).toBeInTheDocument();
+    expect(screen.getByText("Release identity needs manual confirmation.")).toBeInTheDocument();
+    expect(screen.queryByText("Strict blockers")).not.toBeInTheDocument();
+    expect(screen.queryByText("Advisories")).not.toBeInTheDocument();
+    expect(screen.queryByText("Poster metadata is not available.")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Evidence complete/)).not.toBeInTheDocument();
   });
 
   it("renders auth failure as retryable blocked lane evidence without an action card", () => {
@@ -291,8 +480,7 @@ describe("DupeCheckPage", () => {
       ["ALPHA", "BETA"],
     );
 
-    expect(screen.getByText("Projection blocked")).toBeInTheDocument();
-    expect(screen.getByText("Preflight retryable")).toBeInTheDocument();
+    expect(screen.getByText("Blocked")).toBeInTheDocument();
     expect(
       screen.getAllByText(
         "Tracker authentication is not ready for this attempt. Resolve authentication outside the upload workflow, then restart it.",
@@ -349,7 +537,9 @@ describe("DupeCheckPage", () => {
       ["AITHER", "REMOTE"],
     );
 
-    expect(screen.getByText("In client · upload blocked")).toBeInTheDocument();
+    expect(screen.getByText("In client")).toBeInTheDocument();
+    expect(screen.getByText("Already in client: Strict match")).toBeInTheDocument();
+    expect(screen.queryByText("Strict match")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("checkbox", { name: "Ignore dupes for AITHER" }),
     ).not.toBeInTheDocument();
@@ -357,5 +547,180 @@ describe("DupeCheckPage", () => {
     expect(optional).not.toBeChecked();
     fireEvent.click(optional);
     expect(setIgnored).toHaveBeenCalledWith("REMOTE", true);
+  });
+
+  it("renders per-candidate relations and uses distinct incomplete-evidence acknowledgement", () => {
+    const setIgnored = vi.fn();
+    renderPage(
+      facetFor(
+        {
+          status: "ready",
+          assessment: {
+            results: [
+              {
+                trackerId: "EXAMPLE",
+                uploadReleaseName: "Example.Release.2026.2160p-GRP",
+                decision: "pending",
+                status: "blocked",
+                policyId: "example/duplicate/v1",
+                search: {
+                  complete: false,
+                  pages: 2,
+                  candidateCount: 2,
+                  warnings: ["Tracker result limit prevented a complete search."],
+                },
+                matches: [
+                  {
+                    id: "1",
+                    name: "Example.Release.2026.2160p.DV.HDR-GRP",
+                    relation: "proposed_trumps",
+                    reasons: [{ code: "broader_hdr_compatibility" }],
+                    hdr: {
+                      formats: ["dolby_vision", "hdr10"],
+                      origin: "tracker_api",
+                      status: "complete",
+                    },
+                    evidenceStatus: "complete",
+                    pack: false,
+                    internal: false,
+                    trumpable: false,
+                  },
+                  {
+                    id: "2",
+                    name: "Example.Release.2026.2160p.Unknown-GRP",
+                    relation: "insufficient_evidence",
+                    reasons: [{ code: "candidate_hdr_missing" }],
+                    hdr: { origin: "unknown", status: "missing" },
+                    evidenceStatus: "missing",
+                    pack: false,
+                    internal: false,
+                    trumpable: false,
+                  },
+                ],
+              },
+            ],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["assessment"]>,
+          projections: {
+            projections: [
+              {
+                trackerId: "EXAMPLE",
+                displayName: "Example",
+                uploadReleaseName: "Example.Release.2026.2160p-GRP",
+                readiness: "ready",
+              },
+            ],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+          preflight: {
+            results: [{ trackerId: "EXAMPLE", state: "ready" }],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["preflight"]>,
+        },
+        { setIgnored },
+      ),
+    );
+
+    expect(screen.getByText("proposed trumps")).toBeInTheDocument();
+    expect(screen.getByText("insufficient evidence")).toBeInTheDocument();
+    expect(screen.queryByText(/HDR:/)).not.toBeInTheDocument();
+    expect(screen.queryByText("broader_hdr_compatibility")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Tracker result limit prevented a complete search."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Ignore dupes for EXAMPLE" })).toBeNull();
+    const acknowledge = screen.getByRole("switch", {
+      name: "Acknowledge dupe risk for EXAMPLE",
+    });
+    fireEvent.click(acknowledge);
+    expect(setIgnored).toHaveBeenCalledWith("EXAMPLE", true);
+  });
+
+  it("keeps proven coexistence out of the default action list and candidate count", () => {
+    renderPage(
+      facetFor({
+        status: "ready",
+        assessment: {
+          results: [
+            {
+              trackerId: "EXAMPLE",
+              uploadReleaseName: "Example.Release.2026.1080p.WEB-DL-GRP",
+              decision: "no_match",
+              status: "completed",
+              search: { complete: true, pages: 1, candidateCount: 1 },
+              matches: [
+                {
+                  id: "1",
+                  name: "Example.Release.2026.2160p.Remux-GRP",
+                  relation: "coexists",
+                  reasons: [{ code: "different_resolution" }],
+                  resolution: "2160p",
+                  pack: false,
+                  internal: false,
+                  trumpable: false,
+                },
+              ],
+            },
+          ],
+        } as unknown as NonNullable<DuplicatesFacet["view"]["assessment"]>,
+        projections: {
+          projections: [
+            {
+              trackerId: "EXAMPLE",
+              displayName: "Example",
+              uploadReleaseName: "Example.Release.2026.1080p.WEB-DL-GRP",
+              readiness: "ready",
+            },
+          ],
+        } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+        preflight: {
+          results: [{ trackerId: "EXAMPLE", state: "ready" }],
+        } as unknown as NonNullable<DuplicatesFacet["view"]["preflight"]>,
+      }),
+    );
+
+    expect(screen.getByText("No dupes")).toBeInTheDocument();
+    expect(screen.queryByText("Example.Release.2026.2160p.Remux-GRP")).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Ignore dupes for EXAMPLE" })).toBeNull();
+  });
+
+  it("allows explicit risk acknowledgement when an incomplete search returns no candidates", () => {
+    const setIgnored = vi.fn();
+    renderPage(
+      facetFor(
+        {
+          status: "ready",
+          assessment: {
+            results: [
+              {
+                trackerId: "EXAMPLE",
+                uploadReleaseName: "Example.Release.2026.2160p-GRP",
+                decision: "pending",
+                status: "blocked",
+                search: { complete: false, pages: 2, candidateCount: 0 },
+                matches: [],
+              },
+            ],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["assessment"]>,
+          projections: {
+            projections: [
+              {
+                trackerId: "EXAMPLE",
+                displayName: "Example",
+                uploadReleaseName: "Example.Release.2026.2160p-GRP",
+                readiness: "ready",
+              },
+            ],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+          preflight: {
+            results: [{ trackerId: "EXAMPLE", state: "ready" }],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["preflight"]>,
+        },
+        { setIgnored },
+      ),
+    );
+
+    const acknowledge = screen.getByRole("switch", {
+      name: "Acknowledge dupe risk for EXAMPLE",
+    });
+    fireEvent.click(acknowledge);
+    expect(setIgnored).toHaveBeenCalledWith("EXAMPLE", true);
   });
 });

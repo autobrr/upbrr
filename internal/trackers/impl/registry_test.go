@@ -104,6 +104,36 @@ func TestNewRegistryIncludesHDB(t *testing.T) {
 	}
 }
 
+func TestMovieYearProvidersFollowTrackerMetadataAuthority(t *testing.T) {
+	t.Parallel()
+
+	registry, err := NewRegistry()
+	if err != nil {
+		t.Fatalf("new registry: %v", err)
+	}
+	for _, family := range []trackers.Family{trackers.FamilyUnit3D, trackers.FamilyAZFamily} {
+		for _, name := range registry.NamesByFamily(family) {
+			descriptor, ok := registry.LookupDescriptor(name)
+			if !ok || descriptor.ReleaseNamePolicy.MovieYearProvider != api.IdentityProviderTMDB {
+				t.Fatalf("%s movie-year provider = %q", name, descriptor.ReleaseNamePolicy.MovieYearProvider)
+			}
+		}
+	}
+	for name, provider := range map[string]api.IdentityProvider{
+		"ANT": api.IdentityProviderTMDB,
+		"BJS": api.IdentityProviderTMDB,
+		"BHD": api.IdentityProviderIMDB,
+		"CZT": api.IdentityProviderIMDB,
+		"HDB": api.IdentityProviderIMDB,
+		"PTP": api.IdentityProviderIMDB,
+	} {
+		descriptor, ok := registry.LookupDescriptor(name)
+		if !ok || descriptor.ReleaseNamePolicy.MovieYearProvider != provider {
+			t.Fatalf("%s movie-year provider = %q, want %q", name, descriptor.ReleaseNamePolicy.MovieYearProvider, provider)
+		}
+	}
+}
+
 func TestDescriptionDefinitionsPreserveFinalReviewedDescription(t *testing.T) {
 	t.Parallel()
 
@@ -168,7 +198,7 @@ func TestRegistryProjectsARAndMTVNamesBeforeDuplicateChecking(t *testing.T) {
 					Year:  2026,
 				},
 			},
-			wantUpload:    "Example.Release.2026",
+			wantUpload:    "Example Release 2026",
 			wantDuplicate: "Example Release 2026",
 		},
 		{
@@ -262,6 +292,20 @@ func TestRegistryProjectsVersionedReleaseNamesForEveryBuiltIn(t *testing.T) {
 			if strings.TrimSpace(projection.UploadReleaseName) == "" || strings.TrimSpace(projection.DuplicateCriteria.Name) == "" {
 				t.Fatalf("projected names = upload %q, search %q", projection.UploadReleaseName, projection.DuplicateCriteria.Name)
 			}
+			wantEpisodeTitleMode := api.EpisodeTitleModeInclude
+			if name == "BLU" || name == "HDB" {
+				wantEpisodeTitleMode = api.EpisodeTitleModeOmit
+			}
+			if projection.NamingElementPolicyVersion != api.ReleaseNameElementPolicyVersionV1 ||
+				projection.EpisodeTitleMode != wantEpisodeTitleMode {
+				t.Fatalf(
+					"element policy = version %q mode %q, want version %q mode %q",
+					projection.NamingElementPolicyVersion,
+					projection.EpisodeTitleMode,
+					api.ReleaseNameElementPolicyVersionV1,
+					wantEpisodeTitleMode,
+				)
+			}
 			if !slices.ContainsFunc(projection.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
 				return decision.Code == "release_name_policy" && decision.Decision == descriptor.ReleaseNamePolicy.ID
 			}) {
@@ -274,6 +318,41 @@ func TestRegistryProjectsVersionedReleaseNamesForEveryBuiltIn(t *testing.T) {
 				t.Fatalf("distinct duplicate-search name is undeclared: %#v", projection)
 			}
 		})
+	}
+}
+
+func TestRegistryOmitsGeneratedEpisodeTitleForBLU(t *testing.T) {
+	t.Parallel()
+
+	registry, err := NewRegistry()
+	if err != nil {
+		t.Fatalf("new registry: %v", err)
+	}
+	descriptor, ok := registry.LookupDescriptor("BLU")
+	if !ok {
+		t.Fatal("BLU descriptor missing")
+	}
+	const included = "Example.Show.S01E02.Example.Episode.1080p.WEB-DL-GRP"
+	const omitted = "Example.Show.S01E02.1080p.WEB-DL-GRP"
+	input, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{
+		Tracker: "BLU",
+		Meta: api.UploadSubject{
+			ReleaseName: included,
+			GeneratedReleaseNames: api.GeneratedReleaseNameVariants{
+				IncludeEpisodeTitle: api.ReleaseNameVariant{Name: included},
+				OmitEpisodeTitle:    api.ReleaseNameVariant{Name: omitted},
+			},
+		},
+	}, descriptor.ReleaseNamePolicy)
+	if failure != nil {
+		t.Fatalf("prepare BLU name: %v", failure)
+	}
+	name, err := input.ReviewedUploadName()
+	if err != nil {
+		t.Fatalf("reviewed BLU name: %v", err)
+	}
+	if name != omitted {
+		t.Fatalf("BLU release name = %q, want %q", name, omitted)
 	}
 }
 
@@ -348,7 +427,8 @@ func TestNewRegistryCapabilityInventory(t *testing.T) {
 	if _, ok := registry.LookupMetadataPolicy("ANT"); !ok {
 		t.Fatal("expected ANT tracker-owned metadata policy")
 	}
-	if policy, ok := registry.LookupDupePolicy("ANT"); !ok || !policy.DolbyVisionImpliesHDR {
+	if policy, ok := registry.LookupDupePolicy("ANT"); !ok || policy.ID != "ant/duplicate/v2" ||
+		policy.EvidenceID != "ant-dupes-trumping" {
 		t.Fatalf("ANT dupe policy = %#v, %t", policy, ok)
 	}
 }
@@ -372,6 +452,9 @@ func TestNewRegistryMigrationInventoryClassifiesEveryBuiltIn(t *testing.T) {
 		if descriptor.ReleaseNamePolicy.Resolver == nil || strings.TrimSpace(descriptor.ReleaseNamePolicy.ID) == "" ||
 			strings.TrimSpace(descriptor.ProjectorVersion) == "" {
 			t.Fatalf("%s versioned release projector missing", name)
+		}
+		if policy, ok := registry.LookupDupePolicy(name); !ok || strings.TrimSpace(policy.ID) == "" {
+			t.Fatalf("%s versioned duplicate policy missing", name)
 		}
 
 		var namingAndTaxonomyOwner string
@@ -505,13 +588,23 @@ func TestNewRegistryOwnsMetadataPolicies(t *testing.T) {
 	}
 
 	mtvPolicy, ok := registry.LookupMetadataPolicy("MTV")
-	if !ok || len(mtvPolicy.Requirements) != 1 {
-		t.Fatalf("MTV metadata policy = %#v, %t; want one requirement", mtvPolicy, ok)
+	if !ok || len(mtvPolicy.Requirements) != 4 {
+		t.Fatalf("MTV metadata policy = %#v, %t; want four requirements", mtvPolicy, ok)
 	}
-	mtvRequirement := mtvPolicy.Requirements[0]
-	wantFields := []trackers.MetadataField{trackers.MetadataFieldTMDB, trackers.MetadataFieldIMDB, trackers.MetadataFieldTVDB}
-	if mtvRequirement.Scope != trackers.MetadataScopeAny || !slices.Equal(mtvRequirement.AnyOf, wantFields) {
-		t.Errorf("MTV metadata requirement = %#v; want any of %#v", mtvRequirement, wantFields)
+	wantRequirements := []struct {
+		scope  trackers.MetadataScope
+		fields []trackers.MetadataField
+	}{
+		{scope: trackers.MetadataScopeMovie, fields: []trackers.MetadataField{trackers.MetadataFieldTMDB, trackers.MetadataFieldIMDB}},
+		{scope: trackers.MetadataScopeTV, fields: []trackers.MetadataField{trackers.MetadataFieldTVDB}},
+		{scope: trackers.MetadataScopeTV, fields: []trackers.MetadataField{trackers.MetadataFieldTVDBTitle}},
+		{scope: trackers.MetadataScopeTV, fields: []trackers.MetadataField{trackers.MetadataFieldTVDBDisambiguation}},
+	}
+	for index, want := range wantRequirements {
+		got := mtvPolicy.Requirements[index]
+		if got.Scope != want.scope || got.Disposition != api.RuleDispositionStrict || !slices.Equal(got.AnyOf, want.fields) {
+			t.Errorf("MTV metadata requirement %d = %#v; want scope=%q fields=%#v strict", index, got, want.scope, want.fields)
+		}
 	}
 }
 
@@ -555,7 +648,7 @@ func TestNewRegistryIncludesBHDPolicies(t *testing.T) {
 	if groups, ok := registry.LookupBannedGroups("BHD"); !ok || !slices.Contains(groups, "TGS") {
 		t.Fatalf("BHD banned groups = %#v, %t", groups, ok)
 	}
-	if policy, ok := registry.LookupDupePolicy("BHD"); !ok || !policy.MatchAggregateSize || !policy.NormalizeDDPlusName {
+	if policy, ok := registry.LookupDupePolicy("BHD"); !ok || policy.ID != "bhd/duplicate/v2" || policy.SizeVariancePercent != 20 {
 		t.Fatalf("BHD dupe policy = %#v, %t", policy, ok)
 	}
 	if definition, ok := registry.Lookup("BHD"); !ok {

@@ -43,11 +43,13 @@ const (
 	e2eShotPathEnv     = "UPBRR_E2E_SCREENSHOT_PATH"
 	e2eResolutionEnv   = "UPBRR_E2E_RESOLUTION"
 	e2eDuplicateEnv    = "UPBRR_E2E_DUPLICATE_TRACKERS"
+	e2eDupeScenarioEnv = "UPBRR_E2E_DUPE_SCENARIOS"
 	e2eBlurayEnv       = "UPBRR_E2E_BLURAY_CANDIDATES"
 	e2eAuthNeededEnv   = "UPBRR_E2E_AUTH_REQUIRED_TRACKERS"
 	e2eAuthScenarioEnv = "UPBRR_E2E_AUTH_SCENARIOS"
 	e2eAuthCounterEnv  = "UPBRR_E2E_AUTH_COUNTER_PATH"
 	e2eClockOffsetEnv  = "UPBRR_E2E_CLOCK_OFFSET"
+	e2eMediaKindEnv    = "UPBRR_E2E_MEDIA_KIND"
 )
 
 // maybeApplyE2EServices replaces only missing runtime capabilities when both
@@ -162,6 +164,26 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 	if resolution == "" {
 		resolution = "1080p"
 	}
+	releaseName := "E2E.Movie.2026.1080p.WEB-DL.DD5.1.H264-UPBRR"
+	releaseNameNoTag := "E2E.Movie.2026.1080p.WEB-DL.DD5.1.H264"
+	releaseNameClean := "E2E Movie 2026 1080p WEB-DL DD5.1 H264"
+	title := "E2E Movie"
+	category := api.CategoryMovie
+	canonicalCategory := api.CanonicalCategoryMovie
+	tvdbID := 0
+	season := 0
+	episode := 0
+	if strings.EqualFold(strings.TrimSpace(os.Getenv(e2eMediaKindEnv)), "tv") {
+		releaseName = "E2E.Show.2026.S01E01.1080p.WEB-DL.DD5.1.H264-UPBRR"
+		releaseNameNoTag = "E2E.Show.2026.S01E01.1080p.WEB-DL.DD5.1.H264"
+		releaseNameClean = "E2E Show 2026 S01E01 1080p WEB-DL DD5.1 H264"
+		title = "E2E Show"
+		category = api.CategoryTV
+		canonicalCategory = api.CanonicalCategoryTV
+		tvdbID = 2001
+		season = 1
+		episode = 1
+	}
 	meta := preparationstate.State{
 		SourcePath: sourcePath,
 		Paths:      []string{sourcePath},
@@ -172,29 +194,33 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 			KeepImages:      input.Policy.KeepImages,
 			InteractionMode: input.Controls.Interaction,
 		},
-		ReleaseName:       "E2E.Movie.2026.1080p.WEB-DL.DD5.1.H264-UPBRR",
-		ReleaseNameNoTag:  "E2E.Movie.2026.1080p.WEB-DL.DD5.1.H264",
-		ReleaseNameClean:  "E2E Movie 2026 1080p WEB-DL DD5.1 H264",
-		Filename:          filepath.Base(sourcePath),
-		Tag:               "-UPBRR",
-		Type:              "WEBDL",
-		Source:            "WEB-DL",
-		Container:         "MKV",
-		VideoCodec:        "AVC",
-		VideoEncode:       "H264",
-		Audio:             "DD 5.1",
-		Channels:          "5.1",
-		AudioLanguages:    []string{"English"},
-		SubtitleLanguages: []string{"English"},
+		ReleaseName:              releaseName,
+		ReleaseNameNoTag:         releaseNameNoTag,
+		ReleaseNameClean:         releaseNameClean,
+		Filename:                 filepath.Base(sourcePath),
+		Tag:                      "-UPBRR",
+		Type:                     "WEBDL",
+		Source:                   "WEB-DL",
+		Container:                "MKV",
+		VideoCodec:               "AVC",
+		VideoEncode:              "H264",
+		Audio:                    "DD 5.1",
+		Channels:                 "5.1",
+		AudioLanguages:           []string{"English"},
+		SubtitleLanguages:        []string{"English"},
+		MediaInfoUniqueID:        "e2e-unique-id",
+		MediaInfoUniqueIDPresent: true,
 		Release: api.ReleaseInfo{
-			Category:   string(api.CategoryMovie),
+			Category:   string(category),
 			Type:       "WEBDL",
-			Title:      "E2E Movie",
+			Title:      title,
 			Year:       2026,
 			Source:     "WEB-DL",
 			Resolution: resolution,
 			Ext:        ".mkv",
 			Group:      "UPBRR",
+			Season:     season,
+			Episode:    episode,
 		},
 		DescriptionTemplate: "E2E description fixture.",
 	}
@@ -233,21 +259,43 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 		SourcePath: sourcePath,
 		TMDBID:     1001,
 		IMDBID:     1234567,
-		Category:   api.CanonicalCategoryMovie,
+		TVDBID:     tvdbID,
+		Category:   canonicalCategory,
 	}
 	meta.ProviderMetadata = api.SourceScopedMetadata{
 		SourcePath: sourcePath,
 		TMDB: &api.TMDBMetadata{
 			TMDBID:           1001,
 			IMDBID:           1234567,
-			Category:         string(api.CategoryMovie),
-			Title:            "E2E Movie",
-			OriginalTitle:    "E2E Movie",
+			TVDBID:           tvdbID,
+			Category:         string(category),
+			Title:            title,
+			OriginalTitle:    title,
 			Year:             2026,
 			ReleaseDate:      "2026-01-02",
 			OriginalLanguage: "en",
 			Overview:         "Deterministic E2E metadata fixture.",
 		},
+	}
+	if tvdbID > 0 {
+		meta.ProviderMetadata.TVDB = &api.TVDBMetadata{
+			TVDBID:                 tvdbID,
+			Name:                   title,
+			NameEnglish:            title,
+			Overview:               "Deterministic E2E metadata fixture.",
+			OverviewEnglish:        "Deterministic E2E metadata fixture.",
+			FirstAired:             "2026-01-02",
+			Year:                   2026,
+			OriginalLanguage:       "eng",
+			HasEnglish:             true,
+			EpisodeSeason:          season,
+			EpisodeNumber:          episode,
+			EpisodeName:            "Example Episode",
+			EpisodeNameEnglish:     "Example Episode",
+			EpisodeOverview:        "Deterministic E2E episode fixture.",
+			EpisodeOverviewEnglish: "Deterministic E2E episode fixture.",
+			EpisodeAired:           "2026-01-02",
+		}
 	}
 	if value := strings.TrimSpace(os.Getenv(e2eBlurayEnv)); value == "1" || strings.EqualFold(value, "true") {
 		meta.ProviderMetadata.Bluray = e2eBlurayMetadata(sourcePath)
@@ -494,37 +542,195 @@ type e2eDupeService struct {
 
 func (e2eDupeService) Check(_ context.Context, meta api.DuplicateSubject, trackers []string) (api.DupeCheckSummary, error) {
 	duplicateTrackers := e2eTrackerSet(e2eDuplicateEnv)
+	scenarios := e2eDupeScenarios()
 	results := make([]api.DupeCheckResult, 0, len(trackers))
 	for _, tracker := range trackers {
 		name := strings.ToUpper(strings.TrimSpace(tracker))
-		result := api.DupeCheckResult{Tracker: name, Status: "completed"}
-		if _, ok := duplicateTrackers[name]; ok {
-			result.HasDupes = true
-			result.Filtered = []api.DupeEntry{{
-				ID:   "e2e-dupe-1",
-				Name: "Example.Release.2026.1080p-GRP",
-			}}
+		result := api.DupeCheckResult{
+			Tracker: name,
+			Status:  "completed",
+			Search: api.DupeSearchEvidence{
+				Complete: true,
+				Pages:    1,
+				Scope:    "synthetic_work_identity",
+			},
 		}
+		scenario := scenarios[name]
+		if scenario == "" {
+			if _, ok := duplicateTrackers[name]; ok {
+				scenario = "exact"
+			}
+		}
+		applyE2EDupeScenario(&result, scenario)
 		results = append(results, result)
 	}
 	return api.DupeCheckSummary{SourcePath: meta.SourcePath, Results: results}, nil
 }
 
-func (s e2eDupeService) CheckWithAssessment(
+func e2eDupeScenarios() map[string]string {
+	scenarios := make(map[string]string)
+	for value := range strings.SplitSeq(os.Getenv(e2eDupeScenarioEnv), ",") {
+		trackerID, scenario, ok := strings.Cut(value, "=")
+		trackerID = strings.ToUpper(strings.TrimSpace(trackerID))
+		scenario = strings.ToLower(strings.TrimSpace(scenario))
+		if ok && trackerID != "" && scenario != "" {
+			scenarios[trackerID] = scenario
+		}
+	}
+	return scenarios
+}
+
+func applyE2EDupeScenario(result *api.DupeCheckResult, scenario string) {
+	if result == nil {
+		return
+	}
+	switch strings.ToLower(strings.TrimSpace(scenario)) {
+	case "exact":
+		result.Evaluations = []api.DupeCandidateEvaluation{
+			e2eDupeCandidate("e2e-dupe-1", "Example.Release.2026.1080p-GRP", api.DupeRelationExactDuplicate, "exact_identity",
+				api.HDRFacts{
+					Formats: []api.HDRFormat{api.HDRFormatSDR},
+					Origin:  api.HDREvidenceTrackerAPI,
+					Status:  api.HDREvidenceComplete,
+				}),
+		}
+		result.HasDupes = true
+	case "coexists":
+		result.Evaluations = []api.DupeCandidateEvaluation{
+			e2eDupeCandidate("e2e-coexists-1", "Example.Release.2026.1080p.SDR-GRP", api.DupeRelationCoexists, "distinct_hdr_slot",
+				api.HDRFacts{
+					Formats: []api.HDRFormat{api.HDRFormatSDR},
+					Origin:  api.HDREvidenceTrackerAPI,
+					Status:  api.HDREvidenceComplete,
+				}),
+		}
+	case "proposed_trump":
+		result.Evaluations = []api.DupeCandidateEvaluation{
+			e2eDupeCandidate("e2e-trump-1", "Example.Release.2026.1080p.HDR10-GRP", api.DupeRelationProposedTrumps, "broader_hdr_compatibility",
+				api.HDRFacts{
+					Formats: []api.HDRFormat{api.HDRFormatHDR10},
+					Origin:  api.HDREvidenceTrackerAPI,
+					Status:  api.HDREvidenceComplete,
+				}),
+		}
+		result.HasDupes = true
+	case "missing_hdr":
+		result.Evaluations = []api.DupeCandidateEvaluation{
+			e2eDupeCandidate("e2e-missing-1", "Example.Release.2026.1080p.Unknown-GRP", api.DupeRelationInsufficientEvidence, "candidate_hdr_missing",
+				api.HDRFacts{Origin: api.HDREvidenceUnknown, Status: api.HDREvidenceMissing}),
+		}
+		result.HasDupes = true
+	case "mtv_manual":
+		result.Evaluations = []api.DupeCandidateEvaluation{
+			e2eDupeCandidate("e2e-mtv-1", "Example.Show.S01E01.1080p.WEB-DL.DV-GRP", api.DupeRelationManualReview, "mtv_title_hdr_partial",
+				api.HDRFacts{
+					Formats: []api.HDRFormat{api.HDRFormatDolbyVision},
+					Origin:  api.HDREvidenceTrackerTitle,
+					Status:  api.HDREvidencePartial,
+				}),
+		}
+		result.HasDupes = true
+	case "mixed", "mixed_incomplete":
+		result.Evaluations = []api.DupeCandidateEvaluation{
+			e2eDupeCandidate("e2e-coexists-1", "Example.Release.2026.1080p.SDR-GRP", api.DupeRelationCoexists, "distinct_hdr_slot",
+				api.HDRFacts{
+					Formats: []api.HDRFormat{api.HDRFormatSDR},
+					Origin:  api.HDREvidenceTrackerAPI,
+					Status:  api.HDREvidenceComplete,
+				}),
+			e2eDupeCandidate("e2e-trump-1", "Example.Release.2026.1080p.HDR10-GRP", api.DupeRelationProposedTrumps, "broader_hdr_compatibility",
+				api.HDRFacts{
+					Formats: []api.HDRFormat{api.HDRFormatHDR10},
+					Origin:  api.HDREvidenceTrackerAPI,
+					Status:  api.HDREvidenceComplete,
+				}),
+			e2eDupeCandidate("e2e-missing-1", "Example.Release.2026.1080p.Unknown-GRP", api.DupeRelationInsufficientEvidence, "candidate_hdr_missing",
+				api.HDRFacts{Origin: api.HDREvidenceUnknown, Status: api.HDREvidenceMissing}),
+		}
+		result.HasDupes = true
+	case "incomplete":
+		result.Search.Complete = false
+		result.Search.Pages = 2
+		result.Search.Warnings = []string{"Synthetic search stopped at the configured page bound."}
+		result.HasDupes = true
+	}
+	if scenario == "mixed_incomplete" {
+		result.Search.Complete = false
+		result.Search.Pages = 2
+		result.Search.Warnings = []string{"Synthetic search stopped at the configured page bound."}
+	}
+	result.Search.CandidateCount = len(result.Evaluations)
+}
+
+func e2eDupeCandidate(
+	id string,
+	name string,
+	relation api.DupeRelation,
+	reason string,
+	hdr api.HDRFacts,
+) api.DupeCandidateEvaluation {
+	return api.DupeCandidateEvaluation{
+		ID:       id,
+		Name:     name,
+		Link:     "https://tracker.invalid/torrents.php?id=" + id,
+		Relation: relation,
+		Reasons: []api.DupeReason{{
+			Code:    reason,
+			Message: "Synthetic tracker policy evidence.",
+		}},
+		HDR:            hdr,
+		EvidenceStatus: hdr.Status,
+	}
+}
+
+func (s e2eDupeService) CheckProjectionSet(
 	ctx context.Context,
 	meta api.DuplicateSubject,
-	trackers []string,
-	_ dupechecking.CheckOptions,
-) (api.DupeCheckSummary, dupechecking.Assessment, error) {
+	projections api.TrackerReleaseProjectionSet,
+	_ api.ProjectionDupeCheckOptions,
+) (api.DupeCheckSummary, api.DupeAssessmentEvidence, error) {
+	if err := projections.Validate(); err != nil {
+		return api.DupeCheckSummary{}, dupechecking.EmptyAssessment(), fmt.Errorf("e2e duplicate projections: %w", err)
+	}
+	trackers := make([]string, 0, len(projections.Projections))
+	for _, projection := range projections.Projections {
+		if projection.Readiness != api.ReadinessStatusReady || !projection.DupeReady {
+			continue
+		}
+		trackers = append(trackers, string(projection.TrackerID))
+	}
 	summary, err := s.Check(ctx, meta, trackers)
 	evidence := make([]dupechecking.AssessmentEvidence, 0, len(summary.Results))
 	for _, result := range summary.Results {
+		match := api.DupeMatch{}
+		privateRaw := make([]api.DupeEntry, 0, len(result.Evaluations))
+		for _, candidate := range result.Evaluations {
+			if candidate.Relation == api.DupeRelationCoexists {
+				continue
+			}
+			reason := ""
+			if len(candidate.Reasons) > 0 {
+				reason = candidate.Reasons[0].Code
+			}
+			match = api.DupeMatch{
+				MatchedID:     candidate.ID,
+				MatchedName:   candidate.Name,
+				MatchedLink:   candidate.Link,
+				MatchedReason: reason,
+			}
+			privateRaw = append(privateRaw, api.DupeEntry{
+				ID:   candidate.ID,
+				Name: candidate.Name,
+				Link: candidate.Link,
+			})
+			break
+		}
 		evidence = append(evidence, dupechecking.AssessmentEvidence{
 			Tracker:     result.Tracker,
 			Disposition: dupechecking.DispositionResolved,
 			HasDupes:    result.HasDupes,
-			Match:       result.Match,
-			Raw:         result.Raw,
+			Match:       match,
+			Raw:         privateRaw,
 		})
 	}
 	return summary, dupechecking.NewAssessment(meta, s.cfg, evidence), err

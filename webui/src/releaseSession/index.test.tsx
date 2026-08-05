@@ -1810,6 +1810,19 @@ describe("useReleaseSession", () => {
     await selectAndPrepare(result, "C:\\media\\Example");
     await waitFor(() => expect(result.current.duplicates.view.status).toBe("ready"));
     expect(dryRunUploads).not.toHaveBeenCalled();
+    expect(
+      result.current.upload.view.projections?.projections.map((projection) => ({
+        trackerId: projection.trackerId,
+        canonicalReleaseName: projection.canonicalReleaseName,
+        uploadReleaseName: projection.uploadReleaseName,
+      })),
+    ).toEqual([
+      {
+        trackerId: "AITHER",
+        canonicalReleaseName: "Example Release 2026 1080p-GRP",
+        uploadReleaseName: "Example.Release.2026.1080p-GRP",
+      },
+    ]);
 
     await act(() => result.current.upload.runDryRun());
     expect(result.current.upload.view.dryRunStatus).toBe("ready");
@@ -1961,5 +1974,313 @@ describe("useReleaseSession", () => {
     });
     expect(started).toBe(true);
     expect(result.current.duplicates.view.status).toBe("ready");
+  });
+
+  it("acknowledges incomplete zero-candidate duplicate evidence", async () => {
+    const fixture = workflowPorts();
+    const checkDuplicates = vi.fn(
+      async (
+        current: ReleaseWorkflowCurrent,
+        skipRemote: boolean,
+        idempotencyKey: string,
+        signal: AbortSignal,
+      ) => {
+        const checked = await fixture.checkDuplicates(current, skipRemote, idempotencyKey, signal);
+        return {
+          ...checked,
+          dupes: {
+            ...checked.dupes!,
+            status: "blocked",
+            results: [
+              {
+                trackerId: "AITHER",
+                uploadReleaseName: "Example.Release.2026.1080p-GRP",
+                matches: [],
+                search: {
+                  complete: false,
+                  pages: 2,
+                  candidateCount: 0,
+                  scope: "work_identity",
+                  warnings: ["Search pagination is incomplete."],
+                },
+                decision: "pending",
+                status: "blocked",
+              },
+            ],
+          } as unknown as NonNullable<ReleaseWorkflowCurrent["dupes"]>,
+        };
+      },
+    );
+    const decideDuplicates = vi.fn(
+      async (current: ReleaseWorkflowCurrent): Promise<ReleaseWorkflowCurrent> => ({
+        ...current,
+        dupes: {
+          ...current.dupes!,
+          status: "completed",
+          results: current.dupes!.results.map((result) => ({
+            ...result,
+            decision: "ignored",
+            status: "completed",
+          })),
+        },
+      }),
+    );
+    const workflow = workflowPorts({ checkDuplicates, decideDuplicates });
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(portsFor({ workflow })),
+    });
+
+    act(() => result.current.input.selectSource("C:\\media\\Example Release"));
+    act(() => result.current.duplicates.chooseTrackers(["AITHER"]));
+    await act(() => result.current.input.prepare());
+    await act(() => result.current.duplicates.run());
+
+    act(() => result.current.duplicates.setIgnored("AITHER", true));
+    await waitFor(() =>
+      expect(decideDuplicates).toHaveBeenCalledWith(
+        expect.anything(),
+        { AITHER: "ignored" },
+        expect.any(String),
+        expect.any(AbortSignal),
+      ),
+    );
+    await waitFor(() => {
+      expect(result.current.workflow.view.current?.dupes?.status).toBe("completed");
+      expect(result.current.workflow.view.current?.dupes?.results[0]).toEqual(
+        expect.objectContaining({ decision: "ignored", status: "completed" }),
+      );
+    });
+  });
+
+  it("checks dupes before name review and acknowledges the tracker name without rechecking", async () => {
+    const fixture = workflowPorts();
+    const action = {
+      createdAt: "2026-07-20T00:00:00Z",
+      id: "action-review-name",
+      kind: "provide_tracker_input" as const,
+      prompt: "Confirm the tracker release name.",
+      status: "pending" as const,
+      trackerId: "AR",
+      workflowRevision: 3,
+    };
+    const project = vi.fn(
+      async (
+        current: ReleaseWorkflowCurrent,
+        trackers: readonly string[],
+        instructions: Readonly<Record<string, TrackerProjectionInstructions>>,
+        idempotencyKey: string,
+        signal: AbortSignal,
+      ) => {
+        const projected = await fixture.project(
+          current,
+          trackers,
+          instructions,
+          idempotencyKey,
+          signal,
+        );
+        return {
+          ...projected,
+          workflow: {
+            ...projected.workflow,
+            requiredActions: [action],
+            status: "blocked" as const,
+          },
+          projections: {
+            ...projected.projections!,
+            projections: projected.projections!.projections.map((projection) => ({
+              ...projection,
+              dupeReady: true,
+              uploadReady: false,
+              requiredActions: [action],
+              policyDecisions: [
+                {
+                  code: "release_name_confirmation",
+                  decision: "confirmation_required",
+                  blocking: false,
+                },
+              ],
+            })),
+          },
+        };
+      },
+    );
+    const prepare = vi.fn(
+      async (
+        current: ReleaseWorkflowCurrent,
+        input: PrepareInput,
+        idempotencyKey: string,
+        signal: AbortSignal,
+      ) => {
+        const prepared = await fixture.prepare(current, input, idempotencyKey, signal);
+        return {
+          ...prepared,
+          workflow: {
+            ...prepared.workflow,
+            requiredActions: [action],
+            status: "blocked" as const,
+          },
+          projections: {
+            status: "ready" as const,
+            projections: [
+              {
+                trackerId: "AR",
+                displayName: "AR",
+                canonicalReleaseName: "Example Release 2026",
+                uploadReleaseName: "Example.Release.2026-GRP",
+                artifacts: {},
+                dupeReady: true,
+                uploadReady: false,
+                readiness: "ready" as const,
+                requiredActions: [action],
+                policyDecisions: [
+                  {
+                    code: "release_name_confirmation",
+                    decision: "confirmation_required",
+                    blocking: false,
+                  },
+                ],
+              },
+            ],
+          } as unknown as NonNullable<ReleaseWorkflowCurrent["projections"]>,
+        };
+      },
+    );
+    let checkedCurrent: ReleaseWorkflowCurrent | null = null;
+    const checkDuplicates = vi.fn(
+      async (
+        current: ReleaseWorkflowCurrent,
+        skipRemote: boolean,
+        idempotencyKey: string,
+        signal: AbortSignal,
+      ) => {
+        checkedCurrent = await fixture.checkDuplicates(current, skipRemote, idempotencyKey, signal);
+        return checkedCurrent;
+      },
+    );
+    const workflowBase = workflowPorts({ checkDuplicates, prepare, project });
+    const baseContinue = workflowBase.continue;
+    let reviewedCurrent: ReleaseWorkflowCurrent | null = null;
+    const continueWorkflow = vi.fn(
+      async (request: ContinueReleaseWorkflowRequest, signal: AbortSignal) => {
+        if (!request.answers?.length) return baseContinue(request, signal);
+        if (!checkedCurrent) throw new Error("duplicate fixture is unavailable");
+        const active = reviewedCurrent || checkedCurrent;
+        const acknowledged = request.answers[0]?.confirmed === true;
+        const currentlyAcknowledged =
+          active.projections?.projections[0]?.policyDecisions?.[0]?.decision === "confirmed";
+        if (acknowledged === currentlyAcknowledged) return active;
+        const reviewedName = acknowledged
+          ? request.answers[0]?.textValue || ""
+          : "Example.Release.2026-GRP";
+        const revision = active.workflow.revision + 1;
+        const reviewedAction = {
+          ...action,
+          status: acknowledged ? ("resolved" as const) : ("pending" as const),
+          workflowRevision: revision,
+        };
+        reviewedCurrent = {
+          ...active,
+          workflow: {
+            ...active.workflow,
+            revision,
+            requiredActions: [reviewedAction],
+            status: acknowledged ? "active" : "blocked",
+          },
+          projections: {
+            ...active.projections!,
+            projections: active.projections!.projections.map((projection) => ({
+              ...projection,
+              uploadReleaseName: reviewedName,
+              uploadReady: acknowledged,
+              requiredActions: [reviewedAction],
+              policyDecisions: [
+                {
+                  code: "release_name_confirmation",
+                  decision: acknowledged ? "confirmed" : "confirmation_required",
+                  blocking: false,
+                },
+              ],
+            })),
+          },
+          dupes: {
+            ...active.dupes!,
+            results: active.dupes!.results.map((dupe) => ({
+              ...dupe,
+              uploadReleaseName: reviewedName,
+            })),
+          },
+        };
+        return reviewedCurrent;
+      },
+    );
+    const workflow: ReleaseSessionPorts["workflow"] = {
+      ...workflowBase,
+      continue: continueWorkflow,
+    };
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(portsFor({ workflow })),
+    });
+    act(() => result.current.input.selectSource("C:\\media\\Example Release"));
+    act(() => result.current.duplicates.chooseTrackers(["AR"]));
+    await act(() => result.current.input.prepare());
+    act(() =>
+      result.current.duplicates.confirmReleaseName("AR", "Example.Release.2026.REVIEWED-GRP"),
+    );
+    await act(() => result.current.duplicates.run());
+
+    const dupeProjectionInstructions = project.mock.calls[0]?.[2]?.AR;
+    expect(dupeProjectionInstructions).not.toHaveProperty("uploadReleaseName");
+    expect(checkDuplicates).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      expect(await result.current.duplicates.acknowledgeReleaseName("AR", true)).toBe(true);
+    });
+    const answerRequest = continueWorkflow.mock.calls.find((call) => call[0].answers?.length)?.[0];
+    expect(answerRequest?.answers?.[0]).toEqual(
+      expect.objectContaining({
+        actionId: "action-review-name",
+        confirmed: true,
+        textValue: "Example.Release.2026.REVIEWED-GRP",
+      }),
+    );
+    expect(checkDuplicates).toHaveBeenCalledOnce();
+    expect(result.current.duplicates.view.projections?.projections[0]).toEqual(
+      expect.objectContaining({
+        uploadReleaseName: "Example.Release.2026.REVIEWED-GRP",
+        uploadReady: true,
+      }),
+    );
+
+    await act(async () => {
+      expect(await result.current.duplicates.acknowledgeReleaseName("AR", false)).toBe(true);
+    });
+    const unconfirmRequest = continueWorkflow.mock.calls.find(
+      (call) => call[0].answers?.[0]?.confirmed === false,
+    )?.[0];
+    expect(unconfirmRequest?.answers?.[0]).toEqual(
+      expect.objectContaining({
+        actionId: "action-review-name",
+        confirmed: false,
+      }),
+    );
+    expect(unconfirmRequest?.answers?.[0]).not.toHaveProperty("textValue");
+    expect(checkDuplicates).toHaveBeenCalledOnce();
+    expect(result.current.duplicates.view.projections?.projections[0]).toEqual(
+      expect.objectContaining({
+        uploadReleaseName: "Example.Release.2026-GRP",
+        uploadReady: false,
+      }),
+    );
+
+    await act(async () => {
+      expect(await result.current.duplicates.acknowledgeReleaseName("AR", true)).toBe(true);
+    });
+    expect(checkDuplicates).toHaveBeenCalledOnce();
+    expect(result.current.duplicates.view.projections?.projections[0]).toEqual(
+      expect.objectContaining({
+        uploadReleaseName: "Example.Release.2026.REVIEWED-GRP",
+        uploadReady: true,
+      }),
+    );
   });
 });

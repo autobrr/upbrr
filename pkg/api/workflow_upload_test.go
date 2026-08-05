@@ -22,6 +22,7 @@ func TestReleaseWorkflowUploadRequestRoundTripPreservesPresence(t *testing.T) {
 			Mode:            ReleaseWorkflowUploadModeDebug,
 			PreparedRelease: ReleaseWorkflowPreparedReleaseRequire,
 		},
+		Trackers: ReleaseWorkflowUploadTrackers{Include: []TrackerID{"EXAMPLE"}},
 		Preparation: ReleaseWorkflowUploadPreparation{
 			Facts: ReleaseWorkflowUploadFacts{
 				ExternalIDs: ReleaseWorkflowUploadExternalIDs{
@@ -64,6 +65,7 @@ func TestReleaseWorkflowUploadRequestValidation(t *testing.T) {
 	valid := CreateReleaseWorkflowUploadRequest{
 		Source:         ReleaseWorkflowUploadSource{Path: `D:\Example Release 2026`},
 		Unattended:     &ReleaseWorkflowUploadUnattended{},
+		Trackers:       ReleaseWorkflowUploadTrackers{Include: []TrackerID{"EXAMPLE"}},
 		IdempotencyKey: "upload-1",
 	}
 	tests := []struct {
@@ -107,6 +109,11 @@ func TestReleaseWorkflowUploadRequestValidation(t *testing.T) {
 	}
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("valid upload request: %v", err)
+	}
+	inherited := valid
+	inherited.Trackers.Include = nil
+	if err := inherited.Validate(); err != nil {
+		t.Fatalf("upload request inheriting default trackers: %v", err)
 	}
 }
 

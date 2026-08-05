@@ -141,6 +141,9 @@ func (r *Registry) Register(def Definition) error {
 		if provider, ok := def.(DupePolicyProvider); ok {
 			descriptor.DupePolicy = provider.DupePolicy()
 		}
+		if descriptor.DupePolicy == nil {
+			descriptor.DupePolicy = compatibilityDupePolicy(descriptor.Name)
+		}
 		if provider, ok := def.(AudioPolicyProvider); ok {
 			descriptor.AudioPolicy = provider.AudioPolicy()
 		}
@@ -173,6 +176,21 @@ func (r *Registry) Register(def Definition) error {
 		}
 	}
 	return r.RegisterDescriptor(descriptor)
+}
+
+func compatibilityDupePolicy(tracker string) *DupePolicy {
+	return &DupePolicy{
+		ID: strings.ToLower(strings.TrimSpace(tracker)) + "/duplicate-compat/v1",
+		SearchScope: DupeSearchScope{
+			MaxPages: 100,
+		},
+		SameSlotFallback: &DupeRule{
+			ID:                 "policy_evidence_unavailable",
+			Relation:           "manual_review",
+			ReasonCode:         "tracker_policy_not_evidence_backed",
+			RequiresManualStep: true,
+		},
+	}
 }
 
 // LookupTorrentIdentityPolicy returns tracker-owned torrent-client identity behavior.
@@ -347,7 +365,67 @@ func (r *Registry) LookupDupePolicy(tracker string) (DupePolicy, bool) {
 	if !ok || descriptor.DupePolicy == nil {
 		return DupePolicy{}, false
 	}
-	return *descriptor.DupePolicy, true
+	return cloneDupePolicy(*descriptor.DupePolicy), true
+}
+
+func cloneDupePolicy(policy DupePolicy) DupePolicy {
+	policy.SlotDimensions = append([]DupeDimension(nil), policy.SlotDimensions...)
+	policy.OptionalSlotDimensions = append([]DupeDimension(nil), policy.OptionalSlotDimensions...)
+	policy.CompleteSlotDimensions = append([]DupeDimension(nil), policy.CompleteSlotDimensions...)
+	policy.RequiredDimensions = append([]DupeDimension(nil), policy.RequiredDimensions...)
+	policy.SuppressGeneralCoexistence = append([]DupeDimension(nil), policy.SuppressGeneralCoexistence...)
+	policy.CoexistenceRules = cloneDupeRules(policy.CoexistenceRules)
+	policy.PrecedenceRules = cloneDupeRules(policy.PrecedenceRules)
+	policy.ManualReviewRules = cloneDupeRules(policy.ManualReviewRules)
+	policy.SetRules = cloneDupeSetRules(policy.SetRules)
+	policy.SizeVarianceResolutions = append([]string(nil), policy.SizeVarianceResolutions...)
+	policy.SizeVarianceTypes = append([]string(nil), policy.SizeVarianceTypes...)
+	if policy.SameSlotFallback != nil {
+		fallback := cloneDupeRules([]DupeRule{*policy.SameSlotFallback})
+		policy.SameSlotFallback = &fallback[0]
+	}
+	return policy
+}
+
+func cloneDupeSetRules(rules []DupeSetRule) []DupeSetRule {
+	result := make([]DupeSetRule, len(rules))
+	for index, rule := range rules {
+		rule.TargetPredicates = cloneDupeSetPredicates(rule.TargetPredicates)
+		rule.CandidatePredicates = cloneDupeSetPredicates(rule.CandidatePredicates)
+		rule.CapacityOverrides = append([]DupeSetCapacityOverride(nil), rule.CapacityOverrides...)
+		for overrideIndex := range rule.CapacityOverrides {
+			rule.CapacityOverrides[overrideIndex].CandidatePredicates = cloneDupeSetPredicates(
+				rule.CapacityOverrides[overrideIndex].CandidatePredicates,
+			)
+		}
+		result[index] = rule
+	}
+	return result
+}
+
+func cloneDupeSetPredicates(predicates []DupeSetPredicate) []DupeSetPredicate {
+	result := make([]DupeSetPredicate, len(predicates))
+	for index, predicate := range predicates {
+		predicate.Values = append([]string(nil), predicate.Values...)
+		predicate.ExcludedValues = append([]string(nil), predicate.ExcludedValues...)
+		result[index] = predicate
+	}
+	return result
+}
+
+func cloneDupeRules(rules []DupeRule) []DupeRule {
+	result := make([]DupeRule, len(rules))
+	for index, rule := range rules {
+		conditions := rule.Conditions
+		rule.Conditions = make([]DupeCondition, len(conditions))
+		for conditionIndex, condition := range conditions {
+			condition.TargetValues = append([]string(nil), condition.TargetValues...)
+			condition.CandidateValues = append([]string(nil), condition.CandidateValues...)
+			rule.Conditions[conditionIndex] = condition
+		}
+		result[index] = rule
+	}
+	return result
 }
 
 // LookupUploadArtifactPolicy returns tracker torrent personalization fields.
@@ -568,8 +646,88 @@ func (r *Registry) RegisterDescriptor(descriptor Descriptor) error {
 		}
 		descriptor.ImageHost = &policy
 	}
+	if descriptor.DupePolicy != nil {
+		policy := cloneDupePolicy(*descriptor.DupePolicy)
+		if err := validateDupePolicy(policy); err != nil {
+			return fmt.Errorf("trackers: definition %s has invalid duplicate policy: %w", name, err)
+		}
+		descriptor.DupePolicy = &policy
+	}
 	r.descriptors[name] = descriptor
 	return nil
+}
+
+func validateDupePolicy(policy DupePolicy) error {
+	if strings.TrimSpace(policy.ID) == "" {
+		return errors.New("policy ID is empty")
+	}
+	isCompatibility := strings.Contains(strings.ToLower(policy.ID), "/duplicate-compat/")
+	if !isCompatibility && (len(policy.SlotDimensions) > 0 || len(policy.OptionalSlotDimensions) > 0 || len(policy.CompleteSlotDimensions) > 0 ||
+		len(policy.RequiredDimensions) > 0 || len(policy.SuppressGeneralCoexistence) > 0 || len(policy.CoexistenceRules) > 0 ||
+		len(policy.PrecedenceRules) > 0 || len(policy.SetRules) > 0 || policy.SizeVariancePercent > 0) {
+		if strings.TrimSpace(policy.EvidenceID) == "" {
+			return errors.New("automatic policy has no evidence ID")
+		}
+	}
+	seenRuleIDs := make(map[string]struct{})
+	groups := [][]DupeRule{policy.CoexistenceRules, policy.PrecedenceRules, policy.ManualReviewRules}
+	if policy.SameSlotFallback != nil {
+		groups = append(groups, []DupeRule{*policy.SameSlotFallback})
+	}
+	for _, rules := range groups {
+		for _, rule := range rules {
+			ruleID := strings.TrimSpace(rule.ID)
+			if ruleID == "" {
+				return errors.New("rule ID is empty")
+			}
+			if _, exists := seenRuleIDs[ruleID]; exists {
+				return fmt.Errorf("duplicate rule ID %q", ruleID)
+			}
+			seenRuleIDs[ruleID] = struct{}{}
+			if strings.TrimSpace(rule.Relation) == "" && !rule.RequiresManualStep {
+				return fmt.Errorf("rule %q has no relation", ruleID)
+			}
+			if !rule.RequiresManualStep && !isCompatibility &&
+				strings.TrimSpace(firstPolicyEvidenceID(rule.EvidenceID, policy.EvidenceID)) == "" {
+				return fmt.Errorf("automatic rule %q has no evidence ID", ruleID)
+			}
+		}
+	}
+	for _, rule := range policy.SetRules {
+		ruleID := strings.TrimSpace(rule.ID)
+		if ruleID == "" {
+			return errors.New("set rule ID is empty")
+		}
+		if _, exists := seenRuleIDs[ruleID]; exists {
+			return fmt.Errorf("duplicate rule ID %q", ruleID)
+		}
+		seenRuleIDs[ruleID] = struct{}{}
+		if strings.TrimSpace(firstPolicyEvidenceID(rule.EvidenceID, policy.EvidenceID)) == "" {
+			return fmt.Errorf("set rule %q has no evidence ID", ruleID)
+		}
+		if len(rule.TargetPredicates) == 0 || len(rule.CandidatePredicates) == 0 {
+			return fmt.Errorf("set rule %q has no target or candidate predicates", ruleID)
+		}
+		if rule.Capacity <= 0 {
+			return fmt.Errorf("set rule %q has invalid capacity", ruleID)
+		}
+		if rule.MinimumSizeSeparationPercent < 0 || rule.MinimumSizeSeparationPercent >= 100 {
+			return fmt.Errorf("set rule %q has invalid size separation", ruleID)
+		}
+		for _, override := range rule.CapacityOverrides {
+			if override.Capacity <= 0 || override.Capacity > rule.Capacity || len(override.CandidatePredicates) == 0 {
+				return fmt.Errorf("set rule %q has invalid capacity override", ruleID)
+			}
+		}
+	}
+	return nil
+}
+
+func firstPolicyEvidenceID(ruleEvidenceID string, policyEvidenceID string) string {
+	if value := strings.TrimSpace(ruleEvidenceID); value != "" {
+		return value
+	}
+	return strings.TrimSpace(policyEvidenceID)
 }
 
 func normalizePolicyPatterns(patterns []string) []string {

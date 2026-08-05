@@ -83,6 +83,76 @@ func TestDefinitionBuildDescriptionUsesProvidedMenuImages(t *testing.T) {
 	}
 }
 
+func TestProfileReleaseNamePolicyOmitsOnlyGeneratedEpisodeTitles(t *testing.T) {
+	t.Parallel()
+
+	binding := Profile().ReleaseNamePolicy
+	if binding.ID != "standalone/hdb/v2" {
+		t.Fatalf("HDB release-name policy = %q, want standalone/hdb/v2", binding.ID)
+	}
+	elementPolicy := binding.Elements.Normalized()
+	if elementPolicy.Version != api.ReleaseNameElementPolicyVersionV1 ||
+		elementPolicy.EpisodeTitleMode != api.EpisodeTitleModeOmit {
+		t.Fatalf("HDB element policy = %#v", elementPolicy)
+	}
+
+	const included = "Example.Show.S01E02.Example.Episode.1080p.WEB-DL-GRP"
+	const omitted = "Example.Show.S01E02.1080p.WEB-DL-GRP"
+	const sourcePath = "Example.Show.S01E02.1080p.WEB-DL-GRP"
+	base := api.UploadSubject{
+		SourcePath:  sourcePath,
+		ReleaseName: included,
+		Identity: api.ExternalIdentity{
+			SourcePath: sourcePath,
+			Category:   api.CanonicalCategoryTV,
+			IMDBID:     1234567,
+		},
+		ProviderMetadata: api.SourceScopedMetadata{
+			SourcePath: sourcePath,
+			IMDB: &api.IMDBMetadata{
+				IMDBID: 1234567,
+				Title:  "Example Show",
+				AKA:    "Example Show",
+			},
+		},
+		Release:    api.ReleaseInfo{Resolution: "1080p"},
+		Source:     "WEB-DL",
+		VideoCodec: "H.264",
+		Tag:        "-GRP",
+		SeasonStr:  "S01",
+		EpisodeStr: "E02",
+		GeneratedReleaseNames: api.GeneratedReleaseNameVariants{
+			IncludeEpisodeTitle: api.ReleaseNameVariant{Name: included},
+			OmitEpisodeTitle:    api.ReleaseNameVariant{Name: omitted},
+		},
+	}
+	resolved, failure := trackers.PrepareInputWithReleaseNamePolicy(
+		trackers.PreparationInput{Tracker: "HDB", Meta: base},
+		binding,
+	)
+	if failure != nil {
+		t.Fatalf("resolve generated name: %v", failure)
+	}
+	name, err := resolved.ReviewedUploadName()
+	const wantGenerated = "Example Show S01E02 1080p WEB-DL H.264-GRP"
+	if err != nil || name != wantGenerated {
+		t.Fatalf("generated reviewed name = (%q, %v), want %q", name, err, wantGenerated)
+	}
+
+	base.SceneName = included
+	resolved, failure = trackers.PrepareInputWithReleaseNamePolicy(
+		trackers.PreparationInput{Tracker: "HDB", Meta: base},
+		binding,
+	)
+	if failure != nil {
+		t.Fatalf("resolve exact scene name: %v", failure)
+	}
+	name, err = resolved.ReviewedUploadName()
+	if err != nil || name != included {
+		t.Fatalf("exact scene reviewed name = (%q, %v), want %q", name, err, included)
+	}
+}
+
 func TestDefinitionUploadMissingCredentials(t *testing.T) {
 	d := New()
 	_, err := d.submit(context.Background(), trackers.PreparationInput{Tracker: "HDB", Logger: api.NopLogger{}})
@@ -110,6 +180,8 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 
 	uploadSeen := false
 	downloadSeen := false
+	uploadedName := ""
+	uploadedTorrentName := ""
 	registeredTorrent := hdbRegisteredTorrentFixture(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -123,7 +195,8 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 				t.Errorf("parse multipart: %v", err)
 				return
 			}
-			if r.FormValue("name") == "" {
+			uploadedName = r.FormValue("name")
+			if uploadedName == "" {
 				t.Error("expected upload name field")
 				return
 			}
@@ -136,6 +209,7 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 				t.Error("expected torrent file in multipart form")
 				return
 			}
+			uploadedTorrentName = files[0].Filename
 			f, err := files[0].Open()
 			if err != nil {
 				t.Errorf("open uploaded file: %v", err)
@@ -167,10 +241,34 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 		Meta: api.UploadSubject{
 			SourcePath:  filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath: torrentPath,
-			Identity:    api.ExternalIdentity{Category: "MOVIE"},
+			Identity: api.ExternalIdentity{
+				SourcePath: filepath.Join(tmp, "Movie.mkv"),
+				Category:   api.CanonicalCategoryTV,
+				IMDBID:     1234567,
+				TVDBID:     987650001,
+			},
+			ProviderMetadata: api.SourceScopedMetadata{
+				SourcePath: filepath.Join(tmp, "Movie.mkv"),
+				IMDB: &api.IMDBMetadata{
+					IMDBID: 1234567,
+					Title:  "Example Show",
+					AKA:    "Example Show",
+				},
+			},
 			Type:        "WEBDL",
 			VideoCodec:  "HEVC",
-			ReleaseName: "My.Release.2026.2160p.WEBDL.HEVC",
+			SeasonStr:   "S01",
+			EpisodeStr:  "E02",
+			Release:     api.ReleaseInfo{Resolution: "2160p"},
+			ReleaseName: "Example.Show.S01E02.Example.Episode.2160p.WEBDL.HEVC",
+			GeneratedReleaseNames: api.GeneratedReleaseNameVariants{
+				IncludeEpisodeTitle: api.ReleaseNameVariant{
+					Name: "Example.Show.S01E02.Example.Episode.2160p.WEBDL.HEVC",
+				},
+				OmitEpisodeTitle: api.ReleaseNameVariant{
+					Name: "Example.Show.S01E02.2160p.WEBDL.HEVC",
+				},
+			},
 		},
 		TrackerConfig: config.TrackerConfig{
 			Username: "user",
@@ -207,6 +305,12 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	}
 	if !uploadSeen {
 		t.Fatal("expected upload endpoint to be called")
+	}
+	if uploadedName != "Example Show S01E02 2160p WEB-DL HEVC" {
+		t.Fatalf("uploaded name = %q, want structured generated name", uploadedName)
+	}
+	if uploadedTorrentName != "Example.Show.S01E02.2160p.WEB-DL.HEVC.torrent" {
+		t.Fatalf("uploaded torrent name = %q, want dotted release name", uploadedTorrentName)
 	}
 	if !downloadSeen {
 		t.Fatal("expected download endpoint to be called")

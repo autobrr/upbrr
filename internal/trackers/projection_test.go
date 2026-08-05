@@ -6,6 +6,7 @@ package trackers
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -84,6 +85,7 @@ func TestRegistryCatalogAndProjectionUseStableIdentityAndFinalPreviewSemantics(t
 	projection, failure := registry.ProjectRelease(context.Background(), PreparationInput{
 		Tracker: "EXAMPLE-LEGACY",
 		Meta: api.UploadSubject{
+			Filename:    "Example.Source.2026.1080p-GRP.mkv",
 			ReleaseName: "Example.Show.S01E01.1080p.WEB-DL.x265-GRP",
 			SeasonInt:   1,
 			EpisodeInt:  1,
@@ -107,11 +109,18 @@ func TestRegistryCatalogAndProjectionUseStableIdentityAndFinalPreviewSemantics(t
 	if projection.UploadReleaseName != "Example.Show.S01E01.1080p.WEB-DL.x265-GRP" {
 		t.Fatalf("upload release name = %q", projection.UploadReleaseName)
 	}
+	if projection.NamingElementPolicyVersion != api.ReleaseNameElementPolicyVersionV1 ||
+		projection.EpisodeTitleMode != api.EpisodeTitleModeInclude {
+		t.Fatalf("projection element policy = version %q mode %q", projection.NamingElementPolicyVersion, projection.EpisodeTitleMode)
+	}
 	if prepareCalls != 0 {
 		t.Fatalf("projection invoked tracker preparation %d times", prepareCalls)
 	}
 	if projection.DuplicateCriteria.Name != "Example.Show.S01E01.1080p.WEB-DL.x265-GRP" {
 		t.Fatalf("duplicate query name = %q", projection.DuplicateCriteria.Name)
+	}
+	if !slices.Contains(projection.DuplicateTarget.Names, "Example.Source.2026.1080p-GRP") {
+		t.Fatalf("duplicate target names = %#v", projection.DuplicateTarget.Names)
 	}
 	if projection.Taxonomy.Category.Label != "TV" || projection.Taxonomy.Codec.Label != "H.265" {
 		t.Fatalf("projection taxonomy = %#v", projection.Taxonomy)
@@ -122,6 +131,140 @@ func TestRegistryCatalogAndProjectionUseStableIdentityAndFinalPreviewSemantics(t
 	}
 	if !projection.DupeReady || !projection.UploadReady || projection.Readiness != api.ReadinessStatusReady {
 		t.Fatalf("projection readiness = %#v", projection)
+	}
+}
+
+func TestRegistryProjectionAppliesAndFingerprintsEpisodeTitleOmitPolicy(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	if err := registry.RegisterDescriptor(Descriptor{
+		Name:             "EXAMPLE",
+		DisplayName:      "Example Tracker",
+		ProjectorVersion: "example-v2",
+		Definition:       projectionStubDefinition{stubDefinition: stubDefinition{name: "EXAMPLE"}},
+		Family:           FamilyStandalone,
+		ReleaseNamePolicy: WithEpisodeTitleMode(
+			CanonicalReleaseNamePolicy(),
+			api.EpisodeTitleModeOmit,
+		),
+	}); err != nil {
+		t.Fatalf("register descriptor: %v", err)
+	}
+
+	const included = "Example.Show.S01E02.Example.Episode.1080p-GRP"
+	const omitted = "Example.Show.S01E02.1080p-GRP"
+	fingerprint := mustProjectionFingerprint(t, "projection")
+	projection, failure := registry.ProjectRelease(context.Background(), PreparationInput{
+		Tracker: "EXAMPLE",
+		Meta: api.UploadSubject{
+			ReleaseName: included,
+			GeneratedReleaseNames: api.GeneratedReleaseNameVariants{
+				IncludeEpisodeTitle: api.ReleaseNameVariant{Name: included},
+				OmitEpisodeTitle:    api.ReleaseNameVariant{Name: omitted},
+			},
+			Release: api.ReleaseInfo{Category: "TV"},
+		},
+	}, fingerprint, fingerprint, fingerprint)
+	if failure != nil {
+		t.Fatalf("project release: %v", failure)
+	}
+	if projection.UploadReleaseName != omitted || projection.DuplicateCriteria.Name != omitted {
+		t.Fatalf("projected names = upload %q duplicate %q", projection.UploadReleaseName, projection.DuplicateCriteria.Name)
+	}
+	if projection.NamingElementPolicyVersion != api.ReleaseNameElementPolicyVersionV1 ||
+		projection.EpisodeTitleMode != api.EpisodeTitleModeOmit || projection.NamingFingerprint == "" {
+		t.Fatalf("projection element policy = %#v", projection)
+	}
+}
+
+func TestRegistryProjectionRequiresNonSceneUploadNameConfirmationWithoutBlockingDupes(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	policy := WithNonSceneReleaseNameConfirmation(
+		SimpleSubjectReleaseNamePolicy("standalone/example/v2", func(subject api.UploadSubject) string {
+			if subject.Scene {
+				return subject.SceneName
+			}
+			return subject.ReleaseName
+		}),
+	)
+	if err := registry.RegisterDescriptor(Descriptor{
+		Name:              "EXAMPLE",
+		DisplayName:       "Example Tracker",
+		ProjectorVersion:  "example-v2",
+		Definition:        projectionStubDefinition{stubDefinition: stubDefinition{name: "EXAMPLE"}},
+		Family:            FamilyStandalone,
+		ReleaseNamePolicy: policy,
+	}); err != nil {
+		t.Fatalf("register descriptor: %v", err)
+	}
+	fingerprint := mustProjectionFingerprint(t, "projection")
+	project := func(meta api.UploadSubject, requested *string) api.TrackerReleaseProjection {
+		t.Helper()
+		projection, failure := registry.ProjectRelease(context.Background(), PreparationInput{
+			Tracker:             "EXAMPLE",
+			Meta:                meta,
+			RequestedUploadName: requested,
+		}, fingerprint, fingerprint, fingerprint)
+		if failure != nil {
+			t.Fatalf("project release: %v", failure)
+		}
+		return projection
+	}
+
+	const proposed = "Example.Release.2026-GRP"
+	blocked := project(api.UploadSubject{ReleaseName: proposed}, nil)
+	if blocked.Readiness != api.ReadinessStatusReady || !blocked.DupeReady || blocked.UploadReady ||
+		len(blocked.RequiredActions) != 1 {
+		t.Fatalf("upload-pending projection = %#v", blocked)
+	}
+	action := blocked.RequiredActions[0]
+	if action.Kind != api.RequiredActionProvideTrackerInput || action.TrackerID != "EXAMPLE" ||
+		!action.AllowsFreeText || len(action.Options) != 1 || action.Options[0].Value != proposed {
+		t.Fatalf("confirmation action = %#v", action)
+	}
+	if !slices.ContainsFunc(blocked.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
+		return decision.Code == releaseNameConfirmationCode &&
+			decision.Decision == "confirmation_required" &&
+			!decision.Blocking
+	}) {
+		t.Fatalf("confirmation policy decision missing: %#v", blocked.PolicyDecisions)
+	}
+
+	const reviewed = "Example.Release.2026.REVIEWED-GRP"
+	confirmedName := reviewed
+	confirmed := project(api.UploadSubject{ReleaseName: proposed}, &confirmedName)
+	if confirmed.Readiness != api.ReadinessStatusReady || !confirmed.DupeReady || !confirmed.UploadReady ||
+		len(confirmed.RequiredActions) != 0 || confirmed.UploadReleaseName != reviewed {
+		t.Fatalf("confirmed projection = %#v", confirmed)
+	}
+	if confirmed.CriteriaFingerprint != blocked.CriteriaFingerprint ||
+		confirmed.DuplicateTargetFingerprint != blocked.DuplicateTargetFingerprint ||
+		confirmed.DuplicateSearchFingerprint != blocked.DuplicateSearchFingerprint ||
+		confirmed.DuplicatePolicyFingerprint != blocked.DuplicatePolicyFingerprint ||
+		confirmed.DuplicateCriteria.Name != blocked.DuplicateCriteria.Name ||
+		!slices.Equal(confirmed.DuplicateTarget.Names, blocked.DuplicateTarget.Names) {
+		t.Fatalf("reviewed upload name changed duplicate semantics: pending=%#v confirmed=%#v", blocked, confirmed)
+	}
+	if !slices.ContainsFunc(confirmed.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
+		return decision.Code == releaseNameConfirmationCode &&
+			decision.Decision == "confirmed" &&
+			!decision.Blocking
+	}) {
+		t.Fatalf("confirmed policy decision missing: %#v", confirmed.PolicyDecisions)
+	}
+
+	const sceneName = "Example Release [SCENE].2026-GRP"
+	scene := project(api.UploadSubject{
+		Scene:       true,
+		SceneName:   sceneName,
+		ReleaseName: proposed,
+	}, nil)
+	if scene.Readiness != api.ReadinessStatusReady || scene.UploadReleaseName != sceneName ||
+		len(scene.RequiredActions) != 0 {
+		t.Fatalf("scene projection = %#v", scene)
 	}
 }
 
@@ -154,6 +297,44 @@ func TestPrepareAdapterRejectsPayloadSemanticsThatDifferFromReviewedProjection(t
 	}
 }
 
+func TestDuplicateTargetFingerprintIncludesHDRProvenance(t *testing.T) {
+	t.Parallel()
+
+	subject := api.UploadSubject{
+		HDRFacts: api.HDRFacts{
+			Formats: []api.HDRFormat{api.HDRFormatDolbyVision, api.HDRFormatHDR10},
+			Origin:  api.HDREvidenceMediaInfo,
+			Status:  api.HDREvidenceComplete,
+		},
+	}
+	first, err := api.CanonicalWorkflowFingerprint(duplicateTarget(subject))
+	if err != nil {
+		t.Fatalf("first target fingerprint: %v", err)
+	}
+	subject.HDRFacts.Origin = api.HDREvidenceContentFilename
+	subject.HDRFacts.Status = api.HDREvidencePartial
+	second, err := api.CanonicalWorkflowFingerprint(duplicateTarget(subject))
+	if err != nil {
+		t.Fatalf("second target fingerprint: %v", err)
+	}
+	if first == second {
+		t.Fatal("target fingerprint ignored HDR evidence provenance")
+	}
+}
+
+func TestDuplicateTargetPrefersProviderCode(t *testing.T) {
+	t.Parallel()
+
+	target := duplicateTarget(api.UploadSubject{
+		Service:         "AMZN",
+		ServiceLongName: "Amazon Prime Video",
+		Distributor:     "Example Distributor",
+	})
+	if target.Provider != "AMZN" {
+		t.Fatalf("duplicate provider = %q, want AMZN", target.Provider)
+	}
+}
+
 func TestApplyProjectionRuleFailuresHonorsExplicitDebugWaivers(t *testing.T) {
 	t.Parallel()
 
@@ -165,13 +346,27 @@ func TestApplyProjectionRuleFailuresHonorsExplicitDebugWaivers(t *testing.T) {
 			UploadReady: true,
 		}
 	}
-	waivable := []api.RuleFailure{NewRuleFailure("runtime_gate", "waivable gate", api.RuleDispositionWaivable)}
-	strict := []api.RuleFailure{NewRuleFailure("constructibility", "hard prerequisite", api.RuleDispositionStrict)}
+	waivable := []api.RuleFailure{NewEvidenceRuleFailure(
+		"runtime_gate",
+		"waivable gate",
+		api.RuleDispositionWaivable,
+		api.MetadataEvidenceStatusPartial,
+	)}
+	strict := []api.RuleFailure{NewEvidenceRuleFailure(
+		"constructibility",
+		"hard prerequisite",
+		api.RuleDispositionStrict,
+		api.MetadataEvidenceStatusComplete,
+	)}
 
 	normal := readyProjection()
 	ApplyProjectionRuleFailures(&normal, waivable, api.WorkflowExecutionModeNormal)
 	if normal.Readiness != api.ReadinessStatusIneligible || normal.DupeReady || !normal.PolicyDecisions[0].Blocking {
 		t.Fatalf("normal waivable outcome = %#v", normal)
+	}
+	if normal.PolicyDecisions[0].Disposition != api.RuleDispositionWaivable ||
+		normal.PolicyDecisions[0].EvidenceStatus != api.MetadataEvidenceStatusPartial {
+		t.Fatalf("normal public policy evidence = %#v", normal.PolicyDecisions[0])
 	}
 
 	debug := readyProjection()

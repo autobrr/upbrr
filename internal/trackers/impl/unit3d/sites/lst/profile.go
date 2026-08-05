@@ -18,10 +18,7 @@ func Profile() unit3d.Profile {
 		Site: unit3d.SiteProfile{
 			ApplyAdditionalPayload: additionalPayload,
 		},
-		DupePolicy: &trackers.DupePolicy{
-			TrackTrumpableID:     true,
-			MatchDVDReleaseGroup: true,
-		},
+		DupePolicy: duplicatePolicy(),
 		BannedPolicy: &trackers.BannedGroupPolicy{
 			EndpointPath:  "/api/bannedReleaseGroups",
 			RequireAPIKey: true,

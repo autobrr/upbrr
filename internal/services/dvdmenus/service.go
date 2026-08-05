@@ -364,7 +364,9 @@ func (s *Service) List(ctx context.Context, meta api.DVDMenuSubject) ([]api.Scre
 // directory and atomically deletes its local DB references. Remote image-host
 // assets are not deleted. If final removal of the staged file fails, Delete
 // attempts to restore the original file and its local records before returning;
-// compensation failures are joined with the removal error.
+// compensation failures are joined with the removal error. A repeated delete
+// whose file and records are both already gone succeeds so retries converge;
+// every other outcome that left local state behind is reported as an error.
 func (s *Service) Delete(ctx context.Context, meta api.DVDMenuSubject, imagePath string) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("DVD menus: delete canceled: %w", err)
@@ -405,6 +407,12 @@ func (s *Service) Delete(ctx context.Context, meta api.DVDMenuSubject, imagePath
 			if restoreErr := os.Rename(pendingPath, trimmedPath); restoreErr != nil {
 				return fmt.Errorf("DVD menus: delete records and restore local image: %w", errors.Join(err, restoreErr))
 			}
+		} else if errors.Is(err, internalerrors.ErrNotFound) {
+			// Neither the file nor its records exist, so a repeated delete has
+			// nothing left to remove and reports the end state it asked for. Any
+			// other not-found error still has local state to answer for.
+			s.logger.Debugf("DVD menus: image already absent source=%s", meta.SourcePath)
+			return nil
 		}
 		return fmt.Errorf("DVD menus: delete records: %w", err)
 	}

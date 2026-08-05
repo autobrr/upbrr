@@ -189,6 +189,46 @@ func TestMapCollectedFactsProjectsEffectiveInstructionValues(t *testing.T) {
 	}
 }
 
+func TestMapCollectedFactsPreservesGeneratedReleaseNameVariants(t *testing.T) {
+	t.Parallel()
+
+	variants := api.GeneratedReleaseNameVariants{
+		IncludeEpisodeTitle: api.ReleaseNameVariant{
+			NameNoTag: "Example.Show.S01E02.Example.Episode.1080p.WEB-DL",
+			Name:      "Example.Show.S01E02.Example.Episode.1080p.WEB-DL-GRP",
+			CleanName: "Example Show S01E02 Example Episode 1080p WEB-DL-GRP",
+		},
+		OmitEpisodeTitle: api.ReleaseNameVariant{
+			NameNoTag: "Example.Show.S01E02.1080p.WEB-DL",
+			Name:      "Example.Show.S01E02.1080p.WEB-DL-GRP",
+			CleanName: "Example Show S01E02 1080p WEB-DL-GRP",
+		},
+	}
+	facts := mapCollectedFacts(preparationstate.State{GeneratedReleaseNames: variants})
+	if facts.Naming.GeneratedReleaseNames != variants {
+		t.Fatalf("collected variants = %#v, want %#v", facts.Naming.GeneratedReleaseNames, variants)
+	}
+}
+
+func TestMapCollectedFactsPublishesFinalizedNamingSourceAndType(t *testing.T) {
+	t.Parallel()
+	facts := mapCollectedFacts(preparationstate.State{
+		SourcePath: "Example.Show.S01.2026.BDRip.1080p.x265-GRP.mkv",
+		Source:     "BluRay",
+		Type:       "ENCODE",
+		Release: api.ReleaseInfo{
+			Source: "BluRay",
+			Type:   "ENCODE",
+		},
+	})
+	if facts.Naming.Source != "BluRay" || facts.Naming.Type != "ENCODE" {
+		t.Fatalf("naming facts = %#v", facts.Naming)
+	}
+	if facts.Media.Source != "BluRay" || facts.Media.Type != "ENCODE" {
+		t.Fatalf("media facts = %#v", facts.Media)
+	}
+}
+
 func TestApplyBlurayFactInstructionSelectsCandidateBeforePublication(t *testing.T) {
 	t.Parallel()
 	meta := preparationstate.State{

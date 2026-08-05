@@ -33,13 +33,17 @@ func (d *Definition) Name() string {
 // TrackerFamily identifies the definition as AZ-family-backed.
 func (d *Definition) TrackerFamily() trackers.Family { return trackers.FamilyAZFamily }
 
-// ReleaseNamePolicy returns the versioned AZ-family naming policy.
+// ReleaseNamePolicy returns the versioned AZ-family naming policy with TMDB-authoritative movie years.
 func (d *Definition) ReleaseNamePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.SubjectReleaseNameSearchPolicy(
-		fmt.Sprintf("azfamily/%s/v1", strings.ToLower(d.site.Name)),
+	version := "v1"
+	if d.site.Name == "AZ" || d.site.Name == "CZ" {
+		version = "v2"
+	}
+	return trackers.WithMovieYearProvider(trackers.SubjectReleaseNameSearchPolicy(
+		fmt.Sprintf("azfamily/%s/%s", strings.ToLower(d.site.Name), version),
 		func(meta api.UploadSubject, _ config.TrackerConfig) string { return editName(d.site, meta) },
 		func(meta api.UploadSubject, _ config.TrackerConfig) string { return resolveSearchName(meta) },
-	)
+	), api.IdentityProviderTMDB)
 }
 
 // UploadContentMode declares the aggregate description workflow shared by AZ-family sites.
@@ -63,20 +67,104 @@ func (d *Definition) UploadArtifactPolicy() *trackers.UploadArtifactPolicy {
 	}
 }
 
+// DupePolicy returns only source-backed AZ/CZ overlay behavior. PHD has no
+// matching saved duplicate-policy snapshot and therefore uses compatibility
+// fallback.
+func (d *Definition) DupePolicy() *trackers.DupePolicy {
+	var policy *trackers.DupePolicy
+	switch d.site.Name {
+	case "AZ":
+		policy = &trackers.DupePolicy{
+			ID:         "az/duplicate/v2",
+			EvidenceID: "az-upload-rules",
+			SlotDimensions: []trackers.DupeDimension{
+				trackers.DupeDimensionType,
+				trackers.DupeDimensionSource,
+				trackers.DupeDimensionResolution,
+			},
+			PrecedenceRules: trackers.SeasonPackPrecedenceRules("az-upload-rules"),
+		}
+	case "CZ":
+		policy = &trackers.DupePolicy{
+			ID:         "cz/duplicate/v2",
+			EvidenceID: "cz-upload-rules",
+			SlotDimensions: []trackers.DupeDimension{
+				trackers.DupeDimensionType,
+				trackers.DupeDimensionResolution,
+			},
+		}
+	default:
+		return nil
+	}
+	policy.SearchScope = trackers.DupeSearchScope{
+		MaxPages: 100,
+	}
+	return policy
+}
+
 // MetadataPolicy returns metadata requirements for this AZ-family profile.
 func (d *Definition) MetadataPolicy() *trackers.TrackerMetadataPolicy {
-	return &trackers.TrackerMetadataPolicy{RequireKnownCategory: true, Requirements: []trackers.MetadataRequirement{
-		{
-			Scope:       trackers.MetadataScopeMovie,
-			AnyOf:       []trackers.MetadataField{trackers.MetadataFieldTMDBIDOnly, trackers.MetadataFieldIMDBIDOnly},
-			Disposition: api.RuleDispositionStrict,
-		},
-		{
-			Scope:       trackers.MetadataScopeTV,
-			AnyOf:       []trackers.MetadataField{trackers.MetadataFieldTMDBIDOnly, trackers.MetadataFieldIMDBIDOnly, trackers.MetadataFieldTVDBIDOnly},
-			Disposition: api.RuleDispositionStrict,
-		},
-	}}
+	switch d.site.Name {
+	case "AZ":
+		return &trackers.TrackerMetadataPolicy{RequireKnownCategory: true, Requirements: []trackers.MetadataRequirement{
+			strictMetadataRequirement(
+				trackers.MetadataScopeMovie,
+				trackers.MetadataFieldTMDBIDOnly,
+				trackers.MetadataFieldIMDBIDOnly,
+			),
+			strictMetadataRequirement(trackers.MetadataScopeTV, trackers.MetadataFieldTVDBIDOnly),
+			strictMetadataRequirement(trackers.MetadataScopeAny, trackers.MetadataFieldTMDBOriginCountries),
+			strictMetadataRequirement(trackers.MetadataScopeTV, trackers.MetadataFieldTVDBTitle),
+			strictMetadataRequirement(trackers.MetadataScopeTV, trackers.MetadataFieldTVDBYear),
+		}}
+	case "CZ":
+		return &trackers.TrackerMetadataPolicy{RequireKnownCategory: true, Requirements: []trackers.MetadataRequirement{
+			strictMetadataRequirement(
+				trackers.MetadataScopeMovie,
+				trackers.MetadataFieldTMDBIDOnly,
+				trackers.MetadataFieldIMDBIDOnly,
+			),
+			strictMetadataRequirement(
+				trackers.MetadataScopeTV,
+				trackers.MetadataFieldIMDBIDOnly,
+				trackers.MetadataFieldTVDBIDOnly,
+			),
+			strictMetadataRequirement(trackers.MetadataScopeAny, trackers.MetadataFieldTMDBOriginCountries),
+			strictMetadataRequirement(
+				trackers.MetadataScopeMovie,
+				trackers.MetadataFieldTMDBTitle,
+				trackers.MetadataFieldIMDBTitle,
+			),
+			strictMetadataRequirement(
+				trackers.MetadataScopeTV,
+				trackers.MetadataFieldIMDBTitle,
+				trackers.MetadataFieldTVDBTitle,
+			),
+		}}
+	default:
+		return &trackers.TrackerMetadataPolicy{RequireKnownCategory: true, Requirements: []trackers.MetadataRequirement{
+			strictMetadataRequirement(
+				trackers.MetadataScopeMovie,
+				trackers.MetadataFieldTMDBIDOnly,
+				trackers.MetadataFieldIMDBIDOnly,
+			),
+			strictMetadataRequirement(
+				trackers.MetadataScopeTV,
+				trackers.MetadataFieldTMDBIDOnly,
+				trackers.MetadataFieldIMDBIDOnly,
+				trackers.MetadataFieldTVDBIDOnly,
+			),
+			strictMetadataRequirement(trackers.MetadataScopeAny, trackers.MetadataFieldTMDBOriginCountries),
+		}}
+	}
+}
+
+func strictMetadataRequirement(scope trackers.MetadataScope, fields ...trackers.MetadataField) trackers.MetadataRequirement {
+	return trackers.MetadataRequirement{
+		Scope:       scope,
+		AnyOf:       fields,
+		Disposition: api.RuleDispositionStrict,
+	}
 }
 
 // BannedGroups returns the static banned release-group list for this AZ-family profile.

@@ -25,7 +25,6 @@ const (
 	rtfTorrentEndpoint = "https://retroflix.club/api/torrent"
 	rtfLoginEndpoint   = "https://retroflix.club/api/login"
 	rtfBrowsePrefix    = "https://retroflix.club/browse/t/"
-	rtfAgeGraceDays    = 365*10 + 3
 )
 
 type dupeSearcher struct {
@@ -56,10 +55,10 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 		return dupe.Failed(dupe.FailureInternal, "RTF handler misconfigured: no HTTP client", nil)
 	}
 	if !isRTFContentOldEnough(meta, time.Now().UTC()) {
-		return dupe.NotRun(dupe.NotRunUnsupportedContent, "RTF requires content older than 10 years", nil)
+		return dupe.NotRun(dupe.NotRunUnsupportedContent, "RTF requires content at least 10 years and 1 month old", nil)
 	}
 
-	params, ok := buildRTFSearchParams(meta)
+	params, searchScope, searchComplete, ok := buildRTFSearchParams(meta)
 	if !ok {
 		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing imdb/title for RTF dupe search", nil)
 	}
@@ -98,22 +97,37 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 	for _, raw := range list {
 		item, ok := raw.(map[string]any)
 		if !ok {
-			continue
+			return dupe.Failed(dupe.FailureResponseParse, "RTF response contained a malformed torrent", nil)
 		}
 		id := stringFromAny(item["id"])
+		if id == "" || strings.TrimSpace(stringFromAny(item["name"])) == "" {
+			return dupe.Failed(dupe.FailureResponseParse, "RTF response contained a malformed torrent", nil)
+		}
 		entry := api.DupeEntry{
-			Name:     stringFromAny(item["name"]),
-			ID:       id,
-			Link:     buildRTFLink(item, id),
-			Download: buildRTFDownloadLink(id),
+			Name:      stringFromAny(item["name"]),
+			ID:        id,
+			Link:      buildRTFLink(item, id),
+			Download:  buildRTFDownloadLink(id),
+			Type:      stringFromAny(item["type"]),
+			Res:       stringFromAny(item["resolution"]),
+			Source:    stringFromAny(item["source"]),
+			Codec:     stringFromAny(item["codec"]),
+			Container: stringFromAny(item["container"]),
+			Edition:   stringFromAny(item["edition"]),
+			Region:    stringFromAny(item["region"]),
 		}
 		size := intFromAny(item["size"])
 		if size > 0 {
 			entry.SizeKnown = true
 			entry.SizeBytes = size
 		}
+		if fileCount := positiveIntFromAny(item["fileCount"]); fileCount > 0 {
+			entry.FileCount = fileCount
+		}
 		if files, ok := item["files"].([]any); ok {
-			entry.FileCount = len(files)
+			if entry.FileCount == 0 {
+				entry.FileCount = len(files)
+			}
 			for _, f := range files {
 				if fileMap, ok := f.(map[string]any); ok {
 					name := stringFromAny(fileMap["name"])
@@ -125,22 +139,39 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 		}
 		entries = append(entries, entry)
 	}
-	return dupe.Resolved(entries, nil)
+	warnings := []string(nil)
+	if !searchComplete {
+		warnings = []string{"RTF title search completeness is not evidenced"}
+	}
+	return dupe.ResolvedWithSearch(entries, warnings, dupe.SearchEvidence{
+		Complete: searchComplete,
+		Pages:    1,
+		Scope:    searchScope,
+		Warnings: warnings,
+	})
 }
 
-func buildRTFSearchParams(meta api.DuplicateSubject) (url.Values, bool) {
+func positiveIntFromAny(value any) int {
+	parsed, err := strconv.Atoi(strings.TrimSpace(stringFromAny(value)))
+	if err != nil || parsed <= 0 {
+		return 0
+	}
+	return parsed
+}
+
+func buildRTFSearchParams(meta api.DuplicateSubject) (url.Values, string, bool, bool) {
 	params := url.Values{}
 	params.Set("includingDead", "1")
 	if meta.Identity.IMDBID != 0 {
 		params.Set("imdbId", providerid.IMDb(meta.Identity.IMDBID).Prefixed())
-		return params, true
+		return params, "work_identity", true, true
 	}
 	query := cleanRTFSearchTitle(meta)
 	if query == "" {
-		return nil, false
+		return nil, "", false, false
 	}
 	params.Set("search", query)
-	return params, true
+	return params, "title_year", false, true
 }
 
 func cleanRTFSearchTitle(meta api.DuplicateSubject) string {
@@ -261,135 +292,7 @@ func buildRTFDownloadLink(id string) string {
 }
 
 func isRTFContentOldEnough(meta api.DuplicateSubject, now time.Time) bool {
-	cutoff := now.UTC().AddDate(0, 0, -rtfAgeGraceDays)
-	if date, ok := rtfReferenceDate(meta); ok {
-		return !date.After(cutoff)
-	}
-	year := rtfReferenceYear(meta)
-	if year == 0 {
-		return true
-	}
-	// Year-based fallback is intentionally looser than the date-based check
-	// because month/day precision is unavailable when only year is known.
-	return now.UTC().Year()-year > 9
-}
-
-func rtfReferenceDate(meta api.DuplicateSubject) (time.Time, bool) {
-	category := rtfCategory(meta)
-	switch category {
-	case "MOVIE":
-		return rtfMovieReleaseDate(meta)
-	case "TV":
-		return rtfMostRecentTVDate(meta)
-	default:
-		if date, ok := rtfMovieReleaseDate(meta); ok {
-			return date, true
-		}
-		return rtfMostRecentTVDate(meta)
-	}
-}
-
-func rtfMovieReleaseDate(meta api.DuplicateSubject) (time.Time, bool) {
-	if meta.ProviderMetadata.TMDB == nil {
-		return time.Time{}, false
-	}
-	return parseRTFDate(meta.ProviderMetadata.TMDB.ReleaseDate)
-}
-
-func rtfMostRecentTVDate(meta api.DuplicateSubject) (time.Time, bool) {
-	candidates := make([]time.Time, 0, 8)
-	if meta.ProviderMetadata.TMDB != nil {
-		if date, ok := parseRTFDate(meta.ProviderMetadata.TMDB.LastAirDate); ok {
-			candidates = append(candidates, date)
-		}
-		if date, ok := parseRTFDate(meta.ProviderMetadata.TMDB.FirstAirDate); ok {
-			candidates = append(candidates, date)
-		}
-	}
-	if meta.ProviderMetadata.TVmaze != nil {
-		if date, ok := parseRTFDate(meta.ProviderMetadata.TVmaze.Premiered); ok {
-			candidates = append(candidates, date)
-		}
-	}
-	if meta.ProviderMetadata.IMDB != nil {
-		for _, episode := range meta.ProviderMetadata.IMDB.Episodes {
-			if date, ok := rtfEpisodeDate(episode); ok {
-				candidates = append(candidates, date)
-			}
-		}
-	}
-	if len(candidates) == 0 {
-		return time.Time{}, false
-	}
-	latest := candidates[0]
-	for _, candidate := range candidates[1:] {
-		if candidate.After(latest) {
-			latest = candidate
-		}
-	}
-	return latest, true
-}
-
-func rtfEpisodeDate(episode api.IMDBEpisode) (time.Time, bool) {
-	if episode.ReleaseDate.Year > 0 {
-		month := episode.ReleaseDate.Month
-		if month <= 0 {
-			month = 1
-		}
-		day := episode.ReleaseDate.Day
-		if day <= 0 {
-			day = 1
-		}
-		return time.Date(episode.ReleaseDate.Year, time.Month(month), day, 0, 0, 0, 0, time.UTC), true
-	}
-	if episode.ReleaseYear > 0 {
-		return time.Date(episode.ReleaseYear, time.January, 1, 0, 0, 0, 0, time.UTC), true
-	}
-	return time.Time{}, false
-}
-
-func parseRTFDate(raw string) (time.Time, bool) {
-	value := strings.TrimSpace(raw)
-	if value == "" {
-		return time.Time{}, false
-	}
-	for _, layout := range []string{"2006-01-02", time.RFC3339} {
-		parsed, err := time.Parse(layout, value)
-		if err != nil {
-			continue
-		}
-		return time.Date(parsed.Year(), parsed.Month(), parsed.Day(), 0, 0, 0, 0, time.UTC), true
-	}
-	return time.Time{}, false
-}
-
-func rtfReferenceYear(meta api.DuplicateSubject) int {
-	if date, ok := rtfReferenceDate(meta); ok {
-		return date.Year()
-	}
-	if meta.Release.Year > 0 {
-		return meta.Release.Year
-	}
-	if meta.ProviderMetadata.TMDB != nil && meta.ProviderMetadata.TMDB.Year > 0 {
-		return meta.ProviderMetadata.TMDB.Year
-	}
-	if meta.ProviderMetadata.IMDB != nil && meta.ProviderMetadata.IMDB.Year > 0 {
-		return meta.ProviderMetadata.IMDB.Year
-	}
-	if meta.ProviderMetadata.TVmaze != nil {
-		if date, ok := parseRTFDate(meta.ProviderMetadata.TVmaze.Premiered); ok {
-			return date.Year()
-		}
-	}
-	return 0
-}
-
-func rtfCategory(meta api.DuplicateSubject) string {
-	category, err := meta.Identity.RequireCategory()
-	if err != nil {
-		return ""
-	}
-	return strings.ToUpper(string(category))
+	return rtfContentAgeEligibility(meta.Release, meta.ProviderMetadata, now) == rtfAgeEligible
 }
 
 func rtfJSONRequest(
@@ -475,7 +378,8 @@ func intFromAny(value any) int64 {
 		parsed, _ := typed.Int64()
 		return parsed
 	case float64:
-		return int64(typed)
+		parsed, _ := strconv.ParseInt(strconv.FormatFloat(typed, 'f', -1, 64), 10, 64)
+		return parsed
 	case string:
 		parsed, _ := strconv.ParseInt(strings.TrimSpace(typed), 10, 64)
 		return parsed

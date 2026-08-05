@@ -8,7 +8,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -21,7 +24,7 @@ type ServiceSet struct {
 	Torrents   TorrentService
 	Clients    ClientService
 	Filesystem FilesystemService
-	Dupes      DupeService
+	Dupes      ProjectionDupeService
 	// TrackerAuth validates tracker readiness at the shared upload-preflight boundary.
 	TrackerAuth TrackerAuthService
 	Screenshots ScreenshotService
@@ -49,8 +52,30 @@ type FilesystemService interface {
 	ValidatePaths(ctx context.Context, paths []string) ([]string, error)
 }
 
-type DupeService interface {
-	Check(ctx context.Context, subject DuplicateSubject, trackers []string) (DupeCheckSummary, error)
+// ProjectionDupeCheckOptions controls projection-bound duplicate execution.
+type ProjectionDupeCheckOptions struct {
+	// SkipRemote limits evaluation to local/client evidence when true.
+	SkipRemote bool
+	// BypassBannedGroups allows debug-mode callers to bypass banned-group policy.
+	BypassBannedGroups bool
+}
+
+// DupeAssessmentEvidence is private retained duplicate authority. Public
+// workflow state receives only sanitized candidate projections.
+type DupeAssessmentEvidence interface {
+	Apply(*DuplicateSubject)
+	MarshalBinary() ([]byte, error)
+}
+
+// ProjectionDupeService checks one exact tracker projection set and returns
+// private retained evidence separately from its safe public summary.
+type ProjectionDupeService interface {
+	CheckProjectionSet(
+		context.Context,
+		DuplicateSubject,
+		TrackerReleaseProjectionSet,
+		ProjectionDupeCheckOptions,
+	) (DupeCheckSummary, DupeAssessmentEvidence, error)
 }
 
 // DuplicateSubject is the duplicate module's source-scoped read model. It
@@ -74,6 +99,7 @@ type DuplicateSubject struct {
 	Source               string
 	Tag                  string
 	HDR                  string
+	HDRFacts             HDRFacts
 	UHD                  string
 	VideoEncode          string
 	VideoCodec           string
@@ -211,21 +237,24 @@ func validateExactMediaUploads(channel string, uploads []UploadedImageLink, allo
 // instruction, and prerequisite view. It excludes preparation diagnostics,
 // resolver evidence, cache freshness, and client-search implementation state.
 type UploadSubject struct {
-	SourcePath                  string
-	Paths                       []string
-	DiscType                    string
-	VideoPath                   string
-	FileList                    []string
-	SourceSize                  int64
-	MediaInfoJSONPath           string
-	MediaInfoTextPath           string
-	DVDVOBMediaInfoText         string
-	Scene                       bool
-	SceneName                   string
-	SceneNFOPath                string
-	SceneRenamed                bool
-	SceneRenamedReason          string
-	DescriptionGroups           []DescriptionBuilderGroup
+	SourcePath          string
+	Paths               []string
+	DiscType            string
+	VideoPath           string
+	FileList            []string
+	SourceSize          int64
+	MediaInfoJSONPath   string
+	MediaInfoTextPath   string
+	DVDVOBMediaInfoText string
+	Scene               bool
+	SceneName           string
+	SceneNFOPath        string
+	SceneRenamed        bool
+	SceneRenamedReason  string
+	DescriptionGroups   []DescriptionBuilderGroup
+	// DescriptionGroupsFinal distinguishes retained description output from
+	// pre-description subjects whose content may still be generated.
+	DescriptionGroupsFinal      bool
 	Trackers                    []string
 	Options                     UploadOptions
 	TrackersRemove              []string
@@ -274,6 +303,7 @@ type UploadSubject struct {
 	Type                        string
 	UHD                         string
 	HDR                         string
+	HDRFacts                    HDRFacts
 	Distributor                 string
 	Region                      string
 	VideoCodec                  string
@@ -291,8 +321,14 @@ type UploadSubject struct {
 	ReleaseName                 string
 	ReleaseNameNoTag            string
 	ReleaseNameClean            string
-	BlockedTrackers             map[string][]TrackerBlockReason
-	TrackerRuleFailures         map[string][]RuleFailure
+	// GeneratedReleaseNames contains canonical structural alternatives. Empty
+	// variants mean ReleaseName must remain exact.
+	GeneratedReleaseNames GeneratedReleaseNameVariants
+	BlockedTrackers       map[string][]TrackerBlockReason
+	TrackerRuleFailures   map[string][]RuleFailure
+	// RehashedTrackers identifies uploads whose selected base torrent required
+	// regeneration so tracker execution can queue them after reusable artifacts.
+	RehashedTrackers []string
 	// ExactMedia, when non-nil, constrains description/image preparation to the
 	// retained workflow-owned revision instead of repository discovery.
 	ExactMedia *ExactMediaAssets
@@ -337,70 +373,190 @@ type RuleSubject struct {
 	DVDVOBMediaInfoReady bool
 }
 
+// PackageFileKind classifies a known package entry without applying
+// tracker-specific policy.
+type PackageFileKind string
+
+const (
+	PackageFileKindMedia            PackageFileKind = "media"
+	PackageFileKindArchive          PackageFileKind = "archive"
+	PackageFileKindExternalSubtitle PackageFileKind = "external_subtitle"
+	PackageFileKindSample           PackageFileKind = "sample"
+	PackageFileKindProof            PackageFileKind = "proof"
+	PackageFileKindNFO              PackageFileKind = "nfo"
+	PackageFileKindChecksum         PackageFileKind = "checksum"
+	PackageFileKindImage            PackageFileKind = "image"
+	PackageFileKindText             PackageFileKind = "text"
+	PackageFileKindExecutable       PackageFileKind = "executable"
+	PackageFileKindOther            PackageFileKind = "other"
+)
+
+// SeasonEpisodeFacts records locally detected episode numbers for one season.
+type SeasonEpisodeFacts struct {
+	Season   int
+	Episodes []int
+}
+
+// PackageFacts contains source-layout facts derived without filesystem I/O.
+// Status remains partial until the caller supplies a complete all-file list.
+type PackageFacts struct {
+	Status                    MetadataEvidenceStatus
+	KnownFileCount            int
+	MediaFileCount            int
+	ArchiveFileCount          int
+	ExternalSubtitleFileCount int
+	ExternalFileCount         int
+	NestedFileCount           int
+	Extensions                []string
+	DetectedSeasons           []int
+	DetectedEpisodes          []SeasonEpisodeFacts
+	ExtraKinds                []PackageFileKind
+	SingleFileFolder          bool
+}
+
+// MediaFileFact contains normalized technical and language facts for one
+// media file. Empty values and zero track counts mean unknown.
+type MediaFileFact struct {
+	FileName          string
+	Primary           bool
+	Container         string
+	Source            string
+	Resolution        string
+	VideoCodec        string
+	VideoEncode       string
+	BitDepth          string
+	VideoTrackCount   int
+	AudioLanguages    []string
+	SubtitleLanguages []string
+}
+
+// MediaFileFacts contains all media facts available to shared validation.
+// TechnicalStatus and LanguageStatus describe their respective projections.
+type MediaFileFacts struct {
+	Status            MetadataEvidenceStatus
+	TechnicalStatus   MetadataEvidenceStatus
+	LanguageStatus    MetadataEvidenceStatus
+	ExpectedFileCount int
+	OriginalLanguage  string
+	Files             []MediaFileFact
+}
+
+// AssetEvidence records exact readiness for one prepared asset channel.
+type AssetEvidence struct {
+	Status MetadataEvidenceStatus
+	Ready  bool
+	Count  int
+}
+
+// AssetFacts contains prepared-resource readiness without exposing local paths.
+type AssetFacts struct {
+	Status            MetadataEvidenceStatus
+	MediaInfoJSON     AssetEvidence
+	MediaInfoText     AssetEvidence
+	DVDVOBMediaInfo   AssetEvidence
+	BDInfo            AssetEvidence
+	NFO               AssetEvidence
+	Screenshots       AssetEvidence
+	HostedScreenshots AssetEvidence
+	DVDMenus          AssetEvidence
+	HostedDVDMenus    AssetEvidence
+}
+
+// AvailabilityFacts contains provider-entry evidence available to validation.
+// The aggregate status remains partial because the current contract does not
+// declare the complete provider lookup scope.
+type AvailabilityFacts struct {
+	// Status describes the completeness of Providers as a set, not the result
+	// of any one provider lookup.
+	Status    MetadataEvidenceStatus
+	Providers []ProviderAvailabilityEvidence
+}
+
+// ProvenanceFacts records source/generation authority for identity and provider
+// metadata consumed by validation.
+type ProvenanceFacts struct {
+	Status             MetadataEvidenceStatus
+	IdentitySourcePath string
+	IdentityGeneration PreparedGeneration
+	MetadataSourcePath string
+	MetadataGeneration PreparedGeneration
+	Identity           IdentityProvenanceSet
+}
+
 // TrackerValidationSubject contains only immutable canonical facts, projected
 // tracker answers, and prepared-resource readiness used by side-effect-free
 // pre-duplicate validation.
 type TrackerValidationSubject struct {
-	Tracker                     string
-	SourcePath                  string
-	VideoPath                   string
-	FileList                    []string
-	SourceSize                  int64
-	DiscType                    string
-	Scene                       bool
-	SceneNFOReady               bool
-	SceneRenamed                bool
-	SceneRenamedReason          string
-	PersonalRelease             bool
-	Release                     ReleaseInfo
-	ReleaseName                 string
-	ReleaseNameNoTag            string
-	Tag                         string
-	Identity                    ExternalIdentity
-	ProviderMetadata            SourceScopedMetadata
-	AudioLanguages              []string
-	SubtitleLanguages           []string
-	SeasonInt                   int
-	EpisodeInt                  int
-	SeasonStr                   string
-	EpisodeStr                  string
-	TVPack                      bool
-	DailyEpisodeDate            string
-	Anime                       bool
-	EpisodeTitle                string
-	EpisodeOverview             string
-	Disc                        DiscFacts
-	Type                        string
-	Source                      string
-	Container                   string
-	Audio                       string
-	Channels                    string
-	HasCommentary               bool
-	Is3D                        string
-	BitDepth                    string
-	VideoCodec                  string
-	VideoEncode                 string
-	HasEncodeSettings           bool
-	HDR                         string
-	UHD                         string
-	Distributor                 string
-	Region                      string
-	Edition                     string
-	Repack                      string
-	WebDV                       bool
-	Service                     string
-	ServiceLongName             string
-	StreamOptimized             int
-	Assessments                 ReleaseAssessments
-	QuestionnaireAnswers        map[string]string
-	TrackerConfigOverrides      TrackerConfigOverrides
-	TrackerSiteOverrides        TrackerSiteOverrides
-	ReleaseNameOverrides        ReleaseNameOverrides
+	Tracker                string
+	SourcePath             string
+	VideoPath              string
+	FileList               []string
+	SourceSize             int64
+	DiscType               string
+	Scene                  bool
+	SceneNFOReady          bool
+	SceneRenamed           bool
+	SceneRenamedReason     string
+	PersonalRelease        bool
+	Release                ReleaseInfo
+	ReleaseName            string
+	ReleaseNameNoTag       string
+	Tag                    string
+	Identity               ExternalIdentity
+	ProviderMetadata       SourceScopedMetadata
+	AudioLanguages         []string
+	SubtitleLanguages      []string
+	SeasonInt              int
+	EpisodeInt             int
+	SeasonStr              string
+	EpisodeStr             string
+	TVPack                 bool
+	DailyEpisodeDate       string
+	Anime                  bool
+	EpisodeTitle           string
+	EpisodeOverview        string
+	Disc                   DiscFacts
+	Type                   string
+	Source                 string
+	Container              string
+	Audio                  string
+	Channels               string
+	HasCommentary          bool
+	Is3D                   string
+	BitDepth               string
+	VideoCodec             string
+	VideoEncode            string
+	HasEncodeSettings      bool
+	HDR                    string
+	UHD                    string
+	Distributor            string
+	Region                 string
+	Edition                string
+	Repack                 string
+	WebDV                  bool
+	Service                string
+	ServiceLongName        string
+	StreamOptimized        int
+	Assessments            ReleaseAssessments
+	QuestionnaireAnswers   map[string]string
+	TrackerConfigOverrides TrackerConfigOverrides
+	TrackerSiteOverrides   TrackerSiteOverrides
+	ReleaseNameOverrides   ReleaseNameOverrides
+	// DescriptionOverride is the description selected for Tracker.
+	DescriptionOverride string
+	// DescriptionGroupsFinal distinguishes pending description work from final
+	// evidence that required manual content is absent.
+	DescriptionGroupsFinal      bool
 	MediaInfoJSONReady          bool
 	MediaInfoTextReady          bool
 	DVDVOBMediaInfoReady        bool
 	BDInfoReady                 bool
 	PreparedResourceFingerprint string
+	PackageFacts                PackageFacts
+	MediaFileFacts              MediaFileFacts
+	AssetFacts                  AssetFacts
+	AvailabilityFacts           AvailabilityFacts
+	ProvenanceFacts             ProvenanceFacts
 }
 
 // NewTrackerValidationSubject projects an upload subject into the detached
@@ -415,6 +571,7 @@ func NewTrackerValidationSubject(subject UploadSubject, tracker string) TrackerV
 		maps.Copy(answers, values)
 		break
 	}
+	descriptionOverride := trackerDescriptionOverride(subject, tracker)
 	resourceFingerprint, _ := CanonicalWorkflowFingerprint(struct {
 		MediaInfoJSON   bool
 		MediaInfoText   bool
@@ -428,6 +585,11 @@ func NewTrackerValidationSubject(subject UploadSubject, tracker string) TrackerV
 		BDInfo:          strings.TrimSpace(subject.Disc.Summary) != "",
 		SceneNFO:        strings.TrimSpace(subject.SceneNFOPath) != "",
 	})
+	packageFacts := deriveValidationPackageFacts(subject.SourcePath, subject.FileList)
+	mediaFacts := deriveValidationMediaFileFacts(subject, packageFacts.MediaFileCount)
+	assetFacts := deriveValidationAssetFacts(subject)
+	availabilityFacts := deriveValidationAvailabilityFacts(subject.ProviderMetadata)
+	provenanceFacts := deriveValidationProvenanceFacts(subject.Identity, subject.ProviderMetadata)
 	return TrackerValidationSubject{
 		Tracker:                     tracker,
 		SourcePath:                  subject.SourcePath,
@@ -484,12 +646,46 @@ func NewTrackerValidationSubject(subject UploadSubject, tracker string) TrackerV
 		TrackerConfigOverrides:      cloneTrackerValidationValue(subject.TrackerConfigOverrides),
 		TrackerSiteOverrides:        cloneTrackerValidationValue(subject.TrackerSiteOverrides),
 		ReleaseNameOverrides:        cloneTrackerValidationValue(subject.ReleaseNameOverrides),
+		DescriptionOverride:         descriptionOverride,
+		DescriptionGroupsFinal:      subject.DescriptionGroupsFinal,
 		MediaInfoJSONReady:          strings.TrimSpace(subject.MediaInfoJSONPath) != "",
 		MediaInfoTextReady:          strings.TrimSpace(subject.MediaInfoTextPath) != "",
 		DVDVOBMediaInfoReady:        strings.TrimSpace(subject.DVDVOBMediaInfoText) != "",
 		BDInfoReady:                 strings.TrimSpace(subject.Disc.Summary) != "",
 		PreparedResourceFingerprint: string(resourceFingerprint),
+		PackageFacts:                packageFacts,
+		MediaFileFacts:              mediaFacts,
+		AssetFacts:                  assetFacts,
+		AvailabilityFacts:           availabilityFacts,
+		ProvenanceFacts:             provenanceFacts,
 	}
+}
+
+// trackerDescriptionOverride prefers explicit direct content, then selects the
+// first non-empty prepared description assigned to tracker.
+func trackerDescriptionOverride(subject UploadSubject, tracker string) string {
+	if description := strings.TrimSpace(subject.DescriptionOverride); description != "" {
+		return description
+	}
+	for _, group := range subject.DescriptionGroups {
+		matchesTracker := false
+		for _, candidate := range group.Trackers {
+			if strings.EqualFold(strings.TrimSpace(candidate), tracker) {
+				matchesTracker = true
+				break
+			}
+		}
+		if !matchesTracker {
+			continue
+		}
+		if description := strings.TrimSpace(group.Description); description != "" {
+			return description
+		}
+		if description := strings.TrimSpace(group.RawDescription); description != "" {
+			return description
+		}
+	}
+	return ""
 }
 
 func cloneTrackerValidationValue[T any](value T) T {
@@ -500,9 +696,501 @@ func cloneTrackerValidationValue[T any](value T) T {
 	return cloned
 }
 
+var (
+	validationSeasonPattern  = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])S(\d{1,3})`)
+	validationEpisodePattern = regexp.MustCompile(`(?i)E(\d{1,4})`)
+	validationArchivePart    = regexp.MustCompile(`(?i)^\.r\d{2,3}$`)
+)
+
+var validationMediaExtensions = map[string]struct{}{
+	".3gp":  {},
+	".avi":  {},
+	".flv":  {},
+	".m2ts": {},
+	".m2v":  {},
+	".m4v":  {},
+	".mkv":  {},
+	".mov":  {},
+	".mp4":  {},
+	".mpeg": {},
+	".mpg":  {},
+	".mts":  {},
+	".ts":   {},
+	".vob":  {},
+	".webm": {},
+	".wmv":  {},
+}
+
+var validationArchiveExtensions = map[string]struct{}{
+	".001": {},
+	".7z":  {},
+	".bz2": {},
+	".gz":  {},
+	".rar": {},
+	".tar": {},
+	".tbz": {},
+	".tgz": {},
+	".txz": {},
+	".xz":  {},
+	".zip": {},
+}
+
+var validationSubtitleExtensions = map[string]struct{}{
+	".ass": {},
+	".idx": {},
+	".smi": {},
+	".srt": {},
+	".ssa": {},
+	".sub": {},
+	".sup": {},
+	".vtt": {},
+}
+
+func deriveValidationPackageFacts(sourcePath string, fileList []string) PackageFacts {
+	facts := PackageFacts{Status: MetadataEvidenceStatusUnavailable}
+	extensions := make(map[string]struct{})
+	extraKinds := make(map[PackageFileKind]struct{})
+	detectedEpisodes := make(map[int]map[int]struct{})
+	seenFiles := make(map[string]struct{})
+	sourcePath = strings.TrimSpace(sourcePath)
+	folderCandidate := false
+
+	for _, rawFile := range fileList {
+		fileName := strings.TrimSpace(rawFile)
+		if fileName == "" {
+			continue
+		}
+		cleanFileName := filepath.Clean(fileName)
+		if _, seen := seenFiles[cleanFileName]; seen {
+			continue
+		}
+		seenFiles[cleanFileName] = struct{}{}
+		facts.KnownFileCount++
+
+		extension := strings.ToLower(filepath.Ext(cleanFileName))
+		if extension != "" {
+			extensions[extension] = struct{}{}
+		}
+		isMedia := validationPackageFileIsMedia(extension)
+		if isMedia {
+			facts.MediaFileCount++
+		}
+		kind := validationPackageFileKind(cleanFileName, extension, isMedia)
+		switch kind {
+		case PackageFileKindArchive:
+			facts.ArchiveFileCount++
+		case PackageFileKindExternalSubtitle:
+			facts.ExternalSubtitleFileCount++
+		case PackageFileKindMedia:
+		case PackageFileKindSample, PackageFileKindProof, PackageFileKindNFO, PackageFileKindChecksum,
+			PackageFileKindImage, PackageFileKindText, PackageFileKindExecutable, PackageFileKindOther:
+			extraKinds[kind] = struct{}{}
+		}
+
+		nested, external, insideFolder := validationPackagePathFacts(sourcePath, cleanFileName)
+		if nested {
+			facts.NestedFileCount++
+		}
+		if external {
+			facts.ExternalFileCount++
+		}
+		folderCandidate = folderCandidate || insideFolder
+		collectValidationSeasonEpisodes(filepath.Base(cleanFileName), detectedEpisodes)
+	}
+
+	if facts.KnownFileCount == 0 {
+		return facts
+	}
+	facts.Status = MetadataEvidenceStatusPartial
+	facts.SingleFileFolder = facts.KnownFileCount == 1 && folderCandidate
+	facts.Extensions = make([]string, 0, len(extensions))
+	for extension := range extensions {
+		facts.Extensions = append(facts.Extensions, extension)
+	}
+	slices.Sort(facts.Extensions)
+	facts.ExtraKinds = make([]PackageFileKind, 0, len(extraKinds))
+	for kind := range extraKinds {
+		facts.ExtraKinds = append(facts.ExtraKinds, kind)
+	}
+	slices.Sort(facts.ExtraKinds)
+
+	seasons := make([]int, 0, len(detectedEpisodes))
+	for season := range detectedEpisodes {
+		seasons = append(seasons, season)
+	}
+	slices.Sort(seasons)
+	facts.DetectedSeasons = slices.Clone(seasons)
+	facts.DetectedEpisodes = make([]SeasonEpisodeFacts, 0, len(seasons))
+	for _, season := range seasons {
+		episodeSet := detectedEpisodes[season]
+		episodes := make([]int, 0, len(episodeSet))
+		for episode := range episodeSet {
+			episodes = append(episodes, episode)
+		}
+		slices.Sort(episodes)
+		facts.DetectedEpisodes = append(facts.DetectedEpisodes, SeasonEpisodeFacts{
+			Season:   season,
+			Episodes: episodes,
+		})
+	}
+	return facts
+}
+
+func validationPackageFileIsMedia(extension string) bool {
+	_, ok := validationMediaExtensions[extension]
+	return ok
+}
+
+func validationPackageFileKind(fileName string, extension string, media bool) PackageFileKind {
+	base := strings.ToLower(filepath.Base(fileName))
+	clean := strings.ToLower(filepath.Clean(fileName))
+	switch {
+	case validationArchivePart.MatchString(extension):
+		return PackageFileKindArchive
+	case hasValidationExtension(validationArchiveExtensions, extension):
+		return PackageFileKindArchive
+	case hasValidationExtension(validationSubtitleExtensions, extension):
+		return PackageFileKindExternalSubtitle
+	case strings.Contains(base, "sample"):
+		return PackageFileKindSample
+	case strings.Contains(clean, string(filepath.Separator)+"proof"+string(filepath.Separator)) || strings.Contains(base, "proof"):
+		return PackageFileKindProof
+	case extension == ".nfo":
+		return PackageFileKindNFO
+	case extension == ".sfv" || extension == ".md5" || extension == ".sha1" || extension == ".sha256":
+		return PackageFileKindChecksum
+	case extension == ".bmp" || extension == ".gif" || extension == ".jpeg" || extension == ".jpg" ||
+		extension == ".png" || extension == ".webp":
+		return PackageFileKindImage
+	case extension == ".txt":
+		return PackageFileKindText
+	case extension == ".bat" || extension == ".cmd" || extension == ".com" || extension == ".exe" ||
+		extension == ".msi" || extension == ".ps1" || extension == ".scr":
+		return PackageFileKindExecutable
+	case media:
+		return PackageFileKindMedia
+	default:
+		return PackageFileKindOther
+	}
+}
+
+func hasValidationExtension(values map[string]struct{}, extension string) bool {
+	_, ok := values[extension]
+	return ok
+}
+
+func validationPackagePathFacts(sourcePath string, fileName string) (nested bool, external bool, insideFolder bool) {
+	if sourcePath == "" {
+		return filepath.Dir(fileName) != ".", false, false
+	}
+	cleanSource := filepath.Clean(sourcePath)
+	if validationLocalPathsEqual(cleanSource, fileName) {
+		return false, false, false
+	}
+	relative, err := filepath.Rel(cleanSource, fileName)
+	if err != nil {
+		return false, true, false
+	}
+	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+		return false, true, false
+	}
+	return filepath.Dir(relative) != ".", false, relative != "."
+}
+
+func validationLocalPathsEqual(left string, right string) bool {
+	return strings.EqualFold(filepath.Clean(left), filepath.Clean(right))
+}
+
+func collectValidationSeasonEpisodes(fileName string, detected map[int]map[int]struct{}) {
+	seasonMatch := validationSeasonPattern.FindStringSubmatch(fileName)
+	if len(seasonMatch) < 2 {
+		return
+	}
+	season, err := strconv.Atoi(seasonMatch[1])
+	if err != nil || season < 0 {
+		return
+	}
+	if detected[season] == nil {
+		detected[season] = make(map[int]struct{})
+	}
+	for _, episodeMatch := range validationEpisodePattern.FindAllStringSubmatch(fileName, -1) {
+		if len(episodeMatch) < 2 {
+			continue
+		}
+		episode, parseErr := strconv.Atoi(episodeMatch[1])
+		if parseErr == nil && episode >= 0 {
+			detected[season][episode] = struct{}{}
+		}
+	}
+}
+
+func deriveValidationMediaFileFacts(subject UploadSubject, expectedFileCount int) MediaFileFacts {
+	return buildValidationMediaFileFacts(
+		subject.VideoPath,
+		subject.FileList,
+		expectedFileCount,
+		subject.Container,
+		subject.Source,
+		subject.Release.Resolution,
+		subject.VideoCodec,
+		subject.VideoEncode,
+		subject.BitDepth,
+		subject.AudioLanguages,
+		subject.SubtitleLanguages,
+		validationOriginalLanguage(subject.ProviderMetadata),
+	)
+}
+
+func deriveValidationRuleMediaFileFacts(subject RuleSubject, expectedFileCount int) MediaFileFacts {
+	return buildValidationMediaFileFacts(
+		subject.VideoPath,
+		subject.FileList,
+		expectedFileCount,
+		subject.Container,
+		subject.Source,
+		subject.Release.Resolution,
+		subject.VideoCodec,
+		subject.VideoEncode,
+		subject.BitDepth,
+		subject.AudioLanguages,
+		subject.SubtitleLanguages,
+		validationOriginalLanguage(subject.ProviderMetadata),
+	)
+}
+
+func buildValidationMediaFileFacts(
+	videoPath string,
+	fileList []string,
+	expectedFileCount int,
+	container string,
+	source string,
+	resolution string,
+	videoCodec string,
+	videoEncode string,
+	bitDepth string,
+	audioLanguages []string,
+	subtitleLanguages []string,
+	originalLanguage string,
+) MediaFileFacts {
+	facts := MediaFileFacts{
+		Status:            MetadataEvidenceStatusUnavailable,
+		TechnicalStatus:   MetadataEvidenceStatusUnavailable,
+		LanguageStatus:    MetadataEvidenceStatusUnavailable,
+		ExpectedFileCount: expectedFileCount,
+		OriginalLanguage:  strings.TrimSpace(originalLanguage),
+	}
+	primaryPath := strings.TrimSpace(videoPath)
+	if primaryPath == "" && len(fileList) > 0 {
+		primaryPath = strings.TrimSpace(fileList[0])
+	}
+	technicalKnown := primaryPath != "" || strings.TrimSpace(container) != "" || strings.TrimSpace(source) != "" ||
+		strings.TrimSpace(resolution) != "" || strings.TrimSpace(videoCodec) != "" || strings.TrimSpace(videoEncode) != "" ||
+		strings.TrimSpace(bitDepth) != ""
+	languageKnown := len(audioLanguages) > 0 || len(subtitleLanguages) > 0 || facts.OriginalLanguage != ""
+	if !technicalKnown && !languageKnown {
+		return facts
+	}
+	fileName := ""
+	if primaryPath != "" {
+		fileName = filepath.Base(filepath.Clean(primaryPath))
+	}
+	facts.Files = []MediaFileFact{{
+		FileName:          fileName,
+		Primary:           true,
+		Container:         strings.TrimSpace(container),
+		Source:            strings.TrimSpace(source),
+		Resolution:        strings.TrimSpace(resolution),
+		VideoCodec:        strings.TrimSpace(videoCodec),
+		VideoEncode:       strings.TrimSpace(videoEncode),
+		BitDepth:          strings.TrimSpace(bitDepth),
+		AudioLanguages:    slices.Clone(audioLanguages),
+		SubtitleLanguages: slices.Clone(subtitleLanguages),
+	}}
+	facts.Status = MetadataEvidenceStatusPartial
+	if technicalKnown {
+		facts.TechnicalStatus = MetadataEvidenceStatusPartial
+	}
+	if languageKnown {
+		facts.LanguageStatus = MetadataEvidenceStatusPartial
+	}
+	return facts
+}
+
+func validationOriginalLanguage(metadata SourceScopedMetadata) string {
+	switch {
+	case metadata.TMDB != nil && strings.TrimSpace(metadata.TMDB.OriginalLanguage) != "":
+		return strings.TrimSpace(metadata.TMDB.OriginalLanguage)
+	case metadata.TVDB != nil && strings.TrimSpace(metadata.TVDB.OriginalLanguage) != "":
+		return strings.TrimSpace(metadata.TVDB.OriginalLanguage)
+	case metadata.IMDB != nil && strings.TrimSpace(metadata.IMDB.OriginalLanguage) != "":
+		return strings.TrimSpace(metadata.IMDB.OriginalLanguage)
+	case metadata.TVmaze != nil && strings.TrimSpace(metadata.TVmaze.Language) != "":
+		return strings.TrimSpace(metadata.TVmaze.Language)
+	default:
+		return ""
+	}
+}
+
+func deriveValidationAssetFacts(subject UploadSubject) AssetFacts {
+	mediaInfoJSONReady := strings.TrimSpace(subject.MediaInfoJSONPath) != ""
+	mediaInfoTextReady := strings.TrimSpace(subject.MediaInfoTextPath) != ""
+	dvdVOBMediaInfoReady := strings.TrimSpace(subject.DVDVOBMediaInfoText) != ""
+	facts := AssetFacts{
+		Status:            MetadataEvidenceStatusPartial,
+		MediaInfoJSON:     completeAssetEvidence(mediaInfoJSONReady, boolCount(mediaInfoJSONReady)),
+		MediaInfoText:     completeAssetEvidence(mediaInfoTextReady, boolCount(mediaInfoTextReady)),
+		DVDVOBMediaInfo:   completeAssetEvidence(dvdVOBMediaInfoReady, boolCount(dvdVOBMediaInfoReady)),
+		BDInfo:            completeAssetEvidence(strings.TrimSpace(subject.Disc.Summary) != "", boolCount(strings.TrimSpace(subject.Disc.Summary) != "")),
+		NFO:               completeAssetEvidence(strings.TrimSpace(subject.SceneNFOPath) != "", boolCount(strings.TrimSpace(subject.SceneNFOPath) != "")),
+		Screenshots:       unavailableAssetEvidence(),
+		HostedScreenshots: unavailableAssetEvidence(),
+		DVDMenus:          unavailableAssetEvidence(),
+		HostedDVDMenus:    unavailableAssetEvidence(),
+	}
+	if subject.ExactMedia == nil {
+		return facts
+	}
+	screenshotCount := countValidationScreenshots(subject.ExactMedia.Screenshots, ScreenshotPurposeFinal)
+	menuCount := countValidationDVDMenus(subject.ExactMedia.DVDMenus)
+	hostedScreenshotCount := countValidationImageLinks(subject.ExactMedia.ScreenshotUploads)
+	hostedMenuCount := countValidationImageLinks(subject.ExactMedia.DVDMenuUploads)
+	facts.Status = MetadataEvidenceStatusComplete
+	facts.Screenshots = completeAssetEvidence(screenshotCount > 0, screenshotCount)
+	facts.HostedScreenshots = completeAssetEvidence(hostedScreenshotCount > 0, hostedScreenshotCount)
+	facts.DVDMenus = completeAssetEvidence(menuCount > 0, menuCount)
+	facts.HostedDVDMenus = completeAssetEvidence(hostedMenuCount > 0, hostedMenuCount)
+	return facts
+}
+
+func deriveValidationRuleAssetFacts(subject RuleSubject) AssetFacts {
+	return AssetFacts{
+		Status:            MetadataEvidenceStatusPartial,
+		MediaInfoJSON:     completeAssetEvidence(subject.MediaInfoJSONReady, boolCount(subject.MediaInfoJSONReady)),
+		MediaInfoText:     completeAssetEvidence(subject.MediaInfoTextReady, boolCount(subject.MediaInfoTextReady)),
+		DVDVOBMediaInfo:   completeAssetEvidence(subject.DVDVOBMediaInfoReady, boolCount(subject.DVDVOBMediaInfoReady)),
+		BDInfo:            completeAssetEvidence(strings.TrimSpace(subject.Disc.Summary) != "", boolCount(strings.TrimSpace(subject.Disc.Summary) != "")),
+		NFO:               completeAssetEvidence(strings.TrimSpace(subject.SceneNFOPath) != "", boolCount(strings.TrimSpace(subject.SceneNFOPath) != "")),
+		Screenshots:       unavailableAssetEvidence(),
+		HostedScreenshots: unavailableAssetEvidence(),
+		DVDMenus:          unavailableAssetEvidence(),
+		HostedDVDMenus:    unavailableAssetEvidence(),
+	}
+}
+
+func completeAssetEvidence(ready bool, count int) AssetEvidence {
+	return AssetEvidence{
+		Status: MetadataEvidenceStatusComplete,
+		Ready:  ready,
+		Count:  count,
+	}
+}
+
+func unavailableAssetEvidence() AssetEvidence {
+	return AssetEvidence{Status: MetadataEvidenceStatusUnavailable}
+}
+
+func boolCount(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func countValidationScreenshots(images []ScreenshotImage, purpose ScreenshotPurpose) int {
+	count := 0
+	for _, image := range images {
+		if image.Purpose == purpose && strings.TrimSpace(image.Path) != "" {
+			count++
+		}
+	}
+	return count
+}
+
+func countValidationDVDMenus(images []DVDMenuCaptureImage) int {
+	count := 0
+	for _, image := range images {
+		if image.Purpose == ScreenshotPurposeMenu && strings.TrimSpace(image.Path) != "" {
+			count++
+		}
+	}
+	return count
+}
+
+func countValidationImageLinks(links []UploadedImageLink) int {
+	count := 0
+	for _, link := range links {
+		if strings.TrimSpace(link.ImagePath) != "" &&
+			(strings.TrimSpace(link.ImgURL) != "" || strings.TrimSpace(link.RawURL) != "" || strings.TrimSpace(link.WebURL) != "") {
+			count++
+		}
+	}
+	return count
+}
+
+func deriveValidationAvailabilityFacts(metadata SourceScopedMetadata) AvailabilityFacts {
+	facts := AvailabilityFacts{
+		Status:    MetadataEvidenceStatusUnavailable,
+		Providers: slices.Clone(metadata.ProviderAvailability),
+	}
+	if len(facts.Providers) > 0 {
+		facts.Status = MetadataEvidenceStatusPartial
+	}
+	return facts
+}
+
+func deriveValidationProvenanceFacts(identity ExternalIdentity, metadata SourceScopedMetadata) ProvenanceFacts {
+	facts := ProvenanceFacts{
+		Status:             MetadataEvidenceStatusUnavailable,
+		IdentitySourcePath: strings.TrimSpace(identity.SourcePath),
+		IdentityGeneration: identity.Generation,
+		MetadataSourcePath: strings.TrimSpace(metadata.SourcePath),
+		MetadataGeneration: metadata.Generation,
+		Identity:           identity.Provenance,
+	}
+	identityKnown := facts.IdentitySourcePath != "" || facts.IdentityGeneration > 0 || validationIdentityProvenanceKnown(facts.Identity)
+	metadataKnown := facts.MetadataSourcePath != "" || facts.MetadataGeneration > 0
+	if !identityKnown && !metadataKnown {
+		return facts
+	}
+	facts.Status = MetadataEvidenceStatusPartial
+	if !identityKnown || !metadataKnown {
+		return facts
+	}
+	if facts.IdentitySourcePath != "" && facts.MetadataSourcePath != "" &&
+		!validationLocalPathsEqual(facts.IdentitySourcePath, facts.MetadataSourcePath) {
+		facts.Status = MetadataEvidenceStatusContradictory
+		return facts
+	}
+	if facts.IdentityGeneration > 0 && facts.MetadataGeneration > 0 &&
+		facts.IdentityGeneration != facts.MetadataGeneration {
+		facts.Status = MetadataEvidenceStatusContradictory
+		return facts
+	}
+	if facts.IdentitySourcePath != "" && facts.MetadataSourcePath != "" &&
+		facts.IdentityGeneration > 0 && facts.MetadataGeneration > 0 {
+		facts.Status = MetadataEvidenceStatusComplete
+	}
+	return facts
+}
+
+func validationIdentityProvenanceKnown(provenance IdentityProvenanceSet) bool {
+	return validationIdentityProvenanceValueKnown(provenance.TMDB) ||
+		validationIdentityProvenanceValueKnown(provenance.IMDB) ||
+		validationIdentityProvenanceValueKnown(provenance.TVDB) ||
+		validationIdentityProvenanceValueKnown(provenance.TVmaze) ||
+		validationIdentityProvenanceValueKnown(provenance.MAL) ||
+		validationIdentityProvenanceValueKnown(provenance.Category)
+}
+
+func validationIdentityProvenanceValueKnown(provenance IdentityProvenance) bool {
+	return provenance != "" && provenance != IdentityProvenanceUnknown
+}
+
 // NewTrackerValidationSubjectFromRuleSubject preserves the legacy generic-rule
 // entry point while routing custom checks through the validation contract.
 func NewTrackerValidationSubjectFromRuleSubject(subject RuleSubject, tracker string) TrackerValidationSubject {
+	packageFacts := deriveValidationPackageFacts(subject.SourcePath, subject.FileList)
+	mediaFacts := deriveValidationRuleMediaFileFacts(subject, packageFacts.MediaFileCount)
 	return TrackerValidationSubject{
 		Tracker:              strings.ToUpper(strings.TrimSpace(tracker)),
 		SourcePath:           subject.SourcePath,
@@ -534,11 +1222,17 @@ func NewTrackerValidationSubjectFromRuleSubject(subject RuleSubject, tracker str
 		WebDV:                subject.WebDV,
 		Anime:                subject.Anime,
 		Assessments:          cloneTrackerValidationValue(subject.Assessments),
+		DescriptionOverride:  subject.DescriptionOverride,
 		Disc:                 cloneTrackerValidationValue(subject.Disc),
 		MediaInfoJSONReady:   subject.MediaInfoJSONReady,
 		MediaInfoTextReady:   subject.MediaInfoTextReady,
 		DVDVOBMediaInfoReady: subject.DVDVOBMediaInfoReady,
 		BDInfoReady:          strings.TrimSpace(subject.Disc.Summary) != "",
+		PackageFacts:         packageFacts,
+		MediaFileFacts:       mediaFacts,
+		AssetFacts:           deriveValidationRuleAssetFacts(subject),
+		AvailabilityFacts:    deriveValidationAvailabilityFacts(subject.ProviderMetadata),
+		ProvenanceFacts:      deriveValidationProvenanceFacts(subject.Identity, subject.ProviderMetadata),
 	}
 }
 
@@ -709,7 +1403,10 @@ type TorrentSubject struct {
 	DiscType          string
 	ClientTorrentPath string
 	Trackers          []string
-	TorrentOverrides  TorrentOverrides
+	// SkipIfRehashTrackers lists selected tracker names to omit when their
+	// torrent policy would otherwise require regeneration. Names are case-insensitive.
+	SkipIfRehashTrackers []string
+	TorrentOverrides     TorrentOverrides
 }
 
 // ClientSubject contains prepared content source facts and caller instructions
@@ -739,6 +1436,9 @@ type RuleFailure struct {
 	Rule        string
 	Reason      string
 	Disposition RuleDisposition
+	// EvidenceStatus describes the completeness of the facts supporting this
+	// result; an empty value denotes a legacy result.
+	EvidenceStatus MetadataEvidenceStatus `json:"evidenceStatus,omitempty"`
 }
 
 // NormalizeRuleDisposition maps legacy persisted values and fails closed for
@@ -1223,6 +1923,33 @@ type TVDBEpisodeMetadata struct {
 	EpisodeImage string
 }
 
+// TVDBNameDisambiguation records provider evidence used to decide whether a
+// TV series name needs its TVDB year and country locale.
+type TVDBNameDisambiguation struct {
+	// CanonicalName is the selected English series name used for comparison.
+	CanonicalName string
+	// SeriesYear is the selected series year used for same-year comparison.
+	SeriesYear int
+	// Locale is the normalized country token emitted only when IncludeLocale
+	// is true.
+	Locale string
+	// SameNameSeries counts distinct other TVDB IDs with the same normalized
+	// English primary name or alias.
+	SameNameSeries int
+	// SameNameAndYearSeries counts SameNameSeries entries with a matching known
+	// year.
+	SameNameAndYearSeries int
+	// IncludeYear and IncludeLocale are the prepared naming decisions consumed
+	// by tracker policies without further provider I/O.
+	IncludeYear   bool
+	IncludeLocale bool
+	// Status records whether the general-name search evidence is complete,
+	// partial, unavailable, or contradictory.
+	Status MetadataEvidenceStatus
+	// Source identifies the versioned disambiguation algorithm.
+	Source string
+}
+
 // TVDBMetadata stores TVDB series metadata plus the selected episode and any
 // episode list fetched for the selected season.
 type TVDBMetadata struct {
@@ -1239,6 +1966,7 @@ type TVDBMetadata struct {
 	YearSource string
 	// YearConfidence is "high" for explicit TVDB title/alias years and "low" for guarded slug-derived naming years.
 	YearConfidence         string
+	NameDisambiguation     TVDBNameDisambiguation
 	Type                   string
 	Status                 string
 	Network                string
@@ -1393,10 +2121,18 @@ type TrackerQuestionnaireField struct {
 	Required    bool
 }
 
+// TorrentResult carries a torrent artifact reference and tracker context
+// between creation, upload, and client-injection services.
 type TorrentResult struct {
 	Path      string
 	InfoHash  string
 	URL       string
 	Tracker   string
 	CrossSeed bool
+	// RehashedTrackers lists selected trackers whose preparation required the
+	// created base torrent and should be scheduled after reusable uploads.
+	RehashedTrackers []string
+	// SkippedTrackers lists selected trackers omitted by SkipIfRehashTrackers.
+	// Path can be empty when every selected tracker was skipped.
+	SkippedTrackers []string
 }

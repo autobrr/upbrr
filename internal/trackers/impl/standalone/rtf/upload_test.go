@@ -30,8 +30,9 @@ func TestBuildUploadDryRunUsesDescriptionPayloadAndLeavesNFOEmpty(t *testing.T) 
 		Tracker: "RTF",
 		Meta: api.UploadSubject{
 			TorrentPath:         torrentPath,
-			ReleaseName:         "Example.Release.2026.1080p-GRP",
+			ReleaseName:         "Example.Release.2010.1080p-GRP",
 			DescriptionOverride: "Custom description",
+			Release:             api.ReleaseInfo{Year: 2010},
 		},
 		TrackerConfig: config.TrackerConfig{APIKey: "token"},
 		Assets:        &trackers.DescriptionAssets{Description: "Custom description"},
@@ -93,6 +94,7 @@ func TestUploadRefreshesExpiredAPIKeyAndPersistsIt(t *testing.T) {
 		Meta: api.UploadSubject{
 			TorrentPath: torrentPath,
 			ReleaseName: "Release",
+			Release:     api.ReleaseInfo{Year: 2010},
 		},
 		TrackerConfig: config.TrackerConfig{
 			APIKey:   "old-token",
@@ -158,7 +160,7 @@ func TestUploadBlockedExpiredAPIKeyDoesNotRefreshOrPersist(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected blocked upload error")
 	}
-	if !strings.Contains(err.Error(), "content must be at least 10 years old") {
+	if !strings.Contains(err.Error(), "content must be at least 10 years and 1 month old") {
 		t.Fatalf("expected eligibility error, got %v", err)
 	}
 	if requests != 0 {
@@ -201,6 +203,7 @@ func TestUploadUsesValidAPIKeyWithoutRefresh(t *testing.T) {
 		Meta: api.UploadSubject{
 			TorrentPath: torrentPath,
 			ReleaseName: "Release",
+			Release:     api.ReleaseInfo{Year: 2010},
 		},
 		TrackerConfig: config.TrackerConfig{
 			APIKey: "valid-token",
@@ -250,6 +253,7 @@ func TestUploadGeneratesMissingAPIKeyFromCredentials(t *testing.T) {
 		Meta: api.UploadSubject{
 			TorrentPath: torrentPath,
 			ReleaseName: "Release",
+			Release:     api.ReleaseInfo{Year: 2010},
 		},
 		TrackerConfig: config.TrackerConfig{
 			Username: "user",
@@ -272,8 +276,11 @@ func TestUploadGeneratesMissingAPIKeyFromCredentials(t *testing.T) {
 
 func TestUploadRejectsMalformedBaseURL(t *testing.T) {
 	_, err := uploadAt(context.Background(), trackers.PreparationInput{
-		Tracker:       "RTF",
-		Meta:          api.UploadSubject{ReleaseName: "Example.Release.2026.1080p-GRP"},
+		Tracker: "RTF",
+		Meta: api.UploadSubject{
+			ReleaseName: "Example.Release.2010.1080p-GRP",
+			Release:     api.ReleaseInfo{Year: 2010},
+		},
 		TrackerConfig: config.TrackerConfig{APIKey: "token"},
 	}, "not a url")
 	if err == nil {

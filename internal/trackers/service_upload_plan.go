@@ -577,18 +577,16 @@ func (s *Service) createPendingRecords(ctx context.Context, meta api.UploadSubje
 	}
 }
 
+// submitTrackerPlans finishes reusable-base uploads first, then waits the
+// configured rehash cooldown before starting rehash-dependent uploads.
 func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject, slots []trackerPlanSlot) {
-	ready := make([]int, 0, len(slots))
-	for idx := range slots {
-		if slots[idx].failure == nil && slots[idx].plan.Intent() == PreparationIntentUpload {
-			ready = append(ready, idx)
-		}
-	}
+	ready, delayedStart := orderedReadyTrackerPlanIndexes(slots, meta.RehashedTrackers)
 	workerCount := s.maxConcurrentTrackerUploads(len(ready))
 	if workerCount == 0 {
 		return
 	}
 	jobs := make(chan int)
+	var phase sync.WaitGroup
 	var wg sync.WaitGroup
 	worker := func() {
 		defer wg.Done()
@@ -601,6 +599,7 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 				if releaseErr := slot.plan.Release(); releaseErr != nil {
 					s.warnPlanRelease(slot.tracker, releaseErr)
 				}
+				phase.Done()
 				continue
 			}
 			emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "running", "Uploading to tracker")
@@ -615,6 +614,7 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 				slot.failure = trackerFailure(slot.tracker, "effect_fence", fingerprintErr)
 				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, "failed")
 				emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "failed", slot.failure.Message)
+				phase.Done()
 				continue
 			}
 			effectReceipt, effectErr := api.BeginWorkflowExternalEffect(ctx, api.WorkflowExternalEffect{
@@ -630,6 +630,7 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 				slot.failure = trackerFailure(slot.tracker, code, effectErr)
 				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, code)
 				emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "failed", slot.failure.Message)
+				phase.Done()
 				continue
 			}
 			if effectReceipt.AlreadySucceeded {
@@ -643,6 +644,7 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 					"completed",
 					"Prior tracker upload receipt retained",
 				)
+				phase.Done()
 				continue
 			}
 			summary, err := slot.plan.Submit(ctx)
@@ -652,6 +654,7 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 				slot.failure = trackerFailure(slot.tracker, "unknown_outcome", receiptErr)
 				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, "unknown_outcome")
 				emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "failed", slot.failure.Message)
+				phase.Done()
 				continue
 			}
 			if err != nil {
@@ -667,6 +670,7 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 			if releaseErr := slot.plan.Release(); releaseErr != nil {
 				s.warnPlanRelease(slot.tracker, releaseErr)
 			}
+			phase.Done()
 		}
 	}
 	for range workerCount {
@@ -676,9 +680,27 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 	next := 0
 enqueue:
 	for ; next < len(ready); next++ {
+		if next == delayedStart && delayedStart < len(ready) {
+			cooldown := time.Duration(max(s.cfg.TorrentCreation.RehashCooldown, 0)) * time.Second
+			s.logger.Infof("trackers: rehash uploads queued last count=%d cooldown=%s", len(ready)-delayedStart, cooldown)
+			if delayedStart > 0 {
+				phase.Wait()
+			}
+			if delayedStart > 0 && cooldown > 0 {
+				timer := time.NewTimer(cooldown)
+				select {
+				case <-timer.C:
+				case <-ctx.Done():
+					timer.Stop()
+					break enqueue
+				}
+			}
+		}
+		phase.Add(1)
 		select {
 		case jobs <- ready[next]:
 		case <-ctx.Done():
+			phase.Done()
 			break enqueue
 		}
 	}
@@ -690,6 +712,33 @@ enqueue:
 		s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, "canceled")
 		emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "canceled", "Upload canceled")
 	}
+}
+
+// orderedReadyTrackerPlanIndexes stably partitions ready upload plans so
+// reusable-base plans precede rehash-dependent plans. delayedStart is the first
+// rehash-dependent index in the returned slice.
+func orderedReadyTrackerPlanIndexes(slots []trackerPlanSlot, rehashedTrackers []string) ([]int, int) {
+	rehashed := make(map[string]struct{}, len(rehashedTrackers))
+	for _, tracker := range rehashedTrackers {
+		if tracker = normalizeTrackerName(tracker); tracker != "" {
+			rehashed[tracker] = struct{}{}
+		}
+	}
+	ready := make([]int, 0, len(slots))
+	delayed := make([]int, 0, len(rehashed))
+	for idx := range slots {
+		if slots[idx].failure != nil || slots[idx].plan.Intent() != PreparationIntentUpload {
+			continue
+		}
+		if _, ok := rehashed[normalizeTrackerName(slots[idx].tracker)]; ok {
+			delayed = append(delayed, idx)
+		} else {
+			ready = append(ready, idx)
+		}
+	}
+	delayedStart := len(ready)
+	ready = append(ready, delayed...)
+	return ready, delayedStart
 }
 
 func (s *Service) logUploadedTorrentURLs(fallbackTracker string, summary api.UploadSummary) {

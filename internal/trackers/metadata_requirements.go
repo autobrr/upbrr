@@ -31,8 +31,24 @@ const (
 	MetadataFieldTVDB MetadataField = "tvdb"
 	// MetadataFieldTVmaze represents fetched TVmaze data matching the canonical ID.
 	MetadataFieldTVmaze MetadataField = "tvmaze"
+	// MetadataFieldTMDBTitle represents a non-empty title from matching TMDB metadata.
+	MetadataFieldTMDBTitle MetadataField = "tmdb_title"
+	// MetadataFieldIMDBTitle represents a non-empty title from matching IMDb metadata.
+	MetadataFieldIMDBTitle MetadataField = "imdb_title"
 	// MetadataFieldTVDBTitle represents a non-empty title from matching TVDB metadata.
 	MetadataFieldTVDBTitle MetadataField = "tvdb_title"
+	// MetadataFieldTVDBYear represents a positive series year from matching TVDB metadata.
+	MetadataFieldTVDBYear MetadataField = "tvdb_year"
+	// MetadataFieldTVDBDisambiguation represents usable TVDB name-collision evidence.
+	MetadataFieldTVDBDisambiguation MetadataField = "tvdb_disambiguation"
+	// MetadataFieldTMDBOriginCountries represents non-empty origin countries from matching TMDB metadata.
+	MetadataFieldTMDBOriginCountries MetadataField = "tmdb_origin_countries"
+	// MetadataFieldTMDBUnavailable represents explicit evidence that TMDB has no matching entry.
+	MetadataFieldTMDBUnavailable MetadataField = "tmdb_unavailable"
+	// MetadataFieldIMDBUnavailable represents explicit evidence that IMDb has no matching entry.
+	MetadataFieldIMDBUnavailable MetadataField = "imdb_unavailable"
+	// MetadataFieldTVDBUnavailable represents explicit evidence that TVDB has no matching entry.
+	MetadataFieldTVDBUnavailable MetadataField = "tvdb_unavailable"
 	// MetadataFieldPoster represents poster artwork from matching provider metadata.
 	MetadataFieldPoster MetadataField = "poster"
 )
@@ -99,18 +115,8 @@ func evaluateMetadataRequirementsWithRegistry(registry *Registry, tracker string
 			continue
 		}
 		disposition := api.NormalizeRuleDisposition(requirement.Disposition)
-		rule := "require_metadata_id"
+		rule := metadataRequirementRule(requirement.AnyOf)
 		reason := "missing required " + metadataFieldList(requirement.AnyOf)
-		switch {
-		case slices.Contains(requirement.AnyOf, MetadataFieldTVDBTitle):
-			rule = "require_tvdb_title"
-			reason = "missing required TVDB series title for MTV TV upload"
-		case slices.Contains(requirement.AnyOf, MetadataFieldPoster):
-			rule = "require_metadata_poster"
-			reason = "missing required metadata poster"
-		case disposition == api.RuleDispositionAdvisory:
-			reason = "missing recommended IMDb ID; PTP upload remains allowed"
-		}
 		failures = append(failures, api.RuleFailure{
 			Rule:        rule,
 			Reason:      reason,
@@ -118,6 +124,28 @@ func evaluateMetadataRequirementsWithRegistry(registry *Registry, tracker string
 		})
 	}
 	return failures, true
+}
+
+func metadataRequirementRule(fields []MetadataField) string {
+	switch {
+	case slices.Contains(fields, MetadataFieldPoster):
+		return "require_metadata_poster"
+	case slices.Contains(fields, MetadataFieldTVDBDisambiguation):
+		return "require_tvdb_disambiguation"
+	case slices.Contains(fields, MetadataFieldTMDBOriginCountries):
+		return "require_metadata_origin_country"
+	case slices.Contains(fields, MetadataFieldTMDBTitle),
+		slices.Contains(fields, MetadataFieldIMDBTitle),
+		slices.Contains(fields, MetadataFieldTVDBTitle),
+		slices.Contains(fields, MetadataFieldTVDBYear):
+		return "require_metadata_naming_fact"
+	case slices.Contains(fields, MetadataFieldTMDBUnavailable),
+		slices.Contains(fields, MetadataFieldIMDBUnavailable),
+		slices.Contains(fields, MetadataFieldTVDBUnavailable):
+		return "require_provider_availability"
+	default:
+		return "require_metadata_id"
+	}
 }
 
 // metadataCategoryDisposition prevents a waivable missing-category result from
@@ -150,8 +178,15 @@ func metadataRequirementPresent(fields []MetadataField, meta api.RuleSubject) bo
 	return false
 }
 
+// MetadataFieldPresent reports whether one source-scoped metadata field is
+// present. Tracker-local validation uses it to compose conditional conjunctions
+// that cannot be represented by one AnyOf row.
+func MetadataFieldPresent(field MetadataField, meta api.RuleSubject) bool {
+	return metadataFieldPresent(field, meta)
+}
+
 // metadataFieldPresent accepts only IDs and provider data scoped to the current
-// source; an empty scope remains compatible with legacy unscoped metadata.
+// source and prepared generation.
 func metadataFieldPresent(field MetadataField, meta api.RuleSubject) bool {
 	idsCurrent := sourceMatches(meta.Identity.SourcePath, meta.SourcePath)
 	switch field {
@@ -171,8 +206,24 @@ func metadataFieldPresent(field MetadataField, meta api.RuleSubject) bool {
 		return matchingTVDBMetadata(meta)
 	case MetadataFieldTVmaze:
 		return matchingTVmazeMetadata(meta)
+	case MetadataFieldTMDBTitle:
+		return matchingTMDBTitle(meta)
+	case MetadataFieldIMDBTitle:
+		return matchingIMDBTitle(meta)
 	case MetadataFieldTVDBTitle:
-		return matchingTVDBMetadata(meta)
+		return matchingTVDBTitle(meta)
+	case MetadataFieldTVDBYear:
+		return matchingTVDBMetadata(meta) && meta.ProviderMetadata.TVDB.Year > 0
+	case MetadataFieldTVDBDisambiguation:
+		return matchingTVDBDisambiguation(meta)
+	case MetadataFieldTMDBOriginCountries:
+		return matchingTMDBOriginCountries(meta)
+	case MetadataFieldTMDBUnavailable:
+		return matchingProviderUnavailable(meta, api.IdentityProviderTMDB)
+	case MetadataFieldIMDBUnavailable:
+		return matchingProviderUnavailable(meta, api.IdentityProviderIMDB)
+	case MetadataFieldTVDBUnavailable:
+		return matchingProviderUnavailable(meta, api.IdentityProviderTVDB)
 	case MetadataFieldPoster:
 		return matchingMetadataPoster(meta)
 	}
@@ -182,26 +233,78 @@ func metadataFieldPresent(field MetadataField, meta api.RuleSubject) bool {
 func matchingTMDBMetadata(meta api.RuleSubject) bool {
 	value := meta.ProviderMetadata.TMDB
 	return providerMetadataCurrent(meta) && value != nil && meta.Identity.TMDBID > 0 &&
-		value.TMDBID == meta.Identity.TMDBID && strings.TrimSpace(value.Title) != ""
+		value.TMDBID == meta.Identity.TMDBID
 }
 
 func matchingIMDBMetadata(meta api.RuleSubject) bool {
 	value := meta.ProviderMetadata.IMDB
 	return providerMetadataCurrent(meta) && value != nil && meta.Identity.IMDBID > 0 &&
-		value.IMDBID == meta.Identity.IMDBID && strings.TrimSpace(value.Title) != ""
+		value.IMDBID == meta.Identity.IMDBID
 }
 
 func matchingTVDBMetadata(meta api.RuleSubject) bool {
 	value := meta.ProviderMetadata.TVDB
 	return providerMetadataCurrent(meta) && value != nil && meta.Identity.TVDBID > 0 &&
-		value.TVDBID == meta.Identity.TVDBID &&
-		(strings.TrimSpace(value.NameEnglish) != "" || strings.TrimSpace(value.Name) != "")
+		value.TVDBID == meta.Identity.TVDBID
 }
 
 func matchingTVmazeMetadata(meta api.RuleSubject) bool {
 	value := meta.ProviderMetadata.TVmaze
 	return providerMetadataCurrent(meta) && value != nil && meta.Identity.TVmazeID > 0 &&
 		value.TVmazeID == meta.Identity.TVmazeID && strings.TrimSpace(value.Name) != ""
+}
+
+func matchingTMDBTitle(meta api.RuleSubject) bool {
+	return matchingTMDBMetadata(meta) && strings.TrimSpace(meta.ProviderMetadata.TMDB.Title) != ""
+}
+
+func matchingIMDBTitle(meta api.RuleSubject) bool {
+	return matchingIMDBMetadata(meta) && strings.TrimSpace(meta.ProviderMetadata.IMDB.Title) != ""
+}
+
+func matchingTVDBTitle(meta api.RuleSubject) bool {
+	return matchingTVDBMetadata(meta) &&
+		(strings.TrimSpace(meta.ProviderMetadata.TVDB.NameEnglish) != "" || strings.TrimSpace(meta.ProviderMetadata.TVDB.Name) != "")
+}
+
+func matchingTVDBDisambiguation(meta api.RuleSubject) bool {
+	if !matchingTVDBTitle(meta) {
+		return false
+	}
+	evidence := meta.ProviderMetadata.TVDB.NameDisambiguation
+	if strings.TrimSpace(evidence.Source) == "" {
+		return false
+	}
+	return evidence.Status == api.MetadataEvidenceStatusComplete || evidence.Status == api.MetadataEvidenceStatusPartial
+}
+
+func matchingTMDBOriginCountries(meta api.RuleSubject) bool {
+	if !matchingTMDBMetadata(meta) {
+		return false
+	}
+	for _, country := range meta.ProviderMetadata.TMDB.OriginCountry {
+		if strings.TrimSpace(country) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func matchingProviderUnavailable(meta api.RuleSubject, provider api.IdentityProvider) bool {
+	if !providerMetadataCurrent(meta) {
+		return false
+	}
+	if _, found := meta.Identity.ProviderID(provider); found {
+		return false
+	}
+	for _, evidence := range meta.ProviderMetadata.ProviderAvailability {
+		if evidence.Provider == provider &&
+			evidence.Status == api.ProviderAvailabilityStatusNotFound &&
+			strings.TrimSpace(evidence.Source) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // matchingMetadataPoster reports whether any current matching provider snapshot
@@ -228,12 +331,12 @@ func matchingMetadataPoster(meta api.RuleSubject) bool {
 }
 
 func providerMetadataCurrent(meta api.RuleSubject) bool {
-	return sourceMatches(meta.Identity.SourcePath, meta.SourcePath) &&
-		sourceMatches(meta.ProviderMetadata.SourcePath, meta.SourcePath)
+	return meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity)
 }
 
-// sourceMatches reports whether data is unscoped or belongs to the current
-// source. Path comparison is case-insensitive to match persisted source keys.
+// sourceMatches preserves legacy unscoped canonical identity while rejecting
+// an explicitly different source. Path comparison is case-insensitive to match
+// persisted source keys.
 func sourceMatches(scopedPath, currentPath string) bool {
 	trimmed := strings.TrimSpace(scopedPath)
 	return trimmed == "" || strings.EqualFold(trimmed, strings.TrimSpace(currentPath))
@@ -260,8 +363,24 @@ func metadataFieldList(fields []MetadataField) string {
 			labels = append(labels, "fetched TVDB metadata")
 		case MetadataFieldTVmaze:
 			labels = append(labels, "fetched TVmaze metadata")
+		case MetadataFieldTMDBTitle:
+			labels = append(labels, "fetched TMDB title")
+		case MetadataFieldIMDBTitle:
+			labels = append(labels, "fetched IMDb title")
 		case MetadataFieldTVDBTitle:
-			labels = append(labels, "TVDB series title")
+			labels = append(labels, "fetched TVDB series title")
+		case MetadataFieldTVDBYear:
+			labels = append(labels, "fetched TVDB series year")
+		case MetadataFieldTVDBDisambiguation:
+			labels = append(labels, "TVDB name disambiguation")
+		case MetadataFieldTMDBOriginCountries:
+			labels = append(labels, "fetched TMDB origin countries")
+		case MetadataFieldTMDBUnavailable:
+			labels = append(labels, "explicit TMDB entry-unavailable evidence")
+		case MetadataFieldIMDBUnavailable:
+			labels = append(labels, "explicit IMDb entry-unavailable evidence")
+		case MetadataFieldTVDBUnavailable:
+			labels = append(labels, "explicit TVDB entry-unavailable evidence")
 		case MetadataFieldPoster:
 			labels = append(labels, "metadata poster")
 		}

@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -32,9 +31,8 @@ import (
 )
 
 var (
-	bhdBaseURL            = "https://beyond-hd.me"
-	bhdTorrentIDPattern   = regexp.MustCompile(`https://beyond-hd\.me/torrent/download/[^\"'\s]+?\.(\d+)\.`)
-	bhdInvalidIMDbPattern = regexp.MustCompile(`(?i)^invalid imdb_id`)
+	bhdBaseURL          = "https://beyond-hd.me"
+	bhdTorrentIDPattern = regexp.MustCompile(`https://beyond-hd\.me/torrent/download/[^\"'\s]+?\.(\d+)\.`)
 )
 
 const bhdUploadResponseMaxBytes = commonhttp.DefaultResponsePreviewBytes
@@ -62,12 +60,6 @@ func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
-	fallbackFields := maps.Clone(state.fields)
-	fallbackFields["imdb_id"] = "1"
-	fallbackBody, fallbackContentType, err := buildMultipartPayload(fallbackFields, state.mediaDump, state.torrentPath)
-	if err != nil {
-		return trackers.PreparedOperation{}, err
-	}
 	endpoint := uploadEndpoint(strings.TrimSpace(req.TrackerConfig.APIKey))
 	announceURL := strings.TrimSpace(req.TrackerConfig.AnnounceURL)
 	artifactPath := ""
@@ -78,9 +70,7 @@ func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers
 		}
 	}
 	return trackers.NewPreparedOperation(preview, func(submitCtx context.Context) (api.UploadSummary, error) {
-		return submitPreparedUpload(
-			submitCtx, req, state, endpoint, body, contentType, fallbackBody, fallbackContentType, announceURL, artifactPath,
-		)
+		return submitPreparedUpload(submitCtx, req, state, endpoint, body, contentType, announceURL, artifactPath)
 	}, nil), nil
 }
 
@@ -91,23 +81,12 @@ func submitPreparedUpload(
 	endpoint string,
 	body []byte,
 	contentType string,
-	fallbackBody []byte,
-	fallbackContentType string,
 	announceURL string,
 	artifactPath string,
 ) (api.UploadSummary, error) {
 	response, responseBody, err := sendPreparedUpload(ctx, endpoint, body, contentType)
 	if err != nil {
 		return api.UploadSummary{}, err
-	}
-	if response.StatusCode == 0 && bhdInvalidIMDbPattern.MatchString(response.StatusMessage) {
-		if req.Logger != nil {
-			req.Logger.Warnf("trackers: BHD rejected imdb_id=%s, retrying upload without an IMDb id", state.fields["imdb_id"])
-		}
-		response, responseBody, err = sendPreparedUpload(ctx, endpoint, fallbackBody, fallbackContentType)
-		if err != nil {
-			return api.UploadSummary{}, err
-		}
 	}
 	if response.StatusCode == 0 {
 		artifactPath, artifactErr := writeFailureArtifact(req, responseBody, "upload_failure")
@@ -185,6 +164,9 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 	}
 	if req.Meta.Identity.TMDBID == 0 {
 		return uploadState{}, errors.New("trackers: BHD missing tmdb id; refresh metadata or set a TMDB id before uploading")
+	}
+	if req.Meta.Identity.IMDBID == 0 {
+		return uploadState{}, errors.New("trackers: BHD missing imdb id; refresh metadata or set an IMDb id before uploading")
 	}
 	var err error
 	var assets trackers.DescriptionAssets
@@ -403,12 +385,7 @@ func resolveTMDBID(meta api.UploadSubject) string {
 }
 
 func resolveIMDbID(meta api.UploadSubject) string {
-	if meta.Identity.IMDBID > 0 {
-		// BHD rejects unpadded six-digit IDs; IMDb IDs are zero-padded
-		// to at least seven digits.
-		return providerid.IMDb(meta.Identity.IMDBID).Digits()
-	}
-	return "0"
+	return providerid.IMDb(meta.Identity.IMDBID).Digits()
 }
 
 func resolveAnon(cfg config.TrackerConfig) string {

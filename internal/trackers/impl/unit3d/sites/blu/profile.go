@@ -12,6 +12,7 @@ func Profile() unit3d.Profile {
 	return unit3d.Profile{
 		Name:             "BLU",
 		BaseURL:          "https://blutopia.cc",
+		OmitEpisodeTitle: true,
 		ValidationPolicy: ValidationPolicy(),
 		BannedGroups:     BannedGroups(),
 		Site: unit3d.SiteProfile{

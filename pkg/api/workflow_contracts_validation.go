@@ -568,6 +568,24 @@ func (s TrackerReleaseProjectionSet) Validate() error {
 				return fmt.Errorf("tracker projection %s %s: %w", id, label, err)
 			}
 		}
+		hasExtendedLineage := projection.NamingPolicyID != "" || projection.NamingFingerprint != "" ||
+			projection.DuplicatePolicyID != "" || projection.DuplicatePolicyFingerprint != "" ||
+			projection.DuplicateTargetFingerprint != "" || projection.DuplicateSearchFingerprint != ""
+		if hasExtendedLineage {
+			if strings.TrimSpace(projection.DuplicatePolicyID) == "" || strings.TrimSpace(projection.NamingPolicyID) == "" {
+				return fmt.Errorf("tracker projection %s extended lineage requires duplicate and naming policy ids", id)
+			}
+			for label, fingerprint := range map[string]WorkflowFingerprint{
+				"naming":      projection.NamingFingerprint,
+				"dupe policy": projection.DuplicatePolicyFingerprint,
+				"dupe target": projection.DuplicateTargetFingerprint,
+				"dupe search": projection.DuplicateSearchFingerprint,
+			} {
+				if err := validateWorkflowFingerprint(fingerprint); err != nil {
+					return fmt.Errorf("tracker projection %s %s: %w", id, label, err)
+				}
+			}
+		}
 		if projection.DupeReady && projection.Readiness != ReadinessStatusReady {
 			return fmt.Errorf("tracker projection %s is dupe-ready without ready status", id)
 		}
@@ -736,11 +754,30 @@ func (s DupeAssessment) Validate() error {
 		if result.CheckedAt.IsZero() || !result.FreshUntil.After(result.CheckedAt) {
 			return fmt.Errorf("dupe result %s has invalid freshness", id)
 		}
-		if err := validateWorkflowFingerprint(result.ProjectionFingerprint); err != nil {
-			return fmt.Errorf("dupe result %s projection: %w", id, err)
+		for label, fingerprint := range map[string]WorkflowFingerprint{
+			"projection": result.ProjectionFingerprint,
+			"criteria":   result.CriteriaFingerprint,
+		} {
+			if err := validateWorkflowFingerprint(fingerprint); err != nil {
+				return fmt.Errorf("dupe result %s %s: %w", id, label, err)
+			}
 		}
-		if err := validateWorkflowFingerprint(result.CriteriaFingerprint); err != nil {
-			return fmt.Errorf("dupe result %s criteria: %w", id, err)
+		hasExtendedLineage := result.PolicyID != "" || result.TargetFingerprint != "" ||
+			result.SearchFingerprint != "" || result.PolicyFingerprint != "" || result.EvidenceFingerprint != ""
+		if hasExtendedLineage {
+			if strings.TrimSpace(result.PolicyID) == "" {
+				return fmt.Errorf("dupe result %s extended lineage requires policy id", id)
+			}
+			for label, fingerprint := range map[string]WorkflowFingerprint{
+				"target":   result.TargetFingerprint,
+				"search":   result.SearchFingerprint,
+				"policy":   result.PolicyFingerprint,
+				"evidence": result.EvidenceFingerprint,
+			} {
+				if err := validateWorkflowFingerprint(fingerprint); err != nil {
+					return fmt.Errorf("dupe result %s %s: %w", id, label, err)
+				}
+			}
 		}
 		switch result.Decision {
 		case DupeDecisionPending:
@@ -755,6 +792,9 @@ func (s DupeAssessment) Validate() error {
 		case DupeDecisionNoMatch:
 			if result.Status != StageStatusCompleted && result.Status != StageStatusSkipped {
 				return fmt.Errorf("resolved dupe result %s has invalid status %s", id, result.Status)
+			}
+			if result.Status == StageStatusCompleted && hasExtendedLineage && !result.Search.Complete {
+				return fmt.Errorf("no-match dupe result %s requires complete search", id)
 			}
 		case DupeDecisionBypassed:
 			if result.Status != StageStatusCompleted || len(result.Matches) > 0 || len(result.RequiredActions) > 0 || len(result.Failures) > 0 {

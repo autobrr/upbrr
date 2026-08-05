@@ -33,7 +33,7 @@ const continuation = (requiredActions: readonly RequiredAction[]): WorkflowConti
 });
 
 describe("WorkflowRequiredActions", () => {
-  it("stays visible after operation progress is complete and routes supported actions", () => {
+  it("stays visible after operation progress is complete and routes non-dupe actions", () => {
     const navigate = vi.fn();
     const completed = {
       command: "upload-media-images",
@@ -47,15 +47,23 @@ describe("WorkflowRequiredActions", () => {
     render(
       <>
         <WorkflowOperationProgress operation={completed} />
-        <WorkflowRequiredActions continuation={continuation([action()])} onNavigate={navigate} />
+        <WorkflowRequiredActions
+          continuation={continuation([
+            action({
+              kind: "select_metadata",
+              prompt: "Review release metadata.",
+              trackerId: undefined,
+            }),
+          ])}
+          onNavigate={navigate}
+        />
       </>,
     );
 
     expect(screen.queryByText("upload-media-images")).not.toBeInTheDocument();
-    expect(screen.getByText("Review the duplicate match.")).toBeInTheDocument();
-    expect(screen.getByText("Tracker: EXAMPLE")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Review duplicates" }));
-    expect(navigate).toHaveBeenCalledWith("duplicates");
+    expect(screen.getByText("Review release metadata.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review metadata" }));
+    expect(navigate).toHaveBeenCalledWith("input");
   });
 
   it("renders unsupported actions without inventing navigation", () => {
@@ -85,5 +93,27 @@ describe("WorkflowRequiredActions", () => {
       />,
     );
     expect(screen.queryByText("Action required")).not.toBeInTheDocument();
+  });
+
+  it("leaves duplicate review and tracker naming inside dupe tracker cards", () => {
+    const navigate = vi.fn();
+    render(
+      <WorkflowRequiredActions
+        continuation={continuation([
+          action(),
+          action({
+            id: "action-2",
+            kind: "provide_tracker_input",
+            prompt: "Confirm the tracker release name.",
+          }),
+        ])}
+        onNavigate={navigate}
+      />,
+    );
+
+    expect(screen.queryByText("Review the duplicate match.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Confirm the tracker release name.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(navigate).not.toHaveBeenCalled();
   });
 });

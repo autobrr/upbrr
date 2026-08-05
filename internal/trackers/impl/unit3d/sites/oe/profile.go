@@ -19,9 +19,6 @@ func Profile() unit3d.Profile {
 			ResolveTypeID:          typeID,
 			ApplyAdditionalPayload: additionalPayload,
 		},
-		DupePolicy: &trackers.DupePolicy{
-			AllowSizeVariance1080: true,
-		},
 		ImageHost: &trackers.ImageHostPolicy{
 			AllowedHosts: []string{"imgbox", "imgbb", "onlyimage", "ptscreens", "passtheimage"},
 		},

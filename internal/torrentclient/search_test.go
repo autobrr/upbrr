@@ -822,6 +822,18 @@ func TestMatchTrackerURLsMatchesCZTAnnounce(t *testing.T) {
 	}
 }
 
+func TestMatchTrackerURLsMatchesPTPAnnounce(t *testing.T) {
+	t.Parallel()
+
+	matched := matchTrackerURLs(
+		[]string{"https://please.passthepopcorn.me/redacted/announce"},
+		buildTrackerIDPatterns(trackerPatternRegistry(t)),
+	)
+	if !containsString(matched, "PTP") {
+		t.Fatalf("expected PTP in matched trackers, got %v", matched)
+	}
+}
+
 func TestEnsureMatchedTrackersForKnownIDsAddsBTN(t *testing.T) {
 	t.Parallel()
 

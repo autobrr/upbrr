@@ -25,11 +25,12 @@ func Profile() standalone.Profile {
 			return prepareUploadAt(ctx, req, btnDefaultBaseURL)
 		},
 		ReleaseNamePolicy: trackers.SubjectReleaseNameSearchPolicy(
-			"standalone/btn/v1",
+			"standalone/btn/v2",
 			func(meta api.UploadSubject, _ config.TrackerConfig) string { return resolveUploadName(meta) },
 			func(meta api.UploadSubject, _ config.TrackerConfig) string { return resolveSearchName(meta) },
 		),
 		NewDuplicateAdapter: newDuplicateAdapter,
+		Rules:               &trackers.RuleSet{RequireTVOnly: true},
 		BannedGroups:        bannedGroups(),
 		DataPolicy:          &trackers.DataLookupPolicy{DeferWhenCollectingImages: true},
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{

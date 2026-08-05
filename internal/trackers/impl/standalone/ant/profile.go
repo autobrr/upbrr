@@ -13,20 +13,39 @@ import (
 // Profile returns ANT identity, preparation, dupe, rules, bans, and policies.
 func Profile() standalone.Profile {
 	return standalone.Profile{
-		Name:                 "ANT",
-		BaseURL:              "https://anthelion.me",
-		DescriptionGroup:     "ant",
-		UploadContentMode:    trackers.UploadContentModeScreenshots,
-		AuthCapability:       authcontract.APIKeyCapability("ANT"),
-		PrepareDescription:   prepareDescription,
-		PrepareUpload:        prepareUpload,
+		Name:               "ANT",
+		BaseURL:            "https://anthelion.me",
+		DescriptionGroup:   "ant",
+		UploadContentMode:  trackers.UploadContentModeScreenshots,
+		AuthCapability:     authcontract.APIKeyCapability("ANT"),
+		PrepareDescription: prepareDescription,
+		PrepareUpload:      prepareUpload,
+		ReleaseNamePolicy: trackers.WithMovieYearProvider(
+			trackers.SimpleSubjectReleaseNamePolicy("standalone/ant/v1", resolveUploadName),
+			api.IdentityProviderTMDB,
+		),
 		NewDuplicateAdapter:  newDuplicateAdapter,
 		Rules:                &trackers.RuleSet{RequireMovieOnly: true},
 		ValidationPolicy:     validationPolicy(),
 		ArtifactPolicy:       &trackers.ArtifactPolicy{MaxPieceSizeMiB: 128, MaxTorrentBytes: 250 << 10},
 		BannedGroups:         bannedGroups(),
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "ANT"},
-		DupePolicy:           &trackers.DupePolicy{DolbyVisionImpliesHDR: true},
+		DupePolicy: &trackers.DupePolicy{
+			ID:         "ant/duplicate/v2",
+			EvidenceID: "ant-dupes-trumping",
+			SearchScope: trackers.DupeSearchScope{
+				MaxPages: 100,
+			},
+			SlotDimensions: []trackers.DupeDimension{
+				trackers.DupeDimensionType,
+				trackers.DupeDimensionSource,
+				trackers.DupeDimensionResolution,
+				trackers.DupeDimensionCodec,
+				trackers.DupeDimensionHDR,
+			},
+			HDRPartialMode:       trackers.DupeHDRPartialGenericMarker,
+			HDRCompatibilityMode: trackers.DupeHDRCompatibilityDirectional,
+		},
 		AudioPolicy: &trackers.AudioPolicy{
 			AllowedLanguages: []string{"english"}, BlockEnglishOriginalWithForeign: true,
 		},

@@ -227,6 +227,8 @@ func TestNormalizeBannedReleaseGroup(t *testing.T) {
 		{tag: " - ", want: ""},
 		{tag: "   ", want: ""},
 		{tag: "-GRP", want: "grp"},
+		{tag: "-ZR-", want: "zr"},
+		{tag: "--ZR-", want: "zr"},
 		{tag: "-TAoE", want: "taoe"},
 		{tag: "-NotTAoE", want: "nottaoe"},
 	}

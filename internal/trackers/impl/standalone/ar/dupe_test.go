@@ -5,8 +5,12 @@ package ar
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,6 +28,18 @@ func adapterEvidence(result dupe.AdapterResult) ([]api.DupeEntry, []string, erro
 type arRoundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f arRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+type dupeCaptureLogger struct {
+	debug []string
+}
+
+func (l *dupeCaptureLogger) Tracef(string, ...any) {}
+func (l *dupeCaptureLogger) Infof(string, ...any)  {}
+func (l *dupeCaptureLogger) Warnf(string, ...any)  {}
+func (l *dupeCaptureLogger) Errorf(string, ...any) {}
+func (l *dupeCaptureLogger) Debugf(format string, args ...any) {
+	l.debug = append(l.debug, fmt.Sprintf(format, args...))
+}
 
 func TestARHandlerSearchParsesResultsWithCookieFile(t *testing.T) {
 	t.Parallel()
@@ -63,19 +79,27 @@ func TestARHandlerSearchParsesResultsWithCookieFile(t *testing.T) {
 				t.Fatal("expected cookie header to include session token")
 			}
 
-			body := `{"status":"success","response":{"results":[{"groupName":"Movie.Title.2023.1080p.BluRay-GRP","size":123456789,"fileCount":1,"groupId":44,"torrentId":55}]}}`
+			fixture := "browse_page_1.json"
+			if req.URL.Query().Get("page") == "2" {
+				fixture = "browse_page_2.json"
+			}
+			body, err := os.ReadFile(filepath.Join("testdata", fixture))
+			if err != nil {
+				t.Fatalf("read AR fixture: %v", err)
+			}
 			return &http.Response{
 				StatusCode: http.StatusOK,
-				Body:       io.NopCloser(strings.NewReader(body)),
-				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(string(body))),
+				Header:     http.Header{"Content-Type": []string{"application/json; charset=utf-8"}},
 			}, nil
 		}),
 	}
+	logger := &dupeCaptureLogger{}
 
 	handler := dupe.NewAdapter(New(), "AR",
 		config.Config{
 			MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmpDir, "ua.db")},
-		}, client, api.NopLogger{})
+		}, client, logger)
 
 	meta := api.DuplicateSubject{
 		Release: api.ReleaseInfo{Title: "Movie Title", Year: 2023},
@@ -83,18 +107,19 @@ func TestARHandlerSearchParsesResultsWithCookieFile(t *testing.T) {
 			DuplicateCriteria: api.TrackerDuplicateCriteria{Name: "Exact Projected Query"},
 		},
 	}
-	entries, notes, err := adapterEvidence(handler.Search(context.Background(), meta))
+	result := handler.Search(context.Background(), meta)
+	entries, notes, err := adapterEvidence(result)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(notes) != 0 {
 		t.Fatalf("expected no notes, got %#v", notes)
 	}
-	if len(entries) != 1 {
-		t.Fatalf("expected one entry, got %d", len(entries))
+	if len(entries) != 3 {
+		t.Fatalf("expected three entries, got %d", len(entries))
 	}
 	entry := entries[0]
-	if entry.Name != "Movie.Title.2023.1080p.BluRay-GRP" {
+	if entry.Name != "Example.Release.2026.1080p.BluRay.x264-GRP" {
 		t.Fatalf("unexpected name %q", entry.Name)
 	}
 	if entry.FileCount != 1 {
@@ -103,8 +128,8 @@ func TestARHandlerSearchParsesResultsWithCookieFile(t *testing.T) {
 	if !entry.SizeKnown || entry.SizeBytes != 123456789 {
 		t.Fatalf("unexpected size known=%t size=%d", entry.SizeKnown, entry.SizeBytes)
 	}
-	if len(entry.Files) != 1 || entry.Files[0] != entry.Name {
-		t.Fatalf("expected files to contain group name, got %#v", entry.Files)
+	if len(entry.Files) != 0 {
+		t.Fatalf("expected no fabricated file list, got %#v", entry.Files)
 	}
 	if entry.ID != "55" {
 		t.Fatalf("expected ID=55, got %q", entry.ID)
@@ -115,14 +140,157 @@ func TestARHandlerSearchParsesResultsWithCookieFile(t *testing.T) {
 	if entry.Download != "https://alpharatio.cc/torrents.php?action=download&id=55" {
 		t.Fatalf("unexpected download %q", entry.Download)
 	}
+	search := result.SearchEvidence()
+	if !search.Complete || search.Pages != 2 || search.Scope != "title_year" || len(search.Warnings) != 0 {
+		t.Fatalf("unexpected search evidence: %#v", search)
+	}
+	logs := strings.Join(logger.debug, "\n")
+	if !strings.Contains(logs, `AR search request method=GET action=browse searchstr="Exact Projected Query"`) {
+		t.Fatalf("missing safe AR request diagnostics: %q", logs)
+	}
+	if !strings.Contains(
+		logs,
+		`AR search response pages=2 advertised_pages=2 accepted_results=3 complete=true decision=completed`,
+	) {
+		t.Fatalf("missing safe AR response diagnostics: %q", logs)
+	}
 }
 
-func TestARSearchQueryDirectFallbackIncludesYear(t *testing.T) {
+func TestARSearchQueryDirectFallbackPrefersProviderTitle(t *testing.T) {
 	t.Parallel()
 
-	if got := arSearchQuery(api.DuplicateSubject{Release: api.ReleaseInfo{Title: "Movie Title", Year: 2023}}); got != "Movie Title 2023" {
+	got := arSearchQuery(api.DuplicateSubject{
+		Release: api.ReleaseInfo{Title: "EXAMPLE DISC EDITION", Year: 2026},
+		ProviderMetadata: api.SourceScopedMetadata{
+			TMDB: &api.TMDBMetadata{Title: "Example Release", Year: 2026},
+		},
+	})
+	if got != "Example Release 2026" {
 		t.Fatalf("fallback query = %q", got)
 	}
+}
+
+func TestARPaginationFailuresRetainSafePartialCandidates(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		maxPages    int
+		secondPage  string
+		secondError bool
+		wantPages   int
+		wantWarning string
+	}{
+		{
+			name:        "bound",
+			maxPages:    1,
+			wantPages:   1,
+			wantWarning: "AR search reached page bound before consuming advertised pages",
+		},
+		{
+			name:        "inconsistent page number",
+			maxPages:    3,
+			secondPage:  `{"status":"success","response":{"currentPage":1,"pages":2,"results":[]}}`,
+			wantPages:   2,
+			wantWarning: "AR search pagination evidence is inconsistent",
+		},
+		{
+			name:        "repeated page",
+			maxPages:    3,
+			secondPage:  `{"status":"success","response":{"currentPage":2,"pages":2,"results":[{"groupName":"Example.Release.2026.1080p.BluRay.x264-GRP","size":1,"fileCount":1,"groupId":44,"torrentId":55}]}}`,
+			wantPages:   2,
+			wantWarning: "AR search repeated a result page",
+		},
+		{
+			name:        "partial request failure",
+			maxPages:    3,
+			secondError: true,
+			wantPages:   1,
+			wantWarning: "AR search stopped after a partial request failure",
+		},
+		{
+			name:        "malformed result",
+			maxPages:    3,
+			secondPage:  `{"status":"success","response":{"currentPage":2,"pages":2,"results":[{"groupName":"Example.Release.2026.1080p.BluRay.x264-GRP","size":1,"fileCount":1,"groupId":44,"torrentId":0}]}}`,
+			wantPages:   2,
+			wantWarning: "AR search result evidence is malformed",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := arClientWithCookie(t, arRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+				body := `{"status":"success","response":{"currentPage":1,"pages":2,"results":[{"groupName":"Example.Release.2026.1080p.BluRay.x264-GRP","size":1,"fileCount":1,"groupId":44,"torrentId":55}]}}`
+				if req.URL.Query().Get("page") == "2" {
+					if test.secondError {
+						return nil, errors.New("synthetic request failure")
+					}
+					body = test.secondPage
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(body)),
+					Header:     make(http.Header),
+				}, nil
+			}))
+			searcher := dupeSearcher{
+http: client,
+ logger: api.NopLogger{},
+ maxPages: test.maxPages,
+}
+			result := searcher.Search(context.Background(), api.DuplicateSubject{
+				Projection: &api.TrackerReleaseProjection{
+					DuplicateCriteria: api.TrackerDuplicateCriteria{Name: "Example Release 2026"},
+				},
+			})
+			search := result.SearchEvidence()
+			if result.Disposition() != dupe.DispositionResolved || search.Complete || search.Pages != test.wantPages ||
+				len(search.Warnings) != 1 || search.Warnings[0] != test.wantWarning || len(result.Entries()) != 1 {
+				t.Fatalf("AR partial result=%#v search=%#v entries=%#v", result, search, result.Entries())
+			}
+		})
+	}
+}
+
+func TestAREmptyResultSetIsComplete(t *testing.T) {
+	t.Parallel()
+
+	client := arClientWithCookie(t, arRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"status":"success","response":{"currentPage":0,"pages":0,"results":[]}}`)),
+			Header:     make(http.Header),
+		}, nil
+	}))
+	result := (dupeSearcher{
+http: client,
+ logger: api.NopLogger{},
+ maxPages: 2,
+}).Search(
+		context.Background(),
+		api.DuplicateSubject{Projection: &api.TrackerReleaseProjection{
+			DuplicateCriteria: api.TrackerDuplicateCriteria{Name: "Example Release 2026"},
+		}},
+	)
+	search := result.SearchEvidence()
+	if !search.Complete || search.Pages != 1 || search.Scope != "title_year" || len(search.Warnings) != 0 || len(result.Entries()) != 0 {
+		t.Fatalf("AR empty result search=%#v entries=%#v", search, result.Entries())
+	}
+}
+
+func arClientWithCookie(t *testing.T, transport http.RoundTripper) *http.Client {
+	t.Helper()
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("create cookie jar: %v", err)
+	}
+	trackerURL, err := url.Parse("https://alpharatio.cc/")
+	if err != nil {
+		t.Fatalf("parse tracker URL: %v", err)
+	}
+	jar.SetCookies(trackerURL, []*http.Cookie{{Name: "session", Value: "synthetic"}})
+	return &http.Client{Transport: transport, Jar: jar}
 }
 
 func TestARHandlerMissingCookieFileReturnsSkipNote(t *testing.T) {

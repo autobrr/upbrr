@@ -257,6 +257,10 @@ func applyReleaseNameOverrides(req api.ReleaseNameRequest, overrides api.Release
 	if overrides.Category != nil {
 		req.Category = strings.TrimSpace(*overrides.Category)
 	}
+	if overrides.EpisodeTitle != nil {
+		req.EpisodeTitle = strings.TrimSpace(*overrides.EpisodeTitle)
+		req.ManualEpisodeTitle = true
+	}
 	if overrides.ManualDate != nil {
 		req.ManualDate = strings.TrimSpace(*overrides.ManualDate) != ""
 	}

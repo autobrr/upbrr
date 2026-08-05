@@ -4,7 +4,11 @@
 package ptp
 
 import (
+	"errors"
+	"fmt"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -12,15 +16,31 @@ import (
 
 func resolveType(meta api.UploadSubject) string {
 	category := strings.ToLower(strings.TrimSpace(string(meta.Identity.Category)))
-	if category == "" {
-		category = strings.ToLower(strings.TrimSpace(string(meta.Identity.Category)))
+	if meta.ProviderMetadata.IMDB != nil {
+		imdbType := strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.IMDB.Type))
+		switch {
+		case strings.Contains(imdbType, "concert"):
+			return "Live Performance"
+		case strings.Contains(imdbType, "short"):
+			return "Short Film"
+		case strings.Contains(imdbType, "mini series"), strings.Contains(imdbType, "miniseries"):
+			return "Miniseries"
+		case strings.Contains(imdbType, "stand-up"), strings.Contains(imdbType, "stand up"):
+			return "Stand-up Comedy"
+		}
 	}
-	if meta.ProviderMetadata.IMDB != nil && strings.Contains(strings.ToLower(meta.ProviderMetadata.IMDB.Type), "concert") {
-		return "Music"
-	}
-	if meta.ProviderMetadata.TMDB != nil &&
-		(strings.Contains(strings.ToLower(meta.ProviderMetadata.TMDB.Genres), "documentary") || strings.Contains(strings.ToLower(meta.ProviderMetadata.TMDB.Keywords), "documentary")) {
-		return "Documentary"
+	if meta.ProviderMetadata.TMDB != nil {
+		keywords := strings.ToLower(meta.ProviderMetadata.TMDB.Keywords)
+		switch {
+		case strings.Contains(keywords, "concert"):
+			return "Live Performance"
+		case strings.Contains(keywords, "stand-up comedy"), strings.Contains(keywords, "stand up comedy"):
+			return "Stand-up Comedy"
+		case strings.Contains(keywords, "miniseries"), strings.Contains(keywords, "mini-series"):
+			return "Miniseries"
+		case strings.Contains(keywords, "short film"):
+			return "Short Film"
+		}
 	}
 	if category == "movie" {
 		return "Feature Film"
@@ -36,9 +56,23 @@ func resolveType(meta api.UploadSubject) string {
 
 func resolveCodec(meta api.UploadSubject) string {
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
-		return "BD50"
+		switch {
+		case meta.SourceSize <= 0:
+			return "BD50"
+		case meta.SourceSize <= 2328*(1<<30)/100:
+			return "BD25"
+		case meta.SourceSize <= 4657*(1<<30)/100:
+			return "BD50"
+		case meta.SourceSize <= 6147*(1<<30)/100:
+			return "BD66"
+		default:
+			return "BD100"
+		}
 	}
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
+		if meta.SourceSize > 0 && meta.SourceSize <= 437*(1<<30)/100 {
+			return "DVD5"
+		}
 		return "DVD9"
 	}
 	codec := strings.TrimSpace(meta.VideoCodec)
@@ -56,22 +90,57 @@ func resolveCodec(meta api.UploadSubject) string {
 	return codec
 }
 
-func resolveResolution(meta api.UploadSubject) (string, string) {
+func resolveResolution(meta api.UploadSubject) (string, string, string) {
 	resolution := strings.TrimSpace(meta.Release.Resolution)
-	if resolution == "" {
-		resolution = "Other"
-	}
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
-		source := strings.TrimSpace(meta.Source)
-		source = strings.ReplaceAll(source, " DVD", "")
-		if source != "" {
-			return source, ""
+		source := strings.TrimSuffix(strings.ToUpper(strings.TrimSpace(meta.Source)), " DVD")
+		if source == "NTSC" || source == "PAL" {
+			return source, "", ""
 		}
 	}
-	if strings.EqualFold(resolution, "OTHER") {
-		return "Other", "Other"
+	if resolution == "" {
+		for token := range strings.FieldsSeq(strings.NewReplacer(".", " ", "_", " ", "-", " ").Replace(meta.ReleaseName + " " + meta.Filename)) {
+			switch strings.ToLower(token) {
+			case "480i", "480p", "540p", "576i", "576p", "720p", "1080i", "1080p", "1440p", "2160p", "4320p", "8640p":
+				resolution = token
+			}
+		}
 	}
-	return resolution, ""
+	switch strings.ToLower(resolution) {
+	case "ntsc":
+		return "NTSC", "", ""
+	case "pal":
+		return "PAL", "", ""
+	case "480p", "576p", "720p", "1080i", "1080p", "2160p":
+		return strings.ToLower(resolution), "", ""
+	}
+	if width, height, ok := ptpOtherResolution(resolution); ok {
+		return "Other", width, height
+	}
+	return "Other", "", ""
+}
+
+func ptpOtherResolution(resolution string) (string, string, bool) {
+	if dimensions, ok := map[string][2]string{
+		"480i":  {"720", "480"},
+		"540p":  {"960", "540"},
+		"576i":  {"720", "576"},
+		"1440p": {"2560", "1440"},
+		"4320p": {"7680", "4320"},
+		"8640p": {"15360", "8640"},
+	}[strings.ToLower(strings.TrimSpace(resolution))]; ok {
+		return dimensions[0], dimensions[1], true
+	}
+	width, height, ok := strings.Cut(strings.ToLower(strings.TrimSpace(resolution)), "x")
+	if !ok {
+		return "", "", false
+	}
+	parsedWidth, widthErr := strconv.Atoi(width)
+	parsedHeight, heightErr := strconv.Atoi(height)
+	if widthErr != nil || heightErr != nil || parsedWidth <= 0 || parsedHeight <= 0 {
+		return "", "", false
+	}
+	return strconv.Itoa(parsedWidth), strconv.Itoa(parsedHeight), true
 }
 
 func resolveContainer(meta api.UploadSubject) string {
@@ -93,19 +162,23 @@ func resolveContainer(meta api.UploadSubject) string {
 }
 
 func resolveSource(source string) string {
-	switch strings.TrimSpace(source) {
-	case "Blu-ray", "BluRay":
+	switch strings.ToUpper(strings.TrimSpace(source)) {
+	case "BLU-RAY", "BLURAY":
 		return "Blu-ray"
-	case "HD DVD", "HDDVD":
+	case "HD DVD", "HDDVD", "HD-DVD":
 		return "HD-DVD"
-	case "Web":
+	case "WEB", "WEB-DL", "WEBDL":
 		return "WEB"
 	case "HDTV", "UHDTV":
 		return "HDTV"
-	case "NTSC", "PAL":
+	case "NTSC", "PAL", "DVD":
 		return "DVD"
+	case "TV":
+		return "TV"
+	case "VHS":
+		return "VHS"
 	default:
-		return "OtherR"
+		return "Other"
 	}
 }
 
@@ -134,22 +207,17 @@ func resolveTags(meta api.UploadSubject) string {
 	values := make([]string, 0, 8)
 	if meta.ProviderMetadata.TMDB != nil {
 		for item := range strings.SplitSeq(meta.ProviderMetadata.TMDB.Genres, ",") {
-			trimmed := strings.ToLower(strings.TrimSpace(item))
-			if trimmed != "" {
-				values = append(values, trimmed)
+			if tag := ptpTag(item); tag != "" {
+				values = append(values, tag)
 			}
 		}
 	}
 	if len(values) == 0 && strings.TrimSpace(meta.Release.Genre) != "" {
 		for item := range strings.SplitSeq(meta.Release.Genre, ",") {
-			trimmed := strings.ToLower(strings.TrimSpace(item))
-			if trimmed != "" {
-				values = append(values, trimmed)
+			if tag := ptpTag(item); tag != "" {
+				values = append(values, tag)
 			}
 		}
-	}
-	if len(values) == 0 {
-		values = append(values, "action")
 	}
 	seen := make(map[string]struct{}, len(values))
 	filtered := make([]string, 0, len(values))
@@ -161,6 +229,82 @@ func resolveTags(meta api.UploadSubject) string {
 		filtered = append(filtered, value)
 	}
 	return strings.Join(filtered, ", ")
+}
+
+func ptpTag(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch normalized {
+	case "science fiction", "sci-fi", "sci fi":
+		return "sci.fi"
+	case "martial arts":
+		return "martial.arts"
+	case "film noir":
+		return "film.noir"
+	case "music":
+		return "musical"
+	case "war & politics", "war and politics":
+		return "war"
+	}
+	for _, allowed := range []string{
+		"action", "adventure", "animation", "arthouse", "asian", "biography", "camp", "comedy", "crime", "cult", "documentary",
+		"drama", "experimental", "exploitation", "family", "fantasy", "film.noir", "history", "horror", "martial.arts", "musical", "mystery",
+		"performance", "philosophy", "politics", "romance", "sci.fi", "short", "silent", "sport", "thriller", "video.art", "war", "western",
+	} {
+		if normalized == allowed {
+			return allowed
+		}
+	}
+	return ""
+}
+
+func resolveTrumpable(meta api.UploadSubject) []int {
+	values := make([]int, 0, 2)
+	if hasHardcodedSubtitles(meta) {
+		values = append(values, 4)
+	}
+	if len(meta.AudioLanguages) > 0 && !ptpEnglishLanguage(meta.AudioLanguages[0]) && !ptpHasEnglishLanguage(meta.SubtitleLanguages) {
+		values = append(values, 14)
+	}
+	return values
+}
+
+func hasHardcodedSubtitles(meta api.UploadSubject) bool {
+	name := strings.ToLower(strings.Join(append([]string{
+		meta.ReleaseName,
+		meta.ReleaseNameNoTag,
+		meta.Filename,
+	}, meta.FileList...), " "))
+	return strings.Contains(name, "hardsub") || strings.Contains(name, "hard-sub") || strings.Contains(name, "hardcoded")
+}
+
+func withHardcodedSubtitleLanguages(meta api.UploadSubject, value string) (api.UploadSubject, error) {
+	if !hasHardcodedSubtitles(meta) {
+		return meta, nil
+	}
+	if strings.TrimSpace(value) == "" {
+		return api.UploadSubject{}, errors.New("trackers: PTP hardcoded subtitle languages are required")
+	}
+	meta.SubtitleLanguages = append([]string(nil), meta.SubtitleLanguages...)
+	for language := range strings.SplitSeq(value, ",") {
+		language = strings.TrimSpace(language)
+		if language == "" {
+			continue
+		}
+		if _, ok := subtitleIDs[strings.ToLower(language)]; !ok {
+			return api.UploadSubject{}, fmt.Errorf("trackers: PTP unsupported hardcoded subtitle language %q", language)
+		}
+		meta.SubtitleLanguages = append(meta.SubtitleLanguages, language)
+	}
+	return meta, nil
+}
+
+func ptpHasEnglishLanguage(values []string) bool {
+	return slices.ContainsFunc(values, ptpEnglishLanguage)
+}
+
+func ptpEnglishLanguage(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	return normalized == "en" || normalized == "eng" || strings.HasPrefix(normalized, "english")
 }
 
 var subtitleIDs = map[string]int{
@@ -191,7 +335,9 @@ var subtitleIDs = map[string]int{
 	"korean":               19,
 	"latvian":              37,
 	"lithuanian":           39,
+	"malay":                54,
 	"norwegian":            12,
+	"persian":              52,
 	"polish":               17,
 	"portuguese":           21,
 	"romanian":             13,
@@ -205,4 +351,5 @@ var subtitleIDs = map[string]int{
 	"turkish":              18,
 	"ukrainian":            34,
 	"vietnamese":           25,
+	"welsh":                55,
 }

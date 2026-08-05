@@ -13,7 +13,9 @@ import type { TrackerUploadItem } from "../../types";
 import { handleExternalLinkClick } from "../../utils/externalLinks";
 import type {
   DupeAssessment,
+  DupeMatchProjection,
   TrackerPreflightAssessment,
+  TrackerReleaseProjection,
   TrackerReleaseProjectionSet,
 } from "../../api/generated/release-workflow";
 
@@ -26,43 +28,110 @@ type Props = {
   trackerIconSrcByName: TrackerIconCache;
 };
 
-const uniqueFailureMessages = (failures: readonly { failure: { Message: string } }[]): string[] => {
+const releaseNameConfirmationState = (projection: TrackerReleaseProjection | undefined) => {
+  const decision = projection?.policyDecisions?.find(
+    (candidate) => candidate.code === "release_name_confirmation",
+  )?.decision;
+  return {
+    confirmed: decision === "confirmed",
+    pending: decision === "confirmation_required",
+  };
+};
+
+const hasInClientMatch = (result: DupeAssessment["results"][number] | undefined) =>
+  Boolean(result?.matches?.some((match) => match.reason?.trim().toLowerCase() === "in_client"));
+
+const reviewRelations = new Set([
+  "same_slot",
+  "proposed_trumps",
+  "manual_review",
+  "insufficient_evidence",
+]);
+
+const relationLabel = (relation: string | undefined) =>
+  relation ? relation.replaceAll("_", " ") : "candidate";
+
+const relationTone = (relation: string | undefined): "neutral" | "info" | "danger" => {
+  switch (relation) {
+    case "coexists":
+      return "info";
+    case "proposed_trumps":
+      return "neutral";
+    default:
+      return "danger";
+  }
+};
+
+const requiresRiskAcknowledgement = (result: DupeAssessment["results"][number] | undefined) =>
+  Boolean(
+    result &&
+    ((Boolean(result.search?.pages) && result.search?.complete === false) ||
+      result.matches?.some((match) => reviewRelations.has(match.relation || ""))),
+  );
+
+const actionMatches = (result: DupeAssessment["results"][number] | undefined) =>
+  (result?.matches || []).filter(
+    (match) => match.relation !== "coexists" && match.reason?.trim().toLowerCase() !== "in_client",
+  );
+
+const candidateFacts = (match: DupeMatchProjection) =>
+  [match.source, match.resolution, match.codec].filter((value): value is string => Boolean(value));
+
+const uniqueMessages = (values: readonly (string | undefined)[]) => {
   const seen = new Set<string>();
-  return failures.flatMap((failure) => {
-    const message = failure.failure.Message.trim();
+  return values.flatMap((value) => {
+    const message = value?.trim() || "";
     if (!message || seen.has(message)) return [];
     seen.add(message);
     return [message];
   });
 };
 
-const hasInClientMatch = (result: DupeAssessment["results"][number] | undefined) =>
-  Boolean(result?.matches?.some((match) => match.reason?.trim().toLowerCase() === "in_client"));
-
-const workflowDupeSummary = (
+const trackerBlockReasons = (
+  projection: TrackerReleaseProjection | undefined,
+  readiness: TrackerPreflightAssessment["results"][number] | undefined,
   result: DupeAssessment["results"][number] | undefined,
-  searchBlocked: boolean,
-  inClient: boolean,
 ) => {
-  if (searchBlocked && !result) {
-    return "Duplicate search not run because this tracker is blocked.";
+  const inClientMatches = (result?.matches || []).filter(
+    (match) => match.reason?.trim().toLowerCase() === "in_client",
+  );
+  return uniqueMessages([
+    ...inClientMatches.map((match) => `Already in client: ${match.name}`),
+    ...(projection?.policyDecisions || [])
+      .filter((decision) => decision.blocking)
+      .map((decision) => decision.message || decision.code.replaceAll("_", " ")),
+    ...(projection?.failures || []).map((failure) => failure.failure.Message),
+    ...(readiness?.failures || []).map((failure) => failure.failure.Message),
+    ...(result?.failures || []).map((failure) => failure.failure.Message),
+    ...(result?.search?.warnings || []),
+  ]);
+};
+
+const trackerSummary = (
+  projection: TrackerReleaseProjection | undefined,
+  readiness: TrackerPreflightAssessment["results"][number] | undefined,
+  result: DupeAssessment["results"][number] | undefined,
+) => {
+  if (projection?.readiness !== "ready" || (readiness && readiness.state !== "ready")) {
+    return "Blocked";
   }
-  if (result?.status === "skipped") return "Duplicate search skipped.";
-  if (!result) return "Duplicate search has not run.";
-  if (result.status === "failed") return "Duplicate search failed.";
-  if (inClient) return "In client · upload blocked";
-  const count = result.matches?.length || 0;
+  if (!result) return "Not checked";
+  if (result.status === "failed") return "Check failed";
+  if (hasInClientMatch(result)) return "In client";
+  const count = actionMatches(result).length;
   switch (result.decision) {
     case "accepted":
-      return `${count} match(es) · upload blocked`;
+      return `${count} potential dupe${count === 1 ? "" : "s"} · blocked`;
     case "ignored":
-      return `${count} match(es) · duplicate override enabled`;
+      return `${count} potential dupe${count === 1 ? "" : "s"} · acknowledged`;
     case "pending":
-      return `${count} match(es) · review optional`;
+      return `${count} potential dupe${count === 1 ? "" : "s"} · review`;
     case "no_match":
-      return "0 match(es) · no duplicate found";
+      return count ? `${count} non-blocking candidate${count === 1 ? "" : "s"}` : "No dupes";
+    case "bypassed":
+      return "Dupe check bypassed";
     case "skipped":
-      return "Duplicate search skipped.";
+      return "Dupe check skipped";
   }
 };
 
@@ -79,45 +148,59 @@ const workflowTrackerIDs = (
     ]),
   );
 
-const uploadEligibleTrackerIDs = (
-  assessment: DupeAssessment | null,
-  preflight: TrackerPreflightAssessment | null,
-  projections: TrackerReleaseProjectionSet | null,
-) => {
-  const projectionByTracker = new Map(
-    (projections?.projections || []).map((projection) => [projection.trackerId, projection]),
+function CandidateList({ matches }: Readonly<{ matches: readonly DupeMatchProjection[] }>) {
+  if (!matches.length) return null;
+  return (
+    <div aria-label="Potential duplicates" className="grid max-h-56 gap-1 overflow-y-auto">
+      {matches.map((match) => {
+        const facts = candidateFacts(match);
+        return (
+          <div
+            className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded border border-[var(--border)] bg-black/10 px-2 py-1.5 text-sm"
+            key={`${match.id || ""}-${match.name}-${match.relation || ""}`}
+          >
+            <Badge tone={relationTone(match.relation)}>{relationLabel(match.relation)}</Badge>
+            {match.link ? (
+              <a
+                className="tracker-link min-w-0 break-all"
+                href={match.link}
+                onAuxClick={handleExternalLinkClick}
+                onClick={handleExternalLinkClick}
+                rel="noreferrer"
+                target="_blank"
+              >
+                {match.name}
+              </a>
+            ) : (
+              <span className="min-w-0 break-all">{match.name}</span>
+            )}
+            {facts.length ? <span className="muted text-xs">{facts.join(" · ")}</span> : null}
+          </div>
+        );
+      })}
+    </div>
   );
-  const preflightByTracker = new Map(
-    (preflight?.results || []).map((result) => [result.trackerId, result]),
-  );
-  const dupeByTracker = new Map(
-    (assessment?.results || []).map((result) => [result.trackerId, result]),
-  );
-  return workflowTrackerIDs(assessment, preflight, projections).filter((trackerID) => {
-    const projection = projectionByTracker.get(trackerID);
-    const readiness = preflightByTracker.get(trackerID);
-    const result = dupeByTracker.get(trackerID);
-    return (
-      projection?.readiness === "ready" &&
-      readiness?.state === "ready" &&
-      result?.status === "completed" &&
-      !hasInClientMatch(result) &&
-      ["no_match", "ignored"].includes(result.decision)
-    );
-  });
-};
+}
 
 function WorkflowDupeAssessmentView({
   assessment,
   preflight,
   projections,
   ignoredTrackers,
+  releaseNameOverrides,
+  busy,
+  confirmReleaseName,
+  acknowledgeReleaseName,
   setIgnored,
 }: Readonly<{
   assessment: DupeAssessment | null;
   preflight: TrackerPreflightAssessment | null;
   projections: TrackerReleaseProjectionSet | null;
   ignoredTrackers: ReadonlySet<string>;
+  releaseNameOverrides: Readonly<Record<string, string>>;
+  busy: boolean;
+  confirmReleaseName(tracker: string, value: string): void;
+  acknowledgeReleaseName(tracker: string, acknowledged: boolean): Promise<boolean>;
   setIgnored(tracker: string, ignored: boolean): void;
 }>) {
   const projectionsByTracker = new Map(
@@ -129,115 +212,140 @@ function WorkflowDupeAssessmentView({
   const dupesByTracker = new Map(
     (assessment?.results || []).map((result) => [result.trackerId, result]),
   );
-  const trackerIDs = workflowTrackerIDs(assessment, preflight, projections);
 
   return (
     <div className="grid gap-2">
-      {trackerIDs.map((trackerID) => {
+      {workflowTrackerIDs(assessment, preflight, projections).map((trackerID) => {
         const result = dupesByTracker.get(trackerID);
         const projection = projectionsByTracker.get(trackerID);
         const readiness = preflightByTracker.get(trackerID);
-        const canonicalName = projection?.canonicalReleaseName || "";
-        const ruleStatus = (projection?.policyDecisions || []).filter(
-          (decision) => decision.blocking,
+        const nameConfirmation = releaseNameConfirmationState(projection);
+        const releaseName = releaseNameOverrides[trackerID] ?? projection?.uploadReleaseName ?? "";
+        const canonicalName = projection?.canonicalReleaseName?.trim() || "";
+        const uploadName =
+          result?.uploadReleaseName?.trim() || projection?.uploadReleaseName?.trim() || "";
+        const searchName =
+          result?.criteria?.name?.trim() || projection?.duplicateCriteria?.name?.trim() || "";
+        const namesModified = Boolean(
+          canonicalName &&
+          ((uploadName && uploadName !== canonicalName) ||
+            (searchName && searchName !== canonicalName)),
         );
-        const failureMessages = uniqueFailureMessages([
-          ...(projection?.failures || []),
-          ...(readiness?.failures || []),
-          ...(result?.failures || []),
-        ]);
+        const blockReasons = trackerBlockReasons(projection, readiness, result);
         const inClient = hasInClientMatch(result);
-        const searchBlocked = Boolean(
-          (projection && projection.readiness !== "ready") ||
-          (readiness && readiness.state !== "ready"),
-        );
+        const riskAcknowledgement = requiresRiskAcknowledgement(result);
         const canOverride = Boolean(
           result &&
           !inClient &&
-          result.matches?.length &&
+          (riskAcknowledgement || actionMatches(result).length) &&
           ["pending", "accepted", "ignored"].includes(result.decision),
         );
         const matches = Array.from(
           new Map(
-            (result?.matches || []).map((match) => [
+            actionMatches(result).map((match) => [
               `${match.id || ""}\u0000${match.name}\u0000${match.reason || ""}`,
               match,
             ]),
           ).values(),
         );
-        const uploadName =
-          result?.uploadReleaseName || projection?.uploadReleaseName || "Unavailable";
-        const searchName = result?.criteria?.name || projection?.duplicateCriteria?.name;
         return (
           <article className="panel grid gap-2 py-3" key={trackerID}>
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="font-bold">{projection?.displayName || trackerID}</p>
-              <div className="flex flex-wrap gap-1">
-                <Badge tone={projection?.readiness === "ready" ? "info" : "danger"}>
-                  Projection {projection?.readiness || "unknown"}
-                </Badge>
-                <Badge tone={readiness?.state === "ready" ? "info" : "danger"}>
-                  Preflight {readiness?.state || "not run"}
-                </Badge>
-                <Badge tone={ruleStatus.length ? "danger" : "info"}>
-                  {ruleStatus.length ? `${ruleStatus.length} blocking rule(s)` : "Rules ready"}
-                </Badge>
-                {inClient ? <Badge tone="danger">In client</Badge> : null}
-              </div>
+              <h2 className="text-base">{projection?.displayName || trackerID}</h2>
+              <Badge
+                tone={
+                  inClient ||
+                  result?.status === "failed" ||
+                  projection?.readiness !== "ready" ||
+                  (readiness && readiness.state !== "ready")
+                    ? "danger"
+                    : "info"
+                }
+              >
+                {trackerSummary(projection, readiness, result)}
+              </Badge>
             </div>
-            <div className="grid gap-1 text-sm">
-              {canonicalName && canonicalName !== result?.uploadReleaseName ? (
-                <p className="muted">
-                  <span className="font-semibold text-[var(--text)]">Canonical:</span>{" "}
-                  {canonicalName}
-                </p>
-              ) : null}
-              <p>
-                <span className="font-semibold">Tracker upload:</span> {uploadName}
-              </p>
-              {searchName && searchName !== uploadName ? (
-                <p>
-                  <span className="font-semibold">Duplicate search:</span> {searchName}
-                </p>
-              ) : null}
-              <p className="muted">{workflowDupeSummary(result, searchBlocked, inClient)}</p>
-            </div>
-            {failureMessages.length ? (
+
+            {blockReasons.length ? (
               <div className="grid gap-1 text-sm">
-                {failureMessages.map((message) => (
+                {blockReasons.map((message) => (
                   <p className="error" key={message}>
                     {message}
                   </p>
                 ))}
               </div>
             ) : null}
-            {matches.length ? (
-              <div className="flex flex-wrap gap-2 text-sm">
-                {matches.map((match) =>
-                  match.link ? (
-                    <a
-                      className="tracker-link"
-                      href={match.link}
-                      key={match.id || match.name}
-                      onAuxClick={handleExternalLinkClick}
-                      onClick={handleExternalLinkClick}
-                      rel="noreferrer"
-                      target="_blank"
-                    >
-                      {match.name}
-                    </a>
-                  ) : (
-                    <span key={match.id || match.name}>{match.name}</span>
-                  ),
-                )}
+
+            {namesModified ? (
+              <div
+                aria-label={`Modified tracker names for ${trackerID}`}
+                className="grid gap-1 text-sm"
+              >
+                <p className="muted">
+                  <span className="font-semibold text-[var(--text)]">Canonical:</span>{" "}
+                  {canonicalName}
+                </p>
+                <p>
+                  <span className="font-semibold">Tracker upload:</span> {uploadName}
+                </p>
+                {searchName && searchName !== uploadName ? (
+                  <p>
+                    <span className="font-semibold">Duplicate search:</span> {searchName}
+                  </p>
+                ) : null}
               </div>
             ) : null}
+
+            <CandidateList matches={matches} />
+
+            {nameConfirmation.pending || nameConfirmation.confirmed ? (
+              <div
+                aria-label={`Tracker naming for ${trackerID}`}
+                className="grid gap-2 rounded border border-[var(--border)] bg-black/10 p-2"
+              >
+                <label className="grid gap-1">
+                  <span className="text-xs font-semibold">Tracker release name</span>
+                  <input
+                    aria-label={`Release name for ${trackerID}`}
+                    disabled={busy || nameConfirmation.confirmed}
+                    value={releaseName}
+                    onChange={(event) => confirmReleaseName(trackerID, event.target.value)}
+                  />
+                </label>
+                <label className="inline-flex items-center gap-2 text-xs font-semibold">
+                  <span>Confirm release name</span>
+                  <Switch
+                    aria-label={`Confirm release name for ${trackerID}`}
+                    checked={nameConfirmation.confirmed}
+                    disabled={
+                      busy ||
+                      !result ||
+                      (!nameConfirmation.confirmed &&
+                        (!nameConfirmation.pending || !releaseName.trim()))
+                    }
+                    onChange={(event) => {
+                      void acknowledgeReleaseName(trackerID, event.target.checked);
+                    }}
+                  />
+                </label>
+              </div>
+            ) : null}
+
             {canOverride ? (
               <label className="inline-flex items-center gap-2 text-xs font-semibold">
-                <span>Ignore duplicate match</span>
+                <span>
+                  {riskAcknowledgement
+                    ? "Acknowledge tracker policy risk"
+                    : "Ignore duplicate match"}
+                </span>
                 <Switch
-                  aria-label={`Ignore dupes for ${trackerID}`}
+                  aria-label={
+                    riskAcknowledgement
+                      ? `Acknowledge dupe risk for ${trackerID}`
+                      : `Ignore dupes for ${trackerID}`
+                  }
                   checked={result?.decision === "ignored" || ignoredTrackers.has(trackerID)}
+                  disabled={busy}
                   onChange={(event) => setIgnored(trackerID, event.target.checked)}
                 />
               </label>
@@ -249,7 +357,7 @@ function WorkflowDupeAssessmentView({
   );
 }
 
-/** Presents exact workflow-owned per-tracker duplicate outcomes and selection controls. */
+/** Presents per-tracker duplicate evidence, policy acknowledgements, and release-name review. */
 export default function DupeCheckPage({
   facet,
   sourcePath,
@@ -263,7 +371,6 @@ export default function DupeCheckPage({
   const preflight = view.preflight || null;
   const projections = view.projections || null;
   const trackerIDs = workflowTrackerIDs(assessment, preflight, projections);
-  const availableTrackers = uploadEligibleTrackerIDs(assessment, preflight, projections);
   const ignoredTrackers = new Set(view.ignoredTrackers);
   const selectedTrackers = new Set(view.selectedTrackers);
   const trackerSelectionRequired = selectedTrackers.size === 0;
@@ -322,38 +429,6 @@ export default function DupeCheckPage({
         {trackerSelectionRequired ? (
           <p className="muted text-sm">Select at least one tracker to run duplicate checking.</p>
         ) : null}
-      </section>
-
-      <section className="panel flex flex-wrap items-center justify-between gap-3 py-3">
-        <div className="min-w-0">
-          <p className="label">Source path</p>
-          <p className="value break-words text-sm">{sourcePath || "No path selected"}</p>
-          {trackerIDs.length ? (
-            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-[var(--muted)]">
-              <span className="font-semibold text-[var(--text)]">
-                Available for upload: {availableTrackers.length}
-              </span>
-              {availableTrackers.map((tracker) => (
-                <Badge
-                  aria-label={hideTrackerNames ? tracker : undefined}
-                  className="text-[var(--text)] flex items-center gap-1"
-                  key={`available-${tracker}`}
-                  tone="info"
-                >
-                  <TrackerIconImage
-                    tracker={tracker}
-                    iconSrc={trackerIconFor(trackerIconSrcByName, tracker)}
-                    enabled={useFavicons}
-                  />
-                  {hideTrackerNames ? null : tracker}
-                </Badge>
-              ))}
-              {trackerIDs.length > availableTrackers.length ? (
-                <span>{trackerIDs.length - availableTrackers.length} blocked.</span>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
         <Button
           className="ml-auto"
           variant="primary"
@@ -369,10 +444,14 @@ export default function DupeCheckPage({
 
       {trackerIDs.length ? (
         <WorkflowDupeAssessmentView
+          acknowledgeReleaseName={facet.acknowledgeReleaseName}
           assessment={assessment}
+          busy={dupeLoading}
+          confirmReleaseName={facet.confirmReleaseName}
           ignoredTrackers={ignoredTrackers}
           preflight={preflight}
           projections={projections}
+          releaseNameOverrides={view.releaseNameOverrides}
           setIgnored={facet.setIgnored}
         />
       ) : (

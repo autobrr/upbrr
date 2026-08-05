@@ -30,23 +30,36 @@ const (
 
 // Stable not-run codes.
 const (
-	NotRunUserRequested       = "user_requested"
-	NotRunBannedGroup         = "banned_group"
-	NotRunAuthNotReady        = "auth_not_ready"
-	NotRunMissingCredentials  = "missing_credentials"
-	NotRunMissingMetadata     = "missing_metadata"
-	NotRunUnsupportedContent  = "unsupported_content"
+	// NotRunUserRequested indicates that the caller explicitly skipped the search.
+	NotRunUserRequested = "user_requested"
+	// NotRunBannedGroup indicates a policy-blocked release group.
+	NotRunBannedGroup = "banned_group"
+	// NotRunAuthNotReady indicates that tracker authentication is not usable.
+	NotRunAuthNotReady = "auth_not_ready"
+	// NotRunMissingCredentials indicates required tracker credentials are absent.
+	NotRunMissingCredentials = "missing_credentials"
+	// NotRunMissingMetadata indicates required metadata was unavailable.
+	NotRunMissingMetadata = "missing_metadata"
+	// NotRunUnsupportedContent indicates the tracker does not support the content.
+	NotRunUnsupportedContent = "unsupported_content"
+	// NotRunManualCheckRequired indicates that policy requires manual review.
 	NotRunManualCheckRequired = "manual_check_required"
-	NotRunNotImplemented      = "not_implemented"
+	// NotRunNotImplemented indicates that this tracker operation is unavailable.
+	NotRunNotImplemented = "not_implemented"
 )
 
 // Stable failure codes.
 const (
-	FailureRequest        = "request"
+	// FailureRequest indicates a request could not be completed.
+	FailureRequest = "request"
+	// FailureAuthentication indicates tracker authentication failed.
 	FailureAuthentication = "authentication"
+	// FailureResponseStatus indicates the tracker returned an unusable status.
 	FailureResponseStatus = "response_status"
-	FailureResponseParse  = "response_parse"
-	FailureInternal       = "internal"
+	// FailureResponseParse indicates the tracker response was malformed.
+	FailureResponseParse = "response_parse"
+	// FailureInternal indicates an internal adapter failure.
+	FailureInternal = "internal"
 )
 
 var validNotRunCodes = map[string]struct{}{
@@ -149,6 +162,16 @@ func (d Dependencies) Logger() api.Logger { return d.logger }
 // Registry returns the composed tracker registry when construction occurs through the duplicate service.
 func (d Dependencies) Registry() *trackerspkg.Registry { return d.registry }
 
+// MaxPages returns the tracker policy's search bound or fallback when none is configured.
+func (d Dependencies) MaxPages(fallback int) int {
+	if d.registry != nil {
+		if policy, ok := d.registry.LookupDupePolicy(d.tracker); ok && policy.SearchScope.MaxPages > 0 {
+			return policy.SearchScope.MaxPages
+		}
+	}
+	return fallback
+}
+
 // BoundConfig returns a minimal config snapshot containing only this adapter's bound inputs.
 // It exists for tracker protocol helpers shared with upload/auth code; it never contains unrelated app config.
 func (d Dependencies) BoundConfig() config.Config {
@@ -181,20 +204,47 @@ func (f AdapterFunc) Search(ctx context.Context, meta api.DuplicateSubject) Adap
 type adapterResultData struct {
 	disposition Disposition
 	entries     []api.DupeEntry
+	search      SearchEvidence
 	notes       []string
 	code        string
 	safeMessage string
 	cause       error
 }
 
+// SearchEvidence records whether an adapter exhausted the policy-relevant
+// remote result space.
+type SearchEvidence struct {
+	Complete bool
+	Pages    int
+	Scope    string
+	Warnings []string
+}
+
 // AdapterResult is an immutable, constructor-created tracker protocol outcome.
 type AdapterResult struct{ data *adapterResultData }
 
-// Resolved constructs a successful adapter outcome.
+// Resolved constructs a successful compatibility-adapter outcome whose remote
+// result space is not proven complete. Evidence-backed adapters must use
+// ResolvedWithSearch explicitly.
 func Resolved(entries []api.DupeEntry, notes []string) AdapterResult {
+	return ResolvedWithSearch(entries, notes, SearchEvidence{
+		Pages:    1,
+		Warnings: []string{"adapter search completeness is not evidenced"},
+	})
+}
+
+// ResolvedWithSearch constructs a successful adapter outcome with explicit
+// search completion evidence.
+func ResolvedWithSearch(entries []api.DupeEntry, notes []string, search SearchEvidence) AdapterResult {
+	if search.Pages < 0 {
+		search.Pages = 0
+	}
+	search.Scope = strings.TrimSpace(search.Scope)
+	search.Warnings = cloneNotes(search.Warnings)
 	return AdapterResult{data: &adapterResultData{
 		disposition: DispositionResolved,
 		entries:     cloneEntries(entries),
+		search:      search,
 		notes:       cloneNotes(notes),
 	}}
 }
@@ -233,6 +283,16 @@ func (r AdapterResult) Entries() []api.DupeEntry {
 		return nil
 	}
 	return cloneEntries(r.data.entries)
+}
+
+// SearchEvidence returns a defensive copy of search completion evidence.
+func (r AdapterResult) SearchEvidence() SearchEvidence {
+	if r.data == nil {
+		return SearchEvidence{}
+	}
+	search := r.data.search
+	search.Warnings = cloneNotes(search.Warnings)
+	return search
 }
 
 // Notes returns display-only notes.
@@ -294,6 +354,11 @@ func cloneEntries(entries []api.DupeEntry) []api.DupeEntry {
 	for idx, entry := range entries {
 		entry.Files = append([]string(nil), entry.Files...)
 		entry.Flags = append([]string(nil), entry.Flags...)
+		entry.HDR.Formats = append([]api.HDRFormat(nil), entry.HDR.Formats...)
+		entry.HDR.FallbackFormats = append([]api.HDRFormat(nil), entry.HDR.FallbackFormats...)
+		entry.HDR.SourceFields = append([]string(nil), entry.HDR.SourceFields...)
+		entry.HDR.Contradictions = append([]string(nil), entry.HDR.Contradictions...)
+		entry.Attributes = maps.Clone(entry.Attributes)
 		out[idx] = entry
 	}
 	return out

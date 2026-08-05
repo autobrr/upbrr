@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -34,6 +35,10 @@ type trackerResponsibilityRow struct {
 }
 
 func unit3DResponsibility(name string, policy string, descriptionGroup string) trackerResponsibilityRow {
+	return unit3DResponsibilityVersion(name, policy, descriptionGroup, "v1")
+}
+
+func unit3DResponsibilityVersion(name string, policy string, descriptionGroup string, version string) trackerResponsibilityRow {
 	return trackerResponsibilityRow{
 		name:              name,
 		family:            trackers.FamilyUnit3D,
@@ -44,13 +49,17 @@ func unit3DResponsibility(name string, policy string, descriptionGroup string) t
 		descriptionOwner:  "unit3d/description.go",
 		mediaOwner:        "unit3d/media.go",
 		descriptionGroup:  descriptionGroup,
-		releaseNamePolicy: "unit3d/" + policy + "/v1",
+		releaseNamePolicy: "unit3d/" + policy + "/" + version,
 		projectorVersion:  "unit3d-v2",
 		principalName:     "name",
 	}
 }
 
 func azFamilyResponsibility(name string) trackerResponsibilityRow {
+	return azFamilyResponsibilityVersion(name, "v1")
+}
+
+func azFamilyResponsibilityVersion(name string, version string) trackerResponsibilityRow {
 	return trackerResponsibilityRow{
 		name:              name,
 		family:            trackers.FamilyAZFamily,
@@ -60,7 +69,7 @@ func azFamilyResponsibility(name string) trackerResponsibilityRow {
 		taxonomyOwner:     "azfamily/taxonomy.go",
 		descriptionOwner:  "azfamily/description.go",
 		mediaOwner:        "azfamily/media.go",
-		releaseNamePolicy: "azfamily/" + strings.ToLower(name) + "/v1",
+		releaseNamePolicy: "azfamily/" + strings.ToLower(name) + "/" + version,
 		projectorVersion:  "azfamily-v2",
 		principalName:     "name",
 	}
@@ -69,43 +78,43 @@ func azFamilyResponsibility(name string) trackerResponsibilityRow {
 var trackerResponsibilityLedger = []trackerResponsibilityRow{
 	unit3DResponsibility("A4K", "canonical", ""),
 	unit3DResponsibility("ACM", "acm", "acm"),
-	unit3DResponsibility("AITHER", "aither", ""),
+	unit3DResponsibilityVersion("AITHER", "aither", "", "v2"),
 	unit3DResponsibility("BLU", "canonical", ""),
 	unit3DResponsibility("CBR", "cbr", ""),
-	unit3DResponsibility("DP", "dp", ""),
+	unit3DResponsibilityVersion("DP", "dp", "", "v2"),
 	unit3DResponsibility("EMUW", "canonical", ""),
 	unit3DResponsibility("FRIKI", "canonical", ""),
-	unit3DResponsibility("HHD", "canonical", ""),
+	unit3DResponsibilityVersion("HHD", "hhd", "", "v2"),
 	unit3DResponsibility("IHD", "canonical", ""),
 	unit3DResponsibility("ITT", "canonical", ""),
 	unit3DResponsibility("LCD", "lcd", ""),
 	unit3DResponsibility("LDU", "ldu", ""),
 	unit3DResponsibility("LST", "canonical", ""),
 	unit3DResponsibility("LT", "canonical", ""),
-	unit3DResponsibility("LUME", "canonical", ""),
+	unit3DResponsibilityVersion("LUME", "lume", "", "v2"),
 	unit3DResponsibility("MNS", "canonical", ""),
 	unit3DResponsibility("OE", "oe", ""),
-	unit3DResponsibility("OTW", "canonical", ""),
+	unit3DResponsibilityVersion("OTW", "otw", "", "v2"),
 	unit3DResponsibility("PT", "canonical", ""),
 	unit3DResponsibility("PTT", "canonical", ""),
 	unit3DResponsibility("R4E", "canonical", ""),
 	unit3DResponsibility("RAS", "canonical", ""),
-	unit3DResponsibility("RF", "rf", ""),
+	unit3DResponsibilityVersion("RF", "rf", "", "v2"),
 	unit3DResponsibility("RHD", "rhd", ""),
 	unit3DResponsibility("SAM", "sam", ""),
 	unit3DResponsibility("SHRI", "canonical", ""),
-	unit3DResponsibility("SP", "canonical", ""),
+	unit3DResponsibilityVersion("SP", "sp", "", "v3"),
 	unit3DResponsibility("STC", "canonical", ""),
 	unit3DResponsibility("TIK", "canonical", ""),
 	unit3DResponsibility("TLZ", "canonical", ""),
 	unit3DResponsibility("TOS", "canonical", ""),
 	unit3DResponsibility("TTR", "canonical", ""),
-	unit3DResponsibility("ULCX", "ulcx", ""),
+	unit3DResponsibilityVersion("ULCX", "ulcx", "", "v2"),
 	unit3DResponsibility("UTP", "canonical", ""),
-	unit3DResponsibility("YUS", "canonical", ""),
+	unit3DResponsibilityVersion("YUS", "yus", "", "v2"),
 	unit3DResponsibility("ZNTH", "znth", ""),
-	azFamilyResponsibility("AZ"),
-	azFamilyResponsibility("CZ"),
+	azFamilyResponsibilityVersion("AZ", "v2"),
+	azFamilyResponsibilityVersion("CZ", "v2"),
 	azFamilyResponsibility("PHD"),
 	{
 		name:              "ANT",
@@ -118,7 +127,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		mediaOwner:        "standalone/ant/media.go",
 		questionnaireKeys: []string{"type", "tags", "adult_screens"},
 		descriptionGroup:  "ant",
-		releaseNamePolicy: "standalone/canonical/v1",
+		releaseNamePolicy: "standalone/ant/v1",
 		projectorVersion:  "standalone-v2",
 		principalName:     "name",
 	},
@@ -134,7 +143,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		descriptionOwner:  "standalone/ar/description.go",
 		mediaOwner:        "standalone/ar/media.go",
 		descriptionGroup:  "ar",
-		releaseNamePolicy: "standalone/ar/v1",
+		releaseNamePolicy: "standalone/ar/v3",
 		projectorVersion:  "standalone-v2",
 		principalName:     "name",
 	},
@@ -163,7 +172,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		descriptionOwner:  "standalone/bhd/description.go",
 		mediaOwner:        "standalone/bhd/media.go",
 		descriptionGroup:  "bhd",
-		releaseNamePolicy: "standalone/bhd/v1",
+		releaseNamePolicy: "standalone/bhd/v2",
 		projectorVersion:  "standalone-v2",
 		principalName:     "name",
 	},
@@ -224,7 +233,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		descriptionOwner:  "standalone/btn/description.go",
 		mediaOwner:        "standalone/btn/media.go",
 		descriptionGroup:  "btn",
-		releaseNamePolicy: "standalone/btn/v1",
+		releaseNamePolicy: "standalone/btn/v2",
 		projectorVersion:  "standalone-v2",
 		principalName:     "release_name",
 	},
@@ -314,7 +323,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		taxonomyOwner:     "standalone/hdb/taxonomy.go",
 		descriptionOwner:  "standalone/hdb/description.go",
 		descriptionGroup:  "hdb",
-		releaseNamePolicy: "standalone/canonical/v1",
+		releaseNamePolicy: "standalone/hdb/v2",
 		projectorVersion:  "standalone-v2",
 		principalName:     "name",
 	},
@@ -373,7 +382,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		descriptionOwner:  "standalone/mtv/description.go",
 		mediaOwner:        "standalone/mtv/media.go",
 		descriptionGroup:  "mtv",
-		releaseNamePolicy: "standalone/mtv/v1",
+		releaseNamePolicy: "standalone/mtv/v3",
 		projectorVersion:  "standalone-v2",
 		principalName:     "title",
 	},
@@ -386,7 +395,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		taxonomyOwner:     "standalone/nbl/taxonomy.go",
 		mediaOwner:        "standalone/nbl/media.go",
 		descriptionGroup:  "nbl",
-		releaseNamePolicy: "standalone/nbl/v1",
+		releaseNamePolicy: "standalone/nbl/v2",
 		projectorVersion:  "standalone-v2",
 		principalName:     "name",
 	},
@@ -543,7 +552,7 @@ func TestTrackerResponsibilityLedgerCoversEveryBuiltIn(t *testing.T) {
 			if descriptor.Validation.Check == nil || strings.TrimSpace(descriptor.Validation.ID) == "" {
 				t.Fatal("versioned pre-dupe validation policy is unrecorded")
 			}
-			if !strings.HasSuffix(descriptor.Validation.ID, "-v1") {
+			if !validationPolicyIDIsVersioned(descriptor.Validation.ID) {
 				t.Fatalf("validation policy %q is not explicitly versioned", descriptor.Validation.ID)
 			}
 			if strings.TrimSpace(row.principalName) == "" {
@@ -593,6 +602,20 @@ func TestTrackerResponsibilityLedgerCoversEveryBuiltIn(t *testing.T) {
 			}
 		})
 	}
+}
+
+func validationPolicyIDIsVersioned(id string) bool {
+	for component := range strings.SplitSeq(id, "+") {
+		versionMarker := strings.LastIndex(component, "-v")
+		if versionMarker <= 0 {
+			return false
+		}
+		version, err := strconv.Atoi(component[versionMarker+2:])
+		if err != nil || version < 1 {
+			return false
+		}
+	}
+	return true
 }
 
 func questionnaireOwner(row trackerResponsibilityRow) string {

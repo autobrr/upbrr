@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -54,6 +55,7 @@ func (a workflowTrackerServiceAdapter) PrepareRetainedUploadPlan(
 }
 
 type workflowUploadPlanBuilder struct {
+	config   config.Config
 	resolver workflowDescriptionSubjectResolver
 	trackers workflowRetainedUploadService
 	torrents api.TorrentService
@@ -71,6 +73,7 @@ type workflowUploadExecution struct {
 }
 
 func newWorkflowUploadPlanBuilder(
+	cfg config.Config,
 	resolver workflowDescriptionSubjectResolver,
 	service api.TrackerService,
 	torrents api.TorrentService,
@@ -81,6 +84,7 @@ func newWorkflowUploadPlanBuilder(
 		retained = workflowTrackerServiceAdapter{service: concrete}
 	}
 	return workflowUploadPlanBuilder{
+		config:   cfg,
 		resolver: resolver,
 		trackers: retained,
 		torrents: torrents,
@@ -97,31 +101,35 @@ func (b workflowUploadPlanBuilder) Fingerprint(
 	options releaseworkflow.UploadPlanBuildOptions,
 ) (api.WorkflowFingerprint, error) {
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
-		ProjectionSet   api.TrackerReleaseProjectionSetRef
-		Projection      api.WorkflowFingerprint
-		Dupes           api.DupeAssessmentRef
-		DupeInput       api.WorkflowFingerprint
-		Media           api.MediaArtifactSetRef
-		MediaCapture    api.WorkflowFingerprint
-		Descriptions    api.DescriptionSetRef
-		Description     api.WorkflowFingerprint
-		NoSeed          bool
-		TrackerIDs      []api.TrackerID
-		TrackerApproval *api.TrackerApprovalSnapshotRef
-		Authority       api.WorkflowFingerprint
+		ProjectionSet    api.TrackerReleaseProjectionSetRef
+		Projection       api.WorkflowFingerprint
+		ProjectionPolicy api.WorkflowFingerprint
+		Dupes            api.DupeAssessmentRef
+		DupeInput        api.WorkflowFingerprint
+		Media            api.MediaArtifactSetRef
+		MediaCapture     api.WorkflowFingerprint
+		Descriptions     api.DescriptionSetRef
+		Description      api.WorkflowFingerprint
+		NoSeed           bool
+		RehashCooldown   int
+		TrackerIDs       []api.TrackerID
+		TrackerApproval  *api.TrackerApprovalSnapshotRef
+		Authority        api.WorkflowFingerprint
 	}{
-		ProjectionSet:   api.TrackerReleaseProjectionSetRef{ID: projections.ID, Revision: projections.Revision},
-		Projection:      projections.InputFingerprint,
-		Dupes:           api.DupeAssessmentRef{ID: dupes.ID, Revision: dupes.Revision},
-		DupeInput:       dupes.InputFingerprint,
-		Media:           api.MediaArtifactSetRef{ID: media.ID, Revision: media.Revision},
-		MediaCapture:    media.CaptureFingerprint,
-		Descriptions:    api.DescriptionSetRef{ID: descriptions.ID, Revision: descriptions.Revision},
-		Description:     descriptions.InputFingerprint,
-		NoSeed:          options.NoSeed,
-		TrackerIDs:      append([]api.TrackerID(nil), options.TrackerIDs...),
-		TrackerApproval: options.TrackerApproval,
-		Authority:       options.AuthorityFingerprint,
+		ProjectionSet:    api.TrackerReleaseProjectionSetRef{ID: projections.ID, Revision: projections.Revision},
+		Projection:       projections.InputFingerprint,
+		ProjectionPolicy: projections.PolicyFingerprint,
+		Dupes:            api.DupeAssessmentRef{ID: dupes.ID, Revision: dupes.Revision},
+		DupeInput:        dupes.InputFingerprint,
+		Media:            api.MediaArtifactSetRef{ID: media.ID, Revision: media.Revision},
+		MediaCapture:     media.CaptureFingerprint,
+		Descriptions:     api.DescriptionSetRef{ID: descriptions.ID, Revision: descriptions.Revision},
+		Description:      descriptions.InputFingerprint,
+		NoSeed:           options.NoSeed,
+		RehashCooldown:   b.config.TorrentCreation.RehashCooldown,
+		TrackerIDs:       append([]api.TrackerID(nil), options.TrackerIDs...),
+		TrackerApproval:  options.TrackerApproval,
+		Authority:        options.AuthorityFingerprint,
 	})
 	if err != nil {
 		return "", fmt.Errorf("workflow upload plan fingerprint: %w", err)
@@ -251,6 +259,7 @@ func (b workflowUploadPlanBuilder) Build(
 		Trackers:               workflowProjectionTrackerNames(eligible),
 		QuestionnaireAnswers:   questionnaire,
 		DescriptionGroups:      descriptionGroups,
+		DescriptionGroupsFinal: true,
 		TrackerConfigOverrides: descriptionInstructions.TrackerConfig,
 		TrackerSiteOverrides:   descriptionInstructions.TrackerSite,
 		ClientOverrides:        descriptionInstructions.Client,
@@ -267,17 +276,40 @@ func (b workflowUploadPlanBuilder) Build(
 	applyWorkflowCrossSeeds(&subject, dupeEvidence, dupes)
 	if len(eligible) > 0 && b.torrents != nil && !descriptionInstructions.Options.SkipAutoTorrent {
 		torrent, err := b.torrents.Create(ctx, api.TorrentSubject{
-			SourcePath:       subject.SourcePath,
-			SourceSize:       subject.SourceSize,
-			FileList:         append([]string(nil), subject.FileList...),
-			DiscType:         subject.DiscType,
-			Trackers:         workflowProjectionTrackerNames(eligible),
-			TorrentOverrides: descriptionInstructions.Torrent,
+			SourcePath:           subject.SourcePath,
+			SourceSize:           subject.SourceSize,
+			FileList:             append([]string(nil), subject.FileList...),
+			DiscType:             subject.DiscType,
+			ClientTorrentPath:    subject.ClientTorrentPath,
+			Trackers:             workflowProjectionTrackerNames(eligible),
+			SkipIfRehashTrackers: workflowSkipIfRehashTrackers(b.config, eligible),
+			TorrentOverrides:     descriptionInstructions.Torrent,
 		})
 		if err != nil {
 			return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: prepare torrent: %w", err)
 		}
 		subject.TorrentPath = torrent.Path
+		skipped := make(map[api.TrackerID]struct{}, len(torrent.SkippedTrackers))
+		for _, tracker := range torrent.SkippedTrackers {
+			trackerID := api.TrackerID(strings.ToUpper(strings.TrimSpace(tracker)))
+			if trackerID != "" {
+				skipped[trackerID] = struct{}{}
+			}
+		}
+		if len(skipped) > 0 {
+			remaining := make([]api.TrackerReleaseProjection, 0, len(eligible))
+			for _, projection := range eligible {
+				if _, ok := skipped[projection.TrackerID]; ok {
+					trackerStatuses[projection.TrackerID] = api.StageStatusSkipped
+					trackerReasons[projection.TrackerID] = "Tracker skipped because its torrent would require rehashing."
+					continue
+				}
+				remaining = append(remaining, projection)
+			}
+			eligible = remaining
+		}
+		subject.Trackers = workflowProjectionTrackerNames(eligible)
+		subject.RehashedTrackers = append([]string(nil), torrent.RehashedTrackers...)
 	}
 	var retained workflowRetainedUploadPlan
 	if len(eligible) > 0 {
@@ -302,6 +334,7 @@ func (b workflowUploadPlanBuilder) Build(
 		api.NormalizeWorkflowExecutionMode(projections.ExecutionMode) == api.WorkflowExecutionModeDebug
 	dryRunInjected := make(map[api.TrackerID]struct{})
 	readyCount := 0
+	skippedCount := 0
 	for index, projection := range planProjections {
 		preparation, hasPreparation := preparationByTracker[projection.TrackerID]
 		tracker := api.UploadPlanTracker{
@@ -453,6 +486,9 @@ func (b workflowUploadPlanBuilder) Build(
 		}
 		tracker.SemanticFingerprint = semanticFingerprint
 		plan.Trackers = append(plan.Trackers, tracker)
+		if tracker.Status == api.StageStatusSkipped {
+			skippedCount++
+		}
 		itemStatus := tracker.Status
 		message := "Tracker upload operation prepared."
 		switch tracker.Status {
@@ -479,6 +515,8 @@ func (b workflowUploadPlanBuilder) Build(
 	}
 	if readyCount > 0 {
 		plan.Status = api.StageStatusReady
+	} else if len(plan.Trackers) > 0 && skippedCount == len(plan.Trackers) {
+		plan.Status = api.StageStatusSkipped
 	}
 	return plan, &workflowUploadExecution{
 		plan:           retained,
@@ -488,6 +526,28 @@ func (b workflowUploadPlanBuilder) Build(
 		dryRunInjected: dryRunInjected,
 		crossSeeds:     append([]api.UploadedTorrent(nil), subject.CrossSeedTorrents...),
 	}, nil
+}
+
+// workflowSkipIfRehashTrackers returns eligible tracker names whose config
+// enables rehash skipping. Exact config keys win over deterministic case-folded aliases.
+func workflowSkipIfRehashTrackers(cfg config.Config, projections []api.TrackerReleaseProjection) []string {
+	result := make([]string, 0, len(projections))
+	for _, projection := range projections {
+		name := strings.ToUpper(strings.TrimSpace(string(projection.TrackerID)))
+		trackerConfig, ok := cfg.Trackers.Trackers[name]
+		if !ok {
+			for _, configuredName := range slices.Sorted(maps.Keys(cfg.Trackers.Trackers)) {
+				if strings.EqualFold(strings.TrimSpace(configuredName), name) {
+					trackerConfig, ok = cfg.Trackers.Trackers[configuredName], true
+					break
+				}
+			}
+		}
+		if ok && trackerConfig.SkipIfRehash {
+			result = append(result, name)
+		}
+	}
+	return result
 }
 
 func (b workflowUploadPlanBuilder) RetryClientInjections(
@@ -542,6 +602,7 @@ func workflowDryRunClientFailure(
 		api.OperationFailureIncompatibleGeneration,
 		api.OperationFailureMissingPrerequisite,
 		api.OperationFailureTrackerAuthRequired,
+		api.OperationFailureTrackerAuthUnavailable,
 		api.OperationFailureNoEligibleTrackers,
 		api.OperationFailureStaleReview,
 		api.OperationFailureStaleResult,
@@ -1076,6 +1137,7 @@ func workflowClientFailureRecovery(code api.OperationFailureCode) api.OperationR
 		api.OperationFailureIncompatibleGeneration,
 		api.OperationFailureMissingPrerequisite,
 		api.OperationFailureTrackerAuthRequired,
+		api.OperationFailureTrackerAuthUnavailable,
 		api.OperationFailureNoEligibleTrackers,
 		api.OperationFailureStaleReview,
 		api.OperationFailureStaleResult,
@@ -1244,7 +1306,7 @@ func workflowQuestionnaireAnswers(input map[api.TrackerID]map[string]string) map
 }
 
 func applyWorkflowCrossSeeds(subject *api.UploadSubject, evidence workflowDupePrivateEvidence, dupes api.DupeAssessment) {
-	if subject == nil {
+	if subject == nil || evidence.Assessment == nil {
 		return
 	}
 	duplicateSubject := api.DuplicateSubject{}

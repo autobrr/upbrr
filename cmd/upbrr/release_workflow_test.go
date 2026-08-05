@@ -197,23 +197,33 @@ func TestPrintCLIWorkflowProjectionsIncludesAuditablePolicyDetails(t *testing.T)
 				PolicyDecisions: []api.TrackerPolicyDecision{
 					{Code: "release_name_policy", Decision: "standalone/example/v1"},
 					{
-						Code:     "unsupported_source",
-						Decision: "ineligible",
-						Blocking: true,
-						Message:  "Example does not support the release source.",
+						Code:           "unsupported_source",
+						Decision:       "ineligible",
+						Blocking:       true,
+						Message:        "Example does not support the release source.",
+						Disposition:    api.RuleDispositionStrict,
+						EvidenceStatus: api.MetadataEvidenceStatusComplete,
 					},
 					{
 						Code:     "banned_group",
 						Decision: "bypassed",
 						Message:  "Debug mode bypassed tracker banned-group policy.",
 					},
+					{
+						Code:           "metadata_poster",
+						Decision:       "advisory",
+						Message:        "Poster metadata is unavailable.",
+						Disposition:    api.RuleDispositionAdvisory,
+						EvidenceStatus: api.MetadataEvidenceStatusUnavailable,
+					},
 				},
 			}},
 		}, nil)
 	})
 	for _, expected := range []string{
-		"code=unsupported_source decision=ineligible blocking=true reason=Example does not support the release source.",
-		"code=banned_group decision=bypassed blocking=false reason=Debug mode bypassed tracker banned-group policy.",
+		"code=unsupported_source decision=ineligible blocking=true disposition=strict evidence=complete reason=Example does not support the release source.",
+		"code=banned_group decision=bypassed blocking=false disposition=unspecified evidence=unspecified reason=Debug mode bypassed tracker banned-group policy.",
+		"code=metadata_poster decision=advisory blocking=false disposition=advisory evidence=unavailable reason=Poster metadata is unavailable.",
 	} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("tracker projection output missing %q: %q", expected, output)
@@ -845,6 +855,43 @@ func TestCLIWorkflowUnattendedDefersQuestionnaireToCentralPolicy(t *testing.T) {
 	}
 	if changed || len(instructions) != 0 {
 		t.Fatalf("unattended questionnaire changed instructions = %#v", instructions)
+	}
+}
+
+func TestCLIWorkflowContinuationErrorIncludesInteractionMode(t *testing.T) {
+	t.Parallel()
+
+	for _, interaction := range []api.InteractionMode{
+		api.InteractionModeUnattended,
+		api.InteractionModeUnattendedConfirm,
+	} {
+		t.Run(string(interaction), func(t *testing.T) {
+			t.Parallel()
+
+			actionErr := cliWorkflowContinuationError(releaseworkflow.CommandResult{
+				Continuation: api.WorkflowContinuation{RequiredActions: []api.RequiredAction{{
+					Kind:   api.RequiredActionReviewDuplicates,
+					Prompt: "Review duplicate evidence.",
+				}}},
+			}, interaction)
+			if !strings.Contains(actionErr.Error(), "interaction="+string(interaction)) ||
+				!strings.Contains(actionErr.Error(), string(api.RequiredActionReviewDuplicates)) ||
+				!strings.Contains(actionErr.Error(), "Review duplicate evidence.") {
+				t.Fatalf("action continuation error = %v", actionErr)
+			}
+
+			progressErr := cliWorkflowContinuationError(releaseworkflow.CommandResult{
+				Continuation: api.WorkflowContinuation{
+					Lifecycle:   api.OperationLifecycleWaiting,
+					Disposition: api.WorkflowDispositionNeedsAction,
+				},
+			}, interaction)
+			if !strings.Contains(progressErr.Error(), "interaction="+string(interaction)) ||
+				!strings.Contains(progressErr.Error(), "made no progress") ||
+				!strings.Contains(progressErr.Error(), "lifecycle=waiting") {
+				t.Fatalf("no-progress continuation error = %v", progressErr)
+			}
+		})
 	}
 }
 

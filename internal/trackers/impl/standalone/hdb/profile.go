@@ -22,29 +22,35 @@ func Profile() standalone.Profile {
 		BaseURL:            hdbBaseURL,
 		DescriptionGroup:   "hdb",
 		UploadContentMode:  trackers.UploadContentModeDescription,
+		ReleaseNamePolicy:  releaseNamePolicy(),
+		Rules:              &trackers.RuleSet{MinResolution: "720p"},
 		ValidationPolicy:   validationPolicy(),
 		PrepareDescription: prepareDescription,
 		PrepareUpload: func(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
 			return prepareUploadAt(ctx, req, hdbBaseURL, nil)
 		},
 		NewDuplicateAdapter: func(deps dupe.Dependencies) dupe.Adapter { return newDuplicateAdapterAt(deps, hdbBaseURL) },
-		MetadataPolicy: &trackers.TrackerMetadataPolicy{
-			RequireKnownCategory: true,
-			Requirements: []trackers.MetadataRequirement{
-				{
-					Scope:       trackers.MetadataScopeMovie,
-					AnyOf:       []trackers.MetadataField{trackers.MetadataFieldIMDBIDOnly},
-					Disposition: api.RuleDispositionStrict,
-				},
-				{
-					Scope:       trackers.MetadataScopeTV,
-					AnyOf:       []trackers.MetadataField{trackers.MetadataFieldIMDBIDOnly, trackers.MetadataFieldTVDBIDOnly},
-					Disposition: api.RuleDispositionStrict,
-				},
+		DupePolicy: &trackers.DupePolicy{
+			ID:         "hdb/duplicate/v2",
+			EvidenceID: "hdb-rules",
+			SearchScope: trackers.DupeSearchScope{
+				MaxPages: 100,
+			},
+			SlotDimensions: []trackers.DupeDimension{
+				trackers.DupeDimensionSource,
+				trackers.DupeDimensionResolution,
+				trackers.DupeDimensionCodec,
+				trackers.DupeDimensionGroup,
 			},
 		},
+		MetadataPolicy: &trackers.TrackerMetadataPolicy{
+			RequireKnownCategory: true,
+		},
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "HDBits"},
-		ArtifactPolicy:       &trackers.ArtifactPolicy{MaxPieceSizeMiB: 16},
+		ArtifactPolicy: &trackers.ArtifactPolicy{
+			MaxPieceSizeMiB:     16,
+			PieceSizeProfileURL: hdbBaseURL,
+		},
 		ImageHostPolicy: &trackers.ImageHostPolicy{
 			AllowedHosts:         []string{"hdb"},
 			OwnedHosts:           []string{"hdb"},

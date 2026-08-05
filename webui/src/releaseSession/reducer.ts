@@ -93,6 +93,8 @@ export type SessionState = Readonly<{
   selectedTrackers: readonly string[];
   trackerSelectionTouched: boolean;
   ignoredDupesFor: readonly string[];
+  /** Tracker-name edits retained for the active prepared source. */
+  releaseNameOverrides: Readonly<Record<string, string>>;
   questionnaireAnswers: Readonly<Record<string, Readonly<Record<string, string>>>>;
   uploadOptions: UploadRunOptions;
   duplicatesError: string;
@@ -162,6 +164,7 @@ export type SessionAction =
       trackers: readonly string[];
     }>
   | Readonly<{ type: "dupe_ignore_changed"; tracker: string; ignored: boolean }>
+  | Readonly<{ type: "release_name_confirmed"; tracker: string; value: string }>
   | Readonly<{ type: "questionnaire_answered"; tracker: string; key: string; value: string }>
   | Readonly<{ type: "upload_options_changed"; value: Partial<UploadRunOptions> }>
   | Readonly<{
@@ -312,6 +315,7 @@ export const initialSessionState = (): SessionState => ({
   selectedTrackers: [],
   trackerSelectionTouched: false,
   ignoredDupesFor: [],
+  releaseNameOverrides: {},
   questionnaireAnswers: {},
   uploadOptions: emptyOptions(),
   duplicatesError: "",
@@ -509,6 +513,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         selectedTrackers: normalizeNames(action.defaultTrackers || []),
         trackerSelectionTouched: false,
         ignoredDupesFor: [],
+        releaseNameOverrides: {},
         questionnaireAnswers: {},
         uploadOptions: emptyOptions(),
         duplicatesError: "",
@@ -656,6 +661,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         preparationDirty: false,
         release: { SourcePath: acceptedSource, Generation: release.Generation },
         preview: action.preview,
+        releaseNameOverrides: {},
         playlist: {
           ...state.playlist,
           status:
@@ -712,6 +718,17 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       return {
         ...state,
         ignoredDupesFor: [...ignored],
+      };
+    }
+    case "release_name_confirmed": {
+      const tracker = action.tracker.trim().toUpperCase();
+      if (!tracker) return state;
+      return {
+        ...state,
+        releaseNameOverrides: {
+          ...state.releaseNameOverrides,
+          [tracker]: action.value,
+        },
       };
     }
     case "questionnaire_answered": {

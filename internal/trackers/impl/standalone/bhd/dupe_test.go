@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -171,13 +172,68 @@ func TestBHDSearchUsesExternalIDs(t *testing.T) {
 			} else if got := bhdStringFromAny(payload["categories"]); got != tc.wantCategory {
 				t.Fatalf("expected category %q, got %q", tc.wantCategory, got)
 			}
-			if tc.wantNilType {
-				if value, ok := payload["types"]; !ok || value != nil {
-					t.Fatalf("expected nil type filter, got %#v", value)
-				}
-			} else if got := bhdStringFromAny(payload["types"]); got != tc.wantType {
-				t.Fatalf("expected type %q, got %q", tc.wantType, got)
+			if value, ok := payload["types"]; !ok || value != nil {
+				t.Fatalf("expected policy-safe nil type filter, got %#v", value)
 			}
 		})
+	}
+}
+
+func TestBHDSearchContinuesFullPageWhenTotalPagesOmitted(t *testing.T) {
+	t.Parallel()
+
+	requestedPages := make([]int, 0, 2)
+	client := &http.Client{Transport: bhdRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		var request map[string]any
+		if err := json.NewDecoder(req.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		page := int(bhdInt(request["page"]))
+		requestedPages = append(requestedPages, page)
+		count := 100
+		if page == 2 {
+			count = 1
+		}
+		results := make([]map[string]any, count)
+		for index := range count {
+			results[index] = map[string]any{
+				"name": fmt.Sprintf("Example.Release.2026.%03d.1080p-GRP", index+(page-1)*100),
+			}
+		}
+		body, err := json.Marshal(map[string]any{
+			"status_code": 1,
+			"results":     results,
+		})
+		if err != nil {
+			t.Fatalf("encode response: %v", err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewReader(body)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	searcher := &dupeSearcher{
+		cfg: config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"BHD": {APIKey: "placeholder"},
+		}}},
+		http:     client,
+		baseURL:  "https://example.invalid/",
+		maxPages: 2,
+	}
+
+	result := searcher.Search(context.Background(), api.DuplicateSubject{
+		Identity: api.ExternalIdentity{TMDBID: 1234567, Category: api.CanonicalCategoryMovie},
+	})
+	search := result.SearchEvidence()
+	if err := result.Cause(); err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if !slices.Equal(requestedPages, []int{1, 2}) ||
+		!search.Complete ||
+		search.Pages != 2 ||
+		len(search.Warnings) != 0 ||
+		len(result.Entries()) != 101 {
+		t.Fatalf("requested pages=%v search=%#v entries=%d", requestedPages, search, len(result.Entries()))
 	}
 }

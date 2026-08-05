@@ -20,6 +20,9 @@ import (
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/ant"
+	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/hdb"
+	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/mtv"
+	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/ptp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -535,7 +538,7 @@ func TestCreateNoHashRejectsCaseOnlyMultiFileClientTorrent(t *testing.T) {
 	}
 }
 
-func TestCreateNoHashReusesSameNameSameSizeDifferentContentTorrent(t *testing.T) {
+func TestCreateNoHashRejectsSameNameSameSizeDifferentContentTorrent(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -550,18 +553,15 @@ func TestCreateNoHashReusesSameNameSameSizeDifferentContentTorrent(t *testing.T)
 
 	service := NewService(api.NopLogger{}, t.TempDir())
 	reuseOnly := true
-	result, err := service.Create(context.Background(), api.TorrentSubject{
+	_, err := service.Create(context.Background(), api.TorrentSubject{
 		SourcePath:        source,
 		ClientTorrentPath: clientTorrentPath,
 		TorrentOverrides: api.TorrentOverrides{
 			NoHash: &reuseOnly,
 		},
 	})
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if result.Path != clientTorrentPath {
-		t.Fatalf("expected same-name same-size client torrent path %s, got %s", clientTorrentPath, result.Path)
+	if !errors.Is(err, internalerrors.ErrNotFound) {
+		t.Fatalf("expected nohash to reject piece mismatch, got %v", err)
 	}
 }
 
@@ -713,7 +713,7 @@ func TestPieceExpForMiB(t *testing.T) {
 	}
 }
 
-func TestApplyTorrentOverridePieceOptionsKeepsUserMax(t *testing.T) {
+func TestApplyTorrentOverridePieceOptionsCapsRequiredPieceSizeToUserMax(t *testing.T) {
 	t.Parallel()
 
 	maxPiece := 16
@@ -731,8 +731,8 @@ func TestApplyTorrentOverridePieceOptionsKeepsUserMax(t *testing.T) {
 	if options.maxPieceExp != 24 {
 		t.Fatalf("expected user max exponent 24, got %d", options.maxPieceExp)
 	}
-	if options.pieceExp == nil || *options.pieceExp != requiredExp {
-		t.Fatalf("expected required piece exponent %d to remain set, got %#v", requiredExp, options.pieceExp)
+	if options.pieceExp == nil || *options.pieceExp != 24 {
+		t.Fatalf("expected required piece exponent to be capped at 24, got %#v", options.pieceExp)
 	}
 }
 
@@ -877,7 +877,7 @@ func TestCreateRejectsSameNameDifferentSizeClientTorrent(t *testing.T) {
 	}
 }
 
-func TestCreateReusesSameNameSameSizeDifferentContentClientTorrent(t *testing.T) {
+func TestCreateRejectsSameNameSameSizeDifferentContentClientTorrent(t *testing.T) {
 	t.Parallel()
 
 	sourceDir := t.TempDir()
@@ -898,8 +898,8 @@ func TestCreateReusesSameNameSameSizeDifferentContentClientTorrent(t *testing.T)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if result.Path != clientTorrentPath {
-		t.Fatalf("expected same-name same-size client torrent path %s, got %s", clientTorrentPath, result.Path)
+	if result.Path == clientTorrentPath {
+		t.Fatalf("expected same-name same-size client torrent to be skipped")
 	}
 }
 
@@ -952,7 +952,7 @@ func TestCreateRejectsWantedFileOutsideRoot(t *testing.T) {
 	}
 }
 
-func TestCreateRegeneratesNonCompliantPTPTorrent(t *testing.T) {
+func TestCreateRegeneratesOneSharedBaseForPTPAndHDB(t *testing.T) {
 	t.Parallel()
 
 	sourceDir := t.TempDir()
@@ -963,7 +963,7 @@ func TestCreateRegeneratesNonCompliantPTPTorrent(t *testing.T) {
 	}
 
 	clientTorrentPath := filepath.Join(sourceDir, "client.torrent")
-	wrongPiece := uint(16)
+	wrongPiece := uint(18)
 	_, err := mkbrr.Create(mkbrr.CreateOptions{
 		Path:           source,
 		OutputPath:     clientTorrentPath,
@@ -974,11 +974,17 @@ func TestCreateRegeneratesNonCompliantPTPTorrent(t *testing.T) {
 		t.Fatalf("create client torrent: %v", err)
 	}
 
-	service := NewService(api.NopLogger{}, t.TempDir())
+	registry := trackers.NewRegistry()
+	for _, definition := range []trackers.Definition{hdb.New(), ptp.New()} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register tracker: %v", err)
+		}
+	}
+	service := NewServiceWithRegistry(api.NopLogger{}, t.TempDir(), registry)
 	result, err := service.Create(context.Background(), api.TorrentSubject{
 		SourcePath:        source,
 		SourceSize:        int64(len(content)),
-		Trackers:          []string{"PTP"},
+		Trackers:          []string{"PTP", "HDB"},
 		ClientTorrentPath: clientTorrentPath,
 	})
 	if err != nil {
@@ -986,6 +992,9 @@ func TestCreateRegeneratesNonCompliantPTPTorrent(t *testing.T) {
 	}
 	if result.Path == clientTorrentPath {
 		t.Fatalf("expected non-compliant client torrent to be regenerated")
+	}
+	if !slices.Equal(result.RehashedTrackers, []string{"PTP"}) {
+		t.Fatalf("rehash trackers = %v, want PTP", result.RehashedTrackers)
 	}
 
 	torrentMeta, err := metainfo.LoadFromFile(result.Path)
@@ -996,8 +1005,112 @@ func TestCreateRegeneratesNonCompliantPTPTorrent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unmarshal info: %v", err)
 	}
-	if info.PieceLength != 1<<17 {
-		t.Fatalf("expected 128 KiB piece size, got %d", info.PieceLength)
+	minExp, maxExp := ptpPieceExpRange(int64(len(content)))
+	if info.PieceLength < int64(1)<<minExp || info.PieceLength > int64(1)<<maxExp {
+		t.Fatalf("expected PTP-compatible shared piece size, got %d", info.PieceLength)
+	}
+	if torrentMeta.Announce != "" || len(torrentMeta.AnnounceList) != 0 {
+		t.Fatal("expected trackerless base torrent")
+	}
+}
+
+func TestCreateSkipsMTVInsteadOfRehashingSharedHDBBase(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	source := filepath.Join(dir, "video.mkv")
+	writeTestFile(t, source, "source-data")
+	clientTorrentPath := filepath.Join(dir, "client.torrent")
+	pieceExp := uint(24)
+	if _, err := mkbrr.Create(mkbrr.CreateOptions{
+		Path:           source,
+		OutputPath:     clientTorrentPath,
+		IsPrivate:      true,
+		PieceLengthExp: &pieceExp,
+	}); err != nil {
+		t.Fatalf("create client torrent: %v", err)
+	}
+
+	registry := trackers.NewRegistry()
+	for _, definition := range []trackers.Definition{hdb.New(), mtv.New()} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register tracker: %v", err)
+		}
+	}
+	service := NewServiceWithRegistry(api.NopLogger{}, t.TempDir(), registry)
+	result, err := service.Create(context.Background(), api.TorrentSubject{
+		SourcePath:           source,
+		SourceSize:           int64(len("source-data")),
+		Trackers:             []string{"HDB", "MTV"},
+		SkipIfRehashTrackers: []string{"MTV"},
+		ClientTorrentPath:    clientTorrentPath,
+	})
+	if err != nil {
+		t.Fatalf("create shared base: %v", err)
+	}
+	if result.Path != clientTorrentPath || !slices.Equal(result.SkippedTrackers, []string{"MTV"}) || len(result.RehashedTrackers) != 0 {
+		t.Fatal("shared base result did not reuse HDB torrent and skip MTV")
+	}
+}
+
+func TestResolveTrackerPieceProfiles(t *testing.T) {
+	t.Parallel()
+
+	registry := trackers.NewRegistry()
+	for _, definition := range []trackers.Definition{hdb.New(), mtv.New(), ptp.New()} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register tracker: %v", err)
+		}
+	}
+	tests := []struct {
+		name        string
+		trackers    []string
+		size        int64
+		maxExp      uint
+		pieceExp    uint
+		profileHost string
+	}{
+		{
+			name:        "PTP",
+			trackers:    []string{"PTP"},
+			size:        70 << 20,
+			maxExp:      24,
+			pieceExp:    17,
+			profileHost: "passthepopcorn.me",
+		},
+		{
+			name:        "HDB",
+			trackers:    []string{"HDB"},
+			size:        40 << 30,
+			maxExp:      24,
+			pieceExp:    24,
+			profileHost: "hdbits.org",
+		},
+		{
+			name:        "MTV",
+			trackers:    []string{"MTV"},
+			size:        40 << 30,
+			maxExp:      23,
+			pieceExp:    23,
+			profileHost: "morethantv",
+		},
+		{
+			name:        "HDB and MTV",
+			trackers:    []string{"HDB", "MTV"},
+			size:        40 << 30,
+			maxExp:      23,
+			pieceExp:    23,
+			profileHost: "morethantv",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			policy := resolveTrackerPolicy(api.TorrentSubject{Trackers: test.trackers, SourceSize: test.size}, registry)
+			pieceExp, ok := policy.requiredPieceExp(api.TorrentSubject{SourceSize: test.size})
+			if !ok || policy.maxPieceExp != test.maxExp || pieceExp != test.pieceExp || !strings.Contains(policy.pieceSizeProfileURL, test.profileHost) {
+				t.Fatalf("policy=%#v piece_exp=%d resolved=%t", policy, pieceExp, ok)
+			}
+		})
 	}
 }
 
@@ -1035,6 +1148,48 @@ func TestPTPPiecePolicyBoundaries(t *testing.T) {
 		}
 		if got != tc.exp {
 			t.Fatalf("size %d: expected exp %d, got %d", tc.size, tc.exp, got)
+		}
+	}
+}
+
+func TestPTPGreenPieceSizeRanges(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		size   int64
+		minExp uint
+		maxExp uint
+	}{
+		{
+			size:   10 << 20,
+			minExp: 15,
+			maxExp: 16,
+		},
+		{
+			size:   70 << 20,
+			minExp: 16,
+			maxExp: 17,
+		},
+		{
+			size:   533 << 20,
+			minExp: 19,
+			maxExp: 20,
+		},
+		{
+			size:   2294 << 20,
+			minExp: 21,
+			maxExp: 22,
+		},
+		{
+			size:   17080 << 20,
+			minExp: 24,
+			maxExp: 24,
+		},
+	}
+	for _, test := range tests {
+		minExp, maxExp := ptpPieceExpRange(test.size)
+		if minExp != test.minExp || maxExp != test.maxExp {
+			t.Fatalf("size %d: range %d-%d, want %d-%d", test.size, minExp, maxExp, test.minExp, test.maxExp)
 		}
 	}
 }

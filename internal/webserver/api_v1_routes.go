@@ -36,11 +36,38 @@ func (s *Server) registerV1Routes(mux *http.ServeMux) {
 		}
 		s.serveReleaseWorkflowOpenAPI(w)
 	})
+	mux.HandleFunc("/api/v1/capabilities", s.handleAPIV1Capabilities)
 	mux.HandleFunc("/api/v1/uploads", s.handleAPIV1UploadCreate)
 	mux.HandleFunc("/api/v1/uploads/", s.handleAPIV1UploadFeedback)
 	mux.HandleFunc("/api/v1/continuations", s.handleAPIV1WorkflowContinuation)
 	mux.HandleFunc("/api/v1/workflows", http.NotFound)
 	mux.HandleFunc("/api/v1/workflows/", s.handleAPIV1WorkflowResource)
+}
+
+func (s *Server) handleAPIV1Capabilities(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	principal, ok := s.authenticateAPIRequest(w, r, APITokenScopeWorkflowRead)
+	if !ok {
+		return
+	}
+	schemaHash, err := releaseWorkflowUploadOptionSchemaHash()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "capability schema unavailable"})
+		return
+	}
+	scopes := make([]string, len(principal.Scopes))
+	for index, scope := range principal.Scopes {
+		scopes[index] = string(scope)
+	}
+	capabilities, err := s.backend.GetReleaseWorkflowCapabilities(principal.OwnerID, scopes, schemaHash)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "capability catalog unavailable"})
+		return
+	}
+	writeJSON(w, http.StatusOK, capabilities)
 }
 
 func (s *Server) handleAPIV1UploadCreate(w http.ResponseWriter, r *http.Request) {

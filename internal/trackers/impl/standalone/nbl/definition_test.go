@@ -7,12 +7,25 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestProfileDeclaresNBLHDRDupeSlots(t *testing.T) {
+	t.Parallel()
+
+	policy := Profile().DupePolicy
+	if policy == nil || policy.ID != "nbl/duplicate/v2" || policy.EvidenceID != "nbl-uploading-overview" ||
+		!slices.Contains(policy.SlotDimensions, trackers.DupeDimensionHDR) ||
+		policy.SearchScope.MaxPages != 100 ||
+		policy.HDRSlotMode != trackers.DupeHDRSlotModeGeneric {
+		t.Fatalf("NBL dupe policy = %#v", policy)
+	}
+}
 
 func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 	t.Parallel()

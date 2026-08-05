@@ -92,6 +92,7 @@ describe("ScreenshotsPage", () => {
       ...base,
       view: {
         ...base.view,
+        status: "idle",
         workflowMode: true,
         plan: null,
         selections: [],
@@ -115,6 +116,39 @@ describe("ScreenshotsPage", () => {
     );
 
     await waitFor(() => expect(screenshots.load).toHaveBeenCalledOnce());
+  });
+
+  it("does not retry a failed automatic frame suggestion load", () => {
+    const base = facet();
+    const screenshots: ScreenshotsFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        status: "error",
+        workflowMode: true,
+        plan: null,
+        selections: [],
+        error: "Unable to load frame suggestions.",
+      },
+    };
+
+    render(
+      <ScreenshotsPage
+        facet={screenshots}
+        screenshotConfig={{ Screens: 4, ToneMap: false }}
+        updateScreenshotConfigValue={vi.fn()}
+        loadSettings={vi.fn()}
+        settingsLoading={false}
+        settingsDirty={false}
+        settingsSaved=""
+        settingsError=""
+        applyScreenshotSettings={vi.fn()}
+        setLightboxImage={vi.fn()}
+        setLightboxAlt={vi.fn()}
+      />,
+    );
+
+    expect(screenshots.load).not.toHaveBeenCalled();
   });
 
   it("restores the main gallery layout while routing actions through the session facet", async () => {

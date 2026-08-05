@@ -1,0 +1,19 @@
+{
+  "data": [
+    {
+      "tvdb_id": 987650005,
+      "name": "Another Series",
+      "year": "2024",
+      "aliases": [
+        {
+          "name": "Example Series (2024)",
+          "language": "eng"
+        },
+        {
+          "name": "Exemple Série",
+          "language": "fra"
+        }
+      ]
+    }
+  ]
+}

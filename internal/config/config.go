@@ -254,6 +254,9 @@ type ArrIntegrationConfig struct {
 	EmbyTVDir     string `yaml:"emby_tv_dir"`
 }
 
+// TorrentCreationConfig controls torrent construction and reuse scheduling.
+// RehashCooldown delays rehash-dependent tracker submissions by that many
+// seconds after all reusable tracker submissions finish; negative values act as zero.
 type TorrentCreationConfig struct {
 	MkbrrThreads   int  `yaml:"mkbrr_threads"`
 	PreferMax16    bool `yaml:"prefer_max_16_torrent"`
@@ -288,7 +291,9 @@ type TrackersConfig struct {
 
 // TrackerConfig stores one tracker's supported settings. Unknown preserves
 // unsupported extension fields across load/save, excluding deprecated URL
-// fields and schema-known fields belonging to another tracker.
+// fields and schema-known fields belonging to another tracker. SkipIfRehash
+// omits the tracker when torrent preparation requires regeneration, including
+// forced regeneration of source data.
 type TrackerConfig struct {
 	LinkDirName         string         `yaml:"link_dir_name" json:"LinkDirName"`
 	APIKey              string         `yaml:"api_key" json:"APIKey"`

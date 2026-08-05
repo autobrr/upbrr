@@ -367,15 +367,6 @@ func collapseDots(value string) string {
 	return strings.Trim(cleaned, ".")
 }
 
-func containsAny(value string, needles []string) bool {
-	for _, needle := range needles {
-		if strings.Contains(value, needle) {
-			return true
-		}
-	}
-	return false
-}
-
 func uniqueStrings(values []string) []string {
 	seen := map[string]struct{}{}
 	result := make([]string, 0, len(values))

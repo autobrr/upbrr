@@ -107,7 +107,7 @@ func (c *BannedGroupChecker) IsBanned(tracker, group string) (bool, error) {
 		return false, nil
 	}
 	tracker = strings.ToUpper(strings.TrimSpace(tracker))
-	group = strings.ToLower(strings.TrimSpace(group))
+	group = normalizeBannedGroupKey(group)
 	if tracker == "" || group == "" {
 		return false, nil
 	}
@@ -208,7 +208,7 @@ func (c *BannedGroupChecker) load(tracker string) (map[string]struct{}, error) {
 	groups := map[string]struct{}{}
 	if owned, ok := c.registry.LookupBannedGroups(tracker); ok {
 		for _, value := range owned {
-			cleaned := strings.ToLower(strings.TrimSpace(value))
+			cleaned := normalizeBannedGroupKey(value)
 			if cleaned != "" {
 				groups[cleaned] = struct{}{}
 			}
@@ -231,7 +231,7 @@ func (c *BannedGroupChecker) load(tracker string) (map[string]struct{}, error) {
 	}
 
 	for value := range strings.SplitSeq(payload.BannedGroups, ",") {
-		cleaned := strings.ToLower(strings.TrimSpace(value))
+		cleaned := normalizeBannedGroupKey(value)
 		if cleaned == "" {
 			continue
 		}
@@ -411,10 +411,10 @@ func normalizedBannedGroupList(groups []string) []string {
 	out := make([]string, 0, len(groups))
 	for _, group := range groups {
 		cleaned := strings.TrimSpace(group)
-		if cleaned == "" {
+		key := normalizeBannedGroupKey(cleaned)
+		if key == "" {
 			continue
 		}
-		key := strings.ToLower(cleaned)
 		if _, ok := seen[key]; ok {
 			continue
 		}

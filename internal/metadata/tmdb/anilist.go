@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/redaction"
 )
 
 const anilistURL = "https://graphql.anilist.co"
@@ -51,6 +52,9 @@ func (c *Client) ResolveAnime(ctx context.Context, tmdbName string, input Metada
 		}
 		items, err := c.anilistSearch(ctx, term, result.MALID)
 		if err != nil {
+			if c.logger != nil {
+				c.logger.Warnf("tmdb: anilist search failed mal=%d err=%s", result.MALID, redaction.RedactValue(err.Error(), nil))
+			}
 			continue
 		}
 		if len(items) > 0 {
@@ -180,7 +184,7 @@ func (c *Client) anilistSearch(ctx context.Context, term string, malID int) ([]a
 		}
 		lastErr = err
 		if c.logger != nil {
-			c.logger.Warnf("tmdb: anilist request timed out for %q, retrying (%d/%d)", strings.TrimSpace(term), attempt+2, anilistRetryCount)
+			c.logger.Warnf("tmdb: anilist request timed out mal=%d retry=%d/%d", malID, attempt+2, anilistRetryCount)
 		}
 	}
 	if lastErr != nil {
@@ -192,7 +196,7 @@ func (c *Client) anilistSearch(ctx context.Context, term string, malID int) ([]a
 func (c *Client) doAniListSearch(ctx context.Context, body []byte) (anilistResponse, error) {
 	var response anilistResponse
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, anilistURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.anilistURL, bytes.NewReader(body))
 	if err != nil {
 		return response, fmt.Errorf("anilist: build search request: %w", err)
 	}
@@ -218,7 +222,7 @@ func (c *Client) doAniListSearch(ctx context.Context, body []byte) (anilistRespo
 func (c *Client) doAniListMetadata(ctx context.Context, body []byte) (anilistMetadataResponse, error) {
 	var response anilistMetadataResponse
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, anilistURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.anilistURL, bytes.NewReader(body))
 	if err != nil {
 		return response, fmt.Errorf("anilist: build metadata request: %w", err)
 	}
@@ -359,7 +363,7 @@ type anilistMedia struct {
 	ID         int          `json:"id"`
 	IDMal      int          `json:"idMal"`
 	Title      anilistTitle `json:"title"`
-	SeasonYear string       `json:"seasonYear"`
+	SeasonYear int          `json:"seasonYear"`
 	Episodes   int          `json:"episodes"`
 	Tags       []anilistTag `json:"tags"`
 }

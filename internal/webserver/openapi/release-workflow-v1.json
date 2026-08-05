@@ -1292,14 +1292,44 @@
       "DupeMatchProjection": {
         "type": "object",
         "properties": {
+          "category": {
+            "type": "string"
+          },
+          "codec": {
+            "type": "string"
+          },
+          "container": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string"
+          },
+          "edition": {
+            "type": "string"
+          },
+          "episode": {
+            "type": "integer"
+          },
+          "evidenceStatus": {
+            "$ref": "#/components/schemas/HDREvidenceStatus"
+          },
           "flags": {
             "type": "array",
             "items": {
               "type": "string"
             }
           },
+          "group": {
+            "type": "string"
+          },
+          "hdr": {
+            "$ref": "#/components/schemas/HDRFacts"
+          },
           "id": {
             "type": "string"
+          },
+          "internal": {
+            "type": "boolean"
           },
           "link": {
             "type": "string"
@@ -1307,15 +1337,103 @@
           "name": {
             "type": "string"
           },
+          "pack": {
+            "type": "boolean"
+          },
+          "provider": {
+            "type": "string"
+          },
           "reason": {
             "type": "string"
           },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DupeReason"
+            }
+          },
+          "region": {
+            "type": "string"
+          },
+          "relation": {
+            "$ref": "#/components/schemas/DupeRelation"
+          },
+          "repack": {
+            "type": "string"
+          },
+          "resolution": {
+            "type": "string"
+          },
+          "season": {
+            "type": "integer"
+          },
           "sizeBytes": {
             "type": "integer"
+          },
+          "source": {
+            "type": "string"
+          },
+          "threeD": {
+            "type": "string"
+          },
+          "trumpable": {
+            "type": "boolean"
+          },
+          "type": {
+            "type": "string"
           }
         },
         "required": [
-          "name"
+          "hdr",
+          "internal",
+          "name",
+          "pack",
+          "trumpable"
+        ]
+      },
+      "DupeReason": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ]
+      },
+      "DupeRelation": {
+        "type": "string"
+      },
+      "DupeSearchEvidence": {
+        "type": "object",
+        "properties": {
+          "candidateCount": {
+            "type": "integer"
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "pages": {
+            "type": "integer"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "candidateCount",
+          "complete",
+          "pages"
         ]
       },
       "EncodeSettingsStatus": {
@@ -1390,6 +1508,9 @@
           "Title",
           "Year"
         ]
+      },
+      "EpisodeTitleMode": {
+        "type": "string"
       },
       "ExternalIDOverrides": {
         "type": "object",
@@ -1605,6 +1726,21 @@
           "workflowRevision"
         ]
       },
+      "GeneratedReleaseNameVariants": {
+        "type": "object",
+        "properties": {
+          "IncludeEpisodeTitle": {
+            "$ref": "#/components/schemas/ReleaseNameVariant"
+          },
+          "OmitEpisodeTitle": {
+            "$ref": "#/components/schemas/ReleaseNameVariant"
+          }
+        },
+        "required": [
+          "IncludeEpisodeTitle",
+          "OmitEpisodeTitle"
+        ]
+      },
       "GetReleaseWorkflowMediaPlanRequest": {
         "type": "object",
         "properties": {
@@ -1647,6 +1783,57 @@
           "available",
           "goal"
         ]
+      },
+      "HDREvidenceOrigin": {
+        "type": "string"
+      },
+      "HDREvidenceStatus": {
+        "type": "string"
+      },
+      "HDRFacts": {
+        "type": "object",
+        "properties": {
+          "contradictions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "dolbyVisionProfile": {
+            "type": "string"
+          },
+          "fallbackFormats": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HDRFormat"
+            }
+          },
+          "formats": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HDRFormat"
+            }
+          },
+          "origin": {
+            "$ref": "#/components/schemas/HDREvidenceOrigin"
+          },
+          "sourceFields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "$ref": "#/components/schemas/HDREvidenceStatus"
+          }
+        },
+        "required": [
+          "origin",
+          "status"
+        ]
+      },
+      "HDRFormat": {
+        "type": "string"
       },
       "HostedImageAttempt": {
         "type": "object",
@@ -2429,6 +2616,9 @@
           "HDR": {
             "type": "string"
           },
+          "HDRFacts": {
+            "$ref": "#/components/schemas/HDRFacts"
+          },
           "HasEncodeSettings": {
             "type": "boolean"
           },
@@ -2489,6 +2679,7 @@
           "Distributor",
           "Edition",
           "HDR",
+          "HDRFacts",
           "HasEncodeSettings",
           "MediaInfoUniqueID",
           "Region",
@@ -2567,6 +2758,9 @@
         ]
       },
       "MediaPlanID": {
+        "type": "string"
+      },
+      "MetadataEvidenceStatus": {
         "type": "string"
       },
       "MetadataOverrides": {
@@ -2710,6 +2904,9 @@
           "Filename": {
             "type": "string"
           },
+          "GeneratedReleaseNames": {
+            "$ref": "#/components/schemas/GeneratedReleaseNameVariants"
+          },
           "Genre": {
             "type": "string"
           },
@@ -2796,6 +2993,7 @@
           "Editions",
           "Extension",
           "Filename",
+          "GeneratedReleaseNames",
           "Genre",
           "Group",
           "HDR",
@@ -3261,6 +3459,28 @@
           "timestampSeconds",
           "workflowId"
         ]
+      },
+      "ProviderAvailabilityEvidence": {
+        "type": "object",
+        "properties": {
+          "Provider": {
+            "$ref": "#/components/schemas/IdentityProvider"
+          },
+          "Source": {
+            "type": "string"
+          },
+          "Status": {
+            "$ref": "#/components/schemas/ProviderAvailabilityStatus"
+          }
+        },
+        "required": [
+          "Provider",
+          "Source",
+          "Status"
+        ]
+      },
+      "ProviderAvailabilityStatus": {
+        "type": "string"
       },
       "ProviderDisplay": {
         "type": "object",
@@ -3789,6 +4009,25 @@
           }
         }
       },
+      "ReleaseNameVariant": {
+        "type": "object",
+        "properties": {
+          "CleanName": {
+            "type": "string"
+          },
+          "Name": {
+            "type": "string"
+          },
+          "NameNoTag": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "CleanName",
+          "Name",
+          "NameNoTag"
+        ]
+      },
       "ReleaseRef": {
         "type": "object",
         "properties": {
@@ -4041,6 +4280,151 @@
           "revision",
           "status",
           "updatedAt"
+        ]
+      },
+      "ReleaseWorkflowCapabilities": {
+        "type": "object",
+        "properties": {
+          "apiVersion": {
+            "type": "string"
+          },
+          "applicationVersion": {
+            "type": "string"
+          },
+          "features": {
+            "$ref": "#/components/schemas/ReleaseWorkflowCapabilityFeatures"
+          },
+          "imageHosts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseWorkflowCapabilityResource"
+            }
+          },
+          "ownerId": {
+            "type": "string"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "torrentClients": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseWorkflowCapabilityResource"
+            }
+          },
+          "trackers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseWorkflowCapabilityTracker"
+            }
+          },
+          "uploadOptionSchemaHash": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "applicationVersion",
+          "features",
+          "imageHosts",
+          "ownerId",
+          "scopes",
+          "torrentClients",
+          "trackers",
+          "uploadOptionSchemaHash"
+        ]
+      },
+      "ReleaseWorkflowCapabilityFeatures": {
+        "type": "object",
+        "properties": {
+          "compositeUpload": {
+            "type": "boolean"
+          },
+          "strictEligibleTrackerContinuation": {
+            "type": "boolean"
+          },
+          "typedFeedback": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "compositeUpload",
+          "strictEligibleTrackerContinuation",
+          "typedFeedback"
+        ]
+      },
+      "ReleaseWorkflowCapabilityField": {
+        "type": "object",
+        "properties": {
+          "activation": {
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string"
+          },
+          "yamlKey": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "activation",
+          "key",
+          "yamlKey"
+        ]
+      },
+      "ReleaseWorkflowCapabilityResource": {
+        "type": "object",
+        "properties": {
+          "configured": {
+            "type": "boolean"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "configured",
+          "displayName",
+          "id"
+        ]
+      },
+      "ReleaseWorkflowCapabilityTracker": {
+        "type": "object",
+        "properties": {
+          "capabilities": {
+            "$ref": "#/components/schemas/TrackerCapabilityDescriptor"
+          },
+          "configFields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseWorkflowCapabilityField"
+            }
+          },
+          "configured": {
+            "type": "boolean"
+          },
+          "default": {
+            "type": "boolean"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/TrackerID"
+          }
+        },
+        "required": [
+          "capabilities",
+          "configured",
+          "default",
+          "displayName",
+          "id"
         ]
       },
       "ReleaseWorkflowCurrent": {
@@ -6018,6 +6402,9 @@
           "workflowId"
         ]
       },
+      "RuleDisposition": {
+        "type": "string"
+      },
       "SaveReleaseWorkflowDescriptionOverrideRequest": {
         "type": "object",
         "properties": {
@@ -6223,6 +6610,12 @@
               }
             ]
           },
+          "ProviderAvailability": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderAvailabilityEvidence"
+            }
+          },
           "SourcePath": {
             "type": "string"
           },
@@ -6262,6 +6655,7 @@
         },
         "required": [
           "Generation",
+          "ProviderAvailability",
           "SourcePath",
           "UpdatedAt"
         ]
@@ -6714,6 +7108,9 @@
           "Name": {
             "type": "string"
           },
+          "NameDisambiguation": {
+            "$ref": "#/components/schemas/TVDBNameDisambiguation"
+          },
           "NameEnglish": {
             "type": "string"
           },
@@ -6772,6 +7169,7 @@
           "Genres",
           "HasEnglish",
           "Name",
+          "NameDisambiguation",
           "NameEnglish",
           "Network",
           "OriginalCountry",
@@ -6786,6 +7184,49 @@
           "YearConfidence",
           "YearFromAlias",
           "YearSource"
+        ]
+      },
+      "TVDBNameDisambiguation": {
+        "type": "object",
+        "properties": {
+          "CanonicalName": {
+            "type": "string"
+          },
+          "IncludeLocale": {
+            "type": "boolean"
+          },
+          "IncludeYear": {
+            "type": "boolean"
+          },
+          "Locale": {
+            "type": "string"
+          },
+          "SameNameAndYearSeries": {
+            "type": "integer"
+          },
+          "SameNameSeries": {
+            "type": "integer"
+          },
+          "SeriesYear": {
+            "type": "integer"
+          },
+          "Source": {
+            "type": "string"
+          },
+          "Status": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
+          }
+        },
+        "required": [
+          "CanonicalName",
+          "IncludeLocale",
+          "IncludeYear",
+          "Locale",
+          "SameNameAndYearSeries",
+          "SameNameSeries",
+          "SeriesYear",
+          "Source",
+          "Status"
         ]
       },
       "TVmazeMetadata": {
@@ -7429,6 +7870,9 @@
           "decision": {
             "$ref": "#/components/schemas/DupeDecision"
           },
+          "evidenceFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
           "failures": {
             "type": "array",
             "items": {
@@ -7444,6 +7888,12 @@
               "$ref": "#/components/schemas/DupeMatchProjection"
             }
           },
+          "policyFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "policyId": {
+            "type": "string"
+          },
           "projectionFingerprint": {
             "$ref": "#/components/schemas/WorkflowFingerprint"
           },
@@ -7453,8 +7903,17 @@
               "$ref": "#/components/schemas/RequiredAction"
             }
           },
+          "search": {
+            "$ref": "#/components/schemas/DupeSearchEvidence"
+          },
+          "searchFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
           "status": {
             "$ref": "#/components/schemas/StageStatus"
+          },
+          "targetFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
           },
           "trackerId": {
             "$ref": "#/components/schemas/TrackerID"
@@ -7469,8 +7928,13 @@
           "criteriaFingerprint",
           "decision",
           "freshUntil",
+          "policyFingerprint",
+          "policyId",
           "projectionFingerprint",
+          "search",
+          "searchFingerprint",
           "status",
+          "targetFingerprint",
           "trackerId",
           "uploadReleaseName"
         ]
@@ -7524,6 +7988,84 @@
           "resolution",
           "source",
           "type"
+        ]
+      },
+      "TrackerDuplicateTarget": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "container": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string"
+          },
+          "edition": {
+            "type": "string"
+          },
+          "episode": {
+            "type": "integer"
+          },
+          "fileNames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "group": {
+            "type": "string"
+          },
+          "hdr": {
+            "$ref": "#/components/schemas/HDRFacts"
+          },
+          "names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pack": {
+            "type": "boolean"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "repack": {
+            "type": "string"
+          },
+          "resolution": {
+            "type": "string"
+          },
+          "season": {
+            "type": "integer"
+          },
+          "sizeBytes": {
+            "type": "integer"
+          },
+          "source": {
+            "type": "string"
+          },
+          "threeD": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "videoCodec": {
+            "type": "string"
+          },
+          "videoEncode": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "hdr",
+          "pack"
         ]
       },
       "TrackerID": {
@@ -7585,6 +8127,12 @@
           },
           "decision": {
             "type": "string"
+          },
+          "disposition": {
+            "$ref": "#/components/schemas/RuleDisposition"
+          },
+          "evidenceStatus": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
           },
           "message": {
             "type": "string"
@@ -7998,6 +8546,24 @@
           "duplicateCriteria": {
             "$ref": "#/components/schemas/TrackerDuplicateCriteria"
           },
+          "duplicatePolicyFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "duplicatePolicyId": {
+            "type": "string"
+          },
+          "duplicateSearchFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "duplicateTarget": {
+            "$ref": "#/components/schemas/TrackerDuplicateTarget"
+          },
+          "duplicateTargetFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "episodeTitleMode": {
+            "$ref": "#/components/schemas/EpisodeTitleMode"
+          },
           "failures": {
             "type": "array",
             "items": {
@@ -8008,6 +8574,15 @@
             "$ref": "#/components/schemas/WorkflowFingerprint"
           },
           "metadataLocale": {
+            "type": "string"
+          },
+          "namingElementPolicyVersion": {
+            "type": "string"
+          },
+          "namingFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "namingPolicyId": {
             "type": "string"
           },
           "policyDecisions": {
@@ -8065,7 +8640,16 @@
           "displayName",
           "dupeReady",
           "duplicateCriteria",
+          "duplicatePolicyFingerprint",
+          "duplicatePolicyId",
+          "duplicateSearchFingerprint",
+          "duplicateTarget",
+          "duplicateTargetFingerprint",
+          "episodeTitleMode",
           "inputFingerprint",
+          "namingElementPolicyVersion",
+          "namingFingerprint",
+          "namingPolicyId",
           "projectorFingerprint",
           "readiness",
           "taxonomy",
@@ -9189,7 +9773,14 @@
         "type": "string"
       },
       "WorkflowPatchstring": {
-        "type": "object"
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
       },
       "WorkflowResourceID": {
         "type": "string"
@@ -9242,6 +9833,44 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/capabilities": {
+      "get": {
+        "description": "Returns token owner/scopes, supported features, upload schema compatibility, and non-secret configured resource choices.",
+        "operationId": "getReleaseWorkflowCapabilities",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseWorkflowCapabilities"
+                }
+              }
+            },
+            "description": "Authenticated non-secret integration capability metadata."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "summary": "Get authenticated integration capabilities",
+        "tags": [
+          "Operations"
+        ]
+      }
+    },
     "/continuations": {
       "post": {
         "description": "Starts a workflow or advances an existing owner-scoped workflow toward the requested goal.",
@@ -9460,6 +10089,11 @@
                     "source": {
                       "path": "D:\\Example Release 2026"
                     },
+                    "trackers": {
+                      "include": [
+                        "EXAMPLE"
+                      ]
+                    },
                     "unattended": {
                       "confirm": false
                     }
@@ -9476,6 +10110,11 @@
                     },
                     "source": {
                       "path": "D:\\Example Release 2026"
+                    },
+                    "trackers": {
+                      "include": [
+                        "EXAMPLE"
+                      ]
                     },
                     "unattended": {
                       "confirm": false

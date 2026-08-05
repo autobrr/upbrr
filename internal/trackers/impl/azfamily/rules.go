@@ -17,8 +17,12 @@ import (
 // ValidationPolicy returns the versioned AZ-family constructibility and site
 // policy binding.
 func (d *Definition) ValidationPolicy() trackers.ValidationPolicyBinding {
+	version := "constructibility-v1"
+	if d.site.Name == "AZ" || d.site.Name == "CZ" {
+		version = "policy-v2"
+	}
 	return trackers.ValidationPolicyBinding{
-		ID:    "azfamily-" + strings.ToLower(d.site.Name) + "-constructibility-v1",
+		ID:    "azfamily-" + strings.ToLower(d.site.Name) + "-" + version,
 		Check: d.evaluateRules,
 	}
 }
@@ -42,6 +46,14 @@ func (d *Definition) evaluateRules(ctx context.Context, meta api.TrackerValidati
 		add("anime_redirect", "anime should be uploaded to AnimeTorrents instead")
 	}
 	origin := originCountries(meta)
+	if (d.site.Name == "AZ" || d.site.Name == "CZ") && len(origin) == 0 {
+		failures = append(failures, trackers.NewEvidenceRuleFailure(
+			"country_evidence",
+			"TMDB origin-country evidence is required for site routing",
+			api.RuleDispositionStrict,
+			originCountryEvidenceStatus(meta),
+		))
+	}
 	switch d.site.Name {
 	case "AZ":
 		if intersects(origin, phdCountries()) {
@@ -71,6 +83,9 @@ func (d *Definition) evaluateRules(ctx context.Context, meta api.TrackerValidati
 			addStrict("country_block", "PrivateHD only allows major English-language territories")
 		}
 		evaluatePHDTechnicalRules(meta, add, addStrict)
+	}
+	if d.site.Name == "AZ" || d.site.Name == "CZ" {
+		failures = append(failures, validateAZEvidence(d.site, meta)...)
 	}
 	return failures, nil
 }
@@ -129,6 +144,17 @@ func originCountries(meta api.TrackerValidationSubject) []string {
 		return meta.ProviderMetadata.TMDB.OriginCountry
 	}
 	return nil
+}
+
+func originCountryEvidenceStatus(meta api.TrackerValidationSubject) api.MetadataEvidenceStatus {
+	switch {
+	case meta.ProvenanceFacts.Status == api.MetadataEvidenceStatusContradictory:
+		return api.MetadataEvidenceStatusContradictory
+	case meta.ProviderMetadata.TMDB == nil:
+		return api.MetadataEvidenceStatusUnavailable
+	default:
+		return api.MetadataEvidenceStatusPartial
+	}
 }
 
 func isOlderThan50Years(meta api.TrackerValidationSubject) bool {

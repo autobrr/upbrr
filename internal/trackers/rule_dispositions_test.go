@@ -5,6 +5,7 @@ package trackers_test
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -107,6 +108,117 @@ func TestProductionMetadataIdentityRequirementsAreStrictExceptPTP(t *testing.T) 
 	}
 }
 
+func TestProductionMetadataTargetMatrix(t *testing.T) {
+	t.Parallel()
+
+	registry, err := impl.NewRegistry()
+	if err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	tests := []struct {
+		tracker              string
+		requireKnownCategory bool
+		requirements         []trackers.MetadataRequirement
+	}{
+		{
+			tracker:              "AZ",
+			requireKnownCategory: true,
+			requirements: []trackers.MetadataRequirement{
+				{Scope: trackers.MetadataScopeMovie, AnyOf: []trackers.MetadataField{trackers.MetadataFieldTMDBIDOnly, trackers.MetadataFieldIMDBIDOnly}},
+				{Scope: trackers.MetadataScopeTV, AnyOf: []trackers.MetadataField{trackers.MetadataFieldTVDBIDOnly}},
+				{Scope: trackers.MetadataScopeAny, AnyOf: []trackers.MetadataField{trackers.MetadataFieldTMDBOriginCountries}},
+				{Scope: trackers.MetadataScopeTV, AnyOf: []trackers.MetadataField{trackers.MetadataFieldTVDBTitle}},
+				{Scope: trackers.MetadataScopeTV, AnyOf: []trackers.MetadataField{trackers.MetadataFieldTVDBYear}},
+			},
+		},
+		{
+			tracker:              "CZ",
+			requireKnownCategory: true,
+			requirements: []trackers.MetadataRequirement{
+				{Scope: trackers.MetadataScopeMovie, AnyOf: []trackers.MetadataField{trackers.MetadataFieldTMDBIDOnly, trackers.MetadataFieldIMDBIDOnly}},
+				{Scope: trackers.MetadataScopeTV, AnyOf: []trackers.MetadataField{trackers.MetadataFieldIMDBIDOnly, trackers.MetadataFieldTVDBIDOnly}},
+				{Scope: trackers.MetadataScopeAny, AnyOf: []trackers.MetadataField{trackers.MetadataFieldTMDBOriginCountries}},
+				{Scope: trackers.MetadataScopeMovie, AnyOf: []trackers.MetadataField{trackers.MetadataFieldTMDBTitle, trackers.MetadataFieldIMDBTitle}},
+				{Scope: trackers.MetadataScopeTV, AnyOf: []trackers.MetadataField{trackers.MetadataFieldIMDBTitle, trackers.MetadataFieldTVDBTitle}},
+			},
+		},
+		{
+			tracker:              "PHD",
+			requireKnownCategory: true,
+			requirements: []trackers.MetadataRequirement{
+				{Scope: trackers.MetadataScopeMovie, AnyOf: []trackers.MetadataField{trackers.MetadataFieldTMDBIDOnly, trackers.MetadataFieldIMDBIDOnly}},
+				{
+					Scope: trackers.MetadataScopeTV,
+					AnyOf: []trackers.MetadataField{
+						trackers.MetadataFieldTMDBIDOnly,
+						trackers.MetadataFieldIMDBIDOnly,
+						trackers.MetadataFieldTVDBIDOnly,
+					},
+				},
+				{Scope: trackers.MetadataScopeAny, AnyOf: []trackers.MetadataField{trackers.MetadataFieldTMDBOriginCountries}},
+			},
+		},
+		{
+			tracker:              "BHD",
+			requireKnownCategory: true,
+			requirements: []trackers.MetadataRequirement{
+				{Scope: trackers.MetadataScopeAny, AnyOf: []trackers.MetadataField{trackers.MetadataFieldIMDBIDOnly}},
+				{Scope: trackers.MetadataScopeAny, AnyOf: []trackers.MetadataField{trackers.MetadataFieldTMDBIDOnly}},
+			},
+		},
+		{
+			tracker:              "MTV",
+			requireKnownCategory: true,
+			requirements: []trackers.MetadataRequirement{
+				{Scope: trackers.MetadataScopeMovie, AnyOf: []trackers.MetadataField{trackers.MetadataFieldTMDB, trackers.MetadataFieldIMDB}},
+				{Scope: trackers.MetadataScopeTV, AnyOf: []trackers.MetadataField{trackers.MetadataFieldTVDB}},
+				{Scope: trackers.MetadataScopeTV, AnyOf: []trackers.MetadataField{trackers.MetadataFieldTVDBTitle}},
+				{Scope: trackers.MetadataScopeTV, AnyOf: []trackers.MetadataField{trackers.MetadataFieldTVDBDisambiguation}},
+			},
+		},
+		{
+			tracker:              "HDB",
+			requireKnownCategory: true,
+		},
+		{
+			tracker:              "OTW",
+			requireKnownCategory: true,
+			requirements: []trackers.MetadataRequirement{{
+				Scope: trackers.MetadataScopeAny,
+				AnyOf: []trackers.MetadataField{trackers.MetadataFieldTMDB, trackers.MetadataFieldIMDB, trackers.MetadataFieldTVDB},
+			}},
+		},
+		{
+			tracker: "SP",
+			requirements: []trackers.MetadataRequirement{{
+				Scope: trackers.MetadataScopeAny,
+				AnyOf: []trackers.MetadataField{trackers.MetadataFieldTMDBIDOnly},
+			}},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.tracker, func(t *testing.T) {
+			t.Parallel()
+			policy, ok := registry.LookupMetadataPolicy(test.tracker)
+			if !ok {
+				t.Fatal("metadata policy missing")
+			}
+			if policy.RequireKnownCategory != test.requireKnownCategory {
+				t.Fatalf("RequireKnownCategory = %t, want %t", policy.RequireKnownCategory, test.requireKnownCategory)
+			}
+			if len(policy.Requirements) != len(test.requirements) {
+				t.Fatalf("requirements = %#v, want %#v", policy.Requirements, test.requirements)
+			}
+			for index, want := range test.requirements {
+				got := policy.Requirements[index]
+				if got.Scope != want.Scope || !slices.Equal(got.AnyOf, want.AnyOf) {
+					t.Fatalf("requirement %d = %#v, want %#v", index, got, want)
+				}
+			}
+		})
+	}
+}
+
 func containsMetadataIdentityField(fields []trackers.MetadataField) bool {
 	for _, field := range fields {
 		switch field {
@@ -119,7 +231,16 @@ func containsMetadataIdentityField(fields []trackers.MetadataField) bool {
 			trackers.MetadataFieldTVDB,
 			trackers.MetadataFieldTVmaze:
 			return true
-		case trackers.MetadataFieldTVDBTitle, trackers.MetadataFieldPoster:
+		case trackers.MetadataFieldTMDBTitle,
+			trackers.MetadataFieldIMDBTitle,
+			trackers.MetadataFieldTVDBTitle,
+			trackers.MetadataFieldTVDBYear,
+			trackers.MetadataFieldTVDBDisambiguation,
+			trackers.MetadataFieldTMDBOriginCountries,
+			trackers.MetadataFieldTMDBUnavailable,
+			trackers.MetadataFieldIMDBUnavailable,
+			trackers.MetadataFieldTVDBUnavailable,
+			trackers.MetadataFieldPoster:
 			continue
 		}
 	}

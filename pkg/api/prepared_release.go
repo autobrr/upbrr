@@ -105,35 +105,38 @@ type NamingFacts struct {
 	ReleaseName    string
 	NameWithoutTag string
 	CleanName      string
-	Tag            string
-	Type           string
-	Artist         string
-	Title          string
-	Subtitle       string
-	AlternateTitle string
-	Year           int
-	Month          int
-	Day            int
-	Source         string
-	Resolution     string
-	Codecs         []string
-	Audio          []string
-	HDR            []string
-	Extension      string
-	Languages      []string
-	Site           string
-	Genre          string
-	Channels       string
-	Collection     string
-	Region         string
-	Size           string
-	Group          string
-	Disc           string
-	Editions       []string
-	Other          []string
-	Scene          bool
-	SceneName      string
-	Personal       bool
+	// GeneratedReleaseNames contains safe canonical structural alternatives.
+	// Empty variants mean ReleaseName must remain exact.
+	GeneratedReleaseNames GeneratedReleaseNameVariants
+	Tag                   string
+	Type                  string
+	Artist                string
+	Title                 string
+	Subtitle              string
+	AlternateTitle        string
+	Year                  int
+	Month                 int
+	Day                   int
+	Source                string
+	Resolution            string
+	Codecs                []string
+	Audio                 []string
+	HDR                   []string
+	Extension             string
+	Languages             []string
+	Site                  string
+	Genre                 string
+	Channels              string
+	Collection            string
+	Region                string
+	Size                  string
+	Group                 string
+	Disc                  string
+	Editions              []string
+	Other                 []string
+	Scene                 bool
+	SceneName             string
+	Personal              bool
 }
 
 // EpisodeFacts contains canonical reusable episodic identity and schedule
@@ -169,6 +172,7 @@ type MediaFacts struct {
 	Type              string
 	UHD               string
 	HDR               string
+	HDRFacts          HDRFacts
 	Distributor       string
 	Region            string
 	VideoCodec        string
@@ -465,15 +469,60 @@ func (i ExternalIdentity) RequireCategory() (CanonicalCategory, error) {
 // SourceScopedMetadata stores optional provider enrichment for one source and
 // prepared generation.
 type SourceScopedMetadata struct {
-	SourcePath string
-	Generation PreparedGeneration
-	TMDB       *TMDBMetadata
-	IMDB       *IMDBMetadata
-	TVDB       *TVDBMetadata
-	TVmaze     *TVmazeMetadata
-	AniList    *AniListMetadata
-	Bluray     *BlurayMetadata
-	UpdatedAt  time.Time `ts_type:"string"`
+	SourcePath           string
+	Generation           PreparedGeneration
+	TMDB                 *TMDBMetadata
+	IMDB                 *IMDBMetadata
+	TVDB                 *TVDBMetadata
+	TVmaze               *TVmazeMetadata
+	AniList              *AniListMetadata
+	Bluray               *BlurayMetadata
+	ProviderAvailability []ProviderAvailabilityEvidence
+	UpdatedAt            time.Time `ts_type:"string"`
+}
+
+// IsCurrentFor reports whether provider metadata belongs to the current source
+// and prepared generation. Blank source scopes preserve legacy metadata, but
+// explicit source mismatches and generation mismatches are rejected.
+func (m SourceScopedMetadata) IsCurrentFor(sourcePath string, identity ExternalIdentity) bool {
+	return sourceScopedPathMatches(identity.SourcePath, sourcePath) &&
+		sourceScopedPathMatches(m.SourcePath, sourcePath) &&
+		preparedGenerationMatches(m.Generation, identity.Generation)
+}
+
+func sourceScopedPathMatches(scopedPath string, currentPath string) bool {
+	scopedPath = strings.TrimSpace(scopedPath)
+	return scopedPath == "" || strings.EqualFold(scopedPath, strings.TrimSpace(currentPath))
+}
+
+func preparedGenerationMatches(scoped PreparedGeneration, current PreparedGeneration) bool {
+	if scoped == 0 && current == 0 {
+		return true
+	}
+	return scoped > 0 && scoped == current
+}
+
+// ProviderAvailabilityStatus records the result of checking whether a provider
+// has an entry for the current source. Missing evidence remains distinct from a
+// completed lookup that found no entry.
+type ProviderAvailabilityStatus string
+
+const (
+	// ProviderAvailabilityStatusAvailable means the provider returned a matching entry.
+	ProviderAvailabilityStatusAvailable ProviderAvailabilityStatus = "available"
+	// ProviderAvailabilityStatusNotFound means a completed lookup proved that the provider has no matching entry.
+	ProviderAvailabilityStatusNotFound ProviderAvailabilityStatus = "not_found"
+)
+
+// ProviderAvailabilityEvidence records one typed provider-entry lookup result.
+// SourceScopedMetadata owns its exact source path and generation.
+type ProviderAvailabilityEvidence struct {
+	// Provider identifies the provider whose matching entry was checked.
+	Provider IdentityProvider
+	// Status is present only for a completed availability decision.
+	Status ProviderAvailabilityStatus
+	// Source identifies the evidence producer or lookup contract.
+	Source string
 }
 
 // DiagnosticSeverity classifies preparation diagnostics without turning them
@@ -510,6 +559,21 @@ type ExternalIdentityCandidate struct {
 	PosterURL     string
 	Similarity    float64
 }
+
+// MetadataEvidenceStatus describes whether provider evidence can support both
+// positive and negative metadata decisions.
+type MetadataEvidenceStatus string
+
+const (
+	// MetadataEvidenceStatusComplete means the provider contract exposed all relevant evidence.
+	MetadataEvidenceStatusComplete MetadataEvidenceStatus = "complete"
+	// MetadataEvidenceStatusPartial means positive evidence is usable but negative evidence is incomplete.
+	MetadataEvidenceStatusPartial MetadataEvidenceStatus = "partial"
+	// MetadataEvidenceStatusUnavailable means the evidence lookup could not be performed.
+	MetadataEvidenceStatusUnavailable MetadataEvidenceStatus = "unavailable"
+	// MetadataEvidenceStatusContradictory means provider evidence disagreed about the same subject.
+	MetadataEvidenceStatusContradictory MetadataEvidenceStatus = "contradictory"
+)
 
 // Clone returns a detached prepared-release projection.
 func (r PreparedRelease) Clone() (PreparedRelease, error) {

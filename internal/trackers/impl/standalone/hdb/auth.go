@@ -50,7 +50,7 @@ func resolveAuthSessionAt(
 			Err:          fmt.Errorf("trackers: HDB cookies unavailable: %w", err),
 		}
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/upload/upload", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/upload", nil)
 	if err != nil {
 		return fmt.Errorf("trackers: HDB session validation request build: %w", err)
 	}
