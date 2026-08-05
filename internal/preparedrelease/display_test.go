@@ -69,6 +69,9 @@ func TestProjectPreparedReleaseDisplaySparseAndLocalFallbacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if display.Providers == nil {
+		t.Fatal("identity-only display providers are nil")
+	}
 	if len(display.Providers) != 0 {
 		t.Fatalf("identity-only display providers = %d, want 0", len(display.Providers))
 	}
