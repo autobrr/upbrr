@@ -11,17 +11,16 @@ import (
 	"strconv"
 	"strings"
 
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-type mediaInfoDoc struct {
-	Media struct {
-		Track []map[string]any `json:"track"`
-	} `json:"media"`
-}
+type mediaInfoDoc = mediafacts.MediaInfoDocument
 
-var canonicalResolutionWidths = []int{3840, 2560, 1920, 1280, 1024, 854, 720, 15360, 7680, 0}
+var canonicalResolutionWidths = []int{3840, 2560, 1920, 1280, 1024, 960, 854, 720, 15360, 7680, 0}
 var canonicalResolutionHeights = []int{2160, 1440, 1080, 720, 576, 540, 480, 8640, 4320, 0}
 
 func loadMediaInfoDoc(path string) (mediaInfoDoc, error) {
@@ -84,7 +83,7 @@ var scanTypeRegex = regexp.MustCompile(`(?i)Scan\s*type\s*:\s*([^\r\n]+)`)
 var interlacedResolutionHintRegex = regexp.MustCompile(`(?i)\b(1080i|576i|480i)\b`)
 var numericRegex = regexp.MustCompile(`\d+(?:\.\d+)?`)
 
-func extractDVDMediaInfo(meta api.PreparedMetadata) api.DVDMediaInfo {
+func extractDVDMediaInfo(meta preparationstate.State) api.DVDMediaInfo {
 	if !strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
 		return api.DVDMediaInfo{}
 	}
@@ -281,6 +280,7 @@ func mapDVDResolution(res string, guessed string, width int, scan string) string
 		"480p":        "480p",
 		"854x480i":    "480i",
 		"480i":        "480i",
+		"720x540p":    "540p",
 		"720x576p":    "576p",
 		"720x576i":    "576i",
 		"720x480p":    "480p",

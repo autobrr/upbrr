@@ -261,8 +261,16 @@ func TestBuildLocalizedTitlesUsesDeterministicGenericRegionalCandidate(t *testin
 				"pt-PT": "Titulo Portugal",
 			},
 			translations: []Translation{
-				{ISO6391: "pt", ISO31661: "PT", Data: TranslationData{Title: "Titulo Portugal"}},
-				{ISO6391: " pt ", ISO31661: " br ", Data: TranslationData{Title: "Titulo Brasil"}},
+				{
+					ISO6391:  "pt",
+					ISO31661: "PT",
+					Data:     TranslationData{Title: "Titulo Portugal"},
+				},
+				{
+					ISO6391:  " pt ",
+					ISO31661: " br ",
+					Data:     TranslationData{Title: "Titulo Brasil"},
+				},
 			},
 		},
 		{
@@ -274,8 +282,16 @@ func TestBuildLocalizedTitlesUsesDeterministicGenericRegionalCandidate(t *testin
 				"pt-PT": "Titulo Portugal",
 			},
 			translations: []Translation{
-				{ISO6391: " pt ", ISO31661: " br ", Data: TranslationData{Title: "Titulo Brasil"}},
-				{ISO6391: "pt", ISO31661: "PT", Data: TranslationData{Title: "Titulo Portugal"}},
+				{
+					ISO6391:  " pt ",
+					ISO31661: " br ",
+					Data:     TranslationData{Title: "Titulo Brasil"},
+				},
+				{
+					ISO6391:  "pt",
+					ISO31661: "PT",
+					Data:     TranslationData{Title: "Titulo Portugal"},
+				},
 			},
 		},
 		{
@@ -284,7 +300,11 @@ func TestBuildLocalizedTitlesUsesDeterministicGenericRegionalCandidate(t *testin
 			wantGeneric:     "American Title",
 			wantRegional:    map[string]string{"en-US": "American Title"},
 			translations: []Translation{
-				{ISO6391: "en", ISO31661: "US", Data: TranslationData{Title: "American Title"}},
+				{
+					ISO6391:  "en",
+					ISO31661: "US",
+					Data:     TranslationData{Title: "American Title"},
+				},
 			},
 		},
 		{
@@ -293,7 +313,11 @@ func TestBuildLocalizedTitlesUsesDeterministicGenericRegionalCandidate(t *testin
 			wantGeneric:     "Titre Canadien",
 			wantRegional:    map[string]string{"fr-CA": "Titre Canadien"},
 			translations: []Translation{
-				{ISO6391: " fr ", ISO31661: " ca ", Data: TranslationData{Title: "Titre Canadien"}},
+				{
+					ISO6391:  " fr ",
+					ISO31661: " ca ",
+					Data:     TranslationData{Title: "Titre Canadien"},
+				},
 			},
 		},
 		{
@@ -302,7 +326,11 @@ func TestBuildLocalizedTitlesUsesDeterministicGenericRegionalCandidate(t *testin
 			wantGeneric:     "Serie Mexicana",
 			wantRegional:    map[string]string{"es-MX": "Serie Mexicana"},
 			translations: []Translation{
-				{ISO6391: "es", ISO31661: "MX", Data: TranslationData{Name: "Serie Mexicana"}},
+				{
+					ISO6391:  "es",
+					ISO31661: "MX",
+					Data:     TranslationData{Name: "Serie Mexicana"},
+				},
 			},
 		},
 	}
@@ -325,10 +353,22 @@ func TestBuildLocalizedTitlesUsesDeterministicGenericRegionalCandidate(t *testin
 
 func TestBuildLocalizedTitlesKeepsNeutralGenericOverRegionalCandidate(t *testing.T) {
 	titles := buildLocalizedTitles([]Translation{
-		{ISO6391: "pt", ISO31661: "PT", Data: TranslationData{Title: "Titulo Portugal"}},
+		{
+			ISO6391:  "pt",
+			ISO31661: "PT",
+			Data:     TranslationData{Title: "Titulo Portugal"},
+		},
 		{ISO6391: "pt", Data: TranslationData{Title: "Titulo Neutro"}},
-		{ISO6391: "de", ISO31661: "DE", Data: TranslationData{Title: "Deutscher Titel"}},
-		{ISO6391: "en", ISO31661: "US", Data: TranslationData{Title: "American English"}},
+		{
+			ISO6391:  "de",
+			ISO31661: "DE",
+			Data:     TranslationData{Title: "Deutscher Titel"},
+		},
+		{
+			ISO6391:  "en",
+			ISO31661: "US",
+			Data:     TranslationData{Title: "American English"},
+		},
 		{ISO6391: "en", Data: TranslationData{Title: "Neutral English"}},
 	})
 
@@ -351,7 +391,11 @@ func TestBuildLocalizedTitlesKeepsNeutralGenericOverRegionalCandidate(t *testing
 
 func TestBuildLocalizedTitlesUsesTVTranslationName(t *testing.T) {
 	titles := buildLocalizedTitles([]Translation{
-		{ISO6391: "es", ISO31661: "ES", Data: TranslationData{Name: "Serie Espanola"}},
+		{
+			ISO6391:  "es",
+			ISO31661: "ES",
+			Data:     TranslationData{Name: "Serie Espanola"},
+		},
 	})
 
 	if got := titles["es"]; got != "Serie Espanola" {
@@ -393,4 +437,54 @@ func (l *captureTMDBLogger) warnings() []string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return append([]string{}, l.warns...)
+}
+
+func TestFetchMetadataResolvesAnimeAKA(t *testing.T) {
+	var anilistRequested atomic.Bool
+
+	anilist := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		anilistRequested.Store(true)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"Page":{"media":[{"id":1,"idMal":67890,"title":{"romaji":"Rei No Sakuhin","english":"Example Anime Series","native":"サンプル作品"},"seasonYear":2026,"episodes":12}]}}}`))
+	}))
+	defer anilist.Close()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/tv/12345":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"name":"Example Anime Series","original_name":"サンプル作品","first_air_date":"2026-07-11","original_language":"ja","genres":[{"id":16,"name":"Animation"}]}`))
+		case "/tv/12345/credits":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"crew":[],"cast":[]}`))
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client(), nil, "api-key")
+	client.baseURL = server.URL
+	client.anilistURL = anilist.URL
+
+	result, err := client.FetchMetadata(context.Background(), MetadataInput{
+		TMDBID:   12345,
+		Category: "TV",
+	})
+	if err != nil {
+		t.Fatalf("fetch metadata: %v", err)
+	}
+	if !anilistRequested.Load() {
+		t.Fatalf("expected anilist to be queried for an anime title")
+	}
+	if !result.Anime {
+		t.Fatalf("expected anime detection for a japanese animation title")
+	}
+	if result.MALID != 67890 {
+		t.Fatalf("expected mal id 67890, got %d", result.MALID)
+	}
+	if result.RetrievedAKA != "AKA Rei No Sakuhin" {
+		t.Fatalf("expected romaji AKA, got %q", result.RetrievedAKA)
+	}
 }

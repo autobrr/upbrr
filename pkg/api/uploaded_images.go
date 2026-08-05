@@ -30,12 +30,27 @@ type UploadImageHostFailure struct {
 	Message    string
 }
 
+// UploadImageHostAttemptResult retains one exact scheduled host/scope attempt,
+// including failures later recovered by fallback.
+type UploadImageHostAttemptResult struct {
+	Host       string
+	UsageScope string
+	Trackers   []string
+	Fallback   bool
+	Links      []UploadedImageLink
+	Failure    *UploadImageHostFailure
+}
+
 // UploadImagesResult aggregates image upload outcomes across target hosts.
 // Links contains successfully uploaded image links and is populated when one
 // or more host uploads succeed.
-// Failures contains host-level upload failures and is populated when one or
-// more target hosts fail.
+// Failures contains terminal host-level failures that still block one or more
+// trackers after fallback attempts. FailedHosts contains every host whose
+// attempt failed, including failures recovered by a fallback, so later workflow
+// stages can avoid retrying them.
 type UploadImagesResult struct {
-	Links    []UploadedImageLink
-	Failures []UploadImageHostFailure
+	Links       []UploadedImageLink
+	Failures    []UploadImageHostFailure
+	FailedHosts []string
+	Attempts    []UploadImageHostAttemptResult
 }

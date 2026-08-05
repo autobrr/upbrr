@@ -62,6 +62,27 @@ func TestParseReleaseInfo(t *testing.T) {
 			group:    "GRP",
 		},
 		{
+			name:     "glued bdremux resolves remux and bluray",
+			input:    "Show S01 2019 BDRemux 1080p",
+			category: "TV",
+			typ:      "REMUX",
+			source:   "BluRay",
+		},
+		{
+			name:     "glued bdrip resolves encode",
+			input:    "Show S01 2022 BDRip 1080p-GRP",
+			category: "TV",
+			typ:      "ENCODE",
+			source:   "BDRiP",
+			group:    "GRP",
+		},
+		{
+			name:     "compact bdmv infers bluray source",
+			input:    "Example.Show.S01.2026.BDMV.1080p",
+			category: "TV",
+			source:   "BluRay",
+		},
+		{
 			name:     "webrip filename uses webrip",
 			input:    "Movie.2026.2160p.WEBRip.DDP5.1.H.265-GRP.mkv",
 			category: "MOVIE",

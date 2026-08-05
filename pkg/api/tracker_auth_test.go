@@ -5,7 +5,6 @@ package api
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -60,30 +59,37 @@ func TestTrackerAuthStatusConsumerContractsIncludeAPIFields(t *testing.T) {
 	t.Parallel()
 
 	fields := trackerAuthStatusJSONFields(t)
-	frontendTypes := readRepoFile(t, "gui", "frontend", "src", "types.ts")
+	frontendTypes := readRepoFile(t, "webui", "src", "types.ts")
 
 	assertContractBlockFields(t, frontendTypes, "export type TrackerAuthStatus = {", "};", fields)
+}
 
-	wailsModels, ok := readOptionalRepoFile(t, "gui", "frontend", "wailsjs", "go", "models.ts")
-	if !ok {
-		t.Log("skipping generated Wails model contract check; gui/frontend/wailsjs/go/models.ts is ignored and absent in clean checkouts")
-		return
-	}
-	assertContractBlockFields(t, wailsModels, "export class TrackerAuthStatus {", "static createFrom", fields)
+func TestTrackerAuthCapabilityConsumerContractsIncludeAPIFields(t *testing.T) {
+	t.Parallel()
+
+	fields := jsonFieldNames[TrackerAuthCapability](t)
+	frontendTypes := readRepoFile(t, "webui", "src", "types.ts")
+
+	assertContractBlockFields(t, frontendTypes, "export type TrackerAuthCapability = {", "};", fields)
 }
 
 // trackerAuthStatusJSONFields returns the serialized field names that every
 // frontend-facing auth status consumer must keep in its local contract.
 func trackerAuthStatusJSONFields(t *testing.T) []string {
 	t.Helper()
+	return jsonFieldNames[TrackerAuthStatus](t)
+}
 
-	statusType := reflect.TypeFor[TrackerAuthStatus]()
-	fields := make([]string, 0, statusType.NumField())
-	for field := range statusType.Fields() {
+func jsonFieldNames[T any](t *testing.T) []string {
+	t.Helper()
+
+	contractType := reflect.TypeFor[T]()
+	fields := make([]string, 0, contractType.NumField())
+	for field := range contractType.Fields() {
 		tag := field.Tag.Get("json")
 		name, _, _ := strings.Cut(tag, ",")
 		if name == "" || name == "-" {
-			t.Fatalf("TrackerAuthStatus field %s missing JSON contract tag", field.Name)
+			t.Fatalf("%s field %s missing JSON contract tag", contractType.Name(), field.Name)
 		}
 		fields = append(fields, name)
 	}
@@ -121,20 +127,6 @@ func readRepoFile(t *testing.T, parts ...string) string {
 		t.Fatalf("read repo contract file %v: %v", parts, err)
 	}
 	return string(content)
-}
-
-func readOptionalRepoFile(t *testing.T, parts ...string) (string, bool) {
-	t.Helper()
-
-	content, err := readRepoFileContent(parts...)
-	if err == nil {
-		return string(content), true
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		return "", false
-	}
-	t.Fatalf("read optional repo contract file %v: %v", parts, err)
-	return "", false
 }
 
 func readRepoFileContent(parts ...string) ([]byte, error) {

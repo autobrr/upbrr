@@ -32,8 +32,20 @@ func TestScreenshotFinalSelectionsCRUD(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 
 	selections := []ScreenshotFinalSelection{
-		{SourcePath: sourcePath, ImagePath: "/tmp/final-01.png", Order: 0, Source: "existing", SelectedAt: now},
-		{SourcePath: sourcePath, ImagePath: "/tmp/final-02.png", Order: 1, Source: "generated", SelectedAt: now},
+		{
+			SourcePath: sourcePath,
+			ImagePath:  "/tmp/final-01.png",
+			Order:      0,
+			Source:     "existing",
+			SelectedAt: now,
+		},
+		{
+			SourcePath: sourcePath,
+			ImagePath:  "/tmp/final-02.png",
+			Order:      1,
+			Source:     "generated",
+			SelectedAt: now,
+		},
 	}
 
 	if err := repo.SaveFinalSelections(ctx, sourcePath, selections); err != nil {

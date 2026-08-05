@@ -71,12 +71,6 @@ jobs:
           path: release-artifacts
           pattern: cli-*
 
-      - name: Download GUI artifacts
-        uses: actions/download-artifact@v5
-        with:
-          path: release-artifacts
-          pattern: gui-*
-
       - name: Publish release assets
         shell: bash
         env:

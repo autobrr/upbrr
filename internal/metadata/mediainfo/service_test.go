@@ -11,7 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/autobrr/upbrr/internal/paths"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -80,7 +82,7 @@ func TestExportReusesExistingArtifactsWhenConformanceOK(t *testing.T) {
 	}
 
 	release := api.ReleaseInfo{Title: "Movie.Title", Year: 2024}
-	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, api.PreparedMetadata{Release: release}, targetPath)
+	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, preparationstate.State{Release: release}, targetPath)
 	if err != nil {
 		t.Fatalf("temp dir: %v", err)
 	}

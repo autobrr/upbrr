@@ -1,0 +1,20 @@
+{
+  "data": [
+    {
+      "tvdb_id": 987650007,
+      "name": "Example Series",
+      "primary_language": "eng",
+      "year": "2026",
+      "aliases": []
+    },
+    {
+      "tvdb_id": 987650007,
+      "name": "Different Display Name",
+      "primary_language": "eng",
+      "year": "2026",
+      "aliases": [
+        "Example.Series.2026"
+      ]
+    }
+  ]
+}

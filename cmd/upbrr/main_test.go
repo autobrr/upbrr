@@ -9,17 +9,37 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
-	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/webserver"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestCLIPreparationBatchOwnsPerSourceInstructions(t *testing.T) {
+	t.Parallel()
+
+	tmdbID := 1234567
+	defaults := api.Request{
+		ExternalIDOverrides: api.ExternalIDOverrides{TMDBID: &tmdbID},
+		PlaylistInstruction: api.PlaylistInstruction{Set: true, Selected: []string{"00001.mpls"}},
+	}
+	batch := newCLIPreparationBatch(defaults, []string{"one", "two"})
+	*defaults.ExternalIDOverrides.TMDBID = 7654321
+	defaults.PlaylistInstruction.Selected[0] = "99999.mpls"
+	*batch.items[0].externalIDs.TMDBID = 1111111
+	batch.items[0].playlistInstruction.Selected[0] = "00002.mpls"
+
+	if got := *batch.items[1].externalIDs.TMDBID; got != 1234567 {
+		t.Fatalf("second item TMDB ID = %d, want detached value", got)
+	}
+	if got := batch.items[1].playlistInstruction.Selected[0]; got != "00001.mpls" {
+		t.Fatalf("second item playlist = %q, want detached value", got)
+	}
+}
 
 func TestProcessCLIPathsQueueModeContinuesOnError(t *testing.T) {
 	t.Parallel()
@@ -80,9 +100,11 @@ func TestProcessCLIPathsAppliesPerItemTimeout(t *testing.T) {
 	t.Parallel()
 
 	paths := []string{"slow", "fast"}
-	fastSawFreshDeadline := false
+	var slowDeadline time.Time
+	var fastDeadline time.Time
 	err := processCLIPaths(context.Background(), paths, true, 20*time.Millisecond, api.NopLogger{}, func(itemCtx context.Context, sourcePath string) error {
 		if sourcePath == "slow" {
+			slowDeadline, _ = itemCtx.Deadline()
 			// Exceed the per-item timeout; this item should be cancelled at
 			// ~20ms rather than running to completion.
 			select {
@@ -94,44 +116,18 @@ func TestProcessCLIPathsAppliesPerItemTimeout(t *testing.T) {
 		}
 		// The next item must receive a fresh per-item deadline, proving the
 		// timeout is not shared across the queue.
-		if deadline, ok := itemCtx.Deadline(); ok && time.Until(deadline) > 5*time.Millisecond {
-			fastSawFreshDeadline = true
-		}
+		fastDeadline, _ = itemCtx.Deadline()
 		return nil
 	})
 	if err == nil {
 		t.Fatal("expected a summary error because the slow item timed out")
 	}
-	if !fastSawFreshDeadline {
-		t.Fatal("expected the second item to get a fresh per-item deadline")
+	if slowDeadline.IsZero() || fastDeadline.IsZero() || !fastDeadline.After(slowDeadline) {
+		t.Fatalf("expected the second item to get a later per-item deadline: slow=%v fast=%v", slowDeadline, fastDeadline)
 	}
 }
 
 // --- GROUP B #5: the per-item context is threaded through to core calls ---
-
-func TestRunSiteCheckCLIPathThreadsContextToCoreCall(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	coreSvc := &cliCoreForTest{}
-	err := runSiteCheckCLIPath(ctx, coreSvc, cliOptions{}, map[string]bool{}, "movie.mkv", 0)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("expected canceled context to reach FetchMetadataPreview, got %v", err)
-	}
-}
-
-func TestRunInteractiveCLIPathThreadsContextToCoreCall(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	coreSvc := &cliCoreForTest{}
-	err := runInteractiveCLIPathWithInput(ctx, coreSvc, cliOptions{}, map[string]bool{}, "movie.mkv", 0, config.Config{}, strings.NewReader(""))
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("expected canceled context to reach FetchMetadataPreview, got %v", err)
-	}
-}
 
 func TestProcessCLIPathsAbortsOnParentCancel(t *testing.T) {
 	t.Parallel()
@@ -394,9 +390,6 @@ func TestRunHelpFlagsPrintUsageAndSucceed(t *testing.T) {
 					t.Fatalf("expected output to contain %q, got %q", expected, output)
 				}
 			}
-			if strings.Contains(output, "-gui") {
-				t.Fatalf("expected GUI flag to be absent from help, got %q", output)
-			}
 		})
 	}
 }
@@ -451,7 +444,11 @@ func TestServePersistConfigListenOnlyClearsStoredBaseURL(t *testing.T) {
 	runtime.Port = 9090
 	runtime.BaseURL = "/temporary/"
 
-	persisted := servePersistConfig(stored, runtime, map[string]bool{"persist-listen": true, "addr": true, "base-url": true})
+	persisted := servePersistConfig(stored, runtime, map[string]bool{
+		"persist-listen": true,
+		"addr":           true,
+		"base-url":       true,
+	})
 	if persisted.Host != "0.0.0.0" || persisted.Port != 9090 {
 		t.Fatalf("listen settings not persisted: %#v", persisted)
 	}
@@ -464,21 +461,38 @@ func TestServePersistConfigListenOnlyClearsStoredBaseURL(t *testing.T) {
 }
 
 func TestServePersistConfigWebConfigPersistsBaseURL(t *testing.T) {
-	stored := webserver.CLIConfig{Host: "localhost", Port: 7480, BaseURL: "/stored/"}
+	stored := webserver.CLIConfig{
+		Host:    "localhost",
+		Port:    7480,
+		BaseURL: "/stored/",
+	}
 	runtime := stored
 	runtime.Host = "0.0.0.0"
 	runtime.Port = 9090
 	runtime.BaseURL = "/explicit/"
 
-	persisted := servePersistConfig(stored, runtime, map[string]bool{"persist-listen": true, "persist-web-config": true, "addr": true, "base-url": true})
+	persisted := servePersistConfig(stored, runtime, map[string]bool{
+		"persist-listen":     true,
+		"persist-web-config": true,
+		"addr":               true,
+		"base-url":           true,
+	})
 	if persisted.Host != "0.0.0.0" || persisted.Port != 9090 || persisted.BaseURL != "/explicit/" {
 		t.Fatalf("explicit web config not persisted: %#v", persisted)
 	}
 }
 
 func TestServePersistConfigListenOnlyPersistsExplicitListenFields(t *testing.T) {
-	stored := webserver.CLIConfig{Host: "localhost", Port: 7480, BaseURL: "/stored/"}
-	runtime := webserver.CLIConfig{Host: "0.0.0.0", Port: 9090, BaseURL: "/env/"}
+	stored := webserver.CLIConfig{
+		Host:    "localhost",
+		Port:    7480,
+		BaseURL: "/stored/",
+	}
+	runtime := webserver.CLIConfig{
+		Host:    "0.0.0.0",
+		Port:    9090,
+		BaseURL: "/env/",
+	}
 
 	persisted := servePersistConfig(stored, runtime, map[string]bool{"persist-listen": true, "port": true})
 	if persisted.Host != "localhost" || persisted.Port != 9090 || persisted.BaseURL != "" {
@@ -489,8 +503,16 @@ func TestServePersistConfigListenOnlyPersistsExplicitListenFields(t *testing.T) 
 func TestServePersistConfigListenOnlyIgnoresInvalidStoredBaseURLWhenSaving(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "state", "upbrr.db")
-	stored := webserver.CLIConfig{Host: "localhost", Port: 7480, BaseURL: "javascript:alert(1)"}
-	runtime := webserver.CLIConfig{Host: "127.0.0.1", Port: 9090, BaseURL: "javascript:alert(1)"}
+	stored := webserver.CLIConfig{
+		Host:    "localhost",
+		Port:    7480,
+		BaseURL: "javascript:alert(1)",
+	}
+	runtime := webserver.CLIConfig{
+		Host:    "127.0.0.1",
+		Port:    9090,
+		BaseURL: "javascript:alert(1)",
+	}
 
 	persisted := servePersistConfig(stored, runtime, map[string]bool{"persist-listen": true, "host": true})
 	if err := webserver.SaveCLIConfig(dbPath, persisted); err != nil {
@@ -538,7 +560,7 @@ func TestRunServePersistListenBindFailureDoesNotWriteWebConfig(t *testing.T) {
 	defer listener.Close()
 
 	tmpDir := t.TempDir()
-	distPath := filepath.Join(tmpDir, "gui", "frontend", "dist")
+	distPath := filepath.Join(tmpDir, "webui", "dist")
 	if err := os.MkdirAll(distPath, 0o755); err != nil {
 		t.Fatalf("create web assets fixture: %v", err)
 	}
@@ -669,96 +691,6 @@ func TestRunExportConfigPlaintextExportsPlainSecrets(t *testing.T) {
 	}
 }
 
-func TestPrepareCLIUploadMetadataRefreshesResolvedPathForExternalSelections(t *testing.T) {
-	t.Parallel()
-
-	sourcePath := "folder"
-	resolvedPath := filepath.Join("folder", "movie.mkv")
-	tmdbID := 12345
-	malID := 67890
-
-	coreSvc := &cliCoreForTest{
-		previewResponses: []api.MetadataPreview{
-			{SourcePath: resolvedPath},
-			{SourcePath: resolvedPath},
-		},
-	}
-	req := api.Request{
-		Paths: []string{sourcePath},
-		ExternalIDSelections: map[string]api.ExternalIDSelection{
-			sourcePath: {TMDBID: &tmdbID, MALID: &malID},
-		},
-	}
-
-	resolvedReq, err := prepareCLIUploadMetadata(context.Background(), coreSvc, req)
-	if err != nil {
-		t.Fatalf("prepareCLIUploadMetadata: %v", err)
-	}
-	if len(coreSvc.requests) != 2 {
-		t.Fatalf("expected 2 preview requests, got %#v", coreSvc.requests)
-	}
-	if len(coreSvc.requests[0].req.Paths) != 1 || coreSvc.requests[0].req.Paths[0] != sourcePath {
-		t.Fatalf("expected first preview for source path, got %#v", coreSvc.requests[0].req.Paths)
-	}
-	if len(coreSvc.requests[1].req.Paths) != 1 || coreSvc.requests[1].req.Paths[0] != resolvedPath {
-		t.Fatalf("expected second preview for resolved path, got %#v", coreSvc.requests[1].req.Paths)
-	}
-	if len(resolvedReq.Paths) != 1 || resolvedReq.Paths[0] != resolvedPath {
-		t.Fatalf("expected resolved upload path, got %#v", resolvedReq.Paths)
-	}
-	selected, ok := resolveCLIExternalIDSelection(resolvedReq.ExternalIDSelections, resolvedPath)
-	if !ok || selected.TMDBID == nil || *selected.TMDBID != tmdbID {
-		t.Fatalf("expected resolved-path external selection, got %#v", resolvedReq.ExternalIDSelections)
-	}
-	if selected.MALID == nil || *selected.MALID != malID {
-		t.Fatalf("expected resolved-path mal selection, got %#v", resolvedReq.ExternalIDSelections)
-	}
-	secondSelected, ok := coreSvc.requests[1].req.ExternalIDSelections[resolvedPath]
-	if !ok || secondSelected.TMDBID == nil || *secondSelected.TMDBID != tmdbID {
-		t.Fatalf("expected resolved-path selection on second preview, got %#v", coreSvc.requests[1].req.ExternalIDSelections)
-	}
-	if secondSelected.MALID == nil || *secondSelected.MALID != malID {
-		t.Fatalf("expected second preview mal selection, got %#v", coreSvc.requests[1].req.ExternalIDSelections)
-	}
-}
-
-func TestPrepareCLIUploadMetadataRefreshesStaleResolvedPathExternalSelections(t *testing.T) {
-	t.Parallel()
-
-	sourcePath := "folder"
-	resolvedPath := filepath.Join("folder", "movie.mkv")
-	currentTMDBID := 12345
-	staleTMDBID := 99999
-
-	coreSvc := &cliCoreForTest{
-		previewResponses: []api.MetadataPreview{
-			{SourcePath: resolvedPath},
-			{SourcePath: resolvedPath},
-		},
-	}
-	req := api.Request{
-		Paths: []string{sourcePath},
-		ExternalIDSelections: map[string]api.ExternalIDSelection{
-			sourcePath:   {TMDBID: &currentTMDBID},
-			resolvedPath: {TMDBID: &staleTMDBID},
-		},
-	}
-
-	resolvedReq, err := prepareCLIUploadMetadata(context.Background(), coreSvc, req)
-	if err != nil {
-		t.Fatalf("prepareCLIUploadMetadata: %v", err)
-	}
-
-	selected, ok := resolvedReq.ExternalIDSelections[resolvedPath]
-	if !ok || selected.TMDBID == nil || *selected.TMDBID != currentTMDBID {
-		t.Fatalf("expected resolved upload selection to refresh stale TMDB ID, got %#v", resolvedReq.ExternalIDSelections)
-	}
-	secondSelected, ok := coreSvc.requests[1].req.ExternalIDSelections[resolvedPath]
-	if !ok || secondSelected.TMDBID == nil || *secondSelected.TMDBID != currentTMDBID {
-		t.Fatalf("expected second preview to refresh stale TMDB ID, got %#v", coreSvc.requests[1].req.ExternalIDSelections)
-	}
-}
-
 // --- GROUP D #7/#8: queue summary error names quoted paths and wraps first cause ---
 
 func TestProcessCLIPathsQueueModeErrorIncludesQuotedFailedPathsAndWrapsCause(t *testing.T) {
@@ -827,356 +759,3 @@ func TestRunCLIPathWithTimeoutPropagatesParentCancel(t *testing.T) {
 }
 
 // --- GROUP A: upload-only queue continue-on-error + bounded-timeout batch ---
-
-func TestRunCLIUploadOnlyQueueContinuesOnError(t *testing.T) {
-	t.Parallel()
-
-	failOn := "bad"
-	uploadPaths := make([]string, 0)
-	coreSvc := &cliCoreForTest{
-		runUploadFunc: func(_ context.Context, req api.Request) (api.Result, error) {
-			if len(req.Paths) > 0 {
-				uploadPaths = append(uploadPaths, req.Paths[0])
-				if req.Paths[0] == failOn {
-					return api.Result{}, errors.New("upload boom")
-				}
-			}
-			return api.Result{UploadedCount: 1}, nil
-		},
-	}
-	paths := []string{"good1", failOn, "good2"}
-	err := runCLIUploadOnlyQueue(context.Background(), coreSvc, api.Request{}, paths, false, api.NopLogger{})
-	if err == nil {
-		t.Fatal("expected a summary error when one queue item fails")
-	}
-	if coreSvc.runUploadPreparedCalls != len(paths) {
-		t.Fatalf("expected RunUploadPrepared called once per path (%d), got %d", len(paths), coreSvc.runUploadPreparedCalls)
-	}
-	if len(uploadPaths) != len(paths) {
-		t.Fatalf("expected each path attempted (no early abort), got %v", uploadPaths)
-	}
-}
-
-func TestRunCLIUploadOnlyQueueSumsUploadedCounts(t *testing.T) {
-	t.Parallel()
-
-	coreSvc := &cliCoreForTest{}
-	paths := []string{"a", "b", "c"}
-	err := runCLIUploadOnlyQueue(context.Background(), coreSvc, api.Request{}, paths, false, api.NopLogger{})
-	if err != nil {
-		t.Fatalf("expected no error for all-passing queue, got %v", err)
-	}
-	if coreSvc.runUploadPreparedCalls != len(paths) {
-		t.Fatalf("expected %d RunUploadPrepared calls, got %d", len(paths), coreSvc.runUploadPreparedCalls)
-	}
-	for _, r := range coreSvc.requests {
-		if r.name != "upload" {
-			continue
-		}
-		if len(r.req.Paths) != 1 {
-			t.Fatalf("expected single-path upload request per item, got %#v", r.req.Paths)
-		}
-	}
-}
-
-func TestRunCLIUploadOnlyQueueCapturesOnlyDVDItems(t *testing.T) {
-	t.Parallel()
-
-	dvdRoot := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dvdRoot, "VIDEO_TS"), 0o700); err != nil {
-		t.Fatalf("create VIDEO_TS: %v", err)
-	}
-	nonDiscRoot := t.TempDir()
-	coreSvc := &cliCoreForTest{dvdMenuResult: api.DVDMenuCaptureResult{
-		Images: []api.DVDMenuCaptureImage{{ScreenshotImage: api.ScreenshotImage{Path: "dvd-menu.png", Purpose: api.ScreenshotPurposeMenu}}},
-	}}
-	err := runCLIUploadOnlyQueue(context.Background(), coreSvc, api.Request{
-		Options: api.UploadOptions{CaptureDVDMenus: true},
-	}, []string{dvdRoot, nonDiscRoot}, false, api.NopLogger{})
-	if err != nil {
-		t.Fatalf("upload-only queue: %v", err)
-	}
-	if coreSvc.dvdMenuCaptureCalls != 1 {
-		t.Fatalf("capture calls = %d, want 1", coreSvc.dvdMenuCaptureCalls)
-	}
-	if coreSvc.runUploadPreparedCalls != 2 {
-		t.Fatalf("upload calls = %d, want 2", coreSvc.runUploadPreparedCalls)
-	}
-}
-
-func TestRunCLIUploadOnlyQueueDVDMenuCaptureFailureStopsUpload(t *testing.T) {
-	t.Parallel()
-
-	dvdRoot := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dvdRoot, "VIDEO_TS"), 0o700); err != nil {
-		t.Fatalf("create VIDEO_TS: %v", err)
-	}
-	coreSvc := &cliCoreForTest{dvdMenuErr: errSyntheticDVDMenuCapture}
-	err := runCLIUploadOnlyQueue(context.Background(), coreSvc, api.Request{
-		Options: api.UploadOptions{CaptureDVDMenus: true},
-	}, []string{dvdRoot}, false, api.NopLogger{})
-
-	assertDVDMenuCaptureError(t, err)
-	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,capture-dvd-menus" {
-		t.Fatalf("queue capture failure call order = %s", got)
-	}
-	if coreSvc.runUploadPreparedCalls != 0 {
-		t.Fatalf("queue upload calls after capture failure = %d, want 0", coreSvc.runUploadPreparedCalls)
-	}
-}
-
-func TestRunCLIUploadOnlyQueueRecordsEachEmptyDVDMenuCapture(t *testing.T) {
-	t.Parallel()
-
-	paths := []string{t.TempDir(), t.TempDir()}
-	for _, path := range paths {
-		if err := os.Mkdir(filepath.Join(path, "VIDEO_TS"), 0o700); err != nil {
-			t.Fatalf("create VIDEO_TS: %v", err)
-		}
-	}
-	coreSvc := &cliCoreForTest{}
-	err := runCLIUploadOnlyQueue(context.Background(), coreSvc, api.Request{
-		Options: api.UploadOptions{CaptureDVDMenus: true},
-	}, paths, false, api.NopLogger{})
-	if err == nil {
-		t.Fatal("expected queue summary error for empty DVD menu captures")
-	}
-	if coreSvc.dvdMenuCaptureCalls != len(paths) {
-		t.Fatalf("capture calls = %d, want %d", coreSvc.dvdMenuCaptureCalls, len(paths))
-	}
-	if coreSvc.runUploadPreparedCalls != 0 {
-		t.Fatalf("upload calls = %d, want 0", coreSvc.runUploadPreparedCalls)
-	}
-}
-
-func TestRunCLIUploadOnlyBatchBoundsTimeoutByItemCap(t *testing.T) {
-	t.Parallel()
-
-	var remaining time.Duration
-	var sawDeadline bool
-	coreSvc := &cliCoreForTest{
-		runUploadFunc: func(ctx context.Context, _ api.Request) (api.Result, error) {
-			if deadline, ok := ctx.Deadline(); ok {
-				sawDeadline = true
-				remaining = time.Until(deadline)
-			}
-			return api.Result{UploadedCount: 1}, nil
-		},
-	}
-	paths := make([]string, cliUploadOnlyTimeoutCap+25)
-	for i := range paths {
-		paths[i] = "p" + strconv.Itoa(i)
-	}
-	if err := runCLIUploadOnlyBatch(context.Background(), coreSvc, api.Request{Paths: paths}, paths, false, api.NopLogger{}); err != nil {
-		t.Fatalf("runCLIUploadOnlyBatch: %v", err)
-	}
-	if !sawDeadline {
-		t.Fatal("expected the upload context to carry a deadline")
-	}
-	capDur := time.Duration(cliUploadOnlyTimeoutCap) * cliItemTimeout
-	if remaining > capDur {
-		t.Fatalf("expected deadline <= cap %v, got remaining %v", capDur, remaining)
-	}
-	if remaining >= time.Duration(len(paths))*cliItemTimeout {
-		t.Fatalf("expected bounded deadline below len(paths)*cliItemTimeout, got %v", remaining)
-	}
-	if coreSvc.runUploadPreparedCalls != 1 {
-		t.Fatalf("expected a single batch RunUploadPrepared call, got %d", coreSvc.runUploadPreparedCalls)
-	}
-}
-
-func TestRunCLIUploadOnlyBatchSinglePathTimeout(t *testing.T) {
-	t.Parallel()
-
-	var remaining time.Duration
-	var sawDeadline bool
-	coreSvc := &cliCoreForTest{
-		runUploadFunc: func(ctx context.Context, _ api.Request) (api.Result, error) {
-			if deadline, ok := ctx.Deadline(); ok {
-				sawDeadline = true
-				remaining = time.Until(deadline)
-			}
-			return api.Result{UploadedCount: 1}, nil
-		},
-	}
-	paths := []string{"only"}
-	if err := runCLIUploadOnlyBatch(context.Background(), coreSvc, api.Request{Paths: paths}, paths, false, api.NopLogger{}); err != nil {
-		t.Fatalf("runCLIUploadOnlyBatch: %v", err)
-	}
-	if !sawDeadline {
-		t.Fatal("expected the upload context to carry a deadline")
-	}
-	if remaining > cliItemTimeout {
-		t.Fatalf("expected single-path deadline <= cliItemTimeout, got %v", remaining)
-	}
-	if coreSvc.runUploadPreparedCalls != 1 {
-		t.Fatalf("expected a single RunUploadPrepared call, got %d", coreSvc.runUploadPreparedCalls)
-	}
-}
-
-func TestRunCLIUploadOnlyBatchCapturesBeforeDebugReviews(t *testing.T) {
-	t.Parallel()
-
-	dvdRoot := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dvdRoot, "VIDEO_TS"), 0o700); err != nil {
-		t.Fatalf("create VIDEO_TS: %v", err)
-	}
-	coreSvc := &cliCoreForTest{
-		dvdMenuResult: api.DVDMenuCaptureResult{
-			Images: []api.DVDMenuCaptureImage{{ScreenshotImage: api.ScreenshotImage{Path: "dvd-menu.png", Purpose: api.ScreenshotPurposeMenu}}},
-		},
-		review: api.UploadReview{Trackers: []api.TrackerReview{{Tracker: "BLU"}}},
-	}
-	paths := []string{dvdRoot}
-	if err := runCLIUploadOnlyBatch(context.Background(), coreSvc, api.Request{
-		Paths:   paths,
-		Options: api.UploadOptions{CaptureDVDMenus: true},
-	}, paths, true, api.NopLogger{}); err != nil {
-		t.Fatalf("upload-only batch: %v", err)
-	}
-	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,capture-dvd-menus,review" {
-		t.Fatalf("batch call order = %s", got)
-	}
-}
-
-func TestRunCLIUploadOnlyBatchContinuesAfterEmptyDVDMenuCapture(t *testing.T) {
-	t.Parallel()
-
-	paths := []string{t.TempDir(), t.TempDir()}
-	for _, path := range paths {
-		if err := os.Mkdir(filepath.Join(path, "VIDEO_TS"), 0o700); err != nil {
-			t.Fatalf("create VIDEO_TS: %v", err)
-		}
-	}
-	coreSvc := &cliCoreForTest{}
-	logger := &cliErrorCountingLogger{}
-	if err := runCLIUploadOnlyBatch(context.Background(), coreSvc, api.Request{
-		Paths:   paths,
-		Options: api.UploadOptions{CaptureDVDMenus: true},
-	}, paths, false, logger); err != nil {
-		t.Fatalf("upload-only batch: %v", err)
-	}
-	if coreSvc.dvdMenuCaptureCalls != len(paths) {
-		t.Fatalf("capture calls = %d, want %d", coreSvc.dvdMenuCaptureCalls, len(paths))
-	}
-	if logger.errors != len(paths) {
-		t.Fatalf("recorded capture failures = %d, want %d", logger.errors, len(paths))
-	}
-	if coreSvc.runUploadPreparedCalls != 1 {
-		t.Fatalf("upload calls = %d, want 1", coreSvc.runUploadPreparedCalls)
-	}
-}
-
-func TestRunCLIUploadOnlyBatchDVDMenuCaptureFailureStopsReviewAndUpload(t *testing.T) {
-	t.Parallel()
-
-	dvdRoot := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dvdRoot, "VIDEO_TS"), 0o700); err != nil {
-		t.Fatalf("create VIDEO_TS: %v", err)
-	}
-	coreSvc := &cliCoreForTest{dvdMenuErr: errSyntheticDVDMenuCapture}
-	paths := []string{dvdRoot}
-	err := runCLIUploadOnlyBatch(context.Background(), coreSvc, api.Request{
-		Paths:   paths,
-		Options: api.UploadOptions{CaptureDVDMenus: true},
-	}, paths, true, api.NopLogger{})
-
-	assertDVDMenuCaptureError(t, err)
-	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,capture-dvd-menus" {
-		t.Fatalf("batch capture failure call order = %s", got)
-	}
-	if coreSvc.runUploadPreparedCalls != 0 {
-		t.Fatalf("batch upload calls after capture failure = %d, want 0", coreSvc.runUploadPreparedCalls)
-	}
-}
-
-type cliErrorCountingLogger struct {
-	api.NopLogger
-	errors int
-}
-
-func (l *cliErrorCountingLogger) Errorf(string, ...any) {
-	l.errors++
-}
-
-// --- GROUP C: BDMV setup cancellation is surfaced, not swallowed ---
-
-func newBDMVTempDir(t *testing.T) string {
-	t.Helper()
-	root := t.TempDir()
-	if err := os.Mkdir(filepath.Join(root, "BDMV"), 0o755); err != nil {
-		t.Fatalf("mkdir BDMV: %v", err)
-	}
-	return root
-}
-
-func TestHandleBDMVPlaylistSelectionReturnsOnDetectDiscTypeCancel(t *testing.T) {
-	t.Parallel()
-
-	root := newBDMVTempDir(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	err := handleBDMVPlaylistSelection(ctx, []string{root}, &cliCoreForTest{}, config.Config{}, api.NopLogger{}, cliOptions{})
-	if err == nil || !isCtxErr(err) {
-		t.Fatalf("expected a context error from DetectDiscType, got %v", err)
-	}
-}
-
-func TestHandleBDMVPlaylistSelectionReturnsOnLoadSelectionCtxErr(t *testing.T) {
-	t.Parallel()
-
-	root := newBDMVTempDir(t)
-	coreSvc := &cliCoreForTest{playlistSelectionErr: context.DeadlineExceeded}
-	err := handleBDMVPlaylistSelection(context.Background(), []string{root}, coreSvc, config.Config{}, api.NopLogger{}, cliOptions{})
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("expected DeadlineExceeded from LoadPlaylistSelection, got %v", err)
-	}
-}
-
-func TestHandleBDMVPlaylistSelectionReturnsOnDiscoverPlaylistsCtxErr(t *testing.T) {
-	t.Parallel()
-
-	for _, useLargest := range []bool{true, false} {
-		root := newBDMVTempDir(t)
-		coreSvc := &cliCoreForTest{
-			playlistSelectionErr: internalerrors.ErrNotFound,
-			discoverPlaylistsErr: context.Canceled,
-		}
-		err := handleBDMVPlaylistSelection(context.Background(), []string{root}, coreSvc, config.Config{
-			Metadata: config.MetadataConfig{UseLargestPlaylist: useLargest},
-		}, api.NopLogger{}, cliOptions{})
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("UseLargestPlaylist=%v: expected Canceled from DiscoverPlaylists, got %v", useLargest, err)
-		}
-	}
-}
-
-func TestHandleBDMVPlaylistSelectionReturnsOnSaveSelectionCtxErr(t *testing.T) {
-	t.Parallel()
-
-	for _, useLargest := range []bool{true, false} {
-		root := newBDMVTempDir(t)
-		coreSvc := &cliCoreForTest{
-			playlistSelectionErr: internalerrors.ErrNotFound,
-			playlists:            []api.PlaylistInfo{{File: "00800.mpls", Score: 1}},
-			savePlaylistErr:      context.Canceled,
-		}
-		err := handleBDMVPlaylistSelection(context.Background(), []string{root}, coreSvc, config.Config{
-			Metadata: config.MetadataConfig{UseLargestPlaylist: useLargest},
-		}, api.NopLogger{}, cliOptions{})
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("UseLargestPlaylist=%v: expected Canceled from SavePlaylistSelection, got %v", useLargest, err)
-		}
-	}
-}
-
-func TestHandleBDMVPlaylistSelectionSkipsNonCtxErrors(t *testing.T) {
-	t.Parallel()
-
-	root := newBDMVTempDir(t)
-	coreSvc := &cliCoreForTest{playlistSelectionErr: errors.New("boom")}
-	err := handleBDMVPlaylistSelection(context.Background(), []string{root}, coreSvc, config.Config{}, api.NopLogger{}, cliOptions{})
-	if err != nil {
-		t.Fatalf("expected non-ctx load error to be skipped (continue), got %v", err)
-	}
-}

@@ -53,6 +53,37 @@ type ScreenshotOverrides struct {
 	MenuPaths              []string
 }
 
+// ScreenshotSubject contains only source facts required to plan and manage
+// screenshots. Workflow modules build it from an exact prepared generation.
+type ScreenshotSubject struct {
+	SourcePath            string
+	DiscType              string
+	VideoPath             string
+	MediaInfoJSONPath     string
+	MediaCategory         string
+	HDR                   string
+	TVPack                bool
+	Episode               int
+	Release               ReleaseInfo
+	SelectedBDMVPlaylists []PlaylistInfo
+	DefaultCount          int
+	ManualFrames          []int
+}
+
+// DVDMenuSubject contains the stable source facts required by DVD-menu
+// capture and lifecycle operations.
+type DVDMenuSubject struct {
+	SourcePath string
+	DiscType   string
+}
+
+// ImageHostingSubject scopes image-host operations to one prepared source.
+// GalleryName is the already-resolved display name used by batch hosts.
+type ImageHostingSubject struct {
+	SourcePath  string
+	GalleryName string
+}
+
 type ScreenshotFinalSelection struct {
 	SourcePath string
 	ImagePath  string

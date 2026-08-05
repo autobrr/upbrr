@@ -12,8 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/autobrr/upbrr/internal/pathutil"
-	"github.com/autobrr/upbrr/pkg/api"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
+	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
 )
 
 var (
@@ -31,9 +33,22 @@ var (
 )
 
 var videoExtensions = map[string]struct{}{
-	".mkv": {}, ".mp4": {}, ".avi": {}, ".mov": {}, ".wmv": {}, ".webm": {}, ".ts": {}, ".m2ts": {}, ".m2v": {}, ".mpg": {}, ".mpeg": {},
+	".mkv":  {},
+	".mp4":  {},
+	".avi":  {},
+	".mov":  {},
+	".wmv":  {},
+	".webm": {},
+	".ts":   {},
+	".m2ts": {},
+	".m2v":  {},
+	".mpg":  {},
+	".mpeg": {},
 }
 
+// Result contains normalized episodic signals. DailyDate uses YYYY-MM-DD;
+// MultiEpisode includes the first episode; AbsoluteEpisode is retained even
+// when it also supplies Episode.
 type Result struct {
 	Season          int
 	Episode         int
@@ -43,7 +58,12 @@ type Result struct {
 	MultiEpisode    []int
 }
 
-func Extract(path string, meta api.PreparedMetadata) Result {
+// Extract parses the source basename before the selected video basename, then
+// fills missing values from parsed release metadata. Season-only or multi-video
+// sources become TV packs unless the primary basename names one explicit
+// episode. Directory inspection is best-effort and filesystem errors are
+// treated as no multi-video evidence.
+func Extract(path string, meta preparationstate.State) Result {
 	candidates := buildCandidates(path, meta)
 	primaryCandidate := ""
 	if len(candidates) > 0 {
@@ -115,6 +135,59 @@ func Extract(path string, meta api.PreparedMetadata) Result {
 	return result
 }
 
+// ParseSeasonInstruction parses one explicit caller-supplied season token: a
+// bare number or an S-prefixed number of at most two digits ("5", "05",
+// "S05"). An empty value means an explicit clear and returns zero. Combined,
+// ranged, zero, overflowing, or otherwise malformed values are rejected with a
+// typed invalid-input error.
+func ParseSeasonInstruction(value string) (int, error) {
+	return parseInstructionToken(value, "S", 2, "season")
+}
+
+// ParseEpisodeInstruction parses one explicit caller-supplied episode token: a
+// bare number or an E-prefixed number of at most three digits ("7", "07",
+// "E07"). An empty value means an explicit clear and returns zero. Combined,
+// ranged, zero, overflowing, or otherwise malformed values are rejected with a
+// typed invalid-input error.
+func ParseEpisodeInstruction(value string) (int, error) {
+	return parseInstructionToken(value, "E", 3, "episode")
+}
+
+func parseInstructionToken(value string, prefix string, maxDigits int, label string) (int, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return 0, nil
+	}
+	digits := trimmed
+	if len(digits) > 1 && strings.EqualFold(digits[:1], prefix) {
+		digits = digits[1:]
+	}
+	if len(digits) > maxDigits {
+		return 0, instructionTokenError(label, value, prefix)
+	}
+	for _, char := range digits {
+		if char < '0' || char > '9' {
+			return 0, instructionTokenError(label, value, prefix)
+		}
+	}
+	number, err := strconv.Atoi(digits)
+	if err != nil || number <= 0 {
+		return 0, instructionTokenError(label, value, prefix)
+	}
+	return number, nil
+}
+
+func instructionTokenError(label string, value string, prefix string) error {
+	return fmt.Errorf(
+		"%s instruction %q: expected a single positive token such as %q or %q: %w",
+		label,
+		value,
+		"5",
+		prefix+"05",
+		internalerrors.ErrInvalidInput,
+	)
+}
+
 func FormatSeason(value int) string {
 	if value <= 0 {
 		return ""
@@ -129,7 +202,7 @@ func FormatEpisode(value int) string {
 	return fmt.Sprintf("E%02d", value)
 }
 
-func buildCandidates(path string, meta api.PreparedMetadata) []string {
+func buildCandidates(path string, meta preparationstate.State) []string {
 	seen := map[string]struct{}{}
 	out := make([]string, 0, 2)
 	add := func(value string) {

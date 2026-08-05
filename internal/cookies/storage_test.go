@@ -64,8 +64,16 @@ func TestCookieStoreGetCookieRejectsEmptyTrackerOrName(t *testing.T) {
 		trackerID string
 		cookie    string
 	}{
-		{name: "empty tracker", trackerID: "", cookie: "session"},
-		{name: "empty cookie", trackerID: "tracker", cookie: ""},
+		{
+			name:      "empty tracker",
+			trackerID: "",
+			cookie:    "session",
+		},
+		{
+			name:      "empty cookie",
+			trackerID: "tracker",
+			cookie:    "",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := store.GetCookie(context.Background(), tc.trackerID, tc.cookie, []byte("0123456789abcdef0123456789abcdef"))
@@ -93,8 +101,16 @@ func TestCookieStoreDeleteCookieRejectsEmptyTrackerOrName(t *testing.T) {
 		trackerID string
 		cookie    string
 	}{
-		{name: "empty tracker", trackerID: "", cookie: "session"},
-		{name: "empty cookie", trackerID: "tracker", cookie: ""},
+		{
+			name:      "empty tracker",
+			trackerID: "",
+			cookie:    "session",
+		},
+		{
+			name:      "empty cookie",
+			trackerID: "tracker",
+			cookie:    "",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := store.DeleteCookie(context.Background(), tc.trackerID, tc.cookie)

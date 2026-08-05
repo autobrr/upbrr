@@ -18,7 +18,9 @@ import (
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 )
 
-// PlaylistInfo represents a discovered playlist file with its metrics and scoring.
+// PlaylistInfo describes one MPLS candidate. File and item names are basenames,
+// Duration is seconds, item sizes are bytes, and Score ranks main-feature
+// likelihood. Edition is currently left empty by discovery.
 type PlaylistInfo struct {
 	File     string
 	Duration float64
@@ -27,14 +29,14 @@ type PlaylistInfo struct {
 	Edition  string
 }
 
-// PlaylistItem represents a single file reference within a playlist.
+// PlaylistItem identifies one referenced stream basename and its size in bytes.
 type PlaylistItem struct {
 	File string
 	Size int64
 }
 
-// DiscoverPlaylists discovers and scores all MPLS playlists in a BDMV folder.
-// Returns playlists sorted by score (highest first), or an error if the BDMV directory is invalid.
+// DiscoverPlaylists discovers and scores all MPLS files in a BDMV folder. It
+// returns candidates ordered by descending score.
 func DiscoverPlaylists(ctx context.Context, bdmvRoot string) ([]PlaylistInfo, error) {
 	if bdmvRoot == "" {
 		return nil, fmt.Errorf("playlist: empty path: %w", internalerrors.ErrInvalidInput)
@@ -147,8 +149,8 @@ func calculatePlaylistScore(duration float64, items []PlaylistItem) float64 {
 	return score
 }
 
-// ParseMPLS parses an MPLS file and extracts duration and file references.
-// Returns (duration in seconds, []PlaylistItem, error).
+// ParseMPLS returns an MPLS playlist's duration in seconds and referenced M2TS
+// basenames with stream sizes in bytes.
 func ParseMPLS(mpslPath string) (float64, []PlaylistItem, error) {
 	file, err := os.Open(mpslPath)
 	if err != nil {
@@ -458,7 +460,8 @@ func attachStreamSizes(playlistDir string, items []PlaylistItem) ([]PlaylistItem
 	return result, nil
 }
 
-// FormatDuration converts seconds to HH:MM:SS format for display.
+// FormatDuration truncates fractional seconds and formats the result as
+// HH:MM:SS; hours are not capped at 24.
 func FormatDuration(seconds float64) string {
 	d := time.Duration(seconds * float64(time.Second))
 	h := int(d.Hours())

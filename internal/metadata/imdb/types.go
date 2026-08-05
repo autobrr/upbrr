@@ -3,6 +3,8 @@
 
 package imdb
 
+// Info contains normalized IMDb title metadata. RuntimeMinutes is minutes;
+// edition detail map keys are decimal runtime-minute strings.
 type Info struct {
 	IMDbID           string
 	IMDbURL          string
@@ -75,6 +77,9 @@ type SeasonSummary struct {
 	YearRange string
 }
 
+// SearchInput controls release-hint parsing and automatic candidate selection.
+// Quickie examines only the first result; Unattended permits selection of an
+// otherwise ambiguous top-ranked candidate.
 type SearchInput struct {
 	Filename          string
 	SearchYear        int
@@ -88,6 +93,8 @@ type SearchInput struct {
 	Debug             bool
 }
 
+// SearchResult retains ranked candidates even when interactive ambiguity leaves
+// IMDbID unset. AutoSelected reports that no manual choice remains.
 type SearchResult struct {
 	IMDbID       int
 	Candidates   []Candidate

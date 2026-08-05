@@ -14,6 +14,11 @@ import (
 const defaultDirName = ".upbrr"
 const defaultDBName = "db.sqlite"
 
+// DefaultPath returns the preferred database path without creating it. When
+// XDG_CONFIG_HOME is set, an existing canonical database wins, followed by an
+// existing legacy .upbrr database under that same config root; otherwise a new
+// canonical XDG path is returned. Without XDG_CONFIG_HOME, the user-home
+// .upbrr path is returned.
 func DefaultPath() (string, error) {
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
 		preferred := filepath.Join(xdg, "upbrr", defaultDBName)
@@ -57,6 +62,10 @@ func sameConfigRoot(a, b string) bool {
 	return cleanA == cleanB
 }
 
+// RootDir returns and creates the parent directory used for database-adjacent
+// files. Empty, in-memory, and SQLite URI inputs deliberately resolve to the
+// default on-disk database directory instead of deriving a directory from the
+// connection string.
 func RootDir(dbPath string) (string, error) {
 	trimmed := strings.TrimSpace(dbPath)
 	if trimmed == "" || trimmed == ":memory:" || strings.HasPrefix(trimmed, "file:") {
@@ -73,6 +82,8 @@ func RootDir(dbPath string) (string, error) {
 	return filepath.Dir(cleaned), nil
 }
 
+// Subdir creates name beneath [RootDir] and returns its path. Newly created
+// directories use mode 0700.
 func Subdir(dbPath, name string) (string, error) {
 	root, err := RootDir(dbPath)
 	if err != nil {
@@ -85,6 +96,8 @@ func Subdir(dbPath, name string) (string, error) {
 	return path, nil
 }
 
+// FileInSubdir creates dirName beneath [RootDir] and returns fileName joined
+// within it; it does not create the file.
 func FileInSubdir(dbPath, dirName, fileName string) (string, error) {
 	dir, err := Subdir(dbPath, dirName)
 	if err != nil {
@@ -93,6 +106,8 @@ func FileInSubdir(dbPath, dirName, fileName string) (string, error) {
 	return filepath.Join(dir, fileName), nil
 }
 
+// CookiePath returns a path beneath the managed cookies subdirectory, creating
+// that directory when needed.
 func CookiePath(dbPath, fileName string) (string, error) {
 	return FileInSubdir(dbPath, "cookies", fileName)
 }

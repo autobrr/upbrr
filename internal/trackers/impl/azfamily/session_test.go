@@ -47,8 +47,8 @@ func TestLookupMediaCodeSupportsTVDBOnlyTV(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	result, err := lookupMediaCode(context.Background(), siteDefinition{Name: "AZ", BaseURL: server.URL}, sessionState{client: server.Client()}, api.PreparedMetadata{
-		ExternalIDs: api.ExternalIDs{Category: "TV", TVDBID: 456789},
+	result, err := lookupMediaCode(context.Background(), siteDefinition{Name: "AZ", BaseURL: server.URL}, sessionState{client: server.Client()}, api.UploadSubject{
+		Identity: api.ExternalIdentity{Category: "TV", TVDBID: 456789},
 	})
 	if err != nil {
 		t.Fatalf("lookup TVDB media: %v", err)
@@ -62,13 +62,13 @@ func TestLookupMediaCodeReturnsExactMatchBeforeLaterProviderFailure(t *testing.T
 	t.Parallel()
 	tests := []struct {
 		name      string
-		meta      api.PreparedMetadata
+		meta      api.UploadSubject
 		responses map[string]mediaSearchResponse
 		wantCode  string
 	}{
 		{
 			name: "imdb before tmdb failure",
-			meta: api.PreparedMetadata{ExternalIDs: api.ExternalIDs{
+			meta: api.UploadSubject{Identity: api.ExternalIdentity{
 				Category: "MOVIE",
 				IMDBID:   123,
 				TMDBID:   456,
@@ -81,7 +81,7 @@ func TestLookupMediaCodeReturnsExactMatchBeforeLaterProviderFailure(t *testing.T
 		},
 		{
 			name: "tmdb before tvdb failure",
-			meta: api.PreparedMetadata{ExternalIDs: api.ExternalIDs{
+			meta: api.UploadSubject{Identity: api.ExternalIdentity{
 				Category: "TV",
 				IMDBID:   123,
 				TMDBID:   456,
@@ -96,7 +96,7 @@ func TestLookupMediaCodeReturnsExactMatchBeforeLaterProviderFailure(t *testing.T
 		},
 		{
 			name: "tvdb after earlier misses",
-			meta: api.PreparedMetadata{ExternalIDs: api.ExternalIDs{
+			meta: api.UploadSubject{Identity: api.ExternalIdentity{
 				Category: "TV",
 				IMDBID:   123,
 				TMDBID:   456,
@@ -142,7 +142,11 @@ func TestLookupMediaCodeReturnsProviderErrorWithoutEarlierExactMatch(t *testing.
 		context.Background(),
 		siteDefinition{Name: "AZ", BaseURL: server.URL},
 		sessionState{client: server.Client()},
-		api.PreparedMetadata{ExternalIDs: api.ExternalIDs{Category: "MOVIE", IMDBID: 123, TMDBID: 456}},
+		api.UploadSubject{Identity: api.ExternalIdentity{
+			Category: "MOVIE",
+			IMDBID:   123,
+			TMDBID:   456,
+		}},
 	)
 	if err == nil || !strings.Contains(err.Error(), "media search by tmdb failed") {
 		t.Fatal("expected later provider failure when no earlier exact match exists")
@@ -160,9 +164,9 @@ func TestLookupMediaCodeSelectsExactIDFromTitleResults(t *testing.T) {
 		context.Background(),
 		siteDefinition{Name: "AZ", BaseURL: server.URL},
 		sessionState{client: server.Client()},
-		api.PreparedMetadata{
-			ExternalIDs: api.ExternalIDs{Category: "MOVIE", TMDBID: 456},
-			Release:     api.ReleaseInfo{Title: "Example Release 2026", Year: 2026},
+		api.UploadSubject{
+			Identity: api.ExternalIdentity{Category: "MOVIE", TMDBID: 456},
+			Release:  api.ReleaseInfo{Title: "Example Release 2026", Year: 2026},
 		},
 	)
 	if err != nil {
@@ -187,9 +191,9 @@ func TestLookupMediaCodeRejectsUnmatchedTitleResults(t *testing.T) {
 		context.Background(),
 		siteDefinition{Name: "AZ", BaseURL: server.URL},
 		sessionState{client: server.Client()},
-		api.PreparedMetadata{
-			ExternalIDs: api.ExternalIDs{Category: "MOVIE", TMDBID: 456},
-			Release:     api.ReleaseInfo{Title: "Example Release 2026", Year: 2026},
+		api.UploadSubject{
+			Identity: api.ExternalIdentity{Category: "MOVIE", TMDBID: 456},
+			Release:  api.ReleaseInfo{Title: "Example Release 2026", Year: 2026},
 		},
 	)
 	if err != nil {

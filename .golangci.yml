@@ -7,11 +7,22 @@ formatters:
   enable:
     - goimports
     - gofmt
+    - golines
 
   settings:
     goimports:
       local-prefixes:
         - github.com/autobrr/upbrr
+    golines:
+      max-len: 160
+      tab-len: 4
+      shorten-comments: false
+      reformat-tags: false
+      chain-split-dots: false
+
+  exclusions:
+    paths:
+      - _test\.go$
 
 linters:
   enable:

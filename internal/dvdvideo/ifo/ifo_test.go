@@ -44,7 +44,12 @@ func TestParseRejectsTruncatedLanguageTable(t *testing.T) {
 }
 
 func TestDVDTimeDuration(t *testing.T) {
-	duration, err := (DVDTime{Hour: 0x01, Minute: 0x02, Second: 0x03, Frame: 0x52}).Duration()
+	duration, err := (DVDTime{
+		Hour:   0x01,
+		Minute: 0x02,
+		Second: 0x03,
+		Frame:  0x52,
+	}).Duration()
 	if err != nil {
 		t.Fatalf("Duration: %v", err)
 	}

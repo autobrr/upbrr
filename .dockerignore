@@ -1,9 +1,8 @@
 .git
 .github
 dist
-gui/build
-gui/frontend/node_modules
-gui/frontend/dist
+webui/node_modules
+webui/dist
 scripts
 documentation
 **/*_test.go

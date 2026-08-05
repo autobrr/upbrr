@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>upbrr API Documentation</title>
+    <link rel="icon" type="image/x-icon" href="../../favicon.ico">
+    <script>
+        (function () {
+            const darkMode = window.matchMedia("(prefers-color-scheme: dark)");
+
+            function resolveTheme() {
+                try {
+                    const savedTheme = window.localStorage.getItem("theme");
+                    if (savedTheme === "light" || savedTheme === "dark") {
+                        return savedTheme;
+                    }
+                } catch {
+                    // Local storage can be unavailable under browser privacy policies.
+                }
+                return darkMode.matches ? "dark" : "light";
+            }
+
+            function updateThemeToggle(theme) {
+                const toggle = document.getElementById("theme-toggle");
+                if (toggle) {
+                    toggle.setAttribute("aria-pressed", String(theme === "dark"));
+                }
+            }
+
+            function applyTheme(theme) {
+                document.documentElement.dataset.theme = theme;
+                updateThemeToggle(theme);
+            }
+
+            function applyPreferredTheme() {
+                applyTheme(resolveTheme());
+            }
+
+            applyPreferredTheme();
+            darkMode.addEventListener("change", applyPreferredTheme);
+            window.addEventListener("storage", function (event) {
+                if (event.key === "theme") {
+                    applyPreferredTheme();
+                }
+            });
+            window.addEventListener("DOMContentLoaded", function () {
+                const toggle = document.getElementById("theme-toggle");
+                toggle.addEventListener("click", function () {
+                    const nextTheme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+                    try {
+                        window.localStorage.setItem("theme", nextTheme);
+                    } catch {
+                        // The current page can still switch themes without persistence.
+                    }
+                    applyTheme(nextTheme);
+                });
+                updateThemeToggle(document.documentElement.dataset.theme);
+            });
+        })();
+    </script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@{{SWAGGER_UI_VERSION}}/swagger-ui.css">
+    <style>
+        :root {
+            color-scheme: light;
+            --docs-background: #fafafa;
+            --docs-panel: #fff;
+            --docs-panel-light: #f3f4f6;
+            --docs-text: #1f2937;
+            --docs-muted: #4b5563;
+            --docs-border: #d1d5db;
+            --docs-accent: #4990e2;
+            --docs-link: #2563eb;
+        }
+        html[data-theme="dark"] {
+            color-scheme: dark;
+            --docs-background: #0d111a;
+            --docs-panel: #121826;
+            --docs-panel-light: #1b2335;
+            --docs-text: #f3f5f7;
+            --docs-muted: #b1bac8;
+            --docs-border: #354158;
+            --docs-accent: #f5b942;
+            --docs-link: #67e8f9;
+        }
+        html {
+            box-sizing: border-box;
+            overflow-y: scroll;
+        }
+        *, *::before, *::after {
+            box-sizing: inherit;
+        }
+        body {
+            margin: 0;
+            background: var(--docs-background);
+            color: var(--docs-text);
+        }
+        .docs-toolbar {
+            position: sticky;
+            z-index: 20;
+            top: 0;
+            min-height: 49px;
+            border-bottom: 1px solid var(--docs-border);
+            background: var(--docs-panel);
+        }
+        .docs-toolbar__inner {
+            display: flex;
+            max-width: 1460px;
+            margin: 0 auto;
+            padding: 8px 16px;
+            justify-content: flex-end;
+        }
+        .theme-toggle {
+            display: inline-flex;
+            height: 32px;
+            padding: 4px 10px;
+            align-items: center;
+            gap: 8px;
+            border: 1px solid var(--docs-border);
+            border-radius: 6px;
+            background: var(--docs-panel-light);
+            color: var(--docs-text);
+            cursor: pointer;
+            font: 600 13px/1 system-ui, sans-serif;
+        }
+        .theme-toggle:focus-visible {
+            outline: 2px solid var(--docs-accent);
+            outline-offset: 2px;
+        }
+        .theme-toggle__track {
+            position: relative;
+            width: 34px;
+            height: 18px;
+            border-radius: 999px;
+            background: var(--docs-muted);
+            transition: background 120ms ease;
+        }
+        .theme-toggle__thumb {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--docs-panel);
+            transition: transform 120ms ease;
+        }
+        .theme-toggle[aria-pressed="true"] .theme-toggle__track {
+            background: var(--docs-accent);
+        }
+        .theme-toggle[aria-pressed="true"] .theme-toggle__thumb {
+            transform: translateX(16px);
+        }
+        .swagger-ui .topbar {
+            display: none;
+        }
+        .swagger-ui .wrapper {
+            max-width: 1460px;
+            margin: 0 auto;
+        }
+        .swagger-ui .opblock-tag {
+            margin: 20px 0 10px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid var(--docs-border);
+            font-size: 24px !important;
+        }
+        .swagger-ui .scheme-container {
+            position: sticky;
+            z-index: 10;
+            top: 49px;
+            padding: 10px 0;
+            background: var(--docs-panel);
+            box-shadow: 0 1px 2px rgb(0 0 0 / 10%);
+        }
+        .swagger-ui .filter-container {
+            position: sticky;
+            z-index: 9;
+            top: 109px;
+            margin-bottom: 20px;
+            padding: 10px 0;
+            background: var(--docs-panel);
+        }
+        .swagger-ui .filter-container input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid var(--docs-accent);
+            border-radius: 4px;
+            background: var(--docs-panel-light);
+            color: var(--docs-text);
+            font-size: 16px;
+        }
+        .swagger-ui .opblock {
+            margin-bottom: 10px;
+            border-radius: 4px;
+        }
+        html[data-theme="dark"] .swagger-ui,
+        html[data-theme="dark"] .swagger-ui .info .title,
+        html[data-theme="dark"] .swagger-ui .info p,
+        html[data-theme="dark"] .swagger-ui .info li,
+        html[data-theme="dark"] .swagger-ui .info table,
+        html[data-theme="dark"] .swagger-ui .opblock-tag,
+        html[data-theme="dark"] .swagger-ui .opblock .opblock-summary-description,
+        html[data-theme="dark"] .swagger-ui .opblock .opblock-section-header h4,
+        html[data-theme="dark"] .swagger-ui .opblock-description-wrapper,
+        html[data-theme="dark"] .swagger-ui .opblock-description-wrapper p,
+        html[data-theme="dark"] .swagger-ui .parameter__name,
+        html[data-theme="dark"] .swagger-ui .response-col_status,
+        html[data-theme="dark"] .swagger-ui .response-col_description,
+        html[data-theme="dark"] .swagger-ui .responses-inner h4,
+        html[data-theme="dark"] .swagger-ui .responses-inner h5,
+        html[data-theme="dark"] .swagger-ui .model,
+        html[data-theme="dark"] .swagger-ui .model-title,
+        html[data-theme="dark"] .swagger-ui section.models h4,
+        html[data-theme="dark"] .swagger-ui table thead tr td,
+        html[data-theme="dark"] .swagger-ui table thead tr th,
+        html[data-theme="dark"] .swagger-ui label {
+            color: var(--docs-text);
+        }
+        html[data-theme="dark"] .swagger-ui .info a,
+        html[data-theme="dark"] .swagger-ui .opblock-description-wrapper a,
+        html[data-theme="dark"] .swagger-ui .response-col_description a {
+            color: var(--docs-link);
+        }
+        html[data-theme="dark"] .swagger-ui .parameter__type,
+        html[data-theme="dark"] .swagger-ui .prop-format,
+        html[data-theme="dark"] .swagger-ui .response-col_links,
+        html[data-theme="dark"] .swagger-ui .model-hint {
+            color: var(--docs-muted);
+        }
+        html[data-theme="dark"] .swagger-ui .scheme-container,
+        html[data-theme="dark"] .swagger-ui .filter-container,
+        html[data-theme="dark"] .swagger-ui .opblock .opblock-section-header,
+        html[data-theme="dark"] .swagger-ui .model-box,
+        html[data-theme="dark"] .swagger-ui section.models,
+        html[data-theme="dark"] .swagger-ui .dialog-ux .modal-ux {
+            border-color: var(--docs-border);
+            background: var(--docs-panel);
+            color: var(--docs-text);
+        }
+        html[data-theme="dark"] .swagger-ui .dialog-ux .modal-ux-header,
+        html[data-theme="dark"] .swagger-ui .dialog-ux .modal-ux-content {
+            border-color: var(--docs-border);
+        }
+        html[data-theme="dark"] .swagger-ui input[type="email"],
+        html[data-theme="dark"] .swagger-ui input[type="file"],
+        html[data-theme="dark"] .swagger-ui input[type="password"],
+        html[data-theme="dark"] .swagger-ui input[type="search"],
+        html[data-theme="dark"] .swagger-ui input[type="text"],
+        html[data-theme="dark"] .swagger-ui select,
+        html[data-theme="dark"] .swagger-ui textarea {
+            border-color: var(--docs-border);
+            background: var(--docs-panel-light);
+            color: var(--docs-text);
+        }
+        html[data-theme="dark"] .swagger-ui input::placeholder,
+        html[data-theme="dark"] .swagger-ui textarea::placeholder {
+            color: var(--docs-muted);
+        }
+        html[data-theme="dark"] .swagger-ui .highlight-code > .microlight,
+        html[data-theme="dark"] .swagger-ui .microlight {
+            background: #090d14 !important;
+            color: #f3f5f7 !important;
+        }
+        html[data-theme="dark"] .swagger-ui .expand-operation svg,
+        html[data-theme="dark"] .swagger-ui .models-control svg,
+        html[data-theme="dark"] .swagger-ui .opblock-control-arrow svg,
+        html[data-theme="dark"] .swagger-ui .dialog-ux .modal-ux-header .close-modal svg {
+            fill: var(--docs-text);
+        }
+    </style>
+</head>
+<body>
+    <header class="docs-toolbar">
+        <div class="docs-toolbar__inner">
+            <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Dark mode" aria-pressed="false">
+                <span class="theme-toggle__track" aria-hidden="true">
+                    <span class="theme-toggle__thumb"></span>
+                </span>
+                <span>Dark mode</span>
+            </button>
+        </div>
+    </header>
+    <div id="swagger-ui"></div>
+    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@{{SWAGGER_UI_VERSION}}/swagger-ui-bundle.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@{{SWAGGER_UI_VERSION}}/swagger-ui-standalone-preset.js"></script>
+    <script>
+        window.onload = function () {
+            window.ui = SwaggerUIBundle({
+                url: "openapi.json",
+                dom_id: "#swagger-ui",
+                deepLinking: true,
+                presets: [
+                    SwaggerUIBundle.presets.apis,
+                    SwaggerUIStandalonePreset
+                ],
+                plugins: [
+                    SwaggerUIBundle.plugins.DownloadUrl
+                ],
+                layout: "StandaloneLayout",
+                persistAuthorization: true,
+                tryItOutEnabled: true,
+                filter: true,
+                docExpansion: "list",
+                defaultModelsExpandDepth: 1,
+                defaultModelExpandDepth: 1,
+                displayRequestDuration: true,
+                showExtensions: true,
+                showCommonExtensions: true,
+                tagsSorter: "alpha",
+                operationsSorter: "alpha",
+                validatorUrl: null
+            });
+        };
+    </script>
+</body>
+</html>

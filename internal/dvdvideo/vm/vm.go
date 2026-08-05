@@ -155,7 +155,11 @@ func Execute(commands []Command, registers *Registers, opts Options) (Result, er
 		}
 	}
 
-	e := executor{registers: registers, now: now, random: random}
+	e := executor{
+		registers: registers,
+		now:       now,
+		random:    random,
+	}
 	executed := 0
 	for row := 0; row < len(commands); executed++ {
 		if executed >= budget {
@@ -166,7 +170,11 @@ func Execute(commands []Command, registers *Registers, opts Options) (Result, er
 			return Result{Executed: executed + 1}, fmt.Errorf("DVD VM row %d: %w", row+1, err)
 		}
 		if hasLink {
-			return Result{Link: link, HasLink: true, Executed: executed + 1}, nil
+			return Result{
+				Link:     link,
+				HasLink:  true,
+				Executed: executed + 1,
+			}, nil
 		}
 		if line > 0 {
 			if line == 256 {
@@ -463,11 +471,23 @@ func linkInstruction(instruction uint64) (Link, bool) {
 	case 4:
 		return Link{Command: LinkPGCN, Data1: bits16(instruction, 14, 15)}, true
 	case 5:
-		return Link{Command: LinkPTTN, Data1: bits16(instruction, 9, 10), Data2: bits16(instruction, 15, 6)}, true
+		return Link{
+			Command: LinkPTTN,
+			Data1:   bits16(instruction, 9, 10),
+			Data2:   bits16(instruction, 15, 6),
+		}, true
 	case 6:
-		return Link{Command: LinkPGN, Data1: bits16(instruction, 6, 7), Data2: bits16(instruction, 15, 6)}, true
+		return Link{
+			Command: LinkPGN,
+			Data1:   bits16(instruction, 6, 7),
+			Data2:   bits16(instruction, 15, 6),
+		}, true
 	case 7:
-		return Link{Command: LinkCN, Data1: bits16(instruction, 7, 8), Data2: bits16(instruction, 15, 6)}, true
+		return Link{
+			Command: LinkCN,
+			Data1:   bits16(instruction, 7, 8),
+			Data2:   bits16(instruction, 15, 6),
+		}, true
 	default:
 		return Link{}, false
 	}
@@ -482,7 +502,11 @@ func jumpInstruction(instruction uint64) (Link, bool) {
 	case 3:
 		return Link{Command: JumpVTSTT, Data1: bits16(instruction, 22, 7)}, true
 	case 5:
-		return Link{Command: JumpVTSPTT, Data1: bits16(instruction, 22, 7), Data2: bits16(instruction, 41, 10)}, true
+		return Link{
+			Command: JumpVTSPTT,
+			Data1:   bits16(instruction, 22, 7),
+			Data2:   bits16(instruction, 41, 10),
+		}, true
 	case 6:
 		switch bits(instruction, 23, 2) {
 		case 0:
@@ -490,7 +514,12 @@ func jumpInstruction(instruction uint64) (Link, bool) {
 		case 1:
 			return Link{Command: JumpVMGMMenu, Data1: bits16(instruction, 19, 4)}, true
 		case 2:
-			return Link{Command: JumpVTSM, Data1: bits16(instruction, 31, 8), Data2: bits16(instruction, 39, 8), Data3: bits16(instruction, 19, 4)}, true
+			return Link{
+				Command: JumpVTSM,
+				Data1:   bits16(instruction, 31, 8),
+				Data2:   bits16(instruction, 39, 8),
+				Data3:   bits16(instruction, 19, 4),
+			}, true
 		case 3:
 			return Link{Command: JumpVMGMPGC, Data1: bits16(instruction, 46, 15)}, true
 		}
@@ -500,11 +529,23 @@ func jumpInstruction(instruction uint64) (Link, bool) {
 		case 0:
 			return Link{Command: CallFirstPlay, Data1: resume}, true
 		case 1:
-			return Link{Command: CallVMGMMenu, Data1: bits16(instruction, 19, 4), Data2: resume}, true
+			return Link{
+				Command: CallVMGMMenu,
+				Data1:   bits16(instruction, 19, 4),
+				Data2:   resume,
+			}, true
 		case 2:
-			return Link{Command: CallVTSM, Data1: bits16(instruction, 19, 4), Data2: resume}, true
+			return Link{
+				Command: CallVTSM,
+				Data1:   bits16(instruction, 19, 4),
+				Data2:   resume,
+			}, true
 		case 3:
-			return Link{Command: CallVMGMPGC, Data1: bits16(instruction, 46, 15), Data2: resume}, true
+			return Link{
+				Command: CallVMGMPGC,
+				Data1:   bits16(instruction, 46, 15),
+				Data2:   resume,
+			}, true
 		}
 	}
 	return Link{}, false

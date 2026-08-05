@@ -7,26 +7,79 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
+	"github.com/autobrr/upbrr/internal/trackers"
+	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+type aitherRuleDefinition struct{}
+
+func (aitherRuleDefinition) Name() string           { return "AITHER" }
+func (aitherRuleDefinition) DefaultBaseURL() string { return "https://aither.cc" }
+func (aitherRuleDefinition) UploadContentMode() trackers.UploadContentMode {
+	return trackers.UploadContentModeDescription
+}
+func (aitherRuleDefinition) Prepare(ctx context.Context, input trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
+	return preparePolicyDefinition(ctx, input)
+}
+func (aitherRuleDefinition) ClaimPolicy() *trackers.ClaimPolicy {
+	return &trackers.ClaimPolicy{APIBacked: true}
+}
+func preparePolicyDefinition(ctx context.Context, input trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
+	return trackers.PrepareAdapter(
+		ctx,
+		input,
+		func(context.Context, trackers.PreparationInput) (trackers.DescriptionResult, error) {
+			return trackers.DescriptionResult{}, nil
+		},
+		func(context.Context, trackers.PreparationInput) (trackers.PreparedOperation, error) {
+			return trackers.NewPreparedOperation(
+				api.TrackerDryRunEntry{Tracker: input.Tracker, Status: "ready"},
+				func(context.Context) (api.UploadSummary, error) { return api.UploadSummary{}, nil },
+				nil,
+			), nil
+		},
+	)
+}
+
+func antRuleRegistry(t *testing.T) *trackers.Registry {
+	t.Helper()
+	registry, err := trackerimpl.NewRegistry()
+	if err != nil {
+		t.Fatalf("create tracker registry: %v", err)
+	}
+	return registry
+}
+
 func TestEditionFromMetaMultiPlaylistAggregatesIMDbMatches(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		DiscType: "BDMV",
 		SelectedBDMVPlaylists: []api.PlaylistInfo{
 			{File: "00001.MPLS", Duration: 7200},
 			{File: "00002.MPLS", Duration: 7500},
 		},
-		ExternalMetadata: api.ExternalMetadata{
+		ProviderMetadata: api.SourceScopedMetadata{
 			IMDB: &api.IMDBMetadata{
 				EditionDetails: map[string]api.IMDBEditionDetail{
-					"120": {DisplayName: "2h", Seconds: 7200, Minutes: 120},
-					"125": {DisplayName: "2h 5m", Seconds: 7500, Minutes: 125, Attributes: []string{"Extended"}},
+					"120": {
+						DisplayName: "2h",
+						Seconds:     7200,
+						Minutes:     120,
+					},
+					"125": {
+						DisplayName: "2h 5m",
+						Seconds:     7500,
+						Minutes:     125,
+						Attributes:  []string{"Extended"},
+					},
 				},
 			},
 		},
@@ -41,17 +94,56 @@ func TestEditionFromMetaMultiPlaylistAggregatesIMDbMatches(t *testing.T) {
 	}
 }
 
+func TestRebuildReleaseNamePersistsGeneratedEpisodeVariants(t *testing.T) {
+	t.Parallel()
+
+	meta := preparationstate.State{
+		Identity:     api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+		Type:         "WEBDL",
+		Source:       "WEB",
+		Service:      "EXM",
+		Audio:        "AAC 2.0",
+		VideoEncode:  "H.264",
+		Tag:          "-GRP",
+		SeasonInt:    1,
+		EpisodeInt:   2,
+		SeasonStr:    "S01",
+		EpisodeStr:   "E02",
+		EpisodeTitle: "Example Episode",
+		Release: api.ReleaseInfo{
+			Title:      "Example Show",
+			Resolution: "1080p",
+		},
+	}
+
+	RebuildReleaseName(&meta, api.NopLogger{})
+
+	included := meta.GeneratedReleaseNames.IncludeEpisodeTitle
+	omitted := meta.GeneratedReleaseNames.OmitEpisodeTitle
+	if meta.ReleaseName != included.Name || included.Name == omitted.Name {
+		t.Fatalf("generated release names = current %q variants %#v", meta.ReleaseName, meta.GeneratedReleaseNames)
+	}
+	if !strings.Contains(included.Name, "Example Episode") || strings.Contains(omitted.Name, "Example Episode") {
+		t.Fatalf("generated episode variants = %#v", meta.GeneratedReleaseNames)
+	}
+}
+
 func TestEditionFromMetaMultiPlaylistDeduplicatesMatches(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		DiscType: "BDMV",
 		SelectedBDMVPlaylists: []api.PlaylistInfo{
 			{File: "00001.MPLS", Duration: 7200},
 			{File: "00002.MPLS", Duration: 7205},
 		},
-		ExternalMetadata: api.ExternalMetadata{
+		ProviderMetadata: api.SourceScopedMetadata{
 			IMDB: &api.IMDBMetadata{
 				EditionDetails: map[string]api.IMDBEditionDetail{
-					"120": {DisplayName: "2h", Seconds: 7200, Minutes: 120, Attributes: []string{"Director's Cut"}},
+					"120": {
+						DisplayName: "2h",
+						Seconds:     7200,
+						Minutes:     120,
+						Attributes:  []string{"Director's Cut"},
+					},
 				},
 			},
 		},
@@ -64,17 +156,27 @@ func TestEditionFromMetaMultiPlaylistDeduplicatesMatches(t *testing.T) {
 }
 
 func TestEditionFromMetaMultiPlaylistTieBreaksEqualRuntimeMatches(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		DiscType: "BDMV",
 		SelectedBDMVPlaylists: []api.PlaylistInfo{
 			{File: "00001.MPLS", Duration: 7500},
 			{File: "00002.MPLS", Duration: 7500},
 		},
-		ExternalMetadata: api.ExternalMetadata{
+		ProviderMetadata: api.SourceScopedMetadata{
 			IMDB: &api.IMDBMetadata{
 				EditionDetails: map[string]api.IMDBEditionDetail{
-					"124": {DisplayName: "2h 4m 50s", Seconds: 7490, Minutes: 124, Attributes: []string{"extended cut"}},
-					"125": {DisplayName: "2h 5m 10s", Seconds: 7510, Minutes: 125, Attributes: []string{"director's cut"}},
+					"124": {
+						DisplayName: "2h 4m 50s",
+						Seconds:     7490,
+						Minutes:     124,
+						Attributes:  []string{"extended cut"},
+					},
+					"125": {
+						DisplayName: "2h 5m 10s",
+						Seconds:     7510,
+						Minutes:     125,
+						Attributes:  []string{"director's cut"},
+					},
 				},
 			},
 		},
@@ -87,7 +189,7 @@ func TestEditionFromMetaMultiPlaylistTieBreaksEqualRuntimeMatches(t *testing.T) 
 }
 
 func TestEditionFromMetaMultiPlaylistFallsBackWhenNoIMDbMatch(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		DiscType: "BDMV",
 		SelectedBDMVPlaylists: []api.PlaylistInfo{
 			{File: "00001.MPLS", Duration: 7200},
@@ -96,10 +198,15 @@ func TestEditionFromMetaMultiPlaylistFallsBackWhenNoIMDbMatch(t *testing.T) {
 		Release: api.ReleaseInfo{
 			Edition: []string{"Collector's", "Edition"},
 		},
-		ExternalMetadata: api.ExternalMetadata{
+		ProviderMetadata: api.SourceScopedMetadata{
 			IMDB: &api.IMDBMetadata{
 				EditionDetails: map[string]api.IMDBEditionDetail{
-					"90": {DisplayName: "1h 30m", Seconds: 5400, Minutes: 90, Attributes: []string{"Extended"}},
+					"90": {
+						DisplayName: "1h 30m",
+						Seconds:     5400,
+						Minutes:     90,
+						Attributes:  []string{"Extended"},
+					},
 				},
 			},
 		},
@@ -112,13 +219,22 @@ func TestEditionFromMetaMultiPlaylistFallsBackWhenNoIMDbMatch(t *testing.T) {
 }
 
 func TestEditionFromMetaMatchesIMDbRuntimeForSingleFile(t *testing.T) {
-	meta := api.PreparedMetadata{
-		ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
-		ExternalMetadata: api.ExternalMetadata{
+	meta := preparationstate.State{
+		Identity: api.ExternalIdentity{Category: "MOVIE"},
+		ProviderMetadata: api.SourceScopedMetadata{
 			IMDB: &api.IMDBMetadata{
 				EditionDetails: map[string]api.IMDBEditionDetail{
-					"100": {DisplayName: "1h 40m", Seconds: 6000, Minutes: 100},
-					"125": {DisplayName: "2h 5m", Seconds: 7500, Minutes: 125, Attributes: []string{"extended edition"}},
+					"100": {
+						DisplayName: "1h 40m",
+						Seconds:     6000,
+						Minutes:     100,
+					},
+					"125": {
+						DisplayName: "2h 5m",
+						Seconds:     7500,
+						Minutes:     125,
+						Attributes:  []string{"extended edition"},
+					},
 				},
 			},
 		},
@@ -135,13 +251,21 @@ func TestEditionFromMetaMatchesIMDbRuntimeForSingleFile(t *testing.T) {
 }
 
 func TestEditionFromMetaIgnoresIMDbRuntimeTheatricalOnlyForSingleFile(t *testing.T) {
-	meta := api.PreparedMetadata{
-		ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
-		ExternalMetadata: api.ExternalMetadata{
+	meta := preparationstate.State{
+		Identity: api.ExternalIdentity{Category: "MOVIE"},
+		ProviderMetadata: api.SourceScopedMetadata{
 			IMDB: &api.IMDBMetadata{
 				EditionDetails: map[string]api.IMDBEditionDetail{
-					"100": {DisplayName: "1h 40m", Seconds: 6000, Minutes: 100},
-					"125": {DisplayName: "2h 5m", Seconds: 7500, Minutes: 125},
+					"100": {
+						DisplayName: "1h 40m",
+						Seconds:     6000,
+						Minutes:     100,
+					},
+					"125": {
+						DisplayName: "2h 5m",
+						Seconds:     7500,
+						Minutes:     125,
+					},
 				},
 			},
 		},
@@ -155,13 +279,23 @@ func TestEditionFromMetaIgnoresIMDbRuntimeTheatricalOnlyForSingleFile(t *testing
 }
 
 func TestEditionFromMetaChoosesClosestIMDbRuntimeForSingleFile(t *testing.T) {
-	meta := api.PreparedMetadata{
-		ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
-		ExternalMetadata: api.ExternalMetadata{
+	meta := preparationstate.State{
+		Identity: api.ExternalIdentity{Category: "MOVIE"},
+		ProviderMetadata: api.SourceScopedMetadata{
 			IMDB: &api.IMDBMetadata{
 				EditionDetails: map[string]api.IMDBEditionDetail{
-					"124": {DisplayName: "2h 4m", Seconds: 7440, Minutes: 124, Attributes: []string{"director's cut"}},
-					"125": {DisplayName: "2h 5m", Seconds: 7500, Minutes: 125, Attributes: []string{"extended cut"}},
+					"124": {
+						DisplayName: "2h 4m",
+						Seconds:     7440,
+						Minutes:     124,
+						Attributes:  []string{"director's cut"},
+					},
+					"125": {
+						DisplayName: "2h 5m",
+						Seconds:     7500,
+						Minutes:     125,
+						Attributes:  []string{"extended cut"},
+					},
 				},
 			},
 		},
@@ -175,13 +309,22 @@ func TestEditionFromMetaChoosesClosestIMDbRuntimeForSingleFile(t *testing.T) {
 }
 
 func TestEditionFromMetaSuppressesEditionWhenCloserIMDbRuntimeIsTheatrical(t *testing.T) {
-	meta := api.PreparedMetadata{
-		ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
-		ExternalMetadata: api.ExternalMetadata{
+	meta := preparationstate.State{
+		Identity: api.ExternalIdentity{Category: "MOVIE"},
+		ProviderMetadata: api.SourceScopedMetadata{
 			IMDB: &api.IMDBMetadata{
 				EditionDetails: map[string]api.IMDBEditionDetail{
-					"124": {DisplayName: "2h 4m", Seconds: 7440, Minutes: 124, Attributes: []string{"director's cut"}},
-					"125": {DisplayName: "2h 5m", Seconds: 7500, Minutes: 125},
+					"124": {
+						DisplayName: "2h 4m",
+						Seconds:     7440,
+						Minutes:     124,
+						Attributes:  []string{"director's cut"},
+					},
+					"125": {
+						DisplayName: "2h 5m",
+						Seconds:     7500,
+						Minutes:     125,
+					},
 				},
 			},
 		},
@@ -196,15 +339,24 @@ func TestEditionFromMetaSuppressesEditionWhenCloserIMDbRuntimeIsTheatrical(t *te
 
 func TestEditionFromMetaSkipsIMDbRuntimeWhenManualEditionOverridePresent(t *testing.T) {
 	manual := "Hybrid"
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		ReleaseNameOverrides: api.ReleaseNameOverrides{Edition: &manual},
 		Release:              api.ReleaseInfo{Edition: []string{"Collector's", "Edition"}},
-		ExternalIDs:          api.ExternalIDs{Category: "MOVIE"},
-		ExternalMetadata: api.ExternalMetadata{
+		Identity:             api.ExternalIdentity{Category: "MOVIE"},
+		ProviderMetadata: api.SourceScopedMetadata{
 			IMDB: &api.IMDBMetadata{
 				EditionDetails: map[string]api.IMDBEditionDetail{
-					"100": {DisplayName: "1h 40m", Seconds: 6000, Minutes: 100},
-					"125": {DisplayName: "2h 5m", Seconds: 7500, Minutes: 125, Attributes: []string{"extended"}},
+					"100": {
+						DisplayName: "1h 40m",
+						Seconds:     6000,
+						Minutes:     100,
+					},
+					"125": {
+						DisplayName: "2h 5m",
+						Seconds:     7500,
+						Minutes:     125,
+						Attributes:  []string{"extended"},
+					},
 				},
 			},
 		},
@@ -219,16 +371,25 @@ func TestEditionFromMetaSkipsIMDbRuntimeWhenManualEditionOverridePresent(t *test
 
 func TestEditionFromMetaSkipsIMDbRuntimeWhenNoEditionOverridePresent(t *testing.T) {
 	noEdition := true
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		ReleaseNameOverrides: api.ReleaseNameOverrides{NoEdition: &noEdition},
 		Edition:              "IMAX",
 		Release:              api.ReleaseInfo{Edition: []string{"Collector's", "Edition"}},
-		ExternalIDs:          api.ExternalIDs{Category: "MOVIE"},
-		ExternalMetadata: api.ExternalMetadata{
+		Identity:             api.ExternalIdentity{Category: "MOVIE"},
+		ProviderMetadata: api.SourceScopedMetadata{
 			IMDB: &api.IMDBMetadata{
 				EditionDetails: map[string]api.IMDBEditionDetail{
-					"100": {DisplayName: "1h 40m", Seconds: 6000, Minutes: 100},
-					"125": {DisplayName: "2h 5m", Seconds: 7500, Minutes: 125, Attributes: []string{"extended"}},
+					"100": {
+						DisplayName: "1h 40m",
+						Seconds:     6000,
+						Minutes:     100,
+					},
+					"125": {
+						DisplayName: "2h 5m",
+						Seconds:     7500,
+						Minutes:     125,
+						Attributes:  []string{"extended"},
+					},
 				},
 			},
 		},
@@ -243,14 +404,23 @@ func TestEditionFromMetaSkipsIMDbRuntimeWhenNoEditionOverridePresent(t *testing.
 
 func TestEditionFromMetaSkipsIMDbRuntimeWhenAnimeOverridePresent(t *testing.T) {
 	anime := true
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		MetadataOverrides: api.MetadataOverrides{Anime: &anime},
-		ExternalIDs:       api.ExternalIDs{Category: "MOVIE"},
-		ExternalMetadata: api.ExternalMetadata{
+		Identity:          api.ExternalIdentity{Category: "MOVIE"},
+		ProviderMetadata: api.SourceScopedMetadata{
 			IMDB: &api.IMDBMetadata{
 				EditionDetails: map[string]api.IMDBEditionDetail{
-					"100": {DisplayName: "1h 40m", Seconds: 6000, Minutes: 100},
-					"125": {DisplayName: "2h 5m", Seconds: 7500, Minutes: 125, Attributes: []string{"extended"}},
+					"100": {
+						DisplayName: "1h 40m",
+						Seconds:     6000,
+						Minutes:     100,
+					},
+					"125": {
+						DisplayName: "2h 5m",
+						Seconds:     7500,
+						Minutes:     125,
+						Attributes:  []string{"extended"},
+					},
 				},
 			},
 		},
@@ -264,7 +434,7 @@ func TestEditionFromMetaSkipsIMDbRuntimeWhenAnimeOverridePresent(t *testing.T) {
 }
 
 func TestEditionFromMetaExtractsRepackAndCleansEdition(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		Release: api.ReleaseInfo{Edition: []string{"Limited", "Extended", "Edition", "REPACK2"}},
 	}
 
@@ -278,7 +448,7 @@ func TestEditionFromMetaExtractsRepackAndCleansEdition(t *testing.T) {
 }
 
 func TestEditionFromMetaDropsPunctuationOnlyEditionResidue(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		Release: api.ReleaseInfo{Edition: []string{"Limited.Edition", "Limited.Edition"}},
 	}
 
@@ -292,7 +462,7 @@ func TestEditionFromMetaDropsPunctuationOnlyEditionResidue(t *testing.T) {
 }
 
 func TestEditionFromMetaTrimsPunctuationAroundKeptEdition(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		Release: api.ReleaseInfo{Edition: []string{"Limited.Edition", "Extended.Edition"}},
 	}
 
@@ -303,7 +473,7 @@ func TestEditionFromMetaTrimsPunctuationAroundKeptEdition(t *testing.T) {
 }
 
 func TestEditionFromMetaStripsRepackAliasesFromEdition(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		Release: api.ReleaseInfo{Edition: []string{"Director's", "Cut", "V3"}},
 	}
 
@@ -351,7 +521,7 @@ func TestEditionFromMetaExtractsRepackFromSourcePath(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			edition, repack := editionFromMeta(api.PreparedMetadata{SourcePath: tc.path}, mediaInfoDoc{})
+			edition, repack := editionFromMeta(preparationstate.State{SourcePath: tc.path}, mediaInfoDoc{})
 			if edition != "" {
 				t.Fatalf("expected empty edition, got %q", edition)
 			}
@@ -400,13 +570,22 @@ func TestMediaDurationSecondsParsesMediaInfoDurationFormats(t *testing.T) {
 }
 
 func TestEditionFromMetaMatchesIMDbRuntimeFromDurationString(t *testing.T) {
-	meta := api.PreparedMetadata{
-		ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
-		ExternalMetadata: api.ExternalMetadata{
+	meta := preparationstate.State{
+		Identity: api.ExternalIdentity{Category: "MOVIE"},
+		ProviderMetadata: api.SourceScopedMetadata{
 			IMDB: &api.IMDBMetadata{
 				EditionDetails: map[string]api.IMDBEditionDetail{
-					"100": {DisplayName: "1h 40m", Seconds: 6000, Minutes: 100},
-					"125": {DisplayName: "2h 5m", Seconds: 7500, Minutes: 125, Attributes: []string{"extended"}},
+					"100": {
+						DisplayName: "1h 40m",
+						Seconds:     6000,
+						Minutes:     100,
+					},
+					"125": {
+						DisplayName: "2h 5m",
+						Seconds:     7500,
+						Minutes:     125,
+						Attributes:  []string{"extended"},
+					},
 				},
 			},
 		},
@@ -420,13 +599,22 @@ func TestEditionFromMetaMatchesIMDbRuntimeFromDurationString(t *testing.T) {
 }
 
 func TestEditionFromMetaPreservesIMDbEditionAttributeText(t *testing.T) {
-	meta := api.PreparedMetadata{
-		ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
-		ExternalMetadata: api.ExternalMetadata{
+	meta := preparationstate.State{
+		Identity: api.ExternalIdentity{Category: "MOVIE"},
+		ProviderMetadata: api.SourceScopedMetadata{
 			IMDB: &api.IMDBMetadata{
 				EditionDetails: map[string]api.IMDBEditionDetail{
-					"100": {DisplayName: "1h 40m", Seconds: 6000, Minutes: 100},
-					"125": {DisplayName: "2h 5m", Seconds: 7500, Minutes: 125, Attributes: []string{"IMAX", "remastered version"}},
+					"100": {
+						DisplayName: "1h 40m",
+						Seconds:     6000,
+						Minutes:     100,
+					},
+					"125": {
+						DisplayName: "2h 5m",
+						Seconds:     7500,
+						Minutes:     125,
+						Attributes:  []string{"IMAX", "remastered version"},
+					},
 				},
 			},
 		},
@@ -446,7 +634,7 @@ func TestSmartEditionWordHandlesUnicodeFirstRune(t *testing.T) {
 }
 
 func TestSourceAndTypeInfersWebDLFromParsedRelease(t *testing.T) {
-	source, typeValue := sourceAndType(api.PreparedMetadata{
+	source, typeValue := sourceAndType(preparationstate.State{
 		SourcePath: "Movie.2026.1080p.WEB-DL.DDP5.1.H.264-GRP.mkv",
 		Release: api.ReleaseInfo{
 			Source: "Web",
@@ -463,7 +651,7 @@ func TestSourceAndTypeInfersWebDLFromParsedRelease(t *testing.T) {
 }
 
 func TestSourceAndTypeBareWebEncodeDefaultsToWebDL(t *testing.T) {
-	source, typeValue := sourceAndType(api.PreparedMetadata{
+	source, typeValue := sourceAndType(preparationstate.State{
 		SourcePath: "Movie.2026.HDR.2160p.WEB.h265-GRP.mkv",
 		Release: api.ReleaseInfo{
 			Source: "WEB",
@@ -480,7 +668,7 @@ func TestSourceAndTypeBareWebEncodeDefaultsToWebDL(t *testing.T) {
 }
 
 func TestSourceAndTypeBareWebMissingTypeDefaultsToWebDL(t *testing.T) {
-	source, typeValue := sourceAndType(api.PreparedMetadata{
+	source, typeValue := sourceAndType(preparationstate.State{
 		SourcePath: "Movie.2026.HDR.2160p.WEB.h265-GRP.mkv",
 		Release: api.ReleaseInfo{
 			Source: "WEB",
@@ -495,14 +683,71 @@ func TestSourceAndTypeBareWebMissingTypeDefaultsToWebDL(t *testing.T) {
 	}
 }
 
-func TestApplyMediaDetailsFallsBackToFilenameHDRWhenMediaInfoHasNoHDR(t *testing.T) {
+func TestDeriveMediaFactsFoldsValueInstructionsIntoFactsAndName(t *testing.T) {
+	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+	meta, err := svc.deriveMediaFacts(context.Background(), preparationstate.State{
+		SourcePath: "Example.Movie.2026.1080p.WEB.H.264-GRP.mkv",
+		Release: api.ReleaseInfo{
+			Category:   "movie",
+			Title:      "Example Movie",
+			Year:       2026,
+			Resolution: "1080p",
+			Source:     "Web",
+			Type:       "ENCODE",
+			Group:      "GRP",
+		},
+		Tag: "-GRP",
+		ReleaseNameOverrides: api.ReleaseNameOverrides{
+			Type:       new("REMUX"),
+			Source:     new("BluRay"),
+			Resolution: new("2160p"),
+			Edition:    new("Extended"),
+			ManualYear: new(2027),
+			Tag:        new("OTHER"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("derive media facts: %v", err)
+	}
+	if meta.Type != "REMUX" || meta.Release.Type != "REMUX" {
+		t.Fatalf("type facts = %q/%q", meta.Type, meta.Release.Type)
+	}
+	if meta.Source != "BluRay" || meta.Release.Source != "BluRay" {
+		t.Fatalf("source facts = %q/%q", meta.Source, meta.Release.Source)
+	}
+	if meta.Release.Resolution != "2160p" {
+		t.Fatalf("resolution fact = %q", meta.Release.Resolution)
+	}
+	if meta.Edition != "Extended" {
+		t.Fatalf("edition fact = %q", meta.Edition)
+	}
+	if meta.Release.Year != 2027 {
+		t.Fatalf("year fact = %d", meta.Release.Year)
+	}
+	if meta.Tag != "-OTHER" || meta.Release.Group != "OTHER" {
+		t.Fatalf("tag facts = %q/%q", meta.Tag, meta.Release.Group)
+	}
+	for _, token := range []string{"2027", "2160p", "Extended", "BluRay REMUX"} {
+		if !strings.Contains(meta.ReleaseName, token) {
+			t.Fatalf("expected rebuilt name to include %q, got %q", token, meta.ReleaseName)
+		}
+	}
+	if !strings.HasSuffix(meta.ReleaseName, "-OTHER") {
+		t.Fatalf("expected rebuilt name to end with corrected tag, got %q", meta.ReleaseName)
+	}
+	if strings.HasSuffix(meta.ReleaseNameNoTag, "-OTHER") {
+		t.Fatalf("expected no tag in tagless name, got %q", meta.ReleaseNameNoTag)
+	}
+}
+
+func TestApplyMediaDetailsTreatsUsableMediaInfoWithoutHDRAsSDR(t *testing.T) {
 	miPath := filepath.Join(t.TempDir(), "mediainfo.json")
 	if err := os.WriteFile(miPath, []byte(`{"media":{"track":[{"@type":"General"},{"@type":"Video","Format":"HEVC","Width":"3840","Height":"2160"}]}}`), 0o600); err != nil {
 		t.Fatalf("write mediainfo: %v", err)
 	}
 
 	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
-	meta, err := svc.ApplyMediaDetails(context.Background(), api.PreparedMetadata{
+	meta, err := svc.deriveMediaFacts(context.Background(), preparationstate.State{
 		SourcePath:        "Movie.2026.[DV].HDR10+.HLG.2160p.WEB-DL.H.265-GRP.mkv",
 		MediaInfoJSONPath: miPath,
 		Release:           api.ReleaseInfo{HDR: []string{"HDR"}, Resolution: "2160p"},
@@ -510,11 +755,15 @@ func TestApplyMediaDetailsFallsBackToFilenameHDRWhenMediaInfoHasNoHDR(t *testing
 	if err != nil {
 		t.Fatalf("apply media details: %v", err)
 	}
-	if meta.HDR != "DV HDR10+ HLG" {
-		t.Fatalf("expected filename HDR fallback, got %q", meta.HDR)
+	if meta.HDR != "" {
+		t.Fatalf("expected confirmed SDR display, got %q", meta.HDR)
 	}
-	if !strings.Contains(meta.ReleaseName, "DV HDR10+ HLG") {
-		t.Fatalf("expected rebuilt release name to include filename HDR, got %q", meta.ReleaseName)
+	if meta.HDRFacts.Origin != api.HDREvidenceMediaInfo || meta.HDRFacts.Status != api.HDREvidenceContradictory ||
+		!slices.Equal(meta.HDRFacts.Formats, []api.HDRFormat{api.HDRFormatSDR}) {
+		t.Fatalf("unexpected structured SDR facts: %#v", meta.HDRFacts)
+	}
+	if strings.Contains(meta.ReleaseName, "DV HDR10+ HLG") {
+		t.Fatalf("expected authoritative SDR to suppress filename HDR, got %q", meta.ReleaseName)
 	}
 }
 
@@ -524,7 +773,7 @@ func TestHDRFromMediaPrefersMediaInfoOverFilenameHDR(t *testing.T) {
 		t.Fatalf("parse mediainfo: %v", err)
 	}
 
-	got := hdrFromMedia(doc, nil, api.PreparedMetadata{
+	got := hdrFromMedia(doc, nil, preparationstate.State{
 		SourcePath: "Movie.2026.DV.HDR.2160p.WEB-DL.H.265-GRP.mkv",
 	})
 	if got != "HDR10+" {
@@ -538,9 +787,9 @@ func TestHDRFromMediaNormalizesPQTransferToHDR(t *testing.T) {
 		t.Fatalf("parse mediainfo: %v", err)
 	}
 
-	got := hdrFromMedia(doc, nil, api.PreparedMetadata{})
-	if got != "HDR" {
-		t.Fatalf("expected PQ transfer to normalize to HDR, got %q", got)
+	got := hdrFromMedia(doc, nil, preparationstate.State{})
+	if got != "PQ10" {
+		t.Fatalf("expected PQ transfer to preserve PQ10, got %q", got)
 	}
 }
 
@@ -550,9 +799,44 @@ func TestHDRFromMediaDetectsDolbyVisionHDR10Compatibility(t *testing.T) {
 		t.Fatalf("parse mediainfo: %v", err)
 	}
 
-	got := hdrFromMedia(doc, nil, api.PreparedMetadata{})
+	got := hdrFromMedia(doc, nil, preparationstate.State{})
 	if got != "DV HDR" {
 		t.Fatalf("expected Dolby Vision HDR10 compatibility to normalize to DV HDR, got %q", got)
+	}
+	facts := hdrFactsFromMedia(doc, nil, preparationstate.State{})
+	if facts.DolbyVisionProfile != "8.1" ||
+		!slices.Equal(facts.Formats, []api.HDRFormat{api.HDRFormatDolbyVision, api.HDRFormatHDR10}) {
+		t.Fatalf("unexpected Dolby Vision HDR10 facts: %#v", facts)
+	}
+}
+
+func TestHDRFromMediaDoesNotTreatOmittedFallbackAsContradiction(t *testing.T) {
+	doc, err := loadMediaInfoDocFromJSONPayload(`{"media":{"track":[{"@type":"General"},{"@type":"Video","HDR_Format_String":"Dolby Vision, Profile 8.1, HDR10 compatible"}]}}`)
+	if err != nil {
+		t.Fatalf("parse mediainfo: %v", err)
+	}
+
+	facts := hdrFactsFromMedia(doc, nil, preparationstate.State{
+		SourcePath: "Example.Release.2026.DV.2160p.WEB-DL.H.265-GRP.mkv",
+	})
+	if facts.Status != api.HDREvidenceComplete ||
+		!slices.Equal(facts.Formats, []api.HDRFormat{api.HDRFormatDolbyVision, api.HDRFormatHDR10}) {
+		t.Fatalf("omitted filename fallback facts = %#v", facts)
+	}
+}
+
+func TestHDRFromMediaRetainsContradictionWhenFilenameAddsUnsupportedFallback(t *testing.T) {
+	doc, err := loadMediaInfoDocFromJSONPayload(`{"media":{"track":[{"@type":"General"},{"@type":"Video","HDR_Format_String":"Dolby Vision, Profile 5"}]}}`)
+	if err != nil {
+		t.Fatalf("parse mediainfo: %v", err)
+	}
+
+	facts := hdrFactsFromMedia(doc, nil, preparationstate.State{
+		SourcePath: "Example.Release.2026.DV.HDR.2160p.WEB-DL.H.265-GRP.mkv",
+	})
+	if facts.Status != api.HDREvidenceContradictory ||
+		!slices.Equal(facts.Formats, []api.HDRFormat{api.HDRFormatDolbyVision}) {
+		t.Fatalf("unsupported filename fallback facts = %#v", facts)
 	}
 }
 
@@ -562,7 +846,7 @@ func TestHDRFromMediaDetectsDolbyVisionHDR10PlusCompatibility(t *testing.T) {
 		t.Fatalf("parse mediainfo: %v", err)
 	}
 
-	got := hdrFromMedia(doc, nil, api.PreparedMetadata{})
+	got := hdrFromMedia(doc, nil, preparationstate.State{})
 	if got != "DV HDR10+" {
 		t.Fatalf("expected Dolby Vision HDR10+ compatibility to normalize to DV HDR10+, got %q", got)
 	}
@@ -574,9 +858,12 @@ func TestHDRFromMediaDetectsDolbyVisionOnly(t *testing.T) {
 		t.Fatalf("parse mediainfo: %v", err)
 	}
 
-	got := hdrFromMedia(doc, nil, api.PreparedMetadata{})
+	got := hdrFromMedia(doc, nil, preparationstate.State{})
 	if got != "DV" {
 		t.Fatalf("expected Dolby Vision metadata to normalize to DV, got %q", got)
+	}
+	if facts := hdrFactsFromMedia(doc, nil, preparationstate.State{}); facts.DolbyVisionProfile != "5" {
+		t.Fatalf("expected Dolby Vision profile 5, got %#v", facts)
 	}
 }
 
@@ -586,7 +873,7 @@ func TestHDRFromMediaDetectsSMPTE2094AsHDR(t *testing.T) {
 		t.Fatalf("parse mediainfo: %v", err)
 	}
 
-	got := hdrFromMedia(doc, nil, api.PreparedMetadata{})
+	got := hdrFromMedia(doc, nil, preparationstate.State{})
 	if got != "HDR" {
 		t.Fatalf("expected SMPTE ST 2094 metadata to normalize to HDR, got %q", got)
 	}
@@ -598,7 +885,7 @@ func TestHDRFromMediaDetectsHLGFormat(t *testing.T) {
 		t.Fatalf("parse mediainfo: %v", err)
 	}
 
-	got := hdrFromMedia(doc, nil, api.PreparedMetadata{})
+	got := hdrFromMedia(doc, nil, preparationstate.State{})
 	if got != "HLG" {
 		t.Fatalf("expected HLG format metadata to normalize to HLG, got %q", got)
 	}
@@ -610,7 +897,7 @@ func TestHDRFromMediaDetectsHLGTransfer(t *testing.T) {
 		t.Fatalf("parse mediainfo: %v", err)
 	}
 
-	got := hdrFromMedia(doc, nil, api.PreparedMetadata{})
+	got := hdrFromMedia(doc, nil, preparationstate.State{})
 	if got != "HLG" {
 		t.Fatalf("expected HLG transfer metadata to normalize to HLG, got %q", got)
 	}
@@ -622,9 +909,38 @@ func TestHDRFromMediaDetectsBT2020TransferAsWCG(t *testing.T) {
 		t.Fatalf("parse mediainfo: %v", err)
 	}
 
-	got := hdrFromMedia(doc, nil, api.PreparedMetadata{})
+	got := hdrFromMedia(doc, nil, preparationstate.State{})
 	if got != "WCG" {
 		t.Fatalf("expected BT.2020 transfer metadata to normalize to WCG, got %q", got)
+	}
+}
+
+func TestHDRFromMediaDetectsBT2020PrimariesAsWCG(t *testing.T) {
+	doc, err := loadMediaInfoDocFromJSONPayload(
+		`{"media":{"track":[{"@type":"General"},{"@type":"Video","Format":"HEVC","colour_primaries":"BT.2020"}]}}`,
+	)
+	if err != nil {
+		t.Fatalf("parse mediainfo: %v", err)
+	}
+
+	facts := hdrFactsFromMedia(doc, nil, preparationstate.State{})
+	if !slices.Equal(facts.Formats, []api.HDRFormat{api.HDRFormatWCG}) || facts.Origin != api.HDREvidenceMediaInfo {
+		t.Fatalf("expected WCG MediaInfo facts, got %#v", facts)
+	}
+}
+
+func TestHDRFromMediaFallsBackWhenVideoTrackHasNoUsableFields(t *testing.T) {
+	doc, err := loadMediaInfoDocFromJSONPayload(`{"media":{"track":[{"@type":"General"},{"@type":"Video"}]}}`)
+	if err != nil {
+		t.Fatalf("parse mediainfo: %v", err)
+	}
+
+	facts := hdrFactsFromMedia(doc, nil, preparationstate.State{
+		SourcePath: "Example.Release.2026.DV.HDR10+.2160p.WEB-DL.H.265-GRP.mkv",
+	})
+	if facts.Origin != api.HDREvidenceContentFilename || facts.Status != api.HDREvidencePartial ||
+		!slices.Equal(facts.Formats, []api.HDRFormat{api.HDRFormatDolbyVision, api.HDRFormatHDR10Plus}) {
+		t.Fatalf("expected filename fallback facts, got %#v", facts)
 	}
 }
 
@@ -634,7 +950,7 @@ func TestHDRFromMediaPrefersBDInfoOverFilenameHDR(t *testing.T) {
 			{HDRDV: "HDR10+"},
 			{HDRDV: "Dolby Vision"},
 		},
-	}, api.PreparedMetadata{
+	}, preparationstate.State{
 		SourcePath: "Movie.2026.HDR.2160p.BluRay-GRP",
 	})
 	if got != "DV HDR10+" {
@@ -642,30 +958,43 @@ func TestHDRFromMediaPrefersBDInfoOverFilenameHDR(t *testing.T) {
 	}
 }
 
+func TestHDRFromMediaPreservesCombinedBDInfoDVAndHDR10Plus(t *testing.T) {
+	facts := hdrFactsFromMedia(mediaInfoDoc{}, &discparse.BDInfo{
+		Video: []discparse.BDVideo{{
+			HDRDV:   "Dolby Vision / HDR10+",
+			Profile: "Profile 8.1",
+		}},
+	}, preparationstate.State{})
+	if facts.DolbyVisionProfile != "8.1" ||
+		!slices.Equal(facts.Formats, []api.HDRFormat{api.HDRFormatDolbyVision, api.HDRFormatHDR10Plus}) {
+		t.Fatalf("unexpected combined BDInfo facts: %#v", facts)
+	}
+}
+
 func TestFilenameHDRFromMetaNormalizesSafeTokens(t *testing.T) {
 	tests := []struct {
 		name string
-		meta api.PreparedMetadata
+		meta preparationstate.State
 		want string
 	}{
 		{
 			name: "dot bracket space tokens",
-			meta: api.PreparedMetadata{SourcePath: "Movie.2026.[DV].HDR10+.HLG.2160p.WEB-DL.H.265-GRP.mkv"},
+			meta: preparationstate.State{SourcePath: "Movie.2026.[DV].HDR10+.HLG.2160p.WEB-DL.H.265-GRP.mkv"},
 			want: "DV HDR10+ HLG",
 		},
 		{
 			name: "underscore separator",
-			meta: api.PreparedMetadata{SourcePath: "Movie_2026_HDR_2160p_WEB-DL_H265-GRP.mkv"},
+			meta: preparationstate.State{SourcePath: "Movie_2026_HDR_2160p_WEB-DL_H265-GRP.mkv"},
 			want: "HDR",
 		},
 		{
 			name: "hyphen separator",
-			meta: api.PreparedMetadata{SourcePath: "Movie-2026-HDR10-2160p-WEB-DL-H265-GRP.mkv"},
+			meta: preparationstate.State{SourcePath: "Movie-2026-HDR10-2160p-WEB-DL-H265-GRP.mkv"},
 			want: "HDR",
 		},
 		{
 			name: "source path tokens win over stale parsed release tokens",
-			meta: api.PreparedMetadata{
+			meta: preparationstate.State{
 				SourcePath: "Movie.2026.DV.HDR10+.2160p.WEB-DL.H265-GRP.mkv",
 				Release:    api.ReleaseInfo{HDR: []string{"HDR"}},
 			},
@@ -673,22 +1002,22 @@ func TestFilenameHDRFromMetaNormalizesSafeTokens(t *testing.T) {
 		},
 		{
 			name: "parsed release tokens fallback when source path has no hdr",
-			meta: api.PreparedMetadata{Release: api.ReleaseInfo{HDR: []string{"DV", "HDR10+", "SDR"}}},
+			meta: preparationstate.State{Release: api.ReleaseInfo{HDR: []string{"DV", "HDR10+", "SDR"}}},
 			want: "DV HDR10+",
 		},
 		{
 			name: "sdr token ignored",
-			meta: api.PreparedMetadata{SourcePath: "Movie.2026.SDR.2160p.WEB-DL.H.265-GRP.mkv"},
+			meta: preparationstate.State{SourcePath: "Movie.2026.SDR.2160p.WEB-DL.H.265-GRP.mkv"},
 			want: "",
 		},
 		{
 			name: "hdrip source ignored",
-			meta: api.PreparedMetadata{SourcePath: "Movie.2026.1080p.HDRip.H.264-GRP.mkv"},
+			meta: preparationstate.State{SourcePath: "Movie.2026.1080p.HDRip.H.264-GRP.mkv"},
 			want: "",
 		},
 		{
 			name: "group suffix ignored",
-			meta: api.PreparedMetadata{SourcePath: "Movie.2026.2160p.WEB-DL.H.265-GRP-HDR.mkv"},
+			meta: preparationstate.State{SourcePath: "Movie.2026.2160p.WEB-DL.H.265-GRP-HDR.mkv"},
 			want: "",
 		},
 	}
@@ -703,7 +1032,7 @@ func TestFilenameHDRFromMetaNormalizesSafeTokens(t *testing.T) {
 }
 
 func TestSourceAndTypeInfersRemuxWhenReleaseTypeMissing(t *testing.T) {
-	source, typeValue := sourceAndType(api.PreparedMetadata{
+	source, typeValue := sourceAndType(preparationstate.State{
 		SourcePath: "Movie.2026.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-GRP.mkv",
 		Release: api.ReleaseInfo{
 			Source: "BluRay",
@@ -718,10 +1047,43 @@ func TestSourceAndTypeInfersRemuxWhenReleaseTypeMissing(t *testing.T) {
 	}
 }
 
+func TestSourceAndTypeFinalizesBDRemuxAsBluRayRemux(t *testing.T) {
+	source, typeValue := sourceAndType(preparationstate.State{
+		SourcePath: "Example.Show.S01.2026.BDRemux.1080p",
+		Release:    api.ReleaseInfo{},
+	}, mediaInfoDoc{})
+
+	if source != "BluRay" {
+		t.Fatalf("expected BluRay source, got %q", source)
+	}
+	if typeValue != "REMUX" {
+		t.Fatalf("expected REMUX type, got %q", typeValue)
+	}
+}
+
+// The parser retains the rls-native "BDRiP" source spelling; media-fact
+// derivation must finalize the non-canonical value as BluRay.
+func TestSourceAndTypeFinalizesBDRipAsBluRayEncode(t *testing.T) {
+	source, typeValue := sourceAndType(preparationstate.State{
+		SourcePath: "Example.Show.S01.2026.BDRip.1080p.x265-GRP",
+		Release: api.ReleaseInfo{
+			Source: "BDRiP",
+			Type:   "ENCODE",
+		},
+	}, mediaInfoDoc{})
+
+	if source != "BluRay" {
+		t.Fatalf("expected BluRay source, got %q", source)
+	}
+	if typeValue != "ENCODE" {
+		t.Fatalf("expected ENCODE type, got %q", typeValue)
+	}
+}
+
 // Python get_type() falls back to "ENCODE" for any release that is not a disc
 // and does not match a known keyword. Verify Go does the same.
 func TestSourceAndTypeDefaultsToEncodeForUnknownRelease(t *testing.T) {
-	_, typeValue := sourceAndType(api.PreparedMetadata{
+	_, typeValue := sourceAndType(preparationstate.State{
 		SourcePath: "Some.Unknown.Movie.2026-GRP.mkv",
 		Release:    api.ReleaseInfo{},
 	}, mediaInfoDoc{})
@@ -735,7 +1097,7 @@ func TestSourceAndTypeEncodeDefaultNotAppliedForDiscs(t *testing.T) {
 	for _, discType := range []string{"BDMV", "DVD", "HDDVD"} {
 		t.Run(discType, func(t *testing.T) {
 			t.Parallel()
-			_, typeValue := sourceAndType(api.PreparedMetadata{
+			_, typeValue := sourceAndType(preparationstate.State{
 				DiscType:   discType,
 				SourcePath: "/media/disc",
 				Release:    api.ReleaseInfo{},
@@ -748,7 +1110,7 @@ func TestSourceAndTypeEncodeDefaultNotAppliedForDiscs(t *testing.T) {
 }
 
 func TestSourceAndTypeDefaultsDiscSourceForBDMV(t *testing.T) {
-	source, typeValue := sourceAndType(api.PreparedMetadata{
+	source, typeValue := sourceAndType(preparationstate.State{
 		DiscType:   "BDMV",
 		SourcePath: "/media/disc",
 		Release:    api.ReleaseInfo{},
@@ -765,7 +1127,7 @@ func TestSourceAndTypeDefaultsDiscSourceForBDMV(t *testing.T) {
 // Python get_uhd() does NOT include WEBRIP in the 2160p→UHD check.
 // Verify that a 2160p WEBRIP does not produce a UHD flag.
 func TestUHDFromMetaWEBRIP2160pNotUHD(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		Type: "WEBRIP",
 		Release: api.ReleaseInfo{
 			Resolution: "2160p",
@@ -777,7 +1139,7 @@ func TestUHDFromMetaWEBRIP2160pNotUHD(t *testing.T) {
 }
 
 func TestUHDFromMetaWEBDL2160pNotUHD(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		Type: "WEBDL",
 		Release: api.ReleaseInfo{
 			Resolution: "2160p",
@@ -789,7 +1151,7 @@ func TestUHDFromMetaWEBDL2160pNotUHD(t *testing.T) {
 }
 
 func TestUHDFromMetaBareWebEncode2160pNotUHD(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		Type:   "ENCODE",
 		Source: "WEB",
 		Release: api.ReleaseInfo{
@@ -803,7 +1165,7 @@ func TestUHDFromMetaBareWebEncode2160pNotUHD(t *testing.T) {
 }
 
 func TestUHDFromMetaENCODE2160pIsUHD(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		Type: "ENCODE",
 		Release: api.ReleaseInfo{
 			Resolution: "2160p",
@@ -815,7 +1177,7 @@ func TestUHDFromMetaENCODE2160pIsUHD(t *testing.T) {
 }
 
 func TestUHDFromMetaUHDInPath(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		Type:       "WEBRIP",
 		SourcePath: "/media/Movie.2160p.UHD.WEBRip-GRP.mkv",
 		Release: api.ReleaseInfo{
@@ -828,7 +1190,7 @@ func TestUHDFromMetaUHDInPath(t *testing.T) {
 }
 
 func TestUHDFromMetaUltraHDReleaseOther(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		Release: api.ReleaseInfo{
 			Other: []string{"Ultra HD"},
 		},
@@ -840,8 +1202,8 @@ func TestUHDFromMetaUltraHDReleaseOther(t *testing.T) {
 
 func TestAudioFromMediaAddsDualAudioForEnglishAndOriginalLanguage(t *testing.T) {
 	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","Language":"en","StreamOrder":"1"},{"@type":"Audio","Format":"AC-3","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","Language":"ja","StreamOrder":"2"}]}}`)
-	meta := api.PreparedMetadata{
-		ExternalMetadata: api.ExternalMetadata{
+	meta := preparationstate.State{
+		ProviderMetadata: api.SourceScopedMetadata{
 			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
 		},
 	}
@@ -856,8 +1218,8 @@ func TestAudioFromMediaAddsDualAudioForEnglishAndOriginalLanguage(t *testing.T) 
 
 func TestAudioFromMediaSkipsCommentaryTitleVariantsForDualAudio(t *testing.T) {
 	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"MLP FBA","Format_AdditionalFeatures":"16-ch","Channels":"8","ChannelLayout":"L R C LFE Ls Rs Lb Rb","Language":"en","StreamOrder":"1"},{"@type":"Audio","Format":"AC-3","Channels":"2","ChannelLayout":"L R","Language":"ja","StreamOrder":"2","Title_String":"Director Commentary"}]}}`)
-	meta := api.PreparedMetadata{
-		ExternalMetadata: api.ExternalMetadata{
+	meta := preparationstate.State{
+		ProviderMetadata: api.SourceScopedMetadata{
 			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
 		},
 	}
@@ -874,7 +1236,7 @@ func TestAudioFromMediaSkipsCommentaryTitleVariantsForDualAudio(t *testing.T) {
 func TestAudioFromMediaSkipsCompatibilityTitleStringForPrimaryAudio(t *testing.T) {
 	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Channels":"2","ChannelLayout":"L R","StreamOrder":"0","Title_String":"Compatibility Track"},{"@type":"Audio","Format":"MLP FBA","Format_AdditionalFeatures":"16-ch","Channels":"8","ChannelLayout":"L R C LFE Ls Rs Lb Rb","StreamOrder":"1"}]}}`)
 
-	audio, channels, commentary := audioFromMedia(api.PreparedMetadata{}, doc, nil)
+	audio, channels, commentary := audioFromMedia(preparationstate.State{}, doc, nil)
 	if audio != "TrueHD 7.1 Atmos" {
 		t.Fatalf("expected compatibility Title_String track to be ignored for primary audio, got %q", audio)
 	}
@@ -886,7 +1248,7 @@ func TestAudioFromMediaSkipsCompatibilityTitleStringForPrimaryAudio(t *testing.T
 func TestAudioFromMediaSkipsCommentaryTitleStringForPrimaryAudio(t *testing.T) {
 	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Channels":"2","ChannelLayout":"L R","StreamOrder":"0","Title_String":"Director Commentary"},{"@type":"Audio","Format":"MLP FBA","Format_AdditionalFeatures":"16-ch","Channels":"8","ChannelLayout":"L R C LFE Ls Rs Lb Rb","StreamOrder":"1"}]}}`)
 
-	audio, channels, commentary := audioFromMedia(api.PreparedMetadata{}, doc, nil)
+	audio, channels, commentary := audioFromMedia(preparationstate.State{}, doc, nil)
 	if audio != "TrueHD 7.1 Atmos" {
 		t.Fatalf("expected commentary Title_String track to be ignored for primary audio, got %q", audio)
 	}
@@ -898,7 +1260,7 @@ func TestAudioFromMediaSkipsCommentaryTitleStringForPrimaryAudio(t *testing.T) {
 func TestAudioFromMediaDetectsAuro3DFromPrimaryAudioTitle(t *testing.T) {
 	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Channels":"2","ChannelLayout":"L R","StreamOrder":"0","Title_String":"Compatibility Track"},{"@type":"Audio","Format":"DTS","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","StreamOrder":"1","Title_String":"Auro3D"}]}}`)
 
-	audio, channels, commentary := audioFromMedia(api.PreparedMetadata{}, doc, nil)
+	audio, channels, commentary := audioFromMedia(preparationstate.State{}, doc, nil)
 	if audio != "DTS 5.1 Auro3D" {
 		t.Fatalf("expected selected primary audio title to drive Auro3D marker, got %q", audio)
 	}
@@ -909,8 +1271,8 @@ func TestAudioFromMediaDetectsAuro3DFromPrimaryAudioTitle(t *testing.T) {
 
 func TestAudioFromMediaAddsDubbedWhenOnlyEnglishTrackPresent(t *testing.T) {
 	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","Language":"en","StreamOrder":"1"}]}}`)
-	meta := api.PreparedMetadata{
-		ExternalMetadata: api.ExternalMetadata{
+	meta := preparationstate.State{
+		ProviderMetadata: api.SourceScopedMetadata{
 			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
 		},
 	}
@@ -922,9 +1284,9 @@ func TestAudioFromMediaAddsDubbedWhenOnlyEnglishTrackPresent(t *testing.T) {
 
 func TestAudioFromMediaSkipsLanguagePrefixForDiscs(t *testing.T) {
 	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","Language":"en","StreamOrder":"1"},{"@type":"Audio","Format":"AC-3","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","Language":"ja","StreamOrder":"2"}]}}`)
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		DiscType: "BDMV",
-		ExternalMetadata: api.ExternalMetadata{
+		ProviderMetadata: api.SourceScopedMetadata{
 			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
 		},
 	}
@@ -935,9 +1297,9 @@ func TestAudioFromMediaSkipsLanguagePrefixForDiscs(t *testing.T) {
 }
 
 func TestApplyAudioLanguagePrefixFiltersCommentaryAndCompatibilityEntries(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		AudioLanguages: []string{"English Commentary", "Compatibility Track", "Japanese"},
-		ExternalMetadata: api.ExternalMetadata{
+		ProviderMetadata: api.SourceScopedMetadata{
 			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
 		},
 	}
@@ -950,7 +1312,7 @@ func TestApplyAudioLanguagePrefixFiltersCommentaryAndCompatibilityEntries(t *tes
 
 func TestAudioFromMediaAddsEXFormatSetting(t *testing.T) {
 	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Format_Settings":"Dolby Surround EX","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","StreamOrder":"1"}]}}`)
-	audio, _, _ := audioFromMedia(api.PreparedMetadata{}, doc, nil)
+	audio, _, _ := audioFromMedia(preparationstate.State{}, doc, nil)
 	if audio != "DD EX 5.1" {
 		t.Fatalf("expected DD EX 5.1, got %q", audio)
 	}
@@ -958,7 +1320,7 @@ func TestAudioFromMediaAddsEXFormatSetting(t *testing.T) {
 
 func TestAudioFromMediaUsesCodecIDWhenFormatIsGenericAudio(t *testing.T) {
 	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"Audio","CodecID":"A_VORBIS","Channels":"2","StreamOrder":"1"}]}}`)
-	audio, channels, _ := audioFromMedia(api.PreparedMetadata{}, doc, nil)
+	audio, channels, _ := audioFromMedia(preparationstate.State{}, doc, nil)
 	if audio != "VORBIS 2.0" {
 		t.Fatalf("expected VORBIS 2.0, got %q", audio)
 	}
@@ -969,7 +1331,7 @@ func TestAudioFromMediaUsesCodecIDWhenFormatIsGenericAudio(t *testing.T) {
 
 func TestAudioFromMediaKeepsGenericFormatWhenCodecIDUnknown(t *testing.T) {
 	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"Audio","CodecID":"A_UNKNOWN","Channels":"2","StreamOrder":"1"}]}}`)
-	audio, channels, _ := audioFromMedia(api.PreparedMetadata{}, doc, nil)
+	audio, channels, _ := audioFromMedia(preparationstate.State{}, doc, nil)
 	if audio != "Audio 2.0" {
 		t.Fatalf("expected Audio 2.0, got %q", audio)
 	}
@@ -978,253 +1340,9 @@ func TestAudioFromMediaKeepsGenericFormatWhenCodecIDUnknown(t *testing.T) {
 	}
 }
 
-func TestRemoveTrackerBlockReasonDoesNotMutateInput(t *testing.T) {
-	original := []api.TrackerBlockReason{api.TrackerBlockReasonAudio, api.TrackerBlockReasonClaim}
-	blocked := map[string][]api.TrackerBlockReason{
-		"AITHER": append([]api.TrackerBlockReason{}, original...),
-	}
-
-	filtered := removeTrackerBlockReason(blocked, api.TrackerBlockReasonAudio)
-
-	if got := blocked["AITHER"]; len(got) != len(original) || got[0] != original[0] || got[1] != original[1] {
-		t.Fatalf("expected input blocked map to remain unchanged, got %#v", blocked)
-	}
-	if got := filtered["AITHER"]; len(got) != 1 || got[0] != api.TrackerBlockReasonClaim {
-		t.Fatalf("expected filtered map to keep only claim block, got %#v", filtered)
-	}
-}
-
-func TestRefreshPreparedMetadataPreservesNonRequestScopedFailures(t *testing.T) {
-	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
-	meta := api.PreparedMetadata{
-		BlockedTrackers: map[string][]api.TrackerBlockReason{
-			"AITHER": {api.TrackerBlockReasonAudio, api.TrackerBlockReasonClaim},
-		},
-		TrackerRuleFailures: map[string][]api.RuleFailure{
-			"AITHER": {
-				{Rule: "audio_bloat", Reason: "audio languages French may be considered bloated"},
-				{Rule: trackerClaimRuleActive, Reason: "AITHER has an active claim for this release"},
-				{Rule: "language_rule", Reason: "missing original language coverage"},
-			},
-			"ANT": {
-				{Rule: "require_movie_only", Reason: "category tv is not movie"},
-			},
-		},
-	}
-
-	refreshed, err := svc.RefreshPreparedMetadata(context.Background(), meta)
-	if err != nil {
-		t.Fatalf("refresh prepared metadata: %v", err)
-	}
-	if refreshed.BlockedTrackers != nil {
-		t.Fatalf("expected request-scoped tracker blocks cleared, got %#v", refreshed.BlockedTrackers)
-	}
-	if failures := refreshed.TrackerRuleFailures["AITHER"]; len(failures) != 1 || failures[0].Rule != "language_rule" {
-		t.Fatalf("expected only non-request-scoped AITHER failure preserved, got %#v", refreshed.TrackerRuleFailures)
-	}
-	if failures := refreshed.TrackerRuleFailures["ANT"]; len(failures) != 1 || failures[0].Rule != "require_movie_only" {
-		t.Fatalf("expected unrelated ANT failure preserved, got %#v", refreshed.TrackerRuleFailures)
-	}
-	for tracker, failures := range refreshed.TrackerRuleFailures {
-		for _, failure := range failures {
-			if failure.Rule == "audio_bloat" || failure.Rule == trackerClaimRuleActive {
-				t.Fatalf("did not expect request-scoped failure %q for %s after refresh: %#v", failure.Rule, tracker, refreshed.TrackerRuleFailures)
-			}
-		}
-	}
-}
-
-func TestRefreshPreparedMetadataRefreshesFilenameHDRFromCurrentSourcePath(t *testing.T) {
-	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
-	meta := api.PreparedMetadata{
-		SourcePath: "Movie.2026.DV.HDR10+.2160p.WEB-DL.H.265-GRP.mkv",
-		Source:     "Web",
-		Type:       "WEBDL",
-		VideoCodec: "H.265",
-		HDR:        "HDR",
-		Release: api.ReleaseInfo{
-			Title:      "Movie",
-			Year:       2026,
-			Resolution: "2160p",
-			HDR:        []string{"HDR"},
-		},
-	}
-
-	refreshed, err := svc.RefreshPreparedMetadata(context.Background(), meta)
-	if err != nil {
-		t.Fatalf("refresh prepared metadata: %v", err)
-	}
-	if refreshed.HDR != "DV HDR10+" {
-		t.Fatalf("expected current source path HDR, got %q", refreshed.HDR)
-	}
-	if !strings.Contains(refreshed.ReleaseName, "DV HDR10+") {
-		t.Fatalf("expected refreshed release name to include current source path HDR, got %q", refreshed.ReleaseName)
-	}
-}
-
-func TestRefreshPreparedMetadataKeepsDistinctMediaHDR(t *testing.T) {
-	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
-	meta := api.PreparedMetadata{
-		SourcePath: "Movie.2026.DV.2160p.WEB-DL.H.265-GRP.mkv",
-		Source:     "Web",
-		Type:       "WEBDL",
-		VideoCodec: "H.265",
-		HDR:        "HDR10+",
-		Release: api.ReleaseInfo{
-			Title:      "Movie",
-			Year:       2026,
-			Resolution: "2160p",
-			HDR:        []string{"HDR"},
-		},
-	}
-
-	refreshed, err := svc.RefreshPreparedMetadata(context.Background(), meta)
-	if err != nil {
-		t.Fatalf("refresh prepared metadata: %v", err)
-	}
-	if refreshed.HDR != "HDR10+" {
-		t.Fatalf("expected distinct media HDR to remain, got %q", refreshed.HDR)
-	}
-}
-
-func TestRefreshPreparedMetadataClearsResolvedRuleFailures(t *testing.T) {
-	repo := &fakeRepo{}
-	svc := NewService(repo, WithConfig(config.Config{}))
-	meta := api.PreparedMetadata{
-		SourcePath: "/media/example.mkv",
-		Trackers:   []string{"ANT"},
-		ExternalIDs: api.ExternalIDs{
-			Category: "MOVIE",
-			TMDBID:   1,
-		},
-		ExternalMetadata: api.ExternalMetadata{
-			TMDB: &api.TMDBMetadata{TMDBID: 1, Title: "Example Release"},
-		},
-		TrackerRuleFailures: map[string][]api.RuleFailure{
-			"ANT": {
-				{Rule: "require_movie_only", Reason: "category tv is not movie"},
-			},
-			"BTN": {
-				{Rule: "language_rule", Reason: "missing original language coverage"},
-			},
-		},
-	}
-
-	refreshed, err := svc.RefreshPreparedMetadata(context.Background(), meta)
-	if err != nil {
-		t.Fatalf("refresh prepared metadata: %v", err)
-	}
-	if failures := refreshed.TrackerRuleFailures["ANT"]; len(failures) != 0 {
-		t.Fatalf("expected resolved ANT rule failure to be cleared, got %#v", failures)
-	}
-	if failures := refreshed.TrackerRuleFailures["BTN"]; len(failures) != 1 || failures[0].Rule != "language_rule" {
-		t.Fatalf("expected unevaluated BTN rule failure to remain, got %#v", refreshed.TrackerRuleFailures)
-	}
-	if len(repo.trackerRuleFailures) != 0 {
-		t.Fatalf("expected cleared ANT rule failures to be persisted, got %#v", repo.trackerRuleFailures)
-	}
-}
-
-func TestRefreshPreparedMetadataKeepsRepoForRulePersistence(t *testing.T) {
-	repo := &fakeRepo{}
-	svc := NewService(repo, WithConfig(config.Config{}))
-	meta := api.PreparedMetadata{
-		SourcePath: "/media/example.mkv",
-		Trackers:   []string{"ANT"},
-		ExternalIDs: api.ExternalIDs{
-			Category: "tv",
-		},
-	}
-
-	refreshed, err := svc.RefreshPreparedMetadata(context.Background(), meta)
-	if err != nil {
-		t.Fatalf("refresh prepared metadata: %v", err)
-	}
-	failures := refreshed.TrackerRuleFailures["ANT"]
-	if len(failures) == 0 {
-		t.Fatalf("expected refreshed metadata to retain ANT rule failure, got %#v", refreshed.TrackerRuleFailures)
-	}
-	if len(repo.trackerRuleFailures) == 0 {
-		t.Fatalf("expected tracker rule failures to be persisted during refresh")
-	}
-	if repo.trackerRuleFailures[0].Tracker != "ANT" || repo.trackerRuleFailures[0].Rule != "require_movie_only" {
-		t.Fatalf("unexpected persisted tracker rule failures: %#v", repo.trackerRuleFailures)
-	}
-}
-
-func TestRefreshPreparedMetadataNormalizesStaleMISettingsForNonEncodes(t *testing.T) {
-	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
-	cases := []struct {
-		name       string
-		meta       api.PreparedMetadata
-		wantBlock  bool
-		wantNormal bool
-	}{
-		{
-			name: "remux not blocked",
-			meta: api.PreparedMetadata{
-				Type:                   "REMUX",
-				ValidMediaInfoSettings: false,
-			},
-			wantNormal: true,
-		},
-		{
-			name: "bdmv not blocked",
-			meta: api.PreparedMetadata{
-				Type:                   "ENCODE",
-				DiscType:               "BDMV",
-				ValidMediaInfoSettings: false,
-			},
-			wantNormal: true,
-		},
-		{
-			name: "av1 encode not blocked",
-			meta: api.PreparedMetadata{
-				Type:                   "ENCODE",
-				VideoCodec:             "AV1",
-				ValidMediaInfoSettings: false,
-			},
-			wantNormal: true,
-		},
-		{
-			name: "genuine encode stays blocked",
-			meta: api.PreparedMetadata{
-				Type:                   "ENCODE",
-				VideoCodec:             "H.265",
-				ValidMediaInfoSettings: false,
-			},
-			wantBlock: true,
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			meta := tc.meta
-			meta.SourcePath = "/media/example.mkv"
-			meta.Trackers = []string{"AITHER"}
-			refreshed, err := svc.RefreshPreparedMetadata(context.Background(), meta)
-			if err != nil {
-				t.Fatalf("refresh prepared metadata: %v", err)
-			}
-			if tc.wantNormal && !refreshed.ValidMediaInfoSettings {
-				t.Fatalf("expected ValidMediaInfoSettings normalized to true")
-			}
-			blocked := false
-			for _, failure := range refreshed.TrackerRuleFailures["AITHER"] {
-				if failure.Rule == "require_valid_mi_setting" {
-					blocked = true
-				}
-			}
-			if blocked != tc.wantBlock {
-				t.Fatalf("require_valid_mi_setting blocked=%t, want %t (failures=%#v)", blocked, tc.wantBlock, refreshed.TrackerRuleFailures["AITHER"])
-			}
-		})
-	}
-}
-
 func TestAudioFromMediaUsesChannelsOriginalWhenPresent(t *testing.T) {
 	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Channels":"8 / 6","Channels_Original":"6","ChannelLayout":"L R C LFE Ls Rs","StreamOrder":"1"}]}}`)
-	audio, channels, _ := audioFromMedia(api.PreparedMetadata{}, doc, nil)
+	audio, channels, _ := audioFromMedia(preparationstate.State{}, doc, nil)
 	if audio != "DD 5.1" {
 		t.Fatalf("expected DD 5.1, got %q", audio)
 	}
@@ -1234,7 +1352,7 @@ func TestAudioFromMediaUsesChannelsOriginalWhenPresent(t *testing.T) {
 }
 
 func TestAudioFromMediaNormalizesBDInfoCodec(t *testing.T) {
-	audio, channels, commentary := audioFromMedia(api.PreparedMetadata{}, mediaInfoDoc{}, &discparse.BDInfo{
+	audio, channels, commentary := audioFromMedia(preparationstate.State{}, mediaInfoDoc{}, &discparse.BDInfo{
 		Audio: []discparse.BDAudio{{
 			Codec:    "Dolby TrueHD Audio",
 			Channels: "5.1",
@@ -1250,7 +1368,7 @@ func TestAudioFromMediaNormalizesBDInfoCodec(t *testing.T) {
 }
 
 func TestAudioFromMediaNormalizesBDInfoCodecWithAtmos(t *testing.T) {
-	audio, channels, commentary := audioFromMedia(api.PreparedMetadata{}, mediaInfoDoc{}, &discparse.BDInfo{
+	audio, channels, commentary := audioFromMedia(preparationstate.State{}, mediaInfoDoc{}, &discparse.BDInfo{
 		Audio: []discparse.BDAudio{{
 			Codec:    "Dolby TrueHD Audio",
 			Channels: "7.1",
@@ -1267,12 +1385,12 @@ func TestAudioFromMediaNormalizesBDInfoCodecWithAtmos(t *testing.T) {
 }
 
 func TestResolveAudioBloatPolicyBlocksStrictTrackersForEnglishOriginal(t *testing.T) {
-	blocked, warned := resolveAudioBloatPolicy(api.PreparedMetadata{
+	blocked, warned := resolveAudioBloatPolicyWithRegistry(preparationstate.State{
 		AudioLanguages: []string{"English", "French"},
-		ExternalMetadata: api.ExternalMetadata{
+		ProviderMetadata: api.SourceScopedMetadata{
 			TMDB: &api.TMDBMetadata{OriginalLanguage: "en"},
 		},
-	}, []string{"ANT", "BHD", "MTV", "AITHER", "ASC"})
+	}, []string{"ANT", "BHD", "MTV", "AITHER", "ASC"}, antRuleRegistry(t))
 
 	if got := blocked["ANT"]; len(got) != 1 || got[0] != "French" {
 		t.Fatalf("expected ANT blocked for French bloat, got %#v", blocked)
@@ -1292,12 +1410,12 @@ func TestResolveAudioBloatPolicyBlocksStrictTrackersForEnglishOriginal(t *testin
 }
 
 func TestResolveAudioBloatPolicyWarnsButDoesNotBlockNonEnglishOriginal(t *testing.T) {
-	blocked, warned := resolveAudioBloatPolicy(api.PreparedMetadata{
+	blocked, warned := resolveAudioBloatPolicyWithRegistry(preparationstate.State{
 		AudioLanguages: []string{"English", "Japanese", "French"},
-		ExternalMetadata: api.ExternalMetadata{
+		ProviderMetadata: api.SourceScopedMetadata{
 			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
 		},
-	}, []string{"ANT", "BHD", "SPD"})
+	}, []string{"ANT", "BHD", "SPD"}, antRuleRegistry(t))
 
 	if blocked != nil {
 		t.Fatalf("expected no blocked trackers, got %#v", blocked)
@@ -1310,5 +1428,25 @@ func TestResolveAudioBloatPolicyWarnsButDoesNotBlockNonEnglishOriginal(t *testin
 	}
 	if got := warned["SPD"]; len(got) != 1 || got[0] != "French" {
 		t.Fatalf("expected SPD warning for French bloat, got %#v", warned)
+	}
+}
+
+func TestResolveAudioBloatPolicyExemptsDiscContent(t *testing.T) {
+	t.Parallel()
+
+	for _, discType := range []string{"DVD", "BDMV", "Blu-Ray", "HD DVD"} {
+		t.Run(discType, func(t *testing.T) {
+			t.Parallel()
+			blocked, warned := resolveAudioBloatPolicyWithRegistry(preparationstate.State{
+				DiscType:       discType,
+				AudioLanguages: []string{"English", "French", "Spanish"},
+				ProviderMetadata: api.SourceScopedMetadata{
+					TMDB: &api.TMDBMetadata{OriginalLanguage: "en"},
+				},
+			}, []string{"ANT", "BHD", "AITHER"}, antRuleRegistry(t))
+			if blocked != nil || warned != nil {
+				t.Fatalf("%s disc audio policy blocked=%#v warned=%#v", discType, blocked, warned)
+			}
+		})
 	}
 }

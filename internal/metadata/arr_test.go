@@ -7,6 +7,8 @@ import (
 	"context"
 	"testing"
 
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/metadata/imdb"
 	"github.com/autobrr/upbrr/internal/metadata/tmdb"
@@ -17,10 +19,10 @@ type stubArrClient struct {
 	result ArrLookupResult
 	err    error
 	calls  int
-	last   api.PreparedMetadata
+	last   preparationstate.State
 }
 
-func (s *stubArrClient) Lookup(_ context.Context, meta api.PreparedMetadata) (ArrLookupResult, error) {
+func (s *stubArrClient) Lookup(_ context.Context, meta preparationstate.State) (ArrLookupResult, error) {
 	s.calls++
 	s.last = meta
 	if s.err != nil {
@@ -56,7 +58,7 @@ func TestApplyArrDataUsesSonarrForTV(t *testing.T) {
 		WithRadarrClient(radarr),
 	)
 
-	meta, err := svc.ApplyArrData(context.Background(), api.PreparedMetadata{
+	meta, err := svc.collectArrIdentityEvidence(context.Background(), preparationstate.State{
 		SourcePath: "/data/Show.S01E01.mkv",
 		SeasonInt:  1,
 		EpisodeInt: 1,
@@ -65,7 +67,7 @@ func TestApplyArrDataUsesSonarrForTV(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("ApplyArrData returned error: %v", err)
+		t.Fatalf("collectArrIdentityEvidence returned error: %v", err)
 	}
 	if sonarr.calls != 1 {
 		t.Fatalf("expected sonarr lookup, got %d calls", sonarr.calls)
@@ -95,7 +97,11 @@ func TestResolveExternalIDsPrefersArrBeforeSearch(t *testing.T) {
 	}
 	imdbClient := &stubIMDB{
 		searchResult: imdb.SearchResult{IMDbID: 888},
-		info:         imdb.Info{IMDbID: "tt0000123", Title: "Example", Year: 2021},
+		info: imdb.Info{
+			IMDbID: "tt0000123",
+			Title:  "Example",
+			Year:   2021,
+		},
 	}
 	svc := NewService(
 		repo,
@@ -106,20 +112,20 @@ func TestResolveExternalIDsPrefersArrBeforeSearch(t *testing.T) {
 		WithTVmazeClient(&stubTVmaze{}),
 	)
 
-	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+	result, err := svc.resolveExternalIdentity(context.Background(), preparationstate.State{
 		SourcePath: "/data/Example.2021.mkv",
 		ArrSource:  "radarr",
 		ArrTMDBID:  123,
 		ArrIMDBID:  456,
 	})
 	if err != nil {
-		t.Fatalf("ResolveExternalIDs returned error: %v", err)
+		t.Fatalf("resolveExternalIdentity returned error: %v", err)
 	}
-	if result.ExternalIDs.TMDBID != 123 || result.ExternalIDs.SourceTMDB != "radarr" {
-		t.Fatalf("expected arr tmdb id preserved, got %#v", result.ExternalIDs)
+	if result.Identity.TMDBID != 123 || result.Identity.Provenance.TMDB != api.IdentityProvenanceArr {
+		t.Fatalf("expected arr tmdb id preserved, got %#v", result.Identity)
 	}
-	if result.ExternalIDs.IMDBID != 456 || result.ExternalIDs.SourceIMDB != "radarr" {
-		t.Fatalf("expected arr imdb id preserved, got %#v", result.ExternalIDs)
+	if result.Identity.IMDBID != 456 || result.Identity.Provenance.IMDB != api.IdentityProvenanceArr {
+		t.Fatalf("expected arr imdb id preserved, got %#v", result.Identity)
 	}
 	if tmdbClient.searchCalls != 0 {
 		t.Fatalf("expected tmdb search skipped, got %d calls", tmdbClient.searchCalls)
@@ -137,12 +143,16 @@ func TestResolveExternalIDsDoesNotOverwriteExplicitOverridesWithArr(t *testing.T
 		repo,
 		WithConfig(config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "token"}}),
 		WithTMDBClient(&stubTMDB{metadata: tmdb.MetadataResult{Title: "Example", Year: 2022}}),
-		WithIMDBClient(&stubIMDB{info: imdb.Info{IMDbID: "tt0000777", Title: "Example", Year: 2022}}),
+		WithIMDBClient(&stubIMDB{info: imdb.Info{
+			IMDbID: "tt0000777",
+			Title:  "Example",
+			Year:   2022,
+		}}),
 		WithTVDBClient(&stubTVDB{}),
 		WithTVmazeClient(&stubTVmaze{}),
 	)
 
-	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+	result, err := svc.resolveExternalIdentity(context.Background(), preparationstate.State{
 		SourcePath: "/data/Example.2022.mkv",
 		ArrSource:  "radarr",
 		ArrTMDBID:  123,
@@ -153,18 +163,18 @@ func TestResolveExternalIDsDoesNotOverwriteExplicitOverridesWithArr(t *testing.T
 		},
 	})
 	if err != nil {
-		t.Fatalf("ResolveExternalIDs returned error: %v", err)
+		t.Fatalf("resolveExternalIdentity returned error: %v", err)
 	}
-	if result.ExternalIDs.TMDBID != overrideTMDB || result.ExternalIDs.SourceTMDB != "override" {
-		t.Fatalf("expected tmdb override retained, got %#v", result.ExternalIDs)
+	if result.Identity.TMDBID != overrideTMDB || result.Identity.Provenance.TMDB != api.IdentityProvenanceExplicit || result.Identity.Overrides.TMDB != api.OverrideStateValue {
+		t.Fatalf("expected tmdb override retained, got %#v", result.Identity)
 	}
-	if result.ExternalIDs.IMDBID != overrideIMDB || result.ExternalIDs.SourceIMDB != "override" {
-		t.Fatalf("expected imdb override retained, got %#v", result.ExternalIDs)
+	if result.Identity.IMDBID != overrideIMDB || result.Identity.Provenance.IMDB != api.IdentityProvenanceExplicit || result.Identity.Overrides.IMDB != api.OverrideStateValue {
+		t.Fatalf("expected imdb override retained, got %#v", result.Identity)
 	}
 }
 
 func TestResolveSearchYearUsesArrYearBeforeReleaseYear(t *testing.T) {
-	year := resolveSearchYear(api.PreparedMetadata{
+	year := resolveSearchYear(preparationstate.State{
 		ArrYear: 2024,
 		Release: api.ReleaseInfo{
 			Year: 2020,

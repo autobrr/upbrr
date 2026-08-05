@@ -9,7 +9,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func languageValues(meta api.PreparedMetadata) languageBundle {
+func languageValues(meta api.UploadSubject) languageBundle {
 	audioSet := make(map[string]struct{})
 	for _, value := range meta.AudioLanguages {
 		if id, ok := languageID(value); ok {

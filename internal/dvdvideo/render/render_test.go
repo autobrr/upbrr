@@ -43,7 +43,12 @@ func TestDecodeFrameRejectsOversizedDimensions(t *testing.T) {
 		t.Fatalf("encode PNG: %v", err)
 	}
 	runner := &fakeRunner{outputs: []Output{{Stdout: payload.Bytes()}}}
-	_, err := DecodeFrame(context.Background(), runner, "ffmpeg", FrameRequest{SourcePath: `C:\path\to\VIDEO_TS`, LanguageUnit: 1, PGC: 1, Program: 1})
+	_, err := DecodeFrame(context.Background(), runner, "ffmpeg", FrameRequest{
+		SourcePath:   `C:\path\to\VIDEO_TS`,
+		LanguageUnit: 1,
+		PGC:          1,
+		Program:      1,
+	})
 	if !errors.Is(err, ErrFrame) {
 		t.Fatalf("DecodeFrame error = %v, want ErrFrame", err)
 	}

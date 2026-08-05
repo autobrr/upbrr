@@ -16,15 +16,51 @@ func TestNormalizeBaseURLAcceptsCanonicalInputs(t *testing.T) {
 		raw  string
 		want string
 	}{
-		{name: "empty", raw: "", want: ""},
-		{name: "root", raw: "/", want: ""},
-		{name: "path without slash", raw: "upbrr", want: "/upbrr"},
-		{name: "path with slash", raw: "/upbrr/", want: "/upbrr"},
-		{name: "path query fragment stripped", raw: "/upbrr/?token=secret#frag", want: "/upbrr"},
-		{name: "absolute https", raw: " https://example.test/upbrr/ ", want: "https://example.test/upbrr/"},
-		{name: "absolute http", raw: "http://example.test/upbrr", want: "http://example.test/upbrr/"},
-		{name: "absolute ipv6", raw: "http://[::1]:7480/upbrr?token=secret#frag", want: "http://[::1]:7480/upbrr/"},
-		{name: "absolute root query stripped", raw: "https://example.test/?token=secret#frag", want: "https://example.test/"},
+		{
+			name: "empty",
+			raw:  "",
+			want: "",
+		},
+		{
+			name: "root",
+			raw:  "/",
+			want: "",
+		},
+		{
+			name: "path without slash",
+			raw:  "upbrr",
+			want: "/upbrr",
+		},
+		{
+			name: "path with slash",
+			raw:  "/upbrr/",
+			want: "/upbrr",
+		},
+		{
+			name: "path query fragment stripped",
+			raw:  "/upbrr/?token=secret#frag",
+			want: "/upbrr",
+		},
+		{
+			name: "absolute https",
+			raw:  " https://example.test/upbrr/ ",
+			want: "https://example.test/upbrr/",
+		},
+		{
+			name: "absolute http",
+			raw:  "http://example.test/upbrr",
+			want: "http://example.test/upbrr/",
+		},
+		{
+			name: "absolute ipv6",
+			raw:  "http://[::1]:7480/upbrr?token=secret#frag",
+			want: "http://[::1]:7480/upbrr/",
+		},
+		{
+			name: "absolute root query stripped",
+			raw:  "https://example.test/?token=secret#frag",
+			want: "https://example.test/",
+		},
 	}
 
 	for _, tc := range cases {
@@ -49,16 +85,56 @@ func TestNormalizeBaseURLRejectsInvalidInputs(t *testing.T) {
 		raw  string
 		want string
 	}{
-		{name: "protocol relative", raw: "//example.test/upbrr", want: "protocol-relative"},
-		{name: "javascript", raw: "javascript:alert(1)", want: "http or https"},
-		{name: "file", raw: "file:///tmp/upbrr", want: "http or https"},
-		{name: "ftp", raw: "ftp://example.test/upbrr", want: "http or https"},
-		{name: "missing host", raw: "https:/upbrr", want: "must include a host"},
-		{name: "userinfo", raw: "https://user@example.test/upbrr", want: "userinfo"},
-		{name: "path traversal", raw: "/upbrr/../admin", want: "path traversal"},
-		{name: "encoded traversal", raw: "/upbrr/%2e%2e/admin", want: "path traversal"},
-		{name: "query only", raw: "?base=/upbrr", want: "must include a path"},
-		{name: "fragment only", raw: "#upbrr", want: "must include a path"},
+		{
+			name: "protocol relative",
+			raw:  "//example.test/upbrr",
+			want: "protocol-relative",
+		},
+		{
+			name: "javascript",
+			raw:  "javascript:alert(1)",
+			want: "http or https",
+		},
+		{
+			name: "file",
+			raw:  "file:///tmp/upbrr",
+			want: "http or https",
+		},
+		{
+			name: "ftp",
+			raw:  "ftp://example.test/upbrr",
+			want: "http or https",
+		},
+		{
+			name: "missing host",
+			raw:  "https:/upbrr",
+			want: "must include a host",
+		},
+		{
+			name: "userinfo",
+			raw:  "https://user@example.test/upbrr",
+			want: "userinfo",
+		},
+		{
+			name: "path traversal",
+			raw:  "/upbrr/../admin",
+			want: "path traversal",
+		},
+		{
+			name: "encoded traversal",
+			raw:  "/upbrr/%2e%2e/admin",
+			want: "path traversal",
+		},
+		{
+			name: "query only",
+			raw:  "?base=/upbrr",
+			want: "must include a path",
+		},
+		{
+			name: "fragment only",
+			raw:  "#upbrr",
+			want: "must include a path",
+		},
 	}
 
 	for _, tc := range cases {
@@ -139,13 +215,41 @@ func TestExternalBasePathNormalizesBaseURL(t *testing.T) {
 		raw  string
 		want string
 	}{
-		{name: "empty", raw: "", want: ""},
-		{name: "root absolute url", raw: "https://example.test/", want: ""},
-		{name: "absolute url path", raw: " https://example.test/upbrr/ ", want: "/upbrr"},
-		{name: "path with slash", raw: "/upbrr/", want: "/upbrr"},
-		{name: "path without slash", raw: "upbrr", want: "/upbrr"},
-		{name: "nested path", raw: "https://example.test/tools/upbrr/?token=ignored", want: "/tools/upbrr"},
-		{name: "query only", raw: "https://example.test?token=ignored", want: ""},
+		{
+			name: "empty",
+			raw:  "",
+			want: "",
+		},
+		{
+			name: "root absolute url",
+			raw:  "https://example.test/",
+			want: "",
+		},
+		{
+			name: "absolute url path",
+			raw:  " https://example.test/upbrr/ ",
+			want: "/upbrr",
+		},
+		{
+			name: "path with slash",
+			raw:  "/upbrr/",
+			want: "/upbrr",
+		},
+		{
+			name: "path without slash",
+			raw:  "upbrr",
+			want: "/upbrr",
+		},
+		{
+			name: "nested path",
+			raw:  "https://example.test/tools/upbrr/?token=ignored",
+			want: "/tools/upbrr",
+		},
+		{
+			name: "query only",
+			raw:  "https://example.test?token=ignored",
+			want: "",
+		},
 	}
 
 	for _, tc := range cases {
@@ -166,10 +270,26 @@ func TestJoinBasePath(t *testing.T) {
 		suffix string
 		want   string
 	}{
-		{base: "", suffix: "/api/events", want: "/api/events"},
-		{base: "/", suffix: "/api/events", want: "/api/events"},
-		{base: "/upbrr", suffix: "/api/events", want: "/upbrr/api/events"},
-		{base: "/upbrr/", suffix: "api/events", want: "/upbrr/api/events"},
+		{
+			base:   "",
+			suffix: "/api/events",
+			want:   "/api/events",
+		},
+		{
+			base:   "/",
+			suffix: "/api/events",
+			want:   "/api/events",
+		},
+		{
+			base:   "/upbrr",
+			suffix: "/api/events",
+			want:   "/upbrr/api/events",
+		},
+		{
+			base:   "/upbrr/",
+			suffix: "api/events",
+			want:   "/upbrr/api/events",
+		},
 	}
 
 	for _, tc := range cases {

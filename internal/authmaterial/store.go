@@ -4,7 +4,9 @@
 package authmaterial
 
 import (
+	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
@@ -17,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/apitoken"
 	"github.com/autobrr/upbrr/internal/redaction"
 
 	"golang.org/x/crypto/argon2"
@@ -39,10 +42,13 @@ const (
 	legacyAuthArgon2KeyLen      = 32
 )
 
+// Record is the persisted web-auth state. PendingUpgrade makes auth-dependent
+// data rewrap resumable without replacing the active credentials early.
 type Record struct {
 	Username                string          `json:"username"`
 	PasswordHash            string          `json:"password_hash"`
 	EncryptionKeySeed       string          `json:"encryption_key_seed,omitempty"`
+	APIKeys                 []APIKeyRecord  `json:"api_keys,omitempty"`
 	AllowUnencryptedExport  bool            `json:"allow_unencrypted_export,omitempty"`
 	BrowseRoot              string          `json:"browse_root,omitempty"`
 	AllowUnrestrictedBrowse bool            `json:"allow_unrestricted_browse,omitempty"`
@@ -50,6 +56,20 @@ type Record struct {
 	CreatedAt               time.Time       `json:"created_at"`
 }
 
+// APIKeyRecord is one persisted bearer-key hash plus safe operator metadata.
+// APIKeyHash is a one-way SHA-256 digest of a high-entropy generated token.
+type APIKeyRecord struct {
+	ID         string           `json:"id"`
+	Name       string           `json:"name"`
+	OwnerID    string           `json:"owner_id"`
+	APIKeyHash string           `json:"api_key_hash"`
+	Scopes     []apitoken.Scope `json:"scopes"`
+	CreatedAt  time.Time        `json:"created_at"`
+	RevokedAt  *time.Time       `json:"revoked_at,omitempty"`
+}
+
+// PendingUpgrade stores the target auth record and the last completed rewrap
+// stage while the active record remains unchanged.
 type PendingUpgrade struct {
 	Stage     string    `json:"stage"`
 	Target    Record    `json:"target"`
@@ -62,11 +82,15 @@ const (
 	UpgradeStageDataRewrapped    = "data_rewrapped"
 )
 
+// Store serializes operations performed through one web-auth file handle.
+// Writes use a same-directory temporary file, sync it, set mode 0600, then
+// rename it over the active record.
 type Store struct {
 	path string
 	mu   sync.Mutex
 }
 
+// NewStore targets web-auth.json beside dbPath and creates its parent directory.
 func NewStore(dbPath string) (*Store, error) {
 	dir := filepath.Dir(strings.TrimSpace(dbPath))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -75,10 +99,14 @@ func NewStore(dbPath string) (*Store, error) {
 	return &Store{path: filepath.Join(dir, WebAuthFileName)}, nil
 }
 
+// AuthFilePath returns the web-auth.json path beside dbPath without touching
+// the filesystem.
 func AuthFilePath(dbPath string) string {
 	return filepath.Join(filepath.Dir(strings.TrimSpace(dbPath)), WebAuthFileName)
 }
 
+// BootstrapAuthFile creates the initial auth record and refuses to overwrite
+// an existing record.
 func BootstrapAuthFile(dbPath string, username string, password string) error {
 	store, err := NewStore(dbPath)
 	if err != nil {
@@ -87,6 +115,7 @@ func BootstrapAuthFile(dbPath string, username string, password string) error {
 	return store.Bootstrap(username, password)
 }
 
+// Exists reports whether the store's auth file currently exists.
 func (s *Store) Exists() (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -101,10 +130,17 @@ func (s *Store) Exists() (bool, error) {
 	return false, fmt.Errorf("web auth: stat auth file: %w", err)
 }
 
+// Load reads the persisted record without applying the stricter usability and
+// permission checks performed by [LoadRecordFromDBPath].
 func (s *Store) Load() (Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.loadLocked()
+}
 
+// loadLocked is intentionally separate so read-modify-write operations hold
+// one store lock across both the read and atomic replacement.
+func (s *Store) loadLocked() (Record, error) {
 	raw, err := os.ReadFile(s.path)
 	if err != nil {
 		return Record{}, fmt.Errorf("web auth: read auth file: %w", err)
@@ -116,6 +152,8 @@ func (s *Store) Load() (Record, error) {
 	return record, nil
 }
 
+// Bootstrap hashes the password, generates a stable encryption seed, and
+// creates a new record. It refuses to replace an existing auth file.
 func (s *Store) Bootstrap(username string, password string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -142,6 +180,8 @@ func (s *Store) Bootstrap(username string, password string) error {
 	return s.saveLocked(record)
 }
 
+// UpdatePasswordHash replaces only the hash when username matches the active
+// record.
 func (s *Store) UpdatePasswordHash(username string, passwordHash string) error {
 	return s.updateRecordLocked(func(record *Record) error {
 		if record.Username != strings.TrimSpace(username) {
@@ -152,6 +192,8 @@ func (s *Store) UpdatePasswordHash(username string, passwordHash string) error {
 	})
 }
 
+// UpdateRecord replaces mutable auth, export, browse, and upgrade fields while
+// preserving the active username and creation time.
 func (s *Store) UpdateRecord(updated Record) error {
 	return s.updateRecordLocked(func(record *Record) error {
 		if record.Username != strings.TrimSpace(updated.Username) {
@@ -168,6 +210,8 @@ func (s *Store) UpdateRecord(updated Record) error {
 	})
 }
 
+// BeginPendingUpgrade records target at the prepared stage only if current
+// still matches the active auth and browse settings.
 func (s *Store) BeginPendingUpgrade(current Record, target Record) error {
 	return s.updateRecordLocked(func(record *Record) error {
 		if record.Username != strings.TrimSpace(current.Username) {
@@ -182,6 +226,7 @@ func (s *Store) BeginPendingUpgrade(current Record, target Record) error {
 		}
 
 		target.PendingUpgrade = nil
+		target.APIKeys = nil
 		record.PendingUpgrade = &PendingUpgrade{
 			Stage:     UpgradeStagePrepared,
 			Target:    target,
@@ -191,6 +236,8 @@ func (s *Store) BeginPendingUpgrade(current Record, target Record) error {
 	})
 }
 
+// AdvancePendingUpgrade sets any recognized upgrade stage. It validates the
+// stage name but does not enforce forward-only transitions.
 func (s *Store) AdvancePendingUpgrade(username string, stage string) error {
 	stage = strings.TrimSpace(stage)
 	switch stage {
@@ -212,6 +259,8 @@ func (s *Store) AdvancePendingUpgrade(username string, stage string) error {
 	})
 }
 
+// FinalizePendingUpgrade replaces the active record with its pending target,
+// clears pending state, and preserves the original creation time.
 func (s *Store) FinalizePendingUpgrade(username string) (Record, error) {
 	var finalized Record
 
@@ -225,6 +274,7 @@ func (s *Store) FinalizePendingUpgrade(username string) (Record, error) {
 
 		target := record.PendingUpgrade.Target
 		target.PendingUpgrade = nil
+		target.APIKeys = cloneAPIKeyRecords(record.APIKeys)
 		target.CreatedAt = record.CreatedAt
 		*record = target
 		finalized = target
@@ -234,6 +284,8 @@ func (s *Store) FinalizePendingUpgrade(username string) (Record, error) {
 	return finalized, err
 }
 
+// ClearPendingUpgrade removes pending upgrade state without changing active
+// auth or browse settings.
 func (s *Store) ClearPendingUpgrade(username string) error {
 	return s.updateRecordLocked(func(record *Record) error {
 		if record.Username != strings.TrimSpace(username) {
@@ -248,14 +300,9 @@ func (s *Store) updateRecordLocked(apply func(record *Record) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	raw, err := os.ReadFile(s.path)
+	record, err := s.loadLocked()
 	if err != nil {
-		return fmt.Errorf("web auth: read auth file: %w", err)
-	}
-
-	var record Record
-	if err := json.Unmarshal(raw, &record); err != nil {
-		return fmt.Errorf("web auth: unmarshal auth file: %s", redaction.RedactValue(err.Error(), nil))
+		return err
 	}
 	if err := apply(&record); err != nil {
 		return err
@@ -264,6 +311,136 @@ func (s *Store) updateRecordLocked(apply func(record *Record) error) error {
 	return s.saveLocked(record)
 }
 
+// CreateAPIToken appends one generated-key hash to web-auth.json.
+func (s *Store) CreateAPIToken(ctx context.Context, stored apitoken.StoredRecord) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("web auth: create API key canceled: %w", err)
+	}
+	encodedHash := base64.RawStdEncoding.EncodeToString(stored.TokenHash[:])
+	return s.updateRecordLocked(func(record *Record) error {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("web auth: create API key canceled: %w", err)
+		}
+		if !record.AuthMaterial().IsUsable() {
+			return ErrUnavailable
+		}
+		for _, existing := range record.APIKeys {
+			if existing.ID == stored.ID || existing.APIKeyHash == encodedHash {
+				return errors.New("web auth: duplicate API key")
+			}
+		}
+		record.APIKeys = append(record.APIKeys, APIKeyRecord{
+			ID:         stored.ID,
+			Name:       stored.Name,
+			OwnerID:    stored.OwnerID,
+			APIKeyHash: encodedHash,
+			Scopes:     append([]apitoken.Scope(nil), stored.Scopes...),
+			CreatedAt:  stored.CreatedAt,
+		})
+		return nil
+	})
+}
+
+// ListAPITokens returns safe metadata newest first; hashes remain private.
+func (s *Store) ListAPITokens(ctx context.Context) ([]apitoken.Record, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("web auth: list API keys canceled: %w", err)
+	}
+	record, err := s.Load()
+	if err != nil {
+		return nil, fmt.Errorf("web auth: list API keys: %w", err)
+	}
+	if !record.AuthMaterial().IsUsable() {
+		return nil, ErrUnavailable
+	}
+	result := make([]apitoken.Record, 0, len(record.APIKeys))
+	for index := len(record.APIKeys) - 1; index >= 0; index-- {
+		result = append(result, apiKeyMetadata(record.APIKeys[index]))
+	}
+	return result, nil
+}
+
+// FindActiveAPITokenByHash resolves active metadata with constant-time hash comparison.
+func (s *Store) FindActiveAPITokenByHash(
+	ctx context.Context,
+	hash [sha256.Size]byte,
+) (apitoken.Record, error) {
+	if err := ctx.Err(); err != nil {
+		return apitoken.Record{}, fmt.Errorf("web auth: authenticate API key canceled: %w", err)
+	}
+	record, err := s.Load()
+	if err != nil {
+		return apitoken.Record{}, fmt.Errorf("web auth: authenticate API key: %w", err)
+	}
+	if !record.AuthMaterial().IsUsable() {
+		return apitoken.Record{}, ErrUnavailable
+	}
+	for _, candidate := range record.APIKeys {
+		decoded, err := base64.RawStdEncoding.DecodeString(strings.TrimSpace(candidate.APIKeyHash))
+		if err != nil || len(decoded) != sha256.Size {
+			return apitoken.Record{}, errors.New("web auth: invalid stored API key hash")
+		}
+		if candidate.RevokedAt == nil && subtle.ConstantTimeCompare(hash[:], decoded) == 1 {
+			return apiKeyMetadata(candidate), nil
+		}
+	}
+	return apitoken.Record{}, apitoken.ErrNotFound
+}
+
+// RevokeAPIToken marks one active key revoked while retaining audit metadata.
+func (s *Store) RevokeAPIToken(ctx context.Context, id string, revokedAt time.Time) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, fmt.Errorf("web auth: revoke API key canceled: %w", err)
+	}
+	revoked := false
+	err := s.updateRecordLocked(func(record *Record) error {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("web auth: revoke API key canceled: %w", err)
+		}
+		if !record.AuthMaterial().IsUsable() {
+			return ErrUnavailable
+		}
+		for index := range record.APIKeys {
+			if record.APIKeys[index].ID == id && record.APIKeys[index].RevokedAt == nil {
+				value := revokedAt.UTC()
+				record.APIKeys[index].RevokedAt = &value
+				revoked = true
+				break
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("web auth: revoke API key: %w", err)
+	}
+	return revoked, nil
+}
+
+func apiKeyMetadata(record APIKeyRecord) apitoken.Record {
+	return apitoken.Record{
+		ID:        record.ID,
+		Name:      record.Name,
+		OwnerID:   record.OwnerID,
+		Scopes:    append([]apitoken.Scope(nil), record.Scopes...),
+		CreatedAt: record.CreatedAt,
+		RevokedAt: record.RevokedAt,
+	}
+}
+
+func cloneAPIKeyRecords(records []APIKeyRecord) []APIKeyRecord {
+	cloned := make([]APIKeyRecord, len(records))
+	for index, record := range records {
+		cloned[index] = record
+		cloned[index].Scopes = append([]apitoken.Scope(nil), record.Scopes...)
+		if record.RevokedAt != nil {
+			value := *record.RevokedAt
+			cloned[index].RevokedAt = &value
+		}
+	}
+	return cloned
+}
+
+// AuthMaterial returns a trimmed projection of the record's helper inputs.
 func (r Record) AuthMaterial() Material {
 	return Material{
 		Username:               strings.TrimSpace(r.Username),
@@ -311,6 +488,8 @@ func (s *Store) saveLocked(record Record) error {
 	return nil
 }
 
+// HashPassword validates the minimum length and returns an Argon2id encoded
+// hash with a new random salt.
 func HashPassword(password string) (string, error) {
 	password = strings.TrimSpace(password)
 	if len(password) < AuthPasswordMinLength {
@@ -339,11 +518,14 @@ func HashPassword(password string) (string, error) {
 	), nil
 }
 
+// VerifyPassword reports whether password matches a supported Argon2id encoding.
 func VerifyPassword(password string, encoded string) bool {
 	ok, _ := VerifyPasswordWithUpgrade(password, encoded)
 	return ok
 }
 
+// VerifyPasswordWithUpgrade reports both password validity and whether the
+// matched encoding uses the legacy three-part format.
 func VerifyPasswordWithUpgrade(password string, encoded string) (bool, bool) {
 	parts := strings.Split(encoded, "$")
 	if len(parts) < 3 || parts[0] != "argon2id" {

@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/autobrr/upbrr/pkg/api"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 )
 
 // DetectTag returns the parsed release group as a hyphen-prefixed tag.
@@ -39,7 +39,7 @@ type SeasonPackGroupTagInfo struct {
 
 // DetectSeasonPackGroupTags parses file-list release groups and reports when a
 // season pack contains more than one group tag.
-func DetectSeasonPackGroupTags(meta api.PreparedMetadata) SeasonPackGroupTagInfo {
+func DetectSeasonPackGroupTags(meta preparationstate.State) SeasonPackGroupTagInfo {
 	if !meta.TVPack || len(meta.FileList) < 2 {
 		return SeasonPackGroupTagInfo{}
 	}
@@ -82,7 +82,7 @@ func DetectSeasonPackGroupTags(meta api.PreparedMetadata) SeasonPackGroupTagInfo
 
 // SeasonPackMixedGroupTagNotice returns the user-facing notice for season packs
 // with mismatched file-level group tags.
-func SeasonPackMixedGroupTagNotice(meta api.PreparedMetadata) (string, bool) {
+func SeasonPackMixedGroupTagNotice(meta preparationstate.State) (string, bool) {
 	info := DetectSeasonPackGroupTags(meta)
 	if !info.Mixed || strings.TrimSpace(info.Notice) == "" {
 		return "", false

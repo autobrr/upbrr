@@ -12,36 +12,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  pathpolicy:
-    name: pathpolicy (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 5
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-          - windows-latest
-          - macos-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Run path portability policy
-        run: go run ./cmd/pathpolicy
-
   golangci:
     name: golangci-lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: pathpolicy
 
     steps:
       - name: Checkout
@@ -51,6 +25,18 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+
+      - name: Run architecture ownership policy
+        run: go run ./cmd/architecturepolicy
+
+      - name: Run path portability policy
+        run: go run ./cmd/pathpolicy
+
+      - name: Run composite literal layout policy
+        run: go run ./cmd/literalpolicy
+
+      - name: Validate release workflow contracts
+        run: go run ./cmd/workflowcontractgen -check
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v8

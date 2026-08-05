@@ -14,6 +14,8 @@ import (
 
 var playlistReportHeaderPattern = regexp.MustCompile(`(?m)^\*{20}\r?\nPLAYLIST:\s+([^\r\n]+)\r?\n\*{20}`)
 
+// PlaylistReport preserves one raw BDInfo playlist block together with its
+// extracted quick-summary, files, and extended-summary sections.
 type PlaylistReport struct {
 	Playlist   string
 	Raw        string
@@ -22,6 +24,8 @@ type PlaylistReport struct {
 	ExtSummary string
 }
 
+// NormalizePlaylistName reduces slash- or backslash-delimited input to an
+// uppercase MPLS basename, adding the extension when absent.
 func NormalizePlaylistName(name string) string {
 	trimmed := strings.TrimSpace(name)
 	trimmed = strings.ReplaceAll(trimmed, "\\", "/")
@@ -87,7 +91,9 @@ func normalizeSummarySpaces(text string) string {
 	return strings.Join(lines, "\n")
 }
 
-// SplitBDInfoPlaylistReports extracts each playlist section from a full BDInfo report.
+// SplitBDInfoPlaylistReports extracts playlist blocks keyed by normalized MPLS
+// basename. Reports without playlist headers return nil; duplicate normalized
+// names fail the entire parse.
 func SplitBDInfoPlaylistReports(text string) (map[string]string, error) {
 	matches := playlistReportHeaderPattern.FindAllStringSubmatchIndex(text, -1)
 	if len(matches) == 0 {
@@ -118,6 +124,8 @@ func SplitBDInfoPlaylistReports(text string) (map[string]string, error) {
 }
 
 // ExtractPlaylistReports returns selected playlist reports in selection order.
+// Missing blocks or quick summaries fail the entire extraction without a
+// partial result.
 func ExtractPlaylistReports(text string, selected []string) ([]PlaylistReport, error) {
 	if len(selected) == 0 {
 		return nil, nil

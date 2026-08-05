@@ -25,8 +25,16 @@ func TestParseTMDBLocalizedData(t *testing.T) {
 			},
 			"videos": map[string]any{
 				"results": []any{
-					map[string]any{"site": "YouTube", "type": "Teaser", "key": "teaser"},
-					map[string]any{"site": "YouTube", "type": "Trailer", "key": "trailer"},
+					map[string]any{
+						"site": "YouTube",
+						"type": "Teaser",
+						"key":  "teaser",
+					},
+					map[string]any{
+						"site": "YouTube",
+						"type": "Trailer",
+						"key":  "trailer",
+					},
 				},
 			},
 			"content_ratings": map[string]any{
@@ -161,45 +169,89 @@ func TestParseTMDBLocalizedData(t *testing.T) {
 			{
 				name: "trailer type wins over adjacent teaser",
 				data: []any{
-					map[string]any{"site": "YouTube", "type": "Trailer", "key": "official"},
-					map[string]any{"site": "YouTube", "type": "Teaser", "key": "teaser"},
+					map[string]any{
+						"site": "YouTube",
+						"type": "Trailer",
+						"key":  "official",
+					},
+					map[string]any{
+						"site": "YouTube",
+						"type": "Teaser",
+						"key":  "teaser",
+					},
 				},
 				want: "https://www.youtube.com/watch?v=official",
 			},
 			{
 				name: "teaser only ignored",
 				data: []any{
-					map[string]any{"site": "YouTube", "type": "Teaser", "key": "teaser"},
+					map[string]any{
+						"site": "YouTube",
+						"type": "Teaser",
+						"key":  "teaser",
+					},
 				},
 			},
 			{
 				name: "non trailer video types ignored",
 				data: []any{
-					map[string]any{"site": "YouTube", "type": "Featurette", "key": "featurette"},
-					map[string]any{"site": "YouTube", "type": "Recap", "key": "recap"},
-					map[string]any{"site": "YouTube", "type": "Opening Credits", "key": "credits"},
+					map[string]any{
+						"site": "YouTube",
+						"type": "Featurette",
+						"key":  "featurette",
+					},
+					map[string]any{
+						"site": "YouTube",
+						"type": "Recap",
+						"key":  "recap",
+					},
+					map[string]any{
+						"site": "YouTube",
+						"type": "Opening Credits",
+						"key":  "credits",
+					},
 				},
 			},
 			{
 				name: "non youtube trailer ignored and youtube trailer accepted",
 				data: []any{
-					map[string]any{"site": "Vimeo", "type": "Trailer", "key": "vimeo"},
-					map[string]any{"site": "YouTube", "type": "Trailer", "key": "youtube"},
+					map[string]any{
+						"site": "Vimeo",
+						"type": "Trailer",
+						"key":  "vimeo",
+					},
+					map[string]any{
+						"site": "YouTube",
+						"type": "Trailer",
+						"key":  "youtube",
+					},
 				},
 				want: "https://www.youtube.com/watch?v=youtube",
 			},
 			{
 				name: "first youtube trailer wins",
 				data: []any{
-					map[string]any{"site": "YouTube", "type": "Trailer", "key": "first"},
-					map[string]any{"site": "YouTube", "type": "Trailer", "key": "second"},
+					map[string]any{
+						"site": "YouTube",
+						"type": "Trailer",
+						"key":  "first",
+					},
+					map[string]any{
+						"site": "YouTube",
+						"type": "Trailer",
+						"key":  "second",
+					},
 				},
 				want: "https://www.youtube.com/watch?v=first",
 			},
 			{
 				name: "empty video key ignored",
 				data: []any{
-					map[string]any{"site": "YouTube", "type": "Trailer", "key": ""},
+					map[string]any{
+						"site": "YouTube",
+						"type": "Trailer",
+						"key":  "",
+					},
 				},
 			},
 		}
@@ -228,11 +280,31 @@ func TestParseTMDBLocalizedData(t *testing.T) {
 		}{
 			{name: "empty", path: ""},
 			{name: "whitespace", path: " \t\n "},
-			{name: "relative with slash", path: "/poster.jpg", want: "https://image.tmdb.org/t/p/original/poster.jpg"},
-			{name: "relative without slash", path: "poster.jpg", want: "https://image.tmdb.org/t/p/original/poster.jpg"},
-			{name: "trim relative path", path: " /poster.jpg ", want: "https://image.tmdb.org/t/p/original/poster.jpg"},
-			{name: "absolute https", path: "https://cdn.example/poster.jpg", want: "https://cdn.example/poster.jpg"},
-			{name: "absolute http", path: "http://cdn.example/poster.jpg", want: "http://cdn.example/poster.jpg"},
+			{
+				name: "relative with slash",
+				path: "/poster.jpg",
+				want: "https://image.tmdb.org/t/p/original/poster.jpg",
+			},
+			{
+				name: "relative without slash",
+				path: "poster.jpg",
+				want: "https://image.tmdb.org/t/p/original/poster.jpg",
+			},
+			{
+				name: "trim relative path",
+				path: " /poster.jpg ",
+				want: "https://image.tmdb.org/t/p/original/poster.jpg",
+			},
+			{
+				name: "absolute https",
+				path: "https://cdn.example/poster.jpg",
+				want: "https://cdn.example/poster.jpg",
+			},
+			{
+				name: "absolute http",
+				path: "http://cdn.example/poster.jpg",
+				want: "http://cdn.example/poster.jpg",
+			},
 			{name: "malformed absolute", path: "https://"},
 			{name: "unsupported scheme", path: "ftp://cdn.example/poster.jpg"},
 			{name: "scheme relative", path: "//cdn.example/poster.jpg"},

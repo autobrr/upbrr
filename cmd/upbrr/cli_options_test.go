@@ -112,9 +112,21 @@ func TestParseServeOptionsPortUsesDecimalSyntax(t *testing.T) {
 		args []string
 		want int
 	}{
-		{name: "separate value", args: []string{"--port", "080"}, want: 80},
-		{name: "equals value", args: []string{"--port=010"}, want: 10},
-		{name: "leading zero nine", args: []string{"--port", "009"}, want: 9},
+		{
+			name: "separate value",
+			args: []string{"--port", "080"},
+			want: 80,
+		},
+		{
+			name: "equals value",
+			args: []string{"--port=010"},
+			want: 10,
+		},
+		{
+			name: "leading zero nine",
+			args: []string{"--port", "009"},
+			want: 9,
+		},
 	}
 
 	for _, tc := range cases {
@@ -170,10 +182,30 @@ func TestApplyServeOptionOverridesAddressMatrix(t *testing.T) {
 		host string
 		port int
 	}{
-		{name: "host port", addr: "localhost:9090", host: "localhost", port: 9090},
-		{name: "colon port shorthand", addr: ":9091", host: "0.0.0.0", port: 9091},
-		{name: "bracketed ipv6", addr: "[::1]:9092", host: "::1", port: 9092},
-		{name: "scoped ipv6", addr: "[fe80::1%zone]:9093", host: "fe80::1%zone", port: 9093},
+		{
+			name: "host port",
+			addr: "localhost:9090",
+			host: "localhost",
+			port: 9090,
+		},
+		{
+			name: "colon port shorthand",
+			addr: ":9091",
+			host: "0.0.0.0",
+			port: 9091,
+		},
+		{
+			name: "bracketed ipv6",
+			addr: "[::1]:9092",
+			host: "::1",
+			port: 9092,
+		},
+		{
+			name: "scoped ipv6",
+			addr: "[fe80::1%zone]:9093",
+			host: "fe80::1%zone",
+			port: 9093,
+		},
 	}
 
 	for _, tc := range cases {
@@ -255,16 +287,32 @@ func TestApplyServeEnvOverridesRejectsEmptyBaseURL(t *testing.T) {
 func TestApplyServeOptionOverridesCLIOverridesEnv(t *testing.T) {
 	envCfg, err := applyServeEnvOverrides(
 		webserver.DefaultCLIConfig(),
-		serveEnvOptions{Host: "0.0.0.0", Port: "9090", BaseURL: "/env/"},
-		map[string]bool{"host": true, "port": true, "base-url": true},
+		serveEnvOptions{
+			Host:    "0.0.0.0",
+			Port:    "9090",
+			BaseURL: "/env/",
+		},
+		map[string]bool{
+			"host":     true,
+			"port":     true,
+			"base-url": true,
+		},
 	)
 	if err != nil {
 		t.Fatalf("apply serve env overrides: %v", err)
 	}
 	cfg, err := applyServeOptionOverrides(
 		envCfg,
-		serveOptions{Host: "127.0.0.1", Port: 9191, BaseURL: "/cli/"},
-		map[string]bool{"host": true, "port": true, "base-url": true},
+		serveOptions{
+			Host:    "127.0.0.1",
+			Port:    9191,
+			BaseURL: "/cli/",
+		},
+		map[string]bool{
+			"host":     true,
+			"port":     true,
+			"base-url": true,
+		},
 	)
 	if err != nil {
 		t.Fatalf("apply serve option overrides: %v", err)
@@ -349,15 +397,60 @@ func TestApplyServeOptionOverridesRejectsInvalidValues(t *testing.T) {
 		visited map[string]bool
 		want    string
 	}{
-		{name: "addr with host", opts: serveOptions{Addr: "localhost:7480", Host: "localhost"}, visited: map[string]bool{"addr": true, "host": true}, want: "--addr cannot be used"},
-		{name: "empty host", opts: serveOptions{Host: " "}, visited: map[string]bool{"host": true}, want: "--host cannot be empty"},
-		{name: "host includes port", opts: serveOptions{Host: "localhost:7480"}, visited: map[string]bool{"host": true}, want: "--host cannot include a port"},
-		{name: "scoped ipv6 hostport", opts: serveOptions{Host: "fe80::1%zone:9090"}, visited: map[string]bool{"host": true}, want: "--host cannot include a port"},
-		{name: "invalid port", opts: serveOptions{Port: 70000}, visited: map[string]bool{"port": true}, want: "invalid port"},
-		{name: "invalid addr", opts: serveOptions{Addr: "localhost"}, visited: map[string]bool{"addr": true}, want: "--addr must be host:port"},
-		{name: "unbracketed ipv6 addr", opts: serveOptions{Addr: "::1:9090"}, visited: map[string]bool{"addr": true}, want: "--addr must be host:port"},
-		{name: "empty base url", opts: serveOptions{BaseURL: " "}, visited: map[string]bool{"base-url": true}, want: "--base-url cannot be empty"},
-		{name: "invalid base url", opts: serveOptions{BaseURL: "javascript:alert(1)"}, visited: map[string]bool{"base-url": true}, want: "http or https"},
+		{
+			name:    "addr with host",
+			opts:    serveOptions{Addr: "localhost:7480", Host: "localhost"},
+			visited: map[string]bool{"addr": true, "host": true},
+			want:    "--addr cannot be used",
+		},
+		{
+			name:    "empty host",
+			opts:    serveOptions{Host: " "},
+			visited: map[string]bool{"host": true},
+			want:    "--host cannot be empty",
+		},
+		{
+			name:    "host includes port",
+			opts:    serveOptions{Host: "localhost:7480"},
+			visited: map[string]bool{"host": true},
+			want:    "--host cannot include a port",
+		},
+		{
+			name:    "scoped ipv6 hostport",
+			opts:    serveOptions{Host: "fe80::1%zone:9090"},
+			visited: map[string]bool{"host": true},
+			want:    "--host cannot include a port",
+		},
+		{
+			name:    "invalid port",
+			opts:    serveOptions{Port: 70000},
+			visited: map[string]bool{"port": true},
+			want:    "invalid port",
+		},
+		{
+			name:    "invalid addr",
+			opts:    serveOptions{Addr: "localhost"},
+			visited: map[string]bool{"addr": true},
+			want:    "--addr must be host:port",
+		},
+		{
+			name:    "unbracketed ipv6 addr",
+			opts:    serveOptions{Addr: "::1:9090"},
+			visited: map[string]bool{"addr": true},
+			want:    "--addr must be host:port",
+		},
+		{
+			name:    "empty base url",
+			opts:    serveOptions{BaseURL: " "},
+			visited: map[string]bool{"base-url": true},
+			want:    "--base-url cannot be empty",
+		},
+		{
+			name:    "invalid base url",
+			opts:    serveOptions{BaseURL: "javascript:alert(1)"},
+			visited: map[string]bool{"base-url": true},
+			want:    "http or https",
+		},
 	}
 
 	for _, tc := range cases {
@@ -378,11 +471,31 @@ func TestParseServeHostRejectsMalformedBrackets(t *testing.T) {
 		host string
 		want string
 	}{
-		{name: "leading bracket only", host: "[::1", want: "invalid bracket syntax"},
-		{name: "trailing bracket only", host: "::1]", want: "invalid bracket syntax"},
-		{name: "nested brackets", host: "[[::1]]", want: "invalid bracket syntax"},
-		{name: "empty brackets", host: "[]", want: "invalid bracket syntax"},
-		{name: "bracketed hostname", host: "[localhost]", want: "IPv6 literals"},
+		{
+			name: "leading bracket only",
+			host: "[::1",
+			want: "invalid bracket syntax",
+		},
+		{
+			name: "trailing bracket only",
+			host: "::1]",
+			want: "invalid bracket syntax",
+		},
+		{
+			name: "nested brackets",
+			host: "[[::1]]",
+			want: "invalid bracket syntax",
+		},
+		{
+			name: "empty brackets",
+			host: "[]",
+			want: "invalid bracket syntax",
+		},
+		{
+			name: "bracketed hostname",
+			host: "[localhost]",
+			want: "IPv6 literals",
+		},
 	}
 
 	for _, tc := range cases {
@@ -439,12 +552,6 @@ func TestParseServeHostPreservesValidIPv6(t *testing.T) {
 				t.Fatalf("parseServeHost(%q) = %q, want %q", tc.host, got, tc.want)
 			}
 		})
-	}
-}
-
-func TestParseCLIOptionsRejectsGUIFlag(t *testing.T) {
-	if _, _, _, err := parseCLIOptions([]string{"-gui"}); err == nil {
-		t.Fatal("expected gui flag to be rejected")
 	}
 }
 
@@ -513,7 +620,7 @@ func TestParseCLIOptionsPythonAliases(t *testing.T) {
 	}
 }
 
-func TestBuildCLIRequestDebugImpliesDryRunAndOnlyID(t *testing.T) {
+func TestBuildCLIRequestKeepsDebugAdapterLocalAndPropagatesOnlyID(t *testing.T) {
 	opts, visited, paths, err := parseCLIOptions([]string{"--debug", "--onlyID", "movie.mkv"})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -522,11 +629,8 @@ func TestBuildCLIRequestDebugImpliesDryRunAndOnlyID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build request: %v", err)
 	}
-	if !req.Options.Debug {
-		t.Fatalf("expected debug enabled, got %#v", req.Options)
-	}
-	if !req.Options.DryRun {
-		t.Fatalf("expected debug to imply dry run, got %#v", req.Options)
+	if !opts.Debug {
+		t.Fatal("expected CLI debug mode enabled")
 	}
 	if !req.Options.OnlyID {
 		t.Fatalf("expected onlyID to propagate, got %#v", req.Options)
@@ -550,12 +654,11 @@ func TestParseCLIOptionsFlagsAfterPath(t *testing.T) {
 	if !visited["debug"] || !visited["delete-tmp"] {
 		t.Fatalf("expected trailing flags visited, got %#v", visited)
 	}
-	req, err := buildCLIRequest(opts, visited, paths, 4)
-	if err != nil {
+	if _, err := buildCLIRequest(opts, visited, paths, 4); err != nil {
 		t.Fatalf("build request: %v", err)
 	}
-	if !req.Options.Debug || !req.Options.DryRun {
-		t.Fatalf("expected trailing debug to force dry run, got %#v", req.Options)
+	if !opts.Debug {
+		t.Fatal("expected trailing debug to remain adapter-local")
 	}
 }
 
@@ -596,8 +699,43 @@ func TestBuildCLIRequestPropagatesRunLogLevel(t *testing.T) {
 	if req.Options.RunLogLevel != "trace" {
 		t.Fatalf("expected run log level trace, got %q", req.Options.RunLogLevel)
 	}
-	if !req.Options.Debug {
-		t.Fatalf("expected debug enabled, got %#v", req.Options)
+	if !opts.Debug {
+		t.Fatal("expected CLI debug mode enabled")
+	}
+}
+
+func TestBuildCLIRequestPreservesCombinedDebugModifiers(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		args       []string
+		wantNoSeed bool
+	}{
+		{name: "default injection", args: []string{"--debug", "-siu", "-s", "0", "movie.mkv"}},
+		{
+			name:       "no seed",
+			args:       []string{"--debug", "-ns", "-siu", "-s", "0", "movie.mkv"},
+			wantNoSeed: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			opts, visited, paths, err := parseCLIOptions(test.args)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			req, err := buildCLIRequest(opts, visited, paths, opts.Screens)
+			if err != nil {
+				t.Fatalf("build request: %v", err)
+			}
+			if !opts.Debug {
+				t.Fatal("expected debug to remain an adapter-local operation choice")
+			}
+			if req.Options.NoSeed != test.wantNoSeed || req.Options.Screens != 0 {
+				t.Fatalf("combined debug modifiers lost from upload options: %#v", req.Options)
+			}
+			if req.ImageHostOverrides.SkipUpload == nil || !*req.ImageHostOverrides.SkipUpload {
+				t.Fatalf("combined debug image-host override lost: %#v", req.ImageHostOverrides)
+			}
+		})
 	}
 }
 
@@ -676,11 +814,16 @@ func TestBuildCLIRequestExecutionOptions(t *testing.T) {
 	if req.Execution.SiteUploadTracker != "BLU" {
 		t.Fatalf("expected site upload tracker BLU, got %q", req.Execution.SiteUploadTracker)
 	}
-	if !req.Options.DryRun {
-		t.Fatalf("expected site-check to imply dry run, got %#v", req.Options)
-	}
 	if len(req.Trackers) != 1 || req.Trackers[0] != "BLU" {
 		t.Fatalf("expected site-upload tracker to override request trackers, got %#v", req.Trackers)
+	}
+}
+
+func TestParseCLIOptionsRejectsRemovedDryRunFlag(t *testing.T) {
+	t.Parallel()
+
+	if _, _, _, err := parseCLIOptions([]string{"--dry-run", "movie.mkv"}); err == nil {
+		t.Fatal("expected removed --dry-run flag to be rejected")
 	}
 }
 
@@ -907,103 +1050,36 @@ func TestBuildCLIRequestImageHostOverrides(t *testing.T) {
 	}
 }
 
-func TestPrintDryRunSummary(t *testing.T) {
-	tests := []struct {
-		name     string
-		entry    api.TrackerDryRunEntry
-		contains []string
-	}{
-		{
-			name: "prints summary details",
-			entry: api.TrackerDryRunEntry{
-				Tracker:     "BLU",
-				Status:      "ready",
-				Message:     "looks good",
-				ReleaseName: "Movie.2024.1080p",
-				Payload: map[string]string{
-					"category": "MOVIE",
-					"name":     "Movie.2024.1080p",
-				},
-				ImageHost: api.ImageHostFeedback{
-					Reuploaded: true,
-					Message:    "reuploaded to imgbox",
-					Warnings: []api.ImageHostWarning{
-						{Host: "pixhost", Message: "temporary failure"},
-					},
-				},
-			},
-			contains: []string{
-				"Dry run: ready (looks good)",
-				"Tracker release name: Movie.2024.1080p",
-				"Images: reuploaded to imgbox",
-				"Image host warning: pixhost failed: temporary failure",
-			},
-		},
-		{
-			name: "prints release name changes",
-			entry: api.TrackerDryRunEntry{
-				Tracker:                 "AITHER",
-				Status:                  "ready",
-				ReleaseName:             "Movie.2024.1080p.WEB-DL.x264-GRP",
-				OriginalReleaseName:     "Movie.2024.1080p.WEB-DL.H264-GRP",
-				UploadReleaseName:       "Movie.2024.1080p.WEB-DL.x264-GRP",
-				ReleaseNameChanged:      true,
-				ReleaseNameChangeReason: "tracker naming policy",
-			},
-			contains: []string{
-				"Dry run: ready",
-				"Tracker release name changed: Movie.2024.1080p.WEB-DL.H264-GRP -> Movie.2024.1080p.WEB-DL.x264-GRP (reason: tracker naming policy)",
-			},
-		},
-		{
-			name:  "empty tracker prints nothing",
-			entry: api.TrackerDryRunEntry{},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			output := captureStdout(t, func() {
-				printDryRunSummary(tt.entry)
-			})
-			for _, expected := range tt.contains {
-				if !strings.Contains(output, expected) {
-					t.Fatalf("expected output to contain %q, got %q", expected, output)
-				}
-			}
-			if len(tt.contains) == 0 && output != "" {
-				t.Fatalf("expected no output, got %q", output)
-			}
-		})
-	}
-}
-
 func TestPrintMetadataPreviewShowsRichReleaseDetails(t *testing.T) {
 	output := captureStdout(t, func() {
 		printMetadataPreview(api.MetadataPreview{
 			SourcePath:  "C:\\path\\to\\Example.Release.2026.S01.1080p.WEB-DL-GRP",
 			ReleaseName: "Example Release 2026 S01 1080p WEB-DL H.264-GRP",
 			TrackerName: "LST",
-			ExternalIDs: api.ExternalIDs{
+			Identity: api.ExternalIdentity{
 				TMDBID:   123456,
 				IMDBID:   7654321,
 				TVDBID:   234567,
 				TVmazeID: 34567,
-				Category: "TV",
+				Category: api.CanonicalCategoryTV,
 			},
-			Warnings: []string{"Season pack contains mixed group tags (ALT, GRP); trackers with mixed-origin support will use Mixed."},
-			ExternalPreview: []api.ExternalPreview{{
-				Provider:     "tmdb",
-				ID:           123456,
-				Title:        "Example Release",
-				Year:         2026,
-				Overview:     "Example overview for a fictional series used in CLI preview output.",
-				Genres:       "Drama, Mystery",
-				Category:     "TV",
-				FirstAirDate: "2026-02-22",
-				Runtime:      55,
-				Rating:       7.9,
-				RatingCount:  1200,
+			Display: api.PreparedReleaseDisplay{Providers: []api.ProviderDisplay{{
+				Provider:         api.IdentityProviderTMDB,
+				ID:               123456,
+				SummaryAvailable: true,
+				Summary: api.ProviderDisplaySummary{
+					Title:          "Example Release",
+					Year:           2026,
+					Overview:       "Example overview for a fictional series used in CLI preview output.",
+					Genres:         "Drama, Mystery",
+					Category:       "TV",
+					Date:           "2026-02-22",
+					RuntimeMinutes: 55,
+				},
+			}}},
+			Diagnostics: []api.PreparationDiagnostic{{
+				Severity: api.DiagnosticSeverityWarning,
+				Message:  "Season pack contains mixed group tags (ALT, GRP); trackers with mixed-origin support will use Mixed.",
 			}},
 		}, true)
 	})
@@ -1020,178 +1096,18 @@ func TestPrintMetadataPreviewShowsRichReleaseDetails(t *testing.T) {
 		"Category: TV",
 		"Date: 2026-02-22",
 		"Runtime: 55 min",
-		"Rating: 7.9 (1200 votes)",
 		"Tracker data from: LST",
 		"External IDs",
-		"TMDB: https://www.themoviedb.org/tv/123456",
-		"IMDb: https://www.imdb.com/title/tt7654321",
-		"TVDB: https://www.thetvdb.com/?id=234567&tab=series",
-		"TVmaze: https://www.tvmaze.com/shows/34567",
+		"TMDB: 123456",
+		"IMDb: tt7654321",
+		"TVDB: 234567",
+		"TVmaze: 34567",
 		"Warnings:",
 		"- Season pack contains mixed group tags (ALT, GRP); trackers with mixed-origin support will use Mixed.",
 	} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("expected output to contain %q, got %q", expected, output)
 		}
-	}
-}
-
-func TestPrintDryRunDetails(t *testing.T) {
-	tests := []struct {
-		name        string
-		entry       api.TrackerDryRunEntry
-		contains    []string
-		notContains []string
-	}{
-		{
-			name: "prints files payload and condenses body fields",
-			entry: api.TrackerDryRunEntry{
-				Endpoint: "https://tracker.test/upload",
-				Files: []api.TrackerDryRunFile{
-					{Field: "torrent", Path: "C:\\Users\\Tester\\.upbrr\\tmp\\file.torrent", Present: true},
-					{Field: "nfo", Path: "", Present: false},
-				},
-				Payload: map[string]string{
-					"category":    "MOVIE",
-					"description": "line 1\nline 2",
-					"keywords":    "movie, webdl",
-					"mediainfo":   "General\nComplete name: Movie.2024.mkv",
-					"name":        "Movie.2024",
-					"passkey":     "secret-passkey",
-				},
-				Description: "line 1\nline 2",
-			},
-			contains: []string{
-				"Files:",
-				"- torrent [present]: .upbrr/tmp/file.torrent",
-				"- nfo [missing]: (none)",
-				"Payload:",
-				"- category: MOVIE",
-				"- description: [13 bytes, 2 lines omitted]",
-				"- keywords: movie, webdl",
-				"- mediainfo: [37 bytes, 2 lines omitted]",
-				"- name: Movie.2024",
-				"- passkey: [REDACTED]",
-			},
-			notContains: []string{
-				"C:\\Users\\Tester",
-				"Endpoint:",
-				"https://tracker.test/upload",
-				"line 1\nline 2",
-				"secret-passkey",
-				"General\nComplete name",
-			},
-		},
-		{
-			name:  "empty details print nothing",
-			entry: api.TrackerDryRunEntry{},
-		},
-		{
-			name: "prints debug sections with redacted endpoint and payload",
-			entry: api.TrackerDryRunEntry{
-				DebugSections: []api.TrackerDryRunDebugSection{
-					{
-						Title:    "BTN autofill request",
-						Endpoint: "https://tracker.test/upload.php?passkey=secret-pass",
-						Payload: map[string]string{
-							"auto_season": "5",
-							"auto_series": "12345",
-							"scene_yesno": "No",
-							"type":        "Season",
-						},
-					},
-					{
-						Title:    "BTN final upload payload after autofill",
-						Endpoint: "https://tracker.test/upload.php?api_key=secret-key",
-						Files: []api.TrackerDryRunFile{
-							{Field: "file_input", Path: "C:\\Users\\Tester\\.upbrr\\tmp\\file.torrent", Present: true},
-						},
-						Payload: map[string]string{
-							"artist":       "Example Show",
-							"release_desc": "line 1\nline 2",
-							"type":         "Season",
-						},
-					},
-				},
-			},
-			contains: []string{
-				"Debug sections:",
-				"BTN autofill request:",
-				"Endpoint: https://tracker.test/upload.php?passkey=[REDACTED]",
-				"- auto_season: 5",
-				"- auto_series: 12345",
-				"BTN final upload payload after autofill:",
-				"Endpoint: https://tracker.test/upload.php?api_key=[REDACTED]",
-				"- file_input [present]: .upbrr/tmp/file.torrent",
-				"- artist: Example Show",
-				"- release_desc: [13 bytes, 2 lines omitted]",
-				"- type: Season",
-			},
-			notContains: []string{
-				"secret-pass",
-				"secret-key",
-				"C:\\Users\\Tester",
-				"line 1\nline 2",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			output := captureStdout(t, func() {
-				printDryRunDetails(tt.entry)
-			})
-			for _, expected := range tt.contains {
-				if !strings.Contains(output, expected) {
-					t.Fatalf("expected output to contain %q, got %q", expected, output)
-				}
-			}
-			for _, unexpected := range tt.notContains {
-				if strings.Contains(output, unexpected) {
-					t.Fatalf("expected output not to contain %q, got %q", unexpected, output)
-				}
-			}
-			if len(tt.contains) == 0 && output != "" {
-				t.Fatalf("expected no output, got %q", output)
-			}
-		})
-	}
-}
-
-func TestPrintDryRunDetailsRedactsSensitiveEndpointAndPayload(t *testing.T) {
-	output := captureStdout(t, func() {
-		printDryRunDetails(api.TrackerDryRunEntry{
-			Endpoint: "https://tracker.test/api/upload?api_key=secret-key&passkey=secret-pass",
-			Payload: map[string]string{
-				"api_key":  "secret-key",
-				"auth":     "secret-auth",
-				"keywords": "movie, webdl",
-				"name":     "Movie.2024",
-				"passkey":  "secret-pass",
-				"announce": "https://tracker.test/announce?passkey=secret-pass",
-			},
-		})
-	})
-
-	for _, secret := range []string{"secret-key", "secret-pass", "secret-auth"} {
-		if strings.Contains(output, secret) {
-			t.Fatalf("expected %q to be redacted, got %q", secret, output)
-		}
-	}
-	for _, expected := range []string{
-		"- api_key: [REDACTED]",
-		"- auth: [REDACTED]",
-		"- keywords: movie, webdl",
-		"- name: Movie.2024",
-		"- passkey: [REDACTED]",
-		"- announce: https://tracker.test/announce?passkey=[REDACTED]",
-	} {
-		if !strings.Contains(output, expected) {
-			t.Fatalf("expected redacted output to contain %q, got %q", expected, output)
-		}
-	}
-	if strings.Contains(output, "Endpoint:") {
-		t.Fatalf("expected endpoint to be omitted from dry-run details")
 	}
 }
 
@@ -1222,149 +1138,6 @@ func TestFormatPathLabelKeepsDBRelativePath(t *testing.T) {
 				t.Fatalf("expected %q, got %q", tt.want, got)
 			}
 		})
-	}
-}
-
-func TestPrintDryRunDetailsSummarizesDescriptionWithoutPayloadDescription(t *testing.T) {
-	output := captureStdout(t, func() {
-		printDryRunDetails(api.TrackerDryRunEntry{
-			Payload:     map[string]string{"name": "Movie.2024"},
-			Description: "first line\nsecond line",
-		})
-	})
-
-	if !strings.Contains(output, "Description: [22 bytes, 2 lines omitted]") {
-		t.Fatalf("expected summarized description, got %q", output)
-	}
-	if strings.Contains(output, "first line") {
-		t.Fatalf("expected raw description to be omitted, got %q", output)
-	}
-}
-
-func TestPrintDebugUploadReview(t *testing.T) {
-	review := api.UploadReview{
-		SourcePath: "C:\\releases\\movie",
-		Trackers: []api.TrackerReview{
-			{
-				Tracker: "BLU",
-				DryRun: api.TrackerDryRunEntry{
-					Tracker:             "BLU",
-					Status:              "ready",
-					Endpoint:            "https://blu.test/upload",
-					ReleaseName:         "Movie.2024",
-					OriginalReleaseName: "Movie 2024",
-					UploadReleaseName:   "Movie.2024",
-					ReleaseNameChanged:  true,
-					Payload:             map[string]string{"name": "Movie.2024"},
-					Description:         "test description",
-				},
-			},
-			{
-				Tracker:      "HDB",
-				Banned:       true,
-				BannedReason: "group banned",
-				DryRun: api.TrackerDryRunEntry{
-					Tracker:      "HDB",
-					Status:       "ready",
-					Banned:       true,
-					BannedReason: "group banned",
-					ReleaseName:  "Movie.HDB.2024",
-					Payload:      map[string]string{"name": "Movie.HDB.2024"},
-				},
-			},
-		},
-	}
-
-	output := captureStdout(t, func() {
-		printDebugUploadReview(review)
-	})
-
-	for _, expected := range []string{
-		"[Debug Dry Run] [local path]",
-		"[BLU Debug Payload]",
-		"Dry run: ready",
-		"Tracker release name changed: Movie 2024 -> Movie.2024",
-		"- name: Movie.2024",
-		"[HDB Debug Payload]",
-		"Banned group: group banned",
-		"- name: Movie.HDB.2024",
-	} {
-		if !strings.Contains(output, expected) {
-			t.Fatalf("expected output to contain %q, got %q", expected, output)
-		}
-	}
-	for _, unexpected := range []string{
-		"Endpoint:",
-		"Payload fields:",
-	} {
-		if strings.Contains(output, unexpected) {
-			t.Fatalf("expected output not to contain %q, got %q", unexpected, output)
-		}
-	}
-}
-
-func TestPrintDebugUploadReviewGroupsIdenticalPayloads(t *testing.T) {
-	review := api.UploadReview{
-		SourcePath: "C:\\releases\\movie",
-		Trackers: []api.TrackerReview{
-			{
-				Tracker: "BLU",
-				DryRun: api.TrackerDryRunEntry{
-					Tracker:     "BLU",
-					Status:      "ready",
-					ReleaseName: "Movie.2024",
-					Payload:     map[string]string{"category": "MOVIE", "name": "Movie.2024"},
-				},
-			},
-			{
-				Tracker: "SP",
-				DryRun: api.TrackerDryRunEntry{
-					Tracker:     "SP",
-					Status:      "ready",
-					ReleaseName: "Movie.2024",
-					Payload:     map[string]string{"category": "MOVIE", "name": "Movie.2024"},
-				},
-			},
-			{
-				Tracker: "HDB",
-				DryRun: api.TrackerDryRunEntry{
-					Tracker:             "HDB",
-					Status:              "ready",
-					ReleaseName:         "Movie-2024",
-					OriginalReleaseName: "Movie 2024",
-					UploadReleaseName:   "Movie-2024",
-					ReleaseNameChanged:  true,
-					Payload:             map[string]string{"category": "MOVIE", "name": "Movie-2024"},
-				},
-			},
-		},
-	}
-
-	output := captureStdout(t, func() {
-		printDebugUploadReview(review)
-	})
-
-	for _, expected := range []string{
-		"[BLU, SP Debug Payload]",
-		"[HDB Debug Payload]",
-		"Tracker release name changed: Movie 2024 -> Movie-2024",
-		"- name: Movie.2024",
-		"- name: Movie-2024",
-	} {
-		if !strings.Contains(output, expected) {
-			t.Fatalf("expected output to contain %q, got %q", expected, output)
-		}
-	}
-	for _, unexpected := range []string{
-		"[BLU Debug Payload]",
-		"[SP Debug Payload]",
-	} {
-		if strings.Contains(output, unexpected) {
-			t.Fatalf("expected output not to contain %q, got %q", unexpected, output)
-		}
-	}
-	if count := strings.Count(output, "- name: Movie.2024"); count != 1 {
-		t.Fatalf("expected grouped payload to print once, got %d occurrences in %q", count, output)
 	}
 }
 

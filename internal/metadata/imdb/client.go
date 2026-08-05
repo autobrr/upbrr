@@ -6,10 +6,13 @@ package imdb
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,14 +26,24 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-const defaultBaseURL = "https://api.graphql.imdb.com/"
+const (
+	defaultBaseURL         = "https://caching.graphql.imdb.com/"
+	imdbOrigin             = "https://www.imdb.com"
+	imdbClientName         = "imdb-web-next-localized"
+	imdbUserCountry        = "US"
+	maxGraphQLResponseSize = 32 << 20
+)
 
+// Client queries IMDb's public GraphQL endpoint for title, search, and episode
+// metadata.
 type Client struct {
 	baseURL string
 	http    *http.Client
 	logger  api.Logger
 }
 
+// NewClient substitutes a 15-second HTTP client and no-op logger for nil
+// dependencies.
 func NewClient(httpClient *http.Client, logger api.Logger) *Client {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 15 * time.Second}
@@ -38,9 +51,17 @@ func NewClient(httpClient *http.Client, logger api.Logger) *Client {
 	if logger == nil {
 		logger = api.NopLogger{}
 	}
-	return &Client{baseURL: defaultBaseURL, http: httpClient, logger: logger}
+	return &Client{
+		baseURL: defaultBaseURL,
+		http:    httpClient,
+		logger:  logger,
+	}
 }
 
+// GetInfo returns normalized title metadata for imdbID. Empty or zero IDs and
+// missing titles return an empty result without error; request or decode failures
+// return no partial result. Missing runtime and plot values default to 60 minutes
+// and "No plot available", and episode data is limited to the first 500 entries.
 func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage string, debug bool) (Info, error) {
 	info := Info{}
 	id := metautil.NormalizeIMDbID(imdbID)
@@ -48,10 +69,13 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 		return info, nil
 	}
 
-	query := fmt.Sprintf(`query GetTitleInfo { title(id: "%s") { id titleText { text isOriginalTitle country { text } } originalTitleText { text } releaseYear { year endYear } titleType { id } plot { plotText { plainText } } ratingsSummary { aggregateRating voteCount } primaryImage { url } runtime { displayableProperty { value { plainText } } seconds } titleGenres { genres { genre { text } } } principalCredits { category { text id } credits { name { id nameText { text } } } } episodes { episodes(first: 500) { edges { node { id series { displayableEpisodeNumber { displayableSeason { season } episodeNumber { text } } } titleText { text } releaseYear { year } releaseDate { year month day } } } pageInfo { hasNextPage hasPreviousPage } total } } runtimes(first: 10) { edges { node { id seconds displayableProperty { value { plainText } } attributes { text } } } } technicalSpecifications { soundMixes { items { text attributes { text } } } } akas(first: 100) { edges { node { text country { text } language { text } attributes { text } } } } countriesOfOrigin { countries { text } } } }`, escapeGraphQLString(id))
+	query := fmt.Sprintf(
+		`query GetTitleInfo { title(id: "%s") { id titleText { text isOriginalTitle country { text } } originalTitleText { text } releaseYear { year endYear } titleType { id } plot { plotText { plainText } } ratingsSummary { aggregateRating voteCount } primaryImage { url } runtime { displayableProperty { value { plainText } } seconds } titleGenres { genres { genre { text } } } principalCredits { category { text id } credits { name { id nameText { text } } } } episodes { episodes(first: 500) { edges { node { id series { displayableEpisodeNumber { displayableSeason { season } episodeNumber { text } } } titleText { text } releaseYear { year } releaseDate { year month day } } } pageInfo { hasNextPage hasPreviousPage } total } } runtimes(first: 10) { edges { node { id seconds displayableProperty { value { plainText } } attributes { text } } } } technicalSpecifications { soundMixes { items { text attributes { text } } } } akas(first: 100) { edges { node { text country { text } language { text } attributes { text } } } } countriesOfOrigin { countries { text } } } }`,
+		escapeGraphQLString(id),
+	)
 
 	var response map[string]any
-	if err := c.postGraphQL(ctx, query, &response); err != nil {
+	if err := c.postGraphQL(ctx, "GetTitleInfo", query, &response); err != nil {
 		return info, err
 	}
 
@@ -271,6 +295,11 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 	return info, nil
 }
 
+// Search tries increasingly broad title variants in order, pausing one second
+// between remote attempts. Individual request failures are treated as no results.
+// A single result or a sufficiently separated similarity winner is selected;
+// Unattended selects the top ambiguous candidate, while interactive mode returns
+// candidates with a zero IMDbID. Quickie validates only the first result.
 func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, error) {
 	results := []map[string]any{}
 	imdbID := 0
@@ -381,14 +410,22 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 				if c.logger != nil {
 					c.logger.Infof("imdb: search auto-selected id=%d similarity=%.2f", best.IMDbID, best.Similarity)
 				}
-				return SearchResult{IMDbID: best.IMDbID, Candidates: candidates, AutoSelected: true}, nil
+				return SearchResult{
+					IMDbID:       best.IMDbID,
+					Candidates:   candidates,
+					AutoSelected: true,
+				}, nil
 			}
 		}
 		if input.Unattended {
 			if c.logger != nil {
 				c.logger.Infof("imdb: search unattended auto-selected id=%d similarity=%.2f", best.IMDbID, best.Similarity)
 			}
-			return SearchResult{IMDbID: best.IMDbID, Candidates: candidates, AutoSelected: true}, nil
+			return SearchResult{
+				IMDbID:       best.IMDbID,
+				Candidates:   candidates,
+				AutoSelected: true,
+			}, nil
 		}
 		return SearchResult{IMDbID: 0, Candidates: candidates}, nil
 	}
@@ -436,15 +473,21 @@ func applyReleaseHints(input SearchInput) SearchInput {
 	return input
 }
 
+// GetEpisodeInfo returns episode numbering, parent-series identity, and adjacent
+// episode references. Empty IDs and missing titles return an empty result without
+// error; request and decode failures return no partial result.
 func (c *Client) GetEpisodeInfo(ctx context.Context, imdbID string, debug bool) (EpisodeLookup, error) {
 	id := metautil.NormalizeIMDbID(imdbID)
 	if id == "" {
 		return EpisodeLookup{}, nil
 	}
 
-	query := fmt.Sprintf(`query { title(id: "%s") { id titleText { text } series { displayableEpisodeNumber { displayableSeason { id season text } episodeNumber { id text } } nextEpisode { id titleText { text } } previousEpisode { id titleText { text } } series { id titleText { text } } } } }`, escapeGraphQLString(id))
+	query := fmt.Sprintf(
+		`query GetEpisodeInfo { title(id: "%s") { id titleText { text } series { displayableEpisodeNumber { displayableSeason { id season text } episodeNumber { id text } } nextEpisode { id titleText { text } } previousEpisode { id titleText { text } } series { id titleText { text } } } } }`,
+		escapeGraphQLString(id),
+	)
 	var response map[string]any
-	if err := c.postGraphQL(ctx, query, &response); err != nil {
+	if err := c.postGraphQL(ctx, "GetEpisodeInfo", query, &response); err != nil {
 		return EpisodeLookup{}, err
 	}
 	title := getMap(response, "data", "title")
@@ -488,7 +531,13 @@ func (c *Client) GetEpisodeInfo(ctx context.Context, imdbID string, debug bool) 
 		c.logger.Debugf("imdb: episode lookup loaded for %s", id)
 	}
 	if c.logger != nil {
-		c.logger.Tracef("imdb: episode lookup loaded id=%s series=%q season=%s episode=%s", id, lookup.Series.SeriesTitle, lookup.Series.SeasonText, lookup.Series.EpisodeText)
+		c.logger.Tracef(
+			"imdb: episode lookup loaded id=%s series=%q season=%s episode=%s",
+			id,
+			lookup.Series.SeriesTitle,
+			lookup.Series.SeasonText,
+			lookup.Series.EpisodeText,
+		)
 	}
 
 	return lookup, nil
@@ -515,43 +564,176 @@ func (c *Client) runSearch(ctx context.Context, filename string, searchYear int,
 	}
 	constraintsString := strings.Join(constraints, ", ")
 
-	query := fmt.Sprintf(`{ advancedTitleSearch(first: 10, constraints: {%s}) { total edges { node { title { id titleText { text } titleType { text } releaseYear { year } plot { plotText { plainText } } } } } } }`, constraintsString)
+	query := fmt.Sprintf(
+		`query SearchTitles { advancedTitleSearch(first: 10, constraints: {%s}) { total edges { node { title { id titleText { text } titleType { text } releaseYear { year } plot { plotText { plainText } } } } } } }`,
+		constraintsString,
+	)
 	var response map[string]any
-	if err := c.postGraphQL(ctx, query, &response); err != nil {
+	if err := c.postGraphQL(ctx, "SearchTitles", query, &response); err != nil {
 		return nil
 	}
 	return getList(response, "data", "advancedTitleSearch", "edges")
 }
 
-func (c *Client) postGraphQL(ctx context.Context, query string, target any) error {
-	payload := map[string]string{"query": query}
-	body, err := json.Marshal(payload)
+type graphQLRequest struct {
+	OperationName string            `json:"operationName"`
+	Variables     map[string]any    `json:"variables"`
+	Query         string            `json:"query,omitempty"`
+	Extensions    graphQLExtensions `json:"extensions"`
+}
+
+type graphQLExtensions struct {
+	PersistedQuery graphQLPersistedQuery `json:"persistedQuery"`
+}
+
+type graphQLPersistedQuery struct {
+	Version    int    `json:"version"`
+	SHA256Hash string `json:"sha256Hash"`
+}
+
+type graphQLErrorEnvelope struct {
+	Errors []struct {
+		Message    string `json:"message"`
+		Extensions struct {
+			Code string `json:"code"`
+		} `json:"extensions"`
+	} `json:"errors"`
+}
+
+func (c *Client) postGraphQL(ctx context.Context, operationName string, query string, target any) error {
+	queryHash := sha256.Sum256([]byte(query))
+	payload := graphQLRequest{
+		OperationName: operationName,
+		Variables:     map[string]any{},
+		Extensions: graphQLExtensions{
+			PersistedQuery: graphQLPersistedQuery{
+				Version:    1,
+				SHA256Hash: hex.EncodeToString(queryHash[:]),
+			},
+		},
+	}
+
+	responseBody, err := c.executeGraphQLRequest(ctx, http.MethodGet, payload)
 	if err != nil {
-		return fmt.Errorf("imdb: marshal GraphQL payload: %w", err)
+		return err
+	}
+	if persistedQueryNotFound(responseBody) {
+		if c.logger != nil {
+			c.logger.Debugf("imdb: persisted query cache miss operation=%s action=register", operationName)
+		}
+		payload.Query = query
+		responseBody, err = c.executeGraphQLRequest(ctx, http.MethodPost, payload)
+		if err != nil {
+			return err
+		}
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("imdb: build GraphQL request: %w", err)
+	if err := graphQLResponseError(operationName, responseBody); err != nil {
+		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("imdb: execute GraphQL request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-		return fmt.Errorf("imdb: http %d: %s", resp.StatusCode, strings.TrimSpace(redaction.RedactValue(string(payload), nil)))
-	}
-
-	decoder := json.NewDecoder(resp.Body)
-	if err := decoder.Decode(target); err != nil {
+	if err := json.Unmarshal(responseBody, target); err != nil {
 		return fmt.Errorf("imdb: decode GraphQL response: %w", err)
 	}
 	return nil
+}
+
+func (c *Client) executeGraphQLRequest(ctx context.Context, method string, payload graphQLRequest) ([]byte, error) {
+	endpoint := c.baseURL
+	var body io.Reader
+
+	if method == http.MethodGet {
+		parsedURL, err := url.Parse(endpoint)
+		if err != nil {
+			return nil, fmt.Errorf("imdb: parse GraphQL endpoint: %w", err)
+		}
+		variables, err := json.Marshal(payload.Variables)
+		if err != nil {
+			return nil, fmt.Errorf("imdb: marshal GraphQL variables: %w", err)
+		}
+		extensions, err := json.Marshal(payload.Extensions)
+		if err != nil {
+			return nil, fmt.Errorf("imdb: marshal GraphQL extensions: %w", err)
+		}
+		params := parsedURL.Query()
+		params.Set("operationName", payload.OperationName)
+		params.Set("variables", string(variables))
+		params.Set("extensions", string(extensions))
+		parsedURL.RawQuery = params.Encode()
+		endpoint = parsedURL.String()
+	} else {
+		requestBody, err := json.Marshal(payload)
+		if err != nil {
+			return nil, fmt.Errorf("imdb: marshal GraphQL payload: %w", err)
+		}
+		body = bytes.NewReader(requestBody)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, body)
+	if err != nil {
+		return nil, fmt.Errorf("imdb: build GraphQL request: %w", err)
+	}
+	req.Header.Set("Accept", "application/graphql+json, application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", imdbOrigin)
+	req.Header.Set("X-Imdb-Client-Name", imdbClientName)
+	req.Header.Set("X-Imdb-User-Country", imdbUserCountry)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("imdb: execute GraphQL request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, maxGraphQLResponseSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("imdb: read GraphQL response: %w", err)
+	}
+	if len(responseBody) > maxGraphQLResponseSize {
+		return nil, fmt.Errorf("imdb: GraphQL response exceeds %d bytes", maxGraphQLResponseSize)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf(
+			"imdb: http %d: %s",
+			resp.StatusCode,
+			strings.TrimSpace(redaction.RedactValue(string(responseBody), nil)),
+		)
+	}
+
+	return responseBody, nil
+}
+
+func graphQLResponseError(operationName string, responseBody []byte) error {
+	var envelope graphQLErrorEnvelope
+	if err := json.Unmarshal(responseBody, &envelope); err != nil || len(envelope.Errors) == 0 {
+		return nil
+	}
+
+	firstError := envelope.Errors[0]
+	code := strings.TrimSpace(redaction.RedactValue(firstError.Extensions.Code, nil))
+	message := strings.TrimSpace(redaction.RedactValue(firstError.Message, nil))
+	switch {
+	case code != "" && message != "":
+		return fmt.Errorf("imdb: GraphQL error operation=%s code=%s message=%s", operationName, code, message)
+	case code != "":
+		return fmt.Errorf("imdb: GraphQL error operation=%s code=%s", operationName, code)
+	case message != "":
+		return fmt.Errorf("imdb: GraphQL error operation=%s message=%s", operationName, message)
+	default:
+		return fmt.Errorf("imdb: GraphQL response contains errors operation=%s count=%d", operationName, len(envelope.Errors))
+	}
+}
+
+func persistedQueryNotFound(responseBody []byte) bool {
+	var envelope graphQLErrorEnvelope
+	if err := json.Unmarshal(responseBody, &envelope); err != nil {
+		return false
+	}
+	for _, graphQLError := range envelope.Errors {
+		if graphQLError.Extensions.Code == "PERSISTED_QUERY_NOT_FOUND" || graphQLError.Message == "PersistedQueryNotFound" {
+			return true
+		}
+	}
+	return false
 }
 
 func collectCredits(data map[string]any, keyword string) []Person {
@@ -598,7 +780,15 @@ func rankCandidates(results []map[string]any, filename string, searchYear int) [
 				similarity += 0.05
 			}
 		}
-		candidates = append(candidates, Candidate{IMDbID: imdbID, Title: text, Year: year, Type: getStringFromMap(title, "titleType", "text"), Plot: plot, PosterURL: posterURL, Similarity: similarity})
+		candidates = append(candidates, Candidate{
+			IMDbID:     imdbID,
+			Title:      text,
+			Year:       year,
+			Type:       getStringFromMap(title, "titleType", "text"),
+			Plot:       plot,
+			PosterURL:  posterURL,
+			Similarity: similarity,
+		})
 	}
 
 	sort.SliceStable(candidates, func(i, j int) bool {

@@ -1,0 +1,20 @@
+// Copyright (c) 2025-2026, Audionut and the autobrr contributors.
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+package spd
+
+import (
+	"strings"
+
+	"github.com/autobrr/upbrr/internal/bbcode"
+)
+
+func finalizeDescription(value string) string {
+	value = strings.TrimSpace(bbcode.NormalizeNewlines(value))
+	value = bbcode.RemoveImageResize(value)
+	value = bbcode.ConvertNamedSpoilerToNormalSpoiler(value)
+	value = strings.NewReplacer("[note]", "Note: ", "[/note]", "", "[code]", "", "[/code]", "", "[*]", "• ").Replace(value)
+	value = bbcode.RemoveSpoiler(value)
+	value = bbcode.RemoveList(value)
+	return bbcode.RemoveExtraLines(value)
+}

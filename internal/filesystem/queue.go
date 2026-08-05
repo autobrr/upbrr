@@ -20,9 +20,9 @@ var queueVideoExts = map[string]struct{}{
 	".ts":  {},
 }
 
-// GatherQueuePaths expands a queue root into first-level upload candidates.
-// Files are included directly; subdirectories are included as single units when
-// they contain video files or disc folder markers.
+// GatherQueuePaths returns sorted absolute host paths for first-level upload
+// candidates. A file root is returned directly; directory children are kept
+// only when they are video files or directories containing video or disc data.
 func GatherQueuePaths(ctx context.Context, root string) ([]string, error) {
 	trimmed := strings.TrimSpace(root)
 	if trimmed == "" {
@@ -80,6 +80,8 @@ func GatherQueuePaths(ctx context.Context, root string) ([]string, error) {
 	return paths, nil
 }
 
+// LimitQueuePaths returns a defensive copy capped at limit. A non-positive
+// limit returns all paths.
 func LimitQueuePaths(paths []string, limit int) []string {
 	if limit <= 0 || len(paths) <= limit {
 		return append([]string{}, paths...)

@@ -112,7 +112,11 @@ func TestCaptureDirectoryRejectsItemLimitOverSafetyMaximum(t *testing.T) {
 func TestVisibleMenuStateRequiresAuthoredMenuEvidence(t *testing.T) {
 	t.Parallel()
 
-	base := ifo.ProgramChain{Programs: 2, Cells: 1, CellPlayback: []ifo.CellPlayback{{}}}
+	base := ifo.ProgramChain{
+		Programs:     2,
+		Cells:        1,
+		CellPlayback: []ifo.CellPlayback{{}},
+	}
 	withPGCStill := base
 	withPGCStill.StillTime = 0xff
 	withCellStill := base
@@ -128,14 +132,55 @@ func TestVisibleMenuStateRequiresAuthoredMenuEvidence(t *testing.T) {
 		highlight  bool
 		want       bool
 	}{
-		{name: "button", pgc: base, coordinate: graph.Coordinate{Program: 1, Cell: 1}, buttons: []nav.Button{{Number: 1}}, want: true},
-		{name: "overlay", pgc: base, coordinate: graph.Coordinate{Program: 1, Cell: 1}, overlay: true, want: true},
-		{name: "highlight", pgc: base, coordinate: graph.Coordinate{Program: 1, Cell: 1}, highlight: true, want: true},
-		{name: "pgc still", pgc: withPGCStill, coordinate: graph.Coordinate{Program: 1, Cell: 1}, want: true},
-		{name: "cell still", pgc: withCellStill, coordinate: graph.Coordinate{Program: 1, Cell: 1}, want: true},
-		{name: "entry program", pgc: entry, coordinate: graph.Coordinate{Program: 1, Cell: 1}, want: true},
-		{name: "entry transition program", pgc: entry, coordinate: graph.Coordinate{Program: 2, Cell: 1}},
-		{name: "plain transition", pgc: base, coordinate: graph.Coordinate{Program: 1, Cell: 1}},
+		{
+			name:       "button",
+			pgc:        base,
+			coordinate: graph.Coordinate{Program: 1, Cell: 1},
+			buttons:    []nav.Button{{Number: 1}},
+			want:       true,
+		},
+		{
+			name:       "overlay",
+			pgc:        base,
+			coordinate: graph.Coordinate{Program: 1, Cell: 1},
+			overlay:    true,
+			want:       true,
+		},
+		{
+			name:       "highlight",
+			pgc:        base,
+			coordinate: graph.Coordinate{Program: 1, Cell: 1},
+			highlight:  true,
+			want:       true,
+		},
+		{
+			name:       "pgc still",
+			pgc:        withPGCStill,
+			coordinate: graph.Coordinate{Program: 1, Cell: 1},
+			want:       true,
+		},
+		{
+			name:       "cell still",
+			pgc:        withCellStill,
+			coordinate: graph.Coordinate{Program: 1, Cell: 1},
+			want:       true,
+		},
+		{
+			name:       "entry program",
+			pgc:        entry,
+			coordinate: graph.Coordinate{Program: 1, Cell: 1},
+			want:       true,
+		},
+		{
+			name:       "entry transition program",
+			pgc:        entry,
+			coordinate: graph.Coordinate{Program: 2, Cell: 1},
+		},
+		{
+			name:       "plain transition",
+			pgc:        base,
+			coordinate: graph.Coordinate{Program: 1, Cell: 1},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -439,7 +484,12 @@ func newFakeRunner(t *testing.T) *fakeRunner {
 	background := image.NewNRGBA(image.Rect(0, 0, 2, 2))
 	for y := range 2 {
 		for x := range 2 {
-			background.SetNRGBA(x, y, color.NRGBA{R: 16, G: 32, B: 48, A: 0xff})
+			background.SetNRGBA(x, y, color.NRGBA{
+				R: 16,
+				G: 32,
+				B: 48,
+				A: 0xff,
+			})
 		}
 	}
 	if err := png.Encode(&frame, background); err != nil {
@@ -454,7 +504,11 @@ func newFakeRunner(t *testing.T) *fakeRunner {
 
 func (r *fakeRunner) Run(_ context.Context, executable string, args []string, limit int) (render.Output, error) {
 	index := len(r.calls)
-	r.calls = append(r.calls, runnerCall{executable: executable, args: append([]string(nil), args...), limit: limit})
+	r.calls = append(r.calls, runnerCall{
+		executable: executable,
+		args:       append([]string(nil), args...),
+		limit:      limit,
+	})
 	var output render.Output
 	var err error
 	if index < len(r.outputs) {

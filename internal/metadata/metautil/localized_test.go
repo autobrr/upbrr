@@ -11,13 +11,41 @@ func TestTranslateGenreToPortuguese(t *testing.T) {
 		input string
 		want  string
 	}{
-		{name: "empty", input: "", want: ""},
-		{name: "action", input: "action", want: "ação"},
-		{name: "action & adventure upper", input: "ACTION & ADVENTURE", want: "ação e aventura"},
-		{name: "drama unchanged", input: "drama", want: "drama"},
-		{name: "unknown unchanged", input: "some-unknown-genre", want: "some-unknown-genre"},
-		{name: "comedy with space", input: "  Comedy  ", want: "comédia"},
-		{name: "sci-fi", input: "sci-fi", want: "ficção científica"},
+		{
+			name:  "empty",
+			input: "",
+			want:  "",
+		},
+		{
+			name:  "action",
+			input: "action",
+			want:  "ação",
+		},
+		{
+			name:  "action & adventure upper",
+			input: "ACTION & ADVENTURE",
+			want:  "ação e aventura",
+		},
+		{
+			name:  "drama unchanged",
+			input: "drama",
+			want:  "drama",
+		},
+		{
+			name:  "unknown unchanged",
+			input: "some-unknown-genre",
+			want:  "some-unknown-genre",
+		},
+		{
+			name:  "comedy with space",
+			input: "  Comedy  ",
+			want:  "comédia",
+		},
+		{
+			name:  "sci-fi",
+			input: "sci-fi",
+			want:  "ficção científica",
+		},
 	}
 
 	for _, tt := range tests {
@@ -35,11 +63,31 @@ func TestCapitalizeGenre(t *testing.T) {
 		input string
 		want  string
 	}{
-		{name: "empty", input: "", want: ""},
-		{name: "acao", input: "ação", want: "Ação"},
-		{name: "action & adventure", input: "ação e aventura", want: "Ação e aventura"},
-		{name: "comedy", input: "comedy", want: "Comedy"},
-		{name: "with spaces", input: "  drama  ", want: "Drama"},
+		{
+			name:  "empty",
+			input: "",
+			want:  "",
+		},
+		{
+			name:  "acao",
+			input: "ação",
+			want:  "Ação",
+		},
+		{
+			name:  "action & adventure",
+			input: "ação e aventura",
+			want:  "Ação e aventura",
+		},
+		{
+			name:  "comedy",
+			input: "comedy",
+			want:  "Comedy",
+		},
+		{
+			name:  "with spaces",
+			input: "  drama  ",
+			want:  "Drama",
+		},
 	}
 
 	for _, tt := range tests {
@@ -57,17 +105,61 @@ func TestTranslateGenreToPortugueseStrict(t *testing.T) {
 		input string
 		want  string
 	}{
-		{name: "empty", input: "", want: ""},
-		{name: "action", input: "action", want: "ação"},
-		{name: "action & adventure upper", input: "ACTION & ADVENTURE", want: "ação e aventura"},
-		{name: "drama", input: "drama", want: "drama"},
-		{name: "unknown returns empty", input: "some-unknown-genre", want: ""},
-		{name: "comedy with space", input: "  Comedy  ", want: "comédia"},
-		{name: "sci-fi", input: "sci-fi", want: "ficção científica"},
-		{name: "adult", input: "adult", want: "adulto"},
-		{name: "film-noir", input: "Film Noir", want: "filme noir"},
-		{name: "musical", input: "musical", want: "musical"},
-		{name: "talk-show", input: "talk-show", want: "talk show"},
+		{
+			name:  "empty",
+			input: "",
+			want:  "",
+		},
+		{
+			name:  "action",
+			input: "action",
+			want:  "ação",
+		},
+		{
+			name:  "action & adventure upper",
+			input: "ACTION & ADVENTURE",
+			want:  "ação e aventura",
+		},
+		{
+			name:  "drama",
+			input: "drama",
+			want:  "drama",
+		},
+		{
+			name:  "unknown returns empty",
+			input: "some-unknown-genre",
+			want:  "",
+		},
+		{
+			name:  "comedy with space",
+			input: "  Comedy  ",
+			want:  "comédia",
+		},
+		{
+			name:  "sci-fi",
+			input: "sci-fi",
+			want:  "ficção científica",
+		},
+		{
+			name:  "adult",
+			input: "adult",
+			want:  "adulto",
+		},
+		{
+			name:  "film-noir",
+			input: "Film Noir",
+			want:  "filme noir",
+		},
+		{
+			name:  "musical",
+			input: "musical",
+			want:  "musical",
+		},
+		{
+			name:  "talk-show",
+			input: "talk-show",
+			want:  "talk show",
+		},
 	}
 
 	for _, tt := range tests {
@@ -86,11 +178,36 @@ func TestISO3166PortugueseName(t *testing.T) {
 		fallback string
 		want     string
 	}{
-		{name: "empty", code: "", fallback: "Unknown", want: "Unknown"},
-		{name: "US to PT", code: "US", fallback: "US", want: "Estados Unidos da América"},
-		{name: "US lowercase", code: "us", fallback: "US", want: "Estados Unidos da América"},
-		{name: "BR to PT", code: "BR", fallback: "BR", want: "Brasil"},
-		{name: "unknown fallback", code: "XYZ", fallback: "XYZ", want: "XYZ"},
+		{
+			name:     "empty",
+			code:     "",
+			fallback: "Unknown",
+			want:     "Unknown",
+		},
+		{
+			name:     "US to PT",
+			code:     "US",
+			fallback: "US",
+			want:     "Estados Unidos da América",
+		},
+		{
+			name:     "US lowercase",
+			code:     "us",
+			fallback: "US",
+			want:     "Estados Unidos da América",
+		},
+		{
+			name:     "BR to PT",
+			code:     "BR",
+			fallback: "BR",
+			want:     "Brasil",
+		},
+		{
+			name:     "unknown fallback",
+			code:     "XYZ",
+			fallback: "XYZ",
+			want:     "XYZ",
+		},
 	}
 
 	for _, tt := range tests {

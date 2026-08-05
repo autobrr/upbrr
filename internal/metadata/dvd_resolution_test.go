@@ -6,11 +6,11 @@ package metadata
 import (
 	"testing"
 
-	"github.com/autobrr/upbrr/pkg/api"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 )
 
 func TestExtractDVDMediaInfoFromVOBJSON(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		DiscType:            "DVD",
 		SourcePath:          `/releases/Movie.DVD`,
 		DVDVOBMediaInfoJSON: `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"720","Height":"576","FrameRate":"25.000","ScanType":"Interlaced"}]}}`,
@@ -29,7 +29,7 @@ func TestExtractDVDMediaInfoFromVOBJSON(t *testing.T) {
 }
 
 func TestExtractDVDMediaInfoFallsBackToText(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		DiscType:            "DVD",
 		SourcePath:          `/releases/Movie.DVD`,
 		DVDVOBMediaInfoJSON: `{"media":{"track":[{"@type":"General"},{"@type":"Video"}]}}`,
@@ -52,7 +52,7 @@ func TestExtractDVDMediaInfoFallsBackToText(t *testing.T) {
 }
 
 func TestExtractDVDMediaInfoUsesInterlacedHintFromSourcePath(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		DiscType:            "DVD",
 		SourcePath:          `/releases/Movie.1080i.DVD`,
 		DVDVOBMediaInfoJSON: `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"1920","Height":"1080","FrameRate":"25.000"}]}}`,
@@ -68,7 +68,7 @@ func TestExtractDVDMediaInfoUsesInterlacedHintFromSourcePath(t *testing.T) {
 }
 
 func TestExtractDVDMediaInfoDefaultsUnknownScanToProgressive(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		DiscType:            "DVD",
 		SourcePath:          `/releases/Movie.DVD`,
 		DVDVOBMediaInfoJSON: `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"720","Height":"576","FrameRate":"25.000"}]}}`,
@@ -84,7 +84,7 @@ func TestExtractDVDMediaInfoDefaultsUnknownScanToProgressive(t *testing.T) {
 }
 
 func TestExtractDVDMediaInfoDoesNotOverrideJSONProgressiveScan(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		DiscType:            "DVD",
 		SourcePath:          `/releases/Movie.DVD`,
 		DVDVOBMediaInfoJSON: `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"720","Height":"576","FrameRate":"25.000","ScanType":"Progressive"}]}}`,
@@ -118,6 +118,18 @@ func TestResolutionFromMediaInfo(t *testing.T) {
 			payload:  `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"1280","Height":"720","ScanType":"Progressive"}]}}`,
 			expected: "720p",
 			message:  "expected 720p, got %q",
+		},
+		{
+			name:     "720x540p",
+			payload:  `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"720","Height":"540","ScanType":"Progressive"}]}}`,
+			expected: "540p",
+			message:  "expected 540p for 720x540, got %q",
+		},
+		{
+			name:     "960x540p",
+			payload:  `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"960","Height":"540","ScanType":"Progressive"}]}}`,
+			expected: "540p",
+			message:  "expected 540p for 960x540, got %q",
 		},
 		{
 			name:     "1080i",

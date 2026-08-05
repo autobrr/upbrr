@@ -111,14 +111,18 @@ func TestRedactValueDelimitedAuthAndCookieTails(t *testing.T) {
 func TestRedactValueDoesNotReredactRedactedQueryValues(t *testing.T) {
 	t.Parallel()
 
-	input := "https://tracker.example/upload?api_key=secret-key&passkey=secret-pass"
+	input := "tracker=https://tracker.example/upload?api_key=secret-key&passkey=secret-pass state=ready, count=4]"
 	output := RedactValue(input, nil)
+	second := RedactValue(output, nil)
 
-	if contains(output, "[REDACTED]]") {
+	if contains(second, "[REDACTED]]") {
 		t.Fatal("expected already-redacted query values to stay stable")
 	}
-	if !contains(output, "api_key=[REDACTED]&passkey=[REDACTED]") {
+	if !contains(second, "api_key=[REDACTED]&passkey=[REDACTED] state=ready, count=4]") {
 		t.Fatal("expected query values redacted once")
+	}
+	if second != output {
+		t.Fatal("second redaction changed output")
 	}
 }
 

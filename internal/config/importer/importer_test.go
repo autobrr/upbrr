@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -93,14 +94,50 @@ func TestImportFromContentRejectsDestructiveObjectOverlays(t *testing.T) {
 		payload []byte
 		wantErr bool
 	}{
-		{name: "yaml-null", file: "config.yaml", payload: []byte("main_settings: null\n")},
-		{name: "yaml-empty-map", file: "config.yaml", payload: []byte("main_settings: {}\n")},
-		{name: "yaml-empty-array", file: "config.yaml", payload: []byte("main_settings: []\n"), wantErr: true},
-		{name: "yaml-scalar", file: "config.yaml", payload: []byte("main_settings: nope\n"), wantErr: true},
-		{name: "json-null", file: "config.json", payload: []byte(`{"MainSettings":null}`)},
-		{name: "json-empty-map", file: "config.json", payload: []byte(`{"MainSettings":{}}`)},
-		{name: "json-empty-array", file: "config.json", payload: []byte(`{"MainSettings":[]}`), wantErr: true},
-		{name: "json-scalar", file: "config.json", payload: []byte(`{"MainSettings":"nope"}`), wantErr: true},
+		{
+			name:    "yaml-null",
+			file:    "config.yaml",
+			payload: []byte("main_settings: null\n"),
+		},
+		{
+			name:    "yaml-empty-map",
+			file:    "config.yaml",
+			payload: []byte("main_settings: {}\n"),
+		},
+		{
+			name:    "yaml-empty-array",
+			file:    "config.yaml",
+			payload: []byte("main_settings: []\n"),
+			wantErr: true,
+		},
+		{
+			name:    "yaml-scalar",
+			file:    "config.yaml",
+			payload: []byte("main_settings: nope\n"),
+			wantErr: true,
+		},
+		{
+			name:    "json-null",
+			file:    "config.json",
+			payload: []byte(`{"MainSettings":null}`),
+		},
+		{
+			name:    "json-empty-map",
+			file:    "config.json",
+			payload: []byte(`{"MainSettings":{}}`),
+		},
+		{
+			name:    "json-empty-array",
+			file:    "config.json",
+			payload: []byte(`{"MainSettings":[]}`),
+			wantErr: true,
+		},
+		{
+			name:    "json-scalar",
+			file:    "config.json",
+			payload: []byte(`{"MainSettings":"nope"}`),
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -131,16 +168,56 @@ func TestImportFromContentRejectsUnknownTopLevelSections(t *testing.T) {
 		file    string
 		payload []byte
 	}{
-		{name: "yaml-scalar", file: "config.yaml", payload: []byte("unknown_section: nope\n")},
-		{name: "yaml-array", file: "config.yaml", payload: []byte("unknown_section: []\n")},
-		{name: "yaml-object", file: "config.yaml", payload: []byte("unknown_section:\n  nested: true\n")},
-		{name: "yaml-null", file: "config.yaml", payload: []byte("unknown_section: null\n")},
-		{name: "yaml-case-twin", file: "config.yaml", payload: []byte("MainSettings:\n  TMDBAPI: wrong\n")},
-		{name: "json-scalar", file: "config.json", payload: []byte(`{"UnknownSection":"nope"}`)},
-		{name: "json-array", file: "config.json", payload: []byte(`{"UnknownSection":[]}`)},
-		{name: "json-object", file: "config.json", payload: []byte(`{"UnknownSection":{"nested":true}}`)},
-		{name: "json-null", file: "config.json", payload: []byte(`{"UnknownSection":null}`)},
-		{name: "json-case-twin", file: "config.json", payload: []byte(`{"main_settings":{"tmdb_api":"wrong"}}`)},
+		{
+			name:    "yaml-scalar",
+			file:    "config.yaml",
+			payload: []byte("unknown_section: nope\n"),
+		},
+		{
+			name:    "yaml-array",
+			file:    "config.yaml",
+			payload: []byte("unknown_section: []\n"),
+		},
+		{
+			name:    "yaml-object",
+			file:    "config.yaml",
+			payload: []byte("unknown_section:\n  nested: true\n"),
+		},
+		{
+			name:    "yaml-null",
+			file:    "config.yaml",
+			payload: []byte("unknown_section: null\n"),
+		},
+		{
+			name:    "yaml-case-twin",
+			file:    "config.yaml",
+			payload: []byte("MainSettings:\n  TMDBAPI: wrong\n"),
+		},
+		{
+			name:    "json-scalar",
+			file:    "config.json",
+			payload: []byte(`{"UnknownSection":"nope"}`),
+		},
+		{
+			name:    "json-array",
+			file:    "config.json",
+			payload: []byte(`{"UnknownSection":[]}`),
+		},
+		{
+			name:    "json-object",
+			file:    "config.json",
+			payload: []byte(`{"UnknownSection":{"nested":true}}`),
+		},
+		{
+			name:    "json-null",
+			file:    "config.json",
+			payload: []byte(`{"UnknownSection":null}`),
+		},
+		{
+			name:    "json-case-twin",
+			file:    "config.json",
+			payload: []byte(`{"main_settings":{"tmdb_api":"wrong"}}`),
+		},
 	}
 
 	for _, tt := range tests {
@@ -554,25 +631,73 @@ func TestImportFromFileRejectsOversize(t *testing.T) {
 	}
 }
 
-func TestImportFromContentDisablesUnsupportedImageRehost(t *testing.T) {
+func TestImportFromContentPreservesTrackerImageRehostForRuntimePolicy(t *testing.T) {
 	yaml := []byte("trackers:\n  trackers:\n    TL:\n      img_rehost: true\n")
 
 	cfg, warnings, err := ImportFromContent("config.yaml", yaml)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.Trackers.Trackers["TL"].ImgRehost {
-		t.Fatal("expected TL img_rehost to be disabled during import")
+	if !cfg.Trackers.Trackers["TL"].ImgRehost {
+		t.Fatal("expected TL img_rehost to remain available for registry policy validation")
 	}
-	found := false
 	for _, w := range warnings {
 		if strings.Contains(w, "TL") && strings.Contains(w, "img_rehost") {
-			found = true
-			break
+			t.Fatalf("unexpected config-layer tracker policy warning: %v", warnings)
 		}
 	}
-	if !found {
-		t.Fatalf("expected warning about TL img_rehost, got %v", warnings)
+}
+
+func TestImportFromContentRemovesDeprecatedTrackerURLs(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		filename string
+		payload  []byte
+		paths    []string
+	}{
+		{
+			name:     "yaml",
+			filename: "config.yaml",
+			payload:  []byte("trackers:\n  trackers:\n    BTN:\n      Url: https://btn.invalid\n      api_key: token\n    RETIRED:\n      uRL: https://retired.invalid\n      keep_me: retained\n"),
+			paths:    []string{"trackers.trackers.BTN.Url", "trackers.trackers.RETIRED.uRL"},
+		},
+		{
+			name:     "json",
+			filename: "config.json",
+			payload:  []byte(`{"Trackers":{"Trackers":{"BTN":{"uRl":"https://btn.invalid","APIKey":"token"},"RETIRED":{"URL":"https://retired.invalid","keep_me":"retained"}}}}`),
+			paths:    []string{"Trackers.Trackers.BTN.uRl", "Trackers.Trackers.RETIRED.URL"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, warnings, err := ImportFromContent(test.filename, test.payload)
+			if err != nil {
+				t.Fatalf("import: %v", err)
+			}
+			if got := cfg.Trackers.Trackers["BTN"].APIKey; got != "token" {
+				t.Fatalf("BTN APIKey = %q", got)
+			}
+			unsupported := cfg.Trackers.Trackers["RETIRED"]
+			if got := unsupported.Unknown["keep_me"]; got != "retained" {
+				t.Fatalf("unsupported field = %#v", got)
+			}
+			for key := range unsupported.Unknown {
+				if strings.EqualFold(strings.TrimSpace(key), "url") {
+					t.Fatalf("deprecated URL survived in Unknown as %q", key)
+				}
+			}
+			for _, path := range test.paths {
+				want := "ignored deprecated tracker URL: " + path
+				if !slices.Contains(warnings, want) {
+					t.Fatalf("missing warning %q in %#v", want, warnings)
+				}
+			}
+		})
 	}
 }
 
@@ -607,7 +732,6 @@ func importSecretConfig(dbPath string) *config.Config {
 			Trackers: map[string]config.TrackerConfig{
 				"BTN": {
 					APIKey: "plain-btn-api-key",
-					URL:    "https://secret.btn.example",
 				},
 			},
 		},
@@ -657,9 +781,6 @@ func assertImportedSecretValues(t *testing.T, cfg *config.Config) {
 	if cfg.Trackers.Trackers["BTN"].APIKey != "plain-btn-api-key" {
 		t.Fatalf("BTN APIKey: got %q", cfg.Trackers.Trackers["BTN"].APIKey)
 	}
-	if cfg.Trackers.Trackers["BTN"].URL != "https://secret.btn.example" {
-		t.Fatalf("BTN URL: got %q", cfg.Trackers.Trackers["BTN"].URL)
-	}
 	if cfg.TorrentClients["qbit"].QbitPass != "plain-qbit-pass" {
 		t.Fatalf("QbitPass: got %q", cfg.TorrentClients["qbit"].QbitPass)
 	}
@@ -675,9 +796,6 @@ func assertNoPlaintextSecretValues(t *testing.T, cfg *config.Config) {
 	}
 	if cfg.Trackers.Trackers["BTN"].APIKey == "plain-btn-api-key" {
 		t.Fatal("saved config leaked plaintext BTN APIKey")
-	}
-	if cfg.Trackers.Trackers["BTN"].URL == "https://secret.btn.example" {
-		t.Fatal("saved config leaked plaintext BTN URL")
 	}
 	if cfg.TorrentClients["qbit"].QbitPass == "plain-qbit-pass" {
 		t.Fatal("saved config leaked plaintext QbitPass")

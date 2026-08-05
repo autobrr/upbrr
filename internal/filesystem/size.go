@@ -15,8 +15,10 @@ import (
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 )
 
-// SourceSize returns the total size of the content in bytes.
-// For disc sources, it walks the entire tree; otherwise it sums the file list or video path.
+// SourceSize returns content size in bytes. Disc sources walk the full tree and
+// report traversal errors. Other sources prefer nonblank fileList entries,
+// fall back to videoPath when none remain, and silently skip missing,
+// inaccessible, or non-regular files.
 func SourceSize(ctx context.Context, sourcePath, discType string, fileList []string, videoPath string) (int64, error) {
 	trimmed := strings.TrimSpace(sourcePath)
 	if trimmed == "" {

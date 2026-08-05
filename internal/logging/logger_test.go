@@ -5,6 +5,8 @@ package logging
 
 import (
 	"bytes"
+	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -59,6 +61,21 @@ func TestLoggerSanitizesLocalPaths(t *testing.T) {
 	}
 	if !strings.Contains(recent[0].Message, "source=[local path] artifact=.upbrr/tmp/file.torrent tracker=ABC") {
 		t.Fatalf("unexpected buffered log message: %q", recent[0].Message)
+	}
+}
+
+func TestSanitizeMessagePreservesSavePathFieldOnly(t *testing.T) {
+	t.Parallel()
+
+	savePath := filepath.Join(t.TempDir(), "Example.Release.2026-GRP")
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.Source-GRP")
+	got := SanitizeMessage(fmt.Sprintf("save_path=%s source=%s", savePath, sourcePath))
+
+	if !strings.Contains(got, "save_path="+savePath) {
+		t.Fatalf("expected save path field to remain visible, got %q", got)
+	}
+	if strings.Contains(got, sourcePath) || !strings.Contains(got, "source=[local path]") {
+		t.Fatalf("expected non-save path field to remain redacted, got %q", got)
 	}
 }
 
@@ -166,5 +183,22 @@ func TestSanitizeMessageRedactsURLUserinfo(t *testing.T) {
 	}
 	if !strings.Contains(got, "https://[REDACTED]@host.example/path") {
 		t.Fatal("expected URL host and path preserved")
+	}
+}
+
+func TestSanitizeMessagePreservesFieldsAfterTerminalRedactedQuery(t *testing.T) {
+	t.Parallel()
+
+	input := "tracker=https://tracker.example/announce?passkey=secret state=ready count=4"
+	first := SanitizeMessage(input)
+	second := SanitizeMessage(first)
+	if strings.Contains(first, "secret") || strings.Contains(second, "secret") {
+		t.Fatal("expected tracker passkey redacted")
+	}
+	if first != second {
+		t.Fatalf("sanitization is not idempotent:\nfirst:  %q\nsecond: %q", first, second)
+	}
+	if !strings.Contains(second, "passkey=[REDACTED] state=ready count=4") {
+		t.Fatalf("structured suffix was not preserved: %q", second)
 	}
 }

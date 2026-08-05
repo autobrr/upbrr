@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -16,7 +18,7 @@ func TestBestSceneCandidate(t *testing.T) {
 	manualTag := "-GRP"
 	cases := []struct {
 		name      string
-		meta      api.PreparedMetadata
+		meta      preparationstate.State
 		release   api.ReleaseInfo
 		tag       string
 		overrides api.ReleaseNameOverrides
@@ -25,8 +27,14 @@ func TestBestSceneCandidate(t *testing.T) {
 		wantPick  string // "" means expect no confident match
 	}{
 		{
-			name:      "exact tokens (renamed dots to spaces) match",
-			release:   api.ReleaseInfo{Resolution: "1080p", Year: 2026, Group: "GRP", Source: "BluRay", Codec: []string{"x264"}},
+			name: "exact tokens (renamed dots to spaces) match",
+			release: api.ReleaseInfo{
+				Resolution: "1080p",
+				Year:       2026,
+				Group:      "GRP",
+				Source:     "BluRay",
+				Codec:      []string{"x264"},
+			},
 			localBase: "Example Movie 2026 1080p BluRay x264 GRP",
 			cands: []srrdbSearchResult{
 				// Same title at a different resolution must not be matched.
@@ -36,8 +44,13 @@ func TestBestSceneCandidate(t *testing.T) {
 			wantPick: "Example.Movie.2026.1080p.BluRay.x264-GRP",
 		},
 		{
-			name:      "foreign dub is not chosen for an english release",
-			release:   api.ReleaseInfo{Resolution: "1080p", Year: 2026, Group: "GRP", Language: []string{"English"}},
+			name: "foreign dub is not chosen for an english release",
+			release: api.ReleaseInfo{
+				Resolution: "1080p",
+				Year:       2026,
+				Group:      "GRP",
+				Language:   []string{"English"},
+			},
 			localBase: "Example Drama 2026 1080p BluRay x264 GRP",
 			cands: []srrdbSearchResult{
 				{Release: "Example.Drama.2026.German.DL.1080p.BluRay.x264-GRP", IsForeign: "yes"},
@@ -46,8 +59,12 @@ func TestBestSceneCandidate(t *testing.T) {
 			wantPick: "Example.Drama.2026.1080p.BluRay.x264-GRP",
 		},
 		{
-			name:      "multi-edition prefers the matching theatrical cut",
-			release:   api.ReleaseInfo{Resolution: "2160p", Year: 2014, Group: "GRP"},
+			name: "multi-edition prefers the matching theatrical cut",
+			release: api.ReleaseInfo{
+				Resolution: "2160p",
+				Year:       2014,
+				Group:      "GRP",
+			},
 			localBase: "Movie 2014 2160p BluRay x265 GRP",
 			cands: []srrdbSearchResult{
 				{Release: "Movie.2014.Extended.2160p.BluRay.x265-GRP"},
@@ -56,8 +73,13 @@ func TestBestSceneCandidate(t *testing.T) {
 			wantPick: "Movie.2014.2160p.BluRay.x265-GRP",
 		},
 		{
-			name:      "multi-edition prefers the matching extended cut",
-			release:   api.ReleaseInfo{Resolution: "2160p", Year: 2014, Group: "GRP", Edition: []string{"Extended"}},
+			name: "multi-edition prefers the matching extended cut",
+			release: api.ReleaseInfo{
+				Resolution: "2160p",
+				Year:       2014,
+				Group:      "GRP",
+				Edition:    []string{"Extended"},
+			},
 			localBase: "Movie 2014 Extended 2160p BluRay x265 GRP",
 			cands: []srrdbSearchResult{
 				{Release: "Movie.2014.2160p.BluRay.x265-GRP"},
@@ -66,8 +88,12 @@ func TestBestSceneCandidate(t *testing.T) {
 			wantPick: "Movie.2014.Extended.2160p.BluRay.x265-GRP",
 		},
 		{
-			name:      "season pack matches on resolution and group without a year",
-			release:   api.ReleaseInfo{Resolution: "1080p", Group: "GRP", Source: "WEB-DL"},
+			name: "season pack matches on resolution and group without a year",
+			release: api.ReleaseInfo{
+				Resolution: "1080p",
+				Group:      "GRP",
+				Source:     "WEB-DL",
+			},
 			localBase: "Show S01 1080p WEB-DL GRP",
 			cands: []srrdbSearchResult{
 				{Release: "Show.S01.1080p.WEB-DL.DDP5.1.H.264-GRP"},
@@ -76,8 +102,14 @@ func TestBestSceneCandidate(t *testing.T) {
 			wantPick: "Show.S01.1080p.WEB-DL.DDP5.1.H.264-GRP",
 		},
 		{
-			name:      "english web-dl is not misclassified as a foreign dub",
-			release:   api.ReleaseInfo{Resolution: "1080p", Year: 2026, Group: "GRP", Source: "WEB-DL", Language: []string{"English"}},
+			name: "english web-dl is not misclassified as a foreign dub",
+			release: api.ReleaseInfo{
+				Resolution: "1080p",
+				Year:       2026,
+				Group:      "GRP",
+				Source:     "WEB-DL",
+				Language:   []string{"English"},
+			},
 			localBase: "Movie 2026 1080p WEB-DL DDP5 1 H 264 GRP",
 			cands: []srrdbSearchResult{
 				{Release: "Movie.2026.German.DL.1080p.BluRay.x264-GRP", IsForeign: "yes"},
@@ -95,8 +127,14 @@ func TestBestSceneCandidate(t *testing.T) {
 			wantPick: "",
 		},
 		{
-			name:      "known local group must match candidate group",
-			release:   api.ReleaseInfo{Resolution: "1080p", Year: 2026, Group: "EXAMPLE", Source: "WEB-DL", Codec: []string{"H.264"}},
+			name: "known local group must match candidate group",
+			release: api.ReleaseInfo{
+				Resolution: "1080p",
+				Year:       2026,
+				Group:      "EXAMPLE",
+				Source:     "WEB-DL",
+				Codec:      []string{"H.264"},
+			},
 			localBase: "Example Sports Movie 2026 1080p AMZN WEB-DL DD+ 5.1 H.264-EXAMPLE",
 			cands: []srrdbSearchResult{
 				{Release: "Example.Sports.Movie.2026.1080p.WEB.H264-OTHER", IsForeign: "no"},
@@ -104,8 +142,14 @@ func TestBestSceneCandidate(t *testing.T) {
 			wantPick: "",
 		},
 		{
-			name:      "known local group match is case-insensitive",
-			release:   api.ReleaseInfo{Resolution: "1080p", Year: 2026, Group: "example", Source: "WEB-DL", Codec: []string{"H.264"}},
+			name: "known local group match is case-insensitive",
+			release: api.ReleaseInfo{
+				Resolution: "1080p",
+				Year:       2026,
+				Group:      "example",
+				Source:     "WEB-DL",
+				Codec:      []string{"H.264"},
+			},
 			localBase: "Movie 2026 1080p WEB-DL H.264-example",
 			cands: []srrdbSearchResult{
 				{Release: "Movie.2026.1080p.WEB-DL.H.264-EXAMPLE", IsForeign: "no"},
@@ -113,8 +157,14 @@ func TestBestSceneCandidate(t *testing.T) {
 			wantPick: "Movie.2026.1080p.WEB-DL.H.264-EXAMPLE",
 		},
 		{
-			name:      "manual tag override wins over parsed filename group",
-			release:   api.ReleaseInfo{Resolution: "1080p", Year: 2026, Group: "example", Source: "BluRay", Codec: []string{"x264"}},
+			name: "manual tag override wins over parsed filename group",
+			release: api.ReleaseInfo{
+				Resolution: "1080p",
+				Year:       2026,
+				Group:      "example",
+				Source:     "BluRay",
+				Codec:      []string{"x264"},
+			},
 			tag:       "-example",
 			overrides: api.ReleaseNameOverrides{Tag: &manualTag},
 			localBase: "renamed-example",
@@ -125,9 +175,9 @@ func TestBestSceneCandidate(t *testing.T) {
 		},
 		{
 			name: "external metadata year participates when parser year is missing",
-			meta: api.PreparedMetadata{
+			meta: preparationstate.State{
 				Release:          api.ReleaseInfo{Resolution: "1080p"},
-				ExternalMetadata: api.ExternalMetadata{TMDB: &api.TMDBMetadata{Year: 2026}},
+				ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Year: 2026}},
 			},
 			localBase: "renamed-example",
 			cands: []srrdbSearchResult{
@@ -137,9 +187,9 @@ func TestBestSceneCandidate(t *testing.T) {
 		},
 		{
 			name: "media-derived codec participates when parser codec is missing",
-			meta: api.PreparedMetadata{
+			meta: preparationstate.State{
 				Release:          api.ReleaseInfo{Resolution: "1080p"},
-				ExternalMetadata: api.ExternalMetadata{TMDB: &api.TMDBMetadata{Year: 2026}},
+				ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Year: 2026}},
 				VideoEncode:      "x264",
 			},
 			localBase: "Example Driver 2026 1080p",
@@ -150,8 +200,12 @@ func TestBestSceneCandidate(t *testing.T) {
 			wantPick: "Example.Driver.2026.1080p.BluRay.x264-GRP",
 		},
 		{
-			name:      "no candidate at the right resolution is not matched",
-			release:   api.ReleaseInfo{Resolution: "2160p", Year: 2014, Group: "GRP"},
+			name: "no candidate at the right resolution is not matched",
+			release: api.ReleaseInfo{
+				Resolution: "2160p",
+				Year:       2014,
+				Group:      "GRP",
+			},
 			localBase: "Movie 2014 2160p BluRay x265 GRP",
 			cands: []srrdbSearchResult{
 				{Release: "Movie.2014.1080p.BluRay.x264-GRP"},
@@ -160,8 +214,12 @@ func TestBestSceneCandidate(t *testing.T) {
 			wantPick: "",
 		},
 		{
-			name:      "wrong year and group is not matched",
-			release:   api.ReleaseInfo{Resolution: "1080p", Year: 2014, Group: "GRP"},
+			name: "wrong year and group is not matched",
+			release: api.ReleaseInfo{
+				Resolution: "1080p",
+				Year:       2014,
+				Group:      "GRP",
+			},
 			localBase: "Movie 2014 1080p BluRay x264 GRP",
 			cands: []srrdbSearchResult{
 				{Release: "Different.Movie.1999.1080p.BluRay.x264-OTHER"},
@@ -173,14 +231,18 @@ func TestBestSceneCandidate(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			meta := api.PreparedMetadata{Release: tc.release, Tag: tc.tag, ReleaseNameOverrides: tc.overrides}
+			meta := preparationstate.State{
+				Release:              tc.release,
+				Tag:                  tc.tag,
+				ReleaseNameOverrides: tc.overrides,
+			}
 			if tc.meta.SourcePath != "" ||
 				tc.meta.VideoPath != "" ||
 				tc.meta.Release.Resolution != "" ||
-				tc.meta.ExternalMetadata.TMDB != nil ||
-				tc.meta.ExternalMetadata.IMDB != nil ||
-				tc.meta.ExternalMetadata.TVDB != nil ||
-				tc.meta.ExternalMetadata.TVmaze != nil ||
+				tc.meta.ProviderMetadata.TMDB != nil ||
+				tc.meta.ProviderMetadata.IMDB != nil ||
+				tc.meta.ProviderMetadata.TVDB != nil ||
+				tc.meta.ProviderMetadata.TVmaze != nil ||
 				tc.meta.VideoEncode != "" ||
 				tc.meta.VideoCodec != "" {
 				meta = tc.meta
@@ -296,7 +358,7 @@ func TestSceneLocalCandidates(t *testing.T) {
 
 	// Folder release: SourcePath is the release folder, VideoPath the media file.
 	const folder = "Example.Driver.2026.1080p.BluRay.x264-GRP"
-	c := sceneLocalCandidates(api.PreparedMetadata{
+	c := sceneLocalCandidates(preparationstate.State{
 		SourcePath: filepath.Join(base, folder),
 		VideoPath:  filepath.Join(base, folder, "renamed-example.mkv"),
 	})
@@ -312,7 +374,7 @@ func TestSceneLocalCandidates(t *testing.T) {
 
 	// Single-file release: SourcePath == VideoPath, no folder candidate.
 	singlePath := filepath.Join(base, "movie.2020.1080p.bluray.x264-grp.mkv")
-	single := sceneLocalCandidates(api.PreparedMetadata{SourcePath: singlePath, VideoPath: singlePath})
+	single := sceneLocalCandidates(preparationstate.State{SourcePath: singlePath, VideoPath: singlePath})
 	if len(single.folders) != 0 {
 		t.Fatalf("single-file folder candidates = %v, want none", single.folders)
 	}

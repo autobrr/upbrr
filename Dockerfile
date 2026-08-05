@@ -4,16 +4,16 @@
 # below. The predefined platform args (BUILDPLATFORM, TARGET*) are auto-available
 # to FROM, and VERSION/BUILD_ID are declared inside the build stage where they are
 # consumed (see below), so they do not need global declarations.
-ARG GO_VERSION=1.26.4
+ARG GO_VERSION=1.26.5
 
-FROM --platform=$BUILDPLATFORM node:20-alpine AS frontend
+FROM --platform=$BUILDPLATFORM node:24-alpine AS frontend
 
-WORKDIR /src/gui/frontend
+WORKDIR /src/webui
 
-COPY gui/frontend/package.json gui/frontend/pnpm-lock.yaml ./
+COPY webui/package.json webui/pnpm-lock.yaml ./
 RUN corepack enable && pnpm install --frozen-lockfile
 
-COPY gui/frontend/ ./
+COPY webui/ ./
 RUN pnpm run build:bundle
 
 FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS cli-builder
@@ -27,8 +27,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 COPY . .
 
 # Embed the built web UI so `upbrr serve` can serve it. Mirrors
-# scripts/sync-frontend-assets.ps1 used by the binary release workflow.
-COPY --from=frontend /src/gui/frontend/dist/ ./internal/guiapp/assets/
+# scripts/sync-webui-assets.ps1 used by the binary release workflow.
+COPY --from=frontend /src/webui/dist/ ./internal/webserver/assets/
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -45,7 +45,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
         CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" GOARM="$goarm" \
             go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.buildIdentifier=${BUILD_ID}" -o /out/upbrr ./cmd/upbrr
 
-FROM alpine:3.23
+FROM alpine:3.24
 
 # fontconfig + a font are required by ffmpeg's drawtext filter (screenshot frame
 # overlays); without them capture fails with "Cannot find a valid font for the

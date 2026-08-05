@@ -17,10 +17,34 @@ type HistoryEntry struct {
 	LatestUploadStatus string
 	LatestUploadAt     time.Time `ts_type:"string"`
 	RuleFailureCount   int
-	// RuleWarningCount excludes blocking, legacy, and unrecognized rule results.
-	RuleWarningCount int
+	// RuleAdvisoryCount contains non-blocking advisory rule results.
+	RuleAdvisoryCount int
 }
 
+// HistoryRecord is the persistence-facing history aggregate.
+type HistoryRecord struct {
+	SourcePath           string
+	ReleaseTitle         string
+	ReleaseSource        string
+	ReleaseResolution    string
+	MetadataUpdatedAt    time.Time `ts_type:"string"`
+	LatestUploadStatus   string
+	LatestUploadAt       time.Time `ts_type:"string"`
+	Metadata             FileMetadata
+	PreparedRelease      *PreparedRelease
+	ReleaseNameOverrides ReleaseNameOverrides
+	DescriptionOverride  DescriptionOverride
+	DescriptionOverrides []DescriptionOverride
+	PlaylistSelection    PlaylistSelection
+	TrackerMetadata      []TrackerMetadata
+	TrackerRuleFailures  []TrackerRuleFailure
+	Screenshots          []Screenshot
+	FinalSelections      []ScreenshotFinalSelection
+	UploadedImages       []UploadedImageLink
+	UploadHistory        []UploadRecord
+}
+
+// HistoryOverview is the transport projection for one stored release.
 type HistoryOverview struct {
 	SourcePath           string
 	ReleaseTitle         string
@@ -31,8 +55,9 @@ type HistoryOverview struct {
 	LatestUploadAt       time.Time `ts_type:"string"`
 	StatusLabel          string
 	Metadata             FileMetadata
-	ExternalIDs          ExternalIDs
-	ExternalMetadata     ExternalMetadata
+	Release              ReleaseRef
+	Identity             ExternalIdentity
+	Display              PreparedReleaseDisplay
 	ReleaseNameOverrides ReleaseNameOverrides
 	DescriptionOverride  DescriptionOverride
 	DescriptionOverrides []DescriptionOverride

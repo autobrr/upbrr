@@ -84,7 +84,7 @@ func TestWriteFailureArtifactRedactsSensitiveBody(t *testing.T) {
 
 	root := t.TempDir()
 	dbPath := filepath.Join(root, "state", "upbrr.db")
-	meta := api.PreparedMetadata{SourcePath: filepath.Join(root, "source.mkv")}
+	meta := api.UploadSubject{SourcePath: filepath.Join(root, "source.mkv")}
 	body := []byte(`{"message":"failed","api_key":"secret-key","detail":"token=plain-secret"}`)
 
 	path, err := WriteFailureArtifact(meta, dbPath, "GPW", "upload_failure", body, ".json")

@@ -128,7 +128,13 @@ func CaptureDirectory(ctx context.Context, root string, runner render.Runner, ex
 		return Result{}, fmt.Errorf("%w: menu item limit must be between 1 and %d", ErrCapture, graph.MaxMenuItems)
 	}
 	if opts.Logger != nil {
-		opts.Logger.Debugf("DVD menus: engine preflight started engine_version=%s max_items=%d process_timeout_ms=%d deinterlace=%t", Version, opts.Traversal.MaxItems, opts.ProcessTimeout.Milliseconds(), opts.Deinterlace)
+		opts.Logger.Debugf(
+			"DVD menus: engine preflight started engine_version=%s max_items=%d process_timeout_ms=%d deinterlace=%t",
+			Version,
+			opts.Traversal.MaxItems,
+			opts.ProcessTimeout.Milliseconds(),
+			opts.Deinterlace,
+		)
 	}
 
 	disc, err := ifo.InspectDirectory(root)
@@ -145,7 +151,12 @@ func CaptureDirectory(ctx context.Context, root string, runner render.Runner, ex
 				recovered++
 			}
 		}
-		opts.Logger.Debugf("DVD menus: inventory ready manager=%t title_sets=%d recovered_ifos=%d", disc.Manager.Kind == ifo.KindManager, len(disc.TitleSets), recovered)
+		opts.Logger.Debugf(
+			"DVD menus: inventory ready manager=%t title_sets=%d recovered_ifos=%d",
+			disc.Manager.Kind == ifo.KindManager,
+			len(disc.TitleSets),
+			recovered,
+		)
 	}
 	var capability render.Capability
 	if opts.Capability != nil {
@@ -176,7 +187,16 @@ func CaptureDirectory(ctx context.Context, root string, runner render.Runner, ex
 
 // captureDisc resolves selected graph screens again, decodes their exact
 // background frames, composites live SPU state, and retains non-black output.
-func captureDisc(ctx context.Context, root string, disc ifo.Disc, resolver *directoryResolver, runner render.Runner, executable string, capability render.Capability, opts Options) (Result, error) {
+func captureDisc(
+	ctx context.Context,
+	root string,
+	disc ifo.Disc,
+	resolver *directoryResolver,
+	runner render.Runner,
+	executable string,
+	capability render.Capability,
+	opts Options,
+) (Result, error) {
 	opts.Traversal.Logger = opts.Logger
 	opts.Traversal.Progress = func(update graph.Progress) {
 		reportProgress(opts.Progress, Progress{
@@ -203,7 +223,13 @@ func captureDisc(ctx context.Context, root string, disc ifo.Disc, resolver *dire
 		return result, fmt.Errorf("%w: menu discovery", ErrCapture)
 	}
 	if opts.Logger != nil {
-		opts.Logger.Debugf("DVD menus: rendering started selected=%d inventoried=%d states=%d buttons=%d", len(discovered.Screens), discovered.Inventoried, discovered.VisitedStates, discovered.VisitedButtons)
+		opts.Logger.Debugf(
+			"DVD menus: rendering started selected=%d inventoried=%d states=%d buttons=%d",
+			len(discovered.Screens),
+			discovered.Inventoried,
+			discovered.VisitedStates,
+			discovered.VisitedButtons,
+		)
 	}
 	reportEngineProgress(opts.Progress, result)
 
@@ -240,7 +266,15 @@ func captureDisc(ctx context.Context, root string, disc ifo.Disc, resolver *dire
 			}
 		}
 		if opts.Logger != nil {
-			opts.Logger.Tracef("DVD menus: render state index=%d target_ms=%d scan_truncated=%t overlay=%t highlight=%t buttons=%d", index+1, detail.target.Milliseconds(), detail.scanTruncated, detail.hasOverlay, detail.highlight != nil, len(detail.buttons))
+			opts.Logger.Tracef(
+				"DVD menus: render state index=%d target_ms=%d scan_truncated=%t overlay=%t highlight=%t buttons=%d",
+				index+1,
+				detail.target.Milliseconds(),
+				detail.scanTruncated,
+				detail.hasOverlay,
+				detail.highlight != nil,
+				len(detail.buttons),
+			)
 		}
 
 		frameCtx, cancelFrame := context.WithTimeout(ctx, opts.ProcessTimeout)
@@ -263,7 +297,13 @@ func captureDisc(ctx context.Context, root string, disc ifo.Disc, resolver *dire
 		}
 		if opts.Logger != nil {
 			bounds := background.Bounds()
-			opts.Logger.Debugf("DVD menus: frame decoded index=%d width=%d height=%d target_ms=%d", index+1, bounds.Dx(), bounds.Dy(), detail.target.Milliseconds())
+			opts.Logger.Debugf(
+				"DVD menus: frame decoded index=%d width=%d height=%d target_ms=%d",
+				index+1,
+				bounds.Dx(),
+				bounds.Dy(),
+				detail.target.Milliseconds(),
+			)
 		}
 
 		composed := copyImage(background)
@@ -292,14 +332,28 @@ func captureDisc(ctx context.Context, root string, disc ifo.Disc, resolver *dire
 			HasHighlight: detail.highlight != nil,
 		})
 		if opts.Logger != nil {
-			opts.Logger.Debugf("DVD menus: capture stored index=%d discovery=%s overlay=%t highlight=%t captured=%d", index+1, screen.Discovery, detail.hasOverlay, detail.highlight != nil, len(result.Captures))
+			opts.Logger.Debugf(
+				"DVD menus: capture stored index=%d discovery=%s overlay=%t highlight=%t captured=%d",
+				index+1,
+				screen.Discovery,
+				detail.hasOverlay,
+				detail.highlight != nil,
+				len(result.Captures),
+			)
 		}
 		reportEngineProgress(opts.Progress, result)
 	}
 
 	result.Complete = discovered.Complete && !result.Partial && !result.Truncated && len(result.Captures) == len(discovered.Screens)
 	if opts.Logger != nil {
-		opts.Logger.Debugf("DVD menus: rendering complete selected=%d captured=%d partial=%t truncated=%t warnings=%d", len(discovered.Screens), len(result.Captures), result.Partial, result.Truncated, len(result.Warnings))
+		opts.Logger.Debugf(
+			"DVD menus: rendering complete selected=%d captured=%d partial=%t truncated=%t warnings=%d",
+			len(discovered.Screens),
+			len(result.Captures),
+			result.Partial,
+			result.Truncated,
+			len(result.Warnings),
+		)
 	}
 	if len(result.Captures) == 0 {
 		return result, fmt.Errorf("%w: no menu frames captured", ErrCapture)

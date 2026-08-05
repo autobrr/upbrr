@@ -86,13 +86,21 @@ func releaseNameTokens(value string) []releaseNameToken {
 			continue
 		}
 		if tokenStart != -1 {
-			tokens = append(tokens, releaseNameToken{value: builder.String(), start: tokenStart, end: idx})
+			tokens = append(tokens, releaseNameToken{
+				value: builder.String(),
+				start: tokenStart,
+				end:   idx,
+			})
 			builder.Reset()
 			tokenStart = -1
 		}
 	}
 	if tokenStart != -1 {
-		tokens = append(tokens, releaseNameToken{value: builder.String(), start: tokenStart, end: len(value)})
+		tokens = append(tokens, releaseNameToken{
+			value: builder.String(),
+			start: tokenStart,
+			end:   len(value),
+		})
 	}
 	return tokens
 }

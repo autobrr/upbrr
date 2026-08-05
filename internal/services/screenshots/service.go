@@ -6,6 +6,7 @@ package screenshots
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	_ "image/png" // register PNG decoder for screenshot metadata loading
@@ -24,23 +25,42 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	"github.com/autobrr/upbrr/internal/logging"
-	"github.com/autobrr/upbrr/internal/paths"
-	"github.com/autobrr/upbrr/internal/pathutil"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
-	"github.com/autobrr/upbrr/internal/services/imagehost"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// sqliteBusyAttempts bounds how often a repository call is retried while SQLite
+// reports the database busy or locked.
+const sqliteBusyAttempts = 3
+
+// Service plans, captures, previews, persists, and removes release screenshots
+// beneath a managed temporary root.
 type Service struct {
 	cfg     config.Config
 	logger  api.Logger
 	tmpRoot string
 	runner  Runner
-	repo    api.MetadataRepository
+	repo    repository
 }
 
+type repository interface {
+	api.ScreenshotLifecycleRepository
+	SaveScreenshot(context.Context, api.Screenshot) error
+	ListScreenshotsByPath(context.Context, string) ([]api.Screenshot, error)
+	DeleteScreenshot(context.Context, string) error
+	ListFinalSelections(context.Context, string) ([]api.ScreenshotFinalSelection, error)
+	DeleteFinalSelection(context.Context, string) error
+	ListTrackerMetadataByPath(context.Context, string) ([]api.TrackerMetadata, error)
+	SaveTrackerMetadata(context.Context, api.TrackerMetadata) error
+}
+
+// NewService returns a screenshot service without persistence. Nil logger and
+// runner values select [api.NopLogger] and the process-backed FFmpeg runner.
 func NewService(cfg config.Config, logger api.Logger, tmpRoot string, runner Runner) *Service {
 	if logger == nil {
 		logger = api.NopLogger{}
@@ -48,20 +68,38 @@ func NewService(cfg config.Config, logger api.Logger, tmpRoot string, runner Run
 	if runner == nil {
 		runner = commandRunner{}
 	}
-	return &Service{cfg: cfg, logger: logger, tmpRoot: tmpRoot, runner: runner}
+	return &Service{
+		cfg:     cfg,
+		logger:  logger,
+		tmpRoot: tmpRoot,
+		runner:  runner,
+	}
 }
 
-func NewServiceWithRepo(cfg config.Config, logger api.Logger, tmpRoot string, runner Runner, repo api.MetadataRepository) *Service {
+// NewServiceWithRepo returns a screenshot service that can reuse and persist
+// screenshot, final-selection, and tracker-image records through repo.
+func NewServiceWithRepo(cfg config.Config, logger api.Logger, tmpRoot string, runner Runner, repo repository) *Service {
 	if logger == nil {
 		logger = api.NopLogger{}
 	}
 	if runner == nil {
 		runner = commandRunner{}
 	}
-	return &Service{cfg: cfg, logger: logger, tmpRoot: tmpRoot, runner: runner, repo: repo}
+	return &Service{
+		cfg:     cfg,
+		logger:  logger,
+		tmpRoot: tmpRoot,
+		runner:  runner,
+		repo:    repo,
+	}
 }
 
-func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int) (plan api.ScreenshotPlan, err error) {
+// Plan derives frame suggestions from prepared timing data and excludes
+// matching managed screenshots already present on disk and in the repository.
+// A non-positive count falls back to the subject default and then config. When
+// timing is unavailable, the returned plan requests manual frames instead of
+// failing; stored tracker images are merged into final selections.
+func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count int) (plan api.ScreenshotPlan, err error) {
 	defer func() {
 		if err != nil {
 			s.logger.Warnf("screenshots: planning blocked err=%s", redaction.RedactValue(err.Error(), nil))
@@ -80,7 +118,7 @@ func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int
 	}
 
 	if count <= 0 {
-		count = meta.Options.Screens
+		count = meta.DefaultCount
 	}
 	if count <= 0 {
 		count = s.cfg.ScreenshotHandling.Screens
@@ -101,13 +139,36 @@ func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int
 		screenshotSourceKind(meta),
 		screenshotLogField(meta.DiscType),
 		count,
-		len(meta.ScreenshotOverrides.ManualFrames),
+		len(meta.ManualFrames),
 		plan.DurationSeconds,
 		plan.FrameRate,
 		info.SourcePath,
 	)
 
-	manualSelections := buildManualFrameSelections(meta.ScreenshotOverrides.ManualFrames, plan.FrameRate)
+	manualSelections := buildManualFrameSelections(meta.ManualFrames, plan.FrameRate)
+	if len(manualSelections) == 0 && plan.DurationSeconds <= 0 && len(info.Segments) == 0 {
+		if cmd, resolveErr := resolveFFmpeg(); resolveErr != nil {
+			s.logger.Debugf(
+				"screenshots: duration fallback unavailable input=%s err=%s",
+				info.SourcePath,
+				redaction.RedactValue(resolveErr.Error(), nil),
+			)
+		} else if duration, probeErr := probeVideoDuration(ctx, s.runner, cmd, info.SourcePath); probeErr != nil {
+			s.logger.Debugf(
+				"screenshots: duration fallback failed input=%s err=%s",
+				info.SourcePath,
+				redaction.RedactValue(probeErr.Error(), nil),
+			)
+		} else {
+			info.DurationSeconds = duration
+			plan.DurationSeconds = duration
+			s.logger.Debugf(
+				"screenshots: duration fallback resolved method=ffmpeg duration_seconds=%.3f input=%s",
+				duration,
+				info.SourcePath,
+			)
+		}
+	}
 	if len(manualSelections) == 0 && (plan.DurationSeconds <= 0 || plan.FrameRate <= 0) {
 		plan.RequiresManualFrames = true
 		s.logger.Debugf("screenshots: manual frames required reason=missing_timing duration_seconds=%.3f frame_rate=%.3f", plan.DurationSeconds, plan.FrameRate)
@@ -115,11 +176,8 @@ func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int
 	}
 
 	total := count
-	if strings.TrimSpace(meta.DiscType) != "" {
-		total = count + 1
-	}
 
-	tmpDir, _, err := paths.ReleaseTempDir(s.tmpRoot, meta, meta.SourcePath)
+	tmpDir, _, err := paths.ReleaseTempDirFor(s.tmpRoot, meta.SourcePath, meta.Release)
 	if err != nil {
 		return api.ScreenshotPlan{}, fmt.Errorf("screenshots: %w", err)
 	}
@@ -206,7 +264,7 @@ func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int
 	plan.SuggestedSelections = suggestions
 
 	plan.ExistingScreenshots = filterScreenshotsMatchingSelections(listExistingScreens(tmpDir, base), baselineSelections, plan.FrameRate)
-	plan.TrackerImageLinks = buildTrackerImageLinks(meta, tmpDir)
+	plan.TrackerImageLinks = buildTrackerImageLinks(s.loadTrackerMetadata(ctx, meta.SourcePath), tmpDir)
 	plan.ExistingTrackerScreenshots = filterUnlinkedTrackerScreens(
 		listTrackerScreens(tmpDir, base),
 		plan.TrackerImageLinks,
@@ -231,7 +289,12 @@ func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int
 // Capture renders the requested frames into the prepared release's managed temp
 // directory and records each image with purpose. It returns successful images
 // plus per-selection failures and honors context cancellation.
-func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, selections []api.ScreenshotSelection, purpose api.ScreenshotPurpose) (result api.ScreenshotResult, err error) {
+func (s *Service) Capture(
+	ctx context.Context,
+	meta api.ScreenshotSubject,
+	selections []api.ScreenshotSelection,
+	purpose api.ScreenshotPurpose,
+) (result api.ScreenshotResult, err error) {
 	defer func() {
 		if err != nil {
 			s.logger.Warnf("screenshots: capture blocked err=%s", redaction.RedactValue(err.Error(), nil))
@@ -257,11 +320,11 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, select
 	if err != nil {
 		return api.ScreenshotResult{}, err
 	}
-	if err := resolveDVDVideoSegmentTimings(ctx, s.runner, cmd, info.Segments, s.logger); err != nil {
+	if err := resolveDVDVideoSegmentTimings(ctx, s.runner, cmd, info.Segments, info.DurationSeconds, s.logger); err != nil {
 		return api.ScreenshotResult{}, err
 	}
 
-	tmpDir, _, err := paths.ReleaseTempDir(s.tmpRoot, meta, meta.SourcePath)
+	tmpDir, _, err := paths.ReleaseTempDirFor(s.tmpRoot, meta.SourcePath, meta.Release)
 	if err != nil {
 		return api.ScreenshotResult{}, fmt.Errorf("screenshots: %w", err)
 	}
@@ -365,7 +428,16 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, select
 			var usedLib bool
 			var captureErr error
 			for _, candidate := range resolveSegmentCandidates(info, ts) {
-				s.logger.Tracef("screenshots: capture queued index=%d timestamp_seconds=%.3f input_timestamp_seconds=%.3f segment=%d fallback=%d input=%s output=%s", selection.Index, ts, candidate.Timestamp, candidate.SegmentIndex, candidate.FallbackIndex, candidate.SourcePath, output)
+				s.logger.Tracef(
+					"screenshots: capture queued index=%d timestamp_seconds=%.3f input_timestamp_seconds=%.3f segment=%d fallback=%d input=%s output=%s",
+					selection.Index,
+					ts,
+					candidate.Timestamp,
+					candidate.SegmentIndex,
+					candidate.FallbackIndex,
+					candidate.SourcePath,
+					output,
+				)
 				capture := captureRequest{
 					InputPath:     candidate.SourcePath,
 					OutputPath:    output,
@@ -390,7 +462,13 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, select
 				if captureErr == nil {
 					break
 				}
-				s.logger.Debugf("screenshots: capture segment failed index=%d segment=%d fallback=%d err=%s", selection.Index, candidate.SegmentIndex, candidate.FallbackIndex, redaction.RedactValue(captureErr.Error(), nil))
+				s.logger.Debugf(
+					"screenshots: capture segment failed index=%d segment=%d fallback=%d err=%s",
+					selection.Index,
+					candidate.SegmentIndex,
+					candidate.FallbackIndex,
+					redaction.RedactValue(captureErr.Error(), nil),
+				)
 			}
 			if captureErr != nil {
 				s.logger.Warnf("screenshots: capture frame failed index=%d err=%s", selection.Index, redaction.RedactValue(captureErr.Error(), nil))
@@ -404,7 +482,12 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, select
 				usedLibplacebo.Store(true)
 			}
 
-			img := api.ScreenshotImage{Index: selection.Index, TimestampSeconds: ts, Path: output, Purpose: purpose}
+			img := api.ScreenshotImage{
+				Index:            selection.Index,
+				TimestampSeconds: ts,
+				Path:             output,
+				Purpose:          purpose,
+			}
 			if stat, err := os.Stat(output); err == nil {
 				img.SizeBytes = stat.Size()
 			}
@@ -481,7 +564,10 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, select
 	return result, nil
 }
 
-func (s *Service) PreviewFrame(ctx context.Context, meta api.PreparedMetadata, timestampSeconds float64) (preview api.ScreenshotPreview, err error) {
+// PreviewFrame captures one decodable, non-black PNG into memory without
+// persisting it. DVD inputs try the selected VOB segment followed by later
+// segments when a candidate yields no usable frame.
+func (s *Service) PreviewFrame(ctx context.Context, meta api.ScreenshotSubject, timestampSeconds float64) (preview api.ScreenshotPreview, err error) {
 	defer func() {
 		if err != nil {
 			s.logger.Warnf("screenshots: preview blocked err=%s", redaction.RedactValue(err.Error(), nil))
@@ -507,15 +593,30 @@ func (s *Service) PreviewFrame(ctx context.Context, meta api.PreparedMetadata, t
 	if err != nil {
 		return api.ScreenshotPreview{}, err
 	}
-	if err := resolveDVDVideoSegmentTimings(ctx, s.runner, cmd, info.Segments, s.logger); err != nil {
+	if err := resolveDVDVideoSegmentTimings(ctx, s.runner, cmd, info.Segments, info.DurationSeconds, s.logger); err != nil {
 		return api.ScreenshotPreview{}, err
 	}
 	candidates := resolveSegmentCandidates(info, timestampSeconds)
 
-	s.logger.Debugf("screenshots: preview setup kind=%s disc=%s timestamp_seconds=%.3f candidates=%d selected_path=%s ffmpeg=%s", screenshotSourceKind(meta), screenshotLogField(meta.DiscType), timestampSeconds, len(candidates), candidates[0].SourcePath, cmd)
+	s.logger.Debugf(
+		"screenshots: preview setup kind=%s disc=%s timestamp_seconds=%.3f candidates=%d selected_path=%s ffmpeg=%s",
+		screenshotSourceKind(meta),
+		screenshotLogField(meta.DiscType),
+		timestampSeconds,
+		len(candidates),
+		candidates[0].SourcePath,
+		cmd,
+	)
 	var payload []byte
 	for _, candidate := range candidates {
-		s.logger.Tracef("screenshots: preview queued timestamp_seconds=%.3f input_timestamp_seconds=%.3f segment=%d fallback=%d input=%s", timestampSeconds, candidate.Timestamp, candidate.SegmentIndex, candidate.FallbackIndex, candidate.SourcePath)
+		s.logger.Tracef(
+			"screenshots: preview queued timestamp_seconds=%.3f input_timestamp_seconds=%.3f segment=%d fallback=%d input=%s",
+			timestampSeconds,
+			candidate.Timestamp,
+			candidate.SegmentIndex,
+			candidate.FallbackIndex,
+			candidate.SourcePath,
+		)
 		payload, err = captureFrameBytes(ctx, s.runner, cmd, previewRequest{
 			InputPath: candidate.SourcePath,
 			Timestamp: candidate.Timestamp,
@@ -523,7 +624,12 @@ func (s *Service) PreviewFrame(ctx context.Context, meta api.PreparedMetadata, t
 		if err == nil {
 			break
 		}
-		s.logger.Debugf("screenshots: preview segment failed segment=%d fallback=%d err=%s", candidate.SegmentIndex, candidate.FallbackIndex, redaction.RedactValue(err.Error(), nil))
+		s.logger.Debugf(
+			"screenshots: preview segment failed segment=%d fallback=%d err=%s",
+			candidate.SegmentIndex,
+			candidate.FallbackIndex,
+			redaction.RedactValue(err.Error(), nil),
+		)
 	}
 	if err != nil {
 		return api.ScreenshotPreview{}, err
@@ -542,7 +648,15 @@ func (s *Service) PreviewFrame(ctx context.Context, meta api.PreparedMetadata, t
 	return preview, nil
 }
 
-func (s *Service) Delete(ctx context.Context, meta api.PreparedMetadata, imagePath string) error {
+// Delete removes an allowed image beneath the release's managed temp directory,
+// then cleans up its repository screenshot, upload, final-selection, and
+// tracker-image references. Cleanup covers every stored spelling that names the
+// removed file, so an accepted filesystem alias cannot delete the file while
+// leaving its records behind. Cleanup failures do not restore the local file,
+// but they are reported: a caller must be able to tell a complete delete from
+// one that left records behind, and calling Delete again converges because an
+// already-missing file is not an error.
+func (s *Service) Delete(ctx context.Context, meta api.ScreenshotSubject, imagePath string) error {
 	select {
 	case <-ctx.Done():
 		return fmt.Errorf("context canceled: %w", ctx.Err())
@@ -557,7 +671,7 @@ func (s *Service) Delete(ctx context.Context, meta api.PreparedMetadata, imagePa
 		s.logger.Tracef("screenshots: delete requested path=%s", trimmed)
 	}
 
-	tmpDir, _, err := paths.ReleaseTempDir(s.tmpRoot, meta, meta.SourcePath)
+	tmpDir, _, err := paths.ReleaseTempDirFor(s.tmpRoot, meta.SourcePath, meta.Release)
 	if err != nil {
 		return fmt.Errorf("screenshots: %w", err)
 	}
@@ -570,7 +684,7 @@ func (s *Service) Delete(ctx context.Context, meta api.PreparedMetadata, imagePa
 	if err != nil {
 		return fmt.Errorf("screenshots: resolve temp path: %w", err)
 	}
-	if absTarget != absTmp && !strings.HasPrefix(absTarget, absTmp+string(os.PathSeparator)) {
+	if !isPathWithinDir(tmpDir, absTarget) {
 		return internalerrors.ErrInvalidInput
 	}
 	if s.logger != nil {
@@ -579,6 +693,12 @@ func (s *Service) Delete(ctx context.Context, meta api.PreparedMetadata, imagePa
 
 	if !isAllowedImageExt(absTarget) {
 		return internalerrors.ErrInvalidInput
+	}
+
+	deleteTargets, cleanupErr := s.storedDeleteTargets(ctx, meta.SourcePath, absTarget)
+	cleanupErrs := make([]error, 0, 1)
+	if cleanupErr != nil {
+		cleanupErrs = append(cleanupErrs, cleanupErr)
 	}
 
 	if err := os.Remove(absTarget); err != nil {
@@ -591,46 +711,152 @@ func (s *Service) Delete(ctx context.Context, meta api.PreparedMetadata, imagePa
 	} else if s.logger != nil {
 		s.logger.Tracef("screenshots: image deleted from disk: %s", absTarget)
 	}
+	confirmedTargets := deleteTargets[:1]
+	for _, target := range deleteTargets[1:] {
+		_, statErr := os.Stat(target)
+		switch {
+		case statErr == nil:
+			continue
+		case errors.Is(statErr, os.ErrNotExist):
+			confirmedTargets = append(confirmedTargets, target)
+		default:
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("inspect stored delete target: %w", statErr))
+		}
+	}
+	deleteTargets = confirmedTargets
 
 	if s.repo != nil {
-		if s.logger != nil {
-			s.logger.Tracef("screenshots: deleting db records for %s", absTarget)
+		for _, target := range deleteTargets {
+			if s.logger != nil {
+				s.logger.Tracef("screenshots: deleting db records for %s", target)
+			}
+			if err := retrySQLiteBusy(ctx, func() error {
+				return s.repo.DeleteScreenshot(ctx, target)
+			}); err != nil {
+				s.logger.Warnf(
+					"screenshots: failed to delete screenshot record target=%s err=%s",
+					target,
+					redaction.RedactValue(err.Error(), nil),
+				)
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("delete screenshot record: %w", err))
+			} else if s.logger != nil {
+				s.logger.Tracef("screenshots: deleted screenshot record for %s", target)
+			}
+			if err := retrySQLiteBusy(ctx, func() error {
+				return s.repo.DeleteFinalSelection(ctx, target)
+			}); err != nil {
+				s.logger.Warnf(
+					"screenshots: failed to delete final selection target=%s err=%s",
+					target,
+					redaction.RedactValue(err.Error(), nil),
+				)
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("delete final selection: %w", err))
+			} else if s.logger != nil {
+				s.logger.Tracef("screenshots: deleted final selection for %s", target)
+			}
 		}
-		if err := retrySQLiteBusy(ctx, 3, func() error {
-			return s.repo.DeleteScreenshot(ctx, absTarget)
-		}); err != nil {
-			s.logger.Debugf("screenshots: failed to delete screenshot record: %v", err)
-		} else if s.logger != nil {
-			s.logger.Tracef("screenshots: deleted screenshot record for %s", absTarget)
+		if err := s.removeTrackerImageReference(ctx, meta, tmpDir, absTarget); err != nil {
+			cleanupErrs = append(cleanupErrs, err)
 		}
-		if err := retrySQLiteBusy(ctx, 3, func() error {
-			return s.repo.DeleteFinalSelection(ctx, absTarget)
-		}); err != nil {
-			s.logger.Debugf("screenshots: failed to delete final selection: %v", err)
-		} else if s.logger != nil {
-			s.logger.Tracef("screenshots: deleted final selection for %s", absTarget)
-		}
-		s.removeTrackerImageReference(ctx, meta, tmpDir, absTarget)
 	}
 
+	if len(cleanupErrs) > 0 {
+		return fmt.Errorf("screenshots: delete cleanup incomplete: %w", errors.Join(cleanupErrs...))
+	}
 	return nil
 }
 
-func (s *Service) removeTrackerImageReference(ctx context.Context, meta api.PreparedMetadata, tmpDir string, absTarget string) {
+// storedDeleteTargets returns every repository spelling that names absTarget on
+// this filesystem, starting with absTarget itself. Path validation accepts
+// filesystem aliases such as Windows case variants, but image-path columns
+// compare byte-for-byte, so cleanup keyed only on the caller's spelling can
+// remove the file and leave its screenshot, upload, and selection rows behind.
+// A failed lookup returns the targets resolved so far plus an error: cleanup can
+// still run, but it can no longer be claimed complete.
+func (s *Service) storedDeleteTargets(ctx context.Context, sourcePath string, absTarget string) ([]string, error) {
+	targets := []string{absTarget}
+	if s.repo == nil || strings.TrimSpace(sourcePath) == "" {
+		return targets, nil
+	}
+	targetInfo, targetStatErr := os.Stat(absTarget)
+	addStored := func(stored string) {
+		stored = strings.TrimSpace(stored)
+		if stored == "" || slices.Contains(targets, stored) {
+			return
+		}
+		sameTarget := pathutil.SamePath(stored, absTarget)
+		if !sameTarget && targetStatErr == nil {
+			storedInfo, statErr := os.Stat(stored)
+			sameTarget = statErr == nil && os.SameFile(storedInfo, targetInfo)
+		}
+		if !sameTarget {
+			return
+		}
+		targets = append(targets, stored)
+		if s.logger != nil {
+			s.logger.Tracef("screenshots: delete alias resolved stored=%s requested=%s", stored, absTarget)
+		}
+	}
+	lookupErrs := make([]error, 0, 2)
+	var screenshots []api.Screenshot
+	if err := retrySQLiteBusy(ctx, func() error {
+		stored, err := s.repo.ListScreenshotsByPath(ctx, sourcePath)
+		if err != nil {
+			return fmt.Errorf("load screenshot records: %w", err)
+		}
+		screenshots = stored
+		return nil
+	}); err != nil {
+		s.logger.Warnf("screenshots: failed to load screenshot records for delete err=%s", redaction.RedactValue(err.Error(), nil))
+		lookupErrs = append(lookupErrs, err)
+	}
+	for _, record := range screenshots {
+		addStored(record.ImagePath)
+	}
+	var selections []api.ScreenshotFinalSelection
+	if err := retrySQLiteBusy(ctx, func() error {
+		stored, err := s.repo.ListFinalSelections(ctx, sourcePath)
+		if err != nil {
+			return fmt.Errorf("load final selections: %w", err)
+		}
+		selections = stored
+		return nil
+	}); err != nil {
+		s.logger.Warnf("screenshots: failed to load final selections for delete err=%s", redaction.RedactValue(err.Error(), nil))
+		lookupErrs = append(lookupErrs, err)
+	}
+	for _, selection := range selections {
+		addStored(selection.ImagePath)
+	}
+	if len(lookupErrs) > 0 {
+		return targets, errors.Join(lookupErrs...)
+	}
+	return targets, nil
+}
+
+// removeTrackerImageReference drops the deleted image from every stored tracker
+// image list for the release. A failure leaves a tracker pointing at an image
+// that no longer exists locally, so it is returned rather than only logged.
+func (s *Service) removeTrackerImageReference(
+	ctx context.Context,
+	meta api.ScreenshotSubject,
+	tmpDir string,
+	absTarget string,
+) error {
 	if s.repo == nil {
-		return
+		return nil
 	}
 	if strings.TrimSpace(tmpDir) == "" || strings.TrimSpace(absTarget) == "" {
-		return
+		return nil
 	}
 	fileStem := strings.ToLower(strings.TrimSuffix(filepath.Base(absTarget), filepath.Ext(absTarget)))
-	records := meta.TrackerData
+	updateErrs := make([]error, 0, 1)
+	var records []api.TrackerMetadata
 	if strings.TrimSpace(meta.SourcePath) != "" {
 		stored, err := s.repo.ListTrackerMetadataByPath(ctx, meta.SourcePath)
 		if err != nil {
-			if s.logger != nil {
-				s.logger.Debugf("screenshots: failed to load tracker metadata for delete: %v", err)
-			}
+			s.logger.Warnf("screenshots: failed to load tracker metadata for delete err=%s", redaction.RedactValue(err.Error(), nil))
+			updateErrs = append(updateErrs, fmt.Errorf("load tracker metadata: %w", err))
 		} else if len(stored) > 0 {
 			records = stored
 			if s.logger != nil {
@@ -670,7 +896,11 @@ func (s *Service) removeTrackerImageReference(ctx context.Context, meta api.Prep
 				if baseStem != "" && (fileStem == baseStem || strings.HasPrefix(fileStem, baseStem+"_")) {
 					removed = true
 					if s.logger != nil {
-						s.logger.Tracef("screenshots: tracker image stem match tracker=%s url=%s", strings.TrimSpace(record.Tracker), strings.TrimSpace(urlValue))
+						s.logger.Tracef(
+							"screenshots: tracker image stem match tracker=%s url=%s",
+							strings.TrimSpace(record.Tracker),
+							strings.TrimSpace(urlValue),
+						)
 					}
 					continue
 				}
@@ -684,22 +914,44 @@ func (s *Service) removeTrackerImageReference(ctx context.Context, meta api.Prep
 		if strings.TrimSpace(record.SourcePath) == "" {
 			record.SourcePath = meta.SourcePath
 		}
-		if err := retrySQLiteBusy(ctx, 3, func() error {
+		if err := retrySQLiteBusy(ctx, func() error {
 			return s.repo.SaveTrackerMetadata(ctx, record)
 		}); err != nil {
-			s.logger.Debugf("screenshots: failed to update tracker metadata: %v", err)
+			s.logger.Warnf(
+				"screenshots: failed to update tracker metadata tracker=%s err=%s",
+				strings.TrimSpace(record.Tracker),
+				redaction.RedactValue(err.Error(), nil),
+			)
+			updateErrs = append(updateErrs, fmt.Errorf("update tracker metadata: %w", err))
 		} else if s.logger != nil {
 			s.logger.Tracef("screenshots: updated tracker metadata tracker=%s remaining=%d", strings.TrimSpace(record.Tracker), len(record.ImageURLs))
 		}
 	}
+	if len(updateErrs) > 0 {
+		return errors.Join(updateErrs...)
+	}
+	return nil
 }
 
-func retrySQLiteBusy(ctx context.Context, attempts int, fn func() error) error {
-	if attempts < 1 {
-		attempts = 1
+func (s *Service) loadTrackerMetadata(ctx context.Context, sourcePath string) []api.TrackerMetadata {
+	if s.repo == nil || strings.TrimSpace(sourcePath) == "" {
+		return nil
 	}
+	records, err := s.repo.ListTrackerMetadataByPath(ctx, sourcePath)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Debugf("screenshots: failed to load tracker metadata: %v", err)
+		}
+		return nil
+	}
+	return records
+}
+
+// retrySQLiteBusy runs fn until it succeeds, fails for a reason other than a
+// busy or locked database, or exhausts sqliteBusyAttempts.
+func retrySQLiteBusy(ctx context.Context, fn func() error) error {
 	var lastErr error
-	for i := 0; i < attempts; i++ {
+	for i := range sqliteBusyAttempts {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("screenshots: sqlite retry canceled: %w", err)
 		}
@@ -726,7 +978,7 @@ func isSQLiteBusyError(err error) bool {
 // SaveFinalSelections replaces normal final selections from images while
 // preserving manual and automatic disc-menu selections. Menu-purpose images in
 // the input are ignored rather than reclassified as normal screenshots.
-func (s *Service) SaveFinalSelections(ctx context.Context, meta api.PreparedMetadata, images []api.ScreenshotImage) error {
+func (s *Service) SaveFinalSelections(ctx context.Context, meta api.ScreenshotSubject, images []api.ScreenshotImage) error {
 	if s.repo == nil {
 		return nil
 	}
@@ -736,7 +988,7 @@ func (s *Service) SaveFinalSelections(ctx context.Context, meta api.PreparedMeta
 	default:
 	}
 
-	tmpDir, _, err := paths.ReleaseTempDir(s.tmpRoot, meta, meta.SourcePath)
+	tmpDir, _, err := paths.ReleaseTempDirFor(s.tmpRoot, meta.SourcePath, meta.Release)
 	if err != nil {
 		return fmt.Errorf("screenshots: %w", err)
 	}
@@ -765,20 +1017,14 @@ func (s *Service) SaveFinalSelections(ctx context.Context, meta api.PreparedMeta
 		})
 	}
 
-	if lifecycle, ok := s.repo.(api.ScreenshotLifecycleRepository); ok {
-		if err := lifecycle.ReplaceNormalFinalSelections(ctx, meta.SourcePath, selections); err != nil {
-			return fmt.Errorf("screenshots: replace normal final selections: %w", err)
-		}
-		return nil
-	}
-	if err := s.repo.SaveFinalSelections(ctx, meta.SourcePath, selections); err != nil {
-		return fmt.Errorf("screenshots: save final selections: %w", err)
+	if err := s.repo.ReplaceNormalFinalSelections(ctx, meta.SourcePath, selections); err != nil {
+		return fmt.Errorf("screenshots: replace normal final selections: %w", err)
 	}
 	return nil
 }
 
-func screenshotBaseName(meta api.PreparedMetadata) string {
-	base := paths.ReleaseTempBase(meta, meta.SourcePath)
+func screenshotBaseName(meta api.ScreenshotSubject) string {
+	base := paths.ReleaseTempBaseFor(meta.SourcePath, meta.Release)
 	return sanitizeFilename(base)
 }
 
@@ -897,7 +1143,11 @@ func listTrackerScreens(tmpDir, base string) []api.ScreenshotImage {
 		if infoErr != nil {
 			return nil
 		}
-		results = append(results, api.ScreenshotImage{Path: path, Purpose: api.ScreenshotPurposeFinal, SizeBytes: info.Size()})
+		results = append(results, api.ScreenshotImage{
+			Path:      path,
+			Purpose:   api.ScreenshotPurposeFinal,
+			SizeBytes: info.Size(),
+		})
 		return nil
 	})
 
@@ -905,7 +1155,7 @@ func listTrackerScreens(tmpDir, base string) []api.ScreenshotImage {
 	return results
 }
 
-func (s *Service) loadFinalSelections(ctx context.Context, meta api.PreparedMetadata, tmpDir string) []api.ScreenshotImage {
+func (s *Service) loadFinalSelections(ctx context.Context, meta api.ScreenshotSubject, tmpDir string) []api.ScreenshotImage {
 	if s.repo == nil {
 		return nil
 	}
@@ -1051,15 +1301,15 @@ func reindexScreenshotImages(images []api.ScreenshotImage) []api.ScreenshotImage
 	return images
 }
 
-func buildTrackerImageLinks(meta api.PreparedMetadata, tmpDir string) []api.ScreenshotLinkedImage {
+func buildTrackerImageLinks(records []api.TrackerMetadata, tmpDir string) []api.ScreenshotLinkedImage {
 	if strings.TrimSpace(tmpDir) == "" {
 		return nil
 	}
-	if len(meta.TrackerData) == 0 {
+	if len(records) == 0 {
 		return nil
 	}
 	results := make([]api.ScreenshotLinkedImage, 0)
-	for _, record := range meta.TrackerData {
+	for _, record := range records {
 		tracker := strings.TrimSpace(record.Tracker)
 		if tracker == "" {
 			continue

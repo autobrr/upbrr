@@ -5,86 +5,120 @@ package torrent
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
-	"github.com/anacrolix/torrent/metainfo"
+	"github.com/autobrr/go-torrent/metainfo"
+	mkbrr "github.com/autobrr/mkbrr/torrent"
 
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-type pieceSizeRange struct {
-	maxSize  uint64
-	pieceExp uint
-}
-
+// trackerTorrentPolicy contains the metainfo limits enforced during both
+// candidate reuse and torrent creation for selected trackers.
 type trackerTorrentPolicy struct {
-	name            string
-	maxPieceExp     uint
-	pieceSizeChart  []pieceSizeRange
-	maxTorrentBytes int64
+	name                string
+	maxPieceExp         uint
+	maxTorrentBytes     int64
+	pieceSizeProfileURL string
+	profileMaxPieceExp  uint
+	ptp                 bool
 }
 
-func resolveTrackerPolicy(meta api.PreparedMetadata) *trackerTorrentPolicy {
-	if hasTracker(meta.Trackers, []string{"ANT"}) {
-		return antTorrentPolicy()
+// resolveTrackerPolicy combines registered artifact limits and uses the most
+// restrictive mkbrr piece-size profile selected for this source size.
+func resolveTrackerPolicy(meta api.TorrentSubject, registry *trackers.Registry) *trackerTorrentPolicy {
+	var policy *trackerTorrentPolicy
+	for _, name := range meta.Trackers {
+		trackerName := strings.ToUpper(strings.TrimSpace(name))
+		artifact, ok := registry.LookupArtifactPolicy(name)
+		if !ok {
+			continue
+		}
+		if policy == nil {
+			policy = &trackerTorrentPolicy{}
+		}
+		if policy.name == "" {
+			policy.name = trackerName
+		} else {
+			policy.name += "+" + trackerName
+		}
+		policy.ptp = policy.ptp || trackerName == "PTP"
+		maxPieceExp, _ := pieceExpForMiB(artifact.MaxPieceSizeMiB)
+		if maxPieceExp > 0 && (policy.maxPieceExp == 0 || maxPieceExp < policy.maxPieceExp) {
+			policy.maxPieceExp = maxPieceExp
+		}
+		if artifact.MaxTorrentBytes > 0 && (policy.maxTorrentBytes == 0 || artifact.MaxTorrentBytes < policy.maxTorrentBytes) {
+			policy.maxTorrentBytes = artifact.MaxTorrentBytes
+		}
+		profileURL := strings.TrimSpace(artifact.PieceSizeProfileURL)
+		if profileURL == "" {
+			continue
+		}
+		profileExp := mkbrr.GetRecommendedPieceLengthExp(profileURL, uint64(max(meta.SourceSize, 0)))
+		if meta.SourceSize <= 0 {
+			profileExp = maxPieceExp
+		}
+		if policy.pieceSizeProfileURL == "" || profileExp > 0 && (policy.profileMaxPieceExp == 0 || profileExp < policy.profileMaxPieceExp) {
+			policy.pieceSizeProfileURL = profileURL
+			policy.profileMaxPieceExp = profileExp
+		}
+	}
+	if policy != nil {
+		return policy
 	}
 	if hasTracker(meta.Trackers, []string{"PTP"}) {
 		return &trackerTorrentPolicy{
-			name:        "PTP",
-			maxPieceExp: 24,
-			pieceSizeChart: []pieceSizeRange{
-				{maxSize: 58 << 20, pieceExp: 16},
-				{maxSize: 122 << 20, pieceExp: 17},
-				{maxSize: 213 << 20, pieceExp: 18},
-				{maxSize: 444 << 20, pieceExp: 19},
-				{maxSize: 922 << 20, pieceExp: 20},
-				{maxSize: 3977 << 20, pieceExp: 21},
-				{maxSize: 6861 << 20, pieceExp: 22},
-				{maxSize: 14234 << 20, pieceExp: 23},
-				{maxSize: ^uint64(0), pieceExp: 24},
-			},
-		}
-	}
-	if hasTracker(meta.Trackers, []string{"HDB"}) {
-		return &trackerTorrentPolicy{
-			name:        "HDB",
-			maxPieceExp: 24,
+			name:                "PTP",
+			maxPieceExp:         24,
+			pieceSizeProfileURL: "https://passthepopcorn.me",
+			ptp:                 true,
 		}
 	}
 	return nil
 }
 
-func (p *trackerTorrentPolicy) createOptions(meta api.PreparedMetadata) mkbrrPieceOptions {
+func (p *trackerTorrentPolicy) createOptions(meta api.TorrentSubject) mkbrrPieceOptions {
 	if p == nil {
 		return applyTorrentOverridePieceOptions(meta, mkbrrPieceOptions{maxPieceExp: 27})
 	}
-	options := mkbrrPieceOptions{maxPieceExp: p.maxPieceExp}
-	if len(p.pieceSizeChart) == 0 {
-		return applyTorrentOverridePieceOptions(meta, options)
-	}
+	options := mkbrrPieceOptions{maxPieceExp: p.maxPieceExp, profileURL: p.pieceSizeProfileURL}
 	if exp, ok := p.requiredPieceExp(meta); ok {
 		options.pieceExp = &exp
 	}
 	return applyTorrentOverridePieceOptions(meta, options)
 }
 
-func (p *trackerTorrentPolicy) requiredPieceExp(meta api.PreparedMetadata) (uint, bool) {
-	if p == nil || len(p.pieceSizeChart) == 0 {
+func (p *trackerTorrentPolicy) requiredPieceExp(meta api.TorrentSubject) (uint, bool) {
+	if p == nil || p.pieceSizeProfileURL == "" || meta.SourceSize <= 0 {
 		return 0, false
 	}
-	if meta.SourceSize <= 0 {
+	exp := mkbrr.GetRecommendedPieceLengthExp(p.pieceSizeProfileURL, uint64(meta.SourceSize))
+	if exp == 0 {
 		return 0, false
 	}
-	size := uint64(meta.SourceSize)
-	for _, entry := range p.pieceSizeChart {
-		if size <= entry.maxSize {
-			return entry.pieceExp, true
-		}
+	if p.maxPieceExp > 0 && exp > p.maxPieceExp {
+		exp = p.maxPieceExp
 	}
-	return 0, false
+	return exp, true
 }
 
-func (p *trackerTorrentPolicy) validateTorrent(path string, meta api.PreparedMetadata) error {
+func (p *trackerTorrentPolicy) validateCreateOptions(meta api.TorrentSubject, options mkbrrPieceOptions) error {
+	if p == nil || !p.ptp || meta.SourceSize <= 0 {
+		return nil
+	}
+	minExp, _ := ptpPieceExpRange(meta.SourceSize)
+	if options.maxPieceExp > 0 && options.maxPieceExp < minExp {
+		return fmt.Errorf("%s piece-size policies conflict: max exponent %d is below PTP minimum %d", p.name, options.maxPieceExp, minExp)
+	}
+	if options.pieceExp != nil && *options.pieceExp < minExp {
+		return fmt.Errorf("%s piece-size profile exponent %d is below PTP minimum %d", p.name, *options.pieceExp, minExp)
+	}
+	return nil
+}
+
+func (p *trackerTorrentPolicy) validateTorrent(path string, meta api.TorrentSubject) error {
 	if p == nil || strings.TrimSpace(path) == "" {
 		return nil
 	}
@@ -105,23 +139,43 @@ func (p *trackerTorrentPolicy) validateTorrent(path string, meta api.PreparedMet
 			return fmt.Errorf("%s piece size %d exceeds max %d", p.name, info.PieceLength, maxPieceLength)
 		}
 	}
-	requiredExp, ok := p.requiredPieceExp(meta)
-	if !ok {
+	if !p.ptp {
 		return nil
 	}
-	requiredLength := int64(1) << requiredExp
-	if info.PieceLength != requiredLength {
-		return fmt.Errorf("%s requires piece size %d, got %d", p.name, requiredLength, info.PieceLength)
+	sourceSize := meta.SourceSize
+	if sourceSize <= 0 {
+		sourceSize = info.TotalLength()
+	}
+	minExp, maxExp := ptpPieceExpRange(sourceSize)
+	minLength, maxLength := int64(1)<<minExp, int64(1)<<maxExp
+	if info.PieceLength <= 0 || info.PieceLength&(info.PieceLength-1) != 0 || info.PieceLength < minLength || info.PieceLength > maxLength {
+		return fmt.Errorf("%s piece size %d is outside PTP range %d-%d", p.name, info.PieceLength, minLength, maxLength)
 	}
 	return nil
+}
+
+func ptpPieceExpRange(size int64) (uint, uint) {
+	// PTP accepts the chart's green and orange cells, including its tiny-torrent and legacy-client exceptions.
+	bytes := float64(max(size, 1))
+	minExp := min(max(int(math.Floor(math.Log2(bytes/2000))), 15), 24)
+	maxExp := min(max(int(math.Ceil(math.Log2(bytes/500))), 18), 24)
+	if minExp > 22 {
+		if size <= 128<<30 {
+			minExp = 22
+		} else if size <= 256<<30 {
+			minExp = 23
+		}
+	}
+	return uint(minExp), uint(maxExp)
 }
 
 type mkbrrPieceOptions struct {
 	maxPieceExp uint
 	pieceExp    *uint
+	profileURL  string
 }
 
-func applyTorrentOverridePieceOptions(meta api.PreparedMetadata, options mkbrrPieceOptions) mkbrrPieceOptions {
+func applyTorrentOverridePieceOptions(meta api.TorrentSubject, options mkbrrPieceOptions) mkbrrPieceOptions {
 	if meta.TorrentOverrides.MaxPieceSizeMiB == nil {
 		return options
 	}
@@ -132,6 +186,10 @@ func applyTorrentOverridePieceOptions(meta api.PreparedMetadata, options mkbrrPi
 	}
 	if options.maxPieceExp == 0 || overrideExp < options.maxPieceExp {
 		options.maxPieceExp = overrideExp
+	}
+	if options.pieceExp != nil && *options.pieceExp > options.maxPieceExp {
+		pieceExp := options.maxPieceExp
+		options.pieceExp = &pieceExp
 	}
 	return options
 }

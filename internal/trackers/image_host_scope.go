@@ -3,11 +3,7 @@
 
 package trackers
 
-import (
-	"strings"
-
-	"github.com/autobrr/upbrr/internal/imagehostpolicy"
-)
+import "strings"
 
 const globalImageUsageScope = "global"
 
@@ -37,21 +33,21 @@ func trackerImageUsageScope(tracker string) string {
 	return "tracker:" + trimmed
 }
 
-func usageScopeForHost(host string) string {
-	owner := trackerForOwnedHost(host)
+func usageScopeForHost(registry *Registry, host string) string {
+	owner := trackerForOwnedHost(registry, host)
 	if owner == "" {
 		return globalImageUsageScope
 	}
 	return trackerImageUsageScope(owner)
 }
 
-func trackerForOwnedHost(host string) string {
-	return imagehostpolicy.OwnerForHost(host)
+func trackerForOwnedHost(registry *Registry, host string) string {
+	return registry.OwnerForImageHost(host)
 }
 
-// TrackerForOwnedImageHost returns the owning tracker name for the provided image host string, or an empty string when unowned.
-func TrackerForOwnedImageHost(host string) string {
-	return trackerForOwnedHost(host)
+// TrackerForOwnedImageHost returns the registry owner for an image host.
+func TrackerForOwnedImageHost(registry *Registry, host string) string {
+	return trackerForOwnedHost(registry, host)
 }
 
 // TrackerImageUsageScope returns the normalized image usage scope string for the provided tracker name.

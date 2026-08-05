@@ -5,27 +5,29 @@ package api
 
 // TrackerAuthCapability describes the auth operations the UI can offer for one tracker.
 type TrackerAuthCapability struct {
-	// TrackerID is the normalized tracker code used in bridge requests.
+	// TrackerID is the normalized tracker code used in WebUI requests.
 	TrackerID   string `json:"trackerID"`
 	DisplayName string `json:"displayName"`
 	// AuthKind is a compact capability label such as "cookies", "credential_login", or "api_key_cookies_login".
-	AuthKind           string   `json:"authKind"`
-	SupportsCookieFile bool     `json:"supportsCookieFile"`
-	SupportsLogin      bool     `json:"supportsLogin"`
-	SupportsAutoLogin  bool     `json:"supportsAutoLogin"`
-	SupportsTOTP       bool     `json:"supportsTOTP"`
-	SupportsManual2FA  bool     `json:"supportsManual2FA"`
-	RequiresAPIKey     bool     `json:"requiresAPIKey"`
-	RequiresPasskey    bool     `json:"requiresPasskey"`
-	Notes              []string `json:"notes"`
+	AuthKind           string `json:"authKind"`
+	SupportsCookieFile bool   `json:"supportsCookieFile"`
+	SupportsLogin      bool   `json:"supportsLogin"`
+	SupportsAutoLogin  bool   `json:"supportsAutoLogin"`
+	SupportsTOTP       bool   `json:"supportsTOTP"`
+	SupportsManual2FA  bool   `json:"supportsManual2FA"`
+	// SupportsRemoteValidation reports whether Check Auth can execute a tracker-owned remote resolver.
+	SupportsRemoteValidation bool     `json:"supportsRemoteValidation"`
+	RequiresAPIKey           bool     `json:"requiresAPIKey"`
+	RequiresPasskey          bool     `json:"requiresPasskey"`
+	Notes                    []string `json:"notes"`
 }
 
 // TrackerAuthStatus reports the current local tracker auth state after a
 // status, import, login, validation, 2FA, or delete action.
 //
-// Wails, embedded web, and frontend consumers must expose the same JSON fields
+// WebUI routes and TypeScript consumers must expose the same JSON fields
 // so status summaries, remediation messages, and Promise-visible errors stay in
-// parity across GUI entrypoints.
+// parity across browser entrypoints.
 type TrackerAuthStatus struct {
 	TrackerID   string `json:"trackerID"`
 	DisplayName string `json:"displayName"`
