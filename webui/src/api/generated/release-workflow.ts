@@ -2406,3 +2406,4 @@ export type WorkflowResourceRef = Readonly<{
 export type WorkflowRevision = number;
 
 export type WorkflowStatus = "draft" | "active" | "blocked" | "completed" | "canceled" | "failed";
+
