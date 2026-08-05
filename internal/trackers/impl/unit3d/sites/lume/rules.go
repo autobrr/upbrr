@@ -9,7 +9,7 @@ import (
 
 // Rules strictly requires valid MediaInfo encode settings and enforces LUME's
 // non-disc container, resolution, and language limits. Adult failures remain
-// waivable; language failures are strict.
+// waivable; language failures are also waivable.
 func Rules() *trackers.RuleSet {
 	return &trackers.RuleSet{
 		RequireValidMISetting: true,

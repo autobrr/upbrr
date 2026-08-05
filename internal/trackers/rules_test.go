@@ -365,8 +365,8 @@ func TestEvaluateRulesLanguageRuleMissingData(t *testing.T) {
 	if failures[0].Rule != "language_rule" {
 		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
 	}
-	if failures[0].Disposition != api.RuleDispositionStrict {
-		t.Fatalf("language disposition = %q, want strict", failures[0].Disposition)
+	if failures[0].Disposition != api.RuleDispositionWaivable {
+		t.Fatalf("language disposition = %q, want waivable", failures[0].Disposition)
 	}
 }
 
@@ -873,6 +873,9 @@ func TestEvaluateRulesRHDRequiresGermanAudio(t *testing.T) {
 	if failures[0].Rule != "language_rule" {
 		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
 	}
+	if failures[0].Disposition != api.RuleDispositionWaivable {
+		t.Fatalf("language disposition = %q, want waivable", failures[0].Disposition)
+	}
 }
 
 func TestEvaluateRulesRHDAllowsGermanAudio(t *testing.T) {
@@ -994,6 +997,9 @@ func TestEvaluateRulesAitherRequiresLanguageForNonDisc(t *testing.T) {
 	if failures[0].Rule != "language_rule" {
 		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
 	}
+	if failures[0].Disposition != api.RuleDispositionWaivable {
+		t.Fatalf("language disposition = %q, want waivable", failures[0].Disposition)
+	}
 }
 
 func TestEvaluateRulesNonDiscLanguagePoliciesSkipDiscs(t *testing.T) {
@@ -1018,7 +1024,7 @@ func TestEvaluateRulesNonDiscLanguagePoliciesSkipDiscs(t *testing.T) {
 	}
 }
 
-func TestEvaluateRulesTTRLanguageFailuresAreStrict(t *testing.T) {
+func TestEvaluateRulesTTRLanguageFailuresAreWaivable(t *testing.T) {
 	t.Parallel()
 
 	meta := api.RuleSubject{
@@ -1029,7 +1035,7 @@ func TestEvaluateRulesTTRLanguageFailuresAreStrict(t *testing.T) {
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "TTR", meta)
 	for _, rule := range []string{"language_rule", "spanish_track_required"} {
 		failure, found := findRuleFailure(failures, rule)
-		if !found || failure.Disposition != api.RuleDispositionStrict {
+		if !found || failure.Disposition != api.RuleDispositionWaivable {
 			t.Fatalf("%s = %#v, failures=%#v", rule, failure, failures)
 		}
 	}
