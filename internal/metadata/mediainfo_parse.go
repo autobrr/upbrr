@@ -54,15 +54,25 @@ func parseMediaInfoBitrate(value any) (int64, bool) {
 	if err != nil {
 		return 0, false
 	}
-	lower := strings.ToLower(text)
 	multiplier := float64(1)
 	switch {
-	case strings.Contains(lower, "gbit"), strings.Contains(lower, "gb/s"):
-		multiplier = 1_000_000_000
-	case strings.Contains(lower, "mbit"), strings.Contains(lower, "mb/s"):
-		multiplier = 1_000_000
-	case strings.Contains(lower, "kbit"), strings.Contains(lower, "kb/s"):
-		multiplier = 1_000
+	case strings.Contains(text, "GB/s"):
+		multiplier = 8_000_000_000
+	case strings.Contains(text, "MB/s"):
+		multiplier = 8_000_000
+	case strings.Contains(text, "KB/s"):
+		multiplier = 8_000
+	}
+	if multiplier == 1 {
+		lower := strings.ToLower(text)
+		switch {
+		case strings.Contains(lower, "gbit"), strings.Contains(lower, "gb/s"):
+			multiplier = 1_000_000_000
+		case strings.Contains(lower, "mbit"), strings.Contains(lower, "mb/s"):
+			multiplier = 1_000_000
+		case strings.Contains(lower, "kbit"), strings.Contains(lower, "kb/s"):
+			multiplier = 1_000
+		}
 	}
 	return int64(parsed * multiplier), true
 }

@@ -40,6 +40,7 @@ var releaseTokenSeparatorPattern = regexp.MustCompile(`[^A-Z0-9]+`)
 
 func videoBitrateAssessment(doc mediaInfoDoc) api.VideoBitrateAssessment {
 	generalTracks, videoTracks, audioTracks := splitMediaInfoTracks(doc)
+	directBitrateInvalid := false
 	for _, track := range videoTracks {
 		raw, ok := track["BitRate"]
 		if !ok {
@@ -49,7 +50,7 @@ func videoBitrateAssessment(doc mediaInfoDoc) api.VideoBitrateAssessment {
 		if parsed && bitrate > 0 {
 			return api.VideoBitrateAssessment{Status: api.VideoBitrateStatusPresent, BitsPerSecond: bitrate}
 		}
-		return api.VideoBitrateAssessment{Status: api.VideoBitrateStatusInvalid}
+		directBitrateInvalid = true
 	}
 	var overall int64
 	found := false
@@ -61,6 +62,9 @@ func videoBitrateAssessment(doc mediaInfoDoc) api.VideoBitrateAssessment {
 		}
 	}
 	if !found {
+		if directBitrateInvalid {
+			return api.VideoBitrateAssessment{Status: api.VideoBitrateStatusInvalid}
+		}
 		return api.VideoBitrateAssessment{Status: api.VideoBitrateStatusUnavailable}
 	}
 	if overall <= 0 {
