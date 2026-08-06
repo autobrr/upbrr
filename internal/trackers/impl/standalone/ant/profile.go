@@ -31,7 +31,7 @@ func Profile() standalone.Profile {
 		BannedGroups:         bannedGroups(),
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "ANT"},
 		DupePolicy: &trackers.DupePolicy{
-			ID:         "ant/duplicate/v2",
+			ID:         "ant/duplicate/v3",
 			EvidenceID: "ant-dupes-trumping",
 			SearchScope: trackers.DupeSearchScope{
 				MaxPages: 100,
@@ -45,6 +45,40 @@ func Profile() standalone.Profile {
 			},
 			HDRPartialMode:       trackers.DupeHDRPartialGenericMarker,
 			HDRCompatibilityMode: trackers.DupeHDRCompatibilityDirectional,
+			PrecedenceRules: []trackers.DupeRule{
+				{
+					ID:         "ant/duplicate/v3/exact_full_disc",
+					Relation:   string(api.DupeRelationExactDuplicate),
+					ReasonCode: "exact_identity",
+					Conditions: []trackers.DupeCondition{
+						{
+							Dimension:       trackers.DupeDimensionMediaKind,
+							TargetValues:    []string{"full_disc"},
+							CandidateValues: []string{"full_disc"},
+						},
+						{
+							Dimension:        trackers.DupeDimensionGroup,
+							ValuesEqual:      true,
+							RequiresComplete: true,
+						},
+						{
+							Dimension:        trackers.DupeDimensionSize,
+							ValuesEqual:      true,
+							RequiresComplete: true,
+						},
+					},
+				},
+				{
+					ID:         "ant/duplicate/v3/single_full_disc",
+					Relation:   string(api.DupeRelationExistingPreferred),
+					ReasonCode: "existing_full_disc",
+					Conditions: []trackers.DupeCondition{{
+						Dimension:       trackers.DupeDimensionMediaKind,
+						TargetValues:    []string{"full_disc"},
+						CandidateValues: []string{"full_disc"},
+					}},
+				},
+			},
 		},
 		AudioPolicy: &trackers.AudioPolicy{
 			AllowedLanguages: []string{"english"}, BlockEnglishOriginalWithForeign: true,

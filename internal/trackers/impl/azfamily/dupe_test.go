@@ -70,4 +70,15 @@ func TestAZNetworkHandlerSearchParsesHTMLResults(t *testing.T) {
 	if entries[0].ID != "123" {
 		t.Fatalf("expected torrent id 123, got %q", entries[0].ID)
 	}
+	if entries[0].Type != "WEB-DL" || entries[0].CanonicalType != "WEBDL" {
+		t.Fatalf("unexpected AZ candidate type %#v", entries[0])
+	}
+}
+
+func TestAZCanonicalCandidateTypePreservesFilteredDiscEvidence(t *testing.T) {
+	t.Parallel()
+
+	if got := azCanonicalCandidateType("BluRay Raw"); got != "DISC" {
+		t.Fatalf("BluRay Raw type = %q", got)
+	}
 }
