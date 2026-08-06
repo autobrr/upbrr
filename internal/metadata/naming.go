@@ -583,13 +583,13 @@ func namingSourceMatches(scopedPath, currentPath string) bool {
 	return trimmed == "" || strings.EqualFold(trimmed, strings.TrimSpace(currentPath))
 }
 
-// fillProviderAlternateTitle preserves a parsed alternate and otherwise returns
-// one normalized AKA title when the provider candidate differs from the primary.
+// fillProviderAlternateTitle prefers a parsed alternate and otherwise returns
+// one normalized AKA title when the chosen value differs from the primary.
 func fillProviderAlternateTitle(current, primary, candidate string) string {
-	if strings.TrimSpace(current) != "" {
-		return strings.TrimSpace(current)
+	alternate := strings.TrimSpace(current)
+	if alternate == "" {
+		alternate = strings.TrimSpace(candidate)
 	}
-	alternate := strings.TrimSpace(candidate)
 	if len(alternate) > len("AKA ") && strings.EqualFold(alternate[:len("AKA ")], "AKA ") {
 		alternate = strings.TrimSpace(alternate[len("AKA "):])
 	}
