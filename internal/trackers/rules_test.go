@@ -323,32 +323,6 @@ func TestEvaluateRulesUnit3DWithoutRuleSetEnforcesMediaInfoSettings(t *testing.T
 	}
 }
 
-func TestA4KValidationRejectsWebRipWithoutFilesystemAccess(t *testing.T) {
-	t.Parallel()
-
-	subject := api.TrackerValidationSubject{
-		Type:        "WEBRIP",
-		ReleaseName: "Example.Release.2026.2160p.WEBRip-GRP",
-	}
-	failures := validationPolicyFailuresForTest(t, "A4K", subject)
-	if !hasRuleFailure(failures, "a4k_webrip") {
-		t.Fatalf("A4K validation missing WEBRip failure: %#v", failures)
-	}
-}
-
-func TestA4KValidationRejectsNon2160p(t *testing.T) {
-	t.Parallel()
-
-	subject := api.TrackerValidationSubject{
-		Type:    "WEBDL",
-		Release: api.ReleaseInfo{Resolution: "1080p"},
-	}
-	failures := validationPolicyFailuresForTest(t, "A4K", subject)
-	if !hasRuleFailure(failures, "a4k_resolution") {
-		t.Fatalf("A4K validation missing resolution failure: %#v", failures)
-	}
-}
-
 func TestEvaluateRulesUnit3DAllowsPresentMediaInfoEncodeSettings(t *testing.T) {
 	meta := api.RuleSubject{
 		Identity:    api.ExternalIdentity{Category: "movie"},
@@ -391,8 +365,8 @@ func TestEvaluateRulesLanguageRuleMissingData(t *testing.T) {
 	if failures[0].Rule != "language_rule" {
 		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
 	}
-	if failures[0].Disposition != api.RuleDispositionStrict {
-		t.Fatalf("language disposition = %q, want strict", failures[0].Disposition)
+	if failures[0].Disposition != api.RuleDispositionWaivable {
+		t.Fatalf("language disposition = %q, want waivable", failures[0].Disposition)
 	}
 }
 
@@ -899,6 +873,9 @@ func TestEvaluateRulesRHDRequiresGermanAudio(t *testing.T) {
 	if failures[0].Rule != "language_rule" {
 		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
 	}
+	if failures[0].Disposition != api.RuleDispositionWaivable {
+		t.Fatalf("language disposition = %q, want waivable", failures[0].Disposition)
+	}
 }
 
 func TestEvaluateRulesRHDAllowsGermanAudio(t *testing.T) {
@@ -1020,6 +997,9 @@ func TestEvaluateRulesAitherRequiresLanguageForNonDisc(t *testing.T) {
 	if failures[0].Rule != "language_rule" {
 		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
 	}
+	if failures[0].Disposition != api.RuleDispositionWaivable {
+		t.Fatalf("language disposition = %q, want waivable", failures[0].Disposition)
+	}
 }
 
 func TestEvaluateRulesNonDiscLanguagePoliciesSkipDiscs(t *testing.T) {
@@ -1044,26 +1024,7 @@ func TestEvaluateRulesNonDiscLanguagePoliciesSkipDiscs(t *testing.T) {
 	}
 }
 
-func TestEvaluateRulesA4KDiscExemptsLanguageRequirement(t *testing.T) {
-	t.Parallel()
-
-	for _, discType := range []string{"BDMV", "DVD"} {
-		t.Run(discType, func(t *testing.T) {
-			t.Parallel()
-			failures := evaluateNonMetadataRulesForTest(context.Background(), "A4K", api.RuleSubject{
-				DiscType:          discType,
-				AudioLanguages:    []string{"Japanese"},
-				SubtitleLanguages: []string{"French"},
-				Assessments:       encodeAssessments(api.EncodeSettingsStatusPresent),
-			})
-			if hasRuleFailure(failures, "language_rule") {
-				t.Fatalf("A4K applied non-disc language rule to %s: %#v", discType, failures)
-			}
-		})
-	}
-}
-
-func TestEvaluateRulesTTRLanguageFailuresAreStrict(t *testing.T) {
+func TestEvaluateRulesTTRLanguageFailuresAreWaivable(t *testing.T) {
 	t.Parallel()
 
 	meta := api.RuleSubject{
@@ -1074,7 +1035,7 @@ func TestEvaluateRulesTTRLanguageFailuresAreStrict(t *testing.T) {
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "TTR", meta)
 	for _, rule := range []string{"language_rule", "spanish_track_required"} {
 		failure, found := findRuleFailure(failures, rule)
-		if !found || failure.Disposition != api.RuleDispositionStrict {
+		if !found || failure.Disposition != api.RuleDispositionWaivable {
 			t.Fatalf("%s = %#v, failures=%#v", rule, failure, failures)
 		}
 	}

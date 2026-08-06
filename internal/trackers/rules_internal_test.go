@@ -35,7 +35,7 @@ func TestResolveCategoryUsesCanonicalIdentityDespiteEmptyTVMetadata(t *testing.T
 	}
 }
 
-func TestConfiguredStrictRuleDispositions(t *testing.T) {
+func TestConfiguredRuleDispositions(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -148,6 +148,10 @@ func TestConfiguredStrictRuleDispositions(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
+			wantDisposition := api.RuleDispositionStrict
+			if test.rule == "require_audio_languages" || test.rule == "language_rule" {
+				wantDisposition = api.RuleDispositionWaivable
+			}
 			registry := NewRegistry()
 			if err := registry.RegisterDescriptor(Descriptor{
 				Name:       "STRICT",
@@ -162,8 +166,8 @@ func TestConfiguredStrictRuleDispositions(t *testing.T) {
 			}
 			for _, failure := range failures {
 				if failure.Rule == test.rule {
-					if failure.Disposition != api.RuleDispositionStrict {
-						t.Fatalf("%s disposition = %q, want strict", test.rule, failure.Disposition)
+					if failure.Disposition != wantDisposition {
+						t.Fatalf("%s disposition = %q, want %q", test.rule, failure.Disposition, wantDisposition)
 					}
 					return
 				}
