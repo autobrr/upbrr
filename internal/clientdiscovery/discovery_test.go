@@ -17,6 +17,7 @@ type recordingClient struct {
 	input  api.ClientSubject
 	result api.ClientSearchResult
 	err    error
+	cancel context.CancelFunc
 }
 
 func (*recordingClient) Inject(context.Context, api.ClientSubject, api.TorrentResult) error {
@@ -26,6 +27,9 @@ func (*recordingClient) Inject(context.Context, api.ClientSubject, api.TorrentRe
 func (c *recordingClient) SearchPathedTorrents(_ context.Context, input api.ClientSubject) (api.ClientSearchResult, error) {
 	c.calls++
 	c.input = input
+	if c.cancel != nil {
+		c.cancel()
+	}
 	return c.result, c.err
 }
 
@@ -102,22 +106,34 @@ func TestDiscoverSkipAndUnavailableAreSuccessfulEmptySnapshots(t *testing.T) {
 	}
 }
 
-func TestDiscoverPreservesSearchErrorsAndCancellation(t *testing.T) {
+func TestDiscoverDegradesSearchErrorsAndPreservesCancellation(t *testing.T) {
 	t.Parallel()
 
 	searchErr := errors.New("search failed")
-	_, err := New(&recordingClient{err: searchErr}, api.NopLogger{}).Discover(
+	evidence, err := New(&recordingClient{err: searchErr}, api.NopLogger{}).Discover(
 		context.Background(),
 		SearchInput{SourcePath: "Example.Release.2026.mkv"},
 	)
-	if !errors.Is(err, searchErr) {
-		t.Fatalf("search error = %v", err)
+	if err != nil || evidence.Disposition != DispositionUnavailable {
+		t.Fatalf("search evidence=%#v err=%v", evidence, err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	client := &recordingClient{err: searchErr, cancel: cancel}
+	_, err = New(client, api.NopLogger{}).Discover(ctx, SearchInput{SourcePath: "Example.Release.2026.mkv"})
+	if !errors.Is(err, context.Canceled) || client.calls != 1 {
+		t.Fatalf("canceled error=%v calls=%d", err, client.calls)
+	}
+	ctx, cancel = context.WithCancel(context.Background())
+	client = &recordingClient{cancel: cancel}
+	_, err = New(client, api.NopLogger{}).Discover(ctx, SearchInput{SourcePath: "Example.Release.2026.mkv"})
+	if !errors.Is(err, context.Canceled) || client.calls != 1 {
+		t.Fatalf("successful canceled error=%v calls=%d", err, client.calls)
+	}
+	ctx, cancel = context.WithCancel(context.Background())
 	cancel()
-	client := &recordingClient{}
+	client = &recordingClient{}
 	_, err = New(client, api.NopLogger{}).Discover(ctx, SearchInput{SourcePath: "Example.Release.2026.mkv"})
 	if !errors.Is(err, context.Canceled) || client.calls != 0 {
-		t.Fatalf("canceled error=%v calls=%d", err, client.calls)
+		t.Fatalf("pre-search canceled error=%v calls=%d", err, client.calls)
 	}
 }
