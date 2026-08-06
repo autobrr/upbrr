@@ -928,6 +928,118 @@ func TestInjectQbitClientURLLinkingFallsBackWithoutStaging(t *testing.T) {
 	}
 }
 
+func TestInjectQbitClientURLFallbackRelativeFileListUsesSourceParentSavePath(t *testing.T) {
+	// No t.Parallel: t.Chdir forbids it. The chdir into an empty directory
+	// reproduces #317: a torrent-relative FileList entry must not anchor the
+	// savepath to the process working directory.
+	t.Chdir(t.TempDir())
+
+	server, capture := newQbitAddCaptureServer(t)
+	root := t.TempDir()
+	source := filepath.Join(root, "Fixture.Title.2024.mkv")
+	if err := os.WriteFile(source, []byte("media"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	linkRoot := filepath.Join(root, "links")
+	if err := os.MkdirAll(linkRoot, 0o700); err != nil {
+		t.Fatalf("mkdir links: %v", err)
+	}
+
+	svc := NewService(config.Config{
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:                     "qbit",
+				URL:                      server.URL,
+				Username:                 "user",
+				Password:                 "pass",
+				Linking:                  "hardlink",
+				LinkedFolder:             config.StringList{linkRoot},
+				AutomaticManagementPaths: config.StringList{root},
+			},
+		},
+	}, nil)
+
+	meta := api.ClientSubject{SourcePath: source, FileList: []string{"Fixture.Title.2024.mkv"}}
+	if err := svc.Inject(context.Background(), meta, api.TorrentResult{URL: "https://tracker.example/torrent/1", Tracker: "RF"}); err != nil {
+		t.Fatalf("inject URL fallback: %v", err)
+	}
+	select {
+	case err := <-capture.errCh:
+		t.Fatalf("handler: %v", err)
+	default:
+	}
+
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	//pathpolicy:allow qBittorrent savepath is slash-delimited API data.
+	wantSavePath := filepath.ToSlash(root) + "/"
+	if capture.savePath != wantSavePath {
+		t.Fatalf("expected source-parent savepath %q, got %q", wantSavePath, capture.savePath)
+	}
+	if capture.autoTMM != "true" {
+		t.Fatalf("expected autoTMM true, got %q", capture.autoTMM)
+	}
+}
+
+func TestInjectQbitClientPathMappingRelativeFileListMapsSourceParent(t *testing.T) {
+	// No t.Parallel: t.Chdir forbids it. Path mapping must apply to the
+	// prepared source parent even when the FileList entry is torrent-relative.
+	t.Chdir(t.TempDir())
+
+	server, capture := newQbitAddCaptureServer(t)
+
+	root := t.TempDir()
+	localRoot := filepath.Join(root, "local")
+	releaseDir := filepath.Join(localRoot, "Movies", "Fixture.Title.2024")
+	if err := os.MkdirAll(releaseDir, 0o700); err != nil {
+		t.Fatalf("mkdir release: %v", err)
+	}
+	source := filepath.Join(releaseDir, "video.mkv")
+	if err := os.WriteFile(source, []byte("media"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	torrentPath := filepath.Join(root, "sample.torrent")
+	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+
+	remoteRoot := "/remote/media"
+	svc := NewService(config.Config{
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:                     "qbit",
+				URL:                      server.URL,
+				Username:                 "user",
+				Password:                 "pass",
+				LocalPath:                config.StringList{localRoot},
+				RemotePath:               config.StringList{remoteRoot},
+				AutomaticManagementPaths: config.StringList{localRoot},
+			},
+		},
+	}, nil)
+
+	meta := api.ClientSubject{SourcePath: source, FileList: []string{"video.mkv"}}
+	if err := svc.Inject(context.Background(), meta, api.TorrentResult{Path: torrentPath}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	select {
+	case err := <-capture.errCh:
+		t.Fatalf("handler: %v", err)
+	default:
+	}
+
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	wantSavePath := "/remote/media/Movies/Fixture.Title.2024/"
+	if capture.savePath != wantSavePath {
+		t.Fatalf("expected mapped savepath %q, got %q", wantSavePath, capture.savePath)
+	}
+	if capture.autoTMM != "true" {
+		t.Fatalf("expected autoTMM true, got %q", capture.autoTMM)
+	}
+}
+
 func TestInjectQbitClientInvalidLinkPlanFallbackSkipsHashCheck(t *testing.T) {
 	t.Parallel()
 

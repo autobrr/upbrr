@@ -463,13 +463,18 @@ func TestAdapterResultDefensiveCopies(t *testing.T) {
 	}
 }
 
-func TestCheckProjectionSetUsesExactCriteriaAndProjectsUploadName(t *testing.T) {
+func TestCheckProjectionSetUsesExactCriteriaAndRetainsBlockedClientMatch(t *testing.T) {
 	t.Parallel()
 
 	var received api.DuplicateSubject
+	var blockedAdapterCalls atomic.Int32
 	service := testService(map[string]Adapter{
 		"A": AdapterFunc(func(_ context.Context, subject api.DuplicateSubject) AdapterResult {
 			received = subject
+			return Resolved(nil, nil)
+		}),
+		"B": AdapterFunc(func(context.Context, api.DuplicateSubject) AdapterResult {
+			blockedAdapterCalls.Add(1)
 			return Resolved(nil, nil)
 		}),
 	})
@@ -531,9 +536,28 @@ func TestCheckProjectionSetUsesExactCriteriaAndProjectsUploadName(t *testing.T) 
 		Status:    api.StageStatusReady,
 		CreatedAt: now,
 	}
+	blockedProjection := projectionSet.Projections[0]
+	blockedProjection.TrackerID = "B"
+	blockedProjection.DisplayName = "Tracker B"
+	blockedProjection.CanonicalReleaseName = "Example.Release.2026.BLOCKED-GRP"
+	blockedProjection.UploadReleaseName = ""
+	blockedProjection.DuplicateCriteria = api.TrackerDuplicateCriteria{}
+	blockedProjection.ProjectorFingerprint = mustDupeFingerprint(t, "blocked-projection")
+	blockedProjection.CriteriaFingerprint = mustDupeFingerprint(t, "blocked-criteria")
+	blockedProjection.Readiness = api.ReadinessStatusIneligible
+	blockedProjection.DupeReady = false
+	blockedProjection.UploadReady = false
+	blockedProjection.PolicyDecisions = []api.TrackerPolicyDecision{{
+		Code:        "unsupported_source",
+		Decision:    "ineligible",
+		Blocking:    true,
+		Disposition: api.RuleDispositionStrict,
+	}}
+	projectionSet.Projections = append(projectionSet.Projections, blockedProjection)
 	summary, _, err := service.CheckProjectionSet(context.Background(), api.DuplicateSubject{
-		SourcePath:  projectionSet.ReleaseRef.SourcePath,
-		ReleaseName: projectionSet.Projections[0].CanonicalReleaseName,
+		SourcePath:      projectionSet.ReleaseRef.SourcePath,
+		ReleaseName:     projectionSet.Projections[0].CanonicalReleaseName,
+		MatchedTrackers: []string{" b "},
 	}, projectionSet, api.ProjectionDupeCheckOptions{})
 	if err != nil {
 		t.Fatalf("check projection set: %v", err)
@@ -541,7 +565,7 @@ func TestCheckProjectionSetUsesExactCriteriaAndProjectsUploadName(t *testing.T) 
 	if received.Projection == nil || received.ReleaseName != "Example Release 2026" || received.SeasonInt != 2 {
 		t.Fatalf("adapter subject = %#v", received)
 	}
-	if len(summary.Results) != 1 {
+	if len(summary.Results) != 2 {
 		t.Fatalf("duplicate results = %#v", summary.Results)
 	}
 	result := summary.Results[0]
@@ -550,6 +574,13 @@ func TestCheckProjectionSetUsesExactCriteriaAndProjectsUploadName(t *testing.T) 
 		result.ProjectionFingerprint != projectionFingerprint || result.CriteriaFingerprint != criteriaFingerprint ||
 		result.ProjectionStatus != api.ReadinessStatusReady {
 		t.Fatalf("projected duplicate result = %#v", result)
+	}
+	clientResult := summary.Results[1]
+	if blockedAdapterCalls.Load() != 0 || clientResult.Tracker != "B" || !clientResult.HasDupes ||
+		len(clientResult.Evaluations) != 1 || clientResult.Evaluations[0].Name != blockedProjection.CanonicalReleaseName ||
+		len(clientResult.Evaluations[0].Reasons) != 1 || clientResult.Evaluations[0].Reasons[0].Code != "in_client" ||
+		clientResult.Search.Scope != "local_client" {
+		t.Fatalf("blocked local-client result = %#v adapter_calls=%d", clientResult, blockedAdapterCalls.Load())
 	}
 }
 

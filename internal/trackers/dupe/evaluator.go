@@ -278,6 +278,8 @@ func dupeReasonMessage(reason string) string {
 	switch strings.TrimSpace(reason) {
 	case "exact_identity":
 		return "Candidate has identical release or file identity."
+	case "existing_full_disc":
+		return "Tracker permits only one full disc for this work."
 	case "existing_season_pack":
 		return "Existing season pack contains the proposed episode slot."
 	case "proposed_season_pack":

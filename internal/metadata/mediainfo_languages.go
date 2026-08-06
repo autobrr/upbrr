@@ -10,6 +10,7 @@ import (
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
 	"github.com/autobrr/upbrr/internal/languageutil"
+	"github.com/autobrr/upbrr/internal/metadata/discparse"
 )
 
 func validateMediaInfoUniqueID(meta preparationstate.State, doc mediaInfoDoc) (string, bool) {
@@ -66,6 +67,23 @@ func extractMediaInfoLanguages(doc mediaInfoDoc) ([]string, []string) {
 		}
 	}
 
+	return uniqueStrings(audio), uniqueStrings(subs)
+}
+
+// extractBDInfoLanguages returns normalized, case-insensitively deduplicated
+// audio and subtitle languages from a parsed quick summary.
+func extractBDInfoLanguages(info *discparse.BDInfo) ([]string, []string) {
+	if info == nil {
+		return nil, nil
+	}
+	audio := make([]string, 0, len(info.Audio))
+	for _, track := range info.Audio {
+		audio = append(audio, normalizeLanguage(track.Language))
+	}
+	subs := make([]string, 0, len(info.Subtitles))
+	for _, language := range info.Subtitles {
+		subs = append(subs, normalizeLanguage(language))
+	}
 	return uniqueStrings(audio), uniqueStrings(subs)
 }
 

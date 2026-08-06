@@ -446,6 +446,71 @@ describe("renderTorrentClientsSection", () => {
       AutomaticManagementPaths: ["/media"],
     });
   });
+
+  it("clears selectors that reference a removed client", async () => {
+    installAppOperationMocks({
+      GetConfig: async () =>
+        JSON.stringify({
+          ClientSetup: {
+            DefaultClient: "primary",
+            InjectClients: ["primary", "backup"],
+            SearchClients: [" PRIMARY ", "backup"],
+          },
+          Trackers: {
+            Trackers: {
+              AITHER: { TorrentClient: "PRIMARY" },
+              BLU: { TorrentClient: "backup" },
+            },
+          },
+          TorrentClients: {
+            primary: {
+              Type: "watch",
+              WatchFolder: "incoming-primary",
+              StorageDir: "library-primary",
+            },
+            backup: {
+              Type: "watch",
+              WatchFolder: "incoming-backup",
+              StorageDir: "library-backup",
+            },
+          },
+        }),
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () =>
+        trackerCatalog(
+          trackerCatalogEntry("AITHER", [["TorrentClient", ""]]),
+          trackerCatalogEntry("BLU", [["TorrentClient", ""]]),
+        ),
+      GetImageHostPolicyMetadata: async () => ({}),
+    });
+
+    render(createElement(TorrentClientsHarness));
+
+    await waitFor(() => expect(screen.getByText("primary")).toBeInTheDocument());
+    const primaryCard = screen.getByText("primary").closest(".settings-card");
+    expect(primaryCard).toBeTruthy();
+    fireEvent.click(within(primaryCard as HTMLElement).getByRole("button", { name: "Remove" }));
+
+    await waitFor(() => expect(screen.queryByText("primary")).not.toBeInTheDocument());
+    const payload = readPayload<{
+      ClientSetup?: {
+        DefaultClient?: string;
+        InjectClients?: string[];
+        SearchClients?: string[];
+      };
+      Trackers?: { Trackers?: Record<string, { TorrentClient?: string }> };
+      TorrentClients?: Record<string, Record<string, unknown>>;
+    }>();
+    expect(payload.TorrentClients?.primary).toBeUndefined();
+    expect(payload.TorrentClients?.backup).toBeDefined();
+    expect(payload.ClientSetup).toEqual({
+      DefaultClient: "",
+      InjectClients: ["backup"],
+      SearchClients: ["backup"],
+    });
+    expect(payload.Trackers?.Trackers?.AITHER?.TorrentClient).toBe("");
+    expect(payload.Trackers?.Trackers?.BLU?.TorrentClient).toBe("backup");
+  });
 });
 
 describe("ClientSetup client selectors", () => {

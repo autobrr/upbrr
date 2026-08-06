@@ -163,6 +163,98 @@ func TestDupeSearcherMissingCredentialsSkips(t *testing.T) {
 	}
 }
 
+func TestANTFullDiscEvidenceUsesIdentityThenSingleDiscRule(t *testing.T) {
+	t.Parallel()
+
+	target := api.TrackerDuplicateTarget{
+		Type:       "DISC",
+		Source:     "Blu-ray",
+		Resolution: "1080p",
+		VideoCodec: "AVC",
+		Group:      "GRP",
+		SizeBytes:  1000,
+	}
+	entry := api.DupeEntry{
+		Name:          "Example.Release.2026.1080p.Blu-ray.AVC-GRP",
+		CanonicalType: "DISC",
+		Source:        "Blu-ray",
+		Res:           "1080p",
+		Codec:         "AVC",
+		Container:     "m2ts",
+		Group:         "GRP",
+		SizeBytes:     1000,
+		SizeKnown:     true,
+	}
+	policy := *Profile().DupePolicy
+	result := dupe.Evaluate(target, []dupe.TrackerCandidate{dupe.NormalizeCandidate(entry, "ANT")}, policy, dupe.SearchEvidence{Complete: true})
+	if got := result.Candidates[0].Relation; got != api.DupeRelationExactDuplicate {
+		t.Fatalf("same ANT full disc relation = %q", got)
+	}
+
+	entry.Group = "OTHER"
+	entry.SizeBytes = 900
+	result = dupe.Evaluate(target, []dupe.TrackerCandidate{dupe.NormalizeCandidate(entry, "ANT")}, policy, dupe.SearchEvidence{Complete: true})
+	if got := result.Candidates[0].Relation; got != api.DupeRelationExistingPreferred {
+		t.Fatalf("second ANT full disc relation = %q", got)
+	}
+}
+
+func TestANTCandidatePreservesDiscFields(t *testing.T) {
+	t.Parallel()
+
+	entries := antDupeEntries(map[string]any{"item": []any{map[string]any{
+		"title":        "Example Release 2026",
+		"fileName":     "generated.123.torrent",
+		"container":    "m2ts",
+		"releaseGroup": "GRP",
+		"flags":        []any{"HDR10"},
+		"files": []any{
+			map[string]any{"name": "BDMV/BACKUP/BDJO/00000.bdjo"},
+			map[string]any{"name": "BDMV/index.bdmv"},
+		},
+	}}}, "")
+	if len(entries) != 1 || entries[0].Name != "generated.123.torrent" || entries[0].CanonicalType != "DISC" ||
+		entries[0].Container != "m2ts" || entries[0].Group != "GRP" || len(entries[0].Flags) != 1 {
+		t.Fatalf("ANT disc entry = %#v", entries)
+	}
+}
+
+func TestANTListedWEBFileCoexistsWithDisc(t *testing.T) {
+	t.Parallel()
+
+	entries := antDupeEntries(map[string]any{"item": []any{map[string]any{
+		"title":        "Example Release 2026",
+		"media":        "WEB",
+		"resolution":   "1080p",
+		"codec":        "H264",
+		"container":    "MKV",
+		"releaseGroup": "WEBGRP",
+		"files": []any{map[string]any{
+			"name": "Example.Release.2026.1080p.WEB-DL.H.264-WEBGRP.mkv",
+		}},
+	}}}, "")
+	if len(entries) != 1 || entries[0].Name != "Example.Release.2026.1080p.WEB-DL.H.264-WEBGRP.mkv" || entries[0].Source != "WEB" {
+		t.Fatalf("ANT WEB entry = %#v", entries)
+	}
+
+	target := api.TrackerDuplicateTarget{
+		Type:       "DISC",
+		Source:     "Blu-ray",
+		Resolution: "1080p",
+		VideoCodec: "AVC",
+		Group:      "GRP",
+	}
+	result := dupe.Evaluate(
+		target,
+		[]dupe.TrackerCandidate{dupe.NormalizeCandidate(entries[0], "ANT")},
+		*Profile().DupePolicy,
+		dupe.SearchEvidence{Complete: true},
+	)
+	if got := result.Candidates[0].Relation; got != api.DupeRelationCoexists {
+		t.Fatalf("ANT WEB candidate relation = %q", got)
+	}
+}
+
 func antSearchPageJSON(t *testing.T, offset int, total int, count int, includePagination bool) string {
 	t.Helper()
 	items := make([]map[string]any, count)

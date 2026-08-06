@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -831,8 +832,24 @@ func TestModuleBDMVPreparationRequiresTypedPlaylistSelection(t *testing.T) {
 	t.Parallel()
 
 	base := testPreparer()
+	candidates := make([]api.PlaylistInfo, 12)
+	for index := range candidates {
+		candidates[index] = api.PlaylistInfo{
+			File:     fmt.Sprintf("%05d.mpls", index+1),
+			Duration: float64(7200 - index),
+			Items:    []api.PlaylistItem{{File: fmt.Sprintf("%05d.m2ts", index+1), Size: int64(1000 - index)}},
+			Score:    float64(100 - index),
+			Edition:  "Example Edition",
+		}
+	}
 	preparer := ReleasePreparerFunc{
 		PrepareFunc: func(_ context.Context, input api.PrepareInput) (api.PrepareResult, error) {
+			if !input.Instructions.Playlist.Set {
+				return api.PrepareResult{}, &api.PlaylistSelectionRequiredError{
+					SourcePath: input.SourcePath,
+					Candidates: candidates,
+				}
+			}
 			return api.PrepareResult{Release: api.PreparedRelease{
 				Generation: 1,
 				Source: api.SourceManifest{
@@ -868,8 +885,12 @@ func TestModuleBDMVPreparationRequiresTypedPlaylistSelection(t *testing.T) {
 		t.Fatalf("playlist preparation workflow = %#v", result.Workflow)
 	}
 	action := result.Workflow.RequiredActions[0]
-	if action.Kind != api.RequiredActionSelectPlaylist || len(action.Options) != 1 || action.Options[0].Value != "00001.mpls" {
+	if action.Kind != api.RequiredActionSelectPlaylist || len(action.Options) != maxPlaylistActionOptions || action.Options[0].Value != "00001.mpls" {
 		t.Fatalf("playlist action = %#v", action)
+	}
+	if action.Options[0].Playlist == nil || !reflect.DeepEqual(*action.Options[0].Playlist, candidates[0]) ||
+		action.Options[len(action.Options)-1].Value != "00010.mpls" {
+		t.Fatalf("playlist action details = %#v", action.Options)
 	}
 
 	instructions := api.ReleaseFactInstructions{

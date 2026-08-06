@@ -33,6 +33,71 @@ const continuation = (requiredActions: readonly RequiredAction[]): WorkflowConti
 });
 
 describe("WorkflowRequiredActions", () => {
+  it("keeps source evidence visible while showing Blu-ray playlist progress", () => {
+    render(
+      <WorkflowOperationProgress
+        operation={
+          {
+            command: "prepare_release",
+            completed: 300,
+            events: [
+              {
+                command: "prepare_release",
+                disposition: "none",
+                lifecycle: "running",
+                message: "PLAYLIST: 7/26",
+                operationId: "operation-1",
+                phase: "bdinfo",
+                scope: "workflow",
+                scopeId: "bdinfo",
+                sequence: 1,
+                severity: "info",
+                state: "running",
+                timestamp: "2026-07-26T00:00:00Z",
+                workflowId: "workflow-1",
+              },
+            ],
+            id: "operation-1",
+            items: [
+              {
+                completed: 0,
+                id: "source_evidence",
+                kind: "preparation_phase",
+                label: "Collect source evidence",
+                phase: "source_evidence",
+                status: "running",
+                total: 1,
+              },
+              {
+                completed: 0,
+                id: "bdinfo",
+                kind: "preparation_phase",
+                label: "Analyze Blu-ray playlists",
+                phase: "bdinfo",
+                status: "running",
+                total: 1200,
+              },
+            ],
+            message: "Analyzing selected Blu-ray playlists.",
+            operation: "preparation",
+            progress: 25,
+            revision: 1,
+            sequence: 1,
+            startedAt: "2026-07-26T00:00:00Z",
+            status: "running",
+            total: 1200,
+            updatedAt: "2026-07-26T00:00:00Z",
+            workflowId: "workflow-1",
+          } as WorkflowOperationStatus
+        }
+      />,
+    );
+
+    expect(screen.getByText("Collect source evidence")).toBeInTheDocument();
+    expect(screen.getByText("Analyze Blu-ray playlists")).toBeInTheDocument();
+    expect(screen.getByText("PLAYLIST: 7/26")).toBeInTheDocument();
+  });
+
   it("stays visible after operation progress is complete and routes non-dupe actions", () => {
     const navigate = vi.fn();
     const completed = {

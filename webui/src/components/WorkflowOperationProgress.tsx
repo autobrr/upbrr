@@ -5,7 +5,7 @@ import type { Operation as WorkflowOperationStatus } from "../api/generated/rele
 
 const visibleStatuses = new Set(["queued", "running", "blocked", "failed", "interrupted"]);
 
-/** Shows durable progress except for duplicate checks, which render on their owning route. */
+/** Shows stable operation snapshots plus transient event detail; duplicate checks render on their owning route. */
 export function WorkflowOperationProgress({
   operation,
 }: Readonly<{ operation?: WorkflowOperationStatus | null }>) {
@@ -14,7 +14,7 @@ export function WorkflowOperationProgress({
   const events = operation.events || [];
   const scopedEvents = events.filter(
     (event) =>
-      event.scope !== "workflow" &&
+      event.scopeId !== operation.workflowId &&
       (["queued", "running"].includes(event.lifecycle) ||
         event.severity === "warn" ||
         event.severity === "error"),
@@ -28,7 +28,9 @@ export function WorkflowOperationProgress({
   const completed = Math.min(operation.completed, operation.total || operation.completed);
   const progress = Math.max(0, Math.min(100, operation.progress));
   const failure = operation.failures?.find((entry) => entry.failure.Message)?.failure;
-  const rootEvent = [...events].reverse().find((event) => event.scope === "workflow");
+  const rootEvent = [...events]
+    .reverse()
+    .find((event) => event.scope === "workflow" && event.scopeId === operation.workflowId);
   const latestFailureEvent = [...events]
     .reverse()
     .find((event) => event.severity === "error" || event.severity === "warn");
@@ -40,11 +42,12 @@ export function WorkflowOperationProgress({
       : failure?.Recovery && failure.Recovery !== "none"
         ? `Recovery: ${failure.Recovery.replaceAll("_", " ")}.`
         : "";
-  const activeItems = events.length
-    ? []
-    : (operation.items || []).filter(
-        (item) => item.status === "queued" || item.status === "running" || item.status === "failed",
-      );
+  const eventScopeIds = new Set(scopedEvents.map((event) => event.scopeId));
+  const activeItems = (operation.items || []).filter(
+    (item) =>
+      (item.status === "queued" || item.status === "running" || item.status === "failed") &&
+      !eventScopeIds.has(item.id),
+  );
 
   return (
     <section className="panel mb-3 grid gap-2 py-3" role="status" aria-live="polite">
@@ -83,7 +86,11 @@ export function WorkflowOperationProgress({
               className="flex flex-wrap items-center justify-between gap-2 rounded border border-white/10 bg-white/5 px-2 py-1.5"
               key={`${event.sequence}-${event.scope}-${event.scopeId || "workflow"}`}
             >
-              <span className="font-semibold">{event.scopeId || event.scope}</span>
+              <span className="font-semibold">
+                {operation.items?.find((item) => item.id === event.scopeId)?.label ||
+                  event.scopeId ||
+                  event.scope}
+              </span>
               <span
                 className={
                   event.severity === "error"

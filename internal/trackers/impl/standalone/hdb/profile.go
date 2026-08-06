@@ -31,7 +31,7 @@ func Profile() standalone.Profile {
 		},
 		NewDuplicateAdapter: func(deps dupe.Dependencies) dupe.Adapter { return newDuplicateAdapterAt(deps, hdbBaseURL) },
 		DupePolicy: &trackers.DupePolicy{
-			ID:         "hdb/duplicate/v2",
+			ID:         "hdb/duplicate/v3",
 			EvidenceID: "hdb-rules",
 			SearchScope: trackers.DupeSearchScope{
 				MaxPages: 100,

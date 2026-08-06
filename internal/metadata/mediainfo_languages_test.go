@@ -3,7 +3,11 @@
 
 package metadata
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/autobrr/upbrr/internal/metadata/discparse"
+)
 
 func TestExtractMediaInfoLanguagesSkipsCommentary(t *testing.T) {
 	doc := mediaInfoDoc{}
@@ -38,5 +42,22 @@ func TestExtractMediaInfoLanguagesSkipsCompatibility(t *testing.T) {
 	audio, _ := extractMediaInfoLanguages(doc)
 	if len(audio) != 1 || audio[0] != "Japanese" {
 		t.Fatalf("unexpected audio languages: %#v", audio)
+	}
+}
+
+func TestExtractBDInfoLanguages(t *testing.T) {
+	audio, subs := extractBDInfoLanguages(&discparse.BDInfo{
+		Audio: []discparse.BDAudio{
+			{Language: "en"},
+			{Language: "French"},
+			{Language: "English"},
+		},
+		Subtitles: []string{"es", "Spanish"},
+	})
+	if len(audio) != 2 || audio[0] != "English" || audio[1] != "French" {
+		t.Fatalf("unexpected audio languages: %#v", audio)
+	}
+	if len(subs) != 1 || subs[0] != "Spanish" {
+		t.Fatalf("unexpected subtitle languages: %#v", subs)
 	}
 }

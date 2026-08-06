@@ -112,12 +112,12 @@ const trackerSummary = (
   readiness: TrackerPreflightAssessment["results"][number] | undefined,
   result: DupeAssessment["results"][number] | undefined,
 ) => {
+  if (hasInClientMatch(result)) return "In client";
   if (projection?.readiness !== "ready" || (readiness && readiness.state !== "ready")) {
     return "Blocked";
   }
   if (!result) return "Not checked";
   if (result.status === "failed") return "Check failed";
-  if (hasInClientMatch(result)) return "In client";
   const count = actionMatches(result).length;
   switch (result.decision) {
     case "accepted":
@@ -221,18 +221,26 @@ function WorkflowDupeAssessmentView({
         const readiness = preflightByTracker.get(trackerID);
         const nameConfirmation = releaseNameConfirmationState(projection);
         const releaseName = releaseNameOverrides[trackerID] ?? projection?.uploadReleaseName ?? "";
+        const inClient = hasInClientMatch(result);
+        const strictBlocked =
+          inClient ||
+          Boolean(
+            projection?.policyDecisions?.some(
+              (decision) => decision.blocking && decision.disposition === "strict",
+            ),
+          );
         const canonicalName = projection?.canonicalReleaseName?.trim() || "";
         const uploadName =
           result?.uploadReleaseName?.trim() || projection?.uploadReleaseName?.trim() || "";
         const searchName =
           result?.criteria?.name?.trim() || projection?.duplicateCriteria?.name?.trim() || "";
         const namesModified = Boolean(
+          !strictBlocked &&
           canonicalName &&
           ((uploadName && uploadName !== canonicalName) ||
             (searchName && searchName !== canonicalName)),
         );
         const blockReasons = trackerBlockReasons(projection, readiness, result);
-        const inClient = hasInClientMatch(result);
         const riskAcknowledgement = requiresRiskAcknowledgement(result);
         const canOverride = Boolean(
           result &&
@@ -249,7 +257,7 @@ function WorkflowDupeAssessmentView({
           ).values(),
         );
         return (
-          <article className="panel grid gap-2 py-3" key={trackerID}>
+          <article className="panel grid gap-1 px-3 py-2" key={trackerID}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-base">{projection?.displayName || trackerID}</h2>
               <Badge
@@ -298,7 +306,7 @@ function WorkflowDupeAssessmentView({
 
             <CandidateList matches={matches} />
 
-            {nameConfirmation.pending || nameConfirmation.confirmed ? (
+            {!strictBlocked && (nameConfirmation.pending || nameConfirmation.confirmed) ? (
               <div
                 aria-label={`Tracker naming for ${trackerID}`}
                 className="grid gap-2 rounded border border-[var(--border)] bg-black/10 p-2"

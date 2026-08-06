@@ -44,6 +44,43 @@ func TestNormalizeTitleRemuxOutranksStructuredDiscSource(t *testing.T) {
 	}
 }
 
+func TestNormalizeFullDiscFromStructuredAndTrackerLabels(t *testing.T) {
+	t.Parallel()
+
+	for _, entry := range []api.DupeEntry{
+		{Type: "DISC"},
+		{Type: "Full Disc"},
+		{Type: "BD 50"},
+		{Type: "BluRay Raw"},
+		{Name: "Example Release 2026 1080p Blu-ray AVC-GRP", Container: "m2ts"},
+		{
+			Name:      "Example Release 2026 576i DVD-GRP",
+			Source:    "DVD",
+			Container: "ISO",
+		},
+	} {
+		facts := normalizeCandidateFacts(NormalizeCandidate(entry, "TEST"))
+		if facts.MediaKind != mediaKindFullDisc || facts.MediaClass != mediaClassFullDisc || facts.SourceFamily != sourceFamilyDisc {
+			t.Fatalf("full-disc facts = %#v for entry %#v", facts, entry)
+		}
+	}
+}
+
+func TestAmbiguousBluRayTitleDoesNotDisproveFullDiscDuplicate(t *testing.T) {
+	t.Parallel()
+
+	target := api.TrackerDuplicateTarget{
+		Names:  []string{"Example Release 2026 Proposed-GRP"},
+		Type:   "DISC",
+		Source: "Blu-ray",
+	}
+	candidate := NormalizeCandidate(api.DupeEntry{Name: "Example Release 2026 1080p Blu-ray AVC TrueHD 7.1-GRP"}, "TEST")
+	result := Evaluate(target, []TrackerCandidate{candidate}, trackerspkg.DupePolicy{}, SearchEvidence{Complete: true})
+	if got := result.Candidates[0].Relation; got != api.DupeRelationSameSlot || !result.RequiresAction {
+		t.Fatalf("ambiguous Blu-ray relation = %#v", result.Candidates[0])
+	}
+}
+
 func TestNormalizeProviderFromAutobrrRLSCollection(t *testing.T) {
 	t.Parallel()
 

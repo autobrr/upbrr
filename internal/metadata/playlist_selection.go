@@ -37,7 +37,10 @@ func (s *Service) resolveBDMVPlaylistSelection(ctx context.Context, request prep
 		stored, lookupErr := s.repo.GetPlaylistSelection(ctx, playlistSelectionKey(request.Layout.SourcePath))
 		if lookupErr != nil {
 			if errors.Is(lookupErr, internalerrors.ErrNotFound) {
-				return nil, &api.PlaylistSelectionRequiredError{SourcePath: request.Layout.SourcePath}
+				return nil, &api.PlaylistSelectionRequiredError{
+					SourcePath: request.Layout.SourcePath,
+					Candidates: apiPlaylists(discovered),
+				}
 			}
 			return nil, fmt.Errorf("metadata: load remembered playlist selection: %w", lookupErr)
 		}
@@ -49,7 +52,10 @@ func (s *Service) resolveBDMVPlaylistSelection(ctx context.Context, request prep
 		return apiPlaylists(discovered), nil
 	}
 	if len(selected) == 0 {
-		return nil, &api.PlaylistSelectionRequiredError{SourcePath: request.Layout.SourcePath}
+		return nil, &api.PlaylistSelectionRequiredError{
+			SourcePath: request.Layout.SourcePath,
+			Candidates: apiPlaylists(discovered),
+		}
 	}
 
 	byName := make(map[string]filesystem.PlaylistInfo, len(discovered))
