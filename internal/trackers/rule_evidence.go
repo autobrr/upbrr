@@ -211,11 +211,15 @@ func ValidatePerFileUniformity(facts api.MediaFileFacts, policy PerFileUniformit
 				continue
 			}
 			if !strings.EqualFold(expected, value) {
+				evidence := policy.Evidence
+				if field == MediaUniformityFieldAudioLanguages || field == MediaUniformityFieldSubtitleLanguages {
+					evidence.ViolationDisposition = api.RuleDispositionWaivable
+				}
 				return predicateViolation(
 					rule,
 					fmt.Sprintf("media files have non-uniform %s", field),
 					facts.Status,
-					policy.Evidence,
+					evidence,
 				)
 			}
 		}
@@ -552,9 +556,10 @@ type LanguageCombinationPolicy struct {
 	RequireEnglishSubtitleWithoutAudio bool
 }
 
-// ValidateLanguageCombination applies language requirements to every media
-// file without inferring absent tracks from incomplete evidence.
+// ValidateLanguageCombination applies waivable language requirements to every
+// media file without inferring absent tracks from incomplete evidence.
 func ValidateLanguageCombination(facts api.MediaFileFacts, policy LanguageCombinationPolicy) []api.RuleFailure {
+	policy.Evidence.ViolationDisposition = api.RuleDispositionWaivable
 	rule := predicateRule(policy.Evidence, "language_combination")
 	original := languageutil.NormalizeLanguageDisplay(facts.OriginalLanguage)
 	needsOriginal := policy.RequireOriginalAudio || policy.RequireOriginalOrEnglishAudio ||

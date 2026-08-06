@@ -296,6 +296,7 @@ func normalizeTargetFacts(target api.TrackerDuplicateTarget) normalizedFacts {
 	facts.MediaKind, facts.MediaClass, facts.SourceFamily = deriveMediaFacts(
 		facts.Type.Value,
 		facts.Source.Value,
+		facts.Container.Value,
 		target.VideoEncode,
 		title.MediaKind,
 	)
@@ -430,6 +431,7 @@ func normalizeCandidateFacts(candidate TrackerCandidate) normalizedFacts {
 	facts.MediaKind, facts.MediaClass, facts.SourceFamily = deriveMediaFacts(
 		facts.Type.Value,
 		facts.Source.Value,
+		facts.Container.Value,
 		"",
 		title.MediaKind,
 	)
@@ -574,6 +576,7 @@ func webCodecTokenFollows(tokens []string, start int) bool {
 
 func mediaKindFromText(value string) mediaKind {
 	normalized := strings.NewReplacer(".", " ", "_", " ", "-", " ").Replace(strings.ToUpper(value))
+	compact := compactAlphaNumeric(value)
 	switch {
 	case strings.Contains(normalized, "REMUX"):
 		return mediaKindRemux
@@ -587,22 +590,42 @@ func mediaKindFromText(value string) mediaKind {
 		return mediaKindSDTV
 	case strings.Contains(normalized, "DVD RIP"), strings.Contains(normalized, "DVDRIP"):
 		return mediaKindDVDRip
-	case strings.Contains(normalized, "BD25"), strings.Contains(normalized, "BD50"), strings.Contains(normalized, "BD66"),
-		strings.Contains(normalized, "BD100"), strings.Contains(normalized, "FULL DISC"), strings.Contains(normalized, "BLU RAY DISC"),
-		strings.Contains(normalized, "UHD DISC"), strings.Contains(normalized, "DVD5"), strings.Contains(normalized, "DVD9"):
+	case strings.Contains(compact, "bd25"), strings.Contains(compact, "bd50"), strings.Contains(compact, "bd66"),
+		strings.Contains(compact, "bd100"), strings.Contains(normalized, "FULL DISC"), strings.Contains(normalized, "BLU RAY DISC"),
+		strings.Contains(normalized, "UHD DISC"), strings.Contains(normalized, "BLURAY RAW"), strings.Contains(compact, "dvd5"),
+		strings.Contains(compact, "dvd9"):
 		return mediaKindFullDisc
-	case strings.Contains(normalized, "BD RIP"), strings.Contains(normalized, "BDRIP"), strings.Contains(normalized, "BLU RAY"),
-		strings.Contains(normalized, "BLURAY"):
+	case strings.Contains(normalized, "BD RIP"), strings.Contains(normalized, "BDRIP"),
+		(strings.Contains(normalized, "BLU RAY") || strings.Contains(normalized, "BLURAY")) &&
+			(strings.Contains(compact, "x264") || strings.Contains(compact, "x265") || strings.Contains(compact, "xvid") ||
+				strings.Contains(compact, "divx")):
 		return mediaKindDiscEncode
 	default:
 		return mediaKindUnknown
 	}
 }
 
-func deriveMediaFacts(typeValue string, sourceValue string, encodeValue string, titleKind mediaKind) (mediaKind, mediaClass, sourceFamily) {
+// deriveMediaFacts classifies media from structured type and container evidence before falling back to title and source evidence.
+func deriveMediaFacts(
+	typeValue string,
+	sourceValue string,
+	containerValue string,
+	encodeValue string,
+	titleKind mediaKind,
+) (mediaKind, mediaClass, sourceFamily) {
 	kind := mediaKindFromText(strings.Join([]string{typeValue, encodeValue}, " "))
 	if strings.Contains(strings.ToUpper(typeValue), "DISC") {
 		kind = mediaKindFullDisc
+	}
+	if kind == mediaKindUnknown {
+		switch canonicalContainer(containerValue) {
+		case "m2ts", "vob_ifo":
+			kind = mediaKindFullDisc
+		case "iso":
+			if family := canonicalSource(sourceValue); family == "bluray" || family == "uhd_bluray" || family == "hd_dvd" || family == "dvd" {
+				kind = mediaKindFullDisc
+			}
+		}
 	}
 	if kind == mediaKindUnknown {
 		kind = titleKind

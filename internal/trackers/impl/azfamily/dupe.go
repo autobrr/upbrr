@@ -176,11 +176,33 @@ func (h dupeSearcher) fetchTorrentList(
 			if ripType != "" && !containsFlag(entry.Flags, ripType) {
 				continue
 			}
+			entry.Type = ripType
+			entry.CanonicalType = azCanonicalCandidateType(ripType)
 			results = append(results, entry)
 		}
 		pageURL = nextAZPage(root, site.baseURL)
 	}
 	return results, nil
+}
+
+// azCanonicalCandidateType maps an AZ-family rip filter value to the shared duplicate type vocabulary.
+func azCanonicalCandidateType(ripType string) string {
+	switch strings.ToLower(strings.TrimSpace(ripType)) {
+	case "bluray raw", "dvd":
+		return "DISC"
+	case "bluray remux", "dvd remux":
+		return "REMUX"
+	case "web-dl":
+		return "WEBDL"
+	case "webrip":
+		return "WEBRIP"
+	case "hdtv", "sdtv":
+		return "HDTV"
+	case "bdrip", "bluray", "brrip", "dvdrip", "hdrip":
+		return "ENCODE"
+	default:
+		return ""
+	}
 }
 
 type azDupeSiteDef struct {

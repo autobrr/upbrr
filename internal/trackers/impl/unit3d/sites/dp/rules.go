@@ -9,7 +9,7 @@ var nordic = []string{"english", "norwegian", "norsk", "no", "nb", "nn", "swedis
 
 // Rules strictly blocks single-file folders and hardcoded subtitles. Its
 // release-group exception remains waivable; its Nordic language requirement is
-// strict.
+// also waivable.
 func Rules() *trackers.RuleSet {
 	return &trackers.RuleSet{
 		BlockSingleFileFolder: true,

@@ -43,6 +43,8 @@ const (
 	workflowWorkLeaseTTL  = time.Minute
 	workflowWorkHeartbeat = 20 * time.Second
 	workflowCommandTTL    = 24 * time.Hour
+	// maxPlaylistActionOptions bounds the selectable playlist details retained in one action.
+	maxPlaylistActionOptions = 10
 )
 
 // Option configures a workflow module.
@@ -2873,6 +2875,30 @@ func (m *Module) prepareRelease(
 	command.Input.Instructions = facts.Instructions
 	prepared, err := m.preparer.Prepare(ctx, command.Input)
 	if err != nil {
+		var playlistRequired *api.PlaylistSelectionRequiredError
+		if errors.As(err, &playlistRequired) {
+			options := make([]api.RequiredActionOption, 0, min(len(playlistRequired.Candidates), maxPlaylistActionOptions))
+			for _, candidate := range playlistRequired.Candidates {
+				playlist := strings.TrimSpace(candidate.File)
+				if playlist != "" {
+					candidate.File = playlist
+					options = append(options, api.RequiredActionOption{
+						Value:    playlist,
+						Label:    playlist,
+						Playlist: &candidate,
+					})
+					if len(options) == maxPlaylistActionOptions {
+						break
+					}
+				}
+			}
+			if len(options) > 0 {
+				if actionErr := m.blockForPlaylistSelection(state, nextRevision, now, options); actionErr != nil {
+					return CommandResult{}, actionErr
+				}
+				return CommandResult{}, nil
+			}
+		}
 		return CommandResult{}, fmt.Errorf("release workflow prepare canonical release: %w", err)
 	}
 	ref := api.ReleaseRef{SourcePath: prepared.Release.Source.SourcePath, Generation: prepared.Release.Generation}
@@ -2924,25 +2950,43 @@ func (m *Module) prepareRelease(
 				continue
 			}
 			options = append(options, api.RequiredActionOption{Value: playlist, Label: playlist})
+			if len(options) == maxPlaylistActionOptions {
+				break
+			}
 		}
 		if len(options) > 0 {
-			actionID, actionErr := m.newID("action")
-			if actionErr != nil {
-				return CommandResult{}, actionErr
+			if err := m.blockForPlaylistSelection(state, nextRevision, now, options); err != nil {
+				return CommandResult{}, err
 			}
-			state.Workflow.Status = api.WorkflowStatusBlocked
-			state.Workflow.RequiredActions = []api.RequiredAction{{
-				ID:               api.RequiredActionID(actionID),
-				Kind:             api.RequiredActionSelectPlaylist,
-				Status:           api.RequiredActionStatusPending,
-				WorkflowRevision: nextRevision,
-				Prompt:           "Select one or more Blu-ray playlists to analyze.",
-				Options:          options,
-				CreatedAt:        now,
-			}}
 		}
 	}
 	return CommandResult{Release: &snapshot}, nil
+}
+
+// blockForPlaylistSelection replaces workflow failures with one pending,
+// revision-bound Blu-ray playlist action and marks the workflow blocked.
+func (m *Module) blockForPlaylistSelection(
+	state *State,
+	nextRevision api.WorkflowRevision,
+	now time.Time,
+	options []api.RequiredActionOption,
+) error {
+	actionID, err := m.newID("action")
+	if err != nil {
+		return err
+	}
+	state.Workflow.Status = api.WorkflowStatusBlocked
+	state.Workflow.RequiredActions = []api.RequiredAction{{
+		ID:               api.RequiredActionID(actionID),
+		Kind:             api.RequiredActionSelectPlaylist,
+		Status:           api.RequiredActionStatusPending,
+		WorkflowRevision: nextRevision,
+		Prompt:           "Select one or more Blu-ray playlists to analyze.",
+		Options:          options,
+		CreatedAt:        now,
+	}}
+	state.Workflow.Failures = nil
+	return nil
 }
 
 func (m *Module) resetRelease(

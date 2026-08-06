@@ -148,12 +148,26 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 				continue
 			}
 			seenIDs[id] = struct{}{}
+			flags, flagsPresent := hdbTags(item)
+			candidateType := hdbCandidateType(item["medium"])
 			entry := api.DupeEntry{
-				Name:      hdbString(item["name"]),
-				ID:        id,
-				Link:      "https://hdbits.org/details.php?id=" + id,
-				Download:  "https://hdbits.org/download.php/" + url.QueryEscape(filename) + "?id=" + id + "&passkey=" + passkey,
-				FileCount: hdbInt(item["numfiles"]),
+				Name:          hdbString(item["name"]),
+				ID:            id,
+				Link:          "https://hdbits.org/details.php?id=" + id,
+				Download:      "https://hdbits.org/download.php/" + url.QueryEscape(filename) + "?id=" + id + "&passkey=" + passkey,
+				FileCount:     hdbInt(item["numfiles"]),
+				Category:      hdbCandidateCategory(item["category"]),
+				Type:          candidateType,
+				CanonicalType: candidateType,
+				Res:           hdbString(item["resolution"]),
+				Codec:         hdbCandidateCodec(item["codec"]),
+				Container:     hdbString(item["container"]),
+				Group:         firstHDBText(hdbString(item["releaseGroup"]), hdbString(item["group"])),
+				Flags:         flags,
+				FlagsPresent:  flagsPresent,
+				HDR:           dupe.NormalizeTrackerHDRFlags(flags, flagsPresent, false),
+				Internal:      hdbInt(item["origin"]) == 1,
+				Description:   hdbString(item["descr"]),
 			}
 			if size := hdbInt(item["size"]); size > 0 {
 				entry.SizeKnown, entry.SizeBytes = true, int64(size)
@@ -240,6 +254,93 @@ func firstHDBText(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// hdbCandidateCategory maps HDB category IDs to the shared movie and TV vocabulary.
+func hdbCandidateCategory(value any) string {
+	switch hdbInt(value) {
+	case 1, 3, 4:
+		return string(api.CanonicalCategoryMovie)
+	case 2:
+		return string(api.CanonicalCategoryTV)
+	default:
+		return hdbString(value)
+	}
+}
+
+// hdbCandidateCodec maps HDB codec IDs to names understood by duplicate normalization.
+func hdbCandidateCodec(value any) string {
+	switch hdbInt(value) {
+	case 1:
+		return "H.264"
+	case 2:
+		return "MPEG-2"
+	case 3:
+		return "VC-1"
+	case 4:
+		return "XviD"
+	case 5:
+		return "H.265"
+	case 6:
+		return "VP9"
+	default:
+		return hdbString(value)
+	}
+}
+
+// hdbCandidateType maps HDB medium IDs and labels to the shared duplicate type vocabulary.
+func hdbCandidateType(value any) string {
+	switch hdbInt(value) {
+	case 1:
+		return "DISC"
+	case 3:
+		return "ENCODE"
+	case 4:
+		return "HDTV"
+	case 5:
+		return "REMUX"
+	case 6:
+		return "WEBDL"
+	}
+	normalized := normalizeHDBType(hdbString(value))
+	switch normalized {
+	case "BLURAY", "HDDVD", "DISC":
+		return "DISC"
+	case "ENCODE", "HDTV", "REMUX", "WEBDL", "WEBRIP":
+		return normalized
+	default:
+		return ""
+	}
+}
+
+// hdbTags normalizes array or comma-delimited tags and reports whether the response supplied tag evidence.
+func hdbTags(item map[string]any) ([]string, bool) {
+	value, present := item["tags"]
+	if !present {
+		return nil, false
+	}
+	var tags []string
+	switch typed := value.(type) {
+	case []any:
+		for _, raw := range typed {
+			if tag := hdbString(raw); tag != "" {
+				tags = append(tags, tag)
+			}
+		}
+	case []string:
+		for _, raw := range typed {
+			if tag := strings.TrimSpace(raw); tag != "" {
+				tags = append(tags, tag)
+			}
+		}
+	case string:
+		for raw := range strings.SplitSeq(typed, ",") {
+			if tag := strings.TrimSpace(raw); tag != "" {
+				tags = append(tags, tag)
+			}
+		}
+	}
+	return tags, true
 }
 
 func isHDBDupeTVCategory(meta api.DuplicateSubject) bool {

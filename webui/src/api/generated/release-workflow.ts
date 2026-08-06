@@ -1463,6 +1463,7 @@ export type RequiredActionKind = string;
 
 export type RequiredActionOption = Readonly<{
   label: string;
+  playlist?: PlaylistInfo | null;
   value: string;
 }>;
 

@@ -151,17 +151,18 @@ func antDupeEntries(payload map[string]any, _ string) []api.DupeEntry {
 			fileCount = len(files)
 		}
 		entry := api.DupeEntry{
-			Name:      antString(item["fileName"]),
-			Files:     files,
-			FileCount: fileCount,
-			Link:      antString(item["guid"]),
-			Download:  strings.ReplaceAll(antString(item["link"]), "&amp;", "&"),
-			Res:       antString(item["resolution"]),
-			Type:      antString(item["type"]),
-			Source:    antString(item["source"]),
-		}
-		if entry.Name == "" && len(files) > 0 {
-			entry.Name = files[0]
+			Name:          antCandidateName(item, files),
+			Files:         files,
+			FileCount:     fileCount,
+			Link:          antString(item["guid"]),
+			Download:      strings.ReplaceAll(antString(item["link"]), "&amp;", "&"),
+			Res:           antString(item["resolution"]),
+			Type:          antString(item["type"]),
+			CanonicalType: antCandidateType(item),
+			Source:        antCandidateSource(item),
+			Codec:         antString(item["codec"]),
+			Container:     antString(item["container"]),
+			Group:         antString(item["releaseGroup"]),
 		}
 		if size := antInt(item["size"]); size > 0 {
 			entry.SizeKnown, entry.SizeBytes = true, size
@@ -179,6 +180,38 @@ func antDupeEntries(payload map[string]any, _ string) []api.DupeEntry {
 		entries = append(entries, entry)
 	}
 	return entries
+}
+
+// antCandidateName prefers the listed content name for single-file torrents and ANT's torrent filename for multi-file torrents.
+func antCandidateName(item map[string]any, files []string) string {
+	if len(files) == 1 {
+		return files[0]
+	}
+	for _, field := range []string{"fileName", "releaseName", "name", "title"} {
+		if value := antString(item[field]); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+// antCandidateSource falls back to ANT's media field when the response omits source.
+func antCandidateSource(item map[string]any) string {
+	if source := antString(item["source"]); source != "" {
+		return source
+	}
+	return antString(item["media"])
+}
+
+// antCandidateType classifies disc containers explicitly and otherwise preserves ANT's type value.
+func antCandidateType(item map[string]any) string {
+	typeValue := antString(item["type"])
+	switch strings.ToLower(antString(item["container"])) {
+	case "m2ts", "bdmv", "vob/ifo", "video_ts", "iso":
+		return "DISC"
+	default:
+		return typeValue
+	}
 }
 
 type antPagination struct {

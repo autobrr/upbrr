@@ -34,6 +34,8 @@ func (e *BDMVRescanRequiredError) Error() string {
 type PlaylistSelectionRequiredError struct {
 	// SourcePath identifies the requested local Blu-ray source.
 	SourcePath string
+	// Candidates contains the discovered playlists available for selection.
+	Candidates []PlaylistInfo
 }
 
 // Error returns the stable playlist-selection-required message.

@@ -70,4 +70,31 @@ func TestAZNetworkHandlerSearchParsesHTMLResults(t *testing.T) {
 	if entries[0].ID != "123" {
 		t.Fatalf("expected torrent id 123, got %q", entries[0].ID)
 	}
+	if entries[0].Type != "WEB-DL" || entries[0].CanonicalType != "WEBDL" {
+		t.Fatalf("unexpected AZ candidate type %#v", entries[0])
+	}
+}
+
+func TestAZCanonicalCandidateType(t *testing.T) {
+	t.Parallel()
+
+	for input, want := range map[string]string{
+		"BluRay Raw":  "DISC",
+		"DVD":          "DISC",
+		"BluRay Remux": "REMUX",
+		"DVD Remux":    "REMUX",
+		"WEB-DL":       "WEBDL",
+		"WEBRip":       "WEBRIP",
+		"HDTV":         "HDTV",
+		"SDTV":         "HDTV",
+		"BDRip":        "ENCODE",
+		"BluRay":       "ENCODE",
+		"BRRip":        "ENCODE",
+		"DVDRip":       "ENCODE",
+		"HDRip":        "ENCODE",
+	} {
+		if got := azCanonicalCandidateType(input); got != want {
+			t.Errorf("azCanonicalCandidateType(%q) = %q, want %q", input, got, want)
+		}
+	}
 }

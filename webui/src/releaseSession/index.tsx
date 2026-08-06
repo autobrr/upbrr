@@ -467,13 +467,17 @@ export function ReleaseSessionProvider({
       sourcePath,
       commandRevision,
       correlationID,
-      candidates: (action.options || []).map((option) => ({
-        file: option.value,
-        duration: 0,
-        items: [],
-        score: 0,
-        edition: "",
-      })),
+      candidates: (action.options || []).map((option) =>
+        option.playlist
+          ? { ...option.playlist, items: [...option.playlist.items] }
+          : {
+              file: option.value,
+              duration: 0,
+              items: [],
+              score: 0,
+              edition: "",
+            },
+      ),
       error: "",
     });
     return true;
@@ -572,7 +576,7 @@ export function ReleaseSessionProvider({
       );
       releaseWorkflowController(controller);
       if (controller.signal.aborted) return null;
-      return acceptWorkflowCurrent(prepared);
+      return prepared;
     } catch (error) {
       releaseWorkflowController(controller);
       lastWorkflowError.current = error;
@@ -814,11 +818,7 @@ export function ReleaseSessionProvider({
           commandID,
           controller.signal,
         );
-      } else if (
-        intent.playlist.Set &&
-        pendingPlaylist &&
-        workflowView.current?.release?.release.Source.SourcePath === sourcePath
-      ) {
+      } else if (intent.playlist.Set && pendingPlaylist && workflowView.current) {
         setWorkflowView((view) => ({
           ...view,
           status: "running",
@@ -845,6 +845,7 @@ export function ReleaseSessionProvider({
           lastWorkflowError.current || new Error("Canonical workflow preparation did not complete.")
         );
       }
+      acceptWorkflowCurrent(current);
       if (dispatchPlaylistAction(current, sourcePath, commandRevision, correlationID)) {
         return false;
       }

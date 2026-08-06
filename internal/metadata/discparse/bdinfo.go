@@ -42,7 +42,9 @@ func NormalizePlaylistName(name string) string {
 	return strings.ToUpper(filepath.Base(trimmed))
 }
 
-// SplitBDInfoReport extracts summary and files sections from a BDInfo report.
+// SplitBDInfoReport extracts quick-summary, files, and extended-summary sections
+// from a full report. A persisted standalone quick summary is returned as the
+// summary when it contains playlist and length fields.
 func SplitBDInfoReport(text string) (summary string, files string, extSummary string) {
 	parts := strings.SplitN(text, "QUICK SUMMARY:", 2)
 	if len(parts) == 2 {
@@ -61,6 +63,8 @@ func SplitBDInfoReport(text string) (summary string, files string, extSummary st
 		remaining := strings.TrimRight(parts[1], " \n")
 		summary = strings.TrimRight(strings.SplitN(remaining, "********************", 2)[0], " \n")
 		summary = normalizeSummarySpaces(summary)
+	} else if isStandaloneBDInfoSummary(text) {
+		summary = normalizeSummarySpaces(strings.TrimSpace(text))
 	}
 
 	// Legacy Python logic selects the segment after the second [code] marker.
@@ -73,6 +77,19 @@ func SplitBDInfoReport(text string) (summary string, files string, extSummary st
 	}
 
 	return summary, files, extSummary
+}
+
+// isStandaloneBDInfoSummary recognizes the minimum fields emitted in a
+// persisted playlist quick summary without accepting arbitrary report text.
+func isStandaloneBDInfoSummary(text string) bool {
+	hasPlaylist := false
+	hasLength := false
+	for raw := range strings.SplitSeq(text, "\n") {
+		line := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(raw), "*")))
+		hasPlaylist = hasPlaylist || strings.HasPrefix(line, "playlist:")
+		hasLength = hasLength || strings.HasPrefix(line, "length:")
+	}
+	return hasPlaylist && hasLength
 }
 
 func normalizeSummarySpaces(text string) string {
@@ -167,7 +184,7 @@ func ExtractPlaylistReports(text string, selected []string) ([]PlaylistReport, e
 // ParseBDInfoFiles parses the FILES section of a BDInfo report.
 func ParseBDInfoFiles(files string) []BDFile {
 	var result []BDFile
-	for _, line := range strings.Split(files, "\n") {
+	for line := range strings.SplitSeq(files, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			continue
@@ -196,11 +213,11 @@ func ParseBDInfoFiles(files string) []BDFile {
 // ParseBDInfoSummary parses a BDInfo summary and files section.
 func ParseBDInfoSummary(summary string, files string, path string) *BDInfo {
 	info := &BDInfo{Path: path}
-	for _, raw := range strings.Split(summary, "\n") {
+	for raw := range strings.SplitSeq(summary, "\n") {
 		line := strings.TrimSpace(raw)
 		lower := strings.ToLower(line)
-		if strings.HasPrefix(lower, "*") {
-			lower = strings.TrimSpace(strings.TrimPrefix(lower, "*"))
+		if after, ok := strings.CutPrefix(lower, "*"); ok {
+			lower = strings.TrimSpace(after)
 			line = strings.TrimSpace(strings.TrimPrefix(line, "*"))
 		}
 

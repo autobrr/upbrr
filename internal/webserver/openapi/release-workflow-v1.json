@@ -6274,6 +6274,16 @@
           "label": {
             "type": "string"
           },
+          "playlist": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlaylistInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "value": {
             "type": "string"
           }

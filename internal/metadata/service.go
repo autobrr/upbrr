@@ -351,13 +351,13 @@ func cloneTrackerIDs(values map[string]string) map[string]string {
 func (s *Service) collectSourceEvidence(ctx context.Context, request preparationstate.Request) (meta preparationstate.State, err error) {
 	bdinfoActive := false
 	bdinfoTerminal := false
+	reportBDInfo := func(status api.PreparationProgressStatus, message string) {
+		api.EmitPreparationProgress(ctx, api.NewPreparationProgressUpdate(api.PreparationPhaseBDInfo, status, message))
+	}
 	defer func() {
 		if err != nil {
 			if bdinfoActive && !bdinfoTerminal {
-				api.EmitPreparationProgress(
-					ctx,
-					api.NewPreparationProgressUpdate(api.PreparationPhaseBDInfo, api.PreparationProgressFailed, "Blu-ray analysis failed."),
-				)
+				reportBDInfo(api.PreparationProgressFailed, "Blu-ray analysis failed.")
 			}
 			s.logger.Warnf("metadata: preparation blocked err=%s", redaction.RedactValue(err.Error(), nil))
 		}
@@ -441,17 +441,11 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 			// Execute BDInfo on selected playlists
 			if s.bdinfo != nil {
 				bdinfoActive = true
-				api.EmitPreparationProgress(
-					ctx,
-					api.NewPreparationProgressUpdate(api.PreparationPhaseBDInfo, api.PreparationProgressRunning, "Preparing Blu-ray analysis."),
-				)
+				reportBDInfo(api.PreparationProgressRunning, "Analyzing selected Blu-ray playlists.")
 				tmpRoot, rerr := db.Subdir(s.cfg.MainSettings.DBPath, "tmp")
 				if rerr != nil {
 					bdinfoTerminal = true
-					api.EmitPreparationProgress(
-						ctx,
-						api.NewPreparationProgressUpdate(api.PreparationPhaseBDInfo, api.PreparationProgressFailed, "Blu-ray analysis failed."),
-					)
+					reportBDInfo(api.PreparationProgressFailed, "Blu-ray analysis failed.")
 					return preparationstate.State{}, fmt.Errorf("metadata: resolve tmp root: %w", rerr)
 				}
 				tmpDir, _, rerr := paths.ReleaseTempDir(tmpRoot, meta, primary)
@@ -463,13 +457,13 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 					return preparationstate.State{}, fmt.Errorf("metadata: create bdinfo temp dir: %w", err)
 				}
 
-				outputPath, needScan, berr := s.resolveOrCreateBDMVSummaries(ctx, input, tmpDir, playlistPath, selectedPlaylistNames)
+				analysisCtx := bdinfo.WithProgressReporter(ctx, func(message string) {
+					reportBDInfo(api.PreparationProgressRunning, message)
+				})
+				outputPath, needScan, berr := s.resolveOrCreateBDMVSummaries(analysisCtx, input, tmpDir, playlistPath, selectedPlaylistNames)
 				if berr != nil {
 					bdinfoTerminal = true
-					api.EmitPreparationProgress(
-						ctx,
-						api.NewPreparationProgressUpdate(api.PreparationPhaseBDInfo, api.PreparationProgressFailed, "Blu-ray analysis failed."),
-					)
+					reportBDInfo(api.PreparationProgressFailed, "Blu-ray analysis failed.")
 					return preparationstate.State{}, berr
 				}
 				if strings.TrimSpace(outputPath) != "" {
@@ -483,13 +477,10 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 				}
 				if needScan {
 					s.logger.Debugf("metadata: bdinfo scan completed for %d selected playlists", len(selectedPlaylistNames))
-					api.EmitPreparationProgress(
-						ctx,
-						api.NewPreparationProgressUpdate(api.PreparationPhaseBDInfo, api.PreparationProgressCompleted, "Blu-ray analysis complete."),
-					)
+					reportBDInfo(api.PreparationProgressCompleted, "Blu-ray analysis complete.")
 					bdinfoTerminal = true
 				} else {
-					api.SkipPreparationProgress(ctx, api.PreparationPhaseBDInfo, "Reused cached Blu-ray analysis.")
+					reportBDInfo(api.PreparationProgressSkipped, "Reused cached Blu-ray analysis.")
 					bdinfoTerminal = true
 				}
 			} else {

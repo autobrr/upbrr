@@ -13,6 +13,7 @@ import (
 
 	bdrunner "github.com/autobrr/go-bdinfo/pkg/bdinfo"
 
+	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -228,9 +229,9 @@ func (s *Service) execute(ctx context.Context, bdmvPath string, playlistName str
 	}, nil
 }
 
-// ParseOutput extracts the title, label, size, length, and quick-summary fields
-// present in a persisted BDInfo report. Missing fields are omitted without an
-// error.
+// ParseOutput extracts title, label, size, length, and quick-summary fields from
+// either a full BDInfo report or a persisted standalone quick summary. Missing
+// fields are omitted without an error.
 func (s *Service) ParseOutput(filePath string) (map[string]any, error) {
 	content, err := os.ReadFile(filePath)
 	if err != nil {
@@ -269,12 +270,8 @@ func (s *Service) ParseOutput(filePath string) (map[string]any, error) {
 		}
 	}
 
-	// Extract summary section
-	if idx := strings.Index(text, "QUICK SUMMARY:"); idx >= 0 {
-		end := strings.Index(text[idx:], "********************")
-		if end > 0 {
-			result["summary"] = strings.TrimSpace(text[idx+14 : idx+end])
-		}
+	if summary, _, _ := discparse.SplitBDInfoReport(text); strings.TrimSpace(summary) != "" {
+		result["summary"] = summary
 	}
 
 	s.logger.Debugf("bdinfo: parsed output with %d fields", len(result))

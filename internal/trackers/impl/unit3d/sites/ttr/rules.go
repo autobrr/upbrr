@@ -12,7 +12,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// Rules returns TTR's strict Spanish audio-or-subtitle requirements.
+// Rules returns TTR's waivable Spanish audio-or-subtitle requirements.
 func Rules() *trackers.RuleSet {
 	return &trackers.RuleSet{Language: &trackers.LanguageRule{
 		Languages:    []string{"spanish", "es", "spa"},
@@ -37,7 +37,7 @@ func checkSubtitleOnly(ctx context.Context, meta api.TrackerValidationSubject, _
 		return []api.RuleFailure{trackers.NewRuleFailure(
 			"spanish_track_required",
 			"TTR requires at least one Spanish audio or subtitle track.",
-			api.RuleDispositionStrict,
+			api.RuleDispositionWaivable,
 		)}, nil
 	}
 	return nil, nil

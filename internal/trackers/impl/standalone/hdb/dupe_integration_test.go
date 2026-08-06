@@ -133,7 +133,7 @@ func TestHDBHandlerSearchBuildsPayloadAndParsesResults(t *testing.T) {
 				t.Fatalf("unexpected page %d", got)
 			}
 
-			body := `{"status":0,"data":[{"id":42,"name":"Movie.Title.2024.1080p.WEB-DL.DDP5.1.H.265-GRP","filename":"Movie Title (2024).torrent","size":1234567890,"numfiles":3}]}`
+			body := `{"status":0,"data":[{"id":42,"name":"Movie.Title.2024.1080p.WEB-DL.DDP5.1.H.265-GRP","filename":"Movie Title (2024).torrent","size":1234567890,"numfiles":3,"category":1,"codec":5,"medium":6,"origin":1,"tags":["HDR10"],"descr":"Example description"}]}`
 			return &http.Response{
 				StatusCode: http.StatusOK,
 				Body:       io.NopCloser(strings.NewReader(body)),
@@ -199,6 +199,11 @@ func TestHDBHandlerSearchBuildsPayloadAndParsesResults(t *testing.T) {
 	if entry.FileCount != 3 {
 		t.Fatalf("unexpected file count %d", entry.FileCount)
 	}
+	if entry.Category != string(api.CanonicalCategoryMovie) || entry.Type != "WEBDL" || entry.CanonicalType != "WEBDL" || entry.Codec != "H.265" ||
+		!entry.Internal || len(entry.Flags) != 1 || entry.Flags[0] != "HDR10" || len(entry.HDR.Formats) != 1 ||
+		entry.HDR.Formats[0] != api.HDRFormatHDR10 || entry.Description != "Example description" {
+		t.Fatalf("unexpected structured HDB evidence %#v", entry)
+	}
 	logs := strings.Join(logger.debug, "\n")
 	if strings.Contains(logs, `"username":"user"`) || strings.Contains(logs, `"passkey":"pk"`) {
 		t.Fatal("HDB request log exposed credentials")
@@ -209,6 +214,34 @@ func TestHDBHandlerSearchBuildsPayloadAndParsesResults(t *testing.T) {
 	search := result.SearchEvidence()
 	if !search.Complete || search.Pages != 1 || search.Scope != "work_identity" {
 		t.Fatalf("unexpected search evidence %#v", search)
+	}
+}
+
+func TestHDBFullDiscUsesMediumAndGroupSlot(t *testing.T) {
+	t.Parallel()
+
+	target := api.TrackerDuplicateTarget{
+		Type:       "DISC",
+		Source:     "Blu-ray",
+		Resolution: "1080p",
+		VideoCodec: "AVC",
+		Group:      "GRP",
+	}
+	entry := api.DupeEntry{
+		Name:          "Example Release 2026 1080p Blu-ray AVC TrueHD 7.1-GRP",
+		CanonicalType: "DISC",
+		Codec:         "H.264",
+	}
+	policy := *Profile().DupePolicy
+	result := dupe.Evaluate(target, []dupe.TrackerCandidate{dupe.NormalizeCandidate(entry, "HDB")}, policy, dupe.SearchEvidence{Complete: true})
+	if got := result.Candidates[0].Relation; got != api.DupeRelationSameSlot || !result.RequiresAction {
+		t.Fatalf("same-group HDB disc evaluation = %#v", result.Candidates[0])
+	}
+
+	entry.Name = "Example Release 2026 1080p Blu-ray AVC TrueHD 7.1-OTHER"
+	result = dupe.Evaluate(target, []dupe.TrackerCandidate{dupe.NormalizeCandidate(entry, "HDB")}, policy, dupe.SearchEvidence{Complete: true})
+	if got := result.Candidates[0].Relation; got != api.DupeRelationCoexists {
+		t.Fatalf("different-group HDB disc relation = %q", got)
 	}
 }
 

@@ -29,6 +29,16 @@ func TestAitherEvidencePolicyPassViolationAndMissingEvidence(t *testing.T) {
 	)
 
 	subject = aitherPassingSubject()
+	subject.MediaFileFacts.Files[0].SubtitleLanguages = []string{"Japanese"}
+	assertAitherFailure(
+		t,
+		evaluateAitherEvidence(t, subject),
+		"aither_language",
+		api.RuleDispositionWaivable,
+		api.MetadataEvidenceStatusComplete,
+	)
+
+	subject = aitherPassingSubject()
 	subject.PackageFacts.Status = api.MetadataEvidenceStatusPartial
 	assertAitherFailure(
 		t,

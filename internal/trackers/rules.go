@@ -229,12 +229,12 @@ func evaluateRules(ctx context.Context, registry *Registry, tracker string, meta
 	}
 
 	if rules.RequireAudioLanguages && !isDiscType(meta.DiscType) && len(meta.AudioLanguages) == 0 {
-		addStrict("require_audio_languages", "missing audio language data")
+		addWaivable("require_audio_languages", "missing audio language data")
 	}
 
 	if rules.Language != nil {
 		if ok, reason := evaluateLanguageRule(meta, rules.Language); !ok {
-			addStrict("language_rule", reason)
+			addWaivable("language_rule", reason)
 		}
 	}
 

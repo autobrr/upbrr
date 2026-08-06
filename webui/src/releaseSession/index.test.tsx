@@ -973,7 +973,9 @@ describe("useReleaseSession", () => {
       required: boolean,
     ): ReleaseWorkflowCurrent =>
       ({
-        ...workflowCurrentFromPreview(current, preview(sourcePath, current.workflow.revision)),
+        ...(required
+          ? current
+          : workflowCurrentFromPreview(current, preview(sourcePath, current.workflow.revision))),
         workflow: {
           ...current.workflow,
           status: required ? "blocked" : "active",
@@ -985,7 +987,19 @@ describe("useReleaseSession", () => {
                   status: "pending",
                   workflowRevision: current.workflow.revision,
                   prompt: "Select one or more Blu-ray playlists to analyze.",
-                  options: [{ value: "00001.mpls", label: "00001.mpls" }],
+                  options: [
+                    {
+                      value: "00001.mpls",
+                      label: "00001.mpls",
+                      playlist: {
+                        file: "00001.mpls",
+                        duration: 7200,
+                        items: [{ file: "00001.m2ts", size: 4_000_000_000 }],
+                        score: 91.25,
+                        edition: "Example Edition",
+                      },
+                    },
+                  ],
                   createdAt: "2026-07-20T00:00:00Z",
                 },
               ]
@@ -996,12 +1010,13 @@ describe("useReleaseSession", () => {
       .fn()
       .mockResolvedValueOnce(withRelease(workflowCurrent("workflow-playlist-browser", 2), true))
       .mockResolvedValueOnce(withRelease(workflowCurrent("workflow-playlist-browser", 4), false));
+    const create = vi.fn(async () => workflowCurrent("workflow-playlist-browser", 1));
     const replaceFacts = vi.fn(async () => workflowCurrent("workflow-playlist-browser", 3));
     const { result, unmount } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(
         portsFor({
           workflow: workflowPorts({
-            create: async () => workflowCurrent("workflow-playlist-browser", 1),
+            create,
             prepare: prepareWorkflow,
             replaceFacts,
           }),
@@ -1017,12 +1032,21 @@ describe("useReleaseSession", () => {
       expect.objectContaining({
         required: true,
         selected: ["00001.mpls"],
-        candidates: [expect.objectContaining({ file: "00001.mpls" })],
+        candidates: [
+          {
+            file: "00001.mpls",
+            duration: 7200,
+            items: [{ file: "00001.m2ts", size: 4_000_000_000 }],
+            score: 91.25,
+            edition: "Example Edition",
+          },
+        ],
       }),
     );
 
     await act(() => result.current.input.confirmPlaylists());
 
+    expect(create).toHaveBeenCalledOnce();
     expect(replaceFacts).not.toHaveBeenCalled();
     expect(prepareWorkflow).toHaveBeenLastCalledWith(
       expect.anything(),
@@ -1035,6 +1059,8 @@ describe("useReleaseSession", () => {
       expect.any(AbortSignal),
     );
     expect(result.current.input.view.status).toBe("ready");
+    expect(result.current.workflow.view.status).toBe("ready");
+    expect(result.current.duplicates.view.status).toBe("idle");
     expect(result.current.workflow.view.current?.workflow.revision).toBe(4);
 
     unmount();

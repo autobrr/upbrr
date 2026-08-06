@@ -98,7 +98,7 @@ func RuleFailureBlocksExecution(failure api.RuleFailure, mode api.WorkflowExecut
 		api.NormalizeWorkflowExecutionMode(mode) != api.WorkflowExecutionModeDebug
 }
 
-// LanguageRule configures language requirements and the release types to which they apply.
+// LanguageRule configures waivable language requirements and the release types to which they apply.
 type LanguageRule struct {
 	// Languages lists normalized languages accepted by the tracker.
 	Languages []string
@@ -123,7 +123,7 @@ type RuleSet struct {
 	RequireUniqueID bool
 	// RequireValidMISetting requires a supported MediaInfo configuration.
 	RequireValidMISetting bool
-	// RequireAudioLanguages requires parsed audio-language metadata.
+	// RequireAudioLanguages requires parsed audio-language metadata as a waivable rule.
 	RequireAudioLanguages bool
 	// RequireDiscOnly rejects non-disc releases.
 	RequireDiscOnly bool
