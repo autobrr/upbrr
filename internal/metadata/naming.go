@@ -534,14 +534,17 @@ func resolveReleaseNameTitle(category string, meta preparationstate.State) (stri
 		tmdb := meta.ProviderMetadata.TMDB
 		title = strings.TrimSpace(tmdb.Title)
 		altTitle = fillProviderAlternateTitle(altTitle, title, tmdb.OriginalTitle)
-		if year == 0 && tmdb.Year > 0 {
+		// The matched provider owns the canonical year exactly like it owns the
+		// title: a filename-parsed year can lag provider corrections and then
+		// diverge from tracker-canonical names, defeating duplicate matching.
+		if tmdb.Year > 0 {
 			year = tmdb.Year
 		}
 	case matchingIMDBMetadataForNaming(meta):
 		imdb := meta.ProviderMetadata.IMDB
 		title = strings.TrimSpace(imdb.Title)
 		altTitle = fillProviderAlternateTitle(altTitle, title, imdb.AKA)
-		if year == 0 && imdb.Year > 0 {
+		if imdb.Year > 0 {
 			year = imdb.Year
 		}
 	}

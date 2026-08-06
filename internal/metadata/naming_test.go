@@ -968,6 +968,63 @@ func TestResolveReleaseNameTitlePrefersTMDBForMovie(t *testing.T) {
 	}
 }
 
+func TestResolveReleaseNameTitleProviderYearOverridesParsedYear(t *testing.T) {
+	// A filename minted under since-corrected provider metadata (for example a
+	// release named 2002 for a movie TMDB now lists as 2003) must not leak the
+	// stale parsed year into the canonical name: the year follows the matched
+	// provider exactly like the title does.
+	meta := preparationstate.State{
+		Identity: api.ExternalIdentity{
+			Category: "MOVIE",
+			TMDBID:   13654,
+		},
+		Release: api.ReleaseInfo{Title: "Parsed Title", Year: 2002},
+		ProviderMetadata: api.SourceScopedMetadata{
+			TMDB: &api.TMDBMetadata{
+				TMDBID: 13654,
+				Title:  "TMDB Title",
+				Year:   2003,
+			},
+		},
+	}
+	_, _, year := resolveReleaseNameTitle("MOVIE", meta)
+	if year != 2003 {
+		t.Fatalf("expected provider year 2003 to override parsed year, got %d", year)
+	}
+
+	meta.ProviderMetadata.TMDB = nil
+	meta.Identity = api.ExternalIdentity{
+		Category: "MOVIE",
+		IMDBID:   324941,
+	}
+	meta.ProviderMetadata.IMDB = &api.IMDBMetadata{
+		IMDBID: 324941,
+		Title:  "IMDb Title",
+		Year:   2003,
+	}
+	_, _, year = resolveReleaseNameTitle("MOVIE", meta)
+	if year != 2003 {
+		t.Fatalf("expected IMDb year 2003 to override parsed year, got %d", year)
+	}
+}
+
+func TestResolveReleaseNameTitleKeepsParsedYearWithoutProviderYear(t *testing.T) {
+	meta := preparationstate.State{
+		Identity: api.ExternalIdentity{
+			Category: "MOVIE",
+			TMDBID:   1,
+		},
+		Release: api.ReleaseInfo{Title: "Parsed Title", Year: 2002},
+		ProviderMetadata: api.SourceScopedMetadata{
+			TMDB: &api.TMDBMetadata{TMDBID: 1, Title: "TMDB Title"},
+		},
+	}
+	_, _, year := resolveReleaseNameTitle("MOVIE", meta)
+	if year != 2002 {
+		t.Fatalf("expected parsed year 2002 to survive missing provider year, got %d", year)
+	}
+}
+
 func TestResolveReleaseNameTitleTVFallsBackFromUnusableTVDBToIMDb(t *testing.T) {
 	meta := preparationstate.State{
 		Identity: api.ExternalIdentity{
