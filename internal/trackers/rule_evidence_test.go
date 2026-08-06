@@ -147,6 +147,16 @@ func TestValidatePerFileUniformity(t *testing.T) {
 		api.RuleDispositionWaivable,
 		api.MetadataEvidenceStatusComplete,
 	)
+	policy.Fields = []MediaUniformityField{MediaUniformityFieldSubtitleLanguages}
+	facts.Files[0].SubtitleLanguages = []string{"English"}
+	facts.Files[1].SubtitleLanguages = []string{"French"}
+	assertEvidenceFailure(
+		t,
+		ValidatePerFileUniformity(facts, policy),
+		"uniformity",
+		api.RuleDispositionWaivable,
+		api.MetadataEvidenceStatusComplete,
+	)
 	policy.Fields = []MediaUniformityField{MediaUniformityFieldVideoCodec}
 	facts.Files[1].VideoCodec = "H.265"
 	facts.Status = api.MetadataEvidenceStatusPartial
