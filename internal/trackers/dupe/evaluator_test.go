@@ -77,6 +77,43 @@ func TestEvaluateReleaseNameIdentity(t *testing.T) {
 			target:    api.TrackerDuplicateTarget{Names: []string{"Example.Release.2026.Generated-GRP"}},
 			candidate: "Example.Release.2026.Original-GRP",
 		},
+		{
+			name: "adjacent year correction is exact identity",
+			target: api.TrackerDuplicateTarget{
+				Names: []string{"Patch's London Adventure 2002 1080p DSNP WEB-DL DD+ 5.1 H.264-HONE"},
+			},
+			candidate: "Patch's London Adventure 2003 1080p DSNP WEB-DL DD+ 5.1 H.264-HONE",
+			wantExact: true,
+		},
+		{
+			name: "adjacent title-embedded year with matching release year",
+			target: api.TrackerDuplicateTarget{
+				Names: []string{"2001 A Space Odyssey 1968 2160p MA WEB-DL H.265-GRP"},
+			},
+			candidate: "2001 A Space Odyssey 1969 2160p MA WEB-DL H.265-GRP",
+			wantExact: true,
+		},
+		{
+			name: "year gap beyond one is not identity",
+			target: api.TrackerDuplicateTarget{
+				Names: []string{"Example Movie 2002 1080p WEB-DL-GRP"},
+			},
+			candidate: "Example Movie 2004 1080p WEB-DL-GRP",
+		},
+		{
+			name: "adjacent year with other differences is not identity",
+			target: api.TrackerDuplicateTarget{
+				Names: []string{"Example Movie 2002 1080p WEB-DL-GRP"},
+			},
+			candidate: "Example Movie 2003 1080p WEB-DL-OTHER",
+		},
+		{
+			name: "adjacent non-year number is not identity",
+			target: api.TrackerDuplicateTarget{
+				Names: []string{"Movie Part 101 2020 1080p WEB-DL-GRP"},
+			},
+			candidate: "Movie Part 102 2020 1080p WEB-DL-GRP",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got := Evaluate(

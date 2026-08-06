@@ -98,7 +98,7 @@ func exactCandidate(target api.TrackerDuplicateTarget, candidate TrackerCandidat
 		return !candidate.SizeKnown || target.SizeBytes == 0 || candidate.SizeBytes == target.SizeBytes
 	}
 	if slices.ContainsFunc(target.Names, func(name string) bool {
-		return sameCandidateName(name, candidate.Name)
+		return sameCandidateName(name, candidate.Name) || adjacentYearCandidateName(name, candidate.Name)
 	}) {
 		return true
 	}
@@ -117,6 +117,85 @@ func sameCandidateName(left string, right string) bool {
 	left = strings.ReplaceAll(left, `\`, "/")
 	right = strings.ReplaceAll(right, `\`, "/")
 	return strings.EqualFold(path.Base(left), path.Base(right))
+}
+
+// adjacentYearCandidateName reports whether two release names are identical
+// except for one four-digit year token whose values differ by at most one.
+// Provider year corrections (a movie listed as 2002 and later corrected to
+// 2003) leave otherwise-identical names disagreeing only on that token, which
+// must still count as exact identity. The comparison is deliberately narrow:
+// exactly one contiguous difference, confined to a standalone year-plausible
+// token, with every other byte equal case-insensitively.
+func adjacentYearCandidateName(left string, right string) bool {
+	left = strings.TrimSpace(left)
+	right = strings.TrimSpace(right)
+	if left == "" || right == "" {
+		return false
+	}
+	if namesDifferOnlyByAdjacentYear(left, right) {
+		return true
+	}
+	left = strings.ReplaceAll(left, `\`, "/")
+	right = strings.ReplaceAll(right, `\`, "/")
+	return namesDifferOnlyByAdjacentYear(path.Base(left), path.Base(right))
+}
+
+func namesDifferOnlyByAdjacentYear(left string, right string) bool {
+	l := strings.ToLower(left)
+	r := strings.ToLower(right)
+	if len(l) != len(r) || l == r {
+		return false
+	}
+	diff := 0
+	for diff < len(l) && l[diff] == r[diff] {
+		diff++
+	}
+	// Widen to the start of the digit run containing the first difference so
+	// the whole year token is compared, not just its differing suffix.
+	start := diff
+	for start > 0 && isASCIIDigit(l[start-1]) {
+		start--
+	}
+	if start+4 > len(l) {
+		return false
+	}
+	leftYear, leftOK := parseYearToken(l, start)
+	rightYear, rightOK := parseYearToken(r, start)
+	if !leftOK || !rightOK {
+		return false
+	}
+	delta := leftYear - rightYear
+	if delta < -1 || delta > 1 {
+		return false
+	}
+	return l[start+4:] == r[start+4:]
+}
+
+// parseYearToken parses a standalone four-digit year at start, requiring
+// non-digit boundaries on both sides and a plausible release-year range.
+func parseYearToken(value string, start int) (int, bool) {
+	if start > 0 && isASCIIDigit(value[start-1]) {
+		return 0, false
+	}
+	end := start + 4
+	if end < len(value) && isASCIIDigit(value[end]) {
+		return 0, false
+	}
+	year := 0
+	for index := start; index < end; index++ {
+		if !isASCIIDigit(value[index]) {
+			return 0, false
+		}
+		year = year*10 + int(value[index]-'0')
+	}
+	if year < 1880 || year > 2100 {
+		return 0, false
+	}
+	return year, true
+}
+
+func isASCIIDigit(value byte) bool {
+	return value >= '0' && value <= '9'
 }
 
 func releaseNameMatchesFile(fileName string, releaseName string) bool {
