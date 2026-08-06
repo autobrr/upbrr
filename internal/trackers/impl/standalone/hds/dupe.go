@@ -38,10 +38,6 @@ func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 }
 
 func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dupe.AdapterResult {
-	resolution := strings.TrimSpace(meta.Release.Resolution)
-	if resolution != "2160p" && resolution != "1080p" && resolution != "1080i" && resolution != "720p" {
-		return dupe.NotRun(dupe.NotRunUnsupportedContent, "resolution below HDS dupe-check minimum", nil)
-	}
 	if meta.Identity.IMDBID == 0 {
 		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing IMDb ID for HDS dupe search", nil)
 	}
@@ -55,6 +51,8 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		return dupe.NotRun(dupe.NotRunMissingCredentials, "missing valid HDS cookies", nil)
 	}
 	entries := make([]api.DupeEntry, 0)
+	pages := 0
+	complete := false
 	for page := 0; page <= 10; page++ {
 		params := url.Values{
 			"page":    {"torrents"},
@@ -67,8 +65,10 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		if err != nil || status < http.StatusOK || status >= http.StatusMultipleChoices {
 			return dupe.Failed(dupe.FailureRequest, "HDS search failed", err)
 		}
+		pages++
 		parts := strings.SplitN(body, "Show/Hide Categories", 2)
 		if len(parts) < 2 {
+			complete = true
 			break
 		}
 		root, err := xhtml.Parse(strings.NewReader(parts[1]))
@@ -107,11 +107,25 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 			href, text := commonhttp.Attr(node, "href"), strings.TrimSpace(commonhttp.NodeText(node))
 			return strings.Contains(href, "pages=") && (strings.EqualFold(text, "Next") || text == ">>" || hdsPagePattern.MatchString(href))
 		})
-		if next == nil || len(entries) == before {
+		if next == nil {
+			complete = true
+			break
+		}
+		if len(entries) == before {
 			break
 		}
 	}
-	return dupe.Resolved(entries, nil)
+	warnings := []string(nil)
+	if !complete {
+		warnings = []string{"HDS search reached pagination safety bound"}
+	}
+	return dupe.ResolvedWithSearch(entries, nil, dupe.SearchEvidence{
+		Complete:  complete,
+		WorkScope: dupe.WorkScopeProviderID,
+		Pages:     pages,
+		Scope:     "provider_all_categories",
+		Warnings:  warnings,
+	})
 }
 
 func hdsBaseURL(_ config.Config) string {

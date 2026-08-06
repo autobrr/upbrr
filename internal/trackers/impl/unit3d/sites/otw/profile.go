@@ -37,11 +37,8 @@ func Profile() unit3d.Profile {
 			SearchScope: trackers.DupeSearchScope{
 				MaxPages: 100,
 			},
-			SlotDimensions: []trackers.DupeDimension{trackers.DupeDimensionType, trackers.DupeDimensionResolution, trackers.DupeDimensionHDR},
-			PrecedenceRules: append(
-				trackers.SeasonPackPrecedenceRules("otw-rules-naming"),
-				trackers.DirectionalMediaKindRules("otw-rules-naming", "web_dl", "web_rip")...,
-			),
+			SlotDimensions:  []trackers.DupeDimension{trackers.DupeDimensionType, trackers.DupeDimensionResolution, trackers.DupeDimensionHDR},
+			PrecedenceRules: trackers.DirectionalMediaKindRules("otw-rules-naming", "web_dl", "web_rip"),
 		},
 	}
 }

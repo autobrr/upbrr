@@ -44,4 +44,7 @@ func TestDuplicateSearchUsesPaddedIMDbID(t *testing.T) {
 	if result.Disposition() != dupe.DispositionResolved {
 		t.Fatalf("unexpected disposition=%v code=%q cause=%v", result.Disposition(), result.Code(), result.Cause())
 	}
+	if search := result.SearchEvidence(); !search.Complete || search.WorkScope != dupe.WorkScopeProviderID || !search.EffectiveComplete() {
+		t.Fatalf("unexpected search evidence: %#v", search)
+	}
 }

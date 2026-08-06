@@ -34,12 +34,12 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	if !tlConfigured(s.cfg) {
 		return dupe.NotRun(dupe.NotRunMissingCredentials, "missing passkey for tracker", nil)
 	}
-	query := dupe.ProjectedSearchName(meta)
-	if meta.Projection == nil {
-		query = strings.TrimSpace(meta.Release.Title)
-		if query == "" {
-			query = strings.TrimSpace(meta.ReleaseName)
-		}
+	query := strings.TrimSpace(meta.Release.Title)
+	if query == "" && meta.Projection != nil {
+		query = dupe.ProjectedSearchName(meta)
+	}
+	if query == "" {
+		query = strings.TrimSpace(meta.ReleaseName)
 	}
 	if query == "" {
 		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing title for TL dupe search", nil)
@@ -79,7 +79,14 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		}
 		entries = append(entries, entry)
 	}
-	return dupe.Resolved(entries, nil)
+	warnings := []string{"TL title search does not prove whole-work coverage"}
+	return dupe.ResolvedWithSearch(entries, nil, dupe.SearchEvidence{
+		Complete:  true,
+		WorkScope: dupe.WorkScopeTitle,
+		Pages:     1,
+		Scope:     "title_query",
+		Warnings:  warnings,
+	})
 }
 
 func tlConfigured(cfg config.Config) bool {

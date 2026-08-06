@@ -146,10 +146,11 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 		warnings = []string{warning}
 	}
 	search := dupe.SearchEvidence{
-		Complete: complete,
-		Pages:    pages,
-		Scope:    "title_year",
-		Warnings: warnings,
+		Complete:  complete,
+		WorkScope: dupe.WorkScopeTitle,
+		Pages:     pages,
+		Scope:     "title_year",
+		Warnings:  warnings,
 	}
 	if h.logger != nil {
 		h.logger.Debugf(
@@ -321,10 +322,11 @@ func mapCookiesToSlice(values map[string]*http.Cookie) []*http.Cookie {
 }
 
 func arSearchQuery(meta api.DuplicateSubject) string {
-	if meta.Projection != nil {
-		return dupe.ProjectedSearchName(meta)
+	query := resolveARSearchNameFields(meta.Release, meta.ReleaseName, meta.ProviderMetadata)
+	if query == "" && meta.Projection != nil {
+		query = dupe.ProjectedSearchName(meta)
 	}
-	return resolveARSearchNameFields(meta.Release, meta.ReleaseName, meta.ProviderMetadata)
+	return query
 }
 
 type arResponse struct {

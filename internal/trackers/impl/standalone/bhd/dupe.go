@@ -59,9 +59,6 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	}
 	payload := map[string]any{"action": "search", "categories": category}
 	payload["types"] = nil
-	if dupeIsSD(meta) {
-		payload["categories"], payload["types"] = nil, nil
-	}
 	if tmdbID != 0 {
 		payload["tmdb_id"] = tmdbPrefix + "/" + strconv.Itoa(tmdbID)
 	} else {
@@ -131,10 +128,11 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		warnings = []string{"BHD search reached a pagination bound or omitted completion metadata"}
 	}
 	return dupe.ResolvedWithSearch(entries, warnings, dupe.SearchEvidence{
-		Complete: complete,
-		Pages:    pages,
-		Scope:    "work_category",
-		Warnings: warnings,
+		Complete:  complete,
+		WorkScope: dupe.WorkScopeProviderID,
+		Pages:     pages,
+		Scope:     "work_category",
+		Warnings:  warnings,
 	})
 }
 
@@ -291,11 +289,6 @@ func bhdSeason(meta api.DuplicateSubject) string {
 		return normalizeBHDSeason(match[1])
 	}
 	return ""
-}
-
-func dupeIsSD(meta api.DuplicateSubject) bool {
-	resolution := normalizeResolution(meta.Release.Resolution)
-	return strings.Contains(resolution, "480") || strings.Contains(resolution, "540") || strings.Contains(resolution, "576")
 }
 
 func normalizeBHDSeason(value string) string {

@@ -15,6 +15,12 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// GeneralDuplicatePolicyID identifies the always-on duplicate comparison contract.
+const GeneralDuplicatePolicyID = "general/duplicate/v3"
+
+// DuplicateSearchContractID identifies effective work-scope completion semantics.
+const DuplicateSearchContractID = "duplicate-search/work-scope/v1"
+
 // ErrSubmitted2FARejected marks tracker auth failure after a supplied manual 2FA code was rejected.
 var ErrSubmitted2FARejected = errors.New("trackers: submitted 2FA rejected")
 
@@ -499,9 +505,6 @@ type DupePolicy struct {
 	SizeVarianceResolutions []string
 	// SizeVarianceTypes limits size coexistence to named release types.
 	SizeVarianceTypes []string
-	// SameSlotFallback is applied only after exact, content, general,
-	// tracker-overlay, and size findings are resolved.
-	SameSlotFallback *DupeRule
 	// TrumpableOverridesSlot permits an authoritative tracker-supplied
 	// trumpable flag to outrank ordinary slot/capacity review.
 	TrumpableOverridesSlot bool
@@ -627,51 +630,6 @@ type DupeSetRule struct {
 	Capacity                     int
 	CapacityOverrides            []DupeSetCapacityOverride
 	MinimumSizeSeparationPercent float64
-}
-
-// SeasonPackPrecedenceRules returns opt-in directional season-pack rules.
-// Tracker profiles must select these explicitly; no global pack assumption is
-// applied by the evaluator.
-func SeasonPackPrecedenceRules(evidenceID string) []DupeRule {
-	evidenceID = strings.TrimSpace(evidenceID)
-	return []DupeRule{
-		{
-			ID:               "existing_season_pack",
-			EvidenceID:       evidenceID,
-			Relation:         "existing_preferred",
-			OverridesGeneral: true,
-			Conditions: []DupeCondition{
-				{
-					Dimension:        DupeDimensionSeason,
-					ValuesEqual:      true,
-					RequiresComplete: true,
-				},
-				{
-					Dimension:       DupeDimensionPack,
-					TargetValues:    []string{"false"},
-					CandidateValues: []string{"true"},
-				},
-			},
-		},
-		{
-			ID:               "proposed_season_pack",
-			EvidenceID:       evidenceID,
-			Relation:         "proposed_trumps",
-			OverridesGeneral: true,
-			Conditions: []DupeCondition{
-				{
-					Dimension:        DupeDimensionSeason,
-					ValuesEqual:      true,
-					RequiresComplete: true,
-				},
-				{
-					Dimension:       DupeDimensionPack,
-					TargetValues:    []string{"true"},
-					CandidateValues: []string{"false"},
-				},
-			},
-		},
-	}
 }
 
 // DirectionalMediaKindRules returns bidirectional precedence for two

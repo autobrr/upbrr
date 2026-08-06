@@ -54,6 +54,7 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 	params.Set("apikey", apiKey)
 	params.Set("limit", strconv.Itoa(mtvSearchLimit))
 
+	workScope := dupe.WorkScopeProviderID
 	switch {
 	case meta.Identity.IMDBID != 0:
 		params.Set("imdbid", providerid.IMDb(meta.Identity.IMDBID).Prefixed())
@@ -62,6 +63,7 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 	case isMTVTVCategory(meta) && meta.Identity.TVDBID != 0:
 		params.Set("tvdbid", strconv.Itoa(meta.Identity.TVDBID))
 	default:
+		workScope = dupe.WorkScopeTitle
 		query := cleanMTVSearchTitle(meta)
 		if query == "" {
 			return dupe.NotRun(dupe.NotRunMissingMetadata, "missing imdb/tmdb/tvdb id or title for MTV dupe search", nil)
@@ -157,10 +159,11 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 		warnings = []string{incompleteWarning}
 	}
 	return dupe.ResolvedWithSearch(entries, warnings, dupe.SearchEvidence{
-		Complete: complete,
-		Pages:    pages,
-		Scope:    "work_identity",
-		Warnings: warnings,
+		Complete:  complete,
+		WorkScope: workScope,
+		Pages:     pages,
+		Scope:     "work_identity",
+		Warnings:  warnings,
 	})
 }
 
@@ -275,10 +278,10 @@ func isMTVTVCategory(meta api.DuplicateSubject) bool {
 }
 
 func cleanMTVSearchTitle(meta api.DuplicateSubject) string {
-	if meta.Projection != nil {
-		return dupe.ProjectedSearchName(meta)
-	}
 	query := strings.TrimSpace(meta.Release.Title)
+	if query == "" && meta.Projection != nil {
+		query = dupe.ProjectedSearchName(meta)
+	}
 	if query == "" {
 		query = strings.TrimSpace(meta.ReleaseName)
 	}

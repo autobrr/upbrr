@@ -41,13 +41,16 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		return dupe.NotRun(dupe.NotRunMissingCredentials, "missing api_key for tracker", nil)
 	}
 	params := url.Values{}
+	workScope := dupe.WorkScopeProviderID
 	switch {
 	case meta.Identity.IMDBID != 0:
 		params.Set("imdbId", providerid.IMDb(meta.Identity.IMDBID).Prefixed())
-	case meta.Projection != nil:
-		params.Set("search", dupe.ProjectedSearchName(meta))
 	case strings.TrimSpace(meta.Release.Title) != "":
+		workScope = dupe.WorkScopeTitle
 		params.Set("search", strings.TrimSpace(meta.Release.Title))
+	case meta.Projection != nil:
+		workScope = dupe.WorkScopeTitle
+		params.Set("search", dupe.ProjectedSearchName(meta))
 	default:
 		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing imdb/title for SPD dupe search", nil)
 	}
@@ -60,6 +63,12 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		SizeField:      "size",
 		Link:           func(id string) string { return "https://speedapp.io/browse/" + id + "/" },
 		FailureMessage: "SPD search failed",
+		SearchEvidence: dupe.SearchEvidence{
+			Complete:  true,
+			WorkScope: workScope,
+			Pages:     1,
+			Scope:     "result_array",
+		},
 	})
 }
 

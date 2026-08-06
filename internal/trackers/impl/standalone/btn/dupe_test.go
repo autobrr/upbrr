@@ -155,7 +155,7 @@ func TestBTNHandlerFallsBackToTVDB(t *testing.T) {
 	}
 }
 
-func TestBTNHandlerFallsBackToTitleSearch(t *testing.T) {
+func TestBTNHandlerPrefersBroadTitleSearch(t *testing.T) {
 	t.Parallel()
 
 	payloads := captureBTNPayloads(t, `{"result":{"torrents":{}}}`)
@@ -166,7 +166,7 @@ func TestBTNHandlerFallsBackToTitleSearch(t *testing.T) {
 		Identity: api.ExternalIdentity{
 			Category: "TV",
 		},
-		Release: api.ReleaseInfo{Title: "Ignored Title"},
+		Release: api.ReleaseInfo{Title: "Example Release 2026"},
 		Projection: &api.TrackerReleaseProjection{
 			DuplicateCriteria: api.TrackerDuplicateCriteria{Name: "Exact Projected Search"},
 		},
@@ -175,7 +175,7 @@ func TestBTNHandlerFallsBackToTitleSearch(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	filter := payloads.lastFilter(t)
-	assertBTNFilterValue(t, filter, "searchstr", "Exact Projected Search")
+	assertBTNFilterValue(t, filter, "searchstr", "Example Release 2026")
 }
 
 func TestBTNHandlerNormalizesEntries(t *testing.T) {

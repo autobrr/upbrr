@@ -57,6 +57,8 @@ type factComparison struct {
 const (
 	findingPriorityExact           = 1000
 	findingPriorityDisjointContent = 900
+	findingPriorityPackContainment = 850
+	findingPriorityTrackerRule     = 810
 	findingPriorityTrackerMatched  = 800
 	findingPriorityTrackerMissing  = 700
 	findingPriorityGeneral         = 600
@@ -99,7 +101,7 @@ func collectCandidateFindings(
 			Priority:   priority,
 		})
 	}
-	findings = append(findings, sameSlotFallbackFinding(policy))
+	findings = append(findings, sameSlotFallbackFinding())
 	return findings
 }
 
@@ -146,10 +148,13 @@ func collectGeneralFindings(target normalizedFacts, candidate normalizedFacts, p
 		}
 	case contentEqual, contentOverlaps:
 	}
+	if finding, ok := collectPackContainmentFinding(target.Content, candidate.Content); ok {
+		findings = append(findings, finding)
+	}
 	if target.Resolution.Status == FactContradictory || candidate.Resolution.Status == FactContradictory {
 		findings = append(findings, contradictionFinding("resolution"))
 	} else if !generalDimensionSuppressed(policy, trackerspkg.DupeDimensionResolution) &&
-		compareFacts(target.Resolution, candidate.Resolution) == DimensionDifferent {
+		generalDimensionDiffers(trackerspkg.DupeDimensionResolution, target.Resolution, candidate.Resolution) {
 		findings = append(findings, generalFinding("resolution", "resolution_differs", findingPriorityGeneral))
 	}
 	if !generalDimensionSuppressed(policy, trackerspkg.DupeDimensionMediaClass) && target.MediaClass != mediaClassUnknown &&
@@ -188,11 +193,75 @@ func collectGeneralFindings(target normalizedFacts, candidate normalizedFacts, p
 		switch {
 		case dimension.target.Status == FactContradictory || dimension.other.Status == FactContradictory:
 			findings = append(findings, contradictionFinding(dimension.name))
-		case !generalDimensionSuppressed(policy, dimension.policyKey) && compareFacts(dimension.target, dimension.other) == DimensionDifferent:
+		case !generalDimensionSuppressed(policy, dimension.policyKey) &&
+			generalDimensionDiffers(dimension.policyKey, dimension.target, dimension.other):
 			findings = append(findings, generalFinding(dimension.name, dimension.reason, findingPriorityGeneral))
 		}
 	}
+	if !generalDimensionSuppressed(policy, trackerspkg.DupeDimensionHDR) {
+		if finding, ok := collectGeneralHDRFinding(target.HDR, candidate.HDR); ok {
+			findings = append(findings, finding)
+		}
+	}
 	return findings
+}
+
+func collectPackContainmentFinding(target contentScope, candidate contentScope) (RuleFinding, bool) {
+	if target.Season <= 0 || candidate.Season <= 0 || target.Season != candidate.Season {
+		return RuleFinding{}, false
+	}
+	var relation api.DupeRelation
+	var reason string
+	switch {
+	case target.Kind == contentScopeSeasonPack &&
+		(candidate.Kind == contentScopeEpisode || candidate.Kind == contentScopeEpisodeRange):
+		relation, reason = api.DupeRelationProposedTrumps, "proposed_season_pack"
+	case candidate.Kind == contentScopeSeasonPack &&
+		(target.Kind == contentScopeEpisode || target.Kind == contentScopeEpisodeRange):
+		relation, reason = api.DupeRelationExistingPreferred, "existing_season_pack"
+	default:
+		return RuleFinding{}, false
+	}
+	return RuleFinding{
+		RuleID:      GeneralPolicyID + "/season_pack_containment",
+		Source:      "general",
+		Status:      RuleFindingMatched,
+		Relation:    relation,
+		ReasonCode:  reason,
+		Compared:    []string{"content_scope"},
+		Priority:    findingPriorityPackContainment,
+		Specificity: 1,
+	}, true
+}
+
+func generalDimensionDiffers(dimension trackerspkg.DupeDimension, target Fact, candidate Fact) bool {
+	eligible := dimension == trackerspkg.DupeDimensionResolution || dimension == trackerspkg.DupeDimensionEdition ||
+		dimension == trackerspkg.DupeDimensionRegion || dimension == trackerspkg.DupeDimensionThreeD
+	return eligible && compareFacts(target, candidate) == DimensionDifferent
+}
+
+func collectGeneralHDRFinding(target api.HDRFacts, candidate api.HDRFacts) (RuleFinding, bool) {
+	if target.Status == api.HDREvidenceContradictory || candidate.Status == api.HDREvidenceContradictory {
+		return contradictionFinding("hdr"), true
+	}
+	if !generalHDREvidence(target) || !generalHDREvidence(candidate) {
+		return RuleFinding{}, false
+	}
+	targetSlot, targetKnown := genericHDRSlot(target.Formats)
+	candidateSlot, candidateKnown := genericHDRSlot(candidate.Formats)
+	if !targetKnown || !candidateKnown || targetSlot == candidateSlot {
+		return RuleFinding{}, false
+	}
+	return generalFinding("hdr", "distinct_hdr_slot", findingPriorityGeneral), true
+}
+
+func generalHDREvidence(facts api.HDRFacts) bool {
+	if facts.Status == api.HDREvidenceComplete {
+		return true
+	}
+	return facts.Status == api.HDREvidencePartial && len(facts.Formats) > 0 &&
+		(facts.Origin == api.HDREvidenceTrackerTitle || facts.Origin == api.HDREvidenceContentFilename ||
+			facts.Origin == api.HDREvidenceReleaseName)
 }
 
 func generalDimensionSuppressed(policy trackerspkg.DupePolicy, dimension trackerspkg.DupeDimension) bool {
@@ -265,7 +334,7 @@ func evaluateTrackerRule(
 	if finding.Priority == 0 && finding.Relation == api.DupeRelationExactDuplicate {
 		finding.Priority = findingPriorityExact
 	} else if finding.Priority == 0 {
-		finding.Priority = findingPriorityTrackerMatched
+		finding.Priority = findingPriorityTrackerRule
 	}
 	if rule.RequiresManualStep {
 		finding.Relation = api.DupeRelationManualReview
@@ -393,10 +462,7 @@ func collectTrackerSlotFinding(
 			finding.Relation = api.DupeRelationCoexists
 			finding.ReasonCode = "different_" + string(dimension)
 			finding.Compared = append(finding.Compared, string(dimension)+"=different")
-			finding.Priority = findingPriorityGeneral - 10
-			if policy.SlotDifferencesOverrideGeneral {
-				finding.Priority = findingPriorityTrackerMatched
-			}
+			finding.Priority = findingPriorityTrackerMatched
 			return finding, true
 		case DimensionUnknown, DimensionNotApplicable:
 			finding.Missing = append(finding.Missing, missingDimensionName(targetFact, candidateFact, dimension))
@@ -616,28 +682,10 @@ func collectSizeFinding(
 	}, true
 }
 
-func sameSlotFallbackFinding(policy trackerspkg.DupePolicy) RuleFinding {
-	if policy.SameSlotFallback != nil {
-		rule := *policy.SameSlotFallback
-		relation := api.DupeRelation(strings.TrimSpace(rule.Relation))
-		if rule.RequiresManualStep {
-			relation = api.DupeRelationManualReview
-		}
-		return RuleFinding{
-			RuleID:     firstNonEmpty(rule.ID, strings.TrimSpace(policy.ID)+"/same_slot_fallback"),
-			EvidenceID: firstNonEmpty(rule.EvidenceID, policy.EvidenceID),
-			Source:     "tracker",
-			Status:     RuleFindingMatched,
-			Relation:   relation,
-			ReasonCode: firstNonEmpty(rule.ReasonCode, rule.ID),
-			Priority:   findingPriorityFallback,
-			Manual:     rule.RequiresManualStep,
-		}
-	}
+func sameSlotFallbackFinding() RuleFinding {
 	return RuleFinding{
-		RuleID:     strings.TrimSpace(policy.ID) + "/same_slot",
-		EvidenceID: policy.EvidenceID,
-		Source:     "tracker",
+		RuleID:     GeneralPolicyID + "/same_slot",
+		Source:     "general",
 		Status:     RuleFindingMatched,
 		Relation:   api.DupeRelationSameSlot,
 		ReasonCode: "same_tracker_slot",

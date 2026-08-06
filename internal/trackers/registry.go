@@ -184,12 +184,6 @@ func compatibilityDupePolicy(tracker string) *DupePolicy {
 		SearchScope: DupeSearchScope{
 			MaxPages: 100,
 		},
-		SameSlotFallback: &DupeRule{
-			ID:                 "policy_evidence_unavailable",
-			Relation:           "manual_review",
-			ReasonCode:         "tracker_policy_not_evidence_backed",
-			RequiresManualStep: true,
-		},
 	}
 }
 
@@ -380,10 +374,6 @@ func cloneDupePolicy(policy DupePolicy) DupePolicy {
 	policy.SetRules = cloneDupeSetRules(policy.SetRules)
 	policy.SizeVarianceResolutions = append([]string(nil), policy.SizeVarianceResolutions...)
 	policy.SizeVarianceTypes = append([]string(nil), policy.SizeVarianceTypes...)
-	if policy.SameSlotFallback != nil {
-		fallback := cloneDupeRules([]DupeRule{*policy.SameSlotFallback})
-		policy.SameSlotFallback = &fallback[0]
-	}
 	return policy
 }
 
@@ -671,9 +661,6 @@ func validateDupePolicy(policy DupePolicy) error {
 	}
 	seenRuleIDs := make(map[string]struct{})
 	groups := [][]DupeRule{policy.CoexistenceRules, policy.PrecedenceRules, policy.ManualReviewRules}
-	if policy.SameSlotFallback != nil {
-		groups = append(groups, []DupeRule{*policy.SameSlotFallback})
-	}
 	for _, rules := range groups {
 		for _, rule := range rules {
 			ruleID := strings.TrimSpace(rule.ID)

@@ -46,7 +46,7 @@ func Profile() unit3d.Profile {
 }
 
 func lumeDupePrecedenceRules() []trackers.DupeRule {
-	rules := trackers.SeasonPackPrecedenceRules("lume-rules-naming")
+	rules := make([]trackers.DupeRule, 0, 10)
 	for _, pair := range [][2]string{
 		{"web_dl", "web_rip"},
 		{"web_dl", "hdtv"},

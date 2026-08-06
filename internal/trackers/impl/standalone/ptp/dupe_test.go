@@ -269,7 +269,7 @@ func TestPTPSetCapacityFamilies(t *testing.T) {
 					SizeKnown:  true,
 				}},
 				*duplicatePolicy(),
-				dupe.SearchEvidence{Complete: true},
+				dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeTrackerGroup},
 			).Candidates[0]
 			if got.Relation != test.want {
 				t.Fatalf("PTP set relation = %#v, want %s", got, test.want)
@@ -308,13 +308,17 @@ func TestPTPStructuredExactIdentity(t *testing.T) {
 		SizeKnown:  true,
 	}
 
-	got := dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, *duplicatePolicy(), dupe.SearchEvidence{Complete: true}).Candidates[0]
+	got := dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, *duplicatePolicy(), dupe.SearchEvidence{
+		Complete: true, WorkScope: dupe.WorkScopeTrackerGroup,
+	}).Candidates[0]
 	if got.Relation != api.DupeRelationExactDuplicate || got.WinningRule != "ptp/duplicate/v2/structured_exact_identity" {
 		t.Fatalf("PTP structured exact identity = %#v", got)
 	}
 
 	candidate.SizeBytes--
-	got = dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, *duplicatePolicy(), dupe.SearchEvidence{Complete: true}).Candidates[0]
+	got = dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, *duplicatePolicy(), dupe.SearchEvidence{
+		Complete: true, WorkScope: dupe.WorkScopeTrackerGroup,
+	}).Candidates[0]
 	if got.Relation == api.DupeRelationExactDuplicate {
 		t.Fatalf("PTP mismatched size classified exact: %#v", got)
 	}
@@ -356,7 +360,7 @@ func TestPTPSDSetCapacityDropsWhenHigherAlternativeExists(t *testing.T) {
 			},
 		},
 		*duplicatePolicy(),
-		dupe.SearchEvidence{Complete: true},
+		dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeTrackerGroup},
 	)
 	if got.SetFindings[0].Capacity != 1 || got.Candidates[0].Relation != api.DupeRelationManualReview {
 		t.Fatalf("PTP SD capacity override = %#v", got)

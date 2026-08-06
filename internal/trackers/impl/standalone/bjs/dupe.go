@@ -54,9 +54,18 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 		return node.Type == xhtml.ElementNode && node.Data == "div" && hasClass(node, "main_column")
 	})
 	if mainColumn == nil {
-		return dupe.Resolved(nil, nil)
+		return dupe.ResolvedWithSearch(nil, nil, bjsSearchEvidence())
 	}
-	return dupe.Resolved(extractBJSResults(baseURL, mainColumn, meta), nil)
+	return dupe.ResolvedWithSearch(extractBJSResults(baseURL, mainColumn, meta), nil, bjsSearchEvidence())
+}
+
+func bjsSearchEvidence() dupe.SearchEvidence {
+	return dupe.SearchEvidence{
+		WorkScope: dupe.WorkScopeProviderID,
+		Pages:     1,
+		Scope:     "provider_group",
+		Warnings:  []string{"BJS group-page completeness is not evidenced"},
+	}
 }
 
 func extractBJSResults(baseURL string, root *xhtml.Node, meta api.DuplicateSubject) []api.DupeEntry {
@@ -65,11 +74,10 @@ func extractBJSResults(baseURL string, root *xhtml.Node, meta api.DuplicateSubje
 	})
 	entries := make([]api.DupeEntry, 0)
 	currentSeason := ""
-	currentResolution := ""
 	currentEpisode := ""
 	currentPack := false
 	for _, row := range rows {
-		if updateBJSContext(row, &currentSeason, &currentResolution, &currentEpisode, &currentPack) {
+		if updateBJSContext(row, &currentSeason, &currentEpisode, &currentPack) {
 			continue
 		}
 
@@ -77,11 +85,14 @@ func extractBJSResults(baseURL string, root *xhtml.Node, meta api.DuplicateSubje
 		if !strings.HasPrefix(rowID, "torrent") || strings.HasPrefix(rowID, "torrent_") {
 			continue
 		}
-		if !shouldProcessBJSRow(currentSeason, currentResolution, currentEpisode, currentPack, meta) {
+		if !shouldProcessBJSRow(currentSeason, meta) {
 			continue
 		}
 
 		entry := bjsEntryFromRow(baseURL, row)
+		entry.Season, _ = strconv.Atoi(strings.TrimSpace(currentSeason))
+		entry.Episode, _ = strconv.Atoi(strings.TrimSpace(currentEpisode))
+		entry.Pack = currentPack
 		if entry.ID != "" || entry.Name != "" {
 			entries = append(entries, entry)
 		}
@@ -89,13 +100,10 @@ func extractBJSResults(baseURL string, root *xhtml.Node, meta api.DuplicateSubje
 	return entries
 }
 
-func updateBJSContext(row *xhtml.Node, currentSeason *string, currentResolution *string, currentEpisode *string, currentPack *bool) bool {
+func updateBJSContext(row *xhtml.Node, currentSeason *string, currentEpisode *string, currentPack *bool) bool {
 	for className := range strings.FieldsSeq(attrValueHTML(row, "class")) {
 		switch className {
 		case "resolution_header":
-			if match := regexp.MustCompile(`(?i)(\d{3,4}p|\d{3,4}i)`).FindStringSubmatch(nodeTextHTML(row)); len(match) == 2 {
-				*currentResolution = strings.ToLower(match[1])
-			}
 			return true
 		case "season_header":
 			if match := regexp.MustCompile(`(?i)temporada\s+(\d+)`).FindStringSubmatch(nodeTextHTML(row)); len(match) == 2 {
@@ -130,34 +138,13 @@ func updateBJSContext(row *xhtml.Node, currentSeason *string, currentResolution 
 	return false
 }
 
-func shouldProcessBJSRow(currentSeason string, currentResolution string, currentEpisode string, currentPack bool, meta api.DuplicateSubject) bool {
+func shouldProcessBJSRow(currentSeason string, meta api.DuplicateSubject) bool {
 	category := strings.ToUpper(strings.TrimSpace(string(meta.Identity.Category)))
-	switch category {
-	case "TV":
-		if meta.SeasonInt <= 0 || strings.TrimSpace(currentSeason) == "" {
-			return false
-		}
-		season, err := strconv.Atoi(strings.TrimSpace(currentSeason))
-		if err != nil || season != meta.SeasonInt {
-			return false
-		}
-		if meta.TVPack {
-			return currentPack
-		}
-		if currentPack {
-			return true
-		}
-		episode, err := strconv.Atoi(strings.TrimSpace(currentEpisode))
-		return err == nil && episode == meta.EpisodeInt
-	case "MOVIE":
-		wantResolution := strings.ToLower(strings.TrimSpace(meta.Release.Resolution))
-		if wantResolution == "" || strings.TrimSpace(currentResolution) == "" {
-			return true
-		}
-		return strings.EqualFold(currentResolution, wantResolution)
-	default:
+	if category != "TV" || meta.SeasonInt <= 0 || strings.TrimSpace(currentSeason) == "" {
 		return true
 	}
+	season, err := strconv.Atoi(strings.TrimSpace(currentSeason))
+	return err == nil && season == meta.SeasonInt
 }
 
 func bjsEntryFromRow(baseURL string, row *xhtml.Node) api.DupeEntry {

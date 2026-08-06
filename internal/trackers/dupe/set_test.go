@@ -18,25 +18,25 @@ func TestEvaluateSetCapacity(t *testing.T) {
 	policy := testSetPolicy()
 	target := testSetTarget()
 	tests := []struct {
-		name             string
-		candidates       []TrackerCandidate
-		wantRelation     api.DupeRelation
-		wantSetRelation  api.DupeRelation
-		wantAction       bool
+		name            string
+		candidates      []TrackerCandidate
+		wantRelation    api.DupeRelation
+		wantSetRelation api.DupeRelation
+		wantAction      bool
 	}{
 		{name: "zero", wantSetRelation: api.DupeRelationCoexists},
 		{
-			name:             "exact threshold",
-			candidates:       []TrackerCandidate{testSetCandidate("one", 80)},
-			wantRelation:     api.DupeRelationCoexists,
-			wantSetRelation:  api.DupeRelationCoexists,
+			name:            "exact threshold",
+			candidates:      []TrackerCandidate{testSetCandidate("one", 80)},
+			wantRelation:    api.DupeRelationCoexists,
+			wantSetRelation: api.DupeRelationCoexists,
 		},
 		{
-			name:             "just below threshold",
-			candidates:       []TrackerCandidate{testSetCandidate("one", 81)},
-			wantRelation:     api.DupeRelationManualReview,
-			wantSetRelation:  api.DupeRelationManualReview,
-			wantAction:       true,
+			name:            "just below threshold",
+			candidates:      []TrackerCandidate{testSetCandidate("one", 81)},
+			wantRelation:    api.DupeRelationManualReview,
+			wantSetRelation: api.DupeRelationManualReview,
+			wantAction:      true,
 		},
 		{
 			name: "unknown size",
@@ -72,7 +72,7 @@ func TestEvaluateSetCapacity(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := Evaluate(target, test.candidates, policy, SearchEvidence{Complete: true})
+			got := Evaluate(target, test.candidates, policy, SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID})
 			if len(got.SetFindings) != 1 || got.SetFindings[0].Relation != test.wantSetRelation || got.RequiresAction != test.wantAction {
 				t.Fatalf("set evaluation = %#v", got)
 			}
@@ -91,14 +91,14 @@ func TestEvaluateSetCapacityUsesWholeOrderIndependentCollection(t *testing.T) {
 	first := testSetCandidate("one", 80)
 	second := testSetCandidate("two", 60)
 	for _, candidate := range []TrackerCandidate{first, second} {
-		got := Evaluate(target, []TrackerCandidate{candidate}, policy, SearchEvidence{Complete: true})
+		got := Evaluate(target, []TrackerCandidate{candidate}, policy, SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID})
 		if got.Candidates[0].Relation != api.DupeRelationCoexists {
 			t.Fatalf("single candidate should fit second slot: %#v", got)
 		}
 	}
 
-	forward := Evaluate(target, []TrackerCandidate{first, second}, policy, SearchEvidence{Complete: true})
-	reverse := Evaluate(target, []TrackerCandidate{second, first}, policy, SearchEvidence{Complete: true})
+	forward := Evaluate(target, []TrackerCandidate{first, second}, policy, SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID})
+	reverse := Evaluate(target, []TrackerCandidate{second, first}, policy, SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID})
 	for _, got := range []Evaluation{forward, reverse} {
 		if len(got.SetFindings) != 1 || got.SetFindings[0].ReasonCode != "set_capacity_full" || !got.RequiresAction {
 			t.Fatalf("full set evaluation = %#v", got)
@@ -115,7 +115,7 @@ func TestEvaluateSetCapacityUsesWholeOrderIndependentCollection(t *testing.T) {
 	}
 
 	third := testSetCandidate("three", 40)
-	got := Evaluate(target, []TrackerCandidate{first, second, third}, policy, SearchEvidence{Complete: true})
+	got := Evaluate(target, []TrackerCandidate{first, second, third}, policy, SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID})
 	if got.SetFindings[0].ExistingOccupancy != 3 || got.SetFindings[0].Relation != api.DupeRelationManualReview {
 		t.Fatalf("three-candidate set = %#v", got.SetFindings[0])
 	}
@@ -143,7 +143,7 @@ func TestEvaluateSetCapacityNeverInfersQualityFromSize(t *testing.T) {
 		testSetTarget(),
 		[]TrackerCandidate{testSetCandidate("one", 80)},
 		testSetPolicy(),
-		SearchEvidence{Complete: true},
+		SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID},
 	)
 	finding := got.SetFindings[0]
 	combined := finding.ReasonCode + " " + dupeReasonMessage(finding.ReasonCode)
@@ -168,25 +168,25 @@ func testSetPolicy() trackerspkg.DupePolicy {
 			EvidenceID: "example-rules",
 			TargetPredicates: []trackerspkg.DupeSetPredicate{
 				{
-Dimension: trackerspkg.DupeDimensionMediaKind,
- Values: encodeKinds,
- RequiresComplete: true,
-},
+					Dimension:        trackerspkg.DupeDimensionMediaKind,
+					Values:           encodeKinds,
+					RequiresComplete: true,
+				},
 				{
-Dimension: trackerspkg.DupeDimensionResolution,
- Values: []string{"1080p"},
- RequiresComplete: true,
-},
+					Dimension:        trackerspkg.DupeDimensionResolution,
+					Values:           []string{"1080p"},
+					RequiresComplete: true,
+				},
 				{
-Dimension: trackerspkg.DupeDimensionCodec,
- Values: []string{"h264"},
- RequiresComplete: true,
-},
+					Dimension:        trackerspkg.DupeDimensionCodec,
+					Values:           []string{"h264"},
+					RequiresComplete: true,
+				},
 				{
-Dimension: trackerspkg.DupeDimensionHDR,
- Values: []string{"sdr"},
- RequiresComplete: true,
-},
+					Dimension:        trackerspkg.DupeDimensionHDR,
+					Values:           []string{"sdr"},
+					RequiresComplete: true,
+				},
 			},
 			CandidatePredicates: []trackerspkg.DupeSetPredicate{
 				{
@@ -196,20 +196,20 @@ Dimension: trackerspkg.DupeDimensionHDR,
 					MatchTarget:      true,
 				},
 				{
-Dimension: trackerspkg.DupeDimensionResolution,
- Values: []string{"1080p"},
- RequiresComplete: true,
-},
+					Dimension:        trackerspkg.DupeDimensionResolution,
+					Values:           []string{"1080p"},
+					RequiresComplete: true,
+				},
 				{
-Dimension: trackerspkg.DupeDimensionCodec,
- Values: []string{"h264"},
- RequiresComplete: true,
-},
+					Dimension:        trackerspkg.DupeDimensionCodec,
+					Values:           []string{"h264"},
+					RequiresComplete: true,
+				},
 				{
-Dimension: trackerspkg.DupeDimensionHDR,
- Values: []string{"sdr"},
- RequiresComplete: true,
-},
+					Dimension:        trackerspkg.DupeDimensionHDR,
+					Values:           []string{"sdr"},
+					RequiresComplete: true,
+				},
 				{
 					Dimension:        trackerspkg.DupeDimensionEdition,
 					RequiresComplete: true,

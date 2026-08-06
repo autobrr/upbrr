@@ -78,7 +78,13 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 			entries = append(entries, api.DupeEntry{Name: name})
 		}
 	})
-	return dupe.Resolved(entries, nil)
+	warnings := []string{"PTS search pagination completeness is not evidenced"}
+	return dupe.ResolvedWithSearch(entries, nil, dupe.SearchEvidence{
+		WorkScope: dupe.WorkScopeProviderID,
+		Pages:     1,
+		Scope:     "provider_query",
+		Warnings:  warnings,
+	})
 }
 
 func ptsBaseURL(_ config.Config) string {

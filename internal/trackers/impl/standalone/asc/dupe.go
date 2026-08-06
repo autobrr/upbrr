@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -145,7 +144,17 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 	if err := ctx.Err(); err != nil {
 		return dupe.Failed(dupe.FailureRequest, "ASC search canceled", err)
 	}
-	return dupe.Resolved(entries, nil)
+	workScope := dupe.WorkScopeProviderID
+	if meta.Anime {
+		workScope = dupe.WorkScopeTitle
+	}
+	warnings := []string{"ASC search pagination completeness is not evidenced"}
+	return dupe.ResolvedWithSearch(entries, nil, dupe.SearchEvidence{
+		WorkScope: workScope,
+		Pages:     1,
+		Scope:     "broad_work_query",
+		Warnings:  warnings,
+	})
 }
 
 func buildASCSearchURL(meta api.DuplicateSubject) string {
@@ -154,7 +163,7 @@ func buildASCSearchURL(meta api.DuplicateSubject) string {
 		return base + "/torrents-search.php?search=" + url.QueryEscape(resolveASCTitle(meta))
 	}
 	if strings.EqualFold(resolveASCCategory(meta), "TV") {
-		return base + "/busca-series.php?search=" + url.QueryEscape(resolveASCSeasonEpisode(meta)) + "&imdb=" + url.QueryEscape(resolveASCIMDb(meta))
+		return base + "/busca-series.php?search=&imdb=" + url.QueryEscape(resolveASCIMDb(meta))
 	}
 	return base + "/busca-filmes.php?search=&imdb=" + url.QueryEscape(resolveASCIMDb(meta))
 }
@@ -406,31 +415,14 @@ func resolveASCCategory(meta api.DuplicateSubject) string {
 }
 
 func resolveASCTitle(meta api.DuplicateSubject) string {
-	if meta.Projection != nil {
-		return dupe.ProjectedSearchName(meta)
-	}
 	if strings.TrimSpace(meta.Release.Title) != "" {
 		return strings.TrimSpace(meta.Release.Title)
+	}
+	if meta.Projection != nil {
+		return dupe.ProjectedSearchName(meta)
 	}
 	if strings.TrimSpace(meta.ReleaseName) != "" {
 		return strings.TrimSpace(meta.ReleaseName)
 	}
 	return strings.TrimSpace(meta.SourcePath)
-}
-
-func resolveASCSeasonEpisode(meta api.DuplicateSubject) string {
-	if meta.EpisodeInt > 0 {
-		return "S" + padASC2(meta.SeasonInt) + "E" + padASC2(meta.EpisodeInt)
-	}
-	if meta.SeasonInt > 0 {
-		return "S" + padASC2(meta.SeasonInt)
-	}
-	return ""
-}
-
-func padASC2(value int) string {
-	if value < 10 {
-		return "0" + strconv.Itoa(value)
-	}
-	return strconv.Itoa(value)
 }

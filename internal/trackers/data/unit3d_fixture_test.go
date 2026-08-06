@@ -25,7 +25,10 @@ func TestUnit3DSearchEntriesDeriveHDRFromMediaInfo(t *testing.T) {
 	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
 		t.Fatalf("decode fixture: %v", err)
 	}
-	entries := buildUnit3DSearchEntries(payload.Data, false)
+	entries, dropped := buildUnit3DSearchEntries(payload.Data, 0, false)
+	if dropped != 0 {
+		t.Fatalf("wrong-work rows = %d", dropped)
+	}
 	if len(entries) != 4 {
 		t.Fatalf("entries = %d", len(entries))
 	}
@@ -49,10 +52,13 @@ func TestUnit3DSearchEntriesDeriveHDRFromMediaInfo(t *testing.T) {
 func TestUnit3DSearchEntriesPreserveRawAndCanonicalTypes(t *testing.T) {
 	t.Parallel()
 
-	entries := buildUnit3DSearchEntries([]unit3dSearchItem{
+	entries, dropped := buildUnit3DSearchEntries([]unit3dSearchItem{
 		{Attributes: unit3dSearchAttrs{Type: " WEB-DL "}},
 		{Attributes: unit3dSearchAttrs{Type: "Special Type"}},
-	}, false)
+	}, 0, false)
+	if dropped != 0 {
+		t.Fatalf("wrong-work rows = %d", dropped)
+	}
 	if len(entries) != 2 {
 		t.Fatalf("entries = %d", len(entries))
 	}
@@ -63,7 +69,7 @@ func TestUnit3DSearchEntriesPreserveRawAndCanonicalTypes(t *testing.T) {
 		t.Fatalf("unknown Unit3D type = %#v", entries[1])
 	}
 
-	pending := buildUnit3DPendingEntries(
+	pending, dropped := buildUnit3DPendingEntries(
 		[]unit3dPendingSearchItem{{
 			Type:      "WEB-RIP",
 			MediaInfo: "Video\nFormat : AVC\nWidth : 1 920 pixels",
@@ -71,8 +77,24 @@ func TestUnit3DSearchEntriesPreserveRawAndCanonicalTypes(t *testing.T) {
 		unit3dSearchEndpoint{},
 		false,
 	)
+	if dropped != 0 {
+		t.Fatalf("pending wrong-work rows = %d", dropped)
+	}
 	if len(pending) != 1 || pending[0].Type != "WEB-RIP" || pending[0].CanonicalType != "WEBRIP" ||
 		!slices.Equal(pending[0].HDR.Formats, []api.HDRFormat{api.HDRFormatSDR}) {
 		t.Fatalf("pending Unit3D type = %#v", pending)
+	}
+}
+
+func TestUnit3DSearchEntriesDropOnlyConflictingWorkIDs(t *testing.T) {
+	t.Parallel()
+
+	entries, dropped := buildUnit3DSearchEntries([]unit3dSearchItem{
+		{Attributes: unit3dSearchAttrs{Name: "Example.Release.2026.1080p-GRP", TMDBID: 1234567}},
+		{Attributes: unit3dSearchAttrs{Name: "Example.Release.2026.2160p-GRP"}},
+		{Attributes: unit3dSearchAttrs{Name: "Different.Work.2026.1080p-GRP", TMDBID: 7654321}},
+	}, 1234567, false)
+	if dropped != 1 || len(entries) != 2 {
+		t.Fatalf("entries=%d dropped=%d, want 2/1", len(entries), dropped)
 	}
 }

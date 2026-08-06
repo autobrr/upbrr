@@ -211,13 +211,33 @@ type adapterResultData struct {
 	cause       error
 }
 
-// SearchEvidence records whether an adapter exhausted the policy-relevant
-// remote result space.
+// WorkScope identifies how a search was bound to one work.
+type WorkScope string
+
+const (
+	// WorkScopeUnknown means the search contract does not prove work identity.
+	WorkScopeUnknown WorkScope = ""
+	// WorkScopeProviderID means an authoritative provider ID bound the search.
+	WorkScopeProviderID WorkScope = "provider_id"
+	// WorkScopeTrackerGroup means an exact tracker group or content page bound the search.
+	WorkScopeTrackerGroup WorkScope = "tracker_group"
+	// WorkScopeTitle means title-derived terms bound the search.
+	WorkScopeTitle WorkScope = "title_fallback"
+)
+
+// SearchEvidence records enumeration and work-identity coverage independently.
 type SearchEvidence struct {
-	Complete bool
-	Pages    int
-	Scope    string
-	Warnings []string
+	Complete       bool
+	WorkScope      WorkScope
+	Pages          int
+	Scope          string
+	Warnings       []string
+	WrongWorkCount int
+}
+
+// EffectiveComplete reports whether an exhaustive search was authoritatively bound to one work.
+func (e SearchEvidence) EffectiveComplete() bool {
+	return e.Complete && (e.WorkScope == WorkScopeProviderID || e.WorkScope == WorkScopeTrackerGroup)
 }
 
 // AdapterResult is an immutable, constructor-created tracker protocol outcome.
@@ -238,6 +258,9 @@ func Resolved(entries []api.DupeEntry, notes []string) AdapterResult {
 func ResolvedWithSearch(entries []api.DupeEntry, notes []string, search SearchEvidence) AdapterResult {
 	if search.Pages < 0 {
 		search.Pages = 0
+	}
+	if search.WrongWorkCount < 0 {
+		search.WrongWorkCount = 0
 	}
 	search.Scope = strings.TrimSpace(search.Scope)
 	search.Warnings = cloneNotes(search.Warnings)

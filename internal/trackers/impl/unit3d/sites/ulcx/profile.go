@@ -27,11 +27,8 @@ func Profile() unit3d.Profile {
 			SearchScope: trackers.DupeSearchScope{
 				MaxPages: 100,
 			},
-			SlotDimensions: []trackers.DupeDimension{trackers.DupeDimensionType, trackers.DupeDimensionResolution, trackers.DupeDimensionHDR},
-			PrecedenceRules: append(
-				trackers.SeasonPackPrecedenceRules("ulcx-upload-rules"),
-				trackers.DirectionalMediaKindRules("ulcx-upload-rules", "web_dl", "web_rip")...,
-			),
+			SlotDimensions:          []trackers.DupeDimension{trackers.DupeDimensionType, trackers.DupeDimensionResolution, trackers.DupeDimensionHDR},
+			PrecedenceRules:         trackers.DirectionalMediaKindRules("ulcx-upload-rules", "web_dl", "web_rip"),
 			SizeVariancePercent:     20,
 			SizeVarianceResolutions: []string{"1080p"},
 		},

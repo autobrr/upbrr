@@ -117,7 +117,7 @@ func evaluateSetRules(
 				}
 			}
 		}
-		if !search.Complete {
+		if !search.EffectiveComplete() {
 			finding.Missing = append(finding.Missing, "search_complete")
 		}
 		finding.Missing = uniqueSorted(finding.Missing)

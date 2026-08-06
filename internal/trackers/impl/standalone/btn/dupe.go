@@ -45,14 +45,17 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		return dupe.NotRun(dupe.NotRunUnsupportedContent, "BTN only supports TV dupe search", nil)
 	}
 	filter := make(map[string]any)
+	workScope := dupe.WorkScopeProviderID
 	switch {
 	case trackerID(meta) != "":
+		workScope = dupe.WorkScopeTrackerGroup
 		filter["id"] = trackerID(meta)
 	case meta.Identity.IMDBID != 0:
 		filter["imdb"] = providerid.IMDb(meta.Identity.IMDBID).Prefixed()
 	case meta.Identity.TVDBID != 0:
 		filter["tvdb"] = meta.Identity.TVDBID
 	case searchTitle(meta) != "":
+		workScope = dupe.WorkScopeTitle
 		filter["searchstr"] = searchTitle(meta)
 	default:
 		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing btn/imdb/tvdb id and title for BTN dupe search", nil)
@@ -110,7 +113,13 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		entry.Flags = flags(torrent)
 		entries = append(entries, entry)
 	}
-	return dupe.Resolved(entries, nil)
+	warnings := []string{"BTN search is bounded to 50 results"}
+	return dupe.ResolvedWithSearch(entries, nil, dupe.SearchEvidence{
+		WorkScope: workScope,
+		Pages:     1,
+		Scope:     "bounded_result_set",
+		Warnings:  warnings,
+	})
 }
 
 func isTV(meta api.DuplicateSubject) bool {
@@ -128,10 +137,10 @@ func trackerID(meta api.DuplicateSubject) string {
 }
 
 func searchTitle(meta api.DuplicateSubject) string {
-	if meta.Projection != nil {
-		return dupe.ProjectedSearchName(meta)
-	}
 	candidates := []string{strings.TrimSpace(meta.Release.Title)}
+	if meta.Projection != nil {
+		candidates = append(candidates, dupe.ProjectedSearchName(meta))
+	}
 	if meta.ProviderMetadata.TVDB != nil {
 		candidates = append(candidates, strings.TrimSpace(meta.ProviderMetadata.TVDB.Name), strings.TrimSpace(meta.ProviderMetadata.TVDB.NameEnglish))
 	}

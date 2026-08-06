@@ -45,7 +45,8 @@ func Evaluate(
 	search SearchEvidence,
 ) Evaluation {
 	targetFacts := normalizeTargetFacts(target)
-	evaluation := Evaluation{Complete: search.Complete, TargetFacts: targetFacts}
+	effectiveComplete := search.EffectiveComplete()
+	evaluation := Evaluation{Complete: effectiveComplete, TargetFacts: targetFacts}
 	candidateFacts := make([]normalizedFacts, 0, len(candidates))
 	for _, candidate := range candidates {
 		facts := normalizeCandidateFacts(candidate)
@@ -75,7 +76,7 @@ func Evaluate(
 		case api.DupeRelationCoexists:
 		}
 	}
-	if !search.Complete {
+	if !effectiveComplete {
 		evaluation.RequiresAction = true
 	}
 	return evaluation
@@ -84,18 +85,11 @@ func Evaluate(
 func exactCandidate(target api.TrackerDuplicateTarget, candidate TrackerCandidate) bool {
 	filesComparable := len(target.FileNames) > 0 && len(candidate.Files) > 0
 	if filesComparable {
-		if candidate.FileCount > 0 && candidate.FileCount != len(candidate.Files) {
-			return false
-		}
-		if len(target.FileNames) != len(candidate.Files) {
-			return false
-		}
 		left := normalizedFileSet(target.FileNames)
 		right := normalizedFileSet(candidate.Files)
-		if !slices.Equal(left, right) {
-			return false
+		if slices.ContainsFunc(left, func(file string) bool { return slices.Contains(right, file) }) {
+			return true
 		}
-		return !candidate.SizeKnown || target.SizeBytes == 0 || candidate.SizeBytes == target.SizeBytes
 	}
 	if slices.ContainsFunc(target.Names, func(name string) bool {
 		return sameCandidateName(name, candidate.Name)

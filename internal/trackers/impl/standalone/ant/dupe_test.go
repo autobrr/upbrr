@@ -212,7 +212,7 @@ func TestANTCandidatePreservesDiscFields(t *testing.T) {
 			map[string]any{"name": "BDMV/BACKUP/BDJO/00000.bdjo"},
 			map[string]any{"name": "BDMV/index.bdmv"},
 		},
-	}}}, "")
+	}}})
 	if len(entries) != 1 || entries[0].Name != "generated.123.torrent" || entries[0].CanonicalType != "DISC" ||
 		entries[0].Container != "m2ts" || entries[0].Group != "GRP" || len(entries[0].Flags) != 1 {
 		t.Fatalf("ANT disc entry = %#v", entries)
@@ -232,7 +232,7 @@ func TestANTListedWEBFileCoexistsWithDisc(t *testing.T) {
 		"files": []any{map[string]any{
 			"name": "Example.Release.2026.1080p.WEB-DL.H.264-WEBGRP.mkv",
 		}},
-	}}}, "")
+	}}})
 	if len(entries) != 1 || entries[0].Name != "Example.Release.2026.1080p.WEB-DL.H.264-WEBGRP.mkv" || entries[0].Source != "WEB" {
 		t.Fatalf("ANT WEB entry = %#v", entries)
 	}

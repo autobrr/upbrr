@@ -47,4 +47,7 @@ func TestDuplicateSearchUsesDCQueryHeadersAndProjection(t *testing.T) {
 	if len(entries) != 1 || entries[0].ID != "42" || entries[0].Link != "https://digitalcore.club/torrent/42/" || entries[0].SizeBytes != 1234 {
 		t.Fatalf("unexpected entries: %#v", entries)
 	}
+	if search := result.SearchEvidence(); !search.Complete || search.WorkScope != dupe.WorkScopeProviderID || !search.EffectiveComplete() {
+		t.Fatalf("unexpected search evidence: %#v", search)
+	}
 }
