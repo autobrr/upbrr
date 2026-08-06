@@ -115,10 +115,10 @@ func (m *Module) Discover(ctx context.Context, input SearchInput) (Evidence, err
 			ForceRecheck: cloneBool(input.ForceRecheck),
 		},
 	})
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return Evidence{}, fmt.Errorf("client discovery: search canceled: %w", ctxErr)
+	}
 	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return Evidence{}, fmt.Errorf("client discovery: search canceled: %w", ctxErr)
-		}
 		return Evidence{Disposition: DispositionUnavailable}, nil
 	}
 	evidence := normalizeEvidence(result)
