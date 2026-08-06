@@ -848,6 +848,60 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         return prev;
       }
       delete cursor[key];
+
+      if (path.length === 1 && path[0] === "TorrentClients") {
+        const removedName = key.trim().toLowerCase();
+        const remainingNames = Object.keys(cursor);
+        const isRemovedReference = (value: ConfigValue) => {
+          if (typeof value !== "string" || value.trim().toLowerCase() !== removedName) {
+            return false;
+          }
+          const selected = value.trim();
+          const exactMatches = remainingNames.filter((name) => name.trim() === selected).length;
+          if (exactMatches > 0) {
+            return exactMatches !== 1;
+          }
+          return (
+            remainingNames.filter((name) => name.trim().toLowerCase() === selected.toLowerCase())
+              .length !== 1
+          );
+        };
+
+        const clientSetup = clone.ClientSetup;
+        if (clientSetup && typeof clientSetup === "object" && !Array.isArray(clientSetup)) {
+          if (isRemovedReference(clientSetup.DefaultClient)) {
+            clientSetup.DefaultClient = "";
+          }
+          for (const field of ["InjectClients", "SearchClients"]) {
+            const selected = clientSetup[field];
+            if (Array.isArray(selected)) {
+              clientSetup[field] = selected.filter((value) => !isRemovedReference(value));
+            }
+          }
+        }
+
+        const trackers = clone.Trackers;
+        const trackerEntries =
+          trackers && typeof trackers === "object" && !Array.isArray(trackers)
+            ? trackers.Trackers
+            : null;
+        if (
+          trackerEntries &&
+          typeof trackerEntries === "object" &&
+          !Array.isArray(trackerEntries)
+        ) {
+          Object.values(trackerEntries).forEach((tracker) => {
+            if (
+              tracker &&
+              typeof tracker === "object" &&
+              !Array.isArray(tracker) &&
+              isRemovedReference(tracker.TorrentClient)
+            ) {
+              tracker.TorrentClient = "";
+            }
+          });
+        }
+      }
       return clone;
     });
   };
