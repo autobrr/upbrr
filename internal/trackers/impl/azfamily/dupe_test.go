@@ -75,10 +75,26 @@ func TestAZNetworkHandlerSearchParsesHTMLResults(t *testing.T) {
 	}
 }
 
-func TestAZCanonicalCandidateTypePreservesFilteredDiscEvidence(t *testing.T) {
+func TestAZCanonicalCandidateType(t *testing.T) {
 	t.Parallel()
 
-	if got := azCanonicalCandidateType("BluRay Raw"); got != "DISC" {
-		t.Fatalf("BluRay Raw type = %q", got)
+	for input, want := range map[string]string{
+		"BluRay Raw":  "DISC",
+		"DVD":          "DISC",
+		"BluRay Remux": "REMUX",
+		"DVD Remux":    "REMUX",
+		"WEB-DL":       "WEBDL",
+		"WEBRip":       "WEBRIP",
+		"HDTV":         "HDTV",
+		"SDTV":         "HDTV",
+		"BDRip":        "ENCODE",
+		"BluRay":       "ENCODE",
+		"BRRip":        "ENCODE",
+		"DVDRip":       "ENCODE",
+		"HDRip":        "ENCODE",
+	} {
+		if got := azCanonicalCandidateType(input); got != want {
+			t.Errorf("azCanonicalCandidateType(%q) = %q, want %q", input, got, want)
+		}
 	}
 }

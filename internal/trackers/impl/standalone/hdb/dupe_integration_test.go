@@ -200,7 +200,8 @@ func TestHDBHandlerSearchBuildsPayloadAndParsesResults(t *testing.T) {
 		t.Fatalf("unexpected file count %d", entry.FileCount)
 	}
 	if entry.Category != string(api.CanonicalCategoryMovie) || entry.Type != "WEBDL" || entry.CanonicalType != "WEBDL" || entry.Codec != "H.265" ||
-		!entry.Internal || len(entry.Flags) != 1 || entry.Flags[0] != "HDR10" || entry.Description != "Example description" {
+		!entry.Internal || len(entry.Flags) != 1 || entry.Flags[0] != "HDR10" || len(entry.HDR.Formats) != 1 ||
+		entry.HDR.Formats[0] != api.HDRFormatHDR10 || entry.Description != "Example description" {
 		t.Fatalf("unexpected structured HDB evidence %#v", entry)
 	}
 	logs := strings.Join(logger.debug, "\n")
