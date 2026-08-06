@@ -320,10 +320,12 @@ func (s *Service) trackerLinkDirName(tracker string) string {
 
 // sourcePathForLinking returns an existing local source path suitable for link
 // creation. It stats candidate paths because link staging must copy or link real
-// filesystem content.
+// filesystem content. Relative FileList entries are ignored: they are
+// torrent-internal names, and resolving them would match against the process
+// working directory instead of the prepared source.
 func sourcePathForLinking(meta api.ClientSubject) (string, error) {
 	if len(meta.FileList) == 1 {
-		if candidate := strings.TrimSpace(meta.FileList[0]); candidate != "" {
+		if candidate := strings.TrimSpace(meta.FileList[0]); candidate != "" && filepath.IsAbs(candidate) {
 			info, err := os.Stat(candidate)
 			if err == nil && !info.IsDir() {
 				return absLocalPath("linking candidate", candidate)
@@ -350,10 +352,12 @@ func sourcePathForLinking(meta api.ClientSubject) (string, error) {
 // sourcePathForQbitSavePath returns the prepared content path used for
 // qBittorrent savepath mapping. Resolution is lexical because client-visible content need
 // not be available to stat locally. A torrent artifact path or URL is separate
-// from the prepared content source and cannot replace it.
+// from the prepared content source and cannot replace it. Relative FileList
+// entries are ignored: they are torrent-internal names, and resolving them
+// lexically would anchor the save path to the process working directory.
 func sourcePathForQbitSavePath(meta api.ClientSubject) (string, error) {
 	if len(meta.FileList) == 1 {
-		if candidate := strings.TrimSpace(meta.FileList[0]); candidate != "" {
+		if candidate := strings.TrimSpace(meta.FileList[0]); candidate != "" && filepath.IsAbs(candidate) {
 			return absLocalPath("qbit mapping source", candidate)
 		}
 	}
