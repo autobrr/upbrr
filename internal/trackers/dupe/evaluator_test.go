@@ -80,9 +80,9 @@ func TestEvaluateReleaseNameIdentity(t *testing.T) {
 		{
 			name: "adjacent year correction is exact identity",
 			target: api.TrackerDuplicateTarget{
-				Names: []string{"Patch's London Adventure 2002 1080p DSNP WEB-DL DD+ 5.1 H.264-HONE"},
+				Names: []string{"Patch's London Adventure 2002 1080p DSNP WEB-DL DD+ 5.1 H.264-GRP"},
 			},
-			candidate: "Patch's London Adventure 2003 1080p DSNP WEB-DL DD+ 5.1 H.264-HONE",
+			candidate: "Patch's London Adventure 2003 1080p DSNP WEB-DL DD+ 5.1 H.264-GRP",
 			wantExact: true,
 		},
 		{
