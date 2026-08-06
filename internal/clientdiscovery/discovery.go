@@ -119,6 +119,7 @@ func (m *Module) Discover(ctx context.Context, input SearchInput) (Evidence, err
 		return Evidence{}, fmt.Errorf("client discovery: search canceled: %w", ctxErr)
 	}
 	if err != nil {
+		m.logger.Debugf("client discovery: decision=degrade reason=search_failed")
 		return Evidence{Disposition: DispositionUnavailable}, nil
 	}
 	evidence := normalizeEvidence(result)

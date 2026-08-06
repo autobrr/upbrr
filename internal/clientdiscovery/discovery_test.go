@@ -129,4 +129,11 @@ func TestDiscoverDegradesSearchErrorsAndPreservesCancellation(t *testing.T) {
 	if !errors.Is(err, context.Canceled) || client.calls != 1 {
 		t.Fatalf("successful canceled error=%v calls=%d", err, client.calls)
 	}
+	ctx, cancel = context.WithCancel(context.Background())
+	cancel()
+	client = &recordingClient{}
+	_, err = New(client, api.NopLogger{}).Discover(ctx, SearchInput{SourcePath: "Example.Release.2026.mkv"})
+	if !errors.Is(err, context.Canceled) || client.calls != 0 {
+		t.Fatalf("pre-search canceled error=%v calls=%d", err, client.calls)
+	}
 }
