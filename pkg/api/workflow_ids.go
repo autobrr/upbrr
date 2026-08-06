@@ -297,6 +297,8 @@ const (
 type RequiredActionOption struct {
 	Value string `json:"value"`
 	Label string `json:"label"`
+	// Playlist carries detached display details when the option selects a Blu-ray playlist.
+	Playlist *PlaylistInfo `json:"playlist,omitempty"`
 }
 
 // RequiredAction is a transport-safe backend-defined manual action.

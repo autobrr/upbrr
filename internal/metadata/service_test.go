@@ -705,6 +705,31 @@ func TestResolveBDMVPlaylistSelectionRejectsUnknownDirectPlaylist(t *testing.T) 
 	}
 }
 
+func TestResolveBDMVPlaylistSelectionRequiredIncludesCandidates(t *testing.T) {
+	originalDiscover := discoverBDMVPlaylists
+	t.Cleanup(func() {
+		discoverBDMVPlaylists = originalDiscover
+	})
+
+	discoverBDMVPlaylists = func(_ context.Context, _ string) ([]filesystem.PlaylistInfo, error) {
+		return []filesystem.PlaylistInfo{{
+			File:     "00001.MPLS",
+			Duration: 5400,
+			Items:    []filesystem.PlaylistItem{{File: "00001.m2ts", Size: 100}},
+			Score:    75,
+		}}, nil
+	}
+
+	_, err := (&Service{repo: &fakeRepo{}}).resolveBDMVPlaylistSelection(context.Background(), preparationstate.Request{
+		Layout: sourcelayout.Layout{SourcePath: `D:\Disc`, BDMVRoot: `D:\Disc\BDMV`},
+	})
+	var required *api.PlaylistSelectionRequiredError
+	if !errors.As(err, &required) || len(required.Candidates) != 1 || required.Candidates[0].File != "00001.MPLS" ||
+		required.Candidates[0].Duration != 5400 || len(required.Candidates[0].Items) != 1 {
+		t.Fatalf("playlist selection error candidates = %#v", required)
+	}
+}
+
 func TestDiscoverBDMVSummaryCache(t *testing.T) {
 	tmpDir := t.TempDir()
 	writeBDMVSummaryFixture(t, tmpDir, "00002.MPLS", "extended summary two")
