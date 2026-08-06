@@ -1908,6 +1908,7 @@ export type TrackerDuplicateTarget = Readonly<{
   fileNames?: readonly string[];
   group?: string;
   hdr: HDRFacts;
+  imdbId?: number;
   names?: readonly string[];
   pack: boolean;
   provider?: string;
@@ -1918,6 +1919,7 @@ export type TrackerDuplicateTarget = Readonly<{
   sizeBytes?: number;
   source?: string;
   threeD?: string;
+  tmdbId?: number;
   type?: string;
   videoCodec?: string;
   videoEncode?: string;

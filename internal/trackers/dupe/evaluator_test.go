@@ -129,6 +129,73 @@ func TestEvaluateReleaseNameIdentity(t *testing.T) {
 	}
 }
 
+func TestEvaluateProviderIdentity(t *testing.T) {
+	t.Parallel()
+
+	target := api.TrackerDuplicateTarget{
+		Names:  []string{"Example Movie 2003 1080p WEB-DL-GRP"},
+		TMDBID: 13654,
+	}
+
+	sameName := TrackerCandidate{
+		Name:   "Example Movie 2003 1080p WEB-DL-GRP",
+		TMDBID: 99999,
+	}
+	relation := Evaluate(target, []TrackerCandidate{sameName}, trackerspkg.DupePolicy{}, SearchEvidence{Complete: true}).Candidates[0].Relation
+	if relation == api.DupeRelationExactDuplicate {
+		t.Fatalf("conflicting provider IDs must veto exact identity, got %q", relation)
+	}
+
+	distantYear := TrackerCandidate{
+		Name:   "Example Movie 1971 1080p WEB-DL-GRP",
+		TMDBID: 13654,
+	}
+	relation = Evaluate(target, []TrackerCandidate{distantYear}, trackerspkg.DupePolicy{}, SearchEvidence{Complete: true}).Candidates[0].Relation
+	if relation != api.DupeRelationExactDuplicate {
+		t.Fatalf("matching provider IDs must make year tokens irrelevant, got %q", relation)
+	}
+
+	noIDsDistantYear := TrackerCandidate{Name: "Example Movie 1971 1080p WEB-DL-GRP"}
+	relation = Evaluate(target, []TrackerCandidate{noIDsDistantYear}, trackerspkg.DupePolicy{}, SearchEvidence{Complete: true}).Candidates[0].Relation
+	if relation == api.DupeRelationExactDuplicate {
+		t.Fatalf("year-insensitive identity requires provider ID agreement, got %q", relation)
+	}
+}
+
+func TestEvaluateProviderSizeIdentityRequiresReview(t *testing.T) {
+	t.Parallel()
+
+	target := api.TrackerDuplicateTarget{
+		Names:     []string{"Example Movie 2003 1080p WEB-DL-GRP"},
+		TMDBID:    13654,
+		SizeBytes: 4821745127,
+	}
+	renamed := TrackerCandidate{
+		Name:      "Totally Restyled Name 1080p WEB-DL-OTHER",
+		TMDBID:    13654,
+		SizeBytes: 4821745127,
+		SizeKnown: true,
+	}
+	evaluation := Evaluate(target, []TrackerCandidate{renamed}, trackerspkg.DupePolicy{}, SearchEvidence{Complete: true})
+	if relation := evaluation.Candidates[0].Relation; relation != api.DupeRelationManualReview {
+		t.Fatalf("same work with identical size and unmatched name must require review, got %q", relation)
+	}
+	if !evaluation.RequiresAction {
+		t.Fatalf("provider size identity must mark the evaluation actionable")
+	}
+
+	differentSize := TrackerCandidate{
+		Name:      "Totally Restyled Name 1080p WEB-DL-OTHER",
+		TMDBID:    13654,
+		SizeBytes: 123,
+		SizeKnown: true,
+	}
+	evaluation = Evaluate(target, []TrackerCandidate{differentSize}, trackerspkg.DupePolicy{}, SearchEvidence{Complete: true})
+	if relation := evaluation.Candidates[0].Relation; relation == api.DupeRelationManualReview {
+		t.Fatalf("differing sizes must not trigger provider size identity, got %q", relation)
+	}
+}
+
 func TestEvaluateANTGenericHDRIsInsufficientForHDR10Plus(t *testing.T) {
 	t.Parallel()
 

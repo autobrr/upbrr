@@ -81,7 +81,29 @@ func Evaluate(
 	return evaluation
 }
 
+// providerIdentityDiffers reports whether both sides carry the same provider's
+// work ID with different values, which is authoritative evidence the releases
+// belong to different works regardless of name similarity.
+func providerIdentityDiffers(target api.TrackerDuplicateTarget, candidate TrackerCandidate) bool {
+	if target.TMDBID > 0 && candidate.TMDBID > 0 && target.TMDBID != candidate.TMDBID {
+		return true
+	}
+	return target.IMDBID > 0 && candidate.IMDBID > 0 && target.IMDBID != candidate.IMDBID
+}
+
+// providerIdentityMatches reports whether both sides carry an equal non-zero
+// work ID from the same provider.
+func providerIdentityMatches(target api.TrackerDuplicateTarget, candidate TrackerCandidate) bool {
+	if target.TMDBID > 0 && candidate.TMDBID > 0 && target.TMDBID == candidate.TMDBID {
+		return true
+	}
+	return target.IMDBID > 0 && candidate.IMDBID > 0 && target.IMDBID == candidate.IMDBID
+}
+
 func exactCandidate(target api.TrackerDuplicateTarget, candidate TrackerCandidate) bool {
+	if providerIdentityDiffers(target, candidate) {
+		return false
+	}
 	filesComparable := len(target.FileNames) > 0 && len(candidate.Files) > 0
 	if filesComparable {
 		if candidate.FileCount > 0 && candidate.FileCount != len(candidate.Files) {
@@ -97,8 +119,14 @@ func exactCandidate(target api.TrackerDuplicateTarget, candidate TrackerCandidat
 		}
 		return !candidate.SizeKnown || target.SizeBytes == 0 || candidate.SizeBytes == target.SizeBytes
 	}
+	sameWork := providerIdentityMatches(target, candidate)
 	if slices.ContainsFunc(target.Names, func(name string) bool {
-		return sameCandidateName(name, candidate.Name) || adjacentYearCandidateName(name, candidate.Name)
+		if sameCandidateName(name, candidate.Name) || adjacentYearCandidateName(name, candidate.Name) {
+			return true
+		}
+		// When the provider work ID already proves both releases are the same
+		// work, the year token cannot distinguish them: accept any year delta.
+		return sameWork && yearInsensitiveCandidateName(name, candidate.Name)
 	}) {
 		return true
 	}
@@ -138,6 +166,39 @@ func adjacentYearCandidateName(left string, right string) bool {
 	left = strings.ReplaceAll(left, `\`, "/")
 	right = strings.ReplaceAll(right, `\`, "/")
 	return namesDifferOnlyByAdjacentYear(path.Base(left), path.Base(right))
+}
+
+// yearInsensitiveCandidateName reports whether two release names are identical
+// after masking standalone four-digit year tokens. Only meaningful when the
+// caller has already proven both releases are the same work via provider IDs.
+func yearInsensitiveCandidateName(left string, right string) bool {
+	left = strings.TrimSpace(left)
+	right = strings.TrimSpace(right)
+	if left == "" || right == "" {
+		return false
+	}
+	if maskYearTokens(strings.ToLower(left)) == maskYearTokens(strings.ToLower(right)) {
+		return true
+	}
+	left = strings.ReplaceAll(left, `\`, "/")
+	right = strings.ReplaceAll(right, `\`, "/")
+	return maskYearTokens(strings.ToLower(path.Base(left))) == maskYearTokens(strings.ToLower(path.Base(right)))
+}
+
+// maskYearTokens replaces each standalone year-plausible four-digit token with
+// a fixed placeholder so comparisons ignore the year values.
+func maskYearTokens(value string) string {
+	result := []byte(value)
+	for index := 0; index+4 <= len(result); index++ {
+		if index > 0 && isASCIIDigit(result[index-1]) {
+			continue
+		}
+		if _, ok := parseYearToken(value, index); !ok {
+			continue
+		}
+		copy(result[index:index+4], "0000")
+	}
+	return string(result)
 }
 
 func namesDifferOnlyByAdjacentYear(left string, right string) bool {

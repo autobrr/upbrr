@@ -10,6 +10,8 @@ import (
 // DupeEntry is one backend adapter's private duplicate-search hit.
 type DupeEntry struct {
 	Name          string
+	TMDBID        int
+	IMDBID        int
 	SizeBytes     int64
 	SizeKnown     bool
 	SizeText      string

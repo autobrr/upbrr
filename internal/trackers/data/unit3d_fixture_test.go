@@ -46,6 +46,28 @@ func TestUnit3DSearchEntriesDeriveHDRFromMediaInfo(t *testing.T) {
 	}
 }
 
+func TestUnit3DSearchEntriesCarryProviderIDs(t *testing.T) {
+	t.Parallel()
+
+	entries := buildUnit3DSearchEntries([]unit3dSearchItem{
+		{Attributes: unit3dSearchAttrs{
+			Name:   "Example.Release.2026.1080p.WEB-DL-GRP",
+			TMDBID: 13654,
+			IMDBID: 324941,
+		}},
+		{Attributes: unit3dSearchAttrs{Name: "No.IDs.Release.2026.1080p.WEB-DL-GRP"}},
+	}, false)
+	if len(entries) != 2 {
+		t.Fatalf("entries = %d", len(entries))
+	}
+	if entries[0].TMDBID != 13654 || entries[0].IMDBID != 324941 {
+		t.Fatalf("provider IDs = %#v", entries[0])
+	}
+	if entries[1].TMDBID != 0 || entries[1].IMDBID != 0 {
+		t.Fatalf("absent provider IDs must stay zero: %#v", entries[1])
+	}
+}
+
 func TestUnit3DSearchEntriesPreserveRawAndCanonicalTypes(t *testing.T) {
 	t.Parallel()
 

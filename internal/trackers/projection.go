@@ -535,6 +535,8 @@ func projectionDuplicateNames(projection api.TrackerReleaseProjection) []string 
 func duplicateTarget(subject api.UploadSubject) api.TrackerDuplicateTarget {
 	return api.TrackerDuplicateTarget{
 		Names:       []string{SourceReleaseName(subject)},
+		TMDBID:      subject.Identity.TMDBID,
+		IMDBID:      subject.Identity.IMDBID,
 		Category:    string(subject.Identity.Category),
 		Type:        strings.TrimSpace(subject.Type),
 		Source:      strings.TrimSpace(subject.Source),

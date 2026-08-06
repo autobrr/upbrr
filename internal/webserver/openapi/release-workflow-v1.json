@@ -8030,6 +8030,9 @@
           "hdr": {
             "$ref": "#/components/schemas/HDRFacts"
           },
+          "imdbId": {
+            "type": "integer"
+          },
           "names": {
             "type": "array",
             "items": {
@@ -8062,6 +8065,9 @@
           },
           "threeD": {
             "type": "string"
+          },
+          "tmdbId": {
+            "type": "integer"
           },
           "type": {
             "type": "string"

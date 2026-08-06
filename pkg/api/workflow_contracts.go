@@ -185,6 +185,8 @@ type TrackerDuplicateCriteria struct {
 // for local duplicate policy evaluation.
 type TrackerDuplicateTarget struct {
 	Names       []string `json:"names,omitempty"`
+	TMDBID      int      `json:"tmdbId,omitempty"`
+	IMDBID      int      `json:"imdbId,omitempty"`
 	Category    string   `json:"category,omitempty"`
 	Type        string   `json:"type,omitempty"`
 	Source      string   `json:"source,omitempty"`

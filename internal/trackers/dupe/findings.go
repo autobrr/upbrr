@@ -57,6 +57,7 @@ type factComparison struct {
 const (
 	findingPriorityExact           = 1000
 	findingPriorityDisjointContent = 900
+	findingPriorityProviderSize    = 850
 	findingPriorityTrackerMatched  = 800
 	findingPriorityTrackerMissing  = 700
 	findingPriorityGeneral         = 600
@@ -76,6 +77,9 @@ func collectCandidateFindings(
 ) []RuleFinding {
 	findings := make([]RuleFinding, 0, 12)
 	findings = append(findings, collectExactFindings(target, candidate)...)
+	if finding, ok := collectProviderSizeFinding(target, candidate); ok {
+		findings = append(findings, finding)
+	}
 	findings = append(findings, collectGeneralFindings(targetFacts, candidateFacts, policy)...)
 	findings = append(findings, collectTrackerRules(target, targetFacts, candidate, candidateFacts, policy)...)
 	if finding, ok := collectTrackerSlotFinding(target, targetFacts, candidate, candidateFacts, policy); ok {
@@ -115,6 +119,30 @@ func collectExactFindings(target api.TrackerDuplicateTarget, candidate TrackerCa
 		ReasonCode: "exact_identity",
 		Priority:   findingPriorityExact,
 	}}
+}
+
+// collectProviderSizeFinding surfaces a reviewable duplicate when provider
+// work IDs prove both releases are the same work and the byte sizes are
+// identical, but name identity still failed (for example a renamed or
+// re-styled duplicate). Exact-identity findings outrank it when both fire.
+func collectProviderSizeFinding(target api.TrackerDuplicateTarget, candidate TrackerCandidate) (RuleFinding, bool) {
+	if !providerIdentityMatches(target, candidate) {
+		return RuleFinding{}, false
+	}
+	if !candidate.SizeKnown || target.SizeBytes <= 0 || candidate.SizeBytes != target.SizeBytes {
+		return RuleFinding{}, false
+	}
+	if exactCandidate(target, candidate) {
+		return RuleFinding{}, false
+	}
+	return RuleFinding{
+		RuleID:     GeneralPolicyID + "/provider_size_identity",
+		Source:     "general",
+		Status:     RuleFindingMatched,
+		Relation:   api.DupeRelationManualReview,
+		ReasonCode: "provider_size_identity",
+		Priority:   findingPriorityProviderSize,
+	}, true
 }
 
 func collectGeneralFindings(target normalizedFacts, candidate normalizedFacts, policy trackerspkg.DupePolicy) []RuleFinding {

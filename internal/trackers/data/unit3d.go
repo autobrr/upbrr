@@ -567,6 +567,8 @@ func buildUnit3DSearchEntries(items []unit3dSearchItem, isDisc bool) []api.DupeE
 		rawType := strings.TrimSpace(item.Attributes.Type)
 		entry := api.DupeEntry{
 			Name:          strings.TrimSpace(item.Attributes.Name),
+			TMDBID:        item.Attributes.TMDBID,
+			IMDBID:        item.Attributes.IMDBID,
 			Trumpable:     item.Attributes.Trumpable,
 			Link:          strings.TrimSpace(item.Attributes.DetailsLink),
 			Download:      strings.TrimSpace(item.Attributes.DownloadLink),
@@ -1021,6 +1023,8 @@ type unit3dSearchItem struct {
 
 type unit3dSearchAttrs struct {
 	Name         string       `json:"name"`
+	TMDBID       int          `json:"tmdb_id"`
+	IMDBID       int          `json:"imdb_id"`
 	Size         json.Number  `json:"size"`
 	Files        []unit3dFile `json:"files"`
 	Trumpable    bool         `json:"trumpable"`
