@@ -50,6 +50,11 @@ func (b workflowDupeBuilder) Build(
 	for _, result := range preflight.Results {
 		preflightByTracker[result.TrackerID] = result
 	}
+	inClient := func(trackerID api.TrackerID) bool {
+		return slices.ContainsFunc(subject.MatchedTrackers, func(candidate string) bool {
+			return strings.EqualFold(strings.TrimSpace(candidate), string(trackerID))
+		})
+	}
 	eligibleProjections := projections
 	eligibleProjections.Projections = make([]api.TrackerReleaseProjection, 0, len(projections.Projections))
 	for _, projection := range projections.Projections {
@@ -62,7 +67,8 @@ func (b workflowDupeBuilder) Build(
 			)
 		}
 		result, ok := preflightByTracker[projection.TrackerID]
-		if ok && projection.Readiness == api.ReadinessStatusReady && projection.DupeReady && result.State == api.TrackerPreflightStateReady {
+		if inClient(projection.TrackerID) ||
+			(ok && projection.Readiness == api.ReadinessStatusReady && projection.DupeReady && result.State == api.TrackerPreflightStateReady) {
 			eligibleProjections.Projections = append(eligibleProjections.Projections, projection)
 			continue
 		}
@@ -122,7 +128,9 @@ func (b workflowDupeBuilder) Build(
 		if !preflightOK {
 			return api.DupeAssessment{}, nil, fmt.Errorf("workflow duplicate check: tracker %s has no preflight result", projection.TrackerID)
 		}
-		if projection.Readiness != api.ReadinessStatusReady || !projection.DupeReady || preflightResult.State != api.TrackerPreflightStateReady {
+		result, resultOK := resultsByTracker[projection.TrackerID]
+		if !inClient(projection.TrackerID) &&
+			(projection.Readiness != api.ReadinessStatusReady || !projection.DupeReady || preflightResult.State != api.TrackerPreflightStateReady) {
 			trackerResult.Decision = api.DupeDecisionSkipped
 			trackerResult.Status = api.StageStatusSkipped
 			trackerResult.RequiredActions = append([]api.RequiredAction(nil), preflightResult.RequiredActions...)
@@ -148,8 +156,7 @@ func (b workflowDupeBuilder) Build(
 			results = append(results, trackerResult)
 			continue
 		}
-		result, ok := resultsByTracker[projection.TrackerID]
-		if !ok {
+		if !resultOK {
 			return api.DupeAssessment{}, nil, fmt.Errorf("workflow duplicate check: eligible tracker %s returned no result", projection.TrackerID)
 		}
 		trackerResult.Matches = publicDupeMatches(result)

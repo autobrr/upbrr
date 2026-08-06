@@ -44,7 +44,7 @@ type CheckOptions struct {
 	BypassBannedGroups bool
 }
 
-// CheckProjectionSet searches only dupe-ready projections from one exact set.
+// CheckProjectionSet searches dupe-ready projections and preserves definitive local-client matches from one exact set.
 func (s *Service) CheckProjectionSet(
 	ctx context.Context,
 	meta api.DuplicateSubject,
@@ -61,10 +61,10 @@ func (s *Service) CheckProjectionSet(
 	projections := make(map[string]api.TrackerReleaseProjection, len(projectionSet.Projections))
 	trackers := make([]string, 0, len(projectionSet.Projections))
 	for _, projection := range projectionSet.Projections {
-		if projection.Readiness != api.ReadinessStatusReady || !projection.DupeReady {
+		tracker := normalizeTracker(string(projection.TrackerID))
+		if (projection.Readiness != api.ReadinessStatusReady || !projection.DupeReady) && !containsTracker(meta.MatchedTrackers, tracker) {
 			continue
 		}
-		tracker := normalizeTracker(string(projection.TrackerID))
 		projections[tracker] = projection
 		trackers = append(trackers, tracker)
 	}
@@ -304,6 +304,15 @@ func duplicateSubjectForProjection(
 		return meta, errors.New("tracker projection is missing")
 	}
 	meta.Projection = &projection
+	if containsTracker(meta.MatchedTrackers, tracker) {
+		for _, name := range []string{projection.DuplicateCriteria.Name, projection.UploadReleaseName, projection.CanonicalReleaseName} {
+			if name = strings.TrimSpace(name); name != "" {
+				meta.ReleaseName = name
+				break
+			}
+		}
+		return meta, nil
+	}
 	criteria := projection.DuplicateCriteria
 	name := strings.TrimSpace(criteria.Name)
 	if name == "" {

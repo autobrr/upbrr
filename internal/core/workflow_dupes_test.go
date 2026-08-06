@@ -17,8 +17,10 @@ import (
 )
 
 type workflowDupeServiceFake struct {
-	queries []string
-	result  *api.DupeCheckResult
+	queries     []string
+	projections []api.TrackerReleaseProjection
+	result      *api.DupeCheckResult
+	results     []api.DupeCheckResult
 }
 
 type workflowProjectionDupeServiceFake struct {
@@ -86,6 +88,13 @@ func (f *workflowDupeServiceFake) CheckProjectionSet(
 	projections api.TrackerReleaseProjectionSet,
 	_ api.ProjectionDupeCheckOptions,
 ) (api.DupeCheckSummary, api.DupeAssessmentEvidence, error) {
+	f.projections = append(f.projections, projections.Projections...)
+	if f.results != nil {
+		return api.DupeCheckSummary{
+			SourcePath: subject.SourcePath,
+			Results:    append([]api.DupeCheckResult(nil), f.results...),
+		}, dupechecking.EmptyAssessment(), nil
+	}
 	trackers := make([]string, 0, len(projections.Projections))
 	for _, projection := range projections.Projections {
 		trackers = append(trackers, string(projection.TrackerID))
@@ -383,7 +392,7 @@ func TestWorkflowDupeOutcomeIncompleteSearchWithoutCandidatesRequiresReview(t *t
 	}
 }
 
-func TestWorkflowDupeBuilderSearchesReadySiblingAndRetainsAuthBlockedRow(t *testing.T) {
+func TestWorkflowDupeBuilderRetainsBlockedLocalClientAndSkippedAuthRows(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC)
@@ -411,6 +420,13 @@ func TestWorkflowDupeBuilderSearchesReadySiblingAndRetainsAuthBlockedRow(t *test
 	}
 	ready := projection("ALPHA", api.ReadinessStatusReady, true)
 	authBlocked := projection("BETA", api.ReadinessStatusBlocked, false)
+	clientBlocked := projection("GAMMA", api.ReadinessStatusIneligible, false)
+	clientBlocked.PolicyDecisions = []api.TrackerPolicyDecision{{
+		Code:        "unsupported_source",
+		Decision:    "ineligible",
+		Blocking:    true,
+		Disposition: api.RuleDispositionStrict,
+	}}
 	authBlocked.Failures = []api.WorkflowFailure{{
 		TrackerID: "BETA",
 		Failure: api.OperationFailure{
@@ -432,16 +448,41 @@ func TestWorkflowDupeBuilderSearchesReadySiblingAndRetainsAuthBlockedRow(t *test
 				State:     api.TrackerPreflightStateRetryable,
 				Failures:  authBlocked.Failures,
 			},
+			{TrackerID: "GAMMA", State: api.TrackerPreflightStateActionRequired},
 		},
 	}
-	service := &workflowDupeServiceFake{}
+	service := &workflowDupeServiceFake{results: []api.DupeCheckResult{
+		{
+			Tracker: "ALPHA",
+			Search:  api.DupeSearchEvidence{Complete: true},
+			Status:  "completed",
+		},
+		{
+			Tracker:  "GAMMA",
+			HasDupes: true,
+			Evaluations: []api.DupeCandidateEvaluation{{
+				Name:     clientBlocked.CanonicalReleaseName,
+				Relation: api.DupeRelationExactDuplicate,
+				Reasons:  []api.DupeReason{{Code: "in_client"}},
+			}},
+			Search: api.DupeSearchEvidence{
+				Complete:       true,
+				CandidateCount: 1,
+				Scope:          "local_client",
+			},
+			Status: "completed",
+		},
+	}}
 	snapshot, _, err := (workflowDupeBuilder{service: service}).Build(
 		context.Background(),
-		api.DuplicateSubject{SourcePath: "C:\\releases\\Example.Release.2026.mkv"},
+		api.DuplicateSubject{
+			SourcePath:      "C:\\releases\\Example.Release.2026.mkv",
+			MatchedTrackers: []string{" gamma "},
+		},
 		api.TrackerReleaseProjectionSet{
 			ID:          "projections-1",
 			Revision:    4,
-			Projections: []api.TrackerReleaseProjection{ready, authBlocked},
+			Projections: []api.TrackerReleaseProjection{ready, authBlocked, clientBlocked},
 		},
 		preflight,
 		now,
@@ -450,12 +491,14 @@ func TestWorkflowDupeBuilderSearchesReadySiblingAndRetainsAuthBlockedRow(t *test
 	if err != nil {
 		t.Fatalf("build mixed workflow dupes: %v", err)
 	}
-	if len(service.queries) != 1 || service.queries[0] != ready.DuplicateCriteria.Name {
-		t.Fatalf("eligible duplicate queries = %v", service.queries)
+	if len(service.projections) != 2 || service.projections[0].TrackerID != "ALPHA" || service.projections[1].TrackerID != "GAMMA" {
+		t.Fatalf("checked duplicate projections = %#v", service.projections)
 	}
-	if len(snapshot.Results) != 2 || snapshot.Results[1].TrackerID != "BETA" ||
+	if len(snapshot.Results) != 3 || snapshot.Results[1].TrackerID != "BETA" ||
 		snapshot.Results[1].Decision != api.DupeDecisionSkipped || snapshot.Results[1].Status != api.StageStatusSkipped ||
-		len(snapshot.Results[1].Failures) != 1 {
+		len(snapshot.Results[1].Failures) != 1 || snapshot.Results[2].TrackerID != "GAMMA" ||
+		snapshot.Results[2].Decision != api.DupeDecisionAccepted || snapshot.Results[2].Status != api.StageStatusCompleted ||
+		len(snapshot.Results[2].Matches) != 1 || snapshot.Results[2].Matches[0].Reason != "in_client" {
 		t.Fatalf("mixed duplicate snapshot = %#v", snapshot)
 	}
 }

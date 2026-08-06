@@ -367,7 +367,9 @@ describe("DupeCheckPage", () => {
             {
               trackerId: "EXAMPLE",
               displayName: "Example Tracker",
+              canonicalReleaseName: "Example Release 2026 1080p-GRP",
               uploadReleaseName: "Example.Release.2026.1080p-GRP",
+              duplicateCriteria: { name: "Example Release 2026" },
               readiness: "ineligible",
               policyDecisions: [
                 {
@@ -412,6 +414,8 @@ describe("DupeCheckPage", () => {
     expect(screen.queryByText("Advisories")).not.toBeInTheDocument();
     expect(screen.queryByText("Poster metadata is not available.")).not.toBeInTheDocument();
     expect(screen.queryByText(/Evidence complete/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Canonical:")).not.toBeInTheDocument();
+    expect(screen.queryByText("Tracker upload:")).not.toBeInTheDocument();
   });
 
   it("renders auth failure as retryable blocked lane evidence without an action card", () => {
@@ -521,14 +525,23 @@ describe("DupeCheckPage", () => {
               displayName: trackerId,
               canonicalReleaseName: "Example Release S01E01 1080p-GRP",
               uploadReleaseName: "Example.Release.S01E01.1080p-GRP",
-              policyDecisions: [],
-              readiness: "ready",
+              policyDecisions:
+                trackerId === "AITHER"
+                  ? [
+                      {
+                        code: "release_name_confirmation",
+                        decision: "confirmation_required",
+                        blocking: false,
+                      },
+                    ]
+                  : [],
+              readiness: trackerId === "AITHER" ? "ineligible" : "ready",
             })),
           } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
           preflight: {
             results: ["AITHER", "REMOTE"].map((trackerId) => ({
               trackerId,
-              state: "ready",
+              state: trackerId === "AITHER" ? "action_required" : "ready",
             })),
           } as unknown as NonNullable<DuplicatesFacet["view"]["preflight"]>,
         },
@@ -539,6 +552,22 @@ describe("DupeCheckPage", () => {
 
     expect(screen.getByText("In client")).toBeInTheDocument();
     expect(screen.getByText("Already in client: Strict match")).toBeInTheDocument();
+    const inClientCard = screen.getByRole("heading", { name: "AITHER" }).closest("article");
+    expect(inClientCard).toHaveClass("gap-1", "px-3", "py-2");
+    expect(within(inClientCard as HTMLElement).queryByText("Canonical:")).not.toBeInTheDocument();
+    expect(
+      within(inClientCard as HTMLElement).queryByText("Tracker upload:"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(inClientCard as HTMLElement).queryByRole("textbox", {
+        name: "Release name for AITHER",
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(inClientCard as HTMLElement).queryByRole("switch", {
+        name: "Confirm release name for AITHER",
+      }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText("Strict match")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("checkbox", { name: "Ignore dupes for AITHER" }),
