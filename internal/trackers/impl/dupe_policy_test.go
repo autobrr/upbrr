@@ -228,7 +228,10 @@ func TestARPTPRTFPoliciesAreEvidenceBackedAndConservative(t *testing.T) {
 		episodeTarget.Episode = 1
 		assertAREvaluation := func(name string, candidate dupe.TrackerCandidate, want api.DupeRelation) {
 			t.Helper()
-			got := dupe.Evaluate(episodeTarget, []dupe.TrackerCandidate{candidate}, policy, dupe.SearchEvidence{Complete: true}).Candidates[0]
+			got := dupe.Evaluate(episodeTarget, []dupe.TrackerCandidate{candidate}, policy, dupe.SearchEvidence{
+				Complete:  true,
+				WorkScope: dupe.WorkScopeTrackerGroup,
+			}).Candidates[0]
 			if got.Relation != want {
 				t.Fatalf("%s relation = %#v, want %s", name, got, want)
 			}
@@ -269,7 +272,10 @@ func TestARPTPRTFPoliciesAreEvidenceBackedAndConservative(t *testing.T) {
 		}
 		assertRTF := func(name string, target api.TrackerDuplicateTarget, candidate dupe.TrackerCandidate, want api.DupeRelation) {
 			t.Helper()
-			got := dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, policy, dupe.SearchEvidence{Complete: true}).Candidates[0]
+			got := dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, policy, dupe.SearchEvidence{
+				Complete:  true,
+				WorkScope: dupe.WorkScopeTrackerGroup,
+			}).Candidates[0]
 			if got.Relation != want {
 				t.Fatalf("%s relation = %#v, want %s", name, got, want)
 			}
