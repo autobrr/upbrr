@@ -35,7 +35,6 @@ func (d *Definition) NewDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 	cfg := deps.BoundConfig()
 	httpClient := deps.HTTPClient()
 	logger := deps.Logger()
-	_ = logger
 	return &dupeSearcher{
 		tracker:  deps.Tracker(),
 		baseURL:  d.site.BaseURL,
@@ -165,10 +164,24 @@ func (h dupeSearcher) fetchTorrentList(
 	for strings.TrimSpace(pageURL) != "" {
 		if pages >= maxPages {
 			warning = "AZ-family search reached pagination safety bound"
+			if h.logger != nil {
+				h.logger.Warnf(
+					"dupechecking: search tracker=%s pages=%d complete=false decision=pagination_safety_bound",
+					h.tracker,
+					pages,
+				)
+			}
 			break
 		}
 		if _, ok := visited[pageURL]; ok {
 			warning = "AZ-family search repeated a result page"
+			if h.logger != nil {
+				h.logger.Warnf(
+					"dupechecking: search tracker=%s pages=%d complete=false decision=repeated_page",
+					h.tracker,
+					pages,
+				)
+			}
 			break
 		}
 		visited[pageURL] = struct{}{}
@@ -207,6 +220,9 @@ func (h dupeSearcher) fetchTorrentList(
 		nextPage := nextAZPage(root, site.baseURL)
 		if nextPage == "" {
 			complete = true
+			if h.logger != nil {
+				h.logger.Debugf("dupechecking: search tracker=%s pages=%d complete=true decision=enumeration_complete", h.tracker, pages)
+			}
 		}
 		pageURL = nextPage
 	}
@@ -354,7 +370,7 @@ func nextAZPage(root *xhtml.Node, baseURL string) string {
 			return
 		}
 		if node.Type == xhtml.ElementNode && node.Data == "a" && strings.EqualFold(attrValueHTML(node, "rel"), "next") {
-			next = absoluteAZURL(baseURL, attrValueHTML(node, "href"))
+			next = sameOriginAZURL(baseURL, attrValueHTML(node, "href"))
 			return
 		}
 		for child := node.FirstChild; child != nil; child = child.NextSibling {
@@ -363,6 +379,25 @@ func nextAZPage(root *xhtml.Node, baseURL string) string {
 	}
 	walk(root)
 	return next
+}
+
+func sameOriginAZURL(baseURL, value string) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	base, baseErr := url.Parse(strings.TrimSpace(baseURL))
+	reference, referenceErr := url.Parse(strings.TrimSpace(value))
+	if baseErr != nil || referenceErr != nil {
+		return ""
+	}
+	resolved := base.ResolveReference(reference)
+	if (base.Scheme != "http" && base.Scheme != "https") ||
+		!strings.EqualFold(base.Scheme, resolved.Scheme) ||
+		!strings.EqualFold(base.Host, resolved.Host) ||
+		strings.TrimSpace(base.Host) == "" {
+		return ""
+	}
+	return resolved.String()
 }
 
 func attrValueHTML(node *xhtml.Node, key string) string {

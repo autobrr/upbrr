@@ -100,14 +100,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 				entries = append(entries, entry)
 			}
 		}
-		next := commonhttp.FirstNode(root, func(node *xhtml.Node) bool {
-			if node.Type != xhtml.ElementNode || node.Data != "a" {
-				return false
-			}
-			href, text := commonhttp.Attr(node, "href"), strings.TrimSpace(commonhttp.NodeText(node))
-			return strings.Contains(href, "pages=") && (strings.EqualFold(text, "Next") || text == ">>" || hdsPagePattern.MatchString(href))
-		})
-		if next == nil {
+		if !hdsHasNextPage(root, page) {
 			complete = true
 			break
 		}
@@ -126,6 +119,24 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		Scope:     "provider_all_categories",
 		Warnings:  warnings,
 	})
+}
+
+func hdsHasNextPage(root *xhtml.Node, currentPage int) bool {
+	return commonhttp.FirstNode(root, func(node *xhtml.Node) bool {
+		if node.Type != xhtml.ElementNode || node.Data != "a" {
+			return false
+		}
+		href, text := commonhttp.Attr(node, "href"), strings.TrimSpace(commonhttp.NodeText(node))
+		if strings.EqualFold(text, "Next") || text == ">>" {
+			return strings.Contains(href, "pages=")
+		}
+		match := hdsPagePattern.FindStringSubmatch(href)
+		if len(match) != 2 {
+			return false
+		}
+		targetPage, err := strconv.Atoi(match[1])
+		return err == nil && targetPage > currentPage
+	}) != nil
 }
 
 func hdsBaseURL(_ config.Config) string {

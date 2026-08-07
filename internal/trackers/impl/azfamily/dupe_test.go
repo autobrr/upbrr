@@ -11,7 +11,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	xhtml "golang.org/x/net/html"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
@@ -116,5 +119,30 @@ func TestAZCanonicalCandidateType(t *testing.T) {
 		if got := azCanonicalCandidateType(input); got != want {
 			t.Errorf("azCanonicalCandidateType(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+func TestNextAZPageRejectsOffOriginURL(t *testing.T) {
+	t.Parallel()
+
+	for name, fixture := range map[string]struct {
+		href string
+		want string
+	}{
+		"relative": {href: "/movies/torrents/77?page=2", want: "https://az.example/movies/torrents/77?page=2"},
+		"external": {href: "https://example.invalid/steal", want: ""},
+		"empty":    {href: "", want: ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			root, err := xhtml.Parse(strings.NewReader(`<a rel="next" href="` + fixture.href + `">Next</a>`))
+			if err != nil {
+				t.Fatalf("parse fixture: %v", err)
+			}
+			if got := nextAZPage(root, "https://az.example"); got != fixture.want {
+				t.Fatalf("next page = %q, want %q", got, fixture.want)
+			}
+		})
 	}
 }
