@@ -52,6 +52,9 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	} else {
 		workScope = dupe.WorkScopeTitle
 		query := metautil.FirstNonEmptyTrimmed(meta.Release.Title, dupe.ProjectedSearchName(meta), meta.ReleaseName)
+		if query == "" {
+			return dupe.NotRun(dupe.NotRunMissingMetadata, "missing title for HDT dupe search", nil)
+		}
 		params.Set("search", query)
 		params.Set("options", "3")
 	}
