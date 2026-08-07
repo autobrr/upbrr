@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -146,6 +147,74 @@ func TestCaptureFrameRejectsBlackOutputFile(t *testing.T) {
 	if _, statErr := os.Stat(output); !os.IsNotExist(statErr) {
 		t.Fatal("expected rejected black output file to be removed")
 	}
+}
+
+func TestCaptureFrameRecoversFromBlackFrameWithTimestampOffset(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "screen.png")
+	blackPayload := testPNGBytes(t, color.RGBA{A: 255})
+	validPayload := testPNGBytes(t, color.RGBA{
+		R: 200,
+		G: 100,
+		B: 50,
+		A: 255,
+	})
+	runner := &timestampSensitiveRunner{
+		blackTimestamps: map[string]struct{}{"1.000": {}},
+		blackPayload:    blackPayload,
+		validPayload:    validPayload,
+	}
+
+	_, err := captureFrame(context.Background(), runner, "ffmpeg", captureRequest{
+		InputPath:  "example.mkv",
+		OutputPath: output,
+		Timestamp:  1,
+	}, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("expected black frame to recover with timestamp offset, got error: %v", err)
+	}
+
+	stat, statErr := os.Stat(output)
+	if statErr != nil {
+		t.Fatalf("expected output file to exist, got stat error: %v", statErr)
+	}
+	if stat.Size() == 0 {
+		t.Fatal("expected non-empty output file")
+	}
+
+	wantTimestamps := []string{"1.000", "2.000"}
+	if !slices.Equal(runner.timestamps, wantTimestamps) {
+		t.Fatalf("attempted timestamps = %v, want %v", runner.timestamps, wantTimestamps)
+	}
+}
+
+type timestampSensitiveRunner struct {
+	blackTimestamps map[string]struct{}
+	blackPayload    []byte
+	validPayload    []byte
+	timestamps      []string
+}
+
+func (r *timestampSensitiveRunner) Run(_ context.Context, _ string, args []string, _ string) (CommandResult, error) {
+	var ts string
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-ss" {
+			ts = args[i+1]
+			break
+		}
+	}
+	if ts != "" {
+		r.timestamps = append(r.timestamps, ts)
+	}
+	payload := r.validPayload
+	if _, isBlack := r.blackTimestamps[ts]; isBlack {
+		payload = r.blackPayload
+	}
+	if len(args) > 0 {
+		if err := os.WriteFile(args[len(args)-1], payload, 0o600); err != nil {
+			return CommandResult{ExitCode: 1}, fmt.Errorf("write output fixture: %w", err)
+		}
+	}
+	return CommandResult{ExitCode: 0}, nil
 }
 
 type singleResultRunner struct {

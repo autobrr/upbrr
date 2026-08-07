@@ -172,10 +172,58 @@ var (
 	errFFmpegBlackImage = errors.New("ffmpeg produced black image")
 )
 
+// blackFrameTimestampOffsets lists relative timestamp adjustments (in seconds)
+// tried when FFmpeg produces a black image at the initial frame timestamp.
+var blackFrameTimestampOffsets = []float64{0, 1.0, 2.0, 3.0, 5.0, -1.0, -2.0}
+
 // captureFrame writes one PNG frame and returns whether the successful attempt
 // used libplacebo. Libplacebo captures retry once before falling back to the
 // software filter chain so transient Vulkan setup failures remain recoverable.
+// Black output images automatically retry near the requested timestamp using
+// relative offsets before failing.
 func captureFrame(ctx context.Context, runner Runner, cmdPath string, req captureRequest, logger api.Logger) (bool, error) {
+	var lastErr error
+	var lastUsedLib bool
+
+	for _, offset := range blackFrameTimestampOffsets {
+		candidateTS := req.Timestamp + offset
+		if candidateTS < 0 {
+			continue
+		}
+		attemptReq := req
+		attemptReq.Timestamp = candidateTS
+
+		usedLib, err := captureFrameSingle(ctx, runner, cmdPath, attemptReq, logger)
+		if err == nil {
+			if offset != 0 {
+				l := screenshotLogger(logger)
+				l.Debugf(
+					"screenshots: black image recovered with timestamp offset original=%.3f offset=%.3f new=%.3f",
+					req.Timestamp,
+					offset,
+					candidateTS,
+				)
+			}
+			return usedLib, nil
+		}
+
+		lastErr = err
+		lastUsedLib = usedLib
+
+		if !errors.Is(err, errFFmpegBlackImage) {
+			break
+		}
+		l := screenshotLogger(logger)
+		l.Debugf(
+			"screenshots: ffmpeg capture produced black image at timestamp=%.3f, retrying timestamp offset",
+			candidateTS,
+		)
+	}
+
+	return lastUsedLib, lastErr
+}
+
+func captureFrameSingle(ctx context.Context, runner Runner, cmdPath string, req captureRequest, logger api.Logger) (bool, error) {
 	logger = screenshotLogger(logger)
 	if strings.TrimSpace(req.InputPath) == "" {
 		return false, errors.New("screenshots: input path required")
@@ -251,6 +299,9 @@ func captureFrame(ctx context.Context, runner Runner, cmdPath string, req captur
 		stderr = err.Error()
 	}
 	logger.Debugf("screenshots: ffmpeg capture exhausted mode=%s reason=%s", ffmpegModeLabel(useLibplacebo), ffmpegResultPreview(result, err))
+	if err != nil {
+		return useLibplacebo, fmt.Errorf("screenshots: ffmpeg capture failed: %w", err)
+	}
 	return useLibplacebo, fmt.Errorf("screenshots: ffmpeg capture failed: %s", stderr)
 }
 
