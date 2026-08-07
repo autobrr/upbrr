@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -152,11 +153,11 @@ func TestCaptureFrameRecoversFromBlackFrameWithTimestampOffset(t *testing.T) {
 	output := filepath.Join(t.TempDir(), "screen.png")
 	blackPayload := testPNGBytes(t, color.RGBA{A: 255})
 	validPayload := testPNGBytes(t, color.RGBA{
-R: 200,
- G: 100,
- B: 50,
- A: 255,
-})
+		R: 200,
+		G: 100,
+		B: 50,
+		A: 255,
+	})
 	runner := &timestampSensitiveRunner{
 		blackTimestamps: map[string]struct{}{"1.000": {}},
 		blackPayload:    blackPayload,
@@ -179,12 +180,18 @@ R: 200,
 	if stat.Size() == 0 {
 		t.Fatal("expected non-empty output file")
 	}
+
+	wantTimestamps := []string{"1.000", "2.000"}
+	if !slices.Equal(runner.timestamps, wantTimestamps) {
+		t.Fatalf("attempted timestamps = %v, want %v", runner.timestamps, wantTimestamps)
+	}
 }
 
 type timestampSensitiveRunner struct {
 	blackTimestamps map[string]struct{}
 	blackPayload    []byte
 	validPayload    []byte
+	timestamps      []string
 }
 
 func (r *timestampSensitiveRunner) Run(_ context.Context, _ string, args []string, _ string) (CommandResult, error) {
@@ -194,6 +201,9 @@ func (r *timestampSensitiveRunner) Run(_ context.Context, _ string, args []strin
 			ts = args[i+1]
 			break
 		}
+	}
+	if ts != "" {
+		r.timestamps = append(r.timestamps, ts)
 	}
 	payload := r.validPayload
 	if _, isBlack := r.blackTimestamps[ts]; isBlack {
