@@ -108,7 +108,9 @@ func exactCandidate(target api.TrackerDuplicateTarget, candidate TrackerCandidat
 	}) {
 		return true
 	}
-	return len(target.FileNames) == 1 && releaseNameMatchesFile(target.FileNames[0], candidate.Name)
+	return len(target.FileNames) == 1 &&
+		isVideoFileName(strings.ToLower(strings.TrimSpace(target.FileNames[0]))) &&
+		releaseNameMatchesFile(target.FileNames[0], candidate.Name)
 }
 
 // videoFileSet returns the sorted normalized basenames of primary video

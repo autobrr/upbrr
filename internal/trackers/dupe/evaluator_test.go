@@ -1192,6 +1192,22 @@ func TestEvaluateGeneralSeasonPackContainmentIsDirectional(t *testing.T) {
 	}
 }
 
+func TestEvaluateSingleAuxiliaryFileStemDoesNotEstablishIdentity(t *testing.T) {
+	t.Parallel()
+
+	// A lone non-video file whose stem coincides with the candidate's release
+	// name must not establish identity through the single-file stem fallback.
+	evaluation := Evaluate(
+		api.TrackerDuplicateTarget{FileNames: []string{"Example.Release.2026.nfo"}},
+		[]TrackerCandidate{{Name: "Example.Release.2026"}},
+		trackerspkg.DupePolicy{},
+		SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID},
+	)
+	if got := evaluation.Candidates[0].Relation; got == api.DupeRelationExactDuplicate {
+		t.Fatalf("auxiliary stem fallback must not be exact identity, got %q", got)
+	}
+}
+
 func TestEvaluatePackContainmentRequiresAuthoritativeWorkScope(t *testing.T) {
 	t.Parallel()
 
