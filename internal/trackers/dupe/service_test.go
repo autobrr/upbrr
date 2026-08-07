@@ -119,7 +119,7 @@ Complete: true,
 		t.Fatalf("candidate debug logs = %d, want 2", len(candidateLogs))
 	}
 	if !strings.Contains(candidateLogs[0], `tracker=BHD candidate_id="candidate-1" relation=same_slot`) ||
-		!strings.Contains(candidateLogs[0], `winning_rule=general/duplicate/v3/same_slot`) ||
+		!strings.Contains(candidateLogs[0], `winning_rule=general/duplicate/v4/same_slot`) ||
 		!strings.Contains(candidateLogs[0], `kind=web_dl class=web source_family=web`) ||
 		!strings.Contains(candidateLogs[0], `name="Example.Release.2026.1080p.WEB-DL-GRP"`) ||
 		!strings.Contains(candidateLogs[0], `facts="WEB-DL · EXAMPLE · 1080p"`) ||
@@ -275,7 +275,7 @@ func TestCandidateLogIncludesOnlyDecisiveDeduplicatedEvidence(t *testing.T) {
 	for _, value := range []string{
 		`compared="media_class | resolution"`,
 		`missing=""`,
-		`matched="general/duplicate/v3/media_class"`,
+		`matched="general/duplicate/v4/media_class"`,
 	} {
 		if !strings.Contains(logLine, value) {
 			t.Fatalf("candidate log missing %q: %q", value, logLine)

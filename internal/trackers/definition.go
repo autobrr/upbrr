@@ -16,7 +16,7 @@ import (
 )
 
 // GeneralDuplicatePolicyID identifies the always-on duplicate comparison contract.
-const GeneralDuplicatePolicyID = "general/duplicate/v3"
+const GeneralDuplicatePolicyID = "general/duplicate/v4"
 
 // DuplicateSearchContractID identifies effective work-scope completion semantics.
 const DuplicateSearchContractID = "duplicate-search/work-scope/v1"
