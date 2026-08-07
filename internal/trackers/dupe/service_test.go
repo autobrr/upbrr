@@ -101,10 +101,10 @@ func TestProjectAdapterResultDebugLogsEveryCandidateEvaluation(t *testing.T) {
 			HDR:  candidateHDR,
 		},
 	}, nil, SearchEvidence{
-Complete: true,
- WorkScope: WorkScopeProviderID,
- Pages: 1,
-}), time.Now().UTC())
+		Complete:  true,
+		WorkScope: WorkScopeProviderID,
+		Pages:     1,
+	}), time.Now().UTC())
 
 	if len(result.Evaluations) != 2 {
 		t.Fatalf("candidate evaluations = %d, want 2", len(result.Evaluations))
@@ -180,27 +180,27 @@ func TestProjectAdapterResultEmptySearchNeedsAuthoritativeWorkScope(t *testing.T
 		wantReason   string
 	}{
 		{
-name: "provider",
- workScope: WorkScopeProviderID,
- wantComplete: true,
- wantVerdict: VerdictClear,
-},
+			name:         "provider",
+			workScope:    WorkScopeProviderID,
+			wantComplete: true,
+			wantVerdict:  VerdictClear,
+		},
 		{
-name: "title",
- workScope: WorkScopeTitle,
- wantVerdict: VerdictBlocked,
- wantReason: "incomplete_search",
-},
+			name:        "title",
+			workScope:   WorkScopeTitle,
+			wantVerdict: VerdictBlocked,
+			wantReason:  "incomplete_search",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			result, entry := testService(nil).projectAdapterResult(
 				"EXAMPLE",
 				api.DuplicateSubject{},
 				ResolvedWithSearch(nil, nil, SearchEvidence{
-Complete: true,
- WorkScope: test.workScope,
- Pages: 1,
-}),
+					Complete:  true,
+					WorkScope: test.workScope,
+					Pages:     1,
+				}),
 				time.Now().UTC(),
 			)
 			if result.Search.Complete != test.wantComplete || entry.verdict != test.wantVerdict || entry.match.MatchedReason != test.wantReason {
@@ -407,9 +407,8 @@ func TestCandidateLogShowsDifferentTargetAndCandidateOperands(t *testing.T) {
 			Name: "Example.Release.2026.1080p.WEB-DL.H.264-GRP",
 		}, "AR")},
 		trackerspkg.DupePolicy{
-			ID:                             "ar/duplicate/v2",
-			EvidenceID:                     "ar-uploading-guidelines",
-			SlotDifferencesOverrideGeneral: true,
+			ID:         "ar/duplicate/v2",
+			EvidenceID: "ar-uploading-guidelines",
 			SlotDimensions: []trackerspkg.DupeDimension{
 				trackerspkg.DupeDimensionSource,
 				trackerspkg.DupeDimensionResolution,

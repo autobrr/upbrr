@@ -48,7 +48,6 @@ func Profile() standalone.Profile {
 				trackers.DupeDimensionGroup,
 			},
 			SlotContradictionsRequireManualReview: true,
-			SlotDifferencesOverrideGeneral:        true,
 		},
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,

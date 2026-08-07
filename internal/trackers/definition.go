@@ -486,9 +486,6 @@ type DupePolicy struct {
 	// SlotContradictionsRequireManualReview prevents contradictory structured
 	// and title evidence from collapsing into a generic missing-fact result.
 	SlotContradictionsRequireManualReview bool
-	// SlotDifferencesOverrideGeneral keeps a tracker tuple's decisive dimension
-	// and operand provenance ahead of broader general coexistence findings.
-	SlotDifferencesOverrideGeneral bool
 	// CoexistenceRules are evaluated before directional precedence.
 	CoexistenceRules []DupeRule
 	// PrecedenceRules express directional existing/proposed preferences.
