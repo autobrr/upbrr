@@ -616,7 +616,7 @@ func TestEvaluateGeneralPolicyAppliesPackPrecedence(t *testing.T) {
 			ReasonCode:         "tracker_policy_not_evidence_backed",
 			RequiresManualStep: true,
 		}}},
-		SearchEvidence{Complete: true},
+		SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID},
 	)
 	if got := evaluation.Candidates[0].Relation; got != api.DupeRelationExistingPreferred {
 		t.Fatalf("compatibility pack relation = %q", got)
@@ -1175,7 +1175,7 @@ func TestEvaluateGeneralSeasonPackContainmentIsDirectional(t *testing.T) {
 		api.TrackerDuplicateTarget{Season: 1, Pack: true},
 		[]TrackerCandidate{{Season: 1, Episode: 2}},
 		trackerspkg.DupePolicy{},
-		SearchEvidence{},
+		SearchEvidence{WorkScope: WorkScopeProviderID},
 	).Candidates[0]
 	if proposedPack.Relation != api.DupeRelationProposedTrumps {
 		t.Fatalf("proposed pack relation = %#v", proposedPack)
@@ -1185,10 +1185,30 @@ func TestEvaluateGeneralSeasonPackContainmentIsDirectional(t *testing.T) {
 		api.TrackerDuplicateTarget{Season: 1, Episode: 2},
 		[]TrackerCandidate{{Season: 1, Pack: true}},
 		trackerspkg.DupePolicy{},
-		SearchEvidence{},
+		SearchEvidence{WorkScope: WorkScopeProviderID},
 	).Candidates[0]
 	if existingPack.Relation != api.DupeRelationExistingPreferred {
 		t.Fatalf("existing pack relation = %#v", existingPack)
+	}
+}
+
+func TestEvaluatePackContainmentRequiresAuthoritativeWorkScope(t *testing.T) {
+	t.Parallel()
+
+	// A title-fallback search cannot prove candidates belong to the same
+	// work, so a season-number coincidence with a different show's pack must
+	// not block the proposal.
+	evaluation := Evaluate(
+		api.TrackerDuplicateTarget{Season: 1, Episode: 2},
+		[]TrackerCandidate{{Season: 1, Pack: true}},
+		trackerspkg.DupePolicy{},
+		SearchEvidence{Complete: true, WorkScope: WorkScopeTitle},
+	)
+	if got := evaluation.Candidates[0].Relation; got == api.DupeRelationExistingPreferred {
+		t.Fatalf("title-fallback pack containment must not block, got %q", got)
+	}
+	if evaluation.Blocks {
+		t.Fatalf("title-fallback season coincidence must not set Blocks")
 	}
 }
 

@@ -75,10 +75,11 @@ func collectCandidateFindings(
 	candidate TrackerCandidate,
 	candidateFacts normalizedFacts,
 	policy trackerspkg.DupePolicy,
+	workScope WorkScope,
 ) []RuleFinding {
 	findings := make([]RuleFinding, 0, 12)
 	findings = append(findings, collectExactFindings(target, candidate)...)
-	findings = append(findings, collectGeneralFindings(targetFacts, candidateFacts, policy)...)
+	findings = append(findings, collectGeneralFindings(targetFacts, candidateFacts, policy, workScope)...)
 	findings = append(findings, collectTrackerRules(target, targetFacts, candidate, candidateFacts, policy)...)
 	if finding, ok := collectTrackerSlotFinding(target, targetFacts, candidate, candidateFacts, policy); ok {
 		findings = append(findings, finding)
@@ -119,7 +120,7 @@ func collectExactFindings(target api.TrackerDuplicateTarget, candidate TrackerCa
 	}}
 }
 
-func collectGeneralFindings(target normalizedFacts, candidate normalizedFacts, policy trackerspkg.DupePolicy) []RuleFinding {
+func collectGeneralFindings(target normalizedFacts, candidate normalizedFacts, policy trackerspkg.DupePolicy, workScope WorkScope) []RuleFinding {
 	findings := make([]RuleFinding, 0, 8)
 	switch compareContentScopes(target.Content, candidate.Content) {
 	case contentDefinitelyDisjoint:
@@ -148,8 +149,14 @@ func collectGeneralFindings(target normalizedFacts, candidate normalizedFacts, p
 		}
 	case contentEqual, contentOverlaps:
 	}
-	if finding, ok := collectPackContainmentFinding(target.Content, candidate.Content); ok {
-		findings = append(findings, finding)
+	// Pack containment reasons about work-level content coverage, so it only
+	// applies when the search authoritatively bound candidates to the same
+	// work; season numbers alone cannot relate releases across works on a
+	// title-fallback search.
+	if workScope == WorkScopeProviderID || workScope == WorkScopeTrackerGroup {
+		if finding, ok := collectPackContainmentFinding(target.Content, candidate.Content); ok {
+			findings = append(findings, finding)
+		}
 	}
 	if target.Resolution.Status == FactContradictory || candidate.Resolution.Status == FactContradictory {
 		findings = append(findings, contradictionFinding("resolution"))

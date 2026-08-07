@@ -51,7 +51,7 @@ func Evaluate(
 	for _, candidate := range candidates {
 		facts := normalizeCandidateFacts(candidate)
 		candidateFacts = append(candidateFacts, facts)
-		findings := collectCandidateFindings(target, targetFacts, candidate, facts, policy)
+		findings := collectCandidateFindings(target, targetFacts, candidate, facts, policy, search.WorkScope)
 		evaluation.Candidates = append(evaluation.Candidates, resolveCandidateFindings(candidate, facts, findings))
 	}
 	evaluation.SetFindings = evaluateSetRules(targetFacts, candidates, candidateFacts, policy, search)
