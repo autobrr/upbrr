@@ -560,6 +560,8 @@ func (s *Service) projectAdapterResult(
 				Pages:          search.Pages,
 				CandidateCount: len(candidates),
 				Scope:          search.Scope,
+				WorkScope:      string(search.WorkScope),
+				WrongWorkCount: search.WrongWorkCount,
 				Warnings:       cloneNotes(search.Warnings),
 			},
 		}

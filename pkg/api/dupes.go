@@ -97,10 +97,16 @@ type DupeCandidateEvaluation struct {
 
 // DupeSearchEvidence is the safe completion state of one tracker search.
 type DupeSearchEvidence struct {
-	Complete       bool     `json:"complete"`
-	Pages          int      `json:"pages"`
-	CandidateCount int      `json:"candidateCount"`
-	Scope          string   `json:"scope,omitempty"`
+	Complete       bool   `json:"complete"`
+	Pages          int    `json:"pages"`
+	CandidateCount int    `json:"candidateCount"`
+	Scope          string `json:"scope,omitempty"`
+	// WorkScope reports how the search was bound to one work
+	// (provider_id, tracker_group, or title_fallback).
+	WorkScope string `json:"workScope,omitempty"`
+	// WrongWorkCount is the number of returned rows excluded because they
+	// belonged to a conflicting work.
+	WrongWorkCount int      `json:"wrongWorkCount,omitempty"`
 	Warnings       []string `json:"warnings,omitempty"`
 }
 
