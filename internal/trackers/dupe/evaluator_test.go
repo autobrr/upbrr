@@ -1192,6 +1192,52 @@ func TestEvaluateGeneralSeasonPackContainmentIsDirectional(t *testing.T) {
 	}
 }
 
+func TestEvaluateGenericVideoBasenameDoesNotEstablishIdentity(t *testing.T) {
+	t.Parallel()
+
+	// Generic member names repeat across distinct releases. A shared generic
+	// video basename must not establish identity when the video sets differ,
+	// and identical generic single-file sets with conflicting known sizes
+	// must fail the size check.
+	sharedSample := Evaluate(
+		api.TrackerDuplicateTarget{
+			Names:     []string{"Example.Release.2026.2160p-GRP"},
+			FileNames: []string{"Example.Release.2026.2160p-GRP.mkv", "sample.mkv"},
+			SizeBytes: 4000,
+		},
+		[]TrackerCandidate{{
+			Name:      "Example.Release.2026.1080p-OTHER",
+			Files:     []string{"Example.Release.2026.1080p-OTHER.mkv", "sample.mkv"},
+			SizeKnown: true,
+			SizeBytes: 1500,
+		}},
+		trackerspkg.DupePolicy{},
+		SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID},
+	)
+	if got := sharedSample.Candidates[0].Relation; got == api.DupeRelationExactDuplicate {
+		t.Fatalf("shared generic sample basename must not be exact identity, got %q", got)
+	}
+
+	genericSingle := Evaluate(
+		api.TrackerDuplicateTarget{
+			Names:     []string{"Example.Release.2026.2160p-GRP"},
+			FileNames: []string{"01.mkv"},
+			SizeBytes: 4000,
+		},
+		[]TrackerCandidate{{
+			Name:      "Example.Release.2026.1080p-OTHER",
+			Files:     []string{"01.mkv"},
+			SizeKnown: true,
+			SizeBytes: 1500,
+		}},
+		trackerspkg.DupePolicy{},
+		SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID},
+	)
+	if got := genericSingle.Candidates[0].Relation; got == api.DupeRelationExactDuplicate {
+		t.Fatalf("generic single-file basename with conflicting sizes must not be exact, got %q", got)
+	}
+}
+
 func TestEvaluateSingleAuxiliaryFileStemDoesNotEstablishIdentity(t *testing.T) {
 	t.Parallel()
 
