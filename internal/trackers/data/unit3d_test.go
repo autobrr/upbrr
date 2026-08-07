@@ -235,7 +235,7 @@ func TestSearchTorrentsCBRIncludesPendingAndFiltersTMDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("search torrents: %v", err)
 	}
-	if !strings.Contains(warning, "omitted 1 rows with conflicting TMDB IDs") {
+	if !strings.Contains(warning, "omitted 1 row with conflicting TMDB IDs") {
 		t.Fatalf("wrong-work warning = %q", warning)
 	}
 	if len(entries) != 2 {
@@ -391,8 +391,9 @@ func TestDedupeUnit3DEntriesKeepsRicherEvidence(t *testing.T) {
 			Source: "WEB",
 			Files:  []string{"example.mkv"},
 		},
+		{ID: "42", Name: "Different.Release"},
 	})
-	if len(entries) != 1 || entries[0].Type != "WEBDL" {
+	if len(entries) != 2 || entries[0].Type != "WEBDL" || entries[1].Name != "Different.Release" {
 		t.Fatalf("deduped entries = %#v", entries)
 	}
 }

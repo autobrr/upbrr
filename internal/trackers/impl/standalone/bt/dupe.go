@@ -296,17 +296,17 @@ func processBTGroupPage(n *html.Node, foundItems *[]string) {
 			continue
 		}
 
-		if isDisc {
-			pathDiv := findBTNode(fileDiv, func(node *html.Node) bool {
-				return node.Type == html.ElementNode && node.Data == "div" && hasBTClass(node, "filelist_path")
-			})
-			if pathDiv != nil {
-				folderName := strings.Trim(strings.TrimSpace(extractBTText(pathDiv)), "/")
-				if folderName != "" {
-					*foundItems = append(*foundItems, folderName)
-				}
+		pathDiv := findBTNode(fileDiv, func(node *html.Node) bool {
+			return node.Type == html.ElementNode && node.Data == "div" && hasBTClass(node, "filelist_path")
+		})
+		if pathDiv != nil {
+			folderName := strings.Trim(strings.TrimSpace(extractBTText(pathDiv)), "/")
+			if folderName != "" {
+				*foundItems = append(*foundItems, folderName)
+				continue
 			}
-		} else {
+		}
+		if !isDisc {
 			fileTable := findBTNode(fileDiv, func(node *html.Node) bool {
 				return node.Type == html.ElementNode && node.Data == "table" && hasBTClass(node, "filelist_table")
 			})

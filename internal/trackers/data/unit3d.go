@@ -461,9 +461,13 @@ func (c *Client) SearchTorrentsWithEvidenceBound(
 	}
 	result.Entries = dedupeUnit3DEntries(result.Entries)
 	if result.WrongWorkCount > 0 {
+		rowLabel := "rows"
+		if result.WrongWorkCount == 1 {
+			rowLabel = "row"
+		}
 		result.Warning = appendUnit3DWarning(
 			result.Warning,
-			fmt.Sprintf("Unit3D search omitted %d rows with conflicting TMDB IDs", result.WrongWorkCount),
+			fmt.Sprintf("Unit3D search omitted %d %s with conflicting TMDB IDs", result.WrongWorkCount, rowLabel),
 		)
 	}
 
@@ -722,20 +726,21 @@ func appendUnit3DWarning(existing string, warning string) string {
 
 func dedupeUnit3DEntries(entries []api.DupeEntry) []api.DupeEntry {
 	result := make([]api.DupeEntry, 0, len(entries))
-	indexByID := make(map[string]int)
+	indexByKey := make(map[string]int)
 	for _, entry := range entries {
 		id := strings.TrimSpace(entry.ID)
 		if id == "" {
 			result = append(result, entry)
 			continue
 		}
-		if index, ok := indexByID[id]; ok {
+		key := id + "\x00" + strings.ToLower(strings.TrimSpace(entry.Name))
+		if index, ok := indexByKey[key]; ok {
 			if unit3DEntryRichness(entry) > unit3DEntryRichness(result[index]) {
 				result[index] = entry
 			}
 			continue
 		}
-		indexByID[id] = len(result)
+		indexByKey[key] = len(result)
 		result = append(result, entry)
 	}
 	return result
