@@ -515,6 +515,95 @@ func TestEvaluateExactFileIdentityNormalizesHostAndTorrentPaths(t *testing.T) {
 	}
 }
 
+func TestEvaluateSharedAuxiliaryFileIsNotExactIdentity(t *testing.T) {
+	t.Parallel()
+
+	// Same-work releases at different resolutions can ship identically named
+	// subtitle/companion files; a shared auxiliary basename must not become
+	// exact identity between distinct releases.
+	evaluation := Evaluate(
+		api.TrackerDuplicateTarget{
+			Names:      []string{"Example.Release.2026.2160p-GRP"},
+			Resolution: "2160p",
+			FileNames: []string{
+				"Example.Release.2026.2160p-GRP/Example.Release.2026.2160p-GRP.mkv",
+				"Example.Release.2026.2160p-GRP/2_English.srt",
+			},
+			SizeBytes: 4000,
+		},
+		[]TrackerCandidate{{
+			Name:       "Example.Release.2026.1080p-GRP",
+			Resolution: "1080p",
+			Files: []string{
+				"Example.Release.2026.1080p-GRP/Example.Release.2026.1080p-GRP.mkv",
+				"Example.Release.2026.1080p-GRP/2_English.srt",
+			},
+			SizeKnown: true,
+			SizeBytes: 1500,
+		}},
+		trackerspkg.DupePolicy{},
+		SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID},
+	)
+	if got := evaluation.Candidates[0].Relation; got == api.DupeRelationExactDuplicate {
+		t.Fatalf("shared subtitle basename must not be exact identity, got %q", got)
+	}
+}
+
+func TestEvaluateSeasonPackProposalNotBlockedBySingleEpisodeFile(t *testing.T) {
+	t.Parallel()
+
+	// A proposed season pack shares episode file basenames with existing
+	// single-episode uploads; identity must not outrank pack precedence.
+	evaluation := Evaluate(
+		api.TrackerDuplicateTarget{
+			Names:  []string{"Example.Show.S01.1080p-GRP"},
+			Season: 1,
+			Pack:   true,
+			FileNames: []string{
+				"Example.Show.S01.1080p-GRP/Example.Show.S01E01.1080p-GRP.mkv",
+				"Example.Show.S01.1080p-GRP/Example.Show.S01E02.1080p-GRP.mkv",
+			},
+			SizeBytes: 4000,
+		},
+		[]TrackerCandidate{{
+			Name:      "Example.Show.S01E01.1080p-GRP",
+			Season:    1,
+			Episode:   1,
+			Files:     []string{"Example.Show.S01E01.1080p-GRP.mkv"},
+			SizeKnown: true,
+			SizeBytes: 2000,
+		}},
+		trackerspkg.DupePolicy{},
+		SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID},
+	)
+	if got := evaluation.Candidates[0].Relation; got != api.DupeRelationProposedTrumps {
+		t.Fatalf("season pack over existing episode must trump, got %q", got)
+	}
+}
+
+func TestEvaluateEqualVideoSetWithConflictingSizeIsNotExact(t *testing.T) {
+	t.Parallel()
+
+	evaluation := Evaluate(
+		api.TrackerDuplicateTarget{
+			Names:     []string{"Example.Release.2026-GRP"},
+			FileNames: []string{"Example.Release.2026-GRP.mkv"},
+			SizeBytes: 4000,
+		},
+		[]TrackerCandidate{{
+			Name:      "Example.Release.2026.Other-GRP",
+			Files:     []string{"Example.Release.2026-GRP.mkv"},
+			SizeKnown: true,
+			SizeBytes: 1500,
+		}},
+		trackerspkg.DupePolicy{},
+		SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID},
+	)
+	if got := evaluation.Candidates[0].Relation; got == api.DupeRelationExactDuplicate {
+		t.Fatalf("known conflicting sizes must veto file identity, got %q", got)
+	}
+}
+
 func TestEvaluateGeneralPolicyAppliesPackPrecedence(t *testing.T) {
 	t.Parallel()
 
