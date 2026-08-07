@@ -147,7 +147,10 @@ func TestSourceBackedDupeOverlaysResolveDeterministically(t *testing.T) {
 				test.target,
 				[]dupe.TrackerCandidate{test.candidate},
 				policy,
-				dupe.SearchEvidence{Complete: true},
+				dupe.SearchEvidence{
+					Complete:  true,
+					WorkScope: dupe.WorkScopeProviderID,
+				},
 			).Candidates[0]
 			if got.Relation != test.relation {
 				t.Fatalf("%s relation = %#v", test.tracker, got)
