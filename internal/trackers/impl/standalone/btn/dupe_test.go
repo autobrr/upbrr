@@ -290,6 +290,25 @@ func TestBTNHandlerPaginatesUntilReportedTotal(t *testing.T) {
 	}
 }
 
+func TestBTNHandlerPreservesEntriesAfterPartialRequestFailure(t *testing.T) {
+	t.Parallel()
+
+	payloads := captureBTNPayloads(t, `{"result":{"results":"3","torrents":{"101":{"ReleaseName":"Example.Show.S01E01.1080p-GRP"},"102":{"ReleaseName":"Example.Show.S01E01.720p-GRP"}}}}`)
+	handler := dupe.NewAdapter(New(), "BTN", configWithBTNAPIKey(), payloads.client, nil)
+	result := handler.Search(context.Background(), api.DuplicateSubject{
+		SourcePath: "x",
+		Identity: api.ExternalIdentity{
+			Category: "TV",
+			TVDBID:   998877,
+		},
+	})
+
+	evidence := result.SearchEvidence()
+	if len(result.Entries()) != 2 || evidence.Complete || len(evidence.Warnings) != 1 || evidence.Warnings[0] != "BTN search stopped after a partial request failure" {
+		t.Fatalf("unexpected partial search result entries=%d evidence=%#v", len(result.Entries()), evidence)
+	}
+}
+
 func TestBTNHandlerUsesOneShotDailySearch(t *testing.T) {
 	t.Parallel()
 

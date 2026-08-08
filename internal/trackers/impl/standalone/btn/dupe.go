@@ -24,6 +24,7 @@ const btnDupePageLimit = 100
 type dupeSearcher struct {
 	cfg      config.Config
 	http     *http.Client
+	logger   api.Logger
 	endpoint string
 	maxPages int
 }
@@ -41,10 +42,10 @@ func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 	cfg := deps.BoundConfig()
 	httpClient := deps.HTTPClient()
 	logger := deps.Logger()
-	_ = logger
 	return &dupeSearcher{
 		cfg:      cfg,
 		http:     httpClient,
+		logger:   logger,
 		endpoint: "https://api.broadcasthe.net/",
 		maxPages: deps.MaxPages(100),
 	}
@@ -66,10 +67,6 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing btn/tvdb id and title for BTN dupe search", nil)
 	}
 
-	maxPages := s.maxPages
-	if maxPages <= 0 {
-		maxPages = 100
-	}
 	entries := make([]api.DupeEntry, 0)
 	seenIDs := make(map[string]struct{})
 	offset := 0
@@ -77,9 +74,15 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	reportedTotal := -1
 	complete := false
 	warning := ""
-	for pages < maxPages {
+	for pages < s.maxPages {
 		page, failureCode, fetchErr := s.fetchPage(ctx, token, filter, offset)
 		if failureCode != "" {
+			s.logger.Warnf(
+				"dupechecking: BTN search page failed tracker=BTN offset=%d pages=%d complete=false code=%s",
+				offset,
+				pages,
+				failureCode,
+			)
 			if pages == 0 {
 				return dupe.Failed(failureCode, "BTN search failed", fetchErr)
 			}
@@ -145,6 +148,18 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	warnings := []string(nil)
 	if warning != "" {
 		warnings = []string{warning}
+		s.logger.Warnf(
+			"dupechecking: BTN search incomplete tracker=BTN pages=%d entries=%d complete=false reason=%s",
+			pages,
+			len(entries),
+			warning,
+		)
+	} else {
+		s.logger.Debugf(
+			"dupechecking: BTN search complete tracker=BTN pages=%d entries=%d complete=true",
+			pages,
+			len(entries),
+		)
 	}
 	scope := "work_identity"
 	if daily {
@@ -216,12 +231,13 @@ func (s *dupeSearcher) fetchPage(ctx context.Context, token string, filter map[s
 func btnDupeFilter(meta api.DuplicateSubject) (map[string]any, dupe.WorkScope, bool) {
 	title := searchTitle(meta)
 	date, daily := btnDailyDate(meta.DailyEpisodeDate)
+	groupID := trackerID(meta)
 	filter := make(map[string]any)
 	workScope := dupe.WorkScopeUnknown
 	switch {
-	case trackerID(meta) != "":
+	case groupID != "":
 		workScope = dupe.WorkScopeTrackerGroup
-		filter["id"] = trackerID(meta)
+		filter["id"] = groupID
 	case meta.Identity.TVDBID != 0:
 		workScope = dupe.WorkScopeProviderID
 		filter["tvdb"] = strconv.Itoa(meta.Identity.TVDBID)
