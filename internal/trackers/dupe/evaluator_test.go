@@ -618,8 +618,16 @@ func TestEvaluateGeneralPolicyAppliesPackPrecedence(t *testing.T) {
 	t.Parallel()
 
 	evaluation := Evaluate(
-		api.TrackerDuplicateTarget{Season: 1, Episode: 2},
-		[]TrackerCandidate{{Season: 1, Pack: true}},
+		api.TrackerDuplicateTarget{
+			Season:     1,
+			Episode:    2,
+			Resolution: "1080p",
+		},
+		[]TrackerCandidate{{
+			Season:     1,
+			Pack:       true,
+			Resolution: "1080p",
+		}},
 		trackerspkg.DupePolicy{ManualReviewRules: []trackerspkg.DupeRule{{
 			ID:                 "policy_evidence_unavailable",
 			Relation:           "manual_review",
@@ -1182,8 +1190,16 @@ func TestEvaluateGeneralSeasonPackContainmentIsDirectional(t *testing.T) {
 	t.Parallel()
 
 	proposedPack := Evaluate(
-		api.TrackerDuplicateTarget{Season: 1, Pack: true},
-		[]TrackerCandidate{{Season: 1, Episode: 2}},
+		api.TrackerDuplicateTarget{
+			Season:     1,
+			Pack:       true,
+			Resolution: "2160p",
+		},
+		[]TrackerCandidate{{
+			Season:     1,
+			Episode:    2,
+			Resolution: "2160p",
+		}},
 		trackerspkg.DupePolicy{},
 		SearchEvidence{WorkScope: WorkScopeProviderID},
 	).Candidates[0]
@@ -1192,13 +1208,39 @@ func TestEvaluateGeneralSeasonPackContainmentIsDirectional(t *testing.T) {
 	}
 
 	existingPack := Evaluate(
-		api.TrackerDuplicateTarget{Season: 1, Episode: 2},
-		[]TrackerCandidate{{Season: 1, Pack: true}},
+		api.TrackerDuplicateTarget{
+			Season:     1,
+			Episode:    2,
+			Resolution: "2160p",
+		},
+		[]TrackerCandidate{{
+			Season:     1,
+			Pack:       true,
+			Resolution: "2160p",
+		}},
 		trackerspkg.DupePolicy{},
 		SearchEvidence{WorkScope: WorkScopeProviderID},
 	).Candidates[0]
 	if existingPack.Relation != api.DupeRelationExistingPreferred {
 		t.Fatalf("existing pack relation = %#v", existingPack)
+	}
+
+	differentResolution := Evaluate(
+		api.TrackerDuplicateTarget{
+			Season:     1,
+			Episode:    2,
+			Resolution: "2160p",
+		},
+		[]TrackerCandidate{{
+			Season:     1,
+			Pack:       true,
+			Resolution: "1080p",
+		}},
+		trackerspkg.DupePolicy{},
+		SearchEvidence{WorkScope: WorkScopeProviderID},
+	)
+	if got := differentResolution.Candidates[0]; got.Relation != api.DupeRelationCoexists || differentResolution.Blocks {
+		t.Fatalf("different-resolution pack relation = %#v", differentResolution)
 	}
 }
 

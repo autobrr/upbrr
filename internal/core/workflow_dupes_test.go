@@ -392,6 +392,41 @@ func TestWorkflowDupeOutcomeIncompleteSearchWithoutCandidatesRequiresReview(t *t
 	}
 }
 
+func TestPublicDupeMatchesExcludesCoexistence(t *testing.T) {
+	t.Parallel()
+
+	result := api.DupeCheckResult{
+		UploadReleaseName: "Example.Release.2026.1080p-GRP",
+		Status:            "completed",
+		Search:            api.DupeSearchEvidence{Complete: true},
+		Evaluations: []api.DupeCandidateEvaluation{
+			{
+				ID:       "coexists",
+				Relation: api.DupeRelationCoexists,
+			},
+			{
+				ID:       "review",
+				Relation: api.DupeRelationSameSlot,
+			},
+		},
+	}
+
+	matches := publicDupeMatches(result)
+	if len(matches) != 1 || matches[0].ID != "review" {
+		t.Fatalf("mixed public matches = %#v", matches)
+	}
+
+	result.Evaluations = result.Evaluations[:1]
+	if matches = publicDupeMatches(result); len(matches) != 0 {
+		t.Fatalf("complete coexistence-only matches = %#v", matches)
+	}
+
+	result.Search.Complete = false
+	if matches = publicDupeMatches(result); len(matches) != 1 || matches[0].Reason != "incomplete_search" {
+		t.Fatalf("incomplete coexistence-only matches = %#v", matches)
+	}
+}
+
 func TestWorkflowDupeBuilderRetainsBlockedLocalClientAndSkippedAuthRows(t *testing.T) {
 	t.Parallel()
 

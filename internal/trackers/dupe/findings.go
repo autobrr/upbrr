@@ -153,7 +153,8 @@ func collectGeneralFindings(target normalizedFacts, candidate normalizedFacts, p
 	// applies when the search authoritatively bound candidates to the same
 	// work; season numbers alone cannot relate releases across works on a
 	// title-fallback search.
-	if workScope == WorkScopeProviderID || workScope == WorkScopeTrackerGroup {
+	if (workScope == WorkScopeProviderID || workScope == WorkScopeTrackerGroup) &&
+		compareDimensionFacts(trackerspkg.DupeDimensionResolution, target.Resolution, candidate.Resolution) == DimensionEqual {
 		if finding, ok := collectPackContainmentFinding(target.Content, candidate.Content); ok {
 			findings = append(findings, finding)
 		}
