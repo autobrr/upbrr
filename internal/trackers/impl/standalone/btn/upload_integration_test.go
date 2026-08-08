@@ -1727,7 +1727,7 @@ func TestBTNSeasonPackReservationFailsClosedOnMalformedAPISearch(t *testing.T) {
 			Method string `json:"method"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&rpc)
-		if rpc.Method != "getTorrentsSearch" {
+		if rpc.Method != "getTorrents" {
 			http.NotFound(w, r)
 			return
 		}
@@ -1778,12 +1778,12 @@ func TestBTNSeasonPackReservationUsesTranslatedTVDBSeason(t *testing.T) {
 			Method string `json:"method"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&rpc)
-		if rpc.Method != "getTorrentsSearch" {
+		if rpc.Method != "getTorrents" {
 			http.NotFound(w, r)
 			return
 		}
 		apiSearchCalls.Add(1)
-		_, _ = fmt.Fprintf(w, `{"result":{"torrents":{"10":{"ReleaseName":"Example.Show.S05E01.1080p-GRP","Time":%q},"9":{"ReleaseName":"Example.Show.S03E01.1080p-GRP","Time":%q}}}}`, now, old)
+		_, _ = fmt.Fprintf(w, `{"result":{"results":"3","torrents":{"10":{"ReleaseName":"Example.Show.S05E01.1080p-GRP","Time":%q},"9":{"ReleaseName":"Example.Show.S05E02.1080p-GRP","Time":%q},"8":{"ReleaseName":"Example.Show.S03E01.1080p-GRP","Time":%q}}}}`, old, now, old)
 	}))
 	defer server.Close()
 
@@ -1812,6 +1812,149 @@ func TestBTNSeasonPackReservationUsesTranslatedTVDBSeason(t *testing.T) {
 	if apiSearchCalls.Load() != 1 {
 		t.Fatalf("expected one API search call, got %d", apiSearchCalls.Load())
 	}
+}
+
+func TestBTNReservationBoundary(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	if !btnReservationActive(now, now.Add(-2*time.Hour+time.Nanosecond)) {
+		t.Fatal("expected reservation to remain active immediately before expiry")
+	}
+	if btnReservationActive(now, now.Add(-2*time.Hour)) {
+		t.Fatal("expected reservation to expire at two hours")
+	}
+	if btnReservationActive(now, now.Add(-2*time.Hour-time.Nanosecond)) {
+		t.Fatal("expected reservation to remain expired after two hours")
+	}
+}
+
+func TestBTNSeasonPackReservationRequiresCompleteTimestampEvidence(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		response   string
+		wantErr    string
+		wantStatus int
+	}{
+		{
+			name:     "missing time",
+			response: `{"result":{"results":"1","torrents":{"1":{"ReleaseName":"Example.Show.S01E01.1080p-GRP"}}}}`,
+			wantErr:  "valid timestamp",
+		},
+		{
+			name:     "malformed time",
+			response: `{"result":{"results":"1","torrents":{"1":{"ReleaseName":"Example.Show.S01E01.1080p-GRP","Time":"later"}}}}`,
+			wantErr:  "valid timestamp",
+		},
+		{
+			name:     "fractional time",
+			response: `{"result":{"results":"1","torrents":{"1":{"ReleaseName":"Example.Show.S01E01.1080p-GRP","Time":1.5}}}}`,
+			wantErr:  "valid timestamp",
+		},
+		{
+			name:     "no match",
+			response: `{"result":{"results":0,"torrents":false}}`,
+		},
+		{
+			name:       "request failure",
+			wantErr:    "evidence unavailable",
+			wantStatus: http.StatusServiceUnavailable,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if tt.wantStatus != 0 {
+					http.Error(w, "unavailable", tt.wantStatus)
+					return
+				}
+				_, _ = w.Write([]byte(tt.response))
+			}))
+			defer server.Close()
+
+			err := checkBTNSeasonPackReservation(context.Background(), uploadContext{
+				apiURL:   server.URL,
+				apiToken: strings.Repeat("x", 30),
+			}, btnReservationTestInput())
+			if tt.wantErr == "" && err != nil {
+				t.Fatalf("unexpected reservation error: %v", err)
+			}
+			if tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)) {
+				t.Fatalf("reservation error=%v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestBTNSeasonPackReservationPaginatesBeforeBlocking(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+	old := strconv.FormatInt(time.Now().Add(-3*time.Hour).Unix(), 10)
+	recent := strconv.FormatInt(time.Now().Add(-time.Hour).Unix(), 10)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		switch calls.Add(1) {
+		case 1:
+			_, _ = fmt.Fprintf(w, `{"result":{"results":"2","torrents":{"1":{"ReleaseName":"Example.Show.S01E01.1080p-GRP","Time":%q}}}}`, old)
+		case 2:
+			_, _ = fmt.Fprintf(w, `{"result":{"results":"2","torrents":{"2":{"ReleaseName":"Example.Show.S01E02.1080p-GRP","Time":%q}}}}`, recent)
+		default:
+			http.Error(w, "unexpected request", http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+
+	err := checkBTNSeasonPackReservation(context.Background(), uploadContext{
+		apiURL:   server.URL,
+		apiToken: strings.Repeat("x", 30),
+	}, btnReservationTestInput())
+	if err == nil || !strings.Contains(err.Error(), "2-hour reservation period") {
+		t.Fatalf("expected complete multi-page evidence to block, got %v", err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("expected two reservation pages, got %d", calls.Load())
+	}
+}
+
+func TestBTNSeasonPackReservationRejectsPartialSearch(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+	old := strconv.FormatInt(time.Now().Add(-3*time.Hour).Unix(), 10)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			_, _ = fmt.Fprintf(w, `{"result":{"results":"2","torrents":{"1":{"ReleaseName":"Example.Show.S01E01.1080p-GRP","Time":%q}}}}`, old)
+			return
+		}
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	err := checkBTNSeasonPackReservation(context.Background(), uploadContext{
+		apiURL:   server.URL,
+		apiToken: strings.Repeat("x", 30),
+	}, btnReservationTestInput())
+	if err == nil || !strings.Contains(err.Error(), "evidence unavailable") {
+		t.Fatalf("expected partial reservation evidence to be unavailable, got %v", err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("expected two reservation requests, got %d", calls.Load())
+	}
+}
+
+func btnReservationTestInput() trackers.PreparationInput {
+	return trackers.PreparationInput{Meta: api.UploadSubject{
+		TVPack:    true,
+		SeasonInt: 1,
+		Tag:       "NTb",
+		Identity: api.ExternalIdentity{
+			TVDBID:   123456,
+			Category: "TV",
+		},
+	}}
 }
 
 func TestBTNUploadFollowsIntermediateDetailPage(t *testing.T) {

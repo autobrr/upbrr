@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
@@ -1306,72 +1307,118 @@ func checkBTNSeasonPackReservation(ctx context.Context, uploadCtx uploadContext,
 		"category": "Episode",
 		"group":    group,
 	}
-
-	// We only need the most recent episodes to check the 2-hour window
-	torrentsMap, err := btnAPISearchTorrents(ctx, uploadCtx.apiURL, uploadCtx.apiToken, filter, 50)
-	if err != nil {
-		return err
-	}
-
-	seasonPrefix := ""
 	season, _ := resolveBTNTVSeasonEpisode(req.Meta)
-	if season > 0 {
-		seasonPrefix = fmt.Sprintf("S%02dE", season)
+	if season <= 0 {
+		return errors.New("trackers: BTN reservation evidence unavailable: canonical season is missing")
 	}
+
+	torrents, err := btnAPISearchTorrents(ctx, uploadCtx.apiURL, uploadCtx.apiToken, filter, btnDupePageLimit)
+	if err != nil {
+		return fmt.Errorf("trackers: BTN reservation evidence unavailable: %w", err)
+	}
+
+	seasonPrefix := fmt.Sprintf("S%02dE", season)
 
 	var newestInternal time.Time
-	for _, t := range torrentsMap {
-		name, _ := t["ReleaseName"].(string)
-		if seasonPrefix != "" && !strings.Contains(strings.ToUpper(name), seasonPrefix) {
+	for _, torrent := range torrents {
+		if strings.TrimSpace(torrent.releaseName) == "" {
+			return errors.New("trackers: BTN reservation evidence unavailable: result omitted a release name")
+		}
+		if !strings.Contains(strings.ToUpper(torrent.releaseName), seasonPrefix) {
 			continue
 		}
-
-		tTime := parseBTNTimestamp(t["Time"])
-		if tTime.After(newestInternal) {
-			newestInternal = tTime
+		if !torrent.timePresent || !torrent.timeValid {
+			return errors.New("trackers: BTN reservation evidence unavailable: matching result omitted a valid timestamp")
+		}
+		if torrent.uploadedAt.After(newestInternal) {
+			newestInternal = torrent.uploadedAt
 		}
 	}
 
-	if !newestInternal.IsZero() && time.Since(newestInternal) < 2*time.Hour {
+	if btnReservationActive(time.Now(), newestInternal) {
+		if req.Logger != nil {
+			req.Logger.Warnf("trackers: BTN reservation check decision=blocked season=%d evidence_rows=%d", season, len(torrents))
+		}
 		return errors.New("trackers: BTN 2-hour reservation period for internal season packs has not expired")
+	}
+	if req.Logger != nil {
+		req.Logger.Debugf("trackers: BTN reservation check decision=allowed season=%d evidence_rows=%d", season, len(torrents))
 	}
 
 	return nil
 }
 
-func btnAPISearchTorrents(ctx context.Context, apiURL, apiToken string, filter map[string]any, limit int) (map[string]map[string]any, error) {
-	var response struct {
-		Result struct {
-			Torrents json.RawMessage `json:"torrents"`
-		} `json:"result"`
-	}
-	if err := callBTNAPI(ctx, apiURL, "ua-btn-upload-check", "getTorrentsSearch", []any{apiToken, filter, limit}, &response); err != nil {
-		return nil, err
-	}
-
-	if len(response.Result.Torrents) == 0 || string(response.Result.Torrents) == "false" || string(response.Result.Torrents) == "[]" {
-		return nil, nil
-	}
-
-	var torrentsMap map[string]map[string]any
-	if err := json.Unmarshal(response.Result.Torrents, &torrentsMap); err != nil {
-		return nil, fmt.Errorf("trackers: BTN API parse torrents search response: %s", redaction.RedactValue(err.Error(), nil))
-	}
-	return torrentsMap, nil
+func btnReservationActive(now time.Time, newest time.Time) bool {
+	return !newest.IsZero() && now.Sub(newest) < 2*time.Hour
 }
 
-func parseBTNTimestamp(val any) time.Time {
+func btnAPISearchTorrents(ctx context.Context, apiURL, apiToken string, filter map[string]any, limit int) (map[string]btnTorrent, error) {
+	torrents := make(map[string]btnTorrent)
+	offset := 0
+	reportedTotal := -1
+	for range 100 {
+		var response btnTorrentsResponse
+		if err := callBTNAPI(ctx, apiURL, "ua-btn-upload-check", "getTorrents", []any{apiToken, filter, limit, offset}, &response); err != nil {
+			return nil, err
+		}
+		if btnAPIErrorPresent(response.Error) {
+			return nil, errors.New("trackers: BTN API rejected reservation search")
+		}
+		if response.Result == nil {
+			return nil, errors.New("trackers: BTN API reservation search omitted its result")
+		}
+		pageTorrents, itemCount, malformed, err := decodeBTNDupeTorrents(response.Result.Torrents)
+		if err != nil {
+			return nil, fmt.Errorf("trackers: BTN API parse torrents search response: %s", redaction.RedactValue(err.Error(), nil))
+		}
+		total, totalKnown := btnResultCount(response.Result.Results)
+		if !totalKnown {
+			return nil, errors.New("trackers: BTN API reservation search omitted a valid results count")
+		}
+		if reportedTotal < 0 {
+			reportedTotal = total
+		} else if reportedTotal != total {
+			return nil, errors.New("trackers: BTN API reservation search returned inconsistent results counts")
+		}
+		if malformed {
+			return nil, errors.New("trackers: BTN API reservation search returned malformed torrent evidence")
+		}
+		for id, torrent := range pageTorrents {
+			if strings.TrimSpace(id) == "" {
+				return nil, errors.New("trackers: BTN API reservation search returned an empty torrent id")
+			}
+			torrents[id] = torrent
+		}
+		switch {
+		case len(torrents) == reportedTotal:
+			return torrents, nil
+		case len(torrents) > reportedTotal:
+			return nil, errors.New("trackers: BTN API reservation search returned more torrents than reported")
+		case itemCount == 0:
+			return nil, errors.New("trackers: BTN API reservation search stopped before all reported results were returned")
+		}
+		offset += itemCount
+	}
+	return nil, errors.New("trackers: BTN API reservation search reached its page bound")
+}
+
+func parseBTNTimestamp(val any) (time.Time, bool) {
 	var epoch int64
 	switch v := val.(type) {
 	case string:
 		epoch, _ = strconv.ParseInt(v, 10, 64)
 	case float64:
+		if v < 1 || v > 1<<53-1 || v != math.Trunc(v) {
+			return time.Time{}, false
+		}
 		epoch = int64(v)
+	case json.Number:
+		epoch, _ = v.Int64()
 	}
 	if epoch > 0 {
-		return time.Unix(epoch, 0)
+		return time.Unix(epoch, 0), true
 	}
-	return time.Time{}
+	return time.Time{}, false
 }
 
 func resolveBTNSameOriginURL(baseURL string, currentURL string, rawURL string) (*url.URL, bool) {
