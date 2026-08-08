@@ -203,6 +203,16 @@ func (c *ScreenshotHandlingConfig) ResolvedMaxMenuItems() int {
 	return c.MaxMenuItems
 }
 
+// ResolvedMinSuccessfulUploads returns how many images a host must publish for
+// a tracker before a partially failed image-host batch still counts as usable.
+// Zero or negative disables the allowance, so any failed image fails the batch.
+func (c *ScreenshotHandlingConfig) ResolvedMinSuccessfulUploads() int {
+	if c.MinSuccessfulUploads <= 0 {
+		return 0
+	}
+	return c.MinSuccessfulUploads
+}
+
 type DescriptionSettingsConfig struct {
 	AddLogo                 bool   `yaml:"add_logo"`
 	LogoSize                int    `yaml:"logo_size"`

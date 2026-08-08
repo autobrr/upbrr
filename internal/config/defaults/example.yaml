@@ -49,6 +49,8 @@ screenshot_handling:
   screens: 4
   # Automatic DVD menu capture is opt-in. This caps stored distinct menu screens (1-32).
   max_menu_items: 6
+  # When an image host drops some uploads, the batch still counts as usable once
+  # this many images are published. Zero requires every image to succeed.
   min_successful_image_uploads: 3
   cutoff_screens: 1
   frame_overlay: false

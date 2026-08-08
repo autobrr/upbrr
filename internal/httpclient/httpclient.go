@@ -11,7 +11,12 @@ import (
 const (
 	// DefaultTimeout and UploadTimeout are whole-request deadlines assigned to [http.Client.Timeout].
 	DefaultTimeout = 45 * time.Second
-	UploadTimeout  = 60 * time.Second
+	// UploadTimeout covers image-host uploads, where the deadline spans the host
+	// processing a multi-megabyte image and not just the transfer. 2160p
+	// screenshots run 5-8MB and hosts have been observed answering well past a
+	// minute under load, so this keeps roughly three times the headroom over
+	// their typical response time.
+	UploadTimeout = 120 * time.Second
 )
 
 // New returns a client whose timeout defaults to [DefaultTimeout] when timeout is non-positive.
