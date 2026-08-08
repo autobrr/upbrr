@@ -185,7 +185,7 @@ func TestBTNHandlerPrefersBroadTitleSearch(t *testing.T) {
 func TestBTNHandlerNormalizesEntries(t *testing.T) {
 	t.Parallel()
 
-	payloads := captureBTNPayloads(t, `{"result":{"results":"1","torrents":{"777":{"GroupID":"333","ReleaseName":"Example.Show.S01E01.1080p.WEB-DL.HDR.DV","Size":12345,"Resolution":"1080p","Source":"WEB-DL","HDR":"HDR10","DolbyVision":"DV"}}}}`)
+	payloads := captureBTNPayloads(t, `{"result":{"results":"1","torrents":{"777":{"GroupID":"333","TVDBID":"1234567","IMDBID":"tt1234567","ReleaseName":"Example.Show.S01.1080p.WEB-DL.HDR.DV-NTb","Size":12345,"Category":"season","Resolution":"1080p","Source":"WEB-DL","Codec":"H.264","Container":"MKV","Origin":"P2P","GroupName":"NTb","HDR":"HDR10","DolbyVision":"DV"}}}}`)
 	handler := dupe.NewAdapter(New(), "BTN", configWithBTNAPIKey(), payloads.client, nil)
 
 	entries, notes, err := adapterEvidence(handler.Search(context.Background(), api.DuplicateSubject{
@@ -205,7 +205,7 @@ func TestBTNHandlerNormalizesEntries(t *testing.T) {
 		t.Fatalf("expected 1 entry, got %d", len(entries))
 	}
 	entry := entries[0]
-	if entry.Name != "Example.Show.S01E01.1080p.WEB-DL.HDR.DV" {
+	if entry.Name != "Example.Show.S01.1080p.WEB-DL.HDR.DV-NTb" {
 		t.Fatalf("unexpected name: %#v", entry)
 	}
 	if entry.ID != "777" {
@@ -220,11 +220,62 @@ func TestBTNHandlerNormalizesEntries(t *testing.T) {
 	if entry.Res != "1080p" {
 		t.Fatalf("unexpected resolution: %#v", entry)
 	}
-	if entry.Type != "WEB-DL" {
-		t.Fatalf("unexpected type: %#v", entry)
+	if entry.Type != "" || entry.Source != "WEB-DL" || entry.Category != "season" || !entry.Pack || entry.Codec != "H.264" || entry.Container != "MKV" {
+		t.Fatalf("unexpected category/source/media mapping: %#v", entry)
+	}
+	if entry.ReleaseOrigin != "P2P" || entry.Group != "NTb" || !entry.Internal {
+		t.Fatalf("unexpected origin/group mapping: %#v", entry)
+	}
+	if len(entry.ProviderIDs) != 3 || entry.ProviderIDs[0].Provider != "btn" || entry.ProviderIDs[0].Value != "333" ||
+		entry.ProviderIDs[1].Provider != "tvdb" || entry.ProviderIDs[1].Value != "1234567" ||
+		entry.ProviderIDs[2].Provider != "imdb" || entry.ProviderIDs[2].Value != "tt1234567" {
+		t.Fatalf("unexpected provider IDs: %#v", entry.ProviderIDs)
 	}
 	if len(entry.Flags) != 2 || entry.Flags[0] != "HDR10" || entry.Flags[1] != "DV" {
 		t.Fatalf("unexpected flags: %#v", entry.Flags)
+	}
+	if !entry.FlagsPresent || !entry.FlagsComplete {
+		t.Fatalf("unexpected flag completeness: %#v", entry)
+	}
+}
+
+func TestBTNTorrentMapsGroupEpisodeCoordinates(t *testing.T) {
+	t.Parallel()
+
+	entry := decodeBTNTorrent("777", map[string]any{
+		"GroupName":   "S01E12",
+		"ReleaseName": "[GRP] Example Show - 12 (1080p)",
+	}).dupeEntry()
+	if entry.Season != 1 || entry.Episode != 12 {
+		t.Fatalf("group coordinates = season %d episode %d", entry.Season, entry.Episode)
+	}
+}
+
+func TestBTNHandlerLeavesMissingOptionalEvidenceMissing(t *testing.T) {
+	t.Parallel()
+
+	payloads := captureBTNPayloads(t, `{"result":{"results":1,"torrents":{"777":{"ReleaseName":"Example.Show.S01E01.480p-GRP","Resolution":"SD","HDR":null,"DolbyVision":null}}}}`)
+	handler := dupe.NewAdapter(New(), "BTN", configWithBTNAPIKey(), payloads.client, nil)
+	result := handler.Search(context.Background(), api.DuplicateSubject{
+		SourcePath: "x",
+		Identity:   api.ExternalIdentity{Category: "TV", TVDBID: 1234567},
+	})
+	entries := result.Entries()
+	if result.Cause() != nil || len(entries) != 1 {
+		t.Fatalf("unexpected result entries=%d cause=%v", len(entries), result.Cause())
+	}
+	entry := entries[0]
+	if entry.Type != "" || entry.Source != "" || entry.Category != "" || entry.Codec != "" || entry.Container != "" ||
+		entry.ReleaseOrigin != "" || entry.Group != "" || entry.Internal || entry.FlagsPresent || entry.FlagsComplete || len(entry.ProviderIDs) != 0 {
+		t.Fatalf("missing optional evidence was inferred: %#v", entry)
+	}
+}
+
+func TestBTNInternalGroupDetectionIsCaseInsensitive(t *testing.T) {
+	t.Parallel()
+
+	if !isBTNInternalGroupName("ntb") || !isBTNInternalGroupName("-NTb") || !isBTNInternalGroupName(" -NTb ") || isBTNInternalGroupName("GRP") {
+		t.Fatal("unexpected BTN internal-group classification")
 	}
 }
 

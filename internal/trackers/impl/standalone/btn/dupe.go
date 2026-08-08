@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +22,8 @@ import (
 
 const btnDupePageLimit = 100
 
+var btnGroupEpisodePattern = regexp.MustCompile(`(?i)\bS(\d{1,3})E(\d{1,4})\b`)
+
 type dupeSearcher struct {
 	cfg      config.Config
 	http     *http.Client
@@ -30,11 +33,41 @@ type dupeSearcher struct {
 }
 
 type btnDupePage struct {
-	torrents   map[string]map[string]any
+	torrents   map[string]btnTorrent
 	itemCount  int
 	total      int
 	totalKnown bool
 	malformed  bool
+}
+
+type btnTorrentsResponse struct {
+	Error  json.RawMessage `json:"error"`
+	Result *struct {
+		Results  json.RawMessage `json:"results"`
+		Torrents json.RawMessage `json:"torrents"`
+	} `json:"result"`
+}
+
+type btnTorrent struct {
+	id            string
+	groupID       string
+	releaseName   string
+	category      string
+	source        string
+	codec         string
+	container     string
+	resolution    string
+	provider      string
+	origin        string
+	group         string
+	providerIDs   []api.TrackerProviderID
+	size          int64
+	flags         []string
+	flagsPresent  bool
+	flagsComplete bool
+	uploadedAt    time.Time
+	timePresent   bool
+	timeValid     bool
 }
 
 // NewDuplicateAdapter returns a duplicate-search adapter bound to one immutable dependency set.
@@ -66,6 +99,17 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	if len(filter) == 0 {
 		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing btn/tvdb id and title for BTN dupe search", nil)
 	}
+	mode := "ordinary"
+	if daily {
+		mode = "daily"
+	}
+	s.logger.Debugf(
+		"dupechecking: BTN search started tracker=BTN mode=%s work_scope=%s page_limit=%d max_pages=%d",
+		mode,
+		workScope,
+		btnDupePageLimit,
+		s.maxPages,
+	)
 
 	entries := make([]api.DupeEntry, 0)
 	seenIDs := make(map[string]struct{})
@@ -109,18 +153,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 				continue
 			}
 			seenIDs[id] = struct{}{}
-			entry := api.DupeEntry{
-				Name: releaseName(id, torrent),
-				ID:   id,
-				Link: torrentLink(id, torrent),
-				Res:  btnString(first(torrent, "Resolution", "resolution")),
-				Type: btnString(first(torrent, "Source", "source", "Type", "type")),
-			}
-			if size := btnInt(first(torrent, "Size", "size")); size > 0 {
-				entry.SizeKnown, entry.SizeBytes = true, size
-			}
-			entry.Flags = flags(torrent)
-			entries = append(entries, entry)
+			entries = append(entries, torrent.dupeEntry())
 		}
 		if warning != "" {
 			break
@@ -149,15 +182,21 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	if warning != "" {
 		warnings = []string{warning}
 		s.logger.Warnf(
-			"dupechecking: BTN search incomplete tracker=BTN pages=%d entries=%d complete=false reason=%s",
+			"dupechecking: BTN search finished tracker=BTN mode=%s work_scope=%s pages=%d reported_total=%d unique_rows=%d complete=false decision=incomplete reason=%s",
+			mode,
+			workScope,
 			pages,
+			reportedTotal,
 			len(entries),
 			warning,
 		)
 	} else {
 		s.logger.Debugf(
-			"dupechecking: BTN search complete tracker=BTN pages=%d entries=%d complete=true",
+			"dupechecking: BTN search finished tracker=BTN mode=%s work_scope=%s pages=%d reported_total=%d unique_rows=%d complete=true decision=complete",
+			mode,
+			workScope,
 			pages,
+			reportedTotal,
 			len(entries),
 		)
 	}
@@ -198,13 +237,7 @@ func (s *dupeSearcher) fetchPage(ctx context.Context, token string, filter map[s
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return btnDupePage{}, dupe.FailureResponseStatus, fmt.Errorf("BTN search page at offset %d returned HTTP status %d", offset, resp.StatusCode)
 	}
-	var response struct {
-		Error  json.RawMessage `json:"error"`
-		Result *struct {
-			Results  json.RawMessage `json:"results"`
-			Torrents json.RawMessage `json:"torrents"`
-		} `json:"result"`
-	}
+	var response btnTorrentsResponse
 	if err := decodeBTNAPIJSON(resp.Body, &response); err != nil {
 		return btnDupePage{}, dupe.FailureResponseParse, fmt.Errorf("decode BTN search page at offset %d: %w", offset, err)
 	}
@@ -264,7 +297,7 @@ func btnDailyDate(value string) (string, bool) {
 	return date.Format("2006.01.02"), true
 }
 
-func decodeBTNDupeTorrents(raw json.RawMessage) (map[string]map[string]any, int, bool, error) {
+func decodeBTNDupeTorrents(raw json.RawMessage) (map[string]btnTorrent, int, bool, error) {
 	trimmed := strings.TrimSpace(string(raw))
 	switch trimmed {
 	case "", "null", "false", "[]", "{}", `""`, `"0"`:
@@ -274,7 +307,7 @@ func decodeBTNDupeTorrents(raw json.RawMessage) (map[string]map[string]any, int,
 	if err := json.Unmarshal(raw, &encoded); err != nil {
 		return nil, 0, false, errors.New("invalid torrent result map")
 	}
-	torrents := make(map[string]map[string]any, len(encoded))
+	torrents := make(map[string]btnTorrent, len(encoded))
 	malformed := false
 	for id, value := range encoded {
 		var torrent map[string]any
@@ -282,7 +315,7 @@ func decodeBTNDupeTorrents(raw json.RawMessage) (map[string]map[string]any, int,
 			malformed = true
 			continue
 		}
-		torrents[id] = torrent
+		torrents[id] = decodeBTNTorrent(id, torrent)
 	}
 	return torrents, len(encoded), malformed, nil
 }
@@ -353,8 +386,75 @@ func searchTitle(meta api.DuplicateSubject) string {
 	return ""
 }
 
-func releaseName(id string, torrent map[string]any) string {
-	for _, candidate := range []string{btnString(first(torrent, "ReleaseName", "releaseName")), btnString(first(torrent, "SceneName", "Name", "name")), btnString(first(torrent, "Series", "series")), strings.TrimSpace(id)} {
+func decodeBTNTorrent(id string, values map[string]any) btnTorrent {
+	hdr, hdrPresent := firstPresent(values, "HDR", "hdr")
+	dolbyVision, dolbyVisionPresent := firstPresent(values, "DolbyVision", "dolbyVision", "DV", "dv")
+	rawTime, timePresent := firstPresent(values, "Time", "time")
+	uploadedAt, timeValid := parseBTNTimestamp(rawTime)
+	return btnTorrent{
+		id:            strings.TrimSpace(id),
+		groupID:       btnString(first(values, "GroupID", "groupId")),
+		releaseName:   firstBTNString(values, "ReleaseName", "releaseName", "SceneName", "Name", "name", "Series", "series"),
+		category:      btnString(first(values, "Category", "category")),
+		source:        btnString(first(values, "Source", "source")),
+		codec:         btnString(first(values, "Codec", "codec")),
+		container:     btnString(first(values, "Container", "container")),
+		resolution:    btnString(first(values, "Resolution", "resolution")),
+		provider:      btnString(first(values, "Provider", "provider", "Service", "service")),
+		origin:        btnString(first(values, "Origin", "origin")),
+		group:         btnString(first(values, "GroupName", "groupName", "ReleaseGroup", "releaseGroup")),
+		providerIDs:   btnProviderIDs(values),
+		size:          btnInt(first(values, "Size", "size")),
+		flags:         btnFlags(hdr, dolbyVision),
+		flagsPresent:  hdrPresent || dolbyVisionPresent,
+		flagsComplete: hdrPresent && dolbyVisionPresent,
+		uploadedAt:    uploadedAt,
+		timePresent:   timePresent,
+		timeValid:     timeValid,
+	}
+}
+
+func (torrent btnTorrent) dupeEntry() api.DupeEntry {
+	season, episode := btnGroupEpisode(torrent.group)
+	entry := api.DupeEntry{
+		Name:          torrent.name(),
+		ID:            torrent.id,
+		Link:          torrent.link(),
+		Res:           torrent.resolution,
+		Category:      torrent.category,
+		Season:        season,
+		Episode:       episode,
+		Pack:          strings.EqualFold(strings.TrimSpace(torrent.category), "season"),
+		Source:        torrent.source,
+		Codec:         torrent.codec,
+		Container:     torrent.container,
+		Provider:      torrent.provider,
+		ProviderIDs:   append([]api.TrackerProviderID(nil), torrent.providerIDs...),
+		Group:         torrent.group,
+		ReleaseOrigin: torrent.origin,
+		Internal:      isBTNInternalGroupName(torrent.group),
+		Flags:         append([]string(nil), torrent.flags...),
+		FlagsPresent:  torrent.flagsPresent,
+		FlagsComplete: torrent.flagsComplete,
+	}
+	if torrent.size > 0 {
+		entry.SizeKnown, entry.SizeBytes = true, torrent.size
+	}
+	return entry
+}
+
+func btnGroupEpisode(groupName string) (int, int) {
+	match := btnGroupEpisodePattern.FindStringSubmatch(groupName)
+	if len(match) != 3 {
+		return 0, 0
+	}
+	season, _ := strconv.Atoi(match[1])
+	episode, _ := strconv.Atoi(match[2])
+	return season, episode
+}
+
+func (torrent btnTorrent) name() string {
+	for _, candidate := range []string{torrent.releaseName, torrent.id} {
 		if candidate != "" {
 			return candidate
 		}
@@ -362,25 +462,68 @@ func releaseName(id string, torrent map[string]any) string {
 	return ""
 }
 
-func torrentLink(id string, torrent map[string]any) string {
-	groupID := btnString(first(torrent, "GroupID", "groupId"))
-	if groupID == "" || strings.TrimSpace(id) == "" {
+func (torrent btnTorrent) link() string {
+	if torrent.groupID == "" || torrent.id == "" {
 		return ""
 	}
-	return "https://broadcasthe.net/torrents.php?id=" + groupID + "&torrentid=" + strings.TrimSpace(id)
+	return "https://broadcasthe.net/torrents.php?id=" + torrent.groupID + "&torrentid=" + torrent.id
 }
 
-func flags(torrent map[string]any) []string {
+func btnFlags(values ...any) []string {
 	out := make([]string, 0, 2)
-	for _, value := range []string{btnString(first(torrent, "HDR", "hdr")), btnString(first(torrent, "DolbyVision", "dolbyVision", "DV", "dv"))} {
+	for index, raw := range values {
+		value := btnString(raw)
 		upper := strings.ToUpper(strings.TrimSpace(value))
 		switch upper {
-		case "", "0", "FALSE", "NO", "1", "TRUE", "YES":
+		case "", "0", "FALSE", "NO":
 			continue
+		case "1", "TRUE", "YES":
+			if index == 0 {
+				upper = "HDR"
+			} else {
+				upper = "DV"
+			}
 		}
 		out = append(out, upper)
 	}
 	return out
+}
+
+func btnProviderIDs(values map[string]any) []api.TrackerProviderID {
+	fields := []struct {
+		provider string
+		keys     []string
+	}{
+		{provider: "btn", keys: []string{"GroupID", "groupId"}},
+		{provider: "tvdb", keys: []string{"TVDBID", "TvdbID", "tvdbId", "tvdb"}},
+		{provider: "imdb", keys: []string{"IMDBID", "ImdbID", "imdbId", "imdb"}},
+		{provider: "tvrage", keys: []string{"TVRageID", "TvrageID", "tvrageId", "tvrage"}},
+	}
+	ids := make([]api.TrackerProviderID, 0, len(fields))
+	for _, field := range fields {
+		if value := btnString(first(values, field.keys...)); value != "" && value != "0" {
+			ids = append(ids, api.TrackerProviderID{Provider: field.provider, Value: value})
+		}
+	}
+	return ids
+}
+
+func firstBTNString(values map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value := btnString(values[key]); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func firstPresent(values map[string]any, keys ...string) (any, bool) {
+	for _, key := range keys {
+		if value, ok := values[key]; ok && value != nil {
+			return value, true
+		}
+	}
+	return nil, false
 }
 
 func first(values map[string]any, keys ...string) any {

@@ -108,6 +108,7 @@ func projectDryRunEntry(input PreparationInput, preview api.TrackerDryRunEntry) 
 		Date:        strings.TrimSpace(input.Meta.DailyEpisodeDate),
 	}
 	target := duplicateTarget(input.Meta)
+	target.ReleaseOrigin = taxonomyValue(preview.Payload, "origin").Label
 	target.Names = append([]string{canonicalName, uploadName}, target.Names...)
 	criteriaFingerprint, err := api.CanonicalWorkflowFingerprint(criteria)
 	if err != nil {
@@ -341,6 +342,9 @@ func (r *Registry) ProjectRelease(
 		return blockedReleaseProjection(input, failure.Message()), failure
 	}
 	projection := pureReleaseProjection(input)
+	if descriptor.DupePolicy != nil && descriptor.DupePolicy.TargetReleaseOrigin != nil {
+		projection.DuplicateTarget.ReleaseOrigin = strings.TrimSpace(descriptor.DupePolicy.TargetReleaseOrigin(input.Meta))
+	}
 	var failure *PreparationFailure
 	if contextErr := ctx.Err(); contextErr != nil {
 		failure = NewPreparationFailure(input.Tracker, "projection", "tracker projection canceled", contextErr)
@@ -443,7 +447,7 @@ func (r *Registry) ProjectRelease(
 			projection.DupeReady = false
 			projection.UploadReady = false
 		} else {
-			ApplyProjectionRuleFailures(&projection, ruleFailures, input.ExecutionMode)
+			ApplyProjectionRuleFailures(&projection, ruleFailures, input.ExecutionMode, input.Logger)
 			if projection.Readiness == api.ReadinessStatusUnknown {
 				projection.Readiness = api.ReadinessStatusReady
 				projection.DupeReady = true
@@ -587,6 +591,7 @@ func ApplyProjectionRuleFailures(
 	projection *api.TrackerReleaseProjection,
 	failures []api.RuleFailure,
 	executionMode api.WorkflowExecutionMode,
+	logger api.Logger,
 ) {
 	if projection == nil {
 		return
@@ -600,6 +605,13 @@ func ApplyProjectionRuleFailures(
 		}
 		if blocking {
 			decision = "ineligible"
+			if logger != nil {
+				logger.Warnf(
+					"trackers: projection validation blocked tracker=%s rule=%s decision=ineligible",
+					projection.TrackerID,
+					strings.TrimSpace(failure.Rule),
+				)
+			}
 			projection.Readiness = api.ReadinessStatusIneligible
 			projection.DupeReady = false
 			projection.UploadReady = false

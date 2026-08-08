@@ -456,7 +456,7 @@ func (s *Service) checkTracker(
 			CheckedAt: checkedAt,
 		}
 		s.logger.Infof(
-			"dupechecking: search tracker=%s state=completed source=local_client candidates=1 complete=true candidate_action=true review_required=true",
+			"dupechecking: search tracker=%s state=completed source=local_client candidates=1 complete=true candidate_action=true review_required=false",
 			tracker,
 		)
 		return result, newAssessmentEntry(meta, s.cfg, tracker, DispositionResolved, "", true, match, nil), false
@@ -575,7 +575,7 @@ func (s *Service) projectAdapterResult(
 			search.Complete,
 			effectiveComplete,
 			hasDupes,
-			hasDupes || evaluation.RequiresAction,
+			evaluation.RequiresAction,
 		)
 		s.logTargetEvaluation(tracker, policy, evaluation.TargetFacts, search)
 		for _, finding := range evaluation.SetFindings {
@@ -1110,6 +1110,11 @@ func dupeProgressMessage(result api.DupeCheckResult) string {
 	case "bypassed":
 		return sanitizeSafeMessage(result.SkipReason, "duplicate policy bypassed")
 	default:
+		for _, candidate := range result.Evaluations {
+			if candidate.Relation == api.DupeRelationExactDuplicate || candidate.Relation == api.DupeRelationExistingPreferred {
+				return "duplicate found; upload blocked"
+			}
+		}
 		if !result.Search.Complete {
 			if count := actionableCandidateCount(result.Evaluations); count > 0 {
 				return fmt.Sprintf("search incomplete; %d candidates require attention", count)

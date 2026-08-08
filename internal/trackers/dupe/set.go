@@ -187,7 +187,11 @@ func evaluateSetPredicates(
 				missing = append(missing, missingPrefix+"_"+string(predicate.Dimension))
 				continue
 			}
-			if compareFacts(targetFact, subjectFact) != DimensionEqual {
+			switch compareDimensionFacts(predicate.Dimension, targetFact, subjectFact) {
+			case DimensionEqual:
+			case DimensionUnknown, DimensionNotApplicable:
+				missing = append(missing, missingPrefix+"_"+string(predicate.Dimension))
+			case DimensionDifferent:
 				mismatch = true
 			}
 		}

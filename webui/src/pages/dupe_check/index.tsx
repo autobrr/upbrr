@@ -65,6 +65,7 @@ const relationTone = (relation: string | undefined): "neutral" | "info" | "dange
 const requiresRiskAcknowledgement = (result: DupeAssessment["results"][number] | undefined) =>
   Boolean(
     result &&
+    result.decision === "pending" &&
     ((Boolean(result.search?.pages) && result.search?.complete === false) ||
       result.matches?.some((match) => reviewRelations.has(match.relation || ""))),
   );

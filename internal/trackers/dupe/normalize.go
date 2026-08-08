@@ -142,24 +142,26 @@ type contentScope struct {
 }
 
 type normalizedFacts struct {
-	Type         Fact
-	Source       Fact
-	Resolution   Fact
-	Codec        Fact
-	Container    Fact
-	Provider     Fact
-	Group        Fact
-	Edition      Fact
-	Region       Fact
-	ThreeD       Fact
-	Repack       Fact
-	Size         Fact
-	Files        Fact
-	MediaKind    mediaKind
-	MediaClass   mediaClass
-	SourceFamily sourceFamily
-	Content      contentScope
-	HDR          api.HDRFacts
+	Type          Fact
+	Source        Fact
+	Resolution    Fact
+	Codec         Fact
+	Container     Fact
+	Provider      Fact
+	Group         Fact
+	ReleaseOrigin Fact
+	Pack          Fact
+	Edition       Fact
+	Region        Fact
+	ThreeD        Fact
+	Repack        Fact
+	Size          Fact
+	Files         Fact
+	MediaKind     mediaKind
+	MediaClass    mediaClass
+	SourceFamily  sourceFamily
+	Content       contentScope
+	HDR           api.HDRFacts
 }
 
 type parsedTitleFacts struct {
@@ -200,9 +202,8 @@ func normalizeTargetFacts(target api.TrackerDuplicateTarget) normalizedFacts {
 			FactOriginTargetMedia,
 			FactOriginContentName,
 		),
-		Resolution: mergeStructuredAndTitleFact(
+		Resolution: mergeResolutionFact(
 			canonicalResolution(target.Resolution),
-			"resolution",
 			title.Resolution,
 			FactOriginTargetMedia,
 			FactOriginContentName,
@@ -235,6 +236,8 @@ func normalizeTargetFacts(target api.TrackerDuplicateTarget) normalizedFacts {
 			FactOriginTargetMedia,
 			FactOriginContentName,
 		),
+		ReleaseOrigin: completeFact(canonicalReleaseOrigin(target.ReleaseOrigin), FactOriginTargetMedia, "release_origin"),
+		Pack:          boolFact(target.Pack),
 		Edition: mergeStructuredAndTitleFact(
 			canonicalEdition(target.Edition),
 			"edition",
@@ -327,9 +330,8 @@ func normalizeCandidateFacts(candidate TrackerCandidate) normalizedFacts {
 			FactOriginTrackerAPI,
 			FactOriginTrackerTitle,
 		),
-		Resolution: mergeStructuredAndTitleFact(
+		Resolution: mergeResolutionFact(
 			canonicalResolution(candidate.Resolution),
-			"resolution",
 			title.Resolution,
 			FactOriginTrackerAPI,
 			FactOriginTrackerTitle,
@@ -362,6 +364,8 @@ func normalizeCandidateFacts(candidate TrackerCandidate) normalizedFacts {
 			FactOriginTrackerAPI,
 			FactOriginTrackerTitle,
 		),
+		ReleaseOrigin: completeFact(canonicalReleaseOrigin(candidate.ReleaseOrigin), FactOriginTrackerAPI, "release_origin"),
+		Pack:          boolFact(candidate.Pack),
 		Edition: mergeStructuredAndTitleFact(
 			canonicalEdition(candidate.Edition),
 			"edition",
@@ -759,6 +763,21 @@ func canonicalGroup(value string) string {
 	return strings.TrimLeft(strings.TrimSpace(value), "-")
 }
 
+func canonicalReleaseOrigin(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "scene":
+		return "scene"
+	case "p2p":
+		return "p2p"
+	case "mixed":
+		return "mixed"
+	case "none":
+		return "none"
+	default:
+		return ""
+	}
+}
+
 func canonicalEdition(value string) string {
 	if canonical := canonicalTitleEdition(nil, []string{value}, value); canonical != "" {
 		return canonical
@@ -1020,6 +1039,52 @@ func mergeStructuredAndTitleFact(
 	}
 }
 
+type resolutionComparison uint8
+
+const (
+	resolutionExact resolutionComparison = iota
+	resolutionOverlapping
+	resolutionDisjoint
+)
+
+func mergeResolutionFact(structured string, title string, structuredOrigin FactOrigin, titleOrigin FactOrigin) Fact {
+	structured = strings.TrimSpace(structured)
+	title = strings.TrimSpace(title)
+	if structured == "" || title == "" {
+		return mergeStructuredAndTitleFact(structured, "resolution", title, structuredOrigin, titleOrigin)
+	}
+	if compareResolutionValues(structured, title) != resolutionOverlapping {
+		return mergeStructuredAndTitleFact(structured, "resolution", title, structuredOrigin, titleOrigin)
+	}
+	return Fact{
+		Value:        title,
+		Status:       FactPartial,
+		Origin:       titleOrigin,
+		SourceFields: []string{"resolution", "title"},
+	}
+}
+
+func compareResolutionValues(left string, right string) resolutionComparison {
+	left = canonicalResolution(left)
+	right = canonicalResolution(right)
+	if strings.EqualFold(left, right) {
+		return resolutionExact
+	}
+	if left == "sd" && isConcreteSDResolution(right) || right == "sd" && isConcreteSDResolution(left) {
+		return resolutionOverlapping
+	}
+	return resolutionDisjoint
+}
+
+func isConcreteSDResolution(value string) bool {
+	switch canonicalResolution(value) {
+	case "480i", "480p", "576i", "576p":
+		return true
+	default:
+		return false
+	}
+}
+
 func completeFact(value string, origin FactOrigin, sourceField string) Fact {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -1049,6 +1114,28 @@ func compareFacts(target Fact, candidate Fact) DimensionComparison {
 		return DimensionEqual
 	}
 	return DimensionDifferent
+}
+
+func compareDimensionFacts(dimension trackerspkg.DupeDimension, target Fact, candidate Fact) DimensionComparison {
+	if dimension != trackerspkg.DupeDimensionResolution {
+		return compareFacts(target, candidate)
+	}
+	if target.Status == FactMissing && candidate.Status == FactMissing {
+		return DimensionNotApplicable
+	}
+	if target.Status == FactMissing || candidate.Status == FactMissing ||
+		target.Status == FactContradictory || candidate.Status == FactContradictory {
+		return DimensionUnknown
+	}
+	switch compareResolutionValues(target.Value, candidate.Value) {
+	case resolutionExact:
+		return DimensionEqual
+	case resolutionOverlapping:
+		return DimensionUnknown
+	case resolutionDisjoint:
+		return DimensionDifferent
+	}
+	return DimensionUnknown
 }
 
 func mergeHDRWithTitle(structured api.HDRFacts, title api.HDRFacts) api.HDRFacts {
@@ -1100,15 +1187,21 @@ func dimensionFact(facts normalizedFacts, dimension trackerspkg.DupeDimension) F
 		return facts.Provider
 	case trackerspkg.DupeDimensionGroup:
 		return facts.Group
+	case trackerspkg.DupeDimensionReleaseOrigin:
+		return facts.ReleaseOrigin
 	case trackerspkg.DupeDimensionRepack:
 		return facts.Repack
 	case trackerspkg.DupeDimensionSize:
 		return facts.Size
-	case trackerspkg.DupeDimensionHDR,
-		trackerspkg.DupeDimensionPack,
-		trackerspkg.DupeDimensionSeason,
-		trackerspkg.DupeDimensionEpisode,
-		trackerspkg.DupeDimensionDate:
+	case trackerspkg.DupeDimensionPack:
+		return facts.Pack
+	case trackerspkg.DupeDimensionSeason:
+		return contentSeasonFact(facts.Content)
+	case trackerspkg.DupeDimensionEpisode:
+		return contentEpisodeFact(facts.Content)
+	case trackerspkg.DupeDimensionDate:
+		return completeFact(facts.Content.Date, facts.Content.Origin, "date")
+	case trackerspkg.DupeDimensionHDR:
 		return missingFact()
 	}
 	return missingFact()

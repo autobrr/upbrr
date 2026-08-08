@@ -153,7 +153,8 @@ func collectGeneralFindings(target normalizedFacts, candidate normalizedFacts, p
 	// applies when the search authoritatively bound candidates to the same
 	// work; season numbers alone cannot relate releases across works on a
 	// title-fallback search.
-	if workScope == WorkScopeProviderID || workScope == WorkScopeTrackerGroup {
+	if (workScope == WorkScopeProviderID || workScope == WorkScopeTrackerGroup) &&
+		compareDimensionFacts(trackerspkg.DupeDimensionResolution, target.Resolution, candidate.Resolution) == DimensionEqual {
 		if finding, ok := collectPackContainmentFinding(target.Content, candidate.Content); ok {
 			findings = append(findings, finding)
 		}
@@ -244,7 +245,7 @@ func collectPackContainmentFinding(target contentScope, candidate contentScope) 
 func generalDimensionDiffers(dimension trackerspkg.DupeDimension, target Fact, candidate Fact) bool {
 	eligible := dimension == trackerspkg.DupeDimensionResolution || dimension == trackerspkg.DupeDimensionEdition ||
 		dimension == trackerspkg.DupeDimensionRegion || dimension == trackerspkg.DupeDimensionThreeD
-	return eligible && compareFacts(target, candidate) == DimensionDifferent
+	return eligible && compareDimensionFacts(dimension, target, candidate) == DimensionDifferent
 }
 
 func collectGeneralHDRFinding(target api.HDRFacts, candidate api.HDRFacts) (RuleFinding, bool) {
@@ -355,7 +356,7 @@ func evaluateTrackerRule(
 			candidateFacts,
 			condition.Dimension,
 		)
-		comparison := compareFacts(targetFact, candidateFact)
+		comparison := compareDimensionFacts(condition.Dimension, targetFact, candidateFact)
 		finding.comparisons = append(finding.comparisons, factComparison{
 			Dimension: condition.Dimension,
 			Target:    targetFact,
@@ -441,7 +442,7 @@ func collectTrackerSlotFinding(
 			candidateFacts,
 			dimension,
 		)
-		comparison := compareFacts(targetFact, candidateFact)
+		comparison := compareDimensionFacts(dimension, targetFact, candidateFact)
 		if configured.optional && comparison == DimensionNotApplicable {
 			continue
 		}
@@ -783,6 +784,7 @@ func comparisonFactsForDimension(
 		trackerspkg.DupeDimensionThreeD,
 		trackerspkg.DupeDimensionProvider,
 		trackerspkg.DupeDimensionGroup,
+		trackerspkg.DupeDimensionReleaseOrigin,
 		trackerspkg.DupeDimensionRepack,
 		trackerspkg.DupeDimensionSize:
 		return dimensionFact(targetFacts, dimension), dimensionFact(candidateFacts, dimension)

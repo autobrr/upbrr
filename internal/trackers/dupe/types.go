@@ -376,6 +376,7 @@ func cloneEntries(entries []api.DupeEntry) []api.DupeEntry {
 	out := make([]api.DupeEntry, len(entries))
 	for idx, entry := range entries {
 		entry.Files = append([]string(nil), entry.Files...)
+		entry.ProviderIDs = append([]api.TrackerProviderID(nil), entry.ProviderIDs...)
 		entry.Flags = append([]string(nil), entry.Flags...)
 		entry.HDR.Formats = append([]api.HDRFormat(nil), entry.HDR.Formats...)
 		entry.HDR.FallbackFormats = append([]api.HDRFormat(nil), entry.HDR.FallbackFormats...)

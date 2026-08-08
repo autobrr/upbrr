@@ -454,6 +454,9 @@ type DupePolicy struct {
 	// EvidenceID identifies the policy evidence backing automatic
 	// tracker-specific behavior.
 	EvidenceID string
+	// TargetReleaseOrigin derives tracker-native origin from the proposed release.
+	// ID versions this pure resolver; it is excluded from serialized fingerprints.
+	TargetReleaseOrigin func(api.UploadSubject) string `json:"-"`
 	// SearchScope declares how many pages may be consumed before search becomes incomplete.
 	SearchScope DupeSearchScope
 	// SlotDimensions are compared to establish tracker slot membership.
@@ -516,26 +519,27 @@ type DupeSearchScope struct {
 type DupeDimension string
 
 const (
-	DupeDimensionType         DupeDimension = "type"
-	DupeDimensionSource       DupeDimension = "source"
-	DupeDimensionMediaKind    DupeDimension = "media_kind"
-	DupeDimensionMediaClass   DupeDimension = "media_class"
-	DupeDimensionSourceFamily DupeDimension = "source_family"
-	DupeDimensionResolution   DupeDimension = "resolution"
-	DupeDimensionCodec        DupeDimension = "codec"
-	DupeDimensionContainer    DupeDimension = "container"
-	DupeDimensionHDR          DupeDimension = "hdr"
-	DupeDimensionEdition      DupeDimension = "edition"
-	DupeDimensionRegion       DupeDimension = "region"
-	DupeDimensionThreeD       DupeDimension = "3d"
-	DupeDimensionProvider     DupeDimension = "provider"
-	DupeDimensionGroup        DupeDimension = "group"
-	DupeDimensionRepack       DupeDimension = "repack"
-	DupeDimensionPack         DupeDimension = "pack"
-	DupeDimensionSeason       DupeDimension = "season"
-	DupeDimensionEpisode      DupeDimension = "episode"
-	DupeDimensionDate         DupeDimension = "date"
-	DupeDimensionSize         DupeDimension = "size"
+	DupeDimensionType          DupeDimension = "type"
+	DupeDimensionSource        DupeDimension = "source"
+	DupeDimensionMediaKind     DupeDimension = "media_kind"
+	DupeDimensionMediaClass    DupeDimension = "media_class"
+	DupeDimensionSourceFamily  DupeDimension = "source_family"
+	DupeDimensionResolution    DupeDimension = "resolution"
+	DupeDimensionCodec         DupeDimension = "codec"
+	DupeDimensionContainer     DupeDimension = "container"
+	DupeDimensionHDR           DupeDimension = "hdr"
+	DupeDimensionEdition       DupeDimension = "edition"
+	DupeDimensionRegion        DupeDimension = "region"
+	DupeDimensionThreeD        DupeDimension = "3d"
+	DupeDimensionProvider      DupeDimension = "provider"
+	DupeDimensionGroup         DupeDimension = "group"
+	DupeDimensionReleaseOrigin DupeDimension = "release_origin"
+	DupeDimensionRepack        DupeDimension = "repack"
+	DupeDimensionPack          DupeDimension = "pack"
+	DupeDimensionSeason        DupeDimension = "season"
+	DupeDimensionEpisode       DupeDimension = "episode"
+	DupeDimensionDate          DupeDimension = "date"
+	DupeDimensionSize          DupeDimension = "size"
 )
 
 // DupeHDRSlotMode identifies one tracker HDR slot taxonomy.

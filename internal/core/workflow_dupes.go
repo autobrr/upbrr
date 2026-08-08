@@ -261,6 +261,9 @@ func duplicateEvidenceFingerprint(result api.DupeCheckResult) (api.WorkflowFinge
 func publicDupeMatches(result api.DupeCheckResult) []api.DupeMatchProjection {
 	matches := make([]api.DupeMatchProjection, 0, len(result.Evaluations))
 	for _, evaluation := range result.Evaluations {
+		if evaluation.Relation == api.DupeRelationCoexists {
+			continue
+		}
 		reason := ""
 		if len(evaluation.Reasons) > 0 {
 			reason = evaluation.Reasons[0].Code

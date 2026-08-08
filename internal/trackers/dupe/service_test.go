@@ -169,6 +169,36 @@ func TestProjectAdapterResultIncompleteEmptySearchIsNotCandidateEvidence(t *test
 	}
 }
 
+func TestProjectAdapterResultExactDuplicateDominatesReview(t *testing.T) {
+	t.Parallel()
+
+	logger := &recordingDupeLogger{}
+	service := testService(nil)
+	service.logger = logger
+	result, _ := service.projectAdapterResult(
+		"EXAMPLE",
+		api.DuplicateSubject{ReleaseName: "Example.Release.2026.1080p.WEB-DL-GRP"},
+		ResolvedWithSearch([]api.DupeEntry{
+			{ID: "2", Name: "Example.Release.2026.1080p.WEB-DL-OTHER"},
+			{ID: "1", Name: "Example.Release.2026.1080p.WEB-DL-GRP"},
+		}, nil, SearchEvidence{
+			Complete:  true,
+			WorkScope: WorkScopeProviderID,
+			Pages:     1,
+		}),
+		time.Now().UTC(),
+	)
+	if !result.HasDupes || result.Evaluations[0].Relation != api.DupeRelationExactDuplicate {
+		t.Fatalf("exact duplicate result = %#v", result)
+	}
+	if got := dupeProgressMessage(result); got != "duplicate found; upload blocked" {
+		t.Fatalf("exact duplicate progress = %q", got)
+	}
+	if len(logger.info) != 1 || !strings.Contains(logger.info[0], "candidate_action=true review_required=false") {
+		t.Fatalf("exact duplicate outcome log = %#v", logger.info)
+	}
+}
+
 func TestProjectAdapterResultEmptySearchNeedsAuthoritativeWorkScope(t *testing.T) {
 	t.Parallel()
 
@@ -230,7 +260,7 @@ func TestCheckTrackerLogsLocalClientOutcome(t *testing.T) {
 	}
 	if !strings.Contains(
 		logger.info[0],
-		"tracker=HDB state=completed source=local_client candidates=1 complete=true candidate_action=true review_required=true",
+		"tracker=HDB state=completed source=local_client candidates=1 complete=true candidate_action=true review_required=false",
 	) {
 		t.Fatalf("local-client log = %q", logger.info[0])
 	}
@@ -490,20 +520,27 @@ func adaptersConfig(adapters map[string]Adapter) config.Config {
 }
 
 func TestAdapterResultDefensiveCopies(t *testing.T) {
-	entries := []api.DupeEntry{{Name: "Example.Release.2026.1080p-GRP", Files: []string{"one.mkv"}}}
+	entries := []api.DupeEntry{{
+		Name:        "Example.Release.2026.1080p-GRP",
+		Files:       []string{"one.mkv"},
+		ProviderIDs: []api.TrackerProviderID{{Provider: "tvdb", Value: "1234567"}},
+	}}
 	notes := []string{"display only"}
 	result := Resolved(entries, notes)
 	entries[0].Name = "mutated"
 	entries[0].Files[0] = "mutated"
+	entries[0].ProviderIDs[0].Value = "mutated"
 	notes[0] = "mutated"
 
 	gotEntries := result.Entries()
 	gotNotes := result.Notes()
-	if gotEntries[0].Name != "Example.Release.2026.1080p-GRP" || gotEntries[0].Files[0] != "one.mkv" || gotNotes[0] != "display only" {
+	if gotEntries[0].Name != "Example.Release.2026.1080p-GRP" || gotEntries[0].Files[0] != "one.mkv" ||
+		gotEntries[0].ProviderIDs[0].Value != "1234567" || gotNotes[0] != "display only" {
 		t.Fatalf("result changed through caller mutation: %#v %#v", gotEntries, gotNotes)
 	}
 	gotEntries[0].Files[0] = "again"
-	if result.Entries()[0].Files[0] != "one.mkv" {
+	gotEntries[0].ProviderIDs[0].Value = "again"
+	if result.Entries()[0].Files[0] != "one.mkv" || result.Entries()[0].ProviderIDs[0].Value != "1234567" {
 		t.Fatal("result accessor exposed mutable state")
 	}
 }

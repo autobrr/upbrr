@@ -79,7 +79,37 @@ func Evaluate(
 	if !effectiveComplete {
 		evaluation.RequiresAction = true
 	}
+	if evaluation.Blocks {
+		evaluation.RequiresAction = false
+	}
+	slices.SortStableFunc(evaluation.Candidates, func(left, right CandidateEvaluation) int {
+		leftRank, rightRank := candidateEvaluationRank(left), candidateEvaluationRank(right)
+		if rank := leftRank - rightRank; rank != 0 {
+			return rank
+		}
+		if leftRank >= 2 {
+			return 0
+		}
+		if id := strings.Compare(left.Candidate.ID, right.Candidate.ID); id != 0 {
+			return id
+		}
+		return strings.Compare(left.Candidate.Name, right.Candidate.Name)
+	})
 	return evaluation
+}
+
+func candidateEvaluationRank(candidate CandidateEvaluation) int {
+	switch candidate.Relation {
+	case api.DupeRelationExactDuplicate:
+		return 0
+	case api.DupeRelationExistingPreferred:
+		return 1
+	case api.DupeRelationSameSlot, api.DupeRelationProposedTrumps, api.DupeRelationCoexists,
+		api.DupeRelationManualReview, api.DupeRelationInsufficientEvidence:
+		return 2
+	default:
+		return 3
+	}
 }
 
 func exactCandidate(target api.TrackerDuplicateTarget, candidate TrackerCandidate) bool {
@@ -274,7 +304,7 @@ func candidateResult(
 		Candidate:   candidate,
 		Facts:       facts,
 		Relation:    relation,
-		Reasons:     []api.DupeReason{{Code: strings.TrimSpace(reason), Message: dupeReasonMessage(reason)}},
+		Reasons:     []api.DupeReason{{Code: strings.TrimSpace(reason), Message: dupeReasonMessage(reason, relation)}},
 		Findings:    append([]RuleFinding(nil), findings...),
 		WinningRule: winningRuleID(findings, relation, reason),
 	}
@@ -304,7 +334,7 @@ func winningRuleID(findings []RuleFinding, relation api.DupeRelation, reason str
 	return ""
 }
 
-func dupeReasonMessage(reason string) string {
+func dupeReasonMessage(reason string, relation api.DupeRelation) string {
 	switch strings.TrimSpace(reason) {
 	case "exact_identity":
 		return "Candidate has identical release or file identity."
@@ -376,6 +406,8 @@ func dupeReasonMessage(reason string) string {
 		return "Existing WEB-DL is preferred over the proposed WEBRip."
 	default:
 		switch {
+		case relation == api.DupeRelationCoexists:
+			return "Candidate occupies a distinct tracker slot."
 		case strings.HasSuffix(reason, "_missing"):
 			return "Required comparison evidence is unavailable."
 		case strings.HasSuffix(reason, "_contradictory"):
@@ -409,6 +441,7 @@ func publicCandidateEvaluations(evaluation Evaluation) []api.DupeCandidateEvalua
 			Container:      candidate.Container,
 			Provider:       candidate.Provider,
 			Group:          candidate.Group,
+			ReleaseOrigin:  candidate.ReleaseOrigin,
 			Edition:        candidate.Edition,
 			Region:         candidate.Region,
 			ThreeD:         candidate.ThreeD,

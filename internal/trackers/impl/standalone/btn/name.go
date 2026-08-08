@@ -6,6 +6,7 @@ package btn
 import (
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
 
 	"golang.org/x/text/runes"
@@ -37,7 +38,26 @@ var btnNameNormalizationRules = []btnNameNormalizationRule{
 	{pattern: regexp.MustCompile(`\.{2,}`), replacement: `.`},
 }
 
+var (
+	btnMediaExtensionPattern = regexp.MustCompile(`(?i)\.(?:avi|mkv|mp4|ts|m4v|m2ts|wmv|mpeg|mpg|vob)$`)
+	btnEpisodeTokenPattern   = regexp.MustCompile(`(?i)S\d{1,3}E\d{1,4}(?:-E?\d{1,4})?`)
+	btnDailyTokenPattern     = regexp.MustCompile(`\b20\d{2}[.\-_]\d{2}[.\-_]\d{2}\b`)
+	btnYearBeforeSeason      = regexp.MustCompile(`(?i)\.(?:19|20)\d{2}(\.S\d{1,3}(?:E\d{1,4})?)`)
+)
+
 func resolveUploadName(meta api.UploadSubject) string {
+	if isBTNSceneRelease(meta) {
+		for _, candidate := range []string{meta.SceneName, meta.ReleaseName, meta.ReleaseNameNoTag} {
+			if name := strings.TrimSpace(candidate); name != "" {
+				return name
+			}
+		}
+	}
+	if meta.Anime && !meta.TVPack {
+		if name := strings.TrimSpace(pathutil.Base(meta.Filename)); name != "" {
+			return btnMediaExtensionPattern.ReplaceAllString(name, "")
+		}
+	}
 	var name string
 	if n := strings.TrimSpace(meta.ReleaseName); n != "" {
 		name = n
@@ -48,8 +68,15 @@ func resolveUploadName(meta api.UploadSubject) string {
 	} else {
 		name = pathutil.Base(meta.SourcePath)
 	}
+	name = btnMediaExtensionPattern.ReplaceAllString(name, "")
 	name = cleanAndNormalizeBTNName(name)
+	name = applyBTNDailyDate(name, meta.DailyEpisodeDate)
+	name = applyBTNYearRule(name, meta)
+	name = applyBTNSDResolutionRule(name, meta.Release.Resolution)
 	name = applyBTNNoGroupSuffix(name, meta)
+	if seasonPackHasMixedGroups(meta) {
+		name = regexp.MustCompile(`-[^-\.]+$`).ReplaceAllString(name, "-BTN")
+	}
 	codec := mapCodec(meta, nil)
 	if codec == "Mixed" {
 		codec = ""
@@ -59,6 +86,54 @@ func resolveUploadName(meta api.UploadSubject) string {
 		source = ""
 	}
 	return applyBTNNameMapping(name, codec, source)
+}
+
+func applyBTNDailyDate(name string, value string) string {
+	date, err := time.Parse("2006-01-02", strings.TrimSpace(value))
+	if err != nil {
+		return name
+	}
+	token := date.Format("2006.01.02")
+	if btnDailyTokenPattern.MatchString(name) {
+		return btnDailyTokenPattern.ReplaceAllString(name, token)
+	}
+	return btnEpisodeTokenPattern.ReplaceAllString(name, token)
+}
+
+func applyBTNYearRule(name string, meta api.UploadSubject) string {
+	if strings.TrimSpace(meta.DailyEpisodeDate) != "" || releaseTitleContainsYear(meta.Release.Title) {
+		return name
+	}
+	return btnYearBeforeSeason.ReplaceAllString(name, "$1")
+}
+
+func releaseTitleContainsYear(title string) bool {
+	return regexp.MustCompile(`(?:^|\s)(?:19|20)\d{2}(?:\s|$)`).MatchString(strings.Join(strings.Fields(title), " "))
+}
+
+func applyBTNSDResolutionRule(name string, resolution string) string {
+	switch strings.ToLower(strings.TrimSpace(resolution)) {
+	case "sd", "480i", "480p", "576i", "576p":
+	default:
+		return name
+	}
+	parts := strings.Split(name, ".")
+	kept := parts[:0]
+	for _, part := range parts {
+		lower := strings.ToLower(part)
+		if lower == "sd" || btnDisallowedSDResolutionToken(lower) {
+			continue
+		}
+		kept = append(kept, part)
+	}
+	return strings.Join(kept, ".")
+}
+
+func btnDisallowedSDResolutionToken(value string) bool {
+	if value == "480p" || value == "576p" {
+		return false
+	}
+	return regexp.MustCompile(`^\d{3,4}[pi]$`).MatchString(value)
 }
 
 func resolveSearchName(meta api.UploadSubject) string {
@@ -134,6 +209,8 @@ func removeDiacritics(value string) string {
 
 func cleanAndNormalizeBTNName(value string) string {
 	value = removeDiacritics(value)
+	value = strings.ReplaceAll(value, "&", " and ")
+	value = strings.NewReplacer("'", "", "’", "").Replace(value)
 	value = strings.Join(strings.Fields(value), " ")
 	value = strings.ReplaceAll(value, " ", ".")
 	value = strings.ReplaceAll(value, "DD+", "DDP")

@@ -36,6 +36,7 @@ type TrackerCandidate struct {
 	Container       string
 	Provider        string
 	Group           string
+	ReleaseOrigin   string
 	Edition         string
 	Region          string
 	ThreeD          string
@@ -71,6 +72,7 @@ func NormalizeCandidate(entry api.DupeEntry, _ string) TrackerCandidate {
 		Container:       strings.TrimSpace(entry.Container),
 		Provider:        strings.TrimSpace(entry.Provider),
 		Group:           strings.TrimSpace(entry.Group),
+		ReleaseOrigin:   strings.TrimSpace(entry.ReleaseOrigin),
 		Edition:         strings.TrimSpace(entry.Edition),
 		Region:          strings.TrimSpace(entry.Region),
 		ThreeD:          strings.TrimSpace(entry.ThreeD),
