@@ -233,7 +233,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		descriptionOwner:  "standalone/btn/description.go",
 		mediaOwner:        "standalone/btn/media.go",
 		descriptionGroup:  "btn",
-		releaseNamePolicy: "standalone/btn/v2",
+		releaseNamePolicy: "standalone/btn/v3",
 		projectorVersion:  "standalone-v2",
 		principalName:     "release_name",
 	},

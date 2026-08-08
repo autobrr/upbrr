@@ -45,11 +45,11 @@ var btnInternalGroups = []string{
 }
 
 func isBTNInternalGroup(meta api.UploadSubject) bool {
-	if strings.TrimSpace(meta.Tag) == "" {
-		return false
-	}
+	return isBTNInternalGroupName(meta.Tag)
+}
 
-	group := strings.ToLower(strings.TrimPrefix(meta.Tag, "-"))
+func isBTNInternalGroupName(value string) bool {
+	group := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(value, "-")))
 	for _, value := range btnInternalGroups {
 		if strings.ToLower(value) == group {
 			return true
