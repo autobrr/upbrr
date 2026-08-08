@@ -513,8 +513,21 @@ describe("DupeCheckPage", () => {
               {
                 trackerId: "REMOTE",
                 uploadReleaseName: "Example.Release.S01E01.1080p-GRP",
-                matches: [{ id: "456", name: "Optional match", reason: "same release" }],
-                decision: "pending",
+                matches: [
+                  {
+                    id: "456",
+                    name: "Exact match",
+                    reason: "exact_identity",
+                    relation: "exact_duplicate",
+                  },
+                  {
+                    id: "457",
+                    name: "Uncertain match",
+                    reason: "candidate_content_scope_missing",
+                    relation: "insufficient_evidence",
+                  },
+                ],
+                decision: "accepted",
                 status: "completed",
               },
             ],

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,8 @@ import (
 )
 
 const btnDupePageLimit = 100
+
+var btnGroupEpisodePattern = regexp.MustCompile(`(?i)\bS(\d{1,3})E(\d{1,4})\b`)
 
 type dupeSearcher struct {
 	cfg      config.Config
@@ -412,12 +415,15 @@ func decodeBTNTorrent(id string, values map[string]any) btnTorrent {
 }
 
 func (torrent btnTorrent) dupeEntry() api.DupeEntry {
+	season, episode := btnGroupEpisode(torrent.group)
 	entry := api.DupeEntry{
 		Name:          torrent.name(),
 		ID:            torrent.id,
 		Link:          torrent.link(),
 		Res:           torrent.resolution,
 		Category:      torrent.category,
+		Season:        season,
+		Episode:       episode,
 		Pack:          strings.EqualFold(strings.TrimSpace(torrent.category), "season"),
 		Source:        torrent.source,
 		Codec:         torrent.codec,
@@ -435,6 +441,16 @@ func (torrent btnTorrent) dupeEntry() api.DupeEntry {
 		entry.SizeKnown, entry.SizeBytes = true, torrent.size
 	}
 	return entry
+}
+
+func btnGroupEpisode(groupName string) (int, int) {
+	match := btnGroupEpisodePattern.FindStringSubmatch(groupName)
+	if len(match) != 3 {
+		return 0, 0
+	}
+	season, _ := strconv.Atoi(match[1])
+	episode, _ := strconv.Atoi(match[2])
+	return season, episode
 }
 
 func (torrent btnTorrent) name() string {

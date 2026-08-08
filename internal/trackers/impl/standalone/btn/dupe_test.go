@@ -239,6 +239,18 @@ func TestBTNHandlerNormalizesEntries(t *testing.T) {
 	}
 }
 
+func TestBTNTorrentMapsGroupEpisodeCoordinates(t *testing.T) {
+	t.Parallel()
+
+	entry := decodeBTNTorrent("777", map[string]any{
+		"GroupName":   "S01E12",
+		"ReleaseName": "[GRP] Example Show - 12 (1080p)",
+	}).dupeEntry()
+	if entry.Season != 1 || entry.Episode != 12 {
+		t.Fatalf("group coordinates = season %d episode %d", entry.Season, entry.Episode)
+	}
+}
+
 func TestBTNHandlerLeavesMissingOptionalEvidenceMissing(t *testing.T) {
 	t.Parallel()
 

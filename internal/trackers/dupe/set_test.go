@@ -146,7 +146,7 @@ func TestEvaluateSetCapacityNeverInfersQualityFromSize(t *testing.T) {
 		SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID},
 	)
 	finding := got.SetFindings[0]
-	combined := finding.ReasonCode + " " + dupeReasonMessage(finding.ReasonCode)
+	combined := finding.ReasonCode + " " + dupeReasonMessage(finding.ReasonCode, finding.Relation)
 	if strings.Contains(strings.ToLower(combined), "quality") ||
 		strings.Contains(strings.ToLower(combined), "larger") || strings.Contains(strings.ToLower(combined), "higher") {
 		t.Fatalf("size inferred a quality role: %#v", finding)

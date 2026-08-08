@@ -169,6 +169,36 @@ func TestProjectAdapterResultIncompleteEmptySearchIsNotCandidateEvidence(t *test
 	}
 }
 
+func TestProjectAdapterResultExactDuplicateDominatesReview(t *testing.T) {
+	t.Parallel()
+
+	logger := &recordingDupeLogger{}
+	service := testService(nil)
+	service.logger = logger
+	result, _ := service.projectAdapterResult(
+		"EXAMPLE",
+		api.DuplicateSubject{ReleaseName: "Example.Release.2026.1080p.WEB-DL-GRP"},
+		ResolvedWithSearch([]api.DupeEntry{
+			{ID: "2", Name: "Example.Release.2026.1080p.WEB-DL-OTHER"},
+			{ID: "1", Name: "Example.Release.2026.1080p.WEB-DL-GRP"},
+		}, nil, SearchEvidence{
+			Complete:  true,
+			WorkScope: WorkScopeProviderID,
+			Pages:     1,
+		}),
+		time.Now().UTC(),
+	)
+	if !result.HasDupes || result.Evaluations[0].Relation != api.DupeRelationExactDuplicate {
+		t.Fatalf("exact duplicate result = %#v", result)
+	}
+	if got := dupeProgressMessage(result); got != "duplicate found; upload blocked" {
+		t.Fatalf("exact duplicate progress = %q", got)
+	}
+	if len(logger.info) != 1 || !strings.Contains(logger.info[0], "candidate_action=true review_required=false") {
+		t.Fatalf("exact duplicate outcome log = %#v", logger.info)
+	}
+}
+
 func TestProjectAdapterResultEmptySearchNeedsAuthoritativeWorkScope(t *testing.T) {
 	t.Parallel()
 
@@ -230,7 +260,7 @@ func TestCheckTrackerLogsLocalClientOutcome(t *testing.T) {
 	}
 	if !strings.Contains(
 		logger.info[0],
-		"tracker=HDB state=completed source=local_client candidates=1 complete=true candidate_action=true review_required=true",
+		"tracker=HDB state=completed source=local_client candidates=1 complete=true candidate_action=true review_required=false",
 	) {
 		t.Fatalf("local-client log = %q", logger.info[0])
 	}

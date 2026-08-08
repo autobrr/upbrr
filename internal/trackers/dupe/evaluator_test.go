@@ -21,9 +21,9 @@ func TestEvaluateRetainsDistinctCandidateRelations(t *testing.T) {
 	}
 	candidates := []TrackerCandidate{
 		{
-			ID:   "1",
-			Name: "Example.Release.2026.2160p.WEB-DL.DV.HDR-GRP",
-			HDR:  testHDR(api.HDREvidenceComplete, api.HDRFormatDolbyVision, api.HDRFormatHDR10),
+			ID:   "3",
+			Name: "Example.Release.2026.2160p.WEB-DL.Unknown-GRP",
+			HDR:  api.HDRFacts{Origin: api.HDREvidenceUnknown, Status: api.HDREvidenceMissing},
 		},
 		{
 			ID:   "2",
@@ -31,9 +31,9 @@ func TestEvaluateRetainsDistinctCandidateRelations(t *testing.T) {
 			HDR:  testHDR(api.HDREvidenceComplete, api.HDRFormatSDR),
 		},
 		{
-			ID:   "3",
-			Name: "Example.Release.2026.2160p.WEB-DL.Unknown-GRP",
-			HDR:  api.HDRFacts{Origin: api.HDREvidenceUnknown, Status: api.HDREvidenceMissing},
+			ID:   "1",
+			Name: "Example.Release.2026.2160p.WEB-DL.DV.HDR-GRP",
+			HDR:  testHDR(api.HDREvidenceComplete, api.HDRFormatDolbyVision, api.HDRFormatHDR10),
 		},
 	}
 	evaluation := Evaluate(target, candidates, trackerspkg.DupePolicy{
@@ -45,12 +45,22 @@ func TestEvaluateRetainsDistinctCandidateRelations(t *testing.T) {
 		t.Fatalf("candidate evaluations = %#v", evaluation.Candidates)
 	}
 	if evaluation.Candidates[0].Relation != api.DupeRelationExactDuplicate ||
-		evaluation.Candidates[1].Relation != api.DupeRelationCoexists ||
-		evaluation.Candidates[2].Relation != api.DupeRelationInsufficientEvidence {
+		evaluation.Candidates[1].Relation != api.DupeRelationInsufficientEvidence ||
+		evaluation.Candidates[2].Relation != api.DupeRelationCoexists ||
+		evaluation.Candidates[0].Candidate.ID != "1" {
 		t.Fatalf("candidate relations = %#v", evaluation.Candidates)
 	}
-	if !evaluation.Blocks || !evaluation.RequiresAction {
+	if !evaluation.Blocks || evaluation.RequiresAction {
 		t.Fatalf("aggregate evaluation = %#v", evaluation)
+	}
+}
+
+func TestDupeReasonMessageDescribesCustomCoexistenceAsDistinct(t *testing.T) {
+	t.Parallel()
+
+	got := dupeReasonMessage("tracker_custom_coexists", api.DupeRelationCoexists)
+	if got != "Candidate occupies a distinct tracker slot." {
+		t.Fatalf("custom coexistence message = %q", got)
 	}
 }
 
@@ -1108,11 +1118,11 @@ func TestEvaluateGeneralFallbackPreservesPotentialCandidates(t *testing.T) {
 				Resolution: "1080p",
 			},
 			candidate: TrackerCandidate{
-Name: "Example.Release.2026.1080p.WEB-DL-GRP",
- Type: "WEB-DL",
- Resolution: "1080p",
-},
-			want:      api.DupeRelationSameSlot,
+				Name:       "Example.Release.2026.1080p.WEB-DL-GRP",
+				Type:       "WEB-DL",
+				Resolution: "1080p",
+			},
+			want: api.DupeRelationSameSlot,
 		},
 		{
 			name: "restyled name",
@@ -1122,11 +1132,11 @@ Name: "Example.Release.2026.1080p.WEB-DL-GRP",
 				Resolution: "1080p",
 			},
 			candidate: TrackerCandidate{
-Name: "Restyled Alias - GRP",
- Type: "WEB-DL",
- Resolution: "1080p",
-},
-			want:      api.DupeRelationSameSlot,
+				Name:       "Restyled Alias - GRP",
+				Type:       "WEB-DL",
+				Resolution: "1080p",
+			},
+			want: api.DupeRelationSameSlot,
 		},
 		{
 			name:      "fuzzy filename",
