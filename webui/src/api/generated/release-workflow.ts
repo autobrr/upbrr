@@ -352,6 +352,8 @@ export type DupeSearchEvidence = Readonly<{
   pages: number;
   scope?: string;
   warnings?: readonly string[];
+  workScope?: string;
+  wrongWorkCount?: number;
 }>;
 
 export type EncodeSettingsStatus = string;

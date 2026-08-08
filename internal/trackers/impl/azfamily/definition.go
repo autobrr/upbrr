@@ -82,7 +82,6 @@ func (d *Definition) DupePolicy() *trackers.DupePolicy {
 				trackers.DupeDimensionSource,
 				trackers.DupeDimensionResolution,
 			},
-			PrecedenceRules: trackers.SeasonPackPrecedenceRules("az-upload-rules"),
 		}
 	case "CZ":
 		policy = &trackers.DupePolicy{

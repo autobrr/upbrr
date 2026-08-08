@@ -100,14 +100,14 @@ func TestCZTHandlerSearchUsesPasskeyAndParsesArray(t *testing.T) {
 	}
 }
 
-func TestCZTHandlerSearchPrefersFullReleaseName(t *testing.T) {
+func TestCZTHandlerSearchPrefersBroadTitle(t *testing.T) {
 	t.Parallel()
 
 	const releaseName = "Movie.2024.1080p.WEB-DL-GRP"
 
 	handlerErr := make(chan error, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := assertCZTSearchRequest(r, releaseName); err != nil {
+		if err := assertCZTSearchRequest(r, "Movie"); err != nil {
 			select {
 			case handlerErr <- err:
 			default:
@@ -125,10 +125,11 @@ func TestCZTHandlerSearchPrefersFullReleaseName(t *testing.T) {
 		logger:  api.NopLogger{},
 		baseURL: server.URL,
 	}
-	entries, notes, err := adapterEvidence(handler.Search(context.Background(), api.DuplicateSubject{
+	result := handler.Search(context.Background(), api.DuplicateSubject{
 		ReleaseName: releaseName,
 		Release:     api.ReleaseInfo{Title: "Movie"},
-	}))
+	})
+	entries, notes, err := adapterEvidence(result)
 	select {
 	case err := <-handlerErr:
 		t.Fatalf("handler: %v", err)
@@ -142,6 +143,10 @@ func TestCZTHandlerSearchPrefersFullReleaseName(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].Name != releaseName {
 		t.Fatalf("expected release-name result, got %#v", entries)
+	}
+	search := result.SearchEvidence()
+	if !search.Complete || search.WorkScope != dupe.WorkScopeTitle || search.EffectiveComplete() {
+		t.Fatalf("unexpected search evidence: %#v", search)
 	}
 }
 

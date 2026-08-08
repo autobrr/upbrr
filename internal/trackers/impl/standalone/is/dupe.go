@@ -5,7 +5,6 @@ package is
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"net/http"
 	"net/url"
@@ -52,6 +51,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	}
 	params := url.Values{"do": {"search"}}
 	category := strings.ToUpper(strings.TrimSpace(string(meta.Identity.Category)))
+	workScope := dupe.WorkScopeProviderID
 	if category == "MOVIE" {
 		if meta.Identity.IMDBID == 0 {
 			return dupe.NotRun(dupe.NotRunMissingMetadata, "missing IMDb ID for IS movie dupe search", nil)
@@ -59,9 +59,10 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		params.Set("search_type", "t_genre")
 		params.Set("keywords", providerid.IMDb(meta.Identity.IMDBID).Prefixed())
 	} else {
-		query := dupe.ProjectedSearchName(meta)
-		if meta.Projection == nil {
-			query = strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName) + " " + isSeasonEpisode(meta))
+		workScope = dupe.WorkScopeTitle
+		query := metautil.FirstNonEmptyTrimmed(meta.Release.Title, dupe.ProjectedSearchName(meta), meta.ReleaseName)
+		if query == "" {
+			return dupe.NotRun(dupe.NotRunMissingMetadata, "missing title for IS dupe search", nil)
 		}
 		params.Set("search_type", "t_name")
 		params.Set("keywords", query)
@@ -89,7 +90,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		return node.Type == xhtml.ElementNode && node.Data == "table" && isAttr(node, "id") == "sortabletable"
 	})
 	if table == nil {
-		return dupe.Resolved(nil, nil)
+		return isResolved(nil, workScope)
 	}
 	entries := make([]api.DupeEntry, 0)
 	for _, row := range isFind(table, func(node *xhtml.Node) bool { return node.Type == xhtml.ElementNode && node.Data == "tr" }) {
@@ -110,17 +111,21 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 			entries = append(entries, entry)
 		}
 	}
-	return dupe.Resolved(entries, nil)
+	return isResolved(entries, workScope)
+}
+
+func isResolved(entries []api.DupeEntry, workScope dupe.WorkScope) dupe.AdapterResult {
+	warnings := []string{"IS search pagination completeness is not evidenced"}
+	return dupe.ResolvedWithSearch(entries, nil, dupe.SearchEvidence{
+		WorkScope: workScope,
+		Pages:     1,
+		Scope:     "broad_work_query",
+		Warnings:  warnings,
+	})
 }
 
 func isBaseURL(_ config.Config) string {
 	return "https://immortalseed.me"
-}
-func isSeasonEpisode(meta api.DuplicateSubject) string {
-	if meta.SeasonInt > 0 && meta.EpisodeInt > 0 {
-		return fmt.Sprintf("S%02dE%02d", meta.SeasonInt, meta.EpisodeInt)
-	}
-	return strings.TrimSpace(meta.SeasonStr + meta.EpisodeStr)
 }
 func isFind(root *xhtml.Node, match func(*xhtml.Node) bool) []*xhtml.Node {
 	result := make([]*xhtml.Node, 0)

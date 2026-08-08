@@ -38,9 +38,8 @@ func Profile() unit3d.Profile {
 }
 
 func hhdDupePrecedenceRules(evidenceID string) []trackers.DupeRule {
-	rules := trackers.SeasonPackPrecedenceRules(evidenceID)
-	return append(rules,
-		trackers.DupeRule{
+	return []trackers.DupeRule{
+		{
 			ID:               "proposed_webdl_over_webrip",
 			EvidenceID:       evidenceID,
 			Relation:         "proposed_trumps",
@@ -74,7 +73,7 @@ func hhdDupePrecedenceRules(evidenceID string) []trackers.DupeRule {
 				},
 			},
 		},
-		trackers.DupeRule{
+		{
 			ID:               "existing_webdl_over_webrip",
 			EvidenceID:       evidenceID,
 			Relation:         "existing_preferred",
@@ -108,5 +107,5 @@ func hhdDupePrecedenceRules(evidenceID string) []trackers.DupeRule {
 				},
 			},
 		},
-	)
+	}
 }

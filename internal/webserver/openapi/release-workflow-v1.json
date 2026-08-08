@@ -1428,6 +1428,12 @@
             "items": {
               "type": "string"
             }
+          },
+          "workScope": {
+            "type": "string"
+          },
+          "wrongWorkCount": {
+            "type": "integer"
           }
         },
         "required": [

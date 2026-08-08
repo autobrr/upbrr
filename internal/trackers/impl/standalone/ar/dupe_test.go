@@ -69,8 +69,8 @@ func TestARHandlerSearchParsesResultsWithCookieFile(t *testing.T) {
 			if got := query.Get("action"); got != "browse" {
 				t.Fatalf("expected action=browse, got %q", got)
 			}
-			if got := query.Get("searchstr"); got != "Exact Projected Query" {
-				t.Fatalf("expected exact projected searchstr, got %q", got)
+			if got := query.Get("searchstr"); got != "Example Release 2026" {
+				t.Fatalf("expected broad title/year searchstr, got %q", got)
 			}
 			if got := req.Header.Get("User-Agent"); got == "" {
 				t.Fatalf("expected User-Agent header")
@@ -102,9 +102,9 @@ func TestARHandlerSearchParsesResultsWithCookieFile(t *testing.T) {
 		}, client, logger)
 
 	meta := api.DuplicateSubject{
-		Release: api.ReleaseInfo{Title: "Movie Title", Year: 2023},
+		Release: api.ReleaseInfo{Title: "Example Release", Year: 2026},
 		Projection: &api.TrackerReleaseProjection{
-			DuplicateCriteria: api.TrackerDuplicateCriteria{Name: "Exact Projected Query"},
+			DuplicateCriteria: api.TrackerDuplicateCriteria{Name: "Example.Release.2026.1080p-GRP"},
 		},
 	}
 	result := handler.Search(context.Background(), meta)
@@ -141,11 +141,12 @@ func TestARHandlerSearchParsesResultsWithCookieFile(t *testing.T) {
 		t.Fatalf("unexpected download %q", entry.Download)
 	}
 	search := result.SearchEvidence()
-	if !search.Complete || search.Pages != 2 || search.Scope != "title_year" || len(search.Warnings) != 0 {
+	if !search.Complete || search.WorkScope != dupe.WorkScopeTitle || search.EffectiveComplete() ||
+		search.Pages != 2 || search.Scope != "title_year" || len(search.Warnings) != 0 {
 		t.Fatalf("unexpected search evidence: %#v", search)
 	}
 	logs := strings.Join(logger.debug, "\n")
-	if !strings.Contains(logs, `AR search request method=GET action=browse searchstr="Exact Projected Query"`) {
+	if !strings.Contains(logs, `AR search request method=GET action=browse searchstr="Example Release 2026"`) {
 		t.Fatalf("missing safe AR request diagnostics: %q", logs)
 	}
 	if !strings.Contains(
@@ -156,13 +157,16 @@ func TestARHandlerSearchParsesResultsWithCookieFile(t *testing.T) {
 	}
 }
 
-func TestARSearchQueryDirectFallbackPrefersProviderTitle(t *testing.T) {
+func TestARSearchQueryPrefersProviderTitleOverProjectedRelease(t *testing.T) {
 	t.Parallel()
 
 	got := arSearchQuery(api.DuplicateSubject{
 		Release: api.ReleaseInfo{Title: "EXAMPLE DISC EDITION", Year: 2026},
 		ProviderMetadata: api.SourceScopedMetadata{
 			TMDB: &api.TMDBMetadata{Title: "Example Release", Year: 2026},
+		},
+		Projection: &api.TrackerReleaseProjection{
+			DuplicateCriteria: api.TrackerDuplicateCriteria{Name: "Example.Release.2026.1080p-GRP"},
 		},
 	})
 	if got != "Example Release 2026" {
@@ -235,10 +239,10 @@ func TestARPaginationFailuresRetainSafePartialCandidates(t *testing.T) {
 				}, nil
 			}))
 			searcher := dupeSearcher{
-http: client,
- logger: api.NopLogger{},
- maxPages: test.maxPages,
-}
+				http:     client,
+				logger:   api.NopLogger{},
+				maxPages: test.maxPages,
+			}
 			result := searcher.Search(context.Background(), api.DuplicateSubject{
 				Projection: &api.TrackerReleaseProjection{
 					DuplicateCriteria: api.TrackerDuplicateCriteria{Name: "Example Release 2026"},
@@ -264,10 +268,10 @@ func TestAREmptyResultSetIsComplete(t *testing.T) {
 		}, nil
 	}))
 	result := (dupeSearcher{
-http: client,
- logger: api.NopLogger{},
- maxPages: 2,
-}).Search(
+		http:     client,
+		logger:   api.NopLogger{},
+		maxPages: 2,
+	}).Search(
 		context.Background(),
 		api.DuplicateSubject{Projection: &api.TrackerReleaseProjection{
 			DuplicateCriteria: api.TrackerDuplicateCriteria{Name: "Example Release 2026"},

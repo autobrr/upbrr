@@ -93,7 +93,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 			return dupe.Failed(dupe.FailureResponseParse, "ANT search failed", decodeErr)
 		}
 
-		pageEntries := antDupeEntries(payload, meta.Release.Resolution)
+		pageEntries := antDupeEntries(payload)
 		entries = append(entries, pageEntries...)
 		pages++
 		itemCount := antItemCount(payload)
@@ -130,14 +130,15 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		warnings = []string{"ANT search result is truncated or lacks complete pagination evidence"}
 	}
 	return dupe.ResolvedWithSearch(entries, warnings, dupe.SearchEvidence{
-		Complete: complete,
-		Pages:    pages,
-		Scope:    "work_identity",
-		Warnings: warnings,
+		Complete:  complete,
+		WorkScope: dupe.WorkScopeProviderID,
+		Pages:     pages,
+		Scope:     "work_identity",
+		Warnings:  warnings,
 	})
 }
 
-func antDupeEntries(payload map[string]any, _ string) []api.DupeEntry {
+func antDupeEntries(payload map[string]any) []api.DupeEntry {
 	items, _ := payload["item"].([]any)
 	entries := make([]api.DupeEntry, 0, len(items))
 	for _, raw := range items {

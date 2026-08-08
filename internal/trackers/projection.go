@@ -404,9 +404,14 @@ func (r *Registry) ProjectRelease(
 	}
 	projection.NamingFingerprint = projection.ProjectorFingerprint
 	projection.DuplicatePolicyFingerprint, err = api.CanonicalWorkflowFingerprint(struct {
-		ID     string
-		Policy *DupePolicy
-	}{ID: projection.DuplicatePolicyID, Policy: descriptor.DupePolicy})
+		GeneralPolicyID string
+		ID              string
+		Policy          *DupePolicy
+	}{
+		GeneralPolicyID: GeneralDuplicatePolicyID,
+		ID:              projection.DuplicatePolicyID,
+		Policy:          descriptor.DupePolicy,
+	})
 	if err != nil {
 		failure = NewPreparationFailure(input.Tracker, "fingerprint", "tracker duplicate policy fingerprint failed", err)
 		projection.Readiness = api.ReadinessStatusBlocked
@@ -463,9 +468,11 @@ func (r *Registry) ProjectRelease(
 		}
 	}
 	projection.DuplicateSearchFingerprint, err = api.CanonicalWorkflowFingerprint(struct {
+		Contract string
 		Criteria api.TrackerDuplicateCriteria
 		Scope    DupeSearchScope
 	}{
+		Contract: DuplicateSearchContractID,
 		Criteria: projection.DuplicateCriteria,
 		Scope:    searchScope,
 	})

@@ -137,7 +137,7 @@ func TestMTVHandlerUsesIMDBPriorityAndParsesXML(t *testing.T) {
 	}
 }
 
-func TestMTVHandlerUsesExactProjectedTitleQuery(t *testing.T) {
+func TestMTVHandlerPrefersBroadTitleQuery(t *testing.T) {
 	t.Parallel()
 
 	client := &http.Client{
@@ -146,7 +146,7 @@ func TestMTVHandlerUsesExactProjectedTitleQuery(t *testing.T) {
 			assertQueryParam(t, query, "t", "search")
 			assertQueryParam(t, query, "apikey", "token")
 			assertQueryParam(t, query, "limit", "100")
-			assertQueryParam(t, query, "q", "Exact Projected Query")
+			assertQueryParam(t, query, "q", "Example Release 2026")
 			if got := query.Get("imdbid"); got != "" {
 				t.Fatalf("imdbid should be empty, got %q", got)
 			}
@@ -168,7 +168,7 @@ func TestMTVHandlerUsesExactProjectedTitleQuery(t *testing.T) {
 			},
 		}, client, api.NopLogger{})
 	meta := api.DuplicateSubject{
-		Release: api.ReleaseInfo{Title: "Ignored Title"},
+		Release: api.ReleaseInfo{Title: "Example Release 2026"},
 		Projection: &api.TrackerReleaseProjection{
 			DuplicateCriteria: api.TrackerDuplicateCriteria{Name: "Exact Projected Query"},
 		},

@@ -17,7 +17,7 @@ import (
 )
 
 // GeneralPolicyID identifies the always-on structural comparison policy.
-const GeneralPolicyID = "general/duplicate/v2"
+const GeneralPolicyID = trackerspkg.GeneralDuplicatePolicyID
 
 // FactStatus records evidence completeness for one normalized dimension.
 type FactStatus string

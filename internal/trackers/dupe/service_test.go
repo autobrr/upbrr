@@ -100,7 +100,11 @@ func TestProjectAdapterResultDebugLogsEveryCandidateEvaluation(t *testing.T) {
 			Res:  "1080p",
 			HDR:  candidateHDR,
 		},
-	}, nil, SearchEvidence{Complete: true, Pages: 1}), time.Now().UTC())
+	}, nil, SearchEvidence{
+		Complete:  true,
+		WorkScope: WorkScopeProviderID,
+		Pages:     1,
+	}), time.Now().UTC())
 
 	if len(result.Evaluations) != 2 {
 		t.Fatalf("candidate evaluations = %d, want 2", len(result.Evaluations))
@@ -115,7 +119,7 @@ func TestProjectAdapterResultDebugLogsEveryCandidateEvaluation(t *testing.T) {
 		t.Fatalf("candidate debug logs = %d, want 2", len(candidateLogs))
 	}
 	if !strings.Contains(candidateLogs[0], `tracker=BHD candidate_id="candidate-1" relation=same_slot`) ||
-		!strings.Contains(candidateLogs[0], `winning_rule=bhd/duplicate/v1/same_slot`) ||
+		!strings.Contains(candidateLogs[0], `winning_rule=general/duplicate/v4/same_slot`) ||
 		!strings.Contains(candidateLogs[0], `kind=web_dl class=web source_family=web`) ||
 		!strings.Contains(candidateLogs[0], `name="Example.Release.2026.1080p.WEB-DL-GRP"`) ||
 		!strings.Contains(candidateLogs[0], `facts="WEB-DL · EXAMPLE · 1080p"`) ||
@@ -159,8 +163,50 @@ func TestProjectAdapterResultIncompleteEmptySearchIsNotCandidateEvidence(t *test
 		t.Fatalf("incomplete search progress = %q", got)
 	}
 	if len(logger.info) != 1 ||
-		!strings.Contains(logger.info[0], "candidates=0 complete=false candidate_action=false review_required=true") {
+		!strings.Contains(logger.info[0], "received=0 evaluated=0 wrong_work=0 exhaustive=false effective_complete=false "+
+			"candidate_action=false review_required=true") {
 		t.Fatalf("incomplete search outcome log = %#v", logger.info)
+	}
+}
+
+func TestProjectAdapterResultEmptySearchNeedsAuthoritativeWorkScope(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name         string
+		workScope    WorkScope
+		wantComplete bool
+		wantVerdict  Verdict
+		wantReason   string
+	}{
+		{
+			name:         "provider",
+			workScope:    WorkScopeProviderID,
+			wantComplete: true,
+			wantVerdict:  VerdictClear,
+		},
+		{
+			name:        "title",
+			workScope:   WorkScopeTitle,
+			wantVerdict: VerdictBlocked,
+			wantReason:  "incomplete_search",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result, entry := testService(nil).projectAdapterResult(
+				"EXAMPLE",
+				api.DuplicateSubject{},
+				ResolvedWithSearch(nil, nil, SearchEvidence{
+					Complete:  true,
+					WorkScope: test.workScope,
+					Pages:     1,
+				}),
+				time.Now().UTC(),
+			)
+			if result.Search.Complete != test.wantComplete || entry.verdict != test.wantVerdict || entry.match.MatchedReason != test.wantReason {
+				t.Fatalf("empty search result=%#v entry=%#v", result, entry)
+			}
+		})
 	}
 }
 
@@ -229,7 +275,7 @@ func TestCandidateLogIncludesOnlyDecisiveDeduplicatedEvidence(t *testing.T) {
 	for _, value := range []string{
 		`compared="media_class | resolution"`,
 		`missing=""`,
-		`matched="general/duplicate/v2/media_class"`,
+		`matched="general/duplicate/v4/media_class"`,
 	} {
 		if !strings.Contains(logLine, value) {
 			t.Fatalf("candidate log missing %q: %q", value, logLine)
@@ -361,9 +407,8 @@ func TestCandidateLogShowsDifferentTargetAndCandidateOperands(t *testing.T) {
 			Name: "Example.Release.2026.1080p.WEB-DL.H.264-GRP",
 		}, "AR")},
 		trackerspkg.DupePolicy{
-			ID:                             "ar/duplicate/v2",
-			EvidenceID:                     "ar-uploading-guidelines",
-			SlotDifferencesOverrideGeneral: true,
+			ID:         "ar/duplicate/v2",
+			EvidenceID: "ar-uploading-guidelines",
 			SlotDimensions: []trackerspkg.DupeDimension{
 				trackerspkg.DupeDimensionSource,
 				trackerspkg.DupeDimensionResolution,

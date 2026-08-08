@@ -22,3 +22,34 @@ func TestResolvedPreservesUnknownSearchCompleteness(t *testing.T) {
 		t.Fatalf("compatibility result warnings = %q, want completeness warning", search.Warnings)
 	}
 }
+
+func TestSearchEvidenceEffectiveCompleteRequiresAuthoritativeWorkScope(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name  string
+		scope WorkScope
+		want  bool
+	}{
+		{
+name: "provider",
+ scope: WorkScopeProviderID,
+ want: true,
+},
+		{
+name: "tracker group",
+ scope: WorkScopeTrackerGroup,
+ want: true,
+},
+		{name: "title", scope: WorkScopeTitle},
+		{name: "unknown", scope: WorkScopeUnknown},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := (SearchEvidence{Complete: true, WorkScope: test.scope}).EffectiveComplete(); got != test.want {
+				t.Fatalf("EffectiveComplete() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}

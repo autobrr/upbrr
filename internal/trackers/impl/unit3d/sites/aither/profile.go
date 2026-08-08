@@ -32,10 +32,7 @@ func Profile() unit3d.Profile {
 				trackers.DupeDimensionResolution,
 				trackers.DupeDimensionHDR,
 			},
-			PrecedenceRules: append(
-				trackers.SeasonPackPrecedenceRules("aither-slots-trumping"),
-				trackers.DirectionalMediaKindRules("aither-slots-trumping", "web_dl", "web_rip")...,
-			),
+			PrecedenceRules:     trackers.DirectionalMediaKindRules("aither-slots-trumping", "web_dl", "web_rip"),
 			SizeVariancePercent: 20,
 		},
 		BannedPolicy: &trackers.BannedGroupPolicy{

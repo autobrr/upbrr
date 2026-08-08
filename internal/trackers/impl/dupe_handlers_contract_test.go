@@ -16,6 +16,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
+	ascimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/asc"
 	bjsimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/bjs"
 	btimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/bt"
 	ffimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/ff"
@@ -25,6 +26,7 @@ import (
 	isimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/is"
 	ptsimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/pts"
 	thrimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/thr"
+	tlimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/tl"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -53,13 +55,39 @@ func TestSiteHandlersSearch(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		tracker  string
-		meta     api.DuplicateSubject
-		setup    func(t *testing.T, baseURL string, dbPath string)
-		handler  func(cfg config.Config, client *http.Client) dupe.Adapter
-		validate func(t *testing.T, entries []api.DupeEntry)
+		name       string
+		tracker    string
+		meta       api.DuplicateSubject
+		setup      func(t *testing.T, baseURL string, dbPath string)
+		handler    func(cfg config.Config, client *http.Client) dupe.Adapter
+		validate   func(t *testing.T, entries []api.DupeEntry)
+		scope      dupe.WorkScope
+		enumerated bool
+		effective  bool
 	}{
+		{
+			name:    "ASC",
+			tracker: "ASC",
+			meta: api.DuplicateSubject{
+				Identity:   api.ExternalIdentity{Category: api.CanonicalCategoryTV, IMDBID: 1234567},
+				Release:    api.ReleaseInfo{Title: "Example Release 2026"},
+				SeasonInt:  1,
+				EpisodeInt: 2,
+				SourcePath: "x",
+			},
+			setup: func(t *testing.T, _ string, dbPath string) {
+				writeTextCookie(t, dbPath, "ASC", hostFromBaseURL(t, "https://cliente.amigos-share.club"))
+			},
+			handler: func(cfg config.Config, client *http.Client) dupe.Adapter {
+				return dupe.NewAdapter(ascimpl.New(), "ASC", cfg, client, api.NopLogger{})
+			},
+			validate: func(t *testing.T, entries []api.DupeEntry) {
+				if len(entries) != 0 {
+					t.Fatalf("unexpected ASC entries: %#v", entries)
+				}
+			},
+			scope: dupe.WorkScopeProviderID,
+		},
 		{
 			name:    "BT",
 			tracker: "BT",
@@ -79,6 +107,7 @@ func TestSiteHandlersSearch(t *testing.T) {
 					t.Fatalf("unexpected BT entries: %#v", entries)
 				}
 			},
+			scope: dupe.WorkScopeProviderID,
 		},
 		{
 			name:    "FL",
@@ -99,6 +128,7 @@ func TestSiteHandlersSearch(t *testing.T) {
 					t.Fatalf("unexpected FL entries: %#v", entries)
 				}
 			},
+			scope: dupe.WorkScopeProviderID,
 		},
 		{
 			name:    "FF",
@@ -115,6 +145,7 @@ func TestSiteHandlersSearch(t *testing.T) {
 					t.Fatalf("unexpected FF entries: %#v", entries)
 				}
 			},
+			scope: dupe.WorkScopeProviderID,
 		},
 		{
 			name:    "BJS",
@@ -131,6 +162,7 @@ func TestSiteHandlersSearch(t *testing.T) {
 					t.Fatalf("unexpected BJS entries: %#v", entries)
 				}
 			},
+			scope: dupe.WorkScopeProviderID,
 		},
 		{
 			name:    "HDS",
@@ -151,6 +183,9 @@ func TestSiteHandlersSearch(t *testing.T) {
 					t.Fatalf("unexpected HDS entries: %#v", entries)
 				}
 			},
+			scope:      dupe.WorkScopeProviderID,
+			enumerated: true,
+			effective:  true,
 		},
 		{
 			name:    "HDT",
@@ -171,6 +206,7 @@ func TestSiteHandlersSearch(t *testing.T) {
 					t.Fatalf("unexpected HDT entries: %#v", entries)
 				}
 			},
+			scope: dupe.WorkScopeProviderID,
 		},
 		{
 			name:    "IS",
@@ -187,6 +223,7 @@ func TestSiteHandlersSearch(t *testing.T) {
 					t.Fatalf("unexpected IS entries: %#v", entries)
 				}
 			},
+			scope: dupe.WorkScopeProviderID,
 		},
 		{
 			name:    "PTS",
@@ -203,6 +240,7 @@ func TestSiteHandlersSearch(t *testing.T) {
 					t.Fatalf("unexpected PTS entries: %#v", entries)
 				}
 			},
+			scope: dupe.WorkScopeProviderID,
 		},
 		{
 			name:    "THR",
@@ -217,6 +255,29 @@ func TestSiteHandlersSearch(t *testing.T) {
 					t.Fatalf("unexpected THR entries: %#v", entries)
 				}
 			},
+			scope:      dupe.WorkScopeProviderID,
+			enumerated: true,
+			effective:  true,
+		},
+		{
+			name:    "TL",
+			tracker: "TL",
+			meta: api.DuplicateSubject{
+				Release:     api.ReleaseInfo{Title: "Example Release 2026"},
+				ReleaseName: "Example.Release.2026.1080p-GRP",
+				SourcePath:  "x",
+			},
+			setup: func(_ *testing.T, _ string, _ string) {},
+			handler: func(cfg config.Config, client *http.Client) dupe.Adapter {
+				return dupe.NewAdapter(tlimpl.New(), "TL", cfg, client, api.NopLogger{})
+			},
+			validate: func(t *testing.T, entries []api.DupeEntry) {
+				if len(entries) != 0 {
+					t.Fatalf("unexpected TL entries: %#v", entries)
+				}
+			},
+			scope:      dupe.WorkScopeTitle,
+			enumerated: true,
 		},
 	}
 
@@ -227,6 +288,11 @@ func TestSiteHandlersSearch(t *testing.T) {
 			dbPath := filepath.Join(tmp, "ua.db")
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch tc.tracker {
+				case "ASC":
+					if r.URL.Path == "/busca-series.php" && r.URL.Query().Get("search") == "" && r.URL.Query().Get("imdb") == "tt1234567" {
+						_, _ = w.Write([]byte(`<html><body></body></html>`))
+						return
+					}
 				case "BT":
 					if r.URL.Path == "/torrents.php" {
 						if r.URL.RawQuery == "id=99" {
@@ -295,6 +361,11 @@ func TestSiteHandlersSearch(t *testing.T) {
 						_, _ = w.Write([]byte(`<a href="details.php?id=91" onmousemove="return overlibImage('THR.Movie.2024.1080p.BluRay-GRP','/images/test.png')">link</a>`))
 						return
 					}
+				case "TL":
+					if r.URL.EscapedPath() == "/torrents/browse/list/query/Example%20Release%202026" {
+						_, _ = w.Write([]byte(`{"torrentList":[]}`))
+						return
+					}
 				}
 				http.NotFound(w, r)
 			}))
@@ -307,6 +378,7 @@ func TestSiteHandlersSearch(t *testing.T) {
 					tc.tracker: {
 						Username: "user",
 						Password: "pass",
+						Passkey:  "passkey",
 					},
 				}},
 			}
@@ -315,12 +387,17 @@ func TestSiteHandlersSearch(t *testing.T) {
 				t.Fatalf("parse test server URL: %v", err)
 			}
 			client := &http.Client{Transport: handlerRewriteTransport{base: base, rt: server.Client().Transport}}
-			entries, notes, err := adapterEvidence(tc.handler(cfg, client).Search(context.Background(), tc.meta))
+			result := tc.handler(cfg, client).Search(context.Background(), tc.meta)
+			entries, notes, err := adapterEvidence(result)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if len(notes) != 0 {
 				t.Fatalf("unexpected notes: %v", notes)
+			}
+			search := result.SearchEvidence()
+			if search.WorkScope != tc.scope || search.Complete != tc.enumerated || search.EffectiveComplete() != tc.effective {
+				t.Fatalf("search evidence = %#v, want scope=%q enumerated=%t effective=%t", search, tc.scope, tc.enumerated, tc.effective)
 			}
 			tc.validate(t, entries)
 		})

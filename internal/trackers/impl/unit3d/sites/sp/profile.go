@@ -44,8 +44,7 @@ func Profile() unit3d.Profile {
 			SearchScope: trackers.DupeSearchScope{
 				MaxPages: 100,
 			},
-			SlotDimensions:  []trackers.DupeDimension{trackers.DupeDimensionType, trackers.DupeDimensionResolution, trackers.DupeDimensionHDR},
-			PrecedenceRules: trackers.SeasonPackPrecedenceRules("sp-upload-organization-guides"),
+			SlotDimensions: []trackers.DupeDimension{trackers.DupeDimensionType, trackers.DupeDimensionResolution, trackers.DupeDimensionHDR},
 		},
 	}
 }

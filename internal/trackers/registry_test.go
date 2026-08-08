@@ -172,12 +172,11 @@ func TestValidateDupePolicyRequiresEvidenceIDForAutomaticRules(t *testing.T) {
 	}
 }
 
-func TestCompatibilityDupePolicyUsesSameSlotFallback(t *testing.T) {
+func TestCompatibilityDupePolicyAddsNoSyntheticFallback(t *testing.T) {
 	t.Parallel()
 
 	policy := compatibilityDupePolicy("EXAMPLE")
-	if len(policy.ManualReviewRules) != 0 || policy.SameSlotFallback == nil ||
-		policy.SameSlotFallback.ReasonCode != "tracker_policy_not_evidence_backed" {
+	if len(policy.ManualReviewRules) != 0 || len(policy.SlotDimensions) != 0 || len(policy.PrecedenceRules) != 0 {
 		t.Fatalf("compatibility policy = %#v", policy)
 	}
 }

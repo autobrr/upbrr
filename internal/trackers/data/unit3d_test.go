@@ -235,8 +235,8 @@ func TestSearchTorrentsCBRIncludesPendingAndFiltersTMDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("search torrents: %v", err)
 	}
-	if warning != "" {
-		t.Fatalf("unexpected warning: %s", warning)
+	if !strings.Contains(warning, "omitted 1 row with conflicting TMDB IDs") {
+		t.Fatalf("wrong-work warning = %q", warning)
 	}
 	if len(entries) != 2 {
 		t.Fatalf("entry count mismatch: got %d entries %#v", len(entries), entries)
@@ -372,6 +372,30 @@ func newUnit3DSearchTestClient(t *testing.T, server *httptest.Server, tracker st
 		&http.Client{Transport: rewriteHostTransport{base: base, rt: server.Client().Transport}},
 		testUnit3DRegistry(t, tracker, baseURL),
 	)
+}
+
+func TestDedupeUnit3DEntriesKeepsRicherEvidence(t *testing.T) {
+	t.Parallel()
+
+	entries := dedupeUnit3DEntries([]api.DupeEntry{
+		{
+			ID:          "42",
+			Name:        "Example.Release",
+			Description: strings.Repeat("long but sparse ", 20),
+		},
+		{
+			ID:     "42",
+			Name:   "Example.Release",
+			Type:   "WEBDL",
+			Res:    "1080p",
+			Source: "WEB",
+			Files:  []string{"example.mkv"},
+		},
+		{ID: "42", Name: "Different.Release"},
+	})
+	if len(entries) != 2 || entries[0].Type != "WEBDL" || entries[1].Name != "Different.Release" {
+		t.Fatalf("deduped entries = %#v", entries)
+	}
 }
 
 func TestTorrentInfoUsesBearerAuthorization(t *testing.T) {

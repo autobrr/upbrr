@@ -11,7 +11,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	xhtml "golang.org/x/net/html"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
@@ -35,7 +38,16 @@ func TestAZNetworkHandlerSearchParsesHTMLResults(t *testing.T) {
 		case "/ajax/movies/1":
 			_, _ = io.WriteString(w, `{"data":[{"id":"77","imdb":"tt0000123"}]}`)
 		case "/movies/torrents/77":
-			_, _ = io.WriteString(w, `<table class="table-bordered"><tbody><tr><td><a class="torrent-filename" href="/torrent/123">Movie.2024.1080p.WEB-DL.x265-GRP</a><span class="badge-extra">WEB-DL</span></td></tr></tbody></table>`)
+			if r.URL.Query().Has("quality") {
+				t.Error("AZ discovery must not include a quality filter")
+			}
+			_, _ = io.WriteString(w, `<table class="table-bordered"><tbody>
+<tr><td><a class="torrent-filename" href="/torrent/123">Example.Release.2026.BluRay.Raw-GRP</a><span class="badge-extra">BluRay Raw</span></td></tr>
+<tr><td><a class="torrent-filename" href="/torrent/124">Example.Release.2026.BluRay.REMUX-GRP</a><span class="badge-extra">BluRay REMUX</span></td></tr>
+<tr><td><a class="torrent-filename" href="/torrent/125">Example.Release.2026.1080p.WEB-DL-GRP</a><span class="badge-extra">WEB-DL</span></td></tr>
+<tr><td><a class="torrent-filename" href="/torrent/126">Example.Release.2026.1080p.WEBRip-GRP</a><span class="badge-extra">WEBRip</span></td></tr>
+<tr><td><a class="torrent-filename" href="/torrent/127">Example.Release.2026.1080p.HDTV-GRP</a><span class="badge-extra">HDTV</span></td></tr>
+</tbody></table>`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -55,7 +67,7 @@ func TestAZNetworkHandlerSearchParsesHTMLResults(t *testing.T) {
 		}, server.Client(), api.NopLogger{})
 	entries, notes, err := adapterEvidence(handler.Search(context.Background(), api.DuplicateSubject{
 		Identity: api.ExternalIdentity{Category: "MOVIE", IMDBID: 123},
-		Release:  api.ReleaseInfo{Title: "Movie", Resolution: "1080p"},
+		Release:  api.ReleaseInfo{Title: "Example Release", Resolution: "1080p"},
 		Type:     "WEBDL",
 	}))
 	if err != nil {
@@ -64,14 +76,25 @@ func TestAZNetworkHandlerSearchParsesHTMLResults(t *testing.T) {
 	if len(notes) != 0 {
 		t.Fatalf("expected no notes, got %v", notes)
 	}
-	if len(entries) != 1 {
-		t.Fatalf("expected 1 entry, got %d", len(entries))
+	if len(entries) != 5 {
+		t.Fatalf("expected every mixed variant, got %d", len(entries))
 	}
 	if entries[0].ID != "123" {
 		t.Fatalf("expected torrent id 123, got %q", entries[0].ID)
 	}
-	if entries[0].Type != "WEB-DL" || entries[0].CanonicalType != "WEBDL" {
-		t.Fatalf("unexpected AZ candidate type %#v", entries[0])
+	wantTypes := []string{"DISC", "REMUX", "WEBDL", "WEBRIP", "HDTV"}
+	for index, want := range wantTypes {
+		if entries[index].CanonicalType != want {
+			t.Fatalf("candidate %d type = %#v, want %q", index, entries[index], want)
+		}
+	}
+	evidence := handler.Search(context.Background(), api.DuplicateSubject{
+		Identity: api.ExternalIdentity{Category: "MOVIE", IMDBID: 123},
+		Release:  api.ReleaseInfo{Title: "Example Release", Resolution: "1080p"},
+		Type:     "WEBDL",
+	}).SearchEvidence()
+	if !evidence.EffectiveComplete() || evidence.WorkScope != dupe.WorkScopeTrackerGroup {
+		t.Fatalf("AZ search evidence = %#v", evidence)
 	}
 }
 
@@ -79,7 +102,7 @@ func TestAZCanonicalCandidateType(t *testing.T) {
 	t.Parallel()
 
 	for input, want := range map[string]string{
-		"BluRay Raw":  "DISC",
+		"BluRay Raw":   "DISC",
 		"DVD":          "DISC",
 		"BluRay Remux": "REMUX",
 		"DVD Remux":    "REMUX",
@@ -96,5 +119,30 @@ func TestAZCanonicalCandidateType(t *testing.T) {
 		if got := azCanonicalCandidateType(input); got != want {
 			t.Errorf("azCanonicalCandidateType(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+func TestNextAZPageRejectsOffOriginURL(t *testing.T) {
+	t.Parallel()
+
+	for name, fixture := range map[string]struct {
+		href string
+		want string
+	}{
+		"relative": {href: "/movies/torrents/77?page=2", want: "https://az.example/movies/torrents/77?page=2"},
+		"external": {href: "https://example.invalid/steal", want: ""},
+		"empty":    {href: "", want: ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			root, err := xhtml.Parse(strings.NewReader(`<a rel="next" href="` + fixture.href + `">Next</a>`))
+			if err != nil {
+				t.Fatalf("parse fixture: %v", err)
+			}
+			if got := nextAZPage(root, "https://az.example"); got != fixture.want {
+				t.Fatalf("next page = %q, want %q", got, fixture.want)
+			}
+		})
 	}
 }

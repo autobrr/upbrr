@@ -383,10 +383,11 @@ func (c *Client) SearchTorrents(ctx context.Context, tracker string, params url.
 
 // Unit3DSearchResult retains pagination completion evidence with normalized entries.
 type Unit3DSearchResult struct {
-	Entries  []api.DupeEntry
-	Warning  string
-	Complete bool
-	Pages    int
+	Entries        []api.DupeEntry
+	Warning        string
+	Complete       bool
+	Pages          int
+	WrongWorkCount int
 }
 
 // SearchTorrentsWithEvidence consumes every advertised page up to a bounded
@@ -422,11 +423,12 @@ func (c *Client) SearchTorrentsWithEvidenceBound(
 		c.logger.Debugf("unit3d: %s missing API key; request will be unauthenticated", tracker)
 	}
 
+	tmdbID, _ := strconv.Atoi(strings.TrimSpace(params.Get("tmdbId")))
 	endpoints := []unit3dSearchEndpoint{{
-		url: strings.TrimRight(baseURL, "/") + path.Join("/", "api", "torrents", "filter"),
+		url:          strings.TrimRight(baseURL, "/") + path.Join("/", "api", "torrents", "filter"),
+		filterTMDBID: tmdbID,
 	}}
 	if usesUnit3DPendingSearch(tracker) {
-		tmdbID, _ := strconv.Atoi(strings.TrimSpace(params.Get("tmdbId")))
 		endpoints = append(endpoints, unit3dSearchEndpoint{
 			url:           strings.TrimRight(baseURL, "/") + path.Join("/", "api", "torrents", "pending"),
 			pending:       true,
@@ -437,7 +439,7 @@ func (c *Client) SearchTorrentsWithEvidenceBound(
 
 	result := Unit3DSearchResult{Complete: true}
 	for _, endpoint := range endpoints {
-		endpointEntries, warning, complete, pages, err := c.searchUnit3DEndpoint(
+		endpointResult, err := c.searchUnit3DEndpoint(
 			ctx,
 			tracker,
 			endpoint,
@@ -449,17 +451,35 @@ func (c *Client) SearchTorrentsWithEvidenceBound(
 		if err != nil {
 			return Unit3DSearchResult{}, err
 		}
-		result.Pages += pages
-		result.Complete = result.Complete && complete
-		if warning != "" {
-			result.Warning = warning
-			result.Entries = append(result.Entries, endpointEntries...)
-			return result, nil
+		result.Pages += endpointResult.Pages
+		result.Complete = result.Complete && endpointResult.Complete
+		result.WrongWorkCount += endpointResult.WrongWorkCount
+		if endpointResult.Warning != "" {
+			result.Warning = appendUnit3DWarning(result.Warning, endpointResult.Warning)
 		}
-		result.Entries = append(result.Entries, endpointEntries...)
+		result.Entries = append(result.Entries, endpointResult.Entries...)
+	}
+	result.Entries = dedupeUnit3DEntries(result.Entries)
+	if result.WrongWorkCount > 0 {
+		rowLabel := "rows"
+		if result.WrongWorkCount == 1 {
+			rowLabel = "row"
+		}
+		result.Warning = appendUnit3DWarning(
+			result.Warning,
+			fmt.Sprintf("Unit3D search omitted %d %s with conflicting TMDB IDs", result.WrongWorkCount, rowLabel),
+		)
 	}
 
 	return result, nil
+}
+
+type unit3dEndpointSearchResult struct {
+	Entries        []api.DupeEntry
+	Warning        string
+	Complete       bool
+	Pages          int
+	WrongWorkCount int
 }
 
 func (c *Client) searchUnit3DEndpoint(
@@ -470,36 +490,38 @@ func (c *Client) searchUnit3DEndpoint(
 	apiKey string,
 	isDisc bool,
 	maxPages int,
-) ([]api.DupeEntry, string, bool, int, error) {
+) (unit3dEndpointSearchResult, error) {
 	perPage, _ := strconv.Atoi(strings.TrimSpace(params.Get("perPage")))
 	if perPage <= 0 {
 		perPage = 100
 	}
 	var entries []api.DupeEntry
+	wrongWorkCount := 0
 	for pageNumber := 1; pageNumber <= maxPages; pageNumber++ {
 		pageParams := cloneURLValues(params)
 		pageParams.Set("page", strconv.Itoa(pageNumber))
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.url, nil)
 		if err != nil {
-			return nil, "", false, pageNumber - 1, fmt.Errorf("unit3d: request: %w", err)
+			return unit3dEndpointSearchResult{}, fmt.Errorf("unit3d: request: %w", err)
 		}
 		req.URL.RawQuery = pageParams.Encode()
 		SetUnit3DAPIHeaders(req, apiKey)
 
 		resp, err := c.http.Do(req)
 		if err != nil {
-			return nil, "", false, pageNumber - 1, fmt.Errorf("unit3d: request: %w", err)
+			return unit3dEndpointSearchResult{}, fmt.Errorf("unit3d: request: %w", err)
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			resp.Body.Close()
 			if c.logger != nil {
 				c.logger.Warnf("unit3d: %s search failed (status=%d)", tracker, resp.StatusCode)
 			}
-			return entries,
-				fmt.Sprintf("%s search failed (status=%d)", strings.ToUpper(strings.TrimSpace(tracker)), resp.StatusCode),
-				false,
-				pageNumber,
-				nil
+			return unit3dEndpointSearchResult{
+				Entries:        entries,
+				Warning:        fmt.Sprintf("%s search failed (status=%d)", strings.ToUpper(strings.TrimSpace(tracker)), resp.StatusCode),
+				Pages:          pageNumber,
+				WrongWorkCount: wrongWorkCount,
+			}, nil
 		}
 
 		if endpoint.pending {
@@ -507,11 +529,18 @@ func (c *Client) searchUnit3DEndpoint(
 			decodeErr := json.NewDecoder(resp.Body).Decode(&payload)
 			resp.Body.Close()
 			if decodeErr != nil {
-				return nil, "", false, pageNumber, fmt.Errorf("unit3d: decode: %w", decodeErr)
+				return unit3dEndpointSearchResult{}, fmt.Errorf("unit3d: decode: %w", decodeErr)
 			}
-			entries = append(entries, buildUnit3DPendingEntries(payload.Data, endpoint, isDisc)...)
+			pageEntries, dropped := buildUnit3DPendingEntries(payload.Data, endpoint, isDisc)
+			entries = append(entries, pageEntries...)
+			wrongWorkCount += dropped
 			if len(payload.Data) < perPage {
-				return entries, "", true, pageNumber, nil
+				return unit3dEndpointSearchResult{
+					Entries:        entries,
+					Complete:       true,
+					Pages:          pageNumber,
+					WrongWorkCount: wrongWorkCount,
+				}, nil
 			}
 			continue
 		}
@@ -520,9 +549,11 @@ func (c *Client) searchUnit3DEndpoint(
 		decodeErr := json.NewDecoder(resp.Body).Decode(&payload)
 		resp.Body.Close()
 		if decodeErr != nil {
-			return nil, "", false, pageNumber, fmt.Errorf("unit3d: decode: %w", decodeErr)
+			return unit3dEndpointSearchResult{}, fmt.Errorf("unit3d: decode: %w", decodeErr)
 		}
-		entries = append(entries, buildUnit3DSearchEntries(payload.Data, isDisc)...)
+		pageEntries, dropped := buildUnit3DSearchEntries(payload.Data, endpoint.filterTMDBID, isDisc)
+		entries = append(entries, pageEntries...)
+		wrongWorkCount += dropped
 		lastPage := payload.Meta.LastPage
 		currentPage := payload.Meta.CurrentPage
 		if currentPage <= 0 {
@@ -530,14 +561,34 @@ func (c *Client) searchUnit3DEndpoint(
 		}
 		switch {
 		case lastPage > 0 && currentPage >= lastPage:
-			return entries, "", true, pageNumber, nil
+			return unit3dEndpointSearchResult{
+				Entries:        entries,
+				Complete:       true,
+				Pages:          pageNumber,
+				WrongWorkCount: wrongWorkCount,
+			}, nil
 		case lastPage == 0 && len(payload.Data) < perPage:
-			return entries, "", true, pageNumber, nil
+			return unit3dEndpointSearchResult{
+				Entries:        entries,
+				Complete:       true,
+				Pages:          pageNumber,
+				WrongWorkCount: wrongWorkCount,
+			}, nil
 		case lastPage == 0:
-			return entries, "Unit3D search response omitted pagination metadata at page capacity", false, pageNumber, nil
+			return unit3dEndpointSearchResult{
+				Entries:        entries,
+				Warning:        "Unit3D search response omitted pagination metadata at page capacity",
+				Pages:          pageNumber,
+				WrongWorkCount: wrongWorkCount,
+			}, nil
 		}
 	}
-	return entries, "Unit3D search reached pagination safety bound", false, maxPages, nil
+	return unit3dEndpointSearchResult{
+		Entries:        entries,
+		Warning:        "Unit3D search reached pagination safety bound",
+		Pages:          maxPages,
+		WrongWorkCount: wrongWorkCount,
+	}, nil
 }
 
 func cloneURLValues(values url.Values) url.Values {
@@ -561,9 +612,14 @@ func SetUnit3DAPIHeaders(req *http.Request, apiKey string) {
 	}
 }
 
-func buildUnit3DSearchEntries(items []unit3dSearchItem, isDisc bool) []api.DupeEntry {
+func buildUnit3DSearchEntries(items []unit3dSearchItem, filterTMDBID int, isDisc bool) ([]api.DupeEntry, int) {
 	entries := make([]api.DupeEntry, 0, len(items))
+	wrongWorkCount := 0
 	for _, item := range items {
+		if filterTMDBID > 0 && item.Attributes.TMDBID > 0 && item.Attributes.TMDBID != filterTMDBID {
+			wrongWorkCount++
+			continue
+		}
 		rawType := strings.TrimSpace(item.Attributes.Type)
 		entry := api.DupeEntry{
 			Name:          strings.TrimSpace(item.Attributes.Name),
@@ -603,13 +659,15 @@ func buildUnit3DSearchEntries(items []unit3dSearchItem, isDisc bool) []api.DupeE
 		entries = append(entries, entry)
 	}
 
-	return entries
+	return entries, wrongWorkCount
 }
 
-func buildUnit3DPendingEntries(items []unit3dPendingSearchItem, endpoint unit3dSearchEndpoint, isDisc bool) []api.DupeEntry {
+func buildUnit3DPendingEntries(items []unit3dPendingSearchItem, endpoint unit3dSearchEndpoint, isDisc bool) ([]api.DupeEntry, int) {
 	entries := make([]api.DupeEntry, 0, len(items))
+	wrongWorkCount := 0
 	for _, item := range items {
-		if endpoint.filterTMDBID > 0 && item.TMDBID != endpoint.filterTMDBID {
+		if endpoint.filterTMDBID > 0 && item.TMDBID > 0 && item.TMDBID != endpoint.filterTMDBID {
+			wrongWorkCount++
 			continue
 		}
 
@@ -652,7 +710,68 @@ func buildUnit3DPendingEntries(items []unit3dPendingSearchItem, endpoint unit3dS
 		entries = append(entries, entry)
 	}
 
-	return entries
+	return entries, wrongWorkCount
+}
+
+func appendUnit3DWarning(existing string, warning string) string {
+	existing, warning = strings.TrimSpace(existing), strings.TrimSpace(warning)
+	if existing == "" {
+		return warning
+	}
+	if warning == "" {
+		return existing
+	}
+	return existing + "; " + warning
+}
+
+func dedupeUnit3DEntries(entries []api.DupeEntry) []api.DupeEntry {
+	result := make([]api.DupeEntry, 0, len(entries))
+	indexByKey := make(map[string]int)
+	for _, entry := range entries {
+		id := strings.TrimSpace(entry.ID)
+		if id == "" {
+			result = append(result, entry)
+			continue
+		}
+		key := id + "\x00" + strings.ToLower(strings.TrimSpace(entry.Name))
+		if index, ok := indexByKey[key]; ok {
+			if unit3DEntryRichness(entry) > unit3DEntryRichness(result[index]) {
+				result[index] = entry
+			}
+			continue
+		}
+		indexByKey[key] = len(result)
+		result = append(result, entry)
+	}
+	return result
+}
+
+func unit3DEntryRichness(entry api.DupeEntry) int {
+	score := len(entry.Files) + len(entry.Flags) + len(entry.HDR.Formats) + len(entry.Attributes)
+	for _, value := range []string{
+		entry.Name, entry.SizeText, entry.Type, entry.CanonicalType, entry.Res, entry.Category, entry.Source, entry.Codec, entry.Container,
+		entry.Provider, entry.Group, entry.Edition, entry.Region, entry.ThreeD, entry.Repack, entry.BDInfo, entry.Description,
+	} {
+		if strings.TrimSpace(value) != "" {
+			score++
+		}
+	}
+	if entry.SizeKnown {
+		score++
+	}
+	if entry.FileCount > 0 {
+		score++
+	}
+	if entry.Season > 0 || entry.Episode > 0 {
+		score++
+	}
+	if entry.FlagsPresent {
+		score++
+	}
+	if entry.FlagsComplete {
+		score++
+	}
+	return score
 }
 
 func usesUnit3DPendingSearch(tracker string) bool {
@@ -1032,6 +1151,7 @@ type unit3dSearchAttrs struct {
 	BDInfo       string       `json:"bd_info"`
 	MediaInfo    string       `json:"media_info"`
 	Description  string       `json:"description"`
+	TMDBID       int          `json:"tmdb_id"`
 }
 
 type unit3dPendingSearchResponse struct {

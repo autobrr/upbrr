@@ -47,4 +47,7 @@ func TestDuplicateSearchUsesSPDQueryHeadersAndProjection(t *testing.T) {
 	if len(entries) != 1 || entries[0].ID != "84" || entries[0].Link != "https://speedapp.io/browse/84/" || entries[0].SizeBytes != 4321 {
 		t.Fatalf("unexpected entries: %#v", entries)
 	}
+	if search := result.SearchEvidence(); !search.Complete || search.WorkScope != dupe.WorkScopeProviderID || !search.EffectiveComplete() {
+		t.Fatalf("unexpected search evidence: %#v", search)
+	}
 }

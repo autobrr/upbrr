@@ -63,9 +63,10 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	}
 	if empty {
 		return dupe.ResolvedWithSearch(nil, nil, dupe.SearchEvidence{
-			Complete: true,
-			Pages:    1,
-			Scope:    "work_identity",
+			Complete:  true,
+			WorkScope: dupe.WorkScopeTrackerGroup,
+			Pages:     1,
+			Scope:     "work_identity",
 		})
 	}
 	payload, err := s.get(ctx, url.Values{
@@ -81,9 +82,10 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		return dupe.Failed(dupe.FailureResponseParse, "PTP torrent group response was malformed", nil)
 	}
 	return dupe.ResolvedWithSearch(entries, nil, dupe.SearchEvidence{
-		Complete: true,
-		Pages:    1,
-		Scope:    "work_identity",
+		Complete:  true,
+		WorkScope: dupe.WorkScopeTrackerGroup,
+		Pages:     1,
+		Scope:     "work_identity",
 	})
 }
 

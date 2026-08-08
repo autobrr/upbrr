@@ -144,11 +144,19 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 		warnings = []string{"RTF title search completeness is not evidenced"}
 	}
 	return dupe.ResolvedWithSearch(entries, warnings, dupe.SearchEvidence{
-		Complete: searchComplete,
-		Pages:    1,
-		Scope:    searchScope,
-		Warnings: warnings,
+		Complete:  searchComplete,
+		WorkScope: rtfWorkScope(searchComplete),
+		Pages:     1,
+		Scope:     searchScope,
+		Warnings:  warnings,
 	})
+}
+
+func rtfWorkScope(providerBound bool) dupe.WorkScope {
+	if providerBound {
+		return dupe.WorkScopeProviderID
+	}
+	return dupe.WorkScopeTitle
 }
 
 func positiveIntFromAny(value any) int {
@@ -175,10 +183,10 @@ func buildRTFSearchParams(meta api.DuplicateSubject) (url.Values, string, bool, 
 }
 
 func cleanRTFSearchTitle(meta api.DuplicateSubject) string {
-	if meta.Projection != nil {
-		return dupe.ProjectedSearchName(meta)
-	}
 	query := strings.TrimSpace(meta.Release.Title)
+	if query == "" && meta.Projection != nil {
+		query = dupe.ProjectedSearchName(meta)
+	}
 	if query == "" {
 		query = strings.TrimSpace(meta.ReleaseName)
 	}

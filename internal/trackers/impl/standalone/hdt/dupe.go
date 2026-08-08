@@ -7,7 +7,6 @@ import (
 	"context"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 
 	xhtml "golang.org/x/net/html"
@@ -36,10 +35,6 @@ func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 }
 
 func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dupe.AdapterResult {
-	resolution := strings.TrimSpace(meta.Release.Resolution)
-	if resolution != "2160p" && resolution != "1080p" && resolution != "1080i" && resolution != "720p" {
-		return dupe.NotRun(dupe.NotRunUnsupportedContent, "resolution below HDT dupe-check minimum", nil)
-	}
 	baseURL := hdtBaseURL(s.cfg)
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
@@ -49,14 +44,16 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	if err != nil {
 		return dupe.NotRun(dupe.NotRunMissingCredentials, "missing valid HDT cookies", nil)
 	}
-	params := url.Values{"active": {"0"}, "category[]": {strconv.Itoa(hdtCategoryID(meta))}}
+	params := url.Values{"active": {"0"}}
+	workScope := dupe.WorkScopeProviderID
 	if meta.Identity.IMDBID != 0 {
 		params.Set("search", providerid.IMDb(meta.Identity.IMDBID).Prefixed())
 		params.Set("options", "2")
 	} else {
-		query := dupe.ProjectedSearchName(meta)
-		if meta.Projection == nil {
-			query = metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName)
+		workScope = dupe.WorkScopeTitle
+		query := metautil.FirstNonEmptyTrimmed(meta.Release.Title, dupe.ProjectedSearchName(meta), meta.ReleaseName)
+		if query == "" {
+			return dupe.NotRun(dupe.NotRunMissingMetadata, "missing title for HDT dupe search", nil)
 		}
 		params.Set("search", query)
 		params.Set("options", "3")
@@ -86,56 +83,15 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 			entries = append(entries, entry)
 		}
 	}
-	return dupe.Resolved(entries, nil)
+	warnings := []string{"HDT search pagination completeness is not evidenced"}
+	return dupe.ResolvedWithSearch(entries, nil, dupe.SearchEvidence{
+		WorkScope: workScope,
+		Pages:     1,
+		Scope:     "all_categories",
+		Warnings:  warnings,
+	})
 }
 
 func hdtBaseURL(_ config.Config) string {
 	return "https://hd-torrents.me"
-}
-func hdtCategoryID(meta api.DuplicateSubject) int {
-	category := strings.ToUpper(strings.TrimSpace(string(meta.Identity.Category)))
-	resolution := strings.TrimSpace(meta.Release.Resolution)
-	disc := strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") || strings.EqualFold(strings.TrimSpace(meta.Type), "DISC")
-	remux := strings.EqualFold(strings.TrimSpace(meta.Type), "REMUX")
-	uhd := strings.EqualFold(strings.TrimSpace(meta.UHD), "UHD") && resolution == "2160p"
-	if category == "TV" {
-		if disc {
-			if resolution == "2160p" {
-				return 72
-			}
-			return 59
-		}
-		if remux {
-			if uhd {
-				return 73
-			}
-			return 60
-		}
-		if resolution == "2160p" {
-			return 65
-		}
-		if resolution == "1080p" || resolution == "1080i" {
-			return 30
-		}
-		return 38
-	}
-	if disc {
-		if resolution == "2160p" {
-			return 70
-		}
-		return 1
-	}
-	if remux {
-		if uhd {
-			return 71
-		}
-		return 2
-	}
-	if resolution == "2160p" {
-		return 64
-	}
-	if resolution == "1080p" || resolution == "1080i" {
-		return 5
-	}
-	return 3
 }

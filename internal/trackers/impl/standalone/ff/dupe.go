@@ -52,10 +52,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	}
 	query := providerid.IMDb(meta.Identity.IMDBID).Prefixed()
 	if meta.Anime {
-		query = dupe.ProjectedSearchName(meta)
-		if meta.Projection == nil {
-			query = metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName)
-		}
+		query = metautil.FirstNonEmptyTrimmed(meta.Release.Title, dupe.ProjectedSearchName(meta), meta.ReleaseName)
 	}
 	status, root, err := commonhttp.GetHTML(ctx, s.http, baseURL+"/torrents.php", url.Values{"searchstr": {query}}, trackerCookies)
 	if err != nil || status < http.StatusOK || status >= http.StatusMultipleChoices || root == nil {
@@ -98,7 +95,17 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 			}
 		}
 	}
-	return dupe.Resolved(entries, nil)
+	workScope := dupe.WorkScopeProviderID
+	if meta.Anime {
+		workScope = dupe.WorkScopeTitle
+	}
+	warnings := []string{"FF search pagination completeness is not evidenced"}
+	return dupe.ResolvedWithSearch(entries, nil, dupe.SearchEvidence{
+		WorkScope: workScope,
+		Pages:     1,
+		Scope:     "provider_group",
+		Warnings:  warnings,
+	})
 }
 
 func ffBaseURL(_ config.Config) string {

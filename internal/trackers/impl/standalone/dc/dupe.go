@@ -52,6 +52,12 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		SizeField:      "size",
 		Link:           func(id string) string { return "https://digitalcore.club/torrent/" + id + "/" },
 		FailureMessage: "DC search failed",
+		SearchEvidence: dupe.SearchEvidence{
+			Complete:  true,
+			WorkScope: dupe.WorkScopeProviderID,
+			Pages:     1,
+			Scope:     "provider_array",
+		},
 	})
 }
 

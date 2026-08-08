@@ -61,9 +61,11 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		notes = []string{search.Warning}
 	}
 	return dupe.ResolvedWithSearch(search.Entries, notes, dupe.SearchEvidence{
-		Complete: search.Complete,
-		Pages:    search.Pages,
-		Scope:    "work_category",
-		Warnings: notes,
+		Complete:       search.Complete,
+		WorkScope:      dupe.WorkScopeProviderID,
+		Pages:          search.Pages,
+		Scope:          "work_category",
+		Warnings:       notes,
+		WrongWorkCount: search.WrongWorkCount,
 	})
 }

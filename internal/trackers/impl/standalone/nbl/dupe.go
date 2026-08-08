@@ -51,15 +51,17 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		"api_key":  {apiKey},
 		"per_page": {"100"},
 	}
+	workScope := dupe.WorkScopeProviderID
 	switch {
 	case meta.Identity.TVmazeID != 0:
 		params.Set("tvmaze", strconv.Itoa(meta.Identity.TVmazeID))
 	case meta.Identity.IMDBID != 0:
 		params.Set("imdb", providerid.IMDb(meta.Identity.IMDBID).Prefixed())
 	default:
-		searchName := dupe.ProjectedSearchName(meta)
-		if meta.Projection == nil {
-			searchName = strings.TrimSpace(meta.Release.Title)
+		workScope = dupe.WorkScopeTitle
+		searchName := strings.TrimSpace(meta.Release.Title)
+		if searchName == "" {
+			searchName = dupe.ProjectedSearchName(meta)
 		}
 		if searchName == "" {
 			return dupe.NotRun(dupe.NotRunMissingMetadata, "missing tvmaze/imdb/title for NBL dupe search", nil)
@@ -110,10 +112,11 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		warnings = []string{"NBL search reached a pagination bound or returned incomplete pagination metadata"}
 	}
 	return dupe.ResolvedWithSearch(entries, warnings, dupe.SearchEvidence{
-		Complete: complete,
-		Pages:    pages,
-		Scope:    "work_identity",
-		Warnings: warnings,
+		Complete:  complete,
+		WorkScope: workScope,
+		Pages:     pages,
+		Scope:     "work_identity",
+		Warnings:  warnings,
 	})
 }
 

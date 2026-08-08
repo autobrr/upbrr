@@ -26,7 +26,7 @@ func TestANTFlagFixturePreservesPartialSemantics(t *testing.T) {
 	if err := decoder.Decode(&payload); err != nil {
 		t.Fatalf("decode fixture: %v", err)
 	}
-	entries := antDupeEntries(payload, "")
+	entries := antDupeEntries(payload)
 	if len(entries) != 6 {
 		t.Fatalf("entries = %d", len(entries))
 	}

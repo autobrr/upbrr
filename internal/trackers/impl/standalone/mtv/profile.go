@@ -71,11 +71,9 @@ func Profile() standalone.Profile {
 				trackers.DupeDimensionSource,
 				trackers.DupeDimensionProvider,
 				trackers.DupeDimensionHDR,
-				trackers.DupeDimensionPack,
 			},
 			HDRPartialMode:       trackers.DupeHDRPartialExplicitTitle,
 			HDRCompatibilityMode: trackers.DupeHDRCompatibilityDirectional,
-			PrecedenceRules:      trackers.SeasonPackPrecedenceRules("mtv-upload-rules"),
 		},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{
 			TrackerURLPatterns: []string{"tracker.morethantv"}, SearchPreference: trackers.TorrentSearchPreferenceSmallPieces,

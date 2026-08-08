@@ -81,7 +81,7 @@ func TestBTNHandlerSkipsNonTV(t *testing.T) {
 func TestBTNHandlerUsesTrackerIDFirst(t *testing.T) {
 	t.Parallel()
 
-	payloads := captureBTNPayloads(t, `{"result":{"torrents":{}}}`)
+	payloads := captureBTNPayloads(t, `{"result":{"results":"0","torrents":{}}}`)
 	handler := dupe.NewAdapter(New(), "BTN", configWithBTNAPIKey(), payloads.client, nil)
 
 	_, notes, err := adapterEvidence(handler.Search(context.Background(), api.DuplicateSubject{
@@ -108,35 +108,39 @@ func TestBTNHandlerUsesTrackerIDFirst(t *testing.T) {
 	if _, ok := filter["tvdb"]; ok {
 		t.Fatalf("did not expect tvdb when btn id is present: %#v", filter)
 	}
-	if _, ok := filter["searchstr"]; ok {
-		t.Fatalf("did not expect searchstr when btn id is present: %#v", filter)
+	if _, ok := filter["search"]; ok {
+		t.Fatalf("did not expect search when btn id is present: %#v", filter)
 	}
 }
 
-func TestBTNHandlerFallsBackToIMDb(t *testing.T) {
+func TestBTNHandlerFallsBackToTitleWhenOnlyIMDbIsAvailable(t *testing.T) {
 	t.Parallel()
 
-	payloads := captureBTNPayloads(t, `{"result":{"torrents":{}}}`)
+	payloads := captureBTNPayloads(t, `{"result":{"results":"0","torrents":{}}}`)
 	handler := dupe.NewAdapter(New(), "BTN", configWithBTNAPIKey(), payloads.client, nil)
 
-	_, _, err := adapterEvidence(handler.Search(context.Background(), api.DuplicateSubject{
+	result := handler.Search(context.Background(), api.DuplicateSubject{
 		SourcePath: "x",
 		Identity: api.ExternalIdentity{
 			Category: "TV",
 			IMDBID:   1234567,
 		},
-	}))
-	if err != nil {
+		Release: api.ReleaseInfo{Title: "Example Show"},
+	})
+	if err := result.Cause(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	filter := payloads.lastFilter(t)
-	assertBTNFilterValue(t, filter, "imdb", "tt1234567")
+	assertBTNFilterValue(t, filter, "search", "Example%Show")
+	if result.SearchEvidence().WorkScope != dupe.WorkScopeTitle {
+		t.Fatalf("expected title fallback evidence, got %#v", result.SearchEvidence())
+	}
 }
 
 func TestBTNHandlerFallsBackToTVDB(t *testing.T) {
 	t.Parallel()
 
-	payloads := captureBTNPayloads(t, `{"result":{"torrents":{}}}`)
+	payloads := captureBTNPayloads(t, `{"result":{"results":"0","torrents":{}}}`)
 	handler := dupe.NewAdapter(New(), "BTN", configWithBTNAPIKey(), payloads.client, nil)
 
 	_, _, err := adapterEvidence(handler.Search(context.Background(), api.DuplicateSubject{
@@ -155,10 +159,10 @@ func TestBTNHandlerFallsBackToTVDB(t *testing.T) {
 	}
 }
 
-func TestBTNHandlerFallsBackToTitleSearch(t *testing.T) {
+func TestBTNHandlerPrefersBroadTitleSearch(t *testing.T) {
 	t.Parallel()
 
-	payloads := captureBTNPayloads(t, `{"result":{"torrents":{}}}`)
+	payloads := captureBTNPayloads(t, `{"result":{"results":"0","torrents":{}}}`)
 	handler := dupe.NewAdapter(New(), "BTN", configWithBTNAPIKey(), payloads.client, nil)
 
 	_, _, err := adapterEvidence(handler.Search(context.Background(), api.DuplicateSubject{
@@ -166,7 +170,7 @@ func TestBTNHandlerFallsBackToTitleSearch(t *testing.T) {
 		Identity: api.ExternalIdentity{
 			Category: "TV",
 		},
-		Release: api.ReleaseInfo{Title: "Ignored Title"},
+		Release: api.ReleaseInfo{Title: "Example Release 2026"},
 		Projection: &api.TrackerReleaseProjection{
 			DuplicateCriteria: api.TrackerDuplicateCriteria{Name: "Exact Projected Search"},
 		},
@@ -175,13 +179,13 @@ func TestBTNHandlerFallsBackToTitleSearch(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	filter := payloads.lastFilter(t)
-	assertBTNFilterValue(t, filter, "searchstr", "Exact Projected Search")
+	assertBTNFilterValue(t, filter, "search", "Example%Release%2026")
 }
 
 func TestBTNHandlerNormalizesEntries(t *testing.T) {
 	t.Parallel()
 
-	payloads := captureBTNPayloads(t, `{"result":{"torrents":{"777":{"GroupID":"333","ReleaseName":"Example.Show.S01E01.1080p.WEB-DL.HDR.DV","Size":12345,"Resolution":"1080p","Source":"WEB-DL","HDR":"HDR10","DolbyVision":"DV"}}}}`)
+	payloads := captureBTNPayloads(t, `{"result":{"results":"1","torrents":{"777":{"GroupID":"333","ReleaseName":"Example.Show.S01E01.1080p.WEB-DL.HDR.DV","Size":12345,"Resolution":"1080p","Source":"WEB-DL","HDR":"HDR10","DolbyVision":"DV"}}}}`)
 	handler := dupe.NewAdapter(New(), "BTN", configWithBTNAPIKey(), payloads.client, nil)
 
 	entries, notes, err := adapterEvidence(handler.Search(context.Background(), api.DuplicateSubject{
@@ -230,34 +234,145 @@ func TestBTNHandlerAPIErrorReturnsNoDupes(t *testing.T) {
 	payloads := captureBTNPayloads(t, `{"error":{"message":"bad request"}}`)
 	handler := dupe.NewAdapter(New(), "BTN", configWithBTNAPIKey(), payloads.client, nil)
 
-	entries, notes, err := adapterEvidence(handler.Search(context.Background(), api.DuplicateSubject{
+	result := handler.Search(context.Background(), api.DuplicateSubject{
 		SourcePath: "x",
 		Identity: api.ExternalIdentity{
 			Category: "TV",
 		},
 		Release: api.ReleaseInfo{Title: "Example Show"},
-	}))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	})
+	if result.Disposition() != dupe.DispositionFailed || result.Code() != dupe.FailureResponseStatus || result.Cause() == nil {
+		t.Fatalf("unexpected result disposition=%v code=%q cause=%v", result.Disposition(), result.Code(), result.Cause())
 	}
-	if len(entries) != 0 {
-		t.Fatalf("expected no entries, got %d", len(entries))
+	if len(result.Entries()) != 0 {
+		t.Fatalf("expected no entries, got %d", len(result.Entries()))
 	}
-	if len(notes) != 0 {
-		t.Fatalf("expected no notes, got %v", notes)
+	if len(result.Notes()) != 0 {
+		t.Fatalf("expected no notes, got %v", result.Notes())
+	}
+}
+
+func TestBTNHandlerPaginatesUntilReportedTotal(t *testing.T) {
+	t.Parallel()
+
+	payloads := captureBTNPayloadSequence(t,
+		`{"result":{"results":"3","torrents":{"101":{"ReleaseName":"Example.Show.S01E01.1080p-GRP"},"102":{"ReleaseName":"Example.Show.S01E01.720p-GRP"}}}}`,
+		`{"result":{"results":3,"torrents":{"103":{"ReleaseName":"Example.Show.S01E01.2160p-GRP"}}}}`,
+	)
+	handler := dupe.NewAdapter(New(), "BTN", configWithBTNAPIKey(), payloads.client, nil)
+	result := handler.Search(context.Background(), api.DuplicateSubject{
+		SourcePath: "x",
+		Identity: api.ExternalIdentity{
+			Category: "TV",
+			TVDBID:   998877,
+		},
+	})
+
+	if result.Cause() != nil || len(result.Entries()) != 3 {
+		t.Fatalf("unexpected result entries=%d cause=%v", len(result.Entries()), result.Cause())
+	}
+	evidence := result.SearchEvidence()
+	if !evidence.Complete || evidence.Pages != 2 || !evidence.EffectiveComplete() {
+		t.Fatalf("unexpected search evidence: %#v", evidence)
+	}
+	for index, wantOffset := range []int64{0, 2} {
+		payload := payloads.payloadAt(t, index)
+		if btnTestString(payload["method"]) != "getTorrents" {
+			t.Fatalf("request %d did not use getTorrents", index)
+		}
+		params := btnPayloadParams(t, payload)
+		if got := btnTestInt(params[2]); got != btnDupePageLimit {
+			t.Fatalf("request %d limit=%d, want %d", index, got, btnDupePageLimit)
+		}
+		if got := btnTestInt(params[3]); got != wantOffset {
+			t.Fatalf("request %d offset=%d, want %d", index, got, wantOffset)
+		}
+	}
+}
+
+func TestBTNHandlerPreservesEntriesAfterPartialRequestFailure(t *testing.T) {
+	t.Parallel()
+
+	payloads := captureBTNPayloads(t, `{"result":{"results":"3","torrents":{"101":{"ReleaseName":"Example.Show.S01E01.1080p-GRP"},"102":{"ReleaseName":"Example.Show.S01E01.720p-GRP"}}}}`)
+	handler := dupe.NewAdapter(New(), "BTN", configWithBTNAPIKey(), payloads.client, nil)
+	result := handler.Search(context.Background(), api.DuplicateSubject{
+		SourcePath: "x",
+		Identity: api.ExternalIdentity{
+			Category: "TV",
+			TVDBID:   998877,
+		},
+	})
+
+	evidence := result.SearchEvidence()
+	if len(result.Entries()) != 2 || evidence.Complete || len(evidence.Warnings) != 1 || evidence.Warnings[0] != "BTN search stopped after a partial request failure" {
+		t.Fatalf("unexpected partial search result entries=%d evidence=%#v", len(result.Entries()), evidence)
+	}
+}
+
+func TestBTNHandlerUsesOneShotDailySearch(t *testing.T) {
+	t.Parallel()
+
+	payloads := captureBTNPayloads(t, `{"result":{"results":"2500","torrents":{"777":{"ReleaseName":"Example.Daily.2026.02.03.1080p-GRP"}}}}`)
+	handler := dupe.NewAdapter(New(), "BTN", configWithBTNAPIKey(), payloads.client, nil)
+	result := handler.Search(context.Background(), api.DuplicateSubject{
+		SourcePath:       "x",
+		DailyEpisodeDate: "2026-02-03",
+		Identity: api.ExternalIdentity{
+			Category: "TV",
+			TVDBID:   998877,
+		},
+		Release: api.ReleaseInfo{Title: "Example Daily"},
+	})
+
+	if result.Cause() != nil || len(result.Entries()) != 1 || payloads.requestCount() != 1 {
+		t.Fatalf("unexpected daily result entries=%d requests=%d cause=%v", len(result.Entries()), payloads.requestCount(), result.Cause())
+	}
+	filter := payloads.lastFilter(t)
+	assertBTNFilterValue(t, filter, "tvdb", "998877")
+	assertBTNFilterValue(t, filter, "search", "Example%Daily")
+	assertBTNFilterValue(t, filter, "category", "Episode")
+	assertBTNFilterValue(t, filter, "name", "2026.02.03%")
+	evidence := result.SearchEvidence()
+	if evidence.Complete || evidence.Pages != 1 || evidence.Scope != "daily_episode" || len(evidence.Warnings) != 1 {
+		t.Fatalf("unexpected daily search evidence: %#v", evidence)
+	}
+}
+
+func TestBTNHandlerRequiresReportedResultCountForCompleteness(t *testing.T) {
+	t.Parallel()
+
+	payloads := captureBTNPayloads(t, `{"result":{"torrents":{"777":{"ReleaseName":"Example.Show.S01E01.1080p-GRP"}}}}`)
+	handler := dupe.NewAdapter(New(), "BTN", configWithBTNAPIKey(), payloads.client, nil)
+	result := handler.Search(context.Background(), api.DuplicateSubject{
+		SourcePath: "x",
+		Identity: api.ExternalIdentity{
+			Category: "TV",
+			TVDBID:   998877,
+		},
+	})
+
+	evidence := result.SearchEvidence()
+	if evidence.Complete || len(evidence.Warnings) != 1 || evidence.Warnings[0] != "BTN search response omitted a valid results count" {
+		t.Fatalf("unexpected search evidence: %#v", evidence)
 	}
 }
 
 type btnPayloadCapture struct {
-	client  *http.Client
-	payload map[string]any
-	mu      sync.Mutex
+	client    *http.Client
+	payloads  []map[string]any
+	responses []string
+	mu        sync.Mutex
 }
 
 func captureBTNPayloads(t *testing.T, response string) *btnPayloadCapture {
 	t.Helper()
+	return captureBTNPayloadSequence(t, response)
+}
 
-	capture := &btnPayloadCapture{}
+func captureBTNPayloadSequence(t *testing.T, responses ...string) *btnPayloadCapture {
+	t.Helper()
+
+	capture := &btnPayloadCapture{responses: responses}
 	capture.client = &http.Client{
 		Transport: btnRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 			body, err := io.ReadAll(req.Body)
@@ -266,11 +381,19 @@ func captureBTNPayloads(t *testing.T, response string) *btnPayloadCapture {
 			}
 			_ = req.Body.Close()
 
-			capture.mu.Lock()
-			defer capture.mu.Unlock()
-			if err := json.Unmarshal(body, &capture.payload); err != nil {
+			var payload map[string]any
+			if err := json.Unmarshal(body, &payload); err != nil {
 				return nil, fmt.Errorf("unmarshal BTN payload request body: %w", err)
 			}
+			capture.mu.Lock()
+			index := len(capture.payloads)
+			if index >= len(capture.responses) {
+				capture.mu.Unlock()
+				return nil, fmt.Errorf("unexpected BTN request %d", index+1)
+			}
+			capture.payloads = append(capture.payloads, payload)
+			response := capture.responses[index]
+			capture.mu.Unlock()
 
 			return &http.Response{
 				StatusCode: http.StatusOK,
@@ -285,17 +408,41 @@ func captureBTNPayloads(t *testing.T, response string) *btnPayloadCapture {
 
 func (c *btnPayloadCapture) lastFilter(t *testing.T) map[string]any {
 	t.Helper()
+	return btnPayloadFilter(t, c.payloadAt(t, c.requestCount()-1))
+}
+
+func (c *btnPayloadCapture) payloadAt(t *testing.T, index int) map[string]any {
+	t.Helper()
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	params, ok := c.payload["params"].([]any)
-	if !ok || len(params) < 2 {
-		t.Fatalf("expected JSON-RPC params, got %#v", c.payload)
+	if index < 0 || index >= len(c.payloads) {
+		t.Fatalf("BTN payload index %d out of range", index)
 	}
+	return c.payloads[index]
+}
+
+func (c *btnPayloadCapture) requestCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.payloads)
+}
+
+func btnPayloadParams(t *testing.T, payload map[string]any) []any {
+	t.Helper()
+	params, ok := payload["params"].([]any)
+	if !ok || len(params) != 4 {
+		t.Fatal("expected four JSON-RPC params")
+	}
+	return params
+}
+
+func btnPayloadFilter(t *testing.T, payload map[string]any) map[string]any {
+	t.Helper()
+	params := btnPayloadParams(t, payload)
 	filter, ok := params[1].(map[string]any)
 	if !ok {
-		t.Fatalf("expected filter map, got %#v", params[1])
+		t.Fatal("expected BTN filter map")
 	}
 	return filter
 }

@@ -30,7 +30,6 @@ func duplicatePolicy() *trackers.DupePolicy {
 		},
 		HDRPartialMode:                        trackers.DupeHDRPartialExplicitTitle,
 		SlotContradictionsRequireManualReview: true,
-		SlotDifferencesOverrideGeneral:        true,
 		CoexistenceRules: append(
 			lstCodecCoexistenceRules(),
 			lstWEBDLAlongsideWEBRipRule(),

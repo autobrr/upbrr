@@ -45,12 +45,13 @@ func Evaluate(
 	search SearchEvidence,
 ) Evaluation {
 	targetFacts := normalizeTargetFacts(target)
-	evaluation := Evaluation{Complete: search.Complete, TargetFacts: targetFacts}
+	effectiveComplete := search.EffectiveComplete()
+	evaluation := Evaluation{Complete: effectiveComplete, TargetFacts: targetFacts}
 	candidateFacts := make([]normalizedFacts, 0, len(candidates))
 	for _, candidate := range candidates {
 		facts := normalizeCandidateFacts(candidate)
 		candidateFacts = append(candidateFacts, facts)
-		findings := collectCandidateFindings(target, targetFacts, candidate, facts, policy)
+		findings := collectCandidateFindings(target, targetFacts, candidate, facts, policy, search.WorkScope)
 		evaluation.Candidates = append(evaluation.Candidates, resolveCandidateFindings(candidate, facts, findings))
 	}
 	evaluation.SetFindings = evaluateSetRules(targetFacts, candidates, candidateFacts, policy, search)
@@ -75,34 +76,63 @@ func Evaluate(
 		case api.DupeRelationCoexists:
 		}
 	}
-	if !search.Complete {
+	if !effectiveComplete {
 		evaluation.RequiresAction = true
 	}
 	return evaluation
 }
 
 func exactCandidate(target api.TrackerDuplicateTarget, candidate TrackerCandidate) bool {
-	filesComparable := len(target.FileNames) > 0 && len(candidate.Files) > 0
-	if filesComparable {
-		if candidate.FileCount > 0 && candidate.FileCount != len(candidate.Files) {
-			return false
+	// File identity compares primary video content only: auxiliary files
+	// (subtitles, nfo, artwork) routinely share basenames across distinct
+	// releases of one work and must never establish identity. Partial
+	// candidate file lists stay usable, so identity holds when the video sets
+	// agree or when the proposal's single video is covered by the candidate.
+	targetVideos := videoFileSet(target.FileNames)
+	candidateVideos := videoFileSet(candidate.Files)
+	if len(targetVideos) > 0 && len(candidateVideos) > 0 {
+		if slices.Equal(targetVideos, candidateVideos) {
+			return !candidate.SizeKnown || target.SizeBytes == 0 || candidate.SizeBytes == target.SizeBytes
 		}
-		if len(target.FileNames) != len(candidate.Files) {
-			return false
+		// A single-video proposal already present inside a larger candidate
+		// (an existing pack or collection) is covered content; the candidate
+		// size describes more than the proposal, so no size comparison
+		// applies. The reverse (multi-video proposal overlapping an existing
+		// single) is left to pack-precedence policy, not identity.
+		if len(targetVideos) == 1 && slices.Contains(candidateVideos, targetVideos[0]) {
+			return true
 		}
-		left := normalizedFileSet(target.FileNames)
-		right := normalizedFileSet(candidate.Files)
-		if !slices.Equal(left, right) {
-			return false
-		}
-		return !candidate.SizeKnown || target.SizeBytes == 0 || candidate.SizeBytes == target.SizeBytes
 	}
 	if slices.ContainsFunc(target.Names, func(name string) bool {
 		return sameCandidateName(name, candidate.Name)
 	}) {
 		return true
 	}
-	return len(target.FileNames) == 1 && releaseNameMatchesFile(target.FileNames[0], candidate.Name)
+	return len(target.FileNames) == 1 &&
+		isVideoFileName(strings.ToLower(strings.TrimSpace(target.FileNames[0]))) &&
+		releaseNameMatchesFile(target.FileNames[0], candidate.Name)
+}
+
+// videoFileSet returns the sorted normalized basenames of primary video
+// content, excluding auxiliary companions whose names repeat across releases.
+func videoFileSet(files []string) []string {
+	result := make([]string, 0, len(files))
+	for _, file := range normalizedFileSet(files) {
+		if isVideoFileName(file) {
+			result = append(result, file)
+		}
+	}
+	return result
+}
+
+func isVideoFileName(name string) bool {
+	switch path.Ext(name) {
+	case ".mkv", ".mp4", ".avi", ".ts", ".m2ts", ".mts", ".vob", ".mov", ".wmv",
+		".flv", ".mpg", ".mpeg", ".m4v", ".webm", ".iso":
+		return true
+	default:
+		return false
+	}
 }
 
 func sameCandidateName(left string, right string) bool {

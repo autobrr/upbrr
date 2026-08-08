@@ -7,7 +7,6 @@ import (
 	"context"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 
 	xhtml "golang.org/x/net/html"
@@ -45,15 +44,14 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	if err != nil {
 		return dupe.NotRun(dupe.NotRunMissingCredentials, "missing valid FL cookies", nil)
 	}
-	params := url.Values{"cat": {strconv.Itoa(flCategoryID(meta))}}
+	params := url.Values{}
+	workScope := dupe.WorkScopeProviderID
 	if meta.Identity.IMDBID != 0 {
 		params.Set("search", providerid.IMDb(meta.Identity.IMDBID).Prefixed())
 		params.Set("searchin", "3")
 	} else {
-		query := dupe.ProjectedSearchName(meta)
-		if meta.Projection == nil {
-			query = metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName)
-		}
+		workScope = dupe.WorkScopeTitle
+		query := metautil.FirstNonEmptyTrimmed(meta.Release.Title, dupe.ProjectedSearchName(meta), meta.ReleaseName)
 		if query == "" {
 			return dupe.NotRun(dupe.NotRunMissingMetadata, "missing FL search query", nil)
 		}
@@ -103,44 +101,17 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 			Link: link,
 		})
 	})
-	return dupe.Resolved(entries, nil)
+	warnings := []string{"FL search pagination completeness is not evidenced"}
+	return dupe.ResolvedWithSearch(entries, nil, dupe.SearchEvidence{
+		WorkScope: workScope,
+		Pages:     1,
+		Scope:     "all_categories",
+		Warnings:  warnings,
+	})
 }
 
 func flBaseURL(_ config.Config) string {
 	return "https://filelist.io"
-}
-func flCategoryID(meta api.DuplicateSubject) int {
-	if meta.Anime {
-		return 24
-	}
-	category := strings.ToUpper(strings.TrimSpace(string(meta.Identity.Category)))
-	resolution := strings.TrimSpace(meta.Release.Resolution)
-	switch {
-	case strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD"):
-		return 2
-	case category == "TV":
-		if resolution == "2160p" {
-			return 27
-		}
-		if resolution == "480p" || resolution == "576p" {
-			return 23
-		}
-		return 21
-	default:
-		if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") || strings.EqualFold(strings.TrimSpace(meta.Type), "REMUX") {
-			if resolution == "2160p" {
-				return 26
-			}
-			return 20
-		}
-		if resolution == "2160p" {
-			return 6
-		}
-		if resolution == "480p" || resolution == "576p" {
-			return 1
-		}
-		return 4
-	}
 }
 func flWalk(node *xhtml.Node, visit func(*xhtml.Node)) {
 	if node == nil {

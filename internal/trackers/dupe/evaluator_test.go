@@ -417,7 +417,7 @@ func TestEvaluateIncompleteEmptySearchRequiresAction(t *testing.T) {
 	}
 }
 
-func TestEvaluateSeasonPackContainingTargetFileIsNotExactDuplicate(t *testing.T) {
+func TestEvaluateSeasonPackContainingExactTargetFileIsExactDuplicate(t *testing.T) {
 	t.Parallel()
 
 	evaluation := Evaluate(
@@ -433,10 +433,10 @@ func TestEvaluateSeasonPackContainingTargetFileIsNotExactDuplicate(t *testing.T)
 			Season: 1,
 			Pack:   true,
 		}},
-		trackerspkg.DupePolicy{PrecedenceRules: trackerspkg.SeasonPackPrecedenceRules("")},
+		trackerspkg.DupePolicy{},
 		SearchEvidence{Complete: true},
 	)
-	if got := evaluation.Candidates[0].Relation; got != api.DupeRelationExistingPreferred {
+	if got := evaluation.Candidates[0].Relation; got != api.DupeRelationExactDuplicate {
 		t.Fatalf("season-pack relation = %q", got)
 	}
 }
@@ -515,7 +515,96 @@ func TestEvaluateExactFileIdentityNormalizesHostAndTorrentPaths(t *testing.T) {
 	}
 }
 
-func TestEvaluateCompatibilityPolicyDoesNotInventPackPrecedence(t *testing.T) {
+func TestEvaluateSharedAuxiliaryFileIsNotExactIdentity(t *testing.T) {
+	t.Parallel()
+
+	// Same-work releases at different resolutions can ship identically named
+	// subtitle/companion files; a shared auxiliary basename must not become
+	// exact identity between distinct releases.
+	evaluation := Evaluate(
+		api.TrackerDuplicateTarget{
+			Names:      []string{"Example.Release.2026.2160p-GRP"},
+			Resolution: "2160p",
+			FileNames: []string{
+				"Example.Release.2026.2160p-GRP/Example.Release.2026.2160p-GRP.mkv",
+				"Example.Release.2026.2160p-GRP/2_English.srt",
+			},
+			SizeBytes: 4000,
+		},
+		[]TrackerCandidate{{
+			Name:       "Example.Release.2026.1080p-GRP",
+			Resolution: "1080p",
+			Files: []string{
+				"Example.Release.2026.1080p-GRP/Example.Release.2026.1080p-GRP.mkv",
+				"Example.Release.2026.1080p-GRP/2_English.srt",
+			},
+			SizeKnown: true,
+			SizeBytes: 1500,
+		}},
+		trackerspkg.DupePolicy{},
+		SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID},
+	)
+	if got := evaluation.Candidates[0].Relation; got == api.DupeRelationExactDuplicate {
+		t.Fatalf("shared subtitle basename must not be exact identity, got %q", got)
+	}
+}
+
+func TestEvaluateSeasonPackProposalNotBlockedBySingleEpisodeFile(t *testing.T) {
+	t.Parallel()
+
+	// A proposed season pack shares episode file basenames with existing
+	// single-episode uploads; identity must not outrank pack precedence.
+	evaluation := Evaluate(
+		api.TrackerDuplicateTarget{
+			Names:  []string{"Example.Show.S01.1080p-GRP"},
+			Season: 1,
+			Pack:   true,
+			FileNames: []string{
+				"Example.Show.S01.1080p-GRP/Example.Show.S01E01.1080p-GRP.mkv",
+				"Example.Show.S01.1080p-GRP/Example.Show.S01E02.1080p-GRP.mkv",
+			},
+			SizeBytes: 4000,
+		},
+		[]TrackerCandidate{{
+			Name:      "Example.Show.S01E01.1080p-GRP",
+			Season:    1,
+			Episode:   1,
+			Files:     []string{"Example.Show.S01E01.1080p-GRP.mkv"},
+			SizeKnown: true,
+			SizeBytes: 2000,
+		}},
+		trackerspkg.DupePolicy{},
+		SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID},
+	)
+	if got := evaluation.Candidates[0].Relation; got != api.DupeRelationProposedTrumps {
+		t.Fatalf("season pack over existing episode must trump, got %q", got)
+	}
+}
+
+func TestEvaluateEqualVideoSetWithConflictingSizeIsNotExact(t *testing.T) {
+	t.Parallel()
+
+	evaluation := Evaluate(
+		api.TrackerDuplicateTarget{
+			Names:     []string{"Example.Release.2026-GRP"},
+			FileNames: []string{"Example.Release.2026-GRP.mkv"},
+			SizeBytes: 4000,
+		},
+		[]TrackerCandidate{{
+			Name:      "Example.Release.2026.Other-GRP",
+			Files:     []string{"Example.Release.2026-GRP.mkv"},
+			SizeKnown: true,
+			SizeBytes: 1500,
+		}},
+		trackerspkg.DupePolicy{},
+		SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID},
+	)
+	if got := evaluation.Candidates[0].Relation; got == api.DupeRelationExactDuplicate {
+		t.Fatalf("known conflicting sizes must veto file identity, got %q", got)
+	}
+}
+
+func TestEvaluateGeneralPolicyAppliesPackPrecedence(t *testing.T) {
 	t.Parallel()
 
 	evaluation := Evaluate(
@@ -527,9 +616,9 @@ func TestEvaluateCompatibilityPolicyDoesNotInventPackPrecedence(t *testing.T) {
 			ReasonCode:         "tracker_policy_not_evidence_backed",
 			RequiresManualStep: true,
 		}}},
-		SearchEvidence{Complete: true},
+		SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID},
 	)
-	if got := evaluation.Candidates[0].Relation; got != api.DupeRelationManualReview {
+	if got := evaluation.Candidates[0].Relation; got != api.DupeRelationExistingPreferred {
 		t.Fatalf("compatibility pack relation = %q", got)
 	}
 }
@@ -739,7 +828,7 @@ func TestNormalizeBareSceneWEBAsWebDL(t *testing.T) {
 	}
 }
 
-func TestEvaluateGeneralStructurePrecedesIrrelevantMissingHDR(t *testing.T) {
+func TestEvaluateTrackerSlotsPrecedeGeneralAndMissingHDR(t *testing.T) {
 	t.Parallel()
 
 	policy := trackerspkg.DupePolicy{
@@ -763,7 +852,7 @@ func TestEvaluateGeneralStructurePrecedesIrrelevantMissingHDR(t *testing.T) {
 				Resolution: "720p",
 				HDR:        api.HDRFacts{Origin: api.HDREvidenceUnknown, Status: api.HDREvidenceMissing},
 			},
-			reason: "resolution_differs",
+			reason: "different_resolution",
 		},
 		{
 			name: "sd full disc",
@@ -773,7 +862,7 @@ func TestEvaluateGeneralStructurePrecedesIrrelevantMissingHDR(t *testing.T) {
 				Resolution: "480i",
 				HDR:        api.HDRFacts{Origin: api.HDREvidenceUnknown, Status: api.HDREvidenceMissing},
 			},
-			reason: "media_class_differs",
+			reason: "different_resolution",
 		},
 		{
 			name: "same resolution remux",
@@ -791,24 +880,16 @@ func TestEvaluateGeneralStructurePrecedesIrrelevantMissingHDR(t *testing.T) {
 
 			got := Evaluate(target, []TrackerCandidate{test.candidate}, policy, SearchEvidence{Complete: true}).Candidates[0]
 			if got.Relation != api.DupeRelationCoexists || got.Reasons[0].Code != test.reason {
-				t.Fatalf("general structural relation = %#v", got)
+				t.Fatalf("structural relation = %#v", got)
 			}
 		})
 	}
 }
 
-func TestEvaluateCompatibilityFallbackRunsOnlyForUnresolvedSameSlot(t *testing.T) {
+func TestEvaluateCompatibilityPolicyUsesGeneralFallback(t *testing.T) {
 	t.Parallel()
 
-	policy := trackerspkg.DupePolicy{
-		ID: "ras/duplicate-compat/v1",
-		SameSlotFallback: &trackerspkg.DupeRule{
-			ID:                 "policy_evidence_unavailable",
-			Relation:           "manual_review",
-			ReasonCode:         "tracker_policy_not_evidence_backed",
-			RequiresManualStep: true,
-		},
-	}
+	policy := trackerspkg.DupePolicy{ID: "ras/duplicate-compat/v1"}
 	target := api.TrackerDuplicateTarget{Type: "WEB-DL", Resolution: "1080p"}
 	different := Evaluate(
 		target,
@@ -825,7 +906,7 @@ func TestEvaluateCompatibilityFallbackRunsOnlyForUnresolvedSameSlot(t *testing.T
 		policy,
 		SearchEvidence{Complete: true},
 	).Candidates[0]
-	if same.Relation != api.DupeRelationManualReview || same.Reasons[0].Code != "tracker_policy_not_evidence_backed" {
+	if same.Relation != api.DupeRelationSameSlot || same.Reasons[0].Code != "same_tracker_slot" {
 		t.Fatalf("same compatibility slot = %#v", same)
 	}
 }
@@ -972,7 +1053,7 @@ func TestEvaluateEqualSpecificityConflictRequiresManualReview(t *testing.T) {
 	}
 }
 
-func TestEvaluateSameTitleDoesNotOverrideStructuredFileMismatch(t *testing.T) {
+func TestEvaluateExactReleaseNameBlocksDespiteFileMismatch(t *testing.T) {
 	t.Parallel()
 
 	got := Evaluate(
@@ -988,12 +1069,12 @@ func TestEvaluateSameTitleDoesNotOverrideStructuredFileMismatch(t *testing.T) {
 		trackerspkg.DupePolicy{},
 		SearchEvidence{Complete: true},
 	).Candidates[0]
-	if got.Relation == api.DupeRelationExactDuplicate {
-		t.Fatalf("file mismatch classified exact: %#v", got)
+	if got.Relation != api.DupeRelationExactDuplicate {
+		t.Fatalf("exact release name relation = %#v", got)
 	}
 }
 
-func TestEvaluatePartialCandidateFileSetIsNotExact(t *testing.T) {
+func TestEvaluatePartialCandidateFileSetWithExactBasenameIsExact(t *testing.T) {
 	t.Parallel()
 
 	got := Evaluate(
@@ -1005,8 +1086,191 @@ func TestEvaluatePartialCandidateFileSetIsNotExact(t *testing.T) {
 		trackerspkg.DupePolicy{},
 		SearchEvidence{Complete: true},
 	).Candidates[0]
-	if got.Relation == api.DupeRelationExactDuplicate {
-		t.Fatalf("partial file set classified exact: %#v", got)
+	if got.Relation != api.DupeRelationExactDuplicate {
+		t.Fatalf("partial file set relation = %#v", got)
+	}
+}
+
+func TestEvaluateGeneralFallbackPreservesPotentialCandidates(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name      string
+		target    api.TrackerDuplicateTarget
+		candidate TrackerCandidate
+		want      api.DupeRelation
+	}{
+		{
+			name: "year difference",
+			target: api.TrackerDuplicateTarget{
+				Names:      []string{"Example.Release.2025.1080p.WEB-DL-GRP"},
+				Type:       "WEB-DL",
+				Resolution: "1080p",
+			},
+			candidate: TrackerCandidate{
+Name: "Example.Release.2026.1080p.WEB-DL-GRP",
+ Type: "WEB-DL",
+ Resolution: "1080p",
+},
+			want:      api.DupeRelationSameSlot,
+		},
+		{
+			name: "restyled name",
+			target: api.TrackerDuplicateTarget{
+				Names:      []string{"Example.Release.2026.1080p.WEB-DL-GRP"},
+				Type:       "WEB-DL",
+				Resolution: "1080p",
+			},
+			candidate: TrackerCandidate{
+Name: "Restyled Alias - GRP",
+ Type: "WEB-DL",
+ Resolution: "1080p",
+},
+			want:      api.DupeRelationSameSlot,
+		},
+		{
+			name:      "fuzzy filename",
+			target:    api.TrackerDuplicateTarget{FileNames: []string{"Example.Release.2026.mkv"}},
+			candidate: TrackerCandidate{Files: []string{"Example.Release.2026.PROPER.mkv"}},
+			want:      api.DupeRelationSameSlot,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := Evaluate(test.target, []TrackerCandidate{test.candidate}, trackerspkg.DupePolicy{}, SearchEvidence{}).Candidates[0]
+			if got.Relation != test.want {
+				t.Fatalf("relation = %q, want %q", got.Relation, test.want)
+			}
+		})
+	}
+}
+
+func TestEvaluateGeneralHDRRequiresPositiveEvidence(t *testing.T) {
+	t.Parallel()
+
+	target := api.TrackerDuplicateTarget{HDR: testHDR(api.HDREvidenceComplete, api.HDRFormatSDR)}
+	complete := Evaluate(
+		target,
+		[]TrackerCandidate{{HDR: testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10)}},
+		trackerspkg.DupePolicy{},
+		SearchEvidence{},
+	).Candidates[0]
+	if complete.Relation != api.DupeRelationCoexists || complete.Reasons[0].Code != "distinct_hdr_slot" {
+		t.Fatalf("complete HDR relation = %#v", complete)
+	}
+
+	partial := testHDR(api.HDREvidencePartial, api.HDRFormatHDR10)
+	partial.Origin = api.HDREvidenceTrackerAPI
+	got := Evaluate(target, []TrackerCandidate{{HDR: partial}}, trackerspkg.DupePolicy{}, SearchEvidence{}).Candidates[0]
+	if got.Relation != api.DupeRelationSameSlot {
+		t.Fatalf("partial API HDR relation = %#v", got)
+	}
+}
+
+func TestEvaluateGeneralSeasonPackContainmentIsDirectional(t *testing.T) {
+	t.Parallel()
+
+	proposedPack := Evaluate(
+		api.TrackerDuplicateTarget{Season: 1, Pack: true},
+		[]TrackerCandidate{{Season: 1, Episode: 2}},
+		trackerspkg.DupePolicy{},
+		SearchEvidence{WorkScope: WorkScopeProviderID},
+	).Candidates[0]
+	if proposedPack.Relation != api.DupeRelationProposedTrumps {
+		t.Fatalf("proposed pack relation = %#v", proposedPack)
+	}
+
+	existingPack := Evaluate(
+		api.TrackerDuplicateTarget{Season: 1, Episode: 2},
+		[]TrackerCandidate{{Season: 1, Pack: true}},
+		trackerspkg.DupePolicy{},
+		SearchEvidence{WorkScope: WorkScopeProviderID},
+	).Candidates[0]
+	if existingPack.Relation != api.DupeRelationExistingPreferred {
+		t.Fatalf("existing pack relation = %#v", existingPack)
+	}
+}
+
+func TestEvaluateGenericVideoBasenameDoesNotEstablishIdentity(t *testing.T) {
+	t.Parallel()
+
+	// Generic member names repeat across distinct releases. A shared generic
+	// video basename must not establish identity when the video sets differ,
+	// and identical generic single-file sets with conflicting known sizes
+	// must fail the size check.
+	sharedSample := Evaluate(
+		api.TrackerDuplicateTarget{
+			Names:     []string{"Example.Release.2026.2160p-GRP"},
+			FileNames: []string{"Example.Release.2026.2160p-GRP.mkv", "sample.mkv"},
+			SizeBytes: 4000,
+		},
+		[]TrackerCandidate{{
+			Name:      "Example.Release.2026.1080p-OTHER",
+			Files:     []string{"Example.Release.2026.1080p-OTHER.mkv", "sample.mkv"},
+			SizeKnown: true,
+			SizeBytes: 1500,
+		}},
+		trackerspkg.DupePolicy{},
+		SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID},
+	)
+	if got := sharedSample.Candidates[0].Relation; got == api.DupeRelationExactDuplicate {
+		t.Fatalf("shared generic sample basename must not be exact identity, got %q", got)
+	}
+
+	genericSingle := Evaluate(
+		api.TrackerDuplicateTarget{
+			Names:     []string{"Example.Release.2026.2160p-GRP"},
+			FileNames: []string{"01.mkv"},
+			SizeBytes: 4000,
+		},
+		[]TrackerCandidate{{
+			Name:      "Example.Release.2026.1080p-OTHER",
+			Files:     []string{"01.mkv"},
+			SizeKnown: true,
+			SizeBytes: 1500,
+		}},
+		trackerspkg.DupePolicy{},
+		SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID},
+	)
+	if got := genericSingle.Candidates[0].Relation; got == api.DupeRelationExactDuplicate {
+		t.Fatalf("generic single-file basename with conflicting sizes must not be exact, got %q", got)
+	}
+}
+
+func TestEvaluateSingleAuxiliaryFileStemDoesNotEstablishIdentity(t *testing.T) {
+	t.Parallel()
+
+	// A lone non-video file whose stem coincides with the candidate's release
+	// name must not establish identity through the single-file stem fallback.
+	evaluation := Evaluate(
+		api.TrackerDuplicateTarget{FileNames: []string{"Example.Release.2026.nfo"}},
+		[]TrackerCandidate{{Name: "Example.Release.2026"}},
+		trackerspkg.DupePolicy{},
+		SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID},
+	)
+	if got := evaluation.Candidates[0].Relation; got == api.DupeRelationExactDuplicate {
+		t.Fatalf("auxiliary stem fallback must not be exact identity, got %q", got)
+	}
+}
+
+func TestEvaluatePackContainmentRequiresAuthoritativeWorkScope(t *testing.T) {
+	t.Parallel()
+
+	// A title-fallback search cannot prove candidates belong to the same
+	// work, so a season-number coincidence with a different show's pack must
+	// not block the proposal.
+	evaluation := Evaluate(
+		api.TrackerDuplicateTarget{Season: 1, Episode: 2},
+		[]TrackerCandidate{{Season: 1, Pack: true}},
+		trackerspkg.DupePolicy{},
+		SearchEvidence{Complete: true, WorkScope: WorkScopeTitle},
+	)
+	if got := evaluation.Candidates[0].Relation; got == api.DupeRelationExistingPreferred {
+		t.Fatalf("title-fallback pack containment must not block, got %q", got)
+	}
+	if evaluation.Blocks {
+		t.Fatalf("title-fallback season coincidence must not set Blocks")
 	}
 }
 

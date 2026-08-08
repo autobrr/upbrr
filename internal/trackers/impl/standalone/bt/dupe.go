@@ -55,53 +55,44 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing IMDb ID for BT dupe search", nil)
 	}
 
-	isTVPack := meta.TVPack
-
 	searchStr := imdbID
+	workScope := dupe.WorkScopeProviderID
 	if meta.Anime {
-		if meta.Projection != nil {
+		workScope = dupe.WorkScopeTitle
+		tvdbNameEnglish := ""
+		tvdbName := ""
+		if meta.ProviderMetadata.TVDB != nil {
+			tvdbNameEnglish = strings.TrimSpace(meta.ProviderMetadata.TVDB.NameEnglish)
+			tvdbName = strings.TrimSpace(meta.ProviderMetadata.TVDB.Name)
+		}
+
+		tmdbTitle := ""
+		tmdbOriginalTitle := ""
+		if meta.ProviderMetadata.TMDB != nil {
+			tmdbTitle = strings.TrimSpace(meta.ProviderMetadata.TMDB.Title)
+			tmdbOriginalTitle = strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalTitle)
+		}
+
+		imdbTitle := ""
+		if meta.ProviderMetadata.IMDB != nil {
+			imdbTitle = strings.TrimSpace(meta.ProviderMetadata.IMDB.Title)
+		}
+
+		switch {
+		case strings.TrimSpace(meta.Release.Title) != "":
+			searchStr = strings.TrimSpace(meta.Release.Title)
+		case tvdbNameEnglish != "":
+			searchStr = tvdbNameEnglish
+		case tmdbTitle != "":
+			searchStr = tmdbTitle
+		case imdbTitle != "":
+			searchStr = imdbTitle
+		case tvdbName != "":
+			searchStr = tvdbName
+		case tmdbOriginalTitle != "":
+			searchStr = tmdbOriginalTitle
+		case dupe.ProjectedSearchName(meta) != "":
 			searchStr = dupe.ProjectedSearchName(meta)
-		} else {
-			tvdbNameEnglish := ""
-			tvdbName := ""
-			if meta.ProviderMetadata.TVDB != nil {
-				tvdbNameEnglish = strings.TrimSpace(meta.ProviderMetadata.TVDB.NameEnglish)
-				tvdbName = strings.TrimSpace(meta.ProviderMetadata.TVDB.Name)
-			}
-
-			tmdbTitle := ""
-			tmdbOriginalTitle := ""
-			if meta.ProviderMetadata.TMDB != nil {
-				tmdbTitle = strings.TrimSpace(meta.ProviderMetadata.TMDB.Title)
-				tmdbOriginalTitle = strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalTitle)
-			}
-
-			imdbTitle := ""
-			if meta.ProviderMetadata.IMDB != nil {
-				imdbTitle = strings.TrimSpace(meta.ProviderMetadata.IMDB.Title)
-			}
-
-			releaseName := strings.TrimSpace(meta.ReleaseName)
-
-			switch {
-			// English
-			case tvdbNameEnglish != "":
-				searchStr = tvdbNameEnglish
-			case tmdbTitle != "":
-				searchStr = tmdbTitle
-			case imdbTitle != "":
-				searchStr = imdbTitle
-
-			// Original
-			case tvdbName != "":
-				searchStr = tvdbName
-			case tmdbOriginalTitle != "":
-				searchStr = tmdbOriginalTitle
-
-			// Release Name
-			case releaseName != "":
-				searchStr = releaseName
-			}
 		}
 	}
 
@@ -126,14 +117,14 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 
 	torrentTable := findBTNodeByID(node, "torrent_table")
 	if torrentTable == nil {
-		return dupe.Resolved(nil, nil)
+		return btResolved(nil, workScope)
 	}
 
 	groupLinks := make(map[string]struct{})
 	findBTGroupLinks(torrentTable, groupLinks)
 
 	if len(groupLinks) == 0 {
-		return dupe.Resolved(nil, nil)
+		return btResolved(nil, workScope)
 	}
 
 	var foundItems []string
@@ -177,7 +168,7 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 				}
 
 				var localFound []string
-				processBTGroupPage(groupNode, isTVPack, &localFound)
+				processBTGroupPage(groupNode, &localFound)
 
 				if len(localFound) > 0 {
 					mu.Lock()
@@ -199,7 +190,17 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 	if err := ctx.Err(); err != nil {
 		return dupe.Failed(dupe.FailureRequest, "BT search canceled", err)
 	}
-	return dupe.Resolved(entries, nil)
+	return btResolved(entries, workScope)
+}
+
+func btResolved(entries []api.DupeEntry, workScope dupe.WorkScope) dupe.AdapterResult {
+	warnings := []string{"BT search pagination completeness is not evidenced"}
+	return dupe.ResolvedWithSearch(entries, nil, dupe.SearchEvidence{
+		WorkScope: workScope,
+		Pages:     1,
+		Scope:     "provider_group",
+		Warnings:  warnings,
+	})
 }
 
 func resolveBTIMDbIDText(meta api.DuplicateSubject) string {
@@ -242,7 +243,7 @@ func findBTGroupLinks(n *html.Node, links map[string]struct{}) {
 	}
 }
 
-func processBTGroupPage(n *html.Node, isTVPack bool, foundItems *[]string) {
+func processBTGroupPage(n *html.Node, foundItems *[]string) {
 	trs := findBTAllNodes(n, func(node *html.Node) bool {
 		if node.Type == html.ElementNode && node.Data == "tr" {
 			for _, a := range node.Attr {
@@ -295,17 +296,17 @@ func processBTGroupPage(n *html.Node, isTVPack bool, foundItems *[]string) {
 			continue
 		}
 
-		if isDisc || isTVPack {
-			pathDiv := findBTNode(fileDiv, func(node *html.Node) bool {
-				return node.Type == html.ElementNode && node.Data == "div" && hasBTClass(node, "filelist_path")
-			})
-			if pathDiv != nil {
-				folderName := strings.Trim(strings.TrimSpace(extractBTText(pathDiv)), "/")
-				if folderName != "" {
-					*foundItems = append(*foundItems, folderName)
-				}
+		pathDiv := findBTNode(fileDiv, func(node *html.Node) bool {
+			return node.Type == html.ElementNode && node.Data == "div" && hasBTClass(node, "filelist_path")
+		})
+		if pathDiv != nil {
+			folderName := strings.Trim(strings.TrimSpace(extractBTText(pathDiv)), "/")
+			if folderName != "" {
+				*foundItems = append(*foundItems, folderName)
+				continue
 			}
-		} else {
+		}
+		if !isDisc {
 			fileTable := findBTNode(fileDiv, func(node *html.Node) bool {
 				return node.Type == html.ElementNode && node.Data == "table" && hasBTClass(node, "filelist_table")
 			})

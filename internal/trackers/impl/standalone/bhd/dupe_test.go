@@ -46,9 +46,6 @@ func TestBHDSearchUsesExternalIDs(t *testing.T) {
 		wantTMDBID   string
 		wantIMDBID   string
 		wantCategory string
-		wantType     string
-		wantNilType  bool
-		wantNilCat   bool
 	}{
 		{
 			name: "tv tmdb id",
@@ -59,7 +56,6 @@ func TestBHDSearchUsesExternalIDs(t *testing.T) {
 			},
 			wantTMDBID:   "tv/123",
 			wantCategory: "TV",
-			wantType:     "1080p",
 		},
 		{
 			name: "movie tmdb id",
@@ -70,7 +66,6 @@ func TestBHDSearchUsesExternalIDs(t *testing.T) {
 			},
 			wantTMDBID:   "movie/234",
 			wantCategory: "Movies",
-			wantType:     "1080p",
 		},
 		{
 			name: "tmdb takes precedence over imdb",
@@ -85,7 +80,6 @@ func TestBHDSearchUsesExternalIDs(t *testing.T) {
 			},
 			wantTMDBID:   "movie/123",
 			wantCategory: "Movies",
-			wantType:     "2160p",
 		},
 		{
 			name: "imdb id",
@@ -96,18 +90,16 @@ func TestBHDSearchUsesExternalIDs(t *testing.T) {
 			},
 			wantIMDBID:   "tt1234567",
 			wantCategory: "Movies",
-			wantType:     "1080p",
 		},
 		{
-			name: "sd clears category and type filters",
+			name: "sd keeps broad category and no type filter",
 			meta: api.DuplicateSubject{
 				SourcePath: "source",
 				Identity:   api.ExternalIdentity{TMDBID: 123, Category: "MOVIE"},
 				Release:    api.ReleaseInfo{Resolution: "576p"},
 			},
-			wantTMDBID:  "movie/123",
-			wantNilType: true,
-			wantNilCat:  true,
+			wantTMDBID:   "movie/123",
+			wantCategory: "Movies",
 		},
 		{
 			name: "dvd clears type filter",
@@ -119,7 +111,6 @@ func TestBHDSearchUsesExternalIDs(t *testing.T) {
 			},
 			wantTMDBID:   "movie/123",
 			wantCategory: "Movies",
-			wantNilType:  true,
 		},
 	}
 
@@ -165,11 +156,7 @@ func TestBHDSearchUsesExternalIDs(t *testing.T) {
 			if got := bhdStringFromAny(payload["imdb_id"]); got != tc.wantIMDBID {
 				t.Fatalf("expected imdb_id %q, got %q", tc.wantIMDBID, got)
 			}
-			if tc.wantNilCat {
-				if value, ok := payload["categories"]; !ok || value != nil {
-					t.Fatalf("expected nil category filter, got %#v", value)
-				}
-			} else if got := bhdStringFromAny(payload["categories"]); got != tc.wantCategory {
+			if got := bhdStringFromAny(payload["categories"]); got != tc.wantCategory {
 				t.Fatalf("expected category %q, got %q", tc.wantCategory, got)
 			}
 			if value, ok := payload["types"]; !ok || value != nil {

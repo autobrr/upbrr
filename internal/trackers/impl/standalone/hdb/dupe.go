@@ -77,16 +77,15 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		request.Category = []int{category}
 	}
 	searchMethod := "id"
+	workScope := dupe.WorkScopeProviderID
 	if meta.Identity.IMDBID != 0 {
 		request.IMDB = map[string]string{"id": providerid.IMDb(meta.Identity.IMDBID).Digits()}
 	} else if isHDBDupeTVCategory(meta) && meta.Identity.TVDBID != 0 {
 		request.TVDB = map[string]int{"id": meta.Identity.TVDBID}
 	}
 	if request.IMDB == nil && request.TVDB == nil {
-		query := dupe.ProjectedSearchName(meta)
-		if meta.Projection == nil {
-			query = firstHDBText(meta.ReleaseName, meta.Filename, meta.Release.Title)
-		}
+		workScope = dupe.WorkScopeTitle
+		query := firstHDBText(meta.Release.Title, dupe.ProjectedSearchName(meta), meta.ReleaseName, meta.Filename)
 		if query == "" {
 			s.logger.Warnf("dupechecking: HDB missing imdb/tvdb IDs and search text for %s", meta.SourcePath)
 			return dupe.NotRun(dupe.NotRunMissingMetadata, "missing imdb/tvdb id for HDB dupe search", nil)
@@ -203,10 +202,11 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		complete,
 	)
 	return dupe.ResolvedWithSearch(entries, warnings, dupe.SearchEvidence{
-		Complete: complete,
-		Pages:    pages,
-		Scope:    "work_identity",
-		Warnings: warnings,
+		Complete:  complete,
+		WorkScope: workScope,
+		Pages:     pages,
+		Scope:     "work_identity",
+		Warnings:  warnings,
 	})
 }
 

@@ -544,6 +544,7 @@ func (s *Service) projectAdapterResult(
 		policy := s.duplicatePolicy(tracker, meta)
 		search := adapterResult.SearchEvidence()
 		evaluation := Evaluate(duplicateTargetForEvaluation(meta), candidates, policy, search)
+		effectiveComplete := search.EffectiveComplete()
 		match := evaluationMatch(evaluation)
 		hasDupes := evaluation.Blocks || hasActionableCandidateEvaluations(evaluation.Candidates)
 		result := api.DupeCheckResult{
@@ -555,18 +556,24 @@ func (s *Service) projectAdapterResult(
 			PolicyID:    policy.ID,
 			Evaluations: publicCandidateEvaluations(evaluation),
 			Search: api.DupeSearchEvidence{
-				Complete:       search.Complete,
+				Complete:       effectiveComplete,
 				Pages:          search.Pages,
 				CandidateCount: len(candidates),
 				Scope:          search.Scope,
+				WorkScope:      string(search.WorkScope),
+				WrongWorkCount: search.WrongWorkCount,
 				Warnings:       cloneNotes(search.Warnings),
 			},
 		}
 		s.logger.Infof(
-			"dupechecking: search tracker=%s state=completed candidates=%d complete=%t candidate_action=%t review_required=%t",
+			"dupechecking: search tracker=%s state=completed work_scope=%s received=%d evaluated=%d wrong_work=%d exhaustive=%t effective_complete=%t candidate_action=%t review_required=%t",
 			tracker,
+			search.WorkScope,
+			len(raw),
 			len(candidates),
+			search.WrongWorkCount,
 			search.Complete,
+			effectiveComplete,
 			hasDupes,
 			hasDupes || evaluation.RequiresAction,
 		)
@@ -575,11 +582,14 @@ func (s *Service) projectAdapterResult(
 			s.logSetFinding(tracker, finding)
 		}
 		s.logger.Debugf(
-			"dupechecking: search tracker=%s pages=%d complete=%t scope=%s warnings=%q",
+			"dupechecking: search tracker=%s pages=%d exhaustive=%t effective_complete=%t work_scope=%s scope=%s wrong_work=%d warnings=%q",
 			tracker,
 			search.Pages,
 			search.Complete,
+			effectiveComplete,
+			search.WorkScope,
 			dupeCandidateLogValue(search.Scope),
+			search.WrongWorkCount,
 			dupeCandidateLogValues(search.Warnings),
 		)
 		for _, candidate := range evaluation.Candidates {

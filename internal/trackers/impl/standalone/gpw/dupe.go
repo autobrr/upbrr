@@ -84,7 +84,12 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		}
 		entries = append(entries, api.DupeEntry{Name: strings.Join(strings.Fields(strings.Join(parts, " ")), " ")})
 	}
-	return dupe.Resolved(entries, nil)
+	return dupe.ResolvedWithSearch(entries, nil, dupe.SearchEvidence{
+		Complete:  true,
+		WorkScope: dupe.WorkScopeProviderID,
+		Pages:     1,
+		Scope:     "provider_array",
+	})
 }
 
 func gpwAPIKey(cfg config.Config) string {

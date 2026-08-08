@@ -34,11 +34,14 @@ func TestExtractBJSResultsNewTVLayout(t *testing.T) {
 		Release:    api.ReleaseInfo{Resolution: "1080p"},
 	})
 
-	if len(entries) != 1 {
-		t.Fatalf("expected one matching episode entry, got %#v", entries)
+	if len(entries) != 2 {
+		t.Fatalf("expected every same-season entry, got %#v", entries)
 	}
-	if entries[0].ID != "123" || entries[0].Name != "Example.S01E02.1080p-GRP" {
+	if entries[0].ID != "123" || entries[0].Name != "Example.S01E02.1080p-GRP" || entries[0].Season != 1 || entries[0].Episode != 2 {
 		t.Fatalf("unexpected entry: %#v", entries[0])
+	}
+	if entries[1].ID != "124" || entries[1].Episode != 3 {
+		t.Fatalf("unexpected sibling entry: %#v", entries[1])
 	}
 	if !entries[0].SizeKnown || entries[0].SizeBytes == 0 {
 		t.Fatalf("expected parsed size, got %#v", entries[0])
