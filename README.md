@@ -54,13 +54,13 @@ Otherwise, if the `XDG_CONFIG_HOME` environment variable is set (normally `~/.co
 $XDG_CONFIG_HOME/upbrr/db.sqlite
 ```
 
-Cookie files live beside that database:
+Tracker cookies are stored encrypted in the database. To import legacy `.txt` or `.json` cookie files, place them in a `cookies` folder beside the database:
 
 ```text
 %USERPROFILE%\.upbrr\cookies
 ```
 
-If you use a custom database path, put cookies in a `cookies` folder beside that database.
+If you use a custom database path, put legacy cookie files in a `cookies` folder beside that database. upbrr removes successfully migrated files.
 
 ## Migration From Upload Assistant
 
@@ -228,7 +228,7 @@ Useful CLI checks:
 .\upbrr.exe --queue "D:\upload-queue" --limit-queue 5
 ```
 
-CLI `--debug` builds and prints the same non-submitting tracker payload preview as the WebUI dry run. It never submits to trackers. `--log-level debug` changes log verbosity only and does not select debug/dry-run behavior. See `upbrr.exe --help`.
+CLI `--debug` builds and prints the same non-submitting tracker payload preview as the WebUI dry run. It never submits to trackers, but it still attempts client injection by default; add `--no-seed` (`-ns`) to skip injection. `--log-level debug` changes log verbosity only and does not select debug/dry-run behavior. See `upbrr.exe --help`.
 
 ### Automatic DVD Menu Screenshots
 

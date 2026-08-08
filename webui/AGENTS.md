@@ -1,13 +1,13 @@
 # Frontend Guidelines
 
-Scoped rules for `webui`. Root repo rules still apply.
+`webui`-scoped; root repo rules apply.
 
 ## Source Of Truth
 
-- Scripts and dependencies: `package.json`, `pnpm-lock.yaml`.
+- Scripts/dependencies: `package.json`, `pnpm-lock.yaml`.
 - TypeScript config: `tsconfig*.json`, `vite.config.ts`, `vitest.config.ts`.
-- Lint/format behavior: ESLint, Prettier, Stylelint config files and Lefthook.
-- API/runtime contracts: `pkg/api`, `internal/webserver`, generated workflow transport types and clients under `src/api`, and release ownership under `src/releaseSession`.
+- Lint/format: ESLint, Prettier, Stylelint configs, Lefthook.
+- API/runtime contracts: `pkg/api`, `internal/webserver`, generated workflow transport types/clients under `src/api`, release ownership under `src/releaseSession`.
 
 ## Commands
 
@@ -22,51 +22,51 @@ pnpm --dir webui run build
 
 ## Check Selection
 
-- TS/TSX changes: `pnpm --dir webui run lint`, `lint:dead`, `typecheck`, `test:unit`, and `format:check`.
-- CSS changes: `pnpm --dir webui run lint:style`; also run `format:check`.
-- Browser client/API changes: frontend `test:unit` + `typecheck`, plus backend/API tests from `internal/AGENTS.md` and `pkg/api/AGENTS.md`.
-- Bundle/import/env changes: `pnpm --dir webui run build`.
-- Visual/embedded behavior changes: rebuild/sync embedded assets and inspect `http://localhost:7480`; avoid Vite `5173` for parity.
+- TS/TSX: `pnpm --dir webui run lint`, `lint:dead`, `typecheck`, `test:unit`, `format:check`.
+- CSS: `pnpm --dir webui run lint:style`; also `format:check`.
+- Browser client/API: frontend `test:unit` + `typecheck`; backend/API tests from `internal/AGENTS.md` and `pkg/api/AGENTS.md`.
+- Bundle/import/env: `pnpm --dir webui run build`.
+- Visual/embedded: rebuild/sync embedded assets; inspect `http://localhost:7480`; avoid Vite `5173` for parity.
 
-`make test-frontend` runs lint, dead-code, typecheck, unit, and format checks, but not Stylelint. Run Stylelint explicitly for CSS.
+`make test-frontend` runs lint, dead-code, typecheck, unit, format; not Stylelint. Run Stylelint explicitly for CSS.
 
 ## React / TypeScript
 
-- Keep TypeScript, ESLint, Stylelint, dead-code clean. Do not weaken rules.
-- `useEffect` only for external sync. Avoid derived state in effects; render or `useMemo` instead.
-- User-driven logic belongs in handlers. Fetch effects need cleanup/abort guards.
-- Preserve CLI and WebUI behavior when changing shared request shapes, upload options, or prepared metadata.
-- Match existing component state patterns before adding new abstraction.
+- Keep TypeScript, ESLint, Stylelint, dead-code clean; never weaken rules.
+- `useEffect` only for external sync. Derive during render or `useMemo`, not effects.
+- User-driven logic: handlers. Fetch effects: cleanup/abort guards.
+- Shared request shapes, upload options, prepared metadata changes: preserve CLI/WebUI behavior.
+- Match existing component state patterns before new abstractions.
 
 ## Release Session / Workflow Ownership
 
-- Release workflow pages consume `useReleaseSession` facets; they do not import production API clients to coordinate release operations directly.
-- `src/releaseSession` owns active release state, workflow operation intents, durable polling, and progress projection. Views render facet state instead of subscribing independently.
-- Render backend-provided tracker auth capabilities/status/actions, questionnaire schemas/defaults, and reviewed upload/search names. Submit user answers/actions through shared contracts.
-- Existing backend stage controls are authoritative for WebUI tracker selection. Preserve their exact tracker subset through downstream preparation and upload; do not add the CLI/composite post-dupe approval gate or widen the set in frontend state.
-- Do not derive tracker-specific auth readiness, taxonomy, descriptions, media facts, questionnaire fields, or release-name transformations in frontend code.
-- Production workflow transport is mandatory. Do not add release Job clients, optional workflow ports, or fallback orchestration.
-- Facets expose declarative state and intent methods, not React setters, dispatch functions, or refs.
-- Use structured failure codes/metadata for recovery. Do not infer recovery from error-message text.
-- Consume backend-provided disc resource paths; do not derive BDMV paths from preparation source strings in the frontend.
+- Release workflow pages consume `useReleaseSession` facets; no production API client imports for direct release coordination.
+- `src/releaseSession` owns active release state, workflow operation intents, durable polling, progress projection. Views render facet state; no independent subscriptions.
+- Render backend-provided tracker auth capabilities/status/actions, questionnaire schemas/defaults, reviewed upload/search names. Submit answers/actions through shared contracts.
+- Backend stage controls authoritatively select WebUI trackers. Preserve exact subset through preparation/upload; no CLI/composite post-dupe approval gate or frontend widening.
+- Frontend must not derive tracker-specific auth readiness, taxonomy, descriptions, media facts, questionnaire fields, or release-name transformations.
+- Production workflow transport mandatory. No release Job clients, optional workflow ports, or fallback orchestration.
+- Facets expose declarative state/intent methods; no React setters, dispatch functions, or refs.
+- Recovery: structured failure codes/metadata; never infer from error-message text.
+- Consume backend-provided disc resource paths; never derive BDMV paths from preparation source strings.
 
 ## Frontend Output / Logging
 
-- Follow root log-level guidance for browser-visible diagnostics and WebUI event logging.
-- Do not expose credentials, tokens, API keys, passkeys, cookies, 2FA codes, challenge IDs, or secret payloads in console output, UI errors, toasts, test failure text, or debug panels.
-- Avoid permanent `console.*` diagnostics. If a diagnostic is intentionally kept, make it dev-scoped, concise, and redacted.
-- User-facing errors should be stable outcomes or next steps; detailed troubleshooting context belongs in developer diagnostics.
+- Follow root log-level guidance for browser-visible diagnostics/WebUI event logging.
+- Never expose credentials, tokens, API keys, passkeys, cookies, 2FA codes, challenge IDs, or secret payloads in console output, UI errors, toasts, test failure text, or debug panels.
+- Avoid permanent `console.*` diagnostics. Retained diagnostics: dev-scoped, concise, redacted.
+- User errors: stable outcomes/next steps; troubleshooting detail: developer diagnostics.
 
 ## Styling
 
-- Prefer Tailwind utilities for touched local layout/spacing.
+- Touched local layout/spacing: prefer Tailwind utilities.
 - Keep CSS for shared/theme/cross-cutting selectors or JSX readability.
-- Do not make repo-wide format/style sweeps unless explicitly requested.
-- Text must fit containers across desktop/mobile; do not rely on viewport-width font scaling.
+- No repo-wide format/style sweeps unless explicitly requested.
+- Text must fit desktop/mobile containers; no viewport-width font scaling dependence.
 
 ## Embedded Web Checks
 
-- For embedded visual/runtime checks, rebuild frontend, sync embedded assets, rebuild CLI, then serve the embedded app:
+- Embedded visual/runtime checks: rebuild frontend, sync embedded assets, rebuild CLI, serve embedded app:
 
 ```bash
 pnpm --dir webui run build
@@ -76,9 +76,9 @@ go build -o .\dist\upbrr.exe .\cmd\upbrr
 ```
 
 - Use `http://localhost:7480`.
-- Avoid Vite `5173` for embedded parity checks.
+- Avoid Vite `5173` for embedded parity.
 - Stop local servers after inspection.
 
 ## E2E
 
-For Playwright E2E work, read `e2e/AGENTS.md` first. E2E tests must use the embedded web UI, local fake services, isolated temp config/DB, and no real credentials.
+Playwright E2E: read `e2e/AGENTS.md` first. Tests require embedded web UI, local fake services, isolated temp config/DB, no real credentials.

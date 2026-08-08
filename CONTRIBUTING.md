@@ -72,7 +72,7 @@ lefthook install
 What runs when Git invokes hooks:
 
 - `pre-commit` — on **staged files only**: `prettier --write` (webui), `eslint` (webui/src), `golangci-lint fmt` (Go), the composite-literal layout policy, `go run ./cmd/logpolicy` (when `internal/**` Go files change), and `go run ./cmd/pathpolicy` (when Go files change). Formatters auto-re-stage their fixes.
-- `pre-push` — full-project TypeScript typecheck and `make lint`, which runs the architecture ownership, path-portability, and composite-literal layout checkers before golangci-lint. CI mirrors these Go policy checks and frontend checks for pull requests.
+- `pre-push` — full-project TypeScript typecheck and `make lint`, which runs the architecture ownership, path-portability, composite-literal layout, and workflow-contract drift checkers before golangci-lint. CI mirrors these Go policy checks and frontend checks for pull requests.
 - `commit-msg` — `go run ./cmd/commitmsgcheck` enforces [Conventional Commits](https://www.conventionalcommits.org/) without requiring Node.js or `pnpm install`.
 
 Makefile shortcuts:
