@@ -494,6 +494,9 @@ func normalizeAssessments(value api.ReleaseAssessments) api.ReleaseAssessments {
 	if value.MediaInfoEncodeSettings == "" {
 		value.MediaInfoEncodeSettings = api.EncodeSettingsStatusUnknown
 	}
+	if value.VideoBitrate.Status == "" {
+		value.VideoBitrate.Status = api.VideoBitrateStatusUnknown
+	}
 	if value.Naming.Status == "" {
 		value.Naming.Status = api.NamingStatusUnknown
 	}

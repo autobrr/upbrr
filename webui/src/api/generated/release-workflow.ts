@@ -951,6 +951,7 @@ export type ReleaseAssessments = Readonly<{
   MediaInfoEncodeSettings: EncodeSettingsStatus;
   MediaInfoUniqueID: UniqueIDStatus;
   Naming: NamingAssessment;
+  VideoBitrate: VideoBitrateAssessment;
 }>;
 
 export type ReleaseFactInstructionSnapshot = Readonly<{
@@ -2273,6 +2274,13 @@ export type UploadTrackerResult = Readonly<{
   submissionStatus?: StageStatus;
   trackerId: TrackerID;
 }>;
+
+export type VideoBitrateAssessment = Readonly<{
+  BitsPerSecond: number;
+  Status: VideoBitrateStatus;
+}>;
+
+export type VideoBitrateStatus = string;
 
 export type WorkflowAuthority = Readonly<{
   expectedRevision: WorkflowRevision;

@@ -3679,12 +3679,16 @@
           },
           "Naming": {
             "$ref": "#/components/schemas/NamingAssessment"
+          },
+          "VideoBitrate": {
+            "$ref": "#/components/schemas/VideoBitrateAssessment"
           }
         },
         "required": [
           "MediaInfoEncodeSettings",
           "MediaInfoUniqueID",
-          "Naming"
+          "Naming",
+          "VideoBitrate"
         ]
       },
       "ReleaseFactInstructionSnapshot": {
@@ -9344,6 +9348,24 @@
           "status",
           "trackerId"
         ]
+      },
+      "VideoBitrateAssessment": {
+        "type": "object",
+        "properties": {
+          "BitsPerSecond": {
+            "type": "integer"
+          },
+          "Status": {
+            "$ref": "#/components/schemas/VideoBitrateStatus"
+          }
+        },
+        "required": [
+          "BitsPerSecond",
+          "Status"
+        ]
+      },
+      "VideoBitrateStatus": {
+        "type": "string"
       },
       "WorkflowAuthority": {
         "type": "object",
