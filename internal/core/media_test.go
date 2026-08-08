@@ -363,6 +363,33 @@ func sortedCallHosts(calls []imageHostCall) []string {
 	return hosts
 }
 
+// reusableImageRepository reports images a previous run already published, so
+// the reuse branch of uploadImagesToTarget can be exercised. Only the uploaded
+// image lookup carries behavior; the rest satisfies the interface.
+type reusableImageRepository struct {
+	mediaRepository
+	links []api.UploadedImageLink
+}
+
+func (r *reusableImageRepository) ListUploadedImagesByPath(context.Context, string) ([]api.UploadedImageLink, error) {
+	return slices.Clone(r.links), nil
+}
+
+// reusedImageLinks builds host records that uploadedImagesByPathForTarget
+// matches back to the given images.
+func reusedImageLinks(images []api.ScreenshotImage, target trackers.ImageUploadTarget) []api.UploadedImageLink {
+	links := make([]api.UploadedImageLink, 0, len(images))
+	for _, image := range images {
+		links = append(links, api.UploadedImageLink{
+			ImagePath:  image.Path,
+			Host:       target.Host,
+			UsageScope: target.UsageScope,
+			RawURL:     "https://images.example.invalid/reused",
+		})
+	}
+	return links
+}
+
 // partialImageHostingService publishes a fixed number of images and then fails
 // the batch, mirroring a host that drops individual uploads under load.
 type partialImageHostingService struct {
@@ -413,6 +440,7 @@ Host: "pixhost",
 		name        string
 		minimum     int
 		published   int
+		reused      int
 		wantLinks   int
 		wantFailure bool
 	}{
@@ -446,16 +474,38 @@ name: "minimum above requested",
  published: 5,
  wantFailure: true,
 },
+		// Reuse counts toward the floor: the host publishes fewer images than
+		// the floor on its own, so this only passes when the allowance is
+		// applied where reused links are visible.
+		{
+name: "reuse completes the minimum",
+ minimum: 3,
+ published: 2,
+ reused: 2,
+ wantLinks: 4,
+},
+		{
+name: "reuse still short of the minimum",
+ minimum: 5,
+ published: 2,
+ reused: 2,
+ wantFailure: true,
+},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
+			var repo mediaRepository
+			if testCase.reused > 0 {
+				repo = &reusableImageRepository{links: reusedImageLinks(images[:testCase.reused], target)}
+			}
 			module := &mediaModule{
 				cfg: config.Config{
 					ImageHosting:       config.ImageHostingConfig{Host1: "pixhost"},
 					ScreenshotHandling: config.ScreenshotHandlingConfig{MinSuccessfulUploads: testCase.minimum},
 				},
 				images:   &partialImageHostingService{published: testCase.published},
+				repo:     repo,
 				logger:   &recordingMediaLogger{},
 				registry: mediaImageHostRegistry(t),
 			}
