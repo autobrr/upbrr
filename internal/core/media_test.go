@@ -362,3 +362,135 @@ func sortedCallHosts(calls []imageHostCall) []string {
 	slices.Sort(hosts)
 	return hosts
 }
+
+// partialImageHostingService publishes a fixed number of images and then fails
+// the batch, mirroring a host that drops individual uploads under load.
+type partialImageHostingService struct {
+	published int
+}
+
+func (*partialImageHostingService) ListCandidates(context.Context, api.ImageHostingSubject) ([]api.ScreenshotImage, error) {
+	return nil, nil
+}
+
+func (s *partialImageHostingService) Upload(
+	_ context.Context,
+	_ api.ImageHostingSubject,
+	host string,
+	usageScope string,
+	images []api.ScreenshotImage,
+) ([]api.UploadedImageLink, error) {
+	published := min(s.published, len(images))
+	links := make([]api.UploadedImageLink, 0, published)
+	for _, image := range images[:published] {
+		links = append(links, api.UploadedImageLink{
+			ImagePath:  image.Path,
+			Host:       host,
+			UsageScope: usageScope,
+			RawURL:     "https://images.example.invalid/" + host,
+		})
+	}
+	if published == len(images) {
+		return links, nil
+	}
+	return links, fmt.Errorf("image hosting: %d of %d uploads failed", len(images)-published, len(images))
+}
+
+func TestUploadImagesAcceptsPartialHostBatchAtConfiguredMinimum(t *testing.T) {
+	t.Parallel()
+
+	images := make([]api.ScreenshotImage, 0, 6)
+	for index := range 6 {
+		images = append(images, api.ScreenshotImage{Path: fmt.Sprintf("screen%d.png", index)})
+	}
+	target := trackers.ImageUploadTarget{
+Host: "pixhost",
+ UsageScope: "global",
+ Trackers: []string{"ONE"},
+}
+
+	for _, testCase := range []struct {
+		name        string
+		minimum     int
+		published   int
+		wantLinks   int
+		wantFailure bool
+	}{
+		{
+name: "above minimum",
+ minimum: 3,
+ published: 5,
+ wantLinks: 5,
+},
+		{
+name: "at minimum",
+ minimum: 3,
+ published: 3,
+ wantLinks: 3,
+},
+		{
+name: "below minimum",
+ minimum: 3,
+ published: 2,
+ wantFailure: true,
+},
+		{
+name: "allowance disabled",
+ minimum: 0,
+ published: 5,
+ wantFailure: true,
+},
+		{
+name: "minimum above requested",
+ minimum: 8,
+ published: 5,
+ wantFailure: true,
+},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			module := &mediaModule{
+				cfg: config.Config{
+					ImageHosting:       config.ImageHostingConfig{Host1: "pixhost"},
+					ScreenshotHandling: config.ScreenshotHandlingConfig{MinSuccessfulUploads: testCase.minimum},
+				},
+				images:   &partialImageHostingService{published: testCase.published},
+				logger:   &recordingMediaLogger{},
+				registry: mediaImageHostRegistry(t),
+			}
+			result, err := module.uploadImagesToTargetsWithFallback(
+				context.Background(),
+				api.UploadSubject{SourcePath: "Example.Release.2026.mkv"},
+				"pixhost",
+				nil,
+				[]trackers.ImageUploadTarget{target},
+				images,
+			)
+			if err != nil {
+				t.Fatalf("upload images: %v", err)
+			}
+			if testCase.wantFailure {
+				if len(result.Failures) != 1 || !slices.Equal(result.Failures[0].Trackers, []string{"ONE"}) {
+					t.Fatalf("expected a tracker-scoped failure, got %#v", result.Failures)
+				}
+				if !slices.Contains(result.FailedHosts, "pixhost") {
+					t.Fatalf("expected pixhost to be marked failed, got %v", result.FailedHosts)
+				}
+				return
+			}
+			if len(result.Failures) != 0 {
+				t.Fatalf("partial batch above the minimum must not report a failure: %#v", result.Failures)
+			}
+			if len(result.FailedHosts) != 0 {
+				t.Fatalf("partial batch above the minimum must not mark the host failed: %v", result.FailedHosts)
+			}
+			if len(result.Links) != testCase.wantLinks {
+				t.Fatalf("published links = %d, want %d", len(result.Links), testCase.wantLinks)
+			}
+			if len(result.Attempts) != 1 || result.Attempts[0].Failure != nil {
+				t.Fatalf("attempt results = %#v", result.Attempts)
+			}
+		})
+	}
+}
