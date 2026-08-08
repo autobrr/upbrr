@@ -409,6 +409,7 @@ func publicCandidateEvaluations(evaluation Evaluation) []api.DupeCandidateEvalua
 			Container:      candidate.Container,
 			Provider:       candidate.Provider,
 			Group:          candidate.Group,
+			ReleaseOrigin:  candidate.ReleaseOrigin,
 			Edition:        candidate.Edition,
 			Region:         candidate.Region,
 			ThreeD:         candidate.ThreeD,

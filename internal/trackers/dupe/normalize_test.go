@@ -4,6 +4,7 @@
 package dupe
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -121,6 +122,66 @@ func TestNormalizeStructuredTitleConflictIsContradictory(t *testing.T) {
 		if fact.Status != FactContradictory || len(fact.Contradictions) == 0 {
 			t.Fatalf("%s conflict = %#v", dimension, fact)
 		}
+	}
+}
+
+func TestNormalizeResolutionCoarseSDRetainsConcreteTitleEvidence(t *testing.T) {
+	t.Parallel()
+
+	for _, resolution := range []string{"480p", "576p"} {
+		facts := normalizeCandidateFacts(NormalizeCandidate(api.DupeEntry{
+			Name: "Example.Release.2026." + resolution + ".WEB-DL.H.264-GRP",
+			Res:  "SD",
+		}, "BTN"))
+		if facts.Resolution.Value != resolution || facts.Resolution.Status != FactPartial ||
+			facts.Resolution.Origin != FactOriginTrackerTitle ||
+			!slices.Equal(facts.Resolution.SourceFields, []string{"resolution", "title"}) {
+			t.Fatalf("%s resolution fact = %#v", resolution, facts.Resolution)
+		}
+	}
+}
+
+func TestCompareResolutionFactsDistinguishesOverlapFromConflict(t *testing.T) {
+	t.Parallel()
+
+	complete := func(value string) Fact { return completeFact(value, FactOriginTrackerAPI, "resolution") }
+	for _, test := range []struct {
+		name  string
+		left  string
+		right string
+		want  DimensionComparison
+	}{
+		{
+			name:  "coarse concrete overlap",
+			left:  "SD",
+			right: "480p",
+			want:  DimensionUnknown,
+		},
+		{
+			name:  "concrete values differ",
+			left:  "480p",
+			right: "576p",
+			want:  DimensionDifferent,
+		},
+		{
+			name:  "sd and hd differ",
+			left:  "SD",
+			right: "720p",
+			want:  DimensionDifferent,
+		},
+		{
+			name:  "same concrete value",
+			left:  "576i",
+			right: "576i",
+			want:  DimensionEqual,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := compareDimensionFacts(trackerspkg.DupeDimensionResolution, complete(test.left), complete(test.right)); got != test.want {
+				t.Fatalf("comparison = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 

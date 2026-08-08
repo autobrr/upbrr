@@ -31,7 +31,9 @@ type DupeEntry struct {
 	Codec         string
 	Container     string
 	Provider      string
+	ProviderIDs   []TrackerProviderID
 	Group         string
+	ReleaseOrigin string
 	Edition       string
 	Region        string
 	ThreeD        string
@@ -82,6 +84,7 @@ type DupeCandidateEvaluation struct {
 	Container      string            `json:"container,omitempty"`
 	Provider       string            `json:"provider,omitempty"`
 	Group          string            `json:"group,omitempty"`
+	ReleaseOrigin  string            `json:"releaseOrigin,omitempty"`
 	Edition        string            `json:"edition,omitempty"`
 	Region         string            `json:"region,omitempty"`
 	ThreeD         string            `json:"threeD,omitempty"`

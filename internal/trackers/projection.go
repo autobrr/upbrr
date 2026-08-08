@@ -108,6 +108,7 @@ func projectDryRunEntry(input PreparationInput, preview api.TrackerDryRunEntry) 
 		Date:        strings.TrimSpace(input.Meta.DailyEpisodeDate),
 	}
 	target := duplicateTarget(input.Meta)
+	target.ReleaseOrigin = taxonomyValue(preview.Payload, "origin").Label
 	target.Names = append([]string{canonicalName, uploadName}, target.Names...)
 	criteriaFingerprint, err := api.CanonicalWorkflowFingerprint(criteria)
 	if err != nil {
@@ -341,6 +342,9 @@ func (r *Registry) ProjectRelease(
 		return blockedReleaseProjection(input, failure.Message()), failure
 	}
 	projection := pureReleaseProjection(input)
+	if descriptor.DupePolicy != nil && descriptor.DupePolicy.TargetReleaseOrigin != nil {
+		projection.DuplicateTarget.ReleaseOrigin = strings.TrimSpace(descriptor.DupePolicy.TargetReleaseOrigin(input.Meta))
+	}
 	var failure *PreparationFailure
 	if contextErr := ctx.Err(); contextErr != nil {
 		failure = NewPreparationFailure(input.Tracker, "projection", "tracker projection canceled", contextErr)

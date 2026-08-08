@@ -490,20 +490,27 @@ func adaptersConfig(adapters map[string]Adapter) config.Config {
 }
 
 func TestAdapterResultDefensiveCopies(t *testing.T) {
-	entries := []api.DupeEntry{{Name: "Example.Release.2026.1080p-GRP", Files: []string{"one.mkv"}}}
+	entries := []api.DupeEntry{{
+		Name:        "Example.Release.2026.1080p-GRP",
+		Files:       []string{"one.mkv"},
+		ProviderIDs: []api.TrackerProviderID{{Provider: "tvdb", Value: "1234567"}},
+	}}
 	notes := []string{"display only"}
 	result := Resolved(entries, notes)
 	entries[0].Name = "mutated"
 	entries[0].Files[0] = "mutated"
+	entries[0].ProviderIDs[0].Value = "mutated"
 	notes[0] = "mutated"
 
 	gotEntries := result.Entries()
 	gotNotes := result.Notes()
-	if gotEntries[0].Name != "Example.Release.2026.1080p-GRP" || gotEntries[0].Files[0] != "one.mkv" || gotNotes[0] != "display only" {
+	if gotEntries[0].Name != "Example.Release.2026.1080p-GRP" || gotEntries[0].Files[0] != "one.mkv" ||
+		gotEntries[0].ProviderIDs[0].Value != "1234567" || gotNotes[0] != "display only" {
 		t.Fatalf("result changed through caller mutation: %#v %#v", gotEntries, gotNotes)
 	}
 	gotEntries[0].Files[0] = "again"
-	if result.Entries()[0].Files[0] != "one.mkv" {
+	gotEntries[0].ProviderIDs[0].Value = "again"
+	if result.Entries()[0].Files[0] != "one.mkv" || result.Entries()[0].ProviderIDs[0].Value != "1234567" {
 		t.Fatal("result accessor exposed mutable state")
 	}
 }

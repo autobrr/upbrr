@@ -184,27 +184,28 @@ type TrackerDuplicateCriteria struct {
 // TrackerDuplicateTarget is the projection-bound proposed release used only
 // for local duplicate policy evaluation.
 type TrackerDuplicateTarget struct {
-	Names       []string `json:"names,omitempty"`
-	Category    string   `json:"category,omitempty"`
-	Type        string   `json:"type,omitempty"`
-	Source      string   `json:"source,omitempty"`
-	Provider    string   `json:"provider,omitempty"`
-	Resolution  string   `json:"resolution,omitempty"`
-	Container   string   `json:"container,omitempty"`
-	VideoCodec  string   `json:"videoCodec,omitempty"`
-	VideoEncode string   `json:"videoEncode,omitempty"`
-	HDR         HDRFacts `json:"hdr"`
-	Edition     string   `json:"edition,omitempty"`
-	Region      string   `json:"region,omitempty"`
-	ThreeD      string   `json:"threeD,omitempty"`
-	Group       string   `json:"group,omitempty"`
-	Repack      string   `json:"repack,omitempty"`
-	Season      int      `json:"season,omitempty"`
-	Episode     int      `json:"episode,omitempty"`
-	Date        string   `json:"date,omitempty"`
-	Pack        bool     `json:"pack"`
-	SizeBytes   int64    `json:"sizeBytes,omitempty"`
-	FileNames   []string `json:"fileNames,omitempty"`
+	Names         []string `json:"names,omitempty"`
+	Category      string   `json:"category,omitempty"`
+	Type          string   `json:"type,omitempty"`
+	Source        string   `json:"source,omitempty"`
+	Provider      string   `json:"provider,omitempty"`
+	ReleaseOrigin string   `json:"releaseOrigin,omitempty"`
+	Resolution    string   `json:"resolution,omitempty"`
+	Container     string   `json:"container,omitempty"`
+	VideoCodec    string   `json:"videoCodec,omitempty"`
+	VideoEncode   string   `json:"videoEncode,omitempty"`
+	HDR           HDRFacts `json:"hdr"`
+	Edition       string   `json:"edition,omitempty"`
+	Region        string   `json:"region,omitempty"`
+	ThreeD        string   `json:"threeD,omitempty"`
+	Group         string   `json:"group,omitempty"`
+	Repack        string   `json:"repack,omitempty"`
+	Season        int      `json:"season,omitempty"`
+	Episode       int      `json:"episode,omitempty"`
+	Date          string   `json:"date,omitempty"`
+	Pack          bool     `json:"pack"`
+	SizeBytes     int64    `json:"sizeBytes,omitempty"`
+	FileNames     []string `json:"fileNames,omitempty"`
 }
 
 // TrackerArtifactRequirements are backend-owned tracker artifact requirements.
