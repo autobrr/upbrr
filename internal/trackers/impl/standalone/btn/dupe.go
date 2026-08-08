@@ -418,6 +418,7 @@ func (torrent btnTorrent) dupeEntry() api.DupeEntry {
 		Link:          torrent.link(),
 		Res:           torrent.resolution,
 		Category:      torrent.category,
+		Pack:          strings.EqualFold(strings.TrimSpace(torrent.category), "season"),
 		Source:        torrent.source,
 		Codec:         torrent.codec,
 		Container:     torrent.container,

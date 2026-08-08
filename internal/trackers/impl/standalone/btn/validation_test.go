@@ -173,7 +173,7 @@ func cleanBTNValidationSubject() api.TrackerValidationSubject {
 			Files: []api.MediaFileFact{{
 				FileName:    "Example.Show.S01E01.1080p.WEB-DL.H.264-GRP.mkv",
 				Container:   "MKV",
-				Source:      "WEB-DL",
+				Source:      "Web",
 				Resolution:  "1080p",
 				VideoCodec:  "H.264",
 				VideoEncode: "x264",

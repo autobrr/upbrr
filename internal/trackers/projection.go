@@ -447,7 +447,7 @@ func (r *Registry) ProjectRelease(
 			projection.DupeReady = false
 			projection.UploadReady = false
 		} else {
-			ApplyProjectionRuleFailures(&projection, ruleFailures, input.ExecutionMode)
+			ApplyProjectionRuleFailures(&projection, ruleFailures, input.ExecutionMode, input.Logger)
 			if projection.Readiness == api.ReadinessStatusUnknown {
 				projection.Readiness = api.ReadinessStatusReady
 				projection.DupeReady = true
@@ -591,6 +591,7 @@ func ApplyProjectionRuleFailures(
 	projection *api.TrackerReleaseProjection,
 	failures []api.RuleFailure,
 	executionMode api.WorkflowExecutionMode,
+	logger api.Logger,
 ) {
 	if projection == nil {
 		return
@@ -604,6 +605,13 @@ func ApplyProjectionRuleFailures(
 		}
 		if blocking {
 			decision = "ineligible"
+			if logger != nil {
+				logger.Warnf(
+					"trackers: projection validation blocked tracker=%s rule=%s decision=ineligible",
+					projection.TrackerID,
+					strings.TrimSpace(failure.Rule),
+				)
+			}
 			projection.Readiness = api.ReadinessStatusIneligible
 			projection.DupeReady = false
 			projection.UploadReady = false

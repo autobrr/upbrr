@@ -360,7 +360,7 @@ func TestApplyProjectionRuleFailuresHonorsExplicitDebugWaivers(t *testing.T) {
 	)}
 
 	normal := readyProjection()
-	ApplyProjectionRuleFailures(&normal, waivable, api.WorkflowExecutionModeNormal)
+	ApplyProjectionRuleFailures(&normal, waivable, api.WorkflowExecutionModeNormal, nil)
 	if normal.Readiness != api.ReadinessStatusIneligible || normal.DupeReady || !normal.PolicyDecisions[0].Blocking {
 		t.Fatalf("normal waivable outcome = %#v", normal)
 	}
@@ -370,17 +370,21 @@ func TestApplyProjectionRuleFailuresHonorsExplicitDebugWaivers(t *testing.T) {
 	}
 
 	debug := readyProjection()
-	ApplyProjectionRuleFailures(&debug, waivable, api.WorkflowExecutionModeDebug)
+	ApplyProjectionRuleFailures(&debug, waivable, api.WorkflowExecutionModeDebug, nil)
 	if debug.Readiness != api.ReadinessStatusReady || !debug.DupeReady || debug.PolicyDecisions[0].Decision != "bypassed" ||
 		debug.PolicyDecisions[0].Blocking {
 		t.Fatalf("debug waivable outcome = %#v", debug)
 	}
 
 	debugStrict := readyProjection()
-	ApplyProjectionRuleFailures(&debugStrict, strict, api.WorkflowExecutionModeDebug)
+	logger := &warningLogger{}
+	ApplyProjectionRuleFailures(&debugStrict, strict, api.WorkflowExecutionModeDebug, logger)
 	if debugStrict.Readiness != api.ReadinessStatusIneligible || debugStrict.DupeReady ||
 		debugStrict.PolicyDecisions[0].Decision != "ineligible" {
 		t.Fatalf("debug strict outcome = %#v", debugStrict)
+	}
+	if len(logger.warnings) != 1 || logger.warnings[0] != "trackers: projection validation blocked tracker=EXAMPLE rule=constructibility decision=ineligible" {
+		t.Fatalf("blocking validation warnings = %#v", logger.warnings)
 	}
 }
 

@@ -109,6 +109,7 @@ func (b workflowPreflightBuilder) Build(
 				projection,
 				newProjectionRuleFailures(*projection, failures),
 				executionMode,
+				b.logger,
 			)
 		}
 	}

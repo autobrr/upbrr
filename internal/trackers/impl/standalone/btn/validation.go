@@ -89,7 +89,7 @@ func checkRequirements(ctx context.Context, subject api.TrackerValidationSubject
 		},
 		AllowedSources: []string{
 			"hdtv", "pdtv", "dsr", "dvdrip", "tvrip", "vhsrip", "bluray", "blu-ray", "bdrip", "brrip", "dvd5", "dvd9", "hddvd",
-			"web-dl", "webdl", "webrip", "bd5", "bd9", "bd25", "bd50", "mixed", "unknown",
+			"web", "web-dl", "webdl", "webrip", "bd5", "bd9", "bd25", "bd50", "mixed", "unknown",
 		},
 		AllowedResolutions: []string{
 			"sd", "480i", "480p", "576i", "576p", "720p", "1080i", "1080p", "1440p", "2160p", "4320p", "8640p", "portable device", "mixed",

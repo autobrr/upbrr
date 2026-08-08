@@ -45,6 +45,20 @@ func TestBTNDuplicatePolicyRelations(t *testing.T) {
 			want:      api.DupeRelationCoexists,
 		},
 		{
+			name: "web without region ignores pal ntsc",
+			target: func() api.TrackerDuplicateTarget {
+				target := btnPolicyTarget("WEB-DL", "1080p", "H.264", "P2P")
+				target.Episode = 12
+				return target
+			}(),
+			candidate: func() dupe.TrackerCandidate {
+				candidate := btnPolicyCandidate("WEB-DL", "1080p", "H.264", "P2P")
+				candidate.Episode = 13
+				return candidate
+			}(),
+			want: api.DupeRelationCoexists,
+		},
+		{
 			name:      "bluray and dvd coexist",
 			target:    btnPolicyTarget("BluRay", "576p", "H.264", "P2P"),
 			candidate: btnPolicyCandidate("DVD", "576p", "H.264", "P2P"),
@@ -60,12 +74,12 @@ func TestBTNDuplicatePolicyRelations(t *testing.T) {
 			name: "pal and ntsc coexist",
 			target: func() api.TrackerDuplicateTarget {
 				target := btnPolicyTarget("DVD", "576i", "MPEG2", "P2P")
-				target.Region = "PAL"
+				target.Names = []string{"Example.Show.S01.PAL.DVD-GRP"}
 				return target
 			}(),
 			candidate: func() dupe.TrackerCandidate {
 				candidate := btnPolicyCandidate("DVD", "576i", "MPEG2", "P2P")
-				candidate.Region = "NTSC"
+				candidate.Name = "Example.Show.S01.NTSC.DVD-GRP"
 				return candidate
 			}(),
 			want: api.DupeRelationCoexists,

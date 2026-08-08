@@ -25,7 +25,7 @@ func duplicatePolicy() *trackers.DupePolicy {
 			btnDifferentValueRule("scene_p2p", trackers.DupeDimensionReleaseOrigin, "scene", "p2p"),
 			btnWEBCodecRule(),
 			btnDifferentValueRule("bluray_dvd", trackers.DupeDimensionSource, "bluray", "dvd"),
-			btnDifferentValueRule("pal_ntsc", trackers.DupeDimensionRegion, "pal", "ntsc"),
+			btnPALNTSC(),
 		},
 		PrecedenceRules: btnCodecPrecedenceRules(),
 		ManualReviewRules: []trackers.DupeRule{
@@ -34,6 +34,18 @@ func duplicatePolicy() *trackers.DupePolicy {
 		},
 		SetRules: btnSetRules(),
 	}
+}
+
+func btnPALNTSC() trackers.DupeRule {
+	rule := btnDifferentValueRule("pal_ntsc", trackers.DupeDimensionRegion, "pal", "ntsc")
+	rule.Conditions[0].RequiresComplete = false
+	rule.Conditions = append(rule.Conditions, trackers.DupeCondition{
+		Dimension:        trackers.DupeDimensionSource,
+		TargetValues:     []string{"dvd"},
+		CandidateValues:  []string{"dvd"},
+		RequiresComplete: true,
+	})
+	return rule
 }
 
 func btnDifferentValueRule(id string, dimension trackers.DupeDimension, left string, right string) trackers.DupeRule {
