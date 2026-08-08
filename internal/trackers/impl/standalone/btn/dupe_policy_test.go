@@ -185,11 +185,31 @@ func TestBTNDuplicatePolicyWEBCapacityRequiresProviderEvidence(t *testing.T) {
 	if finding := btnSetFinding(t, uhdFull, "standalone/btn/duplicate/v1/web_sd_uhd_capacity"); finding.Relation != api.DupeRelationManualReview {
 		t.Fatalf("WEB UHD full finding = %#v", finding)
 	}
+	coarseTarget := target
+	coarseTarget.Resolution = "480p"
+	coarse := first
+	coarse.Resolution = "SD"
+	coarseResult := dupe.Evaluate(coarseTarget, []dupe.TrackerCandidate{coarse}, *duplicatePolicy(), btnCompleteSearch())
+	if finding := btnSetFinding(t, coarseResult, "standalone/btn/duplicate/v1/web_sd_uhd_capacity"); finding.Relation != api.DupeRelationInsufficientEvidence {
+		t.Fatalf("WEB coarse-SD finding = %#v", finding)
+	}
 
 	first.Provider = ""
 	missing := dupe.Evaluate(target, []dupe.TrackerCandidate{first}, *duplicatePolicy(), btnCompleteSearch())
 	if finding := btnSetFinding(t, missing, "standalone/btn/duplicate/v1/web_hd_capacity"); finding.Relation != api.DupeRelationInsufficientEvidence {
 		t.Fatalf("WEB missing-provider finding = %#v", finding)
+	}
+}
+
+func TestBTNDuplicatePolicyRequiresCompleteAutomaticFacts(t *testing.T) {
+	t.Parallel()
+
+	target := btnPolicyTarget("WEB-DL", "1080p", "H.265", "P2P")
+	candidate := btnPolicyCandidate("WEB-DL", "1080p", "", "P2P")
+	candidate.Name = "Example.Show.S01E01.1080p.WEB-DL.H.264-GRP"
+	result := dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, *duplicatePolicy(), btnCompleteSearch()).Candidates[0]
+	if result.Relation == api.DupeRelationCoexists {
+		t.Fatalf("partial codec evidence proved coexistence: %#v", result)
 	}
 }
 

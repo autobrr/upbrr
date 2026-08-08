@@ -34,7 +34,7 @@ Do not merge the stacked PR into the base branch merely to obtain a main-based r
 
 - Keep BTN's existing TV-only upbrr scope. BTN may accept some TV-related movies, but movie classification, search filtering, and upload support are deferred.
 - Do not count or reject related-movie rows as wrong-work results in this work. They remain outside the supported target scope.
-- Preserve the dedicated daily-show search. Daily searches must stay narrowly filtered and one-shot; they must not paginate through thousands of broadly matching episodes.
+- Preserve the dedicated daily-show search. Daily searches must stay narrowly filtered and one-shot; they must not paginate through thousands of broadly matching episodes. They may report public `complete=true` only when BTN group or TVDB identity binds the work and the one response returns every unique row in its stable reported total; title-fallback daily searches remain incomplete.
 - Use BTN's reported `results` count to state whether an ordinary search returned every row. An incomplete search may still compare returned candidates, but it cannot prove absence or safely apply collection-capacity rules.
 - Treat `SD` as a coarse resolution family, not as a synonym that permanently erases `480i`, `480p`, `576i`, or `576p`.
 - Reuse shared dupe policy, set-capacity, validation-evidence, and questionnaire machinery. Add no BTN-specific framework.
@@ -59,7 +59,9 @@ Secondary API evidence:
 
 Where sources conflict, a sanitized direct BTN response and saved BTN rules win. Jackett behavior is corroboration, not tracker authority.
 
-## Current-State Findings
+## Pre-implementation Findings
+
+This baseline describes behavior before this plan's implementation.
 
 ### Duplicate search
 
@@ -210,12 +212,10 @@ Suggested commit: `feat(btn): retain duplicate candidate evidence`
 - Express objective coexistence rules declaratively:
   - different concrete resolutions;
   - Scene versus P2P;
-  - internal versus non-internal where the saved rule permits coexistence;
   - H.265 WEB versus H.264 WEB;
   - Blu-ray versus DVD;
-  - PAL versus NTSC when both standards are known;
-  - foreign-language versus English versions when both language facts are authoritative;
-  - pilot episode versus season pack when containment evidence proves the exception.
+  - PAL versus NTSC when both standards are known.
+- Defer internal versus non-internal, foreign-language versus English, and pilot-versus-pack coexistence until shared typed evidence can prove both operands.
 - Express objective directional precedence only where both sides have required facts, including H.264 over DivX/Xvid and any verified format rule with no subjective quality judgment.
 - Add separate collection rules for independent capacities rather than merging unlike pools:
   - one Scene season pack per source/resolution family;
@@ -435,7 +435,7 @@ Before creating the stacked PR, re-audit unresolved threads and checks on base P
 ## Definition of Done
 
 - BTN SD evidence no longer produces false contradictions or false resolution coexistence.
-- Ordinary BTN search completion is based on verified totals and pagination; daily search remains narrow and one-shot.
+- Ordinary BTN search completion is based on verified totals and pagination; daily search remains narrow and one-shot and is public-complete only with BTN-group/TVDB work binding plus a count-matching response.
 - BTN response fields needed by rules are retained as typed facts.
 - Objective BTN duplicate, capacity, upload, and naming rules are implemented with evidence IDs and tests.
 - Subjective or unavailable rules produce manual/advisory outcomes.

@@ -49,7 +49,8 @@ func isBTNInternalGroup(meta api.UploadSubject) bool {
 }
 
 func isBTNInternalGroupName(value string) bool {
-	group := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(value, "-")))
+	group := strings.TrimPrefix(strings.TrimSpace(value), "-")
+	group = strings.ToLower(strings.TrimSpace(group))
 	for _, value := range btnInternalGroups {
 		if strings.ToLower(value) == group {
 			return true

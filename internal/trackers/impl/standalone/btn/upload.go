@@ -1301,6 +1301,11 @@ func checkBTNSeasonPackReservation(ctx context.Context, uploadCtx uploadContext,
 	if group == "" {
 		return nil
 	}
+	warnUnavailable := func(reason string) {
+		if req.Logger != nil {
+			req.Logger.Warnf("trackers: BTN reservation check decision=evidence_unavailable reason=%s", reason)
+		}
+	}
 
 	filter := map[string]any{
 		"tvdb":     strconv.Itoa(tvdbID),
@@ -1309,11 +1314,13 @@ func checkBTNSeasonPackReservation(ctx context.Context, uploadCtx uploadContext,
 	}
 	season, _ := resolveBTNTVSeasonEpisode(req.Meta)
 	if season <= 0 {
+		warnUnavailable("canonical_season_missing")
 		return errors.New("trackers: BTN reservation evidence unavailable: canonical season is missing")
 	}
 
 	torrents, err := btnAPISearchTorrents(ctx, uploadCtx.apiURL, uploadCtx.apiToken, filter, btnDupePageLimit)
 	if err != nil {
+		warnUnavailable("search_failed")
 		return fmt.Errorf("trackers: BTN reservation evidence unavailable: %w", err)
 	}
 
@@ -1322,12 +1329,14 @@ func checkBTNSeasonPackReservation(ctx context.Context, uploadCtx uploadContext,
 	var newestInternal time.Time
 	for _, torrent := range torrents {
 		if strings.TrimSpace(torrent.releaseName) == "" {
+			warnUnavailable("release_name_missing")
 			return errors.New("trackers: BTN reservation evidence unavailable: result omitted a release name")
 		}
 		if !strings.Contains(strings.ToUpper(torrent.releaseName), seasonPrefix) {
 			continue
 		}
 		if !torrent.timePresent || !torrent.timeValid {
+			warnUnavailable("timestamp_invalid")
 			return errors.New("trackers: BTN reservation evidence unavailable: matching result omitted a valid timestamp")
 		}
 		if torrent.uploadedAt.After(newestInternal) {
@@ -1384,8 +1393,12 @@ func btnAPISearchTorrents(ctx context.Context, apiURL, apiToken string, filter m
 			return nil, errors.New("trackers: BTN API reservation search returned malformed torrent evidence")
 		}
 		for id, torrent := range pageTorrents {
-			if strings.TrimSpace(id) == "" {
+			id = strings.TrimSpace(id)
+			if id == "" {
 				return nil, errors.New("trackers: BTN API reservation search returned an empty torrent id")
+			}
+			if _, exists := torrents[id]; exists {
+				return nil, errors.New("trackers: BTN API reservation search returned a duplicate torrent id")
 			}
 			torrents[id] = torrent
 		}

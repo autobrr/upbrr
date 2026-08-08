@@ -1895,8 +1895,28 @@ func TestBTNSeasonPackReservationPaginatesBeforeBlocking(t *testing.T) {
 	var calls atomic.Int32
 	old := strconv.FormatInt(time.Now().Add(-3*time.Hour).Unix(), 10)
 	recent := strconv.FormatInt(time.Now().Add(-time.Hour).Unix(), 10)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		switch calls.Add(1) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var rpc struct {
+			Params []json.RawMessage `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&rpc); err != nil || len(rpc.Params) != 4 {
+			t.Errorf("decode reservation request: params=%d err=%v", len(rpc.Params), err)
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		var offset int
+		if err := json.Unmarshal(rpc.Params[3], &offset); err != nil {
+			t.Errorf("decode reservation offset: %v", err)
+			http.Error(w, "invalid offset", http.StatusBadRequest)
+			return
+		}
+		call := calls.Add(1)
+		if want := int(call - 1); offset != want {
+			t.Errorf("reservation offset=%d, want %d", offset, want)
+			http.Error(w, "unexpected offset", http.StatusBadRequest)
+			return
+		}
+		switch call {
 		case 1:
 			_, _ = fmt.Fprintf(w, `{"result":{"results":"2","torrents":{"1":{"ReleaseName":"Example.Show.S01E01.1080p-GRP","Time":%q}}}}`, old)
 		case 2:
@@ -1942,6 +1962,29 @@ func TestBTNSeasonPackReservationRejectsPartialSearch(t *testing.T) {
 	}
 	if calls.Load() != 2 {
 		t.Fatalf("expected two reservation requests, got %d", calls.Load())
+	}
+}
+
+func TestBTNSeasonPackReservationRejectsDuplicateIDs(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+	old := strconv.FormatInt(time.Now().Add(-3*time.Hour).Unix(), 10)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		_, _ = fmt.Fprintf(w, `{"result":{"results":"2","torrents":{"1":{"ReleaseName":"Example.Show.S01E01.1080p-GRP","Time":%q}}}}`, old)
+	}))
+	defer server.Close()
+
+	err := checkBTNSeasonPackReservation(context.Background(), uploadContext{
+		apiURL:   server.URL,
+		apiToken: strings.Repeat("x", 30),
+	}, btnReservationTestInput())
+	if err == nil || !strings.Contains(err.Error(), "duplicate torrent id") {
+		t.Fatalf("expected duplicate reservation evidence to fail, got %v", err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("expected duplicate evidence on second request, got %d requests", calls.Load())
 	}
 }
 

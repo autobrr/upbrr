@@ -502,7 +502,7 @@ func firstBTNString(values map[string]any, keys ...string) string {
 
 func firstPresent(values map[string]any, keys ...string) (any, bool) {
 	for _, key := range keys {
-		if value, ok := values[key]; ok {
+		if value, ok := values[key]; ok && value != nil {
 			return value, true
 		}
 	}

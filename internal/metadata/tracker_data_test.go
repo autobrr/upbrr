@@ -539,7 +539,17 @@ func TestLoadBTNClaimedTitlesFallsBackToStaleCacheAfterFetchFailure(t *testing.T
 		t.Fatalf("write cache: %v", err)
 	}
 
-	restore := swapDefaultTransport(roundTripperFunc(func(_ *http.Request) (*http.Response, error) {
+	clientCalls := 0
+	restore := swapDefaultTransport(roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		clientCalls++
+		if clientCalls == 1 {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader("session valid")),
+				Header:     make(http.Header),
+				Request:    req,
+			}, nil
+		}
 		return nil, context.Canceled
 	}))
 	defer restore()
@@ -548,6 +558,9 @@ func TestLoadBTNClaimedTitlesFallsBackToStaleCacheAfterFetchFailure(t *testing.T
 	claimed, err := svc.loadBTNClaimedTitles(context.Background(), cachePath, 48*time.Hour)
 	if err != nil {
 		t.Fatalf("load stale BTN claimed titles: %v", err)
+	}
+	if clientCalls != 2 {
+		t.Fatalf("expected session validation and failed claimed-title fetch, got %d requests", clientCalls)
 	}
 	if _, ok := claimed[normalizeBTNTitle("Cached Show")]; !ok {
 		t.Fatalf("expected stale cached title after fetch failure, got %#v", claimed)

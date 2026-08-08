@@ -43,10 +43,11 @@ func btnDifferentValueRule(id string, dimension trackers.DupeDimension, left str
 		Relation:   string(api.DupeRelationCoexists),
 		ReasonCode: "btn_" + id + "_coexists",
 		Conditions: []trackers.DupeCondition{{
-			Dimension:       dimension,
-			TargetValues:    []string{left, right},
-			CandidateValues: []string{left, right},
-			ValuesDifferent: true,
+			Dimension:        dimension,
+			TargetValues:     []string{left, right},
+			CandidateValues:  []string{left, right},
+			ValuesDifferent:  true,
+			RequiresComplete: true,
 		}},
 	}
 }
@@ -54,9 +55,10 @@ func btnDifferentValueRule(id string, dimension trackers.DupeDimension, left str
 func btnWEBCodecRule() trackers.DupeRule {
 	rule := btnDifferentValueRule("web_h265_h264", trackers.DupeDimensionCodec, "h265", "h264")
 	rule.Conditions = append(rule.Conditions, trackers.DupeCondition{
-		Dimension:       trackers.DupeDimensionSource,
-		TargetValues:    []string{"web"},
-		CandidateValues: []string{"web"},
+		Dimension:        trackers.DupeDimensionSource,
+		TargetValues:     []string{"web"},
+		CandidateValues:  []string{"web"},
+		RequiresComplete: true,
 	})
 	return rule
 }
@@ -65,9 +67,10 @@ func btnCodecPrecedenceRules() []trackers.DupeRule {
 	conditions := func(targetCodec string, candidateCodec string) []trackers.DupeCondition {
 		return []trackers.DupeCondition{
 			{
-				Dimension:       trackers.DupeDimensionCodec,
-				TargetValues:    []string{targetCodec},
-				CandidateValues: []string{candidateCodec},
+				Dimension:        trackers.DupeDimensionCodec,
+				TargetValues:     []string{targetCodec},
+				CandidateValues:  []string{candidateCodec},
+				RequiresComplete: true,
 			},
 			{
 				Dimension:        trackers.DupeDimensionSource,

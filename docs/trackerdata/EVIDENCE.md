@@ -8,7 +8,9 @@ required structured evidence.
 Search completion is separate from work identity. Public `complete=true`
 requires both exhausted enumeration and a provider- or tracker-group-bound
 query. Title and release-name searches remain incomplete even when their
-returned page or array is exhausted.
+returned page or array is exhausted. BTN daily search is not an exception: its
+one response is public-complete only when BTN group or TVDB identity binds the
+work and unique returned IDs equal the stable reported total.
 
 ## Search coverage audit
 
@@ -22,7 +24,7 @@ returned page or array is exhausted.
 | BHD | exact TMDB/IMDb ID plus broad movie/TV category and TV season scope | all advertised pages up to the safety bound | yes when pagination proves exhaustion |
 | BHDTV | none | manual check | not run |
 | BJS | exact IMDb group page | one group page; completeness unknown | no |
-| BTN | tracker group, exact TVDB provider ID, or title fallback; daily searches also bind date/category | ordinary `getTorrents` searches use 100-row pages and zero-based returned-row offsets until the stable `results` total is reached; daily searches are one-shot | tracker-group/provider searches after total exhaustion; title fallback remains non-authoritative; daily is incomplete when one request does not reach the total |
+| BTN | tracker group, exact TVDB provider ID, or title fallback; daily searches also bind date/category | ordinary `getTorrents` searches use 100-row pages and zero-based returned-row offsets until the stable `results` total is reached; daily searches are one-shot | tracker-group/provider searches after total exhaustion; title fallback remains non-authoritative; daily requires tracker-group/TVDB binding and a count-matching response |
 | BT | exact IMDb group, or anime title fallback | group-page discovery; search pagination and partial group-fetch semantics unknown | no |
 | CZT | broad title | returned array exhausted | no |
 | DC | exact IMDb ID | complete provider result array | yes |
@@ -120,7 +122,8 @@ Expected automatic relation boundaries:
   assumed; reservation checks enumerate the complete bounded result and select
   the newest matching valid `Time`.
 - Daily queries retain `Episode` plus `YYYY.MM.DD%` filtering and issue one
-  request. A larger reported total is explicit incomplete evidence.
+  request. Public completion additionally requires BTN-group/TVDB work binding
+  and a unique returned-ID count equal to the stable reported total.
 - BTN `Source` maps to `DupeEntry.Source`, not `Type`. `Category`, `Codec`,
   `Container`, `Resolution`, `Origin`, `GroupName`, provider IDs, size, HDR/DV,
   and `Time` retain independent typed meanings.

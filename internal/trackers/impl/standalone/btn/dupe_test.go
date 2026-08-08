@@ -242,7 +242,7 @@ func TestBTNHandlerNormalizesEntries(t *testing.T) {
 func TestBTNHandlerLeavesMissingOptionalEvidenceMissing(t *testing.T) {
 	t.Parallel()
 
-	payloads := captureBTNPayloads(t, `{"result":{"results":1,"torrents":{"777":{"ReleaseName":"Example.Show.S01E01.480p-GRP","Resolution":"SD"}}}}`)
+	payloads := captureBTNPayloads(t, `{"result":{"results":1,"torrents":{"777":{"ReleaseName":"Example.Show.S01E01.480p-GRP","Resolution":"SD","HDR":null,"DolbyVision":null}}}}`)
 	handler := dupe.NewAdapter(New(), "BTN", configWithBTNAPIKey(), payloads.client, nil)
 	result := handler.Search(context.Background(), api.DuplicateSubject{
 		SourcePath: "x",
@@ -262,7 +262,7 @@ func TestBTNHandlerLeavesMissingOptionalEvidenceMissing(t *testing.T) {
 func TestBTNInternalGroupDetectionIsCaseInsensitive(t *testing.T) {
 	t.Parallel()
 
-	if !isBTNInternalGroupName("ntb") || !isBTNInternalGroupName("-NTb") || isBTNInternalGroupName("GRP") {
+	if !isBTNInternalGroupName("ntb") || !isBTNInternalGroupName("-NTb") || !isBTNInternalGroupName(" -NTb ") || isBTNInternalGroupName("GRP") {
 		t.Fatal("unexpected BTN internal-group classification")
 	}
 }
