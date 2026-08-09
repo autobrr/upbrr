@@ -1105,11 +1105,11 @@ func TestEvaluateGeneralFallbackPreservesPotentialCandidates(t *testing.T) {
 				Resolution: "1080p",
 			},
 			candidate: TrackerCandidate{
-Name: "Example.Release.2026.1080p.WEB-DL-GRP",
- Type: "WEB-DL",
- Resolution: "1080p",
-},
-			want:      api.DupeRelationSameSlot,
+				Name:       "Example.Release.2026.1080p.WEB-DL-GRP",
+				Type:       "WEB-DL",
+				Resolution: "1080p",
+			},
+			want: api.DupeRelationSameSlot,
 		},
 		{
 			name: "restyled name",
@@ -1119,11 +1119,11 @@ Name: "Example.Release.2026.1080p.WEB-DL-GRP",
 				Resolution: "1080p",
 			},
 			candidate: TrackerCandidate{
-Name: "Restyled Alias - GRP",
- Type: "WEB-DL",
- Resolution: "1080p",
-},
-			want:      api.DupeRelationSameSlot,
+				Name:       "Restyled Alias - GRP",
+				Type:       "WEB-DL",
+				Resolution: "1080p",
+			},
+			want: api.DupeRelationSameSlot,
 		},
 		{
 			name:      "fuzzy filename",
@@ -1146,22 +1146,141 @@ Name: "Restyled Alias - GRP",
 func TestEvaluateGeneralHDRRequiresPositiveEvidence(t *testing.T) {
 	t.Parallel()
 
-	target := api.TrackerDuplicateTarget{HDR: testHDR(api.HDREvidenceComplete, api.HDRFormatSDR)}
-	complete := Evaluate(
-		target,
-		[]TrackerCandidate{{HDR: testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10)}},
-		trackerspkg.DupePolicy{},
-		SearchEvidence{},
-	).Candidates[0]
-	if complete.Relation != api.DupeRelationCoexists || complete.Reasons[0].Code != "distinct_hdr_slot" {
-		t.Fatalf("complete HDR relation = %#v", complete)
+	tests := []struct {
+		name      string
+		target    api.TrackerDuplicateTarget
+		candidate TrackerCandidate
+		want      api.DupeRelation
+	}{
+		{
+			name: "2160p SDR and HDR coexist",
+			target: api.TrackerDuplicateTarget{
+				Resolution: "2160p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatSDR),
+			},
+			candidate: TrackerCandidate{
+				Resolution: "2160p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10),
+			},
+			want: api.DupeRelationCoexists,
+		},
+		{
+			name: "2160p proposed DV HDR trumps HDR",
+			target: api.TrackerDuplicateTarget{
+				Resolution: "2160p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatDolbyVision, api.HDRFormatHDR10),
+			},
+			candidate: TrackerCandidate{
+				Resolution: "2160p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10Plus),
+			},
+			want: api.DupeRelationProposedTrumps,
+		},
+		{
+			name: "2160p existing DV HDR trumps HDR",
+			target: api.TrackerDuplicateTarget{
+				Resolution: "2160p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10),
+			},
+			candidate: TrackerCandidate{
+				Resolution: "2160p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatDolbyVision, api.HDRFormatHDR10Plus),
+			},
+			want: api.DupeRelationExistingPreferred,
+		},
+		{
+			name: "distinct media class precedes DV HDR trumping",
+			target: api.TrackerDuplicateTarget{
+				Type:       "WEB-DL",
+				Resolution: "2160p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatDolbyVision, api.HDRFormatHDR10),
+			},
+			candidate: TrackerCandidate{
+				Type:       "REMUX",
+				Resolution: "2160p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10),
+			},
+			want: api.DupeRelationCoexists,
+		},
+		{
+			name: "2160p DV and DV HDR coexist",
+			target: api.TrackerDuplicateTarget{
+				Resolution: "2160p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatDolbyVision),
+			},
+			candidate: TrackerCandidate{
+				Resolution: "2160p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatDolbyVision, api.HDRFormatHDR10),
+			},
+			want: api.DupeRelationCoexists,
+		},
+		{
+			name: "1080p ignores HDR",
+			target: api.TrackerDuplicateTarget{
+				Resolution: "1080p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatSDR),
+			},
+			candidate: TrackerCandidate{
+				Resolution: "1080p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10),
+			},
+			want: api.DupeRelationSameSlot,
+		},
+		{
+			name: "other resolutions ignore HDR",
+			target: api.TrackerDuplicateTarget{
+				Resolution: "720p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatSDR),
+			},
+			candidate: TrackerCandidate{
+				Resolution: "720p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10),
+			},
+			want: api.DupeRelationSameSlot,
+		},
+		{
+			name: "partial 2160p resolution cannot prove coexistence",
+			target: api.TrackerDuplicateTarget{
+				Resolution: "2160p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatSDR),
+			},
+			candidate: TrackerCandidate{
+				Name: "Example.Release.2026.2160p.HDR-GRP",
+				HDR:  testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10),
+			},
+			want: api.DupeRelationSameSlot,
+		},
+		{
+			name: "partial HDR cannot prove coexistence",
+			target: api.TrackerDuplicateTarget{
+				Resolution: "2160p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatSDR),
+			},
+			candidate: TrackerCandidate{
+				Resolution: "2160p",
+				HDR: api.HDRFacts{
+					Formats: []api.HDRFormat{api.HDRFormatHDR10},
+					Origin:  api.HDREvidenceTrackerTitle,
+					Status:  api.HDREvidencePartial,
+				},
+			},
+			want: api.DupeRelationSameSlot,
+		},
 	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 
-	partial := testHDR(api.HDREvidencePartial, api.HDRFormatHDR10)
-	partial.Origin = api.HDREvidenceTrackerAPI
-	got := Evaluate(target, []TrackerCandidate{{HDR: partial}}, trackerspkg.DupePolicy{}, SearchEvidence{}).Candidates[0]
-	if got.Relation != api.DupeRelationSameSlot {
-		t.Fatalf("partial API HDR relation = %#v", got)
+			got := Evaluate(
+				test.target,
+				[]TrackerCandidate{test.candidate},
+				trackerspkg.DupePolicy{},
+				SearchEvidence{Complete: true},
+			).Candidates[0]
+			if got.Relation != test.want {
+				t.Fatalf("general HDR relation = %q, want %q", got.Relation, test.want)
+			}
+		})
 	}
 }
 

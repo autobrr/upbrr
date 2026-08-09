@@ -26,10 +26,11 @@ Scoped rules for the shared duplicate-search coordinator and evaluator. Root and
 ## HDR
 
 - Do not collapse HDR to one boolean. Preserve `sdr`, `dolby_vision`, `hdr10`, `hdr10_plus`, `hlg`, `pq10`, `hdr_vivid`, and `wide_color_gamut` independently, including Dolby Vision profile and fallback formats.
-- At 2160p, general policy allows at most one release per coarse SDR, HDR, DV, or DV+HDR type.
+- At 2160p, general policy gives SDR and DV-only distinct slots. Plain HDR and DV+HDR share one compatibility slot: DV+HDR trumps plain HDR in either direction.
+- Apply general HDR coexistence or trumping only when both releases have complete, authoritative 2160p resolution and HDR evidence.
 - At 1080p, general policy ignores HDR type; SDR, HDR, DV, and DV+HDR do not form distinct slots unless specific tracker rule/slot evidence allows it.
 - General policy creates no HDR-based coexistence slots at other resolutions and does not split generic HDR formats or Dolby Vision profiles into additional slots.
-- Finer distinctions such as HDR10 versus HDR10+, HLG, PQ10, HDR Vivid, WCG, Dolby Vision profiles, or directional compatibility require specific tracker rule/slot evidence.
+- Finer distinctions such as HDR10 versus HDR10+, HLG, PQ10, HDR Vivid, WCG, Dolby Vision profiles, or directional compatibility beyond DV+HDR trumping plain HDR require specific tracker rule/slot evidence.
 - Missing, partial, or contradictory HDR evidence must fail closed according to `HDRPartialMode`; never manufacture SDR from an absent field unless the adapter contract proves absence is authoritative.
 
 ## Tracker Overlays
