@@ -187,26 +187,96 @@ func TestCaptureFrameRecoversFromBlackFrameWithTimestampOffset(t *testing.T) {
 	}
 }
 
+func TestCaptureFrameContinuesOffsetsAfterNoImage(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "screen.png")
+	runner := &timestampSensitiveRunner{
+		blackTimestamps: map[string]struct{}{"1.000": {}},
+		noImageTimestamps: map[string]struct{}{
+			"2.000": {},
+			"3.000": {},
+			"4.000": {},
+			"6.000": {},
+		},
+		blackPayload: testPNGBytes(t, color.RGBA{A: 255}),
+		validPayload: testPNGBytes(t, color.RGBA{R: 200, A: 255}),
+	}
+
+	_, err := captureFrame(context.Background(), runner, "ffmpeg", captureRequest{
+		InputPath:  "example.mkv",
+		OutputPath: output,
+		Timestamp:  1,
+	}, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("expected negative timestamp offset to recover after empty positive offsets, got error: %v", err)
+	}
+
+	wantTimestamps := []string{"1.000", "2.000", "3.000", "4.000", "6.000", "0.000"}
+	if !slices.Equal(runner.timestamps, wantTimestamps) {
+		t.Fatalf("attempted timestamps = %v, want %v", runner.timestamps, wantTimestamps)
+	}
+}
+
+func TestCaptureFrameValidatesBlackSourceBeforeOverlay(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "screen.png")
+	runner := &timestampSensitiveRunner{
+		sourceBlackTimestamps: map[string]struct{}{"1.000": {}},
+		blackPayload:          testPNGBytes(t, color.RGBA{A: 255}),
+		validPayload:          testPNGBytes(t, color.RGBA{G: 200, A: 255}),
+	}
+
+	_, err := captureFrame(context.Background(), runner, "ffmpeg", captureRequest{
+		InputPath:   "example.mkv",
+		OutputPath:  output,
+		Timestamp:   1,
+		FrameOverlay: true,
+	}, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("expected black source frame to recover before overlay, got error: %v", err)
+	}
+
+	wantTimestamps := []string{"1.000", "2.000", "2.000"}
+	if !slices.Equal(runner.timestamps, wantTimestamps) {
+		t.Fatalf("attempted timestamps = %v, want %v", runner.timestamps, wantTimestamps)
+	}
+	wantOverlays := []bool{false, false, true}
+	if !slices.Equal(runner.overlays, wantOverlays) {
+		t.Fatalf("overlay attempts = %v, want %v", runner.overlays, wantOverlays)
+	}
+}
+
 type timestampSensitiveRunner struct {
-	blackTimestamps map[string]struct{}
-	blackPayload    []byte
-	validPayload    []byte
-	timestamps      []string
+	blackTimestamps       map[string]struct{}
+	noImageTimestamps     map[string]struct{}
+	sourceBlackTimestamps map[string]struct{}
+	blackPayload          []byte
+	validPayload          []byte
+	timestamps            []string
+	overlays              []bool
 }
 
 func (r *timestampSensitiveRunner) Run(_ context.Context, _ string, args []string, _ string) (CommandResult, error) {
 	var ts string
+	hasOverlay := false
 	for i := 0; i+1 < len(args); i++ {
-		if args[i] == "-ss" {
+		switch args[i] {
+		case "-ss":
 			ts = args[i+1]
-			break
+		case "-vf":
+			hasOverlay = strings.Contains(args[i+1], "drawtext=")
 		}
 	}
 	if ts != "" {
 		r.timestamps = append(r.timestamps, ts)
+		r.overlays = append(r.overlays, hasOverlay)
+	}
+	if _, noImage := r.noImageTimestamps[ts]; noImage {
+		return CommandResult{ExitCode: 0}, nil
 	}
 	payload := r.validPayload
 	if _, isBlack := r.blackTimestamps[ts]; isBlack {
+		payload = r.blackPayload
+	}
+	if _, sourceIsBlack := r.sourceBlackTimestamps[ts]; sourceIsBlack && !hasOverlay {
 		payload = r.blackPayload
 	}
 	if len(args) > 0 {

@@ -184,6 +184,7 @@ var blackFrameTimestampOffsets = []float64{0, 1.0, 2.0, 3.0, 5.0, -1.0, -2.0}
 func captureFrame(ctx context.Context, runner Runner, cmdPath string, req captureRequest, logger api.Logger) (bool, error) {
 	var lastErr error
 	var lastUsedLib bool
+	retryingBlackFrame := false
 
 	for _, offset := range blackFrameTimestampOffsets {
 		candidateTS := req.Timestamp + offset
@@ -210,12 +211,14 @@ func captureFrame(ctx context.Context, runner Runner, cmdPath string, req captur
 		lastErr = err
 		lastUsedLib = usedLib
 
-		if !errors.Is(err, errFFmpegBlackImage) {
+		if errors.Is(err, errFFmpegBlackImage) {
+			retryingBlackFrame = true
+		} else if !retryingBlackFrame || !errors.Is(err, errFFmpegNoImage) {
 			break
 		}
 		l := screenshotLogger(logger)
 		l.Debugf(
-			"screenshots: ffmpeg capture produced black image at timestamp=%.3f, retrying timestamp offset",
+			"screenshots: ffmpeg capture produced unusable image at timestamp=%.3f, retrying timestamp offset",
 			candidateTS,
 		)
 	}
@@ -230,6 +233,27 @@ func captureFrameSingle(ctx context.Context, runner Runner, cmdPath string, req 
 	}
 	if strings.TrimSpace(req.OutputPath) == "" {
 		return false, errors.New("screenshots: output path required")
+	}
+	if req.FrameOverlay {
+		// Validate before drawtext can make a black source frame appear usable.
+		validationFile, err := os.CreateTemp(filepath.Dir(req.OutputPath), ".upbrr-overlay-check-*.png")
+		if err != nil {
+			return false, fmt.Errorf("screenshots: create overlay validation output: %w", err)
+		}
+		validationPath := validationFile.Name()
+		if err := validationFile.Close(); err != nil {
+			_ = os.Remove(validationPath)
+			return false, fmt.Errorf("screenshots: close overlay validation output: %w", err)
+		}
+		defer func() { _ = os.Remove(validationPath) }()
+
+		validationReq := req
+		validationReq.OutputPath = validationPath
+		validationReq.FrameOverlay = false
+		validationReq.UseLibplacebo = false
+		if _, err := captureFrameSingle(ctx, runner, cmdPath, validationReq, logger); err != nil {
+			return false, err
+		}
 	}
 
 	useLibplacebo := req.UseLibplacebo && req.ToneMap && !req.FrameOverlay
