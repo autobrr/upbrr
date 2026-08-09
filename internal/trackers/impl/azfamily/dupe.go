@@ -140,9 +140,6 @@ func (h dupeSearcher) lookupMediaCode(ctx context.Context, site azDupeSiteDef, c
 			return stringFromAny(item["id"]), nil
 		}
 	}
-	if len(items) > 0 {
-		return stringFromAny(items[0]["id"]), nil
-	}
 	return "", nil
 }
 
@@ -217,11 +214,17 @@ func (h dupeSearcher) fetchTorrentList(
 			entry.CanonicalType = azCanonicalCandidateType(entry.Type)
 			results = append(results, entry)
 		}
-		nextPage := nextAZPage(root, site.baseURL)
-		if nextPage == "" {
+		nextPage, nextPresent := nextAZPage(root, site.baseURL)
+		switch {
+		case !nextPresent:
 			complete = true
 			if h.logger != nil {
 				h.logger.Debugf("dupechecking: search tracker=%s pages=%d complete=true decision=enumeration_complete", h.tracker, pages)
+			}
+		case nextPage == "":
+			warning = "AZ-family search rejected an invalid next-page link"
+			if h.logger != nil {
+				h.logger.Warnf("dupechecking: search tracker=%s pages=%d complete=false decision=invalid_next_page", h.tracker, pages)
 			}
 		}
 		pageURL = nextPage
@@ -362,14 +365,16 @@ func parseAZDupeRow(row *xhtml.Node, site azDupeSiteDef) api.DupeEntry {
 	return entry
 }
 
-func nextAZPage(root *xhtml.Node, baseURL string) string {
+func nextAZPage(root *xhtml.Node, baseURL string) (string, bool) {
 	var next string
+	present := false
 	var walk func(*xhtml.Node)
 	walk = func(node *xhtml.Node) {
-		if node == nil || next != "" {
+		if node == nil || present {
 			return
 		}
 		if node.Type == xhtml.ElementNode && node.Data == "a" && strings.EqualFold(attrValueHTML(node, "rel"), "next") {
+			present = true
 			next = sameOriginAZURL(baseURL, attrValueHTML(node, "href"))
 			return
 		}
@@ -378,7 +383,7 @@ func nextAZPage(root *xhtml.Node, baseURL string) string {
 		}
 	}
 	walk(root)
-	return next
+	return next, present
 }
 
 func sameOriginAZURL(baseURL, value string) string {
