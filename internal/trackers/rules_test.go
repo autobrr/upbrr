@@ -170,7 +170,6 @@ func TestStandaloneConstructibilityAuditPoliciesRejectInvalidFacts(t *testing.T)
 		{tracker: "BHDTV", rule: "unsupported_category"},
 		{tracker: "FF", rule: "unsupported_category"},
 		{tracker: "FL", rule: "unsupported_category"},
-		{tracker: "MTV", rule: "unsupported_category"},
 		{tracker: "NBL", rule: "nbl_asset_mediainfo_text"},
 		{tracker: "THR", rule: "unsupported_category"},
 		{tracker: "TL", rule: "unsupported_category"},
@@ -1124,7 +1123,7 @@ func TestEvaluateRulesMetadataPolicyReturnsEvaluatedEmpty(t *testing.T) {
 		SourcePath: "/data/movies/Example.Movie.2026.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-GRP",
 		Release:    api.ReleaseInfo{Group: "GRP", Resolution: "2160p"},
 	}
-	if got := evaluateNonMetadataRulesForTest(context.Background(), "MTV", clean); got == nil || len(nonAdvisoryFailures(got)) != 0 {
+	if got := evaluateNonMetadataRulesForTest(context.Background(), "ANT", clean); got == nil || len(nonAdvisoryFailures(got)) != 0 {
 		t.Fatalf("expected evaluated result without blocking failures, got %#v", got)
 	}
 }

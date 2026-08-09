@@ -56,7 +56,6 @@ const trackerFieldMeta: Record<string, FieldMeta> = {
   UseItalianTitle: boolField("UseItalianTitle", { label: "Use Italian title" }),
   OTPURI: stringField("OTPURI", { label: "OTP URI", sensitive: true }),
   SkipIfRehash: boolField("SkipIfRehash", { label: "Skip if rehash", advanced: true }),
-  PreferMTV: boolField("PreferMTV", { label: "Prefer MTV torrent", advanced: true }),
   PTGenAPI: stringField("PTGenAPI", { label: "PTGen API", sensitive: true }),
   AddWebSourceToDesc: boolField("AddWebSourceToDesc", { label: "Add web source to desc" }),
   UseMetadataName: boolField("UseMetadataName", { label: "Use metadata name" }),

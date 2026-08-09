@@ -92,7 +92,6 @@ func newTestBannedPolicyRegistry(t *testing.T) *Registry {
 		"GPW":  {"MOMOWEB"},
 		"HHD":  {"EVO"},
 		"LT":   {"EVO"},
-		"MTV":  {"PandaRG"},
 		"NBL":  {"YakuboEncodes"},
 		"OE":   {"VipapkSudios"},
 		"OTW":  {"Sync0rdi"},
@@ -174,7 +173,6 @@ func TestBannedGroupCheckerStaticBuiltins(t *testing.T) {
 		"GPW":  {"MOMOWEB"},
 		"HHD":  {"EVO"},
 		"LT":   {"EVO"},
-		"MTV":  {"PandaRG"},
 		"NBL":  {"YakuboEncodes"},
 		"OE":   {"VipapkSudios"},
 		"OTW":  {"Sync0rdi"},
@@ -415,7 +413,7 @@ func TestRefreshDynamicDoesNotLogUnsupportedTrackers(t *testing.T) {
 	checker := newTestBannedGroupChecker(t, filepath.Join(t.TempDir(), "db.sqlite"))
 	logger := &bannedRefreshTestLogger{}
 
-	if err := checker.RefreshDynamic(context.Background(), config.Config{}, []string{"DP", "BHD", "MTV"}, logger); err != nil {
+	if err := checker.RefreshDynamic(context.Background(), config.Config{}, []string{"DP", "BHD", "BTN"}, logger); err != nil {
 		t.Fatalf("refresh unsupported banned groups: %v", err)
 	}
 	if len(logger.debugMessages) != 0 {

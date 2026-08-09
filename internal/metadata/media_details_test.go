@@ -1390,16 +1390,13 @@ func TestResolveAudioBloatPolicyBlocksStrictTrackersForEnglishOriginal(t *testin
 		ProviderMetadata: api.SourceScopedMetadata{
 			TMDB: &api.TMDBMetadata{OriginalLanguage: "en"},
 		},
-	}, []string{"ANT", "BHD", "MTV", "AITHER", "ASC"}, antRuleRegistry(t))
+	}, []string{"ANT", "BHD", "AITHER", "ASC"}, antRuleRegistry(t))
 
 	if got := blocked["ANT"]; len(got) != 1 || got[0] != "French" {
 		t.Fatalf("expected ANT blocked for French bloat, got %#v", blocked)
 	}
 	if got := blocked["BHD"]; len(got) != 1 || got[0] != "French" {
 		t.Fatalf("expected BHD blocked for French bloat, got %#v", blocked)
-	}
-	if got := blocked["MTV"]; len(got) != 1 || got[0] != "French" {
-		t.Fatalf("expected MTV blocked for French bloat, got %#v", blocked)
 	}
 	if got := warned["AITHER"]; len(got) != 1 || got[0] != "French" {
 		t.Fatalf("expected AITHER warning for French bloat, got %#v", warned)

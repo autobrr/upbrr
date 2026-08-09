@@ -798,9 +798,10 @@ func TestTrackerAuthBackendUsesRequestContext(t *testing.T) {
 
 	backend := &Backend{
 		cfg: config.Config{
+			Metadata: config.MetadataConfig{BTNAPI: "api-key"},
 			Trackers: config.TrackersConfig{
 				Trackers: map[string]config.TrackerConfig{
-					"MTV": {
+					"BTN": {
 						Username: "user",
 						Password: "pass",
 					},
@@ -811,7 +812,7 @@ func TestTrackerAuthBackendUsesRequestContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	status, err := backend.TestTrackerAuth(ctx, "MTV")
+	status, err := backend.TestTrackerAuth(ctx, "BTN")
 	if err != nil {
 		t.Fatalf("TestTrackerAuth: %v", err)
 	}

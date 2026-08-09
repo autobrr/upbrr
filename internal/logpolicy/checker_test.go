@@ -675,7 +675,7 @@ func check(t testingT) {
 	t.Fatalf("stored token: %q", apiKey)
 	apiToken := refreshAPIToken()
 	t.Fatalf("refreshed token: %q", apiToken)
-	authKey := extractMTVAuthKey()
+	authKey := extractBTNAuthKey()
 	t.Fatalf("auth key: %q", authKey)
 	rssKey := getRSSKey()
 	t.Fatalf("rss key: %q", rssKey)
@@ -685,7 +685,7 @@ func check(t testingT) {
 
 func loadStoredRTFAPIKey() string { return "" }
 func refreshAPIToken() string { return "" }
-func extractMTVAuthKey() string { return "" }
+func extractBTNAuthKey() string { return "" }
 func getRSSKey() string { return "" }
 func readTorrentPass() string { return "" }
 
@@ -2302,7 +2302,7 @@ func (logger) Debugf(string, ...any) {}
 
 func check(log logger) {
 	log.Debugf("trackers: unit3d desc part=template len=%d", 100)
-	log.Debugf("trackers: description assets start tracker=%s source=%s", "MTV", "/path/to/file")
+	log.Debugf("trackers: description assets start tracker=%s source=%s", "BTN", "/path/to/file")
 	log.Debugf("trackers: description assets resolved desc_len=%d screenshots=%d", 1000, 4)
 	log.Debugf("trackers: description assets tracker urls source=db tracker=%s records=%d filtered=%d", "AR", 10, 4)
 }
@@ -2409,7 +2409,7 @@ func (logger) Infof(string, ...any) {}
 
 func check(log logger, path string) {
 	log.Infof("dupechecking: ULCX checked for %s raw=0 filtered=0 dupes=false", path)
-	log.Infof("dupechecking: MTV checked for %s raw=0 filtered=0 dupes=false", path)
+	log.Infof("dupechecking: BTN checked for %s raw=0 filtered=0 dupes=false", path)
 	log.Infof("dupechecking: NBL checked for %s raw=12 filtered=0 dupes=false", path)
 }
 `

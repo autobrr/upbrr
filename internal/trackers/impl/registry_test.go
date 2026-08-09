@@ -24,11 +24,11 @@ func TestNewRegistryIncludesHDB(t *testing.T) {
 	if _, ok := registry.Lookup("HDB"); !ok {
 		t.Fatal("expected HDB definition to be registered")
 	}
-	if _, ok := registry.Lookup("MTV"); !ok {
-		t.Fatal("expected MTV definition to be registered")
-	}
 	if _, ok := registry.Lookup("ANT"); !ok {
 		t.Fatal("expected ANT definition to be registered")
+	}
+	if _, ok := registry.Lookup("MTV"); ok {
+		t.Fatal("did not expect MTV definition to be registered")
 	}
 	if _, ok := registry.Lookup("AR"); !ok {
 		t.Fatal("expected AR definition to be registered")
@@ -174,7 +174,7 @@ func TestDescriptionDefinitionsPreserveFinalReviewedDescription(t *testing.T) {
 	}
 }
 
-func TestRegistryProjectsARAndMTVNamesBeforeDuplicateChecking(t *testing.T) {
+func TestRegistryProjectsARNamesBeforeDuplicateChecking(t *testing.T) {
 	t.Parallel()
 
 	registry, err := NewRegistry()
@@ -199,15 +199,6 @@ func TestRegistryProjectsARAndMTVNamesBeforeDuplicateChecking(t *testing.T) {
 				},
 			},
 			wantUpload:    "Example Release 2026",
-			wantDuplicate: "Example Release 2026",
-		},
-		{
-			tracker: "MTV",
-			subject: api.UploadSubject{
-				ReleaseName: "Example Release 2026 1080p WEB-DL-GRP",
-				Release:     api.ReleaseInfo{Title: "Example Release 2026"},
-			},
-			wantUpload:    "Example.Release.2026.1080p.WEB-DL-GRP",
 			wantDuplicate: "Example Release 2026",
 		},
 	}
@@ -558,7 +549,6 @@ func TestNewRegistryOwnsUploadArtifactPolicies(t *testing.T) {
 		"HDS":   {Source: "HD-Space"},
 		"HDT":   {Source: "hd-torrents.org"},
 		"IS":    {Source: "https://immortalseed.me"},
-		"MTV":   {Source: "MTV"},
 		"NBL":   {Source: "NBL"},
 		"PHD":   {Source: "PrivateHD", DefaultAnnounce: "https://tracker.privatehd.to/announce"},
 		"PTS":   {Source: "[www.ptskit.org] PTSKIT"},
@@ -581,29 +571,9 @@ func TestNewRegistryOwnsMetadataPolicies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new registry: %v", err)
 	}
-	for _, name := range []string{"AR", "AZ", "BJS", "CZ", "CZT", "MTV", "NBL", "PHD", "PTP", "SPD", "THR", "TL", "TVC", "AITHER"} {
+	for _, name := range []string{"AR", "AZ", "BJS", "CZ", "CZT", "NBL", "PHD", "PTP", "SPD", "THR", "TL", "TVC", "AITHER"} {
 		if _, ok := registry.LookupMetadataPolicy(name); !ok {
 			t.Errorf("expected %s tracker-owned metadata policy", name)
-		}
-	}
-
-	mtvPolicy, ok := registry.LookupMetadataPolicy("MTV")
-	if !ok || len(mtvPolicy.Requirements) != 4 {
-		t.Fatalf("MTV metadata policy = %#v, %t; want four requirements", mtvPolicy, ok)
-	}
-	wantRequirements := []struct {
-		scope  trackers.MetadataScope
-		fields []trackers.MetadataField
-	}{
-		{scope: trackers.MetadataScopeMovie, fields: []trackers.MetadataField{trackers.MetadataFieldTMDB, trackers.MetadataFieldIMDB}},
-		{scope: trackers.MetadataScopeTV, fields: []trackers.MetadataField{trackers.MetadataFieldTVDB}},
-		{scope: trackers.MetadataScopeTV, fields: []trackers.MetadataField{trackers.MetadataFieldTVDBTitle}},
-		{scope: trackers.MetadataScopeTV, fields: []trackers.MetadataField{trackers.MetadataFieldTVDBDisambiguation}},
-	}
-	for index, want := range wantRequirements {
-		got := mtvPolicy.Requirements[index]
-		if got.Scope != want.scope || got.Disposition != api.RuleDispositionStrict || !slices.Equal(got.AnyOf, want.fields) {
-			t.Errorf("MTV metadata requirement %d = %#v; want scope=%q fields=%#v strict", index, got, want.scope, want.fields)
 		}
 	}
 }
@@ -774,7 +744,7 @@ func TestNewRegistryIncludesAuthResolvers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new registry: %v", err)
 	}
-	for _, tracker := range []string{"BTN", "FF", "FL", "HDB", "MTV", "PTP", "RTF"} {
+	for _, tracker := range []string{"BTN", "FF", "FL", "HDB", "PTP", "RTF"} {
 		if _, ok := registry.LookupAuthSessionResolver(tracker); !ok {
 			t.Errorf("expected %s tracker-owned auth resolver", tracker)
 		}

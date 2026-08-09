@@ -16,7 +16,7 @@ func TestIsInternalGroup(t *testing.T) {
 	cfg := config.Config{
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
-				"MTV": {
+				"BTN": {
 					Internal:       true,
 					InternalGroups: []string{"GroupA", "GroupB"},
 				},
@@ -24,10 +24,10 @@ func TestIsInternalGroup(t *testing.T) {
 		},
 	}
 
-	if !IsInternalGroup(cfg, "MTV", api.UploadSubject{Tag: "-GroupA"}) {
+	if !IsInternalGroup(cfg, "BTN", api.UploadSubject{Tag: "-GroupA"}) {
 		t.Fatalf("expected group to be internal")
 	}
-	if IsInternalGroup(cfg, "MTV", api.UploadSubject{Tag: "-Other"}) {
+	if IsInternalGroup(cfg, "BTN", api.UploadSubject{Tag: "-Other"}) {
 		t.Fatalf("expected group to be non-internal")
 	}
 	if IsInternalGroup(cfg, "BHD", api.UploadSubject{Tag: "-GroupA"}) {
