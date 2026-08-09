@@ -339,6 +339,7 @@ func (r *corruptionCancelRunner) Run(ctx context.Context, _ string, args []strin
 	select {
 	case <-r.allStarted:
 	case <-ctx.Done():
+		r.canceled.Add(1)
 		return CommandResult{ExitCode: 1}, fmt.Errorf("synthetic ffmpeg start: %w", ctx.Err())
 	}
 	if ffmpegValueAfter(args, "-ss") == "10.000" {
