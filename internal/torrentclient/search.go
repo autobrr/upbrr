@@ -1249,13 +1249,11 @@ func (s *Service) selectValidTorrent(
 			bestPiece = pieceSize
 			return
 		}
-		if constraints.preferMax16 {
-			if shouldReplaceBest(pieceSize, bestPiece, constraints) {
-				bestHash = hash
-				bestPath = path
-				bestData = data
-				bestPiece = pieceSize
-			}
+		if shouldReplaceBest(pieceSize, bestPiece, constraints) {
+			bestHash = hash
+			bestPath = path
+			bestData = data
+			bestPiece = pieceSize
 		}
 	}
 

@@ -432,9 +432,9 @@ func newMetadataRegistry(t *testing.T) *Registry {
 		t.Fatalf("register BHD metadata policy: %v", err)
 	}
 	btnPolicy := &TrackerMetadataPolicy{RequireKnownCategory: true, Requirements: []MetadataRequirement{{
-		Scope: MetadataScopeTV,
- AnyOf: []MetadataField{MetadataFieldIMDB, MetadataFieldTVDB},
- Disposition: api.RuleDispositionStrict,
+		Scope:       MetadataScopeTV,
+		AnyOf:       []MetadataField{MetadataFieldIMDB, MetadataFieldTVDB},
+		Disposition: api.RuleDispositionStrict,
 	}}}
 	if err := registry.RegisterDescriptor(Descriptor{
 		Name:       "BTN",

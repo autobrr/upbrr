@@ -54,6 +54,16 @@ func (l *captureLogger) Errorf(string, ...any) {}
 
 func TestSearchPathedTorrentsProxyPrefersPieceSize(t *testing.T) {
 	t.Parallel()
+	testSearchPathedTorrentsProxyPieceSelection(t, true, "16MiB", "16MiB")
+}
+
+func TestSearchPathedTorrentsProxySelectsSmallestReusableWithoutPiecePreference(t *testing.T) {
+	t.Parallel()
+	testSearchPathedTorrentsProxyPieceSelection(t, false, "no_constraints", "")
+}
+
+func testSearchPathedTorrentsProxyPieceSelection(t *testing.T, preferMax16 bool, expectedFound string, expectedConstraint string) {
+	t.Helper()
 
 	dir := t.TempDir()
 	hashLarge, dataLarge := createTestTorrent(t, dir, "Movie.Title.2024.mkv", 25)
@@ -130,7 +140,7 @@ func TestSearchPathedTorrentsProxyPrefersPieceSize(t *testing.T) {
 			DefaultClient: "qbit",
 			SearchClients: config.CSVList{"qbit"},
 		},
-		TorrentCreation: config.TorrentCreationConfig{PreferMax16: true},
+		TorrentCreation: config.TorrentCreationConfig{PreferMax16: preferMax16},
 		TorrentClients: map[string]config.TorrentClientConfig{
 			"qbit": {
 				Type:        "qui",
@@ -152,11 +162,11 @@ func TestSearchPathedTorrentsProxyPrefersPieceSize(t *testing.T) {
 	if result.InfoHash != hashSmall {
 		t.Fatalf("expected preferred hash-small, got %q", result.InfoHash)
 	}
-	if result.FoundPreferredPiece != "16MiB" {
-		t.Fatalf("expected preferred piece size 16MiB, got %q", result.FoundPreferredPiece)
+	if result.FoundPreferredPiece != expectedFound {
+		t.Fatalf("expected preferred piece result %q, got %q", expectedFound, result.FoundPreferredPiece)
 	}
-	if result.PieceSizeConstraint != "16MiB" {
-		t.Fatalf("expected piece constraint 16MiB, got %q", result.PieceSizeConstraint)
+	if result.PieceSizeConstraint != expectedConstraint {
+		t.Fatalf("expected piece constraint %q, got %q", expectedConstraint, result.PieceSizeConstraint)
 	}
 	if len(result.TorrentComments) != 2 {
 		t.Fatalf("expected 2 matches, got %d", len(result.TorrentComments))

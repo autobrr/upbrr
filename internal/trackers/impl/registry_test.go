@@ -27,6 +27,9 @@ func TestNewRegistryIncludesHDB(t *testing.T) {
 	if _, ok := registry.Lookup("ANT"); !ok {
 		t.Fatal("expected ANT definition to be registered")
 	}
+	if _, ok := registry.Lookup("MTV"); ok {
+		t.Fatal("did not expect MTV definition to be registered")
+	}
 	if _, ok := registry.Lookup("AR"); !ok {
 		t.Fatal("expected AR definition to be registered")
 	}
