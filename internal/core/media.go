@@ -637,7 +637,7 @@ func (m *mediaModule) uploadImagesToTarget(
 		)
 		uploaded, err := m.images.Upload(progressCtx, imageHostingSubject(meta), target.Host, target.UsageScope, images)
 		if err != nil && m.partialHostUploadIsUsable(target, len(images), len(uploaded), err) {
-			emitCoreImageUploadResult(progressCtx, progressTarget, len(uploaded), nil)
+			emitCoreImageUploadResult(progressCtx, progressTarget, len(uploaded), err)
 			return uploaded, nil
 		}
 		emitCoreImageUploadResult(progressCtx, progressTarget, len(uploaded), err)
@@ -708,7 +708,7 @@ func (m *mediaModule) uploadImagesToTarget(
 	uploaded, err := m.images.Upload(progressCtx, imageHostingSubject(meta), target.Host, target.UsageScope, missing)
 	results = append(results, uploaded...)
 	if err != nil && m.partialHostUploadIsUsable(target, len(images), len(results), err) {
-		emitCoreImageUploadResult(progressCtx, progressTarget, len(uploaded), nil)
+		emitCoreImageUploadResult(progressCtx, progressTarget, len(uploaded), err)
 		return results, nil
 	}
 	emitCoreImageUploadResult(progressCtx, progressTarget, len(uploaded), err)

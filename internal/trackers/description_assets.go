@@ -868,6 +868,9 @@ func preloadUploadAssetData(
 			}
 		}
 		applyUploadedVariantsToSlots(preloaded.screenshotSlots, preloaded.uploads)
+		for index := range preloaded.screenshotSlots {
+			preloaded.screenshotSlots[index].RenderInScreenshots = len(preloaded.screenshotSlots[index].Variants) > 0
+		}
 		preloaded.screenshotSlotsLoaded = true
 		return preloaded, nil
 	}

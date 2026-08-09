@@ -431,10 +431,10 @@ func TestUploadImagesAcceptsPartialHostBatchAtConfiguredMinimum(t *testing.T) {
 		images = append(images, api.ScreenshotImage{Path: fmt.Sprintf("screen%d.png", index)})
 	}
 	target := trackers.ImageUploadTarget{
-Host: "pixhost",
- UsageScope: "global",
- Trackers: []string{"ONE"},
-}
+		Host:       "pixhost",
+		UsageScope: "global",
+		Trackers:   []string{"ONE"},
+	}
 
 	for _, testCase := range []struct {
 		name        string
@@ -445,52 +445,52 @@ Host: "pixhost",
 		wantFailure bool
 	}{
 		{
-name: "above minimum",
- minimum: 3,
- published: 5,
- wantLinks: 5,
-},
+			name:      "above minimum",
+			minimum:   3,
+			published: 5,
+			wantLinks: 5,
+		},
 		{
-name: "at minimum",
- minimum: 3,
- published: 3,
- wantLinks: 3,
-},
+			name:      "at minimum",
+			minimum:   3,
+			published: 3,
+			wantLinks: 3,
+		},
 		{
-name: "below minimum",
- minimum: 3,
- published: 2,
- wantFailure: true,
-},
+			name:        "below minimum",
+			minimum:     3,
+			published:   2,
+			wantFailure: true,
+		},
 		{
-name: "allowance disabled",
- minimum: 0,
- published: 5,
- wantFailure: true,
-},
+			name:        "allowance disabled",
+			minimum:     0,
+			published:   5,
+			wantFailure: true,
+		},
 		{
-name: "minimum above requested",
- minimum: 8,
- published: 5,
- wantFailure: true,
-},
+			name:        "minimum above requested",
+			minimum:     8,
+			published:   5,
+			wantFailure: true,
+		},
 		// Reuse counts toward the floor: the host publishes fewer images than
 		// the floor on its own, so this only passes when the allowance is
 		// applied where reused links are visible.
 		{
-name: "reuse completes the minimum",
- minimum: 3,
- published: 2,
- reused: 2,
- wantLinks: 4,
-},
+			name:      "reuse completes the minimum",
+			minimum:   3,
+			published: 2,
+			reused:    2,
+			wantLinks: 4,
+		},
 		{
-name: "reuse still short of the minimum",
- minimum: 5,
- published: 2,
- reused: 2,
- wantFailure: true,
-},
+			name:        "reuse still short of the minimum",
+			minimum:     5,
+			published:   2,
+			reused:      2,
+			wantFailure: true,
+		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
@@ -509,8 +509,12 @@ name: "reuse still short of the minimum",
 				logger:   &recordingMediaLogger{},
 				registry: mediaImageHostRegistry(t),
 			}
+			var progressUpdates []api.ImageUploadProgressUpdate
+			ctx := api.WithImageUploadProgressReporter(context.Background(), func(update api.ImageUploadProgressUpdate) {
+				progressUpdates = append(progressUpdates, update)
+			})
 			result, err := module.uploadImagesToTargetsWithFallback(
-				context.Background(),
+				ctx,
 				api.UploadSubject{SourcePath: "Example.Release.2026.mkv"},
 				"pixhost",
 				nil,
@@ -540,6 +544,15 @@ name: "reuse still short of the minimum",
 			}
 			if len(result.Attempts) != 1 || result.Attempts[0].Failure != nil {
 				t.Fatalf("attempt results = %#v", result.Attempts)
+			}
+			if len(progressUpdates) == 0 {
+				t.Fatal("accepted partial batch emitted no progress")
+			}
+			terminal := progressUpdates[len(progressUpdates)-1]
+			wantFailed := len(images) - testCase.reused - testCase.published
+			if terminal.Status != api.ImageUploadProgressFailed || terminal.Completed != len(images) ||
+				terminal.Succeeded != testCase.published || terminal.Reused != testCase.reused || terminal.Failed != wantFailed {
+				t.Fatalf("accepted partial terminal progress = %#v", terminal)
 			}
 		})
 	}
