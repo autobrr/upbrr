@@ -957,7 +957,7 @@ type pixhostUploader struct {
 	client *http.Client
 }
 
-const pixhostUploadURL = "https://api.pixhost.cc/images"
+const pixhostUploadURL = "https://api.pixhost.to/images"
 
 func (u *pixhostUploader) Upload(ctx context.Context, imagePath string) (uploadResult, error) {
 	fields := map[string]string{
