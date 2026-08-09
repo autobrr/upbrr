@@ -61,12 +61,18 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	if !valid {
 		return dupe.Failed(dupe.FailureResponseParse, "PTP group search response was malformed", nil)
 	}
+	complete := ptpGroupLookupComplete(groupPayload, empty)
+	warnings := []string(nil)
+	if !complete {
+		warnings = []string{"PTP IMDb search count did not prove complete work coverage"}
+	}
 	if empty {
-		return dupe.ResolvedWithSearch(nil, nil, dupe.SearchEvidence{
-			Complete:  true,
+		return dupe.ResolvedWithSearch(nil, warnings, dupe.SearchEvidence{
+			Complete:  complete,
 			WorkScope: dupe.WorkScopeTrackerGroup,
 			Pages:     1,
 			Scope:     "work_identity",
+			Warnings:  warnings,
 		})
 	}
 	payload, err := s.get(ctx, url.Values{
@@ -81,11 +87,12 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	if !ok {
 		return dupe.Failed(dupe.FailureResponseParse, "PTP torrent group response was malformed", nil)
 	}
-	return dupe.ResolvedWithSearch(entries, nil, dupe.SearchEvidence{
-		Complete:  true,
+	return dupe.ResolvedWithSearch(entries, warnings, dupe.SearchEvidence{
+		Complete:  complete,
 		WorkScope: dupe.WorkScopeTrackerGroup,
 		Pages:     1,
 		Scope:     "work_identity",
+		Warnings:  warnings,
 	})
 }
 
@@ -142,6 +149,31 @@ func ptpResolvedGroupID(payload map[string]any) (string, bool, bool) {
 	}
 	groupID := ptpString(payload["GroupId"])
 	return groupID, false, groupID != ""
+}
+
+func ptpGroupLookupComplete(payload map[string]any, empty bool) bool {
+	rawTotal, totalPresent := payload["TotalResults"]
+	rawPage, pagePresent := payload["Page"]
+	total, validTotal := ptpNonNegativeInt(rawTotal)
+	page, validPage := ptpNonNegativeInt(rawPage)
+	if !totalPresent || !pagePresent || !validTotal || !validPage || page != 1 {
+		return false
+	}
+	if movies, present := payload["Movies"]; present {
+		list, ok := movies.([]any)
+		if !ok || int64(len(list)) != total {
+			return false
+		}
+	}
+	if empty {
+		return total == 0
+	}
+	return total == 1
+}
+
+func ptpNonNegativeInt(value any) (int64, bool) {
+	parsed, err := strconv.ParseInt(ptpString(value), 10, 64)
+	return parsed, err == nil && parsed >= 0
 }
 
 func ptpDupeEntries(payload map[string]any, groupID string, baseURL string) ([]api.DupeEntry, bool) {

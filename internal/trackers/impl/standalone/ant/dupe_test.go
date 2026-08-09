@@ -154,6 +154,31 @@ func TestDupeSearcherANTPaginationBoundFailsClosed(t *testing.T) {
 	}
 }
 
+func TestDupeSearcherANTTotalChangeFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		requests++
+		total := 101
+		count := 100
+		if requests == 2 {
+			total = 102
+			count = 1
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(antSearchPageJSON(t, (requests-1)*100, total, count, true))),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	searcher := dupe.NewAdapter(New(), "ANT", antDupeTestConfig(), client, api.NopLogger{})
+	result := searcher.Search(context.Background(), api.DuplicateSubject{Identity: api.ExternalIdentity{TMDBID: 123}})
+	if search := result.SearchEvidence(); search.Complete || search.Pages != 2 || len(search.Warnings) != 1 || len(result.Entries()) != 101 {
+		t.Fatalf("changed total search=%#v entries=%d", search, len(result.Entries()))
+	}
+}
+
 func TestDupeSearcherMissingCredentialsSkips(t *testing.T) {
 	t.Parallel()
 	searcher := dupe.NewAdapter(New(), "ANT", config.Config{}, http.DefaultClient, api.NopLogger{})

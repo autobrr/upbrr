@@ -130,7 +130,7 @@ func TestBHDSearchUsesExternalIDs(t *testing.T) {
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body: io.NopCloser(bytes.NewBufferString(
-						`{"status_code":1,"results":[{"name":"Example.Release.2026.1080p-GRP"}]}`,
+						`{"status_code":1,"page":1,"total_pages":1,"total_results":1,"results":[{"name":"Example.Release.2026.1080p-GRP"}]}`,
 					)),
 					Header: make(http.Header),
 				}, nil
@@ -222,5 +222,33 @@ func TestBHDSearchContinuesFullPageWhenTotalPagesOmitted(t *testing.T) {
 		len(search.Warnings) != 0 ||
 		len(result.Entries()) != 101 {
 		t.Fatalf("requested pages=%v search=%#v entries=%d", requestedPages, search, len(result.Entries()))
+	}
+}
+
+func TestBHDSearchCountMismatchFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	client := &http.Client{Transport: bhdRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body: io.NopCloser(strings.NewReader(
+				`{"status_code":1,"page":1,"total_pages":1,"total_results":2,"results":[{"name":"Example.Release.2026.1080p-GRP"}]}`,
+			)),
+			Header: make(http.Header),
+		}, nil
+	})}
+	searcher := &dupeSearcher{
+		cfg: config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"BHD": {APIKey: "placeholder"},
+		}}},
+		http:     client,
+		baseURL:  "https://example.invalid/",
+		maxPages: 1,
+	}
+	result := searcher.Search(context.Background(), api.DuplicateSubject{
+		Identity: api.ExternalIdentity{TMDBID: 1234567, Category: api.CanonicalCategoryMovie},
+	})
+	if search := result.SearchEvidence(); search.Complete || search.Pages != 1 || len(search.Warnings) != 1 || len(result.Entries()) != 1 {
+		t.Fatalf("count mismatch search=%#v entries=%d", search, len(result.Entries()))
 	}
 }
