@@ -25,7 +25,6 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/hds"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/hdt"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/is"
-	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/mtv"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/nbl"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/ptp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/pts"
@@ -118,7 +117,7 @@ func azFamilyDefinitions() []trackers.Definition {
 
 func standaloneDefinitions() []trackers.Definition {
 	return []trackers.Definition{
-		hdb.New(), mtv.New(), ant.New(), ar.New(), asc.New(), bhd.New(), bhdtv.New(), bjs.New(), btn.New(), bt.New(), czt.New(), dc.New(), ff.New(),
+		hdb.New(), ant.New(), ar.New(), asc.New(), bhd.New(), bhdtv.New(), bjs.New(), btn.New(), bt.New(), czt.New(), dc.New(), ff.New(),
 		fl.New(), gpw.New(), hds.New(), hdt.New(), is.New(), nbl.New(), ptp.New(), pts.New(), rtf.New(), spd.New(), thr.New(), tl.New(), tvc.New(),
 	}
 }

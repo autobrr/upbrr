@@ -188,11 +188,11 @@ func TestEvaluateNBLUsesCoarseSDRHDRDVSlots(t *testing.T) {
 	}
 }
 
-func TestEvaluateMTVHDRCompatibilityIsDirectional(t *testing.T) {
+func TestEvaluateANTHDRCompatibilityIsDirectional(t *testing.T) {
 	t.Parallel()
 
 	policy := trackerspkg.DupePolicy{
-		ID:                   "mtv/duplicate/v2",
+		ID:                   "ant/duplicate/v3",
 		SlotDimensions:       []trackerspkg.DupeDimension{trackerspkg.DupeDimensionHDR},
 		HDRCompatibilityMode: trackerspkg.DupeHDRCompatibilityDirectional,
 	}
@@ -308,7 +308,7 @@ func TestEvaluateCriticalEvidenceAndStructuralSlotsPrecedeDirectionalHDR(t *test
 	}
 }
 
-func TestEvaluateMTVMissingResolutionPrecedesDirectionalHDR(t *testing.T) {
+func TestEvaluateANTMissingResolutionPrecedesDirectionalHDR(t *testing.T) {
 	t.Parallel()
 
 	targetHDR := api.HDRFacts{
@@ -325,14 +325,14 @@ func TestEvaluateMTVMissingResolutionPrecedesDirectionalHDR(t *testing.T) {
 		},
 		[]TrackerCandidate{{HDR: targetHDR}},
 		trackerspkg.DupePolicy{
-			ID:             "mtv/duplicate/v2",
+			ID:             "ant/duplicate/v3",
 			SlotDimensions: []trackerspkg.DupeDimension{trackerspkg.DupeDimensionResolution, trackerspkg.DupeDimensionHDR},
 		},
 		SearchEvidence{Complete: true},
 	)
 	if got := evaluation.Candidates[0]; got.Relation != api.DupeRelationInsufficientEvidence ||
 		got.Reasons[0].Code != "candidate_resolution_missing" {
-		t.Fatalf("missing MTV resolution relation = %#v", got)
+		t.Fatalf("missing ANT resolution relation = %#v", got)
 	}
 }
 
@@ -600,12 +600,9 @@ func TestEvaluateCompoundDirectionalRule(t *testing.T) {
 func TestNormalizeCandidateUsesExplicitTitleHDRAsPartialEvidence(t *testing.T) {
 	t.Parallel()
 
-	entry := api.DupeEntry{Name: "Example.Release.2026.DV.HDR10+.2160p-GRP"}
-	for _, tracker := range []string{"ANT", "MTV"} {
-		candidate := NormalizeCandidate(entry, tracker)
-		if candidate.HDR.Origin != api.HDREvidenceTrackerTitle || candidate.HDR.Status != api.HDREvidencePartial {
-			t.Fatalf("%s title HDR evidence = %#v", tracker, candidate.HDR)
-		}
+	candidate := NormalizeCandidate(api.DupeEntry{Name: "Example.Release.2026.DV.HDR10+.2160p-GRP"}, "ANT")
+	if candidate.HDR.Origin != api.HDREvidenceTrackerTitle || candidate.HDR.Status != api.HDREvidencePartial {
+		t.Fatalf("ANT title HDR evidence = %#v", candidate.HDR)
 	}
 }
 

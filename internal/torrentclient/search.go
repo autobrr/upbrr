@@ -35,7 +35,6 @@ import (
 )
 
 const (
-	mtvPieceSizeLimit  = 8 * 1024 * 1024
 	max16PieceSize     = 16 * 1024 * 1024
 	proxySearchTimeout = 15 * time.Second
 )
@@ -72,27 +71,14 @@ func buildTrackerIDPatterns(registry *trackers.Registry) map[string]trackerPatte
 	return patterns
 }
 
-func trackerSearchPreferenceNames(registry *trackers.Registry, preference trackers.TorrentSearchPreference) []string {
-	names := make([]string, 0)
-	for _, tracker := range registry.Names() {
-		policy, ok := registry.LookupTorrentIdentityPolicy(tracker)
-		if ok && policy.SearchPreference == preference {
-			names = append(names, tracker)
-		}
-	}
-	return names
-}
-
 // proxySearchResponse models the torrent list returned by the Qui search proxy.
 type proxySearchResponse struct {
 	Torrents []qbittorrent.Torrent `json:"torrents"`
 }
 
-// pieceConstraints describes tracker-specific preferences used when selecting
-// a reusable torrent from validated client matches.
+// pieceConstraints describes global preferences used when selecting a reusable torrent.
 type pieceConstraints struct {
 	label       string
-	preferSmall bool
 	preferMax16 bool
 }
 
@@ -141,7 +127,7 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.ClientSubje
 		return api.ClientSearchResult{}, internalerrors.ErrInvalidInput
 	}
 
-	constraints := resolvePieceConstraints(s.cfg, s.smallPieceTrackers)
+	constraints := resolvePieceConstraints(s.cfg)
 	result = api.ClientSearchResult{PieceSizeConstraint: constraints.label}
 	s.logger.Tracef("clients: pathed search start source=%s constraints=%q", meta.SourcePath, constraints.label)
 
@@ -277,21 +263,7 @@ func formatTrackerMatches(matches []api.TrackerMatch) string {
 	return strings.Join(formatted, ",")
 }
 
-func resolvePieceConstraints(cfg config.Config, smallPieceTrackers []string) pieceConstraints {
-	for _, tracker := range smallPieceTrackers {
-		trackerCfg, ok := cfg.Trackers.Trackers[tracker]
-		if !ok {
-			for name, candidate := range cfg.Trackers.Trackers {
-				if strings.EqualFold(strings.TrimSpace(name), tracker) {
-					trackerCfg, ok = candidate, true
-					break
-				}
-			}
-		}
-		if ok && trackerCfg.PreferMTV {
-			return pieceConstraints{label: strings.ToUpper(tracker), preferSmall: true}
-		}
-	}
+func resolvePieceConstraints(cfg config.Config) pieceConstraints {
 	if cfg.TorrentCreation.PreferMax16 {
 		return pieceConstraints{label: "16MiB", preferMax16: true}
 	}
@@ -1277,13 +1249,11 @@ func (s *Service) selectValidTorrent(
 			bestPiece = pieceSize
 			return
 		}
-		if constraints.preferSmall || constraints.preferMax16 {
-			if shouldReplaceBest(pieceSize, bestPiece, constraints) {
-				bestHash = hash
-				bestPath = path
-				bestData = data
-				bestPiece = pieceSize
-			}
+		if shouldReplaceBest(pieceSize, bestPiece, constraints) {
+			bestHash = hash
+			bestPath = path
+			bestData = data
+			bestPiece = pieceSize
 		}
 	}
 
@@ -1325,7 +1295,7 @@ func (s *Service) selectValidTorrent(
 		if info, err := os.Stat(outputPath); err == nil && !info.IsDir() {
 			data, err := os.ReadFile(outputPath)
 			if err == nil {
-				validation := validateTorrentData(meta, normalizedHash, data, constraints)
+				validation := validateTorrentData(meta, normalizedHash, data)
 				if validation.clientMatch && strings.EqualFold(validation.infoHash, normalizedHash) {
 					if err := forceRecheckValidated(normalizedHash); err != nil {
 						return validatedTorrentSelection{}, err
@@ -1353,7 +1323,7 @@ func (s *Service) selectValidTorrent(
 			continue
 		}
 
-		validation := validateTorrentData(meta, normalizedHash, data, constraints)
+		validation := validateTorrentData(meta, normalizedHash, data)
 		if !validation.clientMatch {
 			if validation.reason != "" {
 				s.logger.Debugf("clients: exported torrent failed validation for %s: %s", normalizedHash, validation.reason)
@@ -1520,7 +1490,7 @@ func sanitizeTorrentData(data []byte) ([]byte, error) {
 
 // validateTorrentData parses torrent data and reports whether its hash, paths,
 // and piece metadata are usable as a client match and/or a reusable torrent file.
-func validateTorrentData(meta api.ClientSubject, hash string, data []byte, constraints pieceConstraints) torrentDataValidation {
+func validateTorrentData(meta api.ClientSubject, hash string, data []byte) torrentDataValidation {
 	metaInfo, err := metainfo.Load(bytes.NewReader(data))
 	if err != nil {
 		return torrentDataValidation{reason: "load_failed"}
@@ -1560,7 +1530,7 @@ func validateTorrentData(meta api.ClientSubject, hash string, data []byte, const
 		}
 	}
 
-	if invalidPieceConstraints(constraints, pieceSize, pieces, int64(len(data)), wrongFile) {
+	if invalidPieceConstraints(pieceSize, pieces, int64(len(data)), wrongFile) {
 		return torrentDataValidation{
 			clientMatch: true,
 			pieceSize:   pieceSize,
@@ -1665,11 +1635,11 @@ func torrentV1Files(info metainfo.Info) []metainfo.FileInfo {
 
 // invalidPieceConstraints reports metadata limits that prevent saving an
 // exported torrent as the reusable torrent file for this source.
-func invalidPieceConstraints(constraints pieceConstraints, pieceSize int64, pieces int, torrentSize int64, wrongFile bool) bool {
+func invalidPieceConstraints(pieceSize int64, pieces int, torrentSize int64, wrongFile bool) bool {
 	if pieces >= 5000 && pieceSize < 4294304 {
 		return true
 	}
-	if pieces >= 8000 && pieceSize < 8488608 && !constraints.preferSmall {
+	if pieces >= 8000 && pieceSize < 8488608 {
 		return true
 	}
 	if pieces >= 12000 {
@@ -1725,11 +1695,8 @@ func preferredPieceLabel(pieceSize int64, constraints pieceConstraints) string {
 	if pieceSize <= 0 {
 		return ""
 	}
-	if !constraints.preferSmall && !constraints.preferMax16 {
+	if !constraints.preferMax16 {
 		return "no_constraints"
-	}
-	if constraints.preferSmall && pieceSize <= mtvPieceSizeLimit {
-		return constraints.label
 	}
 	if constraints.preferMax16 && pieceSize <= max16PieceSize {
 		return "16MiB"
@@ -1740,9 +1707,6 @@ func preferredPieceLabel(pieceSize int64, constraints pieceConstraints) string {
 func shouldReplaceBest(pieceSize int64, bestPiece int64, constraints pieceConstraints) bool {
 	if bestPiece == 0 {
 		return true
-	}
-	if constraints.preferSmall {
-		return pieceSize < bestPiece
 	}
 	if constraints.preferMax16 {
 		bestFits := bestPiece <= max16PieceSize

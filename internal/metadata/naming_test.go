@@ -911,6 +911,12 @@ func TestResolveReleaseNameTitleProviderAlternateRules(t *testing.T) {
 			wantAlt: "AKA Original Title",
 		},
 		{
+			name:       "adds prefix to parsed alternate",
+			releaseAlt: "Parsed Alternate",
+			imdbAKA:    "Original Title",
+			wantAlt:    "AKA Parsed Alternate",
+		},
+		{
 			name:       "preserves parsed alternate",
 			releaseAlt: "AKA Parsed Alternate",
 			imdbAKA:    "Original Title",

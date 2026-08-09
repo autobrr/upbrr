@@ -8,8 +8,9 @@ import "errors"
 
 // These sentinels may be wrapped; callers should classify them with [errors.Is].
 var (
-	ErrNotImplemented = errors.New("not implemented")
-	ErrInvalidInput   = errors.New("invalid input")
-	ErrNotFound       = errors.New("not found")
-	ErrBannedGroup    = errors.New("banned group")
+	ErrNotImplemented  = errors.New("not implemented")
+	ErrInvalidInput    = errors.New("invalid input")
+	ErrNotFound        = errors.New("not found")
+	ErrBannedGroup     = errors.New("banned group")
+	ErrFrameCorruption = errors.New("frame corruption detected")
 )

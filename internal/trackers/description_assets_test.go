@@ -80,7 +80,7 @@ func descriptionAssetsTestRegistry(t *testing.T) *Registry {
 			OwnedHosts:           []string{"hdb"},
 			DisableWithoutRehost: true,
 		},
-		"MTV": {AllowedHosts: []string{"imgbox", "imgbb"}},
+		"BTN": {AllowedHosts: []string{"imgbox", "imgbb"}},
 		"OE":  {AllowedHosts: []string{"imgbox", "imgbb", "onlyimage", "ptscreens", "passtheimage"}},
 		"PTP": {AllowedHosts: []string{"pixhost", "imgbb", "onlyimage", "ptscreens", "passtheimage"}},
 	}
@@ -89,7 +89,7 @@ func descriptionAssetsTestRegistry(t *testing.T) *Registry {
 		{name: "HHD", family: FamilyUnit3D},
 		{name: "ANT", family: FamilyStandalone},
 		{name: "HDB", family: FamilyStandalone},
-		{name: "MTV", family: FamilyStandalone},
+		{name: "BTN", family: FamilyStandalone},
 		{name: "NBL", family: FamilyStandalone},
 		{name: "OE", family: FamilyUnit3D},
 		{name: "PTP", family: FamilyStandalone},

@@ -17,8 +17,8 @@ func TestTrackerAuthStatusJSONContractFields(t *testing.T) {
 	t.Parallel()
 
 	status := TrackerAuthStatus{
-		TrackerID:        "MTV",
-		DisplayName:      "MTV",
+		TrackerID:        "BTN",
+		DisplayName:      "BTN",
 		State:            "needs_2fa",
 		CookieCount:      2,
 		LastCheckedAt:    "2026-07-08T01:02:03Z",
@@ -39,8 +39,8 @@ func TestTrackerAuthStatusJSONContractFields(t *testing.T) {
 	}
 
 	want := map[string]any{
-		"trackerID":        "MTV",
-		"displayName":      "MTV",
+		"trackerID":        "BTN",
+		"displayName":      "BTN",
 		"state":            "needs_2fa",
 		"cookieCount":      float64(2),
 		"lastCheckedAt":    "2026-07-08T01:02:03Z",

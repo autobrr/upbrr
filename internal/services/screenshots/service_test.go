@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -279,6 +280,43 @@ func TestPreviewFrameExcludesDVDMenuVOB(t *testing.T) {
 	}
 }
 
+func TestCaptureReturnsHardErrorAndCancelsSiblingFramesForCorruption(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "Example.Release.2026.1080p-GRP.mkv")
+	if err := os.WriteFile(sourcePath, []byte("synthetic video"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	mediaInfoPath := filepath.Join(root, "mediainfo.json")
+	if err := os.WriteFile(mediaInfoPath, []byte(`{"media":{"track":[{"@type":"General","Duration":"100"},{"@type":"Video","FrameRate":"25.000"}]}}`), 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+	ffmpegRoot := t.TempDir()
+	if err := writeTestBundledFFmpeg(ffmpegRoot); err != nil {
+		t.Fatalf("write bundled ffmpeg: %v", err)
+	}
+	t.Chdir(ffmpegRoot)
+
+	runner := &corruptionCancelRunner{allStarted: make(chan struct{})}
+	service := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), runner)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err := service.Capture(ctx, api.ScreenshotSubject{
+		SourcePath:        sourcePath,
+		MediaInfoJSONPath: mediaInfoPath,
+	}, []api.ScreenshotSelection{
+		{Index: 0, TimestampSeconds: 10},
+		{Index: 1, TimestampSeconds: 20},
+		{Index: 2, TimestampSeconds: 30},
+		{Index: 3, TimestampSeconds: 40},
+	}, api.ScreenshotPurposeFinal)
+	if !errors.Is(err, internalerrors.ErrFrameCorruption) {
+		t.Fatalf("capture error = %v, want frame corruption", err)
+	}
+	if got := runner.canceled.Load(); got != 3 {
+		t.Fatalf("canceled sibling captures = %d, want 3", got)
+	}
+}
+
 type runnerCall struct {
 	args []string
 }
@@ -286,6 +324,30 @@ type runnerCall struct {
 type scriptedRunner struct {
 	results []CommandResult
 	calls   []runnerCall
+}
+
+type corruptionCancelRunner struct {
+	started    atomic.Int32
+	canceled   atomic.Int32
+	allStarted chan struct{}
+}
+
+func (r *corruptionCancelRunner) Run(ctx context.Context, _ string, args []string, _ string) (CommandResult, error) {
+	if r.started.Add(1) == 4 {
+		close(r.allStarted)
+	}
+	select {
+	case <-r.allStarted:
+	case <-ctx.Done():
+		r.canceled.Add(1)
+		return CommandResult{ExitCode: 1}, fmt.Errorf("synthetic ffmpeg start: %w", ctx.Err())
+	}
+	if ffmpegValueAfter(args, "-ss") == "10.000" {
+		return CommandResult{Stderr: []byte("corrupt decoded frame in stream 0"), ExitCode: 0}, nil
+	}
+	<-ctx.Done()
+	r.canceled.Add(1)
+	return CommandResult{ExitCode: 1}, fmt.Errorf("synthetic ffmpeg canceled: %w", ctx.Err())
 }
 
 func (r *scriptedRunner) Run(_ context.Context, _ string, args []string, _ string) (CommandResult, error) {
