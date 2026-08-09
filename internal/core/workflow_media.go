@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -520,6 +521,9 @@ func (b workflowMediaBuilder) Build(
 			if err != nil {
 				if ctx.Err() != nil {
 					return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media screenshot capture: %w", ctx.Err())
+				}
+				if errors.Is(err, internalerrors.ErrFrameCorruption) {
+					return failedMediaSnapshot(snapshot, "Screenshot frame corruption detected. Repair source media before retrying."), privateArtifacts, nil
 				}
 				return failedMediaSnapshot(snapshot, "Screenshot capture failed. Retry media capture."), privateArtifacts, nil
 			}

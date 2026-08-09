@@ -6,6 +6,7 @@ package screenshots
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -17,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -244,12 +246,53 @@ func TestCaptureFrameValidatesBlackSourceBeforeOverlay(t *testing.T) {
 	}
 }
 
+func TestCaptureFrameHardFailsOnDecoderCorruption(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "screen.png")
+	runner := &timestampSensitiveRunner{
+		validPayload: testPNGBytes(t, color.RGBA{R: 200, A: 255}),
+		stderr:       []byte("[h264] Error while decoding stream #0:0"),
+	}
+
+	_, err := captureFrame(context.Background(), runner, "ffmpeg", captureRequest{
+		InputPath:     "example.mkv",
+		OutputPath:    output,
+		Timestamp:     1,
+		UseLibplacebo: true,
+		ToneMap:       true,
+	}, api.NopLogger{})
+	if !errors.Is(err, internalerrors.ErrFrameCorruption) {
+		t.Fatalf("capture error = %v, want frame corruption", err)
+	}
+	if want := []string{"1.000"}; !slices.Equal(runner.timestamps, want) {
+		t.Fatalf("attempted timestamps = %v, want %v", runner.timestamps, want)
+	}
+	if _, statErr := os.Stat(output); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("corrupt capture output survived: %v", statErr)
+	}
+}
+
+func TestFFmpegFrameCorruptionIndicators(t *testing.T) {
+	for _, diagnostic := range []string{
+		"error while decoding",
+		"Invalid data found when processing input",
+		"non-existing PPS 0 referenced",
+		"incomplete frame",
+		"corrupt decoded frame in stream 0",
+		"corrupt input packet in stream 0",
+	} {
+		if err := ffmpegFrameCorruptionError([]byte(diagnostic)); !errors.Is(err, internalerrors.ErrFrameCorruption) {
+			t.Fatalf("diagnostic %q error = %v, want frame corruption", diagnostic, err)
+		}
+	}
+}
+
 type timestampSensitiveRunner struct {
 	blackTimestamps       map[string]struct{}
 	noImageTimestamps     map[string]struct{}
 	sourceBlackTimestamps map[string]struct{}
 	blackPayload          []byte
 	validPayload          []byte
+	stderr                []byte
 	timestamps            []string
 	overlays              []bool
 }
@@ -284,7 +327,7 @@ func (r *timestampSensitiveRunner) Run(_ context.Context, _ string, args []strin
 			return CommandResult{ExitCode: 1}, fmt.Errorf("write output fixture: %w", err)
 		}
 	}
-	return CommandResult{ExitCode: 0}, nil
+	return CommandResult{Stderr: r.stderr, ExitCode: 0}, nil
 }
 
 type singleResultRunner struct {

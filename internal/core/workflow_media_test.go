@@ -43,6 +43,7 @@ type workflowScreenshotFake struct {
 	plans    int
 	captures int
 	deleted  []string
+	err      error
 }
 
 func (f *workflowScreenshotFake) Plan(
@@ -64,6 +65,9 @@ func (f *workflowScreenshotFake) Capture(
 	purpose api.ScreenshotPurpose,
 ) (api.ScreenshotResult, error) {
 	f.captures++
+	if f.err != nil {
+		return api.ScreenshotResult{}, f.err
+	}
 	images := make([]api.ScreenshotImage, len(selections))
 	for index, selection := range selections {
 		images[index] = api.ScreenshotImage{
@@ -201,6 +205,36 @@ func TestWorkflowMediaBuilderCapturesOnlyProjectedNormalScreenshots(t *testing.T
 	}
 	if changed.CaptureFingerprint == snapshot.CaptureFingerprint {
 		t.Fatal("media capture fingerprint ignored release generation")
+	}
+}
+
+func TestWorkflowMediaBuilderReportsFrameCorruption(t *testing.T) {
+	t.Parallel()
+
+	screenshots := &workflowScreenshotFake{root: t.TempDir(), err: fmt.Errorf("synthetic: %w", internalerrors.ErrFrameCorruption)}
+	builder := workflowMediaBuilder{resolver: workflowMediaResolverFake{}, screenshots: screenshots}
+	snapshot, _, err := builder.Build(
+		context.Background(),
+		api.ReleaseRef{SourcePath: "C:\\releases\\Example.Release.2026", Generation: 1},
+		api.TrackerReleaseProjectionSet{
+			ID:       "projections-corruption",
+			Revision: 1,
+			Projections: []api.TrackerReleaseProjection{{
+				TrackerID: "SYNTHETIC",
+				Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1},
+			}},
+		},
+		api.MediaCaptureInstructions{},
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("build workflow media: %v", err)
+	}
+	if snapshot.Status != api.StageStatusFailed || len(snapshot.Failures) != 1 {
+		t.Fatalf("frame corruption snapshot = %#v", snapshot)
+	}
+	if got := snapshot.Failures[0].Failure.Message; got != "Screenshot frame corruption detected. Repair source media before retrying." {
+		t.Fatalf("frame corruption failure = %q", got)
 	}
 }
 
