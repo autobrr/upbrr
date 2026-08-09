@@ -116,6 +116,7 @@ Current expected local/generated ignores: `dist/`, `webui/dist/`, `internal/webs
 
 ## Domain Guardrails
 
+- Duplicate-search, evaluation, adapter, or policy work anywhere under `internal/trackers` must also read and follow `internal/trackers/dupe/AGENTS.md`, including tracker-local `dupe.go` and `dupe_policy.go` files.
 - Standalone tracker behavior belongs in `internal/trackers/impl/standalone/<tracker>`; Unit3D site exceptions belong in `internal/trackers/impl/unit3d/sites/<tracker>`. Each standalone package composes identity and static capabilities in `profile.go`; dynamic data/claim factories may use a small local wrapper around `standalone.Definition`. Register definitions explicitly in `internal/trackers/impl/registry.go`; generic packages must not import individual implementations.
 - `internal/trackers/impl/registry.go` is the only complete supported-tracker composition list and groups definitions by family. Tracker profiles/definitions own endpoints and typed policy; `internal/config/defaults/example.yaml` owns ordered config surfaces/defaults. Generic metadata, auth, image-hosting, torrent-client, and frontend code must consume registry/catalog capabilities without tracker-name dispatch.
 - Tracker semantic file ownership is strict:
