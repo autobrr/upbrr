@@ -213,9 +213,13 @@ func TestWorkflowMediaBuilderReportsFrameCorruption(t *testing.T) {
 
 	screenshots := &workflowScreenshotFake{root: t.TempDir(), err: fmt.Errorf("synthetic: %w", internalerrors.ErrFrameCorruption)}
 	builder := workflowMediaBuilder{resolver: workflowMediaResolverFake{}, screenshots: screenshots}
+	var progress []api.WorkflowProgressUpdate
+	ctx := api.WithWorkflowProgressReporter(context.Background(), func(update api.WorkflowProgressUpdate) {
+		progress = append(progress, update)
+	})
 	snapshot, _, err := builder.Build(
-		context.Background(),
-		api.ReleaseRef{SourcePath: "C:\\releases\\Example.Release.2026", Generation: 1},
+		ctx,
+		api.ReleaseRef{SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026"), Generation: 1},
 		api.TrackerReleaseProjectionSet{
 			ID:       "projections-corruption",
 			Revision: 1,
@@ -235,6 +239,11 @@ func TestWorkflowMediaBuilderReportsFrameCorruption(t *testing.T) {
 	}
 	if got := snapshot.Failures[0].Failure.Message; got != "Screenshot frame corruption detected. Repair source media before retrying." {
 		t.Fatalf("frame corruption failure = %q", got)
+	}
+	if !slices.ContainsFunc(progress, func(update api.WorkflowProgressUpdate) bool {
+		return update.ItemID == "screenshots" && update.Status == api.StageStatusFailed
+	}) {
+		t.Fatalf("frame corruption progress was not emitted: %#v", progress)
 	}
 }
 

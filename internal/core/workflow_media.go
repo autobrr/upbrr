@@ -523,6 +523,15 @@ func (b workflowMediaBuilder) Build(
 					return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media screenshot capture: %w", ctx.Err())
 				}
 				if errors.Is(err, internalerrors.ErrFrameCorruption) {
+					api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
+						Phase:   "screenshots",
+						ItemID:  "screenshots",
+						Kind:    "media",
+						Label:   "Screenshots",
+						Status:  api.StageStatusFailed,
+						Total:   screenshotCount,
+						Message: "Screenshot frame corruption detected. Repair source media before retrying.",
+					})
 					return failedMediaSnapshot(snapshot, "Screenshot frame corruption detected. Repair source media before retrying."), privateArtifacts, nil
 				}
 				return failedMediaSnapshot(snapshot, "Screenshot capture failed. Retry media capture."), privateArtifacts, nil
