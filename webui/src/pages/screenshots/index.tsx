@@ -360,6 +360,8 @@ export default function ScreenshotsPage({
                 <span>FFmpeg compression</span>
                 <input
                   type="number"
+                  min={0}
+                  max={9}
                   value={
                     typeof screenshotConfig.FFmpegCompression === "number"
                       ? screenshotConfig.FFmpegCompression

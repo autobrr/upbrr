@@ -551,16 +551,12 @@ func buildFFmpegPreviewArgs(req previewRequest) []string {
 
 func buildFFmpegArgs(req captureRequest, useLibplacebo bool) []string {
 	vf := buildFilterChain(req, useLibplacebo)
-	compression := req.Compression
-	if compression <= 0 {
-		compression = 6
-	}
 
 	args := []string{"-hide_banner", "-y", "-loglevel", "error", "-ss", fmt.Sprintf("%.3f", req.Timestamp), "-i", req.InputPath, "-frames:v", "1"}
 	if useLibplacebo {
 		args = append(args, "-init_hw_device", "vulkan")
 	}
-	args = append(args, "-vf", vf, "-compression_level", strconv.Itoa(compression), "-pred", "mixed", req.OutputPath)
+	args = append(args, "-vf", vf, "-compression_level", strconv.Itoa(req.Compression), "-pred", "mixed", req.OutputPath)
 	return args
 }
 

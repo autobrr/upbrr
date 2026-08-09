@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -91,6 +92,22 @@ func TestRoundToEvenUsesNearestEvenForHalves(t *testing.T) {
 	for input, want := range tests {
 		if got := roundToEven(input); got != want {
 			t.Fatalf("roundToEven(%v) = %d, want %d", input, got, want)
+		}
+	}
+}
+
+func TestBuildFFmpegArgsPreservesPNGCompressionBounds(t *testing.T) {
+	for _, compression := range []int{0, 9} {
+		args := buildFFmpegArgs(captureRequest{
+			InputPath:   "example.mkv",
+			OutputPath:  "screen.png",
+			Compression: compression,
+		}, false)
+		if got := ffmpegValueAfter(args, "-compression_level"); got != strconv.Itoa(compression) {
+			t.Fatalf("compression level = %q, want %d", got, compression)
+		}
+		if got := ffmpegValueAfter(args, "-pred"); got != "mixed" {
+			t.Fatalf("PNG prediction = %q, want mixed", got)
 		}
 	}
 }

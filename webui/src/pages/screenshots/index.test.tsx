@@ -192,6 +192,10 @@ describe("ScreenshotsPage", () => {
 
     fireEvent.change(screen.getByLabelText("Screenshot count"), { target: { value: "6" } });
     expect(updateScreenshotConfigValue).toHaveBeenCalledWith("Screens", 6);
+
+    const compression = screen.getByLabelText("FFmpeg compression");
+    expect(compression).toHaveAttribute("min", "0");
+    expect(compression).toHaveAttribute("max", "9");
   });
 
   it("renders and mutates workflow-owned screenshots by opaque artifact ID", () => {
