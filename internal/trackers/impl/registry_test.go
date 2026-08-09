@@ -737,7 +737,9 @@ func TestNewRegistryIncludesImageHostPolicies(t *testing.T) {
 		}
 	}
 	bhdPolicy, ok := registry.LookupImageHostPolicy("BHD")
-	if !ok || !slices.Equal(bhdPolicy.AllowedHosts, []string{"imgbox", "imgbb", "pixhost", "bhd", "passtheimage"}) {
+	if !ok ||
+		!slices.Equal(bhdPolicy.AllowedHosts, []string{"imgbox", "imgbb", "pixhost", "bhd", "passtheimage"}) ||
+		bhdPolicy.DisableWithoutRehost || bhdPolicy.DisableWithoutAPI || bhdPolicy.ConditionalHost != "" {
 		t.Errorf("BHD image policy = %#v, %t", bhdPolicy, ok)
 	}
 }
