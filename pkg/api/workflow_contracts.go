@@ -402,6 +402,7 @@ type DupeMatchProjection struct {
 	Container      string            `json:"container,omitempty"`
 	Provider       string            `json:"provider,omitempty"`
 	Group          string            `json:"group,omitempty"`
+	ReleaseOrigin  string            `json:"releaseOrigin,omitempty"`
 	Edition        string            `json:"edition,omitempty"`
 	Region         string            `json:"region,omitempty"`
 	ThreeD         string            `json:"threeD,omitempty"`

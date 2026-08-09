@@ -48,12 +48,14 @@ func TestBTNDuplicatePolicyRelations(t *testing.T) {
 			name: "web without region ignores pal ntsc",
 			target: func() api.TrackerDuplicateTarget {
 				target := btnPolicyTarget("WEB-DL", "1080p", "H.264", "P2P")
+				target.Names = []string{"Example.Show.S01E12.PAL.WEB-DL.H.264-GRP"}
 				target.Episode = 12
 				return target
 			}(),
 			candidate: func() dupe.TrackerCandidate {
 				candidate := btnPolicyCandidate("WEB-DL", "1080p", "H.264", "P2P")
-				candidate.Episode = 13
+				candidate.Name = "Example.Show.S01E12.NTSC.WEB-DL.H.264-GRP"
+				candidate.Episode = 12
 				return candidate
 			}(),
 			want: api.DupeRelationCoexists,

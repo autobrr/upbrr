@@ -286,6 +286,7 @@ func publicDupeMatches(result api.DupeCheckResult) []api.DupeMatchProjection {
 			Container:      evaluation.Container,
 			Provider:       evaluation.Provider,
 			Group:          evaluation.Group,
+			ReleaseOrigin:  evaluation.ReleaseOrigin,
 			Edition:        evaluation.Edition,
 			Region:         evaluation.Region,
 			ThreeD:         evaluation.ThreeD,

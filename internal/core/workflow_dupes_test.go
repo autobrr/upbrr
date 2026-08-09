@@ -405,14 +405,15 @@ func TestPublicDupeMatchesExcludesCoexistence(t *testing.T) {
 				Relation: api.DupeRelationCoexists,
 			},
 			{
-				ID:       "review",
-				Relation: api.DupeRelationSameSlot,
+				ID:            "review",
+				ReleaseOrigin: "P2P",
+				Relation:      api.DupeRelationSameSlot,
 			},
 		},
 	}
 
 	matches := publicDupeMatches(result)
-	if len(matches) != 1 || matches[0].ID != "review" {
+	if len(matches) != 1 || matches[0].ID != "review" || matches[0].ReleaseOrigin != "P2P" {
 		t.Fatalf("mixed public matches = %#v", matches)
 	}
 

@@ -329,6 +329,7 @@ export type DupeMatchProjection = Readonly<{
   reasons?: readonly DupeReason[];
   region?: string;
   relation?: DupeRelation;
+  releaseOrigin?: string;
   repack?: string;
   resolution?: string;
   season?: number;
