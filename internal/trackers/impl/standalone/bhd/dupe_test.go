@@ -225,6 +225,62 @@ func TestBHDSearchContinuesFullPageWhenTotalPagesOmitted(t *testing.T) {
 	}
 }
 
+func TestBHDSearchRejectsPaginationMetadataPresenceChange(t *testing.T) {
+	t.Parallel()
+
+	requestedPages := make([]int, 0, 2)
+	client := &http.Client{Transport: bhdRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		var request map[string]any
+		if err := json.NewDecoder(req.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		page := int(bhdInt(request["page"]))
+		requestedPages = append(requestedPages, page)
+		results := make([]map[string]any, 100)
+		for index := range results {
+			results[index] = map[string]any{
+				"name": fmt.Sprintf("Example.Release.2026.%03d.1080p-GRP", index+(page-1)*100),
+			}
+		}
+		body := map[string]any{"status_code": 1, "results": results}
+		if page == 2 {
+			body["page"], body["total_pages"], body["total_results"] = 2, 2, 200
+		}
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("encode response: %v", err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewReader(encoded)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	searcher := &dupeSearcher{
+		cfg: config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"BHD": {APIKey: "placeholder"},
+		}}},
+		http:     client,
+		baseURL:  "https://example.invalid/",
+		maxPages: 2,
+	}
+
+	result := searcher.Search(context.Background(), api.DuplicateSubject{
+		Identity: api.ExternalIdentity{TMDBID: 1234567, Category: api.CanonicalCategoryMovie},
+	})
+	search := result.SearchEvidence()
+	if err := result.Cause(); err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if !slices.Equal(requestedPages, []int{1, 2}) ||
+		search.Complete ||
+		search.Pages != 2 ||
+		len(search.Warnings) != 1 ||
+		len(result.Entries()) != 200 {
+		t.Fatalf("requested pages=%v search=%#v entries=%d", requestedPages, search, len(result.Entries()))
+	}
+}
+
 func TestBHDSearchCountMismatchFailsClosed(t *testing.T) {
 	t.Parallel()
 

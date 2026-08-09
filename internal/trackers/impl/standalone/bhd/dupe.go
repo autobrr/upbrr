@@ -80,6 +80,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	pages := 0
 	expectedTotalPages := -1
 	expectedTotalResults := -1
+	firstPageHasPagination := false
 	for pageNumber := 1; pageNumber <= maxPages; pageNumber++ {
 		pagePayload := maps.Clone(payload)
 		pagePayload["page"] = pageNumber
@@ -117,7 +118,13 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		rawPage, pageKnown := decoded["page"]
 		rawTotalPages, totalPagesKnown := decoded["total_pages"]
 		rawTotalResults, totalResultsKnown := decoded["total_results"]
-		if expectedTotalPages >= 0 || pageKnown || totalPagesKnown || totalResultsKnown {
+		hasPagination := pageKnown || totalPagesKnown || totalResultsKnown
+		if pageNumber == 1 {
+			firstPageHasPagination = hasPagination
+		} else if hasPagination != firstPageHasPagination {
+			break
+		}
+		if expectedTotalPages >= 0 || hasPagination {
 			responsePage, validPage := bhdNonNegativeInt(rawPage)
 			totalPages, validTotalPages := bhdNonNegativeInt(rawTotalPages)
 			totalResults, validTotalResults := bhdNonNegativeInt(rawTotalResults)
