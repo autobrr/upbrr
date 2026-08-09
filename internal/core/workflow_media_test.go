@@ -237,6 +237,9 @@ func TestWorkflowMediaBuilderReportsFrameCorruption(t *testing.T) {
 	if snapshot.Status != api.StageStatusFailed || len(snapshot.Failures) != 1 {
 		t.Fatalf("frame corruption snapshot = %#v", snapshot)
 	}
+	if snapshot.Artifacts == nil {
+		t.Fatal("frame corruption artifacts = nil, want empty array")
+	}
 	if got := snapshot.Failures[0].Failure.Message; got != "Screenshot frame corruption detected. Repair source media before retrying." {
 		t.Fatalf("frame corruption failure = %q", got)
 	}

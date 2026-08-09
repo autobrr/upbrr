@@ -413,6 +413,7 @@ func (b workflowMediaBuilder) Build(
 	snapshot := api.MediaArtifactSet{
 		CaptureFingerprint:      captureFingerprint,
 		RequirementsFingerprint: requirementsFingerprint,
+		Artifacts:               []api.MediaArtifact{},
 		Status:                  api.StageStatusCompleted,
 	}
 	projectedScreenshots, projectedDVDMenus := projectedMediaRequirements(projections.Projections)
@@ -1265,6 +1266,7 @@ func (b workflowMediaBuilder) mediaMutationBase(
 	return api.MediaArtifactSet{
 			CaptureFingerprint:      fingerprint,
 			RequirementsFingerprint: requirements,
+			Artifacts:               []api.MediaArtifact{},
 			Status:                  api.StageStatusCompleted,
 		}, workflowMediaPrivateArtifacts{
 			ArtifactImages:    make(map[api.PublicResourceID]api.ScreenshotImage),

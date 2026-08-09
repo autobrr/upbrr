@@ -378,6 +378,8 @@ func (s *Service) Capture(
 		result.Errors = captureErrors
 		return result, nil
 	}
+	captureCtx, cancelCapture := context.WithCancel(ctx)
+	defer cancelCapture()
 
 	limit := len(jobs)
 	if s.cfg.ScreenshotHandling.FFmpegLimit {
@@ -418,7 +420,7 @@ func (s *Service) Capture(
 	worker := func() {
 		defer wg.Done()
 		for job := range jobCh {
-			if ctx.Err() != nil {
+			if captureCtx.Err() != nil {
 				return
 			}
 
@@ -459,7 +461,7 @@ func (s *Service) Capture(
 					HeightScale:   info.HeightScale,
 				}
 
-				usedLib, captureErr = captureFrame(ctx, s.runner, cmd, capture, s.logger)
+				usedLib, captureErr = captureFrame(captureCtx, s.runner, cmd, capture, s.logger)
 				if captureErr == nil {
 					break
 				}
@@ -469,6 +471,7 @@ func (s *Service) Capture(
 						corruptionErr = captureErr
 					}
 					mu.Unlock()
+					cancelCapture()
 					break
 				}
 				s.logger.Debugf(
@@ -480,6 +483,9 @@ func (s *Service) Capture(
 				)
 			}
 			if captureErr != nil {
+				if captureCtx.Err() != nil && ctx.Err() == nil {
+					return
+				}
 				s.logger.Warnf("screenshots: capture frame failed index=%d err=%s", selection.Index, redaction.RedactValue(captureErr.Error(), nil))
 				mu.Lock()
 				captureErrors = append(captureErrors, api.ScreenshotError{Index: selection.Index, Message: logging.SanitizeMessage(captureErr.Error())})
@@ -532,7 +538,7 @@ func (s *Service) Capture(
 		defer close(jobCh)
 		for _, job := range jobs {
 			select {
-			case <-ctx.Done():
+			case <-captureCtx.Done():
 				return
 			case jobCh <- job:
 			}
