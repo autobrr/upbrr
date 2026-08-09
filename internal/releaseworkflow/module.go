@@ -4654,6 +4654,10 @@ func (m *Module) publishMediaReplacement(
 	return result, nil
 }
 
+// refreshMutatedMediaStatus recomputes media readiness after a mutation while
+// retaining image-host failures and pending reconciliation actions. Before
+// required hosting runs, selected local assets determine readiness; afterward,
+// each tracker must have enough applicable hosted screenshot sources.
 func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections []api.TrackerReleaseProjection) {
 	hostFailures := make([]api.WorkflowFailure, 0, len(snapshot.Failures))
 	for _, failure := range snapshot.Failures {
@@ -4684,11 +4688,15 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections []api
 	}
 	snapshot.Failures = hostFailures
 	snapshot.RequiredActions = reconcileActions
-	if selectedScreenshots < requiredScreenshots || selectedMenus < requiredMenus {
+	screenshotsReady := selectedScreenshots >= requiredScreenshots
+	if snapshot.ImageRequirementsPrepared {
+		screenshotsReady = hostedScreenshotRequirementsMet(*snapshot, projections)
+	}
+	if !screenshotsReady || selectedMenus < requiredMenus {
 		snapshot.Status = api.StageStatusBlocked
 		snapshot.RequiredActions = append(snapshot.RequiredActions, api.RequiredAction{
 			Kind:   api.RequiredActionProvideTrackerInput,
-			Prompt: "Capture or select the required release images before continuing.",
+			Prompt: "Capture, select, or host the required release images before continuing.",
 		})
 		return
 	}
@@ -4701,6 +4709,53 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections []api
 		return
 	}
 	snapshot.Status = api.StageStatusCompleted
+}
+
+// hostedScreenshotRequirementsMet reports whether every projection has enough
+// unique selected final-screenshot sources in applicable host attempts. Multiple
+// hosted variants of the same local screenshot count once; DVD menus do not count.
+func hostedScreenshotRequirementsMet(snapshot api.MediaArtifactSet, projections []api.TrackerReleaseProjection) bool {
+	artifacts := make(map[api.PublicResourceID]api.MediaArtifact, len(snapshot.Artifacts))
+	for _, artifact := range snapshot.Artifacts {
+		artifacts[artifact.ID] = artifact
+	}
+	for _, projection := range projections {
+		if projection.Artifacts.ScreenshotCount <= 0 {
+			continue
+		}
+		trackerID := normalizeDownstreamTrackerID(projection.TrackerID)
+		sources := make(map[api.PublicResourceID]struct{}, projection.Artifacts.ScreenshotCount)
+		for _, attempt := range snapshot.HostAttempts {
+			if !hostedAttemptAppliesToTracker(attempt, trackerID) {
+				continue
+			}
+			for _, result := range attempt.Results {
+				hosted := artifacts[result.ID]
+				source := artifacts[api.PublicResourceID(strings.TrimSpace(hosted.Source))]
+				if hosted.Selected && hosted.Kind == api.MediaArtifactHostedImage && hosted.Purpose == api.ScreenshotPurposeFinal &&
+					source.Selected && source.Kind == api.MediaArtifactScreenshot && source.Purpose == api.ScreenshotPurposeFinal {
+					sources[source.ID] = struct{}{}
+				}
+			}
+		}
+		if len(sources) < projection.Artifacts.ScreenshotCount {
+			return false
+		}
+	}
+	return true
+}
+
+// hostedAttemptAppliesToTracker reports whether an attempt explicitly targeted
+// the tracker and used either global scope or that tracker's owned scope. An
+// empty usage scope is treated as global.
+func hostedAttemptAppliesToTracker(attempt api.HostedImageAttempt, trackerID api.TrackerID) bool {
+	if !slices.ContainsFunc(attempt.TrackerIDs, func(candidate api.TrackerID) bool {
+		return normalizeDownstreamTrackerID(candidate) == trackerID
+	}) {
+		return false
+	}
+	scope := strings.TrimSpace(attempt.UsageScope)
+	return scope == "" || strings.EqualFold(scope, "global") || strings.EqualFold(scope, "tracker:"+string(trackerID))
 }
 
 func (m *Module) publishMedia(

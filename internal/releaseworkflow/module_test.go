@@ -3442,6 +3442,67 @@ func TestRefreshMutatedMediaStatusPreservesOnlyGenuineMediaActions(t *testing.T)
 	}
 }
 
+func TestRefreshMutatedMediaStatusRequiresHostedScreenshotsPerTracker(t *testing.T) {
+	t.Parallel()
+
+	const trackerID api.TrackerID = "SYNTHETIC"
+	projections := []api.TrackerReleaseProjection{{
+		TrackerID: trackerID,
+		Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 6},
+	}}
+	snapshot := api.MediaArtifactSet{ImageRequirementsPrepared: true}
+	results := make([][]api.MediaArtifact, 2)
+	for index := range 6 {
+		sourceID := api.PublicResourceID(fmt.Sprintf("screen-%d", index))
+		hosted := api.MediaArtifact{
+			ID:       api.PublicResourceID(fmt.Sprintf("hosted-%d", index)),
+			Kind:     api.MediaArtifactHostedImage,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+			Source:   string(sourceID),
+		}
+		snapshot.Artifacts = append(snapshot.Artifacts, api.MediaArtifact{
+			ID:       sourceID,
+			Kind:     api.MediaArtifactScreenshot,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+		}, hosted)
+		results[index/3] = append(results[index/3], hosted)
+	}
+	duplicate := api.MediaArtifact{
+		ID:       "hosted-duplicate",
+		Kind:     api.MediaArtifactHostedImage,
+		Purpose:  api.ScreenshotPurposeFinal,
+		Selected: true,
+		Source:   "screen-0",
+	}
+	snapshot.Artifacts = append(snapshot.Artifacts, duplicate)
+	results[0] = append(results[0], duplicate)
+	snapshot.HostAttempts = []api.HostedImageAttempt{
+		{
+			UsageScope: "global",
+			TrackerIDs: []api.TrackerID{trackerID},
+			Results:    results[0],
+		},
+		{
+			UsageScope: "tracker:OTHER",
+			TrackerIDs: []api.TrackerID{trackerID},
+			Results:    results[1],
+		},
+	}
+
+	refreshMutatedMediaStatus(&snapshot, projections)
+	if snapshot.Status != api.StageStatusBlocked || len(snapshot.RequiredActions) != 1 {
+		t.Fatalf("three tracker-usable hosted screenshots satisfied six required screenshots: %#v", snapshot)
+	}
+
+	snapshot.HostAttempts[1].UsageScope = "global"
+	refreshMutatedMediaStatus(&snapshot, projections)
+	if snapshot.Status != api.StageStatusCompleted || len(snapshot.RequiredActions) != 0 {
+		t.Fatalf("six tracker-usable hosted screenshots did not satisfy the requirement: %#v", snapshot)
+	}
+}
+
 func waitForWorkflowOperation(
 	t *testing.T,
 	module *Module,
