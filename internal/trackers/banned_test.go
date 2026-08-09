@@ -413,7 +413,7 @@ func TestRefreshDynamicDoesNotLogUnsupportedTrackers(t *testing.T) {
 	checker := newTestBannedGroupChecker(t, filepath.Join(t.TempDir(), "db.sqlite"))
 	logger := &bannedRefreshTestLogger{}
 
-	if err := checker.RefreshDynamic(context.Background(), config.Config{}, []string{"DP", "BHD", "TEST"}, logger); err != nil {
+	if err := checker.RefreshDynamic(context.Background(), config.Config{}, []string{"DP", "BHD", "BTN"}, logger); err != nil {
 		t.Fatalf("refresh unsupported banned groups: %v", err)
 	}
 	if len(logger.debugMessages) != 0 {

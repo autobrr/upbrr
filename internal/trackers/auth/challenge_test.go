@@ -17,12 +17,12 @@ func TestChallengeManagerExpiresChallenges(t *testing.T) {
 	manager.now = func() time.Time { return now }
 	manager.ids = func() (string, error) { return "challenge-1", nil }
 
-	id := manager.Create(context.Background(), "test")
+	id := manager.Create(context.Background(), "BTN")
 	if id != "challenge-1" {
 		t.Fatalf("challenge id: got %q", id)
 	}
-	if challenge, ok := manager.Get(id); !ok || challenge.TrackerID != "TEST" {
-		t.Fatalf("expected active TEST challenge, got %#v ok=%v", challenge, ok)
+	if challenge, ok := manager.Get(id); !ok || challenge.TrackerID != "BTN" {
+		t.Fatalf("expected active BTN challenge, got %#v ok=%v", challenge, ok)
 	}
 
 	now = now.Add(time.Minute)
@@ -38,7 +38,7 @@ func TestChallengeManagerConsumesTrackerScopedChallenge(t *testing.T) {
 	manager.ids = func() (string, error) { return "challenge-1", nil }
 
 	id := manager.Create(context.Background(), "PTP")
-	if _, err := manager.Consume(id, "TEST"); err == nil {
+	if _, err := manager.Consume(id, "BTN"); err == nil {
 		t.Fatal("expected tracker mismatch")
 	}
 	if _, err := manager.Consume(id, "PTP"); err != nil {

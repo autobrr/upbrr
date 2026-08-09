@@ -950,11 +950,11 @@ func TestStatusConfiguredAuthReportsEncryptedStorageUnavailableWhenPersistenceRe
 		spec      trackerSpec
 		wantState string
 	}{
-		"TEST api key only": {
+		"BTN api key only": {
 			cfg:       config.TrackerConfig{APIKey: "api-key"},
 			wantState: StateEncryptedStorageUnavailable,
 			spec: trackerSpec{
-				id:               "TEST",
+				id:               "BTN",
 				cookies:          true,
 				apiKey:           true,
 				needsCredentials: true,
@@ -1045,10 +1045,10 @@ func TestStatusStateMessageParityForAuthBlockers(t *testing.T) {
 		"api key still needs upload auth": {
 			dbPath: newTrackerAuthTestDB(t),
 			cfg: config.Config{
-				Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"TEST": {APIKey: "api-key"}}},
+				Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"BTN": {APIKey: "api-key"}}},
 			},
 			spec: trackerSpec{
-				id:               "TEST",
+				id:               "BTN",
 				cookies:          true,
 				login:            true,
 				apiKey:           true,
@@ -1352,7 +1352,7 @@ func TestValidateWithoutAdapterReportsUnsupportedRemoteValidation(t *testing.T) 
 }
 
 func TestParseCookieContentJSONMap(t *testing.T) {
-	got, err := ParseCookieContent("TEST.json", `{"session":"abc","nested":{"value":"def"}}`)
+	got, err := ParseCookieContent("BTN.json", `{"session":"abc","nested":{"value":"def"}}`)
 	if err != nil {
 		t.Fatalf("ParseCookieContent: %v", err)
 	}
@@ -1618,7 +1618,7 @@ func TestApplyEnsureErrorToStatusKeepsStateMessageParity(t *testing.T) {
 func TestApplyEnsureErrorToStatusRedactsURLPath(t *testing.T) {
 	t.Parallel()
 
-	status := api.TrackerAuthStatus{TrackerID: "TEST", State: StateConfigured}
+	status := api.TrackerAuthStatus{TrackerID: "BTN", State: StateConfigured}
 	applyEnsureErrorToStatus(&status, errors.New(`Get "https://www.tracker.invalid/secret-login-token?passkey=abc": auth key not found`))
 
 	if strings.Contains(status.LastError, "secret-login-token") || strings.Contains(status.LastError, "abc") {
@@ -1951,9 +1951,9 @@ func TestTrackerAuthWarningStatusDoesNotLogSuccess(t *testing.T) {
 	logger := &trackerAuthRecordingLogger{}
 	service := newTestServiceWithLogger(config.Config{}, logger)
 	service.logStatus("login completed", api.TrackerAuthStatus{
-		TrackerID: "TEST",
+		TrackerID: "BTN",
 		State:     StateConfigured,
-		LastError: "tracker auth: TEST: validation failed",
+		LastError: "tracker auth: BTN: validation failed",
 	})
 
 	infoLog := strings.Join(logger.info, "\n")
@@ -1961,7 +1961,7 @@ func TestTrackerAuthWarningStatusDoesNotLogSuccess(t *testing.T) {
 	if strings.Contains(infoLog, "tracker auth: login completed") {
 		t.Fatalf("warning status logged success info: info=%q warn=%q", infoLog, warnLog)
 	}
-	if !strings.Contains(warnLog, "tracker auth: login completed warning tracker=TEST") {
+	if !strings.Contains(warnLog, "tracker auth: login completed warning tracker=BTN") {
 		t.Fatalf("expected warning log, got info=%q warn=%q", infoLog, warnLog)
 	}
 }
@@ -1972,16 +1972,16 @@ func TestTrackerAuthConfiguredLoginStatusUsesInfo(t *testing.T) {
 	logger := &trackerAuthRecordingLogger{}
 	service := newTestServiceWithLogger(config.Config{}, logger)
 	service.logStatus("login completed", api.TrackerAuthStatus{
-		TrackerID: "TEST",
+		TrackerID: "BTN",
 		State:     StateConfigured,
 	})
 
 	infoLog := strings.Join(logger.info, "\n")
 	traceLog := strings.Join(logger.trace, "\n")
-	if !strings.Contains(infoLog, "tracker auth: login completed tracker=TEST") {
+	if !strings.Contains(infoLog, "tracker auth: login completed tracker=BTN") {
 		t.Fatalf("expected successful login info log, got info=%q trace=%q", infoLog, traceLog)
 	}
-	if strings.Contains(traceLog, "tracker auth: login completed tracker=TEST") {
+	if strings.Contains(traceLog, "tracker auth: login completed tracker=BTN") {
 		t.Fatalf("successful login logged at trace: info=%q trace=%q", infoLog, traceLog)
 	}
 }

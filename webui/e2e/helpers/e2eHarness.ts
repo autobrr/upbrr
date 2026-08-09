@@ -381,6 +381,10 @@ trackers:
   HDS:
     announce_url: "http://tracker.invalid/announce"
     image_host: "imgbb"
+  PTP:
+    username: "e2e"
+    password: "e2e"
+    image_host: "imgbb"
   BTN:
     api_key: "e2e"
     username: "e2e"

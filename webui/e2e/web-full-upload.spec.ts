@@ -296,16 +296,18 @@ test("embedded web reports an optional tracker dry run after a duplicate overrid
   }
 });
 
-test("embedded web renders mixed and incomplete duplicate evidence", async ({ page }) => {
+test("embedded web renders mixed, incomplete, and manual duplicate evidence", async ({ page }) => {
   const workspace = await createE2EWorkspace();
-  workspace.env.UPBRR_E2E_DUPE_SCENARIOS = "HDS=mixed_incomplete";
+  workspace.env.UPBRR_E2E_DUPE_SCENARIOS = "HDS=mixed_incomplete,PTP=manual";
   let app: AppServer | undefined;
   try {
     app = await startApp(workspace);
     await fetchMetadata(page, app.url, workspace.sourcePath);
     await page.getByRole("button", { name: "Dupe Check" }).click();
     await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
-    await page.getByRole("checkbox", { name: "HDS" }).check();
+    for (const tracker of ["HDS", "PTP"]) {
+      await page.getByRole("checkbox", { name: tracker }).check();
+    }
     await runDuplicateCheck(page);
 
     await expect(page.getByText("Example.Release.2026.1080p.SDR-GRP")).toHaveCount(0);
@@ -315,11 +317,16 @@ test("embedded web renders mixed and incomplete duplicate evidence", async ({ pa
     await expect(page.getByText("coexists")).toHaveCount(0);
     await expect(page.getByText("proposed trumps")).toBeVisible();
     await expect(page.getByText("insufficient evidence")).toBeVisible();
+    await expect(page.getByText("manual review", { exact: true })).toBeVisible();
     await expect(page.getByText("Search incomplete · 2 page(s)")).toBeVisible();
     await expect(
       page.getByText("Synthetic search stopped at the configured page bound."),
     ).toBeVisible();
-    await expect(page.getByLabel("Acknowledge dupe risk for HDS")).toBeVisible();
+    await expect(page.getByText(/evidence partial \(tracker_title\)/)).toBeVisible();
+
+    for (const tracker of ["HDS", "PTP"]) {
+      await expect(page.getByLabel(`Acknowledge dupe risk for ${tracker}`)).toBeVisible();
+    }
     await expect(
       page.getByRole("link", { name: "Example.Release.2026.1080p.HDR10-GRP" }),
     ).toHaveAttribute("href", /^https:\/\/tracker\.invalid\/torrents\.php\?id=e2e-trump-1$/);
