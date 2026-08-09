@@ -27,7 +27,7 @@ const baseProps = {
     "FF",
     "FL",
     "HDB",
-    "MTV",
+    "TEST",
     "PTP",
     "RTF",
     "THR",
@@ -63,8 +63,8 @@ const baseProps = {
 };
 
 const trackerAuthCapability = {
-  trackerID: "MTV",
-  displayName: "MTV",
+  trackerID: "TEST",
+  displayName: "TEST",
   authKind: "api_key_cookies_login",
   supportsCookieFile: true,
   supportsLogin: true,
@@ -77,8 +77,8 @@ const trackerAuthCapability = {
 };
 
 const trackerAuthStatus = (message: string) => ({
-  trackerID: "MTV",
-  displayName: "MTV",
+  trackerID: "TEST",
+  displayName: "TEST",
   state: "configured",
   cookieCount: 1,
   lastCheckedAt: "",
@@ -194,7 +194,7 @@ describe("SettingsPage", () => {
   it("reports encrypted cookie storage ready only when every tracker is ready", async () => {
     installAppOperationMocks({
       ListTrackerAuthCapabilities: vi.fn().mockResolvedValue([trackerAuthCapability]),
-      GetTrackerAuthStatus: vi.fn().mockResolvedValue(trackerAuthStatus("MTV ready")),
+      GetTrackerAuthStatus: vi.fn().mockResolvedValue(trackerAuthStatus("TEST ready")),
     });
 
     render(
@@ -220,7 +220,7 @@ describe("SettingsPage", () => {
           ...trackerAuthStatus(`${trackerID} status`),
           trackerID,
           displayName: trackerID,
-          encryptedStorage: trackerID === "MTV",
+          encryptedStorage: trackerID === "TEST",
         }),
       ),
     });
@@ -238,8 +238,8 @@ describe("SettingsPage", () => {
     installAppOperationMocks({
       ListTrackerAuthCapabilities: vi.fn().mockResolvedValue([
         {
-          trackerID: "MTV",
-          displayName: "MTV",
+          trackerID: "TEST",
+          displayName: "TEST",
           authKind: "api_key_cookies_login",
           supportsCookieFile: true,
           supportsLogin: true,
@@ -376,7 +376,7 @@ describe("SettingsPage", () => {
       <SettingsPage {...baseProps} settingsSection="tracker_auth" setSettingsSection={vi.fn()} />,
     );
 
-    const mtvTitle = await screen.findByText("MTV");
+    const testTitle = await screen.findByText("TEST");
     const btnTitle = await screen.findByText("BTN");
     const arTitle = await screen.findByText("AR");
     const hdbTitle = await screen.findByText("HDB");
@@ -385,7 +385,7 @@ describe("SettingsPage", () => {
     const rtfTitle = await screen.findByText("RTF");
     const thrTitle = await screen.findByText("THR");
     const ascTitle = await screen.findByText("ASC");
-    const mtvCard = mtvTitle.closest(".tracker-auth-card");
+    const testCard = testTitle.closest(".tracker-auth-card");
     const btnCard = btnTitle.closest(".tracker-auth-card");
     const arCard = arTitle.closest(".tracker-auth-card");
     const hdbCard = hdbTitle.closest(".tracker-auth-card");
@@ -395,7 +395,7 @@ describe("SettingsPage", () => {
     const thrCard = thrTitle.closest(".tracker-auth-card");
     const ascCard = ascTitle.closest(".tracker-auth-card");
 
-    expect(mtvCard).not.toBeNull();
+    expect(testCard).not.toBeNull();
     expect(btnCard).not.toBeNull();
     expect(arCard).not.toBeNull();
     expect(hdbCard).not.toBeNull();
@@ -405,7 +405,7 @@ describe("SettingsPage", () => {
     expect(thrCard).not.toBeNull();
     expect(ascCard).not.toBeNull();
     expect(
-      within(mtvCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
+      within(testCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
     ).toBeInTheDocument();
     expect(
       within(btnCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
@@ -447,7 +447,7 @@ describe("SettingsPage", () => {
       <SettingsPage {...baseProps} settingsSection="tracker_auth" setSettingsSection={vi.fn()} />,
     );
 
-    const title = await screen.findByText("MTV");
+    const title = await screen.findByText("TEST");
     const card = title.closest(".tracker-auth-card");
     expect(card).not.toBeNull();
     expect(
@@ -472,7 +472,7 @@ describe("SettingsPage", () => {
       <SettingsPage {...baseProps} settingsSection="tracker_auth" setSettingsSection={vi.fn()} />,
     );
 
-    const title = await screen.findByText("MTV");
+    const title = await screen.findByText("TEST");
     const card = title.closest(".tracker-auth-card");
     expect(card).not.toBeNull();
     expect(
@@ -674,15 +674,15 @@ describe("SettingsPage", () => {
       <SettingsPage
         {...baseProps}
         settingsSection="tracker_auth"
-        trackerSelectionNames={["MTV"]}
+        trackerSelectionNames={["TEST"]}
         setSettingsSection={vi.fn()}
       />,
     );
 
-    expect(await screen.findByText("MTV ready")).toBeInTheDocument();
+    expect(await screen.findByText("TEST ready")).toBeInTheDocument();
     expect(screen.queryByText("ASC")).not.toBeInTheDocument();
     expect(getStatus).toHaveBeenCalledTimes(1);
-    expect(getStatus).toHaveBeenCalledWith("MTV");
+    expect(getStatus).toHaveBeenCalledWith("TEST");
   });
 
   it.each([
@@ -705,10 +705,10 @@ describe("SettingsPage", () => {
         <SettingsPage {...baseProps} settingsSection="tracker_auth" setSettingsSection={vi.fn()} />,
       );
 
-      expect(await screen.findByText("MTV")).toBeInTheDocument();
+      expect(await screen.findByText("TEST")).toBeInTheDocument();
       await userEvent.click(screen.getByRole("button", { name: buttonName }));
 
-      expect(action).toHaveBeenCalledWith("MTV");
+      expect(action).toHaveBeenCalledWith("TEST");
       expect(await screen.findByText("action ready")).toBeInTheDocument();
 
       initialStatus.resolve(trackerAuthStatus("initial stale"));
@@ -788,7 +788,7 @@ describe("SettingsPage", () => {
     );
 
     expect(await screen.findByText("Error: refresh failed")).toBeInTheDocument();
-    expect(screen.queryByText("MTV")).not.toBeInTheDocument();
+    expect(screen.queryByText("TEST")).not.toBeInTheDocument();
     expect(screen.queryByText("action ready")).not.toBeInTheDocument();
   });
 
@@ -806,7 +806,7 @@ describe("SettingsPage", () => {
       <SettingsPage {...baseProps} settingsSection="tracker_auth" setSettingsSection={vi.fn()} />,
     );
 
-    expect(await screen.findByText("MTV")).toBeInTheDocument();
+    expect(await screen.findByText("TEST")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Import Cookies" }));
     expect(await screen.findByText("action ready")).toBeInTheDocument();
 
@@ -833,7 +833,7 @@ describe("SettingsPage", () => {
         }),
       ),
       TestTrackerAuth: vi.fn().mockImplementation((trackerID: string) => {
-        if (trackerID === "MTV") {
+        if (trackerID === "TEST") {
           return staleAction.promise;
         }
         return Promise.resolve({
@@ -848,15 +848,15 @@ describe("SettingsPage", () => {
       <SettingsPage {...baseProps} settingsSection="tracker_auth" setSettingsSection={vi.fn()} />,
     );
 
-    const mtvTitle = await screen.findByText("MTV");
+    const testTitle = await screen.findByText("TEST");
     const ptpTitle = await screen.findByText("PTP");
-    const mtvCard = mtvTitle.closest(".tracker-auth-card");
+    const testCard = testTitle.closest(".tracker-auth-card");
     const ptpCard = ptpTitle.closest(".tracker-auth-card");
 
-    expect(mtvCard).not.toBeNull();
+    expect(testCard).not.toBeNull();
     expect(ptpCard).not.toBeNull();
     await userEvent.click(
-      within(mtvCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
+      within(testCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
     );
     await userEvent.click(
       within(ptpCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
@@ -867,7 +867,7 @@ describe("SettingsPage", () => {
 
     await waitFor(() => {
       expect(within(ptpCard as HTMLElement).getByText("new action ready")).toBeInTheDocument();
-      expect(within(mtvCard as HTMLElement).getByText("Error: stale failure")).toBeInTheDocument();
+      expect(within(testCard as HTMLElement).getByText("Error: stale failure")).toBeInTheDocument();
       expect(
         within(ptpCard as HTMLElement).queryByText("Error: stale failure"),
       ).not.toBeInTheDocument();
@@ -878,7 +878,7 @@ describe("SettingsPage", () => {
     );
 
     await waitFor(() => {
-      expect(within(mtvCard as HTMLElement).getByText("Error: stale failure")).toBeInTheDocument();
+      expect(within(testCard as HTMLElement).getByText("Error: stale failure")).toBeInTheDocument();
       expect(
         within(ptpCard as HTMLElement).queryByText("Error: stale failure"),
       ).not.toBeInTheDocument();
@@ -925,7 +925,7 @@ describe("SettingsPage", () => {
       <SettingsPage {...baseProps} settingsSection="tracker_auth" setSettingsSection={vi.fn()} />,
     );
 
-    expect(await screen.findByText("MTV")).toBeInTheDocument();
+    expect(await screen.findByText("TEST")).toBeInTheDocument();
     expect(screen.getByText("Loading tracker auth...")).toBeInTheDocument();
 
     rerender(
@@ -1001,7 +1001,7 @@ describe("SettingsPage", () => {
       />,
     );
 
-    expect(await screen.findByText("MTV")).toBeInTheDocument();
+    expect(await screen.findByText("TEST")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("after save")).toBeInTheDocument();
 
@@ -1111,7 +1111,7 @@ describe("SettingsPage", () => {
       />,
     );
 
-    expect(await screen.findByText("MTV")).toBeInTheDocument();
+    expect(await screen.findByText("TEST")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Choose file & import" }));
     expect(await screen.findByText("after import")).toBeInTheDocument();
 

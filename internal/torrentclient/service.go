@@ -33,11 +33,10 @@ import (
 
 // Service coordinates torrent-client injection and search operations.
 type Service struct {
-	cfg                config.Config
-	logger             api.Logger
-	trackerPatterns    map[string]trackerPattern
-	trackerPriority    []string
-	smallPieceTrackers []string
+	cfg             config.Config
+	logger          api.Logger
+	trackerPatterns map[string]trackerPattern
+	trackerPriority []string
 }
 
 // qbit injection HTTP uses a short, single-attempt client so a dead WebUI or
@@ -99,11 +98,10 @@ func NewServiceWithRegistry(cfg config.Config, logger api.Logger, registry *trac
 		registry = trackers.NewRegistry()
 	}
 	return &Service{
-		cfg:                cfg,
-		logger:             logger,
-		trackerPatterns:    buildTrackerIDPatterns(registry),
-		trackerPriority:    registry.Priority(),
-		smallPieceTrackers: trackerSearchPreferenceNames(registry, trackers.TorrentSearchPreferenceSmallPieces),
+		cfg:             cfg,
+		logger:          logger,
+		trackerPatterns: buildTrackerIDPatterns(registry),
+		trackerPriority: registry.Priority(),
 	}
 }
 

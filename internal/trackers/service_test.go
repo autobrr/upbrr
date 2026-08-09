@@ -1055,9 +1055,9 @@ func TestBuildPreparationDoesNotRetryFailedImageHostForLaterTrackers(t *testing.
 	registry := NewRegistry()
 	for _, definition := range []Definition{
 		stubPreparationDefinition{
-			name:        "MTV",
-			group:       "mtv",
-			description: "MTV description",
+			name:        "STC",
+			group:       "stc",
+			description: "STC description",
 		},
 		stubPreparationDefinition{
 			name:        "OE",
@@ -1092,7 +1092,7 @@ func TestBuildPreparationDoesNotRetryFailedImageHostForLaterTrackers(t *testing.
 	preview, err := svc.BuildPreparation(
 		context.Background(),
 		api.NewDescriptionSubject(api.UploadSubject{SourcePath: sourcePath}),
-		[]string{"MTV", "OE"},
+		[]string{"STC", "OE"},
 	)
 	if err != nil {
 		t.Fatalf("build preparation: %v", err)

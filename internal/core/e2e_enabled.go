@@ -620,16 +620,6 @@ func applyE2EDupeScenario(result *api.DupeCheckResult, scenario string) {
 				api.HDRFacts{Origin: api.HDREvidenceUnknown, Status: api.HDREvidenceMissing}),
 		}
 		result.HasDupes = true
-	case "mtv_manual":
-		result.Evaluations = []api.DupeCandidateEvaluation{
-			e2eDupeCandidate("e2e-mtv-1", "Example.Show.S01E01.1080p.WEB-DL.DV-GRP", api.DupeRelationManualReview, "mtv_title_hdr_partial",
-				api.HDRFacts{
-					Formats: []api.HDRFormat{api.HDRFormatDolbyVision},
-					Origin:  api.HDREvidenceTrackerTitle,
-					Status:  api.HDREvidencePartial,
-				}),
-		}
-		result.HasDupes = true
 	case "mixed", "mixed_incomplete":
 		result.Evaluations = []api.DupeCandidateEvaluation{
 			e2eDupeCandidate("e2e-coexists-1", "Example.Release.2026.1080p.SDR-GRP", api.DupeRelationCoexists, "distinct_hdr_slot",

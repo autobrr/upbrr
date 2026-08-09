@@ -21,7 +21,6 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/ant"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/hdb"
-	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/mtv"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/ptp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -1014,50 +1013,11 @@ func TestCreateReusesPTPYellowPieceSizeForPTPAndHDB(t *testing.T) {
 	}
 }
 
-func TestCreateSkipsMTVInsteadOfRehashingSharedHDBBase(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	source := filepath.Join(dir, "video.mkv")
-	writeTestFile(t, source, "source-data")
-	clientTorrentPath := filepath.Join(dir, "client.torrent")
-	pieceExp := uint(24)
-	if _, err := mkbrr.Create(mkbrr.CreateOptions{
-		Path:           source,
-		OutputPath:     clientTorrentPath,
-		IsPrivate:      true,
-		PieceLengthExp: &pieceExp,
-	}); err != nil {
-		t.Fatalf("create client torrent: %v", err)
-	}
-
-	registry := trackers.NewRegistry()
-	for _, definition := range []trackers.Definition{hdb.New(), mtv.New()} {
-		if err := registry.Register(definition); err != nil {
-			t.Fatalf("register tracker: %v", err)
-		}
-	}
-	service := NewServiceWithRegistry(api.NopLogger{}, t.TempDir(), registry)
-	result, err := service.Create(context.Background(), api.TorrentSubject{
-		SourcePath:           source,
-		SourceSize:           int64(len("source-data")),
-		Trackers:             []string{"HDB", "MTV"},
-		SkipIfRehashTrackers: []string{"MTV"},
-		ClientTorrentPath:    clientTorrentPath,
-	})
-	if err != nil {
-		t.Fatalf("create shared base: %v", err)
-	}
-	if result.Path != clientTorrentPath || !slices.Equal(result.SkippedTrackers, []string{"MTV"}) || len(result.RehashedTrackers) != 0 {
-		t.Fatal("shared base result did not reuse HDB torrent and skip MTV")
-	}
-}
-
 func TestResolveTrackerPieceProfiles(t *testing.T) {
 	t.Parallel()
 
 	registry := trackers.NewRegistry()
-	for _, definition := range []trackers.Definition{hdb.New(), mtv.New(), ptp.New()} {
+	for _, definition := range []trackers.Definition{hdb.New(), ptp.New()} {
 		if err := registry.Register(definition); err != nil {
 			t.Fatalf("register tracker: %v", err)
 		}
@@ -1085,22 +1045,6 @@ func TestResolveTrackerPieceProfiles(t *testing.T) {
 			maxExp:      24,
 			pieceExp:    24,
 			profileHost: "hdbits.org",
-		},
-		{
-			name:        "MTV",
-			trackers:    []string{"MTV"},
-			size:        40 << 30,
-			maxExp:      23,
-			pieceExp:    23,
-			profileHost: "morethantv",
-		},
-		{
-			name:        "HDB and MTV",
-			trackers:    []string{"HDB", "MTV"},
-			size:        40 << 30,
-			maxExp:      23,
-			pieceExp:    23,
-			profileHost: "morethantv",
 		},
 	}
 	for _, test := range tests {

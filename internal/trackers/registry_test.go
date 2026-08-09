@@ -56,8 +56,6 @@ func testImageHostPolicyForTracker(name string) *ImageHostPolicy {
 			OwnedHosts:             []string{"lostimg"},
 			EnableWithImageHosting: true,
 		}
-	case "MTV":
-		return &ImageHostPolicy{AllowedHosts: []string{"imgbox", "imgbb"}}
 	case "OE":
 		return &ImageHostPolicy{AllowedHosts: []string{"imgbox", "imgbb", "onlyimage", "ptscreens", "passtheimage"}}
 	case "PTP":

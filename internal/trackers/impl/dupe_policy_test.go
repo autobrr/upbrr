@@ -84,23 +84,6 @@ func TestSourceBackedDupeOverlaysResolveDeterministically(t *testing.T) {
 			relation: api.DupeRelationProposedTrumps,
 		},
 		{
-			name:    "MTV provider coexistence",
-			tracker: "MTV",
-			target: api.TrackerDuplicateTarget{
-				Type:       "WEB-DL",
-				Resolution: "1080p",
-				Provider:   "Example A",
-				HDR:        completeSDR,
-			},
-			candidate: dupe.TrackerCandidate{
-				Type:       "WEB-DL",
-				Resolution: "1080p",
-				Provider:   "Example B",
-				HDR:        completeSDR,
-			},
-			relation: api.DupeRelationCoexists,
-		},
-		{
 			name:    "SP season pack direction",
 			tracker: "SP",
 			target: api.TrackerDuplicateTarget{

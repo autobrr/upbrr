@@ -197,7 +197,6 @@ func (d *Definition) TorrentIdentityPolicy() *trackers.TorrentIdentityPolicy {
 			policy.DetailIDPattern = d.profile.TorrentIdentity.DetailIDPattern
 		}
 		policy.WorkingTrackerID = d.profile.TorrentIdentity.WorkingTrackerID
-		policy.SearchPreference = d.profile.TorrentIdentity.SearchPreference
 	}
 	return &policy
 }
