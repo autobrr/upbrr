@@ -53,6 +53,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	entries := make([]api.DupeEntry, 0)
 	pages := 0
 	complete := false
+	warning := ""
 	for page := 0; page <= 10; page++ {
 		params := url.Values{
 			"page":    {"torrents"},
@@ -104,12 +105,16 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 			break
 		}
 		if len(entries) == before {
+			warning = "HDS search made no pagination progress"
 			break
 		}
 	}
 	warnings := []string(nil)
 	if !complete {
-		warnings = []string{"HDS search reached pagination safety bound"}
+		if warning == "" {
+			warning = "HDS search reached pagination safety bound"
+		}
+		warnings = []string{warning}
 	}
 	return dupe.ResolvedWithSearch(entries, nil, dupe.SearchEvidence{
 		Complete:  complete,

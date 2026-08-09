@@ -41,6 +41,8 @@ func TestHDSSearchRequiresExpectedResultStructure(t *testing.T) {
 		body            string
 		wantDisposition dupe.Disposition
 		wantComplete    bool
+		wantPages       int
+		wantWarning     string
 	}{
 		{
 			name:            "markerless login response fails",
@@ -52,6 +54,14 @@ func TestHDSSearchRequiresExpectedResultStructure(t *testing.T) {
 			body:            `Show/Hide Categories<table></table>`,
 			wantDisposition: dupe.DispositionResolved,
 			wantComplete:    true,
+			wantPages:       1,
+		},
+		{
+			name:            "forward page without entries reports no progress",
+			body:            `Show/Hide Categories<table></table><a href="index.php?page=torrents&amp;pages=1">2</a>`,
+			wantDisposition: dupe.DispositionResolved,
+			wantPages:       1,
+			wantWarning:     "HDS search made no pagination progress",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -72,8 +82,12 @@ func TestHDSSearchRequiresExpectedResultStructure(t *testing.T) {
 			if test.wantDisposition == dupe.DispositionFailed && result.Code() != dupe.FailureResponseParse {
 				t.Fatalf("failure code = %q, want %q", result.Code(), dupe.FailureResponseParse)
 			}
-			if search := result.SearchEvidence(); search.Complete != test.wantComplete || len(result.Entries()) != 0 {
+			search := result.SearchEvidence()
+			if search.Complete != test.wantComplete || search.Pages != test.wantPages || len(result.Entries()) != 0 {
 				t.Fatalf("search evidence = %#v, entries = %#v", search, result.Entries())
+			}
+			if test.wantWarning != "" && (len(search.Warnings) != 1 || search.Warnings[0] != test.wantWarning) {
+				t.Fatalf("warnings = %#v, want %q", search.Warnings, test.wantWarning)
 			}
 		})
 	}
