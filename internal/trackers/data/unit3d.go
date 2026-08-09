@@ -497,6 +497,9 @@ func (c *Client) searchUnit3DEndpoint(
 	}
 	var entries []api.DupeEntry
 	wrongWorkCount := 0
+	expectedTotal := -1
+	expectedLastPage := -1
+	received := 0
 	for pageNumber := 1; pageNumber <= maxPages; pageNumber++ {
 		pageParams := cloneURLValues(params)
 		pageParams.Set("page", strconv.Itoa(pageNumber))
@@ -554,30 +557,47 @@ func (c *Client) searchUnit3DEndpoint(
 		pageEntries, dropped := buildUnit3DSearchEntries(payload.Data, endpoint.filterTMDBID, isDisc)
 		entries = append(entries, pageEntries...)
 		wrongWorkCount += dropped
+		received += len(payload.Data)
+		if payload.Meta.Total == nil || *payload.Meta.Total < 0 {
+			return unit3dEndpointSearchResult{
+				Entries:        entries,
+				Warning:        "Unit3D search response omitted a valid result total",
+				Pages:          pageNumber,
+				WrongWorkCount: wrongWorkCount,
+			}, nil
+		}
 		lastPage := payload.Meta.LastPage
 		currentPage := payload.Meta.CurrentPage
-		if currentPage <= 0 {
-			currentPage = pageNumber
+		if currentPage != pageNumber || lastPage <= 0 || currentPage > lastPage {
+			return unit3dEndpointSearchResult{
+				Entries:        entries,
+				Warning:        "Unit3D search returned inconsistent pagination metadata",
+				Pages:          pageNumber,
+				WrongWorkCount: wrongWorkCount,
+			}, nil
 		}
-		switch {
-		case lastPage > 0 && currentPage >= lastPage:
+		if expectedTotal < 0 {
+			expectedTotal, expectedLastPage = *payload.Meta.Total, lastPage
+		} else if *payload.Meta.Total != expectedTotal || lastPage != expectedLastPage {
 			return unit3dEndpointSearchResult{
 				Entries:        entries,
-				Complete:       true,
+				Warning:        "Unit3D search returned inconsistent pagination metadata",
 				Pages:          pageNumber,
 				WrongWorkCount: wrongWorkCount,
 			}, nil
-		case lastPage == 0 && len(payload.Data) < perPage:
+		}
+		if currentPage == lastPage {
+			if received != expectedTotal {
+				return unit3dEndpointSearchResult{
+					Entries:        entries,
+					Warning:        "Unit3D search result count did not match its advertised total",
+					Pages:          pageNumber,
+					WrongWorkCount: wrongWorkCount,
+				}, nil
+			}
 			return unit3dEndpointSearchResult{
 				Entries:        entries,
 				Complete:       true,
-				Pages:          pageNumber,
-				WrongWorkCount: wrongWorkCount,
-			}, nil
-		case lastPage == 0:
-			return unit3dEndpointSearchResult{
-				Entries:        entries,
-				Warning:        "Unit3D search response omitted pagination metadata at page capacity",
 				Pages:          pageNumber,
 				WrongWorkCount: wrongWorkCount,
 			}, nil
@@ -1121,9 +1141,9 @@ type unit3dSearchResponse struct {
 }
 
 type unit3dSearchMeta struct {
-	CurrentPage int `json:"current_page"`
-	LastPage    int `json:"last_page"`
-	Total       int `json:"total"`
+	CurrentPage int  `json:"current_page"`
+	LastPage    int  `json:"last_page"`
+	Total       *int `json:"total"`
 }
 
 type unit3dSearchEndpoint struct {

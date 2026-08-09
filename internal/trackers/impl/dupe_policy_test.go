@@ -207,7 +207,7 @@ func TestARPTPRTFPoliciesAreEvidenceBackedAndConservative(t *testing.T) {
 			t.Helper()
 			got := dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, policy, dupe.SearchEvidence{
 				Complete:  true,
-				WorkScope: dupe.WorkScopeTrackerGroup,
+				WorkScope: dupe.WorkScopeTitle,
 			}).Candidates[0]
 			if got.Relation != want {
 				t.Fatalf("%s relation = %#v, want %s", name, got, want)
@@ -233,7 +233,7 @@ func TestARPTPRTFPoliciesAreEvidenceBackedAndConservative(t *testing.T) {
 			t.Helper()
 			got := dupe.Evaluate(episodeTarget, []dupe.TrackerCandidate{candidate}, policy, dupe.SearchEvidence{
 				Complete:  true,
-				WorkScope: dupe.WorkScopeTrackerGroup,
+				WorkScope: dupe.WorkScopeTitle,
 			}).Candidates[0]
 			if got.Relation != want {
 				t.Fatalf("%s relation = %#v, want %s", name, got, want)
@@ -254,7 +254,7 @@ func TestARPTPRTFPoliciesAreEvidenceBackedAndConservative(t *testing.T) {
 			Group:      "GRP",
 			Season:     1,
 			Pack:       true,
-		}, api.DupeRelationExistingPreferred)
+		}, api.DupeRelationSameSlot)
 		assertRelation("filename packaging is not authoritative", dupe.TrackerCandidate{
 			Source:     "BluRay",
 			Resolution: "1080p",
@@ -277,7 +277,7 @@ func TestARPTPRTFPoliciesAreEvidenceBackedAndConservative(t *testing.T) {
 			t.Helper()
 			got := dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, policy, dupe.SearchEvidence{
 				Complete:  true,
-				WorkScope: dupe.WorkScopeTrackerGroup,
+				WorkScope: dupe.WorkScopeProviderID,
 			}).Candidates[0]
 			if got.Relation != want {
 				t.Fatalf("%s relation = %#v, want %s", name, got, want)

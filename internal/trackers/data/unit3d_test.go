@@ -205,7 +205,7 @@ func TestSearchTorrentsCBRIncludesPendingAndFiltersTMDB(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/torrents/filter":
-			_, _ = w.Write([]byte(`{"data":[{"id":101,"attributes":{"name":"Existing.Release","size":123,"files":[{"name":"existing.mkv"}],"details_link":"https://example.test/torrents/101","download_link":"https://example.test/download/101","type":"WEBDL","resolution":"1080p","internal":true}}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":101,"attributes":{"name":"Existing.Release","size":123,"files":[{"name":"existing.mkv"}],"details_link":"https://example.test/torrents/101","download_link":"https://example.test/download/101","type":"WEBDL","resolution":"1080p","internal":true}}],"meta":{"current_page":1,"last_page":1,"total":1}}`))
 		case "/api/torrents/pending":
 			_, _ = w.Write([]byte(`{"data":[{"id":202,"tmdb_id":42,"name":"Pending.Release","size":456,"files":[{"name":"pending.mkv"}],"download_link":"https://example.test/download/202","type":"REMUX","resolution":"2160p"},{"id":203,"tmdb_id":99,"name":"Wrong.Movie","size":789}]}`))
 		default:
@@ -269,11 +269,11 @@ func TestSearchTorrentsWithEvidenceConsumesAdvertisedFinalPage(t *testing.T) {
 		switch page {
 		case "1":
 			_, _ = w.Write([]byte(
-				`{"data":[{"id":1,"attributes":{"name":"Example.Release.2026.1080p.WEB-DL-GRP"}}],"meta":{"current_page":1,"last_page":2}}`,
+				`{"data":[{"id":1,"attributes":{"name":"Example.Release.2026.1080p.WEB-DL-GRP"}}],"meta":{"current_page":1,"last_page":2,"total":2}}`,
 			))
 		case "2":
 			_, _ = w.Write([]byte(
-				`{"data":[{"id":2,"attributes":{"name":"Example.Release.2026.2160p.WEB-DL-GRP"}}],"meta":{"current_page":2,"last_page":2}}`,
+				`{"data":[{"id":2,"attributes":{"name":"Example.Release.2026.2160p.WEB-DL-GRP"}}],"meta":{"current_page":2,"last_page":2,"total":2}}`,
 			))
 		default:
 			http.Error(w, "unexpected page", http.StatusBadRequest)
@@ -281,7 +281,7 @@ func TestSearchTorrentsWithEvidenceConsumesAdvertisedFinalPage(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	client := newUnit3DSearchTestClient(t, server, "AITHER")
+	client := newUnit3DSearchTestClient(t, server)
 	params := url.Values{"perPage": []string{"1"}}
 	result, err := client.SearchTorrentsWithEvidenceBound(context.Background(), "AITHER", params, false, 10)
 	if err != nil {
@@ -304,7 +304,7 @@ func TestSearchTorrentsWithEvidenceFailsClosedAtPolicyBound(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprintf(
 			w,
-			`{"data":[{"id":%s,"attributes":{"name":"Example.Release.2026.Page.%s-GRP"}}],"meta":{"current_page":%s,"last_page":3}}`,
+			`{"data":[{"id":%s,"attributes":{"name":"Example.Release.2026.Page.%s-GRP"}}],"meta":{"current_page":%s,"last_page":3,"total":3}}`,
 			page,
 			page,
 			page,
@@ -312,7 +312,7 @@ func TestSearchTorrentsWithEvidenceFailsClosedAtPolicyBound(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	client := newUnit3DSearchTestClient(t, server, "AITHER")
+	client := newUnit3DSearchTestClient(t, server)
 	result, err := client.SearchTorrentsWithEvidenceBound(
 		context.Background(),
 		"AITHER",
@@ -340,7 +340,7 @@ func TestSearchTorrentsWithEvidenceTreatsCapacityWithoutMetaAsIncomplete(t *test
 	}))
 	t.Cleanup(server.Close)
 
-	client := newUnit3DSearchTestClient(t, server, "AITHER")
+	client := newUnit3DSearchTestClient(t, server)
 	result, err := client.SearchTorrentsWithEvidenceBound(
 		context.Background(),
 		"AITHER",
@@ -352,13 +352,69 @@ func TestSearchTorrentsWithEvidenceTreatsCapacityWithoutMetaAsIncomplete(t *test
 		t.Fatalf("search torrents: %v", err)
 	}
 	if result.Complete || result.Pages != 1 ||
-		result.Warning != "Unit3D search response omitted pagination metadata at page capacity" {
+		result.Warning != "Unit3D search response omitted a valid result total" {
 		t.Fatalf("metadata-free result = %#v", result)
 	}
 }
 
-func newUnit3DSearchTestClient(t *testing.T, server *httptest.Server, tracker string) *Client {
+func TestSearchTorrentsWithEvidenceValidatesAdvertisedTotal(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		responses []string
+		warning   string
+	}{
+		{
+			name: "final count mismatch",
+			responses: []string{
+				`{"data":[{"id":1,"attributes":{"name":"Example.Release.2026.1080p.WEB-DL-GRP"}}],"meta":{"current_page":1,"last_page":1,"total":2}}`,
+			},
+			warning: "Unit3D search result count did not match its advertised total",
+		},
+		{
+			name: "total changes",
+			responses: []string{
+				`{"data":[{"id":1,"attributes":{"name":"Example.Release.2026.1080p.WEB-DL-GRP"}}],"meta":{"current_page":1,"last_page":2,"total":2}}`,
+				`{"data":[{"id":2,"attributes":{"name":"Example.Release.2026.2160p.WEB-DL-GRP"}}],"meta":{"current_page":2,"last_page":2,"total":3}}`,
+			},
+			warning: "Unit3D search returned inconsistent pagination metadata",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if calls >= len(tc.responses) {
+					http.Error(w, "unexpected page", http.StatusBadRequest)
+					return
+				}
+				_, _ = w.Write([]byte(tc.responses[calls]))
+				calls++
+			}))
+			t.Cleanup(server.Close)
+
+			client := newUnit3DSearchTestClient(t, server)
+			result, err := client.SearchTorrentsWithEvidenceBound(
+				context.Background(),
+				"AITHER",
+				url.Values{"perPage": []string{"1"}},
+				false,
+				10,
+			)
+			if err != nil {
+				t.Fatalf("search torrents: %v", err)
+			}
+			if result.Complete || result.Pages != len(tc.responses) || result.Warning != tc.warning {
+				t.Fatalf("validated total result = %#v", result)
+			}
+		})
+	}
+}
+
+func newUnit3DSearchTestClient(t *testing.T, server *httptest.Server) *Client {
 	t.Helper()
+	const tracker = "AITHER"
 	base, err := url.Parse(server.URL)
 	if err != nil {
 		t.Fatalf("parse test server URL: %v", err)

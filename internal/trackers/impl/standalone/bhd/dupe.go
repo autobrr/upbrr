@@ -78,6 +78,8 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	entries := make([]api.DupeEntry, 0)
 	complete := false
 	pages := 0
+	expectedTotalPages := -1
+	expectedTotalResults := -1
 	for pageNumber := 1; pageNumber <= maxPages; pageNumber++ {
 		pagePayload := maps.Clone(payload)
 		pagePayload["page"] = pageNumber
@@ -112,16 +114,35 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		pageEntries := bhdEntries(decoded)
 		entries = append(entries, pageEntries...)
 		pages++
-		totalPages := int(bhdInt(decoded["total_pages"]))
-		switch {
-		case totalPages > 0 && pageNumber >= totalPages:
-			complete = true
-		case totalPages == 0 && len(pageEntries) < pageSize:
-			complete = true
-		default:
-			continue
+		rawPage, pageKnown := decoded["page"]
+		rawTotalPages, totalPagesKnown := decoded["total_pages"]
+		rawTotalResults, totalResultsKnown := decoded["total_results"]
+		if expectedTotalPages >= 0 || pageKnown || totalPagesKnown || totalResultsKnown {
+			responsePage, validPage := bhdNonNegativeInt(rawPage)
+			totalPages, validTotalPages := bhdNonNegativeInt(rawTotalPages)
+			totalResults, validTotalResults := bhdNonNegativeInt(rawTotalResults)
+			if !pageKnown || !totalPagesKnown || !totalResultsKnown || !validPage || !validTotalPages || !validTotalResults || responsePage != pageNumber {
+				break
+			}
+			if expectedTotalPages < 0 {
+				expectedTotalPages, expectedTotalResults = totalPages, totalResults
+			} else if totalPages != expectedTotalPages || totalResults != expectedTotalResults {
+				break
+			}
+			switch {
+			case totalPages == 0 && totalResults == 0 && len(entries) == 0:
+				complete = true
+			case totalPages > 0 && pageNumber == totalPages && len(entries) == totalResults:
+				complete = true
+			case totalPages > 0 && pageNumber < totalPages && len(pageEntries) > 0:
+				continue
+			}
+			break
 		}
-		break
+		if len(pageEntries) < pageSize {
+			complete = true
+			break
+		}
 	}
 	warnings := []string(nil)
 	if !complete {
@@ -339,4 +360,9 @@ func bhdInt(value any) int64 {
 	default:
 		return 0
 	}
+}
+
+func bhdNonNegativeInt(value any) (int, bool) {
+	parsed, err := strconv.Atoi(strings.TrimSpace(fmt.Sprint(value)))
+	return parsed, err == nil && parsed >= 0
 }

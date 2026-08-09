@@ -62,6 +62,9 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	}
 	entries := make([]api.DupeEntry, 0)
 	offset := 0
+	expectedTotal := -1
+	expectedTotalPresent := false
+	expectedOffsetPresent := false
 	complete := false
 	pages := 0
 	for pages < maxPages {
@@ -98,6 +101,12 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		pages++
 		itemCount := antItemCount(payload)
 		pagination := parseANTPagination(payload)
+		if pages == 1 {
+			expectedTotalPresent = pagination.TotalPresent
+			expectedOffsetPresent = pagination.OffsetPresent
+		} else if pagination.TotalPresent != expectedTotalPresent || pagination.OffsetPresent != expectedOffsetPresent {
+			break
+		}
 		pageOffset := offset
 		if pagination.OffsetPresent {
 			if pagination.Offset != offset {
@@ -105,16 +114,23 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 			}
 			pageOffset = pagination.Offset
 		}
+		if pagination.TotalPresent {
+			if expectedTotal < 0 {
+				expectedTotal = pagination.Total
+			} else if pagination.Total != expectedTotal {
+				break
+			}
+		}
 		nextOffset := pageOffset + itemCount
 		switch {
-		case pagination.TotalPresent && pagination.Total == 0 && itemCount == 0:
+		case expectedTotal == 0 && itemCount == 0:
 			complete = true
-		case pagination.TotalPresent && pagination.Total > 0 && nextOffset >= pagination.Total:
+		case expectedTotal > 0 && nextOffset == expectedTotal:
 			complete = true
-		case pagination.TotalPresent && pagination.Total > nextOffset && nextOffset > offset:
+		case expectedTotal > nextOffset && nextOffset > offset:
 			offset = nextOffset
 			continue
-		case pagination.TotalPresent:
+		case expectedTotal >= 0:
 			// Metadata is contradictory or the endpoint made no progress.
 		case itemCount < pageLimit:
 			complete = true

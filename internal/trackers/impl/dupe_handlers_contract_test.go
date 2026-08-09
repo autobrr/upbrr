@@ -16,17 +16,31 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
+	"github.com/autobrr/upbrr/internal/trackers/impl/azfamily"
+	antimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/ant"
 	ascimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/asc"
+	bhdimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/bhd"
 	bjsimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/bjs"
 	btimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/bt"
+	btnimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/btn"
+	cztimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/czt"
+	dcimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/dc"
 	ffimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/ff"
 	flimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/fl"
+	gpwimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/gpw"
+	hdbimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/hdb"
 	hdsimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/hds"
 	hdtimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/hdt"
 	isimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/is"
+	nblimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/nbl"
+	ptpimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/ptp"
 	ptsimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/pts"
+	rtfimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/rtf"
+	spdimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/spd"
 	thrimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/thr"
 	tlimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/tl"
+	unit3dimpl "github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
+	aitherimpl "github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/aither"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -279,6 +293,181 @@ func TestSiteHandlersSearch(t *testing.T) {
 			scope:      dupe.WorkScopeTitle,
 			enumerated: true,
 		},
+		{
+			name:    "ANT",
+			tracker: "ANT",
+			meta:    api.DuplicateSubject{Identity: api.ExternalIdentity{TMDBID: 123}, SourcePath: "x"},
+			handler: func(cfg config.Config, client *http.Client) dupe.Adapter {
+				return dupe.NewAdapter(antimpl.New(), "ANT", cfg, client, api.NopLogger{})
+			},
+			validate:   validateNoEntries,
+			scope:      dupe.WorkScopeProviderID,
+			enumerated: true,
+			effective:  true,
+		},
+		{
+			name:    "AZ",
+			tracker: "AZ",
+			meta: api.DuplicateSubject{
+				Identity:   api.ExternalIdentity{Category: api.CanonicalCategoryMovie, IMDBID: 123},
+				Release:    api.ReleaseInfo{Title: "Example Release 2026"},
+				SourcePath: "x",
+			},
+			setup: func(t *testing.T, _ string, dbPath string) {
+				writeTextCookie(t, dbPath, "AZ", hostFromBaseURL(t, "https://avistaz.to"))
+			},
+			handler: func(cfg config.Config, client *http.Client) dupe.Adapter {
+				return dupe.NewAdapter(azfamily.New("AZ"), "AZ", cfg, client, api.NopLogger{})
+			},
+			validate:   validateNoEntries,
+			scope:      dupe.WorkScopeTrackerGroup,
+			enumerated: true,
+			effective:  true,
+		},
+		{
+			name:    "BHD",
+			tracker: "BHD",
+			meta:    api.DuplicateSubject{Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie, TMDBID: 123}, SourcePath: "x"},
+			handler: func(cfg config.Config, client *http.Client) dupe.Adapter {
+				return dupe.NewAdapter(bhdimpl.New(), "BHD", cfg, client, api.NopLogger{})
+			},
+			validate:   validateNoEntries,
+			scope:      dupe.WorkScopeProviderID,
+			enumerated: true,
+			effective:  true,
+		},
+		{
+			name:    "BTN",
+			tracker: "BTN",
+			meta: api.DuplicateSubject{
+				Identity:   api.ExternalIdentity{Category: api.CanonicalCategoryTV, TVDBID: 123},
+				SourcePath: "x",
+			},
+			handler: func(cfg config.Config, client *http.Client) dupe.Adapter {
+				return dupe.NewAdapter(btnimpl.New(), "BTN", cfg, client, api.NopLogger{})
+			},
+			validate:   validateNoEntries,
+			scope:      dupe.WorkScopeProviderID,
+			enumerated: true,
+			effective:  true,
+		},
+		{
+			name:    "CZT",
+			tracker: "CZT",
+			meta:    api.DuplicateSubject{Release: api.ReleaseInfo{Title: "Example Release 2026"}, SourcePath: "x"},
+			handler: func(cfg config.Config, client *http.Client) dupe.Adapter {
+				return dupe.NewAdapter(cztimpl.New(), "CZT", cfg, client, api.NopLogger{})
+			},
+			validate:   validateNoEntries,
+			scope:      dupe.WorkScopeTitle,
+			enumerated: true,
+		},
+		{
+			name:    "DC",
+			tracker: "DC",
+			meta:    api.DuplicateSubject{Identity: api.ExternalIdentity{IMDBID: 123}, SourcePath: "x"},
+			handler: func(cfg config.Config, client *http.Client) dupe.Adapter {
+				return dupe.NewAdapter(dcimpl.New(), "DC", cfg, client, api.NopLogger{})
+			},
+			validate:   validateNoEntries,
+			scope:      dupe.WorkScopeProviderID,
+			enumerated: true,
+			effective:  true,
+		},
+		{
+			name:    "GPW",
+			tracker: "GPW",
+			meta:    api.DuplicateSubject{Identity: api.ExternalIdentity{IMDBID: 123}, SourcePath: "x"},
+			handler: func(cfg config.Config, client *http.Client) dupe.Adapter {
+				return dupe.NewAdapter(gpwimpl.New(), "GPW", cfg, client, api.NopLogger{})
+			},
+			validate:   validateNoEntries,
+			scope:      dupe.WorkScopeProviderID,
+			enumerated: true,
+			effective:  true,
+		},
+		{
+			name:    "HDB",
+			tracker: "HDB",
+			meta: api.DuplicateSubject{
+				Identity:   api.ExternalIdentity{Category: api.CanonicalCategoryMovie, IMDBID: 123},
+				SourcePath: "x",
+			},
+			handler: func(cfg config.Config, client *http.Client) dupe.Adapter {
+				return dupe.NewAdapter(hdbimpl.New(), "HDB", cfg, client, api.NopLogger{})
+			},
+			validate:   validateNoEntries,
+			scope:      dupe.WorkScopeProviderID,
+			enumerated: true,
+			effective:  true,
+		},
+		{
+			name:    "NBL",
+			tracker: "NBL",
+			meta:    api.DuplicateSubject{Identity: api.ExternalIdentity{TVmazeID: 81}, SourcePath: "x"},
+			handler: func(cfg config.Config, client *http.Client) dupe.Adapter {
+				return dupe.NewAdapter(nblimpl.New(), "NBL", cfg, client, api.NopLogger{})
+			},
+			validate:   validateNoEntries,
+			scope:      dupe.WorkScopeProviderID,
+			enumerated: true,
+			effective:  true,
+		},
+		{
+			name:    "PTP",
+			tracker: "PTP",
+			meta:    api.DuplicateSubject{Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie, IMDBID: 123}, SourcePath: "x"},
+			handler: func(cfg config.Config, client *http.Client) dupe.Adapter {
+				return dupe.NewAdapter(ptpimpl.New(), "PTP", cfg, client, api.NopLogger{})
+			},
+			validate:   validateNoEntries,
+			scope:      dupe.WorkScopeTrackerGroup,
+			enumerated: true,
+			effective:  true,
+		},
+		{
+			name:    "RTF",
+			tracker: "RTF",
+			meta: api.DuplicateSubject{
+				Identity:   api.ExternalIdentity{Category: api.CanonicalCategoryMovie, IMDBID: 123},
+				Release:    api.ReleaseInfo{Year: 1990},
+				SourcePath: "x",
+			},
+			handler: func(cfg config.Config, client *http.Client) dupe.Adapter {
+				return dupe.NewAdapter(rtfimpl.New(), "RTF", cfg, client, api.NopLogger{})
+			},
+			validate:   validateNoEntries,
+			scope:      dupe.WorkScopeProviderID,
+			enumerated: true,
+			effective:  true,
+		},
+		{
+			name:    "SPD",
+			tracker: "SPD",
+			meta:    api.DuplicateSubject{Identity: api.ExternalIdentity{IMDBID: 123}, SourcePath: "x"},
+			handler: func(cfg config.Config, client *http.Client) dupe.Adapter {
+				return dupe.NewAdapter(spdimpl.New(), "SPD", cfg, client, api.NopLogger{})
+			},
+			validate:   validateNoEntries,
+			scope:      dupe.WorkScopeProviderID,
+			enumerated: true,
+			effective:  true,
+		},
+		{
+			name:    "Unit3D",
+			tracker: "AITHER",
+			meta: api.DuplicateSubject{
+				Identity:   api.ExternalIdentity{Category: api.CanonicalCategoryMovie, TMDBID: 123},
+				SourcePath: "x",
+			},
+			handler: func(cfg config.Config, client *http.Client) dupe.Adapter {
+				return dupe.NewAdapter(unit3dimpl.NewWithProfile(aitherimpl.Profile()), "AITHER", cfg, client, api.NopLogger{}, MustNewRegistry())
+			},
+			validate:   validateNoEntries,
+			scope:      dupe.WorkScopeProviderID,
+			enumerated: true,
+			effective:  true,
+		},
 	}
 
 	for _, tc := range tests {
@@ -288,6 +477,42 @@ func TestSiteHandlersSearch(t *testing.T) {
 			dbPath := filepath.Join(tmp, "ua.db")
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch tc.tracker {
+				case "ANT":
+					_, _ = w.Write([]byte(`{"item":[],"response":{"offset":0,"total":0}}`))
+					return
+				case "AZ":
+					switch r.URL.Path {
+					case "/ajax/movies/1":
+						_, _ = w.Write([]byte(`{"data":[{"id":"77","imdb":"tt0000123"}]}`))
+						return
+					case "/movies/torrents/77":
+						_, _ = w.Write([]byte(`<table class="table-bordered"><tbody></tbody></table>`))
+						return
+					}
+				case "BHD":
+					_, _ = w.Write([]byte(`{"status_code":1,"page":1,"total_pages":0,"total_results":0,"results":[]}`))
+					return
+				case "BTN":
+					_, _ = w.Write([]byte(`{"result":{"results":"0","torrents":{}}}`))
+					return
+				case "CZT", "DC", "RTF", "SPD":
+					_, _ = w.Write([]byte(`[]`))
+					return
+				case "GPW":
+					_, _ = w.Write([]byte(`{"status":200,"response":[]}`))
+					return
+				case "HDB":
+					_, _ = w.Write([]byte(`{"status":0,"data":[]}`))
+					return
+				case "NBL":
+					_, _ = w.Write([]byte(`{"current_page":0,"total_pages":0,"count":0,"total_results":0,"items":[]}`))
+					return
+				case "PTP":
+					_, _ = w.Write([]byte(`{"TotalResults":"0","Movies":[],"Page":"1"}`))
+					return
+				case "AITHER":
+					_, _ = w.Write([]byte(`{"data":[],"meta":{"current_page":1,"last_page":1,"total":0}}`))
+					return
 				case "ASC":
 					if r.URL.Path == "/busca-series.php" && r.URL.Query().Get("search") == "" && r.URL.Query().Get("imdb") == "tt1234567" {
 						_, _ = w.Write([]byte(`<html><body></body></html>`))
@@ -371,14 +596,19 @@ func TestSiteHandlersSearch(t *testing.T) {
 			}))
 			defer server.Close()
 
-			tc.setup(t, server.URL, dbPath)
+			if tc.setup != nil {
+				tc.setup(t, server.URL, dbPath)
+			}
 			cfg := config.Config{
 				MainSettings: config.MainSettingsConfig{DBPath: dbPath},
 				Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
 					tc.tracker: {
-						Username: "user",
-						Password: "pass",
-						Passkey:  "passkey",
+						Username:   "user",
+						Password:   "pass",
+						Passkey:    "passkey",
+						APIKey:     "api-key",
+						PTPAPIUser: "api-user",
+						PTPAPIKey:  "api-key",
 					},
 				}},
 			}
@@ -424,6 +654,13 @@ func writeJSONCookie(t *testing.T, dbPath string, tracker string, payload string
 	}
 	if err := os.WriteFile(filepath.Join(cookieDir, tracker+".json"), []byte(payload), 0o600); err != nil {
 		t.Fatalf("write cookie file: %v", err)
+	}
+}
+
+func validateNoEntries(t *testing.T, entries []api.DupeEntry) {
+	t.Helper()
+	if len(entries) != 0 {
+		t.Fatalf("unexpected entries: %#v", entries)
 	}
 }
 

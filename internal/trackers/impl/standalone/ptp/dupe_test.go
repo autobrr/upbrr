@@ -123,6 +123,27 @@ func TestPTPEmptyIMDbLookupIsComplete(t *testing.T) {
 	}
 }
 
+func TestPTPIMDbLookupCountMismatchIsIncomplete(t *testing.T) {
+	t.Parallel()
+
+	client := &http.Client{Transport: ptpRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"TotalResults":"1","Movies":[],"Page":"1"}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	handler := dupe.NewAdapter(New(), "PTP", config.Config{Trackers: config.TrackersConfig{
+		Trackers: map[string]config.TrackerConfig{
+			"PTP": {PTPAPIUser: "api-user", PTPAPIKey: "api-key"},
+		},
+	}}, client, api.NopLogger{})
+	result := handler.Search(context.Background(), api.DuplicateSubject{Identity: api.ExternalIdentity{IMDBID: 1234567}})
+	if search := result.SearchEvidence(); search.Complete || len(search.Warnings) != 1 || len(result.Entries()) != 0 {
+		t.Fatalf("mismatched PTP search = %#v entries=%#v", search, result.Entries())
+	}
+}
+
 func TestPTPMalformedGroupPayloadFails(t *testing.T) {
 	t.Parallel()
 

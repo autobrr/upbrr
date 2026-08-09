@@ -5,7 +5,10 @@ webui/tsconfig.tsbuildinfo
 internal/webserver/assets/*
 !internal/webserver/assets/.keep
 dist/
-docs/
+docs/*
+!docs/trackerdata/
+docs/trackerdata/*
+!docs/trackerdata/CONTEXT.md
 tmp/
 .trunk/
 *.exe
