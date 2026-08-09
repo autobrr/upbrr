@@ -222,7 +222,7 @@ func collectPackContainmentFinding(target contentScope, candidate contentScope) 
 	switch {
 	case target.Kind == contentScopeSeasonPack &&
 		(candidate.Kind == contentScopeEpisode || candidate.Kind == contentScopeEpisodeRange):
-		relation, reason = api.DupeRelationProposedTrumps, "proposed_season_pack"
+		relation, reason = api.DupeRelationCoexists, "proposed_season_pack"
 	case candidate.Kind == contentScopeSeasonPack &&
 		(target.Kind == contentScopeEpisode || target.Kind == contentScopeEpisodeRange):
 		relation, reason = api.DupeRelationExistingPreferred, "existing_season_pack"

@@ -576,8 +576,11 @@ func TestEvaluateSeasonPackProposalNotBlockedBySingleEpisodeFile(t *testing.T) {
 		trackerspkg.DupePolicy{},
 		SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID},
 	)
-	if got := evaluation.Candidates[0].Relation; got != api.DupeRelationProposedTrumps {
-		t.Fatalf("season pack over existing episode must trump, got %q", got)
+	if got := evaluation.Candidates[0].Relation; got != api.DupeRelationCoexists {
+		t.Fatalf("existing episode must be irrelevant to proposed season pack, got %q", got)
+	}
+	if evaluation.RequiresAction || evaluation.Blocks {
+		t.Fatalf("existing episode must not make proposed season pack actionable: %#v", evaluation)
 	}
 }
 
@@ -1293,7 +1296,7 @@ func TestEvaluateGeneralSeasonPackContainmentIsDirectional(t *testing.T) {
 		trackerspkg.DupePolicy{},
 		SearchEvidence{WorkScope: WorkScopeProviderID},
 	).Candidates[0]
-	if proposedPack.Relation != api.DupeRelationProposedTrumps {
+	if proposedPack.Relation != api.DupeRelationCoexists {
 		t.Fatalf("proposed pack relation = %#v", proposedPack)
 	}
 
