@@ -68,8 +68,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		pages++
 		parts := strings.SplitN(body, "Show/Hide Categories", 2)
 		if len(parts) < 2 {
-			complete = true
-			break
+			return dupe.Failed(dupe.FailureResponseParse, "HDS response parse failed", nil)
 		}
 		root, err := xhtml.Parse(strings.NewReader(parts[1]))
 		if err != nil {
