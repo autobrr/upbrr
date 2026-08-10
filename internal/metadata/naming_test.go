@@ -69,22 +69,26 @@ func TestBuildReleaseNameMovieBareWebEncodeUsesWebDLNaming(t *testing.T) {
 }
 
 func TestBuildReleaseNameHybridEdition(t *testing.T) {
-	result := BuildReleaseName(api.ReleaseNameRequest{
-		Category:    "MOVIE",
-		Type:        "ENCODE",
-		Title:       "Hybrid Cut",
-		Year:        2020,
-		Edition:     "Hybrid Director",
-		WebDV:       true,
-		Resolution:  "1080p",
-		Source:      "BluRay",
-		Audio:       "DTS",
-		VideoEncode: "x264",
-	}, api.NopLogger{})
+	for _, webDV := range []bool{false, true} {
+		t.Run(fmt.Sprintf("webdv_%t", webDV), func(t *testing.T) {
+			result := BuildReleaseName(api.ReleaseNameRequest{
+				Category:    "MOVIE",
+				Type:        "ENCODE",
+				Title:       "Hybrid Cut",
+				Year:        2020,
+				Edition:     "Hybrid Director",
+				WebDV:       webDV,
+				Resolution:  "1080p",
+				Source:      "BluRay",
+				Audio:       "DTS",
+				VideoEncode: "x264",
+			}, api.NopLogger{})
 
-	expected := "Hybrid Cut 2020 Director Hybrid 1080p BluRay DTS x264"
-	if result.NameNoTag != expected {
-		t.Fatalf("expected %q, got %q", expected, result.NameNoTag)
+			expected := "Hybrid Cut 2020 Director Hybrid 1080p BluRay DTS x264"
+			if result.NameNoTag != expected {
+				t.Fatalf("expected %q, got %q", expected, result.NameNoTag)
+			}
+		})
 	}
 }
 

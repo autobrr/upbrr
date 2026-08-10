@@ -369,12 +369,44 @@ func TestEditionFromMetaSkipsIMDbRuntimeWhenManualEditionOverridePresent(t *test
 	}
 }
 
+func TestEditionFromMetaPromotesOnlyExactHybridOther(t *testing.T) {
+	tests := []struct {
+		name    string
+		release api.ReleaseInfo
+		want    string
+	}{
+		{
+			name:    "exact case insensitive value",
+			release: api.ReleaseInfo{Other: []string{" HYBRiD "}},
+			want:    "Hybrid",
+		},
+		{
+			name:    "keeps existing edition",
+			release: api.ReleaseInfo{Edition: []string{"Extended"}, Other: []string{"HYBRiD", "RETAiL"}},
+			want:    "Extended Hybrid",
+		},
+		{
+			name:    "ignores unrelated values",
+			release: api.ReleaseInfo{Other: []string{"RETAiL", "REMUX", "Hybridish", "HYBRiD REMUX"}},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			edition, _ := editionFromMeta(preparationstate.State{Release: tc.release}, mediaInfoDoc{})
+			if edition != tc.want {
+				t.Fatalf("expected edition %q, got %q", tc.want, edition)
+			}
+		})
+	}
+}
+
 func TestEditionFromMetaSkipsIMDbRuntimeWhenNoEditionOverridePresent(t *testing.T) {
 	noEdition := true
 	meta := preparationstate.State{
 		ReleaseNameOverrides: api.ReleaseNameOverrides{NoEdition: &noEdition},
 		Edition:              "IMAX",
-		Release:              api.ReleaseInfo{Edition: []string{"Collector's", "Edition"}},
+		Release:              api.ReleaseInfo{Edition: []string{"Collector's", "Edition"}, Other: []string{"HYBRiD"}},
 		Identity:             api.ExternalIdentity{Category: "MOVIE"},
 		ProviderMetadata: api.SourceScopedMetadata{
 			IMDB: &api.IMDBMetadata{

@@ -1596,6 +1596,7 @@ func editionFromMeta(meta preparationstate.State, doc mediaInfoDoc) (string, str
 	if hasNoEditionOverride(meta.ReleaseNameOverrides) {
 		return "", ""
 	}
+	hybrid := containsExactHybrid(meta.Release.Other)
 	if !hasManualEditionOverride(meta.ReleaseNameOverrides) {
 		edition = strings.TrimSpace(resolveIMDbEditionFromMediaDuration(meta, doc))
 		isIMDbEdition = edition != ""
@@ -1611,7 +1612,7 @@ func editionFromMeta(meta preparationstate.State, doc mediaInfoDoc) (string, str
 		edition = strings.TrimSpace(strings.Join(meta.Release.Edition, " "))
 	}
 	repack := repackFromMeta(meta, edition)
-	if edition == "" {
+	if edition == "" && !hybrid {
 		return "", repack
 	}
 	if repackPattern.MatchString(edition) {
@@ -1621,9 +1622,20 @@ func editionFromMeta(meta preparationstate.State, doc mediaInfoDoc) (string, str
 		edition = strings.TrimSpace(repackPattern.ReplaceAllString(edition, ""))
 	}
 	if isIMDbEdition {
-		return cleanIMDbEditionText(edition), strings.ToUpper(repack)
+		edition = cleanIMDbEditionText(edition)
+	} else {
+		edition = cleanEditionText(edition)
 	}
-	return cleanEditionText(edition), strings.ToUpper(repack)
+	if hybrid && !containsExactHybrid(strings.Fields(edition)) {
+		edition = strings.TrimSpace(edition + " Hybrid")
+	}
+	return edition, strings.ToUpper(repack)
+}
+
+func containsExactHybrid(values []string) bool {
+	return slices.ContainsFunc(values, func(value string) bool {
+		return strings.EqualFold(strings.TrimSpace(value), "Hybrid")
+	})
 }
 
 // repackFromMeta scans source basenames and parsed release tokens so repack
