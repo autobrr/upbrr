@@ -124,6 +124,42 @@ func TestPrepareUsesExactCompatibilityAndPublishesConcreteAssessments(t *testing
 	}
 }
 
+func TestPrepareRecomputesLegacyContractAfterRestart(t *testing.T) {
+	t.Parallel()
+	path := writePreparedTestFile(t, "source.mkv", "synthetic media")
+	store := newMemoryStore()
+	initial := newTestModule(t, store, &recordingCollector{})
+	prepared, err := initial.Prepare(context.Background(), api.PrepareInput{SourcePath: path})
+	if err != nil {
+		t.Fatalf("initial prepare: %v", err)
+	}
+
+	legacy := prepared.Release
+	legacy.Compatibility.ContractVersion = "prepared-release-v3"
+	legacy.Assessments.VideoBitrate = api.VideoBitrateAssessment{}
+	store.mu.Lock()
+	store.current[canonicalSourceKey(path)] = legacy
+	store.mu.Unlock()
+
+	restartedCollector := &recordingCollector{}
+	restarted := newTestModule(t, store, restartedCollector)
+	recomputed, err := restarted.Prepare(context.Background(), api.PrepareInput{SourcePath: path})
+	if err != nil {
+		t.Fatalf("restart prepare: %v", err)
+	}
+	if recomputed.Release.Generation != prepared.Release.Generation+1 || restartedCollector.callCount() != 1 {
+		t.Fatalf(
+			"restart generation=%d collector=%d, want generation=%d collector=1",
+			recomputed.Release.Generation,
+			restartedCollector.callCount(),
+			prepared.Release.Generation+1,
+		)
+	}
+	if recomputed.Release.Assessments.VideoBitrate.Status != api.VideoBitrateStatusUnknown {
+		t.Fatalf("video bitrate status = %q, want %q", recomputed.Release.Assessments.VideoBitrate.Status, api.VideoBitrateStatusUnknown)
+	}
+}
+
 func TestPrepareRequirePreparedRejectsMissingAndReusesCompatibleGeneration(t *testing.T) {
 	t.Parallel()
 

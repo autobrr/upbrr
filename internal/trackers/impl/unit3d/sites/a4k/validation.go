@@ -57,5 +57,6 @@ func isWebRip(subject api.TrackerValidationSubject) bool {
 	return strings.EqualFold(strings.TrimSpace(subject.Type), "WEBRIP") ||
 		webRipRegex.MatchString(subject.Source) ||
 		webRipRegex.MatchString(subject.Release.Source) ||
-		webRipRegex.MatchString(subject.ReleaseName)
+		webRipRegex.MatchString(subject.ReleaseName) ||
+		webRipRegex.MatchString(subject.ReleaseNameNoTag)
 }
