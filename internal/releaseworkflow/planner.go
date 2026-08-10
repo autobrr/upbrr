@@ -550,9 +550,25 @@ func continuationPreflightCurrent(current CommandResult, now time.Time) bool {
 		current.Preflight.ProjectionSet.Revision == current.Projections.Revision
 }
 
+// continuationMediaCaptureSatisfied treats explicit final selections as
+// satisfied only when each screenshot index is retained.
 func continuationMediaCaptureSatisfied(current CommandResult, desired *api.MediaCaptureInstructions) bool {
 	if desired == nil || current.Media == nil {
 		return desired == nil && current.Media != nil
+	}
+	if (desired.Purpose == "" || desired.Purpose == api.ScreenshotPurposeFinal) && desired.Selections != nil {
+		retained := make(map[int]struct{}, len(current.Media.Artifacts))
+		for _, artifact := range current.Media.Artifacts {
+			if artifact.Kind == api.MediaArtifactScreenshot {
+				retained[artifact.Index] = struct{}{}
+			}
+		}
+		for _, selection := range desired.Selections {
+			if _, ok := retained[selection.Index]; !ok {
+				return false
+			}
+		}
+		return true
 	}
 	expected, err := api.CanonicalWorkflowFingerprint(struct {
 		Release      api.ReleaseRef

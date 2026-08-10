@@ -98,11 +98,11 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 	dvdSize := strings.TrimSpace(req.DVDSize)
 	edition := strings.TrimSpace(req.Edition)
 
-	edition = removeHybrid(edition)
 	hybrid := ""
-	if req.WebDV {
+	if req.WebDV || containsExactHybrid(strings.Fields(edition)) {
 		hybrid = "Hybrid"
 	}
+	edition = removeHybrid(edition)
 
 	if category == "TV" && !req.ManualEpisodeTitle && episode == "" && !req.ManualDate {
 		episodeTitle = ""

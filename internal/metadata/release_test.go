@@ -3,7 +3,17 @@
 
 package metadata
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
+
+func TestParseReleaseInfoPreservesHybridOther(t *testing.T) {
+	release := ParseReleaseInfo("Example.Release.2026.2160p.WEB-DL.HYBRiD.DDP5.1.Atmos.DV.H.265-GRP.mkv")
+	if !slices.Equal(release.Other, []string{"HYBRiD"}) {
+		t.Fatalf("expected exact Hybrid parser output, got %#v", release.Other)
+	}
+}
 
 func TestParseReleaseInfo(t *testing.T) {
 	tests := []struct {
