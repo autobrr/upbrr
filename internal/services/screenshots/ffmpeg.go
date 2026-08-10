@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -172,16 +173,97 @@ var (
 	errFFmpegBlackImage = errors.New("ffmpeg produced black image")
 )
 
+var ffmpegFrameCorruptionIndicators = []string{
+	"error while decoding",
+	"invalid data found when processing input",
+	"non-existing pps",
+	"incomplete frame",
+	"corrupt decoded frame",
+	"corrupt input packet",
+}
+
+// blackFrameTimestampOffsets lists relative timestamp adjustments (in seconds)
+// tried when FFmpeg produces a black image at the initial frame timestamp.
+var blackFrameTimestampOffsets = []float64{0, 1.0, 2.0, 3.0, 5.0, -1.0, -2.0}
+
 // captureFrame writes one PNG frame and returns whether the successful attempt
 // used libplacebo. Libplacebo captures retry once before falling back to the
 // software filter chain so transient Vulkan setup failures remain recoverable.
+// Black output images automatically retry near the requested timestamp using
+// relative offsets before failing.
 func captureFrame(ctx context.Context, runner Runner, cmdPath string, req captureRequest, logger api.Logger) (bool, error) {
+	var lastErr error
+	var lastUsedLib bool
+	retryingBlackFrame := false
+
+	for _, offset := range blackFrameTimestampOffsets {
+		candidateTS := req.Timestamp + offset
+		if candidateTS < 0 {
+			continue
+		}
+		attemptReq := req
+		attemptReq.Timestamp = candidateTS
+
+		usedLib, err := captureFrameSingle(ctx, runner, cmdPath, attemptReq, logger)
+		if err == nil {
+			if offset != 0 {
+				l := screenshotLogger(logger)
+				l.Debugf(
+					"screenshots: black image recovered with timestamp offset original=%.3f offset=%.3f new=%.3f",
+					req.Timestamp,
+					offset,
+					candidateTS,
+				)
+			}
+			return usedLib, nil
+		}
+
+		lastErr = err
+		lastUsedLib = usedLib
+
+		if errors.Is(err, errFFmpegBlackImage) {
+			retryingBlackFrame = true
+		} else if !retryingBlackFrame || !errors.Is(err, errFFmpegNoImage) {
+			break
+		}
+		l := screenshotLogger(logger)
+		l.Debugf(
+			"screenshots: ffmpeg capture produced unusable image at timestamp=%.3f, retrying timestamp offset",
+			candidateTS,
+		)
+	}
+
+	return lastUsedLib, lastErr
+}
+
+func captureFrameSingle(ctx context.Context, runner Runner, cmdPath string, req captureRequest, logger api.Logger) (bool, error) {
 	logger = screenshotLogger(logger)
 	if strings.TrimSpace(req.InputPath) == "" {
 		return false, errors.New("screenshots: input path required")
 	}
 	if strings.TrimSpace(req.OutputPath) == "" {
 		return false, errors.New("screenshots: output path required")
+	}
+	if req.FrameOverlay {
+		// Validate before drawtext can make a black source frame appear usable.
+		validationFile, err := os.CreateTemp(filepath.Dir(req.OutputPath), ".upbrr-overlay-check-*.png")
+		if err != nil {
+			return false, fmt.Errorf("screenshots: create overlay validation output: %w", err)
+		}
+		validationPath := validationFile.Name()
+		if err := validationFile.Close(); err != nil {
+			_ = os.Remove(validationPath)
+			return false, fmt.Errorf("screenshots: close overlay validation output: %w", err)
+		}
+		defer func() { _ = os.Remove(validationPath) }()
+
+		validationReq := req
+		validationReq.OutputPath = validationPath
+		validationReq.FrameOverlay = false
+		validationReq.UseLibplacebo = false
+		if _, err := captureFrameSingle(ctx, runner, cmdPath, validationReq, logger); err != nil {
+			return false, err
+		}
 	}
 
 	useLibplacebo := req.UseLibplacebo && req.ToneMap && !req.FrameOverlay
@@ -195,6 +277,9 @@ func captureFrame(ctx context.Context, runner Runner, cmdPath string, req captur
 		ffmpegFilterFromArgs(args),
 	)
 	result, err := runner.Run(ctx, cmdPath, args, "")
+	if corruptionErr := rejectCorruptCaptureOutput(req.OutputPath, result); corruptionErr != nil {
+		return useLibplacebo, corruptionErr
+	}
 	if err == nil && result.ExitCode == 0 {
 		if err = validateCaptureOutput(req.OutputPath); err == nil {
 			logger.Tracef("screenshots: ffmpeg capture ok mode=%s exit_code=%d", ffmpegModeLabel(useLibplacebo), result.ExitCode)
@@ -215,6 +300,9 @@ func captureFrame(ctx context.Context, runner Runner, cmdPath string, req captur
 			ffmpegFilterFromArgs(args),
 		)
 		result, err = runner.Run(ctx, cmdPath, args, "")
+		if corruptionErr := rejectCorruptCaptureOutput(req.OutputPath, result); corruptionErr != nil {
+			return true, corruptionErr
+		}
 		if err == nil && result.ExitCode == 0 {
 			if err = validateCaptureOutput(req.OutputPath); err == nil {
 				logger.Tracef("screenshots: ffmpeg capture ok mode=%s retry=%t exit_code=%d", ffmpegModeLabel(true), true, result.ExitCode)
@@ -238,6 +326,9 @@ func captureFrame(ctx context.Context, runner Runner, cmdPath string, req captur
 			ffmpegFilterFromArgs(args),
 		)
 		result, err = runner.Run(ctx, cmdPath, args, "")
+		if corruptionErr := rejectCorruptCaptureOutput(req.OutputPath, result); corruptionErr != nil {
+			return false, corruptionErr
+		}
 		if err == nil && result.ExitCode == 0 {
 			if err = validateCaptureOutput(req.OutputPath); err == nil {
 				logger.Tracef("screenshots: ffmpeg capture ok mode=%s exit_code=%d", ffmpegModeLabel(false), result.ExitCode)
@@ -251,6 +342,9 @@ func captureFrame(ctx context.Context, runner Runner, cmdPath string, req captur
 		stderr = err.Error()
 	}
 	logger.Debugf("screenshots: ffmpeg capture exhausted mode=%s reason=%s", ffmpegModeLabel(useLibplacebo), ffmpegResultPreview(result, err))
+	if err != nil {
+		return useLibplacebo, fmt.Errorf("screenshots: ffmpeg capture failed: %w", err)
+	}
 	return useLibplacebo, fmt.Errorf("screenshots: ffmpeg capture failed: %s", stderr)
 }
 
@@ -288,6 +382,9 @@ func captureFrameBytes(ctx context.Context, runner Runner, cmdPath string, req p
 	args := buildFFmpegPreviewArgs(req)
 	logger.Tracef("screenshots: ffmpeg preview attempt timestamp_seconds=%.3f input=%s", req.Timestamp, req.InputPath)
 	result, err := runner.Run(ctx, cmdPath, args, "")
+	if corruptionErr := ffmpegFrameCorruptionError(result.Stderr); corruptionErr != nil {
+		return nil, corruptionErr
+	}
 	if err == nil && result.ExitCode == 0 && len(result.Stdout) > 0 {
 		if err := validateImagePayload(result.Stdout); err != nil {
 			logger.Debugf("screenshots: ffmpeg preview rejected reason=%s", redaction.RedactValue(err.Error(), nil))
@@ -412,6 +509,26 @@ func ffmpegResultPreview(result CommandResult, err error) string {
 		message = message[:ffmpegLogPreviewLimit] + "...[truncated]"
 	}
 	return redaction.RedactValue(message, nil)
+}
+
+// ffmpegFrameCorruptionError maps allow-listed decoder diagnostics to a stable
+// hard failure without exposing FFmpeg's raw stderr.
+func ffmpegFrameCorruptionError(stderr []byte) error {
+	diagnostics := strings.ToLower(string(stderr))
+	for _, indicator := range ffmpegFrameCorruptionIndicators {
+		if strings.Contains(diagnostics, indicator) {
+			return fmt.Errorf("screenshots: %w: ffmpeg reported %q", internalerrors.ErrFrameCorruption, indicator)
+		}
+	}
+	return nil
+}
+
+func rejectCorruptCaptureOutput(outputPath string, result CommandResult) error {
+	err := ffmpegFrameCorruptionError(result.Stderr)
+	if err != nil {
+		_ = os.Remove(outputPath)
+	}
+	return err
 }
 
 func buildFFmpegPreviewArgs(req previewRequest) []string {

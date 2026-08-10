@@ -22,6 +22,7 @@ type mediaInfoDoc = mediafacts.MediaInfoDocument
 
 var canonicalResolutionWidths = []int{3840, 2560, 1920, 1280, 1024, 960, 854, 720, 15360, 7680, 0}
 var canonicalResolutionHeights = []int{2160, 1440, 1080, 720, 576, 540, 480, 8640, 4320, 0}
+var bitrateNumberRegex = regexp.MustCompile(`\d+(?:\.\d+)?`)
 
 func loadMediaInfoDoc(path string) (mediaInfoDoc, error) {
 	var doc mediaInfoDoc
@@ -37,6 +38,43 @@ func loadMediaInfoDoc(path string) (mediaInfoDoc, error) {
 		return doc, fmt.Errorf("metadata: parse mediainfo json: %w", err)
 	}
 	return doc, nil
+}
+
+func parseMediaInfoBitrate(value any) (int64, bool) {
+	text := strings.TrimSpace(fmtSprint(value))
+	if text == "" {
+		return 0, false
+	}
+	number := strings.ReplaceAll(strings.ReplaceAll(text, " ", ""), ",", "")
+	match := bitrateNumberRegex.FindString(number)
+	if match == "" {
+		return 0, false
+	}
+	parsed, err := strconv.ParseFloat(match, 64)
+	if err != nil {
+		return 0, false
+	}
+	multiplier := float64(1)
+	switch {
+	case strings.Contains(text, "GB/s"):
+		multiplier = 8_000_000_000
+	case strings.Contains(text, "MB/s"):
+		multiplier = 8_000_000
+	case strings.Contains(text, "KB/s"):
+		multiplier = 8_000
+	}
+	if multiplier == 1 {
+		lower := strings.ToLower(text)
+		switch {
+		case strings.Contains(lower, "gbit"), strings.Contains(lower, "gb/s"):
+			multiplier = 1_000_000_000
+		case strings.Contains(lower, "mbit"), strings.Contains(lower, "mb/s"):
+			multiplier = 1_000_000
+		case strings.Contains(lower, "kbit"), strings.Contains(lower, "kb/s"):
+			multiplier = 1_000
+		}
+	}
+	return int64(parsed * multiplier), true
 }
 
 func splitMediaInfoTracks(doc mediaInfoDoc) (general []map[string]any, video []map[string]any, audio []map[string]any) {

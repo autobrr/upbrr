@@ -709,7 +709,6 @@ func TestNewRegistryIncludesImageHostPolicies(t *testing.T) {
 		disableWithoutAPI    bool
 	}{
 		{tracker: "A4K", host: "onlyimage"},
-		{tracker: "BHD", host: "bhd"},
 		{
 			tracker:              "HDB",
 			host:                 "hdb",
@@ -736,6 +735,12 @@ func TestNewRegistryIncludesImageHostPolicies(t *testing.T) {
 		if policy.ConditionalHost != test.conditionalHost {
 			t.Errorf("%s conditional image host = %q", test.tracker, policy.ConditionalHost)
 		}
+	}
+	bhdPolicy, ok := registry.LookupImageHostPolicy("BHD")
+	if !ok ||
+		!slices.Equal(bhdPolicy.AllowedHosts, []string{"imgbox", "imgbb", "pixhost", "bhd", "passtheimage"}) ||
+		bhdPolicy.DisableWithoutRehost || bhdPolicy.DisableWithoutAPI || bhdPolicy.ConditionalHost != "" {
+		t.Errorf("BHD image policy = %#v, %t", bhdPolicy, ok)
 	}
 }
 

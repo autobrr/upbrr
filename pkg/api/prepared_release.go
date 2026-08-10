@@ -255,7 +255,26 @@ type NamingRequirement string
 type ReleaseAssessments struct {
 	MediaInfoUniqueID       UniqueIDStatus
 	MediaInfoEncodeSettings EncodeSettingsStatus
+	VideoBitrate            VideoBitrateAssessment
 	Naming                  NamingAssessment
+}
+
+// VideoBitrateStatus records whether a usable video bitrate was derived from
+// the prepared MediaInfo facts.
+type VideoBitrateStatus string
+
+const (
+	VideoBitrateStatusUnknown     VideoBitrateStatus = "unknown"
+	VideoBitrateStatusPresent     VideoBitrateStatus = "present"
+	VideoBitrateStatusUnavailable VideoBitrateStatus = "unavailable"
+	VideoBitrateStatusInvalid     VideoBitrateStatus = "invalid"
+)
+
+// VideoBitrateAssessment contains the prepared video bitrate and its evidence
+// status. BitsPerSecond is populated only when Status is Present.
+type VideoBitrateAssessment struct {
+	Status        VideoBitrateStatus
+	BitsPerSecond int64
 }
 
 // UniqueIDRequirementSatisfied reports whether the concrete assessment permits
