@@ -59,6 +59,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/ras"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/rf"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/rhd"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/rmc"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/sam"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/shri"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/sp"
@@ -101,7 +102,7 @@ func unit3DDefinitions() []trackers.Definition {
 	profiles := []unit3d.Profile{
 		a4k.Profile(), acm.Profile(), aither.Profile(), blu.Profile(), cbr.Profile(), dp.Profile(), emuw.Profile(), friki.Profile(), hhd.Profile(),
 		ihd.Profile(), itt.Profile(), lcd.Profile(), ldu.Profile(), lst.Profile(), lt.Profile(), lume.Profile(), mns.Profile(), oe.Profile(), otw.Profile(),
-		pt.Profile(), ptt.Profile(), r4e.Profile(), ras.Profile(), rf.Profile(), rhd.Profile(), sam.Profile(), shri.Profile(), sp.Profile(), stc.Profile(),
+		pt.Profile(), ptt.Profile(), r4e.Profile(), ras.Profile(), rf.Profile(), rhd.Profile(), rmc.Profile(), sam.Profile(), shri.Profile(), sp.Profile(), stc.Profile(),
 		tik.Profile(), tlz.Profile(), tos.Profile(), ttr.Profile(), ulcx.Profile(), utp.Profile(), yus.Profile(), znth.Profile(),
 	}
 	definitions := make([]trackers.Definition, 0, len(profiles))

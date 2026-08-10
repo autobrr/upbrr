@@ -288,6 +288,24 @@ func TestUnit3DPayloadCallbacksRejectKnownInvalidFacts(t *testing.T) {
 	}
 }
 
+func TestRMCConstructibilityRejectsReleasesNewerThanCutoff(t *testing.T) {
+	t.Parallel()
+
+	failures := validationPolicyFailuresForTest(t, "RMC", api.TrackerValidationSubject{Release: api.ReleaseInfo{Year: 2001}})
+	if !hasRuleFailure(failures, "rmc_release_year") {
+		t.Fatalf("RMC validation missing rmc_release_year failure: %#v", failures)
+	}
+}
+
+func TestRMCConstructibilityAllowsReleasesAtCutoff(t *testing.T) {
+	t.Parallel()
+
+	failures := validationPolicyFailuresForTest(t, "RMC", api.TrackerValidationSubject{Release: api.ReleaseInfo{Year: 2000}})
+	if hasRuleFailure(failures, "rmc_release_year") {
+		t.Fatalf("RMC rejected a release at the cutoff year: %#v", failures)
+	}
+}
+
 func encodeAssessments(status api.EncodeSettingsStatus) api.ReleaseAssessments {
 	return api.ReleaseAssessments{MediaInfoEncodeSettings: status}
 }
@@ -503,6 +521,11 @@ func TestEvaluateRulesRequestedStrictCategoryTrackers(t *testing.T) {
 			expectedRule: "require_movie_only",
 		},
 		{
+			tracker:      "RMC",
+			category:     api.CanonicalCategoryTV,
+			expectedRule: "require_movie_only",
+		},
+		{
 			tracker:      "BTN",
 			category:     api.CanonicalCategoryMovie,
 			expectedRule: "require_tv_only",
@@ -535,6 +558,7 @@ func TestEvaluateRulesStrictCategoryTrackersRejectMissingCategory(t *testing.T) 
 		"BTN": "require_tv_only",
 		"PTP": "require_movie_only",
 		"RF":  "require_movie_only",
+		"RMC": "require_movie_only",
 	} {
 		t.Run(tracker, func(t *testing.T) {
 			t.Parallel()

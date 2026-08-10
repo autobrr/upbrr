@@ -368,6 +368,11 @@ trackers:
     api_key: ""
     anon: false
     modq: false
+  RMC:
+    link_dir_name: ""
+    api_key: ""
+    anon: false
+    modq: false
   RTF:
     link_dir_name: ""
     username: ""
