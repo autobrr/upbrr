@@ -60,6 +60,7 @@ jobs:
           issue_number="$(
             gh issue list \
               --state open \
+              --search "in:title \"$title\"" \
               --limit 100 \
               --json number,title \
               --jq '.[] | select(.title == "Vulnerability scan failed") | .number' \
