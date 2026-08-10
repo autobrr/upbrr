@@ -764,16 +764,6 @@ type ImageHostPolicyProvider interface {
 	ImageHostPolicy() *ImageHostPolicy
 }
 
-// TorrentSearchPreference identifies tracker-owned torrent reuse selection behavior.
-type TorrentSearchPreference string
-
-const (
-	// TorrentSearchPreferenceNone applies the global torrent reuse preference.
-	TorrentSearchPreferenceNone TorrentSearchPreference = ""
-	// TorrentSearchPreferenceSmallPieces prefers the smallest reusable torrent pieces.
-	TorrentSearchPreferenceSmallPieces TorrentSearchPreference = "small_pieces"
-)
-
 // TorrentIdentityPolicy declares how torrent-client metadata identifies a tracker.
 type TorrentIdentityPolicy struct {
 	// TrackerURLPatterns match announce URLs reported by torrent clients.
@@ -784,8 +774,6 @@ type TorrentIdentityPolicy struct {
 	DetailIDPattern string
 	// WorkingTrackerID supplies a stable synthetic ID when a working announce URL is sufficient.
 	WorkingTrackerID string
-	// SearchPreference selects optional tracker-owned torrent reuse behavior.
-	SearchPreference TorrentSearchPreference
 	// InferMatchFromResolvedID treats a resolved tracker ID as provenance even
 	// when no announce URL was available in the matched torrent response.
 	InferMatchFromResolvedID bool

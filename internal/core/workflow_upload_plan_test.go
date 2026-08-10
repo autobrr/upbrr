@@ -360,14 +360,14 @@ func TestWorkflowUploadPlanAppliesSkipIfRehashAndQueuesSharedBaseUsers(t *testin
 	torrents := &workflowTorrentServiceCapture{result: api.TorrentResult{
 		Path:             filepath.Join(tempDir, "base.torrent"),
 		RehashedTrackers: []string{"PTP"},
-		SkippedTrackers:  []string{"MTV"},
+		SkippedTrackers:  []string{"BTN"},
 	}}
 	trackerService := &workflowRetainedUploadServiceFake{torrentPaths: trackerTorrentPaths}
 	builder := workflowUploadPlanBuilder{
 		config: config.Config{
 			TorrentCreation: config.TorrentCreationConfig{RehashCooldown: 10},
 			Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-				"MTV": {SkipIfRehash: true},
+				"BTN": {SkipIfRehash: true},
 			}},
 		},
 		resolver: workflowUploadResolverFixed{subject: api.UploadSubject{SourcePath: filepath.Join(tempDir, "Example.Release.2026.mkv")}},
@@ -381,7 +381,7 @@ func TestWorkflowUploadPlanAppliesSkipIfRehashAndQueuesSharedBaseUsers(t *testin
 			UploadReady: true,
 		},
 		{
-			TrackerID:   "MTV",
+			TrackerID:   "BTN",
 			Readiness:   api.ReadinessStatusReady,
 			UploadReady: true,
 		},
@@ -398,7 +398,7 @@ func TestWorkflowUploadPlanAppliesSkipIfRehashAndQueuesSharedBaseUsers(t *testin
 			Status:    api.StageStatusCompleted,
 		},
 		{
-			TrackerID: "MTV",
+			TrackerID: "BTN",
 			Decision:  api.DupeDecisionNoMatch,
 			Status:    api.StageStatusCompleted,
 		},
@@ -424,16 +424,16 @@ func TestWorkflowUploadPlanAppliesSkipIfRehashAndQueuesSharedBaseUsers(t *testin
 		t.Fatalf("build rehash upload plan: %v", err)
 	}
 	defer func() { _ = execution.Release() }()
-	if torrents.calls != 1 || !slices.Equal(torrents.subject.SkipIfRehashTrackers, []string{"MTV"}) {
-		t.Fatal("torrent preparation did not receive the MTV skip policy exactly once")
+	if torrents.calls != 1 || !slices.Equal(torrents.subject.SkipIfRehashTrackers, []string{"BTN"}) {
+		t.Fatal("torrent preparation did not receive the BTN skip policy exactly once")
 	}
 	if len(trackerService.projections) != 2 || trackerService.projections[0].TrackerID != "PTP" || trackerService.projections[1].TrackerID != "HDB" ||
 		!slices.Equal(trackerService.subject.RehashedTrackers, []string{"PTP"}) {
 		t.Fatalf("retained tracker projections = %#v", trackerService.projections)
 	}
-	if plan.Status != api.StageStatusReady || len(plan.Trackers) != 3 || plan.Trackers[1].TrackerID != "MTV" ||
+	if plan.Status != api.StageStatusReady || len(plan.Trackers) != 3 || plan.Trackers[1].TrackerID != "BTN" ||
 		plan.Trackers[1].Status != api.StageStatusSkipped || plan.Trackers[1].Eligible {
-		t.Fatalf("MTV skip plan = %#v", plan.Trackers)
+		t.Fatalf("BTN skip plan = %#v", plan.Trackers)
 	}
 }
 

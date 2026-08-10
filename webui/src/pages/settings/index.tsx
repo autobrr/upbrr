@@ -428,7 +428,7 @@ export default function SettingsPage(props: Props) {
               className={settingsInputClass}
               value={trackerAuthFilter}
               onChange={(event) => setTrackerAuthFilter(event.target.value)}
-              placeholder="MTV, cookies, api"
+              placeholder="BTN, cookies, api"
             />
           </label>
         </div>

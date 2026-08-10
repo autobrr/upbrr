@@ -167,16 +167,6 @@ func TestProductionMetadataTargetMatrix(t *testing.T) {
 			},
 		},
 		{
-			tracker:              "MTV",
-			requireKnownCategory: true,
-			requirements: []trackers.MetadataRequirement{
-				{Scope: trackers.MetadataScopeMovie, AnyOf: []trackers.MetadataField{trackers.MetadataFieldTMDB, trackers.MetadataFieldIMDB}},
-				{Scope: trackers.MetadataScopeTV, AnyOf: []trackers.MetadataField{trackers.MetadataFieldTVDB}},
-				{Scope: trackers.MetadataScopeTV, AnyOf: []trackers.MetadataField{trackers.MetadataFieldTVDBTitle}},
-				{Scope: trackers.MetadataScopeTV, AnyOf: []trackers.MetadataField{trackers.MetadataFieldTVDBDisambiguation}},
-			},
-		},
-		{
 			tracker:              "HDB",
 			requireKnownCategory: true,
 		},

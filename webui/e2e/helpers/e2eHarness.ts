@@ -381,7 +381,7 @@ trackers:
   HDS:
     announce_url: "http://tracker.invalid/announce"
     image_host: "imgbb"
-  MTV:
+  PTP:
     username: "e2e"
     password: "e2e"
     image_host: "imgbb"

@@ -600,7 +600,7 @@ func TestPixhostUploaderPostsCurrentDomain(t *testing.T) {
 
 	client := &http.Client{
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			if req.URL.String() != pixhostUploadURL {
+			if req.URL.String() != "https://api.pixhost.to/images" {
 				t.Fatalf("unexpected request URL: %s", req.URL.String())
 			}
 			mediaType, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))

@@ -370,23 +370,6 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		principalName:     "name",
 	},
 	{
-		name:              "MTV",
-		family:            trackers.FamilyStandalone,
-		contentMode:       trackers.UploadContentModeDescription,
-		authMode:          "api_and_upload_session",
-		authOwner:         "standalone/mtv/auth.go",
-		hasAuthResolver:   true,
-		supportsLogin:     true,
-		supports2FA:       true,
-		taxonomyOwner:     "standalone/mtv/taxonomy.go",
-		descriptionOwner:  "standalone/mtv/description.go",
-		mediaOwner:        "standalone/mtv/media.go",
-		descriptionGroup:  "mtv",
-		releaseNamePolicy: "standalone/mtv/v3",
-		projectorVersion:  "standalone-v2",
-		principalName:     "title",
-	},
-	{
 		name:              "NBL",
 		family:            trackers.FamilyStandalone,
 		contentMode:       trackers.UploadContentModeNone,
@@ -510,8 +493,8 @@ func TestTrackerResponsibilityLedgerCoversEveryBuiltIn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new registry: %v", err)
 	}
-	if len(trackerResponsibilityLedger) != 66 {
-		t.Fatalf("responsibility rows = %d, want 66", len(trackerResponsibilityLedger))
+	if len(trackerResponsibilityLedger) != 65 {
+		t.Fatalf("responsibility rows = %d, want 65", len(trackerResponsibilityLedger))
 	}
 
 	ledgerNames := make([]string, 0, len(trackerResponsibilityLedger))

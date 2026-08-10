@@ -1467,9 +1467,9 @@ describe("tracker advanced fields", () => {
             DefaultTrackers: [],
             PreferredTracker: "",
             Trackers: {
-              MTV: {
+              BTN: {
                 FaviconURL: "https://example.test/favicon.ico",
-                LinkDirName: "mtv",
+                LinkDirName: "btn",
                 APIKey: "api-key",
                 Username: "user",
                 Password: "pass",
@@ -1477,7 +1477,6 @@ describe("tracker advanced fields", () => {
                 Anon: false,
                 OTPURI: "otpauth://totp/example",
                 SkipIfRehash: true,
-                PreferMTV: true,
               },
             },
           },
@@ -1486,7 +1485,7 @@ describe("tracker advanced fields", () => {
       ListTrackerCatalog: async () =>
         trackerCatalog(
           trackerCatalogEntry(
-            "MTV",
+            "BTN",
             [
               ["FaviconURL", ""],
               ["LinkDirName", ""],
@@ -1497,7 +1496,6 @@ describe("tracker advanced fields", () => {
               ["Anon", false],
               ["OTPURI", ""],
               ["SkipIfRehash", false],
-              ["PreferMTV", false],
             ],
             false,
             "standalone",
@@ -1510,15 +1508,14 @@ describe("tracker advanced fields", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByText("MTV", { selector: ".settings-card__summary-name" }),
+        screen.getByText("BTN", { selector: ".settings-card__summary-name" }),
       ).toBeInTheDocument(),
     );
-    fireEvent.click(screen.getByText("MTV", { selector: ".settings-card__summary-name" }));
+    fireEvent.click(screen.getByText("BTN", { selector: ".settings-card__summary-name" }));
 
     expect(screen.queryByLabelText("Favicon URL")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Link dir name")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Skip if rehash")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Prefer MTV torrent")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Announce URL")).toBeInTheDocument();
     expect(screen.getByLabelText("OTP URI")).toBeInTheDocument();
   });

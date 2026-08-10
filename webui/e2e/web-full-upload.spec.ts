@@ -296,18 +296,16 @@ test("embedded web reports an optional tracker dry run after a duplicate overrid
   }
 });
 
-test("embedded web renders mixed, incomplete, and MTV manual duplicate evidence", async ({
-  page,
-}) => {
+test("embedded web renders mixed, incomplete, and manual duplicate evidence", async ({ page }) => {
   const workspace = await createE2EWorkspace();
-  workspace.env.UPBRR_E2E_DUPE_SCENARIOS = "HDS=mixed_incomplete,MTV=mtv_manual";
+  workspace.env.UPBRR_E2E_DUPE_SCENARIOS = "HDS=mixed_incomplete,PTP=manual";
   let app: AppServer | undefined;
   try {
     app = await startApp(workspace);
     await fetchMetadata(page, app.url, workspace.sourcePath);
     await page.getByRole("button", { name: "Dupe Check" }).click();
     await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
-    for (const tracker of ["HDS", "MTV"]) {
+    for (const tracker of ["HDS", "PTP"]) {
       await page.getByRole("checkbox", { name: tracker }).check();
     }
     await runDuplicateCheck(page);
@@ -326,7 +324,7 @@ test("embedded web renders mixed, incomplete, and MTV manual duplicate evidence"
     ).toBeVisible();
     await expect(page.getByText(/evidence partial \(tracker_title\)/)).toBeVisible();
 
-    for (const tracker of ["HDS", "MTV"]) {
+    for (const tracker of ["HDS", "PTP"]) {
       await expect(page.getByLabel(`Acknowledge dupe risk for ${tracker}`)).toBeVisible();
     }
     await expect(

@@ -76,14 +76,53 @@ func TestParseMediaInfoBitrate(t *testing.T) {
 		wantOK bool
 	}{
 		{name: "empty", wantOK: false},
-		{name: "bad", value: "bad", wantOK: false},
-		{name: "kbit", value: "512 kbit/s", want: 512_000, wantOK: true},
-		{name: "mbit", value: "12 Mbit/s", want: 12_000_000, wantOK: true},
-		{name: "gbit", value: "1.5 Gbit/s", want: 1_500_000_000, wantOK: true},
-		{name: "lowercase mb/s", value: "12 mb/s", want: 12_000_000, wantOK: true},
-		{name: "KB/s", value: "512 KB/s", want: 4_096_000, wantOK: true},
-		{name: "MB/s", value: "1.5 MB/s", want: 12_000_000, wantOK: true},
-		{name: "GB/s", value: "2 GB/s", want: 16_000_000_000, wantOK: true},
+		{
+			name:   "bad",
+			value:  "bad",
+			wantOK: false,
+		},
+		{
+			name:   "kbit",
+			value:  "512 kbit/s",
+			want:   512_000,
+			wantOK: true,
+		},
+		{
+			name:   "mbit",
+			value:  "12 Mbit/s",
+			want:   12_000_000,
+			wantOK: true,
+		},
+		{
+			name:   "gbit",
+			value:  "1.5 Gbit/s",
+			want:   1_500_000_000,
+			wantOK: true,
+		},
+		{
+			name:   "lowercase mb/s",
+			value:  "12 mb/s",
+			want:   12_000_000,
+			wantOK: true,
+		},
+		{
+			name:   "KB/s",
+			value:  "512 KB/s",
+			want:   4_096_000,
+			wantOK: true,
+		},
+		{
+			name:   "MB/s",
+			value:  "1.5 MB/s",
+			want:   12_000_000,
+			wantOK: true,
+		},
+		{
+			name:   "GB/s",
+			value:  "2 GB/s",
+			want:   16_000_000_000,
+			wantOK: true,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -63,7 +63,7 @@ func TestEnsureDescriptionImageHostSkipUploadDoesNotMaterializeURLOnlySlots(t *t
 	trackerCfg := config.TrackerConfig{ImageHost: "imgbox"}
 
 	resolution, err := ensureDescriptionImageHostWithDataAndRegistry(
-		context.Background(), "MTV", meta, cfg, trackerCfg, repo, &stubImageService{}, api.NopLogger{}, descriptionAssetsTestRegistry(t), nil,
+		context.Background(), "BTN", meta, cfg, trackerCfg, repo, &stubImageService{}, api.NopLogger{}, descriptionAssetsTestRegistry(t), nil,
 	)
 	if err != nil {
 		t.Fatalf("ensure image host: %v", err)
