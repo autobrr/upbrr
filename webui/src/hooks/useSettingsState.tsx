@@ -1655,9 +1655,31 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
       const trackerOptions = catalogEntries.map((entry) => entry.name);
       const availableTrackers = trackerOptions.filter((name) => !visibleTrackerSet.has(name));
       const trackerClientOptions = [{ value: "", label: "" }, ...torrentClientOptions];
+      const imageCfg =
+        configData.ImageHosting &&
+        typeof configData.ImageHosting === "object" &&
+        !Array.isArray(configData.ImageHosting)
+          ? (configData.ImageHosting as ConfigMap)
+          : null;
+
+      const trackerHasEnabledOwnedImageHost = (trackerName: string) => {
+        const trackerKey = trackerName.trim().toUpperCase();
+        const ownerByHost = imageHostPolicyMetadata?.OwnedHosts ?? {};
+        return (imageHostPolicyMetadata?.TrackerUploadHosts?.[trackerKey] ?? []).some((host) => {
+          const normalizedHost = normalizeImageHostValue(host);
+          const enabledKey = conditionalImageHostEnabledKeys[normalizedHost];
+          return (
+            ownerByHost[normalizedHost]?.trim().toUpperCase() === trackerKey &&
+            Boolean(enabledKey && imageCfg?.[enabledKey])
+          );
+        });
+      };
 
       const trackerSchemaFor = (entry: TrackerCatalogEntry) => {
-        return entry.fields.map((field) => {
+        const fields = trackerHasEnabledOwnedImageHost(entry.name)
+          ? entry.fields.filter((field) => field.key !== "ImageHost")
+          : entry.fields;
+        return fields.map((field) => {
           const base = trackerFieldPresentation(field.key);
           if (field.key === "ImageHost") {
             return { ...base, options: trackerOptionsForImageHost(entry.name) };
