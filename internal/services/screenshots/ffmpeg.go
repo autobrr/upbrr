@@ -153,6 +153,9 @@ type frameInfoResult struct {
 type previewRequest struct {
 	InputPath string
 	Timestamp float64
+	ToneMap   bool
+	Algorithm string
+	Desat     float64
 }
 
 const (
@@ -542,7 +545,11 @@ func buildFFmpegPreviewArgs(req previewRequest) []string {
 		"-sn",
 		"-dn",
 		"-frames:v", "1",
-		"-vf", "format=rgb24",
+		"-vf", buildFilterChain(captureRequest{
+			ToneMap:   req.ToneMap,
+			Algorithm: req.Algorithm,
+			Desat:     req.Desat,
+		}, false),
 		"-f", "image2pipe",
 		"-vcodec", "png",
 		"-",

@@ -584,7 +584,8 @@ func (s *Service) Capture(
 
 // PreviewFrame captures one decodable, non-black PNG into memory without
 // persisting it. DVD inputs try the selected VOB segment followed by later
-// segments when a candidate yields no usable frame.
+// segments when a candidate yields no usable frame. When enabled for HDR/DV
+// inputs, it applies configured software tone mapping before returning.
 func (s *Service) PreviewFrame(ctx context.Context, meta api.ScreenshotSubject, timestampSeconds float64) (preview api.ScreenshotPreview, err error) {
 	defer func() {
 		if err != nil {
@@ -638,6 +639,9 @@ func (s *Service) PreviewFrame(ctx context.Context, meta api.ScreenshotSubject, 
 		payload, err = captureFrameBytes(ctx, s.runner, cmd, previewRequest{
 			InputPath: candidate.SourcePath,
 			Timestamp: candidate.Timestamp,
+			ToneMap:   shouldTonemap(meta, s.cfg),
+			Algorithm: s.cfg.ScreenshotHandling.TonemapAlgorithm,
+			Desat:     s.cfg.ScreenshotHandling.Desat,
 		}, s.logger)
 		if err == nil {
 			break

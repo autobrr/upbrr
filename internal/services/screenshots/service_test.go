@@ -280,6 +280,41 @@ func TestPreviewFrameExcludesDVDMenuVOB(t *testing.T) {
 	}
 }
 
+func TestPreviewFrameTonemapsHDR(t *testing.T) {
+	ffmpegRoot := t.TempDir()
+	if err := writeTestBundledFFmpeg(ffmpegRoot); err != nil {
+		t.Fatalf("write bundled ffmpeg: %v", err)
+	}
+	t.Chdir(ffmpegRoot)
+
+	runner := &scriptedRunner{results: []CommandResult{{
+		Stdout: testPNGBytes(t, color.RGBA{
+			R: 16,
+			G: 16,
+			B: 16,
+			A: 255,
+		}),
+		ExitCode: 0,
+	}}}
+	service := NewService(config.Config{ScreenshotHandling: config.ScreenshotHandlingConfig{
+		ToneMap:          true,
+		TonemapAlgorithm: "hable",
+		Desat:            0.25,
+	}}, api.NopLogger{}, t.TempDir(), runner)
+	_, err := service.PreviewFrame(context.Background(), api.ScreenshotSubject{
+		SourcePath: "Example.Release.2026.1080p-GRP.mkv",
+		HDR:        "HDR10",
+	}, 1)
+	if err != nil {
+		t.Fatalf("preview frame: %v", err)
+	}
+
+	want := "zscale=transfer=linear,tonemap=tonemap=hable:desat=0.25,zscale=transfer=bt709,format=rgb24"
+	if got := ffmpegValueAfter(runner.calls[0].args, "-vf"); got != want {
+		t.Fatalf("preview filter = %q, want %q", got, want)
+	}
+}
+
 func TestCaptureReturnsHardErrorAndCancelsSiblingFramesForCorruption(t *testing.T) {
 	root := t.TempDir()
 	sourcePath := filepath.Join(root, "Example.Release.2026.1080p-GRP.mkv")

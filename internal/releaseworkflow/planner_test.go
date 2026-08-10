@@ -991,6 +991,52 @@ func TestContinuationPlannerRecapturesRequestedMediaAfterArtifactsDeleted(t *tes
 	}
 }
 
+func TestContinuationPlannerCapturesEachNewExplicitScreenshotIndex(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.July, 23, 1, 2, 3, 0, time.UTC)
+	current := readyContinuationPlannerResult(t, now)
+	current.Media = &api.MediaArtifactSet{
+		Status: api.StageStatusBlocked,
+		Artifacts: []api.MediaArtifact{{
+			ID:       "screen-3",
+			Kind:     api.MediaArtifactScreenshot,
+			Index:    3,
+			Selected: true,
+		}},
+		RequiredActions: []api.RequiredAction{{
+			ID:     "media-required",
+			Kind:   api.RequiredActionProvideTrackerInput,
+			Status: api.RequiredActionStatusPending,
+		}},
+	}
+	request := api.ContinueReleaseWorkflowRequest{
+		IdempotencyKey: "continue-capture-explicit",
+		Goal:           api.WorkflowGoalMediaReady,
+		Intent: api.WorkflowIntent{
+			TrackerIDs:             []api.TrackerID{"ALPHA"},
+			ProjectionInstructions: map[api.TrackerID]api.TrackerProjectionInstructions{},
+			Media: &api.MediaCaptureInstructions{
+				Purpose: api.ScreenshotPurposeFinal,
+				Selections: []api.ScreenshotSelection{{
+					Index: 4,
+				}},
+			},
+		},
+	}
+
+	command, stage := planContinuationCommand(request, current, now)
+	if _, ok := command.(CaptureMediaCommand); !ok || stage != "capture-media" {
+		t.Fatalf("new explicit screenshot plan: stage=%q command=%#v", stage, command)
+	}
+
+	request.Intent.Media.Selections[0].Index = 3
+	command, stage = planContinuationCommand(request, current, now)
+	if command != nil || stage != "capture-media" {
+		t.Fatalf("retained explicit screenshot plan: stage=%q command=%#v", stage, command)
+	}
+}
+
 func TestContinuationMediaIntentCanResolveItsPendingGlobalAction(t *testing.T) {
 	t.Parallel()
 
