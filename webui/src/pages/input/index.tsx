@@ -1890,6 +1890,46 @@ export default function InputPage(props: Props) {
                       />
                     </div>
                     <div className="settings-field">
+                      <label htmlFor="release-distributor">Distributor</label>
+                      <div className="flex gap-2">
+                        <input
+                          id="release-distributor"
+                          value={view.intent.metadata.Distributor ?? ""}
+                          onChange={(event) =>
+                            facet.changeMetadata({
+                              ...view.intent.metadata,
+                              Distributor: event.target.value,
+                            })
+                          }
+                          placeholder="Example Distributor"
+                        />
+                        <Button
+                          className="h-auto"
+                          type="button"
+                          aria-label="Remove distributor"
+                          onClick={() =>
+                            facet.changeMetadata({ ...view.intent.metadata, Distributor: "" })
+                          }
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="settings-field">
+                      <label htmlFor="release-original-language">Original language</label>
+                      <input
+                        id="release-original-language"
+                        value={view.intent.metadata.OriginalLanguage ?? ""}
+                        onChange={(event) =>
+                          facet.changeMetadata({
+                            ...view.intent.metadata,
+                            OriginalLanguage: event.target.value,
+                          })
+                        }
+                        placeholder="ja"
+                      />
+                    </div>
+                    <div className="settings-field">
                       <label htmlFor="release-edition">Edition</label>
                       <input
                         id="release-edition"
@@ -1939,18 +1979,31 @@ export default function InputPage(props: Props) {
                     </div>
                     <div className="settings-field">
                       <label htmlFor="release-episode-title">Episode title</label>
-                      <input
-                        id="release-episode-title"
-                        value={releaseEdits?.episodeTitle || ""}
-                        onChange={(event) => {
-                          setReleaseEdits((prev) => ({
-                            ...prev,
-                            episodeTitle: event.target.value,
-                          }));
-                          markReleaseTouched("episodeTitle");
-                        }}
-                        placeholder="Pilot"
-                      />
+                      <div className="flex gap-2">
+                        <input
+                          id="release-episode-title"
+                          value={releaseEdits?.episodeTitle || ""}
+                          onChange={(event) => {
+                            setReleaseEdits((prev) => ({
+                              ...prev,
+                              episodeTitle: event.target.value,
+                            }));
+                            markReleaseTouched("episodeTitle");
+                          }}
+                          placeholder="Pilot"
+                        />
+                        <Button
+                          className="h-auto"
+                          type="button"
+                          aria-label="Remove episode title"
+                          onClick={() => {
+                            setReleaseEdits((prev) => ({ ...prev, episodeTitle: "" }));
+                            markReleaseTouched("episodeTitle");
+                          }}
+                        >
+                          Remove
+                        </Button>
+                      </div>
                     </div>
                     <div className="settings-field">
                       <label htmlFor="release-manual-year">Manual year</label>

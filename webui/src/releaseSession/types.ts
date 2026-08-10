@@ -23,6 +23,7 @@ import type {
   DescriptionSet,
   MediaArtifactSet,
   MediaCaptureInstructions,
+  MetadataOverrides,
   ReleaseWorkflowCurrent,
   TrackerPreflightAssessment,
   TrackerReleaseProjectionSet,
@@ -66,6 +67,7 @@ export type PlaylistStatus =
 export type PreparationIntent = Readonly<{
   sourceLookupURL: string;
   identity: Readonly<ExternalIDOverrides>;
+  metadata: Readonly<MetadataOverrides>;
   releaseName: Readonly<ReleaseNameOverrides>;
   playlist: Readonly<{ Set: boolean; Selected: readonly string[]; UseAll: boolean }>;
 }>;
@@ -115,6 +117,7 @@ export type InputFacet = Readonly<{
   selectSource(value: string): void;
   changeSourceLookupURL(value: string): void;
   changeIdentity(value: Readonly<ExternalIDOverrides>): void;
+  changeMetadata(value: Readonly<MetadataOverrides>): void;
   changeReleaseName(value: Readonly<ReleaseNameOverrides>): void;
   chooseTrackers(trackers: readonly string[]): void;
   choosePlaylists(playlists: readonly string[], useAll: boolean): void;
