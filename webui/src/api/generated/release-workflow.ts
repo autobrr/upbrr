@@ -990,9 +990,11 @@ export type ReleaseNameOverrides = Readonly<{
   ManualDate?: string | null;
   ManualYear?: number | null;
   NoAKA?: boolean | null;
+  NoDistributor?: boolean | null;
   NoDual?: boolean | null;
   NoDub?: boolean | null;
   NoEdition?: boolean | null;
+  NoEpisodeTitle?: boolean | null;
   NoSeason?: boolean | null;
   NoTag?: boolean | null;
   NoYear?: boolean | null;
@@ -1309,9 +1311,11 @@ export type ReleaseWorkflowUploadReleaseName = Readonly<{
   episodeTitle?: string | null;
   manualYear?: number | null;
   noAka?: boolean | null;
+  noDistributor?: boolean | null;
   noDual?: boolean | null;
   noDub?: boolean | null;
   noEdition?: boolean | null;
+  noEpisodeTitle?: boolean | null;
   noSeason?: boolean | null;
   noTag?: boolean | null;
   noYear?: boolean | null;

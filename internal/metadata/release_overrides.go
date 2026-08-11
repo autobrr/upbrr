@@ -68,6 +68,12 @@ func mergeReleaseNameOverrides(base api.ReleaseNameOverrides, incoming api.Relea
 	if incoming.NoTag != nil {
 		result.NoTag = incoming.NoTag
 	}
+	if incoming.NoEpisodeTitle != nil {
+		result.NoEpisodeTitle = incoming.NoEpisodeTitle
+	}
+	if incoming.NoDistributor != nil {
+		result.NoDistributor = incoming.NoDistributor
+	}
 	if incoming.NoEdition != nil {
 		result.NoEdition = incoming.NoEdition
 	}
@@ -104,6 +110,8 @@ func hasReleaseNameOverrides(overrides api.ReleaseNameOverrides) bool {
 		overrides.NoYear != nil ||
 		overrides.NoAKA != nil ||
 		overrides.NoTag != nil ||
+		overrides.NoEpisodeTitle != nil ||
+		overrides.NoDistributor != nil ||
 		overrides.NoEdition != nil ||
 		overrides.NoDub != nil ||
 		overrides.NoDual != nil ||
@@ -194,6 +202,12 @@ func applyReleaseNameValueOverrides(meta *preparationstate.State) {
 	}
 	if overrides.EpisodeTitle != nil {
 		meta.EpisodeTitle = strings.TrimSpace(*overrides.EpisodeTitle)
+	}
+	if overrides.NoEpisodeTitle != nil && *overrides.NoEpisodeTitle {
+		meta.EpisodeTitle = ""
+	}
+	if overrides.NoDistributor != nil && *overrides.NoDistributor {
+		meta.Distributor = ""
 	}
 	if overrides.ManualYear != nil && *overrides.ManualYear > 0 {
 		meta.Release.Year = *overrides.ManualYear
@@ -299,6 +313,9 @@ func applyReleaseNameOverrides(req api.ReleaseNameRequest, overrides api.Release
 	}
 	if overrides.NoTag != nil && *overrides.NoTag {
 		req.Tag = ""
+	}
+	if overrides.NoEpisodeTitle != nil && *overrides.NoEpisodeTitle {
+		req.EpisodeTitle = ""
 	}
 	if overrides.NoEdition != nil && *overrides.NoEdition {
 		req.Edition = ""

@@ -975,6 +975,22 @@ func TestBuildCLIRequestMetadataOverrides(t *testing.T) {
 	}
 }
 
+func TestBuildCLIRequestOmissionAliases(t *testing.T) {
+	opts, visited, paths, err := parseCLIOptions([]string{"-net", "-ndist", "-ne", "show.mkv"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	req, err := buildCLIRequest(opts, visited, paths, 4)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	if req.ReleaseNameOverrides.NoEpisodeTitle == nil || !*req.ReleaseNameOverrides.NoEpisodeTitle ||
+		req.ReleaseNameOverrides.NoDistributor == nil || !*req.ReleaseNameOverrides.NoDistributor ||
+		req.ReleaseNameOverrides.NoEdition == nil || !*req.ReleaseNameOverrides.NoEdition {
+		t.Fatalf("expected omission overrides, got %#v", req.ReleaseNameOverrides)
+	}
+}
+
 func TestBuildCLIRequestTrackerConfigOverrides(t *testing.T) {
 	opts, visited, paths, err := parseCLIOptions([]string{
 		"--anon",

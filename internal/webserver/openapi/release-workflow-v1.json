@@ -3871,6 +3871,16 @@
               }
             ]
           },
+          "NoDistributor": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "NoDual": {
             "anyOf": [
               {
@@ -3892,6 +3902,16 @@
             ]
           },
           "NoEdition": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "NoEpisodeTitle": {
             "anyOf": [
               {
                 "type": "boolean"
@@ -5558,6 +5578,16 @@
               }
             ]
           },
+          "noDistributor": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "noDual": {
             "anyOf": [
               {
@@ -5579,6 +5609,16 @@
             ]
           },
           "noEdition": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "noEpisodeTitle": {
             "anyOf": [
               {
                 "type": "boolean"

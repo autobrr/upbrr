@@ -19,6 +19,8 @@ func TestMapPreparationRequestPreservesSingleSourceIntent(t *testing.T) {
 	tag := "GRP"
 	distributor := "Example Distributor"
 	personalRelease := false
+	omitEpisodeTitle := true
+	omitDistributor := true
 	client := "qbit"
 	forceRecheck := false
 	request := Request{
@@ -32,9 +34,11 @@ func TestMapPreparationRequestPreservesSingleSourceIntent(t *testing.T) {
 		},
 		ExternalIDOverrides: ExternalIDOverrides{TMDBID: &tmdbID},
 		ReleaseNameOverrides: ReleaseNameOverrides{
-			Category: &category,
-			Type:     &releaseType,
-			Tag:      &tag,
+			Category:       &category,
+			Type:           &releaseType,
+			Tag:            &tag,
+			NoEpisodeTitle: &omitEpisodeTitle,
+			NoDistributor:  &omitDistributor,
 		},
 		MetadataOverrides: MetadataOverrides{
 			Distributor:     &distributor,
@@ -66,9 +70,11 @@ func TestMapPreparationRequestPreservesSingleSourceIntent(t *testing.T) {
 			Identity: ExternalIDOverrides{TMDBID: new(123456)},
 			Category: &canonicalCategory,
 			ReleaseName: ReleaseNameOverrides{
-				Category: new("TV"),
-				Type:     new("episode"),
-				Tag:      new("GRP"),
+				Category:       new("TV"),
+				Type:           new("episode"),
+				Tag:            new("GRP"),
+				NoEpisodeTitle: new(true),
+				NoDistributor:  new(true),
 			},
 			Metadata:     MetadataOverrides{Distributor: new("Example Distributor"), PersonalRelease: new(false)},
 			SourceLookup: "https://example.invalid/source",
@@ -97,6 +103,8 @@ func TestMapPreparationRequestPreservesSingleSourceIntent(t *testing.T) {
 
 	*request.ExternalIDOverrides.TMDBID = 999999
 	*request.ReleaseNameOverrides.Tag = "CHANGED"
+	*request.ReleaseNameOverrides.NoEpisodeTitle = false
+	*request.ReleaseNameOverrides.NoDistributor = false
 	*request.MetadataOverrides.Distributor = "CHANGED"
 	*request.ClientOverrides.Client = "changed"
 	request.TrackerIDOverrides["btn"] = "changed"

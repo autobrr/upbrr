@@ -462,6 +462,8 @@ func compositeUploadFactInstructions(
 			NoYear:           cloneBoolPointer(releaseName.NoYear),
 			NoAKA:            cloneBoolPointer(releaseName.NoAKA),
 			NoTag:            cloneBoolPointer(releaseName.NoTag),
+			NoEpisodeTitle:   cloneBoolPointer(releaseName.NoEpisodeTitle),
+			NoDistributor:    cloneBoolPointer(releaseName.NoDistributor),
 			NoEdition:        cloneBoolPointer(releaseName.NoEdition),
 			NoDub:            cloneBoolPointer(releaseName.NoDub),
 			NoDual:           cloneBoolPointer(releaseName.NoDual),

@@ -129,18 +129,20 @@ func TestBuildReleaseNameCleanName(t *testing.T) {
 
 func TestApplyReleaseNameOverridesKeepsNamingOnlyControls(t *testing.T) {
 	base := api.ReleaseNameRequest{
-		Category: "MOVIE",
-		Title:    "Example",
-		Tag:      "-GROUP",
-		Audio:    "DD+5.1",
-		Edition:  "Director",
+		Category:     "MOVIE",
+		Title:        "Example",
+		Tag:          "-GROUP",
+		Audio:        "DD+5.1",
+		Edition:      "Director",
+		EpisodeTitle: "Example Episode",
 	}
 	overrides := api.ReleaseNameOverrides{
-		NoTag:      new(true),
-		NoEdition:  new(true),
-		ManualDate: new("2025-01-01"),
-		NoAKA:      new(true),
-		Type:       new("REMUX"),
+		NoTag:          new(true),
+		NoEdition:      new(true),
+		NoEpisodeTitle: new(true),
+		ManualDate:     new("2025-01-01"),
+		NoAKA:          new(true),
+		Type:           new("REMUX"),
 	}
 	updated := applyReleaseNameOverrides(base, overrides, api.NopLogger{})
 	if updated.Tag != "" {
@@ -148,6 +150,9 @@ func TestApplyReleaseNameOverridesKeepsNamingOnlyControls(t *testing.T) {
 	}
 	if updated.Edition != "" {
 		t.Fatalf("expected edition cleared, got %q", updated.Edition)
+	}
+	if updated.EpisodeTitle != "" {
+		t.Fatalf("expected episode title cleared, got %q", updated.EpisodeTitle)
 	}
 	if !updated.ManualDate {
 		t.Fatalf("expected manual date naming mode, got manual=%t", updated.ManualDate)
@@ -169,6 +174,7 @@ func TestApplyReleaseNameValueOverridesUpdatesCanonicalFacts(t *testing.T) {
 			ServiceLongName:  "Netflix",
 			Region:           "A",
 			Edition:          "Extended",
+			Distributor:      "Example Distributor",
 			Audio:            "DD+ 5.1",
 			Tag:              "-GRP",
 			EpisodeTitle:     "Parsed Title",
@@ -307,6 +313,24 @@ func TestApplyReleaseNameValueOverridesUpdatesCanonicalFacts(t *testing.T) {
 			assert: func(t *testing.T, meta preparationstate.State) {
 				if meta.EpisodeTitle != "" {
 					t.Fatalf("episode title fact = %q", meta.EpisodeTitle)
+				}
+			},
+		},
+		{
+			name:      "no episode title clears the fact",
+			overrides: api.ReleaseNameOverrides{NoEpisodeTitle: new(true)},
+			assert: func(t *testing.T, meta preparationstate.State) {
+				if meta.EpisodeTitle != "" {
+					t.Fatalf("episode title fact = %q", meta.EpisodeTitle)
+				}
+			},
+		},
+		{
+			name:      "no distributor clears the fact",
+			overrides: api.ReleaseNameOverrides{NoDistributor: new(true)},
+			assert: func(t *testing.T, meta preparationstate.State) {
+				if meta.Distributor != "" {
+					t.Fatalf("distributor fact = %q", meta.Distributor)
 				}
 			},
 		},

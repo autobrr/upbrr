@@ -250,7 +250,7 @@ describe("InputPage", () => {
     expect(screen.getByText("TMDB generation 2")).toBeVisible();
   });
 
-  it("explicitly removes the episode title from the release name", () => {
+  it("forces generated release-name omissions", () => {
     const facet = readyInputFacet(1);
     render(
       <InputPage
@@ -267,9 +267,13 @@ describe("InputPage", () => {
     );
 
     fireEvent.click(screen.getByText("Edit Release Details"));
-    fireEvent.click(screen.getByRole("button", { name: "Remove episode title" }));
+    fireEvent.click(screen.getByLabelText("No episode title"));
+    fireEvent.click(screen.getByLabelText("No distributor"));
 
-    expect(facet.changeReleaseName).toHaveBeenLastCalledWith({ EpisodeTitle: "" });
+    expect(facet.changeReleaseName).toHaveBeenLastCalledWith({
+      NoEpisodeTitle: true,
+      NoDistributor: true,
+    });
   });
 
   it("edits distributor and original-language metadata", () => {
@@ -295,9 +299,6 @@ describe("InputPage", () => {
     expect(facet.changeMetadata).toHaveBeenLastCalledWith({
       Distributor: "Example Distributor",
     });
-
-    fireEvent.click(screen.getByRole("button", { name: "Remove distributor" }));
-    expect(facet.changeMetadata).toHaveBeenLastCalledWith({ Distributor: "" });
 
     fireEvent.change(screen.getByLabelText("Original language"), {
       target: { value: "ja" },

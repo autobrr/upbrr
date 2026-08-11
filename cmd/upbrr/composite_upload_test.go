@@ -119,6 +119,8 @@ func TestMapCLICompositeUploadRequestPreservesPerUploadOptions(t *testing.T) {
 			NoYear:           new(false),
 			NoAKA:            new(false),
 			NoTag:            new(false),
+			NoEpisodeTitle:   new(false),
+			NoDistributor:    new(false),
 			NoEdition:        new(false),
 			NoDub:            new(false),
 			NoDual:           new(false),
@@ -170,6 +172,10 @@ func TestMapCLICompositeUploadRequestPreservesPerUploadOptions(t *testing.T) {
 		*mapped.Preparation.Facts.ExternalIDs.IMDB.Value != "tt0000456" ||
 		mapped.Preparation.Facts.ReleaseName.Tag == nil ||
 		*mapped.Preparation.Facts.ReleaseName.Tag != "GRP" ||
+		mapped.Preparation.Facts.ReleaseName.NoEpisodeTitle == nil ||
+		*mapped.Preparation.Facts.ReleaseName.NoEpisodeTitle ||
+		mapped.Preparation.Facts.ReleaseName.NoDistributor == nil ||
+		*mapped.Preparation.Facts.ReleaseName.NoDistributor ||
 		mapped.Preparation.Facts.Metadata.Anime == nil ||
 		*mapped.Preparation.Facts.Metadata.Anime {
 		t.Fatalf("fact mapping = %#v", mapped.Preparation.Facts)
