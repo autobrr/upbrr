@@ -363,21 +363,23 @@ func (s *Service) Capture(
 		timestamp float64
 	}
 
-	errors := make([]api.ScreenshotError, 0)
+	captureErrors := make([]api.ScreenshotError, 0)
 	jobs := make([]captureJob, 0, len(selections))
 	for _, selection := range selections {
 		ts := selectionTimestamp(selection, info.FrameRate)
 		if ts <= 0 {
-			errors = append(errors, api.ScreenshotError{Index: selection.Index, Message: "invalid timestamp"})
+			captureErrors = append(captureErrors, api.ScreenshotError{Index: selection.Index, Message: "invalid timestamp"})
 			continue
 		}
 		jobs = append(jobs, captureJob{selection: selection, timestamp: ts})
 	}
 
 	if len(jobs) == 0 {
-		result.Errors = errors
+		result.Errors = captureErrors
 		return result, nil
 	}
+	captureCtx, cancelCapture := context.WithCancel(ctx)
+	defer cancelCapture()
 
 	limit := len(jobs)
 	if s.cfg.ScreenshotHandling.FFmpegLimit {
@@ -400,7 +402,7 @@ func (s *Service) Capture(
 		purpose,
 		len(selections),
 		len(jobs),
-		len(errors),
+		len(captureErrors),
 		limit,
 		s.cfg.ScreenshotHandling.FrameOverlay,
 		tonemap,
@@ -412,12 +414,13 @@ func (s *Service) Capture(
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var usedLibplacebo atomic.Bool
+	var corruptionErr error
 	images := make([]api.ScreenshotImage, 0, len(jobs))
 
 	worker := func() {
 		defer wg.Done()
 		for job := range jobCh {
-			if ctx.Err() != nil {
+			if captureCtx.Err() != nil {
 				return
 			}
 
@@ -458,8 +461,17 @@ func (s *Service) Capture(
 					HeightScale:   info.HeightScale,
 				}
 
-				usedLib, captureErr = captureFrame(ctx, s.runner, cmd, capture, s.logger)
+				usedLib, captureErr = captureFrame(captureCtx, s.runner, cmd, capture, s.logger)
 				if captureErr == nil {
+					break
+				}
+				if errors.Is(captureErr, internalerrors.ErrFrameCorruption) {
+					mu.Lock()
+					if corruptionErr == nil {
+						corruptionErr = captureErr
+					}
+					mu.Unlock()
+					cancelCapture()
 					break
 				}
 				s.logger.Debugf(
@@ -471,9 +483,12 @@ func (s *Service) Capture(
 				)
 			}
 			if captureErr != nil {
+				if captureCtx.Err() != nil && ctx.Err() == nil {
+					return
+				}
 				s.logger.Warnf("screenshots: capture frame failed index=%d err=%s", selection.Index, redaction.RedactValue(captureErr.Error(), nil))
 				mu.Lock()
-				errors = append(errors, api.ScreenshotError{Index: selection.Index, Message: logging.SanitizeMessage(captureErr.Error())})
+				captureErrors = append(captureErrors, api.ScreenshotError{Index: selection.Index, Message: logging.SanitizeMessage(captureErr.Error())})
 				mu.Unlock()
 				continue
 			}
@@ -523,7 +538,7 @@ func (s *Service) Capture(
 		defer close(jobCh)
 		for _, job := range jobs {
 			select {
-			case <-ctx.Done():
+			case <-captureCtx.Done():
 				return
 			case jobCh <- job:
 			}
@@ -535,12 +550,15 @@ func (s *Service) Capture(
 	if err := ctx.Err(); err != nil {
 		return result, fmt.Errorf("screenshots: generate canceled: %w", err)
 	}
+	if corruptionErr != nil {
+		return result, corruptionErr
+	}
 
 	sort.Slice(images, func(i, j int) bool { return images[i].Index < images[j].Index })
-	sort.Slice(errors, func(i, j int) bool { return errors[i].Index < errors[j].Index })
+	sort.Slice(captureErrors, func(i, j int) bool { return captureErrors[i].Index < captureErrors[j].Index })
 
 	result.Images = images
-	result.Errors = errors
+	result.Errors = captureErrors
 	result.UsedLibplacebo = usedLibplacebo.Load()
 	s.logger.Debugf("screenshots: capture result images=%d errors=%d libplacebo_used=%t", len(result.Images), len(result.Errors), result.UsedLibplacebo)
 
@@ -566,7 +584,8 @@ func (s *Service) Capture(
 
 // PreviewFrame captures one decodable, non-black PNG into memory without
 // persisting it. DVD inputs try the selected VOB segment followed by later
-// segments when a candidate yields no usable frame.
+// segments when a candidate yields no usable frame. When enabled for HDR/DV
+// inputs, it applies configured software tone mapping before returning.
 func (s *Service) PreviewFrame(ctx context.Context, meta api.ScreenshotSubject, timestampSeconds float64) (preview api.ScreenshotPreview, err error) {
 	defer func() {
 		if err != nil {
@@ -620,8 +639,14 @@ func (s *Service) PreviewFrame(ctx context.Context, meta api.ScreenshotSubject, 
 		payload, err = captureFrameBytes(ctx, s.runner, cmd, previewRequest{
 			InputPath: candidate.SourcePath,
 			Timestamp: candidate.Timestamp,
+			ToneMap:   shouldTonemap(meta, s.cfg),
+			Algorithm: s.cfg.ScreenshotHandling.TonemapAlgorithm,
+			Desat:     s.cfg.ScreenshotHandling.Desat,
 		}, s.logger)
 		if err == nil {
+			break
+		}
+		if errors.Is(err, internalerrors.ErrFrameCorruption) {
 			break
 		}
 		s.logger.Debugf(

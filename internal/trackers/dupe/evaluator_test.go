@@ -198,11 +198,11 @@ func TestEvaluateNBLUsesCoarseSDRHDRDVSlots(t *testing.T) {
 	}
 }
 
-func TestEvaluateMTVHDRCompatibilityIsDirectional(t *testing.T) {
+func TestEvaluateANTHDRCompatibilityIsDirectional(t *testing.T) {
 	t.Parallel()
 
 	policy := trackerspkg.DupePolicy{
-		ID:                   "mtv/duplicate/v2",
+		ID:                   "ant/duplicate/v3",
 		SlotDimensions:       []trackerspkg.DupeDimension{trackerspkg.DupeDimensionHDR},
 		HDRCompatibilityMode: trackerspkg.DupeHDRCompatibilityDirectional,
 	}
@@ -318,7 +318,7 @@ func TestEvaluateCriticalEvidenceAndStructuralSlotsPrecedeDirectionalHDR(t *test
 	}
 }
 
-func TestEvaluateMTVMissingResolutionPrecedesDirectionalHDR(t *testing.T) {
+func TestEvaluateANTMissingResolutionPrecedesDirectionalHDR(t *testing.T) {
 	t.Parallel()
 
 	targetHDR := api.HDRFacts{
@@ -335,14 +335,14 @@ func TestEvaluateMTVMissingResolutionPrecedesDirectionalHDR(t *testing.T) {
 		},
 		[]TrackerCandidate{{HDR: targetHDR}},
 		trackerspkg.DupePolicy{
-			ID:             "mtv/duplicate/v2",
+			ID:             "ant/duplicate/v3",
 			SlotDimensions: []trackerspkg.DupeDimension{trackerspkg.DupeDimensionResolution, trackerspkg.DupeDimensionHDR},
 		},
 		SearchEvidence{Complete: true},
 	)
 	if got := evaluation.Candidates[0]; got.Relation != api.DupeRelationInsufficientEvidence ||
 		got.Reasons[0].Code != "candidate_resolution_missing" {
-		t.Fatalf("missing MTV resolution relation = %#v", got)
+		t.Fatalf("missing ANT resolution relation = %#v", got)
 	}
 }
 
@@ -586,8 +586,11 @@ func TestEvaluateSeasonPackProposalNotBlockedBySingleEpisodeFile(t *testing.T) {
 		trackerspkg.DupePolicy{},
 		SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID},
 	)
-	if got := evaluation.Candidates[0].Relation; got != api.DupeRelationProposedTrumps {
-		t.Fatalf("season pack over existing episode must trump, got %q", got)
+	if got := evaluation.Candidates[0].Relation; got != api.DupeRelationCoexists {
+		t.Fatalf("existing episode must be irrelevant to proposed season pack, got %q", got)
+	}
+	if evaluation.RequiresAction || evaluation.Blocks {
+		t.Fatalf("existing episode must not make proposed season pack actionable: %#v", evaluation)
 	}
 }
 
@@ -707,12 +710,9 @@ func TestEvaluateCompoundDirectionalRule(t *testing.T) {
 func TestNormalizeCandidateUsesExplicitTitleHDRAsPartialEvidence(t *testing.T) {
 	t.Parallel()
 
-	entry := api.DupeEntry{Name: "Example.Release.2026.DV.HDR10+.2160p-GRP"}
-	for _, tracker := range []string{"ANT", "MTV"} {
-		candidate := NormalizeCandidate(entry, tracker)
-		if candidate.HDR.Origin != api.HDREvidenceTrackerTitle || candidate.HDR.Status != api.HDREvidencePartial {
-			t.Fatalf("%s title HDR evidence = %#v", tracker, candidate.HDR)
-		}
+	candidate := NormalizeCandidate(api.DupeEntry{Name: "Example.Release.2026.DV.HDR10+.2160p-GRP"}, "ANT")
+	if candidate.HDR.Origin != api.HDREvidenceTrackerTitle || candidate.HDR.Status != api.HDREvidencePartial {
+		t.Fatalf("ANT title HDR evidence = %#v", candidate.HDR)
 	}
 }
 
@@ -1167,22 +1167,141 @@ func TestEvaluateGeneralFallbackPreservesPotentialCandidates(t *testing.T) {
 func TestEvaluateGeneralHDRRequiresPositiveEvidence(t *testing.T) {
 	t.Parallel()
 
-	target := api.TrackerDuplicateTarget{HDR: testHDR(api.HDREvidenceComplete, api.HDRFormatSDR)}
-	complete := Evaluate(
-		target,
-		[]TrackerCandidate{{HDR: testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10)}},
-		trackerspkg.DupePolicy{},
-		SearchEvidence{},
-	).Candidates[0]
-	if complete.Relation != api.DupeRelationCoexists || complete.Reasons[0].Code != "distinct_hdr_slot" {
-		t.Fatalf("complete HDR relation = %#v", complete)
+	tests := []struct {
+		name      string
+		target    api.TrackerDuplicateTarget
+		candidate TrackerCandidate
+		want      api.DupeRelation
+	}{
+		{
+			name: "2160p SDR and HDR coexist",
+			target: api.TrackerDuplicateTarget{
+				Resolution: "2160p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatSDR),
+			},
+			candidate: TrackerCandidate{
+				Resolution: "2160p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10),
+			},
+			want: api.DupeRelationCoexists,
+		},
+		{
+			name: "2160p proposed DV HDR trumps HDR",
+			target: api.TrackerDuplicateTarget{
+				Resolution: "2160p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatDolbyVision, api.HDRFormatHDR10),
+			},
+			candidate: TrackerCandidate{
+				Resolution: "2160p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10Plus),
+			},
+			want: api.DupeRelationProposedTrumps,
+		},
+		{
+			name: "2160p existing DV HDR trumps HDR",
+			target: api.TrackerDuplicateTarget{
+				Resolution: "2160p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10),
+			},
+			candidate: TrackerCandidate{
+				Resolution: "2160p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatDolbyVision, api.HDRFormatHDR10Plus),
+			},
+			want: api.DupeRelationExistingPreferred,
+		},
+		{
+			name: "distinct media class precedes DV HDR trumping",
+			target: api.TrackerDuplicateTarget{
+				Type:       "WEB-DL",
+				Resolution: "2160p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatDolbyVision, api.HDRFormatHDR10),
+			},
+			candidate: TrackerCandidate{
+				Type:       "REMUX",
+				Resolution: "2160p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10),
+			},
+			want: api.DupeRelationCoexists,
+		},
+		{
+			name: "2160p DV and DV HDR coexist",
+			target: api.TrackerDuplicateTarget{
+				Resolution: "2160p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatDolbyVision),
+			},
+			candidate: TrackerCandidate{
+				Resolution: "2160p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatDolbyVision, api.HDRFormatHDR10),
+			},
+			want: api.DupeRelationCoexists,
+		},
+		{
+			name: "1080p ignores HDR",
+			target: api.TrackerDuplicateTarget{
+				Resolution: "1080p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatSDR),
+			},
+			candidate: TrackerCandidate{
+				Resolution: "1080p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10),
+			},
+			want: api.DupeRelationSameSlot,
+		},
+		{
+			name: "other resolutions ignore HDR",
+			target: api.TrackerDuplicateTarget{
+				Resolution: "720p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatSDR),
+			},
+			candidate: TrackerCandidate{
+				Resolution: "720p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10),
+			},
+			want: api.DupeRelationSameSlot,
+		},
+		{
+			name: "partial 2160p resolution cannot prove coexistence",
+			target: api.TrackerDuplicateTarget{
+				Resolution: "2160p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatSDR),
+			},
+			candidate: TrackerCandidate{
+				Name: "Example.Release.2026.2160p.HDR-GRP",
+				HDR:  testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10),
+			},
+			want: api.DupeRelationSameSlot,
+		},
+		{
+			name: "partial HDR cannot prove coexistence",
+			target: api.TrackerDuplicateTarget{
+				Resolution: "2160p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatSDR),
+			},
+			candidate: TrackerCandidate{
+				Resolution: "2160p",
+				HDR: api.HDRFacts{
+					Formats: []api.HDRFormat{api.HDRFormatHDR10},
+					Origin:  api.HDREvidenceTrackerTitle,
+					Status:  api.HDREvidencePartial,
+				},
+			},
+			want: api.DupeRelationSameSlot,
+		},
 	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 
-	partial := testHDR(api.HDREvidencePartial, api.HDRFormatHDR10)
-	partial.Origin = api.HDREvidenceTrackerAPI
-	got := Evaluate(target, []TrackerCandidate{{HDR: partial}}, trackerspkg.DupePolicy{}, SearchEvidence{}).Candidates[0]
-	if got.Relation != api.DupeRelationSameSlot {
-		t.Fatalf("partial API HDR relation = %#v", got)
+			got := Evaluate(
+				test.target,
+				[]TrackerCandidate{test.candidate},
+				trackerspkg.DupePolicy{},
+				SearchEvidence{Complete: true},
+			).Candidates[0]
+			if got.Relation != test.want {
+				t.Fatalf("general HDR relation = %q, want %q", got.Relation, test.want)
+			}
+		})
 	}
 }
 
@@ -1203,7 +1322,7 @@ func TestEvaluateGeneralSeasonPackContainmentIsDirectional(t *testing.T) {
 		trackerspkg.DupePolicy{},
 		SearchEvidence{WorkScope: WorkScopeProviderID},
 	).Candidates[0]
-	if proposedPack.Relation != api.DupeRelationProposedTrumps {
+	if proposedPack.Relation != api.DupeRelationCoexists {
 		t.Fatalf("proposed pack relation = %#v", proposedPack)
 	}
 

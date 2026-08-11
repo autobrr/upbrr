@@ -21,7 +21,6 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/btn"
-	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/mtv"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/ptp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/rtf"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/thr"
@@ -34,7 +33,7 @@ func newTestService(cfg config.Config) *Service {
 
 func newTestServiceWithLogger(cfg config.Config, logger api.Logger) *Service {
 	registry := trackers.NewRegistry()
-	for _, definition := range []trackers.Definition{btn.New(), mtv.New(), ptp.New(), rtf.New(), thr.New()} {
+	for _, definition := range []trackers.Definition{btn.New(), ptp.New(), rtf.New(), thr.New()} {
 		if err := registry.Register(definition); err != nil {
 			panic(err)
 		}
@@ -569,13 +568,13 @@ func TestSubmit2FAConfirmedInvalidFailureDoesNotExposeRetryChallenge(t *testing.
 	}
 }
 
-func TestSubmit2FAMTVSubmittedCodeAuthKeyFailureKeepsChallengeRetryVisible(t *testing.T) {
+func TestSubmit2FASubmittedCodeAuthKeyFailureKeepsChallengeRetryVisible(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.Config{
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
-				"MTV": {
+				"BTN": {
 					Username: "user",
 					Password: "pass",
 				},
@@ -585,9 +584,9 @@ func TestSubmit2FAMTVSubmittedCodeAuthKeyFailureKeepsChallengeRetryVisible(t *te
 	service := newTestService(cfg)
 	service.challenges = NewChallengeManager(defaultChallengeTTL)
 	service.adapters = map[string]Adapter{
-		"MTV": trackerAdapter{
+		"BTN": trackerAdapter{
 			capability: api.TrackerAuthCapability{
-				TrackerID:         "MTV",
+				TrackerID:         "BTN",
 				SupportsLogin:     true,
 				SupportsManual2FA: true,
 			},
@@ -595,25 +594,25 @@ func TestSubmit2FAMTVSubmittedCodeAuthKeyFailureKeepsChallengeRetryVisible(t *te
 				if login.Code != "000000" {
 					t.Fatalf("expected submitted code, got %q", login.Code)
 				}
-				return fmt.Errorf("trackers: MTV auth key not found: %w", mtv.ErrSubmitted2FARejected)
+				return fmt.Errorf("trackers: test auth key not found: %w", trackers.ErrSubmitted2FARejected)
 			},
 		},
 	}
-	ownerKey, err := service.challengeOwnerKey("MTV")
+	ownerKey, err := service.challengeOwnerKey("BTN")
 	if err != nil {
 		t.Fatalf("challengeOwnerKey: %v", err)
 	}
-	challengeID := service.challenges.Create(context.Background(), "MTV", ownerKey)
+	challengeID := service.challenges.Create(context.Background(), "BTN", ownerKey)
 
 	status, err := service.Submit2FA(context.Background(), challengeID, "000000")
 	if err != nil {
 		t.Fatalf("Submit2FA: %v", err)
 	}
 	if !status.Needs2FA || status.ChallengeID != challengeID {
-		t.Fatalf("expected retry-visible MTV challenge after auth-key miss, got %#v", status)
+		t.Fatalf("expected retry-visible BTN challenge after auth-key miss, got %#v", status)
 	}
 	if _, ok := service.challenges.Get(challengeID); !ok {
-		t.Fatal("failed MTV submitted code consumed challenge")
+		t.Fatal("failed BTN submitted code consumed challenge")
 	}
 }
 
@@ -623,27 +622,27 @@ func TestSubmit2FATransientParserFailureDoesNotExposeRetryChallenge(t *testing.T
 	cfg := config.Config{
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
-				"MTV": {Username: "user", Password: "pass"},
+				"BTN": {Username: "user", Password: "pass"},
 			},
 		},
 	}
 	adapter := &fakeAdapter{
 		capability: api.TrackerAuthCapability{
-			TrackerID:         "MTV",
+			TrackerID:         "BTN",
 			SupportsLogin:     true,
 			SupportsManual2FA: true,
 		},
 		validate: func() (Session, error) {
-			return Session{}, &Needs2FAError{TrackerID: "MTV"}
+			return Session{}, &Needs2FAError{TrackerID: "BTN"}
 		},
 		submit: func(context.Context, config.TrackerConfig, string, api.TrackerAuthLoginRequest) (Session, error) {
-			return Session{}, classifyAdapterError("MTV", errors.New("trackers: MTV 2FA token not found"))
+			return Session{}, classifyAdapterError("BTN", errors.New("trackers: BTN 2FA token not found"))
 		},
 	}
 	service := newTestService(cfg)
-	service.adapters = map[string]Adapter{"MTV": adapter}
+	service.adapters = map[string]Adapter{"BTN": adapter}
 
-	status, err := service.Login(context.Background(), "MTV", api.TrackerAuthLoginRequest{})
+	status, err := service.Login(context.Background(), "BTN", api.TrackerAuthLoginRequest{})
 	if err != nil {
 		t.Fatalf("Login: %v", err)
 	}
@@ -951,11 +950,11 @@ func TestStatusConfiguredAuthReportsEncryptedStorageUnavailableWhenPersistenceRe
 		spec      trackerSpec
 		wantState string
 	}{
-		"MTV api key only": {
+		"BTN api key only": {
 			cfg:       config.TrackerConfig{APIKey: "api-key"},
 			wantState: StateEncryptedStorageUnavailable,
 			spec: trackerSpec{
-				id:               "MTV",
+				id:               "BTN",
 				cookies:          true,
 				apiKey:           true,
 				needsCredentials: true,
@@ -1046,10 +1045,10 @@ func TestStatusStateMessageParityForAuthBlockers(t *testing.T) {
 		"api key still needs upload auth": {
 			dbPath: newTrackerAuthTestDB(t),
 			cfg: config.Config{
-				Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"MTV": {APIKey: "api-key"}}},
+				Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"BTN": {APIKey: "api-key"}}},
 			},
 			spec: trackerSpec{
-				id:               "MTV",
+				id:               "BTN",
 				cookies:          true,
 				login:            true,
 				apiKey:           true,
@@ -1179,7 +1178,6 @@ func TestStatusConfiguredAuthReportsCoexistingCookies(t *testing.T) {
 		trackerID string
 		cfg       config.TrackerConfig
 	}{
-		"api key": {trackerID: "MTV", cfg: config.TrackerConfig{APIKey: "api-key"}},
 		"passkey": {trackerID: "HDB", cfg: config.TrackerConfig{Username: "user", Passkey: "passkey"}},
 	}
 	for name, tt := range tests {
@@ -1249,49 +1247,6 @@ func TestLoginHDBWithoutCredentialLoginReturnsStatus(t *testing.T) {
 	}
 	if status.State != StateLoginRequired || !strings.Contains(status.Message, "not supported") {
 		t.Fatalf("expected unsupported credential login status, got %#v", status)
-	}
-}
-
-func TestStatusMTVAPIKeyOnlyReportsUploadNotReady(t *testing.T) {
-	t.Parallel()
-
-	dbPath := newTrackerAuthTestDB(t)
-	service := newTestService(config.Config{
-		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
-		Trackers: config.TrackersConfig{
-			Trackers: map[string]config.TrackerConfig{"MTV": {APIKey: "api-key"}},
-		},
-	})
-
-	status, err := service.Status(context.Background(), "MTV")
-	if err != nil {
-		t.Fatalf("Status: %v", err)
-	}
-	if status.State != StateLoginRequired {
-		t.Fatalf("expected upload auth to be login-required, got %#v", status)
-	}
-	if !strings.Contains(status.Message, "API key covers Torznab/search") || !strings.Contains(status.Message, "required for upload auth") {
-		t.Fatalf("expected split search/upload message, got %#v", status)
-	}
-}
-
-func TestStatusMTVCredentialsWithoutAPIKeyRemainUploadReady(t *testing.T) {
-	t.Parallel()
-
-	dbPath := newTrackerAuthTestDB(t)
-	service := newTestService(config.Config{
-		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
-		Trackers: config.TrackersConfig{
-			Trackers: map[string]config.TrackerConfig{"MTV": {Username: "user", Password: "pass"}},
-		},
-	})
-
-	status, err := service.Status(context.Background(), "MTV")
-	if err != nil {
-		t.Fatalf("Status: %v", err)
-	}
-	if status.State != StateConfigured {
-		t.Fatalf("expected MTV credentials to remain upload-ready, got %#v", status)
 	}
 }
 
@@ -1397,7 +1352,7 @@ func TestValidateWithoutAdapterReportsUnsupportedRemoteValidation(t *testing.T) 
 }
 
 func TestParseCookieContentJSONMap(t *testing.T) {
-	got, err := ParseCookieContent("MTV.json", `{"session":"abc","nested":{"value":"def"}}`)
+	got, err := ParseCookieContent("BTN.json", `{"session":"abc","nested":{"value":"def"}}`)
 	if err != nil {
 		t.Fatalf("ParseCookieContent: %v", err)
 	}
@@ -1663,13 +1618,13 @@ func TestApplyEnsureErrorToStatusKeepsStateMessageParity(t *testing.T) {
 func TestApplyEnsureErrorToStatusRedactsURLPath(t *testing.T) {
 	t.Parallel()
 
-	status := api.TrackerAuthStatus{TrackerID: "MTV", State: StateConfigured}
-	applyEnsureErrorToStatus(&status, errors.New(`Get "https://www.morethantv.me/secret-login-token?passkey=abc": auth key not found`))
+	status := api.TrackerAuthStatus{TrackerID: "BTN", State: StateConfigured}
+	applyEnsureErrorToStatus(&status, errors.New(`Get "https://www.tracker.invalid/secret-login-token?passkey=abc": auth key not found`))
 
 	if strings.Contains(status.LastError, "secret-login-token") || strings.Contains(status.LastError, "abc") {
 		t.Fatalf("LastError leaked URL secret: %#v", status)
 	}
-	if !strings.Contains(status.LastError, "https://www.morethantv.me/[REDACTED]") {
+	if !strings.Contains(status.LastError, "https://www.tracker.invalid/[REDACTED]") {
 		t.Fatalf("LastError lost useful URL host context: %#v", status)
 	}
 }
@@ -1881,7 +1836,7 @@ func TestCapabilitiesAdvertiseOnlySupportedManual2FA(t *testing.T) {
 			t.Fatalf("%s advertises automatic login without explicit login support", cap.TrackerID)
 		}
 		switch cap.TrackerID {
-		case "MTV", "PTP":
+		case "BTN", "PTP":
 			if !cap.SupportsManual2FA {
 				t.Fatalf("%s must advertise supported manual 2FA", cap.TrackerID)
 			}
@@ -1942,7 +1897,7 @@ func TestTrackerAuthLogsOperationResultsWithoutSecrets(t *testing.T) {
 		MainSettings: config.MainSettingsConfig{DBPath: newTrackerAuthTestDB(t)},
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
-				"MTV": {
+				"BTN": {
 					APIKey:   "secret-api-key",
 					Username: "secret-user",
 					Password: "secret-password",
@@ -1951,12 +1906,12 @@ func TestTrackerAuthLogsOperationResultsWithoutSecrets(t *testing.T) {
 		},
 	}, logger)
 
-	status, err := service.Status(context.Background(), "MTV")
+	status, err := service.Status(context.Background(), "BTN")
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
-	if status.TrackerID != "MTV" {
-		t.Fatalf("expected MTV status, got %#v", status)
+	if status.TrackerID != "BTN" {
+		t.Fatalf("expected BTN status, got %#v", status)
 	}
 	if _, err := service.Capabilities(context.Background()); err != nil {
 		t.Fatalf("Capabilities: %v", err)
@@ -1969,13 +1924,13 @@ func TestTrackerAuthLogsOperationResultsWithoutSecrets(t *testing.T) {
 	traceLog := strings.Join(logger.trace, "\n")
 	warnLog := strings.Join(logger.warn, "\n")
 	allLogs := infoLog + "\n" + traceLog + "\n" + warnLog
-	if !strings.Contains(traceLog, "tracker auth: status checked tracker=MTV") {
+	if !strings.Contains(traceLog, "tracker auth: status checked tracker=BTN") {
 		t.Fatal("expected status trace log")
 	}
 	if !strings.Contains(traceLog, "tracker auth: capabilities loaded count=") {
 		t.Fatal("expected capabilities trace log")
 	}
-	for _, routine := range []string{"tracker auth: status checked tracker=MTV", "tracker auth: capabilities loaded count="} {
+	for _, routine := range []string{"tracker auth: status checked tracker=BTN", "tracker auth: capabilities loaded count="} {
 		if strings.Contains(infoLog, routine) {
 			t.Fatal("routine tracker auth log used info level")
 		}
@@ -1996,9 +1951,9 @@ func TestTrackerAuthWarningStatusDoesNotLogSuccess(t *testing.T) {
 	logger := &trackerAuthRecordingLogger{}
 	service := newTestServiceWithLogger(config.Config{}, logger)
 	service.logStatus("login completed", api.TrackerAuthStatus{
-		TrackerID: "MTV",
+		TrackerID: "BTN",
 		State:     StateConfigured,
-		LastError: "tracker auth: MTV: validation failed",
+		LastError: "tracker auth: BTN: validation failed",
 	})
 
 	infoLog := strings.Join(logger.info, "\n")
@@ -2006,7 +1961,7 @@ func TestTrackerAuthWarningStatusDoesNotLogSuccess(t *testing.T) {
 	if strings.Contains(infoLog, "tracker auth: login completed") {
 		t.Fatalf("warning status logged success info: info=%q warn=%q", infoLog, warnLog)
 	}
-	if !strings.Contains(warnLog, "tracker auth: login completed warning tracker=MTV") {
+	if !strings.Contains(warnLog, "tracker auth: login completed warning tracker=BTN") {
 		t.Fatalf("expected warning log, got info=%q warn=%q", infoLog, warnLog)
 	}
 }
@@ -2017,16 +1972,16 @@ func TestTrackerAuthConfiguredLoginStatusUsesInfo(t *testing.T) {
 	logger := &trackerAuthRecordingLogger{}
 	service := newTestServiceWithLogger(config.Config{}, logger)
 	service.logStatus("login completed", api.TrackerAuthStatus{
-		TrackerID: "MTV",
+		TrackerID: "BTN",
 		State:     StateConfigured,
 	})
 
 	infoLog := strings.Join(logger.info, "\n")
 	traceLog := strings.Join(logger.trace, "\n")
-	if !strings.Contains(infoLog, "tracker auth: login completed tracker=MTV") {
+	if !strings.Contains(infoLog, "tracker auth: login completed tracker=BTN") {
 		t.Fatalf("expected successful login info log, got info=%q trace=%q", infoLog, traceLog)
 	}
-	if strings.Contains(traceLog, "tracker auth: login completed tracker=MTV") {
+	if strings.Contains(traceLog, "tracker auth: login completed tracker=BTN") {
 		t.Fatalf("successful login logged at trace: info=%q trace=%q", infoLog, traceLog)
 	}
 }
@@ -2350,7 +2305,7 @@ func TestValidateBoundsRemoteAuthAndFailedValidationIsNotReady(t *testing.T) {
 	}
 	deadlineCh := make(chan deadlineObservation, 1)
 	adapter := &fakeAdapter{
-		capability: api.TrackerAuthCapability{TrackerID: "MTV", SupportsLogin: true},
+		capability: api.TrackerAuthCapability{TrackerID: "BTN", SupportsLogin: true},
 		validateCtx: func(ctx context.Context) (Session, error) {
 			deadline, ok := ctx.Deadline()
 			if !ok {
@@ -2358,7 +2313,7 @@ func TestValidateBoundsRemoteAuthAndFailedValidationIsNotReady(t *testing.T) {
 			}
 			deadlineCh <- deadlineObservation{checkedAt: time.Now(), deadline: deadline}
 			return Session{}, &ValidationError{
-				TrackerID: "MTV",
+				TrackerID: "BTN",
 				Transient: true,
 				Reason:    "remote validation unavailable",
 				Err:       context.DeadlineExceeded,
@@ -2368,12 +2323,12 @@ func TestValidateBoundsRemoteAuthAndFailedValidationIsNotReady(t *testing.T) {
 	service := newTestService(config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
 		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-			"MTV": {Username: "user", Password: "pass"},
+			"BTN": {Username: "user", Password: "pass"},
 		}},
 	})
-	service.adapters["MTV"] = adapter
+	service.adapters["BTN"] = adapter
 
-	status, err := service.Validate(context.Background(), "MTV")
+	status, err := service.Validate(context.Background(), "BTN")
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
@@ -2394,7 +2349,7 @@ func TestValidateManyRunsTrackerChecksConcurrentlyAndPreservesOrder(t *testing.T
 	t.Parallel()
 
 	dbPath := newTrackerAuthTestDB(t)
-	trackerIDs := [maxConcurrentValidations + 1]string{"PTP", "MTV", "RTF", "AR", "HDB"}
+	trackerIDs := [maxConcurrentValidations + 1]string{"PTP", "BTN", "RTF", "AR", "HDB"}
 	entered := make(chan string, len(trackerIDs))
 	releases := make(map[string]chan struct{}, len(trackerIDs))
 	released := make(map[string]bool, len(trackerIDs))
@@ -2427,6 +2382,7 @@ func TestValidateManyRunsTrackerChecksConcurrentlyAndPreservesOrder(t *testing.T
 	}
 	service := newTestService(config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Metadata:     config.MetadataConfig{BTNAPI: "api-key"},
 		Trackers:     config.TrackersConfig{Trackers: trackerConfigs},
 	})
 	for _, trackerID := range trackerIDs {

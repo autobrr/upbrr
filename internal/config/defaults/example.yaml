@@ -312,16 +312,6 @@ trackers:
     link_dir_name: ""
     api_key: ""
     anon: false
-  MTV:
-    link_dir_name: ""
-    api_key: ""
-    username: ""
-    password: ""
-    announce_url: ""
-    anon: false
-    otp_uri: ""
-    skip_if_rehash: false
-    prefer_mtv_torrent: false
   NBL:
     link_dir_name: ""
     api_key: ""

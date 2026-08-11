@@ -3,7 +3,7 @@ name: vuln
 on:
   workflow_dispatch:
   schedule:
-    - cron: "17 8 * * 1"
+    - cron: "17 8 */2 * *"
 
 permissions:
   contents: read
@@ -38,3 +38,37 @@ jobs:
       - name: Run OSV dependency scan
         if: ${{ !cancelled() }}
         run: go run github.com/google/osv-scanner/v2/cmd/osv-scanner@${OSV_SCANNER_VERSION} scan source --lockfile go.mod --lockfile webui/pnpm-lock.yaml
+
+  report_failure:
+    name: Report vulnerability scan failure
+    needs: vuln
+    if: ${{ !cancelled() && needs.vuln.result == 'failure' }}
+    permissions:
+      issues: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Create or update failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Vulnerability scan failed"
+          body="Latest failed run: ${RUN_URL}"
+          issue_number="$(
+            gh issue list \
+              --state open \
+              --search "in:title \"$title\"" \
+              --limit 100 \
+              --json number,title \
+              --jq '.[] | select(.title == "Vulnerability scan failed") | .number' \
+            | head -n 1
+          )"
+
+          if [ -n "$issue_number" ]; then
+            gh issue edit "$issue_number" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi

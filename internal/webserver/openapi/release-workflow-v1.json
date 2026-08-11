@@ -3688,12 +3688,16 @@
           },
           "Naming": {
             "$ref": "#/components/schemas/NamingAssessment"
+          },
+          "VideoBitrate": {
+            "$ref": "#/components/schemas/VideoBitrateAssessment"
           }
         },
         "required": [
           "MediaInfoEncodeSettings",
           "MediaInfoUniqueID",
-          "Naming"
+          "Naming",
+          "VideoBitrate"
         ]
       },
       "ReleaseFactInstructionSnapshot": {
@@ -3876,6 +3880,16 @@
               }
             ]
           },
+          "NoDistributor": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "NoDual": {
             "anyOf": [
               {
@@ -3897,6 +3911,16 @@
             ]
           },
           "NoEdition": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "NoEpisodeTitle": {
             "anyOf": [
               {
                 "type": "boolean"
@@ -5563,6 +5587,16 @@
               }
             ]
           },
+          "noDistributor": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "noDual": {
             "anyOf": [
               {
@@ -5584,6 +5618,16 @@
             ]
           },
           "noEdition": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "noEpisodeTitle": {
             "anyOf": [
               {
                 "type": "boolean"
@@ -9356,6 +9400,24 @@
           "status",
           "trackerId"
         ]
+      },
+      "VideoBitrateAssessment": {
+        "type": "object",
+        "properties": {
+          "BitsPerSecond": {
+            "type": "integer"
+          },
+          "Status": {
+            "$ref": "#/components/schemas/VideoBitrateStatus"
+          }
+        },
+        "required": [
+          "BitsPerSecond",
+          "Status"
+        ]
+      },
+      "VideoBitrateStatus": {
+        "type": "string"
       },
       "WorkflowAuthority": {
         "type": "object",

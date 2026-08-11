@@ -98,11 +98,11 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 	dvdSize := strings.TrimSpace(req.DVDSize)
 	edition := strings.TrimSpace(req.Edition)
 
-	edition = removeHybrid(edition)
 	hybrid := ""
-	if req.WebDV {
+	if req.WebDV || containsExactHybrid(strings.Fields(edition)) {
 		hybrid = "Hybrid"
 	}
+	edition = removeHybrid(edition)
 
 	if category == "TV" && !req.ManualEpisodeTitle && episode == "" && !req.ManualDate {
 		episodeTitle = ""
@@ -583,13 +583,13 @@ func namingSourceMatches(scopedPath, currentPath string) bool {
 	return trimmed == "" || strings.EqualFold(trimmed, strings.TrimSpace(currentPath))
 }
 
-// fillProviderAlternateTitle preserves a parsed alternate and otherwise returns
-// one normalized AKA title when the provider candidate differs from the primary.
+// fillProviderAlternateTitle prefers a parsed alternate and otherwise returns
+// one normalized AKA title when the chosen value differs from the primary.
 func fillProviderAlternateTitle(current, primary, candidate string) string {
-	if strings.TrimSpace(current) != "" {
-		return strings.TrimSpace(current)
+	alternate := strings.TrimSpace(current)
+	if alternate == "" {
+		alternate = strings.TrimSpace(candidate)
 	}
-	alternate := strings.TrimSpace(candidate)
 	if len(alternate) > len("AKA ") && strings.EqualFold(alternate[:len("AKA ")], "AKA ") {
 		alternate = strings.TrimSpace(alternate[len("AKA "):])
 	}

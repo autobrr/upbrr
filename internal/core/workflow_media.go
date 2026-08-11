@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -412,6 +413,7 @@ func (b workflowMediaBuilder) Build(
 	snapshot := api.MediaArtifactSet{
 		CaptureFingerprint:      captureFingerprint,
 		RequirementsFingerprint: requirementsFingerprint,
+		Artifacts:               []api.MediaArtifact{},
 		Status:                  api.StageStatusCompleted,
 	}
 	projectedScreenshots, projectedDVDMenus := projectedMediaRequirements(projections.Projections)
@@ -520,6 +522,18 @@ func (b workflowMediaBuilder) Build(
 			if err != nil {
 				if ctx.Err() != nil {
 					return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media screenshot capture: %w", ctx.Err())
+				}
+				if errors.Is(err, internalerrors.ErrFrameCorruption) {
+					api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
+						Phase:   "screenshots",
+						ItemID:  "screenshots",
+						Kind:    "media",
+						Label:   "Screenshots",
+						Status:  api.StageStatusFailed,
+						Total:   screenshotCount,
+						Message: "Screenshot frame corruption detected. Repair source media before retrying.",
+					})
+					return failedMediaSnapshot(snapshot, "Screenshot frame corruption detected. Repair source media before retrying."), privateArtifacts, nil
 				}
 				return failedMediaSnapshot(snapshot, "Screenshot capture failed. Retry media capture."), privateArtifacts, nil
 			}
@@ -1252,6 +1266,7 @@ func (b workflowMediaBuilder) mediaMutationBase(
 	return api.MediaArtifactSet{
 			CaptureFingerprint:      fingerprint,
 			RequirementsFingerprint: requirements,
+			Artifacts:               []api.MediaArtifact{},
 			Status:                  api.StageStatusCompleted,
 		}, workflowMediaPrivateArtifacts{
 			ArtifactImages:    make(map[api.PublicResourceID]api.ScreenshotImage),

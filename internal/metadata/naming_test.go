@@ -69,22 +69,26 @@ func TestBuildReleaseNameMovieBareWebEncodeUsesWebDLNaming(t *testing.T) {
 }
 
 func TestBuildReleaseNameHybridEdition(t *testing.T) {
-	result := BuildReleaseName(api.ReleaseNameRequest{
-		Category:    "MOVIE",
-		Type:        "ENCODE",
-		Title:       "Hybrid Cut",
-		Year:        2020,
-		Edition:     "Hybrid Director",
-		WebDV:       true,
-		Resolution:  "1080p",
-		Source:      "BluRay",
-		Audio:       "DTS",
-		VideoEncode: "x264",
-	}, api.NopLogger{})
+	for _, webDV := range []bool{false, true} {
+		t.Run(fmt.Sprintf("webdv_%t", webDV), func(t *testing.T) {
+			result := BuildReleaseName(api.ReleaseNameRequest{
+				Category:    "MOVIE",
+				Type:        "ENCODE",
+				Title:       "Hybrid Cut",
+				Year:        2020,
+				Edition:     "Hybrid Director",
+				WebDV:       webDV,
+				Resolution:  "1080p",
+				Source:      "BluRay",
+				Audio:       "DTS",
+				VideoEncode: "x264",
+			}, api.NopLogger{})
 
-	expected := "Hybrid Cut 2020 Director Hybrid 1080p BluRay DTS x264"
-	if result.NameNoTag != expected {
-		t.Fatalf("expected %q, got %q", expected, result.NameNoTag)
+			expected := "Hybrid Cut 2020 Director Hybrid 1080p BluRay DTS x264"
+			if result.NameNoTag != expected {
+				t.Fatalf("expected %q, got %q", expected, result.NameNoTag)
+			}
+		})
 	}
 }
 
@@ -125,18 +129,20 @@ func TestBuildReleaseNameCleanName(t *testing.T) {
 
 func TestApplyReleaseNameOverridesKeepsNamingOnlyControls(t *testing.T) {
 	base := api.ReleaseNameRequest{
-		Category: "MOVIE",
-		Title:    "Example",
-		Tag:      "-GROUP",
-		Audio:    "DD+5.1",
-		Edition:  "Director",
+		Category:     "MOVIE",
+		Title:        "Example",
+		Tag:          "-GROUP",
+		Audio:        "DD+5.1",
+		Edition:      "Director",
+		EpisodeTitle: "Example Episode",
 	}
 	overrides := api.ReleaseNameOverrides{
-		NoTag:      new(true),
-		NoEdition:  new(true),
-		ManualDate: new("2025-01-01"),
-		NoAKA:      new(true),
-		Type:       new("REMUX"),
+		NoTag:          new(true),
+		NoEdition:      new(true),
+		NoEpisodeTitle: new(true),
+		ManualDate:     new("2025-01-01"),
+		NoAKA:          new(true),
+		Type:           new("REMUX"),
 	}
 	updated := applyReleaseNameOverrides(base, overrides, api.NopLogger{})
 	if updated.Tag != "" {
@@ -144,6 +150,9 @@ func TestApplyReleaseNameOverridesKeepsNamingOnlyControls(t *testing.T) {
 	}
 	if updated.Edition != "" {
 		t.Fatalf("expected edition cleared, got %q", updated.Edition)
+	}
+	if updated.EpisodeTitle != "" {
+		t.Fatalf("expected episode title cleared, got %q", updated.EpisodeTitle)
 	}
 	if !updated.ManualDate {
 		t.Fatalf("expected manual date naming mode, got manual=%t", updated.ManualDate)
@@ -165,6 +174,7 @@ func TestApplyReleaseNameValueOverridesUpdatesCanonicalFacts(t *testing.T) {
 			ServiceLongName:  "Netflix",
 			Region:           "A",
 			Edition:          "Extended",
+			Distributor:      "Example Distributor",
 			Audio:            "DD+ 5.1",
 			Tag:              "-GRP",
 			EpisodeTitle:     "Parsed Title",
@@ -303,6 +313,24 @@ func TestApplyReleaseNameValueOverridesUpdatesCanonicalFacts(t *testing.T) {
 			assert: func(t *testing.T, meta preparationstate.State) {
 				if meta.EpisodeTitle != "" {
 					t.Fatalf("episode title fact = %q", meta.EpisodeTitle)
+				}
+			},
+		},
+		{
+			name:      "no episode title clears the fact",
+			overrides: api.ReleaseNameOverrides{NoEpisodeTitle: new(true)},
+			assert: func(t *testing.T, meta preparationstate.State) {
+				if meta.EpisodeTitle != "" {
+					t.Fatalf("episode title fact = %q", meta.EpisodeTitle)
+				}
+			},
+		},
+		{
+			name:      "no distributor clears the fact",
+			overrides: api.ReleaseNameOverrides{NoDistributor: new(true)},
+			assert: func(t *testing.T, meta preparationstate.State) {
+				if meta.Distributor != "" {
+					t.Fatalf("distributor fact = %q", meta.Distributor)
 				}
 			},
 		},
@@ -909,6 +937,12 @@ func TestResolveReleaseNameTitleProviderAlternateRules(t *testing.T) {
 			name:    "normalizes prefix",
 			imdbAKA: "AKA Original Title",
 			wantAlt: "AKA Original Title",
+		},
+		{
+			name:       "adds prefix to parsed alternate",
+			releaseAlt: "Parsed Alternate",
+			imdbAKA:    "Original Title",
+			wantAlt:    "AKA Parsed Alternate",
 		},
 		{
 			name:       "preserves parsed alternate",

@@ -51,6 +51,7 @@ const facet = (): ScreenshotsFacet => {
         artifacts: [
           {
             id: "artifact-1",
+            index: 3,
             kind: "screenshot",
             purpose: "final",
             selected: true,
@@ -274,6 +275,34 @@ describe("ScreenshotsPage", () => {
     );
     expect(frameDetails).not.toHaveAttribute("open");
     vi.unstubAllGlobals();
+  });
+
+  it("captures the live preview as a new retained screenshot", () => {
+    const screenshots = facet();
+    render(
+      <ScreenshotsPage
+        facet={screenshots}
+        screenshotConfig={{ Screens: 4, ToneMap: false }}
+        updateScreenshotConfigValue={vi.fn()}
+        loadSettings={vi.fn()}
+        settingsLoading={false}
+        settingsDirty={false}
+        settingsSaved=""
+        settingsError=""
+        applyScreenshotSettings={vi.fn()}
+        setLightboxImage={vi.fn()}
+        setLightboxAlt={vi.fn()}
+      />,
+    );
+
+    const preview = screen.getByRole("heading", { name: "Live Preview" }).closest("section");
+    if (!preview) throw new Error("live preview missing");
+    fireEvent.change(within(preview).getByLabelText("Seconds"), { target: { value: "37.5" } });
+    fireEvent.click(within(preview).getByRole("button", { name: "Capture preview" }));
+
+    expect(screenshots.generate).toHaveBeenCalledWith("final", [
+      { Index: 4, TimestampSeconds: 37.5, Frame: 900, Source: "manual" },
+    ]);
   });
 
   it("excludes DVD menus and hosted menu variants from normal screenshot counts", () => {

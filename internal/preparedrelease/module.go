@@ -23,7 +23,7 @@ import (
 
 // ContractVersion changes whenever prepared fact semantics or the private seed
 // contract become incompatible, forcing persisted generations to be recomputed.
-const ContractVersion = "prepared-release-v3"
+const ContractVersion = "prepared-release-v4"
 
 // Store is the prepared-release persistence port. Implementations must commit
 // facts, identity, and provider metadata as one generation transaction.
@@ -493,6 +493,9 @@ func normalizeAssessments(value api.ReleaseAssessments) api.ReleaseAssessments {
 	}
 	if value.MediaInfoEncodeSettings == "" {
 		value.MediaInfoEncodeSettings = api.EncodeSettingsStatusUnknown
+	}
+	if value.VideoBitrate.Status == "" {
+		value.VideoBitrate.Status = api.VideoBitrateStatusUnknown
 	}
 	if value.Naming.Status == "" {
 		value.Naming.Status = api.NamingStatusUnknown

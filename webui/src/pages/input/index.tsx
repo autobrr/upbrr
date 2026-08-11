@@ -843,6 +843,8 @@ export default function InputPage(props: Props) {
     noYear: false,
     noAKA: false,
     noTag: false,
+    noEpisodeTitle: false,
+    noDistributor: false,
     noEdition: false,
     noDub: false,
     noDual: false,
@@ -867,6 +869,8 @@ export default function InputPage(props: Props) {
     noYear: false,
     noAKA: false,
     noTag: false,
+    noEpisodeTitle: false,
+    noDistributor: false,
     noEdition: false,
     noDub: false,
     noDual: false,
@@ -961,6 +965,8 @@ export default function InputPage(props: Props) {
       ["noYear", "NoYear", edits.noYear],
       ["noAKA", "NoAKA", edits.noAKA],
       ["noTag", "NoTag", edits.noTag],
+      ["noEpisodeTitle", "NoEpisodeTitle", edits.noEpisodeTitle],
+      ["noDistributor", "NoDistributor", edits.noDistributor],
       ["noEdition", "NoEdition", edits.noEdition],
       ["noDub", "NoDub", edits.noDub],
       ["noDual", "NoDual", edits.noDual],
@@ -1022,6 +1028,8 @@ export default function InputPage(props: Props) {
       noYear: Boolean(stored.NoYear),
       noAKA: Boolean(stored.NoAKA),
       noTag: Boolean(stored.NoTag),
+      noEpisodeTitle: Boolean(stored.NoEpisodeTitle),
+      noDistributor: Boolean(stored.NoDistributor),
       noEdition: Boolean(stored.NoEdition),
       noDub: Boolean(stored.NoDub),
       noDual: Boolean(stored.NoDual),
@@ -1890,6 +1898,34 @@ export default function InputPage(props: Props) {
                       />
                     </div>
                     <div className="settings-field">
+                      <label htmlFor="release-distributor">Distributor</label>
+                      <input
+                        id="release-distributor"
+                        value={view.intent.metadata.Distributor ?? ""}
+                        onChange={(event) =>
+                          facet.changeMetadata({
+                            ...view.intent.metadata,
+                            Distributor: event.target.value,
+                          })
+                        }
+                        placeholder="Example Distributor"
+                      />
+                    </div>
+                    <div className="settings-field">
+                      <label htmlFor="release-original-language">Original language</label>
+                      <input
+                        id="release-original-language"
+                        value={view.intent.metadata.OriginalLanguage ?? ""}
+                        onChange={(event) =>
+                          facet.changeMetadata({
+                            ...view.intent.metadata,
+                            OriginalLanguage: event.target.value,
+                          })
+                        }
+                        placeholder="ja"
+                      />
+                    </div>
+                    <div className="settings-field">
                       <label htmlFor="release-edition">Edition</label>
                       <input
                         id="release-edition"
@@ -2021,6 +2057,20 @@ export default function InputPage(props: Props) {
                       />
                     </div>
                     <div className="settings-toggle">
+                      <span>No episode title</span>
+                      <Switch
+                        aria-label="No episode title"
+                        checked={Boolean(releaseEdits?.noEpisodeTitle)}
+                        onChange={(event) => {
+                          setReleaseEdits((prev) => ({
+                            ...prev,
+                            noEpisodeTitle: event.target.checked,
+                          }));
+                          markReleaseTouched("noEpisodeTitle");
+                        }}
+                      />
+                    </div>
+                    <div className="settings-toggle">
                       <span>No AKA</span>
                       <Switch
                         aria-label="No AKA"
@@ -2050,6 +2100,20 @@ export default function InputPage(props: Props) {
                         onChange={(event) => {
                           setReleaseEdits((prev) => ({ ...prev, noEdition: event.target.checked }));
                           markReleaseTouched("noEdition");
+                        }}
+                      />
+                    </div>
+                    <div className="settings-toggle">
+                      <span>No distributor</span>
+                      <Switch
+                        aria-label="No distributor"
+                        checked={Boolean(releaseEdits?.noDistributor)}
+                        onChange={(event) => {
+                          setReleaseEdits((prev) => ({
+                            ...prev,
+                            noDistributor: event.target.checked,
+                          }));
+                          markReleaseTouched("noDistributor");
                         }}
                       />
                     </div>

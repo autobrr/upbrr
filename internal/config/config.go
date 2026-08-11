@@ -325,7 +325,6 @@ type TrackerConfig struct {
 	UseItalianTitle     bool           `yaml:"use_italian_title" json:"UseItalianTitle"`
 	OTPURI              string         `yaml:"otp_uri" json:"OTPURI"`
 	SkipIfRehash        bool           `yaml:"skip_if_rehash" json:"SkipIfRehash"`
-	PreferMTV           bool           `yaml:"prefer_mtv_torrent" json:"PreferMTV"`
 	PTGenAPI            string         `yaml:"ptgen_api" json:"PTGenAPI"`
 	AddWebSourceToDesc  bool           `yaml:"add_web_source_to_desc" json:"AddWebSourceToDesc"`
 	UseMetadataName     bool           `yaml:"use_metadata_name" json:"UseMetadataName"`

@@ -763,6 +763,8 @@ func compositeCLIFacts(instructions api.ReleaseFactInstructions) api.ReleaseWork
 			NoYear:           cloneCLIBoolPointer(instructions.ReleaseName.NoYear),
 			NoAKA:            cloneCLIBoolPointer(instructions.ReleaseName.NoAKA),
 			NoTag:            cloneCLIBoolPointer(instructions.ReleaseName.NoTag),
+			NoEpisodeTitle:   cloneCLIBoolPointer(instructions.ReleaseName.NoEpisodeTitle),
+			NoDistributor:    cloneCLIBoolPointer(instructions.ReleaseName.NoDistributor),
 			NoEdition:        cloneCLIBoolPointer(instructions.ReleaseName.NoEdition),
 			NoDub:            cloneCLIBoolPointer(instructions.ReleaseName.NoDub),
 			NoDual:           cloneCLIBoolPointer(instructions.ReleaseName.NoDual),

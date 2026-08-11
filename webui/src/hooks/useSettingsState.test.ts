@@ -989,7 +989,7 @@ describe("Tracker client selectors", () => {
     expect(screen.getByLabelText("Announce URL")).toHaveValue("");
   });
 
-  it("shows Lostimg as an LST image host only when configured in image hosting", async () => {
+  it("hides LST image host selection when Lostimg is enabled", async () => {
     installAppOperationMocks({
       GetConfig: async () =>
         JSON.stringify({
@@ -1035,8 +1035,7 @@ describe("Tracker client selectors", () => {
     );
     fireEvent.click(screen.getByText("LST", { selector: ".settings-card__summary-name" }));
 
-    const imageHostSelect = screen.getByLabelText("Image host") as HTMLSelectElement;
-    expect(Array.from(imageHostSelect.options).map((option) => option.value)).toContain("lostimg");
+    expect(screen.queryByLabelText("Image host")).not.toBeInTheDocument();
   });
 
   it("shows configured global hosts for LST when Lostimg is disabled", async () => {
@@ -1093,7 +1092,7 @@ describe("Tracker client selectors", () => {
     expect(values).not.toContain("lostimg");
   });
 
-  it("shows ReelFliX as an RF image host when configured in image hosting", async () => {
+  it("hides RF image host selection when ReelFliX is enabled", async () => {
     installAppOperationMocks({
       GetConfig: async () =>
         JSON.stringify({
@@ -1139,8 +1138,7 @@ describe("Tracker client selectors", () => {
     );
     fireEvent.click(screen.getByText("RF", { selector: ".settings-card__summary-name" }));
 
-    const imageHostSelect = screen.getByLabelText("Image host") as HTMLSelectElement;
-    expect(Array.from(imageHostSelect.options).map((option) => option.value)).toContain("reelflix");
+    expect(screen.queryByLabelText("Image host")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Image API")).not.toBeInTheDocument();
   });
 
@@ -1467,9 +1465,9 @@ describe("tracker advanced fields", () => {
             DefaultTrackers: [],
             PreferredTracker: "",
             Trackers: {
-              MTV: {
+              BTN: {
                 FaviconURL: "https://example.test/favicon.ico",
-                LinkDirName: "mtv",
+                LinkDirName: "btn",
                 APIKey: "api-key",
                 Username: "user",
                 Password: "pass",
@@ -1477,7 +1475,6 @@ describe("tracker advanced fields", () => {
                 Anon: false,
                 OTPURI: "otpauth://totp/example",
                 SkipIfRehash: true,
-                PreferMTV: true,
               },
             },
           },
@@ -1486,7 +1483,7 @@ describe("tracker advanced fields", () => {
       ListTrackerCatalog: async () =>
         trackerCatalog(
           trackerCatalogEntry(
-            "MTV",
+            "BTN",
             [
               ["FaviconURL", ""],
               ["LinkDirName", ""],
@@ -1497,7 +1494,6 @@ describe("tracker advanced fields", () => {
               ["Anon", false],
               ["OTPURI", ""],
               ["SkipIfRehash", false],
-              ["PreferMTV", false],
             ],
             false,
             "standalone",
@@ -1510,15 +1506,14 @@ describe("tracker advanced fields", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByText("MTV", { selector: ".settings-card__summary-name" }),
+        screen.getByText("BTN", { selector: ".settings-card__summary-name" }),
       ).toBeInTheDocument(),
     );
-    fireEvent.click(screen.getByText("MTV", { selector: ".settings-card__summary-name" }));
+    fireEvent.click(screen.getByText("BTN", { selector: ".settings-card__summary-name" }));
 
     expect(screen.queryByLabelText("Favicon URL")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Link dir name")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Skip if rehash")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Prefer MTV torrent")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Announce URL")).toBeInTheDocument();
     expect(screen.getByLabelText("OTP URI")).toBeInTheDocument();
   });

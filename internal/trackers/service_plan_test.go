@@ -65,7 +65,7 @@ func TestOrderedReadyTrackerPlanIndexesQueuesRehashLast(t *testing.T) {
 	slots := []trackerPlanSlot{
 		{tracker: "PTP", plan: plan("PTP")},
 		{tracker: "HDB", plan: plan("HDB")},
-		{tracker: "MTV", failure: &TrackerFailure{Tracker: "MTV"}},
+		{tracker: "BTN", failure: &TrackerFailure{Tracker: "BTN"}},
 		{tracker: "ANT", plan: plan("ANT")},
 	}
 	ready, delayedStart := orderedReadyTrackerPlanIndexes(slots, []string{"ptp", "ANT"})
@@ -120,7 +120,7 @@ func (d barrierPlanDefinition) Prepare(ctx context.Context, _ PreparationInput) 
 
 func TestUploadPreparationHasBoundedPoolAndFullBarrier(t *testing.T) {
 	t.Parallel()
-	names := []string{"AITHER", "BHD", "BLU", "HDB", "MTV", "PTP"}
+	names := []string{"AITHER", "BHD", "BLU", "HDB", "BTN", "PTP"}
 	started := make(chan string, len(names))
 	submitted := make(chan string, len(names))
 	releasePrep := make(chan struct{})

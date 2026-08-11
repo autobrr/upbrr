@@ -225,6 +225,7 @@ export const routeAccess = (
 const cloneIntent = (intent: PreparationIntent): PreparationIntent => ({
   sourceLookupURL: intent.sourceLookupURL,
   identity: { ...intent.identity },
+  metadata: { ...intent.metadata },
   releaseName: { ...intent.releaseName },
   playlist: {
     Set: intent.playlist.Set,
@@ -238,6 +239,7 @@ const workflowPreparationIntent = (current: ReleaseWorkflowCurrent): Preparation
   return {
     sourceLookupURL: instructions?.SourceLookup || "",
     identity: { ...(instructions?.Identity || {}) },
+    metadata: { ...(instructions?.Metadata || {}) },
     releaseName: { ...(instructions?.ReleaseName || {}) },
     playlist: {
       Set: Boolean(instructions?.Playlist?.Set),
@@ -299,7 +301,7 @@ const preparationInputForWorkflow = (
     Identity: { ...intent.identity },
     Category: intent.releaseName.Category,
     ReleaseName: { ...intent.releaseName },
-    Metadata: {},
+    Metadata: { ...intent.metadata },
     SourceLookup: intent.sourceLookupURL,
     BlurayReleaseID: "",
     Playlist: {
@@ -1593,6 +1595,7 @@ export function ReleaseSessionProvider({
       selectSource,
       changeSourceLookupURL: (value) => dispatch({ type: "source_lookup_changed", value }),
       changeIdentity: (value) => dispatch({ type: "identity_changed", value }),
+      changeMetadata: (value) => dispatch({ type: "metadata_changed", value }),
       changeReleaseName: (value) => dispatch({ type: "release_name_changed", value }),
       chooseTrackers: (trackers) => dispatch({ type: "trackers_chosen", trackers }),
       choosePlaylists: (playlists, useAll) =>

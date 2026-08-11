@@ -122,27 +122,111 @@ func TestAZCanonicalCandidateType(t *testing.T) {
 	}
 }
 
-func TestNextAZPageRejectsOffOriginURL(t *testing.T) {
+func TestAZLookupMediaCodeRequiresExactIMDbMatch(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name    string
+		meta    api.DuplicateSubject
+		payload string
+		want    string
+	}{
+		{
+			name: "matching later result",
+			meta: api.DuplicateSubject{Identity: api.ExternalIdentity{
+				Category: "MOVIE",
+				IMDBID:   123,
+			}},
+			payload: `{"data":[{"id":"11","imdb":"tt9999999"},{"id":"22","imdb":"tt0000123"}]}`,
+			want:    "22",
+		},
+		{
+			name: "unmatched results",
+			meta: api.DuplicateSubject{Identity: api.ExternalIdentity{
+				Category: "MOVIE",
+				IMDBID:   123,
+			}},
+			payload: `{"data":[{"id":"11","imdb":"tt9999999"}]}`,
+		},
+		{
+			name: "title only cannot bind work",
+			meta: api.DuplicateSubject{
+				Identity: api.ExternalIdentity{Category: "MOVIE"},
+				Release:  api.ReleaseInfo{Title: "Example Release 2026"},
+			},
+			payload: `{"data":[{"id":"11","imdb":"tt0000123"}]}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, test.payload)
+			}))
+			t.Cleanup(server.Close)
+
+			got, err := (dupeSearcher{http: server.Client()}).lookupMediaCode(
+				context.Background(),
+				azDupeSiteDef{baseURL: server.URL},
+				nil,
+				test.meta,
+			)
+			if err != nil {
+				t.Fatalf("lookup media code: %v", err)
+			}
+			if got != test.want {
+				t.Fatalf("media code = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestNextAZPageDistinguishesAbsentAndRejectedURL(t *testing.T) {
 	t.Parallel()
 
 	for name, fixture := range map[string]struct {
-		href string
+		html string
 		want string
 	}{
-		"relative": {href: "/movies/torrents/77?page=2", want: "https://az.example/movies/torrents/77?page=2"},
-		"external": {href: "https://example.invalid/steal", want: ""},
-		"empty":    {href: "", want: ""},
+		"absent":    {html: `<div>No next page</div>`},
+		"relative":  {html: `<a rel="next" href="/movies/torrents/77?page=2">Next</a>`, want: "https://az.example/movies/torrents/77?page=2"},
+		"external":  {html: `<a rel="next" href="https://example.invalid/steal">Next</a>`},
+		"empty":     {html: `<a rel="next" href="">Next</a>`},
+		"malformed": {html: `<a rel="next" href="://">Next</a>`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			root, err := xhtml.Parse(strings.NewReader(`<a rel="next" href="` + fixture.href + `">Next</a>`))
+			root, err := xhtml.Parse(strings.NewReader(fixture.html))
 			if err != nil {
 				t.Fatalf("parse fixture: %v", err)
 			}
-			if got := nextAZPage(root, "https://az.example"); got != fixture.want {
-				t.Fatalf("next page = %q, want %q", got, fixture.want)
+			got, present := nextAZPage(root, "https://az.example")
+			wantPresent := strings.Contains(fixture.html, `rel="next"`)
+			if got != fixture.want || present != wantPresent {
+				t.Fatalf("next page = %q, present = %t; want %q, %t", got, present, fixture.want, wantPresent)
 			}
 		})
+	}
+}
+
+func TestAZRejectedNextPageLeavesSearchIncomplete(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `<a rel="next" href="https://example.invalid/page/2">Next</a>`)
+	}))
+	t.Cleanup(server.Close)
+
+	_, pages, complete, warning, err := (dupeSearcher{http: server.Client()}).fetchTorrentList(
+		context.Background(),
+		azDupeSiteDef{baseURL: server.URL},
+		nil,
+		server.URL+"/movies/torrents/77",
+	)
+	if err != nil {
+		t.Fatalf("fetch torrent list: %v", err)
+	}
+	if pages != 1 || complete || warning == "" {
+		t.Fatalf("search evidence: pages=%d complete=%t warning=%q", pages, complete, warning)
 	}
 }

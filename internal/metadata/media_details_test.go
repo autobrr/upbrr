@@ -128,6 +128,34 @@ func TestRebuildReleaseNamePersistsGeneratedEpisodeVariants(t *testing.T) {
 	}
 }
 
+func TestRebuildReleaseNameOmitsGeneratedEpisodeTitle(t *testing.T) {
+	t.Parallel()
+
+	meta := preparationstate.State{
+		Identity:             api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+		Type:                 "WEBDL",
+		Source:               "WEB",
+		Service:              "EXM",
+		Audio:                "AAC 2.0",
+		VideoEncode:          "H.264",
+		SeasonStr:            "S01",
+		EpisodeStr:           "E02",
+		EpisodeTitle:         "Example Episode",
+		ReleaseNameOverrides: api.ReleaseNameOverrides{NoEpisodeTitle: new(true)},
+		Release: api.ReleaseInfo{
+			Title:      "Example Show",
+			Resolution: "1080p",
+		},
+	}
+
+	RebuildReleaseName(&meta, api.NopLogger{})
+
+	if strings.Contains(meta.ReleaseName, "Example Episode") ||
+		strings.Contains(meta.GeneratedReleaseNames.IncludeEpisodeTitle.Name, "Example Episode") {
+		t.Fatalf("generated release names retained episode title: %#v", meta.GeneratedReleaseNames)
+	}
+}
+
 func TestEditionFromMetaMultiPlaylistDeduplicatesMatches(t *testing.T) {
 	meta := preparationstate.State{
 		DiscType: "BDMV",
@@ -369,12 +397,44 @@ func TestEditionFromMetaSkipsIMDbRuntimeWhenManualEditionOverridePresent(t *test
 	}
 }
 
+func TestEditionFromMetaPromotesOnlyExactHybridOther(t *testing.T) {
+	tests := []struct {
+		name    string
+		release api.ReleaseInfo
+		want    string
+	}{
+		{
+			name:    "exact case insensitive value",
+			release: api.ReleaseInfo{Other: []string{" HYBRiD "}},
+			want:    "Hybrid",
+		},
+		{
+			name:    "keeps existing edition",
+			release: api.ReleaseInfo{Edition: []string{"Extended"}, Other: []string{"HYBRiD", "RETAiL"}},
+			want:    "Extended Hybrid",
+		},
+		{
+			name:    "ignores unrelated values",
+			release: api.ReleaseInfo{Other: []string{"RETAiL", "REMUX", "Hybridish", "HYBRiD REMUX"}},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			edition, _ := editionFromMeta(preparationstate.State{Release: tc.release}, mediaInfoDoc{})
+			if edition != tc.want {
+				t.Fatalf("expected edition %q, got %q", tc.want, edition)
+			}
+		})
+	}
+}
+
 func TestEditionFromMetaSkipsIMDbRuntimeWhenNoEditionOverridePresent(t *testing.T) {
 	noEdition := true
 	meta := preparationstate.State{
 		ReleaseNameOverrides: api.ReleaseNameOverrides{NoEdition: &noEdition},
 		Edition:              "IMAX",
-		Release:              api.ReleaseInfo{Edition: []string{"Collector's", "Edition"}},
+		Release:              api.ReleaseInfo{Edition: []string{"Collector's", "Edition"}, Other: []string{"HYBRiD"}},
 		Identity:             api.ExternalIdentity{Category: "MOVIE"},
 		ProviderMetadata: api.SourceScopedMetadata{
 			IMDB: &api.IMDBMetadata{
@@ -1390,16 +1450,13 @@ func TestResolveAudioBloatPolicyBlocksStrictTrackersForEnglishOriginal(t *testin
 		ProviderMetadata: api.SourceScopedMetadata{
 			TMDB: &api.TMDBMetadata{OriginalLanguage: "en"},
 		},
-	}, []string{"ANT", "BHD", "MTV", "AITHER", "ASC"}, antRuleRegistry(t))
+	}, []string{"ANT", "BHD", "AITHER", "ASC"}, antRuleRegistry(t))
 
 	if got := blocked["ANT"]; len(got) != 1 || got[0] != "French" {
 		t.Fatalf("expected ANT blocked for French bloat, got %#v", blocked)
 	}
 	if got := blocked["BHD"]; len(got) != 1 || got[0] != "French" {
 		t.Fatalf("expected BHD blocked for French bloat, got %#v", blocked)
-	}
-	if got := blocked["MTV"]; len(got) != 1 || got[0] != "French" {
-		t.Fatalf("expected MTV blocked for French bloat, got %#v", blocked)
 	}
 	if got := warned["AITHER"]; len(got) != 1 || got[0] != "French" {
 		t.Fatalf("expected AITHER warning for French bloat, got %#v", warned)

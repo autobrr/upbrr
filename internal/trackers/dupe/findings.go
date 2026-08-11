@@ -207,7 +207,7 @@ func collectGeneralFindings(target normalizedFacts, candidate normalizedFacts, p
 		}
 	}
 	if !generalDimensionSuppressed(policy, trackerspkg.DupeDimensionHDR) {
-		if finding, ok := collectGeneralHDRFinding(target.HDR, candidate.HDR); ok {
+		if finding, ok := collectGeneralHDRFinding(target, candidate); ok {
 			findings = append(findings, finding)
 		}
 	}
@@ -223,7 +223,7 @@ func collectPackContainmentFinding(target contentScope, candidate contentScope) 
 	switch {
 	case target.Kind == contentScopeSeasonPack &&
 		(candidate.Kind == contentScopeEpisode || candidate.Kind == contentScopeEpisodeRange):
-		relation, reason = api.DupeRelationProposedTrumps, "proposed_season_pack"
+		relation, reason = api.DupeRelationCoexists, "proposed_season_pack"
 	case candidate.Kind == contentScopeSeasonPack &&
 		(target.Kind == contentScopeEpisode || target.Kind == contentScopeEpisodeRange):
 		relation, reason = api.DupeRelationExistingPreferred, "existing_season_pack"
@@ -248,28 +248,34 @@ func generalDimensionDiffers(dimension trackerspkg.DupeDimension, target Fact, c
 	return eligible && compareDimensionFacts(dimension, target, candidate) == DimensionDifferent
 }
 
-func collectGeneralHDRFinding(target api.HDRFacts, candidate api.HDRFacts) (RuleFinding, bool) {
-	if target.Status == api.HDREvidenceContradictory || candidate.Status == api.HDREvidenceContradictory {
-		return contradictionFinding("hdr"), true
-	}
-	if !generalHDREvidence(target) || !generalHDREvidence(candidate) {
+func collectGeneralHDRFinding(target normalizedFacts, candidate normalizedFacts) (RuleFinding, bool) {
+	if target.Resolution.Status != FactComplete || candidate.Resolution.Status != FactComplete ||
+		!strings.EqualFold(target.Resolution.Value, "2160p") || !strings.EqualFold(candidate.Resolution.Value, "2160p") {
 		return RuleFinding{}, false
 	}
-	targetSlot, targetKnown := genericHDRSlot(target.Formats)
-	candidateSlot, candidateKnown := genericHDRSlot(candidate.Formats)
+	if target.HDR.Status == api.HDREvidenceContradictory || candidate.HDR.Status == api.HDREvidenceContradictory {
+		return contradictionFinding("hdr"), true
+	}
+	if target.HDR.Status != api.HDREvidenceComplete || candidate.HDR.Status != api.HDREvidenceComplete {
+		return RuleFinding{}, false
+	}
+	targetSlot, targetKnown := genericHDRSlot(hdrCompatibility(target.HDR))
+	candidateSlot, candidateKnown := genericHDRSlot(hdrCompatibility(candidate.HDR))
 	if !targetKnown || !candidateKnown || targetSlot == candidateSlot {
 		return RuleFinding{}, false
 	}
-	return generalFinding("hdr", "distinct_hdr_slot", findingPriorityGeneral), true
-}
-
-func generalHDREvidence(facts api.HDRFacts) bool {
-	if facts.Status == api.HDREvidenceComplete {
-		return true
+	finding := generalFinding("hdr", "distinct_hdr_slot", findingPriorityGeneral)
+	switch {
+	case targetSlot == "dv_hdr" && candidateSlot == "hdr":
+		finding.Relation = api.DupeRelationProposedTrumps
+		finding.ReasonCode = "broader_hdr_compatibility"
+		finding.Priority = findingPriorityTrumpable
+	case targetSlot == "hdr" && candidateSlot == "dv_hdr":
+		finding.Relation = api.DupeRelationExistingPreferred
+		finding.ReasonCode = "existing_broader_hdr_compatibility"
+		finding.Priority = findingPriorityTrumpable
 	}
-	return facts.Status == api.HDREvidencePartial && len(facts.Formats) > 0 &&
-		(facts.Origin == api.HDREvidenceTrackerTitle || facts.Origin == api.HDREvidenceContentFilename ||
-			facts.Origin == api.HDREvidenceReleaseName)
+	return finding, true
 }
 
 func generalDimensionSuppressed(policy trackerspkg.DupePolicy, dimension trackerspkg.DupeDimension) bool {
