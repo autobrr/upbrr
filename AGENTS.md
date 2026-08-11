@@ -4,7 +4,7 @@ Always-loaded AI-agent repo rules. Keep short; nearest scoped `AGENTS.md` owns a
 
 ## Source Of Truth
 
-- Authority: `Makefile`, `lefthook.yml`, `.golangci.yml`, `webui/package.json`, `.github/workflows/*`.
+- Authority: `Makefile`, `lefthook.yml`, `.golangci.yml`, `webui/package.json`, and active `.github/workflows/*.yml` files. `.yml22` files are disabled templates.
 - Setup/commands: `CONTRIBUTING.md`.
 - Conflict: follow tools; update stale prose.
 

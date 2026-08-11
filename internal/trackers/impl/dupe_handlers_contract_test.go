@@ -5,6 +5,7 @@ package impl
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -493,6 +494,26 @@ func TestSiteHandlersSearch(t *testing.T) {
 					_, _ = w.Write([]byte(`{"status_code":1,"page":1,"total_pages":0,"total_results":0,"results":[]}`))
 					return
 				case "BTN":
+					if r.Method != http.MethodPost || r.URL.Path != "/" {
+						http.Error(w, "unexpected BTN search route", http.StatusBadRequest)
+						return
+					}
+					var request struct {
+						JSONRPC string            `json:"jsonrpc"`
+						ID      string            `json:"id"`
+						Method  string            `json:"method"`
+						Params  []json.RawMessage `json:"params"`
+					}
+					if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.JSONRPC != "2.0" ||
+						request.ID != "upbrr-btn-search" || request.Method != "getTorrents" || len(request.Params) != 4 {
+						http.Error(w, "invalid BTN search request", http.StatusBadRequest)
+						return
+					}
+					var filter map[string]string
+					if err := json.Unmarshal(request.Params[1], &filter); err != nil || filter["tvdb"] != "123" {
+						http.Error(w, "missing BTN TVDB provider ID", http.StatusBadRequest)
+						return
+					}
 					_, _ = w.Write([]byte(`{"result":{"results":"0","torrents":{}}}`))
 					return
 				case "CZT", "DC", "RTF", "SPD":

@@ -56,6 +56,16 @@ func uploadAt(ctx context.Context, req trackers.PreparationInput, baseURL string
 	if failure != nil {
 		return api.UploadSummary{}, failure
 	}
+	preview := plan.DryRun()
+	if len(preview.RequiredActions) > 0 {
+		_ = plan.Release()
+		return api.UploadSummary{}, trackers.NewPreparationFailure(
+			"BTN",
+			"confirmation_required",
+			preview.RequiredActions[0].Prompt,
+			nil,
+		)
+	}
 	summary, err := plan.Submit(ctx)
 	if err != nil {
 		return api.UploadSummary{}, fmt.Errorf("trackers: BTN submit prepared upload: %w", err)
@@ -111,7 +121,7 @@ func prepareUploadAt(ctx context.Context, req trackers.PreparationInput, baseURL
 	if autofillAction != nil {
 		if req.Meta.Options.InteractionMode == api.InteractionModeUnattended {
 			if req.Logger != nil {
-				req.Logger.Warnf("trackers: %s decision=skip", autofillAction.Prompt)
+				req.Logger.Warnf("trackers: BTN autofill series mismatch decision=skip")
 			}
 			return trackers.PreparedOperation{}, trackers.NewPreparationFailure(
 				"BTN",
@@ -121,7 +131,7 @@ func prepareUploadAt(ctx context.Context, req trackers.PreparationInput, baseURL
 			)
 		}
 		if req.Logger != nil {
-			req.Logger.Warnf("trackers: %s decision=confirmation_required", autofillAction.Prompt)
+			req.Logger.Warnf("trackers: BTN autofill series mismatch decision=confirmation_required")
 		}
 	}
 

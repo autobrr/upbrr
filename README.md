@@ -228,7 +228,7 @@ Useful CLI checks:
 .\upbrr.exe --queue "D:\upload-queue" --limit-queue 5
 ```
 
-CLI `--debug` builds and prints the same non-submitting tracker payload preview as the WebUI dry run. It never submits to trackers, but it still attempts client injection by default; add `--no-seed` (`-ns`) to skip injection. `--log-level debug` changes log verbosity only and does not select debug/dry-run behavior. See `upbrr.exe --help`.
+CLI `--debug` runs the end-to-end workflow without tracker submission and prints the tracker payload preview. It still attempts client injection by default; add `--no-seed` (`-ns`) to skip injection. `--log-level debug` changes log verbosity only and does not select debug/dry-run behavior. See `upbrr.exe --help`.
 
 ### Automatic DVD Menu Screenshots
 

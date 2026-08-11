@@ -217,6 +217,10 @@ func PrepareAdapter(
 	case PreparationIntentUpload:
 		operation, err := prepareUpload(ctx, input)
 		if err != nil {
+			var preparationFailure *PreparationFailure
+			if errors.As(err, &preparationFailure) {
+				return TrackerPlan{}, preparationFailure
+			}
 			return TrackerPlan{}, NewPreparationFailure(input.Tracker, "upload", err.Error(), err)
 		}
 		if operation.submit == nil {

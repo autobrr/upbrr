@@ -774,6 +774,65 @@ func TestBTNExplicitDryRunRunsAutofillAndReportsBothPayloads(t *testing.T) {
 	}
 }
 
+func TestBTNDirectUploadBlocksMismatchedAutofillArtist(t *testing.T) {
+	t.Parallel()
+
+	dbPath := newBTNAuthDB(t)
+	if err := cookies.SaveTrackerCookieMap(context.Background(), dbPath, "BTN", map[string]string{"session": "imported"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+
+	var uploadCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/upload.php":
+			_, _ = io.WriteString(w, `<form action="/upload.php"><input name="autofill"></form>`)
+		case r.Method == http.MethodPost && r.URL.Path == "/upload.php" && strings.HasPrefix(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded"):
+			_, _ = io.WriteString(w, `
+				<input name="artist" value="Unexpected Show">
+				<input name="seriesid" value="999">
+				<input name="title" value="Episode One">
+				<input name="year" value="2026">
+				<select name="format"><option selected value="MKV">MKV</option></select>
+				<select name="bitrate"><option selected value="H.265">H.265</option></select>
+				<select name="media"><option selected value="WEB-DL">WEB-DL</option></select>
+				<select name="resolution"><option selected value="1080p">1080p</option></select>
+			`)
+		case r.Method == http.MethodPost && r.URL.Path == "/upload.php":
+			uploadCalls.Add(1)
+			http.Error(w, "unexpected upload", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	logger := &captureBTNLogger{}
+	req := newBTNDryRunTestRequest(t, dbPath)
+	req.Logger = logger
+	req.Meta.MediaInfoTextPath = writeBTNTestMediaInfo(t, filepath.Dir(req.Meta.SourcePath), "General\nFormat: Matroska")
+	req.Meta.Identity.TVDBID = 12345
+	req.Meta.ProviderMetadata.TVDB = &api.TVDBMetadata{
+		TVDBID:           12345,
+		NameEnglish:      "Expected Show",
+		EpisodeSeason:    1,
+		OriginalLanguage: "en",
+	}
+
+	_, err := uploadAt(context.Background(), req, server.URL)
+	var failure *trackers.PreparationFailure
+	if !errors.As(err, &failure) || failure.Code() != "confirmation_required" {
+		t.Fatalf("direct mismatch failure = %v", err)
+	}
+	if uploadCalls.Load() != 0 {
+		t.Fatalf("mismatched autofill submitted %d uploads", uploadCalls.Load())
+	}
+	if !logger.containsWarning("BTN autofill series mismatch decision=confirmation_required") ||
+		logger.containsWarning("Unexpected Show") || logger.containsWarning("Expected Show") {
+		t.Fatal("expected fixed mismatch warning without provider values")
+	}
+}
+
 func TestBTNUploadBlocksMissingCanonicalTVSeasonEpisode(t *testing.T) {
 	t.Parallel()
 

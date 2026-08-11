@@ -195,6 +195,7 @@ func TestStampUploadPlanActionsPublishesDurableActionIdentity(t *testing.T) {
 		t.Fatalf("stamp upload-plan actions: %v", err)
 	}
 	if len(actions) != 1 || actions[0].ID == "" || actions[0].WorkflowRevision != 7 ||
+		actions[0].TrackerID != "BTN" ||
 		actions[0].Status != api.RequiredActionStatusPending || !actions[0].CreatedAt.Equal(now) ||
 		actions[0].ExpiresAt == nil || !actions[0].ExpiresAt.Equal(expiresAt) {
 		t.Fatalf("stamped upload-plan actions = %#v plan=%#v", actions, plan)

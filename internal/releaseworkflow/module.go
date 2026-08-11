@@ -5423,6 +5423,7 @@ func (m *Module) stampUploadPlanActions(
 	var actions []api.RequiredAction
 	for _, tracker := range plan.Trackers {
 		for _, action := range tracker.RequiredActions {
+			action.TrackerID = tracker.TrackerID
 			if action.ID == "" {
 				id, err := m.newID("action")
 				if err != nil {
