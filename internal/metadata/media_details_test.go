@@ -128,6 +128,34 @@ func TestRebuildReleaseNamePersistsGeneratedEpisodeVariants(t *testing.T) {
 	}
 }
 
+func TestRebuildReleaseNameOmitsGeneratedEpisodeTitle(t *testing.T) {
+	t.Parallel()
+
+	meta := preparationstate.State{
+		Identity:             api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+		Type:                 "WEBDL",
+		Source:               "WEB",
+		Service:              "EXM",
+		Audio:                "AAC 2.0",
+		VideoEncode:          "H.264",
+		SeasonStr:            "S01",
+		EpisodeStr:           "E02",
+		EpisodeTitle:         "Example Episode",
+		ReleaseNameOverrides: api.ReleaseNameOverrides{NoEpisodeTitle: new(true)},
+		Release: api.ReleaseInfo{
+			Title:      "Example Show",
+			Resolution: "1080p",
+		},
+	}
+
+	RebuildReleaseName(&meta, api.NopLogger{})
+
+	if strings.Contains(meta.ReleaseName, "Example Episode") ||
+		strings.Contains(meta.GeneratedReleaseNames.IncludeEpisodeTitle.Name, "Example Episode") {
+		t.Fatalf("generated release names retained episode title: %#v", meta.GeneratedReleaseNames)
+	}
+}
+
 func TestEditionFromMetaMultiPlaylistDeduplicatesMatches(t *testing.T) {
 	meta := preparationstate.State{
 		DiscType: "BDMV",

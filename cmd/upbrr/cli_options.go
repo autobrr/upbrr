@@ -55,6 +55,8 @@ type cliOptions struct {
 	NoYear                bool
 	NoAKA                 bool
 	NoTag                 bool
+	NoEpisodeTitle        bool
+	NoDistributor         bool
 	NoEdition             bool
 	NoDub                 bool
 	NoDual                bool
@@ -203,7 +205,12 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	fs.BoolVar(&opts.NoYear, "no-year", false, "Remove year from name")
 	fs.BoolVar(&opts.NoAKA, "no-aka", false, "Remove AKA from name")
 	fs.BoolVar(&opts.NoTag, "no-tag", false, "Remove group tag from name")
+	fs.BoolVar(&opts.NoEpisodeTitle, "no-episode-title", false, "Remove episode title from name")
+	fs.BoolVar(&opts.NoEpisodeTitle, "net", false, "Remove episode title from name")
+	fs.BoolVar(&opts.NoDistributor, "no-distributor", false, "Remove distributor")
+	fs.BoolVar(&opts.NoDistributor, "ndist", false, "Remove distributor")
 	fs.BoolVar(&opts.NoEdition, "no-edition", false, "Remove edition from name")
+	fs.BoolVar(&opts.NoEdition, "ne", false, "Remove edition from name")
 	fs.BoolVar(&opts.NoDub, "no-dub", false, "Remove dubbed tag from audio name")
 	fs.BoolVar(&opts.NoDual, "no-dual", false, "Remove dual-audio tag from audio name")
 	fs.BoolVar(&opts.DualAudio, "dual-audio", false, "Add dual-audio tag to audio name")
@@ -476,6 +483,9 @@ func cliFlagAliases() map[string]string {
 		"repack":               "edition",
 		"manual-episode-title": "episode-title",
 		"met":                  "episode-title",
+		"net":                  "no-episode-title",
+		"ndist":                "no-distributor",
+		"ne":                   "no-edition",
 		"year":                 "manual-year",
 		"reg":                  "region",
 		"df":                   "descfile",
@@ -616,7 +626,7 @@ func cliHelpSections(name string) []helpSection {
 		{title: "Release Overrides", names: []string{
 			"category", "type", "source", "resolution", "tag", "service", "distributor", "original-language",
 			"edition", "season", "episode", "episode-title", "manual-year", "daily", "region", "no-season", "no-year",
-			"no-aka", "no-tag", "no-edition", "no-dub", "no-dual", "dual-audio",
+			"no-aka", "no-tag", "no-episode-title", "no-distributor", "no-edition", "no-dub", "no-dual", "dual-audio",
 		}},
 		{title: "Metadata IDs", names: []string{"tmdb", "imdb", "mal", "tvdb", "tvmaze"}},
 		{title: "Tracker Overrides", names: []string{
@@ -739,27 +749,29 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, s
 			InteractionMode: opts.interactionMode(),
 		},
 		ReleaseNameOverrides: buildReleaseNameOverrides(visited, releaseOverrideInput{
-			Category:     opts.Category,
-			Type:         opts.Type,
-			Source:       opts.Source,
-			Resolution:   opts.Resolution,
-			Tag:          opts.Tag,
-			Service:      opts.Service,
-			Edition:      opts.Edition,
-			Season:       opts.Season,
-			Episode:      opts.Episode,
-			EpisodeTitle: opts.EpisodeTitle,
-			ManualYear:   opts.ManualYear,
-			ManualDate:   opts.ManualDate,
-			NoSeason:     opts.NoSeason,
-			NoYear:       opts.NoYear,
-			NoAKA:        opts.NoAKA,
-			NoTag:        opts.NoTag,
-			NoEdition:    opts.NoEdition,
-			NoDub:        opts.NoDub,
-			NoDual:       opts.NoDual,
-			DualAudio:    opts.DualAudio,
-			Region:       opts.Region,
+			Category:       opts.Category,
+			Type:           opts.Type,
+			Source:         opts.Source,
+			Resolution:     opts.Resolution,
+			Tag:            opts.Tag,
+			Service:        opts.Service,
+			Edition:        opts.Edition,
+			Season:         opts.Season,
+			Episode:        opts.Episode,
+			EpisodeTitle:   opts.EpisodeTitle,
+			ManualYear:     opts.ManualYear,
+			ManualDate:     opts.ManualDate,
+			NoSeason:       opts.NoSeason,
+			NoYear:         opts.NoYear,
+			NoAKA:          opts.NoAKA,
+			NoTag:          opts.NoTag,
+			NoEpisodeTitle: opts.NoEpisodeTitle,
+			NoDistributor:  opts.NoDistributor,
+			NoEdition:      opts.NoEdition,
+			NoDub:          opts.NoDub,
+			NoDual:         opts.NoDual,
+			DualAudio:      opts.DualAudio,
+			Region:         opts.Region,
 		}),
 		SkipDupeCheck:          opts.SkipDupeCheck,
 		SkipDupeAsActual:       opts.SkipDupeAsActual,

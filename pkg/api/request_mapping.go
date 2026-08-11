@@ -101,6 +101,8 @@ func cloneReleaseNameOverrides(value ReleaseNameOverrides) ReleaseNameOverrides 
 		NoYear:           cloneBool(value.NoYear),
 		NoAKA:            cloneBool(value.NoAKA),
 		NoTag:            cloneBool(value.NoTag),
+		NoEpisodeTitle:   cloneBool(value.NoEpisodeTitle),
+		NoDistributor:    cloneBool(value.NoDistributor),
 		NoEdition:        cloneBool(value.NoEdition),
 		NoDub:            cloneBool(value.NoDub),
 		NoDual:           cloneBool(value.NoDual),

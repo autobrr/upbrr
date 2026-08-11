@@ -155,6 +155,11 @@ var migrationRegistry = []migrationStep{
 		dependsOn: []string{"2026_07_add_release_workflow_durability"},
 		apply:     migrateAddReleaseWorkflowWorkLeases,
 	},
+	{
+		id:        "2026_08_add_release_omission_controls",
+		dependsOn: []string{baselineMigrationID},
+		apply:     migrateAddReleaseOmissionControls,
+	},
 }
 
 func migrateAddReleaseWorkflowStates(ctx context.Context, exec migrationExecutor) error {
@@ -632,6 +637,32 @@ func migrateAddReleaseOverrideUseSeasonEpisode(ctx context.Context, exec migrati
 	}
 	if _, err := exec.ExecContext(ctx, `ALTER TABLE release_overrides ADD COLUMN use_season_episode INTEGER`); err != nil {
 		return fmt.Errorf("db: %w", err)
+	}
+	return nil
+}
+
+func migrateAddReleaseOmissionControls(ctx context.Context, exec migrationExecutor) error {
+	tablePresent, err := tableExists(ctx, exec, "release_overrides")
+	if err != nil {
+		return err
+	}
+	if !tablePresent {
+		return nil
+	}
+	for _, column := range []struct{ name, statement string }{
+		{"no_episode_title", `ALTER TABLE release_overrides ADD COLUMN no_episode_title INTEGER`},
+		{"no_distributor", `ALTER TABLE release_overrides ADD COLUMN no_distributor INTEGER`},
+	} {
+		exists, err := tableColumnExists(ctx, exec, "release_overrides", column.name)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		if _, err := exec.ExecContext(ctx, column.statement); err != nil {
+			return fmt.Errorf("db: add release override %s: %w", column.name, err)
+		}
 	}
 	return nil
 }
@@ -1498,6 +1529,8 @@ func createBaselineSchema(ctx context.Context, exec migrationExecutor) error {
 			no_year INTEGER,
 			no_aka INTEGER,
 			no_tag INTEGER,
+			no_episode_title INTEGER,
+			no_distributor INTEGER,
 			no_edition INTEGER,
 			no_dub INTEGER,
 			no_dual INTEGER,

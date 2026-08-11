@@ -947,9 +947,25 @@ describe("useReleaseSession", () => {
     });
 
     act(() => result.current.input.selectSource("C:\\media\\Example Release"));
+    act(() =>
+      result.current.input.changeMetadata({
+        Distributor: "Example Distributor",
+        OriginalLanguage: "ja",
+      }),
+    );
     await act(() => result.current.input.prepare());
 
     expect(create).toHaveBeenCalledOnce();
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        Metadata: {
+          Distributor: "Example Distributor",
+          OriginalLanguage: "ja",
+        },
+      }),
+      expect.any(String),
+      expect.any(AbortSignal),
+    );
     expect(prepareWorkflow).toHaveBeenCalledOnce();
     expect(prepareWorkflow).toHaveBeenCalledWith(
       expect.anything(),

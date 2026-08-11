@@ -49,7 +49,7 @@ func TestBaselineSchemaIncludesCurrentMigrationColumns(t *testing.T) {
 			},
 		},
 		{name: "external_metadata", columns: []string{"generation"}},
-		{name: "release_overrides", columns: []string{"use_season_episode"}},
+		{name: "release_overrides", columns: []string{"use_season_episode", "no_episode_title", "no_distributor"}},
 		{name: "description_overrides", columns: []string{"group_key"}},
 	} {
 		for _, column := range table.columns {
@@ -60,6 +60,32 @@ func TestBaselineSchemaIncludesCurrentMigrationColumns(t *testing.T) {
 			if !exists {
 				t.Fatalf("baseline missing current column %s.%s", table.name, column)
 			}
+		}
+	}
+}
+
+func TestMigrateAddReleaseOmissionControlsIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	t.Cleanup(func() { _ = rawDB.Close() })
+
+	ctx := context.Background()
+	if _, err := rawDB.ExecContext(ctx, `CREATE TABLE release_overrides (source_path TEXT PRIMARY KEY)`); err != nil {
+		t.Fatalf("create legacy release overrides: %v", err)
+	}
+	for range 2 {
+		if err := migrateAddReleaseOmissionControls(ctx, rawDB); err != nil {
+			t.Fatalf("migrate release omission controls: %v", err)
+		}
+	}
+	for _, column := range []string{"no_episode_title", "no_distributor"} {
+		exists, err := tableColumnExists(ctx, rawDB, "release_overrides", column)
+		if err != nil || !exists {
+			t.Fatalf("release_overrides.%s exists=%t err=%v", column, exists, err)
 		}
 	}
 }

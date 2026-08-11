@@ -117,6 +117,7 @@ export type SessionAction =
     }>
   | Readonly<{ type: "source_lookup_changed"; value: string }>
   | Readonly<{ type: "identity_changed"; value: Readonly<ExternalIDOverrides> }>
+  | Readonly<{ type: "metadata_changed"; value: PreparationIntent["metadata"] }>
   | Readonly<{ type: "release_name_changed"; value: Readonly<ReleaseNameOverrides> }>
   | Readonly<{
       type: "playlist_required";
@@ -261,6 +262,7 @@ export type SessionAction =
 const emptyIntent = (): PreparationIntent => ({
   sourceLookupURL: "",
   identity: {},
+  metadata: {},
   releaseName: {},
   playlist: { Set: false, Selected: [], UseAll: false },
 });
@@ -268,6 +270,7 @@ const emptyIntent = (): PreparationIntent => ({
 const clonePreparationIntent = (intent: PreparationIntent): PreparationIntent => ({
   sourceLookupURL: intent.sourceLookupURL,
   identity: { ...intent.identity },
+  metadata: { ...intent.metadata },
   releaseName: { ...intent.releaseName },
   playlist: {
     Set: intent.playlist.Set,
@@ -529,6 +532,11 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       return preparationIntentChanged(state, {
         ...state.preparationIntent,
         identity: { ...action.value },
+      });
+    case "metadata_changed":
+      return preparationIntentChanged(state, {
+        ...state.preparationIntent,
+        metadata: { ...action.value },
       });
     case "release_name_changed":
       return preparationIntentChanged(state, {

@@ -30,8 +30,10 @@ func TestReleaseWorkflowUploadRequestRoundTripPreservesPresence(t *testing.T) {
 					IMDB: &ReleaseWorkflowUploadStringID{Value: &empty},
 				},
 				ReleaseName: ReleaseWorkflowUploadReleaseName{
-					Tag:    &empty,
-					NoYear: &disabled,
+					Tag:            &empty,
+					NoYear:         &disabled,
+					NoEpisodeTitle: &disabled,
+					NoDistributor:  &disabled,
 				},
 			},
 			ClientSearch: ReleaseWorkflowUploadClientSearch{Skip: &disabled},

@@ -134,6 +134,8 @@ type ReleaseNameOverrides struct {
 	NoYear           *bool
 	NoAKA            *bool
 	NoTag            *bool
+	NoEpisodeTitle   *bool
+	NoDistributor    *bool
 	NoEdition        *bool
 	NoDub            *bool
 	NoDual           *bool
