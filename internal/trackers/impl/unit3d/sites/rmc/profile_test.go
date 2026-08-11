@@ -155,6 +155,27 @@ func TestResolutionID(t *testing.T) {
 	}
 }
 
+func TestResolutionIDPrecedenceAndMarkerRecovery(t *testing.T) {
+	tests := []struct {
+		name string
+		meta api.UploadSubject
+		want string
+	}{
+		{"soundtrack with video resolution", api.UploadSubject{Type: "SoundTrack", Release: api.ReleaseInfo{Resolution: "1080p"}}, "12"},
+		{"360p marker", api.UploadSubject{ReleaseName: "Example.Release.2000.360p-GRP"}, "10"},
+		{"540p marker", api.UploadSubject{ReleaseName: "Example.Release.2000.540p-GRP"}, "11"},
+		{"embedded 360p marker", api.UploadSubject{ReleaseName: "Example.Release.2000.1360p-GRP"}, "13"},
+		{"embedded 540p marker", api.UploadSubject{ReleaseName: "Example.Release.2000.1540p-GRP"}, "13"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := resolutionID(test.meta); got != test.want {
+				t.Fatalf("resolutionID(%#v) = %q, want %q", test.meta, got, test.want)
+			}
+		})
+	}
+}
+
 func TestBuildNameSanitizesDisallowedCharacters(t *testing.T) {
 	meta := rmcNameSubject("Exämple: Rëlease! (2000) 1080p Bluray x264-GRP", "Exämple: Rëlease!", 2000)
 	got := Profile().Site.BuildName(meta, config.TrackerConfig{})

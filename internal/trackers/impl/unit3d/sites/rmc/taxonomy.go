@@ -16,6 +16,7 @@ var (
 	rmcRestorationPattern = regexp.MustCompile(`(?i)(^|[^[:alnum:]])restor(?:ation|ed)([^[:alnum:]]|$)`)
 	rmcSoundtrackPattern  = regexp.MustCompile(`(?i)(^|[^[:alnum:]])sound[ ._-]*track([^[:alnum:]]|$)`)
 	rmcLegacyPattern      = regexp.MustCompile(`(?i)(^|[^[:alnum:]])(?:vhs|laser[ ._-]*disc|woc)([^[:alnum:]]|$)`)
+	rmcResolutionPattern  = regexp.MustCompile(`(?:^|[^[:alnum:]])(360p|540p)(?:[^[:alnum:]]|$)`)
 )
 
 // typeID maps prepared release facts and RMC-specific labels or name markers
@@ -77,6 +78,9 @@ func typeID(meta api.UploadSubject) string {
 // resolutionID maps prepared release facts to RMC's resolution IDs.
 // Soundtracks default to FLAC; unmatched resolutions use Other RES.
 func resolutionID(meta api.UploadSubject) string {
+	if typeID(meta) == "17" {
+		return "12"
+	}
 	resolution := rmcResolution(meta)
 	if value, ok := map[string]string{
 		"4320p": "1",
@@ -94,9 +98,6 @@ func resolutionID(meta api.UploadSubject) string {
 	}[resolution]; ok {
 		return value
 	}
-	if typeID(meta) == "17" {
-		return "12"
-	}
 	return "13"
 }
 
@@ -105,12 +106,8 @@ func resolutionID(meta api.UploadSubject) string {
 func rmcResolution(meta api.UploadSubject) string {
 	resolution := strings.ToLower(strings.TrimSpace(unit3d.Resolution(meta)))
 	if resolution == "" {
-		name := strings.ToLower(markerName(meta))
-		for _, candidate := range []string{"360p", "540p"} {
-			if strings.Contains(name, candidate) {
-				resolution = candidate
-				break
-			}
+		if match := rmcResolutionPattern.FindStringSubmatch(strings.ToLower(markerName(meta))); len(match) > 1 {
+			resolution = match[1]
 		}
 	}
 	return resolution
