@@ -1128,6 +1128,7 @@ func (s UploadPlan) Validate() error {
 	}
 	seen := make(map[TrackerID]struct{}, len(s.Trackers))
 	eligible := 0
+	skipped := 0
 	for _, tracker := range s.Trackers {
 		id := normalizeTrackerID(tracker.TrackerID)
 		if id == "" || strings.TrimSpace(tracker.UploadReleaseName) == "" {
@@ -1148,6 +1149,9 @@ func (s UploadPlan) Validate() error {
 		case StageStatusSkipped, StageStatusBlocked:
 			if tracker.Eligible {
 				return fmt.Errorf("upload plan tracker %s cannot be %s and eligible", id, tracker.Status)
+			}
+			if tracker.Status == StageStatusSkipped {
+				skipped++
 			}
 		case StageStatusFailed:
 			if tracker.Eligible || len(tracker.Failures) == 0 {
@@ -1225,8 +1229,8 @@ func (s UploadPlan) Validate() error {
 			return errors.New("ready upload plan requires an eligible tracker")
 		}
 	case StageStatusSkipped:
-		if len(s.Trackers) != 0 {
-			return errors.New("skipped upload plan cannot contain tracker operations")
+		if skipped != len(s.Trackers) {
+			return errors.New("skipped upload plan requires only skipped tracker outcomes")
 		}
 	case StageStatusBlocked:
 	case StageStatusUnavailable:

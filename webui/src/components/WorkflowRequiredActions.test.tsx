@@ -120,6 +120,7 @@ describe("WorkflowRequiredActions", () => {
               trackerId: undefined,
             }),
           ])}
+          onConfirm={vi.fn()}
           onNavigate={navigate}
         />
       </>,
@@ -143,6 +144,7 @@ describe("WorkflowRequiredActions", () => {
             trackerId: undefined,
           }),
         ])}
+        onConfirm={vi.fn()}
         onNavigate={navigate}
       />,
     );
@@ -154,6 +156,7 @@ describe("WorkflowRequiredActions", () => {
     rerender(
       <WorkflowRequiredActions
         continuation={continuation([action({ status: "resolved" })])}
+        onConfirm={vi.fn()}
         onNavigate={navigate}
       />,
     );
@@ -172,6 +175,7 @@ describe("WorkflowRequiredActions", () => {
             prompt: "Confirm the tracker release name.",
           }),
         ])}
+        onConfirm={vi.fn()}
         onNavigate={navigate}
       />,
     );
@@ -180,5 +184,25 @@ describe("WorkflowRequiredActions", () => {
     expect(screen.queryByText("Confirm the tracker release name.")).not.toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("confirms rule authorization in place", () => {
+    const confirm = vi.fn();
+    render(
+      <WorkflowRequiredActions
+        continuation={continuation([
+          action({
+            kind: "authorize_rules",
+            prompt: "BTN autofill returned a different series. Continue?",
+            trackerId: undefined,
+          }),
+        ])}
+        onConfirm={confirm}
+        onNavigate={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue upload" }));
+    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ kind: "authorize_rules" }));
   });
 });

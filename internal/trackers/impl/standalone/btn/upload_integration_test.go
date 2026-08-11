@@ -1095,6 +1095,27 @@ func TestBTNPrepareUploadDataUsesEpisodeIntForTVDBAutoTitle(t *testing.T) {
 	}
 }
 
+func TestBTNAutofillArtistActionMatchesTVDBNamesExactly(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{
+		Identity: api.ExternalIdentity{TVDBID: 12345},
+		ProviderMetadata: api.SourceScopedMetadata{TVDB: &api.TVDBMetadata{
+			Name:        "Native Show",
+			NameEnglish: "English Show",
+			Aliases:     []string{"Alias Show"},
+		}},
+	}
+	for _, artist := range []string{"Native Show", "English Show", "Alias Show", " English Show "} {
+		if action := btnAutofillArtistAction(meta, artist); action != nil {
+			t.Fatalf("artist %q unexpectedly required confirmation: %#v", artist, action)
+		}
+	}
+	if action := btnAutofillArtistAction(meta, "english show"); action == nil {
+		t.Fatal("case-mismatched artist did not require confirmation")
+	}
+}
+
 func TestBTNPrepareUploadDataUsesSeasonIntForTVDBSeasonPack(t *testing.T) {
 	t.Parallel()
 

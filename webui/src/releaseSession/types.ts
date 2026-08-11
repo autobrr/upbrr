@@ -24,6 +24,7 @@ import type {
   MediaArtifactSet,
   MediaCaptureInstructions,
   MetadataOverrides,
+  RequiredAction,
   ReleaseWorkflowCurrent,
   TrackerPreflightAssessment,
   TrackerReleaseProjectionSet,
@@ -319,6 +320,8 @@ export type WorkflowFacet = Readonly<{
   generateDescriptions(instructions: DescriptionInstructions): Promise<boolean>;
   dryRunUploads(): Promise<boolean>;
   executeUploads(): Promise<boolean>;
+  /** Submits an `authorize_rules` confirmation and resumes upload; unsupported kinds resolve to false. */
+  confirmAction(action: RequiredAction): Promise<boolean>;
   retryFailedUploads(): Promise<boolean>;
   retryClientInjections(): Promise<boolean>;
   invalidateTrackers(trackerIDs: readonly string[], reason: string): Promise<boolean>;

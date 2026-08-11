@@ -361,6 +361,13 @@ func (b workflowUploadPlanBuilder) Build(
 				},
 				TrackerID: projection.TrackerID,
 			}}
+		case preparation.Failure != nil && preparation.Failure.Code == trackers.PreparationFailureCodeSkipped:
+			tracker.Status = api.StageStatusSkipped
+			message := strings.TrimSpace(logging.SanitizeMessage(preparation.Failure.Message))
+			if message == "" {
+				message = "Tracker skipped during preparation."
+			}
+			tracker.Warnings = []string{message}
 		case preparation.Failure != nil:
 			tracker.Status = api.StageStatusFailed
 			message := strings.TrimSpace(logging.SanitizeMessage(preparation.Failure.Message))
@@ -387,6 +394,7 @@ func (b workflowUploadPlanBuilder) Build(
 			tracker.TorrentArtifactID = torrentArtifactID
 			tracker.TorrentFingerprint = torrentFingerprint
 			tracker.Endpoint, tracker.Fields, tracker.Files = sanitizeWorkflowUploadPreview(preparation.Preview)
+			tracker.RequiredActions = append([]api.RequiredAction(nil), preparation.Preview.RequiredActions...)
 			if identityErr != nil || torrentArtifactID == "" {
 				tracker.Status = api.StageStatusFailed
 				tracker.Warnings = []string{"No exact prepared tracker torrent is available. Prepare the tracker again."}
@@ -463,6 +471,7 @@ func (b workflowUploadPlanBuilder) Build(
 			Eligible            bool
 			Status              api.StageStatus
 			Warnings            []string
+			RequiredActions     []api.RequiredAction
 			PreparedOperationID api.PublicResourceID
 			TorrentArtifactID   api.PublicResourceID
 			TorrentFingerprint  api.WorkflowFingerprint
@@ -474,6 +483,7 @@ func (b workflowUploadPlanBuilder) Build(
 			tracker.Eligible,
 			tracker.Status,
 			tracker.Warnings,
+			tracker.RequiredActions,
 			tracker.PreparedOperationID,
 			tracker.TorrentArtifactID,
 			tracker.TorrentFingerprint,

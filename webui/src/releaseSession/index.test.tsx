@@ -682,6 +682,51 @@ describe("useReleaseSession", () => {
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
 
+  it("confirms a retained rule authorization before upload", async () => {
+    const workflowID = "workflow-authorize-upload";
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const action = {
+      createdAt: "2026-07-20T00:00:00Z",
+      id: "action-authorize",
+      kind: "authorize_rules" as const,
+      prompt: "Confirm BTN autofill.",
+      status: "pending" as const,
+      workflowRevision: 7,
+    };
+    const base = workflowCurrent(workflowID, 7);
+    const retained: ReleaseWorkflowCurrent = {
+      ...base,
+      workflow: { ...base.workflow, status: "blocked", requiredActions: [action] },
+      continuation: { ...base.continuation, requiredActions: [action] },
+    };
+    const continueWorkflow = vi.fn(async () => retained);
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          workflow: workflowPorts({
+            current: async () => retained,
+            continue: continueWorkflow,
+          }),
+        }),
+      ),
+    });
+
+    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+    await act(async () => {
+      expect(await result.current.workflow.confirmAction(action)).toBe(true);
+    });
+    expect(continueWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        goal: "uploaded",
+        answers: [{ actionId: action.id, workflowRevision: 7, confirmed: true }],
+      }),
+      expect.any(AbortSignal),
+    );
+
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
   it("executes a direct upload through one workflow command", async () => {
     const workflowID = "workflow-skipped-upload";
     window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);

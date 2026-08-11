@@ -458,6 +458,7 @@ function AppShell() {
           <WorkflowOperationProgress operation={releaseSession.workflow.view.current?.operation} />
           <WorkflowRequiredActions
             continuation={releaseSession.workflow.view.current?.continuation}
+            onConfirm={(action) => void releaseSession.workflow.confirmAction(action)}
             onNavigate={(route) => openReleaseTab(releaseRouteTabs[route], route)}
           />
           {activeTab === "settings" ? (

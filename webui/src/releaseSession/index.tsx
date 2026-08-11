@@ -20,6 +20,7 @@ import type {
   MediaCaptureInstructions,
   Operation as WorkflowOperationStatus,
   PrepareInput as WorkflowPrepareInput,
+  RequiredAction,
   ReleaseFactInstructions,
   ReleaseWorkflowCurrent,
   WorkflowContinuation,
@@ -1523,6 +1524,27 @@ export function ReleaseSessionProvider({
           continueBackendGoal(current, "dry_run", backendResolvedUploadIntent(), commandID, signal),
         ),
       executeUploads: () => executeExactUpload(),
+      confirmAction: (action: RequiredAction) => {
+        if (action.kind !== "authorize_rules") return Promise.resolve(false);
+        return runBackendWorkflow((current, commandID, signal) =>
+          continueBackendGoal(
+            current,
+            "uploaded",
+            backendResolvedUploadIntent(),
+            commandID,
+            signal,
+            {
+              answers: [
+                {
+                  actionId: action.id,
+                  workflowRevision: current.workflow.revision,
+                  confirmed: true,
+                },
+              ],
+            },
+          ),
+        );
+      },
       retryFailedUploads: () => {
         const result = workflowView.current?.uploadResult;
         if (!result) return Promise.resolve(false);

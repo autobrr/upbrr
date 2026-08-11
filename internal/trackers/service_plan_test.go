@@ -74,6 +74,18 @@ func TestOrderedReadyTrackerPlanIndexesQueuesRehashLast(t *testing.T) {
 	}
 }
 
+func TestTrackerPlanFailuresOmitsIntentionalSkips(t *testing.T) {
+	t.Parallel()
+
+	failures := trackerPlanFailures([]trackerPlanSlot{
+		{tracker: "ALPHA", failure: &TrackerFailure{Tracker: "ALPHA", Code: PreparationFailureCodeSkipped}},
+		{tracker: "BETA", failure: &TrackerFailure{Tracker: "BETA", Code: "prepare"}},
+	})
+	if len(failures) != 1 || failures[0].Tracker != "BETA" {
+		t.Fatalf("tracker plan failures = %#v", failures)
+	}
+}
+
 func TestSubmitTrackerPlansWaitsBetweenReusableAndRehashedBatches(t *testing.T) {
 	var reusableFinished time.Time
 	var rehashedStarted time.Time

@@ -5352,6 +5352,10 @@ func (m *Module) dryRunUploads(
 			_ = prepared.Release()
 		}
 	}()
+	uploadActions, err := m.stampUploadPlanActions(prepared.plan, nextRevision, now)
+	if err != nil {
+		return CommandResult{}, err
+	}
 	reports := uploadDryRunReports(prepared.plan.Trackers)
 	succeededCount, failedCount, skippedCount, status := reduceUploadDryRunReports(reports)
 	id, err := m.newID("upload_dry_run")
@@ -5384,6 +5388,7 @@ func (m *Module) dryRunUploads(
 	if err != nil {
 		return CommandResult{}, err
 	}
+	actions := slices.Concat(uploadActions, reconcileActions)
 	if err := m.private.Put(
 		ownerID,
 		state.Workflow.ID,
@@ -5400,12 +5405,42 @@ func (m *Module) dryRunUploads(
 	state.DryRuns[snapshot.ID] = snapshot
 	state.Workflow.DryRun = &api.UploadDryRunResultRef{ID: snapshot.ID, Revision: snapshot.Revision}
 	if state.Workflow.UploadResult == nil {
-		setWorkflowStageStatus(&state.Workflow, snapshot.Status, reconcileActions, reconcileFailures)
-		if len(reconcileActions) > 0 {
+		setWorkflowStageStatus(&state.Workflow, snapshot.Status, actions, reconcileFailures)
+		if len(actions) > 0 {
 			state.Workflow.Status = api.WorkflowStatusBlocked
 		}
 	}
 	return CommandResult{DryRun: &snapshot}, nil
+}
+
+// stampUploadPlanActions prepares tracker actions for workflow presentation.
+// It assigns missing IDs and expiry while resetting status, revision, and creation time.
+func (m *Module) stampUploadPlanActions(
+	plan api.UploadPlan,
+	revision api.WorkflowRevision,
+	now time.Time,
+) ([]api.RequiredAction, error) {
+	var actions []api.RequiredAction
+	for _, tracker := range plan.Trackers {
+		for _, action := range tracker.RequiredActions {
+			if action.ID == "" {
+				id, err := m.newID("action")
+				if err != nil {
+					return nil, err
+				}
+				action.ID = api.RequiredActionID(id)
+			}
+			action.Status = api.RequiredActionStatusPending
+			action.WorkflowRevision = revision
+			action.CreatedAt = now
+			if action.ExpiresAt == nil {
+				expiresAt := plan.ExpiresAt
+				action.ExpiresAt = &expiresAt
+			}
+			actions = append(actions, action)
+		}
+	}
+	return actions, nil
 }
 
 func (m *Module) reconcileActionsForDryRun(
@@ -5548,20 +5583,40 @@ func (m *Module) executeUploads(
 	if state.Workflow.UploadResult != nil {
 		return CommandResult{}, fmt.Errorf("%w: upload already has a retained result; retry failed trackers or change workflow inputs", ErrInvalidTransition)
 	}
+	if slices.ContainsFunc(state.Workflow.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionAuthorizeRules && action.Status == api.RequiredActionStatusPending
+	}) {
+		return CommandResult{}, api.NewOperationError(api.OperationFailure{
+			Code:      api.OperationFailureConfirmationRequired,
+			Operation: api.OperationKindUploadExecute,
+			Message:   "Upload requires confirmation of a pending tracker rule.",
+			Recovery:  api.OperationRecoveryConfirm,
+		}, ErrInvalidTransition)
+	}
 	prepared, err := m.preparedUploadsForExecution(ctx, ownerID, state, command.NoSeed, command.TrackerIDs, now)
 	if err != nil {
 		return CommandResult{}, err
 	}
 	defer func() { _ = prepared.Release() }()
-	requestedTrackerIDs := command.TrackerIDs
-	if len(requestedTrackerIDs) == 0 {
-		requestedTrackerIDs = prepared.trackerIDs
+	if slices.ContainsFunc(prepared.plan.Trackers, func(tracker api.UploadPlanTracker) bool {
+		return len(tracker.RequiredActions) > 0
+	}) && state.Workflow.DryRun == nil {
+		return CommandResult{}, api.NewOperationError(api.OperationFailure{
+			Code:      api.OperationFailureConfirmationRequired,
+			Operation: api.OperationKindUploadExecute,
+			Message:   "Prepare and review the upload before confirming its tracker preparation result.",
+			Recovery:  api.OperationRecoveryReviewAgain,
+		}, ErrInvalidTransition)
 	}
-	trackerIDs, err := validateUploadExecutionTrackerIDs(prepared.plan.Trackers, requestedTrackerIDs)
+	trackerIDs, err := validateUploadExecutionTrackerIDs(prepared.plan.Trackers, command.TrackerIDs)
 	if err != nil {
 		return CommandResult{}, err
 	}
-	results, executionErr := prepared.execution.Execute(ctx, trackerIDs)
+	var results []api.UploadTrackerResult
+	var executionErr error
+	if len(trackerIDs) > 0 {
+		results, executionErr = prepared.execution.Execute(ctx, trackerIDs)
+	}
 	results = completeUploadExecutionResults(prepared.plan.Trackers, results, executionErr, trackerIDs)
 	authority := prepared.execution.RegisteredArtifactAuthority()
 	return m.publishUploadResult(ownerID, state, nextRevision, now, prepared, results, authority)
@@ -5891,22 +5946,36 @@ func completeUploadExecutionResults(
 	return completed
 }
 
+// validateUploadExecutionTrackerIDs selects ready, eligible trackers from the retained plan.
+// An empty request selects all; explicit skipped trackers are ignored, while other invalid or duplicate IDs reject the request.
 func validateUploadExecutionTrackerIDs(
 	trackers []api.UploadPlanTracker,
 	requested []api.TrackerID,
 ) ([]api.TrackerID, error) {
-	if len(requested) == 0 {
-		return nil, nil
-	}
 	eligible := make(map[api.TrackerID]struct{}, len(trackers))
+	skipped := make(map[api.TrackerID]struct{}, len(trackers))
 	for _, tracker := range trackers {
 		if tracker.Eligible && tracker.Status == api.StageStatusReady {
 			eligible[tracker.TrackerID] = struct{}{}
+		} else if tracker.Status == api.StageStatusSkipped {
+			skipped[tracker.TrackerID] = struct{}{}
 		}
+	}
+	if len(requested) == 0 {
+		selected := make([]api.TrackerID, 0, len(eligible))
+		for _, tracker := range trackers {
+			if _, ok := eligible[tracker.TrackerID]; ok {
+				selected = append(selected, tracker.TrackerID)
+			}
+		}
+		return selected, nil
 	}
 	selected := make(map[api.TrackerID]struct{}, len(requested))
 	for _, trackerID := range requested {
 		trackerID = api.TrackerID(strings.ToUpper(strings.TrimSpace(string(trackerID))))
+		if _, wasSkipped := skipped[trackerID]; wasSkipped {
+			continue
+		}
 		if _, exists := eligible[trackerID]; !exists {
 			return nil, fmt.Errorf("%w: tracker %s is not eligible in the retained upload plan", ErrInvalidTransition, trackerID)
 		}
@@ -6233,6 +6302,10 @@ func (m *Module) resolveAction(
 	action := state.Workflow.RequiredActions[index]
 	if action.Kind == api.RequiredActionReprepare {
 		return CommandResult{}, fmt.Errorf("%w: reprepare action must be completed by preparing the release", ErrInvalidTransition)
+	}
+	if action.Kind == api.RequiredActionAuthorizeRules &&
+		(command.Answer.Confirmed == nil || !*command.Answer.Confirmed || command.Answer.TextValue != nil || len(command.Answer.SelectedValues) > 0) {
+		return CommandResult{}, fmt.Errorf("%w: rule authorization requires explicit confirmation", ErrInvalidTransition)
 	}
 	if action.Kind == api.RequiredActionReconcileSubmission {
 		if len(command.Answer.SelectedValues) != 1 ||

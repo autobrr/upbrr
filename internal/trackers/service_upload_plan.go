@@ -255,7 +255,11 @@ func (s *Service) prepareUploadPlans(
 					cause:   failure,
 				}
 				slots[idx] = slot
-				emitTrackerPlanProgress(ctx, meta.SourcePath, tracker, "tracker_preparation", "failed", slot.failure.Message)
+				status := "failed"
+				if slot.failure.Code == PreparationFailureCodeSkipped {
+					status = "skipped"
+				}
+				emitTrackerPlanProgress(ctx, meta.SourcePath, tracker, "tracker_preparation", status, slot.failure.Message)
 				continue
 			}
 			slot.torrentPath = trackerMeta.TorrentPath
@@ -825,7 +829,7 @@ func summarizeTrackerPlanSlots(slots []trackerPlanSlot) api.UploadSummary {
 func trackerPlanFailures(slots []trackerPlanSlot) []TrackerFailure {
 	failures := make([]TrackerFailure, 0)
 	for _, slot := range slots {
-		if slot.failure != nil && slot.failure.Code != "canceled" {
+		if slot.failure != nil && slot.failure.Code != "canceled" && slot.failure.Code != PreparationFailureCodeSkipped {
 			failures = append(failures, *slot.failure)
 		}
 	}

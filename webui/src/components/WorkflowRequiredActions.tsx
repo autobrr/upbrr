@@ -32,12 +32,14 @@ function actionScope(action: RequiredAction): string {
   return "Workflow action";
 }
 
-/** Shows pending workflow actions not owned by the per-tracker duplicate-review cards. */
+/** Shows pending non-dupe actions and lets users confirm tracker rules or open the owning workflow step. */
 export function WorkflowRequiredActions({
   continuation,
+  onConfirm,
   onNavigate,
 }: Readonly<{
   continuation?: WorkflowContinuation | null;
+  onConfirm: (action: RequiredAction) => void;
   onNavigate: (route: ReleaseRoute) => void;
 }>) {
   const actions = (continuation?.requiredActions || []).filter(
@@ -64,7 +66,13 @@ export function WorkflowRequiredActions({
                 <span className="muted text-sm">{actionScope(action)}</span>
               </div>
               <p className="muted text-xs">Action: {action.kind.replaceAll("_", " ")}</p>
-              {route ? (
+              {action.kind === "authorize_rules" ? (
+                <div>
+                  <button className="ghost" type="button" onClick={() => onConfirm(action)}>
+                    Continue upload
+                  </button>
+                </div>
+              ) : route ? (
                 <div>
                   <button className="ghost" type="button" onClick={() => onNavigate(route)}>
                     {actionLabels[action.kind] || "Open workflow step"}

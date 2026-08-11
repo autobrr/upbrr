@@ -107,6 +107,23 @@ func prepareUploadAt(ctx context.Context, req trackers.PreparationInput, baseURL
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
+	autofillAction := btnAutofillArtistAction(req.Meta, data["artist"])
+	if autofillAction != nil {
+		if req.Meta.Options.InteractionMode == api.InteractionModeUnattended {
+			if req.Logger != nil {
+				req.Logger.Warnf("trackers: %s decision=skip", autofillAction.Prompt)
+			}
+			return trackers.PreparedOperation{}, trackers.NewPreparationFailure(
+				"BTN",
+				trackers.PreparationFailureCodeSkipped,
+				autofillAction.Prompt+" Tracker skipped in unattended mode.",
+				nil,
+			)
+		}
+		if req.Logger != nil {
+			req.Logger.Warnf("trackers: %s decision=confirmation_required", autofillAction.Prompt)
+		}
+	}
 
 	files := resolveBTNUploadFiles(req.Meta, torrentPath)
 	body, contentType, err := commonhttp.BuildMultipartPayload(data, files)
@@ -130,6 +147,9 @@ func prepareUploadAt(ctx context.Context, req trackers.PreparationInput, baseURL
 		Payload:          data,
 		Files:            resolveBTNDryRunFiles(req.Meta, torrentPath),
 	})
+	if autofillAction != nil {
+		preview.RequiredActions = []api.RequiredAction{*autofillAction}
+	}
 	return trackers.NewPreparedOperation(preview, func(submitCtx context.Context) (api.UploadSummary, error) {
 		return submitPreparedUpload(submitCtx, req, uploadCtx, trackerTorrentPath, body, contentType)
 	}, nil), nil
@@ -292,6 +312,7 @@ func buildUploadDryRunAt(ctx context.Context, req trackers.PreparationInput, bas
 
 	autofillPayload, uploadType := buildBTNAutofillPayload(req.Meta, releaseName)
 	debugSections := make([]api.TrackerDryRunDebugSection, 0, 2)
+	var requiredActions []api.RequiredAction
 	if req.Intent == trackers.PreparationIntentDryRun {
 		debugSections = append(debugSections, api.TrackerDryRunDebugSection{
 			Title:    "BTN autofill request",
@@ -337,6 +358,14 @@ func buildUploadDryRunAt(ctx context.Context, req trackers.PreparationInput, bas
 		if err != nil {
 			return api.TrackerDryRunEntry{}, err
 		}
+		if action := btnAutofillArtistAction(req.Meta, fields["artist"]); action != nil {
+			if req.Meta.Options.InteractionMode == api.InteractionModeUnattended {
+				status = "skipped"
+				message += "; BTN autofill series mismatched TVDB metadata; skipped in unattended mode"
+			} else {
+				requiredActions = []api.RequiredAction{*action}
+			}
+		}
 		message += "; BTN autofill debug completed"
 		debugSections = append(debugSections, api.TrackerDryRunDebugSection{
 			Title:    "BTN final upload payload after autofill",
@@ -357,6 +386,7 @@ func buildUploadDryRunAt(ctx context.Context, req trackers.PreparationInput, bas
 		Payload:          payload,
 		Files:            resolveBTNDryRunFiles(req.Meta, torrentPath),
 		DebugSections:    debugSections,
+		RequiredActions:  requiredActions,
 	}, nil
 }
 

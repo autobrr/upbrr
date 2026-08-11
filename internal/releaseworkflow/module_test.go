@@ -174,6 +174,33 @@ func TestStampProjectionActionsPublishesDurableActionIdentity(t *testing.T) {
 	}
 }
 
+func TestStampUploadPlanActionsPublishesDurableActionIdentity(t *testing.T) {
+	t.Parallel()
+
+	module := &Module{ids: &sequenceIDGenerator{}}
+	now := time.Date(2026, time.July, 28, 20, 0, 0, 0, time.UTC)
+	expiresAt := now.Add(time.Hour)
+	plan := api.UploadPlan{
+		ExpiresAt: expiresAt,
+		Trackers: []api.UploadPlanTracker{{
+			TrackerID: "BTN",
+			RequiredActions: []api.RequiredAction{{
+				Kind:   api.RequiredActionAuthorizeRules,
+				Prompt: "Confirm BTN autofill.",
+			}},
+		}},
+	}
+	actions, err := module.stampUploadPlanActions(plan, 7, now)
+	if err != nil {
+		t.Fatalf("stamp upload-plan actions: %v", err)
+	}
+	if len(actions) != 1 || actions[0].ID == "" || actions[0].WorkflowRevision != 7 ||
+		actions[0].Status != api.RequiredActionStatusPending || !actions[0].CreatedAt.Equal(now) ||
+		actions[0].ExpiresAt == nil || !actions[0].ExpiresAt.Equal(expiresAt) {
+		t.Fatalf("stamped upload-plan actions = %#v plan=%#v", actions, plan)
+	}
+}
+
 type trackerProjectionBuilderFunc func(
 	context.Context,
 	api.ReleaseSnapshot,
@@ -378,6 +405,31 @@ func TestCompleteUploadExecutionResultsReportsSkippedAndBlockedTrackers(t *testi
 		completed[1].TrackerID != "BETA" || completed[1].Status != api.StageStatusSkipped ||
 		completed[2].TrackerID != "GAMMA" || completed[2].Status != api.StageStatusFailed || len(completed[2].Failures) != 1 {
 		t.Fatalf("completed upload results = %#v", completed)
+	}
+}
+
+func TestValidateUploadExecutionTrackerIDsOmitsSkippedTrackers(t *testing.T) {
+	t.Parallel()
+
+	trackers := []api.UploadPlanTracker{
+		{
+			TrackerID: "ALPHA",
+			Eligible:  true,
+			Status:    api.StageStatusReady,
+		},
+		{TrackerID: "BETA", Status: api.StageStatusSkipped},
+		{TrackerID: "GAMMA", Status: api.StageStatusFailed},
+	}
+	selected, err := validateUploadExecutionTrackerIDs(trackers, nil)
+	if err != nil || !slices.Equal(selected, []api.TrackerID{"ALPHA"}) {
+		t.Fatalf("default execution selection = %#v, %v", selected, err)
+	}
+	selected, err = validateUploadExecutionTrackerIDs(trackers, []api.TrackerID{"BETA", "ALPHA"})
+	if err != nil || !slices.Equal(selected, []api.TrackerID{"ALPHA"}) {
+		t.Fatalf("explicit execution selection = %#v, %v", selected, err)
+	}
+	if _, err := validateUploadExecutionTrackerIDs(trackers, []api.TrackerID{"GAMMA"}); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("failed tracker selection error = %v", err)
 	}
 }
 
@@ -3649,6 +3701,47 @@ func TestResolveReconciliationRequiresExactAnswerAndForcesFreshReview(t *testing
 	retry.UpdatedAt = retry.StartedAt
 	if _, idempotent, err := repository.BeginEffect(ctx, retry); err != nil || idempotent {
 		t.Fatalf("begin reconciled retry idempotent=%v err=%v", idempotent, err)
+	}
+}
+
+func TestResolveRuleAuthorizationRequiresExplicitConfirmation(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC)
+	action := api.RequiredAction{
+		ID:               "action-authorize",
+		Kind:             api.RequiredActionAuthorizeRules,
+		Status:           api.RequiredActionStatusPending,
+		WorkflowRevision: 2,
+		Prompt:           "Confirm BTN autofill.",
+		CreatedAt:        now,
+	}
+	state := State{Workflow: api.ReleaseWorkflow{
+		ID:              "workflow-authorize",
+		Revision:        2,
+		Status:          api.WorkflowStatusBlocked,
+		RequiredActions: []api.RequiredAction{action},
+	}}
+	confirmed := false
+	command := ResolveActionCommand{
+		WorkflowID:       state.Workflow.ID,
+		ExpectedRevision: 2,
+		Answer: api.RequiredActionAnswer{
+			ActionID:         action.ID,
+			WorkflowRevision: 2,
+			Confirmed:        &confirmed,
+		},
+	}
+	module := &Module{}
+	if _, err := module.resolveAction(context.Background(), testOwnerID, &state, 3, now, command); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("unconfirmed rule authorization error = %v", err)
+	}
+	confirmed = true
+	if _, err := module.resolveAction(context.Background(), testOwnerID, &state, 3, now, command); err != nil {
+		t.Fatalf("resolve rule authorization: %v", err)
+	}
+	if len(state.Workflow.RequiredActions) != 0 || state.Workflow.Status != api.WorkflowStatusActive {
+		t.Fatalf("resolved rule authorization workflow = %#v", state.Workflow)
 	}
 }
 

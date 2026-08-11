@@ -4,12 +4,11 @@
 package api
 
 import (
-	"strings"
 	"testing"
 	"time"
 )
 
-func TestSkippedUploadPlanContainsNoTrackerOperations(t *testing.T) {
+func TestSkippedUploadPlanRequiresOnlySkippedTrackerOutcomes(t *testing.T) {
 	t.Parallel()
 
 	createdAt := time.Date(2026, 7, 22, 1, 2, 3, 0, time.UTC)
@@ -39,7 +38,11 @@ func TestSkippedUploadPlanContainsNoTrackerOperations(t *testing.T) {
 		Status:              StageStatusSkipped,
 		SemanticFingerprint: workflowTestFingerprint(t, "skipped-aither"),
 	}}
-	if err := plan.Validate(); err == nil || !strings.Contains(err.Error(), "cannot contain tracker operations") {
-		t.Fatalf("validate populated skipped upload plan error = %v", err)
+	if err := plan.Validate(); err != nil {
+		t.Fatalf("validate populated skipped upload plan: %v", err)
+	}
+	plan.Trackers[0].Status = StageStatusBlocked
+	if err := plan.Validate(); err == nil {
+		t.Fatal("validate skipped upload plan accepted a non-skipped tracker")
 	}
 }
