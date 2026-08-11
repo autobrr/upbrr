@@ -291,7 +291,7 @@ func TestUnit3DPayloadCallbacksRejectKnownInvalidFacts(t *testing.T) {
 func TestRMCConstructibilityRejectsReleasesNewerThanCutoff(t *testing.T) {
 	t.Parallel()
 
-	failures := validationPolicyFailuresForTest(t, "RMC", api.TrackerValidationSubject{Release: api.ReleaseInfo{Year: 2001}})
+	failures := validationPolicyFailuresForTest(t, "RMC", rmcValidationSubject(1900, 2001))
 	if !hasRuleFailure(failures, "rmc_release_year") {
 		t.Fatalf("RMC validation missing rmc_release_year failure: %#v", failures)
 	}
@@ -300,9 +300,24 @@ func TestRMCConstructibilityRejectsReleasesNewerThanCutoff(t *testing.T) {
 func TestRMCConstructibilityAllowsReleasesAtCutoff(t *testing.T) {
 	t.Parallel()
 
-	failures := validationPolicyFailuresForTest(t, "RMC", api.TrackerValidationSubject{Release: api.ReleaseInfo{Year: 2000}})
+	failures := validationPolicyFailuresForTest(t, "RMC", rmcValidationSubject(2001, 2000))
 	if hasRuleFailure(failures, "rmc_release_year") {
 		t.Fatalf("RMC rejected a release at the cutoff year: %#v", failures)
+	}
+}
+
+func rmcValidationSubject(parsedYear, tmdbYear int) api.TrackerValidationSubject {
+	const tmdbID = 1234567
+	return api.TrackerValidationSubject{
+		Release:  api.ReleaseInfo{Year: parsedYear},
+		Identity: api.ExternalIdentity{TMDBID: tmdbID},
+		ProviderMetadata: api.SourceScopedMetadata{
+			TMDB: &api.TMDBMetadata{
+				TMDBID: tmdbID,
+				Title:  "Example Release",
+				Year:   tmdbYear,
+			},
+		},
 	}
 }
 

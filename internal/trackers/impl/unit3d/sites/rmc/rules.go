@@ -12,11 +12,11 @@ func Rules() *trackers.RuleSet {
 	}
 }
 
-// ValidationPolicy returns RMC's release-year cutoff, evaluated alongside
+// ValidationPolicy returns RMC's TMDB release-year cutoff, evaluated alongside
 // mandatory Unit3D constructibility.
 func ValidationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID:    "unit3d-rmc-release-year-v1",
+		ID:    "unit3d-rmc-policy-v1",
 		Check: checkRequirements,
 	}
 }

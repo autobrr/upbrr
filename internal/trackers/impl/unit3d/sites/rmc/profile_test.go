@@ -4,9 +4,11 @@
 package rmc
 
 import (
+	"context"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -17,6 +19,12 @@ func TestProfileIdentity(t *testing.T) {
 	}
 	if profile.BaseURL != "https://retro-movies.club" {
 		t.Fatalf("base URL = %q", profile.BaseURL)
+	}
+	if profile.MetadataPolicy == nil || len(profile.MetadataPolicy.Requirements) != 1 ||
+		len(profile.MetadataPolicy.Requirements[0].AnyOf) != 1 ||
+		profile.MetadataPolicy.Requirements[0].AnyOf[0] != trackers.MetadataFieldTMDBTitle ||
+		profile.MetadataPolicy.Requirements[0].Disposition != api.RuleDispositionStrict {
+		t.Fatalf("metadata policy = %#v, want current TMDB title", profile.MetadataPolicy)
 	}
 }
 
@@ -47,8 +55,8 @@ func TestTypeID(t *testing.T) {
 			want: "4",
 		},
 		{
-			name: "encode",
-			meta: api.UploadSubject{Type: "ENCODE"},
+			name: "BluRay encode",
+			meta: api.UploadSubject{Type: "Bluray Encode"},
 			want: "5",
 		},
 		{
@@ -77,6 +85,31 @@ func TestTypeID(t *testing.T) {
 			want: "10",
 		},
 		{
+			name: "SDTV",
+			meta: api.UploadSubject{Type: "HDTV", Release: api.ReleaseInfo{Resolution: "540p"}},
+			want: "11",
+		},
+		{
+			name: "VHS LD WOC",
+			meta: api.UploadSubject{Type: "VHS / LD / WOC"},
+			want: "12",
+		},
+		{
+			name: "upscale",
+			meta: api.UploadSubject{Type: "Upscale"},
+			want: "14",
+		},
+		{
+			name: "restoration",
+			meta: api.UploadSubject{Type: "Restoration"},
+			want: "15",
+		},
+		{
+			name: "soundtrack",
+			meta: api.UploadSubject{Type: "SoundTrack"},
+			want: "17",
+		},
+		{
 			name: "unsupported",
 			meta: api.UploadSubject{},
 			want: "0",
@@ -98,7 +131,6 @@ func TestResolutionID(t *testing.T) {
 	}{
 		{"4320p", "1"},
 		{"2160p", "2"},
-		{"1440p", "3"},
 		{"1080p", "3"},
 		{"1080i", "4"},
 		{"720p", "5"},
@@ -106,8 +138,12 @@ func TestResolutionID(t *testing.T) {
 		{"576i", "7"},
 		{"480p", "8"},
 		{"480i", "9"},
-		{"unknown", "11"},
-		{"", "11"},
+		{"360p", "10"},
+		{"540p", "11"},
+		{"FLAC", "12"},
+		{"1440p", "13"},
+		{"unknown", "13"},
+		{"", "13"},
 	}
 	for _, test := range tests {
 		t.Run(test.resolution, func(t *testing.T) {
@@ -120,7 +156,7 @@ func TestResolutionID(t *testing.T) {
 }
 
 func TestBuildNameSanitizesDisallowedCharacters(t *testing.T) {
-	meta := api.UploadSubject{ReleaseName: "Exämple: Rëlease! (2000) 1080p Bluray x264-GRP"}
+	meta := rmcNameSubject("Exämple: Rëlease! (2000) 1080p Bluray x264-GRP", "Exämple: Rëlease!", 2000)
 	got := Profile().Site.BuildName(meta, config.TrackerConfig{})
 	want := "Exmple Rlease 2000 1080p Bluray x264-GRP"
 	if got != want {
@@ -129,21 +165,67 @@ func TestBuildNameSanitizesDisallowedCharacters(t *testing.T) {
 }
 
 func TestBuildNameRemovesAKASegment(t *testing.T) {
-	meta := api.UploadSubject{
-		ReleaseName: "Metropolis AKA Die Stadt 1927 1080p Bluray x264-GRP",
-		Release:     api.ReleaseInfo{Alt: "Die Stadt"},
-	}
+	meta := rmcNameSubject("Example Release AKA Example Alternate 1999 1080p Bluray x264-GRP", "Example Release", 1999)
+	meta.ProviderMetadata.TMDB.RetrievedAKA = "AKA Example Alternate"
 	got := Profile().Site.BuildName(meta, config.TrackerConfig{})
-	want := "Metropolis 1927 1080p Bluray x264-GRP"
+	want := "Example Release 1999 1080p Bluray x264-GRP"
 	if got != want {
 		t.Fatalf("name = %q, want %q", got, want)
 	}
 }
 
 func TestBuildNameFallsBackToReleaseNameNoTag(t *testing.T) {
-	meta := api.UploadSubject{ReleaseNameNoTag: "Example Release 2000 1080p Bluray x264"}
+	meta := rmcNameSubject("", "Example Release", 2000)
+	meta.ReleaseNameNoTag = "Example Release 2000 1080p Bluray x264"
 	got := Profile().Site.BuildName(meta, config.TrackerConfig{})
 	if got != "Example Release 2000 1080p Bluray x264" {
 		t.Fatalf("name = %q", got)
+	}
+}
+
+func TestBuildNameUsesTMDBTitleAndYearAndPreservesPlus(t *testing.T) {
+	meta := rmcNameSubject("Wrong Title AKA Wrong Alternate 2001 1080p Bluray HDR10+ x264 DD+-GRP", "Example Release", 2000)
+	meta.Release.Year = 2001
+	got := Profile().Site.BuildName(meta, config.TrackerConfig{})
+	want := "Example Release 2000 1080p Bluray HDR10+ x264 DD+-GRP"
+	if got != want {
+		t.Fatalf("name = %q, want %q", got, want)
+	}
+}
+
+func TestBuildNameRejectsStaleTMDBMetadata(t *testing.T) {
+	meta := rmcNameSubject("Example Release 2000 1080p Bluray x264-GRP", "Example Release", 2000)
+	meta.SourcePath = "current-source"
+	meta.Identity.SourcePath = meta.SourcePath
+	meta.ProviderMetadata.SourcePath = "stale-source"
+	if got := Profile().Site.BuildName(meta, config.TrackerConfig{}); got != "" {
+		t.Fatalf("name = %q, want empty for stale TMDB metadata", got)
+	}
+}
+
+func TestCheckRequirementsRequiresTMDBYear(t *testing.T) {
+	meta := rmcNameSubject("Example Release 2000 1080p Bluray x264-GRP", "Example Release", 0)
+	failures, err := checkRequirements(context.Background(), api.NewTrackerValidationSubject(meta, "RMC"), api.NopLogger{})
+	if err != nil {
+		t.Fatalf("check requirements: %v", err)
+	}
+	if len(failures) != 1 || failures[0].Rule != "rmc_release_year" {
+		t.Fatalf("failures = %#v, want rmc_release_year", failures)
+	}
+}
+
+func rmcNameSubject(name, title string, year int) api.UploadSubject {
+	const tmdbID = 1234567
+	return api.UploadSubject{
+		ReleaseName: name,
+		Release:     api.ReleaseInfo{Year: year},
+		Identity:    api.ExternalIdentity{TMDBID: tmdbID},
+		ProviderMetadata: api.SourceScopedMetadata{
+			TMDB: &api.TMDBMetadata{
+				TMDBID: tmdbID,
+				Title:  title,
+				Year:   year,
+			},
+		},
 	}
 }

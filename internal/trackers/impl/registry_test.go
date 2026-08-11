@@ -259,6 +259,7 @@ func TestRegistryProjectsVersionedReleaseNamesForEveryBuiltIn(t *testing.T) {
 		},
 		ProviderMetadata: api.SourceScopedMetadata{
 			TMDB: &api.TMDBMetadata{
+				TMDBID:           12345,
 				Title:            "Example Release",
 				OriginalTitle:    "Example Release",
 				OriginalLanguage: "en",
