@@ -25,6 +25,74 @@ func TestCheckRepositoryAcceptsCanonicalRepository(t *testing.T) {
 	}
 }
 
+func TestCheckRepositoryAcceptsOwnedIMDbFormatting(t *testing.T) {
+	root := t.TempDir()
+	writePolicyFixture(
+		t,
+		root,
+		"internal/providerid/imdb.go",
+		"package providerid\nimport \"fmt\"\nfunc format(id int) string { return fmt.Sprintf(\"tt%07d\", id) }\n",
+	)
+	writePolicyFixture(
+		t,
+		root,
+		"webui/src/utils/providerId.ts",
+		"export const formatIMDbID = (id: number) => `tt${id.toString().padStart(7, \"0\")}`;\n",
+	)
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("check repository: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("violations = %#v", violations)
+	}
+}
+
+func TestCheckRepositoryRejectsAdHocGoIMDbFormatting(t *testing.T) {
+	root := t.TempDir()
+	writePolicyFixture(
+		t,
+		root,
+		"internal/example/format.go",
+		"package example\nimport (\"fmt\"; \"strconv\")\ntype Identity struct { IMDBID int }\nfunc padded(id int) string { return fmt.Sprintf(\"tt%07d\", id) }\nfunc raw(identity Identity) string { return strconv.Itoa(identity.IMDBID) }\n",
+	)
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("check repository: %v", err)
+	}
+	assertViolationContains(t, violations, "numeric IMDb formatting belongs to internal/providerid")
+}
+
+func TestCheckRepositoryRejectsAdHocGoIMDbFprintf(t *testing.T) {
+	root := t.TempDir()
+	writePolicyFixture(
+		t,
+		root,
+		"internal/example/format.go",
+		"package example\nimport (\"fmt\"; \"io\")\ntype Identity struct { IMDBID int }\nfunc padded(w io.Writer, identity Identity) { fmt.Fprintf(w, \"%07d\", identity.IMDBID) }\n",
+	)
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("check repository: %v", err)
+	}
+	assertViolationContains(t, violations, "numeric IMDb formatting belongs to internal/providerid")
+}
+
+func TestCheckRepositoryRejectsAdHocFrontendIMDbFormatting(t *testing.T) {
+	root := t.TempDir()
+	writePolicyFixture(
+		t,
+		root,
+		"webui/src/pages/input/format.ts",
+		"export const formatIMDbID = (id: number) => `tt${id.toString().padStart(7, \"0\")}`;\n",
+	)
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("check repository: %v", err)
+	}
+	assertViolationContains(t, violations, "numeric IMDb formatting belongs to webui/src/utils/providerId.ts")
+}
+
 func TestCheckRepositoryRejectsCategoryAliasInNamingFacts(t *testing.T) {
 	root := t.TempDir()
 	directory := filepath.Join(root, "pkg", "api")

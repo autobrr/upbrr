@@ -5,8 +5,10 @@ package ant
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -32,9 +34,10 @@ func TestDupeSearcherSendsAPIKeyHeader(t *testing.T) {
 			t.Fatal("apikey should not be sent as a query parameter")
 		}
 		for key, want := range map[string]string{
-			"t":    "search",
-			"o":    "json",
-			"tmdb": "123",
+			"t":     "search",
+			"o":     "json",
+			"imdb":  "0000456",
+			"limit": "100",
 		} {
 			if got := query.Get(key); got != want {
 				t.Fatalf("query %s = %q, want %q", key, got, want)
@@ -56,12 +59,123 @@ func TestDupeSearcherSendsAPIKeyHeader(t *testing.T) {
 
 	cfg := config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"ANT": {APIKey: "token"}}}}
 	searcher := dupe.NewAdapter(New(), "ANT", cfg, client, api.NopLogger{})
-	entries, notes, err := adapterEvidence(searcher.Search(context.Background(), api.DuplicateSubject{Identity: api.ExternalIdentity{TMDBID: 123}, Release: api.ReleaseInfo{Resolution: "1080p"}}))
+	entries, notes, err := adapterEvidence(searcher.Search(context.Background(), api.DuplicateSubject{
+		Identity: api.ExternalIdentity{IMDBID: 456},
+		Release:  api.ReleaseInfo{Resolution: "1080p"},
+	}))
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
 	if len(notes) != 0 || len(entries) != 1 {
 		t.Fatalf("entries=%#v notes=%#v", entries, notes)
+	}
+}
+
+func TestDupeSearcherConsumesANTOffsetPages(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		includePagination bool
+	}{
+		{name: "advertised total", includePagination: true},
+		{name: "page capacity fallback", includePagination: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var offsets []string
+			client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				offsets = append(offsets, req.URL.Query().Get("offset"))
+				var body string
+				switch len(offsets) {
+				case 1:
+					body = antSearchPageJSON(t, 0, 101, 100, tc.includePagination)
+				case 2:
+					body = antSearchPageJSON(t, 100, 101, 1, tc.includePagination)
+				default:
+					t.Fatalf("unexpected request count: %d", len(offsets))
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(body)),
+					Header:     make(http.Header),
+				}, nil
+			})}
+
+			cfg := antDupeTestConfig()
+			searcher := dupe.NewAdapter(New(), "ANT", cfg, client, api.NopLogger{})
+			result := searcher.Search(
+				context.Background(),
+				api.DuplicateSubject{Identity: api.ExternalIdentity{TMDBID: 123}},
+			)
+			if result.Cause() != nil {
+				t.Fatalf("search: %v", result.Cause())
+			}
+			evidence := result.SearchEvidence()
+			if !evidence.Complete || evidence.Pages != 2 {
+				t.Fatalf("search evidence = %#v", evidence)
+			}
+			entries := result.Entries()
+			if len(entries) != 101 || entries[100].Name != "Example.Release.100" {
+				t.Fatalf("paginated entries = %d last=%#v", len(entries), entries[len(entries)-1])
+			}
+			if len(offsets) != 2 || offsets[0] != "" || offsets[1] != "100" {
+				t.Fatalf("requested offsets = %#v", offsets)
+			}
+		})
+	}
+}
+
+func TestDupeSearcherANTPaginationBoundFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	client := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(antSearchPageJSON(t, 0, 101, 100, true))),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	searcher := &dupeSearcher{
+		cfg:      antDupeTestConfig(),
+		http:     client,
+		endpoint: "https://example.invalid/api.php",
+		maxPages: 1,
+	}
+	result := searcher.Search(
+		context.Background(),
+		api.DuplicateSubject{Identity: api.ExternalIdentity{TMDBID: 123}},
+	)
+	evidence := result.SearchEvidence()
+	if evidence.Complete || evidence.Pages != 1 || len(evidence.Warnings) != 1 {
+		t.Fatalf("bounded search evidence = %#v", evidence)
+	}
+	if len(result.Entries()) != 100 || len(result.Notes()) != 1 {
+		t.Fatalf("bounded result entries=%d notes=%#v", len(result.Entries()), result.Notes())
+	}
+}
+
+func TestDupeSearcherANTTotalChangeFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		requests++
+		total := 101
+		count := 100
+		if requests == 2 {
+			total = 102
+			count = 1
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(antSearchPageJSON(t, (requests-1)*100, total, count, true))),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	searcher := dupe.NewAdapter(New(), "ANT", antDupeTestConfig(), client, api.NopLogger{})
+	result := searcher.Search(context.Background(), api.DuplicateSubject{Identity: api.ExternalIdentity{TMDBID: 123}})
+	if search := result.SearchEvidence(); search.Complete || search.Pages != 2 || len(search.Warnings) != 1 || len(result.Entries()) != 101 {
+		t.Fatalf("changed total search=%#v entries=%d", search, len(result.Entries()))
 	}
 }
 
@@ -72,4 +186,127 @@ func TestDupeSearcherMissingCredentialsSkips(t *testing.T) {
 	if result.Disposition() != dupe.DispositionNotRun || result.Code() != dupe.NotRunMissingCredentials || result.SafeMessage() == "" {
 		t.Fatalf("unexpected result disposition=%v code=%q message=%q", result.Disposition(), result.Code(), result.SafeMessage())
 	}
+}
+
+func TestANTFullDiscEvidenceUsesIdentityThenSingleDiscRule(t *testing.T) {
+	t.Parallel()
+
+	target := api.TrackerDuplicateTarget{
+		Type:       "DISC",
+		Source:     "Blu-ray",
+		Resolution: "1080p",
+		VideoCodec: "AVC",
+		Group:      "GRP",
+		SizeBytes:  1000,
+	}
+	entry := api.DupeEntry{
+		Name:          "Example.Release.2026.1080p.Blu-ray.AVC-GRP",
+		CanonicalType: "DISC",
+		Source:        "Blu-ray",
+		Res:           "1080p",
+		Codec:         "AVC",
+		Container:     "m2ts",
+		Group:         "GRP",
+		SizeBytes:     1000,
+		SizeKnown:     true,
+	}
+	policy := *Profile().DupePolicy
+	result := dupe.Evaluate(target, []dupe.TrackerCandidate{dupe.NormalizeCandidate(entry, "ANT")}, policy, dupe.SearchEvidence{Complete: true})
+	if got := result.Candidates[0].Relation; got != api.DupeRelationExactDuplicate {
+		t.Fatalf("same ANT full disc relation = %q", got)
+	}
+
+	entry.Group = "OTHER"
+	entry.SizeBytes = 900
+	result = dupe.Evaluate(target, []dupe.TrackerCandidate{dupe.NormalizeCandidate(entry, "ANT")}, policy, dupe.SearchEvidence{Complete: true})
+	if got := result.Candidates[0].Relation; got != api.DupeRelationExistingPreferred {
+		t.Fatalf("second ANT full disc relation = %q", got)
+	}
+}
+
+func TestANTCandidatePreservesDiscFields(t *testing.T) {
+	t.Parallel()
+
+	entries := antDupeEntries(map[string]any{"item": []any{map[string]any{
+		"title":        "Example Release 2026",
+		"fileName":     "generated.123.torrent",
+		"container":    "m2ts",
+		"releaseGroup": "GRP",
+		"flags":        []any{"HDR10"},
+		"files": []any{
+			map[string]any{"name": "BDMV/BACKUP/BDJO/00000.bdjo"},
+			map[string]any{"name": "BDMV/index.bdmv"},
+		},
+	}}})
+	if len(entries) != 1 || entries[0].Name != "generated.123.torrent" || entries[0].CanonicalType != "DISC" ||
+		entries[0].Container != "m2ts" || entries[0].Group != "GRP" || len(entries[0].Flags) != 1 {
+		t.Fatalf("ANT disc entry = %#v", entries)
+	}
+}
+
+func TestANTListedWEBFileCoexistsWithDisc(t *testing.T) {
+	t.Parallel()
+
+	entries := antDupeEntries(map[string]any{"item": []any{map[string]any{
+		"title":        "Example Release 2026",
+		"media":        "WEB",
+		"resolution":   "1080p",
+		"codec":        "H264",
+		"container":    "MKV",
+		"releaseGroup": "WEBGRP",
+		"files": []any{map[string]any{
+			"name": "Example.Release.2026.1080p.WEB-DL.H.264-WEBGRP.mkv",
+		}},
+	}}})
+	if len(entries) != 1 || entries[0].Name != "Example.Release.2026.1080p.WEB-DL.H.264-WEBGRP.mkv" || entries[0].Source != "WEB" {
+		t.Fatalf("ANT WEB entry = %#v", entries)
+	}
+
+	target := api.TrackerDuplicateTarget{
+		Type:       "DISC",
+		Source:     "Blu-ray",
+		Resolution: "1080p",
+		VideoCodec: "AVC",
+		Group:      "GRP",
+	}
+	result := dupe.Evaluate(
+		target,
+		[]dupe.TrackerCandidate{dupe.NormalizeCandidate(entries[0], "ANT")},
+		*Profile().DupePolicy,
+		dupe.SearchEvidence{Complete: true},
+	)
+	if got := result.Candidates[0].Relation; got != api.DupeRelationCoexists {
+		t.Fatalf("ANT WEB candidate relation = %q", got)
+	}
+}
+
+func antSearchPageJSON(t *testing.T, offset int, total int, count int, includePagination bool) string {
+	t.Helper()
+	items := make([]map[string]any, count)
+	for index := range count {
+		items[index] = map[string]any{
+			"fileName":   "Example.Release." + strconv.Itoa(offset+index),
+			"resolution": "2160p",
+		}
+	}
+	payload := map[string]any{
+		"item": items,
+	}
+	if includePagination {
+		payload["response"] = map[string]any{
+			"offset": offset,
+			"total":  total,
+		}
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal ANT search page: %v", err)
+	}
+	return string(encoded)
+}
+
+func antDupeTestConfig() config.Config {
+	return config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+		"ANT": {APIKey: "token"},
+	}}}
 }

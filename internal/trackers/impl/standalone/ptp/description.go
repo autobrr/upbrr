@@ -60,13 +60,7 @@ func buildScreenshotSection(meta api.UploadSubject, screenshots []api.Screenshot
 	if len(screenshots) == 0 {
 		return ""
 	}
-	minimum := meta.Options.Screens
-	if minimum <= 0 {
-		minimum = 2
-	}
-	if requiresMinimumTwoScreens(meta) && minimum < 2 {
-		minimum = 2
-	}
+	minimum := max(len(meta.FileList), max(meta.Options.Screens, 3))
 	allowed := make([]string, 0, len(screenshots))
 	for _, screenshot := range screenshots {
 		rawURL := strings.TrimSpace(screenshot.RawURL)
@@ -93,7 +87,7 @@ func buildScreenshotSection(meta api.UploadSubject, screenshots []api.Screenshot
 
 func isPTPImageHost(host string) bool {
 	switch strings.ToLower(strings.TrimSpace(host)) {
-	case "pixhost", "imgbb", "onlyimage", "ptscreens":
+	case "pixhost", "imgbb", "onlyimage", "ptscreens", "passtheimage":
 		return true
 	default:
 		return false

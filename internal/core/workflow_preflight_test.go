@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -208,6 +209,37 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		}
 	})
 
+	t.Run("upload name review does not block duplicate preflight", func(t *testing.T) {
+		uploadPending := projections
+		uploadPending.Projections = append([]api.TrackerReleaseProjection(nil), projections.Projections...)
+		uploadPending.Projections[0].UploadReady = false
+		uploadPending.Projections[0].RequiredActions = []api.RequiredAction{{
+			Kind:      api.RequiredActionProvideTrackerInput,
+			TrackerID: "ALPHA",
+			Prompt:    "Confirm the tracker release name.",
+		}}
+		builder := workflowPreflightBuilder{auth: workflowPreflightAuthFake{}, registry: registry}
+		assessment, finalized, err := builder.Build(
+			context.Background(),
+			api.UploadSubject{},
+			catalog,
+			runtime,
+			uploadPending,
+			now,
+		)
+		if err != nil {
+			t.Fatalf("build upload-pending preflight: %v", err)
+		}
+		if assessment.Results[0].State != api.TrackerPreflightStateReady ||
+			len(assessment.Results[0].RequiredActions) != 1 ||
+			finalized[0].Readiness != api.ReadinessStatusReady ||
+			!finalized[0].DupeReady ||
+			finalized[0].UploadReady ||
+			len(finalized[0].RequiredActions) != 1 {
+			t.Fatalf("upload-pending preflight = %#v/%#v", assessment.Results[0], finalized[0])
+		}
+	})
+
 	t.Run("two factor blocked lane", func(t *testing.T) {
 		builder := workflowPreflightBuilder{auth: workflowPreflightAuthFake{
 			capabilities: []api.TrackerAuthCapability{{TrackerID: "ALPHA", SupportsManual2FA: true}},
@@ -228,6 +260,8 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 			len(result.Failures) != 1 ||
 			result.Failures[0].Failure.Code != api.OperationFailureTrackerAuthRequired ||
 			result.Failures[0].Failure.Recovery != api.OperationRecoveryAuthenticateTrackers ||
+			!strings.Contains(result.Failures[0].Failure.Message, "two-factor") ||
+			!strings.Contains(result.Failures[0].Failure.Message, "Tracker Auth") ||
 			finalized[0].Readiness != api.ReadinessStatusBlocked ||
 			finalized[0].DupeReady ||
 			finalized[0].UploadReady {
@@ -242,6 +276,35 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		}
 		if strings.Contains(string(payload), "secret-value") {
 			t.Fatalf("preflight exposed secret: %s", payload)
+		}
+	})
+
+	t.Run("encrypted storage blocker preserves repair guidance", func(t *testing.T) {
+		builder := workflowPreflightBuilder{auth: workflowPreflightAuthFake{
+			capabilities: []api.TrackerAuthCapability{{TrackerID: "ALPHA", SupportsLogin: true}},
+			statuses: []api.TrackerAuthStatus{{
+				TrackerID:        "ALPHA",
+				State:            trackerauth.StateEncryptedStorageUnavailable,
+				EncryptedStorage: false,
+				Message:          "encrypted cookie storage unavailable; create web-auth.json before importing cookies",
+			}},
+		}, registry: registry}
+		assessment, finalized, err := builder.Build(context.Background(), api.UploadSubject{}, catalog, runtime, projections, now)
+		if err != nil {
+			t.Fatalf("build encrypted storage preflight: %v", err)
+		}
+		result := assessment.Results[0]
+		if result.State != api.TrackerPreflightStateRetryable ||
+			len(result.RequiredActions) != 0 ||
+			len(result.Failures) != 1 ||
+			result.Failures[0].Failure.Code != api.OperationFailureTrackerAuthRequired ||
+			result.Failures[0].Failure.Recovery != api.OperationRecoveryCompletePrerequisite ||
+			!strings.Contains(result.Failures[0].Failure.Message, "Encrypted cookie storage") ||
+			!strings.Contains(result.Failures[0].Failure.Message, "web-auth.json") ||
+			finalized[0].Readiness != api.ReadinessStatusBlocked ||
+			finalized[0].DupeReady ||
+			finalized[0].UploadReady {
+			t.Fatalf("encrypted storage preflight = %#v/%#v", result, finalized[0])
 		}
 	})
 
@@ -285,6 +348,7 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 			len(assessment.Results[0].RequiredActions) != 0 ||
 			len(assessment.Results[0].Failures) != 1 ||
 			assessment.Results[0].Failures[0].Failure.Code != api.OperationFailureTrackerAuthRequired ||
+			assessment.Results[0].Failures[0].Failure.Message != authBlockedPreflightMessage ||
 			finalized[0].Readiness != api.ReadinessStatusBlocked ||
 			finalized[0].DupeReady ||
 			finalized[0].UploadReady {
@@ -327,7 +391,9 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		if assessment.Results[0].State != api.TrackerPreflightStateRetryable ||
 			len(assessment.Results[0].RequiredActions) != 0 ||
 			len(assessment.Results[0].Failures) != 1 ||
-			assessment.Results[0].Failures[0].Failure.Code != api.OperationFailureTrackerAuthRequired ||
+			assessment.Results[0].Failures[0].Failure.Code != api.OperationFailureTrackerAuthUnavailable ||
+			assessment.Results[0].Failures[0].Failure.Recovery != api.OperationRecoveryRetry ||
+			assessment.Results[0].Failures[0].Failure.Message != authUnavailablePreflightMessage ||
 			finalized[0].Readiness != api.ReadinessStatusBlocked {
 			t.Fatalf("capability failure auth lane = %#v/%#v", assessment.Results[0], finalized[0])
 		}
@@ -349,8 +415,9 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		}
 		if assessment.Results[0].State != api.TrackerPreflightStateRetryable ||
 			len(assessment.Results[0].Failures) != 1 ||
-			assessment.Results[0].Failures[0].Failure.Code != api.OperationFailureTrackerAuthRequired ||
-			assessment.Results[0].Failures[0].Failure.Recovery != api.OperationRecoveryAuthenticateTrackers ||
+			assessment.Results[0].Failures[0].Failure.Code != api.OperationFailureTrackerAuthUnavailable ||
+			assessment.Results[0].Failures[0].Failure.Recovery != api.OperationRecoveryRetry ||
+			assessment.Results[0].Failures[0].Failure.Message != authUnavailablePreflightMessage ||
 			finalized[0].DupeReady {
 			t.Fatalf("retryable preflight = %#v/%#v", assessment.Results[0], finalized[0])
 		}
@@ -364,15 +431,20 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 	})
 
 	t.Run("configured remote validation failure skips without action", func(t *testing.T) {
-		builder := workflowPreflightBuilder{auth: workflowPreflightAuthFake{
-			capabilities: []api.TrackerAuthCapability{{TrackerID: "ALPHA", SupportsLogin: true}},
-			statuses: []api.TrackerAuthStatus{{
-				TrackerID: "ALPHA",
-				State:     trackerauth.StateConfigured,
-				Message:   "remote auth test failed",
-				LastError: "remote validation unavailable",
-			}},
-		}, registry: registry}
+		logger := &recordingMediaLogger{}
+		builder := workflowPreflightBuilder{
+			auth: workflowPreflightAuthFake{
+				capabilities: []api.TrackerAuthCapability{{TrackerID: "ALPHA", SupportsLogin: true}},
+				statuses: []api.TrackerAuthStatus{{
+					TrackerID: "ALPHA",
+					State:     trackerauth.StateConfigured,
+					Message:   "remote auth test failed",
+					LastError: "remote validation unavailable",
+				}},
+			},
+			registry: registry,
+			logger:   logger,
+		}
 		assessment, finalized, err := builder.Build(context.Background(), api.UploadSubject{}, catalog, runtime, projections, now)
 		if err != nil {
 			t.Fatalf("build unavailable auth preflight: %v", err)
@@ -381,8 +453,9 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		if result.State != api.TrackerPreflightStateRetryable ||
 			len(result.RequiredActions) != 0 ||
 			len(result.Failures) != 1 ||
-			result.Failures[0].Failure.Code != api.OperationFailureTrackerAuthRequired ||
-			result.Failures[0].Failure.Recovery != api.OperationRecoveryAuthenticateTrackers ||
+			result.Failures[0].Failure.Code != api.OperationFailureTrackerAuthUnavailable ||
+			result.Failures[0].Failure.Recovery != api.OperationRecoveryRetry ||
+			result.Failures[0].Failure.Message != authUnavailablePreflightMessage ||
 			finalized[0].Readiness != api.ReadinessStatusBlocked ||
 			finalized[0].DupeReady ||
 			finalized[0].UploadReady {
@@ -390,6 +463,15 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		}
 		if assessment.Results[1].State != api.TrackerPreflightStateReady || !finalized[1].DupeReady || !finalized[1].UploadReady {
 			t.Fatalf("unavailable auth changed sibling = %#v/%#v", assessment.Results[1], finalized[1])
+		}
+		if logger.countLevelContaining(
+			"WARN",
+			"tracker auth unavailable tracker=ALPHA state=configured reason=remote_validation_unavailable decision=retry recovery=retry",
+		) != 1 {
+			t.Fatalf("auth failure log = %#v", logger.entries)
+		}
+		if logger.countLevelContaining("WARN", "remote validation unavailable") != 0 {
+			t.Fatalf("auth failure log exposed raw validation detail: %#v", logger.entries)
 		}
 	})
 
@@ -418,6 +500,53 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		}
 		if len(assessment.Results[0].Failures) != 1 || !strings.Contains(assessment.Results[0].Failures[0].Failure.Message, "French") {
 			t.Fatalf("audio policy failure = %#v", assessment.Results[0].Failures)
+		}
+
+		assessment, finalized, err = builder.Build(context.Background(), api.UploadSubject{
+			DiscType:       "DVD",
+			AudioLanguages: []string{"English", "French"},
+			ProviderMetadata: api.SourceScopedMetadata{
+				TMDB: &api.TMDBMetadata{OriginalLanguage: "en"},
+			},
+		}, catalog, runtime, projections, now)
+		if err != nil {
+			t.Fatalf("build disc audio policy preflight: %v", err)
+		}
+		if assessment.Results[0].State != api.TrackerPreflightStateReady || !finalized[0].UploadReady {
+			t.Fatalf("disc audio policy preflight = %#v/%#v", assessment.Results[0], finalized[0])
+		}
+	})
+
+	t.Run("audio bloat warnings are aggregated", func(t *testing.T) {
+		policyRegistry := trackerspkg.NewRegistry()
+		for _, trackerName := range []string{"ALPHA", "BETA"} {
+			if err := policyRegistry.Register(workflowAudioPolicyDefinition{name: trackerName}); err != nil {
+				t.Fatalf("register %s audio policy: %v", trackerName, err)
+			}
+		}
+		logger := &recordingMediaLogger{}
+		builder := workflowPreflightBuilder{
+			auth:     workflowPreflightAuthFake{},
+			registry: policyRegistry,
+			logger:   logger,
+		}
+		assessment, _, err := builder.Build(context.Background(), api.UploadSubject{
+			AudioLanguages: []string{"Japanese", "French"},
+			ProviderMetadata: api.SourceScopedMetadata{
+				TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
+			},
+		}, catalog, runtime, projections, now)
+		if err != nil {
+			t.Fatalf("build warning audio policy preflight: %v", err)
+		}
+		if assessment.Results[0].State != api.TrackerPreflightStateReady || assessment.Results[1].State != api.TrackerPreflightStateReady {
+			t.Fatalf("warning policy blocked trackers: %#v", assessment.Results)
+		}
+		if logger.countLevelContaining(
+			"WARN",
+			"trackers=ALPHA,BETA languages=French decision=advisory blocking=false",
+		) != 1 {
+			t.Fatalf("audio warning logs = %#v", logger.entries)
 		}
 	})
 
@@ -607,6 +736,19 @@ func TestWorkflowPreflightRejectsMissingPreparedResourceBeforeAuth(t *testing.T)
 		return decision.Code == "required_media_resource" && decision.Blocking
 	}) {
 		t.Fatalf("missing local-resource decision: %#v", finalized[0].PolicyDecisions)
+	}
+}
+
+func TestSubjectWithAvailablePreparedResourcesPreservesStatError(t *testing.T) {
+	t.Parallel()
+
+	subject := api.UploadSubject{MediaInfoTextPath: "invalid\x00path"}
+	checked, changed, err := subjectWithAvailablePreparedResources(subject)
+	if !errors.Is(err, syscall.EINVAL) {
+		t.Fatalf("prepared resource stat error = %v, want EINVAL", err)
+	}
+	if changed || checked.MediaInfoTextPath != subject.MediaInfoTextPath {
+		t.Fatalf("prepared resource changed after stat error: changed=%t checked=%#v", changed, checked)
 	}
 }
 

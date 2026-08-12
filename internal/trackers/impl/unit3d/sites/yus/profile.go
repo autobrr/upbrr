@@ -11,7 +11,9 @@ func Profile() unit3d.Profile {
 		BaseURL:      "https://yu-scene.net",
 		BannedGroups: BannedGroups(),
 		Site: unit3d.SiteProfile{
-			ResolveTypeID: typeID,
+			BuildName:        buildName,
+			BuildNameVersion: "v2",
+			ResolveTypeID:    typeID,
 		},
 	}
 }

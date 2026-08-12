@@ -46,9 +46,44 @@ func validateValidationPolicy(binding ValidationPolicyBinding) error {
 // NewRuleFailure constructs a normalized keyed tracker-rule result.
 func NewRuleFailure(rule string, reason string, disposition api.RuleDisposition) api.RuleFailure {
 	return api.RuleFailure{
-		Rule:        strings.TrimSpace(rule),
-		Reason:      strings.TrimSpace(reason),
-		Disposition: api.NormalizeRuleDisposition(disposition),
+		Rule:           strings.TrimSpace(rule),
+		Reason:         strings.TrimSpace(reason),
+		Disposition:    api.NormalizeRuleDisposition(disposition),
+		EvidenceStatus: "",
+	}
+}
+
+// NewEvidenceRuleFailure constructs a normalized keyed tracker-rule result
+// carrying the completeness of the evidence used for that decision.
+func NewEvidenceRuleFailure(
+	rule string,
+	reason string,
+	disposition api.RuleDisposition,
+	evidenceStatus api.MetadataEvidenceStatus,
+) api.RuleFailure {
+	failure := NewRuleFailure(rule, reason, disposition)
+	failure.EvidenceStatus = normalizeRuleEvidenceStatus(evidenceStatus)
+	return failure
+}
+
+// NormalizeRuleFailure preserves evidence while normalizing legacy fields.
+func NormalizeRuleFailure(failure api.RuleFailure) api.RuleFailure {
+	normalized := NewRuleFailure(failure.Rule, failure.Reason, failure.Disposition)
+	if failure.EvidenceStatus != "" {
+		normalized.EvidenceStatus = normalizeRuleEvidenceStatus(failure.EvidenceStatus)
+	}
+	return normalized
+}
+
+func normalizeRuleEvidenceStatus(status api.MetadataEvidenceStatus) api.MetadataEvidenceStatus {
+	switch status {
+	case api.MetadataEvidenceStatusComplete,
+		api.MetadataEvidenceStatusPartial,
+		api.MetadataEvidenceStatusUnavailable,
+		api.MetadataEvidenceStatusContradictory:
+		return status
+	default:
+		return api.MetadataEvidenceStatusUnavailable
 	}
 }
 
@@ -63,7 +98,7 @@ func RuleFailureBlocksExecution(failure api.RuleFailure, mode api.WorkflowExecut
 		api.NormalizeWorkflowExecutionMode(mode) != api.WorkflowExecutionModeDebug
 }
 
-// LanguageRule configures language requirements and the release types to which they apply.
+// LanguageRule configures waivable language requirements and the release types to which they apply.
 type LanguageRule struct {
 	// Languages lists normalized languages accepted by the tracker.
 	Languages []string
@@ -88,7 +123,7 @@ type RuleSet struct {
 	RequireUniqueID bool
 	// RequireValidMISetting requires a supported MediaInfo configuration.
 	RequireValidMISetting bool
-	// RequireAudioLanguages requires parsed audio-language metadata.
+	// RequireAudioLanguages requires parsed audio-language metadata as a waivable rule.
 	RequireAudioLanguages bool
 	// RequireDiscOnly rejects non-disc releases.
 	RequireDiscOnly bool

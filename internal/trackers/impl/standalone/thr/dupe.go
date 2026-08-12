@@ -16,6 +16,7 @@ import (
 	xhtml "golang.org/x/net/html"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -51,9 +52,11 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		return dupe.Failed(dupe.FailureAuthentication, "THR login failed", err)
 	}
 	entries := make([]api.DupeEntry, 0)
+	complete := false
+	pages := 0
 	for page := 0; page <= 10; page++ {
 		params := url.Values{
-			"search":   {fmt.Sprintf("tt%07d", meta.Identity.IMDBID)},
+			"search":   {providerid.IMDb(meta.Identity.IMDBID).Prefixed()},
 			"blah":     {"2"},
 			"incldead": {"1"},
 		}
@@ -64,6 +67,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		if err != nil || status < http.StatusOK || status >= http.StatusMultipleChoices || root == nil {
 			return dupe.Failed(dupe.FailureRequest, "THR search failed", err)
 		}
+		pages++
 		before := len(entries)
 		for _, link := range commonhttp.FindNodes(root, func(node *xhtml.Node) bool {
 			return node.Type == xhtml.ElementNode && node.Data == "a" && strings.HasPrefix(commonhttp.Attr(node, "href"), "details.php")
@@ -79,11 +83,25 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		next := commonhttp.FirstNode(root, func(node *xhtml.Node) bool {
 			return node.Type == xhtml.ElementNode && node.Data == "a" && strings.Contains(strings.ToLower(commonhttp.NodeText(node)), "next")
 		})
-		if next == nil || len(entries) == before {
+		if next == nil {
+			complete = true
+			break
+		}
+		if len(entries) == before {
 			break
 		}
 	}
-	return dupe.Resolved(entries, nil)
+	warnings := []string(nil)
+	if !complete {
+		warnings = []string{"THR search reached a pagination bound or made no progress"}
+	}
+	return dupe.ResolvedWithSearch(entries, nil, dupe.SearchEvidence{
+		Complete:  complete,
+		WorkScope: dupe.WorkScopeProviderID,
+		Pages:     pages,
+		Scope:     "provider_query",
+		Warnings:  warnings,
+	})
 }
 
 func thrLogin(ctx context.Context, client *http.Client, baseURL, username, password string) ([]*http.Cookie, error) {

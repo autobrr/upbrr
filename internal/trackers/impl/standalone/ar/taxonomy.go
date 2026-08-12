@@ -4,9 +4,9 @@
 package ar
 
 import (
-	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -64,7 +64,7 @@ func resolveTypeID(meta api.UploadSubject) string {
 func resolveTags(meta api.UploadSubject) string {
 	values := make([]string, 0, 8)
 	if meta.Identity.IMDBID > 0 {
-		values = append(values, "tt"+strconv.Itoa(meta.Identity.IMDBID))
+		values = append(values, providerid.IMDb(meta.Identity.IMDBID).Prefixed())
 	}
 	for value := range strings.SplitSeq(resolveGenres(meta), ",") {
 		for sub := range strings.SplitSeq(value, "&") {

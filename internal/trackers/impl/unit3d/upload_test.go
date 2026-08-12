@@ -236,6 +236,9 @@ func TestBuildUnit3DDataUsesCanonicalCategory(t *testing.T) {
 	if got := tvData["tvdb"]; got != "789" {
 		t.Fatalf("expected tvdb=789, got %q", got)
 	}
+	if got := tvData["imdb"]; got != "0000456" {
+		t.Fatalf("expected padded imdb=0000456, got %q", got)
+	}
 
 	movieReq := trackers.PreparationInput{
 		Tracker: "AITHER",
@@ -268,6 +271,9 @@ func TestBuildUnit3DDataUsesCanonicalCategory(t *testing.T) {
 	}
 	if _, ok := movieData["tvdb"]; ok {
 		t.Fatalf("tvdb should be omitted for movie payload")
+	}
+	if got := movieData["imdb"]; got != "0" {
+		t.Fatalf("expected absent imdb=0, got %q", got)
 	}
 }
 

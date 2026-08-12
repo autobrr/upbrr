@@ -19,6 +19,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -275,7 +276,7 @@ func resolveIMDbURL(meta api.UploadSubject) string {
 		return strings.TrimSpace(meta.ProviderMetadata.IMDB.IMDbURL)
 	}
 	if meta.Identity.IMDBID > 0 {
-		return fmt.Sprintf("https://www.imdb.com/title/tt%07d", meta.Identity.IMDBID)
+		return providerid.IMDb(meta.Identity.IMDBID).URL()
 	}
 	return ""
 }
@@ -364,15 +365,6 @@ func collapseDots(value string) string {
 		cleaned = strings.ReplaceAll(cleaned, "..", ".")
 	}
 	return strings.Trim(cleaned, ".")
-}
-
-func containsAny(value string, needles []string) bool {
-	for _, needle := range needles {
-		if strings.Contains(value, needle) {
-			return true
-		}
-	}
-	return false
 }
 
 func uniqueStrings(values []string) []string {

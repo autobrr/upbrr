@@ -4,9 +4,20 @@
 import { useMemo, useState } from "react";
 import { Button } from "../../components/ui/button";
 import type { UploadFacet } from "../../releaseSession/types";
+import type {
+  TrackerDryRunReport,
+  TrackerReleaseProjection,
+} from "../../api/generated/release-workflow";
 
 type Props = Readonly<{
   facet: UploadFacet;
+}>;
+
+/** One tracker upload card: the projection plus any dry-run report merged by tracker. */
+type TrackerUploadCard = Readonly<{
+  trackerId: string;
+  projection?: TrackerReleaseProjection;
+  report?: TrackerDryRunReport;
 }>;
 
 /** Thin presentation adapter for workflow dry-run and upload state. */
@@ -21,6 +32,24 @@ export default function TrackerUploadPage({ facet }: Props) {
       ),
     [selected, view.projections],
   );
+  const trackerCards = useMemo(() => {
+    const reports = view.dryRunResult?.reports || [];
+    const reportsByTracker = new Map(reports.map((report) => [report.trackerId, report]));
+    const cards: TrackerUploadCard[] = (view.projections?.projections || [])
+      .filter((projection) => selected.has(projection.trackerId))
+      .map((projection) => ({
+        trackerId: projection.trackerId,
+        projection,
+        report: reportsByTracker.get(projection.trackerId),
+      }));
+    const projectedIDs = new Set(cards.map((card) => card.trackerId));
+    return [
+      ...cards,
+      ...reports
+        .filter((report) => !projectedIDs.has(report.trackerId))
+        .map((report): TrackerUploadCard => ({ trackerId: report.trackerId, report })),
+    ];
+  }, [selected, view.dryRunResult, view.projections]);
   const uploadRunning = view.uploadStatus === "running";
   const failedTrackers = (view.result?.results || [])
     .filter((result) => result.submissionStatus === "failed")
@@ -170,70 +199,80 @@ export default function TrackerUploadPage({ facet }: Props) {
         ) : null}
       </section>
 
-      {view.dryRunResult ? (
+      {trackerCards.length || view.dryRunResult ? (
         <section className="panel grid gap-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2>Dry-run results</h2>
-            <span className="muted">{view.dryRunResult.status}</span>
+            <h2>Tracker uploads</h2>
+            {view.dryRunResult ? <span className="muted">{view.dryRunResult.status}</span> : null}
           </div>
-          {view.dryRunResult.reports.map((tracker) => {
-            const expansionKey = `dry-run-result:${tracker.trackerId}`;
+          {trackerCards.map(({ trackerId, projection, report }) => {
+            const expansionKey = `dry-run-result:${trackerId}`;
             const expanded = expandedTrackers[expansionKey] ?? false;
-            const trackerLabel = tracker.displayName || tracker.trackerId;
+            const trackerLabel = report?.displayName || projection?.displayName || trackerId;
+            // The projection carries the reviewed tracker name; a dry-run report
+            // adds status and detail and must not replace it.
+            const uploadName =
+              projection?.uploadReleaseName || report?.uploadReleaseName || "Unavailable";
+            const canonicalName = projection?.canonicalReleaseName || "";
             return (
               <div
                 className="grid gap-2 rounded border border-white/10 bg-white/5 p-3"
-                key={tracker.trackerId}
+                key={trackerId}
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <strong>{trackerLabel}</strong>
-                  <div className="flex items-center gap-2">
-                    <span className={tracker.status === "blocked" ? "error" : "muted"}>
-                      {tracker.status}
-                    </span>
-                    <button
-                      aria-expanded={expanded}
-                      aria-label={`${expanded ? "Collapse" : "Expand"} ${trackerLabel}`}
-                      className="ghost"
-                      type="button"
-                      onClick={() => toggleTrackerDetails(expansionKey)}
-                    >
-                      {expanded ? "Collapse" : "Expand"}
-                    </button>
-                  </div>
+                  {report ? (
+                    <div className="flex items-center gap-2">
+                      <span className={report.status === "blocked" ? "error" : "muted"}>
+                        {report.status}
+                      </span>
+                      <button
+                        aria-expanded={expanded}
+                        aria-label={`${expanded ? "Collapse" : "Expand"} ${trackerLabel}`}
+                        className="ghost"
+                        type="button"
+                        onClick={() => toggleTrackerDetails(expansionKey)}
+                      >
+                        {expanded ? "Collapse" : "Expand"}
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
-                {expanded ? (
+                <p className="value break-all">
+                  <span className="font-semibold">Tracker upload:</span> {uploadName}
+                </p>
+                {canonicalName && canonicalName !== uploadName ? (
+                  <p className="muted break-all">
+                    <span className="font-semibold">Canonical:</span> {canonicalName}
+                  </p>
+                ) : null}
+                {report && expanded ? (
                   <div className="grid gap-2">
-                    <p className="value break-all">{tracker.uploadReleaseName}</p>
-                    {tracker.endpoint ? (
-                      <p className="value break-all">{tracker.endpoint}</p>
-                    ) : null}
+                    {report.endpoint ? <p className="value break-all">{report.endpoint}</p> : null}
                     <p className="muted">
-                      Files ready: {(tracker.files || []).filter((file) => file.present).length}/
-                      {(tracker.files || []).length}
+                      Files ready: {(report.files || []).filter((file) => file.present).length}/
+                      {(report.files || []).length}
                     </p>
-                    {tracker.fields?.map((field) => (
+                    {report.fields?.map((field) => (
                       <p className="value break-all" key={field.key}>
                         {field.key}: {field.value}
                       </p>
                     ))}
-                    {tracker.warnings?.map((warning) => (
+                    {report.warnings?.map((warning) => (
                       <p className="muted" key={warning}>
                         {warning}
                       </p>
                     ))}
-                    {tracker.failures?.map((failure, index) => (
+                    {report.failures?.map((failure, index) => (
                       <p className="error" key={`${failure.failure.Code}-${index}`}>
                         {failure.failure.Message}
                       </p>
                     ))}
-                    {tracker.clientInjection.status ? (
-                      <p
-                        className={tracker.clientInjection.status === "failed" ? "error" : "muted"}
-                      >
-                        Client injection: {tracker.clientInjection.status}
-                        {tracker.clientInjection.message
-                          ? ` · ${tracker.clientInjection.message}`
+                    {report.clientInjection.status ? (
+                      <p className={report.clientInjection.status === "failed" ? "error" : "muted"}>
+                        Client injection: {report.clientInjection.status}
+                        {report.clientInjection.message
+                          ? ` · ${report.clientInjection.message}`
                           : ""}
                       </p>
                     ) : null}

@@ -32,7 +32,7 @@ type SearchInput struct {
 }
 
 // Disposition identifies whether a discovery request searched, was explicitly
-// skipped, or could not search because no client adapter exists.
+// skipped, or could not search because no usable client adapter was available.
 type Disposition string
 
 const (
@@ -81,7 +81,8 @@ func New(clients api.ClientService, logger api.Logger) *Module {
 }
 
 // Discover obtains one current client snapshot and always reports why a search
-// did or did not execute.
+// did or did not execute. Client failures produce unavailable evidence, while
+// request validation and cancellation remain fatal.
 func (m *Module) Discover(ctx context.Context, input SearchInput) (Evidence, error) {
 	if m == nil {
 		return Evidence{}, errors.New("client discovery: module is not initialized")
@@ -114,8 +115,12 @@ func (m *Module) Discover(ctx context.Context, input SearchInput) (Evidence, err
 			ForceRecheck: cloneBool(input.ForceRecheck),
 		},
 	})
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return Evidence{}, fmt.Errorf("client discovery: search canceled: %w", ctxErr)
+	}
 	if err != nil {
-		return Evidence{}, fmt.Errorf("client discovery: search pathed torrents: %w", err)
+		m.logger.Debugf("client discovery: decision=degrade reason=search_failed")
+		return Evidence{Disposition: DispositionUnavailable}, nil
 	}
 	evidence := normalizeEvidence(result)
 	evidence.Disposition = DispositionSearched

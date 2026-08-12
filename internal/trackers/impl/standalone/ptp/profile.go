@@ -24,11 +24,16 @@ func Profile() standalone.Profile {
 		DescriptionGroup:   "ptp",
 		UploadContentMode:  trackers.UploadContentModeDescription,
 		PrepareDescription: prepareDescription,
+		ReleaseNamePolicy: trackers.WithMovieYearProvider(
+			trackers.CanonicalReleaseNamePolicy(),
+			api.IdentityProviderIMDB,
+		),
 		PrepareUpload: func(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
 			return prepareUploadAt(ctx, req, ptpBaseURL)
 		},
 		NewDuplicateAdapter: func(deps dupe.Dependencies) dupe.Adapter { return newDuplicateAdapterAt(deps, ptpBaseURL) },
-		Rules:               &trackers.RuleSet{RequireMovieUnlessTVPack: true},
+		DupePolicy:          duplicatePolicy(),
+		Rules:               &trackers.RuleSet{RequireMovieOnly: true},
 		ValidationPolicy:    validationPolicy(),
 		BannedGroups:        bannedGroups(),
 		DataPolicy:          &trackers.DataLookupPolicy{Cooldown: time.Minute},
@@ -38,11 +43,15 @@ func Profile() standalone.Profile {
 			Disposition: api.RuleDispositionAdvisory,
 		}}},
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "PTP"},
+		ArtifactPolicy: &trackers.ArtifactPolicy{
+			MaxPieceSizeMiB:     16,
+			PieceSizeProfileURL: ptpBaseURL,
+		},
 		ImageHostPolicy: &trackers.ImageHostPolicy{
 			AllowedHosts: []string{"pixhost", "imgbb", "onlyimage", "ptscreens", "passtheimage"},
 		},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{
-			TrackerURLPatterns: []string{ptpBaseURL},
+			TrackerURLPatterns: []string{ptpBaseURL, "https://please.passthepopcorn.me"},
 			CommentURLPatterns: []string{ptpBaseURL},
 			DetailIDPattern:    "torrentid=(\\d+)",
 		},

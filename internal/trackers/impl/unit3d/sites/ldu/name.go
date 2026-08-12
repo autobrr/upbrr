@@ -16,6 +16,9 @@ func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
 	if name == "" {
 		name = strings.TrimSpace(meta.ReleaseNameNoTag)
 	}
+	if unit3d.IsDiscType(meta.DiscType) {
+		return clean(name)
+	}
 	nonEnglishOriginal := !isEnglish(originalLanguage(meta))
 	audio, nonEnglishAudio := firstAudio(meta.AudioLanguages)
 	subtitle := firstSubtitle(meta.SubtitleLanguages)

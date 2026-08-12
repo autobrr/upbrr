@@ -24,7 +24,7 @@ func TestBuildZNTHNameTV(t *testing.T) {
 	}
 }
 
-func TestBuildZNTHNameMovieYearMismatch(t *testing.T) {
+func TestBuildZNTHNameLeavesMovieYearToFamilyPolicy(t *testing.T) {
 	meta := api.UploadSubject{
 		ReleaseName: "Movie.2024.1080p.WEB-DL-GRP",
 		Release:     api.ReleaseInfo{Year: 2024},
@@ -34,7 +34,7 @@ func TestBuildZNTHNameMovieYearMismatch(t *testing.T) {
 		},
 	}
 	got := Profile().Site.BuildName(meta, config.TrackerConfig{})
-	expected := "Movie.2025.1080p.WEB-DL-GRP"
+	expected := "Movie.2024.1080p.WEB-DL-GRP"
 	if got != expected {
 		t.Fatalf("expected %q, got %q", expected, got)
 	}
@@ -104,7 +104,7 @@ func TestBuildZNTHNameUnknownCategoryDoesNotInferTVCategory(t *testing.T) {
 	}
 }
 
-func TestBuildZNTHNameExplicitMoviePreservesMovieBranchOverParsedTV(t *testing.T) {
+func TestBuildZNTHNameExplicitMoviePreservesEpisodeTitle(t *testing.T) {
 	meta := api.UploadSubject{
 		ReleaseName:  "Show.S01E01.2024.Episode.Title.1080p.WEB-DL-GRP",
 		EpisodeTitle: "Episode Title",
@@ -122,7 +122,7 @@ func TestBuildZNTHNameExplicitMoviePreservesMovieBranchOverParsedTV(t *testing.T
 	}
 
 	got := Profile().Site.BuildName(meta, config.TrackerConfig{})
-	expected := "Show.S01E01.2025.Episode.Title.1080p.WEB-DL-GRP"
+	expected := "Show.S01E01.2024.Episode.Title.1080p.WEB-DL-GRP"
 	if got != expected {
 		t.Fatalf("expected %q, got %q", expected, got)
 	}
@@ -147,38 +147,6 @@ func TestBuildZNTHNameBlankCategoryDoesNotInferMovieCategory(t *testing.T) {
 	}
 }
 
-func TestBuildZNTHNameMovieYearMismatchNoResolutionHyphenatedTitle(t *testing.T) {
-	meta := api.UploadSubject{
-		ReleaseName: "Movie - Part One 2024",
-		Release:     api.ReleaseInfo{Year: 2024},
-		Identity:    api.ExternalIdentity{Category: "MOVIE"},
-		ProviderMetadata: api.SourceScopedMetadata{
-			IMDB: &api.IMDBMetadata{Year: 2025},
-		},
-	}
-	got := Profile().Site.BuildName(meta, config.TrackerConfig{})
-	expected := "Movie - Part One 2025"
-	if got != expected {
-		t.Fatalf("expected %q, got %q", expected, got)
-	}
-}
-
-func TestBuildZNTHNameMovieYearMismatchNoResolutionGroupSuffix(t *testing.T) {
-	meta := api.UploadSubject{
-		ReleaseName: "Movie.Title.2024-GRP2024",
-		Release:     api.ReleaseInfo{Year: 2024, Group: "GRP2024"},
-		Identity:    api.ExternalIdentity{Category: "MOVIE"},
-		ProviderMetadata: api.SourceScopedMetadata{
-			IMDB: &api.IMDBMetadata{Year: 2025},
-		},
-	}
-	got := Profile().Site.BuildName(meta, config.TrackerConfig{})
-	expected := "Movie.Title.2025-GRP2024"
-	if got != expected {
-		t.Fatalf("expected %q, got %q", expected, got)
-	}
-}
-
 func TestBuildZNTHNameTVUnicodePrefix(t *testing.T) {
 	meta := api.UploadSubject{
 		ReleaseName:  "\u212aShow.S01E01.Episode.Title.1080p.WEB-DL-GRP",
@@ -188,22 +156,6 @@ func TestBuildZNTHNameTVUnicodePrefix(t *testing.T) {
 	}
 	got := Profile().Site.BuildName(meta, config.TrackerConfig{})
 	expected := "\u212aShow.S01E01.1080p.WEB-DL-GRP"
-	if got != expected {
-		t.Fatalf("expected %q, got %q", expected, got)
-	}
-}
-
-func TestBuildZNTHNameMovieYearMismatchUnicodeTitle(t *testing.T) {
-	meta := api.UploadSubject{
-		ReleaseName: "\u212aMovie.2024",
-		Release:     api.ReleaseInfo{Year: 2024},
-		Identity:    api.ExternalIdentity{Category: "MOVIE"},
-		ProviderMetadata: api.SourceScopedMetadata{
-			IMDB: &api.IMDBMetadata{Year: 2025},
-		},
-	}
-	got := Profile().Site.BuildName(meta, config.TrackerConfig{})
-	expected := "\u212aMovie.2025"
 	if got != expected {
 		t.Fatalf("expected %q, got %q", expected, got)
 	}

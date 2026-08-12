@@ -167,6 +167,7 @@ function TrackerSettingsHarness() {
     "div",
     null,
     state.renderTrackerSection(false),
+    createElement("button", { type: "button", onClick: state.handleSaveSettings }, "Save settings"),
     createElement(PayloadCapture, { value: state.buildSavePayload() }),
   );
 }
@@ -444,6 +445,71 @@ describe("renderTorrentClientsSection", () => {
       QbitPass: "secret",
       AutomaticManagementPaths: ["/media"],
     });
+  });
+
+  it("clears selectors that reference a removed client", async () => {
+    installAppOperationMocks({
+      GetConfig: async () =>
+        JSON.stringify({
+          ClientSetup: {
+            DefaultClient: "primary",
+            InjectClients: ["primary", "backup"],
+            SearchClients: [" PRIMARY ", "backup"],
+          },
+          Trackers: {
+            Trackers: {
+              AITHER: { TorrentClient: "PRIMARY" },
+              BLU: { TorrentClient: "backup" },
+            },
+          },
+          TorrentClients: {
+            primary: {
+              Type: "watch",
+              WatchFolder: "incoming-primary",
+              StorageDir: "library-primary",
+            },
+            backup: {
+              Type: "watch",
+              WatchFolder: "incoming-backup",
+              StorageDir: "library-backup",
+            },
+          },
+        }),
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () =>
+        trackerCatalog(
+          trackerCatalogEntry("AITHER", [["TorrentClient", ""]]),
+          trackerCatalogEntry("BLU", [["TorrentClient", ""]]),
+        ),
+      GetImageHostPolicyMetadata: async () => ({}),
+    });
+
+    render(createElement(TorrentClientsHarness));
+
+    await waitFor(() => expect(screen.getByText("primary")).toBeInTheDocument());
+    const primaryCard = screen.getByText("primary").closest(".settings-card");
+    expect(primaryCard).toBeTruthy();
+    fireEvent.click(within(primaryCard as HTMLElement).getByRole("button", { name: "Remove" }));
+
+    await waitFor(() => expect(screen.queryByText("primary")).not.toBeInTheDocument());
+    const payload = readPayload<{
+      ClientSetup?: {
+        DefaultClient?: string;
+        InjectClients?: string[];
+        SearchClients?: string[];
+      };
+      Trackers?: { Trackers?: Record<string, { TorrentClient?: string }> };
+      TorrentClients?: Record<string, Record<string, unknown>>;
+    }>();
+    expect(payload.TorrentClients?.primary).toBeUndefined();
+    expect(payload.TorrentClients?.backup).toBeDefined();
+    expect(payload.ClientSetup).toEqual({
+      DefaultClient: "",
+      InjectClients: ["backup"],
+      SearchClients: ["backup"],
+    });
+    expect(payload.Trackers?.Trackers?.AITHER?.TorrentClient).toBe("");
+    expect(payload.Trackers?.Trackers?.BLU?.TorrentClient).toBe("backup");
   });
 });
 
@@ -796,8 +862,9 @@ describe("Tracker client selectors", () => {
     expect(screen.getByText("1/1")).toBeInTheDocument();
   });
 
-  it("masks encrypted tracker credentials and preserves them for saves", async () => {
+  it("masks tracker credentials after saving while preserving them in the payload", async () => {
     const encryptedAPIKey = "upbrr-enc:v1:encrypted-btn-api-key";
+    let savedReplacement = false;
     installAppOperationMocks({
       GetConfig: async () =>
         JSON.stringify({
@@ -828,6 +895,12 @@ describe("Tracker client selectors", () => {
           ),
         ),
       GetImageHostPolicyMetadata: async () => ({}),
+      SaveConfig: async (payload: string) => {
+        const saved = JSON.parse(payload) as {
+          Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
+        };
+        savedReplacement = saved.Trackers?.Trackers?.BTN?.APIKey === "replacement-api-key";
+      },
     });
 
     render(createElement(TrackerSettingsHarness));
@@ -857,7 +930,17 @@ describe("Tracker client selectors", () => {
     payload = readPayload<{
       Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
     }>();
-    expect(payload.Trackers?.Trackers?.BTN?.APIKey).toBe("replacement-api-key");
+    expect(payload.Trackers?.Trackers?.BTN?.APIKey === "replacement-api-key").toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+
+    await waitFor(() => expect(screen.getByLabelText("API key")).toHaveValue("[REDACTED]"));
+    expect(savedReplacement).toBe(true);
+
+    savedReplacement = false;
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+
+    await waitFor(() => expect(savedReplacement).toBe(true));
   });
 
   it("renders BTN announce URL from tracker schema when stored config lacks the key", async () => {
@@ -906,7 +989,7 @@ describe("Tracker client selectors", () => {
     expect(screen.getByLabelText("Announce URL")).toHaveValue("");
   });
 
-  it("shows Lostimg as an LST image host only when configured in image hosting", async () => {
+  it("hides LST image host selection when Lostimg is enabled", async () => {
     installAppOperationMocks({
       GetConfig: async () =>
         JSON.stringify({
@@ -952,8 +1035,7 @@ describe("Tracker client selectors", () => {
     );
     fireEvent.click(screen.getByText("LST", { selector: ".settings-card__summary-name" }));
 
-    const imageHostSelect = screen.getByLabelText("Image host") as HTMLSelectElement;
-    expect(Array.from(imageHostSelect.options).map((option) => option.value)).toContain("lostimg");
+    expect(screen.queryByLabelText("Image host")).not.toBeInTheDocument();
   });
 
   it("shows configured global hosts for LST when Lostimg is disabled", async () => {
@@ -1010,7 +1092,7 @@ describe("Tracker client selectors", () => {
     expect(values).not.toContain("lostimg");
   });
 
-  it("shows ReelFliX as an RF image host when configured in image hosting", async () => {
+  it("hides RF image host selection when ReelFliX is enabled", async () => {
     installAppOperationMocks({
       GetConfig: async () =>
         JSON.stringify({
@@ -1056,8 +1138,7 @@ describe("Tracker client selectors", () => {
     );
     fireEvent.click(screen.getByText("RF", { selector: ".settings-card__summary-name" }));
 
-    const imageHostSelect = screen.getByLabelText("Image host") as HTMLSelectElement;
-    expect(Array.from(imageHostSelect.options).map((option) => option.value)).toContain("reelflix");
+    expect(screen.queryByLabelText("Image host")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Image API")).not.toBeInTheDocument();
   });
 
@@ -1384,9 +1465,9 @@ describe("tracker advanced fields", () => {
             DefaultTrackers: [],
             PreferredTracker: "",
             Trackers: {
-              MTV: {
+              BTN: {
                 FaviconURL: "https://example.test/favicon.ico",
-                LinkDirName: "mtv",
+                LinkDirName: "btn",
                 APIKey: "api-key",
                 Username: "user",
                 Password: "pass",
@@ -1394,7 +1475,6 @@ describe("tracker advanced fields", () => {
                 Anon: false,
                 OTPURI: "otpauth://totp/example",
                 SkipIfRehash: true,
-                PreferMTV: true,
               },
             },
           },
@@ -1403,7 +1483,7 @@ describe("tracker advanced fields", () => {
       ListTrackerCatalog: async () =>
         trackerCatalog(
           trackerCatalogEntry(
-            "MTV",
+            "BTN",
             [
               ["FaviconURL", ""],
               ["LinkDirName", ""],
@@ -1414,7 +1494,6 @@ describe("tracker advanced fields", () => {
               ["Anon", false],
               ["OTPURI", ""],
               ["SkipIfRehash", false],
-              ["PreferMTV", false],
             ],
             false,
             "standalone",
@@ -1427,15 +1506,14 @@ describe("tracker advanced fields", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByText("MTV", { selector: ".settings-card__summary-name" }),
+        screen.getByText("BTN", { selector: ".settings-card__summary-name" }),
       ).toBeInTheDocument(),
     );
-    fireEvent.click(screen.getByText("MTV", { selector: ".settings-card__summary-name" }));
+    fireEvent.click(screen.getByText("BTN", { selector: ".settings-card__summary-name" }));
 
     expect(screen.queryByLabelText("Favicon URL")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Link dir name")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Skip if rehash")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Prefer MTV torrent")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Announce URL")).toBeInTheDocument();
     expect(screen.getByLabelText("OTP URI")).toBeInTheDocument();
   });

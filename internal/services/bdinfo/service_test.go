@@ -89,6 +89,22 @@ without specific fields`
 	}
 }
 
+func TestParseOutputStandaloneSummary(t *testing.T) {
+	testFile := filepath.Join(t.TempDir(), "BD_SUMMARY_00001.MPLS.txt")
+	content := "Disc Title: Example Release 2026\nPlaylist: 00001.MPLS\nLength: 01:30:00.000\nVideo: MPEG-4 AVC Video / 30000 kbps / 1080p"
+	if err := os.WriteFile(testFile, []byte(content), 0o600); err != nil {
+		t.Fatalf("write standalone summary: %v", err)
+	}
+
+	result, err := New(api.NopLogger{}).ParseOutput(testFile)
+	if err != nil {
+		t.Fatalf("parse standalone summary: %v", err)
+	}
+	if result["summary"] != content {
+		t.Fatalf("summary = %q, want %q", result["summary"], content)
+	}
+}
+
 func TestContextCancellation(t *testing.T) {
 	svc := New(api.NopLogger{})
 

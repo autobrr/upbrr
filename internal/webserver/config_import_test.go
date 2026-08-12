@@ -12,7 +12,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
 )
 
@@ -20,9 +19,7 @@ func TestRouteImportConfigAcceptsEscapedEnvelopeAtRawCap(t *testing.T) {
 	t.Parallel()
 
 	repo, dbPath := openBrowseTestRepo(t)
-	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "long-enough-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	writeTestAuthFile(t, dbPath, "tester", false)
 	server := testServerWithBackend(t, repo, config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}})
 	content := "#" + strings.Repeat("<", configImportMaxBytes-1)
 	body, err := json.Marshal(map[string]string{

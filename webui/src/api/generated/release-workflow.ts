@@ -309,12 +309,52 @@ export type DupeAssessmentRef = Readonly<{
 export type DupeDecision = string;
 
 export type DupeMatchProjection = Readonly<{
+  category?: string;
+  codec?: string;
+  container?: string;
+  date?: string;
+  edition?: string;
+  episode?: number;
+  evidenceStatus?: HDREvidenceStatus;
   flags?: readonly string[];
+  group?: string;
+  hdr: HDRFacts;
   id?: string;
+  internal: boolean;
   link?: string;
   name: string;
+  pack: boolean;
+  provider?: string;
   reason?: string;
+  reasons?: readonly DupeReason[];
+  region?: string;
+  relation?: DupeRelation;
+  releaseOrigin?: string;
+  repack?: string;
+  resolution?: string;
+  season?: number;
   sizeBytes?: number;
+  source?: string;
+  threeD?: string;
+  trumpable: boolean;
+  type?: string;
+}>;
+
+export type DupeReason = Readonly<{
+  code: string;
+  message?: string;
+}>;
+
+export type DupeRelation = string;
+
+export type DupeSearchEvidence = Readonly<{
+  candidateCount: number;
+  complete: boolean;
+  pages: number;
+  scope?: string;
+  warnings?: readonly string[];
+  workScope?: string;
+  wrongWorkCount?: number;
 }>;
 
 export type EncodeSettingsStatus = string;
@@ -336,6 +376,8 @@ export type EpisodeFacts = Readonly<{
   Title: string;
   Year: number;
 }>;
+
+export type EpisodeTitleMode = string;
 
 export type ExternalIDOverrides = Readonly<{
   IMDBID?: number | null;
@@ -389,6 +431,11 @@ export type FramePreview = Readonly<{
   workflowRevision: WorkflowRevision;
 }>;
 
+export type GeneratedReleaseNameVariants = Readonly<{
+  IncludeEpisodeTitle: ReleaseNameVariant;
+  OmitEpisodeTitle: ReleaseNameVariant;
+}>;
+
 export type GetReleaseWorkflowMediaPlanRequest = Readonly<{
   workflowId: WorkflowID;
 }>;
@@ -403,6 +450,22 @@ export type GoalAvailability = Readonly<{
   reason?: string;
   reasonCode?: string;
 }>;
+
+export type HDREvidenceOrigin = string;
+
+export type HDREvidenceStatus = string;
+
+export type HDRFacts = Readonly<{
+  contradictions?: readonly string[];
+  dolbyVisionProfile?: string;
+  fallbackFormats?: readonly HDRFormat[];
+  formats?: readonly HDRFormat[];
+  origin: HDREvidenceOrigin;
+  sourceFields?: readonly string[];
+  status: HDREvidenceStatus;
+}>;
+
+export type HDRFormat = string;
 
 export type HostedImageAttempt = Readonly<{
   artifactIds: readonly PublicResourceID[];
@@ -615,6 +678,7 @@ export type MediaFacts = Readonly<{
   Distributor: string;
   Edition: string;
   HDR: string;
+  HDRFacts: HDRFacts;
   HasEncodeSettings: boolean;
   MediaInfoUniqueID: string;
   Region: string;
@@ -649,6 +713,8 @@ export type MediaPlan = Readonly<{
 
 export type MediaPlanID = string;
 
+export type MetadataEvidenceStatus = string;
+
 export type MetadataOverrides = Readonly<{
   Anime?: boolean | null;
   Commentary?: boolean | null;
@@ -677,6 +743,7 @@ export type NamingFacts = Readonly<{
   Editions: readonly string[];
   Extension: string;
   Filename: string;
+  GeneratedReleaseNames: GeneratedReleaseNameVariants;
   Genre: string;
   Group: string;
   HDR: readonly string[];
@@ -831,6 +898,14 @@ export type PreviewReleaseWorkflowFrameRequest = Readonly<{
   workflowId: WorkflowID;
 }>;
 
+export type ProviderAvailabilityEvidence = Readonly<{
+  Provider: IdentityProvider;
+  Source: string;
+  Status: ProviderAvailabilityStatus;
+}>;
+
+export type ProviderAvailabilityStatus = string;
+
 export type ProviderDisplay = Readonly<{
   Details: ProviderDisplayDetails;
   DisplayID: string;
@@ -879,6 +954,7 @@ export type ReleaseAssessments = Readonly<{
   MediaInfoEncodeSettings: EncodeSettingsStatus;
   MediaInfoUniqueID: UniqueIDStatus;
   Naming: NamingAssessment;
+  VideoBitrate: VideoBitrateAssessment;
 }>;
 
 export type ReleaseFactInstructionSnapshot = Readonly<{
@@ -917,9 +993,11 @@ export type ReleaseNameOverrides = Readonly<{
   ManualDate?: string | null;
   ManualYear?: number | null;
   NoAKA?: boolean | null;
+  NoDistributor?: boolean | null;
   NoDual?: boolean | null;
   NoDub?: boolean | null;
   NoEdition?: boolean | null;
+  NoEpisodeTitle?: boolean | null;
   NoSeason?: boolean | null;
   NoTag?: boolean | null;
   NoYear?: boolean | null;
@@ -931,6 +1009,12 @@ export type ReleaseNameOverrides = Readonly<{
   Tag?: string | null;
   Type?: string | null;
   UseSeasonEpisode?: boolean | null;
+}>;
+
+export type ReleaseNameVariant = Readonly<{
+  CleanName: string;
+  Name: string;
+  NameNoTag: string;
 }>;
 
 export type ReleaseRef = Readonly<{
@@ -980,6 +1064,45 @@ export type ReleaseWorkflow = Readonly<{
   trackerRuntime?: TrackerRuntimeSnapshotRef | null;
   updatedAt: string;
   uploadResult?: UploadResultRef | null;
+}>;
+
+export type ReleaseWorkflowCapabilities = Readonly<{
+  apiVersion: string;
+  applicationVersion: string;
+  features: ReleaseWorkflowCapabilityFeatures;
+  imageHosts: readonly ReleaseWorkflowCapabilityResource[];
+  ownerId: string;
+  scopes: readonly string[];
+  torrentClients: readonly ReleaseWorkflowCapabilityResource[];
+  trackers: readonly ReleaseWorkflowCapabilityTracker[];
+  uploadOptionSchemaHash: string;
+}>;
+
+export type ReleaseWorkflowCapabilityFeatures = Readonly<{
+  compositeUpload: boolean;
+  strictEligibleTrackerContinuation: boolean;
+  typedFeedback: boolean;
+}>;
+
+export type ReleaseWorkflowCapabilityField = Readonly<{
+  activation: boolean;
+  key: string;
+  yamlKey: string;
+}>;
+
+export type ReleaseWorkflowCapabilityResource = Readonly<{
+  configured: boolean;
+  displayName: string;
+  id: string;
+}>;
+
+export type ReleaseWorkflowCapabilityTracker = Readonly<{
+  capabilities: TrackerCapabilityDescriptor;
+  configFields?: readonly ReleaseWorkflowCapabilityField[];
+  configured: boolean;
+  default: boolean;
+  displayName: string;
+  id: TrackerID;
 }>;
 
 export type ReleaseWorkflowCurrent = Readonly<{
@@ -1191,9 +1314,11 @@ export type ReleaseWorkflowUploadReleaseName = Readonly<{
   episodeTitle?: string | null;
   manualYear?: number | null;
   noAka?: boolean | null;
+  noDistributor?: boolean | null;
   noDual?: boolean | null;
   noDub?: boolean | null;
   noEdition?: boolean | null;
+  noEpisodeTitle?: boolean | null;
   noSeason?: boolean | null;
   noTag?: boolean | null;
   noYear?: boolean | null;
@@ -1346,6 +1471,7 @@ export type RequiredActionKind = string;
 
 export type RequiredActionOption = Readonly<{
   label: string;
+  playlist?: PlaylistInfo | null;
   value: string;
 }>;
 
@@ -1382,6 +1508,8 @@ export type RetryReleaseWorkflowUploadRequest = Readonly<{
   retry: FailedTrackerRetryRef;
   workflowId: WorkflowID;
 }>;
+
+export type RuleDisposition = string;
 
 export type SaveReleaseWorkflowDescriptionOverrideRequest = Readonly<{
   expectedRevision: WorkflowRevision;
@@ -1438,6 +1566,7 @@ export type SourceScopedMetadata = Readonly<{
   Bluray?: BlurayMetadata | null;
   Generation: PreparedGeneration;
   IMDB?: IMDBMetadata | null;
+  ProviderAvailability: readonly ProviderAvailabilityEvidence[];
   SourcePath: string;
   TMDB?: TMDBMetadata | null;
   TVDB?: TVDBMetadata | null;
@@ -1553,6 +1682,7 @@ export type TVDBMetadata = Readonly<{
   Genres: string;
   HasEnglish: boolean;
   Name: string;
+  NameDisambiguation: TVDBNameDisambiguation;
   NameEnglish: string;
   Network: string;
   OriginalCountry: string;
@@ -1567,6 +1697,18 @@ export type TVDBMetadata = Readonly<{
   YearConfidence: string;
   YearFromAlias: boolean;
   YearSource: string;
+}>;
+
+export type TVDBNameDisambiguation = Readonly<{
+  CanonicalName: string;
+  IncludeLocale: boolean;
+  IncludeYear: boolean;
+  Locale: string;
+  SameNameAndYearSeries: number;
+  SameNameSeries: number;
+  SeriesYear: number;
+  Source: string;
+  Status: MetadataEvidenceStatus;
 }>;
 
 export type TVmazeMetadata = Readonly<{
@@ -1735,12 +1877,18 @@ export type TrackerDupeAssessment = Readonly<{
   criteria: TrackerDuplicateCriteria;
   criteriaFingerprint: WorkflowFingerprint;
   decision: DupeDecision;
+  evidenceFingerprint?: WorkflowFingerprint;
   failures?: readonly WorkflowFailure[];
   freshUntil: string;
   matches?: readonly DupeMatchProjection[];
+  policyFingerprint: WorkflowFingerprint;
+  policyId: string;
   projectionFingerprint: WorkflowFingerprint;
   requiredActions?: readonly RequiredAction[];
+  search: DupeSearchEvidence;
+  searchFingerprint: WorkflowFingerprint;
   status: StageStatus;
+  targetFingerprint: WorkflowFingerprint;
   trackerId: TrackerID;
   uploadReleaseName: string;
 }>;
@@ -1757,6 +1905,31 @@ export type TrackerDuplicateCriteria = Readonly<{
   season?: number;
   source: TrackerTaxonomyValue;
   type: TrackerTaxonomyValue;
+}>;
+
+export type TrackerDuplicateTarget = Readonly<{
+  category?: string;
+  container?: string;
+  date?: string;
+  edition?: string;
+  episode?: number;
+  fileNames?: readonly string[];
+  group?: string;
+  hdr: HDRFacts;
+  names?: readonly string[];
+  pack: boolean;
+  provider?: string;
+  region?: string;
+  releaseOrigin?: string;
+  repack?: string;
+  resolution?: string;
+  season?: number;
+  sizeBytes?: number;
+  source?: string;
+  threeD?: string;
+  type?: string;
+  videoCodec?: string;
+  videoEncode?: string;
 }>;
 
 export type TrackerID = string;
@@ -1777,6 +1950,8 @@ export type TrackerPolicyDecision = Readonly<{
   blocking: boolean;
   code: string;
   decision: string;
+  disposition?: RuleDisposition;
+  evidenceStatus?: MetadataEvidenceStatus;
   message?: string;
 }>;
 
@@ -1891,9 +2066,18 @@ export type TrackerReleaseProjection = Readonly<{
   displayName: string;
   dupeReady: boolean;
   duplicateCriteria: TrackerDuplicateCriteria;
+  duplicatePolicyFingerprint: WorkflowFingerprint;
+  duplicatePolicyId: string;
+  duplicateSearchFingerprint: WorkflowFingerprint;
+  duplicateTarget: TrackerDuplicateTarget;
+  duplicateTargetFingerprint: WorkflowFingerprint;
+  episodeTitleMode: EpisodeTitleMode;
   failures?: readonly WorkflowFailure[];
   inputFingerprint: WorkflowFingerprint;
   metadataLocale?: string;
+  namingElementPolicyVersion: string;
+  namingFingerprint: WorkflowFingerprint;
+  namingPolicyId: string;
   policyDecisions?: readonly TrackerPolicyDecision[];
   preparedResourceFingerprint?: WorkflowFingerprint;
   projectorFingerprint: WorkflowFingerprint;
@@ -2099,6 +2283,13 @@ export type UploadTrackerResult = Readonly<{
   trackerId: TrackerID;
 }>;
 
+export type VideoBitrateAssessment = Readonly<{
+  BitsPerSecond: number;
+  Status: VideoBitrateStatus;
+}>;
+
+export type VideoBitrateStatus = string;
+
 export type WorkflowAuthority = Readonly<{
   expectedRevision: WorkflowRevision;
   workflowId: WorkflowID;
@@ -2211,8 +2402,7 @@ export type WorkflowOperationResult = Readonly<{
 
 export type WorkflowOperationResultKind = string;
 
-export type WorkflowPatchstring = Readonly<{
-}>;
+export type WorkflowPatchstring = string | null;
 
 export type WorkflowResourceID = string;
 

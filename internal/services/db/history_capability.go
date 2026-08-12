@@ -32,7 +32,7 @@ func (r *SQLiteRepository) LoadHistoryRecord(ctx context.Context, sourcePath str
 
 	prepared, preparedErr := r.LoadPreparedRelease(ctx, sourcePath)
 	if preparedErr == nil {
-		record.PreparedReleaseRef = &api.ReleaseRef{SourcePath: prepared.Source.SourcePath, Generation: prepared.Generation}
+		record.PreparedRelease = &prepared
 	} else if !errors.Is(preparedErr, internalerrors.ErrNotFound) {
 		return api.HistoryRecord{}, fmt.Errorf("db history record prepared release: %w", preparedErr)
 	}

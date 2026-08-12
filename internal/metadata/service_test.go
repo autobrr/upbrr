@@ -53,13 +53,13 @@ func TestCollectSourceEvidenceKeepsCanonicalSource(t *testing.T) {
 	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg))
 
 	meta, err := service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{
-		SourcePath:     path,
-		Trackers:       []string{"blu", "bhd"},
-		Options:        api.UploadOptions{
-OnlyID: true,
- KeepImages: true,
- InteractionMode: api.InteractionModeUnattended,
-},
+		SourcePath: path,
+		Trackers:   []string{"blu", "bhd"},
+		Options: api.UploadOptions{
+			OnlyID:          true,
+			KeepImages:      true,
+			InteractionMode: api.InteractionModeUnattended,
+		},
 		TrackersRemove: []string{"bhd"},
 	}))
 	if err != nil {
@@ -87,6 +87,127 @@ OnlyID: true,
 	_, err = service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{}))
 	if !errors.Is(err, internalerrors.ErrInvalidInput) {
 		t.Fatalf("expected invalid input error, got: %v", err)
+	}
+}
+
+func TestCollectSourceEvidenceRejectsMalformedSeasonEpisodeInstructionsBeforeSourceScan(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	sourcePath := filepath.Join(base, "Example.Release.2026.1080p-GRP")
+	if err := os.MkdirAll(sourcePath, 0o755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	repo := &stubRepo{}
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
+	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg))
+
+	tests := []struct {
+		name      string
+		overrides api.ReleaseNameOverrides
+	}{
+		{name: "combined season token", overrides: api.ReleaseNameOverrides{Season: new("S01E05")}},
+		{name: "ranged episode token", overrides: api.ReleaseNameOverrides{Episode: new("E01-E03")}},
+		{name: "malformed daily date", overrides: api.ReleaseNameOverrides{ManualDate: new("not-a-date")}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{
+				SourcePath:           sourcePath,
+				ReleaseNameOverrides: tc.overrides,
+			}))
+			if !errors.Is(err, internalerrors.ErrInvalidInput) {
+				t.Fatalf("expected typed invalid input error, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestCollectSourceEvidenceMergesStoredReleaseNameOverrides(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	sourcePath := filepath.Join(base, "Example.Release.2026.1080p-GRP.mkv")
+	if err := os.WriteFile(sourcePath, []byte("video"), 0o600); err != nil {
+		t.Fatalf("write video failed: %v", err)
+	}
+	lookupErr := errors.New("override lookup failed")
+	tests := []struct {
+		name      string
+		stored    api.ReleaseNameOverrides
+		lookupErr error
+		incoming  api.ReleaseNameOverrides
+		want      api.ReleaseNameOverrides
+		wantErr   error
+	}{
+		{
+			name:   "stored only",
+			stored: api.ReleaseNameOverrides{Type: new("ENCODE"), Season: new("S02")},
+			want:   api.ReleaseNameOverrides{Type: new("ENCODE"), Season: new("S02")},
+		},
+		{
+			name: "incoming overrides stored conflicts",
+			stored: api.ReleaseNameOverrides{
+				Type:    new("ENCODE"),
+				Season:  new("S02"),
+				Episode: new("E04"),
+			},
+			incoming: api.ReleaseNameOverrides{Type: new("REMUX"), Season: new("S03")},
+			want: api.ReleaseNameOverrides{
+				Type:    new("REMUX"),
+				Season:  new("S03"),
+				Episode: new("E04"),
+			},
+		},
+		{
+			name:    "invalid stored season",
+			stored:  api.ReleaseNameOverrides{Season: new("S01E05")},
+			wantErr: internalerrors.ErrInvalidInput,
+		},
+		{
+			name:     "invalid incoming episode",
+			stored:   api.ReleaseNameOverrides{Episode: new("E04")},
+			incoming: api.ReleaseNameOverrides{Episode: new("E01-E03")},
+			wantErr:  internalerrors.ErrInvalidInput,
+		},
+		{
+			name:    "invalid stored date",
+			stored:  api.ReleaseNameOverrides{ManualDate: new("not-a-date")},
+			wantErr: internalerrors.ErrInvalidInput,
+		},
+		{
+			name:      "not found uses incoming",
+			lookupErr: internalerrors.ErrNotFound,
+			incoming:  api.ReleaseNameOverrides{Type: new("REMUX")},
+			want:      api.ReleaseNameOverrides{Type: new("REMUX")},
+		},
+		{
+			name:      "lookup error propagates",
+			lookupErr: lookupErr,
+			wantErr:   lookupErr,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &stubRepo{releaseNameOverrides: tc.stored, releaseNameOverridesErr: tc.lookupErr}
+			service := NewService(repo)
+			meta, err := service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{
+				SourcePath:           sourcePath,
+				ReleaseNameOverrides: tc.incoming,
+			}))
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("expected %v, got %v", tc.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("collect source evidence: %v", err)
+			}
+			if !reflect.DeepEqual(meta.ReleaseNameOverrides, tc.want) {
+				t.Fatalf("release-name overrides = %#v, want %#v", meta.ReleaseNameOverrides, tc.want)
+			}
+		})
 	}
 }
 
@@ -181,7 +302,7 @@ func TestPrepareCLIKeepFolderPreservesSingleFileDirectory(t *testing.T) {
 
 	meta, err := service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{
 		SourcePath: path,
-		Options: api.UploadOptions{KeepFolder: true},
+		Options:    api.UploadOptions{KeepFolder: true},
 	}))
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -584,6 +705,31 @@ func TestResolveBDMVPlaylistSelectionRejectsUnknownDirectPlaylist(t *testing.T) 
 	}
 }
 
+func TestResolveBDMVPlaylistSelectionRequiredIncludesCandidates(t *testing.T) {
+	originalDiscover := discoverBDMVPlaylists
+	t.Cleanup(func() {
+		discoverBDMVPlaylists = originalDiscover
+	})
+
+	discoverBDMVPlaylists = func(_ context.Context, _ string) ([]filesystem.PlaylistInfo, error) {
+		return []filesystem.PlaylistInfo{{
+			File:     "00001.MPLS",
+			Duration: 5400,
+			Items:    []filesystem.PlaylistItem{{File: "00001.m2ts", Size: 100}},
+			Score:    75,
+		}}, nil
+	}
+
+	_, err := (&Service{repo: &fakeRepo{}}).resolveBDMVPlaylistSelection(context.Background(), preparationstate.Request{
+		Layout: sourcelayout.Layout{SourcePath: `D:\Disc`, BDMVRoot: `D:\Disc\BDMV`},
+	})
+	var required *api.PlaylistSelectionRequiredError
+	if !errors.As(err, &required) || len(required.Candidates) != 1 || required.Candidates[0].File != "00001.MPLS" ||
+		required.Candidates[0].Duration != 5400 || len(required.Candidates[0].Items) != 1 {
+		t.Fatalf("playlist selection error candidates = %#v", required)
+	}
+}
+
 func TestDiscoverBDMVSummaryCache(t *testing.T) {
 	tmpDir := t.TempDir()
 	writeBDMVSummaryFixture(t, tmpDir, "00002.MPLS", "extended summary two")
@@ -930,7 +1076,7 @@ func TestPrepareBDMVPartialCacheRequiresConfirmation(t *testing.T) {
 
 	_, err = service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{
 		SourcePath: sourcePath,
-		Options: api.UploadOptions{InteractionMode: api.InteractionModeInteractive},
+		Options:    api.UploadOptions{InteractionMode: api.InteractionModeInteractive},
 	}))
 	var rescanErr *api.BDMVRescanRequiredError
 	if !errors.As(err, &rescanErr) {
@@ -1064,10 +1210,12 @@ func TestPrepareBDMVPartialCacheRescansWhenConfirmed(t *testing.T) {
 }
 
 type stubRepo struct {
-	saved                 db.FileMetadata
-	existing              db.FileMetadata
-	playlistSelection     db.PlaylistSelection
-	playlistSelectionPath string
+	saved                   db.FileMetadata
+	existing                db.FileMetadata
+	releaseNameOverrides    db.ReleaseNameOverrides
+	releaseNameOverridesErr error
+	playlistSelection       db.PlaylistSelection
+	playlistSelectionPath   string
 }
 
 type stubMediaInfo struct{}
@@ -1147,11 +1295,17 @@ func (s *stubRepo) SaveDVDMediaInfo(context.Context, db.DVDMediaInfo) error {
 }
 
 func (s *stubRepo) GetReleaseNameOverrides(context.Context, string) (db.ReleaseNameOverrides, error) {
+	if s.releaseNameOverridesErr != nil {
+		return db.ReleaseNameOverrides{}, s.releaseNameOverridesErr
+	}
+	if hasReleaseNameOverrides(s.releaseNameOverrides) {
+		return s.releaseNameOverrides, nil
+	}
 	return db.ReleaseNameOverrides{}, internalerrors.ErrNotFound
 }
 
 func (s *stubRepo) SaveReleaseNameOverrides(context.Context, string, db.ReleaseNameOverrides) error {
-	return internalerrors.ErrNotImplemented
+	return nil
 }
 
 func (s *stubRepo) DeleteReleaseNameOverrides(context.Context, string) error {

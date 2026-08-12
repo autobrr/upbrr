@@ -58,9 +58,11 @@ type RetainedMediaResource interface {
 	DeleteArtifacts(context.Context, api.MediaArtifactSet, []api.PublicResourceID) (RetainedMediaResource, error)
 }
 
-// RetainedMediaCommitter finalizes staged external media mutations after the
-// workflow revision has committed. Commit must be idempotent so retries can
-// converge after a partial filesystem or repository failure.
+// RetainedMediaCommitter finalizes staged external media mutations. Local
+// artifact deletion commits before the workflow revision is saved so a failed
+// commit keeps the artifact durable and retryable; hosted-image removal
+// commits after the revision has committed. Commit must be idempotent so
+// retries can converge after a partial filesystem or repository failure.
 type RetainedMediaCommitter interface {
 	Commit(context.Context) error
 }

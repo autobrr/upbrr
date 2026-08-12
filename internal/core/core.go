@@ -62,6 +62,11 @@ func workflowPrivateVaultRoot(dbPath string) string {
 	return filepath.Join(filepath.Dir(dbPath), "workflow-private", hex.EncodeToString(sum[:16]))
 }
 
+func applySkipAutoTorrentDefault(input api.PrepareInput, configured bool) api.PrepareInput {
+	input.Search.Skip = input.Search.Skip || configured
+	return input
+}
+
 // NewWithContext constructs a Core and applies ctx to initialization work such
 // as opening and migrating an internally created repository. The context is not
 // retained after construction.
@@ -178,6 +183,9 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 	}
 	clientDiscovery := clientdiscovery.New(services.Clients, logger)
 	if services.Metadata == nil {
+		if _, err := metadata.EnsureDefaultTagOverrides(cfg.MainSettings.DBPath); err != nil {
+			return nil, fmt.Errorf("core: default tag overrides: %w", err)
+		}
 		bdinfoService := bdinfo.New(logger)
 
 		services.Metadata = metadata.NewService(
@@ -274,7 +282,9 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 		return nil, fmt.Errorf("core: release workflow repository: %w", err)
 	}
 	workflowPreparer := releaseworkflow.ReleasePreparerFunc{
-		PrepareFunc: preparedFacts.Prepare,
+		PrepareFunc: func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
+			return preparedFacts.Prepare(ctx, applySkipAutoTorrentDefault(input, cfg.Metadata.SkipAutoTorrent))
+		},
 		DisplayFunc: func(ctx context.Context, ref api.ReleaseRef) (api.PreparedReleaseDisplay, error) {
 			display, displayErr := preparedFacts.ResolveDisplay(ctx, ref)
 			if displayErr != nil {
@@ -333,7 +343,7 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 			resolver: preparedFacts,
 			trackers: services.Trackers,
 		}),
-		releaseworkflow.WithUploadPlanBuilder(newWorkflowUploadPlanBuilder(preparedFacts, services.Trackers, services.Torrents, services.Clients)),
+		releaseworkflow.WithUploadPlanBuilder(newWorkflowUploadPlanBuilder(cfg, preparedFacts, services.Trackers, services.Torrents, services.Clients)),
 		releaseworkflow.WithOperationErrorClassifier(classifyOperationError),
 		releaseworkflow.WithLogger(logger),
 	)

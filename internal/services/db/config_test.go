@@ -366,7 +366,6 @@ func TestConfigComplexTypes(t *testing.T) {
 		URL            string   `json:"url"`
 		Categories     []string `json:"categories"`
 		Tags           []string `json:"tags"`
-		PreferMTV      bool     `json:"prefer_mtv"`
 		MaxConnections int      `json:"max_connections"`
 	}
 
@@ -375,7 +374,6 @@ func TestConfigComplexTypes(t *testing.T) {
 		URL:            "http://localhost:8080",
 		Categories:     []string{"upload", "debug"},
 		Tags:           []string{"tag1", "tag2"},
-		PreferMTV:      true,
 		MaxConnections: 10,
 	}
 
@@ -397,9 +395,6 @@ func TestConfigComplexTypes(t *testing.T) {
 	}
 	if len(loaded.Categories) != len(clientCfg.Categories) {
 		t.Errorf("categories mismatch: got %v, want %v", loaded.Categories, clientCfg.Categories)
-	}
-	if loaded.PreferMTV != clientCfg.PreferMTV {
-		t.Errorf("prefer_mtv mismatch: got %v, want %v", loaded.PreferMTV, clientCfg.PreferMTV)
 	}
 	if loaded.MaxConnections != clientCfg.MaxConnections {
 		t.Errorf("max_connections mismatch: got %d, want %d", loaded.MaxConnections, clientCfg.MaxConnections)

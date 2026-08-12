@@ -51,6 +51,48 @@ func buildBTNAutofillPayload(meta api.UploadSubject, releaseName string) (url.Va
 	return autofillPayload, uploadType
 }
 
+// preferredBTNTVDBSeriesName returns the English TVDB name, falling back to the native name.
+func preferredBTNTVDBSeriesName(meta api.UploadSubject) string {
+	if meta.ProviderMetadata.TVDB == nil {
+		return ""
+	}
+	if name := strings.TrimSpace(meta.ProviderMetadata.TVDB.NameEnglish); name != "" {
+		return name
+	}
+	return strings.TrimSpace(meta.ProviderMetadata.TVDB.Name)
+}
+
+// btnAutofillArtistAction requests confirmation unless BTN's artist exactly matches a TVDB name or alias.
+// Missing TVDB identity or primary-name metadata disables the check.
+func btnAutofillArtistAction(meta api.UploadSubject, artist string) *api.RequiredAction {
+	if meta.Identity.TVDBID <= 0 || meta.ProviderMetadata.TVDB == nil {
+		return nil
+	}
+	artist = strings.TrimSpace(artist)
+	names := append(
+		[]string{meta.ProviderMetadata.TVDB.Name, meta.ProviderMetadata.TVDB.NameEnglish},
+		meta.ProviderMetadata.TVDB.Aliases...,
+	)
+	for _, name := range names {
+		if artist == strings.TrimSpace(name) && artist != "" {
+			return nil
+		}
+	}
+	expected := preferredBTNTVDBSeriesName(meta)
+	if expected == "" {
+		return nil
+	}
+	return &api.RequiredAction{
+		Kind: api.RequiredActionAuthorizeRules,
+		Prompt: fmt.Sprintf(
+			"BTN autofill returned series %q, but TVDB %d identifies %q. Continue uploading this result to BTN?",
+			artist,
+			meta.Identity.TVDBID,
+			expected,
+		),
+	}
+}
+
 // requestBTNAutofillFields performs BTN's autofill POST and extracts the form
 // values returned for the final upload payload. A validation failure means BTN
 // did not return enough series/title data for the requested upload type.

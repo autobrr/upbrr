@@ -135,6 +135,100 @@ func TestMapLegacyFactsUsesTypedConcreteAssessments(t *testing.T) {
 	}
 }
 
+func TestMapCollectedFactsProjectsEffectiveInstructionValues(t *testing.T) {
+	t.Parallel()
+	meta := preparationstate.State{
+		SourcePath:       "Example.Release.2026.1080p-GRP.mkv",
+		Type:             "REMUX",
+		Source:           "BluRay",
+		Service:          "AMZN",
+		ServiceLongName:  "Amazon Prime",
+		Edition:          "Extended",
+		Region:           "B",
+		Audio:            "DTS-HD MA 5.1",
+		Tag:              "-OTHER",
+		EpisodeTitle:     "Corrected Title",
+		SeasonInt:        3,
+		EpisodeInt:       7,
+		SeasonStr:        "S03",
+		EpisodeStr:       "E07",
+		DailyEpisodeDate: "2026-02-03",
+		Release: api.ReleaseInfo{
+			Type:       "REMUX",
+			Source:     "BluRay",
+			Resolution: "2160p",
+			Region:     "B",
+			Year:       2027,
+			Group:      "OTHER",
+		},
+	}
+	facts := mapCollectedFacts(meta)
+	if facts.Naming.Type != "REMUX" || facts.Media.Type != "REMUX" {
+		t.Fatalf("type facts = %q/%q", facts.Naming.Type, facts.Media.Type)
+	}
+	if facts.Naming.Source != "BluRay" || facts.Media.Source != "BluRay" {
+		t.Fatalf("source facts = %q/%q", facts.Naming.Source, facts.Media.Source)
+	}
+	if facts.Naming.Resolution != "2160p" || facts.Naming.Year != 2027 {
+		t.Fatalf("naming facts = %q/%d", facts.Naming.Resolution, facts.Naming.Year)
+	}
+	if facts.Naming.Tag != "-OTHER" || facts.Naming.Group != "OTHER" {
+		t.Fatalf("tag facts = %q/%q", facts.Naming.Tag, facts.Naming.Group)
+	}
+	if facts.Media.Service != "AMZN" || facts.Media.ServiceLongName != "Amazon Prime" || facts.Media.Edition != "Extended" || facts.Media.Region != "B" ||
+		facts.Media.Audio != "DTS-HD MA 5.1" {
+		t.Fatalf("media facts = %#v", facts.Media)
+	}
+	if facts.Episode.Season != 3 || facts.Episode.Episode != 7 || facts.Episode.SeasonLabel != "S03" || facts.Episode.EpisodeLabel != "E07" ||
+		facts.Episode.Title != "Corrected Title" ||
+		facts.Episode.DailyDate != "2026-02-03" {
+		t.Fatalf("episode facts = %#v", facts.Episode)
+	}
+	if facts.Identity.Season != 3 || facts.Identity.Episode != 7 {
+		t.Fatalf("identity intent = %#v", facts.Identity)
+	}
+}
+
+func TestMapCollectedFactsPreservesGeneratedReleaseNameVariants(t *testing.T) {
+	t.Parallel()
+
+	variants := api.GeneratedReleaseNameVariants{
+		IncludeEpisodeTitle: api.ReleaseNameVariant{
+			NameNoTag: "Example.Show.S01E02.Example.Episode.1080p.WEB-DL",
+			Name:      "Example.Show.S01E02.Example.Episode.1080p.WEB-DL-GRP",
+			CleanName: "Example Show S01E02 Example Episode 1080p WEB-DL-GRP",
+		},
+		OmitEpisodeTitle: api.ReleaseNameVariant{
+			NameNoTag: "Example.Show.S01E02.1080p.WEB-DL",
+			Name:      "Example.Show.S01E02.1080p.WEB-DL-GRP",
+			CleanName: "Example Show S01E02 1080p WEB-DL-GRP",
+		},
+	}
+	facts := mapCollectedFacts(preparationstate.State{GeneratedReleaseNames: variants})
+	if facts.Naming.GeneratedReleaseNames != variants {
+		t.Fatalf("collected variants = %#v, want %#v", facts.Naming.GeneratedReleaseNames, variants)
+	}
+}
+
+func TestMapCollectedFactsPublishesFinalizedNamingSourceAndType(t *testing.T) {
+	t.Parallel()
+	facts := mapCollectedFacts(preparationstate.State{
+		SourcePath: "Example.Show.S01.2026.BDRip.1080p.x265-GRP.mkv",
+		Source:     "BluRay",
+		Type:       "ENCODE",
+		Release: api.ReleaseInfo{
+			Source: "BluRay",
+			Type:   "ENCODE",
+		},
+	})
+	if facts.Naming.Source != "BluRay" || facts.Naming.Type != "ENCODE" {
+		t.Fatalf("naming facts = %#v", facts.Naming)
+	}
+	if facts.Media.Source != "BluRay" || facts.Media.Type != "ENCODE" {
+		t.Fatalf("media facts = %#v", facts.Media)
+	}
+}
+
 func TestApplyBlurayFactInstructionSelectsCandidateBeforePublication(t *testing.T) {
 	t.Parallel()
 	meta := preparationstate.State{

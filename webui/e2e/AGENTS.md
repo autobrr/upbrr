@@ -1,6 +1,6 @@
 # E2E Guidelines
 
-Scoped rules for Playwright E2E under `webui/e2e`. Root and frontend rules still apply.
+Playwright E2E rules scoped to `webui/e2e`. Root + frontend rules apply.
 
 ## Commands
 
@@ -12,15 +12,15 @@ pnpm --dir webui run test:e2e:web
 pnpm --dir webui run test:e2e:full
 ```
 
-`make e2e` is the preferred full local command. It installs frontend deps, builds the frontend, syncs embedded assets, builds `dist/upbrr-e2e.exe` with the `e2e` tag, and runs all Playwright projects.
+`make e2e` is preferred full local command. Installs frontend deps, builds frontend, syncs embedded assets, builds `dist/upbrr-e2e.exe` with `e2e` tag, runs all Playwright projects.
 
-If Playwright browsers are missing:
+Missing Playwright browsers:
 
 ```bash
 pnpm --dir webui exec playwright install chromium
 ```
 
-To open the HTML report from repo root:
+Open HTML report from repo root:
 
 ```bash
 pnpm --dir webui exec playwright show-report
@@ -29,30 +29,31 @@ pnpm --dir webui exec playwright show-report
 ## Projects
 
 - `web-smoke`: embedded server at `http://localhost:7480`, `--dev-no-auth`; nav/settings/invalid-input smoke coverage.
-- `web-base-path-smoke`: embedded server mounted below a configured base path; asset, navigation, API, and event-stream routing coverage.
-- `web-full-upload`: metadata, screenshot/image upload, tracker dry-run, tracker upload, and history through embedded web UI.
-- `cli-full-upload`: full CLI upload path against local fakes and temp config/DB.
+- `web-base-path-smoke`: embedded server under configured base path; asset, navigation, API, event-stream routing coverage.
+- `web-full-upload`: metadata, screenshot/image upload, tracker dry-run/upload, history through embedded web UI.
+- `cli-full-upload`: full CLI upload path against local fakes + temp config/DB.
+- `api-full-upload`: authenticated composite API uploads, authority/idempotency, continuation/restart, cancellation, client-effect recovery.
 
 ## Harness Rules
 
-- Web UI E2E uses the embedded app as source of truth, not Vite.
+- Web UI E2E uses embedded app as source of truth, not Vite.
 - Use isolated temp workspace per test: config YAML, SQLite DB, media/torrent/screenshot fixtures.
-- Use local fake tracker/image-host/torrent/metadata services only.
-- Fake-service scenarios should cover auth-blocked preflight lanes, questionnaire schemas/answers, reviewed upload/search names, WebUI stage controls, CLI/composite post-dupe tracker approval, and tracker-lane isolation when one lane is blocked.
-- Exercise login and 2FA only through the dedicated Tracker Auth surface; upload workflows must not issue or accept auth/2FA continuation feedback.
-- Assert that auth/questionnaire failure blocks only the affected tracker while other runnable lanes continue. Across continuation and restart, assert downstream work uses the exact approved or stage-controlled tracker subset. Never implement tracker semantics in the fake frontend.
+- Use only local fake tracker/image-host/torrent/metadata services.
+- Fake-service scenarios cover auth-blocked preflight lanes, questionnaire schemas/answers, reviewed upload/search names, WebUI stage controls, CLI/composite post-dupe tracker approval, tracker-lane isolation when one lane is blocked.
+- Exercise login + 2FA only through dedicated Tracker Auth surface; upload workflows must not issue or accept auth/2FA continuation feedback.
+- Auth/questionnaire failure blocks only affected tracker; other runnable lanes continue. Across continuation/restart, assert downstream work uses exact approved or stage-controlled tracker subset. Never implement tracker semantics in fake frontend.
 - No real tracker, image host, torrent client, TMDB, or credentials in E2E.
-- Service seams must be test-only or config/test fixture driven; production defaults stay unchanged.
-- Process manager must clean up `dist/upbrr-e2e.exe serve --config <temp>\config.yaml --dev-no-auth`.
+- Service seams test-only or config/test fixture driven; production defaults unchanged.
+- Process manager cleans up `dist/upbrr-e2e.exe serve --config <temp>\config.yaml --dev-no-auth`.
 
 ## Generated Artifacts
 
-Ignored local outputs:
+Ignored outputs:
 
 - `webui/playwright-report/`
 - `webui/test-results/`
 
-Do not commit Playwright traces, videos, screenshots, reports, temp DBs, or `dist/upbrr-e2e.exe`.
+Never commit Playwright traces, videos, screenshots, reports, temp DBs, or `dist/upbrr-e2e.exe`.
 
 ## CI
 

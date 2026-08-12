@@ -7,6 +7,8 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -43,10 +45,13 @@ func TestRTFHandlerUsesIMDBIDParamAndParsesResults(t *testing.T) {
 				if got := query.Get("imdb"); got != "" {
 					t.Fatalf("unexpected imdb query value %q", got)
 				}
-				body := `[{"id":"42","name":"Movie.1990.1080p.BluRay-GRP","size":123456789,"files":[{"name":"Movie.1990.1080p.BluRay-GRP.mkv"}]}]`
+				body, err := os.ReadFile(filepath.Join("testdata", "search_variants.json"))
+				if err != nil {
+					t.Fatalf("read RTF fixture: %v", err)
+				}
 				return &http.Response{
 					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader(body)),
+					Body:       io.NopCloser(strings.NewReader(string(body))),
 					Header:     make(http.Header),
 				}, nil
 			default:
@@ -70,15 +75,16 @@ func TestRTFHandlerUsesIMDBIDParamAndParsesResults(t *testing.T) {
 		Release:  api.ReleaseInfo{Year: 1990},
 	}
 
-	entries, notes, err := adapterEvidence(handler.Search(context.Background(), meta))
+	result := handler.Search(context.Background(), meta)
+	entries, notes, err := adapterEvidence(result)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(notes) != 0 {
 		t.Fatalf("expected no notes, got %#v", notes)
 	}
-	if len(entries) != 1 {
-		t.Fatalf("expected one entry, got %d", len(entries))
+	if len(entries) != 5 {
+		t.Fatalf("expected five entries, got %d", len(entries))
 	}
 	if !sawSearch {
 		t.Fatalf("expected /api/torrent call")
@@ -97,8 +103,63 @@ func TestRTFHandlerUsesIMDBIDParamAndParsesResults(t *testing.T) {
 	if !entry.SizeKnown || entry.SizeBytes != 123456789 {
 		t.Fatalf("unexpected size known=%t size=%d", entry.SizeKnown, entry.SizeBytes)
 	}
-	if entry.FileCount != 1 || len(entry.Files) != 1 {
+	if entry.FileCount != 2 || len(entry.Files) != 1 {
 		t.Fatalf("unexpected files payload count=%d files=%#v", entry.FileCount, entry.Files)
+	}
+	if entry.Type != "ENCODE" || entry.Res != "1080p" || entry.Source != "BluRay" || entry.Codec != "x264" || entry.Container != "MKV" {
+		t.Fatalf("unexpected structured RTF mapping: %#v", entry)
+	}
+	search := result.SearchEvidence()
+	if !search.Complete || search.Pages != 1 || search.Scope != "work_identity" || len(search.Warnings) != 0 {
+		t.Fatalf("unexpected RTF search evidence: %#v", search)
+	}
+}
+
+func TestRTFTitleFallbackRemainsExplicitlyIncomplete(t *testing.T) {
+	t.Parallel()
+
+	client := &http.Client{Transport: rtfRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Query().Get("search") != "Example Release" {
+			t.Fatalf("unexpected title query: %q", req.URL.RawQuery)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`[]`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	handler := dupe.NewAdapter(New(), "RTF", config.Config{Trackers: config.TrackersConfig{
+		Trackers: map[string]config.TrackerConfig{"RTF": {APIKey: "good-key"}},
+	}}, client, api.NopLogger{})
+	result := handler.Search(context.Background(), api.DuplicateSubject{
+		Release: api.ReleaseInfo{Title: "Example Release", Year: 1990},
+	})
+	search := result.SearchEvidence()
+	if search.Complete || search.Pages != 1 || search.Scope != "title_year" ||
+		len(search.Warnings) != 1 || search.Warnings[0] != "RTF title search completeness is not evidenced" {
+		t.Fatalf("RTF title search evidence = %#v", search)
+	}
+}
+
+func TestRTFMalformedTorrentPayloadFails(t *testing.T) {
+	t.Parallel()
+
+	client := &http.Client{Transport: rtfRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`[{"name":"Example.Release.2026.1080p-GRP"}]`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	handler := dupe.NewAdapter(New(), "RTF", config.Config{Trackers: config.TrackersConfig{
+		Trackers: map[string]config.TrackerConfig{"RTF": {APIKey: "good-key"}},
+	}}, client, api.NopLogger{})
+	result := handler.Search(context.Background(), api.DuplicateSubject{
+		Identity: api.ExternalIdentity{IMDBID: 1234567},
+		Release:  api.ReleaseInfo{Year: 1990},
+	})
+	if result.Disposition() != dupe.DispositionFailed || result.Code() != dupe.FailureResponseParse {
+		t.Fatalf("malformed RTF torrent disposition=%v code=%q", result.Disposition(), result.Code())
 	}
 }
 
@@ -223,7 +284,7 @@ func TestRTFHandlerSkipsTooRecentContent(t *testing.T) {
 
 	result := handler.Search(context.Background(), meta)
 	if result.Disposition() != dupe.DispositionNotRun || result.Code() != dupe.NotRunUnsupportedContent ||
-		!strings.Contains(strings.ToLower(result.SafeMessage()), "10 years") {
+		!strings.Contains(strings.ToLower(result.SafeMessage()), "10 years and 1 month") {
 		t.Fatalf("unexpected result disposition=%v code=%q message=%q", result.Disposition(), result.Code(), result.SafeMessage())
 	}
 	if called {

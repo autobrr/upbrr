@@ -9,22 +9,35 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"golang.org/x/crypto/argon2"
 )
 
-func makeLegacyHash(password, salt string) string {
-	sum := argon2.IDKey(
-		[]byte(password),
-		[]byte(salt),
-		legacyAuthArgon2Time,
-		legacyAuthArgon2MemoryKB,
-		legacyAuthArgon2Parallelism,
-		legacyAuthArgon2KeyLen,
-	)
-	return "argon2id$" + salt + "$" + base64.RawStdEncoding.EncodeToString(sum)
+var (
+	legacyHashFixtureOnce sync.Once
+	legacyHashFixture     string
+)
+
+func makeLegacyHash() string {
+	legacyHashFixtureOnce.Do(func() {
+		const (
+			password = "very-secure-password"
+			salt     = "legacy-salt-value"
+		)
+		sum := argon2.IDKey(
+			[]byte(password),
+			[]byte(salt),
+			legacyAuthArgon2Time,
+			legacyAuthArgon2MemoryKB,
+			legacyAuthArgon2Parallelism,
+			legacyAuthArgon2KeyLen,
+		)
+		legacyHashFixture = "argon2id$" + salt + "$" + base64.RawStdEncoding.EncodeToString(sum)
+	})
+	return legacyHashFixture
 }
 
 func TestHashPasswordEncodesArgon2Parameters(t *testing.T) {
@@ -66,8 +79,7 @@ func TestHashPasswordRejectsTooShortPassword(t *testing.T) {
 
 func TestVerifyPasswordSupportsLegacyImplicitParameters(t *testing.T) {
 	password := "very-secure-password"
-	salt := "legacy-salt-value"
-	legacyHash := makeLegacyHash(password, salt)
+	legacyHash := makeLegacyHash()
 
 	if !verifyPassword(password, legacyHash) {
 		t.Fatal("expected legacy hash to verify with implicit parameters")
@@ -79,8 +91,7 @@ func TestVerifyPasswordSupportsLegacyImplicitParameters(t *testing.T) {
 
 func TestVerifyPasswordWithUpgradeFlagsLegacyHashes(t *testing.T) {
 	password := "very-secure-password"
-	salt := "legacy-salt-value"
-	legacyHash := makeLegacyHash(password, salt)
+	legacyHash := makeLegacyHash()
 
 	ok, needsUpgrade := verifyPasswordWithUpgrade(password, legacyHash)
 	if !ok {
@@ -137,19 +148,13 @@ func TestAuthStoreUpdatePasswordHashReappliesSecurePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAuthStore: %v", err)
 	}
-	if err := store.Bootstrap("tester", "very-secure-password"); err != nil {
-		t.Fatalf("Bootstrap: %v", err)
-	}
+	writeTestAuthFile(t, dbPath, "tester", false)
 
 	authPath := AuthFilePath(dbPath)
 	if err := os.Chmod(authPath, 0o644); err != nil {
 		t.Fatalf("Chmod before update: %v", err)
 	}
-	hash, err := hashPassword("another-secure-password")
-	if err != nil {
-		t.Fatalf("hashPassword: %v", err)
-	}
-	if err := store.UpdatePasswordHash("tester", hash); err != nil {
+	if err := store.UpdatePasswordHash("tester", "updated-test-password-hash"); err != nil {
 		t.Fatalf("UpdatePasswordHash: %v", err)
 	}
 
@@ -168,9 +173,7 @@ func TestAuthStoreUpdateRecordPersistsOptionalPolicyFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAuthStore: %v", err)
 	}
-	if err := store.Bootstrap("tester", "very-secure-password"); err != nil {
-		t.Fatalf("Bootstrap: %v", err)
-	}
+	writeTestAuthFile(t, dbPath, "tester", false)
 
 	record, err := store.Load()
 	if err != nil {

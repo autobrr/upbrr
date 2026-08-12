@@ -16,16 +16,18 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 type dupeSearcher struct {
-	tracker string
-	baseURL string
-	cfg     config.Config
-	http    *http.Client
-	logger  api.Logger
+	tracker  string
+	baseURL  string
+	cfg      config.Config
+	http     *http.Client
+	logger   api.Logger
+	maxPages int
 }
 
 // NewDuplicateAdapter returns a duplicate-search adapter bound to one immutable dependency set.
@@ -33,13 +35,13 @@ func (d *Definition) NewDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 	cfg := deps.BoundConfig()
 	httpClient := deps.HTTPClient()
 	logger := deps.Logger()
-	_ = logger
 	return &dupeSearcher{
-		tracker: deps.Tracker(),
-		baseURL: d.site.BaseURL,
-		cfg:     cfg,
-		http:    httpClient,
-		logger:  logger,
+		tracker:  deps.Tracker(),
+		baseURL:  d.site.BaseURL,
+		cfg:      cfg,
+		http:     httpClient,
+		logger:   logger,
+		maxPages: deps.MaxPages(100),
 	}
 }
 
@@ -60,19 +62,29 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 	if mediaCode == "" {
 		return dupe.NotRun(dupe.NotRunMissingMetadata, strings.ToUpper(strings.TrimSpace(tracker))+" media missing from tracker database", nil)
 	}
-	pageURL := site.baseURL + "/movies/torrents/" + mediaCode + "?quality=" + url.QueryEscape(azDupeResolution(meta))
-	entries, err := h.fetchTorrentList(ctx, site, loadedCookies, pageURL, meta)
+	pageURL := site.baseURL + "/movies/torrents/" + mediaCode
+	entries, pages, complete, warning, err := h.fetchTorrentList(ctx, site, loadedCookies, pageURL)
 	if err != nil {
 		return dupe.Failed(dupe.FailureRequest, strings.ToUpper(strings.TrimSpace(tracker))+" search failed", err)
 	}
-	return dupe.Resolved(entries, nil)
+	warnings := []string(nil)
+	if warning != "" {
+		warnings = []string{warning}
+	}
+	return dupe.ResolvedWithSearch(entries, warnings, dupe.SearchEvidence{
+		Complete:  complete,
+		WorkScope: dupe.WorkScopeTrackerGroup,
+		Pages:     pages,
+		Scope:     "tracker_group",
+		Warnings:  warnings,
+	})
 }
 
 func (h dupeSearcher) lookupMediaCode(ctx context.Context, site azDupeSiteDef, cookies []*http.Cookie, meta api.DuplicateSubject) (string, error) {
 	term := lookupAZDupeTitle(meta)
 	imdb := ""
 	if meta.Identity.IMDBID != 0 {
-		imdb = fmt.Sprintf("tt%07d", meta.Identity.IMDBID)
+		imdb = providerid.IMDb(meta.Identity.IMDBID).Prefixed()
 	}
 	category, err := meta.Identity.RequireCategory()
 	if err != nil {
@@ -128,9 +140,6 @@ func (h dupeSearcher) lookupMediaCode(ctx context.Context, site azDupeSiteDef, c
 			return stringFromAny(item["id"]), nil
 		}
 	}
-	if len(items) > 0 {
-		return stringFromAny(items[0]["id"]), nil
-	}
 	return "", nil
 }
 
@@ -139,19 +148,43 @@ func (h dupeSearcher) fetchTorrentList(
 	site azDupeSiteDef,
 	cookies []*http.Cookie,
 	pageURL string,
-	meta api.DuplicateSubject,
-) ([]api.DupeEntry, error) {
+) ([]api.DupeEntry, int, bool, string, error) {
 	results := make([]api.DupeEntry, 0)
 	visited := make(map[string]struct{})
-	ripType := azDupeRipType(meta)
+	pages := 0
+	maxPages := h.maxPages
+	if maxPages <= 0 {
+		maxPages = 100
+	}
+	complete := false
+	warning := ""
 	for strings.TrimSpace(pageURL) != "" {
+		if pages >= maxPages {
+			warning = "AZ-family search reached pagination safety bound"
+			if h.logger != nil {
+				h.logger.Warnf(
+					"dupechecking: search tracker=%s pages=%d complete=false decision=pagination_safety_bound",
+					h.tracker,
+					pages,
+				)
+			}
+			break
+		}
 		if _, ok := visited[pageURL]; ok {
+			warning = "AZ-family search repeated a result page"
+			if h.logger != nil {
+				h.logger.Warnf(
+					"dupechecking: search tracker=%s pages=%d complete=false decision=repeated_page",
+					h.tracker,
+					pages,
+				)
+			}
 			break
 		}
 		visited[pageURL] = struct{}{}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
 		if err != nil {
-			return nil, fmt.Errorf("dupechecking: create %s torrent list request: %w", site.baseURL, err)
+			return nil, pages, false, warning, fmt.Errorf("dupechecking: create %s torrent list request: %w", site.baseURL, err)
 		}
 		req.Header.Set("User-Agent", "upbrr")
 		for _, cookie := range cookies {
@@ -159,27 +192,97 @@ func (h dupeSearcher) fetchTorrentList(
 		}
 		resp, err := h.http.Do(req)
 		if err != nil {
-			return nil, fmt.Errorf("dupechecking: fetch %s torrent list: %w", site.baseURL, err)
+			return nil, pages, false, warning, fmt.Errorf("dupechecking: fetch %s torrent list: %w", site.baseURL, err)
+		}
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			resp.Body.Close()
+			return nil, pages, false, warning, fmt.Errorf("dupechecking: fetch %s torrent list: status %d", site.baseURL, resp.StatusCode)
 		}
 		root, err := xhtml.Parse(resp.Body)
 		_ = resp.Body.Close()
 		if err != nil {
-			return nil, fmt.Errorf("dupechecking: parse %s search response: %w", site.baseURL, err)
+			return nil, pages, false, warning, fmt.Errorf("dupechecking: parse %s search response: %w", site.baseURL, err)
 		}
+		pages++
 		rows := findTorrentRows(root)
 		for _, row := range rows {
 			entry := parseAZDupeRow(row, site)
 			if entry.Name == "" {
 				continue
 			}
-			if ripType != "" && !containsFlag(entry.Flags, ripType) {
-				continue
-			}
+			entry.Type = azCandidateRipType(entry.Flags)
+			entry.CanonicalType = azCanonicalCandidateType(entry.Type)
 			results = append(results, entry)
 		}
-		pageURL = nextAZPage(root, site.baseURL)
+		nextPage, nextPresent := nextAZPage(root, site.baseURL)
+		switch {
+		case !nextPresent:
+			complete = true
+			if h.logger != nil {
+				h.logger.Debugf("dupechecking: search tracker=%s pages=%d complete=true decision=enumeration_complete", h.tracker, pages)
+			}
+		case nextPage == "":
+			warning = "AZ-family search rejected an invalid next-page link"
+			if h.logger != nil {
+				h.logger.Warnf("dupechecking: search tracker=%s pages=%d complete=false decision=invalid_next_page", h.tracker, pages)
+			}
+		}
+		pageURL = nextPage
 	}
-	return results, nil
+	return dedupeAZEntries(results), pages, complete, warning, nil
+}
+
+func azCandidateRipType(flags []string) string {
+	for _, flag := range flags {
+		if azCanonicalCandidateType(flag) != "" {
+			return strings.TrimSpace(flag)
+		}
+	}
+	return ""
+}
+
+func dedupeAZEntries(entries []api.DupeEntry) []api.DupeEntry {
+	result := make([]api.DupeEntry, 0, len(entries))
+	indexes := make(map[string]int)
+	for _, entry := range entries {
+		key := strings.TrimSpace(entry.ID)
+		if key == "" {
+			key = strings.TrimSpace(entry.Link)
+		}
+		if key == "" {
+			result = append(result, entry)
+			continue
+		}
+		if index, ok := indexes[key]; ok {
+			if len(entry.Flags) > len(result[index].Flags) {
+				result[index] = entry
+			}
+			continue
+		}
+		indexes[key] = len(result)
+		result = append(result, entry)
+	}
+	return result
+}
+
+// azCanonicalCandidateType maps an AZ-family rip filter value to the shared duplicate type vocabulary.
+func azCanonicalCandidateType(ripType string) string {
+	switch strings.ToLower(strings.TrimSpace(ripType)) {
+	case "bluray raw", "dvd":
+		return "DISC"
+	case "bluray remux", "dvd remux":
+		return "REMUX"
+	case "web-dl":
+		return "WEBDL"
+	case "webrip":
+		return "WEBRIP"
+	case "hdtv", "sdtv":
+		return "HDTV"
+	case "bdrip", "bluray", "brrip", "dvdrip", "hdrip":
+		return "ENCODE"
+	default:
+		return ""
+	}
 }
 
 type azDupeSiteDef struct {
@@ -212,57 +315,6 @@ func lookupAZDupeTitle(meta api.DuplicateSubject) string {
 		}
 	}
 	return strings.TrimSpace(meta.Filename)
-}
-
-func azDupeResolution(meta api.DuplicateSubject) string {
-	value := strings.TrimSpace(meta.Release.Resolution)
-	if value == "" {
-		value = detectResolution(meta.ReleaseName)
-	}
-	switch strings.ToLower(value) {
-	case "2160p":
-		return "UHD"
-	case "720p", "1080p":
-		return value
-	default:
-		return "all"
-	}
-}
-
-func azDupeRipType(meta api.DuplicateSubject) string {
-	switch strings.ToLower(strings.TrimSpace(meta.Type)) {
-	case "bdrip":
-		return "BDRip"
-	case "encode":
-		return "BluRay"
-	case "brrip":
-		return "BRRip"
-	case "dvdrip":
-		return "DVDRip"
-	case "hdrip":
-		return "HDRip"
-	case "hdtv":
-		return "HDTV"
-	case "sdtv":
-		return "SDTV"
-	case "webdl":
-		return "WEB-DL"
-	case "webrip":
-		return "WEBRip"
-	case "remux":
-		if strings.Contains(strings.ToLower(strings.TrimSpace(meta.Source)), "dvd") {
-			return "DVD Remux"
-		}
-		return "BluRay REMUX"
-	default:
-		if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
-			return "BluRay Raw"
-		}
-		if strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
-			return "DVD"
-		}
-		return ""
-	}
 }
 
 func findTorrentRows(root *xhtml.Node) []*xhtml.Node {
@@ -313,15 +365,17 @@ func parseAZDupeRow(row *xhtml.Node, site azDupeSiteDef) api.DupeEntry {
 	return entry
 }
 
-func nextAZPage(root *xhtml.Node, baseURL string) string {
+func nextAZPage(root *xhtml.Node, baseURL string) (string, bool) {
 	var next string
+	present := false
 	var walk func(*xhtml.Node)
 	walk = func(node *xhtml.Node) {
-		if node == nil || next != "" {
+		if node == nil || present {
 			return
 		}
 		if node.Type == xhtml.ElementNode && node.Data == "a" && strings.EqualFold(attrValueHTML(node, "rel"), "next") {
-			next = absoluteAZURL(baseURL, attrValueHTML(node, "href"))
+			present = true
+			next = sameOriginAZURL(baseURL, attrValueHTML(node, "href"))
 			return
 		}
 		for child := node.FirstChild; child != nil; child = child.NextSibling {
@@ -329,16 +383,26 @@ func nextAZPage(root *xhtml.Node, baseURL string) string {
 		}
 	}
 	walk(root)
-	return next
+	return next, present
 }
 
-func containsFlag(flags []string, want string) bool {
-	for _, flag := range flags {
-		if strings.EqualFold(strings.TrimSpace(flag), strings.TrimSpace(want)) {
-			return true
-		}
+func sameOriginAZURL(baseURL, value string) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
 	}
-	return false
+	base, baseErr := url.Parse(strings.TrimSpace(baseURL))
+	reference, referenceErr := url.Parse(strings.TrimSpace(value))
+	if baseErr != nil || referenceErr != nil {
+		return ""
+	}
+	resolved := base.ResolveReference(reference)
+	if (base.Scheme != "http" && base.Scheme != "https") ||
+		!strings.EqualFold(base.Scheme, resolved.Scheme) ||
+		!strings.EqualFold(base.Host, resolved.Host) ||
+		strings.TrimSpace(base.Host) == "" {
+		return ""
+	}
+	return resolved.String()
 }
 
 func attrValueHTML(node *xhtml.Node, key string) string {

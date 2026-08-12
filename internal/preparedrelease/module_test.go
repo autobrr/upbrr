@@ -124,6 +124,42 @@ func TestPrepareUsesExactCompatibilityAndPublishesConcreteAssessments(t *testing
 	}
 }
 
+func TestPrepareRecomputesLegacyContractAfterRestart(t *testing.T) {
+	t.Parallel()
+	path := writePreparedTestFile(t, "source.mkv", "synthetic media")
+	store := newMemoryStore()
+	initial := newTestModule(t, store, &recordingCollector{})
+	prepared, err := initial.Prepare(context.Background(), api.PrepareInput{SourcePath: path})
+	if err != nil {
+		t.Fatalf("initial prepare: %v", err)
+	}
+
+	legacy := prepared.Release
+	legacy.Compatibility.ContractVersion = "prepared-release-v3"
+	legacy.Assessments.VideoBitrate = api.VideoBitrateAssessment{}
+	store.mu.Lock()
+	store.current[canonicalSourceKey(path)] = legacy
+	store.mu.Unlock()
+
+	restartedCollector := &recordingCollector{}
+	restarted := newTestModule(t, store, restartedCollector)
+	recomputed, err := restarted.Prepare(context.Background(), api.PrepareInput{SourcePath: path})
+	if err != nil {
+		t.Fatalf("restart prepare: %v", err)
+	}
+	if recomputed.Release.Generation != prepared.Release.Generation+1 || restartedCollector.callCount() != 1 {
+		t.Fatalf(
+			"restart generation=%d collector=%d, want generation=%d collector=1",
+			recomputed.Release.Generation,
+			restartedCollector.callCount(),
+			prepared.Release.Generation+1,
+		)
+	}
+	if recomputed.Release.Assessments.VideoBitrate.Status != api.VideoBitrateStatusUnknown {
+		t.Fatalf("video bitrate status = %q, want %q", recomputed.Release.Assessments.VideoBitrate.Status, api.VideoBitrateStatusUnknown)
+	}
+}
+
 func TestPrepareRequirePreparedRejectsMissingAndReusesCompatibleGeneration(t *testing.T) {
 	t.Parallel()
 
@@ -421,22 +457,42 @@ func TestOperationSubjectsUseExactGenerationAndDetachedFacts(t *testing.T) {
 	t.Parallel()
 
 	path := writePreparedTestFile(t, "source.mkv", "source")
-	module := newTestModule(t, newMemoryStore(), &recordingCollector{})
+	store := newMemoryStore()
+	module := newTestModule(t, store, &recordingCollector{})
 	prepared, err := module.Prepare(context.Background(), api.PrepareInput{SourcePath: path})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ref := api.ReleaseRef{SourcePath: path, Generation: prepared.Release.Generation}
 	upload, err := module.ResolveUploadSubject(context.Background(), api.UploadSubjectInput{
-		Release:  ref,
-		Trackers: []string{"AITHER"},
-		Options:  api.UploadOptions{KeepImages: true},
+		Release:                ref,
+		Trackers:               []string{"AITHER"},
+		DescriptionOverride:    "Manual description.",
+		DescriptionGroupsFinal: true,
+		Options:                api.UploadOptions{KeepImages: true},
 	})
 	if err != nil {
 		t.Fatalf("ResolveUploadSubject() error = %v", err)
 	}
 	if upload.SourcePath != path || upload.ReleaseName != "Example.Release.2026.1080p-GRP" || len(upload.Trackers) != 1 {
 		t.Fatalf("upload subject = %#v", upload)
+	}
+	if upload.DescriptionOverride != "Manual description." || !upload.DescriptionGroupsFinal {
+		t.Fatalf("upload description evidence = %#v", upload)
+	}
+	if upload.GeneratedReleaseNames.OmitEpisodeTitle.Name != "Example.Show.S01E02.1080p.WEB-DL-GRP" {
+		t.Fatalf("upload generated variants = %#v", upload.GeneratedReleaseNames)
+	}
+	persisted, err := store.LoadPreparedRelease(context.Background(), path)
+	if err != nil {
+		t.Fatalf("load persisted release: %v", err)
+	}
+	if persisted.Naming.GeneratedReleaseNames != upload.GeneratedReleaseNames {
+		t.Fatalf(
+			"persisted generated variants = %#v, upload variants %#v",
+			persisted.Naming.GeneratedReleaseNames,
+			upload.GeneratedReleaseNames,
+		)
 	}
 	if upload.Assessments.MediaInfoUniqueID != api.UniqueIDStatusPresent ||
 		upload.Assessments.MediaInfoEncodeSettings != api.EncodeSettingsStatusMissing {
@@ -458,6 +514,71 @@ func TestOperationSubjectsUseExactGenerationAndDetachedFacts(t *testing.T) {
 	var stale *StalePreparationError
 	if !errors.As(err, &stale) || stale.Reason != StaleReasonGeneration {
 		t.Fatalf("wrong generation error = %v", err)
+	}
+}
+
+func TestOperationSubjectsCarryCorrectedFactsConsistently(t *testing.T) {
+	t.Parallel()
+
+	path := writePreparedTestFile(t, "source.mkv", "source")
+	module := newTestModule(t, newMemoryStore(), correctedFactsCollector{})
+	prepared, err := module.Prepare(context.Background(), api.PrepareInput{SourcePath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	release := prepared.Release
+	if release.Media.Type != "REMUX" || release.Naming.Type != "REMUX" || release.Episode.Season != 3 || release.Naming.Group != "OTHER" {
+		t.Fatalf("prepared facts = %#v", release)
+	}
+
+	ref := api.ReleaseRef{SourcePath: path, Generation: release.Generation}
+	upload, err := module.ResolveUploadSubject(context.Background(), api.UploadSubjectInput{Release: ref})
+	if err != nil {
+		t.Fatalf("ResolveUploadSubject() error = %v", err)
+	}
+	if upload.Type != "REMUX" || upload.Source != "BluRay" || upload.Release.Type != "REMUX" || upload.Release.Resolution != "2160p" {
+		t.Fatalf("upload subject type facts = %q/%q/%q/%q", upload.Type, upload.Source, upload.Release.Type, upload.Release.Resolution)
+	}
+	if upload.SeasonInt != 3 || upload.EpisodeInt != 7 || upload.SeasonStr != "S03" || upload.EpisodeStr != "E07" {
+		t.Fatalf("upload subject episode facts = %d/%d %q/%q", upload.SeasonInt, upload.EpisodeInt, upload.SeasonStr, upload.EpisodeStr)
+	}
+	if upload.Tag != "-OTHER" || upload.Release.Group != "OTHER" || upload.Edition != "Extended" || upload.Service != "AMZN" {
+		t.Fatalf("upload subject fact projections = %q/%q/%q/%q", upload.Tag, upload.Release.Group, upload.Edition, upload.Service)
+	}
+
+	duplicate, err := module.ResolveDuplicateSubject(context.Background(), api.DuplicateCheckInput{Release: ref})
+	if err != nil {
+		t.Fatalf("ResolveDuplicateSubject() error = %v", err)
+	}
+	if duplicate.Type != upload.Type || duplicate.Source != upload.Source || duplicate.Tag != upload.Tag {
+		t.Fatalf("duplicate subject diverges from upload subject: %q/%q/%q", duplicate.Type, duplicate.Source, duplicate.Tag)
+	}
+	if duplicate.SeasonInt != upload.SeasonInt || duplicate.EpisodeInt != upload.EpisodeInt || duplicate.Release.Group != upload.Release.Group {
+		t.Fatalf("duplicate subject episode/group diverges: %d/%d %q", duplicate.SeasonInt, duplicate.EpisodeInt, duplicate.Release.Group)
+	}
+}
+
+func TestPreparationCompatibilityDistinguishesExplicitClearInstructions(t *testing.T) {
+	t.Parallel()
+
+	fingerprints := make(map[string]string, 3)
+	for name, season := range map[string]*string{
+		"unset":          nil,
+		"explicit clear": new(""),
+		"explicit value": new("5"),
+	} {
+		input := api.PrepareInput{SourcePath: "Example.Release.2026.mkv"}
+		input.Instructions.ReleaseName.Season = season
+		compatibility, err := preparationCompatibility(input, "source")
+		if err != nil {
+			t.Fatalf("compatibility for %s: %v", name, err)
+		}
+		fingerprints[name] = compatibility.FactInstructionFingerprint
+	}
+	if fingerprints["unset"] == fingerprints["explicit clear"] ||
+		fingerprints["unset"] == fingerprints["explicit value"] ||
+		fingerprints["explicit clear"] == fingerprints["explicit value"] {
+		t.Fatalf("expected distinct fact-instruction fingerprints, got %#v", fingerprints)
 	}
 }
 
@@ -674,6 +795,37 @@ func (staticIdentityResolver) Resolve(_ context.Context, request externalidentit
 	}, nil
 }
 
+// correctedFactsCollector returns fact groups as the metadata pipeline shapes
+// them after fact-producing release-name instructions were applied.
+type correctedFactsCollector struct{}
+
+func (correctedFactsCollector) Collect(_ context.Context, request preparationstate.Request) (CollectedFacts, error) {
+	return CollectedFacts{
+		Naming: api.NamingFacts{
+			Filename:    filepath.Base(request.Manifest.SourcePath),
+			ReleaseName: "Example Show 2027 S03E07 Extended 2160p BluRay REMUX-OTHER",
+			Tag:         "-OTHER",
+			Type:        "REMUX",
+			Source:      "BluRay",
+			Resolution:  "2160p",
+			Year:        2027,
+			Group:       "OTHER",
+		},
+		Episode: api.EpisodeFacts{
+			Season:       3,
+			Episode:      7,
+			SeasonLabel:  "S03",
+			EpisodeLabel: "E07",
+		},
+		Media: api.MediaFacts{
+			Type:    "REMUX",
+			Source:  "BluRay",
+			Edition: "Extended",
+			Service: "AMZN",
+		},
+	}, nil
+}
+
 type recordingCollector struct {
 	mu    sync.Mutex
 	calls []string
@@ -687,6 +839,14 @@ func (c *recordingCollector) Collect(_ context.Context, request preparationstate
 		Naming: api.NamingFacts{
 			Filename:    filepath.Base(request.Manifest.SourcePath),
 			ReleaseName: "Example.Release.2026.1080p-GRP",
+			GeneratedReleaseNames: api.GeneratedReleaseNameVariants{
+				IncludeEpisodeTitle: api.ReleaseNameVariant{
+					Name: "Example.Show.S01E02.Example.Episode.1080p.WEB-DL-GRP",
+				},
+				OmitEpisodeTitle: api.ReleaseNameVariant{
+					Name: "Example.Show.S01E02.1080p.WEB-DL-GRP",
+				},
+			},
 		},
 		Assessments: api.ReleaseAssessments{
 			MediaInfoUniqueID:       api.UniqueIDStatusPresent,

@@ -72,7 +72,7 @@ lefthook install
 What runs when Git invokes hooks:
 
 - `pre-commit` — on **staged files only**: `prettier --write` (webui), `eslint` (webui/src), `golangci-lint fmt` (Go), the composite-literal layout policy, `go run ./cmd/logpolicy` (when `internal/**` Go files change), and `go run ./cmd/pathpolicy` (when Go files change). Formatters auto-re-stage their fixes.
-- `pre-push` — full-project TypeScript typecheck and `make lint`, which runs the architecture ownership, path-portability, and composite-literal layout checkers before golangci-lint. CI mirrors these Go policy checks and frontend checks for pull requests.
+- `pre-push` — full-project TypeScript typecheck and `make lint`, which runs the architecture ownership, path-portability, composite-literal layout, and workflow-contract drift checkers before golangci-lint. CI mirrors these Go policy checks and frontend checks for pull requests.
 - `commit-msg` — `go run ./cmd/commitmsgcheck` enforces [Conventional Commits](https://www.conventionalcommits.org/) without requiring Node.js or `pnpm install`.
 
 Makefile shortcuts:
@@ -144,7 +144,7 @@ pnpm --dir webui run build
 For embedded web visual checks, test the embedded build rather than the Vite-only server. Rebuild the frontend, sync it into embedded assets, rebuild the CLI, then run the auth-disabled embedded server on the main port:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build.ps1
+pwsh -NoProfile -File ./scripts/build.ps1
 .\dist\upbrr.exe serve --dev-no-auth
 ```
 
@@ -210,11 +210,28 @@ pnpm --dir webui run format:check
 pnpm --dir webui run lint:style
 
 # Broad Go regression, lint, and policy sweeps:
+make test-go-fast
 make test-go
 make architecturepolicy
 make lint
 make logpolicy
 make pathpolicy
+```
+
+Use `make test-go-fast` for rapid full-suite iteration. It omits the race
+detector; run focused race tests while developing and `make test-go` before
+handoff when broad Go regressions are plausible.
+
+`make test-go` bounds each race-enabled test binary to four logical CPUs and
+four concurrent `t.Parallel` tests. Package test binaries retain Go's default
+`-p` concurrency. These per-binary limits prevent each concurrently running
+package from independently using the host's full CPU count. Override
+`GO_TEST_SCHEDULER_FLAGS` when benchmarking another per-binary limit, or set it
+empty to use Go defaults:
+
+```sh
+make test-go GO_TEST_SCHEDULER_FLAGS="-cpu=2 -parallel=2"
+make test-go GO_TEST_SCHEDULER_FLAGS=
 ```
 
 Useful focused checks:
@@ -265,6 +282,7 @@ Prefer generic group tags such as `GRP` when the group is incidental; real group
 ### Logging levels
 
 Keep log levels purposeful.
+
 - `INFO` should provide concise, relevant progress or outcome details for end users during uploads and other top-level workflows.
 - `DEBUG` should include richer decision-making context useful for developer troubleshooting.
 - `TRACE` should capture near-complete operational flow for high-fidelity execution reporting.

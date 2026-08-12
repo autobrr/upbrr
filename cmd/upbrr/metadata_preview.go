@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -94,7 +95,7 @@ func printMetadataExternalIdentity(preview api.MetadataPreview) {
 	}
 	if identity.IMDBID != 0 {
 		printHeader()
-		fmt.Printf("IMDb: tt%07d\n", identity.IMDBID)
+		fmt.Printf("IMDb: %s\n", providerid.IMDb(identity.IMDBID).Prefixed())
 	}
 	if identity.TVDBID != 0 {
 		printHeader()

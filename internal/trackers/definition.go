@@ -8,11 +8,18 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+// GeneralDuplicatePolicyID identifies the always-on duplicate comparison contract.
+const GeneralDuplicatePolicyID = "general/duplicate/v4"
+
+// DuplicateSearchContractID identifies effective work-scope completion semantics.
+const DuplicateSearchContractID = "duplicate-search/work-scope/v1"
 
 // ErrSubmitted2FARejected marks tracker auth failure after a supplied manual 2FA code was rejected.
 var ErrSubmitted2FARejected = errors.New("trackers: submitted 2FA rejected")
@@ -125,6 +132,7 @@ type ReleaseNameInput struct {
 	Subject       api.UploadSubject
 	TrackerConfig config.TrackerConfig
 	RequestedName *string
+	ElementPolicy api.ReleaseNameElementPolicy
 }
 
 // ResolvedReleaseNames contains tracker-facing principal and secondary names.
@@ -138,10 +146,26 @@ type ResolvedReleaseNames struct {
 // ReleaseNamePolicy resolves tracker-facing names without I/O or mutable state.
 type ReleaseNamePolicy func(ReleaseNameInput) (ResolvedReleaseNames, error)
 
+// ReleaseNameConfirmationMode declares when an automatically resolved upload
+// name must be explicitly reviewed.
+type ReleaseNameConfirmationMode string
+
+const (
+	// ReleaseNameConfirmationNone accepts automatic names without review.
+	ReleaseNameConfirmationNone ReleaseNameConfirmationMode = ""
+	// ReleaseNameConfirmationNonScene requires review for non-scene releases.
+	ReleaseNameConfirmationNonScene ReleaseNameConfirmationMode = "non_scene"
+)
+
 // ReleaseNamePolicyBinding identifies one versioned naming implementation.
 type ReleaseNamePolicyBinding struct {
-	ID       string
-	Resolver ReleaseNamePolicy
+	ID           string
+	Elements     api.ReleaseNameElementPolicy
+	Confirmation ReleaseNameConfirmationMode
+	// MovieYearProvider selects authoritative current metadata for automatic movie-name years.
+	// Empty preserves the parsed release year; requested upload names are never rewritten.
+	MovieYearProvider api.IdentityProvider
+	Resolver          ReleaseNamePolicy
 }
 
 // ReleaseNamePolicyProvider declares tracker-owned release-name behavior.
@@ -317,6 +341,8 @@ type ArtifactPolicy struct {
 	MaxPieceSizeMiB int
 	// MaxTorrentBytes is the largest permitted encoded torrent size; zero imposes no limit.
 	MaxTorrentBytes int64
+	// PieceSizeProfileURL selects mkbrr's tracker-specific piece-size profile.
+	PieceSizeProfileURL string
 }
 
 // ArtifactPolicyProvider declares tracker-owned torrent artifact policy.
@@ -423,30 +449,234 @@ type UploadArtifactPolicyProvider interface {
 
 // DupePolicy declares tracker-specific duplicate comparison semantics.
 type DupePolicy struct {
-	// DolbyVisionImpliesHDR treats Dolby Vision candidates as HDR during matching.
-	DolbyVisionImpliesHDR bool
-	// MatchAggregateSize compares aggregate file size rather than a single-file size.
-	MatchAggregateSize bool
-	// ContainsFilenameMatch permits containment-based filename comparison.
-	ContainsFilenameMatch bool
-	// NormalizeMTVName applies MTV-specific release-name normalization.
-	NormalizeMTVName bool
-	// TrackTrumpableID preserves a matched tracker ID for trumpability checks.
-	TrackTrumpableID bool
-	// MatchDVDReleaseGroup includes DVD release-group identity in matching.
-	MatchDVDReleaseGroup bool
-	// RequireReleaseGroup rejects candidates without a comparable release group.
-	RequireReleaseGroup bool
-	// RejectEpisodeResolutionMismatch blocks episode candidates at a different resolution.
-	RejectEpisodeResolutionMismatch bool
-	// NormalizeDDPlusName normalizes Dolby Digital Plus naming variants.
-	NormalizeDDPlusName bool
-	// SDMatchesHD permits standard-definition metadata to match high-definition candidates.
-	SDMatchesHD bool
-	// CompareDVDResolution includes DVD resolution in candidate comparison.
-	CompareDVDResolution bool
-	// AllowSizeVariance1080 enables the tracker-specific 1080p size tolerance.
-	AllowSizeVariance1080 bool
+	// ID is the stable versioned comparison-policy identifier.
+	ID string
+	// EvidenceID identifies the policy evidence backing automatic
+	// tracker-specific behavior.
+	EvidenceID string
+	// TargetReleaseOrigin derives tracker-native origin from the proposed release.
+	// ID versions this pure resolver; it is excluded from serialized fingerprints.
+	TargetReleaseOrigin func(api.UploadSubject) string `json:"-"`
+	// SearchScope declares how many pages may be consumed before search becomes incomplete.
+	SearchScope DupeSearchScope
+	// SlotDimensions are compared to establish tracker slot membership.
+	SlotDimensions []DupeDimension
+	// OptionalSlotDimensions establish distinct slots when either side carries
+	// evidence. Two missing values describe the same default slot.
+	OptionalSlotDimensions []DupeDimension
+	// CompleteSlotDimensions require authoritative evidence before a configured
+	// slot dimension can establish equality or coexistence.
+	CompleteSlotDimensions []DupeDimension
+	// RequiredDimensions must be known before fallback review can resolve, but
+	// a difference does not itself prove coexistence.
+	RequiredDimensions []DupeDimension
+	// SuppressGeneralCoexistence delegates named general coexistence axes to
+	// tracker rules without disabling exact or disjoint-content findings.
+	SuppressGeneralCoexistence []DupeDimension
+	// HDRSlotMode declares how normalized HDR facts map to tracker slots.
+	HDRSlotMode DupeHDRSlotMode
+	// HDRPartialMode declares how partial tracker HDR evidence is interpreted.
+	HDRPartialMode DupeHDRPartialMode
+	// HDRCompatibilityMode enables a source-backed directional compatibility
+	// hierarchy instead of treating every distinct HDR set as coexistence.
+	HDRCompatibilityMode DupeHDRCompatibilityMode
+	// RequireDolbyVisionProfile keeps same-format Dolby Vision decisions
+	// indeterminate until both profiles are known.
+	RequireDolbyVisionProfile bool
+	// DolbyVisionProfile5Slot treats Profile 5 as an objective independent slot
+	// when both Dolby Vision profiles are authoritative.
+	DolbyVisionProfile5Slot bool
+	// SlotContradictionsRequireManualReview prevents contradictory structured
+	// and title evidence from collapsing into a generic missing-fact result.
+	SlotContradictionsRequireManualReview bool
+	// CoexistenceRules are evaluated before directional precedence.
+	CoexistenceRules []DupeRule
+	// PrecedenceRules express directional existing/proposed preferences.
+	PrecedenceRules []DupeRule
+	// ManualReviewRules identify subjective or staff-owned decisions.
+	ManualReviewRules []DupeRule
+	// SetRules evaluate capacity-limited slot families across the complete
+	// candidate collection.
+	SetRules []DupeSetRule
+	// SizeVariancePercent permits coexistence when absolute size difference is
+	// at least this percentage of the larger release.
+	SizeVariancePercent float64
+	// SizeVarianceResolutions limits size coexistence to named resolution slots.
+	SizeVarianceResolutions []string
+	// SizeVarianceTypes limits size coexistence to named release types.
+	SizeVarianceTypes []string
+	// TrumpableOverridesSlot permits an authoritative tracker-supplied
+	// trumpable flag to outrank ordinary slot/capacity review.
+	TrumpableOverridesSlot bool
+}
+
+// DupeSearchScope defines the remote-search completion bound.
+type DupeSearchScope struct {
+	MaxPages int
+}
+
+// DupeDimension identifies one structural comparison axis.
+type DupeDimension string
+
+const (
+	DupeDimensionType          DupeDimension = "type"
+	DupeDimensionSource        DupeDimension = "source"
+	DupeDimensionMediaKind     DupeDimension = "media_kind"
+	DupeDimensionMediaClass    DupeDimension = "media_class"
+	DupeDimensionSourceFamily  DupeDimension = "source_family"
+	DupeDimensionResolution    DupeDimension = "resolution"
+	DupeDimensionCodec         DupeDimension = "codec"
+	DupeDimensionContainer     DupeDimension = "container"
+	DupeDimensionHDR           DupeDimension = "hdr"
+	DupeDimensionEdition       DupeDimension = "edition"
+	DupeDimensionRegion        DupeDimension = "region"
+	DupeDimensionThreeD        DupeDimension = "3d"
+	DupeDimensionProvider      DupeDimension = "provider"
+	DupeDimensionGroup         DupeDimension = "group"
+	DupeDimensionReleaseOrigin DupeDimension = "release_origin"
+	DupeDimensionRepack        DupeDimension = "repack"
+	DupeDimensionPack          DupeDimension = "pack"
+	DupeDimensionSeason        DupeDimension = "season"
+	DupeDimensionEpisode       DupeDimension = "episode"
+	DupeDimensionDate          DupeDimension = "date"
+	DupeDimensionSize          DupeDimension = "size"
+)
+
+// DupeHDRSlotMode identifies one tracker HDR slot taxonomy.
+type DupeHDRSlotMode string
+
+const (
+	// DupeHDRSlotModeExact preserves every normalized HDR format as a distinct
+	// comparison fact.
+	DupeHDRSlotModeExact DupeHDRSlotMode = ""
+	// DupeHDRSlotModeGeneric groups formats into SDR, HDR, DV, and DV+HDR.
+	DupeHDRSlotModeGeneric DupeHDRSlotMode = "sdr_hdr_dv"
+)
+
+// DupeHDRPartialMode identifies tracker-backed semantics for partial HDR facts.
+type DupeHDRPartialMode string
+
+const (
+	// DupeHDRPartialReject requires complete HDR facts for an HDR slot.
+	DupeHDRPartialReject DupeHDRPartialMode = ""
+	// DupeHDRPartialGenericMarker treats a partial generic HDR marker as
+	// indeterminate when it overlaps another HDR slot.
+	DupeHDRPartialGenericMarker DupeHDRPartialMode = "generic_marker"
+	// DupeHDRPartialExplicitTitle permits explicit title-derived formats to
+	// participate in comparison while retaining partial provenance.
+	DupeHDRPartialExplicitTitle DupeHDRPartialMode = "explicit_title"
+)
+
+// DupeHDRCompatibilityMode identifies directional HDR compatibility handling.
+type DupeHDRCompatibilityMode string
+
+const (
+	DupeHDRCompatibilityNone        DupeHDRCompatibilityMode = ""
+	DupeHDRCompatibilityDirectional DupeHDRCompatibilityMode = "directional"
+)
+
+// DupeCondition is one fact predicate inside a directional rule. Conditions
+// are ANDed so policies can express compound tracker slots without custom
+// evaluator branches.
+type DupeCondition struct {
+	Dimension        DupeDimension
+	TargetValues     []string
+	CandidateValues  []string
+	ValuesEqual      bool
+	ValuesDifferent  bool
+	RequiresComplete bool
+	// MissingNotApplicable makes a conditional exception inapplicable when one
+	// operand is absent instead of turning the whole comparison indeterminate.
+	MissingNotApplicable bool
+}
+
+// DupeRule is one declarative directional comparison rule.
+type DupeRule struct {
+	ID                 string
+	EvidenceID         string
+	Conditions         []DupeCondition
+	Relation           string
+	ReasonCode         string
+	RequiresManualStep bool
+	// Priority overrides the default tracker-rule priority when non-zero.
+	Priority int
+	// OverridesGeneral allows an indeterminate rule whose known prerequisites
+	// match to shadow a lower-priority general coexistence finding.
+	OverridesGeneral bool
+}
+
+// DupeSetPredicate is one declarative target or candidate fact predicate.
+type DupeSetPredicate struct {
+	Dimension        DupeDimension
+	Values           []string
+	ExcludedValues   []string
+	RequiresComplete bool
+	MatchTarget      bool
+	Optional         bool
+}
+
+// DupeSetCapacityOverride lowers a rule's capacity when any candidate matches
+// its predicates.
+type DupeSetCapacityOverride struct {
+	CandidatePredicates []DupeSetPredicate
+	Capacity            int
+}
+
+// DupeSetRule declares one collection-level capacity policy.
+type DupeSetRule struct {
+	ID                           string
+	EvidenceID                   string
+	TargetPredicates             []DupeSetPredicate
+	CandidatePredicates          []DupeSetPredicate
+	Capacity                     int
+	CapacityOverrides            []DupeSetCapacityOverride
+	MinimumSizeSeparationPercent float64
+}
+
+// DirectionalMediaKindRules returns bidirectional precedence for two
+// canonical media kinds at the same known resolution.
+func DirectionalMediaKindRules(evidenceID string, preferred string, trumped string) []DupeRule {
+	preferred = strings.TrimSpace(preferred)
+	trumped = strings.TrimSpace(trumped)
+	baseID := strings.ReplaceAll(preferred+"_over_"+trumped, "-", "_")
+	return []DupeRule{
+		{
+			ID:               "proposed_" + baseID,
+			EvidenceID:       strings.TrimSpace(evidenceID),
+			Relation:         "proposed_trumps",
+			OverridesGeneral: true,
+			Conditions: []DupeCondition{
+				{
+					Dimension:       DupeDimensionMediaKind,
+					TargetValues:    []string{preferred},
+					CandidateValues: []string{trumped},
+				},
+				{
+					Dimension:        DupeDimensionResolution,
+					ValuesEqual:      true,
+					RequiresComplete: true,
+				},
+			},
+		},
+		{
+			ID:               "existing_" + baseID,
+			EvidenceID:       strings.TrimSpace(evidenceID),
+			Relation:         "existing_preferred",
+			OverridesGeneral: true,
+			Conditions: []DupeCondition{
+				{
+					Dimension:       DupeDimensionMediaKind,
+					TargetValues:    []string{trumped},
+					CandidateValues: []string{preferred},
+				},
+				{
+					Dimension:        DupeDimensionResolution,
+					ValuesEqual:      true,
+					RequiresComplete: true,
+				},
+			},
+		},
+	}
 }
 
 // DupePolicyProvider declares tracker-owned duplicate comparison policy.
@@ -493,16 +723,6 @@ type ImageHostPolicyProvider interface {
 	ImageHostPolicy() *ImageHostPolicy
 }
 
-// TorrentSearchPreference identifies tracker-owned torrent reuse selection behavior.
-type TorrentSearchPreference string
-
-const (
-	// TorrentSearchPreferenceNone applies the global torrent reuse preference.
-	TorrentSearchPreferenceNone TorrentSearchPreference = ""
-	// TorrentSearchPreferenceSmallPieces prefers the smallest reusable torrent pieces.
-	TorrentSearchPreferenceSmallPieces TorrentSearchPreference = "small_pieces"
-)
-
 // TorrentIdentityPolicy declares how torrent-client metadata identifies a tracker.
 type TorrentIdentityPolicy struct {
 	// TrackerURLPatterns match announce URLs reported by torrent clients.
@@ -513,8 +733,6 @@ type TorrentIdentityPolicy struct {
 	DetailIDPattern string
 	// WorkingTrackerID supplies a stable synthetic ID when a working announce URL is sufficient.
 	WorkingTrackerID string
-	// SearchPreference selects optional tracker-owned torrent reuse behavior.
-	SearchPreference TorrentSearchPreference
 	// InferMatchFromResolvedID treats a resolved tracker ID as provenance even
 	// when no announce URL was available in the matched torrent response.
 	InferMatchFromResolvedID bool

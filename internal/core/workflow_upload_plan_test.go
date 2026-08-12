@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/autobrr/go-torrent/bencode"
 	"github.com/autobrr/go-torrent/metainfo"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -25,6 +27,29 @@ type dryRunClientService struct {
 	injections []api.TorrentResult
 	searches   int
 	injectErr  error
+}
+
+type workflowUploadResolverFixed struct {
+	subject api.UploadSubject
+}
+
+func (f workflowUploadResolverFixed) ResolveUploadSubject(context.Context, api.UploadSubjectInput) (api.UploadSubject, error) {
+	return f.subject, nil
+}
+
+type workflowTorrentServiceCapture struct {
+	subject api.TorrentSubject
+	result  api.TorrentResult
+	calls   int
+}
+
+func (f *workflowTorrentServiceCapture) Create(_ context.Context, subject api.TorrentSubject) (api.TorrentResult, error) {
+	f.subject = subject
+	f.calls++
+	if f.result.Path == "" && len(f.result.SkippedTrackers) == 0 {
+		return api.TorrentResult{Path: "prepared.torrent"}, nil
+	}
+	return f.result, nil
 }
 
 func (s *dryRunClientService) Inject(_ context.Context, _ api.ClientSubject, torrent api.TorrentResult) error {
@@ -72,6 +97,7 @@ func (*workflowRetainedUploadPlanFake) Release() error { return nil }
 type workflowRetainedUploadServiceFake struct {
 	projections  []api.TrackerReleaseProjection
 	failures     map[api.TrackerID]trackers.TrackerFailure
+	actions      map[api.TrackerID][]api.RequiredAction
 	torrentPaths map[api.TrackerID]string
 	results      []trackers.RetainedTrackerResult
 	subject      api.UploadSubject
@@ -89,8 +115,9 @@ func (f *workflowRetainedUploadServiceFake) PrepareRetainedUploadPlan(
 		preparation := trackers.RetainedTrackerPreparation{
 			Tracker: string(projection.TrackerID),
 			Preview: api.TrackerDryRunEntry{
-				Tracker: string(projection.TrackerID),
-				Status:  "ready",
+				Tracker:         string(projection.TrackerID),
+				Status:          "ready",
+				RequiredActions: append([]api.RequiredAction(nil), f.actions[projection.TrackerID]...),
 				Files: []api.TrackerDryRunFile{{
 					Field:   "file_input",
 					Path:    filepath.Join("preview", "must-not-drive-injection.torrent"),
@@ -155,9 +182,10 @@ func TestWorkflowUploadPlanFingerprintChangesWithReviewedDependency(t *testing.T
 
 	builder := workflowUploadPlanBuilder{}
 	projections := api.TrackerReleaseProjectionSet{
-		ID:               "projections-1",
-		Revision:         1,
-		InputFingerprint: workflowTestFingerprint(t, "projection"),
+		ID:                "projections-1",
+		Revision:          1,
+		InputFingerprint:  workflowTestFingerprint(t, "projection"),
+		PolicyFingerprint: workflowTestFingerprint(t, "projection-policy"),
 	}
 	dupes := api.DupeAssessment{
 		ID:               "dupes-1",
@@ -177,6 +205,22 @@ func TestWorkflowUploadPlanFingerprintChangesWithReviewedDependency(t *testing.T
 	first, err := builder.Fingerprint(context.Background(), projections, dupes, media, descriptions, releaseworkflow.UploadPlanBuildOptions{})
 	if err != nil {
 		t.Fatalf("fingerprint upload plan: %v", err)
+	}
+	policyChangedProjections := projections
+	policyChangedProjections.PolicyFingerprint = workflowTestFingerprint(t, "changed-projection-policy")
+	policyChanged, err := builder.Fingerprint(
+		context.Background(),
+		policyChangedProjections,
+		dupes,
+		media,
+		descriptions,
+		releaseworkflow.UploadPlanBuildOptions{},
+	)
+	if err != nil {
+		t.Fatalf("fingerprint changed projection policy: %v", err)
+	}
+	if first == policyChanged {
+		t.Fatal("upload plan fingerprint ignored projection policy")
 	}
 	dupes.Revision++
 	changed, err := builder.Fingerprint(context.Background(), projections, dupes, media, descriptions, releaseworkflow.UploadPlanBuildOptions{})
@@ -260,19 +304,166 @@ func TestWorkflowDryRunClientFailureRetainsReconciliationIdentity(t *testing.T) 
 	}
 }
 
+func TestWorkflowUploadPlanPassesSavedClientTorrentForValidation(t *testing.T) {
+	t.Parallel()
+
+	clientTorrent := "C:\\client\\BT_backup\\example.torrent"
+	torrents := &workflowTorrentServiceCapture{}
+	builder := workflowUploadPlanBuilder{
+		resolver: workflowUploadResolverFixed{subject: api.UploadSubject{
+			SourcePath:        "C:\\media\\Example.Release.2026.mkv",
+			ClientTorrentPath: clientTorrent,
+		}},
+		trackers: &workflowRetainedUploadServiceFake{},
+		torrents: torrents,
+	}
+	_, execution, err := builder.Build(
+		context.Background(),
+		api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
+			TrackerID:   "PTP",
+			Readiness:   api.ReadinessStatusReady,
+			UploadReady: true,
+		}}},
+		api.DupeAssessment{Results: []api.TrackerDupeAssessment{{
+			TrackerID: "PTP",
+			Decision:  api.DupeDecisionNoMatch,
+			Status:    api.StageStatusCompleted,
+		}}},
+		workflowDupePrivateEvidence{},
+		api.MediaArtifactSet{},
+		workflowMediaPrivateArtifacts{},
+		api.DescriptionSet{},
+		api.DescriptionInstructions{},
+		releaseworkflow.UploadPlanBuildOptions{},
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("build upload plan: %v", err)
+	}
+	defer func() { _ = execution.Release() }()
+	if torrents.subject.ClientTorrentPath != clientTorrent {
+		t.Fatalf("client torrent path=%q, want %q", torrents.subject.ClientTorrentPath, clientTorrent)
+	}
+}
+
+func TestWorkflowUploadPlanAppliesSkipIfRehashAndQueuesSharedBaseUsers(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	trackerTorrentPaths := map[api.TrackerID]string{
+		"PTP": filepath.Join(tempDir, "ptp.torrent"),
+		"HDB": filepath.Join(tempDir, "hdb.torrent"),
+	}
+	for _, torrentPath := range trackerTorrentPaths {
+		if err := os.WriteFile(torrentPath, []byte("exact torrent"), 0o600); err != nil {
+			t.Fatalf("write tracker torrent: %v", err)
+		}
+	}
+	torrents := &workflowTorrentServiceCapture{result: api.TorrentResult{
+		Path:             filepath.Join(tempDir, "base.torrent"),
+		RehashedTrackers: []string{"PTP"},
+		SkippedTrackers:  []string{"BTN"},
+	}}
+	trackerService := &workflowRetainedUploadServiceFake{torrentPaths: trackerTorrentPaths}
+	builder := workflowUploadPlanBuilder{
+		config: config.Config{
+			TorrentCreation: config.TorrentCreationConfig{RehashCooldown: 10},
+			Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+				"BTN": {SkipIfRehash: true},
+			}},
+		},
+		resolver: workflowUploadResolverFixed{subject: api.UploadSubject{SourcePath: filepath.Join(tempDir, "Example.Release.2026.mkv")}},
+		trackers: trackerService,
+		torrents: torrents,
+	}
+	projections := api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{
+		{
+			TrackerID:   "PTP",
+			Readiness:   api.ReadinessStatusReady,
+			UploadReady: true,
+		},
+		{
+			TrackerID:   "BTN",
+			Readiness:   api.ReadinessStatusReady,
+			UploadReady: true,
+		},
+		{
+			TrackerID:   "HDB",
+			Readiness:   api.ReadinessStatusReady,
+			UploadReady: true,
+		},
+	}}
+	dupes := api.DupeAssessment{Results: []api.TrackerDupeAssessment{
+		{
+			TrackerID: "PTP",
+			Decision:  api.DupeDecisionNoMatch,
+			Status:    api.StageStatusCompleted,
+		},
+		{
+			TrackerID: "BTN",
+			Decision:  api.DupeDecisionNoMatch,
+			Status:    api.StageStatusCompleted,
+		},
+		{
+			TrackerID: "HDB",
+			Decision:  api.DupeDecisionNoMatch,
+			Status:    api.StageStatusCompleted,
+		},
+	}}
+	plan, execution, err := builder.Build(
+		context.Background(),
+		projections,
+		dupes,
+		workflowDupePrivateEvidence{},
+		api.MediaArtifactSet{CaptureFingerprint: workflowTestFingerprint(t, "rehash-media")},
+		workflowMediaPrivateArtifacts{},
+		api.DescriptionSet{InputFingerprint: workflowTestFingerprint(t, "rehash-descriptions")},
+		api.DescriptionInstructions{},
+		releaseworkflow.UploadPlanBuildOptions{},
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("build rehash upload plan: %v", err)
+	}
+	defer func() { _ = execution.Release() }()
+	if torrents.calls != 1 || !slices.Equal(torrents.subject.SkipIfRehashTrackers, []string{"BTN"}) {
+		t.Fatal("torrent preparation did not receive the BTN skip policy exactly once")
+	}
+	if len(trackerService.projections) != 2 || trackerService.projections[0].TrackerID != "PTP" || trackerService.projections[1].TrackerID != "HDB" ||
+		!slices.Equal(trackerService.subject.RehashedTrackers, []string{"PTP"}) {
+		t.Fatalf("retained tracker projections = %#v", trackerService.projections)
+	}
+	if plan.Status != api.StageStatusReady || len(plan.Trackers) != 3 || plan.Trackers[1].TrackerID != "BTN" ||
+		plan.Trackers[1].Status != api.StageStatusSkipped || plan.Trackers[1].Eligible {
+		t.Fatalf("BTN skip plan = %#v", plan.Trackers)
+	}
+}
+
 func TestWorkflowUploadPlanOmitsSkippedTrackersAndKeepsPreparationFailuresLocal(t *testing.T) {
 	t.Parallel()
 
-	service := &workflowRetainedUploadServiceFake{failures: map[api.TrackerID]trackers.TrackerFailure{
-		"GAMMA": {
-			Tracker: "GAMMA",
-			Code:    "prepare",
-			Message: "fixture preparation failed",
+	service := &workflowRetainedUploadServiceFake{
+		failures: map[api.TrackerID]trackers.TrackerFailure{
+			"GAMMA": {
+				Tracker: "GAMMA",
+				Code:    "prepare",
+				Message: "fixture preparation failed",
+			},
+			"DELTA": {
+				Tracker: "DELTA",
+				Code:    trackers.PreparationFailureCodeSkipped,
+				Message: "fixture preparation skipped",
+			},
 		},
-	}, torrentPaths: map[api.TrackerID]string{
-		"ALPHA": filepath.Join(t.TempDir(), "Example.Release.2026.ALPHA-GRP.torrent"),
-		"GAMMA": filepath.Join(t.TempDir(), "Example.Release.2026.GAMMA-GRP.torrent"),
-	}}
+		actions: map[api.TrackerID][]api.RequiredAction{
+			"ALPHA": {{Kind: api.RequiredActionAuthorizeRules, Prompt: "Confirm fixture upload."}},
+		},
+		torrentPaths: map[api.TrackerID]string{
+			"ALPHA": filepath.Join(t.TempDir(), "Example.Release.2026.ALPHA-GRP.torrent"),
+			"GAMMA": filepath.Join(t.TempDir(), "Example.Release.2026.GAMMA-GRP.torrent"),
+			"DELTA": filepath.Join(t.TempDir(), "Example.Release.2026.DELTA-GRP.torrent"),
+		},
+	}
 	for tracker, path := range service.torrentPaths {
 		if err := os.WriteFile(path, []byte("exact torrent "+tracker), 0o600); err != nil {
 			t.Fatalf("write %s torrent: %v", tracker, err)
@@ -312,6 +503,14 @@ func TestWorkflowUploadPlanOmitsSkippedTrackersAndKeepsPreparationFailuresLocal(
 				Readiness:         api.ReadinessStatusReady,
 				UploadReady:       true,
 			},
+			{
+				TrackerID:         "DELTA",
+				DisplayName:       "Delta",
+				UploadReleaseName: "Example.Release.2026.DELTA-GRP",
+				Artifacts:         api.TrackerArtifactRequirements{Description: true},
+				Readiness:         api.ReadinessStatusReady,
+				UploadReady:       true,
+			},
 		},
 	}
 	dupes := api.DupeAssessment{Results: []api.TrackerDupeAssessment{
@@ -327,6 +526,11 @@ func TestWorkflowUploadPlanOmitsSkippedTrackersAndKeepsPreparationFailuresLocal(
 		},
 		{
 			TrackerID: "GAMMA",
+			Decision:  api.DupeDecisionNoMatch,
+			Status:    api.StageStatusCompleted,
+		},
+		{
+			TrackerID: "DELTA",
 			Decision:  api.DupeDecisionNoMatch,
 			Status:    api.StageStatusCompleted,
 		},
@@ -398,7 +602,7 @@ func TestWorkflowUploadPlanOmitsSkippedTrackersAndKeepsPreparationFailuresLocal(
 		InputFingerprint: workflowTestFingerprint(t, "descriptions"),
 		Descriptions: []api.RenderedDescription{{
 			GroupKey:   "alpha",
-			TrackerIDs: []api.TrackerID{"ALPHA", "GAMMA"},
+			TrackerIDs: []api.TrackerID{"ALPHA", "GAMMA", "DELTA"},
 		}},
 		TrackerResults: []api.DescriptionTrackerResult{
 			{TrackerID: "ALPHA", Status: api.StageStatusCompleted},
@@ -426,14 +630,15 @@ func TestWorkflowUploadPlanOmitsSkippedTrackersAndKeepsPreparationFailuresLocal(
 		t.Fatalf("build workflow upload plan: %v", err)
 	}
 	defer func() { _ = execution.Release() }()
-	if plan.Status != api.StageStatusReady || len(plan.Trackers) != 2 {
+	if plan.Status != api.StageStatusReady || len(plan.Trackers) != 3 {
 		t.Fatalf("upload plan = %#v", plan)
 	}
 	if plan.ProjectionSet.ID != projections.ID || plan.Dupes.ID != dupes.ID || plan.Media == nil || plan.Media.ID != media.ID ||
 		plan.Descriptions == nil || plan.Descriptions.ID != descriptions.ID {
 		t.Fatalf("upload plan exact refs = %#v", plan)
 	}
-	if len(service.projections) != 2 || service.projections[0].TrackerID != "ALPHA" || service.projections[1].TrackerID != "GAMMA" {
+	if len(service.projections) != 3 || service.projections[0].TrackerID != "ALPHA" || service.projections[1].TrackerID != "GAMMA" ||
+		service.projections[2].TrackerID != "DELTA" {
 		t.Fatalf("retained upload projections = %#v", service.projections)
 	}
 	if service.subject.ImageHostOverrides.SkipUpload == nil || !*service.subject.ImageHostOverrides.SkipUpload {
@@ -456,6 +661,9 @@ func TestWorkflowUploadPlanOmitsSkippedTrackersAndKeepsPreparationFailuresLocal(
 	if !plan.Trackers[0].Eligible || plan.Trackers[0].Status != api.StageStatusReady {
 		t.Fatalf("ready tracker = %#v", plan.Trackers[0])
 	}
+	if len(plan.Trackers[0].RequiredActions) != 1 || plan.Trackers[0].RequiredActions[0].Kind != api.RequiredActionAuthorizeRules {
+		t.Fatalf("ready tracker actions = %#v", plan.Trackers[0].RequiredActions)
+	}
 	if plan.Trackers[0].PreparedOperationID == "" || plan.Trackers[0].TorrentArtifactID == "" ||
 		plan.Trackers[0].TorrentFingerprint == "" {
 		t.Fatalf("ready tracker exact private identities = %#v", plan.Trackers[0])
@@ -475,6 +683,10 @@ func TestWorkflowUploadPlanOmitsSkippedTrackersAndKeepsPreparationFailuresLocal(
 		plan.Trackers[1].ClientInjectionStatus != api.StageStatusSkipped || len(plan.Trackers[1].Warnings) != 1 ||
 		plan.Trackers[1].Warnings[0] != "fixture preparation failed" {
 		t.Fatalf("failed tracker = %#v", plan.Trackers[1])
+	}
+	if plan.Trackers[2].TrackerID != "DELTA" || plan.Trackers[2].Eligible || plan.Trackers[2].Status != api.StageStatusSkipped ||
+		len(plan.Trackers[2].Warnings) != 1 || plan.Trackers[2].Warnings[0] != "fixture preparation skipped" {
+		t.Fatalf("skipped tracker = %#v", plan.Trackers[2])
 	}
 
 	noSeedPlan, noSeedExecution, err := builder.Build(

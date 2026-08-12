@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
@@ -60,7 +61,6 @@ func submitUnit3DUpload(
 	}
 	trackerdata.SetUnit3DAPIHeaders(httpReq, apiKey)
 	httpReq.Header.Set("Content-Type", contentType)
-	httpReq.Header.Set("User-Agent", "upbrr")
 
 	logger.Debugf("trackers: %s sending upload request...", trackerName)
 	client := &http.Client{Timeout: 40 * time.Second}
@@ -137,7 +137,6 @@ func submitUnit3DUpload(
 		return summary, nil
 	}
 	trackerdata.SetUnit3DAPIHeaders(downloadRequest, apiKey)
-	downloadRequest.Header.Set("User-Agent", "upbrr")
 	downloadClient := unit3DRegisteredTorrentClient(client, baseURL)
 	if err := trackers.DownloadRegisteredTorrent(reqCtx, downloadClient, downloadRequest, artifactPath); err != nil {
 		trackers.LogRegisteredTorrentUnavailable(logger, trackerName)
@@ -353,13 +352,17 @@ func buildUploadDryRunUnit3D(
 	profiles ...SiteProfile,
 ) (api.TrackerDryRunEntry, error) {
 	profile := firstSiteProfile(profiles)
-	var nameFailure *trackers.PreparationFailure
-	req, nameFailure = trackers.PrepareInputWithReleaseNamePolicy(req, NewWithProfile(Profile{
-		Name: req.Tracker,
-		Site: profile,
-	}).ReleaseNamePolicy())
-	if nameFailure != nil {
-		return api.TrackerDryRunEntry{}, nameFailure
+	// Definition.Prepare already revalidates retained projections with the
+	// complete site policy. Direct helper callers still need a safe fallback.
+	if req.Projection == nil {
+		var nameFailure *trackers.PreparationFailure
+		req, nameFailure = trackers.PrepareInputWithReleaseNamePolicy(req, NewWithProfile(Profile{
+			Name: req.Tracker,
+			Site: profile,
+		}).ReleaseNamePolicy())
+		if nameFailure != nil {
+			return api.TrackerDryRunEntry{}, nameFailure
+		}
 	}
 	select {
 	case <-ctx.Done():
@@ -551,6 +554,10 @@ func buildUnit3DData(req trackers.PreparationInput, name, description, mediainfo
 		return nil, fmt.Errorf("trackers: Unit3D category: %w", err)
 	}
 	category := resolveUnit3DCategory(meta)
+	imdbID := providerid.IMDb(meta.Identity.IMDBID).Digits()
+	if imdbID == "" {
+		imdbID = "0"
+	}
 	data := map[string]string{
 		"name":             name,
 		"description":      description,
@@ -560,7 +567,7 @@ func buildUnit3DData(req trackers.PreparationInput, name, description, mediainfo
 		"type_id":          typeID,
 		"resolution_id":    resolveUnit3DResolutionIDForTracker(req.Tracker, meta, profile),
 		"tmdb":             formatOptionalInt(meta.Identity.TMDBID),
-		"imdb":             formatOptionalInt(meta.Identity.IMDBID),
+		"imdb":             imdbID,
 		"mal":              formatOptionalInt(meta.Identity.MALID),
 		"igdb":             "0",
 		"anonymous":        boolFlag(req.TrackerConfig.Anon),

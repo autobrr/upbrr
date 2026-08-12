@@ -96,7 +96,7 @@ func TestMapCLICompositeUploadRequestPreservesPerUploadOptions(t *testing.T) {
 		},
 		ExternalIDOverrides: api.ExternalIDOverrides{
 			TMDBID:   new(123),
-			IMDBID:   new(1234567),
+			IMDBID:   new(456),
 			MALID:    new(456),
 			TVDBID:   new(789),
 			TVmazeID: new(321),
@@ -119,6 +119,8 @@ func TestMapCLICompositeUploadRequestPreservesPerUploadOptions(t *testing.T) {
 			NoYear:           new(false),
 			NoAKA:            new(false),
 			NoTag:            new(false),
+			NoEpisodeTitle:   new(false),
+			NoDistributor:    new(false),
 			NoEdition:        new(false),
 			NoDub:            new(false),
 			NoDual:           new(false),
@@ -167,9 +169,13 @@ func TestMapCLICompositeUploadRequestPreservesPerUploadOptions(t *testing.T) {
 	}
 	if mapped.Preparation.Facts.ExternalIDs.IMDB == nil ||
 		mapped.Preparation.Facts.ExternalIDs.IMDB.Value == nil ||
-		*mapped.Preparation.Facts.ExternalIDs.IMDB.Value != "tt1234567" ||
+		*mapped.Preparation.Facts.ExternalIDs.IMDB.Value != "tt0000456" ||
 		mapped.Preparation.Facts.ReleaseName.Tag == nil ||
 		*mapped.Preparation.Facts.ReleaseName.Tag != "GRP" ||
+		mapped.Preparation.Facts.ReleaseName.NoEpisodeTitle == nil ||
+		*mapped.Preparation.Facts.ReleaseName.NoEpisodeTitle ||
+		mapped.Preparation.Facts.ReleaseName.NoDistributor == nil ||
+		*mapped.Preparation.Facts.ReleaseName.NoDistributor ||
 		mapped.Preparation.Facts.Metadata.Anime == nil ||
 		*mapped.Preparation.Facts.Metadata.Anime {
 		t.Fatalf("fact mapping = %#v", mapped.Preparation.Facts)
@@ -305,6 +311,64 @@ func TestCLICompleteUsesCompositeStartAndFeedback(t *testing.T) {
 	}
 }
 
+func TestCLICompositeTrackerFeedbackConfirmsOrEditsReleaseName(t *testing.T) {
+	const proposed = "Example.Release.2026-GRP"
+	action := api.RequiredAction{
+		Kind:             api.RequiredActionProvideTrackerInput,
+		TrackerID:        "AR",
+		Prompt:           "Confirm or edit the non-scene release name for AR.",
+		Options:          []api.RequiredActionOption{{Value: proposed, Label: proposed}},
+		AllowsFreeText:   true,
+		WorkflowRevision: 4,
+	}
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "confirm proposed",
+			input: "\n",
+			want:  proposed,
+		},
+		{
+			name:  "edit proposed",
+			input: "Example.Release.2026.EDIT-GRP\n",
+			want:  "Example.Release.2026.EDIT-GRP",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			session := &cliWorkflowSession{
+				intent: cliWorkflowIntent{interaction: api.InteractionModeUnattendedConfirm},
+				uploadRequest: api.Request{
+					Trackers: []string{"AR"},
+				},
+				current: releaseworkflow.CommandResult{
+					Projections: &api.TrackerReleaseProjectionSet{
+						Projections: []api.TrackerReleaseProjection{{TrackerID: "AR"}},
+					},
+				},
+			}
+			feedback, declined, err := session.collectCompositeTrackerFeedback(
+				bufio.NewReader(strings.NewReader(test.input)),
+				action,
+				api.ReleaseWorkflowUploadFeedback{},
+			)
+			if err != nil {
+				t.Fatalf("collect tracker feedback: %v", err)
+			}
+			if declined || feedback.Response.TrackerInput == nil {
+				t.Fatalf("tracker feedback = %#v, declined=%t", feedback, declined)
+			}
+			patch := feedback.Response.TrackerInput.Projection.UploadReleaseName
+			if !patch.Present || patch.Reset || patch.Value != test.want {
+				t.Fatalf("release-name patch = %#v, want %q", patch, test.want)
+			}
+		})
+	}
+}
+
 func TestCLICompositeDuplicateReviewPrintsMatchesAndSeparatesTrackers(t *testing.T) {
 	session := &cliWorkflowSession{
 		current: releaseworkflow.CommandResult{
@@ -353,10 +417,10 @@ func TestCLICompositeDuplicateReviewPrintsMatchesAndSeparatesTrackers(t *testing
 	})
 
 	for _, expected := range []string{
-		"Dupe check ALPHA: upload_name=Example.Release.2026.1080p-GRP matches=2 decision=accepted",
-		"Duplicate matches:\n  1. Example.Release.2026.1080p.WEB-DL-GRP\n     Link: https://alpha.example/torrents/123\n  2. Example.Release.2026.1080p.BluRay-GRP",
+		"Dupe check ALPHA: upload_name=Example.Release.2026.1080p-GRP candidates=2 decision=accepted search_complete=false pages=0 policy=none",
+		"Duplicate candidates:\n  1. Example.Release.2026.1080p.WEB-DL-GRP\n     Relation: none  Evidence: none/none\n     Link: https://alpha.example/torrents/123\n  2. Example.Release.2026.1080p.BluRay-GRP",
 		"Upload to ALPHA despite duplicate evidence? [y/N]: \nDupe check BETA:",
-		"Duplicate matches:\n  1. Example.Release.2026.1080p.Encode-GRP",
+		"Duplicate candidates:\n  1. Example.Release.2026.1080p.Encode-GRP",
 	} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("duplicate review output missing %q: %q", expected, output)

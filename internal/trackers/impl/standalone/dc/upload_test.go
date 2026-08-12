@@ -20,6 +20,14 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestResolveIMDbIDPadsShortID(t *testing.T) {
+	t.Parallel()
+
+	if got := resolveIMDbID(api.UploadSubject{Identity: api.ExternalIdentity{IMDBID: 456}}); got != "tt0000456" {
+		t.Fatalf("expected padded IMDb ID, got %q", got)
+	}
+}
+
 func TestSubmitPreparedUploadDownloadsRegisteredTorrentWithAPIKey(t *testing.T) {
 	t.Parallel()
 

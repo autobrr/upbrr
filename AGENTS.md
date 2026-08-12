@@ -1,22 +1,22 @@
 # Project Guidelines
 
-Always-loaded repo rules for AI coding agents. Keep this file short; nearest scoped `AGENTS.md` files carry area detail.
+Always-loaded AI-agent repo rules. Keep short; nearest scoped `AGENTS.md` owns area detail.
 
 ## Source Of Truth
 
-- Tool config wins: `Makefile`, `lefthook.yml`, `.golangci.yml`, `webui/package.json`, `.github/workflows/*`.
-- Contributor setup and command detail: `CONTRIBUTING.md`.
-- Guidance disagrees with tools? Follow tools and update stale prose.
+- Authority: `Makefile`, `lefthook.yml`, `.golangci.yml`, `webui/package.json`, and active `.github/workflows/*.yml` files. `.yml22` files are disabled templates.
+- Setup/commands: `CONTRIBUTING.md`.
+- Conflict: follow tools; update stale prose.
 
 ## Scoped References
 
-- Backend, Go, path/log policy, trackers/config/domain rules, runtime architecture, lint/check policy: `internal/AGENTS.md`.
+- Backend/Go, path/log policy, trackers/config/domain, runtime architecture, lint/checks: `internal/AGENTS.md`.
 - CLI flags/prompts/unattended behavior: `cmd/upbrr/AGENTS.md`.
 - Shared API/runtime contracts: `pkg/api/AGENTS.md`.
-- Frontend, React, CSS, TypeScript, browser checks: `webui/AGENTS.md`.
-- Playwright E2E harness, fake services, reports, manual workflow: `webui/e2e/AGENTS.md`.
+- Frontend/React/CSS/TypeScript/browser checks: `webui/AGENTS.md`.
+- Playwright E2E, fake services, reports, manual workflow: `webui/e2e/AGENTS.md`.
 
-Read the scoped file before editing that area. For simple grep/read-only questions, avoid loading extra instructions unless needed.
+Read scoped file before area edits. Simple grep/read-only work: load extra instructions only when needed.
 
 ## Quick Commands
 
@@ -25,52 +25,52 @@ make help                # supported targets
 make backend             # fast CLI build sanity
 make test-go             # full Go race tests
 make test-frontend       # frontend lint/dead-code/type/unit/format
-make lint                # architecture/path/literal policies + full Go lint
+make lint                # architecture/path/literal/workflow-contract checks + full Go lint
 make precommit           # strong local validation before commit; no Go tests
 make prepush             # Lefthook pre-push wrapper
 git diff --check         # whitespace/conflict markers
 ```
 
-Start narrow; expand checks for shared behavior, release, WebUI/API parity, or safety-sensitive changes. Do not substitute hook wrappers for the area-specific checks below.
+Start narrow; expand for shared behavior, release, WebUI/API parity, or safety-sensitive changes. Area checks below cannot be replaced by hook wrappers.
 
 ## Area Checks
 
-- Backend/Go: focused `go test -race -v -timeout 20m <packages>` for touched packages; `make test-go` when shared core behavior or broad regressions are plausible; `make lint`; `make logpolicy` for logging/internal changes; `make pathpolicy` for path-handling changes.
-- CLI: `go test -race -v -timeout 20m ./cmd/upbrr ./internal/core ./pkg/api`; add touched service/tracker packages; run `make backend` for command/build sanity.
-- WebUI/API: `go test -race -v -timeout 20m ./internal/webserver/... ./pkg/api`; add frontend `typecheck`/unit checks when request/response shapes or browser client code changes.
-- Frontend: `pnpm --dir webui run lint`, `lint:dead`, `typecheck`, `test:unit`, `format:check`; add `lint:style` for CSS and `build` for bundle/runtime issues.
-- E2E/browser: read `webui/e2e/AGENTS.md`; use embedded web checks, not Vite-only checks, for runtime-sensitive UI changes.
+- Backend/Go: touched packages: focused `go test -race -v -timeout 20m <packages>`; shared core/broad regression risk: `make test-go`; always `make lint`; logging/internal: `make logpolicy`; paths: `make pathpolicy`.
+- CLI: `go test -race -v -timeout 20m ./cmd/upbrr ./internal/core ./pkg/api`; add touched service/tracker packages; build sanity: `make backend`.
+- WebUI/API: `go test -race -v -timeout 20m ./internal/webserver/... ./pkg/api`; request/response or browser-client changes: add frontend `typecheck`/unit checks.
+- Frontend: `pnpm --dir webui run lint`, `lint:dead`, `typecheck`, `test:unit`, `format:check`; CSS: `lint:style`; bundle/runtime: `build`.
+- E2E/browser: read `webui/e2e/AGENTS.md`; runtime-sensitive UI requires embedded-web, not Vite-only, checks.
 
-Before commit, also run `git diff --check`, changed-package `make gofix-check-changed`, and the relevant hook commands if desired. `make fmt-go` applies the 160-column formatter and expands keyed composite literals with three or more elements. If Go files, generated dirs, or scratch paths can affect package discovery, run `make lint` before commit.
+Before commit: `git diff --check`, changed-package `make gofix-check-changed`, optionally relevant hooks. `make fmt-go` applies 160-column formatting and expands keyed composite literals containing at least three elements. If Go files, generated dirs, or scratch paths affect package discovery, run `make lint`.
 
 ## Repo Map
 
-- CLI `cmd/upbrr`; application workflow `internal/releaseworkflow`; workflow domain adapters `internal/core`; config `internal/config`; remaining domain services `internal/services`.
-- Canonical prepared generations/display `internal/preparedrelease`; external identity `internal/externalidentity`; source resources `internal/sourcelayout`; torrent-client discovery `internal/clientdiscovery`.
-- Tracker contracts/orchestration `internal/trackers`; implementation families `internal/trackers/impl/{unit3d,azfamily,standalone}`; standalone trackers `internal/trackers/impl/standalone/<tracker>`; Unit3D sites `internal/trackers/impl/unit3d/sites/<tracker>`.
-- Tracker semantic modules use `name.go`, `auth.go`, `taxonomy.go`, `validation.go`, `description.go`, `media.go`, and `questionnaire.go` where behavior exists. Tracker `upload.go` files own prepare/submit/preview orchestration and transport only.
-- Tracker auth/dupe/data coordinators `internal/trackers/{auth,dupe,data}`; encrypted cookie persistence `internal/cookies`; generic BBCode/description/image hosting `internal/{bbcode,description,imagehosting}`.
-- Paths `internal/pathing` with `layout` and checker-only `policy`; torrent clients `internal/torrentclient`; metainfo `internal/torrent/metainfo`; release policy `internal/releasepolicy`.
-- WebUI server/API host `internal/webserver`; API contracts `pkg/api`; frontend workflow state and operation ownership `webui/src/releaseSession`.
+- CLI `cmd/upbrr`; workflow `internal/releaseworkflow`; domain adapters `internal/core`; config `internal/config`; other domain services `internal/services`.
+- Prepared generations/display `internal/preparedrelease`; external identity `internal/externalidentity`; source resources `internal/sourcelayout`; client discovery `internal/clientdiscovery`.
+- Tracker contracts/orchestration `internal/trackers`; families `internal/trackers/impl/{unit3d,azfamily,standalone}`; standalone trackers `internal/trackers/impl/standalone/<tracker>`; Unit3D sites `internal/trackers/impl/unit3d/sites/<tracker>`.
+- Tracker semantic modules: `name.go`, `auth.go`, `taxonomy.go`, `validation.go`, `description.go`, `media.go`, `questionnaire.go` when applicable. Tracker `upload.go`: prepare/submit/preview orchestration and transport only.
+- Tracker auth/dupe/data coordinators `internal/trackers/{auth,dupe,data}`; encrypted cookies `internal/cookies`; generic BBCode/description/image hosting `internal/{bbcode,description,imagehosting}`.
+- Paths `internal/pathing`, with `layout` and checker-only `policy`; torrent clients `internal/torrentclient`; metainfo `internal/torrent/metainfo`; release policy `internal/releasepolicy`.
+- WebUI server/API host `internal/webserver`; API contracts `pkg/api`; frontend workflow state/operation ownership `webui/src/releaseSession`.
 
 ## Logging Levels
 
-- Keep log levels purposeful across CLI, WebUI, tests, and tooling.
-- Add logs for operator-visible progress and decision points, not just final errors. Good logs answer what operation started, what external/local check ran, what decision was made, and how many items were affected.
-- `INFO` should provide concise, relevant progress or outcome details for end users during uploads and other top-level workflows.
-- Warnings should cover failed or blocked outcomes that require attention.
-- `DEBUG` should include richer decision-making context useful for developer troubleshooting.
-- `TRACE` should capture near-complete operational flow for high-fidelity execution reporting.
-- Prefer stable key/value-style fields in message strings (`tracker=%s state=%s decision=%s count=%d`) so logs are searchable.
+- Purposeful levels across CLI, WebUI, tests, tooling.
+- Log operator-visible progress/decisions, not only final errors: operation start, external/local check, decision, affected count.
+- `INFO`: concise, relevant end-user progress/outcomes for uploads and top-level workflows.
+- Warnings: failed/blocked outcomes requiring attention.
+- `DEBUG`: richer developer troubleshooting and decision context.
+- `TRACE`: near-complete operational flow.
+- Prefer searchable, stable key/value message fields: `tracker=%s state=%s decision=%s count=%d`.
 
 ## Non-Negotiables
 
-- Keep changes narrow; fix root cause; do not revert user changes.
-- Preserve CLI and WebUI behavior where they share workflows.
-- Treat debug mode as end-to-end flow validation, not a non-mutating dry run. It suppresses actual tracker submission but intentionally may bypass policy gates such as banned-group blocking so screenshots, descriptions, tracker preparation, and later stages remain testable. Client injection still runs by default; CLI `-ns` and the WebUI Upload page's skip-client-injection option are the explicit opt-outs. Do not report these debug-mode behaviors as defects unless they diverge from these semantics.
-- Resolve versioned tracker upload/search names centrally before duplicate checking. Principal payload fields must consume `PreparationInput.ReviewedUploadName()`; custom naming algorithms live in `name.go`.
-- Preserve CLI `--unattended` / `--unattended_confirm` (`--uac`) safety: `--unattended` must not prompt; `--unattended_confirm` may ask required confirmation/manual inputs. No hidden prompts/confirms or ambiguous fallthrough.
-- Never log credentials/tokens/API keys/cookies/secret payloads; use repo redaction/logging policy.
-- Shareable examples, diagnostics, docs, and test fixtures must not use real release names, real movie/show titles, or real provider IDs. Use synthetic placeholders such as `Example Release 2026`, `Example.Release.2026.1080p-GRP`, and `tt1234567`. Prefer generic group tags such as `GRP` when the group is incidental; real group names are allowed when relevant to behavior. Production domain lists such as tracker banned groups may keep real values when those values are required behavior.
-- Do not commit generated/local output: `dist/`, `webui/dist/`, populated `internal/webserver/assets`, Playwright reports/results, repo-local `tmp/`.
-- `.github/workflows/*.yml` files are active; `.yml22` files are disabled templates.
+- Narrow changes; fix root cause; never revert user changes.
+- Preserve shared CLI/WebUI workflow behavior.
+- Debug mode validates end-to-end flow, not a non-mutating dry run. It suppresses tracker submission but may bypass policy gates such as banned-group blocking, keeping screenshots, descriptions, tracker preparation, and later stages testable. Client injection remains default; CLI `-ns` and WebUI Upload skip-client-injection are explicit opt-outs. Report defects only when behavior diverges from these semantics.
+- Centrally resolve versioned tracker upload/search names before duplicate checks. Principal payload fields use `PreparationInput.ReviewedUploadName()`; custom naming algorithms belong in `name.go`.
+- Preserve CLI `--unattended` / `--unattended_confirm` (`--uac`) safety: `--unattended` never prompts; `--unattended_confirm` may request required confirmation/manual input. No hidden prompts/confirms or ambiguous fallthrough.
+- Never log credentials, tokens, API keys, cookies, or secret payloads; follow repo redaction/logging policy.
+- Shareable examples, diagnostics, docs, fixtures: no real release names, movie/show titles, or provider IDs. Use synthetic `Example Release 2026`, `Example.Release.2026.1080p-GRP`, `tt1234567`. Prefer incidental group `GRP`; real groups only when behavior-relevant. Required production lists, including tracker banned groups, may retain real values.
+- Never commit generated/local output: `dist/`, `webui/dist/`, populated `internal/webserver/assets`, Playwright reports/results, repo-local `tmp/`.
+- `.github/workflows/*.yml` files active; `.yml22` files disabled templates.

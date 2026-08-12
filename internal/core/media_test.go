@@ -362,3 +362,198 @@ func sortedCallHosts(calls []imageHostCall) []string {
 	slices.Sort(hosts)
 	return hosts
 }
+
+// reusableImageRepository reports images a previous run already published, so
+// the reuse branch of uploadImagesToTarget can be exercised. Only the uploaded
+// image lookup carries behavior; the rest satisfies the interface.
+type reusableImageRepository struct {
+	mediaRepository
+	links []api.UploadedImageLink
+}
+
+func (r *reusableImageRepository) ListUploadedImagesByPath(context.Context, string) ([]api.UploadedImageLink, error) {
+	return slices.Clone(r.links), nil
+}
+
+// reusedImageLinks builds host records that uploadedImagesByPathForTarget
+// matches back to the given images.
+func reusedImageLinks(images []api.ScreenshotImage, target trackers.ImageUploadTarget) []api.UploadedImageLink {
+	links := make([]api.UploadedImageLink, 0, len(images))
+	for _, image := range images {
+		links = append(links, api.UploadedImageLink{
+			ImagePath:  image.Path,
+			Host:       target.Host,
+			UsageScope: target.UsageScope,
+			RawURL:     "https://images.example.invalid/reused",
+		})
+	}
+	return links
+}
+
+// partialImageHostingService publishes a fixed number of images and then fails
+// the batch, mirroring a host that drops individual uploads under load.
+type partialImageHostingService struct {
+	published int
+}
+
+func (*partialImageHostingService) ListCandidates(context.Context, api.ImageHostingSubject) ([]api.ScreenshotImage, error) {
+	return nil, nil
+}
+
+func (s *partialImageHostingService) Upload(
+	_ context.Context,
+	_ api.ImageHostingSubject,
+	host string,
+	usageScope string,
+	images []api.ScreenshotImage,
+) ([]api.UploadedImageLink, error) {
+	published := min(s.published, len(images))
+	links := make([]api.UploadedImageLink, 0, published)
+	for _, image := range images[:published] {
+		links = append(links, api.UploadedImageLink{
+			ImagePath:  image.Path,
+			Host:       host,
+			UsageScope: usageScope,
+			RawURL:     "https://images.example.invalid/" + host,
+		})
+	}
+	if published == len(images) {
+		return links, nil
+	}
+	return links, fmt.Errorf("image hosting: %d of %d uploads failed", len(images)-published, len(images))
+}
+
+func TestUploadImagesAcceptsPartialHostBatchAtConfiguredMinimum(t *testing.T) {
+	t.Parallel()
+
+	images := make([]api.ScreenshotImage, 0, 6)
+	for index := range 6 {
+		images = append(images, api.ScreenshotImage{Path: fmt.Sprintf("screen%d.png", index)})
+	}
+	target := trackers.ImageUploadTarget{
+		Host:       "pixhost",
+		UsageScope: "global",
+		Trackers:   []string{"ONE"},
+	}
+
+	for _, testCase := range []struct {
+		name        string
+		minimum     int
+		published   int
+		reused      int
+		wantLinks   int
+		wantFailure bool
+	}{
+		{
+			name:      "above minimum",
+			minimum:   3,
+			published: 5,
+			wantLinks: 5,
+		},
+		{
+			name:      "at minimum",
+			minimum:   3,
+			published: 3,
+			wantLinks: 3,
+		},
+		{
+			name:        "below minimum",
+			minimum:     3,
+			published:   2,
+			wantFailure: true,
+		},
+		{
+			name:        "allowance disabled",
+			minimum:     0,
+			published:   5,
+			wantFailure: true,
+		},
+		{
+			name:        "minimum above requested",
+			minimum:     8,
+			published:   5,
+			wantFailure: true,
+		},
+		// Reuse counts toward the floor: the host publishes fewer images than
+		// the floor on its own, so this only passes when the allowance is
+		// applied where reused links are visible.
+		{
+			name:      "reuse completes the minimum",
+			minimum:   3,
+			published: 2,
+			reused:    2,
+			wantLinks: 4,
+		},
+		{
+			name:        "reuse still short of the minimum",
+			minimum:     5,
+			published:   2,
+			reused:      2,
+			wantFailure: true,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			var repo mediaRepository
+			if testCase.reused > 0 {
+				repo = &reusableImageRepository{links: reusedImageLinks(images[:testCase.reused], target)}
+			}
+			module := &mediaModule{
+				cfg: config.Config{
+					ImageHosting:       config.ImageHostingConfig{Host1: "pixhost"},
+					ScreenshotHandling: config.ScreenshotHandlingConfig{MinSuccessfulUploads: testCase.minimum},
+				},
+				images:   &partialImageHostingService{published: testCase.published},
+				repo:     repo,
+				logger:   &recordingMediaLogger{},
+				registry: mediaImageHostRegistry(t),
+			}
+			var progressUpdates []api.ImageUploadProgressUpdate
+			ctx := api.WithImageUploadProgressReporter(context.Background(), func(update api.ImageUploadProgressUpdate) {
+				progressUpdates = append(progressUpdates, update)
+			})
+			result, err := module.uploadImagesToTargetsWithFallback(
+				ctx,
+				api.UploadSubject{SourcePath: "Example.Release.2026.mkv"},
+				"pixhost",
+				nil,
+				[]trackers.ImageUploadTarget{target},
+				images,
+			)
+			if err != nil {
+				t.Fatalf("upload images: %v", err)
+			}
+			if testCase.wantFailure {
+				if len(result.Failures) != 1 || !slices.Equal(result.Failures[0].Trackers, []string{"ONE"}) {
+					t.Fatalf("expected a tracker-scoped failure, got %#v", result.Failures)
+				}
+				if !slices.Contains(result.FailedHosts, "pixhost") {
+					t.Fatalf("expected pixhost to be marked failed, got %v", result.FailedHosts)
+				}
+				return
+			}
+			if len(result.Failures) != 0 {
+				t.Fatalf("partial batch above the minimum must not report a failure: %#v", result.Failures)
+			}
+			if len(result.FailedHosts) != 0 {
+				t.Fatalf("partial batch above the minimum must not mark the host failed: %v", result.FailedHosts)
+			}
+			if len(result.Links) != testCase.wantLinks {
+				t.Fatalf("published links = %d, want %d", len(result.Links), testCase.wantLinks)
+			}
+			if len(result.Attempts) != 1 || result.Attempts[0].Failure != nil {
+				t.Fatalf("attempt results = %#v", result.Attempts)
+			}
+			if len(progressUpdates) == 0 {
+				t.Fatal("accepted partial batch emitted no progress")
+			}
+			terminal := progressUpdates[len(progressUpdates)-1]
+			wantFailed := len(images) - testCase.reused - testCase.published
+			if terminal.Status != api.ImageUploadProgressFailed || terminal.Completed != len(images) ||
+				terminal.Succeeded != testCase.published || terminal.Reused != testCase.reused || terminal.Failed != wantFailed {
+				t.Fatalf("accepted partial terminal progress = %#v", terminal)
+			}
+		})
+	}
+}

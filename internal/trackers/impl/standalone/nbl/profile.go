@@ -20,11 +20,20 @@ func Profile() standalone.Profile {
 		UploadContentMode:   trackers.UploadContentModeNone,
 		AuthCapability:      authcontract.APIKeyCapability("NBL"),
 		PrepareUpload:       prepareUpload,
-		ReleaseNamePolicy:   trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/nbl/v1", resolveUploadName, resolveSearchName),
+		ReleaseNamePolicy:   trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/nbl/v2", resolveUploadName, resolveSearchName),
 		NewDuplicateAdapter: newDuplicateAdapter,
 		Rules:               rules(),
 		ValidationPolicy:    validationPolicy(),
 		BannedGroups:        bannedGroups(),
+		DupePolicy: &trackers.DupePolicy{
+			ID:         "nbl/duplicate/v2",
+			EvidenceID: "nbl-uploading-overview",
+			SearchScope: trackers.DupeSearchScope{
+				MaxPages: 100,
+			},
+			SlotDimensions: []trackers.DupeDimension{trackers.DupeDimensionHDR},
+			HDRSlotMode:    trackers.DupeHDRSlotModeGeneric,
+		},
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,
 			Requirements: []trackers.MetadataRequirement{{

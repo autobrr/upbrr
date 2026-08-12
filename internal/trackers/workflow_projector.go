@@ -371,7 +371,6 @@ func safeTrackerConfigFingerprint(trackerConfig config.TrackerConfig) (api.Workf
 		UseSpanishTitle    bool
 		UseItalianTitle    bool
 		SkipIfRehash       bool
-		PreferMTV          bool
 		AddWebSourceToDesc bool
 		UseMetadataName    bool
 		ImageCount         int
@@ -398,7 +397,6 @@ func safeTrackerConfigFingerprint(trackerConfig config.TrackerConfig) (api.Workf
 		UseSpanishTitle:    trackerConfig.UseSpanishTitle,
 		UseItalianTitle:    trackerConfig.UseItalianTitle,
 		SkipIfRehash:       trackerConfig.SkipIfRehash,
-		PreferMTV:          trackerConfig.PreferMTV,
 		AddWebSourceToDesc: trackerConfig.AddWebSourceToDesc,
 		UseMetadataName:    trackerConfig.UseMetadataName,
 		ImageCount:         trackerConfig.ImageCount,

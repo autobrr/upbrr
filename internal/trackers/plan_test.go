@@ -210,6 +210,23 @@ func TestPrepareAdapterBuildsUploadOperationOnce(t *testing.T) {
 	}
 }
 
+func TestPrepareAdapterPreservesPreparationFailure(t *testing.T) {
+	t.Parallel()
+
+	want := NewPreparationFailure("BTN", PreparationFailureCodeSkipped, "Tracker skipped.", nil)
+	_, got := PrepareAdapter(
+		context.Background(),
+		PreparationInput{Intent: PreparationIntentUpload, Tracker: "BTN"},
+		nil,
+		func(context.Context, PreparationInput) (PreparedOperation, error) {
+			return PreparedOperation{}, errors.Join(errors.New("wrapped"), want)
+		},
+	)
+	if got != want {
+		t.Fatalf("preparation failure = %#v, want original %#v", got, want)
+	}
+}
+
 func TestPrepareAdapterKeepsPreviewIntentsNonSubmittable(t *testing.T) {
 	t.Parallel()
 

@@ -25,6 +25,8 @@ const (
 	PreparationIntentDryRun PreparationIntent = "dry_run"
 	// PreparationIntentUpload prepares a single-use plan that may submit to the tracker.
 	PreparationIntentUpload PreparationIntent = "upload"
+	// PreparationFailureCodeSkipped marks an intentional tracker-local skip that does not count as an upload failure.
+	PreparationFailureCodeSkipped = "skipped"
 )
 
 var (
@@ -215,6 +217,10 @@ func PrepareAdapter(
 	case PreparationIntentUpload:
 		operation, err := prepareUpload(ctx, input)
 		if err != nil {
+			var preparationFailure *PreparationFailure
+			if errors.As(err, &preparationFailure) {
+				return TrackerPlan{}, preparationFailure
+			}
 			return TrackerPlan{}, NewPreparationFailure(input.Tracker, "upload", err.Error(), err)
 		}
 		if operation.submit == nil {
@@ -314,6 +320,7 @@ func cloneTrackerDryRunEntry(entry api.TrackerDryRunEntry) api.TrackerDryRunEntr
 	entry.Payload = maps.Clone(entry.Payload)
 	entry.Files = append([]api.TrackerDryRunFile(nil), entry.Files...)
 	entry.DebugSections = append([]api.TrackerDryRunDebugSection(nil), entry.DebugSections...)
+	entry.RequiredActions = append([]api.RequiredAction(nil), entry.RequiredActions...)
 	for idx := range entry.DebugSections {
 		entry.DebugSections[idx].Payload = maps.Clone(entry.DebugSections[idx].Payload)
 		entry.DebugSections[idx].Files = append([]api.TrackerDryRunFile(nil), entry.DebugSections[idx].Files...)

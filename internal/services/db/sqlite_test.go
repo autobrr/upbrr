@@ -364,6 +364,8 @@ func TestSQLiteRepositoryCRUD(t *testing.T) {
 		ManualYear:       intPtr(2025),
 		UseSeasonEpisode: boolPtr(true),
 		NoAKA:            boolPtr(true),
+		NoEpisodeTitle:   boolPtr(true),
+		NoDistributor:    boolPtr(true),
 		Region:           stringPtr("A"),
 	}); err != nil {
 		t.Fatalf("save release overrides: %v", err)
@@ -381,6 +383,10 @@ func TestSQLiteRepositoryCRUD(t *testing.T) {
 	}
 	if gotOverrides.NoAKA == nil || !*gotOverrides.NoAKA {
 		t.Fatalf("unexpected no aka override: %#v", gotOverrides)
+	}
+	if gotOverrides.NoEpisodeTitle == nil || !*gotOverrides.NoEpisodeTitle ||
+		gotOverrides.NoDistributor == nil || !*gotOverrides.NoDistributor {
+		t.Fatalf("unexpected omission overrides: %#v", gotOverrides)
 	}
 	if gotOverrides.UseSeasonEpisode == nil || !*gotOverrides.UseSeasonEpisode {
 		t.Fatalf("unexpected use season/episode override: %#v", gotOverrides)
@@ -1010,10 +1016,10 @@ func TestTrackerRuleFailuresCRUD(t *testing.T) {
 			Reason:     "missing MediaInfo Unique ID",
 		},
 		{
-			SourcePath: path,
-			Tracker:    tracker,
-			Rule:       "recommended_id",
-			Reason:     "missing recommended ID",
+			SourcePath:  path,
+			Tracker:     tracker,
+			Rule:        "recommended_id",
+			Reason:      "missing recommended ID",
 			Disposition: api.RuleDispositionAdvisory,
 			Authorized:  true,
 		},

@@ -462,6 +462,8 @@ func compositeUploadFactInstructions(
 			NoYear:           cloneBoolPointer(releaseName.NoYear),
 			NoAKA:            cloneBoolPointer(releaseName.NoAKA),
 			NoTag:            cloneBoolPointer(releaseName.NoTag),
+			NoEpisodeTitle:   cloneBoolPointer(releaseName.NoEpisodeTitle),
+			NoDistributor:    cloneBoolPointer(releaseName.NoDistributor),
 			NoEdition:        cloneBoolPointer(releaseName.NoEdition),
 			NoDub:            cloneBoolPointer(releaseName.NoDub),
 			NoDual:           cloneBoolPointer(releaseName.NoDual),
@@ -1875,7 +1877,7 @@ func (m *Module) applyCompositeUploadFeedback(
 			return candidate.ID == action.ID
 		})
 	}
-	if len(state.Workflow.RequiredActions) == 0 && state.Workflow.Status == api.WorkflowStatusBlocked {
+	if !hasPendingRequiredAction(state.Workflow.RequiredActions) && state.Workflow.Status == api.WorkflowStatusBlocked {
 		state.Workflow.Status = api.WorkflowStatusActive
 	}
 	state.Composite.ActiveOperationID = ""

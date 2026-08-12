@@ -75,6 +75,8 @@ func UploadSubjectForValidation(subject api.TrackerValidationSubject) api.Upload
 		TrackerConfigOverrides:      subject.TrackerConfigOverrides,
 		TrackerSiteOverrides:        subject.TrackerSiteOverrides,
 		ReleaseNameOverrides:        subject.ReleaseNameOverrides,
+		DescriptionOverride:         subject.DescriptionOverride,
+		DescriptionGroupsFinal:      subject.DescriptionGroupsFinal,
 	}
 }
 

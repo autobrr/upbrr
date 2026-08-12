@@ -911,7 +911,7 @@ func (r *SQLiteRepository) GetReleaseNameOverrides(ctx context.Context, path str
 		SELECT category, release_type, release_source, release_resolution,
 			tag, service, edition, season, episode, episode_title,
 			manual_year, manual_date, use_season_episode, no_season, no_year, no_aka, no_tag,
-			no_edition, no_dub, no_dual, dual_audio, region
+			no_episode_title, no_distributor, no_edition, no_dub, no_dual, dual_audio, region
 		FROM release_overrides
 		WHERE source_path = ?
 	`, path)
@@ -934,6 +934,8 @@ func (r *SQLiteRepository) GetReleaseNameOverrides(ctx context.Context, path str
 	var noYear sql.NullBool
 	var noAKA sql.NullBool
 	var noTag sql.NullBool
+	var noEpisodeTitle sql.NullBool
+	var noDistributor sql.NullBool
 	var noEdition sql.NullBool
 	var noDub sql.NullBool
 	var noDual sql.NullBool
@@ -958,6 +960,8 @@ func (r *SQLiteRepository) GetReleaseNameOverrides(ctx context.Context, path str
 		&noYear,
 		&noAKA,
 		&noTag,
+		&noEpisodeTitle,
+		&noDistributor,
 		&noEdition,
 		&noDub,
 		&noDual,
@@ -987,6 +991,8 @@ func (r *SQLiteRepository) GetReleaseNameOverrides(ctx context.Context, path str
 	overrides.NoYear = nullBoolPtr(noYear)
 	overrides.NoAKA = nullBoolPtr(noAKA)
 	overrides.NoTag = nullBoolPtr(noTag)
+	overrides.NoEpisodeTitle = nullBoolPtr(noEpisodeTitle)
+	overrides.NoDistributor = nullBoolPtr(noDistributor)
 	overrides.NoEdition = nullBoolPtr(noEdition)
 	overrides.NoDub = nullBoolPtr(noDub)
 	overrides.NoDual = nullBoolPtr(noDual)
@@ -1026,6 +1032,8 @@ func (r *SQLiteRepository) SaveReleaseNameOverrides(ctx context.Context, path st
 			no_year,
 			no_aka,
 			no_tag,
+			no_episode_title,
+			no_distributor,
 			no_edition,
 			no_dub,
 			no_dual,
@@ -1033,7 +1041,7 @@ func (r *SQLiteRepository) SaveReleaseNameOverrides(ctx context.Context, path st
 			region,
 			updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source_path) DO UPDATE SET
 			category = excluded.category,
 			release_type = excluded.release_type,
@@ -1052,6 +1060,8 @@ func (r *SQLiteRepository) SaveReleaseNameOverrides(ctx context.Context, path st
 			no_year = excluded.no_year,
 			no_aka = excluded.no_aka,
 			no_tag = excluded.no_tag,
+			no_episode_title = excluded.no_episode_title,
+			no_distributor = excluded.no_distributor,
 			no_edition = excluded.no_edition,
 			no_dub = excluded.no_dub,
 			no_dual = excluded.no_dual,
@@ -1077,6 +1087,8 @@ func (r *SQLiteRepository) SaveReleaseNameOverrides(ctx context.Context, path st
 		nullBool(overrides.NoYear),
 		nullBool(overrides.NoAKA),
 		nullBool(overrides.NoTag),
+		nullBool(overrides.NoEpisodeTitle),
+		nullBool(overrides.NoDistributor),
 		nullBool(overrides.NoEdition),
 		nullBool(overrides.NoDub),
 		nullBool(overrides.NoDual),
@@ -3288,7 +3300,8 @@ func (r *SQLiteRepository) ListUploadedImagesByPath(ctx context.Context, path st
 }
 
 // DeleteUploadedImage deletes every usage-scope record matching path,
-// imagePath, and host. It returns an error when no record matched.
+// imagePath, and host. Repeated deletion succeeds once no matching record
+// remains so retained workflow cleanup can safely replay after restart.
 func (r *SQLiteRepository) DeleteUploadedImage(ctx context.Context, path string, imagePath string, host string) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
@@ -3305,19 +3318,12 @@ func (r *SQLiteRepository) DeleteUploadedImage(ctx context.Context, path string,
 	if trimmedHost == "" {
 		return internalerrors.ErrInvalidInput
 	}
-	result, err := r.execWrite(ctx, "delete uploaded image", `
+	_, err := r.execWrite(ctx, "delete uploaded image", `
 		DELETE FROM uploaded_images
 		WHERE source_path = ? AND host = ? AND image_path = ?
 	`, trimmedPath, trimmedHost, trimmedImagePath)
 	if err != nil {
 		return fmt.Errorf("db delete uploaded image: %w", err)
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("db delete uploaded image: rows affected: %w", err)
-	}
-	if rows == 0 {
-		return fmt.Errorf("db delete uploaded image: no image found at path %q for host %q", trimmedImagePath, trimmedHost)
 	}
 	return nil
 }

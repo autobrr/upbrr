@@ -383,7 +383,7 @@ func normalizeState(state *State) {
 		return action.Kind == api.RequiredActionApproveUpload //nolint:staticcheck // Migrate retained v1 final-approval actions.
 	})
 	if state.Workflow.Status == api.WorkflowStatusBlocked &&
-		len(state.Workflow.RequiredActions) == 0 &&
+		!hasPendingRequiredAction(state.Workflow.RequiredActions) &&
 		len(state.Workflow.Failures) == 0 {
 		state.Workflow.Status = api.WorkflowStatusActive
 	}

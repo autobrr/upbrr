@@ -44,6 +44,22 @@ func TestValidateScreensZeroOrNegative(t *testing.T) {
 	}
 }
 
+func TestValidateFFmpegCompressionRange(t *testing.T) {
+	for _, compression := range []int{0, 9} {
+		cfg := withBase(func(c *Config) { c.ScreenshotHandling.FFmpegCompression = compression })
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("ffmpeg_compression=%d: expected valid, got %v", compression, err)
+		}
+	}
+	for _, compression := range []int{-1, 10} {
+		cfg := withBase(func(c *Config) { c.ScreenshotHandling.FFmpegCompression = compression })
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), "ffmpeg_compression") {
+			t.Errorf("ffmpeg_compression=%d: want range error, got %v", compression, err)
+		}
+	}
+}
+
 func TestValidateMaxConcurrentTrackersNegative(t *testing.T) {
 	t.Parallel()
 

@@ -1,0 +1,68 @@
+{
+  "GroupId": "700",
+  "Name": "Example Release",
+  "Year": "2026",
+  "Torrents": [
+    {
+      "Id": "701",
+      "Quality": "Standard Definition",
+      "Source": "DVD",
+      "Container": "VOB IFO",
+      "Codec": "MPEG-2",
+      "Resolution": "480i",
+      "Size": "4700000000",
+      "ReleaseName": "Example.Release.2026.NTSC.DVD9.SDR-GRP",
+      "ReleaseGroup": "GRP",
+      "RemasterTitle": null
+    },
+    {
+      "Id": 702,
+      "Quality": "High Definition",
+      "Source": "Blu-ray",
+      "Container": "MKV",
+      "Codec": "H.264",
+      "Resolution": "1080p",
+      "Size": "8700000000",
+      "ReleaseName": "Example.Release.2026.1080p.BluRay.x264.SDR-GRP",
+      "ReleaseGroup": "GRP",
+      "RemasterTitle": "4K Remaster",
+      "Trumpable": [4]
+    },
+    {
+      "Id": "703",
+      "Quality": "High Definition",
+      "Source": "WEB",
+      "Container": "MKV",
+      "Codec": "H.264",
+      "Resolution": "720p",
+      "Size": "5700000000",
+      "ReleaseName": "Example.Release.2026.720p.WEB-DL.H.264.SDR-GRP",
+      "ReleaseGroup": "GRP",
+      "RemasterTitle": null
+    },
+    {
+      "Id": "704",
+      "Quality": "Ultra High Definition",
+      "Source": "Blu-ray",
+      "Container": "MKV",
+      "Codec": "H.265",
+      "Resolution": "2160p",
+      "Size": "27000000000",
+      "ReleaseName": "Example.Release.2026.2160p.UHD.BluRay.Remux.HDR10-GRP",
+      "ReleaseGroup": "GRP",
+      "RemasterTitle": "Director's Cut / HDR10"
+    },
+    {
+      "Id": "705",
+      "Quality": "Ultra High Definition",
+      "Source": "WEB",
+      "Container": "MKV",
+      "Codec": "H.265",
+      "Resolution": "2160p",
+      "Size": "17000000000",
+      "ReleaseName": "Example.Release.2026.2160p.WEB-DL.H.265.DV5-GRP",
+      "ReleaseGroup": null,
+      "RemasterTitle": "Dolby Vision Profile 5"
+    }
+  ]
+}

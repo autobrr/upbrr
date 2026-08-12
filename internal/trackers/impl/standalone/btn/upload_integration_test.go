@@ -25,7 +25,7 @@ import (
 	"github.com/autobrr/go-torrent/bencode"
 	"github.com/autobrr/go-torrent/metainfo"
 
-	"github.com/autobrr/upbrr/internal/authmaterial"
+	"github.com/autobrr/upbrr/internal/authmaterial/authfixture"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
 	servicedb "github.com/autobrr/upbrr/internal/services/db"
@@ -774,6 +774,65 @@ func TestBTNExplicitDryRunRunsAutofillAndReportsBothPayloads(t *testing.T) {
 	}
 }
 
+func TestBTNDirectUploadBlocksMismatchedAutofillArtist(t *testing.T) {
+	t.Parallel()
+
+	dbPath := newBTNAuthDB(t)
+	if err := cookies.SaveTrackerCookieMap(context.Background(), dbPath, "BTN", map[string]string{"session": "imported"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+
+	var uploadCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/upload.php":
+			_, _ = io.WriteString(w, `<form action="/upload.php"><input name="autofill"></form>`)
+		case r.Method == http.MethodPost && r.URL.Path == "/upload.php" && strings.HasPrefix(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded"):
+			_, _ = io.WriteString(w, `
+				<input name="artist" value="Unexpected Show">
+				<input name="seriesid" value="999">
+				<input name="title" value="Episode One">
+				<input name="year" value="2026">
+				<select name="format"><option selected value="MKV">MKV</option></select>
+				<select name="bitrate"><option selected value="H.265">H.265</option></select>
+				<select name="media"><option selected value="WEB-DL">WEB-DL</option></select>
+				<select name="resolution"><option selected value="1080p">1080p</option></select>
+			`)
+		case r.Method == http.MethodPost && r.URL.Path == "/upload.php":
+			uploadCalls.Add(1)
+			http.Error(w, "unexpected upload", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	logger := &captureBTNLogger{}
+	req := newBTNDryRunTestRequest(t, dbPath)
+	req.Logger = logger
+	req.Meta.MediaInfoTextPath = writeBTNTestMediaInfo(t, filepath.Dir(req.Meta.SourcePath), "General\nFormat: Matroska")
+	req.Meta.Identity.TVDBID = 12345
+	req.Meta.ProviderMetadata.TVDB = &api.TVDBMetadata{
+		TVDBID:           12345,
+		NameEnglish:      "Expected Show",
+		EpisodeSeason:    1,
+		OriginalLanguage: "en",
+	}
+
+	_, err := uploadAt(context.Background(), req, server.URL)
+	var failure *trackers.PreparationFailure
+	if !errors.As(err, &failure) || failure.Code() != "confirmation_required" {
+		t.Fatalf("direct mismatch failure = %v", err)
+	}
+	if uploadCalls.Load() != 0 {
+		t.Fatalf("mismatched autofill submitted %d uploads", uploadCalls.Load())
+	}
+	if !logger.containsWarning("BTN autofill series mismatch decision=confirmation_required") ||
+		logger.containsWarning("Unexpected Show") || logger.containsWarning("Expected Show") {
+		t.Fatal("expected fixed mismatch warning without provider values")
+	}
+}
+
 func TestBTNUploadBlocksMissingCanonicalTVSeasonEpisode(t *testing.T) {
 	t.Parallel()
 
@@ -1092,6 +1151,27 @@ func TestBTNPrepareUploadDataUsesEpisodeIntForTVDBAutoTitle(t *testing.T) {
 	}
 	if gotAutoTitle != "S04E12" {
 		t.Fatalf("expected auto_title S04E12, got %q", gotAutoTitle)
+	}
+}
+
+func TestBTNAutofillArtistActionMatchesTVDBNamesExactly(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{
+		Identity: api.ExternalIdentity{TVDBID: 12345},
+		ProviderMetadata: api.SourceScopedMetadata{TVDB: &api.TVDBMetadata{
+			Name:        "Native Show",
+			NameEnglish: "English Show",
+			Aliases:     []string{"Alias Show"},
+		}},
+	}
+	for _, artist := range []string{"Native Show", "English Show", "Alias Show", " English Show "} {
+		if action := btnAutofillArtistAction(meta, artist); action != nil {
+			t.Fatalf("artist %q unexpectedly required confirmation: %#v", artist, action)
+		}
+	}
+	if action := btnAutofillArtistAction(meta, "english show"); action == nil {
+		t.Fatal("case-mismatched artist did not require confirmation")
 	}
 }
 
@@ -1727,7 +1807,7 @@ func TestBTNSeasonPackReservationFailsClosedOnMalformedAPISearch(t *testing.T) {
 			Method string `json:"method"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&rpc)
-		if rpc.Method != "getTorrentsSearch" {
+		if rpc.Method != "getTorrents" {
 			http.NotFound(w, r)
 			return
 		}
@@ -1778,12 +1858,12 @@ func TestBTNSeasonPackReservationUsesTranslatedTVDBSeason(t *testing.T) {
 			Method string `json:"method"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&rpc)
-		if rpc.Method != "getTorrentsSearch" {
+		if rpc.Method != "getTorrents" {
 			http.NotFound(w, r)
 			return
 		}
 		apiSearchCalls.Add(1)
-		_, _ = fmt.Fprintf(w, `{"result":{"torrents":{"10":{"ReleaseName":"Example.Show.S05E01.1080p-GRP","Time":%q},"9":{"ReleaseName":"Example.Show.S03E01.1080p-GRP","Time":%q}}}}`, now, old)
+		_, _ = fmt.Fprintf(w, `{"result":{"results":"3","torrents":{"10":{"ReleaseName":"Example.Show.S05E01.1080p-GRP","Time":%q},"9":{"ReleaseName":"Example.Show.S05E02.1080p-GRP","Time":%q},"8":{"ReleaseName":"Example.Show.S03E01.1080p-GRP","Time":%q}}}}`, old, now, old)
 	}))
 	defer server.Close()
 
@@ -1812,6 +1892,192 @@ func TestBTNSeasonPackReservationUsesTranslatedTVDBSeason(t *testing.T) {
 	if apiSearchCalls.Load() != 1 {
 		t.Fatalf("expected one API search call, got %d", apiSearchCalls.Load())
 	}
+}
+
+func TestBTNReservationBoundary(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	if !btnReservationActive(now, now.Add(-2*time.Hour+time.Nanosecond)) {
+		t.Fatal("expected reservation to remain active immediately before expiry")
+	}
+	if btnReservationActive(now, now.Add(-2*time.Hour)) {
+		t.Fatal("expected reservation to expire at two hours")
+	}
+	if btnReservationActive(now, now.Add(-2*time.Hour-time.Nanosecond)) {
+		t.Fatal("expected reservation to remain expired after two hours")
+	}
+}
+
+func TestBTNSeasonPackReservationRequiresCompleteTimestampEvidence(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		response   string
+		wantErr    string
+		wantStatus int
+	}{
+		{
+			name:     "missing time",
+			response: `{"result":{"results":"1","torrents":{"1":{"ReleaseName":"Example.Show.S01E01.1080p-GRP"}}}}`,
+			wantErr:  "valid timestamp",
+		},
+		{
+			name:     "malformed time",
+			response: `{"result":{"results":"1","torrents":{"1":{"ReleaseName":"Example.Show.S01E01.1080p-GRP","Time":"later"}}}}`,
+			wantErr:  "valid timestamp",
+		},
+		{
+			name:     "fractional time",
+			response: `{"result":{"results":"1","torrents":{"1":{"ReleaseName":"Example.Show.S01E01.1080p-GRP","Time":1.5}}}}`,
+			wantErr:  "valid timestamp",
+		},
+		{
+			name:     "no match",
+			response: `{"result":{"results":0,"torrents":false}}`,
+		},
+		{
+			name:       "request failure",
+			wantErr:    "evidence unavailable",
+			wantStatus: http.StatusServiceUnavailable,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if tt.wantStatus != 0 {
+					http.Error(w, "unavailable", tt.wantStatus)
+					return
+				}
+				_, _ = w.Write([]byte(tt.response))
+			}))
+			defer server.Close()
+
+			err := checkBTNSeasonPackReservation(context.Background(), uploadContext{
+				apiURL:   server.URL,
+				apiToken: strings.Repeat("x", 30),
+			}, btnReservationTestInput())
+			if tt.wantErr == "" && err != nil {
+				t.Fatalf("unexpected reservation error: %v", err)
+			}
+			if tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)) {
+				t.Fatalf("reservation error=%v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestBTNSeasonPackReservationPaginatesBeforeBlocking(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+	old := strconv.FormatInt(time.Now().Add(-3*time.Hour).Unix(), 10)
+	recent := strconv.FormatInt(time.Now().Add(-time.Hour).Unix(), 10)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var rpc struct {
+			Params []json.RawMessage `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&rpc); err != nil || len(rpc.Params) != 4 {
+			t.Errorf("decode reservation request: params=%d err=%v", len(rpc.Params), err)
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		var offset int
+		if err := json.Unmarshal(rpc.Params[3], &offset); err != nil {
+			t.Errorf("decode reservation offset: %v", err)
+			http.Error(w, "invalid offset", http.StatusBadRequest)
+			return
+		}
+		call := calls.Add(1)
+		if want := int(call - 1); offset != want {
+			t.Errorf("reservation offset=%d, want %d", offset, want)
+			http.Error(w, "unexpected offset", http.StatusBadRequest)
+			return
+		}
+		switch call {
+		case 1:
+			_, _ = fmt.Fprintf(w, `{"result":{"results":"2","torrents":{"1":{"ReleaseName":"Example.Show.S01E01.1080p-GRP","Time":%q}}}}`, old)
+		case 2:
+			_, _ = fmt.Fprintf(w, `{"result":{"results":"2","torrents":{"2":{"ReleaseName":"Example.Show.S01E02.1080p-GRP","Time":%q}}}}`, recent)
+		default:
+			http.Error(w, "unexpected request", http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+
+	err := checkBTNSeasonPackReservation(context.Background(), uploadContext{
+		apiURL:   server.URL,
+		apiToken: strings.Repeat("x", 30),
+	}, btnReservationTestInput())
+	if err == nil || !strings.Contains(err.Error(), "2-hour reservation period") {
+		t.Fatalf("expected complete multi-page evidence to block, got %v", err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("expected two reservation pages, got %d", calls.Load())
+	}
+}
+
+func TestBTNSeasonPackReservationRejectsPartialSearch(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+	old := strconv.FormatInt(time.Now().Add(-3*time.Hour).Unix(), 10)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			_, _ = fmt.Fprintf(w, `{"result":{"results":"2","torrents":{"1":{"ReleaseName":"Example.Show.S01E01.1080p-GRP","Time":%q}}}}`, old)
+			return
+		}
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	err := checkBTNSeasonPackReservation(context.Background(), uploadContext{
+		apiURL:   server.URL,
+		apiToken: strings.Repeat("x", 30),
+	}, btnReservationTestInput())
+	if err == nil || !strings.Contains(err.Error(), "evidence unavailable") {
+		t.Fatalf("expected partial reservation evidence to be unavailable, got %v", err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("expected two reservation requests, got %d", calls.Load())
+	}
+}
+
+func TestBTNSeasonPackReservationRejectsDuplicateIDs(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+	old := strconv.FormatInt(time.Now().Add(-3*time.Hour).Unix(), 10)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		_, _ = fmt.Fprintf(w, `{"result":{"results":"2","torrents":{"1":{"ReleaseName":"Example.Show.S01E01.1080p-GRP","Time":%q}}}}`, old)
+	}))
+	defer server.Close()
+
+	err := checkBTNSeasonPackReservation(context.Background(), uploadContext{
+		apiURL:   server.URL,
+		apiToken: strings.Repeat("x", 30),
+	}, btnReservationTestInput())
+	if err == nil || !strings.Contains(err.Error(), "duplicate torrent id") {
+		t.Fatalf("expected duplicate reservation evidence to fail, got %v", err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("expected duplicate evidence on second request, got %d requests", calls.Load())
+	}
+}
+
+func btnReservationTestInput() trackers.PreparationInput {
+	return trackers.PreparationInput{Meta: api.UploadSubject{
+		TVPack:    true,
+		SeasonInt: 1,
+		Tag:       "NTb",
+		Identity: api.ExternalIdentity{
+			TVDBID:   123456,
+			Category: "TV",
+		},
+	}}
 }
 
 func TestBTNUploadFollowsIntermediateDetailPage(t *testing.T) {
@@ -2082,9 +2348,7 @@ func newBTNAuthDB(t *testing.T) string {
 
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
-	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "long-enough-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	authfixture.Write(t, dbPath)
 	repo, err := servicedb.OpenWithLoggerContext(ctx, dbPath, api.NopLogger{})
 	if err != nil {
 		t.Fatalf("OpenWithLoggerContext: %v", err)

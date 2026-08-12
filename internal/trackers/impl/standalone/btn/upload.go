@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
@@ -54,6 +55,16 @@ func uploadAt(ctx context.Context, req trackers.PreparationInput, baseURL string
 	})
 	if failure != nil {
 		return api.UploadSummary{}, failure
+	}
+	preview := plan.DryRun()
+	if len(preview.RequiredActions) > 0 {
+		_ = plan.Release()
+		return api.UploadSummary{}, trackers.NewPreparationFailure(
+			"BTN",
+			"confirmation_required",
+			preview.RequiredActions[0].Prompt,
+			nil,
+		)
 	}
 	summary, err := plan.Submit(ctx)
 	if err != nil {
@@ -106,6 +117,23 @@ func prepareUploadAt(ctx context.Context, req trackers.PreparationInput, baseURL
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
+	autofillAction := btnAutofillArtistAction(req.Meta, data["artist"])
+	if autofillAction != nil {
+		if req.Meta.Options.InteractionMode == api.InteractionModeUnattended {
+			if req.Logger != nil {
+				req.Logger.Warnf("trackers: BTN autofill series mismatch decision=skip")
+			}
+			return trackers.PreparedOperation{}, trackers.NewPreparationFailure(
+				"BTN",
+				trackers.PreparationFailureCodeSkipped,
+				autofillAction.Prompt+" Tracker skipped in unattended mode.",
+				nil,
+			)
+		}
+		if req.Logger != nil {
+			req.Logger.Warnf("trackers: BTN autofill series mismatch decision=confirmation_required")
+		}
+	}
 
 	files := resolveBTNUploadFiles(req.Meta, torrentPath)
 	body, contentType, err := commonhttp.BuildMultipartPayload(data, files)
@@ -129,6 +157,9 @@ func prepareUploadAt(ctx context.Context, req trackers.PreparationInput, baseURL
 		Payload:          data,
 		Files:            resolveBTNDryRunFiles(req.Meta, torrentPath),
 	})
+	if autofillAction != nil {
+		preview.RequiredActions = []api.RequiredAction{*autofillAction}
+	}
 	return trackers.NewPreparedOperation(preview, func(submitCtx context.Context) (api.UploadSummary, error) {
 		return submitPreparedUpload(submitCtx, req, uploadCtx, trackerTorrentPath, body, contentType)
 	}, nil), nil
@@ -291,6 +322,7 @@ func buildUploadDryRunAt(ctx context.Context, req trackers.PreparationInput, bas
 
 	autofillPayload, uploadType := buildBTNAutofillPayload(req.Meta, releaseName)
 	debugSections := make([]api.TrackerDryRunDebugSection, 0, 2)
+	var requiredActions []api.RequiredAction
 	if req.Intent == trackers.PreparationIntentDryRun {
 		debugSections = append(debugSections, api.TrackerDryRunDebugSection{
 			Title:    "BTN autofill request",
@@ -336,6 +368,14 @@ func buildUploadDryRunAt(ctx context.Context, req trackers.PreparationInput, bas
 		if err != nil {
 			return api.TrackerDryRunEntry{}, err
 		}
+		if action := btnAutofillArtistAction(req.Meta, fields["artist"]); action != nil {
+			if req.Meta.Options.InteractionMode == api.InteractionModeUnattended {
+				status = "skipped"
+				message += "; BTN autofill series mismatched TVDB metadata; skipped in unattended mode"
+			} else {
+				requiredActions = []api.RequiredAction{*action}
+			}
+		}
 		message += "; BTN autofill debug completed"
 		debugSections = append(debugSections, api.TrackerDryRunDebugSection{
 			Title:    "BTN final upload payload after autofill",
@@ -356,6 +396,7 @@ func buildUploadDryRunAt(ctx context.Context, req trackers.PreparationInput, bas
 		Payload:          payload,
 		Files:            resolveBTNDryRunFiles(req.Meta, torrentPath),
 		DebugSections:    debugSections,
+		RequiredActions:  requiredActions,
 	}, nil
 }
 
@@ -1300,78 +1341,137 @@ func checkBTNSeasonPackReservation(ctx context.Context, uploadCtx uploadContext,
 	if group == "" {
 		return nil
 	}
+	warnUnavailable := func(reason string) {
+		if req.Logger != nil {
+			req.Logger.Warnf("trackers: BTN reservation check decision=evidence_unavailable reason=%s", reason)
+		}
+	}
 
 	filter := map[string]any{
 		"tvdb":     strconv.Itoa(tvdbID),
 		"category": "Episode",
 		"group":    group,
 	}
-
-	// We only need the most recent episodes to check the 2-hour window
-	torrentsMap, err := btnAPISearchTorrents(ctx, uploadCtx.apiURL, uploadCtx.apiToken, filter, 50)
-	if err != nil {
-		return err
-	}
-
-	seasonPrefix := ""
 	season, _ := resolveBTNTVSeasonEpisode(req.Meta)
-	if season > 0 {
-		seasonPrefix = fmt.Sprintf("S%02dE", season)
+	if season <= 0 {
+		warnUnavailable("canonical_season_missing")
+		return errors.New("trackers: BTN reservation evidence unavailable: canonical season is missing")
 	}
+
+	torrents, err := btnAPISearchTorrents(ctx, uploadCtx.apiURL, uploadCtx.apiToken, filter, btnDupePageLimit)
+	if err != nil {
+		warnUnavailable("search_failed")
+		return fmt.Errorf("trackers: BTN reservation evidence unavailable: %w", err)
+	}
+
+	seasonPrefix := fmt.Sprintf("S%02dE", season)
 
 	var newestInternal time.Time
-	for _, t := range torrentsMap {
-		name, _ := t["ReleaseName"].(string)
-		if seasonPrefix != "" && !strings.Contains(strings.ToUpper(name), seasonPrefix) {
+	for _, torrent := range torrents {
+		if strings.TrimSpace(torrent.releaseName) == "" {
+			warnUnavailable("release_name_missing")
+			return errors.New("trackers: BTN reservation evidence unavailable: result omitted a release name")
+		}
+		if !strings.Contains(strings.ToUpper(torrent.releaseName), seasonPrefix) {
 			continue
 		}
-
-		tTime := parseBTNTimestamp(t["Time"])
-		if tTime.After(newestInternal) {
-			newestInternal = tTime
+		if !torrent.timePresent || !torrent.timeValid {
+			warnUnavailable("timestamp_invalid")
+			return errors.New("trackers: BTN reservation evidence unavailable: matching result omitted a valid timestamp")
+		}
+		if torrent.uploadedAt.After(newestInternal) {
+			newestInternal = torrent.uploadedAt
 		}
 	}
 
-	if !newestInternal.IsZero() && time.Since(newestInternal) < 2*time.Hour {
+	if btnReservationActive(time.Now(), newestInternal) {
+		if req.Logger != nil {
+			req.Logger.Warnf("trackers: BTN reservation check decision=blocked season=%d evidence_rows=%d", season, len(torrents))
+		}
 		return errors.New("trackers: BTN 2-hour reservation period for internal season packs has not expired")
+	}
+	if req.Logger != nil {
+		req.Logger.Debugf("trackers: BTN reservation check decision=allowed season=%d evidence_rows=%d", season, len(torrents))
 	}
 
 	return nil
 }
 
-func btnAPISearchTorrents(ctx context.Context, apiURL, apiToken string, filter map[string]any, limit int) (map[string]map[string]any, error) {
-	var response struct {
-		Result struct {
-			Torrents json.RawMessage `json:"torrents"`
-		} `json:"result"`
-	}
-	if err := callBTNAPI(ctx, apiURL, "ua-btn-upload-check", "getTorrentsSearch", []any{apiToken, filter, limit}, &response); err != nil {
-		return nil, err
-	}
-
-	if len(response.Result.Torrents) == 0 || string(response.Result.Torrents) == "false" || string(response.Result.Torrents) == "[]" {
-		return nil, nil
-	}
-
-	var torrentsMap map[string]map[string]any
-	if err := json.Unmarshal(response.Result.Torrents, &torrentsMap); err != nil {
-		return nil, fmt.Errorf("trackers: BTN API parse torrents search response: %s", redaction.RedactValue(err.Error(), nil))
-	}
-	return torrentsMap, nil
+func btnReservationActive(now time.Time, newest time.Time) bool {
+	return !newest.IsZero() && now.Sub(newest) < 2*time.Hour
 }
 
-func parseBTNTimestamp(val any) time.Time {
+func btnAPISearchTorrents(ctx context.Context, apiURL, apiToken string, filter map[string]any, limit int) (map[string]btnTorrent, error) {
+	torrents := make(map[string]btnTorrent)
+	offset := 0
+	reportedTotal := -1
+	for range 100 {
+		var response btnTorrentsResponse
+		if err := callBTNAPI(ctx, apiURL, "ua-btn-upload-check", "getTorrents", []any{apiToken, filter, limit, offset}, &response); err != nil {
+			return nil, err
+		}
+		if btnAPIErrorPresent(response.Error) {
+			return nil, errors.New("trackers: BTN API rejected reservation search")
+		}
+		if response.Result == nil {
+			return nil, errors.New("trackers: BTN API reservation search omitted its result")
+		}
+		pageTorrents, itemCount, malformed, err := decodeBTNDupeTorrents(response.Result.Torrents)
+		if err != nil {
+			return nil, fmt.Errorf("trackers: BTN API parse torrents search response: %s", redaction.RedactValue(err.Error(), nil))
+		}
+		total, totalKnown := btnResultCount(response.Result.Results)
+		if !totalKnown {
+			return nil, errors.New("trackers: BTN API reservation search omitted a valid results count")
+		}
+		if reportedTotal < 0 {
+			reportedTotal = total
+		} else if reportedTotal != total {
+			return nil, errors.New("trackers: BTN API reservation search returned inconsistent results counts")
+		}
+		if malformed {
+			return nil, errors.New("trackers: BTN API reservation search returned malformed torrent evidence")
+		}
+		for id, torrent := range pageTorrents {
+			id = strings.TrimSpace(id)
+			if id == "" {
+				return nil, errors.New("trackers: BTN API reservation search returned an empty torrent id")
+			}
+			if _, exists := torrents[id]; exists {
+				return nil, errors.New("trackers: BTN API reservation search returned a duplicate torrent id")
+			}
+			torrents[id] = torrent
+		}
+		switch {
+		case len(torrents) == reportedTotal:
+			return torrents, nil
+		case len(torrents) > reportedTotal:
+			return nil, errors.New("trackers: BTN API reservation search returned more torrents than reported")
+		case itemCount == 0:
+			return nil, errors.New("trackers: BTN API reservation search stopped before all reported results were returned")
+		}
+		offset += itemCount
+	}
+	return nil, errors.New("trackers: BTN API reservation search reached its page bound")
+}
+
+func parseBTNTimestamp(val any) (time.Time, bool) {
 	var epoch int64
 	switch v := val.(type) {
 	case string:
 		epoch, _ = strconv.ParseInt(v, 10, 64)
 	case float64:
+		if v < 1 || v > 1<<53-1 || v != math.Trunc(v) {
+			return time.Time{}, false
+		}
 		epoch = int64(v)
+	case json.Number:
+		epoch, _ = v.Int64()
 	}
 	if epoch > 0 {
-		return time.Unix(epoch, 0)
+		return time.Unix(epoch, 0), true
 	}
-	return time.Time{}
+	return time.Time{}, false
 }
 
 func resolveBTNSameOriginURL(baseURL string, currentURL string, rawURL string) (*url.URL, bool) {

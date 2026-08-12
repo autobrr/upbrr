@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -337,7 +338,9 @@ func TestAPIV1CompositeUploadCreateAndFeedbackContracts(t *testing.T) {
 		context.Background(),
 		http.MethodPost,
 		"/api/v1/uploads",
-		strings.NewReader(`{"source":{"path":"D:\\Example Release 2026"},"unattended":{"confirm":false},"execution":{"mode":"debug"}}`),
+		strings.NewReader(
+			`{"source":{"path":"D:\\Example Release 2026"},"unattended":{"confirm":false},"execution":{"mode":"debug"},"trackers":{"include":["EXAMPLE"]}}`,
+		),
 	)
 	create.Header.Set("Authorization", "Bearer "+apiV1TestToken)
 	create.Header.Set("Idempotency-Key", "upload-create-1")
@@ -383,6 +386,90 @@ func TestAPIV1CompositeUploadCreateAndFeedbackContracts(t *testing.T) {
 	}
 	if got := feedbackResponse.Header().Get("ETag"); got != `"8"` {
 		t.Fatalf("composite feedback ETag = %q", got)
+	}
+}
+
+func TestAPIV1CapabilitiesRequiresReadScopeAndReturnsSafeCatalog(t *testing.T) {
+	t.Parallel()
+
+	readStore, err := newAPITokenStore([]APITokenCredential{{
+		Token:   apiV1TestToken,
+		OwnerID: "qui",
+		Scopes:  []APITokenScope{APITokenScopeWorkflowRead, APITokenScopeWorkflowExecute},
+	}})
+	if err != nil {
+		t.Fatalf("new capability token store: %v", err)
+	}
+	backend := &Backend{cfg: config.Config{
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qui": {
+				Type:     "qui",
+				Password: "capability-secret-value",
+			},
+		},
+		ImageHosting: config.ImageHostingConfig{
+			Host1:    "imgbb",
+			ImgBBAPI: "capability-image-secret",
+		},
+	}}
+	server := &Server{
+		backend:        backend,
+		apiTokens:      readStore,
+		generalLimiter: newFixedWindowLimiter(100, time.Minute),
+	}
+	mux := http.NewServeMux()
+	server.registerV1Routes(mux)
+
+	request := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/capabilities", nil)
+	request.Header.Set("Authorization", "Bearer "+apiV1TestToken)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("capability status = %d", response.Code)
+	}
+	var capabilities api.ReleaseWorkflowCapabilities
+	if err := json.Unmarshal(response.Body.Bytes(), &capabilities); err != nil {
+		t.Fatalf("decode capabilities: %v", err)
+	}
+	if capabilities.OwnerID != "api:qui" || capabilities.APIVersion != api.ReleaseWorkflowAPIVersion ||
+		!capabilities.Features.CompositeUpload || !capabilities.Features.TypedFeedback ||
+		!capabilities.Features.StrictEligibleTrackerContinuation ||
+		len(capabilities.UploadOptionSchemaHash) != 64 || len(capabilities.Trackers) == 0 ||
+		len(capabilities.TorrentClients) != 1 || len(capabilities.ImageHosts) == 0 {
+		t.Fatalf(
+			"capability projection is incomplete: owner=%q api=%q trackers=%d clients=%d hosts=%d",
+			capabilities.OwnerID,
+			capabilities.APIVersion,
+			len(capabilities.Trackers),
+			len(capabilities.TorrentClients),
+			len(capabilities.ImageHosts),
+		)
+	}
+	if strings.Contains(response.Body.String(), "capability-secret-value") ||
+		strings.Contains(response.Body.String(), "capability-image-secret") {
+		t.Fatal("capability projection exposed a configured secret")
+	}
+
+	executeOnlyStore, err := newAPITokenStore([]APITokenCredential{{
+		Token:   apiV1TestToken,
+		OwnerID: "qui",
+		Scopes:  []APITokenScope{APITokenScopeWorkflowExecute},
+	}})
+	if err != nil {
+		t.Fatalf("new execute-only token store: %v", err)
+	}
+	server.apiTokens = executeOnlyStore
+	denied := httptest.NewRecorder()
+	mux.ServeHTTP(denied, request)
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("execute-only capability status = %d", denied.Code)
+	}
+
+	missing := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/capabilities", nil)
+	unauthorized := httptest.NewRecorder()
+	mux.ServeHTTP(unauthorized, missing)
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("missing-token capability status = %d", unauthorized.Code)
 	}
 }
 
@@ -584,6 +671,7 @@ func TestReleaseWorkflowOpenAPICoversRuntimeRoutes(t *testing.T) {
 		t.Fatalf("openapi = %q", document.OpenAPI)
 	}
 	want := map[string]string{
+		"/capabilities":                                                                "get",
 		"/continuations":                                                               "post",
 		"/workflows/{workflowId}":                                                      "get",
 		"/workflows/{workflowId}/trackers/invalidate":                                  "post",

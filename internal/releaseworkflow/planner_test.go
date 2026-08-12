@@ -118,6 +118,58 @@ func TestContinueCreationPersistsTrustedTrackerDecisionMode(t *testing.T) {
 	}
 }
 
+func TestContinuationNameReviewBlocksUploadButNotDuplicateChecking(t *testing.T) {
+	t.Parallel()
+
+	action := api.RequiredAction{
+		ID:        "action-name-review",
+		Kind:      api.RequiredActionProvideTrackerInput,
+		Status:    api.RequiredActionStatusPending,
+		TrackerID: "ALPHA",
+	}
+	current := CommandResult{
+		Workflow: api.ReleaseWorkflow{
+			ID:              "workflow-name-review",
+			Revision:        4,
+			RequiredActions: []api.RequiredAction{action},
+		},
+		Projections: &api.TrackerReleaseProjectionSet{
+			Projections: []api.TrackerReleaseProjection{{
+				TrackerID:   "ALPHA",
+				Readiness:   api.ReadinessStatusReady,
+				DupeReady:   true,
+				UploadReady: false,
+			}},
+		},
+	}
+	module := &Module{}
+	request := api.ContinueReleaseWorkflowRequest{
+		Goal: api.WorkflowGoalDuplicatesDecided,
+	}
+	_, handled, err := module.resolveContinuationAnswer(
+		context.Background(),
+		testOwnerID,
+		request,
+		current,
+		TrackerDecisionModeWebUIControls,
+	)
+	if err != nil || handled {
+		t.Fatalf("duplicate continuation blocked by name review: handled=%t err=%v", handled, err)
+	}
+
+	request.Goal = api.WorkflowGoalMediaReady
+	blocked, handled, err := module.resolveContinuationAnswer(
+		context.Background(),
+		testOwnerID,
+		request,
+		current,
+		TrackerDecisionModeWebUIControls,
+	)
+	if err != nil || !handled || blocked.Workflow.ID != current.Workflow.ID {
+		t.Fatalf("downstream continuation was not blocked by name review: handled=%t err=%v", handled, err)
+	}
+}
+
 func TestContinuationPlannerInsertsExactImageRequirementBarrier(t *testing.T) {
 	t.Parallel()
 
@@ -939,6 +991,52 @@ func TestContinuationPlannerRecapturesRequestedMediaAfterArtifactsDeleted(t *tes
 	}
 }
 
+func TestContinuationPlannerCapturesEachNewExplicitScreenshotIndex(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.July, 23, 1, 2, 3, 0, time.UTC)
+	current := readyContinuationPlannerResult(t, now)
+	current.Media = &api.MediaArtifactSet{
+		Status: api.StageStatusBlocked,
+		Artifacts: []api.MediaArtifact{{
+			ID:       "screen-3",
+			Kind:     api.MediaArtifactScreenshot,
+			Index:    3,
+			Selected: true,
+		}},
+		RequiredActions: []api.RequiredAction{{
+			ID:     "media-required",
+			Kind:   api.RequiredActionProvideTrackerInput,
+			Status: api.RequiredActionStatusPending,
+		}},
+	}
+	request := api.ContinueReleaseWorkflowRequest{
+		IdempotencyKey: "continue-capture-explicit",
+		Goal:           api.WorkflowGoalMediaReady,
+		Intent: api.WorkflowIntent{
+			TrackerIDs:             []api.TrackerID{"ALPHA"},
+			ProjectionInstructions: map[api.TrackerID]api.TrackerProjectionInstructions{},
+			Media: &api.MediaCaptureInstructions{
+				Purpose: api.ScreenshotPurposeFinal,
+				Selections: []api.ScreenshotSelection{{
+					Index: 4,
+				}},
+			},
+		},
+	}
+
+	command, stage := planContinuationCommand(request, current, now)
+	if _, ok := command.(CaptureMediaCommand); !ok || stage != "capture-media" {
+		t.Fatalf("new explicit screenshot plan: stage=%q command=%#v", stage, command)
+	}
+
+	request.Intent.Media.Selections[0].Index = 3
+	command, stage = planContinuationCommand(request, current, now)
+	if command != nil || stage != "capture-media" {
+		t.Fatalf("retained explicit screenshot plan: stage=%q command=%#v", stage, command)
+	}
+}
+
 func TestContinuationMediaIntentCanResolveItsPendingGlobalAction(t *testing.T) {
 	t.Parallel()
 
@@ -964,5 +1062,24 @@ func TestContinuationMediaIntentCanResolveItsPendingGlobalAction(t *testing.T) {
 	unrelated.ID = "action-tracker"
 	if continuationIntentResolvesAction(intent, current, unrelated) {
 		t.Fatal("media intent resolved an unrelated global tracker action")
+	}
+}
+
+func TestStrictUnattendedSkipsTrackerReleaseNameConfirmation(t *testing.T) {
+	t.Parallel()
+
+	action := api.RequiredAction{
+		Kind:      api.RequiredActionProvideTrackerInput,
+		TrackerID: "AR",
+	}
+	if !continuationUnattendedSkipsTrackerAction(api.WorkflowIntent{
+		Interaction: api.InteractionModeUnattended,
+	}, action) {
+		t.Fatal("strict unattended mode did not skip tracker-scoped release-name confirmation")
+	}
+	if continuationUnattendedSkipsTrackerAction(api.WorkflowIntent{
+		Interaction: api.InteractionModeUnattendedConfirm,
+	}, action) {
+		t.Fatal("unattended-confirm mode skipped interactive release-name confirmation")
 	}
 }

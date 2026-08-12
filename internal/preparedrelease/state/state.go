@@ -46,6 +46,7 @@ func (s State) ReleaseAssessments() api.ReleaseAssessments {
 	return api.ReleaseAssessments{
 		MediaInfoUniqueID:       uniqueID,
 		MediaInfoEncodeSettings: encodeSettings,
+		VideoBitrate:            s.VideoBitrate,
 	}
 }
 
@@ -172,6 +173,7 @@ type State struct {
 	Type                           string
 	UHD                            string
 	HDR                            string
+	HDRFacts                       api.HDRFacts
 	Distributor                    string
 	Region                         string
 	VideoCodec                     string
@@ -183,6 +185,7 @@ type State struct {
 	WebDV                          bool
 	MediaInfoUniqueIDPresent       bool
 	MediaInfoEncodeSettingsPresent bool
+	VideoBitrate                   api.VideoBitrateAssessment
 	StreamOptimized                int
 	Service                        string
 	ServiceLongName                string
@@ -190,6 +193,7 @@ type State struct {
 	ReleaseName                    string
 	ReleaseNameNoTag               string
 	ReleaseNameClean               string
+	GeneratedReleaseNames          api.GeneratedReleaseNameVariants
 	ReleaseNameMissing             []string
 	BDInfo                         map[string]any
 }

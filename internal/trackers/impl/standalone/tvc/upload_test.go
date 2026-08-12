@@ -29,6 +29,7 @@ func TestPrepareUploadStateSkipsTVDBForMovie(t *testing.T) {
 			Identity: api.ExternalIdentity{
 				Category: "MOVIE",
 				TMDBID:   123,
+				IMDBID:   456,
 				TVDBID:   456,
 			},
 			ProviderMetadata: api.SourceScopedMetadata{
@@ -48,6 +49,9 @@ func TestPrepareUploadStateSkipsTVDBForMovie(t *testing.T) {
 	}
 	if _, ok := state.fields["tvdb"]; ok {
 		t.Fatalf("did not expect tvdb for movie payload")
+	}
+	if got := state.fields["imdb"]; got != "0000456" {
+		t.Fatalf("expected padded imdb=0000456, got %q", got)
 	}
 }
 
@@ -87,6 +91,9 @@ func TestPrepareUploadStateIncludesTVDBForTV(t *testing.T) {
 	}
 	if got := state.fields["tvdb"]; got != "456" {
 		t.Fatalf("expected tvdb=456, got %q", got)
+	}
+	if got := state.fields["imdb"]; got != "0" {
+		t.Fatalf("expected absent imdb=0, got %q", got)
 	}
 }
 

@@ -636,6 +636,10 @@ func (m *mediaModule) uploadImagesToTarget(
 			len(images),
 		)
 		uploaded, err := m.images.Upload(progressCtx, imageHostingSubject(meta), target.Host, target.UsageScope, images)
+		if err != nil && m.partialHostUploadIsUsable(target, len(images), len(uploaded), err) {
+			emitCoreImageUploadResult(progressCtx, progressTarget, len(uploaded), err)
+			return uploaded, nil
+		}
 		emitCoreImageUploadResult(progressCtx, progressTarget, len(uploaded), err)
 		return wrapCoreResult(uploaded, err)
 	}
@@ -703,11 +707,43 @@ func (m *mediaModule) uploadImagesToTarget(
 	)
 	uploaded, err := m.images.Upload(progressCtx, imageHostingSubject(meta), target.Host, target.UsageScope, missing)
 	results = append(results, uploaded...)
+	if err != nil && m.partialHostUploadIsUsable(target, len(images), len(results), err) {
+		emitCoreImageUploadResult(progressCtx, progressTarget, len(uploaded), err)
+		return results, nil
+	}
 	emitCoreImageUploadResult(progressCtx, progressTarget, len(uploaded), err)
 	if err != nil {
 		return results, fmt.Errorf("core: %w", err)
 	}
 	return results, nil
+}
+
+// partialHostUploadIsUsable reports whether a partially failed host batch still
+// published enough images for the target's trackers to upload with. The
+// allowance is the configured min_successful_image_uploads floor, which is
+// disabled at zero so every failed image keeps failing the batch. Requested
+// counts below the floor cannot clear it, so those batches stay strict.
+func (m *mediaModule) partialHostUploadIsUsable(
+	target trackers.ImageUploadTarget,
+	requested int,
+	published int,
+	err error,
+) bool {
+	minimum := m.cfg.ScreenshotHandling.ResolvedMinSuccessfulUploads()
+	if minimum <= 0 || published < minimum || requested < minimum {
+		return false
+	}
+	m.logger.Warnf(
+		"core: accepting partial image host upload host=%s tracker=%s trackers=%v requested=%d published=%d minimum=%d decision=continue err=%s",
+		target.Host,
+		m.imageHostOwnerLogValue(target.Host),
+		target.Trackers,
+		requested,
+		published,
+		minimum,
+		logging.SanitizeMessage(uploadFailureMessage(err)),
+	)
+	return true
 }
 
 func emitCoreImageUploadResult(

@@ -18,6 +18,7 @@ import (
 	"golang.org/x/net/html"
 
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -408,5 +409,5 @@ func bestCandidateScore(candidates []api.BlurayReleaseCandidate) float64 {
 }
 
 func formatIMDbID(id int) string {
-	return fmt.Sprintf("tt%07d", id)
+	return providerid.IMDb(id).Prefixed()
 }

@@ -75,11 +75,13 @@ type TrackerDryRunEntry struct {
 	Files                   []TrackerDryRunFile
 	// DebugSections carries optional staged diagnostics for trackers whose dry-run
 	// preview needs to show more than one request or derived payload.
-	DebugSections  []TrackerDryRunDebugSection
-	Questionnaire  *TrackerQuestionnaire
-	ImageHost      ImageHostFeedback
-	ContentFailure *TrackerContentFailure
-	Diagnostics    TrackerDryRunDiagnostics
+	DebugSections []TrackerDryRunDebugSection
+	Questionnaire *TrackerQuestionnaire
+	// RequiredActions lists preparation results requiring confirmation before upload execution.
+	RequiredActions []RequiredAction
+	ImageHost       ImageHostFeedback
+	ContentFailure  *TrackerContentFailure
+	Diagnostics     TrackerDryRunDiagnostics
 }
 
 // TrackerDryRunDiagnostics describes live-upload findings without changing

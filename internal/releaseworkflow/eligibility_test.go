@@ -228,6 +228,23 @@ TrackerID: "BETA",
 	if err != nil || !slices.Equal(webTargets.TrackerIDs(), []api.TrackerID{"ALPHA"}) {
 		t.Fatalf("WebUI upload targets after image-host failure = %#v err=%v", webTargets, err)
 	}
+
+	// Losing every tracker to image hosting must name the cause here instead of
+	// handing an empty target set to upload-plan contract validation.
+	allFailed := media
+	allFailed.Failures = append(append([]api.WorkflowFailure(nil), media.Failures...), api.WorkflowFailure{
+		Failure:   api.OperationFailure{Operation: api.OperationKindImageHosting},
+		TrackerID: "ALPHA",
+	})
+	state.Media[media.ID] = allFailed
+	emptied, err := resolveDownstreamTrackerSet(&state, nil, downstreamStageUpload, now)
+	if !errors.Is(err, ErrInvalidTransition) || len(emptied.TrackerIDs()) != 0 {
+		t.Fatalf("upload targets with every tracker image-host blocked = %#v err=%v", emptied, err)
+	}
+	if !strings.Contains(err.Error(), "ALPHA, BETA") {
+		t.Fatalf("image-host exhaustion error must name the blocked trackers: %v", err)
+	}
+	state.Media[media.ID] = media
 	state.Workflow.Media = nil
 
 	state.TrackerDecisionMode = TrackerDecisionModePostDupeGate

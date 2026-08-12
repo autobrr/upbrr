@@ -28,7 +28,7 @@ func TestBuildUnit3DSearchParamsSkipsResolutionForOTW(t *testing.T) {
 	}
 }
 
-func TestBuildUnit3DSearchParamsKeepsResolutionForOtherTrackers(t *testing.T) {
+func TestBuildUnit3DSearchParamsAvoidsPolicyUnsafeNarrowing(t *testing.T) {
 	t.Parallel()
 
 	meta := api.DuplicateSubject{
@@ -36,11 +36,22 @@ func TestBuildUnit3DSearchParamsKeepsResolutionForOtherTrackers(t *testing.T) {
 		Type:        "WEBDL",
 		Release:     api.ReleaseInfo{Resolution: "1080p"},
 		ReleaseName: "Show.S01E02.1080p.WEB-DL.H264-GRP",
+		SeasonInt:   1,
+		EpisodeInt:  2,
 	}
 
 	params := buildDupeSearchParams(meta, "AITHER")
-	if got := params["resolutions[]"]; len(got) != 2 || got[0] != "3" || got[1] != "4" {
-		t.Fatalf("expected 1080p/1080i search filters, got %#v", got)
+	if _, ok := params["resolutions[]"]; ok {
+		t.Fatalf("did not expect resolution narrowing, got %#v", params["resolutions[]"])
+	}
+	if _, ok := params["types[]"]; ok {
+		t.Fatalf("did not expect type narrowing, got %#v", params["types[]"])
+	}
+	if got := params.Get("seasonNumber"); got != "1" {
+		t.Fatalf("expected season scope, got %q", got)
+	}
+	if got := params.Get("episodeNumber"); got != "" {
+		t.Fatalf("episode narrowing can hide season packs, got %q", got)
 	}
 }
 
@@ -61,11 +72,11 @@ func TestBuildUnit3DSearchParamsUsesEMUWTrackerMappings(t *testing.T) {
 	if got := params.Get("categories[]"); got != "1" {
 		t.Fatalf("expected EMUW movie category 1, got %q", got)
 	}
-	if got := params.Get("types[]"); got != "4" {
-		t.Fatalf("expected EMUW WEBDL type 4, got %q", got)
+	if _, ok := params["types[]"]; ok {
+		t.Fatalf("did not expect EMUW type narrowing, got %#v", params["types[]"])
 	}
-	if got := params.Get("resolutions[]"); got != "7" {
-		t.Fatalf("expected EMUW 540p resolution 7, got %q", got)
+	if _, ok := params["resolutions[]"]; ok {
+		t.Fatalf("did not expect EMUW resolution narrowing, got %#v", params["resolutions[]"])
 	}
 	if got := params.Get("perPage"); got != "100" {
 		t.Fatalf("expected perPage=100, got %q", got)
@@ -89,10 +100,13 @@ func TestBuildUnit3DSearchParamsUsesEMUWPaired1080Resolution(t *testing.T) {
 	if got := params.Get("categories[]"); got != "2" {
 		t.Fatalf("expected EMUW TV category 2, got %q", got)
 	}
-	if got := params.Get("types[]"); got != "7" {
-		t.Fatalf("expected EMUW SD type 7, got %q", got)
+	if _, ok := params["types[]"]; ok {
+		t.Fatalf("did not expect EMUW type narrowing, got %#v", params["types[]"])
 	}
-	if got := params["resolutions[]"]; len(got) != 2 || got[0] != "3" || got[1] != "4" {
-		t.Fatalf("expected EMUW 1080p/1080i filters, got %#v", got)
+	if _, ok := params["resolutions[]"]; ok {
+		t.Fatalf("did not expect EMUW resolution narrowing, got %#v", params["resolutions[]"])
+	}
+	if got := params.Get("seasonNumber"); got != "" {
+		t.Fatalf("expected no canonical season number without prepared coordinates, got %q", got)
 	}
 }

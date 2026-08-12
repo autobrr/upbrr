@@ -57,11 +57,17 @@ func (t rewriteHostTransport) RoundTrip(req *http.Request) (*http.Response, erro
 func TestLookupPTP(t *testing.T) {
 	t.Parallel()
 
+	requestErr := make(chan error, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/torrents.php":
 			switch {
 			case r.URL.Query().Get("torrentid") != "":
+				if r.URL.Query().Get("json") != "noredirect" {
+					requestErr <- fmt.Errorf("unexpected PTP JSON mode: %q", r.URL.Query().Get("json"))
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"ImdbId": "1122334",
 					"Torrents": []any{
@@ -99,6 +105,11 @@ func TestLookupPTP(t *testing.T) {
 	ptpResult, err := client.Lookup(context.Background(), "PTP", "777", api.UploadSubject{}, "release.mkv", false, true)
 	if err != nil {
 		t.Fatalf("ptp lookup failed: %v", err)
+	}
+	select {
+	case err := <-requestErr:
+		t.Fatal(err)
+	default:
 	}
 	if ptpResult.IMDBID != 1122334 || ptpResult.TrackerID != "777" || ptpResult.InfoHash != "abc123" {
 		t.Fatalf("unexpected ptp result: %+v", ptpResult)

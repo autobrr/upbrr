@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
 	"github.com/autobrr/upbrr/internal/languageutil"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
@@ -36,6 +38,62 @@ var durationTokenPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(millisecon
 var numericPattern = regexp.MustCompile(`\d+`)
 var releaseTokenSeparatorPattern = regexp.MustCompile(`[^A-Z0-9]+`)
 
+func videoBitrateAssessment(doc mediaInfoDoc) api.VideoBitrateAssessment {
+	generalTracks, videoTracks, audioTracks := splitMediaInfoTracks(doc)
+	directBitrateInvalid := false
+	for _, track := range videoTracks {
+		raw, ok := track["BitRate"]
+		if !ok {
+			continue
+		}
+		bitrate, parsed := parseMediaInfoBitrate(raw)
+		if parsed && bitrate > 0 {
+			return api.VideoBitrateAssessment{Status: api.VideoBitrateStatusPresent, BitsPerSecond: bitrate}
+		}
+		directBitrateInvalid = true
+	}
+	var overall int64
+	found := false
+	for _, track := range generalTracks {
+		if raw, ok := track["OverallBitRate"]; ok {
+			found = true
+			overall, _ = parseMediaInfoBitrate(raw)
+			break
+		}
+	}
+	if !found {
+		if directBitrateInvalid {
+			return api.VideoBitrateAssessment{Status: api.VideoBitrateStatusInvalid}
+		}
+		return api.VideoBitrateAssessment{Status: api.VideoBitrateStatusUnavailable}
+	}
+	if overall <= 0 {
+		return api.VideoBitrateAssessment{Status: api.VideoBitrateStatusInvalid}
+	}
+	var audio int64
+	audioBitrateFullyKnown := true
+	for _, track := range audioTracks {
+		raw, ok := track["BitRate"]
+		if !ok {
+			audioBitrateFullyKnown = false
+			continue
+		}
+		if bitrate, parsed := parseMediaInfoBitrate(raw); parsed && bitrate > 0 {
+			audio += bitrate
+		} else {
+			audioBitrateFullyKnown = false
+		}
+	}
+	if !audioBitrateFullyKnown {
+		return api.VideoBitrateAssessment{Status: api.VideoBitrateStatusUnavailable}
+	}
+	video := overall - audio
+	if video <= 0 {
+		return api.VideoBitrateAssessment{Status: api.VideoBitrateStatusInvalid}
+	}
+	return api.VideoBitrateAssessment{Status: api.VideoBitrateStatusPresent, BitsPerSecond: video}
+}
+
 // deriveMediaFacts enriches prepared evidence from MediaInfo, BDInfo, and filename
 // tokens, overrides, and tracker rules, then rebuilds the release name.
 func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.State) (preparationstate.State, error) {
@@ -51,15 +109,23 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	}
 
 	meta.MediaInfoUniqueID, meta.MediaInfoUniqueIDPresent = validateMediaInfoUniqueID(meta, miDoc)
+	meta.VideoBitrate = videoBitrateAssessment(miDoc)
 	if !meta.MediaInfoUniqueIDPresent && s.logger != nil {
 		s.logger.Warnf("metadata: mediainfo validation failed (missing unique id)")
 	}
 	meta.AudioLanguages, meta.SubtitleLanguages = extractMediaInfoLanguages(miDoc)
+
+	bdinfo := loadBDInfo(meta, s.cfg.MainSettings.DBPath)
+	bdAudioLanguages, bdSubtitleLanguages := extractBDInfoLanguages(bdinfo)
+	if len(meta.AudioLanguages) == 0 {
+		meta.AudioLanguages = bdAudioLanguages
+	}
+	if len(meta.SubtitleLanguages) == 0 {
+		meta.SubtitleLanguages = bdSubtitleLanguages
+	}
 	if s.logger != nil && (len(meta.AudioLanguages) > 0 || len(meta.SubtitleLanguages) > 0) {
 		s.logger.Debugf("metadata: media languages audio=%v subs=%v", meta.AudioLanguages, meta.SubtitleLanguages)
 	}
-
-	bdinfo := loadBDInfo(meta, s.cfg.MainSettings.DBPath)
 
 	meta.Container = containerFromMeta(meta)
 	if s.logger != nil {
@@ -121,7 +187,8 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	}
 
 	meta.UHD = uhdFromMeta(meta)
-	meta.HDR = hdrFromMedia(miDoc, bdinfo, meta)
+	meta.HDRFacts = hdrFactsFromMedia(miDoc, bdinfo, meta)
+	meta.HDR = hdrFactsDisplay(meta.HDRFacts)
 	if s.logger != nil {
 		s.logger.Debugf("metadata: media details uhd=%q hdr=%q", meta.UHD, meta.HDR)
 	}
@@ -205,8 +272,14 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	if err != nil {
 		return preparationstate.State{}, err
 	}
+	// Fold fact-producing name instructions into canonical prepared state
+	// exactly once, after all evidence resolution, so explicit values and
+	// clears win over derived evidence and the final name cannot diverge from
+	// the facts every downstream projection consumes.
+	applyReleaseNameValueOverrides(&meta)
 	// Scene detection can supply the service (from the NFO), which WEB release
-	// names embed, so rebuild once more to fold in scene-derived metadata.
+	// names embed, so rebuild once more to fold in scene-derived metadata and
+	// the effective instruction values.
 	RebuildReleaseName(&meta, s.logger)
 
 	return meta, nil
@@ -576,8 +649,10 @@ func isCommentaryOrCompatibilityAudioValue(value string) bool {
 }
 
 // RebuildReleaseName regenerates the prepared release-name fields from the
-// current metadata and release-name overrides. It is a no-op for nil input and
-// replaces all name variants and missing-field hints in place.
+// current metadata and the naming-only override controls. Fact-producing
+// instruction values are already part of the metadata by the final rebuild. It
+// is a no-op for nil input and replaces all name variants and missing-field
+// hints in place.
 func RebuildReleaseName(meta *preparationstate.State, logger api.Logger) {
 	if meta == nil {
 		return
@@ -589,6 +664,7 @@ func RebuildReleaseName(meta *preparationstate.State, logger api.Logger) {
 	meta.ReleaseNameNoTag = nameResult.NameNoTag
 	meta.ReleaseName = nameResult.Name
 	meta.ReleaseNameClean = nameResult.CleanName
+	meta.GeneratedReleaseNames = nameResult.GeneratedVariants
 	meta.ReleaseNameMissing = append([]string{}, nameResult.MissingFields...)
 	if logger != nil && nameResult.Name != "" {
 		logger.Tracef("metadata: release name resolved %q", nameResult.Name)
@@ -632,6 +708,9 @@ func resolveAudioBloatPolicyWithRegistry(
 	candidateTrackers []string,
 	registry *trackers.Registry,
 ) (map[string][]string, map[string][]string) {
+	if trackers.IsDiscType(meta.DiscType) {
+		return nil, nil
+	}
 	original := canonicalAudioLanguage(originalAudioLanguage(meta))
 	if original == "" || original == "unknown" {
 		return nil, nil
@@ -1238,100 +1317,161 @@ func uhdFromMeta(meta preparationstate.State) string {
 // transfer metadata is normalized to HDR only when BT.2020 primaries confirm
 // the HDR color space.
 func hdrFromMedia(doc mediaInfoDoc, bdinfo *discparse.BDInfo, meta preparationstate.State) string {
+	return hdrFactsDisplay(hdrFactsFromMedia(doc, bdinfo, meta))
+}
+
+func hdrFactsFromMedia(doc mediaInfoDoc, bdinfo *discparse.BDInfo, meta preparationstate.State) api.HDRFacts {
 	if bdinfo != nil && len(bdinfo.Video) > 0 {
-		hdr := ""
-		dv := ""
-		hdrMi := bdinfo.Video[0].HDRDV
-		switch {
-		case strings.Contains(hdrMi, "HDR10+"):
-			hdr = "HDR10+"
-		case hdrMi == "HDR10":
-			hdr = "HDR"
+		facts := api.HDRFacts{
+			Origin:       api.HDREvidenceBDInfo,
+			Status:       api.HDREvidenceComplete,
+			SourceFields: []string{"video.hdr_dv"},
 		}
-		if len(bdinfo.Video) > 1 && bdinfo.Video[1].HDRDV == "Dolby Vision" {
-			dv = "DV"
+		for _, video := range bdinfo.Video {
+			upper := strings.ToUpper(strings.TrimSpace(video.HDRDV))
+			if strings.Contains(upper, "DOLBY VISION") {
+				mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatDolbyVision)
+				if profile := mediafacts.DolbyVisionProfile(video.Profile + " " + video.HDRDV); profile != "" {
+					facts.DolbyVisionProfile = profile
+				}
+			}
+			if strings.Contains(upper, "HDR10+") {
+				mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHDR10Plus)
+			} else if strings.Contains(upper, "HDR10") {
+				mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHDR10)
+			}
+			if strings.Contains(upper, "HLG") {
+				mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHLG)
+			}
+			if strings.Contains(upper, "HDR VIVID") || strings.Contains(upper, "CUVA") {
+				mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHDRVivid)
+			}
+			if strings.Contains(upper, "PQ") {
+				mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatPQ10)
+			}
 		}
-		if mediaHDR := strings.TrimSpace(strings.Join([]string{dv, hdr}, " ")); mediaHDR != "" {
-			return mediaHDR
+		mediafacts.AddHDRFallbacks(&facts)
+		if len(facts.Formats) == 0 {
+			facts.Formats = []api.HDRFormat{api.HDRFormatSDR}
 		}
-		return filenameHDRFromMeta(meta)
+		return withHDRContradiction(facts, filenameHDRFacts(meta))
 	}
 
-	_, videoTracks, _ := splitMediaInfoTracks(doc)
-	if len(videoTracks) == 0 {
-		return filenameHDRFromMeta(meta)
+	facts := mediafacts.HDRFromMediaInfoDocument(doc)
+	if facts.Status == api.HDREvidenceMissing {
+		return filenameHDRFacts(meta)
 	}
-	track := videoTracks[0]
-	primaries := trackString(track, "colour_primaries", "colour_primaries_Original")
-	primariesUpper := strings.ToUpper(primaries)
-	hdr := ""
-	dv := ""
-	formatEvidence := strings.Join([]string{
-		trackString(track, "HDR_Format_Compatibility"),
-		trackString(track, "HDR_Format_String"),
-		trackString(track, "HDR_Format"),
-	}, " ")
-	upperFormat := strings.ToUpper(formatEvidence)
-	switch {
-	case strings.Contains(upperFormat, "HDR10+"):
-		hdr = "HDR10+"
-	case strings.Contains(upperFormat, "HDR10") || strings.Contains(upperFormat, "SMPTE ST 2094"):
-		hdr = "HDR"
-	}
-	if strings.Contains(upperFormat, "HLG") {
-		hdr = strings.TrimSpace(hdr + " HLG")
-	}
-	transfer := trackString(track, "transfer_characteristics", "transfer_characteristics_Original")
-	transferUpper := strings.ToUpper(transfer)
-	if (primariesUpper == "BT.2020" || primariesUpper == "REC.2020") && strings.TrimSpace(formatEvidence) == "" && strings.Contains(transferUpper, "PQ") {
-		hdr = "HDR"
-	}
-	if strings.Contains(transferUpper, "HLG") {
-		hdr = "HLG"
-	}
-	if hdr != "HLG" && strings.Contains(transferUpper, "BT.2020 (10-BIT)") {
-		hdr = "WCG"
-	}
-	if strings.Contains(trackString(track, "HDR_Format"), "Dolby Vision") || strings.Contains(trackString(track, "HDR_Format_String"), "Dolby Vision") {
-		dv = "DV"
-	}
-	if mediaHDR := strings.TrimSpace(strings.Join([]string{dv, hdr}, " ")); mediaHDR != "" {
-		return mediaHDR
-	}
-	return filenameHDRFromMeta(meta)
+	return withHDRContradiction(facts, filenameHDRFacts(meta))
 }
 
 // filenameHDRFromMeta returns normalized HDR tokens from SourcePath before
 // falling back to previously parsed release tokens.
 func filenameHDRFromMeta(meta preparationstate.State) string {
-	if sourceHDR := normalizeFilenameHDRTokens(ParseReleaseInfo(meta.SourcePath).HDR); sourceHDR != "" {
-		return sourceHDR
-	}
-	return normalizeFilenameHDRTokens(meta.Release.HDR)
+	return hdrFactsDisplay(filenameHDRFacts(meta))
 }
 
-// normalizeFilenameHDRTokens keeps recognized filename HDR tokens in release
-// name order and ignores ambiguous labels such as SDR.
-func normalizeFilenameHDRTokens(tokens []string) string {
-	dv := ""
-	hdr := ""
-	hlg := ""
+func filenameHDRFacts(meta preparationstate.State) api.HDRFacts {
+	tokens := ParseReleaseInfo(meta.SourcePath).HDR
+	origin := api.HDREvidenceContentFilename
+	sourceField := "source_path"
+	if len(tokens) == 0 {
+		tokens = meta.Release.HDR
+		origin = api.HDREvidenceReleaseName
+		sourceField = "release.hdr"
+	}
+	facts := api.HDRFacts{
+		Origin: origin,
+		Status: api.HDREvidencePartial,
+	}
 	for _, token := range tokens {
-		normalized := strings.ToUpper(strings.TrimSpace(token))
-		switch normalized {
+		switch strings.ToUpper(strings.TrimSpace(token)) {
 		case "DV", "DOVI", "DOLBY VISION":
-			dv = "DV"
+			mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatDolbyVision)
 		case "HDR10+", "HDR+", "HDR10PLUS":
-			hdr = "HDR10+"
+			mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHDR10Plus)
 		case "HDR", "HDR10":
-			if hdr == "" {
-				hdr = "HDR"
-			}
+			mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHDR10)
 		case "HLG":
-			hlg = "HLG"
+			mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHLG)
+		case "PQ10":
+			mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatPQ10)
+		case "HDR VIVID", "HDRVIVID":
+			mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHDRVivid)
+		case "SDR":
+			mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatSDR)
 		}
 	}
-	return strings.TrimSpace(strings.Join([]string{dv, hdr, hlg}, " "))
+	if len(facts.Formats) == 0 {
+		facts.Origin = api.HDREvidenceUnknown
+		facts.Status = api.HDREvidenceMissing
+		return facts
+	}
+	facts.SourceFields = []string{sourceField}
+	mediafacts.AddHDRFallbacks(&facts)
+	return facts
+}
+
+func hdrFactsDisplay(facts api.HDRFacts) string {
+	parts := make([]string, 0, len(facts.Formats))
+	if hasHDRFormat(facts.Formats, api.HDRFormatDolbyVision) {
+		parts = append(parts, "DV")
+	}
+	for _, format := range facts.Formats {
+		switch format {
+		case api.HDRFormatDolbyVision, api.HDRFormatSDR:
+		case api.HDRFormatHDR10:
+			parts = append(parts, "HDR")
+		case api.HDRFormatHDR10Plus:
+			parts = append(parts, "HDR10+")
+		case api.HDRFormatHLG:
+			parts = append(parts, "HLG")
+		case api.HDRFormatPQ10:
+			parts = append(parts, "PQ10")
+		case api.HDRFormatHDRVivid:
+			parts = append(parts, "HDR Vivid")
+		case api.HDRFormatWCG:
+			parts = append(parts, "WCG")
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func hasHDRFormat(formats []api.HDRFormat, want api.HDRFormat) bool {
+	return slices.Contains(formats, want)
+}
+
+func withHDRContradiction(authoritative api.HDRFacts, fallback api.HDRFacts) api.HDRFacts {
+	if fallback.Status == api.HDREvidenceMissing || !filenameHDRContradicts(authoritative, fallback) {
+		return authoritative
+	}
+	authoritative.Status = api.HDREvidenceContradictory
+	authoritative.Contradictions = append(authoritative.Contradictions, "release_name_hdr_differs")
+	return authoritative
+}
+
+func filenameHDRContradicts(authoritative api.HDRFacts, fallback api.HDRFacts) bool {
+	for _, asserted := range fallback.Formats {
+		switch asserted {
+		case api.HDRFormatHDR10:
+			if hasHDRFormat(authoritative.Formats, api.HDRFormatHDR10) ||
+				hasHDRFormat(authoritative.Formats, api.HDRFormatHDR10Plus) ||
+				hasHDRFormat(authoritative.FallbackFormats, api.HDRFormatHDR10) {
+				continue
+			}
+		case api.HDRFormatHDR10Plus:
+			if hasHDRFormat(authoritative.Formats, api.HDRFormatHDR10Plus) ||
+				hasHDRFormat(authoritative.FallbackFormats, api.HDRFormatHDR10Plus) {
+				continue
+			}
+		case api.HDRFormatSDR, api.HDRFormatDolbyVision, api.HDRFormatHLG, api.HDRFormatPQ10, api.HDRFormatHDRVivid,
+			api.HDRFormatWCG:
+			if hasHDRFormat(authoritative.Formats, asserted) {
+				continue
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func normalizeDistributor(input string) string {
@@ -1456,6 +1596,7 @@ func editionFromMeta(meta preparationstate.State, doc mediaInfoDoc) (string, str
 	if hasNoEditionOverride(meta.ReleaseNameOverrides) {
 		return "", ""
 	}
+	hybrid := containsExactHybrid(meta.Release.Other)
 	if !hasManualEditionOverride(meta.ReleaseNameOverrides) {
 		edition = strings.TrimSpace(resolveIMDbEditionFromMediaDuration(meta, doc))
 		isIMDbEdition = edition != ""
@@ -1471,7 +1612,7 @@ func editionFromMeta(meta preparationstate.State, doc mediaInfoDoc) (string, str
 		edition = strings.TrimSpace(strings.Join(meta.Release.Edition, " "))
 	}
 	repack := repackFromMeta(meta, edition)
-	if edition == "" {
+	if edition == "" && !hybrid {
 		return "", repack
 	}
 	if repackPattern.MatchString(edition) {
@@ -1481,9 +1622,20 @@ func editionFromMeta(meta preparationstate.State, doc mediaInfoDoc) (string, str
 		edition = strings.TrimSpace(repackPattern.ReplaceAllString(edition, ""))
 	}
 	if isIMDbEdition {
-		return cleanIMDbEditionText(edition), strings.ToUpper(repack)
+		edition = cleanIMDbEditionText(edition)
+	} else {
+		edition = cleanEditionText(edition)
 	}
-	return cleanEditionText(edition), strings.ToUpper(repack)
+	if hybrid && !containsExactHybrid(strings.Fields(edition)) {
+		edition = strings.TrimSpace(edition + " Hybrid")
+	}
+	return edition, strings.ToUpper(repack)
+}
+
+func containsExactHybrid(values []string) bool {
+	return slices.ContainsFunc(values, func(value string) bool {
+		return strings.EqualFold(strings.TrimSpace(value), "Hybrid")
+	})
 }
 
 // repackFromMeta scans source basenames and parsed release tokens so repack

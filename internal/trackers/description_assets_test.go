@@ -80,7 +80,7 @@ func descriptionAssetsTestRegistry(t *testing.T) *Registry {
 			OwnedHosts:           []string{"hdb"},
 			DisableWithoutRehost: true,
 		},
-		"MTV": {AllowedHosts: []string{"imgbox", "imgbb"}},
+		"BTN": {AllowedHosts: []string{"imgbox", "imgbb"}},
 		"OE":  {AllowedHosts: []string{"imgbox", "imgbb", "onlyimage", "ptscreens", "passtheimage"}},
 		"PTP": {AllowedHosts: []string{"pixhost", "imgbb", "onlyimage", "ptscreens", "passtheimage"}},
 	}
@@ -89,7 +89,7 @@ func descriptionAssetsTestRegistry(t *testing.T) *Registry {
 		{name: "HHD", family: FamilyUnit3D},
 		{name: "ANT", family: FamilyStandalone},
 		{name: "HDB", family: FamilyStandalone},
-		{name: "MTV", family: FamilyStandalone},
+		{name: "BTN", family: FamilyStandalone},
 		{name: "NBL", family: FamilyStandalone},
 		{name: "OE", family: FamilyUnit3D},
 		{name: "PTP", family: FamilyStandalone},
@@ -1711,6 +1711,56 @@ func TestResolveDescriptionAssetsAttachesExactUploadedVariants(t *testing.T) {
 	}
 	if repo.uploadsCalls != 0 {
 		t.Fatalf("exact uploads unexpectedly queried broad repository state %d time(s)", repo.uploadsCalls)
+	}
+}
+
+func TestResolveDescriptionAssetsUsesOnlyExactUploadedVariants(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	sourcePath := filepath.Join(tempDir, "Example.Release.2026.1080p-GRP.mkv")
+	screenshots := make([]api.ScreenshotImage, 3)
+	for index := range screenshots {
+		screenshots[index] = api.ScreenshotImage{
+			Path:    filepath.Join(tempDir, fmt.Sprintf("screen-%d.png", index)),
+			Purpose: api.ScreenshotPurposeFinal,
+		}
+	}
+	upload := api.UploadedImageLink{
+		SourcePath: sourcePath,
+		ImagePath:  screenshots[0].Path,
+		Host:       "pixhost",
+		UsageScope: globalImageUsageScope,
+		ImgURL:     "https://img.example.invalid/thumb.png",
+		RawURL:     "https://img.example.invalid/screen.png",
+		WebURL:     "https://img.example.invalid/view",
+	}
+	meta := api.UploadSubject{
+		SourcePath: sourcePath,
+		ExactMedia: &api.ExactMediaAssets{
+			Screenshots:       screenshots,
+			ScreenshotUploads: []api.UploadedImageLink{upload},
+		},
+	}
+	repo := &stubRepo{uploads: []api.UploadedImageLink{{
+		SourcePath: sourcePath,
+		ImagePath:  screenshots[1].Path,
+		Host:       "imgbb",
+		RawURL:     "https://ambient.example.invalid/screen.png",
+	}}}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "HHD", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
+	if err != nil {
+		t.Fatalf("resolve partial exact assets: %v", err)
+	}
+	if len(assets.Slots) != len(screenshots) || len(renderableSlots(assets.Slots)) != 1 {
+		t.Fatalf("exact slots = %#v", assets.Slots)
+	}
+	if len(assets.Screenshots) != 1 || assets.Screenshots[0].Path != upload.ImagePath || assets.Screenshots[0].RawURL != upload.RawURL {
+		t.Fatalf("exact screenshots = %#v", assets.Screenshots)
+	}
+	if repo.uploadsCalls != 0 {
+		t.Fatalf("partial exact assets queried ambient uploads %d time(s)", repo.uploadsCalls)
 	}
 }
 

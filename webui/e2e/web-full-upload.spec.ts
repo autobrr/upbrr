@@ -168,7 +168,12 @@ test("embedded web runs image upload, direct tracker upload, and history", async
     await expect(page.getByText("HDS").first()).toBeVisible();
     await expect(page.getByRole("button", { name: "Run dupe check" })).toBeEnabled();
 
+    const mediaPlanResponse = page.waitForResponse((response) =>
+      response.url().includes("/api/app/GetReleaseWorkflowMediaPlan"),
+    );
     await page.getByRole("button", { name: "Screenshots" }).click();
+    const planned = await mediaPlanResponse;
+    expect(planned.ok()).toBe(true);
     const captureResponse = page.waitForResponse((response) =>
       response.url().includes("/api/app/ContinueReleaseWorkflow"),
     );
@@ -255,7 +260,7 @@ test("embedded web reports an optional tracker dry run after a duplicate overrid
     await expect(page.getByText("Example.Release.2026.1080p-GRP")).toBeVisible();
     await expect(page.getByRole("button", { name: "Screenshots" })).toBeEnabled();
     await page.getByLabel("Ignore dupes for HDS").click();
-    await expect(page.getByText("1 match(es) · duplicate override enabled")).toBeVisible();
+    await expect(page.getByText("1 candidate(s) · policy risk acknowledged")).toBeVisible();
 
     await page.getByRole("button", { name: "Screenshots" }).click();
     await page.getByRole("button", { name: "Generate screenshots" }).click();
@@ -269,18 +274,62 @@ test("embedded web reports an optional tracker dry run after a duplicate overrid
     const dryRunButton = page.getByRole("button", { name: "Run dry run" });
     expect(workspace.fake.counters.clientInjections).toBe(0);
     await dryRunButton.click();
-    await expect(page.getByRole("heading", { name: "Dry-run results" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Tracker uploads" })).toBeVisible();
     await expect(page.getByText("HDS").first()).toBeVisible();
     await page.getByRole("button", { name: "Expand HDS" }).click();
-    await expect(page.getByText(/Client injection: completed/)).toBeVisible();
-    await expect.poll(() => workspace.fake.counters.clientInjections).toBe(1);
+    await expect(
+      page.getByText(/Client injection: skipped · Client injection deferred/),
+    ).toBeVisible();
+    expect(workspace.fake.counters.clientInjections).toBe(0);
     expect(workspace.fake.counters.trackerUploads).toBe(0);
 
     await page.getByLabel("Skip client injection").check();
     await dryRunButton.click();
-    await expect(page.getByText(/Client injection: skipped/)).toBeVisible();
-    expect(workspace.fake.counters.clientInjections).toBe(1);
+    await expect(
+      page.getByText(/Client injection: skipped · Client injection disabled/),
+    ).toBeVisible();
+    expect(workspace.fake.counters.clientInjections).toBe(0);
     expect(workspace.fake.counters.trackerUploads).toBe(0);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("embedded web renders mixed, incomplete, and manual duplicate evidence", async ({ page }) => {
+  const workspace = await createE2EWorkspace();
+  workspace.env.UPBRR_E2E_DUPE_SCENARIOS = "HDS=mixed_incomplete,PTP=manual";
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "Dupe Check" }).click();
+    await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
+    for (const tracker of ["HDS", "PTP"]) {
+      await page.getByRole("checkbox", { name: tracker }).check();
+    }
+    await runDuplicateCheck(page);
+
+    await expect(page.getByText("Example.Release.2026.1080p.SDR-GRP")).toHaveCount(0);
+    await expect(page.getByText("Example.Release.2026.1080p.HDR10-GRP")).toBeVisible();
+    await expect(page.getByText("Example.Release.2026.1080p.Unknown-GRP")).toBeVisible();
+    await expect(page.getByText("Example.Show.S01E01.1080p.WEB-DL.DV-GRP")).toBeVisible();
+    await expect(page.getByText("coexists")).toHaveCount(0);
+    await expect(page.getByText("proposed trumps")).toBeVisible();
+    await expect(page.getByText("insufficient evidence")).toBeVisible();
+    await expect(page.getByText("manual review", { exact: true })).toBeVisible();
+    await expect(page.getByText("Search incomplete · 2 page(s)")).toBeVisible();
+    await expect(
+      page.getByText("Synthetic search stopped at the configured page bound."),
+    ).toBeVisible();
+    await expect(page.getByText(/evidence partial \(tracker_title\)/)).toBeVisible();
+
+    for (const tracker of ["HDS", "PTP"]) {
+      await expect(page.getByLabel(`Acknowledge dupe risk for ${tracker}`)).toBeVisible();
+    }
+    await expect(
+      page.getByRole("link", { name: "Example.Release.2026.1080p.HDR10-GRP" }),
+    ).toHaveAttribute("href", /^https:\/\/tracker\.invalid\/torrents\.php\?id=e2e-trump-1$/);
   } finally {
     await app?.stop();
     await workspace.cleanup();

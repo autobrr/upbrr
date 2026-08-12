@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -69,10 +70,11 @@ func TestDefinitionBuildDescriptionUsesResolvedAssetsAndMediaInfo(t *testing.T) 
 		},
 		Assets: &trackers.DescriptionAssets{
 			Description: "kept https://pixhost.to/show/encoded.png",
-			Screenshots: []api.ScreenshotImage{{
-				Host:   "pixhost",
-				RawURL: "https://pixhost.to/show/encoded.png",
-			}},
+			Screenshots: []api.ScreenshotImage{
+				{Host: "pixhost", RawURL: "https://pixhost.to/show/encoded.png"},
+				{Host: "pixhost", RawURL: "https://pixhost.to/show/example-2.png"},
+				{Host: "pixhost", RawURL: "https://pixhost.to/show/example-3.png"},
+			},
 		},
 		Logger: api.NopLogger{},
 	})
@@ -87,6 +89,97 @@ func TestDefinitionBuildDescriptionUsesResolvedAssetsAndMediaInfo(t *testing.T) 
 	}
 	if strings.Contains(result.Description, "lostimg.cc") {
 		t.Fatalf("expected no stale image hosts, got %q", result.Description)
+	}
+}
+
+func TestPTPFreshUploadTaxonomy(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{
+		Source:            "Web",
+		VideoCodec:        "HEVC",
+		HasEncodeSettings: true,
+		ReleaseName:       "Example.Release.2026.1440p.WEB-DL.x265.HARDSUB-GRP",
+		FileList:          []string{"Example.Release.2026.1440p.WEB-DL.x265.HARDSUB-GRP.mkv"},
+		Release: api.ReleaseInfo{
+			Resolution: "1440p",
+		},
+		ProviderMetadata: api.SourceScopedMetadata{
+			IMDB: &api.IMDBMetadata{Type: "concert"},
+			TMDB: &api.TMDBMetadata{Genres: "Science Fiction, Mystery"},
+		},
+		SubtitleLanguages: []string{"Malay", "Persian", "Welsh"},
+	}
+	fields, err := buildUploadFields(meta, "description", "123", map[string]string{
+		"hardcoded_subtitle_languages": "Malay",
+	}, "")
+	if err != nil {
+		t.Fatalf("build fields: %v", err)
+	}
+	for key, want := range map[string]string{
+		"resolution":              "Other",
+		"other_resolution_width":  "2560",
+		"other_resolution_height": "1440",
+		"type":                    "Live Performance",
+		"codec":                   "x265",
+		"container":               "MKV",
+		"source":                  "WEB",
+		"subtitles[]":             "54,52,55",
+		"trumpable[]":             "4",
+	} {
+		if got := fields[key]; got != want {
+			t.Fatalf("field %s=%q, want %q", key, got, want)
+		}
+	}
+	if got := resolveTags(meta); got != "sci.fi, mystery" {
+		t.Fatalf("tags=%q", got)
+	}
+	meta.ReleaseName = "Example.Release.2026.1080p.WEB-DL.x265.HARDSUB.FORCED-GRP"
+	if got := resolveTrumpable(meta); len(got) != 1 || got[0] != 4 {
+		t.Fatalf("forced hardcoded trumpable=%#v", got)
+	}
+	meta.ReleaseName = "Example.Release.2026.1080p.WEB-DL.x265-GRP"
+	meta.FileList = nil
+	meta.AudioLanguages = []string{"Japanese"}
+	meta.SubtitleLanguages = []string{"French"}
+	if got := resolveTrumpable(meta); len(got) != 1 || got[0] != 14 {
+		t.Fatalf("no-English trumpable=%#v", got)
+	}
+	meta.ReleaseName = "Example.Release.2026.1080p.WEB-DL.x265.HARDSUB-GRP"
+	if got := resolveTrumpable(meta); len(got) != 2 || got[0] != 4 || got[1] != 14 {
+		t.Fatalf("hardcoded no-English trumpable=%#v", got)
+	}
+	meta.DiscType = "BDMV"
+	meta.SourceSize = 50 << 30
+	if got := resolveCodec(meta); got != "BD66" {
+		t.Fatalf("50 GiB disc codec=%q", got)
+	}
+	if _, err := buildUploadFields(api.UploadSubject{
+		Release: api.ReleaseInfo{Resolution: "Custom"},
+	}, "description", "123", nil, ""); err == nil {
+		t.Fatal("expected unresolved custom resolution to fail upload construction")
+	}
+}
+
+func TestPTPHardcodedSubtitleQuestionnaire(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{ReleaseName: "Example.Release.2026.1080p.WEB-DL.x265.HARDSUB-GRP"}
+	questionnaire := buildQuestionnaire(meta, "123")
+	if questionnaire == nil || len(questionnaire.Fields) != 1 || questionnaire.Fields[0].Key != "hardcoded_subtitle_languages" {
+		t.Fatalf("questionnaire=%#v", questionnaire)
+	}
+	if _, err := buildUploadFields(meta, "description", "123", nil, ""); err == nil {
+		t.Fatal("expected missing hardcoded subtitle languages to fail")
+	}
+	fields, err := buildUploadFields(meta, "description", "123", map[string]string{
+		"hardcoded_subtitle_languages": "English - Forced",
+	}, "")
+	if err != nil {
+		t.Fatalf("build hardcoded fields: %v", err)
+	}
+	if fields["subtitles[]"] != "50" || fields["trumpable[]"] != "4" {
+		t.Fatalf("hardcoded fields=%#v", fields)
 	}
 }
 
@@ -172,9 +265,15 @@ func TestDefinitionBuildUploadDryRunForExistingGroup(t *testing.T) {
 	torrentPath := filepath.Join(tmp, "release.torrent")
 	createTestTorrent(t, filepath.Join(tmp, "source.bin"), torrentPath)
 
+	requestErr := make(chan error, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case ptpTorrentPath:
+			if r.URL.Query().Get("imdb") != "0000456" || r.URL.Query().Get("json") != "noredirect" {
+				requestErr <- errors.New("unexpected PTP IMDb group query")
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"Movies": []map[string]any{{"GroupId": "1234"}},
 			})
@@ -192,7 +291,7 @@ func TestDefinitionBuildUploadDryRunForExistingGroup(t *testing.T) {
 			ReleaseName: "Movie.2026.1080p.BluRay.x264",
 			Source:      "BluRay",
 			VideoCodec:  "AVC",
-			Identity:    api.ExternalIdentity{Category: "MOVIE", IMDBID: 1234567},
+			Identity:    api.ExternalIdentity{Category: "MOVIE", IMDBID: 456},
 			ProviderMetadata: api.SourceScopedMetadata{
 				TMDB: &api.TMDBMetadata{
 					Title:  "Movie",
@@ -212,8 +311,16 @@ func TestDefinitionBuildUploadDryRunForExistingGroup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected dry-run error: %v", err)
 	}
+	select {
+	case err := <-requestErr:
+		t.Fatal(err)
+	default:
+	}
 	if got := entry.Payload["groupid"]; got != "1234" {
 		t.Fatalf("expected existing group id, got %q", got)
+	}
+	if got := entry.Payload["imdb"]; got != "0000456" {
+		t.Fatalf("expected padded imdb, got %q", got)
 	}
 	if _, exists := entry.Payload["title"]; exists {
 		t.Fatal("did not expect new-group title field when group already exists")
@@ -281,8 +388,8 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.RequestURI() {
-		case ptpLoginPath:
+		switch {
+		case r.URL.RequestURI() == ptpLoginPath:
 			if err := r.ParseForm(); err != nil {
 				t.Errorf("parse login: %v", err)
 				return
@@ -300,6 +407,8 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 				"Result":        "Ok",
 				"AntiCsrfToken": "csrf-token",
 			})
+		case r.Method == http.MethodGet && r.URL.Path == ptpUploadPath:
+			_, _ = w.Write([]byte(`<div data-AntiCsrfToken="csrf-token"></div>`))
 		default:
 			switch r.URL.Path {
 			case ptpUploadPath:
@@ -423,6 +532,10 @@ func TestLoginAndFetchAntiCsrfTokenHandles2FA(t *testing.T) {
 	secondLogin := false
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == ptpUploadPath {
+			_, _ = w.Write([]byte(`<div data-AntiCsrfToken="csrf-token"></div>`))
+			return
+		}
 		if r.URL.RequestURI() != ptpLoginPath {
 			w.WriteHeader(http.StatusNotFound)
 			return

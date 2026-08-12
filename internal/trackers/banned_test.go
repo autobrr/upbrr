@@ -92,7 +92,6 @@ func newTestBannedPolicyRegistry(t *testing.T) *Registry {
 		"GPW":  {"MOMOWEB"},
 		"HHD":  {"EVO"},
 		"LT":   {"EVO"},
-		"MTV":  {"PandaRG"},
 		"NBL":  {"YakuboEncodes"},
 		"OE":   {"VipapkSudios"},
 		"OTW":  {"Sync0rdi"},
@@ -174,7 +173,6 @@ func TestBannedGroupCheckerStaticBuiltins(t *testing.T) {
 		"GPW":  {"MOMOWEB"},
 		"HHD":  {"EVO"},
 		"LT":   {"EVO"},
-		"MTV":  {"PandaRG"},
 		"NBL":  {"YakuboEncodes"},
 		"OE":   {"VipapkSudios"},
 		"OTW":  {"Sync0rdi"},
@@ -209,11 +207,11 @@ func TestBannedGroupCheckerMergesBuiltinsWithCacheFile(t *testing.T) {
 		t.Fatalf("create banned cache dir: %v", err)
 	}
 	filePath := filepath.Join(checker.basePath, "RHD_banned_groups.json")
-	if err := os.WriteFile(filePath, []byte(`{"banned_groups":"CustomRHD, Another.Custom"}`), 0o600); err != nil {
+	if err := os.WriteFile(filePath, []byte(`{"banned_groups":"CustomRHD, Another.Custom, -ZR-"}`), 0o600); err != nil {
 		t.Fatalf("write banned groups: %v", err)
 	}
 
-	for _, group := range []string{"MagicX", "CustomRHD", "another.custom"} {
+	for _, group := range []string{"MagicX", "CustomRHD", "another.custom", "ZR"} {
 		banned, err := checker.IsBanned("RHD", group)
 		if err != nil {
 			t.Fatalf("check %s: %v", group, err)
@@ -415,7 +413,7 @@ func TestRefreshDynamicDoesNotLogUnsupportedTrackers(t *testing.T) {
 	checker := newTestBannedGroupChecker(t, filepath.Join(t.TempDir(), "db.sqlite"))
 	logger := &bannedRefreshTestLogger{}
 
-	if err := checker.RefreshDynamic(context.Background(), config.Config{}, []string{"DP", "BHD", "MTV"}, logger); err != nil {
+	if err := checker.RefreshDynamic(context.Background(), config.Config{}, []string{"DP", "BHD", "BTN"}, logger); err != nil {
 		t.Fatalf("refresh unsupported banned groups: %v", err)
 	}
 	if len(logger.debugMessages) != 0 {

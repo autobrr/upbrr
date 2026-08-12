@@ -93,6 +93,8 @@ export type SessionState = Readonly<{
   selectedTrackers: readonly string[];
   trackerSelectionTouched: boolean;
   ignoredDupesFor: readonly string[];
+  /** Tracker-name edits retained for the active prepared source. */
+  releaseNameOverrides: Readonly<Record<string, string>>;
   questionnaireAnswers: Readonly<Record<string, Readonly<Record<string, string>>>>;
   uploadOptions: UploadRunOptions;
   duplicatesError: string;
@@ -115,6 +117,7 @@ export type SessionAction =
     }>
   | Readonly<{ type: "source_lookup_changed"; value: string }>
   | Readonly<{ type: "identity_changed"; value: Readonly<ExternalIDOverrides> }>
+  | Readonly<{ type: "metadata_changed"; value: PreparationIntent["metadata"] }>
   | Readonly<{ type: "release_name_changed"; value: Readonly<ReleaseNameOverrides> }>
   | Readonly<{
       type: "playlist_required";
@@ -162,6 +165,7 @@ export type SessionAction =
       trackers: readonly string[];
     }>
   | Readonly<{ type: "dupe_ignore_changed"; tracker: string; ignored: boolean }>
+  | Readonly<{ type: "release_name_confirmed"; tracker: string; value: string }>
   | Readonly<{ type: "questionnaire_answered"; tracker: string; key: string; value: string }>
   | Readonly<{ type: "upload_options_changed"; value: Partial<UploadRunOptions> }>
   | Readonly<{
@@ -258,6 +262,7 @@ export type SessionAction =
 const emptyIntent = (): PreparationIntent => ({
   sourceLookupURL: "",
   identity: {},
+  metadata: {},
   releaseName: {},
   playlist: { Set: false, Selected: [], UseAll: false },
 });
@@ -265,6 +270,7 @@ const emptyIntent = (): PreparationIntent => ({
 const clonePreparationIntent = (intent: PreparationIntent): PreparationIntent => ({
   sourceLookupURL: intent.sourceLookupURL,
   identity: { ...intent.identity },
+  metadata: { ...intent.metadata },
   releaseName: { ...intent.releaseName },
   playlist: {
     Set: intent.playlist.Set,
@@ -312,6 +318,7 @@ export const initialSessionState = (): SessionState => ({
   selectedTrackers: [],
   trackerSelectionTouched: false,
   ignoredDupesFor: [],
+  releaseNameOverrides: {},
   questionnaireAnswers: {},
   uploadOptions: emptyOptions(),
   duplicatesError: "",
@@ -509,6 +516,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         selectedTrackers: normalizeNames(action.defaultTrackers || []),
         trackerSelectionTouched: false,
         ignoredDupesFor: [],
+        releaseNameOverrides: {},
         questionnaireAnswers: {},
         uploadOptions: emptyOptions(),
         duplicatesError: "",
@@ -524,6 +532,11 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       return preparationIntentChanged(state, {
         ...state.preparationIntent,
         identity: { ...action.value },
+      });
+    case "metadata_changed":
+      return preparationIntentChanged(state, {
+        ...state.preparationIntent,
+        metadata: { ...action.value },
       });
     case "release_name_changed":
       return preparationIntentChanged(state, {
@@ -656,6 +669,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         preparationDirty: false,
         release: { SourcePath: acceptedSource, Generation: release.Generation },
         preview: action.preview,
+        releaseNameOverrides: {},
         playlist: {
           ...state.playlist,
           status:
@@ -712,6 +726,17 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       return {
         ...state,
         ignoredDupesFor: [...ignored],
+      };
+    }
+    case "release_name_confirmed": {
+      const tracker = action.tracker.trim().toUpperCase();
+      if (!tracker) return state;
+      return {
+        ...state,
+        releaseNameOverrides: {
+          ...state.releaseNameOverrides,
+          [tracker]: action.value,
+        },
       };
     }
     case "questionnaire_answered": {

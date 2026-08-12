@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -19,10 +20,11 @@ func (m *Module) ResolveDisplay(ctx context.Context, ref api.ReleaseRef) (api.Pr
 	if err != nil {
 		return api.PreparedReleaseDisplay{}, err
 	}
-	return projectPreparedReleaseDisplay(owned.result.Release)
+	return ProjectDisplay(owned.result.Release)
 }
 
-func projectPreparedReleaseDisplay(release api.PreparedRelease) (api.PreparedReleaseDisplay, error) {
+// ProjectDisplay builds the canonical provider presentation from stored prepared facts.
+func ProjectDisplay(release api.PreparedRelease) (api.PreparedReleaseDisplay, error) {
 	if reason := providerIdentityMismatch(release); reason != "" {
 		return api.PreparedReleaseDisplay{}, &IncompatiblePreparationError{SourcePath: release.Source.SourcePath, Reason: reason}
 	}
@@ -31,7 +33,7 @@ func projectPreparedReleaseDisplay(release api.PreparedRelease) (api.PreparedRel
 		return api.PreparedReleaseDisplay{}, fmt.Errorf("prepared release: clone display source: %w", err)
 	}
 	release = detached
-	display := api.PreparedReleaseDisplay{ReleaseName: release.Naming.ReleaseName}
+	display := api.PreparedReleaseDisplay{ReleaseName: release.Naming.ReleaseName, Providers: []api.ProviderDisplay{}}
 	identity := release.Identity
 	metadata := release.ProviderMetadata
 	if value := metadata.TMDB; value != nil {
@@ -81,7 +83,7 @@ func projectPreparedReleaseDisplay(release api.PreparedRelease) (api.PreparedRel
 			api.IdentityProviderIMDB,
 			identity.IMDBID,
 			identity.Provenance.IMDB,
-			fmt.Sprintf("https://www.imdb.com/title/tt%07d", identity.IMDBID),
+			providerid.IMDb(identity.IMDBID).URL(),
 			summary,
 			api.ProviderDisplayDetails{IMDB: value},
 		))
@@ -178,7 +180,7 @@ func providerDisplay(
 ) api.ProviderDisplay {
 	displayID := strconv.Itoa(id)
 	if provider == api.IdentityProviderIMDB {
-		displayID = fmt.Sprintf("tt%07d", id)
+		displayID = providerid.IMDb(id).Prefixed()
 	}
 	return api.ProviderDisplay{
 		Provider:         provider,

@@ -102,8 +102,8 @@ describe("web client", () => {
 
   it("preserves tracker auth status fields from browser app routes", async () => {
     const status: TrackerAuthStatus = {
-      trackerID: "MTV",
-      displayName: "MTV",
+      trackerID: "BTN",
+      displayName: "BTN",
       state: "needs_2fa",
       cookieCount: 2,
       lastCheckedAt: "2026-07-08T01:02:03Z",
@@ -120,13 +120,13 @@ describe("web client", () => {
     const { trackerAuthClient } = await import("./app");
     initializeWebClient("csrf-token", true);
 
-    const result = await trackerAuthClient.getStatus("MTV");
+    const result = await trackerAuthClient.getStatus("BTN");
 
     expect(result).toEqual(status);
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/app/GetTrackerAuthStatus",
       expect.objectContaining({
-        body: JSON.stringify({ Tracker: "MTV" }),
+        body: JSON.stringify({ Tracker: "BTN" }),
       }),
     );
   });
@@ -145,7 +145,7 @@ describe("web client", () => {
     const { trackerAuthClient } = await import("./app");
     initializeWebClient("csrf-token", true);
 
-    await expect(trackerAuthClient.test("MTV")).rejects.toThrow("tracker auth: validation failed");
+    await expect(trackerAuthClient.test("BTN")).rejects.toThrow("tracker auth: validation failed");
   });
 
   it("renders structured operation failures with stable recovery guidance", async () => {

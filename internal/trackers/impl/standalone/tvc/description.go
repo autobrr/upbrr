@@ -9,6 +9,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -45,7 +46,7 @@ func externalLinks(meta api.UploadSubject) string {
 		parts = append(parts, fmt.Sprintf("[url=https://www.themoviedb.org/%s/%d]TMDB[/url]", strings.ToLower(category), meta.Identity.TMDBID))
 	}
 	if meta.Identity.IMDBID > 0 {
-		parts = append(parts, fmt.Sprintf("[url=https://www.imdb.com/title/tt%07d]IMDb[/url]", meta.Identity.IMDBID))
+		parts = append(parts, fmt.Sprintf("[url=%s]IMDb[/url]", providerid.IMDb(meta.Identity.IMDBID).URL()))
 	}
 	if isTVCategory(meta) && meta.Identity.TVDBID > 0 {
 		parts = append(parts, fmt.Sprintf("[url=https://www.thetvdb.com/?id=%d&tab=series]TVDB[/url]", meta.Identity.TVDBID))

@@ -289,6 +289,8 @@ export type ReleaseNameOverrides = {
   NoYear?: boolean | null;
   NoAKA?: boolean | null;
   NoTag?: boolean | null;
+  NoEpisodeTitle?: boolean | null;
+  NoDistributor?: boolean | null;
   NoEdition?: boolean | null;
   NoDub?: boolean | null;
   NoDual?: boolean | null;
@@ -846,6 +848,8 @@ export type RuleFailure = {
   Reason: string;
   /** Empty legacy values are waivable; unknown non-empty values fail closed. */
   Disposition?: "advisory" | "waivable" | "strict" | string;
+  /** Completeness of the backend evidence supporting this rule result. */
+  evidenceStatus?: "complete" | "partial" | "unavailable" | "contradictory" | string;
 };
 
 export type DupeEntry = {
@@ -1305,6 +1309,8 @@ export type ReleaseNameEditState = {
   noYear: boolean;
   noAKA: boolean;
   noTag: boolean;
+  noEpisodeTitle: boolean;
+  noDistributor: boolean;
   noEdition: boolean;
   noDub: boolean;
   noDual: boolean;
@@ -1330,6 +1336,8 @@ export type ReleaseNameTouchedState = {
   noYear: boolean;
   noAKA: boolean;
   noTag: boolean;
+  noEpisodeTitle: boolean;
+  noDistributor: boolean;
   noEdition: boolean;
   noDub: boolean;
   noDual: boolean;

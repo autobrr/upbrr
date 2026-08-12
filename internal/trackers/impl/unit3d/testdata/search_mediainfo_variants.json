@@ -1,0 +1,9 @@
+{
+  "data": [
+    {"id": 301, "attributes": {"name": "Example.Release.2026.1080p.WEB-DL-GRP", "size": 1001, "files": [{"name": "Example.Release.2026.1080p.WEB-DL-GRP.mkv"}], "type": "WEB-DL", "resolution": "1080p", "internal": true, "trumpable": false, "media_info": "General\nFormat : Matroska\nVideo\nFormat : AVC\nWidth : 1 920 pixels\nHeight : 1 080 pixels", "details_link": "https://example.invalid/torrents/301"}},
+    {"id": 302, "attributes": {"name": "Example.Release.2026.HDR.2160p.WEB-DL-GRP", "size": 1002, "files": [{"name": "Example.Release.2026.HDR.2160p.WEB-DL-GRP.mkv"}], "type": "WEB-DL", "resolution": "2160p", "internal": false, "trumpable": true, "media_info": "Video\nFormat : HEVC\nHDR format : SMPTE ST 2094 App 4, Version 1, HDR10+ Profile B compatible", "details_link": "https://example.invalid/torrents/302"}},
+    {"id": 303, "attributes": {"name": "Example.Release.2026.Missing.2160p.WEB-DL-GRP", "size": 1003, "files": [{"name": "Example.Release.2026.Missing.2160p.WEB-DL-GRP.mkv"}], "type": "WEB-DL", "resolution": "2160p", "internal": false, "trumpable": false, "details_link": "https://example.invalid/torrents/303"}},
+    {"id": 304, "attributes": {"name": "Example.Release.2026.DV.HDR.2160p.WEB-DL-GRP", "size": 1004, "files": [{"name": "Example.Release.2026.DV.HDR.2160p.WEB-DL-GRP.mkv"}], "type": "WEB-DL", "resolution": "2160p", "internal": false, "trumpable": false, "media_info": "Video\nFormat : HEVC\nHDR format : Dolby Vision\nHDR format string : Dolby Vision, Profile 8.1, HDR10 compatible", "details_link": "https://example.invalid/torrents/304"}}
+  ],
+  "meta": {"current_page": 1, "last_page": 1, "total": 4}
+}

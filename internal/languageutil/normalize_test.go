@@ -10,6 +10,8 @@ func TestNormalizeLanguageDisplayCodes(t *testing.T) {
 		"en":    "English",
 		"en-US": "English",
 		"eng":   "English",
+		"mul":   "Multiple Languages",
+		"zxx":   "ZXX",
 	}
 	for input, expected := range cases {
 		if got := NormalizeLanguageDisplay(input); got != expected {

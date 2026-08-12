@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -50,7 +51,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	req.URL.RawQuery = url.Values{
 		"api_key": {apiKey},
 		"action":  {"torrent"},
-		"imdbID":  {"tt" + strconv.Itoa(meta.Identity.IMDBID)},
+		"imdbID":  {providerid.IMDb(meta.Identity.IMDBID).Prefixed()},
 	}.Encode()
 	resp, err := s.http.Do(req)
 	if err != nil {
@@ -83,7 +84,12 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		}
 		entries = append(entries, api.DupeEntry{Name: strings.Join(strings.Fields(strings.Join(parts, " ")), " ")})
 	}
-	return dupe.Resolved(entries, nil)
+	return dupe.ResolvedWithSearch(entries, nil, dupe.SearchEvidence{
+		Complete:  true,
+		WorkScope: dupe.WorkScopeProviderID,
+		Pages:     1,
+		Scope:     "provider_array",
+	})
 }
 
 func gpwAPIKey(cfg config.Config) string {

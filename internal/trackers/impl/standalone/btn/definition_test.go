@@ -25,6 +25,24 @@ func TestDefinitionName(t *testing.T) {
 	}
 }
 
+func TestBTNProfileOwnsPreparationAndPolicies(t *testing.T) {
+	t.Parallel()
+
+	profile := Profile()
+	if profile.PrepareUpload == nil || profile.NewDuplicateAdapter == nil {
+		t.Fatal("BTN profile must own upload preparation and duplicate search")
+	}
+	if profile.ReleaseNamePolicy.ID != "standalone/btn/v3" || profile.ValidationPolicy.ID != "standalone-btn-constructibility-v2" {
+		t.Fatalf("unexpected BTN naming/validation policies: %q %q", profile.ReleaseNamePolicy.ID, profile.ValidationPolicy.ID)
+	}
+	if profile.DupePolicy == nil || profile.DupePolicy.ID != "standalone/btn/duplicate/v1" {
+		t.Fatalf("unexpected BTN duplicate policy: %#v", profile.DupePolicy)
+	}
+	if profile.AuthCapability == nil || profile.AuthPolicy == nil || profile.AuthResolver == nil {
+		t.Fatal("BTN profile must own auth capability, policy, and resolution")
+	}
+}
+
 func TestDefinitionProjectReleaseUsesBTNSceneName(t *testing.T) {
 	t.Parallel()
 
@@ -51,8 +69,14 @@ func TestDefinitionProjectReleaseUsesBTNSceneName(t *testing.T) {
 	if projection.CanonicalReleaseName != "Example Show S01E01 Episode Name 1080p AAC 2.0 x264-GRP" {
 		t.Fatalf("canonical name = %q", projection.CanonicalReleaseName)
 	}
-	if projection.UploadReleaseName != "Example.Show.S01E01.1080p.AAC2.0.x264-GRP" {
+	if projection.UploadReleaseName != "Example.Show.S01E01.Episode.Name.1080p.AAC2.0.x264-GRP" {
 		t.Fatalf("BTN upload name = %q", projection.UploadReleaseName)
+	}
+	if projection.NamingPolicyID != "standalone/btn/v3" {
+		t.Fatalf("BTN release-name policy = %q", projection.NamingPolicyID)
+	}
+	if projection.DuplicateTarget.ReleaseOrigin != "P2P" {
+		t.Fatalf("BTN duplicate target origin = %q", projection.DuplicateTarget.ReleaseOrigin)
 	}
 }
 
@@ -247,14 +271,14 @@ func TestResolveUploadNameGroupTag(t *testing.T) {
 			expected: "Example.Show.S01E01.1080p.Web-DL.x265-NOGRP",
 		},
 		{
-			name: "Generated episode title absent from filename stripped",
+			name: "Generated single episode title retained when absent from filename",
 			meta: api.UploadSubject{
 				Filename:     "Example.Show.S01E01.1080p.WEB-DL.x265-GRP.mkv",
 				ReleaseName:  "Example.Show.S01E01.Episode.One.1080p.WEB-DL.x265-GRP",
 				EpisodeTitle: "Episode One",
 				Tag:          "GRP",
 			},
-			expected: "Example.Show.S01E01.1080p.WEB-DL.x265-GRP",
+			expected: "Example.Show.S01E01.Episode.One.1080p.WEB-DL.x265-GRP",
 		},
 		{
 			name: "Filename episode title preserved",

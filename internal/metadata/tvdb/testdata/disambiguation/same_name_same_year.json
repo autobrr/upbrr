@@ -1,0 +1,12 @@
+{
+  "data": [
+    {
+      "tvdb_id": 987650004,
+      "name": "EXAMPLE: SERIES",
+      "primary_language": "eng",
+      "year": "2026",
+      "country": "can",
+      "aliases": []
+    }
+  ]
+}

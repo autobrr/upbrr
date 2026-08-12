@@ -133,19 +133,27 @@ func (h cztHandler) Search(ctx context.Context, meta api.DuplicateSubject) dupe.
 		}
 		entries = append(entries, entry)
 	}
-	return dupe.Resolved(entries, nil)
+	warnings := []string{"CZT title search does not prove whole-work coverage"}
+	return dupe.ResolvedWithSearch(entries, nil, dupe.SearchEvidence{
+		Complete:  true,
+		WorkScope: dupe.WorkScopeTitle,
+		Pages:     1,
+		Scope:     "title_query",
+		Warnings:  warnings,
+	})
 }
 
-// cztSearchQuery prefers exact upload/client names before media titles because
-// CZTeam's name search matches torrent release names.
+// cztSearchQuery prefers the release title to discover same-work candidates.
 func cztSearchQuery(meta api.DuplicateSubject) string {
+	if title := strings.TrimSpace(meta.Release.Title); title != "" {
+		return title
+	}
 	if meta.Projection != nil {
 		return dupe.ProjectedSearchName(meta)
 	}
 	return metautil.FirstNonEmptyTrimmed(
-		meta.SceneName,
 		meta.ReleaseName,
-		meta.Release.Title,
+		meta.SceneName,
 		meta.Filename,
 	)
 }

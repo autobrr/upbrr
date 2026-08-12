@@ -30,6 +30,20 @@ var (
 // category/format combinations return an empty name while preserving the
 // applicable missing-field hints; a nil logger is accepted.
 func BuildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.ReleaseNameResult {
+	included := buildReleaseName(req, logger)
+	omittedRequest := req
+	if !req.ManualEpisodeTitle {
+		omittedRequest.EpisodeTitle = ""
+	}
+	omitted := buildReleaseName(omittedRequest, api.NopLogger{})
+	included.GeneratedVariants = api.GeneratedReleaseNameVariants{
+		IncludeEpisodeTitle: releaseNameVariant(included),
+		OmitEpisodeTitle:    releaseNameVariant(omitted),
+	}
+	return included
+}
+
+func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.ReleaseNameResult {
 	if logger == nil {
 		logger = api.NopLogger{}
 	}
@@ -84,12 +98,15 @@ func BuildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 	dvdSize := strings.TrimSpace(req.DVDSize)
 	edition := strings.TrimSpace(req.Edition)
 
-	edition = removeHybrid(edition)
 	hybrid := ""
-	if req.WebDV {
+	if req.WebDV || containsExactHybrid(strings.Fields(edition)) {
 		hybrid = "Hybrid"
 	}
+	edition = removeHybrid(edition)
 
+	if category == "TV" && !req.ManualEpisodeTitle && episode == "" && !req.ManualDate {
+		episodeTitle = ""
+	}
 	if req.ManualDate {
 		season = ""
 		episode = ""
@@ -316,6 +333,14 @@ func BuildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 	}
 }
 
+func releaseNameVariant(result api.ReleaseNameResult) api.ReleaseNameVariant {
+	return api.ReleaseNameVariant{
+		NameNoTag: result.NameNoTag,
+		Name:      result.Name,
+		CleanName: result.CleanName,
+	}
+}
+
 // releaseNameRequestFromMeta converts prepared metadata into the naming input,
 // omitting TV-pack season titles that are stored in EpisodeTitle only as scoped
 // metadata fallback text.
@@ -412,8 +437,8 @@ func releaseNameRequestFromMeta(meta preparationstate.State, logger api.Logger) 
 
 	dailyDate := strings.TrimSpace(meta.DailyEpisodeDate)
 	manualDate := strings.EqualFold(category, "TV") && dailyDate != "" && !meta.TVPack
-	episodeTitle := strings.TrimSpace(meta.EpisodeTitle)
-	if meta.TVPack {
+	episodeTitle := preferredGeneratedEpisodeTitle(meta)
+	if meta.TVPack || strings.TrimSpace(meta.EpisodeStr) == "" {
 		episodeTitle = ""
 	} else if titleIdentityKey(episodeTitle) != "" {
 		episodeTitleKey := titleIdentityKey(episodeTitle)
@@ -453,6 +478,29 @@ func releaseNameRequestFromMeta(meta preparationstate.State, logger api.Logger) 
 		ManualDate:    manualDate,
 		TMDBDateMatch: meta.TMDBDateMatch,
 	}
+}
+
+func preferredGeneratedEpisodeTitle(meta preparationstate.State) string {
+	parsed := strings.TrimSpace(meta.EpisodeTitle)
+	tvdb := meta.ProviderMetadata.TVDB
+	if !namingProviderMetadataCurrent(meta) || tvdb == nil || meta.Identity.TVDBID <= 0 || tvdb.TVDBID != meta.Identity.TVDBID {
+		return parsed
+	}
+	if tvdb.EpisodeSeason > 0 && meta.SeasonInt > 0 && tvdb.EpisodeSeason != meta.SeasonInt {
+		return parsed
+	}
+	if tvdb.EpisodeNumber > 0 && meta.EpisodeInt > 0 && tvdb.EpisodeNumber != meta.EpisodeInt {
+		return parsed
+	}
+	if english := strings.TrimSpace(tvdb.EpisodeNameEnglish); english != "" {
+		return english
+	}
+	original := strings.TrimSpace(tvdb.EpisodeName)
+	if original != "" && !isGenericEpisodeTitle(original) &&
+		(strings.TrimSpace(tvdb.OriginalLanguage) == "" || isEnglishLanguage(tvdb.OriginalLanguage)) {
+		return original
+	}
+	return parsed
 }
 
 // resolveReleaseNameTitle selects naming fields from current matching provider
@@ -535,13 +583,13 @@ func namingSourceMatches(scopedPath, currentPath string) bool {
 	return trimmed == "" || strings.EqualFold(trimmed, strings.TrimSpace(currentPath))
 }
 
-// fillProviderAlternateTitle preserves a parsed alternate and otherwise returns
-// one normalized AKA title when the provider candidate differs from the primary.
+// fillProviderAlternateTitle prefers a parsed alternate and otherwise returns
+// one normalized AKA title when the chosen value differs from the primary.
 func fillProviderAlternateTitle(current, primary, candidate string) string {
-	if strings.TrimSpace(current) != "" {
-		return strings.TrimSpace(current)
+	alternate := strings.TrimSpace(current)
+	if alternate == "" {
+		alternate = strings.TrimSpace(candidate)
 	}
-	alternate := strings.TrimSpace(candidate)
 	if len(alternate) > len("AKA ") && strings.EqualFold(alternate[:len("AKA ")], "AKA ") {
 		alternate = strings.TrimSpace(alternate[len("AKA "):])
 	}
@@ -580,6 +628,8 @@ func inferReleaseTypeFromName(path string) string {
 		return "HDTV"
 	case strings.Contains(compact, "DVDRIP"):
 		return "DVDRIP"
+	case strings.Contains(compact, "BDRIP"):
+		return "ENCODE"
 	}
 	return ""
 }
@@ -590,7 +640,8 @@ func inferReleaseSourceFromName(path string, typeValue string) string {
 	switch {
 	case strings.Contains(compact, "HDDVD"):
 		return "HDDVD"
-	case strings.Contains(compact, "BLURAY") || strings.Contains(compact, "BLU") && strings.Contains(compact, "RAY"):
+	case strings.Contains(compact, "BLURAY") || strings.Contains(compact, "BLU") && strings.Contains(compact, "RAY") ||
+		strings.Contains(compact, "BDREMUX") || strings.Contains(compact, "BDRIP") || strings.Contains(compact, "BDMV"):
 		if strings.EqualFold(typeValue, "DISC") {
 			return "Blu-ray"
 		}

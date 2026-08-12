@@ -320,10 +320,12 @@ func (s *Service) trackerLinkDirName(tracker string) string {
 
 // sourcePathForLinking returns an existing local source path suitable for link
 // creation. It stats candidate paths because link staging must copy or link real
-// filesystem content.
+// filesystem content. Relative FileList entries are ignored: they are
+// torrent-internal names, and resolving them would match against the process
+// working directory instead of the prepared source.
 func sourcePathForLinking(meta api.ClientSubject) (string, error) {
 	if len(meta.FileList) == 1 {
-		if candidate := strings.TrimSpace(meta.FileList[0]); candidate != "" {
+		if candidate := strings.TrimSpace(meta.FileList[0]); candidate != "" && filepath.IsAbs(candidate) {
 			info, err := os.Stat(candidate)
 			if err == nil && !info.IsDir() {
 				return absLocalPath("linking candidate", candidate)
@@ -347,18 +349,24 @@ func sourcePathForLinking(meta api.ClientSubject) (string, error) {
 	return absLocalPath("linking source", source)
 }
 
-// sourcePathForQbitSavePath returns the prepared source path used for qbit
-// savepath mapping. It is intentionally lexical and does not stat the source,
-// because qbit injection can still be valid when source metadata is unavailable.
+// sourcePathForQbitSavePath returns the prepared content path used for
+// qBittorrent savepath mapping. Resolution is lexical because client-visible content need
+// not be available to stat locally. A torrent artifact path or URL is separate
+// from the prepared content source and cannot replace it. Relative FileList
+// entries are ignored: they are torrent-internal names, and resolving them
+// lexically would anchor the save path to the process working directory.
 func sourcePathForQbitSavePath(meta api.ClientSubject) (string, error) {
 	if len(meta.FileList) == 1 {
-		if candidate := strings.TrimSpace(meta.FileList[0]); candidate != "" {
+		if candidate := strings.TrimSpace(meta.FileList[0]); candidate != "" && filepath.IsAbs(candidate) {
 			return absLocalPath("qbit mapping source", candidate)
 		}
 	}
 	source := strings.TrimSpace(meta.SourcePath)
 	if source == "" {
-		return "", internalerrors.ErrInvalidInput
+		return "", fmt.Errorf(
+			"prepared source path is required for qBittorrent save path; torrent artifact path or URL does not replace it: %w",
+			internalerrors.ErrInvalidInput,
+		)
 	}
 	return absLocalPath("qbit mapping source", source)
 }
@@ -778,21 +786,16 @@ func mappedRemotePath[S ~[]string](value string, localPaths S, remotePaths S) (s
 	return bestMapped, bestSpecificity >= 0
 }
 
-// mappedQbitSavePathForSource maps the prepared source path to the qBittorrent
-// save path parent that can contain the torrent's top-level content. It returns
-// mapped=false without touching source metadata when no usable path pairs exist
-// or no configured pair matches the lexical source path.
-func mappedQbitSavePathForSource[S ~[]string](meta api.ClientSubject, localPaths S, remotePaths S) (string, bool, error) {
-	if len(pathMappingPairs(localPaths, remotePaths)) == 0 {
-		return "", false, nil
-	}
+// qbitSavePathForSource returns the prepared source parent, mapped to the
+// qBittorrent host when a configured local/remote path pair matches.
+func qbitSavePathForSource[S ~[]string](meta api.ClientSubject, localPaths S, remotePaths S) (string, bool, error) {
 	source, err := sourcePathForQbitSavePath(meta)
 	if err != nil {
 		return "", false, err
 	}
 	mappedSource, ok := mappedRemotePath(source, localPaths, remotePaths)
 	if !ok {
-		return "", false, nil
+		return qbitSavePath(filepath.Dir(source)), false, nil
 	}
 	return qbitSavePath(filepath.Dir(mappedSource)), true, nil
 }

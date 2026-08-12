@@ -314,10 +314,23 @@ func resolveDownstreamTrackerSet(
 		if !ok || media.Revision != state.Workflow.Media.Revision {
 			return downstreamTrackerSet{}, fmt.Errorf("%w: retained media is stale", ErrInvalidTransition)
 		}
+		blocked := make([]string, 0, len(base))
 		for trackerID := range base {
 			if _, failed := TrackerImageHostFailure(media, trackerID); failed {
 				delete(base, trackerID)
+				blocked = append(blocked, string(trackerID))
 			}
+		}
+		// An empty set here would otherwise travel silently into the upload
+		// plan and only surface as a contract validation error about missing
+		// target tracker IDs, which names neither the stage nor the cause.
+		if len(base) == 0 && len(blocked) > 0 {
+			slices.Sort(blocked)
+			return downstreamTrackerSet{}, fmt.Errorf(
+				"%w: image hosting failed for every downstream tracker (%s)",
+				ErrInvalidTransition,
+				strings.Join(blocked, ", "),
+			)
 		}
 	}
 	selected := base

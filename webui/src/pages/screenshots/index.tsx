@@ -20,7 +20,7 @@ type Props = Readonly<{
   setLightboxAlt: (value: string) => void;
 }>;
 
-/** Presents screenshot planning, generation, ordering, preview, and final selection. */
+/** Presents screenshot planning, live previews, retained capture, ordering, and final selection. */
 export default function ScreenshotsPage({
   facet,
   screenshotConfig,
@@ -43,6 +43,7 @@ export default function ScreenshotsPage({
   useEffect(() => {
     if (
       view.status !== "running" &&
+      view.status !== "error" &&
       !view.plan &&
       (view.workflowMode || Boolean(view.staleReason))
     ) {
@@ -87,22 +88,19 @@ export default function ScreenshotsPage({
   };
 
   const captureLivePreview = () => {
-    if (selections.length === 0) return;
-
-    const closest = selections.reduce<ScreenshotSelection | null>((current, selection) => {
-      if (!current) return selection;
-      return Math.abs(selection.TimestampSeconds - livePreviewSeconds) <
-        Math.abs(current.TimestampSeconds - livePreviewSeconds)
-        ? selection
-        : current;
-    }, null);
+    const nextIndex =
+      Math.max(
+        -1,
+        ...selections.map((selection) => selection.Index),
+        ...workflowImages.map((artifact) => artifact.index ?? -1),
+      ) + 1;
     const selection: ScreenshotSelection = {
-      Index: closest?.Index ?? 0,
+      Index: nextIndex,
       TimestampSeconds: clampPreviewSeconds(livePreviewSeconds),
       Frame: livePreviewFrame,
       Source: "manual",
     };
-    void facet.generate("preview", [selection]);
+    void facet.generate("final", [selection]);
   };
 
   return (
@@ -359,6 +357,8 @@ export default function ScreenshotsPage({
                 <span>FFmpeg compression</span>
                 <input
                   type="number"
+                  min={0}
+                  max={9}
                   value={
                     typeof screenshotConfig.FFmpegCompression === "number"
                       ? screenshotConfig.FFmpegCompression
@@ -536,7 +536,7 @@ export default function ScreenshotsPage({
                   className="primary"
                   type="button"
                   onClick={captureLivePreview}
-                  disabled={previewTimingDisabled || busy || selections.length === 0}
+                  disabled={previewTimingDisabled || busy}
                 >
                   {busy ? "Capturing..." : "Capture preview"}
                 </button>

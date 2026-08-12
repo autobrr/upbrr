@@ -742,17 +742,15 @@ func (s *Service) dryRunBannedGroupResults(ctx context.Context, meta api.UploadS
 	return results
 }
 
-// NormalizeBannedReleaseGroup returns the release group key used by upload,
-// review, dry-run, and dupe-check banned-group decisions. Empty, whitespace,
-// and dash-only tags return an empty key; TAoE is recognized only as an exact
-// normalized alias.
+// NormalizeBannedReleaseGroup returns the canonical release group key used by
+// upload, review, dry-run, and dupe-check banned-group decisions.
 func NormalizeBannedReleaseGroup(tag string) string {
-	group := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(tag), "-"))
-	group = strings.TrimSpace(group)
-	if group == "taoe" {
-		return "taoe"
-	}
-	return group
+	return normalizeBannedGroupKey(tag)
+}
+
+func normalizeBannedGroupKey(group string) string {
+	group = strings.Trim(strings.TrimSpace(group), "-")
+	return strings.ToLower(strings.TrimSpace(group))
 }
 
 func applyDryRunBannedGroupResult(entry *api.TrackerDryRunEntry, results map[string]dryRunBannedGroupResult) {

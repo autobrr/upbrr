@@ -292,6 +292,47 @@ func TestAppendManualMenuScreenshotsRollsBackCrossSourceImageConflict(t *testing
 	}
 }
 
+func TestDeleteUploadedImageConvergesAfterRecordIsGone(t *testing.T) {
+	t.Parallel()
+
+	repo, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	ctx := context.Background()
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "Example.Release.2026.1080p-GRP.mkv")
+	imagePath := filepath.Join(root, "capture.png")
+	if err := repo.SaveUploadedImages(ctx, sourcePath, "example-host", []api.UploadedImageLink{{
+		SourcePath: sourcePath,
+		ImagePath:  imagePath,
+		Host:       "example-host",
+		UsageScope: "global",
+		RawURL:     "https://example.invalid/capture.png",
+		UploadedAt: time.Now().UTC(),
+	}}); err != nil {
+		t.Fatalf("save uploaded image: %v", err)
+	}
+
+	for range 2 {
+		if err := repo.DeleteUploadedImage(ctx, sourcePath, imagePath, "example-host"); err != nil {
+			t.Fatalf("delete uploaded image: %v", err)
+		}
+	}
+	stored, err := repo.ListUploadedImagesByPath(ctx, sourcePath)
+	if err != nil {
+		t.Fatalf("list uploaded images: %v", err)
+	}
+	if len(stored) != 0 {
+		t.Fatal("uploaded image record survived delete")
+	}
+}
+
 func assertFinalSelectionPaths(t *testing.T, repo *SQLiteRepository, sourcePath string, expected []string) {
 	t.Helper()
 	selections, err := repo.ListFinalSelections(context.Background(), sourcePath)

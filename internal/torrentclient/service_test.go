@@ -131,6 +131,7 @@ func TestInjectQbitClient(t *testing.T) {
 	var addTags string
 	var addSkipChecking string
 	var addAutoTMM string
+	var addSavePath string
 	var fileCount int
 	errCh := make(chan error, 1)
 
@@ -155,6 +156,7 @@ func TestInjectQbitClient(t *testing.T) {
 			addTags = r.FormValue("tags")
 			addSkipChecking = r.FormValue("skip_checking")
 			addAutoTMM = r.FormValue("autoTMM")
+			addSavePath = r.FormValue("savepath")
 			if files, ok := r.MultipartForm.File["torrents"]; ok {
 				fileCount = len(files)
 			}
@@ -171,6 +173,8 @@ func TestInjectQbitClient(t *testing.T) {
 	defer server.Close()
 
 	root := t.TempDir()
+	mediaRoot := filepath.Join(root, "media")
+	sourcePath := filepath.Join(mediaRoot, "video.mkv")
 	torrentPath := filepath.Join(root, "sample.torrent")
 	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
@@ -185,11 +189,13 @@ func TestInjectQbitClient(t *testing.T) {
 				Password: "pass",
 				Category: "ua",
 				Tags:     []string{"tag1", "tag2"},
+				LocalPath:  config.StringList{""},
+				RemotePath: config.StringList{""},
 			},
 		},
 	}, nil)
 
-	if err := svc.Inject(context.Background(), api.ClientSubject{SourcePath: "video.mkv"}, api.TorrentResult{Path: torrentPath}); err != nil {
+	if err := svc.Inject(context.Background(), api.ClientSubject{SourcePath: sourcePath}, api.TorrentResult{Path: torrentPath}); err != nil {
 		t.Fatalf("inject: %v", err)
 	}
 
@@ -219,8 +225,37 @@ func TestInjectQbitClient(t *testing.T) {
 	if addAutoTMM != "false" {
 		t.Fatalf("expected autoTMM false, got %q", addAutoTMM)
 	}
+	//pathpolicy:allow qBittorrent savepath is slash-delimited API data.
+	wantSavePath := filepath.ToSlash(mediaRoot) + "/"
+	if addSavePath != wantSavePath {
+		t.Fatalf("expected source-parent savepath %q, got %q", wantSavePath, addSavePath)
+	}
 	if fileCount != 1 {
 		t.Fatalf("expected 1 torrent file, got %d", fileCount)
+	}
+}
+
+func TestInjectQbitClientRejectsMissingPreparedSourceForURLArtifact(t *testing.T) {
+	t.Parallel()
+
+	server, _ := newQbitAddCaptureServer(t)
+	svc := NewService(config.Config{
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:     "qbit",
+				URL:      server.URL,
+				Username: "user",
+				Password: "pass",
+			},
+		},
+	}, nil)
+
+	err := svc.Inject(context.Background(), api.ClientSubject{}, api.TorrentResult{URL: "https://tracker.example/download/1"})
+	if !errors.Is(err, internalerrors.ErrInvalidInput) {
+		t.Fatalf("expected invalid input, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "torrent artifact path or URL does not replace it") {
+		t.Fatal("expected source-versus-artifact guidance")
 	}
 }
 
@@ -893,6 +928,118 @@ func TestInjectQbitClientURLLinkingFallsBackWithoutStaging(t *testing.T) {
 	}
 }
 
+func TestInjectQbitClientURLFallbackRelativeFileListUsesSourceParentSavePath(t *testing.T) {
+	// No t.Parallel: t.Chdir forbids it. The chdir into an empty directory
+	// reproduces #317: a torrent-relative FileList entry must not anchor the
+	// savepath to the process working directory.
+	t.Chdir(t.TempDir())
+
+	server, capture := newQbitAddCaptureServer(t)
+	root := t.TempDir()
+	source := filepath.Join(root, "Fixture.Title.2024.mkv")
+	if err := os.WriteFile(source, []byte("media"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	linkRoot := filepath.Join(root, "links")
+	if err := os.MkdirAll(linkRoot, 0o700); err != nil {
+		t.Fatalf("mkdir links: %v", err)
+	}
+
+	svc := NewService(config.Config{
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:                     "qbit",
+				URL:                      server.URL,
+				Username:                 "user",
+				Password:                 "pass",
+				Linking:                  "hardlink",
+				LinkedFolder:             config.StringList{linkRoot},
+				AutomaticManagementPaths: config.StringList{root},
+			},
+		},
+	}, nil)
+
+	meta := api.ClientSubject{SourcePath: source, FileList: []string{"Fixture.Title.2024.mkv"}}
+	if err := svc.Inject(context.Background(), meta, api.TorrentResult{URL: "https://tracker.example/torrent/1", Tracker: "RF"}); err != nil {
+		t.Fatalf("inject URL fallback: %v", err)
+	}
+	select {
+	case err := <-capture.errCh:
+		t.Fatalf("handler: %v", err)
+	default:
+	}
+
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	//pathpolicy:allow qBittorrent savepath is slash-delimited API data.
+	wantSavePath := filepath.ToSlash(root) + "/"
+	if capture.savePath != wantSavePath {
+		t.Fatalf("expected source-parent savepath %q, got %q", wantSavePath, capture.savePath)
+	}
+	if capture.autoTMM != "true" {
+		t.Fatalf("expected autoTMM true, got %q", capture.autoTMM)
+	}
+}
+
+func TestInjectQbitClientPathMappingRelativeFileListMapsSourceParent(t *testing.T) {
+	// No t.Parallel: t.Chdir forbids it. Path mapping must apply to the
+	// prepared source parent even when the FileList entry is torrent-relative.
+	t.Chdir(t.TempDir())
+
+	server, capture := newQbitAddCaptureServer(t)
+
+	root := t.TempDir()
+	localRoot := filepath.Join(root, "local")
+	releaseDir := filepath.Join(localRoot, "Movies", "Fixture.Title.2024")
+	if err := os.MkdirAll(releaseDir, 0o700); err != nil {
+		t.Fatalf("mkdir release: %v", err)
+	}
+	source := filepath.Join(releaseDir, "video.mkv")
+	if err := os.WriteFile(source, []byte("media"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	torrentPath := filepath.Join(root, "sample.torrent")
+	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+
+	remoteRoot := "/remote/media"
+	svc := NewService(config.Config{
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:                     "qbit",
+				URL:                      server.URL,
+				Username:                 "user",
+				Password:                 "pass",
+				LocalPath:                config.StringList{localRoot},
+				RemotePath:               config.StringList{remoteRoot},
+				AutomaticManagementPaths: config.StringList{localRoot},
+			},
+		},
+	}, nil)
+
+	meta := api.ClientSubject{SourcePath: source, FileList: []string{"video.mkv"}}
+	if err := svc.Inject(context.Background(), meta, api.TorrentResult{Path: torrentPath}); err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	select {
+	case err := <-capture.errCh:
+		t.Fatalf("handler: %v", err)
+	default:
+	}
+
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	wantSavePath := "/remote/media/Movies/Fixture.Title.2024/"
+	if capture.savePath != wantSavePath {
+		t.Fatalf("expected mapped savepath %q, got %q", wantSavePath, capture.savePath)
+	}
+	if capture.autoTMM != "true" {
+		t.Fatalf("expected autoTMM true, got %q", capture.autoTMM)
+	}
+}
+
 func TestInjectQbitClientInvalidLinkPlanFallbackSkipsHashCheck(t *testing.T) {
 	t.Parallel()
 
@@ -940,8 +1087,10 @@ func TestInjectQbitClientInvalidLinkPlanFallbackSkipsHashCheck(t *testing.T) {
 
 	capture.mu.Lock()
 	defer capture.mu.Unlock()
-	if capture.savePath != "" {
-		t.Fatalf("expected original-path fallback, got savepath %q", capture.savePath)
+	//pathpolicy:allow qBittorrent savepath is slash-delimited API data.
+	wantSavePath := filepath.ToSlash(root) + "/"
+	if capture.savePath != wantSavePath {
+		t.Fatalf("expected original-path fallback savepath %q, got %q", wantSavePath, capture.savePath)
 	}
 	if capture.skipChecking != "true" {
 		t.Fatalf("expected fallback to skip hash checking, got skip_checking=%q", capture.skipChecking)
@@ -1259,8 +1408,10 @@ func TestInjectQbitClientFailedLinkPlanFallbackSkipsHashCheck(t *testing.T) {
 	if capture.addCalls != 1 {
 		t.Fatalf("expected one qbit add attempt, got %d", capture.addCalls)
 	}
-	if capture.savePath != "" {
-		t.Fatalf("expected original-path fallback, got savepath %q", capture.savePath)
+	//pathpolicy:allow qBittorrent savepath is slash-delimited API data.
+	wantSavePath := filepath.ToSlash(root) + "/"
+	if capture.savePath != wantSavePath {
+		t.Fatalf("expected original-path fallback savepath %q, got %q", wantSavePath, capture.savePath)
 	}
 	if capture.skipChecking != "true" {
 		t.Fatalf("expected failed-link fallback to skip hash checking, got skip_checking=%q", capture.skipChecking)

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -42,6 +43,7 @@ type workflowScreenshotFake struct {
 	plans    int
 	captures int
 	deleted  []string
+	err      error
 }
 
 func (f *workflowScreenshotFake) Plan(
@@ -63,6 +65,9 @@ func (f *workflowScreenshotFake) Capture(
 	purpose api.ScreenshotPurpose,
 ) (api.ScreenshotResult, error) {
 	f.captures++
+	if f.err != nil {
+		return api.ScreenshotResult{}, f.err
+	}
 	images := make([]api.ScreenshotImage, len(selections))
 	for index, selection := range selections {
 		images[index] = api.ScreenshotImage{
@@ -96,11 +101,12 @@ func (*workflowScreenshotFake) SaveFinalSelections(context.Context, api.Screensh
 }
 
 type workflowDVDMenuFake struct {
-	captures int
-	deleted  []string
-	maxItems []int
-	result   *api.DVDMenuCaptureResult
-	err      error
+	captures  int
+	deleted   []string
+	maxItems  []int
+	result    *api.DVDMenuCaptureResult
+	err       error
+	deleteErr error
 }
 
 func (f *workflowDVDMenuFake) Capture(
@@ -134,6 +140,9 @@ func (*workflowDVDMenuFake) List(context.Context, api.DVDMenuSubject) ([]api.Scr
 }
 
 func (f *workflowDVDMenuFake) Delete(_ context.Context, _ api.DVDMenuSubject, path string) error {
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
 	f.deleted = append(f.deleted, path)
 	return nil
 }
@@ -196,6 +205,48 @@ func TestWorkflowMediaBuilderCapturesOnlyProjectedNormalScreenshots(t *testing.T
 	}
 	if changed.CaptureFingerprint == snapshot.CaptureFingerprint {
 		t.Fatal("media capture fingerprint ignored release generation")
+	}
+}
+
+func TestWorkflowMediaBuilderReportsFrameCorruption(t *testing.T) {
+	t.Parallel()
+
+	screenshots := &workflowScreenshotFake{root: t.TempDir(), err: fmt.Errorf("synthetic: %w", internalerrors.ErrFrameCorruption)}
+	builder := workflowMediaBuilder{resolver: workflowMediaResolverFake{}, screenshots: screenshots}
+	var progress []api.WorkflowProgressUpdate
+	ctx := api.WithWorkflowProgressReporter(context.Background(), func(update api.WorkflowProgressUpdate) {
+		progress = append(progress, update)
+	})
+	snapshot, _, err := builder.Build(
+		ctx,
+		api.ReleaseRef{SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026"), Generation: 1},
+		api.TrackerReleaseProjectionSet{
+			ID:       "projections-corruption",
+			Revision: 1,
+			Projections: []api.TrackerReleaseProjection{{
+				TrackerID: "SYNTHETIC",
+				Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1},
+			}},
+		},
+		api.MediaCaptureInstructions{},
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("build workflow media: %v", err)
+	}
+	if snapshot.Status != api.StageStatusFailed || len(snapshot.Failures) != 1 {
+		t.Fatalf("frame corruption snapshot = %#v", snapshot)
+	}
+	if snapshot.Artifacts == nil {
+		t.Fatal("frame corruption artifacts = nil, want empty array")
+	}
+	if got := snapshot.Failures[0].Failure.Message; got != "Screenshot frame corruption detected. Repair source media before retrying." {
+		t.Fatalf("frame corruption failure = %q", got)
+	}
+	if !slices.ContainsFunc(progress, func(update api.WorkflowProgressUpdate) bool {
+		return update.ItemID == "screenshots" && update.Status == api.StageStatusFailed
+	}) {
+		t.Fatalf("frame corruption progress was not emitted: %#v", progress)
 	}
 }
 
@@ -719,5 +770,43 @@ func TestWorkflowMediaPrivateResourceDeletesThroughManagedServices(t *testing.T)
 	}
 	if len(screenshots.deleted) != 1 || screenshots.deleted[0] != "C:\\private\\screen.png" || len(dvdMenus.deleted) != 0 {
 		t.Fatalf("service deletions screenshots=%v menus=%v", screenshots.deleted, dvdMenus.deleted)
+	}
+}
+
+// TestWorkflowMediaCommitPropagatesMenuDeletionFailure keeps menu-deletion
+// idempotency inside the menu service. The workflow cannot tell an already-absent
+// image from one whose cleanup failed and left local state behind, so it treats
+// every error as unfinished work and keeps the deletion pending for a retry.
+func TestWorkflowMediaCommitPropagatesMenuDeletionFailure(t *testing.T) {
+	t.Parallel()
+
+	menuPath := "C:\\private\\menu.png"
+	dvdMenus := &workflowDVDMenuFake{
+		deleteErr: fmt.Errorf("DVD menus: delete records: %w", internalerrors.ErrNotFound),
+	}
+	resource := workflowMediaPrivateArtifacts{
+		DVDMenus: []api.DVDMenuCaptureImage{{
+			ScreenshotImage: api.ScreenshotImage{Path: menuPath},
+			Discovery:       api.DVDMenuDiscoveryReachable,
+		}},
+		dvdMenuService: dvdMenus,
+	}
+	snapshot := api.MediaArtifactSet{Artifacts: []api.MediaArtifact{{
+		ID:   "menu-1",
+		Kind: api.MediaArtifactDVDMenu,
+	}}}
+	retained, err := resource.DeleteArtifacts(context.Background(), snapshot, []api.PublicResourceID{"menu-1"})
+	if err != nil {
+		t.Fatalf("delete menu artifact: %v", err)
+	}
+	updated, ok := retained.(workflowMediaPrivateArtifacts)
+	if !ok {
+		t.Fatalf("retained media = %#v", retained)
+	}
+	if err := updated.Commit(context.Background()); !errors.Is(err, internalerrors.ErrNotFound) {
+		t.Fatalf("commit error = %v, want the menu service failure", err)
+	}
+	if pending := updated.pendingDeletes(); len(pending) != 1 || pending[0].path != menuPath {
+		t.Fatalf("failed menu deletion did not stay pending: %#v", pending)
 	}
 }

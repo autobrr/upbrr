@@ -33,7 +33,72 @@ const continuation = (requiredActions: readonly RequiredAction[]): WorkflowConti
 });
 
 describe("WorkflowRequiredActions", () => {
-  it("stays visible after operation progress is complete and routes supported actions", () => {
+  it("keeps source evidence visible while showing Blu-ray playlist progress", () => {
+    render(
+      <WorkflowOperationProgress
+        operation={
+          {
+            command: "prepare_release",
+            completed: 300,
+            events: [
+              {
+                command: "prepare_release",
+                disposition: "none",
+                lifecycle: "running",
+                message: "PLAYLIST: 7/26",
+                operationId: "operation-1",
+                phase: "bdinfo",
+                scope: "workflow",
+                scopeId: "bdinfo",
+                sequence: 1,
+                severity: "info",
+                state: "running",
+                timestamp: "2026-07-26T00:00:00Z",
+                workflowId: "workflow-1",
+              },
+            ],
+            id: "operation-1",
+            items: [
+              {
+                completed: 0,
+                id: "source_evidence",
+                kind: "preparation_phase",
+                label: "Collect source evidence",
+                phase: "source_evidence",
+                status: "running",
+                total: 1,
+              },
+              {
+                completed: 0,
+                id: "bdinfo",
+                kind: "preparation_phase",
+                label: "Analyze Blu-ray playlists",
+                phase: "bdinfo",
+                status: "running",
+                total: 1200,
+              },
+            ],
+            message: "Analyzing selected Blu-ray playlists.",
+            operation: "preparation",
+            progress: 25,
+            revision: 1,
+            sequence: 1,
+            startedAt: "2026-07-26T00:00:00Z",
+            status: "running",
+            total: 1200,
+            updatedAt: "2026-07-26T00:00:00Z",
+            workflowId: "workflow-1",
+          } as WorkflowOperationStatus
+        }
+      />,
+    );
+
+    expect(screen.getByText("Collect source evidence")).toBeInTheDocument();
+    expect(screen.getByText("Analyze Blu-ray playlists")).toBeInTheDocument();
+    expect(screen.getByText("PLAYLIST: 7/26")).toBeInTheDocument();
+  });
+
+  it("stays visible after operation progress is complete and routes non-dupe actions", () => {
     const navigate = vi.fn();
     const completed = {
       command: "upload-media-images",
@@ -47,15 +112,24 @@ describe("WorkflowRequiredActions", () => {
     render(
       <>
         <WorkflowOperationProgress operation={completed} />
-        <WorkflowRequiredActions continuation={continuation([action()])} onNavigate={navigate} />
+        <WorkflowRequiredActions
+          continuation={continuation([
+            action({
+              kind: "select_metadata",
+              prompt: "Review release metadata.",
+              trackerId: undefined,
+            }),
+          ])}
+          onConfirm={vi.fn()}
+          onNavigate={navigate}
+        />
       </>,
     );
 
     expect(screen.queryByText("upload-media-images")).not.toBeInTheDocument();
-    expect(screen.getByText("Review the duplicate match.")).toBeInTheDocument();
-    expect(screen.getByText("Tracker: EXAMPLE")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Review duplicates" }));
-    expect(navigate).toHaveBeenCalledWith("duplicates");
+    expect(screen.getByText("Review release metadata.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review metadata" }));
+    expect(navigate).toHaveBeenCalledWith("input");
   });
 
   it("renders unsupported actions without inventing navigation", () => {
@@ -70,6 +144,7 @@ describe("WorkflowRequiredActions", () => {
             trackerId: undefined,
           }),
         ])}
+        onConfirm={vi.fn()}
         onNavigate={navigate}
       />,
     );
@@ -81,9 +156,53 @@ describe("WorkflowRequiredActions", () => {
     rerender(
       <WorkflowRequiredActions
         continuation={continuation([action({ status: "resolved" })])}
+        onConfirm={vi.fn()}
         onNavigate={navigate}
       />,
     );
     expect(screen.queryByText("Action required")).not.toBeInTheDocument();
+  });
+
+  it("leaves duplicate review and tracker naming inside dupe tracker cards", () => {
+    const navigate = vi.fn();
+    render(
+      <WorkflowRequiredActions
+        continuation={continuation([
+          action(),
+          action({
+            id: "action-2",
+            kind: "provide_tracker_input",
+            prompt: "Confirm the tracker release name.",
+          }),
+        ])}
+        onConfirm={vi.fn()}
+        onNavigate={navigate}
+      />,
+    );
+
+    expect(screen.queryByText("Review the duplicate match.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Confirm the tracker release name.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("confirms rule authorization in place", () => {
+    const confirm = vi.fn();
+    render(
+      <WorkflowRequiredActions
+        continuation={continuation([
+          action({
+            kind: "authorize_rules",
+            prompt: "BTN autofill returned a different series. Continue?",
+            trackerId: undefined,
+          }),
+        ])}
+        onConfirm={confirm}
+        onNavigate={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue upload" }));
+    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ kind: "authorize_rules" }));
   });
 });

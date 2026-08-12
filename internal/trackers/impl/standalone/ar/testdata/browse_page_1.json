@@ -1,0 +1,30 @@
+{
+  "status": "success",
+  "response": {
+    "currentPage": 1,
+    "pages": 2,
+    "results": [
+      {
+        "groupName": "Example.Release.2026.1080p.BluRay.x264-GRP",
+        "size": 123456789,
+        "fileCount": 1,
+        "groupId": 44,
+        "torrentId": 55
+      },
+      {
+        "groupName": "Example.Release.2026.2160p.WEB-DL.H.265-GRP",
+        "size": 223456789,
+        "fileCount": 3,
+        "groupId": 44,
+        "torrentId": 56
+      },
+      {
+        "groupName": "Example.Release.2026.1080p.Remux.AVC",
+        "size": 323456789,
+        "fileCount": 2,
+        "groupId": 44,
+        "torrentId": 57
+      }
+    ]
+  }
+}

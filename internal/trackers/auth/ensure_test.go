@@ -335,14 +335,14 @@ func TestEnsureSessionKeepsCookiesOnInvalidLookingTransientAdapterText(t *testin
 	t.Parallel()
 
 	adapter := &fakeAdapter{
-		capability: api.TrackerAuthCapability{TrackerID: "MTV", SupportsLogin: true},
+		capability: api.TrackerAuthCapability{TrackerID: "BTN", SupportsLogin: true},
 		validate: func() (Session, error) {
-			return Session{}, classifyAdapterError("MTV", errors.New("temporary upstream failure: cookie invalid"))
+			return Session{}, classifyAdapterError("BTN", errors.New("temporary upstream failure: cookie invalid"))
 		},
 	}
-	service := &Service{adapters: map[string]Adapter{"MTV": adapter}, challenges: NewChallengeManager(defaultChallengeTTL)}
+	service := &Service{adapters: map[string]Adapter{"BTN": adapter}, challenges: NewChallengeManager(defaultChallengeTTL)}
 
-	_, err := service.EnsureSession(context.Background(), EnsureRequest{TrackerID: "MTV", AutoLogin: true})
+	_, err := service.EnsureSession(context.Background(), EnsureRequest{TrackerID: "BTN", AutoLogin: true})
 	if err == nil {
 		t.Fatal("expected transient validation error")
 	}
@@ -358,7 +358,7 @@ func TestEnsureSessionKeepsCookiesOnInvalidLookingTransientAdapterText(t *testin
 func TestClassifyAdapterErrorKeepsWrappedContextCancellationTransient(t *testing.T) {
 	t.Parallel()
 
-	err := classifyAdapterError("MTV", fmt.Errorf("cookie invalid after retry: %w", context.Canceled))
+	err := classifyAdapterError("BTN", fmt.Errorf("cookie invalid after retry: %w", context.Canceled))
 	var validationErr *ValidationError
 	if !errors.As(err, &validationErr) || !validationErr.Transient || validationErr.ConfirmedInvalid {
 		t.Fatalf("expected context cancellation to stay transient, got %v", err)
@@ -373,30 +373,30 @@ func TestClassifyAdapterErrorRequiresExplicit2FARequiredText(t *testing.T) {
 		want2FA bool
 	}{
 		"explicit missing code": {
-			message: "trackers: MTV 2FA required but otp_uri invalid: empty otp_uri",
+			message: "trackers: BTN 2FA required but otp_uri invalid: empty otp_uri",
 			want2FA: true,
 		},
 		"separator colon": {
-			message: "trackers: MTV 2FA required: enter code",
+			message: "trackers: BTN 2FA required: enter code",
 			want2FA: true,
 		},
 		"separator punctuation": {
-			message: "trackers: MTV 2FA required, enter code",
+			message: "trackers: BTN 2FA required, enter code",
 			want2FA: true,
 		},
 		"separator newline": {
-			message: "trackers: MTV 2FA required\nenter code",
+			message: "trackers: BTN 2FA required\nenter code",
 			want2FA: true,
 		},
 		"separator parentheses": {
-			message: "trackers: MTV (2FA required)",
+			message: "trackers: BTN (2FA required)",
 			want2FA: true,
 		},
 		"missing form token": {
-			message: "trackers: MTV 2FA token not found",
+			message: "trackers: BTN 2FA token not found",
 		},
 		"otp uri parser": {
-			message: "trackers: MTV parse otp_uri: missing secret",
+			message: "trackers: BTN parse otp_uri: missing secret",
 		},
 		"tfa layout text": {
 			message: "trackers: PTP tfa layout token missing",
@@ -405,24 +405,24 @@ func TestClassifyAdapterErrorRequiresExplicit2FARequiredText(t *testing.T) {
 			message: "trackers: GET https://example.invalid/2fa/setup failed",
 		},
 		"prefixed phrase": {
-			message: "trackers: MTV x2FA required",
+			message: "trackers: BTN x2FA required",
 		},
 		"suffixed phrase": {
-			message: "trackers: MTV 2FA requiredx",
+			message: "trackers: BTN 2FA requiredx",
 		},
 		"empty message": {},
 		"whitespace message": {
 			message: "   ",
 		},
 		"grouped parser text": {
-			message: "trackers: MTV otp_uri contains token2FA required value",
+			message: "trackers: BTN otp_uri contains token2FA required value",
 		},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			err := classifyAdapterError("MTV", errors.New(tt.message))
+			err := classifyAdapterError("BTN", errors.New(tt.message))
 			var needsErr *Needs2FAError
 			got2FA := errors.As(err, &needsErr)
 			if got2FA != tt.want2FA {

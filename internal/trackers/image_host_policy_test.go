@@ -277,7 +277,7 @@ func TestNeededImageUploadTargetsForMetadataExcludesEarlierFailedHosts(t *testin
 			Host1: "imgbox",
 			Host2: "imgbb",
 		}},
-		[]string{"MTV"},
+		[]string{"BTN"},
 		"",
 		api.UploadSubject{ImageHostOverrides: api.ImageHostOverrides{FailedHosts: []string{"imgbox"}}},
 	)

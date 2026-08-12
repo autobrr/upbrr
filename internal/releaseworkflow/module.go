@@ -43,6 +43,8 @@ const (
 	workflowWorkLeaseTTL  = time.Minute
 	workflowWorkHeartbeat = 20 * time.Second
 	workflowCommandTTL    = 24 * time.Hour
+	// maxPlaylistActionOptions bounds the selectable playlist details retained in one action.
+	maxPlaylistActionOptions = 10
 )
 
 // Option configures a workflow module.
@@ -338,14 +340,23 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 		m.cleanupUncommittedResult(ownerID, state.Workflow.ID, result)
 		return CommandResult{}, fmt.Errorf("release workflow command canceled before commit: %w", err)
 	}
+	if commandCommitsMediaBeforeSave(command) {
+		if err := m.finalizeRetainedMedia(ctx, ownerID, state.Workflow.ID, result.Media, true); err != nil {
+			m.cleanupUncommittedResult(ownerID, state.Workflow.ID, result)
+			return CommandResult{}, err
+		}
+	}
 	if err := m.repository.Save(ctx, ownerID, expectedRevision, state); err != nil {
 		m.cleanupUncommittedResult(ownerID, state.Workflow.ID, result)
 		return CommandResult{}, fmt.Errorf("release workflow save: %w", err)
 	}
+	if result.Dupes != nil {
+		m.cleanupSupersededDupeResources(ownerID, state.Workflow.ID, priorWorkflow, state.Workflow)
+	}
 	if result.Media != nil {
 		m.cleanupSupersededMediaResources(ownerID, state.Workflow.ID, priorWorkflow, state.Workflow)
 	}
-	if commandFinalizesMedia(command) {
+	if commandFinalizesMedia(command) && !commandCommitsMediaBeforeSave(command) {
 		if err := m.finalizeRetainedMedia(ctx, ownerID, state.Workflow.ID, result.Media, true); err != nil {
 			return CommandResult{}, err
 		}
@@ -354,6 +365,9 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 }
 
 func (m *Module) cleanupUncommittedResult(ownerID string, workflowID api.WorkflowID, result CommandResult) {
+	if result.Dupes != nil {
+		m.private.Delete(ownerID, workflowID, dupePrivateResourceID(result.Dupes.ID))
+	}
 	if result.Media != nil {
 		m.private.Delete(ownerID, workflowID, mediaPrivateResourceID(result.Media.ID))
 	}
@@ -368,6 +382,20 @@ func (m *Module) cleanupUncommittedResult(ownerID string, workflowID api.Workflo
 func commandFinalizesMedia(command mutation) bool {
 	switch command.(type) {
 	case DeleteMediaArtifactsCommand, RemoveHostedImagesCommand:
+		return true
+	default:
+		return false
+	}
+}
+
+// commandCommitsMediaBeforeSave selects commands whose staged local deletions
+// commit before the snapshot save: a failed commit then fails the command while
+// durable state still owns the artifact, so any retry is a fresh, valid delete.
+// Hosted-image removal stays post-save because its cleanup belongs to the
+// already-committed hosted-image revision.
+func commandCommitsMediaBeforeSave(command mutation) bool {
+	switch command.(type) {
+	case DeleteMediaArtifactsCommand:
 		return true
 	default:
 		return false
@@ -399,6 +427,23 @@ func (m *Module) finalizeRetainedMedia(
 		return fmt.Errorf("release workflow finalize media mutation: %w", err)
 	}
 	return nil
+}
+
+func (m *Module) cleanupSupersededDupeResources(
+	ownerID string,
+	workflowID api.WorkflowID,
+	prior api.ReleaseWorkflow,
+	current api.ReleaseWorkflow,
+) {
+	if prior.Dupes != nil && (current.Dupes == nil || *prior.Dupes != *current.Dupes) {
+		m.private.Delete(ownerID, workflowID, dupePrivateResourceID(prior.Dupes.ID))
+	}
+	if prior.Media != nil && (current.Media == nil || *prior.Media != *current.Media) {
+		m.private.Delete(ownerID, workflowID, mediaPrivateResourceID(prior.Media.ID))
+	}
+	if prior.Descriptions != nil && (current.Descriptions == nil || *prior.Descriptions != *current.Descriptions) {
+		m.private.Delete(ownerID, workflowID, descriptionPrivateResourceID(prior.Descriptions.ID))
+	}
 }
 
 func (m *Module) cleanupSupersededMediaResources(
@@ -2309,7 +2354,7 @@ func (m *Module) recoverAfterRestart(ctx context.Context, ownerID string, state 
 	for index := range workflow.RequiredActions {
 		workflow.RequiredActions[index].WorkflowRevision = nextRevision
 	}
-	if len(workflow.RequiredActions) > 0 {
+	if hasPendingRequiredAction(workflow.RequiredActions) {
 		workflow.Status = api.WorkflowStatusBlocked
 	} else {
 		workflow.Status = api.WorkflowStatusActive
@@ -2830,6 +2875,30 @@ func (m *Module) prepareRelease(
 	command.Input.Instructions = facts.Instructions
 	prepared, err := m.preparer.Prepare(ctx, command.Input)
 	if err != nil {
+		var playlistRequired *api.PlaylistSelectionRequiredError
+		if errors.As(err, &playlistRequired) {
+			options := make([]api.RequiredActionOption, 0, min(len(playlistRequired.Candidates), maxPlaylistActionOptions))
+			for _, candidate := range playlistRequired.Candidates {
+				playlist := strings.TrimSpace(candidate.File)
+				if playlist != "" {
+					candidate.File = playlist
+					options = append(options, api.RequiredActionOption{
+						Value:    playlist,
+						Label:    playlist,
+						Playlist: &candidate,
+					})
+					if len(options) == maxPlaylistActionOptions {
+						break
+					}
+				}
+			}
+			if len(options) > 0 {
+				if actionErr := m.blockForPlaylistSelection(state, nextRevision, now, options); actionErr != nil {
+					return CommandResult{}, actionErr
+				}
+				return CommandResult{}, nil
+			}
+		}
 		return CommandResult{}, fmt.Errorf("release workflow prepare canonical release: %w", err)
 	}
 	ref := api.ReleaseRef{SourcePath: prepared.Release.Source.SourcePath, Generation: prepared.Release.Generation}
@@ -2881,25 +2950,43 @@ func (m *Module) prepareRelease(
 				continue
 			}
 			options = append(options, api.RequiredActionOption{Value: playlist, Label: playlist})
+			if len(options) == maxPlaylistActionOptions {
+				break
+			}
 		}
 		if len(options) > 0 {
-			actionID, actionErr := m.newID("action")
-			if actionErr != nil {
-				return CommandResult{}, actionErr
+			if err := m.blockForPlaylistSelection(state, nextRevision, now, options); err != nil {
+				return CommandResult{}, err
 			}
-			state.Workflow.Status = api.WorkflowStatusBlocked
-			state.Workflow.RequiredActions = []api.RequiredAction{{
-				ID:               api.RequiredActionID(actionID),
-				Kind:             api.RequiredActionSelectPlaylist,
-				Status:           api.RequiredActionStatusPending,
-				WorkflowRevision: nextRevision,
-				Prompt:           "Select one or more Blu-ray playlists to analyze.",
-				Options:          options,
-				CreatedAt:        now,
-			}}
 		}
 	}
 	return CommandResult{Release: &snapshot}, nil
+}
+
+// blockForPlaylistSelection replaces workflow failures with one pending,
+// revision-bound Blu-ray playlist action and marks the workflow blocked.
+func (m *Module) blockForPlaylistSelection(
+	state *State,
+	nextRevision api.WorkflowRevision,
+	now time.Time,
+	options []api.RequiredActionOption,
+) error {
+	actionID, err := m.newID("action")
+	if err != nil {
+		return err
+	}
+	state.Workflow.Status = api.WorkflowStatusBlocked
+	state.Workflow.RequiredActions = []api.RequiredAction{{
+		ID:               api.RequiredActionID(actionID),
+		Kind:             api.RequiredActionSelectPlaylist,
+		Status:           api.RequiredActionStatusPending,
+		WorkflowRevision: nextRevision,
+		Prompt:           "Select one or more Blu-ray playlists to analyze.",
+		Options:          options,
+		CreatedAt:        now,
+	}}
+	state.Workflow.Failures = nil
+	return nil
 }
 
 func (m *Module) resetRelease(
@@ -3191,6 +3278,9 @@ func (m *Module) publishProjections(
 	snapshot.Runtime = *workflow.TrackerRuntime
 	snapshot.Selection = *workflow.Selection
 	snapshot.CreatedAt = now
+	if err := m.stampProjectionActions(&snapshot, nextRevision, now); err != nil {
+		return CommandResult{}, err
+	}
 	if err := snapshot.Validate(); err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow publish projections: %w", err)
 	}
@@ -3406,6 +3496,36 @@ func validatePreflightBuild(
 	return nil
 }
 
+func (m *Module) stampProjectionActions(
+	snapshot *api.TrackerReleaseProjectionSet,
+	revision api.WorkflowRevision,
+	now time.Time,
+) error {
+	actions := make([]api.RequiredAction, 0)
+	for projectionIndex := range snapshot.Projections {
+		projection := &snapshot.Projections[projectionIndex]
+		for actionIndex := range projection.RequiredActions {
+			action := &projection.RequiredActions[actionIndex]
+			if action.ID == "" {
+				id, err := m.newID("action")
+				if err != nil {
+					return err
+				}
+				action.ID = api.RequiredActionID(id)
+			}
+			if action.Status != api.RequiredActionStatusResolved {
+				action.Status = api.RequiredActionStatusPending
+			}
+			action.WorkflowRevision = revision
+			action.TrackerID = projection.TrackerID
+			action.CreatedAt = now
+			actions = append(actions, *action)
+		}
+	}
+	snapshot.RequiredActions = actions
+	return nil
+}
+
 func (m *Module) stampPreflightActions(
 	assessment *api.TrackerPreflightAssessment,
 	revision api.WorkflowRevision,
@@ -3488,7 +3608,7 @@ func finalizedProjectionStatus(
 	if readyCount > 0 {
 		return api.StageStatusReady
 	}
-	if len(actions) > 0 {
+	if hasPendingRequiredAction(actions) {
 		return api.StageStatusBlocked
 	}
 	_ = failures
@@ -3550,7 +3670,7 @@ func (m *Module) checkDuplicates(
 		return CommandResult{}, err
 	}
 	snapshot.Status = dupeStageStatus(snapshot.Results)
-	result, err := m.publishDupes(ownerID, state, nextRevision, now, dupeAssessmentPublication{Snapshot: snapshot})
+	result, err := m.publishDupes(state, nextRevision, now, dupeAssessmentPublication{Snapshot: snapshot})
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -3629,7 +3749,7 @@ func (m *Module) decideDuplicates(
 		return CommandResult{}, err
 	}
 	snapshot.Status = dupeStageStatus(snapshot.Results)
-	result, err := m.publishDupes(ownerID, state, nextRevision, now, dupeAssessmentPublication{Snapshot: snapshot})
+	result, err := m.publishDupes(state, nextRevision, now, dupeAssessmentPublication{Snapshot: snapshot})
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -3756,7 +3876,11 @@ func validateDupeBuild(projections api.TrackerReleaseProjectionSet, snapshot api
 			return fmt.Errorf("fingerprint duplicate criteria %s: %w", projection.TrackerID, err)
 		}
 		if result.UploadReleaseName != projection.UploadReleaseName || criteriaFingerprint != projection.CriteriaFingerprint ||
-			result.ProjectionFingerprint != fingerprint || result.CriteriaFingerprint != projection.CriteriaFingerprint {
+			result.ProjectionFingerprint != fingerprint || result.CriteriaFingerprint != projection.CriteriaFingerprint ||
+			result.TargetFingerprint != projection.DuplicateTargetFingerprint ||
+			result.SearchFingerprint != projection.DuplicateSearchFingerprint ||
+			result.PolicyID != projection.DuplicatePolicyID ||
+			result.PolicyFingerprint != projection.DuplicatePolicyFingerprint {
 			return fmt.Errorf("duplicate assessment lineage mismatch for tracker %s", projection.TrackerID)
 		}
 	}
@@ -3830,16 +3954,12 @@ func collectDupeFailures(results []api.TrackerDupeAssessment) []api.WorkflowFail
 func dupePrivateResourceID(id api.DupeAssessmentID) string { return "dupe:" + string(id) }
 
 func (m *Module) publishDupes(
-	ownerID string,
 	state *State,
 	nextRevision api.WorkflowRevision,
 	now time.Time,
 	command dupeAssessmentPublication,
 ) (CommandResult, error) {
 	workflow := state.Workflow
-	priorDupes := workflow.Dupes
-	priorMedia := workflow.Media
-	priorDescriptions := workflow.Descriptions
 	if workflow.Release == nil || workflow.Selection == nil || workflow.TrackerProjections == nil || workflow.TrackerPreflight == nil {
 		return CommandResult{}, fmt.Errorf("%w: duplicate assessment dependencies are incomplete", ErrInvalidTransition)
 	}
@@ -3875,16 +3995,9 @@ func (m *Module) publishDupes(
 	state.Workflow.Media = nil
 	state.Workflow.Descriptions = nil
 	invalidateUploadPlan(&state.Workflow)
-	if priorDupes != nil {
-		m.private.Delete(ownerID, state.Workflow.ID, dupePrivateResourceID(priorDupes.ID))
-	}
-	if priorMedia != nil {
-		m.private.Delete(ownerID, state.Workflow.ID, mediaPrivateResourceID(priorMedia.ID))
-	}
-	if priorDescriptions != nil {
-		m.private.Delete(ownerID, state.Workflow.ID, descriptionPrivateResourceID(priorDescriptions.ID))
-	}
-	setWorkflowStageStatus(&state.Workflow, snapshot.Status, collectDupeActions(snapshot.Results), collectDupeFailures(snapshot.Results))
+	actions := append([]api.RequiredAction(nil), projections.RequiredActions...)
+	actions = append(actions, collectDupeActions(snapshot.Results)...)
+	setWorkflowStageStatus(&state.Workflow, snapshot.Status, actions, collectDupeFailures(snapshot.Results))
 	return CommandResult{Dupes: &snapshot}, nil
 }
 
@@ -4541,6 +4654,10 @@ func (m *Module) publishMediaReplacement(
 	return result, nil
 }
 
+// refreshMutatedMediaStatus recomputes media readiness after a mutation while
+// retaining image-host failures and pending reconciliation actions. Before
+// required hosting runs, selected local assets determine readiness; afterward,
+// each tracker must have enough applicable hosted screenshot sources.
 func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections []api.TrackerReleaseProjection) {
 	hostFailures := make([]api.WorkflowFailure, 0, len(snapshot.Failures))
 	for _, failure := range snapshot.Failures {
@@ -4571,11 +4688,15 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections []api
 	}
 	snapshot.Failures = hostFailures
 	snapshot.RequiredActions = reconcileActions
-	if selectedScreenshots < requiredScreenshots || selectedMenus < requiredMenus {
+	screenshotsReady := selectedScreenshots >= requiredScreenshots
+	if snapshot.ImageRequirementsPrepared {
+		screenshotsReady = hostedScreenshotRequirementsMet(*snapshot, projections)
+	}
+	if !screenshotsReady || selectedMenus < requiredMenus {
 		snapshot.Status = api.StageStatusBlocked
 		snapshot.RequiredActions = append(snapshot.RequiredActions, api.RequiredAction{
 			Kind:   api.RequiredActionProvideTrackerInput,
-			Prompt: "Capture or select the required release images before continuing.",
+			Prompt: "Capture, select, or host the required release images before continuing.",
 		})
 		return
 	}
@@ -4588,6 +4709,53 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections []api
 		return
 	}
 	snapshot.Status = api.StageStatusCompleted
+}
+
+// hostedScreenshotRequirementsMet reports whether every projection has enough
+// unique selected final-screenshot sources in applicable host attempts. Multiple
+// hosted variants of the same local screenshot count once; DVD menus do not count.
+func hostedScreenshotRequirementsMet(snapshot api.MediaArtifactSet, projections []api.TrackerReleaseProjection) bool {
+	artifacts := make(map[api.PublicResourceID]api.MediaArtifact, len(snapshot.Artifacts))
+	for _, artifact := range snapshot.Artifacts {
+		artifacts[artifact.ID] = artifact
+	}
+	for _, projection := range projections {
+		if projection.Artifacts.ScreenshotCount <= 0 {
+			continue
+		}
+		trackerID := normalizeDownstreamTrackerID(projection.TrackerID)
+		sources := make(map[api.PublicResourceID]struct{}, projection.Artifacts.ScreenshotCount)
+		for _, attempt := range snapshot.HostAttempts {
+			if !hostedAttemptAppliesToTracker(attempt, trackerID) {
+				continue
+			}
+			for _, result := range attempt.Results {
+				hosted := artifacts[result.ID]
+				source := artifacts[api.PublicResourceID(strings.TrimSpace(hosted.Source))]
+				if hosted.Selected && hosted.Kind == api.MediaArtifactHostedImage && hosted.Purpose == api.ScreenshotPurposeFinal &&
+					source.Selected && source.Kind == api.MediaArtifactScreenshot && source.Purpose == api.ScreenshotPurposeFinal {
+					sources[source.ID] = struct{}{}
+				}
+			}
+		}
+		if len(sources) < projection.Artifacts.ScreenshotCount {
+			return false
+		}
+	}
+	return true
+}
+
+// hostedAttemptAppliesToTracker reports whether an attempt explicitly targeted
+// the tracker and used either global scope or that tracker's owned scope. An
+// empty usage scope is treated as global.
+func hostedAttemptAppliesToTracker(attempt api.HostedImageAttempt, trackerID api.TrackerID) bool {
+	if !slices.ContainsFunc(attempt.TrackerIDs, func(candidate api.TrackerID) bool {
+		return normalizeDownstreamTrackerID(candidate) == trackerID
+	}) {
+		return false
+	}
+	scope := strings.TrimSpace(attempt.UsageScope)
+	return scope == "" || strings.EqualFold(scope, "global") || strings.EqualFold(scope, "tracker:"+string(trackerID))
 }
 
 func (m *Module) publishMedia(
@@ -5239,6 +5407,10 @@ func (m *Module) dryRunUploads(
 			_ = prepared.Release()
 		}
 	}()
+	uploadActions, err := m.stampUploadPlanActions(prepared.plan, nextRevision, now)
+	if err != nil {
+		return CommandResult{}, err
+	}
 	reports := uploadDryRunReports(prepared.plan.Trackers)
 	succeededCount, failedCount, skippedCount, status := reduceUploadDryRunReports(reports)
 	id, err := m.newID("upload_dry_run")
@@ -5271,6 +5443,7 @@ func (m *Module) dryRunUploads(
 	if err != nil {
 		return CommandResult{}, err
 	}
+	actions := slices.Concat(uploadActions, reconcileActions)
 	if err := m.private.Put(
 		ownerID,
 		state.Workflow.ID,
@@ -5287,12 +5460,43 @@ func (m *Module) dryRunUploads(
 	state.DryRuns[snapshot.ID] = snapshot
 	state.Workflow.DryRun = &api.UploadDryRunResultRef{ID: snapshot.ID, Revision: snapshot.Revision}
 	if state.Workflow.UploadResult == nil {
-		setWorkflowStageStatus(&state.Workflow, snapshot.Status, reconcileActions, reconcileFailures)
-		if len(reconcileActions) > 0 {
+		setWorkflowStageStatus(&state.Workflow, snapshot.Status, actions, reconcileFailures)
+		if len(actions) > 0 {
 			state.Workflow.Status = api.WorkflowStatusBlocked
 		}
 	}
 	return CommandResult{DryRun: &snapshot}, nil
+}
+
+// stampUploadPlanActions prepares tracker actions for workflow presentation.
+// It assigns missing IDs and expiry while resetting status, revision, and creation time.
+func (m *Module) stampUploadPlanActions(
+	plan api.UploadPlan,
+	revision api.WorkflowRevision,
+	now time.Time,
+) ([]api.RequiredAction, error) {
+	var actions []api.RequiredAction
+	for _, tracker := range plan.Trackers {
+		for _, action := range tracker.RequiredActions {
+			action.TrackerID = tracker.TrackerID
+			if action.ID == "" {
+				id, err := m.newID("action")
+				if err != nil {
+					return nil, err
+				}
+				action.ID = api.RequiredActionID(id)
+			}
+			action.Status = api.RequiredActionStatusPending
+			action.WorkflowRevision = revision
+			action.CreatedAt = now
+			if action.ExpiresAt == nil {
+				expiresAt := plan.ExpiresAt
+				action.ExpiresAt = &expiresAt
+			}
+			actions = append(actions, action)
+		}
+	}
+	return actions, nil
 }
 
 func (m *Module) reconcileActionsForDryRun(
@@ -5435,20 +5639,40 @@ func (m *Module) executeUploads(
 	if state.Workflow.UploadResult != nil {
 		return CommandResult{}, fmt.Errorf("%w: upload already has a retained result; retry failed trackers or change workflow inputs", ErrInvalidTransition)
 	}
+	if slices.ContainsFunc(state.Workflow.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionAuthorizeRules && action.Status == api.RequiredActionStatusPending
+	}) {
+		return CommandResult{}, api.NewOperationError(api.OperationFailure{
+			Code:      api.OperationFailureConfirmationRequired,
+			Operation: api.OperationKindUploadExecute,
+			Message:   "Upload requires confirmation of a pending tracker rule.",
+			Recovery:  api.OperationRecoveryConfirm,
+		}, ErrInvalidTransition)
+	}
 	prepared, err := m.preparedUploadsForExecution(ctx, ownerID, state, command.NoSeed, command.TrackerIDs, now)
 	if err != nil {
 		return CommandResult{}, err
 	}
 	defer func() { _ = prepared.Release() }()
-	requestedTrackerIDs := command.TrackerIDs
-	if len(requestedTrackerIDs) == 0 {
-		requestedTrackerIDs = prepared.trackerIDs
+	if slices.ContainsFunc(prepared.plan.Trackers, func(tracker api.UploadPlanTracker) bool {
+		return len(tracker.RequiredActions) > 0
+	}) && state.Workflow.DryRun == nil {
+		return CommandResult{}, api.NewOperationError(api.OperationFailure{
+			Code:      api.OperationFailureConfirmationRequired,
+			Operation: api.OperationKindUploadExecute,
+			Message:   "Prepare and review the upload before confirming its tracker preparation result.",
+			Recovery:  api.OperationRecoveryReviewAgain,
+		}, ErrInvalidTransition)
 	}
-	trackerIDs, err := validateUploadExecutionTrackerIDs(prepared.plan.Trackers, requestedTrackerIDs)
+	trackerIDs, err := validateUploadExecutionTrackerIDs(prepared.plan.Trackers, command.TrackerIDs)
 	if err != nil {
 		return CommandResult{}, err
 	}
-	results, executionErr := prepared.execution.Execute(ctx, trackerIDs)
+	var results []api.UploadTrackerResult
+	var executionErr error
+	if len(trackerIDs) > 0 {
+		results, executionErr = prepared.execution.Execute(ctx, trackerIDs)
+	}
 	results = completeUploadExecutionResults(prepared.plan.Trackers, results, executionErr, trackerIDs)
 	authority := prepared.execution.RegisteredArtifactAuthority()
 	return m.publishUploadResult(ownerID, state, nextRevision, now, prepared, results, authority)
@@ -5778,22 +6002,36 @@ func completeUploadExecutionResults(
 	return completed
 }
 
+// validateUploadExecutionTrackerIDs selects ready, eligible trackers from the retained plan.
+// An empty request selects all; explicit skipped trackers are ignored, while other invalid or duplicate IDs reject the request.
 func validateUploadExecutionTrackerIDs(
 	trackers []api.UploadPlanTracker,
 	requested []api.TrackerID,
 ) ([]api.TrackerID, error) {
-	if len(requested) == 0 {
-		return nil, nil
-	}
 	eligible := make(map[api.TrackerID]struct{}, len(trackers))
+	skipped := make(map[api.TrackerID]struct{}, len(trackers))
 	for _, tracker := range trackers {
 		if tracker.Eligible && tracker.Status == api.StageStatusReady {
 			eligible[tracker.TrackerID] = struct{}{}
+		} else if tracker.Status == api.StageStatusSkipped {
+			skipped[tracker.TrackerID] = struct{}{}
 		}
+	}
+	if len(requested) == 0 {
+		selected := make([]api.TrackerID, 0, len(eligible))
+		for _, tracker := range trackers {
+			if _, ok := eligible[tracker.TrackerID]; ok {
+				selected = append(selected, tracker.TrackerID)
+			}
+		}
+		return selected, nil
 	}
 	selected := make(map[api.TrackerID]struct{}, len(requested))
 	for _, trackerID := range requested {
 		trackerID = api.TrackerID(strings.ToUpper(strings.TrimSpace(string(trackerID))))
+		if _, wasSkipped := skipped[trackerID]; wasSkipped {
+			continue
+		}
 		if _, exists := eligible[trackerID]; !exists {
 			return nil, fmt.Errorf("%w: tracker %s is not eligible in the retained upload plan", ErrInvalidTransition, trackerID)
 		}
@@ -5891,7 +6129,7 @@ func (m *Module) publishUploadResult(
 			state.Workflow.Failures = append(state.Workflow.Failures, failure)
 		}
 	}
-	if len(state.Workflow.RequiredActions) > 0 {
+	if hasPendingRequiredAction(state.Workflow.RequiredActions) {
 		state.Workflow.Status = api.WorkflowStatusBlocked
 	}
 	return CommandResult{UploadResult: &snapshot}, nil
@@ -6104,6 +6342,13 @@ func (m *Module) resolveAction(
 	if command.Answer.WorkflowRevision != command.ExpectedRevision {
 		return CommandResult{}, ErrRevisionConflict
 	}
+	var currentProjections *api.TrackerReleaseProjectionSet
+	if state.Workflow.TrackerProjections != nil {
+		currentProjections = currentSnapshot(state.Projections, state.Workflow.TrackerProjections.ID)
+	}
+	if action, ok := releaseNameConfirmationAction(currentProjections, command.Answer.ActionID); ok {
+		return m.reviewTrackerReleaseName(ctx, ownerID, state, nextRevision, now, action, command.Answer)
+	}
 	index := slices.IndexFunc(state.Workflow.RequiredActions, func(action api.RequiredAction) bool {
 		return action.ID == command.Answer.ActionID && action.Status == api.RequiredActionStatusPending
 	})
@@ -6113,6 +6358,10 @@ func (m *Module) resolveAction(
 	action := state.Workflow.RequiredActions[index]
 	if action.Kind == api.RequiredActionReprepare {
 		return CommandResult{}, fmt.Errorf("%w: reprepare action must be completed by preparing the release", ErrInvalidTransition)
+	}
+	if action.Kind == api.RequiredActionAuthorizeRules &&
+		(command.Answer.Confirmed == nil || !*command.Answer.Confirmed || command.Answer.TextValue != nil || len(command.Answer.SelectedValues) > 0) {
+		return CommandResult{}, fmt.Errorf("%w: rule authorization requires explicit confirmation", ErrInvalidTransition)
 	}
 	if action.Kind == api.RequiredActionReconcileSubmission {
 		if len(command.Answer.SelectedValues) != 1 ||
@@ -6166,7 +6415,7 @@ func (m *Module) resolveAction(
 		})
 	}
 	state.Workflow.RequiredActions = slices.Delete(state.Workflow.RequiredActions, index, index+1)
-	if len(state.Workflow.RequiredActions) == 0 && state.Workflow.Status == api.WorkflowStatusBlocked {
+	if !hasPendingRequiredAction(state.Workflow.RequiredActions) && state.Workflow.Status == api.WorkflowStatusBlocked {
 		if state.Workflow.UploadResult != nil {
 			state.Workflow.Status = api.WorkflowStatusCompleted
 		} else {
@@ -6324,7 +6573,7 @@ func finishUnavailableImageHostingReconciliation(workflow *api.ReleaseWorkflow, 
 			failure.Failure.Operation == api.OperationKindImageHosting &&
 			failure.Resource == action.EffectScopeID
 	})
-	if len(workflow.RequiredActions) == 0 && workflow.Status == api.WorkflowStatusBlocked {
+	if !hasPendingRequiredAction(workflow.RequiredActions) && workflow.Status == api.WorkflowStatusBlocked {
 		workflow.Status = api.WorkflowStatusActive
 	}
 }
@@ -6376,7 +6625,7 @@ func setWorkflowStageStatus(
 ) {
 	workflow.RequiredActions = append([]api.RequiredAction(nil), actions...)
 	workflow.Failures = append([]api.WorkflowFailure(nil), failures...)
-	if len(actions) > 0 {
+	if hasPendingRequiredAction(actions) {
 		workflow.Status = api.WorkflowStatusBlocked
 		return
 	}
@@ -6397,6 +6646,12 @@ func setWorkflowStageStatus(
 		api.StageStatusUnavailable:
 		workflow.Status = api.WorkflowStatusActive
 	}
+}
+
+func hasPendingRequiredAction(actions []api.RequiredAction) bool {
+	return slices.ContainsFunc(actions, func(action api.RequiredAction) bool {
+		return action.Status == "" || action.Status == api.RequiredActionStatusPending
+	})
 }
 
 func cloneCommandResult(result CommandResult) (CommandResult, error) {

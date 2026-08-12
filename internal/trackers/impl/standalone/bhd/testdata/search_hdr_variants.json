@@ -1,0 +1,17 @@
+{
+  "status_code": 1,
+  "page": 1,
+  "total_pages": 1,
+  "total_results": 8,
+  "success": true,
+  "results": [
+    {"id": 101, "name": "Example.Release.2026.DV-GRP", "size": 1001, "category": "Movies", "type": "2160p", "dv": 1, "hdr10": 0, "hdr10+": 0, "hlg": 0, "url": "https://example.invalid/torrents/101"},
+    {"id": 102, "name": "Example.Release.2026.HDR10-GRP", "size": "1002", "category": "Movies", "type": "2160p", "dv": 0, "hdr10": 1, "hdr10+": 0, "hlg": 0, "url": "https://example.invalid/torrents/102"},
+    {"id": 103, "name": "Example.Release.2026.HDR10Plus-GRP", "size": 1003, "category": "Movies", "type": "2160p", "dv": false, "hdr10": false, "hdr10+": true, "hlg": false, "url": "https://example.invalid/torrents/103"},
+    {"id": 104, "name": "Example.Release.2026.DV.HDR10-GRP", "size": 1004, "category": "Movies", "type": "2160p", "dv": "1", "hdr10": "1", "hdr10+": "0", "hlg": "0", "url": "https://example.invalid/torrents/104"},
+    {"id": 105, "name": "Example.Release.2026.DV.HDR10Plus-GRP", "size": 1005, "category": "Movies", "type": "2160p", "dv": 1, "hdr10": 0, "hdr10+": 1, "hlg": 0, "url": "https://example.invalid/torrents/105"},
+    {"id": 106, "name": "Example.Release.2026.HLG-GRP", "size": 1006, "category": "Movies", "type": "2160p", "dv": 0, "hdr10": 0, "hdr10+": 0, "hlg": 1, "url": "https://example.invalid/torrents/106"},
+    {"id": 107, "name": "Example.Release.2026.SDR-GRP", "size": 1007, "category": "Movies", "type": "1080p", "dv": 0, "hdr10": 0, "hdr10+": 0, "hlg": 0, "url": "https://example.invalid/torrents/107"},
+    {"id": 108, "name": "Example.Release.2026.Unknown-GRP", "size": "malformed", "category": "Movies", "type": "2160p", "dv": "unknown", "url": "https://example.invalid/torrents/108"}
+  ]
+}

@@ -203,6 +203,16 @@ func (c *ScreenshotHandlingConfig) ResolvedMaxMenuItems() int {
 	return c.MaxMenuItems
 }
 
+// ResolvedMinSuccessfulUploads returns how many images a host must publish for
+// a tracker before a partially failed image-host batch still counts as usable.
+// Zero or negative disables the allowance, so any failed image fails the batch.
+func (c *ScreenshotHandlingConfig) ResolvedMinSuccessfulUploads() int {
+	if c.MinSuccessfulUploads <= 0 {
+		return 0
+	}
+	return c.MinSuccessfulUploads
+}
+
 type DescriptionSettingsConfig struct {
 	AddLogo                 bool   `yaml:"add_logo"`
 	LogoSize                int    `yaml:"logo_size"`
@@ -254,6 +264,9 @@ type ArrIntegrationConfig struct {
 	EmbyTVDir     string `yaml:"emby_tv_dir"`
 }
 
+// TorrentCreationConfig controls torrent construction and reuse scheduling.
+// RehashCooldown delays rehash-dependent tracker submissions by that many
+// seconds after all reusable tracker submissions finish; negative values act as zero.
 type TorrentCreationConfig struct {
 	MkbrrThreads   int  `yaml:"mkbrr_threads"`
 	PreferMax16    bool `yaml:"prefer_max_16_torrent"`
@@ -288,7 +301,9 @@ type TrackersConfig struct {
 
 // TrackerConfig stores one tracker's supported settings. Unknown preserves
 // unsupported extension fields across load/save, excluding deprecated URL
-// fields and schema-known fields belonging to another tracker.
+// fields and schema-known fields belonging to another tracker. SkipIfRehash
+// omits the tracker when torrent preparation requires regeneration, including
+// forced regeneration of source data.
 type TrackerConfig struct {
 	LinkDirName         string         `yaml:"link_dir_name" json:"LinkDirName"`
 	APIKey              string         `yaml:"api_key" json:"APIKey"`
@@ -320,7 +335,6 @@ type TrackerConfig struct {
 	UseItalianTitle     bool           `yaml:"use_italian_title" json:"UseItalianTitle"`
 	OTPURI              string         `yaml:"otp_uri" json:"OTPURI"`
 	SkipIfRehash        bool           `yaml:"skip_if_rehash" json:"SkipIfRehash"`
-	PreferMTV           bool           `yaml:"prefer_mtv_torrent" json:"PreferMTV"`
 	PTGenAPI            string         `yaml:"ptgen_api" json:"PTGenAPI"`
 	AddWebSourceToDesc  bool           `yaml:"add_web_source_to_desc" json:"AddWebSourceToDesc"`
 	UseMetadataName     bool           `yaml:"use_metadata_name" json:"UseMetadataName"`
@@ -939,6 +953,9 @@ func (c Config) Validate() error {
 	if c.ScreenshotHandling.MaxMenuItems > MaxDVDMenuItems {
 		return fmt.Errorf("config: screenshot_handling.max_menu_items must not exceed %d", MaxDVDMenuItems)
 	}
+	if c.ScreenshotHandling.FFmpegCompression < 0 || c.ScreenshotHandling.FFmpegCompression > 9 {
+		return errors.New("config: screenshot_handling.ffmpeg_compression must be between 0 and 9")
+	}
 	if c.PostUpload.MaxConcurrentTrackers < 0 {
 		return errors.New("config: post_upload.max_concurrent_tracker_uploads must be zero or greater")
 	}
@@ -1166,7 +1183,7 @@ func MergeMissingTrackerDefaultsWithReport(cfg *Config) (TrackerDefaultsMergeRep
 	if trackersChanged {
 		report.markChanged("Trackers")
 	}
-	defaults, err := loadEmbeddedDefaultConfigRaw()
+	defaults, err := loadEmbeddedDefaultTemplate()
 	if err != nil || defaults == nil || len(defaults.Trackers.Trackers) == 0 {
 		if err != nil {
 			return report, fmt.Errorf("load embedded tracker defaults: %w", err)
@@ -1176,7 +1193,7 @@ func MergeMissingTrackerDefaultsWithReport(cfg *Config) (TrackerDefaultsMergeRep
 	for trackerName, trackerCfg := range defaults.Trackers.Trackers {
 		existingName, existing, ok := trackerDefaultMergeEntry(cfg.Trackers.Trackers, trackerName)
 		if !ok {
-			cfg.Trackers.Trackers[trackerName] = trackerCfg
+			cfg.Trackers.Trackers[trackerName] = cloneEmbeddedTrackerConfig(trackerCfg)
 			report.markChanged("Trackers")
 			continue
 		}

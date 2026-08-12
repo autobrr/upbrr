@@ -848,6 +848,60 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         return prev;
       }
       delete cursor[key];
+
+      if (path.length === 1 && path[0] === "TorrentClients") {
+        const removedName = key.trim().toLowerCase();
+        const remainingNames = Object.keys(cursor);
+        const isRemovedReference = (value: ConfigValue) => {
+          if (typeof value !== "string" || value.trim().toLowerCase() !== removedName) {
+            return false;
+          }
+          const selected = value.trim();
+          const exactMatches = remainingNames.filter((name) => name.trim() === selected).length;
+          if (exactMatches > 0) {
+            return exactMatches !== 1;
+          }
+          return (
+            remainingNames.filter((name) => name.trim().toLowerCase() === selected.toLowerCase())
+              .length !== 1
+          );
+        };
+
+        const clientSetup = clone.ClientSetup;
+        if (clientSetup && typeof clientSetup === "object" && !Array.isArray(clientSetup)) {
+          if (isRemovedReference(clientSetup.DefaultClient)) {
+            clientSetup.DefaultClient = "";
+          }
+          for (const field of ["InjectClients", "SearchClients"]) {
+            const selected = clientSetup[field];
+            if (Array.isArray(selected)) {
+              clientSetup[field] = selected.filter((value) => !isRemovedReference(value));
+            }
+          }
+        }
+
+        const trackers = clone.Trackers;
+        const trackerEntries =
+          trackers && typeof trackers === "object" && !Array.isArray(trackers)
+            ? trackers.Trackers
+            : null;
+        if (
+          trackerEntries &&
+          typeof trackerEntries === "object" &&
+          !Array.isArray(trackerEntries)
+        ) {
+          Object.values(trackerEntries).forEach((tracker) => {
+            if (
+              tracker &&
+              typeof tracker === "object" &&
+              !Array.isArray(tracker) &&
+              isRemovedReference(tracker.TorrentClient)
+            ) {
+              tracker.TorrentClient = "";
+            }
+          });
+        }
+      }
       return clone;
     });
   };
@@ -920,6 +974,9 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     try {
       await saveConfig(payload);
       if (settingsMutationVersion.current === mutationVersion) {
+        const masked = maskSensitiveConfig(JSON.parse(payload) as ConfigMap);
+        setConfigData(masked.masked);
+        setSensitiveValues(masked.originals);
         markSettingsSaved("Settings saved and applied.");
       } else {
         setSettingsSaved("Earlier changes saved. Newer edits remain unsaved.");
@@ -1598,9 +1655,31 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
       const trackerOptions = catalogEntries.map((entry) => entry.name);
       const availableTrackers = trackerOptions.filter((name) => !visibleTrackerSet.has(name));
       const trackerClientOptions = [{ value: "", label: "" }, ...torrentClientOptions];
+      const imageCfg =
+        configData.ImageHosting &&
+        typeof configData.ImageHosting === "object" &&
+        !Array.isArray(configData.ImageHosting)
+          ? (configData.ImageHosting as ConfigMap)
+          : null;
+
+      const trackerHasEnabledOwnedImageHost = (trackerName: string) => {
+        const trackerKey = trackerName.trim().toUpperCase();
+        const ownerByHost = imageHostPolicyMetadata?.OwnedHosts ?? {};
+        return (imageHostPolicyMetadata?.TrackerUploadHosts?.[trackerKey] ?? []).some((host) => {
+          const normalizedHost = normalizeImageHostValue(host);
+          const enabledKey = conditionalImageHostEnabledKeys[normalizedHost];
+          return (
+            ownerByHost[normalizedHost]?.trim().toUpperCase() === trackerKey &&
+            Boolean(enabledKey && imageCfg?.[enabledKey])
+          );
+        });
+      };
 
       const trackerSchemaFor = (entry: TrackerCatalogEntry) => {
-        return entry.fields.map((field) => {
+        const fields = trackerHasEnabledOwnedImageHost(entry.name)
+          ? entry.fields.filter((field) => field.key !== "ImageHost")
+          : entry.fields;
+        return fields.map((field) => {
           const base = trackerFieldPresentation(field.key);
           if (field.key === "ImageHost") {
             return { ...base, options: trackerOptionsForImageHost(entry.name) };

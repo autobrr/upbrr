@@ -4,12 +4,14 @@
 package metadata
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
+	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -67,22 +69,26 @@ func TestBuildReleaseNameMovieBareWebEncodeUsesWebDLNaming(t *testing.T) {
 }
 
 func TestBuildReleaseNameHybridEdition(t *testing.T) {
-	result := BuildReleaseName(api.ReleaseNameRequest{
-		Category:    "MOVIE",
-		Type:        "ENCODE",
-		Title:       "Hybrid Cut",
-		Year:        2020,
-		Edition:     "Hybrid Director",
-		WebDV:       true,
-		Resolution:  "1080p",
-		Source:      "BluRay",
-		Audio:       "DTS",
-		VideoEncode: "x264",
-	}, api.NopLogger{})
+	for _, webDV := range []bool{false, true} {
+		t.Run(fmt.Sprintf("webdv_%t", webDV), func(t *testing.T) {
+			result := BuildReleaseName(api.ReleaseNameRequest{
+				Category:    "MOVIE",
+				Type:        "ENCODE",
+				Title:       "Hybrid Cut",
+				Year:        2020,
+				Edition:     "Hybrid Director",
+				WebDV:       webDV,
+				Resolution:  "1080p",
+				Source:      "BluRay",
+				Audio:       "DTS",
+				VideoEncode: "x264",
+			}, api.NopLogger{})
 
-	expected := "Hybrid Cut 2020 Director Hybrid 1080p BluRay DTS x264"
-	if result.NameNoTag != expected {
-		t.Fatalf("expected %q, got %q", expected, result.NameNoTag)
+			expected := "Hybrid Cut 2020 Director Hybrid 1080p BluRay DTS x264"
+			if result.NameNoTag != expected {
+				t.Fatalf("expected %q, got %q", expected, result.NameNoTag)
+			}
+		})
 	}
 }
 
@@ -121,36 +127,353 @@ func TestBuildReleaseNameCleanName(t *testing.T) {
 	}
 }
 
-func TestApplyReleaseNameOverrides(t *testing.T) {
+func TestApplyReleaseNameOverridesKeepsNamingOnlyControls(t *testing.T) {
 	base := api.ReleaseNameRequest{
-		Category: "MOVIE",
-		Title:    "Example",
-		Tag:      "-GROUP",
-		Audio:    "DD+5.1",
-		Edition:  "Director",
+		Category:     "MOVIE",
+		Title:        "Example",
+		Tag:          "-GROUP",
+		Audio:        "DD+5.1",
+		Edition:      "Director",
+		EpisodeTitle: "Example Episode",
 	}
 	overrides := api.ReleaseNameOverrides{
-		NoTag:      new(true),
-		ManualYear: new(2025),
-		ManualDate: new("2025-01-01"),
-		NoAKA:      new(true),
+		NoTag:          new(true),
+		NoEdition:      new(true),
+		NoEpisodeTitle: new(true),
+		ManualDate:     new("2025-01-01"),
+		NoAKA:          new(true),
+		Type:           new("REMUX"),
 	}
 	updated := applyReleaseNameOverrides(base, overrides, api.NopLogger{})
 	if updated.Tag != "" {
 		t.Fatalf("expected tag cleared, got %q", updated.Tag)
 	}
-	if updated.ManualYear != 2025 {
-		t.Fatalf("expected manual year, got %d", updated.ManualYear)
+	if updated.Edition != "" {
+		t.Fatalf("expected edition cleared, got %q", updated.Edition)
 	}
-	if !updated.ManualDate || updated.DailyDate != "2025-01-01" {
-		t.Fatalf("expected manual date applied, got manual=%t date=%q", updated.ManualDate, updated.DailyDate)
+	if updated.EpisodeTitle != "" {
+		t.Fatalf("expected episode title cleared, got %q", updated.EpisodeTitle)
+	}
+	if !updated.ManualDate {
+		t.Fatalf("expected manual date naming mode, got manual=%t", updated.ManualDate)
 	}
 	if !updated.NoAKA {
 		t.Fatalf("expected no aka override")
 	}
+	if updated.Type != "" {
+		t.Fatalf("expected value instruction to stay out of the naming request, got type %q", updated.Type)
+	}
 }
 
-func TestReleaseNameRequestFromMetaDefaultsToDailyForTVEpisode(t *testing.T) {
+func TestApplyReleaseNameValueOverridesUpdatesCanonicalFacts(t *testing.T) {
+	baseState := func() preparationstate.State {
+		return preparationstate.State{
+			Type:             "ENCODE",
+			Source:           "Web",
+			Service:          "NF",
+			ServiceLongName:  "Netflix",
+			Region:           "A",
+			Edition:          "Extended",
+			Distributor:      "Example Distributor",
+			Audio:            "DD+ 5.1",
+			Tag:              "-GRP",
+			EpisodeTitle:     "Parsed Title",
+			SeasonInt:        1,
+			EpisodeInt:       2,
+			SeasonStr:        "S01",
+			EpisodeStr:       "E02",
+			DailyEpisodeDate: "2026-01-01",
+			Release: api.ReleaseInfo{
+				Type:       "ENCODE",
+				Source:     "Web",
+				Resolution: "1080p",
+				Region:     "A",
+				Year:       2024,
+				Group:      "GRP",
+				Edition:    []string{"Extended"},
+			},
+		}
+	}
+	tests := []struct {
+		name      string
+		overrides api.ReleaseNameOverrides
+		assert    func(*testing.T, preparationstate.State)
+	}{
+		{
+			name:      "type updates media and naming facts",
+			overrides: api.ReleaseNameOverrides{Type: new(" REMUX ")},
+			assert: func(t *testing.T, meta preparationstate.State) {
+				if meta.Type != "REMUX" || meta.Release.Type != "REMUX" {
+					t.Fatalf("type facts = %q/%q", meta.Type, meta.Release.Type)
+				}
+			},
+		},
+		{
+			name:      "source updates media and naming facts",
+			overrides: api.ReleaseNameOverrides{Source: new("BluRay")},
+			assert: func(t *testing.T, meta preparationstate.State) {
+				if meta.Source != "BluRay" || meta.Release.Source != "BluRay" {
+					t.Fatalf("source facts = %q/%q", meta.Source, meta.Release.Source)
+				}
+			},
+		},
+		{
+			name:      "resolution updates naming facts",
+			overrides: api.ReleaseNameOverrides{Resolution: new("2160p")},
+			assert: func(t *testing.T, meta preparationstate.State) {
+				if meta.Release.Resolution != "2160p" {
+					t.Fatalf("resolution fact = %q", meta.Release.Resolution)
+				}
+			},
+		},
+		{
+			name:      "service updates code and long name",
+			overrides: api.ReleaseNameOverrides{Service: new("AMZN")},
+			assert: func(t *testing.T, meta preparationstate.State) {
+				if meta.Service != "AMZN" || meta.ServiceLongName != "Amazon Prime" {
+					t.Fatalf("service facts = %q/%q", meta.Service, meta.ServiceLongName)
+				}
+			},
+		},
+		{
+			name:      "unknown service keeps raw value without stale long name",
+			overrides: api.ReleaseNameOverrides{Service: new("ZZZZ")},
+			assert: func(t *testing.T, meta preparationstate.State) {
+				if meta.Service != "ZZZZ" || meta.ServiceLongName != "" {
+					t.Fatalf("service facts = %q/%q", meta.Service, meta.ServiceLongName)
+				}
+			},
+		},
+		{
+			name:      "explicit service clear removes both values",
+			overrides: api.ReleaseNameOverrides{Service: new("")},
+			assert: func(t *testing.T, meta preparationstate.State) {
+				if meta.Service != "" || meta.ServiceLongName != "" {
+					t.Fatalf("service facts = %q/%q", meta.Service, meta.ServiceLongName)
+				}
+			},
+		},
+		{
+			name:      "region updates media and naming facts",
+			overrides: api.ReleaseNameOverrides{Region: new("B")},
+			assert: func(t *testing.T, meta preparationstate.State) {
+				if meta.Region != "B" || meta.Release.Region != "B" {
+					t.Fatalf("region facts = %q/%q", meta.Region, meta.Release.Region)
+				}
+			},
+		},
+		{
+			name:      "edition updates media and naming facts",
+			overrides: api.ReleaseNameOverrides{Edition: new("Director's Cut")},
+			assert: func(t *testing.T, meta preparationstate.State) {
+				if meta.Edition != "Director's Cut" || len(meta.Release.Edition) != 1 || meta.Release.Edition[0] != "Director's Cut" {
+					t.Fatalf("edition facts = %q/%v", meta.Edition, meta.Release.Edition)
+				}
+			},
+		},
+		{
+			name:      "no edition clears the edition fact",
+			overrides: api.ReleaseNameOverrides{Edition: new("Director's Cut"), NoEdition: new(true)},
+			assert: func(t *testing.T, meta preparationstate.State) {
+				if meta.Edition != "" || len(meta.Release.Edition) != 0 {
+					t.Fatalf("edition facts = %q/%v", meta.Edition, meta.Release.Edition)
+				}
+			},
+		},
+		{
+			name:      "manual year updates naming fact",
+			overrides: api.ReleaseNameOverrides{ManualYear: new(2025)},
+			assert: func(t *testing.T, meta preparationstate.State) {
+				if meta.Release.Year != 2025 {
+					t.Fatalf("year fact = %d", meta.Release.Year)
+				}
+			},
+		},
+		{
+			name:      "zero manual year keeps the derived year",
+			overrides: api.ReleaseNameOverrides{ManualYear: new(0)},
+			assert: func(t *testing.T, meta preparationstate.State) {
+				if meta.Release.Year != 2024 {
+					t.Fatalf("year fact = %d", meta.Release.Year)
+				}
+			},
+		},
+		{
+			name:      "episode title updates episode fact",
+			overrides: api.ReleaseNameOverrides{EpisodeTitle: new("Corrected Title")},
+			assert: func(t *testing.T, meta preparationstate.State) {
+				if meta.EpisodeTitle != "Corrected Title" {
+					t.Fatalf("episode title fact = %q", meta.EpisodeTitle)
+				}
+			},
+		},
+		{
+			name:      "explicit episode title clear removes the fact",
+			overrides: api.ReleaseNameOverrides{EpisodeTitle: new("")},
+			assert: func(t *testing.T, meta preparationstate.State) {
+				if meta.EpisodeTitle != "" {
+					t.Fatalf("episode title fact = %q", meta.EpisodeTitle)
+				}
+			},
+		},
+		{
+			name:      "no episode title clears the fact",
+			overrides: api.ReleaseNameOverrides{NoEpisodeTitle: new(true)},
+			assert: func(t *testing.T, meta preparationstate.State) {
+				if meta.EpisodeTitle != "" {
+					t.Fatalf("episode title fact = %q", meta.EpisodeTitle)
+				}
+			},
+		},
+		{
+			name:      "no distributor clears the fact",
+			overrides: api.ReleaseNameOverrides{NoDistributor: new(true)},
+			assert: func(t *testing.T, meta preparationstate.State) {
+				if meta.Distributor != "" {
+					t.Fatalf("distributor fact = %q", meta.Distributor)
+				}
+			},
+		},
+		{
+			name:      "season and episode tokens update episode facts",
+			overrides: api.ReleaseNameOverrides{Season: new("S03"), Episode: new("7")},
+			assert: func(t *testing.T, meta preparationstate.State) {
+				if meta.SeasonInt != 3 || meta.SeasonStr != "S03" || meta.EpisodeInt != 7 || meta.EpisodeStr != "E07" {
+					t.Fatalf("episode facts = %d/%q %d/%q", meta.SeasonInt, meta.SeasonStr, meta.EpisodeInt, meta.EpisodeStr)
+				}
+			},
+		},
+		{
+			name:      "explicit season and episode clears remove episode facts",
+			overrides: api.ReleaseNameOverrides{Season: new(""), Episode: new("")},
+			assert: func(t *testing.T, meta preparationstate.State) {
+				if meta.SeasonInt != 0 || meta.SeasonStr != "" || meta.EpisodeInt != 0 || meta.EpisodeStr != "" {
+					t.Fatalf("episode facts = %d/%q %d/%q", meta.SeasonInt, meta.SeasonStr, meta.EpisodeInt, meta.EpisodeStr)
+				}
+			},
+		},
+		{
+			name:      "manual date updates the daily date fact",
+			overrides: api.ReleaseNameOverrides{ManualDate: new("2026-02-03")},
+			assert: func(t *testing.T, meta preparationstate.State) {
+				if meta.DailyEpisodeDate != "2026-02-03" {
+					t.Fatalf("daily date fact = %q", meta.DailyEpisodeDate)
+				}
+			},
+		},
+		{
+			name:      "empty manual date keeps the parsed daily date fact",
+			overrides: api.ReleaseNameOverrides{ManualDate: new("")},
+			assert: func(t *testing.T, meta preparationstate.State) {
+				if meta.DailyEpisodeDate != "2026-01-01" {
+					t.Fatalf("daily date fact = %q", meta.DailyEpisodeDate)
+				}
+			},
+		},
+		{
+			name:      "dual audio flag updates the audio fact",
+			overrides: api.ReleaseNameOverrides{DualAudio: new(true)},
+			assert: func(t *testing.T, meta preparationstate.State) {
+				if meta.Audio != "DD+ 5.1 Dual-Audio" {
+					t.Fatalf("audio fact = %q", meta.Audio)
+				}
+			},
+		},
+		{
+			name:      "tag updates tag and group facts",
+			overrides: api.ReleaseNameOverrides{Tag: new("OTHER")},
+			assert: func(t *testing.T, meta preparationstate.State) {
+				if meta.Tag != "-OTHER" || meta.Release.Group != "OTHER" {
+					t.Fatalf("tag facts = %q/%q", meta.Tag, meta.Release.Group)
+				}
+			},
+		},
+		{
+			name:      "no tag clears tag and group facts",
+			overrides: api.ReleaseNameOverrides{NoTag: new(true)},
+			assert: func(t *testing.T, meta preparationstate.State) {
+				if meta.Tag != "" || meta.Release.Group != "" {
+					t.Fatalf("tag facts = %q/%q", meta.Tag, meta.Release.Group)
+				}
+			},
+		},
+		{
+			name: "naming-only suppression flags keep canonical facts",
+			overrides: api.ReleaseNameOverrides{
+				NoSeason: new(true),
+				NoYear:   new(true),
+				NoAKA:    new(true),
+			},
+			assert: func(t *testing.T, meta preparationstate.State) {
+				if meta.SeasonInt != 1 || meta.EpisodeInt != 2 || meta.Release.Year != 2024 {
+					t.Fatalf("facts changed by naming-only flags: %d/%d year=%d", meta.SeasonInt, meta.EpisodeInt, meta.Release.Year)
+				}
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			meta := baseState()
+			meta.ReleaseNameOverrides = tc.overrides
+			applyReleaseNameValueOverrides(&meta)
+			tc.assert(t, meta)
+		})
+	}
+}
+
+func TestValidateReleaseNameFactInstructions(t *testing.T) {
+	valid := []api.ReleaseNameOverrides{
+		{},
+		{
+			Season:     new(""),
+			Episode:    new(""),
+			ManualDate: new(""),
+		},
+		{Season: new("5"), Episode: new("7")},
+		{Season: new("05"), Episode: new("07")},
+		{Season: new("S05"), Episode: new("E07")},
+		{Season: new("s5"), Episode: new("e7")},
+		{Season: new("99"), Episode: new("999")},
+		{ManualDate: new("2026-02-03")},
+	}
+	for _, overrides := range valid {
+		if err := validateReleaseNameFactInstructions(overrides); err != nil {
+			t.Fatalf("expected valid instructions %#v, got %v", overrides, err)
+		}
+	}
+
+	invalid := []api.ReleaseNameOverrides{
+		{Season: new("S01E05")},
+		{Season: new("S01-S02")},
+		{Season: new("1x05")},
+		{Season: new("0")},
+		{Season: new("S00")},
+		{Season: new("100")},
+		{Season: new("abc")},
+		{Season: new("S")},
+		{Season: new("-1")},
+		{Season: new("E05")},
+		{Episode: new("E01-E03")},
+		{Episode: new("E01E02")},
+		{Episode: new("0")},
+		{Episode: new("E00")},
+		{Episode: new("1000")},
+		{Episode: new("S05")},
+		{ManualDate: new("2026-13-99")},
+		{ManualDate: new("yesterday")},
+	}
+	for _, overrides := range invalid {
+		err := validateReleaseNameFactInstructions(overrides)
+		if err == nil {
+			t.Fatalf("expected invalid instructions %#v to be rejected", overrides)
+		}
+		if !errors.Is(err, internalerrors.ErrInvalidInput) {
+			t.Fatalf("expected typed invalid-input error for %#v, got %v", overrides, err)
+		}
+	}
+}
+
+func TestReleaseNameRequestFromMetaDefaultsToDailyWithoutEpisodeTitle(t *testing.T) {
 	meta := preparationstate.State{
 		Identity:         api.ExternalIdentity{Category: "TV"},
 		Release:          api.ReleaseInfo{Title: "Example Show", Resolution: "1080p"},
@@ -170,8 +493,8 @@ func TestReleaseNameRequestFromMetaDefaultsToDailyForTVEpisode(t *testing.T) {
 	if req.DailyDate != "2025-11-10" {
 		t.Fatalf("expected daily date in request, got %q", req.DailyDate)
 	}
-	if req.EpisodeTitle != "Episode Title" {
-		t.Fatalf("expected episode title preserved, got %q", req.EpisodeTitle)
+	if req.EpisodeTitle != "" {
+		t.Fatalf("expected daily episode title omitted, got %q", req.EpisodeTitle)
 	}
 }
 
@@ -234,6 +557,152 @@ func TestReleaseNameRequestFromMetaTVPackOmitsSeasonTitle(t *testing.T) {
 	}
 	if !containsAll(result.NameNoTag, []string{"Example Spy Show", "S01", "MGMP", "WEB-DL"}) {
 		t.Fatalf("expected tv pack name to keep season and service tokens, got %q", result.NameNoTag)
+	}
+}
+
+func TestBuildReleaseNameGeneratedEpisodeVariants(t *testing.T) {
+	t.Parallel()
+
+	result := BuildReleaseName(api.ReleaseNameRequest{
+		Category:     "TV",
+		Type:         "WEBDL",
+		Title:        "Example Show",
+		Season:       "S01",
+		Episode:      "E02",
+		EpisodeTitle: "Example Episode",
+		Resolution:   "1080p",
+		Service:      "EXM",
+		Audio:        "AAC 2.0",
+		VideoEncode:  "H.264",
+		Tag:          "-GRP",
+	}, api.NopLogger{})
+
+	included := result.GeneratedVariants.IncludeEpisodeTitle
+	omitted := result.GeneratedVariants.OmitEpisodeTitle
+	if !strings.Contains(included.Name, "Example Episode") || strings.Contains(omitted.Name, "Example Episode") {
+		t.Fatalf("generated episode variants = %#v", result.GeneratedVariants)
+	}
+	if result.Name != included.Name || included.Name == omitted.Name {
+		t.Fatalf("canonical generated variant = %#v", result)
+	}
+}
+
+func TestBuildReleaseNameManualEpisodeTitleOverridesRemainAuthoritative(t *testing.T) {
+	t.Parallel()
+
+	base := api.ReleaseNameRequest{
+		Category:    "TV",
+		Type:        "WEBDL",
+		Title:       "Example Show",
+		Season:      "S01",
+		Episode:     "E02",
+		Resolution:  "1080p",
+		Service:     "EXM",
+		Audio:       "AAC 2.0",
+		VideoEncode: "H.264",
+		Tag:         "-GRP",
+	}
+	for _, test := range []struct {
+		name     string
+		override string
+		want     string
+	}{
+		{
+			name:     "blank",
+			override: "",
+			want:     "",
+		},
+		{
+			name:     "nonblank",
+			override: "Manual Episode",
+			want:     "Manual Episode",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			request := applyReleaseNameOverrides(
+				base,
+				api.ReleaseNameOverrides{EpisodeTitle: &test.override},
+				api.NopLogger{},
+			)
+			result := BuildReleaseName(request, api.NopLogger{})
+			included := result.GeneratedVariants.IncludeEpisodeTitle.Name
+			omitted := result.GeneratedVariants.OmitEpisodeTitle.Name
+			if included != omitted {
+				t.Fatalf("manual override variants differ: %#v", result.GeneratedVariants)
+			}
+			if test.want == "" && strings.Contains(included, "Manual Episode") {
+				t.Fatalf("blank manual override rendered a title: %q", included)
+			}
+			if test.want != "" && !strings.Contains(included, test.want) {
+				t.Fatalf("manual override missing from %q", included)
+			}
+		})
+	}
+}
+
+func TestReleaseNameRequestFromMetaPrefersPreparedEnglishEpisodeTitle(t *testing.T) {
+	t.Parallel()
+
+	meta := preparationstate.State{
+		Identity: api.ExternalIdentity{Category: "TV", TVDBID: 22},
+		ProviderMetadata: api.SourceScopedMetadata{
+			TVDB: &api.TVDBMetadata{
+				TVDBID:             22,
+				NameEnglish:        "Example Show",
+				OriginalLanguage:   "ja",
+				EpisodeSeason:      1,
+				EpisodeNumber:      2,
+				EpisodeName:        "Original Episode",
+				EpisodeNameEnglish: "English Episode",
+			},
+		},
+		Release:      api.ReleaseInfo{Title: "Parsed Show"},
+		Type:         "WEBDL",
+		SeasonInt:    1,
+		EpisodeInt:   2,
+		SeasonStr:    "S01",
+		EpisodeStr:   "E02",
+		EpisodeTitle: "Parsed Episode",
+	}
+	request := releaseNameRequestFromMeta(meta, api.NopLogger{})
+	if request.EpisodeTitle != "English Episode" {
+		t.Fatalf("episode title = %q, want prepared English title", request.EpisodeTitle)
+	}
+
+	meta.ProviderMetadata.TVDB.EpisodeNameEnglish = ""
+	request = releaseNameRequestFromMeta(meta, api.NopLogger{})
+	if request.EpisodeTitle != "Parsed Episode" {
+		t.Fatalf("non-English original replaced parsed title: %q", request.EpisodeTitle)
+	}
+
+	meta.ProviderMetadata.TVDB.OriginalLanguage = "en"
+	request = releaseNameRequestFromMeta(meta, api.NopLogger{})
+	if request.EpisodeTitle != "Original Episode" {
+		t.Fatalf("accepted original episode title = %q", request.EpisodeTitle)
+	}
+}
+
+func TestBuildReleaseNameDailyDateAppearsOnce(t *testing.T) {
+	t.Parallel()
+
+	result := BuildReleaseName(api.ReleaseNameRequest{
+		Category:     "TV",
+		Type:         "WEBDL",
+		Title:        "Example Daily Show",
+		EpisodeTitle: "2026-07-27",
+		DailyDate:    "2026-07-27",
+		ManualDate:   true,
+		Resolution:   "1080p",
+		Service:      "EXM",
+		Audio:        "AAC 2.0",
+		VideoEncode:  "H.264",
+	}, api.NopLogger{})
+	if strings.Count(result.Name, "2026-07-27") != 1 {
+		t.Fatalf("daily date duplicated in %q", result.Name)
+	}
+	if result.GeneratedVariants.IncludeEpisodeTitle != result.GeneratedVariants.OmitEpisodeTitle {
+		t.Fatalf("daily generated variants differ: %#v", result.GeneratedVariants)
 	}
 }
 
@@ -468,6 +937,12 @@ func TestResolveReleaseNameTitleProviderAlternateRules(t *testing.T) {
 			name:    "normalizes prefix",
 			imdbAKA: "AKA Original Title",
 			wantAlt: "AKA Original Title",
+		},
+		{
+			name:       "adds prefix to parsed alternate",
+			releaseAlt: "Parsed Alternate",
+			imdbAKA:    "Original Title",
+			wantAlt:    "AKA Parsed Alternate",
 		},
 		{
 			name:       "preserves parsed alternate",

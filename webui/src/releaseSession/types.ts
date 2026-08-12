@@ -23,6 +23,8 @@ import type {
   DescriptionSet,
   MediaArtifactSet,
   MediaCaptureInstructions,
+  MetadataOverrides,
+  RequiredAction,
   ReleaseWorkflowCurrent,
   TrackerPreflightAssessment,
   TrackerReleaseProjectionSet,
@@ -66,6 +68,7 @@ export type PlaylistStatus =
 export type PreparationIntent = Readonly<{
   sourceLookupURL: string;
   identity: Readonly<ExternalIDOverrides>;
+  metadata: Readonly<MetadataOverrides>;
   releaseName: Readonly<ReleaseNameOverrides>;
   playlist: Readonly<{ Set: boolean; Selected: readonly string[]; UseAll: boolean }>;
 }>;
@@ -115,6 +118,7 @@ export type InputFacet = Readonly<{
   selectSource(value: string): void;
   changeSourceLookupURL(value: string): void;
   changeIdentity(value: Readonly<ExternalIDOverrides>): void;
+  changeMetadata(value: Readonly<MetadataOverrides>): void;
   changeReleaseName(value: Readonly<ReleaseNameOverrides>): void;
   chooseTrackers(trackers: readonly string[]): void;
   choosePlaylists(playlists: readonly string[], useAll: boolean): void;
@@ -128,7 +132,7 @@ export type InputFacet = Readonly<{
   selectCandidate(releaseID: string): Promise<boolean>;
 }>;
 
-/** Duplicate-check commands and exact workflow-owned tracker outcomes. */
+/** Duplicate-check commands, naming review, and exact workflow-owned tracker outcomes. */
 export type DuplicatesFacet = Readonly<{
   view: Readonly<{
     status: FacetStatus;
@@ -139,11 +143,17 @@ export type DuplicatesFacet = Readonly<{
     total: number;
     ignoredTrackers: readonly string[];
     selectedTrackers: readonly string[];
+    /** Local tracker-name edits keyed by normalized tracker ID. */
+    releaseNameOverrides: Readonly<Record<string, string>>;
     error: string;
   }>;
   run(): Promise<boolean>;
   cancel(): Promise<boolean>;
   chooseTrackers(trackers: readonly string[]): void;
+  /** Stores a tracker-name edit locally without resolving its backend action. */
+  confirmReleaseName(tracker: string, value: string): void;
+  /** Resolves or reopens the backend naming action using the current local edit. */
+  acknowledgeReleaseName(tracker: string, acknowledged: boolean): Promise<boolean>;
   setIgnored(tracker: string, ignored: boolean): void;
 }>;
 
@@ -310,6 +320,8 @@ export type WorkflowFacet = Readonly<{
   generateDescriptions(instructions: DescriptionInstructions): Promise<boolean>;
   dryRunUploads(): Promise<boolean>;
   executeUploads(): Promise<boolean>;
+  /** Submits an `authorize_rules` confirmation and resumes upload; unsupported kinds resolve to false. */
+  confirmAction(action: RequiredAction): Promise<boolean>;
   retryFailedUploads(): Promise<boolean>;
   retryClientInjections(): Promise<boolean>;
   invalidateTrackers(trackerIDs: readonly string[], reason: string): Promise<boolean>;

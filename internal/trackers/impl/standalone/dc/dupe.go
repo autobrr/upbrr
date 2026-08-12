@@ -7,10 +7,10 @@ import (
 	"context"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/internal/jsondupe"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -45,13 +45,19 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	}
 	return jsondupe.Search(ctx, s.http, jsondupe.ListSpec{
 		Endpoint:       s.endpoint,
-		Query:          url.Values{"searchText": {"tt" + strconv.Itoa(meta.Identity.IMDBID)}},
+		Query:          url.Values{"searchText": {providerid.IMDb(meta.Identity.IMDBID).Prefixed()}},
 		Headers:        http.Header{"X-Api-Key": {apiKey}},
 		IDField:        "id",
 		NameField:      "name",
 		SizeField:      "size",
 		Link:           func(id string) string { return "https://digitalcore.club/torrent/" + id + "/" },
 		FailureMessage: "DC search failed",
+		SearchEvidence: dupe.SearchEvidence{
+			Complete:  true,
+			WorkScope: dupe.WorkScopeProviderID,
+			Pages:     1,
+			Scope:     "provider_array",
+		},
 	})
 }
 

@@ -128,21 +128,32 @@ export default function HistoryPage({ onReleaseDeleted }: Props) {
       setOverview(null);
       return;
     }
+    let active = true;
     const getHistoryOverview = historyClient.getOverview;
     const loadDetail = async () => {
       setDetailLoading(true);
+      setOverview(null);
       setError("");
       try {
         const next = await getHistoryOverview(selectedPath);
-        setOverview(next);
+        if (active) {
+          setOverview(next);
+        }
       } catch (err) {
-        setError(String(err));
+        if (active) {
+          setError(String(err));
+        }
       } finally {
-        setDetailLoading(false);
+        if (active) {
+          setDetailLoading(false);
+        }
       }
     };
 
     void loadDetail();
+    return () => {
+      active = false;
+    };
   }, [selectedPath]);
 
   const selectedEntry = useMemo(

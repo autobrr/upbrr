@@ -5,7 +5,6 @@ package hds
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -17,6 +16,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -38,10 +38,6 @@ func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 }
 
 func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dupe.AdapterResult {
-	resolution := strings.TrimSpace(meta.Release.Resolution)
-	if resolution != "2160p" && resolution != "1080p" && resolution != "1080i" && resolution != "720p" {
-		return dupe.NotRun(dupe.NotRunUnsupportedContent, "resolution below HDS dupe-check minimum", nil)
-	}
 	if meta.Identity.IMDBID == 0 {
 		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing IMDb ID for HDS dupe search", nil)
 	}
@@ -55,10 +51,13 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		return dupe.NotRun(dupe.NotRunMissingCredentials, "missing valid HDS cookies", nil)
 	}
 	entries := make([]api.DupeEntry, 0)
+	pages := 0
+	complete := false
+	warning := ""
 	for page := 0; page <= 10; page++ {
 		params := url.Values{
 			"page":    {"torrents"},
-			"search":  {fmt.Sprintf("tt%07d", meta.Identity.IMDBID)},
+			"search":  {providerid.IMDb(meta.Identity.IMDBID).Prefixed()},
 			"active":  {"0"},
 			"options": {"2"},
 			"pages":   {strconv.Itoa(page)},
@@ -67,9 +66,10 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		if err != nil || status < http.StatusOK || status >= http.StatusMultipleChoices {
 			return dupe.Failed(dupe.FailureRequest, "HDS search failed", err)
 		}
+		pages++
 		parts := strings.SplitN(body, "Show/Hide Categories", 2)
 		if len(parts) < 2 {
-			break
+			return dupe.Failed(dupe.FailureResponseParse, "HDS response parse failed", nil)
 		}
 		root, err := xhtml.Parse(strings.NewReader(parts[1]))
 		if err != nil {
@@ -100,18 +100,47 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 				entries = append(entries, entry)
 			}
 		}
-		next := commonhttp.FirstNode(root, func(node *xhtml.Node) bool {
-			if node.Type != xhtml.ElementNode || node.Data != "a" {
-				return false
-			}
-			href, text := commonhttp.Attr(node, "href"), strings.TrimSpace(commonhttp.NodeText(node))
-			return strings.Contains(href, "pages=") && (strings.EqualFold(text, "Next") || text == ">>" || hdsPagePattern.MatchString(href))
-		})
-		if next == nil || len(entries) == before {
+		if !hdsHasNextPage(root, page) {
+			complete = true
+			break
+		}
+		if len(entries) == before {
+			warning = "HDS search made no pagination progress"
 			break
 		}
 	}
-	return dupe.Resolved(entries, nil)
+	warnings := []string(nil)
+	if !complete {
+		if warning == "" {
+			warning = "HDS search reached pagination safety bound"
+		}
+		warnings = []string{warning}
+	}
+	return dupe.ResolvedWithSearch(entries, nil, dupe.SearchEvidence{
+		Complete:  complete,
+		WorkScope: dupe.WorkScopeProviderID,
+		Pages:     pages,
+		Scope:     "provider_all_categories",
+		Warnings:  warnings,
+	})
+}
+
+func hdsHasNextPage(root *xhtml.Node, currentPage int) bool {
+	return commonhttp.FirstNode(root, func(node *xhtml.Node) bool {
+		if node.Type != xhtml.ElementNode || node.Data != "a" {
+			return false
+		}
+		href, text := commonhttp.Attr(node, "href"), strings.TrimSpace(commonhttp.NodeText(node))
+		if strings.EqualFold(text, "Next") || text == ">>" {
+			return strings.Contains(href, "pages=")
+		}
+		match := hdsPagePattern.FindStringSubmatch(href)
+		if len(match) != 2 {
+			return false
+		}
+		targetPage, err := strconv.Atoi(match[1])
+		return err == nil && targetPage > currentPage
+	}) != nil
 }
 
 func hdsBaseURL(_ config.Config) string {

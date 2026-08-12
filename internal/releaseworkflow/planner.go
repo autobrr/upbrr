@@ -181,6 +181,26 @@ func (m *Module) resolveContinuationAnswer(
 	current CommandResult,
 	trackerDecisionMode TrackerDecisionMode,
 ) (CommandResult, bool, error) {
+	for _, answer := range request.Answers {
+		if _, ok := releaseNameConfirmationAction(current.Projections, answer.ActionID); !ok {
+			continue
+		}
+		result, err := m.Execute(ctx, ownerID, ResolveActionCommand{
+			WorkflowID:       current.Workflow.ID,
+			ExpectedRevision: current.Workflow.Revision,
+			Answer:           answer,
+			IdempotencyKey: continuationIdempotencyKey(
+				request.IdempotencyKey,
+				"answer-"+string(answer.ActionID),
+				current.Workflow.Revision,
+			),
+		})
+		if err != nil {
+			return CommandResult{}, true, err
+		}
+		updated, err := m.Current(ctx, ownerID, result.Workflow.ID)
+		return updated, true, err
+	}
 	for _, action := range current.Workflow.RequiredActions {
 		if action.Status != api.RequiredActionStatusPending {
 			continue
@@ -198,6 +218,11 @@ func (m *Module) resolveContinuationAnswer(
 			return answer.ActionID == action.ID
 		})
 		if answerIndex < 0 {
+			if request.Goal == api.WorkflowGoalDuplicatesDecided &&
+				action.Kind == api.RequiredActionProvideTrackerInput &&
+				trackerDupeReady(current.Projections, action.TrackerID) {
+				continue
+			}
 			if action.Kind == api.RequiredActionReviewDuplicates &&
 				continuationHasDupeDecisionUpdate(request.Intent, current.Dupes) {
 				continue
@@ -224,6 +249,14 @@ func (m *Module) resolveContinuationAnswer(
 		return updated, true, err
 	}
 	return CommandResult{}, false, nil
+}
+
+func trackerDupeReady(projections *api.TrackerReleaseProjectionSet, trackerID api.TrackerID) bool {
+	return projections != nil && slices.ContainsFunc(projections.Projections, func(projection api.TrackerReleaseProjection) bool {
+		return projection.TrackerID == trackerID &&
+			projection.Readiness == api.ReadinessStatusReady &&
+			projection.DupeReady
+	})
 }
 
 func continuationHasDupeDecisionUpdate(intent api.WorkflowIntent, dupes *api.DupeAssessment) bool {
@@ -371,7 +404,8 @@ func planContinuationCommand(
 	}
 	interaction := continuationInteractionMode(request.Intent)
 	if !continuationPreflightCurrent(current, now) ||
-		(interaction == api.InteractionModeUnattended && preflightRequiresManualAction(current.Preflight)) {
+		(interaction == api.InteractionModeUnattended &&
+			preflightRequiresManualAction(current.Preflight, current.Projections)) {
 		return PreflightTrackersCommand{
 			WorkflowID:       workflowID,
 			ExpectedRevision: revision,
@@ -516,9 +550,25 @@ func continuationPreflightCurrent(current CommandResult, now time.Time) bool {
 		current.Preflight.ProjectionSet.Revision == current.Projections.Revision
 }
 
+// continuationMediaCaptureSatisfied treats explicit final selections as
+// satisfied only when each screenshot index is retained.
 func continuationMediaCaptureSatisfied(current CommandResult, desired *api.MediaCaptureInstructions) bool {
 	if desired == nil || current.Media == nil {
 		return desired == nil && current.Media != nil
+	}
+	if (desired.Purpose == "" || desired.Purpose == api.ScreenshotPurposeFinal) && desired.Selections != nil {
+		retained := make(map[int]struct{}, len(current.Media.Artifacts))
+		for _, artifact := range current.Media.Artifacts {
+			if artifact.Kind == api.MediaArtifactScreenshot {
+				retained[artifact.Index] = struct{}{}
+			}
+		}
+		for _, selection := range desired.Selections {
+			if _, ok := retained[selection.Index]; !ok {
+				return false
+			}
+		}
+		return true
 	}
 	expected, err := api.CanonicalWorkflowFingerprint(struct {
 		Release      api.ReleaseRef
@@ -679,9 +729,21 @@ func continuationUnattendedSkipsTrackerAction(intent api.WorkflowIntent, action 
 	return false
 }
 
-func preflightRequiresManualAction(preflight *api.TrackerPreflightAssessment) bool {
+func preflightRequiresManualAction(
+	preflight *api.TrackerPreflightAssessment,
+	projections *api.TrackerReleaseProjectionSet,
+) bool {
 	return preflight != nil && slices.ContainsFunc(preflight.Results, func(result api.TrackerPreflightResult) bool {
-		return len(result.RequiredActions) > 0
+		return slices.ContainsFunc(result.RequiredActions, func(action api.RequiredAction) bool {
+			if action.Status != "" && action.Status != api.RequiredActionStatusPending {
+				return false
+			}
+			return projections == nil || !slices.ContainsFunc(projections.Projections, func(projection api.TrackerReleaseProjection) bool {
+				return slices.ContainsFunc(projection.RequiredActions, func(current api.RequiredAction) bool {
+					return current.ID == action.ID && current.Status == api.RequiredActionStatusResolved
+				})
+			})
+		})
 	})
 }
 
@@ -699,7 +761,7 @@ func normalizeContinuationTrackerIDs(values []api.TrackerID) []api.TrackerID {
 
 func continuationGoalReached(current CommandResult, request api.ContinueReleaseWorkflowRequest) bool {
 	if continuationInteractionMode(request.Intent) == api.InteractionModeUnattended &&
-		preflightRequiresManualAction(current.Preflight) {
+		preflightRequiresManualAction(current.Preflight, current.Projections) {
 		return false
 	}
 

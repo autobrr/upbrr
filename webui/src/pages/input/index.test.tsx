@@ -27,6 +27,7 @@ const inputFacet = (): InputFacet => ({
     intent: {
       sourceLookupURL: "",
       identity: {},
+      metadata: {},
       releaseName: {},
       playlist: { Set: false, Selected: [], UseAll: false },
     },
@@ -46,6 +47,7 @@ const inputFacet = (): InputFacet => ({
   selectSource: vi.fn(),
   changeSourceLookupURL: vi.fn(),
   changeIdentity: vi.fn(),
+  changeMetadata: vi.fn(),
   changeReleaseName: vi.fn(),
   chooseTrackers: vi.fn(),
   choosePlaylists: vi.fn(),
@@ -246,5 +248,61 @@ describe("InputPage", () => {
     rerender(<InputPage facet={readyInputFacet(2)} {...pageProps} />);
     expect(screen.getByRole("button", { name: /^TMDB/ })).toHaveClass("active");
     expect(screen.getByText("TMDB generation 2")).toBeVisible();
+  });
+
+  it("forces generated release-name omissions", () => {
+    const facet = readyInputFacet(1);
+    render(
+      <InputPage
+        facet={facet}
+        sourcePathHistory={[]}
+        handleBrowseFile={vi.fn()}
+        handleBrowseFolder={vi.fn()}
+        trackerUploadItems={[]}
+        showExternalIDInputUI={false}
+        setLightboxImage={vi.fn()}
+        setLightboxAlt={vi.fn()}
+        trackerIconSrcByName={{}}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    fireEvent.click(screen.getByLabelText("No episode title"));
+    fireEvent.click(screen.getByLabelText("No distributor"));
+
+    expect(facet.changeReleaseName).toHaveBeenLastCalledWith({
+      NoEpisodeTitle: true,
+      NoDistributor: true,
+    });
+  });
+
+  it("edits distributor and original-language metadata", () => {
+    const facet = readyInputFacet(1);
+    render(
+      <InputPage
+        facet={facet}
+        sourcePathHistory={[]}
+        handleBrowseFile={vi.fn()}
+        handleBrowseFolder={vi.fn()}
+        trackerUploadItems={[]}
+        showExternalIDInputUI={false}
+        setLightboxImage={vi.fn()}
+        setLightboxAlt={vi.fn()}
+        trackerIconSrcByName={{}}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    fireEvent.change(screen.getByLabelText("Distributor"), {
+      target: { value: "Example Distributor" },
+    });
+    expect(facet.changeMetadata).toHaveBeenLastCalledWith({
+      Distributor: "Example Distributor",
+    });
+
+    fireEvent.change(screen.getByLabelText("Original language"), {
+      target: { value: "ja" },
+    });
+    expect(facet.changeMetadata).toHaveBeenLastCalledWith({ OriginalLanguage: "ja" });
   });
 });

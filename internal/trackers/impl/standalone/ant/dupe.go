@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -21,6 +22,7 @@ type dupeSearcher struct {
 	cfg      config.Config
 	http     *http.Client
 	endpoint string
+	maxPages int
 }
 
 // NewDuplicateAdapter returns a duplicate-search adapter bound to one immutable dependency set.
@@ -33,6 +35,7 @@ func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 		cfg:      cfg,
 		http:     httpClient,
 		endpoint: "https://anthelion.me/api.php",
+		maxPages: deps.MaxPages(100),
 	}
 }
 
@@ -46,41 +49,117 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	case meta.Identity.TMDBID != 0:
 		params.Set("tmdb", strconv.Itoa(meta.Identity.TMDBID))
 	case meta.Identity.IMDBID != 0:
-		params.Set("imdb", strconv.Itoa(meta.Identity.IMDBID))
+		params.Set("imdb", providerid.IMDb(meta.Identity.IMDBID).Digits())
 	default:
 		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing tmdb/imdb id for ANT dupe search", nil)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.endpoint, nil)
-	if err != nil {
-		return dupe.Failed(dupe.FailureRequest, "ANT request failed", err)
+	const pageLimit = 100
+	params.Set("limit", strconv.Itoa(pageLimit))
+
+	maxPages := s.maxPages
+	if maxPages <= 0 {
+		maxPages = 100
 	}
-	req.URL.RawQuery = params.Encode()
-	req.Header.Set("User-Agent", "upbrr")
-	req.Header.Set("X-Api-Key", apiKey)
-	resp, err := s.http.Do(req)
-	if err != nil {
-		return dupe.Failed(dupe.FailureRequest, "ANT request failed", err)
+	entries := make([]api.DupeEntry, 0)
+	offset := 0
+	expectedTotal := -1
+	expectedTotalPresent := false
+	expectedOffsetPresent := false
+	complete := false
+	pages := 0
+	for pages < maxPages {
+		pageParams := cloneANTValues(params)
+		if offset > 0 {
+			pageParams.Set("offset", strconv.Itoa(offset))
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.endpoint, nil)
+		if err != nil {
+			return dupe.Failed(dupe.FailureRequest, "ANT request failed", err)
+		}
+		req.URL.RawQuery = pageParams.Encode()
+		req.Header.Set("User-Agent", "upbrr")
+		req.Header.Set("X-Api-Key", apiKey)
+		resp, err := s.http.Do(req)
+		if err != nil {
+			return dupe.Failed(dupe.FailureRequest, "ANT request failed", err)
+		}
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			resp.Body.Close()
+			return dupe.Failed(dupe.FailureResponseStatus, "ANT search failed", nil)
+		}
+		var payload map[string]any
+		decoder := json.NewDecoder(resp.Body)
+		decoder.UseNumber()
+		decodeErr := decoder.Decode(&payload)
+		resp.Body.Close()
+		if decodeErr != nil || len(payload) == 0 {
+			return dupe.Failed(dupe.FailureResponseParse, "ANT search failed", decodeErr)
+		}
+
+		pageEntries := antDupeEntries(payload)
+		entries = append(entries, pageEntries...)
+		pages++
+		itemCount := antItemCount(payload)
+		pagination := parseANTPagination(payload)
+		if pages == 1 {
+			expectedTotalPresent = pagination.TotalPresent
+			expectedOffsetPresent = pagination.OffsetPresent
+		} else if pagination.TotalPresent != expectedTotalPresent || pagination.OffsetPresent != expectedOffsetPresent {
+			break
+		}
+		pageOffset := offset
+		if pagination.OffsetPresent {
+			if pagination.Offset != offset {
+				break
+			}
+			pageOffset = pagination.Offset
+		}
+		if pagination.TotalPresent {
+			if expectedTotal < 0 {
+				expectedTotal = pagination.Total
+			} else if pagination.Total != expectedTotal {
+				break
+			}
+		}
+		nextOffset := pageOffset + itemCount
+		switch {
+		case expectedTotal == 0 && itemCount == 0:
+			complete = true
+		case expectedTotal > 0 && nextOffset == expectedTotal:
+			complete = true
+		case expectedTotal > nextOffset && nextOffset > offset:
+			offset = nextOffset
+			continue
+		case expectedTotal >= 0:
+			// Metadata is contradictory or the endpoint made no progress.
+		case itemCount < pageLimit:
+			complete = true
+		case nextOffset > offset:
+			offset = nextOffset
+			continue
+		}
+		break
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return dupe.Failed(dupe.FailureResponseStatus, "ANT search failed", nil)
+
+	warnings := []string(nil)
+	if !complete {
+		warnings = []string{"ANT search result is truncated or lacks complete pagination evidence"}
 	}
-	var payload map[string]any
-	decoder := json.NewDecoder(resp.Body)
-	decoder.UseNumber()
-	if err := decoder.Decode(&payload); err != nil || len(payload) == 0 {
-		return dupe.Failed(dupe.FailureResponseParse, "ANT search failed", err)
-	}
-	return dupe.Resolved(antDupeEntries(payload, meta.Release.Resolution), nil)
+	return dupe.ResolvedWithSearch(entries, warnings, dupe.SearchEvidence{
+		Complete:  complete,
+		WorkScope: dupe.WorkScopeProviderID,
+		Pages:     pages,
+		Scope:     "work_identity",
+		Warnings:  warnings,
+	})
 }
 
-func antDupeEntries(payload map[string]any, resolution string) []api.DupeEntry {
+func antDupeEntries(payload map[string]any) []api.DupeEntry {
 	items, _ := payload["item"].([]any)
 	entries := make([]api.DupeEntry, 0, len(items))
-	targetResolution := strings.ToLower(strings.TrimSpace(resolution))
 	for _, raw := range items {
 		item, ok := raw.(map[string]any)
-		if !ok || targetResolution != "" && strings.ToLower(antString(item["resolution"])) != targetResolution {
+		if !ok {
 			continue
 		}
 		files := antFiles(item["files"])
@@ -89,18 +168,23 @@ func antDupeEntries(payload map[string]any, resolution string) []api.DupeEntry {
 			fileCount = len(files)
 		}
 		entry := api.DupeEntry{
-			Name:      antString(item["fileName"]),
-			Files:     files,
-			FileCount: fileCount,
-			Link:      antString(item["guid"]),
-			Download:  strings.ReplaceAll(antString(item["link"]), "&amp;", "&"),
-		}
-		if entry.Name == "" && len(files) > 0 {
-			entry.Name = files[0]
+			Name:          antCandidateName(item, files),
+			Files:         files,
+			FileCount:     fileCount,
+			Link:          antString(item["guid"]),
+			Download:      strings.ReplaceAll(antString(item["link"]), "&amp;", "&"),
+			Res:           antString(item["resolution"]),
+			Type:          antString(item["type"]),
+			CanonicalType: antCandidateType(item),
+			Source:        antCandidateSource(item),
+			Codec:         antString(item["codec"]),
+			Container:     antString(item["container"]),
+			Group:         antString(item["releaseGroup"]),
 		}
 		if size := antInt(item["size"]); size > 0 {
 			entry.SizeKnown, entry.SizeBytes = true, size
 		}
+		_, entry.FlagsPresent = item["flags"]
 		if flags, ok := item["flags"].([]any); ok {
 			for _, rawFlag := range flags {
 				if flag := antString(rawFlag); flag != "" {
@@ -108,9 +192,111 @@ func antDupeEntries(payload map[string]any, resolution string) []api.DupeEntry {
 				}
 			}
 		}
+		entry.FlagsComplete = false
+		entry.HDR = dupe.NormalizeTrackerHDRFlags(entry.Flags, entry.FlagsPresent, false)
 		entries = append(entries, entry)
 	}
 	return entries
+}
+
+// antCandidateName prefers the listed content name for single-file torrents and ANT's torrent filename for multi-file torrents.
+func antCandidateName(item map[string]any, files []string) string {
+	if len(files) == 1 {
+		return files[0]
+	}
+	for _, field := range []string{"fileName", "releaseName", "name", "title"} {
+		if value := antString(item[field]); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+// antCandidateSource falls back to ANT's media field when the response omits source.
+func antCandidateSource(item map[string]any) string {
+	if source := antString(item["source"]); source != "" {
+		return source
+	}
+	return antString(item["media"])
+}
+
+// antCandidateType classifies disc containers explicitly and otherwise preserves ANT's type value.
+func antCandidateType(item map[string]any) string {
+	typeValue := antString(item["type"])
+	switch strings.ToLower(antString(item["container"])) {
+	case "m2ts", "bdmv", "vob/ifo", "video_ts", "iso":
+		return "DISC"
+	default:
+		return typeValue
+	}
+}
+
+type antPagination struct {
+	Offset        int
+	Total         int
+	OffsetPresent bool
+	TotalPresent  bool
+}
+
+func antItemCount(payload map[string]any) int {
+	items, _ := payload["item"].([]any)
+	return len(items)
+}
+
+func parseANTPagination(payload map[string]any) antPagination {
+	for _, key := range []string{"response", "newznab:response", "newznab_response"} {
+		raw, ok := payload[key]
+		if !ok {
+			continue
+		}
+		response, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if attributes, ok := response["@attributes"].(map[string]any); ok {
+			response = attributes
+		}
+		offset, offsetPresent := antNonNegativeInt(response["offset"])
+		total, totalPresent := antNonNegativeInt(response["total"])
+		return antPagination{
+			Offset:        offset,
+			Total:         total,
+			OffsetPresent: offsetPresent,
+			TotalPresent:  totalPresent,
+		}
+	}
+	return antPagination{}
+}
+
+func antNonNegativeInt(value any) (int, bool) {
+	var raw string
+	switch typed := value.(type) {
+	case json.Number:
+		raw = typed.String()
+	case float64:
+		raw = strconv.FormatFloat(typed, 'f', -1, 64)
+	case int:
+		if typed < 0 {
+			return 0, false
+		}
+		return typed, true
+	case int64:
+		raw = strconv.FormatInt(typed, 10)
+	case string:
+		raw = strings.TrimSpace(typed)
+	default:
+		return 0, false
+	}
+	number, err := strconv.Atoi(raw)
+	return number, err == nil && number >= 0
+}
+
+func cloneANTValues(values url.Values) url.Values {
+	cloned := make(url.Values, len(values))
+	for key, entries := range values {
+		cloned[key] = append([]string(nil), entries...)
+	}
+	return cloned
 }
 
 func antAPIKey(cfg config.Config) string {

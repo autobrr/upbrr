@@ -33,11 +33,10 @@ import (
 
 // Service coordinates torrent-client injection and search operations.
 type Service struct {
-	cfg                config.Config
-	logger             api.Logger
-	trackerPatterns    map[string]trackerPattern
-	trackerPriority    []string
-	smallPieceTrackers []string
+	cfg             config.Config
+	logger          api.Logger
+	trackerPatterns map[string]trackerPattern
+	trackerPriority []string
 }
 
 // qbit injection HTTP uses a short, single-attempt client so a dead WebUI or
@@ -99,19 +98,20 @@ func NewServiceWithRegistry(cfg config.Config, logger api.Logger, registry *trac
 		registry = trackers.NewRegistry()
 	}
 	return &Service{
-		cfg:                cfg,
-		logger:             logger,
-		trackerPatterns:    buildTrackerIDPatterns(registry),
-		trackerPriority:    registry.Priority(),
-		smallPieceTrackers: trackerSearchPreferenceNames(registry, trackers.TorrentSearchPreferenceSmallPieces),
+		cfg:             cfg,
+		logger:          logger,
+		trackerPatterns: buildTrackerIDPatterns(registry),
+		trackerPriority: registry.Priority(),
 	}
 }
 
 // Inject dispatches a prepared torrent to selected clients in sorted name order
 // and applies per-client delay, path mapping, link staging, category, and tag
-// policy. URL-only torrents require a URL-capable client unless global/default
-// fallback can select one; explicit tracker or caller selections that resolve
-// only to watch-folder clients return [internalerrors.ErrInvalidInput].
+// policy. URL-only describes the torrent artifact delivery mode; the prepared
+// content source remains required for qBittorrent save-path resolution. URL-only
+// torrents require a URL-capable client unless global/default fallback can select
+// one; explicit tracker or caller selections that resolve only to watch-folder
+// clients return [internalerrors.ErrInvalidInput].
 //
 // qBittorrent adds set skip_checking=true for both linked and original-path
 // injection. The first client error stops dispatch; prior watch-folder copies or
@@ -384,16 +384,14 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 			staging.SavePath,
 		)
 	} else {
-		// Without link staging, local_path/remote_path still controls where
-		// qBittorrent should save the injected torrent on the client host.
-		savePath, mapped, err := mappedQbitSavePathForSource(meta, client.LocalPath, client.RemotePath)
+		// Without link staging, save beside the prepared source unless a
+		// local_path/remote_path pair maps that location to the client host.
+		savePath, mapped, err := qbitSavePathForSource(meta, client.LocalPath, client.RemotePath)
 		if err != nil {
-			return fmt.Errorf("clients: %s qbit path mapping: %w", name, err)
+			return fmt.Errorf("clients: %s resolve qBittorrent save path: %w", name, err)
 		}
-		if mapped {
-			options.SavePath = savePath
-			logger.Debugf("clients: qbit path mapping ready client=%s save_path=%s", name, savePath)
-		}
+		options.SavePath = savePath
+		logger.Debugf("clients: qbit save path ready client=%s mapped=%t save_path=%s", name, mapped, savePath)
 	}
 	if category := strings.TrimSpace(client.QbitCrossCategory); torrent.CrossSeed && category != "" {
 		options.Category = category

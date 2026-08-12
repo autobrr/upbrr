@@ -31,6 +31,7 @@ type ListSpec struct {
 	SizeField      string
 	Link           func(string) string
 	FailureMessage string
+	SearchEvidence dupe.SearchEvidence
 }
 
 // Search executes a JSON-list duplicate search with number-preserving decoding.
@@ -83,7 +84,7 @@ func Search(ctx context.Context, client *http.Client, spec ListSpec) dupe.Adapte
 		}
 		entries = append(entries, entry)
 	}
-	return dupe.Resolved(entries, nil)
+	return dupe.ResolvedWithSearch(entries, nil, spec.SearchEvidence)
 }
 
 func scalarString(value any) string {

@@ -54,6 +54,14 @@ func TestSplitBDInfoReport(t *testing.T) {
 	}
 }
 
+func TestSplitBDInfoStandaloneSummary(t *testing.T) {
+	report := "Disc Title: Example Release 2026\nPlaylist: 00001.MPLS\nLength: 01:30:00.000\nVideo: MPEG-4 AVC Video / 30000 kbps / 1080p"
+	summary, files, ext := SplitBDInfoReport(report)
+	if summary != report || files != "" || ext != "" {
+		t.Fatalf("unexpected standalone summary split: summary=%q files=%q ext=%q", summary, files, ext)
+	}
+}
+
 func TestSplitBDInfoReportExtSummaryUsesSecondCodeMarker(t *testing.T) {
 	tests := []struct {
 		name   string
