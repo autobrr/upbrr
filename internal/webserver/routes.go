@@ -99,6 +99,8 @@ func (s *Server) registerRootRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/auth/status", func(w http.ResponseWriter, r *http.Request) { s.handleAuthStatus(w, r, session{}) })
 	mux.HandleFunc("/api/auth/bootstrap", func(w http.ResponseWriter, r *http.Request) { s.handleBootstrap(w, r, session{}) })
 	mux.HandleFunc("/api/auth/login", func(w http.ResponseWriter, r *http.Request) { s.handleLogin(w, r, session{}) })
+	mux.HandleFunc("/api/auth/oidc/login", s.handleOIDCLogin)
+	mux.HandleFunc("/api/auth/oidc/callback", s.handleOIDCCallback)
 	mux.HandleFunc("/api/auth/logout", s.requireSession(s.handleLogout))
 	mux.HandleFunc("/api/auth/browse-policy", s.requireSession(s.handleBrowsePolicy))
 	mux.HandleFunc("/api/events", s.requireSession(s.handleEvents))
@@ -312,15 +314,20 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request, _ sess
 		return
 	}
 	current, ok := s.currentSession(r)
+	// On an SSO-only deployment the account is provisioned by the first OIDC
+	// login, so the setup form must not be offered even before it exists.
+	needsSetup := !exists && !s.oidc.DisableBuiltInLogin()
 	payload := map[string]any{
 		"authenticated":           ok,
-		"needsSetup":              !exists,
+		"needsSetup":              needsSetup,
 		"username":                "",
 		"csrfToken":               "",
 		"caseInsensitivePaths":    runtime.GOOS == "windows",
 		"browseRoot":              "",
 		"allowUnrestrictedBrowse": false,
 		"needsBrowsePolicy":       false,
+		"oidcEnabled":             s.oidc.Enabled(),
+		"oidcDisableBuiltInLogin": s.oidc.DisableBuiltInLogin(),
 	}
 	if exists {
 		record, err := s.auth.Load()
@@ -345,6 +352,14 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request, _ sess
 func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request, _ session) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	// With the built-in login disabled, first-run setup must be closed too:
+	// otherwise the trust-on-first-use window below would hand an unauthenticated
+	// caller a password account on a deployment that is meant to be SSO-only.
+	// The account is instead provisioned by the first successful OIDC login.
+	if s.oidc.DisableBuiltInLogin() {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "password login is disabled"})
 		return
 	}
 	// First-run setup uses trust-on-first-use: it is reachable from any host so
@@ -389,6 +404,12 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request, _ sessi
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request, _ session) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	// Enforced on the server, not just hidden in the UI: with the built-in
+	// login disabled, the password endpoint must not remain a usable way in.
+	if s.oidc.DisableBuiltInLogin() {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "password login is disabled"})
 		return
 	}
 	if !s.allowAuthRequest(r) {

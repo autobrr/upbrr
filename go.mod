@@ -8,11 +8,14 @@ require (
 	github.com/autobrr/go-qbittorrent v1.17.0
 	github.com/autobrr/go-torrent v1.1.0
 	github.com/autobrr/mkbrr v1.24.1
+	github.com/coreos/go-oidc/v3 v3.19.0
 	github.com/frustra/bbcode v0.0.0-20201127003707-6ef347fbe1c8
+	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/moistari/rls v0.6.0
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	golang.org/x/crypto v0.53.0
 	golang.org/x/net v0.56.0
+	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sync v0.21.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.44.0
