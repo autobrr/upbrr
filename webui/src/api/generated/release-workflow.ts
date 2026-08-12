@@ -1947,6 +1947,7 @@ export type TrackerLaneOutcome = Readonly<{
 }>;
 
 export type TrackerPolicyDecision = Readonly<{
+  authorized?: boolean;
   blocking: boolean;
   code: string;
   decision: string;
@@ -2029,6 +2030,7 @@ export type TrackerProjectionInstructionSnapshotRef = Readonly<{
 
 export type TrackerProjectionInstructions = Readonly<{
   additionalNames?: Readonly<Record<string, string | null>>;
+  authorizedRuleFingerprint?: WorkflowFingerprint;
   questionnaire?: Readonly<Record<string, string | null>>;
   trackerConfig?: TrackerConfigOverrides;
   trackerSite?: TrackerSiteOverrides;
@@ -2085,10 +2087,12 @@ export type TrackerReleaseProjection = Readonly<{
   questionnaire?: readonly TrackerQuestionnaireRequirement[];
   readiness: ReadinessStatus;
   requiredActions?: readonly RequiredAction[];
+  ruleAuthorizationFingerprint?: WorkflowFingerprint;
   taxonomy: TrackerTaxonomy;
   trackerId: TrackerID;
   uploadReady: boolean;
   uploadReleaseName: string;
+  waivableRuleFingerprint?: WorkflowFingerprint;
 }>;
 
 export type TrackerReleaseProjectionSet = Readonly<{

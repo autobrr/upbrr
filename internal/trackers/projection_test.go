@@ -335,7 +335,7 @@ func TestDuplicateTargetPrefersProviderCode(t *testing.T) {
 	}
 }
 
-func TestApplyProjectionRuleFailuresHonorsExplicitDebugWaivers(t *testing.T) {
+func TestApplyProjectionRuleFailuresRequiresExactNormalAuthorization(t *testing.T) {
 	t.Parallel()
 
 	readyProjection := func() api.TrackerReleaseProjection {
@@ -358,29 +358,80 @@ func TestApplyProjectionRuleFailuresHonorsExplicitDebugWaivers(t *testing.T) {
 		api.RuleDispositionStrict,
 		api.MetadataEvidenceStatusComplete,
 	)}
+	waivableFingerprint, err := WaivableRuleFailureFingerprint("EXAMPLE", waivable)
+	if err != nil {
+		t.Fatalf("fingerprint waivable rules: %v", err)
+	}
+	apply := func(projection *api.TrackerReleaseProjection, failures []api.RuleFailure, mode api.WorkflowExecutionMode, authorization api.WorkflowFingerprint, logger api.Logger) {
+		t.Helper()
+		if err := ApplyProjectionRuleFailures(projection, failures, mode, authorization, logger); err != nil {
+			t.Fatalf("apply projection rule failures: %v", err)
+		}
+	}
 
 	normal := readyProjection()
-	ApplyProjectionRuleFailures(&normal, waivable, api.WorkflowExecutionModeNormal, nil)
-	if normal.Readiness != api.ReadinessStatusIneligible || normal.DupeReady || !normal.PolicyDecisions[0].Blocking {
+	apply(&normal, waivable, api.WorkflowExecutionModeNormal, "", nil)
+	if normal.Readiness != api.ReadinessStatusBlocked || normal.DupeReady || normal.UploadReady ||
+		len(normal.RequiredActions) != 1 || normal.RequiredActions[0].Kind != api.RequiredActionAuthorizeRules ||
+		normal.PolicyDecisions[0].Decision != "authorization_required" || !normal.PolicyDecisions[0].Blocking {
 		t.Fatalf("normal waivable outcome = %#v", normal)
 	}
 	if normal.PolicyDecisions[0].Disposition != api.RuleDispositionWaivable ||
 		normal.PolicyDecisions[0].EvidenceStatus != api.MetadataEvidenceStatusPartial {
 		t.Fatalf("normal public policy evidence = %#v", normal.PolicyDecisions[0])
 	}
+	if normal.WaivableRuleFingerprint != waivableFingerprint || normal.RuleAuthorizationFingerprint != "" {
+		t.Fatalf("normal rule authority = %#v", normal)
+	}
+
+	authorized := readyProjection()
+	apply(&authorized, waivable, api.WorkflowExecutionModeNormal, waivableFingerprint, nil)
+	if authorized.Readiness != api.ReadinessStatusReady || !authorized.DupeReady || !authorized.UploadReady ||
+		len(authorized.RequiredActions) != 0 || authorized.PolicyDecisions[0].Decision != "authorized" ||
+		authorized.PolicyDecisions[0].Blocking || !authorized.PolicyDecisions[0].Authorized ||
+		authorized.RuleAuthorizationFingerprint != waivableFingerprint {
+		t.Fatalf("authorized waivable outcome = %#v", authorized)
+	}
+
+	strictWithAuthorization := readyProjection()
+	combinedFailures := append(append([]api.RuleFailure(nil), waivable...), strict...)
+	apply(
+		&strictWithAuthorization,
+		combinedFailures,
+		api.WorkflowExecutionModeNormal,
+		waivableFingerprint,
+		nil,
+	)
+	if strictWithAuthorization.Readiness != api.ReadinessStatusIneligible || strictWithAuthorization.DupeReady ||
+		strictWithAuthorization.UploadReady || len(strictWithAuthorization.RequiredActions) != 0 ||
+		!strictWithAuthorization.PolicyDecisions[1].Blocking ||
+		strictWithAuthorization.PolicyDecisions[1].Disposition != api.RuleDispositionStrict {
+		t.Fatalf("strict failure with waivable authorization = %#v", strictWithAuthorization)
+	}
+
+	changed := readyProjection()
+	changedFailures := append(append([]api.RuleFailure(nil), waivable...), NewRuleFailure(
+		"second_gate",
+		"another waiver is required",
+		api.RuleDispositionWaivable,
+	))
+	apply(&changed, changedFailures, api.WorkflowExecutionModeNormal, waivableFingerprint, nil)
+	if changed.Readiness != api.ReadinessStatusBlocked || changed.RuleAuthorizationFingerprint != "" || len(changed.RequiredActions) != 1 {
+		t.Fatalf("changed waivable outcome = %#v", changed)
+	}
 
 	debug := readyProjection()
-	ApplyProjectionRuleFailures(&debug, waivable, api.WorkflowExecutionModeDebug, nil)
+	apply(&debug, waivable, api.WorkflowExecutionModeDebug, "", nil)
 	if debug.Readiness != api.ReadinessStatusReady || !debug.DupeReady || debug.PolicyDecisions[0].Decision != "bypassed" ||
-		debug.PolicyDecisions[0].Blocking {
+		debug.PolicyDecisions[0].Blocking || debug.PolicyDecisions[0].Authorized || len(debug.RequiredActions) != 0 {
 		t.Fatalf("debug waivable outcome = %#v", debug)
 	}
 
 	debugStrict := readyProjection()
 	logger := &warningLogger{}
-	ApplyProjectionRuleFailures(&debugStrict, strict, api.WorkflowExecutionModeDebug, logger)
+	apply(&debugStrict, strict, api.WorkflowExecutionModeDebug, "", logger)
 	if debugStrict.Readiness != api.ReadinessStatusIneligible || debugStrict.DupeReady ||
-		debugStrict.PolicyDecisions[0].Decision != "ineligible" {
+		debugStrict.PolicyDecisions[0].Decision != "ineligible" || len(debugStrict.RequiredActions) != 0 {
 		t.Fatalf("debug strict outcome = %#v", debugStrict)
 	}
 	if len(logger.warnings) != 1 || logger.warnings[0] != "trackers: projection validation blocked tracker=EXAMPLE rule=constructibility decision=ineligible" {

@@ -1488,12 +1488,13 @@ func HasBlockingRuleFailures(failures []RuleFailure) bool {
 	return slices.ContainsFunc(failures, IsBlockingRuleFailure)
 }
 
-// CountBlockingRuleFailures returns the number of rule results that block
-// tracker work. Legacy and unrecognized dispositions are counted as blocking.
+// CountBlockingRuleFailures returns the number of unresolved rule results that
+// block tracker work. Authorized waivable results do not block.
 func CountBlockingRuleFailures(failures []TrackerRuleFailure) int {
 	count := 0
 	for _, failure := range failures {
-		if NormalizeRuleDisposition(failure.Disposition) != RuleDispositionAdvisory {
+		disposition := NormalizeRuleDisposition(failure.Disposition)
+		if disposition != RuleDispositionAdvisory && (disposition != RuleDispositionWaivable || !failure.Authorized) {
 			count++
 		}
 	}

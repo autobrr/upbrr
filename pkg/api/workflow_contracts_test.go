@@ -179,6 +179,24 @@ func TestTrackerProjectionInstructionsPreserveAbsentNullAndEmptyName(t *testing.
 	}
 }
 
+func TestTrackerProjectionInstructionsPreserveRuleAuthorization(t *testing.T) {
+	t.Parallel()
+
+	fingerprint := workflowTestFingerprint(t, "authorized-waivable-rules")
+	instructions := TrackerProjectionInstructions{AuthorizedRuleFingerprint: fingerprint}
+	payload, err := json.Marshal(instructions)
+	if err != nil {
+		t.Fatalf("marshal projection rule authorization: %v", err)
+	}
+	var roundTrip TrackerProjectionInstructions
+	if err := json.Unmarshal(payload, &roundTrip); err != nil {
+		t.Fatalf("unmarshal projection rule authorization: %v", err)
+	}
+	if roundTrip.AuthorizedRuleFingerprint != fingerprint {
+		t.Fatalf("rule authorization = %q, want %q", roundTrip.AuthorizedRuleFingerprint, fingerprint)
+	}
+}
+
 func TestTrackerCatalogNormalizesAliasesAndFingerprintsDeterministically(t *testing.T) {
 	t.Parallel()
 

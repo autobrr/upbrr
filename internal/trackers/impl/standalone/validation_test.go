@@ -36,6 +36,31 @@ func TestValidatePreparationExecutionPolicy(t *testing.T) {
 	if err := ValidatePreparation(context.Background(), input, policy(api.RuleDispositionWaivable)); err == nil {
 		t.Fatal("waivable failure must block normal direct preparation")
 	}
+	waivableFingerprint, err := trackers.WaivableRuleFailureFingerprint("EXAMPLE", []api.RuleFailure{
+		trackers.NewRuleFailure("test_rule", "test reason", api.RuleDispositionWaivable),
+	})
+	if err != nil {
+		t.Fatalf("fingerprint waivable failure: %v", err)
+	}
+	input.Projection = &api.TrackerReleaseProjection{
+		WaivableRuleFingerprint:      waivableFingerprint,
+		RuleAuthorizationFingerprint: waivableFingerprint,
+	}
+	if err := ValidatePreparation(context.Background(), input, policy(api.RuleDispositionWaivable)); err != nil {
+		t.Fatalf("exactly authorized waivable failure must pass normal direct preparation: %v", err)
+	}
+	changedPolicy := trackers.ValidationPolicyBinding{
+		ID: "test-policy-v2",
+		Check: func(context.Context, api.TrackerValidationSubject, api.Logger) ([]api.RuleFailure, error) {
+			return []api.RuleFailure{
+				trackers.NewRuleFailure("test_rule", "changed reason", api.RuleDispositionWaivable),
+			}, nil
+		},
+	}
+	if err := ValidatePreparation(context.Background(), input, changedPolicy); err == nil {
+		t.Fatal("changed waivable failure must invalidate retained authorization")
+	}
+	input.Projection = nil
 	input.ExecutionMode = api.WorkflowExecutionModeDebug
 	if err := ValidatePreparation(context.Background(), input, policy(api.RuleDispositionWaivable)); err != nil {
 		t.Fatalf("debug must bypass waivable direct-preparation policy: %v", err)

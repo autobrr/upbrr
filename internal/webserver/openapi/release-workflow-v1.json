@@ -8185,6 +8185,9 @@
       "TrackerPolicyDecision": {
         "type": "object",
         "properties": {
+          "authorized": {
+            "type": "boolean"
+          },
           "blocking": {
             "type": "boolean"
           },
@@ -8481,6 +8484,9 @@
               ]
             }
           },
+          "authorizedRuleFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
           "questionnaire": {
             "type": "object",
             "additionalProperties": {
@@ -8684,6 +8690,9 @@
               "$ref": "#/components/schemas/RequiredAction"
             }
           },
+          "ruleAuthorizationFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
           "taxonomy": {
             "$ref": "#/components/schemas/TrackerTaxonomy"
           },
@@ -8695,6 +8704,9 @@
           },
           "uploadReleaseName": {
             "type": "string"
+          },
+          "waivableRuleFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
           }
         },
         "required": [

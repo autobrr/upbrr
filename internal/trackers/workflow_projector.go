@@ -233,14 +233,15 @@ func (p *WorkflowProjector) projectSelected(
 		applyQuestionnaireInstruction(&trackerSubject, trackerID, instruction)
 		requestedName := projectionRequestedUploadName(instruction)
 		projection, failure := p.registry.ProjectRelease(ctx, PreparationInput{
-			ExecutionMode:          executionMode,
-			Tracker:                string(trackerID),
-			Meta:                   trackerSubject,
-			RequestedUploadName:    requestedName,
-			AdditionalReleaseNames: projectionAdditionalNames(instruction),
-			TrackerConfig:          applyTrackerConfigOverrides(trackerConfigFor(p.config, string(trackerID)), instruction.TrackerConfig),
-			Runtime:                PreparationRuntimeFromConfig(p.config),
-			Logger:                 p.logger,
+			ExecutionMode:             executionMode,
+			Tracker:                   string(trackerID),
+			Meta:                      trackerSubject,
+			RequestedUploadName:       requestedName,
+			AdditionalReleaseNames:    projectionAdditionalNames(instruction),
+			AuthorizedRuleFingerprint: instruction.AuthorizedRuleFingerprint,
+			TrackerConfig:             applyTrackerConfigOverrides(trackerConfigFor(p.config, string(trackerID)), instruction.TrackerConfig),
+			Runtime:                   PreparationRuntimeFromConfig(p.config),
+			Logger:                    p.logger,
 		}, inputFingerprint, catalogFingerprint, configFingerprints[trackerID])
 		if descriptor, ok := p.registry.LookupDescriptor(string(trackerID)); ok {
 			applyWorkflowProjectionRequirements(&projection, descriptor, subject, p.config)
@@ -259,7 +260,10 @@ func (p *WorkflowProjector) projectSelected(
 		projections = append(projections, projection)
 		itemStatus := api.StageStatusCompleted
 		message := "Tracker projection complete."
-		if projection.Readiness != api.ReadinessStatusReady || !projection.DupeReady {
+		if len(projection.RequiredActions) > 0 {
+			itemStatus = api.StageStatusBlocked
+			message = strings.TrimSpace(projection.RequiredActions[0].Prompt)
+		} else if projection.Readiness != api.ReadinessStatusReady || !projection.DupeReady {
 			itemStatus = api.StageStatusSkipped
 			message = projectionIneligibleProgressMessage(projection)
 		}

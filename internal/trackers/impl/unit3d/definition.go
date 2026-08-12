@@ -259,10 +259,17 @@ func (d *Definition) prepareUpload(ctx context.Context, req trackers.Preparation
 	if err != nil {
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s constructibility: %w", d.profile.Name, err)
 	}
-	for _, failure := range failures {
-		if trackers.RuleFailureBlocksExecution(failure, req.ExecutionMode) {
-			return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s constructibility %s: %s", d.profile.Name, failure.Rule, failure.Reason)
-		}
+	blockingFailure, err := trackers.FirstBlockingRuleFailure(req.Tracker, failures, req.ExecutionMode, req.Projection)
+	if err != nil {
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s rule authorization: %w", d.profile.Name, err)
+	}
+	if blockingFailure != nil {
+		return trackers.PreparedOperation{}, fmt.Errorf(
+			"trackers: %s constructibility %s: %s",
+			d.profile.Name,
+			blockingFailure.Rule,
+			blockingFailure.Reason,
+		)
 	}
 	if d.profile.BaseURL != "" {
 		return prepareUnit3DUpload(ctx, req, d.profile.BaseURL, d.profile.Site)

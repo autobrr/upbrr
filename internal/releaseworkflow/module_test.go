@@ -838,7 +838,7 @@ func TestModuleResetAndBlurayCandidateSelectionUseExactRetainedAuthority(t *test
 	result = executeCommand(t, module, PrepareReleaseCommand{
 		WorkflowID:       result.Workflow.ID,
 		ExpectedRevision: result.Workflow.Revision,
-		Input:            api.PrepareInput{SourcePath: "C:\\releases\\Example.Release.2026.1080p-GRP"},
+		Input:            api.PrepareInput{SourcePath: "Example.Release.2026.1080p-GRP"},
 		IdempotencyKey:   "prepare-reset-candidate",
 	})
 	result = executeCommand(t, module, ResetReleaseCommand{
@@ -3763,6 +3763,151 @@ func TestResolveReconciliationRequiresExactAnswerAndForcesFreshReview(t *testing
 	retry.UpdatedAt = retry.StartedAt
 	if _, idempotent, err := repository.BeginEffect(ctx, retry); err != nil || idempotent {
 		t.Fatalf("begin reconciled retry idempotent=%v err=%v", idempotent, err)
+	}
+}
+
+func TestTrustedProjectionInstructionsOnlyAcceptsServerRuleAuthority(t *testing.T) {
+	t.Parallel()
+
+	fingerprint := testFingerprint(t, "trusted-rule-authority")
+	requested := map[api.TrackerID]api.TrackerProjectionInstructions{
+		"ALPHA": {AuthorizedRuleFingerprint: fingerprint},
+	}
+	sanitized, err := trustedProjectionInstructions(requested, nil)
+	if err != nil {
+		t.Fatalf("sanitize projection instructions: %v", err)
+	}
+	if sanitized["ALPHA"].AuthorizedRuleFingerprint != "" {
+		t.Fatalf("caller rule authority survived sanitization: %#v", sanitized)
+	}
+	trusted, err := trustedProjectionInstructions(requested, map[api.TrackerID]api.WorkflowFingerprint{
+		"ALPHA": fingerprint,
+	})
+	if err != nil {
+		t.Fatalf("apply trusted projection instructions: %v", err)
+	}
+	if trusted["ALPHA"].AuthorizedRuleFingerprint != fingerprint {
+		t.Fatalf("trusted rule authority = %#v", trusted)
+	}
+}
+
+func TestResolveProjectionRuleAuthorizationReprojectsWithExactServerAuthority(t *testing.T) {
+	t.Parallel()
+
+	waivableFingerprint := testFingerprint(t, "alpha-waivable-rules")
+	projector := trackerProjectionBuilderFunc(func(
+		_ context.Context,
+		_ api.ReleaseSnapshot,
+		_ api.UploadSubject,
+		trackerIDs []api.TrackerID,
+		instructions map[api.TrackerID]api.TrackerProjectionInstructions,
+		executionMode api.WorkflowExecutionMode,
+	) (
+		api.TrackerCatalogSnapshot,
+		api.TrackerRuntimeSnapshot,
+		api.TrackerSelection,
+		api.TrackerReleaseProjectionSet,
+		error,
+	) {
+		projection := testProjection(t, "ALPHA", "Example.Release.2026.ALPHA-GRP")
+		projection.WaivableRuleFingerprint = waivableFingerprint
+		projection.PolicyDecisions = []api.TrackerPolicyDecision{{
+			Code:        "language_rule",
+			Message:     "language waiver required",
+			Disposition: api.RuleDispositionWaivable,
+		}}
+		status := api.StageStatusReady
+		inputFingerprint := testFingerprint(t, "authorized-rule-projection")
+		if instructions["ALPHA"].AuthorizedRuleFingerprint == waivableFingerprint {
+			projection.RuleAuthorizationFingerprint = waivableFingerprint
+			projection.PolicyDecisions[0].Decision = "authorized"
+			projection.PolicyDecisions[0].Authorized = true
+		} else {
+			inputFingerprint = testFingerprint(t, "pending-rule-projection")
+			projection.Readiness = api.ReadinessStatusBlocked
+			projection.DupeReady = false
+			projection.UploadReady = false
+			projection.PolicyDecisions[0].Decision = "authorization_required"
+			projection.PolicyDecisions[0].Blocking = true
+			projection.RequiredActions = []api.RequiredAction{{
+				Kind:   api.RequiredActionAuthorizeRules,
+				Prompt: "Alpha has waivable rule failures. Continue with this tracker?",
+			}}
+			status = api.StageStatusBlocked
+		}
+		return testCatalog(t), testRuntime(t), api.TrackerSelection{TrackerIDs: trackerIDs}, api.TrackerReleaseProjectionSet{
+			InputFingerprint:  inputFingerprint,
+			PolicyFingerprint: testFingerprint(t, "waivable-rule-policy"),
+			ExecutionMode:     executionMode,
+			Projections:       []api.TrackerReleaseProjection{projection},
+			Status:            status,
+			RequiredActions:   append([]api.RequiredAction(nil), projection.RequiredActions...),
+		}, nil
+	})
+	module, repository := newTestModule(t, testPreparer(), WithTrackerProjectionBuilder(projector))
+	result := executeCommand(t, module, CreateWorkflowCommand{WorkflowID: "workflow-rule-authorization"})
+	result = executeCommand(t, module, PrepareReleaseCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Input:            api.PrepareInput{SourcePath: "C:\\releases\\Example.Release.2026.1080p-GRP"},
+	})
+	result = executeCommand(t, module, ProjectTrackersCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		TrackerIDs:       []api.TrackerID{"ALPHA"},
+		Instructions: map[api.TrackerID]api.TrackerProjectionInstructions{
+			"ALPHA": {AuthorizedRuleFingerprint: waivableFingerprint},
+		},
+	})
+	if result.Workflow.Status != api.WorkflowStatusBlocked || len(result.Workflow.RequiredActions) != 1 ||
+		result.ProjectionInstructions.Instructions["ALPHA"].AuthorizedRuleFingerprint != "" {
+		t.Fatalf("forged rule authority was accepted: %#v", result)
+	}
+	action := result.Workflow.RequiredActions[0]
+	confirmed := true
+	blockedRevision := result.Workflow.Revision
+	result = executeCommand(t, module, ResolveActionCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Answer: api.RequiredActionAnswer{
+			ActionID:         action.ID,
+			WorkflowRevision: action.WorkflowRevision,
+			Confirmed:        &confirmed,
+		},
+	})
+	projection := result.Projections.Projections[0]
+	if result.Workflow.Status != api.WorkflowStatusActive || len(result.Workflow.RequiredActions) != 0 ||
+		projection.Readiness != api.ReadinessStatusReady || !projection.UploadReady ||
+		projection.RuleAuthorizationFingerprint != waivableFingerprint ||
+		!projection.PolicyDecisions[0].Authorized ||
+		result.ProjectionInstructions.Instructions["ALPHA"].AuthorizedRuleFingerprint != waivableFingerprint {
+		t.Fatalf(
+			"resolved rule authorization: status=%s actions=%#v instruction=%q projection=%#v",
+			result.Workflow.Status,
+			result.Workflow.RequiredActions,
+			result.ProjectionInstructions.Instructions["ALPHA"].AuthorizedRuleFingerprint,
+			projection,
+		)
+	}
+	state, err := repository.Load(context.Background(), testOwnerID, result.Workflow.ID)
+	if err != nil {
+		t.Fatalf("reload authorized workflow: %v", err)
+	}
+	stored := state.ProjectionInstructions[state.Workflow.ProjectionInstructions.ID]
+	if stored.Instructions["ALPHA"].AuthorizedRuleFingerprint != waivableFingerprint {
+		t.Fatalf("stored rule authority = %#v", stored)
+	}
+	if _, err := module.Execute(context.Background(), testOwnerID, ResolveActionCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: blockedRevision,
+		Answer: api.RequiredActionAnswer{
+			ActionID:         action.ID,
+			WorkflowRevision: action.WorkflowRevision,
+			Confirmed:        &confirmed,
+		},
+		IdempotencyKey: "stale-rule-authorization",
+	}); !errors.Is(err, ErrRevisionConflict) {
+		t.Fatalf("stale rule authorization error = %v", err)
 	}
 }
 

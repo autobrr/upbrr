@@ -118,12 +118,13 @@ func ValidatePreparation(
 	if err != nil {
 		return fmt.Errorf("trackers: %s constructibility: %w", strings.ToUpper(strings.TrimSpace(input.Tracker)), err)
 	}
-	var blockingFailure *api.RuleFailure
-	for i := range failures {
-		if trackers.RuleFailureBlocksExecution(failures[i], input.ExecutionMode) {
-			blockingFailure = &failures[i]
-			break
-		}
+	blockingFailure, err := trackers.FirstBlockingRuleFailure(input.Tracker, failures, input.ExecutionMode, input.Projection)
+	if err != nil {
+		return fmt.Errorf(
+			"trackers: %s rule authorization: %w",
+			strings.ToUpper(strings.TrimSpace(input.Tracker)),
+			err,
+		)
 	}
 	if blockingFailure == nil {
 		return nil

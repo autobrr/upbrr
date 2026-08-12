@@ -3171,6 +3171,18 @@ func (m *Module) projectTrackers(
 	now time.Time,
 	command ProjectTrackersCommand,
 ) (CommandResult, error) {
+	return m.projectTrackersWithRuleAuthorizations(ctx, ownerID, state, nextRevision, now, command, nil)
+}
+
+func (m *Module) projectTrackersWithRuleAuthorizations(
+	ctx context.Context,
+	ownerID string,
+	state *State,
+	nextRevision api.WorkflowRevision,
+	now time.Time,
+	command ProjectTrackersCommand,
+	authorizations map[api.TrackerID]api.WorkflowFingerprint,
+) (CommandResult, error) {
 	if m.trackerProjector == nil {
 		return CommandResult{}, fmt.Errorf("%w: tracker projection builder is unavailable", ErrInvalidTransition)
 	}
@@ -3181,6 +3193,11 @@ func (m *Module) projectTrackers(
 	if !ok || release.Revision != state.Workflow.Release.Revision {
 		return CommandResult{}, fmt.Errorf("%w: release snapshot is unavailable", ErrInvalidTransition)
 	}
+	instructions, err := trustedProjectionInstructions(command.Instructions, authorizations)
+	if err != nil {
+		return CommandResult{}, fmt.Errorf("release workflow projection instructions: %w", err)
+	}
+	command.Instructions = instructions
 	trackerNames := make([]string, len(command.TrackerIDs))
 	for index, trackerID := range command.TrackerIDs {
 		trackerNames[index] = string(trackerID)
@@ -6348,6 +6365,9 @@ func (m *Module) resolveAction(
 	}
 	if action, ok := releaseNameConfirmationAction(currentProjections, command.Answer.ActionID); ok {
 		return m.reviewTrackerReleaseName(ctx, ownerID, state, nextRevision, now, action, command.Answer)
+	}
+	if projection, action, ok := projectionRuleAuthorizationAction(currentProjections, command.Answer.ActionID); ok {
+		return m.authorizeTrackerRules(ctx, ownerID, state, nextRevision, now, projection, action, command.Answer)
 	}
 	index := slices.IndexFunc(state.Workflow.RequiredActions, func(action api.RequiredAction) bool {
 		return action.ID == command.Answer.ActionID && action.Status == api.RequiredActionStatusPending

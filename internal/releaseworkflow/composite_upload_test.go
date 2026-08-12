@@ -176,6 +176,80 @@ func TestCompositeUploadConfirmFeedbackResumesWithServerApproval(t *testing.T) {
 	}
 }
 
+func TestCompositeUploadRuleAuthorizationResumesLiveUpload(t *testing.T) {
+	t.Parallel()
+
+	module, _, uploads := newCompositeUploadWaiverTestModule(t)
+	request := compositeUploadTestRequest(true, api.ReleaseWorkflowUploadModeUpload, "composite-rule-authorization")
+	started, err := module.StartUpload(context.Background(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("start composite upload: %v", err)
+	}
+	blocked := waitCompositeUploadTestOperation(t, module, started)
+	actionIndex := slices.IndexFunc(blocked.Continuation.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionAuthorizeRules && action.TrackerID == "ALPHA" &&
+			action.Status == api.RequiredActionStatusPending
+	})
+	if actionIndex < 0 || blocked.UploadResult != nil || uploads.execution != nil {
+		t.Fatalf("waivable-rule stop = %#v execution=%#v", blocked, uploads.execution)
+	}
+	action := blocked.Continuation.RequiredActions[actionIndex]
+	resumed, err := module.SubmitUploadFeedback(context.Background(), testOwnerID, blocked.Workflow.ID, api.ReleaseWorkflowUploadFeedback{
+		Action: api.ReleaseWorkflowUploadActionIdentity{
+			ID:               action.ID,
+			WorkflowRevision: blocked.Workflow.Revision,
+		},
+		Response: api.ReleaseWorkflowUploadFeedbackResponse{
+			Kind: api.ReleaseWorkflowUploadFeedbackRuleAuthorization,
+			RuleAuthorization: &api.ReleaseWorkflowUploadConfirmation{
+				Confirmed: true,
+			},
+		},
+		IdempotencyKey: "authorize-composite-rules",
+	})
+	if err != nil {
+		t.Fatalf("submit composite rule authorization: %v", err)
+	}
+	review := waitCompositeUploadTestOperation(t, module, resumed)
+	projectionIndex := slices.IndexFunc(review.Projections.Projections, func(projection api.TrackerReleaseProjection) bool {
+		return projection.TrackerID == "ALPHA"
+	})
+	if projectionIndex < 0 || review.Projections.Projections[projectionIndex].RuleAuthorizationFingerprint == "" ||
+		!review.Projections.Projections[projectionIndex].UploadReady {
+		t.Fatalf("authorized composite projection = %#v", review.Projections)
+	}
+	completed := approveCompositeUploadTrackers(
+		t,
+		module,
+		review,
+		[]api.TrackerID{"ALPHA", "BETA"},
+		"approve-authorized-trackers",
+	)
+	if completed.UploadResult == nil || completed.Operation == nil ||
+		completed.Operation.Status != api.StageStatusExecuted || uploads.execution == nil || uploads.execution.executions != 1 {
+		t.Fatalf("authorized composite upload = %#v execution=%#v", completed, uploads.execution)
+	}
+}
+
+func TestCompositeUploadStrictUnattendedSkipsWaivableTracker(t *testing.T) {
+	t.Parallel()
+
+	module, _, uploads := newCompositeUploadWaiverTestModule(t)
+	request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeUpload, "composite-skip-waivable")
+	started, err := module.StartUpload(context.Background(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("start composite upload: %v", err)
+	}
+	blocked := waitCompositeUploadTestOperation(t, module, started)
+	action := pendingCompositeTrackerApproval(t, blocked)
+	if len(action.Options) != 1 || action.Options[0].Value != "BETA" || uploads.execution != nil ||
+		slices.ContainsFunc(blocked.Continuation.RequiredActions, func(action api.RequiredAction) bool {
+			return action.Kind == api.RequiredActionAuthorizeRules
+		}) {
+		t.Fatalf("strict unattended waiver handling = %#v execution=%#v", blocked, uploads.execution)
+	}
+}
+
 func TestMergeCompositeProjectionDefaultsPreservesTrackerSpecificValues(t *testing.T) {
 	t.Parallel()
 
@@ -510,13 +584,26 @@ func compositeUploadTestRequest(
 func newCompositeUploadTestModule(
 	t *testing.T,
 ) (*Module, *MemoryRepository, *uploadPlanBuilderFake) {
+	return newCompositeUploadTestModuleWithWaiver(t, false)
+}
+
+func newCompositeUploadWaiverTestModule(
+	t *testing.T,
+) (*Module, *MemoryRepository, *uploadPlanBuilderFake) {
+	return newCompositeUploadTestModuleWithWaiver(t, true)
+}
+
+func newCompositeUploadTestModuleWithWaiver(
+	t *testing.T,
+	waivableRules bool,
+) (*Module, *MemoryRepository, *uploadPlanBuilderFake) {
 	t.Helper()
 	projections := trackerProjectionBuilderFunc(func(
 		_ context.Context,
 		_ api.ReleaseSnapshot,
 		_ api.UploadSubject,
 		trackerIDs []api.TrackerID,
-		_ map[api.TrackerID]api.TrackerProjectionInstructions,
+		instructions map[api.TrackerID]api.TrackerProjectionInstructions,
 		executionMode api.WorkflowExecutionMode,
 	) (
 		api.TrackerCatalogSnapshot,
@@ -537,17 +624,47 @@ func newCompositeUploadTestModule(
 			return !slices.Contains(trackerIDs, entry.TrackerID)
 		})
 		projected := make([]api.TrackerReleaseProjection, 0, len(trackerIDs))
+		actions := make([]api.RequiredAction, 0, 1)
+		projectionInput := "composite-projection-input"
 		for _, trackerID := range trackerIDs {
 			projection := testProjection(t, trackerID, "Example.Release.2026."+string(trackerID)+"-GRP")
 			projection.DescriptionGroup = "alpha"
+			if waivableRules && trackerID == "ALPHA" {
+				waivableFingerprint := testFingerprint(t, "composite-waivable-rules")
+				projection.WaivableRuleFingerprint = waivableFingerprint
+				projection.PolicyDecisions = []api.TrackerPolicyDecision{{
+					Code:        "language_rule",
+					Message:     "language waiver required",
+					Disposition: api.RuleDispositionWaivable,
+				}}
+				if instructions[trackerID].AuthorizedRuleFingerprint == waivableFingerprint {
+					projection.RuleAuthorizationFingerprint = waivableFingerprint
+					projection.PolicyDecisions[0].Decision = "authorized"
+					projection.PolicyDecisions[0].Authorized = true
+					projectionInput = "composite-projection-input-authorized"
+				} else {
+					projection.Readiness = api.ReadinessStatusBlocked
+					projection.DupeReady = false
+					projection.UploadReady = false
+					projection.PolicyDecisions[0].Decision = "authorization_required"
+					projection.PolicyDecisions[0].Blocking = true
+					projection.RequiredActions = []api.RequiredAction{{
+						Kind:   api.RequiredActionAuthorizeRules,
+						Prompt: "Alpha has waivable language rules. Continue with this tracker?",
+					}}
+					actions = append(actions, projection.RequiredActions...)
+					projectionInput = "composite-projection-input-pending"
+				}
+			}
 			projected = append(projected, projection)
 		}
 		return catalog, runtime, api.TrackerSelection{TrackerIDs: trackerIDs}, api.TrackerReleaseProjectionSet{
-			InputFingerprint:  testFingerprint(t, "composite-projection-input"),
+			InputFingerprint:  testFingerprint(t, projectionInput),
 			PolicyFingerprint: testFingerprint(t, "composite-projection-policy"),
 			ExecutionMode:     executionMode,
 			Projections:       projected,
 			Status:            api.StageStatusReady,
+			RequiredActions:   actions,
 		}, nil
 	})
 	dupes := dupeAssessmentBuilderFunc(func(

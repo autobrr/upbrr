@@ -22,6 +22,7 @@ type UploadPersistence interface {
 	ReplaceScreenshotSlots(context.Context, string, []api.ScreenshotSlot) error
 	UpsertScreenshotSlotVariants(context.Context, string, []api.ScreenshotSlotVariant) error
 	DeleteUploadedImage(context.Context, string, string, string) error
+	SaveTrackerRuleFailures(context.Context, string, string, []api.TrackerRuleFailure) error
 	CreateUploadRecord(context.Context, api.UploadRecord) error
 	UpdateLatestUploadRecordStatus(context.Context, string, string, string) error
 }

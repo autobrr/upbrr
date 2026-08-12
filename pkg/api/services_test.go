@@ -252,15 +252,15 @@ func TestNewTrackerValidationSubjectProjectsFinalTrackerDescription(t *testing.T
 		DescriptionGroupsFinal: true,
 		DescriptionGroups: []DescriptionBuilderGroup{
 			{
-				GroupKey:   "other",
-				Trackers:   []string{"OTHER"},
+				GroupKey:    "other",
+				Trackers:    []string{"OTHER"},
 				Description: "Other description.",
 			},
 			{
-				GroupKey:      "hdb",
-				Trackers:      []string{"HDB"},
-				Description:   "Manual synopsis.\n[img]https://img.example/poster.jpg[/img]",
-				HasOverride:   true,
+				GroupKey:       "hdb",
+				Trackers:       []string{"HDB"},
+				Description:    "Manual synopsis.\n[img]https://img.example/poster.jpg[/img]",
+				HasOverride:    true,
 				RawDescription: "unused raw description",
 			},
 		},
@@ -315,6 +315,11 @@ func TestRuleFailureDispositionFailClosed(t *testing.T) {
 		{Rule: "legacy"},
 		{Rule: "advisory", Disposition: RuleDispositionAdvisory},
 		{Rule: "unknown", Disposition: "unexpected"},
+		{
+			Rule:        "accepted",
+			Disposition: RuleDispositionWaivable,
+			Authorized:  true,
+		},
 	}
 	if got := CountBlockingRuleFailures(storedFailures); got != 2 {
 		t.Fatalf("blocking count = %d, want 2", got)

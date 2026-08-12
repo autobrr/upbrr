@@ -105,12 +105,20 @@ func (b workflowPreflightBuilder) Build(
 				)
 			}
 			projection.PreparedResourceFingerprint = checkedFingerprint
-			trackers.ApplyProjectionRuleFailures(
+			authorizedFingerprint := projection.RuleAuthorizationFingerprint
+			if err := trackers.ApplyProjectionRuleFailures(
 				projection,
-				newProjectionRuleFailures(*projection, failures),
+				failures,
 				executionMode,
+				authorizedFingerprint,
 				b.logger,
-			)
+			); err != nil {
+				return api.TrackerPreflightAssessment{}, nil, fmt.Errorf(
+					"tracker preflight: apply local resource rules for %s: %w",
+					projection.TrackerID,
+					err,
+				)
+			}
 		}
 	}
 	descriptorByID := make(map[api.TrackerID]api.TrackerCatalogDescriptor, len(catalog.Trackers))
@@ -470,21 +478,6 @@ func subjectWithAvailablePreparedResources(subject api.UploadSubject) (api.Uploa
 		changed = true
 	}
 	return checked, changed, nil
-}
-
-func newProjectionRuleFailures(projection api.TrackerReleaseProjection, failures []api.RuleFailure) []api.RuleFailure {
-	existing := make(map[string]struct{}, len(projection.PolicyDecisions))
-	for _, decision := range projection.PolicyDecisions {
-		existing[strings.TrimSpace(decision.Code)] = struct{}{}
-	}
-	result := make([]api.RuleFailure, 0, len(failures))
-	for _, failure := range failures {
-		if _, ok := existing[strings.TrimSpace(failure.Rule)]; ok {
-			continue
-		}
-		result = append(result, failure)
-	}
-	return result
 }
 
 func appendBypassedRuntimeDecision(projection *api.TrackerReleaseProjection, code string, message string) {

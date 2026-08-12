@@ -4,8 +4,11 @@
 package trackers
 
 import (
+	"cmp"
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -87,15 +90,107 @@ func normalizeRuleEvidenceStatus(status api.MetadataEvidenceStatus) api.Metadata
 	}
 }
 
-// RuleFailureBlocksExecution reports whether a validation failure makes the
-// tracker ineligible in the selected workflow execution mode.
-func RuleFailureBlocksExecution(failure api.RuleFailure, mode api.WorkflowExecutionMode) bool {
+// RuleFailureBlocksExecution reports whether a validation failure blocks the
+// selected workflow execution mode. Waivable failures require exact authority
+// in normal mode and remain automatically bypassed in debug mode.
+func RuleFailureBlocksExecution(failure api.RuleFailure, mode api.WorkflowExecutionMode, authorized bool) bool {
 	disposition := api.NormalizeRuleDisposition(failure.Disposition)
 	if disposition == api.RuleDispositionAdvisory {
 		return false
 	}
-	return disposition != api.RuleDispositionWaivable ||
-		api.NormalizeWorkflowExecutionMode(mode) != api.WorkflowExecutionModeDebug
+	if disposition == api.RuleDispositionStrict {
+		return true
+	}
+	return !authorized && api.NormalizeWorkflowExecutionMode(mode) != api.WorkflowExecutionModeDebug
+}
+
+type waivableRuleIdentity struct {
+	Rule           string
+	Reason         string
+	Disposition    api.RuleDisposition
+	EvidenceStatus api.MetadataEvidenceStatus
+}
+
+// WaivableRuleFailureFingerprint identifies one exact tracker-local set of
+// waivable failures independently of evaluator return order.
+func WaivableRuleFailureFingerprint(tracker string, failures []api.RuleFailure) (api.WorkflowFingerprint, error) {
+	identities := make([]waivableRuleIdentity, 0, len(failures))
+	for _, failure := range failures {
+		failure = NormalizeRuleFailure(failure)
+		if failure.Disposition != api.RuleDispositionWaivable {
+			continue
+		}
+		identities = append(identities, waivableRuleIdentity{
+			Rule:           failure.Rule,
+			Reason:         failure.Reason,
+			Disposition:    failure.Disposition,
+			EvidenceStatus: failure.EvidenceStatus,
+		})
+	}
+	if len(identities) == 0 {
+		return "", nil
+	}
+	slices.SortFunc(identities, func(left, right waivableRuleIdentity) int {
+		if result := cmp.Compare(left.Rule, right.Rule); result != 0 {
+			return result
+		}
+		if result := cmp.Compare(left.Reason, right.Reason); result != 0 {
+			return result
+		}
+		return cmp.Compare(string(left.EvidenceStatus), string(right.EvidenceStatus))
+	})
+	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
+		Contract string
+		Tracker  string
+		Failures []waivableRuleIdentity
+	}{
+		Contract: "tracker-waivable-rules-v1",
+		Tracker:  strings.ToUpper(strings.TrimSpace(tracker)),
+		Failures: identities,
+	})
+	if err != nil {
+		return "", fmt.Errorf("fingerprint waivable tracker rules: %w", err)
+	}
+	return fingerprint, nil
+}
+
+// ProjectionAuthorizesRuleFailures reports whether a retained projection
+// authorizes the exact current waivable failure set.
+func ProjectionAuthorizesRuleFailures(
+	tracker string,
+	failures []api.RuleFailure,
+	projection *api.TrackerReleaseProjection,
+) (bool, error) {
+	if projection == nil || projection.RuleAuthorizationFingerprint == "" {
+		return false, nil
+	}
+	fingerprint, err := WaivableRuleFailureFingerprint(tracker, failures)
+	if err != nil {
+		return false, err
+	}
+	return fingerprint != "" &&
+		projection.WaivableRuleFingerprint == fingerprint &&
+		projection.RuleAuthorizationFingerprint == fingerprint, nil
+}
+
+// FirstBlockingRuleFailure returns the first failure that remains unresolved
+// for tracker preparation.
+func FirstBlockingRuleFailure(
+	tracker string,
+	failures []api.RuleFailure,
+	mode api.WorkflowExecutionMode,
+	projection *api.TrackerReleaseProjection,
+) (*api.RuleFailure, error) {
+	authorized, err := ProjectionAuthorizesRuleFailures(tracker, failures, projection)
+	if err != nil {
+		return nil, err
+	}
+	for index := range failures {
+		if RuleFailureBlocksExecution(failures[index], mode, authorized) {
+			return &failures[index], nil
+		}
+	}
+	return nil, nil
 }
 
 // LanguageRule configures waivable language requirements and the release types to which they apply.

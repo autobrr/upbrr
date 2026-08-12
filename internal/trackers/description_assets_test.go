@@ -38,6 +38,7 @@ type stubRepo struct {
 	uploadsCalls           int
 	deletedUploads         []string
 	createdUploads         []api.UploadRecord
+	ruleFailureSaves       []ruleFailureSave
 	statusUpdates          []uploadStatusUpdate
 	descriptionOverride    string
 	descriptionOverrideErr error
@@ -48,6 +49,12 @@ type stubRepo struct {
 type uploadStatusUpdate struct {
 	tracker string
 	status  string
+}
+
+type ruleFailureSave struct {
+	sourcePath string
+	tracker    string
+	failures   []api.TrackerRuleFailure
 }
 
 type descriptionAssetsTestDefinition struct {
@@ -192,7 +199,14 @@ func (s *stubRepo) UpdateLatestUploadRecordStatus(_ context.Context, _ string, t
 	s.statusUpdates = append(s.statusUpdates, uploadStatusUpdate{tracker: tracker, status: status})
 	return nil
 }
-func (s *stubRepo) SaveTrackerRuleFailures(context.Context, string, string, []api.TrackerRuleFailure) error {
+func (s *stubRepo) SaveTrackerRuleFailures(_ context.Context, sourcePath string, tracker string, failures []api.TrackerRuleFailure) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ruleFailureSaves = append(s.ruleFailureSaves, ruleFailureSave{
+		sourcePath: sourcePath,
+		tracker:    tracker,
+		failures:   append([]api.TrackerRuleFailure(nil), failures...),
+	})
 	return nil
 }
 func (s *stubRepo) ListTrackerRuleFailuresByPath(context.Context, string) ([]api.TrackerRuleFailure, error) {

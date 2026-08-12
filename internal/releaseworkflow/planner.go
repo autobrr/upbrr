@@ -312,6 +312,9 @@ func continuationActionBlocksAllLanesForMode(
 	action api.RequiredAction,
 	mode TrackerDecisionMode,
 ) bool {
+	if _, _, projectionAuthorization := projectionRuleAuthorizationAction(current.Projections, action.ID); projectionAuthorization {
+		return true
+	}
 	if normalizeTrackerDecisionMode(mode) == TrackerDecisionModePostDupeGate &&
 		action.Kind == api.RequiredActionReviewDuplicates {
 		return true
@@ -673,6 +676,8 @@ func effectiveProjectionInstructions(
 ) map[api.TrackerID]api.TrackerProjectionInstructions {
 	effective := make(map[api.TrackerID]api.TrackerProjectionInstructions, len(instructions))
 	for trackerID, instruction := range instructions {
+		// Rule authorization is retained server authority, not caller intent.
+		instruction.AuthorizedRuleFingerprint = ""
 		if projectionInstructionIsEmpty(instruction) {
 			continue
 		}
@@ -692,7 +697,8 @@ func projectionInstructionIsEmpty(instruction api.TrackerProjectionInstructions)
 		instruction.TrackerSite.TIK.Foreign == nil &&
 		instruction.TrackerSite.TIK.Opera == nil &&
 		instruction.TrackerSite.TIK.Asian == nil &&
-		instruction.TrackerSite.TIK.DiscType == nil
+		instruction.TrackerSite.TIK.DiscType == nil &&
+		instruction.AuthorizedRuleFingerprint == ""
 }
 
 func continuationInteractionMode(intent api.WorkflowIntent) api.InteractionMode {

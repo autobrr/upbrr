@@ -369,6 +369,48 @@ func TestCLICompositeTrackerFeedbackConfirmsOrEditsReleaseName(t *testing.T) {
 	}
 }
 
+func TestCLICompositeRuleAuthorizationHonorsInteractionMode(t *testing.T) {
+	action := api.RequiredAction{
+		ID:               "action-waive-rules",
+		Kind:             api.RequiredActionAuthorizeRules,
+		WorkflowRevision: 4,
+		Prompt:           "EXAMPLE has waivable rule failures. Continue with this tracker?",
+	}
+	session := &cliWorkflowSession{
+		intent: cliWorkflowIntent{interaction: api.InteractionModeUnattendedConfirm},
+	}
+	var (
+		feedback api.ReleaseWorkflowUploadFeedback
+		declined bool
+		err      error
+	)
+	captureStdout(t, func() {
+		feedback, declined, err = session.collectCompositeUploadFeedback(
+			context.Background(),
+			bufio.NewReader(strings.NewReader("y\n")),
+			config.Config{},
+			api.NopLogger{},
+			action,
+		)
+	})
+	if err != nil || declined ||
+		feedback.Response.Kind != api.ReleaseWorkflowUploadFeedbackRuleAuthorization ||
+		feedback.Response.RuleAuthorization == nil || !feedback.Response.RuleAuthorization.Confirmed {
+		t.Fatalf("rule authorization feedback = %#v declined=%t err=%v", feedback, declined, err)
+	}
+
+	session.intent.interaction = api.InteractionModeUnattended
+	if _, _, err := session.collectCompositeUploadFeedback(
+		context.Background(),
+		nil,
+		config.Config{},
+		api.NopLogger{},
+		action,
+	); err == nil || !strings.Contains(err.Error(), "strict unattended upload requires global action") {
+		t.Fatalf("strict unattended rule authorization error = %v", err)
+	}
+}
+
 func TestCLICompositeDuplicateReviewPrintsMatchesAndSeparatesTrackers(t *testing.T) {
 	session := &cliWorkflowSession{
 		current: releaseworkflow.CommandResult{

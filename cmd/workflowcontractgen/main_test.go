@@ -34,6 +34,10 @@ func TestTrackerProjectionInstructionsSchemaPreservesTriStateFields(t *testing.T
 			t.Fatalf("%s schema = %#v", field, property)
 		}
 	}
+	authorization := definition.Properties["authorizedRuleFingerprint"]
+	if authorization == nil || renderTypeScript(authorization, 0) != "WorkflowFingerprint" {
+		t.Fatalf("rule authorization schema = %#v", authorization)
+	}
 }
 
 func TestWorkflowPatchStringSchemaPreservesAbsentNullAndString(t *testing.T) {

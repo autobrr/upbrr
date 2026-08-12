@@ -1218,8 +1218,9 @@ func (b *schemaBuilder) definition(value reflect.Type) *schema {
 					Type:                 "object",
 					AdditionalProperties: stringOrNull(),
 				},
-				"trackerConfig": b.inline(reflect.TypeFor[api.TrackerConfigOverrides]()),
-				"trackerSite":   b.inline(reflect.TypeFor[api.TrackerSiteOverrides]()),
+				"trackerConfig":             b.inline(reflect.TypeFor[api.TrackerConfigOverrides]()),
+				"trackerSite":               b.inline(reflect.TypeFor[api.TrackerSiteOverrides]()),
+				"authorizedRuleFingerprint": b.inline(reflect.TypeFor[api.WorkflowFingerprint]()),
 			},
 		}
 	}
