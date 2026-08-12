@@ -245,6 +245,45 @@ func TestCaptureFrameContinuesOffsetsAfterNoImage(t *testing.T) {
 	}
 }
 
+func TestCaptureFrameSkipsNegativeTimestampOffsets(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "screen.png")
+	runner := &timestampSensitiveRunner{
+		blackTimestamps: map[string]struct{}{"1.000": {}},
+		noImageTimestamps: map[string]struct{}{
+			"3.000":  {},
+			"5.000":  {},
+			"9.000":  {},
+			"17.000": {},
+			"33.000": {},
+			"65.000": {},
+		},
+		blackPayload: testPNGBytes(t, color.RGBA{A: 255}),
+	}
+
+	_, err := captureFrame(context.Background(), runner, "ffmpeg", captureRequest{
+		InputPath:  "example.mkv",
+		OutputPath: output,
+		Timestamp:  1,
+	}, api.NopLogger{})
+	if !errors.Is(err, errFFmpegNoImage) {
+		t.Fatalf("capture error = %v, want no image after all non-negative offsets", err)
+	}
+
+	wantTimestamps := []string{"1.000", "3.000", "5.000", "9.000", "17.000", "33.000", "65.000"}
+	if !slices.Equal(runner.timestamps, wantTimestamps) {
+		t.Fatalf("attempted timestamps = %v, want %v", runner.timestamps, wantTimestamps)
+	}
+	for _, timestamp := range runner.timestamps {
+		value, parseErr := strconv.ParseFloat(timestamp, 64)
+		if parseErr != nil {
+			t.Fatalf("parse attempted timestamp %q: %v", timestamp, parseErr)
+		}
+		if value < 0 {
+			t.Fatalf("runner received negative timestamp %q", timestamp)
+		}
+	}
+}
+
 func TestCaptureFrameValidatesBlackSourceBeforeOverlay(t *testing.T) {
 	output := filepath.Join(t.TempDir(), "screen.png")
 	runner := &timestampSensitiveRunner{
