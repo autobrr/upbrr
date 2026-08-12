@@ -246,7 +246,7 @@ func hdbAudioElement(meta api.UploadSubject) string {
 	if audio == "" {
 		return channels
 	}
-	if channels == "" || strings.Contains(strings.ToUpper(audio), strings.ToUpper(channels)) {
+	if channels == "" || strings.EqualFold(audio, "DTS") || strings.Contains(strings.ToUpper(audio), strings.ToUpper(channels)) {
 		return audio
 	}
 	return audio + " " + channels
@@ -260,9 +260,12 @@ func stripHDBAudioLabels(value string) string {
 		if token == "DUALAUDIO" || token == "DUBBED" || token == "MULTILANG" {
 			continue
 		}
-		if token == "DUAL" && index+1 < len(fields) && compactHDBLabel(fields[index+1]) == "AUDIO" {
-			index++
-			continue
+		if index+1 < len(fields) {
+			next := compactHDBLabel(fields[index+1])
+			if (token == "DUAL" && next == "AUDIO") || (token == "MULTI" && next == "LANG") {
+				index++
+				continue
+			}
 		}
 		result = append(result, fields[index])
 	}
@@ -303,6 +306,7 @@ func hdbTitleContainsProhibitedElement(value string) bool {
 		{"DVD5"},
 		{"DVD9"},
 		{"MULTI", "LANG"},
+		{"MULTILANG"},
 		{"DUAL", "AUDIO"},
 		{"DUALAUDIO"},
 		{"DUBBED"},

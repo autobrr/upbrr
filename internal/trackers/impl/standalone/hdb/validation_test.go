@@ -91,6 +91,7 @@ func TestHDBTitleProhibitedElements(t *testing.T) {
 		{title: "Example Release 2026 Series Limited Remastered 1080p", prohibited: true},
 		{title: "Example Release 2026 Subbed nfofix DVD5 DVD9 1080p", prohibited: true},
 		{title: "Example Release 2026 Multi-Lang 1080p", prohibited: true},
+		{title: "Example Release 2026 MultiLang 1080p", prohibited: true},
 		{title: "Example Release 2026 Dual-Audio 1080p", prohibited: true},
 		{title: "Example Release 2026 DualAudio 1080p", prohibited: true},
 		{title: "Example Release 2026 Dubbed 1080p", prohibited: true},
