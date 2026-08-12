@@ -15,7 +15,7 @@ func TestHDBReleaseNamePolicyBuildsStructuredOriginalIMDbName(t *testing.T) {
 	t.Parallel()
 	const (
 		sourcePath = "Example.Release.2026.2160p.WEB-DL.H.265-GRP"
-		generated  = "Example.Release.2026.Limited.2160p.WEB-DL.H.265.DDP.5.1-GRP"
+		generated  = "Example.Release.2026.Limited.2160p.WEB-DL.Dual-Audio.DDP.5.1.H.265-GRP"
 	)
 	meta := api.UploadSubject{
 		SourcePath:  sourcePath,
@@ -41,10 +41,11 @@ func TestHDBReleaseNamePolicyBuildsStructuredOriginalIMDbName(t *testing.T) {
 			},
 		},
 		Release:     api.ReleaseInfo{Resolution: "2160p"},
-		Edition:     "Limited Edition",
+		Edition:     "Director's Cut",
+		Repack:      "REPACK",
 		Source:      "WEB-DL",
 		VideoEncode: "H.265",
-		Audio:       "DDP",
+		Audio:       "Dual-Audio DDP",
 		Channels:    "5.1",
 		Tag:         "-GRP",
 	}
@@ -60,12 +61,70 @@ func TestHDBReleaseNamePolicyBuildsStructuredOriginalIMDbName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reviewed HDB name: %v", err)
 	}
-	const want = "Example Original 2026 2160p WEB-DL H.265 DDP 5.1-GRP"
+	const want = "Example Original 2026 2160p WEB-DL DDP 5.1 H.265-GRP"
 	if got != want {
 		t.Fatalf("HDB name = %q, want %q", got, want)
 	}
-	if strings.Contains(got, "Limited") || strings.Contains(got, "Example.Original") {
+	if strings.Contains(got, "Director's Cut") || strings.Contains(got, "REPACK") || strings.Contains(got, "Dual-Audio") || strings.Contains(got, "Example.Original") {
 		t.Fatalf("HDB name retained prohibited/separator elements: %q", got)
+	}
+}
+
+func TestBuildGeneratedHDBNameUsesMediumSpecificTechnicalOrder(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		meta api.UploadSubject
+		want string
+	}{
+		{
+			name: "Blu-ray disc uses region source video audio",
+			meta: api.UploadSubject{
+				DiscType:   "BDMV",
+				Source:     "BluRay",
+				Region:     "CEE",
+				VideoCodec: "AVC",
+				Audio:      "Dual Audio DTS-HD MA",
+				Channels:   "5.1",
+				Release:    api.ReleaseInfo{Year: 2026, Resolution: "1080p"},
+				Tag:        "-GRP",
+			},
+			want: "Example Release 2026 1080p CEE Blu-ray AVC DTS-HD MA 5.1-GRP",
+		},
+		{
+			name: "BluRay encode uses audio video",
+			meta: api.UploadSubject{
+				Type:        "ENCODE",
+				Source:      "Blu-ray",
+				VideoEncode: "x264",
+				Audio:       "Dubbed DTS",
+				Release:     api.ReleaseInfo{Year: 2026, Resolution: "1080p"},
+				Tag:         "-GRP",
+			},
+			want: "Example Release 2026 1080p BluRay DTS x264-GRP",
+		},
+		{
+			name: "remux substitutes the source medium",
+			meta: api.UploadSubject{
+				Type:       "REMUX",
+				Source:     "BluRay",
+				Region:     "USA",
+				VideoCodec: "AVC",
+				Audio:      "TrueHD",
+				Channels:   "7.1",
+				Release:    api.ReleaseInfo{Year: 2026, Resolution: "2160p"},
+				Tag:        "-GRP",
+			},
+			want: "Example Release 2026 2160p USA Remux AVC TrueHD 7.1-GRP",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := buildGeneratedHDBName(test.meta, "Example Release"); got != test.want {
+				t.Fatalf("HDB name = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 

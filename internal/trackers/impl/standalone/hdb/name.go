@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"unicode"
 
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -15,7 +16,7 @@ import (
 
 func releaseNamePolicy() trackers.ReleaseNamePolicyBinding {
 	return trackers.WithMovieYearProvider(trackers.WithEpisodeTitleMode(
-		trackers.NewReleaseNamePolicy("standalone/hdb/v2", resolveReleaseNames),
+		trackers.NewReleaseNamePolicy("standalone/hdb/v3", resolveReleaseNames),
 		api.EpisodeTitleModeOmit,
 	), api.IdentityProviderIMDB)
 }
@@ -115,17 +116,14 @@ func buildGeneratedHDBName(meta api.UploadSubject, originalTitle string) string 
 	} else {
 		parts = append(parts, hdbIMDbYear(meta))
 	}
-	for _, optional := range []string{meta.Edition, meta.Repack} {
-		if !prohibitedHDBElement(optional) {
-			parts = append(parts, normalizedHDBElement(optional))
-		}
+	parts = append(parts, normalizedHDBElement(meta.Release.Resolution), hdbSourceElement(meta))
+	video := hdbVideoCodecElement(meta)
+	audio := hdbAudioElement(meta)
+	if hdbAudioBeforeVideo(meta) {
+		parts = append(parts, audio, video)
+	} else {
+		parts = append(parts, video, audio)
 	}
-	parts = append(parts,
-		normalizedHDBElement(meta.Release.Resolution),
-		hdbSourceElement(meta),
-		hdbVideoCodecElement(meta),
-		hdbAudioElement(meta),
-	)
 	name := strings.Join(nonEmptyHDBElements(parts), " ")
 	tag := strings.TrimSpace(strings.TrimPrefix(meta.Tag, "-"))
 	if tag != "" && !prohibitedHDBElement(tag) {
@@ -185,22 +183,49 @@ func hdbSourceElement(meta api.UploadSubject) string {
 	if source == "" {
 		source = normalizedHDBElement(meta.Release.Source)
 	}
-	typeValue := strings.ToUpper(strings.TrimSpace(meta.Type))
-	if source == "" || strings.EqualFold(source, "WEB") {
-		switch typeValue {
-		case "WEBDL":
-			source = "WEB-DL"
-		case "WEBRIP":
-			source = "WEBRip"
-		case "HDTV":
+	typeValue := resolveHDBType(meta)
+	switch typeValue {
+	case "WEBDL":
+		source = "WEB-DL"
+	case "WEBRIP":
+		source = "WEBRip"
+	case "HDTV":
+		if source == "" || strings.EqualFold(source, "WEB") {
 			source = "HDTV"
+		}
+	case "REMUX":
+		source = "Remux"
+	case "ENCODE":
+		if normalizeHDBType(source) == "BLURAY" {
+			source = "BluRay"
+		}
+	}
+	disc := hdbDiscType(meta.DiscType)
+	if disc {
+		switch strings.ReplaceAll(strings.ToUpper(strings.TrimSpace(meta.DiscType)), " ", "") {
+		case "BDMV":
+			source = "Blu-ray"
+		case "HDDVD":
+			source = "HD DVD"
 		}
 	}
 	region := normalizedHDBElement(meta.Region)
 	if source != "" && region != "" {
+		if disc || typeValue == "REMUX" {
+			return region + " " + source
+		}
 		return source + " " + region
 	}
 	return source
+}
+
+func hdbAudioBeforeVideo(meta api.UploadSubject) bool {
+	switch resolveHDBType(meta) {
+	case "ENCODE", "WEBDL", "WEBRIP":
+		return true
+	default:
+		return false
+	}
 }
 
 func hdbVideoCodecElement(meta api.UploadSubject) string {
@@ -216,7 +241,7 @@ func hdbVideoCodecElement(meta api.UploadSubject) string {
 }
 
 func hdbAudioElement(meta api.UploadSubject) string {
-	audio := normalizedHDBElement(meta.Audio)
+	audio := stripHDBAudioLabels(normalizedHDBElement(meta.Audio))
 	channels := normalizedHDBElement(meta.Channels)
 	if audio == "" {
 		return channels
@@ -227,16 +252,78 @@ func hdbAudioElement(meta api.UploadSubject) string {
 	return audio + " " + channels
 }
 
+func stripHDBAudioLabels(value string) string {
+	fields := strings.Fields(value)
+	result := make([]string, 0, len(fields))
+	for index := 0; index < len(fields); index++ {
+		token := compactHDBLabel(fields[index])
+		if token == "DUALAUDIO" || token == "DUBBED" || token == "MULTILANG" {
+			continue
+		}
+		if token == "DUAL" && index+1 < len(fields) && compactHDBLabel(fields[index+1]) == "AUDIO" {
+			index++
+			continue
+		}
+		result = append(result, fields[index])
+	}
+	return strings.Join(result, " ")
+}
+
+func compactHDBLabel(value string) string {
+	return strings.NewReplacer("-", "", "_", "", ".", "").Replace(strings.ToUpper(strings.TrimSpace(value)))
+}
+
 func normalizedHDBElement(value string) string {
 	return strings.Join(strings.Fields(value), " ")
 }
 
 func prohibitedHDBElement(value string) bool {
-	for _, token := range strings.FieldsFunc(strings.ToUpper(strings.TrimSpace(value)), func(r rune) bool {
-		return r == ' ' || r == '_' || r == '/'
-	}) {
-		switch token {
-		case "REQ", "RESEED", "COMPLETE", "SEASON", "SERIES", "LIMITED", "SUBBED", "NFOFIX", "DVD5", "DVD9", "DL", "MULTI-LANG":
+	return hdbTitleContainsProhibitedElement(value)
+}
+
+func hdbTitleContainsProhibitedElement(value string) bool {
+	words := strings.FieldsFunc(strings.ToUpper(strings.TrimSpace(value)), func(char rune) bool {
+		return !unicode.IsLetter(char) && !unicode.IsDigit(char)
+	})
+	for index, word := range words {
+		if word == "DL" && (index == 0 || words[index-1] != "WEB") {
+			return true
+		}
+	}
+	for _, prohibited := range [][]string{
+		{"REQ"},
+		{"RESEED"},
+		{"COMPLETE"},
+		{"SEASON"},
+		{"SERIES"},
+		{"LIMITED"},
+		{"REMASTERED"},
+		{"SUBBED"},
+		{"NFOFIX"},
+		{"DVD5"},
+		{"DVD9"},
+		{"MULTI", "LANG"},
+		{"DUAL", "AUDIO"},
+		{"DUALAUDIO"},
+		{"DUBBED"},
+	} {
+		if containsHDBWords(words, prohibited) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsHDBWords(words, target []string) bool {
+	for index := 0; index+len(target) <= len(words); index++ {
+		matched := true
+		for offset := range target {
+			if words[index+offset] != target[offset] {
+				matched = false
+				break
+			}
+		}
+		if matched {
 			return true
 		}
 	}

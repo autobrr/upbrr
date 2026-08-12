@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"unicode"
 
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
@@ -18,7 +17,7 @@ import (
 
 func validationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID:    "standalone-hdb-constructibility-v2",
+		ID:    "standalone-hdb-constructibility-v3",
 		Check: checkRequirements,
 	}
 }
@@ -259,29 +258,4 @@ func hdbSourceBaseName(sourcePath string) string {
 	default:
 		return base
 	}
-}
-
-func hdbTitleContainsProhibitedElement(value string) bool {
-	words := strings.FieldsFunc(strings.ToUpper(strings.TrimSpace(value)), func(char rune) bool {
-		return !unicode.IsLetter(char) && !unicode.IsDigit(char)
-	})
-	normalized := " " + strings.Join(words, " ") + " "
-	for _, prohibited := range []string{
-		" REQ ",
-		" RESEED ",
-		" COMPLETE ",
-		" SEASON ",
-		" SERIES ",
-		" LIMITED ",
-		" SUBBED ",
-		" NFOFIX ",
-		" DVD5 ",
-		" DVD9 ",
-		" MULTI LANG ",
-	} {
-		if strings.Contains(normalized, prohibited) {
-			return true
-		}
-	}
-	return false
 }

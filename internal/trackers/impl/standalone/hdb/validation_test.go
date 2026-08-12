@@ -74,8 +74,36 @@ func TestHDBEvidencePolicyPassViolationAndMissingEvidence(t *testing.T) {
 
 func TestHDBValidationPolicyVersion(t *testing.T) {
 	t.Parallel()
-	if got := Profile().ValidationPolicy.ID; got != "standalone-hdb-constructibility-v2" {
+	if got := Profile().ValidationPolicy.ID; got != "standalone-hdb-constructibility-v3" {
 		t.Fatalf("validation policy ID = %q", got)
+	}
+}
+
+func TestHDBTitleProhibitedElements(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		title      string
+		prohibited bool
+	}{
+		{title: "Example Release 2026 REQ 1080p", prohibited: true},
+		{title: "Example Release 2026 RESEED 1080p", prohibited: true},
+		{title: "Example Release 2026 Complete Season Pack 1080p", prohibited: true},
+		{title: "Example Release 2026 Series Limited Remastered 1080p", prohibited: true},
+		{title: "Example Release 2026 Subbed nfofix DVD5 DVD9 1080p", prohibited: true},
+		{title: "Example Release 2026 Multi-Lang 1080p", prohibited: true},
+		{title: "Example Release 2026 Dual-Audio 1080p", prohibited: true},
+		{title: "Example Release 2026 DualAudio 1080p", prohibited: true},
+		{title: "Example Release 2026 Dubbed 1080p", prohibited: true},
+		{title: "Example Release 2026 German.DL 1080p", prohibited: true},
+		{title: "Example Release 2026 1080p WEB-DL DD 5.1 H.264-GRP"},
+	}
+	for _, test := range tests {
+		t.Run(test.title, func(t *testing.T) {
+			t.Parallel()
+			if got := hdbTitleContainsProhibitedElement(test.title); got != test.prohibited {
+				t.Fatalf("prohibited = %t, want %t", got, test.prohibited)
+			}
+		})
 	}
 }
 
