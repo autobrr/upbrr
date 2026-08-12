@@ -187,7 +187,7 @@ var ffmpegFrameCorruptionIndicators = []string{
 
 // blackFrameTimestampOffsets lists relative timestamp adjustments (in seconds)
 // tried when FFmpeg produces a black image at the initial frame timestamp.
-var blackFrameTimestampOffsets = []float64{0, 1.0, 2.0, 3.0, 5.0, -1.0, -2.0}
+var blackFrameTimestampOffsets = []float64{0, 2, 4, 8, 16, 32, 64, -2, -4, -8, -16, -32, -64}
 
 // captureFrame writes one PNG frame and returns whether the successful attempt
 // used libplacebo. Libplacebo captures retry once before falling back to the
