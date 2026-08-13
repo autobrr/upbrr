@@ -348,6 +348,7 @@ type retainedUploadExecutionFake struct {
 	selected            []api.TrackerID
 	failed              map[api.TrackerID]bool
 	resolved            map[api.TrackerID]api.UploadPlanTracker
+	resolutionErr       error
 	resolutionConfirmed []bool
 }
 
@@ -358,14 +359,17 @@ func (f *retainedUploadExecutionFake) ResolveAction(
 	confirmed bool,
 ) (api.UploadPlanTracker, error) {
 	f.resolutionConfirmed = append(f.resolutionConfirmed, confirmed)
+	if f.resolutionErr != nil {
+		return api.UploadPlanTracker{}, f.resolutionErr
+	}
 	if tracker, ok := f.resolved[trackerID]; ok {
 		return tracker, nil
 	}
 	return api.UploadPlanTracker{
-TrackerID: trackerID,
- Eligible: true,
- Status: api.StageStatusReady,
-}, nil
+		TrackerID: trackerID,
+		Eligible:  true,
+		Status:    api.StageStatusReady,
+	}, nil
 }
 
 func (f *retainedUploadExecutionFake) Execute(_ context.Context, trackerIDs []api.TrackerID) ([]api.UploadTrackerResult, error) {
@@ -452,6 +456,122 @@ func TestValidateUploadExecutionTrackerIDsOmitsSkippedTrackers(t *testing.T) {
 	}
 	if _, err := validateUploadExecutionTrackerIDs(trackers, []api.TrackerID{"GAMMA"}); !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("failed tracker selection error = %v", err)
+	}
+}
+
+func TestExecuteUploadsPendingTrackerActionRespectsSelectionAndInteraction(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		trackerIDs  []api.TrackerID
+		interaction api.InteractionMode
+		wantBlocked bool
+	}{
+		{name: "selected ready sibling", trackerIDs: []api.TrackerID{"ALPHA"}},
+		{
+name: "all interactive",
+ interaction: api.InteractionModeInteractive,
+ wantBlocked: true,
+},
+		{name: "all unattended", interaction: api.InteractionModeUnattended},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			now := time.Date(2026, time.July, 23, 12, 0, 0, 0, time.UTC)
+			module, _ := newTestModule(t, testPreparer())
+			projectionRef := api.TrackerReleaseProjectionSetRef{ID: "projections-pending-action", Revision: 1}
+			dupeRef := api.DupeAssessmentRef{ID: "dupes-pending-action", Revision: 1}
+			mediaRef := api.MediaArtifactSetRef{ID: "media-pending-action", Revision: 1}
+			descriptionRef := api.DescriptionSetRef{ID: "descriptions-pending-action", Revision: 1}
+			dryRunRef := api.UploadDryRunResultRef{ID: "dry-run-pending-action", Revision: 2}
+			action := api.RequiredAction{
+				Kind:      api.RequiredActionResolveTrackerPreparation,
+				Status:    api.RequiredActionStatusPending,
+				TrackerID: "BTN",
+			}
+			execution := &retainedUploadExecutionFake{trackers: []api.TrackerID{"BTN", "ALPHA"}}
+			prepared := &preparedUploads{
+				trackerIDs: []api.TrackerID{"BTN", "ALPHA"},
+				projections: api.TrackerReleaseProjectionSet{
+					ID:       projectionRef.ID,
+					Revision: projectionRef.Revision,
+				},
+				dupes: api.DupeAssessment{ID: dupeRef.ID, Revision: dupeRef.Revision},
+				media: api.MediaArtifactSet{ID: mediaRef.ID, Revision: mediaRef.Revision},
+				descriptions: api.DescriptionSet{
+					ID:       descriptionRef.ID,
+					Revision: descriptionRef.Revision,
+				},
+				plan: api.UploadPlan{
+					Revision:         dryRunRef.Revision,
+					ProjectionSet:    projectionRef,
+					Dupes:            dupeRef,
+					Media:            &mediaRef,
+					Descriptions:     &descriptionRef,
+					InputFingerprint: testFingerprint(t, "pending-tracker-action"),
+					Trackers: []api.UploadPlanTracker{
+						{
+							TrackerID:       "BTN",
+							Eligible:        true,
+							Status:          api.StageStatusReady,
+							RequiredActions: []api.RequiredAction{{Kind: action.Kind}},
+						},
+						{
+TrackerID: "ALPHA",
+ Eligible: true,
+ Status: api.StageStatusReady,
+},
+					},
+					Status:    api.StageStatusReady,
+					ExpiresAt: now.Add(time.Hour),
+				},
+				execution: execution,
+				dryRun:    true,
+			}
+			state := State{
+				Workflow: api.ReleaseWorkflow{
+					ID:                 "workflow-pending-action",
+					Revision:           2,
+					Status:             api.WorkflowStatusBlocked,
+					TrackerProjections: &projectionRef,
+					Dupes:              &dupeRef,
+					Media:              &mediaRef,
+					Descriptions:       &descriptionRef,
+					DryRun:             &dryRunRef,
+					RequiredActions:    []api.RequiredAction{action},
+				},
+				UploadResults: make(map[api.UploadResultID]api.UploadResult),
+			}
+			if err := module.private.Put(
+				testOwnerID,
+				state.Workflow.ID,
+				uploadPlanPrivateResourceID(dryRunRef.ID),
+				prepared,
+				prepared.plan.ExpiresAt,
+			); err != nil {
+				t.Fatalf("retain upload plan: %v", err)
+			}
+
+			result, err := module.executeUploads(context.Background(), testOwnerID, &state, 3, now, ExecuteUploadsCommand{
+				TrackerIDs:  test.trackerIDs,
+				Interaction: test.interaction,
+			})
+			if test.wantBlocked {
+				if !errors.Is(err, ErrInvalidTransition) || execution.executions != 0 {
+					t.Fatalf("interactive execution: result=%#v err=%v executions=%d", result, err, execution.executions)
+				}
+				return
+			}
+			if err != nil || result.UploadResult == nil || execution.executions != 1 ||
+				!slices.Equal(execution.selected, []api.TrackerID{"ALPHA"}) || len(result.UploadResult.Results) != 2 ||
+				result.UploadResult.Results[0].TrackerID != "BTN" || result.UploadResult.Results[0].Status != api.StageStatusSkipped ||
+				result.UploadResult.Results[1].TrackerID != "ALPHA" || result.UploadResult.Results[1].Status != api.StageStatusCompleted {
+				t.Fatalf("lane-aware execution: result=%#v err=%v selected=%v executions=%d", result, err, execution.selected, execution.executions)
+			}
+		})
 	}
 }
 
@@ -4068,6 +4188,28 @@ func TestResolveTrackerPreparationReplacesRetainedDryRun(t *testing.T) {
 		t.Fatalf("retain upload plan: %v", err)
 	}
 	confirmed := false
+	execution.resolutionErr = errors.New("synthetic tracker preparation failure")
+	_, err := module.resolveAction(context.Background(), testOwnerID, &state, 3, now, ResolveActionCommand{
+		WorkflowID:       state.Workflow.ID,
+		ExpectedRevision: 2,
+		Answer: api.RequiredActionAnswer{
+			ActionID:         action.ID,
+			WorkflowRevision: 2,
+			Confirmed:        &confirmed,
+		},
+	})
+	if err == nil {
+		t.Fatal("resolve tracker preparation accepted resolver failure")
+	}
+	if _, err := module.private.Get(
+		testOwnerID,
+		state.Workflow.ID,
+		uploadPlanPrivateResourceID(prior.ID),
+		now,
+	); err != nil || execution.releases != 0 {
+		t.Fatalf("resolver failure did not restore retained plan: err=%v releases=%d", err, execution.releases)
+	}
+	execution.resolutionErr = nil
 	result, err := module.resolveAction(context.Background(), testOwnerID, &state, 3, now, ResolveActionCommand{
 		WorkflowID:       state.Workflow.ID,
 		ExpectedRevision: 2,
@@ -4086,7 +4228,7 @@ func TestResolveTrackerPreparationReplacesRetainedDryRun(t *testing.T) {
 		state.Workflow.RequiredActions[0].WorkflowRevision != 3 {
 		t.Fatalf("resolved dry run=%#v workflow=%#v", result.DryRun, state.Workflow)
 	}
-	if len(execution.resolutionConfirmed) != 1 || execution.resolutionConfirmed[0] {
+	if len(execution.resolutionConfirmed) != 2 || execution.resolutionConfirmed[0] || execution.resolutionConfirmed[1] {
 		t.Fatalf("resolution decisions = %#v", execution.resolutionConfirmed)
 	}
 	if _, err := module.private.Get(

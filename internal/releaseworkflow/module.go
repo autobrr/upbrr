@@ -5523,11 +5523,11 @@ func (m *Module) resolveTrackerPreparationAction(
 			_ = prepared.Release()
 		}
 	}()
-	resolved = true
 	tracker, err := prepared.execution.ResolveAction(ctx, action.TrackerID, action.Kind, *answer.Confirmed)
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow resolve tracker preparation: %w", err)
 	}
+	resolved = true
 	index := slices.IndexFunc(prepared.plan.Trackers, func(candidate api.UploadPlanTracker) bool {
 		return candidate.TrackerID == action.TrackerID
 	})
@@ -5765,9 +5765,12 @@ func (m *Module) executeUploads(
 	if state.Workflow.UploadResult != nil {
 		return CommandResult{}, fmt.Errorf("%w: upload already has a retained result; retry failed trackers or change workflow inputs", ErrInvalidTransition)
 	}
+	intent := api.WorkflowIntent{Interaction: command.Interaction}
 	if slices.ContainsFunc(state.Workflow.RequiredActions, func(action api.RequiredAction) bool {
 		return (action.Kind == api.RequiredActionAuthorizeRules || action.Kind == api.RequiredActionResolveTrackerPreparation) &&
-			action.Status == api.RequiredActionStatusPending
+			action.Status == api.RequiredActionStatusPending &&
+			uploadTrackerSelected(action.TrackerID, command.TrackerIDs) &&
+			!continuationUnattendedSkipsTrackerAction(intent, action)
 	}) {
 		return CommandResult{}, api.NewOperationError(api.OperationFailure{
 			Code:      api.OperationFailureConfirmationRequired,
@@ -5781,8 +5784,9 @@ func (m *Module) executeUploads(
 		return CommandResult{}, err
 	}
 	defer func() { _ = prepared.Release() }()
+	skipUnattendedUploadTrackers(&prepared.plan, command)
 	if slices.ContainsFunc(prepared.plan.Trackers, func(tracker api.UploadPlanTracker) bool {
-		return len(tracker.RequiredActions) > 0
+		return uploadTrackerSelected(tracker.TrackerID, command.TrackerIDs) && len(tracker.RequiredActions) > 0
 	}) && state.Workflow.DryRun == nil {
 		return CommandResult{}, api.NewOperationError(api.OperationFailure{
 			Code:      api.OperationFailureConfirmationRequired,
@@ -5803,6 +5807,33 @@ func (m *Module) executeUploads(
 	results = completeUploadExecutionResults(prepared.plan.Trackers, results, executionErr, trackerIDs)
 	authority := prepared.execution.RegisteredArtifactAuthority()
 	return m.publishUploadResult(ownerID, state, nextRevision, now, prepared, results, authority)
+}
+
+func uploadTrackerSelected(trackerID api.TrackerID, requested []api.TrackerID) bool {
+	if trackerID == "" || len(requested) == 0 {
+		return true
+	}
+	trackerID = api.TrackerID(strings.ToUpper(strings.TrimSpace(string(trackerID))))
+	return slices.Contains(normalizeContinuationTrackerIDs(requested), trackerID)
+}
+
+func skipUnattendedUploadTrackers(plan *api.UploadPlan, command ExecuteUploadsCommand) {
+	intent := api.WorkflowIntent{Interaction: command.Interaction}
+	for index := range plan.Trackers {
+		tracker := &plan.Trackers[index]
+		if !uploadTrackerSelected(tracker.TrackerID, command.TrackerIDs) || !slices.ContainsFunc(tracker.RequiredActions, func(action api.RequiredAction) bool {
+			action.TrackerID = tracker.TrackerID
+			return continuationUnattendedSkipsTrackerAction(intent, action)
+		}) {
+			continue
+		}
+		tracker.Eligible = false
+		tracker.Status = api.StageStatusSkipped
+		tracker.RequiredActions = nil
+		tracker.ClientInjectionStatus = api.StageStatusSkipped
+		tracker.ClientInjectionMessage = "Client injection skipped because unattended mode cannot resolve the required tracker decision."
+		tracker.ClientFailureCode = ""
+	}
 }
 
 func (m *Module) preparedUploadsForExecution(

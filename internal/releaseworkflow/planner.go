@@ -536,6 +536,7 @@ func planContinuationCommand(
 		ExpectedRevision: revision,
 		NoSeed:           request.Intent.NoSeed,
 		TrackerIDs:       append([]api.TrackerID(nil), request.Intent.UploadTrackerIDs...),
+		Interaction:      continuationInteractionMode(request.Intent),
 		IdempotencyKey:   key("execute-uploads"),
 	}, "execute-uploads"
 }

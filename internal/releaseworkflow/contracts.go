@@ -943,6 +943,7 @@ type ExecuteUploadsCommand struct {
 	ExpectedRevision api.WorkflowRevision
 	NoSeed           bool
 	TrackerIDs       []api.TrackerID
+	Interaction      api.InteractionMode
 	IdempotencyKey   string
 }
 
@@ -952,6 +953,14 @@ func (ExecuteUploadsCommand) operationKind() api.OperationKind {
 	return api.OperationKindUploadExecute
 }
 func (c ExecuteUploadsCommand) commandFingerprint() (api.WorkflowFingerprint, error) {
+	if c.Interaction != "" && c.Interaction != api.InteractionModeInteractive {
+		return canonicalCommandFingerprint(struct {
+			ExpectedRevision api.WorkflowRevision
+			NoSeed           bool
+			TrackerIDs       []api.TrackerID
+			Interaction      api.InteractionMode
+		}{c.ExpectedRevision, c.NoSeed, c.TrackerIDs, c.Interaction})
+	}
 	return canonicalCommandFingerprint(struct {
 		ExpectedRevision api.WorkflowRevision
 		NoSeed           bool
