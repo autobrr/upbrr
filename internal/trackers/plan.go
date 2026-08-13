@@ -279,6 +279,7 @@ func preparedUploadPlan(input PreparationInput, operation PreparedOperation) (Tr
 				}
 				return TrackerPlan{}, NewPreparationFailure(input.Tracker, "upload", err.Error(), err)
 			}
+			// Resolver replacements remain bound to the original reviewed input and projection authority.
 			return preparedUploadPlan(input, next)
 		}
 	}

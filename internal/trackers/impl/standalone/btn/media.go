@@ -81,9 +81,12 @@ func prepareUploadDataWithAutofill(
 		return nil, fmt.Errorf("trackers: BTN reviewed upload name: %w", err)
 	}
 
-	autofillPayload, uploadType := buildBTNAutofillPayload(req.Meta, releaseName)
+	var autofillPayload url.Values
+	var uploadType string
 	if releaseNameAutofill {
 		autofillPayload, uploadType = buildBTNReleaseNameAutofillPayload(req.Meta, releaseName)
+	} else {
+		autofillPayload, uploadType = buildBTNAutofillPayload(req.Meta, releaseName)
 	}
 	fields, err := requestBTNAutofillFields(ctx, uploadCtx, autofillPayload, uploadType)
 	if err != nil {
