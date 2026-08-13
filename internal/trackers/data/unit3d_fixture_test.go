@@ -55,7 +55,7 @@ func TestUnit3DSearchEntriesPreferPresentHDRDVAndPreserveProvider(t *testing.T) 
 	var payload unit3dSearchResponse
 	if err := json.Unmarshal([]byte(`{
 		"data": [
-			{"attributes": {"name": "Example.Release.2026.2160p.AMZN.WEB-DL-GRP", "hdr_dv": "DV P7 HDR", "provider": " AMZN ", "media_info": "Video\nFormat : AVC"}},
+			{"attributes": {"name": "Example.Release.2026.2160p.PROVIDER.WEB-DL-GRP", "hdr_dv": "DV P7 HDR", "provider": " PROVIDER ", "media_info": "Video\nFormat : AVC"}},
 			{"attributes": {"name": "Example.Release.2026.1080p.WEB-DL-GRP", "hdr_dv": "", "media_info": "Video\nHDR format : HDR10+"}},
 			{"attributes": {"name": "Example.Release.2026.1080p.WEB-DL-GRP", "media_info": "Video\nHDR format : HDR10+"}},
 			{"attributes": {"name": "Example.Release.2026.2160p.WEB-DL-GRP", "hdr_dv": "DV P9 HDR", "media_info": "Video\nHDR format : HDR10"}}
@@ -67,7 +67,7 @@ func TestUnit3DSearchEntriesPreferPresentHDRDVAndPreserveProvider(t *testing.T) 
 	if dropped != 0 || len(entries) != 4 {
 		t.Fatalf("entries=%d dropped=%d", len(entries), dropped)
 	}
-	if entries[0].Provider != "AMZN" || entries[0].HDR.DolbyVisionProfile != "7" ||
+	if entries[0].Provider != "PROVIDER" || entries[0].HDR.DolbyVisionProfile != "7" ||
 		!slices.Equal(entries[0].HDR.Formats, []api.HDRFormat{api.HDRFormatDolbyVision, api.HDRFormatHDR10}) {
 		t.Fatalf("structured entry = %#v", entries[0])
 	}

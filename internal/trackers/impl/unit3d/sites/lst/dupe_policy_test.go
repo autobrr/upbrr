@@ -68,6 +68,18 @@ func TestLSTDuplicatePolicySlots(t *testing.T) {
 			want: api.DupeRelationInsufficientEvidence,
 		},
 		{
+			name: "webdl codec slot requires provider evidence",
+			target: lstTarget(
+				"Example.Release.2026.1080p.WEB-DL.H.264.SDR-TARGET",
+				"WEBDL", "1080p", "", "H.264", api.HDRFormatSDR,
+			),
+			candidate: lstCandidate(
+				"Example.Release.2026.1080p.WEB-DL.H.265.SDR-OTHER",
+				"WEBDL", "1080p", api.HDRFormatSDR,
+			),
+			want: api.DupeRelationInsufficientEvidence,
+		},
+		{
 			name: "720p webdl has no alternate codec slot",
 			target: lstTarget(
 				"Example.Release.2026.720p.AMZN.WEB-DL.H.264.SDR-TARGET",
