@@ -171,7 +171,7 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 			"upbrr: tracker authentication must be resolved outside the upload workflow; start a fresh attempt",
 		)
 	}
-	if s.intent.interaction == api.InteractionModeUnattended {
+	if s.intent.interaction == api.InteractionModeUnattended && action.Kind != api.RequiredActionResolveTrackerPreparation {
 		return feedback, false, fmt.Errorf("upbrr: strict unattended upload requires global action %s: %s", action.Kind, action.Prompt)
 	}
 
@@ -219,9 +219,13 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 			api.ReleaseWorkflowUploadFeedbackRuleAuthorization,
 		)
 	case api.RequiredActionResolveTrackerPreparation:
-		confirmed, err := promptYesNo(reader, action.Prompt+" [y/N]: ", false)
-		if err != nil {
-			return feedback, false, err
+		confirmed := false
+		if s.intent.interaction != api.InteractionModeUnattended {
+			var err error
+			confirmed, err = promptYesNo(reader, action.Prompt+" [y/N]: ", false)
+			if err != nil {
+				return feedback, false, err
+			}
 		}
 		feedback.Response = api.ReleaseWorkflowUploadFeedbackResponse{
 			Kind: api.ReleaseWorkflowUploadFeedbackTrackerPreparation,
