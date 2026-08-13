@@ -19,6 +19,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -31,4 +33,4 @@ jobs:
           platforms: linux/amd64
           push: false
           cache-from: type=gha,scope=docker-pr-amd64
-          cache-to: type=gha,scope=docker-pr-amd64,mode=min
+          cache-to: type=gha,scope=docker-pr-amd64,mode=min,ignore-error=true
