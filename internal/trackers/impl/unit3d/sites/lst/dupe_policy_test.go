@@ -56,6 +56,18 @@ func TestLSTDuplicatePolicySlots(t *testing.T) {
 			want: api.DupeRelationCoexists,
 		},
 		{
+			name: "webdl codec slot requires candidate provider",
+			target: lstTarget(
+				"Example.Release.2026.1080p.AMZN.WEB-DL.H.264.SDR-TARGET",
+				"WEBDL", "1080p", "AMZN", "H.264", api.HDRFormatSDR,
+			),
+			candidate: lstCandidate(
+				"Example.Release.2026.1080p.WEB-DL.H.265.SDR-OTHER",
+				"WEBDL", "1080p", api.HDRFormatSDR,
+			),
+			want: api.DupeRelationInsufficientEvidence,
+		},
+		{
 			name: "720p webdl has no alternate codec slot",
 			target: lstTarget(
 				"Example.Release.2026.720p.AMZN.WEB-DL.H.264.SDR-TARGET",
@@ -64,6 +76,42 @@ func TestLSTDuplicatePolicySlots(t *testing.T) {
 			candidate: lstCandidate(
 				"Example.Release.2026.720p.AMZN.WEB-DL.H.265.SDR-OTHER",
 				"WEBDL", "720p", api.HDRFormatSDR,
+			),
+			want: api.DupeRelationSameSlot,
+		},
+		{
+			name: "1080p webdl AV1 codec slot",
+			target: lstTarget(
+				"Example.Release.2026.1080p.AMZN.WEB-DL.H.265.SDR-TARGET",
+				"WEBDL", "1080p", "AMZN", "H.265", api.HDRFormatSDR,
+			),
+			candidate: lstCandidate(
+				"Example.Release.2026.1080p.AMZN.WEB-DL.AV1.SDR-OTHER",
+				"WEBDL", "1080p", api.HDRFormatSDR,
+			),
+			want: api.DupeRelationCoexists,
+		},
+		{
+			name: "1440p webdl has no AV1 codec slot",
+			target: lstTarget(
+				"Example.Release.2026.1440p.AMZN.WEB-DL.H.265.SDR-TARGET",
+				"WEBDL", "1440p", "AMZN", "H.265", api.HDRFormatSDR,
+			),
+			candidate: lstCandidate(
+				"Example.Release.2026.1440p.AMZN.WEB-DL.AV1.SDR-OTHER",
+				"WEBDL", "1440p", api.HDRFormatSDR,
+			),
+			want: api.DupeRelationSameSlot,
+		},
+		{
+			name: "HDR webdl has no H264 codec slot",
+			target: lstTarget(
+				"Example.Release.2026.1080p.AMZN.WEB-DL.HDR.H.265-TARGET",
+				"WEBDL", "1080p", "AMZN", "H.265", api.HDRFormatHDR10,
+			),
+			candidate: lstCandidate(
+				"Example.Release.2026.1080p.AMZN.WEB-DL.HDR.H.264-OTHER",
+				"WEBDL", "1080p", api.HDRFormatHDR10,
 			),
 			want: api.DupeRelationSameSlot,
 		},
@@ -126,6 +174,42 @@ func TestLSTDuplicatePolicySlots(t *testing.T) {
 				"ENCODE", "1080p", api.HDRFormatSDR,
 			),
 			want: api.DupeRelationCoexists,
+		},
+		{
+			name: "2160p encode AV1 codec slot",
+			target: lstTarget(
+				"Example.Release.2026.2160p.BluRay.x265.HDR-TARGET",
+				"ENCODE", "2160p", "", "x265", api.HDRFormatHDR10,
+			),
+			candidate: lstCandidate(
+				"Example.Release.2026.2160p.BluRay.AV1.HDR-OTHER",
+				"ENCODE", "2160p", api.HDRFormatHDR10,
+			),
+			want: api.DupeRelationCoexists,
+		},
+		{
+			name: "2160p encode has no H264 codec slot",
+			target: lstTarget(
+				"Example.Release.2026.2160p.BluRay.x265.SDR-TARGET",
+				"ENCODE", "2160p", "", "x265", api.HDRFormatSDR,
+			),
+			candidate: lstCandidate(
+				"Example.Release.2026.2160p.BluRay.x264.SDR-OTHER",
+				"ENCODE", "2160p", api.HDRFormatSDR,
+			),
+			want: api.DupeRelationSameSlot,
+		},
+		{
+			name: "AV1 encode DV HDR trump needs master review",
+			target: lstTarget(
+				"Example.Release.2026.2160p.BluRay.AV1.DV.HDR-TARGET",
+				"ENCODE", "2160p", "", "AV1", api.HDRFormatDolbyVision, api.HDRFormatHDR10,
+			),
+			candidate: lstCandidate(
+				"Example.Release.2026.2160p.BluRay.AV1.HDR-OTHER",
+				"ENCODE", "2160p", api.HDRFormatHDR10,
+			),
+			want: api.DupeRelationManualReview,
 		},
 		{
 			name: "same remux slot needs master review",
@@ -199,7 +283,7 @@ func TestLSTDuplicatePolicyMetadata(t *testing.T) {
 	t.Parallel()
 
 	policy := Profile().DupePolicy
-	if policy == nil || policy.ID != "lst/duplicate/v3" || policy.EvidenceID != lstDupeEvidenceID {
+	if policy == nil || policy.ID != "lst/duplicate/v4" || policy.EvidenceID != lstDupeEvidenceID {
 		t.Fatalf("LST duplicate policy = %#v", policy)
 	}
 }

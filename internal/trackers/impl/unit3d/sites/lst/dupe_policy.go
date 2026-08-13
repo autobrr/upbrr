@@ -12,7 +12,7 @@ const lstDupeEvidenceID = "lst-upload-rules-slots-trumping"
 
 func duplicatePolicy() *trackers.DupePolicy {
 	return &trackers.DupePolicy{
-		ID:         "lst/duplicate/v3",
+		ID:         "lst/duplicate/v4",
 		EvidenceID: lstDupeEvidenceID,
 		SearchScope: trackers.DupeSearchScope{
 			MaxPages: 100,
@@ -41,54 +41,101 @@ func duplicatePolicy() *trackers.DupePolicy {
 
 func lstCodecCoexistenceRules() []trackers.DupeRule {
 	return []trackers.DupeRule{
+		lstCodecCoexistenceRule(
+			"webdl_1080p_2160p_sdr_codec_slots",
+			"lst_webdl_codec_slot",
+			[]string{"web_dl"},
+			[]string{"1080p", "2160p"},
+			[]string{"h264", "h265", "av1"},
+			[]string{"sdr"},
+			true,
+		),
+		lstCodecCoexistenceRule(
+			"webdl_1440p_sdr_codec_slots",
+			"lst_webdl_codec_slot",
+			[]string{"web_dl"},
+			[]string{"1440p"},
+			[]string{"h264", "h265"},
+			[]string{"sdr"},
+			true,
+		),
+		lstCodecCoexistenceRule(
+			"encode_1080p_sdr_codec_slots",
+			"lst_encode_codec_slot",
+			[]string{"disc_encode", "other_encode"},
+			[]string{"1080p"},
+			[]string{"h264", "h265", "av1"},
+			[]string{"sdr"},
+			false,
+		),
+		lstCodecCoexistenceRule(
+			"encode_h265_av1_codec_slots",
+			"lst_encode_codec_slot",
+			[]string{"disc_encode", "other_encode"},
+			[]string{"1080p", "2160p"},
+			[]string{"h265", "av1"},
+			nil,
+			false,
+		),
+	}
+}
+
+func lstCodecCoexistenceRule(
+	id string,
+	reason string,
+	mediaKinds []string,
+	resolutions []string,
+	codecs []string,
+	hdrValues []string,
+	requireProvider bool,
+) trackers.DupeRule {
+	conditions := []trackers.DupeCondition{
 		{
-			ID:         "lst/duplicate/v3/webdl_codec_slots",
-			EvidenceID: lstDupeEvidenceID,
-			Relation:   string(api.DupeRelationCoexists),
-			ReasonCode: "lst_webdl_codec_slot",
-			Conditions: []trackers.DupeCondition{
-				{
-					Dimension:       trackers.DupeDimensionMediaKind,
-					TargetValues:    []string{"web_dl"},
-					CandidateValues: []string{"web_dl"},
-				},
-				{
-					Dimension:       trackers.DupeDimensionResolution,
-					TargetValues:    []string{"1080p", "1440p", "2160p"},
-					CandidateValues: []string{"1080p", "1440p", "2160p"},
-					ValuesEqual:     true,
-				},
-				{Dimension: trackers.DupeDimensionProvider, ValuesEqual: true},
-				{Dimension: trackers.DupeDimensionCodec, ValuesDifferent: true},
-			},
+			Dimension:       trackers.DupeDimensionMediaKind,
+			TargetValues:    mediaKinds,
+			CandidateValues: mediaKinds,
+			ValuesEqual:     true,
 		},
 		{
-			ID:         "lst/duplicate/v3/encode_codec_slots",
-			EvidenceID: lstDupeEvidenceID,
-			Relation:   string(api.DupeRelationCoexists),
-			ReasonCode: "lst_encode_codec_slot",
-			Conditions: []trackers.DupeCondition{
-				{
-					Dimension:       trackers.DupeDimensionMediaKind,
-					TargetValues:    []string{"disc_encode", "other_encode"},
-					CandidateValues: []string{"disc_encode", "other_encode"},
-					ValuesEqual:     true,
-				},
-				{
-					Dimension:       trackers.DupeDimensionResolution,
-					TargetValues:    []string{"1080p", "2160p"},
-					CandidateValues: []string{"1080p", "2160p"},
-					ValuesEqual:     true,
-				},
-				{Dimension: trackers.DupeDimensionCodec, ValuesDifferent: true},
-			},
+			Dimension:       trackers.DupeDimensionResolution,
+			TargetValues:    resolutions,
+			CandidateValues: resolutions,
+			ValuesEqual:     true,
 		},
+	}
+	if requireProvider {
+		conditions = append(conditions, trackers.DupeCondition{
+			Dimension:   trackers.DupeDimensionProvider,
+			ValuesEqual: true,
+		})
+	}
+	conditions = append(conditions,
+		trackers.DupeCondition{
+			Dimension:       trackers.DupeDimensionCodec,
+			TargetValues:    codecs,
+			CandidateValues: codecs,
+			ValuesDifferent: true,
+		},
+		trackers.DupeCondition{
+			Dimension:        trackers.DupeDimensionHDR,
+			TargetValues:     hdrValues,
+			CandidateValues:  hdrValues,
+			ValuesEqual:      true,
+			RequiresComplete: true,
+		},
+	)
+	return trackers.DupeRule{
+		ID:         "lst/duplicate/v4/" + id,
+		EvidenceID: lstDupeEvidenceID,
+		Relation:   string(api.DupeRelationCoexists),
+		ReasonCode: reason,
+		Conditions: conditions,
 	}
 }
 
 func lstWEBDLAlongsideWEBRipRule() trackers.DupeRule {
 	return trackers.DupeRule{
-		ID:               "lst/duplicate/v3/proposed_webdl_alongside_webrip",
+		ID:               "lst/duplicate/v4/proposed_webdl_alongside_webrip",
 		EvidenceID:       lstDupeEvidenceID,
 		Relation:         string(api.DupeRelationCoexists),
 		ReasonCode:       "lst_webdl_retains_slot",
@@ -118,14 +165,14 @@ func lstWEBDLHDRPrecedenceRules() []trackers.DupeRule {
 		{
 			combined:       "dolby_vision+hdr10",
 			base:           "hdr10",
-			proposedRuleID: "lst/duplicate/v3/proposed_dv_hdr_over_hdr10",
-			existingRuleID: "lst/duplicate/v3/existing_dv_hdr_over_hdr10",
+			proposedRuleID: "lst/duplicate/v4/proposed_dv_hdr_over_hdr10",
+			existingRuleID: "lst/duplicate/v4/existing_dv_hdr_over_hdr10",
 		},
 		{
 			combined:       "dolby_vision+hdr10_plus",
 			base:           "hdr10_plus",
-			proposedRuleID: "lst/duplicate/v3/proposed_dv_hdr_over_hdr10_plus",
-			existingRuleID: "lst/duplicate/v3/existing_dv_hdr_over_hdr10_plus",
+			proposedRuleID: "lst/duplicate/v4/proposed_dv_hdr_over_hdr10_plus",
+			existingRuleID: "lst/duplicate/v4/existing_dv_hdr_over_hdr10_plus",
 		},
 	} {
 		rules = append(rules,
@@ -186,7 +233,7 @@ func lstWEBDLHDRRule(id string, targetHDR string, candidateHDR string, relation 
 func lstSubjectiveSlotRules() []trackers.DupeRule {
 	return []trackers.DupeRule{
 		{
-			ID:                 "lst/duplicate/v3/full_disc_content_review",
+			ID:                 "lst/duplicate/v4/full_disc_content_review",
 			EvidenceID:         lstDupeEvidenceID,
 			ReasonCode:         "lst_full_disc_content_review",
 			RequiresManualStep: true,
@@ -200,7 +247,7 @@ func lstSubjectiveSlotRules() []trackers.DupeRule {
 			},
 		},
 		{
-			ID:                 "lst/duplicate/v3/encode_quality_or_master_review",
+			ID:                 "lst/duplicate/v4/encode_quality_or_master_review",
 			EvidenceID:         lstDupeEvidenceID,
 			ReasonCode:         "lst_encode_quality_or_master_review",
 			RequiresManualStep: true,
@@ -217,7 +264,7 @@ func lstSubjectiveSlotRules() []trackers.DupeRule {
 			},
 		},
 		{
-			ID:                 "lst/duplicate/v3/remux_master_review",
+			ID:                 "lst/duplicate/v4/remux_master_review",
 			EvidenceID:         lstDupeEvidenceID,
 			ReasonCode:         "lst_remux_master_review",
 			RequiresManualStep: true,
@@ -232,7 +279,7 @@ func lstSubjectiveSlotRules() []trackers.DupeRule {
 			},
 		},
 		{
-			ID:                 "lst/duplicate/v3/proposed_webrip_requires_comparison",
+			ID:                 "lst/duplicate/v4/proposed_webrip_requires_comparison",
 			EvidenceID:         lstDupeEvidenceID,
 			ReasonCode:         "lst_webrip_comparison_required",
 			RequiresManualStep: true,
@@ -250,7 +297,7 @@ func lstSubjectiveSlotRules() []trackers.DupeRule {
 			},
 		},
 		{
-			ID:                 "lst/duplicate/v3/webrip_quality_review",
+			ID:                 "lst/duplicate/v4/webrip_quality_review",
 			EvidenceID:         lstDupeEvidenceID,
 			ReasonCode:         "lst_webrip_quality_review",
 			RequiresManualStep: true,
@@ -266,7 +313,7 @@ func lstSubjectiveSlotRules() []trackers.DupeRule {
 			},
 		},
 		{
-			ID:                 "lst/duplicate/v3/2160p_webdl_lossless_audio_review",
+			ID:                 "lst/duplicate/v4/2160p_webdl_lossless_audio_review",
 			EvidenceID:         lstDupeEvidenceID,
 			ReasonCode:         "lst_2160p_webdl_lossless_audio_review",
 			RequiresManualStep: true,
@@ -300,26 +347,26 @@ func lstMasterSensitiveHDRRules() []trackers.DupeRule {
 		{
 			targetHDR:    "dolby_vision+hdr10",
 			candidateHDR: "hdr10",
-			encodeRuleID: "lst/duplicate/v3/encode_proposed_dv_hdr_over_hdr10_review",
-			remuxRuleID:  "lst/duplicate/v3/remux_proposed_dv_hdr_over_hdr10_review",
+			encodeRuleID: "lst/duplicate/v4/encode_proposed_dv_hdr_over_hdr10_review",
+			remuxRuleID:  "lst/duplicate/v4/remux_proposed_dv_hdr_over_hdr10_review",
 		},
 		{
 			targetHDR:    "hdr10",
 			candidateHDR: "dolby_vision+hdr10",
-			encodeRuleID: "lst/duplicate/v3/encode_existing_dv_hdr_over_hdr10_review",
-			remuxRuleID:  "lst/duplicate/v3/remux_existing_dv_hdr_over_hdr10_review",
+			encodeRuleID: "lst/duplicate/v4/encode_existing_dv_hdr_over_hdr10_review",
+			remuxRuleID:  "lst/duplicate/v4/remux_existing_dv_hdr_over_hdr10_review",
 		},
 		{
 			targetHDR:    "dolby_vision+hdr10_plus",
 			candidateHDR: "hdr10_plus",
-			encodeRuleID: "lst/duplicate/v3/encode_proposed_dv_hdr_over_hdr10_plus_review",
-			remuxRuleID:  "lst/duplicate/v3/remux_proposed_dv_hdr_over_hdr10_plus_review",
+			encodeRuleID: "lst/duplicate/v4/encode_proposed_dv_hdr_over_hdr10_plus_review",
+			remuxRuleID:  "lst/duplicate/v4/remux_proposed_dv_hdr_over_hdr10_plus_review",
 		},
 		{
 			targetHDR:    "hdr10_plus",
 			candidateHDR: "dolby_vision+hdr10_plus",
-			encodeRuleID: "lst/duplicate/v3/encode_existing_dv_hdr_over_hdr10_plus_review",
-			remuxRuleID:  "lst/duplicate/v3/remux_existing_dv_hdr_over_hdr10_plus_review",
+			encodeRuleID: "lst/duplicate/v4/encode_existing_dv_hdr_over_hdr10_plus_review",
+			remuxRuleID:  "lst/duplicate/v4/remux_existing_dv_hdr_over_hdr10_plus_review",
 		},
 	} {
 		rules = append(rules,

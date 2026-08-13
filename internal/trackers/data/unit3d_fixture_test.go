@@ -49,6 +49,42 @@ func TestUnit3DSearchEntriesDeriveHDRFromMediaInfo(t *testing.T) {
 	}
 }
 
+func TestUnit3DSearchEntriesPreferPresentHDRDVAndPreserveProvider(t *testing.T) {
+	t.Parallel()
+
+	var payload unit3dSearchResponse
+	if err := json.Unmarshal([]byte(`{
+		"data": [
+			{"attributes": {"name": "Example.Release.2026.2160p.AMZN.WEB-DL-GRP", "hdr_dv": "DV P7 HDR", "provider": " AMZN ", "media_info": "Video\nFormat : AVC"}},
+			{"attributes": {"name": "Example.Release.2026.1080p.WEB-DL-GRP", "hdr_dv": "", "media_info": "Video\nHDR format : HDR10+"}},
+			{"attributes": {"name": "Example.Release.2026.1080p.WEB-DL-GRP", "media_info": "Video\nHDR format : HDR10+"}},
+			{"attributes": {"name": "Example.Release.2026.2160p.WEB-DL-GRP", "hdr_dv": "DV P9 HDR", "media_info": "Video\nHDR format : HDR10"}}
+		]
+	}`), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	entries, dropped := buildUnit3DSearchEntries(payload.Data, 0, false)
+	if dropped != 0 || len(entries) != 4 {
+		t.Fatalf("entries=%d dropped=%d", len(entries), dropped)
+	}
+	if entries[0].Provider != "AMZN" || entries[0].HDR.DolbyVisionProfile != "7" ||
+		!slices.Equal(entries[0].HDR.Formats, []api.HDRFormat{api.HDRFormatDolbyVision, api.HDRFormatHDR10}) {
+		t.Fatalf("structured entry = %#v", entries[0])
+	}
+	if entries[1].HDR.Status != api.HDREvidenceComplete ||
+		!slices.Equal(entries[1].HDR.Formats, []api.HDRFormat{api.HDRFormatSDR}) {
+		t.Fatalf("explicit SDR = %#v", entries[1].HDR)
+	}
+	if entries[2].HDR.Origin != api.HDREvidenceMediaInfo ||
+		!slices.Equal(entries[2].HDR.Formats, []api.HDRFormat{api.HDRFormatHDR10Plus}) {
+		t.Fatalf("MediaInfo fallback = %#v", entries[2].HDR)
+	}
+	if entries[3].HDR.Status != api.HDREvidencePartial || entries[3].HDR.Origin != api.HDREvidenceTrackerAPI ||
+		len(entries[3].HDR.Formats) != 0 {
+		t.Fatalf("unknown structured HDR = %#v", entries[3].HDR)
+	}
+}
+
 func TestUnit3DSearchEntriesPreserveRawAndCanonicalTypes(t *testing.T) {
 	t.Parallel()
 
