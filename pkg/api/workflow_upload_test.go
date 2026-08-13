@@ -186,15 +186,15 @@ func TestReleaseWorkflowUploadFeedbackRequiresExplicitTrackerPreparationDecision
 		{name: "omitted", decision: `{}`},
 		{name: "null", decision: `{"confirmed":null}`},
 		{
-name: "false",
- decision: `{"confirmed":false}`,
- wantValid: true,
-},
+			name:      "false",
+			decision:  `{"confirmed":false}`,
+			wantValid: true,
+		},
 		{
-name: "true",
- decision: `{"confirmed":true}`,
- wantValid: true,
-},
+			name:      "true",
+			decision:  `{"confirmed":true}`,
+			wantValid: true,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

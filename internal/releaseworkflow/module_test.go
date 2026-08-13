@@ -470,10 +470,10 @@ func TestExecuteUploadsPendingTrackerActionRespectsSelectionAndInteraction(t *te
 	}{
 		{name: "selected ready sibling", trackerIDs: []api.TrackerID{"ALPHA"}},
 		{
-name: "all interactive",
- interaction: api.InteractionModeInteractive,
- wantBlocked: true,
-},
+			name:        "all interactive",
+			interaction: api.InteractionModeInteractive,
+			wantBlocked: true,
+		},
 		{name: "all unattended", interaction: api.InteractionModeUnattended},
 	}
 	for _, test := range tests {
@@ -520,10 +520,10 @@ name: "all interactive",
 							RequiredActions: []api.RequiredAction{{Kind: action.Kind}},
 						},
 						{
-TrackerID: "ALPHA",
- Eligible: true,
- Status: api.StageStatusReady,
-},
+							TrackerID: "ALPHA",
+							Eligible:  true,
+							Status:    api.StageStatusReady,
+						},
 					},
 					Status:    api.StageStatusReady,
 					ExpiresAt: now.Add(time.Hour),
