@@ -2676,8 +2676,8 @@ func TestApplyTVEpisodeMetadataAnimeTVPackKeepsEpisodeEmpty(t *testing.T) {
 
 	updated := svc.applyTVEpisodeMetadata(ctx, meta, ids, nil, nil, &stubTVDB{}, &stubTVmaze{})
 
-	if updated.EpisodeInt != 0 || updated.EpisodeStr != "" {
-		t.Fatalf("expected anime TV pack to remain season-only, got episode=%d string=%q", updated.EpisodeInt, updated.EpisodeStr)
+	if updated.SeasonInt != 1 || updated.SeasonStr != "S01" || updated.EpisodeInt != 0 || updated.EpisodeStr != "" {
+		t.Fatalf("expected anime TV pack to remain S01, got season=%d/%q episode=%d/%q", updated.SeasonInt, updated.SeasonStr, updated.EpisodeInt, updated.EpisodeStr)
 	}
 }
 
