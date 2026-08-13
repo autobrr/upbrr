@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/moistari/rls"
+	"github.com/autobrr/rls"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/redaction"

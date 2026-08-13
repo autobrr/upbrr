@@ -8,20 +8,18 @@ require (
 	github.com/autobrr/go-qbittorrent v1.17.0
 	github.com/autobrr/go-torrent v1.1.0
 	github.com/autobrr/mkbrr v1.24.1
+	github.com/autobrr/rls v0.8.2-0.20260725105839-a59341eb93af
 	github.com/frustra/bbcode v0.0.0-20201127003707-6ef347fbe1c8
-	github.com/moistari/rls v0.6.0
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	golang.org/x/crypto v0.53.0
 	golang.org/x/net v0.56.0
-	golang.org/x/sync v0.21.0
+	golang.org/x/sync v0.22.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.44.0
-	golang.org/x/text v0.39.0
+	golang.org/x/text v0.40.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.50.1
 )
-
-replace github.com/moistari/rls => github.com/autobrr/rls v0.8.1
 
 require (
 	github.com/Masterminds/semver v1.5.0 // indirect
@@ -29,7 +27,6 @@ require (
 	github.com/bmatcuk/doublestar/v4 v4.10.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fatih/color v1.19.0 // indirect
-	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
