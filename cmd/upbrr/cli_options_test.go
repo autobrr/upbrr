@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,36 +16,6 @@ import (
 	"github.com/autobrr/upbrr/internal/webserver"
 	"github.com/autobrr/upbrr/pkg/api"
 )
-
-func captureStdout(t *testing.T, fn func()) string {
-	t.Helper()
-
-	original := os.Stdout
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("pipe: %v", err)
-	}
-	os.Stdout = writer
-	defer func() {
-		os.Stdout = original
-	}()
-
-	fn()
-
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close writer: %v", err)
-	}
-
-	var buf bytes.Buffer
-	if _, err := buf.ReadFrom(reader); err != nil {
-		t.Fatalf("read stdout: %v", err)
-	}
-	if err := reader.Close(); err != nil {
-		t.Fatalf("close reader: %v", err)
-	}
-
-	return buf.String()
-}
 
 func TestParseCLIOptionsCompatibilityFlags(t *testing.T) {
 	opts, visited, paths, err := parseCLIOptions([]string{"-ua", "-uac", "-sdc", "-sda", "-ddc", "--tmdb", "123", "--imdb", "tt456", "movie.mkv"})
@@ -78,6 +49,59 @@ func TestParseCLIOptionsCompatibilityFlags(t *testing.T) {
 	}
 }
 
+func TestParseCLIOptionsPreservesLegacyDashAndChangedSemantics(t *testing.T) {
+	args := []string{
+		"-category", "MOVIE",
+		"Example.Release.2026.1080p-GRP",
+		"--screens=0",
+		"-debug=false",
+		"--",
+		"-literal-path",
+	}
+	original := slices.Clone(args)
+	opts, visited, paths, err := parseCLIOptions(args)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if opts.Category != "MOVIE" || opts.Screens != 0 || opts.Debug {
+		t.Fatalf("options = %#v", opts)
+	}
+	for _, name := range []string{"category", "screens", "debug"} {
+		if !visited[name] {
+			t.Fatalf("changed flags = %#v, missing %q", visited, name)
+		}
+	}
+	if !slices.Equal(paths, []string{"Example.Release.2026.1080p-GRP", "-literal-path"}) {
+		t.Fatalf("paths = %#v", paths)
+	}
+	if !slices.Equal(args, original) {
+		t.Fatalf("input mutated: got %#v want %#v", args, original)
+	}
+}
+
+func TestParseCLIOptionsOpaqueFlagValueAndAliasLastWins(t *testing.T) {
+	opts, visited, paths, err := parseCLIOptions([]string{"-config", "-sc", "--screens=2", "-s=3", "Example.Release.2026.1080p-GRP"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if opts.ConfigPath != "-sc" || opts.SiteCheck || opts.Screens != 3 {
+		t.Fatalf("options = %#v", opts)
+	}
+	if !visited["config"] || visited["site-check"] || !visited["screens"] {
+		t.Fatalf("changed flags = %#v", visited)
+	}
+	if !slices.Equal(paths, []string{"Example.Release.2026.1080p-GRP"}) {
+		t.Fatalf("paths = %#v", paths)
+	}
+}
+
+func TestParseCLIOptionsRejectsMalformedThreeDashFlag(t *testing.T) {
+	_, _, _, err := parseCLIOptions([]string{"---debug", "Example.Release.2026.1080p-GRP"})
+	if err == nil || !strings.Contains(err.Error(), "bad flag syntax") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestParseServeOptionsDevNoAuth(t *testing.T) {
 	opts, visited, err := parseServeOptions([]string{"--dev-no-auth"})
 	if err != nil {
@@ -88,6 +112,16 @@ func TestParseServeOptionsDevNoAuth(t *testing.T) {
 	}
 	if !visited["dev-no-auth"] {
 		t.Fatalf("expected dev-no-auth visited flag, got %#v", visited)
+	}
+}
+
+func TestParseServeOptionsStopsAtFirstPositional(t *testing.T) {
+	opts, visited, err := parseServeOptions([]string{"extra", "--host", "127.0.0.1"})
+	if err != nil {
+		t.Fatalf("parse serve options: %v", err)
+	}
+	if opts.Host != "" || visited["host"] {
+		t.Fatalf("trailing host flag was parsed: opts=%#v visited=%#v", opts, visited)
 	}
 }
 
@@ -1067,38 +1101,38 @@ func TestBuildCLIRequestImageHostOverrides(t *testing.T) {
 }
 
 func TestPrintMetadataPreviewShowsRichReleaseDetails(t *testing.T) {
-	output := captureStdout(t, func() {
-		printMetadataPreview(api.MetadataPreview{
-			SourcePath:  "C:\\path\\to\\Example.Release.2026.S01.1080p.WEB-DL-GRP",
-			ReleaseName: "Example Release 2026 S01 1080p WEB-DL H.264-GRP",
-			TrackerName: "LST",
-			Identity: api.ExternalIdentity{
-				TMDBID:   123456,
-				IMDBID:   7654321,
-				TVDBID:   234567,
-				TVmazeID: 34567,
-				Category: api.CanonicalCategoryTV,
+	var outputBuffer bytes.Buffer
+	printMetadataPreview(&outputBuffer, api.MetadataPreview{
+		SourcePath:  "C:\\path\\to\\Example.Release.2026.S01.1080p.WEB-DL-GRP",
+		ReleaseName: "Example Release 2026 S01 1080p WEB-DL H.264-GRP",
+		TrackerName: "LST",
+		Identity: api.ExternalIdentity{
+			TMDBID:   123456,
+			IMDBID:   7654321,
+			TVDBID:   234567,
+			TVmazeID: 34567,
+			Category: api.CanonicalCategoryTV,
+		},
+		Display: api.PreparedReleaseDisplay{Providers: []api.ProviderDisplay{{
+			Provider:         api.IdentityProviderTMDB,
+			ID:               123456,
+			SummaryAvailable: true,
+			Summary: api.ProviderDisplaySummary{
+				Title:          "Example Release",
+				Year:           2026,
+				Overview:       "Example overview for a fictional series used in CLI preview output.",
+				Genres:         "Drama, Mystery",
+				Category:       "TV",
+				Date:           "2026-02-22",
+				RuntimeMinutes: 55,
 			},
-			Display: api.PreparedReleaseDisplay{Providers: []api.ProviderDisplay{{
-				Provider:         api.IdentityProviderTMDB,
-				ID:               123456,
-				SummaryAvailable: true,
-				Summary: api.ProviderDisplaySummary{
-					Title:          "Example Release",
-					Year:           2026,
-					Overview:       "Example overview for a fictional series used in CLI preview output.",
-					Genres:         "Drama, Mystery",
-					Category:       "TV",
-					Date:           "2026-02-22",
-					RuntimeMinutes: 55,
-				},
-			}}},
-			Diagnostics: []api.PreparationDiagnostic{{
-				Severity: api.DiagnosticSeverityWarning,
-				Message:  "Season pack contains mixed group tags (ALT, GRP); trackers with mixed-origin support will use Mixed.",
-			}},
-		}, true)
-	})
+		}}},
+		Diagnostics: []api.PreparationDiagnostic{{
+			Severity: api.DiagnosticSeverityWarning,
+			Message:  "Season pack contains mixed group tags (ALT, GRP); trackers with mixed-origin support will use Mixed.",
+		}},
+	}, true)
+	output := outputBuffer.String()
 
 	for _, expected := range []string{
 		"Release details",

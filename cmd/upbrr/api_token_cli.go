@@ -6,11 +6,12 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"strings"
 	"text/tabwriter"
+
+	"github.com/spf13/pflag"
 
 	"github.com/autobrr/upbrr/internal/apitoken"
 	"github.com/autobrr/upbrr/internal/authmaterial"
@@ -27,53 +28,40 @@ Commands:
 Run "upbrr api-token <command> --help" for command options.
 `
 
-func runAPITokenCommand(ctx context.Context, args []string, output io.Writer) error {
-	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		return &cliHelpError{usage: apiTokenCommandUsage}
-	}
-	switch args[0] {
-	case "create":
-		return runCreateAPITokenCommand(ctx, args[1:], output)
-	case "list":
-		return runListAPITokensCommand(ctx, args[1:], output)
-	case "revoke":
-		return runRevokeAPITokenCommand(ctx, args[1:], output)
-	default:
-		return exitError(2, fmt.Errorf("unknown api-token command %q", args[0]))
-	}
+type createAPITokenOptions struct {
+	configPath string
+	name       string
+	ownerID    string
+	rawScopes  string
 }
 
-func runCreateAPITokenCommand(ctx context.Context, args []string, output io.Writer) error {
-	fs := flag.NewFlagSet("api-token create", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	var configPath string
-	var name string
-	var ownerID string
-	var rawScopes string
-	fs.StringVar(&configPath, "config", "", "Path to config file")
-	fs.StringVar(&name, "name", "CLI token", "Operator-facing token name")
-	fs.StringVar(&ownerID, "owner", "default", "Workflow owner isolation key")
-	fs.StringVar(&rawScopes, "scopes", joinAPITokenScopes(apitoken.AllScopes()), "Comma-separated API scopes")
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return &cliHelpError{usage: formatFlagUsage(fs, "upbrr api-token create [options]")}
-		}
-		return exitError(2, fmt.Errorf("parse api-token create options: %w", err))
-	}
-	if fs.NArg() != 0 {
-		return exitError(2, errors.New("api-token create does not accept positional arguments"))
-	}
-	scopes, err := parseAPITokenScopes(rawScopes)
+type configAPITokenOptions struct {
+	configPath string
+}
+
+func bindCreateAPITokenFlags(fs *pflag.FlagSet, opts *createAPITokenOptions) {
+	fs.StringVar(&opts.configPath, "config", "", "Path to config file")
+	fs.StringVar(&opts.name, "name", "CLI token", "Operator-facing token name")
+	fs.StringVar(&opts.ownerID, "owner", "default", "Workflow owner isolation key")
+	fs.StringVar(&opts.rawScopes, "scopes", joinAPITokenScopes(apitoken.AllScopes()), "Comma-separated API scopes")
+}
+
+func bindConfigAPITokenFlags(fs *pflag.FlagSet, opts *configAPITokenOptions) {
+	fs.StringVar(&opts.configPath, "config", "", "Path to config file")
+}
+
+func runCreateAPITokenCommand(ctx context.Context, opts createAPITokenOptions, configProvided bool, output io.Writer) error {
+	scopes, err := parseAPITokenScopes(opts.rawScopes)
 	if err != nil {
 		return exitError(2, err)
 	}
-	service, err := openAPITokenService(ctx, configPath, flagVisited(fs, "config"))
+	service, err := openAPITokenService(ctx, opts.configPath, configProvided)
 	if err != nil {
 		return err
 	}
 	created, err := service.Create(ctx, apitoken.CreateInput{
-		Name:    name,
-		OwnerID: ownerID,
+		Name:    opts.name,
+		OwnerID: opts.ownerID,
 		Scopes:  scopes,
 	})
 	if err != nil {
@@ -83,21 +71,8 @@ func runCreateAPITokenCommand(ctx context.Context, args []string, output io.Writ
 	return nil
 }
 
-func runListAPITokensCommand(ctx context.Context, args []string, output io.Writer) error {
-	fs := flag.NewFlagSet("api-token list", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	var configPath string
-	fs.StringVar(&configPath, "config", "", "Path to config file")
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return &cliHelpError{usage: formatFlagUsage(fs, "upbrr api-token list [options]")}
-		}
-		return exitError(2, fmt.Errorf("parse api-token list options: %w", err))
-	}
-	if fs.NArg() != 0 {
-		return exitError(2, errors.New("api-token list does not accept positional arguments"))
-	}
-	service, err := openAPITokenService(ctx, configPath, flagVisited(fs, "config"))
+func runListAPITokensCommand(ctx context.Context, opts configAPITokenOptions, configProvided bool, output io.Writer) error {
+	service, err := openAPITokenService(ctx, opts.configPath, configProvided)
 	if err != nil {
 		return err
 	}
@@ -133,25 +108,12 @@ func runListAPITokensCommand(ctx context.Context, args []string, output io.Write
 	return nil
 }
 
-func runRevokeAPITokenCommand(ctx context.Context, args []string, output io.Writer) error {
-	fs := flag.NewFlagSet("api-token revoke", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	var configPath string
-	fs.StringVar(&configPath, "config", "", "Path to config file")
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return &cliHelpError{usage: formatFlagUsage(fs, "upbrr api-token revoke [options] <token-id>")}
-		}
-		return exitError(2, fmt.Errorf("parse api-token revoke options: %w", err))
-	}
-	if fs.NArg() != 1 {
-		return exitError(2, errors.New("api-token revoke requires exactly one token ID"))
-	}
-	service, err := openAPITokenService(ctx, configPath, flagVisited(fs, "config"))
+func runRevokeAPITokenCommand(ctx context.Context, opts configAPITokenOptions, configProvided bool, id string, output io.Writer) error {
+	service, err := openAPITokenService(ctx, opts.configPath, configProvided)
 	if err != nil {
 		return err
 	}
-	id := strings.TrimSpace(fs.Arg(0))
+	id = strings.TrimSpace(id)
 	if err := service.Revoke(ctx, id); err != nil {
 		return fmt.Errorf("revoke API credential: %w", err)
 	}
@@ -209,14 +171,4 @@ func joinAPITokenScopes(scopes []apitoken.Scope) string {
 		values[index] = string(scope)
 	}
 	return strings.Join(values, ",")
-}
-
-func flagVisited(fs *flag.FlagSet, name string) bool {
-	visited := false
-	fs.Visit(func(current *flag.Flag) {
-		if current.Name == name {
-			visited = true
-		}
-	})
-	return visited
 }

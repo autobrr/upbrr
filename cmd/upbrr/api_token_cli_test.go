@@ -5,7 +5,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,7 +17,7 @@ import (
 func TestAPITokenCLIManagesPersistentTokens(t *testing.T) {
 	t.Parallel()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "upbrr.db")
 	configPath := filepath.Join(tempDir, "config.yaml")
@@ -31,13 +30,14 @@ func TestAPITokenCLIManagesPersistentTokens(t *testing.T) {
 	}
 
 	var createOutput bytes.Buffer
-	if err := runAPITokenCommand(ctx, []string{
+	if err := executeCLI(ctx, []string{
+		"api-token",
 		"create",
 		"--config", configPath,
 		"--name", "CLI automation",
 		"--owner", "cli-owner",
 		"--scopes", "workflow:read",
-	}, &createOutput); err != nil {
+	}, cliIO{out: &createOutput}); err != nil {
 		t.Fatalf("create command: %v", err)
 	}
 	createdFields := strings.Fields(createOutput.String())
@@ -59,7 +59,7 @@ func TestAPITokenCLIManagesPersistentTokens(t *testing.T) {
 	}
 
 	var listOutput bytes.Buffer
-	if err := runAPITokenCommand(ctx, []string{"list", "--config", configPath}, &listOutput); err != nil {
+	if err := executeCLI(ctx, []string{"api-token", "list", "--config", configPath}, cliIO{out: &listOutput}); err != nil {
 		t.Fatalf("list command: %v", err)
 	}
 	if !strings.Contains(listOutput.String(), "CLI automation") || !strings.Contains(listOutput.String(), id) {
@@ -82,7 +82,7 @@ func TestAPITokenCLIManagesPersistentTokens(t *testing.T) {
 		t.Fatalf("authenticate principal=%#v ok=%t err=%v", principal, ok, err)
 	}
 	var revokeOutput bytes.Buffer
-	if err := runAPITokenCommand(ctx, []string{"revoke", "--config", configPath, id}, &revokeOutput); err != nil {
+	if err := executeCLI(ctx, []string{"api-token", "revoke", "--config", configPath, id}, cliIO{out: &revokeOutput}); err != nil {
 		t.Fatalf("revoke command: %v", err)
 	}
 	if !strings.Contains(revokeOutput.String(), id) {

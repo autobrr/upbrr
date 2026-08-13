@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"io"
 	"slices"
 	"strings"
 	"testing"
@@ -32,6 +33,12 @@ type cliWorkflowCoreFake struct {
 	eventBatch     int
 	queueOperation bool
 	cancelCalls    int
+}
+
+func captureWriter(fn func(io.Writer)) string {
+	var output strings.Builder
+	fn(&output)
+	return output.String()
 }
 
 func (f *cliWorkflowCoreFake) StartReleaseWorkflowUpload(
@@ -121,8 +128,8 @@ func (f *cliWorkflowCoreFake) ContinueReleaseWorkflow(
 }
 
 func TestPrintCLIWorkflowDryRunIncludesClientOutcome(t *testing.T) {
-	output := captureStdout(t, func() {
-		printCLIWorkflowDryRun(api.UploadDryRunResult{Reports: []api.TrackerDryRunReport{
+	output := captureWriter(func(output io.Writer) {
+		printCLIWorkflowDryRun(output, api.UploadDryRunResult{Reports: []api.TrackerDryRunReport{
 			{
 				TrackerID:         "BETA",
 				DisplayName:       "Beta",
@@ -145,8 +152,9 @@ func TestPrintCLIWorkflowDryRunIncludesClientOutcome(t *testing.T) {
 }
 
 func TestPrintCLIWorkflowDryRunSeparatesTrackersAndHighlightsRenames(t *testing.T) {
-	output := captureStdout(t, func() {
+	output := captureWriter(func(output io.Writer) {
 		printCLIWorkflowDryRun(
+			output,
 			api.UploadDryRunResult{Reports: []api.TrackerDryRunReport{
 				{
 					TrackerID:         "ALPHA",
@@ -188,8 +196,8 @@ func TestPrintCLIWorkflowDryRunSeparatesTrackersAndHighlightsRenames(t *testing.
 }
 
 func TestPrintCLIWorkflowProjectionsIncludesAuditablePolicyDetails(t *testing.T) {
-	output := captureStdout(t, func() {
-		printCLIWorkflowProjections(&api.TrackerReleaseProjectionSet{
+	output := captureWriter(func(output io.Writer) {
+		printCLIWorkflowProjections(output, &api.TrackerReleaseProjectionSet{
 			Projections: []api.TrackerReleaseProjection{{
 				DisplayName:       "Example",
 				UploadReleaseName: "Example.Release.2026-GRP",
@@ -235,8 +243,8 @@ func TestPrintCLIWorkflowProjectionsIncludesAuditablePolicyDetails(t *testing.T)
 }
 
 func TestPrintCLIWorkflowProjectionsSeparatesTrackersAndHighlightsRenames(t *testing.T) {
-	output := captureStdout(t, func() {
-		printCLIWorkflowProjections(&api.TrackerReleaseProjectionSet{
+	output := captureWriter(func(output io.Writer) {
+		printCLIWorkflowProjections(output, &api.TrackerReleaseProjectionSet{
 			Projections: []api.TrackerReleaseProjection{
 				{
 					DisplayName:          "Alpha",
@@ -265,8 +273,9 @@ func TestPrintCLIWorkflowProjectionsSeparatesTrackersAndHighlightsRenames(t *tes
 }
 
 func TestPrintCLIWorkflowProjectionsMarksInClientTrackerBlocked(t *testing.T) {
-	output := captureStdout(t, func() {
+	output := captureWriter(func(output io.Writer) {
 		printCLIWorkflowProjections(
+			output,
 			&api.TrackerReleaseProjectionSet{
 				Projections: []api.TrackerReleaseProjection{
 					{
@@ -633,6 +642,7 @@ func TestCLIWorkflowUnattendedPlaylistActionDoesNotPrompt(t *testing.T) {
 		api.PreparationIntentUpload,
 		bufio.NewReader(strings.NewReader("1\n")),
 		config.Config{},
+		cliIO{},
 		api.NopLogger{},
 	)
 	if err == nil || !strings.Contains(err.Error(), "unattended") {
@@ -657,6 +667,7 @@ func TestCLIWorkflowLargestPlaylistUsesTypedFactReplacement(t *testing.T) {
 		api.PreparationIntentUpload,
 		nil,
 		config.Config{Metadata: config.MetadataConfig{UseLargestPlaylist: true}},
+		cliIO{},
 		api.NopLogger{},
 	)
 	if err != nil {
@@ -692,6 +703,7 @@ func TestCLIWorkflowSessionsUseDistinctDurableIdempotencyKeys(t *testing.T) {
 		api.PreparationIntentUpload,
 		nil,
 		config.Config{},
+		cliIO{},
 		api.NopLogger{},
 	); err != nil {
 		t.Fatalf("create first workflow session: %v", err)
@@ -704,6 +716,7 @@ func TestCLIWorkflowSessionsUseDistinctDurableIdempotencyKeys(t *testing.T) {
 		api.PreparationIntentUpload,
 		nil,
 		config.Config{},
+		cliIO{},
 		api.NopLogger{},
 	); err != nil {
 		t.Fatalf("create second workflow session: %v", err)
@@ -840,6 +853,7 @@ func TestCLIWorkflowUnattendedDefersQuestionnaireToCentralPolicy(t *testing.T) {
 	instructions := make(map[api.TrackerID]api.TrackerProjectionInstructions)
 	changed, err := collectCLIWorkflowQuestionnaires(
 		nil,
+		io.Discard,
 		api.InteractionModeUnattended,
 		&api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
 			TrackerID: "ALPHA",

@@ -1,0 +1,8 @@
+Usage: upbrr api-token <command> [options]
+
+Commands:
+  create    Generate and persist a new API token
+  list      List persisted API token metadata
+  revoke    Revoke an API token by ID
+
+Run "upbrr api-token <command> --help" for command options.

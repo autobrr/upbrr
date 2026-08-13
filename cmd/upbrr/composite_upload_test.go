@@ -6,6 +6,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"io"
 	"slices"
 	"strings"
 	"testing"
@@ -258,6 +259,7 @@ func TestCLICompleteUsesCompositeStartAndFeedback(t *testing.T) {
 			UploadResult: &api.UploadResult{ID: "upload-composite", Status: api.StageStatusCompleted},
 		}, nil
 	}
+	var output strings.Builder
 	session := &cliWorkflowSession{
 		core: coreSvc,
 		intent: cliWorkflowIntent{
@@ -271,32 +273,26 @@ func TestCLICompleteUsesCompositeStartAndFeedback(t *testing.T) {
 				InteractionMode: api.InteractionModeUnattendedConfirm,
 			},
 		},
+		streams: cliIO{out: &output},
 	}
-	var (
-		completeErr error
-		output      string
+	_, err := session.complete(
+		context.Background(),
+		false,
+		bufio.NewReader(strings.NewReader("y\nn\n")),
+		config.Config{Logging: config.LoggingConfig{Level: "info"}},
+		api.NopLogger{},
 	)
-	output = captureStdout(t, func() {
-		_, completeErr = session.complete(
-			context.Background(),
-			false,
-			bufio.NewReader(strings.NewReader("y\nn\n")),
-			config.Config{Logging: config.LoggingConfig{Level: "info"}},
-			api.NopLogger{},
-		)
-	})
-	err := completeErr
 	if err != nil {
 		t.Fatalf("complete composite upload: %v", err)
 	}
-	if strings.Contains(output, "Tracker projections") {
-		t.Fatalf("INFO output included tracker projections: %q", output)
+	if strings.Contains(output.String(), "Tracker projections") {
+		t.Fatalf("INFO output included tracker projections: %q", output.String())
 	}
 	for _, prompt := range []string{
 		`Use Alpha as "Example.Release.2026.ALPHA-GRP"? [y/N]:`,
 		`Use Beta as "Example.Release.2026.BETA-GRP"? [y/N]:`,
 	} {
-		if !strings.Contains(output, prompt) {
+		if !strings.Contains(output.String(), prompt) {
 			t.Fatalf("INFO output missing tracker approval prompt %q", prompt)
 		}
 	}
@@ -340,7 +336,8 @@ func TestCLICompositeTrackerFeedbackConfirmsOrEditsReleaseName(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			session := &cliWorkflowSession{
-				intent: cliWorkflowIntent{interaction: api.InteractionModeUnattendedConfirm},
+				streams: cliIO{out: io.Discard},
+				intent:  cliWorkflowIntent{interaction: api.InteractionModeUnattendedConfirm},
 				uploadRequest: api.Request{
 					Trackers: []string{"AR"},
 				},
@@ -377,22 +374,21 @@ func TestCLICompositeRuleAuthorizationHonorsInteractionMode(t *testing.T) {
 		Prompt:           "EXAMPLE has waivable rule failures. Continue with this tracker?",
 	}
 	session := &cliWorkflowSession{
-		intent: cliWorkflowIntent{interaction: api.InteractionModeUnattendedConfirm},
+		intent:  cliWorkflowIntent{interaction: api.InteractionModeUnattendedConfirm},
+		streams: cliIO{out: io.Discard},
 	}
 	var (
 		feedback api.ReleaseWorkflowUploadFeedback
 		declined bool
 		err      error
 	)
-	captureStdout(t, func() {
-		feedback, declined, err = session.collectCompositeUploadFeedback(
-			context.Background(),
-			bufio.NewReader(strings.NewReader("y\n")),
-			config.Config{},
-			api.NopLogger{},
-			action,
-		)
-	})
+	feedback, declined, err = session.collectCompositeUploadFeedback(
+		context.Background(),
+		bufio.NewReader(strings.NewReader("y\n")),
+		config.Config{},
+		api.NopLogger{},
+		action,
+	)
 	if err != nil || declined ||
 		feedback.Response.Kind != api.ReleaseWorkflowUploadFeedbackRuleAuthorization ||
 		feedback.Response.RuleAuthorization == nil || !feedback.Response.RuleAuthorization.Confirmed {
@@ -412,7 +408,9 @@ func TestCLICompositeRuleAuthorizationHonorsInteractionMode(t *testing.T) {
 }
 
 func TestCLICompositeDuplicateReviewPrintsMatchesAndSeparatesTrackers(t *testing.T) {
+	var output strings.Builder
 	session := &cliWorkflowSession{
+		streams: cliIO{out: &output},
 		current: releaseworkflow.CommandResult{
 			Dupes: &api.DupeAssessment{
 				Results: []api.TrackerDupeAssessment{
@@ -440,23 +438,21 @@ func TestCLICompositeDuplicateReviewPrintsMatchesAndSeparatesTrackers(t *testing
 			},
 		},
 	}
-	var feedbackByTracker []api.ReleaseWorkflowUploadFeedback
-	output := captureStdout(t, func() {
-		for _, trackerID := range []api.TrackerID{"ALPHA", "BETA"} {
-			feedback, declined, err := session.collectCompositeDuplicateFeedback(
-				bufio.NewReader(strings.NewReader("n\n")),
-				api.RequiredAction{TrackerID: trackerID},
-				api.ReleaseWorkflowUploadFeedback{},
-			)
-			if err != nil {
-				t.Fatalf("collect duplicate feedback for %s: %v", trackerID, err)
-			}
-			if declined {
-				t.Fatalf("duplicate feedback for %s was declined", trackerID)
-			}
-			feedbackByTracker = append(feedbackByTracker, feedback)
+	feedbackByTracker := make([]api.ReleaseWorkflowUploadFeedback, 0, 2)
+	for _, trackerID := range []api.TrackerID{"ALPHA", "BETA"} {
+		feedback, declined, err := session.collectCompositeDuplicateFeedback(
+			bufio.NewReader(strings.NewReader("n\n")),
+			api.RequiredAction{TrackerID: trackerID},
+			api.ReleaseWorkflowUploadFeedback{},
+		)
+		if err != nil {
+			t.Fatalf("collect duplicate feedback for %s: %v", trackerID, err)
 		}
-	})
+		if declined {
+			t.Fatalf("duplicate feedback for %s was declined", trackerID)
+		}
+		feedbackByTracker = append(feedbackByTracker, feedback)
+	}
 
 	for _, expected := range []string{
 		"Dupe check ALPHA: upload_name=Example.Release.2026.1080p-GRP candidates=2 decision=accepted search_complete=false pages=0 policy=none",
@@ -464,8 +460,8 @@ func TestCLICompositeDuplicateReviewPrintsMatchesAndSeparatesTrackers(t *testing
 		"Upload to ALPHA despite duplicate evidence? [y/N]: \nDupe check BETA:",
 		"Duplicate candidates:\n  1. Example.Release.2026.1080p.Encode-GRP",
 	} {
-		if !strings.Contains(output, expected) {
-			t.Fatalf("duplicate review output missing %q: %q", expected, output)
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("duplicate review output missing %q: %q", expected, output.String())
 		}
 	}
 	for index, trackerID := range []api.TrackerID{"ALPHA", "BETA"} {

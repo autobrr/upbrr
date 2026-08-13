@@ -1,0 +1,7 @@
+Usage: upbrr api-token revoke [options] <token-id>
+
+Options:
+
+Config:
+  -config, --config string
+      Path to config file
