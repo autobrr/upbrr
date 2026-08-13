@@ -845,7 +845,7 @@ func TestModuleResetAndBlurayCandidateSelectionUseExactRetainedAuthority(t *test
 		WorkflowID:       result.Workflow.ID,
 		ExpectedRevision: result.Workflow.Revision,
 		Input: api.PrepareInput{
-			SourcePath:   "C:\\releases\\Example.Release.2026.1080p-GRP",
+			SourcePath:   "Example.Release.2026.1080p-GRP",
 			Instructions: api.ReleaseFactInstructions{SourceLookup: "Reset Example Release"},
 		},
 		IdempotencyKey: "reset-release",
