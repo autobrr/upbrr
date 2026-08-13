@@ -91,8 +91,9 @@ func normalizeRuleEvidenceStatus(status api.MetadataEvidenceStatus) api.Metadata
 }
 
 // RuleFailureBlocksExecution reports whether a validation failure blocks the
-// selected workflow execution mode. Waivable failures require exact authority
-// in normal mode and remain automatically bypassed in debug mode.
+// selected workflow execution mode. Strict failures always block, advisory
+// failures never block, and authorized waivable failures do not block. Debug
+// mode also bypasses unauthorized waivable failures.
 func RuleFailureBlocksExecution(failure api.RuleFailure, mode api.WorkflowExecutionMode, authorized bool) bool {
 	disposition := api.NormalizeRuleDisposition(failure.Disposition)
 	if disposition == api.RuleDispositionAdvisory {
@@ -111,8 +112,9 @@ type waivableRuleIdentity struct {
 	EvidenceStatus api.MetadataEvidenceStatus
 }
 
-// WaivableRuleFailureFingerprint identifies one exact tracker-local set of
-// waivable failures independently of evaluator return order.
+// WaivableRuleFailureFingerprint identifies the normalized tracker-local
+// waivable failures independently of evaluator return order. It returns an
+// empty fingerprint when failures contains no waivable result.
 func WaivableRuleFailureFingerprint(tracker string, failures []api.RuleFailure) (api.WorkflowFingerprint, error) {
 	identities := make([]waivableRuleIdentity, 0, len(failures))
 	for _, failure := range failures {
@@ -131,13 +133,11 @@ func WaivableRuleFailureFingerprint(tracker string, failures []api.RuleFailure) 
 		return "", nil
 	}
 	slices.SortFunc(identities, func(left, right waivableRuleIdentity) int {
-		if result := cmp.Compare(left.Rule, right.Rule); result != 0 {
-			return result
-		}
-		if result := cmp.Compare(left.Reason, right.Reason); result != 0 {
-			return result
-		}
-		return cmp.Compare(string(left.EvidenceStatus), string(right.EvidenceStatus))
+		return cmp.Or(
+			cmp.Compare(left.Rule, right.Rule),
+			cmp.Compare(left.Reason, right.Reason),
+			cmp.Compare(left.EvidenceStatus, right.EvidenceStatus),
+		)
 	})
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
 		Contract string
@@ -154,36 +154,25 @@ func WaivableRuleFailureFingerprint(tracker string, failures []api.RuleFailure) 
 	return fingerprint, nil
 }
 
-// ProjectionAuthorizesRuleFailures reports whether a retained projection
-// authorizes the exact current waivable failure set.
-func ProjectionAuthorizesRuleFailures(
-	tracker string,
-	failures []api.RuleFailure,
-	projection *api.TrackerReleaseProjection,
-) (bool, error) {
-	if projection == nil || projection.RuleAuthorizationFingerprint == "" {
-		return false, nil
-	}
-	fingerprint, err := WaivableRuleFailureFingerprint(tracker, failures)
-	if err != nil {
-		return false, err
-	}
-	return fingerprint != "" &&
-		projection.WaivableRuleFingerprint == fingerprint &&
-		projection.RuleAuthorizationFingerprint == fingerprint, nil
-}
-
-// FirstBlockingRuleFailure returns the first failure that remains unresolved
-// for tracker preparation.
+// FirstBlockingRuleFailure returns the first input failure that blocks tracker
+// preparation. Projection authorization applies only when both stored
+// fingerprints match the current normalized waivable failures; nil means no
+// failure blocks.
 func FirstBlockingRuleFailure(
 	tracker string,
 	failures []api.RuleFailure,
 	mode api.WorkflowExecutionMode,
 	projection *api.TrackerReleaseProjection,
 ) (*api.RuleFailure, error) {
-	authorized, err := ProjectionAuthorizesRuleFailures(tracker, failures, projection)
-	if err != nil {
-		return nil, err
+	authorized := false
+	if projection != nil && projection.RuleAuthorizationFingerprint != "" {
+		fingerprint, err := WaivableRuleFailureFingerprint(tracker, failures)
+		if err != nil {
+			return nil, err
+		}
+		authorized = fingerprint != "" &&
+			projection.WaivableRuleFingerprint == fingerprint &&
+			projection.RuleAuthorizationFingerprint == fingerprint
 	}
 	for index := range failures {
 		if RuleFailureBlocksExecution(failures[index], mode, authorized) {

@@ -346,41 +346,6 @@ func TestContinuationPlannerIgnoresSemanticallyEmptyProjectionInstructions(t *te
 	}
 }
 
-func TestContinuationPlannerRetainsServerRuleAuthorization(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, time.July, 23, 1, 2, 3, 0, time.UTC)
-	current := CommandResult{
-		Workflow: api.ReleaseWorkflow{ID: "workflow-rule-authorization", Revision: 7},
-		Release:  &api.ReleaseSnapshot{ID: "release-rule-authorization", Revision: 2},
-		Selection: &api.TrackerSelection{
-			TrackerIDs: []api.TrackerID{"ALPHA"},
-		},
-		ProjectionInstructions: &api.TrackerProjectionInstructionSnapshot{
-			Instructions: map[api.TrackerID]api.TrackerProjectionInstructions{
-				"ALPHA": {AuthorizedRuleFingerprint: testFingerprint(t, "authorized-rules")},
-			},
-		},
-		Projections: &api.TrackerReleaseProjectionSet{
-			ID:               "projections-rule-authorization",
-			Revision:         3,
-			InputFingerprint: testFingerprint(t, "projection-rule-authorization"),
-		},
-	}
-	request := api.ContinueReleaseWorkflowRequest{
-		IdempotencyKey: "continue-rule-authorization",
-		Goal:           api.WorkflowGoalTrackersAssessed,
-		Intent: api.WorkflowIntent{
-			TrackerIDs:             []api.TrackerID{"ALPHA"},
-			ProjectionInstructions: map[api.TrackerID]api.TrackerProjectionInstructions{},
-		},
-	}
-	command, stage := planContinuationCommand(request, current, now)
-	if _, ok := command.(PreflightTrackersCommand); !ok || stage != "preflight-trackers" {
-		t.Fatalf("retained rule-authorization plan: stage=%q command=%#v", stage, command)
-	}
-}
-
 func TestContinuationPlannerReprojectsWhenExecutionModeChanges(t *testing.T) {
 	t.Parallel()
 

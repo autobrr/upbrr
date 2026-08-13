@@ -7,12 +7,13 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// projectionRuleAuthorizationAction finds a pending authorization action bound
+// to a projection whose current waivable rules remain unauthorized.
 func projectionRuleAuthorizationAction(
 	projections *api.TrackerReleaseProjectionSet,
 	actionID api.RequiredActionID,
@@ -37,6 +38,8 @@ func projectionRuleAuthorizationAction(
 	return api.TrackerReleaseProjection{}, api.RequiredAction{}, false
 }
 
+// authorizeTrackerRules validates explicit confirmation and current snapshot
+// lineage, then reprojects with server-held authority for the accepted rules.
 func (m *Module) authorizeTrackerRules(
 	ctx context.Context,
 	ownerID string,
@@ -72,64 +75,27 @@ func (m *Module) authorizeTrackerRules(
 		action.TrackerID != projection.TrackerID {
 		return CommandResult{}, fmt.Errorf("%w: rule authorization dependencies are stale", ErrInvalidTransition)
 	}
-	cloned, err := instructionSnapshot.Normalize()
-	if err != nil {
-		return CommandResult{}, fmt.Errorf("release workflow normalize rule authorization instructions: %w", err)
-	}
-	if cloned.Instructions == nil {
-		cloned.Instructions = make(map[api.TrackerID]api.TrackerProjectionInstructions)
-	}
-	trackerID := api.TrackerID(strings.ToUpper(strings.TrimSpace(string(projection.TrackerID))))
-	instruction := cloned.Instructions[trackerID]
-	instruction.AuthorizedRuleFingerprint = projection.WaivableRuleFingerprint
-	cloned.Instructions[trackerID] = instruction
-	authorizations := make(map[api.TrackerID]api.WorkflowFingerprint)
-	for trackerID, candidate := range cloned.Instructions {
-		if candidate.AuthorizedRuleFingerprint != "" {
-			authorizations[trackerID] = candidate.AuthorizedRuleFingerprint
-		}
-	}
-	m.logger.Infof("release workflow: accepted tracker rule authorization tracker=%s decision=authorized", trackerID)
+	authorizations := projectionRuleAuthorizations(currentProjections)
+	authorizations[projection.TrackerID] = projection.WaivableRuleFingerprint
+	m.logger.Infof("release workflow: accepted tracker rule authorization tracker=%s decision=authorized", projection.TrackerID)
 	return m.projectTrackersWithRuleAuthorizations(ctx, ownerID, state, nextRevision, now, ProjectTrackersCommand{
 		WorkflowID:       workflow.ID,
 		ExpectedRevision: workflow.Revision,
 		TrackerIDs:       append([]api.TrackerID(nil), selection.TrackerIDs...),
-		Instructions:     cloned.Instructions,
+		Instructions:     instructionSnapshot.Instructions,
 		ExecutionMode:    currentProjections.ExecutionMode,
 	}, authorizations)
 }
 
-func trustedProjectionInstructions(
-	instructions map[api.TrackerID]api.TrackerProjectionInstructions,
-	authorizations map[api.TrackerID]api.WorkflowFingerprint,
-) (map[api.TrackerID]api.TrackerProjectionInstructions, error) {
-	cloned, err := (api.TrackerProjectionInstructionSnapshot{Instructions: instructions}).Clone()
-	if err != nil {
-		return nil, fmt.Errorf("clone projection instructions: %w", err)
-	}
-	for trackerID, instruction := range cloned.Instructions {
-		instruction.AuthorizedRuleFingerprint = ""
-		cloned.Instructions[trackerID] = instruction
-	}
-	cloned, err = cloned.Normalize()
-	if err != nil {
-		return nil, fmt.Errorf("normalize projection instructions: %w", err)
-	}
-	if cloned.Instructions == nil {
-		cloned.Instructions = make(map[api.TrackerID]api.TrackerProjectionInstructions)
-	}
-	for trackerID, fingerprint := range authorizations {
-		trackerID = api.TrackerID(strings.ToUpper(strings.TrimSpace(string(trackerID))))
-		if trackerID == "" || fingerprint == "" {
-			continue
+// projectionRuleAuthorizations returns only recorded authorizations that still
+// match their projection's current waivable rules.
+func projectionRuleAuthorizations(projections api.TrackerReleaseProjectionSet) map[api.TrackerID]api.WorkflowFingerprint {
+	authorizations := make(map[api.TrackerID]api.WorkflowFingerprint, len(projections.Projections))
+	for _, projection := range projections.Projections {
+		if projection.RuleAuthorizationFingerprint != "" &&
+			projection.RuleAuthorizationFingerprint == projection.WaivableRuleFingerprint {
+			authorizations[projection.TrackerID] = projection.RuleAuthorizationFingerprint
 		}
-		instruction := cloned.Instructions[trackerID]
-		instruction.AuthorizedRuleFingerprint = fingerprint
-		cloned.Instructions[trackerID] = instruction
 	}
-	cloned, err = cloned.Normalize()
-	if err != nil {
-		return nil, fmt.Errorf("normalize trusted rule authorization: %w", err)
-	}
-	return cloned.Instructions, nil
+	return authorizations
 }

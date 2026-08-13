@@ -1947,7 +1947,6 @@ export type TrackerLaneOutcome = Readonly<{
 }>;
 
 export type TrackerPolicyDecision = Readonly<{
-  authorized?: boolean;
   blocking: boolean;
   code: string;
   decision: string;
@@ -2030,7 +2029,6 @@ export type TrackerProjectionInstructionSnapshotRef = Readonly<{
 
 export type TrackerProjectionInstructions = Readonly<{
   additionalNames?: Readonly<Record<string, string | null>>;
-  authorizedRuleFingerprint?: WorkflowFingerprint;
   questionnaire?: Readonly<Record<string, string | null>>;
   trackerConfig?: TrackerConfigOverrides;
   trackerSite?: TrackerSiteOverrides;

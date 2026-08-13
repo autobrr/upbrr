@@ -91,7 +91,7 @@ func (u *ReleaseFactInstructionUpdate) UnmarshalJSON(payload []byte) error {
 
 // MarshalJSON preserves tracker projection instruction absence, null/reset, and explicit empty names.
 func (i TrackerProjectionInstructions) MarshalJSON() ([]byte, error) {
-	fields := make(map[string]any, 6)
+	fields := make(map[string]any, 5)
 	if i.UploadReleaseName.Present {
 		if i.UploadReleaseName.Reset {
 			fields["uploadReleaseName"] = nil
@@ -110,9 +110,6 @@ func (i TrackerProjectionInstructions) MarshalJSON() ([]byte, error) {
 	}
 	if i.TrackerSite.TIK.Foreign != nil || i.TrackerSite.TIK.Opera != nil || i.TrackerSite.TIK.Asian != nil || i.TrackerSite.TIK.DiscType != nil {
 		fields["trackerSite"] = i.TrackerSite
-	}
-	if i.AuthorizedRuleFingerprint != "" {
-		fields["authorizedRuleFingerprint"] = i.AuthorizedRuleFingerprint
 	}
 	payload, err := json.Marshal(fields)
 	if err != nil {
@@ -151,11 +148,6 @@ func (i *TrackerProjectionInstructions) UnmarshalJSON(payload []byte) error {
 	if raw, ok := fields["trackerSite"]; ok {
 		if err := json.Unmarshal(raw, &i.TrackerSite); err != nil {
 			return fmt.Errorf("unmarshal tracker projection site: %w", err)
-		}
-	}
-	if raw, ok := fields["authorizedRuleFingerprint"]; ok {
-		if err := json.Unmarshal(raw, &i.AuthorizedRuleFingerprint); err != nil {
-			return fmt.Errorf("unmarshal tracker projection rule authorization: %w", err)
 		}
 	}
 	return nil

@@ -3193,11 +3193,6 @@ func (m *Module) projectTrackersWithRuleAuthorizations(
 	if !ok || release.Revision != state.Workflow.Release.Revision {
 		return CommandResult{}, fmt.Errorf("%w: release snapshot is unavailable", ErrInvalidTransition)
 	}
-	instructions, err := trustedProjectionInstructions(command.Instructions, authorizations)
-	if err != nil {
-		return CommandResult{}, fmt.Errorf("release workflow projection instructions: %w", err)
-	}
-	command.Instructions = instructions
 	trackerNames := make([]string, len(command.TrackerIDs))
 	for index, trackerID := range command.TrackerIDs {
 		trackerNames[index] = string(trackerID)
@@ -3218,6 +3213,7 @@ func (m *Module) projectTrackersWithRuleAuthorizations(
 		subject,
 		command.TrackerIDs,
 		command.Instructions,
+		authorizations,
 		command.ExecutionMode,
 	)
 	if err != nil {

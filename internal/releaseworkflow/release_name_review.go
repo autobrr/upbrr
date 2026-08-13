@@ -123,6 +123,7 @@ func (m *Module) reviewTrackerReleaseName(
 		subject,
 		selection.TrackerIDs,
 		instructionSnapshot.Instructions,
+		projectionRuleAuthorizations(currentProjections),
 		currentProjections.ExecutionMode,
 	)
 	if err != nil {

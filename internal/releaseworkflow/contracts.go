@@ -144,7 +144,10 @@ func (f ReleasePreparerFunc) ResolveDuplicateSubject(ctx context.Context, input 
 	return f.DuplicateFunc(ctx, input)
 }
 
-// TrackerProjectionBuilder hides catalog/config resolution and tracker-local projection semantics.
+// TrackerProjectionBuilder hides catalog/config resolution and tracker-local
+// projection semantics. Rule authorization inputs are tracker-scoped,
+// server-held fingerprints that implementations accept only for an identical
+// freshly evaluated waivable-failure set.
 type TrackerProjectionBuilder interface {
 	Build(
 		context.Context,
@@ -152,6 +155,7 @@ type TrackerProjectionBuilder interface {
 		api.UploadSubject,
 		[]api.TrackerID,
 		map[api.TrackerID]api.TrackerProjectionInstructions,
+		map[api.TrackerID]api.WorkflowFingerprint,
 		api.WorkflowExecutionMode,
 	) (
 		api.TrackerCatalogSnapshot,

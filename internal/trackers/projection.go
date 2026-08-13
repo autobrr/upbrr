@@ -595,8 +595,10 @@ func duplicatePolicyID(descriptor Descriptor) string {
 	return strings.ToLower(strings.TrimSpace(descriptor.Name)) + "/duplicate/v1"
 }
 
-// ApplyProjectionRuleFailures records validation failures and updates tracker
-// eligibility using exact rule authorization and the shared execution-mode policy.
+// ApplyProjectionRuleFailures replaces prior rule-derived projection state,
+// fingerprints the current waivable failures, and updates tracker eligibility.
+// Authorization is retained only for an exact fingerprint match. A nil
+// projection is a no-op; fingerprinting failures are returned.
 func ApplyProjectionRuleFailures(
 	projection *api.TrackerReleaseProjection,
 	failures []api.RuleFailure,
@@ -628,14 +630,14 @@ func ApplyProjectionRuleFailures(
 	if authorized {
 		projection.RuleAuthorizationFingerprint = waivableFingerprint
 	}
-	hasStrict := slices.ContainsFunc(failures, api.IsStrictRuleFailure)
+	hasStrict := false
 	for _, failure := range failures {
 		disposition := api.NormalizeRuleDisposition(failure.Disposition)
 		blocking := RuleFailureBlocksExecution(failure, executionMode, authorized)
 		decision := string(disposition)
-		decisionAuthorized := false
 		switch {
 		case disposition == api.RuleDispositionStrict:
+			hasStrict = true
 			decision = "ineligible"
 			if logger != nil {
 				logger.Warnf(
@@ -644,9 +646,6 @@ func ApplyProjectionRuleFailures(
 					strings.TrimSpace(failure.Rule),
 				)
 			}
-			projection.Readiness = api.ReadinessStatusIneligible
-			projection.DupeReady = false
-			projection.UploadReady = false
 			projection.Failures = append(projection.Failures, api.WorkflowFailure{
 				Failure: api.OperationFailure{
 					Code:      api.OperationFailureNoEligibleTrackers,
@@ -658,7 +657,6 @@ func ApplyProjectionRuleFailures(
 			})
 		case disposition == api.RuleDispositionWaivable && authorized:
 			decision = "authorized"
-			decisionAuthorized = true
 		case disposition == api.RuleDispositionWaivable && !blocking:
 			decision = "bypassed"
 		case disposition == api.RuleDispositionWaivable:
@@ -676,7 +674,6 @@ func ApplyProjectionRuleFailures(
 			Decision:       decision,
 			Blocking:       blocking,
 			Message:        strings.TrimSpace(failure.Reason),
-			Authorized:     decisionAuthorized,
 			Disposition:    disposition,
 			EvidenceStatus: failure.EvidenceStatus,
 		})

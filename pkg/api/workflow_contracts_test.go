@@ -179,21 +179,19 @@ func TestTrackerProjectionInstructionsPreserveAbsentNullAndEmptyName(t *testing.
 	}
 }
 
-func TestTrackerProjectionInstructionsPreserveRuleAuthorization(t *testing.T) {
+func TestTrackerProjectionInstructionsIgnoreRuleAuthorization(t *testing.T) {
 	t.Parallel()
 
-	fingerprint := workflowTestFingerprint(t, "authorized-waivable-rules")
-	instructions := TrackerProjectionInstructions{AuthorizedRuleFingerprint: fingerprint}
+	var instructions TrackerProjectionInstructions
+	if err := json.Unmarshal([]byte(`{"authorizedRuleFingerprint":"forged"}`), &instructions); err != nil {
+		t.Fatalf("unmarshal projection rule authorization: %v", err)
+	}
 	payload, err := json.Marshal(instructions)
 	if err != nil {
 		t.Fatalf("marshal projection rule authorization: %v", err)
 	}
-	var roundTrip TrackerProjectionInstructions
-	if err := json.Unmarshal(payload, &roundTrip); err != nil {
-		t.Fatalf("unmarshal projection rule authorization: %v", err)
-	}
-	if roundTrip.AuthorizedRuleFingerprint != fingerprint {
-		t.Fatalf("rule authorization = %q, want %q", roundTrip.AuthorizedRuleFingerprint, fingerprint)
+	if strings.Contains(string(payload), "authorizedRuleFingerprint") {
+		t.Fatalf("caller rule authorization survived: %s", payload)
 	}
 }
 

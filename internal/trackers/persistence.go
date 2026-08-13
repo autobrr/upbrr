@@ -10,7 +10,8 @@ import (
 )
 
 // UploadPersistence exposes only persisted state used by tracker preparation,
-// description assets, image-host resolution, and upload-ledger finalization.
+// rule-decision audit, description assets, image-host resolution, and
+// upload-ledger finalization.
 // Implementations preserve canonical query ordering and atomic slot updates.
 type UploadPersistence interface {
 	GetDescriptionOverride(context.Context, string, string) (api.DescriptionOverride, error)

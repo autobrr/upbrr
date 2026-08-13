@@ -112,9 +112,6 @@ type TrackerProjectionInstructions struct {
 	Questionnaire     map[string]*string     `json:"questionnaire,omitempty"`
 	TrackerConfig     TrackerConfigOverrides `json:"trackerConfig,omitempty"`
 	TrackerSite       TrackerSiteOverrides   `json:"trackerSite,omitempty"`
-	// AuthorizedRuleFingerprint is server-owned authority for one exact set of
-	// waivable rule failures. Caller-supplied values are ignored.
-	AuthorizedRuleFingerprint WorkflowFingerprint `json:"authorizedRuleFingerprint,omitempty"`
 }
 
 // TrackerProjectionInstructionSnapshot retains tracker-local projection instructions.
@@ -246,8 +243,6 @@ type TrackerPolicyDecision struct {
 	Decision string `json:"decision"`
 	Blocking bool   `json:"blocking"`
 	Message  string `json:"message,omitempty"`
-	// Authorized reports that the exact waivable result was accepted by the user.
-	Authorized bool `json:"authorized,omitempty"`
 	// Disposition is the backend-owned execution effect of a failed rule.
 	Disposition RuleDisposition `json:"disposition,omitempty"`
 	// EvidenceStatus states how completely the backend could evaluate the rule.
@@ -283,9 +278,11 @@ type TrackerReleaseProjection struct {
 	EpisodeTitleMode  EpisodeTitleMode        `json:"episodeTitleMode"`
 	NamingFingerprint WorkflowFingerprint     `json:"namingFingerprint"`
 	PolicyDecisions   []TrackerPolicyDecision `json:"policyDecisions,omitempty"`
-	// WaivableRuleFingerprint identifies the exact current set of waivable failures.
+	// WaivableRuleFingerprint identifies the normalized, tracker-local current set
+	// of waivable failures. It is empty when no waiver is required.
 	WaivableRuleFingerprint WorkflowFingerprint `json:"waivableRuleFingerprint,omitempty"`
-	// RuleAuthorizationFingerprint matches WaivableRuleFingerprint only after exact user authorization.
+	// RuleAuthorizationFingerprint records exact user authorization and is valid
+	// only while it matches WaivableRuleFingerprint.
 	RuleAuthorizationFingerprint WorkflowFingerprint               `json:"ruleAuthorizationFingerprint,omitempty"`
 	Artifacts                    TrackerArtifactRequirements       `json:"artifacts"`
 	DescriptionGroup             string                            `json:"descriptionGroup,omitempty"`

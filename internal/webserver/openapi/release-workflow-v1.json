@@ -8185,9 +8185,6 @@
       "TrackerPolicyDecision": {
         "type": "object",
         "properties": {
-          "authorized": {
-            "type": "boolean"
-          },
           "blocking": {
             "type": "boolean"
           },
@@ -8483,9 +8480,6 @@
                 }
               ]
             }
-          },
-          "authorizedRuleFingerprint": {
-            "$ref": "#/components/schemas/WorkflowFingerprint"
           },
           "questionnaire": {
             "type": "object",

@@ -428,7 +428,9 @@ func (s TrackerProjectionInstructionSnapshot) Clone() (TrackerProjectionInstruct
 	return cloneWorkflowValue(s)
 }
 
-// Normalize returns projection instructions keyed by normalized stable tracker ID.
+// Normalize returns detached projection instructions keyed by normalized stable
+// tracker ID. Blank IDs are omitted; IDs that collide after normalization return
+// an error.
 func (s TrackerProjectionInstructionSnapshot) Normalize() (TrackerProjectionInstructionSnapshot, error) {
 	normalized, err := s.Clone()
 	if err != nil {
@@ -440,11 +442,6 @@ func (s TrackerProjectionInstructionSnapshot) Normalize() (TrackerProjectionInst
 		if trackerID != "" {
 			if _, exists := instructions[trackerID]; exists {
 				return TrackerProjectionInstructionSnapshot{}, fmt.Errorf("tracker projection instructions contain duplicate tracker id %s", trackerID)
-			}
-			if value.AuthorizedRuleFingerprint != "" {
-				if err := validateWorkflowFingerprint(value.AuthorizedRuleFingerprint); err != nil {
-					return TrackerProjectionInstructionSnapshot{}, fmt.Errorf("tracker %s rule authorization: %w", trackerID, err)
-				}
 			}
 			instructions[trackerID] = value
 		}
@@ -597,18 +594,9 @@ func (s TrackerReleaseProjectionSet) Validate() error {
 			if disposition == RuleDispositionWaivable {
 				hasWaivableDecision = true
 			}
-			if decision.Authorized && disposition != RuleDispositionWaivable {
-				return fmt.Errorf("tracker projection %s authorizes a non-waivable policy decision", id)
-			}
-			if decision.Authorized && projection.RuleAuthorizationFingerprint == "" {
-				return fmt.Errorf("tracker projection %s authorizes a policy decision without exact rule authority", id)
-			}
-			if decision.Authorized && decision.Blocking {
-				return fmt.Errorf("tracker projection %s marks an authorized policy decision as blocking", id)
-			}
 			if projection.RuleAuthorizationFingerprint != "" &&
-				disposition == RuleDispositionWaivable && !decision.Authorized {
-				return fmt.Errorf("tracker projection %s has incomplete waivable rule authority", id)
+				disposition == RuleDispositionWaivable && decision.Blocking {
+				return fmt.Errorf("tracker projection %s has blocking waivable rule authority", id)
 			}
 		}
 		if projection.WaivableRuleFingerprint != "" && !hasWaivableDecision {

@@ -718,9 +718,15 @@ func TestWorkflowPreflightRejectsMissingPreparedResourceBeforeAuth(t *testing.T)
 			},
 		},
 	}
-	originalDecisions := slices.Clone(projection.PolicyDecisions)
-	originalActions := slices.Clone(projection.RequiredActions)
-	originalFailures := slices.Clone(projection.Failures)
+	projectionSet := api.TrackerReleaseProjectionSet{
+		ID:          "projection-set-resource",
+		Revision:    1,
+		Projections: []api.TrackerReleaseProjection{projection},
+	}
+	originalProjectionSet, err := projectionSet.Clone()
+	if err != nil {
+		t.Fatalf("clone input projection set: %v", err)
+	}
 	capabilityCalls := 0
 	validateCalls := 0
 	builder := workflowPreflightBuilder{
@@ -737,11 +743,7 @@ func TestWorkflowPreflightRejectsMissingPreparedResourceBeforeAuth(t *testing.T)
 		subject,
 		api.TrackerCatalogSnapshot{Trackers: []api.TrackerCatalogDescriptor{{TrackerID: "RESOURCE"}}},
 		api.TrackerRuntimeSnapshot{Fingerprint: fingerprint("runtime")},
-		api.TrackerReleaseProjectionSet{
-			ID:          "projection-set-resource",
-			Revision:    1,
-			Projections: []api.TrackerReleaseProjection{projection},
-		},
+		projectionSet,
 		time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC),
 	)
 	if err != nil {
@@ -759,10 +761,8 @@ func TestWorkflowPreflightRejectsMissingPreparedResourceBeforeAuth(t *testing.T)
 	}) {
 		t.Fatalf("missing local-resource decision: %#v", finalized[0].PolicyDecisions)
 	}
-	if !reflect.DeepEqual(projection.PolicyDecisions, originalDecisions) ||
-		!reflect.DeepEqual(projection.RequiredActions, originalActions) ||
-		!reflect.DeepEqual(projection.Failures, originalFailures) {
-		t.Fatalf("input projection mutated: %#v", projection)
+	if !reflect.DeepEqual(projectionSet, originalProjectionSet) {
+		t.Fatalf("input projection set mutated: got=%#v want=%#v", projectionSet, originalProjectionSet)
 	}
 }
 

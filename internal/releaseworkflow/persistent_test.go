@@ -45,6 +45,7 @@ func TestPersistentWorkflowRestartRetriesAuthBlockedProjectionOnce(t *testing.T)
 		_ api.UploadSubject,
 		trackerIDs []api.TrackerID,
 		_ map[api.TrackerID]api.TrackerProjectionInstructions,
+		_ map[api.TrackerID]api.WorkflowFingerprint,
 		executionMode api.WorkflowExecutionMode,
 	) (
 		api.TrackerCatalogSnapshot,
@@ -293,6 +294,7 @@ func TestPersistentRestartHandlesLegacyAuthStateSafely(t *testing.T) {
 		_ api.UploadSubject,
 		trackerIDs []api.TrackerID,
 		_ map[api.TrackerID]api.TrackerProjectionInstructions,
+		_ map[api.TrackerID]api.WorkflowFingerprint,
 		executionMode api.WorkflowExecutionMode,
 	) (
 		api.TrackerCatalogSnapshot,

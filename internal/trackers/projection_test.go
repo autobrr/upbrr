@@ -388,8 +388,7 @@ func TestApplyProjectionRuleFailuresRequiresExactNormalAuthorization(t *testing.
 	apply(&authorized, waivable, api.WorkflowExecutionModeNormal, waivableFingerprint, nil)
 	if authorized.Readiness != api.ReadinessStatusReady || !authorized.DupeReady || !authorized.UploadReady ||
 		len(authorized.RequiredActions) != 0 || authorized.PolicyDecisions[0].Decision != "authorized" ||
-		authorized.PolicyDecisions[0].Blocking || !authorized.PolicyDecisions[0].Authorized ||
-		authorized.RuleAuthorizationFingerprint != waivableFingerprint {
+		authorized.PolicyDecisions[0].Blocking || authorized.RuleAuthorizationFingerprint != waivableFingerprint {
 		t.Fatalf("authorized waivable outcome = %#v", authorized)
 	}
 
@@ -423,7 +422,7 @@ func TestApplyProjectionRuleFailuresRequiresExactNormalAuthorization(t *testing.
 	debug := readyProjection()
 	apply(&debug, waivable, api.WorkflowExecutionModeDebug, "", nil)
 	if debug.Readiness != api.ReadinessStatusReady || !debug.DupeReady || debug.PolicyDecisions[0].Decision != "bypassed" ||
-		debug.PolicyDecisions[0].Blocking || debug.PolicyDecisions[0].Authorized || len(debug.RequiredActions) != 0 {
+		debug.PolicyDecisions[0].Blocking || len(debug.RequiredActions) != 0 {
 		t.Fatalf("debug waivable outcome = %#v", debug)
 	}
 

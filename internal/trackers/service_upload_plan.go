@@ -77,7 +77,6 @@ type trackerPlanSlot struct {
 	failure                  *TrackerFailure
 	summary                  api.UploadSummary
 	ruleFailures             []api.TrackerRuleFailure
-	ruleFailuresKnown        bool
 	canceledDuringSubmission bool
 }
 
@@ -190,7 +189,6 @@ func (s *Service) prepareUploadPlans(
 			slot := trackerPlanSlot{tracker: tracker}
 			if projection, ok := projections[normalizeTrackerName(tracker)]; ok {
 				slot.ruleFailures = projectedRuleFailureRecords(projection)
-				slot.ruleFailuresKnown = true
 			}
 			emitTrackerPlanProgress(ctx, meta.SourcePath, tracker, "tracker_preparation", "running", "Preparing tracker plan")
 			if failure := banned[normalizeTrackerName(tracker)]; failure != nil {
@@ -567,7 +565,7 @@ func (s *Service) createPendingRecords(ctx context.Context, meta api.UploadSubje
 		if slot.failure != nil || slot.plan.Intent() != PreparationIntentUpload {
 			continue
 		}
-		if slot.ruleFailuresKnown {
+		if slot.ruleFailures != nil {
 			if err := s.repo.SaveTrackerRuleFailures(ctx, meta.SourcePath, slot.tracker, slot.ruleFailures); err != nil {
 				slot.failure = trackerFailure(slot.tracker, "rule_history", err)
 				if releaseErr := slot.plan.Release(); releaseErr != nil {
@@ -597,8 +595,13 @@ func (s *Service) createPendingRecords(ctx context.Context, meta api.UploadSubje
 	}
 }
 
+// projectedRuleFailureRecords converts rule decisions into persisted audit
+// rows. A waivable decision is marked authorized only when both projection
+// fingerprints match exactly.
 func projectedRuleFailureRecords(projection api.TrackerReleaseProjection) []api.TrackerRuleFailure {
 	records := make([]api.TrackerRuleFailure, 0, len(projection.PolicyDecisions))
+	authorized := projection.RuleAuthorizationFingerprint != "" &&
+		projection.RuleAuthorizationFingerprint == projection.WaivableRuleFingerprint
 	for _, decision := range projection.PolicyDecisions {
 		if strings.TrimSpace(decision.Code) == "" || decision.Disposition == "" {
 			continue
@@ -609,7 +612,7 @@ func projectedRuleFailureRecords(projection api.TrackerReleaseProjection) []api.
 			Rule:        strings.TrimSpace(decision.Code),
 			Reason:      strings.TrimSpace(decision.Message),
 			Disposition: disposition,
-			Authorized:  disposition == api.RuleDispositionWaivable && decision.Authorized,
+			Authorized:  disposition == api.RuleDispositionWaivable && authorized,
 		})
 	}
 	return records

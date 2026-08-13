@@ -375,7 +375,6 @@ func TestRetainedUploadPlanPersistsAuthorizedRuleAudit(t *testing.T) {
 					Code:        "language_rule",
 					Decision:    "authorized",
 					Message:     "language waiver accepted",
-					Authorized:  true,
 					Disposition: api.RuleDispositionWaivable,
 				},
 				{

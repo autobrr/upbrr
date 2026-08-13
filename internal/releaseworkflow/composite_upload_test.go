@@ -603,7 +603,8 @@ func newCompositeUploadTestModuleWithWaiver(
 		_ api.ReleaseSnapshot,
 		_ api.UploadSubject,
 		trackerIDs []api.TrackerID,
-		instructions map[api.TrackerID]api.TrackerProjectionInstructions,
+		_ map[api.TrackerID]api.TrackerProjectionInstructions,
+		ruleAuthorizations map[api.TrackerID]api.WorkflowFingerprint,
 		executionMode api.WorkflowExecutionMode,
 	) (
 		api.TrackerCatalogSnapshot,
@@ -637,10 +638,9 @@ func newCompositeUploadTestModuleWithWaiver(
 					Message:     "language waiver required",
 					Disposition: api.RuleDispositionWaivable,
 				}}
-				if instructions[trackerID].AuthorizedRuleFingerprint == waivableFingerprint {
+				if ruleAuthorizations[trackerID] == waivableFingerprint {
 					projection.RuleAuthorizationFingerprint = waivableFingerprint
 					projection.PolicyDecisions[0].Decision = "authorized"
-					projection.PolicyDecisions[0].Authorized = true
 					projectionInput = "composite-projection-input-authorized"
 				} else {
 					projection.Readiness = api.ReadinessStatusBlocked
