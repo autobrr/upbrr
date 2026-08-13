@@ -400,17 +400,7 @@ func (b workflowUploadPlanBuilder) Build(
 			tracker.Endpoint, tracker.Fields, tracker.Files = sanitizeWorkflowUploadPreview(preparation.Preview)
 			tracker.RequiredActions = append([]api.RequiredAction(nil), preparation.Preview.RequiredActions...)
 			if identityErr != nil || torrentArtifactID == "" {
-				tracker.Status = api.StageStatusFailed
-				tracker.Warnings = []string{"No exact prepared tracker torrent is available. Prepare the tracker again."}
-				tracker.Failures = []api.WorkflowFailure{{
-					Failure: api.OperationFailure{
-						Code:      api.OperationFailureMissingExactTorrent,
-						Operation: api.OperationKindUploadDryRun,
-						Message:   "No exact prepared tracker torrent is available. Prepare the tracker again.",
-						Recovery:  api.OperationRecoveryReprepare,
-					},
-					TrackerID: projection.TrackerID,
-				}}
+				markWorkflowUploadTrackerMissingExactTorrent(&tracker, projection.TrackerID)
 				break
 			}
 			tracker.Eligible = true
@@ -457,15 +447,7 @@ func (b workflowUploadPlanBuilder) Build(
 			}
 		}
 		if options.DryRun && tracker.ClientInjectionStatus == "" {
-			tracker.ClientInjectionStatus = api.StageStatusSkipped
-			switch {
-			case options.NoSeed:
-				tracker.ClientInjectionMessage = "Client injection disabled by the skip option."
-			case tracker.Status == api.StageStatusReady:
-				tracker.ClientInjectionMessage = "Client injection deferred until tracker submission completes."
-			default:
-				tracker.ClientInjectionMessage = "Client injection skipped because the tracker upload was not ready."
-			}
+			projectDeferredWorkflowClientInjection(&tracker, options.NoSeed)
 		}
 		semanticFingerprint, err := workflowUploadTrackerSemanticFingerprint(projection, tracker)
 		if err != nil {
@@ -668,6 +650,36 @@ func uploadPreparationProgressMessage(tracker api.UploadPlanTracker) string {
 		}
 	}
 	return "Tracker upload preparation failed."
+}
+
+func markWorkflowUploadTrackerMissingExactTorrent(tracker *api.UploadPlanTracker, trackerID api.TrackerID) {
+	const message = "No exact prepared tracker torrent is available. Prepare the tracker again."
+
+	tracker.Eligible = false
+	tracker.Status = api.StageStatusFailed
+	tracker.Warnings = []string{message}
+	tracker.Failures = []api.WorkflowFailure{{
+		Failure: api.OperationFailure{
+			Code:      api.OperationFailureMissingExactTorrent,
+			Operation: api.OperationKindUploadDryRun,
+			Message:   message,
+			Recovery:  api.OperationRecoveryReprepare,
+		},
+		TrackerID: trackerID,
+	}}
+}
+
+func projectDeferredWorkflowClientInjection(tracker *api.UploadPlanTracker, noSeed bool) {
+	tracker.ClientInjectionStatus = api.StageStatusSkipped
+	tracker.ClientFailureCode = ""
+	switch {
+	case noSeed:
+		tracker.ClientInjectionMessage = "Client injection disabled by the skip option."
+	case tracker.Status == api.StageStatusReady:
+		tracker.ClientInjectionMessage = "Client injection deferred until tracker submission completes."
+	default:
+		tracker.ClientInjectionMessage = "Client injection skipped because the tracker upload was not ready."
+	}
 }
 
 func workflowTrackerArtifactIdentity(
@@ -916,6 +928,7 @@ func (e *workflowUploadExecution) ResolveAction(
 		return api.UploadPlanTracker{}, fmt.Errorf("workflow upload action: %w", err)
 	}
 	updated := e.trackers[index]
+	previousTorrentFingerprint := updated.TorrentFingerprint
 	updated.RequiredActions = nil
 	updated.Warnings = nil
 	updated.Failures = nil
@@ -961,8 +974,16 @@ func (e *workflowUploadExecution) ResolveAction(
 		if err != nil {
 			return api.UploadPlanTracker{}, err
 		}
-		updated.Eligible = true
-		updated.Status = api.StageStatusReady
+		if updated.TorrentArtifactID == "" {
+			markWorkflowUploadTrackerMissingExactTorrent(&updated, trackerID)
+		} else {
+			updated.Eligible = true
+			updated.Status = api.StageStatusReady
+		}
+	}
+	projectDeferredWorkflowClientInjection(&updated, e.noSeed)
+	if updated.TorrentFingerprint != previousTorrentFingerprint {
+		delete(e.dryRunInjected, trackerID)
 	}
 	updated.SemanticFingerprint, err = workflowUploadTrackerSemanticFingerprint(projection, updated)
 	if err != nil {
