@@ -311,7 +311,7 @@ func TestTrackerPlanResolveActionKeepsOrReplacesPreparedOperation(t *testing.T) 
 		plan := newTestTrackerActionPlan(nil, func(context.Context) (TrackerPlan, *PreparationFailure) {
 			return TrackerPlan{}, want
 		})
-		if _, err := plan.ResolveAction(context.Background(), api.RequiredActionResolveTrackerPreparation, false); err != want {
+		if _, err := plan.ResolveAction(context.Background(), api.RequiredActionResolveTrackerPreparation, false); !errors.Is(err, want) {
 			t.Fatalf("resolver failure = %v, want %v", err, want)
 		}
 	})

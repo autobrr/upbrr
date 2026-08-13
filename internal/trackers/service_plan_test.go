@@ -422,7 +422,7 @@ func TestRetainedUploadPlanRecordsResolutionFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve action: %v", err)
 	}
-	if preparation.Failure == nil || preparation.Failure.Code != PreparationFailureCodeSkipped || preparation.Failure.cause != want {
+	if preparation.Failure == nil || preparation.Failure.Code != PreparationFailureCodeSkipped || !errors.Is(preparation.Failure.cause, want) {
 		t.Fatalf("recorded preparation = %#v", preparation)
 	}
 }
