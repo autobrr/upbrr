@@ -405,6 +405,31 @@ func TestRetainedUploadPlanPersistsAuthorizedRuleAudit(t *testing.T) {
 	}
 }
 
+func TestProjectedRuleFailureRecordsReturnsNilWithoutRecords(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		projection api.TrackerReleaseProjection
+	}{
+		{name: "no decisions"},
+		{
+			name: "all decisions filtered",
+			projection: api.TrackerReleaseProjection{PolicyDecisions: []api.TrackerPolicyDecision{
+				{Disposition: api.RuleDispositionWaivable},
+				{Code: "missing_disposition"},
+			}},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if records := projectedRuleFailureRecords(test.projection); records != nil {
+				t.Fatalf("rule failure records = %#v, want nil", records)
+			}
+		})
+	}
+}
+
 func TestRetainedUploadPlanLogsReturnedTorrentPageURL(t *testing.T) {
 	t.Parallel()
 
