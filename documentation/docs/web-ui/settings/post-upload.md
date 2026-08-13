@@ -22,4 +22,4 @@ Set a tracker-specific **Inject delay** under [Trackers](./trackers.md) when onl
 
 ## Verify the change
 
-Save and use **Dry Run** to validate tracker preparation. Dry Run suppresses submission and therefore cannot measure real submission concurrency or post-success client injection; use a controlled approved upload when those effects must be verified.
+Save and use **Dry Run** to validate tracker preparation. Dry Run suppresses tracker submission but still attempts torrent-client injection by default. Select **Skip client injection** when no torrent should be added; for CLI testing, combine `--debug` with `--no-seed` (`-ns`). Use a controlled approved upload when real submission concurrency must be verified.

@@ -44,7 +44,7 @@ Keep the same `/config` volume.
 2. check startup output for migration or configuration errors;
 3. sign in to the Web UI;
 4. confirm Settings, tracker authentication status, history, and browse roots;
-5. run a non-submitting preparation before the next live upload.
+5. select **Skip client injection**, then run **Dry Run** before the next live upload. Dry Run suppresses tracker submission; the skip option prevents torrent injection. For CLI verification, use `--debug --no-seed` (`-ns`).
 
 :::caution Downgrades
 

@@ -35,6 +35,6 @@ Automatic relogin uses saved tracker credentials only when the backend capabilit
 
 ## Storage recovery
 
-Cookie storage depends on key material beside the active database. Back up and move `web-auth.json` with `db.sqlite`; replacing or losing it can make encrypted secrets and cookies unusable. Check file ownership and permissions when the page reports unavailable storage.
+Cookie storage depends on key material beside the active database. Treat `web-auth.json` and `db.sqlite` as sensitive credentials: give both files restrictive permissions, keep them out of shared storage, and never attach them to support requests. Together they can expose encrypted cookies and other stored secrets. Back up and move them together; replacing or losing `web-auth.json` can make encrypted secrets and cookies unusable.
 
-After importing or changing credentials, select **Check Auth** where available, then run **Dry Run** to verify the tracker can prepare without submitting.
+After importing or changing credentials, select **Check Auth** where available. To verify tracker preparation without submission or client injection, select **Skip client injection** before running **Dry Run**.

@@ -1,9 +1,9 @@
 ---
-title: Torrent Specific settings
+title: Torrent-Specific settings
 description: Prefer reusable torrents with smaller pieces and delay rehash-dependent submissions.
 ---
 
-# Torrent Specific settings
+# Torrent-Specific settings
 
 Use **Settings → Torrent Specific** for torrent reuse and rehash scheduling.
 

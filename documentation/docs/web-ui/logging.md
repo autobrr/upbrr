@@ -18,7 +18,7 @@ These edits require **Save** before they become active.
 | **Max total size** | `20 MB` | Sets the approximate total file budget. The per-file rotation threshold is this value divided by **Max files**. |
 | **Max files**      | `3`     | Sets the file-rotation depth used with the total-size budget.                                                   |
 
-File logging requires positive values for both size fields. The log path is `<database directory>/logs/upbrr.log`; displaying a path does not mean file logging is enabled.
+File logging requires positive **Max total size** and **Max files** values. The log path is `<database directory>/logs/upbrr.log`; displaying a path does not mean file logging is enabled.
 
 ## Live viewer
 

@@ -55,6 +55,6 @@ Use **Show advanced** only when a section offers it. Advanced fields are active 
 | [API Tokens](./api-tokens.md)                   | Scoped bearer-token creation and revocation.                     |
 | [Tracker Auth](./tracker-auth.md)               | Encrypted cookies, remote checks, relogin, and 2FA state.        |
 
-After changing upload behavior or credentials, run one release with **Dry Run** and inspect every tracker preview before submission.
+After changing upload behavior or credentials, inspect every tracker preview and run **Dry Run**. Dry Run suppresses tracker submission but still attempts client injection by default; select **Skip client injection** when no torrent should be added. For CLI testing, combine `--debug` with `--no-seed` (`-ns`).
 
 Logging configuration and the live viewer are on the separate [Logging page](../logging.md).
