@@ -5,6 +5,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -171,6 +172,50 @@ func TestReleaseWorkflowUploadFeedbackAcceptsBothTrackerPreparationDecisions(t *
 		if err := feedback.Validate(); err != nil {
 			t.Fatalf("confirmed=%t: %v", confirmed, err)
 		}
+	}
+}
+
+func TestReleaseWorkflowUploadFeedbackRequiresExplicitTrackerPreparationDecisionInJSON(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name      string
+		decision  string
+		wantValid bool
+	}{
+		{name: "omitted", decision: `{}`},
+		{name: "null", decision: `{"confirmed":null}`},
+		{
+name: "false",
+ decision: `{"confirmed":false}`,
+ wantValid: true,
+},
+		{
+name: "true",
+ decision: `{"confirmed":true}`,
+ wantValid: true,
+},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			payload := fmt.Sprintf(`{
+				"action":{"id":"action-btn-autofill","workflowRevision":4},
+				"response":{"kind":"trackerPreparation","trackerPreparation":%s},
+				"idempotencyKey":"btn-autofill-decision"
+			}`, test.decision)
+			var feedback ReleaseWorkflowUploadFeedback
+			if err := json.Unmarshal([]byte(payload), &feedback); err != nil {
+				t.Fatalf("unmarshal feedback: %v", err)
+			}
+			feedback.IdempotencyKey = "btn-autofill-decision"
+			err := feedback.Validate()
+			if test.wantValid && err != nil {
+				t.Fatalf("explicit decision rejected: %v", err)
+			}
+			if !test.wantValid && err == nil {
+				t.Fatal("missing explicit decision was accepted")
+			}
+		})
 	}
 }
 

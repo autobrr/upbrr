@@ -474,7 +474,8 @@ type ReleaseWorkflowUploadMetadataSelection struct {
 
 // ReleaseWorkflowUploadConfirmation carries one confirmation-style decision.
 type ReleaseWorkflowUploadConfirmation struct {
-	Confirmed bool `json:"confirmed"`
+	Confirmed        bool `json:"confirmed"`
+	confirmedOmitted bool
 }
 
 // ReleaseWorkflowUploadApproval authorizes an exact subset of the reviewed tracker operations.
@@ -611,7 +612,9 @@ func (f ReleaseWorkflowUploadFeedback) Validate() error {
 			return errors.New("rule authorization feedback requires confirmation")
 		}
 	case ReleaseWorkflowUploadFeedbackTrackerPreparation:
-		// Both answers are meaningful: true keeps the current payload; false asks the tracker to resolve it.
+		if f.Response.TrackerPreparation.confirmedOmitted {
+			return errors.New("tracker preparation feedback requires an explicit confirmed member")
+		}
 	case ReleaseWorkflowUploadFeedbackTrackerApproval:
 		if !f.Response.TrackerApproval.Confirmed {
 			return errors.New("tracker approval feedback requires confirmation")
