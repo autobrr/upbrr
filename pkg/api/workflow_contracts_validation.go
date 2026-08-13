@@ -438,6 +438,9 @@ func (s TrackerProjectionInstructionSnapshot) Normalize() (TrackerProjectionInst
 	for trackerID, value := range normalized.Instructions {
 		trackerID = normalizeTrackerID(trackerID)
 		if trackerID != "" {
+			if _, exists := instructions[trackerID]; exists {
+				return TrackerProjectionInstructionSnapshot{}, fmt.Errorf("tracker projection instructions contain duplicate tracker id %s", trackerID)
+			}
 			if value.AuthorizedRuleFingerprint != "" {
 				if err := validateWorkflowFingerprint(value.AuthorizedRuleFingerprint); err != nil {
 					return TrackerProjectionInstructionSnapshot{}, fmt.Errorf("tracker %s rule authorization: %w", trackerID, err)

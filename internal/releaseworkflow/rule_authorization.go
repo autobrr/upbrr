@@ -72,22 +72,24 @@ func (m *Module) authorizeTrackerRules(
 		action.TrackerID != projection.TrackerID {
 		return CommandResult{}, fmt.Errorf("%w: rule authorization dependencies are stale", ErrInvalidTransition)
 	}
-	cloned, err := instructionSnapshot.Clone()
+	cloned, err := instructionSnapshot.Normalize()
 	if err != nil {
-		return CommandResult{}, fmt.Errorf("release workflow clone rule authorization instructions: %w", err)
+		return CommandResult{}, fmt.Errorf("release workflow normalize rule authorization instructions: %w", err)
 	}
 	if cloned.Instructions == nil {
 		cloned.Instructions = make(map[api.TrackerID]api.TrackerProjectionInstructions)
 	}
-	instruction := cloned.Instructions[projection.TrackerID]
+	trackerID := api.TrackerID(strings.ToUpper(strings.TrimSpace(string(projection.TrackerID))))
+	instruction := cloned.Instructions[trackerID]
 	instruction.AuthorizedRuleFingerprint = projection.WaivableRuleFingerprint
-	cloned.Instructions[projection.TrackerID] = instruction
+	cloned.Instructions[trackerID] = instruction
 	authorizations := make(map[api.TrackerID]api.WorkflowFingerprint)
 	for trackerID, candidate := range cloned.Instructions {
 		if candidate.AuthorizedRuleFingerprint != "" {
 			authorizations[trackerID] = candidate.AuthorizedRuleFingerprint
 		}
 	}
+	m.logger.Infof("release workflow: accepted tracker rule authorization tracker=%s decision=authorized", trackerID)
 	return m.projectTrackersWithRuleAuthorizations(ctx, ownerID, state, nextRevision, now, ProjectTrackersCommand{
 		WorkflowID:       workflow.ID,
 		ExpectedRevision: workflow.Revision,

@@ -3789,6 +3789,13 @@ func TestTrustedProjectionInstructionsOnlyAcceptsServerRuleAuthority(t *testing.
 	if trusted["ALPHA"].AuthorizedRuleFingerprint != fingerprint {
 		t.Fatalf("trusted rule authority = %#v", trusted)
 	}
+	duplicateTrackerID := api.TrackerID(" alpha ")
+	if _, err := trustedProjectionInstructions(map[api.TrackerID]api.TrackerProjectionInstructions{
+		"ALPHA":            {},
+		duplicateTrackerID: {},
+	}, nil); err == nil {
+		t.Fatal("expected duplicate normalized tracker instructions to be rejected")
+	}
 }
 
 func TestResolveProjectionRuleAuthorizationReprojectsWithExactServerAuthority(t *testing.T) {
@@ -3849,7 +3856,7 @@ func TestResolveProjectionRuleAuthorizationReprojectsWithExactServerAuthority(t 
 	result = executeCommand(t, module, PrepareReleaseCommand{
 		WorkflowID:       result.Workflow.ID,
 		ExpectedRevision: result.Workflow.Revision,
-		Input:            api.PrepareInput{SourcePath: "C:\\releases\\Example.Release.2026.1080p-GRP"},
+		Input:            api.PrepareInput{SourcePath: "Example.Release.2026.1080p-GRP"},
 	})
 	result = executeCommand(t, module, ProjectTrackersCommand{
 		WorkflowID:       result.Workflow.ID,

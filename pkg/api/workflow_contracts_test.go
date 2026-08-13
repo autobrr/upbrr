@@ -197,6 +197,19 @@ func TestTrackerProjectionInstructionsPreserveRuleAuthorization(t *testing.T) {
 	}
 }
 
+func TestTrackerProjectionInstructionNormalizationRejectsDuplicateTrackerIDs(t *testing.T) {
+	t.Parallel()
+
+	duplicateTrackerID := TrackerID(" alpha ")
+	_, err := (TrackerProjectionInstructionSnapshot{Instructions: map[TrackerID]TrackerProjectionInstructions{
+		"ALPHA":            {},
+		duplicateTrackerID: {},
+	}}).Normalize()
+	if err == nil || !strings.Contains(err.Error(), "duplicate tracker id ALPHA") {
+		t.Fatalf("duplicate normalized tracker ID error = %v", err)
+	}
+}
+
 func TestTrackerCatalogNormalizesAliasesAndFingerprintsDeterministically(t *testing.T) {
 	t.Parallel()
 

@@ -82,6 +82,9 @@ func (b workflowPreflightBuilder) Build(
 		initial.Projections = append([]api.TrackerReleaseProjection(nil), initial.Projections...)
 		for index := range initial.Projections {
 			projection := &initial.Projections[index]
+			projection.PolicyDecisions = slices.Clone(projection.PolicyDecisions)
+			projection.RequiredActions = slices.Clone(projection.RequiredActions)
+			projection.Failures = slices.Clone(projection.Failures)
 			if projection.Readiness != api.ReadinessStatusReady || !projection.DupeReady {
 				continue
 			}

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"syscall"
@@ -698,7 +699,28 @@ func TestWorkflowPreflightRejectsMissingPreparedResourceBeforeAuth(t *testing.T)
 		Readiness:                   api.ReadinessStatusReady,
 		DupeReady:                   true,
 		UploadReady:                 true,
+		PolicyDecisions: []api.TrackerPolicyDecision{
+			{Code: "previous_rule", Disposition: api.RuleDispositionWaivable},
+			{Code: "retained_decision", Decision: "allowed"},
+		},
+		RequiredActions: []api.RequiredAction{
+			{Kind: api.RequiredActionAuthorizeRules, TrackerID: "RESOURCE"},
+			{Kind: api.RequiredActionReviewDuplicates, TrackerID: "RESOURCE"},
+		},
+		Failures: []api.WorkflowFailure{
+			{
+				Failure:   api.OperationFailure{Code: api.OperationFailureNoEligibleTrackers, Operation: api.OperationKindDuplicateCheck},
+				TrackerID: "RESOURCE",
+			},
+			{
+				Failure:   api.OperationFailure{Code: api.OperationFailureMissingPrerequisite, Operation: api.OperationKindPreparation},
+				TrackerID: "RESOURCE",
+			},
+		},
 	}
+	originalDecisions := slices.Clone(projection.PolicyDecisions)
+	originalActions := slices.Clone(projection.RequiredActions)
+	originalFailures := slices.Clone(projection.Failures)
 	capabilityCalls := 0
 	validateCalls := 0
 	builder := workflowPreflightBuilder{
@@ -736,6 +758,11 @@ func TestWorkflowPreflightRejectsMissingPreparedResourceBeforeAuth(t *testing.T)
 		return decision.Code == "required_media_resource" && decision.Blocking
 	}) {
 		t.Fatalf("missing local-resource decision: %#v", finalized[0].PolicyDecisions)
+	}
+	if !reflect.DeepEqual(projection.PolicyDecisions, originalDecisions) ||
+		!reflect.DeepEqual(projection.RequiredActions, originalActions) ||
+		!reflect.DeepEqual(projection.Failures, originalFailures) {
+		t.Fatalf("input projection mutated: %#v", projection)
 	}
 }
 
