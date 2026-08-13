@@ -388,7 +388,7 @@ func (p TrackerPlan) ResolveAction(
 	p.state.mu.Unlock()
 	if release != nil {
 		if err := release(); err != nil {
-			return TrackerPlan{}, err
+			return TrackerPlan{}, NewPreparationFailure(p.tracker, "upload", "tracker prepared upload release failed", err)
 		}
 	}
 	resolved, failure := resolve(ctx)

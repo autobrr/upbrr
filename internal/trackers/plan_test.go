@@ -297,6 +297,41 @@ func TestTrackerPlanResolveActionKeepsOrReplacesPreparedOperation(t *testing.T) 
 			t.Fatalf("submit replacement payload: %v", err)
 		}
 	})
+
+	t.Run("decline requires resolver", func(t *testing.T) {
+		plan := newTestTrackerActionPlan(nil, nil)
+		defer func() { _ = plan.Release() }()
+		if _, err := plan.ResolveAction(context.Background(), api.RequiredActionResolveTrackerPreparation, false); !errors.Is(err, ErrPlanActionNotResolvable) {
+			t.Fatalf("unresolvable action error = %v", err)
+		}
+	})
+
+	t.Run("decline surfaces resolver failure", func(t *testing.T) {
+		want := NewPreparationFailure("BTN", PreparationFailureCodeSkipped, "Tracker skipped.", nil)
+		plan := newTestTrackerActionPlan(nil, func(context.Context) (TrackerPlan, *PreparationFailure) {
+			return TrackerPlan{}, want
+		})
+		if _, err := plan.ResolveAction(context.Background(), api.RequiredActionResolveTrackerPreparation, false); err != want {
+			t.Fatalf("resolver failure = %v, want %v", err, want)
+		}
+	})
+
+	t.Run("decline wraps release failure", func(t *testing.T) {
+		releaseErr := errors.New("release failed")
+		plan := newTestTrackerActionPlan(func() error { return releaseErr }, func(context.Context) (TrackerPlan, *PreparationFailure) {
+			return NewUploadPlan(
+				"BTN",
+				api.TrackerDryRunEntry{Tracker: "BTN"},
+				func(context.Context) (api.UploadSummary, error) { return api.UploadSummary{}, nil },
+				nil,
+			), nil
+		})
+		_, err := plan.ResolveAction(context.Background(), api.RequiredActionResolveTrackerPreparation, false)
+		var preparationFailure *PreparationFailure
+		if !errors.As(err, &preparationFailure) || preparationFailure.Code() != "upload" || !errors.Is(err, releaseErr) {
+			t.Fatalf("release failure = %v", err)
+		}
+	})
 }
 
 func TestPrepareAdapterPreservesPreparationFailure(t *testing.T) {
