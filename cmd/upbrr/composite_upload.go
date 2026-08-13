@@ -218,6 +218,17 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 			feedback,
 			api.ReleaseWorkflowUploadFeedbackRuleAuthorization,
 		)
+	case api.RequiredActionResolveTrackerPreparation:
+		confirmed, err := promptYesNo(reader, action.Prompt+" [y/N]: ", false)
+		if err != nil {
+			return feedback, false, err
+		}
+		feedback.Response = api.ReleaseWorkflowUploadFeedbackResponse{
+			Kind: api.ReleaseWorkflowUploadFeedbackTrackerPreparation,
+			TrackerPreparation: &api.ReleaseWorkflowUploadConfirmation{
+				Confirmed: confirmed,
+			},
+		}
 	case api.RequiredActionReviewDuplicates:
 		return s.collectCompositeDuplicateFeedback(reader, action, feedback)
 	case api.RequiredActionApproveTrackers:
@@ -279,6 +290,7 @@ func compositeCLIConfirmationFeedback(
 		legacyTrackerTwoFactorFeedbackKind,
 		api.ReleaseWorkflowUploadFeedbackTrackerInput,
 		api.ReleaseWorkflowUploadFeedbackQuestionnaire,
+		api.ReleaseWorkflowUploadFeedbackTrackerPreparation,
 		api.ReleaseWorkflowUploadFeedbackDuplicateReview,
 		api.ReleaseWorkflowUploadFeedbackTrackerApproval,
 		api.ReleaseWorkflowUploadFeedbackUploadApproval, //nolint:staticcheck // Reject retained v1 feedback explicitly.

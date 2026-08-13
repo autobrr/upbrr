@@ -151,6 +151,29 @@ func TestReleaseWorkflowUploadFeedbackRequiresMatchingDiscriminatedMember(t *tes
 	}
 }
 
+func TestReleaseWorkflowUploadFeedbackAcceptsBothTrackerPreparationDecisions(t *testing.T) {
+	t.Parallel()
+
+	for _, confirmed := range []bool{false, true} {
+		feedback := ReleaseWorkflowUploadFeedback{
+			Action: ReleaseWorkflowUploadActionIdentity{
+				ID:               "action-btn-autofill",
+				WorkflowRevision: 4,
+			},
+			Response: ReleaseWorkflowUploadFeedbackResponse{
+				Kind: ReleaseWorkflowUploadFeedbackTrackerPreparation,
+				TrackerPreparation: &ReleaseWorkflowUploadConfirmation{
+					Confirmed: confirmed,
+				},
+			},
+			IdempotencyKey: "btn-autofill-decision",
+		}
+		if err := feedback.Validate(); err != nil {
+			t.Fatalf("confirmed=%t: %v", confirmed, err)
+		}
+	}
+}
+
 func TestReleaseWorkflowUploadFeedbackRejectsDuplicateApprovalTrackers(t *testing.T) {
 	t.Parallel()
 

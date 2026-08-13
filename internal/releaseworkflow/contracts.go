@@ -285,6 +285,7 @@ type DescriptionBuilder interface {
 // RetainedUploadExecution is private single-use execution authority. Execute
 // must submit already-prepared operations without rebuilding semantic payloads.
 type RetainedUploadExecution interface {
+	ResolveAction(context.Context, api.TrackerID, api.RequiredActionKind, bool) (api.UploadPlanTracker, error)
 	Execute(context.Context, []api.TrackerID) ([]api.UploadTrackerResult, error)
 	RegisteredArtifactAuthority() RegisteredArtifactAuthority
 	Release() error

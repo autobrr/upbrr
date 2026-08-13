@@ -71,6 +71,20 @@ func (f *workflowRetainedUploadPlanFake) Preparations() []trackers.RetainedTrack
 	return append([]trackers.RetainedTrackerPreparation(nil), f.preparations...)
 }
 
+func (f *workflowRetainedUploadPlanFake) ResolveAction(
+	_ context.Context,
+	trackerID string,
+	_ api.RequiredActionKind,
+	_ bool,
+) (trackers.RetainedTrackerPreparation, error) {
+	for _, preparation := range f.preparations {
+		if strings.EqualFold(preparation.Tracker, trackerID) {
+			return preparation, nil
+		}
+	}
+	return trackers.RetainedTrackerPreparation{}, trackers.ErrPlanActionUnavailable
+}
+
 func (f *workflowRetainedUploadPlanFake) Execute(context.Context) ([]trackers.RetainedTrackerResult, error) {
 	return append([]trackers.RetainedTrackerResult(nil), f.results...), nil
 }

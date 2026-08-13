@@ -380,18 +380,73 @@ func (p *RetainedUploadPlan) Preparations() []RetainedTrackerPreparation {
 	if p == nil {
 		return nil
 	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	result := make([]RetainedTrackerPreparation, 0, len(p.slots))
 	for _, slot := range p.slots {
-		preparation := RetainedTrackerPreparation{Tracker: slot.tracker, TorrentPath: slot.torrentPath}
-		if slot.failure != nil {
-			failure := *slot.failure
-			preparation.Failure = &failure
-		} else {
-			preparation.Preview = slot.plan.DryRun()
-		}
-		result = append(result, preparation)
+		result = append(result, retainedTrackerPreparation(slot))
 	}
 	return result
+}
+
+// ResolveAction updates one retained tracker operation without rebuilding
+// unrelated tracker plans.
+func (p *RetainedUploadPlan) ResolveAction(
+	ctx context.Context,
+	tracker string,
+	kind api.RequiredActionKind,
+	confirmed bool,
+) (RetainedTrackerPreparation, error) {
+	if p == nil {
+		return RetainedTrackerPreparation{}, ErrPlanNotSubmittable
+	}
+	tracker = normalizeTrackerName(tracker)
+	if tracker == "" {
+		return RetainedTrackerPreparation{}, fmt.Errorf("%w: tracker is required", ErrPlanActionUnavailable)
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	switch {
+	case p.released:
+		return RetainedTrackerPreparation{}, ErrPlanReleased
+	case p.executed:
+		return RetainedTrackerPreparation{}, ErrPlanAlreadyUsed
+	}
+	index := slices.IndexFunc(p.slots, func(slot trackerPlanSlot) bool {
+		return normalizeTrackerName(slot.tracker) == tracker
+	})
+	if index < 0 || p.slots[index].failure != nil {
+		return RetainedTrackerPreparation{}, fmt.Errorf("%w: tracker %s", ErrPlanActionUnavailable, tracker)
+	}
+	plan, err := p.slots[index].plan.ResolveAction(ctx, kind, confirmed)
+	if err != nil {
+		var failure *PreparationFailure
+		if !errors.As(err, &failure) {
+			return RetainedTrackerPreparation{}, err
+		}
+		p.slots[index].plan = TrackerPlan{}
+		p.slots[index].failure = &TrackerFailure{
+			Tracker: tracker,
+			Code:    failure.Code(),
+			Message: safeTrackerMessage(failure),
+			cause:   failure,
+		}
+		return retainedTrackerPreparation(p.slots[index]), nil
+	}
+	p.slots[index].plan = plan
+	p.slots[index].failure = nil
+	return retainedTrackerPreparation(p.slots[index]), nil
+}
+
+func retainedTrackerPreparation(slot trackerPlanSlot) RetainedTrackerPreparation {
+	preparation := RetainedTrackerPreparation{Tracker: slot.tracker, TorrentPath: slot.torrentPath}
+	if slot.failure != nil {
+		failure := *slot.failure
+		preparation.Failure = &failure
+	} else {
+		preparation.Preview = slot.plan.DryRun()
+	}
+	return preparation
 }
 
 // Execute consumes all retained tracker plans without rebuilding payloads.

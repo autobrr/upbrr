@@ -289,6 +289,7 @@ func continuationIntentResolvesAction(intent api.WorkflowIntent, current Command
 		return ok && len(instruction.Questionnaire) > 0
 	case api.RequiredActionSelectPlaylist, api.RequiredActionSelectMetadata, api.RequiredActionConfirmRescan,
 		legacyTrackerAuthActionKind, legacyTrackerTwoFactorActionKind, api.RequiredActionAuthorizeRules,
+		api.RequiredActionResolveTrackerPreparation,
 		api.RequiredActionApproveTrackers,
 		api.RequiredActionApproveUpload, //nolint:staticcheck // Retained v1 actions cannot be satisfied by desired intent.
 		api.RequiredActionReprepare,
@@ -717,7 +718,8 @@ func continuationUnattendedSkipsTrackerAction(intent api.WorkflowIntent, action 
 		legacyTrackerTwoFactorActionKind,
 		api.RequiredActionProvideTrackerInput,
 		api.RequiredActionAnswerQuestionnaire,
-		api.RequiredActionAuthorizeRules:
+		api.RequiredActionAuthorizeRules,
+		api.RequiredActionResolveTrackerPreparation:
 		return true
 	case api.RequiredActionSelectPlaylist,
 		api.RequiredActionSelectMetadata,

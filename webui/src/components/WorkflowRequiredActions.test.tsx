@@ -203,6 +203,35 @@ describe("WorkflowRequiredActions", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Continue upload" }));
-    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ kind: "authorize_rules" }));
+    expect(confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "authorize_rules" }),
+      true,
+    );
+  });
+
+  it("offers both tracker preparation decisions", () => {
+    const confirm = vi.fn();
+    render(
+      <WorkflowRequiredActions
+        continuation={continuation([
+          action({
+            kind: "resolve_tracker_preparation",
+            prompt: "BTN autofill mismatched.",
+            options: [
+              { value: "confirm", label: "Continue upload" },
+              { value: "resolve", label: "Try release-name autofill" },
+            ],
+          }),
+        ])}
+        onConfirm={confirm}
+        onNavigate={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Try release-name autofill" }));
+    expect(confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "resolve_tracker_preparation" }),
+      false,
+    );
   });
 });

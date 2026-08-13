@@ -342,11 +342,30 @@ func (f *retainedMediaResourceFake) Commit(context.Context) error {
 }
 
 type retainedUploadExecutionFake struct {
-	executions int
-	releases   int
-	trackers   []api.TrackerID
-	selected   []api.TrackerID
-	failed     map[api.TrackerID]bool
+	executions          int
+	releases            int
+	trackers            []api.TrackerID
+	selected            []api.TrackerID
+	failed              map[api.TrackerID]bool
+	resolved            map[api.TrackerID]api.UploadPlanTracker
+	resolutionConfirmed []bool
+}
+
+func (f *retainedUploadExecutionFake) ResolveAction(
+	_ context.Context,
+	trackerID api.TrackerID,
+	_ api.RequiredActionKind,
+	confirmed bool,
+) (api.UploadPlanTracker, error) {
+	f.resolutionConfirmed = append(f.resolutionConfirmed, confirmed)
+	if tracker, ok := f.resolved[trackerID]; ok {
+		return tracker, nil
+	}
+	return api.UploadPlanTracker{
+TrackerID: trackerID,
+ Eligible: true,
+ Status: api.StageStatusReady,
+}, nil
 }
 
 func (f *retainedUploadExecutionFake) Execute(_ context.Context, trackerIDs []api.TrackerID) ([]api.UploadTrackerResult, error) {
@@ -3962,6 +3981,121 @@ func TestResolveRuleAuthorizationRequiresExplicitConfirmation(t *testing.T) {
 	}
 	if len(state.Workflow.RequiredActions) != 0 || state.Workflow.Status != api.WorkflowStatusActive {
 		t.Fatalf("resolved rule authorization workflow = %#v", state.Workflow)
+	}
+}
+
+func TestResolveTrackerPreparationReplacesRetainedDryRun(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC)
+	module, _ := newTestModule(t, testPreparer())
+	action := api.RequiredAction{
+		ID:               "action-btn-autofill",
+		Kind:             api.RequiredActionResolveTrackerPreparation,
+		Status:           api.RequiredActionStatusPending,
+		WorkflowRevision: 2,
+		TrackerID:        "BTN",
+		Prompt:           "Continue with BTN's TVDB autofill result?",
+		CreatedAt:        now,
+	}
+	initialTracker := api.UploadPlanTracker{
+		TrackerID:              "BTN",
+		DisplayName:            "BTN",
+		UploadReleaseName:      "Example.Release.2026.1080p-GRP",
+		Eligible:               true,
+		Status:                 api.StageStatusReady,
+		ClientInjectionStatus:  api.StageStatusSkipped,
+		ClientInjectionMessage: "Client injection disabled by the skip option.",
+		RequiredActions: []api.RequiredAction{{
+			Kind:   api.RequiredActionResolveTrackerPreparation,
+			Prompt: action.Prompt,
+		}},
+		SemanticFingerprint: testFingerprint(t, "btn-initial-plan"),
+	}
+	fallbackTracker := initialTracker
+	fallbackTracker.RequiredActions = []api.RequiredAction{{
+		Kind:   api.RequiredActionResolveTrackerPreparation,
+		Prompt: "BTN release-name autofill also mismatched. Continue?",
+	}}
+	fallbackTracker.SemanticFingerprint = testFingerprint(t, "btn-fallback-plan")
+	execution := &retainedUploadExecutionFake{
+		resolved: map[api.TrackerID]api.UploadPlanTracker{"BTN": fallbackTracker},
+	}
+	prepared := &preparedUploads{
+		trackerIDs: []api.TrackerID{"BTN"},
+		plan: api.UploadPlan{
+			Revision:  2,
+			Trackers:  []api.UploadPlanTracker{initialTracker},
+			Status:    api.StageStatusReady,
+			ExpiresAt: now.Add(time.Hour),
+		},
+		execution: execution,
+		dryRun:    true,
+	}
+	prior := api.UploadDryRunResult{
+		ID:               "dry-run-btn-initial",
+		WorkflowID:       "workflow-btn-autofill",
+		Revision:         2,
+		ProjectionSet:    api.TrackerReleaseProjectionSetRef{ID: "projections-btn", Revision: 1},
+		Dupes:            api.DupeAssessmentRef{ID: "dupes-btn", Revision: 1},
+		Media:            api.MediaArtifactSetRef{ID: "media-btn", Revision: 1},
+		Descriptions:     api.DescriptionSetRef{ID: "descriptions-btn", Revision: 1},
+		InputFingerprint: testFingerprint(t, "btn-upload-input"),
+		NoSeed:           true,
+		TrackerIDs:       []api.TrackerID{"BTN"},
+		Reports:          uploadDryRunReports([]api.UploadPlanTracker{initialTracker}),
+		SucceededCount:   1,
+		Status:           api.StageStatusCompleted,
+		CreatedAt:        now,
+	}
+	state := State{
+		Workflow: api.ReleaseWorkflow{
+			ID:              prior.WorkflowID,
+			Revision:        2,
+			Status:          api.WorkflowStatusBlocked,
+			DryRun:          &api.UploadDryRunResultRef{ID: prior.ID, Revision: prior.Revision},
+			RequiredActions: []api.RequiredAction{action},
+		},
+		DryRuns: map[api.UploadDryRunResultID]api.UploadDryRunResult{prior.ID: prior},
+	}
+	if err := module.private.Put(
+		testOwnerID,
+		state.Workflow.ID,
+		uploadPlanPrivateResourceID(prior.ID),
+		prepared,
+		prepared.plan.ExpiresAt,
+	); err != nil {
+		t.Fatalf("retain upload plan: %v", err)
+	}
+	confirmed := false
+	result, err := module.resolveAction(context.Background(), testOwnerID, &state, 3, now, ResolveActionCommand{
+		WorkflowID:       state.Workflow.ID,
+		ExpectedRevision: 2,
+		Answer: api.RequiredActionAnswer{
+			ActionID:         action.ID,
+			WorkflowRevision: 2,
+			Confirmed:        &confirmed,
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolve tracker preparation: %v", err)
+	}
+	if result.DryRun == nil || state.Workflow.DryRun == nil || result.DryRun.ID == prior.ID || state.Workflow.DryRun.ID != result.DryRun.ID ||
+		state.Workflow.Status != api.WorkflowStatusBlocked || len(state.Workflow.RequiredActions) != 1 ||
+		state.Workflow.RequiredActions[0].Prompt != fallbackTracker.RequiredActions[0].Prompt ||
+		state.Workflow.RequiredActions[0].WorkflowRevision != 3 {
+		t.Fatalf("resolved dry run=%#v workflow=%#v", result.DryRun, state.Workflow)
+	}
+	if len(execution.resolutionConfirmed) != 1 || execution.resolutionConfirmed[0] {
+		t.Fatalf("resolution decisions = %#v", execution.resolutionConfirmed)
+	}
+	if _, err := module.private.Get(
+		testOwnerID,
+		state.Workflow.ID,
+		uploadPlanPrivateResourceID(result.DryRun.ID),
+		now,
+	); err != nil {
+		t.Fatalf("resolved private upload plan: %v", err)
 	}
 }
 

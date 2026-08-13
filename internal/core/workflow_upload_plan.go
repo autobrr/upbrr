@@ -33,6 +33,7 @@ type workflowRetainedUploadService interface {
 
 type workflowRetainedUploadPlan interface {
 	Preparations() []trackers.RetainedTrackerPreparation
+	ResolveAction(context.Context, string, api.RequiredActionKind, bool) (trackers.RetainedTrackerPreparation, error)
 	Execute(context.Context) ([]trackers.RetainedTrackerResult, error)
 	ExecuteSelected(context.Context, []string) ([]trackers.RetainedTrackerResult, error)
 	Release() error
@@ -70,6 +71,9 @@ type workflowUploadExecution struct {
 	dryRunInjected      map[api.TrackerID]struct{}
 	registeredArtifacts map[api.TrackerID]api.TorrentResult
 	crossSeeds          []api.UploadedTorrent
+	projections         map[api.TrackerID]api.TrackerReleaseProjection
+	inputFingerprint    api.WorkflowFingerprint
+	trackers            []api.UploadPlanTracker
 }
 
 func newWorkflowUploadPlanBuilder(
@@ -463,31 +467,7 @@ func (b workflowUploadPlanBuilder) Build(
 				tracker.ClientInjectionMessage = "Client injection skipped because the tracker upload was not ready."
 			}
 		}
-		semanticFingerprint, err := api.CanonicalWorkflowFingerprint(struct {
-			Projection          api.TrackerReleaseProjection
-			Endpoint            string
-			Fields              []api.UploadPlanField
-			Files               []api.UploadPlanFile
-			Eligible            bool
-			Status              api.StageStatus
-			Warnings            []string
-			RequiredActions     []api.RequiredAction
-			PreparedOperationID api.PublicResourceID
-			TorrentArtifactID   api.PublicResourceID
-			TorrentFingerprint  api.WorkflowFingerprint
-		}{
-			projection,
-			tracker.Endpoint,
-			tracker.Fields,
-			tracker.Files,
-			tracker.Eligible,
-			tracker.Status,
-			tracker.Warnings,
-			tracker.RequiredActions,
-			tracker.PreparedOperationID,
-			tracker.TorrentArtifactID,
-			tracker.TorrentFingerprint,
-		})
+		semanticFingerprint, err := workflowUploadTrackerSemanticFingerprint(projection, tracker)
 		if err != nil {
 			if retained != nil {
 				_ = retained.Release()
@@ -529,13 +509,59 @@ func (b workflowUploadPlanBuilder) Build(
 		plan.Status = api.StageStatusSkipped
 	}
 	return plan, &workflowUploadExecution{
-		plan:           retained,
-		clients:        b.clients,
-		clientSubject:  clientSubject,
-		noSeed:         options.NoSeed,
-		dryRunInjected: dryRunInjected,
-		crossSeeds:     append([]api.UploadedTorrent(nil), subject.CrossSeedTorrents...),
+		plan:             retained,
+		clients:          b.clients,
+		clientSubject:    clientSubject,
+		noSeed:           options.NoSeed,
+		dryRunInjected:   dryRunInjected,
+		crossSeeds:       append([]api.UploadedTorrent(nil), subject.CrossSeedTorrents...),
+		projections:      workflowProjectionMap(planProjections),
+		inputFingerprint: inputFingerprint,
+		trackers:         append([]api.UploadPlanTracker(nil), plan.Trackers...),
 	}, nil
+}
+
+func workflowProjectionMap(projections []api.TrackerReleaseProjection) map[api.TrackerID]api.TrackerReleaseProjection {
+	result := make(map[api.TrackerID]api.TrackerReleaseProjection, len(projections))
+	for _, projection := range projections {
+		result[projection.TrackerID] = projection
+	}
+	return result
+}
+
+func workflowUploadTrackerSemanticFingerprint(
+	projection api.TrackerReleaseProjection,
+	tracker api.UploadPlanTracker,
+) (api.WorkflowFingerprint, error) {
+	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
+		Projection          api.TrackerReleaseProjection
+		Endpoint            string
+		Fields              []api.UploadPlanField
+		Files               []api.UploadPlanFile
+		Eligible            bool
+		Status              api.StageStatus
+		Warnings            []string
+		RequiredActions     []api.RequiredAction
+		PreparedOperationID api.PublicResourceID
+		TorrentArtifactID   api.PublicResourceID
+		TorrentFingerprint  api.WorkflowFingerprint
+	}{
+		projection,
+		tracker.Endpoint,
+		tracker.Fields,
+		tracker.Files,
+		tracker.Eligible,
+		tracker.Status,
+		tracker.Warnings,
+		tracker.RequiredActions,
+		tracker.PreparedOperationID,
+		tracker.TorrentArtifactID,
+		tracker.TorrentFingerprint,
+	})
+	if err != nil {
+		return "", fmt.Errorf("workflow upload tracker semantic fingerprint: %w", err)
+	}
+	return fingerprint, nil
 }
 
 // workflowSkipIfRehashTrackers returns eligible tracker names whose config
@@ -866,6 +892,84 @@ func workflowClientInjectionFingerprint(
 		return "", fmt.Errorf("workflow client injection fingerprint: %w", err)
 	}
 	return fingerprint, nil
+}
+
+func (e *workflowUploadExecution) ResolveAction(
+	ctx context.Context,
+	trackerID api.TrackerID,
+	kind api.RequiredActionKind,
+	confirmed bool,
+) (api.UploadPlanTracker, error) {
+	if e == nil || e.plan == nil {
+		return api.UploadPlanTracker{}, trackers.ErrPlanNotSubmittable
+	}
+	trackerID = api.TrackerID(strings.ToUpper(strings.TrimSpace(string(trackerID))))
+	index := slices.IndexFunc(e.trackers, func(tracker api.UploadPlanTracker) bool {
+		return tracker.TrackerID == trackerID
+	})
+	projection, hasProjection := e.projections[trackerID]
+	if index < 0 || !hasProjection {
+		return api.UploadPlanTracker{}, fmt.Errorf("workflow upload action: tracker %s is unavailable", trackerID)
+	}
+	preparation, err := e.plan.ResolveAction(ctx, string(trackerID), kind, confirmed)
+	if err != nil {
+		return api.UploadPlanTracker{}, fmt.Errorf("workflow upload action: %w", err)
+	}
+	updated := e.trackers[index]
+	updated.RequiredActions = nil
+	updated.Warnings = nil
+	updated.Failures = nil
+	if preparation.Failure != nil {
+		updated.Endpoint = ""
+		updated.Fields = nil
+		updated.Files = nil
+		updated.Eligible = false
+		updated.PreparedOperationID = ""
+		updated.TorrentArtifactID = ""
+		updated.TorrentFingerprint = ""
+		message := strings.TrimSpace(logging.SanitizeMessage(preparation.Failure.Message))
+		if message == "" {
+			if preparation.Failure.Code == trackers.PreparationFailureCodeSkipped {
+				message = "Tracker skipped during preparation."
+			} else {
+				message = "Tracker operation could not be prepared. Review prerequisites and retry."
+			}
+		}
+		updated.Warnings = []string{message}
+		if preparation.Failure.Code == trackers.PreparationFailureCodeSkipped {
+			updated.Status = api.StageStatusSkipped
+		} else {
+			updated.Status = api.StageStatusFailed
+			updated.Failures = []api.WorkflowFailure{{
+				Failure: api.OperationFailure{
+					Code:      api.OperationFailureMissingPreparedTracker,
+					Operation: api.OperationKindUploadDryRun,
+					Message:   message,
+					Recovery:  api.OperationRecoveryReprepare,
+				},
+				TrackerID: trackerID,
+			}}
+		}
+	} else {
+		updated.Endpoint, updated.Fields, updated.Files = sanitizeWorkflowUploadPreview(preparation.Preview)
+		updated.RequiredActions = append([]api.RequiredAction(nil), preparation.Preview.RequiredActions...)
+		updated.PreparedOperationID, updated.TorrentArtifactID, updated.TorrentFingerprint, err = workflowTrackerArtifactIdentity(
+			trackerID,
+			preparation.TorrentPath,
+			e.inputFingerprint,
+		)
+		if err != nil {
+			return api.UploadPlanTracker{}, err
+		}
+		updated.Eligible = true
+		updated.Status = api.StageStatusReady
+	}
+	updated.SemanticFingerprint, err = workflowUploadTrackerSemanticFingerprint(projection, updated)
+	if err != nil {
+		return api.UploadPlanTracker{}, fmt.Errorf("workflow upload action fingerprint %s: %w", trackerID, err)
+	}
+	e.trackers[index] = updated
+	return updated, nil
 }
 
 func (e *workflowUploadExecution) Execute(

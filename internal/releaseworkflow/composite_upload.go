@@ -1493,6 +1493,8 @@ func compositeUploadFeedbackActionKind(kind api.ReleaseWorkflowUploadFeedbackKin
 		return api.RequiredActionAnswerQuestionnaire
 	case api.ReleaseWorkflowUploadFeedbackRuleAuthorization:
 		return api.RequiredActionAuthorizeRules
+	case api.ReleaseWorkflowUploadFeedbackTrackerPreparation:
+		return api.RequiredActionResolveTrackerPreparation
 	case api.ReleaseWorkflowUploadFeedbackDuplicateReview:
 		return api.RequiredActionReviewDuplicates
 	case api.ReleaseWorkflowUploadFeedbackTrackerApproval:
@@ -1530,6 +1532,8 @@ func normalizedCompositeFeedback(feedback api.ReleaseWorkflowUploadFeedback) com
 		response.Questionnaire = cloneStringPointerMap(feedback.Response.Questionnaire.Answers)
 	case api.ReleaseWorkflowUploadFeedbackRuleAuthorization:
 		response.Confirmed = feedback.Response.RuleAuthorization.Confirmed
+	case api.ReleaseWorkflowUploadFeedbackTrackerPreparation:
+		response.Confirmed = feedback.Response.TrackerPreparation.Confirmed
 	case api.ReleaseWorkflowUploadFeedbackDuplicateReview:
 		response.TrackerID = normalizeCompositeTrackerID(feedback.Response.DuplicateReview.TrackerID)
 		response.DuplicateDecision = feedback.Response.DuplicateReview.Decision
@@ -1857,6 +1861,21 @@ func (m *Module) applyCompositeUploadFeedback(
 		state.Composite.Intent.Preparation.Force = true
 	case api.ReleaseWorkflowUploadFeedbackRuleAuthorization:
 		confirmed := true
+		if _, err := m.resolveAction(ctx, ownerID, state, nextRevision, now, ResolveActionCommand{
+			WorkflowID:       command.WorkflowID,
+			ExpectedRevision: command.ExpectedRevision,
+			Answer: api.RequiredActionAnswer{
+				ActionID:         action.ID,
+				WorkflowRevision: command.ExpectedRevision,
+				Confirmed:        &confirmed,
+			},
+			IdempotencyKey: command.IdempotencyKey,
+		}); err != nil {
+			return CommandResult{}, err
+		}
+		resolvedByCommand = true
+	case api.ReleaseWorkflowUploadFeedbackTrackerPreparation:
+		confirmed := command.Response.Confirmed
 		if _, err := m.resolveAction(ctx, ownerID, state, nextRevision, now, ResolveActionCommand{
 			WorkflowID:       command.WorkflowID,
 			ExpectedRevision: command.ExpectedRevision,
