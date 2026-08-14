@@ -70,6 +70,7 @@ Before commit: `git diff --check`, changed-package `make gofix-check-changed`, o
 ## Non-Negotiables
 
 - Narrow changes; fix root cause; never revert user changes.
+- Fill `.github/pull_request_template.md` into every PR body; `gh pr create --body` does not auto-fill it.
 - Preserve shared CLI/WebUI workflow behavior.
 - Debug mode validates end-to-end flow, not a non-mutating dry run. It suppresses tracker submission but may bypass policy gates such as banned-group blocking, keeping screenshots, descriptions, tracker preparation, and later stages testable. Client injection remains default; CLI `-ns` and WebUI Upload skip-client-injection are explicit opt-outs. Report defects only when behavior diverges from these semantics.
 - Centrally resolve versioned tracker upload/search names before duplicate checks. Principal payload fields use `PreparationInput.ReviewedUploadName()`; custom naming algorithms belong in `name.go`.

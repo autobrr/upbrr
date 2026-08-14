@@ -1,11 +1,28 @@
-## Summary
+## Description
 
-<!-- What changed? -->
+<!-- Summarize the change and the motivation. -->
 
-## Documentation
+Fixes # (issue)
 
-Documentation: <!-- Use `not-required: reason` only when no public documentation update is needed. -->
+## How has this been tested?
 
-## Validation
+<!-- Describe how you tested your change. -->
 
-<!-- List the checks run. -->
+## Screenshots (for UI changes)
+
+<!-- Delete this section if your change has no visible UI.
+     Do not show private tracker names, tracker URLs, torrent names, or save paths.
+     Use synthetic torrents, or blur these columns. -->
+
+## Checklist
+
+- [ ] My PR title follows the [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/#summary) format (it becomes the squashed commit message)
+- [ ] I have read [CONTRIBUTING.md](https://github.com/autobrr/upbrr/blob/main/CONTRIBUTING.md)
+- [ ] I ran `make precommit`
+- [ ] For CSS changes, I ran `pnpm --dir webui run lint:style`
+
+## AI disclosure
+
+<!-- Please do not lie about AI usage in this PR. -->
+
+Was any AI used in this PR? Roughly how much of the code was AI-written, and what model/tool?
