@@ -10,6 +10,33 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestResolveTrackerIDsIgnoresUnsupportedConfiguredDefaults(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	if err := registry.Register(stubDefinition{name: "SUPPORTED"}); err != nil {
+		t.Fatalf("register tracker: %v", err)
+	}
+	projector, err := NewWorkflowProjector(registry, config.Config{
+		Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"SUPPORTED", "RETIRED"}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("new workflow projector: %v", err)
+	}
+
+	selected, err := projector.resolveTrackerIDs(nil)
+	if err != nil {
+		t.Fatalf("resolve configured defaults: %v", err)
+	}
+	if len(selected) != 1 || selected[0] != "SUPPORTED" {
+		t.Fatalf("selected trackers = %v, want [SUPPORTED]", selected)
+	}
+
+	if _, err := projector.resolveTrackerIDs([]api.TrackerID{"RETIRED"}); err == nil {
+		t.Fatal("expected explicit unsupported tracker to fail")
+	}
+}
+
 func TestApplyWorkflowProjectionRequirementsDoesNotInferDVDMenuMinimumFromCaptureCap(t *testing.T) {
 	t.Parallel()
 

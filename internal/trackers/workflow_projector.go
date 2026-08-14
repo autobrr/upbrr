@@ -139,7 +139,8 @@ func (p *WorkflowProjector) Build(
 }
 
 func (p *WorkflowProjector) resolveTrackerIDs(requested []api.TrackerID) ([]api.TrackerID, error) {
-	if len(requested) == 0 {
+	usingConfiguredDefaults := len(requested) == 0
+	if usingConfiguredDefaults {
 		requested = make([]api.TrackerID, 0, len(p.config.Trackers.DefaultTrackers))
 		for _, trackerID := range p.config.Trackers.DefaultTrackers {
 			requested = append(requested, api.TrackerID(trackerID))
@@ -150,6 +151,9 @@ func (p *WorkflowProjector) resolveTrackerIDs(requested []api.TrackerID) ([]api.
 	for _, requestedID := range requested {
 		descriptor, ok := p.registry.LookupDescriptor(string(requestedID))
 		if !ok {
+			if usingConfiguredDefaults {
+				continue
+			}
 			return nil, fmt.Errorf("trackers: tracker %s is not registered", requestedID)
 		}
 		trackerID := api.TrackerID(descriptor.Name)
