@@ -8,6 +8,7 @@
     "build": "node --no-experimental-webstorage ./node_modules/@docusaurus/core/bin/docusaurus.mjs build",
     "serve": "docusaurus serve",
     "clear": "docusaurus clear",
+    "check": "pnpm run format:check && pnpm run typecheck && pnpm run build",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

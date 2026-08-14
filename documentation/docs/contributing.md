@@ -42,13 +42,12 @@ pnpm --dir documentation run start
 Before opening a pull request:
 
 ```powershell
-pnpm --dir documentation run format:check
-pnpm --dir documentation run typecheck
-pnpm --dir documentation run build
+pnpm --dir documentation run check
 git diff --check
 ```
 
 Do not commit `documentation/build/`, `documentation/.docusaurus/`, or `documentation/node_modules/`.
+Pull requests use Netlify Deploy Previews. Production is built from the exact release tag and published by the release workflow.
 
 ## Documentation standards
 
@@ -58,6 +57,7 @@ Do not commit `documentation/build/`, `documentation/.docusaurus/`, or `document
 - Keep examples synthetic and safe to share.
 - Add recovery guidance where a task can fail.
 - Update navigation and related pages when changing a shared contract.
+- Update public documentation in the same pull request as user-visible behavior. Otherwise, add `Documentation: not-required: <reason>` to the pull request body.
 
 ## Code contributions
 

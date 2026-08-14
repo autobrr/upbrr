@@ -13,7 +13,7 @@ This document is a guide to help you through the process of contributing to upbr
 - **Tracker implementations** — support for new private trackers lives under
   `internal/trackers/impl`; follow [`ADDING_TRACKERS.md`](./ADDING_TRACKERS.md) for the required
   module, auth, naming, registry, config, and validation contracts
-- **Documentation** — improvements to this file, the README, or inline Go/TS docs
+- **Documentation** — public guides under `documentation/`, this file, the README, or inline Go/TS docs
 
 ## Developer guide
 
@@ -51,8 +51,19 @@ Notes:
 - **Coding:** Keep changes narrow and match the surrounding style. For Go, follow the rules in [`AGENTS.md`](./AGENTS.md) and let `golangci-lint` drive. For frontend work, also see [`webui/AGENTS.md`](./webui/AGENTS.md) and let the Lefthook Prettier + ESLint hooks do the work.
 - **Commit messages:** We enforce [Conventional Commits](https://www.conventionalcommits.org/) via a repo-local validator. See [Commit message format](#commit-message-format) below.
   - No need to force-push or rebase — we squash on merge.
-- **Pull requests:** Submit a PR with a clear description. Mark it _Draft_ if still in progress. Reference related issues.
+- **Pull requests:** Submit a PR with a clear description. Mark it _Draft_ if still in progress. Reference related issues. Update public documentation for user-visible changes; otherwise add `Documentation: not-required: <reason>` to the PR body.
 - **Code review:** Be open to feedback during review.
+
+### Public documentation
+
+The Docusaurus site under `documentation/` is published at [upbrr.com](https://upbrr.com). Keep affected pages, navigation, and cross-links synchronized with user-visible CLI, configuration, Web UI, workflow, tracker, installation, upgrade, and API changes.
+
+```powershell
+pnpm --dir documentation install --frozen-lockfile
+pnpm --dir documentation run check
+```
+
+Pull requests receive Netlify Deploy Previews. Production documentation is built from the exact release tag and published only by the release workflow. Never commit `documentation/build/`.
 
 ## Git hooks (Lefthook)
 
@@ -209,6 +220,9 @@ pnpm --dir webui run format:check
 # CSS:
 pnpm --dir webui run lint:style
 
+# Public documentation:
+pnpm --dir documentation run check
+
 # Broad Go regression, lint, and policy sweeps:
 make test-go-fast
 make test-go
@@ -321,5 +335,6 @@ This project uses [AGENTS.md](https://agents.md/) — an open standard for guidi
 - [`cmd/upbrr/AGENTS.md`](./cmd/upbrr/AGENTS.md) for CLI flags, prompts, and unattended behavior.
 - [`pkg/api/AGENTS.md`](./pkg/api/AGENTS.md) for cross-entrypoint API/runtime contracts.
 - [`webui/e2e/AGENTS.md`](./webui/e2e/AGENTS.md) for Playwright E2E harness rules and commands.
+- [`documentation/AGENTS.md`](./documentation/AGENTS.md) for public documentation synchronization, checks, and publishing.
 
 Most modern AI coding tools support `AGENTS.md` natively or via simple configuration. `CLAUDE.md` files are symlinks to the same guidance for Claude Code.

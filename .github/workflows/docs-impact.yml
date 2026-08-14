@@ -1,0 +1,58 @@
+name: docs-impact
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - edited
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: docs-impact-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  docs-impact:
+    name: Documentation impact
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check documentation acknowledgement
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $event = Get-Content -Raw -LiteralPath $env:GITHUB_EVENT_PATH | ConvertFrom-Json
+          $files = @(
+            gh api --paginate "repos/$env:GITHUB_REPOSITORY/pulls/$($event.number)/files?per_page=100" --jq '.[].filename'
+          )
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+          if ($files.Where({ $_ -like "documentation/*" }).Count -gt 0) {
+            Write-Output "Public documentation changed."
+            exit 0
+          }
+
+          $body = [string]$event.pull_request.body
+          $acknowledgement = [regex]::Match(
+            $body,
+            '(?im)^Documentation:\s*not-required:\s*(?<reason>.+?)\s*$'
+          )
+          $reason = $acknowledgement.Groups['reason'].Value.Trim()
+          if (
+            -not $acknowledgement.Success -or
+            [string]::IsNullOrWhiteSpace($reason) -or
+            $reason.StartsWith("<!--", [StringComparison]::Ordinal)
+          ) {
+            throw "No public documentation changed. Add 'Documentation: not-required: <reason>' to the pull request body or update documentation/."
+          }
+
+          Write-Output "Public documentation impact acknowledged."
