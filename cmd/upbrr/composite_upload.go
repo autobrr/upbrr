@@ -61,13 +61,8 @@ func (s *cliWorkflowSession) completeComposite(
 		s.uploadRequest.Options.RunLogLevel,
 		debug,
 	)
-	var projectionRevision api.WorkflowRevision
 	for range 64 {
-		if printProjections && s.current.Projections != nil && s.current.Dupes != nil &&
-			s.current.Projections.Revision != projectionRevision {
-			projectionRevision = s.current.Projections.Revision
-			printCLIWorkflowProjections(s.streams.out, s.current.Projections, s.current.Dupes)
-		}
+		s.printCompositeProjectionsOnce(printProjections)
 		if debug && s.current.DryRun != nil {
 			printCLIWorkflowDryRun(s.streams.out, *s.current.DryRun, s.intent.noSeed, s.current.Projections)
 			return 0, nil
@@ -107,6 +102,14 @@ func (s *cliWorkflowSession) completeComposite(
 		s.current = next
 	}
 	return 0, errors.New("upbrr: composite upload exceeded the transition limit")
+}
+
+func (s *cliWorkflowSession) printCompositeProjectionsOnce(enabled bool) {
+	if !enabled || s.projectionsPrinted || s.current.Projections == nil || s.current.Dupes == nil {
+		return
+	}
+	s.projectionsPrinted = true
+	printCLIWorkflowProjections(s.streams.out, s.current.Projections, s.current.Dupes)
 }
 
 func cliWorkflowProjectionOutputEnabled(configured string, runOverride string, debug bool) bool {

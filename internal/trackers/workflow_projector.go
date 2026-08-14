@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -223,6 +224,7 @@ func (p *WorkflowProjector) projectSelected(
 ) ([]api.TrackerReleaseProjection, []api.WorkflowFailure) {
 	projections := make([]api.TrackerReleaseProjection, 0, len(selected))
 	failures := make([]api.WorkflowFailure, 0)
+	logger := logging.FromContext(ctx, p.logger)
 	for _, trackerID := range selected {
 		api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
 			Phase:   "projection",
@@ -251,7 +253,7 @@ func (p *WorkflowProjector) projectSelected(
 			AuthorizedRuleFingerprint: ruleAuthorizations[trackerID],
 			TrackerConfig:             applyTrackerConfigOverrides(trackerConfigFor(p.config, string(trackerID)), instruction.TrackerConfig),
 			Runtime:                   PreparationRuntimeFromConfig(p.config),
-			Logger:                    p.logger,
+			Logger:                    logger,
 		}, inputFingerprint, catalogFingerprint, configFingerprints[trackerID])
 		if descriptor, ok := p.registry.LookupDescriptor(string(trackerID)); ok {
 			applyWorkflowProjectionRequirements(&projection, descriptor, subject, p.config)

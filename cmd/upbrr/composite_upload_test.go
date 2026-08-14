@@ -307,6 +307,31 @@ func TestCLICompleteUsesCompositeStartAndFeedback(t *testing.T) {
 	}
 }
 
+func TestCLICompositePrintsTrackerProjectionsOnce(t *testing.T) {
+	var output strings.Builder
+	session := cliWorkflowSession{
+		current: releaseworkflow.CommandResult{
+			Projections: &api.TrackerReleaseProjectionSet{
+				Revision: 1,
+				Projections: []api.TrackerReleaseProjection{{
+					TrackerID:         "ALPHA",
+					DisplayName:       "Alpha",
+					UploadReleaseName: "Example.Release.2026.ALPHA-GRP",
+				}},
+			},
+			Dupes: &api.DupeAssessment{},
+		},
+		streams: cliIO{out: &output},
+	}
+	session.printCompositeProjectionsOnce(true)
+	session.current.Projections.Revision++
+	session.printCompositeProjectionsOnce(true)
+
+	if got := strings.Count(output.String(), "Tracker projections"); got != 1 {
+		t.Fatalf("tracker projection output count = %d, want 1: %q", got, output.String())
+	}
+}
+
 func TestCLICompositeTrackerFeedbackConfirmsOrEditsReleaseName(t *testing.T) {
 	const proposed = "Example.Release.2026-GRP"
 	action := api.RequiredAction{

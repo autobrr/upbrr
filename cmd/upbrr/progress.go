@@ -32,6 +32,7 @@ type cliWorkflowLogState struct {
 
 type cliWorkflowEventLogState struct {
 	lastSequence uint64
+	loggedEvents map[string]struct{}
 }
 
 func withCLIUploadProgressLogger(ctx context.Context, logger api.Logger) context.Context {
@@ -185,6 +186,15 @@ func logCLIWorkflowEvents(logger api.Logger, events []api.WorkflowEvent, state *
 			event.Recovery,
 			message,
 		}
+		key := fmt.Sprintf(format, args...)
+		if _, logged := state.loggedEvents[key]; logged {
+			state.lastSequence = event.Sequence
+			continue
+		}
+		if state.loggedEvents == nil {
+			state.loggedEvents = make(map[string]struct{})
+		}
+		state.loggedEvents[key] = struct{}{}
 		if logger != nil {
 			logger.Debugf(format, args...)
 		}

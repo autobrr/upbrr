@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -662,7 +663,7 @@ func newCompositeUploadTestModuleConfigured(
 ) (*Module, *MemoryRepository, *uploadPlanBuilderFake) {
 	t.Helper()
 	projections := trackerProjectionBuilderFunc(func(
-		_ context.Context,
+		ctx context.Context,
 		_ api.ReleaseSnapshot,
 		_ api.UploadSubject,
 		trackerIDs []api.TrackerID,
@@ -676,6 +677,17 @@ func newCompositeUploadTestModuleConfigured(
 		api.TrackerReleaseProjectionSet,
 		error,
 	) {
+		if releaseNameReview {
+			for _, instruction := range instructions {
+				if instruction.UploadReleaseName.Present {
+					if _, ok := logging.FromContext(ctx, nil).(api.NopLogger); !ok {
+						return api.TrackerCatalogSnapshot{}, api.TrackerRuntimeSnapshot{}, api.TrackerSelection{}, api.TrackerReleaseProjectionSet{},
+							errors.New("release-name projection rebuild did not suppress duplicate diagnostics")
+					}
+					break
+				}
+			}
+		}
 		if len(trackerIDs) == 0 {
 			trackerIDs = []api.TrackerID{"ALPHA", "BETA"}
 		}

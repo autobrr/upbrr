@@ -4,11 +4,54 @@
 package trackers
 
 import (
+	"context"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestWorkflowProjectorUsesContextLogger(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	if err := registry.RegisterDescriptor(Descriptor{
+		Name:              "EXAMPLE",
+		Definition:        stubDefinition{name: "EXAMPLE"},
+		UploadContentMode: UploadContentModeDescription,
+		Validation: ValidationPolicyBinding{
+			ID: "example-validation-v1",
+			Check: func(context.Context, api.TrackerValidationSubject, api.Logger) ([]api.RuleFailure, error) {
+				return []api.RuleFailure{NewRuleFailure("example_rule", "example reason", api.RuleDispositionStrict)}, nil
+			},
+		},
+	}); err != nil {
+		t.Fatalf("register tracker: %v", err)
+	}
+	rootLogger := &warningLogger{}
+	contextLogger := &warningLogger{}
+	projector, err := NewWorkflowProjector(registry, config.Config{}, rootLogger)
+	if err != nil {
+		t.Fatalf("new workflow projector: %v", err)
+	}
+
+	ctx := logging.WithOperationLogger(context.Background(), contextLogger)
+	if _, _, _, _, err := projector.Build(
+		ctx,
+		api.ReleaseSnapshot{},
+		api.UploadSubject{ReleaseName: "Example.Release.2026.1080p-GRP"},
+		[]api.TrackerID{"EXAMPLE"},
+		nil,
+		nil,
+		api.WorkflowExecutionModeNormal,
+	); err != nil {
+		t.Fatalf("build projections: %v", err)
+	}
+	if len(rootLogger.warnings) != 0 || len(contextLogger.warnings) != 1 {
+		t.Fatalf("projection warnings: root=%#v context=%#v", rootLogger.warnings, contextLogger.warnings)
+	}
+}
 
 func TestResolveTrackerIDsIgnoresUnsupportedConfiguredDefaults(t *testing.T) {
 	t.Parallel()

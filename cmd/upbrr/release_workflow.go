@@ -61,15 +61,18 @@ type cliReleaseWorkflowCore interface {
 }
 
 type cliWorkflowSession struct {
-	core           cliReleaseWorkflowCore
-	logger         api.Logger
-	current        releaseworkflow.CommandResult
-	intent         cliWorkflowIntent
-	uploadRequest  api.Request
-	idempotencyRun string
-	intentSequence uint64
-	progressWriter io.Writer
-	streams        cliIO
+	core               cliReleaseWorkflowCore
+	logger             api.Logger
+	current            releaseworkflow.CommandResult
+	intent             cliWorkflowIntent
+	uploadRequest      api.Request
+	idempotencyRun     string
+	intentSequence     uint64
+	printedProgress    map[api.OperationKind]struct{}
+	projectionsPrinted bool
+	eventLogState      cliWorkflowEventLogState
+	progressWriter     io.Writer
+	streams            cliIO
 }
 
 // cliWorkflowIntent is the detached CLI adapter input retained after the
@@ -160,9 +163,14 @@ func (s *cliWorkflowSession) waitForOperation(
 	ctx context.Context,
 	operation api.WorkflowOperationStatus,
 ) (api.WorkflowOperationStatus, error) {
-	printCLIWorkflowProgress(s.progressWriter, operation.Operation)
-	var eventLogState cliWorkflowEventLogState
-	if err := s.logNewOperationEvents(ctx, operation, &eventLogState); err != nil {
+	if _, printed := s.printedProgress[operation.Operation]; !printed {
+		if s.printedProgress == nil {
+			s.printedProgress = make(map[api.OperationKind]struct{})
+		}
+		s.printedProgress[operation.Operation] = struct{}{}
+		printCLIWorkflowProgress(s.progressWriter, operation.Operation)
+	}
+	if err := s.logNewOperationEvents(ctx, operation, &s.eventLogState); err != nil {
 		return api.WorkflowOperationStatus{}, err
 	}
 	for operation.Status == api.StageStatusQueued || operation.Status == api.StageStatusRunning {
@@ -196,7 +204,7 @@ func (s *cliWorkflowSession) waitForOperation(
 			return api.WorkflowOperationStatus{}, fmt.Errorf("upbrr: poll release workflow command: %w", err)
 		}
 		operation = current
-		if err := s.logNewOperationEvents(ctx, operation, &eventLogState); err != nil {
+		if err := s.logNewOperationEvents(ctx, operation, &s.eventLogState); err != nil {
 			return api.WorkflowOperationStatus{}, err
 		}
 	}
