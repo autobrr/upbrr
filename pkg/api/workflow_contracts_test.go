@@ -295,6 +295,43 @@ func TestReleaseWorkflowRejectsInvalidLineageAndBlockedStatus(t *testing.T) {
 	}
 }
 
+func TestDupeAssessmentAllowsNamelessSkippedResult(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 7, 20, 1, 2, 3, 0, time.UTC)
+	fingerprint := workflowTestFingerprint(t, "nameless-skipped-dupe")
+	assessment := DupeAssessment{
+		ID:               "dupes-1",
+		WorkflowID:       "workflow-1",
+		Revision:         1,
+		Release:          ReleaseSnapshotRef{ID: "release-1", Revision: 1},
+		ReleaseRef:       ReleaseRef{SourcePath: "Example.Release.2026", Generation: 1},
+		Selection:        TrackerSelectionRef{ID: "selection-1", Revision: 1},
+		ProjectionSet:    TrackerReleaseProjectionSetRef{ID: "projections-1", Revision: 1},
+		InputFingerprint: fingerprint,
+		Results: []TrackerDupeAssessment{{
+			TrackerID:             "OTW",
+			ProjectionFingerprint: fingerprint,
+			CriteriaFingerprint:   fingerprint,
+			Decision:              DupeDecisionSkipped,
+			Status:                StageStatusSkipped,
+			CheckedAt:             now,
+			FreshUntil:            now.Add(time.Hour),
+		}},
+		Status:    StageStatusCompleted,
+		CreatedAt: now,
+		ExpiresAt: now.Add(time.Hour),
+	}
+	if err := assessment.Validate(); err != nil {
+		t.Fatalf("validate nameless skipped dupe result: %v", err)
+	}
+
+	assessment.Results[0].Decision = DupeDecisionNoMatch
+	if err := assessment.Validate(); err == nil || !strings.Contains(err.Error(), "requires upload release name") {
+		t.Fatalf("expected nameless non-skipped result rejection, got %v", err)
+	}
+}
+
 func TestDirectUploadContractsValidateExactLineageAndTerminalOutcomes(t *testing.T) {
 	t.Parallel()
 

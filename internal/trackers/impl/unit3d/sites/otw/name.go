@@ -120,7 +120,7 @@ func isOTWNonDiscMultiSeason(meta api.UploadSubject) bool {
 	if isOTWCompleteDisc(meta) {
 		return false
 	}
-	seasons := make(map[string]struct{})
+	seasons := make(map[int]struct{})
 	for _, value := range append([]string{
 		meta.SeasonStr,
 		meta.ReleaseName,
@@ -128,7 +128,10 @@ func isOTWNonDiscMultiSeason(meta api.UploadSubject) bool {
 	}, meta.FileList...) {
 		for _, match := range otwSeasonPattern.FindAllStringSubmatch(value, -1) {
 			if len(match) > 1 {
-				seasons[match[1]] = struct{}{}
+				season, err := strconv.Atoi(match[1])
+				if err == nil {
+					seasons[season] = struct{}{}
+				}
 			}
 		}
 	}

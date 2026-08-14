@@ -424,7 +424,8 @@ type DupeMatchProjection struct {
 
 // TrackerDupeAssessment is one retained projection-bound duplicate result.
 type TrackerDupeAssessment struct {
-	TrackerID             TrackerID                `json:"trackerId"`
+	TrackerID TrackerID `json:"trackerId"`
+	// UploadReleaseName may be empty only when Decision is DupeDecisionSkipped.
 	UploadReleaseName     string                   `json:"uploadReleaseName"`
 	ProjectionFingerprint WorkflowFingerprint      `json:"projectionFingerprint"`
 	CriteriaFingerprint   WorkflowFingerprint      `json:"criteriaFingerprint"`

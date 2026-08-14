@@ -120,6 +120,21 @@ func TestBuildNameBlocksProvedNonDiscMultiSeason(t *testing.T) {
 	}
 }
 
+func TestOTWMultiSeasonDetectionNormalizesSeasonPadding(t *testing.T) {
+	t.Parallel()
+	meta := api.UploadSubject{
+		SeasonStr: "S01",
+		FileList: []string{
+			filepath.Join("Example Show - Season 1", "Example.Show.S01E01.mkv"),
+			filepath.Join("Example Show - Season 1", "Example.Show.S01E02.mkv"),
+		},
+		Type: "ENCODE",
+	}
+	if isOTWNonDiscMultiSeason(meta) {
+		t.Fatal("OTW treated Season 1 and S01 as different seasons")
+	}
+}
+
 func TestProfileBuildNameVersion(t *testing.T) {
 	t.Parallel()
 	if got := Profile().Site.BuildNameVersion; got != "v2" {

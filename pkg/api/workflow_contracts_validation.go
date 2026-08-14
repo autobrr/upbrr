@@ -778,8 +778,11 @@ func (s DupeAssessment) Validate() error {
 	hasFailed := false
 	for _, result := range s.Results {
 		id := normalizeTrackerID(result.TrackerID)
-		if id == "" || strings.TrimSpace(result.UploadReleaseName) == "" {
-			return errors.New("dupe result requires tracker id and upload release name")
+		if id == "" {
+			return errors.New("dupe result requires tracker id")
+		}
+		if strings.TrimSpace(result.UploadReleaseName) == "" && result.Decision != DupeDecisionSkipped {
+			return fmt.Errorf("dupe result %s requires upload release name", id)
 		}
 		if _, ok := seen[id]; ok {
 			return fmt.Errorf("dupe assessment contains duplicate tracker %s", id)
