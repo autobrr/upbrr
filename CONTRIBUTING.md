@@ -51,7 +51,7 @@ Notes:
 - **Coding:** Keep changes narrow and match the surrounding style. For Go, follow the rules in [`AGENTS.md`](./AGENTS.md) and let `golangci-lint` drive. For frontend work, also see [`webui/AGENTS.md`](./webui/AGENTS.md) and let the Lefthook Prettier + ESLint hooks do the work.
 - **Commit messages:** We enforce [Conventional Commits](https://www.conventionalcommits.org/) via a repo-local validator. See [Commit message format](#commit-message-format) below.
   - No need to force-push or rebase — we squash on merge.
-- **Pull requests:** Submit a PR with a clear description. Mark it _Draft_ if still in progress. Reference related issues. Update public documentation for user-visible changes; otherwise add `Documentation: not-required: <reason>` to the PR body.
+- **Pull requests:** Submit a PR with a clear description. Mark it _Draft_ if still in progress. Reference related issues. Update public documentation for user-visible changes.
 - **Code review:** Be open to feedback during review.
 
 ### Public documentation
@@ -63,7 +63,7 @@ pnpm --dir documentation install --frozen-lockfile
 pnpm --dir documentation run check
 ```
 
-Pull requests receive Netlify Deploy Previews. Production documentation is built from the exact release tag and published only by the release workflow. Never commit `documentation/build/`.
+Production documentation is built from the exact release tag and published only by the release workflow. Never commit `documentation/build/`.
 
 ## Git hooks (Lefthook)
 

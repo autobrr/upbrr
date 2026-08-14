@@ -22,6 +22,5 @@ pnpm --dir documentation run check
 ## Pull Requests And Publishing
 
 - Documentation changes must keep navigation, cross-links, generated indexes, and adjacent contract pages synchronized.
-- When no public documentation change is needed, add `Documentation: not-required: <reason>` to the PR body.
-- Netlify Deploy Previews are review surfaces. Production publishes only from the exact release tag through `.github/workflows/release.yml`.
+- Production publishes only from the exact release tag through `.github/workflows/release.yml`.
 - Never publish manually, expose Netlify credentials, change the production branch, or change DNS without direct user authorization.
