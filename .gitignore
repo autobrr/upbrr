@@ -2,6 +2,9 @@ webui/node_modules/
 webui/dist/
 webui/package.json.md5
 webui/tsconfig.tsbuildinfo
+documentation/node_modules/
+documentation/build/
+documentation/.docusaurus/
 internal/webserver/assets/*
 !internal/webserver/assets/.keep
 dist/
