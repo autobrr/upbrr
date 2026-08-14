@@ -16,7 +16,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/moistari/rls"
+	"github.com/autobrr/rls"
 	xhtml "golang.org/x/net/html"
 
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
