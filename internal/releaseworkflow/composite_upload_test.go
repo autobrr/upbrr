@@ -176,6 +176,62 @@ func TestCompositeUploadConfirmFeedbackResumesWithServerApproval(t *testing.T) {
 	}
 }
 
+func TestCompositeUploadReleaseNameFeedbackPreservesSiblingProjection(t *testing.T) {
+	t.Parallel()
+
+	module, _, _ := newCompositeUploadNameReviewTestModule(t)
+	request := compositeUploadTestRequest(true, api.ReleaseWorkflowUploadModeDebug, "composite-name-review")
+	request.Trackers.Include = []api.TrackerID{"ALPHA", "BETA", "GAMMA"}
+	started, err := module.StartUpload(context.Background(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("start name-review composite upload: %v", err)
+	}
+	blocked := waitCompositeUploadTestOperation(t, module, started)
+	actionIndex := slices.IndexFunc(blocked.Continuation.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionProvideTrackerInput && action.TrackerID == "ALPHA" &&
+			action.Status == api.RequiredActionStatusPending
+	})
+	if actionIndex < 0 || blocked.Projections == nil || blocked.Dupes == nil {
+		t.Fatalf("initial name-review stop = %#v", blocked)
+	}
+	action := blocked.Continuation.RequiredActions[actionIndex]
+	const reviewedName = "Example.Release.2026.REVIEWED-GRP"
+	resumed, err := module.SubmitUploadFeedback(context.Background(), testOwnerID, blocked.Workflow.ID, api.ReleaseWorkflowUploadFeedback{
+		Action: api.ReleaseWorkflowUploadActionIdentity{
+			ID:               action.ID,
+			WorkflowRevision: blocked.Workflow.Revision,
+		},
+		Response: api.ReleaseWorkflowUploadFeedbackResponse{
+			Kind: api.ReleaseWorkflowUploadFeedbackTrackerInput,
+			TrackerInput: &api.ReleaseWorkflowUploadTrackerInput{
+				TrackerID: "ALPHA",
+				Projection: api.ReleaseWorkflowUploadTrackerProjection{
+					UploadReleaseName: api.WorkflowPatch[string]{Present: true, Value: reviewedName},
+				},
+			},
+		},
+		IdempotencyKey: "confirm-alpha-name",
+	})
+	if err != nil {
+		t.Fatalf("submit composite name review: %v", err)
+	}
+	next := waitCompositeUploadTestOperation(t, module, resumed)
+	if next.Projections == nil || next.Dupes == nil {
+		t.Fatalf("name review discarded projections: %#v", next)
+	}
+	if !slices.ContainsFunc(next.Projections.Projections, func(projection api.TrackerReleaseProjection) bool {
+		return projection.TrackerID == "ALPHA" && projection.UploadReleaseName == reviewedName
+	}) {
+		t.Fatalf("reviewed ALPHA projection = %#v", next.Projections.Projections)
+	}
+	if !slices.ContainsFunc(next.Continuation.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionProvideTrackerInput && action.TrackerID == "BETA" &&
+			action.Status == api.RequiredActionStatusPending
+	}) {
+		t.Fatalf("sibling name-review action = %#v", next.Continuation.RequiredActions)
+	}
+}
+
 func TestCompositeUploadRuleAuthorizationResumesLiveUpload(t *testing.T) {
 	t.Parallel()
 
@@ -584,18 +640,25 @@ func compositeUploadTestRequest(
 func newCompositeUploadTestModule(
 	t *testing.T,
 ) (*Module, *MemoryRepository, *uploadPlanBuilderFake) {
-	return newCompositeUploadTestModuleWithWaiver(t, false)
+	return newCompositeUploadTestModuleConfigured(t, false, false)
 }
 
 func newCompositeUploadWaiverTestModule(
 	t *testing.T,
 ) (*Module, *MemoryRepository, *uploadPlanBuilderFake) {
-	return newCompositeUploadTestModuleWithWaiver(t, true)
+	return newCompositeUploadTestModuleConfigured(t, true, false)
 }
 
-func newCompositeUploadTestModuleWithWaiver(
+func newCompositeUploadNameReviewTestModule(
+	t *testing.T,
+) (*Module, *MemoryRepository, *uploadPlanBuilderFake) {
+	return newCompositeUploadTestModuleConfigured(t, false, true)
+}
+
+func newCompositeUploadTestModuleConfigured(
 	t *testing.T,
 	waivableRules bool,
+	releaseNameReview bool,
 ) (*Module, *MemoryRepository, *uploadPlanBuilderFake) {
 	t.Helper()
 	projections := trackerProjectionBuilderFunc(func(
@@ -603,7 +666,7 @@ func newCompositeUploadTestModuleWithWaiver(
 		_ api.ReleaseSnapshot,
 		_ api.UploadSubject,
 		trackerIDs []api.TrackerID,
-		_ map[api.TrackerID]api.TrackerProjectionInstructions,
+		instructions map[api.TrackerID]api.TrackerProjectionInstructions,
 		ruleAuthorizations map[api.TrackerID]api.WorkflowFingerprint,
 		executionMode api.WorkflowExecutionMode,
 	) (
@@ -617,19 +680,71 @@ func newCompositeUploadTestModuleWithWaiver(
 			trackerIDs = []api.TrackerID{"ALPHA", "BETA"}
 		}
 		catalog := testCatalog(t)
+		if releaseNameReview {
+			catalog.Trackers = append(catalog.Trackers, api.TrackerCatalogDescriptor{
+				TrackerID:         "GAMMA",
+				DisplayName:       "Gamma",
+				ProjectorVersion:  "v1",
+				PolicyFingerprint: testFingerprint(t, "gamma-policy"),
+			})
+		}
 		catalog.Trackers = slices.DeleteFunc(catalog.Trackers, func(descriptor api.TrackerCatalogDescriptor) bool {
 			return !slices.Contains(trackerIDs, descriptor.TrackerID)
 		})
+		catalog, err := catalog.WithFingerprint()
+		if err != nil {
+			return api.TrackerCatalogSnapshot{}, api.TrackerRuntimeSnapshot{}, api.TrackerSelection{}, api.TrackerReleaseProjectionSet{},
+				fmt.Errorf("fingerprint composite test catalog: %w", err)
+		}
 		runtime := testRuntime(t)
+		if releaseNameReview {
+			runtime.Trackers = append(runtime.Trackers, api.TrackerRuntimeEntry{
+				TrackerID:         "GAMMA",
+				Configured:        true,
+				ConfigFingerprint: testFingerprint(t, "gamma-config"),
+			})
+		}
 		runtime.Trackers = slices.DeleteFunc(runtime.Trackers, func(entry api.TrackerRuntimeEntry) bool {
 			return !slices.Contains(trackerIDs, entry.TrackerID)
 		})
 		projected := make([]api.TrackerReleaseProjection, 0, len(trackerIDs))
-		actions := make([]api.RequiredAction, 0, 1)
+		actions := make([]api.RequiredAction, 0, len(trackerIDs))
 		projectionInput := "composite-projection-input"
 		for _, trackerID := range trackerIDs {
-			projection := testProjection(t, trackerID, "Example.Release.2026."+string(trackerID)+"-GRP")
+			automaticName := "Example.Release.2026." + string(trackerID) + "-GRP"
+			projection := testProjection(t, trackerID, automaticName)
 			projection.DescriptionGroup = "alpha"
+			if releaseNameReview && trackerID != "GAMMA" {
+				projection.PolicyDecisions = []api.TrackerPolicyDecision{{
+					Code:     releaseNameConfirmationDecisionCode,
+					Decision: "confirmation_required",
+				}}
+				if instruction := instructions[trackerID]; instruction.UploadReleaseName.Present {
+					projection.UploadReleaseName = instruction.UploadReleaseName.Value
+					projection.AdditionalNames = []api.TrackerReleaseName{{
+						Role:  api.TrackerReleaseNameRoleSearch,
+						Value: automaticName,
+					}}
+					projection.ProjectorFingerprint = testFingerprint(t, string(trackerID)+"-projector-reviewed")
+					projection.InputFingerprint = testFingerprint(t, string(trackerID)+"-input-reviewed")
+					projection.PolicyDecisions[0].Decision = "confirmed"
+					projectionInput += "-" + strings.ToLower(string(trackerID)) + "-reviewed"
+				} else {
+					projection.UploadReady = false
+					projection.RequiredActions = []api.RequiredAction{{
+						Kind:           api.RequiredActionProvideTrackerInput,
+						TrackerID:      trackerID,
+						Prompt:         "Confirm the tracker release name.",
+						AllowsFreeText: true,
+						Options: []api.RequiredActionOption{{
+							Value: automaticName,
+							Label: automaticName,
+						}},
+					}}
+					actions = append(actions, projection.RequiredActions...)
+					projectionInput += "-" + strings.ToLower(string(trackerID)) + "-pending"
+				}
+			}
 			if waivableRules && trackerID == "ALPHA" {
 				waivableFingerprint := testFingerprint(t, "composite-waivable-rules")
 				projection.WaivableRuleFingerprint = waivableFingerprint
@@ -719,11 +834,15 @@ func newCompositeUploadTestModuleWithWaiver(
 		}, struct{}{}, nil
 	})
 	uploadPlans := &uploadPlanBuilderFake{testing: t}
+	preflight := compositeUploadReadyPreflightBuilder(t)
+	if releaseNameReview {
+		preflight = compositeUploadNameReviewPreflightBuilder(t)
+	}
 	module, repository := newTestModule(
 		t,
 		testPreparer(),
 		WithTrackerProjectionBuilder(projections),
-		WithTrackerPreflightBuilder(compositeUploadReadyPreflightBuilder(t)),
+		WithTrackerPreflightBuilder(preflight),
 		WithDupeAssessmentBuilder(dupes),
 		WithMediaArtifactBuilder(media),
 		WithDescriptionBuilder(&descriptionBuilderFake{testing: t}),
@@ -748,6 +867,36 @@ func compositeUploadReadyPreflightBuilder(t *testing.T) TrackerPreflightBuilder 
 			return api.TrackerPreflightAssessment{}, nil, fmt.Errorf("build composite upload test preflight: %w", err)
 		}
 		assessment.ExecutionMode = initial.ExecutionMode
+		return assessment, finalized, nil
+	})
+}
+
+func compositeUploadNameReviewPreflightBuilder(t *testing.T) TrackerPreflightBuilder {
+	t.Helper()
+	base := compositeUploadReadyPreflightBuilder(t)
+	return trackerPreflightBuilderFunc(func(
+		ctx context.Context,
+		subject api.UploadSubject,
+		catalog api.TrackerCatalogSnapshot,
+		runtime api.TrackerRuntimeSnapshot,
+		initial api.TrackerReleaseProjectionSet,
+		now time.Time,
+	) (api.TrackerPreflightAssessment, []api.TrackerReleaseProjection, error) {
+		assessment, finalized, err := base.Build(ctx, subject, catalog, runtime, initial, now)
+		if err != nil {
+			return api.TrackerPreflightAssessment{}, nil, fmt.Errorf("build name-review composite preflight: %w", err)
+		}
+		for index := range assessment.Results {
+			projectionIndex := slices.IndexFunc(initial.Projections, func(projection api.TrackerReleaseProjection) bool {
+				return projection.TrackerID == assessment.Results[index].TrackerID
+			})
+			if projectionIndex >= 0 {
+				assessment.Results[index].RequiredActions = append(
+					[]api.RequiredAction(nil),
+					initial.Projections[projectionIndex].RequiredActions...,
+				)
+			}
+		}
 		return assessment, finalized, nil
 	})
 }
