@@ -86,7 +86,7 @@ const config: Config = {
       },
     ],
     colorMode: {
-      defaultMode: "dark",
+      disableSwitch: false,
       respectPrefersColorScheme: true,
     },
     navbar: {
@@ -135,13 +135,6 @@ const config: Config = {
               label: "Issues",
               href: "https://github.com/autobrr/upbrr/issues",
             },
-          ],
-        },
-        {
-          title: "Machine-readable",
-          items: [
-            { label: "llms.txt", href: "https://upbrr.com/llms.txt" },
-            { label: "llms-full.txt", href: "https://upbrr.com/llms-full.txt" },
           ],
         },
       ],
