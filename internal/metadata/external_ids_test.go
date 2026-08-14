@@ -2655,6 +2655,32 @@ func TestApplyTVEpisodeMetadataIMDbTitleFallbackWithoutTVmaze(t *testing.T) {
 	}
 }
 
+func TestApplyTVEpisodeMetadataAnimeTVPackKeepsEpisodeEmpty(t *testing.T) {
+	svc := NewService(&fakeRepo{})
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	meta := preparationstate.State{
+		SourcePath: "[GRP] Example Release - Season 1 (BD 1080p x265 10-bit)",
+		VideoPath:  "[GRP] Example Release - S01E01 (BD 1080p x265 10-bit).mkv",
+		FileList: []string{
+			"[GRP] Example Release - S01E01 (BD 1080p x265 10-bit).mkv",
+			"[GRP] Example Release - S01E02 (BD 1080p x265 10-bit).mkv",
+		},
+		SeasonInt: 1,
+		SeasonStr: "S01",
+		TVPack:    true,
+		Anime:     true,
+	}
+	ids := &api.ExternalIdentity{TVDBID: 200, Category: "TV"}
+
+	updated := svc.applyTVEpisodeMetadata(ctx, meta, ids, nil, nil, &stubTVDB{}, &stubTVmaze{})
+
+	if updated.SeasonInt != 1 || updated.SeasonStr != "S01" || updated.EpisodeInt != 0 || updated.EpisodeStr != "" {
+		t.Fatalf("expected anime TV pack to remain S01, got season=%d/%q episode=%d/%q", updated.SeasonInt, updated.SeasonStr, updated.EpisodeInt, updated.EpisodeStr)
+	}
+}
+
 func TestApplyTVEpisodeMetadataStoresTVDBSeasonEpisodesForPack(t *testing.T) {
 	svc := NewService(&fakeRepo{})
 	tmdbClient := &stubTMDB{}

@@ -2144,7 +2144,7 @@ func (s *Service) applyTVEpisodeMetadata(
 		}
 	}
 
-	if meta.Anime && ids.TVDBID != 0 {
+	if meta.Anime && !meta.TVPack && ids.TVDBID != 0 {
 		extracted := seasonep.Extract(meta.SourcePath, meta)
 		absoluteEpisode := extracted.AbsoluteEpisode
 		if absoluteEpisode > 0 {
