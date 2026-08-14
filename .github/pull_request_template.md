@@ -4,7 +4,7 @@
 
 ## Documentation
 
-Documentation: <!-- Use `not-required: reason` when this PR does not change `documentation/`. -->
+Documentation: <!-- Use `not-required: reason` only when no public documentation update is needed. -->
 
 ## Validation
 

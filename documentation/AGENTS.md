@@ -13,8 +13,8 @@ Applies to the Docusaurus site published at `upbrr.com`.
 ## Checks
 
 ```powershell
-pnpm install --frozen-lockfile
-pnpm run check
+pnpm --dir documentation install --frozen-lockfile
+pnpm --dir documentation run check
 ```
 
 `check` runs formatting, TypeScript, strict link validation, and the production build. Never commit `build/` or `.docusaurus/`.
