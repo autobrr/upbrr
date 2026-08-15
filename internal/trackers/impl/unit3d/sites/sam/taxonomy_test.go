@@ -14,6 +14,20 @@ func TestCategoryID(t *testing.T) {
 	if got := resolveCategoryID(api.UploadSubject{Identity: api.ExternalIdentity{Category: api.CanonicalCategoryTV}, Anime: true}); got != "3" {
 		t.Fatalf("anime TV category ID = %q, want 3", got)
 	}
+	if got := resolveCategoryID(api.UploadSubject{
+		Identity: api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+		Anime:    true,
+		TVPack:   true,
+	}); got != "3" {
+		t.Fatalf("anime TV season category ID = %q, want 3", got)
+	}
+	if got := resolveCategoryID(api.UploadSubject{
+		Identity:   api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+		Anime:      true,
+		EpisodeInt: 1,
+	}); got != "3" {
+		t.Fatalf("anime TV episode category ID = %q, want 3", got)
+	}
 	if got := resolveCategoryID(api.UploadSubject{Identity: api.ExternalIdentity{Category: api.CanonicalCategoryTV}}); got != "2" {
 		t.Fatalf("non-anime TV category ID = %q, want 2", got)
 	}
