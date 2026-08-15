@@ -4,6 +4,10 @@
 package unit3d
 
 import (
+	"fmt"
+	"strings"
+
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -30,4 +34,19 @@ func (d *Definition) AuthPolicy() *trackers.AuthPolicy {
 			requirements,
 		)),
 	}
+}
+
+func registeredTorrentRSSKey(
+	trackerName string,
+	cfg config.TrackerConfig,
+	policy *RegisteredTorrentPolicy,
+) (string, error) {
+	if policy == nil || !policy.RequiresRSSKey {
+		return "", nil
+	}
+	rssKey := strings.TrimSpace(cfg.RSSKey)
+	if rssKey == "" {
+		return "", fmt.Errorf("trackers: %s missing rss_key", strings.ToUpper(strings.TrimSpace(trackerName)))
+	}
+	return rssKey, nil
 }

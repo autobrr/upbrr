@@ -24,16 +24,22 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// captureUnit3DLogger records warning messages from upload paths that may
-// return before reaching the HTTP test server.
+// captureUnit3DLogger records debug and warning messages from upload paths that
+// may return before reaching the HTTP test server.
 type captureUnit3DLogger struct {
 	mu       sync.Mutex
+	debug    []string
 	warnings []string
 }
 
 func (l *captureUnit3DLogger) Tracef(string, ...any) {}
-func (l *captureUnit3DLogger) Debugf(string, ...any) {}
 func (l *captureUnit3DLogger) Infof(string, ...any)  {}
+
+func (l *captureUnit3DLogger) Debugf(format string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.debug = append(l.debug, fmt.Sprintf(format, args...))
+}
 
 func (l *captureUnit3DLogger) Warnf(format string, args ...any) {
 	l.mu.Lock()
@@ -42,6 +48,17 @@ func (l *captureUnit3DLogger) Warnf(format string, args ...any) {
 }
 
 func (l *captureUnit3DLogger) Errorf(string, ...any) {}
+
+func (l *captureUnit3DLogger) containsDebug(value string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, message := range l.debug {
+		if strings.Contains(message, value) {
+			return true
+		}
+	}
+	return false
+}
 
 // containsWarning reports whether any captured warning contains value.
 func (l *captureUnit3DLogger) containsWarning(value string) bool {
@@ -831,6 +848,38 @@ func TestRegisteredTorrentRSSKeyRequiresConfiguredValue(t *testing.T) {
 	}
 	if got != "synthetic-rss-key" {
 		t.Fatal("configured RSS key was not normalized")
+	}
+}
+
+func TestPrepareUnit3DUploadLogsRegisteredTorrentRSSKeyReadiness(t *testing.T) {
+	policy := &RegisteredTorrentPolicy{RequiresRSSKey: true}
+
+	blockedLogger := &captureUnit3DLogger{}
+	_, err := prepareUnit3DUpload(context.Background(), trackers.PreparationInput{
+		Tracker: "LST",
+		Logger:  blockedLogger,
+	}, "https://tracker.example", policy)
+	if err == nil || !strings.Contains(err.Error(), "missing rss_key") {
+		t.Fatalf("missing RSS key error = %v", err)
+	}
+	if !blockedLogger.containsDebug("tracker=LST credential=rss_key decision=checking") {
+		t.Fatal("expected registered torrent RSS key check log")
+	}
+	if !blockedLogger.containsWarning("tracker=LST credential=rss_key decision=blocked") {
+		t.Fatal("expected blocked registered torrent RSS key decision log")
+	}
+
+	readyLogger := &captureUnit3DLogger{}
+	_, _ = prepareUnit3DUpload(context.Background(), trackers.PreparationInput{
+		Tracker:       "LST",
+		TrackerConfig: config.TrackerConfig{RSSKey: "synthetic-rss-key"},
+		Logger:        readyLogger,
+	}, "https://tracker.example", policy)
+	if !readyLogger.containsDebug("tracker=LST credential=rss_key decision=ready") {
+		t.Fatal("expected ready registered torrent RSS key decision log")
+	}
+	if readyLogger.containsDebug("synthetic-rss-key") {
+		t.Fatal("registered torrent RSS key was logged")
 	}
 }
 

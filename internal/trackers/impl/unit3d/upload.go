@@ -18,7 +18,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -167,9 +166,31 @@ func prepareUnit3DUpload(
 	registeredTorrent *RegisteredTorrentPolicy,
 	profiles ...SiteProfile,
 ) (trackers.PreparedOperation, error) {
+	logger := req.Logger
+	if logger == nil {
+		logger = api.NopLogger{}
+	}
+	requiresRSSKey := registeredTorrent != nil && registeredTorrent.RequiresRSSKey
+	trackerName := strings.ToUpper(strings.TrimSpace(req.Tracker))
+	if requiresRSSKey {
+		logger.Debugf(
+			"trackers: registered torrent auth check tracker=%s credential=rss_key decision=checking",
+			trackerName,
+		)
+	}
 	rssKey, err := registeredTorrentRSSKey(req.Tracker, req.TrackerConfig, registeredTorrent)
 	if err != nil {
+		logger.Warnf(
+			"trackers: registered torrent auth check tracker=%s credential=rss_key decision=blocked",
+			trackerName,
+		)
 		return trackers.PreparedOperation{}, err
+	}
+	if requiresRSSKey {
+		logger.Debugf(
+			"trackers: registered torrent auth check tracker=%s credential=rss_key decision=ready",
+			trackerName,
+		)
 	}
 	preview, err := buildUploadDryRunUnit3D(ctx, req, configuredBaseURL, profiles...)
 	if err != nil {
@@ -182,10 +203,6 @@ func prepareUnit3DUpload(
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s upload blocked: %s", preview.Tracker, preview.Message)
 	}
 
-	logger := req.Logger
-	if logger == nil {
-		logger = api.NopLogger{}
-	}
 	torrentPath := preparedFilePath(preview.Files, "torrent")
 	nfoPath := preparedFilePath(preview.Files, "nfo")
 	payload, contentType, err := buildMultipartPayload(preview.Payload, torrentPath, nfoPath, logger)
@@ -193,7 +210,7 @@ func prepareUnit3DUpload(
 		return trackers.PreparedOperation{}, err
 	}
 	baseURL, uploadURL := resolveUnit3DURLs(configuredBaseURL)
-	trackerName := preview.Tracker
+	trackerName = preview.Tracker
 	releaseName := preview.ReleaseName
 	apiKey := strings.TrimSpace(req.TrackerConfig.APIKey)
 	return trackers.NewPreparedOperation(preview, func(submitCtx context.Context) (api.UploadSummary, error) {
@@ -212,21 +229,6 @@ func prepareUnit3DUpload(
 			logger,
 		)
 	}, nil), nil
-}
-
-func registeredTorrentRSSKey(
-	trackerName string,
-	cfg config.TrackerConfig,
-	policy *RegisteredTorrentPolicy,
-) (string, error) {
-	if policy == nil || !policy.RequiresRSSKey {
-		return "", nil
-	}
-	rssKey := strings.TrimSpace(cfg.RSSKey)
-	if rssKey == "" {
-		return "", fmt.Errorf("trackers: %s missing rss_key", strings.ToUpper(strings.TrimSpace(trackerName)))
-	}
-	return rssKey, nil
 }
 
 func preparedFilePath(files []api.TrackerDryRunFile, field string) string {
