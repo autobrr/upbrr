@@ -1063,6 +1063,9 @@ func (e *workflowUploadExecution) Execute(
 		case alreadyInjected:
 			outcome.ClientInjected = true
 			outcome.ClientInjectionStatus = api.StageStatusCompleted
+		case result.Summary.PendingPublication:
+			outcome.ClientInjectionStatus = api.StageStatusSkipped
+			outcome.ClientInjectionMessage = "Client injection skipped while tracker publication is pending."
 		case e.noSeed:
 			outcome.ClientInjectionStatus = api.StageStatusSkipped
 		case !hasUploaded:

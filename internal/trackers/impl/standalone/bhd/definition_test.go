@@ -415,6 +415,79 @@ func TestUploadDoesNotRetryInvalidIMDb(t *testing.T) {
 	}
 }
 
+func TestUploadClassifiesDraftAndLiveResponses(t *testing.T) {
+	tests := []struct {
+		name               string
+		response           string
+		wantErr            string
+		wantID             string
+		wantPendingPublish bool
+	}{
+		{
+			name:               "draft",
+			response:           `{"status_code":1,"status_message":"Torrent saved as draft"}`,
+			wantPendingPublish: true,
+		},
+		{
+			name:     "live",
+			response: `{"status_code":2,"status_message":"https://beyond-hd.me/torrent/download/example.123456.torrent"}`,
+			wantID:   "123456",
+		},
+		{
+			name:     "live without torrent id",
+			response: `{"status_code":2,"status_message":"Upload complete"}`,
+			wantErr:  "torrent id was not returned",
+		},
+		{
+			name:     "unsupported status",
+			response: `{"status_code":3,"status_message":"Unexpected response"}`,
+			wantErr:  "unsupported upload status code 3",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprint(w, test.response)
+			}))
+			defer server.Close()
+
+			summary, err := submitPreparedUpload(
+				context.Background(),
+				trackers.PreparationInput{Logger: api.NopLogger{}},
+				uploadState{},
+				server.URL,
+				nil,
+				"application/octet-stream",
+				"",
+				"",
+			)
+			if test.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+					t.Fatalf("expected error containing %q, got %v", test.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("submit upload: %v", err)
+			}
+			if summary.Uploaded != 1 || summary.PendingPublication != test.wantPendingPublish {
+				t.Fatalf("unexpected upload summary: %#v", summary)
+			}
+			if test.wantID == "" {
+				if len(summary.UploadedTorrents) != 0 {
+					t.Fatalf("draft must not return registered torrent authority: %#v", summary.UploadedTorrents)
+				}
+				return
+			}
+			if len(summary.UploadedTorrents) != 1 || summary.UploadedTorrents[0].TorrentID != test.wantID {
+				t.Fatalf("unexpected uploaded torrent: %#v", summary.UploadedTorrents)
+			}
+		})
+	}
+}
+
 func TestSendUploadRejectsOversizedResponseBody(t *testing.T) {
 	tmp := t.TempDir()
 	torrentPath := filepath.Join(tmp, "Example.torrent")
