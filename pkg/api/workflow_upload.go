@@ -412,12 +412,13 @@ const (
 	// Deprecated: tracker authentication must be resolved outside upload workflows.
 	ReleaseWorkflowUploadFeedbackTrackerAuthentication ReleaseWorkflowUploadFeedbackKind = "trackerAuthentication"
 	// Deprecated: tracker two-factor authentication must be resolved outside upload workflows.
-	ReleaseWorkflowUploadFeedbackTwoFactor         ReleaseWorkflowUploadFeedbackKind = "twoFactor"
-	ReleaseWorkflowUploadFeedbackTrackerInput      ReleaseWorkflowUploadFeedbackKind = "trackerInput"
-	ReleaseWorkflowUploadFeedbackQuestionnaire     ReleaseWorkflowUploadFeedbackKind = "questionnaire"
-	ReleaseWorkflowUploadFeedbackRuleAuthorization ReleaseWorkflowUploadFeedbackKind = "ruleAuthorization"
-	ReleaseWorkflowUploadFeedbackDuplicateReview   ReleaseWorkflowUploadFeedbackKind = "duplicateReview"
-	ReleaseWorkflowUploadFeedbackTrackerApproval   ReleaseWorkflowUploadFeedbackKind = "trackerApproval"
+	ReleaseWorkflowUploadFeedbackTwoFactor          ReleaseWorkflowUploadFeedbackKind = "twoFactor"
+	ReleaseWorkflowUploadFeedbackTrackerInput       ReleaseWorkflowUploadFeedbackKind = "trackerInput"
+	ReleaseWorkflowUploadFeedbackQuestionnaire      ReleaseWorkflowUploadFeedbackKind = "questionnaire"
+	ReleaseWorkflowUploadFeedbackRuleAuthorization  ReleaseWorkflowUploadFeedbackKind = "ruleAuthorization"
+	ReleaseWorkflowUploadFeedbackTrackerPreparation ReleaseWorkflowUploadFeedbackKind = "trackerPreparation"
+	ReleaseWorkflowUploadFeedbackDuplicateReview    ReleaseWorkflowUploadFeedbackKind = "duplicateReview"
+	ReleaseWorkflowUploadFeedbackTrackerApproval    ReleaseWorkflowUploadFeedbackKind = "trackerApproval"
 	// Deprecated: final upload approval is no longer emitted by runtime workflows.
 	ReleaseWorkflowUploadFeedbackUploadApproval ReleaseWorkflowUploadFeedbackKind = "uploadApproval"
 	ReleaseWorkflowUploadFeedbackReprepare      ReleaseWorkflowUploadFeedbackKind = "reprepare"
@@ -449,6 +450,7 @@ type ReleaseWorkflowUploadFeedbackResponse struct {
 	TrackerInput          *ReleaseWorkflowUploadTrackerInput          `json:"trackerInput,omitempty"`
 	Questionnaire         *ReleaseWorkflowUploadQuestionnaire         `json:"questionnaire,omitempty"`
 	RuleAuthorization     *ReleaseWorkflowUploadConfirmation          `json:"ruleAuthorization,omitempty"`
+	TrackerPreparation    *ReleaseWorkflowUploadConfirmation          `json:"trackerPreparation,omitempty"`
 	DuplicateReview       *ReleaseWorkflowUploadDuplicateReview       `json:"duplicateReview,omitempty"`
 	TrackerApproval       *ReleaseWorkflowUploadTrackerApproval       `json:"trackerApproval,omitempty"`
 	// Deprecated: retained for v1 decoding compatibility.
@@ -470,9 +472,10 @@ type ReleaseWorkflowUploadMetadataSelection struct {
 	Facts          *ReleaseWorkflowUploadFacts `json:"facts,omitempty"`
 }
 
-// ReleaseWorkflowUploadConfirmation positively acknowledges a gated action.
+// ReleaseWorkflowUploadConfirmation carries one confirmation-style decision.
 type ReleaseWorkflowUploadConfirmation struct {
-	Confirmed bool `json:"confirmed"`
+	Confirmed        bool `json:"confirmed"`
+	confirmedOmitted bool
 }
 
 // ReleaseWorkflowUploadApproval authorizes an exact subset of the reviewed tracker operations.
@@ -558,6 +561,7 @@ func (f ReleaseWorkflowUploadFeedback) Validate() error {
 		{ReleaseWorkflowUploadFeedbackTrackerInput, f.Response.TrackerInput != nil},
 		{ReleaseWorkflowUploadFeedbackQuestionnaire, f.Response.Questionnaire != nil},
 		{ReleaseWorkflowUploadFeedbackRuleAuthorization, f.Response.RuleAuthorization != nil},
+		{ReleaseWorkflowUploadFeedbackTrackerPreparation, f.Response.TrackerPreparation != nil},
 		{ReleaseWorkflowUploadFeedbackDuplicateReview, f.Response.DuplicateReview != nil},
 		{ReleaseWorkflowUploadFeedbackTrackerApproval, f.Response.TrackerApproval != nil},
 		{ReleaseWorkflowUploadFeedbackUploadApproval, f.Response.UploadApproval != nil},
@@ -606,6 +610,10 @@ func (f ReleaseWorkflowUploadFeedback) Validate() error {
 	case ReleaseWorkflowUploadFeedbackRuleAuthorization:
 		if !f.Response.RuleAuthorization.Confirmed {
 			return errors.New("rule authorization feedback requires confirmation")
+		}
+	case ReleaseWorkflowUploadFeedbackTrackerPreparation:
+		if f.Response.TrackerPreparation.confirmedOmitted {
+			return errors.New("tracker preparation feedback requires an explicit confirmed member")
 		}
 	case ReleaseWorkflowUploadFeedbackTrackerApproval:
 		if !f.Response.TrackerApproval.Confirmed {

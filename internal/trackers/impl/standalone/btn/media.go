@@ -20,6 +20,7 @@ import (
 	xhtml "golang.org/x/net/html"
 
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -28,27 +29,70 @@ import (
 // POST. TVDB-backed uploads submit the series id plus season or episode token;
 // scene-name autofill is used only when no TVDB series id is available.
 func buildBTNAutofillPayload(meta api.UploadSubject, releaseName string) (url.Values, string) {
+	if meta.Identity.TVDBID <= 0 {
+		return buildBTNReleaseNameAutofillPayload(meta, releaseName)
+	}
 	autofillPayload := url.Values{}
 	uploadType := resolveUploadType(meta)
 	season, episode := resolveBTNTVSeasonEpisode(meta)
 	autofillPayload.Set("type", uploadType)
 	autofillPayload.Set("tvdb", "Get Info")
 
-	if meta.Identity.TVDBID > 0 {
-		autofillPayload.Set("scene_yesno", "No")
-		autofillPayload.Set("auto_series", strconv.Itoa(meta.Identity.TVDBID))
+	autofillPayload.Set("scene_yesno", "No")
+	autofillPayload.Set("auto_series", strconv.Itoa(meta.Identity.TVDBID))
 
-		if uploadType == "Episode" {
-			autofillPayload.Set("auto_title", fmt.Sprintf("S%02dE%02d", season, episode))
-		} else {
-			autofillPayload.Set("auto_season", fmt.Sprintf("S%02d", season))
-		}
+	if uploadType == "Episode" {
+		autofillPayload.Set("auto_title", fmt.Sprintf("S%02dE%02d", season, episode))
 	} else {
-		autofillPayload.Set("scene_yesno", "Yes")
-		autofillPayload.Set("autofill", strings.TrimSpace(releaseName))
+		autofillPayload.Set("auto_season", fmt.Sprintf("S%02d", season))
 	}
 
 	return autofillPayload, uploadType
+}
+
+// buildBTNReleaseNameAutofillPayload forces BTN's scene-name autofill even
+// when upbrr has a TVDB series ID.
+func buildBTNReleaseNameAutofillPayload(meta api.UploadSubject, releaseName string) (url.Values, string) {
+	uploadType := resolveUploadType(meta)
+	autofillPayload := url.Values{}
+	autofillPayload.Set("type", uploadType)
+	autofillPayload.Set("tvdb", "Get Info")
+	autofillPayload.Set("scene_yesno", "Yes")
+	autofillPayload.Set("autofill", strings.TrimSpace(releaseName))
+	return autofillPayload, uploadType
+}
+
+func prepareUploadDataWithAutofill(
+	ctx context.Context,
+	req trackers.PreparationInput,
+	uploadCtx uploadContext,
+	releaseNameAutofill bool,
+) (map[string]string, error) {
+	var nameFailure *trackers.PreparationFailure
+	req, nameFailure = trackers.PrepareInputWithReleaseNamePolicy(req, Profile().ReleaseNamePolicy)
+	if nameFailure != nil {
+		return nil, nameFailure
+	}
+	if _, err := validateBTNTVPayloadMetadata(req.Meta); err != nil {
+		return nil, err
+	}
+	releaseName, err := req.ReviewedUploadName()
+	if err != nil {
+		return nil, fmt.Errorf("trackers: BTN reviewed upload name: %w", err)
+	}
+
+	var autofillPayload url.Values
+	var uploadType string
+	if releaseNameAutofill {
+		autofillPayload, uploadType = buildBTNReleaseNameAutofillPayload(req.Meta, releaseName)
+	} else {
+		autofillPayload, uploadType = buildBTNAutofillPayload(req.Meta, releaseName)
+	}
+	fields, err := requestBTNAutofillFields(ctx, uploadCtx, autofillPayload, uploadType)
+	if err != nil {
+		return nil, err
+	}
+	return buildBTNUploadPayload(req, fields)
 }
 
 // preferredBTNTVDBSeriesName returns the English TVDB name, falling back to the native name.
@@ -64,7 +108,7 @@ func preferredBTNTVDBSeriesName(meta api.UploadSubject) string {
 
 // btnAutofillArtistAction requests confirmation unless BTN's artist exactly matches a TVDB name or alias.
 // Missing TVDB identity or primary-name metadata disables the check.
-func btnAutofillArtistAction(meta api.UploadSubject, artist string) *api.RequiredAction {
+func btnAutofillArtistAction(meta api.UploadSubject, artist string, releaseNameTried bool) *api.RequiredAction {
 	if meta.Identity.TVDBID <= 0 || meta.ProviderMetadata.TVDB == nil {
 		return nil
 	}
@@ -82,14 +126,19 @@ func btnAutofillArtistAction(meta api.UploadSubject, artist string) *api.Require
 	if expected == "" {
 		return nil
 	}
+	prompt := "BTN autofill returned series %q, but upbrr tvdb is a different series %q. Continue uploading this result to BTN?"
+	declineLabel := "Try release-name autofill"
+	if releaseNameTried {
+		prompt = "BTN release-name autofill also returned series %q, but upbrr tvdb is a different series %q. Continue uploading this result to BTN?"
+		declineLabel = "Skip BTN"
+	}
 	return &api.RequiredAction{
-		Kind: api.RequiredActionAuthorizeRules,
-		Prompt: fmt.Sprintf(
-			"BTN autofill returned series %q, but TVDB %d identifies %q. Continue uploading this result to BTN?",
-			artist,
-			meta.Identity.TVDBID,
-			expected,
-		),
+		Kind:   api.RequiredActionResolveTrackerPreparation,
+		Prompt: fmt.Sprintf(prompt, artist, expected),
+		Options: []api.RequiredActionOption{
+			{Value: "confirm", Label: "Continue upload"},
+			{Value: "resolve", Label: declineLabel},
+		},
 	}
 }
 

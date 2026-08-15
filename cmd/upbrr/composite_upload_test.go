@@ -411,6 +411,49 @@ func TestCLICompositeRuleAuthorizationHonorsInteractionMode(t *testing.T) {
 	}
 }
 
+func TestCLICompositeTrackerPreparationDeclineReturnsFeedback(t *testing.T) {
+	session := &cliWorkflowSession{
+		intent: cliWorkflowIntent{interaction: api.InteractionModeUnattendedConfirm},
+	}
+	action := api.RequiredAction{
+		ID:               "action-btn-autofill",
+		Kind:             api.RequiredActionResolveTrackerPreparation,
+		WorkflowRevision: 4,
+		Prompt:           "Continue with BTN's autofill result?",
+	}
+	var (
+		feedback api.ReleaseWorkflowUploadFeedback
+		declined bool
+		err      error
+	)
+	captureStdout(t, func() {
+		feedback, declined, err = session.collectCompositeUploadFeedback(
+			context.Background(),
+			bufio.NewReader(strings.NewReader("n\n")),
+			config.Config{},
+			api.NopLogger{},
+			action,
+		)
+	})
+	if err != nil || declined || feedback.Response.Kind != api.ReleaseWorkflowUploadFeedbackTrackerPreparation ||
+		feedback.Response.TrackerPreparation == nil || feedback.Response.TrackerPreparation.Confirmed {
+		t.Fatalf("tracker preparation feedback = %#v declined=%t err=%v", feedback, declined, err)
+	}
+
+	session.intent.interaction = api.InteractionModeUnattended
+	feedback, declined, err = session.collectCompositeUploadFeedback(
+		context.Background(),
+		nil,
+		config.Config{},
+		api.NopLogger{},
+		action,
+	)
+	if err != nil || declined || feedback.Response.Kind != api.ReleaseWorkflowUploadFeedbackTrackerPreparation ||
+		feedback.Response.TrackerPreparation == nil || feedback.Response.TrackerPreparation.Confirmed {
+		t.Fatalf("strict unattended tracker preparation feedback = %#v declined=%t err=%v", feedback, declined, err)
+	}
+}
+
 func TestCLICompositeDuplicateReviewPrintsMatchesAndSeparatesTrackers(t *testing.T) {
 	session := &cliWorkflowSession{
 		current: releaseworkflow.CommandResult{

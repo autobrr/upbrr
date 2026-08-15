@@ -9,6 +9,25 @@ import (
 	"fmt"
 )
 
+// UnmarshalJSON preserves whether confirmation was omitted while keeping
+// explicit false distinct for tracker-preparation decisions.
+func (c *ReleaseWorkflowUploadConfirmation) UnmarshalJSON(payload []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		return fmt.Errorf("unmarshal workflow confirmation: %w", err)
+	}
+	*c = ReleaseWorkflowUploadConfirmation{confirmedOmitted: true}
+	raw, ok := fields["confirmed"]
+	if !ok || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil
+	}
+	if err := json.Unmarshal(raw, &c.Confirmed); err != nil {
+		return fmt.Errorf("unmarshal workflow confirmation value: %w", err)
+	}
+	c.confirmedOmitted = false
+	return nil
+}
+
 // WorkflowPatch preserves JSON absence, null/reset, and explicit values including zero values.
 // Present=false means leave unchanged; Present=true with Reset=true means return to automatic.
 type WorkflowPatch[T any] struct {

@@ -5076,6 +5076,7 @@
           "trackerInput",
           "questionnaire",
           "ruleAuthorization",
+          "trackerPreparation",
           "duplicateReview",
           "trackerApproval",
           "uploadApproval",
@@ -5193,6 +5194,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/ReleaseWorkflowUploadTrackerInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "trackerPreparation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseWorkflowUploadConfirmation"
               },
               {
                 "type": "null"

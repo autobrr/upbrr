@@ -719,6 +719,19 @@ func (s *cliWorkflowSession) collectContinuationActionAnswers(
 				WorkflowRevision: s.current.Workflow.Revision,
 				Confirmed:        &confirmed,
 			})
+		case api.RequiredActionResolveTrackerPreparation:
+			if s.intent.interaction == api.InteractionModeUnattended {
+				continue
+			}
+			confirmed, err := promptYesNo(reader, action.Prompt+" [y/N]: ", false)
+			if err != nil {
+				return nil, false, err
+			}
+			answers = append(answers, api.RequiredActionAnswer{
+				ActionID:         action.ID,
+				WorkflowRevision: s.current.Workflow.Revision,
+				Confirmed:        &confirmed,
+			})
 		case api.RequiredActionReconcileSubmission:
 			if s.intent.interaction == api.InteractionModeUnattended {
 				return nil, false, errors.New("upbrr: unattended external-effect reconciliation requires manual confirmation")
