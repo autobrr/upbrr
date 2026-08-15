@@ -260,7 +260,11 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 		s.logger.Debugf("metadata: media details service=%q service_longname=%q", meta.Service, meta.ServiceLongName)
 	}
 
+	meta.HardcodedSubs = hardcodedSubsFromMeta(meta)
 	applyMetadataOverrides(&meta)
+	if s.logger != nil {
+		s.logger.Debugf("metadata: media details hardcoded_subs=%t", meta.HardcodedSubs)
+	}
 	meta.Audio = applyAudioLanguagePrefix(meta.Audio, meta)
 	RebuildReleaseName(&meta, s.logger)
 
@@ -352,6 +356,9 @@ func applyMetadataOverrides(meta *preparationstate.State) {
 	}
 	if overrides.Commentary != nil {
 		meta.HasCommentary = *overrides.Commentary
+	}
+	if overrides.HardcodedSubs != nil {
+		meta.HardcodedSubs = *overrides.HardcodedSubs
 	}
 	if overrides.WebDV != nil {
 		meta.WebDV = *overrides.WebDV
@@ -1636,6 +1643,23 @@ func containsExactHybrid(values []string) bool {
 	return slices.ContainsFunc(values, func(value string) bool {
 		return strings.EqualFold(strings.TrimSpace(value), "Hybrid")
 	})
+}
+
+// hardcodedSubsFromMeta centralizes automatic marker detection before explicit metadata overrides.
+func hardcodedSubsFromMeta(meta preparationstate.State) bool {
+	values := make([]string, 0, 5+len(meta.FileList)+len(meta.Release.Edition)+len(meta.Release.Other))
+	values = append(values,
+		pathutil.Base(meta.SourcePath),
+		pathutil.Base(meta.VideoPath),
+		meta.Filename,
+		meta.ReleaseName,
+		meta.ReleaseNameNoTag,
+	)
+	values = append(values, meta.FileList...)
+	values = append(values, meta.Release.Edition...)
+	values = append(values, meta.Release.Other...)
+	value := strings.ToLower(strings.Join(values, " "))
+	return strings.Contains(value, "hardsub") || strings.Contains(value, "hard-sub") || strings.Contains(value, "hardcoded")
 }
 
 // repackFromMeta scans source basenames and parsed release tokens so repack

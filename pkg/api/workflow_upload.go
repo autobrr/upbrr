@@ -177,11 +177,13 @@ type ReleaseWorkflowUploadReleaseName struct {
 }
 
 // ReleaseWorkflowUploadMetadata contains presence-aware metadata overrides.
+// A nil HardcodedSubs preserves automatic marker detection.
 type ReleaseWorkflowUploadMetadata struct {
 	Distributor      *string `json:"distributor,omitempty"`
 	OriginalLanguage *string `json:"originalLanguage,omitempty"`
 	PersonalRelease  *bool   `json:"personalRelease,omitempty"`
 	Commentary       *bool   `json:"commentary,omitempty"`
+	HardcodedSubs    *bool   `json:"hardcodedSubs,omitempty"`
 	WebDV            *bool   `json:"webDv,omitempty"`
 	StreamOptimized  *bool   `json:"streamOptimized,omitempty"`
 	Anime            *bool   `json:"anime,omitempty"`

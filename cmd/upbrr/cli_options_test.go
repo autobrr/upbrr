@@ -939,6 +939,7 @@ func TestBuildCLIRequestMetadataOverrides(t *testing.T) {
 		"--distributor", "Criterion",
 		"--original-language", "ja",
 		"--commentary",
+		"-hc",
 		"--personalrelease",
 		"--stream",
 		"--webdv",
@@ -960,6 +961,9 @@ func TestBuildCLIRequestMetadataOverrides(t *testing.T) {
 	}
 	if req.MetadataOverrides.Commentary == nil || !*req.MetadataOverrides.Commentary {
 		t.Fatalf("expected commentary override, got %#v", req.MetadataOverrides.Commentary)
+	}
+	if req.MetadataOverrides.HardcodedSubs == nil || !*req.MetadataOverrides.HardcodedSubs {
+		t.Fatalf("expected hardcoded subtitle override, got %#v", req.MetadataOverrides.HardcodedSubs)
 	}
 	if req.MetadataOverrides.PersonalRelease == nil || !*req.MetadataOverrides.PersonalRelease {
 		t.Fatalf("expected personal release override, got %#v", req.MetadataOverrides.PersonalRelease)

@@ -15,6 +15,25 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestCompositeUploadFactInstructionsPreservesHardcodedSubs(t *testing.T) {
+	t.Parallel()
+
+	enabled := true
+	instructions, err := compositeUploadFactInstructions(api.ReleaseWorkflowUploadFacts{
+		Metadata: api.ReleaseWorkflowUploadMetadata{HardcodedSubs: &enabled},
+	}, nil)
+	if err != nil {
+		t.Fatalf("map composite upload facts: %v", err)
+	}
+	if instructions.Metadata.HardcodedSubs == nil || !*instructions.Metadata.HardcodedSubs {
+		t.Fatalf("hardcoded subtitle override = %#v", instructions.Metadata.HardcodedSubs)
+	}
+	enabled = false
+	if !*instructions.Metadata.HardcodedSubs {
+		t.Fatal("hardcoded subtitle override aliases request state")
+	}
+}
+
 func TestCompositeUploadStrictUnattendedStopsForTrackerApproval(t *testing.T) {
 	t.Parallel()
 

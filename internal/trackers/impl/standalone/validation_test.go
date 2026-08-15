@@ -12,6 +12,15 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestUploadSubjectForValidationPreservesHardcodedSubs(t *testing.T) {
+	t.Parallel()
+
+	subject := UploadSubjectForValidation(api.TrackerValidationSubject{HardcodedSubs: true})
+	if !subject.HardcodedSubs {
+		t.Fatal("upload subject lost hardcoded subtitle fact")
+	}
+}
+
 func TestValidatePreparationExecutionPolicy(t *testing.T) {
 	t.Parallel()
 

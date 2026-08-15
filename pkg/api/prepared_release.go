@@ -160,6 +160,7 @@ type EpisodeFacts struct {
 }
 
 // MediaFacts contains finalized reusable media characteristics.
+// HardcodedSubs is resolved from automatic detection and then any explicit override.
 type MediaFacts struct {
 	AudioLanguages    []string
 	SubtitleLanguages []string
@@ -167,6 +168,7 @@ type MediaFacts struct {
 	Audio             string
 	Channels          string
 	Commentary        bool
+	HardcodedSubs     bool
 	ThreeD            string
 	Source            string
 	Type              string

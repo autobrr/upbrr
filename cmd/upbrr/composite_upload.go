@@ -826,6 +826,7 @@ func compositeCLIFacts(instructions api.ReleaseFactInstructions) api.ReleaseWork
 			OriginalLanguage: cloneCLIStringPointer(instructions.Metadata.OriginalLanguage),
 			PersonalRelease:  cloneCLIBoolPointer(instructions.Metadata.PersonalRelease),
 			Commentary:       cloneCLIBoolPointer(instructions.Metadata.Commentary),
+			HardcodedSubs:    cloneCLIBoolPointer(instructions.Metadata.HardcodedSubs),
 			WebDV:            cloneCLIBoolPointer(instructions.Metadata.WebDV),
 			StreamOptimized:  cloneCLIBoolPointer(instructions.Metadata.StreamOptimized),
 			Anime:            cloneCLIBoolPointer(instructions.Metadata.Anime),

@@ -276,7 +276,7 @@ describe("InputPage", () => {
     });
   });
 
-  it("edits distributor and original-language metadata", () => {
+  it("edits metadata overrides", () => {
     const facet = readyInputFacet(1);
     render(
       <InputPage
@@ -304,5 +304,8 @@ describe("InputPage", () => {
       target: { value: "ja" },
     });
     expect(facet.changeMetadata).toHaveBeenLastCalledWith({ OriginalLanguage: "ja" });
+
+    fireEvent.click(screen.getByLabelText("Hardcoded subtitles"));
+    expect(facet.changeMetadata).toHaveBeenLastCalledWith({ HardcodedSubs: true });
   });
 });

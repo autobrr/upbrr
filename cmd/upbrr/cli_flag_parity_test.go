@@ -109,6 +109,7 @@ func cliCompositeFlagManifest() map[string]cliCompositeFlagClass {
 		"force-recheck",
 		"foreign",
 		"get-dvd-menus",
+		"hardcoded-subs",
 		"hdb",
 		"imdb",
 		"imghost",

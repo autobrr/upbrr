@@ -19,6 +19,7 @@ func TestMapPreparationRequestPreservesSingleSourceIntent(t *testing.T) {
 	tag := "GRP"
 	distributor := "Example Distributor"
 	personalRelease := false
+	hardcodedSubs := true
 	omitEpisodeTitle := true
 	omitDistributor := true
 	client := "qbit"
@@ -43,6 +44,7 @@ func TestMapPreparationRequestPreservesSingleSourceIntent(t *testing.T) {
 		MetadataOverrides: MetadataOverrides{
 			Distributor:     &distributor,
 			PersonalRelease: &personalRelease,
+			HardcodedSubs:   &hardcodedSubs,
 		},
 		SourceLookupURL:    "  https://example.invalid/source  ",
 		TrackerIDOverrides: map[string]string{"btn": "123"},
@@ -76,7 +78,11 @@ func TestMapPreparationRequestPreservesSingleSourceIntent(t *testing.T) {
 				NoEpisodeTitle: new(true),
 				NoDistributor:  new(true),
 			},
-			Metadata:     MetadataOverrides{Distributor: new("Example Distributor"), PersonalRelease: new(false)},
+			Metadata: MetadataOverrides{
+				Distributor:     new("Example Distributor"),
+				PersonalRelease: new(false),
+				HardcodedSubs:   new(true),
+			},
 			SourceLookup: "https://example.invalid/source",
 			Playlist: PlaylistInstruction{
 				Set:      true,
@@ -106,6 +112,7 @@ func TestMapPreparationRequestPreservesSingleSourceIntent(t *testing.T) {
 	*request.ReleaseNameOverrides.NoEpisodeTitle = false
 	*request.ReleaseNameOverrides.NoDistributor = false
 	*request.MetadataOverrides.Distributor = "CHANGED"
+	*request.MetadataOverrides.HardcodedSubs = false
 	*request.ClientOverrides.Client = "changed"
 	request.TrackerIDOverrides["btn"] = "changed"
 	request.PlaylistInstruction.Selected = append(request.PlaylistInstruction.Selected, "00001.mpls")

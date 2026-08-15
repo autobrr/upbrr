@@ -440,6 +440,7 @@ func trackerLookupSubject(meta preparationstate.State) api.UploadSubject {
 		Audio:                 meta.Audio,
 		Channels:              meta.Channels,
 		HasCommentary:         meta.HasCommentary,
+		HardcodedSubs:         meta.HardcodedSubs,
 		Is3D:                  meta.Is3D,
 		Source:                meta.Source,
 		Type:                  meta.Type,

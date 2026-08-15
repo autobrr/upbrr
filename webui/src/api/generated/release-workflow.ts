@@ -679,6 +679,7 @@ export type MediaFacts = Readonly<{
   Edition: string;
   HDR: string;
   HDRFacts: HDRFacts;
+  HardcodedSubs: boolean;
   HasEncodeSettings: boolean;
   MediaInfoUniqueID: string;
   Region: string;
@@ -719,6 +720,7 @@ export type MetadataOverrides = Readonly<{
   Anime?: boolean | null;
   Commentary?: boolean | null;
   Distributor?: string | null;
+  HardcodedSubs?: boolean | null;
   OriginalLanguage?: string | null;
   PersonalRelease?: boolean | null;
   StreamOptimized?: boolean | null;
@@ -1256,6 +1258,7 @@ export type ReleaseWorkflowUploadMetadata = Readonly<{
   anime?: boolean | null;
   commentary?: boolean | null;
   distributor?: string | null;
+  hardcodedSubs?: boolean | null;
   originalLanguage?: string | null;
   personalRelease?: boolean | null;
   streamOptimized?: boolean | null;

@@ -51,6 +51,7 @@ func TestMapCLICompositeUploadRequestPreservesPerUploadOptions(t *testing.T) {
 			OriginalLanguage: new("English"),
 			PersonalRelease:  new(true),
 			Commentary:       new(true),
+			HardcodedSubs:    new(true),
 			WebDV:            new(true),
 			StreamOptimized:  new(true),
 			Anime:            new(false),
@@ -176,6 +177,8 @@ func TestMapCLICompositeUploadRequestPreservesPerUploadOptions(t *testing.T) {
 		*mapped.Preparation.Facts.ReleaseName.NoEpisodeTitle ||
 		mapped.Preparation.Facts.ReleaseName.NoDistributor == nil ||
 		*mapped.Preparation.Facts.ReleaseName.NoDistributor ||
+		mapped.Preparation.Facts.Metadata.HardcodedSubs == nil ||
+		!*mapped.Preparation.Facts.Metadata.HardcodedSubs ||
 		mapped.Preparation.Facts.Metadata.Anime == nil ||
 		*mapped.Preparation.Facts.Metadata.Anime {
 		t.Fatalf("fact mapping = %#v", mapped.Preparation.Facts)
