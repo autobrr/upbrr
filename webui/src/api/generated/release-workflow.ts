@@ -1221,7 +1221,7 @@ export type ReleaseWorkflowUploadFeedback = Readonly<{
   response: ReleaseWorkflowUploadFeedbackResponse;
 }>;
 
-export type ReleaseWorkflowUploadFeedbackKind = "playlistSelection" | "metadataSelection" | "rescanConfirmation" | "trackerAuthentication" | "twoFactor" | "trackerInput" | "questionnaire" | "ruleAuthorization" | "duplicateReview" | "trackerApproval" | "uploadApproval" | "reprepare" | "reconciliation";
+export type ReleaseWorkflowUploadFeedbackKind = "playlistSelection" | "metadataSelection" | "rescanConfirmation" | "trackerAuthentication" | "twoFactor" | "trackerInput" | "questionnaire" | "ruleAuthorization" | "trackerPreparation" | "duplicateReview" | "trackerApproval" | "uploadApproval" | "reprepare" | "reconciliation";
 
 export type ReleaseWorkflowUploadFeedbackResponse = Readonly<{
   duplicateReview?: ReleaseWorkflowUploadDuplicateReview | null;
@@ -1236,6 +1236,7 @@ export type ReleaseWorkflowUploadFeedbackResponse = Readonly<{
   trackerApproval?: ReleaseWorkflowUploadTrackerApproval | null;
   trackerAuthentication?: ReleaseWorkflowUploadTrackerAuthentication | null;
   trackerInput?: ReleaseWorkflowUploadTrackerInput | null;
+  trackerPreparation?: ReleaseWorkflowUploadConfirmation | null;
   twoFactor?: ReleaseWorkflowUploadTwoFactor | null;
   /** @deprecated */
   uploadApproval?: ReleaseWorkflowUploadApproval | null;

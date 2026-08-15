@@ -154,6 +154,8 @@ export type DuplicatesFacet = Readonly<{
   confirmReleaseName(tracker: string, value: string): void;
   /** Resolves or reopens the backend naming action using the current local edit. */
   acknowledgeReleaseName(tracker: string, acknowledged: boolean): Promise<boolean>;
+  /** Accepts the current exact tracker rule warning and rechecks that tracker. */
+  overrideRules(tracker: string): Promise<boolean>;
   setIgnored(tracker: string, ignored: boolean): void;
 }>;
 
@@ -320,8 +322,8 @@ export type WorkflowFacet = Readonly<{
   generateDescriptions(instructions: DescriptionInstructions): Promise<boolean>;
   dryRunUploads(): Promise<boolean>;
   executeUploads(): Promise<boolean>;
-  /** Submits an `authorize_rules` confirmation and resumes upload; unsupported kinds resolve to false. */
-  confirmAction(action: RequiredAction): Promise<boolean>;
+  /** Resolves a supported upload action and resumes the workflow. */
+  confirmAction(action: RequiredAction, confirmed?: boolean): Promise<boolean>;
   retryFailedUploads(): Promise<boolean>;
   retryClientInjections(): Promise<boolean>;
   invalidateTrackers(trackerIDs: readonly string[], reason: string): Promise<boolean>;

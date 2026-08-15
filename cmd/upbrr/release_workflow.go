@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -719,6 +720,19 @@ func (s *cliWorkflowSession) collectContinuationActionAnswers(
 				WorkflowRevision: s.current.Workflow.Revision,
 				Confirmed:        &confirmed,
 			})
+		case api.RequiredActionResolveTrackerPreparation:
+			if s.intent.interaction == api.InteractionModeUnattended {
+				continue
+			}
+			confirmed, err := promptYesNo(reader, action.Prompt+" [y/N]: ", false)
+			if err != nil {
+				return nil, false, err
+			}
+			answers = append(answers, api.RequiredActionAnswer{
+				ActionID:         action.ID,
+				WorkflowRevision: s.current.Workflow.Revision,
+				Confirmed:        &confirmed,
+			})
 		case api.RequiredActionReconcileSubmission:
 			if s.intent.interaction == api.InteractionModeUnattended {
 				return nil, false, errors.New("upbrr: unattended external-effect reconciliation requires manual confirmation")
@@ -858,8 +872,15 @@ func printCLIWorkflowUploadResult(result *api.UploadResult) (int, error) {
 		submissionStatus := tracker.EffectiveSubmissionStatus()
 		clientStatus := tracker.EffectiveClientInjectionStatus()
 		fmt.Printf("Upload %s: submission=%s client-injection=%s\n", tracker.TrackerID, submissionStatus, clientStatus)
-		if tracker.ClientInjectionMessage != "" {
-			fmt.Printf("  client injection: %s\n", tracker.ClientInjectionMessage)
+		clientMessage := strings.TrimSpace(logging.SanitizeMessage(tracker.ClientInjectionMessage))
+		if clientMessage != "" {
+			fmt.Printf("  client injection: %s\n", clientMessage)
+		}
+		for _, failure := range tracker.Failures {
+			message := strings.TrimSpace(logging.SanitizeMessage(failure.Failure.Message))
+			if message != "" && message != clientMessage {
+				fmt.Printf("  failure: %s\n", message)
+			}
 		}
 		switch submissionStatus {
 		case api.StageStatusCompleted:

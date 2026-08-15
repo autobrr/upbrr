@@ -75,6 +75,7 @@ type trackerPlanSlot struct {
 	torrentPath              string
 	plan                     TrackerPlan
 	failure                  *TrackerFailure
+	resolving                bool
 	summary                  api.UploadSummary
 	ruleFailures             []api.TrackerRuleFailure
 	canceledDuringSubmission bool
@@ -380,18 +381,100 @@ func (p *RetainedUploadPlan) Preparations() []RetainedTrackerPreparation {
 	if p == nil {
 		return nil
 	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	result := make([]RetainedTrackerPreparation, 0, len(p.slots))
 	for _, slot := range p.slots {
-		preparation := RetainedTrackerPreparation{Tracker: slot.tracker, TorrentPath: slot.torrentPath}
-		if slot.failure != nil {
-			failure := *slot.failure
-			preparation.Failure = &failure
-		} else {
-			preparation.Preview = slot.plan.DryRun()
-		}
-		result = append(result, preparation)
+		result = append(result, retainedTrackerPreparation(slot))
 	}
 	return result
+}
+
+// ResolveAction updates one retained tracker operation without rebuilding
+// unrelated tracker plans.
+func (p *RetainedUploadPlan) ResolveAction(
+	ctx context.Context,
+	tracker string,
+	kind api.RequiredActionKind,
+	confirmed bool,
+) (RetainedTrackerPreparation, error) {
+	if p == nil {
+		return RetainedTrackerPreparation{}, ErrPlanNotSubmittable
+	}
+	tracker = normalizeTrackerName(tracker)
+	if tracker == "" {
+		return RetainedTrackerPreparation{}, fmt.Errorf("%w: tracker is required", ErrPlanActionUnavailable)
+	}
+	p.mu.Lock()
+	switch {
+	case p.released:
+		p.mu.Unlock()
+		return RetainedTrackerPreparation{}, ErrPlanReleased
+	case p.executed:
+		p.mu.Unlock()
+		return RetainedTrackerPreparation{}, ErrPlanAlreadyUsed
+	}
+	index := slices.IndexFunc(p.slots, func(slot trackerPlanSlot) bool {
+		return normalizeTrackerName(slot.tracker) == tracker
+	})
+	if index < 0 || p.slots[index].failure != nil || p.slots[index].resolving {
+		p.mu.Unlock()
+		return RetainedTrackerPreparation{}, fmt.Errorf("%w: tracker %s", ErrPlanActionUnavailable, tracker)
+	}
+	p.slots[index].resolving = true
+	plan := p.slots[index].plan
+	p.mu.Unlock()
+
+	resolved, err := plan.ResolveAction(ctx, kind, confirmed)
+	p.mu.Lock()
+	p.slots[index].resolving = false
+	switch {
+	case p.released:
+		p.mu.Unlock()
+		if err == nil {
+			_ = resolved.Release()
+		}
+		return RetainedTrackerPreparation{}, ErrPlanReleased
+	case p.executed:
+		p.mu.Unlock()
+		if err == nil {
+			_ = resolved.Release()
+		}
+		return RetainedTrackerPreparation{}, ErrPlanAlreadyUsed
+	}
+	if err != nil {
+		var failure *PreparationFailure
+		if !errors.As(err, &failure) {
+			p.mu.Unlock()
+			return RetainedTrackerPreparation{}, err
+		}
+		p.slots[index].plan = TrackerPlan{}
+		p.slots[index].failure = &TrackerFailure{
+			Tracker: tracker,
+			Code:    failure.Code(),
+			Message: safeTrackerMessage(failure),
+			cause:   failure,
+		}
+		preparation := retainedTrackerPreparation(p.slots[index])
+		p.mu.Unlock()
+		return preparation, nil
+	}
+	p.slots[index].plan = resolved
+	p.slots[index].failure = nil
+	preparation := retainedTrackerPreparation(p.slots[index])
+	p.mu.Unlock()
+	return preparation, nil
+}
+
+func retainedTrackerPreparation(slot trackerPlanSlot) RetainedTrackerPreparation {
+	preparation := RetainedTrackerPreparation{Tracker: slot.tracker, TorrentPath: slot.torrentPath}
+	if slot.failure != nil {
+		failure := *slot.failure
+		preparation.Failure = &failure
+	} else {
+		preparation.Preview = slot.plan.DryRun()
+	}
+	return preparation
 }
 
 // Execute consumes all retained tracker plans without rebuilding payloads.
@@ -426,6 +509,10 @@ func (p *RetainedUploadPlan) execute(
 	if p.executed {
 		p.mu.Unlock()
 		return nil, ErrPlanAlreadyUsed
+	}
+	if slices.ContainsFunc(p.slots, func(slot trackerPlanSlot) bool { return slot.resolving }) {
+		p.mu.Unlock()
+		return nil, fmt.Errorf("%w: tracker action resolution is in progress", ErrPlanActionUnavailable)
 	}
 	selectedSlots, unselectedSlots, err := selectRetainedTrackerPlanSlots(p.slots, trackerIDs)
 	if err != nil {
@@ -508,10 +595,14 @@ func (p *RetainedUploadPlan) Release() error {
 		return nil
 	}
 	p.released = true
+	plans := make([]TrackerPlan, len(p.slots))
+	for index := range p.slots {
+		plans[index] = p.slots[index].plan
+	}
 	p.mu.Unlock()
 	var errs []error
-	for _, slot := range p.slots {
-		if err := slot.plan.Release(); err != nil {
+	for _, plan := range plans {
+		if err := plan.Release(); err != nil {
 			errs = append(errs, err)
 		}
 	}

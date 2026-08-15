@@ -1524,8 +1524,13 @@ export function ReleaseSessionProvider({
           continueBackendGoal(current, "dry_run", backendResolvedUploadIntent(), commandID, signal),
         ),
       executeUploads: () => executeExactUpload(),
-      confirmAction: (action: RequiredAction) => {
-        if (action.kind !== "authorize_rules") return Promise.resolve(false);
+      confirmAction: (action: RequiredAction, confirmed = true) => {
+        if (
+          (action.kind !== "authorize_rules" && action.kind !== "resolve_tracker_preparation") ||
+          (action.kind === "authorize_rules" && !confirmed)
+        ) {
+          return Promise.resolve(false);
+        }
         return runBackendWorkflow((current, commandID, signal) =>
           continueBackendGoal(
             current,
@@ -1538,7 +1543,7 @@ export function ReleaseSessionProvider({
                 {
                   actionId: action.id,
                   workflowRevision: current.workflow.revision,
-                  confirmed: true,
+                  confirmed,
                 },
               ],
             },
@@ -1770,6 +1775,34 @@ export function ReleaseSessionProvider({
                 workflowRevision: latest.workflow.revision,
                 ...(acknowledged ? { textValue: releaseName } : {}),
                 confirmed: acknowledged,
+              },
+            ],
+          }),
+        );
+      },
+      overrideRules: async (tracker) => {
+        const normalizedTracker = tracker.trim().toUpperCase();
+        const current = workflowView.current;
+        const projection = current?.projections?.projections.find(
+          (candidate) => candidate.trackerId === normalizedTracker,
+        );
+        const action = [
+          ...(current?.workflow.requiredActions || []),
+          ...(projection?.requiredActions || []),
+        ].find(
+          (candidate) =>
+            candidate.kind === "authorize_rules" &&
+            candidate.trackerId === normalizedTracker &&
+            candidate.status === "pending",
+        );
+        if (!current || !action) return false;
+        return runBackendWorkflow((latest, commandID, signal) =>
+          continueBackendGoal(latest, "duplicates_decided", {}, commandID, signal, {
+            answers: [
+              {
+                actionId: action.id,
+                workflowRevision: latest.workflow.revision,
+                confirmed: true,
               },
             ],
           }),

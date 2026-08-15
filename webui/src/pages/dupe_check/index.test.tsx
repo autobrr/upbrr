@@ -32,6 +32,7 @@ const facetFor = (
   chooseTrackers: vi.fn(),
   confirmReleaseName: vi.fn(),
   acknowledgeReleaseName: vi.fn(async () => true),
+  overrideRules: vi.fn(async () => true),
   setIgnored: vi.fn(),
   ...commands,
 });
@@ -416,6 +417,52 @@ describe("DupeCheckPage", () => {
     expect(screen.queryByText(/Evidence complete/)).not.toBeInTheDocument();
     expect(screen.queryByText("Canonical:")).not.toBeInTheDocument();
     expect(screen.queryByText("Tracker upload:")).not.toBeInTheDocument();
+  });
+
+  it("keeps tracker rule overrides in the owning dupe card", () => {
+    const overrideRules = vi.fn(async () => true);
+    renderPage(
+      facetFor(
+        {
+          projections: {
+            projections: [
+              {
+                trackerId: "EXAMPLE",
+                displayName: "Example Tracker",
+                readiness: "blocked",
+                policyDecisions: [
+                  {
+                    code: "genre",
+                    decision: "authorization_required",
+                    blocking: true,
+                    disposition: "waivable",
+                    message: "Genre does not match Animation or Family.",
+                  },
+                ],
+                requiredActions: [
+                  {
+                    id: "authorize-example-rules",
+                    kind: "authorize_rules",
+                    trackerId: "EXAMPLE",
+                    status: "pending",
+                    workflowRevision: 4,
+                    prompt:
+                      "Example Tracker rule warning: genre: Genre does not match Animation or Family. Upload to this tracker anyway?",
+                    createdAt: "2026-08-15T00:00:00Z",
+                  },
+                ],
+              },
+            ],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+        },
+        { overrideRules },
+      ),
+    );
+
+    expect(screen.getByText("Upload approval needed")).toBeInTheDocument();
+    expect(screen.queryByText("Genre does not match Animation or Family.")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Upload to EXAMPLE anyway" }));
+    expect(overrideRules).toHaveBeenCalledWith("EXAMPLE");
   });
 
   it("renders auth failure as retryable blocked lane evidence without an action card", () => {

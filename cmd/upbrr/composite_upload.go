@@ -171,7 +171,8 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 			"upbrr: tracker authentication must be resolved outside the upload workflow; start a fresh attempt",
 		)
 	}
-	if s.intent.interaction == api.InteractionModeUnattended {
+	if s.intent.interaction == api.InteractionModeUnattended &&
+		action.Kind != api.RequiredActionAuthorizeRules && action.Kind != api.RequiredActionResolveTrackerPreparation {
 		return feedback, false, fmt.Errorf("upbrr: strict unattended upload requires global action %s: %s", action.Kind, action.Prompt)
 	}
 
@@ -212,12 +213,22 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 	case api.RequiredActionProvideTrackerInput, api.RequiredActionAnswerQuestionnaire:
 		return s.collectCompositeTrackerFeedback(reader, action, feedback)
 	case api.RequiredActionAuthorizeRules:
-		return compositeCLIConfirmationFeedback(
-			reader,
-			action,
-			feedback,
-			api.ReleaseWorkflowUploadFeedbackRuleAuthorization,
-		)
+		return s.collectCompositeRuleOverrideFeedback(reader, action, feedback)
+	case api.RequiredActionResolveTrackerPreparation:
+		confirmed := false
+		if s.intent.interaction != api.InteractionModeUnattended {
+			var err error
+			confirmed, err = promptYesNo(reader, action.Prompt+" [y/N]: ", false)
+			if err != nil {
+				return feedback, false, err
+			}
+		}
+		feedback.Response = api.ReleaseWorkflowUploadFeedbackResponse{
+			Kind: api.ReleaseWorkflowUploadFeedbackTrackerPreparation,
+			TrackerPreparation: &api.ReleaseWorkflowUploadConfirmation{
+				Confirmed: confirmed,
+			},
+		}
 	case api.RequiredActionReviewDuplicates:
 		return s.collectCompositeDuplicateFeedback(reader, action, feedback)
 	case api.RequiredActionApproveTrackers:
@@ -251,6 +262,45 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 	return feedback, false, nil
 }
 
+func (s *cliWorkflowSession) collectCompositeRuleOverrideFeedback(
+	reader *bufio.Reader,
+	action api.RequiredAction,
+	feedback api.ReleaseWorkflowUploadFeedback,
+) (api.ReleaseWorkflowUploadFeedback, bool, error) {
+	confirmed := false
+	if s.intent.interaction != api.InteractionModeUnattended {
+		var err error
+		confirmed, err = promptYesNo(reader, action.Prompt+" [y/N]: ", false)
+		if err != nil {
+			return feedback, false, err
+		}
+	}
+	feedback.Response = api.ReleaseWorkflowUploadFeedbackResponse{
+		Kind: api.ReleaseWorkflowUploadFeedbackRuleAuthorization,
+		RuleAuthorization: &api.ReleaseWorkflowUploadConfirmation{
+			Confirmed: confirmed,
+		},
+	}
+	if confirmed {
+		return feedback, false, nil
+	}
+	trackerID := api.TrackerID(strings.ToUpper(strings.TrimSpace(string(action.TrackerID))))
+	if !s.hasTrackerAfterRuleSkip(trackerID) {
+		return feedback, true, nil
+	}
+	return feedback, false, nil
+}
+
+func (s *cliWorkflowSession) hasTrackerAfterRuleSkip(skipped api.TrackerID) bool {
+	if s.current.Projections == nil {
+		return false
+	}
+	return slices.ContainsFunc(s.current.Projections.Projections, func(projection api.TrackerReleaseProjection) bool {
+		return projection.TrackerID != skipped &&
+			projection.Readiness != api.ReadinessStatusIneligible
+	})
+}
+
 func compositeCLIConfirmationFeedback(
 	reader *bufio.Reader,
 	action api.RequiredAction,
@@ -269,8 +319,6 @@ func compositeCLIConfirmationFeedback(
 	switch kind {
 	case api.ReleaseWorkflowUploadFeedbackRescanConfirmation:
 		feedback.Response.RescanConfirmation = confirmation
-	case api.ReleaseWorkflowUploadFeedbackRuleAuthorization:
-		feedback.Response.RuleAuthorization = confirmation
 	case api.ReleaseWorkflowUploadFeedbackReprepare:
 		feedback.Response.Reprepare = &api.ReleaseWorkflowUploadReprepare{Confirmed: true}
 	case api.ReleaseWorkflowUploadFeedbackPlaylistSelection,
@@ -279,6 +327,8 @@ func compositeCLIConfirmationFeedback(
 		legacyTrackerTwoFactorFeedbackKind,
 		api.ReleaseWorkflowUploadFeedbackTrackerInput,
 		api.ReleaseWorkflowUploadFeedbackQuestionnaire,
+		api.ReleaseWorkflowUploadFeedbackRuleAuthorization,
+		api.ReleaseWorkflowUploadFeedbackTrackerPreparation,
 		api.ReleaseWorkflowUploadFeedbackDuplicateReview,
 		api.ReleaseWorkflowUploadFeedbackTrackerApproval,
 		api.ReleaseWorkflowUploadFeedbackUploadApproval, //nolint:staticcheck // Reject retained v1 feedback explicitly.
