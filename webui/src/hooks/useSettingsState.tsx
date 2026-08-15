@@ -99,6 +99,7 @@ const imageHostOptions = [
   { value: "zipline", label: "Zipline" },
   { value: "passtheimage", label: "PassTheImage" },
   { value: "seedpool_cdn", label: "Seedpool CDN" },
+  { value: "samaritano", label: "Samaritano" },
   { value: "sharex", label: "ShareX" },
   { value: "utppm", label: "UTPPM" },
 ];
@@ -131,6 +132,7 @@ const imageHostKeyMap: Record<string, string[]> = {
   zipline: ["ZiplineURL", "ZiplineAPIKey"],
   passtheimage: ["PassTheImageAPI"],
   seedpool_cdn: ["SeedpoolCDNAPI"],
+  samaritano: ["SamaritanoAPI"],
   sharex: ["ShareXURL", "ShareXAPIKey"],
   utppm: ["UTPPMAPI"],
 };

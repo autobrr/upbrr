@@ -108,6 +108,7 @@ type ImageHostingConfig struct {
 	ZiplineURL      string `yaml:"zipline_url"`
 	ZiplineAPIKey   string `yaml:"zipline_api_key"`
 	SeedpoolCDNAPI  string `yaml:"seedpool_cdn_api"`
+	SamaritanoAPI   string `yaml:"samaritano_api_key"`
 	ShareXURL       string `yaml:"sharex_url"`
 	ShareXAPIKey    string `yaml:"sharex_api_key"`
 	UTPPMAPI        string `yaml:"utppm_api"`

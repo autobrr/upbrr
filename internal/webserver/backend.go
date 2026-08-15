@@ -379,6 +379,8 @@ func releaseWorkflowImageHostConfigured(cfg config.ImageHostingConfig, host stri
 		return strings.TrimSpace(cfg.PTScreensAPI) != ""
 	case "reelflix":
 		return strings.TrimSpace(cfg.ReelflixAPI) != ""
+	case "samaritano":
+		return strings.TrimSpace(cfg.SamaritanoAPI) != ""
 	case "seedpool_cdn":
 		return strings.TrimSpace(cfg.SeedpoolCDNAPI) != ""
 	case "sharex":

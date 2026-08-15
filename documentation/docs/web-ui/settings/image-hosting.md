@@ -23,6 +23,7 @@ Choose up to six hosts in preferred order. The Web UI reveals credential fields 
 | Zipline      | Base URL and API key     |
 | PassTheImage | API key                  |
 | Seedpool CDN | API key                  |
+| Samaritano   | API key                  |
 | ShareX       | Endpoint URL and API key |
 | UTPPM        | API key                  |
 
