@@ -78,4 +78,7 @@ func TestAPITokenCLIListsAndRevokesPersistentTokens(t *testing.T) {
 	if !strings.Contains(revokeOutput.String(), id) {
 		t.Fatalf("revoke output = %q", revokeOutput.String())
 	}
+	if _, ok, err := service.Authenticate(ctx, token); err != nil || ok {
+		t.Fatalf("authenticate revoked token ok=%t err=%v", ok, err)
+	}
 }
