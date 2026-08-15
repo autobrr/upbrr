@@ -977,6 +977,18 @@ func TestBuildCLIRequestMetadataOverrides(t *testing.T) {
 	if req.MetadataOverrides.Anime == nil || *req.MetadataOverrides.Anime {
 		t.Fatalf("expected not-anime to force anime=false, got %#v", req.MetadataOverrides.Anime)
 	}
+
+	falseOpts, falseVisited, falsePaths, err := parseCLIOptions([]string{"--hardcoded-subs=false", "movie.mkv"})
+	if err != nil {
+		t.Fatalf("parse false hardcoded subtitle override: %v", err)
+	}
+	falseReq, err := buildCLIRequest(falseOpts, falseVisited, falsePaths, 4)
+	if err != nil {
+		t.Fatalf("build false hardcoded subtitle override: %v", err)
+	}
+	if falseReq.MetadataOverrides.HardcodedSubs == nil || *falseReq.MetadataOverrides.HardcodedSubs {
+		t.Fatalf("expected hardcoded subtitle override false, got %#v", falseReq.MetadataOverrides.HardcodedSubs)
+	}
 }
 
 func TestBuildCLIRequestOmissionAliases(t *testing.T) {

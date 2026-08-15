@@ -278,19 +278,17 @@ describe("InputPage", () => {
 
   it("edits metadata overrides", () => {
     const facet = readyInputFacet(1);
-    render(
-      <InputPage
-        facet={facet}
-        sourcePathHistory={[]}
-        handleBrowseFile={vi.fn()}
-        handleBrowseFolder={vi.fn()}
-        trackerUploadItems={[]}
-        showExternalIDInputUI={false}
-        setLightboxImage={vi.fn()}
-        setLightboxAlt={vi.fn()}
-        trackerIconSrcByName={{}}
-      />,
-    );
+    const pageProps = {
+      sourcePathHistory: [],
+      handleBrowseFile: vi.fn(),
+      handleBrowseFolder: vi.fn(),
+      trackerUploadItems: [],
+      showExternalIDInputUI: false,
+      setLightboxImage: vi.fn(),
+      setLightboxAlt: vi.fn(),
+      trackerIconSrcByName: {},
+    };
+    const { rerender } = render(<InputPage facet={facet} {...pageProps} />);
 
     fireEvent.click(screen.getByText("Edit Release Details"));
     fireEvent.change(screen.getByLabelText("Distributor"), {
@@ -307,5 +305,17 @@ describe("InputPage", () => {
 
     fireEvent.click(screen.getByLabelText("Hardcoded subtitles"));
     expect(facet.changeMetadata).toHaveBeenLastCalledWith({ HardcodedSubs: true });
+
+    const enabledFacet: InputFacet = {
+      ...facet,
+      view: {
+        ...facet.view,
+        intent: { ...facet.view.intent, metadata: { HardcodedSubs: true } },
+      },
+      changeMetadata: vi.fn(),
+    };
+    rerender(<InputPage facet={enabledFacet} {...pageProps} />);
+    fireEvent.click(screen.getByLabelText("Hardcoded subtitles"));
+    expect(enabledFacet.changeMetadata).toHaveBeenLastCalledWith({});
   });
 });

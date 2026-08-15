@@ -1649,8 +1649,8 @@ func containsExactHybrid(values []string) bool {
 func hardcodedSubsFromMeta(meta preparationstate.State) bool {
 	values := make([]string, 0, 5+len(meta.FileList)+len(meta.Release.Edition)+len(meta.Release.Other))
 	values = append(values,
-		pathutil.Base(meta.SourcePath),
-		pathutil.Base(meta.VideoPath),
+		filepath.Base(meta.SourcePath),
+		filepath.Base(meta.VideoPath),
 		meta.Filename,
 		meta.ReleaseName,
 		meta.ReleaseNameNoTag,

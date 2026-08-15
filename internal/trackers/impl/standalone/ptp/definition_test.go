@@ -139,7 +139,7 @@ func TestPTPFreshUploadTaxonomy(t *testing.T) {
 	if got := resolveTrumpable(meta); len(got) != 1 || got[0] != 4 {
 		t.Fatalf("forced hardcoded trumpable=%#v", got)
 	}
-	meta.ReleaseName = "Example.Release.2026.1080p.WEB-DL.x265-GRP"
+	meta.ReleaseName = "Example.Release.2026.1080p.WEB-DL.x265.HARDSUB-GRP"
 	meta.FileList = nil
 	meta.HardcodedSubs = false
 	meta.AudioLanguages = []string{"Japanese"}
