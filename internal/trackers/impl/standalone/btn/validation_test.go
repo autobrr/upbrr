@@ -18,6 +18,7 @@ func TestBTNValidationObjectiveRules(t *testing.T) {
 		mutate          func(*api.TrackerValidationSubject)
 		wantRule        string
 		wantDisposition api.RuleDisposition
+		wantStatus      api.MetadataEvidenceStatus
 	}{
 		{
 			name: "archive",
@@ -26,6 +27,7 @@ func TestBTNValidationObjectiveRules(t *testing.T) {
 			},
 			wantRule:        "btn_package_safety",
 			wantDisposition: api.RuleDispositionStrict,
+			wantStatus:      api.MetadataEvidenceStatusComplete,
 		},
 		{
 			name: "extra file",
@@ -34,6 +36,7 @@ func TestBTNValidationObjectiveRules(t *testing.T) {
 			},
 			wantRule:        "btn_package_safety",
 			wantDisposition: api.RuleDispositionStrict,
+			wantStatus:      api.MetadataEvidenceStatusComplete,
 		},
 		{
 			name: "single file folder",
@@ -42,6 +45,7 @@ func TestBTNValidationObjectiveRules(t *testing.T) {
 			},
 			wantRule:        "btn_single_file_layout",
 			wantDisposition: api.RuleDispositionStrict,
+			wantStatus:      api.MetadataEvidenceStatusComplete,
 		},
 		{
 			name: "multi season",
@@ -50,6 +54,7 @@ func TestBTNValidationObjectiveRules(t *testing.T) {
 			},
 			wantRule:        "btn_multi_season_package",
 			wantDisposition: api.RuleDispositionStrict,
+			wantStatus:      api.MetadataEvidenceStatusComplete,
 		},
 		{
 			name: "unsupported codec",
@@ -58,6 +63,7 @@ func TestBTNValidationObjectiveRules(t *testing.T) {
 			},
 			wantRule:        "btn_media_constraints",
 			wantDisposition: api.RuleDispositionStrict,
+			wantStatus:      api.MetadataEvidenceStatusComplete,
 		},
 		{
 			name: "dvd remux",
@@ -67,6 +73,7 @@ func TestBTNValidationObjectiveRules(t *testing.T) {
 			},
 			wantRule:        "btn_dvd_remux",
 			wantDisposition: api.RuleDispositionStrict,
+			wantStatus:      api.MetadataEvidenceStatusComplete,
 		},
 		{
 			name: "scene dvd image",
@@ -77,6 +84,7 @@ func TestBTNValidationObjectiveRules(t *testing.T) {
 			},
 			wantRule:        "btn_scene_dvd_image",
 			wantDisposition: api.RuleDispositionStrict,
+			wantStatus:      api.MetadataEvidenceStatusComplete,
 		},
 		{
 			name: "mixed pack",
@@ -89,6 +97,7 @@ func TestBTNValidationObjectiveRules(t *testing.T) {
 			},
 			wantRule:        "btn_mixed_pack",
 			wantDisposition: api.RuleDispositionWaivable,
+			wantStatus:      api.MetadataEvidenceStatusComplete,
 		},
 		{
 			name: "incomplete season pack",
@@ -100,6 +109,17 @@ func TestBTNValidationObjectiveRules(t *testing.T) {
 			},
 			wantRule:        "btn_episode_range",
 			wantDisposition: api.RuleDispositionWaivable,
+			wantStatus:      api.MetadataEvidenceStatusComplete,
+		},
+		{
+			name: "missing season pack evidence",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				makeBTNValidationPack(subject)
+				subject.PackageFacts.Status = api.MetadataEvidenceStatusUnavailable
+			},
+			wantRule:        "btn_episode_range",
+			wantDisposition: api.RuleDispositionAdvisory,
+			wantStatus:      api.MetadataEvidenceStatusUnavailable,
 		},
 	}
 	for _, test := range tests {
@@ -112,7 +132,7 @@ func TestBTNValidationObjectiveRules(t *testing.T) {
 				t.Fatalf("check requirements: %v", err)
 			}
 			failure, ok := btnValidationFailure(failures, test.wantRule)
-			if !ok || failure.Disposition != test.wantDisposition {
+			if !ok || failure.Disposition != test.wantDisposition || failure.EvidenceStatus != test.wantStatus {
 				t.Fatalf("failure %q = %#v in %#v", test.wantRule, failure, failures)
 			}
 		})
