@@ -372,14 +372,18 @@ func normalizeCLIOptions(opts *cliOptions, visited map[string]bool) error {
 		}
 	}
 	if visited["log-level"] {
-		if _, err := api.ParseLogLevel(opts.LogLevel); err != nil {
+		normalized, err := api.ParseLogLevel(opts.LogLevel)
+		if err != nil {
 			return fmt.Errorf("upbrr: %w", err)
 		}
+		opts.LogLevel = normalized
 	}
 	if visited["console-log-level"] {
-		if _, err := api.ParseLogLevel(opts.ConsoleLogLevel); err != nil {
+		normalized, err := api.ParseLogLevel(opts.ConsoleLogLevel)
+		if err != nil {
 			return fmt.Errorf("upbrr: %w", err)
 		}
+		opts.ConsoleLogLevel = normalized
 	}
 	if visited["tmdb"] {
 		if trimmed := strings.TrimSpace(opts.TMDB); trimmed != "" {

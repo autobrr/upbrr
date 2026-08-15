@@ -722,7 +722,7 @@ func TestParseCLIOptionsRejectsInvalidLogLevel(t *testing.T) {
 }
 
 func TestParseCLIOptionsConsoleLogLevel(t *testing.T) {
-	opts, visited, _, err := parseCLIOptions([]string{"--console-log-level", "info", "movie.mkv"})
+	opts, visited, _, err := parseCLIOptions([]string{"--console-log-level=", "movie.mkv"})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -730,7 +730,7 @@ func TestParseCLIOptionsConsoleLogLevel(t *testing.T) {
 		t.Fatalf("expected console-log-level visited flag, got %#v", visited)
 	}
 	if opts.ConsoleLogLevel != "info" {
-		t.Fatalf("expected console log level info, got %q", opts.ConsoleLogLevel)
+		t.Fatalf("expected explicit empty console log level to normalize to info, got %q", opts.ConsoleLogLevel)
 	}
 }
 
