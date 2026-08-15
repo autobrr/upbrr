@@ -570,9 +570,11 @@ func (c *Client) searchUnit3DEndpoint(
 		received += len(payload.Data)
 		if pageNumber == 1 && payload.Meta.Total == nil && len(payload.Links.Next) > 0 {
 			linkPagination = true
+			c.logUnit3DSearchPagination(tracker, "active", "link_mode", received)
 		}
 		if linkPagination {
 			if payload.Meta.Total != nil {
+				c.logUnit3DSearchPagination(tracker, "rejected", "total_present", received)
 				return unit3dEndpointSearchResult{
 					Entries:        entries,
 					Warning:        "Unit3D search returned inconsistent pagination metadata",
@@ -582,6 +584,7 @@ func (c *Client) searchUnit3DEndpoint(
 			}
 			nextURL, terminal, valid := unit3DNextSearchURL(endpoint.url, payload.Links.Next)
 			if !valid {
+				c.logUnit3DSearchPagination(tracker, "rejected", "invalid_continuation", received)
 				return unit3dEndpointSearchResult{
 					Entries:        entries,
 					Warning:        "Unit3D search returned inconsistent pagination metadata",
@@ -590,6 +593,7 @@ func (c *Client) searchUnit3DEndpoint(
 				}, nil
 			}
 			if terminal {
+				c.logUnit3DSearchPagination(tracker, "completed", "terminal", received)
 				return unit3dEndpointSearchResult{
 					Entries:        entries,
 					Complete:       true,
@@ -598,6 +602,7 @@ func (c *Client) searchUnit3DEndpoint(
 				}, nil
 			}
 			if _, seen := seenPageURLs[unit3DSearchURLKey(nextURL)]; seen {
+				c.logUnit3DSearchPagination(tracker, "rejected", "repeated_continuation", received)
 				return unit3dEndpointSearchResult{
 					Entries:        entries,
 					Warning:        "Unit3D search returned inconsistent pagination metadata",
@@ -605,6 +610,7 @@ func (c *Client) searchUnit3DEndpoint(
 					WrongWorkCount: wrongWorkCount,
 				}, nil
 			}
+			c.logUnit3DSearchPagination(tracker, "active", "continue", received)
 			nextPageURL = nextURL.String()
 			continue
 		}
@@ -653,12 +659,21 @@ func (c *Client) searchUnit3DEndpoint(
 			}, nil
 		}
 	}
+	if linkPagination {
+		c.logUnit3DSearchPagination(tracker, "rejected", "safety_bound", received)
+	}
 	return unit3dEndpointSearchResult{
 		Entries:        entries,
 		Warning:        "Unit3D search reached pagination safety bound",
 		Pages:          maxPages,
 		WrongWorkCount: wrongWorkCount,
 	}, nil
+}
+
+func (c *Client) logUnit3DSearchPagination(tracker, state, decision string, count int) {
+	if c.logger != nil {
+		c.logger.Tracef("unit3d: search pagination tracker=%s state=%s decision=%s count=%d", tracker, state, decision, count)
+	}
 }
 
 func cloneURLValues(values url.Values) url.Values {

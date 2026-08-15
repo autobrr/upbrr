@@ -23,6 +23,15 @@ type rewriteHostTransport struct {
 	rt   http.RoundTripper
 }
 
+type unit3DSearchRecordingLogger struct {
+	api.NopLogger
+	trace []string
+}
+
+func (l *unit3DSearchRecordingLogger) Tracef(format string, args ...any) {
+	l.trace = append(l.trace, fmt.Sprintf(format, args...))
+}
+
 func (t rewriteHostTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	clone := req.Clone(req.Context())
 	clone.URL.Scheme = t.base.Scheme
@@ -318,7 +327,9 @@ func TestSearchTorrentsWithEvidenceConsumesLinkPaginationWithoutTotal(t *testing
 	}))
 	t.Cleanup(server.Close)
 
+	logger := &unit3DSearchRecordingLogger{}
 	client := newUnit3DSearchTestClient(t, server)
+	client.logger = logger
 	result, err := client.SearchTorrentsWithEvidenceBound(
 		t.Context(),
 		"AITHER",
@@ -336,6 +347,19 @@ func TestSearchTorrentsWithEvidenceConsumesLinkPaginationWithoutTotal(t *testing
 	if strings.Join(requests, ",") != "page=1&perPage=1,cursor=second" {
 		t.Fatalf("requested queries = %#v", requests)
 	}
+	logs := strings.Join(logger.trace, "\n")
+	for _, decision := range []string{
+		"state=active decision=link_mode count=1",
+		"state=active decision=continue count=1",
+		"state=completed decision=terminal count=2",
+	} {
+		if !strings.Contains(logs, decision) {
+			t.Fatalf("pagination logs missing %q: %q", decision, logs)
+		}
+	}
+	if strings.Contains(logs, "cursor") || strings.Contains(logs, "second") {
+		t.Fatalf("pagination logs exposed continuation data: %q", logs)
+	}
 }
 
 func TestSearchTorrentsWithEvidenceRejectsRepeatedLink(t *testing.T) {
@@ -351,7 +375,9 @@ func TestSearchTorrentsWithEvidenceRejectsRepeatedLink(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
+	logger := &unit3DSearchRecordingLogger{}
 	client := newUnit3DSearchTestClient(t, server)
+	client.logger = logger
 	result, err := client.SearchTorrentsWithEvidenceBound(
 		t.Context(),
 		"AITHER",
@@ -365,6 +391,9 @@ func TestSearchTorrentsWithEvidenceRejectsRepeatedLink(t *testing.T) {
 	if result.Complete || result.Pages != 1 || calls != 1 ||
 		result.Warning != "Unit3D search returned inconsistent pagination metadata" {
 		t.Fatalf("repeated-link result = %#v calls=%d", result, calls)
+	}
+	if logs := strings.Join(logger.trace, "\n"); !strings.Contains(logs, "state=rejected decision=repeated_continuation count=1") {
+		t.Fatalf("pagination rejection log = %q", logs)
 	}
 }
 
