@@ -6,7 +6,7 @@ require (
 	github.com/autobrr/go-bdinfo v0.4.0
 	github.com/autobrr/go-mediainfo v0.7.0
 	github.com/autobrr/go-qbittorrent v1.17.0
-	github.com/autobrr/go-torrent v1.1.0
+	github.com/autobrr/go-torrent v1.1.1
 	github.com/autobrr/mkbrr v1.24.1
 	github.com/autobrr/rls v0.8.2-0.20260725105839-a59341eb93af
 	github.com/frustra/bbcode v0.0.0-20201127003707-6ef347fbe1c8

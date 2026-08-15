@@ -6,8 +6,8 @@ github.com/autobrr/go-mediainfo v0.7.0 h1:AnyDZC7merAVNfY9qu28/xjt/HZq8/28gqn+Nb
 github.com/autobrr/go-mediainfo v0.7.0/go.mod h1:P3LGxIPznO2TLKV/e58YgN0/ozP5pLCAncFzsdxMDcY=
 github.com/autobrr/go-qbittorrent v1.17.0 h1:GEIfzkdLKkRFkkxGhEnY+LS9dTlMKXE1ZBMOSDCjG3A=
 github.com/autobrr/go-qbittorrent v1.17.0/go.mod h1:9ujARiuSKZf8+NtApflTB69Wsptsp0Qk1mSVVC0tGzM=
-github.com/autobrr/go-torrent v1.1.0 h1:s8YPyq/kywzwxWXkJV7pnlSPnzOulc2CEvOvnWKcOVI=
-github.com/autobrr/go-torrent v1.1.0/go.mod h1:MNqAUt4SVvZTVyVSD3iQHXgi+ARVM3Z6dY0aTvXTnvY=
+github.com/autobrr/go-torrent v1.1.1 h1:Vc5R3QGZlmAEoEyEYqT2B9j/CX7to82GzFlHhXbphCw=
+github.com/autobrr/go-torrent v1.1.1/go.mod h1:MNqAUt4SVvZTVyVSD3iQHXgi+ARVM3Z6dY0aTvXTnvY=
 github.com/autobrr/mkbrr v1.24.1 h1:la/iCYPkEzUwNgn0ZkbE8kEz6dLXDmJqSZDlwWjdYmI=
 github.com/autobrr/mkbrr v1.24.1/go.mod h1:K4GuY03j3i6eucjzChjf9itKA8BEwhsuCLbZ6qM8Rtg=
 github.com/autobrr/rls v0.8.2-0.20260725105839-a59341eb93af h1:OA1WkKphliu/1id+rni0G5yGGZ9sVsWcXJkp+NmDzuQ=
