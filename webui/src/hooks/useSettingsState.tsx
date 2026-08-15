@@ -61,7 +61,6 @@ type UseSettingsStateResult = {
   renderField: (label: string, value: ConfigValue, path: string[], meta?: FieldMeta) => JSX.Element;
   sectionFieldMeta: Record<string, Record<string, FieldMeta>>;
   updateConfigValue: (path: string[], value: ConfigValue) => void;
-  updateScreenshotConfigValue: (key: string, value: ConfigValue) => void;
   configuredImageHosts: string[];
   screenshotConfig: ConfigMap | null;
   buildSavePayload: () => string | null;
@@ -827,10 +826,6 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     }
   };
 
-  const updateScreenshotConfigValue = (key: string, value: ConfigValue) => {
-    updateConfigValue(["ScreenshotHandling", key], value);
-  };
-
   const removeConfigKey = (path: string[], key: string) => {
     if (!configData) return;
     markSettingsChanged();
@@ -1022,12 +1017,6 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
       loadImageHostPolicyMetadata();
     }
   }, [activeTab, imageHostPolicyMetadata, loadImageHostPolicyMetadata]);
-
-  useEffect(() => {
-    if ((activeTab === "screenshots" || activeTab === "upload_images") && !configData) {
-      loadSettings();
-    }
-  }, [activeTab, configData, loadSettings]);
 
   const advancedOpen = settingsAdvanced[settingsSection] ?? false;
   const showAdvancedToggle = (() => {
@@ -2037,7 +2026,6 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     renderField,
     sectionFieldMeta: effectiveSectionFieldMeta,
     updateConfigValue,
-    updateScreenshotConfigValue,
     configuredImageHosts,
     screenshotConfig,
     buildSavePayload,

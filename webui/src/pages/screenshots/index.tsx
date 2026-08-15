@@ -2,38 +2,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Switch } from "../../components/ui/switch";
 import type { ScreenshotsFacet } from "../../releaseSession/types";
-import type { ConfigMap, ConfigValue, ScreenshotSelection } from "../../types";
+import type { ScreenshotSelection } from "../../types";
 
 type Props = Readonly<{
   facet: ScreenshotsFacet;
-  screenshotConfig: ConfigMap | null;
-  updateScreenshotConfigValue: (key: string, value: ConfigValue) => void;
-  loadSettings: () => void;
-  settingsLoading: boolean;
-  settingsDirty: boolean;
-  settingsSaved: string;
-  settingsError: string;
-  applyScreenshotSettings: () => void;
   setLightboxImage: (value: string) => void;
   setLightboxAlt: (value: string) => void;
 }>;
 
 /** Presents screenshot planning, live previews, retained capture, ordering, and final selection. */
-export default function ScreenshotsPage({
-  facet,
-  screenshotConfig,
-  updateScreenshotConfigValue,
-  loadSettings,
-  settingsLoading,
-  settingsDirty,
-  settingsSaved,
-  settingsError,
-  applyScreenshotSettings,
-  setLightboxImage,
-  setLightboxAlt,
-}: Props) {
+export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAlt }: Props) {
   const { view } = facet;
   const loadRef = useRef(facet.load);
   const [livePreviewSeconds, setLivePreviewSeconds] = useState(0);
@@ -293,157 +272,6 @@ export default function ScreenshotsPage({
           <p className="muted">No generated screenshots retained for this workflow.</p>
         </section>
       ) : null}
-
-      <section className="panel screens-settings">
-        <details>
-          <summary>Screenshot settings</summary>
-          {screenshotConfig ? (
-            <div className="screens-settings__grid">
-              <label className="settings-field">
-                <span>Screenshot count</span>
-                <input
-                  type="number"
-                  value={
-                    typeof screenshotConfig.Screens === "number" ? screenshotConfig.Screens : 0
-                  }
-                  onChange={(event) =>
-                    updateScreenshotConfigValue("Screens", Number(event.target.value))
-                  }
-                />
-              </label>
-              <div className="settings-toggle">
-                <span>Tonemap HDR</span>
-                <Switch
-                  aria-label="Tonemap HDR"
-                  checked={Boolean(screenshotConfig.ToneMap)}
-                  onChange={(event) => updateScreenshotConfigValue("ToneMap", event.target.checked)}
-                />
-              </div>
-              <div className="settings-toggle">
-                <span>Use libplacebo</span>
-                <Switch
-                  aria-label="Use libplacebo"
-                  checked={Boolean(screenshotConfig.UseLibplacebo)}
-                  onChange={(event) =>
-                    updateScreenshotConfigValue("UseLibplacebo", event.target.checked)
-                  }
-                />
-              </div>
-              <div className="settings-toggle">
-                <span>Frame overlay</span>
-                <Switch
-                  aria-label="Frame overlay"
-                  checked={Boolean(screenshotConfig.FrameOverlay)}
-                  onChange={(event) =>
-                    updateScreenshotConfigValue("FrameOverlay", event.target.checked)
-                  }
-                />
-              </div>
-              <label className="settings-field">
-                <span>Overlay text size</span>
-                <input
-                  type="number"
-                  value={
-                    typeof screenshotConfig.OverlayTextSize === "number"
-                      ? screenshotConfig.OverlayTextSize
-                      : 0
-                  }
-                  onChange={(event) =>
-                    updateScreenshotConfigValue("OverlayTextSize", Number(event.target.value))
-                  }
-                />
-              </label>
-              <label className="settings-field">
-                <span>FFmpeg compression</span>
-                <input
-                  type="number"
-                  min={0}
-                  max={9}
-                  value={
-                    typeof screenshotConfig.FFmpegCompression === "number"
-                      ? screenshotConfig.FFmpegCompression
-                      : 0
-                  }
-                  onChange={(event) =>
-                    updateScreenshotConfigValue("FFmpegCompression", Number(event.target.value))
-                  }
-                />
-              </label>
-              <label className="settings-field">
-                <span>Tonemap algorithm</span>
-                <input
-                  type="text"
-                  value={
-                    typeof screenshotConfig.TonemapAlgorithm === "string"
-                      ? screenshotConfig.TonemapAlgorithm
-                      : ""
-                  }
-                  onChange={(event) =>
-                    updateScreenshotConfigValue("TonemapAlgorithm", event.target.value)
-                  }
-                />
-              </label>
-              <label className="settings-field">
-                <span>Desat</span>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={typeof screenshotConfig.Desat === "number" ? screenshotConfig.Desat : 0}
-                  onChange={(event) =>
-                    updateScreenshotConfigValue("Desat", Number(event.target.value))
-                  }
-                />
-              </label>
-              <div className="settings-toggle">
-                <span>Limit ffmpeg concurrency</span>
-                <Switch
-                  aria-label="Limit ffmpeg concurrency"
-                  checked={Boolean(screenshotConfig.FFmpegLimit)}
-                  onChange={(event) =>
-                    updateScreenshotConfigValue("FFmpegLimit", event.target.checked)
-                  }
-                />
-              </div>
-              <label className="settings-field">
-                <span>FFmpeg concurrency</span>
-                <input
-                  type="number"
-                  value={
-                    typeof screenshotConfig.ProcessLimit === "number"
-                      ? screenshotConfig.ProcessLimit
-                      : 1
-                  }
-                  onChange={(event) =>
-                    updateScreenshotConfigValue("ProcessLimit", Number(event.target.value))
-                  }
-                />
-              </label>
-            </div>
-          ) : (
-            <p className="muted">Load settings to edit screenshot handling.</p>
-          )}
-          <div className="screens-settings__actions">
-            <button
-              className="ghost"
-              type="button"
-              onClick={loadSettings}
-              disabled={settingsLoading}
-            >
-              {settingsLoading ? "Loading..." : "Reload settings"}
-            </button>
-            <button
-              className="primary"
-              type="button"
-              onClick={applyScreenshotSettings}
-              disabled={settingsLoading || !settingsDirty}
-            >
-              {settingsLoading ? "Applying..." : "Apply settings"}
-            </button>
-          </div>
-          {settingsError ? <p className="error">{settingsError}</p> : null}
-          {settingsSaved ? <p className="success">{settingsSaved}</p> : null}
-        </details>
-      </section>
 
       {view.error ? (
         <p className="error" role="alert">
