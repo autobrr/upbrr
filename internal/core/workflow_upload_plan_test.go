@@ -1313,7 +1313,8 @@ func TestWorkflowUploadExecutionSkipsInjectionWhilePublicationPending(t *testing
 				PendingPublication: true,
 			},
 		}}},
-		clients: clientService,
+		clients:        clientService,
+		dryRunInjected: map[api.TrackerID]struct{}{"ALPHA": {}},
 	}
 	results, err := execution.Execute(context.Background(), nil)
 	if err != nil {

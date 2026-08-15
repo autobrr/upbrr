@@ -1060,12 +1060,12 @@ func (e *workflowUploadExecution) Execute(
 		}
 		_, alreadyInjected := e.dryRunInjected[trackerID]
 		switch {
-		case alreadyInjected:
-			outcome.ClientInjected = true
-			outcome.ClientInjectionStatus = api.StageStatusCompleted
 		case result.Summary.PendingPublication:
 			outcome.ClientInjectionStatus = api.StageStatusSkipped
 			outcome.ClientInjectionMessage = "Client injection skipped while tracker publication is pending."
+		case alreadyInjected:
+			outcome.ClientInjected = true
+			outcome.ClientInjectionStatus = api.StageStatusCompleted
 		case e.noSeed:
 			outcome.ClientInjectionStatus = api.StageStatusSkipped
 		case !hasUploaded:

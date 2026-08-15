@@ -798,6 +798,13 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 				emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "failed", slot.failure.Message)
 			} else {
 				slot.summary = summary
+				if summary.PendingPublication {
+					s.logger.Infof(
+						"trackers: upload tracker=%s state=pending_publication decision=defer_client_injection count=%d",
+						slot.tracker,
+						summary.Uploaded,
+					)
+				}
 				s.logUploadedTorrentURLs(slot.tracker, summary)
 				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, "uploaded")
 				emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "completed", "Tracker upload complete")
