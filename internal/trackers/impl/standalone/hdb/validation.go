@@ -17,7 +17,7 @@ import (
 
 func validationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID:    "standalone-hdb-constructibility-v3",
+		ID:    "standalone-hdb-constructibility-v4",
 		Check: checkRequirements,
 	}
 }
@@ -234,10 +234,7 @@ func hdbTitleFailures(subject api.TrackerValidationSubject, meta api.UploadSubje
 func hdbTitleForValidation(subject api.TrackerValidationSubject, meta api.UploadSubject) (string, api.MetadataEvidenceStatus) {
 	releaseName := strings.TrimSpace(subject.ReleaseName)
 	sourceName := hdbSourceBaseName(subject.SourcePath)
-	if releaseName != "" && sourceName != "" && strings.EqualFold(releaseName, sourceName) {
-		return releaseName, api.MetadataEvidenceStatusComplete
-	}
-	if subject.Scene && !subject.SceneRenamed && releaseName != "" {
+	if !subject.Scene && releaseName != "" && sourceName != "" && strings.EqualFold(releaseName, sourceName) {
 		return releaseName, api.MetadataEvidenceStatusComplete
 	}
 	if title := authoritativeHDBOriginalTitle(meta); title != "" {

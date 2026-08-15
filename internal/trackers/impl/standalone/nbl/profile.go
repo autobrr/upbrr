@@ -20,7 +20,7 @@ func Profile() standalone.Profile {
 		UploadContentMode:   trackers.UploadContentModeNone,
 		AuthCapability:      authcontract.APIKeyCapability("NBL"),
 		PrepareUpload:       prepareUpload,
-		ReleaseNamePolicy:   trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/nbl/v2", resolveUploadName, resolveSearchName),
+		ReleaseNamePolicy:   trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/nbl/v3", resolveUploadName, resolveSearchName),
 		NewDuplicateAdapter: newDuplicateAdapter,
 		Rules:               rules(),
 		ValidationPolicy:    validationPolicy(),
