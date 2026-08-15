@@ -95,7 +95,7 @@ func TestBuildNameAllowsDistributorOnlyForCompleteDisc(t *testing.T) {
 	}
 }
 
-func TestBuildNameBlocksProvedNonDiscMultiSeason(t *testing.T) {
+func TestBuildNameUsesPreparedSeasonFactsOnly(t *testing.T) {
 	t.Parallel()
 	meta := api.UploadSubject{
 		Identity: api.ExternalIdentity{
@@ -110,19 +110,24 @@ func TestBuildNameBlocksProvedNonDiscMultiSeason(t *testing.T) {
 			},
 		},
 		FileList: []string{
-			filepath.Join("Example Show", "Season 01", "Example.Show.S01E01.mkv"),
-			filepath.Join("Example Show", "Season 02", "Example.Show.S02E01.mkv"),
+			filepath.Join("Example Show", "Season 1", "Example.Show.S02E01.mkv"),
+			filepath.Join("Example Show", "Season 1", "Example.Show.S02E02.mkv"),
 		},
-		Type: "WEBDL",
+		Release:   api.ReleaseInfo{Resolution: "1080p"},
+		SeasonInt: 2,
+		SeasonStr: "S02",
+		TVPack:    true,
+		Type:      "WEBDL",
 	}
-	if got := buildName(meta, config.TrackerConfig{}); got != "" {
-		t.Fatalf("OTW non-disc multi-season name = %q, want blocked empty name", got)
+	const want = "Example Show 2020 S02 1080p WEB-DL"
+	if got := buildName(meta, config.TrackerConfig{}); got != want {
+		t.Fatalf("OTW name = %q, want prepared season facts only: %q", got, want)
 	}
 }
 
 func TestProfileBuildNameVersion(t *testing.T) {
 	t.Parallel()
-	if got := Profile().Site.BuildNameVersion; got != "v2" {
-		t.Fatalf("OTW BuildNameVersion = %q, want v2", got)
+	if got := Profile().Site.BuildNameVersion; got != "v3" {
+		t.Fatalf("OTW BuildNameVersion = %q, want v3", got)
 	}
 }
