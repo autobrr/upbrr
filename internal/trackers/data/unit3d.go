@@ -401,8 +401,8 @@ func (c *Client) SearchTorrentsWithEvidence(
 	return c.SearchTorrentsWithEvidenceBound(ctx, tracker, params, isDisc, 100)
 }
 
-// SearchTorrentsWithEvidenceBound consumes every advertised page up to the
-// policy-supplied safety bound.
+// SearchTorrentsWithEvidenceBound consumes every page advertised by count
+// metadata or a same-origin continuation link, up to the policy-supplied bound.
 func (c *Client) SearchTorrentsWithEvidenceBound(
 	ctx context.Context,
 	tracker string,
@@ -500,14 +500,24 @@ func (c *Client) searchUnit3DEndpoint(
 	expectedTotal := -1
 	expectedLastPage := -1
 	received := 0
+	linkPagination := false
+	nextPageURL := ""
+	seenPageURLs := make(map[string]struct{}, maxPages)
 	for pageNumber := 1; pageNumber <= maxPages; pageNumber++ {
-		pageParams := cloneURLValues(params)
-		pageParams.Set("page", strconv.Itoa(pageNumber))
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.url, nil)
+		requestURL := endpoint.url
+		if linkPagination {
+			requestURL = nextPageURL
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 		if err != nil {
 			return unit3dEndpointSearchResult{}, fmt.Errorf("unit3d: request: %w", err)
 		}
-		req.URL.RawQuery = pageParams.Encode()
+		if !linkPagination {
+			pageParams := cloneURLValues(params)
+			pageParams.Set("page", strconv.Itoa(pageNumber))
+			req.URL.RawQuery = pageParams.Encode()
+		}
+		seenPageURLs[unit3DSearchURLKey(req.URL)] = struct{}{}
 		SetUnit3DAPIHeaders(req, apiKey)
 
 		resp, err := c.http.Do(req)
@@ -558,6 +568,46 @@ func (c *Client) searchUnit3DEndpoint(
 		entries = append(entries, pageEntries...)
 		wrongWorkCount += dropped
 		received += len(payload.Data)
+		if pageNumber == 1 && payload.Meta.Total == nil && len(payload.Links.Next) > 0 {
+			linkPagination = true
+		}
+		if linkPagination {
+			if payload.Meta.Total != nil {
+				return unit3dEndpointSearchResult{
+					Entries:        entries,
+					Warning:        "Unit3D search returned inconsistent pagination metadata",
+					Pages:          pageNumber,
+					WrongWorkCount: wrongWorkCount,
+				}, nil
+			}
+			nextURL, terminal, valid := unit3DNextSearchURL(endpoint.url, payload.Links.Next)
+			if !valid {
+				return unit3dEndpointSearchResult{
+					Entries:        entries,
+					Warning:        "Unit3D search returned inconsistent pagination metadata",
+					Pages:          pageNumber,
+					WrongWorkCount: wrongWorkCount,
+				}, nil
+			}
+			if terminal {
+				return unit3dEndpointSearchResult{
+					Entries:        entries,
+					Complete:       true,
+					Pages:          pageNumber,
+					WrongWorkCount: wrongWorkCount,
+				}, nil
+			}
+			if _, seen := seenPageURLs[unit3DSearchURLKey(nextURL)]; seen {
+				return unit3dEndpointSearchResult{
+					Entries:        entries,
+					Warning:        "Unit3D search returned inconsistent pagination metadata",
+					Pages:          pageNumber,
+					WrongWorkCount: wrongWorkCount,
+				}, nil
+			}
+			nextPageURL = nextURL.String()
+			continue
+		}
 		if payload.Meta.Total == nil || *payload.Meta.Total < 0 {
 			return unit3dEndpointSearchResult{
 				Entries:        entries,
@@ -617,6 +667,47 @@ func cloneURLValues(values url.Values) url.Values {
 		cloned[key] = append([]string(nil), entries...)
 	}
 	return cloned
+}
+
+// unit3DNextSearchURL accepts only terminal or same-origin continuation links
+// so tracker API credentials never cross origins.
+func unit3DNextSearchURL(endpointURL string, raw json.RawMessage) (*url.URL, bool, bool) {
+	encoded := strings.TrimSpace(string(raw))
+	if encoded == "" {
+		return nil, false, false
+	}
+	if encoded == "null" {
+		return nil, true, true
+	}
+
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil || strings.TrimSpace(value) == "" {
+		return nil, false, false
+	}
+	value = strings.TrimSpace(value)
+	base, err := url.Parse(endpointURL)
+	if err != nil {
+		return nil, false, false
+	}
+	reference, err := url.Parse(value)
+	if err != nil {
+		return nil, false, false
+	}
+	next := base.ResolveReference(reference)
+	if next.User != nil || next.Fragment != "" ||
+		!strings.EqualFold(next.Scheme, base.Scheme) || !strings.EqualFold(next.Host, base.Host) {
+		return nil, false, false
+	}
+	return next, false, true
+}
+
+// unit3DSearchURLKey canonicalizes origin casing and query ordering for loop detection.
+func unit3DSearchURLKey(value *url.URL) string {
+	cloned := *value
+	cloned.Scheme = strings.ToLower(cloned.Scheme)
+	cloned.Host = strings.ToLower(cloned.Host)
+	cloned.RawQuery = cloned.Query().Encode()
+	return cloned.String()
 }
 
 // SetUnit3DAPIHeaders applies the client identification, JSON response format,
@@ -1136,8 +1227,13 @@ func normalizeID(value int) int {
 }
 
 type unit3dSearchResponse struct {
-	Data []unit3dSearchItem `json:"data"`
-	Meta unit3dSearchMeta   `json:"meta"`
+	Data  []unit3dSearchItem `json:"data"`
+	Links unit3dSearchLinks  `json:"links"`
+	Meta  unit3dSearchMeta   `json:"meta"`
+}
+
+type unit3dSearchLinks struct {
+	Next json.RawMessage `json:"next"`
 }
 
 type unit3dSearchMeta struct {

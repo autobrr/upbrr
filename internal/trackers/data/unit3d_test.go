@@ -296,6 +296,122 @@ func TestSearchTorrentsWithEvidenceConsumesAdvertisedFinalPage(t *testing.T) {
 	}
 }
 
+func TestSearchTorrentsWithEvidenceConsumesLinkPaginationWithoutTotal(t *testing.T) {
+	t.Parallel()
+
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.Query().Encode())
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Query().Get("cursor") {
+		case "":
+			_, _ = w.Write([]byte(
+				`{"data":[{"id":1,"attributes":{"name":"Example.Release.2026.1080p.WEB-DL-GRP"}}],"links":{"next":"https://aither.example/api/torrents/filter?cursor=second"},"meta":{"current_page":1,"per_page":1}}`,
+			))
+		case "second":
+			_, _ = w.Write([]byte(
+				`{"data":[{"id":2,"attributes":{"name":"Example.Release.2026.2160p.WEB-DL-GRP"}}],"links":{"next":null},"meta":{"current_page":2,"per_page":1}}`,
+			))
+		default:
+			http.Error(w, "unexpected cursor", http.StatusBadRequest)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := newUnit3DSearchTestClient(t, server)
+	result, err := client.SearchTorrentsWithEvidenceBound(
+		t.Context(),
+		"AITHER",
+		url.Values{"perPage": []string{"1"}},
+		false,
+		10,
+	)
+	if err != nil {
+		t.Fatalf("search torrents: %v", err)
+	}
+	if !result.Complete || result.Pages != 2 || len(result.Entries) != 2 ||
+		result.Entries[1].Name != "Example.Release.2026.2160p.WEB-DL-GRP" {
+		t.Fatalf("link-paginated result = %#v", result)
+	}
+	if strings.Join(requests, ",") != "page=1&perPage=1,cursor=second" {
+		t.Fatalf("requested queries = %#v", requests)
+	}
+}
+
+func TestSearchTorrentsWithEvidenceRejectsRepeatedLink(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(
+			`{"data":[{"id":1,"attributes":{"name":"Example.Release.2026.1080p.WEB-DL-GRP"}}],"links":{"next":"https://aither.example/api/torrents/filter?perPage=1&page=1"},"meta":{"current_page":1,"per_page":1}}`,
+		))
+	}))
+	t.Cleanup(server.Close)
+
+	client := newUnit3DSearchTestClient(t, server)
+	result, err := client.SearchTorrentsWithEvidenceBound(
+		t.Context(),
+		"AITHER",
+		url.Values{"perPage": []string{"1"}},
+		false,
+		10,
+	)
+	if err != nil {
+		t.Fatalf("search torrents: %v", err)
+	}
+	if result.Complete || result.Pages != 1 || calls != 1 ||
+		result.Warning != "Unit3D search returned inconsistent pagination metadata" {
+		t.Fatalf("repeated-link result = %#v calls=%d", result, calls)
+	}
+}
+
+func TestUnit3DNextSearchURLRequiresSameOrigin(t *testing.T) {
+	t.Parallel()
+
+	const endpoint = "https://aither.example/api/torrents/filter"
+	for _, tc := range []struct {
+		name         string
+		raw          string
+		wantValid    bool
+		wantTerminal bool
+	}{
+		{
+			name:         "terminal",
+			raw:          `null`,
+			wantValid:    true,
+			wantTerminal: true,
+		},
+		{
+			name:      "absolute",
+			raw:       `"https://aither.example/api/torrents/filter?page=2"`,
+			wantValid: true,
+		},
+		{
+			name:      "relative",
+			raw:       `"/api/torrents/filter?page=2"`,
+			wantValid: true,
+		},
+		{name: "other host", raw: `"https://other.example/api/torrents/filter?page=2"`},
+		{name: "downgrade", raw: `"http://aither.example/api/torrents/filter?page=2"`},
+		{name: "other port", raw: `"https://aither.example:444/api/torrents/filter?page=2"`},
+		{name: "userinfo", raw: `"https://user@aither.example/api/torrents/filter?page=2"`},
+		{name: "fragment", raw: `"https://aither.example/api/torrents/filter?page=2#fragment"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			next, terminal, valid := unit3DNextSearchURL(endpoint, json.RawMessage(tc.raw))
+			if valid != tc.wantValid || terminal != tc.wantTerminal {
+				t.Fatalf("next URL valid=%t terminal=%t", valid, terminal)
+			}
+			if valid && !terminal && next == nil {
+				t.Fatal("valid continuation returned nil URL")
+			}
+		})
+	}
+}
+
 func TestSearchTorrentsWithEvidenceFailsClosedAtPolicyBound(t *testing.T) {
 	t.Parallel()
 
