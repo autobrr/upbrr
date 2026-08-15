@@ -60,6 +60,51 @@ func TestFallbackMetadataRequiresCurrentTMDBUnavailableEvidence(t *testing.T) {
 	}
 }
 
+func TestGenreRulesUseSharedProviderGenres(t *testing.T) {
+	t.Parallel()
+
+	const sourcePath = "Example.Release.2026.1080p-GRP"
+	subject := api.TrackerValidationSubject{
+		SourcePath: sourcePath,
+		Release:    api.ReleaseInfo{Genre: "Adult"},
+		Identity: api.ExternalIdentity{
+			SourcePath: sourcePath,
+			Generation: 4,
+			TMDBID:     1234567,
+		},
+		ProviderMetadata: api.SourceScopedMetadata{
+			SourcePath: sourcePath,
+			Generation: 4,
+			TMDB: &api.TMDBMetadata{
+				TMDBID:   1234567,
+				Title:    "Example Release",
+				Genres:   "Animation",
+				Keywords: "Adult",
+			},
+			TVmaze: &api.TVmazeMetadata{Genres: "Family"},
+		},
+	}
+
+	failures, err := checkGenres(context.Background(), subject, nil)
+	if err != nil {
+		t.Fatalf("validate provider genres: %v", err)
+	}
+	for _, rule := range []string{"genre", "block_adult"} {
+		if hasRule(failures, rule) {
+			t.Fatalf("release genre or keyword caused %s failure: %#v", rule, failures)
+		}
+	}
+
+	subject.ProviderMetadata.TVmaze.Genres = "Adult Animation"
+	failures, err = checkGenres(context.Background(), subject, nil)
+	if err != nil {
+		t.Fatalf("validate adult provider genre: %v", err)
+	}
+	if !hasRule(failures, "block_adult") {
+		t.Fatalf("shared adult genre was not blocked: %#v", failures)
+	}
+}
+
 func hasRule(failures []api.RuleFailure, rule string) bool {
 	for _, failure := range failures {
 		if failure.Rule == rule {

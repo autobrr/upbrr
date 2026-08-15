@@ -7,9 +7,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"slices"
 	"strings"
-	"unicode"
 
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
@@ -20,7 +18,7 @@ import (
 // and resolution checks.
 func ValidationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID:    "unit3d-sp-policy-v3",
+		ID:    "unit3d-sp-policy-v4",
 		Check: checkRequirements,
 	}
 }
@@ -111,12 +109,13 @@ func spSoftwareFailures(subject api.TrackerValidationSubject) []api.RuleFailure 
 }
 
 func spAdultContentFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
-	values := spClassificationValues(subject)
 	status := subject.ProvenanceFacts.Status
-	if len(values) > 0 && status == api.MetadataEvidenceStatusUnavailable {
+	ruleSubject := trackers.RuleSubjectFromValidation(subject)
+	genres := trackers.RuleGenres(ruleSubject)
+	if len(genres) > 0 && status == api.MetadataEvidenceStatusUnavailable {
 		status = api.MetadataEvidenceStatusPartial
 	}
-	if slices.ContainsFunc(values, spAdultValue) {
+	if trackers.AdultContent(ruleSubject) {
 		return []api.RuleFailure{trackers.NewEvidenceRuleFailure(
 			"sp_block_adult",
 			"pornographic content is not allowed",
@@ -133,35 +132,6 @@ func spAdultContentFailures(subject api.TrackerValidationSubject) []api.RuleFail
 		)}
 	}
 	return nil
-}
-
-func spClassificationValues(subject api.TrackerValidationSubject) []string {
-	values := []string{subject.Release.Genre}
-	if !subject.ProviderMetadata.IsCurrentFor(subject.SourcePath, subject.Identity) {
-		return values
-	}
-	if metadata := subject.ProviderMetadata.TMDB; metadata != nil {
-		values = append(values, metadata.Genres, metadata.Keywords)
-	}
-	if metadata := subject.ProviderMetadata.IMDB; metadata != nil {
-		values = append(values, metadata.Genres)
-	}
-	if metadata := subject.ProviderMetadata.TVDB; metadata != nil {
-		values = append(values, metadata.Genres)
-	}
-	return values
-}
-
-func spAdultValue(value string) bool {
-	for _, token := range strings.FieldsFunc(strings.ToLower(value), func(char rune) bool {
-		return !unicode.IsLetter(char) && !unicode.IsDigit(char)
-	}) {
-		switch token {
-		case "adult", "erotic", "hentai", "porn", "pornography", "xxx":
-			return true
-		}
-	}
-	return false
 }
 
 func spDiscStructureFailures(subject api.TrackerValidationSubject) []api.RuleFailure {

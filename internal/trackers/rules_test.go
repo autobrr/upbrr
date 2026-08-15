@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -632,8 +633,9 @@ func TestEvaluateRulesBHDBlocksAdultContent(t *testing.T) {
 		Assessments: encodeAssessments(api.EncodeSettingsStatusPresent),
 		Identity:    api.ExternalIdentity{Category: "movie", IMDBID: 1234567},
 		ProviderMetadata: api.SourceScopedMetadata{
-			TMDB: &api.TMDBMetadata{Keywords: "adult"},
-			IMDB: &api.IMDBMetadata{IMDBID: 1234567, Title: "Example Release"},
+			TMDB:   &api.TMDBMetadata{},
+			IMDB:   &api.IMDBMetadata{IMDBID: 1234567, Title: "Example Release"},
+			TVmaze: &api.TVmazeMetadata{Genres: "Adult"},
 		},
 	}
 
@@ -679,13 +681,75 @@ func TestEvaluateRulesBHDBlocksAdultMetadataForExactSourcePath(t *testing.T) {
 		Assessments: encodeAssessments(api.EncodeSettingsStatusPresent),
 		ProviderMetadata: api.SourceScopedMetadata{
 			SourcePath: sourcePath,
-			TMDB:       &api.TMDBMetadata{Keywords: "adult"},
+			TMDB:       &api.TMDBMetadata{Genres: "adult"},
 		},
 	}
 
 	failures := evaluateBHDRulesWithRegistryForTest(context.Background(), meta)
 	if !hasRuleFailure(failures, "block_adult") {
 		t.Fatal("expected exact-source adult metadata to be applied")
+	}
+}
+
+func TestRuleGenresUsesOnlyCurrentProviderGenres(t *testing.T) {
+	t.Parallel()
+
+	const sourcePath = "Example.Release.2026.1080p-GRP"
+	meta := api.RuleSubject{
+		SourcePath: sourcePath,
+		Release:    api.ReleaseInfo{Genre: "Release Only"},
+		Identity: api.ExternalIdentity{
+			SourcePath: sourcePath,
+			Generation: 7,
+		},
+		ProviderMetadata: api.SourceScopedMetadata{
+			SourcePath: sourcePath,
+			Generation: 7,
+			TMDB:       &api.TMDBMetadata{Genres: "Drama, Mystery", Keywords: "Adult"},
+			IMDB:       &api.IMDBMetadata{Genres: "Comedy, Drama"},
+			TVDB:       &api.TVDBMetadata{Genres: "Animation"},
+			TVmaze:     &api.TVmazeMetadata{Genres: "Family"},
+		},
+	}
+
+	want := []string{"drama", "mystery", "comedy", "animation", "family"}
+	if got := trackers.RuleGenres(meta); !slices.Equal(got, want) {
+		t.Fatalf("rule genres = %v, want %v", got, want)
+	}
+	if trackers.AdultContent(meta) {
+		t.Fatal("release genre or provider keyword classified content as adult")
+	}
+
+	meta.ProviderMetadata.Generation = 6
+	if got := trackers.RuleGenres(meta); len(got) != 0 {
+		t.Fatalf("stale rule genres = %v, want none", got)
+	}
+}
+
+func TestAdultContentUsesEveryProviderGenre(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		apply func(*api.SourceScopedMetadata)
+	}{
+		{name: "TMDB", apply: func(metadata *api.SourceScopedMetadata) { metadata.TMDB = &api.TMDBMetadata{Genres: "Adult Animation"} }},
+		{name: "IMDb", apply: func(metadata *api.SourceScopedMetadata) { metadata.IMDB = &api.IMDBMetadata{Genres: "Adult Animation"} }},
+		{name: "TVDB", apply: func(metadata *api.SourceScopedMetadata) { metadata.TVDB = &api.TVDBMetadata{Genres: "Adult Animation"} }},
+		{name: "TVmaze", apply: func(metadata *api.SourceScopedMetadata) {
+			metadata.TVmaze = &api.TVmazeMetadata{Genres: "Adult Animation"}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			meta := api.RuleSubject{}
+			test.apply(&meta.ProviderMetadata)
+			if !trackers.AdultContent(meta) {
+				t.Fatal("adult provider genre was not classified as adult")
+			}
+		})
 	}
 }
 

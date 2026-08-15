@@ -68,7 +68,7 @@ func EvaluateTrackerValidationWithRegistry(
 	subject api.TrackerValidationSubject,
 	logger api.Logger,
 ) ([]api.RuleFailure, error) {
-	failures, err := evaluateRules(ctx, registry, tracker, ruleSubjectFromValidation(subject), logger)
+	failures, err := evaluateRules(ctx, registry, tracker, RuleSubjectFromValidation(subject), logger)
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +184,7 @@ func evaluateRules(ctx context.Context, registry *Registry, tracker string, meta
 		}
 	}
 
-	if rules.BlockAdult && isAdultContent(meta) {
+	if rules.BlockAdult && AdultContent(meta) {
 		message := strings.TrimSpace(rules.AdultMessage)
 		if message == "" {
 			message = "adult content not allowed at " + name
@@ -266,7 +266,9 @@ func evaluateValidationPolicy(
 	return normalized, nil
 }
 
-func ruleSubjectFromValidation(subject api.TrackerValidationSubject) api.RuleSubject {
+// RuleSubjectFromValidation projects a tracker-validation subject into the
+// shared eligibility-rule contract.
+func RuleSubjectFromValidation(subject api.TrackerValidationSubject) api.RuleSubject {
 	sceneNFOPath := ""
 	if subject.SceneNFOReady {
 		sceneNFOPath = "ready"
@@ -425,28 +427,51 @@ func hasReleaseToken(meta api.RuleSubject, tokens []string) bool {
 	return false
 }
 
-func isAdultContent(meta api.RuleSubject) bool {
-	candidates := append([]string{}, splitCSV(meta.Release.Genre)...)
-	if meta.ProviderMetadata.TMDB != nil && externalMetadataMatchesCurrentSource(meta) {
-		candidates = append(candidates, splitCSV(meta.ProviderMetadata.TMDB.Genres)...)
-		candidates = append(candidates, splitCSV(meta.ProviderMetadata.TMDB.Keywords)...)
+// RuleGenres returns normalized, deduplicated genres from current TMDB, IMDb,
+// TVDB, and TVmaze metadata. Parsed release genres and provider keywords are
+// excluded.
+func RuleGenres(meta api.RuleSubject) []string {
+	if !ruleProviderMetadataCurrent(meta) {
+		return nil
 	}
-	if meta.ProviderMetadata.IMDB != nil && externalMetadataMatchesCurrentSource(meta) {
-		candidates = append(candidates, splitCSV(meta.ProviderMetadata.IMDB.Genres)...)
+	values := make([]string, 0)
+	if metadata := meta.ProviderMetadata.TMDB; metadata != nil {
+		values = append(values, splitCSV(metadata.Genres)...)
 	}
-	normalized := normalizeStrings(candidates)
-	for _, token := range normalized {
-		switch token {
-		case "adult", "porn", "pornography", "xxx", "erotic", "hentai", "adult animation", "softcore":
+	if metadata := meta.ProviderMetadata.IMDB; metadata != nil {
+		values = append(values, splitCSV(metadata.Genres)...)
+	}
+	if metadata := meta.ProviderMetadata.TVDB; metadata != nil {
+		values = append(values, splitCSV(metadata.Genres)...)
+	}
+	if metadata := meta.ProviderMetadata.TVmaze; metadata != nil {
+		values = append(values, splitCSV(metadata.Genres)...)
+	}
+	return normalizeStrings(values)
+}
+
+// AdultContent reports whether a current provider genre is classified as adult.
+func AdultContent(meta api.RuleSubject) bool {
+	for _, genre := range RuleGenres(meta) {
+		switch genre {
+		case "adult", "porn", "pornography", "xxx", "erotic", "hentai", "adult animation", "softcore", "orgy":
 			return true
 		}
 	}
 	return false
 }
 
-func externalMetadataMatchesCurrentSource(meta api.RuleSubject) bool {
-	storedSource := strings.TrimSpace(meta.ProviderMetadata.SourcePath)
-	return storedSource == "" || pathutil.SamePath(storedSource, strings.TrimSpace(meta.SourcePath))
+func ruleProviderMetadataCurrent(meta api.RuleSubject) bool {
+	if !providerMetadataCurrent(meta) {
+		return false
+	}
+	currentSource := strings.TrimSpace(meta.SourcePath)
+	for _, scopedSource := range []string{meta.Identity.SourcePath, meta.ProviderMetadata.SourcePath} {
+		if scopedSource = strings.TrimSpace(scopedSource); scopedSource != "" && !pathutil.SamePath(scopedSource, currentSource) {
+			return false
+		}
+	}
+	return true
 }
 
 func splitCSV(value string) []string {
