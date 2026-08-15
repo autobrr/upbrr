@@ -13,8 +13,9 @@ func Profile() unit3d.Profile {
 		Name:    "SAM",
 		BaseURL: "https://samaritano.cc",
 		Site: unit3d.SiteProfile{
-			BuildName:        buildName,
-			BuildNameVersion: "v1",
+			BuildName:         buildName,
+			BuildNameVersion:  "v1",
+			ResolveCategoryID: categoryID,
 		},
 	}
 }
