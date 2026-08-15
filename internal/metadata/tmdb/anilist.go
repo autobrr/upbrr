@@ -26,6 +26,7 @@ const anilistRetryCount = 3
 
 // ponytail: one minute of cumulative retry wait; add shared pacing if AniList publishes a longer rate-limit window.
 const anilistMaxRetryWait = time.Minute
+const anilistRetryDelayOverBudget = anilistMaxRetryWait + time.Nanosecond
 
 // maxAniListMetadataResponseBytes caps rich AniList metadata responses before
 // JSON decode so malformed or unexpected GraphQL responses cannot grow
@@ -122,9 +123,9 @@ func (c *Client) ResolveAnime(ctx context.Context, tmdbName string, input Metada
 //
 // A non-positive ID or missing AniList media returns an empty result without
 // error. GraphQL errors, oversized responses, HTTP failures, and canceled
-// contexts return an error. Transient timeouts and HTTP 429 responses are
-// retried; rate-limit waits honor provider hints within a one-minute cumulative
-// budget.
+// contexts return an error. Transient timeouts are retried. HTTP 429 responses
+// are retried only when the provider delay fits within a one-minute cumulative
+// wait budget.
 func (c *Client) FetchAniListMetadata(ctx context.Context, malID int) (AniListMetadataResult, error) {
 	if malID <= 0 {
 		return AniListMetadataResult{}, nil
@@ -156,10 +157,13 @@ func (c *Client) FetchAniListMetadata(ctx context.Context, malID int) (AniListMe
 		if !isRetryableAniListError(err) || attempt == anilistRetryCount-1 {
 			return AniListMetadataResult{}, err
 		}
+		delay := anilistRetryDelay(err)
+		if delay > retryWaitRemaining {
+			return AniListMetadataResult{}, err
+		}
 		if c.logger != nil {
 			c.logger.Warnf("tmdb: anilist metadata request retrying mal=%d retry=%d/%d", malID, attempt+2, anilistRetryCount)
 		}
-		delay := min(anilistRetryDelay(err), retryWaitRemaining)
 		retryWaitRemaining -= delay
 		if err := waitForAniListRetry(ctx, delay); err != nil {
 			return AniListMetadataResult{}, err
@@ -196,10 +200,13 @@ func (c *Client) anilistSearch(ctx context.Context, term string, malID int) ([]a
 			return nil, err
 		}
 		lastErr = err
+		delay := anilistRetryDelay(err)
+		if delay > retryWaitRemaining {
+			return nil, err
+		}
 		if c.logger != nil {
 			c.logger.Warnf("tmdb: anilist request retrying mal=%d retry=%d/%d", malID, attempt+2, anilistRetryCount)
 		}
-		delay := min(anilistRetryDelay(err), retryWaitRemaining)
 		retryWaitRemaining -= delay
 		if err := waitForAniListRetry(ctx, delay); err != nil {
 			return nil, err
@@ -307,20 +314,20 @@ func newAniListHTTPError(response *http.Response) error {
 func parseAniListRetryDelay(header http.Header, now time.Time) time.Duration {
 	retryAfter := strings.TrimSpace(header.Get("Retry-After"))
 	if seconds, err := strconv.ParseInt(retryAfter, 10, 64); err == nil && seconds >= 0 {
-		if seconds >= int64(anilistMaxRetryWait/time.Second) {
-			return anilistMaxRetryWait
+		if seconds > int64(anilistMaxRetryWait/time.Second) {
+			return anilistRetryDelayOverBudget
 		}
 		return time.Duration(seconds) * time.Second
 	}
 	if retryAt, err := http.ParseTime(retryAfter); err == nil && retryAt.After(now) {
-		return min(retryAt.Sub(now), anilistMaxRetryWait)
+		return min(retryAt.Sub(now), anilistRetryDelayOverBudget)
 	}
 
 	reset, err := strconv.ParseInt(strings.TrimSpace(header.Get("X-Ratelimit-Reset")), 10, 64)
 	if err != nil {
 		return 0
 	}
-	return min(max(time.Unix(reset, 0).Sub(now), 0), anilistMaxRetryWait)
+	return min(max(time.Unix(reset, 0).Sub(now), 0), anilistRetryDelayOverBudget)
 }
 
 func anilistRetryDelay(err error) time.Duration {

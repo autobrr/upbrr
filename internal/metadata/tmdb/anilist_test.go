@@ -96,6 +96,32 @@ func TestAniListSearchRetriesRateLimit(t *testing.T) {
 	}
 }
 
+func TestAniListSearchStopsWhenRetryDelayExceedsBudget(t *testing.T) {
+	attempts := 0
+	client := &Client{
+		anilistURL: testAnilistURL,
+		http: &http.Client{
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				attempts++
+				return &http.Response{
+					StatusCode: http.StatusTooManyRequests,
+					Body:       io.NopCloser(strings.NewReader(`{"errors":[{"message":"Too Many Requests"}]}`)),
+					Header:     http.Header{"Retry-After": []string{"120"}},
+				}, nil
+			}),
+		},
+		logger: api.NopLogger{},
+	}
+
+	_, err := client.anilistSearch(t.Context(), "Example Anime", 0)
+	if err == nil || !strings.Contains(err.Error(), "http 429") {
+		t.Fatalf("expected rate-limit error, got %v", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("expected 1 attempt when retry delay exceeds budget, got %d", attempts)
+	}
+}
+
 func TestAniListSearchDoesNotRetryNonTimeoutErrors(t *testing.T) {
 	attempts := 0
 	client := &Client{
@@ -180,6 +206,32 @@ func TestFetchAniListMetadataRetriesRateLimit(t *testing.T) {
 	}
 	if result.AniListID != 1 || result.MALID != 20 {
 		t.Fatalf("unexpected mapped result: %#v", result)
+	}
+}
+
+func TestFetchAniListMetadataStopsWhenRetryDelayExceedsBudget(t *testing.T) {
+	attempts := 0
+	client := &Client{
+		anilistURL: testAnilistURL,
+		http: &http.Client{
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				attempts++
+				return &http.Response{
+					StatusCode: http.StatusTooManyRequests,
+					Body:       io.NopCloser(strings.NewReader(`{"errors":[{"message":"Too Many Requests"}]}`)),
+					Header:     http.Header{"Retry-After": []string{"120"}},
+				}, nil
+			}),
+		},
+		logger: api.NopLogger{},
+	}
+
+	_, err := client.FetchAniListMetadata(t.Context(), 20)
+	if err == nil || !strings.Contains(err.Error(), "http 429") {
+		t.Fatalf("expected rate-limit error, got %v", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("expected 1 attempt when retry delay exceeds budget, got %d", attempts)
 	}
 }
 
@@ -415,9 +467,14 @@ func TestParseAniListRetryDelay(t *testing.T) {
 			want:       0,
 		},
 		{
-			name:       "bounded",
+			name:       "over budget",
 			retryAfter: "120",
-			want:       anilistMaxRetryWait,
+			want:       anilistRetryDelayOverBudget,
+		},
+		{
+			name:  "reset over budget",
+			reset: strconv.FormatInt(now.Add(120*time.Second).Unix(), 10),
+			want:  anilistRetryDelayOverBudget,
 		},
 	}
 
