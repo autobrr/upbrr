@@ -5,6 +5,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -148,6 +149,73 @@ func TestReleaseWorkflowUploadFeedbackRequiresMatchingDiscriminatedMember(t *tes
 	ambiguous.Response.UploadApproval = &ReleaseWorkflowUploadApproval{Confirmed: true}
 	if err := ambiguous.Validate(); err == nil {
 		t.Fatal("feedback accepted multiple response members")
+	}
+}
+
+func TestReleaseWorkflowUploadFeedbackAcceptsBothTrackerPreparationDecisions(t *testing.T) {
+	t.Parallel()
+
+	for _, confirmed := range []bool{false, true} {
+		feedback := ReleaseWorkflowUploadFeedback{
+			Action: ReleaseWorkflowUploadActionIdentity{
+				ID:               "action-btn-autofill",
+				WorkflowRevision: 4,
+			},
+			Response: ReleaseWorkflowUploadFeedbackResponse{
+				Kind: ReleaseWorkflowUploadFeedbackTrackerPreparation,
+				TrackerPreparation: &ReleaseWorkflowUploadConfirmation{
+					Confirmed: confirmed,
+				},
+			},
+			IdempotencyKey: "btn-autofill-decision",
+		}
+		if err := feedback.Validate(); err != nil {
+			t.Fatalf("confirmed=%t: %v", confirmed, err)
+		}
+	}
+}
+
+func TestReleaseWorkflowUploadFeedbackRequiresExplicitTrackerPreparationDecisionInJSON(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name      string
+		decision  string
+		wantValid bool
+	}{
+		{name: "omitted", decision: `{}`},
+		{name: "null", decision: `{"confirmed":null}`},
+		{
+			name:      "false",
+			decision:  `{"confirmed":false}`,
+			wantValid: true,
+		},
+		{
+			name:      "true",
+			decision:  `{"confirmed":true}`,
+			wantValid: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			payload := fmt.Sprintf(`{
+				"action":{"id":"action-btn-autofill","workflowRevision":4},
+				"response":{"kind":"trackerPreparation","trackerPreparation":%s},
+				"idempotencyKey":"btn-autofill-decision"
+			}`, test.decision)
+			var feedback ReleaseWorkflowUploadFeedback
+			if err := json.Unmarshal([]byte(payload), &feedback); err != nil {
+				t.Fatalf("unmarshal feedback: %v", err)
+			}
+			feedback.IdempotencyKey = "btn-autofill-decision"
+			err := feedback.Validate()
+			if test.wantValid && err != nil {
+				t.Fatalf("explicit decision rejected: %v", err)
+			}
+			if !test.wantValid && err == nil {
+				t.Fatal("missing explicit decision was accepted")
+			}
+		})
 	}
 }
 

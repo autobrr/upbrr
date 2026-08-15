@@ -450,7 +450,7 @@ func TestCompositeUploadRoutesAndSchemasAreGenerated(t *testing.T) {
 		t.Fatalf("composite request required fields = %#v", requestSchema)
 	}
 	kindSchema := builder.schemas["ReleaseWorkflowUploadFeedbackKind"]
-	if kindSchema == nil || len(kindSchema.Enum) != 13 {
+	if kindSchema == nil || len(kindSchema.Enum) != 14 || !slices.Contains(kindSchema.Enum, "trackerPreparation") {
 		t.Fatalf("composite feedback enum = %#v", kindSchema)
 	}
 }

@@ -33,6 +33,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: build-binaries
+    outputs:
+      release_tag: ${{ steps.release.outputs.tag }}
     permissions:
       contents: write
 
@@ -91,3 +93,58 @@ jobs:
           else
             gh release create "$RELEASE_TAG" "${files[@]}" --verify-tag --generate-notes
           fi
+
+  publish-documentation:
+    name: Publish documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: publish-release
+    environment:
+      name: documentation-production
+      url: https://upbrr.com
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.publish-release.outputs.release_tag }}
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11.15.1
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: documentation/pnpm-lock.yaml
+
+      - name: Install documentation dependencies
+        working-directory: documentation
+        run: pnpm install --frozen-lockfile
+
+      - name: Check documentation
+        working-directory: documentation
+        run: pnpm run check
+
+      - name: Publish documentation
+        shell: pwsh
+        working-directory: documentation
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+          RELEASE_TAG: ${{ needs.publish-release.outputs.release_tag }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:NETLIFY_AUTH_TOKEN)) {
+            throw "NETLIFY_AUTH_TOKEN is not configured"
+          }
+          if ([string]::IsNullOrWhiteSpace($env:NETLIFY_SITE_ID)) {
+            throw "NETLIFY_SITE_ID is not configured"
+          }
+
+          pnpm dlx netlify-cli@27.1.1 deploy --prod --dir=build --no-build --message "upbrr $env:RELEASE_TAG"

@@ -71,6 +71,20 @@ func (f *workflowRetainedUploadPlanFake) Preparations() []trackers.RetainedTrack
 	return append([]trackers.RetainedTrackerPreparation(nil), f.preparations...)
 }
 
+func (f *workflowRetainedUploadPlanFake) ResolveAction(
+	_ context.Context,
+	trackerID string,
+	_ api.RequiredActionKind,
+	_ bool,
+) (trackers.RetainedTrackerPreparation, error) {
+	for _, preparation := range f.preparations {
+		if strings.EqualFold(preparation.Tracker, trackerID) {
+			return preparation, nil
+		}
+	}
+	return trackers.RetainedTrackerPreparation{}, trackers.ErrPlanActionUnavailable
+}
+
 func (f *workflowRetainedUploadPlanFake) Execute(context.Context) ([]trackers.RetainedTrackerResult, error) {
 	return append([]trackers.RetainedTrackerResult(nil), f.results...), nil
 }
@@ -93,6 +107,89 @@ func (f *workflowRetainedUploadPlanFake) ExecuteSelected(
 }
 
 func (*workflowRetainedUploadPlanFake) Release() error { return nil }
+
+func TestWorkflowUploadExecutionResolveActionReprojectsResolvedPreparation(t *testing.T) {
+	t.Parallel()
+
+	torrentPath := filepath.Join(t.TempDir(), "Example.Release.2026.BTN-GRP.torrent")
+	writeWorkflowRegisteredTorrent(t, torrentPath, "BTN")
+	tests := []struct {
+		name            string
+		torrentPath     string
+		wantStatus      api.StageStatus
+		wantEligible    bool
+		wantMessage     string
+		wantArtifact    bool
+		wantFailureCode api.OperationFailureCode
+	}{
+		{
+			name:         "ready replacement",
+			torrentPath:  torrentPath,
+			wantStatus:   api.StageStatusReady,
+			wantEligible: true,
+			wantMessage:  "deferred",
+			wantArtifact: true,
+		},
+		{
+			name:            "missing exact torrent",
+			wantStatus:      api.StageStatusFailed,
+			wantMessage:     "not ready",
+			wantFailureCode: api.OperationFailureMissingExactTorrent,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			execution := &workflowUploadExecution{
+				plan: &workflowRetainedUploadPlanFake{preparations: []trackers.RetainedTrackerPreparation{{
+					Tracker:     "BTN",
+					TorrentPath: test.torrentPath,
+				}}},
+				projections: map[api.TrackerID]api.TrackerReleaseProjection{
+					"BTN": {TrackerID: "BTN"},
+				},
+				inputFingerprint: api.WorkflowFingerprint(strings.Repeat("a", 64)),
+				dryRunInjected:   map[api.TrackerID]struct{}{"BTN": {}},
+				trackers: []api.UploadPlanTracker{{
+					TrackerID:              "BTN",
+					Eligible:               true,
+					Status:                 api.StageStatusReady,
+					RequiredActions:        []api.RequiredAction{{Kind: api.RequiredActionResolveTrackerPreparation}},
+					TorrentFingerprint:     api.WorkflowFingerprint(strings.Repeat("b", 64)),
+					ClientInjectionStatus:  api.StageStatusFailed,
+					ClientInjectionMessage: "stale client injection failure",
+					ClientFailureCode:      api.OperationFailureDryRunClientInjection,
+				}},
+			}
+			resolved, err := execution.ResolveAction(
+				context.Background(),
+				"BTN",
+				api.RequiredActionResolveTrackerPreparation,
+				false,
+			)
+			if err != nil {
+				t.Fatalf("resolve tracker preparation: %v", err)
+			}
+			if resolved.Status != test.wantStatus || resolved.Eligible != test.wantEligible ||
+				resolved.ClientInjectionStatus != api.StageStatusSkipped ||
+				!strings.Contains(resolved.ClientInjectionMessage, test.wantMessage) || resolved.ClientFailureCode != "" ||
+				(resolved.TorrentArtifactID != "") != test.wantArtifact || len(resolved.RequiredActions) != 0 {
+				t.Fatalf("resolved tracker = %#v", resolved)
+			}
+			if test.wantFailureCode == "" {
+				if len(resolved.Failures) != 0 {
+					t.Fatalf("resolved tracker failures = %#v", resolved.Failures)
+				}
+			} else if len(resolved.Failures) != 1 || resolved.Failures[0].Failure.Code != test.wantFailureCode {
+				t.Fatalf("resolved tracker failures = %#v", resolved.Failures)
+			}
+			if _, retained := execution.dryRunInjected["BTN"]; retained {
+				t.Fatal("resolved replacement retained stale client-injection receipt")
+			}
+		})
+	}
+}
 
 type workflowRetainedUploadServiceFake struct {
 	projections  []api.TrackerReleaseProjection

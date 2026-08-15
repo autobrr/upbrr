@@ -7,17 +7,28 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestApplySkipAutoTorrentDefault(t *testing.T) {
+func TestApplyMetadataDefaults(t *testing.T) {
 	t.Parallel()
 
-	if !applySkipAutoTorrentDefault(api.PrepareInput{}, true).Search.Skip {
-		t.Fatal("configured skip_auto_torrent was not applied")
+	configured := applyMetadataDefaults(api.PrepareInput{}, config.MetadataConfig{
+		SkipAutoTorrent: true,
+		KeepImages:      true,
+		OnlyID:          true,
+	})
+	if !configured.Search.Skip || !configured.Policy.KeepImages || !configured.Policy.OnlyID {
+		t.Fatalf("configured metadata defaults were not applied: %#v", configured)
 	}
-	if !applySkipAutoTorrentDefault(api.PrepareInput{Search: api.ClientSearchPolicy{Skip: true}}, false).Search.Skip {
-		t.Fatal("request skip_auto_torrent was not preserved")
+
+	requested := applyMetadataDefaults(api.PrepareInput{
+		Search: api.ClientSearchPolicy{Skip: true},
+		Policy: api.PreparationPolicy{KeepImages: true, OnlyID: true},
+	}, config.MetadataConfig{})
+	if !requested.Search.Skip || !requested.Policy.KeepImages || !requested.Policy.OnlyID {
+		t.Fatalf("request metadata options were not preserved: %#v", requested)
 	}
 }
 

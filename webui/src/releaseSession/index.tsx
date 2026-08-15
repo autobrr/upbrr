@@ -1524,8 +1524,13 @@ export function ReleaseSessionProvider({
           continueBackendGoal(current, "dry_run", backendResolvedUploadIntent(), commandID, signal),
         ),
       executeUploads: () => executeExactUpload(),
-      confirmAction: (action: RequiredAction) => {
-        if (action.kind !== "authorize_rules") return Promise.resolve(false);
+      confirmAction: (action: RequiredAction, confirmed = true) => {
+        if (
+          (action.kind !== "authorize_rules" && action.kind !== "resolve_tracker_preparation") ||
+          (action.kind === "authorize_rules" && !confirmed)
+        ) {
+          return Promise.resolve(false);
+        }
         return runBackendWorkflow((current, commandID, signal) =>
           continueBackendGoal(
             current,
@@ -1538,7 +1543,7 @@ export function ReleaseSessionProvider({
                 {
                   actionId: action.id,
                   workflowRevision: current.workflow.revision,
-                  confirmed: true,
+                  confirmed,
                 },
               ],
             },

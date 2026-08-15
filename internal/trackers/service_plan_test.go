@@ -289,6 +289,144 @@ func (d retainedProjectionDefinition) submit(_ context.Context, input Preparatio
 	}, nil
 }
 
+func TestRetainedUploadPlanResolvesOutsideLifecycleLock(t *testing.T) {
+	t.Parallel()
+
+	started := make(chan struct{})
+	proceed := make(chan struct{})
+	plan := newTestTrackerActionPlan(nil, func(ctx context.Context) (TrackerPlan, *PreparationFailure) {
+		close(started)
+		select {
+		case <-proceed:
+		case <-ctx.Done():
+			return TrackerPlan{}, NewPreparationFailure("BTN", "canceled", "resolution canceled", ctx.Err())
+		}
+		return NewUploadPlan(
+			"BTN",
+			api.TrackerDryRunEntry{
+				Tracker: "BTN",
+				Payload: map[string]string{"source": "release_name"},
+			},
+			func(context.Context) (api.UploadSummary, error) { return api.UploadSummary{}, nil },
+			nil,
+		), nil
+	})
+	retained := &RetainedUploadPlan{
+		service: &Service{},
+		slots: []trackerPlanSlot{{
+			tracker: "BTN",
+			plan:    plan,
+		}},
+	}
+	resolution := make(chan error, 1)
+	go func() {
+		_, err := retained.ResolveAction(context.Background(), "BTN", api.RequiredActionResolveTrackerPreparation, false)
+		resolution <- err
+	}()
+	<-started
+
+	preparations := make(chan []RetainedTrackerPreparation, 1)
+	go func() { preparations <- retained.Preparations() }()
+	select {
+	case current := <-preparations:
+		if len(current) != 1 || current[0].Preview.Payload["source"] != "tvdb" {
+			t.Fatalf("pre-resolution snapshot = %#v", current)
+		}
+	case <-time.After(2 * time.Second):
+		close(proceed)
+		t.Fatal("preparations blocked on tracker resolution")
+	}
+	if _, err := retained.ResolveAction(context.Background(), "BTN", api.RequiredActionResolveTrackerPreparation, false); !errors.Is(err, ErrPlanActionUnavailable) {
+		close(proceed)
+		t.Fatalf("concurrent resolution error = %v", err)
+	}
+	if _, err := retained.Execute(context.Background()); !errors.Is(err, ErrPlanActionUnavailable) {
+		close(proceed)
+		t.Fatalf("concurrent execution error = %v", err)
+	}
+	close(proceed)
+	if err := <-resolution; err != nil {
+		t.Fatalf("resolve action: %v", err)
+	}
+	current := retained.Preparations()
+	if len(current) != 1 || current[0].Preview.Payload["source"] != "release_name" {
+		t.Fatalf("resolved preparation = %#v", current)
+	}
+	if err := retained.Release(); err != nil {
+		t.Fatalf("release retained plan: %v", err)
+	}
+}
+
+func TestRetainedUploadPlanReleasesReplacementWhenReleasedDuringResolution(t *testing.T) {
+	t.Parallel()
+
+	started := make(chan struct{})
+	proceed := make(chan struct{})
+	var replacementReleases atomic.Int32
+	plan := newTestTrackerActionPlan(nil, func(ctx context.Context) (TrackerPlan, *PreparationFailure) {
+		close(started)
+		select {
+		case <-proceed:
+		case <-ctx.Done():
+			return TrackerPlan{}, NewPreparationFailure("BTN", "canceled", "resolution canceled", ctx.Err())
+		}
+		return NewUploadPlan(
+			"BTN",
+			api.TrackerDryRunEntry{Tracker: "BTN"},
+			func(context.Context) (api.UploadSummary, error) { return api.UploadSummary{}, nil },
+			func() error {
+				replacementReleases.Add(1)
+				return nil
+			},
+		), nil
+	})
+	retained := &RetainedUploadPlan{
+		service: &Service{},
+		slots: []trackerPlanSlot{{
+			tracker: "BTN",
+			plan:    plan,
+		}},
+	}
+	resolution := make(chan error, 1)
+	go func() {
+		_, err := retained.ResolveAction(context.Background(), "BTN", api.RequiredActionResolveTrackerPreparation, false)
+		resolution <- err
+	}()
+	<-started
+	if err := retained.Release(); err != nil {
+		t.Fatalf("release retained plan: %v", err)
+	}
+	close(proceed)
+	if err := <-resolution; !errors.Is(err, ErrPlanReleased) {
+		t.Fatalf("released resolution error = %v", err)
+	}
+	if replacementReleases.Load() != 1 {
+		t.Fatalf("replacement releases = %d", replacementReleases.Load())
+	}
+}
+
+func TestRetainedUploadPlanRecordsResolutionFailure(t *testing.T) {
+	t.Parallel()
+
+	want := NewPreparationFailure("BTN", PreparationFailureCodeSkipped, "Tracker skipped.", nil)
+	plan := newTestTrackerActionPlan(nil, func(context.Context) (TrackerPlan, *PreparationFailure) {
+		return TrackerPlan{}, want
+	})
+	retained := &RetainedUploadPlan{
+		slots: []trackerPlanSlot{{
+			tracker: "BTN",
+			plan:    plan,
+		}},
+	}
+	preparation, err := retained.ResolveAction(context.Background(), "BTN", api.RequiredActionResolveTrackerPreparation, false)
+	if err != nil {
+		t.Fatalf("resolve action: %v", err)
+	}
+	if preparation.Failure == nil || preparation.Failure.Code != PreparationFailureCodeSkipped || !errors.Is(preparation.Failure.cause, want) {
+		t.Fatalf("recorded preparation = %#v", preparation)
+	}
+}
+
 func TestRetainedUploadPlanExecutesExactReviewedProjectionWithoutRepreparing(t *testing.T) {
 	t.Parallel()
 
