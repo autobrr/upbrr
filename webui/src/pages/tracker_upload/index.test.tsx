@@ -269,10 +269,20 @@ describe("TrackerUploadPage", () => {
           clientInjectionStatus: "failed",
           clientFailureCode: "client_injection",
           clientInjectionMessage: "Exact-torrent client injection failed.",
+          failures: [
+            {
+              failure: {
+                Code: "client_injection_failed",
+                Operation: "client_injection",
+                Message: "Exact-torrent client injection failed.",
+                Recovery: "retry",
+              },
+            },
+          ],
         },
       ],
     } as unknown as NonNullable<UploadFacet["view"]["result"]>;
-    renderPage(uploadFacet({ result }, { retryClientInjection }));
+    const { container } = renderPage(uploadFacet({ result }, { retryClientInjection }));
 
     expect(screen.queryByRole("button", { name: "Retry failed uploads" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry client injection" }));
@@ -282,5 +292,8 @@ describe("TrackerUploadPage", () => {
         "Submission: completed · Client injection: failed · Exact-torrent client injection failed.",
       ),
     ).toBeInTheDocument();
+    expect(container.textContent?.match(/Exact-torrent client injection failed\./g)).toHaveLength(
+      1,
+    );
   });
 });
