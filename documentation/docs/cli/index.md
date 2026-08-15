@@ -8,7 +8,7 @@ description: Commands, interaction modes, aliases, and upload preparation flags 
 ```text
 upbrr [options] <input path>...
 upbrr serve [options]
-upbrr api-token <create|list|revoke> [options]
+upbrr api-token <list|revoke> [options]
 ```
 
 On Windows, examples use `upbrr.exe`. Put options before input paths.
@@ -18,7 +18,7 @@ Use executable help as the exact reference for your installed version:
 ```powershell
 .\upbrr.exe --help
 .\upbrr.exe serve --help
-.\upbrr.exe api-token create --help
+.\upbrr.exe api-token list --help
 ```
 
 ## Common operations
@@ -222,13 +222,7 @@ See [Web server and reverse proxy](../configuration/web-server.md) for precedenc
 
 ## `api-token`
 
-Create a persistent bearer token:
-
-```powershell
-.\upbrr.exe api-token create --name "Release automation" --owner "automation" --scopes workflow:read,workflow:write
-```
-
-`--scopes` accepts `workflow:read`, `workflow:write`, and `workflow:execute`. Omitting it grants all supported scopes. The plaintext token is returned only when created; store it in a secret manager.
+Create persistent bearer tokens in [Settings → API Tokens](../web-ui/settings/api-tokens.md). The authenticated Web UI displays each plaintext token once so it can be copied directly into a secret manager; CLI output never includes tokens.
 
 List safe token metadata:
 
@@ -242,6 +236,6 @@ Revoke by token ID:
 .\upbrr.exe api-token revoke tok_example
 ```
 
-Create options also include `--config`, `--name`, `--owner`, and `--scopes`. List and revoke accept `--config`.
+List and revoke accept `--config`.
 
 See the [API reference](../api/index.md) before granting `workflow:execute`.

@@ -4,8 +4,8 @@ Commands:
   serve [options]
       Start the embedded web UI server
       Options: --addr, --host, --port, --base-url, --persist-web-config, --dev-no-auth
-  api-token <create|list|revoke> [options]
-      Generate and manage persistent API bearer tokens
+  api-token <list|revoke> [options]
+      List and revoke persistent API bearer tokens
 
 Options:
 

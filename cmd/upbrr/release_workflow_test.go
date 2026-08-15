@@ -137,16 +137,17 @@ func TestPrintCLIWorkflowDryRunIncludesClientOutcome(t *testing.T) {
 				Status:            api.StageStatusCompleted,
 				ClientInjection: api.ClientInjectionOutcome{
 					Status:  api.StageStatusCompleted,
-					Message: "Client injection completed.",
+					Message: "Client injection completed with passkey=never-print-this.",
 				},
-				Warnings: []string{"Synthetic warning."},
+				Warnings: []string{"Synthetic warning api_token=never-print-this."},
 			},
 		}}, false, nil)
 	})
 	if !strings.Contains(output, "status=completed") ||
 		!strings.Contains(output, "client injection was attempted for each ready tracker") ||
-		!strings.Contains(output, "client injection: completed: Client injection completed.") ||
-		!strings.Contains(output, "warning: Synthetic warning.") {
+		!strings.Contains(output, "client injection: completed: Client injection completed with passkey=[REDACTED]") ||
+		!strings.Contains(output, "warning: Synthetic warning api_token=[REDACTED]") ||
+		strings.Contains(output, "never-print-this") {
 		t.Fatalf("upload dry-run output = %q", output)
 	}
 }

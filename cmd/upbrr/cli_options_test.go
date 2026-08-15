@@ -1155,7 +1155,7 @@ func TestPrintMetadataPreviewShowsRichReleaseDetails(t *testing.T) {
 
 	for _, expected := range []string{
 		"Release details",
-		"Debug mode: no actual tracker uploads will be processed.",
+		"Debug mode: validates the end-to-end workflow while suppressing tracker submission.",
 		"Source: [local path]",
 		"Upload name: Example Release 2026 S01 1080p WEB-DL H.264-GRP",
 		"Database info",

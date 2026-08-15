@@ -395,6 +395,7 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 			projection.Artifacts.ImageHosting,
 			projection.Artifacts.Description,
 		)
+		printCLICompositeDupeMatches(s.streams.out, dupe.Matches)
 		if logger != nil {
 			logger.Debugf(
 				"tracker approval: tracker=%s screenshots=%d dvd_menus=%d image_hosting=%t descriptions=%t",
@@ -605,7 +606,7 @@ func printCLICompositeDupeMatches(output io.Writer, matches []api.DupeMatchProje
 			}
 			fmt.Fprintf(output, "     HDR: %s\n", strings.Join(formats, "+"))
 		}
-		if link := strings.TrimSpace(match.Link); link != "" {
+		if link := strings.TrimSpace(logging.SanitizeMessage(match.Link)); link != "" {
 			fmt.Fprintf(output, "     Link: %s\n", link)
 		}
 	}

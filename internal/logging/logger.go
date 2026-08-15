@@ -288,7 +288,7 @@ func (l *Logger) writefAtLevel(applicationLevel Level, level Level, label string
 }
 
 func (l *Logger) enabledLevels(applicationLevel Level, level Level) (bool, Level, bool) {
-	consoleLevel := applicationLevel
+	consoleLevel := l.level
 	if l.consoleLevelSet {
 		consoleLevel = l.consoleLevel
 	}

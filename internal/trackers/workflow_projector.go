@@ -153,6 +153,7 @@ func (p *WorkflowProjector) resolveTrackerIDs(requested []api.TrackerID) ([]api.
 		descriptor, ok := p.registry.LookupDescriptor(string(requestedID))
 		if !ok {
 			if usingConfiguredDefaults {
+				p.logger.Warnf("trackers: projection tracker=%s state=unregistered decision=skip count=1", requestedID)
 				continue
 			}
 			return nil, fmt.Errorf("trackers: tracker %s is not registered", requestedID)

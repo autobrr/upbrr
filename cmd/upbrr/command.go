@@ -78,10 +78,6 @@ func executeAPITokenCLI(ctx context.Context, args []string, streams cliIO, origi
 	childName := args[1]
 	var fs *pflag.FlagSet
 	switch childName {
-	case "create":
-		var opts createAPITokenOptions
-		fs = pflag.NewFlagSet("api-token create", pflag.ContinueOnError)
-		bindCreateAPITokenFlags(fs, &opts)
 	case "list", "revoke":
 		var opts configAPITokenOptions
 		fs = pflag.NewFlagSet("api-token "+childName, pflag.ContinueOnError)
@@ -152,7 +148,7 @@ func newServeCommand(streams cliIO) *cobra.Command {
 	var opts serveOptions
 	cmd := &cobra.Command{
 		Use:  "serve [options]",
-		Args: cobra.ArbitraryArgs,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runServe(cmd.Context(), opts, canonicalChangedFlags(cmd.Flags(), nil))
 		},
@@ -181,33 +177,9 @@ func newAPITokenCommand(streams cliIO) *cobra.Command {
 	addExplicitHelpFlag(cmd)
 	cmd.Flags().SetInterspersed(false)
 	cmd.AddCommand(
-		newAPITokenCreateCommand(streams),
 		newAPITokenListCommand(streams),
 		newAPITokenRevokeCommand(streams),
 	)
-	return cmd
-}
-
-func newAPITokenCreateCommand(streams cliIO) *cobra.Command {
-	var opts createAPITokenOptions
-	cmd := &cobra.Command{
-		Use: "create [options]",
-		Args: func(_ *cobra.Command, args []string) error {
-			if len(args) != 0 {
-				return exitError(2, errors.New("api-token create does not accept positional arguments"))
-			}
-			return nil
-		},
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runCreateAPITokenCommand(cmd.Context(), opts, cmd.Flags().Changed("config"), cmd.OutOrStdout())
-		},
-	}
-	configureCommand(cmd, streams, 2, "parse api-token create options", func(cmd *cobra.Command) string {
-		return formatFlagUsage(cmd.Flags(), "upbrr api-token create [options]")
-	})
-	bindCreateAPITokenFlags(cmd.Flags(), &opts)
-	addExplicitHelpFlag(cmd)
-	cmd.Flags().SetInterspersed(false)
 	return cmd
 }
 

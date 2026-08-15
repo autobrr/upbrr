@@ -14,7 +14,7 @@ import (
 	"github.com/autobrr/upbrr/internal/authmaterial"
 )
 
-func TestAPITokenCLIManagesPersistentTokens(t *testing.T) {
+func TestAPITokenCLIListsAndRevokesPersistentTokens(t *testing.T) {
 	t.Parallel()
 
 	ctx := t.Context()
@@ -29,33 +29,31 @@ func TestAPITokenCLIManagesPersistentTokens(t *testing.T) {
 		t.Fatalf("bootstrap auth: %v", err)
 	}
 
-	var createOutput bytes.Buffer
-	if err := executeCLI(ctx, []string{
-		"api-token",
-		"create",
-		"--config", configPath,
-		"--name", "CLI automation",
-		"--owner", "cli-owner",
-		"--scopes", "workflow:read",
-	}, cliIO{out: &createOutput}); err != nil {
-		t.Fatalf("create command: %v", err)
+	repository, err := authmaterial.NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("open auth store: %v", err)
 	}
-	createdFields := strings.Fields(createOutput.String())
-	if len(createdFields) < 8 {
-		t.Fatal("create output is incomplete")
+	service, err := apitoken.NewService(repository)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
 	}
-	var id string
-	var token string
-	for index, value := range createdFields {
-		if value == "ID:" && index+1 < len(createdFields) {
-			id = createdFields[index+1]
-		}
-		if value == "Token:" && index+1 < len(createdFields) {
-			token = createdFields[index+1]
-		}
+	created, err := service.Create(ctx, apitoken.CreateInput{
+		Name:    "CLI automation",
+		OwnerID: "cli-owner",
+		Scopes:  []apitoken.Scope{apitoken.ScopeWorkflowRead},
+	})
+	if err != nil {
+		t.Fatalf("seed API token: %v", err)
 	}
-	if id == "" || token == "" {
-		t.Fatal("create output did not contain token ID and one-time token")
+	id := created.Record.ID
+	token := created.Token
+
+	createResult := executeCLIForTest(ctx, t, []string{"api-token", "create", "--config", configPath})
+	if createResult.code != 2 || !strings.Contains(createResult.stderr, `unknown api-token command "create"`) {
+		t.Fatalf("removed create command result = %#v", createResult)
+	}
+	if strings.Contains(createResult.stdout, token) || strings.Contains(createResult.stderr, token) {
+		t.Fatal("removed create command exposed plaintext token")
 	}
 
 	var listOutput bytes.Buffer
@@ -69,14 +67,6 @@ func TestAPITokenCLIManagesPersistentTokens(t *testing.T) {
 		t.Fatal("list output exposed plaintext token")
 	}
 
-	repository, err := authmaterial.NewStore(dbPath)
-	if err != nil {
-		t.Fatalf("open auth store: %v", err)
-	}
-	service, err := apitoken.NewService(repository)
-	if err != nil {
-		t.Fatalf("new service: %v", err)
-	}
 	principal, ok, err := service.Authenticate(ctx, token)
 	if err != nil || !ok || principal.OwnerID != "api:cli-owner" {
 		t.Fatalf("authenticate principal=%#v ok=%t err=%v", principal, ok, err)

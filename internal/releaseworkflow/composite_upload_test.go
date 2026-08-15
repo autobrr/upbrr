@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -230,6 +231,58 @@ func TestCompositeUploadReleaseNameFeedbackPreservesSiblingProjection(t *testing
 			action.Status == api.RequiredActionStatusPending
 	}) {
 		t.Fatalf("sibling name-review action = %#v", next.Continuation.RequiredActions)
+	}
+}
+
+func TestCompositeUploadTrackerInputRejectsMismatchedTrackerWithoutMutation(t *testing.T) {
+	t.Parallel()
+
+	module, repository, _ := newCompositeUploadNameReviewTestModule(t)
+	request := compositeUploadTestRequest(true, api.ReleaseWorkflowUploadModeDebug, "composite-name-mismatch")
+	request.Trackers.Include = []api.TrackerID{"ALPHA", "BETA", "GAMMA"}
+	started, err := module.StartUpload(context.Background(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("start name-review composite upload: %v", err)
+	}
+	blocked := waitCompositeUploadTestOperation(t, module, started)
+	actionIndex := slices.IndexFunc(blocked.Continuation.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionProvideTrackerInput && action.TrackerID == "ALPHA" &&
+			action.Status == api.RequiredActionStatusPending
+	})
+	if actionIndex < 0 {
+		t.Fatalf("initial name-review stop = %#v", blocked)
+	}
+	action := blocked.Continuation.RequiredActions[actionIndex]
+	before, err := repository.Load(context.Background(), testOwnerID, blocked.Workflow.ID)
+	if err != nil {
+		t.Fatalf("load state before mismatched feedback: %v", err)
+	}
+
+	_, err = module.SubmitUploadFeedback(context.Background(), testOwnerID, blocked.Workflow.ID, api.ReleaseWorkflowUploadFeedback{
+		Action: api.ReleaseWorkflowUploadActionIdentity{
+			ID:               action.ID,
+			WorkflowRevision: blocked.Workflow.Revision,
+		},
+		Response: api.ReleaseWorkflowUploadFeedbackResponse{
+			Kind: api.ReleaseWorkflowUploadFeedbackTrackerInput,
+			TrackerInput: &api.ReleaseWorkflowUploadTrackerInput{
+				TrackerID: " beta ",
+				Projection: api.ReleaseWorkflowUploadTrackerProjection{
+					UploadReleaseName: api.WorkflowPatch[string]{Present: true, Value: "Example.Release.2026.WRONG-GRP"},
+				},
+			},
+		},
+		IdempotencyKey: "mismatched-tracker-input",
+	})
+	if !errors.Is(err, ErrInvalidTransition) || !strings.Contains(err.Error(), "feedback tracker does not match action") {
+		t.Fatalf("mismatched tracker feedback error = %v", err)
+	}
+	after, err := repository.Load(context.Background(), testOwnerID, blocked.Workflow.ID)
+	if err != nil {
+		t.Fatalf("load state after mismatched feedback: %v", err)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("mismatched tracker feedback mutated state: before=%#v after=%#v", before, after)
 	}
 }
 

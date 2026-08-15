@@ -866,10 +866,15 @@ func printCLIWorkflowDryRun(
 			fmt.Fprintf(output, "- %s: %s status=%s\n", report.DisplayName, report.UploadReleaseName, report.Status)
 		}
 		if report.ClientInjection.Status != "" {
-			fmt.Fprintf(output, "  client injection: %s: %s\n", report.ClientInjection.Status, report.ClientInjection.Message)
+			fmt.Fprintf(
+				output,
+				"  client injection: %s: %s\n",
+				report.ClientInjection.Status,
+				logging.SanitizeMessage(report.ClientInjection.Message),
+			)
 		}
 		for _, warning := range report.Warnings {
-			fmt.Fprintf(output, "  warning: %s\n", warning)
+			fmt.Fprintf(output, "  warning: %s\n", logging.SanitizeMessage(warning))
 		}
 	}
 	fmt.Fprintf(

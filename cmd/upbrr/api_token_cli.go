@@ -21,54 +21,18 @@ import (
 const apiTokenCommandUsage = `Usage: upbrr api-token <command> [options]
 
 Commands:
-  create    Generate and persist a new API token
   list      List persisted API token metadata
   revoke    Revoke an API token by ID
 
 Run "upbrr api-token <command> --help" for command options.
 `
 
-type createAPITokenOptions struct {
-	configPath string
-	name       string
-	ownerID    string
-	rawScopes  string
-}
-
 type configAPITokenOptions struct {
 	configPath string
 }
 
-func bindCreateAPITokenFlags(fs *pflag.FlagSet, opts *createAPITokenOptions) {
-	fs.StringVar(&opts.configPath, "config", "", "Path to config file")
-	fs.StringVar(&opts.name, "name", "CLI token", "Operator-facing token name")
-	fs.StringVar(&opts.ownerID, "owner", "default", "Workflow owner isolation key")
-	fs.StringVar(&opts.rawScopes, "scopes", joinAPITokenScopes(apitoken.AllScopes()), "Comma-separated API scopes")
-}
-
 func bindConfigAPITokenFlags(fs *pflag.FlagSet, opts *configAPITokenOptions) {
 	fs.StringVar(&opts.configPath, "config", "", "Path to config file")
-}
-
-func runCreateAPITokenCommand(ctx context.Context, opts createAPITokenOptions, configProvided bool, output io.Writer) error {
-	scopes, err := parseAPITokenScopes(opts.rawScopes)
-	if err != nil {
-		return exitError(2, err)
-	}
-	service, err := openAPITokenService(ctx, opts.configPath, configProvided)
-	if err != nil {
-		return err
-	}
-	created, err := service.Create(ctx, apitoken.CreateInput{
-		Name:    opts.name,
-		OwnerID: opts.ownerID,
-		Scopes:  scopes,
-	})
-	if err != nil {
-		return fmt.Errorf("create API credential: %w", err)
-	}
-	fmt.Fprintf(output, "API token created.\nID: %s\nToken: %s\nStore this token now; it will not be shown again.\n", created.Record.ID, created.Token)
-	return nil
 }
 
 func runListAPITokensCommand(ctx context.Context, opts configAPITokenOptions, configProvided bool, output io.Writer) error {
@@ -149,20 +113,6 @@ func openAPITokenService(
 		return nil, fmt.Errorf("create API credential service: %w", err)
 	}
 	return service, nil
-}
-
-func parseAPITokenScopes(raw string) ([]apitoken.Scope, error) {
-	scopes := make([]apitoken.Scope, 0)
-	for value := range strings.SplitSeq(raw, ",") {
-		if value = strings.TrimSpace(value); value != "" {
-			scopes = append(scopes, apitoken.Scope(value))
-		}
-	}
-	normalized, err := apitoken.NormalizeScopes(scopes)
-	if err != nil {
-		return nil, fmt.Errorf("parse API credential scopes: %w", err)
-	}
-	return normalized, nil
 }
 
 func joinAPITokenScopes(scopes []apitoken.Scope) string {

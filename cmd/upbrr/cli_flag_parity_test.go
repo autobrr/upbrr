@@ -71,7 +71,6 @@ func TestServeAndAPITokenFlagsStayOutsideUploadManifest(t *testing.T) {
 	})
 	apiTokenFlags := make(map[string]struct{})
 	for _, command := range []*pflag.FlagSet{
-		newAPITokenCreateCommand(cliIO{}).Flags(),
 		newAPITokenListCommand(cliIO{}).Flags(),
 		newAPITokenRevokeCommand(cliIO{}).Flags(),
 	} {
@@ -79,7 +78,7 @@ func TestServeAndAPITokenFlagsStayOutsideUploadManifest(t *testing.T) {
 			apiTokenFlags[name] = struct{}{}
 		}
 	}
-	assertSourceFlagsEqual(t, "API token", apiTokenFlags, []string{"config", "name", "owner", "scopes"})
+	assertSourceFlagsEqual(t, "API token", apiTokenFlags, []string{"config"})
 }
 
 func cliCompositeFlagManifest() map[string]cliCompositeFlagClass {

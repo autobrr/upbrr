@@ -18,7 +18,7 @@ func printMetadataPreview(output io.Writer, preview api.MetadataPreview, debug b
 	fmt.Fprintln(output)
 	fmt.Fprintln(output, "Release details")
 	if debug {
-		fmt.Fprintln(output, "Debug mode: no actual tracker uploads will be processed.")
+		fmt.Fprintln(output, "Debug mode: validates the end-to-end workflow while suppressing tracker submission.")
 	}
 	fmt.Fprintf(output, "Source: %s\n", formatPathLabel(preview.SourcePath))
 	fmt.Fprintf(output, "Upload name: %s\n", preview.ReleaseName)

@@ -60,9 +60,10 @@ func TestResolveTrackerIDsIgnoresUnsupportedConfiguredDefaults(t *testing.T) {
 	if err := registry.Register(stubDefinition{name: "SUPPORTED"}); err != nil {
 		t.Fatalf("register tracker: %v", err)
 	}
+	logger := &warningLogger{}
 	projector, err := NewWorkflowProjector(registry, config.Config{
 		Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"SUPPORTED", "RETIRED"}},
-	}, nil)
+	}, logger)
 	if err != nil {
 		t.Fatalf("new workflow projector: %v", err)
 	}
@@ -73,6 +74,9 @@ func TestResolveTrackerIDsIgnoresUnsupportedConfiguredDefaults(t *testing.T) {
 	}
 	if len(selected) != 1 || selected[0] != "SUPPORTED" {
 		t.Fatalf("selected trackers = %v, want [SUPPORTED]", selected)
+	}
+	if len(logger.warnings) != 1 || logger.warnings[0] != "trackers: projection tracker=RETIRED state=unregistered decision=skip count=1" {
+		t.Fatalf("configured default warnings = %#v", logger.warnings)
 	}
 
 	if _, err := projector.resolveTrackerIDs([]api.TrackerID{"RETIRED"}); err == nil {

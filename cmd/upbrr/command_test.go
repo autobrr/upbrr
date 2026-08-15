@@ -70,11 +70,6 @@ func TestCommandHelpGoldens(t *testing.T) {
 			golden: "api-token.txt",
 		},
 		{
-			name:   "api token create",
-			args:   []string{"api-token", "create", "--help"},
-			golden: "api-token-create.txt",
-		},
-		{
 			name:   "api token list",
 			args:   []string{"api-token", "list", "--help"},
 			golden: "api-token-list.txt",
@@ -185,6 +180,12 @@ func TestCommandExitCodesAndRouting(t *testing.T) {
 			args:      []string{"serve", "--typo"},
 			wantCode:  1,
 			wantError: "parse serve options: flag provided but not defined: -typo",
+		},
+		{
+			name:      "serve positional",
+			args:      []string{"serve", "accidental-value"},
+			wantCode:  1,
+			wantError: `unknown command "accidental-value" for "upbrr serve"`,
 		},
 		{
 			name:      "API token positional",
