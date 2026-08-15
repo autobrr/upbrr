@@ -1860,20 +1860,31 @@ func (m *Module) applyCompositeUploadFeedback(
 		}
 		state.Composite.Intent.Preparation.Force = true
 	case api.ReleaseWorkflowUploadFeedbackRuleAuthorization:
-		confirmed := true
-		if _, err := m.resolveAction(ctx, ownerID, state, nextRevision, now, ResolveActionCommand{
-			WorkflowID:       command.WorkflowID,
-			ExpectedRevision: command.ExpectedRevision,
-			Answer: api.RequiredActionAnswer{
-				ActionID:         action.ID,
-				WorkflowRevision: command.ExpectedRevision,
-				Confirmed:        &confirmed,
-			},
-			IdempotencyKey: command.IdempotencyKey,
-		}); err != nil {
-			return CommandResult{}, err
+		if command.Response.Confirmed {
+			confirmed := true
+			if _, err := m.resolveAction(ctx, ownerID, state, nextRevision, now, ResolveActionCommand{
+				WorkflowID:       command.WorkflowID,
+				ExpectedRevision: command.ExpectedRevision,
+				Answer: api.RequiredActionAnswer{
+					ActionID:         action.ID,
+					WorkflowRevision: command.ExpectedRevision,
+					Confirmed:        &confirmed,
+				},
+				IdempotencyKey: command.IdempotencyKey,
+			}); err != nil {
+				return CommandResult{}, err
+			}
+			resolvedByCommand = true
+			break
 		}
-		resolvedByCommand = true
+		trackerID := normalizeCompositeTrackerID(action.TrackerID)
+		if trackerID == "" {
+			return CommandResult{}, fmt.Errorf("%w: tracker rule rejection requires tracker ID", ErrInvalidTransition)
+		}
+		if !slices.Contains(state.Composite.RemoveTrackers, trackerID) {
+			state.Composite.RemoveTrackers = append(state.Composite.RemoveTrackers, trackerID)
+		}
+		m.logger.Infof("release workflow: declined tracker rule override tracker=%s decision=skip", trackerID)
 	case api.ReleaseWorkflowUploadFeedbackTrackerPreparation:
 		confirmed := command.Response.Confirmed
 		if _, err := m.resolveAction(ctx, ownerID, state, nextRevision, now, ResolveActionCommand{

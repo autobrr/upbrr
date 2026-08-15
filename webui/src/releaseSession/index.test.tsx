@@ -727,6 +727,68 @@ describe("useReleaseSession", () => {
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
 
+  it("accepts a tracker rule warning from the dupe facet", async () => {
+    const workflowID = "workflow-dupe-rule-override";
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const action = {
+      createdAt: "2026-08-15T00:00:00Z",
+      id: "action-authorize-alpha",
+      kind: "authorize_rules" as const,
+      prompt: "ALPHA rule warning. Upload to this tracker anyway?",
+      status: "pending" as const,
+      trackerId: "ALPHA",
+      workflowRevision: 7,
+    };
+    const base = workflowCurrent(workflowID, 7);
+    const retained: ReleaseWorkflowCurrent = {
+      ...base,
+      workflow: { ...base.workflow, status: "blocked", requiredActions: [action] },
+      continuation: { ...base.continuation, requiredActions: [action] },
+      projections: {
+        projections: [
+          {
+            trackerId: "ALPHA",
+            displayName: "ALPHA",
+            readiness: "blocked",
+            artifacts: {
+              screenshotCount: 0,
+              dvdMenuCount: 0,
+              imageHosting: false,
+              description: false,
+            },
+            requiredActions: [action],
+          },
+        ],
+      } as unknown as NonNullable<ReleaseWorkflowCurrent["projections"]>,
+    };
+    const continueWorkflow = vi.fn(async () => retained);
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          workflow: workflowPorts({
+            current: async () => retained,
+            continue: continueWorkflow,
+          }),
+        }),
+      ),
+    });
+
+    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+    await act(async () => {
+      expect(await result.current.duplicates.overrideRules("alpha")).toBe(true);
+    });
+    expect(continueWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        goal: "duplicates_decided",
+        answers: [{ actionId: action.id, workflowRevision: 7, confirmed: true }],
+      }),
+      expect.any(AbortSignal),
+    );
+
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
   it("declines a tracker preparation action to request its fallback", async () => {
     const workflowID = "workflow-resolve-tracker-preparation";
     window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);

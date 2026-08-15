@@ -373,11 +373,18 @@ func TestCLICompositeRuleAuthorizationHonorsInteractionMode(t *testing.T) {
 	action := api.RequiredAction{
 		ID:               "action-waive-rules",
 		Kind:             api.RequiredActionAuthorizeRules,
+		TrackerID:        "ALPHA",
 		WorkflowRevision: 4,
-		Prompt:           "EXAMPLE has waivable rule failures. Continue with this tracker?",
+		Prompt:           "ALPHA rule warning: language rule. Upload to this tracker anyway?",
 	}
 	session := &cliWorkflowSession{
 		intent: cliWorkflowIntent{interaction: api.InteractionModeUnattendedConfirm},
+		current: releaseworkflow.CommandResult{
+			Projections: &api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{
+				{TrackerID: "ALPHA", Readiness: api.ReadinessStatusBlocked},
+				{TrackerID: "BETA", Readiness: api.ReadinessStatusReady},
+			}},
+		},
 	}
 	var (
 		feedback api.ReleaseWorkflowUploadFeedback
@@ -397,6 +404,33 @@ func TestCLICompositeRuleAuthorizationHonorsInteractionMode(t *testing.T) {
 		feedback.Response.Kind != api.ReleaseWorkflowUploadFeedbackRuleAuthorization ||
 		feedback.Response.RuleAuthorization == nil || !feedback.Response.RuleAuthorization.Confirmed {
 		t.Fatalf("rule authorization feedback = %#v declined=%t err=%v", feedback, declined, err)
+	}
+
+	captureStdout(t, func() {
+		feedback, declined, err = session.collectCompositeUploadFeedback(
+			context.Background(),
+			bufio.NewReader(strings.NewReader("n\n")),
+			config.Config{},
+			api.NopLogger{},
+			action,
+		)
+	})
+	if err != nil || declined || feedback.Response.RuleAuthorization == nil || feedback.Response.RuleAuthorization.Confirmed {
+		t.Fatalf("rule rejection feedback = %#v declined=%t err=%v", feedback, declined, err)
+	}
+
+	session.current.Projections.Projections = session.current.Projections.Projections[:1]
+	captureStdout(t, func() {
+		_, declined, err = session.collectCompositeUploadFeedback(
+			context.Background(),
+			bufio.NewReader(strings.NewReader("n\n")),
+			config.Config{},
+			api.NopLogger{},
+			action,
+		)
+	})
+	if err != nil || !declined {
+		t.Fatalf("last tracker rejection declined=%t err=%v", declined, err)
 	}
 
 	session.intent.interaction = api.InteractionModeUnattended

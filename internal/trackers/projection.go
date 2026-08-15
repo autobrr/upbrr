@@ -716,5 +716,15 @@ func waivableRuleAuthorizationPrompt(projection api.TrackerReleaseProjection, fa
 	if tracker == "" {
 		tracker = string(projection.TrackerID)
 	}
-	return fmt.Sprintf("%s has waivable rule failures: %s. Continue with this tracker?", tracker, strings.Join(details, "; "))
+	label := "rule warning"
+	if len(details) != 1 {
+		label = "rule warnings"
+	}
+	detail := strings.Join(details, "; ")
+	if detail == "" {
+		detail = "Review required."
+	} else if !strings.ContainsAny(detail[len(detail)-1:], ".!?") {
+		detail += "."
+	}
+	return fmt.Sprintf("%s %s: %s Upload to this tracker anyway?", tracker, label, detail)
 }

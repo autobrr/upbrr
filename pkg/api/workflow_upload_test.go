@@ -175,6 +175,69 @@ func TestReleaseWorkflowUploadFeedbackAcceptsBothTrackerPreparationDecisions(t *
 	}
 }
 
+func TestReleaseWorkflowUploadFeedbackAcceptsBothTrackerRuleDecisions(t *testing.T) {
+	t.Parallel()
+
+	for _, confirmed := range []bool{false, true} {
+		feedback := ReleaseWorkflowUploadFeedback{
+			Action: ReleaseWorkflowUploadActionIdentity{
+				ID:               "tracker-rule-decision",
+				WorkflowRevision: 2,
+			},
+			Response: ReleaseWorkflowUploadFeedbackResponse{
+				Kind: ReleaseWorkflowUploadFeedbackRuleAuthorization,
+				RuleAuthorization: &ReleaseWorkflowUploadConfirmation{
+					Confirmed: confirmed,
+				},
+			},
+			IdempotencyKey: "tracker-rule-decision",
+		}
+		if err := feedback.Validate(); err != nil {
+			t.Fatalf("confirmed=%t: %v", confirmed, err)
+		}
+	}
+}
+
+func TestReleaseWorkflowUploadFeedbackRequiresExplicitTrackerRuleDecisionInJSON(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name      string
+		decision  string
+		wantValid bool
+	}{
+		{name: "omitted", decision: `{}`},
+		{name: "null", decision: `{"confirmed":null}`},
+		{
+			name:      "false",
+			decision:  `{"confirmed":false}`,
+			wantValid: true,
+		},
+		{
+			name:      "true",
+			decision:  `{"confirmed":true}`,
+			wantValid: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			payload := fmt.Sprintf(`{
+				"action":{"id":"tracker-rule-decision","workflowRevision":2},
+				"response":{"kind":"ruleAuthorization","ruleAuthorization":%s},
+				"idempotencyKey":"tracker-rule-decision"
+			}`, test.decision)
+			var feedback ReleaseWorkflowUploadFeedback
+			if err := json.Unmarshal([]byte(payload), &feedback); err != nil {
+				t.Fatalf("unmarshal feedback: %v", err)
+			}
+			feedback.IdempotencyKey = "tracker-rule-decision"
+			if err := feedback.Validate(); (err == nil) != test.wantValid {
+				t.Fatalf("Validate() error = %v, wantValid %t", err, test.wantValid)
+			}
+		})
+	}
+}
+
 func TestReleaseWorkflowUploadFeedbackRequiresExplicitTrackerPreparationDecisionInJSON(t *testing.T) {
 	t.Parallel()
 

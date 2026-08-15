@@ -10,7 +10,7 @@ import (
 )
 
 // UnmarshalJSON preserves whether confirmation was omitted while keeping
-// explicit false distinct for tracker-preparation decisions.
+// explicit false distinct for tracker-rule and tracker-preparation decisions.
 func (c *ReleaseWorkflowUploadConfirmation) UnmarshalJSON(payload []byte) error {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(payload, &fields); err != nil {

@@ -3989,7 +3989,7 @@ func TestResolveProjectionRuleAuthorizationReprojectsWithExactServerAuthority(t 
 			projection.PolicyDecisions[0].Blocking = true
 			projection.RequiredActions = []api.RequiredAction{{
 				Kind:   api.RequiredActionAuthorizeRules,
-				Prompt: "Alpha has waivable rule failures. Continue with this tracker?",
+				Prompt: "Alpha rule warning. Upload to this tracker anyway?",
 			}}
 			status = api.StageStatusBlocked
 		}

@@ -741,6 +741,25 @@ func TestContinuationPlannerAdvancesRunnableSiblingPastPendingDupe(t *testing.T)
 	if continuationActionBlocksAllLanesForMode(current, action, TrackerDecisionModeWebUIControls) {
 		t.Fatal("WebUI duplicate review blocked runnable sibling lane")
 	}
+	waivableFingerprint := testFingerprint(t, "planner-waivable-rule")
+	ruleAction := api.RequiredAction{
+		ID:        "authorize-beta-rules",
+		Kind:      api.RequiredActionAuthorizeRules,
+		TrackerID: "BETA",
+		Status:    api.RequiredActionStatusPending,
+	}
+	current.Projections.Projections[1].WaivableRuleFingerprint = waivableFingerprint
+	current.Projections.Projections[1].RequiredActions = []api.RequiredAction{ruleAction}
+	if !continuationActionBlocksAllLanesForMode(current, ruleAction, TrackerDecisionModePostDupeGate) {
+		t.Fatal("CLI tracker rule prompt did not retain its explicit gate")
+	}
+	if continuationActionBlocksAllLanesForMode(current, ruleAction, TrackerDecisionModeWebUIControls) {
+		t.Fatal("WebUI tracker rule warning blocked runnable workflow lanes")
+	}
+	current.Projections.Projections = current.Projections.Projections[1:]
+	if continuationActionBlocksAllLanesForMode(current, ruleAction, TrackerDecisionModeWebUIControls) {
+		t.Fatal("WebUI tracker rule warning blocked its dupe-card workflow")
+	}
 }
 
 func TestContinuationPlannerPreservesAuthBlockedLaneWhileCheckingReadySibling(t *testing.T) {

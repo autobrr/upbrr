@@ -403,12 +403,12 @@ family policy.
 Choose dispositions deliberately:
 
 - `advisory` records a decision but never blocks;
-- `waivable` requires exact user authorization, then permits normal live execution; debug mode bypasses it automatically;
+- `waivable` records an upload warning; exact user approval permits that tracker, while no response leaves only that tracker excluded; debug mode bypasses it automatically;
 - `strict` blocks in every execution mode.
 
-The workflow emits one tracker-scoped authorization action for the exact current set of waivable
-failures. A changed failure set invalidates that authority and requires a new confirmation. Strict
-failures never emit an authorization action and cannot be overridden.
+The workflow emits one tracker-scoped override for the exact current warning set. WebUI places it
+on that tracker's duplicate-review card; interactive CLI prompts for it. A changed set invalidates
+that authority and requires new approval. Strict failures cannot be overridden.
 
 Every constructibility predicate whose result depends on a required mapping or resource, including
 a missing resolution, category, type, questionnaire answer, or prepared media fact, must be

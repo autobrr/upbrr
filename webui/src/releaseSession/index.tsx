@@ -1780,6 +1780,34 @@ export function ReleaseSessionProvider({
           }),
         );
       },
+      overrideRules: async (tracker) => {
+        const normalizedTracker = tracker.trim().toUpperCase();
+        const current = workflowView.current;
+        const projection = current?.projections?.projections.find(
+          (candidate) => candidate.trackerId === normalizedTracker,
+        );
+        const action = [
+          ...(current?.workflow.requiredActions || []),
+          ...(projection?.requiredActions || []),
+        ].find(
+          (candidate) =>
+            candidate.kind === "authorize_rules" &&
+            candidate.trackerId === normalizedTracker &&
+            candidate.status === "pending",
+        );
+        if (!current || !action) return false;
+        return runBackendWorkflow((latest, commandID, signal) =>
+          continueBackendGoal(latest, "duplicates_decided", {}, commandID, signal, {
+            answers: [
+              {
+                actionId: action.id,
+                workflowRevision: latest.workflow.revision,
+                confirmed: true,
+              },
+            ],
+          }),
+        );
+      },
       cancel: async () => {
         if (!workflowView.current) return false;
         return cancelBackendWorkflow("duplicate check canceled");

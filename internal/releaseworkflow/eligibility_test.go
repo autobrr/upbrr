@@ -97,6 +97,35 @@ func TestDownstreamEligibleProjectionsAfterMediaExcludesOnlyFailedImageHostTrack
 	}
 }
 
+func TestDownstreamEligibleProjectionsExcludesUnapprovedRuleWarning(t *testing.T) {
+	t.Parallel()
+
+	projections := api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{
+		{
+			TrackerID:   "ALPHA",
+			Readiness:   api.ReadinessStatusBlocked,
+			UploadReady: false,
+		},
+		{
+			TrackerID:   "BETA",
+			Readiness:   api.ReadinessStatusReady,
+			UploadReady: true,
+		},
+	}}
+	dupes := api.DupeAssessment{Results: []api.TrackerDupeAssessment{
+		{
+			TrackerID: "BETA",
+			Decision:  api.DupeDecisionNoMatch,
+			Status:    api.StageStatusCompleted,
+		},
+	}}
+
+	eligible := DownstreamEligibleProjections(projections, dupes)
+	if len(eligible.Projections) != 1 || eligible.Projections[0].TrackerID != "BETA" {
+		t.Fatalf("eligible projections = %#v", eligible.Projections)
+	}
+}
+
 func TestDownstreamTrackerSetEnforcesModeAndExactApproval(t *testing.T) {
 	t.Parallel()
 
@@ -113,17 +142,17 @@ func TestDownstreamTrackerSetEnforcesModeAndExactApproval(t *testing.T) {
 		Status:    api.StageStatusReady,
 		Projections: []api.TrackerReleaseProjection{
 			{
-TrackerID: "ALPHA",
- DisplayName: "Alpha",
- Readiness: api.ReadinessStatusReady,
- UploadReady: true,
-},
+				TrackerID:   "ALPHA",
+				DisplayName: "Alpha",
+				Readiness:   api.ReadinessStatusReady,
+				UploadReady: true,
+			},
 			{
-TrackerID: "BETA",
- DisplayName: "Beta",
- Readiness: api.ReadinessStatusReady,
- UploadReady: true,
-},
+				TrackerID:   "BETA",
+				DisplayName: "Beta",
+				Readiness:   api.ReadinessStatusReady,
+				UploadReady: true,
+			},
 		},
 	}
 	preflight := api.TrackerPreflightAssessment{
@@ -142,15 +171,15 @@ TrackerID: "BETA",
 		ExpiresAt:        now.Add(time.Hour),
 		Results: []api.TrackerDupeAssessment{
 			{
-TrackerID: "ALPHA",
- Decision: api.DupeDecisionNoMatch,
- Status: api.StageStatusCompleted,
-},
+				TrackerID: "ALPHA",
+				Decision:  api.DupeDecisionNoMatch,
+				Status:    api.StageStatusCompleted,
+			},
 			{
-TrackerID: "BETA",
- Decision: api.DupeDecisionNoMatch,
- Status: api.StageStatusCompleted,
-},
+				TrackerID: "BETA",
+				Decision:  api.DupeDecisionNoMatch,
+				Status:    api.StageStatusCompleted,
+			},
 		},
 	}
 	state := State{
@@ -218,7 +247,7 @@ TrackerID: "BETA",
 		ID:       "media-authority",
 		Revision: 8,
 		Failures: []api.WorkflowFailure{{
-			Failure: api.OperationFailure{Operation: api.OperationKindImageHosting},
+			Failure:   api.OperationFailure{Operation: api.OperationKindImageHosting},
 			TrackerID: "BETA",
 		}},
 	}

@@ -231,6 +231,55 @@ func TestCompositeUploadRuleAuthorizationResumesLiveUpload(t *testing.T) {
 	}
 }
 
+func TestCompositeUploadRuleRejectionSkipsOnlyThatTracker(t *testing.T) {
+	t.Parallel()
+
+	module, _, uploads := newCompositeUploadWaiverTestModule(t)
+	request := compositeUploadTestRequest(true, api.ReleaseWorkflowUploadModeUpload, "composite-rule-rejection")
+	started, err := module.StartUpload(context.Background(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("start composite upload: %v", err)
+	}
+	blocked := waitCompositeUploadTestOperation(t, module, started)
+	actionIndex := slices.IndexFunc(blocked.Continuation.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionAuthorizeRules && action.TrackerID == "ALPHA" &&
+			action.Status == api.RequiredActionStatusPending
+	})
+	if actionIndex < 0 {
+		t.Fatalf("tracker rule action = %#v", blocked.Continuation.RequiredActions)
+	}
+	action := blocked.Continuation.RequiredActions[actionIndex]
+	resumed, err := module.SubmitUploadFeedback(context.Background(), testOwnerID, blocked.Workflow.ID, api.ReleaseWorkflowUploadFeedback{
+		Action: api.ReleaseWorkflowUploadActionIdentity{
+			ID:               action.ID,
+			WorkflowRevision: blocked.Workflow.Revision,
+		},
+		Response: api.ReleaseWorkflowUploadFeedbackResponse{
+			Kind: api.ReleaseWorkflowUploadFeedbackRuleAuthorization,
+			RuleAuthorization: &api.ReleaseWorkflowUploadConfirmation{
+				Confirmed: false,
+			},
+		},
+		IdempotencyKey: "reject-composite-rules",
+	})
+	if err != nil {
+		t.Fatalf("reject composite tracker rules: %v", err)
+	}
+	review := waitCompositeUploadTestOperation(t, module, resumed)
+	approval := pendingCompositeTrackerApproval(t, review)
+	if len(review.Selection.TrackerIDs) != 1 || review.Selection.TrackerIDs[0] != "BETA" ||
+		review.Projections == nil || len(review.Projections.Projections) != 1 || review.Projections.Projections[0].TrackerID != "BETA" ||
+		len(approval.Options) != 1 || approval.Options[0].Value != "BETA" || uploads.execution != nil {
+		t.Fatalf(
+			"tracker rule rejection = selection=%#v projections=%#v approval=%#v execution=%#v",
+			review.Selection,
+			review.Projections,
+			approval,
+			uploads.execution,
+		)
+	}
+}
+
 func TestCompositeUploadStrictUnattendedSkipsWaivableTracker(t *testing.T) {
 	t.Parallel()
 
@@ -650,7 +699,7 @@ func newCompositeUploadTestModuleWithWaiver(
 					projection.PolicyDecisions[0].Blocking = true
 					projection.RequiredActions = []api.RequiredAction{{
 						Kind:   api.RequiredActionAuthorizeRules,
-						Prompt: "Alpha has waivable language rules. Continue with this tracker?",
+						Prompt: "Alpha rule warning: language rule. Upload to this tracker anyway?",
 					}}
 					actions = append(actions, projection.RequiredActions...)
 					projectionInput = "composite-projection-input-pending"
