@@ -101,19 +101,7 @@ describe("ScreenshotsPage", () => {
     };
 
     render(
-      <ScreenshotsPage
-        facet={screenshots}
-        screenshotConfig={{ Screens: 4, ToneMap: false }}
-        updateScreenshotConfigValue={vi.fn()}
-        loadSettings={vi.fn()}
-        settingsLoading={false}
-        settingsDirty={false}
-        settingsSaved=""
-        settingsError=""
-        applyScreenshotSettings={vi.fn()}
-        setLightboxImage={vi.fn()}
-        setLightboxAlt={vi.fn()}
-      />,
+      <ScreenshotsPage facet={screenshots} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
     );
 
     await waitFor(() => expect(screenshots.load).toHaveBeenCalledOnce());
@@ -134,19 +122,7 @@ describe("ScreenshotsPage", () => {
     };
 
     render(
-      <ScreenshotsPage
-        facet={screenshots}
-        screenshotConfig={{ Screens: 4, ToneMap: false }}
-        updateScreenshotConfigValue={vi.fn()}
-        loadSettings={vi.fn()}
-        settingsLoading={false}
-        settingsDirty={false}
-        settingsSaved=""
-        settingsError=""
-        applyScreenshotSettings={vi.fn()}
-        setLightboxImage={vi.fn()}
-        setLightboxAlt={vi.fn()}
-      />,
+      <ScreenshotsPage facet={screenshots} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
     );
 
     expect(screenshots.load).not.toHaveBeenCalled();
@@ -154,21 +130,8 @@ describe("ScreenshotsPage", () => {
 
   it("restores the main gallery layout while routing actions through the session facet", async () => {
     const screenshots = facet();
-    const updateScreenshotConfigValue = vi.fn();
     render(
-      <ScreenshotsPage
-        facet={screenshots}
-        screenshotConfig={{ Screens: 4, ToneMap: false }}
-        updateScreenshotConfigValue={updateScreenshotConfigValue}
-        loadSettings={vi.fn()}
-        settingsLoading={false}
-        settingsDirty
-        settingsSaved=""
-        settingsError=""
-        applyScreenshotSettings={vi.fn()}
-        setLightboxImage={vi.fn()}
-        setLightboxAlt={vi.fn()}
-      />,
+      <ScreenshotsPage facet={screenshots} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
     );
 
     for (const heading of ["Live Preview", "Generated Screenshots"]) {
@@ -190,13 +153,9 @@ describe("ScreenshotsPage", () => {
     expect(screenshots.generate).toHaveBeenCalledWith("preview", [
       { Index: 0, TimestampSeconds: 12, Frame: 288, Source: "auto" },
     ]);
-
-    fireEvent.change(screen.getByLabelText("Screenshot count"), { target: { value: "6" } });
-    expect(updateScreenshotConfigValue).toHaveBeenCalledWith("Screens", 6);
-
-    const compression = screen.getByLabelText("FFmpeg compression");
-    expect(compression).toHaveAttribute("min", "0");
-    expect(compression).toHaveAttribute("max", "9");
+    expect(screen.queryByText("Screenshot settings")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reload settings" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Apply settings" })).not.toBeInTheDocument();
   });
 
   it("renders and mutates workflow-owned screenshots by opaque artifact ID", () => {
@@ -240,19 +199,7 @@ describe("ScreenshotsPage", () => {
     const confirm = vi.fn(() => true);
     vi.stubGlobal("confirm", confirm);
     const view = render(
-      <ScreenshotsPage
-        facet={screenshots}
-        screenshotConfig={{ Screens: 4, ToneMap: false }}
-        updateScreenshotConfigValue={vi.fn()}
-        loadSettings={vi.fn()}
-        settingsLoading={false}
-        settingsDirty={false}
-        settingsSaved=""
-        settingsError=""
-        applyScreenshotSettings={vi.fn()}
-        setLightboxImage={vi.fn()}
-        setLightboxAlt={vi.fn()}
-      />,
+      <ScreenshotsPage facet={screenshots} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
     );
     const page = within(view.container);
 
@@ -284,19 +231,7 @@ describe("ScreenshotsPage", () => {
   it("captures the live preview as a new retained screenshot", () => {
     const screenshots = facet();
     render(
-      <ScreenshotsPage
-        facet={screenshots}
-        screenshotConfig={{ Screens: 4, ToneMap: false }}
-        updateScreenshotConfigValue={vi.fn()}
-        loadSettings={vi.fn()}
-        settingsLoading={false}
-        settingsDirty={false}
-        settingsSaved=""
-        settingsError=""
-        applyScreenshotSettings={vi.fn()}
-        setLightboxImage={vi.fn()}
-        setLightboxAlt={vi.fn()}
-      />,
+      <ScreenshotsPage facet={screenshots} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
     );
 
     const preview = screen.getByRole("heading", { name: "Live Preview" }).closest("section");
@@ -351,19 +286,7 @@ describe("ScreenshotsPage", () => {
     };
 
     render(
-      <ScreenshotsPage
-        facet={screenshots}
-        screenshotConfig={{ Screens: 4, ToneMap: false }}
-        updateScreenshotConfigValue={vi.fn()}
-        loadSettings={vi.fn()}
-        settingsLoading={false}
-        settingsDirty={false}
-        settingsSaved=""
-        settingsError=""
-        applyScreenshotSettings={vi.fn()}
-        setLightboxImage={vi.fn()}
-        setLightboxAlt={vi.fn()}
-      />,
+      <ScreenshotsPage facet={screenshots} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
     );
 
     expect(screen.getByText("4 captured screenshot(s)")).toBeInTheDocument();

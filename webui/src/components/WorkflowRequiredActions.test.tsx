@@ -174,6 +174,11 @@ describe("WorkflowRequiredActions", () => {
             kind: "provide_tracker_input",
             prompt: "Confirm the tracker release name.",
           }),
+          action({
+            id: "action-3",
+            kind: "authorize_rules",
+            prompt: "Review the tracker rule warning.",
+          }),
         ])}
         onConfirm={vi.fn()}
         onNavigate={navigate}
@@ -182,6 +187,7 @@ describe("WorkflowRequiredActions", () => {
 
     expect(screen.queryByText("Review the duplicate match.")).not.toBeInTheDocument();
     expect(screen.queryByText("Confirm the tracker release name.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Review the tracker rule warning.")).not.toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(navigate).not.toHaveBeenCalled();
   });

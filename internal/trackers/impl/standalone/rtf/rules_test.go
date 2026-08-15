@@ -11,6 +11,52 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestRTFAdultRuleUsesSharedProviderGenres(t *testing.T) {
+	t.Parallel()
+
+	const sourcePath = "Example.Release.2000.1080p-GRP"
+	subject := api.TrackerValidationSubject{
+		SourcePath: sourcePath,
+		Release:    api.ReleaseInfo{Year: 2000, Genre: "Adult"},
+		Identity: api.ExternalIdentity{
+			SourcePath: sourcePath,
+			Generation: 3,
+		},
+		ProviderMetadata: api.SourceScopedMetadata{
+			SourcePath: sourcePath,
+			Generation: 3,
+			TMDB:       &api.TMDBMetadata{Keywords: "Adult"},
+			TVDB:       &api.TVDBMetadata{Genres: "Drama"},
+		},
+	}
+
+	failures, err := checkRules(context.Background(), subject, nil)
+	if err != nil {
+		t.Fatalf("check nonadult provider genres: %v", err)
+	}
+	if hasRTFRule(failures, "block_adult") {
+		t.Fatalf("release genre or keyword blocked RTF upload: %#v", failures)
+	}
+
+	subject.ProviderMetadata.TVDB.Genres = "Adult"
+	failures, err = checkRules(context.Background(), subject, nil)
+	if err != nil {
+		t.Fatalf("check adult provider genre: %v", err)
+	}
+	if !hasRTFRule(failures, "block_adult") {
+		t.Fatalf("shared adult genre did not block RTF upload: %#v", failures)
+	}
+}
+
+func hasRTFRule(failures []api.RuleFailure, rule string) bool {
+	for _, failure := range failures {
+		if failure.Rule == rule {
+			return true
+		}
+	}
+	return false
+}
+
 func TestMinimumContentAgeRuleIsStrict(t *testing.T) {
 	t.Parallel()
 
@@ -18,7 +64,7 @@ func TestMinimumContentAgeRuleIsStrict(t *testing.T) {
 	if policy.Check == nil {
 		t.Fatal("RTF minimum content age rule is not registered")
 	}
-	if policy.ID != "standalone-rtf-constructibility-v2" {
+	if policy.ID != "standalone-rtf-constructibility-v3" {
 		t.Fatalf("RTF validation policy ID = %q", policy.ID)
 	}
 	failures, err := policy.Check(context.Background(), api.TrackerValidationSubject{

@@ -28,7 +28,7 @@ func Profile() unit3d.Profile {
 		},
 		Site: unit3d.SiteProfile{
 			BuildName:        buildName,
-			BuildNameVersion: "v2",
+			BuildNameVersion: "v3",
 			ResolveTypeID:    typeID,
 		},
 		DupePolicy: &trackers.DupePolicy{

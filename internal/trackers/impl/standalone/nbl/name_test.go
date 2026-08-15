@@ -9,24 +9,24 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestReleaseNamePolicyPreservesExactRenamedSceneName(t *testing.T) {
+func TestReleaseNamePolicyUsesNormalNamesForSceneRelease(t *testing.T) {
 	t.Parallel()
 
-	const exact = "Example Show [SCENE].S01E02-GRP"
+	const normal = "Example.Show.S01E02-GRP"
 	meta := api.UploadSubject{
 		Scene:        true,
-		SceneName:    exact,
+		SceneName:    "Example Show [SCENE].S01E02-GRP",
 		SceneRenamed: true,
-		ReleaseName:  "Generated.Example.Show.S01E02-GRP",
+		ReleaseName:  normal,
 		Release:      api.ReleaseInfo{Title: "Example Show"},
 	}
-	if got := resolveUploadName(meta); got != exact {
-		t.Fatalf("NBL upload name = %q, want %q", got, exact)
+	if got := resolveUploadName(meta); got != normal {
+		t.Fatalf("NBL upload name = %q, want %q", got, normal)
 	}
-	if got := resolveSearchName(meta); got != exact {
-		t.Fatalf("NBL search name = %q, want %q", got, exact)
+	if got := resolveSearchName(meta); got != "Example Show" {
+		t.Fatalf("NBL search name = %q, want %q", got, "Example Show")
 	}
-	if got := Profile().ReleaseNamePolicy.ID; got != "standalone/nbl/v2" {
-		t.Fatalf("NBL release-name policy = %q, want standalone/nbl/v2", got)
+	if got := Profile().ReleaseNamePolicy.ID; got != "standalone/nbl/v3" {
+		t.Fatalf("NBL release-name policy = %q, want standalone/nbl/v3", got)
 	}
 }

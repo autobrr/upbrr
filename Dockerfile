@@ -4,7 +4,7 @@
 # below. The predefined platform args (BUILDPLATFORM, TARGET*) are auto-available
 # to FROM, and VERSION/BUILD_ID are declared inside the build stage where they are
 # consumed (see below), so they do not need global declarations.
-ARG GO_VERSION=1.26.5
+ARG GO_VERSION=1.26.6
 
 FROM --platform=$BUILDPLATFORM node:24-alpine AS frontend
 

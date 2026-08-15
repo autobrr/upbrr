@@ -1061,6 +1061,72 @@ func TestWorkflowUploadExecutionDoesNotRepeatSuccessfulDryRunInjection(t *testin
 	}
 }
 
+func TestWorkflowUploadExecutionRetainsSafeTrackerFailure(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		code             string
+		message          string
+		wantMessage      string
+		wantSubmission   api.StageStatus
+		wantRedaction    bool
+		wantPathSanitize bool
+	}{
+		{
+			name:             "submission detail",
+			code:             "submit",
+			message:          `Tracker rejected payload passkey=never-print-this source=C:\releases\Example.Release.2026`,
+			wantMessage:      "Tracker rejected payload",
+			wantSubmission:   api.StageStatusFailed,
+			wantRedaction:    true,
+			wantPathSanitize: true,
+		},
+		{
+			name:           "empty detail fallback",
+			code:           "submit",
+			message:        " ",
+			wantMessage:    "Tracker upload failed. Review the tracker result and retry after correcting the failure.",
+			wantSubmission: api.StageStatusFailed,
+		},
+		{
+			name:           "unknown outcome semantics",
+			code:           "unknown_outcome",
+			message:        "Workflow receipt unavailable.",
+			wantMessage:    "Tracker submission may have succeeded, but no terminal receipt was retained. Verify the tracker before continuing.",
+			wantSubmission: api.StageStatusUnavailable,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			execution := &workflowUploadExecution{
+				plan: &workflowRetainedUploadPlanFake{results: []trackers.RetainedTrackerResult{{
+					Tracker: "EXAMPLE",
+					Failure: &trackers.TrackerFailure{Code: test.code, Message: test.message},
+				}}},
+			}
+			results, err := execution.Execute(t.Context(), nil)
+			if err != nil {
+				t.Fatalf("execute workflow upload: %v", err)
+			}
+			if len(results) != 1 || len(results[0].Failures) != 1 {
+				t.Fatalf("upload execution results = %#v", results)
+			}
+			failure := results[0].Failures[0].Failure
+			if results[0].SubmissionStatus != test.wantSubmission || !strings.Contains(failure.Message, test.wantMessage) {
+				t.Fatalf("upload failure = %#v", results[0])
+			}
+			if test.wantRedaction && (!strings.Contains(failure.Message, "passkey=[REDACTED]") || strings.Contains(failure.Message, "never-print-this")) {
+				t.Fatal("upload failure did not redact the tracker detail")
+			}
+			if test.wantPathSanitize && (!strings.Contains(failure.Message, "source=[local path]") || strings.Contains(failure.Message, `C:\releases`)) {
+				t.Fatal("upload failure did not sanitize the local path")
+			}
+		})
+	}
+}
+
 func TestWorkflowUploadExecutionInjectsExactRegisteredTrackerTorrent(t *testing.T) {
 	t.Parallel()
 

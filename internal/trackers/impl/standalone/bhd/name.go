@@ -19,12 +19,9 @@ var (
 	bhdAudioChannelPattern  = regexp.MustCompile(`^(.+?)(\d+(?:\.\d+){1,2})$`)
 )
 
-// resolveUploadName preserves explicit names and normalizes generated BHD
+// resolveUploadName preserves explicit P2P names and normalizes generated BHD
 // names using provider title, media, disc, and group rules.
 func resolveUploadName(meta api.UploadSubject) string {
-	if sceneName := strings.TrimSpace(meta.SceneName); sceneName != "" {
-		return sceneName
-	}
 	name := selectedBHDReleaseName(meta)
 	if !isBHDGeneratedReleaseName(meta, name) {
 		return name

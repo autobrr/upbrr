@@ -22,6 +22,7 @@ const actionLabels: Readonly<Record<string, string>> = {
 
 const actionOwnedByDupeCard = (action: RequiredAction) =>
   action.kind === "review_duplicates" ||
+  (action.kind === "authorize_rules" && Boolean(action.trackerId)) ||
   (action.kind === "provide_tracker_input" && Boolean(action.trackerId));
 
 function actionScope(action: RequiredAction): string {

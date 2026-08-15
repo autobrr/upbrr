@@ -608,8 +608,8 @@ func (f ReleaseWorkflowUploadFeedback) Validate() error {
 			return errors.New("rescan feedback requires confirmation")
 		}
 	case ReleaseWorkflowUploadFeedbackRuleAuthorization:
-		if !f.Response.RuleAuthorization.Confirmed {
-			return errors.New("rule authorization feedback requires confirmation")
+		if f.Response.RuleAuthorization.confirmedOmitted {
+			return errors.New("tracker rule feedback requires an explicit confirmed member")
 		}
 	case ReleaseWorkflowUploadFeedbackTrackerPreparation:
 		if f.Response.TrackerPreparation.confirmedOmitted {

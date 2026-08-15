@@ -258,6 +258,12 @@ func TestRegistryProjectsVersionedReleaseNamesForEveryBuiltIn(t *testing.T) {
 			Type:       "WEBDL",
 		},
 		ProviderMetadata: api.SourceScopedMetadata{
+			IMDB: &api.IMDBMetadata{
+				IMDBID: 1234567,
+				Title:  "Example Release",
+				AKA:    "Example Release",
+				Year:   2026,
+			},
 			TMDB: &api.TMDBMetadata{
 				TMDBID:           12345,
 				Title:            "Example Release",

@@ -72,7 +72,7 @@ func TestOTWEvidencePolicyPassViolationAndMissingEvidence(t *testing.T) {
 
 func TestOTWValidationPolicyVersion(t *testing.T) {
 	t.Parallel()
-	if got := Profile().ValidationPolicy.ID; got != "unit3d-otw-policy-v2" {
+	if got := Profile().ValidationPolicy.ID; got != "unit3d-otw-policy-v3" {
 		t.Fatalf("validation policy ID = %q", got)
 	}
 }

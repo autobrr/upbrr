@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -892,8 +893,15 @@ func printCLIWorkflowUploadResult(output io.Writer, result *api.UploadResult) (i
 		submissionStatus := tracker.EffectiveSubmissionStatus()
 		clientStatus := tracker.EffectiveClientInjectionStatus()
 		fmt.Fprintf(output, "Upload %s: submission=%s client-injection=%s\n", tracker.TrackerID, submissionStatus, clientStatus)
-		if tracker.ClientInjectionMessage != "" {
-			fmt.Fprintf(output, "  client injection: %s\n", tracker.ClientInjectionMessage)
+		clientMessage := strings.TrimSpace(logging.SanitizeMessage(tracker.ClientInjectionMessage))
+		if clientMessage != "" {
+			fmt.Fprintf(output, "  client injection: %s\n", clientMessage)
+		}
+		for _, failure := range tracker.Failures {
+			message := strings.TrimSpace(logging.SanitizeMessage(failure.Failure.Message))
+			if message != "" && message != clientMessage {
+				fmt.Fprintf(output, "  failure: %s\n", message)
+			}
 		}
 		switch submissionStatus {
 		case api.StageStatusCompleted:

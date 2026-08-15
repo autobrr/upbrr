@@ -16,7 +16,7 @@ import (
 // ValidationPolicy returns OTW's waivable genre, adult-content,
 // reality-content, and release-group restrictions.
 func ValidationPolicy() trackers.ValidationPolicyBinding {
-	return trackers.ValidationPolicyBinding{ID: "unit3d-otw-policy-v2", Check: checkRequirements}
+	return trackers.ValidationPolicyBinding{ID: "unit3d-otw-policy-v3", Check: checkRequirements}
 }
 
 func checkGenres(ctx context.Context, meta api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
@@ -35,11 +35,11 @@ func checkGenres(ctx context.Context, meta api.TrackerValidationSubject, _ api.L
 			api.RuleDispositionStrict,
 		))
 	}
-	genres := unit3d.RuleGenres(ruleSubject)
+	genres := trackers.RuleGenres(ruleSubject)
 	if !unit3d.ContainsRuleValue(genres, []string{"animation", "family"}) {
 		failures = append(failures, trackers.NewRuleFailure("genre", "Genre does not match Animation or Family for OTW.", api.RuleDispositionWaivable))
 	}
-	if unit3d.AdultContent(ruleSubject) {
+	if trackers.AdultContent(ruleSubject) {
 		failures = append(failures, trackers.NewRuleFailure("block_adult", "Adult animation not allowed at OTW.", api.RuleDispositionWaivable))
 	}
 	if unit3d.ContainsRuleValue(genres, []string{"reality", "game show", "game-show", "reality tv", "reality television"}) {

@@ -144,7 +144,6 @@ function AppShell() {
     renderField,
     sectionFieldMeta,
     updateConfigValue,
-    updateScreenshotConfigValue,
     screenshotConfig,
     clearSettingsStatus,
     resolveImageHostLabel,
@@ -525,14 +524,6 @@ function AppShell() {
           ) : activeTab === "screenshots" ? (
             <ScreenshotsPage
               facet={releaseSession.screenshots}
-              screenshotConfig={screenshotConfig}
-              updateScreenshotConfigValue={updateScreenshotConfigValue}
-              loadSettings={loadSettings}
-              settingsLoading={settingsLoading}
-              settingsDirty={settingsDirty}
-              settingsSaved={settingsSaved}
-              settingsError={settingsError}
-              applyScreenshotSettings={() => void handleSaveSettings()}
               setLightboxImage={setLightboxImage}
               setLightboxAlt={setLightboxAlt}
             />

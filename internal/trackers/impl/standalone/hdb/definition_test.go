@@ -87,8 +87,8 @@ func TestProfileReleaseNamePolicyOmitsOnlyGeneratedEpisodeTitles(t *testing.T) {
 	t.Parallel()
 
 	binding := Profile().ReleaseNamePolicy
-	if binding.ID != "standalone/hdb/v3" {
-		t.Fatalf("HDB release-name policy = %q, want standalone/hdb/v3", binding.ID)
+	if binding.ID != "standalone/hdb/v4" {
+		t.Fatalf("HDB release-name policy = %q, want standalone/hdb/v4", binding.ID)
 	}
 	elementPolicy := binding.Elements.Normalized()
 	if elementPolicy.Version != api.ReleaseNameElementPolicyVersionV1 ||
@@ -139,17 +139,18 @@ func TestProfileReleaseNamePolicyOmitsOnlyGeneratedEpisodeTitles(t *testing.T) {
 		t.Fatalf("generated reviewed name = (%q, %v), want %q", name, err, wantGenerated)
 	}
 
+	base.Scene = true
 	base.SceneName = included
 	resolved, failure = trackers.PrepareInputWithReleaseNamePolicy(
 		trackers.PreparationInput{Tracker: "HDB", Meta: base},
 		binding,
 	)
 	if failure != nil {
-		t.Fatalf("resolve exact scene name: %v", failure)
+		t.Fatalf("resolve normal scene name: %v", failure)
 	}
 	name, err = resolved.ReviewedUploadName()
-	if err != nil || name != included {
-		t.Fatalf("exact scene reviewed name = (%q, %v), want %q", name, err, included)
+	if err != nil || name != wantGenerated {
+		t.Fatalf("normal scene reviewed name = (%q, %v), want %q", name, err, wantGenerated)
 	}
 }
 

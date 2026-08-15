@@ -1021,7 +1021,10 @@ func (e *workflowUploadExecution) Execute(
 		if result.Failure != nil {
 			failureCode := api.OperationFailureInternal
 			recovery := api.OperationRecoveryRetry
-			message := "Tracker upload failed. Review the tracker result and retry after correcting the failure."
+			message := strings.TrimSpace(logging.SanitizeMessage(result.Failure.Message))
+			if message == "" {
+				message = "Tracker upload failed. Review the tracker result and retry after correcting the failure."
+			}
 			submissionStatus := api.StageStatusFailed
 			if result.Failure.Code == "unknown_outcome" {
 				failureCode = api.OperationFailureUnknownOutcome
