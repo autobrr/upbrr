@@ -680,7 +680,7 @@ func TestNewRegistryIncludesHDBPolicies(t *testing.T) {
 	if policy, ok := registry.LookupUploadArtifactPolicy("HDB"); !ok || policy.Source != "HDBits" {
 		t.Fatalf("HDB upload artifact policy = %#v, %t", policy, ok)
 	}
-	if policy, ok := registry.LookupArtifactPolicy("HDB"); !ok || policy.MaxPieceSizeMiB != 16 {
+	if policy, ok := registry.LookupArtifactPolicy("HDB"); !ok || policy.MaxPieceSizeMiB != 32 {
 		t.Fatalf("HDB artifact policy = %#v, %t", policy, ok)
 	}
 	if _, ok := registry.LookupDataFactory("HDB"); !ok {

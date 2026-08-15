@@ -48,7 +48,7 @@ func Profile() standalone.Profile {
 		},
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "HDBits"},
 		ArtifactPolicy: &trackers.ArtifactPolicy{
-			MaxPieceSizeMiB:     16,
+			MaxPieceSizeMiB:     32,
 			PieceSizeProfileURL: hdbBaseURL,
 		},
 		ImageHostPolicy: &trackers.ImageHostPolicy{
