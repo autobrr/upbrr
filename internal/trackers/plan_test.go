@@ -406,6 +406,43 @@ func TestTrackerPlanDecisionResolverUsesExplicitAnswer(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("preserves preparation failure", func(t *testing.T) {
+		t.Parallel()
+
+		want := NewPreparationFailure("EXAMPLE", PreparationFailureCodeSkipped, "Tracker skipped.", nil)
+		plan, failure := PrepareAdapter(
+			context.Background(),
+			PreparationInput{Intent: PreparationIntentUpload, Tracker: "EXAMPLE"},
+			nil,
+			func(context.Context, PreparationInput) (PreparedOperation, error) {
+				return NewPreparedOperationWithDecisionResolver(
+					api.TrackerDryRunEntry{
+						Tracker: "EXAMPLE",
+						RequiredActions: []api.RequiredAction{{
+							Kind: api.RequiredActionResolveTrackerPreparation,
+						}},
+					},
+					func(context.Context) (api.UploadSummary, error) {
+						return api.UploadSummary{}, errors.New("unresolved operation submitted")
+					},
+					nil,
+					func(context.Context, bool) (PreparedOperation, error) {
+						return PreparedOperation{}, want
+					},
+				), nil
+			},
+		)
+		if failure != nil {
+			t.Fatalf("prepare decision plan: %v", failure)
+		}
+
+		_, err := plan.ResolveAction(context.Background(), api.RequiredActionResolveTrackerPreparation, true)
+		var got *PreparationFailure
+		if !errors.Is(err, want) || !errors.As(err, &got) || got.Code() != PreparationFailureCodeSkipped {
+			t.Fatalf("resolver failure = %v", err)
+		}
+	})
 }
 
 func TestPrepareAdapterPreservesPreparationFailure(t *testing.T) {

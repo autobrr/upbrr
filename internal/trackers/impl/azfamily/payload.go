@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -240,13 +239,6 @@ func uploadScreenshots(
 			}
 			continue
 		}
-		if id == "" {
-			failures++
-			if firstErr == nil {
-				firstErr = errors.New("image host returned no image id")
-			}
-			continue
-		}
 		results = append(results, id)
 	}
 	if len(results) < minimum {
@@ -290,7 +282,7 @@ func uploadScreenshot(ctx context.Context, site siteDefinition, state sessionSta
 		}
 	}
 	partHeader := make(textproto.MIMEHeader)
-	partHeader.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{"name": "qqfile", "filename": filename}))
+	partHeader.Set("Content-Disposition", multipart.FileContentDisposition("qqfile", filename))
 	partHeader.Set("Content-Type", http.DetectContentType(imageBytes))
 	part, err := writer.CreatePart(partHeader)
 	if err != nil {

@@ -110,6 +110,14 @@ func TestAZScreenshotMinimum(t *testing.T) {
 			want:    6,
 		},
 		{
+			name: "CZ release remux",
+			site: "CZ",
+			subject: api.TrackerValidationSubject{Release: api.ReleaseInfo{
+				Type: "REMUX",
+			}},
+			want: 6,
+		},
+		{
 			name: "CZ 2160p",
 			site: "CZ",
 			subject: api.TrackerValidationSubject{Release: api.ReleaseInfo{

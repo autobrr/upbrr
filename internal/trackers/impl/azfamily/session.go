@@ -195,7 +195,8 @@ func addMissingMedia(ctx context.Context, site siteDefinition, state sessionStat
 			!existing.Missing && strings.TrimSpace(existing.MediaCode) != "" {
 			return existing.MediaCode, nil
 		}
-		return "", fmt.Errorf("trackers: %s add media failed", site.Name)
+		//logpolicy:allow HTTP status is safe response metadata; no response body is included.
+		return "", fmt.Errorf("trackers: %s add media failed status=%d", site.Name, resp.StatusCode)
 	}
 
 	for attempt := range azMediaLookupAttempts {

@@ -44,7 +44,8 @@ func prepareUpload(ctx context.Context, site siteDefinition, req trackers.Prepar
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
-	if media.Missing || strings.TrimSpace(media.MediaCode) == "" {
+	mediaMissing := media.Missing || strings.TrimSpace(media.MediaCode) == ""
+	if mediaMissing {
 		if req.Meta.Options.InteractionMode == api.InteractionModeUnattended {
 			if req.Logger != nil {
 				req.Logger.Warnf("trackers: %s media missing decision=skip mode=unattended", site.Name)
@@ -66,7 +67,7 @@ func prepareUpload(ctx context.Context, site siteDefinition, req trackers.Prepar
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
-	if media.Missing || strings.TrimSpace(media.MediaCode) == "" {
+	if mediaMissing {
 		return prepareMissingMediaOperation(ctx, site, state, req, torrentPath, fileInfo)
 	}
 	preparedScreenshots, screenshotMinimum, err := prepareScreenshotUploads(ctx, site, state, req)
