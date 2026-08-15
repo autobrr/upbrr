@@ -421,7 +421,7 @@ func TestCLICompositeRuleAuthorizationHonorsInteractionMode(t *testing.T) {
 
 	session.current.Projections.Projections = session.current.Projections.Projections[:1]
 	captureStdout(t, func() {
-		_, declined, err = session.collectCompositeUploadFeedback(
+		feedback, declined, err = session.collectCompositeUploadFeedback(
 			context.Background(),
 			bufio.NewReader(strings.NewReader("n\n")),
 			config.Config{},
@@ -429,8 +429,10 @@ func TestCLICompositeRuleAuthorizationHonorsInteractionMode(t *testing.T) {
 			action,
 		)
 	})
-	if err != nil || !declined {
-		t.Fatalf("last tracker rejection declined=%t err=%v", declined, err)
+	if err != nil || !declined ||
+		feedback.Response.Kind != api.ReleaseWorkflowUploadFeedbackRuleAuthorization ||
+		feedback.Response.RuleAuthorization == nil || feedback.Response.RuleAuthorization.Confirmed {
+		t.Fatalf("last tracker rejection = %#v declined=%t err=%v", feedback, declined, err)
 	}
 
 	session.intent.interaction = api.InteractionModeUnattended
@@ -450,15 +452,17 @@ func TestCLICompositeRuleAuthorizationHonorsInteractionMode(t *testing.T) {
 	}
 
 	session.current.Projections.Projections = session.current.Projections.Projections[:1]
-	_, declined, err = session.collectCompositeUploadFeedback(
+	feedback, declined, err = session.collectCompositeUploadFeedback(
 		context.Background(),
 		nil,
 		config.Config{},
 		api.NopLogger{},
 		action,
 	)
-	if err != nil || !declined {
-		t.Fatalf("strict unattended last tracker rejection declined=%t err=%v", declined, err)
+	if err != nil || !declined ||
+		feedback.Response.Kind != api.ReleaseWorkflowUploadFeedbackRuleAuthorization ||
+		feedback.Response.RuleAuthorization == nil || feedback.Response.RuleAuthorization.Confirmed {
+		t.Fatalf("strict unattended last tracker rejection = %#v declined=%t err=%v", feedback, declined, err)
 	}
 }
 
