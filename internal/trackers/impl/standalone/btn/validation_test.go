@@ -90,6 +90,17 @@ func TestBTNValidationObjectiveRules(t *testing.T) {
 			wantRule:        "btn_mixed_pack",
 			wantDisposition: api.RuleDispositionWaivable,
 		},
+		{
+			name: "incomplete season pack",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				makeBTNValidationPack(subject)
+				subject.FileList[1] = "Example.Show.S01E03.1080p.WEB-DL.H.264-GRP.mkv"
+				subject.PackageFacts.DetectedEpisodes[0].Episodes = []int{1, 3}
+				subject.MediaFileFacts.Files[1].FileName = "Example.Show.S01E03.1080p.WEB-DL.H.264-GRP.mkv"
+			},
+			wantRule:        "btn_episode_range",
+			wantDisposition: api.RuleDispositionWaivable,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
