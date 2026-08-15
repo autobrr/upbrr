@@ -234,6 +234,16 @@ describe("TrackerUploadPage", () => {
           status: "failed",
           submissionStatus: "failed",
           clientInjectionStatus: "pending",
+          failures: [
+            {
+              failure: {
+                Code: "internal",
+                Operation: "upload_execute",
+                Message: "Tracker rejected the synthetic payload.",
+                Recovery: "retry",
+              },
+            },
+          ],
         },
       ],
     } as unknown as NonNullable<UploadFacet["view"]["result"]>;
@@ -242,6 +252,7 @@ describe("TrackerUploadPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Expand Example Tracker" }));
     expect(screen.getByText("Example.Release.2026.1080p-GRP")).toBeInTheDocument();
     expect(screen.getByText("category: 1")).toBeInTheDocument();
+    expect(screen.getByText("Tracker rejected the synthetic payload.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Retry failed uploads" }));
     expect(retry).toHaveBeenCalledOnce();
   });

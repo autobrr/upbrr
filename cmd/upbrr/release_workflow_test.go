@@ -144,6 +144,33 @@ func TestPrintCLIWorkflowDryRunIncludesClientOutcome(t *testing.T) {
 	}
 }
 
+func TestPrintCLIWorkflowUploadResultIncludesRedactedTrackerFailure(t *testing.T) {
+	var (
+		uploaded  int
+		resultErr error
+	)
+	output := captureStdout(t, func() {
+		uploaded, resultErr = printCLIWorkflowUploadResult(&api.UploadResult{Results: []api.UploadTrackerResult{{
+			TrackerID:             "EXAMPLE",
+			Status:                api.StageStatusFailed,
+			SubmissionStatus:      api.StageStatusFailed,
+			ClientInjectionStatus: api.StageStatusPending,
+			Failures: []api.WorkflowFailure{{Failure: api.OperationFailure{
+				Code:      api.OperationFailureInternal,
+				Operation: api.OperationKindUploadExecute,
+				Message:   "Tracker rejected payload passkey=never-print-this.",
+				Recovery:  api.OperationRecoveryRetry,
+			}}},
+		}}})
+	})
+	if uploaded != 0 || resultErr == nil || !strings.Contains(resultErr.Error(), "1 tracker upload(s) failed") {
+		t.Fatalf("upload result = %d, %v", uploaded, resultErr)
+	}
+	if !strings.Contains(output, "failure: Tracker rejected payload passkey=[REDACTED]") || strings.Contains(output, "never-print-this") {
+		t.Fatal("upload output did not retain a safely redacted tracker failure")
+	}
+}
+
 func TestPrintCLIWorkflowDryRunSeparatesTrackersAndHighlightsRenames(t *testing.T) {
 	output := captureStdout(t, func() {
 		printCLIWorkflowDryRun(

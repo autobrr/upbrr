@@ -308,6 +308,11 @@ export default function TrackerUploadPage({ facet }: Props) {
                 Client injection: {result.clientInjectionStatus || "unavailable"}
                 {result.clientInjectionMessage ? ` · ${result.clientInjectionMessage}` : ""}
               </span>
+              {result.failures?.map((failure, index) => (
+                <p className="error basis-full" key={`${failure.failure.Code}-${index}`}>
+                  {failure.failure.Message}
+                </p>
+              ))}
             </div>
           ))}
         </section>
