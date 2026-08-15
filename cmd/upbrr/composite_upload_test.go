@@ -434,14 +434,31 @@ func TestCLICompositeRuleAuthorizationHonorsInteractionMode(t *testing.T) {
 	}
 
 	session.intent.interaction = api.InteractionModeUnattended
-	if _, _, err := session.collectCompositeUploadFeedback(
+	session.current.Projections.Projections = append(
+		session.current.Projections.Projections,
+		api.TrackerReleaseProjection{TrackerID: "BETA", Readiness: api.ReadinessStatusReady},
+	)
+	feedback, declined, err = session.collectCompositeUploadFeedback(
 		context.Background(),
 		nil,
 		config.Config{},
 		api.NopLogger{},
 		action,
-	); err == nil || !strings.Contains(err.Error(), "strict unattended upload requires global action") {
-		t.Fatalf("strict unattended rule authorization error = %v", err)
+	)
+	if err != nil || declined || feedback.Response.RuleAuthorization == nil || feedback.Response.RuleAuthorization.Confirmed {
+		t.Fatalf("strict unattended rule rejection = %#v declined=%t err=%v", feedback, declined, err)
+	}
+
+	session.current.Projections.Projections = session.current.Projections.Projections[:1]
+	_, declined, err = session.collectCompositeUploadFeedback(
+		context.Background(),
+		nil,
+		config.Config{},
+		api.NopLogger{},
+		action,
+	)
+	if err != nil || !declined {
+		t.Fatalf("strict unattended last tracker rejection declined=%t err=%v", declined, err)
 	}
 }
 
