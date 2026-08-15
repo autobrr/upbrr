@@ -434,7 +434,8 @@ func TestCLICompositeRuleAuthorizationHonorsInteractionMode(t *testing.T) {
 
 func TestCLICompositeTrackerPreparationDeclineReturnsFeedback(t *testing.T) {
 	session := &cliWorkflowSession{
-		intent: cliWorkflowIntent{interaction: api.InteractionModeUnattendedConfirm},
+		intent:  cliWorkflowIntent{interaction: api.InteractionModeUnattendedConfirm},
+		streams: cliIO{out: io.Discard},
 	}
 	action := api.RequiredAction{
 		ID:               "action-btn-autofill",
@@ -447,15 +448,13 @@ func TestCLICompositeTrackerPreparationDeclineReturnsFeedback(t *testing.T) {
 		declined bool
 		err      error
 	)
-	captureStdout(t, func() {
-		feedback, declined, err = session.collectCompositeUploadFeedback(
-			context.Background(),
-			bufio.NewReader(strings.NewReader("n\n")),
-			config.Config{},
-			api.NopLogger{},
-			action,
-		)
-	})
+	feedback, declined, err = session.collectCompositeUploadFeedback(
+		context.Background(),
+		bufio.NewReader(strings.NewReader("n\n")),
+		config.Config{},
+		api.NopLogger{},
+		action,
+	)
 	if err != nil || declined || feedback.Response.Kind != api.ReleaseWorkflowUploadFeedbackTrackerPreparation ||
 		feedback.Response.TrackerPreparation == nil || feedback.Response.TrackerPreparation.Confirmed {
 		t.Fatalf("tracker preparation feedback = %#v declined=%t err=%v", feedback, declined, err)

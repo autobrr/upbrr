@@ -228,7 +228,7 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 		confirmed := false
 		if s.intent.interaction != api.InteractionModeUnattended {
 			var err error
-			confirmed, err = promptYesNo(reader, action.Prompt+" [y/N]: ", false)
+			confirmed, err = promptYesNo(reader, s.streams.out, action.Prompt+" [y/N]: ", false)
 			if err != nil {
 				return feedback, false, err
 			}

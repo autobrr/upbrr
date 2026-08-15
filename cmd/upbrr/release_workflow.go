@@ -742,7 +742,7 @@ func (s *cliWorkflowSession) collectContinuationActionAnswers(
 			if s.intent.interaction == api.InteractionModeUnattended {
 				continue
 			}
-			confirmed, err := promptYesNo(reader, action.Prompt+" [y/N]: ", false)
+			confirmed, err := promptYesNo(reader, s.streams.out, action.Prompt+" [y/N]: ", false)
 			if err != nil {
 				return nil, false, err
 			}
