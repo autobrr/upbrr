@@ -216,8 +216,9 @@ func runUpload(
 		return exitError(1, err)
 	}
 
-	effectiveLogLevel := logging.ResolveEffectiveLevel(cfg.Logging.Level, opts.LogLevel, opts.Debug)
-	logger, err := logging.NewWithLevel(cfg.Logging, dbPath, effectiveLogLevel)
+	loggingConfig := cfg.Logging
+	loggingConfig.Level = logging.ResolveEffectiveLevel(cfg.Logging.Level, opts.LogLevel, opts.Debug)
+	logger, err := logging.NewWithConsoleLevel(loggingConfig, dbPath, opts.ConsoleLogLevel)
 	if err != nil {
 		return exitError(1, err)
 	}

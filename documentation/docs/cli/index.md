@@ -49,13 +49,14 @@ Process at most five entries from a queue folder:
 
 ## Interaction and safety
 
-| Option                 | Behavior                                                                                                                                |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `--debug`              | Runs end-to-end preparation and payload preview without tracker submission. Client injection remains enabled unless `--no-seed` is set. |
-| `--log-level debug`    | Changes logging verbosity only. It does not enable debug/non-submitting behavior.                                                       |
-| `--unattended`         | Never prompts. Unsafe global ambiguity returns an error; tracker-specific manual prerequisites can block only that tracker.             |
-| `--unattended_confirm` | Uses unattended defaults but permits required confirmation or manual-input prompts.                                                     |
-| `--no-seed`            | Disables torrent-client injection.                                                                                                      |
+| Option                     | Behavior                                                                                                                                |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `--debug`                  | Runs end-to-end preparation and payload preview without tracker submission. Client injection remains enabled unless `--no-seed` is set. |
+| `--log-level debug`        | Changes application logging verbosity for this run. It does not enable debug/non-submitting behavior.                                   |
+| `--console-log-level info` | Changes terminal log verbosity for this run without changing file or retained application logs.                                         |
+| `--unattended`             | Never prompts. Unsafe global ambiguity returns an error; tracker-specific manual prerequisites can block only that tracker.             |
+| `--unattended_confirm`     | Uses unattended defaults but permits required confirmation or manual-input prompts.                                                     |
+| `--no-seed`                | Disables torrent-client injection.                                                                                                      |
 
 :::danger Destructive maintenance
 
@@ -77,18 +78,19 @@ Process at most five entries from a queue folder:
 
 ## Execution
 
-| Option                    | Aliases                       | Purpose                                                 |
-| ------------------------- | ----------------------------- | ------------------------------------------------------- |
-| `--queue <path>`          | `-queue`                      | Process an entire folder queue.                         |
-| `--limit-queue <count>`   | `-limit-queue`, `-lq`         | Limit queued items processed.                           |
-| `--site-check`            | `-site-check`, `-sc`          | Search/check sites without uploading.                   |
-| `--site-upload <tracker>` | `-site-upload`, `-su`         | Process one tracker upload flow.                        |
-| `--debug`                 | `-debug`                      | Enable non-submitting debug mode.                       |
-| `--log-level <level>`     | `-log-level`                  | Set `error`, `warn`, `info`, `debug`, or `trace`.       |
-| `--upload-only`           | `-upload-only`                | Upload using prepared metadata cache only.              |
-| `--delete-tmp`            | `-delete-tmp`, `-dtmp`        | Delete stored content for each input before processing. |
-| `--unattended`            | `-unattended`, `-ua`          | Run without prompts.                                    |
-| `--unattended_confirm`    | `-unattended_confirm`, `-uac` | Run unattended defaults with prompts allowed.           |
+| Option                        | Aliases                       | Purpose                                                                               |
+| ----------------------------- | ----------------------------- | ------------------------------------------------------------------------------------- |
+| `--queue <path>`              | `-queue`                      | Process an entire folder queue.                                                       |
+| `--limit-queue <count>`       | `-limit-queue`, `-lq`         | Limit queued items processed.                                                         |
+| `--site-check`                | `-site-check`, `-sc`          | Search/check sites without uploading.                                                 |
+| `--site-upload <tracker>`     | `-site-upload`, `-su`         | Process one tracker upload flow.                                                      |
+| `--debug`                     | `-debug`                      | Enable non-submitting debug mode.                                                     |
+| `--log-level <level>`         | `-log-level`                  | Set application logging to `error`, `warn`, `info`, `debug`, or `trace` for this run. |
+| `--console-log-level <level>` | `-console-log-level`          | Set console logging to the same levels without changing application logs.             |
+| `--upload-only`               | `-upload-only`                | Upload using prepared metadata cache only.                                            |
+| `--delete-tmp`                | `-delete-tmp`, `-dtmp`        | Delete stored content for each input before processing.                               |
+| `--unattended`                | `-unattended`, `-ua`          | Run without prompts.                                                                  |
+| `--unattended_confirm`        | `-unattended_confirm`, `-uac` | Run unattended defaults with prompts allowed.                                         |
 
 ## Tracker selection and IDs
 

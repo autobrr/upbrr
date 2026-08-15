@@ -721,6 +721,25 @@ func TestParseCLIOptionsRejectsInvalidLogLevel(t *testing.T) {
 	}
 }
 
+func TestParseCLIOptionsConsoleLogLevel(t *testing.T) {
+	opts, visited, _, err := parseCLIOptions([]string{"--console-log-level", "info", "movie.mkv"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !visited["console-log-level"] {
+		t.Fatalf("expected console-log-level visited flag, got %#v", visited)
+	}
+	if opts.ConsoleLogLevel != "info" {
+		t.Fatalf("expected console log level info, got %q", opts.ConsoleLogLevel)
+	}
+}
+
+func TestParseCLIOptionsRejectsInvalidConsoleLogLevel(t *testing.T) {
+	if _, _, _, err := parseCLIOptions([]string{"--console-log-level", "verbose", "movie.mkv"}); err == nil {
+		t.Fatal("expected invalid console log level to fail")
+	}
+}
+
 func TestBuildCLIRequestPropagatesRunLogLevel(t *testing.T) {
 	opts, visited, paths, err := parseCLIOptions([]string{"--debug", "--log-level", "trace", "movie.mkv"})
 	if err != nil {

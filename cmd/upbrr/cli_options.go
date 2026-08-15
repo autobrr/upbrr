@@ -32,6 +32,7 @@ type cliOptions struct {
 	TrackersRemove        string
 	Debug                 bool
 	LogLevel              string
+	ConsoleLogLevel       string
 	Screens               int
 	NoSeed                bool
 	SkipAutoTorrent       bool
@@ -147,7 +148,13 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.StringVar(&opts.TrackersRemove, "trackers-remove", "", "Remove these trackers (comma-separated)")
 	fs.StringVar(&opts.TrackersRemove, "rtk", "", "Remove these trackers (comma-separated)")
 	fs.BoolVar(&opts.Debug, "debug", false, "Enable debug mode")
-	fs.StringVar(&opts.LogLevel, "log-level", "", "Set run log level (error, warn, info, debug, trace)")
+	fs.StringVar(&opts.LogLevel, "log-level", "", "Set application log level for this run (error, warn, info, debug, trace)")
+	fs.StringVar(
+		&opts.ConsoleLogLevel,
+		"console-log-level",
+		"",
+		"Set console log level for this run without changing application logs (error, warn, info, debug, trace)",
+	)
 	fs.IntVar(&opts.Screens, "screens", -1, "Number of screenshots to take")
 	fs.IntVar(&opts.Screens, "s", -1, "Number of screenshots to take")
 	fs.BoolVar(&opts.NoSeed, "no-seed", false, "Do not inject torrent into clients")
@@ -366,6 +373,11 @@ func normalizeCLIOptions(opts *cliOptions, visited map[string]bool) error {
 	}
 	if visited["log-level"] {
 		if _, err := api.ParseLogLevel(opts.LogLevel); err != nil {
+			return fmt.Errorf("upbrr: %w", err)
+		}
+	}
+	if visited["console-log-level"] {
+		if _, err := api.ParseLogLevel(opts.ConsoleLogLevel); err != nil {
 			return fmt.Errorf("upbrr: %w", err)
 		}
 	}
@@ -668,7 +680,7 @@ func cliHelpSections(name string) []helpSection {
 		{title: "Config", names: []string{"config", "export-config", "export-config-plaintext", "import-config", "create-auth"}},
 		{title: "Application", names: []string{"version", "cleanup"}},
 		{title: "Execution", names: []string{
-			"queue", "limit-queue", "site-check", "site-upload", "debug", "log-level", "upload-only",
+			"queue", "limit-queue", "site-check", "site-upload", "debug", "log-level", "console-log-level", "upload-only",
 			"delete-tmp", "unattended", "unattended_confirm",
 		}},
 		{title: "Tracker Selection", names: []string{"trackers", "trackers-remove"}},

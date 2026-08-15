@@ -21,8 +21,8 @@ func TestEveryCanonicalCLIFlagIsClassifiedForCompositeUpload(t *testing.T) {
 
 	registered := commandFlagNames(newUploadRootCommand(cliIO{}, nil).Flags())
 	aliases := cliFlagAliases()
-	if len(registered) != 148 || len(aliases) != 52 {
-		t.Fatalf("upload flag inventory: registered=%d aliases=%d, want 148 and 52", len(registered), len(aliases))
+	if len(registered) != 149 || len(aliases) != 52 {
+		t.Fatalf("upload flag inventory: registered=%d aliases=%d, want 149 and 52", len(registered), len(aliases))
 	}
 	canonical := make(map[string]struct{}, len(registered))
 	for name := range registered {
@@ -34,8 +34,8 @@ func TestEveryCanonicalCLIFlagIsClassifiedForCompositeUpload(t *testing.T) {
 		}
 		canonical[name] = struct{}{}
 	}
-	if len(canonical) != 96 {
-		t.Fatalf("canonical upload flags=%d, want 96", len(canonical))
+	if len(canonical) != 97 {
+		t.Fatalf("canonical upload flags=%d, want 97", len(canonical))
 	}
 
 	classified := cliCompositeFlagManifest()
@@ -178,6 +178,7 @@ func cliCompositeFlagManifest() map[string]cliCompositeFlagClass {
 	for name, reason := range map[string]string{
 		"cleanup":                 "cross-workflow storage administration",
 		"config":                  "process configuration selection",
+		"console-log-level":       "process console verbosity",
 		"create-auth":             "authentication administration",
 		"delete-tmp":              "pre-upload storage administration",
 		"export-config":           "configuration administration",
