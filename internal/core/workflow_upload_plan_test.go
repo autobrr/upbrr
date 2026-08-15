@@ -410,12 +410,16 @@ func TestWorkflowDryRunClientFailureRetainsReconciliationIdentity(t *testing.T) 
 	}
 }
 
-func TestWorkflowUploadPlanPassesSavedClientTorrentForValidation(t *testing.T) {
+func TestWorkflowUploadPlanAppliesNoHashOverrideAndReportsPolicy(t *testing.T) {
 	t.Parallel()
 
 	clientTorrent := "C:\\client\\BT_backup\\example.torrent"
 	savedNoHash := false
 	requestedNoHash := true
+	var updates []api.WorkflowProgressUpdate
+	ctx := api.WithWorkflowProgressReporter(context.Background(), func(update api.WorkflowProgressUpdate) {
+		updates = append(updates, update)
+	})
 	torrents := &workflowTorrentServiceCapture{}
 	builder := workflowUploadPlanBuilder{
 		resolver: workflowUploadResolverFixed{subject: api.UploadSubject{
@@ -426,7 +430,7 @@ func TestWorkflowUploadPlanPassesSavedClientTorrentForValidation(t *testing.T) {
 		torrents: torrents,
 	}
 	_, execution, err := builder.Build(
-		context.Background(),
+		ctx,
 		api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
 			TrackerID:   "PTP",
 			Readiness:   api.ReadinessStatusReady,
@@ -454,6 +458,13 @@ func TestWorkflowUploadPlanPassesSavedClientTorrentForValidation(t *testing.T) {
 	}
 	if torrents.subject.TorrentOverrides.NoHash == nil || !*torrents.subject.TorrentOverrides.NoHash {
 		t.Fatalf("torrent no-hash override = %#v, want true", torrents.subject.TorrentOverrides.NoHash)
+	}
+	if !slices.ContainsFunc(updates, func(update api.WorkflowProgressUpdate) bool {
+		return update.Phase == "upload_plan" && update.Kind == "policy" && update.Label == "Torrent preparation policy" &&
+			update.Status == api.StageStatusCompleted && update.Completed == 0 && update.Total == 1 &&
+			update.Message == "Torrent preparation policy selected no_hash=true tracker_count=1."
+	}) {
+		t.Fatalf("no-hash policy progress = %#v", updates)
 	}
 }
 

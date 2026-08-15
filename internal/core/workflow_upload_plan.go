@@ -236,6 +236,16 @@ func (b workflowUploadPlanBuilder) Build(
 		eligible = append(eligible, projection)
 		planProjections = append(planProjections, projection)
 	}
+	if options.NoHash != nil {
+		api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
+			Phase:   "upload_plan",
+			Kind:    "policy",
+			Label:   "Torrent preparation policy",
+			Status:  api.StageStatusCompleted,
+			Total:   len(eligible),
+			Message: fmt.Sprintf("Torrent preparation policy selected no_hash=%t tracker_count=%d.", *options.NoHash, len(eligible)),
+		})
+	}
 	for _, projection := range planProjections {
 		api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
 			Phase:     "upload_plan",
