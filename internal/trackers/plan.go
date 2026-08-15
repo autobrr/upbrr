@@ -118,6 +118,7 @@ type planState struct {
 	submit   func(context.Context) (api.UploadSummary, error)
 	release  func() error
 	resolve  func(context.Context) (TrackerPlan, *PreparationFailure)
+	decide   func(context.Context, bool) (TrackerPlan, *PreparationFailure)
 }
 
 // TrackerPlan is an immutable operation-scoped adapter plan. Its private state
@@ -137,6 +138,7 @@ type PreparedOperation struct {
 	submit  func(context.Context) (api.UploadSummary, error)
 	release func() error
 	resolve func(context.Context) (PreparedOperation, error)
+	decide  func(context.Context, bool) (PreparedOperation, error)
 }
 
 // UploadPreparer builds canonical upload state once for the requested intent.
@@ -169,6 +171,22 @@ func NewPreparedOperationWithResolver(
 		submit:  submit,
 		release: release,
 		resolve: resolve,
+	}
+}
+
+// NewPreparedOperationWithDecisionResolver captures an upload operation whose
+// explicit confirmation or decline produces one fresh tracker-owned preparation.
+func NewPreparedOperationWithDecisionResolver(
+	preview api.TrackerDryRunEntry,
+	submit func(context.Context) (api.UploadSummary, error),
+	release func() error,
+	decide func(context.Context, bool) (PreparedOperation, error),
+) PreparedOperation {
+	return PreparedOperation{
+		preview: cloneTrackerDryRunEntry(preview),
+		submit:  submit,
+		release: release,
+		decide:  decide,
 	}
 }
 
@@ -283,6 +301,19 @@ func preparedUploadPlan(input PreparationInput, operation PreparedOperation) (Tr
 			return preparedUploadPlan(input, next)
 		}
 	}
+	if operation.decide != nil {
+		plan.state.decide = func(ctx context.Context, confirmed bool) (TrackerPlan, *PreparationFailure) {
+			next, err := operation.decide(ctx, confirmed)
+			if err != nil {
+				var failure *PreparationFailure
+				if errors.As(err, &failure) {
+					return TrackerPlan{}, failure
+				}
+				return TrackerPlan{}, NewPreparationFailure(input.Tracker, "upload", err.Error(), err)
+			}
+			return preparedUploadPlan(input, next)
+		}
+	}
 	return plan, nil
 }
 
@@ -339,8 +370,9 @@ func (p TrackerPlan) Submit(ctx context.Context) (api.UploadSummary, error) {
 	return submit(ctx)
 }
 
-// ResolveAction keeps the current prepared payload when confirmed, or replaces
-// it through the tracker-owned resolver when declined.
+// ResolveAction consumes one matching pending action. Standard actions retain
+// the payload when confirmed or invoke their resolver when declined; decision
+// actions pass either answer to the tracker and replace the plan.
 func (p TrackerPlan) ResolveAction(
 	ctx context.Context,
 	kind api.RequiredActionKind,
@@ -366,6 +398,24 @@ func (p TrackerPlan) ResolveAction(
 	case p.state.resolved:
 		p.state.mu.Unlock()
 		return TrackerPlan{}, ErrPlanActionUnavailable
+	}
+	if p.state.decide != nil {
+		decide := p.state.decide
+		release := p.state.release
+		p.state.used = true
+		p.state.released = true
+		p.state.resolved = true
+		p.state.mu.Unlock()
+		if release != nil {
+			if err := release(); err != nil {
+				return TrackerPlan{}, NewPreparationFailure(p.tracker, "upload", "tracker prepared upload release failed", err)
+			}
+		}
+		resolved, failure := decide(ctx, confirmed)
+		if failure != nil {
+			return TrackerPlan{}, failure
+		}
+		return resolved, nil
 	}
 	if confirmed {
 		p.state.resolved = true

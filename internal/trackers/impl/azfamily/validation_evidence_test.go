@@ -76,6 +76,66 @@ func TestAZFamilyValidationPolicyVersions(t *testing.T) {
 	}
 }
 
+func TestAZScreenshotMinimum(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		site    string
+		subject api.TrackerValidationSubject
+		want    int
+	}{
+		{
+			name:    "AZ web",
+			site:    "AZ",
+			subject: api.TrackerValidationSubject{Type: "WEBDL"},
+			want:    3,
+		},
+		{
+			name:    "CZ web",
+			site:    "CZ",
+			subject: api.TrackerValidationSubject{Type: "WEBDL"},
+			want:    3,
+		},
+		{
+			name:    "CZ disc",
+			site:    "CZ",
+			subject: api.TrackerValidationSubject{DiscType: "BDMV"},
+			want:    6,
+		},
+		{
+			name:    "CZ remux",
+			site:    "CZ",
+			subject: api.TrackerValidationSubject{Type: "REMUX"},
+			want:    6,
+		},
+		{
+			name: "CZ 2160p",
+			site: "CZ",
+			subject: api.TrackerValidationSubject{Release: api.ReleaseInfo{
+				Resolution: "2160p",
+			}},
+			want: 6,
+		},
+		{
+			name: "PHD 2160p",
+			site: "PHD",
+			subject: api.TrackerValidationSubject{Release: api.ReleaseInfo{
+				Resolution: "2160p",
+			}},
+			want: 3,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := azScreenshotMinimum(siteFor(test.site), test.subject); got != test.want {
+				t.Fatalf("minimum = %d, want %d", got, test.want)
+			}
+		})
+	}
+}
+
 func azPassingSubject(site string) api.TrackerValidationSubject {
 	country := "JP"
 	originalLanguage := "ja"
