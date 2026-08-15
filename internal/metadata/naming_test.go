@@ -950,6 +950,12 @@ func TestResolveReleaseNameTitleProviderAlternateRules(t *testing.T) {
 			imdbAKA:    "Original Title",
 			wantAlt:    "AKA Parsed Alternate",
 		},
+		{
+			name:       "duplicate parsed alternate uses provider fallback",
+			releaseAlt: "IMDb Title",
+			imdbAKA:    "Original Title",
+			wantAlt:    "AKA Original Title",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -986,6 +992,7 @@ func TestResolveReleaseNameTitlePrefersTMDBForMovie(t *testing.T) {
 				TMDBID:        1,
 				Title:         "TMDB Title",
 				OriginalTitle: "TMDB Original",
+				RetrievedAKA:  "AKA Rei No Sakuhin",
 				Year:          2025,
 			},
 			IMDB: &api.IMDBMetadata{
@@ -997,8 +1004,41 @@ func TestResolveReleaseNameTitlePrefersTMDBForMovie(t *testing.T) {
 		},
 	}
 	title, alt, year := resolveReleaseNameTitle("MOVIE", meta)
-	if title != "TMDB Title" || alt != "AKA TMDB Original" || year != 2025 {
+	if title != "TMDB Title" || alt != "AKA Rei No Sakuhin" || year != 2025 {
 		t.Fatalf("unexpected TMDB-preferred fields: title=%q alt=%q year=%d", title, alt, year)
+	}
+}
+
+func TestResolveReleaseNameTitleTMDBUsesMatchingIMDbAKA(t *testing.T) {
+	meta := preparationstate.State{
+		Identity: api.ExternalIdentity{
+			Category: "MOVIE",
+			TMDBID:   1,
+			IMDBID:   1234567,
+		},
+		Release: api.ReleaseInfo{Alt: "TMDB Title"},
+		ProviderMetadata: api.SourceScopedMetadata{
+			TMDB: &api.TMDBMetadata{
+				TMDBID:        1,
+				Title:         "TMDB Title",
+				OriginalTitle: "TMDB Original",
+			},
+			IMDB: &api.IMDBMetadata{
+				IMDBID: 1234567,
+				Title:  "IMDb Title",
+				AKA:    "Rei No Sakuhin",
+			},
+		},
+	}
+	_, alt, _ := resolveReleaseNameTitle("MOVIE", meta)
+	if alt != "AKA Rei No Sakuhin" {
+		t.Fatalf("matching IMDb alternate=%q", alt)
+	}
+
+	meta.ProviderMetadata.IMDB.IMDBID = 7654321
+	_, alt, _ = resolveReleaseNameTitle("MOVIE", meta)
+	if alt != "AKA TMDB Original" {
+		t.Fatalf("mismatched IMDb alternate=%q", alt)
 	}
 }
 
