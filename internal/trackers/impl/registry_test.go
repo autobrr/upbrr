@@ -554,7 +554,7 @@ func TestNewRegistryOwnsUploadArtifactPolicies(t *testing.T) {
 		"FL":    {Source: "FL"},
 		"GPW":   {Source: "GreatPosterWall"},
 		"HDS":   {Source: "HD-Space"},
-		"HDT":   {Source: "hd-torrents.org"},
+		"HDT":   {Source: "hd-torrents.org", RequireAnnounce: true},
 		"IS":    {Source: "https://immortalseed.me"},
 		"NBL":   {Source: "NBL"},
 		"PHD":   {Source: "PrivateHD", DefaultAnnounce: "https://tracker.privatehd.to/announce"},
@@ -834,6 +834,27 @@ func TestNewRegistryResolvesHybridAuthRequirements(t *testing.T) {
 				trackers.AuthRequirementAPIKey,
 				trackers.AuthRequirementStoredCookie,
 			},
+		},
+		{
+			name:     "HDT cookies and announce URL",
+			tracker:  "HDT",
+			wantMode: "cookies_announce_url",
+			wantFirst: []trackers.AuthRequirement{
+				trackers.AuthRequirementStoredCookie,
+				trackers.AuthRequirementAnnounceURL,
+			},
+		},
+		{
+			name:      "LST API and RSS key",
+			tracker:   "LST",
+			wantMode:  "api_key_rss_key",
+			wantFirst: []trackers.AuthRequirement{trackers.AuthRequirementAPIKey, trackers.AuthRequirementRSSKey},
+		},
+		{
+			name:      "ULCX API and RSS key",
+			tracker:   "ULCX",
+			wantMode:  "api_key_rss_key",
+			wantFirst: []trackers.AuthRequirement{trackers.AuthRequirementAPIKey, trackers.AuthRequirementRSSKey},
 		},
 		{
 			name:      "RTF API key or credential refresh",

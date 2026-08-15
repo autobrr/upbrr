@@ -1675,6 +1675,10 @@ func TestSaveLoadDatabaseEncryptsSecrets(t *testing.T) {
 				"BHD": {
 					APIKey: "tracker-secret-token",
 				},
+				"LST": {
+					APIKey: "unit3d-secret-token",
+					RSSKey: "registered-torrent-secret",
+				},
 			},
 		},
 		ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
@@ -1703,6 +1707,13 @@ func TestSaveLoadDatabaseEncryptsSecrets(t *testing.T) {
 	if !isSecretEnvelope(trackerCfg.APIKey) {
 		t.Fatalf("saved tracker API key is not stored as a secret envelope")
 	}
+	lstCfg, ok := repo.saved.Trackers.Trackers["LST"]
+	if !ok {
+		t.Fatal("saved config is missing LST tracker entry")
+	}
+	if lstCfg.RSSKey == "registered-torrent-secret" || !isSecretEnvelope(lstCfg.RSSKey) {
+		t.Fatal("saved LST RSS key is not encrypted")
+	}
 
 	loaded, err := LoadFromDatabase(context.Background(), repo)
 	if err != nil {
@@ -1714,6 +1725,9 @@ func TestSaveLoadDatabaseEncryptsSecrets(t *testing.T) {
 	}
 	if loaded.Trackers.Trackers["BHD"].APIKey != "tracker-secret-token" {
 		t.Fatalf("loaded tracker API key mismatch: got %q", loaded.Trackers.Trackers["BHD"].APIKey)
+	}
+	if loaded.Trackers.Trackers["LST"].RSSKey != "registered-torrent-secret" {
+		t.Fatal("loaded LST RSS key mismatch")
 	}
 }
 

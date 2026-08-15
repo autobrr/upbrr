@@ -5,6 +5,7 @@ package hdt
 
 import (
 	"github.com/autobrr/upbrr/internal/trackers"
+	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -22,7 +23,8 @@ func Profile() standalone.Profile {
 		NewDuplicateAdapter: newDuplicateAdapter,
 		ValidationPolicy:    validationPolicy(),
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{
-			Source: "hd-torrents.org",
+			Source:          "hd-torrents.org",
+			RequireAnnounce: true,
 		},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{
 			TrackerURLPatterns: []string{"https://hdts-announce.ru"},
@@ -30,6 +32,14 @@ func Profile() standalone.Profile {
 		AuthCapability: &api.TrackerAuthCapability{
 			AuthKind:           "cookies",
 			SupportsCookieFile: true,
+		},
+		AuthPolicy: &trackers.AuthPolicy{
+			RequirementsDetermineReadiness: true,
+			ResolveRequirements: authcontract.StaticRequirements(authcontract.Requirements(
+				"cookies_announce_url",
+				false,
+				[]trackers.AuthRequirement{trackers.AuthRequirementStoredCookie, trackers.AuthRequirementAnnounceURL},
+			)),
 		},
 	}
 }

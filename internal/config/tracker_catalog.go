@@ -40,6 +40,7 @@ var trackerActivationYAMLKeys = map[string]struct{}{
 	"username":        {},
 	"password":        {},
 	"passkey":         {},
+	"rss_key":         {},
 	"announce_url":    {},
 	"my_announce_url": {},
 }

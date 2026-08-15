@@ -624,7 +624,7 @@ func (s *Service) statusForSpec(ctx context.Context, spec trackerSpec) api.Track
 			status.State = StateLoginRequired
 		}
 	}
-	if spec.authKind == "passkey_or_cookies" &&
+	if (spec.authKind == "passkey_or_cookies" || spec.policy.RequirementsDetermineReadiness) &&
 		len(spec.requirements.Alternatives) > 0 &&
 		status.State != StateEncryptedStorageUnavailable {
 		satisfied, storedCookieOnly := requirementsSatisfied(spec.requirements, cfg, hasAPIKey, status.CookieCount)
@@ -720,6 +720,8 @@ func requirementSatisfied(
 		return strings.TrimSpace(cfg.PTPAPIUser) != ""
 	case trackerscatalog.AuthRequirementAnnounceURL:
 		return strings.TrimSpace(cfg.AnnounceURL) != ""
+	case trackerscatalog.AuthRequirementRSSKey:
+		return strings.TrimSpace(cfg.RSSKey) != ""
 	}
 	return false
 }

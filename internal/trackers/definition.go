@@ -242,6 +242,8 @@ const (
 	AuthRequirementAPIUser AuthRequirement = "api_user"
 	// AuthRequirementAnnounceURL requires a personal announce URL.
 	AuthRequirementAnnounceURL AuthRequirement = "announce_url"
+	// AuthRequirementRSSKey requires a personal RSS key for registered torrent downloads.
+	AuthRequirementRSSKey AuthRequirement = "rss_key"
 )
 
 // AuthRequirementAlternative is one complete set of auth facts. Alternatives
@@ -278,6 +280,8 @@ type AuthPolicy struct {
 	// ResolveRequirements returns the secret-free auth facts for the effective
 	// tracker mode.
 	ResolveRequirements AuthRequirementsResolver
+	// RequirementsDetermineReadiness makes every resolved fact mandatory for configured status.
+	RequirementsDetermineReadiness bool
 	// ResolveAPIKey returns the effective API credential, including any legacy
 	// config source still supported by the owning tracker.
 	ResolveAPIKey func(config.Config, config.TrackerConfig) string

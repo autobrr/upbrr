@@ -1230,6 +1230,82 @@ func TestStatusHDBPasskeyWithoutCookiesIsNotUploadReady(t *testing.T) {
 	}
 }
 
+func TestStatusEnforcesEveryEffectiveAuthRequirement(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Unit3D RSS key", func(t *testing.T) {
+		t.Parallel()
+
+		requirements := trackers.EffectiveAuthRequirements{Alternatives: []trackers.AuthRequirementAlternative{{
+			AllOf: []trackers.AuthRequirement{trackers.AuthRequirementAPIKey, trackers.AuthRequirementRSSKey},
+		}}}
+		for name, test := range map[string]struct {
+			cfg  config.TrackerConfig
+			want string
+		}{
+			"missing RSS key": {cfg: config.TrackerConfig{APIKey: "synthetic-api-key"}, want: StateNotConfigured},
+			"complete":        {cfg: config.TrackerConfig{APIKey: "synthetic-api-key", RSSKey: "synthetic-rss-key"}, want: StateConfigured},
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				service := newTestService(config.Config{
+					MainSettings: config.MainSettingsConfig{DBPath: newTrackerAuthTestDB(t)},
+					Trackers:     config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"LST": test.cfg}},
+				})
+				status := service.statusForSpec(context.Background(), trackerSpec{
+					id:           "LST",
+					authKind:     "api_key",
+					apiKey:       true,
+					policy:       trackers.AuthPolicy{RequirementsDetermineReadiness: true},
+					requirements: requirements,
+				})
+				if status.State != test.want {
+					t.Fatalf("status = %#v, want %s", status, test.want)
+				}
+			})
+		}
+	})
+
+	t.Run("HDT announce URL", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := context.Background()
+		dbPath := newTrackerAuthTestDB(t)
+		if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "HDT", map[string]string{"session": "synthetic-cookie"}); err != nil {
+			t.Fatalf("SaveTrackerCookieMap: %v", err)
+		}
+		requirements := trackers.EffectiveAuthRequirements{Alternatives: []trackers.AuthRequirementAlternative{{
+			AllOf: []trackers.AuthRequirement{trackers.AuthRequirementStoredCookie, trackers.AuthRequirementAnnounceURL},
+		}}}
+		for name, test := range map[string]struct {
+			announce string
+			want     string
+		}{
+			"missing announce URL": {want: StateNotConfigured},
+			"complete":             {announce: "https://tracker.invalid/announce", want: StateConfigured},
+		} {
+			t.Run(name, func(t *testing.T) {
+				service := newTestService(config.Config{
+					MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+					Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+						"HDT": {AnnounceURL: test.announce},
+					}},
+				})
+				status := service.statusForSpec(ctx, trackerSpec{
+					id:           "HDT",
+					authKind:     "cookies",
+					cookies:      true,
+					policy:       trackers.AuthPolicy{RequirementsDetermineReadiness: true},
+					requirements: requirements,
+				})
+				if status.State != test.want {
+					t.Fatalf("status = %#v, want %s", status, test.want)
+				}
+			})
+		}
+	})
+}
+
 func TestLoginHDBWithoutCredentialLoginReturnsStatus(t *testing.T) {
 	t.Parallel()
 

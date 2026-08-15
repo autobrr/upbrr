@@ -325,6 +325,7 @@ type TrackerConfig struct {
 	Anon                bool           `yaml:"anon" json:"Anon"`
 	ShowGroupIfAnon     bool           `yaml:"show_group_if_anon" json:"ShowGroupIfAnon"`
 	BhdRSSKey           string         `yaml:"bhd_rss_key" json:"BhdRSSKey"`
+	RSSKey              string         `yaml:"rss_key" json:"RSSKey"`
 	CheckRequests       bool           `yaml:"check_requests" json:"CheckRequests"`
 	FullMediainfo       bool           `yaml:"full_mediainfo" json:"FullMediainfo"`
 	UploaderName        string         `yaml:"uploader_name" json:"UploaderName"`

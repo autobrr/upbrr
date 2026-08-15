@@ -14,13 +14,20 @@ func (d *Definition) AuthCapability() api.TrackerAuthCapability {
 	return *authcontract.APIKeyCapability(d.profile.Name)
 }
 
-// AuthPolicy returns the family-owned effective API-key requirements.
+// AuthPolicy returns the family-owned effective API-key and registered torrent requirements.
 func (d *Definition) AuthPolicy() *trackers.AuthPolicy {
+	mode := "api_key"
+	requirements := []trackers.AuthRequirement{trackers.AuthRequirementAPIKey}
+	if d.profile.RegisteredTorrent != nil && d.profile.RegisteredTorrent.RequiresRSSKey {
+		mode = "api_key_rss_key"
+		requirements = append(requirements, trackers.AuthRequirementRSSKey)
+	}
 	return &trackers.AuthPolicy{
+		RequirementsDetermineReadiness: d.profile.RegisteredTorrent != nil && d.profile.RegisteredTorrent.RequiresRSSKey,
 		ResolveRequirements: authcontract.StaticRequirements(authcontract.Requirements(
-			"api_key",
+			mode,
 			false,
-			[]trackers.AuthRequirement{trackers.AuthRequirementAPIKey},
+			requirements,
 		)),
 	}
 }

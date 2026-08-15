@@ -18,7 +18,8 @@ func Profile() unit3d.Profile {
 		Site: unit3d.SiteProfile{
 			ApplyAdditionalPayload: additionalPayload,
 		},
-		DupePolicy: duplicatePolicy(),
+		RegisteredTorrent: &unit3d.RegisteredTorrentPolicy{RequiresRSSKey: true},
+		DupePolicy:        duplicatePolicy(),
 		BannedPolicy: &trackers.BannedGroupPolicy{
 			EndpointPath:  "/api/bannedReleaseGroups",
 			RequireAPIKey: true,

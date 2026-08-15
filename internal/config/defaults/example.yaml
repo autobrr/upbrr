@@ -297,6 +297,7 @@ trackers:
   LST:
     link_dir_name: ""
     api_key: ""
+    rss_key: ""
     anon: false
     modq: false
     draft: false
@@ -448,6 +449,7 @@ trackers:
   ULCX:
     link_dir_name: ""
     api_key: ""
+    rss_key: ""
     anon: false
     modq: false
   UTP:

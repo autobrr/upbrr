@@ -55,6 +55,12 @@ func unit3DResponsibilityVersion(name string, policy string, descriptionGroup st
 	}
 }
 
+func unit3DRegisteredTorrentResponsibility(name string, policy string, version string) trackerResponsibilityRow {
+	row := unit3DResponsibilityVersion(name, policy, "", version)
+	row.authMode = "api_key_rss_key"
+	return row
+}
+
 func azFamilyResponsibility(name string) trackerResponsibilityRow {
 	return azFamilyResponsibilityVersion(name, "v1")
 }
@@ -89,7 +95,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 	unit3DResponsibility("ITT", "canonical", ""),
 	unit3DResponsibility("LCD", "lcd", ""),
 	unit3DResponsibility("LDU", "ldu", ""),
-	unit3DResponsibility("LST", "canonical", ""),
+	unit3DRegisteredTorrentResponsibility("LST", "canonical", "v1"),
 	unit3DResponsibility("LT", "canonical", ""),
 	unit3DResponsibilityVersion("LUME", "lume", "", "v2"),
 	unit3DResponsibility("MNS", "canonical", ""),
@@ -110,7 +116,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 	unit3DResponsibility("TLZ", "canonical", ""),
 	unit3DResponsibility("TOS", "canonical", ""),
 	unit3DResponsibility("TTR", "canonical", ""),
-	unit3DResponsibilityVersion("ULCX", "ulcx", "", "v2"),
+	unit3DRegisteredTorrentResponsibility("ULCX", "ulcx", "v2"),
 	unit3DResponsibility("UTP", "canonical", ""),
 	unit3DResponsibilityVersion("YUS", "yus", "", "v2"),
 	unit3DResponsibility("ZNTH", "znth", ""),
@@ -346,7 +352,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		name:              "HDT",
 		family:            trackers.FamilyStandalone,
 		contentMode:       trackers.UploadContentModeDescription,
-		authMode:          "cookies",
+		authMode:          "cookies_announce_url",
 		authOwner:         "standalone/hdt/auth.go",
 		taxonomyOwner:     "standalone/hdt/taxonomy.go",
 		descriptionOwner:  "standalone/hdt/description.go",
