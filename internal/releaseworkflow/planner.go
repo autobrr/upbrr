@@ -515,6 +515,7 @@ func planContinuationCommand(
 		return nil, ""
 	}
 	if current.DryRun == nil || current.DryRun.NoSeed != request.Intent.NoSeed ||
+		!boolPointersEqual(current.DryRun.NoHash, request.Intent.NoHash) ||
 		(len(request.Intent.UploadTrackerIDs) > 0 &&
 			!slices.Equal(
 				normalizeContinuationTrackerIDs(current.DryRun.TrackerIDs),
@@ -524,6 +525,7 @@ func planContinuationCommand(
 			WorkflowID:       workflowID,
 			ExpectedRevision: revision,
 			NoSeed:           request.Intent.NoSeed,
+			NoHash:           cloneBoolPointer(request.Intent.NoHash),
 			TrackerIDs:       append([]api.TrackerID(nil), request.Intent.UploadTrackerIDs...),
 			IdempotencyKey:   key("review-uploads"),
 		}, "review-uploads"
@@ -535,6 +537,7 @@ func planContinuationCommand(
 		WorkflowID:       workflowID,
 		ExpectedRevision: revision,
 		NoSeed:           request.Intent.NoSeed,
+		NoHash:           cloneBoolPointer(request.Intent.NoHash),
 		TrackerIDs:       append([]api.TrackerID(nil), request.Intent.UploadTrackerIDs...),
 		Interaction:      continuationInteractionMode(request.Intent),
 		IdempotencyKey:   key("execute-uploads"),
@@ -788,6 +791,7 @@ func continuationGoalReached(current CommandResult, request api.ContinueReleaseW
 		return descriptionsHaveViableTracker(current.Descriptions)
 	case api.WorkflowGoalUploadReviewed, api.WorkflowGoalDryRun:
 		return current.DryRun != nil && current.DryRun.NoSeed == request.Intent.NoSeed &&
+			boolPointersEqual(current.DryRun.NoHash, request.Intent.NoHash) &&
 			(len(request.Intent.UploadTrackerIDs) == 0 ||
 				slices.Equal(
 					normalizeContinuationTrackerIDs(current.DryRun.TrackerIDs),

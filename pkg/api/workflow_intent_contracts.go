@@ -120,6 +120,7 @@ type UploadDryRunResult struct {
 	Descriptions     DescriptionSetRef              `json:"descriptions"`
 	InputFingerprint WorkflowFingerprint            `json:"inputFingerprint"`
 	NoSeed           bool                           `json:"noSeed"`
+	NoHash           *bool                          `json:"noHash,omitempty"`
 	TrackerIDs       []TrackerID                    `json:"trackerIds"`
 	Reports          []TrackerDryRunReport          `json:"reports"`
 	SucceededCount   int                            `json:"succeededCount"`

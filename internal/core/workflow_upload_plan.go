@@ -115,6 +115,7 @@ func (b workflowUploadPlanBuilder) Fingerprint(
 		Descriptions     api.DescriptionSetRef
 		Description      api.WorkflowFingerprint
 		NoSeed           bool
+		NoHash           *bool `json:"NoHash,omitempty"`
 		RehashCooldown   int
 		TrackerIDs       []api.TrackerID
 		TrackerApproval  *api.TrackerApprovalSnapshotRef
@@ -130,6 +131,7 @@ func (b workflowUploadPlanBuilder) Fingerprint(
 		Descriptions:     api.DescriptionSetRef{ID: descriptions.ID, Revision: descriptions.Revision},
 		Description:      descriptions.InputFingerprint,
 		NoSeed:           options.NoSeed,
+		NoHash:           options.NoHash,
 		RehashCooldown:   b.config.TorrentCreation.RehashCooldown,
 		TrackerIDs:       append([]api.TrackerID(nil), options.TrackerIDs...),
 		TrackerApproval:  options.TrackerApproval,
@@ -172,6 +174,10 @@ func (b workflowUploadPlanBuilder) Build(
 		return api.UploadPlan{}, nil, errors.New("workflow upload plan: description inputs are incompatible")
 	}
 	descriptionInstructions.Options.NoSeed = options.NoSeed
+	if options.NoHash != nil {
+		noHash := *options.NoHash
+		descriptionInstructions.Torrent.NoHash = &noHash
+	}
 	inputFingerprint, err := b.Fingerprint(ctx, projections, dupes, media, descriptions, options)
 	if err != nil {
 		return api.UploadPlan{}, nil, err

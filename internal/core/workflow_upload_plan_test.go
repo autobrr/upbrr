@@ -344,6 +344,15 @@ func TestWorkflowUploadPlanFingerprintChangesWithReviewedDependency(t *testing.T
 	if authorityFirst == authorityChanged {
 		t.Fatal("upload plan fingerprint ignored tracker authority")
 	}
+	noHash := true
+	options.NoHash = &noHash
+	noHashChanged, err := builder.Fingerprint(context.Background(), projections, dupes, media, descriptions, options)
+	if err != nil {
+		t.Fatalf("fingerprint no-hash upload plan: %v", err)
+	}
+	if authorityChanged == noHashChanged {
+		t.Fatal("upload plan fingerprint ignored no-hash option")
+	}
 }
 
 func TestDryRunClientInjectionReportsAggregateTerminalProgress(t *testing.T) {
@@ -405,6 +414,8 @@ func TestWorkflowUploadPlanPassesSavedClientTorrentForValidation(t *testing.T) {
 	t.Parallel()
 
 	clientTorrent := "C:\\client\\BT_backup\\example.torrent"
+	savedNoHash := false
+	requestedNoHash := true
 	torrents := &workflowTorrentServiceCapture{}
 	builder := workflowUploadPlanBuilder{
 		resolver: workflowUploadResolverFixed{subject: api.UploadSubject{
@@ -430,8 +441,8 @@ func TestWorkflowUploadPlanPassesSavedClientTorrentForValidation(t *testing.T) {
 		api.MediaArtifactSet{},
 		workflowMediaPrivateArtifacts{},
 		api.DescriptionSet{},
-		api.DescriptionInstructions{},
-		releaseworkflow.UploadPlanBuildOptions{},
+		api.DescriptionInstructions{Torrent: api.TorrentOverrides{NoHash: &savedNoHash}},
+		releaseworkflow.UploadPlanBuildOptions{NoHash: &requestedNoHash},
 		time.Now(),
 	)
 	if err != nil {
@@ -440,6 +451,9 @@ func TestWorkflowUploadPlanPassesSavedClientTorrentForValidation(t *testing.T) {
 	defer func() { _ = execution.Release() }()
 	if torrents.subject.ClientTorrentPath != clientTorrent {
 		t.Fatalf("client torrent path=%q, want %q", torrents.subject.ClientTorrentPath, clientTorrent)
+	}
+	if torrents.subject.TorrentOverrides.NoHash == nil || !*torrents.subject.TorrentOverrides.NoHash {
+		t.Fatalf("torrent no-hash override = %#v, want true", torrents.subject.TorrentOverrides.NoHash)
 	}
 }
 

@@ -6458,6 +6458,16 @@
           "idempotencyKey": {
             "type": "string"
           },
+          "noHash": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "noSeed": {
             "type": "boolean"
           },
@@ -9103,6 +9113,16 @@
           "media": {
             "$ref": "#/components/schemas/MediaArtifactSetRef"
           },
+          "noHash": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "noSeed": {
             "type": "boolean"
           },
@@ -9753,6 +9773,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/WorkflowMediaSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "noHash": {
+            "anyOf": [
+              {
+                "type": "boolean"
               },
               {
                 "type": "null"
@@ -12798,6 +12828,16 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "noHash": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "noSeed": {
                     "type": "boolean"
                   },

@@ -94,6 +94,7 @@ export type ReleaseWorkflowPorts = Readonly<{
     result: UploadResultRef,
     trackerIDs: readonly string[],
     noSeed: boolean,
+    noHash: boolean,
     idempotencyKey: string,
     signal: AbortSignal,
   ): Promise<ReleaseWorkflowCurrent>;
