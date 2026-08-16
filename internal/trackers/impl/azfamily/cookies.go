@@ -5,40 +5,32 @@ package azfamily
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"strings"
 
 	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 )
 
-type simpleCookieJar struct {
-	baseURL *url.URL
-	cookies map[string]*http.Cookie
-}
-
-func (j simpleCookieJar) SetCookies(_ *url.URL, cookies []*http.Cookie) {
-	if j.cookies == nil {
-		return
+// newSessionCookieJar uses standard domain scoping so tracker cookies do not
+// accompany unrelated external image requests.
+func newSessionCookieJar(rawBaseURL string, cookies []*http.Cookie) (http.CookieJar, error) {
+	baseURL, err := url.Parse(rawBaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid base URL: %w", err)
 	}
-	for _, cookie := range cookies {
-		if cookie == nil || strings.TrimSpace(cookie.Name) == "" {
-			continue
-		}
-		j.cookies[cookie.Name] = cookie
+	if strings.TrimSpace(baseURL.Hostname()) == "" {
+		return nil, errors.New("invalid base URL: missing hostname")
 	}
-}
-
-func (j simpleCookieJar) Cookies(_ *url.URL) []*http.Cookie {
-	if j.cookies == nil {
-		return nil
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return nil, fmt.Errorf("create cookie jar: %w", err)
 	}
-	out := make([]*http.Cookie, 0, len(j.cookies))
-	for _, cookie := range j.cookies {
-		out = append(out, cookie)
-	}
-	return out
+	jar.SetCookies(baseURL, cookies)
+	return jar, nil
 }
 
 func resolveCookies(ctx context.Context, dbPath string, site siteDefinition) ([]*http.Cookie, error) {

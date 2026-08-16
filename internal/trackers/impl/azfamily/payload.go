@@ -28,6 +28,8 @@ import (
 
 const (
 	azMaxScreenshotUploads  = 15
+	azScreenshotSourceMax   = 20 << 20
+	azScreenshotBatchMax    = 100 << 20
 	azScreenshotResponseMax = 64 << 10
 	azImageUserAgent        = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0"
 )
@@ -176,12 +178,18 @@ func prepareScreenshotUploads(
 	}
 	prepared := make([]preparedScreenshotUpload, 0, min(limit, len(assets.MenuImages)+len(assets.Screenshots)))
 	failures := 0
+	preparedBytes := 0
 	appendImage := func(shot api.ScreenshotImage, menu bool) bool {
 		imageBytes, filename, imageErr := screenshotBytes(ctx, state.client, shot)
 		if imageErr != nil || len(imageBytes) == 0 || menu && http.DetectContentType(imageBytes) != "image/png" {
 			failures++
 			return false
 		}
+		if !fitsScreenshotBatch(preparedBytes, len(imageBytes)) {
+			failures++
+			return false
+		}
+		preparedBytes += len(imageBytes)
 		prepared = append(prepared, preparedScreenshotUpload{data: imageBytes, filename: filename})
 		return true
 	}
@@ -344,16 +352,22 @@ func uploadScreenshot(ctx context.Context, site siteDefinition, state sessionSta
 }
 
 func screenshotBytes(ctx context.Context, client *http.Client, shot api.ScreenshotImage) ([]byte, string, error) {
+	var pathErr error
 	if path := strings.TrimSpace(shot.Path); path != "" {
-		if data, err := os.ReadFile(path); err == nil {
+		data, err := readScreenshotFile(path)
+		if err == nil {
 			return data, filepath.Base(path), nil
 		}
+		pathErr = err
 	}
 	raw := strings.TrimSpace(shot.RawURL)
 	if raw == "" {
 		raw = strings.TrimSpace(shot.ImgURL)
 	}
 	if raw == "" {
+		if pathErr != nil {
+			return nil, "", pathErr
+		}
 		return nil, "", errors.New("no screenshot source")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
@@ -368,7 +382,10 @@ func screenshotBytes(ctx context.Context, client *http.Client, shot api.Screensh
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, "", fmt.Errorf("status %d", resp.StatusCode)
 	}
-	data, err := io.ReadAll(resp.Body)
+	if resp.ContentLength > azScreenshotSourceMax {
+		return nil, "", fmt.Errorf("trackers: screenshot source exceeded %d bytes", azScreenshotSourceMax)
+	}
+	data, err := readScreenshotSource(resp.Body, azScreenshotSourceMax)
 	if err != nil {
 		return nil, "", fmt.Errorf("trackers: read screenshot response body: %w", err)
 	}
@@ -377,6 +394,43 @@ func screenshotBytes(ctx context.Context, client *http.Client, shot api.Screensh
 		filename = "screenshot.png"
 	}
 	return data, filename, nil
+}
+
+func readScreenshotFile(filePath string) ([]byte, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("trackers: open screenshot source: %w", err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("trackers: inspect screenshot source: %w", err)
+	}
+	if info.Size() > azScreenshotSourceMax {
+		return nil, fmt.Errorf("trackers: screenshot source exceeded %d bytes", azScreenshotSourceMax)
+	}
+	data, err := readScreenshotSource(file, azScreenshotSourceMax)
+	if err != nil {
+		return nil, fmt.Errorf("trackers: read screenshot source: %w", err)
+	}
+	return data, nil
+}
+
+// readScreenshotSource rejects content larger than limit without retaining the
+// complete oversized source.
+func readScreenshotSource(reader io.Reader, limit int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(reader, limit+1))
+	if err != nil {
+		return nil, fmt.Errorf("read source: %w", err)
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("source exceeded %d bytes", limit)
+	}
+	return data, nil
+}
+
+func fitsScreenshotBatch(current, next int) bool {
+	return current <= azScreenshotBatchMax && next <= azScreenshotBatchMax-current
 }
 
 func keywordsFor(meta api.UploadSubject) string {

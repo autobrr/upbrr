@@ -35,16 +35,13 @@ func newSession(ctx context.Context, site siteDefinition, dbPath string, logger 
 	if err != nil {
 		return sessionState{}, err
 	}
-	cookieMap := make(map[string]*http.Cookie, len(cookies))
-	for _, cookie := range cookies {
-		if cookie == nil || strings.TrimSpace(cookie.Name) == "" {
-			continue
-		}
-		cookieMap[cookie.Name] = cookie
+	jar, err := newSessionCookieJar(site.BaseURL, cookies)
+	if err != nil {
+		return sessionState{}, fmt.Errorf("trackers: %s cookie jar: %w", site.Name, err)
 	}
 	client := &http.Client{
 		Timeout: 40 * time.Second,
-		Jar:     simpleCookieJar{baseURL: mustParseURL(site.BaseURL), cookies: cookieMap},
+		Jar:     jar,
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, site.BaseURL+"/torrents", nil)
 	if err != nil {

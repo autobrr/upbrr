@@ -104,11 +104,6 @@ func extractPatternGroup(pattern *regexp.Regexp, value string) string {
 	return strings.TrimSpace(matches[1])
 }
 
-func mustParseURL(raw string) *url.URL {
-	parsed, _ := url.Parse(raw)
-	return parsed
-}
-
 func stringValue(value any) string {
 	switch typed := value.(type) {
 	case string:

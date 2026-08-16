@@ -55,10 +55,6 @@ func unit3DResponsibilityVersion(name string, policy string, descriptionGroup st
 	}
 }
 
-func azFamilyResponsibility(name string) trackerResponsibilityRow {
-	return azFamilyResponsibilityVersion(name, "v1")
-}
-
 func azFamilyResponsibilityVersion(name string, version string) trackerResponsibilityRow {
 	return trackerResponsibilityRow{
 		name:              name,
@@ -116,7 +112,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 	unit3DResponsibility("ZNTH", "znth", ""),
 	azFamilyResponsibilityVersion("AZ", "v2"),
 	azFamilyResponsibilityVersion("CZ", "v2"),
-	azFamilyResponsibility("PHD"),
+	azFamilyResponsibilityVersion("PHD", "v2"),
 	{
 		name:              "ANT",
 		family:            trackers.FamilyStandalone,
