@@ -354,6 +354,9 @@ func (b *Backend) GetReleaseWorkflowCapabilities(
 
 func releaseWorkflowImageHostConfigured(cfg config.ImageHostingConfig, host string) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "samaritano" {
+		return cfg.SamaritanoEnabled && strings.TrimSpace(cfg.SamaritanoAPI) != ""
+	}
 	if cfg.HostEnabled(host) {
 		return true
 	}
@@ -379,8 +382,6 @@ func releaseWorkflowImageHostConfigured(cfg config.ImageHostingConfig, host stri
 		return strings.TrimSpace(cfg.PTScreensAPI) != ""
 	case "reelflix":
 		return strings.TrimSpace(cfg.ReelflixAPI) != ""
-	case "samaritano":
-		return cfg.SamaritanoEnabled && strings.TrimSpace(cfg.SamaritanoAPI) != ""
 	case "seedpool_cdn":
 		return strings.TrimSpace(cfg.SeedpoolCDNAPI) != ""
 	case "sharex":

@@ -409,9 +409,10 @@ func TestAPIV1CapabilitiesRequiresReadScopeAndReturnsSafeCatalog(t *testing.T) {
 			},
 		},
 		ImageHosting: config.ImageHostingConfig{
-			Host1:         "imgbb",
-			ImgBBAPI:      "capability-image-secret",
-			SamaritanoAPI: "capability-samaritano-secret",
+			Host1:             "imgbb",
+			ImgBBAPI:          "capability-image-secret",
+			SamaritanoEnabled: true,
+			SamaritanoAPI:     "capability-samaritano-secret",
 		},
 	}}
 	server := &Server{
