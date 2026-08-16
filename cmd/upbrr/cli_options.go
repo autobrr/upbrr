@@ -155,6 +155,7 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 		"",
 		"Set console log level for this run without changing application logs (error, warn, info, debug, trace)",
 	)
+	fs.StringVar(&opts.ConsoleLogLevel, "cll", "", "Set console log level for this run without changing application logs (error, warn, info, debug, trace)")
 	fs.IntVar(&opts.Screens, "screens", -1, "Number of screenshots to take")
 	fs.IntVar(&opts.Screens, "s", -1, "Number of screenshots to take")
 	fs.BoolVar(&opts.NoSeed, "no-seed", false, "Do not inject torrent into clients")
@@ -516,10 +517,14 @@ func normalizeLegacyFlag(arg string) (string, string, bool) {
 	if name == "" {
 		return "", arg, false
 	}
-	if dashes == 1 {
+	if dashes == 1 && !isLongOnlyCLIFlag(name) {
 		return name, "--" + trimmed, true
 	}
 	return name, arg, true
+}
+
+func isLongOnlyCLIFlag(name string) bool {
+	return name == "console-log-level"
 }
 
 func cliFlagAliases() map[string]string {
@@ -530,6 +535,7 @@ func cliFlagAliases() map[string]string {
 		"su":                   "site-upload",
 		"rtk":                  "trackers-remove",
 		"dtmp":                 "delete-tmp",
+		"cll":                  "console-log-level",
 		"s":                    "screens",
 		"ns":                   "no-seed",
 		"sat":                  "skip_auto_torrent",
@@ -727,7 +733,10 @@ func formatHelpFlag(builder *strings.Builder, f *pflag.Flag, aliases []string) {
 		valueName = "int"
 	}
 	names := make([]string, 0, 2+len(aliases))
-	names = append(names, "-"+f.Name, "--"+f.Name)
+	if !isLongOnlyCLIFlag(f.Name) {
+		names = append(names, "-"+f.Name)
+	}
+	names = append(names, "--"+f.Name)
 	for _, alias := range aliases {
 		names = append(names, "-"+alias)
 	}

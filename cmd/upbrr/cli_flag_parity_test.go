@@ -21,8 +21,8 @@ func TestEveryCanonicalCLIFlagIsClassifiedForCompositeUpload(t *testing.T) {
 
 	registered := commandFlagNames(newUploadRootCommand(cliIO{}, nil).Flags())
 	aliases := cliFlagAliases()
-	if len(registered) != 149 || len(aliases) != 52 {
-		t.Fatalf("upload flag inventory: registered=%d aliases=%d, want 149 and 52", len(registered), len(aliases))
+	if len(registered) != 150 || len(aliases) != 53 {
+		t.Fatalf("upload flag inventory: registered=%d aliases=%d, want 150 and 53", len(registered), len(aliases))
 	}
 	canonical := make(map[string]struct{}, len(registered))
 	for name := range registered {

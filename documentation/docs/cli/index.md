@@ -86,7 +86,7 @@ Process at most five entries from a queue folder:
 | `--site-upload <tracker>`     | `-site-upload`, `-su`         | Process one tracker upload flow.                                                      |
 | `--debug`                     | `-debug`                      | Enable non-submitting debug mode.                                                     |
 | `--log-level <level>`         | `-log-level`                  | Set application logging to `error`, `warn`, `info`, `debug`, or `trace` for this run. |
-| `--console-log-level <level>` | `-console-log-level`          | Set console logging to the same levels without changing application logs.             |
+| `--console-log-level <level>` | `-cll`                        | Set console logging to the same levels without changing application logs.             |
 | `--upload-only`               | `-upload-only`                | Upload using prepared metadata cache only.                                            |
 | `--delete-tmp`                | `-delete-tmp`, `-dtmp`        | Delete stored content for each input before processing.                               |
 | `--unattended`                | `-unattended`, `-ua`          | Run without prompts.                                                                  |

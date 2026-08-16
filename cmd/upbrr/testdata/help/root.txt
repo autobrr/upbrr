@@ -40,7 +40,7 @@ Execution:
       Enable debug mode
   -log-level, --log-level string
       Set application log level for this run (error, warn, info, debug, trace)
-  -console-log-level, --console-log-level string
+  --console-log-level, -cll string
       Set console log level for this run without changing application logs (error, warn, info, debug, trace)
   -upload-only, --upload-only
       Upload using prepared metadata cache only

@@ -628,6 +628,7 @@ func TestParseCLIOptionsPythonAliases(t *testing.T) {
 		"-ns",
 		"-reg", "A",
 		"-year", "2024",
+		"-cll", "trace",
 		"-met", "Pilot",
 		"--repack", "REPACK",
 		"show.mkv",
@@ -647,7 +648,10 @@ func TestParseCLIOptionsPythonAliases(t *testing.T) {
 	if opts.ManualYear != 2024 || opts.EpisodeTitle != "Pilot" || opts.Edition != "REPACK" {
 		t.Fatalf("expected python alias values to populate canonical fields: %#v", opts)
 	}
-	for _, name := range []string{"screens", "category", "type", "resolution", "tag", "service", "no-seed", "region", "manual-year", "episode-title", "edition"} {
+	if opts.ConsoleLogLevel != "trace" {
+		t.Fatalf("expected console log level alias to populate canonical field, got %q", opts.ConsoleLogLevel)
+	}
+	for _, name := range []string{"screens", "category", "type", "resolution", "tag", "service", "no-seed", "region", "manual-year", "console-log-level", "episode-title", "edition"} {
 		if !visited[name] {
 			t.Fatalf("expected alias %q to resolve to canonical visited key, got %#v", name, visited)
 		}
@@ -737,6 +741,12 @@ func TestParseCLIOptionsConsoleLogLevel(t *testing.T) {
 func TestParseCLIOptionsRejectsInvalidConsoleLogLevel(t *testing.T) {
 	if _, _, _, err := parseCLIOptions([]string{"--console-log-level", "verbose", "movie.mkv"}); err == nil {
 		t.Fatal("expected invalid console log level to fail")
+	}
+}
+
+func TestParseCLIOptionsRejectsSingleDashConsoleLogLevel(t *testing.T) {
+	if _, _, _, err := parseCLIOptions([]string{"-console-log-level", "trace", "movie.mkv"}); err == nil {
+		t.Fatal("expected single-dash console log level to fail")
 	}
 }
 
