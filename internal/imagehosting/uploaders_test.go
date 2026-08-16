@@ -840,8 +840,8 @@ func TestSamaritanoUploaderPostsBearerMultipartAndReturnsURL(t *testing.T) {
 		if req.URL.String() != samaritanoUploadURL {
 			t.Fatalf("unexpected request URL: %s", req.URL.String())
 		}
-		if got := req.Header.Get("Authorization"); got != "Bearer secret" {
-			t.Fatalf("authorization = %q, want bearer token", got)
+		if req.Header.Get("Authorization") != "Bearer secret" {
+			t.Fatal("expected bearer authorization header")
 		}
 		mediaType, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
 		if err != nil {
