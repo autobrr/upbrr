@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -117,8 +118,9 @@ func (m *Module) reviewTrackerReleaseName(
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow resolve reviewed tracker name subject: %w", err)
 	}
+	projectionContext := logging.WithOperationLogger(ctx, api.NopLogger{})
 	rebuiltCatalog, _, rebuiltSelection, rebuiltProjections, err := m.trackerProjector.Build(
-		ctx,
+		projectionContext,
 		release,
 		subject,
 		selection.TrackerIDs,

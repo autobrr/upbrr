@@ -23,6 +23,7 @@ type trackerTorrentPolicy struct {
 	maxTorrentBytes     int64
 	pieceSizeProfileURL string
 	profileMaxPieceExp  uint
+	hdb                 bool
 	ptp                 bool
 }
 
@@ -44,6 +45,7 @@ func resolveTrackerPolicy(meta api.TorrentSubject, registry *trackers.Registry) 
 		} else {
 			policy.name += "+" + trackerName
 		}
+		policy.hdb = policy.hdb || trackerName == "HDB"
 		policy.ptp = policy.ptp || trackerName == "PTP"
 		maxPieceExp, _ := pieceExpForMiB(artifact.MaxPieceSizeMiB)
 		if maxPieceExp > 0 && (policy.maxPieceExp == 0 || maxPieceExp < policy.maxPieceExp) {
@@ -57,6 +59,9 @@ func resolveTrackerPolicy(meta api.TorrentSubject, registry *trackers.Registry) 
 			continue
 		}
 		profileExp := mkbrr.GetRecommendedPieceLengthExp(profileURL, uint64(max(meta.SourceSize, 0)))
+		if trackerName == "HDB" && meta.SourceSize > 8<<30 {
+			profileExp = 24
+		}
 		if meta.SourceSize <= 0 {
 			profileExp = maxPieceExp
 		}
@@ -83,7 +88,11 @@ func (p *trackerTorrentPolicy) createOptions(meta api.TorrentSubject) mkbrrPiece
 	if p == nil {
 		return applyTorrentOverridePieceOptions(meta, mkbrrPieceOptions{maxPieceExp: 27})
 	}
-	options := mkbrrPieceOptions{maxPieceExp: p.maxPieceExp, profileURL: p.pieceSizeProfileURL}
+	maxPieceExp := p.maxPieceExp
+	if p.hdb && maxPieceExp > 24 {
+		maxPieceExp = 24
+	}
+	options := mkbrrPieceOptions{maxPieceExp: maxPieceExp, profileURL: p.pieceSizeProfileURL}
 	if exp, ok := p.requiredPieceExp(meta); ok {
 		options.pieceExp = &exp
 	}
@@ -94,7 +103,10 @@ func (p *trackerTorrentPolicy) requiredPieceExp(meta api.TorrentSubject) (uint, 
 	if p == nil || p.pieceSizeProfileURL == "" || meta.SourceSize <= 0 {
 		return 0, false
 	}
-	exp := mkbrr.GetRecommendedPieceLengthExp(p.pieceSizeProfileURL, uint64(meta.SourceSize))
+	exp := p.profileMaxPieceExp
+	if exp == 0 {
+		exp = mkbrr.GetRecommendedPieceLengthExp(p.pieceSizeProfileURL, uint64(meta.SourceSize))
+	}
 	if exp == 0 {
 		return 0, false
 	}
@@ -133,10 +145,19 @@ func (p *trackerTorrentPolicy) validateTorrent(path string, meta api.TorrentSubj
 	if err != nil {
 		return fmt.Errorf("decode torrent %q: %w", path, err)
 	}
+	return p.validateTorrentInfo(&info, meta)
+}
+
+func (p *trackerTorrentPolicy) validateTorrentInfo(info *metainfo.Info, meta api.TorrentSubject) error {
 	if p.maxPieceExp > 0 {
 		maxPieceLength := int64(1) << p.maxPieceExp
 		if info.PieceLength > maxPieceLength {
 			return fmt.Errorf("%s piece size %d exceeds max %d", p.name, info.PieceLength, maxPieceLength)
+		}
+	}
+	if p.hdb {
+		if err := validateHDBPieceLayout(info); err != nil {
+			return err
 		}
 	}
 	if !p.ptp {
@@ -152,6 +173,20 @@ func (p *trackerTorrentPolicy) validateTorrent(path string, meta api.TorrentSubj
 		return fmt.Errorf("%s piece size %d is outside PTP range %d-%d", p.name, info.PieceLength, minLength, maxLength)
 	}
 	return nil
+}
+
+func validateHDBPieceLayout(info *metainfo.Info) error {
+	pieceCount := info.NumPieces()
+	switch {
+	case info.PieceLength <= 2<<20 && pieceCount > 4000:
+		return fmt.Errorf("HDB piece size %d allows at most 4000 pieces, got %d", info.PieceLength, pieceCount)
+	case (info.PieceLength == 4<<20 || info.PieceLength == 8<<20) && pieceCount > 30000:
+		return fmt.Errorf("HDB piece size %d allows at most 30000 pieces, got %d", info.PieceLength, pieceCount)
+	case info.PieceLength == 32<<20 && info.TotalLength() <= 1<<40:
+		return fmt.Errorf("HDB 32 MiB pieces require torrent content over 1 TiB, got %d bytes", info.TotalLength())
+	default:
+		return nil
+	}
 }
 
 func ptpPieceExpRange(size int64) (uint, uint) {

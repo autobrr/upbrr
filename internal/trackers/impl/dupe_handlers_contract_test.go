@@ -532,7 +532,7 @@ func TestSiteHandlersSearch(t *testing.T) {
 					_, _ = w.Write([]byte(`{"TotalResults":"0","Movies":[],"Page":"1"}`))
 					return
 				case "AITHER":
-					_, _ = w.Write([]byte(`{"data":[],"meta":{"current_page":1,"last_page":1,"total":0}}`))
+					_, _ = w.Write([]byte(`{"data":[],"links":{"next":null}}`))
 					return
 				case "ASC":
 					if r.URL.Path == "/busca-series.php" && r.URL.Query().Get("search") == "" && r.URL.Query().Get("imdb") == "tt1234567" {

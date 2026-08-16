@@ -74,20 +74,23 @@ func ParseLevel(value string) (Level, error) {
 }
 
 // Logger writes sanitized, threshold-filtered entries to console and optional
-// file outputs while retaining the same entries for snapshots and subscribers.
-// Close releases the optional file output.
+// file outputs. An optional console threshold can differ from the application
+// threshold used by file output, snapshots, and subscribers. Close releases the
+// optional file output.
 type Logger struct {
-	level      Level
-	consoleOut *log.Logger
-	consoleErr *log.Logger
-	file       *log.Logger
-	closer     io.Closer
-	mu         sync.Mutex
-	nextID     int64
-	buffer     []Entry
-	bufferCap  int
-	subs       map[int]chan Entry
-	subID      int
+	level           Level
+	consoleLevel    Level
+	consoleLevelSet bool
+	consoleOut      *log.Logger
+	consoleErr      *log.Logger
+	file            *log.Logger
+	closer          io.Closer
+	mu              sync.Mutex
+	nextID          int64
+	buffer          []Entry
+	bufferCap       int
+	subs            map[int]chan Entry
+	subID           int
 }
 
 // Entry is one sanitized retained log entry. IDs increase within a Logger, and
@@ -121,19 +124,40 @@ func NewWithLevel(cfg config.LoggingConfig, dbPath string, override string) (*Lo
 	if trimmed := strings.TrimSpace(override); trimmed != "" {
 		cfg.Level = trimmed
 	}
+	return newLogger(cfg, dbPath, "")
+}
 
+// NewWithConsoleLevel constructs a logger using cfg.Level for application
+// logging and a non-blank override for console output only. Callers must close
+// the returned logger when file output is enabled.
+func NewWithConsoleLevel(cfg config.LoggingConfig, dbPath string, override string) (*Logger, error) {
+	return newLogger(cfg, dbPath, override)
+}
+
+func newLogger(cfg config.LoggingConfig, dbPath string, consoleOverride string) (*Logger, error) {
 	level, err := ParseLevel(cfg.Level)
 	if err != nil {
 		return nil, err
 	}
+	consoleLevel := level
+	consoleLevelSet := false
+	if trimmed := strings.TrimSpace(consoleOverride); trimmed != "" {
+		consoleLevel, err = ParseLevel(trimmed)
+		if err != nil {
+			return nil, err
+		}
+		consoleLevelSet = true
+	}
 
 	consoleOut, consoleErr := defaultConsoleWriters()
 	logger := &Logger{
-		level:      level,
-		consoleOut: log.New(consoleOut, "", log.LstdFlags),
-		consoleErr: log.New(consoleErr, "", log.LstdFlags),
-		bufferCap:  defaultBufferCap,
-		subs:       make(map[int]chan Entry),
+		level:           level,
+		consoleLevel:    consoleLevel,
+		consoleLevelSet: consoleLevelSet,
+		consoleOut:      log.New(consoleOut, "", log.LstdFlags),
+		consoleErr:      log.New(consoleErr, "", log.LstdFlags),
+		bufferCap:       defaultBufferCap,
+		subs:            make(map[int]chan Entry),
 	}
 
 	if cfg.FileEnabled {
@@ -197,6 +221,18 @@ func (l *Logger) SetConsoleOutput(stdout io.Writer, stderr io.Writer) {
 	}
 }
 
+// ConsoleEnabled reports whether console output admits entries at level.
+func (l *Logger) ConsoleEnabled(level Level) bool {
+	if l == nil {
+		return false
+	}
+	consoleLevel := l.level
+	if l.consoleLevelSet {
+		consoleLevel = l.consoleLevel
+	}
+	return level <= consoleLevel
+}
+
 // SetDefaultConsoleOutput replaces the console writers used by new loggers and
 // returns a restore function. Nil writers leave the corresponding output
 // unchanged.
@@ -241,32 +277,52 @@ func (l *Logger) Errorf(format string, args ...any) {
 }
 
 func (l *Logger) logf(level Level, label string, format string, args ...any) {
-	if l == nil || level > l.level {
-		return
-	}
-	formatted := SanitizeMessage(fmt.Sprintf(format, args...))
-	l.writeSanitized(level, label, formatted)
-}
-
-func (l *Logger) writef(level Level, label string, format string, args ...any) {
 	if l == nil {
 		return
 	}
-	l.writeSanitized(level, label, SanitizeMessage(fmt.Sprintf(format, args...)))
+	applicationEnabled, consoleLevel, enabled := l.enabledLevels(l.level, level)
+	if !enabled {
+		return
+	}
+	formatted := SanitizeMessage(fmt.Sprintf(format, args...))
+	l.writeSanitized(level, label, formatted, applicationEnabled, consoleLevel)
 }
 
-func (l *Logger) writeSanitized(level Level, label string, formatted string) {
-	prefix := label + ": "
-	if level <= LevelWarn {
-		l.consoleErr.Print(prefix + formatted)
-	} else {
-		l.consoleOut.Print(prefix + formatted)
+func (l *Logger) writefAtLevel(applicationLevel Level, level Level, label string, format string, args ...any) {
+	if l == nil {
+		return
 	}
-	if l.file != nil {
-		l.file.Print(prefix + formatted)
+	applicationEnabled, consoleLevel, enabled := l.enabledLevels(applicationLevel, level)
+	if !enabled {
+		return
 	}
+	l.writeSanitized(level, label, SanitizeMessage(fmt.Sprintf(format, args...)), applicationEnabled, consoleLevel)
+}
 
-	l.record(label, formatted)
+func (l *Logger) enabledLevels(applicationLevel Level, level Level) (bool, Level, bool) {
+	consoleLevel := l.level
+	if l.consoleLevelSet {
+		consoleLevel = l.consoleLevel
+	}
+	applicationEnabled := level <= applicationLevel
+	return applicationEnabled, consoleLevel, applicationEnabled || level <= consoleLevel
+}
+
+func (l *Logger) writeSanitized(level Level, label string, formatted string, applicationEnabled bool, consoleLevel Level) {
+	prefix := label + ": "
+	if level <= consoleLevel {
+		if level <= LevelWarn {
+			l.consoleErr.Print(prefix + formatted)
+		} else {
+			l.consoleOut.Print(prefix + formatted)
+		}
+	}
+	if applicationEnabled {
+		if l.file != nil {
+			l.file.Print(prefix + formatted)
+		}
+		l.record(label, formatted)
+	}
 }
 
 // SanitizeMessage redacts secrets and replaces local filesystem paths in

@@ -1,0 +1,224 @@
+Usage: upbrr [options] <input path>...
+
+Commands:
+  serve [options]
+      Start the embedded web UI server
+      Options: --addr, --host, --port, --base-url, --persist-web-config, --dev-no-auth
+  api-token <list|revoke> [options]
+      List and revoke persistent API bearer tokens
+
+Options:
+
+Config:
+  -config, --config string
+      Path to config file
+  -export-config, --export-config string
+      Export SQLite config to YAML file and exit
+  -export-config-plaintext, --export-config-plaintext
+      Export config with plaintext secrets (requires --export-config)
+  -import-config, --import-config string
+      Import config file (.py, .yaml, .yml, .json) and exit
+  -create-auth, --create-auth
+      Create web-auth.json beside the active database and exit
+
+Application:
+  -version, --version
+      Show version and exit
+  -cleanup, --cleanup
+      Delete all stored database content for all releases and exit
+
+Execution:
+  -queue, --queue string
+      Process an entire folder queue
+  -limit-queue, --limit-queue, -lq int
+      Limit the number of queued items to process
+  -site-check, --site-check, -sc
+      Search/check sites without uploading
+  -site-upload, --site-upload, -su string
+      Process a single tracker upload flow
+  -debug, --debug
+      Enable debug mode
+  -log-level, --log-level string
+      Set application log level for this run (error, warn, info, debug, trace)
+  --console-log-level, -cll string
+      Set console log level for this run without changing application logs (error, warn, info, debug, trace)
+  -upload-only, --upload-only
+      Upload using prepared metadata cache only
+  -delete-tmp, --delete-tmp, -dtmp
+      Delete stored database content for each input path before upload
+  -unattended, --unattended, -ua
+      Unattended mode
+  -unattended_confirm, --unattended_confirm, -uac
+      Unattended mode with prompts
+
+Tracker Selection:
+  -trackers, --trackers, -tk string
+      Upload to these trackers (comma-separated)
+  -trackers-remove, --trackers-remove, -rtk string
+      Remove these trackers (comma-separated)
+
+Tracker IDs:
+  -ptp, --ptp string
+      PTP torrent id or URL
+  -blu, --blu string
+      BLU torrent id or URL
+  -aither, --aither string
+      Aither torrent id or URL
+  -lst, --lst string
+      LST torrent id or URL
+  -oe, --oe string
+      OE torrent id or URL
+  -hdb, --hdb string
+      HDB torrent id or URL
+  -btn, --btn string
+      BTN torrent id or URL
+  -bhd, --bhd string
+      BHD torrent id or URL
+  -ulcx, --ulcx string
+      ULCX torrent id or URL
+
+Release Overrides:
+  -category, --category, -c string
+      Override category
+  -type, --type, -t string
+      Override release type
+  -source, --source string
+      Override source
+  -resolution, --resolution, -res string
+      Override resolution
+  -tag, --tag, -g string
+      Override group tag
+  -service, --service, -serv string
+      Override streaming service
+  -distributor, --distributor, -dist string
+      Override distributor
+  -original-language, --original-language, -ol string
+      Override original language
+  -edition, --edition, -repack string
+      Override edition text
+  -season, --season string
+      Override season value (single token such as 5 or S05)
+  -episode, --episode string
+      Override episode value (single token such as 5 or E05)
+  -episode-title, --episode-title, -manual-episode-title, -met string
+      Override episode title
+  -manual-year, --manual-year, -year int
+      Override release year
+  -daily, --daily string
+      Set daily episode air date (YYYY-MM-DD)
+  -region, --region, -reg string
+      Override disc region
+  -no-season, --no-season
+      Remove season and episode from name
+  -no-year, --no-year
+      Remove year from name
+  -no-aka, --no-aka
+      Remove AKA from name
+  -no-tag, --no-tag
+      Remove group tag from name
+  -no-episode-title, --no-episode-title, -net
+      Remove episode title from name
+  -no-distributor, --no-distributor, -ndist
+      Remove distributor
+  -no-edition, --no-edition, -ne
+      Remove edition from name
+  -no-dub, --no-dub
+      Remove dubbed tag from audio name
+  -no-dual, --no-dual
+      Remove dual-audio tag from audio name
+  -dual-audio, --dual-audio
+      Add dual-audio tag to audio name
+
+Metadata IDs:
+  -tmdb, --tmdb string
+      Override TMDB id
+  -imdb, --imdb string
+      Override IMDb id
+  -mal, --mal int
+      Override MAL id
+  -tvdb, --tvdb int
+      Override TVDB id
+  -tvmaze, --tvmaze int
+      Override TVmaze id
+
+Tracker Overrides:
+  -skip-dupe-check, --skip-dupe-check, -sdc
+      Skip dupe check
+  -skip-dupe-asking, --skip-dupe-asking, -sda
+      Skip dupe asking
+  -double-dupe-check, --double-dupe-check, -ddc
+      Double dupe check
+  -foreign, --foreign
+      Mark TIK release as foreign
+  -opera, --opera
+      Mark TIK release as opera or musical
+  -asian, --asian
+      Mark TIK release as asian
+  -disctype, --disctype string
+      Override TIK disc type
+  -commentary, --commentary, -mc
+      Mark release as containing commentary
+  -personalrelease, --personalrelease, -pr
+      Mark release as personal
+  -stream, --stream, -st
+      Mark release as stream optimized
+  -webdv, --webdv
+      Mark release as WEB-DV
+  -not-anime, --not-anime
+      Force release to be treated as not anime
+  -anon, --anon, -a
+      Upload anonymously
+  -draft, --draft, -dr
+      Send uploads to drafts where supported
+  -modq, --modq, -mq
+      Opt into mod queue where supported
+  -channel, --channel, -ch string
+      Override SPD channel
+
+Screenshots and Images:
+  -screens, --screens, -s int
+      Number of screenshots to take
+  -manual_frames, --manual_frames, -mf string
+      Comma-separated frame numbers to use for screenshots
+  -comparison, --comparison, -comps string
+      Comparison folder path or comma-separated paths
+  -comparison_index, --comparison_index, -comps_index int
+      Primary comparison index
+  -menu-images, --menu-images string
+      Path to manually captured disc menu screenshots (Disc releases only)
+  -get-dvd-menus, --get-dvd-menus
+      Capture distinct menus from an extracted DVD VIDEO_TS (requires compatible FFmpeg)
+  -imghost, --imghost, -ih string
+      Override image host
+  -skip-imagehost-upload, --skip-imagehost-upload, -siu
+      Skip automatic image host uploads
+  -descfile, --descfile, -df string
+      Custom description file path
+  -desclink, --desclink, -pb string
+      Custom description link
+
+Client and Torrent:
+  -client, --client string
+      Override torrent client
+  -qbit-tag, --qbit-tag, -qbt string
+      Override qBittorrent tag
+  -qbit-cat, --qbit-cat, -qbc string
+      Override qBittorrent category
+  -force-recheck, --force-recheck, -frc
+      Force recheck matched qBittorrent torrents before validation
+  -no-seed, --no-seed, -ns
+      Do not inject torrent into clients
+  -skip_auto_torrent, --skip_auto_torrent, -sat
+      Skip automated torrent client searching
+  -keep-folder, --keep-folder, -kf
+      Keep a supplied folder instead of processing its selected video file directly
+  -onlyID, --onlyID
+      Only grab tracker metadata IDs
+  -infohash, --infohash, -th, -torrenthash string
+      Override v1 info hash
+  -max-piece-size, --max-piece-size, -mps int
+      Set maximum torrent piece size in MiB
+  -nohash, --nohash, -nh
+      Reuse existing torrents only without generating a new one
+  -rehash, --rehash, -rh
+      Force generation of a fresh torrent

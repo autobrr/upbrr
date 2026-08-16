@@ -4,15 +4,11 @@
 package main
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"path/filepath"
-	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/spf13/pflag"
 )
 
 type cliCompositeFlagClass struct {
@@ -23,17 +19,28 @@ type cliCompositeFlagClass struct {
 func TestEveryCanonicalCLIFlagIsClassifiedForCompositeUpload(t *testing.T) {
 	t.Parallel()
 
-	registered := sourceFlagNames(t, "cli_options.go", "parseCLIOptions")
+	registered := commandFlagNames(newUploadRootCommand(cliIO{}, nil).Flags())
 	aliases := cliFlagAliases()
+	if len(registered) != 150 || len(aliases) != 53 {
+		t.Fatalf("upload flag inventory: registered=%d aliases=%d, want 150 and 53", len(registered), len(aliases))
+	}
+	for alias, target := range aliases {
+		if _, exists := registered[alias]; !exists {
+			t.Errorf("alias %q is not registered", alias)
+		}
+		if _, exists := registered[target]; !exists {
+			t.Errorf("alias %q targets unregistered canonical flag %q", alias, target)
+		}
+	}
 	canonical := make(map[string]struct{}, len(registered))
 	for name := range registered {
 		if target, ok := aliases[name]; ok {
-			if _, exists := registered[target]; !exists {
-				t.Errorf("alias %q targets unregistered canonical flag %q", name, target)
-			}
 			name = target
 		}
 		canonical[name] = struct{}{}
+	}
+	if len(canonical) != 97 {
+		t.Fatalf("canonical upload flags=%d, want 97", len(canonical))
 	}
 
 	classified := cliCompositeFlagManifest()
@@ -57,7 +64,7 @@ func TestEveryCanonicalCLIFlagIsClassifiedForCompositeUpload(t *testing.T) {
 func TestServeAndAPITokenFlagsStayOutsideUploadManifest(t *testing.T) {
 	t.Parallel()
 
-	assertSourceFlagsEqual(t, "serve", sourceFlagNames(t, "cli_options.go", "parseServeOptions"), []string{
+	assertSourceFlagsEqual(t, "serve", commandFlagNames(newServeCommand(cliIO{}).Flags()), []string{
 		"addr",
 		"base-url",
 		"config",
@@ -68,16 +75,15 @@ func TestServeAndAPITokenFlagsStayOutsideUploadManifest(t *testing.T) {
 		"port",
 	})
 	apiTokenFlags := make(map[string]struct{})
-	for _, function := range []string{
-		"runCreateAPITokenCommand",
-		"runListAPITokensCommand",
-		"runRevokeAPITokenCommand",
+	for _, command := range []*pflag.FlagSet{
+		newAPITokenListCommand(cliIO{}).Flags(),
+		newAPITokenRevokeCommand(cliIO{}).Flags(),
 	} {
-		for name := range sourceFlagNames(t, "api_token_cli.go", function) {
+		for name := range commandFlagNames(command) {
 			apiTokenFlags[name] = struct{}{}
 		}
 	}
-	assertSourceFlagsEqual(t, "API token", apiTokenFlags, []string{"config", "name", "owner", "scopes"})
+	assertSourceFlagsEqual(t, "API token", apiTokenFlags, []string{"config"})
 }
 
 func cliCompositeFlagManifest() map[string]cliCompositeFlagClass {
@@ -176,6 +182,7 @@ func cliCompositeFlagManifest() map[string]cliCompositeFlagClass {
 	for name, reason := range map[string]string{
 		"cleanup":                 "cross-workflow storage administration",
 		"config":                  "process configuration selection",
+		"console-log-level":       "process console verbosity",
 		"create-auth":             "authentication administration",
 		"delete-tmp":              "pre-upload storage administration",
 		"export-config":           "configuration administration",
@@ -190,52 +197,14 @@ func cliCompositeFlagManifest() map[string]cliCompositeFlagClass {
 	return result
 }
 
-func sourceFlagNames(t *testing.T, fileName string, functionName string) map[string]struct{} {
-	t.Helper()
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve parity test source path")
-	}
-	path := filepath.Join(filepath.Dir(currentFile), fileName)
-	file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
-	if err != nil {
-		t.Fatalf("parse %s: %v", path, err)
-	}
+func commandFlagNames(fs *pflag.FlagSet) map[string]struct{} {
 	result := make(map[string]struct{})
-	for _, declaration := range file.Decls {
-		function, ok := declaration.(*ast.FuncDecl)
-		if !ok || function.Name.Name != functionName {
-			continue
+	fs.VisitAll(func(flag *pflag.Flag) {
+		if flag.Name != "help" {
+			result[flag.Name] = struct{}{}
 		}
-		ast.Inspect(function.Body, func(node ast.Node) bool {
-			call, ok := node.(*ast.CallExpr)
-			if !ok || len(call.Args) < 2 {
-				return true
-			}
-			selector, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok || !strings.HasSuffix(selector.Sel.Name, "Var") {
-				return true
-			}
-			receiver, ok := selector.X.(*ast.Ident)
-			if !ok || receiver.Name != "fs" {
-				return true
-			}
-			literal, ok := call.Args[1].(*ast.BasicLit)
-			if !ok || literal.Kind != token.STRING {
-				return true
-			}
-			name, unquoteErr := strconv.Unquote(literal.Value)
-			if unquoteErr != nil {
-				t.Errorf("decode flag name %s: %v", literal.Value, unquoteErr)
-				return true
-			}
-			result[name] = struct{}{}
-			return true
-		})
-		return result
-	}
-	t.Fatalf("function %s not found in %s", functionName, fileName)
-	return nil
+	})
+	return result
 }
 
 func assertSourceFlagsEqual(

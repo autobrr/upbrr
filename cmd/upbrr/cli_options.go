@@ -5,7 +5,6 @@ package main
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net/url"
@@ -14,6 +13,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/spf13/pflag"
 
 	imagehostpolicy "github.com/autobrr/upbrr/internal/imagehosting/policy"
 	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
@@ -31,6 +32,7 @@ type cliOptions struct {
 	TrackersRemove        string
 	Debug                 bool
 	LogLevel              string
+	ConsoleLogLevel       string
 	Screens               int
 	NoSeed                bool
 	SkipAutoTorrent       bool
@@ -131,26 +133,7 @@ type serveOptions struct {
 	DevNoAuth        bool
 }
 
-type cliHelpError struct {
-	usage string
-}
-
-func (e *cliHelpError) Error() string {
-	return "help requested"
-}
-
-func (e *cliHelpError) Usage() string {
-	if e == nil {
-		return ""
-	}
-	return e.usage
-}
-
-func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, error) {
-	var opts cliOptions
-	fs := flag.NewFlagSet("upbrr", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-
+func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.StringVar(&opts.ConfigPath, "config", "", "Path to config file")
 	fs.BoolVar(&opts.ShowVersion, "version", false, "Show version and exit")
 	fs.StringVar(&opts.QueueName, "queue", "", "Process an entire folder queue")
@@ -165,7 +148,14 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	fs.StringVar(&opts.TrackersRemove, "trackers-remove", "", "Remove these trackers (comma-separated)")
 	fs.StringVar(&opts.TrackersRemove, "rtk", "", "Remove these trackers (comma-separated)")
 	fs.BoolVar(&opts.Debug, "debug", false, "Enable debug mode")
-	fs.StringVar(&opts.LogLevel, "log-level", "", "Set run log level (error, warn, info, debug, trace)")
+	fs.StringVar(&opts.LogLevel, "log-level", "", "Set application log level for this run (error, warn, info, debug, trace)")
+	fs.StringVar(
+		&opts.ConsoleLogLevel,
+		"console-log-level",
+		"",
+		"Set console log level for this run without changing application logs (error, warn, info, debug, trace)",
+	)
+	fs.StringVar(&opts.ConsoleLogLevel, "cll", "", "Set console log level for this run without changing application logs (error, warn, info, debug, trace)")
 	fs.IntVar(&opts.Screens, "screens", -1, "Number of screenshots to take")
 	fs.IntVar(&opts.Screens, "s", -1, "Number of screenshots to take")
 	fs.BoolVar(&opts.NoSeed, "no-seed", false, "Do not inject torrent into clients")
@@ -299,123 +289,152 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	fs.BoolVar(&opts.ModQ, "modq", false, "Opt into mod queue where supported")
 	fs.StringVar(&opts.Channel, "ch", "", "Override SPD channel")
 	fs.StringVar(&opts.Channel, "channel", "", "Override SPD channel")
+	for alias := range cliFlagAliases() {
+		_ = fs.MarkHidden(alias)
+	}
+}
 
-	flagArgs, positionalArgs := splitInterspersedCLIFlags(fs, args)
+func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, error) {
+	var opts cliOptions
+	fs := pflag.NewFlagSet("upbrr", pflag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.SetInterspersed(false)
+	bindUploadFlags(fs, &opts)
+
+	flagArgs, positionalArgs := partitionUploadArgs(fs, args)
 	if err := fs.Parse(flagArgs); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return cliOptions{}, nil, nil, &cliHelpError{usage: formatFlagUsage(fs, "upbrr [options] <input path>...")}
+		if errors.Is(err, pflag.ErrHelp) {
+			return cliOptions{}, nil, nil, fmt.Errorf("parse CLI options: %w", err)
 		}
-		return cliOptions{}, nil, nil, fmt.Errorf("parse CLI options: %w", err)
+		return cliOptions{}, nil, nil, fmt.Errorf("parse CLI options: %w", translatePFlagError(err))
 	}
 
-	visited := make(map[string]bool)
-	aliases := cliFlagAliases()
-	fs.Visit(func(f *flag.Flag) {
-		name := f.Name
-		if canonical, ok := aliases[name]; ok {
-			name = canonical
-		}
-		visited[name] = true
-	})
-
-	if opts.UnattendedConfirm {
-		opts.Unattended = true
-		visited["unattended"] = true
-		visited["unattended_confirm"] = true
-	}
-
-	if visited["imdb"] {
-		if trimmed := strings.TrimSpace(opts.IMDb); trimmed != "" {
-			if _, err := parseIMDbID(trimmed); err != nil {
-				return cliOptions{}, nil, nil, err
-			}
-		}
-	}
-	if visited["infohash"] {
-		if _, err := parseInfoHash(opts.InfoHash); err != nil {
-			return cliOptions{}, nil, nil, err
-		}
-	}
-	if visited["imghost"] {
-		normalized, err := parseImageHost(opts.ImageHost)
-		if err != nil {
-			return cliOptions{}, nil, nil, err
-		}
-		opts.ImageHost = normalized
-	}
-	if visited["disctype"] {
-		normalized, err := parseTIKDiscType(opts.DiscType)
-		if err != nil {
-			return cliOptions{}, nil, nil, err
-		}
-		opts.DiscType = normalized
-	}
-	if visited["max-piece-size"] {
-		if err := validateMaxPieceSize(opts.MaxPieceSize); err != nil {
-			return cliOptions{}, nil, nil, err
-		}
-	}
-	if visited["nohash"] && visited["rehash"] {
-		return cliOptions{}, nil, nil, errors.New("nohash and rehash cannot be used together")
-	}
-	if visited["manual_frames"] {
-		if _, err := parseManualFrames(opts.ManualFrames); err != nil {
-			return cliOptions{}, nil, nil, err
-		}
-	}
-	if visited["comparison"] {
-		if _, err := parseComparisonPaths(opts.Comparison); err != nil {
-			return cliOptions{}, nil, nil, err
-		}
-	}
-	if visited["comparison_index"] {
-		if err := validateComparisonIndex(opts.ComparisonIndex); err != nil {
-			return cliOptions{}, nil, nil, err
-		}
-	}
-	if visited["log-level"] {
-		if _, err := api.ParseLogLevel(opts.LogLevel); err != nil {
-			return cliOptions{}, nil, nil, fmt.Errorf("upbrr: %w", err)
-		}
-	}
-	if visited["tmdb"] {
-		if trimmed := strings.TrimSpace(opts.TMDB); trimmed != "" {
-			if _, _, err := parseTMDBID(trimmed); err != nil {
-				return cliOptions{}, nil, nil, err
-			}
-		}
-	}
-	if visited["site-upload"] {
-		normalized := strings.ToUpper(strings.TrimSpace(opts.SiteUpload))
-		if normalized == "" {
-			return cliOptions{}, nil, nil, errors.New("site-upload requires a tracker")
-		}
-		opts.SiteUpload = normalized
-	}
-	if visited["limit-queue"] && opts.LimitQueue < 0 {
-		return cliOptions{}, nil, nil, errors.New("limit-queue must be >= 0")
-	}
-	if visited["queue"] {
-		trimmed := strings.TrimSpace(opts.QueueName)
-		if trimmed == "" {
-			return cliOptions{}, nil, nil, errors.New("--queue requires a non-empty queue name")
-		}
-		opts.QueueName = trimmed
-	}
-	if opts.ExportConfigPlaintext && !visited["export-config"] {
-		return cliOptions{}, nil, nil, errors.New("--export-config-plaintext requires --export-config")
-	}
-	if opts.ExportConfigPlaintext && strings.TrimSpace(opts.ExportConfigPath) == "" {
-		return cliOptions{}, nil, nil, errors.New("--export-config must have a non-empty value when --export-config-plaintext is used")
-	}
-	if _, err := buildTrackerIDOverrides(opts, visited); err != nil {
+	visited := canonicalChangedFlags(fs, cliFlagAliases())
+	if err := normalizeCLIOptions(&opts, visited); err != nil {
 		return cliOptions{}, nil, nil, err
 	}
 
 	return opts, visited, positionalArgs, nil
 }
 
-func splitInterspersedCLIFlags(fs *flag.FlagSet, args []string) ([]string, []string) {
+func normalizeCLIOptions(opts *cliOptions, visited map[string]bool) error {
+	if opts.UnattendedConfirm {
+		opts.Unattended = true
+		visited["unattended"] = true
+		visited["unattended_confirm"] = true
+	}
+	if visited["imdb"] {
+		if trimmed := strings.TrimSpace(opts.IMDb); trimmed != "" {
+			if _, err := parseIMDbID(trimmed); err != nil {
+				return err
+			}
+		}
+	}
+	if visited["infohash"] {
+		if _, err := parseInfoHash(opts.InfoHash); err != nil {
+			return err
+		}
+	}
+	if visited["imghost"] {
+		normalized, err := parseImageHost(opts.ImageHost)
+		if err != nil {
+			return err
+		}
+		opts.ImageHost = normalized
+	}
+	if visited["disctype"] {
+		normalized, err := parseTIKDiscType(opts.DiscType)
+		if err != nil {
+			return err
+		}
+		opts.DiscType = normalized
+	}
+	if visited["max-piece-size"] {
+		if err := validateMaxPieceSize(opts.MaxPieceSize); err != nil {
+			return err
+		}
+	}
+	if visited["nohash"] && visited["rehash"] {
+		return errors.New("nohash and rehash cannot be used together")
+	}
+	if visited["manual_frames"] {
+		if _, err := parseManualFrames(opts.ManualFrames); err != nil {
+			return err
+		}
+	}
+	if visited["comparison"] {
+		if _, err := parseComparisonPaths(opts.Comparison); err != nil {
+			return err
+		}
+	}
+	if visited["comparison_index"] {
+		if err := validateComparisonIndex(opts.ComparisonIndex); err != nil {
+			return err
+		}
+	}
+	if visited["log-level"] {
+		normalized, err := api.ParseLogLevel(opts.LogLevel)
+		if err != nil {
+			return fmt.Errorf("upbrr: %w", err)
+		}
+		opts.LogLevel = normalized
+	}
+	if visited["console-log-level"] {
+		normalized, err := api.ParseLogLevel(opts.ConsoleLogLevel)
+		if err != nil {
+			return fmt.Errorf("upbrr: %w", err)
+		}
+		opts.ConsoleLogLevel = normalized
+	}
+	if visited["tmdb"] {
+		if trimmed := strings.TrimSpace(opts.TMDB); trimmed != "" {
+			if _, _, err := parseTMDBID(trimmed); err != nil {
+				return err
+			}
+		}
+	}
+	if visited["site-upload"] {
+		normalized := strings.ToUpper(strings.TrimSpace(opts.SiteUpload))
+		if normalized == "" {
+			return errors.New("site-upload requires a tracker")
+		}
+		opts.SiteUpload = normalized
+	}
+	if visited["limit-queue"] && opts.LimitQueue < 0 {
+		return errors.New("limit-queue must be >= 0")
+	}
+	if visited["queue"] {
+		trimmed := strings.TrimSpace(opts.QueueName)
+		if trimmed == "" {
+			return errors.New("--queue requires a non-empty queue name")
+		}
+		opts.QueueName = trimmed
+	}
+	if opts.ExportConfigPlaintext && !visited["export-config"] {
+		return errors.New("--export-config-plaintext requires --export-config")
+	}
+	if opts.ExportConfigPlaintext && strings.TrimSpace(opts.ExportConfigPath) == "" {
+		return errors.New("--export-config must have a non-empty value when --export-config-plaintext is used")
+	}
+	if _, err := buildTrackerIDOverrides(*opts, visited); err != nil {
+		return err
+	}
+	return nil
+}
+
+func canonicalChangedFlags(fs *pflag.FlagSet, aliases map[string]string) map[string]bool {
+	visited := make(map[string]bool)
+	fs.Visit(func(f *pflag.Flag) {
+		name := f.Name
+		if canonical, ok := aliases[name]; ok {
+			name = canonical
+		}
+		visited[name] = true
+	})
+	return visited
+}
+
+func partitionUploadArgs(fs *pflag.FlagSet, args []string) ([]string, []string) {
 	flagArgs := make([]string, 0, len(args))
 	positionalArgs := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
@@ -424,18 +443,22 @@ func splitInterspersedCLIFlags(fs *flag.FlagSet, args []string) ([]string, []str
 			positionalArgs = append(positionalArgs, args[i+1:]...)
 			break
 		}
-		name, ok := cliFlagName(arg)
+		name, normalized, ok := normalizeLegacyFlag(arg)
 		if !ok {
 			positionalArgs = append(positionalArgs, arg)
 			continue
 		}
+		if (name == "help" || name == "h") && !strings.HasPrefix(arg, "---") {
+			flagArgs = append(flagArgs, "--help")
+			break
+		}
 		flagDef := fs.Lookup(name)
 		if flagDef == nil {
-			flagArgs = append(flagArgs, arg)
+			flagArgs = append(flagArgs, normalized)
 			continue
 		}
 
-		flagArgs = append(flagArgs, arg)
+		flagArgs = append(flagArgs, normalized)
 		if strings.Contains(arg, "=") || isBoolFlag(flagDef) {
 			continue
 		}
@@ -447,18 +470,61 @@ func splitInterspersedCLIFlags(fs *flag.FlagSet, args []string) ([]string, []str
 	return flagArgs, positionalArgs
 }
 
-func cliFlagName(arg string) (string, bool) {
+func normalizeNonInterspersedArgs(fs *pflag.FlagSet, args []string) []string {
+	normalized := make([]string, 0, len(args))
+	for len(args) > 0 {
+		arg := args[0]
+		if arg == "--" {
+			return append(normalized, args...)
+		}
+		name, normalizedArg, ok := normalizeLegacyFlag(arg)
+		if !ok {
+			return append(normalized, args...)
+		}
+		args = args[1:]
+		if (name == "help" || name == "h") && !strings.HasPrefix(arg, "---") {
+			return append(normalized, "--help")
+		}
+		normalized = append(normalized, normalizedArg)
+		flagDef := fs.Lookup(name)
+		if flagDef == nil || strings.Contains(arg, "=") || isBoolFlag(flagDef) {
+			continue
+		}
+		if len(args) > 0 {
+			normalized = append(normalized, args[0])
+			args = args[1:]
+		}
+	}
+	return normalized
+}
+
+func normalizeLegacyFlag(arg string) (string, string, bool) {
 	if !strings.HasPrefix(arg, "-") || arg == "-" {
-		return "", false
+		return "", arg, false
 	}
-	trimmed := strings.TrimLeft(arg, "-")
+	dashes := 0
+	for dashes < len(arg) && arg[dashes] == '-' {
+		dashes++
+	}
+	trimmed := arg[dashes:]
 	if trimmed == "" {
-		return "", false
+		return "", arg, false
 	}
+	name := trimmed
 	if before, _, ok := strings.Cut(trimmed, "="); ok {
-		trimmed = before
+		name = before
 	}
-	return trimmed, trimmed != ""
+	if name == "" {
+		return "", arg, false
+	}
+	if dashes == 1 && !isLongOnlyCLIFlag(name) {
+		return name, "--" + trimmed, true
+	}
+	return name, arg, true
+}
+
+func isLongOnlyCLIFlag(name string) bool {
+	return name == "console-log-level"
 }
 
 func cliFlagAliases() map[string]string {
@@ -469,6 +535,7 @@ func cliFlagAliases() map[string]string {
 		"su":                   "site-upload",
 		"rtk":                  "trackers-remove",
 		"dtmp":                 "delete-tmp",
+		"cll":                  "console-log-level",
 		"s":                    "screens",
 		"ns":                   "no-seed",
 		"sat":                  "skip_auto_torrent",
@@ -518,13 +585,7 @@ func cliFlagAliases() map[string]string {
 	}
 }
 
-// parseServeOptions parses serve-only flags and returns the set of flags the
-// caller supplied so config defaults are not overwritten by zero values.
-func parseServeOptions(args []string) (serveOptions, map[string]bool, error) {
-	var opts serveOptions
-	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-
+func bindServeFlags(fs *pflag.FlagSet, opts *serveOptions) {
 	fs.StringVar(&opts.ConfigPath, "config", "", "Path to config file")
 	fs.StringVar(&opts.Addr, "addr", "", "Web UI listen address (host:port)")
 	fs.StringVar(&opts.Host, "host", "", "Web UI host to bind")
@@ -533,23 +594,34 @@ func parseServeOptions(args []string) (serveOptions, map[string]bool, error) {
 	fs.BoolVar(&opts.PersistListen, "persist-listen", false, "Persist Web UI listen host and port to web-config.json")
 	fs.BoolVar(&opts.PersistWebConfig, "persist-web-config", false, "Persist supplied Web UI serve settings to web-config.json")
 	fs.BoolVar(&opts.DevNoAuth, "dev-no-auth", false, "Development only: serve web UI without web authentication on loopback hosts")
+}
 
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return serveOptions{}, nil, &cliHelpError{usage: formatFlagUsage(fs, "upbrr serve [options]")}
+// parseServeOptions parses serve-only flags and returns the set of flags the
+// caller supplied so config defaults are not overwritten by zero values.
+func parseServeOptions(args []string) (serveOptions, map[string]bool, error) {
+	var opts serveOptions
+	fs := pflag.NewFlagSet("serve", pflag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.SetInterspersed(false)
+	bindServeFlags(fs, &opts)
+	normalized := normalizeNonInterspersedArgs(fs, args)
+
+	if err := fs.Parse(normalized); err != nil {
+		if errors.Is(err, pflag.ErrHelp) {
+			return serveOptions{}, nil, fmt.Errorf("parse serve options: %w", err)
 		}
-		return serveOptions{}, nil, fmt.Errorf("parse serve options: %w", err)
+		return serveOptions{}, nil, fmt.Errorf("parse serve options: %w", translatePFlagError(err))
 	}
 
 	visited := make(map[string]bool)
-	fs.Visit(func(f *flag.Flag) {
+	fs.Visit(func(f *pflag.Flag) {
 		visited[f.Name] = true
 	})
 
 	return opts, visited, nil
 }
 
-func formatFlagUsage(fs *flag.FlagSet, usage string) string {
+func formatFlagUsage(fs *pflag.FlagSet, usage string) string {
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "Usage: %s\n", usage)
 	if fs.Name() == "upbrr" {
@@ -557,8 +629,8 @@ func formatFlagUsage(fs *flag.FlagSet, usage string) string {
 		fmt.Fprint(&builder, "  serve [options]\n")
 		fmt.Fprint(&builder, "      Start the embedded web UI server\n")
 		fmt.Fprint(&builder, "      Options: --addr, --host, --port, --base-url, --persist-web-config, --dev-no-auth\n")
-		fmt.Fprint(&builder, "  api-token <create|list|revoke> [options]\n")
-		fmt.Fprint(&builder, "      Generate and manage persistent API bearer tokens\n")
+		fmt.Fprint(&builder, "  api-token <list|revoke> [options]\n")
+		fmt.Fprint(&builder, "      List and revoke persistent API bearer tokens\n")
 	}
 	fmt.Fprint(&builder, "\nOptions:\n")
 	sections := cliHelpSections(fs.Name())
@@ -583,9 +655,9 @@ func formatFlagUsage(fs *flag.FlagSet, usage string) string {
 		}
 	}
 
-	var remaining []*flag.Flag
-	fs.VisitAll(func(f *flag.Flag) {
-		if !seen[f.Name] {
+	var remaining []*pflag.Flag
+	fs.VisitAll(func(f *pflag.Flag) {
+		if !seen[f.Name] && f.Name != "help" && !f.Hidden {
 			remaining = append(remaining, f)
 		}
 	})
@@ -618,7 +690,7 @@ func cliHelpSections(name string) []helpSection {
 		{title: "Config", names: []string{"config", "export-config", "export-config-plaintext", "import-config", "create-auth"}},
 		{title: "Application", names: []string{"version", "cleanup"}},
 		{title: "Execution", names: []string{
-			"queue", "limit-queue", "site-check", "site-upload", "debug", "log-level", "upload-only",
+			"queue", "limit-queue", "site-check", "site-upload", "debug", "log-level", "console-log-level", "upload-only",
 			"delete-tmp", "unattended", "unattended_confirm",
 		}},
 		{title: "Tracker Selection", names: []string{"trackers", "trackers-remove"}},
@@ -655,13 +727,16 @@ func cliAliasesByCanonical() map[string][]string {
 	return result
 }
 
-func formatHelpFlag(builder *strings.Builder, f *flag.Flag, aliases []string) {
-	valueName, usage := flag.UnquoteUsage(f)
+func formatHelpFlag(builder *strings.Builder, f *pflag.Flag, aliases []string) {
+	valueName, usage := pflag.UnquoteUsage(f)
 	if _, ok := f.Value.(*decimalPortValue); ok {
 		valueName = "int"
 	}
 	names := make([]string, 0, 2+len(aliases))
-	names = append(names, "-"+f.Name, "--"+f.Name)
+	if !isLongOnlyCLIFlag(f.Name) {
+		names = append(names, "-"+f.Name)
+	}
+	names = append(names, "--"+f.Name)
 	for _, alias := range aliases {
 		names = append(names, "-"+alias)
 	}
@@ -671,10 +746,6 @@ func formatHelpFlag(builder *strings.Builder, f *flag.Flag, aliases []string) {
 	}
 	fmt.Fprintf(builder, "  %s%s\n", strings.Join(names, ", "), suffix)
 	fmt.Fprintf(builder, "      %s\n", usage)
-}
-
-type boolFlag interface {
-	IsBoolFlag() bool
 }
 
 // decimalPortValue parses --port from raw flag text so leading-zero values use
@@ -699,9 +770,12 @@ func (v *decimalPortValue) String() string {
 	return strconv.Itoa(*v.target)
 }
 
-func isBoolFlag(f *flag.Flag) bool {
-	boolValue, ok := f.Value.(boolFlag)
-	return ok && boolValue.IsBoolFlag()
+func (v *decimalPortValue) Type() string {
+	return "int"
+}
+
+func isBoolFlag(f *pflag.Flag) bool {
+	return f != nil && f.NoOptDefVal != ""
 }
 
 func (o cliOptions) interactionMode() api.InteractionMode {

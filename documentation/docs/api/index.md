@@ -22,13 +22,7 @@ API requests use a persistent bearer token:
 Authorization: Bearer <token>
 ```
 
-Create tokens from the CLI after the active database and `web-auth.json` have been initialized:
-
-```powershell
-.\upbrr.exe api-token create --name "Release automation" --owner "automation" --scopes workflow:read,workflow:write
-```
-
-The plaintext token is returned only from the create command. Store it in a secret manager and never log it.
+After the active database and `web-auth.json` have been initialized, create tokens in [Settings → API Tokens](../web-ui/settings/api-tokens.md). Choose the required scopes, then copy the one-time plaintext value directly into a secret manager. CLI output never includes tokens.
 
 List token metadata:
 

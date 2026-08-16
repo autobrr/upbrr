@@ -1,0 +1,25 @@
+Usage: upbrr serve [options]
+
+Options:
+
+Config:
+  -config, --config string
+      Path to config file
+
+Server:
+  -addr, --addr string
+      Web UI listen address (host:port)
+  -host, --host string
+      Web UI host to bind
+  -port, --port int
+      Web UI port to bind
+  -base-url, --base-url string
+      External Web UI base URL or path, for example https://example.test/upbrr/ or /upbrr/
+  -persist-listen, --persist-listen
+      Persist Web UI listen host and port to web-config.json
+  -persist-web-config, --persist-web-config
+      Persist supplied Web UI serve settings to web-config.json
+
+Development:
+  -dev-no-auth, --dev-no-auth
+      Development only: serve web UI without web authentication on loopback hosts

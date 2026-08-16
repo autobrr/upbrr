@@ -134,10 +134,10 @@ func TestImgboxBatchReusesAnonymousSessionAndToken(t *testing.T) {
 				index,
 			)
 			return &http.Response{
-StatusCode: http.StatusOK,
- Header: make(http.Header),
- Body: io.NopCloser(strings.NewReader(body)),
-}, nil
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}, nil
 		default:
 			t.Fatalf("unexpected request URL: %s", req.URL.String())
 			return nil, nil
@@ -826,6 +826,108 @@ func TestReelflixUploaderPostsSourceWithAPIKey(t *testing.T) {
 	}
 	if result.WebURL != "https://img.reelflix.cc/image/shot" {
 		t.Fatalf("unexpected web URL: %q", result.WebURL)
+	}
+}
+
+func TestSamaritanoUploaderPostsBearerMultipartAndReturnsURL(t *testing.T) {
+	t.Parallel()
+
+	imagePath := filepath.Join(t.TempDir(), "shot.png")
+	if err := os.WriteFile(imagePath, []byte("synthetic image"), 0o600); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.String() != samaritanoUploadURL {
+			t.Fatalf("unexpected request URL: %s", req.URL.String())
+		}
+		if req.Header.Get("Authorization") != "Bearer secret" {
+			t.Fatal("expected bearer authorization header")
+		}
+		mediaType, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
+		if err != nil {
+			t.Fatalf("parse media type: %v", err)
+		}
+		if mediaType != "multipart/form-data" {
+			t.Fatalf("media type = %q, want multipart/form-data", mediaType)
+		}
+		reader := multipartReader(t, req, params["boundary"])
+		part, err := reader.NextPart()
+		if err != nil {
+			t.Fatalf("read multipart part: %v", err)
+		}
+		if part.FormName() != "file" || part.FileName() != "shot.png" {
+			t.Fatalf("unexpected file part: field=%q name=%q", part.FormName(), part.FileName())
+		}
+		if _, err := io.Copy(io.Discard, part); err != nil {
+			t.Fatalf("read file part: %v", err)
+		}
+		if _, err := reader.NextPart(); !errors.Is(err, io.EOF) {
+			t.Fatalf("expected exactly one multipart part, got %v", err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusCreated,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"url":"https://img.samaritano.cc/uploads/shot.png","thumbnail_url":"https://img.samaritano.cc/t/shot.png"}`)),
+		}, nil
+	})}
+
+	result, err := (&samaritanoUploader{apiKey: "secret", client: client}).Upload(context.Background(), imagePath)
+	if err != nil {
+		t.Fatalf("Upload returned error: %v", err)
+	}
+	if result.ImgURL != "https://img.samaritano.cc/t/shot.png" ||
+		result.RawURL != "https://img.samaritano.cc/uploads/shot.png" ||
+		result.WebURL != "https://img.samaritano.cc/uploads/shot.png" {
+		t.Fatalf("unexpected upload result: %#v", result)
+	}
+}
+
+func TestSamaritanoUploaderFallsBackToURLWithoutThumbnail(t *testing.T) {
+	t.Parallel()
+
+	imagePath := filepath.Join(t.TempDir(), "shot.png")
+	if err := os.WriteFile(imagePath, []byte("synthetic image"), 0o600); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"url":"https://img.samaritano.cc/uploads/shot.png"}`)),
+		}, nil
+	})}
+
+	result, err := (&samaritanoUploader{apiKey: "secret", client: client}).Upload(context.Background(), imagePath)
+	if err != nil {
+		t.Fatalf("Upload returned error: %v", err)
+	}
+	want := "https://img.samaritano.cc/uploads/shot.png"
+	if result.ImgURL != want || result.RawURL != want || result.WebURL != want {
+		t.Fatalf("unexpected fallback result: %#v", result)
+	}
+}
+
+func TestSamaritanoUploaderRejectsMissingKeyAndURL(t *testing.T) {
+	t.Parallel()
+
+	if _, err := (&samaritanoUploader{}).Upload(context.Background(), "shot.png"); err == nil || !strings.Contains(err.Error(), "api key missing") {
+		t.Fatalf("missing key error = %v", err)
+	}
+
+	imagePath := filepath.Join(t.TempDir(), "shot.png")
+	if err := os.WriteFile(imagePath, []byte("synthetic image"), 0o600); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"status":true}`)),
+		}, nil
+	})}
+	_, err := (&samaritanoUploader{apiKey: "secret", client: client}).Upload(context.Background(), imagePath)
+	if err == nil || !strings.Contains(err.Error(), "response URL missing") {
+		t.Fatalf("missing URL error = %v", err)
 	}
 }
 

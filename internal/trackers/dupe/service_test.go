@@ -70,6 +70,15 @@ func (*recordingDupeLogger) Warnf(string, ...any) {}
 
 func (*recordingDupeLogger) Errorf(string, ...any) {}
 
+func dupeLogContaining(entries []string, fragment string) string {
+	for _, entry := range entries {
+		if strings.Contains(entry, fragment) {
+			return entry
+		}
+	}
+	return ""
+}
+
 func TestProjectAdapterResultDebugLogsEveryCandidateEvaluation(t *testing.T) {
 	logger := &recordingDupeLogger{}
 	service := testService(nil)
@@ -162,10 +171,11 @@ func TestProjectAdapterResultIncompleteEmptySearchIsNotCandidateEvidence(t *test
 	if got := dupeProgressMessage(result); got != "search incomplete; review required" {
 		t.Fatalf("incomplete search progress = %q", got)
 	}
-	if len(logger.info) != 1 ||
-		!strings.Contains(logger.info[0], "received=0 evaluated=0 wrong_work=0 exhaustive=false effective_complete=false "+
+	outcomeLog := dupeLogContaining(logger.debug, "state=completed")
+	if len(logger.info) != 0 ||
+		!strings.Contains(outcomeLog, "received=0 evaluated=0 wrong_work=0 exhaustive=false effective_complete=false "+
 			"candidate_action=false review_required=true") {
-		t.Fatalf("incomplete search outcome log = %#v", logger.info)
+		t.Fatalf("incomplete search logs: debug=%#v info=%#v", logger.debug, logger.info)
 	}
 }
 
@@ -194,8 +204,9 @@ func TestProjectAdapterResultExactDuplicateDominatesReview(t *testing.T) {
 	if got := dupeProgressMessage(result); got != "duplicate found; upload blocked" {
 		t.Fatalf("exact duplicate progress = %q", got)
 	}
-	if len(logger.info) != 1 || !strings.Contains(logger.info[0], "candidate_action=true review_required=false") {
-		t.Fatalf("exact duplicate outcome log = %#v", logger.info)
+	outcomeLog := dupeLogContaining(logger.debug, "state=completed")
+	if len(logger.info) != 0 || !strings.Contains(outcomeLog, "candidate_action=true review_required=false") {
+		t.Fatalf("exact duplicate outcome logs: debug=%#v info=%#v", logger.debug, logger.info)
 	}
 }
 
@@ -255,14 +266,37 @@ func TestCheckTrackerLogsLocalClientOutcome(t *testing.T) {
 		"HDB",
 		CheckOptions{},
 	)
-	if canceled || !result.HasDupes || len(logger.info) != 1 {
-		t.Fatalf("local-client result=%#v canceled=%t logs=%#v", result, canceled, logger.info)
+	localClientLog := dupeLogContaining(logger.debug, "source=local_client")
+	if canceled || !result.HasDupes || localClientLog == "" || len(logger.info) != 0 {
+		t.Fatalf("local-client result=%#v canceled=%t debug=%#v info=%#v", result, canceled, logger.debug, logger.info)
 	}
 	if !strings.Contains(
-		logger.info[0],
+		localClientLog,
 		"tracker=HDB state=completed source=local_client candidates=1 complete=true candidate_action=true review_required=false",
 	) {
-		t.Fatalf("local-client log = %q", logger.info[0])
+		t.Fatalf("local-client log = %q", localClientLog)
+	}
+}
+
+func TestCheckTrackerLogsRemoteLifecycleAtDebug(t *testing.T) {
+	t.Parallel()
+
+	logger := &recordingDupeLogger{}
+	service := testService(map[string]Adapter{
+		"EXAMPLE": AdapterFunc(func(context.Context, api.DuplicateSubject) AdapterResult {
+			return ResolvedWithSearch(nil, nil, SearchEvidence{
+				Complete:  true,
+				WorkScope: WorkScopeProviderID,
+			})
+		}),
+	})
+	service.logger = logger
+	result, _, canceled := service.checkTracker(t.Context(), api.DuplicateSubject{}, "EXAMPLE", CheckOptions{})
+
+	if canceled || result.Status != "completed" || len(logger.info) != 0 ||
+		dupeLogContaining(logger.debug, "tracker=EXAMPLE state=start") == "" ||
+		dupeLogContaining(logger.debug, "tracker=EXAMPLE state=completed work_scope=provider_id") == "" {
+		t.Fatalf("remote search result=%#v canceled=%t debug=%#v info=%#v", result, canceled, logger.debug, logger.info)
 	}
 }
 
