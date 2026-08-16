@@ -581,6 +581,53 @@ func TestBrowsePolicyCanOnlyCompleteInitialSetup(t *testing.T) {
 	}
 }
 
+func TestBrowsePolicyCanOnlyInitializeUnrestrictedAccessOnce(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "state", "db.sqlite")
+	server := newAuthTestServer(t, dbPath)
+	if err := server.auth.Bootstrap("admin", "very-secure-password"); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+	current := session{Username: "admin", CSRFToken: "synthetic-csrf"}
+
+	body, err := json.Marshal(map[string]any{"browseRoot": "", "allowUnrestrictedBrowse": true})
+	if err != nil {
+		t.Fatalf("marshal unrestricted browse policy: %v", err)
+	}
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/browse-policy", strings.NewReader(string(body)))
+	recorder := httptest.NewRecorder()
+	server.handleBrowsePolicy(recorder, req, current)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("initial unrestricted browse policy returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+
+	record, err := server.auth.Load()
+	if err != nil {
+		t.Fatalf("load unrestricted browse policy: %v", err)
+	}
+	if record.BrowseRoot != "" || !record.AllowUnrestrictedBrowse {
+		t.Fatal("unrestricted browse policy was not stored")
+	}
+
+	replacementRoot := t.TempDir()
+	body, err = json.Marshal(map[string]any{"browseRoot": replacementRoot, "allowUnrestrictedBrowse": false})
+	if err != nil {
+		t.Fatalf("marshal replacement browse policy: %v", err)
+	}
+	req = httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/browse-policy", strings.NewReader(string(body)))
+	recorder = httptest.NewRecorder()
+	server.handleBrowsePolicy(recorder, req, current)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("replacement browse policy returned %d, want 409: %s", recorder.Code, recorder.Body.String())
+	}
+	record, err = server.auth.Load()
+	if err != nil {
+		t.Fatalf("load rejected replacement: %v", err)
+	}
+	if record.BrowseRoot != "" || !record.AllowUnrestrictedBrowse {
+		t.Fatal("WebUI replaced an unrestricted browse policy")
+	}
+}
+
 func TestDevelopmentNoAuthStatusBypassesMissingAuthOnLoopback(t *testing.T) {
 	server := &Server{
 		developmentNoAuth: true,
