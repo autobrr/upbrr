@@ -9,6 +9,7 @@ description: Commands, interaction modes, aliases, and upload preparation flags 
 upbrr [options] <input path>...
 upbrr serve [options]
 upbrr api-token <list|revoke> [options]
+upbrr auth <password|browse-roots> [options]
 ```
 
 On Windows, examples use `upbrr.exe`. Put options before input paths.
@@ -19,6 +20,7 @@ Use executable help as the exact reference for your installed version:
 .\upbrr.exe --help
 .\upbrr.exe serve --help
 .\upbrr.exe api-token list --help
+.\upbrr.exe auth password --help
 ```
 
 ## Common operations
@@ -219,6 +221,32 @@ upbrr serve [options]
 | `--dev-no-auth`            | Disable Web auth for local development on loopback only. |
 
 See [Web server and reverse proxy](../configuration/web-server.md) for precedence and proxy examples.
+
+## `auth`
+
+Password and browse-policy changes are available only through the local binary. Stop `upbrr serve` before running either command, then restart it when the command completes.
+
+Change the Web UI password interactively:
+
+```powershell
+.\upbrr.exe auth password
+```
+
+The command prompts for the current password, the replacement, and confirmation without accepting password flags. A successful change revokes retained browser sessions.
+
+Replace all browse roots by passing each existing directory as a separate argument:
+
+```powershell
+.\upbrr.exe auth browse-roots "D:\Media" "E:\Downloads"
+```
+
+To remove the roots and explicitly allow unrestricted host browsing:
+
+```powershell
+.\upbrr.exe auth browse-roots --allow-unrestricted
+```
+
+Both subcommands accept `--config` when the active database is selected through a non-default config file. For containers, run the command in the same environment as upbrr and use paths visible inside the container.
 
 ## `api-token`
 

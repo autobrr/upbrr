@@ -52,6 +52,17 @@ func TestRegisterRoutesMountsConfiguredBasePath(t *testing.T) {
 	if !strings.Contains(status.Body.String(), `"authenticated":true`) {
 		t.Fatalf("expected development auth status, got %s", status.Body.String())
 	}
+	browsePolicyReq := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost,
+		"/upbrr/api/auth/browse-policy",
+		strings.NewReader(`{"browseRoot":"local-path"}`),
+	)
+	browsePolicy := httptest.NewRecorder()
+	mux.ServeHTTP(browsePolicy, browsePolicyReq)
+	if browsePolicy.Code != http.StatusNotFound {
+		t.Fatalf("WebUI browse-policy mutation returned %d, want 404", browsePolicy.Code)
+	}
 
 	docs := serveBasePathTestRequest(t, mux, "/upbrr/api/v1/docs")
 	if docs.Code != http.StatusOK {

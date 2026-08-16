@@ -180,12 +180,15 @@ func (s *Store) Bootstrap(username string, password string) error {
 	return s.saveLocked(record)
 }
 
-// UpdatePasswordHash replaces only the hash when username matches the active
-// record.
-func (s *Store) UpdatePasswordHash(username string, passwordHash string) error {
+// UpdatePasswordHash replaces only the hash when username and current hash
+// still match the active record.
+func (s *Store) UpdatePasswordHash(username string, currentPasswordHash string, passwordHash string) error {
 	return s.updateRecordLocked(func(record *Record) error {
 		if record.Username != strings.TrimSpace(username) {
 			return errors.New("web auth: user mismatch")
+		}
+		if strings.TrimSpace(record.PasswordHash) != strings.TrimSpace(currentPasswordHash) {
+			return errors.New("web auth: password changed during update")
 		}
 		record.PasswordHash = strings.TrimSpace(passwordHash)
 		return nil

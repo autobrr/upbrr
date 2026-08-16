@@ -100,7 +100,6 @@ func (s *Server) registerRootRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/auth/bootstrap", func(w http.ResponseWriter, r *http.Request) { s.handleBootstrap(w, r, session{}) })
 	mux.HandleFunc("/api/auth/login", func(w http.ResponseWriter, r *http.Request) { s.handleLogin(w, r, session{}) })
 	mux.HandleFunc("/api/auth/logout", s.requireSession(s.handleLogout))
-	mux.HandleFunc("/api/auth/browse-policy", s.requireSession(s.handleBrowsePolicy))
 	mux.HandleFunc("/api/events", s.requireSession(s.handleEvents))
 	mux.HandleFunc("/api/app/TrackerIcon", s.requireSession(s.handleTrackerIcon))
 
@@ -522,62 +521,6 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request, current se
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
-func (s *Server) handleBrowsePolicy(w http.ResponseWriter, r *http.Request, current session) {
-	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		return
-	}
-	var req struct {
-		BrowseRoot              string `json:"browseRoot"`
-		AllowUnrestrictedBrowse bool   `json:"allowUnrestrictedBrowse"`
-	}
-	if err := decodeJSON(r, &req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-
-	roots, err := normalizeBrowsePolicyRoots(splitBrowsePolicyRoots(req.BrowseRoot))
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	if !req.AllowUnrestrictedBrowse && len(roots) == 0 {
-		writeJSON(
-			w,
-			http.StatusBadRequest,
-			map[string]string{"error": "at least one browse root is required unless unrestricted browsing is explicitly allowed"},
-		)
-		return
-	}
-
-	record, err := s.auth.Load()
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	if strings.TrimSpace(record.Username) != strings.TrimSpace(current.Username) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "session user does not match auth record"})
-		return
-	}
-	record.BrowseRoot = joinBrowsePolicyRoots(roots)
-	record.AllowUnrestrictedBrowse = req.AllowUnrestrictedBrowse
-	if err := s.auth.UpdateRecord(record); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"authenticated":           true,
-		"needsSetup":              false,
-		"username":                current.Username,
-		"csrfToken":               current.CSRFToken,
-		"caseInsensitivePaths":    runtime.GOOS == "windows",
-		"browseRoot":              joinBrowsePolicyRoots(roots),
-		"allowUnrestrictedBrowse": req.AllowUnrestrictedBrowse,
-		"needsBrowsePolicy":       false,
-	})
 }
 
 // splitBrowsePolicyRoots decodes stored or submitted browse roots. A single

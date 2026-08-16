@@ -37,9 +37,16 @@ For Linux or macOS, run the equivalent executable:
 
 ## 2. Secure browser access
 
-The first-run screen creates the administrator account. Choose a unique password.
+The first-run screen creates the administrator account. Choose a unique password. The browser then reports that browse access requires the local binary.
 
-Then set one or more browse roots. These roots limit which host folders the browser can select. Use the narrowest folders containing your releases, such as `D:\Media` and `E:\Downloads`. Unrestricted host browsing is available but broadens access.
+Stop the server with <kbd>Ctrl</kbd>+<kbd>C</kbd>, set the narrowest folders containing your releases, then restart it:
+
+```powershell
+.\upbrr.exe auth browse-roots "D:\Media" "E:\Downloads"
+.\upbrr.exe serve
+```
+
+These roots limit which host folders the browser can select. Unrestricted host browsing is available through `auth browse-roots --allow-unrestricted`, but broadens access.
 
 :::caution Network exposure
 

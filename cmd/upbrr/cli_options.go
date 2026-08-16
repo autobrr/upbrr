@@ -631,6 +631,8 @@ func formatFlagUsage(fs *pflag.FlagSet, usage string) string {
 		fmt.Fprint(&builder, "      Options: --addr, --host, --port, --base-url, --persist-web-config, --dev-no-auth\n")
 		fmt.Fprint(&builder, "  api-token <list|revoke> [options]\n")
 		fmt.Fprint(&builder, "      List and revoke persistent API bearer tokens\n")
+		fmt.Fprint(&builder, "  auth <password|browse-roots> [options]\n")
+		fmt.Fprint(&builder, "      Manage the WebUI password and browse policy locally\n")
 	}
 	fmt.Fprint(&builder, "\nOptions:\n")
 	sections := cliHelpSections(fs.Name())
