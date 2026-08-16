@@ -233,7 +233,7 @@ func TestCLIWorkflowProgressPrintsOnlyTopLevelOperations(t *testing.T) {
 	}
 }
 
-func TestCLIWorkflowSessionSuppressesRepeatedOutput(t *testing.T) {
+func TestCLIWorkflowSessionSuppressesRepeatedProgressAndLogsSuccessiveOperations(t *testing.T) {
 	var output bytes.Buffer
 	logger := &cliProgressTestLogger{}
 	event := api.WorkflowEvent{
@@ -275,7 +275,10 @@ func TestCLIWorkflowSessionSuppressesRepeatedOutput(t *testing.T) {
 		t.Fatalf("tracker upload progress count = %d, want 1: %q", got, output.String())
 	}
 	entries := logger.snapshot()
-	if len(entries) != 1 || !strings.Contains(entries[0], "lifecycle=running state=running") {
+	if len(entries) != 2 || entries[0] != entries[1] || !strings.Contains(entries[0], "lifecycle=running state=running") {
 		t.Fatalf("workflow event logs = %#v", entries)
+	}
+	if len(coreSvc.eventAfters) != 2 || coreSvc.eventAfters[0] != 0 || coreSvc.eventAfters[1] != event.Sequence {
+		t.Fatalf("workflow event cursors = %#v", coreSvc.eventAfters)
 	}
 }

@@ -32,6 +32,7 @@ type cliWorkflowLogState struct {
 
 type cliWorkflowEventLogState struct {
 	workflowID   api.WorkflowID
+	operationID  api.WorkflowOperationID
 	lastSequence uint64
 	loggedEvents map[string]struct{}
 }

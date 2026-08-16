@@ -32,6 +32,7 @@ type cliWorkflowCoreFake struct {
 	events         []api.WorkflowEvent
 	eventBatches   [][]api.WorkflowEvent
 	eventBatch     int
+	eventAfters    []uint64
 	queueOperation bool
 	cancelCalls    int
 }
@@ -468,6 +469,7 @@ func (f *cliWorkflowCoreFake) ReleaseWorkflowOperationEvents(
 	after uint64,
 	limit int,
 ) ([]api.WorkflowEvent, error) {
+	f.eventAfters = append(f.eventAfters, after)
 	available := f.events
 	if f.eventBatch < len(f.eventBatches) {
 		available = f.eventBatches[f.eventBatch]

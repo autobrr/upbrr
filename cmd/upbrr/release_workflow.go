@@ -233,9 +233,14 @@ func (s *cliWorkflowSession) logNewOperationEvents(
 	state *cliWorkflowEventLogState,
 ) error {
 	const eventPageSize = 1000
-	if state.workflowID != operation.WorkflowID {
+	switch {
+	case state.workflowID != operation.WorkflowID:
 		state.workflowID = operation.WorkflowID
+		state.operationID = operation.ID
 		state.lastSequence = 0
+		state.loggedEvents = nil
+	case state.operationID != operation.ID:
+		state.operationID = operation.ID
 		state.loggedEvents = nil
 	}
 	for {
