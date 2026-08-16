@@ -46,6 +46,9 @@ func (s *cliWorkflowSession) completeComposite(
 	if err != nil {
 		return 0, err
 	}
+	ctx = api.WithDupeProgressReporter(ctx, func(update api.DupeProgressUpdate) {
+		printCLIWorkflowDupeProgress(s.streams.out, update)
+	})
 	current, err := s.core.StartReleaseWorkflowUpload(ctx, cliWorkflowOwnerID, request)
 	if err != nil {
 		return 0, fmt.Errorf("upbrr: start composite upload: %w", err)
@@ -109,12 +112,22 @@ func (s *cliWorkflowSession) printCompositeProjectionsOnce(enabled bool) {
 		return
 	}
 	s.projectionsPrinted = true
-	printCLIWorkflowProjections(s.streams.out, s.current.Projections, s.current.Dupes)
+	printCLIWorkflowProjections(
+		s.streams.out,
+		s.current.Projections,
+		s.current.Dupes,
+		cliWorkflowProjectionPolicyOutputEnabled(s.logger),
+	)
 }
 
 func cliWorkflowProjectionOutputEnabled(configured string, runOverride string, debug bool) bool {
 	level, err := logging.ParseLevel(logging.ResolveEffectiveLevel(configured, runOverride, debug))
 	return err == nil && level >= logging.LevelDebug
+}
+
+func cliWorkflowProjectionPolicyOutputEnabled(logger api.Logger) bool {
+	consoleLogger, ok := logger.(*logging.Logger)
+	return !ok || consoleLogger.ConsoleEnabled(logging.LevelDebug)
 }
 
 func resolveCLICompositeUploadInputs(

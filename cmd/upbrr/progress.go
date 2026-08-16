@@ -31,6 +31,7 @@ type cliWorkflowLogState struct {
 }
 
 type cliWorkflowEventLogState struct {
+	workflowID   api.WorkflowID
 	lastSequence uint64
 	loggedEvents map[string]struct{}
 }
@@ -200,6 +201,17 @@ func logCLIWorkflowEvents(logger api.Logger, events []api.WorkflowEvent, state *
 		}
 		state.lastSequence = event.Sequence
 	}
+}
+
+func printCLIWorkflowDupeProgress(output io.Writer, update api.DupeProgressUpdate) {
+	if output == nil || update.Completed <= 0 || update.Total <= 0 {
+		return
+	}
+	lineEnd := "\r"
+	if update.Completed >= update.Total {
+		lineEnd = "\n"
+	}
+	_, _ = fmt.Fprintf(output, "Dupe checking: %d/%d%s", update.Completed, update.Total, lineEnd)
 }
 
 func printCLIWorkflowProgress(output io.Writer, operation api.OperationKind) {

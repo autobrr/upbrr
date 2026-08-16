@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -213,7 +214,20 @@ func TestCLICompleteUsesCompositeStartAndFeedback(t *testing.T) {
 			{Value: "BETA", Label: "Beta"},
 		},
 	}
-	coreSvc := &cliWorkflowCoreFake{}
+	coreSvc := &cliWorkflowCoreFake{startProgress: []api.DupeProgressUpdate{
+		{
+			Tracker:   "ALPHA",
+			Status:    "completed",
+			Completed: 1,
+			Total:     2,
+		},
+		{
+			Tracker:   "BETA",
+			Status:    "completed",
+			Completed: 2,
+			Total:     2,
+		},
+	}}
 	coreSvc.startUploadFn = func(api.CreateReleaseWorkflowUploadRequest) (releaseworkflow.CommandResult, error) {
 		return releaseworkflow.CommandResult{
 			Workflow: api.ReleaseWorkflow{
@@ -295,6 +309,9 @@ func TestCLICompleteUsesCompositeStartAndFeedback(t *testing.T) {
 	if strings.Contains(output.String(), "Tracker projections") {
 		t.Fatalf("INFO output included tracker projections: %q", output.String())
 	}
+	if !strings.Contains(output.String(), "Dupe checking: 1/2\rDupe checking: 2/2\n") {
+		t.Fatalf("INFO output omitted dupe progress: %q", output.String())
+	}
 	for _, prompt := range []string{
 		`Use Alpha as "Example.Release.2026.ALPHA-GRP"? [y/N]:`,
 		`Use Beta as "Example.Release.2026.BETA-GRP"? [y/N]:`,
@@ -318,8 +335,13 @@ func TestCLICompleteUsesCompositeStartAndFeedback(t *testing.T) {
 }
 
 func TestCLICompositePrintsTrackerProjectionsOnce(t *testing.T) {
+	logger, err := logging.NewWithConsoleLevel(config.LoggingConfig{Level: "trace"}, "", "info")
+	if err != nil {
+		t.Fatalf("new logger: %v", err)
+	}
 	var output strings.Builder
 	session := cliWorkflowSession{
+		logger: logger,
 		current: releaseworkflow.CommandResult{
 			Projections: &api.TrackerReleaseProjectionSet{
 				Revision: 1,
@@ -327,6 +349,11 @@ func TestCLICompositePrintsTrackerProjectionsOnce(t *testing.T) {
 					TrackerID:         "ALPHA",
 					DisplayName:       "Alpha",
 					UploadReleaseName: "Example.Release.2026.ALPHA-GRP",
+					PolicyDecisions: []api.TrackerPolicyDecision{{
+						Code:        "example_policy",
+						Decision:    "ineligible",
+						Disposition: api.RuleDispositionStrict,
+					}},
 				}},
 			},
 			Dupes: &api.DupeAssessment{},
@@ -339,6 +366,9 @@ func TestCLICompositePrintsTrackerProjectionsOnce(t *testing.T) {
 
 	if got := strings.Count(output.String(), "Tracker projections"); got != 1 {
 		t.Fatalf("tracker projection output count = %d, want 1: %q", got, output.String())
+	}
+	if strings.Contains(output.String(), "policy:") {
+		t.Fatalf("INFO console output included tracker policy detail: %q", output.String())
 	}
 }
 

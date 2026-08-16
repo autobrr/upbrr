@@ -233,6 +233,11 @@ func (s *cliWorkflowSession) logNewOperationEvents(
 	state *cliWorkflowEventLogState,
 ) error {
 	const eventPageSize = 1000
+	if state.workflowID != operation.WorkflowID {
+		state.workflowID = operation.WorkflowID
+		state.lastSequence = 0
+		state.loggedEvents = nil
+	}
 	for {
 		events, err := s.core.ReleaseWorkflowOperationEvents(
 			ctx,
@@ -604,23 +609,49 @@ func printCLIWorkflowProjections(
 	output io.Writer,
 	projections *api.TrackerReleaseProjectionSet,
 	dupes *api.DupeAssessment,
+	includePolicyDetails bool,
 ) {
 	if projections == nil {
 		return
 	}
 	fmt.Fprintln(output)
 	fmt.Fprintln(output, "Tracker projections")
+	blocked := make([]string, 0)
+	if !includePolicyDetails {
+		for _, projection := range projections.Projections {
+			readiness := cliWorkflowProjectionReadiness(projection, dupes)
+			if readiness != api.ReadinessStatusBlocked && readiness != api.ReadinessStatusIneligible {
+				continue
+			}
+			name := strings.TrimSpace(projection.DisplayName)
+			if name == "" {
+				name = string(projection.TrackerID)
+			}
+			blocked = append(blocked, name)
+		}
+	}
+	if len(blocked) > 0 {
+		fmt.Fprintf(output, "Blocked/ineligible: %s\n", strings.Join(blocked, ", "))
+	}
+	printed := len(blocked) > 0
 	for index, projection := range projections.Projections {
 		readiness := cliWorkflowProjectionReadiness(projection, dupes)
-		if index > 0 {
+		if !includePolicyDetails && (readiness == api.ReadinessStatusBlocked || readiness == api.ReadinessStatusIneligible) {
+			continue
+		}
+		if printed || index > 0 {
 			fmt.Fprintln(output)
 		}
+		printed = true
 		if cliWorkflowTrackerNameChanged(projection.CanonicalReleaseName, projection.UploadReleaseName) {
 			fmt.Fprintf(output, "- %s: RENAMED (readiness=%s)\n", projection.DisplayName, readiness)
 			fmt.Fprintf(output, "  original: %s\n", projection.CanonicalReleaseName)
 			fmt.Fprintf(output, "  upload:   %s\n", projection.UploadReleaseName)
 		} else {
 			fmt.Fprintf(output, "- %s: %s (readiness=%s)\n", projection.DisplayName, projection.UploadReleaseName, readiness)
+		}
+		if !includePolicyDetails {
+			continue
 		}
 		for _, decision := range projection.PolicyDecisions {
 			if !auditableProjectionPolicyDecision(decision) {

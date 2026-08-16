@@ -221,6 +221,18 @@ func (l *Logger) SetConsoleOutput(stdout io.Writer, stderr io.Writer) {
 	}
 }
 
+// ConsoleEnabled reports whether console output admits entries at level.
+func (l *Logger) ConsoleEnabled(level Level) bool {
+	if l == nil {
+		return false
+	}
+	consoleLevel := l.level
+	if l.consoleLevelSet {
+		consoleLevel = l.consoleLevel
+	}
+	return level <= consoleLevel
+}
+
 // SetDefaultConsoleOutput replaces the console writers used by new loggers and
 // returns a restore function. Nil writers leave the corresponding output
 // unchanged.
