@@ -147,4 +147,4 @@ jobs:
             throw "NETLIFY_SITE_ID is not configured"
           }
 
-          pnpm dlx netlify-cli@27.1.1 deploy --prod --dir=build --no-build --message "upbrr $env:RELEASE_TAG"
+          pnpm --package=netlify-cli@27.1.1 dlx netlify deploy --prod --dir=build --no-build --message "upbrr $env:RELEASE_TAG"

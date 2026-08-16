@@ -1042,9 +1042,17 @@ func TestResolveTrackerPieceProfiles(t *testing.T) {
 			name:        "HDB",
 			trackers:    []string{"HDB"},
 			size:        40 << 30,
-			maxExp:      24,
+			maxExp:      25,
 			pieceExp:    24,
 			profileHost: "hdbits.org",
+		},
+		{
+			name:        "HDB and PTP",
+			trackers:    []string{"HDB", "PTP"},
+			size:        10 << 30,
+			maxExp:      24,
+			pieceExp:    23,
+			profileHost: "passthepopcorn.me",
 		},
 	}
 	for _, test := range tests {
@@ -1053,6 +1061,124 @@ func TestResolveTrackerPieceProfiles(t *testing.T) {
 			pieceExp, ok := policy.requiredPieceExp(api.TorrentSubject{SourceSize: test.size})
 			if !ok || policy.maxPieceExp != test.maxExp || pieceExp != test.pieceExp || !strings.Contains(policy.pieceSizeProfileURL, test.profileHost) {
 				t.Fatalf("policy=%#v piece_exp=%d resolved=%t", policy, pieceExp, ok)
+			}
+		})
+	}
+}
+
+func TestHDBPieceRecommendationBoundaries(t *testing.T) {
+	t.Parallel()
+
+	registry := trackers.NewRegistry()
+	if err := registry.Register(hdb.New()); err != nil {
+		t.Fatalf("register HDB: %v", err)
+	}
+	cases := []struct {
+		size int64
+		exp  uint
+	}{
+		{size: 8 << 30, exp: 22},
+		{size: 8<<30 + 1, exp: 24},
+		{size: 1<<40 + 1, exp: 24},
+	}
+	for _, test := range cases {
+		meta := api.TorrentSubject{Trackers: []string{"HDB"}, SourceSize: test.size}
+		policy := resolveTrackerPolicy(meta, registry)
+		options := policy.createOptions(meta)
+		if options.maxPieceExp != 24 || options.pieceExp == nil || *options.pieceExp != test.exp {
+			t.Fatalf("size %d: create options = %#v; want max 24 and piece exponent %d", test.size, options, test.exp)
+		}
+	}
+}
+
+func TestHDBAcceptedPieceLayouts(t *testing.T) {
+	t.Parallel()
+
+	policy := &trackerTorrentPolicy{
+		name:        "HDB",
+		maxPieceExp: 25,
+		hdb:         true,
+	}
+	tests := []struct {
+		name        string
+		pieceLength int64
+		pieces      int
+		totalLength int64
+		wantErr     bool
+	}{
+		{
+			name:        "2 MiB at piece limit",
+			pieceLength: 2 << 20,
+			pieces:      4000,
+		},
+		{
+			name:        "2 MiB over piece limit",
+			pieceLength: 2 << 20,
+			pieces:      4001,
+			wantErr:     true,
+		},
+		{
+			name:        "4 MiB at piece limit",
+			pieceLength: 4 << 20,
+			pieces:      30000,
+		},
+		{
+			name:        "4 MiB over piece limit",
+			pieceLength: 4 << 20,
+			pieces:      30001,
+			wantErr:     true,
+		},
+		{
+			name:        "8 MiB at piece limit",
+			pieceLength: 8 << 20,
+			pieces:      30000,
+		},
+		{
+			name:        "8 MiB over piece limit",
+			pieceLength: 8 << 20,
+			pieces:      30001,
+			wantErr:     true,
+		},
+		{
+			name:        "16 MiB has no stated piece limit",
+			pieceLength: 16 << 20,
+			pieces:      30001,
+		},
+		{
+			name:        "32 MiB at 1 TiB",
+			pieceLength: 32 << 20,
+			pieces:      1,
+			totalLength: 1 << 40,
+			wantErr:     true,
+		},
+		{
+			name:        "32 MiB over 1 TiB",
+			pieceLength: 32 << 20,
+			pieces:      1,
+			totalLength: 1<<40 + 1,
+		},
+		{
+			name:        "64 MiB unsupported",
+			pieceLength: 64 << 20,
+			pieces:      1,
+			totalLength: 1<<40 + 1,
+			wantErr:     true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			totalLength := test.totalLength
+			if totalLength == 0 {
+				totalLength = test.pieceLength * int64(test.pieces)
+			}
+			info := metainfo.Info{
+				PieceLength: test.pieceLength,
+				Pieces:      make([]byte, test.pieces*metainfo.HashSize),
+				Length:      totalLength,
+			}
+			err := policy.validateTorrentInfo(&info, api.TorrentSubject{})
+			if (err != nil) != test.wantErr {
+				t.Fatalf("validateTorrentInfo() error = %v, wantErr %t", err, test.wantErr)
 			}
 		})
 	}
