@@ -19,7 +19,11 @@ func TestReleaseWorkflowImageHostConfiguredSamaritanoRequiresAPIKey(t *testing.T
 	}{
 		{name: "disabled with key", cfg: config.ImageHostingConfig{SamaritanoAPI: "secret"}},
 		{name: "enabled without key", cfg: config.ImageHostingConfig{SamaritanoEnabled: true}},
-		{name: "enabled with key", cfg: config.ImageHostingConfig{SamaritanoEnabled: true, SamaritanoAPI: "secret"}, want: true},
+		{
+			name: "enabled with key",
+			cfg:  config.ImageHostingConfig{SamaritanoEnabled: true, SamaritanoAPI: "secret"},
+			want: true,
+		},
 	}
 
 	for _, test := range tests {
