@@ -24,12 +24,17 @@ func TestEveryCanonicalCLIFlagIsClassifiedForCompositeUpload(t *testing.T) {
 	if len(registered) != 150 || len(aliases) != 53 {
 		t.Fatalf("upload flag inventory: registered=%d aliases=%d, want 150 and 53", len(registered), len(aliases))
 	}
+	for alias, target := range aliases {
+		if _, exists := registered[alias]; !exists {
+			t.Errorf("alias %q is not registered", alias)
+		}
+		if _, exists := registered[target]; !exists {
+			t.Errorf("alias %q targets unregistered canonical flag %q", alias, target)
+		}
+	}
 	canonical := make(map[string]struct{}, len(registered))
 	for name := range registered {
 		if target, ok := aliases[name]; ok {
-			if _, exists := registered[target]; !exists {
-				t.Errorf("alias %q targets unregistered canonical flag %q", name, target)
-			}
 			name = target
 		}
 		canonical[name] = struct{}{}
