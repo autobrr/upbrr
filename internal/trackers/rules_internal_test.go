@@ -109,7 +109,7 @@ func TestConfiguredRuleDispositions(t *testing.T) {
 			name:    "hardcoded subtitles",
 			rule:    "block_hardcoded_subs",
 			rules:   RuleSet{BlockHardcodedSubs: true},
-			subject: api.RuleSubject{ReleaseName: "Example.Release.2026.HARDSUB-GRP"},
+			subject: api.RuleSubject{HardcodedSubs: true},
 		},
 		{
 			name:  "single-file folder",

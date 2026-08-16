@@ -80,6 +80,7 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		Audio:                       release.Media.Audio,
 		Channels:                    release.Media.Channels,
 		HasCommentary:               release.Media.Commentary,
+		HardcodedSubs:               release.Media.HardcodedSubs,
 		Is3D:                        release.Media.ThreeD,
 		Source:                      release.Media.Source,
 		Type:                        release.Media.Type,

@@ -259,7 +259,7 @@ func ptpTag(value string) string {
 
 func resolveTrumpable(meta api.UploadSubject) []int {
 	values := make([]int, 0, 2)
-	if hasHardcodedSubtitles(meta) {
+	if meta.HardcodedSubs {
 		values = append(values, 4)
 	}
 	if len(meta.AudioLanguages) > 0 && !ptpEnglishLanguage(meta.AudioLanguages[0]) && !ptpHasEnglishLanguage(meta.SubtitleLanguages) {
@@ -268,17 +268,8 @@ func resolveTrumpable(meta api.UploadSubject) []int {
 	return values
 }
 
-func hasHardcodedSubtitles(meta api.UploadSubject) bool {
-	name := strings.ToLower(strings.Join(append([]string{
-		meta.ReleaseName,
-		meta.ReleaseNameNoTag,
-		meta.Filename,
-	}, meta.FileList...), " "))
-	return strings.Contains(name, "hardsub") || strings.Contains(name, "hard-sub") || strings.Contains(name, "hardcoded")
-}
-
 func withHardcodedSubtitleLanguages(meta api.UploadSubject, value string) (api.UploadSubject, error) {
-	if !hasHardcodedSubtitles(meta) {
+	if !meta.HardcodedSubs {
 		return meta, nil
 	}
 	if strings.TrimSpace(value) == "" {

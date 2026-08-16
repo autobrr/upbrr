@@ -167,6 +167,8 @@ type MediaFacts struct {
 	Audio             string
 	Channels          string
 	Commentary        bool
+	// HardcodedSubs is resolved from automatic detection and then any explicit override.
+	HardcodedSubs     bool
 	ThreeD            string
 	Source            string
 	Type              string

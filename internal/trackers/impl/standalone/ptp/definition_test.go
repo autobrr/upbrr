@@ -99,6 +99,7 @@ func TestPTPFreshUploadTaxonomy(t *testing.T) {
 		Source:            "Web",
 		VideoCodec:        "HEVC",
 		HasEncodeSettings: true,
+		HardcodedSubs:     true,
 		ReleaseName:       "Example.Release.2026.1440p.WEB-DL.x265.HARDSUB-GRP",
 		FileList:          []string{"Example.Release.2026.1440p.WEB-DL.x265.HARDSUB-GRP.mkv"},
 		Release: api.ReleaseInfo{
@@ -138,14 +139,15 @@ func TestPTPFreshUploadTaxonomy(t *testing.T) {
 	if got := resolveTrumpable(meta); len(got) != 1 || got[0] != 4 {
 		t.Fatalf("forced hardcoded trumpable=%#v", got)
 	}
-	meta.ReleaseName = "Example.Release.2026.1080p.WEB-DL.x265-GRP"
+	meta.ReleaseName = "Example.Release.2026.1080p.WEB-DL.x265.HARDSUB-GRP"
 	meta.FileList = nil
+	meta.HardcodedSubs = false
 	meta.AudioLanguages = []string{"Japanese"}
 	meta.SubtitleLanguages = []string{"French"}
 	if got := resolveTrumpable(meta); len(got) != 1 || got[0] != 14 {
 		t.Fatalf("no-English trumpable=%#v", got)
 	}
-	meta.ReleaseName = "Example.Release.2026.1080p.WEB-DL.x265.HARDSUB-GRP"
+	meta.HardcodedSubs = true
 	if got := resolveTrumpable(meta); len(got) != 2 || got[0] != 4 || got[1] != 14 {
 		t.Fatalf("hardcoded no-English trumpable=%#v", got)
 	}
@@ -164,7 +166,10 @@ func TestPTPFreshUploadTaxonomy(t *testing.T) {
 func TestPTPHardcodedSubtitleQuestionnaire(t *testing.T) {
 	t.Parallel()
 
-	meta := api.UploadSubject{ReleaseName: "Example.Release.2026.1080p.WEB-DL.x265.HARDSUB-GRP"}
+	meta := api.UploadSubject{
+		HardcodedSubs: true,
+		ReleaseName:   "Example.Release.2026.1080p.WEB-DL.x265-GRP",
+	}
 	questionnaire := buildQuestionnaire(meta, "123")
 	if questionnaire == nil || len(questionnaire.Fields) != 1 || questionnaire.Fields[0].Key != "hardcoded_subtitle_languages" {
 		t.Fatalf("questionnaire=%#v", questionnaire)

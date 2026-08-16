@@ -117,6 +117,7 @@ func cloneMetadataOverrides(value MetadataOverrides) MetadataOverrides {
 		OriginalLanguage: cloneString(value.OriginalLanguage),
 		PersonalRelease:  cloneBool(value.PersonalRelease),
 		Commentary:       cloneBool(value.Commentary),
+		HardcodedSubs:    cloneBool(value.HardcodedSubs),
 		WebDV:            cloneBool(value.WebDV),
 		StreamOptimized:  cloneBool(value.StreamOptimized),
 		Anime:            cloneBool(value.Anime),
