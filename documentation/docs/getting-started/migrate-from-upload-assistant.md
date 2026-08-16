@@ -49,7 +49,7 @@ Verify tracker authentication from **Settings** before preparing a live upload.
 
 Browse roots are not part of imported application config. They are stored in `web-auth.json` beside the database because they control which host paths the browser may access.
 
-After import, stop the Web UI server and replace the policy through the local binary:
+If no browse policy exists, the first authenticated Web UI setup can establish it. To replace a policy after setup, stop the Web UI server and use the local binary:
 
 ```powershell
 .\upbrr.exe auth browse-roots "D:\Media" "E:\Downloads"

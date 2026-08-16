@@ -224,6 +224,25 @@ func TestUpdateBrowseRootsReplacesPolicy(t *testing.T) {
 	}
 }
 
+func TestUpdateBrowseRootsRejectsRootsWithUnrestrictedAccess(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "state", "db.sqlite")
+	if err := BootstrapAuthFile(dbPath, "tester", "very-secure-password"); err != nil {
+		t.Fatalf("BootstrapAuthFile: %v", err)
+	}
+
+	if _, err := UpdateBrowseRoots(t.Context(), dbPath, []string{t.TempDir()}, true); err == nil ||
+		!strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("UpdateBrowseRoots mixed policy error = %v", err)
+	}
+	record, err := authmaterial.LoadRecordFromDBPath(dbPath)
+	if err != nil {
+		t.Fatalf("LoadRecordFromDBPath: %v", err)
+	}
+	if record.BrowseRoot != "" || record.AllowUnrestrictedBrowse {
+		t.Fatal("rejected mixed policy changed the auth record")
+	}
+}
+
 func TestUpdateBrowseRootsRejectsMissingDirectoryWithoutChangingPolicy(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "state", "db.sqlite")
 	if err := BootstrapAuthFile(dbPath, "tester", "very-secure-password"); err != nil {

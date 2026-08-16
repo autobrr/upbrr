@@ -224,7 +224,7 @@ See [Web server and reverse proxy](../configuration/web-server.md) for precedenc
 
 ## `auth`
 
-Password and browse-policy changes are available only through the local binary. Stop `upbrr serve` before running either command, then restart it when the command completes.
+Password changes and browse-policy changes after initial setup are available only through the local binary. The first authenticated Web UI setup may establish the initial browse policy. Stop `upbrr serve` before running either command, then restart it when the command completes.
 
 Change the Web UI password interactively:
 
@@ -232,7 +232,7 @@ Change the Web UI password interactively:
 .\upbrr.exe auth password
 ```
 
-The command prompts for the current password, the replacement, and confirmation without accepting password flags. A successful change revokes retained browser sessions.
+The command prompts for the current password, the replacement, and confirmation without accepting password flags. Retained browser sessions are revoked immediately after the current password is verified. If a later update step fails, sign in again with the existing password before retrying.
 
 Replace all browse roots by passing each existing directory as a separate argument:
 

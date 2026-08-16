@@ -1,4 +1,5 @@
 Usage: upbrr auth browse-roots [options] <path>...
+       upbrr auth browse-roots --allow-unrestricted
 
 Options:
 

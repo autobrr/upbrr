@@ -195,6 +195,38 @@ func (s *Store) UpdatePasswordHash(username string, currentPasswordHash string, 
 	})
 }
 
+// InitializeBrowsePolicy atomically persists the first WebUI browse policy. It
+// returns false without modifying a policy that was already configured.
+func (s *Store) InitializeBrowsePolicy(username string, browseRoot string, allowUnrestricted bool) (bool, error) {
+	browseRoot = strings.TrimSpace(browseRoot)
+	if allowUnrestricted && browseRoot != "" {
+		return false, errors.New("web auth: unrestricted browsing cannot be combined with browse roots")
+	}
+	if !allowUnrestricted && browseRoot == "" {
+		return false, errors.New("web auth: at least one browse root is required")
+	}
+
+	initialized := false
+	err := s.updateRecordLocked(func(record *Record) error {
+		if record.Username != strings.TrimSpace(username) {
+			return errors.New("web auth: user mismatch")
+		}
+		if strings.TrimSpace(record.BrowseRoot) != "" || record.AllowUnrestrictedBrowse {
+			return nil
+		}
+
+		record.BrowseRoot = browseRoot
+		record.AllowUnrestrictedBrowse = allowUnrestricted
+		if record.PendingUpgrade != nil {
+			record.PendingUpgrade.Target.BrowseRoot = record.BrowseRoot
+			record.PendingUpgrade.Target.AllowUnrestrictedBrowse = allowUnrestricted
+		}
+		initialized = true
+		return nil
+	})
+	return initialized, err
+}
+
 // UpdateRecord replaces mutable auth, export, browse, and upgrade fields while
 // preserving the active username and creation time.
 func (s *Store) UpdateRecord(updated Record) error {

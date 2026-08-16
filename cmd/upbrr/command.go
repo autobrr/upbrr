@@ -327,7 +327,10 @@ func newAuthBrowseRootsCommand(streams cliIO) *cobra.Command {
 		},
 	}
 	configureCommand(cmd, streams, 2, "parse auth browse-roots options", func(cmd *cobra.Command) string {
-		return formatFlagUsage(cmd.Flags(), "upbrr auth browse-roots [options] <path>...")
+		return formatFlagUsage(
+			cmd.Flags(),
+			"upbrr auth browse-roots [options] <path>...\n       upbrr auth browse-roots --allow-unrestricted",
+		)
 	})
 	bindAuthBrowseRootsFlags(cmd.Flags(), &opts)
 	addExplicitHelpFlag(cmd)

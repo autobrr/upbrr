@@ -54,14 +54,14 @@ func TestRegisterRoutesMountsConfiguredBasePath(t *testing.T) {
 	}
 	browsePolicyReq := httptest.NewRequestWithContext(
 		context.Background(),
-		http.MethodPost,
+		http.MethodGet,
 		"/upbrr/api/auth/browse-policy",
-		strings.NewReader(`{"browseRoot":"local-path"}`),
+		nil,
 	)
 	browsePolicy := httptest.NewRecorder()
 	mux.ServeHTTP(browsePolicy, browsePolicyReq)
-	if browsePolicy.Code != http.StatusNotFound {
-		t.Fatalf("WebUI browse-policy mutation returned %d, want 404", browsePolicy.Code)
+	if browsePolicy.Code != http.StatusUnauthorized {
+		t.Fatalf("prefixed initial browse-policy route returned %d, want 401", browsePolicy.Code)
 	}
 
 	docs := serveBasePathTestRequest(t, mux, "/upbrr/api/v1/docs")

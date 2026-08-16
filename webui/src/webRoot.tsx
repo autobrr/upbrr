@@ -13,7 +13,10 @@ type AuthStatus = {
   username: string;
   csrfToken: string;
   caseInsensitivePaths: boolean;
+  browseRoot: string;
+  allowUnrestrictedBrowse: boolean;
   needsBrowsePolicy: boolean;
+  canInitializeBrowsePolicy: boolean;
 };
 
 const initialStatus: AuthStatus = {
@@ -22,15 +25,20 @@ const initialStatus: AuthStatus = {
   username: "",
   csrfToken: "",
   caseInsensitivePaths: false,
+  browseRoot: "",
+  allowUnrestrictedBrowse: false,
   needsBrowsePolicy: false,
+  canInitializeBrowsePolicy: false,
 };
 
-/** Gates the embedded app on Web authentication and CLI-managed browse policy. */
+/** Gates the embedded app on Web authentication and initial browse setup. */
 export default function WebRoot() {
   const [status, setStatus] = useState<AuthStatus | null>(null);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [retainLogin, setRetainLogin] = useState(false);
+  const [browseRoot, setBrowseRoot] = useState("");
+  const [allowUnrestrictedBrowse, setAllowUnrestrictedBrowse] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -40,6 +48,8 @@ export default function WebRoot() {
       .then((payload) => {
         const next = { ...initialStatus, ...payload };
         setStatus(next);
+        setBrowseRoot(next.browseRoot || "");
+        setAllowUnrestrictedBrowse(!!next.allowUnrestrictedBrowse);
         initializeWebClient(next.csrfToken || "", !!next.caseInsensitivePaths);
       })
       .catch((err) => {
@@ -58,7 +68,75 @@ export default function WebRoot() {
   }
 
   if (status.authenticated) {
+    const submitInitialBrowsePolicy = async (event?: FormEvent<HTMLFormElement>) => {
+      event?.preventDefault();
+      if (submitting || (!allowUnrestrictedBrowse && !browseRoot.trim())) {
+        return;
+      }
+      setSubmitting(true);
+      setError("");
+      try {
+        const payload = await authClient.saveInitialBrowsePolicy(
+          allowUnrestrictedBrowse ? "" : browseRoot,
+          allowUnrestrictedBrowse,
+        );
+        const next = { ...initialStatus, ...(payload as Partial<AuthStatus>) };
+        setStatus(next);
+        setBrowseRoot(next.browseRoot || "");
+        setAllowUnrestrictedBrowse(!!next.allowUnrestrictedBrowse);
+        updateWebCSRFToken(next.csrfToken || "", !!next.caseInsensitivePaths);
+      } catch (err) {
+        setError(String(err));
+      } finally {
+        setSubmitting(false);
+      }
+    };
+
     if (status.needsBrowsePolicy) {
+      if (status.canInitializeBrowsePolicy) {
+        return (
+          <div className="web-auth-shell">
+            <div className="web-auth-card">
+              <p className="web-auth-card__eyebrow">upbrr Web</p>
+              <h1>Set Browse Access</h1>
+              <p className="web-auth-card__copy">
+                Choose the host directories this web UI can browse, or explicitly allow unrestricted
+                host browsing. Later changes require the local upbrr binary. Separate multiple paths
+                with commas.
+              </p>
+              <form onSubmit={submitInitialBrowsePolicy}>
+                <label>
+                  <span>Browse root</span>
+                  <input
+                    value={browseRoot}
+                    onChange={(event) => setBrowseRoot(event.target.value)}
+                    disabled={allowUnrestrictedBrowse}
+                    placeholder="D:\\Media, E:\\Downloads"
+                  />
+                </label>
+                <div className="web-auth-card__checkbox">
+                  <Checkbox
+                    id="allow-unrestricted-browse"
+                    checked={allowUnrestrictedBrowse}
+                    onCheckedChange={setAllowUnrestrictedBrowse}
+                  />
+                  <label htmlFor="allow-unrestricted-browse">
+                    Allow unrestricted host browsing
+                  </label>
+                </div>
+                {error ? <p className="web-auth-card__error">{error}</p> : null}
+                <button
+                  type="submit"
+                  disabled={submitting || (!allowUnrestrictedBrowse && !browseRoot.trim())}
+                >
+                  {submitting ? "Saving..." : "Continue"}
+                </button>
+              </form>
+            </div>
+          </div>
+        );
+      }
+
       return (
         <div className="web-auth-shell">
           <div className="web-auth-card">
@@ -108,6 +186,8 @@ export default function WebRoot() {
         : await authClient.login(username, password, retainLogin);
       const next = { ...initialStatus, ...(payload as Partial<AuthStatus>) };
       setStatus(next);
+      setBrowseRoot(next.browseRoot || "");
+      setAllowUnrestrictedBrowse(!!next.allowUnrestrictedBrowse);
       updateWebCSRFToken(next.csrfToken || "", !!next.caseInsensitivePaths);
     } catch (err) {
       setError(String(err));
