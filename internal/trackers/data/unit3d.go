@@ -401,8 +401,8 @@ func (c *Client) SearchTorrentsWithEvidence(
 	return c.SearchTorrentsWithEvidenceBound(ctx, tracker, params, isDisc, 100)
 }
 
-// SearchTorrentsWithEvidenceBound consumes every page advertised by count
-// metadata or a same-origin continuation link, up to the policy-supplied bound.
+// SearchTorrentsWithEvidenceBound consumes every page advertised by a
+// same-origin continuation link, up to the policy-supplied bound.
 func (c *Client) SearchTorrentsWithEvidenceBound(
 	ctx context.Context,
 	tracker string,
@@ -497,22 +497,20 @@ func (c *Client) searchUnit3DEndpoint(
 	}
 	var entries []api.DupeEntry
 	wrongWorkCount := 0
-	expectedTotal := -1
-	expectedLastPage := -1
 	received := 0
-	linkPagination := false
 	nextPageURL := ""
 	seenPageURLs := make(map[string]struct{}, maxPages)
 	for pageNumber := 1; pageNumber <= maxPages; pageNumber++ {
 		requestURL := endpoint.url
-		if linkPagination {
+		usingContinuation := !endpoint.pending && nextPageURL != ""
+		if usingContinuation {
 			requestURL = nextPageURL
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 		if err != nil {
 			return unit3dEndpointSearchResult{}, fmt.Errorf("unit3d: request: %w", err)
 		}
-		if !linkPagination {
+		if !usingContinuation {
 			pageParams := cloneURLValues(params)
 			pageParams.Set("page", strconv.Itoa(pageNumber))
 			req.URL.RawQuery = pageParams.Encode()
@@ -568,89 +566,21 @@ func (c *Client) searchUnit3DEndpoint(
 		entries = append(entries, pageEntries...)
 		wrongWorkCount += dropped
 		received += len(payload.Data)
-		if pageNumber == 1 && payload.Meta.Total == nil && len(payload.Links.Next) > 0 {
-			linkPagination = true
+		nextURL, terminal, valid := unit3DNextSearchURL(endpoint.url, payload.Links.Next)
+		if !valid {
+			c.logUnit3DSearchPagination(tracker, "rejected", "invalid_continuation", received)
+			return unit3dEndpointSearchResult{
+				Entries:        entries,
+				Warning:        "Unit3D search returned inconsistent pagination metadata",
+				Pages:          pageNumber,
+				WrongWorkCount: wrongWorkCount,
+			}, nil
+		}
+		if pageNumber == 1 {
 			c.logUnit3DSearchPagination(tracker, "active", "link_mode", received)
 		}
-		if linkPagination {
-			if payload.Meta.Total != nil {
-				c.logUnit3DSearchPagination(tracker, "rejected", "total_present", received)
-				return unit3dEndpointSearchResult{
-					Entries:        entries,
-					Warning:        "Unit3D search returned inconsistent pagination metadata",
-					Pages:          pageNumber,
-					WrongWorkCount: wrongWorkCount,
-				}, nil
-			}
-			nextURL, terminal, valid := unit3DNextSearchURL(endpoint.url, payload.Links.Next)
-			if !valid {
-				c.logUnit3DSearchPagination(tracker, "rejected", "invalid_continuation", received)
-				return unit3dEndpointSearchResult{
-					Entries:        entries,
-					Warning:        "Unit3D search returned inconsistent pagination metadata",
-					Pages:          pageNumber,
-					WrongWorkCount: wrongWorkCount,
-				}, nil
-			}
-			if terminal {
-				c.logUnit3DSearchPagination(tracker, "completed", "terminal", received)
-				return unit3dEndpointSearchResult{
-					Entries:        entries,
-					Complete:       true,
-					Pages:          pageNumber,
-					WrongWorkCount: wrongWorkCount,
-				}, nil
-			}
-			if _, seen := seenPageURLs[unit3DSearchURLKey(nextURL)]; seen {
-				c.logUnit3DSearchPagination(tracker, "rejected", "repeated_continuation", received)
-				return unit3dEndpointSearchResult{
-					Entries:        entries,
-					Warning:        "Unit3D search returned inconsistent pagination metadata",
-					Pages:          pageNumber,
-					WrongWorkCount: wrongWorkCount,
-				}, nil
-			}
-			c.logUnit3DSearchPagination(tracker, "active", "continue", received)
-			nextPageURL = nextURL.String()
-			continue
-		}
-		if payload.Meta.Total == nil || *payload.Meta.Total < 0 {
-			return unit3dEndpointSearchResult{
-				Entries:        entries,
-				Warning:        "Unit3D search response omitted a valid result total",
-				Pages:          pageNumber,
-				WrongWorkCount: wrongWorkCount,
-			}, nil
-		}
-		lastPage := payload.Meta.LastPage
-		currentPage := payload.Meta.CurrentPage
-		if currentPage != pageNumber || lastPage <= 0 || currentPage > lastPage {
-			return unit3dEndpointSearchResult{
-				Entries:        entries,
-				Warning:        "Unit3D search returned inconsistent pagination metadata",
-				Pages:          pageNumber,
-				WrongWorkCount: wrongWorkCount,
-			}, nil
-		}
-		if expectedTotal < 0 {
-			expectedTotal, expectedLastPage = *payload.Meta.Total, lastPage
-		} else if *payload.Meta.Total != expectedTotal || lastPage != expectedLastPage {
-			return unit3dEndpointSearchResult{
-				Entries:        entries,
-				Warning:        "Unit3D search returned inconsistent pagination metadata",
-				Pages:          pageNumber,
-				WrongWorkCount: wrongWorkCount,
-			}, nil
-		}
-		if currentPage == lastPage {
-			if received != expectedTotal {
-				return unit3dEndpointSearchResult{
-					Entries:        entries,
-					Warning:        "Unit3D search result count did not match its advertised total",
-					Pages:          pageNumber,
-					WrongWorkCount: wrongWorkCount,
-				}, nil
-			}
+		if terminal {
+			c.logUnit3DSearchPagination(tracker, "completed", "terminal", received)
 			return unit3dEndpointSearchResult{
 				Entries:        entries,
 				Complete:       true,
@@ -658,8 +588,19 @@ func (c *Client) searchUnit3DEndpoint(
 				WrongWorkCount: wrongWorkCount,
 			}, nil
 		}
+		if _, seen := seenPageURLs[unit3DSearchURLKey(nextURL)]; seen {
+			c.logUnit3DSearchPagination(tracker, "rejected", "repeated_continuation", received)
+			return unit3dEndpointSearchResult{
+				Entries:        entries,
+				Warning:        "Unit3D search returned inconsistent pagination metadata",
+				Pages:          pageNumber,
+				WrongWorkCount: wrongWorkCount,
+			}, nil
+		}
+		c.logUnit3DSearchPagination(tracker, "active", "continue", received)
+		nextPageURL = nextURL.String()
 	}
-	if linkPagination {
+	if !endpoint.pending {
 		c.logUnit3DSearchPagination(tracker, "rejected", "safety_bound", received)
 	}
 	return unit3dEndpointSearchResult{
@@ -1244,17 +1185,10 @@ func normalizeID(value int) int {
 type unit3dSearchResponse struct {
 	Data  []unit3dSearchItem `json:"data"`
 	Links unit3dSearchLinks  `json:"links"`
-	Meta  unit3dSearchMeta   `json:"meta"`
 }
 
 type unit3dSearchLinks struct {
 	Next json.RawMessage `json:"next"`
-}
-
-type unit3dSearchMeta struct {
-	CurrentPage int  `json:"current_page"`
-	LastPage    int  `json:"last_page"`
-	Total       *int `json:"total"`
 }
 
 type unit3dSearchEndpoint struct {
