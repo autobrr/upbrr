@@ -24,22 +24,16 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// captureUnit3DLogger records debug and warning messages from upload paths that
-// may return before reaching the HTTP test server.
+// captureUnit3DLogger records warning messages from upload paths that may
+// return before reaching the HTTP test server.
 type captureUnit3DLogger struct {
 	mu       sync.Mutex
-	debug    []string
 	warnings []string
 }
 
 func (l *captureUnit3DLogger) Tracef(string, ...any) {}
+func (l *captureUnit3DLogger) Debugf(string, ...any) {}
 func (l *captureUnit3DLogger) Infof(string, ...any)  {}
-
-func (l *captureUnit3DLogger) Debugf(format string, args ...any) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.debug = append(l.debug, fmt.Sprintf(format, args...))
-}
 
 func (l *captureUnit3DLogger) Warnf(format string, args ...any) {
 	l.mu.Lock()
@@ -48,17 +42,6 @@ func (l *captureUnit3DLogger) Warnf(format string, args ...any) {
 }
 
 func (l *captureUnit3DLogger) Errorf(string, ...any) {}
-
-func (l *captureUnit3DLogger) containsDebug(value string) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	for _, message := range l.debug {
-		if strings.Contains(message, value) {
-			return true
-		}
-	}
-	return false
-}
 
 // containsWarning reports whether any captured warning contains value.
 func (l *captureUnit3DLogger) containsWarning(value string) bool {
@@ -496,7 +479,7 @@ func TestUploadUnit3DBlocksMissingCanonicalTVSeasonEpisode(t *testing.T) {
 			Description: "description",
 			Final:       true,
 		},
-	}, server.URL, nil)
+	}, server.URL)
 	if err == nil {
 		t.Fatal("expected canonical TV metadata gap to block upload")
 	}
@@ -711,7 +694,7 @@ func TestBuildUnit3DDataUsesCanonicalCategoryWithParsedReleaseFacts(t *testing.T
 func TestParseUnit3DUploadArtifactDownloadURL(t *testing.T) {
 	t.Parallel()
 
-	artifact, err := parseUnit3DUploadArtifact("https://aither.cc", "https://aither.cc/torrent/download/374352.382", "")
+	artifact, err := parseUnit3DUploadArtifact("https://aither.cc", "https://aither.cc/torrent/download/374352.382")
 	if err != nil {
 		t.Fatalf("parse upload artifact: %v", err)
 	}
@@ -729,7 +712,7 @@ func TestParseUnit3DUploadArtifactDownloadURL(t *testing.T) {
 func TestParseUnit3DUploadArtifactNumericID(t *testing.T) {
 	t.Parallel()
 
-	artifact, err := parseUnit3DUploadArtifact("https://aither.cc", "374352", "")
+	artifact, err := parseUnit3DUploadArtifact("https://aither.cc", "374352")
 	if err != nil {
 		t.Fatalf("parse upload artifact: %v", err)
 	}
@@ -744,25 +727,12 @@ func TestParseUnit3DUploadArtifactNumericID(t *testing.T) {
 	}
 }
 
-func TestParseUnit3DUploadArtifactNumericIDWithRSSKey(t *testing.T) {
-	t.Parallel()
-
-	artifact, err := parseUnit3DUploadArtifact("https://tracker.example", "374352", "synthetic-rss-key")
-	if err != nil {
-		t.Fatalf("parse upload artifact: %v", err)
-	}
-	if artifact.DownloadURL != "https://tracker.example/torrent/download/374352.synthetic-rss-key" {
-		t.Fatalf("unexpected personalized download URL: %q", artifact.DownloadURL)
-	}
-}
-
 func TestParseUnit3DUploadArtifactRejectsOffOriginDownloadURL(t *testing.T) {
 	t.Parallel()
 
 	artifact, err := parseUnit3DUploadArtifact(
 		"https://tracker.example",
 		"https://other.example/torrent/download/374352",
-		"",
 	)
 	if err == nil {
 		t.Fatal("expected off-origin registered torrent URL rejection")
@@ -772,7 +742,7 @@ func TestParseUnit3DUploadArtifactRejectsOffOriginDownloadURL(t *testing.T) {
 	}
 }
 
-func TestSubmitUnit3DUploadDownloadsRegisteredTorrentWithRSSKey(t *testing.T) {
+func TestSubmitUnit3DUploadDownloadsRegisteredTorrentWithAPIAuth(t *testing.T) {
 	t.Parallel()
 
 	registeredTorrent := unit3DRegisteredTorrentFixture(t)
@@ -783,8 +753,8 @@ func TestSubmitUnit3DUploadDownloadsRegisteredTorrentWithRSSKey(t *testing.T) {
 		case request.Method == http.MethodPost && request.URL.Path == "/api/torrents/upload":
 			uploadAuthSeen.Store(request.Header.Get("Authorization") == "Bearer synthetic-api-key")
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"success":true,"data":"374352"}`))
-		case request.Method == http.MethodGet && request.URL.Path == "/torrent/download/374352.synthetic-rss-key":
+			_, _ = w.Write([]byte(`{"success":true,"data":"/torrent/download/374352.382"}`))
+		case request.Method == http.MethodGet && request.URL.Path == "/torrent/download/374352.382":
 			downloadAuthSeen.Store(request.Header.Get("Authorization") == "Bearer synthetic-api-key")
 			w.Header().Set("Content-Type", "application/x-bittorrent")
 			_, _ = w.Write(registeredTorrent)
@@ -804,7 +774,6 @@ func TestSubmitUnit3DUploadDownloadsRegisteredTorrentWithRSSKey(t *testing.T) {
 		"EXAMPLE",
 		"Example.Release.2026.1080p-GRP",
 		"synthetic-api-key",
-		"synthetic-rss-key",
 		server.URL,
 		server.URL+"/api/torrents/upload",
 		"application/json",
@@ -823,63 +792,12 @@ func TestSubmitUnit3DUploadDownloadsRegisteredTorrentWithRSSKey(t *testing.T) {
 		strings.TrimSpace(summary.UploadedTorrents[0].TorrentPath) == "" {
 		t.Fatalf("Unit3D upload summary = %#v", summary)
 	}
-	if summary.UploadedTorrents[0].DownloadURL != "" {
-		t.Fatal("personalized registered torrent URL was retained in the upload summary")
-	}
 	persisted, err := os.ReadFile(summary.UploadedTorrents[0].TorrentPath)
 	if err != nil {
 		t.Fatalf("read registered torrent: %v", err)
 	}
 	if !bytes.Equal(persisted, registeredTorrent) {
 		t.Fatal("Unit3D registered torrent bytes changed")
-	}
-}
-
-func TestRegisteredTorrentRSSKeyRequiresConfiguredValue(t *testing.T) {
-	t.Parallel()
-
-	policy := &RegisteredTorrentPolicy{RequiresRSSKey: true}
-	if _, err := registeredTorrentRSSKey("LST", config.TrackerConfig{}, policy); err == nil || !strings.Contains(err.Error(), "missing rss_key") {
-		t.Fatalf("missing RSS key error = %v", err)
-	}
-	got, err := registeredTorrentRSSKey("LST", config.TrackerConfig{RSSKey: " synthetic-rss-key "}, policy)
-	if err != nil {
-		t.Fatalf("configured RSS key: %v", err)
-	}
-	if got != "synthetic-rss-key" {
-		t.Fatal("configured RSS key was not normalized")
-	}
-}
-
-func TestPrepareUnit3DUploadLogsRegisteredTorrentRSSKeyReadiness(t *testing.T) {
-	policy := &RegisteredTorrentPolicy{RequiresRSSKey: true}
-
-	blockedLogger := &captureUnit3DLogger{}
-	_, err := prepareUnit3DUpload(context.Background(), trackers.PreparationInput{
-		Tracker: "LST",
-		Logger:  blockedLogger,
-	}, "https://tracker.example", policy)
-	if err == nil || !strings.Contains(err.Error(), "missing rss_key") {
-		t.Fatalf("missing RSS key error = %v", err)
-	}
-	if !blockedLogger.containsDebug("tracker=LST credential=rss_key decision=checking") {
-		t.Fatal("expected registered torrent RSS key check log")
-	}
-	if !blockedLogger.containsWarning("tracker=LST credential=rss_key decision=blocked") {
-		t.Fatal("expected blocked registered torrent RSS key decision log")
-	}
-
-	readyLogger := &captureUnit3DLogger{}
-	_, _ = prepareUnit3DUpload(context.Background(), trackers.PreparationInput{
-		Tracker:       "LST",
-		TrackerConfig: config.TrackerConfig{RSSKey: "synthetic-rss-key"},
-		Logger:        readyLogger,
-	}, "https://tracker.example", policy)
-	if !readyLogger.containsDebug("tracker=LST credential=rss_key decision=ready") {
-		t.Fatal("expected ready registered torrent RSS key decision log")
-	}
-	if readyLogger.containsDebug("synthetic-rss-key") {
-		t.Fatal("registered torrent RSS key was logged")
 	}
 }
 

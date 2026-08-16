@@ -435,7 +435,6 @@ func walkSecretFields(cfg *Config, visit func(path string, value *string) error)
 			{name: "AnnounceURL", field: &entry.AnnounceURL},
 			{name: "MyAnnounceURL", field: &entry.MyAnnounceURL},
 			{name: "BhdRSSKey", field: &entry.BhdRSSKey},
-			{name: "RSSKey", field: &entry.RSSKey},
 			{name: "OTPURI", field: &entry.OTPURI},
 			{name: "PTGenAPI", field: &entry.PTGenAPI},
 			{name: "ImgAPI", field: &entry.ImgAPI},

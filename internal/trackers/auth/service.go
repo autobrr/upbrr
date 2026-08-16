@@ -211,8 +211,8 @@ func (s *Service) Status(ctx context.Context, trackerID string) (status api.Trac
 
 // ImportCookies parses supplied cookie content, saves it for trackerID, and
 // returns refreshed auth status from persisted cookie/auth state. Parser errors
-// leave existing stored cookies unchanged. BTN imports still report a missing
-// API-key prerequisite when cookies alone do not make the tracker upload-ready.
+// leave existing stored cookies unchanged. Imports preserve missing mandatory
+// requirements when cookies alone do not make the tracker upload-ready.
 func (s *Service) ImportCookies(ctx context.Context, trackerID string, fileName string, content string) (status api.TrackerAuthStatus, err error) {
 	defer func() {
 		if err != nil {
@@ -239,6 +239,9 @@ func (s *Service) ImportCookies(ctx context.Context, trackerID string, fileName 
 		return api.TrackerAuthStatus{}, fmt.Errorf("tracker auth: import %s cookies: %w", spec.id, err)
 	}
 	status = s.statusForSpec(ctx, spec)
+	if spec.policy.RequirementsDetermineReadiness && !IsReadyStatus(status) {
+		return status, nil
+	}
 	if status.State != StateLoginRequired || spec.policy.MissingAPIKeyMessage == "" || status.Message != spec.policy.MissingAPIKeyMessage {
 		status.State = StateHasCookies
 		status.Message = "cookies imported"
@@ -720,8 +723,6 @@ func requirementSatisfied(
 		return strings.TrimSpace(cfg.PTPAPIUser) != ""
 	case trackerscatalog.AuthRequirementAnnounceURL:
 		return strings.TrimSpace(cfg.AnnounceURL) != ""
-	case trackerscatalog.AuthRequirementRSSKey:
-		return strings.TrimSpace(cfg.RSSKey) != ""
 	}
 	return false
 }

@@ -848,18 +848,6 @@ func TestNewRegistryResolvesHybridAuthRequirements(t *testing.T) {
 			},
 		},
 		{
-			name:      "LST API and RSS key",
-			tracker:   "LST",
-			wantMode:  "api_key_rss_key",
-			wantFirst: []trackers.AuthRequirement{trackers.AuthRequirementAPIKey, trackers.AuthRequirementRSSKey},
-		},
-		{
-			name:      "ULCX API and RSS key",
-			tracker:   "ULCX",
-			wantMode:  "api_key_rss_key",
-			wantFirst: []trackers.AuthRequirement{trackers.AuthRequirementAPIKey, trackers.AuthRequirementRSSKey},
-		},
-		{
 			name:      "RTF API key or credential refresh",
 			tracker:   "RTF",
 			wantMode:  "api_key_or_refresh",

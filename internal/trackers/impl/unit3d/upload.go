@@ -34,14 +34,12 @@ type unit3dUploadResponse struct {
 
 // submitUnit3DUpload sends an already serialized multipart payload and maps a
 // successful Unit3D response to one upload, with an artifact only when the
-// response identifies a download URL. Personalized RSS-key download URLs stay
-// local to the fetch and are omitted from the returned summary.
+// response identifies a download URL.
 func submitUnit3DUpload(
 	ctx context.Context,
 	trackerName string,
 	releaseName string,
 	apiKey string,
-	rssKey string,
 	baseURL string,
 	uploadURL string,
 	contentType string,
@@ -112,7 +110,7 @@ func submitUnit3DUpload(
 		return api.UploadSummary{}, err
 	}
 
-	artifact, artifactErr := parseUnit3DUploadArtifact(baseURL, result.Data, rssKey)
+	artifact, artifactErr := parseUnit3DUploadArtifact(baseURL, result.Data)
 	artifact.Tracker = trackerName
 	if artifact.TorrentID != "" {
 		logger.Infof("trackers: %s upload succeeded - torrent ID: %s", trackerName, artifact.TorrentID)
@@ -120,15 +118,11 @@ func submitUnit3DUpload(
 		logger.Infof("trackers: %s upload succeeded", trackerName)
 	}
 
-	downloadURL := artifact.DownloadURL
-	if strings.TrimSpace(rssKey) != "" {
-		artifact.DownloadURL = ""
-	}
 	summary := api.UploadSummary{
 		Uploaded:         1,
 		UploadedTorrents: []api.UploadedTorrent{artifact},
 	}
-	if artifactErr != nil || downloadURL == "" {
+	if artifactErr != nil || artifact.DownloadURL == "" {
 		trackers.LogRegisteredTorrentUnavailable(logger, trackerName)
 		return summary, nil
 	}
@@ -137,7 +131,7 @@ func submitUnit3DUpload(
 		trackers.LogRegisteredTorrentUnavailable(logger, trackerName)
 		return summary, nil
 	}
-	downloadRequest, err := http.NewRequestWithContext(reqCtx, http.MethodGet, downloadURL, nil)
+	downloadRequest, err := http.NewRequestWithContext(reqCtx, http.MethodGet, artifact.DownloadURL, nil)
 	if err != nil {
 		trackers.LogRegisteredTorrentUnavailable(logger, trackerName)
 		return summary, nil
@@ -158,40 +152,13 @@ func submitUnit3DUpload(
 
 // prepareUnit3DUpload builds one preview for every intent. Upload intent
 // serializes its files during preparation and captures the payload, endpoint,
-// API/RSS keys, and logger so submission does not reread mutable prepared inputs.
+// API key, and logger so submission does not reread mutable prepared inputs.
 func prepareUnit3DUpload(
 	ctx context.Context,
 	req trackers.PreparationInput,
 	configuredBaseURL string,
-	registeredTorrent *RegisteredTorrentPolicy,
 	profiles ...SiteProfile,
 ) (trackers.PreparedOperation, error) {
-	logger := req.Logger
-	if logger == nil {
-		logger = api.NopLogger{}
-	}
-	requiresRSSKey := registeredTorrent != nil && registeredTorrent.RequiresRSSKey
-	trackerName := strings.ToUpper(strings.TrimSpace(req.Tracker))
-	if requiresRSSKey {
-		logger.Debugf(
-			"trackers: registered torrent auth check tracker=%s credential=rss_key decision=checking",
-			trackerName,
-		)
-	}
-	rssKey, err := registeredTorrentRSSKey(req.Tracker, req.TrackerConfig, registeredTorrent)
-	if err != nil {
-		logger.Warnf(
-			"trackers: registered torrent auth check tracker=%s credential=rss_key decision=blocked",
-			trackerName,
-		)
-		return trackers.PreparedOperation{}, err
-	}
-	if requiresRSSKey {
-		logger.Debugf(
-			"trackers: registered torrent auth check tracker=%s credential=rss_key decision=ready",
-			trackerName,
-		)
-	}
 	preview, err := buildUploadDryRunUnit3D(ctx, req, configuredBaseURL, profiles...)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
@@ -203,6 +170,10 @@ func prepareUnit3DUpload(
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s upload blocked: %s", preview.Tracker, preview.Message)
 	}
 
+	logger := req.Logger
+	if logger == nil {
+		logger = api.NopLogger{}
+	}
 	torrentPath := preparedFilePath(preview.Files, "torrent")
 	nfoPath := preparedFilePath(preview.Files, "nfo")
 	payload, contentType, err := buildMultipartPayload(preview.Payload, torrentPath, nfoPath, logger)
@@ -210,7 +181,7 @@ func prepareUnit3DUpload(
 		return trackers.PreparedOperation{}, err
 	}
 	baseURL, uploadURL := resolveUnit3DURLs(configuredBaseURL)
-	trackerName = preview.Tracker
+	trackerName := preview.Tracker
 	releaseName := preview.ReleaseName
 	apiKey := strings.TrimSpace(req.TrackerConfig.APIKey)
 	return trackers.NewPreparedOperation(preview, func(submitCtx context.Context) (api.UploadSummary, error) {
@@ -219,7 +190,6 @@ func prepareUnit3DUpload(
 			trackerName,
 			releaseName,
 			apiKey,
-			rssKey,
 			baseURL,
 			uploadURL,
 			contentType,
@@ -245,7 +215,7 @@ func resolveUnit3DURLs(configuredBaseURL string) (string, string) {
 	return baseURL, strings.TrimRight(baseURL, "/") + "/api/torrents/upload"
 }
 
-func parseUnit3DUploadArtifact(baseURL, rawData, rssKey string) (api.UploadedTorrent, error) {
+func parseUnit3DUploadArtifact(baseURL, rawData string) (api.UploadedTorrent, error) {
 	artifact := api.UploadedTorrent{}
 	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	data := strings.TrimSpace(rawData)
@@ -255,11 +225,7 @@ func parseUnit3DUploadArtifact(baseURL, rawData, rssKey string) (api.UploadedTor
 
 	if isNumericID(data) {
 		artifact.TorrentID = data
-		downloadID := data
-		if rssKey = strings.TrimSpace(rssKey); rssKey != "" {
-			downloadID += "." + url.PathEscape(rssKey)
-		}
-		artifact.DownloadURL = base + "/torrent/download/" + downloadID
+		artifact.DownloadURL = base + "/torrent/download/" + data
 		artifact.TorrentURL = base + "/torrents/" + data
 		return artifact, nil
 	}

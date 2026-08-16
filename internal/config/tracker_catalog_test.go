@@ -40,26 +40,6 @@ func TestOrderedTrackerSchemasPreserveExampleOrderAndActivation(t *testing.T) {
 	}
 }
 
-func TestOrderedTrackerSchemasIncludeUnit3DRSSKeys(t *testing.T) {
-	t.Parallel()
-
-	schemas, err := OrderedTrackerSchemas()
-	if err != nil {
-		t.Fatalf("OrderedTrackerSchemas() error = %v", err)
-	}
-	for _, tracker := range []string{"LST", "ULCX"} {
-		index := slices.IndexFunc(schemas, func(schema TrackerSchema) bool { return schema.Name == tracker })
-		if index < 0 {
-			t.Fatalf("schema %s missing", tracker)
-		}
-		if !slices.ContainsFunc(schemas[index].Fields, func(field TrackerFieldSchema) bool {
-			return field.JSONKey == "RSSKey" && field.YAMLKey == "rss_key" && field.Activation
-		}) {
-			t.Fatalf("schema %s missing activating RSS key field", tracker)
-		}
-	}
-}
-
 func TestTrackerConfiguredUsesOnlyActivationFields(t *testing.T) {
 	t.Parallel()
 

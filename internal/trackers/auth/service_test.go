@@ -21,6 +21,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/btn"
+	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/hdt"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/ptp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/rtf"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/thr"
@@ -1230,80 +1231,43 @@ func TestStatusHDBPasskeyWithoutCookiesIsNotUploadReady(t *testing.T) {
 	}
 }
 
-func TestStatusEnforcesEveryEffectiveAuthRequirement(t *testing.T) {
+func TestStatusEnforcesHDTAuthRequirements(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Unit3D RSS key", func(t *testing.T) {
-		t.Parallel()
-
-		requirements := trackers.EffectiveAuthRequirements{Alternatives: []trackers.AuthRequirementAlternative{{
-			AllOf: []trackers.AuthRequirement{trackers.AuthRequirementAPIKey, trackers.AuthRequirementRSSKey},
-		}}}
-		for name, test := range map[string]struct {
-			cfg  config.TrackerConfig
-			want string
-		}{
-			"missing RSS key": {cfg: config.TrackerConfig{APIKey: "synthetic-api-key"}, want: StateNotConfigured},
-			"complete":        {cfg: config.TrackerConfig{APIKey: "synthetic-api-key", RSSKey: "synthetic-rss-key"}, want: StateConfigured},
-		} {
-			t.Run(name, func(t *testing.T) {
-				t.Parallel()
-				service := newTestService(config.Config{
-					MainSettings: config.MainSettingsConfig{DBPath: newTrackerAuthTestDB(t)},
-					Trackers:     config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"LST": test.cfg}},
-				})
-				status := service.statusForSpec(context.Background(), trackerSpec{
-					id:           "LST",
-					authKind:     "api_key",
-					apiKey:       true,
-					policy:       trackers.AuthPolicy{RequirementsDetermineReadiness: true},
-					requirements: requirements,
-				})
-				if status.State != test.want {
-					t.Fatalf("status = %#v, want %s", status, test.want)
-				}
+	ctx := context.Background()
+	dbPath := newTrackerAuthTestDB(t)
+	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "HDT", map[string]string{"session": "synthetic-cookie"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+	requirements := trackers.EffectiveAuthRequirements{Alternatives: []trackers.AuthRequirementAlternative{{
+		AllOf: []trackers.AuthRequirement{trackers.AuthRequirementStoredCookie, trackers.AuthRequirementAnnounceURL},
+	}}}
+	for name, test := range map[string]struct {
+		announce string
+		want     string
+	}{
+		"missing announce URL": {want: StateNotConfigured},
+		"complete":             {announce: "https://tracker.invalid/announce", want: StateConfigured},
+	} {
+		t.Run(name, func(t *testing.T) {
+			service := newTestService(config.Config{
+				MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+				Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+					"HDT": {AnnounceURL: test.announce},
+				}},
 			})
-		}
-	})
-
-	t.Run("HDT announce URL", func(t *testing.T) {
-		t.Parallel()
-
-		ctx := context.Background()
-		dbPath := newTrackerAuthTestDB(t)
-		if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "HDT", map[string]string{"session": "synthetic-cookie"}); err != nil {
-			t.Fatalf("SaveTrackerCookieMap: %v", err)
-		}
-		requirements := trackers.EffectiveAuthRequirements{Alternatives: []trackers.AuthRequirementAlternative{{
-			AllOf: []trackers.AuthRequirement{trackers.AuthRequirementStoredCookie, trackers.AuthRequirementAnnounceURL},
-		}}}
-		for name, test := range map[string]struct {
-			announce string
-			want     string
-		}{
-			"missing announce URL": {want: StateNotConfigured},
-			"complete":             {announce: "https://tracker.invalid/announce", want: StateConfigured},
-		} {
-			t.Run(name, func(t *testing.T) {
-				service := newTestService(config.Config{
-					MainSettings: config.MainSettingsConfig{DBPath: dbPath},
-					Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-						"HDT": {AnnounceURL: test.announce},
-					}},
-				})
-				status := service.statusForSpec(ctx, trackerSpec{
-					id:           "HDT",
-					authKind:     "cookies",
-					cookies:      true,
-					policy:       trackers.AuthPolicy{RequirementsDetermineReadiness: true},
-					requirements: requirements,
-				})
-				if status.State != test.want {
-					t.Fatalf("status = %#v, want %s", status, test.want)
-				}
+			status := service.statusForSpec(ctx, trackerSpec{
+				id:           "HDT",
+				authKind:     "cookies",
+				cookies:      true,
+				policy:       trackers.AuthPolicy{RequirementsDetermineReadiness: true},
+				requirements: requirements,
 			})
-		}
-	})
+			if status.State != test.want {
+				t.Fatalf("status = %#v, want %s", status, test.want)
+			}
+		})
+	}
 }
 
 func TestLoginHDBWithoutCredentialLoginReturnsStatus(t *testing.T) {
@@ -1896,6 +1860,31 @@ func TestImportCookiesPreservesBTNMissingAPIStatus(t *testing.T) {
 	}
 	if status.State != StateLoginRequired || status.CookieCount != 1 || !strings.Contains(status.Message, "API key is required") {
 		t.Fatalf("expected missing BTN API to survive cookie import, got %#v", status)
+	}
+}
+
+func TestImportCookiesPreservesHDTMissingAnnounceStatus(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newTrackerAuthTestDB(t)
+	registry := trackers.NewRegistry()
+	if err := registry.Register(hdt.New()); err != nil {
+		t.Fatalf("register HDT: %v", err)
+	}
+	service := NewServiceWithRegistryAndLogger(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"HDT": {},
+		}},
+	}, registry, api.NopLogger{})
+
+	status, err := service.ImportCookies(ctx, "HDT", "cookies.json", `{"session":"abc"}`)
+	if err != nil {
+		t.Fatalf("ImportCookies: %v", err)
+	}
+	if status.State != StateNotConfigured || status.CookieCount != 1 || status.Message == "cookies imported" {
+		t.Fatalf("expected missing HDT announce URL to survive cookie import, got %#v", status)
 	}
 }
 

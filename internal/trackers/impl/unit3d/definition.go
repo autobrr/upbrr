@@ -23,12 +23,6 @@ type Definition struct {
 	profile Profile
 }
 
-// RegisteredTorrentPolicy declares site-specific registered torrent download requirements.
-type RegisteredTorrentPolicy struct {
-	// RequiresRSSKey appends the configured RSS key when an upload returns only a numeric torrent ID.
-	RequiresRSSKey bool
-}
-
 // Profile declares Unit3D site identity, endpoint, and site-owned policies.
 type Profile struct {
 	// Name is the stable normalized tracker identifier.
@@ -54,8 +48,6 @@ type Profile struct {
 	DupePolicy *trackers.DupePolicy
 	// UploadArtifact contains site-specific torrent personalization settings.
 	UploadArtifact *trackers.UploadArtifactPolicy
-	// RegisteredTorrent contains site-specific registered torrent download requirements.
-	RegisteredTorrent *RegisteredTorrentPolicy
 	// BannedPolicy contains optional dynamic banned-group retrieval settings.
 	BannedPolicy *trackers.BannedGroupPolicy
 	// BannedGroups is the site's static banned release-group list.
@@ -280,7 +272,7 @@ func (d *Definition) prepareUpload(ctx context.Context, req trackers.Preparation
 		)
 	}
 	if d.profile.BaseURL != "" {
-		return prepareUnit3DUpload(ctx, req, d.profile.BaseURL, d.profile.RegisteredTorrent, d.profile.Site)
+		return prepareUnit3DUpload(ctx, req, d.profile.BaseURL, d.profile.Site)
 	}
 	select {
 	case <-ctx.Done():

@@ -47,7 +47,6 @@ const trackerFieldMeta: Record<string, FieldMeta> = {
   Anon: boolField("Anon", { label: "Anonymous" }),
   ShowGroupIfAnon: boolField("ShowGroupIfAnon", { label: "Show group if anon" }),
   BhdRSSKey: stringField("BhdRSSKey", { label: "BHD RSS key", sensitive: true }),
-  RSSKey: stringField("RSSKey", { label: "RSS key (RID)", sensitive: true }),
   CheckRequests: boolField("CheckRequests", { label: "Check requests" }),
   FullMediainfo: boolField("FullMediainfo", { label: "Full mediainfo" }),
   ImgRehost: boolField("ImgRehost", { label: "Image rehost" }),

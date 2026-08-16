@@ -21,7 +21,6 @@ func Profile() unit3d.Profile {
 			BuildName:        buildName,
 			BuildNameVersion: "v2",
 		},
-		RegisteredTorrent: &unit3d.RegisteredTorrentPolicy{RequiresRSSKey: true},
 		DupePolicy: &trackers.DupePolicy{
 			ID:         "ulcx/duplicate/v2",
 			EvidenceID: "ulcx-upload-rules",
