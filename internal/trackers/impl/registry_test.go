@@ -695,10 +695,14 @@ func TestNewRegistryIncludesHDBPolicies(t *testing.T) {
 	}
 }
 
-func TestNewRegistryIncludesPTPDataPolicy(t *testing.T) {
+func TestNewRegistryIncludesPTPPolicies(t *testing.T) {
 	registry, err := NewRegistry()
 	if err != nil {
 		t.Fatalf("new registry: %v", err)
+	}
+	uploadPolicy, ok := registry.LookupUploadArtifactPolicy("PTP")
+	if !ok || uploadPolicy.Source != "PTP" || !uploadPolicy.RequireAnnounce {
+		t.Fatalf("PTP upload artifact policy = %#v, %t", uploadPolicy, ok)
 	}
 	policy, ok := registry.LookupDataPolicy("PTP")
 	if !ok || policy.Cooldown != time.Minute {

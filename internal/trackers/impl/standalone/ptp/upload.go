@@ -83,9 +83,9 @@ func prepareUploadAt(ctx context.Context, req trackers.PreparationInput, baseURL
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
-	trackerTorrentPath, err := resolveTrackerTorrentPath(req.Meta, req.Runtime.DBPath, "PTP")
+	trackerTorrentPath, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, "PTP")
 	if err != nil {
-		return trackers.PreparedOperation{}, err
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: PTP resolve registered torrent path: %w", err)
 	}
 	return trackers.NewPreparedOperation(preview, func(submitCtx context.Context) (api.UploadSummary, error) {
 		return submitPreparedUpload(submitCtx, req, state, body, contentType, trackerTorrentPath)
@@ -456,21 +456,6 @@ func buildMultipartPayload(fields map[string]string, torrentPath string, fileFie
 		return nil, "", fmt.Errorf("trackers: PTP close multipart writer: %w", err)
 	}
 	return body.Bytes(), writer.FormDataContentType(), nil
-}
-
-func resolveTrackerTorrentPath(meta api.UploadSubject, dbPath string, tracker string) (string, error) {
-	if strings.TrimSpace(dbPath) == "" || strings.TrimSpace(meta.SourcePath) == "" {
-		return "", errors.New("trackers: PTP tracker torrent path requires db path and source path")
-	}
-	tmpRoot, err := db.Subdir(dbPath, "tmp")
-	if err != nil {
-		return "", fmt.Errorf("trackers: %w", err)
-	}
-	tmpDir, base, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
-	if err != nil {
-		return "", fmt.Errorf("trackers: %w", err)
-	}
-	return filepath.Join(tmpDir, base+"."+strings.ToLower(strings.TrimSpace(tracker))+".torrent"), nil
 }
 
 func resolveFailurePath(meta api.UploadSubject, dbPath string) (string, error) {
