@@ -6,8 +6,10 @@ package ulcx
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
@@ -191,9 +193,12 @@ func ulcxChannelCount(value string) (float64, bool) {
 }
 
 func ulcxLosslessAudio(audio string) bool {
+	pcm := slices.Contains(strings.FieldsFunc(audio, func(char rune) bool {
+		return !unicode.IsLetter(char) && !unicode.IsDigit(char)
+	}), "PCM")
 	return strings.Contains(audio, "FLAC") || strings.Contains(audio, "TRUEHD") ||
 		strings.Contains(audio, "DTS-HD MA") || strings.Contains(audio, "DTS-HD MASTER") ||
-		strings.Contains(audio, "LPCM") || strings.Contains(audio, "PCM") || strings.Contains(audio, "ALAC")
+		strings.Contains(audio, "LPCM") || pcm || strings.Contains(audio, "ALAC")
 }
 
 func ulcxX265Encode(meta api.TrackerValidationSubject) bool {

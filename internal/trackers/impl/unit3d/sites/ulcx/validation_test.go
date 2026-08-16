@@ -135,6 +135,15 @@ func TestDeterministicValidationEvidence(t *testing.T) {
 			wantStatus:      api.MetadataEvidenceStatusComplete,
 		},
 		{
+			name: "1080p encode ADPCM multichannel passes",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.Type = "ENCODE"
+				subject.VideoCodec = "AVC"
+				subject.Audio = "ADPCM"
+				subject.Channels = "5.1"
+			},
+		},
+		{
 			name: "2160p encode lossless multichannel passes",
 			mutate: func(subject *api.TrackerValidationSubject) {
 				subject.Type = "ENCODE"
