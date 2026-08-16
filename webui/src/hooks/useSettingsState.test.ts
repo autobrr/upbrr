@@ -160,6 +160,25 @@ function ClientSetupHarness() {
   );
 }
 
+function TorrentCreationHarness() {
+  const state = useSettingsState({ activeTab: "settings" });
+  const torrentCreation = state.configData?.TorrentCreation;
+
+  if (!torrentCreation || typeof torrentCreation !== "object" || Array.isArray(torrentCreation)) {
+    return createElement("div", null);
+  }
+
+  const meta = state.sectionFieldMeta.TorrentCreation ?? {};
+
+  return createElement(
+    "div",
+    null,
+    ...Object.entries(torrentCreation).map(([key, value]) =>
+      state.renderField(key, value, ["TorrentCreation", key], meta[key]),
+    ),
+  );
+}
+
 function TrackerSettingsHarness() {
   const state = useSettingsState({ activeTab: "settings" });
 
@@ -350,6 +369,21 @@ describe("settings advanced fields", () => {
     expect(advancedBySection.PostUpload).toEqual(["InjectDelay", "MaxConcurrentTrackers"]);
     expect(advancedBySection.TorrentCreation).toEqual([]);
     expect(advancedBySection.TorrentClients).toEqual(["VerifyWebUICertificate"]);
+  });
+});
+
+describe("torrent creation settings", () => {
+  it("identifies the 16 MiB preference as reusable-torrent selection", async () => {
+    installAppOperationMocks({
+      GetConfig: async () => JSON.stringify({ TorrentCreation: { PreferMax16: false } }),
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () => trackerCatalog(),
+      GetImageHostPolicyMetadata: async () => ({}),
+    });
+
+    render(createElement(TorrentCreationHarness));
+
+    expect(await screen.findByLabelText("Prefer reusable torrents up to 16 MiB")).not.toBeChecked();
   });
 });
 

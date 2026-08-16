@@ -23,6 +23,7 @@ var HostMapping = map[string]string{
 	"img.passtheima.ge":    "passtheimage",
 	"imgur.com":            "imgur",
 	"postimg.cc":           "postimg",
+	"samaritano.cc":        "samaritano",
 	"digitalcore.club":     "sharex",
 	"img.digitalcore.club": "sharex",
 	"kshare.club":          "kshare",

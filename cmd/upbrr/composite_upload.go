@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strconv"
 	"strings"
@@ -45,6 +46,9 @@ func (s *cliWorkflowSession) completeComposite(
 	if err != nil {
 		return 0, err
 	}
+	ctx = api.WithDupeProgressReporter(ctx, func(update api.DupeProgressUpdate) {
+		printCLIWorkflowDupeProgress(s.streams.out, update)
+	})
 	current, err := s.core.StartReleaseWorkflowUpload(ctx, cliWorkflowOwnerID, request)
 	if err != nil {
 		return 0, fmt.Errorf("upbrr: start composite upload: %w", err)
@@ -60,22 +64,17 @@ func (s *cliWorkflowSession) completeComposite(
 		s.uploadRequest.Options.RunLogLevel,
 		debug,
 	)
-	var projectionRevision api.WorkflowRevision
 	for range 64 {
-		if printProjections && s.current.Projections != nil && s.current.Dupes != nil &&
-			s.current.Projections.Revision != projectionRevision {
-			projectionRevision = s.current.Projections.Revision
-			printCLIWorkflowProjections(s.current.Projections, s.current.Dupes)
-		}
+		s.printCompositeProjectionsOnce(printProjections)
 		if debug && s.current.DryRun != nil {
-			printCLIWorkflowDryRun(*s.current.DryRun, s.intent.noSeed, s.current.Projections)
+			printCLIWorkflowDryRun(s.streams.out, *s.current.DryRun, s.intent.noSeed, s.current.Projections)
 			return 0, nil
 		}
 		if !debug && s.current.UploadResult != nil {
-			return printCLIWorkflowUploadResult(s.current.UploadResult)
+			return printCLIWorkflowUploadResult(s.streams.out, s.current.UploadResult)
 		}
 		if s.current.Selection != nil && len(s.current.Selection.TrackerIDs) == 0 {
-			fmt.Printf("No trackers configured for %s\n", formatPathLabel(s.intent.sourcePath))
+			fmt.Fprintf(s.streams.out, "No trackers configured for %s\n", formatPathLabel(s.intent.sourcePath))
 			return 0, nil
 		}
 
@@ -108,9 +107,27 @@ func (s *cliWorkflowSession) completeComposite(
 	return 0, errors.New("upbrr: composite upload exceeded the transition limit")
 }
 
+func (s *cliWorkflowSession) printCompositeProjectionsOnce(enabled bool) {
+	if !enabled || s.projectionsPrinted || s.current.Projections == nil || s.current.Dupes == nil {
+		return
+	}
+	s.projectionsPrinted = true
+	printCLIWorkflowProjections(
+		s.streams.out,
+		s.current.Projections,
+		s.current.Dupes,
+		cliWorkflowProjectionPolicyOutputEnabled(s.logger),
+	)
+}
+
 func cliWorkflowProjectionOutputEnabled(configured string, runOverride string, debug bool) bool {
 	level, err := logging.ParseLevel(logging.ResolveEffectiveLevel(configured, runOverride, debug))
 	return err == nil && level >= logging.LevelDebug
+}
+
+func cliWorkflowProjectionPolicyOutputEnabled(logger api.Logger) bool {
+	consoleLogger, ok := logger.(*logging.Logger)
+	return !ok || consoleLogger.ConsoleEnabled(logging.LevelDebug)
 }
 
 func resolveCLICompositeUploadInputs(
@@ -182,7 +199,7 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 			"upbrr: tracker authentication must be resolved outside the upload workflow; start a fresh attempt",
 		)
 	case api.RequiredActionSelectPlaylist:
-		selected, err := selectCLIWorkflowPlaylists(reader, action, cfg.Metadata.UseLargestPlaylist)
+		selected, err := selectCLIWorkflowPlaylists(reader, s.streams.out, action, cfg.Metadata.UseLargestPlaylist)
 		if err != nil {
 			return feedback, false, err
 		}
@@ -193,7 +210,7 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 			},
 		}
 	case api.RequiredActionSelectMetadata:
-		selected, err := selectCLICompositeOption(reader, action, "Metadata option")
+		selected, err := selectCLICompositeOption(reader, s.streams.out, action, "Metadata option")
 		if err != nil {
 			return feedback, false, err
 		}
@@ -206,6 +223,7 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 	case api.RequiredActionConfirmRescan:
 		return compositeCLIConfirmationFeedback(
 			reader,
+			s.streams.out,
 			action,
 			feedback,
 			api.ReleaseWorkflowUploadFeedbackRescanConfirmation,
@@ -218,7 +236,7 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 		confirmed := false
 		if s.intent.interaction != api.InteractionModeUnattended {
 			var err error
-			confirmed, err = promptYesNo(reader, action.Prompt+" [y/N]: ", false)
+			confirmed, err = promptYesNo(reader, s.streams.out, action.Prompt+" [y/N]: ", false)
 			if err != nil {
 				return feedback, false, err
 			}
@@ -238,12 +256,13 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 	case api.RequiredActionReprepare:
 		return compositeCLIConfirmationFeedback(
 			reader,
+			s.streams.out,
 			action,
 			feedback,
 			api.ReleaseWorkflowUploadFeedbackReprepare,
 		)
 	case api.RequiredActionReconcileSubmission:
-		confirmed, err := promptYesNo(reader, action.Prompt+" Confirm it did not complete? [y/N]: ", false)
+		confirmed, err := promptYesNo(reader, s.streams.out, action.Prompt+" Confirm it did not complete? [y/N]: ", false)
 		if err != nil {
 			return feedback, false, err
 		}
@@ -270,7 +289,7 @@ func (s *cliWorkflowSession) collectCompositeRuleOverrideFeedback(
 	confirmed := false
 	if s.intent.interaction != api.InteractionModeUnattended {
 		var err error
-		confirmed, err = promptYesNo(reader, action.Prompt+" [y/N]: ", false)
+		confirmed, err = promptYesNo(reader, s.streams.out, action.Prompt+" [y/N]: ", false)
 		if err != nil {
 			return feedback, false, err
 		}
@@ -303,11 +322,12 @@ func (s *cliWorkflowSession) hasTrackerAfterRuleSkip(skipped api.TrackerID) bool
 
 func compositeCLIConfirmationFeedback(
 	reader *bufio.Reader,
+	output io.Writer,
 	action api.RequiredAction,
 	feedback api.ReleaseWorkflowUploadFeedback,
 	kind api.ReleaseWorkflowUploadFeedbackKind,
 ) (api.ReleaseWorkflowUploadFeedback, bool, error) {
-	confirmed, err := promptYesNo(reader, action.Prompt+" [y/N]: ", false)
+	confirmed, err := promptYesNo(reader, output, action.Prompt+" [y/N]: ", false)
 	if err != nil {
 		return feedback, false, err
 	}
@@ -363,29 +383,32 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 			return feedback, false, fmt.Errorf("upbrr: tracker approval candidate %s has no current projection", trackerID)
 		}
 		if index > 0 {
-			fmt.Println()
+			fmt.Fprintln(s.streams.out)
 		}
 		tracker := strings.TrimSpace(projection.DisplayName)
 		if tracker == "" {
 			tracker = string(trackerID)
 		}
 		dupe := dupeByTracker[trackerID]
-		fmt.Printf("Tracker: %s (%s)\n", tracker, trackerID)
-		fmt.Printf("Upload name: %q\n", projection.UploadReleaseName)
-		fmt.Printf(
+		fmt.Fprintf(s.streams.out, "Tracker: %s (%s)\n", tracker, trackerID)
+		fmt.Fprintf(s.streams.out, "Upload name: %q\n", projection.UploadReleaseName)
+		fmt.Fprintf(
+			s.streams.out,
 			"Duplicate check: decision=%s candidates=%d search_complete=%t policy=%s\n",
 			dupe.Decision,
 			len(dupe.Matches),
 			dupe.Search.Complete,
 			emptyCLIValue(dupe.PolicyID),
 		)
-		fmt.Printf(
+		fmt.Fprintf(
+			s.streams.out,
 			"Requirements: screenshots=%d dvd_menus=%d image_hosting=%t descriptions=%t\n",
 			projection.Artifacts.ScreenshotCount,
 			projection.Artifacts.DVDMenuCount,
 			projection.Artifacts.ImageHosting,
 			projection.Artifacts.Description,
 		)
+		printCLICompositeDupeMatches(s.streams.out, dupe.Matches)
 		if logger != nil {
 			logger.Debugf(
 				"tracker approval: tracker=%s screenshots=%d dvd_menus=%d image_hosting=%t descriptions=%t",
@@ -397,7 +420,7 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 			)
 		}
 		prompt := fmt.Sprintf("Use %s as %q? [y/N]: ", tracker, projection.UploadReleaseName)
-		confirmed, err := promptYesNo(reader, prompt, false)
+		confirmed, err := promptYesNo(reader, s.streams.out, prompt, false)
 		if err != nil {
 			return feedback, false, err
 		}
@@ -426,18 +449,19 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 
 func selectCLICompositeOption(
 	reader *bufio.Reader,
+	output io.Writer,
 	action api.RequiredAction,
 	label string,
 ) (string, error) {
 	if len(action.Options) == 0 {
 		return "", fmt.Errorf("upbrr: action %s has no options", action.Kind)
 	}
-	fmt.Println()
-	fmt.Println(action.Prompt)
+	fmt.Fprintln(output)
+	fmt.Fprintln(output, action.Prompt)
 	for index, option := range action.Options {
-		fmt.Printf("%d. %s\n", index+1, option.Label)
+		fmt.Fprintf(output, "%d. %s\n", index+1, option.Label)
 	}
-	answer, err := promptLine(reader, label+" number: ")
+	answer, err := promptLine(reader, output, label+" number: ")
 	if err != nil {
 		return "", err
 	}
@@ -464,7 +488,7 @@ func (s *cliWorkflowSession) collectCompositeTrackerFeedback(
 		s.intent.trackerConfig,
 		s.intent.trackerSite,
 	)
-	_, err := collectCLIWorkflowQuestionnaires(reader, s.intent.interaction, s.current.Projections, instructions)
+	_, err := collectCLIWorkflowQuestionnaires(reader, s.streams.out, s.intent.interaction, s.current.Projections, instructions)
 	if err != nil {
 		return feedback, false, err
 	}
@@ -474,9 +498,9 @@ func (s *cliWorkflowSession) collectCompositeTrackerFeedback(
 		if proposed == "" {
 			return feedback, false, fmt.Errorf("upbrr: release-name confirmation for %s has no proposed name", action.TrackerID)
 		}
-		fmt.Println()
-		fmt.Println(action.Prompt)
-		answer, promptErr := promptLine(reader, fmt.Sprintf("Release name [%s]: ", proposed))
+		fmt.Fprintln(s.streams.out)
+		fmt.Fprintln(s.streams.out, action.Prompt)
+		answer, promptErr := promptLine(reader, s.streams.out, fmt.Sprintf("Release name [%s]: ", proposed))
 		if promptErr != nil {
 			return feedback, false, promptErr
 		}
@@ -525,7 +549,8 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 		return feedback, false, fmt.Errorf("upbrr: duplicate assessment for %s is unavailable", action.TrackerID)
 	}
 	result := s.current.Dupes.Results[resultIndex]
-	fmt.Printf(
+	fmt.Fprintf(
+		s.streams.out,
 		"Dupe check %s: upload_name=%s candidates=%d decision=%s search_complete=%t pages=%d policy=%s\n",
 		result.TrackerID,
 		result.UploadReleaseName,
@@ -535,17 +560,17 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 		result.Search.Pages,
 		emptyCLIValue(result.PolicyID),
 	)
-	printCLICompositeDupeMatches(result.Matches)
-	fmt.Println()
+	printCLICompositeDupeMatches(s.streams.out, result.Matches)
+	fmt.Fprintln(s.streams.out)
 	prompt := fmt.Sprintf("Upload to %s despite duplicate evidence? [y/N]: ", result.TrackerID)
 	if cliDupeRequiresRiskAcknowledgement(result) {
 		prompt = fmt.Sprintf("Acknowledge incomplete/manual policy evidence and upload to %s? [y/N]: ", result.TrackerID)
 	}
-	allow, err := promptYesNo(reader, prompt, false)
+	allow, err := promptYesNo(reader, s.streams.out, prompt, false)
 	if err != nil {
 		return feedback, false, err
 	}
-	fmt.Println()
+	fmt.Fprintln(s.streams.out)
 	decision := api.DupeDecisionAccepted
 	if allow {
 		decision = api.DupeDecisionIgnored
@@ -560,14 +585,15 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 	return feedback, false, nil
 }
 
-func printCLICompositeDupeMatches(matches []api.DupeMatchProjection) {
+func printCLICompositeDupeMatches(output io.Writer, matches []api.DupeMatchProjection) {
 	if len(matches) == 0 {
 		return
 	}
-	fmt.Println("Duplicate candidates:")
+	fmt.Fprintln(output, "Duplicate candidates:")
 	for index, match := range matches {
-		fmt.Printf("  %d. %s\n", index+1, strings.TrimSpace(match.Name))
-		fmt.Printf(
+		fmt.Fprintf(output, "  %d. %s\n", index+1, strings.TrimSpace(match.Name))
+		fmt.Fprintf(
+			output,
 			"     Relation: %s  Evidence: %s/%s\n",
 			emptyCLIValue(string(match.Relation)),
 			emptyCLIValue(string(match.EvidenceStatus)),
@@ -581,20 +607,20 @@ func printCLICompositeDupeMatches(matches []api.DupeMatchProjection) {
 				}
 			}
 			if len(reasons) > 0 {
-				fmt.Printf("     Reasons: %s\n", strings.Join(reasons, ","))
+				fmt.Fprintf(output, "     Reasons: %s\n", strings.Join(reasons, ","))
 			}
 		} else if reason := strings.TrimSpace(match.Reason); reason != "" {
-			fmt.Printf("     Reason: %s\n", reason)
+			fmt.Fprintf(output, "     Reason: %s\n", reason)
 		}
 		if len(match.HDR.Formats) > 0 {
 			formats := make([]string, len(match.HDR.Formats))
 			for index, format := range match.HDR.Formats {
 				formats[index] = string(format)
 			}
-			fmt.Printf("     HDR: %s\n", strings.Join(formats, "+"))
+			fmt.Fprintf(output, "     HDR: %s\n", strings.Join(formats, "+"))
 		}
-		if link := strings.TrimSpace(match.Link); link != "" {
-			fmt.Printf("     Link: %s\n", link)
+		if link := strings.TrimSpace(logging.SanitizeMessage(match.Link)); link != "" {
+			fmt.Fprintf(output, "     Link: %s\n", link)
 		}
 	}
 }

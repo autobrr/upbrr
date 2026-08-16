@@ -32,6 +32,7 @@ var uploadHosts = map[string]struct{}{
 	"pixhost":      {},
 	"ptscreens":    {},
 	"reelflix":     {},
+	"samaritano":   {},
 	"seedpool_cdn": {},
 	"sharex":       {},
 	"thr":          {},

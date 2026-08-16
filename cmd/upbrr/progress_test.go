@@ -232,3 +232,53 @@ func TestCLIWorkflowProgressPrintsOnlyTopLevelOperations(t *testing.T) {
 		t.Fatalf("CLI workflow progress = %q, want %q", output.String(), expected)
 	}
 }
+
+func TestCLIWorkflowSessionSuppressesRepeatedProgressAndLogsSuccessiveOperations(t *testing.T) {
+	var output bytes.Buffer
+	logger := &cliProgressTestLogger{}
+	event := api.WorkflowEvent{
+		Sequence:    1,
+		WorkflowID:  "workflow-cli-events",
+		OperationID: "operation-one",
+		Command:     "composite_upload",
+		Phase:       "prepare",
+		Scope:       api.WorkflowEventScopeWorkflow,
+		ScopeID:     "prepare",
+		Lifecycle:   api.OperationLifecycleRunning,
+		State:       api.StageStatusRunning,
+		Message:     "running",
+	}
+	nextEvent := event
+	nextEvent.Sequence = 2
+	nextEvent.OperationID = "operation-two"
+	coreSvc := &cliWorkflowCoreFake{events: []api.WorkflowEvent{event, nextEvent}}
+	session := cliWorkflowSession{
+		core:           coreSvc,
+		logger:         logger,
+		progressWriter: &output,
+	}
+	operation := api.WorkflowOperationStatus{
+		ID:         event.OperationID,
+		WorkflowID: event.WorkflowID,
+		Operation:  api.OperationKindUploadDryRun,
+		Status:     api.StageStatusCompleted,
+	}
+	if _, err := session.waitForOperation(t.Context(), operation); err != nil {
+		t.Fatalf("wait for first completed operation: %v", err)
+	}
+	operation.ID = nextEvent.OperationID
+	if _, err := session.waitForOperation(t.Context(), operation); err != nil {
+		t.Fatalf("wait for second completed operation: %v", err)
+	}
+
+	if got := strings.Count(output.String(), "Preparing tracker uploads..."); got != 1 {
+		t.Fatalf("tracker upload progress count = %d, want 1: %q", got, output.String())
+	}
+	entries := logger.snapshot()
+	if len(entries) != 2 || entries[0] != entries[1] || !strings.Contains(entries[0], "lifecycle=running state=running") {
+		t.Fatalf("workflow event logs = %#v", entries)
+	}
+	if len(coreSvc.eventAfters) != 2 || coreSvc.eventAfters[0] != 0 || coreSvc.eventAfters[1] != event.Sequence {
+		t.Fatalf("workflow event cursors = %#v", coreSvc.eventAfters)
+	}
+}

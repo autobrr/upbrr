@@ -25,7 +25,7 @@ func Profile() standalone.Profile {
 		PrepareDescription: prepareDescription,
 		PrepareUpload:      prepareUpload,
 		ReleaseNamePolicy: trackers.WithNonSceneReleaseNameConfirmation(
-			trackers.NewReleaseNamePolicy("standalone/ar/v3", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
+			trackers.NewReleaseNamePolicy("standalone/ar/v4", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
 				name := resolveARName(input.Subject)
 				if !input.Subject.Scene && input.RequestedName != nil {
 					name = strings.TrimSpace(*input.RequestedName)

@@ -239,10 +239,14 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		return api.TorrentResult{}, fmt.Errorf("torrent: validate created torrent %q: %w", info.Path, err)
 	}
 	if policy != nil {
-		if err := validateTorrentFileSize(info.Path, policy); err != nil {
+		trackerCount := len(normalizedTrackerNames(meta.Trackers))
+		s.logger.Infof("torrent: tracker policy validation tracker=%s state=start decision=validate count=%d", policy.name, trackerCount)
+		if err := policy.validateTorrent(info.Path, meta); err != nil {
+			s.logger.Warnf("torrent: tracker policy validation tracker=%s state=completed decision=rejected count=%d", policy.name, trackerCount)
 			emitTorrentProgress(ctx, meta, "failed", "Torrent policy validation failed")
 			return api.TorrentResult{}, fmt.Errorf("torrent: validate created torrent policy %q: %w", info.Path, err)
 		}
+		s.logger.Infof("torrent: tracker policy validation tracker=%s state=completed decision=accepted count=%d", policy.name, trackerCount)
 	}
 	if err := setCreatedBy(info.Path, torrentmeta.MkbrrUploadCreatedBy); err != nil {
 		emitTorrentProgress(ctx, meta, "failed", "Torrent metadata update failed")

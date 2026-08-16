@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -63,14 +62,18 @@ type cliReleaseWorkflowCore interface {
 }
 
 type cliWorkflowSession struct {
-	core           cliReleaseWorkflowCore
-	logger         api.Logger
-	current        releaseworkflow.CommandResult
-	intent         cliWorkflowIntent
-	uploadRequest  api.Request
-	idempotencyRun string
-	intentSequence uint64
-	progressWriter io.Writer
+	core               cliReleaseWorkflowCore
+	logger             api.Logger
+	current            releaseworkflow.CommandResult
+	intent             cliWorkflowIntent
+	uploadRequest      api.Request
+	idempotencyRun     string
+	intentSequence     uint64
+	printedProgress    map[api.OperationKind]struct{}
+	projectionsPrinted bool
+	eventLogState      cliWorkflowEventLogState
+	progressWriter     io.Writer
+	streams            cliIO
 }
 
 // cliWorkflowIntent is the detached CLI adapter input retained after the
@@ -161,9 +164,14 @@ func (s *cliWorkflowSession) waitForOperation(
 	ctx context.Context,
 	operation api.WorkflowOperationStatus,
 ) (api.WorkflowOperationStatus, error) {
-	printCLIWorkflowProgress(s.progressWriter, operation.Operation)
-	var eventLogState cliWorkflowEventLogState
-	if err := s.logNewOperationEvents(ctx, operation, &eventLogState); err != nil {
+	if _, printed := s.printedProgress[operation.Operation]; !printed {
+		if s.printedProgress == nil {
+			s.printedProgress = make(map[api.OperationKind]struct{})
+		}
+		s.printedProgress[operation.Operation] = struct{}{}
+		printCLIWorkflowProgress(s.progressWriter, operation.Operation)
+	}
+	if err := s.logNewOperationEvents(ctx, operation, &s.eventLogState); err != nil {
 		return api.WorkflowOperationStatus{}, err
 	}
 	for operation.Status == api.StageStatusQueued || operation.Status == api.StageStatusRunning {
@@ -197,7 +205,7 @@ func (s *cliWorkflowSession) waitForOperation(
 			return api.WorkflowOperationStatus{}, fmt.Errorf("upbrr: poll release workflow command: %w", err)
 		}
 		operation = current
-		if err := s.logNewOperationEvents(ctx, operation, &eventLogState); err != nil {
+		if err := s.logNewOperationEvents(ctx, operation, &s.eventLogState); err != nil {
 			return api.WorkflowOperationStatus{}, err
 		}
 	}
@@ -225,6 +233,16 @@ func (s *cliWorkflowSession) logNewOperationEvents(
 	state *cliWorkflowEventLogState,
 ) error {
 	const eventPageSize = 1000
+	switch {
+	case state.workflowID != operation.WorkflowID:
+		state.workflowID = operation.WorkflowID
+		state.operationID = operation.ID
+		state.lastSequence = 0
+		state.loggedEvents = nil
+	case state.operationID != operation.ID:
+		state.operationID = operation.ID
+		state.loggedEvents = nil
+	}
 	for {
 		events, err := s.core.ReleaseWorkflowOperationEvents(
 			ctx,
@@ -254,8 +272,10 @@ func newCLIWorkflowSession(
 	intent api.PreparationIntent,
 	reader *bufio.Reader,
 	cfg config.Config,
+	streams cliIO,
 	logger api.Logger,
 ) (*cliWorkflowSession, error) {
+	streams = streams.normalized()
 	input, err := api.MapPreparationRequest(request, intent)
 	if err != nil {
 		return nil, fmt.Errorf("upbrr: map workflow preparation: %w", err)
@@ -266,7 +286,8 @@ func newCLIWorkflowSession(
 		intent:         mapCLIWorkflowIntent(request),
 		uploadRequest:  request,
 		idempotencyRun: strings.ToLower(rand.Text()),
-		progressWriter: os.Stdout,
+		progressWriter: streams.out,
+		streams:        streams,
 	}
 	if err := session.continueUntilStable(ctx, api.ContinueReleaseWorkflowRequest{
 		IdempotencyKey: session.nextIdempotencyKey("prepare"),
@@ -312,7 +333,7 @@ func (s *cliWorkflowSession) resolvePlaylistAction(
 	if interaction == api.InteractionModeUnattended && !cfg.Metadata.UseLargestPlaylist {
 		return errors.New("upbrr: unattended Blu-ray preparation requires playlist selection; use --unattended_confirm/--uac to allow the prompt")
 	}
-	selected, err := selectCLIWorkflowPlaylists(reader, *action, cfg.Metadata.UseLargestPlaylist)
+	selected, err := selectCLIWorkflowPlaylists(reader, s.streams.out, *action, cfg.Metadata.UseLargestPlaylist)
 	if err != nil {
 		return err
 	}
@@ -338,7 +359,7 @@ func pendingCLIWorkflowAction(actions []api.RequiredAction, kind api.RequiredAct
 	return nil
 }
 
-func selectCLIWorkflowPlaylists(reader *bufio.Reader, action api.RequiredAction, useLargest bool) ([]string, error) {
+func selectCLIWorkflowPlaylists(reader *bufio.Reader, output io.Writer, action api.RequiredAction, useLargest bool) ([]string, error) {
 	if len(action.Options) == 0 {
 		return nil, errors.New("upbrr: Blu-ray playlist action has no candidates")
 	}
@@ -348,12 +369,12 @@ func selectCLIWorkflowPlaylists(reader *bufio.Reader, action api.RequiredAction,
 	if reader == nil {
 		return nil, errors.New("upbrr: Blu-ray playlist selection requires input")
 	}
-	fmt.Println()
-	fmt.Println(action.Prompt)
+	fmt.Fprintln(output)
+	fmt.Fprintln(output, action.Prompt)
 	for index, option := range action.Options {
-		fmt.Printf("%d. %s\n", index+1, option.Label)
+		fmt.Fprintf(output, "%d. %s\n", index+1, option.Label)
 	}
-	answer, err := promptLine(reader, "Playlist number(s), comma-separated: ")
+	answer, err := promptLine(reader, output, "Playlist number(s), comma-separated: ")
 	if err != nil {
 		return nil, err
 	}
@@ -387,10 +408,11 @@ func runCLIWorkflowInteractive(
 	playlist api.PlaylistInstruction,
 	screens int,
 	cfg config.Config,
-	stdin io.Reader,
+	streams cliIO,
 	logger api.Logger,
 ) error {
-	reader := bufio.NewReader(stdin)
+	streams = streams.normalized()
+	reader := bufio.NewReader(streams.in)
 	currentArgs := append([]string(nil), baseArgs...)
 	currentOpts := opts
 	currentVisited := copyVisited(visited)
@@ -405,23 +427,23 @@ func runCLIWorkflowInteractive(
 			return err
 		}
 		request.PlaylistInstruction = cloneCLIPlaylistInstruction(playlist)
-		session, err = newCLIWorkflowSession(ctx, coreSvc, request, api.PreparationIntentPreview, reader, cfg, logger)
+		session, err = newCLIWorkflowSession(ctx, coreSvc, request, api.PreparationIntentPreview, reader, cfg, streams, logger)
 		if err != nil {
 			return err
 		}
 		preview := cliWorkflowMetadataPreview(session.current)
-		printMetadataPreview(preview, currentOpts.Debug)
+		printMetadataPreview(streams.out, preview, currentOpts.Debug)
 		if currentOpts.interactionMode() == api.InteractionModeUnattended {
 			break
 		}
-		confirmed, promptErr := promptYesNo(reader, "Metadata correct? [Y/n]: ", true)
+		confirmed, promptErr := promptYesNo(reader, streams.out, "Metadata correct? [Y/n]: ", true)
 		if promptErr != nil {
 			return promptErr
 		}
 		if confirmed {
 			break
 		}
-		editArgs, promptErr := promptLine(reader, "Input args that need correction, or 'continue': ")
+		editArgs, promptErr := promptLine(reader, streams.out, "Input args that need correction, or 'continue': ")
 		if promptErr != nil {
 			return promptErr
 		}
@@ -430,13 +452,13 @@ func runCLIWorkflowInteractive(
 		}
 		editTokens, splitErr := splitInteractiveCLIArgs(editArgs)
 		if splitErr != nil {
-			fmt.Printf("Invalid override args: %v\n", splitErr)
+			fmt.Fprintf(streams.out, "Invalid override args: %v\n", splitErr)
 			continue
 		}
 		nextArgs := append(append([]string(nil), currentArgs...), editTokens...)
 		nextOpts, nextVisited, _, parseErr := parseCLIOptions(nextArgs)
 		if parseErr != nil {
-			fmt.Printf("Invalid override args: %v\n", parseErr)
+			fmt.Fprintf(streams.out, "Invalid override args: %v\n", parseErr)
 			continue
 		}
 		currentArgs, currentOpts, currentVisited = nextArgs, nextOpts, nextVisited
@@ -475,6 +497,10 @@ func (s *cliWorkflowSession) complete(
 	cfg config.Config,
 	logger api.Logger,
 ) (int, error) {
+	s.streams = s.streams.normalized()
+	if s.progressWriter == nil {
+		s.progressWriter = s.streams.out
+	}
 	if strings.TrimSpace(s.uploadRequest.SourcePath) == "" {
 		return 0, errors.New("upbrr: composite upload source is unavailable")
 	}
@@ -540,6 +566,7 @@ func ensureCLIWorkflowProjectionOverrides(
 
 func collectCLIWorkflowQuestionnaires(
 	reader *bufio.Reader,
+	output io.Writer,
 	interaction api.InteractionMode,
 	projections *api.TrackerReleaseProjectionSet,
 	instructions map[api.TrackerID]api.TrackerProjectionInstructions,
@@ -567,7 +594,7 @@ func collectCLIWorkflowQuestionnaires(
 			if len(field.Options) > 0 {
 				label += " [" + strings.Join(field.Options, "/") + "]"
 			}
-			answer, err := promptLine(reader, fmt.Sprintf("%s %s: ", projection.TrackerID, label))
+			answer, err := promptLine(reader, output, fmt.Sprintf("%s %s: ", projection.TrackerID, label))
 			if err != nil {
 				return false, err
 			}
@@ -584,25 +611,52 @@ func collectCLIWorkflowQuestionnaires(
 }
 
 func printCLIWorkflowProjections(
+	output io.Writer,
 	projections *api.TrackerReleaseProjectionSet,
 	dupes *api.DupeAssessment,
+	includePolicyDetails bool,
 ) {
 	if projections == nil {
 		return
 	}
-	fmt.Println()
-	fmt.Println("Tracker projections")
+	fmt.Fprintln(output)
+	fmt.Fprintln(output, "Tracker projections")
+	blocked := make([]string, 0)
+	if !includePolicyDetails {
+		for _, projection := range projections.Projections {
+			readiness := cliWorkflowProjectionReadiness(projection, dupes)
+			if readiness != api.ReadinessStatusBlocked && readiness != api.ReadinessStatusIneligible {
+				continue
+			}
+			name := strings.TrimSpace(projection.DisplayName)
+			if name == "" {
+				name = string(projection.TrackerID)
+			}
+			blocked = append(blocked, name)
+		}
+	}
+	if len(blocked) > 0 {
+		fmt.Fprintf(output, "Blocked/ineligible: %s\n", strings.Join(blocked, ", "))
+	}
+	printed := len(blocked) > 0
 	for index, projection := range projections.Projections {
 		readiness := cliWorkflowProjectionReadiness(projection, dupes)
-		if index > 0 {
-			fmt.Println()
+		if !includePolicyDetails && (readiness == api.ReadinessStatusBlocked || readiness == api.ReadinessStatusIneligible) {
+			continue
 		}
+		if printed || index > 0 {
+			fmt.Fprintln(output)
+		}
+		printed = true
 		if cliWorkflowTrackerNameChanged(projection.CanonicalReleaseName, projection.UploadReleaseName) {
-			fmt.Printf("- %s: RENAMED (readiness=%s)\n", projection.DisplayName, readiness)
-			fmt.Printf("  original: %s\n", projection.CanonicalReleaseName)
-			fmt.Printf("  upload:   %s\n", projection.UploadReleaseName)
+			fmt.Fprintf(output, "- %s: RENAMED (readiness=%s)\n", projection.DisplayName, readiness)
+			fmt.Fprintf(output, "  original: %s\n", projection.CanonicalReleaseName)
+			fmt.Fprintf(output, "  upload:   %s\n", projection.UploadReleaseName)
 		} else {
-			fmt.Printf("- %s: %s (readiness=%s)\n", projection.DisplayName, projection.UploadReleaseName, readiness)
+			fmt.Fprintf(output, "- %s: %s (readiness=%s)\n", projection.DisplayName, projection.UploadReleaseName, readiness)
+		}
+		if !includePolicyDetails {
+			continue
 		}
 		for _, decision := range projection.PolicyDecisions {
 			if !auditableProjectionPolicyDecision(decision) {
@@ -620,7 +674,8 @@ func printCLIWorkflowProjections(
 			if evidenceStatus == "" {
 				evidenceStatus = "unspecified"
 			}
-			fmt.Printf(
+			fmt.Fprintf(
+				output,
 				"  policy: code=%s decision=%s blocking=%t disposition=%s evidence=%s reason=%s\n",
 				strings.TrimSpace(decision.Code),
 				strings.TrimSpace(decision.Decision),
@@ -708,7 +763,7 @@ func (s *cliWorkflowSession) collectContinuationActionAnswers(
 			if s.intent.interaction == api.InteractionModeUnattended {
 				continue
 			}
-			confirmed, err := promptYesNo(reader, action.Prompt+" [y/N]: ", false)
+			confirmed, err := promptYesNo(reader, s.streams.out, action.Prompt+" [y/N]: ", false)
 			if err != nil {
 				return nil, false, err
 			}
@@ -724,7 +779,7 @@ func (s *cliWorkflowSession) collectContinuationActionAnswers(
 			if s.intent.interaction == api.InteractionModeUnattended {
 				continue
 			}
-			confirmed, err := promptYesNo(reader, action.Prompt+" [y/N]: ", false)
+			confirmed, err := promptYesNo(reader, s.streams.out, action.Prompt+" [y/N]: ", false)
 			if err != nil {
 				return nil, false, err
 			}
@@ -737,7 +792,7 @@ func (s *cliWorkflowSession) collectContinuationActionAnswers(
 			if s.intent.interaction == api.InteractionModeUnattended {
 				return nil, false, errors.New("upbrr: unattended external-effect reconciliation requires manual confirmation")
 			}
-			confirmed, err := promptYesNo(reader, action.Prompt+" Confirm it did not complete? [y/N]: ", false)
+			confirmed, err := promptYesNo(reader, s.streams.out, action.Prompt+" Confirm it did not complete? [y/N]: ", false)
 			if err != nil {
 				return nil, false, err
 			}
@@ -822,37 +877,44 @@ func cliWorkflowMediaInstructions(request api.Request) api.MediaCaptureInstructi
 }
 
 func printCLIWorkflowDryRun(
+	output io.Writer,
 	result api.UploadDryRunResult,
 	noSeed bool,
 	projections *api.TrackerReleaseProjectionSet,
 ) {
-	fmt.Println()
-	fmt.Println("Upload dry run")
+	fmt.Fprintln(output)
+	fmt.Fprintln(output, "Upload dry run")
 	if noSeed {
-		fmt.Println("Debug mode: tracker uploads and client injection are disabled.")
+		fmt.Fprintln(output, "Debug mode: tracker uploads and client injection are disabled.")
 	} else {
-		fmt.Println("Debug mode: tracker uploads are disabled; client injection was attempted for each ready tracker.")
+		fmt.Fprintln(output, "Debug mode: tracker uploads are disabled; client injection was attempted for each ready tracker.")
 	}
 	for index, report := range result.Reports {
 		if index > 0 {
-			fmt.Println()
+			fmt.Fprintln(output)
 		}
 		projection := cliWorkflowProjectionForTracker(projections, report.TrackerID)
 		if projection != nil && cliWorkflowTrackerNameChanged(projection.CanonicalReleaseName, report.UploadReleaseName) {
-			fmt.Printf("- %s: RENAMED status=%s\n", report.DisplayName, report.Status)
-			fmt.Printf("  original: %s\n", projection.CanonicalReleaseName)
-			fmt.Printf("  upload:   %s\n", report.UploadReleaseName)
+			fmt.Fprintf(output, "- %s: RENAMED status=%s\n", report.DisplayName, report.Status)
+			fmt.Fprintf(output, "  original: %s\n", projection.CanonicalReleaseName)
+			fmt.Fprintf(output, "  upload:   %s\n", report.UploadReleaseName)
 		} else {
-			fmt.Printf("- %s: %s status=%s\n", report.DisplayName, report.UploadReleaseName, report.Status)
+			fmt.Fprintf(output, "- %s: %s status=%s\n", report.DisplayName, report.UploadReleaseName, report.Status)
 		}
 		if report.ClientInjection.Status != "" {
-			fmt.Printf("  client injection: %s: %s\n", report.ClientInjection.Status, report.ClientInjection.Message)
+			fmt.Fprintf(
+				output,
+				"  client injection: %s: %s\n",
+				report.ClientInjection.Status,
+				logging.SanitizeMessage(report.ClientInjection.Message),
+			)
 		}
 		for _, warning := range report.Warnings {
-			fmt.Printf("  warning: %s\n", warning)
+			fmt.Fprintf(output, "  warning: %s\n", logging.SanitizeMessage(warning))
 		}
 	}
-	fmt.Printf(
+	fmt.Fprintf(
+		output,
 		"Dry run complete: %d succeeded, %d failed, %d skipped; status=%s.\n",
 		result.SucceededCount,
 		result.FailedCount,
@@ -861,7 +923,7 @@ func printCLIWorkflowDryRun(
 	)
 }
 
-func printCLIWorkflowUploadResult(result *api.UploadResult) (int, error) {
+func printCLIWorkflowUploadResult(output io.Writer, result *api.UploadResult) (int, error) {
 	if result == nil {
 		return 0, errors.New("upbrr: upload workflow produced no result")
 	}
@@ -871,15 +933,15 @@ func printCLIWorkflowUploadResult(result *api.UploadResult) (int, error) {
 	for _, tracker := range result.Results {
 		submissionStatus := tracker.EffectiveSubmissionStatus()
 		clientStatus := tracker.EffectiveClientInjectionStatus()
-		fmt.Printf("Upload %s: submission=%s client-injection=%s\n", tracker.TrackerID, submissionStatus, clientStatus)
+		fmt.Fprintf(output, "Upload %s: submission=%s client-injection=%s\n", tracker.TrackerID, submissionStatus, clientStatus)
 		clientMessage := strings.TrimSpace(logging.SanitizeMessage(tracker.ClientInjectionMessage))
 		if clientMessage != "" {
-			fmt.Printf("  client injection: %s\n", clientMessage)
+			fmt.Fprintf(output, "  client injection: %s\n", clientMessage)
 		}
 		for _, failure := range tracker.Failures {
 			message := strings.TrimSpace(logging.SanitizeMessage(failure.Failure.Message))
 			if message != "" && message != clientMessage {
-				fmt.Printf("  failure: %s\n", message)
+				fmt.Fprintf(output, "  failure: %s\n", message)
 			}
 		}
 		switch submissionStatus {
@@ -903,9 +965,9 @@ func printCLIWorkflowUploadResult(result *api.UploadResult) (int, error) {
 			clientFailed++
 		}
 	}
-	fmt.Printf("Upload complete: %d tracker upload(s).\n", uploaded)
+	fmt.Fprintf(output, "Upload complete: %d tracker upload(s).\n", uploaded)
 	if clientFailed > 0 {
-		fmt.Printf("Client injection incomplete: %d tracker artifact(s); retry client injection without resubmitting.\n", clientFailed)
+		fmt.Fprintf(output, "Client injection incomplete: %d tracker artifact(s); retry client injection without resubmitting.\n", clientFailed)
 	}
 	if failed > 0 {
 		return uploaded, fmt.Errorf("upbrr: %d tracker upload(s) failed", failed)
@@ -920,17 +982,18 @@ func runCLIWorkflowUploadOnly(
 	debug bool,
 	queueMode bool,
 	cfg config.Config,
-	stdin io.Reader,
+	streams cliIO,
 	logger api.Logger,
 ) error {
-	reader := bufio.NewReader(stdin)
+	streams = streams.normalized()
+	reader := bufio.NewReader(streams.in)
 	uploaded := 0
 	return processCLIPreparationItems(ctx, batch, queueMode, cliItemTimeout, logger, func(itemCtx context.Context, item cliPreparationItem) error {
 		request := batch.defaults
 		request.SourcePath = item.originalPath
 		request.ExternalIDOverrides = item.externalIDs
 		request.PlaylistInstruction = item.playlistInstruction
-		session, err := newCLIWorkflowSession(itemCtx, coreSvc, request, api.PreparationIntentUpload, reader, cfg, logger)
+		session, err := newCLIWorkflowSession(itemCtx, coreSvc, request, api.PreparationIntentUpload, reader, cfg, streams, logger)
 		if err != nil {
 			return err
 		}
@@ -948,7 +1011,7 @@ func runCLIWorkflowSiteCheck(
 	item cliPreparationItem,
 	screens int,
 	cfg config.Config,
-	stdin io.Reader,
+	streams cliIO,
 	logger api.Logger,
 ) error {
 	request, err := buildCLIRequest(opts, visited, []string{item.originalPath}, screens)
@@ -956,12 +1019,13 @@ func runCLIWorkflowSiteCheck(
 		return err
 	}
 	request.PlaylistInstruction = item.playlistInstruction
-	reader := bufio.NewReader(stdin)
-	session, err := newCLIWorkflowSession(ctx, coreSvc, request, api.PreparationIntentDryRun, reader, cfg, logger)
+	streams = streams.normalized()
+	reader := bufio.NewReader(streams.in)
+	session, err := newCLIWorkflowSession(ctx, coreSvc, request, api.PreparationIntentDryRun, reader, cfg, streams, logger)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("\n[Site Check] %s\n", formatPathLabel(item.originalPath))
+	fmt.Fprintf(streams.out, "\n[Site Check] %s\n", formatPathLabel(item.originalPath))
 	_, err = session.complete(ctx, true, reader, cfg, logger)
 	return err
 }

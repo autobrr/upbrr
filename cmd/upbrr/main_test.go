@@ -297,36 +297,9 @@ func TestRunCreateAuthUsesConfiguredDBPath(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	oldArgs := os.Args
-	oldStdin := os.Stdin
-	oldStdout := os.Stdout
-	defer func() {
-		os.Args = oldArgs
-		os.Stdin = oldStdin
-		os.Stdout = oldStdout
-	}()
-
-	stdinPath := filepath.Join(tmpDir, "stdin.txt")
-	if err := os.WriteFile(stdinPath, []byte("tester\nvery-secure-password\nvery-secure-password\n"), 0o600); err != nil {
-		t.Fatalf("write stdin fixture: %v", err)
-	}
-	stdinFile, err := os.Open(stdinPath)
-	if err != nil {
-		t.Fatalf("open stdin fixture: %v", err)
-	}
-	defer stdinFile.Close()
-	os.Stdin = stdinFile
-
-	stdoutPath := filepath.Join(tmpDir, "stdout.txt")
-	stdoutFile, err := os.Create(stdoutPath)
-	if err != nil {
-		t.Fatalf("create stdout fixture: %v", err)
-	}
-	defer stdoutFile.Close()
-	os.Stdout = stdoutFile
-
-	os.Args = []string{"upbrr", "--create-auth", "--config", configPath}
-	if err := run(); err != nil {
+	input := strings.NewReader("tester\nvery-secure-password\nvery-secure-password\n")
+	var output strings.Builder
+	if err := executeCLI(t.Context(), []string{"--create-auth", "--config", configPath}, cliIO{in: input, out: &output}); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -336,13 +309,7 @@ func TestRunCreateAuthUsesConfiguredDBPath(t *testing.T) {
 }
 
 func TestRunRejectsCreateAuthConflicts(t *testing.T) {
-	oldArgs := os.Args
-	defer func() {
-		os.Args = oldArgs
-	}()
-
-	os.Args = []string{"upbrr", "--create-auth", "--export-config", "out.yaml"}
-	err := run()
+	err := executeCLI(t.Context(), []string{"--create-auth", "--export-config", "out.yaml"}, cliIO{})
 	var cliErr *cliExitError
 	if !errors.As(err, &cliErr) {
 		t.Fatalf("expected cliExitError, got %v", err)
@@ -356,21 +323,15 @@ func TestRunRejectsCreateAuthConflicts(t *testing.T) {
 }
 
 func TestRunHelpFlagsPrintUsageAndSucceed(t *testing.T) {
-	oldArgs := os.Args
-	defer func() {
-		os.Args = oldArgs
-	}()
-
 	for _, helpFlag := range []string{"-help", "--help", "-h", "--h"} {
 		t.Run(helpFlag, func(t *testing.T) {
-			os.Args = []string{"upbrr", helpFlag}
-			output := captureRunStdout(t, func() {
-				if err := run(); err != nil {
-					t.Fatalf("run: %v", err)
-				}
-			})
-			if !strings.Contains(output, "Usage: upbrr [options] <input path>...") {
-				t.Fatalf("expected top-level usage in output, got %q", output)
+			var output strings.Builder
+			if err := executeCLI(t.Context(), []string{helpFlag}, cliIO{out: &output}); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			text := output.String()
+			if !strings.Contains(text, "Usage: upbrr [options] <input path>...") {
+				t.Fatalf("expected top-level usage in output, got %q", text)
 			}
 			for _, expected := range []string{
 				"Commands:",
@@ -386,8 +347,8 @@ func TestRunHelpFlagsPrintUsageAndSucceed(t *testing.T) {
 				"-limit-queue, --limit-queue, -lq int",
 				"-version, --version",
 			} {
-				if !strings.Contains(output, expected) {
-					t.Fatalf("expected output to contain %q, got %q", expected, output)
+				if !strings.Contains(text, expected) {
+					t.Fatalf("expected output to contain %q, got %q", expected, text)
 				}
 			}
 		})
@@ -395,36 +356,30 @@ func TestRunHelpFlagsPrintUsageAndSucceed(t *testing.T) {
 }
 
 func TestRunServeHelpPrintsUsageAndSucceeds(t *testing.T) {
-	oldArgs := os.Args
-	defer func() {
-		os.Args = oldArgs
-	}()
-
-	os.Args = []string{"upbrr", "serve", "--help"}
-	output := captureRunStdout(t, func() {
-		if err := run(); err != nil {
-			t.Fatalf("run: %v", err)
-		}
-	})
-	if !strings.Contains(output, "Usage: upbrr serve [options]") {
-		t.Fatalf("expected serve usage in output, got %q", output)
+	var output strings.Builder
+	if err := executeCLI(t.Context(), []string{"serve", "--help"}, cliIO{out: &output}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	text := output.String()
+	if !strings.Contains(text, "Usage: upbrr serve [options]") {
+		t.Fatalf("expected serve usage in output, got %q", text)
 	}
 	for _, expected := range []string{"Config:", "Server:", "Development:", "-config, --config string", "-addr, --addr string", "-host, --host string", "-port, --port int", "-base-url, --base-url string", "-persist-listen, --persist-listen", "-persist-web-config, --persist-web-config", "-dev-no-auth, --dev-no-auth"} {
-		if !strings.Contains(output, expected) {
-			t.Fatalf("expected output to contain %q, got %q", expected, output)
+		if !strings.Contains(text, expected) {
+			t.Fatalf("expected output to contain %q, got %q", expected, text)
 		}
 	}
 }
 
 func TestRunServePersistListenRequiresListenOverride(t *testing.T) {
-	err := runServe([]string{"--persist-listen"})
+	err := executeCLI(t.Context(), []string{"serve", "--persist-listen"}, cliIO{})
 	if err == nil || !strings.Contains(err.Error(), "--persist-listen requires --addr, --host, or --port") {
 		t.Fatalf("expected persist-listen requirement error, got %v", err)
 	}
 }
 
 func TestRunServePersistWebConfigRequiresWebConfigOverride(t *testing.T) {
-	err := runServe([]string{"--persist-web-config"})
+	err := executeCLI(t.Context(), []string{"serve", "--persist-web-config"}, cliIO{})
 	if err == nil || !strings.Contains(err.Error(), "--persist-web-config requires --addr, --host, --port, --base-url, or UPBRR_WEB_* env") {
 		t.Fatalf("expected persist-web-config requirement error, got %v", err)
 	}
@@ -537,7 +492,7 @@ func TestRunServeRejectedDevelopmentNoAuthHostDoesNotPersistListenOverride(t *te
 		t.Fatalf("write config: %v", err)
 	}
 
-	err := runServe([]string{"--config", configPath, "--dev-no-auth", "--host", "0.0.0.0", "--persist-listen"})
+	err := executeCLI(t.Context(), []string{"serve", "--config", configPath, "--dev-no-auth", "--host", "0.0.0.0", "--persist-listen"}, cliIO{})
 	if err == nil || !strings.Contains(err.Error(), "--dev-no-auth requires a loopback host") {
 		t.Fatalf("expected dev-no-auth loopback error, got %v", err)
 	}
@@ -580,7 +535,7 @@ func TestRunServePersistListenBindFailureDoesNotWriteWebConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("split listener addr: %v", err)
 	}
-	err = runServe([]string{"--config", configPath, "--dev-no-auth", "--host", "127.0.0.1", "--port", port, "--persist-listen"})
+	err = executeCLI(t.Context(), []string{"serve", "--config", configPath, "--dev-no-auth", "--host", "127.0.0.1", "--port", port, "--persist-listen"}, cliIO{})
 	if err == nil || !strings.Contains(err.Error(), "webserver: listen") {
 		t.Fatalf("expected listen error, got %v", err)
 	}
@@ -589,40 +544,8 @@ func TestRunServePersistListenBindFailureDoesNotWriteWebConfig(t *testing.T) {
 	}
 }
 
-func captureRunStdout(t *testing.T, fn func()) string {
-	t.Helper()
-
-	original := os.Stdout
-	stdoutPath := filepath.Join(t.TempDir(), "stdout.txt")
-	stdoutFile, err := os.Create(stdoutPath)
-	if err != nil {
-		t.Fatalf("create stdout fixture: %v", err)
-	}
-	os.Stdout = stdoutFile
-	defer func() {
-		os.Stdout = original
-	}()
-
-	fn()
-
-	if err := stdoutFile.Close(); err != nil {
-		t.Fatalf("close stdout fixture: %v", err)
-	}
-	raw, err := os.ReadFile(stdoutPath)
-	if err != nil {
-		t.Fatalf("read stdout fixture: %v", err)
-	}
-	return string(raw)
-}
-
 func TestRunWithoutArgsStillRequiresInputPath(t *testing.T) {
-	oldArgs := os.Args
-	defer func() {
-		os.Args = oldArgs
-	}()
-
-	os.Args = []string{"upbrr"}
-	err := run()
+	err := executeCLI(t.Context(), []string{}, cliIO{})
 	var cliErr *cliExitError
 	if !errors.As(err, &cliErr) {
 		t.Fatalf("expected cliExitError, got %v", err)
@@ -668,13 +591,7 @@ func TestRunExportConfigPlaintextExportsPlainSecrets(t *testing.T) {
 		t.Fatalf("save config: %v", err)
 	}
 
-	oldArgs := os.Args
-	defer func() {
-		os.Args = oldArgs
-	}()
-
-	os.Args = []string{"upbrr", "--config", configPath, "--export-config", outputPath, "--export-config-plaintext"}
-	if err := run(); err != nil {
+	if err := executeCLI(t.Context(), []string{"--config", configPath, "--export-config", outputPath, "--export-config-plaintext"}, cliIO{}); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
