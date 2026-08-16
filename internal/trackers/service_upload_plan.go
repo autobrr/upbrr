@@ -769,16 +769,9 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 				continue
 			}
 			if effectReceipt.AlreadySucceeded {
-				slot.summary = api.UploadSummary{Uploaded: 1}
-				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, "uploaded")
-				emitTrackerPlanProgress(
-					ctx,
-					meta.SourcePath,
-					slot.tracker,
-					"tracker_upload",
-					"completed",
-					"Prior tracker upload receipt retained",
-				)
+				slot.failure = trackerFailure(slot.tracker, "unknown_outcome", api.ErrReleaseWorkflowEffectAlreadySucceeded)
+				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, "unknown_outcome")
+				emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "failed", slot.failure.Message)
 				phase.Done()
 				continue
 			}
