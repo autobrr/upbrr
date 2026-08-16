@@ -72,6 +72,7 @@ func newUploaderRegistry(cfg config.Config, client *http.Client, registry *track
 		},
 		"passtheimage": &passTheImageUploader{apiKey: cfg.ImageHosting.PassTheImageAPI, client: client},
 		"reelflix":     &reelflixUploader{apiKey: cfg.ImageHosting.ReelflixAPI, client: client},
+		"samaritano":   &samaritanoUploader{apiKey: cfg.ImageHosting.SamaritanoAPI, client: client},
 		"seedpool_cdn": &seedpoolUploader{apiKey: cfg.ImageHosting.SeedpoolCDNAPI, client: client},
 		"sharex": &shareXUploader{
 			apiKey: cfg.ImageHosting.ShareXAPIKey,
@@ -1204,6 +1205,49 @@ type shareXUploader struct {
 	apiKey string
 	url    string
 	client *http.Client
+}
+
+const samaritanoUploadURL = "https://img.samaritano.cc/api/v1/sharex/upload"
+
+type samaritanoUploader struct {
+	apiKey string
+	client *http.Client
+}
+
+func (u *samaritanoUploader) Upload(ctx context.Context, imagePath string) (uploadResult, error) {
+	if strings.TrimSpace(u.apiKey) == "" {
+		return uploadResult{}, errors.New("image hosting: samaritano api key missing")
+	}
+	body, status, err := postMultipart(ctx, u.client, samaritanoUploadURL, nil, "file", imagePath, map[string]string{
+		"Authorization": "Bearer " + strings.TrimSpace(u.apiKey),
+	})
+	if err != nil {
+		return uploadResult{}, err
+	}
+	if status != http.StatusOK && status != http.StatusCreated {
+		return uploadResult{}, fmt.Errorf("samaritano upload failed with status %d", status)
+	}
+
+	var response struct {
+		URL          string `json:"url"`
+		ThumbnailURL string `json:"thumbnail_url"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return uploadResult{}, fmt.Errorf("samaritano invalid response: %w", err)
+	}
+	urlValue := strings.TrimSpace(response.URL)
+	if urlValue == "" {
+		return uploadResult{}, errors.New("samaritano upload failed: response URL missing")
+	}
+	imgURL := strings.TrimSpace(response.ThumbnailURL)
+	if imgURL == "" {
+		imgURL = urlValue
+	}
+	return uploadResult{
+		ImgURL: imgURL,
+		RawURL: urlValue,
+		WebURL: urlValue,
+	}, nil
 }
 
 func (u *shareXUploader) Upload(ctx context.Context, imagePath string) (uploadResult, error) {

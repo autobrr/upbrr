@@ -39,6 +39,7 @@ var legacyDefaultSectionByKey = map[string]string{
 	"zipline_url":                    "image_hosting",
 	"zipline_api_key":                "image_hosting",
 	"seedpool_cdn_api":               "image_hosting",
+	"samaritano_api_key":             "image_hosting",
 	"sharex_url":                     "image_hosting",
 	"sharex_api_key":                 "image_hosting",
 	"utppm_api":                      "image_hosting",

@@ -455,7 +455,8 @@ func (s *Service) checkTracker(
 			Status:    "completed",
 			CheckedAt: checkedAt,
 		}
-		s.logger.Infof(
+		s.logger.Debugf(
+			//logpolicy:allow local-client duplicate outcomes require debug visibility alongside remote search outcomes
 			"dupechecking: search tracker=%s state=completed source=local_client candidates=1 complete=true candidate_action=true review_required=false",
 			tracker,
 		)
@@ -516,7 +517,7 @@ func (s *Service) checkTracker(
 		result = failedPublicResult(tracker, FailureInternal, "duplicate adapter unavailable", checkedAt)
 		return result, newAssessmentEntry(meta, s.cfg, tracker, DispositionFailed, FailureInternal, false, api.DupeMatch{}, nil), false
 	}
-	s.logger.Infof("dupechecking: search tracker=%s state=start", tracker)
+	s.logger.Debugf("dupechecking: search tracker=%s state=start", tracker)
 	adapterResult := adapter.Search(ctx, cloneDuplicateSubject(meta))
 	if err := adapterResult.cause(); err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) && ctx.Err() != nil {
 		return api.DupeCheckResult{}, assessmentEntry{}, true
@@ -565,7 +566,7 @@ func (s *Service) projectAdapterResult(
 				Warnings:       cloneNotes(search.Warnings),
 			},
 		}
-		s.logger.Infof(
+		s.logger.Debugf(
 			"dupechecking: search tracker=%s state=completed work_scope=%s received=%d evaluated=%d wrong_work=%d exhaustive=%t effective_complete=%t candidate_action=%t review_required=%t",
 			tracker,
 			search.WorkScope,

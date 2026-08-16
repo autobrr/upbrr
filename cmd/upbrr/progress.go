@@ -31,7 +31,10 @@ type cliWorkflowLogState struct {
 }
 
 type cliWorkflowEventLogState struct {
+	workflowID   api.WorkflowID
+	operationID  api.WorkflowOperationID
 	lastSequence uint64
+	loggedEvents map[string]struct{}
 }
 
 func withCLIUploadProgressLogger(ctx context.Context, logger api.Logger) context.Context {
@@ -185,11 +188,31 @@ func logCLIWorkflowEvents(logger api.Logger, events []api.WorkflowEvent, state *
 			event.Recovery,
 			message,
 		}
+		key := fmt.Sprintf(format, args...)
+		if _, logged := state.loggedEvents[key]; logged {
+			state.lastSequence = event.Sequence
+			continue
+		}
+		if state.loggedEvents == nil {
+			state.loggedEvents = make(map[string]struct{})
+		}
+		state.loggedEvents[key] = struct{}{}
 		if logger != nil {
 			logger.Debugf(format, args...)
 		}
 		state.lastSequence = event.Sequence
 	}
+}
+
+func printCLIWorkflowDupeProgress(output io.Writer, update api.DupeProgressUpdate) {
+	if output == nil || update.Completed <= 0 || update.Total <= 0 {
+		return
+	}
+	lineEnd := "\r"
+	if update.Completed >= update.Total {
+		lineEnd = "\n"
+	}
+	_, _ = fmt.Fprintf(output, "Dupe checking: %d/%d%s", update.Completed, update.Total, lineEnd)
 }
 
 func printCLIWorkflowProgress(output io.Writer, operation api.OperationKind) {

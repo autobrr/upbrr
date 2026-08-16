@@ -8,8 +8,10 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -53,12 +55,70 @@ func TestAniListSearchRetriesTimeouts(t *testing.T) {
 		t.Fatalf("expected two timeout warnings, got %#v", warnings)
 	}
 	for _, warning := range warnings {
-		if !strings.HasPrefix(warning, "tmdb: anilist request timed out mal=0 retry=") {
+		if !strings.HasPrefix(warning, "tmdb: anilist request retrying mal=0 retry=") {
 			t.Fatalf("expected stable timeout warning fields, got %q", warning)
 		}
 		if strings.Contains(warning, "Example") || strings.Contains(warning, "GRP") {
 			t.Fatalf("expected timeout warning to omit the search term, got %q", warning)
 		}
+	}
+}
+
+func TestAniListSearchRetriesRateLimit(t *testing.T) {
+	attempts := 0
+	client := &Client{
+		anilistURL: testAnilistURL,
+		http: &http.Client{
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				attempts++
+				if attempts == 1 {
+					return &http.Response{
+						StatusCode: http.StatusTooManyRequests,
+						Body:       io.NopCloser(strings.NewReader(`{"errors":[{"message":"Too Many Requests"}]}`)),
+						Header:     http.Header{"Retry-After": []string{"0"}},
+					}, nil
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{"data":{"Page":{"media":[]}}}`)),
+					Header:     make(http.Header),
+				}, nil
+			}),
+		},
+		logger: api.NopLogger{},
+	}
+
+	if _, err := client.anilistSearch(t.Context(), "Example Anime", 0); err != nil {
+		t.Fatalf("expected success after rate-limit retry, got %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("expected 2 attempts, got %d", attempts)
+	}
+}
+
+func TestAniListSearchStopsWhenRetryDelayExceedsBudget(t *testing.T) {
+	attempts := 0
+	client := &Client{
+		anilistURL: testAnilistURL,
+		http: &http.Client{
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				attempts++
+				return &http.Response{
+					StatusCode: http.StatusTooManyRequests,
+					Body:       io.NopCloser(strings.NewReader(`{"errors":[{"message":"Too Many Requests"}]}`)),
+					Header:     http.Header{"Retry-After": []string{"120"}},
+				}, nil
+			}),
+		},
+		logger: api.NopLogger{},
+	}
+
+	_, err := client.anilistSearch(t.Context(), "Example Anime", 0)
+	if err == nil || !strings.Contains(err.Error(), "http 429") {
+		t.Fatalf("expected rate-limit error, got %v", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("expected 1 attempt when retry delay exceeds budget, got %d", attempts)
 	}
 }
 
@@ -110,6 +170,97 @@ func TestFetchAniListMetadataReturnsGraphQLErrors(t *testing.T) {
 	}
 	if attempts != 1 {
 		t.Fatalf("expected one request, got %d", attempts)
+	}
+}
+
+func TestFetchAniListMetadataRetriesRateLimit(t *testing.T) {
+	attempts := 0
+	client := &Client{
+		anilistURL: testAnilistURL,
+		http: &http.Client{
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				attempts++
+				if attempts == 1 {
+					return &http.Response{
+						StatusCode: http.StatusTooManyRequests,
+						Body:       io.NopCloser(strings.NewReader(`{"errors":[{"message":"Too Many Requests"}]}`)),
+						Header:     http.Header{"Retry-After": []string{"0"}},
+					}, nil
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{"data":{"Media":{"id":1,"idMal":20}}}`)),
+					Header:     make(http.Header),
+				}, nil
+			}),
+		},
+		logger: api.NopLogger{},
+	}
+
+	result, err := client.FetchAniListMetadata(t.Context(), 20)
+	if err != nil {
+		t.Fatalf("expected success after rate-limit retry, got %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("expected 2 attempts, got %d", attempts)
+	}
+	if result.AniListID != 1 || result.MALID != 20 {
+		t.Fatalf("unexpected mapped result: %#v", result)
+	}
+}
+
+func TestFetchAniListMetadataStopsWhenRetryDelayExceedsBudget(t *testing.T) {
+	attempts := 0
+	client := &Client{
+		anilistURL: testAnilistURL,
+		http: &http.Client{
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				attempts++
+				return &http.Response{
+					StatusCode: http.StatusTooManyRequests,
+					Body:       io.NopCloser(strings.NewReader(`{"errors":[{"message":"Too Many Requests"}]}`)),
+					Header:     http.Header{"Retry-After": []string{"120"}},
+				}, nil
+			}),
+		},
+		logger: api.NopLogger{},
+	}
+
+	_, err := client.FetchAniListMetadata(t.Context(), 20)
+	if err == nil || !strings.Contains(err.Error(), "http 429") {
+		t.Fatalf("expected rate-limit error, got %v", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("expected 1 attempt when retry delay exceeds budget, got %d", attempts)
+	}
+}
+
+func TestFetchAniListMetadataReturnsEmptyOnNotFound(t *testing.T) {
+	attempts := 0
+	client := &Client{
+		anilistURL: testAnilistURL,
+		http: &http.Client{
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				attempts++
+				return &http.Response{
+					StatusCode: http.StatusNotFound,
+					Body:       io.NopCloser(strings.NewReader(`{"errors":[{"message":"Not Found"}]}`)),
+					Header:     make(http.Header),
+				}, nil
+			}),
+		},
+		logger: api.NopLogger{},
+	}
+
+	result, err := client.FetchAniListMetadata(t.Context(), 999999)
+	if err != nil {
+		t.Fatalf("expected missing media to return no error, got %v", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("expected one request, got %d", attempts)
+	}
+	if result.AniListID != 0 || result.MALID != 0 || result.TitleRomaji != "" {
+		t.Fatalf("expected empty metadata, got %#v", result)
 	}
 }
 
@@ -245,6 +396,111 @@ func TestResolveAnimeWarnsSanitizedOnSearchFailure(t *testing.T) {
 		if strings.Contains(warning, "Example") || strings.Contains(warning, "GRP") {
 			t.Fatalf("expected warning to omit the search term, got %q", warning)
 		}
+	}
+}
+
+func TestResolveAnimeSearchesKnownMALIDOnce(t *testing.T) {
+	attempts := 0
+	client := &Client{
+		anilistURL: testAnilistURL,
+		http: &http.Client{
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				attempts++
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{"data":{"Page":{"media":[]}}}`)),
+					Header:     make(http.Header),
+				}, nil
+			}),
+		},
+		logger: api.NopLogger{},
+	}
+
+	result, err := client.ResolveAnime(t.Context(), "Example Anime", MetadataInput{
+		Filename:  "Example.Anime.2026.S01.1080p.WEB-DL-GRP",
+		MALManual: 20,
+	})
+	if err != nil {
+		t.Fatalf("expected best-effort resolve to succeed, got %v", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("expected one MAL ID search, got %d", attempts)
+	}
+	if result.MALID != 20 {
+		t.Fatalf("expected explicit MAL ID to be retained, got %d", result.MALID)
+	}
+}
+
+func TestParseAniListRetryDelay(t *testing.T) {
+	now := time.Date(2026, time.August, 15, 10, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name       string
+		retryAfter string
+		reset      string
+		want       time.Duration
+	}{
+		{
+			name:       "delta seconds",
+			retryAfter: "51",
+			want:       51 * time.Second,
+		},
+		{
+			name:       "http date",
+			retryAfter: now.Add(20 * time.Second).Format(http.TimeFormat),
+			want:       20 * time.Second,
+		},
+		{
+			name:  "reset fallback",
+			reset: strconv.FormatInt(now.Add(30*time.Second).Unix(), 10),
+			want:  30 * time.Second,
+		},
+		{
+			name:       "retry after precedence",
+			retryAfter: "10",
+			reset:      strconv.FormatInt(now.Add(30*time.Second).Unix(), 10),
+			want:       10 * time.Second,
+		},
+		{
+			name:       "invalid and past",
+			retryAfter: "invalid",
+			reset:      strconv.FormatInt(now.Add(-time.Second).Unix(), 10),
+			want:       0,
+		},
+		{
+			name:       "over budget",
+			retryAfter: "120",
+			want:       anilistRetryDelayOverBudget,
+		},
+		{
+			name:  "reset over budget",
+			reset: strconv.FormatInt(now.Add(120*time.Second).Unix(), 10),
+			want:  anilistRetryDelayOverBudget,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			header := make(http.Header)
+			if tt.retryAfter != "" {
+				header.Set("Retry-After", tt.retryAfter)
+			}
+			if tt.reset != "" {
+				header.Set("X-Ratelimit-Reset", tt.reset)
+			}
+			if got := parseAniListRetryDelay(header, now); got != tt.want {
+				t.Fatalf("parseAniListRetryDelay() = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWaitForAniListRetryReturnsCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	err := waitForAniListRetry(ctx, anilistMaxRetryWait)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("waitForAniListRetry() error = %v, want context canceled", err)
 	}
 }
 

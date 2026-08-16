@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"io"
 	"slices"
 	"strings"
 	"testing"
@@ -25,21 +26,32 @@ type cliWorkflowCoreFake struct {
 	uploadRequests []api.CreateReleaseWorkflowUploadRequest
 	uploadFeedback []api.ReleaseWorkflowUploadFeedback
 	startUploadFn  func(api.CreateReleaseWorkflowUploadRequest) (releaseworkflow.CommandResult, error)
+	startProgress  []api.DupeProgressUpdate
 	feedbackFn     func(api.ReleaseWorkflowUploadFeedback) (releaseworkflow.CommandResult, error)
 	operation      api.WorkflowOperationStatus
 	events         []api.WorkflowEvent
 	eventBatches   [][]api.WorkflowEvent
 	eventBatch     int
+	eventAfters    []uint64
 	queueOperation bool
 	cancelCalls    int
 }
 
+func captureWriter(fn func(io.Writer)) string {
+	var output strings.Builder
+	fn(&output)
+	return output.String()
+}
+
 func (f *cliWorkflowCoreFake) StartReleaseWorkflowUpload(
-	_ context.Context,
+	ctx context.Context,
 	_ string,
 	request api.CreateReleaseWorkflowUploadRequest,
 ) (releaseworkflow.CommandResult, error) {
 	f.uploadRequests = append(f.uploadRequests, request)
+	for _, update := range f.startProgress {
+		api.EmitDupeProgress(ctx, update)
+	}
 	if f.startUploadFn != nil {
 		return f.startUploadFn(request)
 	}
@@ -121,8 +133,8 @@ func (f *cliWorkflowCoreFake) ContinueReleaseWorkflow(
 }
 
 func TestPrintCLIWorkflowDryRunIncludesClientOutcome(t *testing.T) {
-	output := captureStdout(t, func() {
-		printCLIWorkflowDryRun(api.UploadDryRunResult{Reports: []api.TrackerDryRunReport{
+	output := captureWriter(func(output io.Writer) {
+		printCLIWorkflowDryRun(output, api.UploadDryRunResult{Reports: []api.TrackerDryRunReport{
 			{
 				TrackerID:         "BETA",
 				DisplayName:       "Beta",
@@ -130,16 +142,17 @@ func TestPrintCLIWorkflowDryRunIncludesClientOutcome(t *testing.T) {
 				Status:            api.StageStatusCompleted,
 				ClientInjection: api.ClientInjectionOutcome{
 					Status:  api.StageStatusCompleted,
-					Message: "Client injection completed.",
+					Message: "Client injection completed with passkey=never-print-this.",
 				},
-				Warnings: []string{"Synthetic warning."},
+				Warnings: []string{"Synthetic warning api_token=never-print-this."},
 			},
 		}}, false, nil)
 	})
 	if !strings.Contains(output, "status=completed") ||
 		!strings.Contains(output, "client injection was attempted for each ready tracker") ||
-		!strings.Contains(output, "client injection: completed: Client injection completed.") ||
-		!strings.Contains(output, "warning: Synthetic warning.") {
+		!strings.Contains(output, "client injection: completed: Client injection completed with passkey=[REDACTED]") ||
+		!strings.Contains(output, "warning: Synthetic warning api_token=[REDACTED]") ||
+		strings.Contains(output, "never-print-this") {
 		t.Fatalf("upload dry-run output = %q", output)
 	}
 }
@@ -149,8 +162,8 @@ func TestPrintCLIWorkflowUploadResultIncludesRedactedTrackerFailure(t *testing.T
 		uploaded  int
 		resultErr error
 	)
-	output := captureStdout(t, func() {
-		uploaded, resultErr = printCLIWorkflowUploadResult(&api.UploadResult{Results: []api.UploadTrackerResult{{
+	output := captureWriter(func(output io.Writer) {
+		uploaded, resultErr = printCLIWorkflowUploadResult(output, &api.UploadResult{Results: []api.UploadTrackerResult{{
 			TrackerID:             "EXAMPLE",
 			Status:                api.StageStatusFailed,
 			SubmissionStatus:      api.StageStatusFailed,
@@ -172,8 +185,9 @@ func TestPrintCLIWorkflowUploadResultIncludesRedactedTrackerFailure(t *testing.T
 }
 
 func TestPrintCLIWorkflowDryRunSeparatesTrackersAndHighlightsRenames(t *testing.T) {
-	output := captureStdout(t, func() {
+	output := captureWriter(func(output io.Writer) {
 		printCLIWorkflowDryRun(
+			output,
 			api.UploadDryRunResult{Reports: []api.TrackerDryRunReport{
 				{
 					TrackerID:         "ALPHA",
@@ -215,8 +229,8 @@ func TestPrintCLIWorkflowDryRunSeparatesTrackersAndHighlightsRenames(t *testing.
 }
 
 func TestPrintCLIWorkflowProjectionsIncludesAuditablePolicyDetails(t *testing.T) {
-	output := captureStdout(t, func() {
-		printCLIWorkflowProjections(&api.TrackerReleaseProjectionSet{
+	output := captureWriter(func(output io.Writer) {
+		printCLIWorkflowProjections(output, &api.TrackerReleaseProjectionSet{
 			Projections: []api.TrackerReleaseProjection{{
 				DisplayName:       "Example",
 				UploadReleaseName: "Example.Release.2026-GRP",
@@ -245,7 +259,7 @@ func TestPrintCLIWorkflowProjectionsIncludesAuditablePolicyDetails(t *testing.T)
 					},
 				},
 			}},
-		}, nil)
+		}, nil, true)
 	})
 	for _, expected := range []string{
 		"code=unsupported_source decision=ineligible blocking=true disposition=strict evidence=complete reason=Example does not support the release source.",
@@ -262,8 +276,8 @@ func TestPrintCLIWorkflowProjectionsIncludesAuditablePolicyDetails(t *testing.T)
 }
 
 func TestPrintCLIWorkflowProjectionsSeparatesTrackersAndHighlightsRenames(t *testing.T) {
-	output := captureStdout(t, func() {
-		printCLIWorkflowProjections(&api.TrackerReleaseProjectionSet{
+	output := captureWriter(func(output io.Writer) {
+		printCLIWorkflowProjections(output, &api.TrackerReleaseProjectionSet{
 			Projections: []api.TrackerReleaseProjection{
 				{
 					DisplayName:          "Alpha",
@@ -278,7 +292,7 @@ func TestPrintCLIWorkflowProjectionsSeparatesTrackersAndHighlightsRenames(t *tes
 					Readiness:            api.ReadinessStatusReady,
 				},
 			},
-		}, nil)
+		}, nil, false)
 	})
 	for _, expected := range []string{
 		"- Alpha: Example.Release.2026-GRP (readiness=ready)\n\n- Beta: RENAMED (readiness=ready)",
@@ -291,9 +305,10 @@ func TestPrintCLIWorkflowProjectionsSeparatesTrackersAndHighlightsRenames(t *tes
 	}
 }
 
-func TestPrintCLIWorkflowProjectionsMarksInClientTrackerBlocked(t *testing.T) {
-	output := captureStdout(t, func() {
+func TestPrintCLIWorkflowProjectionsGroupsBlockedAndIneligibleAtInfo(t *testing.T) {
+	output := captureWriter(func(output io.Writer) {
 		printCLIWorkflowProjections(
+			output,
 			&api.TrackerReleaseProjectionSet{
 				Projections: []api.TrackerReleaseProjection{
 					{
@@ -308,6 +323,12 @@ func TestPrintCLIWorkflowProjectionsMarksInClientTrackerBlocked(t *testing.T) {
 						UploadReleaseName: "Example.Release.2026.BETA-GRP",
 						Readiness:         api.ReadinessStatusReady,
 					},
+					{
+						TrackerID:         "GAMMA",
+						DisplayName:       "Gamma",
+						UploadReleaseName: "Example.Release.2026.GAMMA-GRP",
+						Readiness:         api.ReadinessStatusIneligible,
+					},
 				},
 			},
 			&api.DupeAssessment{Results: []api.TrackerDupeAssessment{
@@ -319,11 +340,15 @@ func TestPrintCLIWorkflowProjectionsMarksInClientTrackerBlocked(t *testing.T) {
 					}},
 				},
 			}},
+			false,
 		)
 	})
-	if !strings.Contains(output, "- Alpha: Example.Release.2026.ALPHA-GRP (readiness=ready)") ||
-		!strings.Contains(output, "- Beta: Example.Release.2026.BETA-GRP (readiness=blocked)") {
+	if !strings.Contains(output, "Blocked/ineligible: Beta, Gamma") ||
+		!strings.Contains(output, "- Alpha: Example.Release.2026.ALPHA-GRP (readiness=ready)") {
 		t.Fatalf("post-dupe tracker projection readiness output = %q", output)
+	}
+	if strings.Contains(output, "Example.Release.2026.BETA-GRP") || strings.Contains(output, "Example.Release.2026.GAMMA-GRP") {
+		t.Fatalf("blocked tracker projection output included release names: %q", output)
 	}
 }
 
@@ -444,6 +469,7 @@ func (f *cliWorkflowCoreFake) ReleaseWorkflowOperationEvents(
 	after uint64,
 	limit int,
 ) ([]api.WorkflowEvent, error) {
+	f.eventAfters = append(f.eventAfters, after)
 	available := f.events
 	if f.eventBatch < len(f.eventBatches) {
 		available = f.eventBatches[f.eventBatch]
@@ -553,7 +579,7 @@ func TestCLIWorkflowLoadsEveryRetainedOperationEventDelta(t *testing.T) {
 		},
 	}}
 	session := &cliWorkflowSession{core: coreSvc, logger: logger}
-	state := cliWorkflowEventLogState{lastSequence: 100}
+	state := cliWorkflowEventLogState{workflowID: operation.WorkflowID, lastSequence: 100}
 
 	if err := session.logNewOperationEvents(context.Background(), operation, &state); err != nil {
 		t.Fatalf("load retained operation events: %v", err)
@@ -561,6 +587,42 @@ func TestCLIWorkflowLoadsEveryRetainedOperationEventDelta(t *testing.T) {
 	entries := logger.snapshot()
 	if len(entries) != 2 || !strings.Contains(entries[0], "scope_id=ALPHA") || !strings.Contains(entries[1], "scope_id=BETA") {
 		t.Fatalf("retained operation event logs = %#v", entries)
+	}
+}
+
+func TestCLIWorkflowResetsRetainedEventCursorForNewWorkflow(t *testing.T) {
+	operation := api.WorkflowOperationStatus{
+		ID:         "operation_new",
+		WorkflowID: "workflow_new",
+	}
+	coreSvc := &cliWorkflowCoreFake{events: []api.WorkflowEvent{{
+		Sequence:    1,
+		WorkflowID:  operation.WorkflowID,
+		OperationID: operation.ID,
+		Command:     "composite_upload",
+		Phase:       "duplicate_check",
+		Scope:       api.WorkflowEventScopeTracker,
+		ScopeID:     "ALPHA",
+		Lifecycle:   api.OperationLifecycleTerminal,
+		State:       api.StageStatusCompleted,
+		Disposition: api.WorkflowDispositionSucceeded,
+	}}}
+	logger := &cliProgressTestLogger{}
+	session := &cliWorkflowSession{
+		core:   coreSvc,
+		logger: logger,
+	}
+	state := cliWorkflowEventLogState{
+		workflowID:   "workflow_previous",
+		lastSequence: 100,
+	}
+
+	if err := session.logNewOperationEvents(context.Background(), operation, &state); err != nil {
+		t.Fatalf("load new workflow events: %v", err)
+	}
+	entries := logger.snapshot()
+	if len(entries) != 1 || !strings.Contains(entries[0], "scope_id=ALPHA") {
+		t.Fatalf("new workflow event logs = %#v", entries)
 	}
 }
 
@@ -660,6 +722,7 @@ func TestCLIWorkflowUnattendedPlaylistActionDoesNotPrompt(t *testing.T) {
 		api.PreparationIntentUpload,
 		bufio.NewReader(strings.NewReader("1\n")),
 		config.Config{},
+		cliIO{},
 		api.NopLogger{},
 	)
 	if err == nil || !strings.Contains(err.Error(), "unattended") {
@@ -684,6 +747,7 @@ func TestCLIWorkflowLargestPlaylistUsesTypedFactReplacement(t *testing.T) {
 		api.PreparationIntentUpload,
 		nil,
 		config.Config{Metadata: config.MetadataConfig{UseLargestPlaylist: true}},
+		cliIO{},
 		api.NopLogger{},
 	)
 	if err != nil {
@@ -719,6 +783,7 @@ func TestCLIWorkflowSessionsUseDistinctDurableIdempotencyKeys(t *testing.T) {
 		api.PreparationIntentUpload,
 		nil,
 		config.Config{},
+		cliIO{},
 		api.NopLogger{},
 	); err != nil {
 		t.Fatalf("create first workflow session: %v", err)
@@ -731,6 +796,7 @@ func TestCLIWorkflowSessionsUseDistinctDurableIdempotencyKeys(t *testing.T) {
 		api.PreparationIntentUpload,
 		nil,
 		config.Config{},
+		cliIO{},
 		api.NopLogger{},
 	); err != nil {
 		t.Fatalf("create second workflow session: %v", err)
@@ -867,6 +933,7 @@ func TestCLIWorkflowUnattendedDefersQuestionnaireToCentralPolicy(t *testing.T) {
 	instructions := make(map[api.TrackerID]api.TrackerProjectionInstructions)
 	changed, err := collectCLIWorkflowQuestionnaires(
 		nil,
+		io.Discard,
 		api.InteractionModeUnattended,
 		&api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
 			TrackerID: "ALPHA",

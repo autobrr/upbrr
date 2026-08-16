@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -408,8 +409,10 @@ func TestAPIV1CapabilitiesRequiresReadScopeAndReturnsSafeCatalog(t *testing.T) {
 			},
 		},
 		ImageHosting: config.ImageHostingConfig{
-			Host1:    "imgbb",
-			ImgBBAPI: "capability-image-secret",
+			Host1:             "imgbb",
+			ImgBBAPI:          "capability-image-secret",
+			SamaritanoEnabled: true,
+			SamaritanoAPI:     "capability-samaritano-secret",
 		},
 	}}
 	server := &Server{
@@ -446,8 +449,14 @@ func TestAPIV1CapabilitiesRequiresReadScopeAndReturnsSafeCatalog(t *testing.T) {
 		)
 	}
 	if strings.Contains(response.Body.String(), "capability-secret-value") ||
-		strings.Contains(response.Body.String(), "capability-image-secret") {
+		strings.Contains(response.Body.String(), "capability-image-secret") ||
+		strings.Contains(response.Body.String(), "capability-samaritano-secret") {
 		t.Fatal("capability projection exposed a configured secret")
+	}
+	if !slices.ContainsFunc(capabilities.ImageHosts, func(host api.ReleaseWorkflowCapabilityResource) bool {
+		return host.ID == "samaritano" && host.Configured
+	}) {
+		t.Fatalf("Samaritano image host was not exposed as configured: %#v", capabilities.ImageHosts)
 	}
 
 	executeOnlyStore, err := newAPITokenStore([]APITokenCredential{{

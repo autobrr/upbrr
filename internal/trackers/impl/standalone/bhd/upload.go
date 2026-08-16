@@ -88,7 +88,8 @@ func submitPreparedUpload(
 	if err != nil {
 		return api.UploadSummary{}, err
 	}
-	if response.StatusCode == 0 {
+	switch response.StatusCode {
+	case 0:
 		artifactPath, artifactErr := writeFailureArtifact(req, responseBody, "upload_failure")
 		if artifactErr != nil && req.Logger != nil {
 			req.Logger.Warnf("trackers: BHD failure artifact write failed: %v", artifactErr)
@@ -104,6 +105,12 @@ func submitPreparedUpload(
 			message = "upload failed"
 		}
 		return api.UploadSummary{}, fmt.Errorf("trackers: BHD api error: %s", message)
+	case 1:
+		return api.UploadSummary{Uploaded: 1, PendingPublication: true}, nil
+	case 2:
+		// Live uploads require the registered torrent ID handled below.
+	default:
+		return api.UploadSummary{}, fmt.Errorf("trackers: BHD unsupported upload status code %d", response.StatusCode)
 	}
 
 	torrentID := extractTorrentID(response.StatusMessage)

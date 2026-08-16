@@ -4,6 +4,7 @@
 package logging
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"path/filepath"
@@ -21,7 +22,9 @@ func TestOperationLoggerUsesRootSinkWithoutMutatingRootThreshold(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new root logger: %v", err)
 	}
-	root.SetConsoleOutput(io.Discard, io.Discard)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	root.SetConsoleOutput(&stdout, &stderr)
 	subscriptionID, entries := root.Subscribe(8)
 	defer root.Unsubscribe(subscriptionID)
 
@@ -50,6 +53,9 @@ func TestOperationLoggerUsesRootSinkWithoutMutatingRootThreshold(t *testing.T) {
 	}
 	if strings.Contains(recent[0].Message, "secret-value") || strings.Contains(recent[0].Message, localPath) {
 		t.Fatalf("scoped entry was not sanitized: %q", recent[0].Message)
+	}
+	if stdout.Len() != 0 || stderr.Len() != 0 {
+		t.Fatalf("scoped trace reached info console: stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
 	select {
 	case entry := <-entries:

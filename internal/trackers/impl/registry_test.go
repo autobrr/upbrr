@@ -603,6 +603,9 @@ func TestNewRegistryIncludesUnit3DRuleCapabilities(t *testing.T) {
 	if baseURL, ok := registry.LookupBaseURL("AITHER"); !ok || baseURL != "https://aither.cc" {
 		t.Fatalf("AITHER base URL = %q, %t", baseURL, ok)
 	}
+	if groups, ok := registry.LookupBannedGroups("MNS"); !ok || !slices.Contains(groups, "4K4U") || !slices.Contains(groups, "ZMNT") {
+		t.Fatalf("MNS banned groups = %#v, %t", groups, ok)
+	}
 }
 
 func TestNewRegistryIncludesBHDPolicies(t *testing.T) {
@@ -680,7 +683,7 @@ func TestNewRegistryIncludesHDBPolicies(t *testing.T) {
 	if policy, ok := registry.LookupUploadArtifactPolicy("HDB"); !ok || policy.Source != "HDBits" {
 		t.Fatalf("HDB upload artifact policy = %#v, %t", policy, ok)
 	}
-	if policy, ok := registry.LookupArtifactPolicy("HDB"); !ok || policy.MaxPieceSizeMiB != 16 {
+	if policy, ok := registry.LookupArtifactPolicy("HDB"); !ok || policy.MaxPieceSizeMiB != 32 {
 		t.Fatalf("HDB artifact policy = %#v, %t", policy, ok)
 	}
 	if _, ok := registry.LookupDataFactory("HDB"); !ok {

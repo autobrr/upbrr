@@ -9,9 +9,8 @@ Or pass the token directly:
     python .\scripts\fetch_metadata_api.py `
         "D:\Media\Example.Release.2026.1080p-GRP.mkv" --token "YOUR_API_TOKEN"
 
-Create a suitable token with:
-    upbrr api-token create --name metadata-client --owner metadata-client `
-        --scopes workflow:read,workflow:write
+Create a suitable token with ``workflow:read`` and ``workflow:write`` scopes in
+Web UI Settings > API Tokens.
 
 The input path must exist on the machine running ``upbrr serve``.
 """

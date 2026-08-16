@@ -82,8 +82,8 @@ func TestBuildNameUsesGeneratedLookingSourceFilenameForConfirmation(t *testing.T
 
 func TestProfileBuildNameVersion(t *testing.T) {
 	t.Parallel()
-	if got := Profile().Site.BuildNameVersion; got != "v3" {
-		t.Fatalf("SP BuildNameVersion = %q, want v3", got)
+	if got := Profile().Site.BuildNameVersion; got != "v4" {
+		t.Fatalf("SP BuildNameVersion = %q, want v4", got)
 	}
 	if got := Profile().ReleaseNamePolicy.Confirmation; got != trackers.ReleaseNameConfirmationNonScene {
 		t.Fatalf("SP release-name confirmation mode = %q", got)

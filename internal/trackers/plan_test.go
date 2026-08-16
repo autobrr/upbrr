@@ -15,9 +15,10 @@ import (
 )
 
 type trackerEffectReporterStub struct {
-	beginErr    error
-	completeErr error
-	begun       []api.WorkflowExternalEffect
+	beginErr         error
+	completeErr      error
+	alreadySucceeded bool
+	begun            []api.WorkflowExternalEffect
 }
 
 func (r *trackerEffectReporterStub) Begin(
@@ -28,7 +29,10 @@ func (r *trackerEffectReporterStub) Begin(
 	if r.beginErr != nil {
 		return api.WorkflowExternalEffectReceipt{}, r.beginErr
 	}
-	return api.WorkflowExternalEffectReceipt{EffectID: "effect-1"}, nil
+	return api.WorkflowExternalEffectReceipt{
+		EffectID:         "effect-1",
+		AlreadySucceeded: r.alreadySucceeded,
+	}, nil
 }
 
 func (r *trackerEffectReporterStub) Complete(
@@ -160,6 +164,34 @@ func TestTrackerSubmissionReceiptFailureBecomesUnknownOutcome(t *testing.T) {
 	(&Service{}).submitTrackerPlans(ctx, api.UploadSubject{SourcePath: "C:\\synthetic"}, slots)
 	if submits.Load() != 1 || slots[0].failure == nil || slots[0].failure.Code != "unknown_outcome" {
 		t.Fatalf("unretained tracker receipt submits=%d failure=%#v", submits.Load(), slots[0].failure)
+	}
+}
+
+func TestTrackerSubmissionSucceededReceiptWithoutResultBecomesUnknownOutcome(t *testing.T) {
+	t.Parallel()
+
+	var submits atomic.Int32
+	reporter := &trackerEffectReporterStub{alreadySucceeded: true}
+	ctx := api.WithWorkflowExternalEffectReporter(t.Context(), reporter)
+	slots := []trackerPlanSlot{{
+		tracker: "ALPHA",
+		plan: NewUploadPlan(
+			"ALPHA",
+			api.TrackerDryRunEntry{Tracker: "ALPHA", Status: "ready"},
+			func(context.Context) (api.UploadSummary, error) {
+				submits.Add(1)
+				return api.UploadSummary{Uploaded: 1}, nil
+			},
+			nil,
+		),
+	}}
+	(&Service{}).submitTrackerPlans(ctx, api.UploadSubject{SourcePath: "Example.Release.2026"}, slots)
+	if submits.Load() != 0 || slots[0].failure == nil || slots[0].failure.Code != "unknown_outcome" ||
+		!errors.Is(slots[0].failure.cause, api.ErrReleaseWorkflowEffectAlreadySucceeded) {
+		t.Fatalf("retained tracker receipt submits=%d failure=%#v", submits.Load(), slots[0].failure)
+	}
+	if slots[0].summary.Uploaded != 0 || len(slots[0].summary.UploadedTorrents) != 0 || slots[0].summary.PendingPublication {
+		t.Fatalf("retained tracker receipt synthesized summary=%#v", slots[0].summary)
 	}
 }
 

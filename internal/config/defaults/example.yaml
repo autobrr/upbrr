@@ -23,6 +23,8 @@ image_hosting:
   zipline_url: ""
   zipline_api_key: ""
   seedpool_cdn_api: ""
+  samaritano_enabled: false
+  samaritano_api_key: ""
   sharex_url: ""
   sharex_api_key: ""
   utppm_api: ""

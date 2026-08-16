@@ -5,6 +5,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/providerid"
@@ -13,23 +14,23 @@ import (
 
 // printMetadataPreview writes the canonical workflow metadata projection shown
 // by the CLI before tracker projection and upload review.
-func printMetadataPreview(preview api.MetadataPreview, debug bool) {
-	fmt.Println()
-	fmt.Println("Release details")
+func printMetadataPreview(output io.Writer, preview api.MetadataPreview, debug bool) {
+	fmt.Fprintln(output)
+	fmt.Fprintln(output, "Release details")
 	if debug {
-		fmt.Println("Debug mode: no actual tracker uploads will be processed.")
+		fmt.Fprintln(output, "Debug mode: validates the end-to-end workflow while suppressing tracker submission.")
 	}
-	fmt.Printf("Source: %s\n", formatPathLabel(preview.SourcePath))
-	fmt.Printf("Upload name: %s\n", preview.ReleaseName)
+	fmt.Fprintf(output, "Source: %s\n", formatPathLabel(preview.SourcePath))
+	fmt.Fprintf(output, "Upload name: %s\n", preview.ReleaseName)
 	if external := primaryMetadataPreview(preview); external != nil {
-		printMetadataDatabaseInfo(*external)
+		printMetadataDatabaseInfo(output, *external)
 	}
 	if preview.TrackerName != "" {
-		fmt.Printf("Tracker data from: %s\n", preview.TrackerName)
+		fmt.Fprintf(output, "Tracker data from: %s\n", preview.TrackerName)
 	}
-	printMetadataExternalIdentity(preview)
+	printMetadataExternalIdentity(output, preview)
 	if metadataPreviewHasCandidates(preview.Diagnostics) {
-		fmt.Println("Candidate IDs available; use override args if needed.")
+		fmt.Fprintln(output, "Candidate IDs available; use override args if needed.")
 	}
 	warnings := make([]string, 0)
 	for _, diagnostic := range preview.Diagnostics {
@@ -38,76 +39,76 @@ func printMetadataPreview(preview api.MetadataPreview, debug bool) {
 		}
 	}
 	if len(warnings) > 0 {
-		fmt.Println("Warnings:")
+		fmt.Fprintln(output, "Warnings:")
 		for _, warning := range warnings {
-			fmt.Printf("- %s\n", warning)
+			fmt.Fprintf(output, "- %s\n", warning)
 		}
 	}
 }
 
-func printMetadataDatabaseInfo(external api.ProviderDisplay) {
-	fmt.Println()
-	fmt.Println("Database info")
+func printMetadataDatabaseInfo(output io.Writer, external api.ProviderDisplay) {
+	fmt.Fprintln(output)
+	fmt.Fprintln(output, "Database info")
 	summary := external.Summary
 	if summary.Title != "" && summary.Year != 0 {
-		fmt.Printf("Title: %s (%d)\n", summary.Title, summary.Year)
+		fmt.Fprintf(output, "Title: %s (%d)\n", summary.Title, summary.Year)
 	} else if summary.Title != "" {
-		fmt.Printf("Title: %s\n", summary.Title)
+		fmt.Fprintf(output, "Title: %s\n", summary.Title)
 	}
 	if overview := summarizeMetadataText(summary.Overview, 260); overview != "" {
-		fmt.Printf("Overview: %s\n", overview)
+		fmt.Fprintf(output, "Overview: %s\n", overview)
 	}
 	if genres := strings.TrimSpace(summary.Genres); genres != "" {
-		fmt.Printf("Genres: %s\n", genres)
+		fmt.Fprintf(output, "Genres: %s\n", genres)
 	}
 	if summary.Category != "" {
-		fmt.Printf("Category: %s\n", strings.ToUpper(summary.Category))
+		fmt.Fprintf(output, "Category: %s\n", strings.ToUpper(summary.Category))
 	}
 	if summary.Date != "" {
-		fmt.Printf("Date: %s\n", summary.Date)
+		fmt.Fprintf(output, "Date: %s\n", summary.Date)
 	}
 	if summary.RuntimeMinutes != 0 {
-		fmt.Printf("Runtime: %d min\n", summary.RuntimeMinutes)
+		fmt.Fprintf(output, "Runtime: %d min\n", summary.RuntimeMinutes)
 	}
 	if summary.Rating != 0 {
 		if summary.RatingCount != 0 {
-			fmt.Printf("Rating: %.1f (%d votes)\n", summary.Rating, summary.RatingCount)
+			fmt.Fprintf(output, "Rating: %.1f (%d votes)\n", summary.Rating, summary.RatingCount)
 		} else {
-			fmt.Printf("Rating: %.1f\n", summary.Rating)
+			fmt.Fprintf(output, "Rating: %.1f\n", summary.Rating)
 		}
 	}
 }
 
-func printMetadataExternalIdentity(preview api.MetadataPreview) {
+func printMetadataExternalIdentity(output io.Writer, preview api.MetadataPreview) {
 	identity := preview.Identity
 	printedHeader := false
 	printHeader := func() {
 		if printedHeader {
 			return
 		}
-		fmt.Println()
-		fmt.Println("External IDs")
+		fmt.Fprintln(output)
+		fmt.Fprintln(output, "External IDs")
 		printedHeader = true
 	}
 	if identity.TMDBID != 0 {
 		printHeader()
-		fmt.Printf("TMDB: %d\n", identity.TMDBID)
+		fmt.Fprintf(output, "TMDB: %d\n", identity.TMDBID)
 	}
 	if identity.IMDBID != 0 {
 		printHeader()
-		fmt.Printf("IMDb: %s\n", providerid.IMDb(identity.IMDBID).Prefixed())
+		fmt.Fprintf(output, "IMDb: %s\n", providerid.IMDb(identity.IMDBID).Prefixed())
 	}
 	if identity.TVDBID != 0 {
 		printHeader()
-		fmt.Printf("TVDB: %d\n", identity.TVDBID)
+		fmt.Fprintf(output, "TVDB: %d\n", identity.TVDBID)
 	}
 	if identity.TVmazeID != 0 {
 		printHeader()
-		fmt.Printf("TVmaze: %d\n", identity.TVmazeID)
+		fmt.Fprintf(output, "TVmaze: %d\n", identity.TVmazeID)
 	}
 	if identity.MALID != 0 {
 		printHeader()
-		fmt.Printf("MAL: %d\n", identity.MALID)
+		fmt.Fprintf(output, "MAL: %d\n", identity.MALID)
 	}
 }
 

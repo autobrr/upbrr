@@ -692,11 +692,9 @@ func SourceReleaseName(subject api.UploadSubject) string {
 }
 
 func sourceReleasePathIsFile(subject api.UploadSubject, sourceBase, extension string) bool {
-	for _, candidate := range []string{subject.VideoPath, subject.Filename} {
-		if candidateBase := strings.TrimSpace(pathutil.Base(candidate)); candidateBase != "" &&
-			strings.EqualFold(candidateBase, sourceBase) {
-			return true
-		}
+	if videoBase := strings.TrimSpace(pathutil.Base(subject.VideoPath)); videoBase != "" &&
+		strings.EqualFold(videoBase, sourceBase) {
+		return true
 	}
 	extension = strings.TrimPrefix(extension, ".")
 	releaseExtension := strings.TrimPrefix(strings.TrimSpace(subject.Release.Ext), ".")

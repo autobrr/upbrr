@@ -903,7 +903,7 @@ func searchFileName(meta preparationstate.State) string {
 }
 
 func trackerLookupFileName(meta preparationstate.State, trackerID string, skipFilenameLookup bool) string {
-	if skipFilenameLookup && strings.TrimSpace(trackerID) == "" {
+	if skipFilenameLookup || strings.TrimSpace(trackerID) != "" {
 		return ""
 	}
 	return searchFileName(meta)

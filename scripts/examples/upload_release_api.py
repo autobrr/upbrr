@@ -19,9 +19,8 @@ WARNING: ``--mode upload`` permits real tracker submissions. Without
 ``--no-seed``, successful tracker uploads are also injected into the configured
 torrent client.
 
-Create a suitable token with:
-    upbrr api-token create --name upload-client --owner upload-client `
-        --scopes workflow:read,workflow:execute
+Create a suitable token with ``workflow:read`` and ``workflow:execute`` scopes
+in Web UI Settings > API Tokens.
 
 The input path must exist on the machine running ``upbrr serve``.
 """

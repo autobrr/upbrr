@@ -380,6 +380,7 @@ func walkSecretFields(cfg *Config, visit func(path string, value *string) error)
 		&cfg.ImageHosting.PassTheImageAPI,
 		&cfg.ImageHosting.ZiplineAPIKey,
 		&cfg.ImageHosting.SeedpoolCDNAPI,
+		&cfg.ImageHosting.SamaritanoAPI,
 		&cfg.ImageHosting.ShareXAPIKey,
 		&cfg.ImageHosting.UTPPMAPI,
 		&cfg.ImageHosting.LostimgAPI,

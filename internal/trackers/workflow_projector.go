@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -139,7 +140,8 @@ func (p *WorkflowProjector) Build(
 }
 
 func (p *WorkflowProjector) resolveTrackerIDs(requested []api.TrackerID) ([]api.TrackerID, error) {
-	if len(requested) == 0 {
+	usingConfiguredDefaults := len(requested) == 0
+	if usingConfiguredDefaults {
 		requested = make([]api.TrackerID, 0, len(p.config.Trackers.DefaultTrackers))
 		for _, trackerID := range p.config.Trackers.DefaultTrackers {
 			requested = append(requested, api.TrackerID(trackerID))
@@ -150,6 +152,10 @@ func (p *WorkflowProjector) resolveTrackerIDs(requested []api.TrackerID) ([]api.
 	for _, requestedID := range requested {
 		descriptor, ok := p.registry.LookupDescriptor(string(requestedID))
 		if !ok {
+			if usingConfiguredDefaults {
+				p.logger.Warnf("trackers: projection tracker=%s state=unregistered decision=skip count=1", requestedID)
+				continue
+			}
 			return nil, fmt.Errorf("trackers: tracker %s is not registered", requestedID)
 		}
 		trackerID := api.TrackerID(descriptor.Name)
@@ -219,6 +225,7 @@ func (p *WorkflowProjector) projectSelected(
 ) ([]api.TrackerReleaseProjection, []api.WorkflowFailure) {
 	projections := make([]api.TrackerReleaseProjection, 0, len(selected))
 	failures := make([]api.WorkflowFailure, 0)
+	logger := logging.FromContext(ctx, p.logger)
 	for _, trackerID := range selected {
 		api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
 			Phase:   "projection",
@@ -247,7 +254,7 @@ func (p *WorkflowProjector) projectSelected(
 			AuthorizedRuleFingerprint: ruleAuthorizations[trackerID],
 			TrackerConfig:             applyTrackerConfigOverrides(trackerConfigFor(p.config, string(trackerID)), instruction.TrackerConfig),
 			Runtime:                   PreparationRuntimeFromConfig(p.config),
-			Logger:                    p.logger,
+			Logger:                    logger,
 		}, inputFingerprint, catalogFingerprint, configFingerprints[trackerID])
 		if descriptor, ok := p.registry.LookupDescriptor(string(trackerID)); ok {
 			applyWorkflowProjectionRequirements(&projection, descriptor, subject, p.config)
