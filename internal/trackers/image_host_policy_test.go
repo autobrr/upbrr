@@ -211,6 +211,7 @@ func TestImageHostPolicySatisfiedWithRegistry(t *testing.T) {
 			tracker: "RF",
 			cfg: config.Config{ImageHosting: config.ImageHostingConfig{
 				ReelflixEnabled: true,
+				ReelflixAPI:     "secret",
 			}},
 			want: true,
 		},
@@ -540,5 +541,36 @@ func TestNeededImageUploadTargetsSkipsSamaritanoWhenDisabled(t *testing.T) {
 	}
 	if len(targets) != 1 || targets[0].Host != "imgbb" {
 		t.Fatalf("expected global imgbb fallback, got %#v", targets)
+	}
+}
+
+func TestNeededImageUploadTargetsSkipsConditionalHostsWithoutAPIKeys(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		tracker      string
+		imageHosting config.ImageHostingConfig
+	}{
+		{tracker: "LST", imageHosting: config.ImageHostingConfig{Host1: "imgbb", LostimgEnabled: true}},
+		{tracker: "RF", imageHosting: config.ImageHostingConfig{Host1: "imgbb", ReelflixEnabled: true}},
+		{tracker: "SAM", imageHosting: config.ImageHostingConfig{Host1: "imgbb", SamaritanoEnabled: true}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.tracker, func(t *testing.T) {
+			t.Parallel()
+			targets, err := NeededImageUploadTargetsWithRegistry(
+				imageHostPolicyTestRegistry(t),
+				config.Config{ImageHosting: test.imageHosting},
+				[]string{test.tracker},
+				"imgbb",
+			)
+			if err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+			if len(targets) != 1 || targets[0].Host != "imgbb" || targets[0].UsageScope != "global" {
+				t.Fatalf("expected global imgbb fallback, got %#v", targets)
+			}
+		})
 	}
 }

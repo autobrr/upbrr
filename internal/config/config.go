@@ -119,17 +119,18 @@ type ImageHostingConfig struct {
 	ReelflixAPI       string `yaml:"reelflix_api"`
 }
 
-// HostEnabled reports whether an optional image-host integration is enabled.
-func (c ImageHostingConfig) HostEnabled(host string) bool {
+// ConditionalHostConfigured reports whether host is a known conditional image
+// host and has both its enable flag and required API key configured.
+func (c ImageHostingConfig) ConditionalHostConfigured(host string) (configured bool, ok bool) {
 	switch strings.ToLower(strings.TrimSpace(host)) {
 	case "lostimg":
-		return c.LostimgEnabled
+		return c.LostimgEnabled && strings.TrimSpace(c.LostimgAPI) != "", true
 	case "reelflix":
-		return c.ReelflixEnabled
+		return c.ReelflixEnabled && strings.TrimSpace(c.ReelflixAPI) != "", true
 	case "samaritano":
-		return c.SamaritanoEnabled
+		return c.SamaritanoEnabled && strings.TrimSpace(c.SamaritanoAPI) != "", true
 	default:
-		return false
+		return false, false
 	}
 }
 

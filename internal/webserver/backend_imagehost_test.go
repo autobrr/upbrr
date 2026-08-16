@@ -9,29 +9,23 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 )
 
-func TestReleaseWorkflowImageHostConfiguredSamaritanoRequiresAPIKey(t *testing.T) {
+func TestReleaseWorkflowConditionalImageHostsRequireAPIKeys(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name string
-		cfg  config.ImageHostingConfig
-		want bool
-	}{
-		{name: "disabled with key", cfg: config.ImageHostingConfig{SamaritanoAPI: "secret"}},
-		{name: "enabled without key", cfg: config.ImageHostingConfig{SamaritanoEnabled: true}},
-		{
-			name: "enabled with key",
-			cfg:  config.ImageHostingConfig{SamaritanoEnabled: true, SamaritanoAPI: "secret"},
-			want: true,
-		},
+	assertConfigured := func(host string, cfg config.ImageHostingConfig, want bool) {
+		t.Helper()
+		if got := releaseWorkflowImageHostConfigured(cfg, host); got != want {
+			t.Errorf("host %q configured = %v, want %v", host, got, want)
+		}
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			if got := releaseWorkflowImageHostConfigured(test.cfg, "samaritano"); got != test.want {
-				t.Fatalf("configured = %v, want %v", got, test.want)
-			}
-		})
-	}
+	assertConfigured("lostimg", config.ImageHostingConfig{LostimgAPI: "secret"}, false)
+	assertConfigured("lostimg", config.ImageHostingConfig{LostimgEnabled: true}, false)
+	assertConfigured("lostimg", config.ImageHostingConfig{LostimgEnabled: true, LostimgAPI: "secret"}, true)
+	assertConfigured("reelflix", config.ImageHostingConfig{ReelflixAPI: "secret"}, false)
+	assertConfigured("reelflix", config.ImageHostingConfig{ReelflixEnabled: true}, false)
+	assertConfigured("reelflix", config.ImageHostingConfig{ReelflixEnabled: true, ReelflixAPI: "secret"}, true)
+	assertConfigured("samaritano", config.ImageHostingConfig{SamaritanoAPI: "secret"}, false)
+	assertConfigured("samaritano", config.ImageHostingConfig{SamaritanoEnabled: true}, false)
+	assertConfigured("samaritano", config.ImageHostingConfig{SamaritanoEnabled: true, SamaritanoAPI: "secret"}, true)
 }
