@@ -603,6 +603,9 @@ func TestNewRegistryIncludesUnit3DRuleCapabilities(t *testing.T) {
 	if baseURL, ok := registry.LookupBaseURL("AITHER"); !ok || baseURL != "https://aither.cc" {
 		t.Fatalf("AITHER base URL = %q, %t", baseURL, ok)
 	}
+	if groups, ok := registry.LookupBannedGroups("MNS"); !ok || !slices.Contains(groups, "4K4U") || !slices.Contains(groups, "ZMNT") {
+		t.Fatalf("MNS banned groups = %#v, %t", groups, ok)
+	}
 }
 
 func TestNewRegistryIncludesBHDPolicies(t *testing.T) {
