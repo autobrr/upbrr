@@ -99,7 +99,6 @@ const imageHostOptions = [
   { value: "zipline", label: "Zipline" },
   { value: "passtheimage", label: "PassTheImage" },
   { value: "seedpool_cdn", label: "Seedpool CDN" },
-  { value: "samaritano", label: "Samaritano" },
   { value: "sharex", label: "ShareX" },
   { value: "utppm", label: "UTPPM" },
 ];
@@ -132,7 +131,6 @@ const imageHostKeyMap: Record<string, string[]> = {
   zipline: ["ZiplineURL", "ZiplineAPIKey"],
   passtheimage: ["PassTheImageAPI"],
   seedpool_cdn: ["SeedpoolCDNAPI"],
-  samaritano: ["SamaritanoAPI"],
   sharex: ["ShareXURL", "ShareXAPIKey"],
   utppm: ["UTPPMAPI"],
 };
@@ -140,6 +138,7 @@ const imageHostKeyMap: Record<string, string[]> = {
 const conditionalImageHostEnabledKeys: Record<string, string> = {
   lostimg: "LostimgEnabled",
   reelflix: "ReelflixEnabled",
+  samaritano: "SamaritanoEnabled",
 };
 
 const stringField = (key: string, meta: Omit<FieldMeta, "key" | "type"> = {}): FieldMeta => ({
@@ -2000,6 +1999,22 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
               (imageCfg.ReelflixAPI as ConfigValue) ?? "",
               ["ImageHosting", "ReelflixAPI"],
               sectionFieldMeta.ImageHosting.ReelflixAPI,
+            )}
+            <div className="settings-switch-row">
+              <span>Samaritano enabled</span>
+              <Switch
+                aria-label="Samaritano enabled"
+                checked={Boolean(imageCfg.SamaritanoEnabled)}
+                onChange={(event) =>
+                  updateConfigValue(["ImageHosting", "SamaritanoEnabled"], event.target.checked)
+                }
+              />
+            </div>
+            {renderField(
+              "SamaritanoAPI",
+              (imageCfg.SamaritanoAPI as ConfigValue) ?? "",
+              ["ImageHosting", "SamaritanoAPI"],
+              sectionFieldMeta.ImageHosting.SamaritanoAPI,
             )}
           </div>
         </div>

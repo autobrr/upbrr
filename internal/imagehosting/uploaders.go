@@ -1229,7 +1229,8 @@ func (u *samaritanoUploader) Upload(ctx context.Context, imagePath string) (uplo
 	}
 
 	var response struct {
-		URL string `json:"url"`
+		URL          string `json:"url"`
+		ThumbnailURL string `json:"thumbnail_url"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
 		return uploadResult{}, fmt.Errorf("samaritano invalid response: %w", err)
@@ -1238,8 +1239,12 @@ func (u *samaritanoUploader) Upload(ctx context.Context, imagePath string) (uplo
 	if urlValue == "" {
 		return uploadResult{}, errors.New("samaritano upload failed: response URL missing")
 	}
+	imgURL := strings.TrimSpace(response.ThumbnailURL)
+	if imgURL == "" {
+		imgURL = urlValue
+	}
 	return uploadResult{
-		ImgURL: urlValue,
+		ImgURL: imgURL,
 		RawURL: urlValue,
 		WebURL: urlValue,
 	}, nil

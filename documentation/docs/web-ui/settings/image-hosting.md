@@ -23,7 +23,6 @@ Choose up to six hosts in preferred order. The Web UI reveals credential fields 
 | Zipline      | Base URL and API key     |
 | PassTheImage | API key                  |
 | Seedpool CDN | API key                  |
-| Samaritano   | API key                  |
 | ShareX       | Endpoint URL and API key |
 | UTPPM        | API key                  |
 
@@ -31,7 +30,7 @@ When an allowed host fails, upbrr can try the next eligible configured host. A h
 
 ## Additional hosts
 
-**Lostimg** and **ReelFliX** are conditional, tracker-owned integrations. Enable one and enter its API key only when a configured tracker advertises support. They are not general global fallback slots.
+**Lostimg**, **ReelFliX**, and **Samaritano** are conditional, tracker-owned integrations. Enable one and enter its API key only when the corresponding tracker advertises support. They are not general global fallback slots; Samaritano is available only for SAM.
 
 ## Verify the change
 

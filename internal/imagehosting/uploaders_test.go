@@ -134,10 +134,10 @@ func TestImgboxBatchReusesAnonymousSessionAndToken(t *testing.T) {
 				index,
 			)
 			return &http.Response{
-StatusCode: http.StatusOK,
- Header: make(http.Header),
- Body: io.NopCloser(strings.NewReader(body)),
-}, nil
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}, nil
 		default:
 			t.Fatalf("unexpected request URL: %s", req.URL.String())
 			return nil, nil
@@ -867,6 +867,32 @@ func TestSamaritanoUploaderPostsBearerMultipartAndReturnsURL(t *testing.T) {
 		return &http.Response{
 			StatusCode: http.StatusCreated,
 			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"url":"https://img.samaritano.cc/uploads/shot.png","thumbnail_url":"https://img.samaritano.cc/t/shot.png"}`)),
+		}, nil
+	})}
+
+	result, err := (&samaritanoUploader{apiKey: "secret", client: client}).Upload(context.Background(), imagePath)
+	if err != nil {
+		t.Fatalf("Upload returned error: %v", err)
+	}
+	if result.ImgURL != "https://img.samaritano.cc/t/shot.png" ||
+		result.RawURL != "https://img.samaritano.cc/uploads/shot.png" ||
+		result.WebURL != "https://img.samaritano.cc/uploads/shot.png" {
+		t.Fatalf("unexpected upload result: %#v", result)
+	}
+}
+
+func TestSamaritanoUploaderFallsBackToURLWithoutThumbnail(t *testing.T) {
+	t.Parallel()
+
+	imagePath := filepath.Join(t.TempDir(), "shot.png")
+	if err := os.WriteFile(imagePath, []byte("synthetic image"), 0o600); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
 			Body:       io.NopCloser(strings.NewReader(`{"url":"https://img.samaritano.cc/uploads/shot.png"}`)),
 		}, nil
 	})}
@@ -877,7 +903,7 @@ func TestSamaritanoUploaderPostsBearerMultipartAndReturnsURL(t *testing.T) {
 	}
 	want := "https://img.samaritano.cc/uploads/shot.png"
 	if result.ImgURL != want || result.RawURL != want || result.WebURL != want {
-		t.Fatalf("unexpected upload result: %#v", result)
+		t.Fatalf("unexpected fallback result: %#v", result)
 	}
 }
 

@@ -13,7 +13,7 @@ import (
 func imageHostPolicyTestRegistry(t *testing.T) *Registry {
 	t.Helper()
 	registry := NewRegistry()
-	for _, name := range []string{"AITHER", "GPW", "HDB", "HHD", "LST", "OE", "PTP", "RF", "STC"} {
+	for _, name := range []string{"AITHER", "GPW", "HDB", "HHD", "LST", "OE", "PTP", "RF", "SAM", "STC"} {
 		policy := testImageHostPolicyForTracker(name)
 		if err := registry.RegisterDescriptor(Descriptor{
 			Name:       name,
@@ -503,6 +503,38 @@ func TestNeededImageUploadTargetsSkipsReelflixWhenDisabled(t *testing.T) {
 			Host1: "imgbb",
 		},
 	}, []string{"RF"}, "imgbb")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(targets) != 1 || targets[0].Host != "imgbb" {
+		t.Fatalf("expected global imgbb fallback, got %#v", targets)
+	}
+}
+
+func TestNeededImageUploadTargetsUsesConfiguredSamaritanoForSAM(t *testing.T) {
+	t.Parallel()
+
+	targets, err := NeededImageUploadTargetsWithRegistry(imageHostPolicyTestRegistry(t), config.Config{
+		ImageHosting: config.ImageHostingConfig{
+			Host1:             "imgbb",
+			SamaritanoEnabled: true,
+			SamaritanoAPI:     "secret",
+		},
+	}, []string{"SAM"}, "imgbb")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(targets) != 1 || targets[0].Host != "samaritano" || targets[0].UsageScope != "tracker:SAM" {
+		t.Fatalf("expected SAM-scoped Samaritano target, got %#v", targets)
+	}
+}
+
+func TestNeededImageUploadTargetsSkipsSamaritanoWhenDisabled(t *testing.T) {
+	t.Parallel()
+
+	targets, err := NeededImageUploadTargetsWithRegistry(imageHostPolicyTestRegistry(t), config.Config{
+		ImageHosting: config.ImageHostingConfig{Host1: "imgbb"},
+	}, []string{"SAM"}, "imgbb")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}

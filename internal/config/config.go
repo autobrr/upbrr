@@ -93,29 +93,30 @@ func (c *MainSettingsConfig) UnmarshalJSON(data []byte) error {
 }
 
 type ImageHostingConfig struct {
-	Host1           string `yaml:"img_host_1"`
-	Host2           string `yaml:"img_host_2"`
-	Host3           string `yaml:"img_host_3"`
-	Host4           string `yaml:"img_host_4"`
-	Host5           string `yaml:"img_host_5"`
-	Host6           string `yaml:"img_host_6"`
-	ImgBBAPI        string `yaml:"imgbb_api"`
-	LensdumpAPI     string `yaml:"lensdump_api"`
-	PTScreensAPI    string `yaml:"ptscreens_api"`
-	OnlyImageAPI    string `yaml:"onlyimage_api"`
-	DalexniAPI      string `yaml:"dalexni_api"`
-	PassTheImageAPI string `yaml:"passtheima_ge_api"`
-	ZiplineURL      string `yaml:"zipline_url"`
-	ZiplineAPIKey   string `yaml:"zipline_api_key"`
-	SeedpoolCDNAPI  string `yaml:"seedpool_cdn_api"`
-	SamaritanoAPI   string `yaml:"samaritano_api_key"`
-	ShareXURL       string `yaml:"sharex_url"`
-	ShareXAPIKey    string `yaml:"sharex_api_key"`
-	UTPPMAPI        string `yaml:"utppm_api"`
-	LostimgEnabled  bool   `yaml:"lostimg_enabled"`
-	LostimgAPI      string `yaml:"lostimg_api"`
-	ReelflixEnabled bool   `yaml:"reelflix_enabled"`
-	ReelflixAPI     string `yaml:"reelflix_api"`
+	Host1             string `yaml:"img_host_1"`
+	Host2             string `yaml:"img_host_2"`
+	Host3             string `yaml:"img_host_3"`
+	Host4             string `yaml:"img_host_4"`
+	Host5             string `yaml:"img_host_5"`
+	Host6             string `yaml:"img_host_6"`
+	ImgBBAPI          string `yaml:"imgbb_api"`
+	LensdumpAPI       string `yaml:"lensdump_api"`
+	PTScreensAPI      string `yaml:"ptscreens_api"`
+	OnlyImageAPI      string `yaml:"onlyimage_api"`
+	DalexniAPI        string `yaml:"dalexni_api"`
+	PassTheImageAPI   string `yaml:"passtheima_ge_api"`
+	ZiplineURL        string `yaml:"zipline_url"`
+	ZiplineAPIKey     string `yaml:"zipline_api_key"`
+	SeedpoolCDNAPI    string `yaml:"seedpool_cdn_api"`
+	SamaritanoEnabled bool   `yaml:"samaritano_enabled"`
+	SamaritanoAPI     string `yaml:"samaritano_api_key"`
+	ShareXURL         string `yaml:"sharex_url"`
+	ShareXAPIKey      string `yaml:"sharex_api_key"`
+	UTPPMAPI          string `yaml:"utppm_api"`
+	LostimgEnabled    bool   `yaml:"lostimg_enabled"`
+	LostimgAPI        string `yaml:"lostimg_api"`
+	ReelflixEnabled   bool   `yaml:"reelflix_enabled"`
+	ReelflixAPI       string `yaml:"reelflix_api"`
 }
 
 // HostEnabled reports whether an optional image-host integration is enabled.
@@ -125,6 +126,8 @@ func (c ImageHostingConfig) HostEnabled(host string) bool {
 		return c.LostimgEnabled
 	case "reelflix":
 		return c.ReelflixEnabled
+	case "samaritano":
+		return c.SamaritanoEnabled
 	default:
 		return false
 	}

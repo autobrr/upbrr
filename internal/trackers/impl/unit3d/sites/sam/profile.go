@@ -4,6 +4,7 @@
 package sam
 
 import (
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 )
 
@@ -12,6 +13,11 @@ func Profile() unit3d.Profile {
 	return unit3d.Profile{
 		Name:    "SAM",
 		BaseURL: "https://samaritano.cc",
+		ImageHost: &trackers.ImageHostPolicy{
+			ConditionalHost:        "samaritano",
+			OwnedHosts:             []string{"samaritano"},
+			EnableWithImageHosting: true,
+		},
 		Site: unit3d.SiteProfile{
 			BuildName:        buildName,
 			BuildNameVersion: "v1",
