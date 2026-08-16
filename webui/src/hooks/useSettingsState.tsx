@@ -113,9 +113,10 @@ const torrentClientLinkingOptions = [
   { value: "reflink", label: "Reflink" },
   { value: "symlink", label: "Symlink" },
 ];
-const imageHostOptionLabels = new Map(
-  imageHostOptions.map((option) => [option.value, option.label]),
-);
+const imageHostOptionLabels = new Map<string, string>([
+  ...imageHostOptions.map((option) => [option.value, option.label] as const),
+  ["samaritano", "Samaritano"],
+]);
 const normalizeImageHostValue = (value: string) => value.trim().toLowerCase();
 const imageHostOptionFor = (host: string) => {
   const value = normalizeImageHostValue(host);
