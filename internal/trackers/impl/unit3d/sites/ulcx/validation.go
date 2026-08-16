@@ -6,6 +6,7 @@ package ulcx
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -16,7 +17,7 @@ import (
 // ValidationPolicy returns ULCX's tracker-specific semantic checks.
 func ValidationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID:    "unit3d-ulcx-policy-v2",
+		ID:    "unit3d-ulcx-policy-v3",
 		Check: checkRules,
 	}
 }
@@ -53,6 +54,7 @@ func checkRules(ctx context.Context, meta api.TrackerValidationSubject, _ api.Lo
 		BlockedExtraKinds: extraKinds,
 	})...)
 	if !disc {
+		failures = append(failures, ulcxContainerFailures(meta, ruleSubject)...)
 		failures = append(failures, trackers.ValidateSingleFileFolder(meta.PackageFacts, ulcxEvidencePolicy("ulcx_single_file_layout"))...)
 		failures = append(failures, trackers.ValidateMultiSeasonPackage(meta.PackageFacts, ulcxEvidencePolicy("ulcx_multi_season_non_disc"))...)
 		failures = append(failures, trackers.ValidateLanguageCombination(meta.MediaFileFacts, trackers.LanguageCombinationPolicy{
@@ -63,7 +65,23 @@ func checkRules(ctx context.Context, meta api.TrackerValidationSubject, _ api.Lo
 	}
 	failures = append(failures, ulcxRequiredAssetFailures(meta)...)
 	failures = append(failures, ulcxEncodeFailures(meta, ruleSubject)...)
+	failures = append(failures, ulcxAudioFailures(meta, ruleSubject)...)
 	return failures, nil
+}
+
+func ulcxContainerFailures(meta api.TrackerValidationSubject, ruleSubject api.RuleSubject) []api.RuleFailure {
+	for _, extension := range meta.PackageFacts.Extensions {
+		extension = strings.ToLower(strings.TrimSpace(extension))
+		if extension != ".mkv" && (extension != ".ts" || unit3d.RuleType(ruleSubject) != "HDTV") {
+			return []api.RuleFailure{trackers.NewEvidenceRuleFailure(
+				"ulcx_media_container",
+				"non-disc releases must contain only MKV files, except TS files for HDTV",
+				api.RuleDispositionStrict,
+				meta.PackageFacts.Status,
+			)}
+		}
+	}
+	return nil
 }
 
 func ulcxRequiredAssetFailures(meta api.TrackerValidationSubject) []api.RuleFailure {
@@ -111,7 +129,71 @@ func ulcxEncodeFailures(meta api.TrackerValidationSubject, ruleSubject api.RuleS
 	if typeValue == "ENCODE" && ulcxX265Encode(meta) {
 		failures = append(failures, ulcxX265SourceFailures(meta, unit3d.Animation(ruleSubject) || unit3d.Anime(ruleSubject))...)
 	}
+	if typeValue == "ENCODE" && ulcxAV1Encode(meta) && !unit3d.Animation(ruleSubject) && !unit3d.Anime(ruleSubject) {
+		failures = append(failures, trackers.NewEvidenceRuleFailure(
+			"ulcx_av1_animation_only",
+			"AV1 encodes are allowed only for animated content",
+			api.RuleDispositionStrict,
+			meta.MediaFileFacts.TechnicalStatus,
+		))
+	}
 	return failures
+}
+
+func ulcxAV1Encode(meta api.TrackerValidationSubject) bool {
+	return strings.EqualFold(strings.TrimSpace(meta.VideoEncode), "AV1") ||
+		strings.EqualFold(strings.TrimSpace(meta.VideoCodec), "AV1")
+}
+
+func ulcxAudioFailures(meta api.TrackerValidationSubject, ruleSubject api.RuleSubject) []api.RuleFailure {
+	audio := strings.ToUpper(strings.TrimSpace(meta.Audio))
+	channels, channelsKnown := ulcxChannelCount(meta.Channels)
+	status := meta.MediaFileFacts.TechnicalStatus
+	switch {
+	case strings.Contains(audio, "LPCM"):
+		return []api.RuleFailure{trackers.NewEvidenceRuleFailure(
+			"ulcx_lpcm_audio",
+			"LPCM audio is not allowed",
+			api.RuleDispositionStrict,
+			status,
+		)}
+	case strings.Contains(audio, "FLAC") && channelsKnown && channels > 2:
+		return []api.RuleFailure{trackers.NewEvidenceRuleFailure(
+			"ulcx_flac_channels",
+			"FLAC audio is allowed only for mono or stereo tracks",
+			api.RuleDispositionStrict,
+			status,
+		)}
+	case unit3d.RuleType(ruleSubject) == "ENCODE" && channelsKnown && channels > 2 &&
+		ulcxLosslessAudio(audio) && unit3d.ResolutionBelow(unit3d.RuleResolution(ruleSubject), "2160p"):
+		return []api.RuleFailure{trackers.NewEvidenceRuleFailure(
+			"ulcx_encode_lossless_multichannel",
+			"lossless multichannel audio is not allowed on encodes at 1080p or below",
+			api.RuleDispositionStrict,
+			status,
+		)}
+	default:
+		return nil
+	}
+}
+
+func ulcxChannelCount(value string) (float64, bool) {
+	value = strings.TrimSpace(value)
+	end := 0
+	for end < len(value) && ((value[end] >= '0' && value[end] <= '9') || value[end] == '.') {
+		end++
+	}
+	if end == 0 {
+		return 0, false
+	}
+	channels, err := strconv.ParseFloat(value[:end], 64)
+	return channels, err == nil
+}
+
+func ulcxLosslessAudio(audio string) bool {
+	return strings.Contains(audio, "FLAC") || strings.Contains(audio, "TRUEHD") ||
+		strings.Contains(audio, "DTS-HD MA") || strings.Contains(audio, "DTS-HD MASTER") ||
+		strings.Contains(audio, "LPCM") || strings.Contains(audio, "PCM") || strings.Contains(audio, "ALAC")
 }
 
 func ulcxX265Encode(meta api.TrackerValidationSubject) bool {
