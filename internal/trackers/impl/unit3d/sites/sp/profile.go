@@ -19,7 +19,7 @@ func Profile() unit3d.Profile {
 		Rules:            Rules(),
 		ValidationPolicy: ValidationPolicy(),
 		ReleaseNamePolicy: trackers.WithNonSceneReleaseNameConfirmation(
-			trackers.NewReleaseNamePolicy("unit3d/sp/v3", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
+			trackers.NewReleaseNamePolicy("unit3d/sp/v4", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
 				name := buildName(input.Subject, input.TrackerConfig)
 				if !input.Subject.Scene && input.RequestedName != nil {
 					name = strings.TrimSpace(*input.RequestedName)
@@ -29,7 +29,7 @@ func Profile() unit3d.Profile {
 		),
 		Site: unit3d.SiteProfile{
 			BuildName:        buildName,
-			BuildNameVersion: "v3",
+			BuildNameVersion: "v4",
 		},
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			Requirements: []trackers.MetadataRequirement{{

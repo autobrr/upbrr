@@ -5,6 +5,7 @@ package trackers
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -37,15 +38,15 @@ func TestResolveReleaseNamesUsesConfiguredMovieYearProvider(t *testing.T) {
 		wantYear string
 	}{
 		{
-name: "TMDB",
- provider: api.IdentityProviderTMDB,
- wantYear: "2026",
-},
+			name:     "TMDB",
+			provider: api.IdentityProviderTMDB,
+			wantYear: "2026",
+		},
 		{
-name: "IMDb",
- provider: api.IdentityProviderIMDB,
- wantYear: "2024",
-},
+			name:     "IMDb",
+			provider: api.IdentityProviderIMDB,
+			wantYear: "2024",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -77,9 +78,9 @@ func TestResolveReleaseNamesPreservesRequestedMovieYear(t *testing.T) {
 	requested := "Example Release 2025 1080p-GRP"
 	resolved, err := resolveProjectedReleaseNames(PreparationInput{
 		Meta: api.UploadSubject{
-			ReleaseName:     requested,
-			Identity:        api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
-			Release:         api.ReleaseInfo{Category: "MOVIE", Year: 2025},
+			ReleaseName:      requested,
+			Identity:         api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+			Release:          api.ReleaseInfo{Category: "MOVIE", Year: 2025},
 			ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Year: 2026}},
 		},
 		RequestedUploadName: &requested,
@@ -241,6 +242,7 @@ func TestRequestedReleaseNameIsPolicyInputAndDoesNotMutateCanonicalSubject(t *te
 
 func TestSourceReleaseNameDistinguishesDottedFoldersFromFiles(t *testing.T) {
 	t.Parallel()
+	const dottedFolder = "Example.Release.2026.2160p.WEB-DL.H.265-GRP"
 
 	tests := []struct {
 		name    string
@@ -248,9 +250,13 @@ func TestSourceReleaseNameDistinguishesDottedFoldersFromFiles(t *testing.T) {
 		want    string
 	}{
 		{
-			name:    "dotted folder",
-			subject: api.UploadSubject{SourcePath: "C:/media/Example.Release.2026"},
-			want:    "Example.Release.2026",
+			name: "prepared dotted folder",
+			subject: api.UploadSubject{
+				SourcePath: filepath.Join("media", dottedFolder),
+				VideoPath:  filepath.Join("media", dottedFolder, dottedFolder+".mkv"),
+				Filename:   dottedFolder,
+			},
+			want: dottedFolder,
 		},
 		{
 			name:    "known media extension",

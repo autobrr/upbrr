@@ -6,6 +6,7 @@ package logging
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -24,6 +25,87 @@ func TestResolveEffectiveLevel(t *testing.T) {
 	}
 	if got := ResolveEffectiveLevel("info", "trace", true); got != "trace" {
 		t.Fatalf("expected explicit override trace, got %q", got)
+	}
+}
+
+func TestConsoleLevelDoesNotChangeApplicationLogging(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
+	logger, err := NewWithConsoleLevel(config.LoggingConfig{
+		Level:          "error",
+		FileEnabled:    true,
+		MaxTotalSizeMB: 1,
+		MaxFiles:       1,
+	}, dbPath, "info")
+	if err != nil {
+		t.Fatalf("new logger: %v", err)
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	logger.SetConsoleOutput(&stdout, &stderr)
+	subscriptionID, subscription := logger.Subscribe(2)
+	defer logger.Unsubscribe(subscriptionID)
+
+	logger.Infof("console-only detail")
+	logger.Errorf("application failure")
+	if err := logger.Close(); err != nil {
+		t.Fatalf("close logger: %v", err)
+	}
+
+	if !strings.Contains(stdout.String(), "console-only detail") || !strings.Contains(stderr.String(), "application failure") {
+		t.Fatalf("console output: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	entries := logger.Recent(10)
+	if len(entries) != 1 || entries[0].Level != "error" || entries[0].Message != "application failure" {
+		t.Fatalf("application entries = %#v", entries)
+	}
+	select {
+	case entry := <-subscription:
+		if entry.Level != "error" || entry.Message != "application failure" {
+			t.Fatalf("subscriber entry = %#v", entry)
+		}
+	default:
+		t.Fatal("application entry did not reach subscriber")
+	}
+	select {
+	case entry := <-subscription:
+		t.Fatalf("console-only entry reached subscriber: %#v", entry)
+	default:
+	}
+	logPath, err := LogPath(dbPath)
+	if err != nil {
+		t.Fatalf("resolve log path: %v", err)
+	}
+	contents, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if strings.Contains(string(contents), "console-only detail") || !strings.Contains(string(contents), "application failure") {
+		t.Fatalf("application log = %q", contents)
+	}
+}
+
+func TestConsoleLevelCanFilterRetainedApplicationEntries(t *testing.T) {
+	t.Parallel()
+
+	logger, err := NewWithConsoleLevel(config.LoggingConfig{Level: "debug"}, "", "warn")
+	if err != nil {
+		t.Fatalf("new logger: %v", err)
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	logger.SetConsoleOutput(&stdout, &stderr)
+
+	logger.Debugf("application detail")
+	logger.Warnf("console warning")
+
+	if stdout.Len() != 0 || !strings.Contains(stderr.String(), "console warning") {
+		t.Fatalf("console output: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	entries := logger.Recent(10)
+	if len(entries) != 2 || entries[0].Level != "debug" || entries[1].Level != "warn" {
+		t.Fatalf("application entries = %#v", entries)
 	}
 }
 

@@ -14,7 +14,7 @@ func TestARReleaseNamePolicyPrefersProviderTitleForDuplicateSearch(t *testing.T)
 	t.Parallel()
 
 	policy := Profile().ReleaseNamePolicy
-	if policy.ID != "standalone/ar/v3" {
+	if policy.ID != "standalone/ar/v4" {
 		t.Fatalf("release name policy ID = %q", policy.ID)
 	}
 	if policy.Confirmation != trackers.ReleaseNameConfirmationNonScene {

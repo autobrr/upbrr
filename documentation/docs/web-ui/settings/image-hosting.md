@@ -30,7 +30,7 @@ When an allowed host fails, upbrr can try the next eligible configured host. A h
 
 ## Additional hosts
 
-**Lostimg** and **ReelFliX** are conditional, tracker-owned integrations. Enable one and enter its API key only when a configured tracker advertises support. They are not general global fallback slots.
+**Lostimg**, **ReelFliX**, and **Samaritano** are conditional, tracker-owned integrations. Enable one and enter its API key only when the corresponding tracker advertises support. They are not general global fallback slots; Samaritano is available only for SAM.
 
 ## Verify the change
 

@@ -653,7 +653,8 @@ func conditionalImageHost(registry *Registry, appCfg config.Config, tracker stri
 	if host == "" {
 		return "", false
 	}
-	if declared.EnableWithImageHosting && appCfg.ImageHosting.HostEnabled(host) {
+	configured, _ := appCfg.ImageHosting.ConditionalHostConfigured(host)
+	if declared.EnableWithImageHosting && configured {
 		return host, true
 	}
 	return host, false

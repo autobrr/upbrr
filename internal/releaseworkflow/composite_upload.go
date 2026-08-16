@@ -1804,8 +1804,32 @@ func (m *Module) applyCompositeUploadFeedback(
 			mapped := compositeUploadProjectionInstructions(map[api.TrackerID]api.ReleaseWorkflowUploadTrackerProjection{
 				command.Response.TrackerID: *command.Response.Projection,
 			})
-			state.Composite.Intent.ProjectionInstructions[command.Response.TrackerID] = mapped[command.Response.TrackerID]
-			invalidateTrackerAndDownstream(&state.Workflow)
+			instruction := mapped[command.Response.TrackerID]
+			state.Composite.Intent.ProjectionInstructions[command.Response.TrackerID] = instruction
+			var projections *api.TrackerReleaseProjectionSet
+			if state.Workflow.TrackerProjections != nil {
+				projections = currentSnapshot(state.Projections, state.Workflow.TrackerProjections.ID)
+			}
+			if _, ok := releaseNameConfirmationAction(projections, action.ID); ok {
+				confirmed := true
+				reviewedName := instruction.UploadReleaseName.Value
+				if _, err := m.resolveAction(ctx, ownerID, state, nextRevision, now, ResolveActionCommand{
+					WorkflowID:       command.WorkflowID,
+					ExpectedRevision: command.ExpectedRevision,
+					Answer: api.RequiredActionAnswer{
+						ActionID:         action.ID,
+						WorkflowRevision: command.ExpectedRevision,
+						TextValue:        &reviewedName,
+						Confirmed:        &confirmed,
+					},
+					IdempotencyKey: command.IdempotencyKey,
+				}); err != nil {
+					return CommandResult{}, err
+				}
+				resolvedByCommand = true
+			} else {
+				invalidateTrackerAndDownstream(&state.Workflow)
+			}
 		}
 	case api.ReleaseWorkflowUploadFeedbackQuestionnaire:
 		if state.Composite.Intent.ProjectionInstructions == nil {
