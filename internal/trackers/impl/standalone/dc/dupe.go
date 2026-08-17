@@ -128,7 +128,7 @@ func dcParseDupeEntries(body []byte) ([]api.DupeEntry, error) {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.UseNumber()
 	if err := decoder.Decode(&payload); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decode DC duplicate response: %w", err)
 	}
 
 	entries := make([]api.DupeEntry, 0, len(payload.Results))
