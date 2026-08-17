@@ -43,8 +43,9 @@ const (
 	workflowWorkLeaseTTL  = time.Minute
 	workflowWorkHeartbeat = 20 * time.Second
 	workflowCommandTTL    = 24 * time.Hour
-	// maxPlaylistActionOptions bounds the selectable playlist details retained in one action.
-	maxPlaylistActionOptions = 10
+	// maxPlaylistActionOptionsPerDisc bounds retained selectable playlist details without
+	// allowing one disc to hide every option for another disc.
+	maxPlaylistActionOptionsPerDisc = 10
 )
 
 // Option configures a workflow module.
@@ -2882,21 +2883,7 @@ func (m *Module) prepareRelease(
 	if err != nil {
 		var playlistRequired *api.PlaylistSelectionRequiredError
 		if errors.As(err, &playlistRequired) {
-			options := make([]api.RequiredActionOption, 0, min(len(playlistRequired.Candidates), maxPlaylistActionOptions))
-			for _, candidate := range playlistRequired.Candidates {
-				playlist := strings.TrimSpace(candidate.File)
-				if playlist != "" {
-					candidate.File = playlist
-					options = append(options, api.RequiredActionOption{
-						Value:    playlist,
-						Label:    playlist,
-						Playlist: &candidate,
-					})
-					if len(options) == maxPlaylistActionOptions {
-						break
-					}
-				}
-			}
+			options := playlistActionOptions(playlistRequired.Candidates)
 			if len(options) > 0 {
 				if actionErr := m.blockForPlaylistSelection(state, nextRevision, now, options); actionErr != nil {
 					return CommandResult{}, actionErr
@@ -2946,26 +2933,33 @@ func (m *Module) prepareRelease(
 	state.Workflow.Status = api.WorkflowStatusActive
 	state.Workflow.RequiredActions = nil
 	state.Workflow.Failures = nil
-	if strings.EqualFold(strings.TrimSpace(prepared.Release.Source.Classification.DiscType), "BDMV") &&
-		!facts.Instructions.Playlist.Set {
-		options := make([]api.RequiredActionOption, 0)
-		for _, entry := range prepared.Release.Source.Entries {
-			playlist := strings.TrimSpace(entry.Playlist)
-			if entry.Type != api.SourceEntryTypePlaylist || playlist == "" {
-				continue
-			}
-			options = append(options, api.RequiredActionOption{Value: playlist, Label: playlist})
-			if len(options) == maxPlaylistActionOptions {
-				break
-			}
-		}
-		if len(options) > 0 {
-			if err := m.blockForPlaylistSelection(state, nextRevision, now, options); err != nil {
-				return CommandResult{}, err
-			}
-		}
-	}
 	return CommandResult{Release: &snapshot}, nil
+}
+
+func playlistActionOptions(candidates []api.PlaylistInfo) []api.RequiredActionOption {
+	options := make([]api.RequiredActionOption, 0, len(candidates))
+	counts := make(map[string]int)
+	for _, candidate := range candidates {
+		candidate.ID = strings.TrimSpace(candidate.ID)
+		candidate.DiscID = strings.TrimSpace(candidate.DiscID)
+		candidate.DiscName = strings.TrimSpace(candidate.DiscName)
+		candidate.File = strings.TrimSpace(candidate.File)
+		if candidate.ID == "" || candidate.File == "" || counts[candidate.DiscID] >= maxPlaylistActionOptionsPerDisc {
+			continue
+		}
+		counts[candidate.DiscID]++
+		candidate.Items = append([]api.PlaylistItem(nil), candidate.Items...)
+		label := candidate.File
+		if candidate.DiscName != "" {
+			label = candidate.DiscName + " — " + label
+		}
+		options = append(options, api.RequiredActionOption{
+			Value:    candidate.ID,
+			Label:    label,
+			Playlist: &candidate,
+		})
+	}
+	return options
 }
 
 // blockForPlaylistSelection replaces workflow failures with one pending,

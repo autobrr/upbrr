@@ -22,6 +22,7 @@ export type ReleaseWorkflowPorts = Readonly<{
   mediaPlan(workflowID: string, signal: AbortSignal): Promise<MediaPlan>;
   previewFrame(
     current: ReleaseWorkflowCurrent,
+    discID: string,
     timestampSeconds: number,
     idempotencyKey: string,
     signal: AbortSignal,

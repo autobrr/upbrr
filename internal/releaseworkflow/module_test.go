@@ -1026,15 +1026,32 @@ func TestModuleBDMVPreparationRequiresTypedPlaylistSelection(t *testing.T) {
 	t.Parallel()
 
 	base := testPreparer()
-	candidates := make([]api.PlaylistInfo, 12)
-	for index := range candidates {
-		candidates[index] = api.PlaylistInfo{
-			File:     fmt.Sprintf("%05d.mpls", index+1),
+	candidates := make([]api.PlaylistInfo, 0, 15)
+	for index := range 12 {
+		file := fmt.Sprintf("%05d.mpls", index+1)
+		candidates = append(candidates, api.PlaylistInfo{
+			ID:       "disc-one:" + file,
+			DiscID:   "disc-one",
+			DiscName: "Disc 1",
+			File:     file,
 			Duration: float64(7200 - index),
 			Items:    []api.PlaylistItem{{File: fmt.Sprintf("%05d.m2ts", index+1), Size: int64(1000 - index)}},
 			Score:    float64(100 - index),
 			Edition:  "Example Edition",
-		}
+		})
+	}
+	for index := range 3 {
+		file := fmt.Sprintf("%05d.mpls", index+1)
+		candidates = append(candidates, api.PlaylistInfo{
+			ID:       "disc-two:" + file,
+			DiscID:   "disc-two",
+			DiscName: "Disc 2",
+			File:     file,
+			Duration: float64(5400 - index),
+			Items:    []api.PlaylistItem{{File: fmt.Sprintf("%05d.m2ts", index+1), Size: int64(900 - index)}},
+			Score:    float64(90 - index),
+			Edition:  "Example Edition",
+		})
 	}
 	preparer := ReleasePreparerFunc{
 		PrepareFunc: func(_ context.Context, input api.PrepareInput) (api.PrepareResult, error) {
@@ -1079,16 +1096,17 @@ func TestModuleBDMVPreparationRequiresTypedPlaylistSelection(t *testing.T) {
 		t.Fatalf("playlist preparation workflow = %#v", result.Workflow)
 	}
 	action := result.Workflow.RequiredActions[0]
-	if action.Kind != api.RequiredActionSelectPlaylist || len(action.Options) != maxPlaylistActionOptions || action.Options[0].Value != "00001.mpls" {
+	if action.Kind != api.RequiredActionSelectPlaylist || len(action.Options) != 13 || action.Options[0].Value != "disc-one:00001.mpls" {
 		t.Fatalf("playlist action = %#v", action)
 	}
 	if action.Options[0].Playlist == nil || !reflect.DeepEqual(*action.Options[0].Playlist, candidates[0]) ||
-		action.Options[len(action.Options)-1].Value != "00010.mpls" {
+		action.Options[0].Label != "Disc 1 — 00001.mpls" || action.Options[9].Value != "disc-one:00010.mpls" ||
+		action.Options[10].Value != "disc-two:00001.mpls" || action.Options[10].Label != "Disc 2 — 00001.mpls" {
 		t.Fatalf("playlist action details = %#v", action.Options)
 	}
 
 	instructions := api.ReleaseFactInstructions{
-		Playlist: api.PlaylistInstruction{Set: true, Selected: []string{"00001.mpls"}},
+		Playlist: api.PlaylistInstruction{Set: true, Selected: []string{"disc-one:00001.mpls", "disc-two:00001.mpls"}},
 	}
 	result = executeCommand(t, module, ReplaceFactInstructionsCommand{
 		WorkflowID:       result.Workflow.ID,

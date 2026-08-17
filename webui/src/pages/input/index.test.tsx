@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { InputFacet } from "../../releaseSession/types";
 import type {
@@ -34,6 +34,7 @@ const inputFacet = (): InputFacet => ({
     selectedTrackers: [],
     preview: null,
     trackerData: [],
+    source: { discCount: 0, discType: "" },
     playlist: {
       status: "idle",
       required: false,
@@ -178,7 +179,18 @@ describe("InputPage", () => {
         playlist: {
           status: "awaiting_selection",
           required: true,
-          candidates: [{ file: "00001.mpls", duration: 120, items: [], score: 1, edition: "" }],
+          candidates: [
+            {
+              id: "disc-one:00001.mpls",
+              discId: "disc-one",
+              discName: "Disc 1",
+              file: "00001.mpls",
+              duration: 120,
+              items: [],
+              score: 1,
+              edition: "",
+            },
+          ],
           selected: [],
           useAll: false,
           error: "",
@@ -200,11 +212,14 @@ describe("InputPage", () => {
     );
 
     fireEvent.click(screen.getByLabelText("00001.mpls"));
-    expect(facet.choosePlaylists).toHaveBeenCalledWith(["00001.mpls"], false);
+    expect(facet.choosePlaylists).toHaveBeenCalledWith(["disc-one:00001.mpls"], false);
 
     const selectedFacet: InputFacet = {
       ...facet,
-      view: { ...facet.view, playlist: { ...facet.view.playlist, selected: ["00001.mpls"] } },
+      view: {
+        ...facet.view,
+        playlist: { ...facet.view.playlist, selected: ["disc-one:00001.mpls"] },
+      },
     };
     cleanup();
     render(
@@ -222,6 +237,78 @@ describe("InputPage", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Confirm Selection" }));
     expect(facet.confirmPlaylists).toHaveBeenCalledOnce();
+  });
+
+  it("groups duplicate playlist names and selects opaque IDs for every disc", () => {
+    const base = inputFacet();
+    const candidates = [
+      {
+        id: "disc-one:00001.mpls",
+        discId: "disc-one",
+        discName: "Disc 1",
+        file: "00001.mpls",
+        duration: 120,
+        items: [],
+        score: 2,
+        edition: "",
+      },
+      {
+        id: "disc-two:00001.mpls",
+        discId: "disc-two",
+        discName: "Disc 2",
+        file: "00001.mpls",
+        duration: 110,
+        items: [],
+        score: 1,
+        edition: "",
+      },
+    ];
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        source: { discCount: 2, discType: "BDMV" },
+        playlist: {
+          status: "awaiting_selection",
+          required: true,
+          candidates,
+          selected: [candidates[0].id],
+          useAll: false,
+          error: "",
+        },
+      },
+    };
+    render(
+      <InputPage
+        facet={facet}
+        sourcePathHistory={[]}
+        handleBrowseFile={vi.fn()}
+        handleBrowseFolder={vi.fn()}
+        trackerUploadItems={[]}
+        showExternalIDInputUI={false}
+        setLightboxImage={vi.fn()}
+        setLightboxAlt={vi.fn()}
+        trackerIconSrcByName={{}}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Disc 1" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Disc 2" })).toBeVisible();
+    expect(screen.getByText("Prepared source: 2 BDMV discs")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Confirm Selection" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Auto-Select Best Per Disc" }));
+    expect(facet.choosePlaylists).toHaveBeenCalledWith(
+      ["disc-one:00001.mpls", "disc-two:00001.mpls"],
+      false,
+    );
+    const playlistSection = screen
+      .getByRole("heading", { name: "Select BDMV Playlists" })
+      .closest("section");
+    if (!playlistSection) throw new Error("playlist section missing");
+    const checkboxIDs = within(playlistSection)
+      .getAllByRole("checkbox")
+      .map((checkbox) => checkbox.getAttribute("id"));
+    expect(new Set(checkboxIDs).size).toBe(checkboxIDs.length);
   });
 
   it("selects the highest-priority metadata source for each prepared generation", () => {

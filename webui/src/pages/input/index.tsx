@@ -1312,10 +1312,32 @@ export default function InputPage(props: Props) {
     : [];
 
   const playlist = view.playlist;
-  const togglePlaylist = (file: string) => {
+  const playlistGroups = playlist.candidates.reduce<
+    Array<{ discID: string; discName: string; candidates: typeof playlist.candidates }>
+  >((groups, candidate) => {
+    const discID = candidate.discId || "single-disc";
+    const existing = groups.find((group) => group.discID === discID);
+    if (existing) {
+      existing.candidates = [...existing.candidates, candidate];
+    } else {
+      groups.push({
+        discID,
+        discName: candidate.discName || "Blu-ray disc",
+        candidates: [candidate],
+      });
+    }
+    return groups;
+  }, []);
+  const selectedPlaylistIDs = new Set(playlist.selected);
+  const playlistSelectionComplete =
+    playlistGroups.length > 0 &&
+    playlistGroups.every((group) =>
+      group.candidates.some((candidate) => selectedPlaylistIDs.has(candidate.id)),
+    );
+  const togglePlaylist = (playlistID: string) => {
     const selected = new Set(playlist.selected);
-    if (selected.has(file)) selected.delete(file);
-    else selected.add(file);
+    if (selected.has(playlistID)) selected.delete(playlistID);
+    else selected.add(playlistID);
     facet.choosePlaylists([...selected], false);
   };
   const toggleAllPlaylists = () => {
@@ -1324,7 +1346,7 @@ export default function InputPage(props: Props) {
       return;
     }
     facet.choosePlaylists(
-      playlist.candidates.map((candidate) => candidate.file),
+      playlist.candidates.map((candidate) => candidate.id),
       true,
     );
   };
@@ -1350,43 +1372,59 @@ export default function InputPage(props: Props) {
           {playlist.error ? <p className="error">{playlist.error}</p> : null}
           {playlist.candidates.length ? (
             <div className="overflow-hidden rounded-md border border-white/10">
-              {playlist.candidates.map((candidate) => {
-                const totalSize = (candidate.items || []).reduce((sum, item) => sum + item.size, 0);
-                const checkboxID = `playlist-${candidate.file.replaceAll(/[^a-zA-Z0-9_-]/g, "-")}`;
-                return (
-                  <div
-                    key={candidate.file}
-                    className="grid gap-1 border-b border-white/10 px-3 py-2 last:border-b-0 hover:bg-white/5"
-                  >
-                    <div className="flex select-none items-center gap-2">
-                      <Checkbox
-                        id={checkboxID}
-                        checked={playlist.selected.includes(candidate.file)}
-                        onCheckedChange={() => togglePlaylist(candidate.file)}
-                      />
-                      <label className="cursor-pointer font-semibold" htmlFor={checkboxID}>
-                        {candidate.file}
-                      </label>
-                    </div>
-                    <span className="ml-6 text-xs text-[var(--muted)]">
-                      {formatPlaylistDuration(candidate.duration)} • {candidate.items?.length || 0}{" "}
-                      files • {formatPlaylistBytes(totalSize)} • Score: {candidate.score.toFixed(2)}
-                    </span>
-                  </div>
-                );
-              })}
+              {playlistGroups.map((group) => (
+                <section key={group.discID} aria-label={group.discName}>
+                  <h3 className="border-b border-white/10 bg-white/5 px-3 py-2 text-sm font-semibold">
+                    {group.discName}
+                  </h3>
+                  {group.candidates.map((candidate) => {
+                    const totalSize = (candidate.items || []).reduce(
+                      (sum, item) => sum + item.size,
+                      0,
+                    );
+                    const checkboxID = `playlist-${candidate.id.replaceAll(/[^a-zA-Z0-9_-]/g, "-")}`;
+                    return (
+                      <div
+                        key={candidate.id}
+                        className="grid gap-1 border-b border-white/10 px-3 py-2 last:border-b-0 hover:bg-white/5"
+                      >
+                        <div className="flex select-none items-center gap-2">
+                          <Checkbox
+                            id={checkboxID}
+                            checked={playlist.selected.includes(candidate.id)}
+                            onCheckedChange={() => togglePlaylist(candidate.id)}
+                          />
+                          <label className="cursor-pointer font-semibold" htmlFor={checkboxID}>
+                            {candidate.file}
+                          </label>
+                        </div>
+                        <span className="ml-6 text-xs text-[var(--muted)]">
+                          {formatPlaylistDuration(candidate.duration)} •{" "}
+                          {candidate.items?.length || 0} files • {formatPlaylistBytes(totalSize)} •
+                          Score: {candidate.score.toFixed(2)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </section>
+              ))}
             </div>
           ) : null}
           {playlist.candidates.length > 1 ? (
             <div className="flex flex-wrap gap-2">
               <Button type="button" onClick={toggleAllPlaylists}>
-                {playlist.useAll ? "Deselect All" : `Select All Top ${playlist.candidates.length}`}
+                {playlist.useAll ? "Deselect All" : "Select All Playlists"}
               </Button>
               <Button
                 type="button"
-                onClick={() => facet.choosePlaylists([playlist.candidates[0].file], false)}
+                onClick={() =>
+                  facet.choosePlaylists(
+                    playlistGroups.map((group) => group.candidates[0].id),
+                    false,
+                  )
+                }
               >
-                Auto-Select Best
+                Auto-Select Best Per Disc
               </Button>
             </div>
           ) : null}
@@ -1397,7 +1435,7 @@ export default function InputPage(props: Props) {
             <Button
               type="button"
               variant="primary"
-              disabled={playlist.selected.length === 0 || playlist.status === "processing"}
+              disabled={!playlistSelectionComplete || playlist.status === "processing"}
               onClick={() => void facet.confirmPlaylists()}
             >
               Confirm Selection
@@ -1493,6 +1531,12 @@ export default function InputPage(props: Props) {
             </div>
           </div>
         </div>
+        {view.source.discCount > 0 ? (
+          <p className="muted" role="status">
+            Prepared source: {view.source.discCount} {view.source.discType || "optical"} disc
+            {view.source.discCount === 1 ? "" : "s"}
+          </p>
+        ) : null}
         {error ? (
           <div className="flex flex-wrap items-center gap-2">
             <p className="error">{error}</p>

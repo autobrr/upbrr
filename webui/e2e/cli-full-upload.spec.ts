@@ -5,7 +5,9 @@ import { spawn } from "node:child_process";
 import { expect, test } from "@playwright/test";
 import {
   createE2EWorkspace,
+  createMultiBluraySourceFixture,
   e2eBinary,
+  expectSingleCollectionTorrentUpload,
   readE2EAuthCounters,
   releaseWorkflowParityFixture,
   repoRoot,
@@ -38,6 +40,36 @@ test("CLI full upload approves trackers before downstream work", async () => {
       releaseWorkflowParityFixture.expectedClientSearches,
     );
     expect(workspace.fake.counters.clientInjections).toBe(0);
+  } finally {
+    await workspace.cleanup();
+  }
+});
+
+test("CLI uploads one collection torrent for two BDMV discs", async () => {
+  const workspace = await createE2EWorkspace({ useLargestPlaylist: true, mediaKind: "tv" });
+  try {
+    const sourcePath = await createMultiBluraySourceFixture(workspace);
+    const result = await runCLI(
+      [
+        "--config",
+        workspace.configPath,
+        "--trackers",
+        releaseWorkflowParityFixture.trackerID,
+        "--no-seed",
+        "--unattended_confirm",
+        sourcePath,
+      ],
+      workspace.env,
+      "y\ny\n",
+    );
+    expect(result.code, result.output).toBe(0);
+    expect(workspace.fake.counters.trackerUploads).toBe(1);
+    expectSingleCollectionTorrentUpload(workspace, "Example BDMV Collection", [
+      "Disc 1",
+      "Disc 2",
+      "BDMV",
+      "00001.mpls",
+    ]);
   } finally {
     await workspace.cleanup();
   }

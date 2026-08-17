@@ -33,6 +33,26 @@ export default function MenuImagesPage({
   const resolvedMaxMenuItems =
     Number.isFinite(maxMenuItems) && maxMenuItems > 0 ? Math.trunc(maxMenuItems) : 6;
   const automaticCaptureAvailable = currentDiscType.toUpperCase() === "DVD";
+  const imageGroups = view.images.reduce<
+    Array<{
+      discID: string;
+      discName: string;
+      items: Array<{ item: (typeof view.images)[number]; index: number }>;
+    }>
+  >((groups, item, index) => {
+    const discID = item.image.discID || "single-disc";
+    const existing = groups.find((group) => group.discID === discID);
+    if (existing) {
+      existing.items.push({ item, index });
+    } else {
+      groups.push({
+        discID,
+        discName: item.image.discName || "DVD menus",
+        items: [{ item, index }],
+      });
+    }
+    return groups;
+  }, []);
 
   useEffect(() => {
     if (view.status === "idle" && view.staleReason) void loadRef.current();
@@ -176,38 +196,47 @@ export default function MenuImagesPage({
           <p className="muted">{running ? "Loading..." : `${view.images.length} saved`}</p>
         </div>
         {view.images.length > 0 ? (
-          <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3">
-            {view.images.map((item, index) => {
-              const itemNumber = index + 1;
-              return (
-                <article className="grid gap-2" key={item.image.artifactID}>
-                  <button
-                    className="screens-thumb"
-                    type="button"
-                    aria-label={`Preview DVD menu ${itemNumber}`}
-                    onClick={() => {
-                      setLightboxImage(item.contentURL);
-                      setLightboxAlt(`DVD menu ${itemNumber}`);
-                    }}
-                  >
-                    <img src={item.contentURL} alt="" />
-                  </button>
-                  <button
-                    ref={(element) => {
-                      if (element) removeButtonRefs.current.set(item.image.artifactID, element);
-                      else removeButtonRefs.current.delete(item.image.artifactID);
-                    }}
-                    className="danger"
-                    type="button"
-                    aria-label={`Remove DVD menu ${itemNumber}`}
-                    disabled={running}
-                    onClick={() => handleDelete(item.image.artifactID)}
-                  >
-                    Remove
-                  </button>
-                </article>
-              );
-            })}
+          <div className="grid gap-4">
+            {imageGroups.map((group) => (
+              <section className="grid gap-2" key={group.discID}>
+                <h3>{group.discName}</h3>
+                <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3">
+                  {group.items.map(({ item, index }) => {
+                    const itemNumber = index + 1;
+                    const imageLabel = `${group.discName} menu ${itemNumber}`;
+                    return (
+                      <article className="grid gap-2" key={item.image.artifactID}>
+                        <button
+                          className="screens-thumb"
+                          type="button"
+                          aria-label={`Preview DVD menu ${itemNumber}`}
+                          onClick={() => {
+                            setLightboxImage(item.contentURL);
+                            setLightboxAlt(imageLabel);
+                          }}
+                        >
+                          <img src={item.contentURL} alt="" />
+                        </button>
+                        <button
+                          ref={(element) => {
+                            if (element)
+                              removeButtonRefs.current.set(item.image.artifactID, element);
+                            else removeButtonRefs.current.delete(item.image.artifactID);
+                          }}
+                          className="danger"
+                          type="button"
+                          aria-label={`Remove DVD menu ${itemNumber}`}
+                          disabled={running}
+                          onClick={() => handleDelete(item.image.artifactID)}
+                        >
+                          Remove
+                        </button>
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+            ))}
           </div>
         ) : (
           <p className="muted">No saved menu images yet.</p>

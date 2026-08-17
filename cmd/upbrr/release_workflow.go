@@ -364,7 +364,17 @@ func selectCLIWorkflowPlaylists(reader *bufio.Reader, output io.Writer, action a
 		return nil, errors.New("upbrr: Blu-ray playlist action has no candidates")
 	}
 	if useLargest {
-		return []string{action.Options[0].Value}, nil
+		selected := make([]string, 0)
+		seenDiscs := make(map[string]struct{})
+		for _, option := range action.Options {
+			discID := playlistOptionDiscID(option)
+			if _, ok := seenDiscs[discID]; ok {
+				continue
+			}
+			seenDiscs[discID] = struct{}{}
+			selected = append(selected, option.Value)
+		}
+		return selected, nil
 	}
 	if reader == nil {
 		return nil, errors.New("upbrr: Blu-ray playlist selection requires input")
@@ -380,14 +390,16 @@ func selectCLIWorkflowPlaylists(reader *bufio.Reader, output io.Writer, action a
 	}
 	selected := make([]string, 0)
 	seen := make(map[string]struct{})
+	selectedDiscs := make(map[string]struct{})
 	for _, token := range strings.FieldsFunc(answer, func(r rune) bool { return r == ',' || r == ' ' }) {
 		for index, option := range action.Options {
-			if token != strconv.Itoa(index+1) && !strings.EqualFold(token, option.Value) {
+			if token != strconv.Itoa(index+1) && token != option.Value {
 				continue
 			}
 			if _, ok := seen[option.Value]; !ok {
 				seen[option.Value] = struct{}{}
 				selected = append(selected, option.Value)
+				selectedDiscs[playlistOptionDiscID(option)] = struct{}{}
 			}
 			break
 		}
@@ -395,7 +407,19 @@ func selectCLIWorkflowPlaylists(reader *bufio.Reader, output io.Writer, action a
 	if len(selected) == 0 {
 		return nil, errors.New("upbrr: no valid Blu-ray playlist selected")
 	}
+	for _, option := range action.Options {
+		if _, ok := selectedDiscs[playlistOptionDiscID(option)]; !ok {
+			return nil, errors.New("upbrr: select at least one Blu-ray playlist for each disc")
+		}
+	}
 	return selected, nil
+}
+
+func playlistOptionDiscID(option api.RequiredActionOption) string {
+	if option.Playlist == nil || strings.TrimSpace(option.Playlist.DiscID) == "" {
+		return "single-disc"
+	}
+	return strings.TrimSpace(option.Playlist.DiscID)
 }
 
 func runCLIWorkflowInteractive(

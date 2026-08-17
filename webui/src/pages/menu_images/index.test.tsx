@@ -69,6 +69,8 @@ describe("MenuImagesPage", () => {
     const images = Array.from({ length: 2 }, (_, index) => ({
       image: {
         artifactID: `menu-${index + 1}`,
+        discID: `disc-${index + 1}`,
+        discName: `Disc ${index + 1}`,
         index,
         timestampSeconds: 0,
         purpose: "menu" as const,
@@ -126,6 +128,8 @@ describe("MenuImagesPage", () => {
 
     expect(screen.getByText("2 captured menu image(s)")).toBeInTheDocument();
     expect(screen.getByText("2 saved")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Disc 1" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Disc 2" })).toBeVisible();
     expect(screen.getAllByRole("button", { name: /^Preview DVD menu/ })).toHaveLength(2);
   });
 });
