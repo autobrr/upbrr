@@ -128,7 +128,7 @@ func (s *dupeSearcher) searchPage(
 ) (dcDupePage, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.endpoint, nil)
 	if err != nil {
-		return dcDupePage{}, dupe.FailureRequest, err
+		return dcDupePage{}, dupe.FailureRequest, fmt.Errorf("build DC duplicate request: %w", err)
 	}
 	req.URL.RawQuery = params.Encode()
 	req.Header.Set("X-Api-Key", apiKey)
@@ -136,7 +136,7 @@ func (s *dupeSearcher) searchPage(
 
 	resp, err := s.http.Do(req)
 	if err != nil {
-		return dcDupePage{}, dupe.FailureRequest, err
+		return dcDupePage{}, dupe.FailureRequest, fmt.Errorf("request DC duplicate search: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
@@ -145,7 +145,7 @@ func (s *dupeSearcher) searchPage(
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, dcDupeMaxResponseBytes+1))
 	if err != nil {
-		return dcDupePage{}, dupe.FailureResponseParse, err
+		return dcDupePage{}, dupe.FailureResponseParse, fmt.Errorf("read DC duplicate response: %w", err)
 	}
 	if len(body) > dcDupeMaxResponseBytes {
 		return dcDupePage{}, dupe.FailureResponseParse, fmt.Errorf("duplicate response exceeds %d bytes", dcDupeMaxResponseBytes)

@@ -179,7 +179,7 @@ func TestDuplicateSearchRequiresPendingCoverageForCompleteness(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if !writeDCDupePage(t, w, dcTestPage{
 					Index:           0,
 					Count:           1,
@@ -253,7 +253,7 @@ func TestDuplicateSearchRejectsInconsistentPagination(t *testing.T) {
 }
 
 func TestDuplicateSearchRejectsNonProgressingPagination(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if !writeDCDupePage(t, w, dcTestPage{
 			Index:           0,
 			Count:           0,
@@ -276,7 +276,7 @@ func TestDuplicateSearchRejectsNonProgressingPagination(t *testing.T) {
 }
 
 func TestDuplicateSearchPaginationBoundFailsClosed(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if !writeDCDupePage(t, w, dcTestPage{
 			Index:           0,
 			Count:           100,
