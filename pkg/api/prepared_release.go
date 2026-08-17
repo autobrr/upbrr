@@ -261,6 +261,34 @@ func (d DiscFacts) AggregateSummary() string {
 	return strings.Join(blocks, "\n\n")
 }
 
+// AggregateDVDVOBMediaInfo returns deterministic plain-text DVD evidence in
+// disc order. One prepared DVD remains unchanged after trimming; collections
+// receive safe disc headings.
+func AggregateDVDVOBMediaInfo(discs []DiscEvidenceResource, fallback string) string {
+	blocks := make([]string, 0, len(discs))
+	for _, disc := range discs {
+		if !strings.EqualFold(strings.TrimSpace(disc.Type), "DVD") {
+			continue
+		}
+		text := strings.TrimSpace(disc.DVDVOBMediaInfoText)
+		if text == "" {
+			continue
+		}
+		blocks = append(blocks, strings.TrimSpace(safeDiscHeading(disc.Name)+"\n"+text))
+	}
+	if len(blocks) == 1 {
+		for _, disc := range discs {
+			if strings.EqualFold(strings.TrimSpace(disc.Type), "DVD") && strings.TrimSpace(disc.DVDVOBMediaInfoText) != "" {
+				return strings.TrimSpace(disc.DVDVOBMediaInfoText)
+			}
+		}
+	}
+	if len(blocks) > 1 {
+		return strings.Join(blocks, "\n\n")
+	}
+	return strings.TrimSpace(fallback)
+}
+
 // PrimaryReport returns the canonical primary BDMV report when one exists.
 func (d DiscFacts) PrimaryReport() (DiscItemFacts, DiscReportFacts, bool) {
 	for _, item := range d.Items {

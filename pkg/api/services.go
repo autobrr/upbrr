@@ -606,18 +606,24 @@ func NewTrackerValidationSubject(subject UploadSubject, tracker string) TrackerV
 		break
 	}
 	descriptionOverride := trackerDescriptionOverride(subject, tracker)
+	bdInfoEvidence := preparedBDInfoAssetEvidence(subject)
+	dvdVOBMediaInfoEvidence := preparedDVDVOBMediaInfoAssetEvidence(subject)
 	resourceFingerprint, _ := CanonicalWorkflowFingerprint(struct {
-		MediaInfoJSON   bool
-		MediaInfoText   bool
-		DVDVOBMediaInfo bool
-		BDInfo          bool
-		SceneNFO        bool
+		MediaInfoJSON        bool
+		MediaInfoText        bool
+		DVDVOBMediaInfoReady bool
+		DVDVOBMediaInfoCount int
+		BDInfoReady          bool
+		BDInfoCount          int
+		SceneNFO             bool
 	}{
-		MediaInfoJSON:   strings.TrimSpace(subject.MediaInfoJSONPath) != "",
-		MediaInfoText:   strings.TrimSpace(subject.MediaInfoTextPath) != "",
-		DVDVOBMediaInfo: strings.TrimSpace(subject.DVDVOBMediaInfoText) != "",
-		BDInfo:          strings.TrimSpace(subject.Disc.Summary) != "",
-		SceneNFO:        strings.TrimSpace(subject.SceneNFOPath) != "",
+		MediaInfoJSON:        strings.TrimSpace(subject.MediaInfoJSONPath) != "",
+		MediaInfoText:        strings.TrimSpace(subject.MediaInfoTextPath) != "",
+		DVDVOBMediaInfoReady: dvdVOBMediaInfoEvidence.Ready,
+		DVDVOBMediaInfoCount: dvdVOBMediaInfoEvidence.Count,
+		BDInfoReady:          bdInfoEvidence.Ready,
+		BDInfoCount:          bdInfoEvidence.Count,
+		SceneNFO:             strings.TrimSpace(subject.SceneNFOPath) != "",
 	})
 	packageFacts := deriveValidationPackageFacts(subject.SourcePath, subject.FileList)
 	mediaFacts := deriveValidationMediaFileFacts(subject, packageFacts.MediaFileCount)
@@ -684,8 +690,8 @@ func NewTrackerValidationSubject(subject UploadSubject, tracker string) TrackerV
 		DescriptionGroupsFinal:      subject.DescriptionGroupsFinal,
 		MediaInfoJSONReady:          strings.TrimSpace(subject.MediaInfoJSONPath) != "",
 		MediaInfoTextReady:          strings.TrimSpace(subject.MediaInfoTextPath) != "",
-		DVDVOBMediaInfoReady:        strings.TrimSpace(subject.DVDVOBMediaInfoText) != "",
-		BDInfoReady:                 strings.TrimSpace(subject.Disc.Summary) != "",
+		DVDVOBMediaInfoReady:        dvdVOBMediaInfoEvidence.Ready,
+		BDInfoReady:                 bdInfoEvidence.Ready,
 		PreparedResourceFingerprint: string(resourceFingerprint),
 		PackageFacts:                packageFacts,
 		MediaFileFacts:              mediaFacts,
@@ -1068,13 +1074,12 @@ func validationOriginalLanguage(metadata SourceScopedMetadata) string {
 func deriveValidationAssetFacts(subject UploadSubject) AssetFacts {
 	mediaInfoJSONReady := strings.TrimSpace(subject.MediaInfoJSONPath) != ""
 	mediaInfoTextReady := strings.TrimSpace(subject.MediaInfoTextPath) != ""
-	dvdVOBMediaInfoReady := strings.TrimSpace(subject.DVDVOBMediaInfoText) != ""
 	facts := AssetFacts{
 		Status:            MetadataEvidenceStatusPartial,
 		MediaInfoJSON:     completeAssetEvidence(mediaInfoJSONReady, boolCount(mediaInfoJSONReady)),
 		MediaInfoText:     completeAssetEvidence(mediaInfoTextReady, boolCount(mediaInfoTextReady)),
-		DVDVOBMediaInfo:   completeAssetEvidence(dvdVOBMediaInfoReady, boolCount(dvdVOBMediaInfoReady)),
-		BDInfo:            completeAssetEvidence(strings.TrimSpace(subject.Disc.Summary) != "", boolCount(strings.TrimSpace(subject.Disc.Summary) != "")),
+		DVDVOBMediaInfo:   preparedDVDVOBMediaInfoAssetEvidence(subject),
+		BDInfo:            preparedBDInfoAssetEvidence(subject),
 		NFO:               completeAssetEvidence(strings.TrimSpace(subject.SceneNFOPath) != "", boolCount(strings.TrimSpace(subject.SceneNFOPath) != "")),
 		Screenshots:       unavailableAssetEvidence(),
 		HostedScreenshots: unavailableAssetEvidence(),
@@ -1097,18 +1102,66 @@ func deriveValidationAssetFacts(subject UploadSubject) AssetFacts {
 }
 
 func deriveValidationRuleAssetFacts(subject RuleSubject) AssetFacts {
+	bdInfo := discBDInfoAssetEvidence(subject.Disc, subject.DiscType)
 	return AssetFacts{
 		Status:            MetadataEvidenceStatusPartial,
 		MediaInfoJSON:     completeAssetEvidence(subject.MediaInfoJSONReady, boolCount(subject.MediaInfoJSONReady)),
 		MediaInfoText:     completeAssetEvidence(subject.MediaInfoTextReady, boolCount(subject.MediaInfoTextReady)),
 		DVDVOBMediaInfo:   completeAssetEvidence(subject.DVDVOBMediaInfoReady, boolCount(subject.DVDVOBMediaInfoReady)),
-		BDInfo:            completeAssetEvidence(strings.TrimSpace(subject.Disc.Summary) != "", boolCount(strings.TrimSpace(subject.Disc.Summary) != "")),
+		BDInfo:            bdInfo,
 		NFO:               completeAssetEvidence(strings.TrimSpace(subject.SceneNFOPath) != "", boolCount(strings.TrimSpace(subject.SceneNFOPath) != "")),
 		Screenshots:       unavailableAssetEvidence(),
 		HostedScreenshots: unavailableAssetEvidence(),
 		DVDMenus:          unavailableAssetEvidence(),
 		HostedDVDMenus:    unavailableAssetEvidence(),
 	}
+}
+
+func preparedBDInfoAssetEvidence(subject UploadSubject) AssetEvidence {
+	return discBDInfoAssetEvidence(subject.Disc, subject.DiscType)
+}
+
+func discBDInfoAssetEvidence(facts DiscFacts, discType string) AssetEvidence {
+	expected := 0
+	ready := 0
+	discsReady := true
+	for _, disc := range facts.Items {
+		if len(disc.Reports) == 0 {
+			discsReady = false
+		}
+		for _, report := range disc.Reports {
+			expected++
+			if strings.TrimSpace(report.Summary) != "" {
+				ready++
+			}
+		}
+	}
+	if !strings.EqualFold(strings.TrimSpace(discType), "BDMV") || len(facts.Items) == 0 {
+		legacyReady := strings.TrimSpace(facts.Summary) != ""
+		return completeAssetEvidence(legacyReady, boolCount(legacyReady))
+	}
+	return completeAssetEvidence(discsReady && expected > 0 && ready == expected, ready)
+}
+
+func preparedDVDVOBMediaInfoAssetEvidence(subject UploadSubject) AssetEvidence {
+	expectedIDs := make(map[string]struct{})
+	for _, disc := range subject.Disc.Items {
+		if strings.EqualFold(strings.TrimSpace(disc.Type), "DVD") {
+			expectedIDs[disc.ID] = struct{}{}
+		}
+	}
+	if len(expectedIDs) == 0 {
+		legacyReady := strings.TrimSpace(subject.DVDVOBMediaInfoText) != ""
+		return completeAssetEvidence(legacyReady, boolCount(legacyReady))
+	}
+	readyIDs := make(map[string]struct{}, len(expectedIDs))
+	for _, disc := range subject.Discs {
+		if _, ok := expectedIDs[disc.ID]; !ok || strings.TrimSpace(disc.DVDVOBMediaInfoText) == "" {
+			continue
+		}
+		readyIDs[disc.ID] = struct{}{}
+	}
+	return completeAssetEvidence(len(readyIDs) == len(expectedIDs), len(readyIDs))
 }
 
 func completeAssetEvidence(ready bool, count int) AssetEvidence {
@@ -1261,7 +1314,7 @@ func NewTrackerValidationSubjectFromRuleSubject(subject RuleSubject, tracker str
 		MediaInfoJSONReady:   subject.MediaInfoJSONReady,
 		MediaInfoTextReady:   subject.MediaInfoTextReady,
 		DVDVOBMediaInfoReady: subject.DVDVOBMediaInfoReady,
-		BDInfoReady:          strings.TrimSpace(subject.Disc.Summary) != "",
+		BDInfoReady:          discBDInfoAssetEvidence(subject.Disc, subject.DiscType).Ready,
 		PackageFacts:         packageFacts,
 		MediaFileFacts:       mediaFacts,
 		AssetFacts:           deriveValidationRuleAssetFacts(subject),
@@ -1272,6 +1325,7 @@ func NewTrackerValidationSubjectFromRuleSubject(subject RuleSubject, tracker str
 
 // NewRuleSubject projects upload facts into the rule evaluator's read model.
 func NewRuleSubject(subject UploadSubject) RuleSubject {
+	dvdVOBMediaInfoReady := preparedDVDVOBMediaInfoAssetEvidence(subject).Ready
 	return RuleSubject{
 		SourcePath:           subject.SourcePath,
 		VideoPath:            subject.VideoPath,
@@ -1306,7 +1360,7 @@ func NewRuleSubject(subject UploadSubject) RuleSubject {
 		Disc:                 subject.Disc,
 		MediaInfoJSONReady:   strings.TrimSpace(subject.MediaInfoJSONPath) != "",
 		MediaInfoTextReady:   strings.TrimSpace(subject.MediaInfoTextPath) != "",
-		DVDVOBMediaInfoReady: strings.TrimSpace(subject.DVDVOBMediaInfoText) != "",
+		DVDVOBMediaInfoReady: dvdVOBMediaInfoReady,
 	}
 }
 

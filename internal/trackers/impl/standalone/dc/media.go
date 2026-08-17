@@ -15,7 +15,7 @@ import (
 )
 
 func resolveMediaInfo(meta api.UploadSubject) (string, error) {
-	if text := metautil.FirstNonEmptyTrimmed(commonhttp.ReadOptionalFile(meta.MediaInfoTextPath), strings.TrimSpace(meta.DVDVOBMediaInfoText)); text != "" {
+	if text := metautil.FirstNonEmptyTrimmed(trackers.ReadDVDVOBMediaInfo(meta), commonhttp.ReadOptionalFile(meta.MediaInfoTextPath)); text != "" {
 		return text, nil
 	}
 	return "", errors.New("trackers: DC missing mediainfo")
@@ -26,5 +26,5 @@ func resolveMedia(req trackers.PreparationInput, meta api.UploadSubject) string 
 		bdinfo, _ := trackers.ReadBDInfo(req.Runtime.DBPath, meta)
 		return strings.TrimSpace(bdinfo)
 	}
-	return metautil.FirstNonEmptyTrimmed(commonhttp.ReadOptionalFile(meta.MediaInfoTextPath), strings.TrimSpace(meta.DVDVOBMediaInfoText))
+	return metautil.FirstNonEmptyTrimmed(trackers.ReadDVDVOBMediaInfo(meta), commonhttp.ReadOptionalFile(meta.MediaInfoTextPath))
 }

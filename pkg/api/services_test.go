@@ -301,6 +301,90 @@ func TestTrackerValidationResourceFingerprintIncludesBDInfoReadiness(t *testing.
 	}
 }
 
+func TestNewTrackerValidationSubjectRequiresEveryBDMVReport(t *testing.T) {
+	t.Parallel()
+
+	subject := UploadSubject{
+		DiscType: "BDMV",
+		Disc: DiscFacts{Items: []DiscItemFacts{
+			{
+				ID:   "disc-one",
+				Name: "Disc 1",
+				Type: "BDMV",
+				Reports: []DiscReportFacts{{
+					Playlist: PlaylistInfo{ID: "disc-one:00001.MPLS"},
+					Summary:  "BDINFO ONE",
+				}},
+			},
+			{
+				ID:   "disc-two",
+				Name: "Disc 2",
+				Type: "BDMV",
+				Reports: []DiscReportFacts{{
+					Playlist: PlaylistInfo{ID: "disc-two:00001.MPLS"},
+				}},
+			},
+		}},
+	}
+
+	partial := NewTrackerValidationSubject(subject, "EXAMPLE")
+	if partial.BDInfoReady || partial.AssetFacts.BDInfo.Ready || partial.AssetFacts.BDInfo.Count != 1 {
+		t.Fatalf("partial BDInfo evidence = %+v", partial.AssetFacts.BDInfo)
+	}
+	subject.Disc.Items[1].Reports[0].Summary = "BDINFO TWO"
+	complete := NewTrackerValidationSubject(subject, "EXAMPLE")
+	if !complete.BDInfoReady || !complete.AssetFacts.BDInfo.Ready || complete.AssetFacts.BDInfo.Count != 2 {
+		t.Fatalf("complete BDInfo evidence = %+v", complete.AssetFacts.BDInfo)
+	}
+	if partial.PreparedResourceFingerprint == complete.PreparedResourceFingerprint {
+		t.Fatal("disc report coverage did not invalidate the prepared-resource fingerprint")
+	}
+}
+
+func TestNewTrackerValidationSubjectRequiresEveryDVDReport(t *testing.T) {
+	t.Parallel()
+
+	subject := UploadSubject{
+		DiscType: "DVD",
+		Disc: DiscFacts{Items: []DiscItemFacts{
+			{
+				ID:   "disc-one",
+				Name: "Disc 1",
+				Type: "DVD",
+			},
+			{
+				ID:   "disc-two",
+				Name: "Disc 2",
+				Type: "DVD",
+			},
+		}},
+		Discs: []DiscEvidenceResource{
+			{
+				ID:                  "disc-one",
+				Name:                "Disc 1",
+				Type:                "DVD",
+				DVDVOBMediaInfoText: "VOB INFO ONE",
+			},
+			{
+				ID:   "disc-two",
+				Name: "Disc 2",
+				Type: "DVD",
+			},
+		},
+		DVDVOBMediaInfoText: "VOB INFO ONE",
+	}
+
+	partial := NewTrackerValidationSubject(subject, "EXAMPLE")
+	if partial.DVDVOBMediaInfoReady || partial.AssetFacts.DVDVOBMediaInfo.Ready || partial.AssetFacts.DVDVOBMediaInfo.Count != 1 {
+		t.Fatalf("partial DVD evidence = %+v", partial.AssetFacts.DVDVOBMediaInfo)
+	}
+	subject.Discs[1].DVDVOBMediaInfoText = "VOB INFO TWO"
+	complete := NewTrackerValidationSubject(subject, "EXAMPLE")
+	if !complete.DVDVOBMediaInfoReady || !complete.AssetFacts.DVDVOBMediaInfo.Ready || complete.AssetFacts.DVDVOBMediaInfo.Count != 2 {
+		t.Fatalf("complete DVD evidence = %+v", complete.AssetFacts.DVDVOBMediaInfo)
+	}
+}
+
 func TestRuleFailureDispositionFailClosed(t *testing.T) {
 	t.Parallel()
 	failures := []RuleFailure{

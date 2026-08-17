@@ -59,7 +59,7 @@ func prepareUpload(ctx context.Context, site siteDefinition, req trackers.Prepar
 	if err != nil {
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s prepared upload torrent: %w", site.Name, err)
 	}
-	fileInfo, err := resolveMediaInfoText(req.Meta)
+	fileInfo, err := resolveMediaInfoText(req.Meta, req.Runtime.DBPath)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
@@ -171,7 +171,7 @@ func buildUploadDryRun(ctx context.Context, site siteDefinition, req trackers.Pr
 			}},
 		}, nil
 	}
-	fileInfo, err := resolveMediaInfoText(req.Meta)
+	fileInfo, err := resolveMediaInfoText(req.Meta, req.Runtime.DBPath)
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}

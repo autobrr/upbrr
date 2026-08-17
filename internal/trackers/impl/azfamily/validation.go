@@ -152,8 +152,11 @@ func azLanguagePolicy(site siteDefinition) trackers.LanguageCombinationPolicy {
 
 func azAssetRequirements(site siteDefinition, subject api.TrackerValidationSubject) []trackers.AssetRequirement {
 	infoKind := trackers.AssetKindMediaInfoText
-	if trackers.IsDiscType(subject.DiscType) {
+	switch strings.ToUpper(strings.TrimSpace(subject.DiscType)) {
+	case "BDMV", "HDDVD":
 		infoKind = trackers.AssetKindBDInfo
+	case "DVD":
+		infoKind = trackers.AssetKindDVDVOBMediaInfo
 	}
 	screenshotCount := 3
 	if site.Name == "CZ" &&

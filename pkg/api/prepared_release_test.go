@@ -53,6 +53,43 @@ func TestDiscFactsAggregateSummaryUsesStableSafeHeadings(t *testing.T) {
 	}
 }
 
+func TestAggregateDVDVOBMediaInfoPreservesSingleDisc(t *testing.T) {
+	t.Parallel()
+
+	discs := []DiscEvidenceResource{{
+		ID:                  "disc-one",
+		Name:                "Disc 1",
+		Type:                "DVD",
+		DVDVOBMediaInfoText: "\nVOB INFO ONE\n",
+	}}
+	if got := AggregateDVDVOBMediaInfo(discs, "fallback"); got != "VOB INFO ONE" {
+		t.Fatalf("DVD VOB aggregate = %q", got)
+	}
+}
+
+func TestAggregateDVDVOBMediaInfoUsesStableSafeHeadings(t *testing.T) {
+	t.Parallel()
+
+	discs := []DiscEvidenceResource{
+		{
+			ID:                  "disc-one",
+			Name:                "Disc\n1",
+			Type:                "DVD",
+			DVDVOBMediaInfoText: "VOB INFO ONE",
+		},
+		{
+			ID:                  "disc-two",
+			Name:                "Disc 2",
+			Type:                "DVD",
+			DVDVOBMediaInfoText: "VOB INFO TWO",
+		},
+	}
+	want := "Disc 1\nVOB INFO ONE\n\nDisc 2\nVOB INFO TWO"
+	if got := AggregateDVDVOBMediaInfo(discs, "fallback"); got != want {
+		t.Fatalf("DVD VOB aggregate = %q, want %q", got, want)
+	}
+}
+
 func TestDiscFactsCanonicalPrimaryUsesFirstDiscAndHighestScore(t *testing.T) {
 	t.Parallel()
 
@@ -61,20 +98,20 @@ func TestDiscFactsCanonicalPrimaryUsesFirstDiscAndHighestScore(t *testing.T) {
 			ID: "disc-one",
 			Reports: []DiscReportFacts{
 				{Playlist: PlaylistInfo{
-ID: "lower",
- Duration: 100,
- Score: 10,
-}},
+					ID:       "lower",
+					Duration: 100,
+					Score:    10,
+				}},
 				{Playlist: PlaylistInfo{
-ID: "higher",
- Duration: 200,
- Score: 20,
-}},
+					ID:       "higher",
+					Duration: 200,
+					Score:    20,
+				}},
 				{Playlist: PlaylistInfo{
-ID: "equal-later",
- Duration: 300,
- Score: 20,
-}},
+					ID:       "equal-later",
+					Duration: 300,
+					Score:    20,
+				}},
 			},
 		},
 		{ID: "disc-two", Reports: []DiscReportFacts{{Playlist: PlaylistInfo{ID: "later", Score: 100}}}},

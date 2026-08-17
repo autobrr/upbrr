@@ -145,8 +145,12 @@ func lumeAssetRequirements(discType string) []trackers.AssetRequirement {
 		Kind:         trackers.AssetKindHostedScreenshot,
 		MinimumCount: 3,
 	}}
-	if strings.EqualFold(strings.TrimSpace(discType), "BDMV") {
+	switch strings.ToUpper(strings.TrimSpace(discType)) {
+	case "BDMV":
 		return append(requirements, trackers.AssetRequirement{Kind: trackers.AssetKindBDInfo})
+	case "DVD":
+		return append(requirements, trackers.AssetRequirement{Kind: trackers.AssetKindDVDVOBMediaInfo})
+	default:
+		return append(requirements, trackers.AssetRequirement{Kind: trackers.AssetKindMediaInfoText})
 	}
-	return append(requirements, trackers.AssetRequirement{Kind: trackers.AssetKindMediaInfoText})
 }
