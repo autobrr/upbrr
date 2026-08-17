@@ -1634,7 +1634,7 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	if err := repo.SaveDescriptionOverride(ctx, DescriptionOverride{SourcePath: targetPath, Description: "desc"}); err != nil {
 		t.Fatalf("save description override: %v", err)
 	}
-	if err := repo.SavePlaylistSelection(ctx, targetPath, []string{"00001.mpls"}, false); err != nil {
+	if err := repo.SavePlaylistSelection(ctx, targetPath, "source-fingerprint", []string{"00001.mpls"}, false); err != nil {
 		t.Fatalf("save playlist selection: %v", err)
 	}
 	if err := repo.SaveTrackerMetadata(ctx, TrackerMetadata{

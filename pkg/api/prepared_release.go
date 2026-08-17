@@ -87,6 +87,7 @@ type SourceManifestEntry struct {
 	Size       int64
 	ModifiedAt time.Time `ts_type:"string"`
 	Disc       string
+	DiscID     string
 	Playlist   string
 }
 
@@ -94,6 +95,7 @@ type SourceManifestEntry struct {
 // preparation-resource paths.
 type SourceClassification struct {
 	DiscType  string
+	DiscCount int
 	Container string
 	MediaType string
 }
@@ -197,6 +199,108 @@ type DiscFacts struct {
 	DurationSeconds float64
 	PlaylistCount   int
 	DVDVOBSet       string
+	PrimaryDiscID   string
+	PrimaryReportID string
+	Items           []DiscItemFacts
+}
+
+// DiscItemFacts contains canonical public facts for one ordered source disc.
+type DiscItemFacts struct {
+	ID              string
+	Name            string
+	Type            string
+	Reports         []DiscReportFacts
+	DurationSeconds float64
+	DVDVOBSet       string
+}
+
+// DiscReportFacts contains canonical facts for one selected BDMV report.
+type DiscReportFacts struct {
+	Playlist PlaylistInfo
+	Summary  string
+}
+
+// SelectedPlaylists returns all canonical selected playlists in disc/report order.
+func (d DiscFacts) SelectedPlaylists() []PlaylistInfo {
+	playlists := make([]PlaylistInfo, 0, d.PlaylistCount)
+	for _, disc := range d.Items {
+		for _, report := range disc.Reports {
+			playlists = append(playlists, report.Playlist)
+		}
+	}
+	if len(playlists) == 0 {
+		return nil
+	}
+	return playlists
+}
+
+// AggregateSummary returns deterministic plain-text BDMV evidence in disc and report order.
+// One disc with one report remains unchanged after trimming; larger sets receive safe headings.
+func (d DiscFacts) AggregateSummary() string {
+	reportCount := 0
+	for _, disc := range d.Items {
+		reportCount += len(disc.Reports)
+	}
+	if len(d.Items) == 1 && reportCount == 1 {
+		return strings.TrimSpace(d.Items[0].Reports[0].Summary)
+	}
+
+	blocks := make([]string, 0, reportCount)
+	for _, disc := range d.Items {
+		for _, report := range disc.Reports {
+			heading := safeDiscHeading(disc.Name)
+			file := safeDiscHeading(report.Playlist.File)
+			if file != "" {
+				heading = strings.TrimSpace(heading + " — " + file)
+			}
+			if summary := strings.TrimSpace(report.Summary); summary != "" {
+				blocks = append(blocks, strings.TrimSpace(heading+"\n"+summary))
+			}
+		}
+	}
+	return strings.Join(blocks, "\n\n")
+}
+
+// PrimaryReport returns the canonical primary BDMV report when one exists.
+func (d DiscFacts) PrimaryReport() (DiscItemFacts, DiscReportFacts, bool) {
+	for _, item := range d.Items {
+		if item.ID != d.PrimaryDiscID {
+			continue
+		}
+		for _, report := range item.Reports {
+			if report.Playlist.ID == d.PrimaryReportID {
+				return item, report, true
+			}
+		}
+		return DiscItemFacts{}, DiscReportFacts{}, false
+	}
+	return DiscItemFacts{}, DiscReportFacts{}, false
+}
+
+// CanonicalPrimary returns the first disc with a usable title. BDMV reports use
+// highest score with report-order ties; DVD titles use the selected VOB set.
+func (d DiscFacts) CanonicalPrimary() (discID string, reportID string, durationSeconds float64, dvdVOBSet string) {
+	for _, item := range d.Items {
+		if len(item.Reports) > 0 {
+			primary := 0
+			for index := 1; index < len(item.Reports); index++ {
+				if item.Reports[index].Playlist.Score > item.Reports[primary].Playlist.Score {
+					primary = index
+				}
+			}
+			return item.ID, item.Reports[primary].Playlist.ID, item.Reports[primary].Playlist.Duration, ""
+		}
+		if item.Type == "DVD" && strings.TrimSpace(item.DVDVOBSet) != "" {
+			return item.ID, "", item.DurationSeconds, item.DVDVOBSet
+		}
+	}
+	return "", "", 0, ""
+}
+
+func safeDiscHeading(value string) string {
+	value = strings.ReplaceAll(value, "\r", " ")
+	value = strings.ReplaceAll(value, "\n", " ")
+	return strings.Join(strings.Fields(value), " ")
 }
 
 // UniqueIDStatus records the concrete MediaInfo unique-ID assessment.

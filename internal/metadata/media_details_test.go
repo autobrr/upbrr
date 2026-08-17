@@ -183,6 +183,66 @@ func TestEditionFromMetaMultiPlaylistDeduplicatesMatches(t *testing.T) {
 	}
 }
 
+func TestEditionFromMetaMultiDiscAggregatesProviderBackedEditions(t *testing.T) {
+	meta := preparationstate.State{
+		DiscType: "BDMV",
+		SelectedBDMVPlaylists: []api.PlaylistInfo{
+			{
+ID: "disc-a:00001.MPLS",
+ DiscID: "disc-a",
+ File: "00001.MPLS",
+ Duration: 7200,
+},
+			{
+ID: "disc-b:00001.MPLS",
+ DiscID: "disc-b",
+ File: "00001.MPLS",
+ Duration: 7500,
+},
+		},
+		ProviderMetadata: api.SourceScopedMetadata{IMDB: &api.IMDBMetadata{EditionDetails: map[string]api.IMDBEditionDetail{
+			"120": {Seconds: 7200, Minutes: 120},
+			"125": {
+Seconds: 7500,
+ Minutes: 125,
+ Attributes: []string{"Extended"},
+},
+		}}},
+	}
+	if edition, _ := editionFromMeta(meta, mediaInfoDoc{}); edition != "2in1 Theatrical / Extended" {
+		t.Fatalf("multi-disc edition = %q", edition)
+	}
+}
+
+func TestEditionFromMetaDoesNotPromoteSplitOrExtrasDurations(t *testing.T) {
+	meta := preparationstate.State{
+		DiscType: "BDMV",
+		SelectedBDMVPlaylists: []api.PlaylistInfo{
+			{
+ID: "disc-a:00001.MPLS",
+ DiscID: "disc-a",
+ Duration: 3600,
+},
+			{
+ID: "disc-b:00001.MPLS",
+ DiscID: "disc-b",
+ Duration: 1800,
+},
+		},
+		ProviderMetadata: api.SourceScopedMetadata{IMDB: &api.IMDBMetadata{EditionDetails: map[string]api.IMDBEditionDetail{
+			"120": {Seconds: 7200, Minutes: 120},
+			"125": {
+Seconds: 7500,
+ Minutes: 125,
+ Attributes: []string{"Extended"},
+},
+		}}},
+	}
+	if edition, _ := editionFromMeta(meta, mediaInfoDoc{}); edition != "" {
+		t.Fatalf("split/extras durations invented edition %q", edition)
+	}
+}
+
 func TestEditionFromMetaMultiPlaylistTieBreaksEqualRuntimeMatches(t *testing.T) {
 	meta := preparationstate.State{
 		DiscType: "BDMV",

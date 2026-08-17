@@ -69,6 +69,7 @@ type repository interface {
 	GetReleaseNameOverrides(context.Context, string) (api.ReleaseNameOverrides, error)
 	SaveReleaseNameOverrides(context.Context, string, api.ReleaseNameOverrides) error
 	GetPlaylistSelection(context.Context, string) (api.PlaylistSelection, error)
+	SavePlaylistSelection(context.Context, string, string, []string, bool) error
 	GetTrackerTimestamp(context.Context, string) (time.Time, error)
 	SaveTrackerTimestamp(context.Context, api.TrackerTimestamp) error
 	SaveTrackerMetadata(context.Context, api.TrackerMetadata) error
@@ -425,78 +426,24 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 		s.logger.Debugf("metadata: detected disc type %s", discType)
 	}
 
-	// For BDMV discs, check if a playlist was selected
-	if discType == "BDMV" {
-		s.logger.Debugf("metadata: checking playlist selection, bdinfo=%v", s.bdinfo != nil)
-		selectedPlaylists, derr := s.resolveBDMVPlaylistSelection(ctx, request)
-		if derr != nil {
+	if discType != "" {
+		if discType == "BDMV" && s.bdinfo != nil {
+			bdinfoActive = true
+			reportBDInfo(api.PreparationProgressRunning, "Analyzing selected Blu-ray playlists.")
+		}
+		if derr := s.collectDiscEvidence(ctx, request, &meta, reportBDInfo); derr != nil {
+			if discType == "BDMV" && s.bdinfo != nil {
+				bdinfoTerminal = true
+				reportBDInfo(api.PreparationProgressFailed, "Blu-ray analysis failed.")
+			}
 			return preparationstate.State{}, derr
 		}
-		meta.SelectedBDMVPlaylists = selectedPlaylists
-		if len(selectedPlaylists) > 0 {
-			playlistPath := request.Layout.BDMVRoot
-			s.logger.Debugf("metadata: resolved playlist selection playlists=%d", len(selectedPlaylists))
-			selectedPlaylistNames := playlistNames(meta.SelectedBDMVPlaylists)
-
-			// Execute BDInfo on selected playlists
-			if s.bdinfo != nil {
-				bdinfoActive = true
-				reportBDInfo(api.PreparationProgressRunning, "Analyzing selected Blu-ray playlists.")
-				tmpRoot, rerr := db.Subdir(s.cfg.MainSettings.DBPath, "tmp")
-				if rerr != nil {
-					bdinfoTerminal = true
-					reportBDInfo(api.PreparationProgressFailed, "Blu-ray analysis failed.")
-					return preparationstate.State{}, fmt.Errorf("metadata: resolve tmp root: %w", rerr)
-				}
-				tmpDir, _, rerr := paths.ReleaseTempDir(tmpRoot, meta, primary)
-				if rerr != nil {
-					return preparationstate.State{}, fmt.Errorf("metadata: resolve bdinfo temp dir: %w", rerr)
-				}
-				s.logger.Debugf("metadata: bdinfo temp dir: %s", tmpDir)
-				if err := os.MkdirAll(tmpDir, 0755); err != nil {
-					return preparationstate.State{}, fmt.Errorf("metadata: create bdinfo temp dir: %w", err)
-				}
-
-				analysisCtx := bdinfo.WithProgressReporter(ctx, func(message string) {
-					reportBDInfo(api.PreparationProgressRunning, message)
-				})
-				outputPath, needScan, berr := s.resolveOrCreateBDMVSummaries(analysisCtx, input, tmpDir, playlistPath, selectedPlaylistNames)
-				if berr != nil {
-					bdinfoTerminal = true
-					reportBDInfo(api.PreparationProgressFailed, "Blu-ray analysis failed.")
-					return preparationstate.State{}, berr
-				}
-				if strings.TrimSpace(outputPath) != "" {
-					s.logger.Debugf("metadata: parsing canonical bdinfo output from %s", outputPath)
-					bdinfoParsed, perr := parseBDInfoOutput(s.bdinfo, outputPath)
-					if perr != nil {
-						return preparationstate.State{}, fmt.Errorf("metadata: bdinfo parse failed: %w", perr)
-					}
-					meta.BDInfo = bdinfoParsed
-					s.logger.Debugf("metadata: bdinfo data collected with %d fields", len(bdinfoParsed))
-				}
-				if needScan {
-					s.logger.Debugf("metadata: bdinfo scan completed for %d selected playlists", len(selectedPlaylistNames))
-					reportBDInfo(api.PreparationProgressCompleted, "Blu-ray analysis complete.")
-					bdinfoTerminal = true
-				} else {
-					reportBDInfo(api.PreparationProgressSkipped, "Reused cached Blu-ray analysis.")
-					bdinfoTerminal = true
-				}
-			} else {
-				s.logger.Debugf("metadata: bdinfo service is nil, skipping disc analysis")
+		if discType == "BDMV" {
+			bdinfoTerminal = true
+			if s.bdinfo == nil {
 				api.SkipPreparationProgress(ctx, api.PreparationPhaseBDInfo, "Blu-ray analysis is unavailable.")
-			}
-
-			// Extract m2ts files from selected playlist(s)
-			m2tsFiles, mainFile, err := s.extractM2TSFromPlaylist(playlistPath, selectedPlaylistNames)
-			if err != nil {
-				s.logger.Debugf("metadata: failed to extract m2ts from playlist: %v", err)
-				// Fall back to regular disc handling
-			} else if mainFile != "" && len(m2tsFiles) > 0 {
-				meta.VideoPath = mainFile
-				meta.FileList = m2tsFiles
-				s.logger.Debugf("metadata: extracted m2ts files count=%d main=%s", len(m2tsFiles), filepath.Base(mainFile))
+			} else {
+				reportBDInfo(api.PreparationProgressCompleted, "Blu-ray analysis complete.")
 			}
 		}
 	}
@@ -620,7 +567,7 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 	default:
 	}
 
-	if s.mi != nil {
+	if s.mi != nil && discType == "" {
 		tmpRoot, err := db.Subdir(s.cfg.MainSettings.DBPath, "tmp")
 		if err != nil {
 			return preparationstate.State{}, fmt.Errorf("metadata: tmp dir: %w", err)
@@ -730,6 +677,228 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 	s.logger.Debugf("metadata: persisted metadata for %s", primary)
 
 	return meta, nil
+}
+
+func (s *Service) collectDiscEvidence(
+	ctx context.Context,
+	request preparationstate.Request,
+	meta *preparationstate.State,
+	reportBDInfo func(api.PreparationProgressStatus, string),
+) error {
+	if meta == nil || len(request.Layout.Discs) == 0 {
+		return fmt.Errorf("metadata: disc resources are unavailable: %w", internalerrors.ErrInvalidInput)
+	}
+
+	selectedByDisc := map[string][]api.PlaylistInfo{}
+	if request.Layout.DiscType == "BDMV" {
+		selected, err := s.resolveBDMVPlaylistSelection(ctx, request)
+		if err != nil {
+			return err
+		}
+		meta.SelectedBDMVPlaylists = selected
+		for _, playlist := range selected {
+			selectedByDisc[playlist.DiscID] = append(selectedByDisc[playlist.DiscID], playlist)
+		}
+	}
+
+	var tmpRoot string
+	var releaseTemp string
+	if s.bdinfo != nil || s.mi != nil {
+		var err error
+		tmpRoot, err = db.Subdir(s.cfg.MainSettings.DBPath, "tmp")
+		if err != nil {
+			return fmt.Errorf("metadata: resolve tmp root: %w", err)
+		}
+		releaseTemp, _, err = paths.ReleaseTempDir(tmpRoot, *meta, meta.SourcePath)
+		if err != nil {
+			return fmt.Errorf("metadata: resolve release temp dir: %w", err)
+		}
+	}
+
+	resources := make([]preparationstate.DiscResource, 0, len(request.Layout.Discs))
+	for _, disc := range request.Layout.Discs {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("metadata: disc analysis canceled: %w", err)
+		}
+		resource := preparationstate.DiscResource{
+			ID:   disc.ID,
+			Name: disc.Name,
+			Type: disc.Type,
+			Root: disc.Root,
+		}
+		artifactDir := ""
+		if releaseTemp != "" {
+			var err error
+			artifactDir, err = paths.DiscTempDir(releaseTemp, disc.ID)
+			if err != nil {
+				return fmt.Errorf("metadata: resolve disc artifact directory: %w", err)
+			}
+			if err := os.MkdirAll(artifactDir, 0o700); err != nil {
+				return fmt.Errorf("metadata: create disc artifact directory: %w", err)
+			}
+		}
+
+		if disc.Type == "BDMV" {
+			resource.SelectedPlaylists = append([]api.PlaylistInfo(nil), selectedByDisc[disc.ID]...)
+			if len(resource.SelectedPlaylists) == 0 {
+				return &api.InvalidPlaylistSelectionError{Reason: "at least one playlist must be selected for every disc"}
+			}
+			playlistFiles := playlistNames(resource.SelectedPlaylists)
+			files, video, err := s.extractM2TSFromPlaylist(disc.Root, playlistFiles)
+			if err != nil {
+				s.logger.Debugf("metadata: failed to extract selected streams disc=%s err=%s", disc.Name, redaction.RedactValue(err.Error(), nil))
+			} else {
+				resource.FileList = files
+				resource.VideoPath = video
+			}
+
+			if s.bdinfo != nil {
+				analysisCtx := bdinfo.WithProgressReporter(ctx, func(message string) {
+					reportBDInfo(api.PreparationProgressRunning, message)
+				})
+				outputPath, _, err := s.resolveOrCreateBDMVSummaries(analysisCtx, request.Input, artifactDir, disc.Root, playlistFiles)
+				if err != nil {
+					return fmt.Errorf("metadata: analyze BDMV disc %s: %w", disc.Name, err)
+				}
+				resource.Reports, err = loadBDMVDiscReports(artifactDir, resource.SelectedPlaylists)
+				if err != nil {
+					return err
+				}
+				if meta.BDInfo == nil && strings.TrimSpace(outputPath) != "" {
+					parsed, err := parseBDInfoOutput(s.bdinfo, outputPath)
+					if err != nil {
+						return fmt.Errorf("metadata: parse BDInfo: %w", err)
+					}
+					meta.BDInfo = parsed
+				}
+			}
+		}
+
+		if s.mi != nil {
+			result, err := s.mi.Export(ctx, mediainfo.Request{
+				SourcePath:  disc.Root,
+				DiscType:    disc.Type,
+				VideoPath:   resource.VideoPath,
+				TempRoot:    tmpRoot,
+				ArtifactDir: artifactDir,
+				Release:     meta.Release,
+			})
+			if err != nil {
+				return fmt.Errorf("metadata: disc MediaInfo: %w", err)
+			}
+			resource.MediaInfoJSONPath = result.JSONPath
+			resource.MediaInfoTextPath = result.TextPath
+			resource.DVDIFOPath = result.IFOPath
+			resource.DVDVOBPath = result.VOBPath
+			resource.DVDVOBSet = result.VOBSet
+			resource.DVDVOBMediaInfoJSON = result.VOBJSON
+			resource.DVDVOBMediaInfoText = result.VOBText
+			if disc.Type == "DVD" {
+				doc, err := loadMediaInfoDocFromJSONPayload(result.VOBJSON)
+				if err != nil {
+					return fmt.Errorf("metadata: parse DVD title MediaInfo: %w", err)
+				}
+				resource.DurationSeconds = mediaDurationSeconds(doc)
+				if err := s.persistDiscDVDMediaInfo(ctx, *meta, resource, len(request.Layout.Discs) == 1); err != nil {
+					return err
+				}
+			}
+		}
+		resources = append(resources, resource)
+	}
+
+	meta.Discs = resources
+	applyPrimaryDiscCompatibility(meta)
+	return nil
+}
+
+func loadBDMVDiscReports(dir string, playlists []api.PlaylistInfo) ([]preparationstate.DiscReportResource, error) {
+	reports := make([]preparationstate.DiscReportResource, 0, len(playlists))
+	for _, playlist := range playlists {
+		summaryPath := paths.BDMVSummaryPath(dir, playlist.File)
+		extPath := paths.BDMVExtSummaryPath(dir, playlist.File)
+		fullPath := paths.BDMVFullSummaryPath(dir, playlist.File)
+		summary, err := os.ReadFile(summaryPath)
+		if err != nil {
+			return nil, fmt.Errorf("metadata: read selected BDInfo summary: %w", err)
+		}
+		extended, err := os.ReadFile(extPath)
+		if err != nil {
+			return nil, fmt.Errorf("metadata: read selected extended BDInfo summary: %w", err)
+		}
+		full, err := os.ReadFile(fullPath)
+		if err != nil {
+			return nil, fmt.Errorf("metadata: read selected full BDInfo summary: %w", err)
+		}
+		reports = append(reports, preparationstate.DiscReportResource{
+			Playlist:        playlist,
+			Summary:         strings.TrimSpace(string(summary)),
+			ExtSummary:      strings.TrimSpace(string(extended)),
+			FullSummary:     strings.TrimSpace(string(full)),
+			SummaryPath:     summaryPath,
+			ExtSummaryPath:  extPath,
+			FullSummaryPath: fullPath,
+		})
+	}
+	return reports, nil
+}
+
+func (s *Service) persistDiscDVDMediaInfo(
+	ctx context.Context,
+	meta preparationstate.State,
+	disc preparationstate.DiscResource,
+	singleDisc bool,
+) error {
+	meta.SourcePath = disc.Root
+	meta.MediaInfoJSONPath = disc.MediaInfoJSONPath
+	meta.MediaInfoTextPath = disc.MediaInfoTextPath
+	meta.DVDIFOPath = disc.DVDIFOPath
+	meta.DVDVOBPath = disc.DVDVOBPath
+	meta.DVDVOBSet = disc.DVDVOBSet
+	meta.DVDVOBMediaInfoJSON = disc.DVDVOBMediaInfoJSON
+	meta.DVDVOBMediaInfoText = disc.DVDVOBMediaInfoText
+	details := extractDVDMediaInfo(meta)
+	if singleDisc {
+		details.SourcePath = meta.Paths[0]
+	} else {
+		details.SourcePath = disc.Root
+	}
+	details.IFOPath = disc.DVDIFOPath
+	details.VOBPath = disc.DVDVOBPath
+	details.VOBSet = disc.DVDVOBSet
+	details.MediaInfoJSON = disc.MediaInfoJSONPath
+	details.MediaInfoText = disc.MediaInfoTextPath
+	details.VOBMediaInfoRaw = metautil.FirstNonEmptyTrimmed(disc.DVDVOBMediaInfoText, disc.DVDVOBMediaInfoJSON)
+	details.UpdatedAt = time.Now().UTC()
+	if err := s.repo.SaveDVDMediaInfo(ctx, details); err != nil {
+		return fmt.Errorf("metadata: persist DVD MediaInfo: %w", err)
+	}
+	return nil
+}
+
+func applyPrimaryDiscCompatibility(meta *preparationstate.State) {
+	if meta == nil {
+		return
+	}
+	meta.FileList = nil
+	for _, disc := range meta.Discs {
+		meta.FileList = append(meta.FileList, disc.FileList...)
+	}
+	for _, disc := range meta.Discs {
+		if len(disc.SelectedPlaylists) == 0 && strings.TrimSpace(disc.DVDVOBSet) == "" &&
+			strings.TrimSpace(disc.VideoPath) == "" && strings.TrimSpace(disc.DVDIFOPath) == "" && strings.TrimSpace(disc.MediaInfoJSONPath) == "" {
+			continue
+		}
+		meta.VideoPath = disc.VideoPath
+		meta.MediaInfoJSONPath = disc.MediaInfoJSONPath
+		meta.MediaInfoTextPath = disc.MediaInfoTextPath
+		meta.DVDIFOPath = disc.DVDIFOPath
+		meta.DVDVOBPath = disc.DVDVOBPath
+		meta.DVDVOBSet = disc.DVDVOBSet
+		meta.DVDVOBMediaInfoJSON = disc.DVDVOBMediaInfoJSON
+		meta.DVDVOBMediaInfoText = disc.DVDVOBMediaInfoText
+		return
+	}
 }
 
 // sceneResultHasData reports whether a scene detector returned metadata worth

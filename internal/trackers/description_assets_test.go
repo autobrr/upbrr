@@ -296,10 +296,12 @@ func (s *stubRepo) DeleteUploadedImage(_ context.Context, _ string, imagePath st
 func (s *stubRepo) GetPlaylistSelection(context.Context, string) (api.PlaylistSelection, error) {
 	return api.PlaylistSelection{}, nil
 }
-func (s *stubRepo) SavePlaylistSelection(context.Context, string, []string, bool) error { return nil }
-func (s *stubRepo) DeletePlaylistSelection(context.Context, string) error               { return nil }
-func (s *stubRepo) ListStoredReleasePaths(context.Context) ([]string, error)            { return nil, nil }
-func (s *stubRepo) PurgeContentData(context.Context, string) error                      { return nil }
+func (s *stubRepo) SavePlaylistSelection(context.Context, string, string, []string, bool) error {
+	return nil
+}
+func (s *stubRepo) DeletePlaylistSelection(context.Context, string) error    { return nil }
+func (s *stubRepo) ListStoredReleasePaths(context.Context) ([]string, error) { return nil, nil }
+func (s *stubRepo) PurgeContentData(context.Context, string) error           { return nil }
 
 type stubImageService struct {
 	uploads map[string][]api.UploadedImageLink

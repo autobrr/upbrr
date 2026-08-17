@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/sourcelayout"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -97,18 +98,14 @@ func normalizePlaylistSelection(values []string) []string {
 	result := make([]string, 0, len(values))
 	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
-		value = filepath.ToSlash(filepath.Clean(strings.TrimSpace(value)))
-		if value == "." || value == "" {
+		value = strings.TrimSpace(value)
+		if value == "" {
 			continue
 		}
-		key := value
-		if runtime.GOOS == "windows" {
-			key = strings.ToLower(key)
-		}
-		if _, ok := seen[key]; ok {
+		if _, ok := seen[value]; ok {
 			continue
 		}
-		seen[key] = struct{}{}
+		seen[value] = struct{}{}
 		result = append(result, value)
 	}
 	sort.Strings(result)
@@ -137,7 +134,7 @@ func inspectSource(ctx context.Context, input api.PrepareInput, layout sourcelay
 			return api.SourceManifest{}, "", fmt.Errorf("prepared release: inspect source %s: %w", root, err)
 		}
 		if !info.IsDir() {
-			entry := manifestEntry(root, info)
+			entry := manifestEntry(root, info, layout)
 			entries = append(entries, entry)
 			total += entry.Size
 			continue
@@ -153,7 +150,7 @@ func inspectSource(ctx context.Context, input api.PrepareInput, layout sourcelay
 			if infoErr != nil {
 				return fmt.Errorf("prepared release: inspect inventory entry %q: %w", path, infoErr)
 			}
-			item := manifestEntry(path, info)
+			item := manifestEntry(path, info, layout)
 			entries = append(entries, item)
 			if item.Type == api.SourceEntryTypeFile || item.Type == api.SourceEntryTypePlaylist {
 				total += item.Size
@@ -170,24 +167,19 @@ func inspectSource(ctx context.Context, input api.PrepareInput, layout sourcelay
 		return left < right
 	})
 
-	selected := make([]api.PlaylistInfo, 0, len(input.Instructions.Playlist.Selected))
-	for _, value := range input.Instructions.Playlist.Selected {
-		selected = append(selected, api.PlaylistInfo{File: value})
-	}
 	manifest := api.SourceManifest{
-		SourcePath:        input.SourcePath,
-		Size:              total,
-		Entries:           entries,
-		SelectedPlaylists: selected,
-		Classification:    classifyManifest(entries),
+		SourcePath:     input.SourcePath,
+		Size:           total,
+		Entries:        entries,
+		Classification: classifyManifest(entries),
 	}
 	if manifest.Classification.DiscType == "" {
 		manifest.Classification.DiscType = layout.DiscType
 	}
+	manifest.Classification.DiscCount = len(layout.Discs)
 	fingerprint, err := fingerprintJSON(sourceFingerprintPayload{
 		SourcePath: canonicalSourceKey(input.SourcePath),
 		Entries:    canonicalFingerprintEntries(entries),
-		Playlists:  input.Instructions.Playlist,
 	})
 	if err != nil {
 		return api.SourceManifest{}, "", fmt.Errorf("prepared release: fingerprint source: %w", err)
@@ -195,7 +187,7 @@ func inspectSource(ctx context.Context, input api.PrepareInput, layout sourcelay
 	return manifest, fingerprint, nil
 }
 
-func manifestEntry(path string, info fs.FileInfo) api.SourceManifestEntry {
+func manifestEntry(path string, info fs.FileInfo, layout sourcelayout.Layout) api.SourceManifestEntry {
 	entryType := api.SourceEntryTypeUnknown
 	switch {
 	case info.IsDir():
@@ -208,12 +200,13 @@ func manifestEntry(path string, info fs.FileInfo) api.SourceManifestEntry {
 		entryType = api.SourceEntryTypePlaylist
 	}
 	disc := ""
-	upper := strings.ToUpper(filepath.ToSlash(path))
-	switch {
-	case strings.Contains(upper, "/BDMV/") || strings.HasSuffix(upper, "/BDMV"):
-		disc = "BDMV"
-	case strings.Contains(upper, "/VIDEO_TS/") || strings.HasSuffix(upper, "/VIDEO_TS"):
-		disc = "DVD"
+	discID := ""
+	for _, resource := range layout.Discs {
+		if pathutil.IsWithinRoot(resource.Root, path) {
+			disc = resource.Type
+			discID = resource.ID
+			break
+		}
 	}
 	playlist := ""
 	if entryType == api.SourceEntryTypePlaylist {
@@ -225,6 +218,7 @@ func manifestEntry(path string, info fs.FileInfo) api.SourceManifestEntry {
 		Size:       info.Size(),
 		ModifiedAt: info.ModTime().UTC(),
 		Disc:       disc,
+		DiscID:     discID,
 		Playlist:   playlist,
 	}
 }
@@ -245,7 +239,6 @@ func classifyManifest(entries []api.SourceManifestEntry) api.SourceClassificatio
 type sourceFingerprintPayload struct {
 	SourcePath string
 	Entries    []sourceFingerprintEntry
-	Playlists  api.PlaylistInstruction
 }
 
 type sourceFingerprintEntry struct {
@@ -254,6 +247,7 @@ type sourceFingerprintEntry struct {
 	Size         int64
 	ModifiedNano int64
 	Disc         string
+	DiscID       string
 	Playlist     string
 }
 
@@ -270,6 +264,7 @@ func canonicalFingerprintEntries(entries []api.SourceManifestEntry) []sourceFing
 			Size:         entry.Size,
 			ModifiedNano: modifiedNano,
 			Disc:         entry.Disc,
+			DiscID:       entry.DiscID,
 			Playlist:     filepath.ToSlash(entry.Playlist),
 		})
 	}
@@ -305,4 +300,30 @@ func fingerprintJSON(value any) (string, error) {
 	}
 	digest := sha256.Sum256(payload)
 	return hex.EncodeToString(digest[:]), nil
+}
+
+func preparedMediaBinding(release api.PreparedRelease) (api.PreparedMediaBinding, error) {
+	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
+		ContractVersion            string
+		SourceFingerprint          string
+		FactInstructionFingerprint string
+		Generation                 api.PreparedGeneration
+		Discs                      []api.DiscItemFacts
+		SelectedPlaylists          []api.PlaylistInfo
+	}{
+		ContractVersion:            ContractVersion,
+		SourceFingerprint:          release.Compatibility.SourceFingerprint,
+		FactInstructionFingerprint: release.Compatibility.FactInstructionFingerprint,
+		Generation:                 release.Generation,
+		Discs:                      release.Disc.Items,
+		SelectedPlaylists:          release.Disc.SelectedPlaylists(),
+	})
+	if err != nil {
+		return api.PreparedMediaBinding{}, fmt.Errorf("prepared release: fingerprint prepared media: %w", err)
+	}
+	return api.PreparedMediaBinding{
+		SourcePath:               release.Source.SourcePath,
+		PreparedMediaFingerprint: string(fingerprint),
+		PreparedGeneration:       release.Generation,
+	}, nil
 }

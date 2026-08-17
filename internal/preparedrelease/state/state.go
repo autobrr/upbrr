@@ -24,6 +24,39 @@ type Request struct {
 	Manifest api.SourceManifest
 	// Layout exposes preparation-only derived resource roots for the same source.
 	Layout sourcelayout.Layout
+	// SourceFingerprint binds repository-backed selection to the inspected inventory.
+	SourceFingerprint string
+}
+
+// DiscReportResource contains private paths and text for one selected BDMV report.
+type DiscReportResource struct {
+	Playlist        api.PlaylistInfo
+	Summary         string
+	ExtSummary      string
+	FullSummary     string
+	SummaryPath     string
+	ExtSummaryPath  string
+	FullSummaryPath string
+}
+
+// DiscResource contains all preparation-private evidence for one source disc.
+type DiscResource struct {
+	ID                  string
+	Name                string
+	Type                string
+	Root                string
+	SelectedPlaylists   []api.PlaylistInfo
+	VideoPath           string
+	FileList            []string
+	Reports             []DiscReportResource
+	MediaInfoJSONPath   string
+	MediaInfoTextPath   string
+	DVDIFOPath          string
+	DVDVOBPath          string
+	DVDVOBSet           string
+	DurationSeconds     float64
+	DVDVOBMediaInfoJSON string
+	DVDVOBMediaInfoText string
 }
 
 // ReleaseAssessments projects concrete source-derived validation facts from
@@ -79,6 +112,7 @@ type State struct {
 	LookupWarnings          []string
 	Paths                   []string
 	DiscType                string
+	Discs                   []DiscResource
 	VideoPath               string
 	FileList                []string
 	SourceSize              int64

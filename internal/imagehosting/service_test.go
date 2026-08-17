@@ -139,7 +139,7 @@ func (r *recordingRepo) DeleteDescriptionOverride(context.Context, string, strin
 func (r *recordingRepo) GetPlaylistSelection(context.Context, string) (api.PlaylistSelection, error) {
 	return api.PlaylistSelection{}, nil
 }
-func (r *recordingRepo) SavePlaylistSelection(context.Context, string, []string, bool) error {
+func (r *recordingRepo) SavePlaylistSelection(context.Context, string, string, []string, bool) error {
 	return nil
 }
 func (r *recordingRepo) DeletePlaylistSelection(context.Context, string) error { return nil }

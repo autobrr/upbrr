@@ -95,6 +95,7 @@ type DuplicateSubject struct {
 	ProviderMetadata     SourceScopedMetadata
 	TrackerIDs           map[string]string
 	DiscType             string
+	Disc                 DiscFacts
 	Type                 string
 	Source               string
 	Tag                  string
@@ -158,6 +159,37 @@ type DVDMenuService interface {
 type ImageHostingService interface {
 	ListCandidates(ctx context.Context, subject ImageHostingSubject) ([]ScreenshotImage, error)
 	Upload(ctx context.Context, subject ImageHostingSubject, host string, usageScope string, images []ScreenshotImage) ([]UploadedImageLink, error)
+}
+
+// DiscReportResource contains one selected BDMV report and its private artifacts.
+type DiscReportResource struct {
+	Playlist        PlaylistInfo
+	Summary         string
+	ExtSummary      string
+	FullSummary     string
+	SummaryPath     string
+	ExtSummaryPath  string
+	FullSummaryPath string
+}
+
+// DiscEvidenceResource contains preparation-private evidence for one ordered disc.
+type DiscEvidenceResource struct {
+	ID                  string
+	Name                string
+	Type                string
+	Root                string
+	SelectedPlaylists   []PlaylistInfo
+	VideoPath           string
+	FileList            []string
+	Reports             []DiscReportResource
+	MediaInfoJSONPath   string
+	MediaInfoTextPath   string
+	DVDIFOPath          string
+	DVDVOBPath          string
+	DVDVOBSet           string
+	DurationSeconds     float64
+	DVDVOBMediaInfoJSON string
+	DVDVOBMediaInfoText string
 }
 
 type TrackerBlockReason string
@@ -237,6 +269,7 @@ func validateExactMediaUploads(channel string, uploads []UploadedImageLink, allo
 // instruction, and prerequisite view. It excludes preparation diagnostics,
 // resolver evidence, cache freshness, and client-search implementation state.
 type UploadSubject struct {
+	MediaBinding        PreparedMediaBinding
 	SourcePath          string
 	Paths               []string
 	DiscType            string
@@ -292,6 +325,7 @@ type UploadSubject struct {
 	Identity                    ExternalIdentity
 	ProviderMetadata            SourceScopedMetadata
 	Disc                        DiscFacts
+	Discs                       []DiscEvidenceResource
 	AudioLanguages              []string
 	SubtitleLanguages           []string
 	Container                   string
@@ -1279,6 +1313,7 @@ func NewRuleSubject(subject UploadSubject) RuleSubject {
 // DescriptionSubject contains only facts, local resources, and rendering
 // instructions consumed by tracker description builders.
 type DescriptionSubject struct {
+	MediaBinding          PreparedMediaBinding
 	SourcePath            string
 	DiscType              string
 	MediaInfoTextPath     string
@@ -1288,6 +1323,8 @@ type DescriptionSubject struct {
 	Options               UploadOptions
 	Release               ReleaseInfo
 	SelectedBDMVPlaylists []PlaylistInfo
+	Disc                  DiscFacts
+	Discs                 []DiscEvidenceResource
 	Tag                   string
 	Identity              ExternalIdentity
 	ProviderMetadata      SourceScopedMetadata
@@ -1312,6 +1349,7 @@ type DescriptionSubject struct {
 // read model and detaches mutable collections.
 func NewDescriptionSubject(subject UploadSubject) DescriptionSubject {
 	projected := DescriptionSubject{
+		MediaBinding:          subject.MediaBinding,
 		SourcePath:            subject.SourcePath,
 		DiscType:              subject.DiscType,
 		MediaInfoTextPath:     subject.MediaInfoTextPath,
@@ -1321,6 +1359,8 @@ func NewDescriptionSubject(subject UploadSubject) DescriptionSubject {
 		Options:               subject.Options,
 		Release:               subject.Release,
 		SelectedBDMVPlaylists: append([]PlaylistInfo(nil), subject.SelectedBDMVPlaylists...),
+		Disc:                  subject.Disc,
+		Discs:                 append([]DiscEvidenceResource(nil), subject.Discs...),
 		Tag:                   subject.Tag,
 		Identity:              subject.Identity,
 		ProviderMetadata:      subject.ProviderMetadata,

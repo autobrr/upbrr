@@ -1126,15 +1126,16 @@ func (r *SQLiteRepository) GetPlaylistSelection(ctx context.Context, sourcePath 
 	}
 
 	row := r.db.QueryRowContext(ctx, `
-		SELECT selected_playlists, use_all
+		SELECT source_fingerprint, selected_playlists, use_all
 		FROM playlist_selections
 		WHERE source_path = ?
 	`, sourcePath)
 
 	var playlistsJSON string
+	var sourceFingerprint string
 	var useAll bool
 
-	if err := row.Scan(&playlistsJSON, &useAll); err != nil {
+	if err := row.Scan(&sourceFingerprint, &playlistsJSON, &useAll); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return PlaylistSelection{}, internalerrors.ErrNotFound
 		}
@@ -1150,12 +1151,19 @@ func (r *SQLiteRepository) GetPlaylistSelection(ctx context.Context, sourcePath 
 
 	return PlaylistSelection{
 		SourcePath:        sourcePath,
+		SourceFingerprint: sourceFingerprint,
 		SelectedPlaylists: playlists,
 		UseAll:            useAll,
 	}, nil
 }
 
-func (r *SQLiteRepository) SavePlaylistSelection(ctx context.Context, sourcePath string, playlists []string, useAll bool) error {
+func (r *SQLiteRepository) SavePlaylistSelection(
+	ctx context.Context,
+	sourcePath string,
+	sourceFingerprint string,
+	playlists []string,
+	useAll bool,
+) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
 	}
@@ -1176,13 +1184,14 @@ func (r *SQLiteRepository) SavePlaylistSelection(ctx context.Context, sourcePath
 	}
 
 	_, err := r.execWrite(ctx, "save playlist selection", `
-		INSERT INTO playlist_selections (source_path, selected_playlists, use_all, updated_at)
-		VALUES (?, ?, ?, ?)
+		INSERT INTO playlist_selections (source_path, source_fingerprint, selected_playlists, use_all, updated_at)
+		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(source_path) DO UPDATE SET
+			source_fingerprint = excluded.source_fingerprint,
 			selected_playlists = excluded.selected_playlists,
 			use_all = excluded.use_all,
 			updated_at = excluded.updated_at
-	`, sourcePath, playlistsJSON, useAll, timestamp)
+	`, sourcePath, strings.TrimSpace(sourceFingerprint), playlistsJSON, useAll, timestamp)
 
 	if err != nil {
 		return fmt.Errorf("db save playlist selection: %w", err)

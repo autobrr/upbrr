@@ -333,6 +333,39 @@ func TestCreateDiscFolderIgnoresWantedFileList(t *testing.T) {
 	})
 }
 
+func TestCreateMultiDiscCollectionIncludesEveryTree(t *testing.T) {
+	t.Parallel()
+
+	sourceDir := filepath.Join(t.TempDir(), "Example.Release.2026.COMPLETE.BLURAY-GRP")
+	firstStream := filepath.Join(sourceDir, "Disc 1", "BDMV", "STREAM", "00001.m2ts")
+	secondStream := filepath.Join(sourceDir, "Disc 2", "BDMV", "STREAM", "00001.m2ts")
+	writeTestFile(t, firstStream, "first stream")
+	writeTestFile(t, filepath.Join(sourceDir, "Disc 1", "BDMV", "PLAYLIST", "00001.mpls"), "first playlist")
+	writeTestFile(t, secondStream, "second stream")
+	writeTestFile(t, filepath.Join(sourceDir, "Disc 2", "BDMV", "PLAYLIST", "00001.mpls"), "second playlist")
+
+	service := NewService(api.NopLogger{}, t.TempDir())
+	result, err := service.Create(context.Background(), api.TorrentSubject{
+		SourcePath: sourceDir,
+		DiscType:   "BDMV",
+		FileList:   []string{firstStream},
+	})
+	if err != nil {
+		t.Fatalf("create collection torrent: %v", err)
+	}
+
+	name, files := loadTorrentShape(t, result.Path)
+	if name != filepath.Base(sourceDir) {
+		t.Fatalf("torrent name = %q, want %q", name, filepath.Base(sourceDir))
+	}
+	assertStringSliceEqual(t, files, []string{
+		"Disc 1/BDMV/PLAYLIST/00001.mpls",
+		"Disc 1/BDMV/STREAM/00001.m2ts",
+		"Disc 2/BDMV/PLAYLIST/00001.mpls",
+		"Disc 2/BDMV/STREAM/00001.m2ts",
+	})
+}
+
 func TestCreateDiscMarkerFolderUsesSelectedRoot(t *testing.T) {
 	t.Parallel()
 

@@ -40,6 +40,7 @@ func IsDiscMenuSelectionSource(source string) bool {
 }
 
 type ScreenshotSelection struct {
+	DiscID           string
 	Index            int
 	TimestampSeconds float64
 	Frame            int
@@ -56,6 +57,7 @@ type ScreenshotOverrides struct {
 // ScreenshotSubject contains only source facts required to plan and manage
 // screenshots. Workflow modules build it from an exact prepared generation.
 type ScreenshotSubject struct {
+	MediaBinding          PreparedMediaBinding
 	SourcePath            string
 	DiscType              string
 	VideoPath             string
@@ -68,31 +70,56 @@ type ScreenshotSubject struct {
 	SelectedBDMVPlaylists []PlaylistInfo
 	DefaultCount          int
 	ManualFrames          []int
+	Discs                 []ScreenshotDiscSubject
+}
+
+// ScreenshotDiscSubject contains private capture inputs for one ordered disc.
+type ScreenshotDiscSubject struct {
+	ID                    string
+	Name                  string
+	Type                  string
+	VideoPath             string
+	MediaInfoJSONPath     string
+	SelectedBDMVPlaylists []PlaylistInfo
 }
 
 // DVDMenuSubject contains the stable source facts required by DVD-menu
 // capture and lifecycle operations.
 type DVDMenuSubject struct {
-	SourcePath string
-	DiscType   string
+	MediaBinding PreparedMediaBinding
+	SourcePath   string
+	DiscType     string
+	Discs        []DVDMenuDiscSubject
+}
+
+// DVDMenuDiscSubject identifies one private DVD root eligible for menu capture.
+type DVDMenuDiscSubject struct {
+	ID   string
+	Name string
+	Root string
 }
 
 // ImageHostingSubject scopes image-host operations to one prepared source.
 // GalleryName is the already-resolved display name used by batch hosts.
 type ImageHostingSubject struct {
-	SourcePath  string
-	GalleryName string
+	MediaBinding PreparedMediaBinding
+	SourcePath   string
+	GalleryName  string
 }
 
 type ScreenshotFinalSelection struct {
-	SourcePath string
-	ImagePath  string
-	Order      int
-	Source     string
-	SelectedAt time.Time `ts_type:"string"`
+	SourcePath               string
+	PreparedMediaFingerprint string
+	PreparedGeneration       PreparedGeneration
+	DiscID                   string
+	ImagePath                string
+	Order                    int
+	Source                   string
+	SelectedAt               time.Time `ts_type:"string"`
 }
 
 type ScreenshotPlan struct {
+	MediaBinding               PreparedMediaBinding
 	SourcePath                 string
 	DiscType                   string
 	DurationSeconds            float64
@@ -105,6 +132,16 @@ type ScreenshotPlan struct {
 	PreviewImages              []ScreenshotImage
 	MetadataTimestamp          string
 	RequiresManualFrames       bool
+	Discs                      []ScreenshotDiscPlan
+}
+
+// ScreenshotDiscPlan is one ordered disc's timing and selection plan.
+type ScreenshotDiscPlan struct {
+	DiscID              string
+	DiscName            string
+	DurationSeconds     float64
+	FrameRate           float64
+	SuggestedSelections []ScreenshotSelection
 }
 
 type ScreenshotLinkedImage struct {
@@ -115,6 +152,8 @@ type ScreenshotLinkedImage struct {
 }
 
 type ScreenshotImage struct {
+	DiscID           string
+	DiscName         string
 	Index            int
 	TimestampSeconds float64
 	Path             string
@@ -132,6 +171,8 @@ type ScreenshotImage struct {
 }
 
 type ScreenshotPreview struct {
+	DiscID           string
+	DiscName         string
 	TimestampSeconds float64
 	ImageBytes       []byte
 	Width            int
@@ -149,6 +190,7 @@ type ScreenshotResult struct {
 }
 
 type ScreenshotError struct {
+	DiscID  string
 	Index   int
 	Message string
 }

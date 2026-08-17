@@ -256,7 +256,7 @@ func (f *fakeRepo) GetPlaylistSelection(_ context.Context, _ string) (api.Playli
 	return api.PlaylistSelection{}, internalerrors.ErrNotFound
 }
 
-func (f *fakeRepo) SavePlaylistSelection(_ context.Context, _ string, _ []string, _ bool) error {
+func (f *fakeRepo) SavePlaylistSelection(_ context.Context, _ string, _ string, _ []string, _ bool) error {
 	return nil
 }
 
@@ -395,26 +395,26 @@ func (s *stubIMDB) GetEpisodeInfo(_ context.Context, _ string, _ bool) (imdb.Epi
 }
 
 type stubTVDB struct {
-	id                int
-	name              string
-	calls             int
-	tvMovieCalls      []bool
-	idWhenTVMovie     int
-	nameWhenTVMovie   string
-	episodes          tvdb.EpisodesData
-	specificAlias     string
-	episodeErr        error
-	episodeTranslate  tvdb.EpisodeTranslation
-	episodeTransErr   error
-	seriesMetadata    tvdb.SeriesMetadata
-	nameDisambiguation tvdb.NameDisambiguation
-	episodeCalls      int
-	seriesMetadataCalls int
-	seriesLangCalls   []string
+	id                       int
+	name                     string
+	calls                    int
+	tvMovieCalls             []bool
+	idWhenTVMovie            int
+	nameWhenTVMovie          string
+	episodes                 tvdb.EpisodesData
+	specificAlias            string
+	episodeErr               error
+	episodeTranslate         tvdb.EpisodeTranslation
+	episodeTransErr          error
+	seriesMetadata           tvdb.SeriesMetadata
+	nameDisambiguation       tvdb.NameDisambiguation
+	episodeCalls             int
+	seriesMetadataCalls      int
+	seriesLangCalls          []string
 	nameDisambiguationInputs []tvdb.NameDisambiguationInput
-	episodeLangCalls  []string
-	episodeTransCalls []int
-	lastEpisodeQuery  tvdb.EpisodeQuery
+	episodeLangCalls         []string
+	episodeTransCalls        []int
+	lastEpisodeQuery         tvdb.EpisodeQuery
 }
 
 func (s *stubTVDB) GetByExternalID(_ context.Context, _, _ string, tvMovie bool) (int, string, error) {
@@ -3130,7 +3130,7 @@ func TestTVDBMetadataAndDisambiguationReuseAreIndependent(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
-		status api.MetadataEvidenceStatus
+		status             api.MetadataEvidenceStatus
 		wantDisambiguation bool
 	}{
 		{status: api.MetadataEvidenceStatusComplete, wantDisambiguation: true},

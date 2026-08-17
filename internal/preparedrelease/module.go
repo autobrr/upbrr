@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -23,7 +24,7 @@ import (
 
 // ContractVersion changes whenever prepared fact semantics or the private seed
 // contract become incompatible, forcing persisted generations to be recomputed.
-const ContractVersion = "prepared-release-v4"
+const ContractVersion = "prepared-release-v5"
 
 // Store is the prepared-release persistence port. Implementations must commit
 // facts, identity, and provider metadata as one generation transaction.
@@ -75,6 +76,7 @@ type CollectedResources struct {
 	SceneNFOPath          string
 	DescriptionTemplate   string
 	SelectedBDMVPlaylists []api.PlaylistInfo
+	Discs                 []preparationstate.DiscResource
 	ClientEvidence        preparationstate.ClientEvidenceSnapshot
 }
 
@@ -201,9 +203,10 @@ func (m *Module) Prepare(ctx context.Context, input api.PrepareInput) (api.Prepa
 			}
 			finish := api.BeginPreparationProgress(ctx, api.PreparationPhaseClientDiscovery, "Hydrating private prepared resources.")
 			resources, hydrateErr := hydrator.HydratePrivateResources(ctx, preparationstate.Request{
-				Input:    input,
-				Manifest: current.Source,
-				Layout:   layout,
+				Input:             input,
+				Manifest:          current.Source,
+				Layout:            layout,
+				SourceFingerprint: sourceFingerprint,
 			})
 			finish(hydrateErr)
 			if hydrateErr != nil {
@@ -244,14 +247,15 @@ func (m *Module) Prepare(ctx context.Context, input api.PrepareInput) (api.Prepa
 		}
 	}
 	collected, err := m.collector.Collect(ctx, preparationstate.Request{
-		Input:    input,
-		Manifest: manifest,
-		Layout:   layout,
+		Input:             input,
+		Manifest:          manifest,
+		Layout:            layout,
+		SourceFingerprint: sourceFingerprint,
 	})
 	if err != nil {
 		return api.PrepareResult{}, fmt.Errorf("prepared release: collect facts: %w", err)
 	}
-	manifest.SelectedPlaylists = clonePreparedPlaylists(collected.Resources.SelectedBDMVPlaylists)
+	manifest.SelectedPlaylists = clonePreparedPlaylists(collected.Disc.SelectedPlaylists())
 	identityIntent := collected.Identity
 	mergeFactInstructions(&identityIntent, input.Instructions)
 	identityFinish := api.BeginPreparationProgress(ctx, api.PreparationPhaseCanonicalIdentity, "Resolving canonical identity.")
@@ -524,7 +528,66 @@ func validateGeneration(release api.PreparedRelease) error {
 	if reason := providerIdentityMismatch(release); reason != "" {
 		return &IncompatiblePreparationError{SourcePath: release.Source.SourcePath, Reason: reason}
 	}
+	if reason := discProjectionMismatch(release); reason != "" {
+		return &IncompatiblePreparationError{SourcePath: release.Source.SourcePath, Reason: reason}
+	}
 	return nil
+}
+
+func discProjectionMismatch(release api.PreparedRelease) string {
+	disc := release.Disc
+	if release.Source.Classification.DiscCount != len(disc.Items) {
+		return "disc inventory count differs from canonical facts"
+	}
+	if release.Source.Classification.DiscType != disc.Type {
+		return "disc type differs from source classification"
+	}
+	selected := disc.SelectedPlaylists()
+	if !reflect.DeepEqual(selected, release.Source.SelectedPlaylists) {
+		return "selected playlist projection differs from canonical disc facts"
+	}
+	if disc.PlaylistCount != len(selected) || disc.Summary != disc.AggregateSummary() {
+		return "disc scalar projection differs from canonical disc facts"
+	}
+	itemByID := make(map[string]api.DiscItemFacts, len(disc.Items))
+	for _, item := range disc.Items {
+		if strings.TrimSpace(item.ID) == "" || strings.TrimSpace(item.Name) == "" || item.Type != disc.Type {
+			return "canonical disc item is invalid"
+		}
+		if _, exists := itemByID[item.ID]; exists {
+			return "canonical disc IDs are not unique"
+		}
+		itemByID[item.ID] = item
+		primaryReport := -1
+		for index, report := range item.Reports {
+			if strings.TrimSpace(report.Playlist.ID) == "" || report.Playlist.DiscID != item.ID || report.Playlist.DiscName != item.Name {
+				return "canonical disc report identity is invalid"
+			}
+			if item.Type != "BDMV" {
+				return "non-BDMV disc contains canonical reports"
+			}
+			if primaryReport < 0 || report.Playlist.Score > item.Reports[primaryReport].Playlist.Score {
+				primaryReport = index
+			}
+		}
+		if primaryReport >= 0 && item.DurationSeconds != item.Reports[primaryReport].Playlist.Duration {
+			return "disc duration differs from canonical primary report"
+		}
+	}
+	for _, entry := range release.Source.Entries {
+		if entry.DiscID == "" {
+			continue
+		}
+		if _, exists := itemByID[entry.DiscID]; !exists {
+			return "source manifest references an unknown disc"
+		}
+	}
+	expectedDiscID, expectedReportID, expectedDuration, expectedVOBSet := disc.CanonicalPrimary()
+	if disc.PrimaryDiscID != expectedDiscID || disc.PrimaryReportID != expectedReportID ||
+		disc.DurationSeconds != expectedDuration || disc.DVDVOBSet != expectedVOBSet {
+		return "disc primary projection differs from canonical disc items"
+	}
+	return ""
 }
 
 func providerIdentityMismatch(release api.PreparedRelease) string {
@@ -655,6 +718,7 @@ type preparationResources struct {
 	sceneNFOPath          string
 	descriptionTemplate   string
 	selectedBDMVPlaylists []api.PlaylistInfo
+	discs                 []preparationstate.DiscResource
 	clientEvidence        preparationstate.ClientEvidenceSnapshot
 }
 
@@ -689,6 +753,7 @@ func mergePreparationResources(base preparationResources, collected preparationR
 	base.sceneNFOPath = collected.sceneNFOPath
 	base.descriptionTemplate = collected.descriptionTemplate
 	base.selectedBDMVPlaylists = collected.selectedBDMVPlaylists
+	base.discs = clonePreparedDiscResources(collected.discs)
 	base.clientEvidence = preparationstate.CloneClientEvidenceSnapshot(collected.clientEvidence)
 	return base
 }
@@ -707,6 +772,7 @@ func resourcesFromCollected(collected CollectedResources) preparationResources {
 		sceneNFOPath:          collected.SceneNFOPath,
 		descriptionTemplate:   collected.DescriptionTemplate,
 		selectedBDMVPlaylists: clonePreparedPlaylists(collected.SelectedBDMVPlaylists),
+		discs:                 clonePreparedDiscResources(collected.Discs),
 		clientEvidence:        preparationstate.CloneClientEvidenceSnapshot(collected.ClientEvidence),
 	}
 }
@@ -736,6 +802,7 @@ func cloneEnvelope(value envelope) (envelope, error) {
 				UseAll:   value.resources.playlist.UseAll,
 			},
 			selectedBDMVPlaylists: clonePreparedPlaylists(value.resources.selectedBDMVPlaylists),
+			discs:                 clonePreparedDiscResources(value.resources.discs),
 			clientEvidence:        preparationstate.CloneClientEvidenceSnapshot(value.resources.clientEvidence),
 		},
 	}
@@ -746,6 +813,14 @@ func clonePreparedPlaylists(value []api.PlaylistInfo) []api.PlaylistInfo {
 	cloned, err := cloneWithJSON(value)
 	if err != nil {
 		panic(fmt.Sprintf("prepared release: clone playlists: %v", err))
+	}
+	return cloned
+}
+
+func clonePreparedDiscResources(value []preparationstate.DiscResource) []preparationstate.DiscResource {
+	cloned, err := cloneWithJSON(value)
+	if err != nil {
+		panic(fmt.Sprintf("prepared release: clone disc resources: %v", err))
 	}
 	return cloned
 }

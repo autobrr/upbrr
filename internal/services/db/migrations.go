@@ -160,6 +160,32 @@ var migrationRegistry = []migrationStep{
 		dependsOn: []string{baselineMigrationID},
 		apply:     migrateAddReleaseOmissionControls,
 	},
+	{
+		id:        "2026_08_add_multi_disc_media_binding",
+		dependsOn: []string{baselineMigrationID},
+		apply:     migrateAddMultiDiscMediaBinding,
+	},
+}
+
+func migrateAddMultiDiscMediaBinding(ctx context.Context, exec migrationExecutor) error {
+	if _, err := exec.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS playlist_selections (
+		source_path TEXT PRIMARY KEY,
+		selected_playlists TEXT NOT NULL DEFAULT "[]",
+		use_all INTEGER NOT NULL DEFAULT 0,
+		updated_at TEXT NOT NULL
+	)`); err != nil {
+		return fmt.Errorf("db: ensure playlist selections: %w", err)
+	}
+	exists, err := tableColumnExists(ctx, exec, "playlist_selections", "source_fingerprint")
+	if err != nil {
+		return fmt.Errorf("db: inspect playlist selection fingerprint: %w", err)
+	}
+	if !exists {
+		if _, err := exec.ExecContext(ctx, `ALTER TABLE playlist_selections ADD COLUMN source_fingerprint TEXT NOT NULL DEFAULT ""`); err != nil {
+			return fmt.Errorf("db: add playlist selection fingerprint: %w", err)
+		}
+	}
+	return nil
 }
 
 func migrateAddReleaseWorkflowStates(ctx context.Context, exec migrationExecutor) error {

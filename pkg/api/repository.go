@@ -187,20 +187,24 @@ type DescriptionOverride struct {
 
 type PlaylistSelection struct {
 	SourcePath        string
+	SourceFingerprint string
 	SelectedPlaylists []string
 	UseAll            bool
 	UpdatedAt         time.Time `ts_type:"string"`
 }
 
 type Screenshot struct {
-	SourcePath  string
-	ImagePath   string
-	Timestamp   float64
-	FrameNumber int
-	Width       int
-	Height      int
-	Purpose     ScreenshotPurpose
-	CapturedAt  time.Time `ts_type:"string"`
+	SourcePath               string
+	PreparedMediaFingerprint string
+	PreparedGeneration       PreparedGeneration
+	DiscID                   string
+	ImagePath                string
+	Timestamp                float64
+	FrameNumber              int
+	Width                    int
+	Height                   int
+	Purpose                  ScreenshotPurpose
+	CapturedAt               time.Time `ts_type:"string"`
 }
 
 // DiscMenuDeleteResult describes local references removed by one atomic menu
@@ -287,7 +291,7 @@ type ReleaseSelectionRepository interface {
 	SaveDescriptionOverride(ctx context.Context, override DescriptionOverride) error
 	DeleteDescriptionOverride(ctx context.Context, path string, groupKey string) error
 	GetPlaylistSelection(ctx context.Context, sourcePath string) (PlaylistSelection, error)
-	SavePlaylistSelection(ctx context.Context, sourcePath string, playlists []string, useAll bool) error
+	SavePlaylistSelection(ctx context.Context, sourcePath string, sourceFingerprint string, playlists []string, useAll bool) error
 }
 
 // HistoryCleanupSnapshot contains persisted local paths needed by Core's
