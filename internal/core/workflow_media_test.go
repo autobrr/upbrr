@@ -21,13 +21,24 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-type workflowMediaResolverFake struct{}
+type workflowMediaResolverFake struct {
+	screenshotSubject *api.ScreenshotSubject
+}
 
-func (workflowMediaResolverFake) ResolveScreenshotSubject(
+func (f workflowMediaResolverFake) ResolveScreenshotSubject(
 	_ context.Context,
 	input api.MediaPlanInput,
 ) (api.ScreenshotSubject, error) {
-	return api.ScreenshotSubject{SourcePath: input.Release.SourcePath, DiscType: "DVD"}, nil
+	if f.screenshotSubject != nil {
+		subject := *f.screenshotSubject
+		subject.ManualFrames = append([]int(nil), input.Options.ManualFrames...)
+		return subject, nil
+	}
+	return api.ScreenshotSubject{
+		SourcePath:   input.Release.SourcePath,
+		DiscType:     "DVD",
+		ManualFrames: append([]int(nil), input.Options.ManualFrames...),
+	}, nil
 }
 
 func (workflowMediaResolverFake) ResolveDVDMenuSubject(
@@ -38,12 +49,13 @@ func (workflowMediaResolverFake) ResolveDVDMenuSubject(
 }
 
 type workflowScreenshotFake struct {
-	root     string
-	plan     *api.ScreenshotPlan
-	plans    int
-	captures int
-	deleted  []string
-	err      error
+	root       string
+	plan       *api.ScreenshotPlan
+	plans      int
+	captures   int
+	selections []api.ScreenshotSelection
+	deleted    []string
+	err        error
 }
 
 func (f *workflowScreenshotFake) Plan(
@@ -60,18 +72,29 @@ func (f *workflowScreenshotFake) Plan(
 
 func (f *workflowScreenshotFake) Capture(
 	_ context.Context,
-	_ api.ScreenshotSubject,
+	subject api.ScreenshotSubject,
 	selections []api.ScreenshotSelection,
 	purpose api.ScreenshotPurpose,
 ) (api.ScreenshotResult, error) {
 	f.captures++
+	f.selections = append(f.selections, selections...)
 	if f.err != nil {
 		return api.ScreenshotResult{}, f.err
 	}
 	images := make([]api.ScreenshotImage, len(selections))
+	discNames := make(map[string]string, len(subject.Discs))
+	for _, disc := range subject.Discs {
+		discNames[disc.ID] = disc.Name
+	}
 	for index, selection := range selections {
+		name := fmt.Sprintf("screen-%d.png", selection.Index)
+		if selection.DiscID != "" {
+			name = fmt.Sprintf("%s-screen-%d.png", selection.DiscID, selection.Index)
+		}
 		images[index] = api.ScreenshotImage{
-			Path:             filepath.Join(f.root, fmt.Sprintf("screen-%d.png", selection.Index)),
+			DiscID:           selection.DiscID,
+			DiscName:         discNames[selection.DiscID],
+			Path:             filepath.Join(f.root, name),
 			Purpose:          purpose,
 			Index:            selection.Index,
 			TimestampSeconds: selection.TimestampSeconds,
@@ -83,9 +106,134 @@ func (f *workflowScreenshotFake) Capture(
 	return api.ScreenshotResult{Purpose: purpose, Images: images}, nil
 }
 
+func TestWorkflowMediaBuilderKeepsAutomaticSuggestionsForOmittedDiscs(t *testing.T) {
+	t.Parallel()
+
+	subject := api.ScreenshotSubject{SourcePath: "C:\\releases\\Example.Release.2026", Discs: []api.ScreenshotDiscSubject{
+		{ID: "disc-a", Name: "Disc 1"},
+		{ID: "disc-b", Name: "Disc 2"},
+	}}
+	screenshots := &workflowScreenshotFake{root: t.TempDir(), plan: &api.ScreenshotPlan{
+		Discs: []api.ScreenshotDiscPlan{
+			{
+				DiscID:   "disc-a",
+				DiscName: "Disc 1",
+				SuggestedSelections: []api.ScreenshotSelection{{
+					DiscID:           "disc-a",
+					Index:            0,
+					TimestampSeconds: 10,
+				}},
+			},
+			{
+				DiscID:   "disc-b",
+				DiscName: "Disc 2",
+				SuggestedSelections: []api.ScreenshotSelection{{
+					DiscID:           "disc-b",
+					Index:            0,
+					TimestampSeconds: 20,
+				}},
+			},
+		},
+	}}
+	builder := workflowMediaBuilder{
+		resolver:    workflowMediaResolverFake{screenshotSubject: &subject},
+		screenshots: screenshots,
+	}
+	projections := api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
+		TrackerID: "ALPHA", Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2},
+	}}}
+
+	result, _, err := builder.Build(context.Background(), api.ReleaseRef{SourcePath: subject.SourcePath, Generation: 1}, projections,
+		api.MediaCaptureInstructions{Purpose: api.ScreenshotPurposeFinal, Selections: []api.ScreenshotSelection{{
+			DiscID:           "disc-a",
+			Index:            4,
+			TimestampSeconds: 40,
+		}}}, time.Now())
+	if err != nil {
+		t.Fatalf("build media: %v", err)
+	}
+	if len(result.Artifacts) != 2 || len(screenshots.selections) != 2 || screenshots.selections[0].DiscID != "disc-a" ||
+		screenshots.selections[1].DiscID != "disc-b" {
+		t.Fatalf("artifacts=%#v selections=%#v", result.Artifacts, screenshots.selections)
+	}
+}
+
+func TestWorkflowMediaBuilderRetainsExpandedRawFramesAcrossDiscs(t *testing.T) {
+	t.Parallel()
+
+	subject := api.ScreenshotSubject{SourcePath: "C:\\releases\\Example.Release.2026", Discs: []api.ScreenshotDiscSubject{
+		{ID: "disc-a", Name: "Disc 1"},
+		{ID: "disc-b", Name: "Disc 2"},
+	}}
+	expanded := []api.ScreenshotSelection{
+		{
+			DiscID:           "disc-a",
+			Index:            0,
+			Frame:            24,
+			TimestampSeconds: 1,
+			Source:           "manual",
+		},
+		{
+			DiscID:           "disc-a",
+			Index:            1,
+			Frame:            48,
+			TimestampSeconds: 2,
+			Source:           "manual",
+		},
+		{
+			DiscID:           "disc-b",
+			Index:            0,
+			Frame:            24,
+			TimestampSeconds: 1,
+			Source:           "manual",
+		},
+		{
+			DiscID:           "disc-b",
+			Index:            1,
+			Frame:            48,
+			TimestampSeconds: 2,
+			Source:           "manual",
+		},
+	}
+	screenshots := &workflowScreenshotFake{root: t.TempDir(), plan: &api.ScreenshotPlan{
+		SuggestedSelections: expanded,
+		Discs: []api.ScreenshotDiscPlan{
+			{
+				DiscID:              "disc-a",
+				DiscName:            "Disc 1",
+				SuggestedSelections: expanded[:2],
+			},
+			{
+				DiscID:              "disc-b",
+				DiscName:            "Disc 2",
+				SuggestedSelections: expanded[2:],
+			},
+		},
+	}}
+	builder := workflowMediaBuilder{
+		resolver:    workflowMediaResolverFake{screenshotSubject: &subject},
+		screenshots: screenshots,
+	}
+
+	result, _, err := builder.Build(context.Background(), api.ReleaseRef{SourcePath: subject.SourcePath, Generation: 1}, api.TrackerReleaseProjectionSet{},
+		api.MediaCaptureInstructions{Purpose: api.ScreenshotPurposeFinal, ManualFrames: []int{24, 48}}, time.Now())
+	if err != nil {
+		t.Fatalf("build media: %v", err)
+	}
+	if len(result.Artifacts) != 4 || len(screenshots.selections) != 4 {
+		t.Fatalf("artifacts=%#v selections=%#v", result.Artifacts, screenshots.selections)
+	}
+	for index, artifact := range result.Artifacts {
+		if artifact.DiscID != expanded[index].DiscID || artifact.Index != expanded[index].Index {
+			t.Fatalf("artifact[%d] = %#v", index, artifact)
+		}
+	}
+}
+
 func (*workflowScreenshotFake) PreviewFrame(
 	context.Context,
 	api.ScreenshotSubject,
+	string,
 	float64,
 ) (api.ScreenshotPreview, error) {
 	return api.ScreenshotPreview{}, nil

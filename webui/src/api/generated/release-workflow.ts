@@ -277,9 +277,26 @@ export type DiagnosticSeverity = string;
 export type DiscFacts = Readonly<{
   DVDVOBSet: string;
   DurationSeconds: number;
+  Items: readonly DiscItemFacts[];
   PlaylistCount: number;
+  PrimaryDiscID: string;
+  PrimaryReportID: string;
   Summary: string;
   Type: string;
+}>;
+
+export type DiscItemFacts = Readonly<{
+  DVDVOBSet: string;
+  DurationSeconds: number;
+  ID: string;
+  Name: string;
+  Reports: readonly DiscReportFacts[];
+  Type: string;
+}>;
+
+export type DiscReportFacts = Readonly<{
+  Playlist: PlaylistInfo;
+  Summary: string;
 }>;
 
 export type DupeAssessment = Readonly<{
@@ -423,6 +440,8 @@ export type FailedTrackerRetryRef = Readonly<{
 
 export type FramePreview = Readonly<{
   contentUrl: string;
+  discId?: string;
+  discName?: string;
   expiresAt: string;
   id: PublicResourceID;
   release: ReleaseSnapshotRef;
@@ -601,6 +620,8 @@ export type InvalidateReleaseWorkflowTrackersRequest = Readonly<{
 }>;
 
 export type MediaArtifact = Readonly<{
+  discId?: string;
+  discName?: string;
   height?: number;
   host?: string;
   id: PublicResourceID;
@@ -646,6 +667,7 @@ export type MediaArtifactSetRef = Readonly<{
 }>;
 
 export type MediaAttachment = Readonly<{
+  discId?: string;
   kind: MediaArtifactKind;
   order?: number;
   purpose: ScreenshotPurpose;
@@ -654,6 +676,7 @@ export type MediaAttachment = Readonly<{
 
 export type MediaCaptureInstructions = Readonly<{
   captureDvdMenus: boolean;
+  manualFrames?: readonly number[];
   maxDvdMenuItems?: number;
   purpose: ScreenshotPurpose;
   screenshotCount: number;
@@ -665,6 +688,14 @@ export type MediaCaptureRequirement = Readonly<{
   purpose: ScreenshotPurpose;
   screenshotCount: number;
   trackerId: TrackerID;
+}>;
+
+export type MediaDiscPlan = Readonly<{
+  discId: string;
+  discName: string;
+  durationSeconds: number;
+  frameRate: number;
+  suggestedSelections?: readonly ScreenshotSelection[];
 }>;
 
 export type MediaFacts = Readonly<{
@@ -699,6 +730,7 @@ export type MediaFacts = Readonly<{
 export type MediaPlan = Readonly<{
   createdAt: string;
   discType?: string;
+  discs?: readonly MediaDiscPlan[];
   durationSeconds: number;
   existingArtifacts?: readonly MediaArtifact[];
   frameRate: number;
@@ -812,9 +844,12 @@ export type OperationRecovery = string;
 export type OverrideState = string;
 
 export type PlaylistInfo = Readonly<{
+  discId: string;
+  discName: string;
   duration: number;
   edition: string;
   file: string;
+  id: string;
   items: readonly PlaylistItem[];
   score: number;
 }>;
@@ -892,6 +927,7 @@ export type PreparedReleaseDisplay = Readonly<{
 }>;
 
 export type PreviewReleaseWorkflowFrameRequest = Readonly<{
+  discId?: string;
   expectedRevision: WorkflowRevision;
   idempotencyKey: string;
   timestampSeconds: number;
@@ -1522,6 +1558,7 @@ export type SaveReleaseWorkflowDescriptionOverrideRequest = Readonly<{
 export type ScreenshotPurpose = string;
 
 export type ScreenshotSelection = Readonly<{
+  DiscID: string;
   Frame: number;
   Index: number;
   Source: string;
@@ -1539,6 +1576,7 @@ export type SetReleaseWorkflowMediaSelectionRequest = Readonly<{
 
 export type SourceClassification = Readonly<{
   Container: string;
+  DiscCount: number;
   DiscType: string;
   MediaType: string;
 }>;
@@ -1555,6 +1593,7 @@ export type SourceManifest = Readonly<{
 
 export type SourceManifestEntry = Readonly<{
   Disc: string;
+  DiscID: string;
   ModifiedAt: string;
   Path: string;
   Playlist: string;

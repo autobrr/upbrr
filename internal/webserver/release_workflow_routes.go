@@ -202,6 +202,7 @@ func (s *Server) registerReleaseWorkflowAppRoutes(mux *http.ServeMux) {
 			current.ID,
 			request.WorkflowID,
 			request.ExpectedRevision,
+			request.DiscID,
 			request.TimestampSeconds,
 		)
 		if err != nil {

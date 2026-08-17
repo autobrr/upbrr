@@ -1254,7 +1254,7 @@ type e2eImageService struct {
 	shotPath string
 	tmpRoot  string
 	repo     interface {
-		SaveUploadedImages(context.Context, string, string, []api.UploadedImageLink) error
+		SaveUploadedImages(context.Context, api.PreparedMediaBinding, string, []api.UploadedImageLink) error
 	}
 }
 
@@ -1283,6 +1283,7 @@ func (s e2eImageService) Upload(
 		}
 		base := fmt.Sprintf("%s/image/%d", strings.TrimRight(s.endpoint, "/"), idx+1)
 		links = append(links, api.UploadedImageLink{
+			DiscID:     image.DiscID,
 			ImagePath:  image.Path,
 			Host:       strings.ToLower(strings.TrimSpace(host)),
 			ImgURL:     base + ".jpg",
@@ -1293,7 +1294,7 @@ func (s e2eImageService) Upload(
 		})
 	}
 	if s.repo != nil && len(links) > 0 {
-		if err := s.repo.SaveUploadedImages(ctx, meta.SourcePath, strings.ToLower(strings.TrimSpace(host)), links); err != nil {
+		if err := s.repo.SaveUploadedImages(ctx, meta.MediaBinding, strings.ToLower(strings.TrimSpace(host)), links); err != nil {
 			return nil, fmt.Errorf("e2e image: save uploads: %w", err)
 		}
 	}
@@ -1356,6 +1357,7 @@ func (s e2eScreenshotService) Plan(_ context.Context, meta api.ScreenshotSubject
 		})
 	}
 	return api.ScreenshotPlan{
+		MediaBinding:        meta.MediaBinding,
 		SourcePath:          meta.SourcePath,
 		DurationSeconds:     120,
 		FrameRate:           24,
@@ -1387,7 +1389,12 @@ func (s e2eScreenshotService) Capture(
 	}, nil
 }
 
-func (s e2eScreenshotService) PreviewFrame(_ context.Context, meta api.ScreenshotSubject, timestampSeconds float64) (api.ScreenshotPreview, error) {
+func (s e2eScreenshotService) PreviewFrame(
+	_ context.Context,
+	meta api.ScreenshotSubject,
+	discID string,
+	timestampSeconds float64,
+) (api.ScreenshotPreview, error) {
 	shot, err := s.image(meta)
 	if err != nil {
 		return api.ScreenshotPreview{}, err
@@ -1397,6 +1404,7 @@ func (s e2eScreenshotService) PreviewFrame(_ context.Context, meta api.Screensho
 		return api.ScreenshotPreview{}, fmt.Errorf("e2e screenshots: read preview: %w", err)
 	}
 	return api.ScreenshotPreview{
+		DiscID:           discID,
 		TimestampSeconds: timestampSeconds,
 		ImageBytes:       payload,
 		Width:            shot.Width,
@@ -1433,14 +1441,14 @@ func (s e2eScreenshotService) SaveFinalSelections(ctx context.Context, meta api.
 	selections := make([]api.ScreenshotFinalSelection, 0, len(images))
 	for idx, image := range images {
 		selections = append(selections, api.ScreenshotFinalSelection{
-			SourcePath: meta.SourcePath,
+			DiscID:     image.DiscID,
 			ImagePath:  image.Path,
 			Order:      idx,
 			Source:     string(api.ScreenshotPurposeFinal),
 			SelectedAt: time.Now().UTC(),
 		})
 	}
-	return s.repo.ReplaceNormalFinalSelections(ctx, meta.SourcePath, selections)
+	return s.repo.ReplaceNormalFinalSelections(ctx, meta.MediaBinding, selections)
 }
 
 func (s e2eScreenshotService) image(meta api.ScreenshotSubject) (api.ScreenshotImage, error) {

@@ -30,9 +30,13 @@ type imageHostResolutionRepo struct {
 	replaceCalls int
 }
 
-func (r *imageHostResolutionRepo) ReplaceScreenshotSlots(ctx context.Context, sourcePath string, slots []api.ScreenshotSlot) error {
+func (r *imageHostResolutionRepo) ReplaceScreenshotSlots(
+	ctx context.Context,
+	binding api.PreparedMediaBinding,
+	slots []api.ScreenshotSlot,
+) error {
 	r.replaceCalls++
-	return r.stubRepo.ReplaceScreenshotSlots(ctx, sourcePath, slots)
+	return r.stubRepo.ReplaceScreenshotSlots(ctx, binding, slots)
 }
 
 func TestEnsureDescriptionImageHostSkipUploadDoesNotMaterializeURLOnlySlots(t *testing.T) {
@@ -53,6 +57,7 @@ func TestEnsureDescriptionImageHostSkipUploadDoesNotMaterializeURLOnlySlots(t *t
 	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
 	repo := &imageHostResolutionRepo{stubRepo: &stubRepo{}}
 	meta := api.UploadSubject{
+		MediaBinding:        trackerTestMediaBinding(sourcePath),
 		SourcePath:          sourcePath,
 		DescriptionOverride: "[center][img]http://8.8.8.8/image.gif[/img][/center]",
 		ImageHostOverrides: api.ImageHostOverrides{

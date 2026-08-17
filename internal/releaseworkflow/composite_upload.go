@@ -536,18 +536,10 @@ func compositeUploadMediaIntent(
 	if input.Screenshots.Count != nil {
 		count = *input.Screenshots.Count
 	}
-	selections := make([]api.ScreenshotSelection, 0, len(input.Screenshots.Frames))
-	for index, frame := range input.Screenshots.Frames {
-		selections = append(selections, api.ScreenshotSelection{
-			Index:  index,
-			Frame:  frame,
-			Source: "manual",
-		})
-	}
 	media := api.MediaCaptureInstructions{
 		ScreenshotCount: count,
 		Purpose:         api.ScreenshotPurposeFinal,
-		Selections:      selections,
+		ManualFrames:    append([]int(nil), input.Screenshots.Frames...),
 		CaptureDVDMenus: optionalBool(input.DVDMenus.Capture),
 	}
 	if input.DVDMenus.MaxItems != nil {

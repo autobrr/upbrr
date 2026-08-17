@@ -74,11 +74,22 @@ func (b workflowMediaBuilder) Plan(
 			Purpose:         api.ScreenshotPurposeFinal,
 		})
 	}
+	discs := make([]api.MediaDiscPlan, 0, len(plan.Discs))
+	for _, disc := range plan.Discs {
+		discs = append(discs, api.MediaDiscPlan{
+			DiscID:              disc.DiscID,
+			DiscName:            disc.DiscName,
+			DurationSeconds:     disc.DurationSeconds,
+			FrameRate:           disc.FrameRate,
+			SuggestedSelections: append([]api.ScreenshotSelection(nil), disc.SuggestedSelections...),
+		})
+	}
 	return api.MediaPlan{
 		DurationSeconds:     plan.DurationSeconds,
 		FrameRate:           plan.FrameRate,
 		DiscType:            plan.DiscType,
 		SuggestedSelections: append([]api.ScreenshotSelection(nil), plan.SuggestedSelections...),
+		Discs:               discs,
 		Requirements:        requirements,
 	}, nil
 }
@@ -86,6 +97,7 @@ func (b workflowMediaBuilder) Plan(
 func (b workflowMediaBuilder) PreviewFrame(
 	ctx context.Context,
 	release api.ReleaseRef,
+	discID string,
 	timestampSeconds float64,
 ) (releaseworkflow.MediaPreviewContent, error) {
 	if b.resolver == nil || b.screenshots == nil {
@@ -98,7 +110,7 @@ func (b workflowMediaBuilder) PreviewFrame(
 	if err != nil {
 		return releaseworkflow.MediaPreviewContent{}, fmt.Errorf("workflow media resolve preview subject: %w", err)
 	}
-	preview, err := b.screenshots.PreviewFrame(ctx, subject, timestampSeconds)
+	preview, err := b.screenshots.PreviewFrame(ctx, subject, discID, timestampSeconds)
 	if err != nil {
 		return releaseworkflow.MediaPreviewContent{}, fmt.Errorf("workflow media preview frame: %w", err)
 	}
@@ -107,6 +119,8 @@ func (b workflowMediaBuilder) PreviewFrame(
 		contentType = "application/octet-stream"
 	}
 	return releaseworkflow.MediaPreviewContent{
+		DiscID:      preview.DiscID,
+		DiscName:    preview.DiscName,
 		Bytes:       append([]byte(nil), preview.ImageBytes...),
 		ContentType: contentType,
 		Width:       preview.Width,
@@ -130,10 +144,10 @@ type workflowMediaPrivateArtifacts struct {
 }
 
 type workflowMediaPendingDelete struct {
-	kind       api.MediaArtifactKind
-	path       string
-	sourcePath string
-	host       string
+	kind    api.MediaArtifactKind
+	path    string
+	binding api.PreparedMediaBinding
+	host    string
 }
 
 type workflowMediaCommitState struct {
@@ -269,7 +283,7 @@ func (a workflowMediaPrivateArtifacts) Commit(ctx context.Context) error {
 			if a.hostedRepository == nil {
 				return errors.New("workflow hosted-image repository is unavailable")
 			}
-			err = a.hostedRepository.DeleteUploadedImage(ctx, deletion.sourcePath, deletion.path, deletion.host)
+			err = a.hostedRepository.DeleteUploadedImage(ctx, deletion.binding, deletion.path, deletion.host)
 		}
 		if err != nil {
 			return fmt.Errorf("workflow media delete artifact: %w", err)
@@ -421,11 +435,9 @@ func (b workflowMediaBuilder) Build(
 	switch instructions.Purpose {
 	case api.ScreenshotPurposeMenu:
 	case api.ScreenshotPurposeFinal:
-		if instructions.Selections != nil {
-			screenshotCount = len(instructions.Selections)
-		} else {
-			screenshotCount = max(projectedScreenshots, instructions.ScreenshotCount)
-		}
+		screenshotCount = max(projectedScreenshots, instructions.ScreenshotCount)
+		screenshotCount = max(screenshotCount, len(instructions.Selections))
+		screenshotCount = max(screenshotCount, len(instructions.ManualFrames))
 	case api.ScreenshotPurposePreview:
 		screenshotCount = max(projectedScreenshots, instructions.ScreenshotCount)
 	default:
@@ -486,6 +498,7 @@ func (b workflowMediaBuilder) Build(
 			Release: release,
 			Count:   screenshotCount,
 			Purpose: purpose,
+			Options: api.ScreenshotOverrides{ManualFrames: append([]int(nil), instructions.ManualFrames...)},
 		}
 		subject, err := b.resolver.ResolveScreenshotSubject(ctx, input)
 		if err != nil {
@@ -494,20 +507,24 @@ func (b workflowMediaBuilder) Build(
 		privateArtifacts.screenshotSubject = subject
 		selections := append([]api.ScreenshotSelection(nil), instructions.Selections...)
 		var existingScreenshots []api.ScreenshotImage
-		if len(selections) == 0 {
-			plan, err := b.screenshots.Plan(ctx, subject, screenshotCount)
-			if err != nil {
-				if ctx.Err() != nil {
-					return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media screenshot plan: %w", ctx.Err())
-				}
-				return failedMediaSnapshot(snapshot, "Screenshot planning failed. Retry media capture."), privateArtifacts, nil
+		plan, err := b.screenshots.Plan(ctx, subject, screenshotCount)
+		if err != nil {
+			if ctx.Err() != nil {
+				return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media screenshot plan: %w", ctx.Err())
 			}
+			return failedMediaSnapshot(snapshot, "Screenshot planning failed. Retry media capture."), privateArtifacts, nil
+		}
+		if len(selections) == 0 {
 			selections = append(selections, plan.SuggestedSelections...)
 			existingScreenshots = append(existingScreenshots, plan.ExistingScreenshots...)
+		} else {
+			var mergeErr error
+			selections, existingScreenshots, mergeErr = mergeManualSelectionsWithDiscPlan(selections, plan)
+			if mergeErr != nil {
+				return failedMediaSnapshot(snapshot, "Screenshot selections must identify a prepared disc."), privateArtifacts, nil
+			}
 		}
-		if len(selections) > screenshotCount {
-			selections = selections[:screenshotCount]
-		}
+		captureTotal := max(screenshotCount, len(selections)+len(existingScreenshots))
 		if len(selections) == 0 && len(existingScreenshots) == 0 {
 			snapshot.Status = api.StageStatusBlocked
 			snapshot.RequiredActions = []api.RequiredAction{{
@@ -538,7 +555,7 @@ func (b workflowMediaBuilder) Build(
 				return failedMediaSnapshot(snapshot, "Screenshot capture failed. Retry media capture."), privateArtifacts, nil
 			}
 		}
-		images := mergeWorkflowScreenshotImages(existingScreenshots, capture.Images, screenshotCount)
+		images := mergeWorkflowScreenshotImages(existingScreenshots, capture.Images, plan.Discs, captureTotal)
 		privateArtifacts.Screenshots = append(privateArtifacts.Screenshots, images...)
 		api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
 			Phase:     "screenshots",
@@ -547,7 +564,7 @@ func (b workflowMediaBuilder) Build(
 			Label:     "Screenshots",
 			Status:    api.StageStatusCompleted,
 			Completed: len(images),
-			Total:     screenshotCount,
+			Total:     captureTotal,
 			Message:   "Screenshot capture complete.",
 		})
 		for index, image := range images {
@@ -667,23 +684,43 @@ func applyWorkflowMediaMinimums(snapshot *api.MediaArtifactSet, requiredScreensh
 	})
 }
 
-func mergeWorkflowScreenshotImages(existing, captured []api.ScreenshotImage, limit int) []api.ScreenshotImage {
+func mergeWorkflowScreenshotImages(
+	existing []api.ScreenshotImage,
+	captured []api.ScreenshotImage,
+	discs []api.ScreenshotDiscPlan,
+	limit int,
+) []api.ScreenshotImage {
 	images := make([]api.ScreenshotImage, 0, len(existing)+len(captured))
-	byIndex := make(map[int]int, cap(images))
+	byIndex := make(map[string]int, cap(images))
 	appendImages := func(values []api.ScreenshotImage) {
 		for _, image := range values {
-			if existingIndex, ok := byIndex[image.Index]; ok {
+			key := fmt.Sprintf("%s\x00%d", image.DiscID, image.Index)
+			if existingIndex, ok := byIndex[key]; ok {
 				images[existingIndex] = image
 				continue
 			}
-			byIndex[image.Index] = len(images)
+			byIndex[key] = len(images)
 			images = append(images, image)
 		}
 	}
 	appendImages(existing)
 	appendImages(captured)
+	discOrder := make(map[string]int, len(discs))
+	for index, disc := range discs {
+		discOrder[disc.DiscID] = index
+	}
 	slices.SortStableFunc(images, func(left, right api.ScreenshotImage) int {
+		leftDisc, leftFound := discOrder[left.DiscID]
+		rightDisc, rightFound := discOrder[right.DiscID]
 		switch {
+		case leftFound && !rightFound:
+			return -1
+		case !leftFound && rightFound:
+			return 1
+		case leftDisc < rightDisc:
+			return -1
+		case leftDisc > rightDisc:
+			return 1
 		case left.Index < right.Index:
 			return -1
 		case left.Index > right.Index:
@@ -696,6 +733,44 @@ func mergeWorkflowScreenshotImages(existing, captured []api.ScreenshotImage, lim
 		images = images[:limit]
 	}
 	return images
+}
+
+func mergeManualSelectionsWithDiscPlan(
+	selections []api.ScreenshotSelection,
+	plan api.ScreenshotPlan,
+) ([]api.ScreenshotSelection, []api.ScreenshotImage, error) {
+	if len(plan.Discs) == 0 {
+		return selections, nil, nil
+	}
+	discIDs := make(map[string]struct{}, len(plan.Discs))
+	for _, disc := range plan.Discs {
+		discIDs[disc.DiscID] = struct{}{}
+	}
+	provided := make(map[string]struct{}, len(selections))
+	for index := range selections {
+		discID := strings.TrimSpace(selections[index].DiscID)
+		if discID == "" && len(plan.Discs) == 1 {
+			discID = plan.Discs[0].DiscID
+			selections[index].DiscID = discID
+		}
+		if _, ok := discIDs[discID]; !ok {
+			return nil, nil, internalerrors.ErrInvalidInput
+		}
+		provided[discID] = struct{}{}
+	}
+	for _, disc := range plan.Discs {
+		if _, ok := provided[disc.DiscID]; ok {
+			continue
+		}
+		selections = append(selections, disc.SuggestedSelections...)
+	}
+	existing := make([]api.ScreenshotImage, 0, len(plan.ExistingScreenshots))
+	for _, image := range plan.ExistingScreenshots {
+		if _, ok := provided[image.DiscID]; !ok {
+			existing = append(existing, image)
+		}
+	}
+	return selections, existing, nil
 }
 
 func (b workflowMediaBuilder) BuildIncremental(
@@ -717,20 +792,32 @@ func (b workflowMediaBuilder) BuildIncremental(
 		retained = cloneWorkflowMediaPrivateArtifacts(retained)
 	}
 	if instructions.Purpose == api.ScreenshotPurposeFinal && len(instructions.Selections) > 0 && existing != nil {
-		indexes := make(map[int]struct{})
+		requestedScreenshotCount := max(instructions.ScreenshotCount, len(instructions.Selections))
+		indexes := make(map[string]struct{})
 		for _, artifact := range existing.Artifacts {
 			if artifact.Kind == api.MediaArtifactScreenshot {
-				indexes[artifact.Index] = struct{}{}
+				indexes[fmt.Sprintf("%s\x00%d", artifact.DiscID, artifact.Index)] = struct{}{}
 			}
 		}
 		filtered := make([]api.ScreenshotSelection, 0, len(instructions.Selections))
 		for _, selection := range instructions.Selections {
-			if _, exists := indexes[selection.Index]; !exists {
+			key := fmt.Sprintf("%s\x00%d", selection.DiscID, selection.Index)
+			if _, exists := indexes[key]; !exists {
 				filtered = append(filtered, selection)
 			}
 		}
 		instructions.Selections = filtered
 		instructions.ScreenshotCount = len(filtered)
+		projectedScreenshots, projectedDVDMenus := projectedMediaRequirements(projections.Projections)
+		if len(filtered) == 0 && !instructions.CaptureDVDMenus &&
+			countMediaArtifacts(existing.Artifacts, api.MediaArtifactScreenshot) >= max(projectedScreenshots, requestedScreenshotCount) &&
+			countMediaArtifacts(existing.Artifacts, api.MediaArtifactDVDMenu) >= projectedDVDMenus {
+			snapshot, cloneErr := existing.Clone()
+			if cloneErr != nil {
+				return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media clone existing capture: %w", cloneErr)
+			}
+			return snapshot, retained, nil
+		}
 	}
 	captured, privateCaptured, err := b.Build(ctx, release, projections, instructions, now)
 	if err != nil {
@@ -893,6 +980,7 @@ func (b workflowMediaBuilder) Attach(
 		contents = append(contents, menuImageContent{
 			contentType: attachment.Content.ContentType,
 			bytes:       append([]byte(nil), attachment.Content.Bytes...),
+			discID:      attachment.Attachment.DiscID,
 		})
 	}
 	subject, images, err := b.media.importAcceptedMenuImageContents(ctx, api.MediaPlanInput{Release: release}, contents)
@@ -1193,7 +1281,7 @@ func imageHostingEffectScope(host string, projections api.TrackerReleaseProjecti
 
 func (b workflowMediaBuilder) RemoveHostedImages(
 	ctx context.Context,
-	release api.ReleaseRef,
+	_ api.ReleaseRef,
 	snapshot api.MediaArtifactSet,
 	privateExisting any,
 	artifactIDs []api.PublicResourceID,
@@ -1213,15 +1301,22 @@ func (b workflowMediaBuilder) RemoveHostedImages(
 		if !exists {
 			return api.MediaArtifactSet{}, nil, errors.New("workflow hosted image is unavailable")
 		}
-		sourcePath := link.SourcePath
-		if strings.TrimSpace(sourcePath) == "" {
-			sourcePath = release.SourcePath
+		binding := api.PreparedMediaBinding{
+			SourcePath:               link.SourcePath,
+			PreparedMediaFingerprint: link.PreparedMediaFingerprint,
+			PreparedGeneration:       link.PreparedGeneration,
+		}
+		if !binding.Valid() {
+			binding = retained.screenshotSubject.MediaBinding
+		}
+		if !binding.Valid() {
+			return api.MediaArtifactSet{}, nil, errors.New("workflow hosted image binding is unavailable")
 		}
 		retained.commitState.pending = append(retained.commitState.pending, workflowMediaPendingDelete{
-			kind:       api.MediaArtifactHostedImage,
-			path:       link.ImagePath,
-			sourcePath: sourcePath,
-			host:       link.Host,
+			kind:    api.MediaArtifactHostedImage,
+			path:    link.ImagePath,
+			binding: binding,
+			host:    link.Host,
 		})
 		delete(retained.HostedImages, artifactID)
 		delete(retained.HostedSources, artifactID)
@@ -1365,6 +1460,8 @@ func publicMediaArtifact(
 	idFingerprint := hex.EncodeToString(sum[:])
 	return api.MediaArtifact{
 		ID:               api.PublicResourceID("media_" + idFingerprint[:24]),
+		DiscID:           image.DiscID,
+		DiscName:         image.DiscName,
 		Kind:             kind,
 		Purpose:          purpose,
 		Selected:         true,

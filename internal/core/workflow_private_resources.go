@@ -68,10 +68,12 @@ type persistedWorkflowMediaArtifacts struct {
 }
 
 type persistedWorkflowMediaPendingDelete struct {
-	Kind       api.MediaArtifactKind `json:"kind"`
-	Path       string                `json:"path"`
-	SourcePath string                `json:"sourcePath,omitempty"`
-	Host       string                `json:"host,omitempty"`
+	Kind                     api.MediaArtifactKind  `json:"kind"`
+	Path                     string                 `json:"path"`
+	SourcePath               string                 `json:"sourcePath,omitempty"`
+	PreparedMediaFingerprint string                 `json:"preparedMediaFingerprint,omitempty"`
+	PreparedGeneration       api.PreparedGeneration `json:"preparedGeneration,omitempty"`
+	Host                     string                 `json:"host,omitempty"`
 }
 
 func (a workflowMediaPrivateArtifacts) MarshalPrivateResource() (string, []byte, error) {
@@ -79,10 +81,12 @@ func (a workflowMediaPrivateArtifacts) MarshalPrivateResource() (string, []byte,
 	persistedPending := make([]persistedWorkflowMediaPendingDelete, 0, len(pending))
 	for _, deletion := range pending {
 		persistedPending = append(persistedPending, persistedWorkflowMediaPendingDelete{
-			Kind:       deletion.kind,
-			Path:       deletion.path,
-			SourcePath: deletion.sourcePath,
-			Host:       deletion.host,
+			Kind:                     deletion.kind,
+			Path:                     deletion.path,
+			SourcePath:               deletion.binding.SourcePath,
+			PreparedMediaFingerprint: deletion.binding.PreparedMediaFingerprint,
+			PreparedGeneration:       deletion.binding.PreparedGeneration,
+			Host:                     deletion.host,
 		})
 	}
 	payload, err := json.Marshal(persistedWorkflowMediaArtifacts{
@@ -112,10 +116,14 @@ func decodeWorkflowMediaPrivateArtifacts(builder workflowMediaBuilder, payload [
 			return nil, errors.New("workflow private media contains invalid pending deletion")
 		}
 		pending = append(pending, workflowMediaPendingDelete{
-			kind:       deletion.Kind,
-			path:       deletion.Path,
-			sourcePath: deletion.SourcePath,
-			host:       deletion.Host,
+			kind: deletion.Kind,
+			path: deletion.Path,
+			binding: api.PreparedMediaBinding{
+				SourcePath:               deletion.SourcePath,
+				PreparedMediaFingerprint: deletion.PreparedMediaFingerprint,
+				PreparedGeneration:       deletion.PreparedGeneration,
+			},
+			host: deletion.Host,
 		})
 	}
 	var commitState *workflowMediaCommitState

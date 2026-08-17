@@ -165,6 +165,11 @@ var migrationRegistry = []migrationStep{
 		dependsOn: []string{baselineMigrationID},
 		apply:     migrateAddMultiDiscMediaBinding,
 	},
+	{
+		id:        "2026_08_bind_prepared_media_assets",
+		dependsOn: []string{"2026_08_add_multi_disc_media_binding", "2026_04_add_screenshot_slot_tables"},
+		apply:     migrateBindPreparedMediaAssets,
+	},
 }
 
 func migrateAddMultiDiscMediaBinding(ctx context.Context, exec migrationExecutor) error {
@@ -183,6 +188,38 @@ func migrateAddMultiDiscMediaBinding(ctx context.Context, exec migrationExecutor
 	if !exists {
 		if _, err := exec.ExecContext(ctx, `ALTER TABLE playlist_selections ADD COLUMN source_fingerprint TEXT NOT NULL DEFAULT ""`); err != nil {
 			return fmt.Errorf("db: add playlist selection fingerprint: %w", err)
+		}
+	}
+	return nil
+}
+
+func migrateBindPreparedMediaAssets(ctx context.Context, exec migrationExecutor) error {
+	for _, table := range []string{"screenshots", "screenshot_final_selections", "uploaded_images", "screenshot_slots", "screenshot_slot_variants"} {
+		tablePresent, err := tableExists(ctx, exec, table)
+		if err != nil {
+			return fmt.Errorf("db: inspect media table %s: %w", table, err)
+		}
+		if !tablePresent {
+			continue
+		}
+		for _, column := range []struct {
+			name       string
+			definition string
+		}{
+			{name: "prepared_media_fingerprint", definition: `TEXT NOT NULL DEFAULT ""`},
+			{name: "prepared_generation", definition: `INTEGER NOT NULL DEFAULT 0`},
+			{name: "disc_id", definition: `TEXT NOT NULL DEFAULT ""`},
+		} {
+			exists, err := tableColumnExists(ctx, exec, table, column.name)
+			if err != nil {
+				return fmt.Errorf("db: inspect %s.%s: %w", table, column.name, err)
+			}
+			if exists {
+				continue
+			}
+			if _, err := exec.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column.name, column.definition)); err != nil {
+				return fmt.Errorf("db: add %s.%s: %w", table, column.name, err)
+			}
 		}
 	}
 	return nil

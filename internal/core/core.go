@@ -498,9 +498,10 @@ func (c *Core) PreviewReleaseWorkflowFrame(
 	ownerID string,
 	workflowID api.WorkflowID,
 	expectedRevision api.WorkflowRevision,
+	discID string,
 	timestampSeconds float64,
 ) (api.FramePreview, error) {
-	preview, err := c.workflow.PreviewFrame(ctx, ownerID, workflowID, expectedRevision, timestampSeconds)
+	preview, err := c.workflow.PreviewFrame(ctx, ownerID, workflowID, expectedRevision, discID, timestampSeconds)
 	if err != nil {
 		return api.FramePreview{}, classifyOperationError(api.OperationKindMedia, err)
 	}

@@ -1899,6 +1899,7 @@ func (m *Module) PreviewFrame(
 	ownerID string,
 	workflowID api.WorkflowID,
 	expectedRevision api.WorkflowRevision,
+	discID string,
 	timestampSeconds float64,
 ) (api.FramePreview, error) {
 	if err := ctx.Err(); err != nil {
@@ -1935,7 +1936,7 @@ func (m *Module) PreviewFrame(
 	content, err := planner.PreviewFrame(ctx, api.ReleaseRef{
 		SourcePath: release.Release.Source.SourcePath,
 		Generation: release.Release.Generation,
-	}, timestampSeconds)
+	}, discID, timestampSeconds)
 	if err != nil {
 		return api.FramePreview{}, fmt.Errorf("release workflow preview frame: %w", err)
 	}
@@ -1953,6 +1954,8 @@ func (m *Module) PreviewFrame(
 		WorkflowID:       workflowID,
 		WorkflowRevision: expectedRevision,
 		Release:          *state.Workflow.Release,
+		DiscID:           content.DiscID,
+		DiscName:         content.DiscName,
 		TimestampSeconds: timestampSeconds,
 		ExpiresAt:        expiresAt,
 	}, nil

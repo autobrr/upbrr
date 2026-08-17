@@ -40,9 +40,14 @@ func imageHostingTestRegistry(t *testing.T) *trackers.Registry {
 	return registry
 }
 
-func (r *recordingRepo) SaveUploadedImages(_ context.Context, path string, host string, images []api.UploadedImageLink) error {
+func (r *recordingRepo) SaveUploadedImages(
+	_ context.Context,
+	binding api.PreparedMediaBinding,
+	host string,
+	images []api.UploadedImageLink,
+) error {
 	r.savedHost = host
-	r.savedPath = path
+	r.savedPath = binding.SourcePath
 	r.savedImages = images
 	return nil
 }
@@ -100,27 +105,27 @@ func (r *recordingRepo) ListTrackerMetadataByPath(context.Context, string) ([]ap
 	return nil, nil
 }
 func (r *recordingRepo) SaveScreenshot(context.Context, api.Screenshot) error { return nil }
-func (r *recordingRepo) ListScreenshotsByPath(context.Context, string) ([]api.Screenshot, error) {
+func (r *recordingRepo) ListScreenshotsByPath(context.Context, api.PreparedMediaBinding) ([]api.Screenshot, error) {
 	return append([]api.Screenshot(nil), r.screens...), nil
 }
 func (r *recordingRepo) DeleteScreenshot(context.Context, string) error { return nil }
-func (r *recordingRepo) SaveFinalSelections(context.Context, string, []api.ScreenshotFinalSelection) error {
+func (r *recordingRepo) SaveFinalSelections(context.Context, api.PreparedMediaBinding, []api.ScreenshotFinalSelection) error {
 	return nil
 }
-func (r *recordingRepo) ListFinalSelections(context.Context, string) ([]api.ScreenshotFinalSelection, error) {
+func (r *recordingRepo) ListFinalSelections(context.Context, api.PreparedMediaBinding) ([]api.ScreenshotFinalSelection, error) {
 	return append([]api.ScreenshotFinalSelection(nil), r.selections...), nil
 }
 func (r *recordingRepo) DeleteFinalSelection(context.Context, string) error { return nil }
-func (r *recordingRepo) ReplaceScreenshotSlots(context.Context, string, []api.ScreenshotSlot) error {
+func (r *recordingRepo) ReplaceScreenshotSlots(context.Context, api.PreparedMediaBinding, []api.ScreenshotSlot) error {
 	return nil
 }
-func (r *recordingRepo) ListScreenshotSlotsByPath(context.Context, string) ([]api.ScreenshotSlot, error) {
+func (r *recordingRepo) ListScreenshotSlotsByPath(context.Context, api.PreparedMediaBinding) ([]api.ScreenshotSlot, error) {
 	return nil, nil
 }
-func (r *recordingRepo) UpsertScreenshotSlotVariants(context.Context, string, []api.ScreenshotSlotVariant) error {
+func (r *recordingRepo) UpsertScreenshotSlotVariants(context.Context, api.PreparedMediaBinding, []api.ScreenshotSlotVariant) error {
 	return nil
 }
-func (r *recordingRepo) ListUploadedImagesByPath(context.Context, string) ([]api.UploadedImageLink, error) {
+func (r *recordingRepo) ListUploadedImagesByPath(context.Context, api.PreparedMediaBinding) ([]api.UploadedImageLink, error) {
 	return append([]api.UploadedImageLink(nil), r.uploads...), nil
 }
 func (r *recordingRepo) DeleteUploadedImage(context.Context, string, string, string) error {
@@ -330,7 +335,7 @@ func TestUploadImagesSuccess(t *testing.T) {
 		uploaders: map[string]uploader{"test": uploaderStub},
 	}
 
-	meta := api.ImageHostingSubject{SourcePath: "source"}
+	meta := imageHostingTestSubject("source")
 	images := []api.ScreenshotImage{{Path: imagePath}}
 	result, err := service.Upload(context.Background(), meta, "test", "tracker:HDB", images)
 	if err != nil {
@@ -399,7 +404,7 @@ func TestListCandidatesIncludesUploadedOnlyImages(t *testing.T) {
 	}
 	service := &Service{logger: api.NopLogger{}, repo: repo}
 
-	images, err := service.ListCandidates(context.Background(), api.ImageHostingSubject{SourcePath: "/tmp/source"})
+	images, err := service.ListCandidates(context.Background(), imageHostingTestSubject("/tmp/source"))
 	if err != nil {
 		t.Fatalf("ListCandidates returned error: %v", err)
 	}
@@ -448,7 +453,7 @@ func TestListCandidatesPopulatesGeneratedAndManualMenuPurpose(t *testing.T) {
 	}
 	service := &Service{logger: api.NopLogger{}, repo: repo}
 
-	images, err := service.ListCandidates(context.Background(), api.ImageHostingSubject{SourcePath: "/tmp/source"})
+	images, err := service.ListCandidates(context.Background(), imageHostingTestSubject("/tmp/source"))
 	if err != nil {
 		t.Fatalf("list candidates: %v", err)
 	}
@@ -462,9 +467,59 @@ func TestListCandidatesPopulatesGeneratedAndManualMenuPurpose(t *testing.T) {
 	}
 }
 
+func TestListCandidatesKeepsPreparedDiscOrder(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	paths := []string{
+		filepath.Join(root, "disc-b.png"),
+		filepath.Join(root, "disc-a-late.png"),
+		filepath.Join(root, "disc-a-early.png"),
+	}
+	for _, imagePath := range paths {
+		if err := os.WriteFile(imagePath, []byte("synthetic image"), 0o600); err != nil {
+			t.Fatalf("write image: %v", err)
+		}
+	}
+	repo := &recordingRepo{screens: []api.Screenshot{
+		{
+			DiscID:    "disc-b",
+			ImagePath: paths[0],
+			Timestamp: 20,
+		},
+		{
+			DiscID:    "disc-a",
+			ImagePath: paths[1],
+			Timestamp: 30,
+		},
+		{
+			DiscID:    "disc-a",
+			ImagePath: paths[2],
+			Timestamp: 10,
+		},
+	}}
+	service := &Service{logger: api.NopLogger{}, repo: repo}
+	subject := imageHostingTestSubject(root)
+	subject.Discs = []api.ImageHostingDiscSubject{
+		{ID: "disc-a", Name: "Disc 1"},
+		{ID: "disc-b", Name: "Disc 2"},
+	}
+
+	images, err := service.ListCandidates(context.Background(), subject)
+	if err != nil {
+		t.Fatalf("list candidates: %v", err)
+	}
+	if len(images) != 3 || images[0].Path != paths[2] || images[1].Path != paths[1] || images[2].Path != paths[0] {
+		t.Fatalf("ordered images = %#v", images)
+	}
+	if images[0].DiscName != "Disc 1" || images[2].DiscName != "Disc 2" {
+		t.Fatalf("disc labels = %#v", images)
+	}
+}
+
 func TestUploadImagesUnsupportedHost(t *testing.T) {
 	service := &Service{logger: api.NopLogger{}, uploaders: map[string]uploader{}}
-	meta := api.ImageHostingSubject{SourcePath: "source"}
+	meta := imageHostingTestSubject("source")
 	_, err := service.Upload(context.Background(), meta, "missing", "global", []api.ScreenshotImage{{Path: "x.png"}})
 	if err == nil {
 		t.Fatal("expected error for unsupported host")
@@ -485,7 +540,7 @@ func TestUploadImagesRejectsTrackerOwnedHostOutsideOwnerScope(t *testing.T) {
 	if err := tmp.Close(); err != nil {
 		t.Fatalf("close temp file: %v", err)
 	}
-	meta := api.ImageHostingSubject{SourcePath: "source"}
+	meta := imageHostingTestSubject("source")
 	_, err = service.Upload(context.Background(), meta, "hdb", "global", []api.ScreenshotImage{{Path: tmpPath}})
 	if err == nil {
 		t.Fatal("expected tracker-owned host outside owner scope to fail")
@@ -502,7 +557,7 @@ func TestUploadImagesMissingFile(t *testing.T) {
 		WebURL: "https://web",
 	}}
 	service := &Service{logger: api.NopLogger{}, uploaders: map[string]uploader{"test": uploaderStub}}
-	meta := api.ImageHostingSubject{SourcePath: "source"}
+	meta := imageHostingTestSubject("source")
 	_, err := service.Upload(context.Background(), meta, "test", "global", []api.ScreenshotImage{{Path: "missing.png"}})
 	if err == nil {
 		t.Fatal("expected error for missing file")
@@ -560,8 +615,9 @@ func TestUploadImagesUsesBatchUploader(t *testing.T) {
 	}
 
 	_, err := service.Upload(context.Background(), api.ImageHostingSubject{
-		SourcePath:  "source",
-		GalleryName: "Movie.2026.2160p.WEB-DL",
+		MediaBinding: imageHostingTestBinding("source"),
+		SourcePath:   "source",
+		GalleryName:  "Movie.2026.2160p.WEB-DL",
 	}, "hdb", "tracker:HDB", []api.ScreenshotImage{
 		{Path: firstPath},
 		{Path: secondPath},
@@ -611,9 +667,11 @@ func TestUploadImagesBatchFailureUsesDebugDiagnosticsAndStableProgress(t *testin
 		Total:      1,
 	})
 
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv")
 	_, err := service.Upload(ctx, api.ImageHostingSubject{
-		SourcePath:  filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv"),
-		GalleryName: "Example.Release.2026.1080p-GRP",
+		MediaBinding: imageHostingTestBinding(sourcePath),
+		SourcePath:   sourcePath,
+		GalleryName:  "Example.Release.2026.1080p-GRP",
 	}, "hdb", "tracker:HDB", []api.ScreenshotImage{{Path: imagePath}})
 	if err == nil {
 		t.Fatal("expected batch upload failure")
@@ -656,9 +714,11 @@ func TestUploadImagesSeparatesHDBMenuGalleryWithoutDuplicates(t *testing.T) {
 		registry:  imageHostingTestRegistry(t),
 	}
 
+	sourcePath := filepath.Join(tmpDir, "Example.Release.2026.2160p.WEB-DL-GRP.mkv")
 	result, err := service.Upload(context.Background(), api.ImageHostingSubject{
-		SourcePath:  filepath.Join(tmpDir, "Example.Release.2026.2160p.WEB-DL-GRP.mkv"),
-		GalleryName: "Example.Release.2026.2160p.WEB-DL-GRP",
+		MediaBinding: imageHostingTestBinding(sourcePath),
+		SourcePath:   sourcePath,
+		GalleryName:  "Example.Release.2026.2160p.WEB-DL-GRP",
 	}, "hdb", "tracker:HDB", []api.ScreenshotImage{
 		{Path: firstPath, Purpose: api.ScreenshotPurposeFinal},
 		{Path: menuPath, Purpose: api.ScreenshotPurposeMenu},
@@ -747,7 +807,7 @@ func TestUploadImagesPersistsSuccessfulConcurrentUploadsOnPartialFailure(t *test
 		uploaders: map[string]uploader{"test": uploaderStub},
 	}
 
-	result, err := service.Upload(context.Background(), api.ImageHostingSubject{SourcePath: "source"}, "test", "global", []api.ScreenshotImage{
+	result, err := service.Upload(context.Background(), imageHostingTestSubject("source"), "test", "global", []api.ScreenshotImage{
 		{Path: firstPath},
 		{Path: secondPath},
 	})
@@ -802,7 +862,7 @@ func TestUploadImagesReportsAbsoluteConcurrentProgress(t *testing.T) {
 		Total:      2,
 	})
 
-	_, err := service.Upload(ctx, api.ImageHostingSubject{SourcePath: "synthetic-source"}, "example", "global", []api.ScreenshotImage{
+	_, err := service.Upload(ctx, imageHostingTestSubject("synthetic-source"), "example", "global", []api.ScreenshotImage{
 		{Path: firstPath},
 		{Path: secondPath},
 	})
@@ -848,7 +908,7 @@ func TestUploadImagesStopsDispatchingWhenContextCanceled(t *testing.T) {
 	firstCallCh := uploaderStub.firstCallCh
 	done := make(chan error, 1)
 	go func() {
-		_, err := service.Upload(ctx, api.ImageHostingSubject{SourcePath: "source"}, "test", "global", []api.ScreenshotImage{
+		_, err := service.Upload(ctx, imageHostingTestSubject("source"), "test", "global", []api.ScreenshotImage{
 			{Path: firstPath},
 			{Path: secondPath},
 		})
@@ -877,4 +937,16 @@ func TestUploadImagesStopsDispatchingWhenContextCanceled(t *testing.T) {
 	if len(uploaderStub.calls) != 1 {
 		t.Fatalf("expected only first upload to start, got %d calls", len(uploaderStub.calls))
 	}
+}
+
+func imageHostingTestBinding(sourcePath string) api.PreparedMediaBinding {
+	return api.PreparedMediaBinding{
+		SourcePath:               sourcePath,
+		PreparedMediaFingerprint: "test-prepared-media",
+		PreparedGeneration:       1,
+	}
+}
+
+func imageHostingTestSubject(sourcePath string) api.ImageHostingSubject {
+	return api.ImageHostingSubject{MediaBinding: imageHostingTestBinding(sourcePath), SourcePath: sourcePath}
 }

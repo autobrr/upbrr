@@ -1033,8 +1033,8 @@ func TestCLIWorkflowMediaInstructionsPreserveExplicitFrames(t *testing.T) {
 		Options:             api.UploadOptions{Screens: 0, CaptureDVDMenus: true},
 		ScreenshotOverrides: api.ScreenshotOverrides{ManualFrames: []int{0, 42}},
 	})
-	if instructions.ScreenshotCount != 0 || !instructions.CaptureDVDMenus || len(instructions.Selections) != 2 ||
-		instructions.Selections[0].Frame != 0 || instructions.Selections[1].Frame != 42 {
+	if instructions.ScreenshotCount != 0 || !instructions.CaptureDVDMenus || instructions.Selections != nil ||
+		!slices.Equal(instructions.ManualFrames, []int{0, 42}) {
 		t.Fatalf("media instructions = %#v", instructions)
 	}
 }

@@ -303,27 +303,9 @@ func fingerprintJSON(value any) (string, error) {
 }
 
 func preparedMediaBinding(release api.PreparedRelease) (api.PreparedMediaBinding, error) {
-	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
-		ContractVersion            string
-		SourceFingerprint          string
-		FactInstructionFingerprint string
-		Generation                 api.PreparedGeneration
-		Discs                      []api.DiscItemFacts
-		SelectedPlaylists          []api.PlaylistInfo
-	}{
-		ContractVersion:            ContractVersion,
-		SourceFingerprint:          release.Compatibility.SourceFingerprint,
-		FactInstructionFingerprint: release.Compatibility.FactInstructionFingerprint,
-		Generation:                 release.Generation,
-		Discs:                      release.Disc.Items,
-		SelectedPlaylists:          release.Disc.SelectedPlaylists(),
-	})
+	fingerprint, err := release.MediaBinding()
 	if err != nil {
-		return api.PreparedMediaBinding{}, fmt.Errorf("prepared release: fingerprint prepared media: %w", err)
+		return api.PreparedMediaBinding{}, fmt.Errorf("prepared release: derive media binding: %w", err)
 	}
-	return api.PreparedMediaBinding{
-		SourcePath:               release.Source.SourcePath,
-		PreparedMediaFingerprint: string(fingerprint),
-		PreparedGeneration:       release.Generation,
-	}, nil
+	return fingerprint, nil
 }

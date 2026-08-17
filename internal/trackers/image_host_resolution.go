@@ -103,7 +103,7 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 	if !skipUpload {
 		localTrackerImages = resolveLocalTrackerScreenshots(meta, appCfg, tracker, logger)
 		if detachComparisonSourceImagesFromSlots(slots, localTrackerImages) {
-			if err := repo.ReplaceScreenshotSlots(ctx, meta.SourcePath, slots); err != nil {
+			if err := repo.ReplaceScreenshotSlots(ctx, meta.MediaBinding, slots); err != nil {
 				return descriptionImageHostResolution{}, fmt.Errorf("trackers: %w", err)
 			}
 			syncSlotsToPreloaded(preloaded, slots)
@@ -172,7 +172,7 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 	if len(sourceImages) == 0 {
 		sourceImages = localTrackerImages
 		if len(sourceImages) > 0 && !slotsContainComparison(slots) && alignRenderableSlotsToSourceImages(slots, sourceImages) {
-			if err := repo.ReplaceScreenshotSlots(ctx, meta.SourcePath, slots); err != nil {
+			if err := repo.ReplaceScreenshotSlots(ctx, meta.MediaBinding, slots); err != nil {
 				return descriptionImageHostResolution{}, fmt.Errorf("trackers: %w", err)
 			}
 			syncSlotsToPreloaded(preloaded, slots)
@@ -195,7 +195,7 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 			changed = changed || materializeChanged
 		}
 		if changed {
-			if err := repo.ReplaceScreenshotSlots(ctx, meta.SourcePath, slots); err != nil {
+			if err := repo.ReplaceScreenshotSlots(ctx, meta.MediaBinding, slots); err != nil {
 				return descriptionImageHostResolution{}, fmt.Errorf("trackers: %w", err)
 			}
 			syncSlotsToPreloaded(preloaded, slots)
@@ -282,7 +282,7 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 		if err != nil {
 			lastErr = err
 			if len(uploaded) > 0 {
-				cleanupUploadedImages(ctx, repo, meta.SourcePath, uploaded, logger)
+				cleanupUploadedImages(ctx, repo, meta.MediaBinding, uploaded, logger)
 			}
 			feedback.Warnings = append(feedback.Warnings, api.ImageHostWarning{
 				Host:    host,
@@ -300,7 +300,7 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 		}
 		screenshots, _, _, err := selectScreenshotsFromSlots(tracker, candidateSlots, selectionPolicy)
 		if err != nil {
-			cleanupUploadedImages(ctx, repo, meta.SourcePath, uploaded, logger)
+			cleanupUploadedImages(ctx, repo, meta.MediaBinding, uploaded, logger)
 			lastErr = err
 			feedback.Warnings = append(feedback.Warnings, api.ImageHostWarning{
 				Host:    host,
@@ -312,7 +312,7 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 			continue
 		}
 		if len(screenshots) == 0 {
-			cleanupUploadedImages(ctx, repo, meta.SourcePath, uploaded, logger)
+			cleanupUploadedImages(ctx, repo, meta.MediaBinding, uploaded, logger)
 			message := "upload did not produce usable screenshots"
 			feedback.Warnings = append(feedback.Warnings, api.ImageHostWarning{
 				Host:    host,
@@ -323,8 +323,8 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 			}
 			continue
 		}
-		if err := upsertScreenshotVariantsFromUploads(ctx, repo, meta.SourcePath, slots, uploaded); err != nil {
-			cleanupUploadedImages(ctx, repo, meta.SourcePath, uploaded, logger)
+		if err := upsertScreenshotVariantsFromUploads(ctx, repo, meta.MediaBinding, slots, uploaded); err != nil {
+			cleanupUploadedImages(ctx, repo, meta.MediaBinding, uploaded, logger)
 			return descriptionImageHostResolution{}, err
 		}
 		applyUploadedVariantsToSlots(slots, uploaded)
@@ -371,7 +371,16 @@ func imageHostingSubject(meta api.UploadSubject) api.ImageHostingSubject {
 			break
 		}
 	}
-	return api.ImageHostingSubject{SourcePath: meta.SourcePath, GalleryName: galleryName}
+	discs := make([]api.ImageHostingDiscSubject, 0, len(meta.Discs))
+	for _, disc := range meta.Discs {
+		discs = append(discs, api.ImageHostingDiscSubject{ID: disc.ID, Name: disc.Name})
+	}
+	return api.ImageHostingSubject{
+		MediaBinding: meta.MediaBinding,
+		SourcePath:   meta.SourcePath,
+		GalleryName:  galleryName,
+		Discs:        discs,
+	}
 }
 
 func firstPreferredDescriptionImageHost(hosts []string) string {
@@ -469,7 +478,7 @@ func screenshotSlotsFromSourceWithoutPersist(
 		return cloneScreenshotSlots(preloaded.screenshotSlots), nil
 	}
 
-	slots, err := repo.ListScreenshotSlotsByPath(ctx, meta.SourcePath)
+	slots, err := repo.ListScreenshotSlotsByPath(ctx, meta.MediaBinding)
 	if err != nil {
 		return nil, fmt.Errorf("trackers: %w", err)
 	}
@@ -560,8 +569,14 @@ func reusableUploadedScreenshotsForHost(
 	return screenshots, nil
 }
 
-func cleanupUploadedImages(ctx context.Context, repo UploadPersistence, sourcePath string, uploaded []api.UploadedImageLink, logger api.Logger) {
-	if repo == nil || len(uploaded) == 0 || strings.TrimSpace(sourcePath) == "" {
+func cleanupUploadedImages(
+	ctx context.Context,
+	repo UploadPersistence,
+	binding api.PreparedMediaBinding,
+	uploaded []api.UploadedImageLink,
+	logger api.Logger,
+) {
+	if repo == nil || len(uploaded) == 0 || !binding.Valid() {
 		return
 	}
 	seen := make(map[string]struct{}, len(uploaded))
@@ -576,10 +591,10 @@ func cleanupUploadedImages(ctx context.Context, repo UploadPersistence, sourcePa
 			continue
 		}
 		seen[key] = struct{}{}
-		if err := repo.DeleteUploadedImage(ctx, sourcePath, pathValue, hostValue); err != nil && logger != nil {
+		if err := repo.DeleteUploadedImage(ctx, binding, pathValue, hostValue); err != nil && logger != nil {
 			logger.Warnf(
 				"trackers: failed to roll back uploaded image tracker=%s host=%s path=%s: %v",
-				strings.TrimSpace(sourcePath),
+				strings.TrimSpace(binding.SourcePath),
 				hostValue,
 				pathValue,
 				err,

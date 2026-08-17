@@ -1179,8 +1179,20 @@
           "DurationSeconds": {
             "type": "number"
           },
+          "Items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscItemFacts"
+            }
+          },
           "PlaylistCount": {
             "type": "integer"
+          },
+          "PrimaryDiscID": {
+            "type": "string"
+          },
+          "PrimaryReportID": {
+            "type": "string"
           },
           "Summary": {
             "type": "string"
@@ -1192,9 +1204,61 @@
         "required": [
           "DVDVOBSet",
           "DurationSeconds",
+          "Items",
           "PlaylistCount",
+          "PrimaryDiscID",
+          "PrimaryReportID",
           "Summary",
           "Type"
+        ]
+      },
+      "DiscItemFacts": {
+        "type": "object",
+        "properties": {
+          "DVDVOBSet": {
+            "type": "string"
+          },
+          "DurationSeconds": {
+            "type": "number"
+          },
+          "ID": {
+            "type": "string"
+          },
+          "Name": {
+            "type": "string"
+          },
+          "Reports": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscReportFacts"
+            }
+          },
+          "Type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "DVDVOBSet",
+          "DurationSeconds",
+          "ID",
+          "Name",
+          "Reports",
+          "Type"
+        ]
+      },
+      "DiscReportFacts": {
+        "type": "object",
+        "properties": {
+          "Playlist": {
+            "$ref": "#/components/schemas/PlaylistInfo"
+          },
+          "Summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "Playlist",
+          "Summary"
         ]
       },
       "DupeAssessment": {
@@ -1704,6 +1768,12 @@
         "type": "object",
         "properties": {
           "contentUrl": {
+            "type": "string"
+          },
+          "discId": {
+            "type": "string"
+          },
+          "discName": {
             "type": "string"
           },
           "expiresAt": {
@@ -2356,6 +2426,12 @@
       "MediaArtifact": {
         "type": "object",
         "properties": {
+          "discId": {
+            "type": "string"
+          },
+          "discName": {
+            "type": "string"
+          },
           "height": {
             "type": "integer"
           },
@@ -2519,6 +2595,9 @@
       "MediaAttachment": {
         "type": "object",
         "properties": {
+          "discId": {
+            "type": "string"
+          },
           "kind": {
             "$ref": "#/components/schemas/MediaArtifactKind"
           },
@@ -2543,6 +2622,12 @@
         "properties": {
           "captureDvdMenus": {
             "type": "boolean"
+          },
+          "manualFrames": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
           },
           "maxDvdMenuItems": {
             "type": "integer"
@@ -2587,6 +2672,35 @@
           "purpose",
           "screenshotCount",
           "trackerId"
+        ]
+      },
+      "MediaDiscPlan": {
+        "type": "object",
+        "properties": {
+          "discId": {
+            "type": "string"
+          },
+          "discName": {
+            "type": "string"
+          },
+          "durationSeconds": {
+            "type": "number"
+          },
+          "frameRate": {
+            "type": "number"
+          },
+          "suggestedSelections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScreenshotSelection"
+            }
+          }
+        },
+        "required": [
+          "discId",
+          "discName",
+          "durationSeconds",
+          "frameRate"
         ]
       },
       "MediaFacts": {
@@ -2714,6 +2828,12 @@
           },
           "discType": {
             "type": "string"
+          },
+          "discs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MediaDiscPlan"
+            }
           },
           "durationSeconds": {
             "type": "number"
@@ -3168,6 +3288,12 @@
       "PlaylistInfo": {
         "type": "object",
         "properties": {
+          "discId": {
+            "type": "string"
+          },
+          "discName": {
+            "type": "string"
+          },
           "duration": {
             "type": "number"
           },
@@ -3175,6 +3301,9 @@
             "type": "string"
           },
           "file": {
+            "type": "string"
+          },
+          "id": {
             "type": "string"
           },
           "items": {
@@ -3188,9 +3317,12 @@
           }
         },
         "required": [
+          "discId",
+          "discName",
           "duration",
           "edition",
           "file",
+          "id",
           "items",
           "score"
         ]
@@ -3449,6 +3581,9 @@
       "PreviewReleaseWorkflowFrameRequest": {
         "type": "object",
         "properties": {
+          "discId": {
+            "type": "string"
+          },
           "expectedRevision": {
             "$ref": "#/components/schemas/WorkflowRevision"
           },
@@ -6508,6 +6643,9 @@
       "ScreenshotSelection": {
         "type": "object",
         "properties": {
+          "DiscID": {
+            "type": "string"
+          },
           "Frame": {
             "type": "integer"
           },
@@ -6522,6 +6660,7 @@
           }
         },
         "required": [
+          "DiscID",
           "Frame",
           "Index",
           "Source",
@@ -6568,6 +6707,9 @@
           "Container": {
             "type": "string"
           },
+          "DiscCount": {
+            "type": "integer"
+          },
           "DiscType": {
             "type": "string"
           },
@@ -6577,6 +6719,7 @@
         },
         "required": [
           "Container",
+          "DiscCount",
           "DiscType",
           "MediaType"
         ]
@@ -6623,6 +6766,9 @@
           "Disc": {
             "type": "string"
           },
+          "DiscID": {
+            "type": "string"
+          },
           "ModifiedAt": {
             "type": "string"
           },
@@ -6641,6 +6787,7 @@
         },
         "required": [
           "Disc",
+          "DiscID",
           "ModifiedAt",
           "Path",
           "Playlist",
@@ -11227,6 +11374,9 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "discId": {
+                    "type": "string"
+                  },
                   "timestampSeconds": {
                     "type": "number"
                   }

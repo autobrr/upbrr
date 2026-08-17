@@ -875,13 +875,13 @@ func preloadUploadAssetData(
 		return preloaded, nil
 	}
 
-	selections, err := repo.ListFinalSelections(ctx, meta.SourcePath)
+	selections, err := repo.ListFinalSelections(ctx, meta.MediaBinding)
 	if err != nil {
 		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	preloaded.selections = selections
 
-	uploads, err := repo.ListUploadedImagesByPath(ctx, meta.SourcePath)
+	uploads, err := repo.ListUploadedImagesByPath(ctx, meta.MediaBinding)
 	if err != nil {
 		return nil, fmt.Errorf("trackers: %w", err)
 	}
@@ -980,7 +980,7 @@ func finalSelectionsFromSource(
 	if preloaded != nil {
 		return preloaded.selections, nil
 	}
-	return wrapTrackerResult(repo.ListFinalSelections(ctx, meta.SourcePath))
+	return wrapTrackerResult(repo.ListFinalSelections(ctx, meta.MediaBinding))
 }
 
 func uploadedImagesFromSource(
@@ -995,7 +995,7 @@ func uploadedImagesFromSource(
 	if preloaded != nil {
 		return preloaded.uploads, nil
 	}
-	return wrapTrackerResult(repo.ListUploadedImagesByPath(ctx, meta.SourcePath))
+	return wrapTrackerResult(repo.ListUploadedImagesByPath(ctx, meta.MediaBinding))
 }
 
 func resolveTrackerImageURLs(

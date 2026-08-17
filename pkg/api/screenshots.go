@@ -40,6 +40,7 @@ func IsDiscMenuSelectionSource(source string) bool {
 }
 
 type ScreenshotSelection struct {
+	// DiscID is required when the prepared source contains multiple discs.
 	DiscID           string
 	Index            int
 	TimestampSeconds float64
@@ -57,8 +58,13 @@ type ScreenshotOverrides struct {
 // ScreenshotSubject contains only source facts required to plan and manage
 // screenshots. Workflow modules build it from an exact prepared generation.
 type ScreenshotSubject struct {
-	MediaBinding          PreparedMediaBinding
-	SourcePath            string
+	// MediaBinding owns persisted media for one exact prepared generation.
+	MediaBinding PreparedMediaBinding
+	SourcePath   string
+	DiscID       string
+	DiscName     string
+	// DiscRoot is the private filesystem root used only by the selected disc capture.
+	DiscRoot              string
 	DiscType              string
 	VideoPath             string
 	MediaInfoJSONPath     string
@@ -75,9 +81,11 @@ type ScreenshotSubject struct {
 
 // ScreenshotDiscSubject contains private capture inputs for one ordered disc.
 type ScreenshotDiscSubject struct {
-	ID                    string
-	Name                  string
-	Type                  string
+	ID   string
+	Name string
+	Type string
+	// Root is the private filesystem root for this disc.
+	Root                  string
 	VideoPath             string
 	MediaInfoJSONPath     string
 	SelectedBDMVPlaylists []PlaylistInfo
@@ -102,9 +110,18 @@ type DVDMenuDiscSubject struct {
 // ImageHostingSubject scopes image-host operations to one prepared source.
 // GalleryName is the already-resolved display name used by batch hosts.
 type ImageHostingSubject struct {
+	// MediaBinding owns persisted uploads and slot variants for one exact prepared generation.
 	MediaBinding PreparedMediaBinding
 	SourcePath   string
 	GalleryName  string
+	// Discs defines stable display and upload ordering without exposing private roots.
+	Discs []ImageHostingDiscSubject
+}
+
+// ImageHostingDiscSubject identifies one ordered disc without private paths.
+type ImageHostingDiscSubject struct {
+	ID   string
+	Name string
 }
 
 type ScreenshotFinalSelection struct {

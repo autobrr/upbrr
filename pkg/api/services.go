@@ -139,7 +139,7 @@ type TrackerAuthService interface {
 type ScreenshotService interface {
 	Plan(ctx context.Context, subject ScreenshotSubject, count int) (ScreenshotPlan, error)
 	Capture(ctx context.Context, subject ScreenshotSubject, selections []ScreenshotSelection, purpose ScreenshotPurpose) (ScreenshotResult, error)
-	PreviewFrame(ctx context.Context, subject ScreenshotSubject, timestampSeconds float64) (ScreenshotPreview, error)
+	PreviewFrame(ctx context.Context, subject ScreenshotSubject, discID string, timestampSeconds float64) (ScreenshotPreview, error)
 	Delete(ctx context.Context, subject ScreenshotSubject, imagePath string) error
 	SaveFinalSelections(ctx context.Context, subject ScreenshotSubject, images []ScreenshotImage) error
 }

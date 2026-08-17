@@ -857,21 +857,10 @@ func cliWorkflowContinuationError(current releaseworkflow.CommandResult, interac
 
 func cliWorkflowMediaInstructions(request api.Request) api.MediaCaptureInstructions {
 	count := max(request.Options.Screens, 0)
-	var selections []api.ScreenshotSelection
-	if len(request.ScreenshotOverrides.ManualFrames) > 0 {
-		selections = make([]api.ScreenshotSelection, 0, len(request.ScreenshotOverrides.ManualFrames))
-	}
-	for index, frame := range request.ScreenshotOverrides.ManualFrames {
-		selections = append(selections, api.ScreenshotSelection{
-			Index:  index,
-			Frame:  frame,
-			Source: "manual",
-		})
-	}
 	return api.MediaCaptureInstructions{
 		ScreenshotCount: count,
 		Purpose:         api.ScreenshotPurposeFinal,
-		Selections:      selections,
+		ManualFrames:    append([]int(nil), request.ScreenshotOverrides.ManualFrames...),
 		CaptureDVDMenus: request.Options.CaptureDVDMenus,
 	}
 }

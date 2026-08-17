@@ -28,8 +28,8 @@ type mediaRepository interface {
 	api.ScreenshotLifecycleRepository
 	ListTrackerMetadataByPath(ctx context.Context, path string) ([]api.TrackerMetadata, error)
 	SaveTrackerMetadata(ctx context.Context, metadata api.TrackerMetadata) error
-	ListUploadedImagesByPath(ctx context.Context, path string) ([]api.UploadedImageLink, error)
-	DeleteUploadedImage(ctx context.Context, path string, imagePath string, host string) error
+	ListUploadedImagesByPath(ctx context.Context, binding api.PreparedMediaBinding) ([]api.UploadedImageLink, error)
+	DeleteUploadedImage(ctx context.Context, binding api.PreparedMediaBinding, imagePath string, host string) error
 }
 
 type mediaScreenshotService interface {
@@ -40,7 +40,7 @@ type mediaScreenshotService interface {
 		selections []api.ScreenshotSelection,
 		purpose api.ScreenshotPurpose,
 	) (api.ScreenshotResult, error)
-	PreviewFrame(ctx context.Context, subject api.ScreenshotSubject, timestampSeconds float64) (api.ScreenshotPreview, error)
+	PreviewFrame(ctx context.Context, subject api.ScreenshotSubject, discID string, timestampSeconds float64) (api.ScreenshotPreview, error)
 	Delete(ctx context.Context, subject api.ScreenshotSubject, imagePath string) error
 	SaveFinalSelections(ctx context.Context, subject api.ScreenshotSubject, images []api.ScreenshotImage) error
 }
@@ -108,7 +108,16 @@ func imageHostingSubject(meta api.UploadSubject) api.ImageHostingSubject {
 			break
 		}
 	}
-	return api.ImageHostingSubject{SourcePath: meta.SourcePath, GalleryName: galleryName}
+	discs := make([]api.ImageHostingDiscSubject, 0, len(meta.Discs))
+	for _, disc := range meta.Discs {
+		discs = append(discs, api.ImageHostingDiscSubject{ID: disc.ID, Name: disc.Name})
+	}
+	return api.ImageHostingSubject{
+		MediaBinding: meta.MediaBinding,
+		SourcePath:   meta.SourcePath,
+		GalleryName:  galleryName,
+		Discs:        discs,
+	}
 }
 
 func (m *mediaModule) dvdMenuCapability(ctx context.Context) (api.DVDMenuEngineInfo, error) {
@@ -121,6 +130,7 @@ func (m *mediaModule) dvdMenuCapability(ctx context.Context) (api.DVDMenuEngineI
 type menuImageContent struct {
 	contentType string
 	bytes       []byte
+	discID      string
 }
 
 // importAcceptedMenuImageContents persists browser/API-uploaded image bytes in
@@ -164,7 +174,12 @@ func (m *mediaModule) importAcceptedMenuImageContents(
 			removeMenuImportFiles(created)
 			return api.DVDMenuSubject{}, nil, internalerrors.ErrInvalidInput
 		}
-		destPath, wasCreated, writeErr := writeManagedMenuImage(tmpDir, content.bytes, extension)
+		discID, discName, discErr := resolveMenuImageDisc(subject.Discs, content.discID)
+		if discErr != nil {
+			removeMenuImportFiles(created)
+			return api.DVDMenuSubject{}, nil, discErr
+		}
+		destPath, wasCreated, writeErr := writeManagedMenuImage(tmpDir, content.bytes, extension, discID)
 		if writeErr != nil {
 			removeMenuImportFiles(created)
 			return api.DVDMenuSubject{}, nil, writeErr
@@ -177,6 +192,8 @@ func (m *mediaModule) importAcceptedMenuImageContents(
 			created = append(created, destPath)
 		}
 		image := api.ScreenshotImage{
+			DiscID:    discID,
+			DiscName:  discName,
 			Index:     len(images),
 			Path:      destPath,
 			Purpose:   api.ScreenshotPurposeMenu,
@@ -184,20 +201,20 @@ func (m *mediaModule) importAcceptedMenuImageContents(
 		}
 		images = append(images, image)
 		records = append(records, api.Screenshot{
-			SourcePath: subject.SourcePath,
+			DiscID:     discID,
 			ImagePath:  destPath,
 			Purpose:    api.ScreenshotPurposeMenu,
 			CapturedAt: now,
 		})
 		selections = append(selections, api.ScreenshotFinalSelection{
-			SourcePath: subject.SourcePath,
+			DiscID:     discID,
 			ImagePath:  destPath,
 			Order:      len(selections),
 			Source:     api.ScreenshotSelectionSourceMenu,
 			SelectedAt: now,
 		})
 	}
-	if err := m.repo.AppendManualMenuScreenshots(ctx, subject.SourcePath, records, selections); err != nil {
+	if err := m.repo.AppendManualMenuScreenshots(ctx, subject.MediaBinding, records, selections); err != nil {
 		removeMenuImportFiles(created)
 		return api.DVDMenuSubject{}, nil, fmt.Errorf("core: save staged menu selections: %w", err)
 	}
@@ -217,9 +234,20 @@ func stagedMenuImageExtension(contentType string) (string, error) {
 	}
 }
 
-func writeManagedMenuImage(tmpDir string, data []byte, extension string) (string, bool, error) {
+func writeManagedMenuImage(tmpDir string, data []byte, extension string, discID string) (string, bool, error) {
 	sum := sha256.Sum256(data)
-	destPath := filepath.Join(tmpDir, fmt.Sprintf("manual-dvd-menu-%x%s", sum[:8], extension))
+	discSegment := strings.Map(func(char rune) rune {
+		switch {
+		case char >= 'a' && char <= 'z', char >= 'A' && char <= 'Z', char >= '0' && char <= '9', char == '-', char == '_':
+			return char
+		default:
+			return '_'
+		}
+	}, strings.TrimSpace(discID))
+	if discSegment == "" {
+		discSegment = "single"
+	}
+	destPath := filepath.Join(tmpDir, fmt.Sprintf("manual-disc-%s-dvd-menu-%x%s", discSegment, sum[:8], extension))
 	if info, err := os.Stat(destPath); err == nil {
 		if info.IsDir() {
 			return "", false, internalerrors.ErrInvalidInput
@@ -254,6 +282,25 @@ func writeManagedMenuImage(tmpDir string, data []byte, extension string) (string
 	}
 	cleanup = false
 	return destPath, true, nil
+}
+
+func resolveMenuImageDisc(discs []api.DVDMenuDiscSubject, requested string) (string, string, error) {
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		if len(discs) == 1 {
+			return discs[0].ID, discs[0].Name, nil
+		}
+		if len(discs) == 0 {
+			return "", "", nil
+		}
+		return "", "", internalerrors.ErrInvalidInput
+	}
+	for _, disc := range discs {
+		if disc.ID == requested {
+			return disc.ID, disc.Name, nil
+		}
+	}
+	return "", "", internalerrors.ErrInvalidInput
 }
 
 func removeMenuImportFiles(paths []string) {
@@ -644,7 +691,7 @@ func (m *mediaModule) uploadImagesToTarget(
 		return wrapCoreResult(uploaded, err)
 	}
 
-	existing, err := m.repo.ListUploadedImagesByPath(ctx, meta.SourcePath)
+	existing, err := m.repo.ListUploadedImagesByPath(ctx, meta.MediaBinding)
 	if err != nil {
 		emitCoreImageUploadProgress(progressCtx, progressTarget, api.ImageUploadProgressFailed, 0, 0, 0, "Existing uploads could not be checked.")
 		return nil, fmt.Errorf("core: %w", err)

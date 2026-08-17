@@ -75,7 +75,7 @@ func resolveVideoInfo(ctx context.Context, meta api.ScreenshotSubject, tmpRoot s
 
 	basePath := strings.TrimSpace(meta.VideoPath)
 	if basePath == "" {
-		basePath = strings.TrimSpace(meta.SourcePath)
+		basePath = screenshotCaptureRoot(meta)
 	}
 	if basePath == "" {
 		return info, errors.New("screenshots: source path required")
@@ -136,7 +136,7 @@ func resolveVideoInfo(ctx context.Context, meta api.ScreenshotSubject, tmpRoot s
 				info.FrameRate = parseFPS(bdinfo)
 			}
 			if info.SourcePath == "" {
-				filePath, err := selectBDMVFile(ctx, meta.SourcePath, bdinfo)
+				filePath, err := selectBDMVFile(ctx, screenshotCaptureRoot(meta), bdinfo)
 				if err == nil {
 					info.SourcePath = filePath
 					logger.Tracef("screenshots: BDMV source selected method=bdinfo path=%s", filePath)
@@ -156,8 +156,9 @@ func resolveVideoInfo(ctx context.Context, meta api.ScreenshotSubject, tmpRoot s
 	}
 
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
-		logger.Tracef("screenshots: DVD source selection root=%s", meta.SourcePath)
-		vobs, err := selectDVDVOBs(ctx, meta.SourcePath)
+		captureRoot := screenshotCaptureRoot(meta)
+		logger.Tracef("screenshots: DVD source selection root=%s", captureRoot)
+		vobs, err := selectDVDVOBs(ctx, captureRoot)
 		if err != nil {
 			return info, err
 		}
@@ -281,7 +282,7 @@ func resolveVideoSource(ctx context.Context, meta api.ScreenshotSubject, tmpRoot
 	logger = screenshotLogger(logger)
 	basePath := strings.TrimSpace(meta.VideoPath)
 	if basePath == "" {
-		basePath = strings.TrimSpace(meta.SourcePath)
+		basePath = screenshotCaptureRoot(meta)
 	}
 	if basePath == "" {
 		return "", errors.New("screenshots: source path required")
@@ -313,7 +314,7 @@ func resolveVideoSource(ctx context.Context, meta api.ScreenshotSubject, tmpRoot
 			return "", err
 		}
 		if bdinfo != nil {
-			filePath, err := selectBDMVFile(ctx, meta.SourcePath, bdinfo)
+			filePath, err := selectBDMVFile(ctx, screenshotCaptureRoot(meta), bdinfo)
 			if err != nil {
 				return "", err
 			}
@@ -323,8 +324,9 @@ func resolveVideoSource(ctx context.Context, meta api.ScreenshotSubject, tmpRoot
 	}
 
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
-		logger.Tracef("screenshots: video source DVD selection root=%s", meta.SourcePath)
-		vob, err := selectDVDVOB(ctx, meta.SourcePath)
+		captureRoot := screenshotCaptureRoot(meta)
+		logger.Tracef("screenshots: video source DVD selection root=%s", captureRoot)
+		vob, err := selectDVDVOB(ctx, captureRoot)
 		if err != nil {
 			return "", err
 		}
@@ -344,7 +346,7 @@ func selectBDMVFileFromMetadata(ctx context.Context, meta api.ScreenshotSubject)
 			return videoPath, true, nil
 		}
 
-		filePath, err := findBDMVFile(ctx, meta.SourcePath, fileName)
+		filePath, err := findBDMVFile(ctx, screenshotCaptureRoot(meta), fileName)
 		if err != nil {
 			return "", false, err
 		}
@@ -658,7 +660,14 @@ func loadBDInfo(tmpRoot string, meta api.ScreenshotSubject) (*discparse.BDInfo, 
 		return nil, fmt.Errorf("screenshots: read BDMV summary: %w", err)
 	}
 	summary, files, _ := discparse.SplitBDInfoReport(string(payload))
-	return discparse.ParseBDInfoSummary(summary, files, meta.SourcePath), nil
+	return discparse.ParseBDInfoSummary(summary, files, screenshotCaptureRoot(meta)), nil
+}
+
+func screenshotCaptureRoot(meta api.ScreenshotSubject) string {
+	if root := strings.TrimSpace(meta.DiscRoot); root != "" {
+		return root
+	}
+	return strings.TrimSpace(meta.SourcePath)
 }
 
 func parseFPS(info *discparse.BDInfo) float64 {

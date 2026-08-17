@@ -229,6 +229,7 @@ func (m *Module) ResolveScreenshotSubject(ctx context.Context, input api.MediaPl
 			ID:                    disc.ID,
 			Name:                  disc.Name,
 			Type:                  disc.Type,
+			Root:                  disc.Root,
 			VideoPath:             disc.VideoPath,
 			MediaInfoJSONPath:     disc.MediaInfoJSONPath,
 			SelectedBDMVPlaylists: clonePreparedPlaylists(disc.SelectedPlaylists),
@@ -271,10 +272,15 @@ func (m *Module) ResolveImageHostingSubject(ctx context.Context, input api.Image
 		release.Naming.Filename,
 		filepath.Base(release.Source.SourcePath),
 	)
+	discs := make([]api.ImageHostingDiscSubject, 0, len(release.Disc.Items))
+	for _, disc := range release.Disc.Items {
+		discs = append(discs, api.ImageHostingDiscSubject{ID: disc.ID, Name: disc.Name})
+	}
 	return api.ImageHostingSubject{
 		MediaBinding: binding,
 		SourcePath:   release.Source.SourcePath,
 		GalleryName:  galleryName,
+		Discs:        discs,
 	}, nil
 }
 

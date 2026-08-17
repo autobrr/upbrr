@@ -227,14 +227,14 @@ func (s *stubRepo) ListTrackerMetadataByPath(context.Context, string) ([]api.Tra
 	return cloneTrackerMetadata(s.trackerRecords), nil
 }
 func (s *stubRepo) SaveScreenshot(context.Context, api.Screenshot) error { return nil }
-func (s *stubRepo) ListScreenshotsByPath(context.Context, string) ([]api.Screenshot, error) {
+func (s *stubRepo) ListScreenshotsByPath(context.Context, api.PreparedMediaBinding) ([]api.Screenshot, error) {
 	return nil, nil
 }
 func (s *stubRepo) DeleteScreenshot(context.Context, string) error { return nil }
-func (s *stubRepo) SaveFinalSelections(context.Context, string, []api.ScreenshotFinalSelection) error {
+func (s *stubRepo) SaveFinalSelections(context.Context, api.PreparedMediaBinding, []api.ScreenshotFinalSelection) error {
 	return nil
 }
-func (s *stubRepo) ListFinalSelections(context.Context, string) ([]api.ScreenshotFinalSelection, error) {
+func (s *stubRepo) ListFinalSelections(context.Context, api.PreparedMediaBinding) ([]api.ScreenshotFinalSelection, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.selectionsCalls++
@@ -244,13 +244,13 @@ func (s *stubRepo) ListFinalSelections(context.Context, string) ([]api.Screensho
 	return append([]api.ScreenshotFinalSelection(nil), s.selections...), nil
 }
 func (s *stubRepo) DeleteFinalSelection(context.Context, string) error { return nil }
-func (s *stubRepo) ReplaceScreenshotSlots(_ context.Context, _ string, slots []api.ScreenshotSlot) error {
+func (s *stubRepo) ReplaceScreenshotSlots(_ context.Context, _ api.PreparedMediaBinding, slots []api.ScreenshotSlot) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.screenshotSlots = cloneScreenshotSlots(slots)
 	return nil
 }
-func (s *stubRepo) ListScreenshotSlotsByPath(context.Context, string) ([]api.ScreenshotSlot, error) {
+func (s *stubRepo) ListScreenshotSlotsByPath(context.Context, api.PreparedMediaBinding) ([]api.ScreenshotSlot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.screenshotSlotCalls++
@@ -259,7 +259,7 @@ func (s *stubRepo) ListScreenshotSlotsByPath(context.Context, string) ([]api.Scr
 	}
 	return cloneScreenshotSlots(s.screenshotSlots), nil
 }
-func (s *stubRepo) UpsertScreenshotSlotVariants(_ context.Context, _ string, variants []api.ScreenshotSlotVariant) error {
+func (s *stubRepo) UpsertScreenshotSlotVariants(_ context.Context, _ api.PreparedMediaBinding, variants []api.ScreenshotSlotVariant) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, variant := range variants {
@@ -272,13 +272,13 @@ func (s *stubRepo) UpsertScreenshotSlotVariants(_ context.Context, _ string, var
 	}
 	return nil
 }
-func (s *stubRepo) SaveUploadedImages(_ context.Context, _ string, _ string, images []api.UploadedImageLink) error {
+func (s *stubRepo) SaveUploadedImages(_ context.Context, _ api.PreparedMediaBinding, _ string, images []api.UploadedImageLink) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.uploads = append(s.uploads, images...)
 	return nil
 }
-func (s *stubRepo) ListUploadedImagesByPath(context.Context, string) ([]api.UploadedImageLink, error) {
+func (s *stubRepo) ListUploadedImagesByPath(context.Context, api.PreparedMediaBinding) ([]api.UploadedImageLink, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.uploadsCalls++
@@ -287,7 +287,7 @@ func (s *stubRepo) ListUploadedImagesByPath(context.Context, string) ([]api.Uplo
 	}
 	return append([]api.UploadedImageLink(nil), s.uploads...), nil
 }
-func (s *stubRepo) DeleteUploadedImage(_ context.Context, _ string, imagePath string, host string) error {
+func (s *stubRepo) DeleteUploadedImage(_ context.Context, _ api.PreparedMediaBinding, imagePath string, host string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.deletedUploads = append(s.deletedUploads, host+":"+imagePath)
@@ -400,7 +400,7 @@ func TestResolveDescriptionAssetsDedupesAfterSanitizingBotSignatures(t *testing.
 			{Tracker: "AITHER", Description: "Body"},
 		},
 	}
-	meta := api.UploadSubject{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{MediaBinding: trackerTestMediaBinding("/tmp/source"), SourcePath: "/tmp/source"}
 
 	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
@@ -464,6 +464,7 @@ func TestDescriptionAssetsPreserveMenuClassificationAcrossRehost(t *testing.T) {
 
 	root := t.TempDir()
 	sourcePath := filepath.Join(root, "Example.Release.2026.DVD-GRP")
+	binding := trackerTestMediaBinding(sourcePath)
 	paths := []string{
 		filepath.Join(root, "auto-menu.png"),
 		filepath.Join(root, "manual-menu.png"),
@@ -490,7 +491,7 @@ func TestDescriptionAssetsPreserveMenuClassificationAcrossRehost(t *testing.T) {
 		},
 	}}
 	images := &stubImageService{repo: repo}
-	meta := api.UploadSubject{SourcePath: sourcePath}
+	meta := api.UploadSubject{MediaBinding: binding, SourcePath: sourcePath}
 
 	resolution, err := ensureDescriptionImageHostWithRegistry(
 		context.Background(),
@@ -537,6 +538,7 @@ func TestPartialMenuRemovalUpdatesResolvedAndRenderedDescription(t *testing.T) {
 
 	root := t.TempDir()
 	sourcePath := filepath.Join(root, "Example.Release.2026.DVD-GRP")
+	binding := trackerTestMediaBinding(sourcePath)
 	autoFirst := filepath.Join(root, "auto-menu-01.png")
 	autoSecond := filepath.Join(root, "auto-menu-02.png")
 	normal := filepath.Join(root, "normal-screen-01.png")
@@ -560,7 +562,7 @@ func TestPartialMenuRemovalUpdatesResolvedAndRenderedDescription(t *testing.T) {
 			Source:     string(api.ScreenshotPurposeFinal),
 		},
 	}
-	if err := repo.SaveFinalSelections(context.Background(), sourcePath, selections); err != nil {
+	if err := repo.SaveFinalSelections(context.Background(), binding, selections); err != nil {
 		t.Fatalf("save selections: %v", err)
 	}
 	uploads := make([]api.UploadedImageLink, 0, len(selections))
@@ -596,20 +598,20 @@ func TestPartialMenuRemovalUpdatesResolvedAndRenderedDescription(t *testing.T) {
 			}},
 		})
 	}
-	if err := repo.SaveUploadedImages(context.Background(), sourcePath, "imgbb", uploads); err != nil {
+	if err := repo.SaveUploadedImages(context.Background(), binding, "imgbb", uploads); err != nil {
 		t.Fatalf("save uploads: %v", err)
 	}
-	if err := repo.ReplaceScreenshotSlots(context.Background(), sourcePath, slots); err != nil {
+	if err := repo.ReplaceScreenshotSlots(context.Background(), binding, slots); err != nil {
 		t.Fatalf("save slots: %v", err)
 	}
 
-	meta := api.UploadSubject{SourcePath: sourcePath}
+	meta := api.UploadSubject{MediaBinding: binding, SourcePath: sourcePath}
 	before := resolveAssetsForTest(t, meta, repo)
 	if len(before.MenuImages) != 2 || len(before.Screenshots) != 1 {
 		t.Fatalf("assets before removal = %#v", before)
 	}
 
-	if _, err := repo.DeleteDiscMenuScreenshot(context.Background(), sourcePath, autoFirst); err != nil {
+	if _, err := repo.DeleteDiscMenuScreenshot(context.Background(), binding, autoFirst); err != nil {
 		t.Fatalf("delete first menu: %v", err)
 	}
 	after := resolveAssetsForTest(t, meta, repo)
@@ -636,6 +638,14 @@ func TestPartialMenuRemovalUpdatesResolvedAndRenderedDescription(t *testing.T) {
 	assertDescriptionTokensInOrder(t, description, "Body token", "Disc menu token", "1.png", "Screenshots token", "2.png")
 	if strings.Contains(description, "0.png") {
 		t.Fatalf("removed menu remained in description: %q", description)
+	}
+}
+
+func trackerTestMediaBinding(sourcePath string) api.PreparedMediaBinding {
+	return api.PreparedMediaBinding{
+		SourcePath:               sourcePath,
+		PreparedMediaFingerprint: "test-prepared-media",
+		PreparedGeneration:       1,
 	}
 }
 
@@ -3219,7 +3229,7 @@ func TestEnsureDescriptionImageHostRollsBackUploadedImagesOnSelectionError(t *te
 			},
 		},
 	}
-	meta := api.UploadSubject{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{MediaBinding: trackerTestMediaBinding("/tmp/source"), SourcePath: "/tmp/source"}
 	images := &stubImageService{
 		uploads: map[string][]api.UploadedImageLink{
 			"pixhost": {

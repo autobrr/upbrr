@@ -48,11 +48,12 @@ func TestScreenshotFinalSelectionsCRUD(t *testing.T) {
 		},
 	}
 
-	if err := repo.SaveFinalSelections(ctx, sourcePath, selections); err != nil {
+	binding := testPreparedMediaBinding(sourcePath)
+	if err := repo.SaveFinalSelections(ctx, binding, selections); err != nil {
 		t.Fatalf("save final selections: %v", err)
 	}
 
-	loaded, err := repo.ListFinalSelections(ctx, sourcePath)
+	loaded, err := repo.ListFinalSelections(ctx, binding)
 	if err != nil {
 		t.Fatalf("list final selections: %v", err)
 	}
@@ -66,11 +67,11 @@ func TestScreenshotFinalSelectionsCRUD(t *testing.T) {
 		t.Fatalf("unexpected second selection: %#v", loaded[1])
 	}
 
-	if err := repo.DeleteFinalSelection(ctx, selections[0].ImagePath); err != nil {
+	if err := repo.DeleteFinalSelection(ctx, binding, selections[0].ImagePath); err != nil {
 		t.Fatalf("delete final selection: %v", err)
 	}
 
-	loaded, err = repo.ListFinalSelections(ctx, sourcePath)
+	loaded, err = repo.ListFinalSelections(ctx, binding)
 	if err != nil {
 		t.Fatalf("list final selections: %v", err)
 	}
@@ -99,15 +100,23 @@ func TestScreenshotFinalSelectionsInvalidInput(t *testing.T) {
 
 	ctx := context.Background()
 
-	if err := repo.SaveFinalSelections(ctx, "", nil); !errors.Is(err, internalerrors.ErrInvalidInput) {
+	if err := repo.SaveFinalSelections(ctx, PreparedMediaBinding{}, nil); !errors.Is(err, internalerrors.ErrInvalidInput) {
 		t.Fatalf("expected invalid input, got %v", err)
 	}
 
-	if _, err := repo.ListFinalSelections(ctx, ""); !errors.Is(err, internalerrors.ErrInvalidInput) {
+	if _, err := repo.ListFinalSelections(ctx, PreparedMediaBinding{}); !errors.Is(err, internalerrors.ErrInvalidInput) {
 		t.Fatalf("expected invalid input, got %v", err)
 	}
 
-	if err := repo.DeleteFinalSelection(ctx, ""); !errors.Is(err, internalerrors.ErrInvalidInput) {
+	if err := repo.DeleteFinalSelection(ctx, PreparedMediaBinding{}, ""); !errors.Is(err, internalerrors.ErrInvalidInput) {
 		t.Fatalf("expected invalid input, got %v", err)
+	}
+}
+
+func testPreparedMediaBinding(sourcePath string) PreparedMediaBinding {
+	return PreparedMediaBinding{
+		SourcePath:               sourcePath,
+		PreparedMediaFingerprint: "test-prepared-media",
+		PreparedGeneration:       1,
 	}
 }
