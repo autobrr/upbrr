@@ -204,6 +204,9 @@ func prepareUploadStateAt(ctx context.Context, req trackers.PreparationInput, dr
 		return uploadState{}, nameFailure
 	}
 	announceURL := normalizedAnnounceURL(req.TrackerConfig.AnnounceURL)
+	if !dryRun && announceURL == "" {
+		return uploadState{}, errors.New("trackers: PTP required announce URL is missing")
+	}
 	torrentPath, err := trackers.PreparedUploadTorrentPath(req.Meta)
 	if err != nil {
 		return uploadState{}, fmt.Errorf("trackers: PTP resolve upload torrent: %w", err)

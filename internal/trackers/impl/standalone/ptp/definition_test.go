@@ -15,12 +15,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/autobrr/go-torrent/metainfo"
 	mkbrr "github.com/autobrr/mkbrr/torrent"
 
 	"github.com/autobrr/upbrr/internal/config"
+	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 	servicedb "github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -375,6 +377,44 @@ func TestDefinitionBuildUploadDryRunForNewGroupIncludesQuestionnaire(t *testing.
 	}
 }
 
+func TestDefinitionUploadRejectsMissingAnnounceBeforeRequest(t *testing.T) {
+	ctx := context.Background()
+	dbPath := newPTPAuthDB(t)
+	if err := cookiepkg.SaveTrackerCookieMap(ctx, dbPath, "PTP", map[string]string{"session": "existing"}); err != nil {
+		t.Fatalf("save PTP cookies: %v", err)
+	}
+
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		http.Error(w, "unexpected request", http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+
+	tmp := t.TempDir()
+	torrentPath := filepath.Join(tmp, "release.torrent")
+	createTestTorrent(t, filepath.Join(tmp, "source.bin"), torrentPath)
+	_, err := (&Definition{baseURL: server.URL}).submit(ctx, trackers.PreparationInput{
+		Tracker: "PTP",
+		Meta: api.UploadSubject{
+			SourcePath:  filepath.Join(tmp, "Movie.mkv"),
+			TorrentPath: torrentPath,
+			ReleaseName: "Movie.2026.1080p.BluRay.x264",
+			Source:      "BluRay",
+			VideoCodec:  "AVC",
+			Identity:    api.ExternalIdentity{Category: "MOVIE", IMDBID: 1234567},
+		},
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
+		Logger:  api.NopLogger{},
+	})
+	if err == nil || !strings.Contains(err.Error(), "required announce URL is missing") {
+		t.Fatalf("missing announce error = %v", err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("missing announce triggered %d PTP request(s)", got)
+	}
+}
+
 func TestDefinitionUploadSuccess(t *testing.T) {
 	tmp := t.TempDir()
 	dbPath := newPTPAuthDB(t)
@@ -546,8 +586,12 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	if registeredMeta.Comment != result.UploadedTorrents[0].TorrentURL {
 		t.Fatalf("expected registered PTP comment %q, got %q", result.UploadedTorrents[0].TorrentURL, registeredMeta.Comment)
 	}
-	legacyBase := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(torrentPath), "[ptp]."), ".torrent")
-	legacyPath := filepath.Join(filepath.Dir(torrentPath), legacyBase+".ptp.torrent")
+	expectedBase := filepath.Base(meta.SourcePath)
+	expectedName := "[ptp]." + expectedBase + ".torrent"
+	if got := filepath.Base(torrentPath); got != expectedName {
+		t.Fatalf("expected canonical PTP torrent %q, got %q", expectedName, got)
+	}
+	legacyPath := filepath.Join(filepath.Dir(torrentPath), expectedBase+".ptp.torrent")
 	if _, err := os.Stat(legacyPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected no duplicate PTP torrent at %q, got %v", legacyPath, err)
 	}
