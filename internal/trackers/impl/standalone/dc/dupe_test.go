@@ -5,10 +5,13 @@ package dc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -24,6 +27,7 @@ func TestDuplicateSearchUsesDCDupeEndpointAndProjection(t *testing.T) {
 			"imdb":        "tt0000456",
 			"releaseName": "Example.Release.2026.1080p.WEB-DL-GRP",
 			"limit":       "100",
+			"index":       "0",
 		}); err != nil {
 			requestErr <- err
 			w.WriteHeader(http.StatusBadRequest)
@@ -34,7 +38,7 @@ func TestDuplicateSearchUsesDCDupeEndpointAndProjection(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		_, _ = w.Write([]byte(`{"results":[{"id":42,"name":"Example.Release.2026.1080p.WEB-DL-GRP","size":1234,"categoryName":"Movies/1080p","type":"single","numfiles":2,"p2p":true,"pack":false,"3d":true,"approved":false,"pending":true,"status":"pending"}],"total":1,"includesPending":true}`))
+		_, _ = w.Write([]byte(`{"results":[{"id":42,"name":"Example.Release.2026.1080p.WEB-DL-GRP","size":1234,"categoryName":"Movies/1080p","type":"single","numfiles":2,"p2p":true,"pack":false,"3d":true,"approved":false,"pending":true,"status":"pending"}],"index":0,"limit":100,"count":1,"total":1,"includesPending":true}`))
 	}))
 	defer server.Close()
 
@@ -87,12 +91,13 @@ func TestDuplicateSearchFallsBackToReleaseNameWithoutIMDb(t *testing.T) {
 		if err := assertDCQuery(query, map[string]string{
 			"releaseName": "Title.Only.2026.720p-GRP",
 			"limit":       "100",
+			"index":       "0",
 		}); err != nil {
 			requestErr <- err
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		_, _ = w.Write([]byte(`{"results":[],"total":0,"includesPending":true}`))
+		_, _ = w.Write([]byte(`{"results":[],"index":0,"limit":100,"count":0,"total":0,"includesPending":true}`))
 	}))
 	defer server.Close()
 
@@ -110,6 +115,134 @@ func TestDuplicateSearchFallsBackToReleaseNameWithoutIMDb(t *testing.T) {
 		t.Fatalf("unexpected entries: %#v", entries)
 	}
 	if search := result.SearchEvidence(); !search.Complete || search.WorkScope != dupe.WorkScopeTitle || search.EffectiveComplete() {
+		t.Fatalf("unexpected search evidence: %#v", search)
+	}
+}
+
+func TestDuplicateSearchPaginatesUntilTerminalTotal(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("index") {
+		case "0":
+			requests++
+			writeDCDupePage(t, w, dcTestPage{Index: 0, Count: 100, Total: 101, IncludesPending: boolPtr(true)})
+		case "100":
+			requests++
+			writeDCDupePage(t, w, dcTestPage{Index: 100, Count: 1, Total: 101, IncludesPending: boolPtr(true)})
+		default:
+			t.Errorf("unexpected index query %q", r.URL.Query().Get("index"))
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	searcher := testDCDupeSearcher(server)
+	result := searcher.Search(context.Background(), api.DuplicateSubject{
+		Identity:    api.ExternalIdentity{IMDBID: 456},
+		ReleaseName: "Example.Release.2026.1080p.WEB-DL-GRP",
+	})
+	if result.Disposition() != dupe.DispositionResolved {
+		t.Fatalf("unexpected disposition=%v code=%q cause=%v", result.Disposition(), result.Code(), result.Cause())
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
+	}
+	if entries := result.Entries(); len(entries) != 101 {
+		t.Fatalf("entries = %d, want 101", len(entries))
+	}
+	if search := result.SearchEvidence(); !search.Complete || !search.EffectiveComplete() || search.Pages != 2 || len(search.Warnings) != 0 {
+		t.Fatalf("unexpected search evidence: %#v", search)
+	}
+}
+
+func TestDuplicateSearchRequiresPendingCoverageForCompleteness(t *testing.T) {
+	tests := []struct {
+		name            string
+		includesPending *bool
+	}{
+		{name: "false", includesPending: boolPtr(false)},
+		{name: "missing", includesPending: nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				writeDCDupePage(t, w, dcTestPage{Index: 0, Count: 0, Total: 0, IncludesPending: tc.includesPending})
+			}))
+			defer server.Close()
+
+			searcher := testDCDupeSearcher(server)
+			result := searcher.Search(context.Background(), api.DuplicateSubject{
+				Identity:    api.ExternalIdentity{IMDBID: 456},
+				ReleaseName: "Example.Release.2026.1080p.WEB-DL-GRP",
+			})
+			if result.Disposition() != dupe.DispositionResolved {
+				t.Fatalf("unexpected disposition=%v code=%q cause=%v", result.Disposition(), result.Code(), result.Cause())
+			}
+			if search := result.SearchEvidence(); search.Complete || search.EffectiveComplete() || len(search.Warnings) != 2 {
+				t.Fatalf("unexpected search evidence: %#v", search)
+			}
+		})
+	}
+}
+
+func TestDuplicateSearchRejectsInconsistentPagination(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		switch r.URL.Query().Get("index") {
+		case "0":
+			writeDCDupePage(t, w, dcTestPage{Index: 0, Count: 100, Total: 101, IncludesPending: boolPtr(true)})
+		case "100":
+			writeDCDupePage(t, w, dcTestPage{Index: 100, Count: 1, Total: 102, IncludesPending: boolPtr(true)})
+		default:
+			t.Errorf("unexpected index query %q", r.URL.Query().Get("index"))
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	searcher := testDCDupeSearcher(server)
+	result := searcher.Search(context.Background(), api.DuplicateSubject{
+		Identity:    api.ExternalIdentity{IMDBID: 456},
+		ReleaseName: "Example.Release.2026.1080p.WEB-DL-GRP",
+	})
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
+	}
+	if search := result.SearchEvidence(); search.Complete || search.EffectiveComplete() || search.Pages != 2 || len(search.Warnings) != 1 {
+		t.Fatalf("unexpected search evidence: %#v", search)
+	}
+}
+
+func TestDuplicateSearchRejectsNonProgressingPagination(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeDCDupePage(t, w, dcTestPage{Index: 0, Count: 0, Total: 1, IncludesPending: boolPtr(true)})
+	}))
+	defer server.Close()
+
+	searcher := testDCDupeSearcher(server)
+	result := searcher.Search(context.Background(), api.DuplicateSubject{
+		Identity:    api.ExternalIdentity{IMDBID: 456},
+		ReleaseName: "Example.Release.2026.1080p.WEB-DL-GRP",
+	})
+	if search := result.SearchEvidence(); search.Complete || search.EffectiveComplete() || search.Pages != 1 || len(search.Warnings) != 1 {
+		t.Fatalf("unexpected search evidence: %#v", search)
+	}
+}
+
+func TestDuplicateSearchPaginationBoundFailsClosed(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeDCDupePage(t, w, dcTestPage{Index: 0, Count: 100, Total: 101, IncludesPending: boolPtr(true)})
+	}))
+	defer server.Close()
+
+	searcher := testDCDupeSearcher(server)
+	searcher.maxPages = 1
+	result := searcher.Search(context.Background(), api.DuplicateSubject{
+		Identity:    api.ExternalIdentity{IMDBID: 456},
+		ReleaseName: "Example.Release.2026.1080p.WEB-DL-GRP",
+	})
+	if search := result.SearchEvidence(); search.Complete || search.EffectiveComplete() || search.Pages != 1 || len(search.Warnings) != 1 {
 		t.Fatalf("unexpected search evidence: %#v", search)
 	}
 }
@@ -135,6 +268,7 @@ func testDCDupeSearcher(server *httptest.Server) *dupeSearcher {
 		}}},
 		http:     server.Client(),
 		endpoint: server.URL,
+		maxPages: 100,
 	}
 }
 
@@ -145,4 +279,41 @@ func assertDCQuery(query url.Values, want map[string]string) error {
 		}
 	}
 	return nil
+}
+
+type dcTestPage struct {
+	Index           int
+	Count           int
+	Total           int
+	IncludesPending *bool
+}
+
+func writeDCDupePage(t *testing.T, w http.ResponseWriter, page dcTestPage) {
+	t.Helper()
+	results := make([]map[string]any, 0, page.Count)
+	for i := 0; i < page.Count; i++ {
+		id := page.Index + i + 1
+		results = append(results, map[string]any{
+			"id":           id,
+			"name":         fmt.Sprintf("Example.Release.%03d.2026.1080p.WEB-DL-GRP", id),
+			"categoryName": "Movies/1080p",
+		})
+	}
+	payload := map[string]any{
+		"results": results,
+		"index":   page.Index,
+		"limit":   dcDupePageSize,
+		"count":   page.Count,
+		"total":   page.Total,
+	}
+	if page.IncludesPending != nil {
+		payload["includesPending"] = *page.IncludesPending
+	}
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		t.Fatalf("encode DC page %s: %v", strconv.Itoa(page.Index), err)
+	}
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }

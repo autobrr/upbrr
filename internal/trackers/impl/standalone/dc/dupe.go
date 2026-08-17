@@ -21,11 +21,13 @@ import (
 )
 
 const dcDupeMaxResponseBytes = 4 << 20
+const dcDupePageSize = 100
 
 type dupeSearcher struct {
 	cfg      config.Config
 	http     *http.Client
 	endpoint string
+	maxPages int
 }
 
 // NewDuplicateAdapter returns a duplicate-search adapter bound to one immutable dependency set.
@@ -38,6 +40,7 @@ func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 		cfg:      cfg,
 		http:     httpClient,
 		endpoint: "https://digitalcore.club/api/v1/torrents/dupe-search",
+		maxPages: deps.MaxPages(100),
 	}
 }
 
@@ -46,7 +49,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	if apiKey == "" {
 		return dupe.NotRun(dupe.NotRunMissingCredentials, "missing api_key for tracker", nil)
 	}
-	params := url.Values{"limit": {"100"}}
+	params := url.Values{"limit": {strconv.Itoa(dcDupePageSize)}}
 	workScope := dupe.WorkScopeProviderID
 	if meta.Identity.IMDBID != 0 {
 		params.Set("imdb", providerid.IMDb(meta.Identity.IMDBID).Prefixed())
@@ -60,9 +63,71 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing imdb id or release name for DC dupe search", nil)
 	}
 
+	maxPages := s.maxPages
+	if maxPages <= 0 {
+		maxPages = 100
+	}
+	entries := make([]api.DupeEntry, 0)
+	complete := false
+	pages := 0
+	index := 0
+	expectedTotal := -1
+	pendingCoverageOK := true
+	for pages < maxPages {
+		pageParams := cloneDCValues(params)
+		pageParams.Set("index", strconv.Itoa(index))
+		page, failureCode, err := s.searchPage(ctx, apiKey, pageParams)
+		if failureCode != "" {
+			return dupe.Failed(failureCode, "DC search failed", err)
+		}
+		pages++
+		entries = append(entries, dcDupeEntries(page.Results)...)
+		if !validDCPage(page, index, dcDupePageSize, expectedTotal) {
+			if page.IncludesPending == nil || !*page.IncludesPending {
+				pendingCoverageOK = false
+			}
+			break
+		}
+		if expectedTotal < 0 {
+			expectedTotal = *page.Total
+		}
+		nextIndex := *page.Index + *page.Count
+		switch {
+		case expectedTotal == 0 && *page.Count == 0:
+			complete = true
+		case nextIndex >= expectedTotal:
+			complete = true
+		case *page.Count > 0 && nextIndex > index:
+			index = nextIndex
+			continue
+		}
+		break
+	}
+
+	warnings := []string(nil)
+	if !pendingCoverageOK {
+		warnings = append(warnings, "DC search did not confirm pending/modqueue coverage")
+	}
+	if !complete {
+		warnings = append(warnings, "DC search reached a pagination bound or returned incomplete pagination metadata")
+	}
+	return dupe.ResolvedWithSearch(entries, warnings, dupe.SearchEvidence{
+		Complete:  complete,
+		WorkScope: workScope,
+		Pages:     pages,
+		Scope:     "dupe_preflight",
+		Warnings:  warnings,
+	})
+}
+
+func (s *dupeSearcher) searchPage(
+	ctx context.Context,
+	apiKey string,
+	params url.Values,
+) (dcDupePage, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.endpoint, nil)
 	if err != nil {
-		return dupe.Failed(dupe.FailureRequest, "DC search failed", err)
+		return dcDupePage{}, dupe.FailureRequest, err
 	}
 	req.URL.RawQuery = params.Encode()
 	req.Header.Set("X-Api-Key", apiKey)
@@ -70,31 +135,26 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 
 	resp, err := s.http.Do(req)
 	if err != nil {
-		return dupe.Failed(dupe.FailureRequest, "DC search failed", err)
+		return dcDupePage{}, dupe.FailureRequest, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return dupe.Failed(dupe.FailureResponseStatus, "DC search failed", nil)
+		return dcDupePage{}, dupe.FailureResponseStatus, nil
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, dcDupeMaxResponseBytes+1))
 	if err != nil {
-		return dupe.Failed(dupe.FailureResponseParse, "DC search failed", err)
+		return dcDupePage{}, dupe.FailureResponseParse, err
 	}
 	if len(body) > dcDupeMaxResponseBytes {
-		return dupe.Failed(dupe.FailureResponseParse, "DC search failed", fmt.Errorf("duplicate response exceeds %d bytes", dcDupeMaxResponseBytes))
+		return dcDupePage{}, dupe.FailureResponseParse, fmt.Errorf("duplicate response exceeds %d bytes", dcDupeMaxResponseBytes)
 	}
 
-	entries, err := dcParseDupeEntries(body)
+	page, err := dcParseDupePage(body)
 	if err != nil {
-		return dupe.Failed(dupe.FailureResponseParse, "DC search failed", err)
+		return dcDupePage{}, dupe.FailureResponseParse, err
 	}
-	return dupe.ResolvedWithSearch(entries, nil, dupe.SearchEvidence{
-		Complete:  true,
-		WorkScope: workScope,
-		Pages:     1,
-		Scope:     "dupe_preflight",
-	})
+	return page, "", nil
 }
 
 func dcAPIKey(cfg config.Config) string {
@@ -121,24 +181,61 @@ func dcSearchName(meta api.DuplicateSubject) string {
 	return ""
 }
 
-func dcParseDupeEntries(body []byte) ([]api.DupeEntry, error) {
-	var payload struct {
-		Results []map[string]any `json:"results"`
-	}
+type dcDupePage struct {
+	Results         []map[string]any `json:"results"`
+	Index           *int             `json:"index"`
+	Limit           *int             `json:"limit"`
+	Count           *int             `json:"count"`
+	Total           *int             `json:"total"`
+	IncludesPending *bool            `json:"includesPending"`
+}
+
+func dcParseDupePage(body []byte) (dcDupePage, error) {
+	var payload dcDupePage
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.UseNumber()
 	if err := decoder.Decode(&payload); err != nil {
-		return nil, fmt.Errorf("decode DC duplicate response: %w", err)
+		return dcDupePage{}, fmt.Errorf("decode DC duplicate response: %w", err)
 	}
+	return payload, nil
+}
 
-	entries := make([]api.DupeEntry, 0, len(payload.Results))
-	for _, item := range payload.Results {
+func dcDupeEntries(results []map[string]any) []api.DupeEntry {
+	entries := make([]api.DupeEntry, 0, len(results))
+	for _, item := range results {
 		entry := dcDupeEntry(item)
 		if entry.Name != "" {
 			entries = append(entries, entry)
 		}
 	}
-	return entries, nil
+	return entries
+}
+
+func validDCPage(page dcDupePage, requestedIndex int, requestedLimit int, expectedTotal int) bool {
+	if page.Index == nil || page.Limit == nil || page.Count == nil || page.Total == nil || page.IncludesPending == nil {
+		return false
+	}
+	if !*page.IncludesPending || *page.Index != requestedIndex || *page.Limit != requestedLimit {
+		return false
+	}
+	if *page.Count < 0 || *page.Total < 0 || *page.Count != len(page.Results) {
+		return false
+	}
+	if *page.Index+*page.Count > *page.Total {
+		return false
+	}
+	if expectedTotal >= 0 && *page.Total != expectedTotal {
+		return false
+	}
+	return true
+}
+
+func cloneDCValues(values url.Values) url.Values {
+	cloned := make(url.Values, len(values))
+	for key, entries := range values {
+		cloned[key] = append([]string(nil), entries...)
+	}
+	return cloned
 }
 
 func dcDupeEntry(item map[string]any) api.DupeEntry {
