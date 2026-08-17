@@ -125,10 +125,20 @@ func TestDuplicateSearchPaginatesUntilTerminalTotal(t *testing.T) {
 		switch r.URL.Query().Get("index") {
 		case "0":
 			requests++
-			writeDCDupePage(t, w, dcTestPage{Index: 0, Count: 100, Total: 101, IncludesPending: boolPtr(true)})
+			writeDCDupePage(t, w, dcTestPage{
+				Index:           0,
+				Count:           100,
+				Total:           101,
+				IncludesPending: boolPtr(true),
+			})
 		case "100":
 			requests++
-			writeDCDupePage(t, w, dcTestPage{Index: 100, Count: 1, Total: 101, IncludesPending: boolPtr(true)})
+			writeDCDupePage(t, w, dcTestPage{
+				Index:           100,
+				Count:           1,
+				Total:           101,
+				IncludesPending: boolPtr(true),
+			})
 		default:
 			t.Errorf("unexpected index query %q", r.URL.Query().Get("index"))
 			w.WriteHeader(http.StatusBadRequest)
@@ -166,7 +176,12 @@ func TestDuplicateSearchRequiresPendingCoverageForCompleteness(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				writeDCDupePage(t, w, dcTestPage{Index: 0, Count: 0, Total: 0, IncludesPending: tc.includesPending})
+				writeDCDupePage(t, w, dcTestPage{
+					Index:           0,
+					Count:           0,
+					Total:           0,
+					IncludesPending: tc.includesPending,
+				})
 			}))
 			defer server.Close()
 
@@ -191,9 +206,19 @@ func TestDuplicateSearchRejectsInconsistentPagination(t *testing.T) {
 		requests++
 		switch r.URL.Query().Get("index") {
 		case "0":
-			writeDCDupePage(t, w, dcTestPage{Index: 0, Count: 100, Total: 101, IncludesPending: boolPtr(true)})
+			writeDCDupePage(t, w, dcTestPage{
+				Index:           0,
+				Count:           100,
+				Total:           101,
+				IncludesPending: boolPtr(true),
+			})
 		case "100":
-			writeDCDupePage(t, w, dcTestPage{Index: 100, Count: 1, Total: 102, IncludesPending: boolPtr(true)})
+			writeDCDupePage(t, w, dcTestPage{
+				Index:           100,
+				Count:           1,
+				Total:           102,
+				IncludesPending: boolPtr(true),
+			})
 		default:
 			t.Errorf("unexpected index query %q", r.URL.Query().Get("index"))
 			w.WriteHeader(http.StatusBadRequest)
@@ -216,7 +241,12 @@ func TestDuplicateSearchRejectsInconsistentPagination(t *testing.T) {
 
 func TestDuplicateSearchRejectsNonProgressingPagination(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeDCDupePage(t, w, dcTestPage{Index: 0, Count: 0, Total: 1, IncludesPending: boolPtr(true)})
+		writeDCDupePage(t, w, dcTestPage{
+			Index:           0,
+			Count:           0,
+			Total:           1,
+			IncludesPending: boolPtr(true),
+		})
 	}))
 	defer server.Close()
 
@@ -232,7 +262,12 @@ func TestDuplicateSearchRejectsNonProgressingPagination(t *testing.T) {
 
 func TestDuplicateSearchPaginationBoundFailsClosed(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeDCDupePage(t, w, dcTestPage{Index: 0, Count: 100, Total: 101, IncludesPending: boolPtr(true)})
+		writeDCDupePage(t, w, dcTestPage{
+			Index:           0,
+			Count:           100,
+			Total:           101,
+			IncludesPending: boolPtr(true),
+		})
 	}))
 	defer server.Close()
 
