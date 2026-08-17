@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -181,8 +182,8 @@ func TestDuplicateSearchRequiresPendingCoverageForCompleteness(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if !writeDCDupePage(t, w, dcTestPage{
 					Index:           0,
-					Count:           0,
-					Total:           0,
+					Count:           1,
+					Total:           1,
 					IncludesPending: tc.includesPending,
 				}) {
 					return
@@ -197,6 +198,9 @@ func TestDuplicateSearchRequiresPendingCoverageForCompleteness(t *testing.T) {
 			})
 			if result.Disposition() != dupe.DispositionResolved {
 				t.Fatalf("unexpected disposition=%v code=%q cause=%v", result.Disposition(), result.Code(), result.Cause())
+			}
+			if entries := result.Entries(); len(entries) != 0 {
+				t.Fatalf("invalid pending-coverage page leaked entries: %#v", entries)
 			}
 			if search := result.SearchEvidence(); search.Complete || search.EffectiveComplete() || len(search.Warnings) != 2 {
 				t.Fatalf("unexpected search evidence: %#v", search)
@@ -295,6 +299,73 @@ func TestDuplicateSearchPaginationBoundFailsClosed(t *testing.T) {
 	}
 }
 
+func TestDuplicateSearchClassifiesRequestFailure(t *testing.T) {
+	searcher := &dupeSearcher{
+		cfg: config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"DC": {APIKey: "secret"},
+		}}},
+		http:     http.DefaultClient,
+		endpoint: "://bad-dc-url",
+		maxPages: dcDupeMaxPages,
+	}
+	result := searcher.Search(context.Background(), testDCDupeSubject())
+	assertDCDupeFailed(t, result, dupe.FailureRequest)
+	if result.Cause() == nil {
+		t.Fatal("expected request failure cause")
+	}
+}
+
+func TestDuplicateSearchClassifiesResponseStatusFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	searcher := testDCDupeSearcher(server)
+	result := searcher.Search(context.Background(), testDCDupeSubject())
+	assertDCDupeFailed(t, result, dupe.FailureResponseStatus)
+	cause := result.Cause()
+	if cause == nil || !strings.Contains(cause.Error(), "401") || strings.Contains(cause.Error(), server.URL) {
+		t.Fatalf("unexpected status cause: %v", cause)
+	}
+}
+
+func TestDuplicateSearchClassifiesResponseParseFailures(t *testing.T) {
+	tests := []struct {
+		name      string
+		handler   http.HandlerFunc
+		wantCause string
+	}{
+		{
+			name: "malformed",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(`{"results":`))
+			},
+			wantCause: "decode DC duplicate response",
+		},
+		{
+			name: "oversized",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(strings.Repeat("x", dcDupeMaxResponseBytes+1)))
+			},
+			wantCause: "exceeds",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(test.handler)
+			defer server.Close()
+
+			searcher := testDCDupeSearcher(server)
+			result := searcher.Search(context.Background(), testDCDupeSubject())
+			assertDCDupeFailed(t, result, dupe.FailureResponseParse)
+			if cause := result.Cause(); cause == nil || !strings.Contains(cause.Error(), test.wantCause) {
+				t.Fatalf("unexpected parse cause: %v", cause)
+			}
+		})
+	}
+}
+
 func TestDuplicateSearchRequiresIMDbOrReleaseName(t *testing.T) {
 	searcher := &dupeSearcher{
 		cfg: config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
@@ -316,7 +387,27 @@ func testDCDupeSearcher(server *httptest.Server) *dupeSearcher {
 		}}},
 		http:     server.Client(),
 		endpoint: server.URL,
-		maxPages: 100,
+		maxPages: dcDupeMaxPages,
+	}
+}
+
+func testDCDupeSubject() api.DuplicateSubject {
+	return api.DuplicateSubject{
+		Identity:    api.ExternalIdentity{IMDBID: 456},
+		ReleaseName: "Example.Release.2026.1080p.WEB-DL-GRP",
+	}
+}
+
+func assertDCDupeFailed(t *testing.T, result dupe.AdapterResult, wantCode string) {
+	t.Helper()
+	if result.Disposition() != dupe.DispositionFailed || result.Code() != wantCode {
+		t.Fatalf("unexpected result disposition=%v code=%q cause=%v", result.Disposition(), result.Code(), result.Cause())
+	}
+	if entries := result.Entries(); len(entries) != 0 {
+		t.Fatalf("failed search returned entries: %#v", entries)
+	}
+	if search := result.SearchEvidence(); search.Complete || search.EffectiveComplete() || search.Pages != 0 {
+		t.Fatalf("failed search claimed completeness: %#v", search)
 	}
 }
 

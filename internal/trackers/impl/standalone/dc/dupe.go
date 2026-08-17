@@ -22,6 +22,7 @@ import (
 
 const dcDupeMaxResponseBytes = 4 << 20
 const dcDupePageSize = 100
+const dcDupeMaxPages = 100
 
 type dupeSearcher struct {
 	cfg      config.Config
@@ -40,7 +41,7 @@ func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 		cfg:      cfg,
 		http:     httpClient,
 		endpoint: "https://digitalcore.club/api/v1/torrents/dupe-search",
-		maxPages: deps.MaxPages(100),
+		maxPages: deps.MaxPages(dcDupeMaxPages),
 	}
 }
 
@@ -65,7 +66,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 
 	maxPages := s.maxPages
 	if maxPages <= 0 {
-		maxPages = 100
+		maxPages = dcDupeMaxPages
 	}
 	entries := make([]api.DupeEntry, 0)
 	complete := false
@@ -81,13 +82,13 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 			return dupe.Failed(failureCode, "DC search failed", err)
 		}
 		pages++
-		entries = append(entries, dcDupeEntries(page.Results)...)
 		if !validDCPage(page, index, dcDupePageSize, expectedTotal) {
 			if page.IncludesPending == nil || !*page.IncludesPending {
 				pendingCoverageOK = false
 			}
 			break
 		}
+		entries = append(entries, dcDupeEntries(page.Results)...)
 		if expectedTotal < 0 {
 			expectedTotal = *page.Total
 		}
@@ -139,7 +140,7 @@ func (s *dupeSearcher) searchPage(
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return dcDupePage{}, dupe.FailureResponseStatus, nil
+		return dcDupePage{}, dupe.FailureResponseStatus, fmt.Errorf("unexpected DC duplicate response status %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, dcDupeMaxResponseBytes+1))
