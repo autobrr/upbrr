@@ -5,8 +5,11 @@ package db
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
+
+	internalerrors "github.com/autobrr/upbrr/internal/errors"
 )
 
 func TestMediaAssetsRequireExactPreparedBinding(t *testing.T) {
@@ -35,6 +38,133 @@ func TestMediaAssetsRequireExactPreparedBinding(t *testing.T) {
 	writeMediaAssetsForBinding(t, repo, second, "disc-b", imagePath, stamp.Add(time.Minute))
 	assertMediaAssetsForBinding(t, repo, first, "", 0)
 	assertMediaAssetsForBinding(t, repo, second, "disc-b", 1)
+}
+
+func TestOlderPreparedBindingCannotReplaceNewerMediaAssets(t *testing.T) {
+	t.Parallel()
+
+	repo, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	ctx := context.Background()
+	older := testPreparedMediaBinding("C:\\releases\\Example.Release.2026")
+	newer := older
+	newer.PreparedMediaFingerprint = "newer-prepared-media"
+	newer.PreparedGeneration = older.PreparedGeneration + 1
+	imagePath := "C:\\screens\\same-name.png"
+	stamp := time.Date(2026, time.August, 18, 1, 2, 3, 0, time.UTC)
+
+	writeMediaAssetsForBinding(t, repo, older, "disc-old", imagePath, stamp)
+	writeMediaAssetsForBinding(t, repo, newer, "disc-new", imagePath, stamp.Add(time.Minute))
+
+	if err := repo.SaveFinalSelections(ctx, older, nil); err != nil {
+		t.Fatalf("clear stale final selections: %v", err)
+	}
+	if err := repo.ReplaceScreenshotSlots(ctx, older, nil); err != nil {
+		t.Fatalf("clear stale screenshot slots: %v", err)
+	}
+	assertMediaAssetsForBinding(t, repo, newer, "disc-new", 1)
+
+	assertStaleMediaWriteRejected(t, repo.SaveScreenshot(ctx, older, Screenshot{
+		DiscID:     "disc-old",
+		ImagePath:  imagePath,
+		Purpose:    "final",
+		CapturedAt: stamp,
+	}))
+	assertStaleMediaWriteRejected(t, repo.SaveFinalSelections(ctx, older, []ScreenshotFinalSelection{{
+		DiscID:     "disc-old",
+		ImagePath:  imagePath,
+		Source:     "final",
+		SelectedAt: stamp,
+	}}))
+	assertStaleMediaWriteRejected(t, repo.SaveUploadedImages(ctx, older, "imgbox", []UploadedImageLink{{
+		DiscID:     "disc-old",
+		ImagePath:  imagePath,
+		UsageScope: "global",
+		RawURL:     "https://example.invalid/stale.png",
+		UploadedAt: stamp,
+	}}))
+	assertStaleMediaWriteRejected(t, repo.ReplaceScreenshotSlots(ctx, older, []ScreenshotSlot{{
+		DiscID:    "disc-old",
+		SlotOrder: 0,
+		ImagePath: imagePath,
+		Variants: []ScreenshotSlotVariant{{
+			DiscID:     "disc-old",
+			SlotOrder:  0,
+			Host:       "imgbox",
+			UsageScope: "global",
+			ImagePath:  imagePath,
+			RawURL:     "https://example.invalid/stale.png",
+			UploadedAt: stamp,
+		}},
+	}}))
+	assertStaleMediaWriteRejected(t, repo.UpsertScreenshotSlotVariants(ctx, older, []ScreenshotSlotVariant{{
+		DiscID:     "disc-old",
+		SlotOrder:  0,
+		Host:       "imgbox",
+		UsageScope: "global",
+		ImagePath:  imagePath,
+		RawURL:     "https://example.invalid/stale.png",
+		UploadedAt: stamp,
+	}}))
+	mismatched := newer
+	mismatched.PreparedMediaFingerprint = "mismatched-prepared-media"
+	assertStaleMediaWriteRejected(t, repo.SaveScreenshot(ctx, mismatched, Screenshot{
+		DiscID:     "disc-mismatch",
+		ImagePath:  imagePath,
+		Purpose:    "final",
+		CapturedAt: stamp,
+	}))
+	assertMediaAssetsForBinding(t, repo, newer, "disc-new", 1)
+}
+
+func TestCurrentPreparedBindingCanReplaceOrphanedHigherGeneration(t *testing.T) {
+	t.Parallel()
+
+	repo, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	sourcePath := "C:\\releases\\Example.Release.2026"
+	orphaned := testPreparedMediaBinding(sourcePath)
+	orphaned.PreparedMediaFingerprint = "orphaned-prepared-media"
+	orphaned.PreparedGeneration = 5
+	current := testPreparedMediaBinding(sourcePath)
+	imagePath := "C:\\screens\\same-name.png"
+	stamp := time.Date(2026, time.August, 18, 1, 2, 3, 0, time.UTC)
+	writeMediaAssetsForBinding(t, repo, orphaned, "disc-orphaned", imagePath, stamp)
+
+	if _, err := repo.RawDB().ExecContext(context.Background(), `
+		INSERT INTO prepared_release_current (
+			source_path, generation, source_fingerprint, fact_instruction_fingerprint,
+			policy_fingerprint, contract_version, source_json, naming_json, episode_json,
+			media_json, disc_json, assessments_json, prepared_at
+		) VALUES (?, ?, "source", "facts", "policy", "contract", "{}", "{}", "{}", "{}", "{}", "{}", ?)
+	`, sourcePath, current.PreparedGeneration, stamp.UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("seed current prepared generation: %v", err)
+	}
+
+	writeMediaAssetsForBinding(t, repo, current, "disc-current", imagePath, stamp.Add(time.Minute))
+	assertMediaAssetsForBinding(t, repo, orphaned, "", 0)
+	assertMediaAssetsForBinding(t, repo, current, "disc-current", 1)
+}
+
+func assertStaleMediaWriteRejected(t *testing.T, err error) {
+	t.Helper()
+	if !errors.Is(err, internalerrors.ErrInvalidInput) {
+		t.Fatalf("stale media write error = %v, want ErrInvalidInput", err)
+	}
 }
 
 func writeMediaAssetsForBinding(

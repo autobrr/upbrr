@@ -243,7 +243,7 @@ type ScreenshotLifecycleRepository interface {
 	// selection and returns the local records needed to compensate the deletion.
 	DeleteDiscMenuScreenshot(ctx context.Context, binding PreparedMediaBinding, imagePath string) (DiscMenuDeleteResult, error)
 	// RestoreDiscMenuScreenshot atomically restores a result returned by
-	// DeleteDiscMenuScreenshot for the same source path.
+	// DeleteDiscMenuScreenshot for the same exact prepared-media binding.
 	RestoreDiscMenuScreenshot(ctx context.Context, binding PreparedMediaBinding, deleted DiscMenuDeleteResult) error
 }
 

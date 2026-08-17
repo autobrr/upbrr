@@ -15,9 +15,9 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// ReadBDInfo reads the selected BDMV playlist summary from the release-scoped
-// temporary directory. Missing selections and missing or unstatable artifacts
-// return empty without error; directory-resolution and read failures are returned.
+// ReadBDInfo returns complete canonical BDMV evidence in disc/report order.
+// Legacy subjects retain release-temp lookup compatibility; missing legacy
+// selections and artifacts return empty without error.
 func ReadBDInfo(dbPath string, meta api.UploadSubject) (string, error) {
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") && len(meta.Disc.Items) > 0 {
 		expected, ready := bdInfoCoverage(meta.Disc)
@@ -93,9 +93,8 @@ func ReadDVDVOBMediaInfo(meta api.UploadSubject) string {
 	return api.AggregateDVDVOBMediaInfo(meta.Discs, meta.DVDVOBMediaInfoText)
 }
 
-// ReadBDinfoOrMediaInfo returns BDMV summary text or the first available general
-// or DVD-VOB MediaInfo report. Artifact resolution and read errors are treated
-// as missing text.
+// ReadBDinfoOrMediaInfo returns complete BDMV or DVD-VOB evidence when present,
+// otherwise the general MediaInfo report. Artifact errors are treated as missing text.
 func ReadBDinfoOrMediaInfo(dbPath string, meta api.UploadSubject) string {
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
 		bdinfo, _ := ReadBDInfo(dbPath, meta)

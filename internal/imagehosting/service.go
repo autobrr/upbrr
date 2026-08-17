@@ -457,15 +457,18 @@ func (s *Service) Upload(
 				uploaded.WebURL = uploaded.RawURL
 			}
 			results[idx] = api.UploadedImageLink{
-				DiscID:     candidate.DiscID,
-				ImagePath:  candidate.Path,
-				Host:       normalizedHost,
-				UsageScope: normalizedScope,
-				ImgURL:     strings.TrimSpace(uploaded.ImgURL),
-				RawURL:     strings.TrimSpace(uploaded.RawURL),
-				WebURL:     strings.TrimSpace(uploaded.WebURL),
-				SizeBytes:  candidate.SizeBytes,
-				UploadedAt: time.Now().UTC(),
+				SourcePath:               meta.MediaBinding.SourcePath,
+				PreparedMediaFingerprint: meta.MediaBinding.PreparedMediaFingerprint,
+				PreparedGeneration:       meta.MediaBinding.PreparedGeneration,
+				DiscID:                   candidate.DiscID,
+				ImagePath:                candidate.Path,
+				Host:                     normalizedHost,
+				UsageScope:               normalizedScope,
+				ImgURL:                   strings.TrimSpace(uploaded.ImgURL),
+				RawURL:                   strings.TrimSpace(uploaded.RawURL),
+				WebURL:                   strings.TrimSpace(uploaded.WebURL),
+				SizeBytes:                candidate.SizeBytes,
+				UploadedAt:               time.Now().UTC(),
 			}
 		}
 		if s.repo != nil {
@@ -644,15 +647,18 @@ dispatchLoop:
 			results = append(results, indexedUploadResult{
 				index: idx,
 				link: api.UploadedImageLink{
-					DiscID:     candidate.DiscID,
-					ImagePath:  candidate.Path,
-					Host:       normalizedHost,
-					UsageScope: normalizedScope,
-					ImgURL:     strings.TrimSpace(uploaded.ImgURL),
-					RawURL:     strings.TrimSpace(uploaded.RawURL),
-					WebURL:     strings.TrimSpace(uploaded.WebURL),
-					SizeBytes:  candidate.SizeBytes,
-					UploadedAt: time.Now().UTC(),
+					SourcePath:               meta.MediaBinding.SourcePath,
+					PreparedMediaFingerprint: meta.MediaBinding.PreparedMediaFingerprint,
+					PreparedGeneration:       meta.MediaBinding.PreparedGeneration,
+					DiscID:                   candidate.DiscID,
+					ImagePath:                candidate.Path,
+					Host:                     normalizedHost,
+					UsageScope:               normalizedScope,
+					ImgURL:                   strings.TrimSpace(uploaded.ImgURL),
+					RawURL:                   strings.TrimSpace(uploaded.RawURL),
+					WebURL:                   strings.TrimSpace(uploaded.WebURL),
+					SizeBytes:                candidate.SizeBytes,
+					UploadedAt:               time.Now().UTC(),
 				},
 			})
 			mu.Unlock()

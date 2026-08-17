@@ -958,3 +958,50 @@ func TestWorkflowMediaCommitPropagatesMenuDeletionFailure(t *testing.T) {
 		t.Fatalf("failed menu deletion did not stay pending: %#v", pending)
 	}
 }
+
+func TestRemoveHostedImagesUsesDVDMenuBindingForLegacyLink(t *testing.T) {
+	t.Parallel()
+
+	binding := api.PreparedMediaBinding{
+		SourcePath:               "C:\\source\\release",
+		PreparedMediaFingerprint: "prepared-fingerprint",
+		PreparedGeneration:       1,
+	}
+	artifactID := api.PublicResourceID("hosted-menu")
+	retained := workflowMediaPrivateArtifacts{
+		HostedImages: map[api.PublicResourceID]api.UploadedImageLink{
+			artifactID: {
+				ImagePath: "C:\\private\\menu.png",
+				Host:      "example-host",
+			},
+		},
+		HostedSources: map[api.PublicResourceID]api.PublicResourceID{artifactID: "menu"},
+		dvdMenuSubject: api.DVDMenuSubject{
+			MediaBinding: binding,
+		},
+		commitState: &workflowMediaCommitState{},
+	}
+	snapshot := api.MediaArtifactSet{Artifacts: []api.MediaArtifact{{
+		ID:   artifactID,
+		Kind: api.MediaArtifactHostedImage,
+	}}}
+
+	_, privateResult, err := (workflowMediaBuilder{}).RemoveHostedImages(
+		context.Background(),
+		api.ReleaseRef{},
+		snapshot,
+		retained,
+		[]api.PublicResourceID{artifactID},
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("remove hosted menu image: %v", err)
+	}
+	updated, ok := privateResult.(workflowMediaPrivateArtifacts)
+	if !ok {
+		t.Fatalf("retained media = %#v", privateResult)
+	}
+	if pending := updated.pendingDeletes(); len(pending) != 1 || !pending[0].binding.Equal(binding) {
+		t.Fatalf("pending hosted menu deletion = %#v, want binding %#v", pending, binding)
+	}
+}

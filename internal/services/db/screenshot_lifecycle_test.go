@@ -198,6 +198,11 @@ func TestScreenshotLifecyclePreservesCategoriesAndCleansReferences(t *testing.T)
 	assertFinalSelectionPaths(t, repo, sourcePath, []string{autoNew, manualOld, normalNew})
 	assertNoScreenshotReferences(t, repo, sourcePath, manualNew)
 
+	mismatched := deleted
+	mismatched.Selection.PreparedGeneration++
+	if err := repo.RestoreDiscMenuScreenshot(ctx, binding, mismatched); !errors.Is(err, internalerrors.ErrInvalidInput) {
+		t.Fatalf("restore mismatched prepared binding error = %v, want ErrInvalidInput", err)
+	}
 	if err := repo.RestoreDiscMenuScreenshot(ctx, binding, deleted); err != nil {
 		t.Fatal("restore deleted menu screenshot records failed")
 	}

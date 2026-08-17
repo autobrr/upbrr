@@ -2029,6 +2029,25 @@ func normalizePreparedMediaBinding(binding PreparedMediaBinding) (PreparedMediaB
 	return binding, nil
 }
 
+func requirePreparedMediaWrite(result sql.Result) error {
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("db inspect prepared media write: %w", err)
+	}
+	if rows == 0 {
+		return internalerrors.ErrInvalidInput
+	}
+	return nil
+}
+
+func preparedMediaRecordMatches(binding PreparedMediaBinding, sourcePath string, fingerprint string, generation api.PreparedGeneration) bool {
+	return binding.Equal(PreparedMediaBinding{
+		SourcePath:               sourcePath,
+		PreparedMediaFingerprint: fingerprint,
+		PreparedGeneration:       generation,
+	})
+}
+
 func (r *SQLiteRepository) SaveScreenshot(ctx context.Context, binding PreparedMediaBinding, screenshot Screenshot) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
@@ -2037,15 +2056,40 @@ func (r *SQLiteRepository) SaveScreenshot(ctx context.Context, binding PreparedM
 	if err != nil || strings.TrimSpace(screenshot.ImagePath) == "" {
 		return internalerrors.ErrInvalidInput
 	}
-	_, err = r.execWrite(ctx, "save screenshot", `
-		INSERT OR REPLACE INTO screenshots (
+	result, err := r.execWrite(ctx, "save screenshot", `
+		INSERT INTO screenshots (
 			source_path, prepared_media_fingerprint, prepared_generation, disc_id,
 			image_path, timestamp, frame_number, width, height, purpose, captured_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(image_path) DO UPDATE SET
+			source_path = excluded.source_path,
+			prepared_media_fingerprint = excluded.prepared_media_fingerprint,
+			prepared_generation = excluded.prepared_generation,
+			disc_id = excluded.disc_id,
+			timestamp = excluded.timestamp,
+			frame_number = excluded.frame_number,
+			width = excluded.width,
+			height = excluded.height,
+			purpose = excluded.purpose,
+			captured_at = excluded.captured_at
+		WHERE screenshots.source_path = excluded.source_path AND (
+			(screenshots.prepared_generation = excluded.prepared_generation AND
+			 screenshots.prepared_media_fingerprint = excluded.prepared_media_fingerprint) OR
+			(screenshots.prepared_generation <> excluded.prepared_generation AND EXISTS (
+				SELECT 1 FROM prepared_release_current
+				WHERE source_path = excluded.source_path AND generation = excluded.prepared_generation
+			)) OR
+			(screenshots.prepared_generation < excluded.prepared_generation AND NOT EXISTS (
+				SELECT 1 FROM prepared_release_current WHERE source_path = excluded.source_path
+			))
+		)
 	`, bound.SourcePath, bound.PreparedMediaFingerprint, bound.PreparedGeneration, strings.TrimSpace(screenshot.DiscID),
 		screenshot.ImagePath, screenshot.Timestamp, screenshot.FrameNumber,
 		screenshot.Width, screenshot.Height, screenshot.Purpose, screenshot.CapturedAt.UTC().Format(time.RFC3339Nano))
 	if err != nil {
+		return fmt.Errorf("db save screenshot: %w", err)
+	}
+	if err := requirePreparedMediaWrite(result); err != nil {
 		return fmt.Errorf("db save screenshot: %w", err)
 	}
 	return nil
@@ -2134,7 +2178,8 @@ func (r *SQLiteRepository) DeleteScreenshot(ctx context.Context, binding Prepare
 	return nil
 }
 
-// SaveFinalSelections atomically replaces every final selection for path.
+// SaveFinalSelections atomically replaces every final selection for one exact
+// prepared-media binding.
 // Callers that must preserve menu selections should use
 // [SQLiteRepository.ReplaceNormalFinalSelections].
 func (r *SQLiteRepository) SaveFinalSelections(ctx context.Context, binding PreparedMediaBinding, selections []ScreenshotFinalSelection) error {
@@ -2150,7 +2195,10 @@ func (r *SQLiteRepository) SaveFinalSelections(ctx context.Context, binding Prep
 	}
 
 	if err := r.withWriteTx(ctx, "save final selections", func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM screenshot_final_selections WHERE source_path = ?`, bound.SourcePath); err != nil {
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM screenshot_final_selections
+			WHERE source_path = ? AND prepared_media_fingerprint = ? AND prepared_generation = ?
+		`, bound.SourcePath, bound.PreparedMediaFingerprint, bound.PreparedGeneration); err != nil {
 			return fmt.Errorf("db save final selections: clear: %w", err)
 		}
 
@@ -2159,6 +2207,22 @@ func (r *SQLiteRepository) SaveFinalSelections(ctx context.Context, binding Prep
 				source_path, prepared_media_fingerprint, prepared_generation, disc_id,
 				image_path, sort_order, source, selected_at
 			) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(source_path, image_path) DO UPDATE SET
+				prepared_media_fingerprint = excluded.prepared_media_fingerprint,
+				prepared_generation = excluded.prepared_generation,
+				disc_id = excluded.disc_id,
+				sort_order = excluded.sort_order,
+				source = excluded.source,
+				selected_at = excluded.selected_at
+			WHERE (screenshot_final_selections.prepared_generation = excluded.prepared_generation AND
+				 screenshot_final_selections.prepared_media_fingerprint = excluded.prepared_media_fingerprint) OR
+				(screenshot_final_selections.prepared_generation <> excluded.prepared_generation AND EXISTS (
+					SELECT 1 FROM prepared_release_current
+					WHERE source_path = excluded.source_path AND generation = excluded.prepared_generation
+				)) OR
+				(screenshot_final_selections.prepared_generation < excluded.prepared_generation AND NOT EXISTS (
+					SELECT 1 FROM prepared_release_current WHERE source_path = excluded.source_path
+				))
 		`)
 		if err != nil {
 			return fmt.Errorf("db save final selections: prepare: %w", err)
@@ -2177,7 +2241,7 @@ func (r *SQLiteRepository) SaveFinalSelections(ctx context.Context, binding Prep
 			if selectedAt.IsZero() {
 				selectedAt = time.Now().UTC()
 			}
-			if _, err := stmt.ExecContext(
+			result, err := stmt.ExecContext(
 				ctx,
 				bound.SourcePath,
 				bound.PreparedMediaFingerprint,
@@ -2187,7 +2251,11 @@ func (r *SQLiteRepository) SaveFinalSelections(ctx context.Context, binding Prep
 				selection.Order,
 				source,
 				selectedAt.UTC().Format(time.RFC3339Nano),
-			); err != nil {
+			)
+			if err != nil {
+				return fmt.Errorf("db save final selections: insert: %w", err)
+			}
+			if err := requirePreparedMediaWrite(result); err != nil {
 				return fmt.Errorf("db save final selections: insert: %w", err)
 			}
 		}
@@ -2259,7 +2327,7 @@ func (r *SQLiteRepository) DeleteFinalSelection(ctx context.Context, binding Pre
 }
 
 // ReplaceNormalFinalSelections atomically replaces non-menu final selections
-// for path while preserving manual and automatic disc-menu selections.
+// for one exact binding while preserving its disc-menu selections.
 func (r *SQLiteRepository) ReplaceNormalFinalSelections(
 	ctx context.Context,
 	binding PreparedMediaBinding,
@@ -2491,8 +2559,8 @@ func (r *SQLiteRepository) DeleteDiscMenuScreenshot(
 
 // RestoreDiscMenuScreenshot atomically compensates a completed local-record
 // deletion when the corresponding filesystem deletion could not be finalized.
-// It rejects snapshots whose source, image, menu purpose, or host data do not
-// match path and the deleted selection.
+// It rejects snapshots whose exact binding, image, menu purpose, or host data
+// do not match the deleted selection.
 func (r *SQLiteRepository) RestoreDiscMenuScreenshot(
 	ctx context.Context,
 	binding PreparedMediaBinding,
@@ -2507,29 +2575,54 @@ func (r *SQLiteRepository) RestoreDiscMenuScreenshot(
 	}
 	selection := deleted.Selection
 	selection.ImagePath = strings.TrimSpace(selection.ImagePath)
-	if selection.ImagePath == "" ||
+	if !preparedMediaRecordMatches(
+		bound,
+		selection.SourcePath,
+		selection.PreparedMediaFingerprint,
+		selection.PreparedGeneration,
+	) || selection.ImagePath == "" ||
 		!api.IsDiscMenuSelectionSource(strings.TrimSpace(selection.Source)) {
 		return internalerrors.ErrInvalidInput
 	}
 	if deleted.Screenshot != nil {
-		if strings.TrimSpace(deleted.Screenshot.ImagePath) != selection.ImagePath ||
+		if !preparedMediaRecordMatches(
+			bound,
+			deleted.Screenshot.SourcePath,
+			deleted.Screenshot.PreparedMediaFingerprint,
+			deleted.Screenshot.PreparedGeneration,
+		) || strings.TrimSpace(deleted.Screenshot.ImagePath) != selection.ImagePath ||
 			deleted.Screenshot.Purpose != api.ScreenshotPurposeMenu {
 			return internalerrors.ErrInvalidInput
 		}
 	}
 	for _, uploaded := range deleted.UploadedImages {
-		if strings.TrimSpace(uploaded.ImagePath) != selection.ImagePath ||
+		if !preparedMediaRecordMatches(
+			bound,
+			uploaded.SourcePath,
+			uploaded.PreparedMediaFingerprint,
+			uploaded.PreparedGeneration,
+		) || strings.TrimSpace(uploaded.ImagePath) != selection.ImagePath ||
 			strings.TrimSpace(uploaded.Host) == "" {
 			return internalerrors.ErrInvalidInput
 		}
 	}
 	for _, slot := range deleted.ScreenshotSlots {
-		if strings.TrimSpace(slot.ImagePath) != selection.ImagePath {
+		if !preparedMediaRecordMatches(
+			bound,
+			slot.SourcePath,
+			slot.PreparedMediaFingerprint,
+			slot.PreparedGeneration,
+		) || strings.TrimSpace(slot.ImagePath) != selection.ImagePath {
 			return internalerrors.ErrInvalidInput
 		}
 	}
 	for _, variant := range deleted.ScreenshotSlotVariants {
-		if strings.TrimSpace(variant.Host) == "" {
+		if !preparedMediaRecordMatches(
+			bound,
+			variant.SourcePath,
+			variant.PreparedMediaFingerprint,
+			variant.PreparedGeneration,
+		) || strings.TrimSpace(variant.Host) == "" {
 			return internalerrors.ErrInvalidInput
 		}
 	}
@@ -2663,7 +2756,7 @@ func listDeletedScreenshotSlotsTx(
 }
 
 // restoreScreenshotSlotsTx upserts a compensation snapshot into the caller's
-// transaction, replacing conflicting slot and variant state for path.
+// transaction, replacing conflicting slot and variant state for its binding.
 func restoreScreenshotSlotsTx(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -2691,13 +2784,22 @@ func restoreScreenshotSlotsTx(
 				tracker = excluded.tracker,
 				section_kind = excluded.section_kind,
 				render_in_screenshots = excluded.render_in_screenshots
+			WHERE (screenshot_slots.prepared_generation = excluded.prepared_generation AND
+				 screenshot_slots.prepared_media_fingerprint = excluded.prepared_media_fingerprint) OR
+				(screenshot_slots.prepared_generation <> excluded.prepared_generation AND EXISTS (
+					SELECT 1 FROM prepared_release_current
+					WHERE source_path = excluded.source_path AND generation = excluded.prepared_generation
+				)) OR
+				(screenshot_slots.prepared_generation < excluded.prepared_generation AND NOT EXISTS (
+					SELECT 1 FROM prepared_release_current WHERE source_path = excluded.source_path
+				))
 		`)
 		if err != nil {
 			return fmt.Errorf("db restore disc menu screenshot: prepare slots: %w", err)
 		}
 		defer slotStmt.Close()
 		for _, slot := range slots {
-			if _, err := slotStmt.ExecContext(
+			result, err := slotStmt.ExecContext(
 				ctx,
 				binding.SourcePath,
 				binding.PreparedMediaFingerprint,
@@ -2713,7 +2815,11 @@ func restoreScreenshotSlotsTx(
 				strings.TrimSpace(slot.Tracker),
 				strings.TrimSpace(slot.SectionKind),
 				boolToInt(slot.RenderInScreenshots),
-			); err != nil {
+			)
+			if err != nil {
+				return fmt.Errorf("db restore disc menu screenshot: insert slot: %w", err)
+			}
+			if err := requirePreparedMediaWrite(result); err != nil {
 				return fmt.Errorf("db restore disc menu screenshot: insert slot: %w", err)
 			}
 		}
@@ -2735,6 +2841,15 @@ func restoreScreenshotSlotsTx(
 			raw_url = excluded.raw_url,
 			web_url = excluded.web_url,
 			uploaded_at = excluded.uploaded_at
+		WHERE (screenshot_slot_variants.prepared_generation = excluded.prepared_generation AND
+			 screenshot_slot_variants.prepared_media_fingerprint = excluded.prepared_media_fingerprint) OR
+			(screenshot_slot_variants.prepared_generation <> excluded.prepared_generation AND EXISTS (
+				SELECT 1 FROM prepared_release_current
+				WHERE source_path = excluded.source_path AND generation = excluded.prepared_generation
+			)) OR
+			(screenshot_slot_variants.prepared_generation < excluded.prepared_generation AND NOT EXISTS (
+				SELECT 1 FROM prepared_release_current WHERE source_path = excluded.source_path
+			))
 	`)
 	if err != nil {
 		return fmt.Errorf("db restore disc menu screenshot: prepare slot variants: %w", err)
@@ -2745,7 +2860,7 @@ func restoreScreenshotSlotsTx(
 		if !variant.UploadedAt.IsZero() {
 			uploadedAt = variant.UploadedAt.UTC().Format(time.RFC3339Nano)
 		}
-		if _, err := variantStmt.ExecContext(
+		result, err := variantStmt.ExecContext(
 			ctx,
 			binding.SourcePath,
 			binding.PreparedMediaFingerprint,
@@ -2759,7 +2874,11 @@ func restoreScreenshotSlotsTx(
 			strings.TrimSpace(variant.RawURL),
 			strings.TrimSpace(variant.WebURL),
 			uploadedAt,
-		); err != nil {
+		)
+		if err != nil {
+			return fmt.Errorf("db restore disc menu screenshot: insert slot variant: %w", err)
+		}
+		if err := requirePreparedMediaWrite(result); err != nil {
 			return fmt.Errorf("db restore disc menu screenshot: insert slot variant: %w", err)
 		}
 	}
@@ -2864,7 +2983,17 @@ func upsertMenuScreenshotsTx(ctx context.Context, tx *sql.Tx, binding PreparedMe
 			height = excluded.height,
 			purpose = excluded.purpose,
 			captured_at = excluded.captured_at
-		WHERE screenshots.source_path = excluded.source_path
+		WHERE screenshots.source_path = excluded.source_path AND (
+			(screenshots.prepared_generation = excluded.prepared_generation AND
+			 screenshots.prepared_media_fingerprint = excluded.prepared_media_fingerprint) OR
+			(screenshots.prepared_generation <> excluded.prepared_generation AND EXISTS (
+				SELECT 1 FROM prepared_release_current
+				WHERE source_path = excluded.source_path AND generation = excluded.prepared_generation
+			)) OR
+			(screenshots.prepared_generation < excluded.prepared_generation AND NOT EXISTS (
+				SELECT 1 FROM prepared_release_current WHERE source_path = excluded.source_path
+			))
+		)
 	`)
 	if err != nil {
 		return fmt.Errorf("db save menu screenshots: prepare: %w", err)
@@ -2893,12 +3022,8 @@ func upsertMenuScreenshotsTx(ctx context.Context, tx *sql.Tx, binding PreparedMe
 		if err != nil {
 			return fmt.Errorf("db save menu screenshots: insert: %w", err)
 		}
-		rows, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("db save menu screenshots: rows affected: %w", err)
-		}
-		if rows == 0 {
-			return internalerrors.ErrInvalidInput
+		if err := requirePreparedMediaWrite(result); err != nil {
+			return fmt.Errorf("db save menu screenshots: insert: %w", err)
 		}
 	}
 	return nil
@@ -2940,7 +3065,10 @@ func listFinalSelectionsTx(ctx context.Context, tx *sql.Tx, binding PreparedMedi
 }
 
 func rewriteFinalSelectionsTx(ctx context.Context, tx *sql.Tx, binding PreparedMediaBinding, selections []ScreenshotFinalSelection) error {
-	if _, err := tx.ExecContext(ctx, `DELETE FROM screenshot_final_selections WHERE source_path = ?`, binding.SourcePath); err != nil {
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM screenshot_final_selections
+		WHERE source_path = ? AND prepared_media_fingerprint = ? AND prepared_generation = ?
+	`, binding.SourcePath, binding.PreparedMediaFingerprint, binding.PreparedGeneration); err != nil {
 		return fmt.Errorf("db rewrite final selections: clear: %w", err)
 	}
 	ordered := orderFinalSelections(binding, selections)
@@ -2949,13 +3077,29 @@ func rewriteFinalSelectionsTx(ctx context.Context, tx *sql.Tx, binding PreparedM
 			source_path, prepared_media_fingerprint, prepared_generation, disc_id,
 			image_path, sort_order, source, selected_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(source_path, image_path) DO UPDATE SET
+			prepared_media_fingerprint = excluded.prepared_media_fingerprint,
+			prepared_generation = excluded.prepared_generation,
+			disc_id = excluded.disc_id,
+			sort_order = excluded.sort_order,
+			source = excluded.source,
+			selected_at = excluded.selected_at
+		WHERE (screenshot_final_selections.prepared_generation = excluded.prepared_generation AND
+			 screenshot_final_selections.prepared_media_fingerprint = excluded.prepared_media_fingerprint) OR
+			(screenshot_final_selections.prepared_generation <> excluded.prepared_generation AND EXISTS (
+				SELECT 1 FROM prepared_release_current
+				WHERE source_path = excluded.source_path AND generation = excluded.prepared_generation
+			)) OR
+			(screenshot_final_selections.prepared_generation < excluded.prepared_generation AND NOT EXISTS (
+				SELECT 1 FROM prepared_release_current WHERE source_path = excluded.source_path
+			))
 	`)
 	if err != nil {
 		return fmt.Errorf("db rewrite final selections: prepare: %w", err)
 	}
 	defer stmt.Close()
 	for _, selection := range ordered {
-		if _, err := stmt.ExecContext(
+		result, err := stmt.ExecContext(
 			ctx,
 			binding.SourcePath,
 			binding.PreparedMediaFingerprint,
@@ -2965,7 +3109,11 @@ func rewriteFinalSelectionsTx(ctx context.Context, tx *sql.Tx, binding PreparedM
 			selection.Order,
 			selection.Source,
 			selection.SelectedAt.UTC().Format(time.RFC3339Nano),
-		); err != nil {
+		)
+		if err != nil {
+			return fmt.Errorf("db rewrite final selections: insert: %w", err)
+		}
+		if err := requirePreparedMediaWrite(result); err != nil {
 			return fmt.Errorf("db rewrite final selections: insert: %w", err)
 		}
 	}
@@ -3055,8 +3203,8 @@ func deleteScreenshotReferencesTx(ctx context.Context, tx *sql.Tx, binding Prepa
 	return nil
 }
 
-// ReplaceScreenshotSlots atomically replaces all slots and variants for path;
-// variants absent from slots are deleted.
+// ReplaceScreenshotSlots atomically replaces all slots and variants for one
+// exact binding; variants absent from slots are deleted.
 func (r *SQLiteRepository) ReplaceScreenshotSlots(ctx context.Context, binding PreparedMediaBinding, slots []ScreenshotSlot) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
@@ -3070,10 +3218,16 @@ func (r *SQLiteRepository) ReplaceScreenshotSlots(ctx context.Context, binding P
 	}
 
 	if err := r.withWriteTx(ctx, "replace screenshot slots", func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM screenshot_slot_variants WHERE source_path = ?`, bound.SourcePath); err != nil {
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM screenshot_slot_variants
+			WHERE source_path = ? AND prepared_media_fingerprint = ? AND prepared_generation = ?
+		`, bound.SourcePath, bound.PreparedMediaFingerprint, bound.PreparedGeneration); err != nil {
 			return fmt.Errorf("db replace screenshot slots: clear variants: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM screenshot_slots WHERE source_path = ?`, bound.SourcePath); err != nil {
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM screenshot_slots
+			WHERE source_path = ? AND prepared_media_fingerprint = ? AND prepared_generation = ?
+		`, bound.SourcePath, bound.PreparedMediaFingerprint, bound.PreparedGeneration); err != nil {
 			return fmt.Errorf("db replace screenshot slots: clear slots: %w", err)
 		}
 
@@ -3083,6 +3237,28 @@ func (r *SQLiteRepository) ReplaceScreenshotSlots(ctx context.Context, binding P
 				slot_order, source_kind, original_key, original_url, original_host,
 				image_path, from_description, tracker, section_kind, render_in_screenshots
 			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(source_path, slot_order) DO UPDATE SET
+				prepared_media_fingerprint = excluded.prepared_media_fingerprint,
+				prepared_generation = excluded.prepared_generation,
+				disc_id = excluded.disc_id,
+				source_kind = excluded.source_kind,
+				original_key = excluded.original_key,
+				original_url = excluded.original_url,
+				original_host = excluded.original_host,
+				image_path = excluded.image_path,
+				from_description = excluded.from_description,
+				tracker = excluded.tracker,
+				section_kind = excluded.section_kind,
+				render_in_screenshots = excluded.render_in_screenshots
+			WHERE (screenshot_slots.prepared_generation = excluded.prepared_generation AND
+				 screenshot_slots.prepared_media_fingerprint = excluded.prepared_media_fingerprint) OR
+				(screenshot_slots.prepared_generation <> excluded.prepared_generation AND EXISTS (
+					SELECT 1 FROM prepared_release_current
+					WHERE source_path = excluded.source_path AND generation = excluded.prepared_generation
+				)) OR
+				(screenshot_slots.prepared_generation < excluded.prepared_generation AND NOT EXISTS (
+					SELECT 1 FROM prepared_release_current WHERE source_path = excluded.source_path
+				))
 		`)
 		if err != nil {
 			return fmt.Errorf("db replace screenshot slots: prepare slots: %w", err)
@@ -3094,6 +3270,24 @@ func (r *SQLiteRepository) ReplaceScreenshotSlots(ctx context.Context, binding P
 				source_path, prepared_media_fingerprint, prepared_generation, disc_id,
 				slot_order, host, usage_scope, image_path, img_url, raw_url, web_url, uploaded_at
 			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(source_path, slot_order, usage_scope, host) DO UPDATE SET
+				prepared_media_fingerprint = excluded.prepared_media_fingerprint,
+				prepared_generation = excluded.prepared_generation,
+				disc_id = excluded.disc_id,
+				image_path = excluded.image_path,
+				img_url = excluded.img_url,
+				raw_url = excluded.raw_url,
+				web_url = excluded.web_url,
+				uploaded_at = excluded.uploaded_at
+			WHERE (screenshot_slot_variants.prepared_generation = excluded.prepared_generation AND
+				 screenshot_slot_variants.prepared_media_fingerprint = excluded.prepared_media_fingerprint) OR
+				(screenshot_slot_variants.prepared_generation <> excluded.prepared_generation AND EXISTS (
+					SELECT 1 FROM prepared_release_current
+					WHERE source_path = excluded.source_path AND generation = excluded.prepared_generation
+				)) OR
+				(screenshot_slot_variants.prepared_generation < excluded.prepared_generation AND NOT EXISTS (
+					SELECT 1 FROM prepared_release_current WHERE source_path = excluded.source_path
+				))
 		`)
 		if err != nil {
 			return fmt.Errorf("db replace screenshot slots: prepare variants: %w", err)
@@ -3101,7 +3295,7 @@ func (r *SQLiteRepository) ReplaceScreenshotSlots(ctx context.Context, binding P
 		defer variantStmt.Close()
 
 		for _, slot := range slots {
-			if _, err := slotStmt.ExecContext(
+			result, err := slotStmt.ExecContext(
 				ctx,
 				bound.SourcePath,
 				bound.PreparedMediaFingerprint,
@@ -3117,7 +3311,11 @@ func (r *SQLiteRepository) ReplaceScreenshotSlots(ctx context.Context, binding P
 				strings.TrimSpace(slot.Tracker),
 				strings.TrimSpace(slot.SectionKind),
 				boolToInt(slot.RenderInScreenshots),
-			); err != nil {
+			)
+			if err != nil {
+				return fmt.Errorf("db replace screenshot slots: insert slot %d: %w", slot.SlotOrder, err)
+			}
+			if err := requirePreparedMediaWrite(result); err != nil {
 				return fmt.Errorf("db replace screenshot slots: insert slot %d: %w", slot.SlotOrder, err)
 			}
 			for _, variant := range slot.Variants {
@@ -3125,7 +3323,7 @@ func (r *SQLiteRepository) ReplaceScreenshotSlots(ctx context.Context, binding P
 				if !variant.UploadedAt.IsZero() {
 					uploadedAt = variant.UploadedAt.UTC().Format(time.RFC3339Nano)
 				}
-				if _, err := variantStmt.ExecContext(
+				result, err := variantStmt.ExecContext(
 					ctx,
 					bound.SourcePath,
 					bound.PreparedMediaFingerprint,
@@ -3139,7 +3337,11 @@ func (r *SQLiteRepository) ReplaceScreenshotSlots(ctx context.Context, binding P
 					strings.TrimSpace(variant.RawURL),
 					strings.TrimSpace(variant.WebURL),
 					uploadedAt,
-				); err != nil {
+				)
+				if err != nil {
+					return fmt.Errorf("db replace screenshot slots: insert variant slot=%d host=%s: %w", slot.SlotOrder, variant.Host, err)
+				}
+				if err := requirePreparedMediaWrite(result); err != nil {
 					return fmt.Errorf("db replace screenshot slots: insert variant slot=%d host=%s: %w", slot.SlotOrder, variant.Host, err)
 				}
 			}
@@ -3286,6 +3488,15 @@ func (r *SQLiteRepository) UpsertScreenshotSlotVariants(
 				raw_url = excluded.raw_url,
 				web_url = excluded.web_url,
 				uploaded_at = excluded.uploaded_at
+			WHERE (screenshot_slot_variants.prepared_generation = excluded.prepared_generation AND
+				 screenshot_slot_variants.prepared_media_fingerprint = excluded.prepared_media_fingerprint) OR
+				(screenshot_slot_variants.prepared_generation <> excluded.prepared_generation AND EXISTS (
+					SELECT 1 FROM prepared_release_current
+					WHERE source_path = excluded.source_path AND generation = excluded.prepared_generation
+				)) OR
+				(screenshot_slot_variants.prepared_generation < excluded.prepared_generation AND NOT EXISTS (
+					SELECT 1 FROM prepared_release_current WHERE source_path = excluded.source_path
+				))
 		`)
 		if err != nil {
 			return fmt.Errorf("db upsert screenshot slot variants: prepare: %w", err)
@@ -3297,7 +3508,7 @@ func (r *SQLiteRepository) UpsertScreenshotSlotVariants(
 			if !variant.UploadedAt.IsZero() {
 				uploadedAt = variant.UploadedAt.UTC().Format(time.RFC3339Nano)
 			}
-			if _, err := stmt.ExecContext(
+			result, err := stmt.ExecContext(
 				ctx,
 				bound.SourcePath,
 				bound.PreparedMediaFingerprint,
@@ -3311,7 +3522,11 @@ func (r *SQLiteRepository) UpsertScreenshotSlotVariants(
 				strings.TrimSpace(variant.RawURL),
 				strings.TrimSpace(variant.WebURL),
 				uploadedAt,
-			); err != nil {
+			)
+			if err != nil {
+				return fmt.Errorf("db upsert screenshot slot variants: slot=%d host=%s: %w", variant.SlotOrder, variant.Host, err)
+			}
+			if err := requirePreparedMediaWrite(result); err != nil {
 				return fmt.Errorf("db upsert screenshot slot variants: slot=%d host=%s: %w", variant.SlotOrder, variant.Host, err)
 			}
 		}
@@ -3323,8 +3538,8 @@ func (r *SQLiteRepository) UpsertScreenshotSlotVariants(
 }
 
 // SaveUploadedImages upserts upload records without deleting omitted images.
-// path and host override their per-image fields; empty usage scopes default to
-// "global" and zero upload times default to the current UTC time.
+// binding and host override their per-image fields; empty usage scopes default
+// to "global" and zero upload times default to the current UTC time.
 func (r *SQLiteRepository) SaveUploadedImages(
 	ctx context.Context,
 	binding PreparedMediaBinding,
@@ -3383,6 +3598,15 @@ func upsertUploadedImagesTx(ctx context.Context, tx *sql.Tx, binding PreparedMed
 			web_url = excluded.web_url,
 			size_bytes = excluded.size_bytes,
 			uploaded_at = excluded.uploaded_at
+		WHERE (uploaded_images.prepared_generation = excluded.prepared_generation AND
+			 uploaded_images.prepared_media_fingerprint = excluded.prepared_media_fingerprint) OR
+			(uploaded_images.prepared_generation <> excluded.prepared_generation AND EXISTS (
+				SELECT 1 FROM prepared_release_current
+				WHERE source_path = excluded.source_path AND generation = excluded.prepared_generation
+			)) OR
+			(uploaded_images.prepared_generation < excluded.prepared_generation AND NOT EXISTS (
+				SELECT 1 FROM prepared_release_current WHERE source_path = excluded.source_path
+			))
 	`)
 	if err != nil {
 		return fmt.Errorf("db save uploaded images: prepare: %w", err)
@@ -3401,7 +3625,7 @@ func upsertUploadedImagesTx(ctx context.Context, tx *sql.Tx, binding PreparedMed
 		if uploadedAt.IsZero() {
 			uploadedAt = time.Now().UTC()
 		}
-		if _, err := stmt.ExecContext(
+		result, err := stmt.ExecContext(
 			ctx,
 			binding.SourcePath,
 			binding.PreparedMediaFingerprint,
@@ -3415,7 +3639,11 @@ func upsertUploadedImagesTx(ctx context.Context, tx *sql.Tx, binding PreparedMed
 			strings.TrimSpace(image.WebURL),
 			image.SizeBytes,
 			uploadedAt.UTC().Format(time.RFC3339Nano),
-		); err != nil {
+		)
+		if err != nil {
+			return fmt.Errorf("db save uploaded images: insert: %w", err)
+		}
+		if err := requirePreparedMediaWrite(result); err != nil {
 			return fmt.Errorf("db save uploaded images: insert: %w", err)
 		}
 	}

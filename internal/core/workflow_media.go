@@ -1310,6 +1310,9 @@ func (b workflowMediaBuilder) RemoveHostedImages(
 			binding = retained.screenshotSubject.MediaBinding
 		}
 		if !binding.Valid() {
+			binding = retained.dvdMenuSubject.MediaBinding
+		}
+		if !binding.Valid() {
 			return api.MediaArtifactSet{}, nil, errors.New("workflow hosted image binding is unavailable")
 		}
 		retained.commitState.pending = append(retained.commitState.pending, workflowMediaPendingDelete{

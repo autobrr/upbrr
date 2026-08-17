@@ -353,6 +353,13 @@ func TestUploadImagesSuccess(t *testing.T) {
 	if result[0].UsageScope != "tracker:HDB" {
 		t.Fatalf("expected usage scope tracker:HDB, got %q", result[0].UsageScope)
 	}
+	if got := (api.PreparedMediaBinding{
+		SourcePath:               result[0].SourcePath,
+		PreparedMediaFingerprint: result[0].PreparedMediaFingerprint,
+		PreparedGeneration:       result[0].PreparedGeneration,
+	}); !got.Equal(meta.MediaBinding) {
+		t.Fatalf("upload result binding = %#v, want %#v", got, meta.MediaBinding)
+	}
 	if repo.savedHost != "test" || repo.savedPath != "source" {
 		t.Fatalf("expected repo save for test/source, got %q/%q", repo.savedHost, repo.savedPath)
 	}
