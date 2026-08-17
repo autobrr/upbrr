@@ -108,14 +108,12 @@ func (r *recordingRepo) SaveScreenshot(context.Context, api.Screenshot) error { 
 func (r *recordingRepo) ListScreenshotsByPath(context.Context, api.PreparedMediaBinding) ([]api.Screenshot, error) {
 	return append([]api.Screenshot(nil), r.screens...), nil
 }
-func (r *recordingRepo) DeleteScreenshot(context.Context, string) error { return nil }
 func (r *recordingRepo) SaveFinalSelections(context.Context, api.PreparedMediaBinding, []api.ScreenshotFinalSelection) error {
 	return nil
 }
 func (r *recordingRepo) ListFinalSelections(context.Context, api.PreparedMediaBinding) ([]api.ScreenshotFinalSelection, error) {
 	return append([]api.ScreenshotFinalSelection(nil), r.selections...), nil
 }
-func (r *recordingRepo) DeleteFinalSelection(context.Context, string) error { return nil }
 func (r *recordingRepo) ReplaceScreenshotSlots(context.Context, api.PreparedMediaBinding, []api.ScreenshotSlot) error {
 	return nil
 }

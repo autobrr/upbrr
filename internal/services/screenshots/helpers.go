@@ -651,6 +651,12 @@ func loadBDInfo(tmpRoot string, meta api.ScreenshotSubject) (*discparse.BDInfo, 
 	if err != nil {
 		return nil, fmt.Errorf("screenshots: %w", err)
 	}
+	if strings.TrimSpace(meta.DiscID) != "" {
+		tmpDir, err = paths.DiscTempDir(tmpDir, meta.DiscID)
+		if err != nil {
+			return nil, fmt.Errorf("screenshots: %w", err)
+		}
+	}
 	path := paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylistFor(meta.SelectedBDMVPlaylists))
 	if strings.TrimSpace(path) == "" {
 		return nil, nil

@@ -745,15 +745,60 @@ func TestResolveBDMVPlaylistSelectionRequiredIncludesCandidates(t *testing.T) {
 	}
 }
 
+func TestResolveBDMVPlaylistSelectionRejectsDiscWithoutPlaylists(t *testing.T) {
+	originalDiscover := discoverBDMVPlaylists
+	t.Cleanup(func() { discoverBDMVPlaylists = originalDiscover })
+	discoverBDMVPlaylists = func(context.Context, string) ([]filesystem.PlaylistInfo, error) { return nil, nil }
+
+	_, err := (&Service{repo: &fakeRepo{}}).resolveBDMVPlaylistSelection(context.Background(), preparationstate.Request{
+		Layout: sourcelayout.Layout{
+			SourcePath: "Collection",
+			DiscType:   "BDMV",
+			Discs: []sourcelayout.DiscResource{{
+				ID: "disc-test",
+ Name: "Disc 1",
+ Type: "BDMV",
+ Root: filepath.Join("Collection", "Disc 1", "BDMV"),
+			}},
+		},
+	})
+	if !errors.Is(err, internalerrors.ErrInvalidInput) {
+		t.Fatalf("expected invalid input, got %v", err)
+	}
+	var required *api.PlaylistSelectionRequiredError
+	if errors.As(err, &required) {
+		t.Fatalf("empty disc produced unsatisfiable selection action: %#v", required)
+	}
+}
+
+func TestPersistDiscDVDMediaInfoKeepsSingleDiscSourceIdentity(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubRepo{}
+	sourcePath := filepath.Join("Collection", "Example.Release.2026")
+	err := (&Service{repo: repo}).persistDiscDVDMediaInfo(
+		context.Background(),
+		preparationstate.State{SourcePath: sourcePath},
+		preparationstate.DiscResource{Root: filepath.Join(sourcePath, "VIDEO_TS")},
+		true,
+	)
+	if err != nil {
+		t.Fatalf("persist DVD MediaInfo: %v", err)
+	}
+	if repo.savedDVD.SourcePath != sourcePath {
+		t.Fatalf("saved source path = %q, want %q", repo.savedDVD.SourcePath, sourcePath)
+	}
+}
+
 func TestResolveBDMVPlaylistSelectionKeepsDuplicateBasenamesDiscScoped(t *testing.T) {
 	originalDiscover := discoverBDMVPlaylists
 	t.Cleanup(func() { discoverBDMVPlaylists = originalDiscover })
 	discoverBDMVPlaylists = func(_ context.Context, _ string) ([]filesystem.PlaylistInfo, error) {
 		return []filesystem.PlaylistInfo{{
-File: "00001.MPLS",
- Duration: 5400,
- Score: 100,
-}}, nil
+			File:     "00001.MPLS",
+			Duration: 5400,
+			Score:    100,
+		}}, nil
 	}
 
 	repo := &stubRepo{}
@@ -767,17 +812,17 @@ File: "00001.MPLS",
 			DiscType:   "BDMV",
 			Discs: []sourcelayout.DiscResource{
 				{
-ID: "disc-a",
- Name: "Disc 1",
- Type: "BDMV",
- Root: filepath.Join("Collection", "Disc 1", "BDMV"),
-},
+					ID:   "disc-a",
+					Name: "Disc 1",
+					Type: "BDMV",
+					Root: filepath.Join("Collection", "Disc 1", "BDMV"),
+				},
 				{
-ID: "disc-b",
- Name: "Disc 2",
- Type: "BDMV",
- Root: filepath.Join("Collection", "Disc 2", "BDMV"),
-},
+					ID:   "disc-b",
+					Name: "Disc 2",
+					Type: "BDMV",
+					Root: filepath.Join("Collection", "Disc 2", "BDMV"),
+				},
 			},
 		},
 		SourceFingerprint: "inventory-fingerprint",
@@ -818,10 +863,10 @@ func TestCollectDiscEvidenceNamespacesDuplicatePlaylists(t *testing.T) {
 	}
 	discoverBDMVPlaylists = func(_ context.Context, _ string) ([]filesystem.PlaylistInfo, error) {
 		return []filesystem.PlaylistInfo{{
-File: "00001.MPLS",
- Duration: 5400,
- Score: 100,
-}}, nil
+			File:     "00001.MPLS",
+			Duration: 5400,
+			Score:    100,
+		}}, nil
 	}
 	parseBDMVPlaylist = func(_ string) (float64, []filesystem.PlaylistItem, error) {
 		return 5400, []filesystem.PlaylistItem{{File: "00001.m2ts", Size: 100}}, nil
@@ -858,10 +903,10 @@ File: "00001.MPLS",
 		WithMediaInfoExporter(&stubMediaInfo{}),
 	)
 	meta := preparationstate.State{
-SourcePath: sourcePath,
- Paths: []string{sourcePath},
- DiscType: "BDMV",
-}
+		SourcePath: sourcePath,
+		Paths:      []string{sourcePath},
+		DiscType:   "BDMV",
+	}
 	err = service.collectDiscEvidence(context.Background(), preparationstate.Request{
 		Input: api.PrepareInput{SourcePath: sourcePath, Instructions: api.ReleaseFactInstructions{Playlist: api.PlaylistInstruction{
 			Set: true, Selected: selected,
@@ -899,23 +944,23 @@ func TestResolveBDMVPlaylistSelectionRejectsIncompleteMultiDiscAtomically(t *tes
 			Selected: []string{"disc-a:00001.MPLS"},
 		}}},
 		Layout: sourcelayout.Layout{
-SourcePath: "Collection",
- DiscType: "BDMV",
- Discs: []sourcelayout.DiscResource{
-			{
-ID: "disc-a",
- Name: "Disc 1",
- Type: "BDMV",
- Root: filepath.Join("Collection", "Disc 1", "BDMV"),
-},
-			{
-ID: "disc-b",
- Name: "Disc 2",
- Type: "BDMV",
- Root: filepath.Join("Collection", "Disc 2", "BDMV"),
-},
+			SourcePath: "Collection",
+			DiscType:   "BDMV",
+			Discs: []sourcelayout.DiscResource{
+				{
+					ID:   "disc-a",
+					Name: "Disc 1",
+					Type: "BDMV",
+					Root: filepath.Join("Collection", "Disc 1", "BDMV"),
+				},
+				{
+					ID:   "disc-b",
+					Name: "Disc 2",
+					Type: "BDMV",
+					Root: filepath.Join("Collection", "Disc 2", "BDMV"),
+				},
+			},
 		},
-},
 		SourceFingerprint: "inventory-fingerprint",
 	})
 	var invalid *api.InvalidPlaylistSelectionError
@@ -942,23 +987,23 @@ func TestResolveBDMVPlaylistSelectionRejectsStaleAndMultiDiscLegacyState(t *test
 			}}
 			_, err := (&Service{repo: repo}).resolveBDMVPlaylistSelection(context.Background(), preparationstate.Request{
 				Layout: sourcelayout.Layout{
-SourcePath: "Collection",
- DiscType: "BDMV",
- Discs: []sourcelayout.DiscResource{
-					{
-ID: "disc-a",
- Name: "Disc 1",
- Type: "BDMV",
- Root: filepath.Join("Collection", "Disc 1", "BDMV"),
-},
-					{
-ID: "disc-b",
- Name: "Disc 2",
- Type: "BDMV",
- Root: filepath.Join("Collection", "Disc 2", "BDMV"),
-},
+					SourcePath: "Collection",
+					DiscType:   "BDMV",
+					Discs: []sourcelayout.DiscResource{
+						{
+							ID:   "disc-a",
+							Name: "Disc 1",
+							Type: "BDMV",
+							Root: filepath.Join("Collection", "Disc 1", "BDMV"),
+						},
+						{
+							ID:   "disc-b",
+							Name: "Disc 2",
+							Type: "BDMV",
+							Root: filepath.Join("Collection", "Disc 2", "BDMV"),
+						},
+					},
 				},
-},
 				SourceFingerprint: "current-inventory",
 			})
 			var required *api.PlaylistSelectionRequiredError
@@ -1438,6 +1483,7 @@ func TestPrepareBDMVPartialCacheRescansWhenConfirmed(t *testing.T) {
 
 type stubRepo struct {
 	saved                      db.FileMetadata
+	savedDVD                   db.DVDMediaInfo
 	existing                   db.FileMetadata
 	releaseNameOverrides       db.ReleaseNameOverrides
 	releaseNameOverridesErr    error
@@ -1518,7 +1564,8 @@ func (s *stubRepo) GetDVDMediaInfo(context.Context, string) (db.DVDMediaInfo, er
 	return db.DVDMediaInfo{}, internalerrors.ErrNotFound
 }
 
-func (s *stubRepo) SaveDVDMediaInfo(context.Context, db.DVDMediaInfo) error {
+func (s *stubRepo) SaveDVDMediaInfo(_ context.Context, info db.DVDMediaInfo) error {
+	s.savedDVD = info
 	return nil
 }
 

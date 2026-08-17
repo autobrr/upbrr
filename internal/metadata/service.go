@@ -849,6 +849,7 @@ func (s *Service) persistDiscDVDMediaInfo(
 	disc preparationstate.DiscResource,
 	singleDisc bool,
 ) error {
+	primarySourcePath := meta.SourcePath
 	meta.SourcePath = disc.Root
 	meta.MediaInfoJSONPath = disc.MediaInfoJSONPath
 	meta.MediaInfoTextPath = disc.MediaInfoTextPath
@@ -859,7 +860,7 @@ func (s *Service) persistDiscDVDMediaInfo(
 	meta.DVDVOBMediaInfoText = disc.DVDVOBMediaInfoText
 	details := extractDVDMediaInfo(meta)
 	if singleDisc {
-		details.SourcePath = meta.Paths[0]
+		details.SourcePath = primarySourcePath
 	} else {
 		details.SourcePath = disc.Root
 	}

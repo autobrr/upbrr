@@ -39,43 +39,43 @@ func TestResolveSourceKinds(t *testing.T) {
 		discRoot string
 	}{
 		{
-name: "file",
- path: filePath,
- kind: KindFile,
-},
+			name: "file",
+			path: filePath,
+			kind: KindFile,
+		},
 		{
-name: "ordinary directory",
- path: ordinary,
- kind: KindDirectory,
-},
+			name: "ordinary directory",
+			path: ordinary,
+			kind: KindDirectory,
+		},
 		{
-name: "disc parent",
- path: discParent + string(filepath.Separator),
- kind: KindDiscParent,
- discType: "BDMV",
- discRoot: bdmvRoot,
-},
+			name:     "disc parent",
+			path:     discParent + string(filepath.Separator),
+			kind:     KindDiscParent,
+			discType: "BDMV",
+			discRoot: bdmvRoot,
+		},
 		{
-name: "direct BDMV root",
- path: bdmvRoot,
- kind: KindDiscRoot,
- discType: "BDMV",
- discRoot: bdmvRoot,
-},
+			name:     "direct BDMV root",
+			path:     bdmvRoot,
+			kind:     KindDiscRoot,
+			discType: "BDMV",
+			discRoot: bdmvRoot,
+		},
 		{
-name: "DVD parent",
- path: dvdParent,
- kind: KindDiscParent,
- discType: "DVD",
- discRoot: dvdRoot,
-},
+			name:     "DVD parent",
+			path:     dvdParent,
+			kind:     KindDiscParent,
+			discType: "DVD",
+			discRoot: dvdRoot,
+		},
 		{
-name: "direct DVD root",
- path: dvdRoot,
- kind: KindDiscRoot,
- discType: "DVD",
- discRoot: dvdRoot,
-},
+			name:     "direct DVD root",
+			path:     dvdRoot,
+			kind:     KindDiscRoot,
+			discType: "DVD",
+			discRoot: dvdRoot,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -180,20 +180,20 @@ func TestResolveRejectsMixedAndUnsupportedDiscCollections(t *testing.T) {
 		want    error
 	}{
 		{
-name: "mixed BDMV and DVD",
- markers: []string{"Disc 1/BDMV", "Disc 2/VIDEO_TS"},
- want: ErrMixedDiscCollection,
-},
+			name:    "mixed BDMV and DVD",
+			markers: []string{"Disc 1/BDMV", "Disc 2/VIDEO_TS"},
+			want:    ErrMixedDiscCollection,
+		},
 		{
-name: "nested HD DVD",
- markers: []string{"Disc 1/HVDVD_TS"},
- want: ErrUnsupportedHDDVDCollection,
-},
+			name:    "nested HD DVD",
+			markers: []string{"Disc 1/HVDVD_TS"},
+			want:    ErrUnsupportedHDDVDCollection,
+		},
 		{
-name: "multiple HD DVD",
- markers: []string{"HVDVD_TS", "Disc 2/HVDVD_TS"},
- want: ErrUnsupportedHDDVDCollection,
-},
+			name:    "multiple HD DVD",
+			markers: []string{"HVDVD_TS", "Disc 2/HVDVD_TS"},
+			want:    ErrUnsupportedHDDVDCollection,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -251,12 +251,22 @@ func TestResolveRejectsDirectorySymlinksWithoutTraversal(t *testing.T) {
 }
 
 func TestResolveRejectsCanonicalIdentityCollisions(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	root := t.TempDir()
+	upperRoot := filepath.Join(root, "Disc")
+	lowerRoot := filepath.Join(root, "disc")
+	mkdirTest(t, filepath.Join(upperRoot, "BDMV"))
+	mkdirTest(t, filepath.Join(lowerRoot, "bdmv"))
+	upperInfo, err := os.Stat(upperRoot)
+	if err != nil {
+		t.Fatalf("stat upper-case disc: %v", err)
+	}
+	lowerInfo, err := os.Stat(lowerRoot)
+	if err != nil {
+		t.Fatalf("stat lower-case disc: %v", err)
+	}
+	if os.SameFile(upperInfo, lowerInfo) {
 		t.Skip("case-insensitive filesystem cannot create colliding marker paths")
 	}
-	root := t.TempDir()
-	mkdirTest(t, filepath.Join(root, "Disc", "BDMV"))
-	mkdirTest(t, filepath.Join(root, "disc", "bdmv"))
 	if _, err := Resolve(context.Background(), root); !errors.Is(err, ErrConflictingDiscLayout) {
 		t.Fatalf("collision error = %v", err)
 	}

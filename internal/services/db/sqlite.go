@@ -3168,35 +3168,41 @@ func orderFinalSelections(binding PreparedMediaBinding, selections []ScreenshotF
 }
 
 func deleteScreenshotReferencesTx(ctx context.Context, tx *sql.Tx, binding PreparedMediaBinding, imagePath string) error {
-	queries := []string{
-		`DELETE FROM screenshot_slot_variants
+	queries := []struct {
+		sql  string
+		args []any
+	}{
+		{
+			sql: `DELETE FROM screenshot_slot_variants
 		 WHERE source_path = ? AND prepared_media_fingerprint = ? AND prepared_generation = ? AND (
 			image_path = ? OR slot_order IN (
 				SELECT slot_order FROM screenshot_slots
 				WHERE source_path = ? AND prepared_media_fingerprint = ? AND prepared_generation = ? AND image_path = ?
 			)
-		)`,
-		`DELETE FROM screenshot_slots
+)`,
+			args: []any{
+				binding.SourcePath, binding.PreparedMediaFingerprint, binding.PreparedGeneration, imagePath,
+				binding.SourcePath, binding.PreparedMediaFingerprint, binding.PreparedGeneration, imagePath,
+			},
+		},
+		{
+			sql: `DELETE FROM screenshot_slots
 		 WHERE source_path = ? AND prepared_media_fingerprint = ? AND prepared_generation = ? AND image_path = ?`,
-		`DELETE FROM uploaded_images
+			args: []any{binding.SourcePath, binding.PreparedMediaFingerprint, binding.PreparedGeneration, imagePath},
+		},
+		{
+			sql: `DELETE FROM uploaded_images
 		 WHERE source_path = ? AND prepared_media_fingerprint = ? AND prepared_generation = ? AND image_path = ?`,
-		`DELETE FROM screenshots
+			args: []any{binding.SourcePath, binding.PreparedMediaFingerprint, binding.PreparedGeneration, imagePath},
+		},
+		{
+			sql: `DELETE FROM screenshots
 		 WHERE source_path = ? AND prepared_media_fingerprint = ? AND prepared_generation = ? AND image_path = ? AND purpose = ?`,
+			args: []any{binding.SourcePath, binding.PreparedMediaFingerprint, binding.PreparedGeneration, imagePath, api.ScreenshotPurposeMenu},
+		},
 	}
-	for index, query := range queries {
-		var args []any
-		switch index {
-		case 0:
-			args = []any{
-				binding.SourcePath, binding.PreparedMediaFingerprint, binding.PreparedGeneration, imagePath,
-				binding.SourcePath, binding.PreparedMediaFingerprint, binding.PreparedGeneration, imagePath,
-			}
-		case 1, 2:
-			args = []any{binding.SourcePath, binding.PreparedMediaFingerprint, binding.PreparedGeneration, imagePath}
-		case 3:
-			args = []any{binding.SourcePath, binding.PreparedMediaFingerprint, binding.PreparedGeneration, imagePath, api.ScreenshotPurposeMenu}
-		}
-		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+	for _, query := range queries {
+		if _, err := tx.ExecContext(ctx, query.sql, query.args...); err != nil {
 			return fmt.Errorf("db delete screenshot references: %w", err)
 		}
 	}

@@ -142,9 +142,7 @@ func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count in
 		}
 		plan.SuggestedSelections = append(plan.SuggestedSelections, discPlan.SuggestedSelections...)
 		plan.ExistingScreenshots = append(plan.ExistingScreenshots, discPlan.ExistingScreenshots...)
-		plan.ExistingTrackerScreenshots = append(plan.ExistingTrackerScreenshots, discPlan.ExistingTrackerScreenshots...)
 		plan.FinalSelections = append(plan.FinalSelections, discPlan.FinalSelections...)
-		plan.TrackerImageLinks = append(plan.TrackerImageLinks, discPlan.TrackerImageLinks...)
 		plan.PreviewImages = append(plan.PreviewImages, discPlan.PreviewImages...)
 		plan.RequiresManualFrames = plan.RequiresManualFrames || discPlan.RequiresManualFrames
 		plan.Discs = append(plan.Discs, api.ScreenshotDiscPlan{

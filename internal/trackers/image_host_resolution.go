@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	"github.com/autobrr/upbrr/internal/logging"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
@@ -90,6 +91,9 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 	skipUpload := imageHostUploadSkipped(meta)
 	if repo == nil || strings.TrimSpace(meta.SourcePath) == "" {
 		return descriptionImageHostResolution{feedback: feedback}, nil
+	}
+	if meta.MediaBinding != (api.PreparedMediaBinding{}) && !meta.MediaBinding.Valid() {
+		return descriptionImageHostResolution{}, internalerrors.ErrInvalidInput
 	}
 
 	slots, err := screenshotSlotsForImageHostResolution(ctx, tracker, meta, repo, logger, preloaded, registry, skipUpload)
@@ -358,29 +362,7 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 }
 
 func imageHostingSubject(meta api.UploadSubject) api.ImageHostingSubject {
-	galleryName := ""
-	for _, candidate := range []string{
-		meta.ReleaseName,
-		meta.ReleaseNameNoTag,
-		meta.Release.Title,
-		meta.Filename,
-		filepath.Base(meta.SourcePath),
-	} {
-		if trimmed := strings.TrimSpace(candidate); trimmed != "" {
-			galleryName = trimmed
-			break
-		}
-	}
-	discs := make([]api.ImageHostingDiscSubject, 0, len(meta.Discs))
-	for _, disc := range meta.Discs {
-		discs = append(discs, api.ImageHostingDiscSubject{ID: disc.ID, Name: disc.Name})
-	}
-	return api.ImageHostingSubject{
-		MediaBinding: meta.MediaBinding,
-		SourcePath:   meta.SourcePath,
-		GalleryName:  galleryName,
-		Discs:        discs,
-	}
+	return api.NewImageHostingSubject(meta)
 }
 
 func firstPreferredDescriptionImageHost(hosts []string) string {
@@ -593,7 +575,7 @@ func cleanupUploadedImages(
 		seen[key] = struct{}{}
 		if err := repo.DeleteUploadedImage(ctx, binding, pathValue, hostValue); err != nil && logger != nil {
 			logger.Warnf(
-				"trackers: failed to roll back uploaded image tracker=%s host=%s path=%s: %v",
+				"trackers: failed to roll back uploaded image source_path=%s host=%s path=%s: %v",
 				strings.TrimSpace(binding.SourcePath),
 				hostValue,
 				pathValue,

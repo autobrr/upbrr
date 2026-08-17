@@ -12,8 +12,50 @@ import (
 	"strings"
 	"testing"
 
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestLoadBDInfoUsesDiscScopedArtifactDirectory(t *testing.T) {
+	t.Parallel()
+
+	tmpRoot := t.TempDir()
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026")
+	release := api.ReleaseInfo{Title: "Example Release 2026"}
+	releaseTemp, _, err := paths.ReleaseTempDirFor(tmpRoot, sourcePath, release)
+	if err != nil {
+		t.Fatalf("release temp dir: %v", err)
+	}
+	discID := "disc-" + strings.Repeat("a", 64)
+	discTemp, err := paths.DiscTempDir(releaseTemp, discID)
+	if err != nil {
+		t.Fatalf("disc temp dir: %v", err)
+	}
+	if err := os.MkdirAll(discTemp, 0o700); err != nil {
+		t.Fatalf("mkdir disc temp: %v", err)
+	}
+	if err := os.WriteFile(paths.BDMVSummaryPath(discTemp, "00001.MPLS"), []byte("Playlist: 00001.MPLS\n"), 0o600); err != nil {
+		t.Fatalf("write disc summary: %v", err)
+	}
+	discRoot := filepath.Join(sourcePath, "Disc 1", "BDMV")
+
+	info, err := loadBDInfo(tmpRoot, api.ScreenshotSubject{
+		SourcePath: sourcePath,
+		DiscType:   "BDMV",
+		DiscID:     discID,
+		DiscRoot:   discRoot,
+		Release:    release,
+		SelectedBDMVPlaylists: []api.PlaylistInfo{{
+			File: "00001.MPLS",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("load BDInfo: %v", err)
+	}
+	if info == nil || info.Path != discRoot {
+		t.Fatalf("disc BDInfo = %#v", info)
+	}
+}
 
 func TestBuildScreenshotSelections(t *testing.T) {
 	meta := api.ScreenshotSubject{}

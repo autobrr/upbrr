@@ -309,7 +309,7 @@ func TestCaptureDistributesCollectionCapAcrossDVDs(t *testing.T) {
 
 	service := newService(api.NopLogger{}, t.TempDir(), repo, &capabilityRunner{}, func() (string, error) { return executable, nil },
 		func(_ context.Context, root string, _ render.Runner, _ string, _ engine.Options) (engine.Result, error) {
-			if root != videoTSA && root != videoTSB {
+			if !sameExistingPath(t, root, videoTSA) && !sameExistingPath(t, root, videoTSB) {
 				t.Fatalf("capture root = %q", root)
 			}
 			return engine.Result{
@@ -370,10 +370,10 @@ func TestCaptureRedistributesQuotaPastEmptyDVD(t *testing.T) {
 
 	service := newService(api.NopLogger{}, t.TempDir(), repo, &capabilityRunner{}, func() (string, error) { return executable, nil },
 		func(_ context.Context, root string, _ render.Runner, _ string, _ engine.Options) (engine.Result, error) {
-			if root == videoTSA {
+			if sameExistingPath(t, root, videoTSA) {
 				return engine.Result{}, nil
 			}
-			if root != videoTSB {
+			if !sameExistingPath(t, root, videoTSB) {
 				t.Fatalf("capture root = %q", root)
 			}
 			return engine.Result{Captures: []engine.Capture{
@@ -768,6 +768,19 @@ func solidImage(fill color.NRGBA) *image.NRGBA {
 		}
 	}
 	return result
+}
+
+func sameExistingPath(t *testing.T, left string, right string) bool {
+	t.Helper()
+	leftInfo, err := os.Stat(left)
+	if err != nil {
+		t.Fatalf("stat path %q: %v", left, err)
+	}
+	rightInfo, err := os.Stat(right)
+	if err != nil {
+		t.Fatalf("stat path %q: %v", right, err)
+	}
+	return os.SameFile(leftInfo, rightInfo)
 }
 
 func writePNG(t *testing.T, path string, fill color.NRGBA) {

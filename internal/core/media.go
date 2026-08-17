@@ -95,29 +95,7 @@ func newMediaModule(
 }
 
 func imageHostingSubject(meta api.UploadSubject) api.ImageHostingSubject {
-	galleryName := ""
-	for _, candidate := range []string{
-		meta.ReleaseName,
-		meta.ReleaseNameNoTag,
-		meta.Release.Title,
-		meta.Filename,
-		filepath.Base(meta.SourcePath),
-	} {
-		if trimmed := strings.TrimSpace(candidate); trimmed != "" {
-			galleryName = trimmed
-			break
-		}
-	}
-	discs := make([]api.ImageHostingDiscSubject, 0, len(meta.Discs))
-	for _, disc := range meta.Discs {
-		discs = append(discs, api.ImageHostingDiscSubject{ID: disc.ID, Name: disc.Name})
-	}
-	return api.ImageHostingSubject{
-		MediaBinding: meta.MediaBinding,
-		SourcePath:   meta.SourcePath,
-		GalleryName:  galleryName,
-		Discs:        discs,
-	}
+	return api.NewImageHostingSubject(meta)
 }
 
 func (m *mediaModule) dvdMenuCapability(ctx context.Context) (api.DVDMenuEngineInfo, error) {

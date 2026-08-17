@@ -35,7 +35,7 @@ func (s *Service) resolveBDMVPlaylistSelection(ctx context.Context, request prep
 			return nil, fmt.Errorf("metadata: discover BDMV playlists: %w", err)
 		}
 		if len(discovered) == 0 {
-			return nil, playlistSelectionRequired(request, candidates)
+			return nil, fmt.Errorf("metadata: BDMV disc has no discoverable playlists: %w", internalerrors.ErrInvalidInput)
 		}
 		for _, playlist := range discovered {
 			candidates = append(candidates, apiPlaylistForDisc(playlist, disc, len(discs) == 1))

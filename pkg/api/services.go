@@ -368,6 +368,34 @@ type UploadSubject struct {
 	ExactMedia *ExactMediaAssets
 }
 
+// NewImageHostingSubject projects upload state into the image-hosting
+// operation's prepared-media identity and display model.
+func NewImageHostingSubject(subject UploadSubject) ImageHostingSubject {
+	galleryName := ""
+	for _, candidate := range []string{
+		subject.ReleaseName,
+		subject.ReleaseNameNoTag,
+		subject.Release.Title,
+		subject.Filename,
+		filepath.Base(subject.SourcePath),
+	} {
+		if trimmed := strings.TrimSpace(candidate); trimmed != "" {
+			galleryName = trimmed
+			break
+		}
+	}
+	discs := make([]ImageHostingDiscSubject, 0, len(subject.Discs))
+	for _, disc := range subject.Discs {
+		discs = append(discs, ImageHostingDiscSubject{ID: disc.ID, Name: disc.Name})
+	}
+	return ImageHostingSubject{
+		MediaBinding: subject.MediaBinding,
+		SourcePath:   subject.SourcePath,
+		GalleryName:  galleryName,
+		Discs:        discs,
+	}
+}
+
 // RuleSubject contains only stable facts used by generic and tracker-specific
 // eligibility rules.
 type RuleSubject struct {

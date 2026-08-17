@@ -16,8 +16,51 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestUploadSubjectForDescriptionPreservesPreparedMediaIdentity(t *testing.T) {
+	t.Parallel()
+
+	binding := trackerTestMediaBinding("/tmp/source")
+	subject := api.DescriptionSubject{
+		MediaBinding: binding,
+		SourcePath:   binding.SourcePath,
+		Disc:         api.DiscFacts{PrimaryDiscID: "disc-a"},
+		Discs:        []api.DiscEvidenceResource{{ID: "disc-a", Name: "Disc 1"}},
+	}
+
+	projected := uploadSubjectForDescription(subject)
+	if !projected.MediaBinding.Equal(binding) || projected.Disc.PrimaryDiscID != "disc-a" ||
+		len(projected.Discs) != 1 || projected.Discs[0].ID != "disc-a" {
+		t.Fatalf("upload subject = %#v", projected)
+	}
+}
+
+func TestEnsureDescriptionImageHostRejectsInvalidPreparedMediaBinding(t *testing.T) {
+	t.Parallel()
+
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	_, err := ensureDescriptionImageHostWithDataAndRegistry(
+		context.Background(),
+		"BTN",
+		api.UploadSubject{
+			MediaBinding: api.PreparedMediaBinding{SourcePath: sourcePath},
+			SourcePath:   sourcePath,
+		},
+		config.Config{},
+		config.TrackerConfig{ImageHost: "imgbox"},
+		&imageHostResolutionRepo{stubRepo: &stubRepo{}},
+		&stubImageService{},
+		api.NopLogger{},
+		descriptionAssetsTestRegistry(t),
+		nil,
+	)
+	if !errors.Is(err, internalerrors.ErrInvalidInput) {
+		t.Fatalf("expected invalid input, got %v", err)
+	}
+}
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 

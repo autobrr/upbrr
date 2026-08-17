@@ -158,6 +158,109 @@ func TestWorkflowMediaBuilderKeepsAutomaticSuggestionsForOmittedDiscs(t *testing
 	}
 }
 
+func TestMergeManualSelectionsPreservesUnreplacedExistingScreenshots(t *testing.T) {
+	t.Parallel()
+
+	manual := []api.ScreenshotSelection{{
+		DiscID:           "disc-a",
+		Index:            4,
+		TimestampSeconds: 40,
+	}}
+	plan := api.ScreenshotPlan{
+		Discs: []api.ScreenshotDiscPlan{
+			{DiscID: "disc-a"},
+			{DiscID: "disc-b", SuggestedSelections: []api.ScreenshotSelection{{
+				DiscID:           "disc-b",
+				Index:            0,
+				TimestampSeconds: 20,
+			}}},
+		},
+		ExistingScreenshots: []api.ScreenshotImage{
+			{
+				DiscID: "disc-a",
+				Index:  1,
+				Path:   "disc-a-existing.png",
+			},
+			{
+				DiscID: "disc-a",
+				Index:  4,
+				Path:   "disc-a-replaced.png",
+			},
+			{
+				DiscID: "disc-b",
+				Index:  2,
+				Path:   "disc-b-existing.png",
+			},
+		},
+	}
+
+	selections, existing, err := mergeManualSelectionsWithDiscPlan(manual, plan)
+	if err != nil {
+		t.Fatalf("merge selections: %v", err)
+	}
+	if len(selections) != 2 || selections[0].DiscID != "disc-a" || selections[1].DiscID != "disc-b" {
+		t.Fatalf("merged selections = %#v", selections)
+	}
+	if len(existing) != 2 || existing[0].Path != "disc-a-existing.png" || existing[1].Path != "disc-b-existing.png" {
+		t.Fatalf("retained screenshots = %#v", existing)
+	}
+}
+
+func TestDecodeWorkflowMediaPrivateArtifactsHandlesLegacyHostedDeleteBinding(t *testing.T) {
+	t.Parallel()
+
+	binding := api.PreparedMediaBinding{
+		SourcePath:               "C:\\releases\\Example.Release.2026",
+		PreparedMediaFingerprint: "prepared-media",
+		PreparedGeneration:       2,
+	}
+	for _, test := range []struct {
+		name       string
+		subject    api.ScreenshotSubject
+		wantDelete bool
+	}{
+		{
+			name:       "subject fallback",
+			subject:    api.ScreenshotSubject{MediaBinding: binding},
+			wantDelete: true,
+		},
+		{name: "unbound legacy entry", wantDelete: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			payload, err := json.Marshal(persistedWorkflowMediaArtifacts{
+				ScreenshotSubject: test.subject,
+				PendingDeletes: []persistedWorkflowMediaPendingDelete{{
+					Kind: api.MediaArtifactHostedImage,
+					Path: "C:\\private\\screen.png",
+					Host: "example-host",
+				}},
+			})
+			if err != nil {
+				t.Fatalf("marshal fixture: %v", err)
+			}
+
+			decoded, err := decodeWorkflowMediaPrivateArtifacts(workflowMediaBuilder{media: &mediaModule{}}, payload)
+			if err != nil {
+				t.Fatalf("decode fixture: %v", err)
+			}
+			artifacts, ok := decoded.(workflowMediaPrivateArtifacts)
+			if !ok {
+				t.Fatalf("decoded fixture type = %T", decoded)
+			}
+			if !test.wantDelete {
+				if artifacts.commitState != nil {
+					t.Fatalf("unsafe legacy delete remained queued: %#v", artifacts.commitState.pending)
+				}
+				return
+			}
+			if artifacts.commitState == nil || len(artifacts.commitState.pending) != 1 ||
+				!artifacts.commitState.pending[0].binding.Equal(binding) {
+				t.Fatalf("repaired pending delete = %#v", artifacts.commitState)
+			}
+		})
+	}
+}
+
 func TestWorkflowMediaBuilderRetainsExpandedRawFramesAcrossDiscs(t *testing.T) {
 	t.Parallel()
 

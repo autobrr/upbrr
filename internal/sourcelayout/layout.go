@@ -162,11 +162,7 @@ func discoverDiscs(ctx context.Context, root string) ([]discoveredDisc, error) {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("source layout: scan canceled: %w", err)
 		}
-		info, err := os.Lstat(path)
-		if err != nil {
-			return fmt.Errorf("source layout: inspect candidate: %w", err)
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
+		if entry.Type()&os.ModeSymlink != 0 {
 			target, statErr := os.Stat(path)
 			if statErr == nil && target.IsDir() {
 				return ErrDirectorySymlink

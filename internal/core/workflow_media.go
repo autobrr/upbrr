@@ -747,6 +747,7 @@ func mergeManualSelectionsWithDiscPlan(
 		discIDs[disc.DiscID] = struct{}{}
 	}
 	provided := make(map[string]struct{}, len(selections))
+	replaced := make(map[string]struct{}, len(selections))
 	for index := range selections {
 		discID := strings.TrimSpace(selections[index].DiscID)
 		if discID == "" && len(plan.Discs) == 1 {
@@ -757,6 +758,7 @@ func mergeManualSelectionsWithDiscPlan(
 			return nil, nil, internalerrors.ErrInvalidInput
 		}
 		provided[discID] = struct{}{}
+		replaced[fmt.Sprintf("%s\x00%d", discID, selections[index].Index)] = struct{}{}
 	}
 	for _, disc := range plan.Discs {
 		if _, ok := provided[disc.DiscID]; ok {
@@ -766,7 +768,7 @@ func mergeManualSelectionsWithDiscPlan(
 	}
 	existing := make([]api.ScreenshotImage, 0, len(plan.ExistingScreenshots))
 	for _, image := range plan.ExistingScreenshots {
-		if _, ok := provided[image.DiscID]; !ok {
+		if _, ok := replaced[fmt.Sprintf("%s\x00%d", image.DiscID, image.Index)]; !ok {
 			existing = append(existing, image)
 		}
 	}

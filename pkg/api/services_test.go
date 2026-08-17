@@ -9,6 +9,35 @@ import (
 	"testing"
 )
 
+func TestNewImageHostingSubjectPreservesPreparedIdentityAndDiscs(t *testing.T) {
+	t.Parallel()
+
+	binding := PreparedMediaBinding{
+		SourcePath:               `C:\releases\Example.Release.2026`,
+		PreparedMediaFingerprint: "prepared-media",
+		PreparedGeneration:       3,
+	}
+	source := UploadSubject{
+		MediaBinding: binding,
+		SourcePath:   binding.SourcePath,
+		ReleaseName:  "Example.Release.2026.1080p-GRP",
+		Discs: []DiscEvidenceResource{
+			{ID: "disc-a", Name: "Disc 1"},
+			{ID: "disc-b", Name: "Disc 2"},
+		},
+	}
+
+	projected := NewImageHostingSubject(source)
+	if !projected.MediaBinding.Equal(binding) || projected.SourcePath != source.SourcePath ||
+		projected.GalleryName != source.ReleaseName || len(projected.Discs) != 2 || projected.Discs[1].ID != "disc-b" {
+		t.Fatalf("image hosting subject = %#v", projected)
+	}
+	projected.Discs[0].Name = "changed"
+	if source.Discs[0].Name != "Disc 1" {
+		t.Fatal("image hosting subject shares disc storage")
+	}
+}
+
 func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 	t.Parallel()
 

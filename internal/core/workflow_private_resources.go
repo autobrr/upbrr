@@ -115,15 +115,25 @@ func decodeWorkflowMediaPrivateArtifacts(builder workflowMediaBuilder, payload [
 		if deletion.Kind == "" || deletion.Path == "" {
 			return nil, errors.New("workflow private media contains invalid pending deletion")
 		}
+		binding := api.PreparedMediaBinding{
+			SourcePath:               deletion.SourcePath,
+			PreparedMediaFingerprint: deletion.PreparedMediaFingerprint,
+			PreparedGeneration:       deletion.PreparedGeneration,
+		}
+		if deletion.Kind == api.MediaArtifactHostedImage && !binding.Valid() {
+			binding = persisted.ScreenshotSubject.MediaBinding
+			if !binding.Valid() {
+				binding = persisted.DVDMenuSubject.MediaBinding
+			}
+			if !binding.Valid() {
+				continue
+			}
+		}
 		pending = append(pending, workflowMediaPendingDelete{
-			kind: deletion.Kind,
-			path: deletion.Path,
-			binding: api.PreparedMediaBinding{
-				SourcePath:               deletion.SourcePath,
-				PreparedMediaFingerprint: deletion.PreparedMediaFingerprint,
-				PreparedGeneration:       deletion.PreparedGeneration,
-			},
-			host: deletion.Host,
+			kind:    deletion.Kind,
+			path:    deletion.Path,
+			binding: binding,
+			host:    deletion.Host,
 		})
 	}
 	var commitState *workflowMediaCommitState
