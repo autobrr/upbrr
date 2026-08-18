@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
+	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -69,6 +71,38 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 	}
 	if entry.Payload["name"] != "Show.S01E01.DDP.1080p.WEB-DL.H.265" {
 		t.Fatalf("unexpected name %q", entry.Payload["name"])
+	}
+}
+
+func TestResolveMediaDumpUsesConfiguredDBPathForLegacyBDMV(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "configured", "upbrr.db")
+	sourcePath := filepath.Join(tempDir, "Example.Release.2026")
+	playlists := []api.PlaylistInfo{{File: "00001.mpls"}}
+	tmpRoot, err := db.Subdir(dbPath, "tmp")
+	if err != nil {
+		t.Fatalf("resolve tmp root: %v", err)
+	}
+	summaryPath, err := paths.PrimaryBDMVSummaryPathFor(tmpRoot, sourcePath, api.ReleaseInfo{}, playlists)
+	if err != nil {
+		t.Fatalf("resolve summary path: %v", err)
+	}
+	if err := os.WriteFile(summaryPath, []byte("configured BDInfo"), 0o600); err != nil {
+		t.Fatalf("write summary: %v", err)
+	}
+
+	media, err := resolveMediaDump(api.UploadSubject{
+		SourcePath:            sourcePath,
+		DiscType:              "BDMV",
+		SelectedBDMVPlaylists: playlists,
+	}, dbPath)
+	if err != nil {
+		t.Fatalf("resolve media dump: %v", err)
+	}
+	if media != "configured BDInfo" {
+		t.Fatalf("media dump = %q", media)
 	}
 }
 

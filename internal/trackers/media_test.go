@@ -4,6 +4,7 @@
 package trackers
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,7 +14,7 @@ import (
 func TestReadBDInfoReturnsEveryPreparedReportInStableOrder(t *testing.T) {
 	t.Parallel()
 
-	meta := multiDiscBDInfoSubject()
+	meta := multiDiscBDInfoSubject(t.TempDir())
 	text, err := ReadBDInfo("", meta)
 	if err != nil {
 		t.Fatalf("read BDInfo: %v", err)
@@ -30,7 +31,7 @@ func TestReadBDInfoReturnsEveryPreparedReportInStableOrder(t *testing.T) {
 func TestReadBDInfoRejectsPartialPreparedEvidence(t *testing.T) {
 	t.Parallel()
 
-	meta := multiDiscBDInfoSubject()
+	meta := multiDiscBDInfoSubject(t.TempDir())
 	meta.Disc.Items[1].Reports[0].Summary = ""
 	if _, err := ReadBDInfo("", meta); err == nil || !strings.Contains(err.Error(), "incomplete prepared BDInfo evidence") {
 		t.Fatalf("partial BDInfo error = %v", err)
@@ -40,17 +41,18 @@ func TestReadBDInfoRejectsPartialPreparedEvidence(t *testing.T) {
 func TestReadPrimaryBDInfoUsesCanonicalTypedResource(t *testing.T) {
 	t.Parallel()
 
-	meta := multiDiscBDInfoSubject()
+	root := t.TempDir()
+	meta := multiDiscBDInfoSubject(root)
 	text, path, err := ReadPrimaryBDInfo("", meta)
 	if err != nil {
 		t.Fatalf("read primary BDInfo: %v", err)
 	}
-	if text != "BDINFO ONE" || path != `C:\private\disc-one\BDINFO.00001.txt` {
+	if text != "BDINFO ONE" || path != filepath.Join(root, "disc-one", "BDINFO.00001.txt") {
 		t.Fatalf("primary BDInfo = %q at %q", text, path)
 	}
 }
 
-func multiDiscBDInfoSubject() api.UploadSubject {
+func multiDiscBDInfoSubject(root string) api.UploadSubject {
 	return api.UploadSubject{
 		DiscType: "BDMV",
 		Disc: api.DiscFacts{
@@ -93,7 +95,7 @@ func multiDiscBDInfoSubject() api.UploadSubject {
 				Reports: []api.DiscReportResource{{
 					Playlist:    api.PlaylistInfo{ID: "disc-one:00001.MPLS"},
 					Summary:     "BDINFO ONE",
-					SummaryPath: `C:\private\disc-one\BDINFO.00001.txt`,
+					SummaryPath: filepath.Join(root, "disc-one", "BDINFO.00001.txt"),
 				}},
 			},
 			{
@@ -103,7 +105,7 @@ func multiDiscBDInfoSubject() api.UploadSubject {
 				Reports: []api.DiscReportResource{{
 					Playlist:    api.PlaylistInfo{ID: "disc-two:00001.MPLS"},
 					Summary:     "BDINFO TWO",
-					SummaryPath: `C:\private\disc-two\BDINFO.00001.txt`,
+					SummaryPath: filepath.Join(root, "disc-two", "BDINFO.00001.txt"),
 				}},
 			},
 		},

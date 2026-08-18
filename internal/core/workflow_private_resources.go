@@ -126,6 +126,12 @@ func decodeWorkflowMediaPrivateArtifacts(builder workflowMediaBuilder, payload [
 				binding = persisted.DVDMenuSubject.MediaBinding
 			}
 			if !binding.Valid() {
+				if builder.media != nil && builder.media.logger != nil {
+					builder.media.logger.Warnf(
+						"core: skipped legacy pending media deletion kind=%s reason=missing_prepared_binding",
+						deletion.Kind,
+					)
+				}
 				continue
 			}
 		}

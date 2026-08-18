@@ -130,6 +130,9 @@ describe("MenuImagesPage", () => {
     expect(screen.getByText("2 saved")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Disc 1" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Disc 2" })).toBeVisible();
-    expect(screen.getAllByRole("button", { name: /^Preview DVD menu/ })).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Preview DVD menu 1 for Disc 1" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Preview DVD menu 1 for Disc 2" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Remove DVD menu 1 for Disc 1" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Remove DVD menu 1 for Disc 2" })).toBeVisible();
   });
 });

@@ -23,7 +23,7 @@ import (
 func TestUploadSubjectForDescriptionPreservesPreparedMediaIdentity(t *testing.T) {
 	t.Parallel()
 
-	binding := trackerTestMediaBinding("/tmp/source")
+	binding := trackerTestMediaBinding(filepath.Join(t.TempDir(), "source"))
 	subject := api.DescriptionSubject{
 		MediaBinding: binding,
 		SourcePath:   binding.SourcePath,

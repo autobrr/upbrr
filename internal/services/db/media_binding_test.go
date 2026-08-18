@@ -150,7 +150,7 @@ func TestCurrentPreparedBindingCanReplaceOrphanedHigherGeneration(t *testing.T) 
 			source_path, generation, source_fingerprint, fact_instruction_fingerprint,
 			policy_fingerprint, contract_version, source_json, naming_json, episode_json,
 			media_json, disc_json, assessments_json, prepared_at
-		) VALUES (?, ?, "source", "facts", "policy", "contract", "{}", "{}", "{}", "{}", "{}", "{}", ?)
+		) VALUES (?, ?, 'source', 'facts', 'policy', 'contract', '{}', '{}', '{}', '{}', '{}', '{}', ?)
 	`, sourcePath, current.PreparedGeneration, stamp.UTC().Format(time.RFC3339Nano)); err != nil {
 		t.Fatalf("seed current prepared generation: %v", err)
 	}

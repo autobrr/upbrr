@@ -227,6 +227,7 @@ func TestDecodeWorkflowMediaPrivateArtifactsHandlesLegacyHostedDeleteBinding(t *
 		{name: "unbound legacy entry", wantDelete: false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			logger := &recordingMediaLogger{}
 			payload, err := json.Marshal(persistedWorkflowMediaArtifacts{
 				ScreenshotSubject: test.subject,
 				PendingDeletes: []persistedWorkflowMediaPendingDelete{{
@@ -239,7 +240,7 @@ func TestDecodeWorkflowMediaPrivateArtifactsHandlesLegacyHostedDeleteBinding(t *
 				t.Fatalf("marshal fixture: %v", err)
 			}
 
-			decoded, err := decodeWorkflowMediaPrivateArtifacts(workflowMediaBuilder{media: &mediaModule{}}, payload)
+			decoded, err := decodeWorkflowMediaPrivateArtifacts(workflowMediaBuilder{media: &mediaModule{logger: logger}}, payload)
 			if err != nil {
 				t.Fatalf("decode fixture: %v", err)
 			}
@@ -251,7 +252,18 @@ func TestDecodeWorkflowMediaPrivateArtifactsHandlesLegacyHostedDeleteBinding(t *
 				if artifacts.commitState != nil {
 					t.Fatalf("unsafe legacy delete remained queued: %#v", artifacts.commitState.pending)
 				}
+				if got := logger.countLevelContaining("WARN", "kind=hosted_image"); got != 1 {
+					t.Fatalf("legacy deletion warning count = %d, want 1", got)
+				}
+				for _, entry := range logger.entries {
+					if strings.Contains(entry.message, "screen.png") || strings.Contains(entry.message, "example-host") {
+						t.Fatalf("legacy deletion warning exposed private details: %q", entry.message)
+					}
+				}
 				return
+			}
+			if logger.countLevelContaining("WARN", "legacy pending media deletion") != 0 {
+				t.Fatalf("unexpected legacy deletion warning: %#v", logger.entries)
 			}
 			if artifacts.commitState == nil || len(artifacts.commitState.pending) != 1 ||
 				!artifacts.commitState.pending[0].binding.Equal(binding) {

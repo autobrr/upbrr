@@ -14,9 +14,9 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func resolveMediaDump(meta api.UploadSubject) (string, error) {
+func resolveMediaDump(meta api.UploadSubject, dbPath string) (string, error) {
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
-		text, err := trackers.ReadBDInfo("", meta)
+		text, err := trackers.ReadBDInfo(dbPath, meta)
 		if err != nil {
 			return "", fmt.Errorf("trackers: BHDTV BDInfo: %w", err)
 		}

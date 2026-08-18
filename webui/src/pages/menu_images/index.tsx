@@ -201,15 +201,15 @@ export default function MenuImagesPage({
               <section className="grid gap-2" key={group.discID}>
                 <h3>{group.discName}</h3>
                 <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3">
-                  {group.items.map(({ item, index }) => {
-                    const itemNumber = index + 1;
+                  {group.items.map(({ item }, groupIndex) => {
+                    const itemNumber = groupIndex + 1;
                     const imageLabel = `${group.discName} menu ${itemNumber}`;
                     return (
                       <article className="grid gap-2" key={item.image.artifactID}>
                         <button
                           className="screens-thumb"
                           type="button"
-                          aria-label={`Preview DVD menu ${itemNumber}`}
+                          aria-label={`Preview DVD menu ${itemNumber} for ${group.discName}`}
                           onClick={() => {
                             setLightboxImage(item.contentURL);
                             setLightboxAlt(imageLabel);
@@ -225,7 +225,7 @@ export default function MenuImagesPage({
                           }}
                           className="danger"
                           type="button"
-                          aria-label={`Remove DVD menu ${itemNumber}`}
+                          aria-label={`Remove DVD menu ${itemNumber} for ${group.discName}`}
                           disabled={running}
                           onClick={() => handleDelete(item.image.artifactID)}
                         >

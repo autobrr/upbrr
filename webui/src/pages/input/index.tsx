@@ -1382,7 +1382,7 @@ export default function InputPage(props: Props) {
                       (sum, item) => sum + item.size,
                       0,
                     );
-                    const checkboxID = `playlist-${candidate.id.replaceAll(/[^a-zA-Z0-9_-]/g, "-")}`;
+                    const checkboxID = `playlist-${encodeURIComponent(candidate.id)}`;
                     return (
                       <div
                         key={candidate.id}

@@ -243,7 +243,7 @@ describe("InputPage", () => {
     const base = inputFacet();
     const candidates = [
       {
-        id: "disc-one:00001.mpls",
+        id: "disc:00001.mpls",
         discId: "disc-one",
         discName: "Disc 1",
         file: "00001.mpls",
@@ -253,7 +253,7 @@ describe("InputPage", () => {
         edition: "",
       },
       {
-        id: "disc-two:00001.mpls",
+        id: "disc/00001.mpls",
         discId: "disc-two",
         discName: "Disc 2",
         file: "00001.mpls",
@@ -298,7 +298,7 @@ describe("InputPage", () => {
     expect(screen.getByRole("button", { name: "Confirm Selection" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Auto-Select Best Per Disc" }));
     expect(facet.choosePlaylists).toHaveBeenCalledWith(
-      ["disc-one:00001.mpls", "disc-two:00001.mpls"],
+      ["disc:00001.mpls", "disc/00001.mpls"],
       false,
     );
     const playlistSection = screen

@@ -40,6 +40,11 @@ type workflowMediaBuilder struct {
 	media       *mediaModule
 }
 
+type discFrameKey struct {
+	discID string
+	index  int
+}
+
 func (b workflowMediaBuilder) Plan(
 	ctx context.Context,
 	release api.ReleaseRef,
@@ -691,10 +696,10 @@ func mergeWorkflowScreenshotImages(
 	limit int,
 ) []api.ScreenshotImage {
 	images := make([]api.ScreenshotImage, 0, len(existing)+len(captured))
-	byIndex := make(map[string]int, cap(images))
+	byIndex := make(map[discFrameKey]int, cap(images))
 	appendImages := func(values []api.ScreenshotImage) {
 		for _, image := range values {
-			key := fmt.Sprintf("%s\x00%d", image.DiscID, image.Index)
+			key := discFrameKey{discID: image.DiscID, index: image.Index}
 			if existingIndex, ok := byIndex[key]; ok {
 				images[existingIndex] = image
 				continue
@@ -747,7 +752,7 @@ func mergeManualSelectionsWithDiscPlan(
 		discIDs[disc.DiscID] = struct{}{}
 	}
 	provided := make(map[string]struct{}, len(selections))
-	replaced := make(map[string]struct{}, len(selections))
+	replaced := make(map[discFrameKey]struct{}, len(selections))
 	for index := range selections {
 		discID := strings.TrimSpace(selections[index].DiscID)
 		if discID == "" && len(plan.Discs) == 1 {
@@ -758,7 +763,7 @@ func mergeManualSelectionsWithDiscPlan(
 			return nil, nil, internalerrors.ErrInvalidInput
 		}
 		provided[discID] = struct{}{}
-		replaced[fmt.Sprintf("%s\x00%d", discID, selections[index].Index)] = struct{}{}
+		replaced[discFrameKey{discID: discID, index: selections[index].Index}] = struct{}{}
 	}
 	for _, disc := range plan.Discs {
 		if _, ok := provided[disc.DiscID]; ok {
@@ -768,7 +773,7 @@ func mergeManualSelectionsWithDiscPlan(
 	}
 	existing := make([]api.ScreenshotImage, 0, len(plan.ExistingScreenshots))
 	for _, image := range plan.ExistingScreenshots {
-		if _, ok := replaced[fmt.Sprintf("%s\x00%d", image.DiscID, image.Index)]; !ok {
+		if _, ok := replaced[discFrameKey{discID: image.DiscID, index: image.Index}]; !ok {
 			existing = append(existing, image)
 		}
 	}
@@ -795,15 +800,15 @@ func (b workflowMediaBuilder) BuildIncremental(
 	}
 	if instructions.Purpose == api.ScreenshotPurposeFinal && len(instructions.Selections) > 0 && existing != nil {
 		requestedScreenshotCount := max(instructions.ScreenshotCount, len(instructions.Selections))
-		indexes := make(map[string]struct{})
+		indexes := make(map[discFrameKey]struct{})
 		for _, artifact := range existing.Artifacts {
 			if artifact.Kind == api.MediaArtifactScreenshot {
-				indexes[fmt.Sprintf("%s\x00%d", artifact.DiscID, artifact.Index)] = struct{}{}
+				indexes[discFrameKey{discID: artifact.DiscID, index: artifact.Index}] = struct{}{}
 			}
 		}
 		filtered := make([]api.ScreenshotSelection, 0, len(instructions.Selections))
 		for _, selection := range instructions.Selections {
-			key := fmt.Sprintf("%s\x00%d", selection.DiscID, selection.Index)
+			key := discFrameKey{discID: selection.DiscID, index: selection.Index}
 			if _, exists := indexes[key]; !exists {
 				filtered = append(filtered, selection)
 			}

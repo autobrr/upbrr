@@ -163,7 +163,7 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 
 	screenBlock := buildDescription(descriptionAssets)
 
-	mediaDump, err := resolveMediaDump(req.Meta)
+	mediaDump, err := resolveMediaDump(req.Meta, req.Runtime.DBPath)
 	if err != nil {
 		return uploadState{}, err
 	}
