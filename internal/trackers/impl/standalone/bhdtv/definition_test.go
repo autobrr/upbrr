@@ -74,13 +74,17 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 	}
 }
 
-func TestResolveMediaDumpUsesConfiguredDBPathForLegacyBDMV(t *testing.T) {
+func TestPrepareUploadStateUsesConfiguredDBPathForLegacyBDMV(t *testing.T) {
 	t.Parallel()
 
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "configured", "upbrr.db")
 	sourcePath := filepath.Join(tempDir, "Example.Release.2026")
+	torrentPath := filepath.Join(tempDir, "Example.Release.2026.torrent")
 	playlists := []api.PlaylistInfo{{File: "00001.mpls"}}
+	if err := os.WriteFile(torrentPath, []byte("torrent"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
 		t.Fatalf("resolve tmp root: %v", err)
@@ -93,16 +97,28 @@ func TestResolveMediaDumpUsesConfiguredDBPathForLegacyBDMV(t *testing.T) {
 		t.Fatalf("write summary: %v", err)
 	}
 
-	media, err := resolveMediaDump(api.UploadSubject{
-		SourcePath:            sourcePath,
-		DiscType:              "BDMV",
-		SelectedBDMVPlaylists: playlists,
-	}, dbPath)
-	if err != nil {
-		t.Fatalf("resolve media dump: %v", err)
+	input, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{
+		Tracker: "BHDTV",
+		Intent:  trackers.PreparationIntentDryRun,
+		Meta: api.UploadSubject{
+			SourcePath:            sourcePath,
+			TorrentPath:           torrentPath,
+			ReleaseName:           "Example.Release.2026",
+			DiscType:              "BDMV",
+			SelectedBDMVPlaylists: playlists,
+		},
+		TrackerConfig: config.TrackerConfig{APIKey: "token"},
+		Runtime:       trackers.PreparationRuntime{DBPath: dbPath},
+	}, New().ReleaseNamePolicy())
+	if failure != nil {
+		t.Fatalf("prepare release name: %v", failure)
 	}
-	if media != "configured BDInfo" {
-		t.Fatalf("media dump = %q", media)
+	state, err := prepareUploadState(context.Background(), input)
+	if err != nil {
+		t.Fatalf("prepare upload state: %v", err)
+	}
+	if state.mediaDump != "configured BDInfo" {
+		t.Fatalf("media dump = %q", state.mediaDump)
 	}
 }
 
