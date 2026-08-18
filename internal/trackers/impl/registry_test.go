@@ -759,7 +759,7 @@ func TestNewRegistryIncludesAuthResolvers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new registry: %v", err)
 	}
-	for _, tracker := range []string{"BTN", "FF", "FL", "HDB", "PTP", "RTF"} {
+	for _, tracker := range []string{"AZ", "BTN", "CZ", "FF", "FL", "HDB", "HDT", "PHD", "PTP", "RTF"} {
 		if _, ok := registry.LookupAuthSessionResolver(tracker); !ok {
 			t.Errorf("expected %s tracker-owned auth resolver", tracker)
 		}
@@ -767,7 +767,7 @@ func TestNewRegistryIncludesAuthResolvers(t *testing.T) {
 		if !ok || capability.TrackerID != tracker {
 			t.Errorf("%s auth capability = %#v, %t", tracker, capability, ok)
 		}
-		if tracker != "HDB" && !capability.SupportsLogin {
+		if tracker != "AZ" && tracker != "CZ" && tracker != "HDB" && tracker != "HDT" && tracker != "PHD" && !capability.SupportsLogin {
 			t.Errorf("expected %s login capability", tracker)
 		}
 	}

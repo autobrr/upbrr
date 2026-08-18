@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -15,7 +14,6 @@ import (
 
 	xhtml "golang.org/x/net/html"
 
-	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -30,7 +28,7 @@ type sessionState struct {
 	token  string
 }
 
-func newSession(ctx context.Context, site siteDefinition, dbPath string, logger api.Logger) (sessionState, error) {
+func newSession(ctx context.Context, site siteDefinition, dbPath string) (sessionState, error) {
 	cookies, err := resolveCookies(ctx, dbPath, site)
 	if err != nil {
 		return sessionState{}, err
@@ -53,21 +51,13 @@ func newSession(ctx context.Context, site siteDefinition, dbPath string, logger 
 		return sessionState{}, fmt.Errorf("trackers: %s cookie validation request: %w", site.Name, err)
 	}
 	defer resp.Body.Close()
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	if readErr != nil && logger != nil {
-		logger.Debugf(
-			"trackers: %s cookie validation body read failed status=%d err=%s",
-			site.Name,
-			resp.StatusCode,
-			redaction.RedactValue(readErr.Error(), nil),
-		)
+	body, err := readAZAuthResponse(site, resp)
+	if err != nil {
+		return sessionState{}, err
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 || strings.Contains(strings.ToLower(string(body)), "page not found") {
-		return sessionState{}, fmt.Errorf("trackers: %s missing valid cookies", site.Name)
-	}
-	token := extractPatternGroup(azTokenPattern, string(body))
-	if token == "" {
-		return sessionState{}, fmt.Errorf("trackers: %s csrf token not found", site.Name)
+	token, err := validateAZAuthResponse(site, resp, body)
+	if err != nil {
+		return sessionState{}, err
 	}
 	return sessionState{client: client, token: token}, nil
 }

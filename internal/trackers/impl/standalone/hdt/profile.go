@@ -31,6 +31,7 @@ func Profile() standalone.Profile {
 			AuthKind:           "cookies",
 			SupportsCookieFile: true,
 		},
+		AuthResolver: resolveAuthSession,
 	}
 }
 

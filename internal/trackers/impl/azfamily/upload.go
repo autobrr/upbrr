@@ -36,7 +36,7 @@ func prepareUpload(ctx context.Context, site siteDefinition, req trackers.Prepar
 		return trackers.NewPreparedOperation(preview, nil, nil), nil
 	}
 
-	state, err := newSession(ctx, site, req.Runtime.DBPath, req.Logger)
+	state, err := newSession(ctx, site, req.Runtime.DBPath)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
@@ -258,7 +258,7 @@ func submitPreparedUpload(
 }
 
 func buildUploadDryRun(ctx context.Context, site siteDefinition, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
-	state, err := newSession(ctx, site, req.Runtime.DBPath, req.Logger)
+	state, err := newSession(ctx, site, req.Runtime.DBPath)
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}
