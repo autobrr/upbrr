@@ -443,7 +443,7 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 		t.Fatalf("resolve PTP torrent artifact: %v", err)
 	}
 	meta.TorrentPath = torrentPath
-	if err := trackers.WritePersonalizedTorrent(baseTorrentPath, torrentPath, announceURL, "", "PTP"); err != nil {
+	if err := trackers.WritePersonalizedTorrent(baseTorrentPath, torrentPath, announceURL, "PTP"); err != nil {
 		t.Fatalf("prepare PTP torrent artifact: %v", err)
 	}
 	preparedMeta, err := metainfo.LoadFromFile(torrentPath)
@@ -502,11 +502,11 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 					t.Errorf("load uploaded torrent: %v", err)
 					return
 				}
-				if uploadedMeta.Comment != "upbrr" {
+				if uploadedMeta.Comment != "uploaded with upbrr" {
 					t.Errorf("expected cleaned upload torrent comment, got %q", uploadedMeta.Comment)
 					return
 				}
-				if uploadedMeta.CreatedBy != "uploaded with upbrr" {
+				if uploadedMeta.CreatedBy != "upbrr with mkbrr" {
 					t.Errorf("expected cleaned upload torrent created-by, got %q", uploadedMeta.CreatedBy)
 					return
 				}
@@ -583,8 +583,8 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	if registeredInfo.Source != "PTP" {
 		t.Fatalf("expected registered PTP source, got %q", registeredInfo.Source)
 	}
-	if registeredMeta.Comment != result.UploadedTorrents[0].TorrentURL {
-		t.Fatalf("expected registered PTP comment %q, got %q", result.UploadedTorrents[0].TorrentURL, registeredMeta.Comment)
+	if registeredMeta.Comment != "uploaded with upbrr" {
+		t.Fatalf("expected upbrr comment, got %q", registeredMeta.Comment)
 	}
 	expectedBase := filepath.Base(meta.SourcePath)
 	expectedName := "[ptp]." + expectedBase + ".torrent"

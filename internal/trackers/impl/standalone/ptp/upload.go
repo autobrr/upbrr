@@ -126,7 +126,7 @@ func submitPreparedUpload(
 		torrentID := strings.TrimSpace(matches[2])
 		torrentURL := strings.TrimRight(state.baseURL, "/") + "/torrents.php?id=" + url.QueryEscape(groupID) + "&torrentid=" + url.QueryEscape(torrentID)
 		registeredPath := trackers.PersistReconstructedRegisteredTorrent(
-			req.Logger, "PTP", state.torrentPath, trackerTorrentPath, state.announceURL, torrentURL, "PTP",
+			req.Logger, "PTP", state.torrentPath, trackerTorrentPath, state.announceURL, "PTP",
 		)
 		return api.UploadSummary{
 			Uploaded: 1,

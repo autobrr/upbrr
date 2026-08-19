@@ -121,7 +121,7 @@ func submitPreparedUpload(
 	downloadURL := strings.TrimRight(bhdBaseURL, "/") + "/torrent/download/" + torrentID
 
 	registeredPath := trackers.PersistReconstructedRegisteredTorrent(
-		req.Logger, "BHD", state.torrentPath, artifactPath, announceURL, torrentURL, "BHD",
+		req.Logger, "BHD", state.torrentPath, artifactPath, announceURL, "BHD",
 	)
 
 	return api.UploadSummary{

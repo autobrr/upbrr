@@ -112,7 +112,6 @@ func submitPreparedUpload(
 				state.torrentPath,
 				artifactPath,
 				req.TrackerConfig.MyAnnounceURL,
-				viewURL,
 				sourceFlag,
 			)
 		}
