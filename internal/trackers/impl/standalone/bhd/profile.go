@@ -28,7 +28,7 @@ func Profile() standalone.Profile {
 		Rules:                rules(),
 		ValidationPolicy:     validationPolicy(),
 		BannedGroups:         bannedGroups(),
-		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "BHD"},
+		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "BHD", RequireAnnounce: true},
 		AudioPolicy:          &trackers.AudioPolicy{BlockEnglishOriginalWithForeign: true},
 		ImageHostPolicy:      &trackers.ImageHostPolicy{AllowedHosts: []string{"imgbox", "imgbb", "pixhost", "bhd", "passtheimage"}},
 		DupePolicy: &trackers.DupePolicy{

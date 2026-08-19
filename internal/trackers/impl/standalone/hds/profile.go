@@ -21,7 +21,8 @@ func Profile() standalone.Profile {
 		NewDuplicateAdapter: newDuplicateAdapter,
 		ValidationPolicy:    validationPolicy(),
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{
-			Source: sourceFlag,
+			Source:          sourceFlag,
+			RequireAnnounce: true,
 		},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{
 			TrackerURLPatterns: []string{"hd-space.pw"},

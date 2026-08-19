@@ -42,7 +42,7 @@ func Profile() standalone.Profile {
 				Disposition: api.RuleDispositionStrict,
 			}},
 		},
-		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: sourceFlag},
+		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: sourceFlag, RequireAnnounce: true},
 		ImageHostPolicy: &trackers.ImageHostPolicy{
 			AllowedHosts:      []string{"thr"},
 			OwnedHosts:        []string{"thr"},

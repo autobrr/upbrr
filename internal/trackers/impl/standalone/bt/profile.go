@@ -22,7 +22,7 @@ func Profile() standalone.Profile {
 		ValidationPolicy:        validationPolicy(),
 		ReleaseNamePolicy:       trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/bt/v1", resolveUploadName, resolveSearchName),
 		NewDuplicateAdapter:     newDuplicateAdapter,
-		UploadArtifactPolicy:    &trackers.UploadArtifactPolicy{Source: sourceFlag},
+		UploadArtifactPolicy:    &trackers.UploadArtifactPolicy{Source: sourceFlag, RequireAnnounce: true},
 		AudioPolicy:             &trackers.AudioPolicy{AllowBloat: true},
 		TorrentIdentityPolicy:   &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{"t.brasiltracker.org"}},
 		AuthCapability:          authcontract.CookieCapability("BT"),

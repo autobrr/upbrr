@@ -419,7 +419,7 @@ func TestNewRegistryCapabilityInventory(t *testing.T) {
 	if groups, ok := registry.LookupBannedGroups("ANT"); !ok || !slices.Contains(groups, "ZMNT") {
 		t.Fatalf("ANT banned groups = %#v, %t", groups, ok)
 	}
-	if policy, ok := registry.LookupUploadArtifactPolicy("ANT"); !ok || policy.Source != "ANT" {
+	if policy, ok := registry.LookupUploadArtifactPolicy("ANT"); !ok || policy.Source != "ANT" || !policy.RequireAnnounce {
 		t.Fatalf("ANT upload artifact policy = %#v, %t", policy, ok)
 	}
 	if _, ok := registry.LookupMetadataPolicy("ANT"); !ok {
@@ -540,30 +540,34 @@ func TestNewRegistryOwnsUploadArtifactPolicies(t *testing.T) {
 		t.Fatalf("new registry: %v", err)
 	}
 	want := map[string]trackers.UploadArtifactPolicy{
-		"ACM":   {Source: "AsianCinema"},
-		"AR":    {Source: "AlphaRatio"},
-		"ASC":   {Source: "ASC"},
-		"AZ":    {Source: "AvistaZ", DefaultAnnounce: "https://tracker.avistaz.to/announce"},
-		"BHDTV": {Source: "BIT-HDTV", UseMyAnnounce: true},
-		"BJS":   {Source: "BJ"},
-		"BT":    {Source: "BT"},
-		"CZ":    {Source: "CinemaZ", DefaultAnnounce: "https://tracker.cinemaz.to/announce"},
-		"CZT":   {Source: "CzT"},
-		"DC":    {Source: "DigitalCore.club"},
-		"FF":    {Source: "FunFile"},
-		"FL":    {Source: "FL"},
-		"GPW":   {Source: "GreatPosterWall"},
-		"HDS":   {Source: "HD-Space"},
-		"HDT":   {Source: "hd-torrents.org"},
-		"IS":    {Source: "https://immortalseed.me"},
-		"NBL":   {Source: "NBL"},
-		"PHD":   {Source: "PrivateHD", DefaultAnnounce: "https://tracker.privatehd.to/announce"},
-		"PTS":   {Source: "[www.ptskit.org] PTSKIT"},
-		"RTF":   {Source: "sunshine"},
-		"THR":   {Source: "[https://www.torrenthr.org] TorrentHR.org"},
-		"TL":    {Source: "TorrentLeech.org"},
-		"TOS":   {Source: "TheOldSchool"},
-		"TVC":   {Source: "TVCHAOS"},
+		"ACM": {Source: "AsianCinema"},
+		"AR":  {Source: "AlphaRatio", RequireAnnounce: true},
+		"ASC": {Source: "ASC", RequireAnnounce: true},
+		"AZ":  {Source: "AvistaZ", DefaultAnnounce: "https://tracker.avistaz.to/announce"},
+		"BHDTV": {
+			Source:          "BIT-HDTV",
+			UseMyAnnounce:   true,
+			RequireAnnounce: true,
+		},
+		"BJS": {Source: "BJ", RequireAnnounce: true},
+		"BT":  {Source: "BT", RequireAnnounce: true},
+		"CZ":  {Source: "CinemaZ", DefaultAnnounce: "https://tracker.cinemaz.to/announce"},
+		"CZT": {Source: "CzT"},
+		"DC":  {Source: "DigitalCore.club"},
+		"FF":  {Source: "FunFile", RequireAnnounce: true},
+		"FL":  {Source: "FL"},
+		"GPW": {Source: "GreatPosterWall", RequireAnnounce: true},
+		"HDS": {Source: "HD-Space", RequireAnnounce: true},
+		"HDT": {Source: "hd-torrents.org", RequireAnnounce: true},
+		"IS":  {Source: "https://immortalseed.me", RequireAnnounce: true},
+		"NBL": {Source: "NBL", RequireAnnounce: true},
+		"PHD": {Source: "PrivateHD", DefaultAnnounce: "https://tracker.privatehd.to/announce"},
+		"PTS": {Source: "[www.ptskit.org] PTSKIT", RequireAnnounce: true},
+		"RTF": {Source: "sunshine", RequireAnnounce: true},
+		"THR": {Source: "[https://www.torrenthr.org] TorrentHR.org", RequireAnnounce: true},
+		"TL":  {Source: "TorrentLeech.org"},
+		"TOS": {Source: "TheOldSchool"},
+		"TVC": {Source: "TVCHAOS", RequireAnnounce: true},
 	}
 	for name, expected := range want {
 		got, ok := registry.LookupUploadArtifactPolicy(name)
@@ -619,7 +623,7 @@ func TestNewRegistryIncludesBHDPolicies(t *testing.T) {
 	if _, ok := registry.LookupMetadataPolicy("BHD"); !ok {
 		t.Fatal("expected BHD metadata policy")
 	}
-	if policy, ok := registry.LookupUploadArtifactPolicy("BHD"); !ok || policy.Source != "BHD" {
+	if policy, ok := registry.LookupUploadArtifactPolicy("BHD"); !ok || policy.Source != "BHD" || !policy.RequireAnnounce {
 		t.Fatalf("BHD upload artifact policy = %#v, %t", policy, ok)
 	}
 	if policy, ok := registry.LookupAudioPolicy("BHD"); !ok || !policy.BlockEnglishOriginalWithForeign {
@@ -859,10 +863,13 @@ func TestNewRegistryResolvesHybridAuthRequirements(t *testing.T) {
 			wantFirst: []trackers.AuthRequirement{trackers.AuthRequirementPasskey},
 		},
 		{
-			name:      "TL form upload",
-			tracker:   "TL",
-			wantMode:  "form_upload",
-			wantFirst: []trackers.AuthRequirement{trackers.AuthRequirementStoredCookie},
+			name:     "TL form upload",
+			tracker:  "TL",
+			wantMode: "form_upload",
+			wantFirst: []trackers.AuthRequirement{
+				trackers.AuthRequirementStoredCookie,
+				trackers.AuthRequirementPasskey,
+			},
 		},
 	}
 	for _, test := range tests {

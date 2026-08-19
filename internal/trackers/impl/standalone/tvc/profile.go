@@ -42,7 +42,7 @@ func Profile() standalone.Profile {
 				Disposition: api.RuleDispositionStrict,
 			}},
 		},
-		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: "TVCHAOS"},
+		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: "TVCHAOS", RequireAnnounce: true},
 		ImageHostPolicy:       &trackers.ImageHostPolicy{AllowedHosts: []string{"imgbb", "imgbox", "pixhost", "bam", "onlyimage"}},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{"https://tvchaosuk.com"}},
 	}
