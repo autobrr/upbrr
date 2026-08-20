@@ -29,7 +29,7 @@ func Profile() standalone.Profile {
 		ValidationPolicy:     validationPolicy(),
 		ArtifactPolicy:       &trackers.ArtifactPolicy{MaxPieceSizeMiB: 128, MaxTorrentBytes: 250 << 10},
 		BannedGroups:         bannedGroups(),
-		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "ANT"},
+		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "ANT", RequireAnnounce: true},
 		DupePolicy: &trackers.DupePolicy{
 			ID:         "ant/duplicate/v3",
 			EvidenceID: "ant-dupes-trumping",

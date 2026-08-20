@@ -35,12 +35,8 @@ func (d *Definition) TrackerFamily() trackers.Family { return trackers.FamilyAZF
 
 // ReleaseNamePolicy returns the versioned AZ-family naming policy with TMDB-authoritative movie years.
 func (d *Definition) ReleaseNamePolicy() trackers.ReleaseNamePolicyBinding {
-	version := "v1"
-	if d.site.Name == "AZ" || d.site.Name == "CZ" {
-		version = "v2"
-	}
 	return trackers.WithMovieYearProvider(trackers.SubjectReleaseNameSearchPolicy(
-		fmt.Sprintf("azfamily/%s/%s", strings.ToLower(d.site.Name), version),
+		fmt.Sprintf("azfamily/%s/v2", strings.ToLower(d.site.Name)),
 		func(meta api.UploadSubject, _ config.TrackerConfig) string { return editName(d.site, meta) },
 		func(meta api.UploadSubject, _ config.TrackerConfig) string { return resolveSearchName(meta) },
 	), api.IdentityProviderTMDB)

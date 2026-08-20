@@ -1,0 +1,7 @@
+Usage: upbrr auth <command> [options]
+
+Commands:
+  password       Change the WebUI password
+  browse-roots  Replace the WebUI browse roots
+
+Run "upbrr auth <command> --help" for command options.

@@ -34,7 +34,7 @@ func Profile() standalone.Profile {
 			return trackers.ResolvedReleaseNames{Upload: uploadName, Duplicate: searchName}, nil
 		}),
 		NewDuplicateAdapter:   newDuplicateAdapter,
-		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: sourceFlag},
+		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: sourceFlag, RequireAnnounce: true},
 		AudioPolicy:           &trackers.AudioPolicy{AllowBloat: true},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{"amigos-share.club"}},
 		AuthCapability:        authcontract.CookieCapability("ASC"),

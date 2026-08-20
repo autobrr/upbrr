@@ -2093,9 +2093,12 @@ type TagOverride struct {
 	PersonalRelease bool
 }
 
+// UploadSummary records completed tracker submissions and any returned registered-torrent authority.
 type UploadSummary struct {
 	Uploaded         int
 	UploadedTorrents []UploadedTorrent
+	// PendingPublication reports that a successful submission has no registered torrent until the tracker publishes it.
+	PendingPublication bool
 }
 
 type UploadedTorrent struct {

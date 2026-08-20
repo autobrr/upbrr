@@ -55,10 +55,6 @@ func unit3DResponsibilityVersion(name string, policy string, descriptionGroup st
 	}
 }
 
-func azFamilyResponsibility(name string) trackerResponsibilityRow {
-	return azFamilyResponsibilityVersion(name, "v1")
-}
-
 func azFamilyResponsibilityVersion(name string, version string) trackerResponsibilityRow {
 	return trackerResponsibilityRow{
 		name:              name,
@@ -66,6 +62,7 @@ func azFamilyResponsibilityVersion(name string, version string) trackerResponsib
 		contentMode:       trackers.UploadContentModeDescription,
 		authMode:          "form",
 		authOwner:         "azfamily/auth.go",
+		hasAuthResolver:   true,
 		taxonomyOwner:     "azfamily/taxonomy.go",
 		descriptionOwner:  "azfamily/description.go",
 		mediaOwner:        "azfamily/media.go",
@@ -104,7 +101,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 	unit3DResponsibility("RMC", "rmc", ""),
 	unit3DResponsibility("SAM", "sam", ""),
 	unit3DResponsibility("SHRI", "canonical", ""),
-	unit3DResponsibilityVersion("SP", "sp", "", "v3"),
+	unit3DResponsibilityVersion("SP", "sp", "", "v4"),
 	unit3DResponsibility("STC", "canonical", ""),
 	unit3DResponsibility("TIK", "canonical", ""),
 	unit3DResponsibility("TLZ", "canonical", ""),
@@ -116,7 +113,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 	unit3DResponsibility("ZNTH", "znth", ""),
 	azFamilyResponsibilityVersion("AZ", "v2"),
 	azFamilyResponsibilityVersion("CZ", "v2"),
-	azFamilyResponsibility("PHD"),
+	azFamilyResponsibilityVersion("PHD", "v2"),
 	{
 		name:              "ANT",
 		family:            trackers.FamilyStandalone,
@@ -144,7 +141,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		descriptionOwner:  "standalone/ar/description.go",
 		mediaOwner:        "standalone/ar/media.go",
 		descriptionGroup:  "ar",
-		releaseNamePolicy: "standalone/ar/v3",
+		releaseNamePolicy: "standalone/ar/v4",
 		projectorVersion:  "standalone-v2",
 		principalName:     "name",
 	},
@@ -348,6 +345,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		contentMode:       trackers.UploadContentModeDescription,
 		authMode:          "cookies",
 		authOwner:         "standalone/hdt/auth.go",
+		hasAuthResolver:   true,
 		taxonomyOwner:     "standalone/hdt/taxonomy.go",
 		descriptionOwner:  "standalone/hdt/description.go",
 		mediaOwner:        "standalone/hdt/media.go",

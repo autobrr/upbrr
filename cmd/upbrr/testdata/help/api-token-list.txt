@@ -1,0 +1,7 @@
+Usage: upbrr api-token list [options]
+
+Options:
+
+Config:
+  -config, --config string
+      Path to config file

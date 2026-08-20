@@ -133,8 +133,28 @@ func editPHDName(meta api.UploadSubject, name string) string {
 	name = azPHDDirCutPattern.ReplaceAllString(name, "DC")
 	name = azPHDExtCutPattern.ReplaceAllString(name, "Extended")
 	name = azPHDTheatrical.ReplaceAllString(name, "Theatrical")
+	if meta.HasEncodeSettings {
+		name = strings.ReplaceAll(name, "H.264", "x264")
+		name = strings.ReplaceAll(name, "H.265", "x265")
+	}
 	if isTV(meta) && meta.Release.Year > 0 {
 		name = strings.ReplaceAll(name, strconv.Itoa(meta.Release.Year), "")
+	}
+	source := strings.TrimSpace(meta.Source)
+	if strings.EqualFold(strings.TrimSpace(meta.Type), "DVDRIP") && source != "" {
+		name = replaceNameElements(name, source, "")
+	}
+	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
+		if region := strings.TrimSpace(meta.Region); region != "" {
+			name = strings.ReplaceAll(name, region, "")
+		}
+		if resolution := strings.TrimSpace(meta.Release.Resolution); source != "" && resolution != "" {
+			name = replaceNameElements(name, source, resolution)
+		}
+		if audio := strings.TrimSpace(meta.Audio); audio != "" {
+			codec := strings.TrimSpace(meta.VideoCodec)
+			name = strings.ReplaceAll(name, audio, strings.TrimSpace(audio+" "+codec))
+		}
 	}
 	return name
 }
@@ -372,6 +392,36 @@ func suffixAfterNameElement(name, element string) (string, bool) {
 		suffix = "-" + suffix
 	}
 	return suffix, true
+}
+
+func replaceNameElements(name, element, replacement string) string {
+	nameRunes := []rune(name)
+	elementRunes := []rune(strings.TrimSpace(element))
+	if len(nameRunes) == 0 || len(elementRunes) == 0 || len(elementRunes) > len(nameRunes) {
+		return name
+	}
+	var result strings.Builder
+	last := 0
+	replaced := false
+	for start := 0; start <= len(nameRunes)-len(elementRunes); {
+		end := start + len(elementRunes)
+		if (start == 0 || isNameSeparator(nameRunes[start-1])) &&
+			(end == len(nameRunes) || isNameSeparator(nameRunes[end])) &&
+			strings.EqualFold(string(nameRunes[start:end]), string(elementRunes)) {
+			result.WriteString(string(nameRunes[last:start]))
+			result.WriteString(replacement)
+			last = end
+			start = end
+			replaced = true
+			continue
+		}
+		start++
+	}
+	if !replaced {
+		return name
+	}
+	result.WriteString(string(nameRunes[last:]))
+	return result.String()
 }
 
 func joinNameWithSuffix(prefix, suffix string) string {

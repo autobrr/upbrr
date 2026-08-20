@@ -354,8 +354,8 @@ func (b *Backend) GetReleaseWorkflowCapabilities(
 
 func releaseWorkflowImageHostConfigured(cfg config.ImageHostingConfig, host string) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
-	if cfg.HostEnabled(host) {
-		return true
+	if configured, ok := cfg.ConditionalHostConfigured(host); ok {
+		return configured
 	}
 	for _, selected := range []string{cfg.Host1, cfg.Host2, cfg.Host3, cfg.Host4, cfg.Host5, cfg.Host6} {
 		if strings.EqualFold(strings.TrimSpace(selected), host) {

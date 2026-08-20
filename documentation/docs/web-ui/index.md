@@ -17,7 +17,7 @@ The default address is [http://localhost:7480](http://localhost:7480).
 
 ## First-run setup
 
-Create the administrator account, then choose one or more host browse roots. Browse roots control which folders the browser can open for release selection and file import.
+Create the administrator account in the browser, then configure one or more host browse roots in the initial setup screen. Browse roots control which folders the browser can open for release selection and file import.
 
 Use a dedicated account password. Do not expose an unconfigured instance to an untrusted network.
 
@@ -73,10 +73,10 @@ The host browser lists only configured roots unless unrestricted browsing was ex
 
 1. verify the upbrr process or container can read it;
 2. verify the path is mounted into the container when using Docker;
-3. update browse roots through the Web UI auth/browse policy;
+3. stop the server and replace the roots with `upbrr auth browse-roots <path>...`;
 4. use the path as visible inside the container, not the host-only path.
 
-Imported application config does not change browse roots.
+Imported application config does not change browse roots. The Web UI route accepts only the initial browse policy; later password and browse-policy changes require the local CLI.
 
 ## Safe first use
 

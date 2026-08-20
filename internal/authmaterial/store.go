@@ -138,6 +138,46 @@ func (s *Store) Load() (Record, error) {
 	return s.loadLocked()
 }
 
+// CreateBackup copies the current auth file bytes to a unique secure file
+// beside it. Completed backups are never overwritten or removed.
+func (s *Store) CreateBackup() (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	raw, err := os.ReadFile(s.path)
+	if err != nil {
+		return "", fmt.Errorf("web auth: read auth file for backup: %w", err)
+	}
+
+	backupFile, err := os.CreateTemp(filepath.Dir(s.path), filepath.Base(s.path)+".backup-*")
+	if err != nil {
+		return "", fmt.Errorf("web auth: create backup file: %w", err)
+	}
+	backupPath := backupFile.Name()
+
+	if err := backupFile.Chmod(0o600); err != nil {
+		_ = backupFile.Close()
+		_ = os.Remove(backupPath)
+		return "", fmt.Errorf("web auth: chmod backup file: %w", err)
+	}
+	if _, err := backupFile.Write(raw); err != nil {
+		_ = backupFile.Close()
+		_ = os.Remove(backupPath)
+		return "", fmt.Errorf("web auth: write backup file: %w", err)
+	}
+	if err := backupFile.Sync(); err != nil {
+		_ = backupFile.Close()
+		_ = os.Remove(backupPath)
+		return "", fmt.Errorf("web auth: sync backup file: %w", err)
+	}
+	if err := backupFile.Close(); err != nil {
+		_ = os.Remove(backupPath)
+		return "", fmt.Errorf("web auth: close backup file: %w", err)
+	}
+
+	return backupPath, nil
+}
+
 // loadLocked is intentionally separate so read-modify-write operations hold
 // one store lock across both the read and atomic replacement.
 func (s *Store) loadLocked() (Record, error) {
@@ -180,16 +220,51 @@ func (s *Store) Bootstrap(username string, password string) error {
 	return s.saveLocked(record)
 }
 
-// UpdatePasswordHash replaces only the hash when username matches the active
-// record.
-func (s *Store) UpdatePasswordHash(username string, passwordHash string) error {
+// UpdatePasswordHash replaces only the hash when username and current hash
+// still match the active record.
+func (s *Store) UpdatePasswordHash(username string, currentPasswordHash string, passwordHash string) error {
 	return s.updateRecordLocked(func(record *Record) error {
 		if record.Username != strings.TrimSpace(username) {
 			return errors.New("web auth: user mismatch")
 		}
+		if strings.TrimSpace(record.PasswordHash) != strings.TrimSpace(currentPasswordHash) {
+			return errors.New("web auth: password changed during update")
+		}
 		record.PasswordHash = strings.TrimSpace(passwordHash)
 		return nil
 	})
+}
+
+// InitializeBrowsePolicy atomically persists the first WebUI browse policy. It
+// returns false without modifying a policy that was already configured.
+func (s *Store) InitializeBrowsePolicy(username string, browseRoot string, allowUnrestricted bool) (bool, error) {
+	browseRoot = strings.TrimSpace(browseRoot)
+	if allowUnrestricted && browseRoot != "" {
+		return false, errors.New("web auth: unrestricted browsing cannot be combined with browse roots")
+	}
+	if !allowUnrestricted && browseRoot == "" {
+		return false, errors.New("web auth: at least one browse root is required")
+	}
+
+	initialized := false
+	err := s.updateRecordLocked(func(record *Record) error {
+		if record.Username != strings.TrimSpace(username) {
+			return errors.New("web auth: user mismatch")
+		}
+		if strings.TrimSpace(record.BrowseRoot) != "" || record.AllowUnrestrictedBrowse {
+			return nil
+		}
+
+		record.BrowseRoot = browseRoot
+		record.AllowUnrestrictedBrowse = allowUnrestricted
+		if record.PendingUpgrade != nil {
+			record.PendingUpgrade.Target.BrowseRoot = record.BrowseRoot
+			record.PendingUpgrade.Target.AllowUnrestrictedBrowse = allowUnrestricted
+		}
+		initialized = true
+		return nil
+	})
+	return initialized, err
 }
 
 // UpdateRecord replaces mutable auth, export, browse, and upgrade fields while

@@ -65,14 +65,82 @@ func TestAZFamilyValidationPolicyVersions(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]string{
-		"AZ":  "azfamily-az-policy-v2",
-		"CZ":  "azfamily-cz-policy-v2",
-		"PHD": "azfamily-phd-constructibility-v1",
+		"AZ":  "azfamily-az-policy-v3",
+		"CZ":  "azfamily-cz-policy-v3",
+		"PHD": "azfamily-phd-constructibility-v2",
 	}
 	for site, expected := range tests {
 		if got := New(site).ValidationPolicy().ID; got != expected {
 			t.Fatalf("%s validation policy ID = %q, want %q", site, got, expected)
 		}
+	}
+}
+
+func TestAZScreenshotMinimum(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		site    string
+		subject api.TrackerValidationSubject
+		want    int
+	}{
+		{
+			name:    "AZ web",
+			site:    "AZ",
+			subject: api.TrackerValidationSubject{Type: "WEBDL"},
+			want:    3,
+		},
+		{
+			name:    "CZ web",
+			site:    "CZ",
+			subject: api.TrackerValidationSubject{Type: "WEBDL"},
+			want:    3,
+		},
+		{
+			name:    "CZ disc",
+			site:    "CZ",
+			subject: api.TrackerValidationSubject{DiscType: "BDMV"},
+			want:    6,
+		},
+		{
+			name:    "CZ remux",
+			site:    "CZ",
+			subject: api.TrackerValidationSubject{Type: "REMUX"},
+			want:    6,
+		},
+		{
+			name: "CZ release remux",
+			site: "CZ",
+			subject: api.TrackerValidationSubject{Release: api.ReleaseInfo{
+				Type: "REMUX",
+			}},
+			want: 6,
+		},
+		{
+			name: "CZ 2160p",
+			site: "CZ",
+			subject: api.TrackerValidationSubject{Release: api.ReleaseInfo{
+				Resolution: "2160p",
+			}},
+			want: 6,
+		},
+		{
+			name: "PHD 2160p",
+			site: "PHD",
+			subject: api.TrackerValidationSubject{Release: api.ReleaseInfo{
+				Resolution: "2160p",
+			}},
+			want: 3,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := azScreenshotMinimum(siteFor(test.site), test.subject); got != test.want {
+				t.Fatalf("minimum = %d, want %d", got, test.want)
+			}
+		})
 	}
 }
 

@@ -117,13 +117,13 @@ func TestTrackerLookupFileNameKeepsFilenameWhenDefaultEnabled(t *testing.T) {
 	}
 }
 
-func TestTrackerLookupFileNameKeepsFilenameWithTrackerID(t *testing.T) {
+func TestTrackerLookupFileNameSkipsFilenameWithTrackerID(t *testing.T) {
 	meta := preparationstate.State{
 		SourcePath: `D:\Movies\Example.Show.S04E01.2160p.WEB.h265-GRP.mkv`,
 	}
 
-	if got := trackerLookupFileName(meta, "12345", true); got != "Example.Show.S04E01.2160p.WEB.h265-GRP.mkv" {
-		t.Fatalf("expected filename to remain available with tracker id, got %q", got)
+	if got := trackerLookupFileName(meta, "12345", false); got != "" {
+		t.Fatalf("expected filename lookup to stop when tracker id is known, got %q", got)
 	}
 }
 

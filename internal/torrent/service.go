@@ -239,12 +239,16 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		return api.TorrentResult{}, fmt.Errorf("torrent: validate created torrent %q: %w", info.Path, err)
 	}
 	if policy != nil {
-		if err := validateTorrentFileSize(info.Path, policy); err != nil {
+		trackerCount := len(normalizedTrackerNames(meta.Trackers))
+		s.logger.Infof("torrent: tracker policy validation tracker=%s state=start decision=validate count=%d", policy.name, trackerCount)
+		if err := policy.validateTorrent(info.Path, meta); err != nil {
+			s.logger.Warnf("torrent: tracker policy validation tracker=%s state=completed decision=rejected count=%d", policy.name, trackerCount)
 			emitTorrentProgress(ctx, meta, "failed", "Torrent policy validation failed")
 			return api.TorrentResult{}, fmt.Errorf("torrent: validate created torrent policy %q: %w", info.Path, err)
 		}
+		s.logger.Infof("torrent: tracker policy validation tracker=%s state=completed decision=accepted count=%d", policy.name, trackerCount)
 	}
-	if err := setCreatedBy(info.Path, torrentmeta.MkbrrUploadCreatedBy); err != nil {
+	if err := setUploadMetadata(info.Path); err != nil {
 		emitTorrentProgress(ctx, meta, "failed", "Torrent metadata update failed")
 		return api.TorrentResult{}, err
 	}
@@ -259,12 +263,13 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 	}, nil
 }
 
-func setCreatedBy(path string, createdBy string) error {
+func setUploadMetadata(path string) error {
 	torrentMeta, err := metainfo.LoadFromFile(path)
 	if err != nil {
 		return fmt.Errorf("torrent: load created torrent metadata: %w", err)
 	}
-	torrentMeta.CreatedBy = createdBy
+	torrentMeta.CreatedBy = torrentmeta.MkbrrUploadCreatedBy
+	torrentMeta.Comment = torrentmeta.UploadComment
 	torrentMeta.Announce = ""
 	torrentMeta.AnnounceList = nil
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0o600)

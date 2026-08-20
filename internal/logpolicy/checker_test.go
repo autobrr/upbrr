@@ -1105,6 +1105,73 @@ func printReleaseDetails(p preview, sourcePath string) {
 	}
 }
 
+func TestCheckRepositoryAllowsReasonedExactLocalPathCLIOutput(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
+		t.Fatalf("mkdir internal: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "upbrr"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd upbrr: %v", err)
+	}
+
+	content := `package main
+
+import "fmt"
+
+func printBackup(backupPath string) {
+	fmt.Printf(
+		"Backup: %s\n",
+		//logpolicy:allow exact operator-requested backup location is required for recovery
+		backupPath,
+	)
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "cmd", "upbrr", "auth.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryReasonedCLIPathAllowSuppressesOnlyOneViolation(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
+		t.Fatalf("mkdir internal: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "upbrr"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd upbrr: %v", err)
+	}
+
+	content := `package main
+
+import "fmt"
+
+func printBackup(backupPath string, unrelatedPath string) {
+	//logpolicy:allow exact operator-requested backup location is required for recovery
+	fmt.Printf("Backup: %s; unrelated: %s\n", backupPath, unrelatedPath)
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "cmd", "upbrr", "auth.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 || !strings.Contains(violations[0].Message, "local filesystem path output") {
+		t.Fatalf("expected one local path violation, got %#v", violations)
+	}
+}
+
 func TestCheckRepositoryAllowsGenericCLIOutputNamesWithoutPathSource(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {

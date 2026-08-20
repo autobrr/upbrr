@@ -10,12 +10,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/autobrr/go-torrent/bencode"
 	"github.com/autobrr/go-torrent/metainfo"
 
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -25,6 +27,37 @@ func TestResolveIMDbIDPadsShortID(t *testing.T) {
 
 	if got := resolveIMDbID(api.UploadSubject{Identity: api.ExternalIdentity{IMDBID: 456}}); got != "tt0000456" {
 		t.Fatalf("expected padded IMDb ID, got %q", got)
+	}
+}
+
+func TestResolveMediaInfoUsesBDInfoForBDMV(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "db.sqlite")
+	meta := api.UploadSubject{
+		SourcePath: "Example.Release.2026",
+		DiscType:   "BDMV",
+		SelectedBDMVPlaylists: []api.PlaylistInfo{{
+			File: "00001.MPLS",
+		}},
+	}
+	summaryPath, err := paths.PrimaryBDMVSummaryPathFor(filepath.Join(filepath.Dir(dbPath), "tmp"), meta.SourcePath, meta.Release, meta.SelectedBDMVPlaylists)
+	if err != nil {
+		t.Fatalf("resolve BDInfo summary path: %v", err)
+	}
+	const summary = "DISC INFO:\nDisc Title: Example Release 2026\n"
+	if err := os.WriteFile(summaryPath, []byte(summary), 0o600); err != nil {
+		t.Fatalf("write BDInfo summary: %v", err)
+	}
+
+	got, err := resolveMediaInfo(trackers.PreparationInput{
+		Runtime: trackers.PreparationRuntime{DBPath: dbPath},
+	}, meta)
+	if err != nil {
+		t.Fatalf("resolve DC BDMV media info: %v", err)
+	}
+	if got != strings.TrimSpace(summary) {
+		t.Fatalf("BDInfo media info = %q, want %q", got, strings.TrimSpace(summary))
 	}
 }
 

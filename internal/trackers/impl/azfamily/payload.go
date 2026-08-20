@@ -12,6 +12,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"os"
 	"path" //nolint:depguard // Extracts response URL path basename, not local filesystem basename.
@@ -20,9 +21,23 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+const (
+	azMaxScreenshotUploads  = 15
+	azScreenshotSourceMax   = 20 << 20
+	azScreenshotBatchMax    = 100 << 20
+	azScreenshotResponseMax = 64 << 10
+	azImageUserAgent        = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:141.0) Gecko/20100101 Firefox/141.0"
+)
+
+type preparedScreenshotUpload struct {
+	data     []byte
+	filename string
+}
 
 func buildFinalPayload(
 	ctx context.Context,
@@ -144,31 +159,116 @@ func fetchTagID(ctx context.Context, site siteDefinition, state sessionState, wo
 	return "", nil
 }
 
-func uploadScreenshots(ctx context.Context, site siteDefinition, state sessionState, req trackers.PreparationInput) ([]string, error) {
+func prepareScreenshotUploads(
+	ctx context.Context,
+	site siteDefinition,
+	state sessionState,
+	req trackers.PreparationInput,
+) ([]preparedScreenshotUpload, int, error) {
 	assets, err := trackers.PreparedDescriptionAssets(req.Assets)
 	if err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
+		return nil, 0, fmt.Errorf("trackers: %w", err)
 	}
-	limit := 3
-	if req.Meta.TVPack {
-		limit = 15
+	minimum := azScreenshotMinimum(site, api.NewTrackerValidationSubject(req.Meta, req.Tracker))
+	limit := minimum
+	menuLimit := 0
+	if req.Meta.TVPack || len(assets.MenuImages) > 0 {
+		limit = azMaxScreenshotUploads
+		menuLimit = limit - minimum
 	}
-	results := make([]string, 0, limit)
-	for _, shot := range assets.Screenshots {
-		if len(results) >= limit {
+	prepared := make([]preparedScreenshotUpload, 0, min(limit, len(assets.MenuImages)+len(assets.Screenshots)))
+	failures := 0
+	preparedBytes := 0
+	appendImage := func(shot api.ScreenshotImage, menu bool) bool {
+		imageBytes, filename, imageErr := screenshotBytes(ctx, state.client, shot)
+		if imageErr != nil || len(imageBytes) == 0 || menu && http.DetectContentType(imageBytes) != "image/png" {
+			failures++
+			return false
+		}
+		if !fitsScreenshotBatch(preparedBytes, len(imageBytes)) {
+			failures++
+			return false
+		}
+		preparedBytes += len(imageBytes)
+		prepared = append(prepared, preparedScreenshotUpload{data: imageBytes, filename: filename})
+		return true
+	}
+	preparedMenus := 0
+	for _, image := range assets.MenuImages {
+		if preparedMenus >= menuLimit {
 			break
 		}
-		imageBytes, filename, err := screenshotBytes(ctx, state.client, shot)
+		if appendImage(image, true) {
+			preparedMenus++
+		}
+	}
+	for _, image := range assets.Screenshots {
+		if len(prepared) >= limit {
+			break
+		}
+		appendImage(image, false)
+	}
+	if len(prepared) < minimum {
+		return nil, minimum, fmt.Errorf(
+			"trackers: %s only %d of %d required screenshot sources could be read",
+			site.Name,
+			len(prepared),
+			minimum,
+		)
+	}
+	if failures > 0 && req.Logger != nil {
+		req.Logger.Warnf(
+			"trackers: %s screenshot source preparation partial prepared=%d failed=%d decision=continue",
+			site.Name,
+			len(prepared),
+			failures,
+		)
+	}
+	return prepared, minimum, nil
+}
+
+func uploadScreenshots(
+	ctx context.Context,
+	site siteDefinition,
+	state sessionState,
+	req trackers.PreparationInput,
+	prepared []preparedScreenshotUpload,
+	minimum int,
+) ([]string, error) {
+	results := make([]string, 0, len(prepared))
+	failures := 0
+	var firstErr error
+	for _, image := range prepared {
+		id, err := uploadScreenshot(ctx, site, state, image.data, image.filename)
 		if err != nil {
+			failures++
+			if firstErr == nil {
+				firstErr = err
+			}
 			continue
 		}
-		id, err := uploadScreenshot(ctx, site, state, imageBytes, filename)
-		if err != nil {
-			continue
+		results = append(results, id)
+	}
+	if len(results) < minimum {
+		if firstErr != nil {
+			return nil, fmt.Errorf(
+				"trackers: %s image host returned %d of %d required screenshots: %w",
+				site.Name,
+				len(results),
+				minimum,
+				firstErr,
+			)
 		}
-		if id != "" {
-			results = append(results, id)
-		}
+		return nil, fmt.Errorf("trackers: %s image host returned %d of %d required screenshots", site.Name, len(results), minimum)
+	}
+	if failures > 0 && req.Logger != nil {
+		req.Logger.Warnf(
+			"trackers: %s screenshot upload partial published=%d failed=%d minimum=%d decision=continue",
+			site.Name,
+			len(results),
+			failures,
+			minimum,
+		)
 	}
 	return results, nil
 }
@@ -176,11 +276,23 @@ func uploadScreenshots(ctx context.Context, site siteDefinition, state sessionSt
 func uploadScreenshot(ctx context.Context, site siteDefinition, state sessionState, imageBytes []byte, filename string) (string, error) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
-	_ = writer.WriteField("_token", state.token)
-	_ = writer.WriteField("qquuid", strconv.FormatInt(time.Now().UnixNano(), 10))
-	_ = writer.WriteField("qqfilename", filename)
-	_ = writer.WriteField("qqtotalfilesize", strconv.Itoa(len(imageBytes)))
-	part, err := writer.CreateFormFile("qqfile", filename)
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{name: "_token", value: state.token},
+		{name: "qquuid", value: strconv.FormatInt(time.Now().UnixNano(), 10)},
+		{name: "qqfilename", value: filename},
+		{name: "qqtotalfilesize", value: strconv.Itoa(len(imageBytes))},
+	} {
+		if err := writer.WriteField(field.name, field.value); err != nil {
+			return "", fmt.Errorf("trackers: %s write screenshot field %s: %w", site.Name, field.name, err)
+		}
+	}
+	partHeader := make(textproto.MIMEHeader)
+	partHeader.Set("Content-Disposition", multipart.FileContentDisposition("qqfile", filename))
+	partHeader.Set("Content-Type", http.DetectContentType(imageBytes))
+	part, err := writer.CreatePart(partHeader)
 	if err != nil {
 		return "", fmt.Errorf("trackers: %s create screenshot form file: %w", site.Name, err)
 	}
@@ -199,7 +311,7 @@ func uploadScreenshot(ctx context.Context, site siteDefinition, state sessionSta
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Origin", site.BaseURL)
-	req.Header.Set("User-Agent", azCookieUserAgent)
+	req.Header.Set("User-Agent", azImageUserAgent)
 	resp, err := state.client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("trackers: %s screenshot upload request: %w", site.Name, err)
@@ -208,31 +320,54 @@ func uploadScreenshot(ctx context.Context, site siteDefinition, state sessionSta
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("status %d", resp.StatusCode)
 	}
-	var payload struct {
-		Success bool   `json:"success"`
-		ImageID any    `json:"imageId"`
-		Error   string `json:"error"`
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, azScreenshotResponseMax+1))
+	if err != nil {
+		return "", fmt.Errorf("trackers: %s read screenshot upload response: %w", site.Name, err)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	if len(responseBody) > azScreenshotResponseMax {
+		return "", fmt.Errorf("trackers: %s screenshot upload response exceeded %d bytes", site.Name, azScreenshotResponseMax)
+	}
+	var payload struct {
+		Success bool `json:"success"`
+		ImageID any  `json:"imageId"`
+		Error   any  `json:"error"`
+	}
+	if err := json.Unmarshal(responseBody, &payload); err != nil {
 		return "", fmt.Errorf("trackers: %s decode screenshot upload response: %w", site.Name, err)
 	}
 	if !payload.Success {
-		return "", fmt.Errorf("%s", strings.TrimSpace(payload.Error))
+		message := "tracker image host rejected screenshot"
+		if payload.Error != nil {
+			if detail := strings.TrimSpace(redaction.RedactValue(stringValue(payload.Error), nil)); detail != "" {
+				message += ": " + detail
+			}
+		}
+		return "", errors.New(message)
 	}
-	return stringValue(payload.ImageID), nil
+	imageID := stringValue(payload.ImageID)
+	if imageID == "" {
+		return "", errors.New("tracker image host returned no image id")
+	}
+	return imageID, nil
 }
 
 func screenshotBytes(ctx context.Context, client *http.Client, shot api.ScreenshotImage) ([]byte, string, error) {
+	var pathErr error
 	if path := strings.TrimSpace(shot.Path); path != "" {
-		if data, err := os.ReadFile(path); err == nil {
+		data, err := readScreenshotFile(path)
+		if err == nil {
 			return data, filepath.Base(path), nil
 		}
+		pathErr = err
 	}
 	raw := strings.TrimSpace(shot.RawURL)
 	if raw == "" {
 		raw = strings.TrimSpace(shot.ImgURL)
 	}
 	if raw == "" {
+		if pathErr != nil {
+			return nil, "", pathErr
+		}
 		return nil, "", errors.New("no screenshot source")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
@@ -247,7 +382,10 @@ func screenshotBytes(ctx context.Context, client *http.Client, shot api.Screensh
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, "", fmt.Errorf("status %d", resp.StatusCode)
 	}
-	data, err := io.ReadAll(resp.Body)
+	if resp.ContentLength > azScreenshotSourceMax {
+		return nil, "", fmt.Errorf("trackers: screenshot source exceeded %d bytes", azScreenshotSourceMax)
+	}
+	data, err := readScreenshotSource(resp.Body, azScreenshotSourceMax)
 	if err != nil {
 		return nil, "", fmt.Errorf("trackers: read screenshot response body: %w", err)
 	}
@@ -256,6 +394,43 @@ func screenshotBytes(ctx context.Context, client *http.Client, shot api.Screensh
 		filename = "screenshot.png"
 	}
 	return data, filename, nil
+}
+
+func readScreenshotFile(filePath string) ([]byte, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("trackers: open screenshot source: %w", err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("trackers: inspect screenshot source: %w", err)
+	}
+	if info.Size() > azScreenshotSourceMax {
+		return nil, fmt.Errorf("trackers: screenshot source exceeded %d bytes", azScreenshotSourceMax)
+	}
+	data, err := readScreenshotSource(file, azScreenshotSourceMax)
+	if err != nil {
+		return nil, fmt.Errorf("trackers: read screenshot source: %w", err)
+	}
+	return data, nil
+}
+
+// readScreenshotSource rejects content larger than limit without retaining the
+// complete oversized source.
+func readScreenshotSource(reader io.Reader, limit int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(reader, limit+1))
+	if err != nil {
+		return nil, fmt.Errorf("read source: %w", err)
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("source exceeded %d bytes", limit)
+	}
+	return data, nil
+}
+
+func fitsScreenshotBatch(current, next int) bool {
+	return current <= azScreenshotBatchMax && next <= azScreenshotBatchMax-current
 }
 
 func keywordsFor(meta api.UploadSubject) string {

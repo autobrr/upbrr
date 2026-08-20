@@ -1301,6 +1301,34 @@ func TestWorkflowUploadExecutionKeepsSubmissionSuccessWithoutExactArtifact(t *te
 	}
 }
 
+func TestWorkflowUploadExecutionSkipsInjectionWhilePublicationPending(t *testing.T) {
+	t.Parallel()
+
+	clientService := &dryRunClientService{}
+	execution := &workflowUploadExecution{
+		plan: &workflowRetainedUploadPlanFake{results: []trackers.RetainedTrackerResult{{
+			Tracker: "ALPHA",
+			Summary: api.UploadSummary{
+				Uploaded:           1,
+				PendingPublication: true,
+			},
+		}}},
+		clients:        clientService,
+		dryRunInjected: map[api.TrackerID]struct{}{"ALPHA": {}},
+	}
+	results, err := execution.Execute(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("execute workflow upload: %v", err)
+	}
+	if len(results) != 1 || results[0].SubmissionStatus != api.StageStatusCompleted ||
+		results[0].ClientInjectionStatus != api.StageStatusSkipped ||
+		results[0].Status != api.StageStatusCompleted ||
+		!strings.Contains(results[0].ClientInjectionMessage, "publication is pending") ||
+		len(results[0].Failures) != 0 || len(clientService.injections) != 0 {
+		t.Fatalf("pending-publication upload results=%#v injections=%#v", results, clientService.injections)
+	}
+}
+
 func TestWorkflowUploadExecutionNoSeedSkipsRegisteredTorrentInjection(t *testing.T) {
 	t.Parallel()
 

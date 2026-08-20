@@ -516,7 +516,10 @@ func TestSiteHandlersSearch(t *testing.T) {
 					}
 					_, _ = w.Write([]byte(`{"result":{"results":"0","torrents":{}}}`))
 					return
-				case "CZT", "DC", "RTF", "SPD":
+				case "DC":
+					_, _ = w.Write([]byte(`{"results":[],"index":0,"limit":100,"count":0,"total":0,"includesPending":true}`))
+					return
+				case "CZT", "RTF", "SPD":
 					_, _ = w.Write([]byte(`[]`))
 					return
 				case "GPW":
@@ -532,7 +535,7 @@ func TestSiteHandlersSearch(t *testing.T) {
 					_, _ = w.Write([]byte(`{"TotalResults":"0","Movies":[],"Page":"1"}`))
 					return
 				case "AITHER":
-					_, _ = w.Write([]byte(`{"data":[],"meta":{"current_page":1,"last_page":1,"total":0}}`))
+					_, _ = w.Write([]byte(`{"data":[],"links":{"next":null}}`))
 					return
 				case "ASC":
 					if r.URL.Path == "/busca-series.php" && r.URL.Query().Get("search") == "" && r.URL.Query().Get("imdb") == "tt1234567" {

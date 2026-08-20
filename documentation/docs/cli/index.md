@@ -8,7 +8,8 @@ description: Commands, interaction modes, aliases, and upload preparation flags 
 ```text
 upbrr [options] <input path>...
 upbrr serve [options]
-upbrr api-token <create|list|revoke> [options]
+upbrr api-token <list|revoke> [options]
+upbrr auth <password|browse-roots> [options]
 ```
 
 On Windows, examples use `upbrr.exe`. Put options before input paths.
@@ -18,7 +19,8 @@ Use executable help as the exact reference for your installed version:
 ```powershell
 .\upbrr.exe --help
 .\upbrr.exe serve --help
-.\upbrr.exe api-token create --help
+.\upbrr.exe api-token list --help
+.\upbrr.exe auth password --help
 ```
 
 ## Common operations
@@ -49,13 +51,14 @@ Process at most five entries from a queue folder:
 
 ## Interaction and safety
 
-| Option                 | Behavior                                                                                                                                |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `--debug`              | Runs end-to-end preparation and payload preview without tracker submission. Client injection remains enabled unless `--no-seed` is set. |
-| `--log-level debug`    | Changes logging verbosity only. It does not enable debug/non-submitting behavior.                                                       |
-| `--unattended`         | Never prompts. Unsafe global ambiguity returns an error; tracker-specific manual prerequisites can block only that tracker.             |
-| `--unattended_confirm` | Uses unattended defaults but permits required confirmation or manual-input prompts.                                                     |
-| `--no-seed`            | Disables torrent-client injection.                                                                                                      |
+| Option                     | Behavior                                                                                                                                |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `--debug`                  | Runs end-to-end preparation and payload preview without tracker submission. Client injection remains enabled unless `--no-seed` is set. |
+| `--log-level debug`        | Changes application logging verbosity for this run. It does not enable debug/non-submitting behavior.                                   |
+| `--console-log-level info` | Changes terminal log verbosity for this run without changing file or retained application logs.                                         |
+| `--unattended`             | Never prompts. Unsafe global ambiguity returns an error; tracker-specific manual prerequisites can block only that tracker.             |
+| `--unattended_confirm`     | Uses unattended defaults but permits required confirmation or manual-input prompts.                                                     |
+| `--no-seed`                | Disables torrent-client injection.                                                                                                      |
 
 :::danger Destructive maintenance
 
@@ -77,18 +80,19 @@ Process at most five entries from a queue folder:
 
 ## Execution
 
-| Option                    | Aliases                       | Purpose                                                 |
-| ------------------------- | ----------------------------- | ------------------------------------------------------- |
-| `--queue <path>`          | `-queue`                      | Process an entire folder queue.                         |
-| `--limit-queue <count>`   | `-limit-queue`, `-lq`         | Limit queued items processed.                           |
-| `--site-check`            | `-site-check`, `-sc`          | Search/check sites without uploading.                   |
-| `--site-upload <tracker>` | `-site-upload`, `-su`         | Process one tracker upload flow.                        |
-| `--debug`                 | `-debug`                      | Enable non-submitting debug mode.                       |
-| `--log-level <level>`     | `-log-level`                  | Set `error`, `warn`, `info`, `debug`, or `trace`.       |
-| `--upload-only`           | `-upload-only`                | Upload using prepared metadata cache only.              |
-| `--delete-tmp`            | `-delete-tmp`, `-dtmp`        | Delete stored content for each input before processing. |
-| `--unattended`            | `-unattended`, `-ua`          | Run without prompts.                                    |
-| `--unattended_confirm`    | `-unattended_confirm`, `-uac` | Run unattended defaults with prompts allowed.           |
+| Option                        | Aliases                       | Purpose                                                                               |
+| ----------------------------- | ----------------------------- | ------------------------------------------------------------------------------------- |
+| `--queue <path>`              | `-queue`                      | Process an entire folder queue.                                                       |
+| `--limit-queue <count>`       | `-limit-queue`, `-lq`         | Limit queued items processed.                                                         |
+| `--site-check`                | `-site-check`, `-sc`          | Search/check sites without uploading.                                                 |
+| `--site-upload <tracker>`     | `-site-upload`, `-su`         | Process one tracker upload flow.                                                      |
+| `--debug`                     | `-debug`                      | Enable non-submitting debug mode.                                                     |
+| `--log-level <level>`         | `-log-level`                  | Set application logging to `error`, `warn`, `info`, `debug`, or `trace` for this run. |
+| `--console-log-level <level>` | `-cll`                        | Set console logging to the same levels without changing application logs.             |
+| `--upload-only`               | `-upload-only`                | Upload using prepared metadata cache only.                                            |
+| `--delete-tmp`                | `-delete-tmp`, `-dtmp`        | Delete stored content for each input before processing.                               |
+| `--unattended`                | `-unattended`, `-ua`          | Run without prompts.                                                                  |
+| `--unattended_confirm`        | `-unattended_confirm`, `-uac` | Run unattended defaults with prompts allowed.                                         |
 
 ## Tracker selection and IDs
 
@@ -218,15 +222,37 @@ upbrr serve [options]
 
 See [Web server and reverse proxy](../configuration/web-server.md) for precedence and proxy examples.
 
-## `api-token`
+## `auth`
 
-Create a persistent bearer token:
+Password changes and browse-policy changes after initial setup are available only through the local binary. The first authenticated Web UI setup may establish the initial browse policy. Stop `upbrr serve` before running either command, then restart it when the command completes.
+
+After validation, each command creates a unique `web-auth.json.backup-*` beside the active auth file and prints its exact path. The path is still printed if a later update step fails. Backups contain sensitive authentication and encryption material; protect them like `web-auth.json` and remove obsolete copies manually.
+
+Change the Web UI password interactively:
 
 ```powershell
-.\upbrr.exe api-token create --name "Release automation" --owner "automation" --scopes workflow:read,workflow:write
+.\upbrr.exe auth password
 ```
 
-`--scopes` accepts `workflow:read`, `workflow:write`, and `workflow:execute`. Omitting it grants all supported scopes. The plaintext token is returned only when created; store it in a secret manager.
+The command prompts for the current password, the replacement, and confirmation without accepting password flags. Retained browser sessions are revoked immediately after the current password is verified. If a later update step fails, sign in again with the existing password before retrying.
+
+Replace all browse roots by passing each existing directory as a separate argument:
+
+```powershell
+.\upbrr.exe auth browse-roots "D:\Media" "E:\Downloads"
+```
+
+To remove the roots and explicitly allow unrestricted host browsing:
+
+```powershell
+.\upbrr.exe auth browse-roots --allow-unrestricted
+```
+
+Both subcommands accept `--config` when the active database is selected through a non-default config file. For containers, run the command in the same environment as upbrr and use paths visible inside the container.
+
+## `api-token`
+
+Create persistent bearer tokens in [Settings → API Tokens](../web-ui/settings/api-tokens.md). The authenticated Web UI displays each plaintext token once so it can be copied directly into a secret manager; CLI output never includes tokens.
 
 List safe token metadata:
 
@@ -240,6 +266,6 @@ Revoke by token ID:
 .\upbrr.exe api-token revoke tok_example
 ```
 
-Create options also include `--config`, `--name`, `--owner`, and `--scopes`. List and revoke accept `--config`.
+List and revoke accept `--config`.
 
 See the [API reference](../api/index.md) before granting `workflow:execute`.

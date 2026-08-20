@@ -14,7 +14,7 @@ type operationLoggerKey struct{}
 
 // OperationLogger is an immutable non-owning verbosity view over one active
 // logger. Entries use the root logger's sanitized outputs, buffer, and
-// subscribers without changing its configured threshold.
+// subscribers without changing its configured application or console threshold.
 type OperationLogger struct {
 	root  *Logger
 	level Level
@@ -87,10 +87,10 @@ func (l *OperationLogger) Errorf(format string, args ...any) {
 }
 
 func (l *OperationLogger) logf(level Level, label string, format string, args ...any) {
-	if l == nil || l.root == nil || level > l.level {
+	if l == nil || l.root == nil {
 		return
 	}
-	l.root.writef(level, label, format, args...)
+	l.root.writefAtLevel(l.level, level, label, format, args...)
 }
 
 var _ api.Logger = (*OperationLogger)(nil)

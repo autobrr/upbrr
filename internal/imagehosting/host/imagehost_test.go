@@ -26,6 +26,7 @@ func TestExtractHost(t *testing.T) {
 		{"imgur", "https://imgur.com/abc", "imgur"},
 		{"imgur with i subdomain", "https://i.imgur.com/abc.jpg", "imgur"},
 		{"postimg", "https://postimg.cc/abc", "postimg"},
+		{"samaritano", "https://img.samaritano.cc/uploads/abc.png", "samaritano"},
 		{"digitalcore", "https://digitalcore.club/img/abc", "sharex"},
 		{"digitalcore img subdomain", "https://img.digitalcore.club/abc.png", "sharex"},
 		{"kshare", "https://kshare.club/abc.png", "kshare"},

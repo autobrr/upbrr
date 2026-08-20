@@ -21,7 +21,7 @@ func Profile() standalone.Profile {
 		ValidationPolicy:      validationPolicy(),
 		NewDuplicateAdapter:   newDuplicateAdapter,
 		AuthCapability:        authcontract.CookieCapability("PTS"),
-		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: sourceFlag},
+		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: sourceFlag, RequireAnnounce: true},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{"https://tracker.ptskit.com"}},
 	}
 }

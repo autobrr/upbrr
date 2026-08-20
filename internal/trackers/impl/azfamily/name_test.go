@@ -212,12 +212,64 @@ func TestAZFamilyNamingPolicyVersions(t *testing.T) {
 	}{
 		{site: "AZ", want: "azfamily/az/v2"},
 		{site: "CZ", want: "azfamily/cz/v2"},
-		{site: "PHD", want: "azfamily/phd/v1"},
+		{site: "PHD", want: "azfamily/phd/v2"},
 	}
 	for _, test := range tests {
 		t.Run(test.site, func(t *testing.T) {
 			if got := New(test.site).ReleaseNamePolicy().ID; got != test.want {
 				t.Fatalf("policy ID = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestEditPHDNameUploadAssistantParity(t *testing.T) {
+	tests := []struct {
+		name        string
+		releaseName string
+		meta        api.UploadSubject
+		want        string
+	}{
+		{
+			name:        "encode settings use x264 and x265 labels",
+			releaseName: "Example Release 2026 H.264 H.265-GRP",
+			meta: api.UploadSubject{
+				HasEncodeSettings: true,
+				Tag:               "-GRP",
+			},
+			want: "Example Release 2026 x264 x265-GRP",
+		},
+		{
+			name:        "DVD rip removes source",
+			releaseName: "Example Release 2026 DVD DVDRip DD 2.0-GRP",
+			meta: api.UploadSubject{
+				Type:   "DVDRIP",
+				Source: "DVD",
+				Tag:    "-GRP",
+			},
+			want: "Example Release 2026 DVDRip DD 2.0-GRP",
+		},
+		{
+			name:        "DVD replaces region and source and appends codec",
+			releaseName: "Example Release 2026 R1 DVD DD 5.1-GRP",
+			meta: api.UploadSubject{
+				DiscType:   "DVD",
+				Region:     "R1",
+				Source:     "DVD",
+				Audio:      "DD 5.1",
+				VideoCodec: "MPEG-2",
+				Tag:        "-GRP",
+				Release:    api.ReleaseInfo{Resolution: "480p"},
+			},
+			want: "Example Release 2026 480p DD 5.1 MPEG-2-GRP",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			test.meta.ReleaseName = test.releaseName
+			if got := editName(siteFor("PHD"), test.meta); got != test.want {
+				t.Fatalf("editName() = %q, want %q", got, test.want)
 			}
 		})
 	}
