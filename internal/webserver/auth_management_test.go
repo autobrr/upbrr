@@ -48,8 +48,16 @@ func TestChangeAuthPasswordUpdatesHashAndRevokesRetainedSessions(t *testing.T) {
 		t.Fatalf("Save session: %v", err)
 	}
 
-	if err := ChangeAuthPassword(t.Context(), dbPath, "very-secure-password", "replacement-secure-password"); err != nil {
+	backupPath, err := ChangeAuthPassword(t.Context(), dbPath, "very-secure-password", "replacement-secure-password")
+	if err != nil {
 		t.Fatalf("ChangeAuthPassword: %v", err)
+	}
+	backup := readAuthBackup(t, backupPath)
+	if !verifyPassword("very-secure-password", backup.PasswordHash) {
+		t.Fatal("backup does not preserve the previous password")
+	}
+	if backup.BrowseRoot != record.BrowseRoot {
+		t.Fatalf("backup browse root = %q, want %q", backup.BrowseRoot, record.BrowseRoot)
 	}
 	updated, err := store.Load()
 	if err != nil {
@@ -79,9 +87,12 @@ func TestChangeAuthPasswordRejectsWrongCurrentPasswordWithoutRevokingSessions(t 
 		t.Fatalf("write session file: %v", err)
 	}
 
-	err := ChangeAuthPassword(t.Context(), dbPath, "incorrect-password", "replacement-secure-password")
+	backupPath, err := ChangeAuthPassword(t.Context(), dbPath, "incorrect-password", "replacement-secure-password")
 	if err == nil || !strings.Contains(err.Error(), "current password is incorrect") {
 		t.Fatalf("ChangeAuthPassword error = %v", err)
+	}
+	if backupPath != "" {
+		t.Fatalf("rejected password created backup %q", backupPath)
 	}
 	if _, err := os.Stat(sessionPath); err != nil {
 		t.Fatalf("session file changed after rejected password: %v", err)
@@ -133,8 +144,13 @@ func TestChangeAuthPasswordRewrapsLegacyCookies(t *testing.T) {
 		t.Fatalf("Close seed repository: %v", err)
 	}
 
-	if err := ChangeAuthPassword(t.Context(), dbPath, "very-secure-password", "replacement-secure-password"); err != nil {
+	backupPath, err := ChangeAuthPassword(t.Context(), dbPath, "very-secure-password", "replacement-secure-password")
+	if err != nil {
 		t.Fatalf("ChangeAuthPassword: %v", err)
+	}
+	backup := readAuthBackup(t, backupPath)
+	if strings.TrimSpace(backup.EncryptionKeySeed) != "" || !verifyPassword("very-secure-password", backup.PasswordHash) {
+		t.Fatal("backup does not preserve the legacy auth record")
 	}
 	updated, err := authmaterial.LoadRecordFromDBPath(dbPath)
 	if err != nil {
@@ -189,7 +205,7 @@ func TestUpdateBrowseRootsReplacesPolicy(t *testing.T) {
 	first := t.TempDir()
 	second := t.TempDir()
 
-	count, err := UpdateBrowseRoots(t.Context(), dbPath, []string{first, second, first}, false)
+	count, backupPath, err := UpdateBrowseRoots(t.Context(), dbPath, []string{first, second, first}, false)
 	if err != nil {
 		t.Fatalf("UpdateBrowseRoots: %v", err)
 	}
@@ -207,8 +223,12 @@ func TestUpdateBrowseRootsReplacesPolicy(t *testing.T) {
 	if record.AllowUnrestrictedBrowse {
 		t.Fatal("restricted policy unexpectedly allows unrestricted browsing")
 	}
+	backup := readAuthBackup(t, backupPath)
+	if backup.BrowseRoot != "" || backup.AllowUnrestrictedBrowse {
+		t.Fatal("first backup contains the updated browse policy")
+	}
 
-	count, err = UpdateBrowseRoots(t.Context(), dbPath, nil, true)
+	count, secondBackupPath, err := UpdateBrowseRoots(t.Context(), dbPath, nil, true)
 	if err != nil {
 		t.Fatalf("UpdateBrowseRoots unrestricted: %v", err)
 	}
@@ -222,6 +242,14 @@ func TestUpdateBrowseRootsReplacesPolicy(t *testing.T) {
 	if record.BrowseRoot != "" || !record.AllowUnrestrictedBrowse {
 		t.Fatalf("unrestricted policy: has_roots=%t unrestricted=%t", record.BrowseRoot != "", record.AllowUnrestrictedBrowse)
 	}
+	if secondBackupPath == backupPath {
+		t.Fatal("successive browse updates reused one backup path")
+	}
+	secondBackup := readAuthBackup(t, secondBackupPath)
+	secondBackupRoots := splitBrowsePolicyRoots(secondBackup.BrowseRoot)
+	if len(secondBackupRoots) != 2 || secondBackup.AllowUnrestrictedBrowse {
+		t.Fatalf("second backup does not preserve the restricted policy: %#v", secondBackup)
+	}
 }
 
 func TestUpdateBrowseRootsRejectsRootsWithUnrestrictedAccess(t *testing.T) {
@@ -230,7 +258,7 @@ func TestUpdateBrowseRootsRejectsRootsWithUnrestrictedAccess(t *testing.T) {
 		t.Fatalf("BootstrapAuthFile: %v", err)
 	}
 
-	if _, err := UpdateBrowseRoots(t.Context(), dbPath, []string{t.TempDir()}, true); err == nil ||
+	if _, _, err := UpdateBrowseRoots(t.Context(), dbPath, []string{t.TempDir()}, true); err == nil ||
 		!strings.Contains(err.Error(), "cannot be combined") {
 		t.Fatalf("UpdateBrowseRoots mixed policy error = %v", err)
 	}
@@ -249,12 +277,12 @@ func TestUpdateBrowseRootsRejectsMissingDirectoryWithoutChangingPolicy(t *testin
 		t.Fatalf("BootstrapAuthFile: %v", err)
 	}
 	existing := t.TempDir()
-	if _, err := UpdateBrowseRoots(t.Context(), dbPath, []string{existing}, false); err != nil {
+	if _, _, err := UpdateBrowseRoots(t.Context(), dbPath, []string{existing}, false); err != nil {
 		t.Fatalf("seed browse roots: %v", err)
 	}
 
 	missing := filepath.Join(t.TempDir(), "missing")
-	if _, err := UpdateBrowseRoots(t.Context(), dbPath, []string{missing}, false); err == nil {
+	if _, _, err := UpdateBrowseRoots(t.Context(), dbPath, []string{missing}, false); err == nil {
 		t.Fatal("expected missing browse root to fail")
 	}
 	record, err := authmaterial.LoadRecordFromDBPath(dbPath)
@@ -287,7 +315,7 @@ func TestUpdateBrowseRootsKeepsPendingPasswordUpdateInSync(t *testing.T) {
 	}
 
 	root := t.TempDir()
-	if _, err := UpdateBrowseRoots(t.Context(), dbPath, []string{root}, false); err != nil {
+	if _, _, err := UpdateBrowseRoots(t.Context(), dbPath, []string{root}, false); err != nil {
 		t.Fatalf("UpdateBrowseRoots: %v", err)
 	}
 	updated, err := store.Load()
@@ -300,4 +328,17 @@ func TestUpdateBrowseRootsKeepsPendingPasswordUpdateInSync(t *testing.T) {
 	if !sameFilesystemPath(updated.BrowseRoot, root) || !sameFilesystemPath(updated.PendingUpgrade.Target.BrowseRoot, root) {
 		t.Fatalf("active and pending browse roots differ: active=%q pending=%q", updated.BrowseRoot, updated.PendingUpgrade.Target.BrowseRoot)
 	}
+}
+
+func readAuthBackup(t *testing.T, path string) authRecord {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read auth backup: %v", err)
+	}
+	var record authRecord
+	if err := json.Unmarshal(raw, &record); err != nil {
+		t.Fatalf("unmarshal auth backup: %v", err)
+	}
+	return record
 }

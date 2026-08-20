@@ -138,6 +138,46 @@ func (s *Store) Load() (Record, error) {
 	return s.loadLocked()
 }
 
+// CreateBackup copies the current auth file bytes to a unique secure file
+// beside it. Completed backups are never overwritten or removed.
+func (s *Store) CreateBackup() (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	raw, err := os.ReadFile(s.path)
+	if err != nil {
+		return "", fmt.Errorf("web auth: read auth file for backup: %w", err)
+	}
+
+	backupFile, err := os.CreateTemp(filepath.Dir(s.path), filepath.Base(s.path)+".backup-*")
+	if err != nil {
+		return "", fmt.Errorf("web auth: create backup file: %w", err)
+	}
+	backupPath := backupFile.Name()
+
+	if err := backupFile.Chmod(0o600); err != nil {
+		_ = backupFile.Close()
+		_ = os.Remove(backupPath)
+		return "", fmt.Errorf("web auth: chmod backup file: %w", err)
+	}
+	if _, err := backupFile.Write(raw); err != nil {
+		_ = backupFile.Close()
+		_ = os.Remove(backupPath)
+		return "", fmt.Errorf("web auth: write backup file: %w", err)
+	}
+	if err := backupFile.Sync(); err != nil {
+		_ = backupFile.Close()
+		_ = os.Remove(backupPath)
+		return "", fmt.Errorf("web auth: sync backup file: %w", err)
+	}
+	if err := backupFile.Close(); err != nil {
+		_ = os.Remove(backupPath)
+		return "", fmt.Errorf("web auth: close backup file: %w", err)
+	}
+
+	return backupPath, nil
+}
+
 // loadLocked is intentionally separate so read-modify-write operations hold
 // one store lock across both the read and atomic replacement.
 func (s *Store) loadLocked() (Record, error) {

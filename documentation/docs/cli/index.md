@@ -226,6 +226,8 @@ See [Web server and reverse proxy](../configuration/web-server.md) for precedenc
 
 Password changes and browse-policy changes after initial setup are available only through the local binary. The first authenticated Web UI setup may establish the initial browse policy. Stop `upbrr serve` before running either command, then restart it when the command completes.
 
+After validation, each command creates a unique `web-auth.json.backup-*` beside the active auth file and prints its exact path. The path is still printed if a later update step fails. Backups contain sensitive authentication and encryption material; protect them like `web-auth.json` and remove obsolete copies manually.
+
 Change the Web UI password interactively:
 
 ```powershell

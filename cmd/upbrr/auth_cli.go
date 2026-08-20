@@ -64,8 +64,12 @@ func runChangeAuthPasswordCommand(ctx context.Context, opts authPasswordOptions,
 	if newPassword != confirmation {
 		return errors.New("change auth password: passwords do not match")
 	}
-	if err := webserver.ChangeAuthPassword(ctx, dbPath, currentPassword, newPassword); err != nil {
-		return fmt.Errorf("change password: %w", err)
+	backupPath, changeErr := webserver.ChangeAuthPassword(ctx, dbPath, currentPassword, newPassword)
+	if changeErr != nil {
+		changeErr = fmt.Errorf("change password: %w", changeErr)
+	}
+	if err := errors.Join(changeErr, writeAuthBackupPath(streams.out, backupPath)); err != nil {
+		return err
 	}
 	if _, err := fmt.Fprintln(streams.out, "Password changed. Retained browser sessions were revoked."); err != nil {
 		return fmt.Errorf("change auth password: write result: %w", err)
@@ -84,9 +88,12 @@ func runUpdateBrowseRootsCommand(
 	if err != nil {
 		return err
 	}
-	count, err := webserver.UpdateBrowseRoots(ctx, dbPath, paths, opts.allowUnrestricted)
-	if err != nil {
-		return fmt.Errorf("replace browse roots: %w", err)
+	count, backupPath, updateErr := webserver.UpdateBrowseRoots(ctx, dbPath, paths, opts.allowUnrestricted)
+	if updateErr != nil {
+		updateErr = fmt.Errorf("replace browse roots: %w", updateErr)
+	}
+	if err := errors.Join(updateErr, writeAuthBackupPath(output, backupPath)); err != nil {
+		return err
 	}
 	if opts.allowUnrestricted {
 		_, err = fmt.Fprintln(output, "Enabled unrestricted host browsing.")
@@ -95,6 +102,21 @@ func runUpdateBrowseRootsCommand(
 	}
 	if err != nil {
 		return fmt.Errorf("update browse roots: write result: %w", err)
+	}
+	return nil
+}
+
+func writeAuthBackupPath(output io.Writer, backupPath string) error {
+	if backupPath == "" {
+		return nil
+	}
+	if _, err := fmt.Fprintf(
+		output,
+		"Web auth backup created: %s\n",
+		//logpolicy:allow the auth backup command must report the exact operator-requested restore path
+		backupPath,
+	); err != nil {
+		return fmt.Errorf("write auth backup result: %w", err)
 	}
 	return nil
 }
