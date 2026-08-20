@@ -1738,7 +1738,7 @@ func shouldSuppressLogpolicyPosition(fset *token.FileSet, allows map[int]*logpol
 	line := fset.Position(pos).Line
 	for _, candidateLine := range []int{line, line - 1} {
 		allow := allows[candidateLine]
-		if allow == nil || allow.reason == "" {
+		if allow == nil || allow.reason == "" || allow.used {
 			continue
 		}
 		allow.used = true
