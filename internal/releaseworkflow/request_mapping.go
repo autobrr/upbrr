@@ -177,6 +177,7 @@ func CommandFromRequest(request any) (Command, error) {
 			WorkflowID:       request.WorkflowID,
 			ExpectedRevision: request.ExpectedRevision,
 			NoSeed:           request.NoSeed,
+			NoHash:           cloneBoolPointer(request.NoHash),
 			TrackerIDs:       append([]api.TrackerID(nil), request.TrackerIDs...),
 			IdempotencyKey:   request.IdempotencyKey,
 		}, nil
@@ -185,6 +186,7 @@ func CommandFromRequest(request any) (Command, error) {
 			WorkflowID:       request.WorkflowID,
 			ExpectedRevision: request.ExpectedRevision,
 			NoSeed:           request.NoSeed,
+			NoHash:           cloneBoolPointer(request.NoHash),
 			TrackerIDs:       append([]api.TrackerID(nil), request.TrackerIDs...),
 			IdempotencyKey:   request.IdempotencyKey,
 		}, nil
@@ -194,6 +196,7 @@ func CommandFromRequest(request any) (Command, error) {
 			ExpectedRevision: request.ExpectedRevision,
 			Retry:            request.Retry,
 			NoSeed:           request.NoSeed,
+			NoHash:           cloneBoolPointer(request.NoHash),
 			IdempotencyKey:   request.IdempotencyKey,
 		}, nil
 	case api.RetryReleaseWorkflowClientInjectionRequest:

@@ -1505,6 +1505,7 @@ export type RetryReleaseWorkflowImageHostRequest = Readonly<{
 export type RetryReleaseWorkflowUploadRequest = Readonly<{
   expectedRevision: WorkflowRevision;
   idempotencyKey: string;
+  noHash?: boolean | null;
   noSeed: boolean;
   retry: FailedTrackerRetryRef;
   workflowId: WorkflowID;
@@ -2200,6 +2201,7 @@ export type UploadDryRunResult = Readonly<{
   id: UploadDryRunResultID;
   inputFingerprint: WorkflowFingerprint;
   media: MediaArtifactSetRef;
+  noHash?: boolean | null;
   noSeed: boolean;
   projectionSet: TrackerReleaseProjectionSetRef;
   reports: readonly TrackerDryRunReport[];
@@ -2371,6 +2373,7 @@ export type WorkflowIntent = Readonly<{
   interaction?: InteractionMode;
   media?: MediaCaptureInstructions | null;
   mediaSelection?: WorkflowMediaSelection | null;
+  noHash?: boolean | null;
   noSeed?: boolean;
   preparation?: PrepareInput | null;
   projectionInstructions?: Readonly<Record<string, TrackerProjectionInstructions>>;

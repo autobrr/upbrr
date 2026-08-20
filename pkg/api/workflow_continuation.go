@@ -86,6 +86,8 @@ type WorkflowIntent struct {
 	Descriptions           *DescriptionInstructions                    `json:"descriptions,omitempty"`
 	UploadTrackerIDs       []TrackerID                                 `json:"uploadTrackerIds,omitempty"`
 	NoSeed                 bool                                        `json:"noSeed,omitempty"`
+	// NoHash overrides retained torrent instructions when present. False explicitly permits hashing.
+	NoHash *bool `json:"noHash,omitempty"`
 }
 
 // WorkflowMediaSelection distinguishes default-all selection from an explicit exact selection.

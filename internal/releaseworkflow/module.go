@@ -5246,6 +5246,7 @@ type preparedUploads struct {
 	plan         api.UploadPlan
 	execution    RetainedUploadExecution
 	dryRun       bool
+	noHash       *bool
 }
 
 func (p *preparedUploads) Release() error {
@@ -5348,6 +5349,7 @@ func (m *Module) prepareUploads(
 		plan:         plan,
 		execution:    execution,
 		dryRun:       options.DryRun,
+		noHash:       cloneBoolPointer(options.NoHash),
 	}, nil
 }
 
@@ -5409,6 +5411,7 @@ func (m *Module) dryRunUploads(
 		UploadPlanBuildOptions{
 			DryRun:     true,
 			NoSeed:     command.NoSeed,
+			NoHash:     cloneBoolPointer(command.NoHash),
 			TrackerIDs: command.TrackerIDs,
 		},
 		now,
@@ -5443,6 +5446,7 @@ func (m *Module) dryRunUploads(
 		Descriptions:     api.DescriptionSetRef{ID: prepared.descriptions.ID, Revision: prepared.descriptions.Revision},
 		InputFingerprint: prepared.plan.InputFingerprint,
 		NoSeed:           command.NoSeed,
+		NoHash:           cloneBoolPointer(command.NoHash),
 		TrackerIDs:       append([]api.TrackerID(nil), prepared.trackerIDs...),
 		Reports:          reports,
 		SucceededCount:   succeededCount,
@@ -5779,7 +5783,7 @@ func (m *Module) executeUploads(
 			Recovery:  api.OperationRecoveryConfirm,
 		}, ErrInvalidTransition)
 	}
-	prepared, err := m.preparedUploadsForExecution(ctx, ownerID, state, command.NoSeed, command.TrackerIDs, now)
+	prepared, err := m.preparedUploadsForExecution(ctx, ownerID, state, command.NoSeed, command.NoHash, command.TrackerIDs, now)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -5841,11 +5845,16 @@ func (m *Module) preparedUploadsForExecution(
 	ownerID string,
 	state *State,
 	noSeed bool,
+	noHash *bool,
 	trackerIDs []api.TrackerID,
 	now time.Time,
 ) (preparedUploads, error) {
 	if state.Workflow.DryRun == nil {
-		return m.prepareUploads(ctx, ownerID, state, UploadPlanBuildOptions{NoSeed: noSeed, TrackerIDs: trackerIDs}, now)
+		return m.prepareUploads(ctx, ownerID, state, UploadPlanBuildOptions{
+			NoSeed:     noSeed,
+			NoHash:     cloneBoolPointer(noHash),
+			TrackerIDs: trackerIDs,
+		}, now)
 	}
 	value, err := m.private.Consume(
 		ownerID,
@@ -5866,7 +5875,7 @@ func (m *Module) preparedUploadsForExecution(
 		releasePrivateResource(value)
 		return preparedUploads{}, errors.New("release workflow exact upload plan has an invalid private resource type")
 	}
-	if !prepared.dryRun || !prepared.plan.ExpiresAt.After(now) ||
+	if !prepared.dryRun || !boolPointersEqual(prepared.noHash, noHash) || !prepared.plan.ExpiresAt.After(now) ||
 		state.Workflow.TrackerProjections == nil || prepared.plan.ProjectionSet != *state.Workflow.TrackerProjections ||
 		state.Workflow.Dupes == nil || prepared.plan.Dupes != *state.Workflow.Dupes ||
 		!trackerApprovalRefsEqual(prepared.plan.TrackerApproval, state.Workflow.TrackerApproval) ||
@@ -5915,7 +5924,17 @@ func (m *Module) retryFailedUploads(
 	if len(targets) == 0 {
 		return CommandResult{}, fmt.Errorf("%w: failed upload retry targets are required", ErrInvalidTransition)
 	}
-	prepared, err := m.prepareUploads(ctx, ownerID, state, UploadPlanBuildOptions{NoSeed: command.NoSeed, TrackerIDs: targets}, now)
+	prepared, err := m.prepareUploads(
+		ctx,
+		ownerID,
+		state,
+		UploadPlanBuildOptions{
+			NoSeed:     command.NoSeed,
+			NoHash:     cloneBoolPointer(command.NoHash),
+			TrackerIDs: targets,
+		},
+		now,
+	)
 	if err != nil {
 		return CommandResult{}, err
 	}

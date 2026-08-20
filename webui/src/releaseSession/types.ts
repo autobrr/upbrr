@@ -75,6 +75,8 @@ export type PreparationIntent = Readonly<{
 
 export type UploadRunOptions = Readonly<{
   noSeed: boolean;
+  /** Require a compatible existing torrent instead of hashing a replacement. */
+  noHash: boolean;
   runLogLevel: string;
 }>;
 

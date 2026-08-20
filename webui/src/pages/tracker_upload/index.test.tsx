@@ -18,7 +18,7 @@ const uploadFacet = (
     projections: null,
     ignoredDupesFor: [],
     questionnaireAnswers: {},
-    options: { noSeed: false, runLogLevel: "info" },
+    options: { noSeed: false, noHash: false, runLogLevel: "info" },
     dryRunStatus: "idle",
     uploadStatus: "idle",
     dryRunResult: null,
@@ -51,6 +51,17 @@ describe("TrackerUploadPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start upload" }));
     expect(runDryRun).toHaveBeenCalledOnce();
     expect(start).toHaveBeenCalledOnce();
+  });
+
+  it("offers reuse-only torrent creation", () => {
+    const changeOptions = vi.fn();
+    renderPage(uploadFacet({}, { changeOptions }));
+
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Reuse existing torrent (skip hashing)" }),
+    );
+
+    expect(changeOptions).toHaveBeenCalledWith({ noHash: true });
   });
 
   it("collects questionnaire answers from current workflow projections", () => {
