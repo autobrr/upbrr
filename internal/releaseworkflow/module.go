@@ -2674,6 +2674,8 @@ func commandTarget(command mutation) (api.WorkflowID, api.WorkflowRevision, stri
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case ApproveTrackersCommand:
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
+	case refreshPersistedMediaStatusCommand:
+		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case CaptureMediaCommand:
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case SetMediaSelectionCommand:
@@ -2745,6 +2747,8 @@ func (m *Module) apply(
 		return m.decideDuplicates(ownerID, state, nextRevision, now, typed)
 	case ApproveTrackersCommand:
 		return m.approveTrackers(state, nextRevision, now, typed)
+	case refreshPersistedMediaStatusCommand:
+		return m.refreshPersistedMediaStatus(ctx, ownerID, state, nextRevision, now, typed)
 	case CaptureMediaCommand:
 		return m.captureMedia(ctx, ownerID, state, nextRevision, now, typed)
 	case SetMediaSelectionCommand:
@@ -4623,7 +4627,7 @@ func (m *Module) publishMediaReplacement(
 	nextRevision api.WorkflowRevision,
 	now time.Time,
 	snapshot api.MediaArtifactSet,
-	resource RetainedMediaResource,
+	resource any,
 ) (CommandResult, error) {
 	targets, err := resolveDownstreamTrackerSet(state, nil, downstreamStageMedia, now)
 	if err != nil {
@@ -4666,10 +4670,33 @@ func (m *Module) publishMediaReplacement(
 	return result, nil
 }
 
+func (m *Module) refreshPersistedMediaStatus(
+	ctx context.Context,
+	ownerID string,
+	state *State,
+	nextRevision api.WorkflowRevision,
+	now time.Time,
+	command refreshPersistedMediaStatusCommand,
+) (CommandResult, error) {
+	_, _, eligible, snapshot, resource, err := m.mediaExtensionContext(ctx, ownerID, state, &command.Media, now)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	if snapshot == nil || snapshot.Status != api.StageStatusBlocked || !snapshot.ImageRequirementsPrepared {
+		return CommandResult{}, fmt.Errorf("%w: persisted media is not eligible for readiness refresh", ErrInvalidTransition)
+	}
+	refreshed := *snapshot
+	refreshMutatedMediaStatus(&refreshed, eligible.Projections)
+	if refreshed.Status != api.StageStatusCompleted {
+		return CommandResult{}, fmt.Errorf("%w: persisted media requirements remain blocked", ErrInvalidTransition)
+	}
+	return m.publishMediaReplacement(ownerID, state, nextRevision, now, refreshed, resource)
+}
+
 // refreshMutatedMediaStatus recomputes media readiness after a mutation while
 // retaining image-host failures and pending reconciliation actions. Before
 // required hosting runs, selected local assets determine readiness; afterward,
-// each tracker must have enough applicable hosted screenshot sources.
+// each surviving tracker must have enough applicable hosted screenshot sources.
 func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections []api.TrackerReleaseProjection) {
 	hostFailures := make([]api.WorkflowFailure, 0, len(snapshot.Failures))
 	for _, failure := range snapshot.Failures {
@@ -4677,11 +4704,25 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections []api
 			hostFailures = append(hostFailures, failure)
 		}
 	}
+	readinessProjections := projections
+	allTrackerHostsFailed := false
+	unmatchedTrackerHostFailure := false
+	if snapshot.ImageRequirementsPrepared {
+		unmatchedTrackerHostFailure = mediaHasUnscopedOrUnknownImageHostFailure(*snapshot, projections)
+		readinessProjections = slices.DeleteFunc(
+			append([]api.TrackerReleaseProjection(nil), projections...),
+			func(projection api.TrackerReleaseProjection) bool {
+				_, failed := TrackerImageHostFailure(*snapshot, projection.TrackerID)
+				return failed
+			},
+		)
+		allTrackerHostsFailed = len(projections) > 0 && len(readinessProjections) == 0
+	}
 	reconcileActions := slices.DeleteFunc(append([]api.RequiredAction(nil), snapshot.RequiredActions...), func(action api.RequiredAction) bool {
 		return action.Kind != api.RequiredActionReconcileSubmission
 	})
 	requiredScreenshots, requiredMenus := 0, 0
-	for _, projection := range projections {
+	for _, projection := range readinessProjections {
 		requiredScreenshots = max(requiredScreenshots, projection.Artifacts.ScreenshotCount)
 		requiredMenus = max(requiredMenus, projection.Artifacts.DVDMenuCount)
 	}
@@ -4702,7 +4743,8 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections []api
 	snapshot.RequiredActions = reconcileActions
 	screenshotsReady := selectedScreenshots >= requiredScreenshots
 	if snapshot.ImageRequirementsPrepared {
-		screenshotsReady = hostedScreenshotRequirementsMet(*snapshot, projections)
+		screenshotsReady = !allTrackerHostsFailed && !unmatchedTrackerHostFailure &&
+			hostedScreenshotRequirementsMet(*snapshot, readinessProjections)
 	}
 	if !screenshotsReady || selectedMenus < requiredMenus {
 		snapshot.Status = api.StageStatusBlocked
@@ -4721,6 +4763,20 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections []api
 		return
 	}
 	snapshot.Status = api.StageStatusCompleted
+}
+
+func mediaHasUnscopedOrUnknownImageHostFailure(media api.MediaArtifactSet, projections []api.TrackerReleaseProjection) bool {
+	known := make(map[api.TrackerID]struct{}, len(projections))
+	for _, projection := range projections {
+		known[normalizeDownstreamTrackerID(projection.TrackerID)] = struct{}{}
+	}
+	return slices.ContainsFunc(media.Failures, func(failure api.WorkflowFailure) bool {
+		if failure.Failure.Operation != api.OperationKindImageHosting {
+			return false
+		}
+		_, ok := known[normalizeDownstreamTrackerID(failure.TrackerID)]
+		return !ok
+	})
 }
 
 // hostedScreenshotRequirementsMet reports whether every projection has enough

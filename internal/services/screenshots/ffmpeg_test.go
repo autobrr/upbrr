@@ -352,6 +352,25 @@ func TestFFmpegFrameCorruptionIndicators(t *testing.T) {
 	}
 }
 
+func TestProbeVideoDurationCancellationPrecedesCorruption(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	runner := &cancelingResultRunner{
+		cancel: cancel,
+		result: CommandResult{
+			Stderr:   []byte("corrupt input packet in stream 0"),
+			ExitCode: 1,
+		},
+	}
+
+	_, err := probeVideoDuration(ctx, runner, "ffmpeg", "example.vob")
+	if !errors.Is(err, ctx.Err()) {
+		t.Fatalf("duration probe error = %v, want %v", err, ctx.Err())
+	}
+	if errors.Is(err, internalerrors.ErrFrameCorruption) {
+		t.Fatalf("duration probe cancellation was replaced by frame corruption: %v", err)
+	}
+}
+
 type timestampSensitiveRunner struct {
 	blackTimestamps       map[string]struct{}
 	noImageTimestamps     map[string]struct{}
@@ -403,6 +422,16 @@ type singleResultRunner struct {
 
 func (r *singleResultRunner) Run(context.Context, string, []string, string) (CommandResult, error) {
 	return r.result, r.err
+}
+
+type cancelingResultRunner struct {
+	cancel context.CancelFunc
+	result CommandResult
+}
+
+func (r *cancelingResultRunner) Run(context.Context, string, []string, string) (CommandResult, error) {
+	r.cancel()
+	return r.result, nil
 }
 
 type writeOutputRunner struct {

@@ -426,6 +426,12 @@ func probeVideoDuration(ctx context.Context, runner Runner, cmdPath, inputPath s
 		"-",
 	}
 	result, err := runner.Run(ctx, cmdPath, args, "")
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return 0, fmt.Errorf("screenshots: ffmpeg duration probe canceled: %w", ctxErr)
+	}
+	if corruptionErr := ffmpegFrameCorruptionError(result.Stderr); corruptionErr != nil {
+		return 0, corruptionErr
+	}
 	if err != nil || result.ExitCode != 0 {
 		return 0, fmt.Errorf("screenshots: ffmpeg duration probe failed: %s", ffmpegResultPreview(result, err))
 	}

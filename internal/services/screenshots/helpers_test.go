@@ -408,6 +408,28 @@ func TestResolveDVDVideoSegmentTimingsReconcilesMPEGPSWrap(t *testing.T) {
 	}
 }
 
+func TestResolveDVDVideoSegmentTimingsReconcilesArbitraryFinalContradiction(t *testing.T) {
+	segments := buildVideoSegments([]dvdTitleVOB{
+		{path: "VTS_01_1.VOB"},
+		{path: "VTS_01_2.VOB"},
+	})
+	logger := &screenshotRecordingLogger{}
+	runner := &scriptedRunner{results: []CommandResult{
+		{Stderr: []byte("Duration: 00:00:20.00, start: 0.000000, bitrate: 4000 kb/s\n")},
+		{Stderr: []byte("Duration: 00:00:37.00, start: 0.000000, bitrate: 500 kb/s\n")},
+	}}
+
+	if err := resolveDVDVideoSegmentTimings(context.Background(), runner, "ffmpeg", segments, 120, logger); err != nil {
+		t.Fatalf("resolve DVD segment timings: %v", err)
+	}
+	if segments[1].StartSeconds != 20 || segments[1].DurationSeconds != 100 {
+		t.Fatalf("reconciled segments = %#v", segments)
+	}
+	if !logger.Contains("decision=use_title_remainder start_seconds=20.000 probed_seconds=37.000 remaining_seconds=100.000 difference_seconds=63.000 title_seconds=120.000") {
+		t.Fatalf("reconciliation diagnostic missing: %#v", logger.entries)
+	}
+}
+
 func TestResolveDVDVideoSegmentTimingsRejectsNonFinalOverrun(t *testing.T) {
 	segments := buildVideoSegments([]dvdTitleVOB{
 		{path: "VTS_01_1.VOB"},

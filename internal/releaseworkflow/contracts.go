@@ -695,6 +695,25 @@ type mediaArtifactsPublication struct {
 	IdempotencyKey   string
 }
 
+// refreshPersistedMediaStatusCommand re-evaluates a persisted media block
+// without exposing a new adapter-facing mutation.
+type refreshPersistedMediaStatusCommand struct {
+	WorkflowID       api.WorkflowID
+	ExpectedRevision api.WorkflowRevision
+	Media            api.MediaArtifactSetRef
+	IdempotencyKey   string
+}
+
+func (refreshPersistedMediaStatusCommand) commandName() string {
+	return "refresh_persisted_media_status"
+}
+func (c refreshPersistedMediaStatusCommand) commandFingerprint() (api.WorkflowFingerprint, error) {
+	return canonicalCommandFingerprint(struct {
+		ExpectedRevision api.WorkflowRevision
+		Media            api.MediaArtifactSetRef
+	}{c.ExpectedRevision, c.Media})
+}
+
 // CaptureMediaCommand plans and captures all required screenshots/DVD menus.
 type CaptureMediaCommand struct {
 	WorkflowID       api.WorkflowID

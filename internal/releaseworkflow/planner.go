@@ -6,6 +6,7 @@ package releaseworkflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -122,6 +123,15 @@ func (m *Module) Continue(
 	if continuationGoalReached(current, request) {
 		return current, nil
 	}
+	if refreshed, handled, _, refreshErr := m.recoverPersistedMediaForContinuation(
+		ctx,
+		ownerID,
+		request,
+		current,
+		m.clock.Now().UTC(),
+	); handled || refreshErr != nil {
+		return refreshed, refreshErr
+	}
 
 	command, stage := planContinuationCommand(request, current, m.clock.Now().UTC())
 	if command == nil {
@@ -139,6 +149,89 @@ func (m *Module) Continue(
 		return CommandResult{}, fmt.Errorf("release workflow continue %s: %w", stage, err)
 	}
 	return m.Current(ctx, ownerID, operation.WorkflowID)
+}
+
+func (m *Module) recoverPersistedMediaForContinuation(
+	ctx context.Context,
+	ownerID string,
+	request api.ContinueReleaseWorkflowRequest,
+	current CommandResult,
+	now time.Time,
+) (CommandResult, bool, bool, error) {
+	command, stage := planContinuationCommand(request, current, now)
+	if !persistedMediaRecoveryCandidate(current) {
+		return current, false, false, nil
+	}
+	if command != nil || stage != "capture-media" {
+		return current, false, command != nil, nil
+	}
+	state, err := m.repository.Load(ctx, ownerID, current.Workflow.ID)
+	if err != nil {
+		return CommandResult{}, true, false, fmt.Errorf("release workflow load persisted media recovery: %w", err)
+	}
+	if state.Workflow.Revision != current.Workflow.Revision {
+		return CommandResult{}, true, false, ErrRevisionConflict
+	}
+	targets, err := resolveDownstreamTrackerSet(&state, nil, downstreamStageMedia, now)
+	if err != nil {
+		if errors.Is(err, ErrInvalidTransition) {
+			return current, false, false, nil
+		}
+		return CommandResult{}, true, false, err
+	}
+	projections := targets.Projections().Projections
+	if len(projections) == 0 {
+		return current, false, false, nil
+	}
+	refreshed := *current.Media
+	refreshMutatedMediaStatus(&refreshed, projections)
+	if refreshed.Status != api.StageStatusCompleted {
+		return current, false, false, nil
+	}
+	result, err := m.execute(ctx, ownerID, refreshPersistedMediaStatusCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		Media:            *current.Workflow.Media,
+		IdempotencyKey: continuationIdempotencyKey(
+			request.IdempotencyKey,
+			"refresh-persisted-media",
+			current.Workflow.Revision,
+		),
+	})
+	if err != nil {
+		return CommandResult{}, true, false, fmt.Errorf("release workflow refresh persisted media: %w", err)
+	}
+	updated, err := m.Current(ctx, ownerID, result.Workflow.ID)
+	return updated, true, false, err
+}
+
+func persistedMediaRecoveryCandidate(current CommandResult) bool {
+	if current.Media == nil || current.Workflow.Media == nil || current.Media.Status != api.StageStatusBlocked ||
+		!current.Media.ImageRequirementsPrepared {
+		return false
+	}
+	mediaActionIDs := make(map[api.RequiredActionID]struct{})
+	for _, action := range current.Media.RequiredActions {
+		if action.Status != api.RequiredActionStatusPending {
+			continue
+		}
+		if action.Kind != api.RequiredActionProvideTrackerInput || action.TrackerID != "" {
+			return false
+		}
+		mediaActionIDs[action.ID] = struct{}{}
+	}
+	if len(mediaActionIDs) != 1 {
+		return false
+	}
+	for _, action := range current.Continuation.RequiredActions {
+		if action.Status != api.RequiredActionStatusPending {
+			continue
+		}
+		if _, mediaAction := mediaActionIDs[action.ID]; !mediaAction {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *Module) acceptContinuationIntent(

@@ -247,6 +247,74 @@ func TestPlanAllocatesScreenshotsAcrossEveryDisc(t *testing.T) {
 	}
 }
 
+func TestPlanAndCapturePreserveGoodDiscWhenAnotherDiscSetupFails(t *testing.T) {
+	subject, _, _ := multiDiscScreenshotSubject(t)
+	subject.Discs[0].Type = "DVD"
+	subject.Discs[0].Root = filepath.Join(t.TempDir(), "missing-dvd")
+	ffmpegRoot := t.TempDir()
+	if err := writeTestBundledFFmpeg(ffmpegRoot); err != nil {
+		t.Fatalf("write bundled ffmpeg: %v", err)
+	}
+	t.Chdir(ffmpegRoot)
+
+	runner := &writingScreenshotRunner{payload: testPNGBytes(t, color.RGBA{
+		R: 16,
+		G: 16,
+		B: 16,
+		A: 255,
+	})}
+	service := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), runner)
+	plan, err := service.Plan(context.Background(), subject, 2)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if len(plan.Discs) != 2 || len(plan.Discs[0].SuggestedSelections) != 0 || len(plan.Discs[1].SuggestedSelections) != 1 {
+		t.Fatalf("disc plans = %#v", plan.Discs)
+	}
+	if plan.DurationSeconds != 600 || plan.FrameRate != 24 || plan.RequiresManualFrames {
+		t.Fatalf("aggregate timing/manual state = %#v", plan)
+	}
+	if len(plan.SuggestedSelections) != 1 || plan.SuggestedSelections[0].DiscID != "disc-b" {
+		t.Fatalf("aggregate suggestions = %#v", plan.SuggestedSelections)
+	}
+
+	selections := append([]api.ScreenshotSelection{{
+		DiscID:           "disc-a",
+		Index:            0,
+		TimestampSeconds: 10,
+	}}, plan.SuggestedSelections...)
+	result, err := service.Capture(context.Background(), subject, selections, api.ScreenshotPurposeFinal)
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	if len(result.Images) != 1 || result.Images[0].DiscID != "disc-b" || len(result.Errors) != 1 || result.Errors[0].DiscID != "disc-a" {
+		t.Fatalf("minimum-one Plan to Capture result = %#v", result)
+	}
+}
+
+func TestPlanReturnsHardDiscDurationProbeCorruption(t *testing.T) {
+	subject, _, videoB := multiDiscScreenshotSubject(t)
+	subject.Discs[1].MediaInfoJSONPath = ""
+	ffmpegRoot := t.TempDir()
+	if err := writeTestBundledFFmpeg(ffmpegRoot); err != nil {
+		t.Fatalf("write bundled ffmpeg: %v", err)
+	}
+	t.Chdir(ffmpegRoot)
+
+	runner := &scriptedRunner{results: []CommandResult{{
+		Stderr:   []byte("corrupt input packet in stream 0"),
+		ExitCode: 1,
+	}}}
+	service := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), runner)
+	_, err := service.Plan(context.Background(), subject, 2)
+	if !errors.Is(err, internalerrors.ErrFrameCorruption) {
+		t.Fatalf("plan error = %v, want frame corruption", err)
+	}
+	if len(runner.calls) != 1 || ffmpegInputArg(runner.calls[0].args) != videoB {
+		t.Fatalf("duration probe calls = %#v", runner.calls)
+	}
+}
+
 func TestPlanExpandsRawManualFramesAcrossEveryDisc(t *testing.T) {
 	t.Parallel()
 
@@ -328,6 +396,140 @@ func TestMultiDiscPreviewRequiresDiscAndCaptureNamesDoNotCollide(t *testing.T) {
 	}
 	if len(captureRunner.calls) != 2 || ffmpegInputArg(captureRunner.calls[0].args) != videoA || ffmpegInputArg(captureRunner.calls[1].args) != videoB {
 		t.Fatalf("capture calls = %#v", captureRunner.calls)
+	}
+}
+
+func TestCapturePreservesSuccessfulDiscsWhenDiscSetupFails(t *testing.T) {
+	subject, _, _ := multiDiscScreenshotSubject(t)
+	subject.Discs[1].Type = "DVD"
+	subject.Discs[1].Root = filepath.Join(t.TempDir(), "missing-dvd")
+	ffmpegRoot := t.TempDir()
+	if err := writeTestBundledFFmpeg(ffmpegRoot); err != nil {
+		t.Fatalf("write bundled ffmpeg: %v", err)
+	}
+	t.Chdir(ffmpegRoot)
+
+	runner := &writingScreenshotRunner{payload: testPNGBytes(t, color.RGBA{
+		R: 16,
+		G: 16,
+		B: 16,
+		A: 255,
+	})}
+	service := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), runner)
+	result, err := service.Capture(context.Background(), subject, []api.ScreenshotSelection{
+		{
+			DiscID:           "disc-a",
+			Index:            0,
+			TimestampSeconds: 10,
+		},
+		{
+			DiscID:           "disc-b",
+			Index:            1,
+			TimestampSeconds: 20,
+		},
+		{
+			DiscID:           "disc-b",
+			Index:            2,
+			TimestampSeconds: 30,
+		},
+	}, api.ScreenshotPurposeFinal)
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	if len(result.Images) != 1 || result.Images[0].DiscID != "disc-a" {
+		t.Fatalf("successful disc images = %#v", result.Images)
+	}
+	if len(result.Errors) != 2 {
+		t.Fatalf("failed disc errors = %#v", result.Errors)
+	}
+	for offset, captureErr := range result.Errors {
+		if captureErr.DiscID != "disc-b" || captureErr.Index != offset+1 || strings.TrimSpace(captureErr.Message) == "" {
+			t.Fatalf("failed disc error[%d] = %#v", offset, captureErr)
+		}
+		if strings.Contains(captureErr.Message, subject.Discs[1].Root) {
+			t.Fatalf("failed disc error exposed local path: %q", captureErr.Message)
+		}
+	}
+}
+
+func TestCaptureReturnsHardDiscCorruptionAfterSuccessfulDisc(t *testing.T) {
+	subject, _, videoB := multiDiscScreenshotSubject(t)
+	ffmpegRoot := t.TempDir()
+	if err := writeTestBundledFFmpeg(ffmpegRoot); err != nil {
+		t.Fatalf("write bundled ffmpeg: %v", err)
+	}
+	t.Chdir(ffmpegRoot)
+
+	runner := &aggregateCaptureRunner{
+		payload: testPNGBytes(t, color.RGBA{
+			R: 16,
+			G: 16,
+			B: 16,
+			A: 255,
+		}),
+		corruptInput: videoB,
+	}
+	service := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), runner)
+	result, err := service.Capture(context.Background(), subject, []api.ScreenshotSelection{
+		{
+			DiscID:           "disc-a",
+			Index:            0,
+			TimestampSeconds: 10,
+		},
+		{
+			DiscID:           "disc-b",
+			Index:            0,
+			TimestampSeconds: 10,
+		},
+	}, api.ScreenshotPurposeFinal)
+	if !errors.Is(err, internalerrors.ErrFrameCorruption) {
+		t.Fatalf("capture error = %v, want frame corruption", err)
+	}
+	if len(result.Images) != 1 || result.Images[0].DiscID != "disc-a" || len(result.Errors) != 0 {
+		t.Fatalf("partial hard-error result = %#v", result)
+	}
+}
+
+func TestCaptureReturnsHardCorruptionFromDVDDurationProbe(t *testing.T) {
+	root := t.TempDir()
+	videoTS := filepath.Join(root, "VIDEO_TS")
+	if err := os.MkdirAll(videoTS, 0o700); err != nil {
+		t.Fatalf("mkdir VIDEO_TS: %v", err)
+	}
+	for _, name := range []string{"VTS_01_1.VOB", "VTS_01_2.VOB"} {
+		if err := os.WriteFile(filepath.Join(videoTS, name), []byte("synthetic video"), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	mediaInfoPath := filepath.Join(root, "mediainfo.json")
+	if err := os.WriteFile(
+		mediaInfoPath,
+		[]byte(`{"media":{"track":[{"@type":"General","Duration":"120"},{"@type":"Video","FrameRate":"24.000"}]}}`),
+		0o600,
+	); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+	ffmpegRoot := t.TempDir()
+	if err := writeTestBundledFFmpeg(ffmpegRoot); err != nil {
+		t.Fatalf("write bundled ffmpeg: %v", err)
+	}
+	t.Chdir(ffmpegRoot)
+
+	runner := &scriptedRunner{results: []CommandResult{{
+		Stderr:   []byte("corrupt input packet in stream 0"),
+		ExitCode: 1,
+	}}}
+	service := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), runner)
+	_, err := service.Capture(context.Background(), api.ScreenshotSubject{
+		SourcePath:        root,
+		DiscType:          "DVD",
+		MediaInfoJSONPath: mediaInfoPath,
+	}, []api.ScreenshotSelection{{Index: 0, TimestampSeconds: 10}}, api.ScreenshotPurposeFinal)
+	if !errors.Is(err, internalerrors.ErrFrameCorruption) {
+		t.Fatalf("capture error = %v, want frame corruption", err)
+	}
+	if len(runner.calls) != 1 || ffmpegInputArg(runner.calls[0].args) != filepath.Join(videoTS, "VTS_01_1.VOB") {
+		t.Fatalf("duration probe calls = %#v", runner.calls)
 	}
 }
 
@@ -473,6 +675,11 @@ type writingScreenshotRunner struct {
 	calls   []runnerCall
 }
 
+type aggregateCaptureRunner struct {
+	payload      []byte
+	corruptInput string
+}
+
 type corruptionCancelRunner struct {
 	started    atomic.Int32
 	canceled   atomic.Int32
@@ -509,6 +716,19 @@ func (r *scriptedRunner) Run(_ context.Context, _ string, args []string, _ strin
 
 func (r *writingScreenshotRunner) Run(_ context.Context, _ string, args []string, _ string) (CommandResult, error) {
 	r.calls = append(r.calls, runnerCall{args: append([]string(nil), args...)})
+	if len(args) == 0 {
+		return CommandResult{ExitCode: 1}, errors.New("missing screenshot output")
+	}
+	if err := os.WriteFile(args[len(args)-1], r.payload, 0o600); err != nil {
+		return CommandResult{ExitCode: 1}, fmt.Errorf("write screenshot output: %w", err)
+	}
+	return CommandResult{ExitCode: 0}, nil
+}
+
+func (r *aggregateCaptureRunner) Run(_ context.Context, _ string, args []string, _ string) (CommandResult, error) {
+	if ffmpegInputArg(args) == r.corruptInput {
+		return CommandResult{Stderr: []byte("corrupt decoded frame in stream 0"), ExitCode: 0}, nil
+	}
 	if len(args) == 0 {
 		return CommandResult{ExitCode: 1}, errors.New("missing screenshot output")
 	}

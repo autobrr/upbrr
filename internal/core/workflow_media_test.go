@@ -51,6 +51,7 @@ func (workflowMediaResolverFake) ResolveDVDMenuSubject(
 type workflowScreenshotFake struct {
 	root       string
 	plan       *api.ScreenshotPlan
+	result     *api.ScreenshotResult
 	plans      int
 	captures   int
 	selections []api.ScreenshotSelection
@@ -80,6 +81,11 @@ func (f *workflowScreenshotFake) Capture(
 	f.selections = append(f.selections, selections...)
 	if f.err != nil {
 		return api.ScreenshotResult{}, f.err
+	}
+	if f.result != nil {
+		result := *f.result
+		result.Purpose = purpose
+		return result, nil
 	}
 	images := make([]api.ScreenshotImage, len(selections))
 	discNames := make(map[string]string, len(subject.Discs))
@@ -510,6 +516,220 @@ func TestWorkflowMediaBuilderReportsFrameCorruption(t *testing.T) {
 		return update.ItemID == "screenshots" && update.Status == api.StageStatusFailed
 	}) {
 		t.Fatalf("frame corruption progress was not emitted: %#v", progress)
+	}
+}
+
+func TestWorkflowMediaBuilderPartialScreenshotCaptureUsesSurvivingMinimum(t *testing.T) {
+	for _, testCase := range []struct {
+		name             string
+		required         int
+		wantStatus       api.StageStatus
+		wantRequiredTask bool
+	}{
+		{
+			name:       "minimum met",
+			required:   1,
+			wantStatus: api.StageStatusCompleted,
+		},
+		{
+			name:             "minimum not met",
+			required:         2,
+			wantStatus:       api.StageStatusBlocked,
+			wantRequiredTask: true,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			capture := api.ScreenshotResult{
+				Images: []api.ScreenshotImage{{
+					Index:            0,
+					TimestampSeconds: 10,
+					Path:             filepath.Join(t.TempDir(), "screen-0.png"),
+					Purpose:          api.ScreenshotPurposeFinal,
+				}},
+				Errors: []api.ScreenshotError{{Index: 1, Message: "synthetic capture failure"}},
+			}
+			screenshots := &workflowScreenshotFake{root: t.TempDir(), result: &capture}
+			builder := workflowMediaBuilder{resolver: workflowMediaResolverFake{}, screenshots: screenshots}
+			var progress []api.WorkflowProgressUpdate
+			ctx := api.WithWorkflowProgressReporter(context.Background(), func(update api.WorkflowProgressUpdate) {
+				progress = append(progress, update)
+			})
+			snapshot, privateArtifacts, err := builder.Build(
+				ctx,
+				api.ReleaseRef{SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026"), Generation: 1},
+				api.TrackerReleaseProjectionSet{
+					ID:       api.TrackerReleaseProjectionSetID("projections-partial-" + testCase.name),
+					Revision: 1,
+					Projections: []api.TrackerReleaseProjection{{
+						TrackerID: "SYNTHETIC",
+						Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: testCase.required},
+					}},
+				},
+				api.MediaCaptureInstructions{
+					Purpose: api.ScreenshotPurposeFinal,
+					Selections: []api.ScreenshotSelection{
+						{Index: 0, TimestampSeconds: 10},
+						{Index: 1, TimestampSeconds: 20},
+					},
+				},
+				time.Now(),
+			)
+			if err != nil {
+				t.Fatalf("build workflow media: %v", err)
+			}
+			if snapshot.Status != testCase.wantStatus || len(snapshot.Artifacts) != 1 || len(snapshot.Failures) != 0 {
+				t.Fatalf("partial capture snapshot = %#v", snapshot)
+			}
+			if got := len(snapshot.RequiredActions) > 0; got != testCase.wantRequiredTask {
+				t.Fatalf("required action present = %t, want %t: %#v", got, testCase.wantRequiredTask, snapshot.RequiredActions)
+			}
+			private, ok := privateArtifacts.(workflowMediaPrivateArtifacts)
+			if !ok || len(private.Screenshots) != 1 {
+				t.Fatalf("partial private artifacts = %#v", privateArtifacts)
+			}
+			if !slices.ContainsFunc(progress, func(update api.WorkflowProgressUpdate) bool {
+				return update.ItemID == "screenshots" && update.Status == api.StageStatusPartial &&
+					update.Completed == 1 && update.Total == 2 && strings.Contains(update.Message, "partial coverage")
+			}) {
+				t.Fatalf("partial screenshot diagnostics were not emitted: %#v", progress)
+			}
+		})
+	}
+}
+
+func TestReconcileRetriedImageHostFailuresClearsOnlySatisfiedTracker(t *testing.T) {
+	t.Parallel()
+
+	const (
+		alpha api.TrackerID = "ALPHA"
+		beta  api.TrackerID = "BETA"
+	)
+	artifacts := []api.MediaArtifact{
+		{
+			ID:       "screen-0",
+			Kind:     api.MediaArtifactScreenshot,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+		},
+		{
+			ID:       "hosted-0",
+			Kind:     api.MediaArtifactHostedImage,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+			Source:   "screen-0",
+		},
+		{
+			ID:       "screen-1",
+			Kind:     api.MediaArtifactScreenshot,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+		},
+		{
+			ID:       "hosted-1",
+			Kind:     api.MediaArtifactHostedImage,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+			Source:   "screen-1",
+		},
+	}
+	priorAttempts := []api.HostedImageAttempt{
+		{
+			Host:       "primary",
+			UsageScope: "tracker:ALPHA",
+			TrackerIDs: []api.TrackerID{alpha},
+			Status:     api.StageStatusFailed,
+			Results:    []api.MediaArtifact{artifacts[1]},
+		},
+		{
+			Host:       "fallback",
+			UsageScope: "tracker:ALPHA",
+			TrackerIDs: []api.TrackerID{alpha},
+			Status:     api.StageStatusFailed,
+		},
+	}
+	priorFailures := []api.WorkflowFailure{
+		hostedImageFailure(alpha, "primary", "old primary failure"),
+		hostedImageFailure(alpha, "fallback", "old fallback failure"),
+		hostedImageFailure(beta, "primary", "old sibling failure"),
+		hostedImageFailure("", "primary", "unscoped failure"),
+	}
+	projections := []api.TrackerReleaseProjection{
+		{TrackerID: alpha, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2}},
+		{TrackerID: beta, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1}},
+	}
+	currentFailures := []api.WorkflowFailure{hostedImageFailure(beta, "primary", "current sibling failure")}
+
+	for _, test := range []struct {
+		name              string
+		required          int
+		results           []api.MediaArtifact
+		wantAlphaFailures int
+	}{
+		{
+			name:     "successful retry restores satisfied tracker",
+			required: 2,
+			results:  []api.MediaArtifact{artifacts[3]},
+		},
+		{
+			name:              "completed attempt without required sources retains failures",
+			required:          2,
+			wantAlphaFailures: 2,
+		},
+		{name: "successful retry satisfies zero screenshot requirement"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			snapshot := api.MediaArtifactSet{
+				Artifacts:    append([]api.MediaArtifact(nil), artifacts...),
+				HostAttempts: append([]api.HostedImageAttempt(nil), priorAttempts...),
+				FailedHosts:  []string{"fallback", "primary"},
+				Failures:     append([]api.WorkflowFailure(nil), priorFailures...),
+			}
+			attempts := []api.HostedImageAttempt{
+				{
+					Host:       "primary",
+					UsageScope: "tracker:ALPHA",
+					TrackerIDs: []api.TrackerID{alpha},
+					Status:     api.StageStatusCompleted,
+					Results:    test.results,
+				},
+				{
+					Host:       "primary",
+					UsageScope: "tracker:BETA",
+					TrackerIDs: []api.TrackerID{beta},
+					Status:     api.StageStatusFailed,
+				},
+			}
+
+			testProjections := append([]api.TrackerReleaseProjection(nil), projections...)
+			testProjections[0].Artifacts.ScreenshotCount = test.required
+			reconcileRetriedImageHostFailures(&snapshot, testProjections, attempts, currentFailures)
+			alphaFailures, betaFailures, unscopedFailures := 0, 0, 0
+			for _, failure := range snapshot.Failures {
+				switch failure.TrackerID {
+				case alpha:
+					alphaFailures++
+				case beta:
+					betaFailures++
+					if failure.Failure.Message != "current sibling failure" {
+						t.Fatalf("sibling retry failure was not replaced: %#v", failure)
+					}
+				case "":
+					unscopedFailures++
+				}
+			}
+			if alphaFailures != test.wantAlphaFailures || betaFailures != 1 || unscopedFailures != 1 {
+				t.Fatalf(
+					"retained image-host failures alpha=%d beta=%d unscoped=%d: %#v",
+					alphaFailures,
+					betaFailures,
+					unscopedFailures,
+					snapshot.Failures,
+				)
+			}
+			if len(snapshot.HostAttempts) != len(priorAttempts) || !slices.Equal(snapshot.FailedHosts, []string{"fallback", "primary"}) {
+				t.Fatalf("historical diagnostics changed: attempts=%#v failedHosts=%v", snapshot.HostAttempts, snapshot.FailedHosts)
+			}
+		})
 	}
 }
 
