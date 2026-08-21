@@ -697,6 +697,8 @@ func buildUnit3DSearchEntries(items []unit3dSearchItem, filterTMDBID int, isDisc
 			Type:          rawType,
 			CanonicalType: CanonicalUnit3DType(rawType),
 			Res:           strings.TrimSpace(item.Attributes.Resolution),
+			Codec:         mediafacts.VideoCodecFromMediaInfoText(item.Attributes.MediaInfo),
+			Provider:      strings.TrimSpace(item.Attributes.Provider),
 			Internal:      item.Attributes.Internal,
 			BDInfo:        strings.TrimSpace(item.Attributes.BDInfo),
 			Description:   strings.TrimSpace(item.Attributes.Description),
@@ -748,6 +750,7 @@ func buildUnit3DPendingEntries(items []unit3dPendingSearchItem, endpoint unit3dS
 			Type:          rawType,
 			CanonicalType: CanonicalUnit3DType(rawType),
 			Res:           strings.TrimSpace(item.Resolution),
+			Codec:         mediafacts.VideoCodecFromMediaInfoText(item.MediaInfo),
 			Internal:      item.Internal,
 			BDInfo:        strings.TrimSpace(item.BDInfo),
 			Description:   strings.TrimSpace(item.Description),
@@ -1217,6 +1220,7 @@ type unit3dSearchAttrs struct {
 	MediaInfo    string       `json:"media_info"`
 	Description  string       `json:"description"`
 	TMDBID       int          `json:"tmdb_id"`
+	Provider     string       `json:"provider"`
 }
 
 type unit3dPendingSearchResponse struct {

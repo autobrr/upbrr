@@ -49,6 +49,17 @@ func HDRFromMediaInfoText(value string) api.HDRFacts {
 	return hdrFromMediaInfoTrack(track)
 }
 
+// VideoCodecFromMediaInfoText returns the first MediaInfo video track's codec.
+func VideoCodecFromMediaInfoText(value string) string {
+	track := firstMediaInfoTextVideoTrack(value)
+	for _, key := range []string{"Format", "CodecID", "Codec ID"} {
+		if codec := mediaInfoValue(track, key); codec != "" {
+			return codec
+		}
+	}
+	return ""
+}
+
 func firstMediaInfoTextVideoTrack(value string) map[string]any {
 	var track map[string]any
 	inFirstVideo := false

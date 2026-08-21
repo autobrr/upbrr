@@ -53,7 +53,11 @@ func TestUnit3DSearchEntriesPreserveRawAndCanonicalTypes(t *testing.T) {
 	t.Parallel()
 
 	entries, dropped := buildUnit3DSearchEntries([]unit3dSearchItem{
-		{Attributes: unit3dSearchAttrs{Type: " WEB-DL "}},
+		{Attributes: unit3dSearchAttrs{
+			Type:      " WEB-DL ",
+			Provider:  " PROVIDER ",
+			MediaInfo: "Video\nFormat : HEVC",
+		}},
 		{Attributes: unit3dSearchAttrs{Type: "Special Type"}},
 	}, 0, false)
 	if dropped != 0 {
@@ -62,7 +66,7 @@ func TestUnit3DSearchEntriesPreserveRawAndCanonicalTypes(t *testing.T) {
 	if len(entries) != 2 {
 		t.Fatalf("entries = %d", len(entries))
 	}
-	if entries[0].Type != "WEB-DL" || entries[0].CanonicalType != "WEBDL" {
+	if entries[0].Type != "WEB-DL" || entries[0].CanonicalType != "WEBDL" || entries[0].Provider != "PROVIDER" || entries[0].Codec != "HEVC" {
 		t.Fatalf("known Unit3D type = %#v", entries[0])
 	}
 	if entries[1].Type != "Special Type" || entries[1].CanonicalType != "" {
@@ -80,7 +84,7 @@ func TestUnit3DSearchEntriesPreserveRawAndCanonicalTypes(t *testing.T) {
 	if dropped != 0 {
 		t.Fatalf("pending wrong-work rows = %d", dropped)
 	}
-	if len(pending) != 1 || pending[0].Type != "WEB-RIP" || pending[0].CanonicalType != "WEBRIP" ||
+	if len(pending) != 1 || pending[0].Type != "WEB-RIP" || pending[0].CanonicalType != "WEBRIP" || pending[0].Codec != "AVC" ||
 		!slices.Equal(pending[0].HDR.Formats, []api.HDRFormat{api.HDRFormatSDR}) {
 		t.Fatalf("pending Unit3D type = %#v", pending)
 	}

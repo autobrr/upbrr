@@ -103,7 +103,7 @@ func TestSourceBackedDupeOverlaysResolveDeterministically(t *testing.T) {
 			relation: api.DupeRelationExistingPreferred,
 		},
 		{
-			name:    "ULCX WEB direction",
+			name:    "ULCX WEB and encode slots",
 			tracker: "ULCX",
 			target: api.TrackerDuplicateTarget{
 				Type:       "WEB-DL",
@@ -115,7 +115,7 @@ func TestSourceBackedDupeOverlaysResolveDeterministically(t *testing.T) {
 				Resolution: "1080p",
 				HDR:        completeSDR,
 			},
-			relation: api.DupeRelationProposedTrumps,
+			relation: api.DupeRelationCoexists,
 		},
 	}
 	for _, test := range tests {
