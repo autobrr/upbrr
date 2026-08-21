@@ -4,7 +4,6 @@
 package bhd
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -62,13 +61,15 @@ func TestResolveUploadNameHonorsOmitAlternateTitle(t *testing.T) {
 	}
 	meta.Type = "WEBDL"
 	meta.VideoCodec = "H.264"
+	meta.Tag = "GRP"
 	meta.NamePresentation = api.ReleaseNamePresentation{
 		Version:            api.ReleaseNamePresentationVersionV1,
 		OmitAlternateTitle: true,
 	}
 
-	if got := resolveUploadName(meta); strings.Contains(got, "AKA") {
-		t.Fatalf("BHD name retained optional alternate title: %q", got)
+	const want = "Example Release 2026 1080p WEB-DL H.264-GRP"
+	if got := resolveUploadName(meta); got != want {
+		t.Fatalf("BHD name = %q, want %q", got, want)
 	}
 }
 
