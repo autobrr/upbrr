@@ -211,7 +211,7 @@ func avistaZEnglishTitle(meta api.UploadSubject) string {
 func cinemaZTitle(meta api.UploadSubject) string {
 	original := cinemaZOriginalTitle(meta)
 	originalUsesNonLatin := containsNonLatinLetter(original)
-	if title := cinemaZEnglishCountryAKA(meta.ProviderMetadata.IMDB, originalUsesNonLatin); title != "" && !containsNonLatinLetter(title) {
+	if title := cinemaZEnglishCountryAKA(meta.ProviderMetadata.IMDB, originalUsesNonLatin); title != "" {
 		return title
 	}
 	if original == "" || !containsNonLatinLetter(original) {
@@ -229,9 +229,9 @@ func cinemaZTitle(meta api.UploadSubject) string {
 	return ""
 }
 
-// cinemaZEnglishCountryAKA returns the first English IMDb AKA with a non-Worldwide
-// country and permitted attributes. A transliterated AKA is eligible only when
-// the original title contains non-Latin letters.
+// cinemaZEnglishCountryAKA returns the first Latin-safe English IMDb AKA with a
+// non-Worldwide country and permitted attributes. A transliterated AKA is
+// eligible only when the original title contains non-Latin letters.
 func cinemaZEnglishCountryAKA(metadata *api.IMDBMetadata, originalUsesNonLatin bool) string {
 	if metadata == nil {
 		return ""
@@ -239,7 +239,7 @@ func cinemaZEnglishCountryAKA(metadata *api.IMDBMetadata, originalUsesNonLatin b
 	for _, aka := range metadata.Akas {
 		title := strings.TrimSpace(aka.Title)
 		country := strings.TrimSpace(aka.Country)
-		if title == "" || !isCinemaZCountry(country) || !isEnglishName(aka.Language) ||
+		if title == "" || containsNonLatinLetter(title) || !isCinemaZCountry(country) || !isEnglishName(aka.Language) ||
 			cinemaZAKAAttributesDisallowed(aka.Attributes, originalUsesNonLatin) {
 			continue
 		}

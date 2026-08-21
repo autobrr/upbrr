@@ -293,6 +293,24 @@ func TestCinemaZEnglishCountryAKA(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("non-Latin title does not hide later Latin AKA", func(t *testing.T) {
+		metadata := &api.IMDBMetadata{Akas: []api.IMDBAKA{
+			{
+				Title:    "Пример фильма",
+				Country:  "Otherland",
+				Language: "English",
+			},
+			{
+				Title:    "Example English Title",
+				Country:  "Otherland",
+				Language: "English",
+			},
+		}}
+		if got, want := cinemaZEnglishCountryAKA(metadata, true), "Example English Title"; got != want {
+			t.Fatalf("cinemaZEnglishCountryAKA() = %q, want %q", got, want)
+		}
+	})
 }
 
 func TestCinemaZNonLatinTitleFallbacks(t *testing.T) {
