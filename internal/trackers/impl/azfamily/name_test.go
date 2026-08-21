@@ -6,6 +6,7 @@ package azfamily
 import (
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -220,6 +221,33 @@ func TestAZFamilyNamingPolicyVersions(t *testing.T) {
 				t.Fatalf("policy ID = %q, want %q", got, test.want)
 			}
 		})
+	}
+}
+
+func TestAZReleaseNamePolicyPreservesDailyDate(t *testing.T) {
+	meta := generatedAZSubject(
+		"TV",
+		"Example Series 2026-02-03 1080p WEB-DL H.265-GRP",
+		api.ReleaseInfo{
+			Title: "Example Series",
+			Year:  2026,
+		},
+	)
+	meta.DailyEpisodeDate = "2026-02-03"
+	meta.NamePresentation = api.ReleaseNamePresentation{
+		Version:      api.ReleaseNamePresentationVersionV1,
+		UseDailyDate: true,
+	}
+
+	input, failure := trackers.PrepareInputWithReleaseNamePolicy(
+		trackers.PreparationInput{Tracker: "AZ", Meta: meta},
+		New("AZ").ReleaseNamePolicy(),
+	)
+	if failure != nil {
+		t.Fatalf("resolve AZ release name: %v", failure)
+	}
+	if got, want := input.Projection.UploadReleaseName, "Example Series 2026-02-03 1080p WEB-DL H.265-GRP"; got != want {
+		t.Fatalf("daily upload name = %q, want %q", got, want)
 	}
 }
 

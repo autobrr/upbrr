@@ -316,6 +316,9 @@ func releaseYear(meta api.UploadSubject) int {
 }
 
 func releaseSeasonEpisode(meta api.UploadSubject) string {
+	if value := strings.TrimSpace(meta.DailyEpisodeDate); value != "" {
+		return value
+	}
 	if value := strings.TrimSpace(meta.SeasonStr + meta.EpisodeStr); value != "" {
 		return value
 	}
