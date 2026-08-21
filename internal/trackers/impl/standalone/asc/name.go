@@ -15,9 +15,14 @@ import (
 func resolveUploadTitle(meta api.UploadSubject) string {
 	base := resolveDisplayTitle(meta)
 	if categoryOf(meta) == "TV" {
-		return strings.TrimSpace(
-			base + " - " + metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.SeasonStr)+strings.TrimSpace(meta.EpisodeStr), seasonEpisodeText(meta)),
+		seasonEpisode := metautil.FirstNonEmptyTrimmed(
+			meta.DailyEpisodeDate,
+			strings.TrimSpace(meta.SeasonStr)+strings.TrimSpace(meta.EpisodeStr),
+			seasonEpisodeText(meta),
 		)
+		if seasonEpisode != "" {
+			return strings.TrimSpace(base + " - " + seasonEpisode)
+		}
 	}
 	return base
 }
@@ -29,6 +34,9 @@ func resolveDisplayTitle(meta api.UploadSubject) string {
 		alt := strings.TrimSpace(tmdb.OriginalTitle)
 		if categoryOf(meta) == "TV" {
 			alt = strings.TrimSpace(metautil.FirstNonEmptyTrimmed(tmdb.Title, meta.Release.Title))
+		}
+		if meta.NamePresentation.Version == api.ReleaseNamePresentationVersionV1 && meta.NamePresentation.OmitAlternateTitle {
+			alt = ""
 		}
 		if main != "" && alt != "" && !strings.EqualFold(main, alt) {
 			return main + " (" + alt + ")"

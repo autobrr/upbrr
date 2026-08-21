@@ -248,7 +248,7 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		}
 		s.logger.Infof("torrent: tracker policy validation tracker=%s state=completed decision=accepted count=%d", policy.name, trackerCount)
 	}
-	if err := setCreatedBy(info.Path, torrentmeta.MkbrrUploadCreatedBy); err != nil {
+	if err := setUploadMetadata(info.Path); err != nil {
 		emitTorrentProgress(ctx, meta, "failed", "Torrent metadata update failed")
 		return api.TorrentResult{}, err
 	}
@@ -263,12 +263,13 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 	}, nil
 }
 
-func setCreatedBy(path string, createdBy string) error {
+func setUploadMetadata(path string) error {
 	torrentMeta, err := metainfo.LoadFromFile(path)
 	if err != nil {
 		return fmt.Errorf("torrent: load created torrent metadata: %w", err)
 	}
-	torrentMeta.CreatedBy = createdBy
+	torrentMeta.CreatedBy = torrentmeta.MkbrrUploadCreatedBy
+	torrentMeta.Comment = torrentmeta.UploadComment
 	torrentMeta.Announce = ""
 	torrentMeta.AnnounceList = nil
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0o600)

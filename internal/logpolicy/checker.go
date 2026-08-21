@@ -611,7 +611,7 @@ func lineColumnForOffset(content []byte, offset int) (int, int) {
 // checkCLISensitiveOutputFile flags raw dry-run endpoint and payload printing in
 // cmd/upbrr, where stdout becomes user-shareable debug log material.
 func checkCLISensitiveOutputFile(fset *token.FileSet, root string, path string) ([]Violation, error) {
-	file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+	file, err := parser.ParseFile(fset, path, nil, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
@@ -625,7 +625,8 @@ func checkCLISensitiveOutputFile(fset *token.FileSet, root string, path string) 
 
 	dryRunFileVars := collectDryRunFileVars(file)
 	localPathVars := collectLocalPathVars(file, aliases)
-	violations := make([]Violation, 0)
+	allows, allowViolations := collectLogpolicyAllows(fset, relPath, file)
+	violations := append([]Violation(nil), allowViolations...)
 	ast.Inspect(file, func(node ast.Node) bool {
 		call, ok := node.(*ast.CallExpr)
 		if !ok {
@@ -657,9 +658,13 @@ func checkCLISensitiveOutputFile(fset *token.FileSet, root string, path string) 
 				)
 			}
 			if containsLocalPathOutputExpr(arg, localPathVars, aliases) && !isSafeLocalPathOutputExpr(arg) {
-				violations = append(
-					violations,
-					violationAt(fset, relPath, arg.Pos(), "local filesystem path output must be reduced to a stable path label before printing"),
+				appendLogpolicyViolation(
+					fset,
+					relPath,
+					allows,
+					&violations,
+					arg.Pos(),
+					"local filesystem path output must be reduced to a stable path label before printing",
 				)
 			}
 		}
@@ -672,6 +677,7 @@ func checkCLISensitiveOutputFile(fset *token.FileSet, root string, path string) 
 		}
 		return true
 	})
+	violations = append(violations, unusedLogpolicyAllowViolations(fset, relPath, allows)...)
 	return violations, nil
 }
 
@@ -1732,7 +1738,7 @@ func shouldSuppressLogpolicyPosition(fset *token.FileSet, allows map[int]*logpol
 	line := fset.Position(pos).Line
 	for _, candidateLine := range []int{line, line - 1} {
 		allow := allows[candidateLine]
-		if allow == nil || allow.reason == "" {
+		if allow == nil || allow.reason == "" || allow.used {
 			continue
 		}
 		allow.used = true

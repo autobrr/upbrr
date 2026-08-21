@@ -158,14 +158,7 @@ func azAssetRequirements(site siteDefinition, subject api.TrackerValidationSubje
 	case "DVD":
 		infoKind = trackers.AssetKindDVDVOBMediaInfo
 	}
-	screenshotCount := 3
-	if site.Name == "CZ" &&
-		(trackers.IsDiscType(subject.DiscType) ||
-			strings.EqualFold(strings.TrimSpace(subject.Type), "REMUX") ||
-			strings.EqualFold(strings.TrimSpace(subject.Release.Type), "REMUX") ||
-			strings.Contains(strings.ToLower(subject.Release.Resolution), "2160")) {
-		screenshotCount = 6
-	}
+	screenshotCount := azScreenshotMinimum(site, subject)
 	return []trackers.AssetRequirement{
 		{
 			Kind:         infoKind,
@@ -176,4 +169,15 @@ func azAssetRequirements(site siteDefinition, subject api.TrackerValidationSubje
 			MinimumCount: screenshotCount,
 		},
 	}
+}
+
+func azScreenshotMinimum(site siteDefinition, subject api.TrackerValidationSubject) int {
+	if site.Name == "CZ" &&
+		(trackers.IsDiscType(subject.DiscType) ||
+			strings.EqualFold(strings.TrimSpace(subject.Type), "REMUX") ||
+			strings.EqualFold(strings.TrimSpace(subject.Release.Type), "REMUX") ||
+			strings.Contains(strings.ToLower(subject.Release.Resolution), "2160")) {
+		return 6
+	}
+	return 3
 }

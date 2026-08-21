@@ -21,14 +21,14 @@ func Profile() standalone.Profile {
 		PrepareDescription: prepareDescription,
 		PrepareUpload:      prepareUpload,
 		ReleaseNamePolicy: trackers.WithMovieYearProvider(
-			trackers.SimpleSubjectReleaseNamePolicy("standalone/bhd/v3", resolveUploadName),
+			trackers.SimpleSubjectReleaseNamePolicy("standalone/bhd/v4", resolveUploadName),
 			api.IdentityProviderIMDB,
 		),
 		NewDuplicateAdapter:  newDuplicateAdapter,
 		Rules:                rules(),
 		ValidationPolicy:     validationPolicy(),
 		BannedGroups:         bannedGroups(),
-		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "BHD"},
+		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "BHD", RequireAnnounce: true},
 		AudioPolicy:          &trackers.AudioPolicy{BlockEnglishOriginalWithForeign: true},
 		ImageHostPolicy:      &trackers.ImageHostPolicy{AllowedHosts: []string{"imgbox", "imgbb", "pixhost", "bhd", "passtheimage"}},
 		DupePolicy: &trackers.DupePolicy{

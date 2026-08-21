@@ -660,6 +660,13 @@ func RebuildReleaseName(meta *preparationstate.State, logger api.Logger) {
 
 	nameRequest := releaseNameRequestFromMeta(*meta, logger)
 	nameRequest = applyReleaseNameOverrides(nameRequest, meta.ReleaseNameOverrides, logger)
+	meta.ReleaseNamePresentation = api.ReleaseNamePresentation{
+		Version:            api.ReleaseNamePresentationVersionV1,
+		OmitAlternateTitle: nameRequest.NoAKA,
+		OmitYear:           nameRequest.NoYear,
+		OmitSeasonEpisode:  nameRequest.NoSeason,
+		UseDailyDate:       nameRequest.ManualDate,
+	}
 	nameResult := BuildReleaseName(nameRequest, logger)
 	meta.ReleaseNameNoTag = nameResult.NameNoTag
 	meta.ReleaseName = nameResult.Name

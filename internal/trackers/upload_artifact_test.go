@@ -64,11 +64,11 @@ func TestResolveUploadTorrentBasePathWritesCleanBaseCopy(t *testing.T) {
 	}
 	assertInfoSource(t, cleaned, "")
 	assertInfoSourceKeyAbsent(t, cleaned)
-	if cleaned.Comment != "upbrr" {
+	if cleaned.Comment != "uploaded with upbrr" {
 		t.Fatalf("expected upbrr comment, got %q", cleaned.Comment)
 	}
-	if cleaned.CreatedBy != "uploaded with upbrr" {
-		t.Fatalf("expected upbrr created-by, got %q", cleaned.CreatedBy)
+	if cleaned.CreatedBy != "upbrr with mkbrr" {
+		t.Fatalf("expected mkbrr created-by, got %q", cleaned.CreatedBy)
 	}
 
 	original := readTestMetaInfo(t, dirtyTorrentPath)
@@ -175,8 +175,11 @@ func TestWriteUploadTorrentCleansTrackerFields(t *testing.T) {
 	if len(cleaned.UrlList) != 0 {
 		t.Fatalf("expected url-list cleared, got %#v", cleaned.UrlList)
 	}
-	if cleaned.Comment != "upbrr" {
+	if cleaned.Comment != "uploaded with upbrr" {
 		t.Fatalf("expected upbrr comment, got %q", cleaned.Comment)
+	}
+	if cleaned.CreatedBy != "upbrr" {
+		t.Fatalf("expected upbrr created-by, got %q", cleaned.CreatedBy)
 	}
 	assertInfoSource(t, cleaned, "")
 	assertInfoSourceKeyAbsent(t, cleaned)
@@ -230,7 +233,7 @@ func TestWritePersonalizedTorrentSetsTrackerFields(t *testing.T) {
 		InfoBytes:    testInfoBytes(t, "BHD"),
 	})
 
-	if err := WritePersonalizedTorrent(sourcePath, outputPath, "https://new.example/announce", "https://tracker.example/torrents/123", "PTP"); err != nil {
+	if err := WritePersonalizedTorrent(sourcePath, outputPath, "https://new.example/announce", "PTP"); err != nil {
 		t.Fatalf("write personalized torrent: %v", err)
 	}
 
@@ -241,10 +244,10 @@ func TestWritePersonalizedTorrentSetsTrackerFields(t *testing.T) {
 	if len(updated.AnnounceList) != 1 || len(updated.AnnounceList[0]) != 1 || updated.AnnounceList[0][0] != "https://new.example/announce" {
 		t.Fatal("expected announce-list set")
 	}
-	if updated.Comment != "https://tracker.example/torrents/123" {
-		t.Fatalf("expected tracker comment, got %q", updated.Comment)
+	if updated.Comment != "uploaded with upbrr" {
+		t.Fatalf("expected upbrr comment, got %q", updated.Comment)
 	}
-	if updated.CreatedBy != "uploaded with upbrr" {
+	if updated.CreatedBy != "upbrr" {
 		t.Fatalf("expected upbrr created-by, got %q", updated.CreatedBy)
 	}
 	if len(updated.UrlList) != 0 {
@@ -265,6 +268,7 @@ func TestPrepareTrackerUploadTorrentCreatesSpecificArtifact(t *testing.T) {
 	writeTestMetaInfo(t, baseTorrentPath, metainfo.MetaInfo{
 		Announce:  "https://old.example/announce",
 		Comment:   "private comment",
+		CreatedBy: "mkbrr",
 		InfoBytes: testInfoBytes(t, "old-source"),
 	})
 
@@ -283,6 +287,12 @@ func TestPrepareTrackerUploadTorrentCreatesSpecificArtifact(t *testing.T) {
 	artifact := readTestMetaInfo(t, meta.TorrentPath)
 	if artifact.Announce != "https://new.example/announce" {
 		t.Fatal("expected announce set")
+	}
+	if artifact.Comment != "uploaded with upbrr" {
+		t.Fatalf("expected upbrr comment, got %q", artifact.Comment)
+	}
+	if artifact.CreatedBy != "upbrr with mkbrr" {
+		t.Fatalf("expected mkbrr created-by, got %q", artifact.CreatedBy)
 	}
 	assertInfoSource(t, artifact, "HDBits")
 

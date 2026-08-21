@@ -42,7 +42,7 @@ func Profile() standalone.Profile {
 			AnyOf:       []trackers.MetadataField{trackers.MetadataFieldIMDBIDOnly},
 			Disposition: api.RuleDispositionAdvisory,
 		}}},
-		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "PTP"},
+		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "PTP", RequireAnnounce: true},
 		ArtifactPolicy: &trackers.ArtifactPolicy{
 			MaxPieceSizeMiB:     16,
 			PieceSizeProfileURL: ptpBaseURL,

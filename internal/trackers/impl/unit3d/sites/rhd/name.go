@@ -54,12 +54,12 @@ func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
 	if year == 0 && tmdb != nil {
 		year = tmdb.Year
 	}
-	if year == 0 {
-		parts = append(parts, "0000")
-	} else {
+	if year > 0 {
 		parts = append(parts, strconv.Itoa(year))
 	}
-	if meta.SeasonStr != "" || meta.EpisodeStr != "" {
+	if meta.DailyEpisodeDate != "" {
+		parts = append(parts, meta.DailyEpisodeDate)
+	} else if meta.SeasonStr != "" || meta.EpisodeStr != "" {
 		parts = append(parts, strings.TrimSpace(meta.SeasonStr+meta.EpisodeStr))
 		if incompleteRegex.MatchString(markers) {
 			parts = append(parts, "iNCOMPLETE")
@@ -155,11 +155,18 @@ func typeAndSource(meta api.UploadSubject) []string {
 		if meta.Region != "" {
 			parts = append(parts, meta.Region)
 		}
-		if meta.Release.Source != "" {
-			parts = append(parts, meta.Release.Source)
+		source := strings.TrimSpace(meta.Release.Source)
+		size := strings.TrimSpace(meta.Release.Size)
+		if strings.EqualFold(meta.DiscType, "DVD") &&
+			(strings.EqualFold(size, "DVD5") || strings.EqualFold(size, "DVD9")) &&
+			(strings.EqualFold(source, "DVD") || strings.EqualFold(source, "PAL DVD") || strings.EqualFold(source, "NTSC DVD")) {
+			source = strings.TrimSpace(source[:len(source)-len("DVD")])
 		}
-		if meta.Release.Size != "" {
-			parts = append(parts, meta.Release.Size)
+		if source != "" {
+			parts = append(parts, source)
+		}
+		if size != "" {
+			parts = append(parts, size)
 		}
 		name = ""
 	}

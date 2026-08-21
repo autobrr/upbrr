@@ -20,6 +20,9 @@ func TestProfileIdentity(t *testing.T) {
 	if profile.BaseURL != "https://retro-movies.club" {
 		t.Fatalf("base URL = %q", profile.BaseURL)
 	}
+	if profile.Site.BuildNameVersion != "v2" {
+		t.Fatalf("RMC build-name version = %q", profile.Site.BuildNameVersion)
+	}
 	if profile.MetadataPolicy == nil || len(profile.MetadataPolicy.Requirements) != 1 ||
 		len(profile.MetadataPolicy.Requirements[0].AnyOf) != 1 ||
 		profile.MetadataPolicy.Requirements[0].AnyOf[0] != trackers.MetadataFieldTMDBTitle ||
@@ -201,6 +204,33 @@ func TestBuildNameFallsBackToReleaseNameNoTag(t *testing.T) {
 	got := Profile().Site.BuildName(meta, config.TrackerConfig{})
 	if got != "Example Release 2000 1080p Bluray x264" {
 		t.Fatalf("name = %q", got)
+	}
+}
+
+func TestBuildNameAllowsFinalizedYearOmission(t *testing.T) {
+	meta := rmcNameSubject("Example Release 1080p Bluray x264-GRP", "Example Release", 0)
+	meta.NamePresentation = api.ReleaseNamePresentation{
+		Version:  api.ReleaseNamePresentationVersionV1,
+		OmitYear: true,
+	}
+	if got := Profile().Site.BuildName(meta, config.TrackerConfig{}); got != "Example Release 1080p Bluray x264-GRP" {
+		t.Fatalf("name = %q", got)
+	}
+}
+
+func TestBuildNameNormalizesTitleAndAKAWhenYearIsOmitted(t *testing.T) {
+	meta := rmcNameSubject("Wrong Title AKA Wrong Alternate 1080p Bluray x264-GRP", "Example Release", 0)
+	meta.Release.Title = "Wrong Title"
+	meta.Release.Alt = "AKA Wrong Alternate"
+	meta.ProviderMetadata.TMDB.RetrievedAKA = "AKA Wrong Alternate"
+	meta.NamePresentation = api.ReleaseNamePresentation{
+		Version:  api.ReleaseNamePresentationVersionV1,
+		OmitYear: true,
+	}
+	got := Profile().Site.BuildName(meta, config.TrackerConfig{})
+	want := "Example Release 1080p Bluray x264-GRP"
+	if got != want {
+		t.Fatalf("name = %q, want %q", got, want)
 	}
 }
 

@@ -79,6 +79,21 @@ func TestCommandHelpGoldens(t *testing.T) {
 			args:   []string{"api-token", "revoke", "--help"},
 			golden: "api-token-revoke.txt",
 		},
+		{
+			name:   "auth",
+			args:   []string{"auth", "--help"},
+			golden: "auth.txt",
+		},
+		{
+			name:   "auth password",
+			args:   []string{"auth", "password", "--help"},
+			golden: "auth-password.txt",
+		},
+		{
+			name:   "auth browse roots",
+			args:   []string{"auth", "browse-roots", "--help"},
+			golden: "auth-browse-roots.txt",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -143,6 +158,26 @@ func TestAPITokenFirstTokenDispatch(t *testing.T) {
 	}
 }
 
+func TestAuthFirstTokenDispatch(t *testing.T) {
+	wantHelp := readHelpGolden(t, "auth.txt")
+	for _, args := range [][]string{
+		{"auth"},
+		{"auth", "help", "password"},
+		{"auth", "-h", "password"},
+		{"auth", "--help", "password"},
+	} {
+		result := executeCLIForTest(t.Context(), t, args)
+		if result.code != 0 || result.stdout != wantHelp || result.stderr != "" {
+			t.Fatalf("args %v: code=%d stdout_match=%t stderr=%q err=%v", args, result.code, result.stdout == wantHelp, result.stderr, result.err)
+		}
+	}
+
+	result := executeCLIForTest(t.Context(), t, []string{"auth", "bad", "--help"})
+	if result.code != 2 || result.stdout != "" || !strings.Contains(result.stderr, `unknown auth command "bad"`) {
+		t.Fatalf("unknown auth command result: %#v", result)
+	}
+}
+
 func TestCommandExitCodesAndRouting(t *testing.T) {
 	missingConfig := filepath.Join(t.TempDir(), "missing.yaml")
 	tests := []struct {
@@ -198,6 +233,30 @@ func TestCommandExitCodesAndRouting(t *testing.T) {
 			args:      []string{"api-token", "revoke", "TOKEN_ID", "--config", "path"},
 			wantCode:  2,
 			wantError: "api-token revoke requires exactly one token ID",
+		},
+		{
+			name:      "auth password positional",
+			args:      []string{"auth", "password", "extra"},
+			wantCode:  2,
+			wantError: "auth password does not accept positional arguments",
+		},
+		{
+			name:      "auth password rejects unattended mode",
+			args:      []string{"auth", "password", "--unattended"},
+			wantCode:  2,
+			wantError: "parse auth password options: flag provided but not defined: -unattended",
+		},
+		{
+			name:      "auth browse roots requires policy",
+			args:      []string{"auth", "browse-roots"},
+			wantCode:  2,
+			wantError: "auth browse-roots requires at least one path or --allow-unrestricted",
+		},
+		{
+			name:      "auth browse roots rejects mixed policy",
+			args:      []string{"auth", "browse-roots", "--allow-unrestricted", "path"},
+			wantCode:  2,
+			wantError: "auth browse-roots cannot combine paths with --allow-unrestricted",
 		},
 		{
 			name:      "leading flag keeps root route",

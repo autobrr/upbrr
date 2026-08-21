@@ -55,6 +55,8 @@ func executeCLI(ctx context.Context, args []string, streams cliIO) error {
 		return executeCobraCommand(ctx, cmd)
 	case "api-token":
 		return executeAPITokenCLI(ctx, args, streams, originalArgs)
+	case "auth":
+		return executeAuthCLI(ctx, args, streams, originalArgs)
 	default:
 		//nolint:contextcheck // Cobra injects ctx through ExecuteContext after command construction.
 		cmd := newUploadRootCommand(streams, originalArgs)
@@ -68,7 +70,7 @@ func executeCLI(ctx context.Context, args []string, streams cliIO) error {
 }
 
 func executeAPITokenCLI(ctx context.Context, args []string, streams cliIO, originalArgs []string) error {
-	if len(args) == 1 || apiTokenHelpToken(args[1]) {
+	if len(args) == 1 || commandHelpToken(args[1]) {
 		//nolint:contextcheck // Cobra injects ctx through ExecuteContext after command construction.
 		cmd := newRootCommand(streams, originalArgs)
 		cmd.SetArgs([]string{"api-token", "--help"})
@@ -99,7 +101,37 @@ func executeCobraCommand(ctx context.Context, cmd *cobra.Command) error {
 	return cmd.ExecuteContext(ctx)
 }
 
-func apiTokenHelpToken(value string) bool {
+func executeAuthCLI(ctx context.Context, args []string, streams cliIO, originalArgs []string) error {
+	if len(args) == 1 || commandHelpToken(args[1]) {
+		//nolint:contextcheck // Cobra injects ctx through ExecuteContext after command construction.
+		cmd := newRootCommand(streams, originalArgs)
+		cmd.SetArgs([]string{"auth", "--help"})
+		return executeCobraCommand(ctx, cmd)
+	}
+
+	childName := args[1]
+	var fs *pflag.FlagSet
+	switch childName {
+	case "password":
+		var opts authPasswordOptions
+		fs = pflag.NewFlagSet("auth "+childName, pflag.ContinueOnError)
+		bindAuthPasswordFlags(fs, &opts)
+	case "browse-roots":
+		var opts authBrowseRootsOptions
+		fs = pflag.NewFlagSet("auth "+childName, pflag.ContinueOnError)
+		bindAuthBrowseRootsFlags(fs, &opts)
+	default:
+		return exitError(2, fmt.Errorf("unknown auth command %q", childName))
+	}
+	normalized := normalizeNonInterspersedArgs(fs, args[2:])
+	commandArgs := append([]string{"auth", childName}, normalized...)
+	//nolint:contextcheck // Cobra injects ctx through ExecuteContext after command construction.
+	cmd := newRootCommand(streams, originalArgs)
+	cmd.SetArgs(commandArgs)
+	return executeCobraCommand(ctx, cmd)
+}
+
+func commandHelpToken(value string) bool {
 	switch value {
 	case "help", "-h", "--h", "-help", "--help":
 		return true
@@ -110,7 +142,7 @@ func apiTokenHelpToken(value string) bool {
 
 func newRootCommand(streams cliIO, originalArgs []string) *cobra.Command {
 	cmd := newUploadRootCommand(streams, originalArgs)
-	cmd.AddCommand(newServeCommand(streams), newAPITokenCommand(streams))
+	cmd.AddCommand(newServeCommand(streams), newAPITokenCommand(streams), newAuthCommand(streams))
 	return cmd
 }
 
@@ -224,6 +256,83 @@ func newAPITokenRevokeCommand(streams cliIO) *cobra.Command {
 		return formatFlagUsage(cmd.Flags(), "upbrr api-token revoke [options] <token-id>")
 	})
 	bindConfigAPITokenFlags(cmd.Flags(), &opts)
+	addExplicitHelpFlag(cmd)
+	cmd.Flags().SetInterspersed(false)
+	return cmd
+}
+
+func newAuthCommand(streams cliIO) *cobra.Command {
+	streams = streams.normalized()
+	cmd := &cobra.Command{
+		Use:  "auth <command> [options]",
+		Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
+	}
+	configureCommand(cmd, streams, 2, "parse auth options", func(*cobra.Command) string {
+		return authCommandUsage
+	})
+	addExplicitHelpFlag(cmd)
+	cmd.Flags().SetInterspersed(false)
+	cmd.AddCommand(
+		newAuthPasswordCommand(streams),
+		newAuthBrowseRootsCommand(streams),
+	)
+	return cmd
+}
+
+func newAuthPasswordCommand(streams cliIO) *cobra.Command {
+	var opts authPasswordOptions
+	cmd := &cobra.Command{
+		Use: "password [options]",
+		Args: func(_ *cobra.Command, args []string) error {
+			if len(args) != 0 {
+				return exitError(2, errors.New("auth password does not accept positional arguments"))
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runChangeAuthPasswordCommand(cmd.Context(), opts, cmd.Flags().Changed("config"), cliIO{
+				in:     cmd.InOrStdin(),
+				out:    cmd.OutOrStdout(),
+				errOut: cmd.ErrOrStderr(),
+			})
+		},
+	}
+	configureCommand(cmd, streams, 2, "parse auth password options", func(cmd *cobra.Command) string {
+		return formatFlagUsage(cmd.Flags(), "upbrr auth password [options]")
+	})
+	bindAuthPasswordFlags(cmd.Flags(), &opts)
+	addExplicitHelpFlag(cmd)
+	cmd.Flags().SetInterspersed(false)
+	return cmd
+}
+
+func newAuthBrowseRootsCommand(streams cliIO) *cobra.Command {
+	var opts authBrowseRootsOptions
+	cmd := &cobra.Command{
+		Use: "browse-roots [options] <path>...",
+		Args: func(_ *cobra.Command, args []string) error {
+			if opts.allowUnrestricted && len(args) != 0 {
+				return exitError(2, errors.New("auth browse-roots cannot combine paths with --allow-unrestricted"))
+			}
+			if !opts.allowUnrestricted && len(args) == 0 {
+				return exitError(2, errors.New("auth browse-roots requires at least one path or --allow-unrestricted"))
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runUpdateBrowseRootsCommand(cmd.Context(), opts, cmd.Flags().Changed("config"), args, cmd.OutOrStdout())
+		},
+	}
+	configureCommand(cmd, streams, 2, "parse auth browse-roots options", func(cmd *cobra.Command) string {
+		return formatFlagUsage(
+			cmd.Flags(),
+			"upbrr auth browse-roots [options] <path>...\n       upbrr auth browse-roots --allow-unrestricted",
+		)
+	})
+	bindAuthBrowseRootsFlags(cmd.Flags(), &opts)
 	addExplicitHelpFlag(cmd)
 	cmd.Flags().SetInterspersed(false)
 	return cmd

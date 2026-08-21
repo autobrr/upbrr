@@ -1,0 +1,12 @@
+Usage: upbrr auth browse-roots [options] <path>...
+       upbrr auth browse-roots --allow-unrestricted
+
+Options:
+
+Config:
+  -config, --config string
+      Path to config file
+
+Other:
+  -allow-unrestricted, --allow-unrestricted
+      Allow unrestricted host browsing instead of configured roots

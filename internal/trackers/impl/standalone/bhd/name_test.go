@@ -42,6 +42,37 @@ func TestResolveUploadNameAppliesBHDMovieNamingMatrix(t *testing.T) {
 	}
 }
 
+func TestResolveUploadNameHonorsOmitAlternateTitle(t *testing.T) {
+	t.Parallel()
+
+	const sourceName = "Example Release AKA Example Original 2026 1080p WEB-DL H.264-GRP"
+	meta := generatedBHDNameSubject(sourceName)
+	meta.Identity.Category = api.CanonicalCategoryMovie
+	meta.Release = api.ReleaseInfo{
+		Title:      "Example Release",
+		Alt:        "Example Original",
+		Year:       2026,
+		Resolution: "1080p",
+	}
+	meta.ProviderMetadata.TMDB = &api.TMDBMetadata{
+		Title:         "Example Release",
+		OriginalTitle: "Example Original",
+		Year:          2026,
+	}
+	meta.Type = "WEBDL"
+	meta.VideoCodec = "H.264"
+	meta.Tag = "GRP"
+	meta.NamePresentation = api.ReleaseNamePresentation{
+		Version:            api.ReleaseNamePresentationVersionV1,
+		OmitAlternateTitle: true,
+	}
+
+	const want = "Example Release 2026 1080p WEB-DL H.264-GRP"
+	if got := resolveUploadName(meta); got != want {
+		t.Fatalf("BHD name = %q, want %q", got, want)
+	}
+}
+
 func TestResolveUploadNameAppliesBHDTVDBCollisionYearMatrix(t *testing.T) {
 	t.Parallel()
 
@@ -199,8 +230,8 @@ func TestResolveUploadNameUsesBHDPolicyAndPreservesExactP2PNames(t *testing.T) {
 func TestBHDNamingPolicyVersion(t *testing.T) {
 	t.Parallel()
 
-	if got := New().ReleaseNamePolicy().ID; got != "standalone/bhd/v3" {
-		t.Fatalf("BHD naming policy ID = %q, want %q", got, "standalone/bhd/v3")
+	if got := New().ReleaseNamePolicy().ID; got != "standalone/bhd/v4" {
+		t.Fatalf("BHD naming policy ID = %q, want %q", got, "standalone/bhd/v4")
 	}
 }
 

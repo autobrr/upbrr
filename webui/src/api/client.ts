@@ -318,7 +318,8 @@ export const authClient = {
     postJSON("/api/auth/bootstrap", { username, password, retainLogin }),
   login: (username: string, password: string, retainLogin: boolean) =>
     postJSON("/api/auth/login", { username, password, retainLogin }),
-  saveBrowsePolicy: (browseRoot: string, allowUnrestrictedBrowse: boolean) =>
+  /** Saves the first browse policy; the server rejects later mutations. */
+  saveInitialBrowsePolicy: (browseRoot: string, allowUnrestrictedBrowse: boolean) =>
     postJSON("/api/auth/browse-policy", { browseRoot, allowUnrestrictedBrowse }),
   logout: () => postJSON("/api/auth/logout"),
 };

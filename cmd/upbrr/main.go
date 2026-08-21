@@ -433,11 +433,11 @@ func createCLIAuthFile(stdin io.Reader, stdout io.Writer, dbPath string) error {
 	if err != nil {
 		return err
 	}
-	password, err := promptAuthPassword(stdin, reader, stdout, "Password: ")
+	password, err := promptPassword(stdin, reader, stdout, "Password: ", "create auth")
 	if err != nil {
 		return err
 	}
-	confirm, err := promptAuthPassword(stdin, reader, stdout, "Confirm password: ")
+	confirm, err := promptPassword(stdin, reader, stdout, "Confirm password: ", "create auth")
 	if err != nil {
 		return err
 	}
@@ -468,23 +468,23 @@ func promptAuthValue(reader *bufio.Reader, stdout io.Writer, label string) (stri
 	return value, nil
 }
 
-func promptAuthPassword(stdin io.Reader, reader *bufio.Reader, stdout io.Writer, label string) (string, error) {
+func promptPassword(stdin io.Reader, reader *bufio.Reader, stdout io.Writer, label string, operation string) (string, error) {
 	if _, err := fmt.Fprint(stdout, label); err != nil {
-		return "", fmt.Errorf("create auth: write password prompt: %w", err)
+		return "", fmt.Errorf("%s: write password prompt: %w", operation, err)
 	}
 	if file, ok := stdin.(*os.File); ok {
 		fd, ok := terminalFileDescriptor(file)
 		if ok && term.IsTerminal(fd) {
 			raw, err := term.ReadPassword(fd)
 			if err != nil {
-				return "", fmt.Errorf("create auth: read password: %w", err)
+				return "", fmt.Errorf("%s: read password: %w", operation, err)
 			}
 			if _, err := fmt.Fprintln(stdout); err != nil {
-				return "", fmt.Errorf("create auth: finish password prompt: %w", err)
+				return "", fmt.Errorf("%s: finish password prompt: %w", operation, err)
 			}
 			value := strings.TrimSpace(string(raw))
 			if value == "" {
-				return "", errors.New("create auth: password cannot be empty")
+				return "", fmt.Errorf("%s: password cannot be empty", operation)
 			}
 			return value, nil
 		}
@@ -492,11 +492,11 @@ func promptAuthPassword(stdin io.Reader, reader *bufio.Reader, stdout io.Writer,
 
 	line, err := reader.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
-		return "", fmt.Errorf("create auth: read password: %w", err)
+		return "", fmt.Errorf("%s: read password: %w", operation, err)
 	}
 	value := strings.TrimSpace(line)
 	if value == "" {
-		return "", errors.New("create auth: password cannot be empty")
+		return "", fmt.Errorf("%s: password cannot be empty", operation)
 	}
 	return value, nil
 }

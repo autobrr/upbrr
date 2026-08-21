@@ -2229,7 +2229,10 @@ func (s *Service) applyTVEpisodeMetadata(
 					if external.TVDB == nil {
 						external.TVDB = &api.TVDBMetadata{TVDBID: ids.TVDBID}
 					}
-					external.TVDB.Name = aliasName
+					external.TVDB.NameEnglish = aliasName
+					if strings.TrimSpace(external.TVDB.Name) == "" {
+						external.TVDB.Name = aliasName
+					}
 					if aliasYear > 0 {
 						external.TVDB.Year = aliasYear
 						external.TVDB.YearFromAlias = true

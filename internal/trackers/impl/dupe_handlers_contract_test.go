@@ -516,7 +516,10 @@ func TestSiteHandlersSearch(t *testing.T) {
 					}
 					_, _ = w.Write([]byte(`{"result":{"results":"0","torrents":{}}}`))
 					return
-				case "CZT", "DC", "RTF", "SPD":
+				case "DC":
+					_, _ = w.Write([]byte(`{"results":[],"index":0,"limit":100,"count":0,"total":0,"includesPending":true}`))
+					return
+				case "CZT", "RTF", "SPD":
 					_, _ = w.Write([]byte(`[]`))
 					return
 				case "GPW":

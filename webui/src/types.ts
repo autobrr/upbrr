@@ -92,9 +92,18 @@ export type SourceManifest = {
   Classification: { DiscType: string; Container: string; MediaType: string };
 };
 
+export type ReleaseNamePresentation = {
+  Version: string;
+  OmitAlternateTitle: boolean;
+  OmitYear: boolean;
+  OmitSeasonEpisode: boolean;
+  UseDailyDate: boolean;
+};
+
 export type NamingFacts = {
   Filename: string;
   ReleaseName: string;
+  NamePresentation: ReleaseNamePresentation;
   NameWithoutTag: string;
   CleanName: string;
   Tag: string;

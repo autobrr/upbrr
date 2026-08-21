@@ -67,7 +67,7 @@ func Profile() standalone.Profile {
 				{Scope: trackers.MetadataScopeAny, AnyOf: []trackers.MetadataField{trackers.MetadataFieldPoster}},
 			},
 		},
-		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: arSourceFlag},
+		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: arSourceFlag, RequireAnnounce: true},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{"tracker.alpharatio"}},
 		AuthCapability: &api.TrackerAuthCapability{
 			TrackerID:          "AR",

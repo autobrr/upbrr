@@ -22,7 +22,7 @@ func Profile() standalone.Profile {
 		PrepareDescription:      prepareDescription,
 		PrepareUpload:           prepareUpload,
 		ValidationPolicy:        validationPolicy(),
-		ReleaseNamePolicy: trackers.NewReleaseNamePolicy("standalone/asc/v1", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
+		ReleaseNamePolicy: trackers.NewReleaseNamePolicy("standalone/asc/v2", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
 			uploadName := resolveUploadTitle(input.Subject)
 			if input.RequestedName != nil {
 				uploadName = strings.TrimSpace(*input.RequestedName)
@@ -34,7 +34,7 @@ func Profile() standalone.Profile {
 			return trackers.ResolvedReleaseNames{Upload: uploadName, Duplicate: searchName}, nil
 		}),
 		NewDuplicateAdapter:   newDuplicateAdapter,
-		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: sourceFlag},
+		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: sourceFlag, RequireAnnounce: true},
 		AudioPolicy:           &trackers.AudioPolicy{AllowBloat: true},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{"amigos-share.club"}},
 		AuthCapability:        authcontract.CookieCapability("ASC"),

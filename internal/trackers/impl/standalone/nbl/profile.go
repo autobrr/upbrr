@@ -42,7 +42,7 @@ func Profile() standalone.Profile {
 				Disposition: api.RuleDispositionStrict,
 			}},
 		},
-		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: "NBL"},
+		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: "NBL", RequireAnnounce: true},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{"tracker.nebulance"}},
 	}
 }

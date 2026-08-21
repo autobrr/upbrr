@@ -6,6 +6,7 @@ package tl
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -41,6 +42,10 @@ func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers
 	if err := standalone.ValidatePreparation(ctx, req, validationPolicy()); err != nil {
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: validate preparation: %w", err)
 	}
+	announces := announceList(req.TrackerConfig)
+	if req.Intent == trackers.PreparationIntentUpload && len(announces) == 0 {
+		return trackers.PreparedOperation{}, errors.New("trackers: TL required passkey-derived announce URL is missing")
+	}
 	state, client, err := prepareUploadState(ctx, req)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
@@ -53,13 +58,9 @@ func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers
 	if err != nil {
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %w", err)
 	}
-	announces := announceList(req.TrackerConfig)
-	artifactPath := ""
-	if len(announces) > 0 {
-		artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, "TL")
-		if err != nil {
-			return trackers.PreparedOperation{}, fmt.Errorf("trackers: %w", err)
-		}
+	artifactPath, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, "TL")
+	if err != nil {
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %w", err)
 	}
 	return trackers.NewPreparedOperation(preview, func(submitCtx context.Context) (api.UploadSummary, error) {
 		return submitPreparedUpload(submitCtx, req, state, client, body, contentType, announces, artifactPath)
@@ -114,7 +115,7 @@ func submitPreparedUpload(
 		announceURL = announces[0]
 	}
 	registeredPath := trackers.PersistReconstructedRegisteredTorrent(
-		req.Logger, "TL", state.torrentPath, artifactPath, announceURL, urlValue, sourceFlag,
+		req.Logger, "TL", state.torrentPath, artifactPath, announceURL, sourceFlag,
 	)
 	return api.UploadSummary{Uploaded: 1, UploadedTorrents: []api.UploadedTorrent{{
 		Tracker:     "TL",

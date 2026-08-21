@@ -2440,7 +2440,7 @@ func TestApplyTVEpisodeMetadataTVDBTitleOnlyAliasAppliedWithoutYear(t *testing.T
 	}
 }
 
-func TestApplyTVEpisodeMetadataTVDBAliasAppliedForEnglish(t *testing.T) {
+func TestApplyTVEpisodeMetadataTVDBAliasPreservesNativeTitle(t *testing.T) {
 	svc := NewService(&fakeRepo{})
 	tmdbClient := &stubTMDB{}
 	tvdbClient := &stubTVDB{specificAlias: "English Show (2021)"}
@@ -2456,16 +2456,20 @@ func TestApplyTVEpisodeMetadataTVDBAliasAppliedForEnglish(t *testing.T) {
 	external := &api.SourceScopedMetadata{
 		TMDB: &api.TMDBMetadata{OriginalLanguage: "en"},
 		TVDB: &api.TVDBMetadata{
-			TVDBID: 200,
-			Name:   "Native Name",
-			Year:   2015,
+			TVDBID:      200,
+			Name:        "Native Name",
+			NameEnglish: "Earlier English Name",
+			Year:        2015,
 		},
 	}
 
 	_ = svc.applyTVEpisodeMetadata(context.Background(), meta, ids, external, tmdbClient, tvdbClient, &stubTVmaze{})
 
-	if external.TVDB.Name != "English Show" {
-		t.Fatalf("expected alias-based title override, got %q", external.TVDB.Name)
+	if external.TVDB.Name != "Native Name" {
+		t.Fatalf("expected native title preserved, got %q", external.TVDB.Name)
+	}
+	if external.TVDB.NameEnglish != "English Show" {
+		t.Fatalf("expected English title preserved, got %q", external.TVDB.NameEnglish)
 	}
 	if external.TVDB.Year != 2021 {
 		t.Fatalf("expected alias-based year override, got %d", external.TVDB.Year)

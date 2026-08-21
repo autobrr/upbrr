@@ -15,6 +15,9 @@ import (
 
 func TestProfileParity(t *testing.T) {
 	profile := Profile().Site
+	if profile.BuildNameVersion != "v2" {
+		t.Fatalf("ACM build-name version = %q", profile.BuildNameVersion)
+	}
 	if got := profile.ResolveTypeID(api.UploadSubject{
 		DiscType:   "BDMV",
 		UHD:        "UHD",
@@ -61,6 +64,23 @@ func TestBuildNameDoesNotAddSubtitleTagsToDiscs(t *testing.T) {
 	got := Profile().Site.BuildName(meta, config.TrackerConfig{})
 	if strings.Contains(got, "[Jpn subs only]") {
 		t.Fatalf("disc name added subtitle tag: %q", got)
+	}
+}
+
+func TestBuildNameHonorsOmitAlternateTitle(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{
+		ReleaseName:      "Example Release 2026 1080p WEB-DL-GRP",
+		Release:          api.ReleaseInfo{Title: "Example Release"},
+		ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{OriginalTitle: "Example Original"}},
+		NamePresentation: api.ReleaseNamePresentation{
+			Version:            api.ReleaseNamePresentationVersionV1,
+			OmitAlternateTitle: true,
+		},
+	}
+	if got := buildACMName(meta); strings.Contains(got, "Example Original") {
+		t.Fatalf("ACM name retained optional alternate title: %q", got)
 	}
 }
 

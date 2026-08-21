@@ -366,6 +366,117 @@ func TestTrackerPlanResolveActionKeepsOrReplacesPreparedOperation(t *testing.T) 
 	})
 }
 
+func TestTrackerPlanDecisionResolverUsesExplicitAnswer(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		confirmed bool
+	}{
+		{name: "confirm", confirmed: true},
+		{name: "decline", confirmed: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			var decided atomic.Bool
+			var answer atomic.Bool
+			var releases atomic.Int32
+			plan, failure := PrepareAdapter(
+				context.Background(),
+				PreparationInput{Intent: PreparationIntentUpload, Tracker: "EXAMPLE"},
+				nil,
+				func(context.Context, PreparationInput) (PreparedOperation, error) {
+					return NewPreparedOperationWithDecisionResolver(
+						api.TrackerDryRunEntry{
+							Tracker: "EXAMPLE",
+							RequiredActions: []api.RequiredAction{{
+								Kind: api.RequiredActionResolveTrackerPreparation,
+							}},
+						},
+						func(context.Context) (api.UploadSummary, error) {
+							return api.UploadSummary{}, errors.New("unresolved operation submitted")
+						},
+						func() error {
+							releases.Add(1)
+							return nil
+						},
+						func(_ context.Context, confirmed bool) (PreparedOperation, error) {
+							answer.Store(confirmed)
+							decided.Store(true)
+							return NewPreparedOperation(
+								api.TrackerDryRunEntry{Tracker: "EXAMPLE", Payload: map[string]string{"resolved": "true"}},
+								func(context.Context) (api.UploadSummary, error) {
+									return api.UploadSummary{Uploaded: 1}, nil
+								},
+								nil,
+							), nil
+						},
+					), nil
+				},
+			)
+			if failure != nil {
+				t.Fatalf("prepare decision plan: %v", failure)
+			}
+
+			resolved, err := plan.ResolveAction(context.Background(), api.RequiredActionResolveTrackerPreparation, test.confirmed)
+			if err != nil {
+				t.Fatalf("resolve decision: %v", err)
+			}
+			if !decided.Load() || answer.Load() != test.confirmed || releases.Load() != 1 {
+				t.Fatalf("decision called=%t answer=%t releases=%d", decided.Load(), answer.Load(), releases.Load())
+			}
+			if resolved.DryRun().Payload["resolved"] != "true" {
+				t.Fatalf("resolved preview = %#v", resolved.DryRun())
+			}
+			if _, err := plan.Submit(context.Background()); !errors.Is(err, ErrPlanReleased) {
+				t.Fatalf("replaced plan submit error = %v", err)
+			}
+			if _, err := resolved.Submit(context.Background()); err != nil {
+				t.Fatalf("submit replacement: %v", err)
+			}
+		})
+	}
+
+	t.Run("preserves preparation failure", func(t *testing.T) {
+		t.Parallel()
+
+		want := NewPreparationFailure("EXAMPLE", PreparationFailureCodeSkipped, "Tracker skipped.", nil)
+		plan, failure := PrepareAdapter(
+			context.Background(),
+			PreparationInput{Intent: PreparationIntentUpload, Tracker: "EXAMPLE"},
+			nil,
+			func(context.Context, PreparationInput) (PreparedOperation, error) {
+				return NewPreparedOperationWithDecisionResolver(
+					api.TrackerDryRunEntry{
+						Tracker: "EXAMPLE",
+						RequiredActions: []api.RequiredAction{{
+							Kind: api.RequiredActionResolveTrackerPreparation,
+						}},
+					},
+					func(context.Context) (api.UploadSummary, error) {
+						return api.UploadSummary{}, errors.New("unresolved operation submitted")
+					},
+					nil,
+					func(context.Context, bool) (PreparedOperation, error) {
+						return PreparedOperation{}, want
+					},
+				), nil
+			},
+		)
+		if failure != nil {
+			t.Fatalf("prepare decision plan: %v", failure)
+		}
+
+		_, err := plan.ResolveAction(context.Background(), api.RequiredActionResolveTrackerPreparation, true)
+		var got *PreparationFailure
+		if !errors.Is(err, want) || !errors.As(err, &got) || got.Code() != PreparationFailureCodeSkipped {
+			t.Fatalf("resolver failure = %v", err)
+		}
+	})
+}
+
 func TestPrepareAdapterPreservesPreparationFailure(t *testing.T) {
 	t.Parallel()
 

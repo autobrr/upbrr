@@ -6,6 +6,8 @@ Commands:
       Options: --addr, --host, --port, --base-url, --persist-web-config, --dev-no-auth
   api-token <list|revoke> [options]
       List and revoke persistent API bearer tokens
+  auth <password|browse-roots> [options]
+      Manage the WebUI password and browse policy locally
 
 Options:
 

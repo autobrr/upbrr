@@ -22,7 +22,7 @@ func Profile() standalone.Profile {
 		ReleaseNamePolicy:     trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/is/v1", resolveSubject, resolveSearchName),
 		NewDuplicateAdapter:   newDuplicateAdapter,
 		AuthCapability:        authcontract.CookieCapability("IS"),
-		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: sourceFlag},
+		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: sourceFlag, RequireAnnounce: true},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{baseURL}},
 	}
 }
