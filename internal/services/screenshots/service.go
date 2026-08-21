@@ -98,7 +98,10 @@ func NewServiceWithRepo(cfg config.Config, logger api.Logger, tmpRoot string, ru
 // matching managed screenshots already present on disk and in the repository.
 // A non-positive count falls back to the subject default and then config. When
 // timing is unavailable, the returned plan requests manual frames instead of
-// failing; stored tracker images are merged into final selections.
+// failing; stored tracker images are merged into final selections. For a
+// multi-disc subject, ordinary per-disc planning failures leave that disc empty
+// while usable discs remain; cancellation, deadlines, and frame corruption
+// still return an error.
 func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count int) (api.ScreenshotPlan, error) {
 	if s.repo != nil && !meta.MediaBinding.Valid() {
 		return api.ScreenshotPlan{}, internalerrors.ErrInvalidInput
@@ -127,6 +130,7 @@ func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count in
 		MetadataTimestamp: time.Now().UTC().Format(time.RFC3339),
 		Discs:             make([]api.ScreenshotDiscPlan, 0, len(discs)),
 	}
+	haveDiscPlan := false
 	for index, disc := range discs {
 		discCount := baseCount
 		if index < remainder {
@@ -134,11 +138,23 @@ func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count in
 		}
 		discPlan, err := s.planDisc(ctx, screenshotSubjectForDisc(meta, disc), discCount)
 		if err != nil {
-			return api.ScreenshotPlan{}, err
+			if len(discs) == 1 {
+				return api.ScreenshotPlan{}, err
+			}
+			if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+				errors.Is(err, internalerrors.ErrFrameCorruption) {
+				return api.ScreenshotPlan{}, err
+			}
+			plan.Discs = append(plan.Discs, api.ScreenshotDiscPlan{
+				DiscID:   disc.ID,
+				DiscName: disc.Name,
+			})
+			continue
 		}
-		if index == 0 {
+		if !haveDiscPlan {
 			plan.DurationSeconds = discPlan.DurationSeconds
 			plan.FrameRate = discPlan.FrameRate
+			haveDiscPlan = true
 		}
 		plan.SuggestedSelections = append(plan.SuggestedSelections, discPlan.SuggestedSelections...)
 		plan.ExistingScreenshots = append(plan.ExistingScreenshots, discPlan.ExistingScreenshots...)
@@ -217,6 +233,12 @@ func (s *Service) planDisc(ctx context.Context, meta api.ScreenshotSubject, coun
 				redaction.RedactValue(resolveErr.Error(), nil),
 			)
 		} else if duration, probeErr := probeVideoDuration(ctx, s.runner, cmd, info.SourcePath); probeErr != nil {
+			if ctx.Err() != nil {
+				return api.ScreenshotPlan{}, fmt.Errorf("screenshots: duration fallback canceled: %w", ctx.Err())
+			}
+			if errors.Is(probeErr, internalerrors.ErrFrameCorruption) {
+				return api.ScreenshotPlan{}, probeErr
+			}
 			s.logger.Debugf(
 				"screenshots: duration fallback failed input=%s err=%s",
 				info.SourcePath,
@@ -359,7 +381,9 @@ func (s *Service) planDisc(ctx context.Context, meta api.ScreenshotSubject, coun
 
 // Capture renders the requested frames into the prepared release's managed temp
 // directory and records each image with purpose. It returns successful images
-// plus per-selection failures and honors context cancellation.
+// plus per-selection failures. For a multi-disc subject, ordinary disc failures
+// do not discard images from other discs; cancellation, deadlines, and frame
+// corruption still return an error.
 func (s *Service) Capture(
 	ctx context.Context,
 	meta api.ScreenshotSubject,
@@ -388,7 +412,19 @@ func (s *Service) Capture(
 		}
 		discResult, err := s.captureDisc(ctx, screenshotSubjectForDisc(meta, disc), discSelections, purpose)
 		if err != nil {
-			return result, err
+			if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+				errors.Is(err, internalerrors.ErrFrameCorruption) {
+				return result, err
+			}
+			message := logging.SanitizeMessage(err.Error())
+			for _, selection := range discSelections {
+				result.Errors = append(result.Errors, api.ScreenshotError{
+					DiscID:  disc.ID,
+					Index:   selection.Index,
+					Message: message,
+				})
+			}
+			continue
 		}
 		result.Images = append(result.Images, discResult.Images...)
 		result.Errors = append(result.Errors, discResult.Errors...)

@@ -61,10 +61,7 @@ type mediaInfoDoc struct {
 
 var durationTokenPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(milliseconds?|msecs?|ms|hours?|hrs?|h|minutes?|mins?|min|seconds?|secs?|sec|s)\b`)
 
-const (
-	dvdSegmentDurationToleranceSeconds = 5.0
-	mpegPSTimestampWrapSeconds         = float64(uint64(1)<<33) / 90000
-)
+const dvdSegmentDurationToleranceSeconds = 5.0
 
 // resolveVideoInfo selects timing metadata and the ffmpeg inputs used for
 // screenshot planning/capture. DVD releases keep ordered title-set segments so
@@ -867,20 +864,17 @@ func resolveDVDVideoSegmentTimings(
 				}
 			} else {
 				difference := math.Abs(duration - remaining)
-				switch {
-				case difference <= dvdSegmentDurationToleranceSeconds:
-				case duration > remaining+dvdSegmentDurationToleranceSeconds &&
-					math.Abs(start+duration-mpegPSTimestampWrapSeconds) <= dvdSegmentDurationToleranceSeconds:
+				if duration > remaining && difference > dvdSegmentDurationToleranceSeconds {
 					logger.Debugf(
-						"screenshots: DVD segment timing reconciled segment=%d decision=use_title_remainder probed_seconds=%.3f remaining_seconds=%.3f title_seconds=%.3f",
+						"screenshots: DVD segment timing reconciled segment=%d decision=use_title_remainder start_seconds=%.3f probed_seconds=%.3f remaining_seconds=%.3f difference_seconds=%.3f title_seconds=%.3f",
 						idx+1,
+						start,
 						duration,
 						remaining,
+						difference,
 						titleDuration,
 					)
 					duration = remaining
-				default:
-					return fmt.Errorf("screenshots: DVD segment %d contradicts title duration", idx+1)
 				}
 			}
 		}

@@ -562,25 +562,27 @@ func (b workflowMediaBuilder) Build(
 		}
 		images := mergeWorkflowScreenshotImages(existingScreenshots, capture.Images, plan.Discs, captureTotal)
 		privateArtifacts.Screenshots = append(privateArtifacts.Screenshots, images...)
+		captureStatus := api.StageStatusCompleted
+		captureMessage := "Screenshot capture complete."
+		if len(capture.Errors) > 0 {
+			captureStatus = api.StageStatusPartial
+			captureMessage = "Screenshot capture completed with partial coverage."
+		}
 		api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
 			Phase:     "screenshots",
 			ItemID:    "screenshots",
 			Kind:      "media",
 			Label:     "Screenshots",
-			Status:    api.StageStatusCompleted,
+			Status:    captureStatus,
 			Completed: len(images),
 			Total:     captureTotal,
-			Message:   "Screenshot capture complete.",
+			Message:   captureMessage,
 		})
 		for index, image := range images {
 			snapshot.Artifacts = append(
 				snapshot.Artifacts,
 				publicMediaArtifact(captureFingerprint, "screenshot", index, api.MediaArtifactScreenshot, purpose, image),
 			)
-		}
-		if len(capture.Errors) > 0 {
-			snapshot.Status = api.StageStatusBlocked
-			snapshot.Failures = append(snapshot.Failures, mediaFailure("Some screenshots could not be captured. Retry or choose different frames."))
 		}
 	}
 	if dvdMenuCount > 0 {
@@ -1093,10 +1095,12 @@ func (b workflowMediaBuilder) UploadImages(
 			return strings.EqualFold(strings.TrimSpace(candidate), host)
 		})
 	}
-	snapshot.Failures = slices.DeleteFunc(snapshot.Failures, func(failure api.WorkflowFailure) bool {
-		return failure.Failure.Operation == api.OperationKindImageHosting &&
-			(host == "" || strings.EqualFold(strings.TrimSpace(failure.Resource), host))
-	})
+	if !retry {
+		snapshot.Failures = slices.DeleteFunc(snapshot.Failures, func(failure api.WorkflowFailure) bool {
+			return failure.Failure.Operation == api.OperationKindImageHosting &&
+				(host == "" || strings.EqualFold(strings.TrimSpace(failure.Resource), host))
+		})
+	}
 	effectFingerprint, err := api.CanonicalWorkflowFingerprint(struct {
 		Release       api.ReleaseRef
 		ProjectionSet api.TrackerReleaseProjectionSetRef
@@ -1247,14 +1251,20 @@ func (b workflowMediaBuilder) UploadImages(
 		}
 		attempts = append(attempts, attempt)
 	}
+	currentFailures := make([]api.WorkflowFailure, 0, len(result.Failures))
 	for _, failure := range result.Failures {
 		if len(failure.Trackers) == 0 {
-			snapshot.Failures = append(snapshot.Failures, hostedImageFailure("", failure.Host, failure.Message))
+			currentFailures = append(currentFailures, hostedImageFailure("", failure.Host, failure.Message))
 			continue
 		}
 		for _, tracker := range failure.Trackers {
-			snapshot.Failures = append(snapshot.Failures, hostedImageFailure(api.TrackerID(tracker), failure.Host, failure.Message))
+			currentFailures = append(currentFailures, hostedImageFailure(api.TrackerID(tracker), failure.Host, failure.Message))
 		}
+	}
+	if retry {
+		reconcileRetriedImageHostFailures(&snapshot, projections.Projections, attempts, currentFailures)
+	} else {
+		snapshot.Failures = append(snapshot.Failures, currentFailures...)
 	}
 	failedHosts := make(map[string]struct{}, len(snapshot.FailedHosts)+len(result.FailedHosts))
 	for _, failed := range snapshot.FailedHosts {
@@ -1271,6 +1281,108 @@ func (b workflowMediaBuilder) UploadImages(
 	}
 	snapshot.FailedHosts = sortedNonEmptyKeys(failedHosts)
 	return snapshot, retained, attempts, nil
+}
+
+func reconcileRetriedImageHostFailures(
+	snapshot *api.MediaArtifactSet,
+	projections []api.TrackerReleaseProjection,
+	attempts []api.HostedImageAttempt,
+	currentFailures []api.WorkflowFailure,
+) {
+	artifacts := make(map[api.PublicResourceID]api.MediaArtifact, len(snapshot.Artifacts))
+	for _, artifact := range snapshot.Artifacts {
+		artifacts[artifact.ID] = artifact
+	}
+	allAttempts := make([]api.HostedImageAttempt, 0, len(snapshot.HostAttempts)+len(attempts))
+	allAttempts = append(allAttempts, snapshot.HostAttempts...)
+	allAttempts = append(allAttempts, attempts...)
+	attemptApplies := func(attempt api.HostedImageAttempt, tracker string) bool {
+		if !slices.ContainsFunc(attempt.TrackerIDs, func(candidate api.TrackerID) bool {
+			return strings.EqualFold(strings.TrimSpace(string(candidate)), tracker)
+		}) {
+			return false
+		}
+		scope := normalizeImageUploadUsageScope(attempt.UsageScope)
+		return scope == "global" || scope == "tracker:"+tracker
+	}
+
+	satisfied := make(map[string]struct{}, len(projections))
+	for _, projection := range projections {
+		tracker := strings.ToUpper(strings.TrimSpace(string(projection.TrackerID)))
+		required := projection.Artifacts.ScreenshotCount
+		if tracker == "" || !slices.ContainsFunc(attempts, func(attempt api.HostedImageAttempt) bool {
+			return attempt.Status == api.StageStatusCompleted && attemptApplies(attempt, tracker)
+		}) {
+			continue
+		}
+		sources := make(map[api.PublicResourceID]struct{}, required)
+		for _, attempt := range allAttempts {
+			if !attemptApplies(attempt, tracker) {
+				continue
+			}
+			for _, result := range attempt.Results {
+				hosted, hostedOK := artifacts[result.ID]
+				source, sourceOK := artifacts[api.PublicResourceID(strings.TrimSpace(hosted.Source))]
+				if hostedOK && sourceOK && hosted.Selected && hosted.Kind == api.MediaArtifactHostedImage &&
+					hosted.Purpose == api.ScreenshotPurposeFinal && source.Selected &&
+					source.Kind == api.MediaArtifactScreenshot && source.Purpose == api.ScreenshotPurposeFinal {
+					sources[source.ID] = struct{}{}
+				}
+			}
+		}
+		if len(sources) >= required {
+			satisfied[tracker] = struct{}{}
+		}
+	}
+
+	type failureKey struct {
+		tracker string
+		host    string
+	}
+	keyFor := func(failure api.WorkflowFailure) (failureKey, bool) {
+		if failure.Failure.Operation != api.OperationKindImageHosting {
+			return failureKey{}, false
+		}
+		return failureKey{
+			tracker: strings.ToUpper(strings.TrimSpace(string(failure.TrackerID))),
+			host:    strings.ToLower(strings.TrimSpace(failure.Resource)),
+		}, true
+	}
+	replacements := make(map[failureKey]struct{}, len(currentFailures))
+	for _, failure := range currentFailures {
+		if key, ok := keyFor(failure); ok {
+			replacements[key] = struct{}{}
+		}
+	}
+	snapshot.Failures = slices.DeleteFunc(snapshot.Failures, func(failure api.WorkflowFailure) bool {
+		key, ok := keyFor(failure)
+		if !ok {
+			return false
+		}
+		if key.tracker != "" {
+			if _, ok := satisfied[key.tracker]; ok {
+				return true
+			}
+		}
+		_, replaced := replacements[key]
+		return replaced
+	})
+	appended := make(map[failureKey]struct{}, len(currentFailures))
+	for _, failure := range currentFailures {
+		key, ok := keyFor(failure)
+		if ok {
+			if key.tracker != "" {
+				if _, ok := satisfied[key.tracker]; ok {
+					continue
+				}
+			}
+			if _, duplicate := appended[key]; duplicate {
+				continue
+			}
+			appended[key] = struct{}{}
+		}
+		snapshot.Failures = append(snapshot.Failures, failure)
+	}
 }
 
 func imageHostingEffectScope(host string, projections api.TrackerReleaseProjectionSet) string {

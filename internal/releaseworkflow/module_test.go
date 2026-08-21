@@ -3729,6 +3729,149 @@ func TestRefreshMutatedMediaStatusRequiresHostedScreenshotsPerTracker(t *testing
 	}
 }
 
+func TestRefreshMutatedMediaStatusExcludesOnlyTrackerScopedHostFailures(t *testing.T) {
+	t.Parallel()
+
+	const (
+		alpha api.TrackerID = "ALPHA"
+		beta  api.TrackerID = "BETA"
+	)
+	artifacts := []api.MediaArtifact{
+		{
+			ID:       "screen-0",
+			Kind:     api.MediaArtifactScreenshot,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+		},
+		{
+			ID:       "hosted-0",
+			Kind:     api.MediaArtifactHostedImage,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+			Source:   "screen-0",
+		},
+		{
+			ID:       "screen-1",
+			Kind:     api.MediaArtifactScreenshot,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+		},
+		{
+			ID:       "hosted-1",
+			Kind:     api.MediaArtifactHostedImage,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+			Source:   "screen-1",
+		},
+	}
+	hostAttempt := api.HostedImageAttempt{
+		UsageScope: "global",
+		TrackerIDs: []api.TrackerID{alpha},
+		Results:    []api.MediaArtifact{artifacts[1], artifacts[3]},
+	}
+	betaFailure := api.WorkflowFailure{
+		Failure:   api.OperationFailure{Operation: api.OperationKindImageHosting},
+		TrackerID: beta,
+		Resource:  "beta-host",
+	}
+	alphaFailure := api.WorkflowFailure{
+		Failure:   api.OperationFailure{Operation: api.OperationKindImageHosting},
+		TrackerID: alpha,
+		Resource:  "alpha-host",
+	}
+	unscopedFailure := api.WorkflowFailure{
+		Failure:  api.OperationFailure{Operation: api.OperationKindImageHosting},
+		Resource: "global-host",
+	}
+	unknownTrackerFailure := api.WorkflowFailure{
+		Failure:   api.OperationFailure{Operation: api.OperationKindImageHosting},
+		TrackerID: "GAMMA",
+		Resource:  "gamma-host",
+	}
+
+	tests := []struct {
+		name        string
+		projections []api.TrackerReleaseProjection
+		failures    []api.WorkflowFailure
+		wantStatus  api.StageStatus
+	}{
+		{
+			name: "surviving tracker completes",
+			projections: []api.TrackerReleaseProjection{
+				{TrackerID: alpha, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2}},
+				{TrackerID: beta, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 3, DVDMenuCount: 1}},
+			},
+			failures:   []api.WorkflowFailure{betaFailure},
+			wantStatus: api.StageStatusCompleted,
+		},
+		{
+			name: "surviving tracker requirements remain enforced",
+			projections: []api.TrackerReleaseProjection{
+				{TrackerID: alpha, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 3}},
+				{TrackerID: beta, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 3}},
+			},
+			failures:   []api.WorkflowFailure{betaFailure},
+			wantStatus: api.StageStatusBlocked,
+		},
+		{
+			name: "every tracker failed",
+			projections: []api.TrackerReleaseProjection{
+				{TrackerID: alpha},
+				{TrackerID: beta},
+			},
+			failures:   []api.WorkflowFailure{alphaFailure, betaFailure},
+			wantStatus: api.StageStatusBlocked,
+		},
+		{
+			name: "unscoped failure blocks otherwise satisfied requirements",
+			projections: []api.TrackerReleaseProjection{
+				{TrackerID: alpha, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2}},
+			},
+			failures:   []api.WorkflowFailure{unscopedFailure},
+			wantStatus: api.StageStatusBlocked,
+		},
+		{
+			name: "unknown tracker failure blocks otherwise satisfied requirements",
+			projections: []api.TrackerReleaseProjection{
+				{TrackerID: alpha, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2}},
+			},
+			failures:   []api.WorkflowFailure{unknownTrackerFailure},
+			wantStatus: api.StageStatusBlocked,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			snapshot := api.MediaArtifactSet{
+				Artifacts:                 append([]api.MediaArtifact(nil), artifacts...),
+				HostAttempts:              []api.HostedImageAttempt{hostAttempt},
+				ImageRequirementsPrepared: true,
+				Failures:                  append([]api.WorkflowFailure(nil), test.failures...),
+			}
+
+			refreshMutatedMediaStatus(&snapshot, test.projections)
+			if snapshot.Status != test.wantStatus {
+				t.Fatalf("media status = %q, want %q: %#v", snapshot.Status, test.wantStatus, snapshot)
+			}
+			if len(snapshot.Failures) != len(test.failures) {
+				t.Fatalf("retained failures = %#v, want %#v", snapshot.Failures, test.failures)
+			}
+			if test.wantStatus == api.StageStatusCompleted {
+				if len(snapshot.RequiredActions) != 0 {
+					t.Fatalf("completed media actions = %#v", snapshot.RequiredActions)
+				}
+				failure, failed := TrackerImageHostFailure(snapshot, beta)
+				if !failed || failure.Resource != betaFailure.Resource {
+					t.Fatalf("retained tracker image-host failure = %#v, found=%t", failure, failed)
+				}
+				return
+			}
+			if len(snapshot.RequiredActions) != 1 || snapshot.RequiredActions[0].Kind != api.RequiredActionProvideTrackerInput {
+				t.Fatalf("blocked media actions = %#v", snapshot.RequiredActions)
+			}
+		})
+	}
+}
+
 func waitForWorkflowOperation(
 	t *testing.T,
 	module *Module,
