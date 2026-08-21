@@ -13,7 +13,7 @@ import (
 
 func TestProfileNameParity(t *testing.T) {
 	profile := Profile().Site
-	if profile.BuildNameVersion != "v2" {
+	if profile.BuildNameVersion != "v3" {
 		t.Fatalf("RHD build-name version = %q", profile.BuildNameVersion)
 	}
 	build := profile.BuildName
@@ -53,6 +53,21 @@ func TestProfileNameParity(t *testing.T) {
 				},
 			},
 			want: "Example Movie 2024 1080p COMPLETE GER Blu-ray BD50 DTS-HD MA 5.1 AVC-GRP",
+		},
+		{
+			name: "full DVD does not repeat capacity",
+			meta: api.UploadSubject{
+				Type:     "DISC",
+				DiscType: "DVD",
+				Tag:      "-GRP",
+				Release: api.ReleaseInfo{
+					Title:  "Example Release",
+					Year:   2026,
+					Source: "PAL DVD",
+					Size:   "DVD9",
+				},
+			},
+			want: "Example Release 2026 COMPLETE PAL DVD9-GRP",
 		},
 		{
 			name: "markers",

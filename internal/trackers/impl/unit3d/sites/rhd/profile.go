@@ -17,7 +17,7 @@ func Profile() unit3d.Profile {
 		BannedGroups: BannedGroups(),
 		Site: unit3d.SiteProfile{
 			BuildName:           buildName,
-			BuildNameVersion:    "v2",
+			BuildNameVersion:    "v3",
 			ResolveResolutionID: resolutionID,
 		},
 	}
