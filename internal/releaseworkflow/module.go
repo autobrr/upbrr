@@ -4685,6 +4685,9 @@ func (m *Module) refreshPersistedMediaStatus(
 	if snapshot == nil || snapshot.Status != api.StageStatusBlocked || !snapshot.ImageRequirementsPrepared {
 		return CommandResult{}, fmt.Errorf("%w: persisted media is not eligible for readiness refresh", ErrInvalidTransition)
 	}
+	if len(eligible.Projections) == 0 {
+		return CommandResult{}, fmt.Errorf("%w: persisted media requirements remain blocked", ErrInvalidTransition)
+	}
 	refreshed := *snapshot
 	refreshMutatedMediaStatus(&refreshed, eligible.Projections)
 	if refreshed.Status != api.StageStatusCompleted {

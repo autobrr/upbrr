@@ -158,10 +158,10 @@ func (m *Module) recoverPersistedMediaForContinuation(
 	current CommandResult,
 	now time.Time,
 ) (CommandResult, bool, bool, error) {
-	command, stage := planContinuationCommand(request, current, now)
 	if !persistedMediaRecoveryCandidate(current) {
 		return current, false, false, nil
 	}
+	command, stage := planContinuationCommand(request, current, now)
 	if command != nil || stage != "capture-media" {
 		return current, false, command != nil, nil
 	}

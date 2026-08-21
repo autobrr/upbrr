@@ -823,7 +823,7 @@ func (m *Module) runCompositeUpload(
 				Recovery:  api.OperationRecoverySelectTrackers,
 			}, errors.New("release workflow composite upload has no remaining trackers"))
 		}
-		recoveryRequest := api.ContinueReleaseWorkflowRequest{
+		request := api.ContinueReleaseWorkflowRequest{
 			Authority: &api.WorkflowAuthority{
 				WorkflowID:       current.Workflow.ID,
 				ExpectedRevision: current.Workflow.Revision,
@@ -835,7 +835,7 @@ func (m *Module) runCompositeUpload(
 		_, recovered, plannerTransition, recoveryErr := m.recoverPersistedMediaForContinuation(
 			ctx,
 			ownerID,
-			recoveryRequest,
+			request,
 			current,
 			m.clock.Now().UTC(),
 		)
@@ -879,15 +879,6 @@ func (m *Module) runCompositeUpload(
 				return CommandResult{}, fmt.Errorf("release workflow composite attach media: %w", err)
 			}
 			continue
-		}
-		request := api.ContinueReleaseWorkflowRequest{
-			Authority: &api.WorkflowAuthority{
-				WorkflowID:       current.Workflow.ID,
-				ExpectedRevision: current.Workflow.Revision,
-			},
-			IdempotencyKey: compositeUploadOperationKey(string(session.RequestFingerprint), uint64(current.Workflow.Revision)),
-			Goal:           session.Goal,
-			Intent:         session.Intent,
 		}
 		next, stage := planContinuationCommand(request, current, m.clock.Now().UTC())
 		if next == nil {

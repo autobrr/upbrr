@@ -864,7 +864,7 @@ func resolveDVDVideoSegmentTimings(
 				}
 			} else {
 				difference := math.Abs(duration - remaining)
-				if difference > dvdSegmentDurationToleranceSeconds {
+				if duration > remaining && difference > dvdSegmentDurationToleranceSeconds {
 					logger.Debugf(
 						"screenshots: DVD segment timing reconciled segment=%d decision=use_title_remainder start_seconds=%.3f probed_seconds=%.3f remaining_seconds=%.3f difference_seconds=%.3f title_seconds=%.3f",
 						idx+1,

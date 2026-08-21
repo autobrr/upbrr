@@ -250,6 +250,7 @@ func TestContinueExpiredDupesReplansBeforePersistedMediaRecovery(t *testing.T) {
 	base := module.dupeBuilder
 	entered := make(chan struct{})
 	release := make(chan struct{})
+	var enteredOnce sync.Once
 	var releaseOnce sync.Once
 	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
 	module.dupeBuilder = dupeAssessmentBuilderFunc(func(
@@ -260,7 +261,7 @@ func TestContinueExpiredDupesReplansBeforePersistedMediaRecovery(t *testing.T) {
 		now time.Time,
 		skipRemote bool,
 	) (api.DupeAssessment, any, error) {
-		close(entered)
+		enteredOnce.Do(func() { close(entered) })
 		<-release
 		return base.Build(ctx, subject, projections, preflight, now, skipRemote)
 	})
@@ -297,6 +298,87 @@ func TestContinueExpiredDupesReplansBeforePersistedMediaRecovery(t *testing.T) {
 	waitForWorkflowOperation(t, module, retained.Workflow.ID, replanningOperation.OperationID, func(status api.WorkflowOperationStatus) bool {
 		return isTerminalProgressStatus(status.Status)
 	})
+}
+
+func TestRefreshPersistedMediaStatusRejectsEmptyApprovedTrackerSet(t *testing.T) {
+	t.Parallel()
+
+	module, repository, request, initialRevision, initialMediaCount := preparePersistedWebUIMediaContinuation(
+		t,
+		[]api.WorkflowFailure{compositeImageHostFailure("BETA")},
+		nil,
+	)
+	state, err := repository.Load(t.Context(), testOwnerID, request.Authority.WorkflowID)
+	if err != nil {
+		t.Fatalf("load persisted media state: %v", err)
+	}
+	state.TrackerDecisionMode = TrackerDecisionModePostDupeGate
+	now := module.clock.Now().UTC()
+	_, dupes, candidateIDs, err := trackerApprovalCandidates(&state, now)
+	if err != nil {
+		t.Fatalf("resolve tracker approval candidates: %v", err)
+	}
+	if !slices.Equal(candidateIDs, []api.TrackerID{"ALPHA", "BETA"}) {
+		t.Fatalf("tracker approval candidates = %#v", candidateIDs)
+	}
+	actionInput, err := trackerApprovalActionInput(&state, dupes, candidateIDs)
+	if err != nil {
+		t.Fatalf("fingerprint tracker approval action: %v", err)
+	}
+	approvedIDs := []api.TrackerID{}
+	approvalFingerprint, err := trackerApprovalFingerprint(actionInput, candidateIDs, approvedIDs)
+	if err != nil {
+		t.Fatalf("fingerprint empty tracker approval: %v", err)
+	}
+	// Simulate legacy persisted authority with current lineage but no approved
+	// trackers. New approval commands reject this state; reads must not advance it.
+	approval := api.TrackerApprovalSnapshot{
+		ID:                  "tracker-approval-empty",
+		WorkflowID:          state.Workflow.ID,
+		Revision:            state.Workflow.Revision,
+		Release:             *state.Workflow.Release,
+		Selection:           *state.Workflow.Selection,
+		ProjectionSet:       *state.Workflow.TrackerProjections,
+		Preflight:           *state.Workflow.TrackerPreflight,
+		Dupes:               *state.Workflow.Dupes,
+		CandidateTrackerIDs: append([]api.TrackerID(nil), candidateIDs...),
+		ApprovedTrackerIDs:  approvedIDs,
+		InputFingerprint:    approvalFingerprint,
+		CreatedAt:           now,
+	}
+	approvalRef := api.TrackerApprovalSnapshotRef{ID: approval.ID, Revision: approval.Revision}
+	media := state.Media[state.Workflow.Media.ID]
+	media.TrackerApproval = &approvalRef
+	media.Failures = nil
+	state.Media[media.ID] = media
+	state.TrackerApprovals[approval.ID] = approval
+	state.Workflow.TrackerApproval = &approvalRef
+	state.Workflow.Failures = nil
+	repository.mu.Lock()
+	repository.states[state.Workflow.ID] = state
+	repository.mu.Unlock()
+
+	withoutGuard := media
+	refreshMutatedMediaStatus(&withoutGuard, nil)
+	if withoutGuard.Status != api.StageStatusCompleted {
+		t.Fatalf("empty tracker fixture remains blocked without guard: %#v", withoutGuard)
+	}
+	_, err = module.execute(t.Context(), testOwnerID, refreshPersistedMediaStatusCommand{
+		WorkflowID:       state.Workflow.ID,
+		ExpectedRevision: state.Workflow.Revision,
+		Media:            *state.Workflow.Media,
+		IdempotencyKey:   "refresh-empty-approved-trackers",
+	})
+	if !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("refresh persisted media error = %v, want %v", err, ErrInvalidTransition)
+	}
+	retained, err := repository.Load(t.Context(), testOwnerID, state.Workflow.ID)
+	if err != nil {
+		t.Fatalf("reload persisted media state: %v", err)
+	}
+	if retained.Workflow.Revision != initialRevision || len(retained.Media) != initialMediaCount {
+		t.Fatalf("rejected persisted media refresh churned state: workflow=%#v media=%d", retained.Workflow, len(retained.Media))
+	}
 }
 
 func preparePersistedWebUIMediaContinuation(
