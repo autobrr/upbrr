@@ -54,6 +54,210 @@ func TestCanonicalFingerprintEntriesIgnoreDirectoryModificationTime(t *testing.T
 	}
 }
 
+func TestSourceFingerprintExcludesPlaylistInstruction(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join(t.TempDir(), "Example.Release.2026.COMPLETE.BLURAY-GRP")
+	if err := os.MkdirAll(filepath.Join(root, "BDMV", "PLAYLIST"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "BDMV", "PLAYLIST", "00001.mpls"), []byte("playlist"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	layout, err := sourcelayout.Resolve(context.Background(), root)
+	if err != nil {
+		t.Fatalf("resolve layout: %v", err)
+	}
+	absent := api.PrepareInput{SourcePath: root}
+	explicit := absent
+	explicit.Instructions.Playlist = api.PlaylistInstruction{Set: true, Selected: []string{"00001.MPLS"}}
+	_, absentFingerprint, err := inspectSource(context.Background(), absent, layout)
+	if err != nil {
+		t.Fatalf("inspect absent selection: %v", err)
+	}
+	_, explicitFingerprint, err := inspectSource(context.Background(), explicit, layout)
+	if err != nil {
+		t.Fatalf("inspect explicit selection: %v", err)
+	}
+	if absentFingerprint != explicitFingerprint {
+		t.Fatalf("source fingerprints differ: %q != %q", absentFingerprint, explicitFingerprint)
+	}
+	absentCompatibility, err := preparationCompatibility(absent, absentFingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	explicitCompatibility, err := preparationCompatibility(explicit, explicitFingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if absentCompatibility.FactInstructionFingerprint == explicitCompatibility.FactInstructionFingerprint {
+		t.Fatal("fact-instruction fingerprint ignored playlist intent")
+	}
+}
+
+func TestDiscInventoryFingerprintTracksInsertionAndRename(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join(t.TempDir(), "Example.Release.2026.COMPLETE.BLURAY-GRP")
+	writeDisc := func(name string) {
+		dir := filepath.Join(root, name, "BDMV", "PLAYLIST")
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "00001.mpls"), []byte(name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inspect := func() (sourcelayout.Layout, string) {
+		layout, err := sourcelayout.Resolve(context.Background(), root)
+		if err != nil {
+			t.Fatalf("resolve layout: %v", err)
+		}
+		_, fingerprint, err := inspectSource(context.Background(), api.PrepareInput{SourcePath: root}, layout)
+		if err != nil {
+			t.Fatalf("inspect source: %v", err)
+		}
+		return layout, fingerprint
+	}
+
+	writeDisc("Disc 2")
+	before, beforeFingerprint := inspect()
+	beforeID := before.Discs[0].ID
+	writeDisc("Disc 1")
+	afterInsertion, insertionFingerprint := inspect()
+	if beforeFingerprint == insertionFingerprint {
+		t.Fatal("sibling insertion retained inventory fingerprint")
+	}
+	var retainedID string
+	for _, disc := range afterInsertion.Discs {
+		if disc.Name == "Disc 2" {
+			retainedID = disc.ID
+		}
+	}
+	if retainedID != beforeID {
+		t.Fatalf("sibling insertion changed existing disc ID: %q != %q", retainedID, beforeID)
+	}
+	if err := os.Rename(filepath.Join(root, "Disc 2"), filepath.Join(root, "Disc 3")); err != nil {
+		t.Fatal(err)
+	}
+	afterRename, renameFingerprint := inspect()
+	if insertionFingerprint == renameFingerprint {
+		t.Fatal("disc rename retained inventory fingerprint")
+	}
+	for _, disc := range afterRename.Discs {
+		if disc.Name == "Disc 3" && disc.ID == beforeID {
+			t.Fatal("disc rename retained canonical disc ID")
+		}
+	}
+}
+
+func TestPreparedMediaBindingIsStableAndSelectionScoped(t *testing.T) {
+	t.Parallel()
+
+	release := api.PreparedRelease{
+		Generation: 4,
+		Compatibility: api.PreparationCompatibility{
+			SourceFingerprint:          "source-fingerprint",
+			FactInstructionFingerprint: "instruction-fingerprint",
+		},
+		Source: api.SourceManifest{SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026")},
+		Disc: api.DiscFacts{
+			Items: []api.DiscItemFacts{
+				{
+					ID:   "disc-one",
+					Name: "Disc 1",
+					Type: "BDMV",
+					Reports: []api.DiscReportFacts{
+						{
+							Playlist: api.PlaylistInfo{
+ID: "00001.MPLS",
+ DiscID: "disc-one",
+ DiscName: "Disc 1",
+ File: "00001.MPLS",
+},
+							Summary:  "BDINFO",
+						},
+					},
+				},
+			},
+		},
+	}
+	first, err := preparedMediaBinding(release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := cloneWithJSON(release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := preparedMediaBinding(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Equal(second) || !first.Valid() {
+		t.Fatalf("round-trip bindings differ: %#v != %#v", first, second)
+	}
+
+	changed := release
+	changed.Disc.Items = append([]api.DiscItemFacts(nil), release.Disc.Items...)
+	changed.Disc.Items[0].Reports = append([]api.DiscReportFacts(nil), release.Disc.Items[0].Reports...)
+	changed.Disc.Items[0].Reports[0].Playlist.ID = "00002.MPLS"
+	changedBinding, err := preparedMediaBinding(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Equal(changedBinding) {
+		t.Fatal("playlist change retained prepared-media binding")
+	}
+	changed = release
+	changed.Generation++
+	changedBinding, err = preparedMediaBinding(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Equal(changedBinding) {
+		t.Fatal("generation change retained prepared-media binding")
+	}
+}
+
+func TestDiscProjectionRequiresCanonicalPrimaryPair(t *testing.T) {
+	t.Parallel()
+
+	playlist := api.PlaylistInfo{
+		ID:       "disc-one:00001.MPLS",
+		DiscID:   "disc-one",
+		DiscName: "Disc 1",
+		File:     "00001.MPLS",
+		Duration: 5400,
+		Score:    100,
+	}
+	release := api.PreparedRelease{
+		Source: api.SourceManifest{
+			Classification:    api.SourceClassification{DiscType: "BDMV", DiscCount: 1},
+			SelectedPlaylists: []api.PlaylistInfo{playlist},
+		},
+		Disc: api.DiscFacts{
+			Type:          "BDMV",
+			PlaylistCount: 1,
+			Items: []api.DiscItemFacts{{
+				ID:              "disc-one",
+				Name:            "Disc 1",
+				Type:            "BDMV",
+				DurationSeconds: 5400,
+				Reports:         []api.DiscReportFacts{{Playlist: playlist, Summary: "BDINFO"}},
+			}},
+		},
+	}
+	release.Disc.Summary = release.Disc.AggregateSummary()
+	if reason := discProjectionMismatch(release); !strings.Contains(reason, "primary projection") {
+		t.Fatalf("missing primary reason = %q", reason)
+	}
+	release.Disc.PrimaryDiscID, release.Disc.PrimaryReportID, release.Disc.DurationSeconds, release.Disc.DVDVOBSet = release.Disc.CanonicalPrimary()
+	if reason := discProjectionMismatch(release); reason != "" {
+		t.Fatalf("canonical projection mismatch = %q", reason)
+	}
+}
+
 func TestPrepareUsesExactCompatibilityAndPublishesConcreteAssessments(t *testing.T) {
 	t.Parallel()
 	path := writePreparedTestFile(t, "source.mkv", "first")
@@ -838,7 +1042,7 @@ func (c *recordingCollector) Collect(_ context.Context, request preparationstate
 	c.mu.Lock()
 	c.calls = append(c.calls, request.Input.Instructions.SourceLookup)
 	c.mu.Unlock()
-	return CollectedFacts{
+	facts := CollectedFacts{
 		Naming: api.NamingFacts{
 			Filename:         filepath.Base(request.Manifest.SourcePath),
 			ReleaseName:      "Example.Release.2026.1080p-GRP",
@@ -859,7 +1063,32 @@ func (c *recordingCollector) Collect(_ context.Context, request preparationstate
 				Status: api.NamingStatusComplete,
 			},
 		},
-	}, nil
+	}
+	if len(request.Layout.Discs) > 0 {
+		facts.Disc.Type = request.Layout.DiscType
+		for _, disc := range request.Layout.Discs {
+			facts.Disc.Items = append(facts.Disc.Items, api.DiscItemFacts{
+ID: disc.ID,
+ Name: disc.Name,
+ Type: disc.Type,
+})
+		}
+		if len(request.Layout.Discs) == 1 {
+			for _, selected := range request.Input.Instructions.Playlist.Selected {
+				playlist := api.PlaylistInfo{
+					ID:       selected,
+					DiscID:   request.Layout.Discs[0].ID,
+					DiscName: request.Layout.Discs[0].Name,
+					File:     selected,
+				}
+				facts.Disc.Items[0].Reports = append(facts.Disc.Items[0].Reports, api.DiscReportFacts{Playlist: playlist})
+				facts.Disc.PlaylistCount++
+			}
+		}
+		facts.Disc.PrimaryDiscID, facts.Disc.PrimaryReportID, facts.Disc.DurationSeconds, facts.Disc.DVDVOBSet = facts.Disc.CanonicalPrimary()
+		facts.Disc.Summary = facts.Disc.AggregateSummary()
+	}
+	return facts, nil
 }
 
 func (c *recordingCollector) callCount() int {

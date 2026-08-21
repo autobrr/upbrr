@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
+	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -69,6 +71,54 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 	}
 	if entry.Payload["name"] != "Show.S01E01.DDP.1080p.WEB-DL.H.265" {
 		t.Fatalf("unexpected name %q", entry.Payload["name"])
+	}
+}
+
+func TestPrepareUploadStateUsesConfiguredDBPathForLegacyBDMV(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "configured", "upbrr.db")
+	sourcePath := filepath.Join(tempDir, "Example.Release.2026")
+	torrentPath := filepath.Join(tempDir, "Example.Release.2026.torrent")
+	playlists := []api.PlaylistInfo{{File: "00001.mpls"}}
+	if err := os.WriteFile(torrentPath, []byte("torrent"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+	tmpRoot, err := db.Subdir(dbPath, "tmp")
+	if err != nil {
+		t.Fatalf("resolve tmp root: %v", err)
+	}
+	summaryPath, err := paths.PrimaryBDMVSummaryPathFor(tmpRoot, sourcePath, api.ReleaseInfo{}, playlists)
+	if err != nil {
+		t.Fatalf("resolve summary path: %v", err)
+	}
+	if err := os.WriteFile(summaryPath, []byte("configured BDInfo"), 0o600); err != nil {
+		t.Fatalf("write summary: %v", err)
+	}
+
+	input, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{
+		Tracker: "BHDTV",
+		Intent:  trackers.PreparationIntentDryRun,
+		Meta: api.UploadSubject{
+			SourcePath:            sourcePath,
+			TorrentPath:           torrentPath,
+			ReleaseName:           "Example.Release.2026",
+			DiscType:              "BDMV",
+			SelectedBDMVPlaylists: playlists,
+		},
+		TrackerConfig: config.TrackerConfig{APIKey: "token"},
+		Runtime:       trackers.PreparationRuntime{DBPath: dbPath},
+	}, New().ReleaseNamePolicy())
+	if failure != nil {
+		t.Fatalf("prepare release name: %v", failure)
+	}
+	state, err := prepareUploadState(context.Background(), input)
+	if err != nil {
+		t.Fatalf("prepare upload state: %v", err)
+	}
+	if state.mediaDump != "configured BDInfo" {
+		t.Fatalf("media dump = %q", state.mediaDump)
 	}
 }
 

@@ -12,8 +12,50 @@ import (
 	"strings"
 	"testing"
 
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestLoadBDInfoUsesDiscScopedArtifactDirectory(t *testing.T) {
+	t.Parallel()
+
+	tmpRoot := t.TempDir()
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026")
+	release := api.ReleaseInfo{Title: "Example Release 2026"}
+	releaseTemp, _, err := paths.ReleaseTempDirFor(tmpRoot, sourcePath, release)
+	if err != nil {
+		t.Fatalf("release temp dir: %v", err)
+	}
+	discID := "disc-" + strings.Repeat("a", 64)
+	discTemp, err := paths.DiscTempDir(releaseTemp, discID)
+	if err != nil {
+		t.Fatalf("disc temp dir: %v", err)
+	}
+	if err := os.MkdirAll(discTemp, 0o700); err != nil {
+		t.Fatalf("mkdir disc temp: %v", err)
+	}
+	if err := os.WriteFile(paths.BDMVSummaryPath(discTemp, "00001.MPLS"), []byte("Playlist: 00001.MPLS\n"), 0o600); err != nil {
+		t.Fatalf("write disc summary: %v", err)
+	}
+	discRoot := filepath.Join(sourcePath, "Disc 1", "BDMV")
+
+	info, err := loadBDInfo(tmpRoot, api.ScreenshotSubject{
+		SourcePath: sourcePath,
+		DiscType:   "BDMV",
+		DiscID:     discID,
+		DiscRoot:   discRoot,
+		Release:    release,
+		SelectedBDMVPlaylists: []api.PlaylistInfo{{
+			File: "00001.MPLS",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("load BDInfo: %v", err)
+	}
+	if info == nil || info.Path != discRoot {
+		t.Fatalf("disc BDInfo = %#v", info)
+	}
+}
 
 func TestBuildScreenshotSelections(t *testing.T) {
 	meta := api.ScreenshotSubject{}
@@ -363,6 +405,43 @@ func TestResolveDVDVideoSegmentTimingsReconcilesMPEGPSWrap(t *testing.T) {
 	}
 	if segments[1].StartSeconds != 20 || segments[1].DurationSeconds != 100 {
 		t.Fatalf("reconciled segments = %#v", segments)
+	}
+}
+
+func TestResolveDVDVideoSegmentTimingsReconcilesArbitraryFinalOverrun(t *testing.T) {
+	segments := buildVideoSegments([]dvdTitleVOB{
+		{path: "VTS_01_1.VOB"},
+		{path: "VTS_01_2.VOB"},
+	})
+	logger := &screenshotRecordingLogger{}
+	runner := &scriptedRunner{results: []CommandResult{
+		{Stderr: []byte("Duration: 00:00:20.00, start: 0.000000, bitrate: 4000 kb/s\n")},
+		{Stderr: []byte("Duration: 00:02:17.00, start: 0.000000, bitrate: 500 kb/s\n")},
+	}}
+
+	if err := resolveDVDVideoSegmentTimings(context.Background(), runner, "ffmpeg", segments, 120, logger); err != nil {
+		t.Fatalf("resolve DVD segment timings: %v", err)
+	}
+	if segments[1].StartSeconds != 20 || segments[1].DurationSeconds != 100 {
+		t.Fatalf("reconciled segments = %#v", segments)
+	}
+	if !logger.Contains("decision=use_title_remainder start_seconds=20.000 probed_seconds=137.000 remaining_seconds=100.000 difference_seconds=37.000 title_seconds=120.000") {
+		t.Fatalf("reconciliation diagnostic missing: %#v", logger.entries)
+	}
+}
+
+func TestResolveDVDVideoSegmentTimingsRejectsShortFinalSegment(t *testing.T) {
+	segments := buildVideoSegments([]dvdTitleVOB{
+		{path: "VTS_01_1.VOB"},
+		{path: "VTS_01_2.VOB"},
+	})
+	runner := &scriptedRunner{results: []CommandResult{
+		{Stderr: []byte("Duration: 00:00:20.00, start: 0.000000, bitrate: 4000 kb/s\n")},
+		{Stderr: []byte("Duration: 00:00:37.00, start: 0.000000, bitrate: 500 kb/s\n")},
+	}}
+
+	if err := resolveDVDVideoSegmentTimings(context.Background(), runner, "ffmpeg", segments, 120, api.NopLogger{}); err == nil {
+		t.Fatal("expected a short final DVD segment to contradict the title duration")
 	}
 }
 

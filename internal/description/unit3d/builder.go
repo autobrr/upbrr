@@ -138,7 +138,12 @@ func BuildDescription(
 		if menuHeader != "" {
 			appendUniquePart(menuHeader, "menu_header")
 		}
-		menuSection := buildScreenshotSection(menuImages, appConfig.Description.ThumbnailSize, parseScreensPerRow(appConfig.Description.ScreensPerRow))
+		menuSection := buildDiscScreenshotSections(
+			meta,
+			menuImages,
+			appConfig.Description.ThumbnailSize,
+			parseScreensPerRow(appConfig.Description.ScreensPerRow),
+		)
 		if menuSection != "" {
 			appendUniquePart(menuSection, "menu_images")
 			logger.Tracef("trackers: unit3d desc part=menu_images count=%d", len(menuImages))
@@ -150,7 +155,8 @@ func BuildDescription(
 	filteredScreenshots := filterScreenshotDuplicates(screenshots, keptDescription, menuImages)
 	logger.Tracef("trackers: unit3d desc screenshots total=%d filtered=%d", len(screenshots), len(filteredScreenshots))
 	screenshotHeader := strings.TrimSpace(appConfig.Description.ScreenshotHeader)
-	screenshotSection := buildScreenshotSection(
+	screenshotSection := buildDiscScreenshotSections(
+		meta,
 		filteredScreenshots,
 		appConfig.Description.ThumbnailSize,
 		parseScreensPerRow(appConfig.Description.ScreensPerRow),
@@ -179,6 +185,45 @@ func BuildDescription(
 	}
 
 	return description, nil
+}
+
+func buildDiscScreenshotSections(meta api.DescriptionSubject, images []api.ScreenshotImage, thumbnailSize int, screensPerRow int) string {
+	if len(meta.Disc.Items) < 2 {
+		return buildScreenshotSection(images, thumbnailSize, screensPerRow)
+	}
+	parts := make([]string, 0, len(meta.Disc.Items)+1)
+	used := make(map[int]struct{}, len(images))
+	for _, disc := range meta.Disc.Items {
+		group := make([]api.ScreenshotImage, 0)
+		for index, image := range images {
+			if image.DiscID != disc.ID {
+				continue
+			}
+			group = append(group, image)
+			used[index] = struct{}{}
+		}
+		if section := buildScreenshotSection(group, thumbnailSize, screensPerRow); section != "" {
+			parts = append(parts, "[b]"+safeDiscLabel(disc.Name)+"[/b]\n"+section)
+		}
+	}
+	unscoped := make([]api.ScreenshotImage, 0, len(images)-len(used))
+	for index, image := range images {
+		if _, ok := used[index]; !ok {
+			unscoped = append(unscoped, image)
+		}
+	}
+	if section := buildScreenshotSection(unscoped, thumbnailSize, screensPerRow); section != "" {
+		parts = append(parts, section)
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func safeDiscLabel(value string) string {
+	value = strings.ReplaceAll(value, "[", "(")
+	value = strings.ReplaceAll(value, "]", ")")
+	value = strings.ReplaceAll(value, "\r", " ")
+	value = strings.ReplaceAll(value, "\n", " ")
+	return strings.Join(strings.Fields(value), " ")
 }
 
 func buildScreenshotSection(images []api.ScreenshotImage, thumbnailSize int, screensPerRow int) string {
@@ -487,7 +532,7 @@ func DVDVOBMediaInfoBlock(meta api.DescriptionSubject) string {
 	if !strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
 		return ""
 	}
-	vobText := strings.TrimSpace(meta.DVDVOBMediaInfoText)
+	vobText := api.AggregateDVDVOBMediaInfo(meta.Discs, meta.DVDVOBMediaInfoText)
 	if vobText == "" {
 		return ""
 	}
@@ -507,7 +552,8 @@ func AppendDVDVOBMediaInfoBlock(description string, meta api.DescriptionSubject)
 	if strings.Contains(trimmedDescription, block) {
 		return trimmedDescription
 	}
-	if strings.Contains(trimmedDescription, dvdVOBMediaInfoHeader) && strings.Contains(trimmedDescription, strings.TrimSpace(meta.DVDVOBMediaInfoText)) {
+	vobText := api.AggregateDVDVOBMediaInfo(meta.Discs, meta.DVDVOBMediaInfoText)
+	if strings.Contains(trimmedDescription, dvdVOBMediaInfoHeader) && strings.Contains(trimmedDescription, vobText) {
 		return trimmedDescription
 	}
 	return normalizeDescription(trimmedDescription + "\n\n" + block)

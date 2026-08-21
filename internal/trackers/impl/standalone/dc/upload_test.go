@@ -61,6 +61,35 @@ func TestResolveMediaInfoUsesBDInfoForBDMV(t *testing.T) {
 	}
 }
 
+func TestResolveMediaInfoUsesEveryDVDDisc(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{
+		DiscType: "DVD",
+		Discs: []api.DiscEvidenceResource{
+			{
+				Name:                "Disc 1",
+				Type:                "DVD",
+				DVDVOBMediaInfoText: "VOB INFO ONE",
+			},
+			{
+				Name:                "Disc 2",
+				Type:                "DVD",
+				DVDVOBMediaInfoText: "VOB INFO TWO",
+			},
+		},
+	}
+
+	got, err := resolveMediaInfo(trackers.PreparationInput{}, meta)
+	if err != nil {
+		t.Fatalf("resolve DC DVD media info: %v", err)
+	}
+	const want = "Disc 1\nVOB INFO ONE\n\nDisc 2\nVOB INFO TWO"
+	if got != want {
+		t.Fatalf("DVD media info = %q, want %q", got, want)
+	}
+}
+
 func TestSubmitPreparedUploadDownloadsRegisteredTorrentWithAPIKey(t *testing.T) {
 	t.Parallel()
 

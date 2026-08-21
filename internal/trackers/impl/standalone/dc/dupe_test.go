@@ -129,7 +129,7 @@ func TestDuplicateSearchPaginatesUntilTerminalTotal(t *testing.T) {
 				Index:           0,
 				Count:           100,
 				Total:           101,
-				IncludesPending: boolPtr(true),
+				IncludesPending: new(true),
 			}) {
 				return
 			}
@@ -139,7 +139,7 @@ func TestDuplicateSearchPaginatesUntilTerminalTotal(t *testing.T) {
 				Index:           100,
 				Count:           1,
 				Total:           101,
-				IncludesPending: boolPtr(true),
+				IncludesPending: new(true),
 			}) {
 				return
 			}
@@ -174,7 +174,7 @@ func TestDuplicateSearchRequiresPendingCoverageForCompleteness(t *testing.T) {
 		name            string
 		includesPending *bool
 	}{
-		{name: "false", includesPending: boolPtr(false)},
+		{name: "false", includesPending: new(false)},
 		{name: "missing", includesPending: nil},
 	}
 	for _, tc := range tests {
@@ -219,7 +219,7 @@ func TestDuplicateSearchRejectsInconsistentPagination(t *testing.T) {
 				Index:           0,
 				Count:           100,
 				Total:           101,
-				IncludesPending: boolPtr(true),
+				IncludesPending: new(true),
 			}) {
 				return
 			}
@@ -228,7 +228,7 @@ func TestDuplicateSearchRejectsInconsistentPagination(t *testing.T) {
 				Index:           100,
 				Count:           1,
 				Total:           102,
-				IncludesPending: boolPtr(true),
+				IncludesPending: new(true),
 			}) {
 				return
 			}
@@ -258,7 +258,7 @@ func TestDuplicateSearchRejectsNonProgressingPagination(t *testing.T) {
 			Index:           0,
 			Count:           0,
 			Total:           1,
-			IncludesPending: boolPtr(true),
+			IncludesPending: new(true),
 		}) {
 			return
 		}
@@ -281,7 +281,7 @@ func TestDuplicateSearchPaginationBoundFailsClosed(t *testing.T) {
 			Index:           0,
 			Count:           100,
 			Total:           101,
-			IncludesPending: boolPtr(true),
+			IncludesPending: new(true),
 		}) {
 			return
 		}
@@ -453,8 +453,4 @@ func writeDCDupePage(t *testing.T, w http.ResponseWriter, page dcTestPage) bool 
 		return false
 	}
 	return true
-}
-
-func boolPtr(value bool) *bool {
-	return &value
 }

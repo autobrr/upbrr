@@ -33,7 +33,7 @@ func buildDescription(meta api.UploadSubject, dbPath string, assets trackers.Des
 		mediaLabel = "BDINFO"
 		mediaText, _ = readBDSummary(meta, dbPath)
 	case "DVD":
-		mediaText = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.DVDVOBMediaInfoText), readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath)))
+		mediaText = metautil.FirstNonEmptyTrimmed(trackers.ReadDVDVOBMediaInfo(meta), readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath)))
 	default:
 		mediaText = readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath))
 	}

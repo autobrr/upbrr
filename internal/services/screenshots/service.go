@@ -50,11 +50,11 @@ type Service struct {
 
 type repository interface {
 	api.ScreenshotLifecycleRepository
-	SaveScreenshot(context.Context, api.Screenshot) error
-	ListScreenshotsByPath(context.Context, string) ([]api.Screenshot, error)
-	DeleteScreenshot(context.Context, string) error
-	ListFinalSelections(context.Context, string) ([]api.ScreenshotFinalSelection, error)
-	DeleteFinalSelection(context.Context, string) error
+	SaveScreenshot(context.Context, api.PreparedMediaBinding, api.Screenshot) error
+	ListScreenshotsByPath(context.Context, api.PreparedMediaBinding) ([]api.Screenshot, error)
+	DeleteScreenshot(context.Context, api.PreparedMediaBinding, string) error
+	ListFinalSelections(context.Context, api.PreparedMediaBinding) ([]api.ScreenshotFinalSelection, error)
+	DeleteFinalSelection(context.Context, api.PreparedMediaBinding, string) error
 	ListTrackerMetadataByPath(context.Context, string) ([]api.TrackerMetadata, error)
 	SaveTrackerMetadata(context.Context, api.TrackerMetadata) error
 }
@@ -98,8 +98,91 @@ func NewServiceWithRepo(cfg config.Config, logger api.Logger, tmpRoot string, ru
 // matching managed screenshots already present on disk and in the repository.
 // A non-positive count falls back to the subject default and then config. When
 // timing is unavailable, the returned plan requests manual frames instead of
-// failing; stored tracker images are merged into final selections.
-func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count int) (plan api.ScreenshotPlan, err error) {
+// failing; stored tracker images are merged into final selections. For a
+// multi-disc subject, ordinary per-disc planning failures leave that disc empty
+// while usable discs remain; cancellation, deadlines, and frame corruption
+// still return an error.
+func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count int) (api.ScreenshotPlan, error) {
+	if s.repo != nil && !meta.MediaBinding.Valid() {
+		return api.ScreenshotPlan{}, internalerrors.ErrInvalidInput
+	}
+	discs := screenshotDiscs(meta)
+	if len(discs) == 0 {
+		return api.ScreenshotPlan{}, internalerrors.ErrInvalidInput
+	}
+	if count <= 0 {
+		count = meta.DefaultCount
+	}
+	if count <= 0 {
+		count = s.cfg.ScreenshotHandling.Screens
+	}
+	if count <= 0 {
+		return api.ScreenshotPlan{}, internalerrors.ErrInvalidInput
+	}
+	total := max(count, len(discs))
+	baseCount := total / len(discs)
+	remainder := total % len(discs)
+
+	plan := api.ScreenshotPlan{
+		MediaBinding:      meta.MediaBinding,
+		SourcePath:        meta.SourcePath,
+		DiscType:          meta.DiscType,
+		MetadataTimestamp: time.Now().UTC().Format(time.RFC3339),
+		Discs:             make([]api.ScreenshotDiscPlan, 0, len(discs)),
+	}
+	haveDiscPlan := false
+	for index, disc := range discs {
+		discCount := baseCount
+		if index < remainder {
+			discCount++
+		}
+		discPlan, err := s.planDisc(ctx, screenshotSubjectForDisc(meta, disc), discCount)
+		if err != nil {
+			if len(discs) == 1 {
+				return api.ScreenshotPlan{}, err
+			}
+			if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+				errors.Is(err, internalerrors.ErrFrameCorruption) {
+				return api.ScreenshotPlan{}, err
+			}
+			plan.Discs = append(plan.Discs, api.ScreenshotDiscPlan{
+				DiscID:   disc.ID,
+				DiscName: disc.Name,
+			})
+			continue
+		}
+		if !haveDiscPlan {
+			plan.DurationSeconds = discPlan.DurationSeconds
+			plan.FrameRate = discPlan.FrameRate
+			haveDiscPlan = true
+		}
+		plan.SuggestedSelections = append(plan.SuggestedSelections, discPlan.SuggestedSelections...)
+		plan.ExistingScreenshots = append(plan.ExistingScreenshots, discPlan.ExistingScreenshots...)
+		plan.FinalSelections = append(plan.FinalSelections, discPlan.FinalSelections...)
+		plan.PreviewImages = append(plan.PreviewImages, discPlan.PreviewImages...)
+		plan.RequiresManualFrames = plan.RequiresManualFrames || discPlan.RequiresManualFrames
+		plan.Discs = append(plan.Discs, api.ScreenshotDiscPlan{
+			DiscID:              disc.ID,
+			DiscName:            disc.Name,
+			DurationSeconds:     discPlan.DurationSeconds,
+			FrameRate:           discPlan.FrameRate,
+			SuggestedSelections: append([]api.ScreenshotSelection(nil), discPlan.SuggestedSelections...),
+		})
+	}
+	if tmpDir, _, err := paths.ReleaseTempDirFor(s.tmpRoot, meta.SourcePath, meta.Release); err == nil {
+		trackerLinks := buildTrackerImageLinks(s.loadTrackerMetadata(ctx, meta.SourcePath), tmpDir)
+		plan.TrackerImageLinks = trackerLinks
+		plan.ExistingTrackerScreenshots = filterUnlinkedTrackerScreens(
+			listTrackerScreens(tmpDir, screenshotBaseName(meta)),
+			trackerLinks,
+		)
+		plan.FinalSelections = mergeTrackerImagesIntoFinalSelections(plan.FinalSelections, trackerLinks)
+	}
+	plan.FinalSelections = orderScreenshotImagesByDisc(plan.FinalSelections, discs)
+	return plan, nil
+}
+
+func (s *Service) planDisc(ctx context.Context, meta api.ScreenshotSubject, count int) (plan api.ScreenshotPlan, err error) {
 	defer func() {
 		if err != nil {
 			s.logger.Warnf("screenshots: planning blocked err=%s", redaction.RedactValue(err.Error(), nil))
@@ -113,16 +196,11 @@ func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count in
 	}
 
 	plan = api.ScreenshotPlan{
-		SourcePath: meta.SourcePath,
-		DiscType:   meta.DiscType,
+		MediaBinding: meta.MediaBinding,
+		SourcePath:   meta.SourcePath,
+		DiscType:     meta.DiscType,
 	}
 
-	if count <= 0 {
-		count = meta.DefaultCount
-	}
-	if count <= 0 {
-		count = s.cfg.ScreenshotHandling.Screens
-	}
 	if count <= 0 {
 		return api.ScreenshotPlan{}, internalerrors.ErrInvalidInput
 	}
@@ -146,6 +224,7 @@ func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count in
 	)
 
 	manualSelections := buildManualFrameSelections(meta.ManualFrames, plan.FrameRate)
+	stampScreenshotSelections(manualSelections, meta.DiscID)
 	if len(manualSelections) == 0 && plan.DurationSeconds <= 0 && len(info.Segments) == 0 {
 		if cmd, resolveErr := resolveFFmpeg(); resolveErr != nil {
 			s.logger.Debugf(
@@ -154,6 +233,12 @@ func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count in
 				redaction.RedactValue(resolveErr.Error(), nil),
 			)
 		} else if duration, probeErr := probeVideoDuration(ctx, s.runner, cmd, info.SourcePath); probeErr != nil {
+			if ctx.Err() != nil {
+				return api.ScreenshotPlan{}, fmt.Errorf("screenshots: duration fallback canceled: %w", ctx.Err())
+			}
+			if errors.Is(probeErr, internalerrors.ErrFrameCorruption) {
+				return api.ScreenshotPlan{}, probeErr
+			}
 			s.logger.Debugf(
 				"screenshots: duration fallback failed input=%s err=%s",
 				info.SourcePath,
@@ -186,6 +271,7 @@ func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count in
 	if len(baselineSelections) == 0 {
 		baselineSelections = buildScreenshotSelections(total, plan.DurationSeconds, plan.FrameRate, meta)
 	}
+	stampScreenshotSelections(baselineSelections, meta.DiscID)
 	base := screenshotBaseName(meta)
 	baselineByIndex := screenshotSelectionsByIndex(baselineSelections)
 
@@ -193,13 +279,16 @@ func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count in
 	var missingIndexTimestamps []float64
 	var existingIndices map[int]struct{}
 	if s.repo != nil {
-		dbScreenshots, err := s.repo.ListScreenshotsByPath(ctx, meta.SourcePath)
+		dbScreenshots, err := s.repo.ListScreenshotsByPath(ctx, meta.MediaBinding)
 		if err != nil {
 			s.logger.Debugf("screenshots: failed to load existing screenshots: %v", err)
 		} else {
 			existingIndices = make(map[int]struct{}, len(dbScreenshots))
 			kept := 0
 			for _, shot := range dbScreenshots {
+				if shot.DiscID != meta.DiscID {
+					continue
+				}
 				pathValue := strings.TrimSpace(shot.ImagePath)
 				if pathValue == "" || !isAllowedImageExt(pathValue) || !isPathWithinDir(tmpDir, pathValue) {
 					continue
@@ -264,11 +353,15 @@ func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count in
 	plan.SuggestedSelections = suggestions
 
 	plan.ExistingScreenshots = filterScreenshotsMatchingSelections(listExistingScreens(tmpDir, base), baselineSelections, plan.FrameRate)
-	plan.TrackerImageLinks = buildTrackerImageLinks(s.loadTrackerMetadata(ctx, meta.SourcePath), tmpDir)
+	stampScreenshotImages(plan.ExistingScreenshots, meta.DiscID, meta.DiscName)
+	if meta.DiscID == "" {
+		plan.TrackerImageLinks = buildTrackerImageLinks(s.loadTrackerMetadata(ctx, meta.SourcePath), tmpDir)
+	}
 	plan.ExistingTrackerScreenshots = filterUnlinkedTrackerScreens(
 		listTrackerScreens(tmpDir, base),
 		plan.TrackerImageLinks,
 	)
+	stampScreenshotImages(plan.ExistingTrackerScreenshots, meta.DiscID, meta.DiscName)
 	plan.FinalSelections = filterScreenshotsMatchingSelections(s.loadFinalSelections(ctx, meta, tmpDir), baselineSelections, plan.FrameRate)
 
 	// Automatically include tracker images in final selections
@@ -288,8 +381,60 @@ func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count in
 
 // Capture renders the requested frames into the prepared release's managed temp
 // directory and records each image with purpose. It returns successful images
-// plus per-selection failures and honors context cancellation.
+// plus per-selection failures. For a multi-disc subject, ordinary disc failures
+// do not discard images from other discs; cancellation, deadlines, and frame
+// corruption still return an error.
 func (s *Service) Capture(
+	ctx context.Context,
+	meta api.ScreenshotSubject,
+	selections []api.ScreenshotSelection,
+	purpose api.ScreenshotPurpose,
+) (api.ScreenshotResult, error) {
+	if len(selections) == 0 || (s.repo != nil && purpose != api.ScreenshotPurposePreview && !meta.MediaBinding.Valid()) {
+		return api.ScreenshotResult{}, internalerrors.ErrInvalidInput
+	}
+	discs := screenshotDiscs(meta)
+	grouped := make(map[string][]api.ScreenshotSelection, len(discs))
+	for _, selection := range selections {
+		disc, ok := selectScreenshotDisc(discs, selection.DiscID)
+		if !ok {
+			return api.ScreenshotResult{}, internalerrors.ErrInvalidInput
+		}
+		selection.DiscID = disc.ID
+		grouped[disc.ID] = append(grouped[disc.ID], selection)
+	}
+
+	result := api.ScreenshotResult{SourcePath: meta.SourcePath, Purpose: purpose}
+	for _, disc := range discs {
+		discSelections := grouped[disc.ID]
+		if len(discSelections) == 0 {
+			continue
+		}
+		discResult, err := s.captureDisc(ctx, screenshotSubjectForDisc(meta, disc), discSelections, purpose)
+		if err != nil {
+			if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+				errors.Is(err, internalerrors.ErrFrameCorruption) {
+				return result, err
+			}
+			message := logging.SanitizeMessage(err.Error())
+			for _, selection := range discSelections {
+				result.Errors = append(result.Errors, api.ScreenshotError{
+					DiscID:  disc.ID,
+					Index:   selection.Index,
+					Message: message,
+				})
+			}
+			continue
+		}
+		result.Images = append(result.Images, discResult.Images...)
+		result.Errors = append(result.Errors, discResult.Errors...)
+		result.Tonemapped = result.Tonemapped || discResult.Tonemapped
+		result.UsedLibplacebo = result.UsedLibplacebo || discResult.UsedLibplacebo
+	}
+	return result, nil
+}
+
+func (s *Service) captureDisc(
 	ctx context.Context,
 	meta api.ScreenshotSubject,
 	selections []api.ScreenshotSelection,
@@ -368,7 +513,11 @@ func (s *Service) Capture(
 	for _, selection := range selections {
 		ts := selectionTimestamp(selection, info.FrameRate)
 		if ts <= 0 {
-			captureErrors = append(captureErrors, api.ScreenshotError{Index: selection.Index, Message: "invalid timestamp"})
+			captureErrors = append(captureErrors, api.ScreenshotError{
+				DiscID:  meta.DiscID,
+				Index:   selection.Index,
+				Message: "invalid timestamp",
+			})
 			continue
 		}
 		jobs = append(jobs, captureJob{selection: selection, timestamp: ts})
@@ -488,7 +637,11 @@ func (s *Service) Capture(
 				}
 				s.logger.Warnf("screenshots: capture frame failed index=%d err=%s", selection.Index, redaction.RedactValue(captureErr.Error(), nil))
 				mu.Lock()
-				captureErrors = append(captureErrors, api.ScreenshotError{Index: selection.Index, Message: logging.SanitizeMessage(captureErr.Error())})
+				captureErrors = append(captureErrors, api.ScreenshotError{
+					DiscID:  meta.DiscID,
+					Index:   selection.Index,
+					Message: logging.SanitizeMessage(captureErr.Error()),
+				})
 				mu.Unlock()
 				continue
 			}
@@ -498,6 +651,8 @@ func (s *Service) Capture(
 			}
 
 			img := api.ScreenshotImage{
+				DiscID:           meta.DiscID,
+				DiscName:         meta.DiscName,
 				Index:            selection.Index,
 				TimestampSeconds: ts,
 				Path:             output,
@@ -565,7 +720,7 @@ func (s *Service) Capture(
 	if s.repo != nil && len(images) > 0 && purpose != api.ScreenshotPurposePreview {
 		for _, img := range images {
 			screenshot := api.Screenshot{
-				SourcePath:  meta.SourcePath,
+				DiscID:      meta.DiscID,
 				ImagePath:   img.Path,
 				Timestamp:   img.TimestampSeconds,
 				FrameNumber: int(img.TimestampSeconds * info.FrameRate),
@@ -574,7 +729,7 @@ func (s *Service) Capture(
 				Purpose:     purpose,
 				CapturedAt:  time.Now().UTC(),
 			}
-			if err := s.repo.SaveScreenshot(ctx, screenshot); err != nil {
+			if err := s.repo.SaveScreenshot(ctx, meta.MediaBinding, screenshot); err != nil {
 				s.logger.Debugf("screenshots: failed to persist screenshot: %v", err)
 			}
 		}
@@ -586,7 +741,24 @@ func (s *Service) Capture(
 // persisting it. DVD inputs try the selected VOB segment followed by later
 // segments when a candidate yields no usable frame. When enabled for HDR/DV
 // inputs, it applies configured software tone mapping before returning.
-func (s *Service) PreviewFrame(ctx context.Context, meta api.ScreenshotSubject, timestampSeconds float64) (preview api.ScreenshotPreview, err error) {
+func (s *Service) PreviewFrame(
+	ctx context.Context,
+	meta api.ScreenshotSubject,
+	discID string,
+	timestampSeconds float64,
+) (api.ScreenshotPreview, error) {
+	disc, ok := selectScreenshotDisc(screenshotDiscs(meta), discID)
+	if !ok {
+		return api.ScreenshotPreview{}, internalerrors.ErrInvalidInput
+	}
+	return s.previewDisc(ctx, screenshotSubjectForDisc(meta, disc), timestampSeconds)
+}
+
+func (s *Service) previewDisc(
+	ctx context.Context,
+	meta api.ScreenshotSubject,
+	timestampSeconds float64,
+) (preview api.ScreenshotPreview, err error) {
 	defer func() {
 		if err != nil {
 			s.logger.Warnf("screenshots: preview blocked err=%s", redaction.RedactValue(err.Error(), nil))
@@ -661,6 +833,8 @@ func (s *Service) PreviewFrame(ctx context.Context, meta api.ScreenshotSubject, 
 	}
 
 	preview = api.ScreenshotPreview{
+		DiscID:           meta.DiscID,
+		DiscName:         meta.DiscName,
 		TimestampSeconds: timestampSeconds,
 		ImageBytes:       payload,
 		SizeBytes:        int64(len(payload)),
@@ -686,6 +860,9 @@ func (s *Service) Delete(ctx context.Context, meta api.ScreenshotSubject, imageP
 	case <-ctx.Done():
 		return fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
+	}
+	if s.repo != nil && !meta.MediaBinding.Valid() {
+		return internalerrors.ErrInvalidInput
 	}
 
 	trimmed := strings.TrimSpace(imagePath)
@@ -720,7 +897,7 @@ func (s *Service) Delete(ctx context.Context, meta api.ScreenshotSubject, imageP
 		return internalerrors.ErrInvalidInput
 	}
 
-	deleteTargets, cleanupErr := s.storedDeleteTargets(ctx, meta.SourcePath, absTarget)
+	deleteTargets, cleanupErr := s.storedDeleteTargets(ctx, meta.MediaBinding, absTarget)
 	cleanupErrs := make([]error, 0, 1)
 	if cleanupErr != nil {
 		cleanupErrs = append(cleanupErrs, cleanupErr)
@@ -756,7 +933,7 @@ func (s *Service) Delete(ctx context.Context, meta api.ScreenshotSubject, imageP
 				s.logger.Tracef("screenshots: deleting db records for %s", target)
 			}
 			if err := retrySQLiteBusy(ctx, func() error {
-				return s.repo.DeleteScreenshot(ctx, target)
+				return s.repo.DeleteScreenshot(ctx, meta.MediaBinding, target)
 			}); err != nil {
 				s.logger.Warnf(
 					"screenshots: failed to delete screenshot record target=%s err=%s",
@@ -768,7 +945,7 @@ func (s *Service) Delete(ctx context.Context, meta api.ScreenshotSubject, imageP
 				s.logger.Tracef("screenshots: deleted screenshot record for %s", target)
 			}
 			if err := retrySQLiteBusy(ctx, func() error {
-				return s.repo.DeleteFinalSelection(ctx, target)
+				return s.repo.DeleteFinalSelection(ctx, meta.MediaBinding, target)
 			}); err != nil {
 				s.logger.Warnf(
 					"screenshots: failed to delete final selection target=%s err=%s",
@@ -798,9 +975,13 @@ func (s *Service) Delete(ctx context.Context, meta api.ScreenshotSubject, imageP
 // remove the file and leave its screenshot, upload, and selection rows behind.
 // A failed lookup returns the targets resolved so far plus an error: cleanup can
 // still run, but it can no longer be claimed complete.
-func (s *Service) storedDeleteTargets(ctx context.Context, sourcePath string, absTarget string) ([]string, error) {
+func (s *Service) storedDeleteTargets(
+	ctx context.Context,
+	binding api.PreparedMediaBinding,
+	absTarget string,
+) ([]string, error) {
 	targets := []string{absTarget}
-	if s.repo == nil || strings.TrimSpace(sourcePath) == "" {
+	if s.repo == nil || !binding.Valid() {
 		return targets, nil
 	}
 	targetInfo, targetStatErr := os.Stat(absTarget)
@@ -825,7 +1006,7 @@ func (s *Service) storedDeleteTargets(ctx context.Context, sourcePath string, ab
 	lookupErrs := make([]error, 0, 2)
 	var screenshots []api.Screenshot
 	if err := retrySQLiteBusy(ctx, func() error {
-		stored, err := s.repo.ListScreenshotsByPath(ctx, sourcePath)
+		stored, err := s.repo.ListScreenshotsByPath(ctx, binding)
 		if err != nil {
 			return fmt.Errorf("load screenshot records: %w", err)
 		}
@@ -840,7 +1021,7 @@ func (s *Service) storedDeleteTargets(ctx context.Context, sourcePath string, ab
 	}
 	var selections []api.ScreenshotFinalSelection
 	if err := retrySQLiteBusy(ctx, func() error {
-		stored, err := s.repo.ListFinalSelections(ctx, sourcePath)
+		stored, err := s.repo.ListFinalSelections(ctx, binding)
 		if err != nil {
 			return fmt.Errorf("load final selections: %w", err)
 		}
@@ -1007,6 +1188,9 @@ func (s *Service) SaveFinalSelections(ctx context.Context, meta api.ScreenshotSu
 	if s.repo == nil {
 		return nil
 	}
+	if !meta.MediaBinding.Valid() {
+		return internalerrors.ErrInvalidInput
+	}
 	select {
 	case <-ctx.Done():
 		return fmt.Errorf("context canceled: %w", ctx.Err())
@@ -1034,15 +1218,30 @@ func (s *Service) SaveFinalSelections(ctx context.Context, meta api.ScreenshotSu
 			return internalerrors.ErrInvalidInput
 		}
 		selections = append(selections, api.ScreenshotFinalSelection{
-			SourcePath: meta.SourcePath,
+			DiscID:     img.DiscID,
 			ImagePath:  pathValue,
 			Order:      index,
 			Source:     selectionSourceLabel(img),
 			SelectedAt: time.Now().UTC(),
 		})
 	}
+	discOrder := screenshotDiscOrder(screenshotDiscs(meta))
+	sort.SliceStable(selections, func(left, right int) bool {
+		leftRank, leftFound := discOrder[selections[left].DiscID]
+		rightRank, rightFound := discOrder[selections[right].DiscID]
+		if leftFound != rightFound {
+			return leftFound
+		}
+		if leftRank != rightRank {
+			return leftRank < rightRank
+		}
+		return selections[left].Order < selections[right].Order
+	})
+	for index := range selections {
+		selections[index].Order = index
+	}
 
-	if err := s.repo.ReplaceNormalFinalSelections(ctx, meta.SourcePath, selections); err != nil {
+	if err := s.repo.ReplaceNormalFinalSelections(ctx, meta.MediaBinding, selections); err != nil {
 		return fmt.Errorf("screenshots: replace normal final selections: %w", err)
 	}
 	return nil
@@ -1050,7 +1249,104 @@ func (s *Service) SaveFinalSelections(ctx context.Context, meta api.ScreenshotSu
 
 func screenshotBaseName(meta api.ScreenshotSubject) string {
 	base := paths.ReleaseTempBaseFor(meta.SourcePath, meta.Release)
-	return sanitizeFilename(base)
+	base = sanitizeFilename(base)
+	if discID := strings.TrimSpace(meta.DiscID); discID != "" {
+		return base + "-disc-" + sanitizeFilename(discID)
+	}
+	return base
+}
+
+func screenshotDiscs(meta api.ScreenshotSubject) []api.ScreenshotDiscSubject {
+	if len(meta.Discs) > 0 {
+		return append([]api.ScreenshotDiscSubject(nil), meta.Discs...)
+	}
+	return []api.ScreenshotDiscSubject{{
+		ID:                    strings.TrimSpace(meta.DiscID),
+		Name:                  strings.TrimSpace(meta.DiscName),
+		Type:                  strings.TrimSpace(meta.DiscType),
+		Root:                  firstScreenshotValue(meta.DiscRoot, meta.SourcePath),
+		VideoPath:             meta.VideoPath,
+		MediaInfoJSONPath:     meta.MediaInfoJSONPath,
+		SelectedBDMVPlaylists: append([]api.PlaylistInfo(nil), meta.SelectedBDMVPlaylists...),
+	}}
+}
+
+func screenshotSubjectForDisc(meta api.ScreenshotSubject, disc api.ScreenshotDiscSubject) api.ScreenshotSubject {
+	meta.DiscID = strings.TrimSpace(disc.ID)
+	meta.DiscName = strings.TrimSpace(disc.Name)
+	meta.DiscRoot = strings.TrimSpace(disc.Root)
+	meta.DiscType = firstScreenshotValue(disc.Type, meta.DiscType)
+	meta.VideoPath = strings.TrimSpace(disc.VideoPath)
+	meta.MediaInfoJSONPath = strings.TrimSpace(disc.MediaInfoJSONPath)
+	meta.SelectedBDMVPlaylists = append([]api.PlaylistInfo(nil), disc.SelectedBDMVPlaylists...)
+	meta.Discs = nil
+	return meta
+}
+
+func selectScreenshotDisc(discs []api.ScreenshotDiscSubject, discID string) (api.ScreenshotDiscSubject, bool) {
+	trimmed := strings.TrimSpace(discID)
+	if trimmed == "" {
+		if len(discs) == 1 {
+			return discs[0], true
+		}
+		return api.ScreenshotDiscSubject{}, false
+	}
+	for _, disc := range discs {
+		if disc.ID == trimmed {
+			return disc, true
+		}
+	}
+	return api.ScreenshotDiscSubject{}, false
+}
+
+func stampScreenshotSelections(selections []api.ScreenshotSelection, discID string) {
+	for index := range selections {
+		selections[index].DiscID = discID
+	}
+}
+
+func stampScreenshotImages(images []api.ScreenshotImage, discID string, discName string) {
+	for index := range images {
+		images[index].DiscID = discID
+		images[index].DiscName = discName
+	}
+}
+
+func screenshotDiscOrder(discs []api.ScreenshotDiscSubject) map[string]int {
+	order := make(map[string]int, len(discs))
+	for index, disc := range discs {
+		order[disc.ID] = index
+	}
+	return order
+}
+
+func orderScreenshotImagesByDisc(images []api.ScreenshotImage, discs []api.ScreenshotDiscSubject) []api.ScreenshotImage {
+	ordered := append([]api.ScreenshotImage(nil), images...)
+	discOrder := screenshotDiscOrder(discs)
+	sort.SliceStable(ordered, func(left, right int) bool {
+		leftRank, leftFound := discOrder[ordered[left].DiscID]
+		rightRank, rightFound := discOrder[ordered[right].DiscID]
+		if leftFound != rightFound {
+			return leftFound
+		}
+		if leftRank != rightRank {
+			return leftRank < rightRank
+		}
+		if ordered[left].Index != ordered[right].Index {
+			return ordered[left].Index < ordered[right].Index
+		}
+		return ordered[left].Path < ordered[right].Path
+	})
+	return ordered
+}
+
+func firstScreenshotValue(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func selectionTimestamp(selection api.ScreenshotSelection, frameRate float64) float64 {
@@ -1184,7 +1480,7 @@ func (s *Service) loadFinalSelections(ctx context.Context, meta api.ScreenshotSu
 	if s.repo == nil {
 		return nil
 	}
-	selections, err := s.repo.ListFinalSelections(ctx, meta.SourcePath)
+	selections, err := s.repo.ListFinalSelections(ctx, meta.MediaBinding)
 	if err != nil {
 		s.logger.Debugf("screenshots: failed to load final selections: %v", err)
 		return nil
@@ -1194,6 +1490,9 @@ func (s *Service) loadFinalSelections(ctx context.Context, meta api.ScreenshotSu
 	}
 	images := make([]api.ScreenshotImage, 0, len(selections))
 	for _, selection := range selections {
+		if selection.DiscID != meta.DiscID {
+			continue
+		}
 		pathValue := strings.TrimSpace(selection.ImagePath)
 		if pathValue == "" {
 			continue
@@ -1213,6 +1512,8 @@ func (s *Service) loadFinalSelections(ctx context.Context, meta api.ScreenshotSu
 		} else {
 			img.Purpose = api.ScreenshotPurposeFinal
 		}
+		img.DiscID = selection.DiscID
+		img.DiscName = meta.DiscName
 		images = append(images, img)
 	}
 	sort.Slice(images, func(i, j int) bool { return images[i].Index < images[j].Index })

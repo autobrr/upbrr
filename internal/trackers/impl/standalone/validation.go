@@ -89,10 +89,14 @@ func cloneAnswers(values map[string]string) map[string]string {
 // PreparedMediaReady reports whether the already-produced local media facts
 // needed by tracker payloads are available without reading private paths.
 func PreparedMediaReady(subject api.TrackerValidationSubject) bool {
-	if strings.EqualFold(strings.TrimSpace(subject.DiscType), "BDMV") {
+	switch strings.ToUpper(strings.TrimSpace(subject.DiscType)) {
+	case "BDMV":
 		return subject.BDInfoReady
+	case "DVD":
+		return subject.DVDVOBMediaInfoReady
+	default:
+		return subject.MediaInfoTextReady || subject.DVDVOBMediaInfoReady
 	}
-	return subject.MediaInfoTextReady || subject.DVDVOBMediaInfoReady
 }
 
 // ValidatePreparation retains constructibility as a defensive invariant for
@@ -108,6 +112,7 @@ func ValidatePreparation(
 	subject := api.NewTrackerValidationSubject(input.Meta, input.Tracker)
 	if strings.EqualFold(strings.TrimSpace(input.Meta.DiscType), "BDMV") &&
 		!subject.BDInfoReady &&
+		len(input.Meta.Disc.Items) == 0 &&
 		strings.TrimSpace(input.Meta.SourcePath) != "" &&
 		len(input.Meta.SelectedBDMVPlaylists) > 0 {
 		// Legacy direct preparation callers may still resolve a previously

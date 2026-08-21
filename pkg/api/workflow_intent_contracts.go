@@ -37,9 +37,20 @@ type MediaPlan struct {
 	FrameRate           float64                        `json:"frameRate"`
 	DiscType            string                         `json:"discType,omitempty"`
 	SuggestedSelections []ScreenshotSelection          `json:"suggestedSelections,omitempty"`
-	Requirements        []MediaCaptureRequirement      `json:"requirements,omitempty"`
-	ExistingArtifacts   []MediaArtifact                `json:"existingArtifacts,omitempty"`
-	CreatedAt           time.Time                      `json:"createdAt" ts_type:"string"`
+	// Discs contains ordered per-disc timing and suggestions.
+	Discs             []MediaDiscPlan           `json:"discs,omitempty"`
+	Requirements      []MediaCaptureRequirement `json:"requirements,omitempty"`
+	ExistingArtifacts []MediaArtifact           `json:"existingArtifacts,omitempty"`
+	CreatedAt         time.Time                 `json:"createdAt" ts_type:"string"`
+}
+
+// MediaDiscPlan is one safe page-facing disc capture plan.
+type MediaDiscPlan struct {
+	DiscID              string                `json:"discId"`
+	DiscName            string                `json:"discName"`
+	DurationSeconds     float64               `json:"durationSeconds"`
+	FrameRate           float64               `json:"frameRate"`
+	SuggestedSelections []ScreenshotSelection `json:"suggestedSelections,omitempty"`
 }
 
 // FramePreview is one non-authoritative opaque frame preview.
@@ -48,9 +59,13 @@ type FramePreview struct {
 	WorkflowID       WorkflowID         `json:"workflowId"`
 	WorkflowRevision WorkflowRevision   `json:"workflowRevision"`
 	Release          ReleaseSnapshotRef `json:"release"`
-	TimestampSeconds float64            `json:"timestampSeconds"`
-	ContentURL       string             `json:"contentUrl"`
-	ExpiresAt        time.Time          `json:"expiresAt" ts_type:"string"`
+	// DiscID identifies the prepared disc used for the preview.
+	DiscID string `json:"discId,omitempty"`
+	// DiscName is the safe page-facing label for DiscID.
+	DiscName         string    `json:"discName,omitempty"`
+	TimestampSeconds float64   `json:"timestampSeconds"`
+	ContentURL       string    `json:"contentUrl"`
+	ExpiresAt        time.Time `json:"expiresAt" ts_type:"string"`
 }
 
 // MediaAttachment describes staged private bytes to attach to retained workflow media.
@@ -58,7 +73,9 @@ type MediaAttachment struct {
 	Resource WorkflowResourceRef `json:"resource"`
 	Kind     MediaArtifactKind   `json:"kind"`
 	Purpose  ScreenshotPurpose   `json:"purpose"`
-	Order    int                 `json:"order,omitempty"`
+	// DiscID is required for a multi-disc attachment and optional for single-disc compatibility.
+	DiscID string `json:"discId,omitempty"`
+	Order  int    `json:"order,omitempty"`
 }
 
 // HostedImageAttempt is the absolute outcome of one host attempt for exact media lineage.

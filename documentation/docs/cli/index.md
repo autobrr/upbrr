@@ -49,6 +49,18 @@ Process at most five entries from a queue folder:
 .\upbrr.exe --queue "D:\upload-queue" --limit-queue 5
 ```
 
+### Multi-disc folders
+
+Pass the collection parent, not each disc separately:
+
+```powershell
+.\upbrr.exe "D:\releases\Example BDMV Collection"
+```
+
+For BDMV, interactive preparation groups playlist choices by disc and requires at least one selection from every disc. `--unattended` stops if no complete stored or configured selection can be resolved; `--unattended_confirm` can show the required prompt.
+
+`--manual_frames 240,480` requests both frames from every prepared disc. The selected parent remains one collection-root torrent containing all disc folders.
+
 ## Interaction and safety
 
 | Option                     | Behavior                                                                                                                                |

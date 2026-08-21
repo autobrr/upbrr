@@ -536,18 +536,10 @@ func compositeUploadMediaIntent(
 	if input.Screenshots.Count != nil {
 		count = *input.Screenshots.Count
 	}
-	selections := make([]api.ScreenshotSelection, 0, len(input.Screenshots.Frames))
-	for index, frame := range input.Screenshots.Frames {
-		selections = append(selections, api.ScreenshotSelection{
-			Index:  index,
-			Frame:  frame,
-			Source: "manual",
-		})
-	}
 	media := api.MediaCaptureInstructions{
 		ScreenshotCount: count,
 		Purpose:         api.ScreenshotPurposeFinal,
-		Selections:      selections,
+		ManualFrames:    append([]int(nil), input.Screenshots.Frames...),
 		CaptureDVDMenus: optionalBool(input.DVDMenus.Capture),
 	}
 	if input.DVDMenus.MaxItems != nil {
@@ -831,7 +823,28 @@ func (m *Module) runCompositeUpload(
 				Recovery:  api.OperationRecoverySelectTrackers,
 			}, errors.New("release workflow composite upload has no remaining trackers"))
 		}
-		if blocked := compositeUploadPendingAction(current, session); blocked != nil {
+		request := api.ContinueReleaseWorkflowRequest{
+			Authority: &api.WorkflowAuthority{
+				WorkflowID:       current.Workflow.ID,
+				ExpectedRevision: current.Workflow.Revision,
+			},
+			IdempotencyKey: compositeUploadOperationKey(string(session.RequestFingerprint), uint64(current.Workflow.Revision)),
+			Goal:           session.Goal,
+			Intent:         session.Intent,
+		}
+		_, recovered, plannerTransition, recoveryErr := m.recoverPersistedMediaForContinuation(
+			ctx,
+			ownerID,
+			request,
+			current,
+			m.clock.Now().UTC(),
+		)
+		if recoveryErr != nil {
+			return CommandResult{}, recoveryErr
+		} else if recovered {
+			continue
+		}
+		if blocked := compositeUploadPendingAction(current, session); blocked != nil && !plannerTransition {
 			if err := m.finishCompositeSession(ctx, ownerID, command.WorkflowID, operationID, "feedback_required"); err != nil {
 				return CommandResult{}, err
 			}
@@ -842,7 +855,7 @@ func (m *Module) runCompositeUpload(
 		} else if changed {
 			continue
 		}
-		if current.Media != nil && len(session.ManualMedia.Attachments) > 0 && !session.ManualMedia.Attached {
+		if !plannerTransition && current.Media != nil && len(session.ManualMedia.Attachments) > 0 && !session.ManualMedia.Attached {
 			m.reportCompositeStage(
 				ctx,
 				ownerID,
@@ -866,15 +879,6 @@ func (m *Module) runCompositeUpload(
 				return CommandResult{}, fmt.Errorf("release workflow composite attach media: %w", err)
 			}
 			continue
-		}
-		request := api.ContinueReleaseWorkflowRequest{
-			Authority: &api.WorkflowAuthority{
-				WorkflowID:       current.Workflow.ID,
-				ExpectedRevision: current.Workflow.Revision,
-			},
-			IdempotencyKey: compositeUploadOperationKey(string(session.RequestFingerprint), uint64(current.Workflow.Revision)),
-			Goal:           session.Goal,
-			Intent:         session.Intent,
 		}
 		next, stage := planContinuationCommand(request, current, m.clock.Now().UTC())
 		if next == nil {

@@ -43,8 +43,9 @@ const (
 	workflowWorkLeaseTTL  = time.Minute
 	workflowWorkHeartbeat = 20 * time.Second
 	workflowCommandTTL    = 24 * time.Hour
-	// maxPlaylistActionOptions bounds the selectable playlist details retained in one action.
-	maxPlaylistActionOptions = 10
+	// maxPlaylistActionOptionsPerDisc bounds retained selectable playlist details without
+	// allowing one disc to hide every option for another disc.
+	maxPlaylistActionOptionsPerDisc = 10
 )
 
 // Option configures a workflow module.
@@ -1899,6 +1900,7 @@ func (m *Module) PreviewFrame(
 	ownerID string,
 	workflowID api.WorkflowID,
 	expectedRevision api.WorkflowRevision,
+	discID string,
 	timestampSeconds float64,
 ) (api.FramePreview, error) {
 	if err := ctx.Err(); err != nil {
@@ -1935,7 +1937,7 @@ func (m *Module) PreviewFrame(
 	content, err := planner.PreviewFrame(ctx, api.ReleaseRef{
 		SourcePath: release.Release.Source.SourcePath,
 		Generation: release.Release.Generation,
-	}, timestampSeconds)
+	}, discID, timestampSeconds)
 	if err != nil {
 		return api.FramePreview{}, fmt.Errorf("release workflow preview frame: %w", err)
 	}
@@ -1953,6 +1955,8 @@ func (m *Module) PreviewFrame(
 		WorkflowID:       workflowID,
 		WorkflowRevision: expectedRevision,
 		Release:          *state.Workflow.Release,
+		DiscID:           content.DiscID,
+		DiscName:         content.DiscName,
 		TimestampSeconds: timestampSeconds,
 		ExpiresAt:        expiresAt,
 	}, nil
@@ -2670,6 +2674,8 @@ func commandTarget(command mutation) (api.WorkflowID, api.WorkflowRevision, stri
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case ApproveTrackersCommand:
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
+	case refreshPersistedMediaStatusCommand:
+		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case CaptureMediaCommand:
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case SetMediaSelectionCommand:
@@ -2741,6 +2747,8 @@ func (m *Module) apply(
 		return m.decideDuplicates(ownerID, state, nextRevision, now, typed)
 	case ApproveTrackersCommand:
 		return m.approveTrackers(state, nextRevision, now, typed)
+	case refreshPersistedMediaStatusCommand:
+		return m.refreshPersistedMediaStatus(ctx, ownerID, state, nextRevision, now, typed)
 	case CaptureMediaCommand:
 		return m.captureMedia(ctx, ownerID, state, nextRevision, now, typed)
 	case SetMediaSelectionCommand:
@@ -2879,21 +2887,7 @@ func (m *Module) prepareRelease(
 	if err != nil {
 		var playlistRequired *api.PlaylistSelectionRequiredError
 		if errors.As(err, &playlistRequired) {
-			options := make([]api.RequiredActionOption, 0, min(len(playlistRequired.Candidates), maxPlaylistActionOptions))
-			for _, candidate := range playlistRequired.Candidates {
-				playlist := strings.TrimSpace(candidate.File)
-				if playlist != "" {
-					candidate.File = playlist
-					options = append(options, api.RequiredActionOption{
-						Value:    playlist,
-						Label:    playlist,
-						Playlist: &candidate,
-					})
-					if len(options) == maxPlaylistActionOptions {
-						break
-					}
-				}
-			}
+			options := playlistActionOptions(playlistRequired.Candidates)
 			if len(options) > 0 {
 				if actionErr := m.blockForPlaylistSelection(state, nextRevision, now, options); actionErr != nil {
 					return CommandResult{}, actionErr
@@ -2943,26 +2937,33 @@ func (m *Module) prepareRelease(
 	state.Workflow.Status = api.WorkflowStatusActive
 	state.Workflow.RequiredActions = nil
 	state.Workflow.Failures = nil
-	if strings.EqualFold(strings.TrimSpace(prepared.Release.Source.Classification.DiscType), "BDMV") &&
-		!facts.Instructions.Playlist.Set {
-		options := make([]api.RequiredActionOption, 0)
-		for _, entry := range prepared.Release.Source.Entries {
-			playlist := strings.TrimSpace(entry.Playlist)
-			if entry.Type != api.SourceEntryTypePlaylist || playlist == "" {
-				continue
-			}
-			options = append(options, api.RequiredActionOption{Value: playlist, Label: playlist})
-			if len(options) == maxPlaylistActionOptions {
-				break
-			}
-		}
-		if len(options) > 0 {
-			if err := m.blockForPlaylistSelection(state, nextRevision, now, options); err != nil {
-				return CommandResult{}, err
-			}
-		}
-	}
 	return CommandResult{Release: &snapshot}, nil
+}
+
+func playlistActionOptions(candidates []api.PlaylistInfo) []api.RequiredActionOption {
+	options := make([]api.RequiredActionOption, 0, len(candidates))
+	counts := make(map[string]int)
+	for _, candidate := range candidates {
+		candidate.ID = strings.TrimSpace(candidate.ID)
+		candidate.DiscID = strings.TrimSpace(candidate.DiscID)
+		candidate.DiscName = strings.TrimSpace(candidate.DiscName)
+		candidate.File = strings.TrimSpace(candidate.File)
+		if candidate.ID == "" || candidate.File == "" || counts[candidate.DiscID] >= maxPlaylistActionOptionsPerDisc {
+			continue
+		}
+		counts[candidate.DiscID]++
+		candidate.Items = append([]api.PlaylistItem(nil), candidate.Items...)
+		label := candidate.File
+		if candidate.DiscName != "" {
+			label = candidate.DiscName + " — " + label
+		}
+		options = append(options, api.RequiredActionOption{
+			Value:    candidate.ID,
+			Label:    label,
+			Playlist: &candidate,
+		})
+	}
+	return options
 }
 
 // blockForPlaylistSelection replaces workflow failures with one pending,
@@ -4626,7 +4627,7 @@ func (m *Module) publishMediaReplacement(
 	nextRevision api.WorkflowRevision,
 	now time.Time,
 	snapshot api.MediaArtifactSet,
-	resource RetainedMediaResource,
+	resource any,
 ) (CommandResult, error) {
 	targets, err := resolveDownstreamTrackerSet(state, nil, downstreamStageMedia, now)
 	if err != nil {
@@ -4669,10 +4670,36 @@ func (m *Module) publishMediaReplacement(
 	return result, nil
 }
 
+func (m *Module) refreshPersistedMediaStatus(
+	ctx context.Context,
+	ownerID string,
+	state *State,
+	nextRevision api.WorkflowRevision,
+	now time.Time,
+	command refreshPersistedMediaStatusCommand,
+) (CommandResult, error) {
+	_, _, eligible, snapshot, resource, err := m.mediaExtensionContext(ctx, ownerID, state, &command.Media, now)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	if snapshot == nil || snapshot.Status != api.StageStatusBlocked || !snapshot.ImageRequirementsPrepared {
+		return CommandResult{}, fmt.Errorf("%w: persisted media is not eligible for readiness refresh", ErrInvalidTransition)
+	}
+	if len(eligible.Projections) == 0 {
+		return CommandResult{}, fmt.Errorf("%w: persisted media requirements remain blocked", ErrInvalidTransition)
+	}
+	refreshed := *snapshot
+	refreshMutatedMediaStatus(&refreshed, eligible.Projections)
+	if refreshed.Status != api.StageStatusCompleted {
+		return CommandResult{}, fmt.Errorf("%w: persisted media requirements remain blocked", ErrInvalidTransition)
+	}
+	return m.publishMediaReplacement(ownerID, state, nextRevision, now, refreshed, resource)
+}
+
 // refreshMutatedMediaStatus recomputes media readiness after a mutation while
 // retaining image-host failures and pending reconciliation actions. Before
 // required hosting runs, selected local assets determine readiness; afterward,
-// each tracker must have enough applicable hosted screenshot sources.
+// each surviving tracker must have enough applicable hosted screenshot sources.
 func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections []api.TrackerReleaseProjection) {
 	hostFailures := make([]api.WorkflowFailure, 0, len(snapshot.Failures))
 	for _, failure := range snapshot.Failures {
@@ -4680,11 +4707,25 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections []api
 			hostFailures = append(hostFailures, failure)
 		}
 	}
+	readinessProjections := projections
+	allTrackerHostsFailed := false
+	unmatchedTrackerHostFailure := false
+	if snapshot.ImageRequirementsPrepared {
+		unmatchedTrackerHostFailure = mediaHasUnscopedOrUnknownImageHostFailure(*snapshot, projections)
+		readinessProjections = slices.DeleteFunc(
+			append([]api.TrackerReleaseProjection(nil), projections...),
+			func(projection api.TrackerReleaseProjection) bool {
+				_, failed := TrackerImageHostFailure(*snapshot, projection.TrackerID)
+				return failed
+			},
+		)
+		allTrackerHostsFailed = len(projections) > 0 && len(readinessProjections) == 0
+	}
 	reconcileActions := slices.DeleteFunc(append([]api.RequiredAction(nil), snapshot.RequiredActions...), func(action api.RequiredAction) bool {
 		return action.Kind != api.RequiredActionReconcileSubmission
 	})
 	requiredScreenshots, requiredMenus := 0, 0
-	for _, projection := range projections {
+	for _, projection := range readinessProjections {
 		requiredScreenshots = max(requiredScreenshots, projection.Artifacts.ScreenshotCount)
 		requiredMenus = max(requiredMenus, projection.Artifacts.DVDMenuCount)
 	}
@@ -4705,7 +4746,8 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections []api
 	snapshot.RequiredActions = reconcileActions
 	screenshotsReady := selectedScreenshots >= requiredScreenshots
 	if snapshot.ImageRequirementsPrepared {
-		screenshotsReady = hostedScreenshotRequirementsMet(*snapshot, projections)
+		screenshotsReady = !allTrackerHostsFailed && !unmatchedTrackerHostFailure &&
+			hostedScreenshotRequirementsMet(*snapshot, readinessProjections)
 	}
 	if !screenshotsReady || selectedMenus < requiredMenus {
 		snapshot.Status = api.StageStatusBlocked
@@ -4724,6 +4766,20 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections []api
 		return
 	}
 	snapshot.Status = api.StageStatusCompleted
+}
+
+func mediaHasUnscopedOrUnknownImageHostFailure(media api.MediaArtifactSet, projections []api.TrackerReleaseProjection) bool {
+	known := make(map[api.TrackerID]struct{}, len(projections))
+	for _, projection := range projections {
+		known[normalizeDownstreamTrackerID(projection.TrackerID)] = struct{}{}
+	}
+	return slices.ContainsFunc(media.Failures, func(failure api.WorkflowFailure) bool {
+		if failure.Failure.Operation != api.OperationKindImageHosting {
+			return false
+		}
+		_, ok := known[normalizeDownstreamTrackerID(failure.TrackerID)]
+		return !ok
+	})
 }
 
 // hostedScreenshotRequirementsMet reports whether every projection has enough

@@ -464,6 +464,7 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 // Callers provide only the description-owned contract.
 func uploadSubjectForDescription(subject api.DescriptionSubject) api.UploadSubject {
 	return api.UploadSubject{
+		MediaBinding:           subject.MediaBinding,
 		SourcePath:             subject.SourcePath,
 		DiscType:               subject.DiscType,
 		MediaInfoTextPath:      subject.MediaInfoTextPath,
@@ -473,6 +474,8 @@ func uploadSubjectForDescription(subject api.DescriptionSubject) api.UploadSubje
 		Options:                subject.Options,
 		Release:                subject.Release,
 		SelectedBDMVPlaylists:  append([]api.PlaylistInfo(nil), subject.SelectedBDMVPlaylists...),
+		Disc:                   subject.Disc,
+		Discs:                  append([]api.DiscEvidenceResource(nil), subject.Discs...),
 		Tag:                    subject.Tag,
 		Identity:               subject.Identity,
 		ProviderMetadata:       subject.ProviderMetadata,

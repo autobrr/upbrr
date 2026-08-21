@@ -461,7 +461,7 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
         suggestedSelections: [],
         createdAt: "2026-07-20T00:00:00Z",
       }) as Awaited<ReturnType<ReleaseSessionPorts["workflow"]["mediaPlan"]>>,
-    previewFrame: async (current, timestampSeconds) => ({
+    previewFrame: async (current, _discID, timestampSeconds) => ({
       id: "preview-1",
       workflowId: current.workflow.id,
       workflowRevision: current.workflow.revision,
@@ -1157,13 +1157,30 @@ describe("useReleaseSession", () => {
                   prompt: "Select one or more Blu-ray playlists to analyze.",
                   options: [
                     {
-                      value: "00001.mpls",
-                      label: "00001.mpls",
+                      value: "disc-one:00001.mpls",
+                      label: "Disc 1 — 00001.mpls",
                       playlist: {
+                        id: "disc-one:00001.mpls",
+                        discId: "disc-one",
+                        discName: "Disc 1",
                         file: "00001.mpls",
                         duration: 7200,
                         items: [{ file: "00001.m2ts", size: 4_000_000_000 }],
                         score: 91.25,
+                        edition: "Example Edition",
+                      },
+                    },
+                    {
+                      value: "disc-two:00001.mpls",
+                      label: "Disc 2 — 00001.mpls",
+                      playlist: {
+                        id: "disc-two:00001.mpls",
+                        discId: "disc-two",
+                        discName: "Disc 2",
+                        file: "00001.mpls",
+                        duration: 7000,
+                        items: [{ file: "00001.m2ts", size: 3_000_000_000 }],
+                        score: 90,
                         edition: "Example Edition",
                       },
                     },
@@ -1199,19 +1216,38 @@ describe("useReleaseSession", () => {
     expect(result.current.input.view.playlist).toEqual(
       expect.objectContaining({
         required: true,
-        selected: ["00001.mpls"],
+        selected: [],
         candidates: [
           {
+            id: "disc-one:00001.mpls",
+            discId: "disc-one",
+            discName: "Disc 1",
             file: "00001.mpls",
             duration: 7200,
             items: [{ file: "00001.m2ts", size: 4_000_000_000 }],
             score: 91.25,
             edition: "Example Edition",
           },
+          {
+            id: "disc-two:00001.mpls",
+            discId: "disc-two",
+            discName: "Disc 2",
+            file: "00001.mpls",
+            duration: 7000,
+            items: [{ file: "00001.m2ts", size: 3_000_000_000 }],
+            score: 90,
+            edition: "Example Edition",
+          },
         ],
       }),
     );
 
+    act(() => result.current.input.choosePlaylists(["disc-one:00001.mpls"], false));
+    expect(await result.current.input.confirmPlaylists()).toBe(false);
+    expect(prepareWorkflow).toHaveBeenCalledOnce();
+    act(() =>
+      result.current.input.choosePlaylists(["disc-one:00001.mpls", "disc-two:00001.mpls"], false),
+    );
     await act(() => result.current.input.confirmPlaylists());
 
     expect(create).toHaveBeenCalledOnce();
@@ -1220,7 +1256,11 @@ describe("useReleaseSession", () => {
       expect.anything(),
       expect.objectContaining({
         Instructions: expect.objectContaining({
-          Playlist: { Set: true, Selected: ["00001.mpls"], UseAll: false },
+          Playlist: {
+            Set: true,
+            Selected: ["disc-one:00001.mpls", "disc-two:00001.mpls"],
+            UseAll: false,
+          },
         }),
       }),
       expect.any(String),
@@ -1820,6 +1860,8 @@ describe("useReleaseSession", () => {
           artifacts: [
             {
               id: "screen-existing",
+              discId: "disc-one",
+              discName: "Disc 1",
               kind: "screenshot" as const,
               purpose: "final" as const,
               selected: true,
@@ -1828,6 +1870,8 @@ describe("useReleaseSession", () => {
             },
             {
               id: "screen-generated",
+              discId: "disc-two",
+              discName: "Disc 2",
               kind: "screenshot" as const,
               purpose: "final" as const,
               selected: true,
@@ -1853,7 +1897,55 @@ describe("useReleaseSession", () => {
               projectionSet: { id: "projections-1", revision: 1 },
               durationSeconds: 60,
               frameRate: 24,
-              suggestedSelections: [{ Index: 1, TimestampSeconds: 10, Frame: 240, Source: "auto" }],
+              discType: "BDMV",
+              discs: [
+                {
+                  discId: "disc-one",
+                  discName: "Disc 1",
+                  durationSeconds: 60,
+                  frameRate: 24,
+                  suggestedSelections: [
+                    {
+                      DiscID: "disc-one",
+                      Index: 1,
+                      TimestampSeconds: 10,
+                      Frame: 240,
+                      Source: "auto",
+                    },
+                  ],
+                },
+                {
+                  discId: "disc-two",
+                  discName: "Disc 2",
+                  durationSeconds: 45,
+                  frameRate: 30,
+                  suggestedSelections: [
+                    {
+                      DiscID: "disc-two",
+                      Index: 2,
+                      TimestampSeconds: 20,
+                      Frame: 600,
+                      Source: "auto",
+                    },
+                  ],
+                },
+              ],
+              suggestedSelections: [
+                {
+                  DiscID: "disc-one",
+                  Index: 1,
+                  TimestampSeconds: 10,
+                  Frame: 240,
+                  Source: "auto",
+                },
+                {
+                  DiscID: "disc-two",
+                  Index: 2,
+                  TimestampSeconds: 20,
+                  Frame: 600,
+                  Source: "auto",
+                },
+              ],
               createdAt: "2026-07-20T00:00:00Z",
             }),
             captureMedia,
@@ -1867,13 +1959,32 @@ describe("useReleaseSession", () => {
       expect(result.current.navigation.view.access.screenshots.available).toBe(true),
     );
     await act(() => result.current.screenshots.load());
+    expect(result.current.screenshots.view.plan?.Discs?.map((disc) => disc.DiscName)).toEqual([
+      "Disc 1",
+      "Disc 2",
+    ]);
     await act(() => result.current.screenshots.generate("final"));
 
     expect(captureMedia).toHaveBeenCalledWith(
       expect.objectContaining({ workflow: expect.objectContaining({ id: "workflow-new" }) }),
       expect.objectContaining({
         purpose: "final",
-        selections: [{ Index: 1, TimestampSeconds: 10, Frame: 240, Source: "auto" }],
+        selections: [
+          {
+            DiscID: "disc-one",
+            Index: 1,
+            TimestampSeconds: 10,
+            Frame: 240,
+            Source: "auto",
+          },
+          {
+            DiscID: "disc-two",
+            Index: 2,
+            TimestampSeconds: 20,
+            Frame: 600,
+            Source: "auto",
+          },
+        ],
       }),
       expect.any(String),
       expect.any(AbortSignal),

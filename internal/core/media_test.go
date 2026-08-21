@@ -372,7 +372,7 @@ type reusableImageRepository struct {
 	links []api.UploadedImageLink
 }
 
-func (r *reusableImageRepository) ListUploadedImagesByPath(context.Context, string) ([]api.UploadedImageLink, error) {
+func (r *reusableImageRepository) ListUploadedImagesByPath(context.Context, api.PreparedMediaBinding) ([]api.UploadedImageLink, error) {
 	return slices.Clone(r.links), nil
 }
 

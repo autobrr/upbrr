@@ -658,7 +658,7 @@ func TestSQLiteRepositoryConcurrentDistinctPathWritesOnDisk(t *testing.T) {
 					errCh <- fmt.Errorf("repo %d save rule failures %d: %w", repoIdx, item, err)
 					return
 				}
-				if err := repo.SaveFinalSelections(ctx, sourcePath, []ScreenshotFinalSelection{{
+				if err := repo.SaveFinalSelections(ctx, testPreparedMediaBinding(sourcePath), []ScreenshotFinalSelection{{
 					ImagePath:  imagePath,
 					Order:      1,
 					Source:     "test",
@@ -667,7 +667,7 @@ func TestSQLiteRepositoryConcurrentDistinctPathWritesOnDisk(t *testing.T) {
 					errCh <- fmt.Errorf("repo %d save final selections %d: %w", repoIdx, item, err)
 					return
 				}
-				if err := repo.SaveUploadedImages(ctx, sourcePath, "imgbb", []UploadedImageLink{{
+				if err := repo.SaveUploadedImages(ctx, testPreparedMediaBinding(sourcePath), "imgbb", []UploadedImageLink{{
 					ImagePath:  imagePath,
 					UsageScope: "global",
 					ImgURL:     fmt.Sprintf("https://img.example/%d/%d.jpg", repoIdx, item),
@@ -722,14 +722,14 @@ func TestSQLiteRepositoryConcurrentDistinctPathWritesOnDisk(t *testing.T) {
 			if len(failures) != 1 {
 				t.Fatalf("expected 1 rule failure for %s, got %d", sourcePath, len(failures))
 			}
-			selections, err := migratorRepo.ListFinalSelections(ctx, sourcePath)
+			selections, err := migratorRepo.ListFinalSelections(ctx, testPreparedMediaBinding(sourcePath))
 			if err != nil {
 				t.Fatalf("list final selections %s: %v", sourcePath, err)
 			}
 			if len(selections) != 1 {
 				t.Fatalf("expected 1 final selection for %s, got %d", sourcePath, len(selections))
 			}
-			images, err := migratorRepo.ListUploadedImagesByPath(ctx, sourcePath)
+			images, err := migratorRepo.ListUploadedImagesByPath(ctx, testPreparedMediaBinding(sourcePath))
 			if err != nil {
 				t.Fatalf("list uploaded images %s: %v", sourcePath, err)
 			}
@@ -1634,7 +1634,7 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	if err := repo.SaveDescriptionOverride(ctx, DescriptionOverride{SourcePath: targetPath, Description: "desc"}); err != nil {
 		t.Fatalf("save description override: %v", err)
 	}
-	if err := repo.SavePlaylistSelection(ctx, targetPath, []string{"00001.mpls"}, false); err != nil {
+	if err := repo.SavePlaylistSelection(ctx, targetPath, "source-fingerprint", []string{"00001.mpls"}, false); err != nil {
 		t.Fatalf("save playlist selection: %v", err)
 	}
 	if err := repo.SaveTrackerMetadata(ctx, TrackerMetadata{
@@ -1654,7 +1654,7 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("save rule failures: %v", err)
 	}
-	if err := repo.SaveScreenshot(ctx, Screenshot{
+	if err := repo.SaveScreenshot(ctx, testPreparedMediaBinding(targetPath), Screenshot{
 		SourcePath: targetPath,
 		ImagePath:  "/tmp/target-01.png",
 		Purpose:    ScreenshotPurpose("final"),
@@ -1662,7 +1662,7 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("save screenshot: %v", err)
 	}
-	if err := repo.SaveFinalSelections(ctx, targetPath, []ScreenshotFinalSelection{{
+	if err := repo.SaveFinalSelections(ctx, testPreparedMediaBinding(targetPath), []ScreenshotFinalSelection{{
 		ImagePath:  "/tmp/target-01.png",
 		Order:      0,
 		Source:     "existing",
@@ -1670,7 +1670,7 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("save final selection: %v", err)
 	}
-	if err := repo.SaveUploadedImages(ctx, targetPath, "imgbox", []UploadedImageLink{{
+	if err := repo.SaveUploadedImages(ctx, testPreparedMediaBinding(targetPath), "imgbox", []UploadedImageLink{{
 		SourcePath: targetPath,
 		ImagePath:  "/tmp/target-01.png",
 		Host:       "imgbox",
@@ -1679,7 +1679,7 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("save uploaded image: %v", err)
 	}
-	if err := repo.ReplaceScreenshotSlots(ctx, targetPath, []ScreenshotSlot{{
+	if err := repo.ReplaceScreenshotSlots(ctx, testPreparedMediaBinding(targetPath), []ScreenshotSlot{{
 		SourcePath:          targetPath,
 		SlotOrder:           0,
 		SourceKind:          "tracker_metadata",
@@ -1698,7 +1698,7 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("save screenshot slots target: %v", err)
 	}
-	if err := repo.ReplaceScreenshotSlots(ctx, otherPath, []ScreenshotSlot{{
+	if err := repo.ReplaceScreenshotSlots(ctx, testPreparedMediaBinding(otherPath), []ScreenshotSlot{{
 		SourcePath:          otherPath,
 		SlotOrder:           0,
 		SourceKind:          "tracker_metadata",
@@ -1749,16 +1749,16 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	if ruleFailures, err := repo.ListTrackerRuleFailuresByPath(ctx, targetPath); err != nil || len(ruleFailures) != 0 {
 		t.Fatalf("expected tracker rule failures removed, got len=%d err=%v", len(ruleFailures), err)
 	}
-	if screenshots, err := repo.ListScreenshotsByPath(ctx, targetPath); err != nil || len(screenshots) != 0 {
+	if screenshots, err := repo.ListScreenshotsByPath(ctx, testPreparedMediaBinding(targetPath)); err != nil || len(screenshots) != 0 {
 		t.Fatalf("expected screenshots removed, got len=%d err=%v", len(screenshots), err)
 	}
-	if finals, err := repo.ListFinalSelections(ctx, targetPath); err != nil || len(finals) != 0 {
+	if finals, err := repo.ListFinalSelections(ctx, testPreparedMediaBinding(targetPath)); err != nil || len(finals) != 0 {
 		t.Fatalf("expected final selections removed, got len=%d err=%v", len(finals), err)
 	}
-	if uploaded, err := repo.ListUploadedImagesByPath(ctx, targetPath); err != nil || len(uploaded) != 0 {
+	if uploaded, err := repo.ListUploadedImagesByPath(ctx, testPreparedMediaBinding(targetPath)); err != nil || len(uploaded) != 0 {
 		t.Fatalf("expected uploaded images removed, got len=%d err=%v", len(uploaded), err)
 	}
-	if slots, err := repo.ListScreenshotSlotsByPath(ctx, targetPath); err != nil || len(slots) != 0 {
+	if slots, err := repo.ListScreenshotSlotsByPath(ctx, testPreparedMediaBinding(targetPath)); err != nil || len(slots) != 0 {
 		t.Fatalf("expected screenshot slots removed, got len=%d err=%v", len(slots), err)
 	}
 	var legacyRows int
@@ -1772,7 +1772,7 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	if _, err := repo.GetByPath(ctx, otherPath); err != nil {
 		t.Fatalf("expected other path untouched, got %v", err)
 	}
-	if slots, err := repo.ListScreenshotSlotsByPath(ctx, otherPath); err != nil || len(slots) != 1 {
+	if slots, err := repo.ListScreenshotSlotsByPath(ctx, testPreparedMediaBinding(otherPath)); err != nil || len(slots) != 1 {
 		t.Fatalf("expected other screenshot slots untouched, got len=%d err=%v", len(slots), err)
 	}
 	pending, err := repo.ListPendingUploads(ctx)
@@ -1885,7 +1885,7 @@ func TestSQLiteRepositoryListStoredReleasePathsIncludesOrphans(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create upload record: %v", err)
 	}
-	if err := repo.SaveScreenshot(ctx, Screenshot{
+	if err := repo.SaveScreenshot(ctx, testPreparedMediaBinding("/media/orphan-shot.mkv"), Screenshot{
 		SourcePath: "/media/orphan-shot.mkv",
 		ImagePath:  "/tmp/orphan-shot.png",
 		Purpose:    ScreenshotPurpose("final"),
@@ -1893,7 +1893,7 @@ func TestSQLiteRepositoryListStoredReleasePathsIncludesOrphans(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("save screenshot: %v", err)
 	}
-	if err := repo.ReplaceScreenshotSlots(ctx, "/media/orphan-slot.mkv", []ScreenshotSlot{{
+	if err := repo.ReplaceScreenshotSlots(ctx, testPreparedMediaBinding("/media/orphan-slot.mkv"), []ScreenshotSlot{{
 		SourcePath:          "/media/orphan-slot.mkv",
 		SlotOrder:           0,
 		SourceKind:          "tracker_metadata",
@@ -1902,7 +1902,7 @@ func TestSQLiteRepositoryListStoredReleasePathsIncludesOrphans(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("save screenshot slot: %v", err)
 	}
-	if err := repo.UpsertScreenshotSlotVariants(ctx, "/media/orphan-variant.mkv", []ScreenshotSlotVariant{{
+	if err := repo.UpsertScreenshotSlotVariants(ctx, testPreparedMediaBinding("/media/orphan-variant.mkv"), []ScreenshotSlotVariant{{
 		SourcePath: "/media/orphan-variant.mkv",
 		SlotOrder:  0,
 		Host:       "imgbox",
@@ -1992,7 +1992,7 @@ func TestSQLiteUploadedImagesPersistUsageScope(t *testing.T) {
 
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
-	if err := repo.SaveUploadedImages(ctx, "/tmp/source", "hdb", []UploadedImageLink{{
+	if err := repo.SaveUploadedImages(ctx, testPreparedMediaBinding("/tmp/source"), "hdb", []UploadedImageLink{{
 		SourcePath: "/tmp/source",
 		ImagePath:  "/tmp/a.png",
 		Host:       "hdb",
@@ -2005,7 +2005,7 @@ func TestSQLiteUploadedImagesPersistUsageScope(t *testing.T) {
 		t.Fatalf("save uploaded image: %v", err)
 	}
 
-	images, err := repo.ListUploadedImagesByPath(ctx, "/tmp/source")
+	images, err := repo.ListUploadedImagesByPath(ctx, testPreparedMediaBinding("/tmp/source"))
 	if err != nil {
 		t.Fatalf("list uploaded images: %v", err)
 	}
@@ -2056,15 +2056,19 @@ func TestSQLiteMigrationBackfillsUploadedImageUsageScope(t *testing.T) {
 	}
 
 	repo := &SQLiteRepository{db: rawDB}
-	images, err := repo.ListUploadedImagesByPath(context.Background(), "/tmp/source")
+	images, err := repo.ListUploadedImagesByPath(context.Background(), testPreparedMediaBinding("/tmp/source"))
 	if err != nil {
 		t.Fatalf("list uploaded images: %v", err)
 	}
-	if len(images) != 1 {
-		t.Fatalf("expected 1 uploaded image, got %d", len(images))
+	if len(images) != 0 {
+		t.Fatalf("legacy uploaded images must remain hidden, got %d", len(images))
 	}
-	if images[0].UsageScope != "global" {
-		t.Fatalf("expected global usage scope after migration, got %q", images[0].UsageScope)
+	var usageScope string
+	if err := rawDB.QueryRowContext(context.Background(), `SELECT usage_scope FROM uploaded_images WHERE source_path = "/tmp/source"`).Scan(&usageScope); err != nil {
+		t.Fatalf("load migrated usage scope: %v", err)
+	}
+	if usageScope != "global" {
+		t.Fatalf("expected global usage scope after migration, got %q", usageScope)
 	}
 }
 
@@ -2194,10 +2198,10 @@ func TestSQLiteRepositoryScreenshotSlotsRoundTrip(t *testing.T) {
 		},
 	}
 
-	if err := repo.ReplaceScreenshotSlots(ctx, "/tmp/source", slots); err != nil {
+	if err := repo.ReplaceScreenshotSlots(ctx, testPreparedMediaBinding("/tmp/source"), slots); err != nil {
 		t.Fatalf("replace screenshot slots: %v", err)
 	}
-	if err := repo.UpsertScreenshotSlotVariants(ctx, "/tmp/source", []ScreenshotSlotVariant{{
+	if err := repo.UpsertScreenshotSlotVariants(ctx, testPreparedMediaBinding("/tmp/source"), []ScreenshotSlotVariant{{
 		SourcePath: "/tmp/source",
 		SlotOrder:  1,
 		Host:       "hdb",
@@ -2210,7 +2214,7 @@ func TestSQLiteRepositoryScreenshotSlotsRoundTrip(t *testing.T) {
 		t.Fatalf("upsert screenshot slot variants: %v", err)
 	}
 
-	loaded, err := repo.ListScreenshotSlotsByPath(ctx, "/tmp/source")
+	loaded, err := repo.ListScreenshotSlotsByPath(ctx, testPreparedMediaBinding("/tmp/source"))
 	if err != nil {
 		t.Fatalf("list screenshot slots: %v", err)
 	}

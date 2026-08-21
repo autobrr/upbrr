@@ -389,8 +389,36 @@ func (f *cliWorkflowCoreFake) ExecuteReleaseWorkflow(
 				WorkflowRevision: f.current.Workflow.Revision,
 				Prompt:           "Select playlist",
 				Options: []api.RequiredActionOption{
-					{Value: "00001.mpls", Label: "00001.mpls"},
-					{Value: "00002.mpls", Label: "00002.mpls"},
+					{
+						Value: "disc-one:00001.mpls",
+						Label: "Disc 1 — 00001.mpls",
+						Playlist: &api.PlaylistInfo{
+							ID: "disc-one:00001.mpls",
+ DiscID: "disc-one",
+ DiscName: "Disc 1",
+ File: "00001.mpls",
+						},
+					},
+					{
+						Value: "disc-one:00002.mpls",
+						Label: "Disc 1 — 00002.mpls",
+						Playlist: &api.PlaylistInfo{
+							ID: "disc-one:00002.mpls",
+ DiscID: "disc-one",
+ DiscName: "Disc 1",
+ File: "00002.mpls",
+						},
+					},
+					{
+						Value: "disc-two:00001.mpls",
+						Label: "Disc 2 — 00001.mpls",
+						Playlist: &api.PlaylistInfo{
+							ID: "disc-two:00001.mpls",
+ DiscID: "disc-two",
+ DiscName: "Disc 2",
+ File: "00001.mpls",
+						},
+					},
 				},
 			}}
 		} else {
@@ -760,8 +788,42 @@ func TestCLIWorkflowLargestPlaylistUsesTypedFactReplacement(t *testing.T) {
 	if !ok {
 		t.Fatalf("third command = %T", coreSvc.commands[2])
 	}
-	if !replace.Instructions.Playlist.Set || !slices.Equal(replace.Instructions.Playlist.Selected, []string{"00001.mpls"}) {
+	if !replace.Instructions.Playlist.Set ||
+		!slices.Equal(replace.Instructions.Playlist.Selected, []string{"disc-one:00001.mpls", "disc-two:00001.mpls"}) {
 		t.Fatalf("playlist instructions = %#v", replace.Instructions.Playlist)
+	}
+}
+
+func TestSelectCLIWorkflowPlaylistsRequiresEveryDisc(t *testing.T) {
+	t.Parallel()
+
+	action := api.RequiredAction{Prompt: "Select playlist", Options: []api.RequiredActionOption{
+		{
+Value: "disc-one:00001.mpls",
+ Label: "Disc 1 — 00001.mpls",
+ Playlist: &api.PlaylistInfo{DiscID: "disc-one"},
+},
+		{
+Value: "disc-one:00002.mpls",
+ Label: "Disc 1 — 00002.mpls",
+ Playlist: &api.PlaylistInfo{DiscID: "disc-one"},
+},
+		{
+Value: "disc-two:00001.mpls",
+ Label: "Disc 2 — 00001.mpls",
+ Playlist: &api.PlaylistInfo{DiscID: "disc-two"},
+},
+	}}
+	selected, err := selectCLIWorkflowPlaylists(bufio.NewReader(strings.NewReader("1,3\n")), io.Discard, action, false)
+	if err != nil {
+		t.Fatalf("select playlists: %v", err)
+	}
+	if !slices.Equal(selected, []string{"disc-one:00001.mpls", "disc-two:00001.mpls"}) {
+		t.Fatalf("selected playlists = %v", selected)
+	}
+	if _, err := selectCLIWorkflowPlaylists(bufio.NewReader(strings.NewReader("1\n")), io.Discard, action, false); err == nil ||
+		!strings.Contains(err.Error(), "each disc") {
+		t.Fatalf("partial selection error = %v", err)
 	}
 }
 
@@ -1033,8 +1095,8 @@ func TestCLIWorkflowMediaInstructionsPreserveExplicitFrames(t *testing.T) {
 		Options:             api.UploadOptions{Screens: 0, CaptureDVDMenus: true},
 		ScreenshotOverrides: api.ScreenshotOverrides{ManualFrames: []int{0, 42}},
 	})
-	if instructions.ScreenshotCount != 0 || !instructions.CaptureDVDMenus || len(instructions.Selections) != 2 ||
-		instructions.Selections[0].Frame != 0 || instructions.Selections[1].Frame != 42 {
+	if instructions.ScreenshotCount != 0 || !instructions.CaptureDVDMenus || instructions.Selections != nil ||
+		!slices.Equal(instructions.ManualFrames, []int{0, 42}) {
 		t.Fatalf("media instructions = %#v", instructions)
 	}
 }

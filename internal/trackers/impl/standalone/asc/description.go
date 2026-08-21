@@ -21,7 +21,6 @@ import (
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/metadata/tmdb"
-	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -692,25 +691,13 @@ func formatDate(dateStr string) string {
 func buildMediaInfo(meta api.UploadSubject, dbPath string) string {
 	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
 	case "BDMV":
-		text, _ := readBDSummary(meta, dbPath)
+		text, _ := trackers.ReadBDInfo(dbPath, meta)
 		return text
 	case "DVD":
-		return metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.DVDVOBMediaInfoText), readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath)))
+		return metautil.FirstNonEmptyTrimmed(trackers.ReadDVDVOBMediaInfo(meta), readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath)))
 	default:
 		return readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath))
 	}
-}
-
-func readBDSummary(meta api.UploadSubject, dbPath string) (string, error) {
-	tmpRoot, err := db.Subdir(dbPath, "tmp")
-	if err != nil {
-		return "", fmt.Errorf("trackers: %w", err)
-	}
-	tmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
-	if err != nil {
-		return "", fmt.Errorf("trackers: %w", err)
-	}
-	return readTextFile(paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylistFor(meta.SelectedBDMVPlaylists)))
 }
 
 func sanitizeDescriptionNotes(value string) string {

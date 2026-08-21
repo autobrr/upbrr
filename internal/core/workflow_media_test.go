@@ -21,13 +21,24 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-type workflowMediaResolverFake struct{}
+type workflowMediaResolverFake struct {
+	screenshotSubject *api.ScreenshotSubject
+}
 
-func (workflowMediaResolverFake) ResolveScreenshotSubject(
+func (f workflowMediaResolverFake) ResolveScreenshotSubject(
 	_ context.Context,
 	input api.MediaPlanInput,
 ) (api.ScreenshotSubject, error) {
-	return api.ScreenshotSubject{SourcePath: input.Release.SourcePath, DiscType: "DVD"}, nil
+	if f.screenshotSubject != nil {
+		subject := *f.screenshotSubject
+		subject.ManualFrames = append([]int(nil), input.Options.ManualFrames...)
+		return subject, nil
+	}
+	return api.ScreenshotSubject{
+		SourcePath:   input.Release.SourcePath,
+		DiscType:     "DVD",
+		ManualFrames: append([]int(nil), input.Options.ManualFrames...),
+	}, nil
 }
 
 func (workflowMediaResolverFake) ResolveDVDMenuSubject(
@@ -38,12 +49,14 @@ func (workflowMediaResolverFake) ResolveDVDMenuSubject(
 }
 
 type workflowScreenshotFake struct {
-	root     string
-	plan     *api.ScreenshotPlan
-	plans    int
-	captures int
-	deleted  []string
-	err      error
+	root       string
+	plan       *api.ScreenshotPlan
+	result     *api.ScreenshotResult
+	plans      int
+	captures   int
+	selections []api.ScreenshotSelection
+	deleted    []string
+	err        error
 }
 
 func (f *workflowScreenshotFake) Plan(
@@ -60,18 +73,34 @@ func (f *workflowScreenshotFake) Plan(
 
 func (f *workflowScreenshotFake) Capture(
 	_ context.Context,
-	_ api.ScreenshotSubject,
+	subject api.ScreenshotSubject,
 	selections []api.ScreenshotSelection,
 	purpose api.ScreenshotPurpose,
 ) (api.ScreenshotResult, error) {
 	f.captures++
+	f.selections = append(f.selections, selections...)
 	if f.err != nil {
 		return api.ScreenshotResult{}, f.err
 	}
+	if f.result != nil {
+		result := *f.result
+		result.Purpose = purpose
+		return result, nil
+	}
 	images := make([]api.ScreenshotImage, len(selections))
+	discNames := make(map[string]string, len(subject.Discs))
+	for _, disc := range subject.Discs {
+		discNames[disc.ID] = disc.Name
+	}
 	for index, selection := range selections {
+		name := fmt.Sprintf("screen-%d.png", selection.Index)
+		if selection.DiscID != "" {
+			name = fmt.Sprintf("%s-screen-%d.png", selection.DiscID, selection.Index)
+		}
 		images[index] = api.ScreenshotImage{
-			Path:             filepath.Join(f.root, fmt.Sprintf("screen-%d.png", selection.Index)),
+			DiscID:           selection.DiscID,
+			DiscName:         discNames[selection.DiscID],
+			Path:             filepath.Join(f.root, name),
 			Purpose:          purpose,
 			Index:            selection.Index,
 			TimestampSeconds: selection.TimestampSeconds,
@@ -83,9 +112,249 @@ func (f *workflowScreenshotFake) Capture(
 	return api.ScreenshotResult{Purpose: purpose, Images: images}, nil
 }
 
+func TestWorkflowMediaBuilderKeepsAutomaticSuggestionsForOmittedDiscs(t *testing.T) {
+	t.Parallel()
+
+	subject := api.ScreenshotSubject{SourcePath: "C:\\releases\\Example.Release.2026", Discs: []api.ScreenshotDiscSubject{
+		{ID: "disc-a", Name: "Disc 1"},
+		{ID: "disc-b", Name: "Disc 2"},
+	}}
+	screenshots := &workflowScreenshotFake{root: t.TempDir(), plan: &api.ScreenshotPlan{
+		Discs: []api.ScreenshotDiscPlan{
+			{
+				DiscID:   "disc-a",
+				DiscName: "Disc 1",
+				SuggestedSelections: []api.ScreenshotSelection{{
+					DiscID:           "disc-a",
+					Index:            0,
+					TimestampSeconds: 10,
+				}},
+			},
+			{
+				DiscID:   "disc-b",
+				DiscName: "Disc 2",
+				SuggestedSelections: []api.ScreenshotSelection{{
+					DiscID:           "disc-b",
+					Index:            0,
+					TimestampSeconds: 20,
+				}},
+			},
+		},
+	}}
+	builder := workflowMediaBuilder{
+		resolver:    workflowMediaResolverFake{screenshotSubject: &subject},
+		screenshots: screenshots,
+	}
+	projections := api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
+		TrackerID: "ALPHA", Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2},
+	}}}
+
+	result, _, err := builder.Build(context.Background(), api.ReleaseRef{SourcePath: subject.SourcePath, Generation: 1}, projections,
+		api.MediaCaptureInstructions{Purpose: api.ScreenshotPurposeFinal, Selections: []api.ScreenshotSelection{{
+			DiscID:           "disc-a",
+			Index:            4,
+			TimestampSeconds: 40,
+		}}}, time.Now())
+	if err != nil {
+		t.Fatalf("build media: %v", err)
+	}
+	if len(result.Artifacts) != 2 || len(screenshots.selections) != 2 || screenshots.selections[0].DiscID != "disc-a" ||
+		screenshots.selections[1].DiscID != "disc-b" {
+		t.Fatalf("artifacts=%#v selections=%#v", result.Artifacts, screenshots.selections)
+	}
+}
+
+func TestMergeManualSelectionsPreservesUnreplacedExistingScreenshots(t *testing.T) {
+	t.Parallel()
+
+	manual := []api.ScreenshotSelection{{
+		DiscID:           "disc-a",
+		Index:            4,
+		TimestampSeconds: 40,
+	}}
+	plan := api.ScreenshotPlan{
+		Discs: []api.ScreenshotDiscPlan{
+			{DiscID: "disc-a"},
+			{DiscID: "disc-b", SuggestedSelections: []api.ScreenshotSelection{{
+				DiscID:           "disc-b",
+				Index:            0,
+				TimestampSeconds: 20,
+			}}},
+		},
+		ExistingScreenshots: []api.ScreenshotImage{
+			{
+				DiscID: "disc-a",
+				Index:  1,
+				Path:   "disc-a-existing.png",
+			},
+			{
+				DiscID: "disc-a",
+				Index:  4,
+				Path:   "disc-a-replaced.png",
+			},
+			{
+				DiscID: "disc-b",
+				Index:  2,
+				Path:   "disc-b-existing.png",
+			},
+		},
+	}
+
+	selections, existing, err := mergeManualSelectionsWithDiscPlan(manual, plan)
+	if err != nil {
+		t.Fatalf("merge selections: %v", err)
+	}
+	if len(selections) != 2 || selections[0].DiscID != "disc-a" || selections[1].DiscID != "disc-b" {
+		t.Fatalf("merged selections = %#v", selections)
+	}
+	if len(existing) != 2 || existing[0].Path != "disc-a-existing.png" || existing[1].Path != "disc-b-existing.png" {
+		t.Fatalf("retained screenshots = %#v", existing)
+	}
+}
+
+func TestDecodeWorkflowMediaPrivateArtifactsHandlesLegacyHostedDeleteBinding(t *testing.T) {
+	t.Parallel()
+
+	binding := api.PreparedMediaBinding{
+		SourcePath:               "C:\\releases\\Example.Release.2026",
+		PreparedMediaFingerprint: "prepared-media",
+		PreparedGeneration:       2,
+	}
+	for _, test := range []struct {
+		name       string
+		subject    api.ScreenshotSubject
+		wantDelete bool
+	}{
+		{
+			name:       "subject fallback",
+			subject:    api.ScreenshotSubject{MediaBinding: binding},
+			wantDelete: true,
+		},
+		{name: "unbound legacy entry", wantDelete: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			logger := &recordingMediaLogger{}
+			payload, err := json.Marshal(persistedWorkflowMediaArtifacts{
+				ScreenshotSubject: test.subject,
+				PendingDeletes: []persistedWorkflowMediaPendingDelete{{
+					Kind: api.MediaArtifactHostedImage,
+					Path: "C:\\private\\screen.png",
+					Host: "example-host",
+				}},
+			})
+			if err != nil {
+				t.Fatalf("marshal fixture: %v", err)
+			}
+
+			decoded, err := decodeWorkflowMediaPrivateArtifacts(workflowMediaBuilder{media: &mediaModule{logger: logger}}, payload)
+			if err != nil {
+				t.Fatalf("decode fixture: %v", err)
+			}
+			artifacts, ok := decoded.(workflowMediaPrivateArtifacts)
+			if !ok {
+				t.Fatalf("decoded fixture type = %T", decoded)
+			}
+			if !test.wantDelete {
+				if artifacts.commitState != nil {
+					t.Fatalf("unsafe legacy delete remained queued: %#v", artifacts.commitState.pending)
+				}
+				if got := logger.countLevelContaining("WARN", "kind=hosted_image"); got != 1 {
+					t.Fatalf("legacy deletion warning count = %d, want 1", got)
+				}
+				for _, entry := range logger.entries {
+					if strings.Contains(entry.message, "screen.png") || strings.Contains(entry.message, "example-host") {
+						t.Fatalf("legacy deletion warning exposed private details: %q", entry.message)
+					}
+				}
+				return
+			}
+			if logger.countLevelContaining("WARN", "legacy pending media deletion") != 0 {
+				t.Fatalf("unexpected legacy deletion warning: %#v", logger.entries)
+			}
+			if artifacts.commitState == nil || len(artifacts.commitState.pending) != 1 ||
+				!artifacts.commitState.pending[0].binding.Equal(binding) {
+				t.Fatalf("repaired pending delete = %#v", artifacts.commitState)
+			}
+		})
+	}
+}
+
+func TestWorkflowMediaBuilderRetainsExpandedRawFramesAcrossDiscs(t *testing.T) {
+	t.Parallel()
+
+	subject := api.ScreenshotSubject{SourcePath: "C:\\releases\\Example.Release.2026", Discs: []api.ScreenshotDiscSubject{
+		{ID: "disc-a", Name: "Disc 1"},
+		{ID: "disc-b", Name: "Disc 2"},
+	}}
+	expanded := []api.ScreenshotSelection{
+		{
+			DiscID:           "disc-a",
+			Index:            0,
+			Frame:            24,
+			TimestampSeconds: 1,
+			Source:           "manual",
+		},
+		{
+			DiscID:           "disc-a",
+			Index:            1,
+			Frame:            48,
+			TimestampSeconds: 2,
+			Source:           "manual",
+		},
+		{
+			DiscID:           "disc-b",
+			Index:            0,
+			Frame:            24,
+			TimestampSeconds: 1,
+			Source:           "manual",
+		},
+		{
+			DiscID:           "disc-b",
+			Index:            1,
+			Frame:            48,
+			TimestampSeconds: 2,
+			Source:           "manual",
+		},
+	}
+	screenshots := &workflowScreenshotFake{root: t.TempDir(), plan: &api.ScreenshotPlan{
+		SuggestedSelections: expanded,
+		Discs: []api.ScreenshotDiscPlan{
+			{
+				DiscID:              "disc-a",
+				DiscName:            "Disc 1",
+				SuggestedSelections: expanded[:2],
+			},
+			{
+				DiscID:              "disc-b",
+				DiscName:            "Disc 2",
+				SuggestedSelections: expanded[2:],
+			},
+		},
+	}}
+	builder := workflowMediaBuilder{
+		resolver:    workflowMediaResolverFake{screenshotSubject: &subject},
+		screenshots: screenshots,
+	}
+
+	result, _, err := builder.Build(context.Background(), api.ReleaseRef{SourcePath: subject.SourcePath, Generation: 1}, api.TrackerReleaseProjectionSet{},
+		api.MediaCaptureInstructions{Purpose: api.ScreenshotPurposeFinal, ManualFrames: []int{24, 48}}, time.Now())
+	if err != nil {
+		t.Fatalf("build media: %v", err)
+	}
+	if len(result.Artifacts) != 4 || len(screenshots.selections) != 4 {
+		t.Fatalf("artifacts=%#v selections=%#v", result.Artifacts, screenshots.selections)
+	}
+	for index, artifact := range result.Artifacts {
+		if artifact.DiscID != expanded[index].DiscID || artifact.Index != expanded[index].Index {
+			t.Fatalf("artifact[%d] = %#v", index, artifact)
+		}
+	}
+}
+
 func (*workflowScreenshotFake) PreviewFrame(
 	context.Context,
 	api.ScreenshotSubject,
+	string,
 	float64,
 ) (api.ScreenshotPreview, error) {
 	return api.ScreenshotPreview{}, nil
@@ -247,6 +516,220 @@ func TestWorkflowMediaBuilderReportsFrameCorruption(t *testing.T) {
 		return update.ItemID == "screenshots" && update.Status == api.StageStatusFailed
 	}) {
 		t.Fatalf("frame corruption progress was not emitted: %#v", progress)
+	}
+}
+
+func TestWorkflowMediaBuilderPartialScreenshotCaptureUsesSurvivingMinimum(t *testing.T) {
+	for _, testCase := range []struct {
+		name             string
+		required         int
+		wantStatus       api.StageStatus
+		wantRequiredTask bool
+	}{
+		{
+			name:       "minimum met",
+			required:   1,
+			wantStatus: api.StageStatusCompleted,
+		},
+		{
+			name:             "minimum not met",
+			required:         2,
+			wantStatus:       api.StageStatusBlocked,
+			wantRequiredTask: true,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			capture := api.ScreenshotResult{
+				Images: []api.ScreenshotImage{{
+					Index:            0,
+					TimestampSeconds: 10,
+					Path:             filepath.Join(t.TempDir(), "screen-0.png"),
+					Purpose:          api.ScreenshotPurposeFinal,
+				}},
+				Errors: []api.ScreenshotError{{Index: 1, Message: "synthetic capture failure"}},
+			}
+			screenshots := &workflowScreenshotFake{root: t.TempDir(), result: &capture}
+			builder := workflowMediaBuilder{resolver: workflowMediaResolverFake{}, screenshots: screenshots}
+			var progress []api.WorkflowProgressUpdate
+			ctx := api.WithWorkflowProgressReporter(context.Background(), func(update api.WorkflowProgressUpdate) {
+				progress = append(progress, update)
+			})
+			snapshot, privateArtifacts, err := builder.Build(
+				ctx,
+				api.ReleaseRef{SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026"), Generation: 1},
+				api.TrackerReleaseProjectionSet{
+					ID:       api.TrackerReleaseProjectionSetID("projections-partial-" + testCase.name),
+					Revision: 1,
+					Projections: []api.TrackerReleaseProjection{{
+						TrackerID: "SYNTHETIC",
+						Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: testCase.required},
+					}},
+				},
+				api.MediaCaptureInstructions{
+					Purpose: api.ScreenshotPurposeFinal,
+					Selections: []api.ScreenshotSelection{
+						{Index: 0, TimestampSeconds: 10},
+						{Index: 1, TimestampSeconds: 20},
+					},
+				},
+				time.Now(),
+			)
+			if err != nil {
+				t.Fatalf("build workflow media: %v", err)
+			}
+			if snapshot.Status != testCase.wantStatus || len(snapshot.Artifacts) != 1 || len(snapshot.Failures) != 0 {
+				t.Fatalf("partial capture snapshot = %#v", snapshot)
+			}
+			if got := len(snapshot.RequiredActions) > 0; got != testCase.wantRequiredTask {
+				t.Fatalf("required action present = %t, want %t: %#v", got, testCase.wantRequiredTask, snapshot.RequiredActions)
+			}
+			private, ok := privateArtifacts.(workflowMediaPrivateArtifacts)
+			if !ok || len(private.Screenshots) != 1 {
+				t.Fatalf("partial private artifacts = %#v", privateArtifacts)
+			}
+			if !slices.ContainsFunc(progress, func(update api.WorkflowProgressUpdate) bool {
+				return update.ItemID == "screenshots" && update.Status == api.StageStatusPartial &&
+					update.Completed == 1 && update.Total == 2 && strings.Contains(update.Message, "partial coverage")
+			}) {
+				t.Fatalf("partial screenshot diagnostics were not emitted: %#v", progress)
+			}
+		})
+	}
+}
+
+func TestReconcileRetriedImageHostFailuresClearsOnlySatisfiedTracker(t *testing.T) {
+	t.Parallel()
+
+	const (
+		alpha api.TrackerID = "ALPHA"
+		beta  api.TrackerID = "BETA"
+	)
+	artifacts := []api.MediaArtifact{
+		{
+			ID:       "screen-0",
+			Kind:     api.MediaArtifactScreenshot,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+		},
+		{
+			ID:       "hosted-0",
+			Kind:     api.MediaArtifactHostedImage,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+			Source:   "screen-0",
+		},
+		{
+			ID:       "screen-1",
+			Kind:     api.MediaArtifactScreenshot,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+		},
+		{
+			ID:       "hosted-1",
+			Kind:     api.MediaArtifactHostedImage,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+			Source:   "screen-1",
+		},
+	}
+	priorAttempts := []api.HostedImageAttempt{
+		{
+			Host:       "primary",
+			UsageScope: "tracker:ALPHA",
+			TrackerIDs: []api.TrackerID{alpha},
+			Status:     api.StageStatusFailed,
+			Results:    []api.MediaArtifact{artifacts[1]},
+		},
+		{
+			Host:       "fallback",
+			UsageScope: "tracker:ALPHA",
+			TrackerIDs: []api.TrackerID{alpha},
+			Status:     api.StageStatusFailed,
+		},
+	}
+	priorFailures := []api.WorkflowFailure{
+		hostedImageFailure(alpha, "primary", "old primary failure"),
+		hostedImageFailure(alpha, "fallback", "old fallback failure"),
+		hostedImageFailure(beta, "primary", "old sibling failure"),
+		hostedImageFailure("", "primary", "unscoped failure"),
+	}
+	projections := []api.TrackerReleaseProjection{
+		{TrackerID: alpha, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2}},
+		{TrackerID: beta, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1}},
+	}
+	currentFailures := []api.WorkflowFailure{hostedImageFailure(beta, "primary", "current sibling failure")}
+
+	for _, test := range []struct {
+		name              string
+		required          int
+		results           []api.MediaArtifact
+		wantAlphaFailures int
+	}{
+		{
+			name:     "successful retry restores satisfied tracker",
+			required: 2,
+			results:  []api.MediaArtifact{artifacts[3]},
+		},
+		{
+			name:              "completed attempt without required sources retains failures",
+			required:          2,
+			wantAlphaFailures: 2,
+		},
+		{name: "successful retry satisfies zero screenshot requirement"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			snapshot := api.MediaArtifactSet{
+				Artifacts:    append([]api.MediaArtifact(nil), artifacts...),
+				HostAttempts: append([]api.HostedImageAttempt(nil), priorAttempts...),
+				FailedHosts:  []string{"fallback", "primary"},
+				Failures:     append([]api.WorkflowFailure(nil), priorFailures...),
+			}
+			attempts := []api.HostedImageAttempt{
+				{
+					Host:       "primary",
+					UsageScope: "tracker:ALPHA",
+					TrackerIDs: []api.TrackerID{alpha},
+					Status:     api.StageStatusCompleted,
+					Results:    test.results,
+				},
+				{
+					Host:       "primary",
+					UsageScope: "tracker:BETA",
+					TrackerIDs: []api.TrackerID{beta},
+					Status:     api.StageStatusFailed,
+				},
+			}
+
+			testProjections := append([]api.TrackerReleaseProjection(nil), projections...)
+			testProjections[0].Artifacts.ScreenshotCount = test.required
+			reconcileRetriedImageHostFailures(&snapshot, testProjections, attempts, currentFailures)
+			alphaFailures, betaFailures, unscopedFailures := 0, 0, 0
+			for _, failure := range snapshot.Failures {
+				switch failure.TrackerID {
+				case alpha:
+					alphaFailures++
+				case beta:
+					betaFailures++
+					if failure.Failure.Message != "current sibling failure" {
+						t.Fatalf("sibling retry failure was not replaced: %#v", failure)
+					}
+				case "":
+					unscopedFailures++
+				}
+			}
+			if alphaFailures != test.wantAlphaFailures || betaFailures != 1 || unscopedFailures != 1 {
+				t.Fatalf(
+					"retained image-host failures alpha=%d beta=%d unscoped=%d: %#v",
+					alphaFailures,
+					betaFailures,
+					unscopedFailures,
+					snapshot.Failures,
+				)
+			}
+			if len(snapshot.HostAttempts) != len(priorAttempts) || !slices.Equal(snapshot.FailedHosts, []string{"fallback", "primary"}) {
+				t.Fatalf("historical diagnostics changed: attempts=%#v failedHosts=%v", snapshot.HostAttempts, snapshot.FailedHosts)
+			}
+		})
 	}
 }
 
@@ -808,5 +1291,52 @@ func TestWorkflowMediaCommitPropagatesMenuDeletionFailure(t *testing.T) {
 	}
 	if pending := updated.pendingDeletes(); len(pending) != 1 || pending[0].path != menuPath {
 		t.Fatalf("failed menu deletion did not stay pending: %#v", pending)
+	}
+}
+
+func TestRemoveHostedImagesUsesDVDMenuBindingForLegacyLink(t *testing.T) {
+	t.Parallel()
+
+	binding := api.PreparedMediaBinding{
+		SourcePath:               "C:\\source\\release",
+		PreparedMediaFingerprint: "prepared-fingerprint",
+		PreparedGeneration:       1,
+	}
+	artifactID := api.PublicResourceID("hosted-menu")
+	retained := workflowMediaPrivateArtifacts{
+		HostedImages: map[api.PublicResourceID]api.UploadedImageLink{
+			artifactID: {
+				ImagePath: "C:\\private\\menu.png",
+				Host:      "example-host",
+			},
+		},
+		HostedSources: map[api.PublicResourceID]api.PublicResourceID{artifactID: "menu"},
+		dvdMenuSubject: api.DVDMenuSubject{
+			MediaBinding: binding,
+		},
+		commitState: &workflowMediaCommitState{},
+	}
+	snapshot := api.MediaArtifactSet{Artifacts: []api.MediaArtifact{{
+		ID:   artifactID,
+		Kind: api.MediaArtifactHostedImage,
+	}}}
+
+	_, privateResult, err := (workflowMediaBuilder{}).RemoveHostedImages(
+		context.Background(),
+		api.ReleaseRef{},
+		snapshot,
+		retained,
+		[]api.PublicResourceID{artifactID},
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("remove hosted menu image: %v", err)
+	}
+	updated, ok := privateResult.(workflowMediaPrivateArtifacts)
+	if !ok {
+		t.Fatalf("retained media = %#v", privateResult)
+	}
+	if pending := updated.pendingDeletes(); len(pending) != 1 || !pending[0].binding.Equal(binding) {
+		t.Fatalf("pending hosted menu deletion = %#v, want binding %#v", pending, binding)
 	}
 }

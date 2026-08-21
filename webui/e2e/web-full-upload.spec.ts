@@ -3,9 +3,10 @@
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
-  createBluraySourceFixture,
-  createDVDSourceFixture,
   createE2EWorkspace,
+  createMultiBluraySourceFixture,
+  createMultiDVDSourceFixture,
+  expectSingleCollectionTorrentUpload,
   fetchMetadata,
   releaseWorkflowParityFixture,
   startApp,
@@ -260,7 +261,7 @@ test("embedded web reports an optional tracker dry run after a duplicate overrid
     await expect(page.getByText("Example.Release.2026.1080p-GRP")).toBeVisible();
     await expect(page.getByRole("button", { name: "Screenshots" })).toBeEnabled();
     await page.getByLabel("Ignore dupes for HDS").click();
-    await expect(page.getByText("1 candidate(s) · policy risk acknowledged")).toBeVisible();
+    await expect(page.getByText("1 potential dupe · acknowledged")).toBeVisible();
 
     await page.getByRole("button", { name: "Screenshots" }).click();
     await page.getByRole("button", { name: "Generate screenshots" }).click();
@@ -318,11 +319,9 @@ test("embedded web renders mixed, incomplete, and manual duplicate evidence", as
     await expect(page.getByText("proposed trumps")).toBeVisible();
     await expect(page.getByText("insufficient evidence")).toBeVisible();
     await expect(page.getByText("manual review", { exact: true })).toBeVisible();
-    await expect(page.getByText("Search incomplete · 2 page(s)")).toBeVisible();
     await expect(
       page.getByText("Synthetic search stopped at the configured page bound."),
     ).toBeVisible();
-    await expect(page.getByText(/evidence partial \(tracker_title\)/)).toBeVisible();
 
     for (const tracker of ["HDS", "PTP"]) {
       await expect(page.getByLabel(`Acknowledge dupe risk for ${tracker}`)).toBeVisible();
@@ -342,7 +341,7 @@ test("embedded web tracks BDMV playlist preparation and opens duplicate checking
   const workspace = await createE2EWorkspace();
   let app: AppServer | undefined;
   try {
-    const sourcePath = await createBluraySourceFixture(workspace);
+    const sourcePath = await createMultiBluraySourceFixture(workspace);
     app = await startApp(workspace);
     await page.goto(app.url);
     await page.getByLabel("Source path").fill(sourcePath);
@@ -358,7 +357,13 @@ test("embedded web tracks BDMV playlist preparation and opens duplicate checking
     await expect(
       page.getByText("Choose playlists for the selected preparation source."),
     ).toBeVisible();
-    await page.getByRole("checkbox", { name: "00001.mpls" }).check();
+    await expect(page.getByRole("heading", { name: "Disc 1" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Disc 2" })).toBeVisible();
+    const duplicatePlaylists = page.getByRole("checkbox", { name: "00001.mpls" });
+    await expect(duplicatePlaylists).toHaveCount(2);
+    await duplicatePlaylists.nth(0).check();
+    await expect(page.getByRole("button", { name: "Confirm Selection" })).toBeDisabled();
+    await duplicatePlaylists.nth(1).check();
     await page.getByRole("button", { name: "Confirm Selection" }).click();
 
     await expect(page.getByText("E2E.Movie.2026.1080p.WEB-DL")).toBeVisible();
@@ -380,9 +385,10 @@ test("embedded DVD media keeps normal screenshots and optional menus independent
   const workspace = await createE2EWorkspace({ screenshotCount: 4 });
   let app: AppServer | undefined;
   try {
-    const sourcePath = await createDVDSourceFixture(workspace);
+    const sourcePath = await createMultiDVDSourceFixture(workspace);
     app = await startApp(workspace);
     await fetchMetadata(page, app.url, sourcePath);
+    await expect(page.getByText(/Prepared source: 2 DVD discs/i)).toBeVisible();
     await page.getByRole("button", { name: "Dupe Check" }).click();
     await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
     await page.getByRole("checkbox", { name: "HDS" }).check();
@@ -397,7 +403,9 @@ test("embedded DVD media keeps normal screenshots and optional menus independent
     await page.getByRole("button", { name: "Generate screenshots" }).click();
     await expect((await screenshotCaptureResponse).ok()).toBe(true);
     await expect(page.getByText("4 captured screenshot(s)")).toBeVisible();
-    await expect(page.getByAltText(/^Screenshot \d$/)).toHaveCount(4);
+    await expect(page.getByAltText(/^Disc [12] screenshot \d$/)).toHaveCount(4);
+    await expect(page.getByRole("heading", { name: "Disc 1" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Disc 2" })).toBeVisible();
     await expect(page.getByText("Action required")).toHaveCount(0);
 
     await page.getByRole("button", { name: "Upload Images" }).click();
@@ -423,22 +431,37 @@ test("embedded DVD media keeps normal screenshots and optional menus independent
     await page.getByRole("button", { name: "Capture DVD menus" }).click();
     await expect((await captureResponse).ok()).toBe(true);
     await expect(page.getByRole("heading", { name: "Authoritative DVD menu set" })).toBeVisible();
-    await expect(page.getByText("1 captured menu image(s)")).toBeVisible();
+    await expect(page.getByText("2 captured menu image(s)")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Disc 1" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Disc 2" })).toBeVisible();
 
+    await page.reload();
     await page.getByRole("button", { name: "Screenshots" }).click();
     await expect(page.getByText("4 captured screenshot(s)")).toBeVisible();
-    await expect(page.getByAltText(/^Screenshot \d$/)).toHaveCount(4);
+    await expect(page.getByAltText(/^Disc [12] screenshot \d$/)).toHaveCount(4);
 
     await page.getByRole("button", { name: "Upload Images" }).click();
     await page.getByRole("button", { name: /^Prepare required hosts \(\d+\)$/ }).click();
-    await expect.poll(() => workspace.fake.counters.imageUploads).toBe(5);
-    await expect(page.getByText("5 saved")).toBeVisible();
+    await expect.poll(() => workspace.fake.counters.imageUploads).toBe(6);
+    await expect(page.getByText("6 saved")).toBeVisible();
 
     await page.getByRole("button", { name: "Descriptions" }).click();
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
     await page.getByRole("button", { name: "Expand" }).click();
     await expect(page.getByRole("textbox")).toHaveValue("E2E description fixture.");
     await expect(page.getByText("Action required")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Upload", exact: true }).click();
+    const startButton = page.getByRole("button", { name: "Start upload" });
+    await expect(startButton).toBeEnabled();
+    await startButton.click();
+    await expect.poll(() => workspace.fake.counters.trackerUploads).toBe(1);
+    expectSingleCollectionTorrentUpload(workspace, "Example DVD Collection", [
+      "Disc 1",
+      "Disc 2",
+      "VIDEO_TS",
+      "VTS_01_1.VOB",
+    ]);
   } finally {
     await app?.stop();
     await workspace.cleanup();

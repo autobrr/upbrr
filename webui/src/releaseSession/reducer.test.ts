@@ -80,4 +80,42 @@ describe("sessionReducer upload intent", () => {
     });
     expect(state.uploadedImages.selectedArtifactIDs).toEqual(["menu-1"]);
   });
+
+  it("keeps automatic selections for discs omitted by a manual edit", () => {
+    const suggestedSelections = [
+      { DiscID: "disc-one", Index: 0, TimestampSeconds: 10, Frame: 240, Source: "auto" },
+      { DiscID: "disc-two", Index: 1, TimestampSeconds: 20, Frame: 600, Source: "auto" },
+    ];
+    let state = initialSessionState();
+    state = sessionReducer(state, {
+      type: "screenshots_loaded",
+      sessionRevision: 0,
+      revision: 0,
+      reseedDrafts: true,
+      plan: {
+        SourcePath: "C:\\media\\Example Collection",
+        DiscType: "BDMV",
+        DurationSeconds: 120,
+        FrameRate: 24,
+        SuggestedSelections: suggestedSelections,
+        ExistingScreenshots: [],
+        ExistingTrackerScreenshots: [],
+        FinalSelections: [],
+        TrackerImageLinks: [],
+        PreviewImages: [],
+        MetadataTimestamp: "2026-08-18T00:00:00Z",
+        RequiresManualFrames: false,
+      },
+    });
+    state = sessionReducer(state, {
+      type: "screenshot_selection_changed",
+      index: 0,
+      value: { TimestampSeconds: 30, Frame: 720 },
+    });
+
+    expect(state.screenshots.selections).toEqual([
+      { ...suggestedSelections[0], TimestampSeconds: 30, Frame: 720 },
+      suggestedSelections[1],
+    ]);
+  });
 });

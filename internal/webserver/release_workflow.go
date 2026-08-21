@@ -250,6 +250,7 @@ func (b *Backend) previewReleaseWorkflowFrame(
 	ownerID string,
 	workflowID api.WorkflowID,
 	expectedRevision api.WorkflowRevision,
+	discID string,
 	timestampSeconds float64,
 ) (api.FramePreview, error) {
 	runtime, err := b.requireRuntime()
@@ -260,7 +261,7 @@ func (b *Backend) previewReleaseWorkflowFrame(
 	if err != nil {
 		return api.FramePreview{}, err
 	}
-	preview, err := workflowCore.PreviewReleaseWorkflowFrame(ctx, ownerID, workflowID, expectedRevision, timestampSeconds)
+	preview, err := workflowCore.PreviewReleaseWorkflowFrame(ctx, ownerID, workflowID, expectedRevision, discID, timestampSeconds)
 	if err != nil {
 		return api.FramePreview{}, classifyReleaseWorkflowError(err)
 	}

@@ -92,3 +92,58 @@ func TestValidatePreparationRejectsInvalidDirectDryRun(t *testing.T) {
 		t.Fatalf("direct dry run must reject invalid facts: %v", err)
 	}
 }
+
+func TestValidatePreparationDoesNotPromotePartialTypedBDInfo(t *testing.T) {
+	t.Parallel()
+
+	policy := trackers.ValidationPolicyBinding{
+		ID: "prepared-media-v1",
+		Check: func(_ context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
+			if PreparedMediaReady(subject) {
+				return nil, nil
+			}
+			return []api.RuleFailure{trackers.NewRuleFailure(
+				"required_media",
+				"prepared media is required",
+				api.RuleDispositionStrict,
+			)}, nil
+		},
+	}
+	input := trackers.PreparationInput{
+		Intent:  trackers.PreparationIntentUpload,
+		Tracker: "EXAMPLE",
+		Meta: api.UploadSubject{
+			SourcePath:            `C:\media\Example.Release.2026`,
+			DiscType:              "BDMV",
+			SelectedBDMVPlaylists: []api.PlaylistInfo{{ID: "disc-one:00001.MPLS"}},
+			Disc: api.DiscFacts{Items: []api.DiscItemFacts{
+				{
+					ID:   "disc-one",
+					Name: "Disc 1",
+					Type: "BDMV",
+					Reports: []api.DiscReportFacts{{
+						Playlist: api.PlaylistInfo{ID: "disc-one:00001.MPLS"},
+						Summary:  "BDINFO ONE",
+					}},
+				},
+				{
+					ID:   "disc-two",
+					Name: "Disc 2",
+					Type: "BDMV",
+					Reports: []api.DiscReportFacts{{
+						Playlist: api.PlaylistInfo{ID: "disc-two:00001.MPLS"},
+					}},
+				},
+			}},
+		},
+		Logger: api.NopLogger{},
+	}
+	if err := ValidatePreparation(context.Background(), input, policy); err == nil || !strings.Contains(err.Error(), "required_media") {
+		t.Fatalf("partial typed BDInfo must remain blocked: %v", err)
+	}
+
+	input.Meta.Disc = api.DiscFacts{}
+	if err := ValidatePreparation(context.Background(), input, policy); err != nil {
+		t.Fatalf("legacy singular BDInfo compatibility failed: %v", err)
+	}
+}

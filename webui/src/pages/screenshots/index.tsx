@@ -16,6 +16,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
   const { view } = facet;
   const loadRef = useRef(facet.load);
   const [livePreviewSeconds, setLivePreviewSeconds] = useState(0);
+  const [livePreviewDiscID, setLivePreviewDiscID] = useState("");
   const [finalDragIndex, setFinalDragIndex] = useState<number | null>(null);
   loadRef.current = facet.load;
 
@@ -45,8 +46,42 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
     [workflowImages],
   );
 
-  const previewDuration = Math.max(plan?.DurationSeconds || 0, 0);
-  const previewFrameRate = Math.max(plan?.FrameRate || 0, 0);
+  const discPlans = useMemo(() => {
+    if (plan?.Discs?.length) return plan.Discs;
+    if (!plan) return [];
+    return [
+      {
+        DiscID: "",
+        DiscName: plan.DiscType ? `${plan.DiscType} disc` : "Source",
+        DurationSeconds: plan.DurationSeconds,
+        FrameRate: plan.FrameRate,
+        SuggestedSelections: plan.SuggestedSelections,
+      },
+    ];
+  }, [plan]);
+  useEffect(() => {
+    if (!discPlans.length) return;
+    if (!discPlans.some((disc) => disc.DiscID === livePreviewDiscID)) {
+      setLivePreviewDiscID(discPlans[0].DiscID);
+      setLivePreviewSeconds(0);
+    }
+  }, [discPlans, livePreviewDiscID]);
+
+  const livePreviewDisc =
+    discPlans.find((disc) => disc.DiscID === livePreviewDiscID) || discPlans[0];
+  const selectionGroups = discPlans.map((disc) => ({
+    disc,
+    selections: selections
+      .map((selection, index) => ({ selection, index }))
+      .filter(({ selection }) => (selection.DiscID || "") === disc.DiscID),
+  }));
+  const workflowImageGroups = discPlans.map((disc) => ({
+    disc,
+    images: workflowImages.filter((artifact) => (artifact.discId || "") === disc.DiscID),
+  }));
+
+  const previewDuration = Math.max(livePreviewDisc?.DurationSeconds || 0, 0);
+  const previewFrameRate = Math.max(livePreviewDisc?.FrameRate || 0, 0);
   const previewTimingDisabled = previewDuration <= 0 || previewFrameRate <= 0;
   const clampPreviewSeconds = (value: number) => {
     if (!Number.isFinite(value)) return 0;
@@ -58,7 +93,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
   const runLivePreviewAt = async (value: number) => {
     const next = clampPreviewSeconds(value);
     setLivePreviewSeconds(next);
-    await facet.previewFrame(next);
+    await facet.previewFrame(livePreviewDisc?.DiscID || "", next);
   };
 
   const stepLivePreview = (direction: number) => {
@@ -74,6 +109,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
         ...workflowImages.map((artifact) => artifact.index ?? -1),
       ) + 1;
     const selection: ScreenshotSelection = {
+      ...(livePreviewDisc?.DiscID ? { DiscID: livePreviewDisc.DiscID } : {}),
       Index: nextIndex,
       TimestampSeconds: clampPreviewSeconds(livePreviewSeconds),
       Frame: livePreviewFrame,
@@ -114,6 +150,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
               <p className="muted">Duration: {plan.DurationSeconds.toFixed(1)}s</p>
               <p className="muted">Frame rate: {plan.FrameRate.toFixed(3)}</p>
               {plan.DiscType ? <p className="muted">Disc type: {plan.DiscType}</p> : null}
+              {discPlans.length ? <p className="muted">Discs: {discPlans.length}</p> : null}
             </div>
           ) : null}
         </div>
@@ -145,46 +182,62 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
           ) : selections.length === 0 ? (
             <p className="muted">No selections available yet.</p>
           ) : (
-            <div className="screens-rows">
-              {selections.map((selection, index) => (
-                <div className="screens-row" key={`sel-${selection.Index}`}>
-                  <div>
-                    <p className="label">Shot {selection.Index + 1}</p>
-                    <p className="muted">Source: {selection.Source || "auto"}</p>
-                  </div>
-                  <label className="screens-field">
-                    <span>Seconds</span>
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={selection.TimestampSeconds}
-                      onChange={(event) =>
-                        facet.changeSelection(index, {
-                          TimestampSeconds: Number(event.target.value) || 0,
-                        })
-                      }
-                    />
-                  </label>
-                  <label className="screens-field">
-                    <span>Frame</span>
-                    <input
-                      type="number"
-                      step="1"
-                      value={selection.Frame}
-                      onChange={(event) =>
-                        facet.changeSelection(index, { Frame: Number(event.target.value) || 0 })
-                      }
-                    />
-                  </label>
-                  <button
-                    className="ghost"
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void facet.generate("preview", [selection])}
-                  >
-                    {busy ? "Previewing..." : "Preview"}
-                  </button>
-                </div>
+            <div className="grid gap-4">
+              {selectionGroups.map(({ disc, selections: discSelections }) => (
+                <section className="grid gap-2" key={disc.DiscID || "single-disc"}>
+                  <h3>{disc.DiscName}</h3>
+                  {discSelections.length ? (
+                    <div className="screens-rows">
+                      {discSelections.map(({ selection, index }) => (
+                        <div
+                          className="screens-row"
+                          key={`sel-${selection.DiscID || "single"}-${selection.Index}`}
+                        >
+                          <div>
+                            <p className="label">Shot {selection.Index + 1}</p>
+                            <p className="muted">Source: {selection.Source || "auto"}</p>
+                          </div>
+                          <label className="screens-field">
+                            <span>Seconds</span>
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={selection.TimestampSeconds}
+                              onChange={(event) =>
+                                facet.changeSelection(index, {
+                                  TimestampSeconds: Number(event.target.value) || 0,
+                                })
+                              }
+                            />
+                          </label>
+                          <label className="screens-field">
+                            <span>Frame</span>
+                            <input
+                              type="number"
+                              step="1"
+                              value={selection.Frame}
+                              onChange={(event) =>
+                                facet.changeSelection(index, {
+                                  Frame: Number(event.target.value) || 0,
+                                })
+                              }
+                            />
+                          </label>
+                          <button
+                            className="ghost"
+                            type="button"
+                            disabled={busy}
+                            onClick={() => void facet.generate("preview", [selection])}
+                          >
+                            {busy ? "Previewing..." : "Preview"}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="muted">No suggested frames for this disc.</p>
+                  )}
+                </section>
               ))}
             </div>
           )}
@@ -208,63 +261,79 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
               Delete all
             </button>
           </div>
-          <div className="screens-grid">
-            {workflowImages.map((artifact, index) => {
-              const selectedIndex = selectedWorkflowImages.findIndex(
-                (selected) => selected.id === artifact.id,
-              );
-              return (
-                <div
-                  className="screens-thumb-card"
-                  key={artifact.id}
-                  draggable={artifact.selected}
-                  onDragStart={() => setFinalDragIndex(selectedIndex)}
-                  onDragOver={(event) => {
-                    if (artifact.selected) event.preventDefault();
-                  }}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    if (artifact.selected && finalDragIndex !== null)
-                      void facet.reorderFinal(finalDragIndex, selectedIndex);
-                    setFinalDragIndex(null);
-                  }}
-                  onDragEnd={() => setFinalDragIndex(null)}
-                >
-                  <button
-                    className="screens-thumb"
-                    type="button"
-                    disabled={!artifact.url}
-                    onClick={() => {
-                      if (!artifact.url) return;
-                      setLightboxImage(artifact.url);
-                      setLightboxAlt(`Screenshot ${index + 1}`);
-                    }}
-                  >
-                    {artifact.url ? (
-                      <img src={artifact.url} alt={`Screenshot ${index + 1}`} loading="lazy" />
-                    ) : (
-                      <span className="muted block p-4 text-center text-sm">Image unavailable</span>
-                    )}
-                  </button>
-                  <button
-                    className="ghost"
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void facet.selectArtifact(artifact.id, !artifact.selected)}
-                  >
-                    {artifact.selected ? "Unselect" : "Select"}
-                  </button>
-                  <button
-                    className="screens-thumb-delete"
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void facet.deleteArtifacts([artifact.id])}
-                  >
-                    Delete
-                  </button>
-                </div>
-              );
-            })}
+          <div className="grid gap-4">
+            {workflowImageGroups
+              .filter((group) => group.images.length > 0)
+              .map(({ disc, images }) => (
+                <section className="grid gap-2" key={disc.DiscID || "single-disc"}>
+                  <h3>{disc.DiscName}</h3>
+                  <div className="screens-grid">
+                    {images.map((artifact, index) => {
+                      const selectedIndex = selectedWorkflowImages.findIndex(
+                        (selected) => selected.id === artifact.id,
+                      );
+                      const imageLabel = disc.DiscID
+                        ? `${disc.DiscName} screenshot ${index + 1}`
+                        : `Screenshot ${index + 1}`;
+                      return (
+                        <div
+                          className="screens-thumb-card"
+                          key={artifact.id}
+                          draggable={artifact.selected}
+                          onDragStart={() => setFinalDragIndex(selectedIndex)}
+                          onDragOver={(event) => {
+                            if (artifact.selected) event.preventDefault();
+                          }}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            if (artifact.selected && finalDragIndex !== null)
+                              void facet.reorderFinal(finalDragIndex, selectedIndex);
+                            setFinalDragIndex(null);
+                          }}
+                          onDragEnd={() => setFinalDragIndex(null)}
+                        >
+                          <button
+                            className="screens-thumb"
+                            type="button"
+                            disabled={!artifact.url}
+                            onClick={() => {
+                              if (!artifact.url) return;
+                              setLightboxImage(artifact.url);
+                              setLightboxAlt(imageLabel);
+                            }}
+                          >
+                            {artifact.url ? (
+                              <img src={artifact.url} alt={imageLabel} loading="lazy" />
+                            ) : (
+                              <span className="muted block p-4 text-center text-sm">
+                                Image unavailable
+                              </span>
+                            )}
+                          </button>
+                          <button
+                            className="ghost"
+                            type="button"
+                            disabled={busy}
+                            onClick={() =>
+                              void facet.selectArtifact(artifact.id, !artifact.selected)
+                            }
+                          >
+                            {artifact.selected ? "Unselect" : "Select"}
+                          </button>
+                          <button
+                            className="screens-thumb-delete"
+                            type="button"
+                            disabled={busy}
+                            onClick={() => void facet.deleteArtifacts([artifact.id])}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              ))}
           </div>
         </section>
       ) : view.workflowMode && view.artifacts ? (
@@ -287,11 +356,33 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
       <section className="panel screens-preview">
         <div className="screens-gallery__header">
           <h2>Live Preview</h2>
-          <p className="muted">Scrub the timeline and capture the current frame.</p>
+          <p className="muted">
+            Scrub the {livePreviewDisc?.DiscName || "source"} timeline and capture the current
+            frame.
+          </p>
         </div>
         {plan ? (
           <div className="screens-preview__body">
             <div className="screens-preview__controls">
+              {discPlans.length > 1 ? (
+                <label className="screens-field">
+                  <span>Disc</span>
+                  <select
+                    aria-label="Preview disc"
+                    value={livePreviewDisc?.DiscID || ""}
+                    onChange={(event) => {
+                      setLivePreviewDiscID(event.target.value);
+                      setLivePreviewSeconds(0);
+                    }}
+                  >
+                    {discPlans.map((disc) => (
+                      <option key={disc.DiscID} value={disc.DiscID}>
+                        {disc.DiscName}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
               <label className="screens-field">
                 <span>Seconds</span>
                 <input

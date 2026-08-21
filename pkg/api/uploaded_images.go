@@ -6,15 +6,18 @@ package api
 import "time"
 
 type UploadedImageLink struct {
-	SourcePath string
-	ImagePath  string
-	Host       string
-	UsageScope string
-	ImgURL     string
-	RawURL     string
-	WebURL     string
-	SizeBytes  int64
-	UploadedAt time.Time `ts_type:"string"`
+	SourcePath               string
+	PreparedMediaFingerprint string
+	PreparedGeneration       PreparedGeneration
+	DiscID                   string
+	ImagePath                string
+	Host                     string
+	UsageScope               string
+	ImgURL                   string
+	RawURL                   string
+	WebURL                   string
+	SizeBytes                int64
+	UploadedAt               time.Time `ts_type:"string"`
 }
 
 // UploadImageHostFailure describes a single host-level image upload failure
