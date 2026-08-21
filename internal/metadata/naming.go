@@ -97,6 +97,11 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 	}
 	region := strings.TrimSpace(req.Region)
 	dvdSize := strings.TrimSpace(req.DVDSize)
+	dvdFormat := joinParts(source, dvdSize)
+	if sourceIn(source, "DVD", "PAL DVD", "NTSC DVD") &&
+		(strings.EqualFold(dvdSize, "DVD5") || strings.EqualFold(dvdSize, "DVD9")) {
+		dvdFormat = joinParts(strings.TrimSpace(source[:len(source)-len("DVD")]), dvdSize)
+	}
 	edition := strings.TrimSpace(req.Edition)
 
 	hybrid := ""
@@ -166,7 +171,7 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 				name = joinParts(title, altTitle, yearValue, threeD, edition, hybrid, repack, resolution, region, uhd, source, hdr, videoCodec, audio)
 				missing = []string{"edition", "region", "distributor"}
 			case "DVD":
-				name = joinParts(title, altTitle, yearValue, repack, edition, region, source, dvdSize, audio)
+				name = joinParts(title, altTitle, yearValue, repack, edition, region, dvdFormat, audio)
 				missing = []string{"edition", "distributor"}
 			case "HDDVD":
 				name = joinParts(title, altTitle, yearValue, edition, repack, resolution, source, videoCodec, audio)
@@ -216,7 +221,7 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 				)
 				missing = []string{"edition", "region", "distributor"}
 			case "DVD":
-				name = joinParts(title, yearValue, altTitle, seasonEpisode+threeD, repack, edition, region, source, dvdSize, audio)
+				name = joinParts(title, yearValue, altTitle, seasonEpisode+threeD, repack, edition, region, dvdFormat, audio)
 				missing = []string{"edition", "distributor"}
 			case "HDDVD":
 				name = joinParts(title, altTitle, yearValue, edition, repack, resolution, source, videoCodec, audio)

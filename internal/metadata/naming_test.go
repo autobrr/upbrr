@@ -44,6 +44,68 @@ func TestBuildReleaseNameMovieWebDL(t *testing.T) {
 	}
 }
 
+func TestBuildReleaseNameDVDDiscDoesNotRepeatDVD(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		category string
+		title    string
+		season   string
+		source   string
+		size     string
+		want     string
+	}{
+		{
+			name:     "PAL movie",
+			category: "MOVIE",
+			title:    "Example Release",
+			source:   "PAL DVD",
+			size:     "DVD9",
+			want:     "Example Release 2026 PAL DVD9",
+		},
+		{
+			name:     "NTSC TV",
+			category: "TV",
+			title:    "Example Show",
+			season:   "S01",
+			source:   "NTSC DVD",
+			size:     "DVD5",
+			want:     "Example Show 2026 S01 NTSC DVD5",
+		},
+		{
+			name:     "unspecified system",
+			category: "MOVIE",
+			title:    "Example Release",
+			source:   "DVD",
+			size:     "DVD9",
+			want:     "Example Release 2026 DVD9",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := BuildReleaseName(api.ReleaseNameRequest{
+				Category:   test.category,
+				Type:       "DISC",
+				Title:      test.title,
+				Year:       2026,
+				SearchYear: "2026",
+				Season:     test.season,
+				DiscType:   "DVD",
+				Source:     test.source,
+				DVDSize:    test.size,
+			}, api.NopLogger{})
+
+			if result.NameNoTag != test.want {
+				t.Fatalf("name = %q, want %q", result.NameNoTag, test.want)
+			}
+		})
+	}
+}
+
 func TestBuildReleaseNameMovieBareWebEncodeUsesWebDLNaming(t *testing.T) {
 	result := BuildReleaseName(api.ReleaseNameRequest{
 		Category:    "MOVIE",
