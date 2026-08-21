@@ -22,7 +22,8 @@ func buildACMName(meta api.UploadSubject) string {
 
 	title := strings.TrimSpace(resolveACMTitle(meta))
 	originalTitle := strings.TrimSpace(resolveACMOriginalTitle(meta))
-	if title != "" && originalTitle != "" && !strings.EqualFold(title, originalTitle) {
+	if title != "" && originalTitle != "" && !strings.EqualFold(title, originalTitle) &&
+		(meta.NamePresentation.Version != api.ReleaseNamePresentationVersionV1 || !meta.NamePresentation.OmitAlternateTitle) {
 		name = strings.Replace(name, title, title+" / "+originalTitle+" \u202A", 1)
 	}
 

@@ -130,7 +130,9 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 		searchYear := strings.TrimSpace(req.SearchYear)
 		if parsedYear, err := strconv.Atoi(searchYear); err == nil && parsedYear > 0 {
 			title = trimTrailingParentheticalYear(title, parsedYear)
-			year = parsedYear
+			if !req.NoYear {
+				year = parsedYear
+			}
 		} else {
 			year = 0
 		}

@@ -275,6 +275,7 @@ type UploadSubject struct {
 	TorrentPath                 string
 	ArrReleaseGroup             string
 	ReleaseNameOverrides        ReleaseNameOverrides
+	NamePresentation            ReleaseNamePresentation
 	TrackerQuestionnaireAnswers map[string]map[string]string
 	SeasonInt                   int
 	EpisodeInt                  int

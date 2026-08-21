@@ -4,6 +4,7 @@
 package bhd
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -39,6 +40,35 @@ func TestResolveUploadNameAppliesBHDMovieNamingMatrix(t *testing.T) {
 	const want = "Example Release AKA Example Original 2024 Director's Cut 2160p UHD BluRay REMUX SDR HEVC TrueHD Atmos 7.1-GRP"
 	if got := resolveUploadName(meta); got != want {
 		t.Fatalf("BHD movie name = %q, want %q", got, want)
+	}
+}
+
+func TestResolveUploadNameHonorsOmitAlternateTitle(t *testing.T) {
+	t.Parallel()
+
+	const sourceName = "Example Release AKA Example Original 2026 1080p WEB-DL H.264-GRP"
+	meta := generatedBHDNameSubject(sourceName)
+	meta.Identity.Category = api.CanonicalCategoryMovie
+	meta.Release = api.ReleaseInfo{
+		Title:      "Example Release",
+		Alt:        "Example Original",
+		Year:       2026,
+		Resolution: "1080p",
+	}
+	meta.ProviderMetadata.TMDB = &api.TMDBMetadata{
+		Title:         "Example Release",
+		OriginalTitle: "Example Original",
+		Year:          2026,
+	}
+	meta.Type = "WEBDL"
+	meta.VideoCodec = "H.264"
+	meta.NamePresentation = api.ReleaseNamePresentation{
+		Version:            api.ReleaseNamePresentationVersionV1,
+		OmitAlternateTitle: true,
+	}
+
+	if got := resolveUploadName(meta); strings.Contains(got, "AKA") {
+		t.Fatalf("BHD name retained optional alternate title: %q", got)
 	}
 }
 
@@ -199,8 +229,8 @@ func TestResolveUploadNameUsesBHDPolicyAndPreservesExactP2PNames(t *testing.T) {
 func TestBHDNamingPolicyVersion(t *testing.T) {
 	t.Parallel()
 
-	if got := New().ReleaseNamePolicy().ID; got != "standalone/bhd/v3" {
-		t.Fatalf("BHD naming policy ID = %q, want %q", got, "standalone/bhd/v3")
+	if got := New().ReleaseNamePolicy().ID; got != "standalone/bhd/v4" {
+		t.Fatalf("BHD naming policy ID = %q, want %q", got, "standalone/bhd/v4")
 	}
 }
 

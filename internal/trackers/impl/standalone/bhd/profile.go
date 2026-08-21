@@ -21,7 +21,7 @@ func Profile() standalone.Profile {
 		PrepareDescription: prepareDescription,
 		PrepareUpload:      prepareUpload,
 		ReleaseNamePolicy: trackers.WithMovieYearProvider(
-			trackers.SimpleSubjectReleaseNamePolicy("standalone/bhd/v3", resolveUploadName),
+			trackers.SimpleSubjectReleaseNamePolicy("standalone/bhd/v4", resolveUploadName),
 			api.IdentityProviderIMDB,
 		),
 		NewDuplicateAdapter:  newDuplicateAdapter,

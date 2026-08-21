@@ -2937,6 +2937,9 @@
           "Month": {
             "type": "integer"
           },
+          "NamePresentation": {
+            "$ref": "#/components/schemas/ReleaseNamePresentation"
+          },
           "NameWithoutTag": {
             "type": "string"
           },
@@ -3008,6 +3011,7 @@
           "HDR",
           "Languages",
           "Month",
+          "NamePresentation",
           "NameWithoutTag",
           "Other",
           "Personal",
@@ -4041,6 +4045,33 @@
             ]
           }
         }
+      },
+      "ReleaseNamePresentation": {
+        "type": "object",
+        "properties": {
+          "OmitAlternateTitle": {
+            "type": "boolean"
+          },
+          "OmitSeasonEpisode": {
+            "type": "boolean"
+          },
+          "OmitYear": {
+            "type": "boolean"
+          },
+          "UseDailyDate": {
+            "type": "boolean"
+          },
+          "Version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "OmitAlternateTitle",
+          "OmitSeasonEpisode",
+          "OmitYear",
+          "UseDailyDate",
+          "Version"
+        ]
       },
       "ReleaseNameVariant": {
         "type": "object",

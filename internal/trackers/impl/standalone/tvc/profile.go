@@ -23,7 +23,7 @@ func Profile() standalone.Profile {
 		AuthCapability:     authcontract.APIKeyCapability("TVC"),
 		PrepareDescription: prepareDescription,
 		PrepareUpload:      prepareUpload,
-		ReleaseNamePolicy: trackers.NewReleaseNamePolicy("standalone/tvc/v1", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
+		ReleaseNamePolicy: trackers.NewReleaseNamePolicy("standalone/tvc/v2", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
 			if input.RequestedName != nil {
 				return trackers.ResolvedReleaseNames{Upload: strings.TrimSpace(*input.RequestedName)}, nil
 			}

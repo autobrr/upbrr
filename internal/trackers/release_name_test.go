@@ -169,6 +169,91 @@ func TestResolveReleaseNamesDoesNotMutateExactOriginalName(t *testing.T) {
 	}
 }
 
+func TestResolveReleaseNamesAppliesFinalizedPresentationToAutomaticSubjectCopy(t *testing.T) {
+	t.Parallel()
+
+	base := api.UploadSubject{
+		ReleaseName: "Example Show 2026 S02E03 1080p-GRP",
+		Release: api.ReleaseInfo{
+			Year:    2026,
+			Season:  2,
+			Episode: 3,
+		},
+		SeasonInt:        2,
+		EpisodeInt:       3,
+		SeasonStr:        "S02",
+		EpisodeStr:       "E03",
+		DailyEpisodeDate: "2026-02-03",
+		ProviderMetadata: api.SourceScopedMetadata{
+			IMDB: &api.IMDBMetadata{Year: 2026, TVYear: 2025},
+			TMDB: &api.TMDBMetadata{Year: 2026},
+			TVDB: &api.TVDBMetadata{Year: 2026, NameDisambiguation: api.TVDBNameDisambiguation{
+				SeriesYear:  2026,
+				IncludeYear: true,
+			}},
+		},
+		NamePresentation: api.ReleaseNamePresentation{
+			Version:           api.ReleaseNamePresentationVersionV1,
+			OmitYear:          true,
+			OmitSeasonEpisode: true,
+			UseDailyDate:      true,
+		},
+	}
+
+	var observed api.UploadSubject
+	binding := NewReleaseNamePolicy("standalone/example/v1", func(input ReleaseNameInput) (ResolvedReleaseNames, error) {
+		observed = input.Subject
+		if input.RequestedName != nil {
+			return ResolvedReleaseNames{Upload: *input.RequestedName}, nil
+		}
+		return ResolvedReleaseNames{Upload: input.Subject.ReleaseName}, nil
+	})
+	if _, err := resolveReleaseNames(PreparationInput{Meta: base}, binding); err != nil {
+		t.Fatalf("resolve automatic name: %v", err)
+	}
+	if observed.Release.Year != 0 || observed.SeasonInt != 0 || observed.EpisodeInt != 0 || observed.SeasonStr != "" || observed.EpisodeStr != "" ||
+		observed.DailyEpisodeDate != "2026-02-03" || observed.ProviderMetadata.IMDB.Year != 0 || observed.ProviderMetadata.IMDB.TVYear != 0 ||
+		observed.ProviderMetadata.TMDB.Year != 0 || observed.ProviderMetadata.TVDB.Year != 0 || observed.ProviderMetadata.TVDB.NameDisambiguation.SeriesYear != 0 ||
+		observed.ProviderMetadata.TVDB.NameDisambiguation.IncludeYear {
+		t.Fatalf("automatic subject presentation = %#v", observed)
+	}
+	if observed.ProviderMetadata.IMDB == base.ProviderMetadata.IMDB || observed.ProviderMetadata.TMDB == base.ProviderMetadata.TMDB ||
+		observed.ProviderMetadata.TVDB == base.ProviderMetadata.TVDB {
+		t.Fatal("automatic presentation mutated shared provider pointers")
+	}
+	if base.Release.Year != 2026 || base.ProviderMetadata.IMDB.Year != 2026 || base.ProviderMetadata.TVDB.NameDisambiguation.SeriesYear != 2026 {
+		t.Fatalf("canonical subject mutated: %#v", base)
+	}
+
+	seasonMode := base
+	seasonMode.NamePresentation.OmitYear = false
+	seasonMode.NamePresentation.OmitSeasonEpisode = false
+	seasonMode.NamePresentation.UseDailyDate = false
+	if _, err := resolveReleaseNames(PreparationInput{Meta: seasonMode}, binding); err != nil {
+		t.Fatalf("resolve season/episode name: %v", err)
+	}
+	if observed.SeasonInt != 2 || observed.EpisodeInt != 3 || observed.DailyEpisodeDate != "" {
+		t.Fatalf("season/episode presentation = %#v", observed)
+	}
+
+	requested := "Requested Example 2026 S02E03"
+	if _, err := resolveReleaseNames(PreparationInput{Meta: base, RequestedUploadName: &requested}, binding); err != nil {
+		t.Fatalf("resolve requested name: %v", err)
+	}
+	if observed.Release.Year != 2026 || observed.SeasonInt != 2 || observed.ProviderMetadata.IMDB.Year != 2026 {
+		t.Fatalf("requested subject was sanitized: %#v", observed)
+	}
+
+	legacy := base
+	legacy.NamePresentation.Version = ""
+	if _, err := resolveReleaseNames(PreparationInput{Meta: legacy}, binding); err != nil {
+		t.Fatalf("resolve legacy name: %v", err)
+	}
+	if observed.Release.Year != 2026 || observed.SeasonInt != 2 || observed.DailyEpisodeDate != "2026-02-03" {
+		t.Fatalf("legacy subject changed: %#v", observed)
+	}
+}
+
 func TestResolveReleaseNamesPublishesExplicitSearchName(t *testing.T) {
 	t.Parallel()
 

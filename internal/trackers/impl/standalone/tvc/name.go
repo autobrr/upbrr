@@ -13,38 +13,37 @@ import (
 
 func resolveName(meta api.UploadSubject) string {
 	typeName := strings.ReplaceAll(meta.Type, "WEBDL", "WEB-DL")
-	var name string
+	title := metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName)
+	name := title
+	year := meta.Release.Year
+	if meta.ProviderMetadata.TMDB != nil {
+		year = maxInt(year, meta.ProviderMetadata.TMDB.Year)
+	}
 	switch {
 	case !isTV(meta):
-		name = fmt.Sprintf(
-			"%s (%d) [%s %s %s]",
-			metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName),
-			maxInt(meta.Release.Year, meta.ProviderMetadata.TMDB.Year),
-			meta.Release.Resolution,
-			typeName,
-			videoSuffix(meta.VideoCodec),
-		)
+		if year > 0 {
+			name += fmt.Sprintf(" (%d)", year)
+		}
 	case meta.TVPack:
-		name = fmt.Sprintf(
-			"%s - Series %d (%d) [%s %s %s]",
-			metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName),
-			maxInt(meta.SeasonInt, 1),
-			maxInt(meta.Release.Year, meta.ProviderMetadata.TMDB.Year),
-			meta.Release.Resolution,
-			typeName,
-			videoSuffix(meta.VideoCodec),
-		)
+		if meta.SeasonInt > 0 {
+			name += fmt.Sprintf(" - Series %d", meta.SeasonInt)
+		}
+		if year > 0 {
+			name += fmt.Sprintf(" (%d)", year)
+		}
 	default:
-		name = fmt.Sprintf(
-			"%s S%02dE%02d [%s %s %s]",
-			metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName),
-			maxInt(meta.SeasonInt, 1),
-			maxInt(meta.EpisodeInt, 1),
-			meta.Release.Resolution,
-			typeName,
-			videoSuffix(meta.VideoCodec),
-		)
+		switch {
+		case strings.TrimSpace(meta.DailyEpisodeDate) != "":
+			name += " " + strings.TrimSpace(meta.DailyEpisodeDate)
+		case meta.SeasonInt > 0 && meta.EpisodeInt > 0:
+			name += fmt.Sprintf(" S%02dE%02d", meta.SeasonInt, meta.EpisodeInt)
+		case meta.SeasonInt > 0:
+			name += fmt.Sprintf(" S%02d", meta.SeasonInt)
+		case meta.EpisodeInt > 0:
+			name += fmt.Sprintf(" E%02d", meta.EpisodeInt)
+		}
 	}
+	name += fmt.Sprintf(" [%s %s %s]", meta.Release.Resolution, typeName, videoSuffix(meta.VideoCodec))
 	if strings.EqualFold(strings.TrimSpace(meta.VideoCodec), "HEVC") {
 		name = strings.Replace(name, "]", " HEVC]", 1)
 	}
@@ -75,6 +74,9 @@ func appendCountryCode(meta api.UploadSubject, name string) string {
 		"PT": "POR",
 		"RU": "RUS",
 		"SE": "SWE",
+	}
+	if meta.ProviderMetadata.TMDB == nil {
+		return name
 	}
 	for _, code := range meta.ProviderMetadata.TMDB.OriginCountry {
 		if mapped := mapping[strings.ToUpper(strings.TrimSpace(code))]; mapped != "" {

@@ -12,7 +12,11 @@ import (
 )
 
 func TestProfileNameParity(t *testing.T) {
-	build := Profile().Site.BuildName
+	profile := Profile().Site
+	if profile.BuildNameVersion != "v2" {
+		t.Fatalf("RHD build-name version = %q", profile.BuildNameVersion)
+	}
+	build := profile.BuildName
 	tests := []struct {
 		name string
 		meta api.UploadSubject
@@ -83,6 +87,18 @@ func TestProfileNameParity(t *testing.T) {
 				},
 			},
 			want: "Example Movie 2026 GERMAN 2160p WEB-DL DDP5.1 DV HDR H.265-GRP",
+		},
+		{
+			name: "daily without year",
+			meta: api.UploadSubject{
+				Type:             "WEBDL",
+				Tag:              "-GRP",
+				DailyEpisodeDate: "2026-02-03",
+				VideoEncode:      "H.264",
+				AudioLanguages:   []string{"German"},
+				Release:          api.ReleaseInfo{Title: "Example Show", Resolution: "1080p"},
+			},
+			want: "Example Show 2026-02-03 GERMAN 1080p WEB-DL H.264-GRP",
 		},
 	}
 	for _, test := range tests {

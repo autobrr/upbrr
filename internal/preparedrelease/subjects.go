@@ -103,6 +103,7 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		ReleaseName:                 release.Naming.ReleaseName,
 		ReleaseNameNoTag:            release.Naming.NameWithoutTag,
 		ReleaseNameClean:            release.Naming.CleanName,
+		NamePresentation:            release.Naming.NamePresentation,
 		GeneratedReleaseNames:       release.Naming.GeneratedReleaseNames,
 		ArrReleaseGroup:             release.Naming.Group,
 		InfoHash:                    resources.clientEvidence.Result.InfoHash,

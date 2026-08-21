@@ -54,12 +54,12 @@ func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
 	if year == 0 && tmdb != nil {
 		year = tmdb.Year
 	}
-	if year == 0 {
-		parts = append(parts, "0000")
-	} else {
+	if year > 0 {
 		parts = append(parts, strconv.Itoa(year))
 	}
-	if meta.SeasonStr != "" || meta.EpisodeStr != "" {
+	if meta.DailyEpisodeDate != "" {
+		parts = append(parts, meta.DailyEpisodeDate)
+	} else if meta.SeasonStr != "" || meta.EpisodeStr != "" {
 		parts = append(parts, strings.TrimSpace(meta.SeasonStr+meta.EpisodeStr))
 		if incompleteRegex.MatchString(markers) {
 			parts = append(parts, "iNCOMPLETE")
