@@ -143,6 +143,56 @@ func TestProfileNameParity(t *testing.T) {
 	}
 }
 
+func TestTypeAndSourceDVDDoesNotRepeatCapacity(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		source string
+		size   string
+		want   string
+	}{
+		{
+			name:   "PAL DVD9",
+			source: "PAL DVD",
+			size:   "DVD9",
+			want:   "COMPLETE PAL DVD9",
+		},
+		{
+			name:   "bare DVD9",
+			source: "DVD",
+			size:   "DVD9",
+			want:   "COMPLETE DVD9",
+		},
+		{
+			name:   "NTSC DVD5",
+			source: "NTSC DVD",
+			size:   "DVD5",
+			want:   "COMPLETE NTSC DVD5",
+		},
+		{
+			name:   "surrounding whitespace",
+			source: " PAL DVD ",
+			size:   " DVD9 ",
+			want:   "COMPLETE PAL DVD9",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := strings.Join(typeAndSource(api.UploadSubject{
+				Type:     "DISC",
+				DiscType: "DVD",
+				Release:  api.ReleaseInfo{Source: test.source, Size: test.size},
+			}), " ")
+			if got != test.want {
+				t.Fatalf("typeAndSource() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestProfileResolutionAndLanguages(t *testing.T) {
 	if got := Profile().Site.ResolveResolutionID(api.UploadSubject{Release: api.ReleaseInfo{Resolution: "576p"}}); got != "12" {
 		t.Fatalf("resolution = %q", got)
