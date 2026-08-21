@@ -111,20 +111,21 @@ func TestMovieYearProvidersFollowTrackerMetadataAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new registry: %v", err)
 	}
-	for _, family := range []trackers.Family{trackers.FamilyUnit3D, trackers.FamilyAZFamily} {
-		for _, name := range registry.NamesByFamily(family) {
-			descriptor, ok := registry.LookupDescriptor(name)
-			if !ok || descriptor.ReleaseNamePolicy.MovieYearProvider != api.IdentityProviderTMDB {
-				t.Fatalf("%s movie-year provider = %q", name, descriptor.ReleaseNamePolicy.MovieYearProvider)
-			}
+	for _, name := range registry.NamesByFamily(trackers.FamilyUnit3D) {
+		descriptor, ok := registry.LookupDescriptor(name)
+		if !ok || descriptor.ReleaseNamePolicy.MovieYearProvider != api.IdentityProviderTMDB {
+			t.Fatalf("%s movie-year provider = %q", name, descriptor.ReleaseNamePolicy.MovieYearProvider)
 		}
 	}
 	for name, provider := range map[string]api.IdentityProvider{
 		"ANT": api.IdentityProviderTMDB,
+		"AZ":  api.IdentityProviderTMDB,
 		"BJS": api.IdentityProviderTMDB,
 		"BHD": api.IdentityProviderIMDB,
+		"CZ":  api.IdentityProviderIMDB,
 		"CZT": api.IdentityProviderIMDB,
 		"HDB": api.IdentityProviderIMDB,
+		"PHD": api.IdentityProviderTMDB,
 		"PTP": api.IdentityProviderIMDB,
 	} {
 		descriptor, ok := registry.LookupDescriptor(name)

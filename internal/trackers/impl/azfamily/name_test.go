@@ -60,7 +60,7 @@ func TestEditNameAZCZPolicyFixtures(t *testing.T) {
 			want: "Example Series S01 2026 1080p WEB-DL H.265-GRP",
 		},
 		{
-			name: "CZ uses one English country AKA",
+			name: "CZ uses a country English AKA independent of production country",
 			site: "CZ",
 			meta: generatedCZSubject(
 				"MOVIE",
@@ -77,13 +77,13 @@ func TestEditNameAZCZPolicyFixtures(t *testing.T) {
 					CountryList: "Exampleland, Secondland",
 					Akas: []api.IMDBAKA{
 						{
-							Title:    "Invalid Other Country",
-							Country:  "Otherland",
+							Title:    "Invalid Worldwide Title",
+							Country:  "World-wide",
 							Language: "English",
 						},
 						{
 							Title:    "Example Film",
-							Country:  "Exampleland",
+							Country:  "Otherland",
 							Language: "English",
 						},
 						{
@@ -116,7 +116,7 @@ func TestEditNameAZCZPolicyFixtures(t *testing.T) {
 			want: "Primer Filma 2026 1080p WEB-DL H.265-GRP",
 		},
 		{
-			name: "CZ transliterates native original title",
+			name: "CZ prefers provider romanization to local transliteration",
 			site: "CZ",
 			meta: generatedCZSubject(
 				"MOVIE",
@@ -132,7 +132,7 @@ func TestEditNameAZCZPolicyFixtures(t *testing.T) {
 					Country: "Exampleland",
 				},
 			),
-			want: "Primer Film 2026 1080p WEB-DL H.265-GRP",
+			want: "Example Localized 2026 1080p WEB-DL H.265-GRP",
 		},
 		{
 			name: "CZ TV always includes year",
@@ -206,21 +206,403 @@ func TestEditNameAZCZPolicyFixtures(t *testing.T) {
 	}
 }
 
-func TestAZFamilyNamingPolicyVersions(t *testing.T) {
+func TestCinemaZEnglishCountryAKA(t *testing.T) {
 	tests := []struct {
-		site string
+		name                 string
+		aka                  api.IMDBAKA
+		originalUsesNonLatin bool
+		want                 string
+	}{
+		{
+			name: "country need not match production country",
+			aka: api.IMDBAKA{
+				Title:    "Example English Title",
+				Country:  "Otherland",
+				Language: "English",
+			},
+			want: "Example English Title",
+		},
+		{
+			name: "worldwide is not country scoped",
+			aka: api.IMDBAKA{
+				Title:    "Example English Title",
+				Country:  "World-wide",
+				Language: "English",
+			},
+		},
+		{
+			name: "blank country is rejected",
+			aka:  api.IMDBAKA{Title: "Example English Title", Language: "English"},
+		},
+		{
+			name: "informal title is rejected",
+			aka: api.IMDBAKA{
+				Title:      "Example English Title",
+				Country:    "Otherland",
+				Language:   "English",
+				Attributes: []string{"informal title"},
+			},
+		},
+		{
+			name: "working title is rejected",
+			aka: api.IMDBAKA{
+				Title:      "Example English Title",
+				Country:    "Otherland",
+				Language:   "English",
+				Attributes: []string{"working title"},
+			},
+		},
+		{
+			name: "festival title is rejected",
+			aka: api.IMDBAKA{
+				Title:      "Example English Title",
+				Country:    "Otherland",
+				Language:   "English",
+				Attributes: []string{"festival title"},
+			},
+		},
+		{
+			name: "transliterated Latin original is rejected",
+			aka: api.IMDBAKA{
+				Title:      "Example English Title",
+				Country:    "Otherland",
+				Language:   "English",
+				Attributes: []string{"transliterated title"},
+			},
+		},
+		{
+			name: "transliterated non-Latin original is allowed",
+			aka: api.IMDBAKA{
+				Title:      "Example Romanization",
+				Country:    "Otherland",
+				Language:   "English",
+				Attributes: []string{"transliterated title"},
+			},
+			originalUsesNonLatin: true,
+			want:                 "Example Romanization",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			metadata := &api.IMDBMetadata{
+				Country: "Exampleland",
+				Akas:    []api.IMDBAKA{test.aka},
+			}
+			if got := cinemaZEnglishCountryAKA(metadata, test.originalUsesNonLatin); got != test.want {
+				t.Fatalf("cinemaZEnglishCountryAKA() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestCinemaZNonLatinTitleFallbacks(t *testing.T) {
+	tests := []struct {
+		name string
+		meta api.UploadSubject
 		want string
 	}{
-		{site: "AZ", want: "azfamily/az/v2"},
-		{site: "CZ", want: "azfamily/cz/v2"},
-		{site: "PHD", want: "azfamily/phd/v2"},
+		{
+			name: "provider romanization wins",
+			meta: api.UploadSubject{
+				Release: api.ReleaseInfo{Title: "Пример Фильм"},
+				ProviderMetadata: api.SourceScopedMetadata{
+					IMDB: &api.IMDBMetadata{Title: "Provider Romanization", AKA: "Пример Фильм"},
+					TMDB: &api.TMDBMetadata{RetrievedAKA: "AKA Other Romanization", OriginalTitle: "Пример Фильм"},
+				},
+			},
+			want: "Other Romanization",
+		},
+		{
+			name: "supported local transliteration is last resort",
+			meta: api.UploadSubject{
+				Release: api.ReleaseInfo{Title: "Пример Фильм"},
+				ProviderMetadata: api.SourceScopedMetadata{
+					IMDB: &api.IMDBMetadata{Title: "Пример Фильм", AKA: "Пример Фильм"},
+					TMDB: &api.TMDBMetadata{Title: "Пример Фильм", OriginalTitle: "Пример Фильм"},
+				},
+			},
+			want: "Primer Film",
+		},
+		{
+			name: "unsupported non-Latin title fails closed",
+			meta: api.UploadSubject{
+				Release: api.ReleaseInfo{Title: "例の作品"},
+				ProviderMetadata: api.SourceScopedMetadata{
+					IMDB: &api.IMDBMetadata{Title: "例の作品", AKA: "例の作品"},
+					TMDB: &api.TMDBMetadata{Title: "例の作品", OriginalTitle: "例の作品"},
+				},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := cinemaZTitle(test.meta); got != test.want {
+				t.Fatalf("cinemaZTitle() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestEditNameCinemaZFailsClosedOnlyForGeneratedNonLatinNames(t *testing.T) {
+	generated := generatedCZSubject(
+		"MOVIE",
+		"例の作品 2026 1080p WEB-DL H.265-GRP",
+		api.ReleaseInfo{
+			Title: "例の作品",
+			Alt:   "例の作品",
+			Year:  2026,
+		},
+		&api.IMDBMetadata{Title: "例の作品", AKA: "例の作品"},
+	)
+	generated.ProviderMetadata.TMDB.Title = "例の作品"
+	generated.ProviderMetadata.TMDB.OriginalTitle = "例の作品"
+	if got := editName(siteFor("CZ"), generated); got != "" {
+		t.Fatalf("generated non-Latin editName() = %q, want empty", got)
+	}
+	if _, failure := trackers.PrepareInputWithReleaseNamePolicy(
+		trackers.PreparationInput{Tracker: "CZ", Meta: generated},
+		New("CZ").ReleaseNamePolicy(),
+	); failure == nil || failure.Code() != "name_policy" {
+		t.Fatalf("generated non-Latin policy failure = %v, want name_policy", failure)
+	}
+
+	requested := generated
+	requested.ReleaseName = "Exact Requested 例の作品 2026-GRP"
+	requested.GeneratedReleaseNames = api.GeneratedReleaseNameVariants{}
+	if got := editName(siteFor("CZ"), requested); got != requested.ReleaseName {
+		t.Fatalf("requested editName() = %q, want %q", got, requested.ReleaseName)
+	}
+}
+
+func TestNormalizeCinemaZGeneratedName(t *testing.T) {
+	tests := []struct {
+		name        string
+		category    string
+		releaseName string
+		configure   func(*api.UploadSubject)
+		want        string
+	}{
+		{
+			name: "edition rules and HYBRID placement",
+			releaseName: "Example Film 2026 LIMITED Criterion Collection 25th Anniversary Edition Extended Cut Director's Cut 4K " +
+				"REPACK Hybrid 2160p WEB-DL DD 5.1 H.265-GRP",
+			configure: func(meta *api.UploadSubject) {
+				meta.Type = "WEBDL"
+				meta.Release.Resolution = "2160p"
+			},
+			want: "Example Film 2026 EXT DC REPACK 2160p HYBRID WEB-DL DD 5.1 H.265-GRP",
+		},
+		{
+			name:        "BluRay remux orders HDR video and audio",
+			releaseName: "Example Film 2026 2160p Hybrid UHD BluRay REMUX TrueHD 7.1 Atmos DV HDR10+ HEVC-GRP",
+			configure: func(meta *api.UploadSubject) {
+				meta.Type = "REMUX"
+				meta.DiscType = "BDMV"
+				meta.Source = "BluRay"
+				meta.Release.Resolution = "2160p"
+				meta.UHD = "UHD"
+				meta.HDR = "DV HDR10+"
+				meta.VideoCodec = "HEVC"
+				meta.Audio = "TrueHD 7.1 Atmos"
+			},
+			want: "Example Film 2026 2160p HYBRID UHD BluRay REMUX DV HDR10+ HEVC TrueHD 7.1 Atmos-GRP",
+		},
+		{
+			name:        "Blu-ray raw adds the rip type and orders its technical tail",
+			releaseName: "Example Film 2026 2160p USA UHD BluRay HDR HEVC DTS-HD MA 2.0-GRP",
+			configure: func(meta *api.UploadSubject) {
+				meta.Type = "DISC"
+				meta.DiscType = "BDMV"
+				meta.Source = "BluRay"
+				meta.Release.Resolution = "2160p"
+				meta.Region = "USA"
+				meta.UHD = "UHD"
+				meta.HDR = "HDR"
+				meta.VideoCodec = "HEVC"
+				meta.Audio = "DTS-HD MA 2.0"
+			},
+			want: "Example Film 2026 2160p USA UHD Blu-ray RAW HDR HEVC DTS-HD MA 2.0-GRP",
+		},
+		{
+			name:        "DVD raw adds resolution and video from metadata",
+			releaseName: "Example Film 2026 R1 DVD DVD9 DD 5.1-GRP",
+			configure: func(meta *api.UploadSubject) {
+				meta.Type = "DISC"
+				meta.DiscType = "DVD"
+				meta.Source = "DVD"
+				meta.Release.Resolution = "480p"
+				meta.Release.Size = "DVD9"
+				meta.Region = "R1"
+				meta.Audio = "DD 5.1"
+				meta.VideoCodec = "MPEG-2"
+			},
+			want: "Example Film 2026 480p DVD9 DD 5.1 MPEG2-GRP",
+		},
+		{
+			name:        "DVD remux wins over persisted disc type and adds omitted fields",
+			releaseName: "Example Film 2026 DVD REMUX DD 2.0-GRP",
+			configure: func(meta *api.UploadSubject) {
+				meta.Type = "REMUX"
+				meta.DiscType = "DVD"
+				meta.Source = "DVD"
+				meta.Release.Resolution = "576p"
+				meta.Audio = "DD 2.0"
+				meta.VideoCodec = "MPEG-2"
+			},
+			want: "Example Film 2026 576p DVD Remux DD 2.0 MPEG2-GRP",
+		},
+		{
+			name:        "DVDRip removes source and orders audio before video",
+			releaseName: "Example Film 2026 DVD XviD DVDRip MP3-GRP",
+			configure: func(meta *api.UploadSubject) {
+				meta.Type = "DVDRIP"
+				meta.Source = "DVD"
+				meta.Audio = "MP3"
+				meta.VideoEncode = "XviD"
+			},
+			want: "Example Film 2026 DVDRip MP3 XviD-GRP",
+		},
+		{
+			name:        "TV episode title words are not treated as release tags",
+			category:    "TV",
+			releaseName: "Example Film 2026 S01E02 Limited Hybrid Extended Cut Hybrid 1080p WEB-DL DD 5.1 H.265-GRP",
+			configure: func(meta *api.UploadSubject) {
+				meta.Type = "WEBDL"
+				meta.EpisodeTitle = "Parsed Episode"
+				meta.ProviderMetadata.TVDB.EpisodeNameEnglish = "Limited Hybrid"
+				meta.Release.Resolution = "1080p"
+			},
+			want: "Example Film 2026 S01E02 Limited Hybrid EXT 1080p HYBRID WEB-DL DD 5.1 H.265-GRP",
+		},
+		{
+			name:        "manual TV episode title remains protected when variants match",
+			category:    "TV",
+			releaseName: "Example Film 2026 S01E02 Limited Hybrid 1080p WEB-DL DD 5.1 H.265-GRP",
+			configure: func(meta *api.UploadSubject) {
+				meta.Type = "WEBDL"
+				meta.EpisodeTitle = "Limited Hybrid"
+				meta.GeneratedReleaseNames.OmitEpisodeTitle = meta.GeneratedReleaseNames.IncludeEpisodeTitle
+				meta.Release.Resolution = "1080p"
+			},
+			want: "Example Film 2026 S01E02 Limited Hybrid 1080p WEB-DL DD 5.1 H.265-GRP",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			category := test.category
+			if category == "" {
+				category = "MOVIE"
+			}
+			meta := generatedCZSubject(
+				category,
+				test.releaseName,
+				api.ReleaseInfo{
+					Title: "Example Localized",
+					Alt:   "Example Original",
+					Year:  2026,
+				},
+				&api.IMDBMetadata{
+					AKA: "Example Original",
+					Akas: []api.IMDBAKA{{
+						Title:    "Example Film",
+						Country:  "Otherland",
+						Language: "English",
+					}},
+				},
+			)
+			test.configure(&meta)
+			if got := editName(siteFor("CZ"), meta); got != test.want {
+				t.Fatalf("editName() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeCinemaZGeneratedNameDoesNotEditTitleWords(t *testing.T) {
+	meta := api.UploadSubject{
+		DiscType:   "BDMV",
+		Source:     "BluRay",
+		UHD:        "UHD",
+		HDR:        "HDR",
+		Region:     "USA",
+		VideoCodec: "HEVC",
+		Audio:      "DTS-HD MA 2.0",
+		Tag:        "-GRP",
+		Release:    api.ReleaseInfo{Resolution: "2160p"},
+	}
+	name := "Example HDR 2026 2160p USA UHD BluRay HDR HEVC DTS-HD MA 2.0-GRP"
+	want := "Example HDR 2026 2160p USA UHD Blu-ray RAW HDR HEVC DTS-HD MA 2.0-GRP"
+	if got := normalizeCinemaZGeneratedName(meta, "Example HDR", name); got != want {
+		t.Fatalf("normalizeCinemaZGeneratedName() = %q, want %q", got, want)
+	}
+}
+
+func TestAZFamilyNamingPolicyVersions(t *testing.T) {
+	tests := []struct {
+		site         string
+		want         string
+		yearProvider api.IdentityProvider
+	}{
+		{
+			site:         "AZ",
+			want:         "azfamily/az/v2",
+			yearProvider: api.IdentityProviderTMDB,
+		},
+		{
+			site:         "CZ",
+			want:         "azfamily/cz/v3",
+			yearProvider: api.IdentityProviderIMDB,
+		},
+		{
+			site:         "PHD",
+			want:         "azfamily/phd/v2",
+			yearProvider: api.IdentityProviderTMDB,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.site, func(t *testing.T) {
-			if got := New(test.site).ReleaseNamePolicy().ID; got != test.want {
+			policy := New(test.site).ReleaseNamePolicy()
+			if got := policy.ID; got != test.want {
 				t.Fatalf("policy ID = %q, want %q", got, test.want)
 			}
+			if got := policy.MovieYearProvider; got != test.yearProvider {
+				t.Fatalf("movie year provider = %q, want %q", got, test.yearProvider)
+			}
 		})
+	}
+}
+
+func TestCinemaZReleaseNamePolicyUsesIMDbProductionYear(t *testing.T) {
+	meta := generatedCZSubject(
+		"MOVIE",
+		"Example Localized Example Original 2025 1080p WEB-DL H.265-GRP",
+		api.ReleaseInfo{
+			Title: "Example Localized",
+			Alt:   "Example Original",
+			Year:  2025,
+		},
+		&api.IMDBMetadata{
+			Title: "Example Film",
+			AKA:   "Example Original",
+			Year:  2024,
+			Akas: []api.IMDBAKA{{
+				Title:    "Example Film",
+				Country:  "Otherland",
+				Language: "English",
+			}},
+		},
+	)
+	meta.ProviderMetadata.TMDB.Year = 2026
+
+	input, failure := trackers.PrepareInputWithReleaseNamePolicy(
+		trackers.PreparationInput{Tracker: "CZ", Meta: meta},
+		New("CZ").ReleaseNamePolicy(),
+	)
+	if failure != nil {
+		t.Fatalf("resolve CinemaZ release name: %v", failure)
+	}
+	if got, want := input.Projection.UploadReleaseName, "Example Film 2024 1080p WEB-DL H.265-GRP"; got != want {
+		t.Fatalf("CinemaZ upload name = %q, want %q", got, want)
 	}
 }
 
