@@ -956,6 +956,8 @@ func TestResolveReleaseNameTitleProviderAlternateRules(t *testing.T) {
 			imdbAKA:    "Original Title",
 			wantAlt:    "AKA Original Title",
 		},
+		{name: "punctuation-equivalent alternate", imdbAKA: "IMDb: Title"},
+		{name: "closely resembling alternate", imdbAKA: "The IMDb Title"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -976,6 +978,39 @@ func TestResolveReleaseNameTitleProviderAlternateRules(t *testing.T) {
 				t.Fatalf("alternate=%q, want %q", got, tc.wantAlt)
 			}
 		})
+	}
+}
+
+func TestResolveReleaseNameTitleTVPrefersMatchingIMDbAKA(t *testing.T) {
+	meta := preparationstate.State{
+		Identity: api.ExternalIdentity{
+			Category: "TV",
+			TVDBID:   2,
+			IMDBID:   1234567,
+		},
+		ProviderMetadata: api.SourceScopedMetadata{
+			TVDB: &api.TVDBMetadata{
+				TVDBID:      2,
+				Name:        "例のシリーズ",
+				NameEnglish: "Example Series",
+			},
+			IMDB: &api.IMDBMetadata{
+				IMDBID: 1234567,
+				Title:  "Example Series",
+				AKA:    "Rei no Shirizu",
+			},
+		},
+	}
+
+	title, alt, _ := resolveReleaseNameTitle("TV", meta)
+	if title != "Example Series" || alt != "AKA Rei no Shirizu" {
+		t.Fatalf("unexpected TV naming fields: title=%q alt=%q", title, alt)
+	}
+
+	meta.ProviderMetadata.IMDB.AKA = "The Example Series"
+	_, alt, _ = resolveReleaseNameTitle("TV", meta)
+	if alt != "AKA 例のシリーズ" {
+		t.Fatalf("close IMDb alternate was not rejected: %q", alt)
 	}
 }
 

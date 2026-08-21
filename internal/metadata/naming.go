@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
@@ -515,11 +516,16 @@ func resolveReleaseNameTitle(category string, meta preparationstate.State) (stri
 		tvdb := meta.ProviderMetadata.TVDB
 		englishTitle := strings.TrimSpace(tvdb.NameEnglish)
 		nativeTitle := strings.TrimSpace(tvdb.Name)
+		imdbAKA := ""
+		if matchingIMDBMetadataForNaming(meta) {
+			imdbAKA = meta.ProviderMetadata.IMDB.AKA
+		}
 		if englishTitle != "" {
 			title = englishTitle
-			altTitle = fillProviderAlternateTitle(altTitle, title, nativeTitle)
+			altTitle = fillProviderAlternateTitle(altTitle, title, imdbAKA, nativeTitle)
 		} else {
 			title = nativeTitle
+			altTitle = fillProviderAlternateTitle(altTitle, title, imdbAKA)
 		}
 		if tvdb.Year > 0 && tvdb.YearFromAlias {
 			year = tvdb.Year
@@ -595,7 +601,8 @@ func fillProviderAlternateTitle(current, primary string, candidates ...string) s
 		if len(alternate) > len("AKA ") && strings.EqualFold(alternate[:len("AKA ")], "AKA ") {
 			alternate = strings.TrimSpace(alternate[len("AKA "):])
 		}
-		if alternate == "" || strings.EqualFold(strings.TrimSpace(primary), alternate) {
+		if alternate == "" || strings.EqualFold(strings.TrimSpace(primary), alternate) ||
+			metautil.SimilarityRatio(titleIdentityKey(primary), titleIdentityKey(alternate)) >= 0.7 {
 			continue
 		}
 		return "AKA " + alternate
