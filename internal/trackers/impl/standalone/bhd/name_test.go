@@ -12,18 +12,18 @@ import (
 func TestResolveUploadNameAppliesBHDMovieNamingMatrix(t *testing.T) {
 	t.Parallel()
 
-	const sourceName = "Parsed Release AKA Parsed Original 2025 Director's Cut 2160p UHD BluRay REMUX HEVC TrueHD 7.1 Atmos-GRP"
+	const sourceName = "Parsed Release AKA Rei no Sakuhin 2025 Director's Cut 2160p UHD BluRay REMUX HEVC TrueHD 7.1 Atmos-GRP"
 	meta := generatedBHDNameSubject(sourceName)
 	meta.Identity.Category = api.CanonicalCategoryMovie
 	meta.Release = api.ReleaseInfo{
 		Title: "Parsed Release",
-		Alt:   "Parsed Original",
+		Alt:   "AKA Rei no Sakuhin",
 		Year:  2025,
 		Group: "GRP",
 	}
 	meta.ProviderMetadata.TMDB = &api.TMDBMetadata{
 		Title:         "Example Release",
-		OriginalTitle: "Example Original",
+		OriginalTitle: "例の作品",
 		Year:          2026,
 	}
 	meta.ProviderMetadata.IMDB = &api.IMDBMetadata{Year: 2024}
@@ -36,9 +36,15 @@ func TestResolveUploadNameAppliesBHDMovieNamingMatrix(t *testing.T) {
 		Status:  api.HDREvidenceComplete,
 	}
 
-	const want = "Example Release AKA Example Original 2024 Director's Cut 2160p UHD BluRay REMUX SDR HEVC TrueHD Atmos 7.1-GRP"
+	const want = "Example Release AKA Rei no Sakuhin 2024 Director's Cut 2160p UHD BluRay REMUX SDR HEVC TrueHD Atmos 7.1-GRP"
 	if got := resolveUploadName(meta); got != want {
 		t.Fatalf("BHD movie name = %q, want %q", got, want)
+	}
+
+	meta.Release.Alt = ""
+	const fallbackWant = "Example Release AKA 例の作品 2024 Director's Cut 2160p UHD BluRay REMUX SDR HEVC TrueHD Atmos 7.1-GRP"
+	if got := resolveUploadName(meta); got != fallbackWant {
+		t.Fatalf("BHD movie fallback name = %q, want %q", got, fallbackWant)
 	}
 }
 
@@ -77,36 +83,39 @@ func TestResolveUploadNameAppliesBHDTVDBCollisionYearMatrix(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name        string
-		includeYear bool
-		want        string
+		name         string
+		includeYear  bool
+		want         string
+		fallbackWant string
 	}{
 		{
-			name: "unique omits series year",
-			want: "Example Series AKA Example Original S01E02 Example Episode 1080p NF WEB-DL DDP Atmos 5.1 H.265-GRP",
+			name:         "unique omits series year",
+			want:         "Example Series AKA Rei no Shirizu S01E02 Example Episode 1080p NF WEB-DL DDP Atmos 5.1 H.265-GRP",
+			fallbackWant: "Example Series AKA 例のシリーズ S01E02 Example Episode 1080p NF WEB-DL DDP Atmos 5.1 H.265-GRP",
 		},
 		{
-			name:        "collision includes series year after AKA",
-			includeYear: true,
-			want:        "Example Series AKA Example Original 2026 S01E02 Example Episode 1080p NF WEB-DL DDP Atmos 5.1 H.265-GRP",
+			name:         "collision includes series year after AKA",
+			includeYear:  true,
+			want:         "Example Series AKA Rei no Shirizu 2026 S01E02 Example Episode 1080p NF WEB-DL DDP Atmos 5.1 H.265-GRP",
+			fallbackWant: "Example Series AKA 例のシリーズ 2026 S01E02 Example Episode 1080p NF WEB-DL DDP Atmos 5.1 H.265-GRP",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			const sourceName = "Example Series 2026 AKA Example Original S01E02 Example Episode 1080p NF WEB-DL DD+ 5.1 Atmos H.265-GRP"
+			const sourceName = "Example Series 2026 AKA Rei no Shirizu S01E02 Example Episode 1080p NF WEB-DL DD+ 5.1 Atmos H.265-GRP"
 			meta := generatedBHDNameSubject(sourceName)
 			meta.Identity.Category = api.CanonicalCategoryTV
 			meta.Release = api.ReleaseInfo{
 				Category:   "TV",
 				Title:      "Example Series",
-				Alt:        "Example Original",
+				Alt:        "AKA Rei no Shirizu",
 				Year:       2026,
 				Resolution: "1080p",
 				Group:      "GRP",
 			}
 			meta.ProviderMetadata.TVDB = &api.TVDBMetadata{
-				Name:        "Example Original",
+				Name:        "例のシリーズ",
 				NameEnglish: "Example Series",
 				NameDisambiguation: api.TVDBNameDisambiguation{
 					CanonicalName: "Example Series",
@@ -123,6 +132,11 @@ func TestResolveUploadNameAppliesBHDTVDBCollisionYearMatrix(t *testing.T) {
 
 			if got := resolveUploadName(meta); got != test.want {
 				t.Fatalf("BHD TV name = %q, want %q", got, test.want)
+			}
+
+			meta.Release.Alt = ""
+			if got := resolveUploadName(meta); got != test.fallbackWant {
+				t.Fatalf("BHD TV fallback name = %q, want %q", got, test.fallbackWant)
 			}
 		})
 	}
@@ -230,8 +244,8 @@ func TestResolveUploadNameUsesBHDPolicyAndPreservesExactP2PNames(t *testing.T) {
 func TestBHDNamingPolicyVersion(t *testing.T) {
 	t.Parallel()
 
-	if got := New().ReleaseNamePolicy().ID; got != "standalone/bhd/v4" {
-		t.Fatalf("BHD naming policy ID = %q, want %q", got, "standalone/bhd/v4")
+	if got := New().ReleaseNamePolicy().ID; got != "standalone/bhd/v5" {
+		t.Fatalf("BHD naming policy ID = %q, want %q", got, "standalone/bhd/v5")
 	}
 }
 
