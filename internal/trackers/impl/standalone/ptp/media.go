@@ -45,7 +45,8 @@ func readTextFile(path string) (string, error) {
 }
 
 func buildMediaSection(meta api.UploadSubject, dbPath string) (string, error) {
-	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
+	discType := strings.ToUpper(strings.TrimSpace(meta.DiscType))
+	switch discType {
 	case "BDMV":
 		text, err := readBDSummary(meta, dbPath)
 		if err != nil {
@@ -60,9 +61,16 @@ func buildMediaSection(meta api.UploadSubject, dbPath string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if strings.TrimSpace(text) == "" {
+		text = strings.TrimSpace(text)
+		if vobText := strings.TrimSpace(meta.DVDVOBMediaInfoText); discType == "DVD" && vobText != "" {
+			if text != "" {
+				text += "\n\n"
+			}
+			text += vobText
+		}
+		if text == "" {
 			return "", nil
 		}
-		return "[mediainfo]" + strings.TrimSpace(text) + "[/mediainfo]", nil
+		return "[mediainfo]" + text + "[/mediainfo]", nil
 	}
 }
