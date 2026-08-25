@@ -106,6 +106,35 @@ func TestBuildReleaseNameDVDDiscDoesNotRepeatDVD(t *testing.T) {
 	}
 }
 
+func TestRebuildReleaseNameUsesPreparedDVDCapacityWithoutNameToken(t *testing.T) {
+	t.Parallel()
+
+	meta := preparationstate.State{
+		SourcePath: "Example Release 2026",
+		DiscType:   "DVD",
+		SourceSize: dvd5CapacityThreshold + 1,
+		Source:     "PAL DVD",
+		Type:       "DISC",
+		Release: api.ReleaseInfo{
+			Category: "MOVIE",
+			Type:     "DISC",
+			Title:    "Example Release",
+			Year:     2026,
+			Source:   "PAL DVD",
+		},
+	}
+	applyDVDCapacity(&meta)
+	RebuildReleaseName(&meta, api.NopLogger{})
+
+	const want = "Example Release 2026 PAL DVD9"
+	if meta.Release.Size != "DVD9" || meta.ReleaseNameNoTag != want {
+		t.Fatalf("size/name = %q/%q, want DVD9/%q", meta.Release.Size, meta.ReleaseNameNoTag, want)
+	}
+	if meta.GeneratedReleaseNames.IncludeEpisodeTitle.NameNoTag != want || meta.GeneratedReleaseNames.OmitEpisodeTitle.NameNoTag != want {
+		t.Fatalf("generated names = %#v, want both %q", meta.GeneratedReleaseNames, want)
+	}
+}
+
 func TestBuildReleaseNameMovieBareWebEncodeUsesWebDLNaming(t *testing.T) {
 	result := BuildReleaseName(api.ReleaseNameRequest{
 		Category:    "MOVIE",
