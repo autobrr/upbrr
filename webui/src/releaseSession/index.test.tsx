@@ -867,54 +867,62 @@ describe("useReleaseSession", () => {
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
 
-  it("resumes an accepted workflow operation by polling without browser events", async () => {
+  it("resumes an accepted workflow operation without exceeding one poll per second", async () => {
+    vi.useFakeTimers();
     window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", "workflow-active");
-    const startedAt = "2026-07-20T00:00:00Z";
-    const operation = (status: "queued" | "running" | "completed", sequence: number) =>
-      ({
-        id: "operation-active",
-        workflowId: "workflow-active",
-        revision: 2,
-        resultRevision: status === "completed" ? 3 : undefined,
-        sequence,
-        command: "check_duplicates",
-        operation: "duplicate_check",
-        phase: "duplicate_check",
-        status,
-        progress: status === "queued" ? 0 : status === "running" ? 50 : 100,
-        completed: status === "completed" ? 1 : 0,
-        total: 1,
-        message: status === "completed" ? "Operation complete." : "Checking tracker.",
-        startedAt,
-        updatedAt: startedAt,
-        completedAt: status === "completed" ? startedAt : undefined,
-      }) as const;
-    const current = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ...workflowCurrent("workflow-active", 2),
-        operation: operation("queued", 1),
-      })
-      .mockResolvedValueOnce({
-        ...workflowCurrent("workflow-active", 3),
-        operation: operation("completed", 3),
+    try {
+      const startedAt = "2026-07-20T00:00:00Z";
+      const operation = (status: "queued" | "running" | "completed", sequence: number) =>
+        ({
+          id: "operation-active",
+          workflowId: "workflow-active",
+          revision: 2,
+          resultRevision: status === "completed" ? 3 : undefined,
+          sequence,
+          command: "check_duplicates",
+          operation: "duplicate_check",
+          phase: "duplicate_check",
+          status,
+          progress: status === "queued" ? 0 : status === "running" ? 50 : 100,
+          completed: status === "completed" ? 1 : 0,
+          total: 1,
+          message: status === "completed" ? "Operation complete." : "Checking tracker.",
+          startedAt,
+          updatedAt: startedAt,
+          completedAt: status === "completed" ? startedAt : undefined,
+        }) as const;
+      const current = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ...workflowCurrent("workflow-active", 2),
+          operation: operation("queued", 1),
+        })
+        .mockResolvedValueOnce({
+          ...workflowCurrent("workflow-active", 3),
+          operation: operation("completed", 3),
+        });
+      const poll = vi
+        .fn()
+        .mockResolvedValueOnce(operation("running", 2))
+        .mockResolvedValueOnce(operation("completed", 3));
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ current, operation: poll }) })),
       });
-    const poll = vi
-      .fn()
-      .mockResolvedValueOnce(operation("running", 2))
-      .mockResolvedValueOnce(operation("completed", 3));
-    const { result, unmount } = renderHook(useReleaseSession, {
-      wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ current, operation: poll }) })),
-    });
 
-    await waitFor(() => expect(result.current.workflow.view.current?.workflow.revision).toBe(3), {
-      timeout: 3000,
-    });
-    expect(poll).toHaveBeenCalledTimes(2);
-    expect(result.current.workflow.view.current?.operation?.status).toBe("completed");
+      await act(async () => vi.advanceTimersByTimeAsync(999));
+      expect(poll).not.toHaveBeenCalled();
+      await act(async () => vi.advanceTimersByTimeAsync(1));
+      expect(poll).toHaveBeenCalledOnce();
+      await act(async () => vi.advanceTimersByTimeAsync(1000));
+      expect(poll).toHaveBeenCalledTimes(2);
+      expect(result.current.workflow.view.current?.workflow.revision).toBe(3);
+      expect(result.current.workflow.view.current?.operation?.status).toBe("completed");
 
-    unmount();
-    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+      unmount();
+    } finally {
+      window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+      vi.useRealTimers();
+    }
   });
 
   it("surfaces the safe failure retained by a terminal workflow operation", async () => {
@@ -962,7 +970,9 @@ describe("useReleaseSession", () => {
       wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ current, operation }) })),
     });
 
-    await waitFor(() => expect(result.current.workflow.view.status).toBe("error"));
+    await waitFor(() => expect(result.current.workflow.view.status).toBe("error"), {
+      timeout: 3000,
+    });
     expect(result.current.workflow.view.error).toBe(
       "The source path is unavailable. Recovery: edit input.",
     );
