@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -134,6 +135,71 @@ func TestExportReusesExistingArtifactsWhenConformanceOK(t *testing.T) {
 	wantCompleteName := "Complete name                            : " + filepath.Base(targetPath)
 	if !strings.Contains(text, wantCompleteName) {
 		t.Fatalf("expected cached complete name %q, got %q", wantCompleteName, text)
+	}
+	tempMatches, err := filepath.Glob(filepath.Join(tmpDir, "mediainfo.txt.tmp-*"))
+	if err != nil {
+		t.Fatalf("glob temp files: %v", err)
+	}
+	if len(tempMatches) != 0 {
+		t.Fatalf("expected atomic cache replacement to remove temp files, got %v", tempMatches)
+	}
+}
+
+func TestExportRestrictsUnchangedCachedTextPermissions(t *testing.T) {
+	tmpRoot := t.TempDir()
+	targetDir := t.TempDir()
+	targetPath := filepath.Join(targetDir, "Example.Release.2026.mkv")
+	if err := os.WriteFile(targetPath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	release := api.ReleaseInfo{Title: "Example Release", Year: 2026}
+	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, preparationstate.State{Release: release}, targetPath)
+	if err != nil {
+		t.Fatalf("temp dir: %v", err)
+	}
+
+	textPath := filepath.Join(tmpDir, "mediainfo.txt")
+	jsonPath := filepath.Join(tmpDir, "MediaInfo.json")
+	cleanText := "Complete name : " + filepath.Base(targetPath)
+	if err := os.WriteFile(textPath, []byte(cleanText), 0o600); err != nil {
+		t.Fatalf("write text: %v", err)
+	}
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(textPath, 0o644); err != nil {
+			t.Fatalf("relax text permissions: %v", err)
+		}
+	}
+	jsonPayload := "{\"media\":{\"track\":[{\"@type\":\"General\",\"extra\":{\"ConformanceErrors\":{}}}]}}"
+	if err := os.WriteFile(jsonPath, []byte(jsonPayload), 0o600); err != nil {
+		t.Fatalf("write json: %v", err)
+	}
+
+	service := NewService(api.NopLogger{}, panicAnalyzer{t: t})
+	result, err := service.Export(context.Background(), Request{
+		SourcePath: targetPath,
+		VideoPath:  targetPath,
+		TempRoot:   tmpRoot,
+		Release:    release,
+	})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	textData, err := os.ReadFile(result.TextPath)
+	if err != nil {
+		t.Fatalf("read reused text: %v", err)
+	}
+	if string(textData) != cleanText {
+		t.Fatalf("expected unchanged cached text %q, got %q", cleanText, textData)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(result.TextPath)
+		if err != nil {
+			t.Fatalf("stat reused text: %v", err)
+		}
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Fatalf("expected reused text mode 0600, got %#o", got)
+		}
 	}
 }
 

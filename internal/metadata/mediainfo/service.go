@@ -119,9 +119,12 @@ func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 			}
 			cleanText := cleanMediaInfoText(string(textOutput), target.AnalyzePath)
 			if cleanText != string(textOutput) {
-				if err := os.WriteFile(textPath, []byte(cleanText), 0o600); err != nil {
+				if err := writeMediaInfoText(textPath, []byte(cleanText)); err != nil {
 					return Result{}, fmt.Errorf("mediainfo: write cached text: %w", err)
 				}
+			}
+			if err := os.Chmod(textPath, 0o600); err != nil {
+				return Result{}, fmt.Errorf("mediainfo: chmod cached text: %w", err)
 			}
 			vobText, vobJSON, err := analyzeVOB(ctx, s.analyzer, target.VOBPath)
 			if err != nil {
@@ -238,6 +241,43 @@ func cleanMediaInfoText(text, target string) string {
 		filtered = append(filtered, line)
 	}
 	return strings.Join(filtered, "\n")
+}
+
+// writeMediaInfoText replaces path from a synced same-directory temp file as a
+// single filesystem update where the platform supports it.
+func writeMediaInfoText(path string, data []byte) error {
+	tmpFile, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	removeTemp := true
+	defer func() {
+		if removeTemp {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	if err := tmpFile.Chmod(0o600); err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("chmod temp file: %w", err)
+	}
+	if _, err := tmpFile.Write(data); err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("write temp file: %w", err)
+	}
+	if err := tmpFile.Sync(); err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("sync temp file: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("close temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("replace file: %w", err)
+	}
+	removeTemp = false
+	return nil
 }
 
 func selectTarget(ctx context.Context, req Request) (targetSelection, error) {
