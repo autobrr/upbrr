@@ -109,7 +109,7 @@ func TestBuildMediaSectionIncludesDVDIFOAndVOBMediaInfo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build media section: %v", err)
 	}
-	want := "[mediainfo]General\nFormat : DVD Video\n\nGeneral\nFormat : MPEG-PS[/mediainfo]"
+	want := "[mediainfo]General\nFormat : DVD Video[/mediainfo]\n\n[mediainfo]General\nFormat : MPEG-PS[/mediainfo]"
 	if got != want {
 		t.Fatalf("media section = %q, want %q", got, want)
 	}

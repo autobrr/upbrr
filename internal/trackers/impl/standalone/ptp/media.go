@@ -62,15 +62,13 @@ func buildMediaSection(meta api.UploadSubject, dbPath string) (string, error) {
 			return "", err
 		}
 		text = strings.TrimSpace(text)
+		var sections []string
+		if text != "" {
+			sections = append(sections, "[mediainfo]"+text+"[/mediainfo]")
+		}
 		if vobText := strings.TrimSpace(meta.DVDVOBMediaInfoText); discType == "DVD" && vobText != "" {
-			if text != "" {
-				text += "\n\n"
-			}
-			text += vobText
+			sections = append(sections, "[mediainfo]"+vobText+"[/mediainfo]")
 		}
-		if text == "" {
-			return "", nil
-		}
-		return "[mediainfo]" + text + "[/mediainfo]", nil
+		return strings.Join(sections, "\n\n"), nil
 	}
 }
