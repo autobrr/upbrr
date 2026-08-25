@@ -693,6 +693,8 @@ func TestSearchPathedTorrentsQbitForceRecheckAfterMetadataValidation(t *testing.
 					ContentPath: sourcePath,
 					Progress:    1,
 					AmountLeft:  0,
+					Size:        5 * 1024 * 1024,
+					TotalSize:   5 * 1024 * 1024,
 					State:       qbittorrent.TorrentStateStalledUp,
 					Tracker:     "https://blutopia.cc/announce/redacted",
 					Comment:     "https://blutopia.cc/torrents/7777",
