@@ -72,7 +72,7 @@ type Service struct {
 
 type repository interface {
 	api.ScreenshotLifecycleRepository
-	LoadMediaAssetSnapshot(context.Context, string) (api.MediaAssetSnapshot, error)
+	LoadMediaAssetSnapshot(context.Context, api.PreparedMediaBinding) (api.MediaAssetSnapshot, error)
 }
 
 // NewService returns a DVD menu service that shares the screenshot FFmpeg
@@ -113,13 +113,22 @@ func newService(
 	}
 }
 
-// Capture renders and persists up to maxItems automatic menu images for one
-// prepared DVD. It atomically replaces earlier automatic captures, preserves
-// manual menus and normal screenshots, and reports partial coverage in result.
+// Capture renders and persists up to maxItems automatic menu images across all
+// prepared DVDs. It preserves collection-wide coverage before adding another
+// image from any disc.
 func (s *Service) Capture(ctx context.Context, meta api.DVDMenuSubject, maxItems int) (api.DVDMenuCaptureResult, error) {
-	result := api.DVDMenuCaptureResult{SourcePath: meta.SourcePath, MaxItems: maxItems}
+	result := api.DVDMenuCaptureResult{
+		SourcePath:       meta.SourcePath,
+		SelectedLanguage: defaultLanguage,
+		MaxItems:         maxItems,
+	}
 	if s != nil && s.logger != nil {
-		s.logger.Debugf("DVD menus: capture requested disc_type=%s max_items=%d", strings.ToUpper(strings.TrimSpace(meta.DiscType)), maxItems)
+		s.logger.Debugf(
+			"DVD menus: capture requested disc_type=%s discs=%d max_items=%d",
+			strings.ToUpper(strings.TrimSpace(meta.DiscType)),
+			len(dvdMenuDiscs(meta)),
+			maxItems,
+		)
 	}
 	api.ReportDVDMenuProgress(ctx, api.DVDMenuProgressUpdate{Phase: "preflight", Message: "Checking DVD menu capture support."})
 	if err := ctx.Err(); err != nil {
@@ -131,42 +140,48 @@ func (s *Service) Capture(ctx context.Context, meta api.DVDMenuSubject, maxItems
 	if !strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
 		return result, errors.New("DVD menus: source is not a DVD")
 	}
-	if strings.TrimSpace(meta.SourcePath) == "" || maxItems < 1 || maxItems > graph.MaxMenuItems {
+	discs := dvdMenuDiscs(meta)
+	if !meta.MediaBinding.Valid() || len(discs) == 0 || maxItems < 1 || maxItems > graph.MaxMenuItems {
 		return result, internalerrors.ErrInvalidInput
 	}
-
-	videoTS, err := resolveVideoTSDirectory(meta.SourcePath)
-	if err != nil {
-		return result, err
-	}
-	s.logger.Debugf("DVD menus: source ready input=extracted_video_ts")
 	executable, capability, info, err := s.resolveCapability(ctx)
 	result.Engine = info
 	if err != nil {
-		s.logger.Warnf("DVD menus: capture failed stage=capability missing_options=%d", len(info.MissingFFmpegOptions))
 		return result, err
 	}
 
 	s.logger.Infof(
-		"DVD menus: capture started language=%s region=%d max_items=%d engine_version=%s ffmpeg_dvdvideo=%t",
+		"DVD menus: capture started discs=%d language=%s region=%d max_items=%d engine_version=%s ffmpeg_dvdvideo=%t",
+		len(discs),
 		defaultLanguage,
 		0,
 		maxItems,
 		info.EngineVersion,
 		info.FFmpegDVDVideo,
 	)
-	lastProgress := engine.Progress{}
-	hasProgress := false
-	engineResult, err := s.captureDirectory(ctx, videoTS, s.runner, executable, engine.Options{
-		Traversal:      graph.Options{Language: defaultLanguage, MaxItems: maxItems},
-		ProcessTimeout: engine.DefaultProcessTimeout,
-		Deinterlace:    true,
-		Capability:     &capability,
-		Logger:         s.logger,
-		Progress: func(update engine.Progress) {
-			if !hasProgress || update != lastProgress {
+	capturedDiscs := make([]dvdMenuDiscResult, 0, len(discs))
+	for _, disc := range discs {
+		if err := ctx.Err(); err != nil {
+			return result, fmt.Errorf("DVD menus: capture canceled: %w", err)
+		}
+		videoTS, resolveErr := resolveVideoTSDirectory(disc.Root)
+		if resolveErr != nil {
+			result.Partial = true
+			result.Warnings = appendWarning(result.Warnings, uncoveredDVDMenuWarning(disc, "disc_source_unavailable"))
+			s.logger.Warnf("DVD menus: disc unavailable disc_id=%s", disc.ID)
+			continue
+		}
+		s.logger.Debugf("DVD menus: disc capture started disc_id=%s", disc.ID)
+		engineResult, captureErr := s.captureDirectory(ctx, videoTS, s.runner, executable, engine.Options{
+			Traversal:      graph.Options{Language: defaultLanguage, MaxItems: maxItems},
+			ProcessTimeout: engine.DefaultProcessTimeout,
+			Deinterlace:    true,
+			Capability:     &capability,
+			Logger:         s.logger,
+			Progress: func(update engine.Progress) {
 				s.logger.Debugf(
-					"DVD menus: progress phase=%s inventoried=%d states=%d buttons=%d captured=%d warnings=%d",
+					"DVD menus: progress disc_id=%s phase=%s inventoried=%d states=%d buttons=%d captured=%d warnings=%d",
+					disc.ID,
 					update.Phase,
 					update.Inventoried,
 					update.VisitedStates,
@@ -174,56 +189,82 @@ func (s *Service) Capture(ctx context.Context, meta api.DVDMenuSubject, maxItems
 					update.Captured,
 					update.Warnings,
 				)
-				lastProgress = update
-				hasProgress = true
-			}
-			api.ReportDVDMenuProgress(ctx, api.DVDMenuProgressUpdate{
-				Phase:           update.Phase,
-				Message:         dvdMenuProgressMessage(update.Phase),
-				DiscoveredMenus: update.Inventoried,
-				VisitedStates:   update.VisitedStates,
-				VisitedButtons:  update.VisitedButtons,
-				CapturedCount:   update.Captured,
-				WarningCount:    update.Warnings,
+				api.ReportDVDMenuProgress(ctx, api.DVDMenuProgressUpdate{
+					Phase:           update.Phase,
+					Message:         dvdMenuProgressMessage(update.Phase),
+					DiscoveredMenus: result.DiscoveredMenus + update.Inventoried,
+					VisitedStates:   result.VisitedStates + update.VisitedStates,
+					VisitedButtons:  result.VisitedButtons + update.VisitedButtons,
+					CapturedCount:   update.Captured,
+					WarningCount:    len(result.Warnings) + update.Warnings,
+				})
+			},
+		})
+		result.DiscoveredMenus += engineResult.Inventoried
+		result.VisitedStates += engineResult.VisitedStates
+		result.VisitedButtons += engineResult.VisitedButtons
+		result.Truncated = result.Truncated || engineResult.Truncated
+		result.Partial = result.Partial || engineResult.Partial
+		for _, warning := range engineResult.Warnings {
+			result.Warnings = appendWarning(result.Warnings, api.DVDMenuCaptureWarning{
+				DiscID:   disc.ID,
+				DiscName: disc.Name,
+				Code:     warning.Code,
+				Message:  warning.Message,
 			})
-		},
-	})
-	result = mapEngineResult(meta.SourcePath, maxItems, engineResult, info)
-	if err != nil {
-		s.logger.Warnf(
-			"DVD menus: capture failed stage=engine captured=%d discovered=%d warnings=%d",
-			len(engineResult.Captures),
-			engineResult.Inventoried,
-			len(engineResult.Warnings),
-		)
-		return result, fmt.Errorf("DVD menus: %w", err)
+			s.logger.Debugf("DVD menus: warning recorded disc_id=%s code=%s", disc.ID, warning.Code)
+		}
+		if hasStructuralDVDMenuCapture(engineResult.Captures) {
+			result.Warnings = appendWarning(result.Warnings, api.DVDMenuCaptureWarning{
+				DiscID:   disc.ID,
+				DiscName: disc.Name,
+				Code:     "structural_discovery",
+				Message:  "Some menu screens were found through structural inventory rather than reachable navigation.",
+			})
+		}
+		if captureErr != nil {
+			result.Partial = true
+			result.Warnings = appendWarning(result.Warnings, uncoveredDVDMenuWarning(disc, "disc_capture_failed"))
+		}
+		if len(engineResult.Captures) == 0 {
+			result.Partial = true
+			result.Warnings = appendWarning(result.Warnings, uncoveredDVDMenuWarning(disc, "disc_no_menus"))
+			continue
+		}
+		capturedDiscs = append(capturedDiscs, dvdMenuDiscResult{disc: disc, result: engineResult})
+		s.logger.Debugf("DVD menus: disc capture complete disc_id=%s captured=%d", disc.ID, len(engineResult.Captures))
 	}
-	if len(engineResult.Captures) == 0 {
-		s.logger.Warnf("DVD menus: capture failed stage=render reason=no_frames")
+
+	selected := allocateDVDMenuCaptures(capturedDiscs, maxItems)
+	if len(selected) == 0 {
 		return result, errors.New("DVD menus: no menu images captured")
 	}
-	s.logger.Debugf(
-		"DVD menus: engine complete discovered=%d states=%d buttons=%d selected=%d captured=%d partial=%t truncated=%t warnings=%d",
-		result.DiscoveredMenus,
-		result.VisitedStates,
-		result.VisitedButtons,
-		engineResult.Selected,
-		len(engineResult.Captures),
-		result.Partial,
-		result.Truncated,
-		len(result.Warnings),
-	)
-	for _, warning := range result.Warnings {
-		s.logger.Debugf("DVD menus: warning recorded code=%s detail=%q", warning.Code, dvdMenuWarningDetail(warning.Code))
+	covered := make(map[string]struct{}, len(capturedDiscs))
+	for _, capture := range selected {
+		covered[capture.disc.ID] = struct{}{}
 	}
-	s.logger.Debugf("DVD menus: persistence started images=%d", len(engineResult.Captures))
+	for _, disc := range discs {
+		if _, ok := covered[disc.ID]; ok {
+			continue
+		}
+		result.Partial = true
+		result.Warnings = appendWarning(result.Warnings, uncoveredDVDMenuWarning(disc, "disc_uncovered"))
+	}
+	totalAvailable := 0
+	for _, disc := range capturedDiscs {
+		totalAvailable += len(disc.result.Captures)
+	}
+	result.Truncated = result.Truncated || totalAvailable > len(selected)
+	result.Complete = !result.Partial && !result.Truncated
+	s.logger.Debugf("DVD menus: persistence started images=%d", len(selected))
+
 	api.ReportDVDMenuProgress(ctx, api.DVDMenuProgressUpdate{
 		Phase:           "persisting",
 		Message:         "Saving captured DVD menu images.",
 		DiscoveredMenus: result.DiscoveredMenus,
 		VisitedStates:   result.VisitedStates,
 		VisitedButtons:  result.VisitedButtons,
-		CapturedCount:   len(engineResult.Captures),
+		CapturedCount:   len(selected),
 		WarningCount:    len(result.Warnings),
 	})
 
@@ -231,14 +272,14 @@ func (s *Service) Capture(ctx context.Context, meta api.DVDMenuSubject, maxItems
 	if err != nil {
 		return result, fmt.Errorf("DVD menus: %w", err)
 	}
-	images, records, selections, created, err := writeCaptureImages(ctx, tmpDir, base, meta.SourcePath, engineResult.Captures)
+	images, records, selections, created, err := writeCaptureImages(ctx, tmpDir, base, selected)
 	if err != nil {
 		removeCreatedFiles(created)
 		s.logger.Warnf("DVD menus: persistence failed stage=write created=%d", len(created))
 		return result, err
 	}
 	s.logger.Debugf("DVD menus: persistence files ready created=%d", len(created))
-	replaced, err := s.repo.ReplaceDVDMenuScreenshots(ctx, meta.SourcePath, records, selections)
+	replaced, err := s.repo.ReplaceDVDMenuScreenshots(ctx, meta.MediaBinding, records, selections)
 	if err != nil {
 		removeCreatedFiles(created)
 		s.logger.Warnf("DVD menus: persistence failed stage=database created=%d", len(created))
@@ -301,6 +342,65 @@ func (s *Service) Capture(ctx context.Context, meta api.DVDMenuSubject, maxItems
 	return result, nil
 }
 
+func hasStructuralDVDMenuCapture(captures []engine.Capture) bool {
+	for _, capture := range captures {
+		if capture.Discovery == graph.DiscoveryStructural {
+			return true
+		}
+	}
+	return false
+}
+
+type dvdMenuDiscResult struct {
+	disc   api.DVDMenuDiscSubject
+	result engine.Result
+}
+
+type dvdMenuSelectedCapture struct {
+	disc    api.DVDMenuDiscSubject
+	capture engine.Capture
+}
+
+func dvdMenuDiscs(meta api.DVDMenuSubject) []api.DVDMenuDiscSubject {
+	if len(meta.Discs) > 0 {
+		return append([]api.DVDMenuDiscSubject(nil), meta.Discs...)
+	}
+	if strings.TrimSpace(meta.SourcePath) == "" {
+		return nil
+	}
+	return []api.DVDMenuDiscSubject{{Root: meta.SourcePath}}
+}
+
+func allocateDVDMenuCaptures(discs []dvdMenuDiscResult, maxItems int) []dvdMenuSelectedCapture {
+	selected := make([]dvdMenuSelectedCapture, 0, maxItems)
+	for captureIndex := 0; len(selected) < maxItems; captureIndex++ {
+		added := false
+		for _, disc := range discs {
+			if captureIndex >= len(disc.result.Captures) {
+				continue
+			}
+			selected = append(selected, dvdMenuSelectedCapture{disc: disc.disc, capture: disc.result.Captures[captureIndex]})
+			added = true
+			if len(selected) == maxItems {
+				break
+			}
+		}
+		if !added {
+			break
+		}
+	}
+	return selected
+}
+
+func uncoveredDVDMenuWarning(disc api.DVDMenuDiscSubject, code string) api.DVDMenuCaptureWarning {
+	return api.DVDMenuCaptureWarning{
+		DiscID:   disc.ID,
+		DiscName: disc.Name,
+		Code:     code,
+		Message:  "DVD menu coverage is unavailable for this disc.",
+	}
+}
+
 func dvdMenuProgressMessage(phase string) string {
 	switch phase {
 	case "discovering":
@@ -327,7 +427,10 @@ func (s *Service) List(ctx context.Context, meta api.DVDMenuSubject) ([]api.Scre
 		return nil, internalerrors.ErrInvalidInput
 	}
 
-	snapshot, err := s.repo.LoadMediaAssetSnapshot(ctx, meta.SourcePath)
+	if !meta.MediaBinding.Valid() {
+		return nil, internalerrors.ErrInvalidInput
+	}
+	snapshot, err := s.repo.LoadMediaAssetSnapshot(ctx, meta.MediaBinding)
 	if err != nil {
 		return nil, fmt.Errorf("DVD menus: load media assets: %w", err)
 	}
@@ -344,6 +447,10 @@ func (s *Service) List(ctx context.Context, meta api.DVDMenuSubject) ([]api.Scre
 	}
 
 	images := make([]api.ScreenshotImage, 0)
+	discNames := make(map[string]string, len(meta.Discs))
+	for _, disc := range meta.Discs {
+		discNames[disc.ID] = disc.Name
+	}
 	for _, selection := range snapshot.FinalSelections {
 		if !api.IsDiscMenuSelectionSource(selection.Source) {
 			continue
@@ -354,6 +461,8 @@ func (s *Service) List(ctx context.Context, meta api.DVDMenuSubject) ([]api.Scre
 		}
 		imageValue, ok := screenshotImage(pathValue, len(images), recordByPath[pathValue], uploadByPath[pathValue])
 		if ok {
+			imageValue.DiscID = selection.DiscID
+			imageValue.DiscName = discNames[selection.DiscID]
 			images = append(images, imageValue)
 		}
 	}
@@ -375,7 +484,7 @@ func (s *Service) Delete(ctx context.Context, meta api.DVDMenuSubject, imagePath
 		return errors.New("DVD menus: screenshot lifecycle repository not configured")
 	}
 	trimmedPath := strings.TrimSpace(imagePath)
-	if strings.TrimSpace(meta.SourcePath) == "" || trimmedPath == "" {
+	if !meta.MediaBinding.Valid() || trimmedPath == "" {
 		return internalerrors.ErrInvalidInput
 	}
 	tmpDir, _, err := paths.ReleaseTempDirFor(s.tmpRoot, meta.SourcePath, api.ReleaseInfo{})
@@ -401,7 +510,7 @@ func (s *Service) Delete(ctx context.Context, meta api.DVDMenuSubject, imagePath
 		return fmt.Errorf("DVD menus: inspect local image: %w", statErr)
 	}
 
-	deleted, err := s.repo.DeleteDiscMenuScreenshot(ctx, meta.SourcePath, trimmedPath)
+	deleted, err := s.repo.DeleteDiscMenuScreenshot(ctx, meta.MediaBinding, trimmedPath)
 	if err != nil {
 		if renamed {
 			if restoreErr := os.Rename(pendingPath, trimmedPath); restoreErr != nil {
@@ -425,7 +534,7 @@ func (s *Service) Delete(ctx context.Context, meta api.DVDMenuSubject, imagePath
 			if restoreErr := os.Rename(pendingPath, trimmedPath); restoreErr != nil {
 				return fmt.Errorf("DVD menus: remove staged local image and restore file: %w", errors.Join(removeErr, restoreErr))
 			}
-			if restoreErr := s.repo.RestoreDiscMenuScreenshot(context.WithoutCancel(ctx), meta.SourcePath, deleted); restoreErr != nil {
+			if restoreErr := s.repo.RestoreDiscMenuScreenshot(context.WithoutCancel(ctx), meta.MediaBinding, deleted); restoreErr != nil {
 				return fmt.Errorf("DVD menus: remove staged local image and restore records: %w", errors.Join(removeErr, restoreErr))
 			}
 			return fmt.Errorf("DVD menus: remove staged local image; deletion rolled back: %w", removeErr)
@@ -496,50 +605,6 @@ func (s *Service) resolveCapability(ctx context.Context) (string, render.Capabil
 	return executable, capability, engineInfo(capability), nil
 }
 
-func dvdMenuWarningDetail(code string) string {
-	switch code {
-	case "depth_limit":
-		return "menu branch depth limit reached"
-	case "state_limit":
-		return "menu state limit reached"
-	case "pre_command":
-		return "menu pre-command failed"
-	case "unsupported_pre_link":
-		return "menu pre-command target was not resolved"
-	case "live_state":
-		return "menu NAV/SPU state could not be resolved"
-	case "button_limit":
-		return "menu button limit reached"
-	case "button_command":
-		return "menu button command failed"
-	case "unsupported_button_link":
-		return "menu button target was not resolved"
-	case "post_command":
-		return "menu post-command failed"
-	case "unsupported_post_link":
-		return "menu post-command target was not resolved"
-	case "structural_only":
-		return "visible menu was not reached through navigation"
-	case "structural_state":
-		return "structural menu candidate could not be classified"
-	case "nav_scan_limit":
-		return "menu NAV/SPU sector scan limit reached"
-	case "frame_decode":
-		return "inventory-selected menu frame could not be decoded"
-	case "spu_unavailable":
-		return "menu subpicture state was not available"
-	case "highlight_unavailable":
-		return "default menu highlight state was not available"
-	case "black_frame":
-		return "decoded menu frame was black"
-	case "structural_discovery":
-		return "some menu screens were found through structural inventory rather than reachable navigation"
-	case "cleanup_failed":
-		return "some replaced local DVD menu files could not be removed"
-	}
-	return "DVD menu coverage warning"
-}
-
 func inspectExecutable(executable string) (executableIdentity, error) {
 	absPath, err := filepath.Abs(strings.TrimSpace(executable))
 	if err != nil {
@@ -594,40 +659,9 @@ func missingFFmpegOptions(err error) []string {
 	return missing
 }
 
-func mapEngineResult(sourcePath string, maxItems int, source engine.Result, info api.DVDMenuEngineInfo) api.DVDMenuCaptureResult {
-	result := api.DVDMenuCaptureResult{
-		SourcePath:       sourcePath,
-		SelectedLanguage: defaultLanguage,
-		DiscoveredMenus:  source.Inventoried,
-		VisitedStates:    source.VisitedStates,
-		VisitedButtons:   source.VisitedButtons,
-		MaxItems:         maxItems,
-		Complete:         source.Complete,
-		Partial:          source.Partial,
-		Truncated:        source.Truncated,
-		Engine:           info,
-	}
-	structural := false
-	for _, capture := range source.Captures {
-		if capture.Discovery == graph.DiscoveryStructural {
-			structural = true
-		}
-	}
-	for _, warning := range source.Warnings {
-		result.Warnings = appendWarning(result.Warnings, api.DVDMenuCaptureWarning{Code: warning.Code, Message: warning.Message})
-	}
-	if structural {
-		result.Warnings = appendWarning(result.Warnings, api.DVDMenuCaptureWarning{
-			Code:    "structural_discovery",
-			Message: "Some menu screens were found through structural inventory rather than reachable navigation.",
-		})
-	}
-	return result
-}
-
 func appendWarning(warnings []api.DVDMenuCaptureWarning, warning api.DVDMenuCaptureWarning) []api.DVDMenuCaptureWarning {
 	for _, existing := range warnings {
-		if existing.Code == warning.Code {
+		if existing.Code == warning.Code && existing.DiscID == warning.DiscID {
 			return warnings
 		}
 	}
@@ -640,22 +674,29 @@ func writeCaptureImages(
 	ctx context.Context,
 	tmpDir string,
 	base string,
-	sourcePath string,
-	captures []engine.Capture,
+	captures []dvdMenuSelectedCapture,
 ) ([]api.DVDMenuCaptureImage, []api.Screenshot, []api.ScreenshotFinalSelection, []string, error) {
 	stamp := time.Now().UTC()
 	images := make([]api.DVDMenuCaptureImage, 0, len(captures))
 	records := make([]api.Screenshot, 0, len(captures))
 	selections := make([]api.ScreenshotFinalSelection, 0, len(captures))
 	created := make([]string, 0, len(captures))
-	for index, capture := range captures {
+	for index, selected := range captures {
+		capture := selected.capture
 		if err := ctx.Err(); err != nil {
 			return nil, nil, nil, created, fmt.Errorf("DVD menus: write capture canceled: %w", err)
 		}
 		if capture.Image == nil || capture.Image.Bounds().Empty() {
 			return nil, nil, nil, created, errors.New("DVD menus: capture image is empty")
 		}
-		finalPath := filepath.Join(tmpDir, fmt.Sprintf("%s-dvd-menu-%02d-%d.png", base, index+1, stamp.UnixNano()))
+		discID := strings.TrimSpace(selected.disc.ID)
+		if discID == "" {
+			discID = "single"
+		}
+		finalPath := filepath.Join(
+			tmpDir,
+			fmt.Sprintf("%s-disc-%s-dvd-menu-%02d-%d.png", base, safeDVDMenuFilenameSegment(discID), index+1, stamp.UnixNano()),
+		)
 		partialPath := finalPath + ".partial"
 		file, err := os.OpenFile(partialPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if err != nil {
@@ -684,6 +725,8 @@ func writeCaptureImages(
 		discovery := api.DVDMenuDiscovery(capture.Discovery)
 		images = append(images, api.DVDMenuCaptureImage{
 			ScreenshotImage: api.ScreenshotImage{
+				DiscID:    selected.disc.ID,
+				DiscName:  selected.disc.Name,
 				Index:     index,
 				Path:      finalPath,
 				Purpose:   api.ScreenshotPurposeMenu,
@@ -694,7 +737,7 @@ func writeCaptureImages(
 			Discovery: discovery,
 		})
 		records = append(records, api.Screenshot{
-			SourcePath:  sourcePath,
+			DiscID:      selected.disc.ID,
 			ImagePath:   finalPath,
 			FrameNumber: index,
 			Width:       bounds.Dx(),
@@ -703,7 +746,7 @@ func writeCaptureImages(
 			CapturedAt:  stamp,
 		})
 		selections = append(selections, api.ScreenshotFinalSelection{
-			SourcePath: sourcePath,
+			DiscID:     selected.disc.ID,
 			ImagePath:  finalPath,
 			Order:      index,
 			Source:     api.ScreenshotSelectionSourceDVDMenu,
@@ -711,6 +754,17 @@ func writeCaptureImages(
 		})
 	}
 	return images, records, selections, created, nil
+}
+
+func safeDVDMenuFilenameSegment(value string) string {
+	return strings.Map(func(char rune) rune {
+		switch {
+		case char >= 'a' && char <= 'z', char >= 'A' && char <= 'Z', char >= '0' && char <= '9', char == '-', char == '_':
+			return char
+		default:
+			return '_'
+		}
+	}, value)
 }
 
 func removeCreatedFiles(paths []string) {

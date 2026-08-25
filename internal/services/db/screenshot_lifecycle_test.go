@@ -29,13 +29,14 @@ func TestScreenshotLifecyclePreservesCategoriesAndCleansReferences(t *testing.T)
 	ctx := context.Background()
 	root := t.TempDir()
 	sourcePath := filepath.Join(root, "Example.Release.2026.DVD-GRP")
+	binding := testPreparedMediaBinding(sourcePath)
 	autoOld := filepath.Join(root, "auto-old.png")
 	manualOld := filepath.Join(root, "manual-old.png")
 	normalOld := filepath.Join(root, "normal-old.png")
 	normalNew := filepath.Join(root, "normal-new.png")
 	now := time.Now().UTC()
 
-	if err := repo.SaveScreenshot(ctx, api.Screenshot{
+	if err := repo.SaveScreenshot(ctx, binding, api.Screenshot{
 		SourcePath: sourcePath,
 		ImagePath:  autoOld,
 		Purpose:    api.ScreenshotPurposeMenu,
@@ -43,7 +44,7 @@ func TestScreenshotLifecyclePreservesCategoriesAndCleansReferences(t *testing.T)
 	}); err != nil {
 		t.Fatalf("save old auto screenshot: %v", err)
 	}
-	if err := repo.SaveScreenshot(ctx, api.Screenshot{
+	if err := repo.SaveScreenshot(ctx, binding, api.Screenshot{
 		SourcePath: sourcePath,
 		ImagePath:  manualOld,
 		Purpose:    api.ScreenshotPurposeMenu,
@@ -51,7 +52,7 @@ func TestScreenshotLifecyclePreservesCategoriesAndCleansReferences(t *testing.T)
 	}); err != nil {
 		t.Fatalf("save old manual screenshot: %v", err)
 	}
-	if err := repo.SaveFinalSelections(ctx, sourcePath, []api.ScreenshotFinalSelection{
+	if err := repo.SaveFinalSelections(ctx, binding, []api.ScreenshotFinalSelection{
 		{
 			SourcePath: sourcePath,
 			ImagePath:  normalOld,
@@ -77,7 +78,7 @@ func TestScreenshotLifecyclePreservesCategoriesAndCleansReferences(t *testing.T)
 		t.Fatalf("seed final selections: %v", err)
 	}
 
-	if err := repo.ReplaceNormalFinalSelections(ctx, sourcePath, []api.ScreenshotFinalSelection{
+	if err := repo.ReplaceNormalFinalSelections(ctx, binding, []api.ScreenshotFinalSelection{
 		{
 			SourcePath: sourcePath,
 			ImagePath:  normalNew,
@@ -91,7 +92,7 @@ func TestScreenshotLifecyclePreservesCategoriesAndCleansReferences(t *testing.T)
 	assertFinalSelectionPaths(t, repo, sourcePath, []string{autoOld, manualOld, normalNew})
 
 	manualNew := filepath.Join(root, "manual-new.png")
-	if err := repo.AppendManualMenuScreenshots(ctx, sourcePath,
+	if err := repo.AppendManualMenuScreenshots(ctx, binding,
 		[]api.Screenshot{{
 			SourcePath: sourcePath,
 			ImagePath:  manualNew,
@@ -109,7 +110,7 @@ func TestScreenshotLifecyclePreservesCategoriesAndCleansReferences(t *testing.T)
 	}
 	assertFinalSelectionPaths(t, repo, sourcePath, []string{autoOld, manualOld, manualNew, normalNew})
 
-	if err := repo.SaveUploadedImages(ctx, sourcePath, "example-host", []api.UploadedImageLink{{
+	if err := repo.SaveUploadedImages(ctx, binding, "example-host", []api.UploadedImageLink{{
 		SourcePath: sourcePath,
 		ImagePath:  autoOld,
 		Host:       "example-host",
@@ -119,7 +120,7 @@ func TestScreenshotLifecyclePreservesCategoriesAndCleansReferences(t *testing.T)
 	}}); err != nil {
 		t.Fatalf("save old auto upload: %v", err)
 	}
-	if err := repo.ReplaceScreenshotSlots(ctx, sourcePath, []api.ScreenshotSlot{{
+	if err := repo.ReplaceScreenshotSlots(ctx, binding, []api.ScreenshotSlot{{
 		SourcePath: sourcePath,
 		SlotOrder:  0,
 		ImagePath:  autoOld,
@@ -135,7 +136,7 @@ func TestScreenshotLifecyclePreservesCategoriesAndCleansReferences(t *testing.T)
 	}
 
 	autoNew := filepath.Join(root, "auto-new.png")
-	replaced, err := repo.ReplaceDVDMenuScreenshots(ctx, sourcePath,
+	replaced, err := repo.ReplaceDVDMenuScreenshots(ctx, binding,
 		[]api.Screenshot{{
 			SourcePath: sourcePath,
 			ImagePath:  autoNew,
@@ -158,7 +159,7 @@ func TestScreenshotLifecyclePreservesCategoriesAndCleansReferences(t *testing.T)
 	assertFinalSelectionPaths(t, repo, sourcePath, []string{autoNew, manualOld, manualNew, normalNew})
 	assertNoScreenshotReferences(t, repo, sourcePath, autoOld)
 
-	if err := repo.SaveUploadedImages(ctx, sourcePath, "example-host", []api.UploadedImageLink{{
+	if err := repo.SaveUploadedImages(ctx, binding, "example-host", []api.UploadedImageLink{{
 		SourcePath: sourcePath,
 		ImagePath:  manualNew,
 		Host:       "example-host",
@@ -168,7 +169,7 @@ func TestScreenshotLifecyclePreservesCategoriesAndCleansReferences(t *testing.T)
 	}}); err != nil {
 		t.Fatalf("save manual upload: %v", err)
 	}
-	if err := repo.ReplaceScreenshotSlots(ctx, sourcePath, []api.ScreenshotSlot{{
+	if err := repo.ReplaceScreenshotSlots(ctx, binding, []api.ScreenshotSlot{{
 		SourcePath: sourcePath,
 		SlotOrder:  0,
 		ImagePath:  manualNew,
@@ -184,7 +185,7 @@ func TestScreenshotLifecyclePreservesCategoriesAndCleansReferences(t *testing.T)
 	}}); err != nil {
 		t.Fatalf("save manual screenshot slot: %v", err)
 	}
-	deleted, err := repo.DeleteDiscMenuScreenshot(ctx, sourcePath, manualNew)
+	deleted, err := repo.DeleteDiscMenuScreenshot(ctx, binding, manualNew)
 	if err != nil {
 		t.Fatalf("delete manual screenshot: %v", err)
 	}
@@ -197,15 +198,20 @@ func TestScreenshotLifecyclePreservesCategoriesAndCleansReferences(t *testing.T)
 	assertFinalSelectionPaths(t, repo, sourcePath, []string{autoNew, manualOld, normalNew})
 	assertNoScreenshotReferences(t, repo, sourcePath, manualNew)
 
-	if err := repo.RestoreDiscMenuScreenshot(ctx, sourcePath, deleted); err != nil {
+	mismatched := deleted
+	mismatched.Selection.PreparedGeneration++
+	if err := repo.RestoreDiscMenuScreenshot(ctx, binding, mismatched); !errors.Is(err, internalerrors.ErrInvalidInput) {
+		t.Fatalf("restore mismatched prepared binding error = %v, want ErrInvalidInput", err)
+	}
+	if err := repo.RestoreDiscMenuScreenshot(ctx, binding, deleted); err != nil {
 		t.Fatal("restore deleted menu screenshot records failed")
 	}
 	assertFinalSelectionPaths(t, repo, sourcePath, []string{autoNew, manualOld, manualNew, normalNew})
-	restoredScreenshots, err := repo.ListScreenshotsByPath(ctx, sourcePath)
+	restoredScreenshots, err := repo.ListScreenshotsByPath(ctx, binding)
 	if err != nil {
 		t.Fatal("list restored screenshots failed")
 	}
-	restoredUploads, err := repo.ListUploadedImagesByPath(ctx, sourcePath)
+	restoredUploads, err := repo.ListUploadedImagesByPath(ctx, binding)
 	if err != nil {
 		t.Fatal("list restored uploads failed")
 	}
@@ -226,7 +232,7 @@ func TestScreenshotLifecyclePreservesCategoriesAndCleansReferences(t *testing.T)
 	if !restoredScreenshot || !restoredUpload {
 		t.Fatal("restored menu screenshot references are incomplete")
 	}
-	restoredSlots, err := repo.ListScreenshotSlotsByPath(ctx, sourcePath)
+	restoredSlots, err := repo.ListScreenshotSlotsByPath(ctx, binding)
 	if err != nil {
 		t.Fatal("list restored screenshot slots failed")
 	}
@@ -252,7 +258,9 @@ func TestAppendManualMenuScreenshotsRollsBackCrossSourceImageConflict(t *testing
 	firstSource := filepath.Join(root, "first")
 	secondSource := filepath.Join(root, "second")
 	imagePath := filepath.Join(root, "shared.png")
-	if err := repo.SaveScreenshot(ctx, api.Screenshot{
+	firstBinding := testPreparedMediaBinding(firstSource)
+	secondBinding := testPreparedMediaBinding(secondSource)
+	if err := repo.SaveScreenshot(ctx, firstBinding, api.Screenshot{
 		SourcePath: firstSource,
 		ImagePath:  imagePath,
 		Purpose:    api.ScreenshotPurposeFinal,
@@ -261,7 +269,7 @@ func TestAppendManualMenuScreenshotsRollsBackCrossSourceImageConflict(t *testing
 		t.Fatalf("seed screenshot: %v", err)
 	}
 
-	err = repo.AppendManualMenuScreenshots(ctx, secondSource,
+	err = repo.AppendManualMenuScreenshots(ctx, secondBinding,
 		[]api.Screenshot{{
 			SourcePath: secondSource,
 			ImagePath:  imagePath,
@@ -276,14 +284,14 @@ func TestAppendManualMenuScreenshotsRollsBackCrossSourceImageConflict(t *testing
 	if !errors.Is(err, internalerrors.ErrInvalidInput) {
 		t.Fatalf("append error = %v, want invalid input", err)
 	}
-	selections, err := repo.ListFinalSelections(ctx, secondSource)
+	selections, err := repo.ListFinalSelections(ctx, secondBinding)
 	if err != nil {
 		t.Fatalf("list rolled-back selections: %v", err)
 	}
 	if len(selections) != 0 {
 		t.Fatalf("rolled-back selections = %#v", selections)
 	}
-	records, err := repo.ListScreenshotsByPath(ctx, firstSource)
+	records, err := repo.ListScreenshotsByPath(ctx, firstBinding)
 	if err != nil {
 		t.Fatalf("list original screenshots: %v", err)
 	}
@@ -307,8 +315,9 @@ func TestDeleteUploadedImageConvergesAfterRecordIsGone(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	sourcePath := filepath.Join(root, "Example.Release.2026.1080p-GRP.mkv")
+	binding := testPreparedMediaBinding(sourcePath)
 	imagePath := filepath.Join(root, "capture.png")
-	if err := repo.SaveUploadedImages(ctx, sourcePath, "example-host", []api.UploadedImageLink{{
+	if err := repo.SaveUploadedImages(ctx, binding, "example-host", []api.UploadedImageLink{{
 		SourcePath: sourcePath,
 		ImagePath:  imagePath,
 		Host:       "example-host",
@@ -320,11 +329,11 @@ func TestDeleteUploadedImageConvergesAfterRecordIsGone(t *testing.T) {
 	}
 
 	for range 2 {
-		if err := repo.DeleteUploadedImage(ctx, sourcePath, imagePath, "example-host"); err != nil {
+		if err := repo.DeleteUploadedImage(ctx, binding, imagePath, "example-host"); err != nil {
 			t.Fatalf("delete uploaded image: %v", err)
 		}
 	}
-	stored, err := repo.ListUploadedImagesByPath(ctx, sourcePath)
+	stored, err := repo.ListUploadedImagesByPath(ctx, binding)
 	if err != nil {
 		t.Fatalf("list uploaded images: %v", err)
 	}
@@ -335,7 +344,7 @@ func TestDeleteUploadedImageConvergesAfterRecordIsGone(t *testing.T) {
 
 func assertFinalSelectionPaths(t *testing.T, repo *SQLiteRepository, sourcePath string, expected []string) {
 	t.Helper()
-	selections, err := repo.ListFinalSelections(context.Background(), sourcePath)
+	selections, err := repo.ListFinalSelections(context.Background(), testPreparedMediaBinding(sourcePath))
 	if err != nil {
 		t.Fatalf("list final selections: %v", err)
 	}
@@ -351,7 +360,8 @@ func assertFinalSelectionPaths(t *testing.T, repo *SQLiteRepository, sourcePath 
 
 func assertNoScreenshotReferences(t *testing.T, repo *SQLiteRepository, sourcePath string, imagePath string) {
 	t.Helper()
-	records, err := repo.ListScreenshotsByPath(context.Background(), sourcePath)
+	binding := testPreparedMediaBinding(sourcePath)
+	records, err := repo.ListScreenshotsByPath(context.Background(), binding)
 	if err != nil {
 		t.Fatalf("list screenshots: %v", err)
 	}
@@ -360,7 +370,7 @@ func assertNoScreenshotReferences(t *testing.T, repo *SQLiteRepository, sourcePa
 			t.Fatalf("screenshot record retained for %q", imagePath)
 		}
 	}
-	uploads, err := repo.ListUploadedImagesByPath(context.Background(), sourcePath)
+	uploads, err := repo.ListUploadedImagesByPath(context.Background(), binding)
 	if err != nil {
 		t.Fatalf("list uploads: %v", err)
 	}
@@ -369,7 +379,7 @@ func assertNoScreenshotReferences(t *testing.T, repo *SQLiteRepository, sourcePa
 			t.Fatalf("upload retained for %q", imagePath)
 		}
 	}
-	slots, err := repo.ListScreenshotSlotsByPath(context.Background(), sourcePath)
+	slots, err := repo.ListScreenshotSlotsByPath(context.Background(), binding)
 	if err != nil {
 		t.Fatalf("list slots: %v", err)
 	}

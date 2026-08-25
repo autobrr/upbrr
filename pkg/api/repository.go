@@ -187,20 +187,24 @@ type DescriptionOverride struct {
 
 type PlaylistSelection struct {
 	SourcePath        string
+	SourceFingerprint string
 	SelectedPlaylists []string
 	UseAll            bool
 	UpdatedAt         time.Time `ts_type:"string"`
 }
 
 type Screenshot struct {
-	SourcePath  string
-	ImagePath   string
-	Timestamp   float64
-	FrameNumber int
-	Width       int
-	Height      int
-	Purpose     ScreenshotPurpose
-	CapturedAt  time.Time `ts_type:"string"`
+	SourcePath               string
+	PreparedMediaFingerprint string
+	PreparedGeneration       PreparedGeneration
+	DiscID                   string
+	ImagePath                string
+	Timestamp                float64
+	FrameNumber              int
+	Width                    int
+	Height                   int
+	Purpose                  ScreenshotPurpose
+	CapturedAt               time.Time `ts_type:"string"`
 }
 
 // DiscMenuDeleteResult describes local references removed by one atomic menu
@@ -225,17 +229,22 @@ type DiscMenuDeleteResult struct {
 // must stay atomic without expanding the general metadata repository contract.
 type ScreenshotLifecycleRepository interface {
 	// ReplaceNormalFinalSelections replaces non-menu selections while preserving disc menus.
-	ReplaceNormalFinalSelections(ctx context.Context, path string, selections []ScreenshotFinalSelection) error
+	ReplaceNormalFinalSelections(ctx context.Context, binding PreparedMediaBinding, selections []ScreenshotFinalSelection) error
 	// AppendManualMenuScreenshots atomically appends manual menu records and selections.
-	AppendManualMenuScreenshots(ctx context.Context, path string, screenshots []Screenshot, selections []ScreenshotFinalSelection) error
+	AppendManualMenuScreenshots(ctx context.Context, binding PreparedMediaBinding, screenshots []Screenshot, selections []ScreenshotFinalSelection) error
 	// ReplaceDVDMenuScreenshots atomically replaces automatic captures and returns their old local paths.
-	ReplaceDVDMenuScreenshots(ctx context.Context, path string, screenshots []Screenshot, selections []ScreenshotFinalSelection) ([]string, error)
+	ReplaceDVDMenuScreenshots(
+		ctx context.Context,
+		binding PreparedMediaBinding,
+		screenshots []Screenshot,
+		selections []ScreenshotFinalSelection,
+	) ([]string, error)
 	// DeleteDiscMenuScreenshot atomically removes one manual or automatic menu
 	// selection and returns the local records needed to compensate the deletion.
-	DeleteDiscMenuScreenshot(ctx context.Context, path string, imagePath string) (DiscMenuDeleteResult, error)
+	DeleteDiscMenuScreenshot(ctx context.Context, binding PreparedMediaBinding, imagePath string) (DiscMenuDeleteResult, error)
 	// RestoreDiscMenuScreenshot atomically restores a result returned by
-	// DeleteDiscMenuScreenshot for the same source path.
-	RestoreDiscMenuScreenshot(ctx context.Context, path string, deleted DiscMenuDeleteResult) error
+	// DeleteDiscMenuScreenshot for the same exact prepared-media binding.
+	RestoreDiscMenuScreenshot(ctx context.Context, binding PreparedMediaBinding, deleted DiscMenuDeleteResult) error
 }
 
 type DVDMediaInfo struct {
@@ -287,7 +296,7 @@ type ReleaseSelectionRepository interface {
 	SaveDescriptionOverride(ctx context.Context, override DescriptionOverride) error
 	DeleteDescriptionOverride(ctx context.Context, path string, groupKey string) error
 	GetPlaylistSelection(ctx context.Context, sourcePath string) (PlaylistSelection, error)
-	SavePlaylistSelection(ctx context.Context, sourcePath string, playlists []string, useAll bool) error
+	SavePlaylistSelection(ctx context.Context, sourcePath string, sourceFingerprint string, playlists []string, useAll bool) error
 }
 
 // HistoryCleanupSnapshot contains persisted local paths needed by Core's
@@ -340,19 +349,19 @@ type MediaAssetSnapshot struct {
 // uploaded-image records. Screenshot lifecycle mutations are atomic.
 type MediaAssetRepository interface {
 	ScreenshotLifecycleRepository
-	LoadMediaAssetSnapshot(ctx context.Context, path string) (MediaAssetSnapshot, error)
-	SaveScreenshot(ctx context.Context, screenshot Screenshot) error
-	ListScreenshotsByPath(ctx context.Context, path string) ([]Screenshot, error)
-	DeleteScreenshot(ctx context.Context, imagePath string) error
-	SaveFinalSelections(ctx context.Context, path string, selections []ScreenshotFinalSelection) error
-	ListFinalSelections(ctx context.Context, path string) ([]ScreenshotFinalSelection, error)
-	DeleteFinalSelection(ctx context.Context, imagePath string) error
-	ReplaceScreenshotSlots(ctx context.Context, path string, slots []ScreenshotSlot) error
-	ListScreenshotSlotsByPath(ctx context.Context, path string) ([]ScreenshotSlot, error)
-	UpsertScreenshotSlotVariants(ctx context.Context, path string, variants []ScreenshotSlotVariant) error
-	SaveUploadedImages(ctx context.Context, path string, host string, images []UploadedImageLink) error
-	ListUploadedImagesByPath(ctx context.Context, path string) ([]UploadedImageLink, error)
-	DeleteUploadedImage(ctx context.Context, path string, imagePath string, host string) error
+	LoadMediaAssetSnapshot(ctx context.Context, binding PreparedMediaBinding) (MediaAssetSnapshot, error)
+	SaveScreenshot(ctx context.Context, binding PreparedMediaBinding, screenshot Screenshot) error
+	ListScreenshotsByPath(ctx context.Context, binding PreparedMediaBinding) ([]Screenshot, error)
+	DeleteScreenshot(ctx context.Context, binding PreparedMediaBinding, imagePath string) error
+	SaveFinalSelections(ctx context.Context, binding PreparedMediaBinding, selections []ScreenshotFinalSelection) error
+	ListFinalSelections(ctx context.Context, binding PreparedMediaBinding) ([]ScreenshotFinalSelection, error)
+	DeleteFinalSelection(ctx context.Context, binding PreparedMediaBinding, imagePath string) error
+	ReplaceScreenshotSlots(ctx context.Context, binding PreparedMediaBinding, slots []ScreenshotSlot) error
+	ListScreenshotSlotsByPath(ctx context.Context, binding PreparedMediaBinding) ([]ScreenshotSlot, error)
+	UpsertScreenshotSlotVariants(ctx context.Context, binding PreparedMediaBinding, variants []ScreenshotSlotVariant) error
+	SaveUploadedImages(ctx context.Context, binding PreparedMediaBinding, host string, images []UploadedImageLink) error
+	ListUploadedImagesByPath(ctx context.Context, binding PreparedMediaBinding) ([]UploadedImageLink, error)
+	DeleteUploadedImage(ctx context.Context, binding PreparedMediaBinding, imagePath string, host string) error
 }
 
 // ReleaseWorkflowStateRecord is one owner-scoped durable public workflow

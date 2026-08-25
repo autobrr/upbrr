@@ -61,10 +61,7 @@ type mediaInfoDoc struct {
 
 var durationTokenPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(milliseconds?|msecs?|ms|hours?|hrs?|h|minutes?|mins?|min|seconds?|secs?|sec|s)\b`)
 
-const (
-	dvdSegmentDurationToleranceSeconds = 5.0
-	mpegPSTimestampWrapSeconds         = float64(uint64(1)<<33) / 90000
-)
+const dvdSegmentDurationToleranceSeconds = 5.0
 
 // resolveVideoInfo selects timing metadata and the ffmpeg inputs used for
 // screenshot planning/capture. DVD releases keep ordered title-set segments so
@@ -75,7 +72,7 @@ func resolveVideoInfo(ctx context.Context, meta api.ScreenshotSubject, tmpRoot s
 
 	basePath := strings.TrimSpace(meta.VideoPath)
 	if basePath == "" {
-		basePath = strings.TrimSpace(meta.SourcePath)
+		basePath = screenshotCaptureRoot(meta)
 	}
 	if basePath == "" {
 		return info, errors.New("screenshots: source path required")
@@ -136,7 +133,7 @@ func resolveVideoInfo(ctx context.Context, meta api.ScreenshotSubject, tmpRoot s
 				info.FrameRate = parseFPS(bdinfo)
 			}
 			if info.SourcePath == "" {
-				filePath, err := selectBDMVFile(ctx, meta.SourcePath, bdinfo)
+				filePath, err := selectBDMVFile(ctx, screenshotCaptureRoot(meta), bdinfo)
 				if err == nil {
 					info.SourcePath = filePath
 					logger.Tracef("screenshots: BDMV source selected method=bdinfo path=%s", filePath)
@@ -156,8 +153,9 @@ func resolveVideoInfo(ctx context.Context, meta api.ScreenshotSubject, tmpRoot s
 	}
 
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
-		logger.Tracef("screenshots: DVD source selection root=%s", meta.SourcePath)
-		vobs, err := selectDVDVOBs(ctx, meta.SourcePath)
+		captureRoot := screenshotCaptureRoot(meta)
+		logger.Tracef("screenshots: DVD source selection root=%s", captureRoot)
+		vobs, err := selectDVDVOBs(ctx, captureRoot)
 		if err != nil {
 			return info, err
 		}
@@ -281,7 +279,7 @@ func resolveVideoSource(ctx context.Context, meta api.ScreenshotSubject, tmpRoot
 	logger = screenshotLogger(logger)
 	basePath := strings.TrimSpace(meta.VideoPath)
 	if basePath == "" {
-		basePath = strings.TrimSpace(meta.SourcePath)
+		basePath = screenshotCaptureRoot(meta)
 	}
 	if basePath == "" {
 		return "", errors.New("screenshots: source path required")
@@ -313,7 +311,7 @@ func resolveVideoSource(ctx context.Context, meta api.ScreenshotSubject, tmpRoot
 			return "", err
 		}
 		if bdinfo != nil {
-			filePath, err := selectBDMVFile(ctx, meta.SourcePath, bdinfo)
+			filePath, err := selectBDMVFile(ctx, screenshotCaptureRoot(meta), bdinfo)
 			if err != nil {
 				return "", err
 			}
@@ -323,8 +321,9 @@ func resolveVideoSource(ctx context.Context, meta api.ScreenshotSubject, tmpRoot
 	}
 
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
-		logger.Tracef("screenshots: video source DVD selection root=%s", meta.SourcePath)
-		vob, err := selectDVDVOB(ctx, meta.SourcePath)
+		captureRoot := screenshotCaptureRoot(meta)
+		logger.Tracef("screenshots: video source DVD selection root=%s", captureRoot)
+		vob, err := selectDVDVOB(ctx, captureRoot)
 		if err != nil {
 			return "", err
 		}
@@ -344,7 +343,7 @@ func selectBDMVFileFromMetadata(ctx context.Context, meta api.ScreenshotSubject)
 			return videoPath, true, nil
 		}
 
-		filePath, err := findBDMVFile(ctx, meta.SourcePath, fileName)
+		filePath, err := findBDMVFile(ctx, screenshotCaptureRoot(meta), fileName)
 		if err != nil {
 			return "", false, err
 		}
@@ -649,6 +648,12 @@ func loadBDInfo(tmpRoot string, meta api.ScreenshotSubject) (*discparse.BDInfo, 
 	if err != nil {
 		return nil, fmt.Errorf("screenshots: %w", err)
 	}
+	if strings.TrimSpace(meta.DiscID) != "" {
+		tmpDir, err = paths.DiscTempDir(tmpDir, meta.DiscID)
+		if err != nil {
+			return nil, fmt.Errorf("screenshots: %w", err)
+		}
+	}
 	path := paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylistFor(meta.SelectedBDMVPlaylists))
 	if strings.TrimSpace(path) == "" {
 		return nil, nil
@@ -658,7 +663,14 @@ func loadBDInfo(tmpRoot string, meta api.ScreenshotSubject) (*discparse.BDInfo, 
 		return nil, fmt.Errorf("screenshots: read BDMV summary: %w", err)
 	}
 	summary, files, _ := discparse.SplitBDInfoReport(string(payload))
-	return discparse.ParseBDInfoSummary(summary, files, meta.SourcePath), nil
+	return discparse.ParseBDInfoSummary(summary, files, screenshotCaptureRoot(meta)), nil
+}
+
+func screenshotCaptureRoot(meta api.ScreenshotSubject) string {
+	if root := strings.TrimSpace(meta.DiscRoot); root != "" {
+		return root
+	}
+	return strings.TrimSpace(meta.SourcePath)
 }
 
 func parseFPS(info *discparse.BDInfo) float64 {
@@ -852,20 +864,17 @@ func resolveDVDVideoSegmentTimings(
 				}
 			} else {
 				difference := math.Abs(duration - remaining)
-				switch {
-				case difference <= dvdSegmentDurationToleranceSeconds:
-				case duration > remaining+dvdSegmentDurationToleranceSeconds &&
-					math.Abs(start+duration-mpegPSTimestampWrapSeconds) <= dvdSegmentDurationToleranceSeconds:
+				if duration > remaining && difference > dvdSegmentDurationToleranceSeconds {
 					logger.Debugf(
-						"screenshots: DVD segment timing reconciled segment=%d decision=use_title_remainder probed_seconds=%.3f remaining_seconds=%.3f title_seconds=%.3f",
+						"screenshots: DVD segment timing reconciled segment=%d decision=use_title_remainder start_seconds=%.3f probed_seconds=%.3f remaining_seconds=%.3f difference_seconds=%.3f title_seconds=%.3f",
 						idx+1,
+						start,
 						duration,
 						remaining,
+						difference,
 						titleDuration,
 					)
 					duration = remaining
-				default:
-					return fmt.Errorf("screenshots: DVD segment %d contradicts title duration", idx+1)
 				}
 			}
 		}

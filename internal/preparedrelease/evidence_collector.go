@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -257,13 +256,7 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 			MediaInfoUniqueID: meta.MediaInfoUniqueID,
 			Anime:             meta.Anime,
 		},
-		Disc: api.DiscFacts{
-			Type:            meta.DiscType,
-			Summary:         collectedBDInfoSummary(meta.BDInfo),
-			DurationSeconds: collectedBDInfoDurationSeconds(meta.BDInfo),
-			PlaylistCount:   len(meta.SelectedBDMVPlaylists),
-			DVDVOBSet:       meta.DVDVOBSet,
-		},
+		Disc:        collectedDiscFacts(meta),
 		Assessments: assessments,
 		Identity: externalidentity.ResolutionIntent{
 			Title:   meta.Release.Title,
@@ -290,6 +283,7 @@ func collectedResources(meta preparationstate.State) CollectedResources {
 		SceneNFOPath:          meta.SceneNFOPath,
 		DescriptionTemplate:   meta.DescriptionTemplate,
 		SelectedBDMVPlaylists: clonePlaylists(meta.SelectedBDMVPlaylists),
+		Discs:                 cloneDiscResources(meta.Discs),
 		ClientEvidence:        preparationstate.CloneClientEvidenceSnapshot(meta.ClientEvidence),
 	}
 }
@@ -303,27 +297,42 @@ func firstCollectedSourcePath(paths []string) string {
 	return ""
 }
 
-func collectedBDInfoSummary(value map[string]any) string {
-	summary, _ := value["summary"].(string)
-	return strings.TrimSpace(summary)
-}
-
-func collectedBDInfoDurationSeconds(value map[string]any) float64 {
-	text := strings.TrimSpace(fmt.Sprint(value["length"]))
-	if text == "" || text == "<nil>" {
-		return 0
+func collectedDiscFacts(meta preparationstate.State) api.DiscFacts {
+	facts := api.DiscFacts{Type: meta.DiscType}
+	for _, resource := range meta.Discs {
+		item := api.DiscItemFacts{
+			ID:              resource.ID,
+			Name:            resource.Name,
+			Type:            resource.Type,
+			DurationSeconds: resource.DurationSeconds,
+			DVDVOBSet:       resource.DVDVOBSet,
+		}
+		reportsByID := make(map[string]preparationstate.DiscReportResource, len(resource.Reports))
+		for _, report := range resource.Reports {
+			reportsByID[report.Playlist.ID] = report
+		}
+		for _, playlist := range resource.SelectedPlaylists {
+			report := reportsByID[playlist.ID]
+			item.Reports = append(item.Reports, api.DiscReportFacts{
+				Playlist: playlist,
+				Summary:  strings.TrimSpace(report.Summary),
+			})
+			facts.PlaylistCount++
+		}
+		if len(item.Reports) > 0 {
+			primary := 0
+			for i := 1; i < len(item.Reports); i++ {
+				if item.Reports[i].Playlist.Score > item.Reports[primary].Playlist.Score {
+					primary = i
+				}
+			}
+			item.DurationSeconds = item.Reports[primary].Playlist.Duration
+		}
+		facts.Items = append(facts.Items, item)
 	}
-	parts := strings.Split(text, ":")
-	if len(parts) != 3 {
-		return 0
-	}
-	hours, hoursErr := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
-	minutes, minutesErr := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
-	seconds, secondsErr := strconv.ParseFloat(strings.TrimSpace(parts[2]), 64)
-	if hoursErr != nil || minutesErr != nil || secondsErr != nil || hours < 0 || minutes < 0 || seconds < 0 {
-		return 0
-	}
-	return hours*3600 + minutes*60 + seconds
+	facts.PrimaryDiscID, facts.PrimaryReportID, facts.DurationSeconds, facts.DVDVOBSet = facts.CanonicalPrimary()
+	facts.Summary = facts.AggregateSummary()
+	return facts
 }
 
 func cloneCollectedIdentity(value api.ExternalIdentity) api.ExternalIdentity {
@@ -347,6 +356,14 @@ func cloneCollectedCandidates(value []api.ExternalIdentityCandidate) []api.Exter
 }
 
 func clonePlaylists(value []api.PlaylistInfo) []api.PlaylistInfo {
+	cloned, err := cloneWithJSON(value)
+	if err != nil {
+		panic(err)
+	}
+	return cloned
+}
+
+func cloneDiscResources(value []preparationstate.DiscResource) []preparationstate.DiscResource {
 	cloned, err := cloneWithJSON(value)
 	if err != nil {
 		panic(err)

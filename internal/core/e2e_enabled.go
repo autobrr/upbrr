@@ -21,7 +21,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/autobrr/go-torrent/bencode"
+	"github.com/autobrr/go-torrent/metainfo"
+
 	"github.com/autobrr/upbrr/internal/clientdiscovery"
+	"github.com/autobrr/upbrr/internal/filesystem"
+	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -101,7 +106,7 @@ func maybeApplyE2EServices(_ context.Context, services *api.ServiceSet, cfg conf
 		}
 	}
 	if services.DVDMenus == nil {
-		services.DVDMenus = e2eDVDMenuService{shotPath: os.Getenv(e2eShotPathEnv)}
+		services.DVDMenus = e2eDVDMenuService{shotPath: os.Getenv(e2eShotPathEnv), tmpRoot: tmpRoot}
 	}
 	if services.Dupes == nil {
 		services.Dupes = e2eDupeService{cfg: cfg}
@@ -297,6 +302,9 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 			EpisodeAired:           "2026-01-02",
 		}
 	}
+	if err := collectE2EDiscEvidence(ctx, request, &meta); err != nil {
+		return preparationstate.State{}, err
+	}
 	if value := strings.TrimSpace(os.Getenv(e2eBlurayEnv)); value == "1" || strings.EqualFold(value, "true") {
 		meta.ProviderMetadata.Bluray = e2eBlurayMetadata(sourcePath)
 	}
@@ -331,6 +339,147 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 		api.NewPreparationProgressUpdate(api.PreparationPhaseSourceEvidence, api.PreparationProgressCompleted, "Synthetic source evidence complete."),
 	)
 	return meta, nil
+}
+
+func collectE2EDiscEvidence(ctx context.Context, request preparationstate.Request, meta *preparationstate.State) error {
+	if meta == nil || len(request.Layout.Discs) == 0 {
+		return nil
+	}
+	meta.DiscType = request.Layout.DiscType
+	selectedByDisc := make(map[string][]api.PlaylistInfo, len(request.Layout.Discs))
+	if request.Layout.DiscType == "BDMV" {
+		candidates, err := e2eBDMVCandidates(ctx, request)
+		if err != nil {
+			return err
+		}
+		selected, err := e2eSelectedPlaylists(request, candidates)
+		if err != nil {
+			return err
+		}
+		meta.SelectedBDMVPlaylists = append([]api.PlaylistInfo(nil), selected...)
+		for _, playlist := range selected {
+			selectedByDisc[playlist.DiscID] = append(selectedByDisc[playlist.DiscID], playlist)
+		}
+	}
+
+	meta.Discs = make([]preparationstate.DiscResource, 0, len(request.Layout.Discs))
+	meta.FileList = nil
+	for _, disc := range request.Layout.Discs {
+		resource := preparationstate.DiscResource{
+			ID:   disc.ID,
+			Name: disc.Name,
+			Type: disc.Type,
+			Root: disc.Root,
+		}
+		switch disc.Type {
+		case "BDMV":
+			resource.SelectedPlaylists = append([]api.PlaylistInfo(nil), selectedByDisc[disc.ID]...)
+			for _, playlist := range resource.SelectedPlaylists {
+				summary := fmt.Sprintf("Disc: %s\nPlaylist: %s\nLength: 00:02:00.000", disc.Name, playlist.File)
+				resource.Reports = append(resource.Reports, preparationstate.DiscReportResource{
+					Playlist:    playlist,
+					Summary:     summary,
+					ExtSummary:  summary,
+					FullSummary: summary,
+				})
+				for _, item := range playlist.Items {
+					streamPath := filepath.Join(disc.Root, "STREAM", item.File)
+					resource.FileList = append(resource.FileList, streamPath)
+					if resource.VideoPath == "" {
+						resource.VideoPath = streamPath
+					}
+				}
+			}
+		case "DVD":
+			resource.DVDIFOPath = filepath.Join(disc.Root, "VIDEO_TS.IFO")
+			resource.DVDVOBPath = filepath.Join(disc.Root, "VTS_01_1.VOB")
+			resource.DVDVOBSet = "VTS_01"
+			resource.DurationSeconds = 120
+			resource.DVDVOBMediaInfoText = fmt.Sprintf("General\nDisc: %s\nDuration: 2 min", disc.Name)
+			resource.FileList = []string{resource.DVDIFOPath, resource.DVDVOBPath}
+		}
+		meta.FileList = append(meta.FileList, resource.FileList...)
+		meta.Discs = append(meta.Discs, resource)
+	}
+	if len(meta.Discs) > 0 {
+		primary := meta.Discs[0]
+		meta.VideoPath = primary.VideoPath
+		meta.DVDIFOPath = primary.DVDIFOPath
+		meta.DVDVOBPath = primary.DVDVOBPath
+		meta.DVDVOBSet = primary.DVDVOBSet
+		meta.DVDVOBMediaInfoText = primary.DVDVOBMediaInfoText
+	}
+	return nil
+}
+
+func e2eBDMVCandidates(ctx context.Context, request preparationstate.Request) ([]api.PlaylistInfo, error) {
+	candidates := make([]api.PlaylistInfo, 0, len(request.Layout.Discs))
+	for _, disc := range request.Layout.Discs {
+		discovered, err := filesystem.DiscoverPlaylists(ctx, disc.Root)
+		if err != nil {
+			return nil, fmt.Errorf("e2e metadata: discover BDMV playlists: %w", err)
+		}
+		for _, playlist := range discovered {
+			file := discparse.NormalizePlaylistName(playlist.File)
+			id := file
+			if len(request.Layout.Discs) > 1 {
+				id = disc.ID + ":" + file
+			}
+			items := make([]api.PlaylistItem, len(playlist.Items))
+			for index, item := range playlist.Items {
+				items[index] = api.PlaylistItem{File: item.File, Size: item.Size}
+			}
+			candidates = append(candidates, api.PlaylistInfo{
+				ID:       id,
+				DiscID:   disc.ID,
+				DiscName: disc.Name,
+				File:     file,
+				Duration: playlist.Duration,
+				Items:    items,
+				Score:    playlist.Score,
+				Edition:  playlist.Edition,
+			})
+		}
+	}
+	return candidates, nil
+}
+
+func e2eSelectedPlaylists(request preparationstate.Request, candidates []api.PlaylistInfo) ([]api.PlaylistInfo, error) {
+	instruction := request.Input.Instructions.Playlist
+	if !instruction.Set {
+		return nil, &api.PlaylistSelectionRequiredError{SourcePath: request.Layout.SourcePath, Candidates: candidates}
+	}
+	selectedIDs := make(map[string]struct{}, len(instruction.Selected))
+	if instruction.UseAll {
+		for _, candidate := range candidates {
+			selectedIDs[candidate.ID] = struct{}{}
+		}
+	} else {
+		for _, raw := range instruction.Selected {
+			id := strings.TrimSpace(raw)
+			if len(request.Layout.Discs) == 1 {
+				id = discparse.NormalizePlaylistName(id)
+			}
+			selectedIDs[id] = struct{}{}
+		}
+	}
+	selected := make([]api.PlaylistInfo, 0, len(selectedIDs))
+	selectedDiscs := make(map[string]struct{}, len(request.Layout.Discs))
+	for _, candidate := range candidates {
+		if _, ok := selectedIDs[candidate.ID]; !ok {
+			continue
+		}
+		selected = append(selected, candidate)
+		selectedDiscs[candidate.DiscID] = struct{}{}
+		delete(selectedIDs, candidate.ID)
+	}
+	if len(selectedIDs) > 0 || len(selectedDiscs) != len(request.Layout.Discs) {
+		return nil, &api.InvalidPlaylistSelectionError{
+			SourcePath: request.Layout.SourcePath,
+			Reason:     "at least one current playlist must be selected for every disc",
+		}
+	}
+	return selected, nil
 }
 
 // HydrateClientEvidence rebuilds restart-only private client evidence without
@@ -479,12 +628,76 @@ func (s e2eTorrentService) Create(_ context.Context, meta api.TorrentSubject) (a
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return api.TorrentResult{}, fmt.Errorf("e2e torrent: mkdir: %w", err)
 	}
+	info, err := e2eTorrentInfo(meta.SourcePath)
+	if err != nil {
+		return api.TorrentResult{}, err
+	}
+	infoBytes, err := bencode.Marshal(info)
+	if err != nil {
+		return api.TorrentResult{}, fmt.Errorf("e2e torrent: encode info: %w", err)
+	}
+	torrent := metainfo.MetaInfo{Announce: "http://e2e.invalid/announce", InfoBytes: bencode.Bytes(infoBytes)}
 	path := filepath.Join(dir, "input.torrent")
-	const torrentFixture = "d8:announce13:http://e2e.ee4:infod6:lengthi0e4:name8:test.txt12:piece lengthi16384e6:pieces0:ee"
-	if err := os.WriteFile(path, []byte(torrentFixture), 0o600); err != nil {
-		return api.TorrentResult{}, fmt.Errorf("e2e torrent: write: %w", err)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return api.TorrentResult{}, fmt.Errorf("e2e torrent: create: %w", err)
+	}
+	writeErr := torrent.Write(file)
+	closeErr := file.Close()
+	if writeErr != nil {
+		return api.TorrentResult{}, fmt.Errorf("e2e torrent: write: %w", writeErr)
+	}
+	if closeErr != nil {
+		return api.TorrentResult{}, fmt.Errorf("e2e torrent: close: %w", closeErr)
 	}
 	return api.TorrentResult{Path: path, InfoHash: "0123456789abcdef0123456789abcdef01234567"}, nil
+}
+
+func e2eTorrentInfo(sourcePath string) (metainfo.Info, error) {
+	sourcePath = strings.TrimSpace(sourcePath)
+	stat, err := os.Stat(sourcePath)
+	if err != nil {
+		return metainfo.Info{}, fmt.Errorf("e2e torrent: stat source: %w", err)
+	}
+	info := metainfo.Info{
+		Name:        filepath.Base(sourcePath),
+		PieceLength: 16 << 10,
+		Pieces:      make([]byte, metainfo.HashSize),
+	}
+	if !stat.IsDir() {
+		info.Length = stat.Size()
+		return info, nil
+	}
+	if err := filepath.WalkDir(sourcePath, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		entryInfo, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(sourcePath, path)
+		if err != nil {
+			return err
+		}
+		info.Files = append(info.Files, metainfo.FileInfo{
+			Length: entryInfo.Size(),
+			Path:   strings.Split(filepath.ToSlash(relative), "/"),
+		})
+		return nil
+	}); err != nil {
+		return metainfo.Info{}, fmt.Errorf("e2e torrent: walk source: %w", err)
+	}
+	slices.SortFunc(info.Files, func(left, right metainfo.FileInfo) int {
+		return strings.Compare(strings.Join(left.Path, "/"), strings.Join(right.Path, "/"))
+	})
+	if len(info.Files) == 0 {
+		return metainfo.Info{}, errors.New("e2e torrent: source contains no files")
+	}
+	return info, nil
 }
 
 // e2eClientService obtains deterministic pathed-torrent evidence from the fake E2E server.
@@ -897,6 +1110,7 @@ type e2eTrackerService struct {
 
 type e2eDVDMenuService struct {
 	shotPath string
+	tmpRoot  string
 }
 
 func (s e2eDVDMenuService) Capture(
@@ -904,16 +1118,34 @@ func (s e2eDVDMenuService) Capture(
 	subject api.DVDMenuSubject,
 	maxItems int,
 ) (api.DVDMenuCaptureResult, error) {
+	discs := subject.Discs
+	if len(discs) == 0 {
+		discs = []api.DVDMenuDiscSubject{{Name: filepath.Base(subject.SourcePath)}}
+	}
+	limit := len(discs)
+	if maxItems > 0 {
+		limit = min(limit, maxItems)
+	}
+	images := make([]api.DVDMenuCaptureImage, 0, limit)
+	for index, disc := range discs[:limit] {
+		image, err := e2eManagedScreenshot(s.shotPath, s.tmpRoot, filepath.Base(subject.SourcePath), "menu-"+disc.ID, index+1)
+		if err != nil {
+			return api.DVDMenuCaptureResult{}, err
+		}
+		image.DiscID = disc.ID
+		image.DiscName = disc.Name
+		image.Purpose = api.ScreenshotPurposeMenu
+		images = append(images, api.DVDMenuCaptureImage{ScreenshotImage: image, Discovery: api.DVDMenuDiscoveryReachable})
+	}
 	return api.DVDMenuCaptureResult{
-		SourcePath: subject.SourcePath,
-		Images: []api.DVDMenuCaptureImage{
-			{ScreenshotImage: e2eScreenshotImage(s.shotPath, api.ScreenshotPurposeMenu), Discovery: api.DVDMenuDiscoveryReachable},
-		},
-		DiscoveredMenus: 1,
-		VisitedStates:   1,
-		VisitedButtons:  1,
+		SourcePath:      subject.SourcePath,
+		Images:          images,
+		DiscoveredMenus: len(discs),
+		VisitedStates:   len(images),
+		VisitedButtons:  len(images),
 		MaxItems:        maxItems,
-		Complete:        true,
+		Complete:        len(images) == len(discs),
+		Truncated:       len(images) < len(discs),
 		Engine: api.DVDMenuEngineInfo{
 			EngineVersion:  "e2e",
 			SchemaVersion:  1,
@@ -922,8 +1154,16 @@ func (s e2eDVDMenuService) Capture(
 	}, nil
 }
 
-func (s e2eDVDMenuService) List(_ context.Context, _ api.DVDMenuSubject) ([]api.ScreenshotImage, error) {
-	return []api.ScreenshotImage{e2eScreenshotImage(s.shotPath, api.ScreenshotPurposeMenu)}, nil
+func (s e2eDVDMenuService) List(ctx context.Context, subject api.DVDMenuSubject) ([]api.ScreenshotImage, error) {
+	result, err := s.Capture(ctx, subject, len(subject.Discs))
+	if err != nil {
+		return nil, err
+	}
+	images := make([]api.ScreenshotImage, 0, len(result.Images))
+	for _, image := range result.Images {
+		images = append(images, image.ScreenshotImage)
+	}
+	return images, nil
 }
 
 func (e2eDVDMenuService) Delete(context.Context, api.DVDMenuSubject, string) error { return nil }
@@ -934,17 +1174,6 @@ func (e2eDVDMenuService) Capability(context.Context) (api.DVDMenuEngineInfo, err
 		SchemaVersion:  1,
 		FFmpegDVDVideo: true,
 	}, nil
-}
-
-func e2eScreenshotImage(path string, purpose api.ScreenshotPurpose) api.ScreenshotImage {
-	return api.ScreenshotImage{
-		Index:     1,
-		Path:      path,
-		Purpose:   purpose,
-		Width:     320,
-		Height:    180,
-		SizeBytes: 68,
-	}
 }
 
 type e2eRetainedUploadPlan struct {
@@ -1254,12 +1483,12 @@ type e2eImageService struct {
 	shotPath string
 	tmpRoot  string
 	repo     interface {
-		SaveUploadedImages(context.Context, string, string, []api.UploadedImageLink) error
+		SaveUploadedImages(context.Context, api.PreparedMediaBinding, string, []api.UploadedImageLink) error
 	}
 }
 
 func (s e2eImageService) ListCandidates(_ context.Context, meta api.ImageHostingSubject) ([]api.ScreenshotImage, error) {
-	shot, err := e2eManagedScreenshot(s.shotPath, s.tmpRoot, filepath.Base(meta.SourcePath), 1)
+	shot, err := e2eManagedScreenshot(s.shotPath, s.tmpRoot, filepath.Base(meta.SourcePath), "", 1)
 	if err != nil {
 		return nil, err
 	}
@@ -1283,6 +1512,7 @@ func (s e2eImageService) Upload(
 		}
 		base := fmt.Sprintf("%s/image/%d", strings.TrimRight(s.endpoint, "/"), idx+1)
 		links = append(links, api.UploadedImageLink{
+			DiscID:     image.DiscID,
 			ImagePath:  image.Path,
 			Host:       strings.ToLower(strings.TrimSpace(host)),
 			ImgURL:     base + ".jpg",
@@ -1293,7 +1523,7 @@ func (s e2eImageService) Upload(
 		})
 	}
 	if s.repo != nil && len(links) > 0 {
-		if err := s.repo.SaveUploadedImages(ctx, meta.SourcePath, strings.ToLower(strings.TrimSpace(host)), links); err != nil {
+		if err := s.repo.SaveUploadedImages(ctx, meta.MediaBinding, strings.ToLower(strings.TrimSpace(host)), links); err != nil {
 			return nil, fmt.Errorf("e2e image: save uploads: %w", err)
 		}
 	}
@@ -1347,20 +1577,53 @@ type e2eScreenshotService struct {
 }
 
 func (s e2eScreenshotService) Plan(_ context.Context, meta api.ScreenshotSubject, count int) (api.ScreenshotPlan, error) {
-	selections := make([]api.ScreenshotSelection, 0, count)
-	for index := range count {
-		selections = append(selections, api.ScreenshotSelection{
-			Index:            index + 1,
-			TimestampSeconds: float64((index + 1) * 10),
-			Frame:            (index + 1) * 240,
+	discs := meta.Discs
+	if len(discs) == 0 {
+		discs = []api.ScreenshotDiscSubject{{
+			ID:   meta.DiscID,
+			Name: meta.DiscName,
+			Type: meta.DiscType,
+		}}
+	}
+	if count <= 0 {
+		count = max(meta.DefaultCount, 1)
+	}
+	total := max(count, len(discs))
+	baseCount := total / len(discs)
+	remainder := total % len(discs)
+	plan := api.ScreenshotPlan{
+		MediaBinding:    meta.MediaBinding,
+		SourcePath:      meta.SourcePath,
+		DiscType:        meta.DiscType,
+		DurationSeconds: 120,
+		FrameRate:       24,
+		Discs:           make([]api.ScreenshotDiscPlan, 0, len(discs)),
+	}
+	for discIndex, disc := range discs {
+		discCount := baseCount
+		if discIndex < remainder {
+			discCount++
+		}
+		selections := make([]api.ScreenshotSelection, 0, discCount)
+		for index := range discCount {
+			selections = append(selections, api.ScreenshotSelection{
+				DiscID:           disc.ID,
+				Index:            index + 1,
+				TimestampSeconds: float64((index + 1) * 10),
+				Frame:            (index + 1) * 240,
+				Source:           "auto",
+			})
+		}
+		plan.SuggestedSelections = append(plan.SuggestedSelections, selections...)
+		plan.Discs = append(plan.Discs, api.ScreenshotDiscPlan{
+			DiscID:              disc.ID,
+			DiscName:            disc.Name,
+			DurationSeconds:     120,
+			FrameRate:           24,
+			SuggestedSelections: selections,
 		})
 	}
-	return api.ScreenshotPlan{
-		SourcePath:          meta.SourcePath,
-		DurationSeconds:     120,
-		FrameRate:           24,
-		SuggestedSelections: selections,
-	}, nil
+	return plan, nil
 }
 
 func (s e2eScreenshotService) Capture(
@@ -1371,11 +1634,13 @@ func (s e2eScreenshotService) Capture(
 ) (api.ScreenshotResult, error) {
 	images := make([]api.ScreenshotImage, 0, len(selections))
 	for _, selection := range selections {
-		shot, err := s.imageAt(meta, selection.Index)
+		shot, err := s.imageAt(meta, selection.DiscID, selection.Index)
 		if err != nil {
 			return api.ScreenshotResult{}, err
 		}
 		shot.Index = selection.Index
+		shot.DiscID = selection.DiscID
+		shot.DiscName = e2eScreenshotDiscName(meta, selection.DiscID)
 		shot.TimestampSeconds = selection.TimestampSeconds
 		shot.Purpose = purpose
 		images = append(images, shot)
@@ -1387,8 +1652,13 @@ func (s e2eScreenshotService) Capture(
 	}, nil
 }
 
-func (s e2eScreenshotService) PreviewFrame(_ context.Context, meta api.ScreenshotSubject, timestampSeconds float64) (api.ScreenshotPreview, error) {
-	shot, err := s.image(meta)
+func (s e2eScreenshotService) PreviewFrame(
+	_ context.Context,
+	meta api.ScreenshotSubject,
+	discID string,
+	timestampSeconds float64,
+) (api.ScreenshotPreview, error) {
+	shot, err := s.imageAt(meta, discID, 1)
 	if err != nil {
 		return api.ScreenshotPreview{}, err
 	}
@@ -1397,6 +1667,8 @@ func (s e2eScreenshotService) PreviewFrame(_ context.Context, meta api.Screensho
 		return api.ScreenshotPreview{}, fmt.Errorf("e2e screenshots: read preview: %w", err)
 	}
 	return api.ScreenshotPreview{
+		DiscID:           discID,
+		DiscName:         e2eScreenshotDiscName(meta, discID),
 		TimestampSeconds: timestampSeconds,
 		ImageBytes:       payload,
 		Width:            shot.Width,
@@ -1433,25 +1705,30 @@ func (s e2eScreenshotService) SaveFinalSelections(ctx context.Context, meta api.
 	selections := make([]api.ScreenshotFinalSelection, 0, len(images))
 	for idx, image := range images {
 		selections = append(selections, api.ScreenshotFinalSelection{
-			SourcePath: meta.SourcePath,
+			DiscID:     image.DiscID,
 			ImagePath:  image.Path,
 			Order:      idx,
 			Source:     string(api.ScreenshotPurposeFinal),
 			SelectedAt: time.Now().UTC(),
 		})
 	}
-	return s.repo.ReplaceNormalFinalSelections(ctx, meta.SourcePath, selections)
+	return s.repo.ReplaceNormalFinalSelections(ctx, meta.MediaBinding, selections)
 }
 
-func (s e2eScreenshotService) image(meta api.ScreenshotSubject) (api.ScreenshotImage, error) {
-	return s.imageAt(meta, 1)
+func (s e2eScreenshotService) imageAt(meta api.ScreenshotSubject, discID string, index int) (api.ScreenshotImage, error) {
+	return e2eManagedScreenshot(s.shotPath, s.tmpRoot, filepath.Base(meta.SourcePath), discID, index)
 }
 
-func (s e2eScreenshotService) imageAt(meta api.ScreenshotSubject, index int) (api.ScreenshotImage, error) {
-	return e2eManagedScreenshot(s.shotPath, s.tmpRoot, filepath.Base(meta.SourcePath), index)
+func e2eScreenshotDiscName(meta api.ScreenshotSubject, discID string) string {
+	for _, disc := range meta.Discs {
+		if disc.ID == discID {
+			return disc.Name
+		}
+	}
+	return meta.DiscName
 }
 
-func e2eManagedScreenshot(shotPath string, tmpRoot string, releaseName string, index int) (api.ScreenshotImage, error) {
+func e2eManagedScreenshot(shotPath string, tmpRoot string, releaseName string, scope string, index int) (api.ScreenshotImage, error) {
 	path := strings.TrimSpace(shotPath)
 	if path == "" {
 		return api.ScreenshotImage{}, errors.New("e2e screenshots: screenshot path is required")
@@ -1467,6 +1744,9 @@ func e2eManagedScreenshot(shotPath string, tmpRoot string, releaseName string, i
 	release := strings.TrimSpace(releaseName)
 	if release == "" {
 		release = "e2e-release"
+	}
+	if strings.TrimSpace(scope) != "" {
+		release += "-" + strings.TrimSpace(scope)
 	}
 	release = strings.Map(func(r rune) rune {
 		switch r {

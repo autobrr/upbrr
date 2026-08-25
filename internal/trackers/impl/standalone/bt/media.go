@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	metamediainfo "github.com/autobrr/upbrr/internal/metadata/mediainfo"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -20,8 +21,8 @@ func resolveRuntime(meta api.UploadSubject) int {
 			}
 		}
 	}
-	if meta.DVDVOBMediaInfoText != "" {
-		if minutes := parseMediaInfoDurationMinutes(meta.DVDVOBMediaInfoText); minutes > 0 {
+	if dvdMediaInfo := trackers.ReadDVDVOBMediaInfo(meta); dvdMediaInfo != "" {
+		if minutes := parseMediaInfoDurationMinutes(dvdMediaInfo); minutes > 0 {
 			return minutes
 		}
 	}

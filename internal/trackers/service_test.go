@@ -2037,7 +2037,10 @@ func TestUploadReportsCancellationAfterCompletedTrackerUpload(t *testing.T) {
 	cfg := config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER"}}}
 	svc := NewServiceWithRegistry(cfg, nil, nil, registry)
 
-	summary, err := svc.Upload(ctx, api.UploadSubject{SourcePath: "/tmp/file"})
+	summary, err := svc.Upload(ctx, api.UploadSubject{
+		MediaBinding: trackerTestMediaBinding("/tmp/file"),
+		SourcePath:   "/tmp/file",
+	})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context cancellation after upload, got %v", err)
 	}
@@ -2383,7 +2386,10 @@ func TestUploadRetriesTransientUploadedStatusFailure(t *testing.T) {
 	svc := NewServiceWithRegistry(cfg, nil, repo, registry)
 
 	ctx := context.Background()
-	summary, err := svc.Upload(ctx, api.UploadSubject{SourcePath: "/tmp/file"})
+	summary, err := svc.Upload(ctx, api.UploadSubject{
+		MediaBinding: trackerTestMediaBinding("/tmp/file"),
+		SourcePath:   "/tmp/file",
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

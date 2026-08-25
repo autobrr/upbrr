@@ -4,6 +4,7 @@
 package layout
 
 import (
+	"encoding/hex"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -11,8 +12,28 @@ import (
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+// DiscTempDir returns the namespaced artifact directory for one backend-owned
+// lowercase SHA-256 disc ID, rejecting malformed IDs and paths outside releaseTempDir.
+func DiscTempDir(releaseTempDir string, discID string) (string, error) {
+	id := strings.TrimSpace(discID)
+	if len(id) != len("disc-")+sha256HexLength || !strings.HasPrefix(id, "disc-") {
+		return "", errors.New("paths: invalid disc ID")
+	}
+	if _, err := hex.DecodeString(strings.TrimPrefix(id, "disc-")); err != nil || strings.ToLower(id) != id {
+		return "", errors.New("paths: invalid disc ID")
+	}
+	dir := filepath.Join(filepath.Clean(releaseTempDir), "discs", id)
+	if !pathutil.IsWithinRoot(releaseTempDir, dir) {
+		return "", errors.New("paths: disc artifact directory escapes release root")
+	}
+	return dir, nil
+}
+
+const sha256HexLength = 64
 
 // BDMVPlaylistKey returns the normalized playlist identifier used in BDInfo artifact names.
 func BDMVPlaylistKey(playlist string) string {

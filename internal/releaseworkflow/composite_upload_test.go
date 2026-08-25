@@ -672,6 +672,206 @@ func TestCompositeUploadTrackerRemovalUpdateIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestCompositeUploadRefreshesOnlyRecoverablePersistedMediaBlock(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		failures         []api.WorkflowFailure
+		additionalAction *api.RequiredAction
+		wantDescriptions bool
+	}{
+		{
+			name:             "surviving tracker continues to descriptions",
+			failures:         []api.WorkflowFailure{compositeImageHostFailure("BETA")},
+			wantDescriptions: true,
+		},
+		{
+			name:     "genuine tracker action remains blocked",
+			failures: []api.WorkflowFailure{compositeImageHostFailure("BETA")},
+			additionalAction: &api.RequiredAction{
+				ID:             "action-tracker-input",
+				Kind:           api.RequiredActionProvideTrackerInput,
+				Status:         api.RequiredActionStatusPending,
+				TrackerID:      "ALPHA",
+				Prompt:         "Provide the required tracker value.",
+				AllowsFreeText: true,
+			},
+		},
+		{
+			name: "all tracker hosts failed",
+			failures: []api.WorkflowFailure{
+				compositeImageHostFailure("ALPHA"),
+				compositeImageHostFailure("BETA"),
+			},
+		},
+		{
+			name:     "unscoped host failure remains blocked",
+			failures: []api.WorkflowFailure{compositeImageHostFailure("")},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			module, repository, _ := newCompositeUploadTestModule(t)
+			request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, "persisted-media-"+strings.ReplaceAll(test.name, " ", "-"))
+			started, err := module.StartUpload(t.Context(), testOwnerID, request)
+			if err != nil {
+				t.Fatalf("start composite upload: %v", err)
+			}
+			blocked := waitCompositeUploadTestOperation(t, module, started)
+			completed := approveCompositeUploadTrackers(
+				t,
+				module,
+				blocked,
+				[]api.TrackerID{"ALPHA", "BETA"},
+				"approve-persisted-media-"+strings.ReplaceAll(test.name, " ", "-"),
+			)
+			command, operationID, initialRevision, initialMediaCount := seedPersistedCompositeMediaBlock(
+				t,
+				repository,
+				completed.Workflow.ID,
+				test.failures,
+				test.additionalAction,
+			)
+			ctx := context.WithValue(t.Context(), operationExecutionContextKey{}, operationID)
+			result, err := module.runCompositeUpload(ctx, testOwnerID, command)
+			if err != nil {
+				t.Fatalf("resume persisted media block: %v", err)
+			}
+			state, err := repository.Load(t.Context(), testOwnerID, completed.Workflow.ID)
+			if err != nil {
+				t.Fatalf("load resumed composite state: %v", err)
+			}
+			if test.wantDescriptions {
+				if result.Descriptions == nil || result.Media == nil || result.Media.Status != api.StageStatusCompleted {
+					t.Fatalf("recovered composite result = %#v", result)
+				}
+				if _, failed := TrackerImageHostFailure(*result.Media, "BETA"); !failed {
+					t.Fatalf("recovered media lost tracker-scoped failure: %#v", result.Media.Failures)
+				}
+				if len(state.Media) != initialMediaCount+1 {
+					t.Fatalf("recovered media revisions = %d, want %d", len(state.Media), initialMediaCount+1)
+				}
+				return
+			}
+			if result.Descriptions != nil || result.Media == nil || result.Media.Status != api.StageStatusBlocked {
+				t.Fatalf("blocked composite result = %#v", result)
+			}
+			if state.Workflow.Revision != initialRevision+1 {
+				t.Fatalf("blocked composite revision = %d, want %d (single terminal checkpoint)", state.Workflow.Revision, initialRevision+1)
+			}
+			if len(state.Media) != initialMediaCount {
+				t.Fatalf("blocked composite refreshed media %d times, want none", len(state.Media)-initialMediaCount)
+			}
+		})
+	}
+}
+
+func seedPersistedCompositeMediaBlock(
+	t *testing.T,
+	repository *MemoryRepository,
+	workflowID api.WorkflowID,
+	failures []api.WorkflowFailure,
+	additionalAction *api.RequiredAction,
+) (CompositeUploadCommand, api.WorkflowOperationID, api.WorkflowRevision, int) {
+	t.Helper()
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	state := repository.states[workflowID]
+	if state.Composite == nil || state.Workflow.Media == nil {
+		t.Fatalf("completed composite state is missing session or media: %#v", state.Workflow)
+	}
+	media := state.Media[state.Workflow.Media.ID]
+	action := api.RequiredAction{
+		ID:               "action-media-input",
+		Kind:             api.RequiredActionProvideTrackerInput,
+		Status:           api.RequiredActionStatusPending,
+		WorkflowRevision: state.Workflow.Revision,
+		Prompt:           "Capture, select, or host the required release images before continuing.",
+		CreatedAt:        state.Workflow.UpdatedAt,
+	}
+	media.Artifacts = []api.MediaArtifact{
+		{
+			ID:       "screen-0",
+			Kind:     api.MediaArtifactScreenshot,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+		},
+		{
+			ID:       "hosted-0",
+			Kind:     api.MediaArtifactHostedImage,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+			Source:   "screen-0",
+		},
+	}
+	media.HostAttempts = []api.HostedImageAttempt{{
+		UsageScope: "global",
+		TrackerIDs: []api.TrackerID{"ALPHA"},
+		Results:    []api.MediaArtifact{media.Artifacts[1]},
+	}}
+	if intent := state.Composite.Intent.Media; intent != nil {
+		fingerprint, fingerprintErr := api.CanonicalWorkflowFingerprint(struct {
+			Release      api.ReleaseRef
+			ProjectionID api.TrackerReleaseProjectionSetID
+			Revision     api.WorkflowRevision
+			Instructions api.MediaCaptureInstructions
+			Requirements api.WorkflowFingerprint
+		}{
+			Release:      state.Projections[state.Workflow.TrackerProjections.ID].ReleaseRef,
+			ProjectionID: state.Workflow.TrackerProjections.ID,
+			Revision:     state.Workflow.TrackerProjections.Revision,
+			Instructions: *intent,
+			Requirements: media.RequirementsFingerprint,
+		})
+		if fingerprintErr != nil {
+			t.Fatalf("fingerprint persisted media fixture: %v", fingerprintErr)
+		}
+		media.CaptureFingerprint = fingerprint
+	}
+	media.ImageRequirementsPrepared = true
+	media.Status = api.StageStatusBlocked
+	media.Failures = append([]api.WorkflowFailure(nil), failures...)
+	media.RequiredActions = []api.RequiredAction{action}
+	if additionalAction != nil {
+		genuine := *additionalAction
+		genuine.WorkflowRevision = state.Workflow.Revision
+		genuine.CreatedAt = state.Workflow.UpdatedAt
+		media.RequiredActions = append(media.RequiredActions, genuine)
+	}
+	state.Media[media.ID] = media
+	state.Workflow.Descriptions = nil
+	state.Workflow.DryRun = nil
+	state.Workflow.UploadResult = nil
+	state.Workflow.Status = api.WorkflowStatusBlocked
+	state.Workflow.RequiredActions = append([]api.RequiredAction(nil), media.RequiredActions...)
+	state.Workflow.Failures = append([]api.WorkflowFailure(nil), failures...)
+	operationID := api.WorkflowOperationID("operation-persisted-media")
+	state.Composite.ActiveOperationID = operationID
+	state.Composite.TerminalReason = ""
+	state.Composite.Goal = api.WorkflowGoalDescriptionsReady
+	repository.states[workflowID] = state
+	return CompositeUploadCommand{
+		WorkflowID:         workflowID,
+		ExpectedRevision:   state.Workflow.Revision,
+		SessionFingerprint: state.Composite.RequestFingerprint,
+		IdempotencyKey:     "resume-persisted-media",
+	}, operationID, state.Workflow.Revision, len(state.Media)
+}
+
+func compositeImageHostFailure(trackerID api.TrackerID) api.WorkflowFailure {
+	return api.WorkflowFailure{
+		Failure: api.OperationFailure{
+			Code:      api.OperationFailureImageHostUnavailable,
+			Operation: api.OperationKindImageHosting,
+			Message:   "Required image host failed.",
+			Recovery:  api.OperationRecoveryRetry,
+		},
+		TrackerID: trackerID,
+		Resource:  "synthetic-host",
+	}
+}
+
 func compositeUploadTestOperationCount(repository *MemoryRepository, workflowID api.WorkflowID) int {
 	repository.mu.RLock()
 	defer repository.mu.RUnlock()

@@ -31,6 +31,10 @@ type MediaArtifactContent struct {
 // MediaPreviewContent retains one non-authoritative frame preview without
 // exposing image bytes or filesystem identity in workflow snapshots.
 type MediaPreviewContent struct {
+	// DiscID identifies the prepared disc used for this preview.
+	DiscID string
+	// DiscName is the safe page-facing label for DiscID.
+	DiscName    string
 	Bytes       []byte
 	ContentType string
 	Width       int
@@ -256,7 +260,7 @@ type MediaArtifactMutator interface {
 // for one exact prepared release.
 type MediaPlanner interface {
 	Plan(context.Context, api.ReleaseRef, api.TrackerReleaseProjectionSet, time.Time) (api.MediaPlan, error)
-	PreviewFrame(context.Context, api.ReleaseRef, float64) (MediaPreviewContent, error)
+	PreviewFrame(context.Context, api.ReleaseRef, string, float64) (MediaPreviewContent, error)
 }
 
 // DescriptionBuilder generates projection- and media-bound descriptions.
@@ -398,7 +402,7 @@ type Application interface {
 	Operation(context.Context, string, api.WorkflowID, api.WorkflowOperationID) (api.WorkflowOperationStatus, error)
 	CancelOperation(context.Context, string, api.WorkflowID, api.WorkflowOperationID) (api.WorkflowOperationStatus, error)
 	MediaPlan(context.Context, string, api.WorkflowID) (api.MediaPlan, error)
-	PreviewFrame(context.Context, string, api.WorkflowID, api.WorkflowRevision, float64) (api.FramePreview, error)
+	PreviewFrame(context.Context, string, api.WorkflowID, api.WorkflowRevision, string, float64) (api.FramePreview, error)
 	PreviewArtifact(context.Context, string, api.WorkflowID, api.PublicResourceID) (MediaArtifactContent, error)
 	StageMediaResource(context.Context, string, api.WorkflowID, api.WorkflowRevision, StagedMediaContent) (api.WorkflowResourceRef, error)
 	MediaArtifact(context.Context, string, api.WorkflowID, api.MediaArtifactSetRef, api.PublicResourceID) (MediaArtifactContent, error)
@@ -689,6 +693,25 @@ type mediaArtifactsPublication struct {
 	ExpectedRevision api.WorkflowRevision
 	Snapshot         api.MediaArtifactSet
 	IdempotencyKey   string
+}
+
+// refreshPersistedMediaStatusCommand re-evaluates a persisted media block
+// without exposing a new adapter-facing mutation.
+type refreshPersistedMediaStatusCommand struct {
+	WorkflowID       api.WorkflowID
+	ExpectedRevision api.WorkflowRevision
+	Media            api.MediaArtifactSetRef
+	IdempotencyKey   string
+}
+
+func (refreshPersistedMediaStatusCommand) commandName() string {
+	return "refresh_persisted_media_status"
+}
+func (c refreshPersistedMediaStatusCommand) commandFingerprint() (api.WorkflowFingerprint, error) {
+	return canonicalCommandFingerprint(struct {
+		ExpectedRevision api.WorkflowRevision
+		Media            api.MediaArtifactSetRef
+	}{c.ExpectedRevision, c.Media})
 }
 
 // CaptureMediaCommand plans and captures all required screenshots/DVD menus.

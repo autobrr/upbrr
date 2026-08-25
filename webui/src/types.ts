@@ -974,6 +974,8 @@ export type ImageHostWarning = {
 export type ScreenshotPurpose = "preview" | "final" | "menu";
 
 export type ScreenshotSelection = {
+  /** Prepared disc identity; omitted only by legacy single-disc callers. */
+  DiscID?: string;
   Index: number;
   TimestampSeconds: number;
   Frame: number;
@@ -981,6 +983,10 @@ export type ScreenshotSelection = {
 };
 
 export type ScreenshotImage = {
+  /** Prepared disc identity; omitted only for unscoped single-disc artifacts. */
+  DiscID?: string;
+  /** Safe prepared-disc label used for grouped display. */
+  DiscName?: string;
   Index: number;
   TimestampSeconds: number;
   Path: string;
@@ -1076,6 +1082,8 @@ export type ScreenshotResult = {
 export type ScreenshotPlan = {
   SourcePath: string;
   DiscType: string;
+  /** Independent prepared-disc timelines; absent for legacy single-source plans. */
+  Discs?: ScreenshotDiscPlan[];
   DurationSeconds: number;
   FrameRate: number;
   SuggestedSelections: ScreenshotSelection[];
@@ -1086,6 +1094,15 @@ export type ScreenshotPlan = {
   PreviewImages: ScreenshotImage[];
   MetadataTimestamp: string;
   RequiresManualFrames: boolean;
+};
+
+/** One prepared disc timeline and its suggested screenshot selections. */
+export type ScreenshotDiscPlan = {
+  DiscID: string;
+  DiscName: string;
+  DurationSeconds: number;
+  FrameRate: number;
+  SuggestedSelections: ScreenshotSelection[];
 };
 
 export type ScreenshotLinkedImage = {
@@ -1380,6 +1397,9 @@ export type PlaylistItem = {
 };
 
 export type PlaylistInfo = {
+  id: string;
+  discId: string;
+  discName: string;
   file: string;
   duration: number;
   items: PlaylistItem[];

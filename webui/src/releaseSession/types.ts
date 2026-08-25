@@ -105,6 +105,7 @@ export type InputFacet = Readonly<{
     selectedTrackers: readonly string[];
     preview: MetadataPreview | null;
     trackerData: readonly TrackerPreview[];
+    source: Readonly<{ discCount: number; discType: string }>;
     playlist: Readonly<{
       status: PlaylistStatus;
       required: boolean;
@@ -182,7 +183,7 @@ export type ScreenshotsFacet = Readonly<{
     purpose: ScreenshotPurpose,
     selections?: readonly ScreenshotSelection[],
   ): Promise<boolean>;
-  previewFrame(timestampSeconds: number): Promise<boolean>;
+  previewFrame(discID: string, timestampSeconds: number): Promise<boolean>;
   remove(artifactID: string): Promise<boolean>;
   removeMany(artifactIDs: readonly string[]): Promise<boolean>;
   selectFinal(artifactID: string, selected: boolean): Promise<boolean>;
@@ -195,6 +196,8 @@ export type ScreenshotsFacet = Readonly<{
 
 export type MediaImageView = Readonly<{
   artifactID: string;
+  discID?: string;
+  discName?: string;
   index: number;
   timestampSeconds: number;
   purpose: ScreenshotPurpose;

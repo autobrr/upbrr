@@ -498,7 +498,11 @@ const (
 
 // MediaArtifact is a safe opaque projection of one retained private artifact.
 type MediaArtifact struct {
-	ID               PublicResourceID  `json:"id"`
+	ID PublicResourceID `json:"id"`
+	// DiscID identifies the prepared disc that produced this artifact.
+	DiscID string `json:"discId,omitempty"`
+	// DiscName is the safe page-facing label derived from prepared facts.
+	DiscName         string            `json:"discName,omitempty"`
 	Kind             MediaArtifactKind `json:"kind"`
 	Purpose          ScreenshotPurpose `json:"purpose"`
 	Selected         bool              `json:"selected"`
@@ -519,7 +523,9 @@ type MediaCaptureInstructions struct {
 	ScreenshotCount int                   `json:"screenshotCount"`
 	Purpose         ScreenshotPurpose     `json:"purpose"`
 	Selections      []ScreenshotSelection `json:"selections,omitempty"`
-	CaptureDVDMenus bool                  `json:"captureDvdMenus"`
+	// ManualFrames applies the same raw frame numbers to every prepared disc.
+	ManualFrames    []int `json:"manualFrames,omitempty"`
+	CaptureDVDMenus bool  `json:"captureDvdMenus"`
 	// MaxDVDMenuItems caps an explicitly requested automatic menu capture.
 	MaxDVDMenuItems int `json:"maxDvdMenuItems,omitempty"`
 }

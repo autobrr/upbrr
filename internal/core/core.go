@@ -498,9 +498,10 @@ func (c *Core) PreviewReleaseWorkflowFrame(
 	ownerID string,
 	workflowID api.WorkflowID,
 	expectedRevision api.WorkflowRevision,
+	discID string,
 	timestampSeconds float64,
 ) (api.FramePreview, error) {
-	preview, err := c.workflow.PreviewFrame(ctx, ownerID, workflowID, expectedRevision, timestampSeconds)
+	preview, err := c.workflow.PreviewFrame(ctx, ownerID, workflowID, expectedRevision, discID, timestampSeconds)
 	if err != nil {
 		return api.FramePreview{}, classifyOperationError(api.OperationKindMedia, err)
 	}
@@ -609,36 +610,41 @@ func (c *Core) DiscoverPlaylists(ctx context.Context, sourcePath string) ([]api.
 	if err != nil {
 		return nil, classifyOperationError(api.OperationKindPreparation, fmt.Errorf("core: resolve playlist source: %w", err))
 	}
-	if strings.TrimSpace(layout.BDMVRoot) == "" {
+	if layout.DiscType != "BDMV" || len(layout.Discs) == 0 {
 		return nil, classifyOperationError(api.OperationKindPreparation, &api.InvalidPlaylistSelectionError{
 			SourcePath: layout.SourcePath,
 			Reason:     "source is not a Blu-ray disc",
 		})
 	}
 
-	playlists, err := filesystem.DiscoverPlaylists(ctx, layout.BDMVRoot)
-	if err != nil {
-		c.logger.Warnf("core: discover playlists failed: %v", err)
-		return nil, classifyOperationError(api.OperationKindPreparation, fmt.Errorf("core: discover playlists: %w", err))
-	}
-
-	// Convert filesystem types to API types.
 	var result []api.PlaylistInfo
-	for _, p := range playlists {
-		var items []api.PlaylistItem
-		for _, item := range p.Items {
-			items = append(items, api.PlaylistItem{
-				File: item.File,
-				Size: item.Size,
+	for _, disc := range layout.Discs {
+		playlists, err := filesystem.DiscoverPlaylists(ctx, disc.Root)
+		if err != nil {
+			c.logger.Warnf("core: discover playlists failed: %v", err)
+			return nil, classifyOperationError(api.OperationKindPreparation, fmt.Errorf("core: discover playlists: %w", err))
+		}
+		for _, playlist := range playlists {
+			items := make([]api.PlaylistItem, 0, len(playlist.Items))
+			for _, item := range playlist.Items {
+				items = append(items, api.PlaylistItem{File: item.File, Size: item.Size})
+			}
+			file := strings.ToUpper(filepath.Base(strings.TrimSpace(playlist.File)))
+			id := file
+			if len(layout.Discs) > 1 {
+				id = disc.ID + ":" + file
+			}
+			result = append(result, api.PlaylistInfo{
+				ID:       id,
+				DiscID:   disc.ID,
+				DiscName: disc.Name,
+				File:     file,
+				Duration: playlist.Duration,
+				Items:    items,
+				Score:    playlist.Score,
+				Edition:  playlist.Edition,
 			})
 		}
-		result = append(result, api.PlaylistInfo{
-			File:     p.File,
-			Duration: p.Duration,
-			Items:    items,
-			Score:    p.Score,
-			Edition:  p.Edition,
-		})
 	}
 
 	c.logger.Infof("core: discovered %d playlists", len(result))

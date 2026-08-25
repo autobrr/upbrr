@@ -16,6 +16,7 @@ import (
 	gomediainfo "github.com/autobrr/go-mediainfo"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -32,7 +33,9 @@ type Request struct {
 	DiscType   string
 	VideoPath  string
 	TempRoot   string
-	Release    api.ReleaseInfo
+	// ArtifactDir optionally selects a namespaced directory within TempRoot.
+	ArtifactDir string
+	Release     api.ReleaseInfo
 }
 
 // Result identifies persisted MediaInfo artifacts and optional DVD evidence.
@@ -99,9 +102,20 @@ func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 		return Result{}, errors.New("mediainfo: empty target")
 	}
 
-	tmpDir, _, err := paths.ReleaseTempDir(req.TempRoot, preparationstate.State{Release: req.Release}, req.SourcePath)
-	if err != nil {
-		return Result{}, fmt.Errorf("metadata: %w", err)
+	tmpDir := strings.TrimSpace(req.ArtifactDir)
+	if tmpDir == "" {
+		tmpDir, _, err = paths.ReleaseTempDir(req.TempRoot, preparationstate.State{Release: req.Release}, req.SourcePath)
+		if err != nil {
+			return Result{}, fmt.Errorf("metadata: %w", err)
+		}
+	} else {
+		tmpDir = filepath.Clean(tmpDir)
+		if !pathutil.IsWithinRoot(req.TempRoot, tmpDir) {
+			return Result{}, errors.New("mediainfo: artifact directory escapes temporary root")
+		}
+		if err := os.MkdirAll(tmpDir, 0o700); err != nil {
+			return Result{}, fmt.Errorf("mediainfo: create artifact directory: %w", err)
+		}
 	}
 	textPath := filepath.Join(tmpDir, "mediainfo.txt")
 	jsonPath := filepath.Join(tmpDir, "MediaInfo.json")
