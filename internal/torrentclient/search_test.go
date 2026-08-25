@@ -1216,6 +1216,7 @@ func TestDiscoveryToCreateDoesNotTrustDifferentQbitContentPath(t *testing.T) {
 		SourcePath:                source,
 		FileList:                  []string{source},
 		ClientTorrentPath:         evidence.TorrentPath,
+		ClientTorrentInfoHash:     evidence.InfoHash,
 		ClientTorrentDataVerified: evidence.TorrentDataVerified,
 	})
 	if err != nil {
