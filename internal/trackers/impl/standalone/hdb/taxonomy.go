@@ -17,31 +17,45 @@ func isHDBTVCategory(meta api.UploadSubject) bool {
 }
 
 func hdbCategoryID(meta api.UploadSubject) int {
-	category, _ := meta.Identity.RequireCategory()
+	return resolveHDBCategoryID(meta.Identity, meta.ProviderMetadata)
+}
+
+// resolveHDBCategoryID maps provider-specific documentary and concert evidence
+// before falling back to HDB's canonical movie or TV category.
+func resolveHDBCategoryID(identity api.ExternalIdentity, metadata api.SourceScopedMetadata) int {
+	if metadata.TMDB != nil {
+		genres := strings.ToLower(strings.TrimSpace(metadata.TMDB.Genres))
+		keywords := strings.ToLower(strings.TrimSpace(metadata.TMDB.Keywords))
+		documentary := strings.Contains(genres, "documentary") || strings.Contains(keywords, "documentary")
+		for genreID := range strings.SplitSeq(metadata.TMDB.GenreIDs, ",") {
+			if strings.TrimSpace(genreID) == "99" {
+				documentary = true
+				break
+			}
+		}
+		if documentary {
+			return 3
+		}
+	}
+	if metadata.IMDB != nil {
+		imdbType := strings.ToLower(strings.TrimSpace(metadata.IMDB.Type))
+		imdbGenres := strings.ToLower(strings.TrimSpace(metadata.IMDB.Genres))
+		if strings.Contains(imdbType, "concert") || (strings.Contains(imdbType, "video") && strings.Contains(imdbGenres, "music")) {
+			return 4
+		}
+	}
+
+	category, _ := identity.RequireCategory()
 	switch category {
 	case api.CanonicalCategoryMovie:
 		return 1
 	case api.CanonicalCategoryTV:
 		return 2
 	case api.CanonicalCategoryUnknown:
+		return 0
+	default:
+		return 0
 	}
-	genres := ""
-	keywords := ""
-	if meta.ProviderMetadata.TMDB != nil {
-		genres = strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.TMDB.Genres))
-		keywords = strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.TMDB.Keywords))
-	}
-	if strings.Contains(genres, "documentary") || strings.Contains(keywords, "documentary") {
-		return 3
-	}
-	if meta.ProviderMetadata.IMDB != nil {
-		imdbType := strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.IMDB.Type))
-		imdbGenres := strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.IMDB.Genres))
-		if strings.Contains(imdbType, "concert") || (strings.Contains(imdbType, "video") && strings.Contains(imdbGenres, "music")) {
-			return 4
-		}
-	}
-	return 0
 }
 
 func hdbCodecID(meta api.UploadSubject) int {

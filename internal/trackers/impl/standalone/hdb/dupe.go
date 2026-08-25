@@ -349,28 +349,5 @@ func isHDBDupeTVCategory(meta api.DuplicateSubject) bool {
 }
 
 func hdbDupeCategoryID(meta api.DuplicateSubject) int {
-	category, _ := meta.Identity.RequireCategory()
-	switch category {
-	case api.CanonicalCategoryMovie:
-		return 1
-	case api.CanonicalCategoryTV:
-		return 2
-	case api.CanonicalCategoryUnknown:
-	}
-	genres, keywords := "", ""
-	if meta.ProviderMetadata.TMDB != nil {
-		genres = strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.TMDB.Genres))
-		keywords = strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.TMDB.Keywords))
-	}
-	if strings.Contains(genres, "documentary") || strings.Contains(keywords, "documentary") {
-		return 3
-	}
-	if meta.ProviderMetadata.IMDB != nil {
-		imdbType := strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.IMDB.Type))
-		imdbGenres := strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.IMDB.Genres))
-		if strings.Contains(imdbType, "concert") || (strings.Contains(imdbType, "video") && strings.Contains(imdbGenres, "music")) {
-			return 4
-		}
-	}
-	return 0
+	return resolveHDBCategoryID(meta.Identity, meta.ProviderMetadata)
 }
