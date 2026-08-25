@@ -98,7 +98,7 @@ describe("productionReleaseSessionPorts", () => {
     ]);
   });
 
-  it("reconciles dry-run and client-injection options through Continue", async () => {
+  it("reconciles upload options through Continue", async () => {
     const requests: Array<{ method: string; body: unknown }> = [];
     const current = {
       workflow: { id: "workflow-1", revision: 7 },
@@ -113,7 +113,7 @@ describe("productionReleaseSessionPorts", () => {
       {
         authority: { workflowId: "workflow-1", expectedRevision: 7 },
         goal: "dry_run",
-        intent: { noSeed: true },
+        intent: { noSeed: true, noHash: true },
         idempotencyKey: "dry-run-1",
       },
       new AbortController().signal,
@@ -125,8 +125,44 @@ describe("productionReleaseSessionPorts", () => {
         body: {
           authority: { workflowId: "workflow-1", expectedRevision: 7 },
           goal: "dry_run",
-          intent: { noSeed: true },
+          intent: { noSeed: true, noHash: true },
           idempotencyKey: "dry-run-1",
+        },
+      },
+    ]);
+  });
+
+  it("forwards no-hash when retrying failed uploads", async () => {
+    const requests: Array<{ method: string; body: unknown }> = [];
+    const current = {
+      workflow: { id: "workflow-1", revision: 7 },
+    } as ReleaseWorkflowCurrent;
+    setAppRequestHandlerForTests(async (method, body) => {
+      requests.push({ method, body });
+      return current;
+    });
+    const ports = productionReleaseSessionPorts();
+
+    await ports.workflow.retryFailedUploads(
+      current,
+      { id: "upload-1", revision: 6 },
+      ["EXAMPLE"],
+      false,
+      true,
+      "retry-1",
+      new AbortController().signal,
+    );
+
+    expect(requests).toEqual([
+      {
+        method: "RetryReleaseWorkflowUpload",
+        body: {
+          workflowId: "workflow-1",
+          expectedRevision: 7,
+          retry: { result: { id: "upload-1", revision: 6 }, trackerIds: ["EXAMPLE"] },
+          noSeed: false,
+          noHash: true,
+          idempotencyKey: "retry-1",
         },
       },
     ]);

@@ -663,6 +663,42 @@ func readyContinuationPlannerResult(t *testing.T, now time.Time) CommandResult {
 	}
 }
 
+func TestContinuationPlannerRebuildsDryRunWhenNoHashChanges(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.July, 23, 1, 2, 3, 0, time.UTC)
+	current := readyContinuationPlannerResult(t, now)
+	current.Media = &api.MediaArtifactSet{Status: api.StageStatusCompleted, ImageRequirementsPrepared: true}
+	current.Descriptions = &api.DescriptionSet{
+		Status: api.StageStatusCompleted,
+		TrackerResults: []api.DescriptionTrackerResult{{
+			TrackerID: "ALPHA",
+			Status:    api.StageStatusCompleted,
+		}},
+	}
+	priorNoHash := true
+	current.DryRun = &api.UploadDryRunResult{NoHash: &priorNoHash}
+	desiredNoHash := false
+	request := api.ContinueReleaseWorkflowRequest{
+		IdempotencyKey: "continue-no-hash-change",
+		Goal:           api.WorkflowGoalDryRun,
+		Intent: api.WorkflowIntent{
+			TrackerIDs:             []api.TrackerID{"ALPHA"},
+			ProjectionInstructions: map[api.TrackerID]api.TrackerProjectionInstructions{},
+			NoHash:                 &desiredNoHash,
+		},
+	}
+
+	if continuationGoalReached(current, request) {
+		t.Fatal("changed no-hash option satisfied the retained dry run")
+	}
+	command, stage := planContinuationCommand(request, current, now)
+	dryRun, ok := command.(DryRunUploadsCommand)
+	if !ok || stage != "review-uploads" || dryRun.NoHash == nil || *dryRun.NoHash {
+		t.Fatalf("changed no-hash plan: stage=%q command=%#v", stage, command)
+	}
+}
+
 func TestContinuationPlannerAdvancesRunnableSiblingPastPendingDupe(t *testing.T) {
 	t.Parallel()
 

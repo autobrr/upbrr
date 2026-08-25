@@ -173,13 +173,14 @@ export const productionReleaseSessionPorts = (): ReleaseSessionPorts => ({
         signal,
       );
     },
-    retryFailedUploads: (current, result, trackerIDs, noSeed, idempotencyKey, signal) =>
+    retryFailedUploads: (current, result, trackerIDs, noSeed, noHash, idempotencyKey, signal) =>
       releaseWorkflowClient.retryFailedUploads(
         {
           workflowId: current.workflow.id,
           expectedRevision: current.workflow.revision,
           retry: { result, trackerIds: [...trackerIDs] },
           noSeed,
+          noHash,
           idempotencyKey,
         },
         signal,

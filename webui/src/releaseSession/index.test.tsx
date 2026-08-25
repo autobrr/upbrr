@@ -157,6 +157,7 @@ type WorkflowStageFixtures = Readonly<{
   dryRunUploads(
     current: ReleaseWorkflowCurrent,
     noSeed: boolean,
+    noHash: boolean | null | undefined,
     trackerIDs: readonly string[],
     idempotencyKey: string,
     signal: AbortSignal,
@@ -164,6 +165,7 @@ type WorkflowStageFixtures = Readonly<{
   executeUploads(
     current: ReleaseWorkflowCurrent,
     noSeed: boolean,
+    noHash: boolean | null | undefined,
     trackerIDs: readonly string[],
     idempotencyKey: string,
     signal: AbortSignal,
@@ -288,6 +290,7 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
           next = await activePorts.dryRunUploads(
             current,
             request.intent.noSeed || false,
+            request.intent.noHash,
             request.intent.uploadTrackerIds || [],
             request.idempotencyKey,
             signal,
@@ -311,6 +314,7 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
                 descriptions: { id: `${workflowID}-descriptions`, revision: 1 },
                 inputFingerprint: "2".repeat(64),
                 noSeed: request.intent.noSeed || false,
+                noHash: request.intent.noHash,
                 trackerIds: request.intent.uploadTrackerIds || [],
                 reports: [],
                 succeededCount: 0,
@@ -328,6 +332,7 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
           next = await activePorts.executeUploads(
             current,
             request.intent.noSeed || false,
+            request.intent.noHash,
             request.intent.uploadTrackerIds || [],
             request.idempotencyKey,
             signal,
@@ -650,7 +655,7 @@ describe("useReleaseSession", () => {
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
 
-  it("passes the current skip-client option to an explicit workflow dry run", async () => {
+  it("passes current upload options to an explicit workflow dry run", async () => {
     const workflowID = "workflow-dry-run-options";
     window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
     const retained = workflowCurrent(workflowID, 7);
@@ -667,11 +672,12 @@ describe("useReleaseSession", () => {
     });
 
     await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
-    act(() => result.current.upload.changeOptions({ noSeed: true }));
+    act(() => result.current.upload.changeOptions({ noSeed: true, noHash: true }));
     await act(() => result.current.upload.runDryRun());
 
     expect(dryRunUploads).toHaveBeenCalledWith(
       expect.objectContaining({ workflow: expect.objectContaining({ id: workflowID }) }),
+      true,
       true,
       [],
       expect.any(String),
@@ -851,6 +857,7 @@ describe("useReleaseSession", () => {
     });
 
     await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+    act(() => result.current.upload.changeOptions({ noHash: true }));
     await act(async () => {
       expect(await result.current.upload.start()).toBe(true);
     });
@@ -858,6 +865,7 @@ describe("useReleaseSession", () => {
     expect(executeUploads).toHaveBeenCalledWith(
       expect.objectContaining({ workflow: expect.objectContaining({ id: workflowID }) }),
       false,
+      true,
       [],
       expect.any(String),
       expect.any(AbortSignal),
@@ -1413,6 +1421,7 @@ describe("useReleaseSession", () => {
         workflow: expect.objectContaining({ id: "workflow-browser-flow" }),
       }),
       false,
+      false,
       [],
       expect.any(String),
       expect.any(AbortSignal),
@@ -1739,18 +1748,22 @@ describe("useReleaseSession", () => {
     const { result } = renderHook(useReleaseSession, { wrapper: wrapperFor(portsFor()) });
     await selectAndPrepare(result, "C:\\media\\Example");
     act(() => result.current.upload.chooseTrackers(["AITHER", "BLU"]));
-    act(() => result.current.upload.changeOptions({ noSeed: true, runLogLevel: "debug" }));
+    act(() =>
+      result.current.upload.changeOptions({ noSeed: true, noHash: true, runLogLevel: "debug" }),
+    );
     act(() => result.current.upload.answerQuestionnaire("AITHER", "season", "1"));
 
     await act(() => result.current.input.prepare());
     expect(result.current.upload.view.selectedTrackers).toEqual(["AITHER", "BLU"]);
     expect(result.current.upload.view.options.noSeed).toBe(true);
+    expect(result.current.upload.view.options.noHash).toBe(true);
     expect(result.current.upload.view.options.runLogLevel).toBe("debug");
     expect(result.current.upload.view.questionnaireAnswers.AITHER).toEqual({ season: "1" });
 
     act(() => result.current.input.selectSource("C:\\media\\Other"));
     expect(result.current.upload.view.selectedTrackers).toEqual([]);
     expect(result.current.upload.view.options.noSeed).toBe(false);
+    expect(result.current.upload.view.options.noHash).toBe(false);
     expect(result.current.upload.view.options.runLogLevel).toBe("info");
     expect(result.current.upload.view.questionnaireAnswers).toEqual({});
   });
@@ -1969,35 +1982,42 @@ describe("useReleaseSession", () => {
   });
 
   it("lets the backend resolve dry-run trackers from current downstream authority", async () => {
-    const dryRunUploads = vi.fn(async (current: ReleaseWorkflowCurrent, noSeed: boolean) => {
-      const revision = current.workflow.revision + 1;
-      return {
-        ...current,
-        workflow: {
-          ...current.workflow,
-          revision,
-          dryRun: { id: "dry-run-1", revision },
-        },
-        dryRun: {
-          id: "dry-run-1",
-          workflowId: current.workflow.id,
-          revision,
-          projectionSet: current.workflow.trackerProjections!,
-          dupes: current.workflow.dupes!,
-          media: { id: "media-1", revision: 1 },
-          descriptions: { id: "descriptions-1", revision: 1 },
-          inputFingerprint: "1".repeat(64),
-          noSeed,
-          trackerIds: ["AITHER"],
-          reports: [],
-          succeededCount: 0,
-          failedCount: 0,
-          skippedCount: 0,
-          status: "skipped" as const,
-          createdAt: "2026-07-22T00:00:00Z",
-        },
-      } as ReleaseWorkflowCurrent;
-    });
+    const dryRunUploads = vi.fn(
+      async (
+        current: ReleaseWorkflowCurrent,
+        noSeed: boolean,
+        noHash: boolean | null | undefined,
+      ) => {
+        const revision = current.workflow.revision + 1;
+        return {
+          ...current,
+          workflow: {
+            ...current.workflow,
+            revision,
+            dryRun: { id: "dry-run-1", revision },
+          },
+          dryRun: {
+            id: "dry-run-1",
+            workflowId: current.workflow.id,
+            revision,
+            projectionSet: current.workflow.trackerProjections!,
+            dupes: current.workflow.dupes!,
+            media: { id: "media-1", revision: 1 },
+            descriptions: { id: "descriptions-1", revision: 1 },
+            inputFingerprint: "1".repeat(64),
+            noSeed,
+            noHash,
+            trackerIds: ["AITHER"],
+            reports: [],
+            succeededCount: 0,
+            failedCount: 0,
+            skippedCount: 0,
+            status: "skipped" as const,
+            createdAt: "2026-07-22T00:00:00Z",
+          },
+        } as ReleaseWorkflowCurrent;
+      },
+    );
     const { result } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ dryRunUploads }) })),
     });
@@ -2022,6 +2042,7 @@ describe("useReleaseSession", () => {
     expect(result.current.upload.view.dryRunStatus).toBe("ready");
     expect(dryRunUploads).toHaveBeenCalledWith(
       expect.anything(),
+      false,
       false,
       [],
       expect.any(String),

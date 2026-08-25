@@ -303,6 +303,7 @@ type RegisteredArtifactAuthority struct {
 type UploadPlanBuildOptions struct {
 	DryRun               bool
 	NoSeed               bool
+	NoHash               *bool
 	TrackerIDs           []api.TrackerID
 	TrackerApproval      *api.TrackerApprovalSnapshotRef
 	AuthorityFingerprint api.WorkflowFingerprint
@@ -922,6 +923,7 @@ type DryRunUploadsCommand struct {
 	WorkflowID       api.WorkflowID
 	ExpectedRevision api.WorkflowRevision
 	NoSeed           bool
+	NoHash           *bool
 	TrackerIDs       []api.TrackerID
 	IdempotencyKey   string
 }
@@ -933,8 +935,9 @@ func (c DryRunUploadsCommand) commandFingerprint() (api.WorkflowFingerprint, err
 	return canonicalCommandFingerprint(struct {
 		ExpectedRevision api.WorkflowRevision
 		NoSeed           bool
+		NoHash           *bool `json:"NoHash,omitempty"`
 		TrackerIDs       []api.TrackerID
-	}{c.ExpectedRevision, c.NoSeed, c.TrackerIDs})
+	}{c.ExpectedRevision, c.NoSeed, c.NoHash, c.TrackerIDs})
 }
 
 // ExecuteUploadsCommand directly prepares and executes eligible trackers.
@@ -942,6 +945,7 @@ type ExecuteUploadsCommand struct {
 	WorkflowID       api.WorkflowID
 	ExpectedRevision api.WorkflowRevision
 	NoSeed           bool
+	NoHash           *bool
 	TrackerIDs       []api.TrackerID
 	Interaction      api.InteractionMode
 	IdempotencyKey   string
@@ -957,15 +961,17 @@ func (c ExecuteUploadsCommand) commandFingerprint() (api.WorkflowFingerprint, er
 		return canonicalCommandFingerprint(struct {
 			ExpectedRevision api.WorkflowRevision
 			NoSeed           bool
+			NoHash           *bool `json:"NoHash,omitempty"`
 			TrackerIDs       []api.TrackerID
 			Interaction      api.InteractionMode
-		}{c.ExpectedRevision, c.NoSeed, c.TrackerIDs, c.Interaction})
+		}{c.ExpectedRevision, c.NoSeed, c.NoHash, c.TrackerIDs, c.Interaction})
 	}
 	return canonicalCommandFingerprint(struct {
 		ExpectedRevision api.WorkflowRevision
 		NoSeed           bool
+		NoHash           *bool `json:"NoHash,omitempty"`
 		TrackerIDs       []api.TrackerID
-	}{c.ExpectedRevision, c.NoSeed, c.TrackerIDs})
+	}{c.ExpectedRevision, c.NoSeed, c.NoHash, c.TrackerIDs})
 }
 
 // RetryFailedUploadsCommand retries only failed trackers from one exact prior result.
@@ -974,6 +980,7 @@ type RetryFailedUploadsCommand struct {
 	ExpectedRevision api.WorkflowRevision
 	Retry            api.FailedTrackerRetryRef
 	NoSeed           bool
+	NoHash           *bool
 	IdempotencyKey   string
 }
 
@@ -987,7 +994,8 @@ func (c RetryFailedUploadsCommand) commandFingerprint() (api.WorkflowFingerprint
 		ExpectedRevision api.WorkflowRevision
 		Retry            api.FailedTrackerRetryRef
 		NoSeed           bool
-	}{c.ExpectedRevision, c.Retry, c.NoSeed})
+		NoHash           *bool `json:"NoHash,omitempty"`
+	}{c.ExpectedRevision, c.Retry, c.NoSeed, c.NoHash})
 }
 
 // RetryClientInjectionsCommand retries retained client effects without

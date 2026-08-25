@@ -444,6 +444,7 @@ func (r ResetReleaseWorkflowDescriptionOverrideRequest) Validate() error {
 type DryRunReleaseWorkflowRequest struct {
 	ReleaseWorkflowCommandContext
 	NoSeed     bool        `json:"noSeed"`
+	NoHash     *bool       `json:"noHash,omitempty"`
 	TrackerIDs []TrackerID `json:"trackerIds,omitempty"`
 }
 
@@ -459,6 +460,7 @@ func (r DryRunReleaseWorkflowRequest) Validate() error {
 type UploadReleaseWorkflowRequest struct {
 	ReleaseWorkflowCommandContext
 	NoSeed     bool        `json:"noSeed"`
+	NoHash     *bool       `json:"noHash,omitempty"`
 	TrackerIDs []TrackerID `json:"trackerIds,omitempty"`
 }
 
@@ -490,6 +492,7 @@ type RetryReleaseWorkflowUploadRequest struct {
 	ReleaseWorkflowCommandContext
 	Retry  FailedTrackerRetryRef `json:"retry"`
 	NoSeed bool                  `json:"noSeed"`
+	NoHash *bool                 `json:"noHash,omitempty"`
 }
 
 // Validate verifies exact workflow authority and explicit failed-tracker targets.

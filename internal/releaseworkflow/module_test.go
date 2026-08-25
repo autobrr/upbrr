@@ -692,8 +692,9 @@ func (f *uploadPlanBuilderFake) Fingerprint(
 		Media        api.MediaArtifactSetID
 		Descriptions api.DescriptionSetID
 		NoSeed       bool
+		NoHash       *bool `json:"NoHash,omitempty"`
 		TrackerIDs   []api.TrackerID
-	}{projections.ID, dupes.ID, media.ID, descriptions.ID, options.NoSeed, options.TrackerIDs})
+	}{projections.ID, dupes.ID, media.ID, descriptions.ID, options.NoSeed, options.NoHash, options.TrackerIDs})
 	if err != nil {
 		return "", fmt.Errorf("upload plan input fingerprint: %w", err)
 	}
@@ -1944,15 +1945,18 @@ func TestModuleDuplicateAssessmentIsRetainedAndDecisionsDoNotRepeatSearch(t *tes
 	if current.Descriptions == nil || current.Descriptions.ID != generated.Descriptions.ID || current.Media == nil || current.Dupes == nil {
 		t.Fatalf("current workflow snapshots = %#v", current)
 	}
+	noHash := true
 	dryRunCommand := DryRunUploadsCommand{
 		WorkflowID:       reused.Workflow.ID,
 		ExpectedRevision: reused.Workflow.Revision,
 		NoSeed:           true,
+		NoHash:           &noHash,
 		IdempotencyKey:   "upload-dry-run",
 	}
 	dryRun := executeCommand(t, module, dryRunCommand)
 	if dryRun.DryRun == nil || dryRun.DryRun.Status != api.StageStatusCompleted || len(dryRun.DryRun.Reports) != 1 ||
-		dryRun.DryRun.Reports[0].ClientInjection.Status != api.StageStatusSkipped || uploadPlans.builds != 1 {
+		dryRun.DryRun.Reports[0].ClientInjection.Status != api.StageStatusSkipped || dryRun.DryRun.NoHash == nil || !*dryRun.DryRun.NoHash ||
+		uploadPlans.builds != 1 || len(uploadPlans.options) != 1 || uploadPlans.options[0].NoHash == nil || !*uploadPlans.options[0].NoHash {
 		t.Fatalf("direct dry run = %#v builds=%d", dryRun.DryRun, uploadPlans.builds)
 	}
 	repeatedDryRun := executeCommand(t, module, dryRunCommand)
@@ -1964,6 +1968,7 @@ func TestModuleDuplicateAssessmentIsRetainedAndDecisionsDoNotRepeatSearch(t *tes
 		WorkflowID:       repeatedDryRun.Workflow.ID,
 		ExpectedRevision: repeatedDryRun.Workflow.Revision,
 		NoSeed:           true,
+		NoHash:           &noHash,
 		IdempotencyKey:   "upload-exact-reviewed-plan",
 	})
 	if reviewedUpload.UploadResult == nil || reviewedUpload.UploadResult.Status != api.StageStatusCompleted ||
