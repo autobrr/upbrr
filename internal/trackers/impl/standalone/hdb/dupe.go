@@ -349,5 +349,5 @@ func isHDBDupeTVCategory(meta api.DuplicateSubject) bool {
 }
 
 func hdbDupeCategoryID(meta api.DuplicateSubject) int {
-	return resolveHDBCategoryID(meta.Identity, meta.ProviderMetadata)
+	return resolveHDBCategoryID(meta.SourcePath, meta.Identity, meta.ProviderMetadata)
 }

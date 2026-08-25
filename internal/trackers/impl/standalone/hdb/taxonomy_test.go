@@ -13,63 +13,162 @@ import (
 func TestHDBCategoryIDs(t *testing.T) {
 	t.Parallel()
 
+	const sourcePath = "Example.Release.2026.mkv"
+
 	tests := []struct {
 		name     string
-		category api.CanonicalCategory
-		tmdb     *api.TMDBMetadata
-		imdb     *api.IMDBMetadata
+		identity api.ExternalIdentity
+		metadata api.SourceScopedMetadata
 		want     int
 	}{
 		{
-			name:     "movie documentary genre",
-			category: api.CanonicalCategoryMovie,
-			tmdb:     &api.TMDBMetadata{Genres: "Documentary"},
-			want:     3,
+			name: "movie documentary from IMDb",
+			identity: api.ExternalIdentity{
+				SourcePath: sourcePath,
+				Category:   api.CanonicalCategoryMovie,
+				IMDBID:     1234567,
+			},
+			metadata: api.SourceScopedMetadata{
+				SourcePath: sourcePath,
+				IMDB:       &api.IMDBMetadata{IMDBID: 1234567, Genres: "Drama, Documentary"},
+			},
+			want: 3,
 		},
 		{
-			name:     "TV documentary keyword",
-			category: api.CanonicalCategoryTV,
-			tmdb:     &api.TMDBMetadata{Keywords: "documentary filmmaking"},
-			want:     3,
+			name: "TV documentary from TVDB",
+			identity: api.ExternalIdentity{
+				SourcePath: sourcePath,
+				Category:   api.CanonicalCategoryTV,
+				TVDBID:     765432,
+			},
+			metadata: api.SourceScopedMetadata{
+				SourcePath: sourcePath,
+				TVDB:       &api.TVDBMetadata{TVDBID: 765432, Genres: "Documentary, History"},
+			},
+			want: 3,
 		},
 		{
-			name:     "localized documentary genre ID",
-			category: api.CanonicalCategoryMovie,
-			tmdb:     &api.TMDBMetadata{Genres: "Documentario", GenreIDs: "18, 99"},
-			want:     3,
+			name: "movie ignores TMDB documentary",
+			identity: api.ExternalIdentity{
+				SourcePath: sourcePath,
+				Category:   api.CanonicalCategoryMovie,
+				IMDBID:     1234567,
+			},
+			metadata: api.SourceScopedMetadata{
+				SourcePath: sourcePath,
+				TMDB:       &api.TMDBMetadata{Genres: "Documentary", GenreIDs: "99"},
+				IMDB:       &api.IMDBMetadata{IMDBID: 1234567, Genres: "Drama"},
+			},
+			want: 1,
 		},
 		{
-			name:     "concert",
-			category: api.CanonicalCategoryMovie,
-			imdb:     &api.IMDBMetadata{Type: "Concert"},
-			want:     4,
+			name: "TV ignores IMDb documentary",
+			identity: api.ExternalIdentity{
+				SourcePath: sourcePath,
+				Category:   api.CanonicalCategoryTV,
+				IMDBID:     1234567,
+				TVDBID:     765432,
+			},
+			metadata: api.SourceScopedMetadata{
+				SourcePath: sourcePath,
+				IMDB:       &api.IMDBMetadata{IMDBID: 1234567, Genres: "Documentary"},
+				TVDB:       &api.TVDBMetadata{TVDBID: 765432, Genres: "Drama"},
+			},
+			want: 2,
+		},
+		{
+			name: "movie ignores mismatched IMDb documentary",
+			identity: api.ExternalIdentity{
+				SourcePath: sourcePath,
+				Category:   api.CanonicalCategoryMovie,
+				IMDBID:     1234567,
+			},
+			metadata: api.SourceScopedMetadata{
+				SourcePath: sourcePath,
+				IMDB:       &api.IMDBMetadata{IMDBID: 7654321, Genres: "Documentary"},
+			},
+			want: 1,
+		},
+		{
+			name: "TV ignores stale TVDB documentary",
+			identity: api.ExternalIdentity{
+				SourcePath: sourcePath,
+				Generation: 2,
+				Category:   api.CanonicalCategoryTV,
+				TVDBID:     765432,
+			},
+			metadata: api.SourceScopedMetadata{
+				SourcePath: sourcePath,
+				Generation: 1,
+				TVDB:       &api.TVDBMetadata{TVDBID: 765432, Genres: "Documentary"},
+			},
+			want: 2,
+		},
+		{
+			name: "concert",
+			identity: api.ExternalIdentity{
+				SourcePath: sourcePath,
+				Category:   api.CanonicalCategoryMovie,
+				IMDBID:     1234567,
+			},
+			metadata: api.SourceScopedMetadata{
+				SourcePath: sourcePath,
+				IMDB: &api.IMDBMetadata{
+					IMDBID: 1234567,
+					Type:   "Video",
+					Genres: "Music",
+				},
+			},
+			want: 4,
+		},
+		{
+			name: "movie documentary takes precedence over concert",
+			identity: api.ExternalIdentity{
+				SourcePath: sourcePath,
+				Category:   api.CanonicalCategoryMovie,
+				IMDBID:     1234567,
+			},
+			metadata: api.SourceScopedMetadata{
+				SourcePath: sourcePath,
+				IMDB: &api.IMDBMetadata{
+					IMDBID: 1234567,
+					Type:   "Video",
+					Genres: "Documentary, Music",
+				},
+			},
+			want: 3,
 		},
 		{
 			name:     "movie",
-			category: api.CanonicalCategoryMovie,
+			identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
 			want:     1,
 		},
 		{
 			name:     "TV",
-			category: api.CanonicalCategoryTV,
+			identity: api.ExternalIdentity{Category: api.CanonicalCategoryTV},
 			want:     2,
 		},
 		{
 			name:     "unknown",
-			category: api.CanonicalCategoryUnknown,
+			identity: api.ExternalIdentity{Category: api.CanonicalCategoryUnknown},
 			want:     0,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			identity := api.ExternalIdentity{Category: tt.category}
-			metadata := api.SourceScopedMetadata{TMDB: tt.tmdb, IMDB: tt.imdb}
-
-			if got := hdbCategoryID(api.UploadSubject{Identity: identity, ProviderMetadata: metadata}); got != tt.want {
+			if got := hdbCategoryID(api.UploadSubject{
+				SourcePath:       sourcePath,
+				Identity:         tt.identity,
+				ProviderMetadata: tt.metadata,
+			}); got != tt.want {
 				t.Fatalf("upload category ID = %d, want %d", got, tt.want)
 			}
-			if got := hdbDupeCategoryID(api.DuplicateSubject{Identity: identity, ProviderMetadata: metadata}); got != tt.want {
+			if got := hdbDupeCategoryID(api.DuplicateSubject{
+				SourcePath:       sourcePath,
+				Identity:         tt.identity,
+				ProviderMetadata: tt.metadata,
+			}); got != tt.want {
 				t.Fatalf("duplicate-search category ID = %d, want %d", got, tt.want)
 			}
 		})
@@ -80,9 +179,15 @@ func TestBuildUploadFieldsUsesDocumentaryCategory(t *testing.T) {
 	t.Parallel()
 
 	meta := api.UploadSubject{
-		Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+		SourcePath: "Example.Release.2026.mkv",
+		Identity: api.ExternalIdentity{
+			SourcePath: "Example.Release.2026.mkv",
+			Category:   api.CanonicalCategoryMovie,
+			IMDBID:     1234567,
+		},
 		ProviderMetadata: api.SourceScopedMetadata{
-			TMDB: &api.TMDBMetadata{GenreIDs: "99"},
+			SourcePath: "Example.Release.2026.mkv",
+			IMDB:       &api.IMDBMetadata{IMDBID: 1234567, Genres: "Documentary"},
 		},
 	}
 	fields := buildUploadFields(meta, config.Config{}, hdbCategoryID(meta), 5, 6, "description", "Example.Release.2026.1080p-GRP")
