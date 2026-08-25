@@ -286,7 +286,7 @@ func TestPrepareHydratesPersistedPrivateResourcesOnceAfterRestart(t *testing.T) 
 	if err != nil {
 		t.Fatalf("resolve hydrated upload subject: %v", err)
 	}
-	if upload.InfoHash != "hydrated-hash" || upload.TrackerIDs["ant"] != "hydrated-id" ||
+	if upload.InfoHash != "hydrated-hash" || !upload.ClientTorrentDataVerified || upload.TrackerIDs["ant"] != "hydrated-id" ||
 		len(upload.MatchedTrackers) != 1 || upload.MatchedTrackers[0] != "ANT" {
 		t.Fatalf("hydrated upload evidence = %#v", upload)
 	}
@@ -914,10 +914,11 @@ func clientEvidenceTestSnapshot(infoHash string) preparationstate.ClientEvidence
 	return preparationstate.ClientEvidenceSnapshot{
 		Disposition: preparationstate.ClientEvidenceDispositionSearched,
 		Result: api.ClientSearchResult{
-			InfoHash:        infoHash,
-			TorrentPath:     "Example.Release.2026.torrent",
-			TrackerIDs:      map[string]string{"ant": "hydrated-id"},
-			MatchedTrackers: []string{"ANT"},
+			InfoHash:            infoHash,
+			TorrentPath:         "Example.Release.2026.torrent",
+			TorrentDataVerified: true,
+			TrackerIDs:          map[string]string{"ant": "hydrated-id"},
+			MatchedTrackers:     []string{"ANT"},
 		},
 	}
 }

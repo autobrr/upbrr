@@ -17,7 +17,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/clientdiscovery"
 	"github.com/autobrr/upbrr/internal/config"
+	torrentservice "github.com/autobrr/upbrr/internal/torrent"
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -66,6 +68,7 @@ func testSearchPathedTorrentsProxyPieceSelection(t *testing.T, preferMax16 bool,
 	t.Helper()
 
 	dir := t.TempDir()
+	sourcePath := filepath.Join(dir, "Movie.Title.2024.mkv")
 	hashLarge, dataLarge := createTestTorrent(t, dir, "Movie.Title.2024.mkv", 25)
 	hashSmall, dataSmall := createTestTorrent(t, dir, "Movie.Title.2024.mkv", 22)
 	dataByHash := map[string][]byte{
@@ -80,8 +83,12 @@ func testSearchPathedTorrentsProxyPieceSelection(t *testing.T, preferMax16 bool,
 				{
 					Hash:        hashLarge,
 					Name:        "Movie.Title.2024",
+					ContentPath: sourcePath,
+					Progress:    1,
+					State:       qbittorrent.TorrentStateStalledUp,
 					SavePath:    "/data",
 					Size:        123,
+					TotalSize:   123,
 					Category:    "movies",
 					NumComplete: 5,
 					Tracker:     "https://blutopia.cc/announce",
@@ -91,8 +98,12 @@ func testSearchPathedTorrentsProxyPieceSelection(t *testing.T, preferMax16 bool,
 				{
 					Hash:        hashSmall,
 					Name:        "Movie.Title.2024",
+					ContentPath: sourcePath,
+					Progress:    1,
+					State:       qbittorrent.TorrentStateStalledUp,
 					SavePath:    "/data",
 					Size:        123,
+					TotalSize:   123,
 					Category:    "movies",
 					NumComplete: 8,
 					Tracker:     "https://blutopia.cc/announce",
@@ -151,8 +162,8 @@ func testSearchPathedTorrentsProxyPieceSelection(t *testing.T, preferMax16 bool,
 
 	svc := NewServiceWithRegistry(cfg, api.NopLogger{}, trackerPatternRegistry(t))
 	meta := api.ClientSubject{
-		SourcePath: "/tmp/Movie.Title.2024",
-		FileList:   []string{"/tmp/Movie.Title.2024.mkv"},
+		SourcePath: sourcePath,
+		FileList:   []string{sourcePath},
 	}
 
 	result, err := svc.SearchPathedTorrents(context.Background(), meta)
@@ -179,6 +190,9 @@ func testSearchPathedTorrentsProxyPieceSelection(t *testing.T, preferMax16 bool,
 	}
 	if result.TorrentPath == "" {
 		t.Fatalf("expected torrent path to be set")
+	}
+	if !result.TorrentDataVerified {
+		t.Fatal("expected selected complete exact-path torrent to carry verified data evidence")
 	}
 	if _, err := os.Stat(result.TorrentPath); err != nil {
 		t.Fatalf("expected torrent file to exist, got %v", err)
@@ -635,6 +649,7 @@ func TestSearchPathedTorrentsQbitForceRecheckAfterMetadataValidation(t *testing.
 	t.Parallel()
 
 	dir := t.TempDir()
+	sourcePath := filepath.Join(dir, "Movie.Title.2024.mkv")
 	validHash, validData := createTestTorrent(t, dir, "Movie.Title.2024.mkv", 22)
 	wrongHash, wrongData := createTestTorrent(t, dir, "Different.Title.2024.mkv", 22)
 	dataByHash := map[string][]byte{
@@ -675,6 +690,10 @@ func TestSearchPathedTorrentsQbitForceRecheckAfterMetadataValidation(t *testing.
 				{
 					Hash:        validHash,
 					Name:        "Movie.Title.2024",
+					ContentPath: sourcePath,
+					Progress:    1,
+					AmountLeft:  0,
+					State:       qbittorrent.TorrentStateStalledUp,
 					Tracker:     "https://blutopia.cc/announce/redacted",
 					Comment:     "https://blutopia.cc/torrents/7777",
 					NumComplete: 5,
@@ -739,8 +758,8 @@ func TestSearchPathedTorrentsQbitForceRecheckAfterMetadataValidation(t *testing.
 	forceRecheck := true
 	svc := NewServiceWithRegistry(cfg, api.NopLogger{}, trackerPatternRegistry(t))
 	result, err := svc.SearchPathedTorrents(context.Background(), api.ClientSubject{
-		SourcePath: filepath.Join(dir, "Movie.Title.2024.mkv"),
-		FileList:   []string{filepath.Join(dir, "Movie.Title.2024.mkv")},
+		SourcePath: sourcePath,
+		FileList:   []string{sourcePath},
 		ClientOverrides: api.ClientOverrides{
 			ForceRecheck: &forceRecheck,
 		},
@@ -750,6 +769,9 @@ func TestSearchPathedTorrentsQbitForceRecheckAfterMetadataValidation(t *testing.
 	}
 	if result.InfoHash != validHash {
 		t.Fatalf("expected validated infohash %q, got %q", validHash, result.InfoHash)
+	}
+	if result.TorrentDataVerified {
+		t.Fatal("forced recheck must not retain stale pre-recheck complete-data evidence")
 	}
 
 	mu.Lock()
@@ -1004,6 +1026,205 @@ func TestTorrentMatchesMetaUsesContentPathBasename(t *testing.T) {
 
 	if !torrentMatchesMeta(torrent, meta) {
 		t.Fatalf("expected content path basename to match")
+	}
+}
+
+func TestQbitTorrentDataVerifiedRequiresCompleteExactClientPath(t *testing.T) {
+	t.Parallel()
+
+	localRoot := t.TempDir()
+	source := filepath.Join(localRoot, "Example.Release.2026.mkv")
+	remoteRoot := "/remote/media"
+	mappedSource, ok := mappedRemotePath(source, config.StringList{localRoot}, config.StringList{remoteRoot})
+	if !ok {
+		t.Fatal("expected source path mapping")
+	}
+	complete := qbittorrent.Torrent{
+		ContentPath: source,
+		Progress:    1,
+		AmountLeft:  0,
+		Size:        1024,
+		TotalSize:   1024,
+		State:       qbittorrent.TorrentStateStalledUp,
+	}
+	meta := api.ClientSubject{
+		SourcePath: filepath.Join(localRoot, "container"),
+		FileList:   []string{source},
+	}
+
+	tests := []struct {
+		name    string
+		torrent qbittorrent.Torrent
+		client  config.TorrentClientConfig
+		want    bool
+	}{
+		{
+			name:    "complete exact path",
+			torrent: complete,
+			want:    true,
+		},
+		{
+			name: "complete mapped path",
+			torrent: qbittorrent.Torrent{
+				ContentPath: mappedSource,
+				Progress:    1,
+				Size:        1024,
+				TotalSize:   1024,
+				State:       qbittorrent.TorrentStatePausedUp,
+			},
+			client: config.TorrentClientConfig{LocalPath: config.StringList{localRoot}, RemotePath: config.StringList{remoteRoot}},
+			want:   true,
+		},
+		{name: "incomplete progress", torrent: func() qbittorrent.Torrent { value := complete; value.Progress = 0.99; return value }()},
+		{name: "remaining bytes", torrent: func() qbittorrent.Torrent { value := complete; value.AmountLeft = 1; return value }()},
+		{name: "unselected files", torrent: func() qbittorrent.Torrent { value := complete; value.Size--; return value }()},
+		{name: "checking state", torrent: func() qbittorrent.Torrent {
+			value := complete
+			value.State = qbittorrent.TorrentStateCheckingUp
+			return value
+		}()},
+		{name: "download state", torrent: func() qbittorrent.Torrent {
+			value := complete
+			value.State = qbittorrent.TorrentStateStalledDl
+			return value
+		}()},
+		{name: "different content path", torrent: func() qbittorrent.Torrent {
+			value := complete
+			value.ContentPath = filepath.Join(localRoot, "other", filepath.Base(source))
+			return value
+		}()},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := qbitTorrentDataVerified(test.torrent, meta, test.client); got != test.want {
+				t.Fatalf("qbitTorrentDataVerified() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestClientContentPathsEqualUsesClientPathSemantics(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		left  string
+		right string
+		want  bool
+	}{
+		{
+			name:  "Windows drive folds case",
+			left:  `C:\Media\Example.Release.2026.mkv`,
+			right: `c:/media/example.release.2026.mkv`,
+			want:  true,
+		},
+		{
+			name:  "Windows UNC folds case",
+			left:  `\\SERVER\Share\Example.Release.2026.mkv`,
+			right: `//server/share/example.release.2026.mkv`,
+			want:  true,
+		},
+		{
+			name:  "POSIX preserves case",
+			left:  "/media/Example.Release.2026.mkv",
+			right: "/media/example.release.2026.mkv",
+		},
+		{
+			name:  "POSIX exact",
+			left:  "/media/Example.Release.2026.mkv",
+			right: "/media/Example.Release.2026.mkv",
+			want:  true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := clientContentPathsEqual(test.left, test.right); got != test.want {
+				t.Fatalf("clientContentPathsEqual(%q, %q) = %t, want %t", test.left, test.right, got, test.want)
+			}
+		})
+	}
+}
+
+func TestDiscoveryToCreateDoesNotTrustDifferentQbitContentPath(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source", "Example.Release.2026.mkv")
+	clientSource := filepath.Join(dir, "client", "Example.Release.2026.mkv")
+	if err := os.MkdirAll(filepath.Dir(source), 0o700); err != nil {
+		t.Fatalf("make source directory: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(clientSource), 0o700); err != nil {
+		t.Fatalf("make client directory: %v", err)
+	}
+	hash, torrentData := createTestTorrent(t, filepath.Dir(clientSource), filepath.Base(clientSource), 18)
+	if err := os.WriteFile(source, bytes.Repeat([]byte("b"), 5*1024*1024), 0o600); err != nil {
+		t.Fatalf("rewrite same-size source: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/torrents/search":
+			_ = json.NewEncoder(w).Encode([]qbittorrent.Torrent{{
+				Hash:        hash,
+				Name:        filepath.Base(clientSource),
+				ContentPath: clientSource,
+				Progress:    1,
+				AmountLeft:  0,
+				Size:        5 * 1024 * 1024,
+				TotalSize:   5 * 1024 * 1024,
+				State:       qbittorrent.TorrentStateStalledUp,
+			}})
+		case "/api/v2/torrents/properties":
+			_ = json.NewEncoder(w).Encode(qbittorrent.TorrentProperties{})
+		case "/api/v2/torrents/export":
+			_, _ = w.Write(torrentData)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(dir, "db.sqlite")},
+		ClientSetup: config.ClientSetupConfig{
+			DefaultClient: "qbit",
+			SearchClients: config.CSVList{"qbit"},
+		},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {Type: "qui", QuiProxyURL: server.URL},
+		},
+	}
+	clients := NewServiceWithRegistry(cfg, api.NopLogger{}, trackerPatternRegistry(t))
+	evidence, err := clientdiscovery.New(clients, api.NopLogger{}).Discover(context.Background(), clientdiscovery.SearchInput{
+		SourcePath: source,
+		FileList:   []string{source},
+	})
+	if err != nil {
+		t.Fatalf("discover client evidence: %v", err)
+	}
+	if evidence.TorrentPath == "" || evidence.TorrentDataVerified {
+		t.Fatalf("expected reusable but unverified client evidence, got %#v", evidence)
+	}
+
+	tmpRoot := filepath.Join(dir, "torrent-tmp")
+	result, err := torrentservice.NewService(api.NopLogger{}, tmpRoot).Create(context.Background(), api.TorrentSubject{
+		SourcePath:                source,
+		FileList:                  []string{source},
+		ClientTorrentPath:         evidence.TorrentPath,
+		ClientTorrentDataVerified: evidence.TorrentDataVerified,
+	})
+	if err != nil {
+		t.Fatalf("create torrent: %v", err)
+	}
+	expectedPath, err := torrentservice.TempTorrentPath(tmpRoot, source)
+	if err != nil {
+		t.Fatalf("expected torrent path: %v", err)
+	}
+	if result.Path != expectedPath {
+		t.Fatalf("expected mismatched client data to be rehashed at %s, got %s", expectedPath, result.Path)
 	}
 }
 

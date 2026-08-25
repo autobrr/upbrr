@@ -50,6 +50,9 @@ type Evidence struct {
 	InfoHash string
 	// TorrentPath is the reusable local metainfo path returned by the client search.
 	TorrentPath string
+	// TorrentDataVerified reports that TorrentPath belongs to a complete client
+	// record whose content path exactly matched the searched source.
+	TorrentDataVerified bool
 	// TrackerIDs maps normalized tracker names to IDs extracted from the matched torrent.
 	TrackerIDs map[string]string
 	// FoundTrackerMatch reports whether any configured tracker matched.
@@ -123,6 +126,9 @@ func (m *Module) Discover(ctx context.Context, input SearchInput) (Evidence, err
 		return Evidence{Disposition: DispositionUnavailable}, nil
 	}
 	evidence := normalizeEvidence(result)
+	if input.ForceRecheck != nil && *input.ForceRecheck {
+		evidence.TorrentDataVerified = false
+	}
 	evidence.Disposition = DispositionSearched
 	m.logger.Debugf(
 		"client discovery: decision=complete matched=%t trackers=%d ids=%d reusable_torrent=%t",
@@ -140,6 +146,7 @@ func normalizeEvidence(value api.ClientSearchResult) Evidence {
 	return Evidence{
 		InfoHash:            strings.TrimSpace(value.InfoHash),
 		TorrentPath:         strings.TrimSpace(value.TorrentPath),
+		TorrentDataVerified: value.TorrentDataVerified,
 		TrackerIDs:          normalizeTrackerIDs(value.TrackerIDs),
 		FoundTrackerMatch:   value.FoundTrackerMatch,
 		TorrentComments:     cloneTorrentMatches(value.TorrentComments),

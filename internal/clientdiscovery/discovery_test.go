@@ -40,10 +40,11 @@ func TestDiscoverNormalizesAndDetachesCurrentEvidence(t *testing.T) {
 	trackerName := " BTN "
 	force := true
 	client := &recordingClient{result: api.ClientSearchResult{
-		InfoHash:          " hash ",
-		TorrentPath:       " torrent/example.torrent ",
-		TrackerIDs:        map[string]string{trackerName: " 123 ", "empty": " "},
-		FoundTrackerMatch: true,
+		InfoHash:            " hash ",
+		TorrentPath:         " torrent/example.torrent ",
+		TorrentDataVerified: true,
+		TrackerIDs:          map[string]string{trackerName: " 123 ", "empty": " "},
+		FoundTrackerMatch:   true,
 		TorrentComments: []api.TorrentMatch{{
 			Name:           "Example.Release.2026",
 			TrackerURLsRaw: []string{"https://tracker.invalid/announce"},
@@ -73,7 +74,7 @@ func TestDiscoverNormalizesAndDetachesCurrentEvidence(t *testing.T) {
 	if client.input.ClientOverrides.ForceRecheck == nil || !*client.input.ClientOverrides.ForceRecheck {
 		t.Fatalf("force recheck = %#v", client.input.ClientOverrides.ForceRecheck)
 	}
-	if evidence.InfoHash != "hash" || evidence.TorrentPath != "torrent/example.torrent" || evidence.TrackerIDs["btn"] != "123" {
+	if evidence.InfoHash != "hash" || evidence.TorrentPath != "torrent/example.torrent" || evidence.TorrentDataVerified || evidence.TrackerIDs["btn"] != "123" {
 		t.Fatalf("evidence = %#v", evidence)
 	}
 	if !slices.Equal(evidence.MatchedTrackers, []string{"AITHER", "BTN"}) {
