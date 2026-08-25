@@ -29,7 +29,8 @@ func TestExportWritesCleanedArtifacts(t *testing.T) {
 		"General",
 		"ReportBy: MediaInfo",
 		"Report created by MediaInfo",
-		"Complete name                            : " + targetPath,
+		"Complete name                            : " + filepath.Join(targetDir, "rendered", filepath.Base(targetPath)),
+		"Source                                   : " + targetPath,
 	}, "\n")
 	jsonOutput := "{\"media\":{\"track\":[{\"@type\":\"General\"}]}}"
 
@@ -57,11 +58,15 @@ func TestExportWritesCleanedArtifacts(t *testing.T) {
 	if strings.Contains(text, "ReportBy") {
 		t.Fatalf("expected ReportBy lines removed")
 	}
-	if strings.Contains(text, targetPath) {
-		t.Fatalf("expected target path to be cleaned")
+	if strings.Contains(text, targetDir) {
+		t.Fatalf("expected host paths to be cleaned, got %q", text)
 	}
-	if !strings.Contains(text, filepath.Base(targetPath)) {
-		t.Fatalf("expected basename in cleaned text")
+	wantCompleteName := "Complete name                            : " + filepath.Base(targetPath)
+	if !strings.Contains(text, wantCompleteName) {
+		t.Fatalf("expected normalized complete name %q, got %q", wantCompleteName, text)
+	}
+	if !strings.Contains(text, "Source                                   : "+filepath.Base(targetPath)) {
+		t.Fatalf("expected exact target occurrences to use the basename, got %q", text)
 	}
 
 	jsonData, err := os.ReadFile(result.JSONPath)
@@ -89,7 +94,12 @@ func TestExportReusesExistingArtifactsWhenConformanceOK(t *testing.T) {
 
 	textPath := filepath.Join(tmpDir, "mediainfo.txt")
 	jsonPath := filepath.Join(tmpDir, "MediaInfo.json")
-	if err := os.WriteFile(textPath, []byte("existing"), 0o600); err != nil {
+	cachedText := strings.Join([]string{
+		"General",
+		"Complete name                            : " + filepath.Join(targetDir, "stale", filepath.Base(targetPath)),
+		"Source                                   : " + targetPath,
+	}, "\n")
+	if err := os.WriteFile(textPath, []byte(cachedText), 0o600); err != nil {
 		t.Fatalf("write text: %v", err)
 	}
 	jsonPayload := "{\"media\":{\"track\":[{\"@type\":\"General\",\"extra\":{\"ConformanceErrors\":{}}}]}}"
@@ -112,6 +122,18 @@ func TestExportReusesExistingArtifactsWhenConformanceOK(t *testing.T) {
 	}
 	if result.JSONPath != jsonPath {
 		t.Fatalf("unexpected json path: %s", result.JSONPath)
+	}
+	textData, err := os.ReadFile(result.TextPath)
+	if err != nil {
+		t.Fatalf("read reused text: %v", err)
+	}
+	text := string(textData)
+	if strings.Contains(text, targetDir) {
+		t.Fatalf("expected cached host paths to be cleaned, got %q", text)
+	}
+	wantCompleteName := "Complete name                            : " + filepath.Base(targetPath)
+	if !strings.Contains(text, wantCompleteName) {
+		t.Fatalf("expected cached complete name %q, got %q", wantCompleteName, text)
 	}
 }
 
@@ -192,6 +214,10 @@ func TestExportDVDAnalyzesIFOAndMatchingVOB(t *testing.T) {
 	}
 	if strings.TrimSpace(result.VOBText) == "" || strings.TrimSpace(result.VOBJSON) == "" {
 		t.Fatalf("expected vob mediainfo outputs in result")
+	}
+	wantVOBCompleteName := "Complete name : " + filepath.Base(vobPath)
+	if !strings.Contains(result.VOBText, wantVOBCompleteName) {
+		t.Fatalf("expected VOB complete name %q, got %q", wantVOBCompleteName, result.VOBText)
 	}
 }
 

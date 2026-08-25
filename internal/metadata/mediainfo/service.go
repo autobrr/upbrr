@@ -81,9 +81,11 @@ func NewService(logger api.Logger, analyzer Analyzer) *Service {
 }
 
 // Export writes mode-0600 text and JSON reports beneath the release temporary
-// directory. Existing artifacts are reused only when both files exist and the
-// JSON has no conformance error; DVD VOB evidence is analyzed on every call.
-// Errors return no Result, although a failed JSON write may leave the text file.
+// directory. Text reports reduce the analyzed target path to its basename;
+// JSON reports retain the analyzer output. Existing artifacts are reused only
+// when both files exist and the JSON has no conformance error; DVD VOB evidence
+// is analyzed on every call. Errors return no Result, although a failed JSON
+// write may leave the text file.
 func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 	select {
 	case <-ctx.Done():
@@ -111,6 +113,16 @@ func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 	if fileExists(textPath) && fileExists(jsonPath) {
 		hasErrors, err := conformanceError(jsonPath, req.DiscType)
 		if err == nil && !hasErrors {
+			textOutput, err := os.ReadFile(textPath)
+			if err != nil {
+				return Result{}, fmt.Errorf("mediainfo: read cached text: %w", err)
+			}
+			cleanText := cleanMediaInfoText(string(textOutput), target.AnalyzePath)
+			if cleanText != string(textOutput) {
+				if err := os.WriteFile(textPath, []byte(cleanText), 0o600); err != nil {
+					return Result{}, fmt.Errorf("mediainfo: write cached text: %w", err)
+				}
+			}
 			vobText, vobJSON, err := analyzeVOB(ctx, s.analyzer, target.VOBPath)
 			if err != nil {
 				return Result{}, err
@@ -219,6 +231,9 @@ func cleanMediaInfoText(text, target string) string {
 		}
 		if strings.HasPrefix(trimmed, "Report created by ") {
 			continue
+		}
+		if field, _, ok := strings.Cut(line, ":"); ok && strings.TrimSpace(field) == "Complete name" {
+			line = field + ": " + base
 		}
 		filtered = append(filtered, line)
 	}
