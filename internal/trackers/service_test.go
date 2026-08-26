@@ -800,6 +800,35 @@ func TestBuildPreparationSkipsAllNonDescriptionContent(t *testing.T) {
 	}
 }
 
+func TestBuildPreparationUsesProjectedDescriptionGroupOverride(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	if err := registry.Register(testHDBPreparationDefinition{}); err != nil {
+		t.Fatalf("register HDB definition: %v", err)
+	}
+
+	svc := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	preview, err := svc.BuildPreparation(t.Context(), api.NewDescriptionSubject(api.UploadSubject{
+		DescriptionGroups: []api.DescriptionBuilderGroup{{
+			GroupKey:       "hdb",
+			Trackers:       []string{"HDB"},
+			Description:    "Stale generated description.",
+			RawDescription: "Saved description.",
+			HasOverride:    true,
+		}},
+	}), []string{"HDB"})
+	if err != nil {
+		t.Fatalf("build preparation: %v", err)
+	}
+	if len(preview.Descriptions) != 1 {
+		t.Fatalf("description groups = %#v", preview.Descriptions)
+	}
+	if preview.Descriptions[0].RawDescription != "Saved description." || !preview.Descriptions[0].HasOverride {
+		t.Fatalf("prepared description = %#v", preview.Descriptions[0])
+	}
+}
+
 func TestBuildUploadDryRunNoneModeSkipsSharedContent(t *testing.T) {
 	t.Parallel()
 

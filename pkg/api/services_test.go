@@ -19,6 +19,15 @@ func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 		}},
 		SelectedBDMVPlaylists: []PlaylistInfo{{File: "00001.mpls"}},
 		ImageHostOverrides:    ImageHostOverrides{FailedHosts: []string{"imgbox"}},
+		DescriptionGroups: []DescriptionBuilderGroup{{
+			GroupKey:       "unit3d",
+			Trackers:       []string{"EXAMPLE"},
+			RawDescription: "Saved description.",
+			ImageHost: ImageHostFeedback{
+				AllowedHosts: []string{"imgbox"},
+				Warnings:     []ImageHostWarning{{Host: "imgbox", Message: "warning"}},
+			},
+		}},
 		ExactMedia: &ExactMediaAssets{
 			Screenshots: []ScreenshotImage{{
 				Path:    `C:\private\screen.png`,
@@ -37,6 +46,9 @@ func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 	projected.ProviderMetadata.TMDB.LocalizedTitles["en"] = "changed"
 	projected.SelectedBDMVPlaylists[0].File = "changed"
 	projected.ImageHost.FailedHosts[0] = "changed"
+	projected.DescriptionGroups[0].Trackers[0] = "changed"
+	projected.DescriptionGroups[0].ImageHost.AllowedHosts[0] = "changed"
+	projected.DescriptionGroups[0].ImageHost.Warnings[0].Message = "changed"
 	projected.ExactMedia.Screenshots[0].Path = "changed"
 	projected.ExactMedia.DVDMenus[0].Path = "changed"
 
@@ -51,6 +63,11 @@ func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 	}
 	if source.ImageHostOverrides.FailedHosts[0] != "imgbox" {
 		t.Fatal("failed image hosts share storage with description subject")
+	}
+	if source.DescriptionGroups[0].Trackers[0] != "EXAMPLE" ||
+		source.DescriptionGroups[0].ImageHost.AllowedHosts[0] != "imgbox" ||
+		source.DescriptionGroups[0].ImageHost.Warnings[0].Message != "warning" {
+		t.Fatal("description groups share storage with description subject")
 	}
 	if source.ExactMedia.Screenshots[0].Path != `C:\private\screen.png` ||
 		source.ExactMedia.DVDMenus[0].Path != `C:\private\menu.png` {

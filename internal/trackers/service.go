@@ -469,6 +469,7 @@ func uploadSubjectForDescription(subject api.DescriptionSubject) api.UploadSubje
 		MediaInfoTextPath:      subject.MediaInfoTextPath,
 		DVDVOBMediaInfoText:    subject.DVDVOBMediaInfoText,
 		DescriptionTemplate:    subject.DescriptionTemplate,
+		DescriptionGroups:      api.CloneDescriptionBuilderGroups(subject.DescriptionGroups),
 		EpisodeOverview:        subject.EpisodeOverview,
 		Options:                subject.Options,
 		Release:                subject.Release,
