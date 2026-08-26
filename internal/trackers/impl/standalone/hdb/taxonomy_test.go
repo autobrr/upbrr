@@ -62,7 +62,7 @@ func TestHDBCategoryIDs(t *testing.T) {
 			want: 1,
 		},
 		{
-			name: "TV ignores IMDb documentary",
+			name: "TV documentary from IMDb",
 			identity: api.ExternalIdentity{
 				SourcePath: sourcePath,
 				Category:   api.CanonicalCategoryTV,
@@ -72,6 +72,21 @@ func TestHDBCategoryIDs(t *testing.T) {
 			metadata: api.SourceScopedMetadata{
 				SourcePath: sourcePath,
 				IMDB:       &api.IMDBMetadata{IMDBID: 1234567, Genres: "Documentary"},
+				TVDB:       &api.TVDBMetadata{TVDBID: 765432, Genres: "Drama"},
+			},
+			want: 3,
+		},
+		{
+			name: "TV ignores mismatched IMDb documentary",
+			identity: api.ExternalIdentity{
+				SourcePath: sourcePath,
+				Category:   api.CanonicalCategoryTV,
+				IMDBID:     1234567,
+				TVDBID:     765432,
+			},
+			metadata: api.SourceScopedMetadata{
+				SourcePath: sourcePath,
+				IMDB:       &api.IMDBMetadata{IMDBID: 7654321, Genres: "Documentary"},
 				TVDB:       &api.TVDBMetadata{TVDBID: 765432, Genres: "Drama"},
 			},
 			want: 2,
@@ -90,16 +105,18 @@ func TestHDBCategoryIDs(t *testing.T) {
 			want: 1,
 		},
 		{
-			name: "TV ignores stale TVDB documentary",
+			name: "TV ignores stale provider documentary metadata",
 			identity: api.ExternalIdentity{
 				SourcePath: sourcePath,
 				Generation: 2,
 				Category:   api.CanonicalCategoryTV,
+				IMDBID:     1234567,
 				TVDBID:     765432,
 			},
 			metadata: api.SourceScopedMetadata{
 				SourcePath: sourcePath,
 				Generation: 1,
+				IMDB:       &api.IMDBMetadata{IMDBID: 1234567, Genres: "Documentary"},
 				TVDB:       &api.TVDBMetadata{TVDBID: 765432, Genres: "Documentary"},
 			},
 			want: 2,
@@ -175,19 +192,21 @@ func TestHDBCategoryIDs(t *testing.T) {
 	}
 }
 
-func TestBuildUploadFieldsUsesDocumentaryCategory(t *testing.T) {
+func TestBuildUploadFieldsUsesTVIMDbDocumentaryCategory(t *testing.T) {
 	t.Parallel()
 
 	meta := api.UploadSubject{
 		SourcePath: "Example.Release.2026.mkv",
 		Identity: api.ExternalIdentity{
 			SourcePath: "Example.Release.2026.mkv",
-			Category:   api.CanonicalCategoryMovie,
+			Category:   api.CanonicalCategoryTV,
 			IMDBID:     1234567,
+			TVDBID:     765432,
 		},
 		ProviderMetadata: api.SourceScopedMetadata{
 			SourcePath: "Example.Release.2026.mkv",
 			IMDB:       &api.IMDBMetadata{IMDBID: 1234567, Genres: "Documentary"},
+			TVDB:       &api.TVDBMetadata{TVDBID: 765432, Genres: "Drama"},
 		},
 	}
 	fields := buildUploadFields(meta, config.Config{}, hdbCategoryID(meta), 5, 6, "description", "Example.Release.2026.1080p-GRP")

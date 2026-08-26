@@ -20,9 +20,9 @@ func hdbCategoryID(meta api.UploadSubject) int {
 	return resolveHDBCategoryID(meta.SourcePath, meta.Identity, meta.ProviderMetadata)
 }
 
-// resolveHDBCategoryID uses matching, current IMDb metadata for movie
-// documentary/concert subtypes and TVDB genres for TV documentaries before
-// falling back to HDB's canonical category.
+// resolveHDBCategoryID uses matching, current IMDb genres for documentaries in
+// either canonical category and TVDB genres as additional TV evidence. IMDb
+// metadata also identifies movie concert subtypes before the canonical fallback.
 func resolveHDBCategoryID(sourcePath string, identity api.ExternalIdentity, metadata api.SourceScopedMetadata) int {
 	category, err := identity.RequireCategory()
 	if err != nil {
@@ -30,10 +30,11 @@ func resolveHDBCategoryID(sourcePath string, identity api.ExternalIdentity, meta
 	}
 
 	if metadata.IsCurrentFor(sourcePath, identity) {
+		imdb := metadata.IMDB
+		imdbMatches := imdb != nil && identity.IMDBID > 0 && imdb.IMDBID == identity.IMDBID
 		switch category {
 		case api.CanonicalCategoryMovie:
-			imdb := metadata.IMDB
-			if imdb != nil && identity.IMDBID > 0 && imdb.IMDBID == identity.IMDBID {
+			if imdbMatches {
 				if hdbHasGenre(imdb.Genres, "documentary") {
 					return 3
 				}
@@ -43,6 +44,9 @@ func resolveHDBCategoryID(sourcePath string, identity api.ExternalIdentity, meta
 				}
 			}
 		case api.CanonicalCategoryTV:
+			if imdbMatches && hdbHasGenre(imdb.Genres, "documentary") {
+				return 3
+			}
 			tvdb := metadata.TVDB
 			if tvdb != nil && identity.TVDBID > 0 && tvdb.TVDBID == identity.TVDBID && hdbHasGenre(tvdb.Genres, "documentary") {
 				return 3
