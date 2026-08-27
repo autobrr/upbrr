@@ -18,14 +18,14 @@ func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 			LocalizedTitles: map[string]string{"en": "Example Release 2026"},
 		}},
 		SelectedBDMVPlaylists: []PlaylistInfo{{File: "00001.mpls"}},
-		ImageHostOverrides:    ImageHostOverrides{FailedHosts: []string{"imgbox"}},
+		ImageHostOverrides:    ImageHostOverrides{FailedHosts: []string{"example-host"}},
 		DescriptionGroups: []DescriptionBuilderGroup{{
 			GroupKey:       "unit3d",
 			Trackers:       []string{"EXAMPLE"},
 			RawDescription: "Saved description.",
 			ImageHost: ImageHostFeedback{
-				AllowedHosts: []string{"imgbox"},
-				Warnings:     []ImageHostWarning{{Host: "imgbox", Message: "warning"}},
+				AllowedHosts: []string{"example-host"},
+				Warnings:     []ImageHostWarning{{Host: "example-host", Message: "warning"}},
 			},
 		}},
 		ExactMedia: &ExactMediaAssets{
@@ -61,11 +61,11 @@ func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 	if source.SelectedBDMVPlaylists[0].File != "00001.mpls" {
 		t.Fatal("playlist facts share storage with description subject")
 	}
-	if source.ImageHostOverrides.FailedHosts[0] != "imgbox" {
+	if source.ImageHostOverrides.FailedHosts[0] != "example-host" {
 		t.Fatal("failed image hosts share storage with description subject")
 	}
 	if source.DescriptionGroups[0].Trackers[0] != "EXAMPLE" ||
-		source.DescriptionGroups[0].ImageHost.AllowedHosts[0] != "imgbox" ||
+		source.DescriptionGroups[0].ImageHost.AllowedHosts[0] != "example-host" ||
 		source.DescriptionGroups[0].ImageHost.Warnings[0].Message != "warning" {
 		t.Fatal("description groups share storage with description subject")
 	}

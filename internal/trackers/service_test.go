@@ -267,9 +267,10 @@ type stubUploadArtifactDefinition struct {
 }
 
 type stubPreparationDefinition struct {
-	name        string
-	group       string
-	description string
+	name                string
+	group               string
+	description         string
+	useAssetDescription bool
 }
 
 type trackingUploadDefinition struct {
@@ -538,8 +539,12 @@ func (s stubPreparationDefinition) submit(context.Context, PreparationInput) (ap
 }
 
 //nolint:unparam // Error is required by the adapter description callback contract.
-func (s stubPreparationDefinition) prepareDescription(context.Context, PreparationInput) (DescriptionResult, error) {
-	return DescriptionResult{Group: s.group, Description: s.description}, nil
+func (s stubPreparationDefinition) prepareDescription(_ context.Context, input PreparationInput) (DescriptionResult, error) {
+	description := s.description
+	if s.useAssetDescription && input.Assets != nil {
+		description = input.Assets.Description
+	}
+	return DescriptionResult{Group: s.group, Description: description}, nil
 }
 
 func (s *blockingImageService) ListCandidates(context.Context, api.ImageHostingSubject) ([]api.ScreenshotImage, error) {
@@ -804,20 +809,24 @@ func TestBuildPreparationUsesProjectedDescriptionGroupOverride(t *testing.T) {
 	t.Parallel()
 
 	registry := NewRegistry()
-	if err := registry.Register(testHDBPreparationDefinition{}); err != nil {
-		t.Fatalf("register HDB definition: %v", err)
+	if err := registry.Register(stubPreparationDefinition{
+		name:                "EXAMPLE",
+		group:               "example",
+		useAssetDescription: true,
+	}); err != nil {
+		t.Fatalf("register example definition: %v", err)
 	}
 
 	svc := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
 	preview, err := svc.BuildPreparation(t.Context(), api.NewDescriptionSubject(api.UploadSubject{
 		DescriptionGroups: []api.DescriptionBuilderGroup{{
-			GroupKey:       "hdb",
-			Trackers:       []string{"HDB"},
+			GroupKey:       "example",
+			Trackers:       []string{"EXAMPLE"},
 			Description:    "Stale generated description.",
 			RawDescription: "Saved description.",
 			HasOverride:    true,
 		}},
-	}), []string{"HDB"})
+	}), []string{"EXAMPLE"})
 	if err != nil {
 		t.Fatalf("build preparation: %v", err)
 	}
