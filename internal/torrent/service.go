@@ -61,7 +61,9 @@ func NewServiceWithRegistry(logger api.Logger, tmpRoot string, registry *tracker
 
 // Create returns the first reusable torrent in client, source, temporary, then
 // adjacent-path order, unless Rehash requests a new artifact. Reused candidates
-// are checked against tracker policy, source layout, and source bytes. NoHash
+// are checked against tracker policy and source layout. Client-discovered
+// candidates with explicit source-bound complete-data evidence skip local
+// source-byte revalidation; all other candidates are checked against source bytes. NoHash
 // fails when none qualify, while Rehash takes precedence when both overrides
 // are enabled.
 //
@@ -525,6 +527,13 @@ func validateCandidateTorrentContent(path string, meta api.TorrentSubject, logge
 			logger.Debugf("torrent: reusable candidate rejected path=%s stage=content_layout reason=%s", path, redaction.RedactValue(err.Error(), nil))
 		}
 		return err
+	}
+	if meta.ClientTorrentDataVerified && pathutil.SamePath(path, meta.ClientTorrentPath) {
+		candidateInfoHash, err := loadInfoHash(path)
+		if err == nil && strings.TrimSpace(meta.ClientTorrentInfoHash) != "" &&
+			strings.EqualFold(candidateInfoHash, strings.TrimSpace(meta.ClientTorrentInfoHash)) {
+			return nil
+		}
 	}
 	if err := verifyCandidateTorrentData(path, meta); err != nil {
 		if logger != nil {

@@ -541,9 +541,10 @@ func TestCreateNoHashRejectsCaseOnlyMultiFileClientTorrent(t *testing.T) {
 	service := NewService(api.NopLogger{}, t.TempDir())
 	reuseOnly := true
 	_, err := service.Create(context.Background(), api.TorrentSubject{
-		SourcePath:        sourceDir,
-		FileList:          []string{episode1, episode2},
-		ClientTorrentPath: clientTorrentPath,
+		SourcePath:                sourceDir,
+		FileList:                  []string{episode1, episode2},
+		ClientTorrentPath:         clientTorrentPath,
+		ClientTorrentDataVerified: true,
 		TorrentOverrides: api.TorrentOverrides{
 			NoHash: &reuseOnly,
 		},
@@ -553,30 +554,90 @@ func TestCreateNoHashRejectsCaseOnlyMultiFileClientTorrent(t *testing.T) {
 	}
 }
 
-func TestCreateNoHashRejectsSameNameSameSizeDifferentContentTorrent(t *testing.T) {
+func TestCreateNoHashRequiresVerifiedClientDataToSkipBytes(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name     string
+		verified bool
+	}{
+		{name: "verified", verified: true},
+		{name: "unverified"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			source := filepath.Join(dir, "video.mkv")
+			writeTestFile(t, source, "source-data")
+
+			clientSource := filepath.Join(dir, "client", "video.mkv")
+			writeTestFile(t, clientSource, "source-evil")
+			clientTorrentPath := filepath.Join(dir, "client.torrent")
+			createTestTorrentFromExisting(t, clientSource, clientTorrentPath)
+			clientInfoHash, err := loadInfoHash(clientTorrentPath)
+			if err != nil {
+				t.Fatalf("load client torrent infohash: %v", err)
+			}
+
+			service := NewService(api.NopLogger{}, t.TempDir())
+			reuseOnly := true
+			result, err := service.Create(context.Background(), api.TorrentSubject{
+				SourcePath:                source,
+				ClientTorrentPath:         clientTorrentPath,
+				ClientTorrentInfoHash:     clientInfoHash,
+				ClientTorrentDataVerified: test.verified,
+				TorrentOverrides: api.TorrentOverrides{
+					NoHash: &reuseOnly,
+				},
+			})
+			if test.verified {
+				if err != nil {
+					t.Fatalf("expected no error, got %v", err)
+				}
+				if result.Path != clientTorrentPath {
+					t.Fatalf("expected verified client torrent %s to be reused, got %s", clientTorrentPath, result.Path)
+				}
+				return
+			}
+			if !errors.Is(err, internalerrors.ErrNotFound) {
+				t.Fatalf("expected unverified client torrent piece mismatch, got %v", err)
+			}
+		})
+	}
+}
+
+func TestCreateNoHashRejectsVerifiedClientTorrentOverwrittenAfterDiscovery(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
 	source := filepath.Join(dir, "video.mkv")
 	writeTestFile(t, source, "source-data")
 
-	clientDir := filepath.Join(dir, "client")
-	clientSource := filepath.Join(clientDir, "video.mkv")
-	writeTestFile(t, clientSource, "source-evil")
 	clientTorrentPath := filepath.Join(dir, "client.torrent")
-	createTestTorrentFromExisting(t, clientSource, clientTorrentPath)
+	createTestTorrentFromExisting(t, source, clientTorrentPath)
+	verifiedInfoHash, err := loadInfoHash(clientTorrentPath)
+	if err != nil {
+		t.Fatalf("load verified client torrent infohash: %v", err)
+	}
+
+	replacementSource := filepath.Join(dir, "replacement", "video.mkv")
+	writeTestFile(t, replacementSource, "source-evil")
+	createTestTorrentFromExisting(t, replacementSource, clientTorrentPath)
 
 	service := NewService(api.NopLogger{}, t.TempDir())
 	reuseOnly := true
-	_, err := service.Create(context.Background(), api.TorrentSubject{
-		SourcePath:        source,
-		ClientTorrentPath: clientTorrentPath,
+	_, err = service.Create(context.Background(), api.TorrentSubject{
+		SourcePath:                source,
+		ClientTorrentPath:         clientTorrentPath,
+		ClientTorrentInfoHash:     verifiedInfoHash,
+		ClientTorrentDataVerified: true,
 		TorrentOverrides: api.TorrentOverrides{
 			NoHash: &reuseOnly,
 		},
 	})
 	if !errors.Is(err, internalerrors.ErrNotFound) {
-		t.Fatalf("expected nohash to reject piece mismatch, got %v", err)
+		t.Fatalf("expected overwritten verified torrent to require byte verification, got %v", err)
 	}
 }
 
@@ -892,7 +953,7 @@ func TestCreateRejectsSameNameDifferentSizeClientTorrent(t *testing.T) {
 	}
 }
 
-func TestCreateRejectsSameNameSameSizeDifferentContentClientTorrent(t *testing.T) {
+func TestCreateRejectsSameNameSameSizeDifferentContentAdjacentTorrent(t *testing.T) {
 	t.Parallel()
 
 	sourceDir := t.TempDir()
@@ -902,19 +963,23 @@ func TestCreateRejectsSameNameSameSizeDifferentContentClientTorrent(t *testing.T
 	clientDir := filepath.Join(sourceDir, "client")
 	clientSource := filepath.Join(clientDir, "video.mkv")
 	writeTestFile(t, clientSource, "source-evil")
-	clientTorrentPath := filepath.Join(sourceDir, "client.torrent")
-	createTestTorrentFromExisting(t, clientSource, clientTorrentPath)
+	adjacentTorrentPath := source + ".torrent"
+	createTestTorrentFromExisting(t, clientSource, adjacentTorrentPath)
 
-	service := NewService(api.NopLogger{}, t.TempDir())
+	tmpRoot := t.TempDir()
+	service := NewService(api.NopLogger{}, tmpRoot)
+	expectedPath, err := TempTorrentPath(tmpRoot, source)
+	if err != nil {
+		t.Fatalf("temp torrent path: %v", err)
+	}
 	result, err := service.Create(context.Background(), api.TorrentSubject{
-		SourcePath:        source,
-		ClientTorrentPath: clientTorrentPath,
+		SourcePath: source,
 	})
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if result.Path == clientTorrentPath {
-		t.Fatalf("expected same-name same-size client torrent to be skipped")
+	if result.Path != expectedPath {
+		t.Fatalf("expected untrusted adjacent torrent to be regenerated at %s, got %s", expectedPath, result.Path)
 	}
 }
 
