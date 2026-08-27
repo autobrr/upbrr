@@ -51,6 +51,7 @@ func UploadSubjectForValidation(subject api.TrackerValidationSubject) api.Upload
 		Audio:                       subject.Audio,
 		Channels:                    subject.Channels,
 		HasCommentary:               subject.HasCommentary,
+		HardcodedSubs:               subject.HardcodedSubs,
 		Is3D:                        subject.Is3D,
 		Source:                      subject.Source,
 		Type:                        subject.Type,

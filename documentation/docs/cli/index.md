@@ -122,6 +122,7 @@ Process at most five entries from a queue folder:
 | `--service <value>`           | `-service`, `-serv`                               | Override streaming service.                       |
 | `--distributor <value>`       | `-distributor`, `-dist`                           | Override distributor.                             |
 | `--original-language <value>` | `-original-language`, `-ol`                       | Override original language.                       |
+| `--hardcoded-subs`            | `-hardcoded-subs`, `-hc`                          | Force hardcoded-subtitle handling.                |
 | `--edition <value>`           | `-edition`, `-repack`                             | Override edition text.                            |
 | `--season <value>`            | `-season`                                         | Override one season token, such as `5` or `S05`.  |
 | `--episode <value>`           | `-episode`                                        | Override one episode token, such as `5` or `E05`. |

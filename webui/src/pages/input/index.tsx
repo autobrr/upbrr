@@ -2035,6 +2035,22 @@ export default function InputPage(props: Props) {
                   <div className="settings-subgroup__title">Flags</div>
                   <div className="settings-grid">
                     <div className="settings-toggle">
+                      <span>Hardcoded subtitles</span>
+                      <Switch
+                        aria-label="Hardcoded subtitles"
+                        checked={Boolean(view.intent.metadata.HardcodedSubs)}
+                        onChange={(event) => {
+                          const metadata = { ...view.intent.metadata };
+                          if (event.target.checked) {
+                            metadata.HardcodedSubs = true;
+                          } else {
+                            delete metadata.HardcodedSubs;
+                          }
+                          facet.changeMetadata(metadata);
+                        }}
+                      />
+                    </div>
+                    <div className="settings-toggle">
                       <span>No season</span>
                       <Switch
                         aria-label="No season"
