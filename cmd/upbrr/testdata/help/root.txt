@@ -160,6 +160,8 @@ Tracker Overrides:
       Override TIK disc type
   -commentary, --commentary, -mc
       Mark release as containing commentary
+  -hardcoded-subs, --hardcoded-subs, -hc
+      Mark release as containing hardcoded subtitles
   -personalrelease, --personalrelease, -pr
       Mark release as personal
   -stream, --stream, -st

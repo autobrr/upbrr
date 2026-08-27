@@ -709,7 +709,7 @@ func cliHelpSections(name string) []helpSection {
 		{title: "Metadata IDs", names: []string{"tmdb", "imdb", "mal", "tvdb", "tvmaze"}},
 		{title: "Tracker Overrides", names: []string{
 			"skip-dupe-check", "skip-dupe-asking", "double-dupe-check", "foreign", "opera", "asian", "disctype",
-			"commentary", "personalrelease", "stream", "webdv", "not-anime", "anon", "draft", "modq", "channel",
+			"commentary", "hardcoded-subs", "personalrelease", "stream", "webdv", "not-anime", "anon", "draft", "modq", "channel",
 		}},
 		{title: "Screenshots and Images", names: []string{
 			"screens", "manual_frames", "comparison", "comparison_index", "menu-images", "get-dvd-menus", "imghost", "skip-imagehost-upload",
