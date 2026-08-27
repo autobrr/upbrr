@@ -81,9 +81,11 @@ func NewService(logger api.Logger, analyzer Analyzer) *Service {
 }
 
 // Export writes mode-0600 text and JSON reports beneath the release temporary
-// directory. Existing artifacts are reused only when both files exist and the
-// JSON has no conformance error; DVD VOB evidence is analyzed on every call.
-// Errors return no Result, although a failed JSON write may leave the text file.
+// directory. Text reports reduce the analyzed target path to its basename;
+// JSON reports retain the analyzer output. Existing artifacts are reused only
+// when both files exist and the JSON has no conformance error; DVD VOB evidence
+// is analyzed on every call. Errors return no Result, although a failed JSON
+// write may leave the text file.
 func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 	select {
 	case <-ctx.Done():
@@ -111,6 +113,19 @@ func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 	if fileExists(textPath) && fileExists(jsonPath) {
 		hasErrors, err := conformanceError(jsonPath, req.DiscType)
 		if err == nil && !hasErrors {
+			textOutput, err := os.ReadFile(textPath)
+			if err != nil {
+				return Result{}, fmt.Errorf("mediainfo: read cached text: %w", err)
+			}
+			cleanText := cleanMediaInfoText(string(textOutput), target.AnalyzePath)
+			if cleanText != string(textOutput) {
+				if err := writeMediaInfoText(textPath, []byte(cleanText)); err != nil {
+					return Result{}, fmt.Errorf("mediainfo: write cached text: %w", err)
+				}
+			}
+			if err := os.Chmod(textPath, 0o600); err != nil {
+				return Result{}, fmt.Errorf("mediainfo: chmod cached text: %w", err)
+			}
 			vobText, vobJSON, err := analyzeVOB(ctx, s.analyzer, target.VOBPath)
 			if err != nil {
 				return Result{}, err
@@ -220,9 +235,49 @@ func cleanMediaInfoText(text, target string) string {
 		if strings.HasPrefix(trimmed, "Report created by ") {
 			continue
 		}
+		if field, _, ok := strings.Cut(line, ":"); ok && strings.TrimSpace(field) == "Complete name" {
+			line = field + ": " + base
+		}
 		filtered = append(filtered, line)
 	}
 	return strings.Join(filtered, "\n")
+}
+
+// writeMediaInfoText replaces path from a synced same-directory temp file as a
+// single filesystem update where the platform supports it.
+func writeMediaInfoText(path string, data []byte) error {
+	tmpFile, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	removeTemp := true
+	defer func() {
+		if removeTemp {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	if err := tmpFile.Chmod(0o600); err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("chmod temp file: %w", err)
+	}
+	if _, err := tmpFile.Write(data); err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("write temp file: %w", err)
+	}
+	if err := tmpFile.Sync(); err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("sync temp file: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("close temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("replace file: %w", err)
+	}
+	removeTemp = false
+	return nil
 }
 
 func selectTarget(ctx context.Context, req Request) (targetSelection, error) {
