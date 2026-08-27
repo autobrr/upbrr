@@ -23,6 +23,7 @@ func TestCommandFromRequestRejectsInvalidSharedRequest(t *testing.T) {
 func TestCommandFromRequestMapsDirectUploadExactly(t *testing.T) {
 	t.Parallel()
 
+	noHash := true
 	request := api.UploadReleaseWorkflowRequest{
 		ReleaseWorkflowCommandContext: api.ReleaseWorkflowCommandContext{
 			WorkflowID:       api.WorkflowID("workflow-1"),
@@ -30,6 +31,7 @@ func TestCommandFromRequestMapsDirectUploadExactly(t *testing.T) {
 			IdempotencyKey:   "upload-1",
 		},
 		NoSeed:     true,
+		NoHash:     &noHash,
 		TrackerIDs: []api.TrackerID{"ALPHA"},
 	}
 
@@ -43,6 +45,7 @@ func TestCommandFromRequestMapsDirectUploadExactly(t *testing.T) {
 	}
 	if command.WorkflowID != request.WorkflowID || command.ExpectedRevision != request.ExpectedRevision ||
 		command.IdempotencyKey != request.IdempotencyKey || command.NoSeed != request.NoSeed ||
+		!boolPointersEqual(command.NoHash, request.NoHash) ||
 		!slices.Equal(command.TrackerIDs, request.TrackerIDs) {
 		t.Fatalf("command = %#v, request = %#v", command, request)
 	}

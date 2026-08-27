@@ -279,7 +279,11 @@ const clonePreparationIntent = (intent: PreparationIntent): PreparationIntent =>
   },
 });
 
-const emptyOptions = (): UploadRunOptions => ({ noSeed: false, runLogLevel: "info" });
+const emptyOptions = (): UploadRunOptions => ({
+  noSeed: false,
+  noHash: false,
+  runLogLevel: "info",
+});
 
 const emptyWorkflow = <T>(): WorkflowState<T> => ({
   revision: 0,

@@ -1307,7 +1307,10 @@ export function ReleaseSessionProvider({
   };
 
   // Selected trackers are pre-dupe UI state; retained backend evidence owns the exact downstream set.
-  const backendResolvedUploadIntent = () => ({ noSeed: state.uploadOptions.noSeed });
+  const backendResolvedUploadIntent = () => ({
+    noSeed: state.uploadOptions.noSeed,
+    noHash: state.uploadOptions.noHash,
+  });
 
   const runDryRun = async (): Promise<boolean> => {
     if (!workflowView.current) return false;
@@ -1563,6 +1566,7 @@ export function ReleaseSessionProvider({
             { id: result.id, revision: result.revision },
             trackerIDs,
             state.uploadOptions.noSeed,
+            state.uploadOptions.noHash,
             commandID,
             signal,
           ),
@@ -2081,6 +2085,7 @@ export function ReleaseSessionProvider({
             { id: result.id, revision: result.revision },
             trackerIDs,
             state.uploadOptions.noSeed,
+            state.uploadOptions.noHash,
             commandID,
             signal,
           ),

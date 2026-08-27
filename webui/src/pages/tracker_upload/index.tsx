@@ -138,6 +138,14 @@ export default function TrackerUploadPage({ facet }: Props) {
             />
             Skip client injection
           </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={view.options.noHash}
+              onChange={(event) => facet.changeOptions({ noHash: event.target.checked })}
+            />
+            Reuse existing torrent (skip hashing)
+          </label>
           <label className="grid gap-1">
             <span className="label">Log level</span>
             <select

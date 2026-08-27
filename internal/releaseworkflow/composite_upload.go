@@ -287,6 +287,7 @@ func normalizeCompositeUploadRequest(
 		MediaSelection:         selection,
 		Descriptions:           &descriptions,
 		NoSeed:                 optionalBool(request.Client.NoSeed),
+		NoHash:                 cloneBoolPointer(request.Torrent.NoHash),
 	}
 	fingerprint, err := api.CanonicalWorkflowFingerprint(requestFingerprintPayload(request))
 	if err != nil {
@@ -635,6 +636,13 @@ func cloneBoolPointer(value *bool) *bool {
 	}
 	cloned := *value
 	return &cloned
+}
+
+func boolPointersEqual(left, right *bool) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func cloneIntPointer(value *int) *int {
