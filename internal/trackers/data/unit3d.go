@@ -688,6 +688,10 @@ func buildUnit3DSearchEntries(items []unit3dSearchItem, filterTMDBID int, isDisc
 			continue
 		}
 		rawType := strings.TrimSpace(item.Attributes.Type)
+		hdr := mediafacts.HDRFromMediaInfoText(item.Attributes.MediaInfo)
+		if item.Attributes.HDRDV != nil {
+			hdr = mediafacts.HDRFromUnit3DHDRDV(*item.Attributes.HDRDV)
+		}
 		entry := api.DupeEntry{
 			Name:          strings.TrimSpace(item.Attributes.Name),
 			Trumpable:     item.Attributes.Trumpable,
@@ -702,7 +706,7 @@ func buildUnit3DSearchEntries(items []unit3dSearchItem, filterTMDBID int, isDisc
 			Internal:      item.Attributes.Internal,
 			BDInfo:        strings.TrimSpace(item.Attributes.BDInfo),
 			Description:   strings.TrimSpace(item.Attributes.Description),
-			HDR:           mediafacts.HDRFromMediaInfoText(item.Attributes.MediaInfo),
+			HDR:           hdr,
 		}
 
 		if sizeValue, err := parseNumberToInt64(item.Attributes.Size); err == nil {
@@ -1220,6 +1224,7 @@ type unit3dSearchAttrs struct {
 	MediaInfo    string       `json:"media_info"`
 	Description  string       `json:"description"`
 	TMDBID       int          `json:"tmdb_id"`
+	HDRDV        *string      `json:"hdr_dv"`
 	Provider     string       `json:"provider"`
 }
 
