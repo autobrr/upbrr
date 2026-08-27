@@ -210,6 +210,18 @@ func TestMapCollectedFactsPreservesGeneratedReleaseNameVariants(t *testing.T) {
 	}
 }
 
+func TestMapCollectedFactsPublishesDVDCapacityToReleaseInfo(t *testing.T) {
+	t.Parallel()
+
+	facts := mapCollectedFacts(preparationstate.State{Release: api.ReleaseInfo{Size: "DVD9"}})
+	if facts.Naming.Size != "DVD9" {
+		t.Fatalf("naming size = %q, want DVD9", facts.Naming.Size)
+	}
+	if got := releaseInfo(api.PreparedRelease{Naming: facts.Naming}).Size; got != "DVD9" {
+		t.Fatalf("release info size = %q, want DVD9", got)
+	}
+}
+
 func TestMapCollectedFactsPublishesFinalizedNamingSourceAndType(t *testing.T) {
 	t.Parallel()
 	facts := mapCollectedFacts(preparationstate.State{

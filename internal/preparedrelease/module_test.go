@@ -124,9 +124,16 @@ func TestPrepareUsesExactCompatibilityAndPublishesConcreteAssessments(t *testing
 	}
 }
 
-func TestPrepareRecomputesLegacyContractAfterRestart(t *testing.T) {
+func TestPrepareRecomputesV5DVDNamingAfterRestart(t *testing.T) {
 	t.Parallel()
-	path := writePreparedTestFile(t, "source.mkv", "synthetic media")
+	path := filepath.Join(t.TempDir(), "Example Release 2026 PAL DVD")
+	videoTSPath := filepath.Join(path, "VIDEO_TS")
+	if err := os.MkdirAll(videoTSPath, 0o755); err != nil {
+		t.Fatalf("create VIDEO_TS: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(videoTSPath, "VTS_01_1.VOB"), []byte("dvd"), 0o600); err != nil {
+		t.Fatalf("write DVD content: %v", err)
+	}
 	store := newMemoryStore()
 	initial := newTestModule(t, store, &recordingCollector{})
 	prepared, err := initial.Prepare(context.Background(), api.PrepareInput{SourcePath: path})
@@ -135,13 +142,26 @@ func TestPrepareRecomputesLegacyContractAfterRestart(t *testing.T) {
 	}
 
 	legacy := prepared.Release
-	legacy.Compatibility.ContractVersion = "prepared-release-v3"
-	legacy.Assessments.VideoBitrate = api.VideoBitrateAssessment{}
+	legacy.Compatibility.ContractVersion = "prepared-release-v5"
+	legacy.Naming.ReleaseName = "Example Release 2026 PAL DVD"
+	legacy.Naming.NameWithoutTag = "Example Release 2026 PAL DVD"
+	legacy.Naming.Source = "PAL DVD"
+	legacy.Naming.Size = ""
 	store.mu.Lock()
 	store.current[canonicalSourceKey(path)] = legacy
 	store.mu.Unlock()
 
-	restartedCollector := &recordingCollector{}
+	correctedFacts := CollectedFacts{
+		Naming: api.NamingFacts{
+			Filename:       filepath.Base(path),
+			ReleaseName:    "Example Release 2026 PAL DVD9",
+			NameWithoutTag: "Example Release 2026 PAL DVD9",
+			Source:         "PAL DVD",
+			Size:           "DVD9",
+		},
+		Disc: api.DiscFacts{Type: "DVD"},
+	}
+	restartedCollector := &recordingCollector{facts: &correctedFacts}
 	restarted := newTestModule(t, store, restartedCollector)
 	recomputed, err := restarted.Prepare(context.Background(), api.PrepareInput{SourcePath: path})
 	if err != nil {
@@ -155,8 +175,9 @@ func TestPrepareRecomputesLegacyContractAfterRestart(t *testing.T) {
 			prepared.Release.Generation+1,
 		)
 	}
-	if recomputed.Release.Assessments.VideoBitrate.Status != api.VideoBitrateStatusUnknown {
-		t.Fatalf("video bitrate status = %q, want %q", recomputed.Release.Assessments.VideoBitrate.Status, api.VideoBitrateStatusUnknown)
+	if recomputed.Release.Compatibility.ContractVersion != ContractVersion || recomputed.Release.Naming.Size != "DVD9" ||
+		recomputed.Release.Naming.ReleaseName != "Example Release 2026 PAL DVD9" {
+		t.Fatalf("recomputed DVD naming = %#v", recomputed.Release.Naming)
 	}
 }
 
@@ -832,12 +853,16 @@ func (correctedFactsCollector) Collect(_ context.Context, request preparationsta
 type recordingCollector struct {
 	mu    sync.Mutex
 	calls []string
+	facts *CollectedFacts
 }
 
 func (c *recordingCollector) Collect(_ context.Context, request preparationstate.Request) (CollectedFacts, error) {
 	c.mu.Lock()
 	c.calls = append(c.calls, request.Input.Instructions.SourceLookup)
 	c.mu.Unlock()
+	if c.facts != nil {
+		return *c.facts, nil
+	}
 	return CollectedFacts{
 		Naming: api.NamingFacts{
 			Filename:         filepath.Base(request.Manifest.SourcePath),
