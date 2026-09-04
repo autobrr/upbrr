@@ -23,8 +23,8 @@ GO_TEST_FAST_FLAGS := -timeout 20m
 GOLANGCI_FLAGS := --timeout=5m
 help:
 	@echo Build
-	@echo   make build              Full build: WebUI, embedded assets, CLI
-	@echo   make backend            Build CLI binary only
+	@echo   make build              Full native build: WebUI, embedded assets, CLI
+	@echo   make backend            Build native CLI binary only
 	@echo   make frontend           Typecheck and build frontend bundle
 	@echo   make frontend-bundle    Build frontend bundle only
 	@$(BLANK)
@@ -62,6 +62,10 @@ help:
 	@echo   make gofix-check        Check Go fix drift with omitzero disabled
 	@echo   make gofix-changed      Apply Go fixes to changed packages
 	@echo   make gofix-check-changed Check Go fix drift on changed packages
+
+# Local binaries must run on the development host despite cross-compilation defaults.
+build backend e2e-build: export GOOS := $(shell go env GOHOSTOS)
+build backend e2e-build: export GOARCH := $(shell go env GOHOSTARCH)
 
 build:
 	$(FULL_BUILD)
