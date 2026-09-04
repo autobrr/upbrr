@@ -652,9 +652,10 @@ func validateDupePolicy(policy DupePolicy) error {
 		return errors.New("policy ID is empty")
 	}
 	isCompatibility := strings.Contains(strings.ToLower(policy.ID), "/duplicate-compat/")
-	if !isCompatibility && (len(policy.SlotDimensions) > 0 || len(policy.OptionalSlotDimensions) > 0 || len(policy.CompleteSlotDimensions) > 0 ||
-		len(policy.RequiredDimensions) > 0 || len(policy.SuppressGeneralCoexistence) > 0 || len(policy.CoexistenceRules) > 0 ||
-		len(policy.PrecedenceRules) > 0 || len(policy.SetRules) > 0 || policy.SizeVariancePercent > 0) {
+	if policy.ExactMatchOnly ||
+		!isCompatibility && (len(policy.SlotDimensions) > 0 || len(policy.OptionalSlotDimensions) > 0 || len(policy.CompleteSlotDimensions) > 0 ||
+			len(policy.RequiredDimensions) > 0 || len(policy.SuppressGeneralCoexistence) > 0 || len(policy.CoexistenceRules) > 0 ||
+			len(policy.PrecedenceRules) > 0 || len(policy.SetRules) > 0 || policy.SizeVariancePercent > 0) {
 		if strings.TrimSpace(policy.EvidenceID) == "" {
 			return errors.New("automatic policy has no evidence ID")
 		}

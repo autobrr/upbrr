@@ -69,6 +69,28 @@ func TestSourceBackedDupeOverlaysResolveDeterministically(t *testing.T) {
 			relation: api.DupeRelationProposedTrumps,
 		},
 		{
+			name:    "DVL distinct releases coexist",
+			tracker: "DVL",
+			target: api.TrackerDuplicateTarget{
+				Names:      []string{"Example.Release.2026.1080p.WEB-DL.VariantA-GRP"},
+				FileNames:  []string{"Example.Release.2026.1080p.WEB-DL.VariantA-GRP.mkv"},
+				SizeBytes:  100,
+				Type:       "WEB-DL",
+				Resolution: "1080p",
+				HDR:        completeSDR,
+			},
+			candidate: dupe.TrackerCandidate{
+				Name:       "Example.Release.2026.1080p.WEB-DL.VariantB-GRP",
+				Files:      []string{"Example.Release.2026.1080p.WEB-DL.VariantB-GRP.mkv"},
+				SizeBytes:  100,
+				SizeKnown:  true,
+				Type:       "WEB-DL",
+				Resolution: "1080p",
+				HDR:        completeSDR,
+			},
+			relation: api.DupeRelationCoexists,
+		},
+		{
 			name:    "LUME WEB over broadcast",
 			tracker: "LUME",
 			target: api.TrackerDuplicateTarget{

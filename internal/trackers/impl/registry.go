@@ -40,6 +40,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/blu"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/cbr"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/dp"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/dvl"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/emuw"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/friki"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/hhd"
@@ -106,6 +107,7 @@ func unit3DDefinitions() []trackers.Definition {
 		blu.Profile(),
 		cbr.Profile(),
 		dp.Profile(),
+		dvl.Profile(),
 		emuw.Profile(),
 		friki.Profile(),
 		hhd.Profile(),

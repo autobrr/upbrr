@@ -458,6 +458,12 @@ type DupePolicy struct {
 	// EvidenceID identifies the policy evidence backing automatic
 	// tracker-specific behavior.
 	EvidenceID string
+	// ExactMatchOnly permits distinct named releases or complete primary-video
+	// identities to coexist within the same known content scope. Exact identity
+	// and season-pack containment still take precedence; incomplete searches
+	// still require action. Enabling this requires EvidenceID.
+	// The zero value preserves standard duplicate comparison.
+	ExactMatchOnly bool `json:",omitempty"`
 	// TargetReleaseOrigin derives tracker-native origin from the proposed release.
 	// ID versions this pure resolver; it is excluded from serialized fingerprints.
 	TargetReleaseOrigin func(api.UploadSubject) string `json:"-"`

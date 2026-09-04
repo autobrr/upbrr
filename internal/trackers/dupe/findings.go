@@ -56,6 +56,7 @@ type factComparison struct {
 
 const (
 	findingPriorityExact           = 1000
+	findingPriorityContentConflict = 950
 	findingPriorityDisjointContent = 900
 	findingPriorityPackContainment = 850
 	findingPriorityTrackerRule     = 810
@@ -80,6 +81,9 @@ func collectCandidateFindings(
 	findings := make([]RuleFinding, 0, 12)
 	findings = append(findings, collectExactFindings(target, candidate)...)
 	findings = append(findings, collectGeneralFindings(targetFacts, candidateFacts, policy, workScope)...)
+	if policy.ExactMatchOnly {
+		findings = append(findings, collectExactOnlyFinding(target, targetFacts, candidate, candidateFacts, policy))
+	}
 	findings = append(findings, collectTrackerRules(target, targetFacts, candidate, candidateFacts, policy)...)
 	if finding, ok := collectTrackerSlotFinding(target, targetFacts, candidate, candidateFacts, policy); ok {
 		findings = append(findings, finding)
@@ -118,6 +122,87 @@ func collectExactFindings(target api.TrackerDuplicateTarget, candidate TrackerCa
 		ReasonCode: "exact_identity",
 		Priority:   findingPriorityExact,
 	}}
+}
+
+func collectExactOnlyFinding(
+	target api.TrackerDuplicateTarget,
+	targetFacts normalizedFacts,
+	candidate TrackerCandidate,
+	candidateFacts normalizedFacts,
+	policy trackerspkg.DupePolicy,
+) RuleFinding {
+	finding := RuleFinding{
+		RuleID:     policy.ID + "/distinct_identity",
+		EvidenceID: policy.EvidenceID,
+		Source:     "tracker",
+		Status:     RuleFindingMatched,
+		Relation:   api.DupeRelationCoexists,
+		ReasonCode: "distinct_release_identity",
+		Priority:   findingPriorityTrackerRule,
+	}
+	// Name identity still blocks when differing sizes prevent exactCandidate
+	// from establishing identity through equal primary-video filenames.
+	if slices.ContainsFunc(target.Names, func(name string) bool {
+		return sameCandidateName(name, candidate.Name)
+	}) {
+		finding.RuleID = policy.ID + "/exact_identity"
+		finding.Relation = api.DupeRelationExactDuplicate
+		finding.ReasonCode = "exact_identity"
+		finding.Priority = findingPriorityExact
+		return finding
+	}
+	// Structured and title coordinates must not disagree: otherwise even a
+	// general disjoint-content or pack finding could rely on the wrong scope.
+	if contentScopesContradict(targetFacts.Content, parseBestTitle(target.Names).Content) ||
+		contentScopesContradict(candidateFacts.Content, parseReleaseTitle(candidate.Name, FactOriginTrackerTitle).Content) {
+		finding.Status = RuleFindingIndeterminate
+		finding.Relation = api.DupeRelationManualReview
+		finding.ReasonCode = "content_scope_contradictory"
+		finding.Contradictions = []string{"content_scope"}
+		finding.Priority = findingPriorityContentConflict
+		return finding
+	}
+	namesKnown := strings.TrimSpace(candidate.Name) != "" && slices.ContainsFunc(target.Names, func(name string) bool {
+		return strings.TrimSpace(name) != ""
+	})
+	filesKnown := candidateFacts.Files.Status == FactComplete &&
+		len(videoFileSet(target.FileNames)) > 0 && len(videoFileSet(candidate.Files)) > 0
+	if !namesKnown && !filesKnown {
+		finding.Missing = append(finding.Missing, "release_identity")
+	}
+	if !sameKnownContentScope(targetFacts.Content, candidateFacts.Content) {
+		finding.Missing = append(finding.Missing, "content_scope")
+	}
+	if len(finding.Missing) > 0 {
+		finding.Status = RuleFindingIndeterminate
+		finding.Relation = api.DupeRelationInsufficientEvidence
+		finding.ReasonCode = "distinct_identity_unproven"
+		// Incomplete overlay evidence must not hide a general coexistence finding.
+		finding.Priority = findingPrioritySlotMissing
+	}
+	return finding
+}
+
+func contentScopesContradict(structured contentScope, title contentScope) bool {
+	if structured.Kind == contentScopeWork || structured.Kind == contentScopeUnknownTV ||
+		title.Kind == contentScopeWork || title.Kind == contentScopeUnknownTV {
+		return false
+	}
+	return structured.Kind != title.Kind || compareContentScopes(structured, title) == contentDefinitelyDisjoint
+}
+
+func sameKnownContentScope(target contentScope, candidate contentScope) bool {
+	switch target.Kind {
+	case contentScopeUnknownTV:
+		return false
+	case contentScopeEpisode, contentScopeEpisodeRange, contentScopeSeasonPack:
+		if target.Season <= 0 || candidate.Season <= 0 {
+			return false
+		}
+	case contentScopeWork, contentScopeDaily, contentScopeCompleteSeries:
+	}
+	target.Origin = candidate.Origin
+	return target == candidate
 }
 
 func collectGeneralFindings(target normalizedFacts, candidate normalizedFacts, policy trackerspkg.DupePolicy, workScope WorkScope) []RuleFinding {

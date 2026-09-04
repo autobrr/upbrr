@@ -79,6 +79,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 	unit3DResponsibility("BLU", "canonical"),
 	unit3DResponsibility("CBR", "cbr"),
 	unit3DResponsibilityVersion("DP", "dp", "", "v2"),
+	unit3DResponsibility("DVL", "canonical"),
 	unit3DResponsibility("EMUW", "canonical"),
 	unit3DResponsibility("FRIKI", "canonical"),
 	unit3DResponsibilityVersion("HHD", "hhd", "", "v2"),
@@ -492,8 +493,8 @@ func TestTrackerResponsibilityLedgerCoversEveryBuiltIn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new registry: %v", err)
 	}
-	if len(trackerResponsibilityLedger) != 66 {
-		t.Fatalf("responsibility rows = %d, want 66", len(trackerResponsibilityLedger))
+	if len(trackerResponsibilityLedger) != 67 {
+		t.Fatalf("responsibility rows = %d, want 67", len(trackerResponsibilityLedger))
 	}
 
 	ledgerNames := make([]string, 0, len(trackerResponsibilityLedger))
