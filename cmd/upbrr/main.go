@@ -40,8 +40,7 @@ func main() {
 	exitCode := 0
 	if err := run(); err != nil {
 		printTerminalError(err)
-		var cliErr *cliExitError
-		if errors.As(err, &cliErr) {
+		if cliErr, ok := errors.AsType[*cliExitError](err); ok {
 			exitCode = cliErr.code
 		} else {
 			exitCode = 1

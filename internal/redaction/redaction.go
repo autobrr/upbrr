@@ -6,6 +6,7 @@ package redaction
 import (
 	"encoding/json"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -125,8 +126,7 @@ func RedactValue(value string, sensitiveKeys map[string]struct{}) string {
 
 	blocks := ExtractJSONBlocks(value)
 	if len(blocks) > 0 {
-		for i := len(blocks) - 1; i >= 0; i-- {
-			block := blocks[i]
+		for _, block := range slices.Backward(blocks) {
 			if block.Start < 0 || block.End > len(value) || block.Start >= block.End {
 				continue
 			}

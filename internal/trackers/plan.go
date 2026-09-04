@@ -259,8 +259,7 @@ func PrepareAdapter(
 	case PreparationIntentUpload:
 		operation, err := prepareUpload(ctx, input)
 		if err != nil {
-			var preparationFailure *PreparationFailure
-			if errors.As(err, &preparationFailure) {
+			if preparationFailure, ok := errors.AsType[*PreparationFailure](err); ok {
 				return TrackerPlan{}, preparationFailure
 			}
 			return TrackerPlan{}, NewPreparationFailure(input.Tracker, "upload", err.Error(), err)
@@ -291,8 +290,7 @@ func preparedUploadPlan(input PreparationInput, operation PreparedOperation) (Tr
 		plan.state.resolve = func(ctx context.Context) (TrackerPlan, *PreparationFailure) {
 			next, err := operation.resolve(ctx)
 			if err != nil {
-				var failure *PreparationFailure
-				if errors.As(err, &failure) {
+				if failure, ok := errors.AsType[*PreparationFailure](err); ok {
 					return TrackerPlan{}, failure
 				}
 				return TrackerPlan{}, NewPreparationFailure(input.Tracker, "upload", err.Error(), err)
@@ -305,8 +303,7 @@ func preparedUploadPlan(input PreparationInput, operation PreparedOperation) (Tr
 		plan.state.decide = func(ctx context.Context, confirmed bool) (TrackerPlan, *PreparationFailure) {
 			next, err := operation.decide(ctx, confirmed)
 			if err != nil {
-				var failure *PreparationFailure
-				if errors.As(err, &failure) {
+				if failure, ok := errors.AsType[*PreparationFailure](err); ok {
 					return TrackerPlan{}, failure
 				}
 				return TrackerPlan{}, NewPreparationFailure(input.Tracker, "upload", err.Error(), err)

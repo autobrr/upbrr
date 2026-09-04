@@ -2877,8 +2877,7 @@ func (m *Module) prepareRelease(
 	command.Input.Instructions = facts.Instructions
 	prepared, err := m.preparer.Prepare(ctx, command.Input)
 	if err != nil {
-		var playlistRequired *api.PlaylistSelectionRequiredError
-		if errors.As(err, &playlistRequired) {
+		if playlistRequired, ok := errors.AsType[*api.PlaylistSelectionRequiredError](err); ok {
 			options := make([]api.RequiredActionOption, 0, min(len(playlistRequired.Candidates), maxPlaylistActionOptions))
 			for _, candidate := range playlistRequired.Candidates {
 				playlist := strings.TrimSpace(candidate.File)

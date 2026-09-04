@@ -50,7 +50,7 @@ func TestRegistryCatalogAndProjectionUseStableIdentityAndFinalPreviewSemantics(t
 
 	registry := NewRegistry()
 	prepareCalls := 0
-	definition := projectionStubDefinition{stubDefinition: stubDefinition{name: "EXAMPLE"}, prepareCalls: &prepareCalls}
+	definition := projectionStubDefinition{name: "EXAMPLE", prepareCalls: &prepareCalls}
 	if err := registry.RegisterDescriptor(Descriptor{
 		Name:              "EXAMPLE",
 		DisplayName:       "Example Tracker",
@@ -271,7 +271,7 @@ func TestRegistryProjectionRequiresNonSceneUploadNameConfirmationWithoutBlocking
 func TestPrepareAdapterRejectsPayloadSemanticsThatDifferFromReviewedProjection(t *testing.T) {
 	t.Parallel()
 
-	definition := projectionStubDefinition{stubDefinition: stubDefinition{name: "EXAMPLE"}}
+	definition := projectionStubDefinition{name: "EXAMPLE"}
 	input := PreparationInput{
 		Intent:  PreparationIntentDryRun,
 		Tracker: "EXAMPLE",

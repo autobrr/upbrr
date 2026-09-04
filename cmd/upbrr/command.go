@@ -373,16 +373,13 @@ func addExplicitHelpFlag(cmd *cobra.Command) {
 }
 
 func translatePFlagError(err error) error {
-	var notExist *pflag.NotExistError
-	if errors.As(err, &notExist) {
+	if notExist, ok := errors.AsType[*pflag.NotExistError](err); ok {
 		return fmt.Errorf("flag provided but not defined: -%s", notExist.GetSpecifiedName())
 	}
-	var valueRequired *pflag.ValueRequiredError
-	if errors.As(err, &valueRequired) {
+	if valueRequired, ok := errors.AsType[*pflag.ValueRequiredError](err); ok {
 		return fmt.Errorf("flag needs an argument: -%s", valueRequired.GetSpecifiedName())
 	}
-	var invalidValue *pflag.InvalidValueError
-	if errors.As(err, &invalidValue) {
+	if invalidValue, ok := errors.AsType[*pflag.InvalidValueError](err); ok {
 		return fmt.Errorf(
 			"invalid value %q for flag -%s: %w",
 			invalidValue.GetValue(),
@@ -390,8 +387,7 @@ func translatePFlagError(err error) error {
 			errors.Unwrap(invalidValue),
 		)
 	}
-	var invalidSyntax *pflag.InvalidSyntaxError
-	if errors.As(err, &invalidSyntax) {
+	if invalidSyntax, ok := errors.AsType[*pflag.InvalidSyntaxError](err); ok {
 		return fmt.Errorf("bad flag syntax: %s", invalidSyntax.GetSpecifiedFlag())
 	}
 	return err

@@ -137,16 +137,14 @@ func (s *Service) ensureSession(ctx context.Context, req EnsureRequest, mode ens
 }
 
 func asNeeds2FAError(err error) (*Needs2FAError, bool) {
-	var needsErr *Needs2FAError
-	if errors.As(err, &needsErr) {
+	if needsErr, ok := errors.AsType[*Needs2FAError](err); ok {
 		return needsErr, true
 	}
 	return nil, false
 }
 
 func asAuthRequiredError(err error) (*AuthRequiredError, bool) {
-	var authRequired *AuthRequiredError
-	if errors.As(err, &authRequired) {
+	if authRequired, ok := errors.AsType[*AuthRequiredError](err); ok {
 		return authRequired, true
 	}
 	return nil, false
