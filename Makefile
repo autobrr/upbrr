@@ -64,8 +64,8 @@ help:
 	@echo   make gofix-check-changed Check Go fix drift on changed packages
 
 # Local binaries must run on the development host despite cross-compilation defaults.
-build backend e2e-build: export GOOS := $(shell go env GOHOSTOS)
-build backend e2e-build: export GOARCH := $(shell go env GOHOSTARCH)
+build backend e2e-build: override export GOOS := $(shell go env GOHOSTOS)
+build backend e2e-build: override export GOARCH := $(shell go env GOHOSTARCH)
 
 build:
 	$(FULL_BUILD)
