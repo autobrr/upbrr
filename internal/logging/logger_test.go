@@ -161,6 +161,20 @@ func TestSanitizeMessagePreservesSavePathFieldOnly(t *testing.T) {
 	}
 }
 
+func TestSanitizeMessageDoesntCensorPathsSimilarToTmp(t *testing.T) {
+	t.Parallel()
+
+	notTempDir := filepath.Clean(os.TempDir()) + "-similar"
+
+	savePath := filepath.Join(t.TempDir(), "Example.Release.2026-GRP")
+	sourcePath := filepath.Join(notTempDir, "Example.Release.2026.Source-GRP")
+	got := SanitizeMessage(fmt.Sprintf("save_path=%s source=%s", savePath, sourcePath))
+
+	if !strings.Contains(got, "source="+notTempDir) {
+		t.Fatalf("expected non-temp dir path to remain visible, got %q", got)
+	}
+}
+
 func TestLoggerSanitizesRequestSecretsAndApostrophePaths(t *testing.T) {
 	t.Parallel()
 
