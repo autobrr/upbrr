@@ -4,11 +4,86 @@
 package ulcx
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestULCXHDRPrecedenceExplainsIncompleteProviderEvidence(t *testing.T) {
+	t.Parallel()
+
+	for _, direction := range []struct {
+		name      string
+		targetHDR api.HDRFacts
+		otherHDR  api.HDRFacts
+		complete  api.DupeRelation
+	}{
+		{
+			name:      "proposed preferred",
+			targetHDR: ulcxHDR(api.HDRFormatDolbyVision, api.HDRFormatHDR10),
+			otherHDR:  ulcxHDR(api.HDRFormatHDR10),
+			complete:  api.DupeRelationProposedTrumps,
+		},
+		{
+			name:      "existing preferred",
+			targetHDR: ulcxHDR(api.HDRFormatHDR10),
+			otherHDR:  ulcxHDR(api.HDRFormatDolbyVision, api.HDRFormatHDR10),
+			complete:  api.DupeRelationExistingPreferred,
+		},
+	} {
+		for _, evidence := range []struct {
+			name     string
+			provider string
+			title    string
+			missing  string
+		}{
+			{name: "missing", missing: "candidate_provider"},
+			{
+				name:    "title only",
+				title:   "Example.Release.2026.2160p.NF.WEB-DL.H.265-GRP",
+				missing: "candidate_provider_partial",
+			},
+			{name: "structured", provider: "NF"},
+		} {
+			t.Run(direction.name+" "+evidence.name, func(t *testing.T) {
+				t.Parallel()
+
+				target := ulcxTarget("WEBDL", "2160p", "NF", "H.265", direction.targetHDR)
+				candidate := ulcxCandidate("WEBDL", "2160p", evidence.provider, "HEVC", direction.otherHDR)
+				if evidence.title != "" {
+					candidate.Name = evidence.title
+				}
+				evaluation := dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, *Profile().DupePolicy, dupe.SearchEvidence{
+					Complete:  true,
+					Pages:     1,
+					WorkScope: dupe.WorkScopeProviderID,
+				})
+				want := direction.complete
+				if evidence.missing != "" {
+					want = api.DupeRelationInsufficientEvidence
+				}
+				result := evaluation.Candidates[0]
+				if result.Relation != want || result.Facts.HDR.Status != api.HDREvidenceComplete || len(result.Reasons) != 1 ||
+					result.Reasons[0].Code != "ulcx_webdl_hdr_precedence" {
+					t.Fatalf("HDR precedence result = %#v", result)
+				}
+				wantBlocks := want == api.DupeRelationExistingPreferred
+				if evaluation.Blocks != wantBlocks || evaluation.RequiresAction == wantBlocks {
+					t.Fatalf("blocks=%t action=%t, want blocks=%t action=%t", evaluation.Blocks, evaluation.RequiresAction, wantBlocks, !wantBlocks)
+				}
+				if evidence.missing != "" {
+					if !strings.Contains(result.Reasons[0].Message, strings.ReplaceAll(evidence.missing, "_", " ")) {
+						t.Fatalf("missing comparison dimension absent from explanation: %#v", result.Reasons)
+					}
+				} else if strings.Contains(result.Reasons[0].Message, "incomplete") {
+					t.Fatalf("complete provider evidence described as incomplete: %#v", result.Reasons)
+				}
+			})
+		}
+	}
+}
 
 func TestULCXDuplicateSlots(t *testing.T) {
 	t.Parallel()

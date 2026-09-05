@@ -5,6 +5,7 @@ package dupe
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
@@ -975,15 +976,21 @@ func TestEvaluateTrackerRuleMissingEvidenceOnlyWhenViable(t *testing.T) {
 	policy := trackerspkg.DupePolicy{ID: "example/duplicate/v2", PrecedenceRules: []trackerspkg.DupeRule{rule}}
 	target := api.TrackerDuplicateTarget{Resolution: "1080p", Provider: "Example"}
 	candidate := TrackerCandidate{Resolution: "720p"}
-	got := Evaluate(target, []TrackerCandidate{candidate}, policy, SearchEvidence{Complete: true}).Candidates[0]
-	if got.Relation != api.DupeRelationInsufficientEvidence || got.WinningRule != rule.ID {
+	evaluation := Evaluate(target, []TrackerCandidate{candidate}, policy, SearchEvidence{Complete: true})
+	got := evaluation.Candidates[0]
+	if got.Relation != api.DupeRelationInsufficientEvidence || got.WinningRule != rule.ID ||
+		!strings.Contains(got.Reasons[0].Message, "comparison evidence: candidate provider.") {
 		t.Fatalf("viable missing rule = %#v", got)
+	}
+	if public := publicCandidateEvaluations(evaluation); !slices.Equal(public[0].Reasons, got.Reasons) {
+		t.Fatalf("public explanation lost comparison evidence: %#v", public)
 	}
 
 	rule.Conditions[0].TargetValues = []string{"2160p"}
 	policy.PrecedenceRules = []trackerspkg.DupeRule{rule}
 	got = Evaluate(target, []TrackerCandidate{candidate}, policy, SearchEvidence{Complete: true}).Candidates[0]
-	if got.Relation != api.DupeRelationCoexists || got.Reasons[0].Code != "resolution_differs" {
+	if got.Relation != api.DupeRelationCoexists || got.Reasons[0].Code != "resolution_differs" ||
+		strings.Contains(got.Reasons[0].Message, "provider") {
 		t.Fatalf("disproved missing rule = %#v", got)
 	}
 }

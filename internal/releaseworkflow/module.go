@@ -3415,20 +3415,36 @@ func applyPreflightInteractionPolicy(
 		if len(result.RequiredActions) == 0 {
 			continue
 		}
-		result.RequiredActions = nil
-		result.State = api.TrackerPreflightStateFailed
+		projectionIndex, ok := projectionIndexes[result.TrackerID]
 		if len(result.Failures) == 0 {
+			message := "Tracker requires manual input and was skipped in unattended mode."
+			if ok && slices.ContainsFunc(result.RequiredActions, func(action api.RequiredAction) bool {
+				return action.Kind == api.RequiredActionAuthorizeRules
+			}) {
+				var reasons []string
+				for _, decision := range finalized[projectionIndex].PolicyDecisions {
+					if decision.Blocking && decision.Decision == "authorization_required" {
+						if reason := strings.TrimSpace(logging.SanitizeMessage(decision.Message)); reason != "" {
+							reasons = append(reasons, reason)
+						}
+					}
+				}
+				if len(reasons) > 0 {
+					message += " " + strings.Join(reasons, "; ")
+				}
+			}
 			result.Failures = []api.WorkflowFailure{{
 				Failure: api.OperationFailure{
 					Code:      api.OperationFailureMissingPrerequisite,
 					Operation: api.OperationKindDuplicateCheck,
-					Message:   "Tracker requires manual input and was skipped in unattended mode.",
+					Message:   message,
 					Recovery:  api.OperationRecoveryCompletePrerequisite,
 				},
 				TrackerID: result.TrackerID,
 			}}
 		}
-		projectionIndex, ok := projectionIndexes[result.TrackerID]
+		result.RequiredActions = nil
+		result.State = api.TrackerPreflightStateFailed
 		if !ok {
 			continue
 		}
