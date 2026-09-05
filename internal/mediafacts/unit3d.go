@@ -11,7 +11,9 @@ import (
 )
 
 // HDRFromUnit3DHDRDV normalizes one present Unit3D hdr_dv enum value.
-// An empty value is authoritative SDR; unknown values remain partial.
+// An empty or whitespace-only value is authoritative SDR, so callers must
+// distinguish an absent field before calling. Unknown values produce partial
+// tracker evidence without formats.
 func HDRFromUnit3DHDRDV(value string) api.HDRFacts {
 	profile, formats, ok := parseUnit3DHDRDV(value)
 	facts := api.HDRFacts{
@@ -30,7 +32,9 @@ func HDRFromUnit3DHDRDV(value string) api.HDRFacts {
 }
 
 // Unit3DHDRDVFromFacts returns the exact Unit3D hdr_dv enum value represented
-// by complete HDR facts. Unsupported or ambiguous facts are not projected.
+// by complete HDR facts. Complete SDR returns ("", true); unsupported,
+// incomplete, or ambiguous facts return ("", false). Dolby Vision subprofiles
+// are projected to their supported major profile, such as 8.1 to P8.
 func Unit3DHDRDVFromFacts(facts api.HDRFacts) (string, bool) {
 	if facts.Status != api.HDREvidenceComplete {
 		return "", false

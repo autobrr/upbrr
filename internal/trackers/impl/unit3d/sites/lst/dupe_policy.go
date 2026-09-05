@@ -285,8 +285,9 @@ func lstSubjectiveSlotRules() []trackers.DupeRule {
 			EvidenceID:         lstDupeEvidenceID,
 			ReasonCode:         "lst_hybrid_remux_hdr_slot_review",
 			RequiresManualStep: true,
-			Priority:           840,
-			OverridesGeneral:   true,
+			// Keep season-pack containment above this override of HDR-slot coexistence.
+			Priority:         840,
+			OverridesGeneral: true,
 			Conditions: []trackers.DupeCondition{
 				{
 					Dimension:       trackers.DupeDimensionMediaKind,
