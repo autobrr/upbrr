@@ -66,6 +66,12 @@ func testImageHostPolicyForTracker(name string) *ImageHostPolicy {
 			OwnedHosts:             []string{"reelflix"},
 			EnableWithImageHosting: true,
 		}
+	case "SAM":
+		return &ImageHostPolicy{
+			ConditionalHost:        "samaritano",
+			OwnedHosts:             []string{"samaritano"},
+			EnableWithImageHosting: true,
+		}
 	case "STC":
 		return &ImageHostPolicy{AllowedHosts: []string{"imgbox", "imgbb"}}
 	default:

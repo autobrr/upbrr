@@ -1257,8 +1257,7 @@ func applyEnsureErrorToStatus(status *api.TrackerAuthStatus, err error) {
 		return
 	}
 
-	var authRequired *AuthRequiredError
-	if errors.As(err, &authRequired) {
+	if _, ok := errors.AsType[*AuthRequiredError](err); ok {
 		status.State = StateLoginRequired
 		if validation, ok := asValidationError(err); ok && validation.ConfirmedInvalid {
 			status.CookieCount = 0
@@ -1269,8 +1268,7 @@ func applyEnsureErrorToStatus(status *api.TrackerAuthStatus, err error) {
 		return
 	}
 
-	var needs2FA *Needs2FAError
-	if errors.As(err, &needs2FA) {
+	if needs2FA, ok := errors.AsType[*Needs2FAError](err); ok {
 		challengeID := strings.TrimSpace(needs2FA.ChallengeID)
 		if challengeID == "" {
 			status.State = StateLoginRequired
@@ -1286,8 +1284,7 @@ func applyEnsureErrorToStatus(status *api.TrackerAuthStatus, err error) {
 		return
 	}
 
-	var unsupported *UnsupportedAuthError
-	if errors.As(err, &unsupported) {
+	if _, ok := errors.AsType[*UnsupportedAuthError](err); ok {
 		status.Message = "remote auth validation is not supported"
 		return
 	}

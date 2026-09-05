@@ -26,8 +26,8 @@ func formatPathLabel(value string) string {
 	return "[local path]"
 }
 
-func promptYesNo(reader *bufio.Reader, prompt string, defaultYes bool) (bool, error) {
-	line, err := promptLine(reader, prompt)
+func promptYesNo(reader *bufio.Reader, output io.Writer, prompt string, defaultYes bool) (bool, error) {
+	line, err := promptLine(reader, output, prompt)
 	if err != nil {
 		return false, err
 	}
@@ -38,8 +38,10 @@ func promptYesNo(reader *bufio.Reader, prompt string, defaultYes bool) (bool, er
 	return trimmed == "y" || trimmed == "yes", nil
 }
 
-func promptLine(reader *bufio.Reader, prompt string) (string, error) {
-	fmt.Print(prompt)
+func promptLine(reader *bufio.Reader, output io.Writer, prompt string) (string, error) {
+	if _, err := fmt.Fprint(output, prompt); err != nil {
+		return "", fmt.Errorf("write prompt: %w", err)
+	}
 	line, err := reader.ReadString('\n')
 	if err != nil {
 		if errors.Is(err, io.EOF) && line != "" {

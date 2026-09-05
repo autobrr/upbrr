@@ -114,7 +114,7 @@ func submitPreparedUpload(
 			tURL = state.baseURL + "/details.php?id=" + id
 		}
 		registeredPath := trackers.PersistReconstructedRegisteredTorrent(
-			req.Logger, "HDT", state.torrentPath, artifactPath, announceURL, tURL, "hd-torrents.org",
+			req.Logger, "HDT", state.torrentPath, artifactPath, announceURL, "hd-torrents.org",
 		)
 		return api.UploadSummary{
 			Uploaded: 1,

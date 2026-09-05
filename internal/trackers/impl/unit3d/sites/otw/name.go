@@ -4,7 +4,6 @@
 package otw
 
 import (
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -13,12 +12,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-var otwSeasonPattern = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:S|Season[ ._-]*)(\d{1,3})`)
-
 func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
-	if isOTWNonDiscMultiSeason(meta) {
-		return ""
-	}
 	title, year := currentOTWTMDBTitleYear(meta)
 	if title == "" {
 		title = strings.TrimSpace(meta.Release.Title)
@@ -114,25 +108,6 @@ func isOTWCompleteDisc(meta api.UploadSubject) bool {
 	return strings.EqualFold(strings.TrimSpace(meta.Type), "DISC") ||
 		unit3d.IsDiscType(meta.DiscType) ||
 		unit3d.IsDiscType(meta.Disc.Type)
-}
-
-func isOTWNonDiscMultiSeason(meta api.UploadSubject) bool {
-	if isOTWCompleteDisc(meta) {
-		return false
-	}
-	seasons := make(map[string]struct{})
-	for _, value := range append([]string{
-		meta.SeasonStr,
-		meta.ReleaseName,
-		meta.ReleaseNameNoTag,
-	}, meta.FileList...) {
-		for _, match := range otwSeasonPattern.FindAllStringSubmatch(value, -1) {
-			if len(match) > 1 {
-				seasons[match[1]] = struct{}{}
-			}
-		}
-	}
-	return len(seasons) > 1
 }
 
 func otwSource(meta api.UploadSubject) string {

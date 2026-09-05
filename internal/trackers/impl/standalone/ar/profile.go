@@ -25,7 +25,7 @@ func Profile() standalone.Profile {
 		PrepareDescription: prepareDescription,
 		PrepareUpload:      prepareUpload,
 		ReleaseNamePolicy: trackers.WithNonSceneReleaseNameConfirmation(
-			trackers.NewReleaseNamePolicy("standalone/ar/v3", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
+			trackers.NewReleaseNamePolicy("standalone/ar/v4", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
 				name := resolveARName(input.Subject)
 				if !input.Subject.Scene && input.RequestedName != nil {
 					name = strings.TrimSpace(*input.RequestedName)
@@ -67,7 +67,7 @@ func Profile() standalone.Profile {
 				{Scope: trackers.MetadataScopeAny, AnyOf: []trackers.MetadataField{trackers.MetadataFieldPoster}},
 			},
 		},
-		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: arSourceFlag},
+		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: arSourceFlag, RequireAnnounce: true},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{"tracker.alpharatio"}},
 		AuthCapability: &api.TrackerAuthCapability{
 			TrackerID:          "AR",

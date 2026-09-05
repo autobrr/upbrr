@@ -285,6 +285,7 @@ type DescriptionBuilder interface {
 // RetainedUploadExecution is private single-use execution authority. Execute
 // must submit already-prepared operations without rebuilding semantic payloads.
 type RetainedUploadExecution interface {
+	ResolveAction(context.Context, api.TrackerID, api.RequiredActionKind, bool) (api.UploadPlanTracker, error)
 	Execute(context.Context, []api.TrackerID) ([]api.UploadTrackerResult, error)
 	RegisteredArtifactAuthority() RegisteredArtifactAuthority
 	Release() error
@@ -942,6 +943,7 @@ type ExecuteUploadsCommand struct {
 	ExpectedRevision api.WorkflowRevision
 	NoSeed           bool
 	TrackerIDs       []api.TrackerID
+	Interaction      api.InteractionMode
 	IdempotencyKey   string
 }
 
@@ -951,6 +953,14 @@ func (ExecuteUploadsCommand) operationKind() api.OperationKind {
 	return api.OperationKindUploadExecute
 }
 func (c ExecuteUploadsCommand) commandFingerprint() (api.WorkflowFingerprint, error) {
+	if c.Interaction != "" && c.Interaction != api.InteractionModeInteractive {
+		return canonicalCommandFingerprint(struct {
+			ExpectedRevision api.WorkflowRevision
+			NoSeed           bool
+			TrackerIDs       []api.TrackerID
+			Interaction      api.InteractionMode
+		}{c.ExpectedRevision, c.NoSeed, c.TrackerIDs, c.Interaction})
+	}
 	return canonicalCommandFingerprint(struct {
 		ExpectedRevision api.WorkflowRevision
 		NoSeed           bool

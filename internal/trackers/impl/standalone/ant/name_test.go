@@ -9,20 +9,20 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestResolveUploadNamePreservesExactRenamedSceneName(t *testing.T) {
+func TestResolveUploadNameUsesNormalNameForSceneRelease(t *testing.T) {
 	t.Parallel()
 
-	const exact = "Example Release [SCENE].2026-GRP"
+	const normal = "Example.Release.2026-GRP"
 	got := resolveUploadName(api.UploadSubject{
 		Scene:        true,
-		SceneName:    exact,
+		SceneName:    "Example Release [SCENE].2026-GRP",
 		SceneRenamed: true,
-		ReleaseName:  "Generated.Example.Release.2026-GRP",
+		ReleaseName:  normal,
 	})
-	if got != exact {
-		t.Fatalf("ANT scene name = %q, want %q", got, exact)
+	if got != normal {
+		t.Fatalf("ANT release name = %q, want %q", got, normal)
 	}
-	if got := Profile().ReleaseNamePolicy.ID; got != "standalone/ant/v1" {
-		t.Fatalf("ANT release-name policy = %q, want standalone/ant/v1", got)
+	if got := Profile().ReleaseNamePolicy.ID; got != "standalone/ant/v2" {
+		t.Fatalf("ANT release-name policy = %q, want standalone/ant/v2", got)
 	}
 }

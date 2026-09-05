@@ -112,12 +112,21 @@ func prepareUploadAt(ctx context.Context, req trackers.PreparationInput, baseURL
 	if err := checkBTNSeasonPackReservation(ctx, uploadCtx, req); err != nil {
 		return trackers.PreparedOperation{}, err
 	}
+	return prepareBTNPreparedOperation(ctx, req, uploadCtx, torrentPath, false)
+}
 
-	data, err := prepareUploadData(ctx, req, uploadCtx)
+func prepareBTNPreparedOperation(
+	ctx context.Context,
+	req trackers.PreparationInput,
+	uploadCtx uploadContext,
+	torrentPath string,
+	releaseNameTried bool,
+) (trackers.PreparedOperation, error) {
+	data, err := prepareUploadDataWithAutofill(ctx, req, uploadCtx, releaseNameTried)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
-	autofillAction := btnAutofillArtistAction(req.Meta, data["artist"])
+	autofillAction := btnAutofillArtistAction(req.Meta, data["artist"], releaseNameTried)
 	if autofillAction != nil {
 		if req.Meta.Options.InteractionMode == api.InteractionModeUnattended {
 			if req.Logger != nil {
@@ -160,9 +169,26 @@ func prepareUploadAt(ctx context.Context, req trackers.PreparationInput, baseURL
 	if autofillAction != nil {
 		preview.RequiredActions = []api.RequiredAction{*autofillAction}
 	}
-	return trackers.NewPreparedOperation(preview, func(submitCtx context.Context) (api.UploadSummary, error) {
+	submit := func(submitCtx context.Context) (api.UploadSummary, error) {
 		return submitPreparedUpload(submitCtx, req, uploadCtx, trackerTorrentPath, body, contentType)
-	}, nil), nil
+	}
+	if autofillAction == nil {
+		return trackers.NewPreparedOperation(preview, submit, nil), nil
+	}
+	return trackers.NewPreparedOperationWithResolver(preview, submit, nil, func(resolveCtx context.Context) (trackers.PreparedOperation, error) {
+		if releaseNameTried {
+			return trackers.PreparedOperation{}, trackers.NewPreparationFailure(
+				"BTN",
+				trackers.PreparationFailureCodeSkipped,
+				autofillAction.Prompt+" Tracker skipped.",
+				nil,
+			)
+		}
+		if req.Logger != nil {
+			req.Logger.Infof("trackers: BTN trying release-name scene autofill source=release_name reason=series_mismatch")
+		}
+		return prepareBTNPreparedOperation(resolveCtx, req, uploadCtx, torrentPath, true)
+	}), nil
 }
 
 func submitPreparedUpload(
@@ -368,7 +394,7 @@ func buildUploadDryRunAt(ctx context.Context, req trackers.PreparationInput, bas
 		if err != nil {
 			return api.TrackerDryRunEntry{}, err
 		}
-		if action := btnAutofillArtistAction(req.Meta, fields["artist"]); action != nil {
+		if action := btnAutofillArtistAction(req.Meta, fields["artist"], false); action != nil {
 			if req.Meta.Options.InteractionMode == api.InteractionModeUnattended {
 				status = "skipped"
 				message += "; BTN autofill series mismatched TVDB metadata; skipped in unattended mode"
@@ -418,25 +444,7 @@ func newUploadContextAt(ctx context.Context, req trackers.PreparationInput, base
 }
 
 func prepareUploadData(ctx context.Context, req trackers.PreparationInput, uploadCtx uploadContext) (map[string]string, error) {
-	var nameFailure *trackers.PreparationFailure
-	req, nameFailure = trackers.PrepareInputWithReleaseNamePolicy(req, Profile().ReleaseNamePolicy)
-	if nameFailure != nil {
-		return nil, nameFailure
-	}
-	if _, err := validateBTNTVPayloadMetadata(req.Meta); err != nil {
-		return nil, err
-	}
-	releaseName, err := req.ReviewedUploadName()
-	if err != nil {
-		return nil, fmt.Errorf("trackers: BTN reviewed upload name: %w", err)
-	}
-
-	autofillPayload, uploadType := buildBTNAutofillPayload(req.Meta, releaseName)
-	fields, err := requestBTNAutofillFields(ctx, uploadCtx, autofillPayload, uploadType)
-	if err != nil {
-		return nil, err
-	}
-	return buildBTNUploadPayload(req, fields)
+	return prepareUploadDataWithAutofill(ctx, req, uploadCtx, false)
 }
 
 // buildBTNUploadPayload merges BTN autofill fields with local metadata for the

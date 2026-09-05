@@ -267,6 +267,8 @@ const (
 	RequiredActionAnswerQuestionnaire RequiredActionKind = "answer_questionnaire"
 	// RequiredActionAuthorizeRules requests acknowledgement of waivable rules.
 	RequiredActionAuthorizeRules RequiredActionKind = "authorize_rules"
+	// RequiredActionResolveTrackerPreparation requests a decision about one prepared tracker payload.
+	RequiredActionResolveTrackerPreparation RequiredActionKind = "resolve_tracker_preparation"
 	// RequiredActionReviewDuplicates requests duplicate acceptance or rejection.
 	RequiredActionReviewDuplicates RequiredActionKind = "review_duplicates"
 	// RequiredActionApproveTrackers requests one exact post-dupe tracker subset.

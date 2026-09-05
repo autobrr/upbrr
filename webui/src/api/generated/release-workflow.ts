@@ -749,6 +749,7 @@ export type NamingFacts = Readonly<{
   HDR: readonly string[];
   Languages: readonly string[];
   Month: number;
+  NamePresentation: ReleaseNamePresentation;
   NameWithoutTag: string;
   Other: readonly string[];
   Personal: boolean;
@@ -1011,6 +1012,14 @@ export type ReleaseNameOverrides = Readonly<{
   UseSeasonEpisode?: boolean | null;
 }>;
 
+export type ReleaseNamePresentation = Readonly<{
+  OmitAlternateTitle: boolean;
+  OmitSeasonEpisode: boolean;
+  OmitYear: boolean;
+  UseDailyDate: boolean;
+  Version: string;
+}>;
+
 export type ReleaseNameVariant = Readonly<{
   CleanName: string;
   Name: string;
@@ -1221,7 +1230,7 @@ export type ReleaseWorkflowUploadFeedback = Readonly<{
   response: ReleaseWorkflowUploadFeedbackResponse;
 }>;
 
-export type ReleaseWorkflowUploadFeedbackKind = "playlistSelection" | "metadataSelection" | "rescanConfirmation" | "trackerAuthentication" | "twoFactor" | "trackerInput" | "questionnaire" | "ruleAuthorization" | "duplicateReview" | "trackerApproval" | "uploadApproval" | "reprepare" | "reconciliation";
+export type ReleaseWorkflowUploadFeedbackKind = "playlistSelection" | "metadataSelection" | "rescanConfirmation" | "trackerAuthentication" | "twoFactor" | "trackerInput" | "questionnaire" | "ruleAuthorization" | "trackerPreparation" | "duplicateReview" | "trackerApproval" | "uploadApproval" | "reprepare" | "reconciliation";
 
 export type ReleaseWorkflowUploadFeedbackResponse = Readonly<{
   duplicateReview?: ReleaseWorkflowUploadDuplicateReview | null;
@@ -1236,6 +1245,7 @@ export type ReleaseWorkflowUploadFeedbackResponse = Readonly<{
   trackerApproval?: ReleaseWorkflowUploadTrackerApproval | null;
   trackerAuthentication?: ReleaseWorkflowUploadTrackerAuthentication | null;
   trackerInput?: ReleaseWorkflowUploadTrackerInput | null;
+  trackerPreparation?: ReleaseWorkflowUploadConfirmation | null;
   twoFactor?: ReleaseWorkflowUploadTwoFactor | null;
   /** @deprecated */
   uploadApproval?: ReleaseWorkflowUploadApproval | null;

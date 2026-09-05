@@ -144,7 +144,6 @@ function AppShell() {
     renderField,
     sectionFieldMeta,
     updateConfigValue,
-    updateScreenshotConfigValue,
     screenshotConfig,
     clearSettingsStatus,
     resolveImageHostLabel,
@@ -458,7 +457,9 @@ function AppShell() {
           <WorkflowOperationProgress operation={releaseSession.workflow.view.current?.operation} />
           <WorkflowRequiredActions
             continuation={releaseSession.workflow.view.current?.continuation}
-            onConfirm={(action) => void releaseSession.workflow.confirmAction(action)}
+            onConfirm={(action, confirmed) =>
+              void releaseSession.workflow.confirmAction(action, confirmed)
+            }
             onNavigate={(route) => openReleaseTab(releaseRouteTabs[route], route)}
           />
           {activeTab === "settings" ? (
@@ -523,14 +524,6 @@ function AppShell() {
           ) : activeTab === "screenshots" ? (
             <ScreenshotsPage
               facet={releaseSession.screenshots}
-              screenshotConfig={screenshotConfig}
-              updateScreenshotConfigValue={updateScreenshotConfigValue}
-              loadSettings={loadSettings}
-              settingsLoading={settingsLoading}
-              settingsDirty={settingsDirty}
-              settingsSaved={settingsSaved}
-              settingsError={settingsError}
-              applyScreenshotSettings={() => void handleSaveSettings()}
               setLightboxImage={setLightboxImage}
               setLightboxAlt={setLightboxAlt}
             />

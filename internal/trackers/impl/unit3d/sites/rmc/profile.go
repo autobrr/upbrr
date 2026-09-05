@@ -27,7 +27,7 @@ func Profile() unit3d.Profile {
 		},
 		Site: unit3d.SiteProfile{
 			BuildName:           buildName,
-			BuildNameVersion:    "v1",
+			BuildNameVersion:    "v2",
 			ResolveTypeID:       typeID,
 			ResolveResolutionID: resolutionID,
 		},

@@ -13,6 +13,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -782,12 +783,14 @@ func TestBTNDirectUploadBlocksMismatchedAutofillArtist(t *testing.T) {
 		t.Fatalf("SaveTrackerCookieMap: %v", err)
 	}
 
+	var autofillCalls atomic.Int32
 	var uploadCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/upload.php":
 			_, _ = io.WriteString(w, `<form action="/upload.php"><input name="autofill"></form>`)
 		case r.Method == http.MethodPost && r.URL.Path == "/upload.php" && strings.HasPrefix(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded"):
+			autofillCalls.Add(1)
 			_, _ = io.WriteString(w, `
 				<input name="artist" value="Unexpected Show">
 				<input name="seriesid" value="999">
@@ -830,6 +833,158 @@ func TestBTNDirectUploadBlocksMismatchedAutofillArtist(t *testing.T) {
 	if !logger.containsWarning("BTN autofill series mismatch decision=confirmation_required") ||
 		logger.containsWarning("Unexpected Show") || logger.containsWarning("Expected Show") {
 		t.Fatal("expected fixed mismatch warning without provider values")
+	}
+	req.Meta.Options.InteractionMode = api.InteractionModeUnattended
+	_, err = uploadAt(context.Background(), req, server.URL)
+	if !errors.As(err, &failure) || failure.Code() != trackers.PreparationFailureCodeSkipped {
+		t.Fatalf("unattended mismatch failure = %v", err)
+	}
+	if autofillCalls.Load() != 2 || uploadCalls.Load() != 0 ||
+		!logger.containsWarning("BTN autofill series mismatch decision=skip") {
+		t.Fatalf("unattended autofills=%d uploads=%d", autofillCalls.Load(), uploadCalls.Load())
+	}
+}
+
+func TestBTNPreparedUploadRetriesMismatchWithReleaseNameAutofill(t *testing.T) {
+	t.Parallel()
+
+	dbPath := newBTNAuthDB(t)
+	if err := cookies.SaveTrackerCookieMap(context.Background(), dbPath, "BTN", map[string]string{"session": "imported"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+	var autofillCalls atomic.Int32
+	var uploadCalls atomic.Int32
+	var formsMu sync.Mutex
+	forms := make([]url.Values, 0, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/upload.php":
+			_, _ = io.WriteString(w, `<form action="/upload.php"><input name="autofill"></form>`)
+		case r.Method == http.MethodPost && r.URL.Path == "/upload.php" && strings.HasPrefix(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded"):
+			if err := r.ParseForm(); err != nil {
+				http.Error(w, "bad form", http.StatusBadRequest)
+				return
+			}
+			formsMu.Lock()
+			forms = append(forms, maps.Clone(r.PostForm))
+			formsMu.Unlock()
+			artist := "Unexpected Show"
+			if autofillCalls.Add(1) == 2 {
+				artist = "Expected Show"
+			}
+			writeBTNTestAutofillResponse(w, artist)
+		case r.Method == http.MethodPost && r.URL.Path == "/upload.php":
+			uploadCalls.Add(1)
+			w.Header().Set("Location", "/torrents.php?id=123&torrentid=456")
+			w.WriteHeader(http.StatusFound)
+		case r.URL.Path == "/torrents.php" && r.URL.Query().Get("action") == "download":
+			_, _ = w.Write(btnRegisteredTorrentFixture())
+		case r.URL.Path == "/torrents.php":
+			_, _ = io.WriteString(w, "ok")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	logger := &captureBTNLogger{}
+	req := newBTNDryRunTestRequest(t, dbPath)
+	req.Logger = logger
+	req.Meta.MediaInfoTextPath = writeBTNTestMediaInfo(t, filepath.Dir(req.Meta.SourcePath), "General\nFormat: Matroska")
+	req.Meta.Identity.TVDBID = 12345
+	req.Meta.ProviderMetadata.TVDB = &api.TVDBMetadata{
+		TVDBID:           12345,
+		NameEnglish:      "Expected Show",
+		EpisodeSeason:    1,
+		EpisodeNumber:    1,
+		OriginalLanguage: "en",
+	}
+	plan := prepareBTNTestUploadPlan(t, req, server.URL)
+	initial := plan.DryRun()
+	if len(initial.RequiredActions) != 1 || initial.RequiredActions[0].Kind != api.RequiredActionResolveTrackerPreparation ||
+		initial.RequiredActions[0].Prompt != `BTN autofill returned series "Unexpected Show", but upbrr tvdb is a different series "Expected Show". Continue uploading this result to BTN?` {
+		t.Fatalf("initial required action = %#v", initial.RequiredActions)
+	}
+	resolved, err := plan.ResolveAction(context.Background(), api.RequiredActionResolveTrackerPreparation, false)
+	if err != nil {
+		t.Fatalf("resolve mismatch: %v", err)
+	}
+	if len(resolved.DryRun().RequiredActions) != 0 {
+		t.Fatalf("fallback required actions = %#v", resolved.DryRun().RequiredActions)
+	}
+	formsMu.Lock()
+	gotForms := append([]url.Values(nil), forms...)
+	formsMu.Unlock()
+	if len(gotForms) != 2 || gotForms[0].Get("scene_yesno") != "No" || gotForms[0].Get("auto_series") != "12345" ||
+		gotForms[1].Get("scene_yesno") != "Yes" || gotForms[1].Get("autofill") != initial.ReleaseName || gotForms[1].Get("auto_series") != "" {
+		t.Fatalf("autofill forms = %#v", gotForms)
+	}
+	if !logger.containsInfo("BTN trying release-name scene autofill") {
+		t.Fatal("missing release-name autofill info log")
+	}
+	summary, err := resolved.Submit(context.Background())
+	if err != nil || summary.Uploaded != 1 || uploadCalls.Load() != 1 {
+		t.Fatalf("fallback submit summary=%#v uploads=%d err=%v", summary, uploadCalls.Load(), err)
+	}
+}
+
+func TestBTNPreparedUploadPromptsAgainWhenReleaseNameAutofillMismatches(t *testing.T) {
+	t.Parallel()
+
+	dbPath := newBTNAuthDB(t)
+	if err := cookies.SaveTrackerCookieMap(context.Background(), dbPath, "BTN", map[string]string{"session": "imported"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+	var autofillCalls atomic.Int32
+	var uploadCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/upload.php":
+			_, _ = io.WriteString(w, `<form action="/upload.php"><input name="autofill"></form>`)
+		case r.Method == http.MethodPost && r.URL.Path == "/upload.php" && strings.HasPrefix(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded"):
+			artist := "First Unexpected Show"
+			if autofillCalls.Add(1) == 2 {
+				artist = "Second Unexpected Show"
+			}
+			writeBTNTestAutofillResponse(w, artist)
+		case r.Method == http.MethodPost && r.URL.Path == "/upload.php":
+			uploadCalls.Add(1)
+			http.Error(w, "unexpected upload", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	logger := &captureBTNLogger{}
+	req := newBTNDryRunTestRequest(t, dbPath)
+	req.Logger = logger
+	req.Meta.MediaInfoTextPath = writeBTNTestMediaInfo(t, filepath.Dir(req.Meta.SourcePath), "General\nFormat: Matroska")
+	req.Meta.Identity.TVDBID = 12345
+	req.Meta.ProviderMetadata.TVDB = &api.TVDBMetadata{
+		TVDBID:           12345,
+		NameEnglish:      "Expected Show",
+		EpisodeSeason:    1,
+		EpisodeNumber:    1,
+		OriginalLanguage: "en",
+	}
+	plan := prepareBTNTestUploadPlan(t, req, server.URL)
+	resolved, err := plan.ResolveAction(context.Background(), api.RequiredActionResolveTrackerPreparation, false)
+	if err != nil {
+		t.Fatalf("resolve first mismatch: %v", err)
+	}
+	actions := resolved.DryRun().RequiredActions
+	if len(actions) != 1 || !strings.Contains(actions[0].Prompt, `BTN release-name autofill also returned series "Second Unexpected Show"`) ||
+		!strings.Contains(actions[0].Prompt, `upbrr tvdb is a different series "Expected Show"`) {
+		t.Fatalf("fallback required action = %#v", actions)
+	}
+	_, err = resolved.ResolveAction(context.Background(), api.RequiredActionResolveTrackerPreparation, false)
+	var failure *trackers.PreparationFailure
+	if !errors.As(err, &failure) || failure.Code() != trackers.PreparationFailureCodeSkipped {
+		t.Fatalf("second decline error = %v", err)
+	}
+	if autofillCalls.Load() != 2 || uploadCalls.Load() != 0 || !logger.containsInfo("BTN trying release-name scene autofill") {
+		t.Fatalf("autofills=%d uploads=%d info=%v", autofillCalls.Load(), uploadCalls.Load(), logger.containsInfo("BTN trying release-name scene autofill"))
 	}
 }
 
@@ -1166,11 +1321,11 @@ func TestBTNAutofillArtistActionMatchesTVDBNamesExactly(t *testing.T) {
 		}},
 	}
 	for _, artist := range []string{"Native Show", "English Show", "Alias Show", " English Show "} {
-		if action := btnAutofillArtistAction(meta, artist); action != nil {
+		if action := btnAutofillArtistAction(meta, artist, false); action != nil {
 			t.Fatalf("artist %q unexpectedly required confirmation: %#v", artist, action)
 		}
 	}
-	if action := btnAutofillArtistAction(meta, "english show"); action == nil {
+	if action := btnAutofillArtistAction(meta, "english show", false); action == nil {
 		t.Fatal("case-mismatched artist did not require confirmation")
 	}
 }
@@ -2435,4 +2590,39 @@ func newBTNDryRunTestRequest(t *testing.T, dbPath string) trackers.PreparationIn
 			}},
 		}),
 	}
+}
+
+func prepareBTNTestUploadPlan(t *testing.T, req trackers.PreparationInput, baseURL string) trackers.TrackerPlan {
+	t.Helper()
+	req.Intent = trackers.PreparationIntentUpload
+	var nameFailure *trackers.PreparationFailure
+	req, nameFailure = trackers.PrepareInputWithReleaseNamePolicy(req, Profile().ReleaseNamePolicy)
+	if nameFailure != nil {
+		t.Fatalf("prepare release name: %v", nameFailure)
+	}
+	plan, failure := trackers.PrepareAdapter(
+		context.Background(),
+		req,
+		nil,
+		func(ctx context.Context, input trackers.PreparationInput) (trackers.PreparedOperation, error) {
+			return prepareUploadAt(ctx, input, baseURL)
+		},
+	)
+	if failure != nil {
+		t.Fatalf("prepare BTN upload plan: %v", failure)
+	}
+	return plan
+}
+
+func writeBTNTestAutofillResponse(w io.Writer, artist string) {
+	_, _ = fmt.Fprintf(w, `
+		<input name="artist" value="%s">
+		<input name="seriesid" value="999">
+		<input name="title" value="Episode One">
+		<input name="year" value="2026">
+		<select name="format"><option selected value="MKV">MKV</option></select>
+		<select name="bitrate"><option selected value="H.265">H.265</option></select>
+		<select name="media"><option selected value="WEB-DL">WEB-DL</option></select>
+		<select name="resolution"><option selected value="1080p">1080p</option></select>
+	`, artist)
 }

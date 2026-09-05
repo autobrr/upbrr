@@ -101,10 +101,11 @@ type SourceClassification struct {
 // NamingFacts contains finalized reusable naming facts rather than raw parser
 // output or workflow-specific name overrides.
 type NamingFacts struct {
-	Filename       string
-	ReleaseName    string
-	NameWithoutTag string
-	CleanName      string
+	Filename         string
+	ReleaseName      string
+	NameWithoutTag   string
+	CleanName        string
+	NamePresentation ReleaseNamePresentation
 	// GeneratedReleaseNames contains safe canonical structural alternatives.
 	// Empty variants mean ReleaseName must remain exact.
 	GeneratedReleaseNames GeneratedReleaseNameVariants

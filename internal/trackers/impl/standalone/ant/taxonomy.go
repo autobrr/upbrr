@@ -72,11 +72,13 @@ func normalizeTypeName(value string) string {
 func resolveAudioFormat(meta api.UploadSubject) string {
 	audio := strings.ToUpper(strings.TrimSpace(meta.Audio))
 	switch {
+	case audio == "":
+		return "NoAudio"
 	case strings.Contains(audio, "DD+"), strings.Contains(audio, "EAC3"):
 		return "EAC3"
 	case strings.Contains(audio, " DD "), strings.HasPrefix(audio, "DD"), strings.Contains(audio, "AC3"):
 		return "AC3"
-	case strings.Contains(audio, "DTS-HD MA"), strings.Contains(audio, "DTS MA"):
+	case strings.Contains(audio, "DTS-HD MA"), strings.Contains(audio, "DTS MA"), strings.Contains(audio, "DTS:X"), strings.Contains(audio, "DTS-HD HRA"):
 		return "DTSMA"
 	case strings.Contains(audio, "DTS"):
 		return "DTS"

@@ -6,6 +6,7 @@ package azfamily
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -35,7 +36,7 @@ func prepareUpload(ctx context.Context, site siteDefinition, req trackers.Prepar
 		return trackers.NewPreparedOperation(preview, nil, nil), nil
 	}
 
-	state, err := newSession(ctx, site, req.Runtime.DBPath, req.Logger)
+	state, err := newSession(ctx, site, req.Runtime.DBPath)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
@@ -43,16 +44,19 @@ func prepareUpload(ctx context.Context, site siteDefinition, req trackers.Prepar
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
-	if media.Missing || strings.TrimSpace(media.MediaCode) == "" {
-		return trackers.PreparedOperation{}, fmt.Errorf(
-			"trackers: %s media missing from tracker database; add it on-site at %s/add/%s then retry",
-			site.Name,
-			site.BaseURL,
-			categorySlug(req.Meta),
-		)
-	}
-	if requests, err := searchRequests(ctx, site, state, req.Meta); err == nil && len(requests) > 0 && req.Logger != nil {
-		req.Logger.Infof("trackers: %s matched %d open request(s)", site.Name, len(requests))
+	mediaMissing := media.Missing || strings.TrimSpace(media.MediaCode) == ""
+	if mediaMissing {
+		if req.Meta.Options.InteractionMode == api.InteractionModeUnattended {
+			if req.Logger != nil {
+				req.Logger.Warnf("trackers: %s media missing decision=skip mode=unattended", site.Name)
+			}
+			return trackers.PreparedOperation{}, trackers.NewPreparationFailure(
+				site.Name,
+				trackers.PreparationFailureCodeSkipped,
+				"Media is missing from the tracker database. Tracker skipped in unattended mode.",
+				nil,
+			)
+		}
 	}
 
 	torrentPath, err := trackers.PreparedUploadTorrentPath(req.Meta)
@@ -63,18 +67,122 @@ func prepareUpload(ctx context.Context, site siteDefinition, req trackers.Prepar
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
-	task, err := createTask(ctx, site, state, req, media.MediaCode, fileInfo, torrentPath)
+	if mediaMissing {
+		return prepareMissingMediaOperation(ctx, site, state, req, torrentPath, fileInfo)
+	}
+	preparedScreenshots, screenshotMinimum, err := prepareScreenshotUploads(ctx, site, state, req)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
-	screenshots, err := uploadScreenshots(ctx, site, state, req)
+	return prepareResolvedUpload(
+		ctx,
+		site,
+		state,
+		req,
+		media.MediaCode,
+		torrentPath,
+		fileInfo,
+		preparedScreenshots,
+		screenshotMinimum,
+	)
+}
+
+func prepareMissingMediaOperation(
+	ctx context.Context,
+	site siteDefinition,
+	state sessionState,
+	req trackers.PreparationInput,
+	torrentPath string,
+	fileInfo string,
+) (trackers.PreparedOperation, error) {
+	releaseName, err := req.ReviewedUploadName()
+	if err != nil {
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s release name: %w", site.Name, err)
+	}
+	preview := api.TrackerDryRunEntry{
+		Tracker:          site.Name,
+		Status:           "ready",
+		Message:          "media database addition requires confirmation",
+		ReleaseName:      releaseName,
+		DescriptionGroup: "azfamily",
+		Description:      buildDescriptionFromAssets(ctx, req),
+		Endpoint:         site.BaseURL + "/upload/" + categorySlug(req.Meta),
+		Files: []api.TrackerDryRunFile{{
+			Field:   "torrent_file",
+			Path:    torrentPath,
+			Present: true,
+		}},
+		RequiredActions: []api.RequiredAction{{
+			Kind:   api.RequiredActionResolveTrackerPreparation,
+			Prompt: site.Name + " media is missing from the tracker database. Add it now and continue?",
+			Options: []api.RequiredActionOption{
+				{Value: "confirm", Label: "Add media and continue"},
+				{Value: "resolve", Label: "Skip " + site.Name},
+			},
+		}},
+	}
+	return trackers.NewPreparedOperationWithDecisionResolver(
+		preview,
+		func(context.Context) (api.UploadSummary, error) {
+			return api.UploadSummary{}, errors.New("tracker media database decision is unresolved")
+		},
+		nil,
+		func(resolveCtx context.Context, confirmed bool) (trackers.PreparedOperation, error) {
+			if !confirmed {
+				return trackers.PreparedOperation{}, trackers.NewPreparationFailure(
+					site.Name,
+					trackers.PreparationFailureCodeSkipped,
+					"Media is missing from the tracker database. Tracker skipped.",
+					nil,
+				)
+			}
+			preparedScreenshots, screenshotMinimum, prepareErr := prepareScreenshotUploads(resolveCtx, site, state, req)
+			if prepareErr != nil {
+				return trackers.PreparedOperation{}, prepareErr
+			}
+			mediaCode, addErr := addMissingMedia(resolveCtx, site, state, req.Meta, req.Logger)
+			if addErr != nil {
+				return trackers.PreparedOperation{}, addErr
+			}
+			return prepareResolvedUpload(
+				resolveCtx,
+				site,
+				state,
+				req,
+				mediaCode,
+				torrentPath,
+				fileInfo,
+				preparedScreenshots,
+				screenshotMinimum,
+			)
+		},
+	), nil
+}
+
+func prepareResolvedUpload(
+	ctx context.Context,
+	site siteDefinition,
+	state sessionState,
+	req trackers.PreparationInput,
+	mediaCode string,
+	torrentPath string,
+	fileInfo string,
+	preparedScreenshots []preparedScreenshotUpload,
+	screenshotMinimum int,
+) (trackers.PreparedOperation, error) {
+	if requests, err := searchRequests(ctx, site, state, req.Meta); err == nil && len(requests) > 0 && req.Logger != nil {
+		req.Logger.Infof("trackers: %s matched %d open request(s)", site.Name, len(requests))
+	}
+	// ponytail: image-host failure can leave the required step-one task behind; add rollback when AZ-family exposes task deletion.
+	task, err := createTask(ctx, site, state, req, mediaCode, fileInfo, torrentPath)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
-	if len(screenshots) < 3 {
-		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s image host returned fewer than 3 screenshots", site.Name)
+	screenshots, err := uploadScreenshots(ctx, site, state, req, preparedScreenshots, screenshotMinimum)
+	if err != nil {
+		return trackers.PreparedOperation{}, err
 	}
-	payload, err := buildFinalPayload(ctx, site, state, req, media.MediaCode, task, fileInfo, screenshots)
+	payload, err := buildFinalPayload(ctx, site, state, req, mediaCode, task, fileInfo, screenshots)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
@@ -150,7 +258,7 @@ func submitPreparedUpload(
 }
 
 func buildUploadDryRun(ctx context.Context, site siteDefinition, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
-	state, err := newSession(ctx, site, req.Runtime.DBPath, req.Logger)
+	state, err := newSession(ctx, site, req.Runtime.DBPath)
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}

@@ -8,7 +8,19 @@ import "strings"
 const (
 	// ReleaseNameElementPolicyVersionV1 identifies the first shared release-name element contract.
 	ReleaseNameElementPolicyVersionV1 = "release-name-elements/v1"
+	// ReleaseNamePresentationVersionV1 identifies the finalized release-name presentation contract.
+	ReleaseNamePresentationVersionV1 = "release-name-presentation/v1"
 )
+
+// ReleaseNamePresentation records finalized presentation choices for
+// tracker-specific automatic names without carrying raw workflow overrides.
+type ReleaseNamePresentation struct {
+	Version            string
+	OmitAlternateTitle bool
+	OmitYear           bool
+	OmitSeasonEpisode  bool
+	UseDailyDate       bool
+}
 
 // EpisodeTitleMode controls automatic episode-title rendering in generated release names.
 type EpisodeTitleMode string

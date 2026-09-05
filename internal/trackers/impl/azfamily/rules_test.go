@@ -51,32 +51,50 @@ func TestEvaluateRulesCZRejectsAsianContent(t *testing.T) {
 	}
 }
 
-func TestEvaluateRulesCountryRestrictionsAreStrict(t *testing.T) {
+func TestEvaluateRulesCountryRestrictionsUseCorrectDisposition(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		tracker string
-		country string
-		rule    string
+		name            string
+		tracker         string
+		country         string
+		rule            string
+		wantDisposition api.RuleDisposition
 	}{
 		{
-			name:    "AZ redirect",
-			tracker: "AZ",
-			country: "US",
-			rule:    "country_redirect",
+			name:            "AZ redirect",
+			tracker:         "AZ",
+			country:         "US",
+			rule:            "country_redirect",
+			wantDisposition: api.RuleDispositionWaivable,
 		},
 		{
-			name:    "CZ block",
-			tracker: "CZ",
-			country: "AQ",
-			rule:    "country_block",
+			name:            "CZ redirect",
+			tracker:         "CZ",
+			country:         "JP",
+			rule:            "country_redirect",
+			wantDisposition: api.RuleDispositionWaivable,
 		},
 		{
-			name:    "PHD block",
-			tracker: "PHD",
-			country: "AQ",
-			rule:    "country_block",
+			name:            "PHD redirect",
+			tracker:         "PHD",
+			country:         "JP",
+			rule:            "country_redirect",
+			wantDisposition: api.RuleDispositionWaivable,
+		},
+		{
+			name:            "CZ block",
+			tracker:         "CZ",
+			country:         "AQ",
+			rule:            "country_block",
+			wantDisposition: api.RuleDispositionStrict,
+		},
+		{
+			name:            "PHD block",
+			tracker:         "PHD",
+			country:         "AQ",
+			rule:            "country_block",
+			wantDisposition: api.RuleDispositionStrict,
 		},
 	}
 	for _, test := range tests {
@@ -90,8 +108,8 @@ func TestEvaluateRulesCountryRestrictionsAreStrict(t *testing.T) {
 			})
 			for _, failure := range failures {
 				if failure.Rule == test.rule {
-					if failure.Disposition != api.RuleDispositionStrict {
-						t.Fatalf("%s disposition = %q, want strict", test.rule, failure.Disposition)
+					if failure.Disposition != test.wantDisposition {
+						t.Fatalf("%s disposition = %q, want %q", test.rule, failure.Disposition, test.wantDisposition)
 					}
 					return
 				}

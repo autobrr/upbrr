@@ -16,7 +16,7 @@ import (
 
 func releaseNamePolicy() trackers.ReleaseNamePolicyBinding {
 	return trackers.WithMovieYearProvider(trackers.WithEpisodeTitleMode(
-		trackers.NewReleaseNamePolicy("standalone/hdb/v3", resolveReleaseNames),
+		trackers.NewReleaseNamePolicy("standalone/hdb/v4", resolveReleaseNames),
 		api.EpisodeTitleModeOmit,
 	), api.IdentityProviderIMDB)
 }
@@ -40,15 +40,11 @@ func resolveReleaseNames(input trackers.ReleaseNameInput) (trackers.ResolvedRele
 }
 
 func exactHDBReleaseName(meta api.UploadSubject) string {
-	sceneName := strings.TrimSpace(meta.SceneName)
-	if sceneName != "" && !meta.SceneRenamed {
-		return sceneName
+	if meta.Scene || strings.TrimSpace(meta.SceneName) != "" {
+		return ""
 	}
 	name := selectedHDBReleaseName(meta)
 	if name == "" || isGeneratedHDBReleaseName(meta, name) {
-		return ""
-	}
-	if meta.SceneRenamed && sceneName != "" && strings.EqualFold(name, sceneName) {
 		return ""
 	}
 	return name

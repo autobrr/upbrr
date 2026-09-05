@@ -67,11 +67,18 @@ func TestSPEvidencePolicyPassViolationAndMissingEvidence(t *testing.T) {
 				subject.Identity.Generation = 2
 				subject.ProviderMetadata.SourcePath = subject.SourcePath
 				subject.ProviderMetadata.Generation = 2
-				subject.ProviderMetadata.TMDB.Genres = "Adult"
+				subject.ProviderMetadata.TVmaze = &api.TVmazeMetadata{Genres: "Adult"}
 			},
 			wantRule:        "sp_block_adult",
 			wantDisposition: api.RuleDispositionStrict,
 			wantStatus:      api.MetadataEvidenceStatusComplete,
+		},
+		{
+			name: "release genre and provider keyword cannot classify adult content",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.Release.Genre = "Adult"
+				subject.ProviderMetadata.TMDB.Keywords = "Adult"
+			},
 		},
 		{
 			name: "stale provider source cannot block adult content",
@@ -120,7 +127,7 @@ func TestSPEvidencePolicyPassViolationAndMissingEvidence(t *testing.T) {
 
 func TestSPValidationPolicyVersion(t *testing.T) {
 	t.Parallel()
-	if got := Profile().ValidationPolicy.ID; got != "unit3d-sp-policy-v3" {
+	if got := Profile().ValidationPolicy.ID; got != "unit3d-sp-policy-v4" {
 		t.Fatalf("validation policy ID = %q", got)
 	}
 }

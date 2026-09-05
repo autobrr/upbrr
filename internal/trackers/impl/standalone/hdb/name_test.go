@@ -40,7 +40,11 @@ func TestHDBReleaseNamePolicyBuildsStructuredOriginalIMDbName(t *testing.T) {
 				Year:   2026,
 			},
 		},
-		Release:     api.ReleaseInfo{Resolution: "2160p"},
+		Release: api.ReleaseInfo{Resolution: "2160p"},
+		NamePresentation: api.ReleaseNamePresentation{
+			Version:            api.ReleaseNamePresentationVersionV1,
+			OmitAlternateTitle: true,
+		},
 		Edition:     "Director's Cut",
 		Repack:      "REPACK",
 		Source:      "WEB-DL",

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 	"sync"
 
@@ -36,6 +37,10 @@ var (
 	ErrPlanAlreadyUsed = errors.New("tracker plan already submitted")
 	// ErrPlanReleased indicates that plan resources were released before submission.
 	ErrPlanReleased = errors.New("tracker plan already released")
+	// ErrPlanActionUnavailable indicates that the requested prepared action is absent.
+	ErrPlanActionUnavailable = errors.New("tracker plan action is unavailable")
+	// ErrPlanActionNotResolvable indicates that a negative answer has no tracker-owned resolution.
+	ErrPlanActionNotResolvable = errors.New("tracker plan action is not resolvable")
 )
 
 // PreparationFailure is a tracker-local, presentation-safe preparation failure.
@@ -109,8 +114,11 @@ type planState struct {
 	mu       sync.Mutex
 	used     bool
 	released bool
+	resolved bool
 	submit   func(context.Context) (api.UploadSummary, error)
 	release  func() error
+	resolve  func(context.Context) (TrackerPlan, *PreparationFailure)
+	decide   func(context.Context, bool) (TrackerPlan, *PreparationFailure)
 }
 
 // TrackerPlan is an immutable operation-scoped adapter plan. Its private state
@@ -129,6 +137,8 @@ type PreparedOperation struct {
 	preview api.TrackerDryRunEntry
 	submit  func(context.Context) (api.UploadSummary, error)
 	release func() error
+	resolve func(context.Context) (PreparedOperation, error)
+	decide  func(context.Context, bool) (PreparedOperation, error)
 }
 
 // UploadPreparer builds canonical upload state once for the requested intent.
@@ -145,6 +155,38 @@ func NewPreparedOperation(
 		preview: cloneTrackerDryRunEntry(preview),
 		submit:  submit,
 		release: release,
+	}
+}
+
+// NewPreparedOperationWithResolver captures an upload operation whose pending
+// tracker action can be replaced by one fresh tracker-owned preparation.
+func NewPreparedOperationWithResolver(
+	preview api.TrackerDryRunEntry,
+	submit func(context.Context) (api.UploadSummary, error),
+	release func() error,
+	resolve func(context.Context) (PreparedOperation, error),
+) PreparedOperation {
+	return PreparedOperation{
+		preview: cloneTrackerDryRunEntry(preview),
+		submit:  submit,
+		release: release,
+		resolve: resolve,
+	}
+}
+
+// NewPreparedOperationWithDecisionResolver captures an upload operation whose
+// explicit confirmation or decline produces one fresh tracker-owned preparation.
+func NewPreparedOperationWithDecisionResolver(
+	preview api.TrackerDryRunEntry,
+	submit func(context.Context) (api.UploadSummary, error),
+	release func() error,
+	decide func(context.Context, bool) (PreparedOperation, error),
+) PreparedOperation {
+	return PreparedOperation{
+		preview: cloneTrackerDryRunEntry(preview),
+		submit:  submit,
+		release: release,
+		decide:  decide,
 	}
 }
 
@@ -217,30 +259,59 @@ func PrepareAdapter(
 	case PreparationIntentUpload:
 		operation, err := prepareUpload(ctx, input)
 		if err != nil {
-			var preparationFailure *PreparationFailure
-			if errors.As(err, &preparationFailure) {
+			if preparationFailure, ok := errors.AsType[*PreparationFailure](err); ok {
 				return TrackerPlan{}, preparationFailure
 			}
 			return TrackerPlan{}, NewPreparationFailure(input.Tracker, "upload", err.Error(), err)
 		}
-		if operation.submit == nil {
-			cleanupErr := error(nil)
-			if operation.release != nil {
-				cleanupErr = operation.release()
-			}
-			cause := errors.New("prepared operation has no submission")
-			if cleanupErr != nil {
-				cause = errors.Join(cause, cleanupErr)
-			}
-			return TrackerPlan{}, NewPreparationFailure(input.Tracker, "upload", "tracker upload preparation is not submittable", cause)
-		}
-		if err := validatePreparedProjection(input, operation.preview); err != nil {
-			return TrackerPlan{}, projectionPreparationFailure(input.Tracker, operation, err)
-		}
-		return NewUploadPlan(input.Tracker, operation.preview, operation.submit, operation.release), nil
+		return preparedUploadPlan(input, operation)
 	default:
 		return TrackerPlan{}, NewPreparationFailure(input.Tracker, "intent", "unsupported preparation intent", nil)
 	}
+}
+
+func preparedUploadPlan(input PreparationInput, operation PreparedOperation) (TrackerPlan, *PreparationFailure) {
+	if operation.submit == nil {
+		cleanupErr := error(nil)
+		if operation.release != nil {
+			cleanupErr = operation.release()
+		}
+		cause := errors.New("prepared operation has no submission")
+		if cleanupErr != nil {
+			cause = errors.Join(cause, cleanupErr)
+		}
+		return TrackerPlan{}, NewPreparationFailure(input.Tracker, "upload", "tracker upload preparation is not submittable", cause)
+	}
+	if err := validatePreparedProjection(input, operation.preview); err != nil {
+		return TrackerPlan{}, projectionPreparationFailure(input.Tracker, operation, err)
+	}
+	plan := NewUploadPlan(input.Tracker, operation.preview, operation.submit, operation.release)
+	if operation.resolve != nil {
+		plan.state.resolve = func(ctx context.Context) (TrackerPlan, *PreparationFailure) {
+			next, err := operation.resolve(ctx)
+			if err != nil {
+				if failure, ok := errors.AsType[*PreparationFailure](err); ok {
+					return TrackerPlan{}, failure
+				}
+				return TrackerPlan{}, NewPreparationFailure(input.Tracker, "upload", err.Error(), err)
+			}
+			// Resolver replacements remain bound to the original reviewed input and projection authority.
+			return preparedUploadPlan(input, next)
+		}
+	}
+	if operation.decide != nil {
+		plan.state.decide = func(ctx context.Context, confirmed bool) (TrackerPlan, *PreparationFailure) {
+			next, err := operation.decide(ctx, confirmed)
+			if err != nil {
+				if failure, ok := errors.AsType[*PreparationFailure](err); ok {
+					return TrackerPlan{}, failure
+				}
+				return TrackerPlan{}, NewPreparationFailure(input.Tracker, "upload", err.Error(), err)
+			}
+			return preparedUploadPlan(input, next)
+		}
+	}
+	return plan, nil
 }
 
 func projectionPreparationFailure(tracker string, operation PreparedOperation, err error) *PreparationFailure {
@@ -296,6 +367,85 @@ func (p TrackerPlan) Submit(ctx context.Context) (api.UploadSummary, error) {
 	return submit(ctx)
 }
 
+// ResolveAction consumes one matching pending action. Standard actions retain
+// the payload when confirmed or invoke their resolver when declined; decision
+// actions pass either answer to the tracker and replace the plan.
+func (p TrackerPlan) ResolveAction(
+	ctx context.Context,
+	kind api.RequiredActionKind,
+	confirmed bool,
+) (TrackerPlan, error) {
+	if p.state == nil || p.intent != PreparationIntentUpload {
+		return TrackerPlan{}, ErrPlanNotSubmittable
+	}
+	if len(p.dryRun.RequiredActions) != 1 || p.dryRun.RequiredActions[0].Kind != kind {
+		return TrackerPlan{}, ErrPlanActionUnavailable
+	}
+	if err := ctx.Err(); err != nil {
+		return TrackerPlan{}, fmt.Errorf("tracker plan resolve action: %w", err)
+	}
+	p.state.mu.Lock()
+	switch {
+	case p.state.released:
+		p.state.mu.Unlock()
+		return TrackerPlan{}, ErrPlanReleased
+	case p.state.used:
+		p.state.mu.Unlock()
+		return TrackerPlan{}, ErrPlanAlreadyUsed
+	case p.state.resolved:
+		p.state.mu.Unlock()
+		return TrackerPlan{}, ErrPlanActionUnavailable
+	}
+	if p.state.decide != nil {
+		decide := p.state.decide
+		release := p.state.release
+		p.state.used = true
+		p.state.released = true
+		p.state.resolved = true
+		p.state.mu.Unlock()
+		if release != nil {
+			if err := release(); err != nil {
+				return TrackerPlan{}, NewPreparationFailure(p.tracker, "upload", "tracker prepared upload release failed", err)
+			}
+		}
+		resolved, failure := decide(ctx, confirmed)
+		if failure != nil {
+			return TrackerPlan{}, failure
+		}
+		return resolved, nil
+	}
+	if confirmed {
+		p.state.resolved = true
+		p.state.mu.Unlock()
+		resolved := p
+		resolved.dryRun = cloneTrackerDryRunEntry(p.dryRun)
+		resolved.dryRun.RequiredActions = slices.DeleteFunc(resolved.dryRun.RequiredActions, func(action api.RequiredAction) bool {
+			return action.Kind == kind
+		})
+		return resolved, nil
+	}
+	if p.state.resolve == nil {
+		p.state.mu.Unlock()
+		return TrackerPlan{}, ErrPlanActionNotResolvable
+	}
+	resolve := p.state.resolve
+	release := p.state.release
+	p.state.used = true
+	p.state.released = true
+	p.state.resolved = true
+	p.state.mu.Unlock()
+	if release != nil {
+		if err := release(); err != nil {
+			return TrackerPlan{}, NewPreparationFailure(p.tracker, "upload", "tracker prepared upload release failed", err)
+		}
+	}
+	resolved, failure := resolve(ctx)
+	if failure != nil {
+		return TrackerPlan{}, failure
+	}
+	return resolved, nil
+}
+
 // Release invokes plan cleanup at most once and prevents later submission.
 // Repeated calls are no-ops and return nil.
 func (p TrackerPlan) Release() error {
@@ -321,6 +471,9 @@ func cloneTrackerDryRunEntry(entry api.TrackerDryRunEntry) api.TrackerDryRunEntr
 	entry.Files = append([]api.TrackerDryRunFile(nil), entry.Files...)
 	entry.DebugSections = append([]api.TrackerDryRunDebugSection(nil), entry.DebugSections...)
 	entry.RequiredActions = append([]api.RequiredAction(nil), entry.RequiredActions...)
+	for idx := range entry.RequiredActions {
+		entry.RequiredActions[idx].Options = append([]api.RequiredActionOption(nil), entry.RequiredActions[idx].Options...)
+	}
 	for idx := range entry.DebugSections {
 		entry.DebugSections[idx].Payload = maps.Clone(entry.DebugSections[idx].Payload)
 		entry.DebugSections[idx].Files = append([]api.TrackerDryRunFile(nil), entry.DebugSections[idx].Files...)

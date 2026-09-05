@@ -22,7 +22,8 @@ func Profile() standalone.Profile {
 		NewDuplicateAdapter: newDuplicateAdapter,
 		ValidationPolicy:    validationPolicy(),
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{
-			Source: "hd-torrents.org",
+			Source:          "hd-torrents.org",
+			RequireAnnounce: true,
 		},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{
 			TrackerURLPatterns: []string{"https://hdts-announce.ru"},
@@ -31,6 +32,7 @@ func Profile() standalone.Profile {
 			AuthKind:           "cookies",
 			SupportsCookieFile: true,
 		},
+		AuthResolver: resolveAuthSession,
 	}
 }
 

@@ -174,6 +174,11 @@ describe("WorkflowRequiredActions", () => {
             kind: "provide_tracker_input",
             prompt: "Confirm the tracker release name.",
           }),
+          action({
+            id: "action-3",
+            kind: "authorize_rules",
+            prompt: "Review the tracker rule warning.",
+          }),
         ])}
         onConfirm={vi.fn()}
         onNavigate={navigate}
@@ -182,6 +187,7 @@ describe("WorkflowRequiredActions", () => {
 
     expect(screen.queryByText("Review the duplicate match.")).not.toBeInTheDocument();
     expect(screen.queryByText("Confirm the tracker release name.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Review the tracker rule warning.")).not.toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(navigate).not.toHaveBeenCalled();
   });
@@ -203,6 +209,35 @@ describe("WorkflowRequiredActions", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Continue upload" }));
-    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ kind: "authorize_rules" }));
+    expect(confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "authorize_rules" }),
+      true,
+    );
+  });
+
+  it("offers both tracker preparation decisions", () => {
+    const confirm = vi.fn();
+    render(
+      <WorkflowRequiredActions
+        continuation={continuation([
+          action({
+            kind: "resolve_tracker_preparation",
+            prompt: "BTN autofill mismatched.",
+            options: [
+              { value: "confirm", label: "Continue upload" },
+              { value: "resolve", label: "Try release-name autofill" },
+            ],
+          }),
+        ])}
+        onConfirm={confirm}
+        onNavigate={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Try release-name autofill" }));
+    expect(confirm).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "resolve_tracker_preparation" }),
+      false,
+    );
   });
 });

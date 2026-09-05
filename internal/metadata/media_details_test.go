@@ -156,6 +156,46 @@ func TestRebuildReleaseNameOmitsGeneratedEpisodeTitle(t *testing.T) {
 	}
 }
 
+func TestRebuildReleaseNameFinalizesTVPresentationAndHonorsNoYear(t *testing.T) {
+	meta := preparationstate.State{
+		SourcePath:       "Example.Show.2026.02.03.1080p.WEB-DL.H.264-GRP",
+		Identity:         api.ExternalIdentity{Category: api.CanonicalCategoryTV, TVDBID: 1234567},
+		DailyEpisodeDate: "2026-02-03",
+		Release: api.ReleaseInfo{
+			Title:      "Example Show",
+			Alt:        "Example Original",
+			Resolution: "1080p",
+		},
+		ProviderMetadata: api.SourceScopedMetadata{TVDB: &api.TVDBMetadata{
+			TVDBID:        1234567,
+			NameEnglish:   "Example Show",
+			Year:          2026,
+			YearFromAlias: true,
+		}},
+		ReleaseNameOverrides: api.ReleaseNameOverrides{
+			NoAKA:    new(true),
+			NoSeason: new(true),
+			NoYear:   new(true),
+		},
+	}
+
+	RebuildReleaseName(&meta, api.NopLogger{})
+
+	if strings.Contains(meta.ReleaseName, "2026 ") {
+		t.Fatalf("NoYear restored TV search year in %q", meta.ReleaseName)
+	}
+	want := api.ReleaseNamePresentation{
+		Version:            api.ReleaseNamePresentationVersionV1,
+		OmitAlternateTitle: true,
+		OmitYear:           true,
+		OmitSeasonEpisode:  true,
+		UseDailyDate:       true,
+	}
+	if meta.ReleaseNamePresentation != want {
+		t.Fatalf("presentation = %#v, want %#v", meta.ReleaseNamePresentation, want)
+	}
+}
+
 func TestEditionFromMetaMultiPlaylistDeduplicatesMatches(t *testing.T) {
 	meta := preparationstate.State{
 		DiscType: "BDMV",

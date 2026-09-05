@@ -6,6 +6,7 @@ package mediainfo
 import (
 	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -85,8 +86,8 @@ func durationColonSeconds(value string) float64 {
 	}
 	var total float64
 	multiplier := 1.0
-	for idx := len(parts) - 1; idx >= 0; idx-- {
-		part := strings.TrimSpace(parts[idx])
+	for _, part := range slices.Backward(parts) {
+		part := strings.TrimSpace(part)
 		if part == "" {
 			continue
 		}

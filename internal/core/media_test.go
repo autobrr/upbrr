@@ -259,6 +259,7 @@ func TestResolveImageUploadTargetsUsesExactWorkflowTrackerSelection(t *testing.T
 		cfg: config.Config{ImageHosting: config.ImageHostingConfig{
 			Host1:          "imgbb",
 			LostimgEnabled: true,
+			LostimgAPI:     "secret",
 		}},
 		logger:   api.NopLogger{},
 		registry: registry,

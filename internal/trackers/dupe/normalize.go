@@ -10,7 +10,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/moistari/rls"
+	"github.com/autobrr/rls"
 
 	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"

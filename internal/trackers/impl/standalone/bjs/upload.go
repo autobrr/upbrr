@@ -119,7 +119,7 @@ func submitPreparedUpload(
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 && id != "" {
 		tURL := torrentURL + id
 		registeredPath := trackers.PersistReconstructedRegisteredTorrent(
-			req.Logger, "BJS", state.torrentPath, artifactPath, announceURL, tURL, sourceFlag,
+			req.Logger, "BJS", state.torrentPath, artifactPath, announceURL, sourceFlag,
 		)
 		return api.UploadSummary{
 			Uploaded: 1,

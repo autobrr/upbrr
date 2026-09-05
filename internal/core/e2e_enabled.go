@@ -1000,6 +1000,15 @@ func (p *e2eRetainedUploadPlan) Preparations() []trackers.RetainedTrackerPrepara
 	return append([]trackers.RetainedTrackerPreparation(nil), p.preparations...)
 }
 
+func (p *e2eRetainedUploadPlan) ResolveAction(
+	context.Context,
+	string,
+	api.RequiredActionKind,
+	bool,
+) (trackers.RetainedTrackerPreparation, error) {
+	return trackers.RetainedTrackerPreparation{}, trackers.ErrPlanActionUnavailable
+}
+
 func (p *e2eRetainedUploadPlan) Execute(ctx context.Context) ([]trackers.RetainedTrackerResult, error) {
 	if p == nil {
 		return nil, errors.New("e2e tracker: retained plan is unavailable")

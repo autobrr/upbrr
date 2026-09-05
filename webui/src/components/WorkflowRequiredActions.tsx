@@ -22,6 +22,7 @@ const actionLabels: Readonly<Record<string, string>> = {
 
 const actionOwnedByDupeCard = (action: RequiredAction) =>
   action.kind === "review_duplicates" ||
+  (action.kind === "authorize_rules" && Boolean(action.trackerId)) ||
   (action.kind === "provide_tracker_input" && Boolean(action.trackerId));
 
 function actionScope(action: RequiredAction): string {
@@ -32,14 +33,14 @@ function actionScope(action: RequiredAction): string {
   return "Workflow action";
 }
 
-/** Shows pending non-dupe actions and lets users confirm tracker rules or open the owning workflow step. */
+/** Shows pending non-dupe actions and lets users resolve confirmations or open the owning workflow step. */
 export function WorkflowRequiredActions({
   continuation,
   onConfirm,
   onNavigate,
 }: Readonly<{
   continuation?: WorkflowContinuation | null;
-  onConfirm: (action: RequiredAction) => void;
+  onConfirm: (action: RequiredAction, confirmed?: boolean) => void;
   onNavigate: (route: ReleaseRoute) => void;
 }>) {
   const actions = (continuation?.requiredActions || []).filter(
@@ -68,8 +69,19 @@ export function WorkflowRequiredActions({
               <p className="muted text-xs">Action: {action.kind.replaceAll("_", " ")}</p>
               {action.kind === "authorize_rules" ? (
                 <div>
-                  <button className="ghost" type="button" onClick={() => onConfirm(action)}>
+                  <button className="ghost" type="button" onClick={() => onConfirm(action, true)}>
                     Continue upload
+                  </button>
+                </div>
+              ) : action.kind === "resolve_tracker_preparation" ? (
+                <div className="flex flex-wrap gap-2">
+                  <button className="ghost" type="button" onClick={() => onConfirm(action, true)}>
+                    {action.options?.find((option) => option.value === "confirm")?.label ||
+                      "Continue upload"}
+                  </button>
+                  <button className="ghost" type="button" onClick={() => onConfirm(action, false)}>
+                    {action.options?.find((option) => option.value === "resolve")?.label ||
+                      "Try alternative"}
                   </button>
                 </div>
               ) : route ? (

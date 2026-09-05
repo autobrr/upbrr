@@ -395,26 +395,26 @@ func (s *stubIMDB) GetEpisodeInfo(_ context.Context, _ string, _ bool) (imdb.Epi
 }
 
 type stubTVDB struct {
-	id                int
-	name              string
-	calls             int
-	tvMovieCalls      []bool
-	idWhenTVMovie     int
-	nameWhenTVMovie   string
-	episodes          tvdb.EpisodesData
-	specificAlias     string
-	episodeErr        error
-	episodeTranslate  tvdb.EpisodeTranslation
-	episodeTransErr   error
-	seriesMetadata    tvdb.SeriesMetadata
-	nameDisambiguation tvdb.NameDisambiguation
-	episodeCalls      int
-	seriesMetadataCalls int
-	seriesLangCalls   []string
+	id                       int
+	name                     string
+	calls                    int
+	tvMovieCalls             []bool
+	idWhenTVMovie            int
+	nameWhenTVMovie          string
+	episodes                 tvdb.EpisodesData
+	specificAlias            string
+	episodeErr               error
+	episodeTranslate         tvdb.EpisodeTranslation
+	episodeTransErr          error
+	seriesMetadata           tvdb.SeriesMetadata
+	nameDisambiguation       tvdb.NameDisambiguation
+	episodeCalls             int
+	seriesMetadataCalls      int
+	seriesLangCalls          []string
 	nameDisambiguationInputs []tvdb.NameDisambiguationInput
-	episodeLangCalls  []string
-	episodeTransCalls []int
-	lastEpisodeQuery  tvdb.EpisodeQuery
+	episodeLangCalls         []string
+	episodeTransCalls        []int
+	lastEpisodeQuery         tvdb.EpisodeQuery
 }
 
 func (s *stubTVDB) GetByExternalID(_ context.Context, _, _ string, tvMovie bool) (int, string, error) {
@@ -2440,7 +2440,7 @@ func TestApplyTVEpisodeMetadataTVDBTitleOnlyAliasAppliedWithoutYear(t *testing.T
 	}
 }
 
-func TestApplyTVEpisodeMetadataTVDBAliasAppliedForEnglish(t *testing.T) {
+func TestApplyTVEpisodeMetadataTVDBAliasPreservesNativeTitle(t *testing.T) {
 	svc := NewService(&fakeRepo{})
 	tmdbClient := &stubTMDB{}
 	tvdbClient := &stubTVDB{specificAlias: "English Show (2021)"}
@@ -2456,16 +2456,20 @@ func TestApplyTVEpisodeMetadataTVDBAliasAppliedForEnglish(t *testing.T) {
 	external := &api.SourceScopedMetadata{
 		TMDB: &api.TMDBMetadata{OriginalLanguage: "en"},
 		TVDB: &api.TVDBMetadata{
-			TVDBID: 200,
-			Name:   "Native Name",
-			Year:   2015,
+			TVDBID:      200,
+			Name:        "Native Name",
+			NameEnglish: "Earlier English Name",
+			Year:        2015,
 		},
 	}
 
 	_ = svc.applyTVEpisodeMetadata(context.Background(), meta, ids, external, tmdbClient, tvdbClient, &stubTVmaze{})
 
-	if external.TVDB.Name != "English Show" {
-		t.Fatalf("expected alias-based title override, got %q", external.TVDB.Name)
+	if external.TVDB.Name != "Native Name" {
+		t.Fatalf("expected native title preserved, got %q", external.TVDB.Name)
+	}
+	if external.TVDB.NameEnglish != "English Show" {
+		t.Fatalf("expected English title preserved, got %q", external.TVDB.NameEnglish)
 	}
 	if external.TVDB.Year != 2021 {
 		t.Fatalf("expected alias-based year override, got %d", external.TVDB.Year)
@@ -2652,6 +2656,32 @@ func TestApplyTVEpisodeMetadataIMDbTitleFallbackWithoutTVmaze(t *testing.T) {
 
 	if updated.EpisodeTitle != "The Example Path" || updated.EpisodeYear != 2026 {
 		t.Fatalf("expected IMDb episode fallback, got title=%q year=%d", updated.EpisodeTitle, updated.EpisodeYear)
+	}
+}
+
+func TestApplyTVEpisodeMetadataAnimeTVPackKeepsEpisodeEmpty(t *testing.T) {
+	svc := NewService(&fakeRepo{})
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	meta := preparationstate.State{
+		SourcePath: "[GRP] Example Release - Season 1 (BD 1080p x265 10-bit)",
+		VideoPath:  "[GRP] Example Release - S01E01 (BD 1080p x265 10-bit).mkv",
+		FileList: []string{
+			"[GRP] Example Release - S01E01 (BD 1080p x265 10-bit).mkv",
+			"[GRP] Example Release - S01E02 (BD 1080p x265 10-bit).mkv",
+		},
+		SeasonInt: 1,
+		SeasonStr: "S01",
+		TVPack:    true,
+		Anime:     true,
+	}
+	ids := &api.ExternalIdentity{TVDBID: 200, Category: "TV"}
+
+	updated := svc.applyTVEpisodeMetadata(ctx, meta, ids, nil, nil, &stubTVDB{}, &stubTVmaze{})
+
+	if updated.SeasonInt != 1 || updated.SeasonStr != "S01" || updated.EpisodeInt != 0 || updated.EpisodeStr != "" {
+		t.Fatalf("expected anime TV pack to remain S01, got season=%d/%q episode=%d/%q", updated.SeasonInt, updated.SeasonStr, updated.EpisodeInt, updated.EpisodeStr)
 	}
 }
 
@@ -3104,7 +3134,7 @@ func TestTVDBMetadataAndDisambiguationReuseAreIndependent(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
-		status api.MetadataEvidenceStatus
+		status             api.MetadataEvidenceStatus
 		wantDisambiguation bool
 	}{
 		{status: api.MetadataEvidenceStatusComplete, wantDisambiguation: true},

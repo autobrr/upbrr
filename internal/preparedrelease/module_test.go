@@ -483,6 +483,9 @@ func TestOperationSubjectsUseExactGenerationAndDetachedFacts(t *testing.T) {
 	if upload.GeneratedReleaseNames.OmitEpisodeTitle.Name != "Example.Show.S01E02.1080p.WEB-DL-GRP" {
 		t.Fatalf("upload generated variants = %#v", upload.GeneratedReleaseNames)
 	}
+	if upload.NamePresentation != (api.ReleaseNamePresentation{Version: api.ReleaseNamePresentationVersionV1, OmitYear: true}) {
+		t.Fatalf("upload name presentation = %#v", upload.NamePresentation)
+	}
 	persisted, err := store.LoadPreparedRelease(context.Background(), path)
 	if err != nil {
 		t.Fatalf("load persisted release: %v", err)
@@ -837,8 +840,9 @@ func (c *recordingCollector) Collect(_ context.Context, request preparationstate
 	c.mu.Unlock()
 	return CollectedFacts{
 		Naming: api.NamingFacts{
-			Filename:    filepath.Base(request.Manifest.SourcePath),
-			ReleaseName: "Example.Release.2026.1080p-GRP",
+			Filename:         filepath.Base(request.Manifest.SourcePath),
+			ReleaseName:      "Example.Release.2026.1080p-GRP",
+			NamePresentation: api.ReleaseNamePresentation{Version: api.ReleaseNamePresentationVersionV1, OmitYear: true},
 			GeneratedReleaseNames: api.GeneratedReleaseNameVariants{
 				IncludeEpisodeTitle: api.ReleaseNameVariant{
 					Name: "Example.Show.S01E02.Example.Episode.1080p.WEB-DL-GRP",

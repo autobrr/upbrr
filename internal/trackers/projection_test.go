@@ -50,7 +50,7 @@ func TestRegistryCatalogAndProjectionUseStableIdentityAndFinalPreviewSemantics(t
 
 	registry := NewRegistry()
 	prepareCalls := 0
-	definition := projectionStubDefinition{stubDefinition: stubDefinition{name: "EXAMPLE"}, prepareCalls: &prepareCalls}
+	definition := projectionStubDefinition{name: "EXAMPLE", prepareCalls: &prepareCalls}
 	if err := registry.RegisterDescriptor(Descriptor{
 		Name:              "EXAMPLE",
 		DisplayName:       "Example Tracker",
@@ -271,7 +271,7 @@ func TestRegistryProjectionRequiresNonSceneUploadNameConfirmationWithoutBlocking
 func TestPrepareAdapterRejectsPayloadSemanticsThatDifferFromReviewedProjection(t *testing.T) {
 	t.Parallel()
 
-	definition := projectionStubDefinition{stubDefinition: stubDefinition{name: "EXAMPLE"}}
+	definition := projectionStubDefinition{name: "EXAMPLE"}
 	input := PreparationInput{
 		Intent:  PreparationIntentDryRun,
 		Tracker: "EXAMPLE",
@@ -348,7 +348,7 @@ func TestApplyProjectionRuleFailuresRequiresExactNormalAuthorization(t *testing.
 	}
 	waivable := []api.RuleFailure{NewEvidenceRuleFailure(
 		"runtime_gate",
-		"waivable gate",
+		"waivable gate.",
 		api.RuleDispositionWaivable,
 		api.MetadataEvidenceStatusPartial,
 	)}
@@ -382,6 +382,9 @@ func TestApplyProjectionRuleFailuresRequiresExactNormalAuthorization(t *testing.
 	}
 	if normal.WaivableRuleFingerprint != waivableFingerprint || normal.RuleAuthorizationFingerprint != "" {
 		t.Fatalf("normal rule authority = %#v", normal)
+	}
+	if prompt := normal.RequiredActions[0].Prompt; prompt != "EXAMPLE rule warning: runtime_gate: waivable gate. Upload to this tracker anyway?" {
+		t.Fatalf("normal rule prompt = %q", prompt)
 	}
 
 	authorized := readyProjection()

@@ -14,11 +14,16 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func resolveMediaInfo(meta api.UploadSubject) (string, error) {
+func resolveMediaInfo(req trackers.PreparationInput, meta api.UploadSubject) (string, error) {
 	if text := metautil.FirstNonEmptyTrimmed(commonhttp.ReadOptionalFile(meta.MediaInfoTextPath), strings.TrimSpace(meta.DVDVOBMediaInfoText)); text != "" {
 		return text, nil
 	}
-	return "", errors.New("trackers: DC missing mediainfo")
+	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
+		if bdinfo, _ := trackers.ReadBDInfo(req.Runtime.DBPath, meta); strings.TrimSpace(bdinfo) != "" {
+			return strings.TrimSpace(bdinfo), nil
+		}
+	}
+	return "", errors.New("trackers: DC missing mediainfo or BDInfo")
 }
 
 func resolveMedia(req trackers.PreparationInput, meta api.UploadSubject) string {

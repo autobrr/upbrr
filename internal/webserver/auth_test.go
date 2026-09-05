@@ -154,7 +154,11 @@ func TestAuthStoreUpdatePasswordHashReappliesSecurePermissions(t *testing.T) {
 	if err := os.Chmod(authPath, 0o644); err != nil {
 		t.Fatalf("Chmod before update: %v", err)
 	}
-	if err := store.UpdatePasswordHash("tester", "updated-test-password-hash"); err != nil {
+	current, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load before update: %v", err)
+	}
+	if err := store.UpdatePasswordHash("tester", current.PasswordHash, "updated-test-password-hash"); err != nil {
 		t.Fatalf("UpdatePasswordHash: %v", err)
 	}
 

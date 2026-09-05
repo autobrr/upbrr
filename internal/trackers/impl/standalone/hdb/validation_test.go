@@ -49,6 +49,21 @@ func TestHDBEvidencePolicyPassViolationAndMissingEvidence(t *testing.T) {
 			wantDisposition: api.RuleDispositionStrict,
 			wantStatus:      api.MetadataEvidenceStatusComplete,
 		},
+		{
+			name: "scene title uses normal HDB name",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.Scene = true
+				subject.ReleaseName = "Example Release 2026 Complete 1080p-GRP"
+				subject.SourcePath = subject.ReleaseName
+				subject.Release.Resolution = "1080p"
+				subject.Source = "WEB-DL"
+				subject.ProviderMetadata.IMDB = &api.IMDBMetadata{
+					IMDBID: 1234567,
+					AKA:    "Example Release",
+					Year:   2026,
+				}
+			},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -74,7 +89,7 @@ func TestHDBEvidencePolicyPassViolationAndMissingEvidence(t *testing.T) {
 
 func TestHDBValidationPolicyVersion(t *testing.T) {
 	t.Parallel()
-	if got := Profile().ValidationPolicy.ID; got != "standalone-hdb-constructibility-v3" {
+	if got := Profile().ValidationPolicy.ID; got != "standalone-hdb-constructibility-v4" {
 		t.Fatalf("validation policy ID = %q", got)
 	}
 }

@@ -107,3 +107,34 @@ jobs:
         with:
           path: webui/node_modules/.cache/prettier
           key: ${{ steps.prettier-cache.outputs.cache-primary-key }}
+
+  test-documentation:
+    name: Documentation checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11.15.1
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: documentation/pnpm-lock.yaml
+
+      - name: Install documentation dependencies
+        working-directory: documentation
+        run: pnpm install --frozen-lockfile
+
+      - name: Check documentation
+        working-directory: documentation
+        run: pnpm run check

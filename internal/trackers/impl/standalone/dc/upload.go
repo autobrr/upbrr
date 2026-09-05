@@ -4,6 +4,7 @@
 package dc
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -85,7 +86,7 @@ func submitPreparedUpload(
 	apiKey string,
 	artifactPath string,
 ) (api.UploadSummary, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL+"/upload", strings.NewReader(string(body)))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL+"/upload", bytes.NewReader(body))
 	if err != nil {
 		return api.UploadSummary{}, fmt.Errorf("trackers: DC request build: %w", err)
 	}
@@ -189,7 +190,7 @@ func prepareUploadState(_ context.Context, req trackers.PreparationInput) (uploa
 		assets = trackers.DescriptionAssets{}
 	}
 	description := buildDescription(req, assets)
-	mediaInfo, err := resolveMediaInfo(req.Meta)
+	mediaInfo, err := resolveMediaInfo(req, req.Meta)
 	if err != nil {
 		return uploadState{}, err
 	}

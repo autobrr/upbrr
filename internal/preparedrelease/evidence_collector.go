@@ -180,6 +180,7 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 			ReleaseName:           meta.ReleaseName,
 			NameWithoutTag:        meta.ReleaseNameNoTag,
 			CleanName:             meta.ReleaseNameClean,
+			NamePresentation:      meta.ReleaseNamePresentation,
 			GeneratedReleaseNames: meta.GeneratedReleaseNames,
 			Tag:                   meta.Tag,
 			Type:                  meta.Release.Type,

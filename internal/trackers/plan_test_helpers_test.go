@@ -53,3 +53,25 @@ func prepareTestDefinition(ctx context.Context, input PreparationInput, definiti
 	}
 	return PrepareAdapter(ctx, input, description, prepareUpload)
 }
+
+func newTestTrackerActionPlan(
+	release func() error,
+	resolve func(context.Context) (TrackerPlan, *PreparationFailure),
+) TrackerPlan {
+	return TrackerPlan{
+		tracker: "BTN",
+		intent:  PreparationIntentUpload,
+		dryRun: api.TrackerDryRunEntry{
+			Tracker: "BTN",
+			Payload: map[string]string{"source": "tvdb"},
+			RequiredActions: []api.RequiredAction{{
+				Kind: api.RequiredActionResolveTrackerPreparation,
+			}},
+		},
+		state: &planState{
+			submit:  func(context.Context) (api.UploadSummary, error) { return api.UploadSummary{}, nil },
+			release: release,
+			resolve: resolve,
+		},
+	}
+}

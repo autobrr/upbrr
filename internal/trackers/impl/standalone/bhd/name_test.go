@@ -16,11 +16,11 @@ func TestResolveUploadNameAppliesBHDMovieNamingMatrix(t *testing.T) {
 	meta := generatedBHDNameSubject(sourceName)
 	meta.Identity.Category = api.CanonicalCategoryMovie
 	meta.Release = api.ReleaseInfo{
-Title: "Parsed Release",
- Alt: "Parsed Original",
- Year: 2025,
- Group: "GRP",
-}
+		Title: "Parsed Release",
+		Alt:   "Parsed Original",
+		Year:  2025,
+		Group: "GRP",
+	}
 	meta.ProviderMetadata.TMDB = &api.TMDBMetadata{
 		Title:         "Example Release",
 		OriginalTitle: "Example Original",
@@ -39,6 +39,37 @@ Title: "Parsed Release",
 	const want = "Example Release AKA Example Original 2024 Director's Cut 2160p UHD BluRay REMUX SDR HEVC TrueHD Atmos 7.1-GRP"
 	if got := resolveUploadName(meta); got != want {
 		t.Fatalf("BHD movie name = %q, want %q", got, want)
+	}
+}
+
+func TestResolveUploadNameHonorsOmitAlternateTitle(t *testing.T) {
+	t.Parallel()
+
+	const sourceName = "Example Release AKA Example Original 2026 1080p WEB-DL H.264-GRP"
+	meta := generatedBHDNameSubject(sourceName)
+	meta.Identity.Category = api.CanonicalCategoryMovie
+	meta.Release = api.ReleaseInfo{
+		Title:      "Example Release",
+		Alt:        "Example Original",
+		Year:       2026,
+		Resolution: "1080p",
+	}
+	meta.ProviderMetadata.TMDB = &api.TMDBMetadata{
+		Title:         "Example Release",
+		OriginalTitle: "Example Original",
+		Year:          2026,
+	}
+	meta.Type = "WEBDL"
+	meta.VideoCodec = "H.264"
+	meta.Tag = "GRP"
+	meta.NamePresentation = api.ReleaseNamePresentation{
+		Version:            api.ReleaseNamePresentationVersionV1,
+		OmitAlternateTitle: true,
+	}
+
+	const want = "Example Release 2026 1080p WEB-DL H.264-GRP"
+	if got := resolveUploadName(meta); got != want {
+		t.Fatalf("BHD name = %q, want %q", got, want)
 	}
 }
 
@@ -67,13 +98,13 @@ func TestResolveUploadNameAppliesBHDTVDBCollisionYearMatrix(t *testing.T) {
 			meta := generatedBHDNameSubject(sourceName)
 			meta.Identity.Category = api.CanonicalCategoryTV
 			meta.Release = api.ReleaseInfo{
-Category: "TV",
- Title: "Example Series",
- Alt: "Example Original",
- Year: 2026,
- Resolution: "1080p",
- Group: "GRP",
-}
+				Category:   "TV",
+				Title:      "Example Series",
+				Alt:        "Example Original",
+				Year:       2026,
+				Resolution: "1080p",
+				Group:      "GRP",
+			}
 			meta.ProviderMetadata.TVDB = &api.TVDBMetadata{
 				Name:        "Example Original",
 				NameEnglish: "Example Series",
@@ -111,10 +142,10 @@ func TestResolveUploadNameAppliesBHDNoGroupDiscAndDVDMatrix(t *testing.T) {
 				meta := generatedBHDNameSubject("Example Release 2026 1080p WEB-DL DDP 5.1-NOGRP")
 				meta.Identity.Category = api.CanonicalCategoryMovie
 				meta.Release = api.ReleaseInfo{
-Title: "Example Release",
- Year: 2026,
- Resolution: "1080p",
-}
+					Title:      "Example Release",
+					Year:       2026,
+					Resolution: "1080p",
+				}
 				meta.Type = "WEBDL"
 				meta.Source = "WEB"
 				meta.Audio = "DDP 5.1"
@@ -148,16 +179,18 @@ Title: "Example Release",
 	}
 }
 
-func TestResolveUploadNamePreservesExactNamesAndDoesNotInferHybridRemux(t *testing.T) {
+func TestResolveUploadNameUsesBHDPolicyAndPreservesExactP2PNames(t *testing.T) {
 	t.Parallel()
 
-	t.Run("scene name", func(t *testing.T) {
+	t.Run("scene release uses normal name", func(t *testing.T) {
 		t.Parallel()
-		meta := generatedBHDNameSubject("Generated Replacement 2026 1080p WEB-DL DDP5.1-NOGRP")
+		meta := generatedBHDNameSubject("Generated Replacement 2026 1080p WEB-DL DDP 5.1-NOGRP")
 		meta.Scene = true
 		meta.SceneName = "Exact.Scene.Name.2026.1080p.WEB-DL.DD+5.1-GRP"
-		if got := resolveUploadName(meta); got != meta.SceneName {
-			t.Fatalf("BHD scene name = %q, want %q", got, meta.SceneName)
+		meta.Audio = "DDP 5.1"
+		const want = "Generated Replacement 2026 1080p WEB-DL DDP 5.1-NOGROUP"
+		if got := resolveUploadName(meta); got != want {
+			t.Fatalf("BHD release name = %q, want %q", got, want)
 		}
 	})
 
@@ -179,10 +212,10 @@ func TestResolveUploadNamePreservesExactNamesAndDoesNotInferHybridRemux(t *testi
 		meta := generatedBHDNameSubject(sourceName)
 		meta.Identity.Category = api.CanonicalCategoryMovie
 		meta.Release = api.ReleaseInfo{
-Title: "Example Release",
- Year: 2026,
- Group: "GRP",
-}
+			Title: "Example Release",
+			Year:  2026,
+			Group: "GRP",
+		}
 		meta.Type = "REMUX"
 		meta.Source = "BluRay"
 		meta.VideoCodec = "HEVC"
@@ -197,8 +230,8 @@ Title: "Example Release",
 func TestBHDNamingPolicyVersion(t *testing.T) {
 	t.Parallel()
 
-	if got := New().ReleaseNamePolicy().ID; got != "standalone/bhd/v2" {
-		t.Fatalf("BHD naming policy ID = %q, want %q", got, "standalone/bhd/v2")
+	if got := New().ReleaseNamePolicy().ID; got != "standalone/bhd/v4" {
+		t.Fatalf("BHD naming policy ID = %q, want %q", got, "standalone/bhd/v4")
 	}
 }
 

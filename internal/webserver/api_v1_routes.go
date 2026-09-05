@@ -651,8 +651,7 @@ func decodeAPIV1JSON(w http.ResponseWriter, r *http.Request, destination any) bo
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(destination); err != nil {
 		status := http.StatusBadRequest
-		var maxBytesError *http.MaxBytesError
-		if errors.As(err, &maxBytesError) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			status = http.StatusRequestEntityTooLarge
 		}
 		writeJSON(w, status, map[string]string{"error": "invalid API request body"})

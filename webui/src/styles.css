@@ -81,8 +81,7 @@ body {
 
 .settings-actions,
 .settings-auth-actions,
-.screens-actions__buttons,
-.screens-settings__actions {
+.screens-actions__buttons {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -117,8 +116,7 @@ body {
   min-width: 0;
 }
 
-.settings-grid,
-.screens-settings__grid {
+.settings-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 9px;
@@ -468,16 +466,6 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 6px 10px;
-}
-
-.screens-settings details {
-  display: grid;
-  gap: 10px;
-}
-
-.screens-settings summary {
-  cursor: pointer;
-  font-weight: 600;
 }
 
 .screens-preview__body,

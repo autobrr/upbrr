@@ -39,17 +39,3 @@ func resolvePoster(meta api.UploadSubject) string {
 	}
 	return metautil.FirstNonEmptyTrimmed(meta.ProviderMetadata.TMDB.Poster)
 }
-
-func genresText(meta api.UploadSubject) string {
-	if meta.ProviderMetadata.TMDB != nil {
-		return metautil.FirstNonEmptyTrimmed(meta.ProviderMetadata.TMDB.Genres, meta.Release.Genre)
-	}
-	return metautil.FirstNonEmptyTrimmed(meta.Release.Genre)
-}
-
-func keywordsText(meta api.UploadSubject) string {
-	if meta.ProviderMetadata.TMDB == nil {
-		return ""
-	}
-	return strings.TrimSpace(meta.ProviderMetadata.TMDB.Keywords)
-}

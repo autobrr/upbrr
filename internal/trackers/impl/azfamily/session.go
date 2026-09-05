@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -15,32 +14,32 @@ import (
 
 	xhtml "golang.org/x/net/html"
 
-	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-const azCookieUserAgent = "upbrr"
+const (
+	azCookieUserAgent     = "upbrr"
+	azMediaLookupAttempts = 6
+	azMediaLookupDelay    = time.Second
+)
 
 type sessionState struct {
 	client *http.Client
 	token  string
 }
 
-func newSession(ctx context.Context, site siteDefinition, dbPath string, logger api.Logger) (sessionState, error) {
+func newSession(ctx context.Context, site siteDefinition, dbPath string) (sessionState, error) {
 	cookies, err := resolveCookies(ctx, dbPath, site)
 	if err != nil {
 		return sessionState{}, err
 	}
-	cookieMap := make(map[string]*http.Cookie, len(cookies))
-	for _, cookie := range cookies {
-		if cookie == nil || strings.TrimSpace(cookie.Name) == "" {
-			continue
-		}
-		cookieMap[cookie.Name] = cookie
+	jar, err := newSessionCookieJar(site.BaseURL, cookies)
+	if err != nil {
+		return sessionState{}, fmt.Errorf("trackers: %s cookie jar: %w", site.Name, err)
 	}
 	client := &http.Client{
 		Timeout: 40 * time.Second,
-		Jar:     simpleCookieJar{baseURL: mustParseURL(site.BaseURL), cookies: cookieMap},
+		Jar:     jar,
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, site.BaseURL+"/torrents", nil)
 	if err != nil {
@@ -52,21 +51,13 @@ func newSession(ctx context.Context, site siteDefinition, dbPath string, logger 
 		return sessionState{}, fmt.Errorf("trackers: %s cookie validation request: %w", site.Name, err)
 	}
 	defer resp.Body.Close()
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	if readErr != nil && logger != nil {
-		logger.Debugf(
-			"trackers: %s cookie validation body read failed status=%d err=%s",
-			site.Name,
-			resp.StatusCode,
-			redaction.RedactValue(readErr.Error(), nil),
-		)
+	body, err := readAZAuthResponse(site, resp)
+	if err != nil {
+		return sessionState{}, err
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 || strings.Contains(strings.ToLower(string(body)), "page not found") {
-		return sessionState{}, fmt.Errorf("trackers: %s missing valid cookies", site.Name)
-	}
-	token := extractPatternGroup(azTokenPattern, string(body))
-	if token == "" {
-		return sessionState{}, fmt.Errorf("trackers: %s csrf token not found", site.Name)
+	token, err := validateAZAuthResponse(site, resp, body)
+	if err != nil {
+		return sessionState{}, err
 	}
 	return sessionState{client: client, token: token}, nil
 }
@@ -146,6 +137,75 @@ func lookupMediaCode(ctx context.Context, site siteDefinition, state sessionStat
 		}
 	}
 	return mediaLookupResult{Missing: true}, nil
+}
+
+func addMissingMedia(ctx context.Context, site siteDefinition, state sessionState, meta api.UploadSubject, logger api.Logger) (string, error) {
+	if existing, err := lookupMediaCode(ctx, site, state, meta); err != nil {
+		return "", err
+	} else if !existing.Missing && strings.TrimSpace(existing.MediaCode) != "" {
+		return existing.MediaCode, nil
+	}
+
+	title := lookupTitle(meta)
+	if title == "" {
+		return "", fmt.Errorf("trackers: %s media title is required", site.Name)
+	}
+	values := url.Values{
+		"_token":  {state.token},
+		"type_id": {categoryID(meta)},
+		"title":   {title},
+		"imdb_id": {imdbForLookup(meta)},
+		"tmdb_id": {tmdbForLookup(meta)},
+	}
+	if tvdbID := tvdbForLookup(meta); tvdbID != "" {
+		values.Set("tvdb_id", tvdbID)
+	}
+	if logger != nil {
+		logger.Infof("trackers: %s media database add start category=%s", site.Name, categorySlug(meta))
+	}
+	resp, err := postForm(
+		ctx,
+		noRedirectClient(state.client),
+		site.BaseURL+"/add/"+categorySlug(meta),
+		values,
+		map[string]string{
+			"Referer":    site.BaseURL + "/upload",
+			"User-Agent": azCookieUserAgent,
+		},
+	)
+	if err != nil {
+		return "", fmt.Errorf("trackers: %s add media: %w", site.Name, err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusFound {
+		if existing, lookupErr := lookupMediaCode(ctx, site, state, meta); lookupErr == nil &&
+			!existing.Missing && strings.TrimSpace(existing.MediaCode) != "" {
+			return existing.MediaCode, nil
+		}
+		//logpolicy:allow HTTP status is safe response metadata; no response body is included.
+		return "", fmt.Errorf("trackers: %s add media failed status=%d", site.Name, resp.StatusCode)
+	}
+
+	for attempt := range azMediaLookupAttempts {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return "", fmt.Errorf("trackers: %s wait for added media: %w", site.Name, ctx.Err())
+			case <-time.After(azMediaLookupDelay):
+			}
+		}
+		media, lookupErr := lookupMediaCode(ctx, site, state, meta)
+		if lookupErr != nil {
+			return "", lookupErr
+		}
+		if !media.Missing && strings.TrimSpace(media.MediaCode) != "" {
+			if logger != nil {
+				logger.Infof("trackers: %s media database add completed category=%s", site.Name, categorySlug(meta))
+			}
+			return media.MediaCode, nil
+		}
+	}
+	return "", fmt.Errorf("trackers: %s added media did not become searchable", site.Name)
 }
 
 // mediaItemMatchesIDs reports whether an item matches any supplied provider ID.

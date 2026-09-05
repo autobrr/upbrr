@@ -61,7 +61,6 @@ type UseSettingsStateResult = {
   renderField: (label: string, value: ConfigValue, path: string[], meta?: FieldMeta) => JSX.Element;
   sectionFieldMeta: Record<string, Record<string, FieldMeta>>;
   updateConfigValue: (path: string[], value: ConfigValue) => void;
-  updateScreenshotConfigValue: (key: string, value: ConfigValue) => void;
   configuredImageHosts: string[];
   screenshotConfig: ConfigMap | null;
   buildSavePayload: () => string | null;
@@ -114,9 +113,10 @@ const torrentClientLinkingOptions = [
   { value: "reflink", label: "Reflink" },
   { value: "symlink", label: "Symlink" },
 ];
-const imageHostOptionLabels = new Map(
-  imageHostOptions.map((option) => [option.value, option.label]),
-);
+const imageHostOptionLabels = new Map<string, string>([
+  ...imageHostOptions.map((option) => [option.value, option.label] as const),
+  ["samaritano", "Samaritano"],
+]);
 const normalizeImageHostValue = (value: string) => value.trim().toLowerCase();
 const imageHostOptionFor = (host: string) => {
   const value = normalizeImageHostValue(host);
@@ -139,6 +139,7 @@ const imageHostKeyMap: Record<string, string[]> = {
 const conditionalImageHostEnabledKeys: Record<string, string> = {
   lostimg: "LostimgEnabled",
   reelflix: "ReelflixEnabled",
+  samaritano: "SamaritanoEnabled",
 };
 
 const stringField = (key: string, meta: Omit<FieldMeta, "key" | "type"> = {}): FieldMeta => ({
@@ -282,7 +283,12 @@ const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
     EmbyDir: { key: "EmbyDir", advanced: true },
     EmbyTVDir: { key: "EmbyTVDir", advanced: true },
   },
-  TorrentCreation: {},
+  TorrentCreation: {
+    PreferMax16: {
+      key: "PreferMax16",
+      label: "Prefer reusable torrents up to 16 MiB",
+    },
+  },
   PostUpload: {
     InjectDelay: { key: "InjectDelay", advanced: true },
     MaxConcurrentTrackers: { key: "MaxConcurrentTrackers", advanced: true },
@@ -827,10 +833,6 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     }
   };
 
-  const updateScreenshotConfigValue = (key: string, value: ConfigValue) => {
-    updateConfigValue(["ScreenshotHandling", key], value);
-  };
-
   const removeConfigKey = (path: string[], key: string) => {
     if (!configData) return;
     markSettingsChanged();
@@ -1022,12 +1024,6 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
       loadImageHostPolicyMetadata();
     }
   }, [activeTab, imageHostPolicyMetadata, loadImageHostPolicyMetadata]);
-
-  useEffect(() => {
-    if ((activeTab === "screenshots" || activeTab === "upload_images") && !configData) {
-      loadSettings();
-    }
-  }, [activeTab, configData, loadSettings]);
 
   const advancedOpen = settingsAdvanced[settingsSection] ?? false;
   const showAdvancedToggle = (() => {
@@ -2010,6 +2006,22 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
               ["ImageHosting", "ReelflixAPI"],
               sectionFieldMeta.ImageHosting.ReelflixAPI,
             )}
+            <div className="settings-switch-row">
+              <span>Samaritano enabled</span>
+              <Switch
+                aria-label="Samaritano enabled"
+                checked={Boolean(imageCfg.SamaritanoEnabled)}
+                onChange={(event) =>
+                  updateConfigValue(["ImageHosting", "SamaritanoEnabled"], event.target.checked)
+                }
+              />
+            </div>
+            {renderField(
+              "SamaritanoAPI",
+              (imageCfg.SamaritanoAPI as ConfigValue) ?? "",
+              ["ImageHosting", "SamaritanoAPI"],
+              sectionFieldMeta.ImageHosting.SamaritanoAPI,
+            )}
           </div>
         </div>
       </div>
@@ -2037,7 +2049,6 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     renderField,
     sectionFieldMeta: effectiveSectionFieldMeta,
     updateConfigValue,
-    updateScreenshotConfigValue,
     configuredImageHosts,
     screenshotConfig,
     buildSavePayload,

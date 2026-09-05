@@ -16,6 +16,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/redaction"
+	"github.com/autobrr/upbrr/internal/services/db"
 )
 
 func generateStableEncryptionSeed() (string, error) {
@@ -31,9 +32,22 @@ func (s *Server) rewrapProtectedDataForAuthChange(ctx context.Context, oldRecord
 	if s == nil || s.backend == nil || s.backend.repo == nil {
 		return errors.New("auth_rewrap: missing server/backend/repo configuration (s.backend.repo unavailable)")
 	}
+	return rewrapProtectedDataForAuthChange(ctx, s.auth, s.backend.repo, oldRecord, newRecord)
+}
+
+func rewrapProtectedDataForAuthChange(
+	ctx context.Context,
+	store *authmaterial.Store,
+	repo *db.SQLiteRepository,
+	oldRecord authRecord,
+	newRecord authRecord,
+) error {
+	if store == nil || repo == nil {
+		return errors.New("auth rewrap: missing auth store or database repository")
+	}
 
 	if oldRecord.PendingUpgrade == nil {
-		if err := s.auth.BeginPendingUpgrade(oldRecord, newRecord); err != nil {
+		if err := store.BeginPendingUpgrade(oldRecord, newRecord); err != nil {
 			return fmt.Errorf("auth rewrap: persist pending upgrade: %w", err)
 		}
 		oldRecord.PendingUpgrade = &authmaterial.PendingUpgrade{
@@ -56,10 +70,10 @@ func (s *Server) rewrapProtectedDataForAuthChange(ctx context.Context, oldRecord
 	}
 
 	if pending.Stage == authmaterial.UpgradeStagePrepared {
-		if err := rewrapCookiesForAuthChange(ctx, s.backend.repo.RawDB(), oldMaterial, newMaterial); err != nil {
+		if err := rewrapCookiesForAuthChange(ctx, repo.RawDB(), oldMaterial, newMaterial); err != nil {
 			return fmt.Errorf("web: %w", err)
 		}
-		if err := s.auth.AdvancePendingUpgrade(oldRecord.Username, authmaterial.UpgradeStageCookiesRewrapped); err != nil {
+		if err := store.AdvancePendingUpgrade(oldRecord.Username, authmaterial.UpgradeStageCookiesRewrapped); err != nil {
 			return fmt.Errorf("auth rewrap: persist cookie phase: %w", err)
 		}
 		pending.Stage = authmaterial.UpgradeStageCookiesRewrapped
@@ -67,10 +81,10 @@ func (s *Server) rewrapProtectedDataForAuthChange(ctx context.Context, oldRecord
 
 	if pending.Stage == authmaterial.UpgradeStageCookiesRewrapped {
 		sourceMaterials := []authmaterial.Material{oldMaterial, newMaterial}
-		if err := config.RewrapSecretsInDatabaseWithFallback(ctx, s.backend.repo, sourceMaterials, newMaterial); err != nil {
+		if err := config.RewrapSecretsInDatabaseWithFallback(ctx, repo, sourceMaterials, newMaterial); err != nil {
 			return fmt.Errorf("web: %w", err)
 		}
-		if err := s.auth.AdvancePendingUpgrade(oldRecord.Username, authmaterial.UpgradeStageDataRewrapped); err != nil {
+		if err := store.AdvancePendingUpgrade(oldRecord.Username, authmaterial.UpgradeStageDataRewrapped); err != nil {
 			return fmt.Errorf("auth rewrap: persist data phase: %w", err)
 		}
 		pending.Stage = authmaterial.UpgradeStageDataRewrapped

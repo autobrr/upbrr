@@ -62,8 +62,10 @@ func workflowPrivateVaultRoot(dbPath string) string {
 	return filepath.Join(filepath.Dir(dbPath), "workflow-private", hex.EncodeToString(sum[:16]))
 }
 
-func applySkipAutoTorrentDefault(input api.PrepareInput, configured bool) api.PrepareInput {
-	input.Search.Skip = input.Search.Skip || configured
+func applyMetadataDefaults(input api.PrepareInput, configured config.MetadataConfig) api.PrepareInput {
+	input.Search.Skip = input.Search.Skip || configured.SkipAutoTorrent
+	input.Policy.KeepImages = input.Policy.KeepImages || configured.KeepImages
+	input.Policy.OnlyID = input.Policy.OnlyID || configured.OnlyID
 	return input
 }
 
@@ -283,7 +285,7 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 	}
 	workflowPreparer := releaseworkflow.ReleasePreparerFunc{
 		PrepareFunc: func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
-			return preparedFacts.Prepare(ctx, applySkipAutoTorrentDefault(input, cfg.Metadata.SkipAutoTorrent))
+			return preparedFacts.Prepare(ctx, applyMetadataDefaults(input, cfg.Metadata))
 		},
 		DisplayFunc: func(ctx context.Context, ref api.ReleaseRef) (api.PreparedReleaseDisplay, error) {
 			display, displayErr := preparedFacts.ResolveDisplay(ctx, ref)

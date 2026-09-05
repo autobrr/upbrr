@@ -123,13 +123,14 @@ func (f *workflowDVDMenuFake) Capture(
 		return *f.result, nil
 	}
 	return api.DVDMenuCaptureResult{
-		Images: []api.DVDMenuCaptureImage{{ScreenshotImage: api.ScreenshotImage{
+		Images: []api.DVDMenuCaptureImage{{
 			Path:      "C:\\private\\menu.png",
 			Purpose:   api.ScreenshotPurposeMenu,
 			Width:     720,
 			Height:    480,
 			SizeBytes: 4321,
-		}, Discovery: api.DVDMenuDiscoveryReachable}},
+			Discovery: api.DVDMenuDiscoveryReachable,
+		}},
 		MaxItems: maxItems,
 		Complete: true,
 	}, nil
@@ -322,10 +323,9 @@ func TestWorkflowMediaBuilderMenuRecaptureReplacesAutomaticAndPreservesManual(t 
 	t.Parallel()
 
 	dvdMenus := &workflowDVDMenuFake{result: &api.DVDMenuCaptureResult{
-		Images: []api.DVDMenuCaptureImage{{ScreenshotImage: api.ScreenshotImage{
+		Images: []api.DVDMenuCaptureImage{{
 			Path:    "new-auto-menu.png",
-			Purpose: api.ScreenshotPurposeMenu,
-		}}},
+			Purpose: api.ScreenshotPurposeMenu}},
 		Partial: true,
 		Warnings: []api.DVDMenuCaptureWarning{{
 			Code: "partial_coverage", Message: "Synthetic partial coverage.",
@@ -373,8 +373,8 @@ func TestWorkflowMediaBuilderMenuRecaptureReplacesAutomaticAndPreservesManual(t 
 	retained := workflowMediaPrivateArtifacts{
 		Screenshots: []api.ScreenshotImage{{Path: "screen.png", Purpose: api.ScreenshotPurposeFinal}},
 		DVDMenus: []api.DVDMenuCaptureImage{
-			{ScreenshotImage: api.ScreenshotImage{Path: "manual-menu.png", Purpose: api.ScreenshotPurposeMenu}},
-			{ScreenshotImage: api.ScreenshotImage{Path: "old-auto-menu.png", Purpose: api.ScreenshotPurposeMenu}},
+			{Path: "manual-menu.png", Purpose: api.ScreenshotPurposeMenu},
+			{Path: "old-auto-menu.png", Purpose: api.ScreenshotPurposeMenu},
 		},
 		ArtifactImages: map[api.PublicResourceID]api.ScreenshotImage{
 			"screen":      {Path: "screen.png", Purpose: api.ScreenshotPurposeFinal},
@@ -743,8 +743,8 @@ func TestWorkflowMediaPrivateResourceDeletesThroughManagedServices(t *testing.T)
 	resource := workflowMediaPrivateArtifacts{
 		Screenshots: []api.ScreenshotImage{{Path: "C:\\private\\screen.png"}},
 		DVDMenus: []api.DVDMenuCaptureImage{{
-			ScreenshotImage: api.ScreenshotImage{Path: "C:\\private\\menu.png"},
-			Discovery:       api.DVDMenuDiscoveryReachable,
+			Path:      "C:\\private\\menu.png",
+			Discovery: api.DVDMenuDiscoveryReachable,
 		}},
 		screenshotService: screenshots,
 		dvdMenuService:    dvdMenus,
@@ -786,8 +786,8 @@ func TestWorkflowMediaCommitPropagatesMenuDeletionFailure(t *testing.T) {
 	}
 	resource := workflowMediaPrivateArtifacts{
 		DVDMenus: []api.DVDMenuCaptureImage{{
-			ScreenshotImage: api.ScreenshotImage{Path: menuPath},
-			Discovery:       api.DVDMenuDiscoveryReachable,
+			Path:      menuPath,
+			Discovery: api.DVDMenuDiscoveryReachable,
 		}},
 		dvdMenuService: dvdMenus,
 	}

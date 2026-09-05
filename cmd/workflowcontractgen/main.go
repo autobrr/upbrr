@@ -1135,6 +1135,7 @@ func newSchemaBuilder() *schemaBuilder {
 				"trackerInput",
 				"questionnaire",
 				"ruleAuthorization",
+				"trackerPreparation",
 				"duplicateReview",
 				"trackerApproval",
 				"uploadApproval",

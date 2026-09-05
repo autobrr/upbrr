@@ -162,7 +162,7 @@ func submitPreparedUpload(
 		}
 		tURL := torrentURL + id
 		registeredPath := trackers.PersistReconstructedRegisteredTorrent(
-			req.Logger, "RTF", state.torrentPath, artifactPath, announceURL, tURL, sourceFlag,
+			req.Logger, "RTF", state.torrentPath, artifactPath, announceURL, sourceFlag,
 		)
 		return api.UploadSummary{
 			Uploaded: 1,

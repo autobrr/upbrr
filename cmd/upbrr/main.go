@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -35,11 +36,11 @@ var (
 )
 
 func main() {
+	cobra.MousetrapHelpText = ""
 	exitCode := 0
 	if err := run(); err != nil {
 		printTerminalError(err)
-		var cliErr *cliExitError
-		if errors.As(err, &cliErr) {
+		if cliErr, ok := errors.AsType[*cliExitError](err); ok {
 			exitCode = cliErr.code
 		} else {
 			exitCode = 1
@@ -52,10 +53,13 @@ func main() {
 
 // printTerminalError writes a sanitized CLI error diagnostic to stderr.
 func printTerminalError(err error) {
-	if err == nil {
-		return
+	printCLIError(os.Stderr, err)
+}
+
+func printCLIError(output io.Writer, err error) {
+	if err != nil {
+		fmt.Fprintf(output, "error: %s\n", logging.SanitizeMessage(formatCLIError(err)))
 	}
-	fmt.Fprintf(os.Stderr, "error: %s\n", logging.SanitizeMessage(formatCLIError(err)))
 }
 
 func formatCLIError(err error) string {
@@ -69,9 +73,8 @@ func formatCLIError(err error) string {
 	return logging.SanitizeMessage(err.Error())
 }
 
-// printTerminalWarning writes a sanitized CLI warning diagnostic to stderr.
-func printTerminalWarning(warning string) {
-	fmt.Fprintf(os.Stderr, "warning: %s\n", logging.SanitizeMessage(warning))
+func printCLIWarning(output io.Writer, warning string) {
+	fmt.Fprintf(output, "warning: %s\n", logging.SanitizeMessage(warning))
 }
 
 type cliExitError struct {
@@ -125,48 +128,27 @@ type cliHistoryPurger interface {
 	DeleteAllHistoryReleases(context.Context) (int, error)
 }
 
-// run dispatches serve mode or the CLI workflow and converts parse/runtime
-// failures into stable process-exit errors for main.
 func run() error {
 	api.SetApplicationBuild(version, buildIdentifier)
+	return executeCLI(context.Background(), os.Args[1:], cliIO{
+		in:     os.Stdin,
+		out:    os.Stdout,
+		errOut: os.Stderr,
+	})
+}
 
-	if len(os.Args) > 1 && os.Args[1] == "serve" {
-		if err := runServe(os.Args[2:]); err != nil {
-			var helpErr *cliHelpError
-			if errors.As(err, &helpErr) {
-				fmt.Fprint(os.Stdout, helpErr.Usage())
-				return nil
-			}
-			return exitError(1, err)
-		}
-		return nil
-	}
-	if len(os.Args) > 1 && os.Args[1] == "api-token" {
-		if err := runAPITokenCommand(context.Background(), os.Args[2:], os.Stdout); err != nil {
-			var helpErr *cliHelpError
-			if errors.As(err, &helpErr) {
-				fmt.Fprint(os.Stdout, helpErr.Usage())
-				return nil
-			}
-			return err
-		}
-		return nil
-	}
-
-	opts, visitedFlags, paths, err := parseCLIOptions(os.Args[1:])
-	if err != nil {
-		var helpErr *cliHelpError
-		if errors.As(err, &helpErr) {
-			fmt.Fprint(os.Stdout, helpErr.Usage())
-			return nil
-		}
-		return exitError(2, err)
-	}
-
+func runUpload(
+	ctx context.Context,
+	originalArgs []string,
+	opts cliOptions,
+	visitedFlags map[string]bool,
+	paths []string,
+	streams cliIO,
+) error {
 	configFlagProvided := visitedFlags["config"]
 
 	if opts.ShowVersion {
-		fmt.Printf("upbrr %s\n", version)
+		fmt.Fprintf(streams.out, "upbrr %s\n", version)
 		return nil
 	}
 
@@ -185,24 +167,23 @@ func run() error {
 		if err != nil {
 			return exitError(1, err)
 		}
-		if err := createCLIAuthFile(os.Stdin, os.Stdout, dbPath); err != nil {
+		if err := createCLIAuthFile(streams.in, streams.out, dbPath); err != nil {
 			return exitError(1, err)
 		}
-		fmt.Printf("created %s\n", formatPathLabel(webserver.AuthFilePath(dbPath)))
+		fmt.Fprintf(streams.out, "created %s\n", formatPathLabel(webserver.AuthFilePath(dbPath)))
 		return nil
 	}
 
-	ctx := context.Background()
 	if strings.TrimSpace(opts.ExportConfigPath) != "" {
 		if err := exportConfigToYAML(ctx, opts.ConfigPath, configFlagProvided, opts.ExportConfigPath, opts.ExportConfigPlaintext); err != nil {
 			return exitError(1, err)
 		}
-		fmt.Printf("exported config to %s\n", formatPathLabel(opts.ExportConfigPath))
+		fmt.Fprintf(streams.out, "exported config to %s\n", formatPathLabel(opts.ExportConfigPath))
 		return nil
 	}
 
 	if strings.TrimSpace(opts.ImportConfigPath) != "" {
-		if err := importConfig(ctx, opts.ImportConfigPath, opts.ConfigPath, configFlagProvided); err != nil {
+		if err := importConfig(ctx, opts.ImportConfigPath, opts.ConfigPath, configFlagProvided, streams); err != nil {
 			return exitError(1, err)
 		}
 		return nil
@@ -229,19 +210,21 @@ func run() error {
 		return exitError(2, errors.New("at least one input path is required"))
 	}
 
-	cfg, dbPath, err := loadCLIConfig(resolvedConfigPath, configFlagProvided)
+	cfg, dbPath, err := loadCLIConfig(ctx, resolvedConfigPath, configFlagProvided)
 	if err != nil {
 		return exitError(1, err)
 	}
 
-	effectiveLogLevel := logging.ResolveEffectiveLevel(cfg.Logging.Level, opts.LogLevel, opts.Debug)
-	logger, err := logging.NewWithLevel(cfg.Logging, dbPath, effectiveLogLevel)
+	loggingConfig := cfg.Logging
+	loggingConfig.Level = logging.ResolveEffectiveLevel(cfg.Logging.Level, opts.LogLevel, opts.Debug)
+	logger, err := logging.NewWithConsoleLevel(loggingConfig, dbPath, opts.ConsoleLogLevel)
 	if err != nil {
 		return exitError(1, err)
 	}
+	logger.SetConsoleOutput(streams.out, streams.errOut)
 	defer func() {
 		if err := logger.Close(); err != nil {
-			printTerminalError(err)
+			printCLIError(streams.errOut, err)
 		}
 	}()
 	screens := opts.Screens
@@ -257,7 +240,7 @@ func run() error {
 	//   - phase 1 (setupCtx): core init + cleanup + delete-tmp (cliSetupTimeout)
 	//   - phase 2 (gatherCtx): queue gather (cliQueueGatherTimeout)
 	//   - phase 3 (per-disc): BDMV discovery (cliDiscDiscoveryTimeout per disc)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	ctx = withCLIUploadProgressLogger(ctx, logger)
 	// Phase 1: core init + cleanup + delete-tmp run under cliSetupTimeout.
@@ -275,7 +258,7 @@ func run() error {
 	}
 	defer func() {
 		if err := coreSvc.Close(); err != nil {
-			printTerminalError(err)
+			printCLIError(streams.errOut, err)
 		}
 	}()
 
@@ -284,7 +267,7 @@ func run() error {
 		if err != nil {
 			return exitError(1, err)
 		}
-		fmt.Printf("deleted stored database content for %d release(s)\n", deleted)
+		fmt.Fprintf(streams.out, "deleted stored database content for %d release(s)\n", deleted)
 		return nil
 	}
 
@@ -309,7 +292,7 @@ func run() error {
 		if err != nil {
 			return exitError(1, err)
 		}
-		if err := deleteCLIStoredReleases(setupCtx, coreSvc, paths); err != nil {
+		if err := deleteCLIStoredReleases(setupCtx, coreSvc, paths, streams.out); err != nil {
 			return exitError(1, err)
 		}
 	}
@@ -323,25 +306,25 @@ func run() error {
 		}
 		batch = batch.withDefaults(uploadReq)
 		queueMode := strings.TrimSpace(opts.QueueName) != ""
-		return runCLIWorkflowUploadOnly(ctx, coreSvc, batch, opts.Debug, queueMode, cfg, os.Stdin, logger)
+		return runCLIWorkflowUploadOnly(ctx, coreSvc, batch, opts.Debug, queueMode, cfg, streams, logger)
 	}
 
 	queueMode := strings.TrimSpace(opts.QueueName) != ""
 	return processCLIPreparationItems(ctx, batch, queueMode, cliItemTimeout, logger, func(itemCtx context.Context, item cliPreparationItem) error {
 		if opts.SiteCheck {
-			return runCLIWorkflowSiteCheck(itemCtx, coreSvc, opts, visitedFlags, item, screens, cfg, os.Stdin, logger)
+			return runCLIWorkflowSiteCheck(itemCtx, coreSvc, opts, visitedFlags, item, screens, cfg, streams, logger)
 		}
 		return runCLIWorkflowInteractive(
 			itemCtx,
 			coreSvc,
-			os.Args[1:],
+			originalArgs,
 			opts,
 			visitedFlags,
 			item.originalPath,
 			item.playlistInstruction,
 			screens,
 			cfg,
-			os.Stdin,
+			streams,
 			logger,
 		)
 	})
@@ -449,11 +432,11 @@ func createCLIAuthFile(stdin io.Reader, stdout io.Writer, dbPath string) error {
 	if err != nil {
 		return err
 	}
-	password, err := promptAuthPassword(stdin, reader, stdout, "Password: ")
+	password, err := promptPassword(stdin, reader, stdout, "Password: ", "create auth")
 	if err != nil {
 		return err
 	}
-	confirm, err := promptAuthPassword(stdin, reader, stdout, "Confirm password: ")
+	confirm, err := promptPassword(stdin, reader, stdout, "Confirm password: ", "create auth")
 	if err != nil {
 		return err
 	}
@@ -484,23 +467,23 @@ func promptAuthValue(reader *bufio.Reader, stdout io.Writer, label string) (stri
 	return value, nil
 }
 
-func promptAuthPassword(stdin io.Reader, reader *bufio.Reader, stdout io.Writer, label string) (string, error) {
+func promptPassword(stdin io.Reader, reader *bufio.Reader, stdout io.Writer, label string, operation string) (string, error) {
 	if _, err := fmt.Fprint(stdout, label); err != nil {
-		return "", fmt.Errorf("create auth: write password prompt: %w", err)
+		return "", fmt.Errorf("%s: write password prompt: %w", operation, err)
 	}
 	if file, ok := stdin.(*os.File); ok {
 		fd, ok := terminalFileDescriptor(file)
 		if ok && term.IsTerminal(fd) {
 			raw, err := term.ReadPassword(fd)
 			if err != nil {
-				return "", fmt.Errorf("create auth: read password: %w", err)
+				return "", fmt.Errorf("%s: read password: %w", operation, err)
 			}
 			if _, err := fmt.Fprintln(stdout); err != nil {
-				return "", fmt.Errorf("create auth: finish password prompt: %w", err)
+				return "", fmt.Errorf("%s: finish password prompt: %w", operation, err)
 			}
 			value := strings.TrimSpace(string(raw))
 			if value == "" {
-				return "", errors.New("create auth: password cannot be empty")
+				return "", fmt.Errorf("%s: password cannot be empty", operation)
 			}
 			return value, nil
 		}
@@ -508,11 +491,11 @@ func promptAuthPassword(stdin io.Reader, reader *bufio.Reader, stdout io.Writer,
 
 	line, err := reader.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
-		return "", fmt.Errorf("create auth: read password: %w", err)
+		return "", fmt.Errorf("%s: read password: %w", operation, err)
 	}
 	value := strings.TrimSpace(line)
 	if value == "" {
-		return "", errors.New("create auth: password cannot be empty")
+		return "", fmt.Errorf("%s: password cannot be empty", operation)
 	}
 	return value, nil
 }
@@ -525,11 +508,7 @@ func terminalFileDescriptor(file *os.File) (int, bool) {
 	return fd, true
 }
 
-func runServe(args []string) error {
-	opts, visitedFlags, err := parseServeOptions(args)
-	if err != nil {
-		return err
-	}
+func runServe(ctx context.Context, opts serveOptions, visitedFlags map[string]bool) error {
 	envOpts, envVisited := readServeEnv()
 	if visitedFlags["persist-listen"] && !hasServeListenOverrides(visitedFlags) {
 		return errors.New("--persist-listen requires --addr, --host, or --port")
@@ -544,7 +523,7 @@ func runServe(args []string) error {
 		return fmt.Errorf("upbrr: %w", err)
 	}
 
-	cfg, dbPath, err := loadServeConfig(resolvedConfigPath, configFlagProvided)
+	cfg, dbPath, err := loadServeConfig(ctx, resolvedConfigPath, configFlagProvided)
 	if err != nil {
 		return err
 	}
@@ -575,6 +554,7 @@ func runServe(args []string) error {
 		return fmt.Errorf("upbrr: API token configuration: %w", err)
 	}
 
+	//nolint:contextcheck // Constructor has no context variant; Run and RunAfterListen receive ctx below.
 	server, err := webserver.New(webserver.Options{
 		Config:            cfg,
 		CLIConfig:         webCfg,
@@ -587,7 +567,7 @@ func runServe(args []string) error {
 	defer server.Close()
 
 	if visitedFlags["persist-listen"] || visitedFlags["persist-web-config"] {
-		return wrapUpbrrError(server.RunAfterListen(context.Background(), func() error {
+		return wrapUpbrrError(server.RunAfterListen(ctx, func() error {
 			if err := webserver.SaveCLIConfig(dbPath, persistWebCfg); err != nil {
 				return fmt.Errorf("save web config: %w", err)
 			}
@@ -595,7 +575,7 @@ func runServe(args []string) error {
 		}))
 	}
 
-	return wrapUpbrrError(server.Run(context.Background()))
+	return wrapUpbrrError(server.Run(ctx))
 }
 
 // hasServeListenOverrides reports whether serve bind flags were provided.
@@ -906,8 +886,8 @@ func parseServePortValue(value string) (int, error) {
 
 // loadCLIConfig bootstraps CLI config and validates both the env-applied
 // pre-persist candidate and the returned runtime config.
-func loadCLIConfig(configPath string, configProvided bool) (config.Config, string, error) {
-	cfg, dbPath, err := configstore.BootstrapWithValidator(context.Background(), configPath, configProvided, true, func(cfg *config.Config) error {
+func loadCLIConfig(ctx context.Context, configPath string, configProvided bool) (config.Config, string, error) {
+	cfg, dbPath, err := configstore.BootstrapWithValidator(ctx, configPath, configProvided, true, func(cfg *config.Config) error {
 		return cfg.Validate()
 	})
 	if err != nil {
@@ -924,8 +904,8 @@ func loadCLIConfig(configPath string, configProvided bool) (config.Config, strin
 // to start even on a fresh install with no config yet. A
 // provided --config may seed or merge database config, but invalid env-applied
 // input is not persisted over stored settings.
-func loadServeConfig(configPath string, configProvided bool) (config.Config, string, error) {
-	return wrapUpbrrResult2(configstore.Bootstrap(context.Background(), configPath, configProvided, configProvided))
+func loadServeConfig(ctx context.Context, configPath string, configProvided bool) (config.Config, string, error) {
+	return wrapUpbrrResult2(configstore.Bootstrap(ctx, configPath, configProvided, configProvided))
 }
 
 func exportConfigToYAML(ctx context.Context, configPath string, configProvided bool, outputPath string, plaintext bool) error {
@@ -1131,12 +1111,12 @@ func purgeCLIStoredReleases(ctx context.Context, coreSvc cliHistoryPurger) (int,
 	return count, nil
 }
 
-func deleteCLIStoredReleases(ctx context.Context, coreSvc cliHistoryReleaseDeleter, paths []string) error {
+func deleteCLIStoredReleases(ctx context.Context, coreSvc cliHistoryReleaseDeleter, paths []string, output io.Writer) error {
 	for _, sourcePath := range paths {
 		if err := coreSvc.DeleteHistoryRelease(ctx, sourcePath); err != nil {
 			return fmt.Errorf("delete stored data for %q: %w", sourcePath, err)
 		}
-		fmt.Printf("deleted stored database content for %s\n", formatPathLabel(sourcePath))
+		fmt.Fprintf(output, "deleted stored database content for %s\n", formatPathLabel(sourcePath))
 	}
 	return nil
 }
@@ -1231,14 +1211,14 @@ func processCLIPreparationItems(
 	})
 }
 
-func importConfig(ctx context.Context, importPath, configPath string, configProvided bool) error {
+func importConfig(ctx context.Context, importPath, configPath string, configProvided bool, streams cliIO) error {
 	cfg, warnings, err := importer.ImportFromFile(importPath)
 	if err != nil {
 		return fmt.Errorf("upbrr: %w", err)
 	}
 
 	for _, w := range warnings {
-		printTerminalWarning(w)
+		printCLIWarning(streams.errOut, w)
 	}
 
 	dbPath, err := resolveExportDBPath(configPath, configProvided)
@@ -1257,9 +1237,9 @@ func importConfig(ctx context.Context, importPath, configPath string, configProv
 	}
 
 	if len(warnings) > 0 {
-		fmt.Printf("imported config from %s (%d warnings)\n", formatPathLabel(importPath), len(warnings))
+		fmt.Fprintf(streams.out, "imported config from %s (%d warnings)\n", formatPathLabel(importPath), len(warnings))
 	} else {
-		fmt.Printf("imported config from %s\n", formatPathLabel(importPath))
+		fmt.Fprintf(streams.out, "imported config from %s\n", formatPathLabel(importPath))
 	}
 	return nil
 }

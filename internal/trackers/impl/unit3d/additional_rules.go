@@ -6,6 +6,7 @@ package unit3d
 import (
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -26,36 +27,7 @@ var ruleResolutionOrder = map[string]int{
 // ValidationRuleSubject projects the shared validation contract into the
 // narrower helpers used by existing Unit3D site policies.
 func ValidationRuleSubject(meta api.TrackerValidationSubject) api.RuleSubject {
-	return api.RuleSubject{
-		SourcePath:         meta.SourcePath,
-		VideoPath:          meta.VideoPath,
-		FileList:           append([]string(nil), meta.FileList...),
-		DiscType:           meta.DiscType,
-		Scene:              meta.Scene,
-		SceneRenamed:       meta.SceneRenamed,
-		SceneRenamedReason: meta.SceneRenamedReason,
-		PersonalRelease:    meta.PersonalRelease,
-		Release:            meta.Release,
-		ReleaseName:        meta.ReleaseName,
-		ReleaseNameNoTag:   meta.ReleaseNameNoTag,
-		Tag:                meta.Tag,
-		Identity:           meta.Identity,
-		ProviderMetadata:   meta.ProviderMetadata,
-		AudioLanguages:     append([]string(nil), meta.AudioLanguages...),
-		SubtitleLanguages:  append([]string(nil), meta.SubtitleLanguages...),
-		TVPack:             meta.TVPack,
-		Type:               meta.Type,
-		Source:             meta.Source,
-		Container:          meta.Container,
-		BitDepth:           meta.BitDepth,
-		VideoCodec:         meta.VideoCodec,
-		VideoEncode:        meta.VideoEncode,
-		HDR:                meta.HDR,
-		Region:             meta.Region,
-		WebDV:              meta.WebDV,
-		Anime:              meta.Anime,
-		Assessments:        meta.Assessments,
-	}
+	return trackers.RuleSubjectFromValidation(meta)
 }
 
 // ResolutionBelow reports whether value ranks below minimum in the Unit3D resolution order.
@@ -89,35 +61,12 @@ func DolbyVisionOnly(meta api.RuleSubject) bool {
 	return strings.Contains(hdr, "DV") && !strings.Contains(hdr, "HDR")
 }
 
-// RuleGenres returns normalized current-source release and provider genres.
-func RuleGenres(meta api.RuleSubject) []string {
-	values := splitRuleList(meta.Release.Genre)
-	if ruleMetadataMatchesSource(meta) && meta.ProviderMetadata.TMDB != nil {
-		values = append(values, splitRuleList(meta.ProviderMetadata.TMDB.Genres)...)
-	}
-	if ruleMetadataMatchesSource(meta) && meta.ProviderMetadata.IMDB != nil {
-		values = append(values, splitRuleList(meta.ProviderMetadata.IMDB.Genres)...)
-	}
-	return NormalizeRuleValues(values)
-}
-
 // RuleKeywords returns normalized current-source TMDB keywords.
 func RuleKeywords(meta api.RuleSubject) []string {
 	if !ruleMetadataMatchesSource(meta) || meta.ProviderMetadata.TMDB == nil {
 		return nil
 	}
 	return NormalizeRuleValues(splitRuleList(meta.ProviderMetadata.TMDB.Keywords))
-}
-
-// AdultContent reports whether current genres or keywords contain an adult marker.
-func AdultContent(meta api.RuleSubject) bool {
-	for _, token := range append(RuleGenres(meta), RuleKeywords(meta)...) {
-		switch token {
-		case "adult", "porn", "pornography", "xxx", "erotic":
-			return true
-		}
-	}
-	return false
 }
 
 // Anime reports whether current metadata classifies the release as anime.
@@ -130,7 +79,7 @@ func Anime(meta api.RuleSubject) bool {
 
 // Animation reports whether current metadata contains the animation genre.
 func Animation(meta api.RuleSubject) bool {
-	return ContainsRuleValue(RuleGenres(meta), []string{"animation"})
+	return ContainsRuleValue(trackers.RuleGenres(meta), []string{"animation"})
 }
 
 // NormalizeRuleValues trims, lowercases, and deduplicates values while preserving order.
