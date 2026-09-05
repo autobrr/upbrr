@@ -4,6 +4,7 @@
 package lst
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
@@ -333,11 +334,228 @@ func TestLSTDuplicatePolicySlots(t *testing.T) {
 	}
 }
 
+func TestLSTHybridRemuxHDRSlotReview(t *testing.T) {
+	t.Parallel()
+
+	for _, targetFormat := range []api.HDRFormat{api.HDRFormatHDR10, api.HDRFormatHDR10Plus} {
+		candidateFormat := api.HDRFormatHDR10Plus
+		if targetFormat == api.HDRFormatHDR10Plus {
+			candidateFormat = api.HDRFormatHDR10
+		}
+		for _, test := range []struct {
+			name                string
+			targetType          string
+			candidateType       string
+			targetResolution    string
+			candidateResolution string
+			candidateHDRStatus  api.HDREvidenceStatus
+			candidateEdition    string
+			candidateRegion     string
+			candidateThreeD     string
+			want                api.DupeRelation
+		}{
+			{
+				name:                "remux requires hybrid slot review",
+				targetType:          "REMUX",
+				candidateType:       "REMUX",
+				targetResolution:    "2160p",
+				candidateResolution: "2160p",
+				want:                api.DupeRelationManualReview,
+			},
+			{
+				name:                "webdl retains separate HDR slots",
+				targetType:          "WEBDL",
+				candidateType:       "WEBDL",
+				targetResolution:    "2160p",
+				candidateResolution: "2160p",
+				want:                api.DupeRelationCoexists,
+			},
+			{
+				name:                "encode retains separate HDR slots",
+				targetType:          "ENCODE",
+				candidateType:       "ENCODE",
+				targetResolution:    "2160p",
+				candidateResolution: "2160p",
+				want:                api.DupeRelationCoexists,
+			},
+			{
+				name:                "remux and encode coexist",
+				targetType:          "REMUX",
+				candidateType:       "ENCODE",
+				targetResolution:    "2160p",
+				candidateResolution: "2160p",
+				want:                api.DupeRelationCoexists,
+			},
+			{
+				name:                "encode and remux coexist",
+				targetType:          "ENCODE",
+				candidateType:       "REMUX",
+				targetResolution:    "2160p",
+				candidateResolution: "2160p",
+				want:                api.DupeRelationCoexists,
+			},
+			{
+				name:                "lower resolution remux retains HDR slots",
+				targetType:          "REMUX",
+				candidateType:       "REMUX",
+				targetResolution:    "1080p",
+				candidateResolution: "1080p",
+				want:                api.DupeRelationCoexists,
+			},
+			{
+				name:                "different remux resolutions coexist",
+				targetType:          "REMUX",
+				candidateType:       "REMUX",
+				targetResolution:    "2160p",
+				candidateResolution: "1080p",
+				want:                api.DupeRelationCoexists,
+			},
+			{
+				name:                "different cuts coexist",
+				targetType:          "REMUX",
+				candidateType:       "REMUX",
+				targetResolution:    "2160p",
+				candidateResolution: "2160p",
+				candidateEdition:    "Extended",
+				want:                api.DupeRelationCoexists,
+			},
+			{
+				name:                "different regions coexist",
+				targetType:          "REMUX",
+				candidateType:       "REMUX",
+				targetResolution:    "2160p",
+				candidateResolution: "2160p",
+				candidateRegion:     "B",
+				want:                api.DupeRelationCoexists,
+			},
+			{
+				name:                "different 3D presentations coexist",
+				targetType:          "REMUX",
+				candidateType:       "REMUX",
+				targetResolution:    "2160p",
+				candidateResolution: "2160p",
+				candidateThreeD:     "3D",
+				want:                api.DupeRelationCoexists,
+			},
+			{
+				name:             "missing remux resolution needs evidence",
+				targetType:       "REMUX",
+				candidateType:    "REMUX",
+				targetResolution: "2160p",
+				want:             api.DupeRelationManualReview,
+			},
+			{
+				name:                "partial HDR needs evidence",
+				targetType:          "REMUX",
+				candidateType:       "REMUX",
+				targetResolution:    "2160p",
+				candidateResolution: "2160p",
+				candidateHDRStatus:  api.HDREvidencePartial,
+				want:                api.DupeRelationManualReview,
+			},
+			{
+				name:                "contradictory HDR needs review",
+				targetType:          "REMUX",
+				candidateType:       "REMUX",
+				targetResolution:    "2160p",
+				candidateResolution: "2160p",
+				candidateHDRStatus:  api.HDREvidenceContradictory,
+				want:                api.DupeRelationManualReview,
+			},
+		} {
+			t.Run(string(targetFormat)+"/"+test.name, func(t *testing.T) {
+				t.Parallel()
+				target := lstTarget("Example.Release.2026-TARGET", test.targetType, test.targetResolution,
+					"AMZN", "H.265", api.HDRFormatDolbyVision, targetFormat)
+				target.Edition = "Theatrical"
+				target.Region = "A"
+				target.ThreeD = "2D"
+				candidate := lstCandidateWithProvider("Example.Release.2026-OTHER", test.candidateType,
+					test.candidateResolution, "AMZN", api.HDRFormatDolbyVision, candidateFormat)
+				candidate.Edition = test.candidateEdition
+				candidate.Region = test.candidateRegion
+				candidate.ThreeD = test.candidateThreeD
+				if test.candidateHDRStatus != "" {
+					candidate.HDR.Status = test.candidateHDRStatus
+				}
+				result := dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, *Profile().DupePolicy,
+					dupe.SearchEvidence{
+						Complete:  true,
+						Pages:     1,
+						WorkScope: dupe.WorkScopeProviderID,
+					}).Candidates[0]
+				if result.Relation != test.want {
+					t.Fatalf("relation = %q, want %q; reasons=%#v", result.Relation, test.want, result.Reasons)
+				}
+				wantReason := "lst_hybrid_remux_hdr_slot_review"
+				if test.candidateHDRStatus == api.HDREvidenceContradictory {
+					wantReason = "lst_hdr_trump_requires_master_review"
+				}
+				hasReviewReason := slices.ContainsFunc(result.Reasons, func(reason api.DupeReason) bool {
+					return reason.Code == wantReason
+				})
+				if hasReviewReason != (test.want == api.DupeRelationManualReview) {
+					t.Fatalf("unexpected slot review reason: %#v", result.Reasons)
+				}
+			})
+		}
+	}
+}
+
+func TestLSTHybridRemuxPreservesSeasonPackContainment(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name       string
+		targetPack bool
+		want       api.DupeRelation
+		wantBlocks bool
+	}{
+		{
+			name:       "existing pack blocks episode",
+			targetPack: false,
+			want:       api.DupeRelationExistingPreferred,
+			wantBlocks: true,
+		},
+		{
+			name:       "proposed pack discards episode",
+			targetPack: true,
+			want:       api.DupeRelationCoexists,
+			wantBlocks: false,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			target := lstTarget("Example.Release.2026-TARGET", "REMUX", "2160p", "", "H.265",
+				api.HDRFormatDolbyVision, api.HDRFormatHDR10)
+			candidate := lstCandidate("Example.Release.2026-OTHER", "REMUX", "2160p",
+				api.HDRFormatDolbyVision, api.HDRFormatHDR10Plus)
+			target.Season, candidate.Season = 1, 1
+			target.Pack, candidate.Pack = test.targetPack, !test.targetPack
+			if test.targetPack {
+				candidate.Episode = 1
+			} else {
+				target.Episode = 1
+			}
+			result := dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, *Profile().DupePolicy,
+				dupe.SearchEvidence{
+					Complete:  true,
+					Pages:     1,
+					WorkScope: dupe.WorkScopeProviderID,
+				})
+			if result.Candidates[0].Relation != test.want || result.Blocks != test.wantBlocks || result.RequiresAction {
+				t.Fatalf("relation=%q blocks=%t action=%t; want relation=%q blocks=%t action=false",
+					result.Candidates[0].Relation, result.Blocks, result.RequiresAction, test.want, test.wantBlocks)
+			}
+		})
+	}
+}
+
 func TestLSTDuplicatePolicyMetadata(t *testing.T) {
 	t.Parallel()
 
 	policy := Profile().DupePolicy
-	if policy == nil || policy.ID != "lst/duplicate/v4" || policy.EvidenceID != lstDupeEvidenceID {
+	if policy == nil || policy.ID != "lst/duplicate/v5" || policy.EvidenceID != lstDupeEvidenceID {
 		t.Fatalf("LST duplicate policy = %#v", policy)
 	}
 }
