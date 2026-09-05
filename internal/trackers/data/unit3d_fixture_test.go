@@ -105,20 +105,20 @@ func TestUnit3DSearchEntriesConflictingHDRRequiresReview(t *testing.T) {
 
 	explicitSDR := ""
 	entries, dropped := buildUnit3DSearchEntries([]unit3dSearchItem{{Attributes: unit3dSearchAttrs{
-		Name:       "Example.Release.2026.2160p.AMZN.WEB-DL.H.265-OTHER",
+		Name:       "Example.Release.2026.2160p.WEB-DL.H.265-OTHER",
 		Type:       "WEB-DL",
 		Resolution: "2160p",
 		MediaInfo:  "Video\nFormat : HEVC\nHDR format : HDR10",
 		HDRDV:      &explicitSDR,
-		Provider:   "AMZN",
+		Provider:   "PROVIDER",
 	}}}, 0, false)
 	if dropped != 0 || len(entries) != 1 {
 		t.Fatalf("entries=%d dropped=%d", len(entries), dropped)
 	}
 	target := api.TrackerDuplicateTarget{
-		Names:       []string{"Example.Release.2026.2160p.AMZN.WEB-DL.H.265-TARGET"},
+		Names:       []string{"Example.Release.2026.2160p.WEB-DL.H.265-TARGET"},
 		Type:        "WEBDL",
-		Provider:    "AMZN",
+		Provider:    "PROVIDER",
 		Resolution:  "2160p",
 		VideoEncode: "H.265",
 		HDR:         mediafacts.HDRFromMediaInfoText("Video\nFormat : HEVC\nHDR format : HDR10"),

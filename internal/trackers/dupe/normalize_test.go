@@ -97,6 +97,7 @@ func TestNormalizeProviderFromAutobrrRLSCollection(t *testing.T) {
 func TestCanonicalProviderAliases(t *testing.T) {
 	t.Parallel()
 
+	// Real codes are required to verify the production alias mappings.
 	for _, test := range []struct {
 		value string
 		want  string
@@ -108,7 +109,7 @@ func TestCanonicalProviderAliases(t *testing.T) {
 		{value: "Hotstar", want: "htsr"},
 		{value: "HSTR", want: "htsr"},
 		{value: "HTSR", want: "htsr"},
-		{value: "AMZN", want: "amzn"},
+		{value: "PROVIDER", want: "provider"},
 	} {
 		if got := canonicalProvider(test.value); got != test.want {
 			t.Errorf("canonicalProvider(%q) = %q, want %q", test.value, got, test.want)
@@ -119,6 +120,7 @@ func TestCanonicalProviderAliases(t *testing.T) {
 func TestNormalizeEquivalentStructuredAndTitleProviderAliases(t *testing.T) {
 	t.Parallel()
 
+	// This production alias must agree across title parsing and API evidence.
 	facts := normalizeCandidateFacts(NormalizeCandidate(api.DupeEntry{
 		Name:     "Example.Release.2026.1080p.HTSR.WEB-DL.H.264-GRP",
 		Type:     "WEBDL",

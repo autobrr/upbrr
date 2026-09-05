@@ -45,6 +45,7 @@ func TestLSTDuplicatePolicySlots(t *testing.T) {
 			want: api.DupeRelationSameSlot,
 		},
 		{
+			// These alias cases require the real codes used by the title parser and API.
 			//nolint:misspell // ADN is LST's exact provider code.
 			name: "ADN API provider matches AND target",
 			target: lstTarget(
@@ -74,11 +75,11 @@ func TestLSTDuplicatePolicySlots(t *testing.T) {
 			name: "distinct structured webdl providers coexist",
 			target: lstTarget(
 				"Example.Release.2026.1080p.WEB-DL.H.264.SDR-TARGET",
-				"WEBDL", "1080p", "AND", "H.264", api.HDRFormatSDR,
+				"WEBDL", "1080p", "PROVIDER_A", "H.264", api.HDRFormatSDR,
 			),
 			candidate: lstCandidateWithProvider(
 				"Example.Release.2026.1080p.WEB-DL.H.264.SDR-OTHER",
-				"WEBDL", "1080p", "DSNP", api.HDRFormatSDR,
+				"WEBDL", "1080p", "PROVIDER_B", api.HDRFormatSDR,
 			),
 			want: api.DupeRelationCoexists,
 		},
@@ -133,36 +134,36 @@ func TestLSTDuplicatePolicySlots(t *testing.T) {
 		{
 			name: "1080p webdl AV1 codec slot",
 			target: lstTarget(
-				"Example.Release.2026.1080p.AMZN.WEB-DL.H.265.SDR-TARGET",
-				"WEBDL", "1080p", "AMZN", "H.265", api.HDRFormatSDR,
+				"Example.Release.2026.1080p.WEB-DL.H.265.SDR-TARGET",
+				"WEBDL", "1080p", "PROVIDER", "H.265", api.HDRFormatSDR,
 			),
-			candidate: lstCandidate(
-				"Example.Release.2026.1080p.AMZN.WEB-DL.AV1.SDR-OTHER",
-				"WEBDL", "1080p", api.HDRFormatSDR,
+			candidate: lstCandidateWithProvider(
+				"Example.Release.2026.1080p.WEB-DL.AV1.SDR-OTHER",
+				"WEBDL", "1080p", "PROVIDER", api.HDRFormatSDR,
 			),
 			want: api.DupeRelationCoexists,
 		},
 		{
 			name: "1440p webdl has no AV1 codec slot",
 			target: lstTarget(
-				"Example.Release.2026.1440p.AMZN.WEB-DL.H.265.SDR-TARGET",
-				"WEBDL", "1440p", "AMZN", "H.265", api.HDRFormatSDR,
+				"Example.Release.2026.1440p.WEB-DL.H.265.SDR-TARGET",
+				"WEBDL", "1440p", "PROVIDER", "H.265", api.HDRFormatSDR,
 			),
-			candidate: lstCandidate(
-				"Example.Release.2026.1440p.AMZN.WEB-DL.AV1.SDR-OTHER",
-				"WEBDL", "1440p", api.HDRFormatSDR,
+			candidate: lstCandidateWithProvider(
+				"Example.Release.2026.1440p.WEB-DL.AV1.SDR-OTHER",
+				"WEBDL", "1440p", "PROVIDER", api.HDRFormatSDR,
 			),
 			want: api.DupeRelationSameSlot,
 		},
 		{
 			name: "HDR webdl has no H264 codec slot",
 			target: lstTarget(
-				"Example.Release.2026.1080p.AMZN.WEB-DL.HDR.H.265-TARGET",
-				"WEBDL", "1080p", "AMZN", "H.265", api.HDRFormatHDR10,
+				"Example.Release.2026.1080p.WEB-DL.HDR.H.265-TARGET",
+				"WEBDL", "1080p", "PROVIDER", "H.265", api.HDRFormatHDR10,
 			),
-			candidate: lstCandidate(
-				"Example.Release.2026.1080p.AMZN.WEB-DL.HDR.H.264-OTHER",
-				"WEBDL", "1080p", api.HDRFormatHDR10,
+			candidate: lstCandidateWithProvider(
+				"Example.Release.2026.1080p.WEB-DL.HDR.H.264-OTHER",
+				"WEBDL", "1080p", "PROVIDER", api.HDRFormatHDR10,
 			),
 			want: api.DupeRelationSameSlot,
 		},
@@ -466,12 +467,12 @@ func TestLSTHybridRemuxHDRSlotReview(t *testing.T) {
 			t.Run(string(targetFormat)+"/"+test.name, func(t *testing.T) {
 				t.Parallel()
 				target := lstTarget("Example.Release.2026-TARGET", test.targetType, test.targetResolution,
-					"AMZN", "H.265", api.HDRFormatDolbyVision, targetFormat)
+					"PROVIDER", "H.265", api.HDRFormatDolbyVision, targetFormat)
 				target.Edition = "Theatrical"
 				target.Region = "A"
 				target.ThreeD = "2D"
 				candidate := lstCandidateWithProvider("Example.Release.2026-OTHER", test.candidateType,
-					test.candidateResolution, "AMZN", api.HDRFormatDolbyVision, candidateFormat)
+					test.candidateResolution, "PROVIDER", api.HDRFormatDolbyVision, candidateFormat)
 				candidate.Edition = test.candidateEdition
 				candidate.Region = test.candidateRegion
 				candidate.ThreeD = test.candidateThreeD
