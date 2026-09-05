@@ -240,10 +240,13 @@ try {
     Assert-Check ((ConvertTo-Json $script:Results -Depth 40) -cnotmatch 'PRIVATE_SENTINEL') 'duplicate_search_report_leaked_private_fields'
   } finally { Set-Item Function:Save-Feedback -Value $originalFeedback }
   $script:AcceptedPolls = 0
+  $script:PacingSleeps = 0
+  function Start-Sleep([int]$Milliseconds) { if ($Milliseconds -eq 250) { $script:PacingSleeps++ } }
   $script:BaseURL = 'http://127.0.0.1:7480'; $script:CSRF = 'synthetic-csrf'
   function Invoke-WebRequest($Uri, $Method, $ContentType, $Body, $WebSession, $Headers, $TimeoutSec, [switch]$SkipHttpErrorCheck) {
     Assert-Check ($Headers.Origin -ceq $script:BaseURL -and $Headers.'X-CSRF-Token' -ceq 'synthetic-csrf') 'application_request_origin_or_csrf_missing'
     $script:AcceptedPolls++
+    Assert-Check ($script:PacingSleeps -eq $script:AcceptedPolls) 'application_request_not_paced'
     if ($Uri.EndsWith('/UploadReleaseWorkflowImages')) {
       return @{ StatusCode = 202; Content = '{"workflow":{"id":"synthetic-workflow"},"operation":{"status":"running"}}' }
     }
@@ -254,6 +257,27 @@ try {
     $accepted = Invoke-LiveAPI 'UploadReleaseWorkflowImages' @{} -ExpectedStatus 202 -Poll
     $completed = Wait-Workflow $accepted (Join-Path $validationDir 'accepted.private.json')
     Assert-Check ($script:AcceptedPolls -eq 2 -and $completed.operation.status -ceq 'completed') 'accepted_image_upload_not_awaited'
+  } finally { Remove-Item Function:Invoke-WebRequest; Remove-Item Function:Start-Sleep }
+  function Invoke-WebRequest { $script:FailedResponse }
+  try {
+    foreach ($status in @(401, 403, 429, 500)) {
+      $script:RemoteStop = $false
+      $script:FailedResponse = @{ StatusCode = $status; Content = '{"error":"rate limit exceeded","private":"PRIVATE_SENTINEL"}' }
+      $failed = $false
+      try { Invoke-LiveAPI 'GetApplicationInfo' -Poll | Out-Null } catch { $failed = $_.Exception.Message -ceq 'api_request_failed' }
+      Assert-Check $failed 'unexpected_http_status_not_rejected'
+      Assert-Check ($script:RemoteStop -eq ($status -eq 429 -or $status -ge 500)) 'http_failure_stop_policy_changed'
+    }
+    foreach ($content in @('{"error":"PRIVATE_SENTINEL"}', '{"error":["rate limit exceeded","PRIVATE_SENTINEL"]}', ('PRIVATE_SENTINEL' * 300), 'not JSON')) {
+      $script:FailedResponse = @{ StatusCode = 403; Content = $content }
+      try { Invoke-LiveAPI 'GetApplicationInfo' -Poll | Out-Null } catch { }
+    }
+    $diagnosticPath = Join-Path $script:RunDir 'api-errors.private.jsonl'
+    $diagnostics = @(Get-Content -LiteralPath $diagnosticPath | ForEach-Object { $_ | ConvertFrom-Json -AsHashtable })
+    Assert-Check ($diagnostics.Count -eq 8 -and $diagnostics[2].status -eq 429 -and $diagnostics[2].expectedStatus -eq 200 -and $diagnostics[2].method -ceq 'GetApplicationInfo' -and $diagnostics[2].errorCode -ceq 'rate_limit_exceeded' -and @($diagnostics[4..7] | Where-Object errorCode -CNE 'unclassified').Count -eq 0) 'http_failure_diagnostic_lost'
+    Assert-Check ((Get-Content -LiteralPath $diagnosticPath -Raw) -cnotmatch 'PRIVATE_SENTINEL') 'http_failure_diagnostic_leaked_response'
+    Invoke-LiveAPI 'UploadReleaseWorkflow' -ExpectedStatus 403 -Poll | Out-Null
+    Assert-Check (@(Get-Content -LiteralPath $diagnosticPath).Count -eq 8) 'expected_http_status_reported_as_failure'
   } finally { Remove-Item Function:Invoke-WebRequest }
   $originalStart = ${function:Start-OwnedProcess}
   $originalStop = ${function:Stop-OwnedProcess}

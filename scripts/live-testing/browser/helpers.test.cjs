@@ -1,6 +1,24 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { isLostimgImageURL, compareMediaOrder, screenshotLifecyclePlan, recaptureScreenshotProbe } = require('./helpers.cjs');
+const { createRequestPacer, isLostimgImageURL, compareMediaOrder, screenshotLifecyclePlan, recaptureScreenshotProbe } = require('./helpers.cjs');
+
+test('concurrent page and direct API requests share serial pacing instead of bursting', async t => {
+  const timers = [];
+  t.mock.method(global, 'setTimeout', (callback, delay) => { timers.push({ callback, delay }); });
+  const pace = createRequestPacer();
+  const dispatched = [];
+  const requests = ['page', 'api', 'page'].map(source => pace().then(() => dispatched.push(source)));
+  await Promise.resolve();
+  for (let index = 0; index < 3; index++) {
+    assert.equal(timers.length, index + 1);
+    assert.equal(timers[index].delay, 250);
+    assert.equal(dispatched.length, index);
+    timers[index].callback();
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  await Promise.all(requests);
+  assert.deepEqual(dispatched, ['page', 'api', 'page']);
+});
 
 test('accept production Lostimg image URLs and reject unrelated origins and schemes', () => {
   for (const value of ['https://lostimg.cc/a.png', 'https://i.lostimg.cc/b.png']) assert.equal(isLostimgImageURL(value), true);

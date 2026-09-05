@@ -202,9 +202,28 @@ function Invoke-LiveAPI([string]$Method, $Body = @{}, [switch]$Poll, [int]$Expec
     $script:Run.requests = $script:RequestCount
     Write-PrivateJson (Join-Path $script:RunDir 'run.json') $script:Run
   }
+  # Match browser pacing: at most four requests/second stays below the server's 300/minute limit.
+  Start-Sleep -Milliseconds 250
   $response = Invoke-WebRequest -Uri "$script:BaseURL/api/app/$Method" -Method Post -ContentType 'application/json' -Body (ConvertTo-Json -InputObject $Body -Depth 100 -Compress) -WebSession $script:Session -Headers @{ Origin = $script:BaseURL; 'X-CSRF-Token' = $script:CSRF } -TimeoutSec 60 -SkipHttpErrorCheck
   if ($response.StatusCode -ne $ExpectedStatus) {
     if ($response.StatusCode -eq 429 -or $response.StatusCode -ge 500) { $script:RemoteStop = $true }
+    # Keep only fixed local API errors; response bodies may contain private data.
+    $errorCode = 'unclassified'
+    try {
+      if ($response.Content -is [string] -and $response.Content.Length -le 4096) {
+        $errorMessage = ($response.Content | ConvertFrom-Json -AsHashtable -ErrorAction Stop).error
+        if ($errorMessage -is [string]) {
+          $errorCode = switch -CaseSensitive ($errorMessage) {
+            'rate limit exceeded' { 'rate_limit_exceeded' }
+            'authentication required' { 'authentication_required' }
+            'csrf validation failed' { 'csrf_validation_failed' }
+            default { 'unclassified' }
+          }
+        }
+      }
+    } catch { }
+    $diagnostic = @{ method = $(if ($Method -cmatch '^[A-Za-z]{1,80}$') { $Method } else { 'unknown' }); status = [int]$response.StatusCode; expectedStatus = $ExpectedStatus; errorCode = $errorCode }
+    [IO.File]::AppendAllText((Join-Path $script:RunDir 'api-errors.private.jsonl'), (ConvertTo-Json $diagnostic -Compress) + "`n")
     throw 'api_request_failed'
   }
   if ($ExpectedStatus -in @(200, 202)) { $response.Content | ConvertFrom-Json -AsHashtable }

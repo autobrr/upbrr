@@ -1,3 +1,12 @@
+// Share one queue between page traffic and direct API requests (server limit: 300/minute).
+function createRequestPacer() {
+  let turn = Promise.resolve();
+  return () => {
+    turn = turn.then(() => new Promise(resolve => setTimeout(resolve, 250)));
+    return turn;
+  };
+}
+
 function isLostimgImageURL(value) {
   try {
     const url = new URL(value);
@@ -38,4 +47,4 @@ async function recaptureScreenshotProbe(plan, capture, artifacts, remove) {
   return { status: await capture(plan.selections, false), deletedID: probe.id };
 }
 
-module.exports = { isLostimgImageURL, compareMediaOrder, screenshotLifecyclePlan, recaptureScreenshotProbe };
+module.exports = { createRequestPacer, isLostimgImageURL, compareMediaOrder, screenshotLifecyclePlan, recaptureScreenshotProbe };

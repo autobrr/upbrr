@@ -56,6 +56,13 @@ HTTP requests. Cases run sequentially. A network/rate-limit signal stops further
 runner remote work; there are no automatic host retries. Build/tool output and
 all browser artifacts remain private.
 
+Runner API calls and browser requests to the local API are paced at no more than
+four requests per second, below the production server's 300-per-minute limit.
+The browser shares pacing between page traffic and direct API/media requests.
+Unexpected API statuses still stop the request without retrying; the private
+`api-errors.private.jsonl` records the method, actual/expected status, and an
+allowlisted local error code, excluding response bodies and credentials.
+
 ## Private corpus and feedback
 
 The default corpus is

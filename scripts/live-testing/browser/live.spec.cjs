@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { randomUUID, createHash } = require('node:crypto');
-const { isLostimgImageURL, compareMediaOrder, screenshotLifecyclePlan, recaptureScreenshotProbe } = require('./helpers.cjs');
+const { createRequestPacer, isLostimgImageURL, compareMediaOrder, screenshotLifecyclePlan, recaptureScreenshotProbe } = require('./helpers.cjs');
 const { test, expect } = require('../../../webui/node_modules/@playwright/test');
 
 test('owned embedded live runtime, controls, local images, and selection persistence', async ({ browser }) => {
@@ -21,8 +21,14 @@ test('owned embedded live runtime, controls, local images, and selection persist
   expect(processState.startTicks).toBe(handoff.process.startTicks);
   expect(processState.owners).toEqual([handoff.process.pid]);
   const context = await browser.newContext({ baseURL: handoff.baseURL });
+  const paceRequest = createRequestPacer();
+  await context.route(`${handoff.baseURL}/api/**`, async route => {
+    await paceRequest();
+    await route.continue();
+  });
   await context.addCookies(handoff.cookies);
   const page = await context.newPage();
+  await paceRequest();
   const authResponse = await context.request.get('/api/auth/status');
   expect(authResponse.ok()).toBe(true);
   const auth = await authResponse.json();
@@ -34,6 +40,7 @@ test('owned embedded live runtime, controls, local images, and selection persist
     if (requests >= handoff.remainingRequests) throw new Error('browser_request_budget_exhausted');
     requests++;
     fs.writeFileSync(requestReceipt, JSON.stringify({ requests }));
+    await paceRequest();
     const response = await context.request.post(`/api/app/${method}`, { data: body, headers: { Origin: handoff.baseURL, 'X-CSRF-Token': auth.csrfToken } });
     expect(response.ok(), 'live_api_request_failed').toBe(true);
     return response.json();
@@ -104,6 +111,7 @@ test('owned embedded live runtime, controls, local images, and selection persist
       for (const [index, artifact] of local.entries()) {
         const params = new URLSearchParams({ workflowId: current.workflow.id, mediaId: current.media.id, mediaRevision: String(current.media.revision), artifactId: artifact.id });
         const resource = `/api/app/release-workflow-media?${params}`;
+        await paceRequest();
         const response = await context.request.get(resource);
         expect(response.ok(), 'local_image_unavailable').toBe(true);
         const bytes = await response.body();
