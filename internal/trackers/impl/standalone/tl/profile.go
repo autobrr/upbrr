@@ -56,7 +56,10 @@ func Profile() standalone.Profile {
 				return authcontract.Requirements(
 					"form_upload",
 					false,
-					[]trackers.AuthRequirement{trackers.AuthRequirementStoredCookie},
+					[]trackers.AuthRequirement{
+						trackers.AuthRequirementStoredCookie,
+						trackers.AuthRequirementPasskey,
+					},
 				)
 			},
 		},

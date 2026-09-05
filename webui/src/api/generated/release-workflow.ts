@@ -749,6 +749,7 @@ export type NamingFacts = Readonly<{
   HDR: readonly string[];
   Languages: readonly string[];
   Month: number;
+  NamePresentation: ReleaseNamePresentation;
   NameWithoutTag: string;
   Other: readonly string[];
   Personal: boolean;
@@ -1009,6 +1010,14 @@ export type ReleaseNameOverrides = Readonly<{
   Tag?: string | null;
   Type?: string | null;
   UseSeasonEpisode?: boolean | null;
+}>;
+
+export type ReleaseNamePresentation = Readonly<{
+  OmitAlternateTitle: boolean;
+  OmitSeasonEpisode: boolean;
+  OmitYear: boolean;
+  UseDailyDate: boolean;
+  Version: string;
 }>;
 
 export type ReleaseNameVariant = Readonly<{

@@ -39,7 +39,7 @@ func TestNBLEvidencePolicyPassViolationAndMissingEvidence(t *testing.T) {
 	)
 }
 
-func TestNBLRejectsEpisodeFolderAndScreenshots(t *testing.T) {
+func TestNBLRejectsEpisodeFolder(t *testing.T) {
 	t.Parallel()
 
 	subject := nblPassingSubject()
@@ -51,17 +51,28 @@ func TestNBLRejectsEpisodeFolderAndScreenshots(t *testing.T) {
 		api.RuleDispositionStrict,
 		api.MetadataEvidenceStatusComplete,
 	)
+}
 
-	subject = nblPassingSubject()
-	subject.AssetFacts.Screenshots.Ready = true
-	subject.AssetFacts.Screenshots.Count = 1
-	assertNBLFailure(
-		t,
-		evaluateNBLEvidence(t, subject),
-		"nbl_screenshots",
-		api.RuleDispositionStrict,
-		api.MetadataEvidenceStatusComplete,
-	)
+func TestNBLIgnoresScreenshotEvidence(t *testing.T) {
+	t.Parallel()
+
+	for _, evidence := range []api.AssetEvidence{
+		{},
+		{Status: api.MetadataEvidenceStatusPartial},
+		{Status: api.MetadataEvidenceStatusComplete},
+		{
+			Status: api.MetadataEvidenceStatusComplete,
+			Ready:  true,
+			Count:  4,
+		},
+	} {
+		subject := nblPassingSubject()
+		subject.AssetFacts.Screenshots = evidence
+		subject.AssetFacts.HostedScreenshots = evidence
+		if failures := evaluateNBLEvidence(t, subject); len(failures) != 0 {
+			t.Errorf("screenshot evidence %+v affected NBL validation: %+v", evidence, failures)
+		}
+	}
 }
 
 func TestNBLDoesNotApplyMediaOnlyPackageRuleToDiscs(t *testing.T) {
@@ -81,7 +92,7 @@ func TestNBLDoesNotApplyMediaOnlyPackageRuleToDiscs(t *testing.T) {
 func TestNBLValidationPolicyVersion(t *testing.T) {
 	t.Parallel()
 
-	if got := Profile().ValidationPolicy.ID; got != "standalone-nbl-policy-v2" {
+	if got := Profile().ValidationPolicy.ID; got != "standalone-nbl-policy-v3" {
 		t.Fatalf("validation policy ID = %q", got)
 	}
 }
@@ -112,7 +123,6 @@ func nblPassingSubject() api.TrackerValidationSubject {
 				Ready:  true,
 				Count:  1,
 			},
-			Screenshots: api.AssetEvidence{Status: api.MetadataEvidenceStatusComplete},
 		},
 	}
 }

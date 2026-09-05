@@ -514,6 +514,120 @@ func TestAuthStatusMasksBrowseRootUntilAuthenticated(t *testing.T) {
 	}
 }
 
+func TestBrowsePolicyCanOnlyCompleteInitialSetup(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "state", "db.sqlite")
+	server := newAuthTestServer(t, dbPath)
+	if err := server.auth.Bootstrap("admin", "very-secure-password"); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+	current := session{Username: "admin", CSRFToken: "synthetic-csrf"}
+	firstRoot := t.TempDir()
+
+	mixedBody, err := json.Marshal(map[string]any{"browseRoot": firstRoot, "allowUnrestrictedBrowse": true})
+	if err != nil {
+		t.Fatalf("marshal mixed browse policy: %v", err)
+	}
+	mixedReq := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost,
+		"/api/auth/browse-policy",
+		strings.NewReader(string(mixedBody)),
+	)
+	mixedRecorder := httptest.NewRecorder()
+	server.handleBrowsePolicy(mixedRecorder, mixedReq, current)
+	if mixedRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("mixed initial browse policy returned %d, want 400: %s", mixedRecorder.Code, mixedRecorder.Body.String())
+	}
+
+	body, err := json.Marshal(map[string]any{"browseRoot": firstRoot, "allowUnrestrictedBrowse": false})
+	if err != nil {
+		t.Fatalf("marshal initial browse policy: %v", err)
+	}
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/browse-policy", strings.NewReader(string(body)))
+	recorder := httptest.NewRecorder()
+	server.handleBrowsePolicy(recorder, req, current)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("initial browse policy returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"canInitializeBrowsePolicy":false`) {
+		t.Fatalf("initial browse policy response did not close setup: %s", recorder.Body.String())
+	}
+
+	record, err := server.auth.Load()
+	if err != nil {
+		t.Fatalf("load initial browse policy: %v", err)
+	}
+	if !sameFilesystemPath(record.BrowseRoot, firstRoot) || record.AllowUnrestrictedBrowse {
+		t.Fatalf("initial browse policy was not stored")
+	}
+
+	secondRoot := t.TempDir()
+	body, err = json.Marshal(map[string]any{"browseRoot": secondRoot, "allowUnrestrictedBrowse": false})
+	if err != nil {
+		t.Fatalf("marshal replacement browse policy: %v", err)
+	}
+	req = httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/browse-policy", strings.NewReader(string(body)))
+	recorder = httptest.NewRecorder()
+	server.handleBrowsePolicy(recorder, req, current)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("replacement browse policy returned %d, want 409: %s", recorder.Code, recorder.Body.String())
+	}
+	record, err = server.auth.Load()
+	if err != nil {
+		t.Fatalf("load rejected replacement: %v", err)
+	}
+	if !sameFilesystemPath(record.BrowseRoot, firstRoot) {
+		t.Fatalf("WebUI replaced an existing browse policy")
+	}
+}
+
+func TestBrowsePolicyCanOnlyInitializeUnrestrictedAccessOnce(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "state", "db.sqlite")
+	server := newAuthTestServer(t, dbPath)
+	if err := server.auth.Bootstrap("admin", "very-secure-password"); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+	current := session{Username: "admin", CSRFToken: "synthetic-csrf"}
+
+	body, err := json.Marshal(map[string]any{"browseRoot": "", "allowUnrestrictedBrowse": true})
+	if err != nil {
+		t.Fatalf("marshal unrestricted browse policy: %v", err)
+	}
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/browse-policy", strings.NewReader(string(body)))
+	recorder := httptest.NewRecorder()
+	server.handleBrowsePolicy(recorder, req, current)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("initial unrestricted browse policy returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+
+	record, err := server.auth.Load()
+	if err != nil {
+		t.Fatalf("load unrestricted browse policy: %v", err)
+	}
+	if record.BrowseRoot != "" || !record.AllowUnrestrictedBrowse {
+		t.Fatal("unrestricted browse policy was not stored")
+	}
+
+	replacementRoot := t.TempDir()
+	body, err = json.Marshal(map[string]any{"browseRoot": replacementRoot, "allowUnrestrictedBrowse": false})
+	if err != nil {
+		t.Fatalf("marshal replacement browse policy: %v", err)
+	}
+	req = httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/auth/browse-policy", strings.NewReader(string(body)))
+	recorder = httptest.NewRecorder()
+	server.handleBrowsePolicy(recorder, req, current)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("replacement browse policy returned %d, want 409: %s", recorder.Code, recorder.Body.String())
+	}
+	record, err = server.auth.Load()
+	if err != nil {
+		t.Fatalf("load rejected replacement: %v", err)
+	}
+	if record.BrowseRoot != "" || !record.AllowUnrestrictedBrowse {
+		t.Fatal("WebUI replaced an unrestricted browse policy")
+	}
+}
+
 func TestDevelopmentNoAuthStatusBypassesMissingAuthOnLoopback(t *testing.T) {
 	server := &Server{
 		developmentNoAuth: true,

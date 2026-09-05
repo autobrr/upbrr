@@ -248,7 +248,7 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		}
 		s.logger.Infof("torrent: tracker policy validation tracker=%s state=completed decision=accepted count=%d", policy.name, trackerCount)
 	}
-	if err := setCreatedBy(info.Path, torrentmeta.MkbrrUploadCreatedBy); err != nil {
+	if err := setUploadMetadata(info.Path); err != nil {
 		emitTorrentProgress(ctx, meta, "failed", "Torrent metadata update failed")
 		return api.TorrentResult{}, err
 	}
@@ -263,12 +263,13 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 	}, nil
 }
 
-func setCreatedBy(path string, createdBy string) error {
+func setUploadMetadata(path string) error {
 	torrentMeta, err := metainfo.LoadFromFile(path)
 	if err != nil {
 		return fmt.Errorf("torrent: load created torrent metadata: %w", err)
 	}
-	torrentMeta.CreatedBy = createdBy
+	torrentMeta.CreatedBy = torrentmeta.MkbrrUploadCreatedBy
+	torrentMeta.Comment = torrentmeta.UploadComment
 	torrentMeta.Announce = ""
 	torrentMeta.AnnounceList = nil
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0o600)
@@ -865,7 +866,7 @@ func expectedTorrentFiles(meta api.TorrentSubject) ([]sourceContentFile, bool, e
 	info, err := os.Stat(source)
 	if err == nil && !info.IsDir() {
 		return []sourceContentFile{{
-			contentFile: contentFile{path: filepath.Base(source), length: info.Size()},
+			path: filepath.Base(source), length: info.Size(),
 		}}, true, nil
 	}
 	if err != nil {
@@ -888,7 +889,7 @@ func expectedTorrentFiles(meta api.TorrentSubject) ([]sourceContentFile, bool, e
 			return nil, false, fmt.Errorf("torrent: stat wanted file %q: %w", wanted[0], err)
 		}
 		return []sourceContentFile{{
-			contentFile: contentFile{path: filepath.Base(wanted[0]), length: info.Size()},
+			path: filepath.Base(wanted[0]), length: info.Size(),
 		}}, true, nil
 	}
 	expected := make([]sourceContentFile, 0, len(wanted))
@@ -906,7 +907,7 @@ func expectedTorrentFiles(meta api.TorrentSubject) ([]sourceContentFile, bool, e
 			return nil, false, fmt.Errorf("torrent: stat wanted file %q: %w", file, err)
 		}
 		expected = append(expected, sourceContentFile{
-			contentFile: contentFile{path: filepath.ToSlash(rel), length: info.Size()},
+			path: filepath.ToSlash(rel), length: info.Size(),
 		})
 	}
 	return expected, true, nil
@@ -965,7 +966,7 @@ func diskContentFiles(root string) ([]sourceContentFile, error) {
 	}
 	if !info.IsDir() {
 		return []sourceContentFile{{
-			contentFile: contentFile{path: filepath.Base(root), length: info.Size()},
+			path: filepath.Base(root), length: info.Size(),
 		}}, nil
 	}
 	paths := make([]sourceContentFile, 0)
@@ -1006,7 +1007,7 @@ func diskContentFiles(root string) ([]sourceContentFile, error) {
 			return nil
 		}
 		paths = append(paths, sourceContentFile{
-			contentFile: contentFile{path: filepath.ToSlash(rel), length: info.Size()},
+			path: filepath.ToSlash(rel), length: info.Size(),
 		})
 		return nil
 	})

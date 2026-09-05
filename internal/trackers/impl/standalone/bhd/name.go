@@ -94,16 +94,20 @@ func applyBHDMovieTitlePolicy(name string, meta api.UploadSubject) string {
 func bhdMovieTitles(meta api.UploadSubject) (string, string, int) {
 	title := strings.TrimSpace(meta.Release.Title)
 	original := trimBHDAKAPrefix(meta.Release.Alt)
+	omitAlternateTitle := meta.NamePresentation.Version == api.ReleaseNamePresentationVersionV1 && meta.NamePresentation.OmitAlternateTitle
+	if omitAlternateTitle {
+		original = ""
+	}
 	year := meta.Release.Year
 	switch {
 	case meta.ProviderMetadata.TMDB != nil && strings.TrimSpace(meta.ProviderMetadata.TMDB.Title) != "":
 		title = strings.TrimSpace(meta.ProviderMetadata.TMDB.Title)
-		if providerOriginal := trimBHDAKAPrefix(meta.ProviderMetadata.TMDB.OriginalTitle); providerOriginal != "" {
+		if providerOriginal := trimBHDAKAPrefix(meta.ProviderMetadata.TMDB.OriginalTitle); providerOriginal != "" && !omitAlternateTitle {
 			original = providerOriginal
 		}
 	case meta.ProviderMetadata.IMDB != nil && strings.TrimSpace(meta.ProviderMetadata.IMDB.Title) != "":
 		title = strings.TrimSpace(meta.ProviderMetadata.IMDB.Title)
-		if providerOriginal := trimBHDAKAPrefix(meta.ProviderMetadata.IMDB.AKA); providerOriginal != "" {
+		if providerOriginal := trimBHDAKAPrefix(meta.ProviderMetadata.IMDB.AKA); providerOriginal != "" && !omitAlternateTitle {
 			original = providerOriginal
 		}
 	}
@@ -131,6 +135,9 @@ func applyBHDTVTitlePolicy(name string, meta api.UploadSubject) string {
 	original := trimBHDAKAPrefix(tvdb.Name)
 	if original == "" {
 		original = trimBHDAKAPrefix(meta.Release.Alt)
+	}
+	if meta.NamePresentation.Version == api.ReleaseNamePresentationVersionV1 && meta.NamePresentation.OmitAlternateTitle {
+		original = ""
 	}
 	tailStart := findBHDTVTailStart(name, meta)
 	if title == "" || tailStart < 0 {

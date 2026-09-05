@@ -9,6 +9,7 @@ description: Commands, interaction modes, aliases, and upload preparation flags 
 upbrr [options] <input path>...
 upbrr serve [options]
 upbrr api-token <list|revoke> [options]
+upbrr auth <password|browse-roots> [options]
 ```
 
 On Windows, examples use `upbrr.exe`. Put options before input paths.
@@ -19,6 +20,7 @@ Use executable help as the exact reference for your installed version:
 .\upbrr.exe --help
 .\upbrr.exe serve --help
 .\upbrr.exe api-token list --help
+.\upbrr.exe auth password --help
 ```
 
 ## Common operations
@@ -219,6 +221,34 @@ upbrr serve [options]
 | `--dev-no-auth`            | Disable Web auth for local development on loopback only. |
 
 See [Web server and reverse proxy](../configuration/web-server.md) for precedence and proxy examples.
+
+## `auth`
+
+Password changes and browse-policy changes after initial setup are available only through the local binary. The first authenticated Web UI setup may establish the initial browse policy. Stop `upbrr serve` before running either command, then restart it when the command completes.
+
+After validation, each command creates a unique `web-auth.json.backup-*` beside the active auth file and prints its exact path. The path is still printed if a later update step fails. Backups contain sensitive authentication and encryption material; protect them like `web-auth.json` and remove obsolete copies manually.
+
+Change the Web UI password interactively:
+
+```powershell
+.\upbrr.exe auth password
+```
+
+The command prompts for the current password, the replacement, and confirmation without accepting password flags. Retained browser sessions are revoked immediately after the current password is verified. If a later update step fails, sign in again with the existing password before retrying.
+
+Replace all browse roots by passing each existing directory as a separate argument:
+
+```powershell
+.\upbrr.exe auth browse-roots "D:\Media" "E:\Downloads"
+```
+
+To remove the roots and explicitly allow unrestricted host browsing:
+
+```powershell
+.\upbrr.exe auth browse-roots --allow-unrestricted
+```
+
+Both subcommands accept `--config` when the active database is selected through a non-default config file. For containers, run the command in the same environment as upbrr and use paths visible inside the container.
 
 ## `api-token`
 

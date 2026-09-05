@@ -37,9 +37,9 @@ For Linux or macOS, run the equivalent executable:
 
 ## 2. Secure browser access
 
-The first-run screen creates the administrator account. Choose a unique password.
+The first-run screens create the administrator account and initial browse policy. Choose a unique password, then set the narrowest folders containing your releases, such as `D:\releases` and `E:\Downloads`.
 
-Then set one or more browse roots. These roots limit which host folders the browser can select. Use the narrowest folders containing your releases, such as `D:\Media` and `E:\Downloads`. Unrestricted host browsing is available but broadens access.
+These roots limit which host folders the browser can select. Initial setup can explicitly allow unrestricted host browsing, but this broadens access. Later password or browse-policy changes require the local `upbrr auth` commands while the server is stopped.
 
 :::caution Network exposure
 

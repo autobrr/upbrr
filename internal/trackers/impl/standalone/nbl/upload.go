@@ -98,7 +98,7 @@ func submitPreparedUpload(
 	torrentURL, torrentID := extractUploadLinkAndID(payload)
 
 	registeredPath := trackers.PersistReconstructedRegisteredTorrent(
-		logger, "NBL", state.torrentPath, artifactPath, announceURL, torrentURL, "NBL",
+		logger, "NBL", state.torrentPath, artifactPath, announceURL, "NBL",
 	)
 
 	return api.UploadSummary{

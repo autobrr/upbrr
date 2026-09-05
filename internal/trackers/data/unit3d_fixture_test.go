@@ -10,6 +10,9 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/mediafacts"
+	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -46,6 +49,97 @@ func TestUnit3DSearchEntriesDeriveHDRFromMediaInfo(t *testing.T) {
 	if entries[3].HDR.DolbyVisionProfile != "8.1" ||
 		!slices.Equal(entries[3].HDR.Formats, []api.HDRFormat{api.HDRFormatDolbyVision, api.HDRFormatHDR10}) {
 		t.Fatalf("Dolby Vision MediaInfo = %#v", entries[3].HDR)
+	}
+}
+
+func TestUnit3DSearchEntriesPreferPresentHDRDVAndPreserveProvider(t *testing.T) {
+	t.Parallel()
+
+	var payload unit3dSearchResponse
+	if err := json.Unmarshal([]byte(`{
+		"data": [
+			{"attributes": {"name": "Example.Release.2026.2160p.PROVIDER.WEB-DL-GRP", "hdr_dv": "DV P8 HDR", "provider": " PROVIDER ", "media_info": "Video\nFormat : HEVC\nHDR format : Dolby Vision\nHDR format string : Dolby Vision, Profile 8.1, HDR10 compatible"}},
+			{"attributes": {"name": "Example.Release.2026.1080p.WEB-DL-GRP", "hdr_dv": "", "media_info": "Video\nHDR format : HDR10+"}},
+			{"attributes": {"name": "Example.Release.2026.1080p.WEB-DL-GRP", "media_info": "Video\nHDR format : HDR10+"}},
+			{"attributes": {"name": "Example.Release.2026.2160p.WEB-DL-GRP", "hdr_dv": "DV P9 HDR", "media_info": "Video\nHDR format : HDR10"}},
+			{"attributes": {"name": "Example.Release.2026.2160p.WEB-DL-GRP", "hdr_dv": "HDR10"}},
+			{"attributes": {"name": "Example.Release.2026.2160p.WEB-DL-GRP", "hdr_dv": "DV P7 HDR", "media_info": "Video\nFormat : HEVC\nHDR format : Dolby Vision\nHDR format string : Dolby Vision, Profile 8.1, HDR10 compatible"}}
+		]
+	}`), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	entries, dropped := buildUnit3DSearchEntries(payload.Data, 0, false)
+	if dropped != 0 || len(entries) != 6 {
+		t.Fatalf("entries=%d dropped=%d", len(entries), dropped)
+	}
+	if entries[0].Provider != "PROVIDER" || entries[0].HDR.Status != api.HDREvidenceComplete ||
+		entries[0].HDR.Origin != api.HDREvidenceTrackerAPI || entries[0].HDR.DolbyVisionProfile != "8" ||
+		!slices.Equal(entries[0].HDR.Formats, []api.HDRFormat{api.HDRFormatDolbyVision, api.HDRFormatHDR10}) {
+		t.Fatalf("structured entry = %#v", entries[0])
+	}
+	if entries[1].HDR.Status != api.HDREvidenceContradictory || entries[1].HDR.Origin != api.HDREvidenceTrackerAPI ||
+		!slices.Equal(entries[1].HDR.SourceFields, []string{"hdr_dv", "media_info"}) || len(entries[1].HDR.Contradictions) != 1 ||
+		!slices.Equal(entries[1].HDR.Formats, []api.HDRFormat{api.HDRFormatSDR}) {
+		t.Fatalf("conflicting explicit SDR = %#v", entries[1].HDR)
+	}
+	if entries[2].HDR.Origin != api.HDREvidenceMediaInfo ||
+		!slices.Equal(entries[2].HDR.Formats, []api.HDRFormat{api.HDRFormatHDR10Plus}) {
+		t.Fatalf("MediaInfo fallback = %#v", entries[2].HDR)
+	}
+	if entries[3].HDR.Status != api.HDREvidencePartial || entries[3].HDR.Origin != api.HDREvidenceTrackerAPI ||
+		len(entries[3].HDR.Formats) != 0 {
+		t.Fatalf("unknown structured HDR = %#v", entries[3].HDR)
+	}
+	if entries[4].HDR.Status != api.HDREvidenceComplete || entries[4].HDR.Origin != api.HDREvidenceTrackerAPI ||
+		!slices.Equal(entries[4].HDR.Formats, []api.HDRFormat{api.HDRFormatHDR10}) {
+		t.Fatalf("structured HDR without MediaInfo = %#v", entries[4].HDR)
+	}
+	if entries[5].HDR.Status != api.HDREvidenceContradictory || entries[5].HDR.DolbyVisionProfile != "7" ||
+		!slices.Equal(entries[5].HDR.Formats, []api.HDRFormat{api.HDRFormatDolbyVision, api.HDRFormatHDR10}) {
+		t.Fatalf("conflicting Dolby Vision profile = %#v", entries[5].HDR)
+	}
+}
+
+func TestUnit3DSearchEntriesConflictingHDRRequiresReview(t *testing.T) {
+	t.Parallel()
+
+	explicitSDR := ""
+	entries, dropped := buildUnit3DSearchEntries([]unit3dSearchItem{{Attributes: unit3dSearchAttrs{
+		Name:       "Example.Release.2026.2160p.WEB-DL.H.265-OTHER",
+		Type:       "WEB-DL",
+		Resolution: "2160p",
+		MediaInfo:  "Video\nFormat : HEVC\nHDR format : HDR10",
+		HDRDV:      &explicitSDR,
+		Provider:   "PROVIDER",
+	}}}, 0, false)
+	if dropped != 0 || len(entries) != 1 {
+		t.Fatalf("entries=%d dropped=%d", len(entries), dropped)
+	}
+	target := api.TrackerDuplicateTarget{
+		Names:       []string{"Example.Release.2026.2160p.WEB-DL.H.265-TARGET"},
+		Type:        "WEBDL",
+		Provider:    "PROVIDER",
+		Resolution:  "2160p",
+		VideoEncode: "H.265",
+		HDR:         mediafacts.HDRFromMediaInfoText("Video\nFormat : HEVC\nHDR format : HDR10"),
+	}
+	policy := trackers.DupePolicy{
+		ID:                                    "test/unit3d-hdr-conflict",
+		SlotDimensions:                        []trackers.DupeDimension{trackers.DupeDimensionMediaKind, trackers.DupeDimensionResolution, trackers.DupeDimensionHDR},
+		SlotContradictionsRequireManualReview: true,
+	}
+	result := dupe.Evaluate(
+		target,
+		[]dupe.TrackerCandidate{dupe.NormalizeCandidate(entries[0], "TEST")},
+		policy,
+		dupe.SearchEvidence{
+			Complete:  true,
+			Pages:     1,
+			WorkScope: dupe.WorkScopeProviderID,
+		},
+	)
+	if got := result.Candidates[0]; got.Relation != api.DupeRelationManualReview || !result.RequiresAction {
+		t.Fatalf("conflicting HDR evaluation = %#v", result)
 	}
 }
 

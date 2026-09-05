@@ -295,7 +295,7 @@ func (d *Definition) prepareDescription(ctx context.Context, req trackers.Prepar
 		req.Logger.Debugf("trackers: %s building unit3d description", d.profile.Name)
 	}
 	var err error
-	assets := trackers.DescriptionAssets{}
+	var assets trackers.DescriptionAssets
 	if req.Assets != nil {
 		assets = *req.Assets
 	} else {

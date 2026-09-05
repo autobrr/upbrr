@@ -8,6 +8,7 @@ import (
 	"path" //nolint:depguard // Normalizes slash-style metadata paths, not local filesystem paths.
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 )
 
@@ -122,8 +123,8 @@ func evalExistingPrefix(value string) (string, bool) {
 	for {
 		resolved, ok := resolveExistingPath(current)
 		if ok {
-			for idx := len(missing) - 1; idx >= 0; idx-- {
-				resolved = filepath.Join(resolved, missing[idx])
+			for _, m := range slices.Backward(missing) {
+				resolved = filepath.Join(resolved, m)
 			}
 			return filepath.Clean(resolved), true
 		}

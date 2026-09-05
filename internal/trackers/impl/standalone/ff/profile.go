@@ -24,7 +24,8 @@ func Profile() standalone.Profile {
 		NewDuplicateAdapter: newDuplicateAdapter,
 		ValidationPolicy:    validationPolicy(),
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{
-			Source: sourceFlag,
+			Source:          sourceFlag,
+			RequireAnnounce: true,
 		},
 		AudioPolicy: &trackers.AudioPolicy{
 			AllowBloat: true,

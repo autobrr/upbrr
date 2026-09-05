@@ -50,7 +50,7 @@ func prepareTrackerUploadTorrentWithRegistry(
 	if err != nil {
 		return api.UploadSubject{}, fmt.Errorf("trackers: prepare %s upload torrent path: %w", normalizeTrackerName(tracker), err)
 	}
-	if err := WritePersonalizedTorrent(basePath, artifactPath, announce, "", source); err != nil {
+	if err := WritePersonalizedTorrent(basePath, artifactPath, announce, source); err != nil {
 		return api.UploadSubject{}, fmt.Errorf("trackers: prepare %s upload torrent artifact: %w", normalizeTrackerName(tracker), err)
 	}
 	meta.TorrentPath = artifactPath
@@ -230,9 +230,9 @@ func WriteUploadTorrent(sourcePath string, outputPath string) error {
 }
 
 // WritePersonalizedTorrent strips inherited tracker fields, applies the supplied
-// announce, comment, and source values plus the canonical creator, and atomically
-// writes outputPath with mode 0600.
-func WritePersonalizedTorrent(sourcePath string, outputPath string, announceURL string, comment string, source string) error {
+// announce and source values plus canonical upload metadata, and atomically writes
+// outputPath with mode 0600.
+func WritePersonalizedTorrent(sourcePath string, outputPath string, announceURL string, source string) error {
 	torrentMeta, err := metainfo.LoadFromFile(sourcePath)
 	if err != nil {
 		return fmt.Errorf("trackers: load torrent artifact: %w", err)
@@ -247,11 +247,6 @@ func WritePersonalizedTorrent(sourcePath string, outputPath string, announceURL 
 		torrentMeta.Announce = trimmedAnnounce
 		torrentMeta.AnnounceList = metainfo.AnnounceList{{trimmedAnnounce}}
 	}
-	torrentMeta.Comment = torrentmeta.UploadCommentFallback
-	if trimmedComment := strings.TrimSpace(comment); trimmedComment != "" {
-		torrentMeta.Comment = trimmedComment
-	}
-	torrentMeta.CreatedBy = torrentmeta.UploadCreatedBy
 
 	return writeTorrentMeta(*torrentMeta, outputPath, "torrent artifact")
 }
@@ -271,12 +266,13 @@ func rewriteTorrentInfoSource(torrentMeta *metainfo.MetaInfo, source string, con
 }
 
 func cleanTorrentMeta(torrentMeta *metainfo.MetaInfo) {
+	createdBy := torrentmeta.CanonicalCreatedBy(torrentMeta.CreatedBy)
 	torrentMeta.Announce = ""
 	torrentMeta.AnnounceList = nil
 	torrentMeta.Nodes = nil
 	torrentMeta.UrlList = nil
-	torrentMeta.Comment = torrentmeta.UploadCommentFallback
-	torrentMeta.CreatedBy = torrentmeta.UploadCreatedBy
+	torrentMeta.Comment = torrentmeta.UploadComment
+	torrentMeta.CreatedBy = createdBy
 }
 
 func writeTorrentMeta(torrentMeta metainfo.MetaInfo, outputPath string, context string) error {

@@ -5,6 +5,7 @@ package azfamily
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -42,7 +45,7 @@ func TestBuildUploadDryRunBlockedWhenMediaMissing(t *testing.T) {
 	}))
 	defer server.Close()
 	parsedServerURL, _ := url.Parse(server.URL)
-	writeAZCookieFile(t, tmp, "AZ", parsedServerURL.Hostname())
+	writeAZCookieFile(t, tmp, parsedServerURL.Hostname())
 
 	plan, failure := testDefinitionAt(server.URL).Prepare(context.Background(), trackers.PreparationInput{
 		Intent:  trackers.PreparationIntentDryRun,
@@ -50,13 +53,13 @@ func TestBuildUploadDryRunBlockedWhenMediaMissing(t *testing.T) {
 		Meta: api.UploadSubject{
 			ReleaseName: "Example.Release.2026.1080p-GRP",
 			Identity:    api.ExternalIdentity{Category: "MOVIE", IMDBID: 123},
-			Release:     api.ReleaseInfo{
-Resolution: "1080p",
- Source: "WEB-DL",
- Type: "WEBDL",
-},
-			Source:      "WEB-DL",
-			Type:        "WEBDL",
+			Release: api.ReleaseInfo{
+				Resolution: "1080p",
+				Source:     "WEB-DL",
+				Type:       "WEBDL",
+			},
+			Source: "WEB-DL",
+			Type:   "WEBDL",
 		},
 		TrackerConfig: config.TrackerConfig{},
 		Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}}),
@@ -71,7 +74,7 @@ Resolution: "1080p",
 	}
 }
 
-func TestUploadSuccess(t *testing.T) {
+func TestUploadMissingMediaDecisionAndScreenshotProtocol(t *testing.T) {
 	tmp := t.TempDir()
 	torrentPath := filepath.Join(tmp, "release.torrent")
 	mediaInfoPath := filepath.Join(tmp, "MEDIAINFO.txt")
@@ -82,24 +85,77 @@ func TestUploadSuccess(t *testing.T) {
 		t.Fatalf("write mediainfo: %v", err)
 	}
 
-	imageBytes := []byte{0x89, 'P', 'N', 'G'}
+	imageBytes := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+	menuPath := "/img/menu.png"
 	imagePaths := []string{"/img/1.png", "/img/2.png", "/img/3.png"}
-	imageIndex := 0
+	var mediaAdded atomic.Bool
+	var addCount atomic.Int32
+	var taskCount atomic.Int32
+	var imageIndex atomic.Int32
+	var uploadMu sync.Mutex
+	uploadedNames := make([]string, 0, 4)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/torrents":
 			_, _ = io.WriteString(w, `<meta name="_token" content="secret-token">`)
 		case r.URL.Path == "/ajax/movies/1":
-			_, _ = io.WriteString(w, `{"data":[{"id":"77","imdb":"tt0000123","tmdb":"0"}]}`)
+			if mediaAdded.Load() {
+				_, _ = io.WriteString(w, `{"data":[{"id":"77","imdb":"tt0000123"}]}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		case r.URL.Path == "/add/movie":
+			if err := r.ParseForm(); err != nil {
+				t.Errorf("parse add media form: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			for field, want := range map[string]string{
+				"_token":  "secret-token",
+				"type_id": "1",
+				"title":   "Example Release",
+				"imdb_id": "tt0000123",
+				"tmdb_id": "",
+			} {
+				if got := r.Form.Get(field); got != want {
+					t.Errorf("add media field %s = %q, want %q", field, got, want)
+				}
+			}
+			addCount.Add(1)
+			mediaAdded.Store(true)
+			w.Header().Set("Location", "/movies/77")
+			w.WriteHeader(http.StatusFound)
 		case strings.Contains(r.URL.Path, "/upload/") && strings.Contains(r.Header.Get("Content-Type"), "multipart/form-data"):
+			taskCount.Add(1)
 			http.Redirect(w, r, "/upload/movie/task/999", http.StatusFound)
 		case strings.Contains(r.URL.Path, "/upload/movie/task/999"):
 			http.Redirect(w, r, "/torrent/123", http.StatusFound)
 		case r.URL.Path == "/requests":
 			_, _ = io.WriteString(w, "<html></html>")
 		case r.URL.Path == "/ajax/image/upload":
-			imageIndex++
-			_, _ = io.WriteString(w, `{"success":true,"imageId":"img`+strconv.Itoa(imageIndex)+`"}`)
+			if got := r.Header.Get("User-Agent"); got != azImageUserAgent {
+				t.Errorf("image upload user agent = %q", got)
+			}
+			if err := r.ParseMultipartForm(1 << 20); err != nil {
+				t.Errorf("parse image upload: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			file, header, err := r.FormFile("qqfile")
+			if err != nil {
+				t.Errorf("image upload file: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			_ = file.Close()
+			if got := header.Header.Get("Content-Type"); got != "image/png" {
+				t.Errorf("image upload content type = %q", got)
+			}
+			uploadMu.Lock()
+			uploadedNames = append(uploadedNames, r.FormValue("qqfilename"))
+			uploadMu.Unlock()
+			index := imageIndex.Add(1)
+			_, _ = io.WriteString(w, `{"success":true,"imageId":"img`+strconv.Itoa(int(index))+`","error":[]}`)
 		case r.URL.Path == "/download/torrent/123":
 			_, _ = w.Write([]byte("personalized-torrent"))
 		case strings.HasPrefix(r.URL.Path, "/img/"):
@@ -110,9 +166,9 @@ func TestUploadSuccess(t *testing.T) {
 	}))
 	defer server.Close()
 	parsedServerURL, _ := url.Parse(server.URL)
-	writeAZCookieFile(t, tmp, "AZ", parsedServerURL.Hostname())
+	writeAZCookieFile(t, tmp, parsedServerURL.Hostname())
 
-	plan, failure := testDefinitionAt(server.URL).Prepare(context.Background(), trackers.PreparationInput{
+	input := trackers.PreparationInput{
 		Intent:  trackers.PreparationIntentUpload,
 		Tracker: "AZ",
 		Meta: api.UploadSubject{
@@ -135,15 +191,59 @@ func TestUploadSuccess(t *testing.T) {
 		TrackerConfig: config.TrackerConfig{},
 		Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}}),
 		Logger:        api.NopLogger{},
-		Assets: &trackers.DescriptionAssets{Screenshots: []api.ScreenshotImage{
-			{RawURL: server.URL + imagePaths[0]},
-			{RawURL: server.URL + imagePaths[1]},
-			{RawURL: server.URL + imagePaths[2]},
-		}},
-	})
+		Assets: &trackers.DescriptionAssets{
+			MenuImages: []api.ScreenshotImage{{RawURL: server.URL + menuPath}},
+			Screenshots: []api.ScreenshotImage{
+				{RawURL: server.URL + imagePaths[0]},
+				{RawURL: server.URL + imagePaths[1]},
+				{RawURL: server.URL + imagePaths[2]},
+			},
+		},
+	}
+
+	plan, failure := testDefinitionAt(server.URL).Prepare(context.Background(), input)
 	if failure != nil {
 		t.Fatalf("unexpected upload preparation error: %v", failure)
 	}
+	if actions := plan.DryRun().RequiredActions; len(actions) != 1 || actions[0].Kind != api.RequiredActionResolveTrackerPreparation {
+		t.Fatalf("missing media actions = %+v", actions)
+	}
+	if _, err := plan.ResolveAction(context.Background(), api.RequiredActionResolveTrackerPreparation, false); err == nil {
+		t.Fatal("declining missing media action returned no error")
+	} else {
+		var skipped *trackers.PreparationFailure
+		if !errors.As(err, &skipped) || skipped.Code() != trackers.PreparationFailureCodeSkipped {
+			t.Fatalf("decline error = %v", err)
+		}
+	}
+	if addCount.Load() != 0 || taskCount.Load() != 0 {
+		t.Fatalf("decline mutations add=%d task=%d", addCount.Load(), taskCount.Load())
+	}
+
+	plan, failure = testDefinitionAt(server.URL).Prepare(context.Background(), input)
+	if failure != nil {
+		t.Fatalf("prepare confirmed upload: %v", failure)
+	}
+	plan, err := plan.ResolveAction(context.Background(), api.RequiredActionResolveTrackerPreparation, true)
+	if err != nil {
+		t.Fatalf("confirm missing media action: %v", err)
+	}
+	if len(plan.DryRun().RequiredActions) != 0 {
+		t.Fatalf("resolved actions = %+v", plan.DryRun().RequiredActions)
+	}
+	if addCount.Load() != 1 || taskCount.Load() != 1 {
+		t.Fatalf("confirmed mutations add=%d task=%d", addCount.Load(), taskCount.Load())
+	}
+	uploadMu.Lock()
+	firstUploadedName := ""
+	if len(uploadedNames) > 0 {
+		firstUploadedName = uploadedNames[0]
+	}
+	uploadMu.Unlock()
+	if firstUploadedName != "menu.png" {
+		t.Fatalf("first uploaded image = %q, want menu.png", firstUploadedName)
+	}
+
 	result, err := plan.Submit(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected upload error: %v", err)
@@ -156,6 +256,105 @@ func TestUploadSuccess(t *testing.T) {
 	}
 	if result.UploadedTorrents[0].TorrentID != "123" {
 		t.Fatalf("expected torrent id 123, got %q", result.UploadedTorrents[0].TorrentID)
+	}
+}
+
+func TestUploadMissingMediaUnattendedSkips(t *testing.T) {
+	tmp := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/torrents":
+			_, _ = io.WriteString(w, `<meta name="_token" content="secret-token">`)
+		case "/ajax/movies/1":
+			_, _ = io.WriteString(w, `{"data":[]}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	parsedServerURL, _ := url.Parse(server.URL)
+	writeAZCookieFile(t, tmp, parsedServerURL.Hostname())
+
+	_, failure := testDefinitionAt(server.URL).Prepare(context.Background(), trackers.PreparationInput{
+		Intent:  trackers.PreparationIntentUpload,
+		Tracker: "AZ",
+		Meta: api.UploadSubject{
+			ReleaseName: "Example.Release.2026.1080p-GRP",
+			Identity:    api.ExternalIdentity{Category: "MOVIE", IMDBID: 123},
+			Release: api.ReleaseInfo{
+				Title:      "Example Release",
+				Resolution: "1080p",
+			},
+			Source:  "WEB-DL",
+			Type:    "WEBDL",
+			Options: api.UploadOptions{InteractionMode: api.InteractionModeUnattended},
+		},
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}}),
+		Logger:  api.NopLogger{},
+	})
+	if failure == nil || failure.Code() != trackers.PreparationFailureCodeSkipped {
+		t.Fatalf("failure = %#v", failure)
+	}
+}
+
+func TestUploadScreenshotPreflightRejectsBeforeTask(t *testing.T) {
+	tmp := t.TempDir()
+	torrentPath := filepath.Join(tmp, "release.torrent")
+	mediaInfoPath := filepath.Join(tmp, "MEDIAINFO.txt")
+	if err := os.WriteFile(torrentPath, []byte("torrent-bytes"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+	if err := os.WriteFile(mediaInfoPath, []byte("mediainfo"), 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+
+	var taskCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/torrents":
+			_, _ = io.WriteString(w, `<meta name="_token" content="secret-token">`)
+		case r.URL.Path == "/ajax/movies/1":
+			_, _ = io.WriteString(w, `{"data":[{"id":"77","imdb":"tt0000123"}]}`)
+		case strings.Contains(r.URL.Path, "/upload/") && strings.Contains(r.Header.Get("Content-Type"), "multipart/form-data"):
+			taskCount.Add(1)
+			w.WriteHeader(http.StatusInternalServerError)
+		case strings.HasPrefix(r.URL.Path, "/img/"):
+			_, _ = w.Write([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	parsedServerURL, _ := url.Parse(server.URL)
+	writeAZCookieFile(t, tmp, parsedServerURL.Hostname())
+
+	_, failure := testDefinitionAt(server.URL).Prepare(context.Background(), trackers.PreparationInput{
+		Intent:  trackers.PreparationIntentUpload,
+		Tracker: "AZ",
+		Meta: api.UploadSubject{
+			SourcePath:        filepath.Join(tmp, "Example.Release.2026.mkv"),
+			TorrentPath:       torrentPath,
+			MediaInfoTextPath: mediaInfoPath,
+			Identity:          api.ExternalIdentity{Category: "MOVIE", IMDBID: 123},
+			ReleaseName:       "Example.Release.2026.1080p.WEB-DL.x265-GRP",
+			Release: api.ReleaseInfo{
+				Title:      "Example Release",
+				Resolution: "1080p",
+			},
+			Type: "WEBDL",
+		},
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}}),
+		Logger:  api.NopLogger{},
+		Assets: &trackers.DescriptionAssets{Screenshots: []api.ScreenshotImage{
+			{RawURL: server.URL + "/img/1.png"},
+			{RawURL: server.URL + "/img/2.png"},
+		}},
+	})
+	if failure == nil || !strings.Contains(failure.Message(), "only 2 of 3 required screenshot sources") {
+		t.Fatalf("failure = %#v", failure)
+	}
+	if taskCount.Load() != 0 {
+		t.Fatalf("created %d remote tasks before screenshot preflight", taskCount.Load())
 	}
 }
 
@@ -184,7 +383,7 @@ func TestBuildUploadDryRunAllowsTVWebDLRipType(t *testing.T) {
 	}))
 	defer server.Close()
 	parsedServerURL, _ := url.Parse(server.URL)
-	writeAZCookieFile(t, tmp, "AZ", parsedServerURL.Hostname())
+	writeAZCookieFile(t, tmp, parsedServerURL.Hostname())
 
 	plan, failure := testDefinitionAt(server.URL).Prepare(context.Background(), trackers.PreparationInput{
 		Intent:  trackers.PreparationIntentDryRun,
@@ -227,14 +426,14 @@ func TestBuildUploadDryRunAllowsTVWebDLRipType(t *testing.T) {
 	}
 }
 
-func writeAZCookieFile(t *testing.T, tmp string, tracker string, domain string) {
+func writeAZCookieFile(t *testing.T, tmp string, domain string) {
 	t.Helper()
 	cookieDir := filepath.Join(tmp, "cookies")
 	if err := os.MkdirAll(cookieDir, 0o755); err != nil {
 		t.Fatalf("mkdir cookie dir: %v", err)
 	}
 	content := "# Netscape HTTP Cookie File\n" + domain + "\tTRUE\t/\tTRUE\t0\tsession\tcookievalue\n"
-	if err := os.WriteFile(filepath.Join(cookieDir, tracker+".txt"), []byte(content), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(cookieDir, "AZ.txt"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write cookie file: %v", err)
 	}
 }

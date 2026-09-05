@@ -69,6 +69,29 @@ func TestSourceBackedDupeOverlaysResolveDeterministically(t *testing.T) {
 			relation: api.DupeRelationProposedTrumps,
 		},
 		{
+			name:    "LST hybrid remux HDR slot needs review",
+			tracker: "LST",
+			target: api.TrackerDuplicateTarget{
+				Type:       "REMUX",
+				Resolution: "2160p",
+				HDR: api.HDRFacts{
+					Formats: []api.HDRFormat{api.HDRFormatDolbyVision, api.HDRFormatHDR10Plus},
+					Origin:  api.HDREvidenceTrackerAPI,
+					Status:  api.HDREvidenceComplete,
+				},
+			},
+			candidate: dupe.TrackerCandidate{
+				Type:       "REMUX",
+				Resolution: "2160p",
+				HDR: api.HDRFacts{
+					Formats: []api.HDRFormat{api.HDRFormatDolbyVision, api.HDRFormatHDR10},
+					Origin:  api.HDREvidenceTrackerAPI,
+					Status:  api.HDREvidenceComplete,
+				},
+			},
+			relation: api.DupeRelationManualReview,
+		},
+		{
 			name:    "LUME WEB over broadcast",
 			tracker: "LUME",
 			target: api.TrackerDuplicateTarget{

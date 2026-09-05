@@ -48,9 +48,17 @@ Use `--persist-web-config` to save supplied `serve` settings. Add `--persist-lis
 
 ## First-run authentication and browse policy
 
-The first browser connection creates an administrator account. The same setup asks for one or more browse roots or explicit unrestricted browsing.
+The first browser connection creates an administrator account and establishes the initial browse policy. After that setup, browse-policy and password changes are intentionally unavailable through the Web UI.
 
 Browse roots restrict browser-driven folder selection and file import. They do not restrict a direct CLI input path. Store them in `web-auth.json`, separate from imported application configuration.
+
+To replace the initial policy later, stop the server and set one or more existing directories with the local binary:
+
+```powershell
+.\upbrr.exe auth browse-roots "D:\Media" "E:\Downloads"
+```
+
+Restart `upbrr serve` after the command completes. Use `auth password` with the server stopped when the administrator password must change. See the [`auth` CLI reference](../cli/index.md#auth) for unrestricted browsing, custom config paths, and session behavior.
 
 `--dev-no-auth` disables browser authentication only on loopback hosts and is intended for local development. Do not use it for a network-accessible deployment.
 

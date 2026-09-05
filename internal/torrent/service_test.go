@@ -129,11 +129,11 @@ func TestCreateNewTorrent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load torrent: %v", err)
 	}
-	if torrentMeta.CreatedBy != "uploaded with upbrr using mkbrr" {
+	if torrentMeta.CreatedBy != "upbrr with mkbrr" {
 		t.Fatalf("expected mkbrr created-by, got %q", torrentMeta.CreatedBy)
 	}
-	if torrentMeta.Comment != "" {
-		t.Fatalf("expected mkbrr comment to be empty, got %q", torrentMeta.Comment)
+	if torrentMeta.Comment != "uploaded with upbrr" {
+		t.Fatalf("expected upbrr comment, got %q", torrentMeta.Comment)
 	}
 }
 

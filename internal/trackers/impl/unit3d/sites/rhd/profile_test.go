@@ -12,7 +12,11 @@ import (
 )
 
 func TestProfileNameParity(t *testing.T) {
-	build := Profile().Site.BuildName
+	profile := Profile().Site
+	if profile.BuildNameVersion != "v3" {
+		t.Fatalf("RHD build-name version = %q", profile.BuildNameVersion)
+	}
+	build := profile.BuildName
 	tests := []struct {
 		name string
 		meta api.UploadSubject
@@ -51,6 +55,21 @@ func TestProfileNameParity(t *testing.T) {
 			want: "Example Movie 2024 1080p COMPLETE GER Blu-ray BD50 DTS-HD MA 5.1 AVC-GRP",
 		},
 		{
+			name: "full DVD does not repeat capacity",
+			meta: api.UploadSubject{
+				Type:     "DISC",
+				DiscType: "DVD",
+				Tag:      "-GRP",
+				Release: api.ReleaseInfo{
+					Title:  "Example Release",
+					Year:   2026,
+					Source: "PAL DVD",
+					Size:   "DVD9",
+				},
+			},
+			want: "Example Release 2026 COMPLETE PAL DVD9-GRP",
+		},
+		{
 			name: "markers",
 			meta: api.UploadSubject{
 				ReleaseName:    "Example.Movie.2024.[INTERNAL].(UPSCALED).1080p.WEB-DL.DDP5.1.H.264-GRP",
@@ -84,6 +103,18 @@ func TestProfileNameParity(t *testing.T) {
 			},
 			want: "Example Movie 2026 GERMAN 2160p WEB-DL DDP5.1 DV HDR H.265-GRP",
 		},
+		{
+			name: "daily without year",
+			meta: api.UploadSubject{
+				Type:             "WEBDL",
+				Tag:              "-GRP",
+				DailyEpisodeDate: "2026-02-03",
+				VideoEncode:      "H.264",
+				AudioLanguages:   []string{"German"},
+				Release:          api.ReleaseInfo{Title: "Example Show", Resolution: "1080p"},
+			},
+			want: "Example Show 2026-02-03 GERMAN 1080p WEB-DL H.264-GRP",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -109,6 +140,56 @@ func TestProfileNameParity(t *testing.T) {
 		if strings.Contains(ignored, marker) {
 			t.Fatalf("unexpected marker %s in %q", marker, ignored)
 		}
+	}
+}
+
+func TestTypeAndSourceDVDDoesNotRepeatCapacity(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		source string
+		size   string
+		want   string
+	}{
+		{
+			name:   "PAL DVD9",
+			source: "PAL DVD",
+			size:   "DVD9",
+			want:   "COMPLETE PAL DVD9",
+		},
+		{
+			name:   "bare DVD9",
+			source: "DVD",
+			size:   "DVD9",
+			want:   "COMPLETE DVD9",
+		},
+		{
+			name:   "NTSC DVD5",
+			source: "NTSC DVD",
+			size:   "DVD5",
+			want:   "COMPLETE NTSC DVD5",
+		},
+		{
+			name:   "surrounding whitespace",
+			source: " PAL DVD ",
+			size:   " DVD9 ",
+			want:   "COMPLETE PAL DVD9",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := strings.Join(typeAndSource(api.UploadSubject{
+				Type:     "DISC",
+				DiscType: "DVD",
+				Release:  api.ReleaseInfo{Source: test.source, Size: test.size},
+			}), " ")
+			if got != test.want {
+				t.Fatalf("typeAndSource() = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 

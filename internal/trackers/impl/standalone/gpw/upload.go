@@ -131,7 +131,7 @@ func submitPreparedUpload(
 	if (status == "success" || status == "ok" || status == "200") && id != "" {
 		tURL := torrentURL + id
 		registeredPath := trackers.PersistReconstructedRegisteredTorrent(
-			req.Logger, "GPW", state.torrentPath, artifactPath, announceURL, tURL, sourceFlag,
+			req.Logger, "GPW", state.torrentPath, artifactPath, announceURL, sourceFlag,
 		)
 		return api.UploadSummary{Uploaded: 1, UploadedTorrents: []api.UploadedTorrent{{
 			Tracker:     "GPW",

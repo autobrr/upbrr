@@ -521,7 +521,7 @@ func imgboxPickCookie(resp *http.Response) string {
 	}
 	parts := make([]string, 0, len(cookies))
 	for _, raw := range cookies {
-		segment := strings.SplitN(raw, ";", 2)[0]
+		segment, _, _ := strings.Cut(raw, ";")
 		if strings.TrimSpace(segment) != "" {
 			parts = append(parts, segment)
 		}

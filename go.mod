@@ -1,23 +1,23 @@
 module github.com/autobrr/upbrr
 
-go 1.26.6
+go 1.27.1
 
 require (
 	github.com/autobrr/go-bdinfo v0.4.0
-	github.com/autobrr/go-mediainfo v0.7.0
-	github.com/autobrr/go-qbittorrent v1.17.0
+	github.com/autobrr/go-mediainfo v0.8.0
+	github.com/autobrr/go-qbittorrent v1.18.0
 	github.com/autobrr/go-torrent v1.1.1
-	github.com/autobrr/mkbrr v1.24.1
-	github.com/autobrr/rls v0.8.2-0.20260725105839-a59341eb93af
+	github.com/autobrr/mkbrr v1.25.0
+	github.com/autobrr/rls v0.9.0
 	github.com/frustra/bbcode v0.0.0-20201127003707-6ef347fbe1c8
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
-	golang.org/x/crypto v0.53.0
-	golang.org/x/net v0.56.0
+	golang.org/x/crypto v0.54.0
+	golang.org/x/net v0.57.0
 	golang.org/x/sync v0.22.0
 	golang.org/x/sys v0.47.0
-	golang.org/x/term v0.44.0
+	golang.org/x/term v0.45.0
 	golang.org/x/text v0.40.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.50.1

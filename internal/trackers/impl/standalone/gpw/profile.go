@@ -22,7 +22,7 @@ func Profile() standalone.Profile {
 		NewDuplicateAdapter:  newDuplicateAdapter,
 		ValidationPolicy:     validationPolicy(),
 		BannedGroups:         bannedGroups(),
-		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: sourceFlag},
+		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: sourceFlag, RequireAnnounce: true},
 		ImageHostPolicy: &trackers.ImageHostPolicy{
 			AllowedHosts: []string{"kshare", "pixhost", "pterclub", "ilikeshots", "imgbox"},
 		},

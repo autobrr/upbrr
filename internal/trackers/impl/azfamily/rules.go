@@ -17,9 +17,9 @@ import (
 // ValidationPolicy returns the versioned AZ-family constructibility and site
 // policy binding.
 func (d *Definition) ValidationPolicy() trackers.ValidationPolicyBinding {
-	version := "constructibility-v1"
+	version := "constructibility-v2"
 	if d.site.Name == "AZ" || d.site.Name == "CZ" {
-		version = "policy-v2"
+		version = "policy-v3"
 	}
 	return trackers.ValidationPolicyBinding{
 		ID:    "azfamily-" + strings.ToLower(d.site.Name) + "-" + version,
@@ -57,16 +57,16 @@ func (d *Definition) evaluateRules(ctx context.Context, meta api.TrackerValidati
 	switch d.site.Name {
 	case "AZ":
 		if intersects(origin, phdCountries()) {
-			addStrict("country_redirect", "major English-language content belongs on PrivateHD")
+			add("country_redirect", "major English-language content belongs on PrivateHD")
 		} else if intersects(origin, cinemaZCountries()) {
-			addStrict("country_redirect", "non-Asian western content belongs on CinemaZ")
+			add("country_redirect", "non-Asian western content belongs on CinemaZ")
 		}
 	case "CZ":
 		switch {
 		case intersects(origin, phdCountries()) && !isOlderThan50Years(meta):
-			addStrict("country_redirect", "recent mainstream English content belongs on PrivateHD")
+			add("country_redirect", "recent mainstream English content belongs on PrivateHD")
 		case intersects(origin, azCountries()):
-			addStrict("country_redirect", "Asian content belongs on AvistaZ")
+			add("country_redirect", "Asian content belongs on AvistaZ")
 		case len(origin) > 0 && !intersects(origin, czAllowedCountries()):
 			addStrict("country_block", "content origin is outside CinemaZ allowed regions")
 		}
@@ -76,9 +76,9 @@ func (d *Definition) evaluateRules(ctx context.Context, meta api.TrackerValidati
 		}
 		switch {
 		case intersects(origin, cinemaZCountries()):
-			addStrict("country_redirect", "European, South American, and African content belongs on CinemaZ")
+			add("country_redirect", "European, South American, and African content belongs on CinemaZ")
 		case intersects(origin, azCountries()):
-			addStrict("country_redirect", "Asian content belongs on AvistaZ")
+			add("country_redirect", "Asian content belongs on AvistaZ")
 		case len(origin) > 0 && !intersects(origin, phdCountries()):
 			addStrict("country_block", "PrivateHD only allows major English-language territories")
 		}

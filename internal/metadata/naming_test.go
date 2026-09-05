@@ -44,6 +44,68 @@ func TestBuildReleaseNameMovieWebDL(t *testing.T) {
 	}
 }
 
+func TestBuildReleaseNameDVDDiscDoesNotRepeatDVD(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		category string
+		title    string
+		season   string
+		source   string
+		size     string
+		want     string
+	}{
+		{
+			name:     "PAL movie",
+			category: "MOVIE",
+			title:    "Example Release",
+			source:   "PAL DVD",
+			size:     "DVD9",
+			want:     "Example Release 2026 PAL DVD9",
+		},
+		{
+			name:     "NTSC TV",
+			category: "TV",
+			title:    "Example Show",
+			season:   "S01",
+			source:   "NTSC DVD",
+			size:     "DVD5",
+			want:     "Example Show 2026 S01 NTSC DVD5",
+		},
+		{
+			name:     "unspecified system",
+			category: "MOVIE",
+			title:    "Example Release",
+			source:   "DVD",
+			size:     "DVD9",
+			want:     "Example Release 2026 DVD9",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := BuildReleaseName(api.ReleaseNameRequest{
+				Category:   test.category,
+				Type:       "DISC",
+				Title:      test.title,
+				Year:       2026,
+				SearchYear: "2026",
+				Season:     test.season,
+				DiscType:   "DVD",
+				Source:     test.source,
+				DVDSize:    test.size,
+			}, api.NopLogger{})
+
+			if result.NameNoTag != test.want {
+				t.Fatalf("name = %q, want %q", result.NameNoTag, test.want)
+			}
+		})
+	}
+}
+
 func TestBuildReleaseNameMovieBareWebEncodeUsesWebDLNaming(t *testing.T) {
 	result := BuildReleaseName(api.ReleaseNameRequest{
 		Category:    "MOVIE",
@@ -950,6 +1012,14 @@ func TestResolveReleaseNameTitleProviderAlternateRules(t *testing.T) {
 			imdbAKA:    "Original Title",
 			wantAlt:    "AKA Parsed Alternate",
 		},
+		{
+			name:       "duplicate parsed alternate uses provider fallback",
+			releaseAlt: "IMDb Title",
+			imdbAKA:    "Original Title",
+			wantAlt:    "AKA Original Title",
+		},
+		{name: "punctuation-equivalent alternate", imdbAKA: "IMDb: Title"},
+		{name: "closely resembling alternate", imdbAKA: "The IMDb Title"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -973,6 +1043,39 @@ func TestResolveReleaseNameTitleProviderAlternateRules(t *testing.T) {
 	}
 }
 
+func TestResolveReleaseNameTitleTVPrefersMatchingIMDbAKA(t *testing.T) {
+	meta := preparationstate.State{
+		Identity: api.ExternalIdentity{
+			Category: "TV",
+			TVDBID:   2,
+			IMDBID:   1234567,
+		},
+		ProviderMetadata: api.SourceScopedMetadata{
+			TVDB: &api.TVDBMetadata{
+				TVDBID:      2,
+				Name:        "例のシリーズ",
+				NameEnglish: "Example Series",
+			},
+			IMDB: &api.IMDBMetadata{
+				IMDBID: 1234567,
+				Title:  "Example Series",
+				AKA:    "Rei no Shirizu",
+			},
+		},
+	}
+
+	title, alt, _ := resolveReleaseNameTitle("TV", meta)
+	if title != "Example Series" || alt != "AKA Rei no Shirizu" {
+		t.Fatalf("unexpected TV naming fields: title=%q alt=%q", title, alt)
+	}
+
+	meta.ProviderMetadata.IMDB.AKA = "The Example Series"
+	_, alt, _ = resolveReleaseNameTitle("TV", meta)
+	if alt != "AKA 例のシリーズ" {
+		t.Fatalf("close IMDb alternate was not rejected: %q", alt)
+	}
+}
+
 func TestResolveReleaseNameTitlePrefersTMDBForMovie(t *testing.T) {
 	meta := preparationstate.State{
 		Identity: api.ExternalIdentity{
@@ -986,6 +1089,7 @@ func TestResolveReleaseNameTitlePrefersTMDBForMovie(t *testing.T) {
 				TMDBID:        1,
 				Title:         "TMDB Title",
 				OriginalTitle: "TMDB Original",
+				RetrievedAKA:  "AKA Rei No Sakuhin",
 				Year:          2025,
 			},
 			IMDB: &api.IMDBMetadata{
@@ -997,8 +1101,41 @@ func TestResolveReleaseNameTitlePrefersTMDBForMovie(t *testing.T) {
 		},
 	}
 	title, alt, year := resolveReleaseNameTitle("MOVIE", meta)
-	if title != "TMDB Title" || alt != "AKA TMDB Original" || year != 2025 {
+	if title != "TMDB Title" || alt != "AKA Rei No Sakuhin" || year != 2025 {
 		t.Fatalf("unexpected TMDB-preferred fields: title=%q alt=%q year=%d", title, alt, year)
+	}
+}
+
+func TestResolveReleaseNameTitleTMDBUsesMatchingIMDbAKA(t *testing.T) {
+	meta := preparationstate.State{
+		Identity: api.ExternalIdentity{
+			Category: "MOVIE",
+			TMDBID:   1,
+			IMDBID:   1234567,
+		},
+		Release: api.ReleaseInfo{Alt: "TMDB Title"},
+		ProviderMetadata: api.SourceScopedMetadata{
+			TMDB: &api.TMDBMetadata{
+				TMDBID:        1,
+				Title:         "TMDB Title",
+				OriginalTitle: "TMDB Original",
+			},
+			IMDB: &api.IMDBMetadata{
+				IMDBID: 1234567,
+				Title:  "IMDb Title",
+				AKA:    "Rei No Sakuhin",
+			},
+		},
+	}
+	_, alt, _ := resolveReleaseNameTitle("MOVIE", meta)
+	if alt != "AKA Rei No Sakuhin" {
+		t.Fatalf("matching IMDb alternate=%q", alt)
+	}
+
+	meta.ProviderMetadata.IMDB.IMDBID = 7654321
+	_, alt, _ = resolveReleaseNameTitle("MOVIE", meta)
+	if alt != "AKA TMDB Original" {
+		t.Fatalf("mismatched IMDb alternate=%q", alt)
 	}
 }
 

@@ -681,9 +681,8 @@ func TestWorkflowUploadPlanOmitsSkippedTrackersAndKeepsPreparationFailuresLocal(
 	}
 	privateMedia := workflowMediaPrivateArtifacts{
 		Screenshots: []api.ScreenshotImage{{Path: exactScreenshotPath, Purpose: api.ScreenshotPurposeFinal}},
-		DVDMenus: []api.DVDMenuCaptureImage{{ScreenshotImage: api.ScreenshotImage{
-			Path: exactMenuPath, Purpose: api.ScreenshotPurposeMenu,
-		}}},
+		DVDMenus: []api.DVDMenuCaptureImage{{
+			Path: exactMenuPath, Purpose: api.ScreenshotPurposeMenu}},
 		HostedImages: map[api.PublicResourceID]api.UploadedImageLink{
 			"hosted-1":      exactUpload,
 			"hosted-menu-1": exactMenuUpload,
@@ -1298,6 +1297,34 @@ func TestWorkflowUploadExecutionKeepsSubmissionSuccessWithoutExactArtifact(t *te
 		results[0].ClientFailureCode != api.OperationFailureMissingExactTorrent ||
 		results[0].Status != api.StageStatusPartial || len(clientService.injections) != 0 {
 		t.Fatalf("artifact-less upload results=%#v injections=%#v", results, clientService.injections)
+	}
+}
+
+func TestWorkflowUploadExecutionSkipsInjectionWhilePublicationPending(t *testing.T) {
+	t.Parallel()
+
+	clientService := &dryRunClientService{}
+	execution := &workflowUploadExecution{
+		plan: &workflowRetainedUploadPlanFake{results: []trackers.RetainedTrackerResult{{
+			Tracker: "ALPHA",
+			Summary: api.UploadSummary{
+				Uploaded:           1,
+				PendingPublication: true,
+			},
+		}}},
+		clients:        clientService,
+		dryRunInjected: map[api.TrackerID]struct{}{"ALPHA": {}},
+	}
+	results, err := execution.Execute(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("execute workflow upload: %v", err)
+	}
+	if len(results) != 1 || results[0].SubmissionStatus != api.StageStatusCompleted ||
+		results[0].ClientInjectionStatus != api.StageStatusSkipped ||
+		results[0].Status != api.StageStatusCompleted ||
+		!strings.Contains(results[0].ClientInjectionMessage, "publication is pending") ||
+		len(results[0].Failures) != 0 || len(clientService.injections) != 0 {
+		t.Fatalf("pending-publication upload results=%#v injections=%#v", results, clientService.injections)
 	}
 }
 

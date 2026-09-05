@@ -181,8 +181,7 @@ func (a *RuntimeActivator) Activate(ctx context.Context, candidate config.Config
 		return activationError(ActivationStageCookies, err)
 	}
 	if err := a.deps.persist(ctx, stored, a.repo, a.fixedDBPath, generation.Logger); err != nil {
-		var cookieErr *runtimeCookiePersistenceError
-		if errors.As(err, &cookieErr) {
+		if _, ok := errors.AsType[*runtimeCookiePersistenceError](err); ok {
 			return activationError(ActivationStageCookies, err)
 		}
 		return activationError(ActivationStagePersist, err)

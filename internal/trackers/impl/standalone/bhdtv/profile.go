@@ -13,17 +13,21 @@ import (
 // Profile returns BHDTV identity, preparation, dupe, and artifact behavior.
 func Profile() standalone.Profile {
 	return standalone.Profile{
-		Name:                 "BHDTV",
-		BaseURL:              "https://www.bit-hdtv.com",
-		DescriptionGroup:     "bhdtv",
-		UploadContentMode:    trackers.UploadContentModeDescription,
-		AuthCapability:       authcontract.APIKeyCapability("BHDTV"),
-		PrepareDescription:   prepareDescription,
-		PrepareUpload:        prepareUpload,
-		ReleaseNamePolicy:    trackers.SimpleSubjectReleaseNamePolicy("standalone/bhdtv/v1", resolveUploadName),
-		NewDuplicateAdapter:  func(dupe.Dependencies) dupe.Adapter { return bhdtvDuplicateAdapter{} },
-		ValidationPolicy:     validationPolicy(),
-		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "BIT-HDTV", UseMyAnnounce: true},
+		Name:                "BHDTV",
+		BaseURL:             "https://www.bit-hdtv.com",
+		DescriptionGroup:    "bhdtv",
+		UploadContentMode:   trackers.UploadContentModeDescription,
+		AuthCapability:      authcontract.APIKeyCapability("BHDTV"),
+		PrepareDescription:  prepareDescription,
+		PrepareUpload:       prepareUpload,
+		ReleaseNamePolicy:   trackers.SimpleSubjectReleaseNamePolicy("standalone/bhdtv/v1", resolveUploadName),
+		NewDuplicateAdapter: func(dupe.Dependencies) dupe.Adapter { return bhdtvDuplicateAdapter{} },
+		ValidationPolicy:    validationPolicy(),
+		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{
+			Source:          "BIT-HDTV",
+			UseMyAnnounce:   true,
+			RequireAnnounce: true,
+		},
 	}
 }
 

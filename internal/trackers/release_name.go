@@ -261,7 +261,8 @@ func resolveReleaseNames(input PreparationInput, binding ReleaseNamePolicyBindin
 	if err != nil {
 		return ResolvedReleaseNames{}, err
 	}
-	subject := applyReleaseNameElementPolicy(input.Meta, input.RequestedUploadName, elementPolicy)
+	subject := applyReleaseNamePresentation(input.Meta, input.RequestedUploadName)
+	subject = applyReleaseNameElementPolicy(subject, input.RequestedUploadName, elementPolicy)
 	resolved, err := binding.Resolver(ReleaseNameInput{
 		Subject:       subject,
 		TrackerConfig: input.TrackerConfig,
@@ -272,7 +273,7 @@ func resolveReleaseNames(input PreparationInput, binding ReleaseNamePolicyBindin
 		return ResolvedReleaseNames{}, fmt.Errorf("resolve release names with %s: %w", binding.ID, err)
 	}
 	if input.RequestedUploadName == nil {
-		resolved = applyProviderMovieYear(resolved, input.Meta, binding.MovieYearProvider)
+		resolved = applyProviderMovieYear(resolved, subject, binding.MovieYearProvider)
 	}
 	resolved.Upload = strings.TrimSpace(resolved.Upload)
 	resolved.Duplicate = strings.TrimSpace(resolved.Duplicate)
@@ -406,6 +407,52 @@ func applyReleaseNameElementPolicy(
 	subject.ReleaseNameNoTag = omitted.NameNoTag
 	subject.ReleaseNameClean = omitted.CleanName
 	return subject
+}
+
+func applyReleaseNamePresentation(subject api.UploadSubject, requestedName *string) api.UploadSubject {
+	presentation := subject.NamePresentation
+	if requestedName != nil || presentation.Version != api.ReleaseNamePresentationVersionV1 {
+		return subject
+	}
+	if presentation.OmitYear {
+		subject.Release.Year = 0
+		if metadata := subject.ProviderMetadata.IMDB; metadata != nil {
+			cloned := *metadata
+			cloned.Year = 0
+			cloned.TVYear = 0
+			subject.ProviderMetadata.IMDB = &cloned
+		}
+		if metadata := subject.ProviderMetadata.TMDB; metadata != nil {
+			cloned := *metadata
+			cloned.Year = 0
+			subject.ProviderMetadata.TMDB = &cloned
+		}
+		if metadata := subject.ProviderMetadata.TVDB; metadata != nil {
+			cloned := *metadata
+			cloned.Year = 0
+			cloned.NameDisambiguation.SeriesYear = 0
+			cloned.NameDisambiguation.IncludeYear = false
+			subject.ProviderMetadata.TVDB = &cloned
+		}
+	}
+	if presentation.UseDailyDate {
+		clearReleaseNameSeasonEpisode(&subject)
+	} else {
+		subject.DailyEpisodeDate = ""
+	}
+	if presentation.OmitSeasonEpisode {
+		clearReleaseNameSeasonEpisode(&subject)
+	}
+	return subject
+}
+
+func clearReleaseNameSeasonEpisode(subject *api.UploadSubject) {
+	subject.Release.Season = 0
+	subject.Release.Episode = 0
+	subject.SeasonInt = 0
+	subject.EpisodeInt = 0
+	subject.SeasonStr = ""
+	subject.EpisodeStr = ""
 }
 
 func subjectUsesGeneratedReleaseName(subject api.UploadSubject, generated api.ReleaseNameVariant) bool {

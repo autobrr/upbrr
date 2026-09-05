@@ -769,16 +769,9 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 				continue
 			}
 			if effectReceipt.AlreadySucceeded {
-				slot.summary = api.UploadSummary{Uploaded: 1}
-				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, "uploaded")
-				emitTrackerPlanProgress(
-					ctx,
-					meta.SourcePath,
-					slot.tracker,
-					"tracker_upload",
-					"completed",
-					"Prior tracker upload receipt retained",
-				)
+				slot.failure = trackerFailure(slot.tracker, "unknown_outcome", api.ErrReleaseWorkflowEffectAlreadySucceeded)
+				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, "unknown_outcome")
+				emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "failed", slot.failure.Message)
 				phase.Done()
 				continue
 			}
@@ -798,6 +791,13 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 				emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "failed", slot.failure.Message)
 			} else {
 				slot.summary = summary
+				if summary.PendingPublication {
+					s.logger.Infof(
+						"trackers: upload tracker=%s state=pending_publication decision=defer_client_injection count=%d",
+						slot.tracker,
+						summary.Uploaded,
+					)
+				}
 				s.logUploadedTorrentURLs(slot.tracker, summary)
 				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, "uploaded")
 				emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "completed", "Tracker upload complete")
@@ -953,6 +953,7 @@ func summarizeTrackerPlanSlots(slots []trackerPlanSlot) api.UploadSummary {
 	for _, slot := range slots {
 		summary.Uploaded += slot.summary.Uploaded
 		summary.UploadedTorrents = append(summary.UploadedTorrents, slot.summary.UploadedTorrents...)
+		summary.PendingPublication = summary.PendingPublication || slot.summary.PendingPublication
 	}
 	return summary
 }

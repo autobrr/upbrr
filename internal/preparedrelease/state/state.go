@@ -194,6 +194,7 @@ type State struct {
 	ReleaseNameNoTag               string
 	ReleaseNameClean               string
 	GeneratedReleaseNames          api.GeneratedReleaseNameVariants
+	ReleaseNamePresentation        api.ReleaseNamePresentation
 	ReleaseNameMissing             []string
 	BDInfo                         map[string]any
 }

@@ -660,6 +660,13 @@ func RebuildReleaseName(meta *preparationstate.State, logger api.Logger) {
 
 	nameRequest := releaseNameRequestFromMeta(*meta, logger)
 	nameRequest = applyReleaseNameOverrides(nameRequest, meta.ReleaseNameOverrides, logger)
+	meta.ReleaseNamePresentation = api.ReleaseNamePresentation{
+		Version:            api.ReleaseNamePresentationVersionV1,
+		OmitAlternateTitle: nameRequest.NoAKA,
+		OmitYear:           nameRequest.NoYear,
+		OmitSeasonEpisode:  nameRequest.NoSeason,
+		UseDailyDate:       nameRequest.ManualDate,
+	}
 	nameResult := BuildReleaseName(nameRequest, logger)
 	meta.ReleaseNameNoTag = nameResult.NameNoTag
 	meta.ReleaseName = nameResult.Name
@@ -1844,8 +1851,8 @@ func parseMediaDurationColonValue(value string) float64 {
 	}
 	var seconds float64
 	multiplier := 1.0
-	for i := len(parts) - 1; i >= 0; i-- {
-		part := strings.TrimSpace(parts[i])
+	for _, part := range slices.Backward(parts) {
+		part := strings.TrimSpace(part)
 		if part == "" {
 			continue
 		}
