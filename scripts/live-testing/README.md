@@ -67,6 +67,17 @@ nanoseconds. Validation re-stats originals and records directory membership.
 It never modifies source media. A changed source requires a reviewed new corpus
 observation, not automatic fingerprint replacement.
 
+An optional `metadata_ids` object pins operator-verified provider identities for
+one case, for example `"metadata_ids": { "imdb": 1234567, "tmdb": 12345 }`.
+Supported keys are `imdb`, `tmdb`, `tvdb`, and `tvmaze`; values must be positive
+integers (omit IMDb's `tt` prefix and leading zeros). TV cases use series IDs,
+including when the input is one episode. Keep actual IDs in the private corpus.
+The runner sends these through the existing explicit identity overrides, checks
+the prepared identity, and passes the same IDs to the CLI comparison helper.
+Omitted providers retain normal resolution. Changing IDs requires a new run;
+saved-run continuation and comparisons retain the corpus fingerprint. Overrides
+do not waive tracker rules or existing-client duplicate blocks.
+
 Disc main-playlist/title and pack completeness are explicitly unresolved in the
 initial corpus. Those cases produce `needs_input` before preparation. Their
 feedback entries have no backend action authority; the current runner does not

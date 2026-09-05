@@ -8,6 +8,7 @@
       "probe_path": "D:\\SyntheticMedia\\Example.Movie.2025.1080p.WEB-DL-GRP.mkv",
       "input_shape": "file",
       "probe_status": "ok",
+      "metadata_ids": { "imdb": 1234567, "tmdb": 12345 },
       "fingerprint": { "size_bytes": 1000000, "mtime_ns": 1700000000000000000, "method": "stat" }
     }
   ]

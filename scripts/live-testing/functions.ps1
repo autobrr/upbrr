@@ -61,6 +61,32 @@ function Get-SourceFingerprint($Case) {
   $observed
 }
 
+function Get-CaseIdentityOverrides($Case) {
+  $identity = @{}
+  if (-not $Case.Contains('metadata_ids')) { return $identity }
+  if ($Case.metadata_ids -isnot [System.Collections.IDictionary]) { throw 'corpus_metadata_ids_invalid' }
+  $fields = @{ imdb = 'IMDBID'; tmdb = 'TMDBID'; tvdb = 'TVDBID'; tvmaze = 'TVmazeID' }
+  foreach ($provider in $Case.metadata_ids.Keys) {
+    $value = $Case.metadata_ids[$provider]
+    if ($provider -cnotin @('imdb', 'tmdb', 'tvdb', 'tvmaze') -or
+        ($value -isnot [int] -and $value -isnot [long]) -or $value -le 0 -or $value -gt [int]::MaxValue) {
+      throw 'corpus_metadata_ids_invalid'
+    }
+    $identity[$fields[$provider]] = [int]$value
+  }
+  $identity
+}
+
+function Get-CaseIdentityCLIArguments($Case) {
+  $null = Get-CaseIdentityOverrides $Case
+  foreach ($provider in @('imdb', 'tmdb', 'tvdb', 'tvmaze')) {
+    if ($Case.metadata_ids -and $Case.metadata_ids.Contains($provider)) {
+      "--$provider"
+      [string]$Case.metadata_ids[$provider]
+    }
+  }
+}
+
 function Read-Corpus([string]$Path, [string[]]$Selected) {
   $corpusData = Read-PrivateJson $Path
   if ($corpusData.schema_version -ne 1 -or @($corpusData.cases).Count -eq 0) { throw 'corpus_schema_invalid' }
@@ -68,6 +94,7 @@ function Read-Corpus([string]$Path, [string[]]$Selected) {
   foreach ($entry in $corpusData.cases) {
     if ($entry.case_id -cnotmatch '^[A-Z0-9]+(?:-[A-Z0-9]+)*$' -or $known.ContainsKey($entry.case_id)) { throw 'corpus_case_id_invalid' }
     if ($entry.input_shape -notin @('file', 'disc-directory', 'episode-directory') -or -not $entry.fingerprint) { throw 'corpus_case_schema_invalid' }
+    $null = Get-CaseIdentityOverrides $entry
     $known[$entry.case_id] = $entry
   }
   foreach ($id in $Selected) {
@@ -363,6 +390,13 @@ function Record-Stage($Lane, $Current, [string]$Goal) {
   if (@($failures | Where-Object { $_.failure.message -match '(?i)rate.limit|too many requests|network|timed?\s*out|connection refused' }).Count -gt 0) { $script:RemoteStop = $true }
   if ($Current.selection -and (ConvertTo-Json -InputObject @($Current.selection.trackerIds) -Compress) -cne (ConvertTo-Json -InputObject @($Lane.trackerIds) -Compress)) { throw 'tracker_selection_changed' }
   if ($Goal -eq 'dry_run' -and $value -and $value.noSeed -ne $true) { $status = 'fail'; $reason = 'dry_run_no_seed_not_locked' }
+  if ($Goal -eq 'prepared' -and $status -eq 'pass') {
+    foreach ($field in $Lane.expectedIdentity.Keys) {
+      if ($value.release.Identity.$field -ne $Lane.expectedIdentity[$field]) {
+        $status = 'fail'; $reason = 'metadata_identity_mismatch'
+      }
+    }
+  }
   $trackers = @($Current.preflight.results | Where-Object { $_.trackerId -cin $Lane.trackerIds } | ForEach-Object {
     @{ trackerId = $_.trackerId; authReady = [bool]$_.authReady; eligible = $_.state -eq 'ready'; state = $(if ($_.state -cmatch '^[a-z_]+$') { $_.state } else { 'unknown' }) }
   })

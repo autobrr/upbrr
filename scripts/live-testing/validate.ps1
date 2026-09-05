@@ -17,6 +17,22 @@ try {
   Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($case) }
   $loaded = @(Read-Corpus $corpusPath @('MOV-1080-WEB'))
   Assert-Check ($loaded.Count -eq 1 -and $loaded[0].status -eq 'ready') 'valid_corpus_rejected'
+  Assert-Check ((Get-CaseIdentityOverrides $case).Count -eq 0 -and @(Get-CaseIdentityCLIArguments $case).Count -eq 0) 'omitted_identity_changed_defaults'
+  $identityCase = $case.Clone()
+  $identityCase.metadata_ids = @{ imdb = 1234567; tmdb = 12345; tvdb = 23456; tvmaze = 34567 }
+  Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($identityCase) }
+  $identityEntry = @(Read-Corpus $corpusPath @('MOV-1080-WEB'))[0]
+  $identity = Get-CaseIdentityOverrides $identityEntry.case
+  Assert-Check ($identity.Count -eq 4 -and $identity.IMDBID -eq 1234567 -and $identity.TMDBID -eq 12345 -and $identity.TVDBID -eq 23456 -and $identity.TVmazeID -eq 34567) 'explicit_identity_not_mapped'
+  Assert-Check ((@(Get-CaseIdentityCLIArguments $identityEntry.case) -join '|') -ceq '--imdb|1234567|--tmdb|12345|--tvdb|23456|--tvmaze|34567') 'cli_identity_flags_differ'
+  foreach ($invalid in @(@{ imdb_episode = 1234567 }, @{ IMDB = 1234567 }, @{ imdb = 'tt1234567' }, @{ imdb = 0 }, @{ tmdb = -1 }, @{ tvdb = 1.5 }, @{ tvmaze = 2147483648 }, @{ imdb = $true }, '1234567', $null)) {
+    $invalidCase = $case.Clone(); $invalidCase.metadata_ids = $invalid
+    Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($invalidCase) }
+    $rejected = $false
+    try { Read-Corpus $corpusPath @('MOV-1080-WEB') | Out-Null } catch { $rejected = $_.Exception.Message -eq 'corpus_metadata_ids_invalid' }
+    Assert-Check $rejected 'invalid_identity_accepted'
+  }
+  Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($case) }
   Invoke-OwnedProcess (Get-ToolPath 'pwsh') @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'run.ps1'), '-ValidateOnly', '-CaseId', 'MOV-1080-WEB', '-Corpus', $corpusPath) (Join-Path $validationDir 'validate-only') 30
   Assert-Check ((Get-SourceFingerprint $case).fingerprint -ceq $stat.fingerprint) 'validation_modified_source'
   [IO.File]::AppendAllText($source, ' changed')
@@ -96,10 +112,20 @@ try {
   $current.selection.trackerIds = @('LST', 'BLU')
   $current.dryRun = @{ status = 'ready'; noSeed = $false }
   Assert-Check ((Record-Stage $lane $current 'dry_run') -eq 'fail') 'conflicting_no_seed_not_detected'
+  $script:RunDir = $validationDir
+  $identityLane = $lane.Clone()
+  $identityLane.expectedIdentity = $identity.Clone()
+  $identityCurrent = @{ workflow = @{ id = 'workflow-identity'; revision = 1 }; release = @{ release = @{ Identity = $identity.Clone() } } }
+  Assert-Check ((Record-Stage $identityLane $identityCurrent 'prepared') -eq 'pass') 'matching_prepared_identity_rejected'
+  $identityCurrent.release.release.Identity.IMDBID = 7654321
+  Assert-Check ((Record-Stage $identityLane $identityCurrent 'prepared') -eq 'fail' -and $script:Results[-1].reason -eq 'metadata_identity_mismatch') 'wrong_prepared_identity_accepted'
+  $identityCurrent.release.release.Remove('Identity')
+  Assert-Check ((Record-Stage $identityLane $identityCurrent 'prepared') -eq 'fail') 'missing_prepared_identity_accepted'
+  $identityCurrent.workflow.requiredActions = @(@{ id = 'identity-choice'; kind = 'select_metadata'; status = 'pending' })
+  Assert-Check ((Record-Stage $identityLane $identityCurrent 'prepared') -eq 'needs_input') 'pending_identity_question_changed_to_failure'
   $gitPath = Get-ToolPath 'git'
   Assert-Check ($gitPath -is [string] -and $gitPath -ceq (Get-Command git -CommandType Application | Select-Object -First 1).Source) 'tool_path_not_single_application'
   Invoke-OwnedProcess $gitPath @('--version') (Join-Path $validationDir 'git-single-path') 30
-  $script:RunDir = $validationDir
   New-Item -ItemType Directory -Path (Join-Path $validationDir 'snapshots') | Out-Null
   $script:Run.budgets.timeoutSeconds = 30
   $script:Lanes = @($lane)
@@ -121,14 +147,18 @@ try {
     }
   }
   try {
-    $intent = @{ trackerIds = @('LST', 'BLU'); noSeed = $true; preparation = @{ SourcePath = $source; Search = @{ Skip = $true }; Force = $true } }
+    $lane.expectedIdentity = $identity.Clone()
+    $intent = @{ trackerIds = @('LST', 'BLU'); noSeed = $true; preparation = @{ SourcePath = $source; Search = @{ Skip = $true }; Force = $true; Instructions = @{ Identity = Get-CaseIdentityOverrides $identityCase } } }
     $advanced = Continue-Lane $lane 'trackers_assessed' $null $intent
     Assert-Check ($script:FakeStep -eq 4 -and $script:FakePolls -eq 1 -and $advanced.release -and $advanced.preflight) 'continuation_stopped_after_creation'
     Assert-Check (-not $script:FakeRequests[0].authority -and $script:FakeRequests[1].authority.expectedRevision -eq 1 -and $script:FakeRequests[2].authority.expectedRevision -eq 3 -and $script:FakeRequests[3].authority.expectedRevision -eq 4) 'continuation_authority_not_current'
     Assert-Check (@($script:FakeRequests.idempotencyKey | Select-Object -Unique).Count -eq 1) 'continuation_idempotency_changed'
     Assert-Check (@($script:FakeRequests | Where-Object { -not $_.intent.preparation -or $_.intent.trackerIds.Count -ne 2 }).Count -eq 0) 'creation_intent_or_full_trackers_lost'
+    Assert-Check (@($script:FakeRequests | Where-Object { $_.intent.preparation.Instructions.Identity.IMDBID -ne 1234567 -or $_.intent.preparation.Instructions.Identity.TVmazeID -ne 34567 }).Count -eq 0) 'identity_lost_during_preparation'
     $recorded = @(Read-PrivateJson (Join-Path $validationDir 'lanes.private.json'))[0]
     Assert-Check ($recorded.authority.expectedRevision -eq 4 -and $recorded.preparation.SourcePath -ceq $source) 'latest_authority_or_preparation_not_saved'
+    Assert-Check ($recorded.preparation.Instructions.Identity.IMDBID -eq 1234567 -and $recorded.preparation.Instructions.Identity.TMDBID -eq 12345 -and $recorded.preparation.Instructions.Identity.TVDBID -eq 23456 -and $recorded.preparation.Instructions.Identity.TVmazeID -eq 34567) 'identity_not_saved_for_continuation'
+    Assert-Check ($recorded.expectedIdentity.IMDBID -eq 1234567 -and $recorded.expectedIdentity.TVmazeID -eq 34567) 'expected_identity_not_saved'
     # The blocked LST action does not make the adapter stop before BLU's backend transition.
     Assert-Check (@(Get-PendingActions $advanced).Count -eq 1 -and $advanced.preflight.results[0].state -eq 'ready') 'partial_tracker_evidence_lost'
   } finally { Set-Item Function:Invoke-LiveAPI -Value $originalAPI }
@@ -137,15 +167,18 @@ try {
   function Invoke-LiveAPI([string]$Method, $Body = @{}, [switch]$Poll, [int]$ExpectedStatus = 200) {
     $script:FakeRequests += @(ConvertTo-Json $Body -Depth 40 | ConvertFrom-Json -AsHashtable)
     $script:FakeStep++
-    @{ workflow = @{ id = 'workflow-1'; revision = 2 }; release = @{ id = 'release-1' }; factInstructions = @{ instructions = @{ SourceLookup = 'operator-selected-synthetic-source' } } }
+    $changedIdentity = $identity.Clone(); $changedIdentity.IMDBID = 7654321
+    @{ workflow = @{ id = 'workflow-1'; revision = 2 }; release = @{ id = 'release-1'; release = @{ Identity = $changedIdentity } }; factInstructions = @{ instructions = @{ SourceLookup = 'operator-selected-synthetic-source'; Identity = $changedIdentity } } }
   }
   try {
     $old = @{ workflow = @{ id = 'workflow-1'; revision = 1 } }
-    $intent = @{ preparation = @{ SourcePath = $source; Instructions = @{} }; noSeed = $true }
+    $intent = @{ preparation = @{ SourcePath = $source; Instructions = @{ Identity = $identity.Clone() } }; noSeed = $true }
     $answer = @{ actionId = 'action-1'; workflowRevision = 1; selectedValues = @('synthetic-1') }
-    $null = Continue-Lane $lane 'prepared' $old $intent @($answer)
+    $answered = Continue-Lane $lane 'prepared' $old $intent @($answer)
     Assert-Check ($script:FakeRequests.Count -eq 2 -and $script:FakeRequests[0].answers.Count -eq 1 -and -not $script:FakeRequests[1].answers) 'revision_bound_answer_replayed'
     Assert-Check ($script:FakeRequests[1].intent.preparation.Instructions.SourceLookup -ceq 'operator-selected-synthetic-source' -and -not $intent.preparation.Instructions.SourceLookup) 'accepted_facts_reset_or_caller_intent_mutated'
+    Assert-Check ($lane.expectedIdentity.IMDBID -eq 1234567 -and $lane.preparation.Instructions.Identity.IMDBID -eq 7654321) 'answered_identity_replaced_case_expectation'
+    Assert-Check ((Record-Stage $lane $answered 'prepared') -eq 'fail' -and $script:Results[-1].reason -eq 'metadata_identity_mismatch') 'answered_identity_mismatch_accepted'
   } finally { Set-Item Function:Invoke-LiveAPI -Value $originalAPI }
 
   $script:FakeStep = 0

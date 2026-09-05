@@ -49,6 +49,7 @@ try {
   Write-PrivateJson (Join-Path $script:RunDir 'profile.private.json') $profile
   if ($profile.runId -cne $id -or $profile.runDir -cne $script:RunDir) { throw 'cli_profile_identity_mismatch' }
   $arguments = @('--live-test', '--live-test-max-images', '0', '--config', $profile.configPath, '--unattended', '--no-seed', '--trackers', ($lane.trackerIds -join ','))
+  $arguments += @(Get-CaseIdentityCLIArguments $entry[0].case)
   if ($lane.sat) { $arguments += '--sat' }
   if ($baseline.executionMode -eq 'debug') { $arguments += '--debug' }
   elseif ($baseline.executionMode -ne 'normal') { throw 'cli_execution_mode_invalid' }

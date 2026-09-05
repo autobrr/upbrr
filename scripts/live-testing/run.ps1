@@ -226,9 +226,12 @@ try {
                 executionMode = $script:Run.executionMode; interaction = 'unattended'; trackerIds = $ids; noSeed = $true; skipRemoteDuplicates = $false
                 preparation = @{ SourcePath = $entry.case.input_path; Intent = 'preview'; Search = @{ Skip = $variant }; Controls = @{ Interaction = 'unattended' }; Force = $variant }
               }
+              $identity = Get-CaseIdentityOverrides $entry.case
+              $lane.expectedIdentity = $identity.Clone()
+              if ($identity.Count -gt 0) { $intent.preparation.Instructions = @{ Identity = $identity } }
               $current = Continue-Lane $lane 'prepared' $null $intent
               $status = Record-Stage $lane $current 'prepared'
-              if (-not $current.release) { continue }
+              if (-not $current.release -or $status -eq 'fail') { continue }
               $intent.Remove('preparation')
               $current = Continue-Lane $lane 'trackers_assessed' $current $intent
               $status = Record-Stage $lane $current 'trackers_assessed'

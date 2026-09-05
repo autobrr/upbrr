@@ -5,7 +5,9 @@ package configstore_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json/v2"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -78,6 +80,45 @@ func liveTestFixture(t *testing.T, legacy ...bool) (string, string) {
 		t.Fatal(err)
 	}
 	return source, filepath.Join(root, "runs", "synthetic-run")
+}
+
+func TestCreateLiveTestProfileBackupFailureCanRetry(t *testing.T) {
+	source, runDir := liveTestFixture(t)
+	sourceBefore, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = configstore.CreateLiveTestProfile(ctx, "", false, runDir)
+	if !errors.Is(err, context.Canceled) || !strings.HasPrefix(err.Error(), "live-test snapshot database: ") {
+		t.Fatalf("backup error was not preserved: %v", err)
+	}
+	for _, path := range []string{runDir, filepath.Join(runDir, "profile", "db.sqlite")} {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("failed backup artifact remains: %s: %v", path, err)
+		}
+	}
+	profile, err := configstore.CreateLiveTestProfile(t.Context(), "", false, runDir)
+	if err != nil {
+		t.Fatalf("retrying the same run directory: %v", err)
+	}
+	cloneBefore, err := os.ReadFile(profile.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := configstore.CreateLiveTestProfile(ctx, "", false, runDir); err == nil ||
+		!strings.Contains(err.Error(), "live-test requires a new run directory") {
+		t.Fatalf("existing run directory was not rejected: %v", err)
+	}
+	cloneAfter, err := os.ReadFile(profile.DBPath)
+	if err != nil || !bytes.Equal(cloneBefore, cloneAfter) {
+		t.Fatalf("existing run database changed: %v", err)
+	}
+	sourceAfter, err := os.ReadFile(source)
+	if err != nil || !bytes.Equal(sourceBefore, sourceAfter) {
+		t.Fatalf("source database changed: %v", err)
+	}
 }
 
 func TestCreateLiveTestProfilePreservesEncryptedConfigurationAndSource(t *testing.T) {

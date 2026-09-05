@@ -67,8 +67,9 @@ func ApplyLiveTestPaths(cfg *config.Config, profile livetest.Profile) {
 }
 
 // CreateLiveTestProfile snapshots real configuration and matching auth material
-// into a fresh private run. Only the clone is migrated or mutated. Failed
-// construction leaves a restricted directory without a runnable ready marker.
+// into a fresh private run. Only the clone is migrated or mutated. Backup failures
+// remove the new run directory; later construction failures leave a restricted
+// directory without a runnable ready marker.
 func CreateLiveTestProfile(ctx context.Context, sourceConfigPath string, sourceProvided bool, runDir string) (livetest.Profile, error) {
 	if ctx == nil {
 		return livetest.Profile{}, errors.New("live-test context is required")
@@ -131,6 +132,9 @@ func CreateLiveTestProfile(ctx context.Context, sourceConfigPath string, sourceP
 		p.SourceKind = "provided_config"
 	}
 	if err := db.BackupReadOnly(ctx, sourcePath, p.DBPath); err != nil {
+		if cleanupErr := os.RemoveAll(runDir); cleanupErr != nil {
+			err = errors.Join(err, fmt.Errorf("remove incomplete run directory: %w", cleanupErr))
+		}
 		return livetest.Profile{}, fmt.Errorf("live-test snapshot database: %w", err)
 	}
 	p.SourceFingerprint, err = liveTestSnapshotFingerprint(p.DBPath)
