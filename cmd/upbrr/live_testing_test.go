@@ -41,6 +41,7 @@ func TestLiveTestCLIProfileStartupAndTerminalCleanup(t *testing.T) {
 	base := t.TempDir()
 	t.Setenv("LOCALAPPDATA", base)
 	t.Setenv("XDG_CACHE_HOME", base)
+	t.Setenv("HOME", base)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(base, "source"))
 	t.Setenv("UA_DEFAULT_DB_PATH", "")
 	t.Setenv("UA_TRACKERS_DEFAULT", "")

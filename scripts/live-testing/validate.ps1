@@ -222,6 +222,72 @@ try {
     $completed = Wait-Workflow $accepted (Join-Path $validationDir 'accepted.private.json')
     Assert-Check ($script:AcceptedPolls -eq 2 -and $completed.operation.status -ceq 'completed') 'accepted_image_upload_not_awaited'
   } finally { Remove-Item Function:Invoke-WebRequest }
+  $originalStart = ${function:Start-OwnedProcess}
+  $originalStop = ${function:Stop-OwnedProcess}
+  $originalRead = ${function:Read-PrivateJson}
+  function Start-OwnedProcess {
+    $process = [pscustomobject]@{ ExitCode = $script:CleanupExit }
+    $process | Add-Member ScriptMethod WaitForExit { param($Timeout) return $true }
+    @{ process = $process }
+  }
+  function Stop-OwnedProcess {}
+  function Read-PrivateJson { $script:CleanupReceipt }
+  try {
+    foreach ($failure in @('pending', 'unknown', 'failed', 'exit', 'identity', 'none')) {
+      $script:CleanupReceipt = @{ runId = $script:Run.runId; deleted = 2; pending = 0; unknown = 0; failed = 0 }
+      $script:CleanupExit = 0
+      if ($failure -in @('pending', 'unknown', 'failed')) { $script:CleanupReceipt[$failure] = 1 }
+      if ($failure -eq 'exit') { $script:CleanupExit = 2 }
+      if ($failure -eq 'identity') { $script:CleanupReceipt.runId = 'wrong-run' }
+      $failed = $false
+      try { Invoke-RunCleanup } catch { $failed = $true }
+      Assert-Check ($failed -eq ($failure -ne 'none')) 'cleanup_failure_not_propagated'
+      Assert-Check (($script:Cleanup.state -eq 'complete') -eq ($failure -eq 'none')) 'cleanup_incorrectly_complete'
+      if ($failure -in @('pending', 'unknown', 'failed')) { Assert-Check ($script:Cleanup[$failure] -eq 1) 'cleanup_counter_lost' }
+      if ($failure -eq 'identity') { Assert-Check ($null -eq $script:Cleanup.unknown) 'unverified_cleanup_claims_zero_unknown' }
+    }
+  } finally {
+    Set-Item Function:Start-OwnedProcess -Value $originalStart
+    Set-Item Function:Stop-OwnedProcess -Value $originalStop
+    Set-Item Function:Read-PrivateJson -Value $originalRead
+  }
+  # Exercise the real runner's catch/finally without using a runtime or live profile.
+  $resumeRoot = Join-Path $validationDir 'resume-appdata'
+  $resumePrivate = Join-Path $resumeRoot 'upbrr-live-testing'
+  foreach ($state in @('cleaned', 'cleanup_pending', 'needs_input', 'failed-cleanup')) {
+    $resumeDir = Join-Path $resumePrivate "runs/$state"
+    New-Item -ItemType Directory -Path $resumeDir -Force | Out-Null
+    $binary = Join-Path $resumeDir 'never-execute.txt'
+    [IO.File]::WriteAllText($binary, 'synthetic; terminal runs must never start a runtime')
+    Write-PrivateJson (Join-Path $resumeDir 'run.json') @{ runId = $state; state = $(if ($state -eq 'failed-cleanup') { 'needs_input' } else { $state }); binaryPath = $binary; binarySha256 = (Get-FileHash -LiteralPath $binary).Hash; requests = 17 }
+    Write-PrivateJson (Join-Path $resumeDir 'profile.private.json') @{ runId = $state }
+    Write-PrivateJson (Join-Path $resumeDir 'report.json') @{ cleanup = @{ state = 'unresolved'; unknown = 1 } }
+    Write-PrivateJson (Join-Path $resumeDir 'results.private.json') @(@{ stage = 'synthetic'; status = 'needs_input' })
+    if ($state -eq 'needs_input') { [IO.File]::WriteAllText((Join-Path $resumeDir 'cleanup-started'), 'terminal') }
+    if ($state -eq 'failed-cleanup') {
+      $child = Start-OwnedProcess (Get-ToolPath 'pwsh') @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'run.ps1'), '-CleanupRun', $state) (Join-Path $validationDir 'failed-cleanup') @{ LOCALAPPDATA = $resumeRoot }
+      try {
+        Assert-Check ($child.process.WaitForExit(30000)) 'failed_cleanup_did_not_exit'
+        Assert-Check ($child.process.ExitCode -eq 2) 'failed_cleanup_not_reported'
+      } finally { Stop-OwnedProcess $child }
+      Assert-Check ((Read-PrivateJson (Join-Path $resumeDir 'run.json')).state -eq 'cleanup_pending') 'failed_cleanup_lost_terminal_state'
+      Assert-Check ((Read-PrivateJson (Join-Path $resumeDir 'report.json')).cleanup.state -eq 'unresolved') 'failed_cleanup_reported_complete'
+      Assert-Check (-not (Test-Path -LiteralPath (Join-Path $resumeDir 'cleanup-started'))) 'failed_cleanup_unexpectedly_started_runtime'
+    }
+    $preserved = @('run.json', 'report.json', 'results.private.json', 'profile.private.json')
+    $before = @($preserved | ForEach-Object { (Get-FileHash -LiteralPath (Join-Path $resumeDir $_)).Hash })
+    $logBase = Join-Path $validationDir "resume-$state"
+    $child = Start-OwnedProcess (Get-ToolPath 'pwsh') @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'run.ps1'), '-ResumeRun', $state) $logBase @{ LOCALAPPDATA = $resumeRoot }
+    try {
+      Assert-Check ($child.process.WaitForExit(30000)) 'terminal_resume_did_not_exit'
+      Assert-Check ($child.process.ExitCode -eq 2) 'terminal_resume_not_rejected'
+    } finally { Stop-OwnedProcess $child }
+    Assert-Check ((Get-Content -LiteralPath "$logBase.stdout.private.log" -Raw) -match 'reason=cleaned_run_cannot_resume') 'terminal_resume_rejected_for_wrong_reason'
+    $after = @($preserved | ForEach-Object { (Get-FileHash -LiteralPath (Join-Path $resumeDir $_)).Hash })
+    Assert-Check (($before -join ',') -ceq ($after -join ',')) 'terminal_resume_rewrote_retained_evidence'
+    Assert-Check (-not (Test-Path -LiteralPath (Join-Path $resumeDir 'process.private.json'))) 'terminal_resume_started_server'
+  }
+  Write-Host 'PASS: cleanup failures remain unresolved; terminal resume preserves manifests, reports, and results without starting a runtime.'
   Write-Host 'PASS: corpus/stat/process/policy checks; ordered partial tracker scope and per-case unavailable evidence; explicit/empty scope blocking; bounded continuation; feedback restart/rebind; failed browser budget/evidence retained; sanitized duplicate evidence; authenticated HTTP 202 upload polled to completion.'
 } finally {
   $checked = Assert-PrivatePath $validationDir (Join-Path $root 'validation')

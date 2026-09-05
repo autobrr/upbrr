@@ -13,6 +13,7 @@ func TestProfileRequiresReadyIdentityAndPrivatePaths(t *testing.T) {
 	base := t.TempDir()
 	t.Setenv("LOCALAPPDATA", base)
 	t.Setenv("XDG_CACHE_HOME", base)
+	t.Setenv("HOME", base)
 	root, err := PrivateRoot()
 	if err != nil {
 		t.Fatal(err)

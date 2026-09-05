@@ -130,13 +130,14 @@ try {
     $profile = Read-PrivateJson (Join-Path $script:RunDir 'profile.private.json')
     $script:Binary = Assert-PrivatePath $script:Run.binaryPath $privateRoot
     if ($script:Run.runId -cne $runID -or $profile.runId -cne $runID -or (Get-FileHash -LiteralPath $script:Binary).Hash -cne $script:Run.binarySha256) { throw 'saved_run_identity_mismatch' }
-    $initialized = $true
     if ($CleanupRun) {
+      $initialized = $true
+      $script:Run.state = 'cleanup_pending'
       Invoke-RunCleanup
       $script:Run.state = 'cleaned'
       Write-Host "run=$runID cleanup=complete"
     } else {
-      if (Test-Path -LiteralPath (Join-Path $script:RunDir 'cleanup-started')) { throw 'cleaned_run_cannot_resume' }
+      if ($script:Run.state -in @('cleaned', 'cleanup_pending') -or (Test-Path -LiteralPath (Join-Path $script:RunDir 'cleanup-started'))) { throw 'cleaned_run_cannot_resume' }
       Stop-RecordedServer $script:RunDir
       $currentCandidate = Get-CandidateState $script:RunDir
       if ((ConvertTo-Json $currentCandidate -Depth 20 -Compress) -cne (ConvertTo-Json $script:Run.candidate -Depth 20 -Compress)) { throw 'candidate_changed_new_run_required' }
@@ -149,6 +150,7 @@ try {
       $script:Lanes = @(Read-PrivateJson (Join-Path $script:RunDir 'lanes.private.json'))
       $script:Results = @(Read-PrivateJson (Join-Path $script:RunDir 'results.private.json'))
       $script:RequestCount = $script:Run.requests
+      $initialized = $true
     }
   }
 

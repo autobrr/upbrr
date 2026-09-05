@@ -9,6 +9,7 @@ func TestLockExcludesConcurrentRuntimeAndReleasesOnClose(t *testing.T) {
 	base := t.TempDir()
 	t.Setenv("LOCALAPPDATA", base)
 	t.Setenv("XDG_CACHE_HOME", base)
+	t.Setenv("HOME", base)
 	first, err := Lock()
 	if err != nil {
 		t.Fatal(err)

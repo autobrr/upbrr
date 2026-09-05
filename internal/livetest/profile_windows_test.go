@@ -66,6 +66,10 @@ func TestValidateRunDirWindowsCaseVariantsTerminate(t *testing.T) {
 		if err != nil || loaded.RunDir != p.RunDir || loaded.RunID != p.RunID {
 			t.Fatalf("case alias changed profile identity: %v", err)
 		}
+		loaded, err = ProfileForDB(filepath.Join(variant, "PrOfIlE", "DB.SQLITE"))
+		if err != nil || loaded.DBPath != p.DBPath {
+			t.Fatalf("case alias changed database identity: %v", err)
+		}
 	}
 	if _, err := ValidateRunDir(filepath.Join(strings.ToUpper(root), "outside", p.RunID)); err == nil {
 		t.Fatal("unapproved case-variant parent accepted")

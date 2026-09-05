@@ -1,22 +1,54 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { isLostimgImageURL, compareMediaOrder, screenshotLifecyclePlan } = require('./helpers.cjs');
+const { isLostimgImageURL, compareMediaOrder, screenshotLifecyclePlan, recaptureScreenshotProbe } = require('./helpers.cjs');
 
 test('accept production Lostimg image URLs and reject unrelated origins and schemes', () => {
   for (const value of ['https://lostimg.cc/a.png', 'https://i.lostimg.cc/b.png']) assert.equal(isLostimgImageURL(value), true);
   for (const value of ['http://lostimg.cc/a.png', 'https://lostimg.com/a.png', 'https://lostimg.cc.example.com/a.png', 'https://example.com/lostimg.cc', 'https://user:password@lostimg.cc/a.png', 'data:image/png;base64,AA==']) assert.equal(isLostimgImageURL(value), false);
 });
 
-test('recapture uses a deleted logical slot and cancellation uses a new slot', () => {
+test('recapture and cancellation use spare slots without changing original selections', () => {
   const images = [{ id: 'a', kind: 'screenshot', timestampSeconds: 10, selected: true }, { id: 'b', kind: 'screenshot', index: 1, timestampSeconds: 20, order: 1 }];
   const plan = screenshotLifecyclePlan(images, { durationSeconds: 30 });
-  assert.equal(plan.target.id, 'a');
-  assert.deepEqual(plan.selections.map(item => [item.Index, item.TimestampSeconds]), [[0, 11], [1, 20]]);
-  assert.equal(plan.cancelSelection.Index, 2);
+  assert.equal(plan.probeIndex, 2);
+  assert.deepEqual(plan.initialSelections.map(item => [item.Index, item.TimestampSeconds]), [[0, 10], [1, 20], [2, 11]]);
+  assert.deepEqual(plan.selections.map(item => [item.Index, item.TimestampSeconds]), [[0, 10], [1, 20], [2, 9]]);
+  assert.equal(plan.cancelSelection.Index, 3);
   assert.equal(images[0].timestampSeconds, 10);
   assert.equal(screenshotLifecyclePlan(images, { durationSeconds: 30, discType: 'BDMV' }), null);
   assert.equal(screenshotLifecyclePlan([{ ...images[0], timestampSeconds: undefined }], { durationSeconds: 30 }), null);
   assert.equal(screenshotLifecyclePlan([images[0], { ...images[1], index: 0 }], { durationSeconds: 30 }), null);
+});
+
+test('typed actions before and after probe deletion preserve original frames and stop further mutations', async () => {
+  for (const blockedCapture of [1, 2, 0]) {
+    const original = [{ id: 'original-a', kind: 'screenshot', timestampSeconds: 10, selected: true }, { id: 'original-b', kind: 'screenshot', index: 1, timestampSeconds: 20, selected: false, order: 1 }];
+    const plan = screenshotLifecyclePlan(original, { durationSeconds: 30 });
+    let retained = structuredClone(original);
+    let captures = 0;
+    const deleted = [];
+    const result = await recaptureScreenshotProbe(plan, async selections => {
+      captures++;
+      assert.deepEqual(selections.slice(0, 2).map(item => [item.Index, item.TimestampSeconds]), [[0, 10], [1, 20]]);
+      if (captures === blockedCapture) return 'needs_input';
+      const selection = selections.find(item => item.Index === plan.probeIndex);
+      // Production IDs are deterministic for the same capture inputs.
+      retained.push({ id: `probe-${selection.Index}@${selection.TimestampSeconds}`, kind: 'screenshot', index: selection.Index, timestampSeconds: selection.TimestampSeconds });
+      return 'completed';
+    }, () => retained, async id => {
+      deleted.push(id);
+      retained = retained.filter(artifact => artifact.id !== id);
+    });
+    assert.deepEqual(retained.slice(0, 2), original);
+    assert.deepEqual(deleted, blockedCapture === 1 ? [] : ['probe-2@11']);
+    assert.equal(captures, blockedCapture === 1 ? 1 : 2);
+    assert.equal(result.status, blockedCapture ? 'needs_input' : 'completed');
+    assert.equal(retained.length, blockedCapture ? 2 : 3);
+    if (!blockedCapture) {
+      assert.notEqual(retained[2].id, result.deletedID);
+      assert.equal(retained[2].timestampSeconds, plan.timestamp);
+    }
+  }
 });
 
 test('Go omitempty order zero sorts first even when capture slots remain in their original array positions', () => {

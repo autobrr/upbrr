@@ -565,6 +565,27 @@ func TestWorkflowMediaBuilderRepeatedCaptureIsNoOp(t *testing.T) {
 			t.Fatalf("artifact %d changed across no-op capture: before=%q after=%q", index, first.Artifacts[index].ID, second.Artifacts[index].ID)
 		}
 	}
+
+	// The live lifecycle probe adds a spare slot without changing retained choices.
+	first.Artifacts[0].Selected = false
+	first.Artifacts[0].Order, first.Artifacts[1].Order = first.Artifacts[1].Order, first.Artifacts[0].Order
+	instructions.Selections = append(instructions.Selections, api.ScreenshotSelection{Index: 3, TimestampSeconds: 180})
+	third, _, err := builder.BuildIncremental(t.Context(), release, projections, instructions, &first, retained, time.Now())
+	if err != nil {
+		t.Fatalf("additional incremental capture: %v", err)
+	}
+	if len(third.Artifacts) != 3 || screenshots.captures != 2 {
+		t.Fatalf("extended media = %#v captures=%d", third, screenshots.captures)
+	}
+	for index := range first.Artifacts {
+		before, after := first.Artifacts[index], third.Artifacts[index]
+		if after.ID != before.ID || after.Selected != before.Selected || after.Order != before.Order || after.TimestampSeconds != before.TimestampSeconds {
+			t.Fatalf("retained artifact changed during spare capture: before=%#v after=%#v", before, after)
+		}
+	}
+	if third.Artifacts[2].Index != 3 {
+		t.Fatalf("spare frame used the wrong slot: %#v", third.Artifacts[2])
+	}
 }
 
 func TestWorkflowMediaBuilderRetainsMatchingExistingScreenshots(t *testing.T) {

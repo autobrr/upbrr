@@ -439,6 +439,7 @@ function Stop-RecordedServer([string]$Directory) {
 }
 
 function Invoke-RunCleanup {
+  $script:Cleanup = @{ deleted = $null; pending = $null; unknown = $null; failed = $null; state = 'unresolved' }
   Stop-RecordedServer $script:RunDir
   $logBase = Join-Path $script:RunDir ('cleanup-' + [guid]::NewGuid().ToString('N'))
   $handle = Start-OwnedProcess $script:Binary @('live-test', 'cleanup', '--run-dir', $script:RunDir) $logBase
@@ -449,6 +450,7 @@ function Invoke-RunCleanup {
   try { $receipt = Read-PrivateJson "$logBase.stdout.private.log" } catch { throw 'cleanup_receipt_missing' }
   if ($receipt.runId -cne $script:Run.runId) { throw 'cleanup_identity_mismatch' }
   Write-PrivateJson (Join-Path $script:RunDir 'cleanup.json') $receipt
-  $script:Cleanup = @{ deleted = $receipt.deleted; pending = $receipt.pending; unknown = $receipt.unknown; failed = $receipt.failed; state = 'complete' }
+  $script:Cleanup = @{ deleted = $receipt.deleted; pending = $receipt.pending; unknown = $receipt.unknown; failed = $receipt.failed; state = 'unresolved' }
   if ($exitCode -ne 0 -or $receipt.pending -gt 0 -or $receipt.unknown -gt 0 -or $receipt.failed -gt 0) { throw 'cleanup_unresolved' }
+  $script:Cleanup.state = 'complete'
 }

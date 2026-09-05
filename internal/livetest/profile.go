@@ -193,7 +193,7 @@ func LoadProfile(runDir string) (Profile, error) {
 	return p, nil
 }
 
-// ProfileForDB resolves a ready profile for the exact expected database path.
+// ProfileForDB resolves a ready profile for its database, allowing equivalent filesystem paths.
 func ProfileForDB(dbPath string) (Profile, error) {
 	dbPath, err := filepath.Abs(dbPath)
 	if err != nil {
@@ -203,7 +203,7 @@ func ProfileForDB(dbPath string) (Profile, error) {
 	if err != nil {
 		return Profile{}, err
 	}
-	if dbPath != p.DBPath {
+	if !pathing.SamePath(dbPath, p.DBPath) {
 		return Profile{}, errors.New("live-test database identity mismatch")
 	}
 	return p, nil

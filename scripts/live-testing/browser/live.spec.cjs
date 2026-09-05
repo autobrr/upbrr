@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { randomUUID, createHash } = require('node:crypto');
-const { isLostimgImageURL, compareMediaOrder, screenshotLifecyclePlan } = require('./helpers.cjs');
+const { isLostimgImageURL, compareMediaOrder, screenshotLifecyclePlan, recaptureScreenshotProbe } = require('./helpers.cjs');
 const { test, expect } = require('../../../webui/node_modules/@playwright/test');
 
 test('owned embedded live runtime, controls, local images, and selection persistence', async ({ browser }) => {
@@ -184,6 +184,7 @@ test('owned embedded live runtime, controls, local images, and selection persist
             }
           };
           const capture = async (selections, cancel) => {
+            if (pending(current)) return 'needs_input';
             const idempotencyKey = randomUUID();
             const previousOperation = current.operation?.id;
             for (let transition = 0; transition < 12; transition++) {
@@ -196,7 +197,7 @@ test('owned embedded live runtime, controls, local images, and selection persist
               if (cancel && current.operation?.command === 'capture_media' && current.operation.id !== previousOperation) {
                 if (active(current)) await api('CancelReleaseWorkflowOperation', { workflowId: lane.workflowId, operationId: current.operation.id });
                 await wait();
-                return current.operation?.status === 'canceled' ? 'canceled' : pending(current) ? 'needs_input' : 'completed_before_cancel';
+                return pending(current) ? 'needs_input' : current.operation?.status === 'canceled' ? 'canceled' : 'completed_before_cancel';
               }
               await wait();
               if (pending(current)) return 'needs_input';
@@ -206,16 +207,22 @@ test('owned embedded live runtime, controls, local images, and selection persist
           };
           try {
             const previousFingerprint = current.media.captureFingerprint;
-            current = await mutation('DeleteReleaseWorkflowMedia', { artifactIds: [plan.target.id] });
-            expect(current.media.artifacts.some(artifact => artifact.id === plan.target.id)).toBe(false);
-            const captured = await capture(plan.selections, false);
-            if (captured === 'needs_input') {
+            const captured = await recaptureScreenshotProbe(plan, capture, () => current.media.artifacts, async id => {
+              current = await mutation('DeleteReleaseWorkflowMedia', { artifactIds: [id] });
+            });
+            for (const original of plan.local) {
+              const retained = current.media.artifacts.find(artifact => artifact.id === original.id);
+              expect(retained, 'original_frame_lost_during_probe').toBeTruthy();
+              expect([retained.selected, retained.order ?? 0, retained.timestampSeconds]).toEqual([original.selected, original.order ?? 0, original.timestampSeconds]);
+            }
+            if (captured.status === 'needs_input') {
               results.push({ caseId: lane.caseId, laneId: lane.laneId, stage: 'screenshot_delete_recapture', status: 'needs_input', reason: 'recapture_requires_typed_action' });
               results.push({ caseId: lane.caseId, laneId: lane.laneId, stage: 'screenshot_cancellation', status: 'needs_input', reason: 'recapture_requires_typed_action' });
+              results.push({ caseId: lane.caseId, laneId: lane.laneId, stage: 'screenshot_lifecycle_restore', status: 'needs_input', reason: 'pending_feedback_authority_preserved' });
             } else {
-              const replacement = current.media.artifacts.find(artifact => artifact.kind === 'screenshot' && (artifact.index || 0) === (plan.target.index || 0));
+              const replacement = current.media.artifacts.find(artifact => artifact.kind === 'screenshot' && artifact.index === plan.probeIndex);
               expect(replacement, 'replacement_frame_missing').toBeTruthy();
-              expect(replacement.id).not.toBe(plan.target.id);
+              expect(replacement.id).not.toBe(captured.deletedID);
               expect(replacement.timestampSeconds).toBeCloseTo(plan.timestamp, 3);
               expect(current.media.captureFingerprint).not.toBe(previousFingerprint);
               const params = new URLSearchParams({ workflowId: current.workflow.id, mediaId: current.media.id, mediaRevision: String(current.media.revision), artifactId: replacement.id });
@@ -227,8 +234,12 @@ test('owned embedded live runtime, controls, local images, and selection persist
               results.push({ caseId: lane.caseId, laneId: lane.laneId, stage: 'screenshot_delete_recapture', status: 'pass', reason: 'deleted_slot_recaptured_at_new_timestamp_and_decoded' });
               const cancellation = await capture([...plan.selections, plan.cancelSelection], true);
               results.push({ caseId: lane.caseId, laneId: lane.laneId, stage: 'screenshot_cancellation', status: cancellation === 'canceled' ? 'pass' : cancellation === 'needs_input' ? 'needs_input' : 'inconclusive', reason: cancellation === 'canceled' ? 'single_capture_canceled' : cancellation === 'needs_input' ? 'capture_requires_typed_action' : 'capture_completed_before_cancel' });
-              // Deleted artifact IDs cannot be restored. Restore the intended logical slots using the newly retained IDs.
-              const intended = plan.local.map(old => current.media.artifacts.find(artifact => artifact.kind === 'screenshot' && (artifact.index || 0) === (old.index || 0)));
+              if (cancellation === 'needs_input') {
+                results.push({ caseId: lane.caseId, laneId: lane.laneId, stage: 'screenshot_lifecycle_restore', status: 'needs_input', reason: 'pending_feedback_authority_preserved' });
+                continue;
+              }
+              // Remove probe frames and preserve the original artifact identities.
+              const intended = plan.local.map(old => current.media.artifacts.find(artifact => artifact.id === old.id));
               expect(intended.every(Boolean), 'retained_slot_missing_after_cancel').toBe(true);
               const intendedIDs = intended.map(artifact => artifact.id);
               const extra = current.media.artifacts.filter(artifact => artifact.kind === 'screenshot' && !intendedIDs.includes(artifact.id)).map(artifact => artifact.id);

@@ -71,6 +71,7 @@ func TestLiveTestRuntimeGenerationPreservesDenialPolicy(t *testing.T) {
 	base := t.TempDir()
 	t.Setenv("LOCALAPPDATA", base)
 	t.Setenv("XDG_CACHE_HOME", base)
+	t.Setenv("HOME", base)
 	t.Setenv("UA_DEFAULT_SCREENS", "9")
 	root, err := livetest.PrivateRoot()
 	if err != nil {
