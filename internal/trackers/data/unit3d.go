@@ -690,7 +690,25 @@ func buildUnit3DSearchEntries(items []unit3dSearchItem, filterTMDBID int, isDisc
 		rawType := strings.TrimSpace(item.Attributes.Type)
 		hdr := mediafacts.HDRFromMediaInfoText(item.Attributes.MediaInfo)
 		if item.Attributes.HDRDV != nil {
-			hdr = mediafacts.HDRFromUnit3DHDRDV(*item.Attributes.HDRDV)
+			trackerHDR := mediafacts.HDRFromUnit3DHDRDV(*item.Attributes.HDRDV)
+			if hdr.Status == api.HDREvidenceComplete && trackerHDR.Status == api.HDREvidenceComplete {
+				formatsAgree := len(hdr.Formats) == len(trackerHDR.Formats) &&
+					!slices.ContainsFunc(hdr.Formats, func(format api.HDRFormat) bool {
+						return !slices.Contains(trackerHDR.Formats, format)
+					})
+				profilesAgree := true
+				if hdr.DolbyVisionProfile != "" && trackerHDR.DolbyVisionProfile != "" {
+					mediaInfoValue, mediaInfoOK := mediafacts.Unit3DHDRDVFromFacts(hdr)
+					trackerValue, trackerOK := mediafacts.Unit3DHDRDVFromFacts(trackerHDR)
+					profilesAgree = mediaInfoOK && trackerOK && mediaInfoValue == trackerValue
+				}
+				if !formatsAgree || !profilesAgree {
+					trackerHDR.Status = api.HDREvidenceContradictory
+					trackerHDR.SourceFields = append(trackerHDR.SourceFields, "media_info")
+					trackerHDR.Contradictions = append(trackerHDR.Contradictions, "MediaInfo HDR differs from hdr_dv")
+				}
+			}
+			hdr = trackerHDR
 		}
 		entry := api.DupeEntry{
 			Name:          strings.TrimSpace(item.Attributes.Name),

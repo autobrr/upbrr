@@ -756,7 +756,17 @@ func canonicalContainer(value string) string {
 }
 
 func canonicalProvider(value string) string {
-	return compactAlphaNumeric(value)
+	normalized := compactAlphaNumeric(value)
+	switch normalized {
+	//nolint:misspell // ADN is the Animation Digital Network provider code.
+	case "and", "adn":
+		//nolint:misspell // ADN is the Animation Digital Network provider code.
+		return "adn"
+	case "hotstar", "hstr", "htsr":
+		return "htsr"
+	default:
+		return normalized
+	}
 }
 
 func canonicalGroup(value string) string {

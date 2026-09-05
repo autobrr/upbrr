@@ -44,6 +44,44 @@ func TestLSTDuplicatePolicySlots(t *testing.T) {
 			want: api.DupeRelationSameSlot,
 		},
 		{
+			//nolint:misspell // ADN is LST's exact provider code.
+			name: "ADN API provider matches AND target",
+			target: lstTarget(
+				"Example.Release.2026.1080p.WEB-DL.H.264.SDR-TARGET",
+				"WEBDL", "1080p", "AND", "H.264", api.HDRFormatSDR,
+			),
+			candidate: lstCandidateWithProvider(
+				"Example.Release.2026.1080p.WEB-DL.H.264.SDR-OTHER",
+				//nolint:misspell // ADN is LST's exact provider code.
+				"WEBDL", "1080p", "ADN", api.HDRFormatSDR,
+			),
+			want: api.DupeRelationSameSlot,
+		},
+		{
+			name: "HTSR API provider matches Hotstar target",
+			target: lstTarget(
+				"Example.Release.2026.1080p.WEB-DL.H.264.SDR-TARGET",
+				"WEBDL", "1080p", "Hotstar", "H.264", api.HDRFormatSDR,
+			),
+			candidate: lstCandidateWithProvider(
+				"Example.Release.2026.1080p.WEB-DL.H.264.SDR-OTHER",
+				"WEBDL", "1080p", "HTSR", api.HDRFormatSDR,
+			),
+			want: api.DupeRelationSameSlot,
+		},
+		{
+			name: "distinct structured webdl providers coexist",
+			target: lstTarget(
+				"Example.Release.2026.1080p.WEB-DL.H.264.SDR-TARGET",
+				"WEBDL", "1080p", "AND", "H.264", api.HDRFormatSDR,
+			),
+			candidate: lstCandidateWithProvider(
+				"Example.Release.2026.1080p.WEB-DL.H.264.SDR-OTHER",
+				"WEBDL", "1080p", "DSNP", api.HDRFormatSDR,
+			),
+			want: api.DupeRelationCoexists,
+		},
+		{
 			name: "webdl codec slot",
 			target: lstTarget(
 				"Example.Release.2026.1080p.AMZN.WEB-DL.H.264.SDR-TARGET",
@@ -282,7 +320,11 @@ func TestLSTDuplicatePolicySlots(t *testing.T) {
 				test.target,
 				[]dupe.TrackerCandidate{test.candidate},
 				*policy,
-				dupe.SearchEvidence{Complete: true, Pages: 1},
+				dupe.SearchEvidence{
+					Complete:  true,
+					Pages:     1,
+					WorkScope: dupe.WorkScopeProviderID,
+				},
 			).Candidates[0]
 			if result.Relation != test.want {
 				t.Fatalf("relation = %q, want %q; result=%#v", result.Relation, test.want, result)
@@ -326,6 +368,12 @@ func lstCandidate(name string, typeValue string, resolution string, formats ...a
 		Res:           resolution,
 		HDR:           lstHDR(formats...),
 	}, "LST")
+}
+
+func lstCandidateWithProvider(name string, typeValue string, resolution string, provider string, formats ...api.HDRFormat) dupe.TrackerCandidate {
+	candidate := lstCandidate(name, typeValue, resolution, formats...)
+	candidate.Provider = provider
+	return candidate
 }
 
 func lstHDR(formats ...api.HDRFormat) api.HDRFacts {

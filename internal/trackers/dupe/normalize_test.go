@@ -94,6 +94,42 @@ func TestNormalizeProviderFromAutobrrRLSCollection(t *testing.T) {
 	}
 }
 
+func TestCanonicalProviderAliases(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		value string
+		want  string
+	}{
+		//nolint:misspell // ADN is the Animation Digital Network provider code.
+		{value: "AND", want: "adn"},
+		//nolint:misspell // ADN is the Animation Digital Network provider code.
+		{value: "ADN", want: "adn"},
+		{value: "Hotstar", want: "htsr"},
+		{value: "HSTR", want: "htsr"},
+		{value: "HTSR", want: "htsr"},
+		{value: "AMZN", want: "amzn"},
+	} {
+		if got := canonicalProvider(test.value); got != test.want {
+			t.Errorf("canonicalProvider(%q) = %q, want %q", test.value, got, test.want)
+		}
+	}
+}
+
+func TestNormalizeEquivalentStructuredAndTitleProviderAliases(t *testing.T) {
+	t.Parallel()
+
+	facts := normalizeCandidateFacts(NormalizeCandidate(api.DupeEntry{
+		Name:     "Example.Release.2026.1080p.HTSR.WEB-DL.H.264-GRP",
+		Type:     "WEBDL",
+		Provider: "Hotstar",
+	}, "LST"))
+	if facts.Provider.Value != "htsr" || facts.Provider.Status != FactComplete ||
+		facts.Provider.Origin != FactOriginTrackerAPI || len(facts.Provider.Contradictions) != 0 {
+		t.Fatalf("provider fact = %#v", facts.Provider)
+	}
+}
+
 func TestCanonicalTitleEditionRecognizesLSTAspectRatioSlots(t *testing.T) {
 	t.Parallel()
 
