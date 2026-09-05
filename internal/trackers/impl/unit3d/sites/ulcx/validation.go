@@ -64,10 +64,10 @@ func checkRules(ctx context.Context, meta api.TrackerValidationSubject, _ api.Lo
 			RequireOriginalOrEnglishAudio:      true,
 			RequireEnglishSubtitleWithoutAudio: true,
 		})...)
+		failures = append(failures, ulcxAudioFailures(meta, ruleSubject)...)
 	}
 	failures = append(failures, ulcxRequiredAssetFailures(meta)...)
 	failures = append(failures, ulcxEncodeFailures(meta, ruleSubject)...)
-	failures = append(failures, ulcxAudioFailures(meta, ruleSubject)...)
 	return failures, nil
 }
 
@@ -150,6 +150,7 @@ func ulcxAV1Encode(meta api.TrackerValidationSubject) bool {
 func ulcxAudioFailures(meta api.TrackerValidationSubject, ruleSubject api.RuleSubject) []api.RuleFailure {
 	audio := strings.ToUpper(strings.TrimSpace(meta.Audio))
 	channels, channelsKnown := ulcxChannelCount(meta.Channels)
+	resolution := unit3d.RuleResolution(ruleSubject)
 	status := meta.MediaFileFacts.TechnicalStatus
 	switch {
 	case strings.Contains(audio, "LPCM"):
@@ -166,8 +167,8 @@ func ulcxAudioFailures(meta api.TrackerValidationSubject, ruleSubject api.RuleSu
 			api.RuleDispositionStrict,
 			status,
 		)}
-	case unit3d.RuleType(ruleSubject) == "ENCODE" && channelsKnown && channels > 2 &&
-		ulcxLosslessAudio(audio) && unit3d.ResolutionBelow(unit3d.RuleResolution(ruleSubject), "2160p"):
+	case unit3d.RuleType(ruleSubject) == "ENCODE" && channelsKnown && channels > 2 && resolution != "" &&
+		ulcxLosslessAudio(audio) && unit3d.ResolutionBelow(resolution, "2160p"):
 		return []api.RuleFailure{trackers.NewEvidenceRuleFailure(
 			"ulcx_encode_lossless_multichannel",
 			"lossless multichannel audio is not allowed on encodes at 1080p or below",
@@ -198,7 +199,7 @@ func ulcxLosslessAudio(audio string) bool {
 	}), "PCM")
 	return strings.Contains(audio, "FLAC") || strings.Contains(audio, "TRUEHD") ||
 		strings.Contains(audio, "DTS-HD MA") || strings.Contains(audio, "DTS-HD MASTER") ||
-		strings.Contains(audio, "LPCM") || pcm || strings.Contains(audio, "ALAC")
+		strings.Contains(audio, "DTS:X") || strings.Contains(audio, "LPCM") || pcm || strings.Contains(audio, "ALAC")
 }
 
 func ulcxX265Encode(meta api.TrackerValidationSubject) bool {

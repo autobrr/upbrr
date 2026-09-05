@@ -20,11 +20,11 @@ func duplicatePolicy() *trackers.DupePolicy {
 			trackers.DupeDimensionResolution,
 			trackers.DupeDimensionHDR,
 		},
-		CoexistenceRules: []trackers.DupeRule{
+		CoexistenceRules: append([]trackers.DupeRule{
 			ulcxWEBDLDifferentProviderRule(),
 			ulcxDifferentCodecRule("web", "ulcx_webdl_codec_slot"),
 			ulcxDifferentCodecRule("encode", "ulcx_encode_codec_slot"),
-		},
+		}, ulcxObjectiveCoexistenceRules()...),
 		PrecedenceRules: ulcxWEBDLHDRPrecedenceRules(),
 		ManualReviewRules: []trackers.DupeRule{
 			ulcxFullDiscReviewRule(),
@@ -35,14 +35,65 @@ func duplicatePolicy() *trackers.DupePolicy {
 	}
 }
 
+func ulcxObjectiveCoexistenceRules() []trackers.DupeRule {
+	var rules []trackers.DupeRule
+	for _, dimension := range []trackers.DupeDimension{
+		trackers.DupeDimensionResolution,
+		trackers.DupeDimensionEdition,
+		trackers.DupeDimensionRegion,
+		trackers.DupeDimensionThreeD,
+	} {
+		rules = append(rules, ulcxDistinctVariantRule(string(dimension), trackers.DupeCondition{
+			Dimension:       dimension,
+			ValuesDifferent: true,
+		}))
+	}
+	// Section 8 groups HDR10-family variants into one compatibility slot.
+	// Their relative quality still needs review outside the WEB-DL rules.
+	hdrSlots := []struct {
+		id      string
+		formats []string
+	}{
+		{id: "sdr", formats: []string{"sdr"}},
+		{id: "hdr10", formats: []string{"pq10", "hdr10", "hdr10_plus", "dolby_vision+hdr10", "dolby_vision+hdr10_plus"}},
+		{id: "hlg", formats: []string{"hlg"}},
+		{id: "dv", formats: []string{"dolby_vision"}},
+	}
+	for _, targetSlot := range hdrSlots {
+		for _, candidateSlot := range hdrSlots {
+			if targetSlot.id == candidateSlot.id {
+				continue
+			}
+			rules = append(rules, ulcxDistinctVariantRule("hdr_"+targetSlot.id+"_"+candidateSlot.id, trackers.DupeCondition{
+				Dimension:        trackers.DupeDimensionHDR,
+				TargetValues:     targetSlot.formats,
+				CandidateValues:  candidateSlot.formats,
+				RequiresComplete: true,
+			}))
+		}
+	}
+	return rules
+}
+
+func ulcxDistinctVariantRule(id string, condition trackers.DupeCondition) trackers.DupeRule {
+	return trackers.DupeRule{
+		ID:         "ulcx/duplicate/v3/distinct_" + id,
+		EvidenceID: ulcxDupeEvidenceID,
+		Relation:   string(api.DupeRelationCoexists),
+		ReasonCode: "ulcx_distinct_" + string(condition.Dimension) + "_slot",
+		// Objective slots outrank subjective review, below season-pack containment (850).
+		Priority:   820,
+		Conditions: []trackers.DupeCondition{condition},
+	}
+}
+
 func ulcxWEBDLDifferentProviderRule() trackers.DupeRule {
 	return trackers.DupeRule{
-		ID:               "ulcx/duplicate/v3/webdl_provider_slots",
-		EvidenceID:       ulcxDupeEvidenceID,
-		Relation:         string(api.DupeRelationCoexists),
-		ReasonCode:       "ulcx_webdl_provider_slot",
-		Priority:         850,
-		OverridesGeneral: true,
+		ID:         "ulcx/duplicate/v3/webdl_provider_slots",
+		EvidenceID: ulcxDupeEvidenceID,
+		Relation:   string(api.DupeRelationCoexists),
+		ReasonCode: "ulcx_webdl_provider_slot",
+		Priority:   810,
 		Conditions: []trackers.DupeCondition{
 			ulcxSameMediaClassCondition("web"),
 			{
@@ -61,12 +112,11 @@ func ulcxWEBDLDifferentProviderRule() trackers.DupeRule {
 
 func ulcxDifferentCodecRule(mediaClass string, reason string) trackers.DupeRule {
 	return trackers.DupeRule{
-		ID:               "ulcx/duplicate/v3/" + mediaClass + "_codec_slots",
-		EvidenceID:       ulcxDupeEvidenceID,
-		Relation:         string(api.DupeRelationCoexists),
-		ReasonCode:       reason,
-		Priority:         850,
-		OverridesGeneral: true,
+		ID:         "ulcx/duplicate/v3/" + mediaClass + "_codec_slots",
+		EvidenceID: ulcxDupeEvidenceID,
+		Relation:   string(api.DupeRelationCoexists),
+		ReasonCode: reason,
+		Priority:   810,
 		Conditions: []trackers.DupeCondition{
 			ulcxSameMediaClassCondition(mediaClass),
 			{
@@ -136,7 +186,7 @@ func ulcxWEBDLHDRRule(id string, targetHDR string, candidateHDR string, relation
 		EvidenceID:       ulcxDupeEvidenceID,
 		Relation:         string(relation),
 		ReasonCode:       "ulcx_webdl_hdr_precedence",
-		Priority:         850,
+		Priority:         810,
 		OverridesGeneral: true,
 		Conditions: []trackers.DupeCondition{
 			ulcxSameMediaClassCondition("web"),
@@ -189,7 +239,7 @@ func ulcxSubjectiveReviewRule(id string, mediaClass string, reason string, overr
 		EvidenceID:         ulcxDupeEvidenceID,
 		ReasonCode:         reason,
 		RequiresManualStep: true,
-		Priority:           850,
+		Priority:           810,
 		OverridesGeneral:   overridesGeneral,
 		Conditions: []trackers.DupeCondition{
 			ulcxSameMediaClassCondition(mediaClass),
@@ -208,7 +258,7 @@ func ulcxWEBDLSameSlotRule() trackers.DupeRule {
 		EvidenceID:       ulcxDupeEvidenceID,
 		Relation:         string(api.DupeRelationSameSlot),
 		ReasonCode:       "ulcx_webdl_same_slot",
-		Priority:         850,
+		Priority:         810,
 		OverridesGeneral: true,
 		Conditions: []trackers.DupeCondition{
 			ulcxSameMediaClassCondition("web"),

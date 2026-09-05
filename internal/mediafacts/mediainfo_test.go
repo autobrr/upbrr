@@ -74,15 +74,22 @@ func TestVideoCodecFromMediaInfoText(t *testing.T) {
 		want string
 	}{
 		{
-name: "format",
- text: "Video\nFormat : HEVC\nCodec ID : V_MPEGH/ISO/HEVC",
- want: "HEVC",
-},
+			name: "format",
+			text: "Video\nFormat : HEVC\nCodec ID : V_MPEGH/ISO/HEVC",
+			want: "HEVC",
+		},
 		{
-name: "codec ID fallback",
- text: "Video\nCodec ID : V_MPEG4/ISO/AVC",
- want: "V_MPEG4/ISO/AVC",
-},
+			name: "codec ID alone is not format evidence",
+			text: "Video\nCodec ID : V_MPEG4/ISO/AVC",
+		},
+		{
+			name: "MPEG family alone is not a codec",
+			text: "Video\nFormat : MPEG Video\nFormat version : Version 2",
+		},
+		{
+			name: "MPEG-4 Visual alone does not identify the encoder",
+			text: "Video\nFormat : MPEG-4 Visual\nWriting library : XviD",
+		},
 		{name: "no video", text: "General\nFormat : Matroska"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

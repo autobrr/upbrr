@@ -101,10 +101,26 @@ func TestDeterministicValidationEvidence(t *testing.T) {
 			mutate: func(subject *api.TrackerValidationSubject) {
 				subject.Audio = "LPCM"
 				subject.Channels = "2.0"
+				subject.MediaFileFacts.TechnicalStatus = api.MetadataEvidenceStatusPartial
 			},
 			wantRule:        "ulcx_lpcm_audio",
 			wantDisposition: api.RuleDispositionStrict,
-			wantStatus:      api.MetadataEvidenceStatusComplete,
+			wantStatus:      api.MetadataEvidenceStatusPartial,
+		},
+		{
+			name: "full disc LPCM passes",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.Type = "DISC"
+				subject.DiscType = "BDMV"
+				subject.Audio = "LPCM 2.0"
+				subject.Channels = "2.0"
+				subject.MediaFileFacts.TechnicalStatus = api.MetadataEvidenceStatusPartial
+				subject.AssetFacts.BDInfo = api.AssetEvidence{
+					Status: api.MetadataEvidenceStatusComplete,
+					Ready:  true,
+					Count:  1,
+				}
+			},
 		},
 		{
 			name: "multichannel FLAC is strict",
@@ -133,6 +149,47 @@ func TestDeterministicValidationEvidence(t *testing.T) {
 			wantRule:        "ulcx_encode_lossless_multichannel",
 			wantDisposition: api.RuleDispositionStrict,
 			wantStatus:      api.MetadataEvidenceStatusComplete,
+		},
+		{
+			name: "1080p encode DTS:X multichannel is strict",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.Type = "ENCODE"
+				subject.VideoCodec = "AVC"
+				subject.Audio = "DTS:X 7.1"
+				subject.Channels = "7.1"
+			},
+			wantRule:        "ulcx_encode_lossless_multichannel",
+			wantDisposition: api.RuleDispositionStrict,
+			wantStatus:      api.MetadataEvidenceStatusComplete,
+		},
+		{
+			name: "1080p encode DTS:X stereo passes",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.Type = "ENCODE"
+				subject.VideoCodec = "AVC"
+				subject.Audio = "DTS:X 2.0"
+				subject.Channels = "2.0"
+			},
+		},
+		{
+			name: "2160p encode DTS:X multichannel passes",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.Type = "ENCODE"
+				subject.VideoCodec = "AVC"
+				subject.Audio = "DTS:X 7.1"
+				subject.Channels = "7.1"
+				subject.Release.Resolution = "2160p"
+				subject.MediaFileFacts.Files[0].Source = "2160p Blu-ray"
+			},
+		},
+		{
+			name: "1080p encode lossy DTS multichannel passes",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.Type = "ENCODE"
+				subject.VideoCodec = "AVC"
+				subject.Audio = "DTS 5.1"
+				subject.Channels = "5.1"
+			},
 		},
 		{
 			name: "1080p encode ADPCM multichannel passes",
@@ -205,6 +262,25 @@ func TestDeterministicValidationEvidence(t *testing.T) {
 			requireULCXValidationFailure(t, failures, test.wantRule, test.wantDisposition, test.wantStatus)
 		})
 	}
+}
+
+func TestMissingResolutionDoesNotRejectLosslessAudio(t *testing.T) {
+	t.Parallel()
+	subject := ulcxValidationSubject()
+	subject.Type = "ENCODE"
+	subject.Audio = "TrueHD 5.1"
+	subject.Channels = "5.1"
+	subject.Release.Resolution = ""
+	subject.MediaFileFacts.TechnicalStatus = api.MetadataEvidenceStatusPartial
+	subject.MediaFileFacts.Files[0].Resolution = ""
+	failures, err := ValidationPolicy().Check(t.Context(), subject, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(failures) != 1 {
+		t.Fatalf("expected only a missing-resolution advisory, got %#v", failures)
+	}
+	requireULCXValidationFailure(t, failures, "ulcx_encode_resolution_evidence", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusPartial)
 }
 
 func TestRulesRequireEncodeSettings(t *testing.T) {

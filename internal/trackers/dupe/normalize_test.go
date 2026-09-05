@@ -33,6 +33,30 @@ func TestNormalizeDiscEncodeFromStructuredTypeAndTitleSource(t *testing.T) {
 	}
 }
 
+func TestNormalizeHigh10AVCCodecLabels(t *testing.T) {
+	t.Parallel()
+	for _, label := range []string{"Hi10P x264", "Hi10P H.264", "Hi10P AVC"} {
+		t.Run(label, func(t *testing.T) {
+			t.Parallel()
+			title := "Example.Release.2026.720p.BluRay.x264-GRP"
+			target := normalizeTargetFacts(api.TrackerDuplicateTarget{
+				Names:       []string{title},
+				VideoEncode: label,
+				VideoCodec:  "AVC",
+			})
+			candidate := normalizeCandidateFacts(NormalizeCandidate(api.DupeEntry{
+				Name:  title,
+				Codec: label,
+			}, "TEST"))
+			for _, fact := range []Fact{target.Codec, candidate.Codec} {
+				if fact.Value != "h264" || fact.Status != FactComplete || len(fact.Contradictions) != 0 {
+					t.Fatalf("codec label %q produced %#v", label, fact)
+				}
+			}
+		})
+	}
+}
+
 func TestNormalizeTitleRemuxOutranksStructuredDiscSource(t *testing.T) {
 	t.Parallel()
 

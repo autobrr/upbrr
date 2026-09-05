@@ -931,6 +931,8 @@ func normalizeAudioFormat(track map[string]any) string {
 		return "DTS"
 	case "aac", "aac lc":
 		return "AAC"
+	case "adpcm":
+		return "ADPCM"
 	case "ac-3":
 		return "DD"
 	case "e-ac-3", "a_eac3", "enhanced ac-3":

@@ -718,7 +718,7 @@ func canonicalResolution(value string) string {
 func canonicalCodec(value string) string {
 	normalized := compactAlphaNumeric(value)
 	switch normalized {
-	case "x264", "h264", "avc", "avc1":
+	case "x264", "h264", "avc", "avc1", "hi10px264", "hi10ph264", "hi10pavc":
 		return "h264"
 	case "x265", "h265", "hevc", "hevc1":
 		return "h265"
