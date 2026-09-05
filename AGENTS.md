@@ -70,12 +70,12 @@ Before commit: `git diff --check`, changed-package `make gofix-check-changed`, o
 ## Non-Negotiables
 
 - Narrow changes; fix root cause; never revert user changes.
-- Fill `.github/pull_request_template.md` into every PR body; `gh pr create --body` does not auto-fill it.
+- Complete `.github/pull_request_template.md` unless the repository maintainer provides explicit alternative PR-body instructions. All validation and publication requirements still apply.
 - Preserve shared CLI/WebUI workflow behavior.
 - Debug mode validates end-to-end flow, not a non-mutating dry run. It suppresses tracker submission but may bypass policy gates such as banned-group blocking, keeping screenshots, descriptions, tracker preparation, and later stages testable. Client injection remains default; CLI `-ns` and WebUI Upload skip-client-injection are explicit opt-outs. Report defects only when behavior diverges from these semantics.
 - Centrally resolve versioned tracker upload/search names before duplicate checks. Principal payload fields use `PreparationInput.ReviewedUploadName()`; custom naming algorithms belong in `name.go`.
 - Preserve CLI `--unattended` / `--unattended_confirm` (`--uac`) safety: `--unattended` never prompts; `--unattended_confirm` may request required confirmation/manual input. No hidden prompts/confirms or ambiguous fallthrough.
 - Never log credentials, tokens, API keys, cookies, or secret payloads; follow repo redaction/logging policy.
-- Shareable examples, diagnostics, docs, fixtures: no real release names, movie/show titles, or provider IDs. Use synthetic `Example Release 2026`, `Example.Release.2026.1080p-GRP`, `tt1234567`. Prefer incidental group `GRP`; real groups only when behavior-relevant. Required production lists, including tracker banned groups, may retain real values.
+- Use synthetic media titles, release names, and content identifiers in shareable examples and fixtures. Exclude credentials, private URLs, and identifiable user data. Public service names, provider codes, format labels, and production mappings are allowed without special justification. Prefer `GRP` for incidental release groups; retain actual groups when behavior depends on them. Do not request cosmetic substitutions of harmless public identifiers.
 - Never commit generated/local output: `dist/`, `webui/dist/`, `documentation/build/`, populated `internal/webserver/assets`, Playwright reports/results, repo-local `tmp/`.
 - `.github/workflows/*.yml` files active; `.yml22` files disabled templates.
