@@ -1,6 +1,6 @@
 # Duplicate Checking Guidelines
 
-Scoped rules for the shared duplicate-search coordinator and evaluator. Root and `internal/AGENTS.md` rules still apply.
+Scoped rules for the shared duplicate-search coordinator and evaluator. Root, `internal/AGENTS.md`, and `internal/trackers/AGENTS.md` rules still apply.
 
 ## Contract
 

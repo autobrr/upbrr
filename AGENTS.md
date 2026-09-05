@@ -11,6 +11,7 @@ Always-loaded AI-agent repo rules. Keep short; nearest scoped `AGENTS.md` owns a
 ## Scoped References
 
 - Backend/Go, path/log policy, trackers/config/domain, runtime architecture, lint/checks: `internal/AGENTS.md`.
+- Tracker definitions, registration, auth, naming, validation, and duplicate contracts, including callers changing them: `internal/trackers/AGENTS.md`.
 - CLI flags/prompts/unattended behavior: `cmd/upbrr/AGENTS.md`.
 - Shared API/runtime contracts: `pkg/api/AGENTS.md`.
 - Frontend/React/CSS/TypeScript/browser checks: `webui/AGENTS.md`.
