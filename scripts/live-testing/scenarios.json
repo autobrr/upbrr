@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "smoke": ["MOV-1080-WEB", "TV-480", "TV-1080-BLURAY", "MOV-2160-DV", "TV-PACK-EPISODE"],
+  "screenshots": ["MOV-480", "MOV-720", "MOV-1080-ENC", "MOV-1080-WEB", "MOV-1080-REMUX", "MOV-1080I", "MOV-2160-SDR", "MOV-2160-HDR", "MOV-2160-DV", "MOV-2160-REMUX", "MOV-3D", "TV-480", "TV-576", "TV-720", "TV-1080-WEB", "TV-1080-BLURAY", "TV-2160-HDR", "TV-2160-DV", "TV-LEGACY-AVI", "TV-MP4", "MOV-BD-DISC", "MOV-UHD-DISC", "MOV-DVD-DISC", "TV-PACK", "TV-PACK-EPISODE"],
+  "dupe": ["MOV-1080-WEB", "TV-PACK", "TV-PACK-EPISODE"],
+  "gaps": ["hdr10plus", "dv_profile5_mp4", "hlg", "1440p", "pal_dvd", "branching_playlist", "season_completeness", "corrupt_zero_duration", "human_color_scene_review", "host_retry_partial_batches", "same_work_slot_expectations", "reviewed_name_payload_equality", "lst_description_rule_assertions", "client_lookup_runtime_observation"]
+}

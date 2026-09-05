@@ -197,6 +197,8 @@ make frontend-bundle  # Vite bundle only
 
 ## Tests and checks
 
+For opt-in checks against configured services and local media, see the [live testing runner](scripts/live-testing/README.md). It uses an isolated profile and production build, blocks tracker submission and client writes, and defaults to no image uploads. Private media, credentials, screenshots, and run evidence stay outside the repository. These checks are separate from ordinary tests and CI.
+
 Run checks for the areas you touched:
 
 ```sh

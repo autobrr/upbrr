@@ -73,6 +73,7 @@ func (s *Service) CheckProjectionSet(
 
 // Service coordinates bounded duplicate checks through tracker-bound adapters.
 type Service struct {
+	liveTest bool
 	cfg      config.Config
 	logger   api.Logger
 	http     *http.Client
@@ -87,12 +88,14 @@ type Service struct {
 // NewServiceWithRegistry constructs one tracker-bound adapter for every
 // registered definition using a shared 20-second HTTP client. Construction
 // failures are retained and returned by later checks rather than panicking.
-func NewServiceWithRegistry(cfg config.Config, logger api.Logger, registry *trackerspkg.Registry) *Service {
+// An optional live-test policy serializes tracker checks within each request.
+func NewServiceWithRegistry(cfg config.Config, logger api.Logger, registry *trackerspkg.Registry, liveTest ...*api.LiveTestPolicy) *Service {
 	if logger == nil {
 		logger = api.NopLogger{}
 	}
 	httpClient := &http.Client{Timeout: 20 * time.Second}
 	service := &Service{
+		liveTest:               len(liveTest) > 0 && liveTest[0] != nil,
 		cfg:                    cfg,
 		logger:                 logger,
 		http:                   httpClient,
@@ -187,6 +190,9 @@ func (s *Service) checkWithAssessment(
 	jobs := make(chan indexedTracker)
 	results := make(chan indexedResult, total)
 	workerCount := min(total, maxDupeWorkers)
+	if s.liveTest {
+		workerCount = 1
+	}
 	var workers sync.WaitGroup
 	for range workerCount {
 		workers.Go(func() {

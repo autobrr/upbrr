@@ -877,8 +877,10 @@ func (u *thrUploader) Upload(ctx context.Context, imagePath string) (uploadResul
 }
 
 type lostimgUploader struct {
-	apiKey string
-	client *http.Client
+	apiKey    string
+	client    *http.Client
+	journal   *imageEffectJournal
+	maxImages int
 }
 
 const lostimgMaxBatchUploadImages = 50
@@ -892,6 +894,9 @@ func (u *lostimgUploader) Upload(ctx context.Context, imagePath string) (uploadR
 }
 
 func (u *lostimgUploader) UploadBatch(ctx context.Context, imagePaths []string) ([]uploadResult, error) {
+	if u.journal != nil {
+		return u.uploadLiveTestBatch(ctx, imagePaths)
+	}
 	if strings.TrimSpace(u.apiKey) == "" {
 		return nil, errors.New("image hosting: lostimg api key missing")
 	}

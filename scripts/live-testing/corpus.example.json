@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "private": true,
+  "cases": [
+    {
+      "case_id": "MOV-1080-WEB",
+      "input_path": "D:\\SyntheticMedia\\Example.Movie.2025.1080p.WEB-DL-GRP.mkv",
+      "probe_path": "D:\\SyntheticMedia\\Example.Movie.2025.1080p.WEB-DL-GRP.mkv",
+      "input_shape": "file",
+      "probe_status": "ok",
+      "fingerprint": { "size_bytes": 1000000, "mtime_ns": 1700000000000000000, "method": "stat" }
+    }
+  ]
+}

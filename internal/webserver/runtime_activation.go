@@ -16,6 +16,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/configstore"
 	"github.com/autobrr/upbrr/internal/cookies"
+	"github.com/autobrr/upbrr/internal/livetest"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -99,11 +100,13 @@ func (e *runtimeCookiePersistenceError) Unwrap() error {
 // RuntimeActivator serializes and owns the complete config-candidate to active
 // runtime transition for one WebUI host.
 type RuntimeActivator struct {
-	mu          sync.Mutex
-	repo        *db.SQLiteRepository
-	fixedDBPath string
-	installer   RuntimeInstaller
-	deps        runtimeActivationDeps
+	liveProfile  *livetest.Profile
+	liveImageKey string
+	mu           sync.Mutex
+	repo         *db.SQLiteRepository
+	fixedDBPath  string
+	installer    RuntimeInstaller
+	deps         runtimeActivationDeps
 }
 
 // NewRuntimeActivator constructs an activator for one already-open repository
@@ -152,6 +155,15 @@ func (a *RuntimeActivator) Activate(ctx context.Context, candidate config.Config
 		return activationError(ActivationStageNormalize, err)
 	}
 	stored.MainSettings.DBPath = a.fixedDBPath
+	if a.liveProfile != nil {
+		if stored.ImageHosting.LostimgAPI != a.liveImageKey {
+			return activationError(
+				ActivationStageValidateStored,
+				errors.New("live-test image-host credentials cannot change during a run; create a new profile"),
+			)
+		}
+		configstore.ApplyLiveTestPaths(stored, *a.liveProfile)
+	}
 	if err := stored.Validate(); err != nil {
 		return activationError(ActivationStageValidateStored, err)
 	}
@@ -160,7 +172,9 @@ func (a *RuntimeActivator) Activate(ctx context.Context, candidate config.Config
 	if err != nil {
 		return activationError(ActivationStageNormalize, err)
 	}
-	config.ApplyEnvOverrides(runtimeCfg)
+	if a.liveProfile == nil {
+		config.ApplyEnvOverrides(runtimeCfg)
+	}
 	runtimeCfg.MainSettings.DBPath = a.fixedDBPath
 	if err := runtimeCfg.Validate(); err != nil {
 		return activationError(ActivationStageValidateRuntime, err)

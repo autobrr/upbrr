@@ -117,6 +117,12 @@ type torrentDataValidation struct {
 // lookup failures degrade that candidate, while export failures reject only the
 // affected candidate.
 func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.ClientSubject) (result api.ClientSearchResult, err error) {
+	if shouldForceRecheck(meta.ClientOverrides) {
+		if err := s.liveTest.RejectMutation(api.OperationKindClientInjection); err != nil {
+			s.logger.Warnf("clients: recheck state=blocked reason=live_test")
+			return api.ClientSearchResult{}, fmt.Errorf("live-test client recheck: %w", err)
+		}
+	}
 	defer func() {
 		if err != nil {
 			s.logger.Warnf("clients: pathed search blocked err=%s", redaction.RedactValue(err.Error(), nil))

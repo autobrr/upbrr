@@ -4,11 +4,14 @@
 package webserver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/livetest"
 	"github.com/autobrr/upbrr/internal/logging"
+	"github.com/autobrr/upbrr/internal/services/db"
 )
 
 // backendRuntimeSnapshot is a shallow, single-generation view of config and
@@ -210,6 +213,20 @@ func (b *Backend) runtimeActivator() (*RuntimeActivator, error) {
 	activator, err := NewRuntimeActivator(b.repo, b.repo.DBPath(), backendRuntimeInstaller{backend: b})
 	if err != nil {
 		return nil, fmt.Errorf("initialize runtime activator: %w", err)
+	}
+	if b.liveTest != nil {
+		profile, err := livetest.ProfileForDB(b.repo.DBPath())
+		if err != nil {
+			return nil, fmt.Errorf("live-test activation profile: %w", err)
+		}
+		if profile.RunID != b.liveTest.RunID() {
+			return nil, errors.New("live-test activation run identity mismatch")
+		}
+		activator.liveProfile = &profile
+		activator.liveImageKey = b.currentConfig().ImageHosting.LostimgAPI
+		activator.deps.build = func(ctx context.Context, cfg config.Config, repo *db.SQLiteRepository) (RuntimeGeneration, error) {
+			return buildRuntimeGenerationWithLiveTest(ctx, cfg, repo, b.liveTest)
+		}
 	}
 	b.activator = activator
 	return activator, nil

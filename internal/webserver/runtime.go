@@ -40,6 +40,15 @@ func AllocateRuntimeGenerationID() uint64 {
 // the shared repository. On failure it closes resources created before the
 // error. Successful ownership transfers to the runtime activator.
 func buildRuntimeGeneration(ctx context.Context, cfg config.Config, repo *db.SQLiteRepository) (RuntimeGeneration, error) {
+	return buildRuntimeGenerationWithLiveTest(ctx, cfg, repo, nil)
+}
+
+func buildRuntimeGenerationWithLiveTest(
+	ctx context.Context,
+	cfg config.Config,
+	repo *db.SQLiteRepository,
+	policy *api.LiveTestPolicy,
+) (RuntimeGeneration, error) {
 	if ctx == nil {
 		return RuntimeGeneration{}, errors.New("webserver: context is required")
 	}
@@ -49,8 +58,9 @@ func buildRuntimeGeneration(ctx context.Context, cfg config.Config, repo *db.SQL
 		return RuntimeGeneration{}, fmt.Errorf("web: %w", err)
 	}
 	svc, err := core.NewWithContext(ctx, api.CoreDependencies{
-		Config: cfg,
-		Logger: logger,
+		LiveTest: policy,
+		Config:   cfg,
+		Logger:   logger,
 		Services: api.ServiceSet{
 			Filesystem: filesystem.NewValidator(),
 		},
