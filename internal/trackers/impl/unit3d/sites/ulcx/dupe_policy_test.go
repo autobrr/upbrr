@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -189,6 +190,340 @@ func TestULCXDuplicateSlots(t *testing.T) {
 	}
 }
 
+func TestULCXRemuxNamingSlots(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name         string
+		targetCut    string
+		candidateCut string
+		want         api.DupeRelation
+	}{
+		{name: "both unmarked", want: api.DupeRelationSameSlot},
+		{
+			name:         "explicit theatrical matches default",
+			candidateCut: "Theatrical Cut",
+			want:         api.DupeRelationSameSlot,
+		},
+		{
+			name:      "proposed theatrical matches default",
+			targetCut: "Theatrical Cut",
+			want:      api.DupeRelationSameSlot,
+		},
+		{
+			name:         "existing extended differs from default",
+			candidateCut: "Extended Cut",
+			want:         api.DupeRelationCoexists,
+		},
+		{
+			name:      "proposed extended differs from default",
+			targetCut: "Extended Cut",
+			want:      api.DupeRelationCoexists,
+		},
+		{
+			name:         "same named cut",
+			targetCut:    "Extended Cut",
+			candidateCut: "Extended Cut",
+			want:         api.DupeRelationSameSlot,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			target := ulcxTarget("REMUX", "1080p", "", "AVC", ulcxHDR(api.HDRFormatSDR))
+			target.Names = []string{"Example Movie 2026 " + test.targetCut + " 1080p BluRay REMUX AVC DTS-HD MA 5.1-GRP"}
+			candidate := ulcxCandidate("REMUX", "1080p", "", "AVC", ulcxHDR(api.HDRFormatSDR))
+			candidate.Name = "Example Movie 2026 " + test.candidateCut + " 1080p BluRay REMUX AVC DTS-HD MA 5.1-OTHER"
+			assertULCXRelation(t, target, candidate, test.want)
+		})
+	}
+	t.Run("title cut conflicting with structured cut stays manual", func(t *testing.T) {
+		t.Parallel()
+		target := ulcxTarget("REMUX", "1080p", "", "AVC", ulcxHDR(api.HDRFormatSDR))
+		target.Names = []string{"Example Movie 2026 1080p BluRay REMUX AVC DTS-HD MA 5.1-GRP"}
+		candidate := ulcxCandidate("REMUX", "1080p", "", "AVC", ulcxHDR(api.HDRFormatSDR))
+		candidate.Name = "Example Movie 2026 Extended Cut 1080p BluRay REMUX AVC DTS-HD MA 5.1-OTHER"
+		candidate.Edition = "Theatrical"
+		assertULCXRelation(t, target, candidate, api.DupeRelationManualReview)
+	})
+}
+
+func TestULCXDeclaredRemuxCuts(t *testing.T) {
+	t.Parallel()
+	for _, cut := range []string{"Director's Cut", "Extended", "Special Edition", "Unrated", "Uncut", "Super Duper Cut"} {
+		for _, variant := range []string{"same cut", "proposed cut", "existing cut", "contradictory cut"} {
+			t.Run(cut+"/"+variant, func(t *testing.T) {
+				t.Parallel()
+				targetCut, candidateCut := cut, cut
+				want := api.DupeRelationSameSlot
+				switch variant {
+				case "proposed cut":
+					candidateCut, want = "", api.DupeRelationCoexists
+				case "existing cut":
+					targetCut, want = "", api.DupeRelationCoexists
+				}
+				target := ulcxTarget("REMUX", "1080p", "", "AVC", ulcxHDR(api.HDRFormatSDR))
+				target.Names = []string{"Example Movie 2026 " + targetCut + " 1080p BluRay REMUX AVC-GRP"}
+				target.Edition = targetCut
+				candidate := ulcxCandidate("REMUX", "1080p", "", "AVC", ulcxHDR(api.HDRFormatSDR))
+				candidate.Name = "Example Movie 2026 " + candidateCut + " 1080p BluRay REMUX AVC-OTHER"
+				if variant == "contradictory cut" {
+					candidate.Edition, want = "Theatrical", api.DupeRelationManualReview
+				}
+				assertULCXRelation(t, target, candidate, want)
+			})
+		}
+	}
+}
+
+func TestULCXRemuxWorkTitleIsNotACut(t *testing.T) {
+	t.Parallel()
+	for _, title := range []string{
+		"Director's Cut", "Extended", "Extended Cut", "Theatrical Cut", "Final Cut", "International Cut",
+		"Alternate Cut", "Open Matte", "OAR", "Uncut", "Unrated", "Special Edition", "Super Duper Cut",
+	} {
+		for _, direction := range []string{"proposed", "existing"} {
+			t.Run(title+" "+direction, func(t *testing.T) {
+				t.Parallel()
+				target := ulcxTarget("REMUX", "1080p", "", "AVC", ulcxHDR(api.HDRFormatSDR))
+				target.Names = []string{"Example Movie 2026 1080p BluRay REMUX AVC-GRP"}
+				candidate := ulcxCandidate("REMUX", "1080p", "", "AVC", ulcxHDR(api.HDRFormatSDR))
+				candidate.Name = "Example Movie 2026 1080p BluRay REMUX AVC-OTHER"
+				if direction == "proposed" {
+					target.Names[0] = "Example " + title + " 2026 1080p BluRay REMUX AVC-GRP"
+				} else {
+					candidate.Name = "Example " + title + " 2026 1080p BluRay REMUX AVC-OTHER"
+				}
+				assertULCXRelation(t, target, candidate, api.DupeRelationSameSlot)
+			})
+		}
+	}
+}
+
+func TestULCXRemuxNamingBoundaryRequired(t *testing.T) {
+	t.Parallel()
+	target := ulcxTarget("REMUX", "1080p", "", "AVC", ulcxHDR(api.HDRFormatSDR))
+	target.Names = []string{"Example Movie 2026 1080p BluRay REMUX AVC-GRP"}
+	candidate := ulcxCandidate("REMUX", "1080p", "", "AVC", ulcxHDR(api.HDRFormatSDR))
+	candidate.Name = "Example Movie Extended Cut 1080p BluRay REMUX AVC-OTHER"
+	assertULCXRelation(t, target, candidate, api.DupeRelationManualReview)
+}
+
+func TestULCXIncompleteNameCannotProveAnHDRSlot(t *testing.T) {
+	t.Parallel()
+	target := ulcxTarget("REMUX", "2160p", "", "AVC", ulcxHDR(api.HDRFormatHDR10))
+	target.Names = []string{"Example Movie 2026 2160p BluRay REMUX HDR10 AVC-GRP"}
+	candidate := ulcxCandidate("REMUX", "2160p", "", "AVC", api.HDRFacts{Status: api.HDREvidenceMissing})
+	candidate.Name = "Example Movie 2026 2160p REMUX AVC-OTHER"
+	assertULCXRelation(t, target, candidate, api.DupeRelationManualReview)
+}
+
+func TestULCXRemuxPresentationAndCompoundCutsRequireReview(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		proposed string
+		existing string
+	}{
+		{
+			proposed: "Example Movie 2026 1080p BluRay REMUX AVC-GRP",
+			existing: "Example Movie 2026 Open Matte 1080p BluRay REMUX AVC-OTHER",
+		},
+		{
+			proposed: "Example Movie 2026 1080p BluRay REMUX AVC-GRP",
+			existing: "Example Movie 2026 OAR 1080p BluRay REMUX AVC-OTHER",
+		},
+		{
+			proposed: "Example Movie 2026 Extended Cut 1080p BluRay REMUX AVC-GRP",
+			existing: "Example Movie 2026 Extended Cut Open Matte 1080p BluRay REMUX AVC-OTHER",
+		},
+		{
+			proposed: "Example Movie 2026 1080p BluRay REMUX AVC-GRP",
+			existing: "Example Movie 2026 IMAX 1080p BluRay REMUX AVC-OTHER",
+		},
+		{
+			proposed: "Example Movie 2026 1080p BluRay REMUX AVC-GRP",
+			existing: "Example Movie 2026 MAR 1080p BluRay REMUX AVC-OTHER",
+		},
+		{
+			proposed: "Example Movie 2026 Extended Cut 1080p BluRay REMUX AVC-GRP",
+			existing: "Example Movie 2026 Extended Cut IMAX 1080p BluRay REMUX AVC-OTHER",
+		},
+		{
+			proposed: "Example Movie 2026 Extended Cut 1080p BluRay REMUX AVC-GRP",
+			existing: "Example Movie 2026 Extended Cut MAR 1080p BluRay REMUX AVC-OTHER",
+		},
+		{
+			proposed: "Alpha 2026 / Beta 2025 1080p BluRay REMUX AVC-GRP",
+			existing: "Alpha 2026 Extended / Beta 2025 1080p BluRay REMUX AVC-OTHER",
+		},
+		{
+			proposed: "Alpha 2026 / Beta 2025 1080p BluRay REMUX AVC-GRP",
+			existing: "Alpha 2026 / Beta 2025 Extended Cut 1080p BluRay REMUX AVC-OTHER",
+		},
+		{
+			proposed: "Alpha 2026 Extended / Beta 2025 1080p BluRay REMUX AVC-GRP",
+			existing: "Alpha 2026 / Beta 2025 Extended Cut 1080p BluRay REMUX AVC-OTHER",
+		},
+	} {
+		for _, reverse := range []bool{false, true} {
+			target := ulcxTarget("REMUX", "1080p", "", "AVC", ulcxHDR(api.HDRFormatSDR))
+			target.Names = []string{test.proposed}
+			candidate := ulcxCandidate("REMUX", "1080p", "", "AVC", ulcxHDR(api.HDRFormatSDR))
+			candidate.Name = test.existing
+			if reverse {
+				target.Names[0], candidate.Name = candidate.Name, target.Names[0]
+			}
+			assertULCXRelation(t, target, candidate, api.DupeRelationManualReview)
+		}
+	}
+}
+
+func TestULCXRemuxNamingPrerequisitesUseMetadata(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name       string
+		resolution string
+		validName  string
+	}{
+		{
+			name:       "Example Remux Movie 2026 1080p AVC-OTHER",
+			resolution: "1080p",
+			validName:  "Example Movie 2026 1080p BluRay REMUX AVC-GRP",
+		},
+		{
+			name:       "Example 1080p Movie 2026 BluRay REMUX AVC-OTHER",
+			resolution: "1080p",
+			validName:  "Example Movie 2026 1080p BluRay REMUX AVC-GRP",
+		},
+		{
+			name:       "Example DVD Movie 2026 REMUX AVC-OTHER",
+			resolution: "480p",
+			validName:  "Example Movie 2026 NTSC DVD REMUX AVC-GRP",
+		},
+		{
+			name:       "Example Movie 2026 1080p AVC-REMUX",
+			resolution: "1080p",
+			validName:  "Example Movie 2026 1080p BluRay REMUX AVC-GRP",
+		},
+		{
+			name:       "Example Movie 2026 REMUX AVC-DVD",
+			resolution: "480p",
+			validName:  "Example Movie 2026 NTSC DVD REMUX AVC-GRP",
+		},
+		{
+			name:       "Example Movie 2026 MyDVD REMUX AVC-OTHER",
+			resolution: "480p",
+			validName:  "Example Movie 2026 NTSC DVD REMUX AVC-GRP",
+		},
+		{
+			name:       "Example Movie 2026 1080p Remuxed AVC-OTHER",
+			resolution: "1080p",
+			validName:  "Example Movie 2026 1080p BluRay REMUX AVC-GRP",
+		},
+	} {
+		for _, direction := range []string{"proposed", "existing"} {
+			t.Run(test.name+" "+direction, func(t *testing.T) {
+				t.Parallel()
+				target := ulcxTarget("REMUX", test.resolution, "", "AVC", ulcxHDR(api.HDRFormatSDR))
+				target.Names = []string{test.validName}
+				candidate := ulcxCandidate("REMUX", test.resolution, "", "AVC", ulcxHDR(api.HDRFormatSDR))
+				candidate.Name = test.name
+				if direction == "proposed" {
+					target.Names[0], candidate.Name = candidate.Name, target.Names[0]
+				}
+				assertULCXRelation(t, target, candidate, api.DupeRelationManualReview)
+			})
+		}
+	}
+}
+
+func TestULCXRemuxHDRWorkTitleAliases(t *testing.T) {
+	t.Parallel()
+	for _, marker := range []string{"HDR", "WCG", "HDR Vivid"} {
+		t.Run(marker, func(t *testing.T) {
+			t.Parallel()
+			target := ulcxTarget("REMUX", "2160p", "", "HEVC", ulcxHDR(api.HDRFormatSDR))
+			target.Names = []string{"Example Movie 2026 2160p BluRay REMUX HEVC-GRP"}
+			candidate := ulcxCandidate("REMUX", "2160p", "", "HEVC", ulcxHDR(api.HDRFormatSDR))
+			candidate.Name = "Example " + marker + " Movie 2026 2160p BluRay REMUX HEVC-OTHER"
+			assertULCXRelation(t, target, candidate, api.DupeRelationSameSlot)
+		})
+	}
+}
+
+func TestULCXSeriesNamingBoundary(t *testing.T) {
+	t.Parallel()
+	target := ulcxTarget("REMUX", "1080p", "", "AVC", ulcxHDR(api.HDRFormatSDR))
+	target.Names = []string{"Example Show S01E01 1080p BluRay REMUX AVC-GRP"}
+	candidate := ulcxCandidate("REMUX", "1080p", "", "AVC", ulcxHDR(api.HDRFormatSDR))
+	candidate.Name = "Example OAR S01E01 1080p BluRay REMUX AVC-OTHER"
+	assertULCXRelation(t, target, candidate, api.DupeRelationSameSlot)
+	candidate.Name = "Example Show S01E01 Extended Cut 1080p BluRay REMUX AVC-OTHER"
+	assertULCXRelation(t, target, candidate, api.DupeRelationManualReview)
+}
+
+func TestULCXEpisodeTitlesRetainDuplicateAction(t *testing.T) {
+	t.Parallel()
+	for _, episodeTitle := range []string{"Final Cut", "HDR", "Example Episode"} {
+		t.Run(episodeTitle, func(t *testing.T) {
+			t.Parallel()
+			meta := ulcxTVNameSubject(api.TVDBNameDisambiguation{CanonicalName: "Example Series", SeriesYear: 2026})
+			meta.EpisodeTitle = episodeTitle
+			meta.ReleaseName = strings.Replace(meta.ReleaseName, "Example Episode", episodeTitle, 1)
+			meta.ReleaseName = strings.Replace(meta.ReleaseName, "WEB-DL H.265", "BluRay REMUX AVC", 1)
+			generated := buildName(meta, config.TrackerConfig{})
+			if !strings.Contains(generated, "S01E02 "+episodeTitle+" 1080p") {
+				t.Fatalf("generated name omitted episode title: %q", generated)
+			}
+			conforming := "Example Series AKA Example Original S01E02 1080p BluRay REMUX AVC-OTHER"
+			target := ulcxTarget("REMUX", "1080p", "", "AVC", ulcxHDR(api.HDRFormatSDR))
+			target.Names = []string{generated}
+			candidate := ulcxCandidate("REMUX", "1080p", "", "AVC", ulcxHDR(api.HDRFormatSDR))
+			candidate.Name = conforming
+			assertULCXRelation(t, target, candidate, api.DupeRelationManualReview)
+			target.Names, candidate.Name = []string{conforming}, generated
+			assertULCXRelation(t, target, candidate, api.DupeRelationManualReview)
+		})
+	}
+}
+
+func TestULCXSeriesDescriptionsRetainDuplicateAction(t *testing.T) {
+	t.Parallel()
+	for _, descriptor := range []string{"S00 Final Cut Interviews", "S01 Final Cut Extras", "S01 OVA Final Cut"} {
+		t.Run(descriptor, func(t *testing.T) {
+			t.Parallel()
+			name := "Example Show " + descriptor + " 1080p BluRay REMUX AVC-GRP"
+			plain := "Example Show " + strings.Fields(descriptor)[0] + " 1080p BluRay REMUX AVC-OTHER"
+			target := ulcxTarget("REMUX", "1080p", "", "AVC", ulcxHDR(api.HDRFormatSDR))
+			target.Names = []string{name}
+			candidate := ulcxCandidate("REMUX", "1080p", "", "AVC", ulcxHDR(api.HDRFormatSDR))
+			candidate.Name = plain
+			assertULCXRelation(t, target, candidate, api.DupeRelationManualReview)
+			target.Names, candidate.Name = []string{plain}, name
+			assertULCXRelation(t, target, candidate, api.DupeRelationManualReview)
+		})
+	}
+}
+
+func TestULCXDVDRemuxNamingSlots(t *testing.T) {
+	t.Parallel()
+	for _, missing := range []string{"neither", "proposed", "existing"} {
+		t.Run(missing+" resolution missing", func(t *testing.T) {
+			t.Parallel()
+			target := ulcxTarget("REMUX", "480p", "", "MPEG-2", ulcxHDR(api.HDRFormatSDR))
+			target.Names = []string{"Example Movie 2026 NTSC DVD REMUX DD2.0-GRP"}
+			candidate := ulcxCandidate("REMUX", "480p", "", "MPEG-2", ulcxHDR(api.HDRFormatSDR))
+			candidate.Name = "Example Movie 2026 NTSC DVD REMUX DD2.0-OTHER"
+			want := api.DupeRelationSameSlot
+			switch missing {
+			case "proposed":
+				target.Resolution, want = "", api.DupeRelationInsufficientEvidence
+			case "existing":
+				candidate.Resolution, want = "", api.DupeRelationInsufficientEvidence
+			}
+			assertULCXRelation(t, target, candidate, want)
+		})
+	}
+}
+
 func TestULCXObjectiveDuplicateSlots(t *testing.T) {
 	t.Parallel()
 
@@ -245,6 +580,9 @@ func TestULCXObjectiveDuplicateSlots(t *testing.T) {
 		target.Edition = "Theatrical"
 		candidate := ulcxCandidate("REMUX", "1080p", "", "AVC", ulcxHDR(api.HDRFormatSDR))
 		candidate.Name = "Example.Release.2026.Extended.EXISTING"
+		assertULCXRelation(t, target, candidate, api.DupeRelationManualReview)
+
+		candidate.Name = "Example.Release.2026.Extended.1080p.BluRay.REMUX.AVC-OTHER"
 		assertULCXRelation(t, target, candidate, api.DupeRelationCoexists)
 
 		candidate.Edition = "Theatrical"
@@ -433,7 +771,7 @@ func TestULCXDuplicatePolicyMetadata(t *testing.T) {
 	t.Parallel()
 
 	policy := Profile().DupePolicy
-	if policy == nil || policy.ID != "ulcx/duplicate/v3" || policy.EvidenceID != ulcxDupeEvidenceID ||
+	if policy == nil || policy.ID != "ulcx/duplicate/v4" || policy.EvidenceID != ulcxDupeEvidenceID || policy.DefaultTitleEdition != "Theatrical" ||
 		policy.SizeVariancePercent != 0 {
 		t.Fatalf("ULCX duplicate policy = %#v", policy)
 	}

@@ -24,11 +24,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/autobrr/rls"
+
 	"github.com/autobrr/upbrr/internal/bbcode"
 	"github.com/autobrr/upbrr/internal/config"
 	descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
 	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -679,6 +682,55 @@ func SetUnit3DAPIHeaders(req *http.Request, apiKey string) {
 	}
 }
 
+// unit3DTitleHDRFallback fills missing HDR evidence from recognizable metadata
+// after a title boundary, treating omitted HDR markers as SDR. A recognized
+// source must precede the video codec. DVD before REMUX plus a structured remux
+// type and resolution permits omitted codec and resolution tokens.
+// Existing structured evidence is preserved.
+func unit3DTitleHDRFallback(name string, canonicalType string, resolution string, hdr api.HDRFacts) api.HDRFacts {
+	if hdr.Status != api.HDREvidenceMissing {
+		return hdr
+	}
+
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return hdr
+	}
+	release := rls.ParseString(name)
+	metadata, bounded := dupe.TrackerTitleMetadata(release)
+	if strings.TrimSpace(release.Title) == "" || !bounded {
+		return hdr
+	}
+	metadataFields := strings.FieldsFunc(metadata, func(r rune) bool {
+		return r == '.' || r == ' ' || r == '_' || r == '-' || r == '[' || r == ']'
+	})
+	dvd := slices.IndexFunc(metadataFields, func(value string) bool { return strings.EqualFold(value, "DVD") })
+	remux := slices.IndexFunc(metadataFields, func(value string) bool { return strings.EqualFold(value, "REMUX") })
+	dvdRemux := dvd >= 0 && remux > dvd && canonicalType == "REMUX" && CanonicalUnit3DResolution(resolution) != ""
+	if !dvdRemux && !dupe.TrackerTitleHasSourceAndCodec(metadata) {
+		return hdr
+	}
+	recognizable := dvdRemux || slices.ContainsFunc(metadataFields, func(value string) bool {
+		return CanonicalUnit3DResolution(value) != ""
+	})
+	if !recognizable {
+		return hdr
+	}
+
+	titleHDR := dupe.NormalizeTrackerTitleHDR(metadata)
+	if titleHDR.Status == api.HDREvidenceMissing {
+		titleHDR = api.HDRFacts{
+			Formats:      []api.HDRFormat{api.HDRFormatSDR},
+			Origin:       api.HDREvidenceTrackerTitle,
+			Status:       api.HDREvidenceComplete,
+			SourceFields: []string{"title"},
+		}
+	} else {
+		titleHDR.Status = api.HDREvidenceComplete
+	}
+	return titleHDR
+}
+
 func buildUnit3DSearchEntries(items []unit3dSearchItem, filterTMDBID int, isDisc bool) ([]api.DupeEntry, int) {
 	entries := make([]api.DupeEntry, 0, len(items))
 	wrongWorkCount := 0
@@ -710,6 +762,8 @@ func buildUnit3DSearchEntries(items []unit3dSearchItem, filterTMDBID int, isDisc
 			}
 			hdr = trackerHDR
 		}
+		canonicalType := CanonicalUnit3DType(rawType)
+		hdr = unit3DTitleHDRFallback(item.Attributes.Name, canonicalType, item.Attributes.Resolution, hdr)
 		entry := api.DupeEntry{
 			Name:          strings.TrimSpace(item.Attributes.Name),
 			Trumpable:     item.Attributes.Trumpable,
@@ -717,7 +771,7 @@ func buildUnit3DSearchEntries(items []unit3dSearchItem, filterTMDBID int, isDisc
 			Download:      strings.TrimSpace(item.Attributes.DownloadLink),
 			ID:            strings.TrimSpace(item.ID.String()),
 			Type:          rawType,
-			CanonicalType: CanonicalUnit3DType(rawType),
+			CanonicalType: canonicalType,
 			Res:           strings.TrimSpace(item.Attributes.Resolution),
 			Codec:         mediafacts.VideoCodecFromMediaInfoText(item.Attributes.MediaInfo),
 			Provider:      strings.TrimSpace(item.Attributes.Provider),
@@ -763,6 +817,8 @@ func buildUnit3DPendingEntries(items []unit3dPendingSearchItem, endpoint unit3dS
 		}
 
 		rawType := strings.TrimSpace(item.Type)
+		canonicalType := CanonicalUnit3DType(rawType)
+		hdr := unit3DTitleHDRFallback(item.Name, canonicalType, item.Resolution, mediafacts.HDRFromMediaInfoText(item.MediaInfo))
 		entry := api.DupeEntry{
 			Name:          strings.TrimSpace(item.Name),
 			Trumpable:     item.Trumpable,
@@ -770,13 +826,13 @@ func buildUnit3DPendingEntries(items []unit3dPendingSearchItem, endpoint unit3dS
 			Download:      strings.TrimSpace(item.DownloadLink),
 			ID:            strings.TrimSpace(item.ID.String()),
 			Type:          rawType,
-			CanonicalType: CanonicalUnit3DType(rawType),
+			CanonicalType: canonicalType,
 			Res:           strings.TrimSpace(item.Resolution),
 			Codec:         mediafacts.VideoCodecFromMediaInfoText(item.MediaInfo),
 			Internal:      item.Internal,
 			BDInfo:        strings.TrimSpace(item.BDInfo),
 			Description:   strings.TrimSpace(item.Description),
-			HDR:           mediafacts.HDRFromMediaInfoText(item.MediaInfo),
+			HDR:           hdr,
 		}
 
 		if sizeValue, err := parseNumberToInt64(item.Size); err == nil {

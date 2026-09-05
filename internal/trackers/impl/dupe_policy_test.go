@@ -7,9 +7,75 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestULCXProjectedEditionMustDescribeACut(t *testing.T) {
+	t.Parallel()
+	registry, err := NewRegistry()
+	if err != nil {
+		t.Fatalf("new registry: %v", err)
+	}
+	descriptor, ok := registry.LookupDescriptor("ULCX")
+	if !ok || descriptor.DupePolicy == nil {
+		t.Fatal("missing ULCX duplicate policy")
+	}
+	hdr := api.HDRFacts{
+		Formats: []api.HDRFormat{api.HDRFormatSDR},
+		Origin:  api.HDREvidenceMediaInfo,
+		Status:  api.HDREvidenceComplete,
+	}
+	for _, edition := range []string{"Limited", "4K Remaster", "Hybrid", "Open Matte", "OAR", "Director's Cut Open Matte", "Extended"} {
+		t.Run(edition, func(t *testing.T) {
+			t.Parallel()
+			projection, failure := registry.ProjectRelease(t.Context(), trackers.PreparationInput{
+				Tracker: "ULCX",
+				Meta: api.UploadSubject{
+					ReleaseName: "Example Movie 2026 1080p BluRay REMUX AVC-GRP",
+					Type:        "REMUX",
+					Source:      "BluRay",
+					VideoEncode: "AVC",
+					Edition:     edition,
+					HDRFacts:    hdr,
+					Release:     api.ReleaseInfo{Category: "MOVIE", Resolution: "1080p"},
+				},
+			}, "", "", "")
+			if failure != nil {
+				t.Fatalf("project ULCX: %v", failure)
+			}
+			target := projection.DuplicateTarget
+			if target.Edition != edition {
+				t.Fatalf("projected edition = %q, want %q", target.Edition, edition)
+			}
+			candidate := dupe.NormalizeCandidate(api.DupeEntry{
+				Name:          "Example Movie 2026 1080p BluRay REMUX AVC-OTHER",
+				CanonicalType: "REMUX",
+				Res:           "1080p",
+				Codec:         "AVC",
+				HDR:           hdr,
+			}, "ULCX")
+			for _, side := range []string{"target", "candidate"} {
+				if side == "candidate" {
+					target.Edition, candidate.Edition = "", edition
+				}
+				result := dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, *descriptor.DupePolicy, dupe.SearchEvidence{
+					Complete:  true,
+					Pages:     1,
+					WorkScope: dupe.WorkScopeProviderID,
+				})
+				want := api.DupeRelationManualReview
+				if edition == "Extended" {
+					want = api.DupeRelationCoexists
+				}
+				if result.Candidates[0].Relation != want || result.RequiresAction != (want == api.DupeRelationManualReview) {
+					t.Fatalf("%s edition relation=%s action=%t, want %s", side, result.Candidates[0].Relation, result.RequiresAction, want)
+				}
+			}
+		})
+	}
+}
 
 func TestSourceBackedDupeOverlaysResolveDeterministically(t *testing.T) {
 	t.Parallel()
@@ -139,6 +205,23 @@ func TestSourceBackedDupeOverlaysResolveDeterministically(t *testing.T) {
 				HDR:        completeSDR,
 			},
 			relation: api.DupeRelationCoexists,
+		},
+		{
+			name:    "ULCX matching remux presentation and cut share a slot",
+			tracker: "ULCX",
+			target: api.TrackerDuplicateTarget{
+				Names:      []string{"Example Movie 2026 1080p BluRay REMUX AVC-GRP"},
+				Type:       "REMUX",
+				Resolution: "1080p",
+				HDR:        completeSDR,
+			},
+			candidate: dupe.TrackerCandidate{
+				Name:       "Example Movie 2026 1080p BluRay REMUX AVC-OTHER",
+				Type:       "REMUX",
+				Resolution: "1080p",
+				HDR:        completeSDR,
+			},
+			relation: api.DupeRelationSameSlot,
 		},
 	}
 	for _, test := range tests {

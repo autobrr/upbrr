@@ -4,6 +4,7 @@
 package dupe
 
 import (
+	"fmt"
 	"regexp"
 	"slices"
 	"strconv"
@@ -173,6 +174,7 @@ type parsedTitleFacts struct {
 	Provider   string
 	Group      string
 	Edition    string
+	Metadata   string
 	Region     string
 	Repack     string
 	ThreeD     string
@@ -443,6 +445,60 @@ func normalizeCandidateFacts(candidate TrackerCandidate) normalizedFacts {
 	return facts
 }
 
+// editionFromNamingContract completes title-derived cuts or supplies the declared
+// omitted cut. Recognition requires source, codec, media kind, and resolution
+// after a date or series boundary. DVD before REMUX with complete normalized
+// resolution evidence permits omitted codec and resolution tokens.
+// Unbounded title-only cuts remain unavailable. Recognized complete cuts and
+// contradictory facts are preserved; generic editions and framing markers remain
+// partial. An empty default leaves all evidence unchanged.
+func editionFromNamingContract(fact Fact, names []string, resolution Fact, defaultEdition string) Fact {
+	if defaultEdition == "" || fact.Status == FactContradictory {
+		return fact
+	}
+	if fact.Value != "" {
+		for marker := range strings.SplitSeq(fact.Value, "+") {
+			if marker == "open_matte" || marker == "oar" || marker == "imax" || marker == "mar" ||
+				(marker != "extended" && marker != "theatrical" && canonicalTitleEdition(nil, nil, marker) == "") {
+				fact.Status = FactPartial
+				return fact
+			}
+		}
+	}
+	if fact.Status == FactComplete {
+		return fact
+	}
+	title := parseBestTitle(names)
+	titleDerived := fact.Origin == FactOriginTrackerTitle || fact.Origin == FactOriginContentName
+	if title.Metadata == "" {
+		if titleDerived {
+			return missingFact()
+		}
+		return fact
+	}
+	metadata := strings.ToUpper(title.Metadata)
+	fields := strings.FieldsFunc(metadata, func(r rune) bool {
+		return r == '.' || r == ' ' || r == '_' || r == '-' || r == '[' || r == ']'
+	})
+	dvd, remux := slices.Index(fields, "DVD"), slices.Index(fields, "REMUX")
+	dvdRemux := dvd >= 0 && remux > dvd && resolution.Status == FactComplete
+	if !dvdRemux && !TrackerTitleHasSourceAndCodec(metadata) {
+		return fact
+	}
+	kind := mediaKindFromText(metadata)
+	if (kind == mediaKindUnknown && !hasBareWEBTitleMarker(metadata)) || (kind == mediaKindRemux && remux < 0) ||
+		(candidateResolutionPattern.FindString(metadata) == "" && !dvdRemux) {
+		return fact
+	}
+	if fact.Status == FactMissing {
+		return completeFact(canonicalEdition(defaultEdition), FactOriginTrackerTitle, "title")
+	}
+	if titleDerived {
+		fact.Status = FactComplete
+	}
+	return fact
+}
+
 func parseBestTitle(names []string) parsedTitleFacts {
 	for _, name := range names {
 		if parsed := parseReleaseTitle(name, FactOriginContentName); parsed.hasEvidence() ||
@@ -454,6 +510,73 @@ func parseBestTitle(names []string) parsedTitleFacts {
 	return parsedTitleFacts{MediaKind: mediaKindUnknown, Content: contentScope{Kind: contentScopeWork}}
 }
 
+// TrackerTitleMetadata returns tokens after the first date or series marker,
+// excluding the release group. The boolean reports whether that boundary exists.
+// Compound titles with an earlier year before a slash have no single boundary.
+// Series text before the first resolution or source token is ambiguous and also
+// has no boundary: cut and HDR words there may belong to an episode or extras title.
+// Cut aliases are normalized; other captures and delimiters retain their original
+// spelling so resolution, HDR10+, and HDR profile evidence are not synthesized or lost.
+func TrackerTitleMetadata(release rls.Release) (string, bool) {
+	var metadata strings.Builder
+	bounded := false
+	yearPrefix := false
+	seriesPrefix := false
+	for _, tag := range release.Tags() {
+		if tag.Is(rls.TagTypeDate) || tag.Is(rls.TagTypeSeries) {
+			bounded = true
+			if tag.Is(rls.TagTypeSeries) {
+				seriesPrefix = true
+			}
+			continue
+		}
+		if tag.Is(rls.TagTypeGroup) {
+			break
+		}
+		if !bounded {
+			original := fmt.Sprintf("%o", tag)
+			if tag.Is(rls.TagTypeText) && len(original) == 4 {
+				if _, err := strconv.Atoi(original); err == nil {
+					yearPrefix = true
+				}
+			}
+			if yearPrefix && tag.Is(rls.TagTypeDelim) && strings.Contains(original, "/") {
+				return "", false
+			}
+			continue
+		}
+		if seriesPrefix {
+			if tag.Is(rls.TagTypeResolution) || tag.Is(rls.TagTypeSource) {
+				seriesPrefix = false
+			} else if !tag.Is(rls.TagTypeDelim) {
+				return "", false
+			}
+		}
+		if tag.Is(rls.TagTypeCut) {
+			metadata.WriteString(tag.Normalize())
+		} else {
+			fmt.Fprintf(&metadata, "%o", tag)
+		}
+	}
+	return metadata.String(), bounded
+}
+
+// TrackerTitleHasSourceAndCodec reports whether bounded release metadata has
+// a recognized source followed by a video codec. Source-like group suffixes
+// after the codec cannot satisfy this naming prerequisite.
+func TrackerTitleHasSourceAndCodec(metadata string) bool {
+	sourceSeen := false
+	for _, tag := range rls.ParseString(metadata).Tags() {
+		if tag.Is(rls.TagTypeSource) {
+			sourceSeen = true
+		}
+		if tag.Is(rls.TagTypeCodec) {
+			return sourceSeen
+		}
+	}
+	return false
+}
+
 func parseReleaseTitle(name string, origin FactOrigin) parsedTitleFacts {
 	name = strings.TrimSpace(name)
 	upper := strings.ToUpper(name)
@@ -461,6 +584,11 @@ func parseReleaseTitle(name string, origin FactOrigin) parsedTitleFacts {
 	mediaKind := mediaKindFromText(upper)
 	if mediaKind == mediaKindUnknown && hasBareWEBTitleMarker(upper) {
 		mediaKind = mediaKindWEBDL
+	}
+	metadata, bounded := TrackerTitleMetadata(release)
+	edition := canonicalTitleEdition(release.Cut, release.Edition, name)
+	if bounded {
+		edition = canonicalTitleEdition(nil, nil, metadata)
 	}
 	parsed := parsedTitleFacts{
 		Resolution: canonicalResolution(candidateResolutionPattern.FindString(name)),
@@ -470,7 +598,8 @@ func parseReleaseTitle(name string, origin FactOrigin) parsedTitleFacts {
 		Container:  canonicalContainer(firstNonEmpty(release.Container, release.Ext)),
 		Provider:   canonicalProvider(release.Collection),
 		Group:      canonicalGroup(release.Group),
-		Edition:    canonicalTitleEdition(release.Cut, release.Edition, name),
+		Edition:    edition,
+		Metadata:   metadata,
 		Region:     canonicalRegion(release.Region),
 		Content:    contentScope{Kind: contentScopeWork, Origin: origin},
 		HDR:        hdrFactsFromCandidateTitle(name),
@@ -795,6 +924,8 @@ func canonicalEdition(value string) string {
 	return strings.ToLower(strings.Join(strings.Fields(value), " "))
 }
 
+// canonicalTitleEdition returns a sorted signature of recognized cut and
+// presentation markers, or an empty string when none are recognized.
 func canonicalTitleEdition(cuts []string, editions []string, title string) string {
 	joined := strings.Join(append(append([]string(nil), cuts...), editions...), " ") + " " + title
 	normalized := strings.NewReplacer(".", " ", "_", " ", "-", " ", "'", "").Replace(strings.ToLower(joined))
@@ -809,6 +940,8 @@ func canonicalTitleEdition(cuts []string, editions []string, title string) strin
 		{phrase: "director s cut", value: "directors_cut"},
 		{phrase: "extended cut", value: "extended"},
 		{phrase: "extended edition", value: "extended"},
+		{phrase: "special edition", value: "special_edition"},
+		{phrase: "super duper cut", value: "super_duper_cut"},
 		{phrase: "theatrical cut", value: "theatrical"},
 		{phrase: "theatrical edition", value: "theatrical"},
 		{phrase: "final cut", value: "final_cut"},
@@ -816,6 +949,8 @@ func canonicalTitleEdition(cuts []string, editions []string, title string) strin
 		{phrase: "alternate cut", value: "alternate_cut"},
 		{phrase: "open matte", value: "open_matte"},
 		{phrase: "oar", value: "oar"},
+		{phrase: "imax", value: "imax"},
+		{phrase: "mar", value: "mar"},
 		{phrase: "uncut", value: "uncut"},
 		{phrase: "unrated", value: "unrated"},
 	} {

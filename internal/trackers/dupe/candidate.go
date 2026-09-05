@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/autobrr/rls"
+
 	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -166,7 +168,19 @@ func enrichCandidateCoordinatesFromTitle(candidate *TrackerCandidate) {
 	}
 }
 
+// hdrFactsFromCandidateTitle excludes work-title and group tokens when a
+// release-name metadata boundary is available.
 func hdrFactsFromCandidateTitle(name string) api.HDRFacts {
+	if metadata, bounded := TrackerTitleMetadata(rls.ParseString(name)); bounded {
+		name = metadata
+	}
+	return NormalizeTrackerTitleHDR(name)
+}
+
+// NormalizeTrackerTitleHDR maps explicit markers anywhere in tracker-supplied
+// text to partial HDR evidence. It accepts free-form remaster metadata and does
+// not infer SDR from marker absence.
+func NormalizeTrackerTitleHDR(name string) api.HDRFacts {
 	upper := strings.ToUpper(name)
 	facts := api.HDRFacts{
 		Origin:       api.HDREvidenceTrackerTitle,
@@ -181,10 +195,17 @@ func hdrFactsFromCandidateTitle(name string) api.HDRFacts {
 			facts.DolbyVisionProfile = "5"
 		}
 	}
+	hdrVivid := tokenPresent(upper, "HDRVIVID") || strings.Contains(upper, "HDR.VIVID") || strings.Contains(upper, "HDR VIVID")
+	if hdrVivid {
+		mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHDRVivid)
+	}
+	if tokenPresent(upper, "WCG") {
+		mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatWCG)
+	}
 	switch {
 	case strings.Contains(upper, "HDR10+"), strings.Contains(upper, "HDR10PLUS"):
 		mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHDR10Plus)
-	case tokenPresent(upper, "HDR10"), tokenPresent(upper, "HDR"):
+	case tokenPresent(upper, "HDR10"), !hdrVivid && tokenPresent(upper, "HDR"):
 		mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHDR10)
 	}
 	if tokenPresent(upper, "HLG") {
@@ -203,12 +224,6 @@ func hdrFactsFromCandidateTitle(name string) api.HDRFacts {
 	}
 	mediafacts.AddHDRFallbacks(&facts)
 	return facts
-}
-
-// NormalizeTrackerTitleHDR maps explicit tracker-title markers to partial HDR
-// evidence without inferring SDR from marker absence.
-func NormalizeTrackerTitleHDR(name string) api.HDRFacts {
-	return hdrFactsFromCandidateTitle(name)
 }
 
 func tokenPresent(value string, token string) bool {

@@ -12,9 +12,10 @@ const ulcxDupeEvidenceID = "ulcx-upload-rules-v1.0.0"
 
 func duplicatePolicy() *trackers.DupePolicy {
 	return &trackers.DupePolicy{
-		ID:          "ulcx/duplicate/v3",
-		EvidenceID:  ulcxDupeEvidenceID,
-		SearchScope: trackers.DupeSearchScope{MaxPages: 100},
+		ID:                  "ulcx/duplicate/v4",
+		EvidenceID:          ulcxDupeEvidenceID,
+		DefaultTitleEdition: "Theatrical",
+		SearchScope:         trackers.DupeSearchScope{MaxPages: 100},
 		SlotDimensions: []trackers.DupeDimension{
 			trackers.DupeDimensionMediaClass,
 			trackers.DupeDimensionResolution,
@@ -28,6 +29,7 @@ func duplicatePolicy() *trackers.DupePolicy {
 		PrecedenceRules: ulcxWEBDLHDRPrecedenceRules(),
 		ManualReviewRules: []trackers.DupeRule{
 			ulcxFullDiscReviewRule(),
+			ulcxRemuxSameSlotRule(),
 			ulcxRemuxReviewRule(),
 			ulcxEncodeReviewRule(),
 			ulcxWEBDLSameSlotRule(),
@@ -44,8 +46,9 @@ func ulcxObjectiveCoexistenceRules() []trackers.DupeRule {
 		trackers.DupeDimensionThreeD,
 	} {
 		rules = append(rules, ulcxDistinctVariantRule(string(dimension), trackers.DupeCondition{
-			Dimension:       dimension,
-			ValuesDifferent: true,
+			Dimension:        dimension,
+			ValuesDifferent:  true,
+			RequiresComplete: dimension == trackers.DupeDimensionEdition,
 		}))
 	}
 	// Section 8 groups HDR10-family variants into one compatibility slot.
@@ -77,7 +80,7 @@ func ulcxObjectiveCoexistenceRules() []trackers.DupeRule {
 
 func ulcxDistinctVariantRule(id string, condition trackers.DupeCondition) trackers.DupeRule {
 	return trackers.DupeRule{
-		ID:         "ulcx/duplicate/v3/distinct_" + id,
+		ID:         "ulcx/duplicate/v4/distinct_" + id,
 		EvidenceID: ulcxDupeEvidenceID,
 		Relation:   string(api.DupeRelationCoexists),
 		ReasonCode: "ulcx_distinct_" + string(condition.Dimension) + "_slot",
@@ -89,7 +92,7 @@ func ulcxDistinctVariantRule(id string, condition trackers.DupeCondition) tracke
 
 func ulcxWEBDLDifferentProviderRule() trackers.DupeRule {
 	return trackers.DupeRule{
-		ID:         "ulcx/duplicate/v3/webdl_provider_slots",
+		ID:         "ulcx/duplicate/v4/webdl_provider_slots",
 		EvidenceID: ulcxDupeEvidenceID,
 		Relation:   string(api.DupeRelationCoexists),
 		ReasonCode: "ulcx_webdl_provider_slot",
@@ -112,7 +115,7 @@ func ulcxWEBDLDifferentProviderRule() trackers.DupeRule {
 
 func ulcxDifferentCodecRule(mediaClass string, reason string) trackers.DupeRule {
 	return trackers.DupeRule{
-		ID:         "ulcx/duplicate/v3/" + mediaClass + "_codec_slots",
+		ID:         "ulcx/duplicate/v4/" + mediaClass + "_codec_slots",
 		EvidenceID: ulcxDupeEvidenceID,
 		Relation:   string(api.DupeRelationCoexists),
 		ReasonCode: reason,
@@ -182,7 +185,7 @@ func ulcxWEBDLHDRPrecedenceRules() []trackers.DupeRule {
 
 func ulcxWEBDLHDRRule(id string, targetHDR string, candidateHDR string, relation api.DupeRelation) trackers.DupeRule {
 	return trackers.DupeRule{
-		ID:               "ulcx/duplicate/v3/" + id,
+		ID:               "ulcx/duplicate/v4/" + id,
 		EvidenceID:       ulcxDupeEvidenceID,
 		Relation:         string(relation),
 		ReasonCode:       "ulcx_webdl_hdr_precedence",
@@ -223,6 +226,37 @@ func ulcxRemuxReviewRule() trackers.DupeRule {
 	return ulcxSubjectiveReviewRule("remux_colour_cut_review", "remux", "ulcx_remux_colour_cut_review", false)
 }
 
+// ulcxRemuxSameSlotRule matches complete resolution, colour, and cut facts.
+// The resulting same-slot match still requires a duplicate decision.
+func ulcxRemuxSameSlotRule() trackers.DupeRule {
+	return trackers.DupeRule{
+		ID:         "ulcx/duplicate/v4/remux_same_slot",
+		EvidenceID: ulcxDupeEvidenceID,
+		Relation:   string(api.DupeRelationSameSlot),
+		ReasonCode: "ulcx_remux_same_slot",
+		// Equal objective facts outrank subjective review, below distinct slots.
+		Priority: 815,
+		Conditions: []trackers.DupeCondition{
+			ulcxSameMediaClassCondition("remux"),
+			{
+				Dimension:        trackers.DupeDimensionResolution,
+				ValuesEqual:      true,
+				RequiresComplete: true,
+			},
+			{
+				Dimension:        trackers.DupeDimensionHDR,
+				ValuesEqual:      true,
+				RequiresComplete: true,
+			},
+			{
+				Dimension:        trackers.DupeDimensionEdition,
+				ValuesEqual:      true,
+				RequiresComplete: true,
+			},
+		},
+	}
+}
+
 func ulcxEncodeReviewRule() trackers.DupeRule {
 	rule := ulcxSubjectiveReviewRule("encode_bitrate_cut_review", "encode", "ulcx_encode_bitrate_cut_review", true)
 	rule.Conditions = append(rule.Conditions, trackers.DupeCondition{
@@ -235,7 +269,7 @@ func ulcxEncodeReviewRule() trackers.DupeRule {
 
 func ulcxSubjectiveReviewRule(id string, mediaClass string, reason string, overridesGeneral bool) trackers.DupeRule {
 	return trackers.DupeRule{
-		ID:                 "ulcx/duplicate/v3/" + id,
+		ID:                 "ulcx/duplicate/v4/" + id,
 		EvidenceID:         ulcxDupeEvidenceID,
 		ReasonCode:         reason,
 		RequiresManualStep: true,
@@ -254,7 +288,7 @@ func ulcxSubjectiveReviewRule(id string, mediaClass string, reason string, overr
 
 func ulcxWEBDLSameSlotRule() trackers.DupeRule {
 	return trackers.DupeRule{
-		ID:               "ulcx/duplicate/v3/webdl_same_slot",
+		ID:               "ulcx/duplicate/v4/webdl_same_slot",
 		EvidenceID:       ulcxDupeEvidenceID,
 		Relation:         string(api.DupeRelationSameSlot),
 		ReasonCode:       "ulcx_webdl_same_slot",

@@ -167,6 +167,61 @@ func TestCanonicalTitleEditionRecognizesLSTAspectRatioSlots(t *testing.T) {
 	}
 }
 
+func TestNormalizeTitleEditionPreservesParsedMetadata(t *testing.T) {
+	t.Parallel()
+	for marker, want := range map[string]string{
+		"Director's Cut":     "directors_cut",
+		"Director s Cut":     "directors_cut",
+		"Extended Cut":       "extended",
+		"Extended Edition":   "extended",
+		"Theatrical Cut":     "theatrical",
+		"Theatrical Edition": "theatrical",
+		"Final Cut":          "final_cut",
+		"International Cut":  "international_cut",
+		"Alternate Cut":      "alternate_cut",
+		"Open Matte":         "open_matte",
+		"OAR":                "oar",
+		"IMAX":               "imax",
+		"MAR":                "mar",
+		"Uncut":              "uncut",
+		"Unrated":            "unrated",
+		"Special Edition":    "special_edition",
+		"Super Duper Cut":    "super_duper_cut",
+	} {
+		t.Run(marker, func(t *testing.T) {
+			t.Parallel()
+			facts := normalizeCandidateFacts(NormalizeCandidate(api.DupeEntry{
+				Name: "Example Movie 2026 " + marker + " 1080p BluRay REMUX AVC-GRP",
+			}, "LST"))
+			if facts.Edition.Value != want || facts.Edition.Status != FactPartial {
+				t.Fatalf("edition = %#v, want partial %q", facts.Edition, want)
+			}
+		})
+	}
+	t.Run("OAR work title is not presentation metadata", func(t *testing.T) {
+		t.Parallel()
+		facts := normalizeCandidateFacts(NormalizeCandidate(api.DupeEntry{
+			Name: "OAR 2026 1080p BluRay REMUX AVC-GRP",
+		}, "LST"))
+		if facts.Edition.Status != FactMissing {
+			t.Fatalf("work title became edition evidence: %#v", facts.Edition)
+		}
+	})
+}
+
+func TestNormalizeCompoundTitleRetainsPartialCuts(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{
+		"Alpha 2026 Extended / Beta 2025 1080p BluRay REMUX AVC-GRP",
+		"Alpha 2026 / Beta 2025 Extended Cut 1080p BluRay REMUX AVC-GRP",
+	} {
+		facts := normalizeCandidateFacts(NormalizeCandidate(api.DupeEntry{Name: name}, "LST"))
+		if facts.Edition.Status != FactPartial || facts.Edition.Value != "extended" {
+			t.Fatalf("edition = %#v, want retained partial extended cut", facts.Edition)
+		}
+	}
+}
+
 func TestNormalizeStructuredTitleConflictIsContradictory(t *testing.T) {
 	t.Parallel()
 
