@@ -58,4 +58,4 @@ Keep one focused regression for every rule boundary, both directions where direc
 go test -race -v -timeout 20m ./internal/trackers/dupe
 ```
 
-Add the touched tracker package when changing an overlay or adapter. Use only synthetic release names and provider IDs in tests.
+Add the touched tracker package when changing an overlay or adapter. Follow the root `AGENTS.md` guidance for synthetic media identities and permitted public identifiers in tests.
