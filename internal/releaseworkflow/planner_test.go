@@ -6,6 +6,7 @@ package releaseworkflow
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -487,6 +488,141 @@ func TestUnattendedPreflightPolicySkipsOnlyManualTrackerLane(t *testing.T) {
 	if assessment.Results[1].State != api.TrackerPreflightStateReady || finalized[1].Readiness != api.ReadinessStatusReady ||
 		!finalized[1].DupeReady || !finalized[1].UploadReady {
 		t.Fatalf("unattended BETA lane changed = %#v/%#v", assessment.Results[1], finalized[1])
+	}
+}
+
+func TestPreflightInteractionPolicyPreservesBlockingRuleReasons(t *testing.T) {
+	t.Parallel()
+
+	const genericMessage = "Tracker requires manual input and was skipped in unattended mode."
+	for _, tc := range []struct {
+		name            string
+		interaction     api.InteractionMode
+		actionKind      api.RequiredActionKind
+		existingFailure bool
+		wantMessage     string
+	}{
+		{
+			name:        "blocking authorization reasons are sanitized",
+			interaction: api.InteractionModeUnattended,
+			actionKind:  api.RequiredActionAuthorizeRules,
+			wantMessage: genericMessage + " missing language data; missing source data api_token=[REDACTED]",
+		},
+		{
+			name:        "other manual action keeps generic message",
+			interaction: api.InteractionModeUnattended,
+			actionKind:  legacyTrackerTwoFactorActionKind,
+			wantMessage: genericMessage,
+		},
+		{
+			name:            "existing failure is preserved",
+			interaction:     api.InteractionModeUnattended,
+			actionKind:      api.RequiredActionAuthorizeRules,
+			existingFailure: true,
+			wantMessage:     "Existing prerequisite failure.",
+		},
+		{
+			name:        "interactive action is preserved",
+			interaction: api.InteractionModeInteractive,
+			actionKind:  api.RequiredActionAuthorizeRules,
+		},
+		{
+			name:        "unattended confirm action is preserved",
+			interaction: api.InteractionModeUnattendedConfirm,
+			actionKind:  api.RequiredActionAuthorizeRules,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			actions := []api.RequiredAction{{
+				Kind:   tc.actionKind,
+				Prompt: "Private prompt must not become the skip reason.",
+			}}
+			decisions := []api.TrackerPolicyDecision{
+				{
+					Code:     "strict_rule",
+					Decision: "ineligible",
+					Blocking: true,
+					Message:  "unrelated strict blocker",
+				},
+				{
+					Code:     "language_rule",
+					Decision: "authorization_required",
+					Blocking: true,
+					Message:  " missing language data ",
+				},
+				{
+					Code:     "allowed_rule",
+					Decision: "authorization_required",
+					Message:  "nonblocking reason",
+				},
+				{
+					Code:     "empty_rule",
+					Decision: "authorization_required",
+					Blocking: true,
+					Message:  " ",
+				},
+				{
+					Code:     "source_rule",
+					Decision: "authorization_required",
+					Blocking: true,
+					Message:  "missing source data api_token=synthetic-secret",
+				},
+			}
+			assessment := api.TrackerPreflightAssessment{Results: []api.TrackerPreflightResult{{
+				TrackerID:       "ALPHA",
+				State:           api.TrackerPreflightStateActionRequired,
+				RequiredActions: actions,
+			}}}
+			finalized := []api.TrackerReleaseProjection{{
+				TrackerID:       "ALPHA",
+				Readiness:       api.ReadinessStatusBlocked,
+				RequiredActions: actions,
+				PolicyDecisions: slices.Clone(decisions),
+			}}
+			wantFailure := api.WorkflowFailure{
+				Failure: api.OperationFailure{
+					Code:      api.OperationFailureMissingPrerequisite,
+					Operation: api.OperationKindDuplicateCheck,
+					Message:   tc.wantMessage,
+					Recovery:  api.OperationRecoveryCompletePrerequisite,
+				},
+				TrackerID: "ALPHA",
+			}
+			if tc.existingFailure {
+				wantFailure.Failure.Code = api.OperationFailureTrackerAuthRequired
+				wantFailure.Failure.Recovery = api.OperationRecoveryAuthenticateTrackers
+				assessment.Results[0].Failures = []api.WorkflowFailure{wantFailure}
+				finalized[0].Failures = []api.WorkflowFailure{wantFailure}
+			}
+			originalResult, originalProjection := assessment.Results[0], finalized[0]
+
+			applyPreflightInteractionPolicy(tc.interaction, &assessment, finalized)
+
+			result, projection := assessment.Results[0], finalized[0]
+			if tc.interaction != api.InteractionModeUnattended {
+				if !reflect.DeepEqual(result, originalResult) || !reflect.DeepEqual(projection, originalProjection) {
+					t.Fatalf("manual interaction changed lane: %#v/%#v", result, projection)
+				}
+				return
+			}
+			if !reflect.DeepEqual(result.Failures, []api.WorkflowFailure{wantFailure}) || !reflect.DeepEqual(projection.Failures, result.Failures) {
+				t.Fatalf("unattended failures = %#v/%#v, want %#v", result.Failures, projection.Failures, wantFailure)
+			}
+			wantDecisions := append(slices.Clone(decisions), api.TrackerPolicyDecision{
+				Code:     string(wantFailure.Failure.Code),
+				Decision: "ineligible",
+				Blocking: true,
+				Message:  tc.wantMessage,
+			})
+			if !slices.Equal(projection.PolicyDecisions, wantDecisions) {
+				t.Fatalf("unattended decisions = %#v, want %#v", projection.PolicyDecisions, wantDecisions)
+			}
+			if result.State != api.TrackerPreflightStateFailed || len(result.RequiredActions) != 0 ||
+				projection.Readiness != api.ReadinessStatusIneligible || projection.DupeReady || projection.UploadReady || len(projection.RequiredActions) != 0 {
+				t.Fatalf("unattended lane = %#v/%#v", result, projection)
+			}
+		})
 	}
 }
 

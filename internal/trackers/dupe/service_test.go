@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -128,7 +129,7 @@ func TestProjectAdapterResultDebugLogsEveryCandidateEvaluation(t *testing.T) {
 		t.Fatalf("candidate debug logs = %d, want 2", len(candidateLogs))
 	}
 	if !strings.Contains(candidateLogs[0], `tracker=BHD candidate_id="candidate-1" relation=same_slot`) ||
-		!strings.Contains(candidateLogs[0], `winning_rule=general/duplicate/v4/same_slot`) ||
+		!strings.Contains(candidateLogs[0], `winning_rule=general/duplicate/v5/same_slot`) ||
 		!strings.Contains(candidateLogs[0], `kind=web_dl class=web source_family=web`) ||
 		!strings.Contains(candidateLogs[0], `name="Example.Release.2026.1080p.WEB-DL-GRP"`) ||
 		!strings.Contains(candidateLogs[0], `facts="WEB-DL · EXAMPLE · 1080p"`) ||
@@ -339,7 +340,7 @@ func TestCandidateLogIncludesOnlyDecisiveDeduplicatedEvidence(t *testing.T) {
 	for _, value := range []string{
 		`compared="media_class | resolution"`,
 		`missing=""`,
-		`matched="general/duplicate/v4/media_class"`,
+		`matched="general/duplicate/v5/media_class"`,
 	} {
 		if !strings.Contains(logLine, value) {
 			t.Fatalf("candidate log missing %q: %q", value, logLine)
@@ -844,6 +845,11 @@ func TestLiveTestChecksEverySelectedTrackerSerially(t *testing.T) {
 	}
 	if maximum.Load() != 1 || len(summary.Results) != len(names) {
 		t.Fatalf("live-test concurrency=%d results=%d", maximum.Load(), len(summary.Results))
+	}
+	for _, name := range names {
+		if !slices.ContainsFunc(summary.Results, func(result api.DupeCheckResult) bool { return result.Tracker == name }) {
+			t.Errorf("missing live-test result for tracker %q", name)
+		}
 	}
 }
 

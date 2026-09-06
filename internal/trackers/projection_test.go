@@ -134,6 +134,44 @@ func TestRegistryCatalogAndProjectionUseStableIdentityAndFinalPreviewSemantics(t
 	}
 }
 
+func TestNilPolicyProjectionInvalidatesPreTitleInferenceContract(t *testing.T) {
+	t.Parallel()
+	registry := NewRegistry()
+	if err := registry.RegisterDescriptor(Descriptor{
+		Name:       "EXAMPLE",
+		Family:     FamilyUnit3D,
+		Definition: projectionStubDefinition{stubDefinition: stubDefinition{name: "EXAMPLE"}},
+	}); err != nil {
+		t.Fatalf("register nil-policy descriptor: %v", err)
+	}
+	fingerprint := mustProjectionFingerprint(t, "projection")
+	projection, failure := registry.ProjectRelease(context.Background(), PreparationInput{
+		Tracker: "EXAMPLE",
+		Meta: api.UploadSubject{
+			ReleaseName: "Example.Movie.2026.1080p.WEB-DL.H264-GRP",
+			Release:     api.ReleaseInfo{Category: "MOVIE", Resolution: "1080p"},
+		},
+	}, fingerprint, fingerprint, fingerprint)
+	if failure != nil {
+		t.Fatalf("project nil-policy tracker: %v", failure)
+	}
+	legacy, err := api.CanonicalWorkflowFingerprint(struct {
+		GeneralPolicyID string
+		ID              string
+		Policy          *DupePolicy
+	}{
+		GeneralPolicyID: "general/duplicate/v4",
+		ID:              projection.DuplicatePolicyID,
+		Policy:          nil,
+	})
+	if err != nil {
+		t.Fatalf("fingerprint legacy contract: %v", err)
+	}
+	if projection.DuplicatePolicyFingerprint == legacy || projection.DuplicatePolicyFingerprint == "" {
+		t.Fatalf("nil-policy projection retained the pre-title-inference fingerprint: %q", projection.DuplicatePolicyFingerprint)
+	}
+}
+
 func TestRegistryProjectionAppliesAndFingerprintsEpisodeTitleOmitPolicy(t *testing.T) {
 	t.Parallel()
 

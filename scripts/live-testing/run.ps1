@@ -225,8 +225,7 @@ try {
         }
         $variants = @([bool]$script:Run.sat)
         if ($script:Run.suite -in @('Dupe', 'Full') -and -not $script:Run.sat -and $entry.case.case_id -in $scenarios.dupe) {
-          $variants = @($false, $true)
-          if ($script:Run.budgets.maxImages -gt 0) { $variants = @($true, $false) }
+          $variants = @($true, $false)
         }
         # Registered configured defaults stay in their original order. Unavailable intended defaults
         # remain in the run report with a blocked result for each selected case.
@@ -274,9 +273,9 @@ try {
                 if (-not $current.dupes) { continue }
               } else { Add-Result $lane.caseId $lane.laneId 'duplicates_decided' 'not_applicable' 'local_capture_scope' }
               if ($script:Run.suite -eq 'Dupe') { continue }
-              # A later forced SAT preparation would invalidate the ordinary lane's
-              # captured generation before its deferred image upload and dry run.
-              if ($script:Run.budgets.maxImages -gt 0 -and $variant -and $variants -contains $false) {
+              # Keep the ordinary lane's captured generation current for deferred
+              # browser checks, image uploads, and dry runs, including zero-image runs.
+              if ($variant -and $variants -contains $false) {
                 Add-Result $lane.caseId $lane.laneId 'media_ready' 'not_applicable' 'source_capture_deferred_to_normal_lane'
                 continue
               }
