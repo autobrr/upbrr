@@ -9,6 +9,19 @@ import (
 	"testing"
 )
 
+func TestHardcodedSubsProjectsIntoTrackerSubjects(t *testing.T) {
+	t.Parallel()
+
+	rule := NewRuleSubject(UploadSubject{HardcodedSubs: true})
+	if !rule.HardcodedSubs {
+		t.Fatal("rule subject lost hardcoded subtitle fact")
+	}
+	validation := NewTrackerValidationSubjectFromRuleSubject(rule, "EXAMPLE")
+	if !validation.HardcodedSubs {
+		t.Fatal("validation subject lost hardcoded subtitle fact")
+	}
+}
+
 func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 	t.Parallel()
 

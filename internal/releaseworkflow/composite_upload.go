@@ -520,6 +520,7 @@ func compositeUploadFactInstructions(
 			OriginalLanguage: cloneStringPointer(facts.Metadata.OriginalLanguage),
 			PersonalRelease:  cloneBoolPointer(facts.Metadata.PersonalRelease),
 			Commentary:       cloneBoolPointer(facts.Metadata.Commentary),
+			HardcodedSubs:    cloneBoolPointer(facts.Metadata.HardcodedSubs),
 			WebDV:            cloneBoolPointer(facts.Metadata.WebDV),
 			StreamOptimized:  cloneBoolPointer(facts.Metadata.StreamOptimized),
 			Anime:            cloneBoolPointer(facts.Metadata.Anime),

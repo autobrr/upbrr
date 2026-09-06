@@ -2628,6 +2628,9 @@
           "HDRFacts": {
             "$ref": "#/components/schemas/HDRFacts"
           },
+          "HardcodedSubs": {
+            "type": "boolean"
+          },
           "HasEncodeSettings": {
             "type": "boolean"
           },
@@ -2689,6 +2692,7 @@
           "Edition",
           "HDR",
           "HDRFacts",
+          "HardcodedSubs",
           "HasEncodeSettings",
           "MediaInfoUniqueID",
           "Region",
@@ -2799,6 +2803,16 @@
             "anyOf": [
               {
                 "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "HardcodedSubs": {
+            "anyOf": [
+              {
+                "type": "boolean"
               },
               {
                 "type": "null"
@@ -5330,6 +5344,16 @@
             "anyOf": [
               {
                 "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hardcodedSubs": {
+            "anyOf": [
+              {
+                "type": "boolean"
               },
               {
                 "type": "null"

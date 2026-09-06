@@ -299,6 +299,7 @@ type UploadSubject struct {
 	Audio                       string
 	Channels                    string
 	HasCommentary               bool
+	HardcodedSubs               bool
 	Is3D                        string
 	Source                      string
 	Type                        string
@@ -355,6 +356,7 @@ type RuleSubject struct {
 	ProviderMetadata     SourceScopedMetadata
 	AudioLanguages       []string
 	SubtitleLanguages    []string
+	HardcodedSubs        bool
 	TVPack               bool
 	Type                 string
 	Source               string
@@ -523,6 +525,7 @@ type TrackerValidationSubject struct {
 	Audio                  string
 	Channels               string
 	HasCommentary          bool
+	HardcodedSubs          bool
 	Is3D                   string
 	BitDepth               string
 	VideoCodec             string
@@ -627,6 +630,7 @@ func NewTrackerValidationSubject(subject UploadSubject, tracker string) TrackerV
 		Audio:                       subject.Audio,
 		Channels:                    subject.Channels,
 		HasCommentary:               subject.HasCommentary,
+		HardcodedSubs:               subject.HardcodedSubs,
 		Is3D:                        subject.Is3D,
 		BitDepth:                    subject.BitDepth,
 		VideoCodec:                  subject.VideoCodec,
@@ -1211,6 +1215,7 @@ func NewTrackerValidationSubjectFromRuleSubject(subject RuleSubject, tracker str
 		ProviderMetadata:     cloneTrackerValidationValue(subject.ProviderMetadata),
 		AudioLanguages:       slices.Clone(subject.AudioLanguages),
 		SubtitleLanguages:    slices.Clone(subject.SubtitleLanguages),
+		HardcodedSubs:        subject.HardcodedSubs,
 		TVPack:               subject.TVPack,
 		Type:                 subject.Type,
 		Source:               subject.Source,
@@ -1257,6 +1262,7 @@ func NewRuleSubject(subject UploadSubject) RuleSubject {
 		ProviderMetadata:     subject.ProviderMetadata,
 		AudioLanguages:       append([]string(nil), subject.AudioLanguages...),
 		SubtitleLanguages:    append([]string(nil), subject.SubtitleLanguages...),
+		HardcodedSubs:        subject.HardcodedSubs,
 		TVPack:               subject.TVPack,
 		Type:                 subject.Type,
 		Source:               subject.Source,
@@ -1363,11 +1369,14 @@ func (s UploadSubject) CanonicalSeasonEpisode() (int, int) {
 	return s.SeasonInt, s.EpisodeInt
 }
 
+// MetadataOverrides contains optional user-authored replacements for derived facts.
+// A nil HardcodedSubs preserves automatic marker detection.
 type MetadataOverrides struct {
 	Distributor      *string
 	OriginalLanguage *string
 	PersonalRelease  *bool
 	Commentary       *bool
+	HardcodedSubs    *bool
 	WebDV            *bool
 	StreamOptimized  *bool
 	Anime            *bool

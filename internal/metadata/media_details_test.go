@@ -840,6 +840,54 @@ func TestDeriveMediaFactsFoldsValueInstructionsIntoFactsAndName(t *testing.T) {
 	}
 }
 
+func TestDeriveMediaFactsResolvesHardcodedSubsOverride(t *testing.T) {
+	t.Parallel()
+
+	force := true
+	suppress := false
+	tests := []struct {
+		name       string
+		sourcePath string
+		override   *bool
+		want       bool
+	}{
+		{
+			name:       "automatic",
+			sourcePath: "Example.Release.2026.HARDSUB.1080p-GRP.mkv",
+			want:       true,
+		},
+		{
+			name:       "manual",
+			sourcePath: "Example.Release.2026.1080p-GRP.mkv",
+			override:   &force,
+			want:       true,
+		},
+		{
+			name:       "suppressed",
+			sourcePath: "Example.Release.2026.HARDSUB.1080p-GRP.mkv",
+			override:   &suppress,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+			meta, err := svc.deriveMediaFacts(context.Background(), preparationstate.State{
+				SourcePath: tt.sourcePath,
+				MetadataOverrides: api.MetadataOverrides{
+					HardcodedSubs: tt.override,
+				},
+			})
+			if err != nil {
+				t.Fatalf("derive media facts: %v", err)
+			}
+			if meta.HardcodedSubs != tt.want {
+				t.Fatalf("hardcoded subtitles = %t, want %t", meta.HardcodedSubs, tt.want)
+			}
+		})
+	}
+}
+
 func TestApplyMediaDetailsTreatsUsableMediaInfoWithoutHDRAsSDR(t *testing.T) {
 	miPath := filepath.Join(t.TempDir(), "mediainfo.json")
 	if err := os.WriteFile(miPath, []byte(`{"media":{"track":[{"@type":"General"},{"@type":"Video","Format":"HEVC","Width":"3840","Height":"2160"}]}}`), 0o600); err != nil {

@@ -162,6 +162,7 @@ export type MediaFacts = {
   Audio: string;
   Channels: string;
   Commentary: boolean;
+  HardcodedSubs: boolean;
   ThreeD: string;
   Source: string;
   Type: string;
@@ -229,6 +230,7 @@ export type PrepareInput = {
       OriginalLanguage?: string | null;
       PersonalRelease?: boolean | null;
       Commentary?: boolean | null;
+      HardcodedSubs?: boolean | null;
       WebDV?: boolean | null;
       StreamOptimized?: boolean | null;
       Anime?: boolean | null;

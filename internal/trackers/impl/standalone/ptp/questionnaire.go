@@ -56,7 +56,7 @@ func buildQuestionnaire(meta api.UploadSubject, groupID string) *api.TrackerQues
 			Required: false,
 		})
 	}
-	if hasHardcodedSubtitles(meta) {
+	if meta.HardcodedSubs {
 		fields = append(fields, api.TrackerQuestionnaireField{
 			Key:         "hardcoded_subtitle_languages",
 			Label:       "Hardcoded Subtitle Languages",

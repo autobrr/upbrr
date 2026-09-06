@@ -198,7 +198,7 @@ func evaluateRules(ctx context.Context, registry *Registry, tracker string, meta
 	if rules.BlockExternalSubs && hasReleaseToken(meta, []string{"extsub", "ext-sub", "external subs", "external subtitles"}) {
 		addWaivable("block_external_subs", "external subtitles not allowed")
 	}
-	if rules.BlockHardcodedSubs && hasReleaseToken(meta, []string{"hardsub", "hard-sub", "hardcoded"}) {
+	if rules.BlockHardcodedSubs && meta.HardcodedSubs {
 		addStrict("block_hardcoded_subs", "hardcoded subtitles not allowed")
 	}
 
@@ -291,6 +291,7 @@ func RuleSubjectFromValidation(subject api.TrackerValidationSubject) api.RuleSub
 		ProviderMetadata:   subject.ProviderMetadata,
 		AudioLanguages:     append([]string(nil), subject.AudioLanguages...),
 		SubtitleLanguages:  append([]string(nil), subject.SubtitleLanguages...),
+		HardcodedSubs:      subject.HardcodedSubs,
 		TVPack:             subject.TVPack,
 		Type:               subject.Type,
 		Source:             subject.Source,

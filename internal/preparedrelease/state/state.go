@@ -168,6 +168,7 @@ type State struct {
 	Audio                          string
 	Channels                       string
 	HasCommentary                  bool
+	HardcodedSubs                  bool
 	Is3D                           string
 	Source                         string
 	Type                           string

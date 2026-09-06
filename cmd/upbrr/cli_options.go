@@ -83,6 +83,7 @@ type cliOptions struct {
 	SkipDupeAsActual      bool
 	DoubleDupeCheck       bool
 	Commentary            bool
+	HardcodedSubs         bool
 	PersonalRelease       bool
 	StreamOptimized       bool
 	WebDV                 bool
@@ -281,6 +282,8 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.BoolVar(&opts.DoubleDupeCheck, "double-dupe-check", false, "Double dupe check")
 	fs.BoolVar(&opts.Commentary, "mc", false, "Mark release as containing commentary")
 	fs.BoolVar(&opts.Commentary, "commentary", false, "Mark release as containing commentary")
+	fs.BoolVar(&opts.HardcodedSubs, "hc", false, "Mark release as containing hardcoded subtitles")
+	fs.BoolVar(&opts.HardcodedSubs, "hardcoded-subs", false, "Mark release as containing hardcoded subtitles")
 	fs.BoolVar(&opts.PersonalRelease, "pr", false, "Mark release as personal")
 	fs.BoolVar(&opts.PersonalRelease, "personalrelease", false, "Mark release as personal")
 	fs.BoolVar(&opts.StreamOptimized, "st", false, "Mark release as stream optimized")
@@ -582,6 +585,7 @@ func cliFlagAliases() map[string]string {
 		"sda":                  "skip-dupe-asking",
 		"ddc":                  "double-dupe-check",
 		"mc":                   "commentary",
+		"hc":                   "hardcoded-subs",
 		"pr":                   "personalrelease",
 		"st":                   "stream",
 		"a":                    "anon",
@@ -916,6 +920,9 @@ func buildMetadataOverrides(opts cliOptions, visited map[string]bool) api.Metada
 	}
 	if visited["commentary"] {
 		overrides.Commentary = boolPtr(opts.Commentary)
+	}
+	if visited["hardcoded-subs"] {
+		overrides.HardcodedSubs = boolPtr(opts.HardcodedSubs)
 	}
 	if visited["personalrelease"] {
 		overrides.PersonalRelease = boolPtr(opts.PersonalRelease)

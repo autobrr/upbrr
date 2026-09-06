@@ -236,6 +236,7 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 			Audio:             meta.Audio,
 			Channels:          meta.Channels,
 			Commentary:        meta.HasCommentary,
+			HardcodedSubs:     meta.HardcodedSubs,
 			ThreeD:            meta.Is3D,
 			Source:            meta.Source,
 			Type:              meta.Type,

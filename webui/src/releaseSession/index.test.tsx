@@ -1196,6 +1196,7 @@ describe("useReleaseSession", () => {
       result.current.input.changeMetadata({
         Distributor: "Example Distributor",
         OriginalLanguage: "ja",
+        HardcodedSubs: true,
       }),
     );
     await act(() => result.current.input.prepare());
@@ -1206,6 +1207,7 @@ describe("useReleaseSession", () => {
         Metadata: {
           Distributor: "Example Distributor",
           OriginalLanguage: "ja",
+          HardcodedSubs: true,
         },
       }),
       expect.any(String),

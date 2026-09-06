@@ -39,6 +39,10 @@ The left navigation follows the release workflow. Some pages appear or unlock on
 
 Navigation guards prevent later operations from silently using missing or stale prerequisites. When a page is unavailable, read the notice and return to the required stage.
 
+### Hardcoded subtitle override
+
+On **Input**, expand **Edit Release Details** and enable **Hardcoded subtitles** when automatic detection misses them. Leave it disabled to keep automatic detection. Trackers that require hardcoded-subtitle languages, including PTP, will then request them before upload.
+
 ## Settings
 
 Use **Settings** to manage:
