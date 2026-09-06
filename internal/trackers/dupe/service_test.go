@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -844,6 +845,11 @@ func TestLiveTestChecksEverySelectedTrackerSerially(t *testing.T) {
 	}
 	if maximum.Load() != 1 || len(summary.Results) != len(names) {
 		t.Fatalf("live-test concurrency=%d results=%d", maximum.Load(), len(summary.Results))
+	}
+	for _, name := range names {
+		if !slices.ContainsFunc(summary.Results, func(result api.DupeCheckResult) bool { return result.Tracker == name }) {
+			t.Errorf("missing live-test result for tracker %q", name)
+		}
 	}
 }
 
