@@ -520,6 +520,73 @@ func TestImgboxUploaderInRegistry(t *testing.T) {
 	}
 }
 
+func TestUploaderRegistryResolvesOwnedTrackerCredentialsDeterministically(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name        string
+		trackers    map[string]config.TrackerConfig
+		hdbUsername string
+		hdbPasskey  string
+		thrAPIKey   string
+	}{
+		{
+			name: "canonical entries win",
+			trackers: map[string]config.TrackerConfig{
+				"HDB": {Username: "canonical-user", Passkey: "canonical-passkey"},
+				"hdb": {Username: "alias-user", Passkey: "alias-passkey"},
+				"THR": {ImgAPI: "canonical-api-key"},
+				"thr": {ImgAPI: "alias-api-key"},
+			},
+			hdbUsername: "canonical-user",
+			hdbPasskey:  "canonical-passkey",
+			thrAPIKey:   "canonical-api-key",
+		},
+		{
+			name: "empty canonical entries block alias credentials",
+			trackers: map[string]config.TrackerConfig{
+				"HDB": {},
+				"hdb": {Username: "alias-user", Passkey: "alias-passkey"},
+				"THR": {},
+				"thr": {ImgAPI: "alias-api-key"},
+			},
+		},
+		{
+			name: "multiple noncanonical entries use lexical first",
+			trackers: map[string]config.TrackerConfig{
+				"hDb": {Username: "first-user", Passkey: "first-passkey"},
+				"hdb": {Username: "second-user", Passkey: "second-passkey"},
+				"tHr": {ImgAPI: "first-api-key"},
+				"thr": {ImgAPI: "second-api-key"},
+			},
+			hdbUsername: "first-user",
+			hdbPasskey:  "first-passkey",
+			thrAPIKey:   "first-api-key",
+		},
+		{
+			name:     "unrelated entries leave credentials empty",
+			trackers: map[string]config.TrackerConfig{"PTP": {Username: "unrelated-user", ImgAPI: "unrelated-api-key"}},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			uploaders := newUploaderRegistry(config.Config{
+				Trackers: config.TrackersConfig{Trackers: test.trackers},
+			}, nil, imageHostingTestRegistry(t))
+			hdb, ok := uploaders["hdb"].(*hdbUploader)
+			if !ok {
+				t.Fatal("HDB uploader has unexpected type")
+			}
+			thr, ok := uploaders["thr"].(*thrUploader)
+			if !ok {
+				t.Fatal("THR uploader has unexpected type")
+			}
+			if hdb.username != test.hdbUsername || hdb.passkey != test.hdbPasskey || thr.apiKey != test.thrAPIKey {
+				t.Fatal("owned tracker credentials resolved incorrectly")
+			}
+		})
+	}
+}
+
 func TestReelflixUploaderUsesGlobalImageHostingAPIKey(t *testing.T) {
 	t.Parallel()
 

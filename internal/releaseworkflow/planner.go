@@ -21,6 +21,13 @@ func (m *Module) Continue(
 	ownerID string,
 	request api.ContinueReleaseWorkflowRequest,
 ) (CommandResult, error) {
+	if m.liveTest != nil {
+		if request.Goal == api.WorkflowGoalUploaded {
+			m.logger.Warnf("workflow: operation=upload_execute state=blocked reason=live_test")
+			return CommandResult{}, fmt.Errorf("live-test workflow goal: %w", m.liveTest.RejectRequest(api.OperationKindUploadExecute))
+		}
+		request.Intent.NoSeed = true
+	}
 	if err := request.Validate(); err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow continue: %w", err)
 	}

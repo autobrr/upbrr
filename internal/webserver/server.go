@@ -25,12 +25,15 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/redaction"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 var openBrowserURL = browser.OpenURL
 
 // Options configures the embedded web UI server.
 type Options struct {
+	// LiveTest preserves process-owned effect restrictions across runtime changes.
+	LiveTest *api.LiveTestPolicy
 	// Config supplies the application configuration used by the backend.
 	Config config.Config
 	// CLIConfig supplies persisted or command-line web server settings.
@@ -75,6 +78,9 @@ func New(opts Options) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("webserver: %w", err)
 	}
+	if opts.LiveTest != nil && !isDevelopmentNoAuthHost(cliCfg.Host) {
+		return nil, fmt.Errorf("webserver: --live-test requires a loopback host, got %q", cliCfg.Host)
+	}
 	if opts.DevelopmentNoAuth && !isDevelopmentNoAuthHost(cliCfg.Host) {
 		return nil, fmt.Errorf("webserver: --dev-no-auth requires a loopback host, got %q", cliCfg.Host)
 	}
@@ -84,7 +90,12 @@ func New(opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	backend, err := newBackendWithContextForServer(context.Background(), cfg, hub)
+	var backend *Backend
+	if opts.LiveTest != nil {
+		backend, err = newBackendWithLiveTest(context.Background(), cfg, hub, opts.LiveTest)
+	} else {
+		backend, err = newBackendWithContextForServer(context.Background(), cfg, hub)
+	}
 	if err != nil {
 		return nil, err
 	}

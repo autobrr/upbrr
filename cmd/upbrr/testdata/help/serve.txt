@@ -23,3 +23,7 @@ Server:
 Development:
   -dev-no-auth, --dev-no-auth
       Development only: serve web UI without web authentication on loopback hosts
+  -live-test, --live-test
+      Use an isolated live-test profile with tracker and client writes disabled
+  -live-test-max-images, --live-test-max-images int
+      Maximum journaled image uploads in this live-test run (zero keeps captures local)

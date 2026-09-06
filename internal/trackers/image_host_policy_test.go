@@ -410,6 +410,31 @@ func TestNeededImageUploadTargetsAllowsTrackerConfiguredHost(t *testing.T) {
 	}
 }
 
+func TestExplicitImageUploadTargetsUsesRequestedConfiguredHost(t *testing.T) {
+	t.Parallel()
+
+	appCfg := config.Config{
+		ImageHosting: config.ImageHostingConfig{Host1: "imgbb"},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"OE": {ImageHost: "imgbox"},
+		}},
+	}
+	targets, err := ExplicitImageUploadTargetsForMetadataExcludingWithRegistry(
+		imageHostPolicyTestRegistry(t),
+		appCfg,
+		[]string{"OE"},
+		"imgbb",
+		nil,
+		api.UploadSubject{},
+	)
+	if err != nil {
+		t.Fatalf("explicit image upload targets: %v", err)
+	}
+	if len(targets) != 1 || targets[0].Host != "imgbb" || len(targets[0].Trackers) != 1 || targets[0].Trackers[0] != "OE" {
+		t.Fatalf("explicit image upload targets = %#v", targets)
+	}
+}
+
 func TestNeededImageUploadTargetsDoesNotShareTrackerConfiguredHostUnlessGloballyConfigured(t *testing.T) {
 	t.Parallel()
 
