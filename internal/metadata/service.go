@@ -526,6 +526,7 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 		return preparationstate.State{}, fmt.Errorf("metadata: source size: %w", err)
 	}
 	meta.SourceSize = size
+	applyDVDCapacity(&meta)
 	s.logger.Debugf("metadata: source size %d bytes", size)
 
 	storedInfoHash := ""
@@ -730,6 +731,18 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 	s.logger.Debugf("metadata: persisted metadata for %s", primary)
 
 	return meta, nil
+}
+
+const dvd5CapacityThreshold = 437 * (1 << 30) / 100
+
+func applyDVDCapacity(meta *preparationstate.State) {
+	if !strings.EqualFold(meta.DiscType, "DVD") || meta.SourceSize <= 0 {
+		return
+	}
+	meta.Release.Size = "DVD9"
+	if meta.SourceSize <= dvd5CapacityThreshold {
+		meta.Release.Size = "DVD5"
+	}
 }
 
 // sceneResultHasData reports whether a scene detector returned metadata worth
