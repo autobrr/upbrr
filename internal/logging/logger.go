@@ -386,7 +386,8 @@ func isUnixLocalPathStart(value string, index int) bool {
 	if index > 0 && value[index-1] == ':' {
 		return false
 	}
-	for _, prefix := range []string{"/home/", "/Users/", "/mnt/", "/media/", "/tmp/", "/var/", "/Volumes/"} {
+	tempDir := filepath.Join(filepath.Clean(os.TempDir()), "/")
+	for _, prefix := range []string{"/home/", "/Users/", "/mnt/", "/media/", "/tmp/", "/var/", "/Volumes/", tempDir} {
 		if strings.HasPrefix(value[index:], prefix) {
 			return true
 		}
