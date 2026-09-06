@@ -32,13 +32,20 @@ $exitCode = 0; $script:Run = $null; $script:RunDir = $null
 try {
   if ($PSCmdlet.ParameterSetName -eq 'New') {
     $Corpus = Assert-PrivatePath $Corpus $privateRoot
+    $scenariosSHA256 = (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'scenarios.json')).Hash
     $scenarios = Read-PrivateJson (Join-Path $PSScriptRoot 'scenarios.json')
     $selected = switch ($Suite) { 'Smoke' { $scenarios.smoke }; 'Dupe' { $scenarios.dupe }; default { $scenarios.screenshots } }
     if ($CaseId) {
-      foreach ($id in $CaseId) { if ($id -cnotin $selected) { throw 'case_outside_suite' } }
       $selected = @($CaseId | Select-Object -Unique)
     }
+    $corpusSHA256 = (Get-FileHash -LiteralPath $Corpus).Hash
     $entries = @(Read-Corpus $Corpus $selected)
+    if ((Get-FileHash -LiteralPath $Corpus).Hash -cne $corpusSHA256) { throw 'corpus_changed_during_run' }
+    # The production temporary layout uses a sanitized basename, not source identity.
+    foreach ($group in @($entries | Where-Object status -EQ 'ready' | Group-Object { Get-BDInfoTempName $_.case })) {
+      if (@($group.Group | Where-Object { $_.case.bdmv_selection }).Count -gt 0 -and
+          @($group.Group.stat.input_path_hash | Select-Object -Unique).Count -gt 1) { throw 'bdinfo_temp_name_collision_use_separate_runs' }
+    }
     Write-Host ('Live testing: suite={0} cases={1} trackerScope={2} images={3}' -f $Suite, $entries.Count, $(if ($Tracker) { $Tracker } else { 'config_defaults' }), $(if ($UploadImages) { $MaxImages } else { 0 }))
     if ($ValidateOnly) {
       foreach ($entry in $entries) { Write-Host ('case={0} status={1} reason={2}' -f $entry.case.case_id, $entry.status, $entry.reason) }
@@ -65,6 +72,7 @@ try {
     }
     if (-not (Test-Path -LiteralPath (Join-Path $script:RepoRoot 'webui/node_modules/@playwright/test/cli.js'))) { throw 'playwright_dependency_missing' }
     $candidateBefore = Get-CandidateState $buildDir
+    $bdinfoScannerFingerprint = Get-BDInfoScannerFingerprint
     Write-Host 'Building embedded production candidate and running deterministic live-test safety gates.'
     Invoke-OwnedProcess (Get-ToolPath 'pnpm') @('--dir', 'webui', 'run', 'build') (Join-Path $buildDir 'frontend')
     Invoke-OwnedProcess (Get-ToolPath 'pwsh') @('-NoProfile', '-File', (Join-Path $script:RepoRoot 'scripts/sync-webui-assets.ps1')) (Join-Path $buildDir 'assets')
@@ -73,8 +81,11 @@ try {
     $buildIdentifier = 'live-' + $runID
     $builtBinary = Join-Path $buildDir 'upbrr.exe'
     Invoke-OwnedProcess (Get-ToolPath 'go') @('build', '-tags=', '-ldflags', "-X main.buildIdentifier=$buildIdentifier", '-o', $builtBinary, './cmd/upbrr') (Join-Path $buildDir 'backend')
+    if ((Get-BDInfoScannerFingerprint) -cne $bdinfoScannerFingerprint) { throw 'bdinfo_scanner_changed_during_build' }
     $candidateAfter = Get-CandidateState $buildDir
     if ((ConvertTo-Json $candidateBefore -Depth 20 -Compress) -cne (ConvertTo-Json $candidateAfter -Depth 20 -Compress)) { throw 'candidate_changed_during_build' }
+    if ((Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'scenarios.json')).Hash -cne $scenariosSHA256) { throw 'scenarios_changed_during_run' }
+    if ((Get-FileHash -LiteralPath $Corpus).Hash -cne $corpusSHA256) { throw 'corpus_changed_during_run' }
     $initArgs = @('live-test', 'init', '--run-dir', $script:RunDir)
     if ($Config) { $initArgs += @('--config', $Config) }
     Invoke-OwnedProcess $builtBinary $initArgs (Join-Path $buildDir 'init')
@@ -115,7 +126,7 @@ try {
       candidate = $candidateAfter; frontend = $assets; tools = $versions; rules = @(Get-RuleState)
       configFingerprint = $profile.sourceFingerprint; profileConfigSha256 = (Get-FileHash -LiteralPath $profile.configPath).Hash
       configDefaultTrackers = @($profile.defaultTrackers); selectedTrackers = $trackers; trackerScope = $(if ($Tracker) { 'explicit' } else { 'config_defaults' })
-      suite = $Suite; caseIds = @($selected); corpusPath = $Corpus; corpusSha256 = (Get-FileHash -LiteralPath $Corpus).Hash
+      suite = $Suite; caseIds = @($selected); corpusPath = $Corpus; corpusSha256 = $corpusSHA256
       sat = [bool]$Sat; executionMode = $(if ($DebugCoverage) { 'debug' } else { 'normal' })
       budgets = @{ maxImages = $(if ($UploadImages) { $MaxImages } else { 0 }); maxRequests = $MaxRequests; timeoutSeconds = $TimeoutSeconds; screenshotCount = $ScreenshotCount }
       buildLogs = $buildDir; expectedSafetyDenials = 0; requests = 0; gaps = @($scenarios.gaps)
@@ -229,7 +240,21 @@ try {
               $identity = Get-CaseIdentityOverrides $entry.case
               $lane.expectedIdentity = $identity.Clone()
               if ($identity.Count -gt 0) { $intent.preparation.Instructions = @{ Identity = $identity } }
+              $playlists = @(Get-CaseBDMVPlaylists $entry.case)
+              if ($playlists.Count -gt 0) {
+                if (-not $intent.preparation.Instructions) { $intent.preparation.Instructions = @{} }
+                $intent.preparation.Instructions.Playlist = @{ Set = $true; Selected = $playlists; UseAll = $false }
+                # Recollect into this profile instead of reusing cloned prepared facts.
+                $intent.preparation.Force = $true
+                $lane.expectedPlaylists = $playlists
+              }
+              $bdinfoCache = Restore-BDInfoReports $entry $profile $privateRoot $bdinfoScannerFingerprint
               $current = Continue-Lane $lane 'prepared' $null $intent
+              if ($bdinfoCache) {
+                $savedBDInfo = Save-BDInfoReports $bdinfoCache $entry $privateRoot $script:Run.binarySha256
+                $lane.bdinfo = @{ sourceFingerprint = $bdinfoCache.sourceFingerprint; scannerFingerprint = $bdinfoCache.scannerFingerprint; restored = $bdinfoCache.restored; reports = @($savedBDInfo.reports) }
+                if ($savedBDInfo) { Add-Result $lane.caseId $lane.laneId 'bdinfo_cache' 'pass' $(if ($bdinfoCache.restored) { 'reports_restored' } else { 'reports_saved' }) }
+              }
               $status = Record-Stage $lane $current 'prepared'
               if (-not $current.release -or $status -eq 'fail') { continue }
               $intent.Remove('preparation')

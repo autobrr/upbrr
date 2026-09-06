@@ -1,5 +1,6 @@
 #Requires -Version 7.0
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'bdinfo.ps1')
 
 function Get-ToolPath([string]$Name) {
   $command = Get-Command $Name -CommandType Application -ErrorAction Stop | Select-Object -First 1
@@ -95,6 +96,7 @@ function Read-Corpus([string]$Path, [string[]]$Selected) {
     if ($entry.case_id -cnotmatch '^[A-Z0-9]+(?:-[A-Z0-9]+)*$' -or $known.ContainsKey($entry.case_id)) { throw 'corpus_case_id_invalid' }
     if ($entry.input_shape -notin @('file', 'disc-directory', 'episode-directory') -or -not $entry.fingerprint) { throw 'corpus_case_schema_invalid' }
     $null = Get-CaseIdentityOverrides $entry
+    $null = @(Get-CaseBDMVPlaylists $entry)
     $known[$entry.case_id] = $entry
   }
   foreach ($id in $Selected) {
@@ -108,7 +110,18 @@ function Read-Corpus([string]$Path, [string[]]$Selected) {
       if ([long]$entry.fingerprint.size_bytes -ne $stat.size_bytes -or [long]$entry.fingerprint.mtime_ns -ne $stat.mtime_ns) {
         $status = 'needs_input'; $reason = 'source_changed_since_inventory'
       }
-      if ($entry.input_shape -ne 'file') { $status = 'needs_input'; $reason = 'source_selection_unconfirmed' }
+      if ($entry.input_shape -ne 'file') {
+        $playlists = @(Get-CaseBDMVPlaylists $entry)
+        if ($playlists.Count -eq 0) { $status = 'needs_input'; $reason = 'source_selection_unconfirmed' }
+        elseif ($entry.bdmv_selection.source_fingerprint -cne $stat.fingerprint) { $status = 'needs_input'; $reason = 'source_changed_since_selection' }
+        else {
+          $bdmvRoot = $entry.input_path
+          if ([IO.Path]::GetFileName($bdmvRoot.TrimEnd('\', '/')) -ine 'BDMV') { $bdmvRoot = Join-Path $bdmvRoot 'BDMV' }
+          foreach ($playlist in $playlists) {
+            if (-not (Test-Path -LiteralPath (Join-Path $bdmvRoot "PLAYLIST/$playlist") -PathType Leaf)) { throw 'bdmv_playlist_missing' }
+          }
+        }
+      }
       @{ case = $entry; stat = $stat; status = $status; reason = $reason }
     } catch {
       @{ case = $entry; stat = $null; status = 'blocked'; reason = 'source_unavailable_or_invalid' }
@@ -414,6 +427,10 @@ function Record-Stage($Lane, $Current, [string]$Goal) {
       if ($value.release.Identity.$field -ne $Lane.expectedIdentity[$field]) {
         $status = 'fail'; $reason = 'metadata_identity_mismatch'
       }
+    }
+    if ($Lane.expectedPlaylists -and
+        (@($value.release.Source.SelectedPlaylists | ForEach-Object { ([string]$_.file).ToUpperInvariant() }) -join ',') -cne ($Lane.expectedPlaylists -join ',')) {
+      $status = 'fail'; $reason = 'bdmv_playlist_selection_mismatch'
     }
   }
   $trackers = @($Current.preflight.results | Where-Object { $_.trackerId -cin $Lane.trackerIds } | ForEach-Object {

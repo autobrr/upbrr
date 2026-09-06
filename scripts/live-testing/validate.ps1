@@ -55,6 +55,229 @@ try {
   Assert-Check (@(Read-Corpus $corpusPath @('TV-PACK'))[0].reason -eq 'source_selection_unconfirmed') 'pack_completeness_invented'
   [IO.File]::WriteAllText((Join-Path $dir 'Example.S01E02-GRP.mkv'), 'synthetic second episode')
   Assert-Check ((Get-SourceFingerprint $pack).fingerprint -cne $packStat.fingerprint) 'membership_change_not_detected'
+  $disc = @{ case_id = 'MY-BD-DISC'; input_path = (Join-Path $validationDir 'Example.Disc-GRP'); input_shape = 'disc-directory'; probe_status = 'ok'; fingerprint = @{} }
+  $playlistDir = Join-Path $disc.input_path 'BDMV/PLAYLIST'
+  New-Item -ItemType Directory -Path $playlistDir -Force | Out-Null
+  [IO.File]::WriteAllText((Join-Path $playlistDir '00001.mpls'), 'synthetic playlist, not playable')
+  $disc.probe_path = Join-Path $disc.input_path 'BDMV/stream.m2ts'
+  [IO.File]::WriteAllText($disc.probe_path, 'synthetic stream')
+  $discStat = Get-SourceFingerprint $disc
+  $disc.fingerprint = @{ size_bytes = $discStat.size_bytes; mtime_ns = $discStat.mtime_ns }
+  $disc.bdmv_selection = @{ playlists = @('00001.mpls'); source_fingerprint = $discStat.fingerprint }
+  Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($disc) }
+  $discEntry = @(Read-Corpus $corpusPath @('MY-BD-DISC'))[0]
+  Assert-Check ($discEntry.status -eq 'ready' -and (@(Get-CaseBDMVPlaylists $disc) -join ',') -ceq '00001.MPLS') 'confirmed_disc_not_ready'
+  foreach ($example in @(
+    @{ source = 'D:\'; expected = 'D_' },
+    @{ source = 'D:/'; expected = 'D_' },
+    @{ source = '\\server\Disc Share\'; expected = 'Disc_Share' },
+    @{ source = 'D:\Disc\BDMV\'; expected = 'BDMV' },
+    @{ source = 'D:\Disc\BDMV\..'; expected = 'Disc' },
+    @{ source = ('D:\Disc' + [char]::ConvertFromUtf32(0x1F4BF)); expected = 'Disc_' }
+  )) {
+    Assert-Check ((Get-BDInfoTempName @{ input_path = $example.source }) -ceq $example.expected) 'bdinfo_production_temp_basename_mismatch'
+  }
+  $originalRepoRoot = $script:RepoRoot
+  $scannerFixture = Join-Path $validationDir 'scanner-fixture'
+  $layoutSources = @('internal/services/db/paths.go', 'internal/sourcelayout/layout.go', 'internal/pathing/pathutil.go', 'internal/pathing/layout/release_tmp.go', 'internal/pathing/layout/bdinfo.go')
+  try {
+    foreach ($relative in @('go.mod', 'go.sum', 'internal/metadata/service.go') + $layoutSources) {
+      $path = Join-Path $scannerFixture $relative
+      New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force | Out-Null
+      [IO.File]::WriteAllText($path, 'synthetic cache contract source')
+    }
+    foreach ($relative in @('internal/services/bdinfo', 'internal/metadata/discparse')) { New-Item -ItemType Directory -Path (Join-Path $scannerFixture $relative) -Force | Out-Null }
+    $script:RepoRoot = $scannerFixture
+    $originalScanner = Get-BDInfoScannerFingerprint
+    foreach ($relative in $layoutSources) {
+      $path = Join-Path $scannerFixture $relative
+      [IO.File]::AppendAllText($path, ' changed layout')
+      Assert-Check ((Get-BDInfoScannerFingerprint) -cne $originalScanner) 'changed_production_layout_reused_cache_key'
+      [IO.File]::WriteAllText($path, 'synthetic cache contract source')
+    }
+    [IO.File]::WriteAllText((Join-Path $scannerFixture 'unrelated.txt'), 'unrelated change')
+    Assert-Check ((Get-BDInfoScannerFingerprint) -ceq $originalScanner) 'unrelated_change_invalidated_bdinfo_cache'
+  } finally { $script:RepoRoot = $originalRepoRoot }
+  # Execute the runner's real snapshot/build statements with deterministic edits at
+  # read/build boundaries; external processes are replaced only in this child probe.
+  $runnerSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'run.ps1') -Raw
+  $preflightStart = $runnerSource.IndexOf('    $scenariosSHA256 =')
+  $preflightEnd = $runnerSource.IndexOf('    # The production temporary layout')
+  $buildStart = $runnerSource.IndexOf('    $candidateBefore =')
+  $buildEnd = $runnerSource.IndexOf('    $initArgs =')
+  $snapshotProbe = Join-Path $validationDir 'snapshot-probe.ps1'
+  $probeHeader = @'
+param($Repo, $Fixture, $Corpus, $Mutation, $OutputPath)
+$ErrorActionPreference = 'Stop'
+. (Join-Path $Repo 'scripts/live-testing/functions.ps1')
+$script:RepoRoot = $Fixture
+$script:OriginalReadCorpus = (Get-Command Read-Corpus).ScriptBlock
+$script:BuildCalls = 0; $script:CandidateCalls = 0
+$scannerSource = Join-Path $Fixture 'internal/metadata/service.go'
+$Suite = 'Screenshots'; $CaseId = @('MY-BD-DISC'); $runID = 'synthetic'; $buildDir = $PSScriptRoot
+function Read-Corpus($Path, $Selected) {
+  $result = @(& $script:OriginalReadCorpus $Path $Selected)
+  if ($Mutation -eq 'read') { [IO.File]::AppendAllText($Path, ' ') }
+  $result
+}
+function Get-CandidateState {
+  if (++$script:CandidateCalls -eq 1 -and $Mutation -eq 'candidate') { [IO.File]::AppendAllText($scannerSource, ' changed before capture') }
+  @{ fixed = 'candidate comparison isolated from the scanner assertion' }
+}
+function Get-ToolPath($Name) { $Name }
+function Invoke-OwnedProcess {
+  if (++$script:BuildCalls -ne 1) { return }
+  switch ($Mutation) {
+    'corpus' { [IO.File]::AppendAllText($Corpus, ' ') }
+    'scanner' { [IO.File]::AppendAllText($scannerSource, ' changed during build') }
+    'scenario' { [IO.File]::AppendAllText((Join-Path $PSScriptRoot 'scenarios.json'), ' ') }
+  }
+}
+$code = 'accepted'
+try {
+'@
+  $probeFooter = @'
+} catch { $code = $_.Exception.Message }
+Write-PrivateJson $OutputPath @{ code = $code; buildCalls = $script:BuildCalls; scannerMatches = ($bdinfoScannerFingerprint -ceq (Get-BDInfoScannerFingerprint)); corpusMatches = ($corpusSHA256 -ceq (Get-FileHash -LiteralPath $Corpus).Hash) }
+'@
+  [IO.File]::WriteAllText($snapshotProbe, $probeHeader + "`n" + $runnerSource.Substring($preflightStart, $preflightEnd - $preflightStart) + $runnerSource.Substring($buildStart, $buildEnd - $buildStart) + "`n" + $probeFooter)
+  foreach ($mutation in @('none', 'read', 'corpus', 'scanner', 'scenario', 'candidate')) {
+    Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($disc) }
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'scenarios.json') -Destination (Join-Path $validationDir 'scenarios.json') -Force
+    [IO.File]::WriteAllText((Join-Path $scannerFixture 'internal/metadata/service.go'), 'synthetic cache contract source')
+    $outputPath = Join-Path $validationDir "snapshot-$mutation.private.json"
+    Invoke-OwnedProcess (Get-ToolPath 'pwsh') @('-NoProfile', '-File', $snapshotProbe, $script:RepoRoot, $scannerFixture, $corpusPath, $mutation, $outputPath) (Join-Path $validationDir "snapshot-$mutation") 30
+    $observed = Read-PrivateJson $outputPath
+    $expected = switch ($mutation) { 'read' { 'corpus_changed_during_run' }; 'corpus' { 'corpus_changed_during_run' }; 'scanner' { 'bdinfo_scanner_changed_during_build' }; 'scenario' { 'scenarios_changed_during_run' }; default { 'accepted' } }
+    Assert-Check ($observed.code -ceq $expected) "snapshot_boundary_$mutation"
+    if ($mutation -eq 'read') { Assert-Check ($observed.buildCalls -eq 0) 'changed_corpus_started_build' }
+    if ($expected -eq 'accepted') { Assert-Check ($observed.scannerMatches -and $observed.corpusMatches) 'snapshot_did_not_match_used_inputs' }
+  }
+  Invoke-OwnedProcess (Get-ToolPath 'pwsh') @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'run.ps1'), '-ValidateOnly', '-CaseId', 'MY-BD-DISC', '-Corpus', $corpusPath) (Join-Path $validationDir 'custom-disc-case') 30
+  $blockedSource = @{ case_id = 'BAD-SOURCE'; input_path = $null; input_shape = 'file'; fingerprint = @{ size_bytes = 0; mtime_ns = 0 } }
+  $unconfirmedDisc = $disc.Clone()
+  $unconfirmedDisc.case_id = 'UNCONFIRMED-DISC'
+  $unconfirmedDisc.input_path = Join-Path $validationDir 'unconfirmed/Example.Disc-GRP'
+  $unconfirmedDisc.probe_path = Join-Path $unconfirmedDisc.input_path 'BDMV/stream.m2ts'
+  $unconfirmedDisc.Remove('bdmv_selection')
+  $otherPlaylistDir = Join-Path $unconfirmedDisc.input_path 'BDMV/PLAYLIST'
+  New-Item -ItemType Directory -Path $otherPlaylistDir -Force | Out-Null
+  [IO.File]::WriteAllText((Join-Path $otherPlaylistDir '00001.mpls'), 'synthetic playlist')
+  [IO.File]::WriteAllText($unconfirmedDisc.probe_path, 'synthetic stream')
+  $otherDiscStat = Get-SourceFingerprint $unconfirmedDisc
+  $unconfirmedDisc.fingerprint = @{ size_bytes = $otherDiscStat.size_bytes; mtime_ns = $otherDiscStat.mtime_ns }
+  $mixedProbe = Join-Path $validationDir 'mixed-source-probe.ps1'
+  [IO.File]::WriteAllText($mixedProbe, @'
+param($Repo, $Corpus)
+& (Join-Path $Repo 'scripts/live-testing/run.ps1') -ValidateOnly -CaseId @('MY-BD-DISC', 'BAD-SOURCE', 'UNCONFIRMED-DISC') -Corpus $Corpus
+exit $LASTEXITCODE
+'@)
+  foreach ($confirmed in @($false, $true)) {
+    if ($confirmed) { $unconfirmedDisc.bdmv_selection = @{ playlists = @('00001.mpls'); source_fingerprint = $otherDiscStat.fingerprint } }
+    Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($disc, $blockedSource, $unconfirmedDisc) }
+    $logBase = Join-Path $validationDir "mixed-source-$confirmed"
+    $handle = Start-OwnedProcess (Get-ToolPath 'pwsh') @('-NoProfile', '-File', $mixedProbe, $script:RepoRoot, $corpusPath) $logBase
+    try {
+      Assert-Check ($handle.process.WaitForExit(30000)) 'mixed_source_probe_timeout'
+      $code = $handle.process.ExitCode
+    } finally { Stop-OwnedProcess $handle }
+    $stdout = Get-Content -LiteralPath "$logBase.stdout.private.log" -Raw
+    if ($confirmed) {
+      Assert-Check ($code -eq 2 -and $stdout -match 'reason=bdinfo_temp_name_collision_use_separate_runs') 'ready_disc_collision_accepted'
+    } else {
+      Assert-Check ($code -eq 2 -and $stdout -match 'case=MY-BD-DISC status=ready' -and $stdout -match 'case=BAD-SOURCE status=blocked' -and $stdout -match 'case=UNCONFIRMED-DISC status=needs_input') 'unready_source_aborted_ready_preflight'
+    }
+  }
+  Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($disc) }
+  foreach ($invalid in @(@(), @('../00001.mpls'), @('00001.mpls', '00001.MPLS'), @('*.mpls'), @('00001.mpls', 2), '00001.mpls')) {
+    $badDisc = $disc.Clone(); $badDisc.bdmv_selection = @{ playlists = $invalid; source_fingerprint = $discStat.fingerprint }
+    $rejected = $false
+    try { Get-CaseBDMVPlaylists $badDisc | Out-Null } catch { $rejected = $_.Exception.Message -eq 'corpus_bdmv_selection_invalid' }
+    Assert-Check $rejected 'invalid_playlist_selection_accepted'
+  }
+  $cacheRoot = Join-Path $validationDir 'cache-root'
+  $profileOne = @{ runDir = (Join-Path $cacheRoot 'runs/one'); dbPath = (Join-Path $cacheRoot 'runs/one/profile/db.sqlite') }
+  $profileTwo = @{ runDir = (Join-Path $cacheRoot 'runs/two'); dbPath = (Join-Path $cacheRoot 'runs/two/profile/db.sqlite') }
+  New-Item -ItemType Directory -Path $cacheRoot -Force | Out-Null
+  $coldCache = Restore-BDInfoReports $discEntry $profileOne $cacheRoot 'scanner-one'
+  $binaryOne = (Get-TextHash 'binary-one').ToUpperInvariant()
+  $binaryTwo = Get-TextHash 'binary-two'
+  Assert-Check (-not $coldCache.restored) 'cold_cache_reported_as_restored'
+  Assert-Check (-not (Save-BDInfoReports $coldCache $discEntry $cacheRoot $binaryOne)) 'missing_reports_saved'
+  New-Item -ItemType Directory -Path $coldCache.target -Force | Out-Null
+  foreach ($name in @(Get-BDInfoReportNames @('00001.MPLS'))) {
+    [IO.File]::WriteAllText((Join-Path $coldCache.target $name), "Playlist: 00001.MPLS`nSynthetic report for cache transport testing.")
+  }
+  foreach ($invalid in @($null, 'binary-one', ('g' * 64), ($binaryOne + "`n"))) {
+    $rejected = $false
+    try { Save-BDInfoReports $coldCache $discEntry $cacheRoot $invalid | Out-Null } catch { $rejected = $_.Exception.Message -eq 'bdinfo_cache_producer_invalid' }
+    Assert-Check ($rejected -and -not (Test-Path -LiteralPath $coldCache.directory)) 'invalid_producer_published_cache'
+  }
+  $saved = Save-BDInfoReports $coldCache $discEntry $cacheRoot $binaryOne
+  Assert-Check ($saved.reports.Count -eq 3 -and $saved.producerBinarySHA256 -ceq $binaryOne) 'complete_reports_not_saved'
+  $warmCache = Restore-BDInfoReports $discEntry $profileTwo $cacheRoot 'scanner-one'
+  Assert-Check ($warmCache.restored -and $warmCache.target -cne $coldCache.target) 'fresh_profile_did_not_restore_reports'
+  $warmSaved = Save-BDInfoReports $warmCache $discEntry $cacheRoot $binaryTwo
+  Assert-Check ($warmSaved.producerBinarySHA256 -ceq $binaryOne) 'cache_relabelled_original_producer'
+  $manifestPath = Join-Path $warmCache.directory 'manifest.private.json'
+  $manifestBytes = [IO.File]::ReadAllBytes($manifestPath)
+  foreach ($shape in @('top_array', 'version_string', 'source_array', 'scanner_array', 'playlist_scalar', 'playlist_item_array', 'reports_object', 'report_array', 'name_array', 'hash_array')) {
+    $wrongManifest = Read-PrivateJson $manifestPath
+    $expected = 'bdinfo_cache_identity_mismatch'
+    switch ($shape) {
+      'top_array' { $wrongManifest = @($wrongManifest) }
+      'version_string' { $wrongManifest.version = '1' }
+      'source_array' { $wrongManifest.sourceFingerprint = @() }
+      'scanner_array' { $wrongManifest.scannerFingerprint = @() }
+      'playlist_scalar' { $wrongManifest.playlists = '00001.MPLS' }
+      'playlist_item_array' { $wrongManifest.playlists[0] = @() }
+      'reports_object' { $wrongManifest.reports = $wrongManifest.reports[0]; $expected = 'bdinfo_cache_incomplete' }
+      'report_array' { $wrongManifest.reports[0] = @($wrongManifest.reports[0]); $expected = 'bdinfo_cache_report_changed' }
+      'name_array' { $wrongManifest.reports[0].name = @(); $expected = 'bdinfo_cache_report_changed' }
+      'hash_array' { $wrongManifest.reports[0].sha256 = @(); $expected = 'bdinfo_cache_report_changed' }
+    }
+    Write-PrivateJson $manifestPath $wrongManifest
+    $badProfileDir = Join-Path $cacheRoot "runs/malformed-$shape"
+    $badProfile = @{ runDir = $badProfileDir; dbPath = (Join-Path $badProfileDir 'profile/db.sqlite') }
+    $rejected = $false
+    try { Restore-BDInfoReports $discEntry $badProfile $cacheRoot 'scanner-one' | Out-Null } catch { $rejected = $_.Exception.Message -eq $expected }
+    Assert-Check ($rejected -and -not (Test-Path -LiteralPath $badProfileDir)) "malformed_manifest_admitted_$shape"
+    [IO.File]::WriteAllBytes($manifestPath, $manifestBytes)
+  }
+  foreach ($invalid in @($null, 'binary-one', ('g' * 64), ($binaryOne + "`n"), @($binaryOne))) {
+    $wrongManifest = Read-PrivateJson $manifestPath
+    if ($null -eq $invalid) { $wrongManifest.Remove('producerBinarySHA256') | Out-Null } else { $wrongManifest.producerBinarySHA256 = $invalid }
+    Write-PrivateJson $manifestPath $wrongManifest
+    $rejected = $false
+    try { Restore-BDInfoReports $discEntry $profileTwo $cacheRoot 'scanner-one' | Out-Null } catch { $rejected = $_.Exception.Message -eq 'bdinfo_cache_producer_invalid' }
+    Assert-Check $rejected 'invalid_cached_producer_accepted'
+    [IO.File]::WriteAllBytes($manifestPath, $manifestBytes)
+  }
+  $wrongManifest = Read-PrivateJson $manifestPath
+  $wrongManifest.sourceFingerprint = 'another-source'
+  Write-PrivateJson $manifestPath $wrongManifest
+  $rejected = $false
+  try { Restore-BDInfoReports $discEntry $profileTwo $cacheRoot 'scanner-one' | Out-Null } catch { $rejected = $_.Exception.Message -eq 'bdinfo_cache_identity_mismatch' }
+  Assert-Check $rejected 'wrong_source_cache_manifest_accepted'
+  [IO.File]::WriteAllBytes($manifestPath, $manifestBytes)
+  $summaryPath = Join-Path $warmCache.directory 'BD_SUMMARY_00001.MPLS.txt'
+  $summaryBytes = [IO.File]::ReadAllBytes($summaryPath)
+  [IO.File]::WriteAllText($summaryPath, 'Playlist: 00002.MPLS')
+  $rejected = $false
+  try { Restore-BDInfoReports $discEntry $profileTwo $cacheRoot 'scanner-one' | Out-Null } catch { $rejected = $_.Exception.Message -eq 'bdinfo_report_playlist_mismatch' }
+  Assert-Check $rejected 'wrong_report_playlist_accepted'
+  [IO.File]::WriteAllBytes($summaryPath, $summaryBytes)
+  $differentScanner = Restore-BDInfoReports $discEntry $profileTwo $cacheRoot 'scanner-two'
+  Assert-Check (-not $differentScanner.restored -and $differentScanner.directory -cne $warmCache.directory) 'changed_scanner_reused_reports'
+  [IO.File]::AppendAllText((Join-Path $warmCache.directory 'BD_SUMMARY_FULL_00001.MPLS.txt'), 'changed report')
+  $rejected = $false
+  try { Restore-BDInfoReports $discEntry $profileTwo $cacheRoot 'scanner-one' | Out-Null } catch { $rejected = $_.Exception.Message -eq 'bdinfo_cache_report_changed' }
+  Assert-Check $rejected 'corrupt_cached_report_accepted'
+  [IO.File]::WriteAllText((Join-Path $playlistDir '00002.mpls'), 'another playlist')
+  Assert-Check (@(Read-Corpus $corpusPath @('MY-BD-DISC'))[0].reason -eq 'source_changed_since_selection') 'disc_membership_change_not_blocked'
+  $rejected = $false
+  try { Save-BDInfoReports $coldCache $discEntry $cacheRoot $binaryOne | Out-Null } catch { $rejected = $_.Exception.Message -eq 'source_changed_during_run' }
+  Assert-Check $rejected 'changed_source_published_cache'
   $probeScript = Join-Path $validationDir 'child.ps1'
   [IO.File]::WriteAllText($probeScript, '[pscustomobject]@{e2e=$env:UPBRR_E2E_RUNNER_VALIDATION;literal=$args[0]}|ConvertTo-Json -Compress')
   $prior = $env:UPBRR_E2E_RUNNER_VALIDATION
@@ -123,6 +346,16 @@ try {
   Assert-Check ((Record-Stage $identityLane $identityCurrent 'prepared') -eq 'fail') 'missing_prepared_identity_accepted'
   $identityCurrent.workflow.requiredActions = @(@{ id = 'identity-choice'; kind = 'select_metadata'; status = 'pending' })
   Assert-Check ((Record-Stage $identityLane $identityCurrent 'prepared') -eq 'needs_input') 'pending_identity_question_changed_to_failure'
+  $identityLane.expectedPlaylists = @('00001.MPLS')
+  $identityCurrent.workflow.Remove('requiredActions')
+  $identityCurrent.release.release.Identity = $identity.Clone()
+  # PlaylistInfo uses explicit lower-case JSON tags, unlike SourceManifest.
+  $identityCurrent.release.release.Source = '{"SelectedPlaylists":[{"file":"00002.MPLS"}]}' | ConvertFrom-Json -AsHashtable
+  Assert-Check ((Record-Stage $identityLane $identityCurrent 'prepared') -eq 'fail' -and $script:Results[-1].reason -eq 'bdmv_playlist_selection_mismatch') 'wrong_prepared_playlist_accepted'
+  $identityCurrent.release.release.Source.SelectedPlaylists[0].file = '00001.mpls'
+  Assert-Check ((Record-Stage $identityLane $identityCurrent 'prepared') -eq 'pass') 'confirmed_prepared_playlist_rejected'
+  $identityCurrent.release.release.Source.Remove('SelectedPlaylists')
+  Assert-Check ((Record-Stage $identityLane $identityCurrent 'prepared') -eq 'fail') 'missing_prepared_playlist_accepted'
   $gitPath = Get-ToolPath 'git'
   Assert-Check ($gitPath -is [string] -and $gitPath -ceq (Get-Command git -CommandType Application | Select-Object -First 1).Source) 'tool_path_not_single_application'
   Invoke-OwnedProcess $gitPath @('--version') (Join-Path $validationDir 'git-single-path') 30

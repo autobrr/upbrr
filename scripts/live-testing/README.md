@@ -33,7 +33,8 @@ observations. Media preparation may itself require tracker duplicate searches;
 site duplicate checks always remain enabled. Sources blocked by exact duplicates,
 client matches, authentication, rules, or missing facts remain blocked.
 
-`-CaseId` restricts a suite to named corpus cases. `-Sat` sets
+`-CaseId` selects named cases from your corpus, including your own case IDs;
+omitting it retains the suite's default case list. `-Sat` sets
 `PrepareInput.Search.Skip=true` on a fresh workflow and forces fresh preparation,
 without carrying client-derived matches from an earlier variant. It cannot clear
 an authoritative `in_client` block. Ordinary requests use `executionMode=normal`.
@@ -85,11 +86,62 @@ Omitted providers retain normal resolution. Changing IDs requires a new run;
 saved-run continuation and comparisons retain the corpus fingerprint. Overrides
 do not waive tracker rules or existing-client duplicate blocks.
 
-Disc main-playlist/title and pack completeness are explicitly unresolved in the
-initial corpus. Those cases produce `needs_input` before preparation. Their
-feedback entries have no backend action authority; the current runner does not
-invent or apply source-scope answers. Select a verified file case for independent
-downstream coverage while resolving the source evidence.
+Disc main-playlist/title and pack completeness are unresolved until verified by
+the operator. Without a Blu-ray selection as described below, directory cases
+produce `needs_input` before preparation. DVD title and pack completeness inputs
+remain unsupported; provider IDs establish identity, not source selection.
+These preflight feedback entries have no backend action authority.
+
+### Blu-ray playlists and reusable BDInfo reports
+
+For your own Blu-ray or UHD disc, use `input_shape: "disc-directory"` and an
+absolute `input_path` pointing to its disc folder, mounted drive/share root, or
+`BDMV` directory. Keep a
+successfully probed stream in `probe_path` with the usual inventory fingerprint.
+After inspecting the disc and choosing the required playlists, record that
+explicit selection against its current source fingerprint:
+
+```powershell
+. .\scripts\live-testing\functions.ps1
+$corpusPath = Join-Path $env:LOCALAPPDATA 'upbrr-live-testing/media-corpus.private.json'
+$corpus = Read-PrivateJson $corpusPath
+$case = @($corpus.cases | Where-Object case_id -CEQ 'MY-BD-DISC')[0]
+$case.bdmv_selection = @{
+  playlists = @('00001.mpls') # Your verified playlist names, in intended order.
+  source_fingerprint = (Get-SourceFingerprint $case).fingerprint
+}
+Write-PrivateJson $corpusPath $corpus
+pwsh -NoProfile -File .\scripts\live-testing\run.ps1 -Suite Screenshots -CaseId MY-BD-DISC -ValidateOnly
+pwsh -NoProfile -File .\scripts\live-testing\run.ps1 -Suite Screenshots -CaseId MY-BD-DISC
+```
+
+Only explicit five-digit MPLS filenames are accepted; no playlist is chosen by
+size or guessed from the folder name. Changing directory membership, file sizes
+or timestamps requires reviewing and recording the selection again. A fresh
+run passes the selection through the production preparation instructions and
+checks the prepared playlist list. Duplicate, tracker and image-host gates still
+apply. Identical sanitized temporary basenames for different sources require
+separate runs, including two inputs both ending in `BDMV`.
+
+The first preparation scans the selected playlists with production BDInfo and
+saves its quick, extended and full reports under
+`%LOCALAPPDATA%\upbrr-live-testing\bdinfo`. Later runs validate report hashes and
+restore those files into their own private profile before preparation. They
+recollect release facts while the production metadata service reuses the reports.
+The cache survives run cleanup and is keyed by source membership/stat evidence,
+playlist order, dependency lockfiles and the BDInfo scanner/report parser and
+artifact-layout source.
+New build timestamps and unrelated application edits do not invalidate it.
+Changed scanner inputs produce a new cache entry; corrupt or incomplete saved
+reports block reuse instead of being trusted. Cache manifests retain the binary
+hash that originally produced the reports, and lane receipts record restored
+versus newly saved reports and their hashes. Keep this entire cache private.
+
+To measure a cold scan again, move the relevant private cache entry aside while
+no run is active. Do not modify its manifest or replace report hashes to approve
+different contents. No tracker submission or client write is needed to save
+BDInfo. These reusable reports establish disc analysis, not screenshot decoding
+or human visual review.
 
 Backend questions are saved in each run's `feedback.private.json` with the exact
 typed `requiredActions`, workflow revision, source fingerprint, and evidence
