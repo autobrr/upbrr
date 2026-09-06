@@ -113,11 +113,15 @@ Omitted providers retain normal resolution. Changing IDs requires a new run;
 saved-run continuation and comparisons retain the corpus fingerprint. Overrides
 do not waive tracker rules or existing-client duplicate blocks.
 
-Disc main-playlist/title and pack completeness are unresolved until verified by
-the operator. Without a Blu-ray selection as described below, directory cases
-produce `needs_input` before preparation. DVD title and pack completeness inputs
-remain unsupported; provider IDs establish identity, not source selection.
-These preflight feedback entries have no backend action authority.
+DVD and episode directories proceed through normal production preparation after
+their probe and source checks pass. DVD metadata IDs identify the movie; they do
+not select a Blu-ray playlist. Episode directories retain their full source path
+and production file enumeration. A ready corpus entry does not certify season
+completeness, and the runner supplies no completeness override or approval.
+Production questions and tracker/duplicate blocks remain authoritative.
+Blu-ray layouts still require the explicit playlist selection described below,
+regardless of the case's directory shape. Missing selections produce `needs_input`
+before preparation; these preflight entries have no backend action authority.
 
 ### Blu-ray playlists and reusable BDInfo reports
 

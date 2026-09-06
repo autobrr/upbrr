@@ -112,14 +112,18 @@ function Read-Corpus([string]$Path, [string[]]$Selected) {
         $status = 'needs_input'; $reason = 'source_changed_since_inventory'
       }
       if ($entry.input_shape -ne 'file') {
-        $playlists = @(Get-CaseBDMVPlaylists $entry)
-        if ($playlists.Count -eq 0) { $status = 'needs_input'; $reason = 'source_selection_unconfirmed' }
-        elseif ($entry.bdmv_selection.source_fingerprint -cne $stat.fingerprint) { $status = 'needs_input'; $reason = 'source_changed_since_selection' }
-        else {
-          $bdmvRoot = $entry.input_path
-          if ([IO.Path]::GetFileName($bdmvRoot.TrimEnd('\', '/')) -ine 'BDMV') { $bdmvRoot = Join-Path $bdmvRoot 'BDMV' }
-          foreach ($playlist in $playlists) {
-            if (-not (Test-Path -LiteralPath (Join-Path $bdmvRoot "PLAYLIST/$playlist") -PathType Leaf)) { throw 'bdmv_playlist_missing' }
+        $bdmvRoot = [IO.Path]::GetFullPath($entry.input_path)
+        if ([IO.Path]::GetFileName($bdmvRoot.TrimEnd('\', '/')) -ine 'BDMV') { $bdmvRoot = Join-Path $bdmvRoot 'BDMV' }
+        # DVD and episode directories use production preparation without MPLS instructions.
+        # Inspect the layout so a BDMV directory cannot bypass selection through its case shape.
+        if ($entry.bdmv_selection -or (Test-Path -LiteralPath $bdmvRoot -PathType Container)) {
+          $playlists = @(Get-CaseBDMVPlaylists $entry)
+          if ($playlists.Count -eq 0) { $status = 'needs_input'; $reason = 'source_selection_unconfirmed' }
+          elseif ($entry.bdmv_selection.source_fingerprint -cne $stat.fingerprint) { $status = 'needs_input'; $reason = 'source_changed_since_selection' }
+          else {
+            foreach ($playlist in $playlists) {
+              if (-not (Test-Path -LiteralPath (Join-Path $bdmvRoot "PLAYLIST/$playlist") -PathType Leaf)) { throw 'bdmv_playlist_missing' }
+            }
           }
         }
       }
