@@ -98,7 +98,12 @@ The default corpus is
 in `corpus.example.json`; copy examples outside the repository before using them.
 Each case requires a stable case ID, absolute input/probe paths, input shape,
 successful probe status, and original probe-file size/mtime in integer
-nanoseconds. Validation re-stats originals and records directory membership.
+nanoseconds. Every directory case must persist the complete result of
+`Get-SourceFingerprint` in its `fingerprint` field after reviewing the source:
+`$case.fingerprint = Get-SourceFingerprint $case`, then save the private corpus
+with `Write-PrivateJson`. Validation compares the saved fingerprint, including
+directory membership, paths, sizes, and timestamps. Older directory entries with
+only probe size/mtime require a reviewed new observation before they can be ready.
 It never modifies source media. A changed source requires a reviewed new corpus
 observation, not automatic fingerprint replacement.
 
@@ -137,9 +142,10 @@ explicit selection against its current source fingerprint:
 $corpusPath = Join-Path $env:LOCALAPPDATA 'upbrr-live-testing/media-corpus.private.json'
 $corpus = Read-PrivateJson $corpusPath
 $case = @($corpus.cases | Where-Object case_id -CEQ 'MY-BD-DISC')[0]
+$case.fingerprint = Get-SourceFingerprint $case
 $case.bdmv_selection = @{
   playlists = @('00001.mpls') # Your verified playlist names, in intended order.
-  source_fingerprint = (Get-SourceFingerprint $case).fingerprint
+  source_fingerprint = $case.fingerprint.fingerprint
 }
 Write-PrivateJson $corpusPath $corpus
 pwsh -NoProfile -File .\scripts\live-testing\run.ps1 -Suite Screenshots -CaseId MY-BD-DISC -ValidateOnly

@@ -50,13 +50,21 @@ try {
   [IO.File]::WriteAllText($episode, 'synthetic episode')
   $pack = @{ case_id = 'TV-PACK'; input_path = $dir; probe_path = $episode; input_shape = 'episode-directory'; probe_status = 'ok'; fingerprint = @{} }
   $packStat = Get-SourceFingerprint $pack
-  $pack.fingerprint = @{ size_bytes = $packStat.size_bytes; mtime_ns = $packStat.mtime_ns }
+  $pack.fingerprint = $packStat
   Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($pack) }
   $packEntry = @(Read-Corpus $corpusPath @('TV-PACK'))[0]
   Assert-Check ($packEntry.status -eq 'ready' -and $packEntry.case.input_path -ceq $dir) 'pack_directory_not_ready_for_preparation'
   Assert-Check (-not $packEntry.case.Contains('bdmv_selection') -and $packEntry.case.Count -eq $pack.Count) 'pack_preflight_invented_instructions'
+  $legacyPack = $pack.Clone(); $legacyPack.fingerprint = @{ size_bytes = $packStat.size_bytes; mtime_ns = $packStat.mtime_ns }
+  Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($legacyPack) }
+  Assert-Check (@(Read-Corpus $corpusPath @('TV-PACK'))[0].reason -eq 'source_changed_since_inventory') 'pack_missing_full_fingerprint_accepted'
+  Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($pack) }
   [IO.File]::WriteAllText((Join-Path $dir 'Example.S01E02-GRP.mkv'), 'synthetic second episode')
   Assert-Check ((Get-SourceFingerprint $pack).fingerprint -cne $packStat.fingerprint) 'membership_change_not_detected'
+  Assert-Check (@(Read-Corpus $corpusPath @('TV-PACK'))[0].reason -eq 'source_changed_since_inventory') 'pack_membership_change_accepted'
+  $pack.fingerprint = Get-SourceFingerprint $pack
+  Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($pack) }
+  Assert-Check (@(Read-Corpus $corpusPath @('TV-PACK'))[0].status -eq 'ready') 'refreshed_pack_inventory_rejected'
   [IO.File]::AppendAllText($episode, ' changed')
   Assert-Check (@(Read-Corpus $corpusPath @('TV-PACK'))[0].reason -eq 'source_changed_since_inventory') 'pack_probe_change_not_detected'
   $dvdRoot = Join-Path $validationDir 'Example.DVD-GRP'
@@ -67,7 +75,7 @@ try {
   foreach ($dvdInput in @($dvdRoot, $dvdVideo)) {
     $dvd = @{ case_id = 'MY-DVD'; input_path = $dvdInput; probe_path = $dvdProbe; input_shape = 'disc-directory'; probe_status = 'ok'; fingerprint = @{}; metadata_ids = @{ imdb = 1234567; tmdb = 12345 } }
     $dvdStat = Get-SourceFingerprint $dvd
-    $dvd.fingerprint = @{ size_bytes = $dvdStat.size_bytes; mtime_ns = $dvdStat.mtime_ns }
+    $dvd.fingerprint = $dvdStat
     Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($dvd) }
     $dvdEntry = @(Read-Corpus $corpusPath @('MY-DVD'))[0]
     Assert-Check ($dvdEntry.status -eq 'ready' -and (Get-CaseIdentityOverrides $dvdEntry.case).TMDBID -eq 12345 -and @(Get-CaseBDMVPlaylists $dvdEntry.case).Count -eq 0) 'dvd_preparation_requires_bluray_selection'
@@ -77,6 +85,10 @@ try {
     $dvd.probe_status = 'ok'; $dvd.fingerprint.size_bytes++
     Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($dvd) }
     Assert-Check (@(Read-Corpus $corpusPath @('MY-DVD'))[0].reason -eq 'source_changed_since_inventory') 'dvd_changed_inventory_accepted'
+    $dvd.fingerprint = Get-SourceFingerprint $dvd
+    Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($dvd) }
+    [IO.File]::AppendAllText((Join-Path $dvdVideo 'VIDEO_TS.IFO'), 'synthetic DVD metadata')
+    Assert-Check (@(Read-Corpus $corpusPath @('MY-DVD'))[0].reason -eq 'source_changed_since_inventory') 'dvd_non_probe_change_accepted'
   }
   $disc = @{ case_id = 'MY-BD-DISC'; input_path = (Join-Path $validationDir 'Example.Disc-GRP'); input_shape = 'disc-directory'; probe_status = 'ok'; fingerprint = @{} }
   $playlistDir = Join-Path $disc.input_path 'BDMV/PLAYLIST'
@@ -85,10 +97,11 @@ try {
   $disc.probe_path = Join-Path $disc.input_path 'BDMV/stream.m2ts'
   [IO.File]::WriteAllText($disc.probe_path, 'synthetic stream')
   $discStat = Get-SourceFingerprint $disc
-  $disc.fingerprint = @{ size_bytes = $discStat.size_bytes; mtime_ns = $discStat.mtime_ns }
+  $disc.fingerprint = $discStat
   foreach ($shape in @('disc-directory', 'episode-directory')) {
     foreach ($discInput in @($disc.input_path, (Join-Path $disc.input_path 'BDMV'))) {
       $unselected = $disc.Clone(); $unselected.input_shape = $shape; $unselected.input_path = $discInput
+      $unselected.fingerprint = Get-SourceFingerprint $unselected
       Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($unselected) }
       Assert-Check (@(Read-Corpus $corpusPath @('MY-BD-DISC'))[0].reason -eq 'source_selection_unconfirmed') 'bdmv_shape_bypassed_selection'
     }
@@ -195,7 +208,7 @@ Write-PrivateJson $OutputPath @{ code = $code; buildCalls = $script:BuildCalls; 
   [IO.File]::WriteAllText((Join-Path $otherPlaylistDir '00001.mpls'), 'synthetic playlist')
   [IO.File]::WriteAllText($unconfirmedDisc.probe_path, 'synthetic stream')
   $otherDiscStat = Get-SourceFingerprint $unconfirmedDisc
-  $unconfirmedDisc.fingerprint = @{ size_bytes = $otherDiscStat.size_bytes; mtime_ns = $otherDiscStat.mtime_ns }
+  $unconfirmedDisc.fingerprint = $otherDiscStat
   $mixedProbe = Join-Path $validationDir 'mixed-source-probe.ps1'
   [IO.File]::WriteAllText($mixedProbe, @'
 param($Repo, $Corpus)

@@ -112,6 +112,9 @@ function Read-Corpus([string]$Path, [string[]]$Selected) {
         $status = 'needs_input'; $reason = 'source_changed_since_inventory'
       }
       if ($entry.input_shape -ne 'file') {
+        if ($entry.fingerprint.fingerprint -cne $stat.fingerprint) {
+          $status = 'needs_input'; $reason = 'source_changed_since_inventory'
+        }
         $bdmvRoot = [IO.Path]::GetFullPath($entry.input_path)
         if ([IO.Path]::GetFileName($bdmvRoot.TrimEnd('\', '/')) -ine 'BDMV') { $bdmvRoot = Join-Path $bdmvRoot 'BDMV' }
         # DVD and episode directories use production preparation without MPLS instructions.
