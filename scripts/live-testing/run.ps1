@@ -435,7 +435,7 @@ try {
     $script:Run.updatedAt = [datetime]::UtcNow.ToString('o')
     Write-PrivateJson (Join-Path $script:RunDir 'run.json') $script:Run
     if ($CleanupRun) {
-      if (Test-Path -LiteralPath (Join-Path $script:RunDir 'results.private.json')) { $script:Results = @(Read-PrivateJson (Join-Path $script:RunDir 'results.private.json')) }
+      if (Test-Path -LiteralPath (Join-Path $script:RunDir 'results.private.json')) { $script:Results = @(Read-PrivateJson (Join-Path $script:RunDir 'results.private.json')) + @($script:Results) }
     }
     if ($script:Cleanup.state -eq 'complete') { $script:Results = @($script:Results | Where-Object stage -NE 'cleanup') }
     Write-PrivateJson (Join-Path $script:RunDir 'results.private.json') $script:Results

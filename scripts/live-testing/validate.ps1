@@ -676,6 +676,10 @@ exit $LASTEXITCODE
       } finally { Stop-OwnedProcess $child }
       Assert-Check ((Read-PrivateJson (Join-Path $resumeDir 'run.json')).state -eq 'cleanup_pending') 'failed_cleanup_lost_terminal_state'
       Assert-Check ((Read-PrivateJson (Join-Path $resumeDir 'report.json')).cleanup.state -eq 'unresolved') 'failed_cleanup_reported_complete'
+      foreach ($rows in @(@(Read-PrivateJson (Join-Path $resumeDir 'results.private.json')), @((Read-PrivateJson (Join-Path $resumeDir 'report.json')).results))) {
+        Assert-Check (@($rows | Where-Object { $_.stage -eq 'synthetic' -and $_.status -eq 'needs_input' }).Count -eq 1) 'failed_cleanup_lost_saved_results'
+        Assert-Check (@($rows | Where-Object { $_.stage -eq 'runner' -and $_.status -eq 'blocked' -and $_.reason }).Count -eq 1) 'failed_cleanup_lost_current_error'
+      }
       Assert-Check (-not (Test-Path -LiteralPath (Join-Path $resumeDir 'cleanup-started'))) 'failed_cleanup_unexpectedly_started_runtime'
     }
     $preserved = @('run.json', 'report.json', 'results.private.json', 'profile.private.json')
