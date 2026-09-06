@@ -8,6 +8,7 @@ import (
 	"errors"
 	"reflect"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -70,6 +71,264 @@ func TestContinueBeginsAndAdvancesThroughCentralPlanner(t *testing.T) {
 	}
 	if replayed.Workflow.Revision != prepared.Workflow.Revision || replayed.Release == nil || replayed.Release.ID != prepared.Release.ID {
 		t.Fatalf("satisfied continuation changed state: %#v", replayed)
+	}
+}
+
+func TestContinueHydratesPreparedGenerationBeforeRestartedMediaCapture(t *testing.T) {
+	t.Parallel()
+
+	forceRecheck := true
+	preparation := api.PrepareInput{
+		SourcePath: "C:\\releases\\Example.Release.2026.1080p-GRP",
+		Instructions: api.ReleaseFactInstructions{
+			SourceLookup: "Example Release 2026",
+		},
+		Controls: api.PreparationControls{
+			ConfirmBDMVRescan: true,
+			ForceRecheck:      &forceRecheck,
+		},
+		Force: true,
+	}
+	projector := trackerProjectionBuilderFunc(func(
+		_ context.Context,
+		_ api.ReleaseSnapshot,
+		_ api.UploadSubject,
+		trackerIDs []api.TrackerID,
+		_ map[api.TrackerID]api.TrackerProjectionInstructions,
+		_ map[api.TrackerID]api.WorkflowFingerprint,
+		_ api.WorkflowExecutionMode,
+	) (
+		api.TrackerCatalogSnapshot,
+		api.TrackerRuntimeSnapshot,
+		api.TrackerSelection,
+		api.TrackerReleaseProjectionSet,
+		error,
+	) {
+		return testCatalog(t), testRuntime(t), api.TrackerSelection{TrackerIDs: trackerIDs}, testProjectionSet(t), nil
+	})
+	first, repository := newTestModule(
+		t,
+		testPreparer(),
+		WithTrackerProjectionBuilder(projector),
+		WithTrackerPreflightBuilder(readyPreflightBuilder(t)),
+		WithDupeAssessmentBuilder(readyDupeBuilder(t)),
+	)
+	current := executeCommand(t, first, CreateWorkflowCommand{
+		WorkflowID:          "workflow-continue-hydration",
+		Instructions:        preparation.Instructions,
+		TrackerDecisionMode: TrackerDecisionModeWebUIControls,
+	})
+	current = executeCommand(t, first, PrepareReleaseCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		Input:            preparation,
+	})
+	if current.Release == nil {
+		t.Fatal("prepared release is unavailable")
+	}
+	preparedRelease := current.Release.Release
+	current = executeCommand(t, first, ProjectTrackersCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		TrackerIDs:       []api.TrackerID{"ALPHA", "BETA"},
+		Instructions:     map[api.TrackerID]api.TrackerProjectionInstructions{},
+	})
+	current = executeCommand(t, first, PreflightTrackersCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+	})
+	current = executeCommand(t, first, CheckDuplicatesCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+	})
+
+	var prepareCalls atomic.Int32
+	hydrationInputs := make(chan api.PrepareInput, 1)
+	basePreparer := testPreparer()
+	restartedPreparer := ReleasePreparerFunc{
+		PrepareFunc: func(_ context.Context, input api.PrepareInput) (api.PrepareResult, error) {
+			prepareCalls.Add(1)
+			hydrationInputs <- input
+			return api.PrepareResult{Release: preparedRelease}, nil
+		},
+		DisplayFunc: basePreparer.ResolveDisplay,
+		SubjectFunc: func(_ context.Context, input api.UploadSubjectInput) (api.UploadSubject, error) {
+			if prepareCalls.Load() == 0 {
+				return api.UploadSubject{}, errors.New("stale_generation")
+			}
+			return api.UploadSubject{SourcePath: input.Release.SourcePath}, nil
+		},
+		DuplicateFunc: basePreparer.ResolveDuplicateSubject,
+	}
+	captureFingerprint := testFingerprint(t, "restart-capture")
+	capturedReleases := make(chan api.ReleaseRef, 1)
+	mediaBuilder := mediaArtifactBuilderFunc(func(
+		ctx context.Context,
+		release api.ReleaseRef,
+		projections api.TrackerReleaseProjectionSet,
+		_ api.MediaCaptureInstructions,
+		_ time.Time,
+	) (api.MediaArtifactSet, any, error) {
+		if _, err := restartedPreparer.ResolveUploadSubject(ctx, api.UploadSubjectInput{Release: release}); err != nil {
+			return api.MediaArtifactSet{}, nil, err
+		}
+		capturedReleases <- release
+		requirements, err := mediaRequirementsFingerprint(projections.Projections)
+		if err != nil {
+			return api.MediaArtifactSet{}, nil, err
+		}
+		return api.MediaArtifactSet{
+			CaptureFingerprint:      captureFingerprint,
+			RequirementsFingerprint: requirements,
+			Artifacts: []api.MediaArtifact{{
+				ID:       "restart-artifact",
+				Kind:     api.MediaArtifactScreenshot,
+				Purpose:  api.ScreenshotPurposeFinal,
+				Selected: true,
+			}},
+			Status: api.StageStatusCompleted,
+		}, nil, nil
+	})
+	restarted, err := New(
+		repository,
+		first.private,
+		restartedPreparer,
+		WithClock(fixedClock{now: time.Date(2026, time.July, 20, 12, 1, 0, 0, time.UTC)}),
+		WithIDGenerator(&sequenceIDGenerator{next: 100}),
+		WithProcessEpoch("restart-hydration"),
+		WithMediaArtifactBuilder(mediaBuilder),
+	)
+	if err != nil {
+		t.Fatalf("new restarted workflow module: %v", err)
+	}
+	resumed, err := restarted.Current(t.Context(), testOwnerID, current.Workflow.ID)
+	if err != nil {
+		t.Fatalf("load workflow after restart: %v", err)
+	}
+	if resumed.Projections == nil || resumed.Preflight == nil || resumed.Dupes == nil {
+		t.Fatalf("restarted dependencies: projections=%#v preflight=%#v dupes=%#v", resumed.Projections, resumed.Preflight, resumed.Dupes)
+	}
+
+	continued, err := restarted.Continue(t.Context(), testOwnerID, api.ContinueReleaseWorkflowRequest{
+		Authority: &api.WorkflowAuthority{
+			WorkflowID:       resumed.Workflow.ID,
+			ExpectedRevision: resumed.Workflow.Revision,
+		},
+		IdempotencyKey: "continue-restarted-media",
+		Goal:           api.WorkflowGoalMediaReady,
+		Intent: api.WorkflowIntent{
+			Preparation:            &preparation,
+			TrackerIDs:             []api.TrackerID{"ALPHA", "BETA"},
+			ProjectionInstructions: map[api.TrackerID]api.TrackerProjectionInstructions{},
+			Media: &api.MediaCaptureInstructions{
+				ScreenshotCount: 4,
+				Purpose:         api.ScreenshotPurposeFinal,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("continue restarted media: %v", err)
+	}
+	if continued.Operation == nil {
+		t.Fatalf("restarted media operation = %#v", continued)
+	}
+	waitForWorkflowOperation(t, restarted, current.Workflow.ID, continued.Operation.ID, func(status api.WorkflowOperationStatus) bool {
+		return isTerminalProgressStatus(status.Status)
+	})
+	completed, err := restarted.Current(t.Context(), testOwnerID, current.Workflow.ID)
+	if err != nil {
+		t.Fatalf("load restarted media: %v", err)
+	}
+	if completed.Media == nil || completed.Media.Status != api.StageStatusCompleted {
+		t.Fatalf("restarted media = %#v, operation = %#v", completed.Media, completed.Operation)
+	}
+	if prepareCalls.Load() != 1 {
+		t.Fatalf("restart hydration calls = %d, want 1", prepareCalls.Load())
+	}
+	hydrationInput := <-hydrationInputs
+	if hydrationInput.SourcePath != preparedRelease.Source.SourcePath || hydrationInput.Force || !hydrationInput.RequirePrepared ||
+		hydrationInput.Controls.ConfirmBDMVRescan || hydrationInput.Controls.ForceRecheck != nil {
+		t.Fatalf("restart hydration input = %#v", hydrationInput)
+	}
+	capturedRelease := <-capturedReleases
+	if capturedRelease.SourcePath != preparedRelease.Source.SourcePath || capturedRelease.Generation != preparedRelease.Generation {
+		t.Fatalf("captured release = %#v, want generation %d", capturedRelease, preparedRelease.Generation)
+	}
+}
+
+func TestHydrateContinuationPreparedReleaseRejectsChangedOrMismatchedGeneration(t *testing.T) {
+	t.Parallel()
+
+	errSourceChanged := errors.New("prepared source changed")
+	compatibility := api.PreparationCompatibility{
+		SourceFingerprint:          "source-v1",
+		FactInstructionFingerprint: "facts-v1",
+		PolicyFingerprint:          "policy-v1",
+		ContractVersion:            "contract-v1",
+	}
+	current := CommandResult{Release: &api.ReleaseSnapshot{Release: api.PreparedRelease{
+		Generation:    7,
+		Compatibility: compatibility,
+		Source:        api.SourceManifest{SourcePath: "C:\\releases\\retained"},
+	}}}
+	forceRecheck := true
+	input := api.PrepareInput{
+		SourcePath: "C:\\releases\\caller-supplied",
+		Controls: api.PreparationControls{
+			ConfirmBDMVRescan: true,
+			ForceRecheck:      &forceRecheck,
+		},
+		Force: true,
+	}
+	tests := []struct {
+		name      string
+		prepare   func(api.PreparedRelease) (api.PrepareResult, error)
+		wantError error
+	}{
+		{
+			name: "changed source",
+			prepare: func(api.PreparedRelease) (api.PrepareResult, error) {
+				return api.PrepareResult{}, errSourceChanged
+			},
+			wantError: errSourceChanged,
+		},
+		{
+			name: "generation mismatch",
+			prepare: func(release api.PreparedRelease) (api.PrepareResult, error) {
+				release.Generation++
+				return api.PrepareResult{Release: release}, nil
+			},
+			wantError: ErrInvalidTransition,
+		},
+		{
+			name: "compatibility mismatch",
+			prepare: func(release api.PreparedRelease) (api.PrepareResult, error) {
+				release.Compatibility.SourceFingerprint = "source-v2"
+				return api.PrepareResult{Release: release}, nil
+			},
+			wantError: ErrInvalidTransition,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			var preparedInput api.PrepareInput
+			module := &Module{preparer: ReleasePreparerFunc{PrepareFunc: func(
+				_ context.Context,
+				candidate api.PrepareInput,
+			) (api.PrepareResult, error) {
+				preparedInput = candidate
+				return test.prepare(current.Release.Release)
+			}}}
+			err := module.hydrateContinuationPreparedRelease(t.Context(), current, input)
+			if !errors.Is(err, test.wantError) {
+				t.Fatalf("hydrate error = %v, want %v", err, test.wantError)
+			}
+			if preparedInput.SourcePath != current.Release.Release.Source.SourcePath || preparedInput.Force ||
+				!preparedInput.RequirePrepared || preparedInput.Controls.ConfirmBDMVRescan || preparedInput.Controls.ForceRecheck != nil {
+				t.Fatalf("hydration input = %#v", preparedInput)
+			}
+		})
 	}
 }
 

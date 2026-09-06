@@ -55,9 +55,14 @@ function Record-LiveDryRunPayload($Lane, $Current) {
 }
 
 function Invoke-LiveImageChecks($BrowserHandoff) {
+  $script:Results = @($script:Results | Where-Object {
+    $_.laneId -or $_.stage -notin @('image_host', 'dry_run') -or
+    $_.reason -notin @('image_uploads_not_authorized_or_remote_stopped', 'hosting_or_duplicate_prerequisites_unfulfilled')
+  })
   $decoded = @($script:Results | Where-Object { $_.stage -eq 'image_decode' -and $_.status -eq 'pass' } | Select-Object -ExpandProperty laneId -Unique)
   $lanes = @($script:Lanes | Where-Object { $_.laneId -cin $decoded -and -not $_.pendingFeedback })
   if ($lanes.Count -eq 0) { Add-Result '' '' 'image_host' 'blocked' 'local_decode_required'; return }
+  $script:Results = @($script:Results | Where-Object { $_.stage -ne 'image_host' -or $_.reason -ne 'local_decode_required' })
   $coverage = @{}
   $coverageTargets = @{}
   if ($script:Run.imageHostCoverage) {
@@ -147,7 +152,7 @@ function Invoke-LiveImageChecks($BrowserHandoff) {
     $BrowserHandoff.lanes = $hostedLanes
     $BrowserHandoff.remainingRequests = [Math]::Max(0, $script:Run.budgets.maxRequests - $script:RequestCount)
     Write-PrivateJson (Join-Path $script:RunDir 'browser.private.json') $BrowserHandoff
-    try { $null = Invoke-BrowserCheck 'hosted' }
+    try { $null = Invoke-BrowserCheck 'hosted'; Add-Result '' '' 'hosted_preview' 'pass' 'hosted_browser_verified' }
     catch { Add-Result '' '' 'hosted_preview' 'fail' 'hosted_preview_failed' }
   }
   if ($script:Run.suite -in @('Smoke', 'Full')) {

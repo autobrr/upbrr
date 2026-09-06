@@ -16,6 +16,8 @@ import (
 
 // Continue advances at most one backend-owned transition toward a desired goal.
 // Repeated calls plus Current polling are the complete adapter orchestration contract.
+// Matching preparation inputs restore the persisted generation before downstream work;
+// unavailable or incompatible prepared data returns an error instead of being rebuilt.
 func (m *Module) Continue(
 	ctx context.Context,
 	ownerID string,
@@ -134,6 +136,12 @@ func (m *Module) Continue(
 	if command == nil {
 		return current, nil
 	}
+	if current.Release != nil && request.Intent.Preparation != nil &&
+		continuationPreparationSatisfied(current.Release, request.Intent.Preparation) {
+		if err := m.hydrateContinuationPreparedRelease(ctx, current, *request.Intent.Preparation); err != nil {
+			return CommandResult{}, err
+		}
+	}
 	if decision, ok := command.(DecideDuplicatesCommand); ok {
 		result, executeErr := m.Execute(ctx, ownerID, decision)
 		if executeErr != nil {
@@ -146,6 +154,27 @@ func (m *Module) Continue(
 		return CommandResult{}, fmt.Errorf("release workflow continue %s: %w", stage, err)
 	}
 	return m.Current(ctx, ownerID, operation.WorkflowID)
+}
+
+func (m *Module) hydrateContinuationPreparedRelease(
+	ctx context.Context,
+	current CommandResult,
+	input api.PrepareInput,
+) error {
+	input.SourcePath = current.Release.Release.Source.SourcePath
+	input.Force = false
+	input.RequirePrepared = true
+	input.Controls.ConfirmBDMVRescan = false
+	input.Controls.ForceRecheck = nil
+	prepared, err := m.preparer.Prepare(ctx, input)
+	if err != nil {
+		return fmt.Errorf("release workflow hydrate continuation prepared release: %w", err)
+	}
+	if prepared.Release.Generation != current.Release.Release.Generation ||
+		prepared.Release.Compatibility != current.Release.Release.Compatibility {
+		return fmt.Errorf("%w: persisted prepared generation changed", ErrInvalidTransition)
+	}
+	return nil
 }
 
 func (m *Module) acceptContinuationIntent(

@@ -352,6 +352,10 @@ exit $LASTEXITCODE
     Assert-Check (($script:Results.caseId -join ',') -ceq 'MOV-1080-WEB,TV-480') 'unavailable_case_order_changed'
     Set-RunTrackerScope $catalog
     Assert-Check ($script:Results.Count -eq 2) 'resume_duplicated_unavailable_results'
+    $script:Run.selectedTrackers = @('BLU', 'RETIRED', 'LST', 'MISSING')
+    $script:Run.caseIds = @('MOV-1080-WEB')
+    Set-RunTrackerScope $catalog
+    Assert-Check ($script:Results.Count -eq 2 -and ($script:Results.evidence.trackerId -join ',') -ceq 'RETIRED,MISSING') 'unavailable_tracker_results_overwrite_each_other'
     $changedRejected = $false
     try { Set-RunTrackerScope @{ entries = @(@{ name = 'BLU' }, @{ name = 'ANT' }) } } catch { $changedRejected = $_.Exception.Message -eq 'tracker_availability_changed_new_run_required' }
     Assert-Check ($changedRejected -and ($script:Run.availableTrackers -join ',') -ceq 'BLU,LST') 'resume_silently_changed_tracker_availability'
@@ -379,6 +383,33 @@ exit $LASTEXITCODE
   $current.dryRun = @{ status = 'ready'; noSeed = $false }
   Assert-Check ((Record-Stage $lane $current 'dry_run') -eq 'fail') 'conflicting_no_seed_not_detected'
   $script:RunDir = $validationDir
+  foreach ($phase in @('local', 'hosted', 'restart')) {
+    foreach ($stage in @('selection_lifecycle', 'screenshot_delete_recapture', 'hosted_preview')) {
+      Add-Result 'RETRY' 'lane-retry' $stage 'needs_input' 'typed_action_required' @{ browserPhase = $phase }
+      Add-Result 'RETRY' 'lane-retry' $stage 'pass' 'retry_succeeded' @{ browserPhase = $phase }
+      $rows = @($script:Results | Where-Object { $_.caseId -eq 'RETRY' -and $_.stage -eq $stage -and $_.evidence.browserPhase -eq $phase })
+      Assert-Check ($rows.Count -eq 1 -and $rows[0].status -eq 'pass') 'browser_phase_retry_retains_obsolete_result'
+    }
+  }
+  foreach ($stage in @('embedded_browser', 'hosted_preview', 'image_host', 'dry_run')) {
+    Add-Result '' '' $stage 'fail' 'previous_attempt_failed'
+    Add-Result '' '' $stage 'pass' 'retry_succeeded'
+    Assert-Check (@($script:Results | Where-Object { -not $_.laneId -and $_.stage -eq $stage -and $_.status -ne 'pass' }).Count -eq 0) 'global_retry_retains_obsolete_result'
+  }
+  Add-Result '' '' 'forbidden_effects' 'fail' 'unexpected_policy_effect'
+  Add-Result '' '' 'forbidden_effects' 'pass' 'zero_forbidden_calls'
+  Assert-Check (@($script:Results | Where-Object { $_.stage -eq 'forbidden_effects' -and $_.status -eq 'fail' }).Count -eq 1) 'retry_hides_forbidden_effect'
+  $failedCapture = @{ workflow = @{ id = 'workflow-failed'; revision = 2 }; operation = @{ status = 'failed'; failures = @(@{ failure = @{ Code = 'stale_generation' } }) } }
+  Assert-Check ((Record-Stage $lane $failedCapture 'media_ready') -eq 'fail') 'failed_capture_reported_as_missing_stage'
+  Assert-Check ($script:Results[-1].reason -eq 'workflow_operation_failed' -and $script:Results[-1].evidence.failureCodes -contains 'stale_generation') 'capture_failure_evidence_missing'
+  $failedCapture.media = @{ status = 'failed'; artifacts = @(@{ kind = 'screenshot' }) }
+  Assert-Check ((Record-Stage $lane $failedCapture 'media_ready') -eq 'fail') 'retained_screenshot_masks_failed_capture'
+  $pendingDupes = @{ workflow = @{ id = 'workflow-dupes'; revision = 1; requiredActions = @(@{ id = 'review'; kind = 'review_duplicates'; status = 'pending' }) }; dupes = @{ status = 'blocked' } }
+  Assert-Check ((Record-Stage $lane $pendingDupes 'duplicates_decided') -eq 'needs_input') 'pending_duplicate_review_not_recorded'
+  $pendingDupes.workflow.Remove('requiredActions'); $pendingDupes.dupes.status = 'completed'
+  Assert-Check ((Record-Stage $lane $pendingDupes 'duplicates_decided') -eq 'pass') 'resolved_duplicate_review_not_recorded'
+  $dupeRows = @($script:Results | Where-Object { $_.laneId -ceq $lane.laneId -and $_.stage -eq 'duplicates_decided' })
+  Assert-Check ($dupeRows.Count -eq 1 -and $dupeRows[0].status -eq 'pass') 'obsolete_duplicate_feedback_retained_in_report'
   $identityLane = $lane.Clone()
   $identityLane.expectedIdentity = $identity.Clone()
   $identityCurrent = @{ workflow = @{ id = 'workflow-identity'; revision = 1 }; release = @{ release = @{ Identity = $identity.Clone() } } }
@@ -457,6 +488,35 @@ exit $LASTEXITCODE
     Assert-Check ((Record-Stage $lane $answered 'prepared') -eq 'fail' -and $script:Results[-1].reason -eq 'metadata_identity_mismatch') 'answered_identity_mismatch_accepted'
   } finally { Set-Item Function:Invoke-LiveAPI -Value $originalAPI }
 
+  $script:FakeRequests = @()
+  function Invoke-LiveAPI([string]$Method, $Body = @{}, [switch]$Poll, [int]$ExpectedStatus = 200) {
+    $script:FakeRequests += @(ConvertTo-Json $Body -Depth 40 | ConvertFrom-Json -AsHashtable)
+    if ($Body.answers -or $Body.intent.duplicateDecisions.HDB -cne 'ignored') { throw 'duplicate_answer_not_routed_to_decision' }
+    if ($script:FakeRequests.Count -eq 1) {
+      return @{ workflow = @{ id = 'workflow-1'; revision = 2 }; dupes = @{ status = 'completed' } }
+    }
+    if ($Body.intent.media.screenshotCount -ne 4) { throw 'resumed_capture_instructions_missing' }
+    @{ workflow = @{ id = 'workflow-1'; revision = 3 }; media = @{ status = 'completed' } }
+  }
+  try {
+    $duplicateLane = @{ laneId = 'lane-duplicate'; trackerIds = @('HDB') }
+    $review = @{ id = 'review-1'; kind = 'review_duplicates'; status = 'pending'; trackerId = 'HDB'; options = @(@{ value = 'accepted' }, @{ value = 'ignored' }) }
+    $old = @{ workflow = @{ id = 'workflow-1'; revision = 1; requiredActions = @($review) } }
+    $intent = @{ trackerIds = @('HDB'); noSeed = $true; media = @{ screenshotCount = 4; purpose = 'final'; captureDvdMenus = $false } }
+    $answer = @{ actionId = 'review-1'; workflowRevision = 1; selectedValues = @('ignored') }
+    $resumed = Continue-Lane $duplicateLane 'media_ready' $old $intent @($answer)
+    Assert-Check ($resumed.media.status -eq 'completed' -and $script:FakeRequests.Count -eq 3) 'duplicate_resume_did_not_reach_media'
+    Assert-Check (-not $intent.duplicateDecisions) 'duplicate_resume_mutated_original_intent'
+    $mixedRejected = $false
+    try { Continue-Lane $duplicateLane 'media_ready' $old $intent @($answer, @{ actionId = 'metadata-1'; workflowRevision = 1; selectedValues = @('synthetic-1') }) | Out-Null } catch { $mixedRejected = $_.Exception.Message -eq 'feedback_duplicate_requires_separate_transition' }
+    Assert-Check $mixedRejected 'duplicate_decision_carried_across_other_answers'
+    foreach ($invalid in @(@{ actionId = 'review-1'; workflowRevision = 0; selectedValues = @('ignored') }, @{ actionId = 'review-1'; workflowRevision = 1; selectedValues = @('pending') }, @{ actionId = 'review-1'; workflowRevision = 1; selectedValues = @('accepted', 'ignored') })) {
+      $rejected = $false
+      try { Continue-Lane $duplicateLane 'media_ready' $old $intent @($invalid) | Out-Null } catch { $rejected = $_.Exception.Message -eq 'feedback_duplicate_answer_invalid' }
+      Assert-Check $rejected 'invalid_duplicate_answer_accepted'
+    }
+  } finally { Set-Item Function:Invoke-LiveAPI -Value $originalAPI }
+
   $script:FakeStep = 0
   function Invoke-LiveAPI([string]$Method, $Body = @{}, [switch]$Poll, [int]$ExpectedStatus = 200) {
     $script:FakeStep++
@@ -500,6 +560,17 @@ exit $LASTEXITCODE
     try { Invoke-BrowserCheck | Out-Null } catch { $browserFailed = $_.Exception.Message -eq 'synthetic_browser_failed' }
     Assert-Check ($browserFailed -and $script:RequestCount -eq $requestsBeforeBrowser + 3) 'failed_browser_budget_lost'
     Assert-Check (@($script:Results | Where-Object stage -EQ 'synthetic_browser_evidence').Count -eq 1) 'failed_browser_evidence_lost'
+    Add-Result 'MOV-1080-WEB' 'lane-0001' 'screenshot_cancellation' 'needs_input' 'typed_action_required' @{ browserPhase = 'local' }
+    Add-Result 'MOV-1080-WEB' 'lane-0001' 'screenshot_lifecycle_restore' 'needs_input' 'typed_action_required' @{ browserPhase = 'local' }
+    Add-Result 'MOV-1080-WEB' 'lane-0001' 'hosted_preview' 'pass' 'hosted_checked' @{ browserPhase = 'hosted' }
+    function Invoke-OwnedProcess {
+      Write-PrivateJson (Join-Path $script:RunDir 'browser-requests.private.json') @{ requests = 2 }
+      Write-PrivateJson (Join-Path $script:RunDir 'browser-results.json') @{ results = @(@{ caseId = 'MOV-1080-WEB'; laneId = 'lane-0001'; stage = 'screenshot_delete_recapture'; status = 'not_applicable'; reason = 'covered_in_another_lane' }) }
+    }
+    Invoke-BrowserCheck | Out-Null
+    $localRows = @($script:Results | Where-Object { $_.evidence.browserPhase -eq 'local' })
+    Assert-Check ($localRows.Count -eq 1 -and $localRows[0].stage -eq 'screenshot_delete_recapture') 'browser_retry_retains_omitted_previous_stages'
+    Assert-Check (@($script:Results | Where-Object { $_.laneId -eq 'lane-0001' -and $_.evidence.browserPhase -eq 'hosted' -and $_.stage -eq 'hosted_preview' }).Count -eq 1) 'browser_retry_erases_another_phase'
   } finally { Set-Item Function:Invoke-OwnedProcess -Value $originalProcess }
   $originalFeedback = (Get-Item Function:Save-Feedback).ScriptBlock
   function Save-Feedback($Lane, $Current, [string]$Goal) {}
