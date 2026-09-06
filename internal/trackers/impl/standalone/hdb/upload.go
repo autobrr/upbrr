@@ -19,6 +19,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/net/html"
+
 	"github.com/autobrr/upbrr/internal/config"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/providerid"
@@ -192,8 +194,15 @@ func submitPreparedUpload(ctx context.Context, req trackers.PreparationInput, st
 	}
 	matches := hdbSuccessURLPattern.FindStringSubmatch(finalURL)
 	if len(matches) < 2 {
-		bodyPreview, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("HDB", resp.StatusCode, finalURL, bodyPreview)
+		const responseLimit = 1 << 20
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, responseLimit+1))
+		detail := extractHDBUploadError(body[:min(len(body), responseLimit)])
+		if readErr != nil {
+			detail = "response body read failed; " + detail
+		} else if len(body) > responseLimit {
+			detail = "response exceeded 1 MiB; " + detail
+		}
+		return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("HDB", resp.StatusCode, finalURL, []byte(detail))
 	}
 
 	torrentID := strings.TrimSpace(matches[1])
@@ -229,6 +238,59 @@ func submitPreparedUpload(ctx context.Context, req trackers.PreparationInput, st
 			TorrentPath: trackerTorrentPath,
 		}},
 	}, nil
+}
+
+func extractHDBUploadError(body []byte) string {
+	doc, err := html.Parse(bytes.NewReader(body))
+	if err != nil {
+		return "could not parse upload response"
+	}
+	var visible, messages strings.Builder
+	var visit func(*html.Node, bool)
+	visit = func(node *html.Node, isError bool) {
+		if node.Type == html.ElementNode {
+			switch node.Data {
+			case "head", "script", "style", "nav", "header", "footer", "input", "textarea", "select", "button", "noscript", "template":
+				return
+			}
+			for _, attr := range node.Attr {
+				if attr.Key == "hidden" || (attr.Key == "aria-hidden" && attr.Val == "true") {
+					return
+				}
+				if attr.Key == "role" && attr.Val == "alert" {
+					isError = true
+				}
+				if attr.Key == "class" || attr.Key == "id" {
+					for token := range strings.FieldsSeq(strings.ToLower(attr.Val)) {
+						switch token {
+						case "error", "errors", "error-message", "error_message", "alert-danger", "alert-error":
+							isError = true
+						}
+					}
+				}
+			}
+		}
+		if node.Type == html.TextNode {
+			visible.WriteString(node.Data)
+			visible.WriteByte(' ')
+			if isError {
+				messages.WriteString(node.Data)
+				messages.WriteByte(' ')
+			}
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			visit(child, isError)
+		}
+	}
+	visit(doc, false)
+	detail := strings.Join(strings.Fields(messages.String()), " ")
+	if detail == "" {
+		detail = strings.Join(strings.Fields(visible.String()), " ")
+	}
+	if detail == "" {
+		return "no readable error message in upload response"
+	}
+	return detail
 }
 
 func buildUploadFields(
