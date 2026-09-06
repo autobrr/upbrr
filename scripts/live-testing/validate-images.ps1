@@ -40,7 +40,7 @@ $script:Results = @()
 Assert-ImageCheck ((Get-LiveRestartLane).laneId -ceq 'blocked') 'restart_without_media_lost_identity_check'
 
 # Exercise the runner's actual variant ordering and capture guard. A forced SAT
-# preparation must precede the ordinary lane that owns deferred hosted media.
+# preparation must precede the ordinary lane that owns local and hosted media.
 $runnerAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'run.ps1'), [ref]$null, [ref]$null)
 $variantStatement = @($runnerAst.FindAll({ param($node)
   $node -is [Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.StartsWith('if ($script:Run.suite -in') -and $node.Extent.Text.Contains('$scenarios.dupe')
@@ -59,8 +59,8 @@ foreach ($mode in @('images', 'no-images', 'explicit-sat', 'ordinary')) {
   . $variantBlock
   $allowedCaptures = @(); $script:Results = @(); $lane = @{ caseId = 'PAIRED'; laneId = 'paired' }
   foreach ($variant in $variants) { . $captureBlock; $allowedCaptures += $variant }
-  $expectedVariants = switch ($mode) { 'images' { 'True,False' }; 'no-images' { 'False,True' }; 'explicit-sat' { 'True' }; default { 'False' } }
-  $expectedCaptures = switch ($mode) { 'no-images' { 'False,True' }; 'explicit-sat' { 'True' }; default { 'False' } }
+  $expectedVariants = switch ($mode) { 'images' { 'True,False' }; 'no-images' { 'True,False' }; 'explicit-sat' { 'True' }; default { 'False' } }
+  $expectedCaptures = switch ($mode) { 'explicit-sat' { 'True' }; default { 'False' } }
   Assert-ImageCheck (($variants -join ',') -ceq $expectedVariants -and ($allowedCaptures -join ',') -ceq $expectedCaptures) "runner_generation_order_wrong_$mode"
 }
 

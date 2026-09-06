@@ -74,9 +74,9 @@ reported by the production workflow. These coverage results are separate from
 description/dry-run results, and all attempts share the same image budget.
 
 `-ScreenshotCount` is 1–10 (default 3); production tracker requirements may raise
-the selected upload count. With image uploads enabled, automatic paired SAT
-checks run before the ordinary lane, which owns the deferred screenshot upload
-and dry run, so forced SAT preparation cannot invalidate that generation.
+the selected upload count. Automatic paired SAT checks run before the ordinary
+lane, which owns screenshot capture, deferred browser checks, and any authorized
+upload and dry run, so forced SAT preparation cannot invalidate that generation.
 `-MaxRequests` bounds runner API commands
 (default 200, maximum 2000), with operation polls bounded separately by
 `-TimeoutSeconds` (default 900, maximum 3600). It is not a count of internal tracker
