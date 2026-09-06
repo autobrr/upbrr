@@ -57,6 +57,11 @@ func executeCLI(ctx context.Context, args []string, streams cliIO) error {
 		return executeAPITokenCLI(ctx, args, streams, originalArgs)
 	case "auth":
 		return executeAuthCLI(ctx, args, streams, originalArgs)
+	case "live-test":
+		//nolint:contextcheck // Cobra receives the execution context below.
+		cmd := newRootCommand(streams, originalArgs)
+		cmd.SetArgs(args)
+		return executeCobraCommand(ctx, cmd)
 	default:
 		//nolint:contextcheck // Cobra injects ctx through ExecuteContext after command construction.
 		cmd := newUploadRootCommand(streams, originalArgs)
@@ -142,7 +147,7 @@ func commandHelpToken(value string) bool {
 
 func newRootCommand(streams cliIO, originalArgs []string) *cobra.Command {
 	cmd := newUploadRootCommand(streams, originalArgs)
-	cmd.AddCommand(newServeCommand(streams), newAPITokenCommand(streams), newAuthCommand(streams))
+	cmd.AddCommand(newServeCommand(streams), newAPITokenCommand(streams), newAuthCommand(streams), newLiveTestCommand(streams))
 	return cmd
 }
 

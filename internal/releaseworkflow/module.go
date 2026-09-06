@@ -177,6 +177,7 @@ func WithLogger(logger api.Logger) Option {
 
 // Module owns workflow sequencing, invalidation, idempotency, and private retention.
 type Module struct {
+	liveTest                 *api.LiveTestPolicy
 	repository               Repository
 	operations               OperationRepository
 	durability               DurabilityRepository
@@ -257,6 +258,9 @@ func (m *Module) Execute(ctx context.Context, ownerID string, command Command) (
 }
 
 func (m *Module) execute(ctx context.Context, ownerID string, command mutation) (CommandResult, error) {
+	if err := m.rejectLiveTestCommand(command); err != nil {
+		return CommandResult{}, err
+	}
 	if ctx == nil {
 		return CommandResult{}, errors.New("release workflow: context is required")
 	}
@@ -463,6 +467,9 @@ func (m *Module) cleanupSupersededMediaResources(
 // Start durably accepts one long-running command and returns its queued
 // operation before server-owned background work begins.
 func (m *Module) Start(ctx context.Context, ownerID string, command Command) (api.WorkflowOperationStatus, error) {
+	if err := m.rejectLiveTestCommand(command); err != nil {
+		return api.WorkflowOperationStatus{}, err
+	}
 	if ctx == nil {
 		return api.WorkflowOperationStatus{}, errors.New("release workflow: context is required")
 	}

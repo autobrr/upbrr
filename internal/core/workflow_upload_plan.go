@@ -56,6 +56,7 @@ func (a workflowTrackerServiceAdapter) PrepareRetainedUploadPlan(
 }
 
 type workflowUploadPlanBuilder struct {
+	liveTest *api.LiveTestPolicy
 	config   config.Config
 	resolver workflowDescriptionSubjectResolver
 	trackers workflowRetainedUploadService
@@ -82,18 +83,23 @@ func newWorkflowUploadPlanBuilder(
 	service api.TrackerService,
 	torrents api.TorrentService,
 	clients api.ClientService,
+	liveTest ...*api.LiveTestPolicy,
 ) workflowUploadPlanBuilder {
 	retained, _ := service.(workflowRetainedUploadService)
 	if concrete, ok := service.(*trackers.Service); ok {
 		retained = workflowTrackerServiceAdapter{service: concrete}
 	}
-	return workflowUploadPlanBuilder{
+	builder := workflowUploadPlanBuilder{
 		config:   cfg,
 		resolver: resolver,
 		trackers: retained,
 		torrents: torrents,
 		clients:  clients,
 	}
+	if len(liveTest) > 0 {
+		builder.liveTest = liveTest[0]
+	}
+	return builder
 }
 
 func (b workflowUploadPlanBuilder) Fingerprint(
@@ -104,6 +110,9 @@ func (b workflowUploadPlanBuilder) Fingerprint(
 	descriptions api.DescriptionSet,
 	options releaseworkflow.UploadPlanBuildOptions,
 ) (api.WorkflowFingerprint, error) {
+	if b.liveTest != nil {
+		options.NoSeed = true
+	}
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
 		ProjectionSet    api.TrackerReleaseProjectionSetRef
 		Projection       api.WorkflowFingerprint
@@ -153,6 +162,12 @@ func (b workflowUploadPlanBuilder) Build(
 	options releaseworkflow.UploadPlanBuildOptions,
 	now time.Time,
 ) (api.UploadPlan, releaseworkflow.RetainedUploadExecution, error) {
+	if b.liveTest != nil {
+		options.NoSeed = true
+		if !options.DryRun {
+			return api.UploadPlan{}, nil, fmt.Errorf("live-test upload plan: %w", b.liveTest.RejectRequest(api.OperationKindUploadExecute))
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: %w", err)
 	}
@@ -607,6 +622,9 @@ func workflowDryRunClientFailure(
 	recovery := api.OperationRecoveryRetry
 	resource := ""
 	switch code {
+	case api.OperationFailureLiveTestMutationDisabled:
+		operation = api.OperationKindClientInjection
+		recovery = api.OperationRecoveryNone
 	case api.OperationFailureMissingExactTorrent:
 		recovery = api.OperationRecoveryReprepare
 	case api.OperationFailureUnknownOutcome:
@@ -1269,7 +1287,7 @@ func workflowClientFailureRecovery(code api.OperationFailureCode) api.OperationR
 		return api.OperationRecoveryRetry
 	case api.OperationFailureUnknownOutcome:
 		return api.OperationRecoveryConfirm
-	case api.OperationFailureMissingExactTorrent:
+	case api.OperationFailureMissingExactTorrent, api.OperationFailureLiveTestMutationDisabled:
 		return api.OperationRecoveryNone
 	case api.OperationFailureInvalidInput,
 		api.OperationFailureInvalidSource,
@@ -1331,6 +1349,9 @@ func injectWorkflowClientWithFence(
 			nil
 	}
 	if injectErr != nil {
+		if errors.Is(injectErr, api.ErrLiveTestMutationDisabled) {
+			return false, api.OperationFailureLiveTestMutationDisabled, "Live testing prohibits torrent-client writes.", nil
+		}
 		return false,
 			api.OperationFailureClientInjection,
 			"Exact-torrent client injection failed. Review client settings before retrying.",

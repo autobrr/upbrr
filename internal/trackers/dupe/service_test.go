@@ -814,6 +814,39 @@ func TestCheckLimitsConcurrencyToFour(t *testing.T) {
 	<-done
 }
 
+func TestLiveTestChecksEverySelectedTrackerSerially(t *testing.T) {
+	var active, maximum atomic.Int32
+	names := []string{"A", "B", "C", "D", "E", "F"}
+	adapters := make(map[string]Adapter)
+	for _, name := range names {
+		adapters[name] = AdapterFunc(func(context.Context, api.DuplicateSubject) AdapterResult {
+			current := active.Add(1)
+			for {
+				previous := maximum.Load()
+				if current <= previous || maximum.CompareAndSwap(previous, current) {
+					break
+				}
+			}
+			time.Sleep(5 * time.Millisecond)
+			active.Add(-1)
+			return Resolved(nil, nil)
+		})
+	}
+	policy, err := api.NewLiveTestPolicy("serial-run", filepath.Join(t.TempDir(), "images.jsonl"), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewServiceWithRegistry(adaptersConfig(adapters), api.NopLogger{}, &trackerspkg.Registry{}, policy)
+	service.adapters = adapters
+	summary, err := service.Check(t.Context(), api.DuplicateSubject{SourcePath: filepath.Join(t.TempDir(), "Synthetic.Release.2026-GRP.mkv")}, names)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if maximum.Load() != 1 || len(summary.Results) != len(names) {
+		t.Fatalf("live-test concurrency=%d results=%d", maximum.Load(), len(summary.Results))
+	}
+}
+
 func TestCheckCancellationWaitsForStartedAdapterAndReturnsCompletedEvidence(t *testing.T) {
 	started := make(chan struct{})
 	completed := make(chan struct{})
