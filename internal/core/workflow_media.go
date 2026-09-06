@@ -1264,20 +1264,20 @@ func (b workflowMediaBuilder) mediaMutationBase(
 		return api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, fmt.Errorf("workflow media fingerprint: %w", err)
 	}
 	return api.MediaArtifactSet{
-			CaptureFingerprint:      fingerprint,
-			RequirementsFingerprint: requirements,
-			Artifacts:               []api.MediaArtifact{},
-			Status:                  api.StageStatusCompleted,
-		}, workflowMediaPrivateArtifacts{
-			ArtifactImages:    make(map[api.PublicResourceID]api.ScreenshotImage),
-			DVDMenuImages:     make(map[api.PublicResourceID]api.DVDMenuCaptureImage),
-			HostedImages:      make(map[api.PublicResourceID]api.UploadedImageLink),
-			HostedSources:     make(map[api.PublicResourceID]api.PublicResourceID),
-			screenshotService: b.screenshots,
-			dvdMenuService:    b.dvdMenus,
-			hostedRepository:  b.media.repo,
-			commitState:       &workflowMediaCommitState{},
-		}, nil
+		CaptureFingerprint:      fingerprint,
+		RequirementsFingerprint: requirements,
+		Artifacts:               []api.MediaArtifact{},
+		Status:                  api.StageStatusCompleted,
+	}, workflowMediaPrivateArtifacts{
+		ArtifactImages:    make(map[api.PublicResourceID]api.ScreenshotImage),
+		DVDMenuImages:     make(map[api.PublicResourceID]api.DVDMenuCaptureImage),
+		HostedImages:      make(map[api.PublicResourceID]api.UploadedImageLink),
+		HostedSources:     make(map[api.PublicResourceID]api.PublicResourceID),
+		screenshotService: b.screenshots,
+		dvdMenuService:    b.dvdMenus,
+		hostedRepository:  b.media.repo,
+		commitState:       &workflowMediaCommitState{},
+	}, nil
 }
 
 func hostedImageKey(sourceID api.PublicResourceID, link api.UploadedImageLink) string {

@@ -22,6 +22,8 @@ import (
 )
 
 type cliOptions struct {
+	LiveTestMaxImages     int
+	LiveTest              bool
 	ConfigPath            string
 	ShowVersion           bool
 	QueueName             string
@@ -123,17 +125,21 @@ type cliOptions struct {
 }
 
 type serveOptions struct {
-	ConfigPath       string
-	Addr             string
-	Host             string
-	Port             int
-	BaseURL          string
-	PersistListen    bool
-	PersistWebConfig bool
-	DevNoAuth        bool
+	LiveTestMaxImages int
+	LiveTest          bool
+	ConfigPath        string
+	Addr              string
+	Host              string
+	Port              int
+	BaseURL           string
+	PersistListen     bool
+	PersistWebConfig  bool
+	DevNoAuth         bool
 }
 
 func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
+	fs.IntVar(&opts.LiveTestMaxImages, "live-test-max-images", 0, "Maximum journaled image uploads in this live-test run (zero keeps captures local)")
+	fs.BoolVar(&opts.LiveTest, "live-test", false, "Use an isolated live-test profile with tracker and client writes disabled")
 	fs.StringVar(&opts.ConfigPath, "config", "", "Path to config file")
 	fs.BoolVar(&opts.ShowVersion, "version", false, "Show version and exit")
 	fs.StringVar(&opts.QueueName, "queue", "", "Process an entire folder queue")
@@ -586,6 +592,8 @@ func cliFlagAliases() map[string]string {
 }
 
 func bindServeFlags(fs *pflag.FlagSet, opts *serveOptions) {
+	fs.IntVar(&opts.LiveTestMaxImages, "live-test-max-images", 0, "Maximum journaled image uploads in this live-test run (zero keeps captures local)")
+	fs.BoolVar(&opts.LiveTest, "live-test", false, "Use an isolated live-test profile with tracker and client writes disabled")
 	fs.StringVar(&opts.ConfigPath, "config", "", "Path to config file")
 	fs.StringVar(&opts.Addr, "addr", "", "Web UI listen address (host:port)")
 	fs.StringVar(&opts.Host, "host", "", "Web UI host to bind")
@@ -633,6 +641,8 @@ func formatFlagUsage(fs *pflag.FlagSet, usage string) string {
 		fmt.Fprint(&builder, "      List and revoke persistent API bearer tokens\n")
 		fmt.Fprint(&builder, "  auth <password|browse-roots> [options]\n")
 		fmt.Fprint(&builder, "      Manage the WebUI password and browse policy locally\n")
+		fmt.Fprint(&builder, "  live-test <init|cleanup> [options]\n")
+		fmt.Fprint(&builder, "      Create an isolated profile or clean up its owned hosted images\n")
 	}
 	fmt.Fprint(&builder, "\nOptions:\n")
 	sections := cliHelpSections(fs.Name())
@@ -685,14 +695,14 @@ func cliHelpSections(name string) []helpSection {
 		return []helpSection{
 			{title: "Config", names: []string{"config"}},
 			{title: "Server", names: []string{"addr", "host", "port", "base-url", "persist-listen", "persist-web-config"}},
-			{title: "Development", names: []string{"dev-no-auth"}},
+			{title: "Development", names: []string{"dev-no-auth", "live-test", "live-test-max-images"}},
 		}
 	}
 	return []helpSection{
 		{title: "Config", names: []string{"config", "export-config", "export-config-plaintext", "import-config", "create-auth"}},
 		{title: "Application", names: []string{"version", "cleanup"}},
 		{title: "Execution", names: []string{
-			"queue", "limit-queue", "site-check", "site-upload", "debug", "log-level", "console-log-level", "upload-only",
+			"queue", "limit-queue", "site-check", "site-upload", "debug", "live-test", "live-test-max-images", "log-level", "console-log-level", "upload-only",
 			"delete-tmp", "unattended", "unattended_confirm",
 		}},
 		{title: "Tracker Selection", names: []string{"trackers", "trackers-remove"}},

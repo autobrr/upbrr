@@ -40,8 +40,7 @@ func main() {
 	exitCode := 0
 	if err := run(); err != nil {
 		printTerminalError(err)
-		var cliErr *cliExitError
-		if errors.As(err, &cliErr) {
+		if cliErr, ok := errors.AsType[*cliExitError](err); ok {
 			exitCode = cliErr.code
 		} else {
 			exitCode = 1
@@ -152,6 +151,12 @@ func runUpload(
 		fmt.Fprintf(streams.out, "upbrr %s\n", version)
 		return nil
 	}
+	if opts.LiveTest && (opts.CreateAuth || opts.ExportConfigPath != "" || opts.ImportConfigPath != "" || opts.Cleanup || opts.DeleteTmp) {
+		return exitError(2, errors.New("--live-test cannot be combined with configuration or stored-release maintenance; use live-test init or cleanup"))
+	}
+	if visitedFlags["live-test-max-images"] && !opts.LiveTest {
+		return exitError(2, errors.New("--live-test-max-images requires --live-test"))
+	}
 
 	if strings.TrimSpace(opts.ExportConfigPath) != "" && strings.TrimSpace(opts.ImportConfigPath) != "" {
 		return exitError(2, errors.New("--export-config and --import-config cannot be used together"))
@@ -211,9 +216,23 @@ func runUpload(
 		return exitError(2, errors.New("at least one input path is required"))
 	}
 
-	cfg, dbPath, err := loadCLIConfig(ctx, resolvedConfigPath, configFlagProvided)
-	if err != nil {
-		return exitError(1, err)
+	var cfg config.Config
+	var dbPath string
+	var livePolicy *api.LiveTestPolicy
+	if opts.LiveTest {
+		var lock *os.File
+		cfg, livePolicy, lock, err = openLiveTestRuntime(ctx, resolvedConfigPath, configFlagProvided, opts.LiveTestMaxImages)
+		if err != nil {
+			return exitError(1, err)
+		}
+		defer lock.Close()
+		dbPath = cfg.MainSettings.DBPath
+		opts.NoSeed = true
+	} else {
+		cfg, dbPath, err = loadCLIConfig(ctx, resolvedConfigPath, configFlagProvided)
+		if err != nil {
+			return exitError(1, err)
+		}
 	}
 
 	loggingConfig := cfg.Logging
@@ -248,8 +267,9 @@ func runUpload(
 	setupCtx, setupCancel := context.WithTimeout(ctx, cliSetupTimeout)
 	defer setupCancel()
 	coreSvc, err := core.NewWithContext(setupCtx, api.CoreDependencies{
-		Config: cfg,
-		Logger: logger,
+		LiveTest: livePolicy,
+		Config:   cfg,
+		Logger:   logger,
 		Services: api.ServiceSet{
 			Filesystem: filesystem.NewValidator(),
 		},
@@ -510,6 +530,9 @@ func terminalFileDescriptor(file *os.File) (int, bool) {
 }
 
 func runServe(ctx context.Context, opts serveOptions, visitedFlags map[string]bool) error {
+	if visitedFlags["live-test-max-images"] && !opts.LiveTest {
+		return errors.New("--live-test-max-images requires --live-test")
+	}
 	envOpts, envVisited := readServeEnv()
 	if visitedFlags["persist-listen"] && !hasServeListenOverrides(visitedFlags) {
 		return errors.New("--persist-listen requires --addr, --host, or --port")
@@ -524,9 +547,22 @@ func runServe(ctx context.Context, opts serveOptions, visitedFlags map[string]bo
 		return fmt.Errorf("upbrr: %w", err)
 	}
 
-	cfg, dbPath, err := loadServeConfig(ctx, resolvedConfigPath, configFlagProvided)
-	if err != nil {
-		return err
+	var cfg config.Config
+	var dbPath string
+	var livePolicy *api.LiveTestPolicy
+	if opts.LiveTest {
+		var lock *os.File
+		cfg, livePolicy, lock, err = openLiveTestRuntime(ctx, resolvedConfigPath, configFlagProvided, opts.LiveTestMaxImages)
+		if err != nil {
+			return err
+		}
+		defer lock.Close()
+		dbPath = cfg.MainSettings.DBPath
+	} else {
+		cfg, dbPath, err = loadServeConfig(ctx, resolvedConfigPath, configFlagProvided)
+		if err != nil {
+			return err
+		}
 	}
 
 	storedWebCfg, err := webserver.LoadCLIConfig(dbPath)
@@ -557,6 +593,7 @@ func runServe(ctx context.Context, opts serveOptions, visitedFlags map[string]bo
 
 	//nolint:contextcheck // Constructor has no context variant; Run and RunAfterListen receive ctx below.
 	server, err := webserver.New(webserver.Options{
+		LiveTest:          livePolicy,
 		Config:            cfg,
 		CLIConfig:         webCfg,
 		DevelopmentNoAuth: opts.DevNoAuth,

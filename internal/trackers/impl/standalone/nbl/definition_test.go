@@ -5,6 +5,7 @@ package nbl
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -33,6 +34,7 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 	tmp := t.TempDir()
 	mediaInfoPath := filepath.Join(tmp, "MEDIAINFO.txt")
 	torrentPath := filepath.Join(tmp, "Show.torrent")
+	screenshotPath := filepath.Join(tmp, "screenshot.png")
 	if err := os.WriteFile(mediaInfoPath, []byte("General\nUnique ID : 123"), 0o600); err != nil {
 		t.Fatalf("write mediainfo: %v", err)
 	}
@@ -49,6 +51,13 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 			MediaInfoTextPath: mediaInfoPath,
 			Identity:          api.ExternalIdentity{TVmazeID: 987},
 			TVPack:            true,
+			ExactMedia: &api.ExactMediaAssets{
+				Screenshots: []api.ScreenshotImage{{Path: screenshotPath, Purpose: api.ScreenshotPurposeFinal}},
+				ScreenshotUploads: []api.UploadedImageLink{{
+					ImagePath: screenshotPath,
+					ImgURL:    "https://images.example.test/screenshot.png",
+				}},
+			},
 		},
 		TrackerConfig: config.TrackerConfig{APIKey: "token"},
 		Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{}),
@@ -58,11 +67,19 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 		t.Fatalf("unexpected failure: %v", failure)
 	}
 	entry := plan.DryRun()
-	if entry.Payload["tvmazeid"] != "987" {
-		t.Fatalf("expected tvmazeid 987, got %q", entry.Payload["tvmazeid"])
+	wantPayload := map[string]string{
+		"action":      "upload",
+		"api_key":     "token",
+		"tvmazeid":    "987",
+		"mediainfo":   "General\nUnique ID : 123",
+		"category":    "3",
+		"ignoredupes": "1",
 	}
-	if entry.Payload["category"] != "3" {
-		t.Fatalf("expected pack category 3, got %q", entry.Payload["category"])
+	if !maps.Equal(entry.Payload, wantPayload) {
+		t.Fatalf("payload = %#v, want %#v", entry.Payload, wantPayload)
+	}
+	if len(entry.Files) != 1 || entry.Files[0].Field != "file_input" || entry.Files[0].Path != torrentPath {
+		t.Fatalf("expected only the torrent attachment, got %+v", entry.Files)
 	}
 	if entry.Questionnaire != nil {
 		t.Fatal("expected no questionnaire")

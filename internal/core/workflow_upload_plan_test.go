@@ -681,9 +681,8 @@ func TestWorkflowUploadPlanOmitsSkippedTrackersAndKeepsPreparationFailuresLocal(
 	}
 	privateMedia := workflowMediaPrivateArtifacts{
 		Screenshots: []api.ScreenshotImage{{Path: exactScreenshotPath, Purpose: api.ScreenshotPurposeFinal}},
-		DVDMenus: []api.DVDMenuCaptureImage{{ScreenshotImage: api.ScreenshotImage{
-			Path: exactMenuPath, Purpose: api.ScreenshotPurposeMenu,
-		}}},
+		DVDMenus: []api.DVDMenuCaptureImage{{
+			Path: exactMenuPath, Purpose: api.ScreenshotPurposeMenu}},
 		HostedImages: map[api.PublicResourceID]api.UploadedImageLink{
 			"hosted-1":      exactUpload,
 			"hosted-menu-1": exactMenuUpload,

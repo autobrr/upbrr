@@ -19,6 +19,8 @@ import (
 )
 
 type cliWorkflowCoreFake struct {
+	liveTest       bool
+	liveStarts     int
 	current        releaseworkflow.CommandResult
 	commands       []releaseworkflow.Command
 	continuations  []api.ContinueReleaseWorkflowRequest
@@ -35,6 +37,13 @@ type cliWorkflowCoreFake struct {
 	eventAfters    []uint64
 	queueOperation bool
 	cancelCalls    int
+}
+
+func (f *cliWorkflowCoreFake) LiveTestEnabled() bool { return f.liveTest }
+
+func (f *cliWorkflowCoreFake) StartLiveTestReleaseWorkflowUpload(ctx context.Context, owner string, request api.CreateReleaseWorkflowUploadRequest) (releaseworkflow.CommandResult, error) {
+	f.liveStarts++
+	return f.StartReleaseWorkflowUpload(ctx, owner, request)
 }
 
 func captureWriter(fn func(io.Writer)) string {

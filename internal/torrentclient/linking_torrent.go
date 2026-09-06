@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/autobrr/go-torrent/metainfo"
@@ -385,8 +386,7 @@ func createTorrentLinkPlan(ctx context.Context, trackerDir string, plan torrentL
 // cleanup failures with the original plan error.
 func rollbackTorrentLinkPlan(trackerDir string, created []string, planErr error) error {
 	var rollbackErrs []error
-	for i := len(created) - 1; i >= 0; i-- {
-		dest := created[i]
+	for _, dest := range slices.Backward(created) {
 		if !pathutil.IsWithinRoot(trackerDir, dest) {
 			rollbackErrs = append(rollbackErrs, errors.New("torrent link rollback destination escapes tracker directory"))
 			continue

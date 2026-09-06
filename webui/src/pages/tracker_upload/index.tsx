@@ -73,8 +73,9 @@ export default function TrackerUploadPage({ facet }: Props) {
         <p className="eyebrow">Tracker Upload</p>
         <h1>Review &amp; Upload</h1>
         <p className="subtitle">
-          Optionally run a dry run, or upload directly. A tracker failure does not stop unrelated
-          uploads.
+          {view.liveTest
+            ? "Run a dry run with normal rules. Live testing disables tracker submission and client injection."
+            : "Optionally run a dry run, or upload directly. A tracker failure does not stop unrelated uploads."}
         </p>
       </header>
 
@@ -134,6 +135,7 @@ export default function TrackerUploadPage({ facet }: Props) {
             <input
               type="checkbox"
               checked={view.options.noSeed}
+              disabled={view.liveTest}
               onChange={(event) => facet.changeOptions({ noSeed: event.target.checked })}
             />
             Skip client injection
@@ -167,7 +169,7 @@ export default function TrackerUploadPage({ facet }: Props) {
           <Button
             variant="primary"
             type="button"
-            disabled={uploadRunning || view.selectedTrackers.length === 0}
+            disabled={!view.mutationsAllowed || uploadRunning || view.selectedTrackers.length === 0}
             onClick={() => void facet.start()}
           >
             {uploadRunning ? "Uploading..." : "Start upload"}
@@ -178,7 +180,12 @@ export default function TrackerUploadPage({ facet }: Props) {
             </button>
           ) : null}
           {failedTrackers.length ? (
-            <button className="ghost" type="button" onClick={() => void facet.retry()}>
+            <button
+              className="ghost"
+              type="button"
+              disabled={!view.mutationsAllowed}
+              onClick={() => void facet.retry()}
+            >
               Retry failed uploads
             </button>
           ) : null}
@@ -186,6 +193,7 @@ export default function TrackerUploadPage({ facet }: Props) {
             <button
               className="ghost"
               type="button"
+              disabled={!view.mutationsAllowed}
               onClick={() => void facet.retryClientInjection()}
             >
               Retry client injection
