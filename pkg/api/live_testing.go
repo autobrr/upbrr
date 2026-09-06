@@ -12,6 +12,10 @@ import (
 // ErrLiveTestMutationDisabled identifies a write forbidden by the process policy.
 var ErrLiveTestMutationDisabled = errors.New("live testing prohibits tracker submission and torrent-client writes")
 
+// MaxLiveTestImageUploads is the process-enforced ceiling for one run's
+// journaled remote image attempts.
+const MaxLiveTestImageUploads = 500
+
 // LiveTestEffectCounts distinguishes rejected requests from guarded writes for
 // one forbidden effect class. Allowed lookup and image-host requests are excluded.
 type LiveTestEffectCounts struct {
@@ -52,7 +56,7 @@ type LiveTestPolicy struct {
 // NewLiveTestPolicy binds already-validated profile identity and private journal.
 // The application entrypoint must validate the profile before constructing it.
 func NewLiveTestPolicy(runID, journalPath string, maxImages int) (*LiveTestPolicy, error) {
-	if strings.TrimSpace(runID) == "" || strings.TrimSpace(journalPath) == "" || maxImages < 0 {
+	if strings.TrimSpace(runID) == "" || strings.TrimSpace(journalPath) == "" || maxImages < 0 || maxImages > MaxLiveTestImageUploads {
 		return nil, errors.New("live testing requires a run identity and image journal")
 	}
 	return &LiveTestPolicy{

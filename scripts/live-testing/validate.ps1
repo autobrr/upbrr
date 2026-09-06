@@ -578,6 +578,7 @@ exit $LASTEXITCODE
     Assert-Check (-not (Test-Path -LiteralPath (Join-Path $resumeDir 'process.private.json'))) 'terminal_resume_started_server'
   }
   Write-Host 'PASS: cleanup failures remain unresolved; terminal resume preserves manifests, reports, and results without starting a runtime.'
+  & (Join-Path $PSScriptRoot 'validate-images.ps1') -ValidationDir $validationDir
   Write-Host 'PASS: corpus/stat/process/policy checks; ordered partial tracker scope and per-case unavailable evidence; explicit/empty scope blocking; bounded continuation; feedback restart/rebind; failed browser budget/evidence retained; sanitized duplicate evidence; authenticated HTTP 202 upload polled to completion.'
 } finally {
   $checked = Assert-PrivatePath $validationDir (Join-Path $root 'validation')

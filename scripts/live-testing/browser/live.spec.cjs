@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { randomUUID, createHash } = require('node:crypto');
-const { createRequestPacer, isLostimgImageURL, compareMediaOrder, screenshotLifecyclePlan, recaptureScreenshotProbe } = require('./helpers.cjs');
+const { createRequestPacer, isJournaledImageURL, hostedImageDecodeURL, compareMediaOrder, screenshotLifecyclePlan, recaptureScreenshotProbe } = require('./helpers.cjs');
 const { test, expect } = require('../../../webui/node_modules/@playwright/test');
 
 test('owned embedded live runtime, controls, local images, and selection persistence', async ({ browser }) => {
@@ -58,6 +58,9 @@ test('owned embedded live runtime, controls, local images, and selection persist
   fs.mkdirSync(path.join(runDir, 'browser-artifacts'), { recursive: true });
   let controlsVerified = false;
   let lifecycleAttempted = false;
+  const journal = handoff.hostedOnly ? fs.readFileSync(path.join(runDir, 'image-effects.private.jsonl'), 'utf8').split('\n')
+    .filter(line => line.trim()).map(line => JSON.parse(line)).filter(record => record.kind === 'uploaded') : [];
+  const journaledURLs = new Set(journal.flatMap(record => record.urls || []));
   try {
     for (const lane of handoff.lanes.filter(lane => lane.workflowId)) {
       let current = await api('GetReleaseWorkflow', { workflowId: lane.workflowId });
@@ -67,23 +70,45 @@ test('owned embedded live runtime, controls, local images, and selection persist
       await page.evaluate(workflowId => sessionStorage.setItem('upbrr.activeReleaseWorkflow', workflowId), lane.workflowId);
       await page.reload();
       await expect(page.getByText('Live testing active', { exact: true })).toBeVisible();
+      const uploadTab = page.getByRole('button', { name: 'Upload', exact: true });
+      if (await uploadTab.isEnabled()) {
+        await uploadTab.click();
+        await expect(page.getByRole('checkbox', { name: 'Skip client injection' })).toBeChecked();
+        await expect(page.getByRole('checkbox', { name: 'Skip client injection' })).toBeDisabled();
+        await expect(page.getByRole('button', { name: 'Run dry run', exact: true })).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Start upload', exact: true })).toBeDisabled();
+        controlsVerified = true;
+      }
       if (handoff.hostedOnly) {
         const hosted = (current.media?.artifacts || []).filter(artifact => artifact.kind === 'hosted_image' && artifact.url);
         expect(hosted.length, 'journaled_hosted_images_required').toBeGreaterThan(0);
+        const sourcePath = current.release.release.Source.SourcePath;
+        const history = await api('GetHistoryOverview', { SourcePath: sourcePath });
+        expect(history.SourcePath, 'hosted_history_source_mismatch').toBe(sourcePath);
+        const imageURLs = new Map();
+        for (const artifact of hosted) {
+          expect(local.some(image => image.id === artifact.source), 'hosted_source_artifact_missing').toBe(true);
+          const attempts = current.media.hostAttempts.filter(attempt => attempt.status === 'completed' && attempt.host === artifact.host &&
+            attempt.artifactIds.includes(artifact.source) && attempt.results.some(result => result.id === artifact.id && result.source === artifact.source && result.url === artifact.url));
+          expect(attempts.length, 'unique_completed_hosted_attempt_required').toBe(1);
+          const imageURL = hostedImageDecodeURL(artifact, history.UploadedImages || [], journal);
+          expect(imageURL, 'typed_journaled_hosted_image_missing').not.toBe('');
+          imageURLs.set(artifact.id, imageURL);
+        }
         const originalIDs = hosted.map(artifact => artifact.id).sort();
         for (let view = 0; view < 2; view++) {
           if (view) await page.reload();
           await page.getByRole('button', { name: 'Upload Images', exact: true }).click();
           await expect(page.getByRole('heading', { name: 'Published images', exact: true })).toBeVisible();
           for (const artifact of hosted) {
-            expect(isLostimgImageURL(artifact.url), 'unexpected_hosted_image_origin').toBe(true);
+            expect(isJournaledImageURL(artifact.url, journaledURLs), 'hosted_image_not_in_run_journal').toBe(true);
             await expect(page.getByRole('link', { name: artifact.url, exact: true })).toHaveAttribute('href', artifact.url);
             const pixels = await page.evaluate(async url => {
               const img = new Image();
               img.src = url;
               await img.decode();
               return { width: img.naturalWidth, height: img.naturalHeight };
-            }, artifact.url);
+            }, imageURLs.get(artifact.id));
             expect(pixels.width).toBeGreaterThan(0);
             expect(pixels.height).toBeGreaterThan(0);
           }
@@ -93,15 +118,6 @@ test('owned embedded live runtime, controls, local images, and selection persist
         await page.screenshot({ path: path.join(runDir, 'browser-artifacts', `${lane.laneId}-hosted.private.png`), fullPage: true });
         results.push({ caseId: lane.caseId, laneId: lane.laneId, stage: 'hosted_preview', status: 'pass', reason: 'published_links_decode_and_survive_reload', evidence: { hosted: hosted.length } });
         continue;
-      }
-      const uploadTab = page.getByRole('button', { name: 'Upload', exact: true });
-      if (await uploadTab.isEnabled()) {
-        await uploadTab.click();
-        await expect(page.getByRole('checkbox', { name: 'Skip client injection' })).toBeChecked();
-        await expect(page.getByRole('checkbox', { name: 'Skip client injection' })).toBeDisabled();
-        await expect(page.getByRole('button', { name: 'Run dry run', exact: true })).toBeVisible();
-        await expect(page.getByRole('button', { name: 'Start upload', exact: true })).toBeDisabled();
-        controlsVerified = true;
       }
       let decoded = 0;
       const frames = new Set();
@@ -274,9 +290,9 @@ test('owned embedded live runtime, controls, local images, and selection persist
         await page.screenshot({ path: path.join(runDir, 'browser-artifacts', `${lane.laneId}.private.png`), fullPage: true });
       }
     }
-    if (!handoff.hostedOnly && !handoff.restartOnly) {
+    if (!handoff.restartOnly) {
       results.push({ caseId: '', laneId: '', stage: 'upload_controls', status: controlsVerified ? 'pass' : handoff.requireUploadControls ? 'inconclusive' : 'not_applicable', reason: controlsVerified ? 'dry_run_and_locked_no_seed_verified' : handoff.requireUploadControls ? 'no_eligible_upload_page' : 'outside_selected_suite' });
-      if (!lifecycleAttempted) results.push({ caseId: '', laneId: '', stage: 'screenshot_cancellation', status: 'inconclusive', reason: 'no_eligible_lifecycle_workflow' });
+      if (!handoff.hostedOnly && !lifecycleAttempted) results.push({ caseId: '', laneId: '', stage: 'screenshot_cancellation', status: 'inconclusive', reason: 'no_eligible_lifecycle_workflow' });
     }
   } finally {
     fs.writeFileSync(path.join(runDir, handoff.hostedOnly ? 'browser-hosted-results.json' : handoff.restartOnly ? 'browser-restart-results.json' : 'browser-results.json'), JSON.stringify({ requests, results }, null, 2));

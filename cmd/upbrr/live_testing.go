@@ -21,6 +21,7 @@ import (
 	"github.com/autobrr/upbrr/internal/imagehosting"
 	"github.com/autobrr/upbrr/internal/livetest"
 	"github.com/autobrr/upbrr/internal/pathing"
+	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -37,6 +38,7 @@ func newLiveTestCommand(streams cliIO) *cobra.Command {
 	cmd.SetOut(streams.out)
 	cmd.SetErr(streams.errOut)
 	var runDir, sourceConfig string
+	var preferDeletableHosts bool
 	initCmd := &cobra.Command{
 		Use:   "init --run-dir <path>",
 		Short: "Snapshot configured credentials into an isolated test profile",
@@ -50,7 +52,18 @@ func newLiveTestCommand(streams cliIO) *cobra.Command {
 				return fmt.Errorf("live-test init lock: %w", err)
 			}
 			defer lock.Close()
-			profile, err := configstore.CreateLiveTestProfile(cmd.Context(), sourceConfig, cmd.Flags().Changed("config"), runDir)
+			options := configstore.LiveTestProfileOptions{}
+			if preferDeletableHosts {
+				registry, err := trackerimpl.NewRegistry()
+				if err != nil {
+					return fmt.Errorf("live-test init tracker registry: %w", err)
+				}
+				options.PreferDeletableHosts = true
+				options.Registry = registry
+			}
+			profile, err := configstore.CreateLiveTestProfileWithOptions(
+				cmd.Context(), sourceConfig, cmd.Flags().Changed("config"), runDir, options,
+			)
 			if err != nil {
 				return fmt.Errorf("live-test init: %w", err)
 			}
@@ -66,6 +79,7 @@ func newLiveTestCommand(streams cliIO) *cobra.Command {
 	}
 	initCmd.Flags().StringVar(&runDir, "run-dir", "", "New directory under the private live-test runs root")
 	initCmd.Flags().StringVar(&sourceConfig, "config", "", "Source configuration using normal config precedence")
+	initCmd.Flags().BoolVar(&preferDeletableHosts, "prefer-deletable-hosts", false, "Prefer configured deletable image hosts in the isolated profile")
 	var cleanupDir string
 	cleanupCmd := &cobra.Command{
 		Use:   "cleanup --run-dir <path>",
@@ -81,8 +95,8 @@ func newLiveTestCommand(streams cliIO) *cobra.Command {
 // openLiveTestRuntime validates the manifest before normal config bootstrap can
 // write anything, and retains the process lock through all background shutdown.
 func openLiveTestRuntime(ctx context.Context, configPath string, provided bool, maxImages int) (config.Config, *api.LiveTestPolicy, *os.File, error) {
-	if maxImages < 0 {
-		return config.Config{}, nil, nil, errors.New("live-test image limit must not be negative")
+	if maxImages < 0 || maxImages > api.MaxLiveTestImageUploads {
+		return config.Config{}, nil, nil, fmt.Errorf("live-test image limit must be between 0 and %d", api.MaxLiveTestImageUploads)
 	}
 	if !provided || strings.TrimSpace(configPath) == "" {
 		return config.Config{}, nil, nil, errors.New("--live-test requires --config from a ready live-test profile")
@@ -141,8 +155,8 @@ func cleanupLiveTestRun(cmd *cobra.Command, runDir string) error {
 		return fmt.Errorf("live-test cleanup lock: %w", err)
 	}
 	defer lock.Close()
-	// Cleanup is terminal for preparation, even when a provider response is
-	// ambiguous. This prevents a resumed workflow from reusing deleted URLs.
+	// Cleanup is terminal for preparation. Unknown uploads remain unresolved;
+	// unconfirmed deletions are reported as retained and are never retried.
 	runRoot, err := os.OpenRoot(profile.RunDir)
 	if err != nil {
 		return fmt.Errorf("live-test cleanup directory: %w", err)

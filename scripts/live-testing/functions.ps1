@@ -1,6 +1,7 @@
 #Requires -Version 7.0
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'bdinfo.ps1')
+. (Join-Path $PSScriptRoot 'images.ps1')
 
 function Get-ToolPath([string]$Name) {
   $command = Get-Command $Name -CommandType Application -ErrorAction Stop | Select-Object -First 1
@@ -309,7 +310,12 @@ function Invoke-BrowserCheck([ValidateSet('local', 'hosted', 'restart')][string]
     # Failed browser checks still consume the budget and retain completed evidence.
     if (Test-Path -LiteralPath $requestsPath) { $script:RequestCount += (Read-PrivateJson $requestsPath).requests }
     if (Test-Path -LiteralPath $receiptPath) {
-      foreach ($row in (Read-PrivateJson $receiptPath).results) { Add-Result $row.caseId $row.laneId $row.stage $row.status $row.reason $row.evidence }
+      foreach ($row in (Read-PrivateJson $receiptPath).results) {
+        if ($row.stage -eq 'upload_controls' -and $row.status -eq 'pass') {
+          $script:Results = @($script:Results | Where-Object { $_.stage -ne 'upload_controls' -or $_.status -notin @('inconclusive', 'not_applicable') })
+        }
+        Add-Result $row.caseId $row.laneId $row.stage $row.status $row.reason $row.evidence
+      }
     }
   }
 }
@@ -407,6 +413,19 @@ function Add-Result([string]$CaseID, [string]$LaneID, [string]$Stage, [string]$S
   }
 }
 
+function Get-LiveFailureCodes($Current) {
+  $failures = @($Current.workflow.failures) + @($Current.operation.failures) + @($Current.preflight.results.failures) +
+    @($Current.dupes.results.failures) + @($Current.media.failures) + @($Current.media.hostAttempts.failures) +
+    @($Current.descriptions.failures) + @($Current.descriptions.trackerResults.failures) + @($Current.dryRun.reports.failures)
+  # OperationFailure uses Go's exported field names, including inside lower-case workflow envelopes.
+  $codes = @($failures | ForEach-Object { $_.failure.Code } | Where-Object { $_ -cmatch '^[a-z][a-z0-9_]{0,80}$' } | Sort-Object -Unique)
+  if (@($codes | Where-Object { $_ -match 'rate_limit|network|timeout|transport' }).Count -gt 0 -or
+      @($failures | Where-Object { $_.failure.Message -match '(?i)rate.limit|too many requests|network|timed?\s*out|connection refused' }).Count -gt 0) {
+    $script:RemoteStop = $true
+  }
+  $codes
+}
+
 function Record-Stage($Lane, $Current, [string]$Goal) {
   $field = @{ prepared = 'release'; trackers_assessed = 'preflight'; duplicates_decided = 'dupes'; media_ready = 'media'; descriptions_ready = 'descriptions'; dry_run = 'dryRun' }[$Goal]
   $value = $Current[$field]
@@ -416,10 +435,7 @@ function Record-Stage($Lane, $Current, [string]$Goal) {
   elseif ($value -and ($Goal -eq 'prepared' -or $value.status -in @('succeeded', 'completed', 'ready'))) { $status = 'pass'; $reason = 'retained_stage_succeeded' }
   elseif ($value.status -in @('failed', 'blocked', 'partial', 'needs_input') -or $Current.continuation.disposition -in @('failed', 'blocked', 'partial')) { $status = 'blocked'; $reason = 'workflow_stage_blocked' }
   if ($Goal -eq 'media_ready' -and @($value.artifacts | Where-Object { $_.kind -eq 'screenshot' }).Count -gt 0) { $status = 'inconclusive'; $reason = 'local_capture_requires_decode' }
-  $failures = @($Current.workflow.failures) + @($Current.operation.failures) + @($Current.preflight.results.failures) + @($Current.dupes.results.failures) + @($Current.media.failures)
-  $failureCodes = @($failures | ForEach-Object { $_.failure.code } | Where-Object { $_ -cmatch '^[a-z][a-z0-9_]{0,80}$' } | Sort-Object -Unique)
-  if (@($failureCodes | Where-Object { $_ -match 'rate_limit|network|timeout|transport' }).Count -gt 0) { $script:RemoteStop = $true }
-  if (@($failures | Where-Object { $_.failure.message -match '(?i)rate.limit|too many requests|network|timed?\s*out|connection refused' }).Count -gt 0) { $script:RemoteStop = $true }
+  $failureCodes = @(Get-LiveFailureCodes $Current)
   if ($Current.selection -and (ConvertTo-Json -InputObject @($Current.selection.trackerIds) -Compress) -cne (ConvertTo-Json -InputObject @($Lane.trackerIds) -Compress)) { throw 'tracker_selection_changed' }
   if ($Goal -eq 'dry_run' -and $value -and $value.noSeed -ne $true) { $status = 'fail'; $reason = 'dry_run_no_seed_not_locked' }
   if ($Goal -eq 'prepared' -and $status -eq 'pass') {
@@ -508,8 +524,17 @@ function Stop-RecordedServer([string]$Directory) {
   $child.Kill($true); $child.WaitForExit()
 }
 
+function Get-LiveRestartLane {
+  foreach ($stage in @('image_host', 'media_ready')) {
+    $passed = @($script:Results | Where-Object { $_.stage -eq $stage -and $_.status -eq 'pass' } | Select-Object -ExpandProperty laneId -Unique)
+    $eligible = @($script:Lanes | Where-Object { $_.workflowId -and $_.laneId -cin $passed } | Select-Object -First 1)
+    if ($eligible.Count -gt 0) { return $eligible[0] }
+  }
+  $script:Lanes | Where-Object workflowId | Select-Object -First 1
+}
+
 function Invoke-RunCleanup {
-  $script:Cleanup = @{ deleted = $null; pending = $null; unknown = $null; failed = $null; state = 'unresolved' }
+  $script:Cleanup = @{ deleted = $null; retained = $null; pending = $null; unknown = $null; failed = $null; state = 'unresolved' }
   Stop-RecordedServer $script:RunDir
   $logBase = Join-Path $script:RunDir ('cleanup-' + [guid]::NewGuid().ToString('N'))
   $handle = Start-OwnedProcess $script:Binary @('live-test', 'cleanup', '--run-dir', $script:RunDir) $logBase
@@ -520,7 +545,7 @@ function Invoke-RunCleanup {
   try { $receipt = Read-PrivateJson "$logBase.stdout.private.log" } catch { throw 'cleanup_receipt_missing' }
   if ($receipt.runId -cne $script:Run.runId) { throw 'cleanup_identity_mismatch' }
   Write-PrivateJson (Join-Path $script:RunDir 'cleanup.json') $receipt
-  $script:Cleanup = @{ deleted = $receipt.deleted; pending = $receipt.pending; unknown = $receipt.unknown; failed = $receipt.failed; state = 'unresolved' }
+  $script:Cleanup = @{ deleted = $receipt.deleted; retained = [int]$receipt.retained; pending = $receipt.pending; unknown = $receipt.unknown; failed = $receipt.failed; state = 'unresolved' }
   if ($exitCode -ne 0 -or $receipt.pending -gt 0 -or $receipt.unknown -gt 0 -or $receipt.failed -gt 0) { throw 'cleanup_unresolved' }
   $script:Cleanup.state = 'complete'
 }

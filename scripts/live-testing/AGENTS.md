@@ -12,6 +12,8 @@ installation; do not add dependencies.
 - Start only an identified production live-test binary. Remove E2E substitutions
   from child environments. Stop only owned processes, then use `live-test cleanup`.
 - Image hosting requires explicit bounded permission. Never call providers from
-  the runner. Pending or unknown cleanup is incomplete, even after local success.
+  the runner. Prefer supported, configured Lostimg in isolated profiles; other
+  compatible hosts are allowed and confirmed non-deletable uploads are retained.
+  Pending or unknown effects remain incomplete, even after local success.
 - Worker checks: PS parser, `validate.ps1`, and separate browser `--list` discovery.
   The parent owns Go/frontend/E2E checks, actual live execution, and independent review.

@@ -284,6 +284,56 @@ func TestCreateLiveTestProfileRejectsUnsafeSources(t *testing.T) {
 	}
 }
 
+func TestCreateLiveTestProfileRejectsCaseFoldedTrackerDuplicates(t *testing.T) {
+	for _, test := range []struct {
+		canonical string
+		alias     string
+	}{
+		{canonical: "HDB", alias: "hdb"},
+		{canonical: "THR", alias: "thr"},
+	} {
+		t.Run(test.canonical, func(t *testing.T) {
+			source, runDir := liveTestFixture(t)
+			cfg, err := configstore.LoadFromDBPath(t.Context(), source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg.Trackers.Trackers[test.alias] = config.TrackerConfig{ImgAPI: "synthetic-alias-key"}
+			if err := configstore.SaveToDBPath(t.Context(), cfg, source); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := configstore.CreateLiveTestProfile(t.Context(), "", false, runDir); err == nil ||
+				!strings.Contains(err.Error(), "duplicate") {
+				t.Fatalf("case-folded tracker duplicate was accepted: %v", err)
+			}
+			if _, err := livetest.LoadProfile(runDir); err == nil {
+				t.Fatal("failed construction published runnable profile")
+			}
+		})
+	}
+}
+
+func TestValidateLiveTestTrackerConfigNames(t *testing.T) {
+	t.Parallel()
+
+	if err := configstore.ValidateLiveTestTrackerConfigNames(map[string]config.TrackerConfig{
+		"HDB": {},
+		"PTP": {},
+		"thr": {},
+	}); err != nil {
+		t.Fatalf("distinct tracker names rejected: %v", err)
+	}
+	for _, trackers := range []map[string]config.TrackerConfig{
+		{"HDB": {}, "hdb": {}},
+		{"hDb": {}, "hdb": {}},
+		{"tHr": {}, "thr": {}},
+	} {
+		if err := configstore.ValidateLiveTestTrackerConfigNames(trackers); err == nil {
+			t.Fatalf("case-folded tracker duplicate accepted: %#v", trackers)
+		}
+	}
+}
+
 func TestCreateLiveTestProfileAppliesProvidedConfigOnlyToClone(t *testing.T) {
 	source, runDir := liveTestFixture(t)
 	provided := filepath.Join(t.TempDir(), "overlay.yaml")

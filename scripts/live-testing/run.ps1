@@ -7,7 +7,8 @@ param(
   [Parameter(ParameterSetName = 'New')][switch]$Sat,
   [Parameter(ParameterSetName = 'New')][switch]$DebugCoverage,
   [Parameter(ParameterSetName = 'New')][switch]$UploadImages,
-  [Parameter(ParameterSetName = 'New')][ValidateRange(1, 10)][int]$MaxImages = 3,
+  [Parameter(ParameterSetName = 'New')][switch]$ImageHostCoverage,
+  [Parameter(ParameterSetName = 'New')][ValidateRange(1, 500)][int]$MaxImages = 3,
   [Parameter(ParameterSetName = 'New')][ValidateRange(1, 10)][int]$ScreenshotCount = 3,
   [Parameter(ParameterSetName = 'New')][ValidateRange(10, 2000)][int]$MaxRequests = 200,
   [Parameter(ParameterSetName = 'New')][ValidateRange(30, 3600)][int]$TimeoutSeconds = 900,
@@ -25,12 +26,13 @@ $privateRoot = Join-Path $env:LOCALAPPDATA 'upbrr-live-testing'
 $script:BaseURL = 'http://127.0.0.1:7480'
 $script:Results = @(); $script:Feedback = @(); $script:Lanes = @()
 $script:RequestCount = 0; $script:RemoteStop = $false
-$script:Cleanup = @{ deleted = 0; pending = 0; unknown = 0; failed = 0; state = 'not_started' }
+$script:Cleanup = @{ deleted = 0; retained = 0; pending = 0; unknown = 0; failed = 0; state = 'not_started' }
 $server = $null; $runnerLock = $null; $initialized = $false; $keepForFeedback = $false
 $exitCode = 0; $script:Run = $null; $script:RunDir = $null
 
 try {
   if ($PSCmdlet.ParameterSetName -eq 'New') {
+    if ($ImageHostCoverage) { $UploadImages = $true }
     $Corpus = Assert-PrivatePath $Corpus $privateRoot
     $scenariosSHA256 = (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'scenarios.json')).Hash
     $scenarios = Read-PrivateJson (Join-Path $PSScriptRoot 'scenarios.json')
@@ -88,6 +90,7 @@ try {
     if ((Get-FileHash -LiteralPath $Corpus).Hash -cne $corpusSHA256) { throw 'corpus_changed_during_run' }
     $initArgs = @('live-test', 'init', '--run-dir', $script:RunDir)
     if ($Config) { $initArgs += @('--config', $Config) }
+    if ($UploadImages) { $initArgs += '--prefer-deletable-hosts' }
     Invoke-OwnedProcess $builtBinary $initArgs (Join-Path $buildDir 'init')
     $profile = Read-PrivateJson (Join-Path $buildDir 'init.stdout.private.log')
     $initialized = $true
@@ -128,6 +131,7 @@ try {
       configDefaultTrackers = @($profile.defaultTrackers); selectedTrackers = $trackers; trackerScope = $(if ($Tracker) { 'explicit' } else { 'config_defaults' })
       suite = $Suite; caseIds = @($selected); corpusPath = $Corpus; corpusSha256 = $corpusSHA256
       sat = [bool]$Sat; executionMode = $(if ($DebugCoverage) { 'debug' } else { 'normal' })
+      imageHostCoverage = [bool]$ImageHostCoverage; preferDeletableHosts = [bool]$UploadImages
       budgets = @{ maxImages = $(if ($UploadImages) { $MaxImages } else { 0 }); maxRequests = $MaxRequests; timeoutSeconds = $TimeoutSeconds; screenshotCount = $ScreenshotCount }
       buildLogs = $buildDir; expectedSafetyDenials = 0; requests = 0; gaps = @($scenarios.gaps)
     }
@@ -220,7 +224,10 @@ try {
           continue
         }
         $variants = @([bool]$script:Run.sat)
-        if ($script:Run.suite -in @('Dupe', 'Full') -and -not $script:Run.sat -and $entry.case.case_id -in $scenarios.dupe) { $variants = @($false, $true) }
+        if ($script:Run.suite -in @('Dupe', 'Full') -and -not $script:Run.sat -and $entry.case.case_id -in $scenarios.dupe) {
+          $variants = @($false, $true)
+          if ($script:Run.budgets.maxImages -gt 0) { $variants = @($true, $false) }
+        }
         # Registered configured defaults stay in their original order. Unavailable intended defaults
         # remain in the run report with a blocked result for each selected case.
         $laneTrackers = ,@($script:Run.availableTrackers)
@@ -267,6 +274,12 @@ try {
                 if (-not $current.dupes) { continue }
               } else { Add-Result $lane.caseId $lane.laneId 'duplicates_decided' 'not_applicable' 'local_capture_scope' }
               if ($script:Run.suite -eq 'Dupe') { continue }
+              # A later forced SAT preparation would invalidate the ordinary lane's
+              # captured generation before its deferred image upload and dry run.
+              if ($script:Run.budgets.maxImages -gt 0 -and $variant -and $variants -contains $false) {
+                Add-Result $lane.caseId $lane.laneId 'media_ready' 'not_applicable' 'source_capture_deferred_to_normal_lane'
+                continue
+              }
               if ($capturedCases.ContainsKey($lane.caseId)) {
                 Add-Result $lane.caseId $lane.laneId 'media_ready' 'not_applicable' 'source_capture_covered_in_another_lane'
                 continue
@@ -326,36 +339,7 @@ try {
     } catch { Add-Result '' '' 'embedded_browser' 'fail' 'browser_check_failed'; $script:RemoteStop = $true }
 
     if ($script:Run.budgets.maxImages -gt 0 -and -not $script:RemoteStop) {
-      # One bounded host canary, using normal backend host selection. Unsupported hosts are blocked by runtime.
-      $decodedLanes = @($script:Results | Where-Object { $_.stage -eq 'image_decode' -and $_.status -eq 'pass' } | Select-Object -ExpandProperty laneId -Unique)
-      $uploadLane = @($script:Lanes | Where-Object { $_.laneId -cin $decodedLanes -and -not $_.pendingFeedback } | Select-Object -First 1)
-      if ($uploadLane.Count -eq 0) { Add-Result '' '' 'image_host' 'blocked' 'local_decode_required' }
-      else {
-        $lane = $uploadLane[0]
-        try {
-          $current = Invoke-LiveAPI 'GetReleaseWorkflow' @{ workflowId = $lane.workflowId }
-          $local = @($current.media.artifacts | Where-Object { $_.kind -eq 'screenshot' -and $_.selected } | Sort-Object order | Select-Object -First $script:Run.budgets.maxImages)
-          if ($local.Count -eq 0) { throw 'selected_local_images_required' }
-          $command = @{ workflowId = $current.workflow.id; expectedRevision = $current.workflow.revision; media = @{ id = $current.media.id; revision = $current.media.revision }; artifactIds = @($local.id); idempotencyKey = [guid]::NewGuid().ToString('N') }
-          $current = Wait-Workflow (Invoke-LiveAPI 'UploadReleaseWorkflowImages' $command -ExpectedStatus 202) (Join-Path $script:RunDir "snapshots/$($lane.laneId).private.json")
-          $hosted = @($current.media.artifacts | Where-Object kind -EQ 'hosted_image')
-          Add-Result $lane.caseId $lane.laneId 'image_host' $(if ($hosted.Count -ge $local.Count) { 'pass' } else { 'blocked' }) $(if ($hosted.Count -ge $local.Count) { 'journaled_images_hosted' } else { 'configured_host_or_budget_blocked' }) @{ selected = $local.Count; hosted = $hosted.Count }
-          if ($hosted.Count -ge $local.Count) {
-            $browserHandoff.hostedOnly = $true
-            $browserHandoff.lanes = @($lane)
-            $browserHandoff.remainingRequests = [Math]::Max(0, $script:Run.budgets.maxRequests - $script:RequestCount)
-            Write-PrivateJson (Join-Path $script:RunDir 'browser.private.json') $browserHandoff
-            try {
-              $null = Invoke-BrowserCheck 'hosted'
-            } catch { Add-Result $lane.caseId $lane.laneId 'hosted_preview' 'fail' 'hosted_preview_failed'; throw }
-            $intent = @{ executionMode = $script:Run.executionMode; interaction = 'unattended'; trackerIds = $lane.trackerIds; noSeed = $true; skipRemoteDuplicates = $false; descriptions = @{ options = @{ NoSeed = $true; InteractionMode = 'unattended' }; imageHost = @{} } }
-            foreach ($goal in @('descriptions_ready', 'dry_run')) {
-              $current = Continue-Lane $lane $goal $current $intent
-              if ((Record-Stage $lane $current $goal) -ne 'pass') { break }
-            }
-          }
-        } catch { Add-Result $lane.caseId $lane.laneId 'image_host' 'blocked' 'host_canary_incomplete' }
-      }
+      Invoke-LiveImageChecks $browserHandoff
     } else {
       Add-Result '' '' 'image_host' 'not_applicable' 'image_uploads_not_authorized_or_remote_stopped'
       if ($script:Run.suite -in @('Smoke', 'Full')) { Add-Result '' '' 'dry_run' 'blocked' 'hosting_or_duplicate_prerequisites_unfulfilled' }
@@ -369,7 +353,7 @@ try {
     $script:Run.effects = @{ trackerSubmission = $effects.trackerSubmission; clientMutation = $effects.clientMutation; expectedNegativeDenialsThisSession = 1; unexpectedDenialsThisSession = $unexpected }
     Add-Result '' '' 'forbidden_effects' $(if ($unexpected -eq 0 -and $remoteCalls -eq 0) { 'pass' } else { 'fail' }) $(if ($unexpected -eq 0 -and $remoteCalls -eq 0) { 'zero_forbidden_calls' } else { 'unexpected_policy_effect' })
     # One owned restart checks persistence without replaying choices or performing new remote work.
-    $restartLane = @($script:Lanes | Where-Object workflowId | Select-Object -First 1)
+    $restartLane = @(Get-LiveRestartLane)
     if ($restartLane.Count -gt 0) {
       Write-Host 'Checking one server restart with the original binary, profile, and image budget.'
       $lane = $restartLane[0]
@@ -435,7 +419,7 @@ try {
       $keepForFeedback = $keepForFeedback -or @($script:Feedback | Where-Object { $_.authority -and $_.status -eq 'needs_input' }).Count -gt 0
       if ($keepForFeedback) {
         $script:Run.state = 'needs_input'; $script:Cleanup.state = 'deferred_for_feedback'
-        if ($script:Run.budgets.maxImages -gt 0) { $script:Cleanup.pending = $null; $script:Cleanup.unknown = $null; $script:Cleanup.failed = $null }
+        if ($script:Run.budgets.maxImages -gt 0) { $script:Cleanup.retained = $null; $script:Cleanup.pending = $null; $script:Cleanup.unknown = $null; $script:Cleanup.failed = $null }
       }
       else {
         try { Invoke-RunCleanup; $script:Run.state = 'cleaned'; $script:Cleanup.state = 'complete' }
@@ -457,6 +441,8 @@ try {
     elseif ($counts.blocked -gt 0 -or $script:Cleanup.state -eq 'unresolved') { $overall = 'blocked' }
     elseif ($counts.inconclusive -eq 0 -and $counts.pass -gt 0 -and $script:Cleanup.state -eq 'complete') { $overall = 'pass' }
     $report = @{ version = 1; runId = $runID; status = $overall; suite = $script:Run.suite; executionMode = $script:Run.executionMode; buildIdentifier = $script:Run.buildIdentifier; binarySha256 = $script:Run.binarySha256; configFingerprint = $script:Run.configFingerprint; configDefaultTrackers = $script:Run.configDefaultTrackers; selectedTrackers = $script:Run.selectedTrackers; availableTrackers = $script:Run.availableTrackers; unavailableTrackers = $script:Run.unavailableTrackers; trackerScope = $script:Run.trackerScope; cases = $script:Run.caseIds; budgets = $script:Run.budgets; requests = $script:Run.requests; counts = $counts; effects = $script:Run.effects; restartEffects = $script:Run.restartEffects; cleanup = $script:Cleanup; gaps = $script:Run.gaps; results = $script:Results }
+    $report.imageHostCoverage = [bool]$script:Run.imageHostCoverage
+    $report.preferDeletableHosts = [bool]$script:Run.preferDeletableHosts
     Write-PrivateJson (Join-Path $script:RunDir 'report.json') $report
     $markdown = @("# Live testing $runID", '', "Status: $overall. Mode: $($script:Run.executionMode).", '', "Intended trackers: $($script:Run.selectedTrackers -join ', ').", "Available trackers: $($script:Run.availableTrackers -join ', ').", "Unavailable trackers: $($script:Run.unavailableTrackers -join ', ').", '', 'This receipt contains only stable case IDs, outcomes, and counters. Private snapshots contain source and tracker evidence.', '', '| Case | Lane | Stage | Status | Reason |', '| --- | --- | --- | --- | --- |')
     foreach ($row in $script:Results) { $markdown += "| $($row.caseId) | $($row.laneId) | $($row.stage) | $($row.status) | $($row.reason) |" }
@@ -467,7 +453,7 @@ try {
         foreach ($search in $row.evidence.duplicateSearches) { $markdown += "| $($row.caseId) | $($row.laneId) | $($search.trackerId) | $($row.evidence.sat) | $($search.status) | $($search.decision) | $($search.scope) | $($search.complete) | $($search.pages) | $($search.candidateCount) |" }
       }
     }
-    $markdown += @('', "Cleanup: $($script:Cleanup.state); deleted=$($script:Cleanup.deleted), pending=$($script:Cleanup.pending), unknown=$($script:Cleanup.unknown), failed=$($script:Cleanup.failed).", '', 'Coverage gaps: ' + ($script:Run.gaps -join ', '), '', 'Use feedback.private.json for exact typed actions; resume only the retained unchanged run. Use -CleanupRun to abandon feedback and reconcile every image effect.')
+    $markdown += @('', "Cleanup: $($script:Cleanup.state); deleted=$($script:Cleanup.deleted), retained=$($script:Cleanup.retained), pending=$($script:Cleanup.pending), unknown=$($script:Cleanup.unknown), failed=$($script:Cleanup.failed).", '', 'Coverage gaps: ' + ($script:Run.gaps -join ', '), '', 'Use feedback.private.json for exact typed actions; resume only the retained unchanged run. Use -CleanupRun to abandon feedback and reconcile every image effect.')
     [IO.File]::WriteAllText((Join-Path $script:RunDir 'report.md'), ($markdown -join "`n"))
     Write-Host "run=$runID status=$overall cleanup=$($script:Cleanup.state)"
     if (-not $CleanupRun -and $overall -ne 'pass') { $exitCode = 2 }

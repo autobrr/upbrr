@@ -12,7 +12,9 @@ pwsh -NoProfile -File .\scripts\live-testing\run.ps1 -Suite Smoke
 pwsh -NoProfile -File .\scripts\live-testing\run.ps1 -Suite Screenshots
 pwsh -NoProfile -File .\scripts\live-testing\run.ps1 -Suite Dupe -Tracker LST -Sat
 pwsh -NoProfile -File .\scripts\live-testing\run.ps1 -Suite Screenshots -DebugCoverage
-pwsh -NoProfile -File .\scripts\live-testing\run.ps1 -Suite Smoke -CaseId MOV-1080-WEB -UploadImages -MaxImages 1
+pwsh -NoProfile -File .\scripts\live-testing\run.ps1 -Suite Full -Tracker ULCX -UploadImages -MaxImages 100
+pwsh -NoProfile -File .\scripts\live-testing\run.ps1 -Suite Full -Tracker ULCX -ImageHostCoverage -MaxImages 100
+pwsh -NoProfile -File .\scripts\live-testing\run.ps1 -Suite Screenshots -CaseId MOV-1080-WEB -ScreenshotCount 1 -UploadImages -MaxImages 1
 pwsh -NoProfile -File .\scripts\live-testing\run.ps1 -ResumeRun '<run-id>'
 pwsh -NoProfile -File .\scripts\live-testing\run.ps1 -CleanupRun '<run-id>'
 pwsh -NoProfile -File .\scripts\live-testing\compare.ps1 -BaselineRunDir '<absolute-private-baseline>' -CandidateRunDir '<absolute-private-candidate>'
@@ -22,8 +24,8 @@ pwsh -NoProfile -File .\scripts\live-testing\check-cli.ps1 -BaselineRunDir '<abs
 `-Tracker` is for an explicitly tracker-specific investigation and accepts exactly
 one ID. Otherwise every selected case receives the current configured default
 tracker list, in its existing order. The backend determines eligibility and
-preserves blocked lanes. No replacement tracker or image host is selected when a
-configured service fails. `-Config` selects the source configuration for cloning.
+preserves blocked lanes. No replacement tracker is selected when a configured
+service fails. `-Config` selects the source configuration for cloning.
 
 `Smoke` uses five representative cases. `Screenshots` selects all 25 saved cases.
 `Dupe` uses one movie and the paired pack/episode inputs; without `-Sat` it creates
@@ -41,16 +43,41 @@ an authoritative `in_client` block. Ordinary requests use `executionMode=normal`
 `-DebugCoverage` explicitly records `executionMode=debug`, including its normal
 policy bypass semantics. Both modes prohibit tracker submission and client writes.
 
-The default image budget is zero. `-UploadImages` enables one bounded canary after
-local images have decoded successfully. `-MaxImages` (1–10, default 3) is the
+The default image budget is zero. `-UploadImages` enables hosting after local
+images have decoded successfully. `Smoke` and `Full` upload
+at least `-ScreenshotCount` for every eligible media lane, honoring any higher
+count in its retained tracker requirements, then generate descriptions and
+full tracker dry-run reports. Budget exhaustion is reported per lane; the runner
+does not silently reduce a full dry-run's required images to a single canary.
+`-MaxImages` (1–500, default 3) is the
 durable per-run dispatch budget, including failed/unknown attempts; it cannot be
-increased on resume. The configured host choices remain authoritative. Only hosts
-with runtime cleanup support can upload; currently that is Lostimg. A one-image
-canary exercises hosting and cleanup only and cannot satisfy LST's three-image
-description rule. Description/dry-run stages are attempted after successful
-hosting and remain blocked if their normal prerequisites are unmet.
+increased on resume. Use a budget appropriate to the number of eligible cases and
+required hosts. Tracker submissions and client writes remain prohibited.
 
-`-ScreenshotCount` is 1–10 (default 3). `-MaxRequests` bounds runner API commands
+Upload-enabled runs clone the configuration with `live-test init
+--prefer-deletable-hosts`: configured Lostimg is preferred only for trackers whose
+registered policy permits it. This changes the private profile, never the source
+configuration. Other compatible configured hosts use their production uploaders,
+with each attempt reserved in the live journal before dispatch. Deletion support
+is not an upload prerequisite. Cleanup deletes confirmed Lostimg images and
+reports other confirmed successful uploads as `retained`; those uploads may remain
+on the provider. Unknown outcomes remain unresolved and are never retried.
+
+`-ImageHostCoverage` is the separate opt-in pipeline check and also enables bounded
+image uploads. In addition to required hosting, it tries one image per configured,
+tracker-compatible host across eligible lanes. A host already exercised by required
+hosting counts toward coverage. It uses the configured priority slots and each
+selected tracker's configured host, filtered through registered acceptance and
+ownership metadata. It does not infer usable credentials from encrypted exports
+or probe every known provider. Missing authentication or policy prerequisites are
+reported by the production workflow. These coverage results are separate from
+description/dry-run results, and all attempts share the same image budget.
+
+`-ScreenshotCount` is 1–10 (default 3); production tracker requirements may raise
+the selected upload count. With image uploads enabled, automatic paired SAT
+checks run before the ordinary lane, which owns the deferred screenshot upload
+and dry run, so forced SAT preparation cannot invalidate that generation.
+`-MaxRequests` bounds runner API commands
 (default 200, maximum 2000), with operation polls bounded separately by
 `-TimeoutSeconds` (default 900, maximum 3600). It is not a count of internal tracker
 HTTP requests. Cases run sequentially. A network/rate-limit signal stops further
@@ -174,11 +201,13 @@ Changed source/config/rule evidence requires a new run. Pending
 typed feedback stops the server but keeps the run resumable; browser mutations
 and hosting do not alter those pending lanes. Run `-CleanupRun` to abandon that
 feedback and reconcile image effects. Cleanup creates a terminal marker: that
-profile can never prepare or upload again. New work requires a new run. Unknown
-or failed deletion results remain pending. The cleanup command cannot resolve an
-upload whose provider URL was never returned, or accept a manual-deletion claim.
-Those cases need operator reconciliation of the exact image and terminal run
-state, with a private confirmation receipt alongside the unchanged journal.
+profile can never prepare or upload again. New work requires a new run. Known
+uploads remain `retained` when deletion is unavailable, failed, or unconfirmed;
+those deletion outcomes are terminal and do not block cleanup completion. Unknown
+upload outcomes remain unresolved. The cleanup command cannot resolve an upload
+whose provider URL was never returned, or accept a manual-deletion claim. Unknown
+uploads need operator reconciliation of the exact image and terminal run state,
+with a private confirmation receipt alongside the unchanged journal.
 Never retry an uncertain upload or invent a provider acknowledgement.
 
 ## Reports and checks
@@ -200,8 +229,12 @@ logical slot at a changed timestamp, makes one cancellation attempt, and restore
 the intended selection/order using fresh artifact IDs. A capture completing
 before cancellation is inconclusive. Typed feedback preserves the exact pending
 authority. After an API host canary, a separate browser pass verifies
-retained published links, decodes their remote images, and verifies persistence
-after reload. Finally, one owned server restart verifies the original binary,
+retained published links against the run's image journal, decodes their remote
+images across providers, and verifies persistence after reload. Completed dry-run
+reports also check projected/report/payload name agreement, prepared torrent
+identity, and skipped client injection. These structural checks do not replace
+tracker-specific inspection of taxonomy, IDs, descriptions, and media reports.
+Finally, one owned server restart verifies the original binary,
 profile, policy and workflow identity, compares retained media, and decodes any
 retained local images. Recovery that requires re-preparation produces fresh typed
 feedback. Original and restarted process effect counters are separate. Unavailable

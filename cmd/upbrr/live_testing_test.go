@@ -55,7 +55,12 @@ func TestLiveTestCLIProfileStartupAndTerminalCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg.MainSettings.DBPath = source
-	cfg.Trackers.DefaultTrackers = config.CSVList{"LST"}
+	cfg.Trackers.DefaultTrackers = config.CSVList{"BHD"}
+	lstConfig := cfg.Trackers.Trackers["LST"]
+	lstConfig.ImageHost = "imgbb"
+	cfg.Trackers.Trackers["LST"] = lstConfig
+	cfg.ImageHosting.LostimgEnabled = true
+	cfg.ImageHosting.LostimgAPI = "synthetic-lostimg-key"
 	if err := configstore.SaveToDBPath(t.Context(), cfg, source); err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +69,7 @@ func TestLiveTestCLIProfileStartupAndTerminalCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	runDir := filepath.Join(root, "runs", "synthetic-cli")
-	result := executeCLIForTest(t.Context(), t, []string{"live-test", "init", "--run-dir", runDir})
+	result := executeCLIForTest(t.Context(), t, []string{"live-test", "init", "--run-dir", runDir, "--prefer-deletable-hosts"})
 	if result.err != nil {
 		t.Fatal(result.err)
 	}
@@ -72,13 +77,38 @@ func TestLiveTestCLIProfileStartupAndTerminalCleanup(t *testing.T) {
 	if err := json.Unmarshal([]byte(result.stdout), &profile); err != nil {
 		t.Fatal(err)
 	}
+	if len(profile.DefaultTrackers) != 1 || profile.DefaultTrackers[0] != "BHD" {
+		t.Fatalf("live-test init changed default trackers: %v", profile.DefaultTrackers)
+	}
 	t.Setenv("UA_DEFAULT_DB_PATH", source)
+	if _, _, unsafeLock, err := openLiveTestRuntime(
+		t.Context(), profile.ConfigPath, true, api.MaxLiveTestImageUploads+1,
+	); err == nil {
+		_ = unsafeLock.Close()
+		t.Fatal("over-limit image budget was accepted")
+	}
 	loaded, policy, lock, err := openLiveTestRuntime(t.Context(), profile.ConfigPath, true, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if loaded.MainSettings.DBPath != profile.DBPath || policy.RunID() != profile.RunID {
 		t.Fatal("runtime escaped its ready profile")
+	}
+	if loaded.Trackers.Trackers["LST"].ImageHost != "lostimg" {
+		t.Fatal("isolated profile did not prefer the deletable host for configured non-default tracker")
+	}
+	if len(loaded.Trackers.DefaultTrackers) != 1 || loaded.Trackers.DefaultTrackers[0] != "BHD" {
+		t.Fatalf("isolated profile changed default trackers: %v", loaded.Trackers.DefaultTrackers)
+	}
+	sourceAfter, err := configstore.LoadFromDBPath(t.Context(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sourceAfter.Trackers.Trackers["LST"].ImageHost != "imgbb" {
+		t.Fatal("live-test host preference mutated the source profile")
+	}
+	if len(sourceAfter.Trackers.DefaultTrackers) != 1 || sourceAfter.Trackers.DefaultTrackers[0] != "BHD" {
+		t.Fatalf("live-test host preference changed source default trackers: %v", sourceAfter.Trackers.DefaultTrackers)
 	}
 	if _, _, second, err := openLiveTestRuntime(t.Context(), profile.ConfigPath, true, 0); err == nil {
 		_ = second.Close()
@@ -98,6 +128,25 @@ func TestLiveTestCLIProfileStartupAndTerminalCleanup(t *testing.T) {
 	}
 	t.Setenv("UPBRR_E2E_TEST", "")
 	if err := os.Unsetenv("UPBRR_E2E_TEST"); err != nil {
+		t.Fatal(err)
+	}
+	retained, err := configstore.LoadFromDBPath(t.Context(), profile.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained.Trackers.Trackers["hdb"] = config.TrackerConfig{Username: "synthetic-alias-user", Passkey: "synthetic-alias-passkey"}
+	if err := configstore.SaveToDBPath(t.Context(), retained, profile.DBPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, unsafeLock, err := openLiveTestRuntime(t.Context(), profile.ConfigPath, true, 0); err == nil ||
+		!strings.Contains(err.Error(), "duplicate") {
+		if unsafeLock != nil {
+			_ = unsafeLock.Close()
+		}
+		t.Fatalf("ambiguous retained profile was accepted: %v", err)
+	}
+	delete(retained.Trackers.Trackers, "hdb")
+	if err := configstore.SaveToDBPath(t.Context(), retained, profile.DBPath); err != nil {
 		t.Fatal(err)
 	}
 	// A startup that never reached image service construction still has no effects.

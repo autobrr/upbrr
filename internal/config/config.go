@@ -1133,6 +1133,26 @@ func trackerAPIKeyForExactName(trackers map[string]TrackerConfig, name string) s
 	return ""
 }
 
+// TrackerConfigByName returns the exact canonical tracker entry when present,
+// then the first trimmed case-insensitive alias in lexical order.
+func TrackerConfigByName(trackers map[string]TrackerConfig, name string) (TrackerConfig, bool) {
+	canonical := strings.TrimSpace(name)
+	if trackerCfg, ok := trackers[canonical]; ok {
+		return trackerCfg, true
+	}
+	aliases := make([]string, 0, 1)
+	for trackerName := range trackers {
+		if strings.EqualFold(strings.TrimSpace(trackerName), canonical) {
+			aliases = append(aliases, trackerName)
+		}
+	}
+	if len(aliases) == 0 {
+		return TrackerConfig{}, false
+	}
+	sort.Strings(aliases)
+	return trackers[aliases[0]], true
+}
+
 // MergeMissingTrackerDefaults backfills tracker stubs from the embedded example
 // config so older saved configs can discover newly added trackers in the WebUI.
 // Existing exact tracker names are preserved; ASCII case variants of "BTN" are

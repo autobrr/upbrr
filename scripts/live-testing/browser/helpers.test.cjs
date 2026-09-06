@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { createRequestPacer, isLostimgImageURL, compareMediaOrder, screenshotLifecyclePlan, recaptureScreenshotProbe } = require('./helpers.cjs');
+const { createRequestPacer, isJournaledImageURL, hostedImageDecodeURL, compareMediaOrder, screenshotLifecyclePlan, recaptureScreenshotProbe } = require('./helpers.cjs');
 
 test('concurrent page and direct API requests share serial pacing instead of bursting', async t => {
   const timers = [];
@@ -20,9 +20,30 @@ test('concurrent page and direct API requests share serial pacing instead of bur
   assert.deepEqual(dispatched, ['page', 'api', 'page']);
 });
 
-test('accept production Lostimg image URLs and reject unrelated origins and schemes', () => {
-  for (const value of ['https://lostimg.cc/a.png', 'https://i.lostimg.cc/b.png']) assert.equal(isLostimgImageURL(value), true);
-  for (const value of ['http://lostimg.cc/a.png', 'https://lostimg.com/a.png', 'https://lostimg.cc.example.com/a.png', 'https://example.com/lostimg.cc', 'https://user:password@lostimg.cc/a.png', 'data:image/png;base64,AA==']) assert.equal(isLostimgImageURL(value), false);
+test('accept exact journaled HTTPS URLs across providers and reject unjournaled URLs or unsafe schemes', () => {
+  const returned = ['https://lostimg.cc/a.png', 'https://i.ptscreens.com/b.png', 'https://images.example.test/c.png'];
+  const unsafe = ['http://images.example.test/a.png', 'https://user:password@images.example.test/a.png', 'data:image/png;base64,AA==', 'not a URL'];
+  const journaled = new Set([...returned, ...unsafe]);
+  for (const value of returned) assert.equal(isJournaledImageURL(value, journaled), true);
+  for (const value of [...unsafe, 'https://lostimg.cc/other.png', 'https://i.ptscreens.com/b.png?different=true']) assert.equal(isJournaledImageURL(value, journaled), false);
+});
+
+test('decode typed image URLs while retaining exact viewer, provider, and journal association', () => {
+  const artifact = { host: 'ptscreens', url: 'https://images.example.test/view/synthetic' };
+  const image = 'https://cdn.example.test/synthetic.png';
+  const link = { Host: 'ptscreens', WebURL: artifact.url, ImgURL: image };
+  const journal = [{ kind: 'uploaded', provider: artifact.host, urls: [image, artifact.url] }];
+  assert.equal(hostedImageDecodeURL(artifact, [link], journal), image);
+  assert.equal(hostedImageDecodeURL(artifact, [link, link], journal), '');
+  assert.equal(hostedImageDecodeURL(artifact, [{ ...link, ImgURL: '', RawURL: image }], journal), image);
+  assert.equal(hostedImageDecodeURL(artifact, [{ ...link, Host: 'imgbb' }], journal), '');
+  assert.equal(hostedImageDecodeURL(artifact, [{ ...link, WebURL: 'https://images.example.test/view/other' }], journal), '');
+  assert.equal(hostedImageDecodeURL(artifact, [link], [{ ...journal[0], provider: 'imgbb' }]), '');
+  assert.equal(hostedImageDecodeURL(artifact, [link], [{ ...journal[0], urls: [image] }, { ...journal[0], urls: [artifact.url] }]), '');
+  const other = 'https://cdn.example.test/other.png';
+  assert.equal(hostedImageDecodeURL(artifact, [link, { ...link, ImgURL: other }], [{ ...journal[0], urls: [...journal[0].urls, other] }]), '');
+  const unsafe = 'http://cdn.example.test/synthetic.png';
+  assert.equal(hostedImageDecodeURL(artifact, [{ ...link, ImgURL: unsafe }], [{ ...journal[0], urls: [artifact.url, unsafe] }]), '');
 });
 
 test('recapture and cancellation use spare slots without changing original selections', () => {

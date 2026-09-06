@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/authmaterial/authfixture"
@@ -118,6 +119,15 @@ func TestLiveTestRuntimeGenerationPreservesDenialPolicy(t *testing.T) {
 	}
 	cfg := validRuntimeActivationConfig()
 	cfg.ImageHosting.LostimgAPI = "synthetic-original-image-key"
+	cfg.Trackers.Trackers = map[string]config.TrackerConfig{
+		"HDB": {
+			Username:  "synthetic-original-user",
+			Passkey:   "synthetic-original-passkey",
+			ImgRehost: true,
+		},
+		"PTP": {ImageHost: "imgbox"},
+		"THR": {ImgAPI: "synthetic-original-thr-key"},
+	}
 	backend := &Backend{
 		repo:     repo,
 		liveTest: policy,
@@ -158,14 +168,96 @@ func TestLiveTestRuntimeGenerationPreservesDenialPolicy(t *testing.T) {
 	if got := policy.Snapshot().TrackerSubmission; got != (api.LiveTestEffectCounts{RequestsDenied: 2}) {
 		t.Fatalf("shared generation receipt = %#v", got)
 	}
-	for _, replacement := range []string{"synthetic-different-image-key", ""} {
+	for _, mutate := range []func(*config.ImageHostingConfig){
+		func(imageHosting *config.ImageHostingConfig) {
+			imageHosting.LostimgAPI = "synthetic-different-image-key"
+		},
+		func(imageHosting *config.ImageHostingConfig) { imageHosting.LostimgAPI = "" },
+		func(imageHosting *config.ImageHostingConfig) {
+			imageHosting.ShareXURL = "https://images.invalid/upload"
+		},
+	} {
 		candidate := cfg
-		candidate.ImageHosting.LostimgAPI = replacement
+		mutate(&candidate.ImageHosting)
 		err := activator.Activate(t.Context(), candidate)
 		assertActivationStage(t, err, ActivationStageValidateStored)
 		if len(installer.generations) != 2 {
 			t.Fatal("credential change reached runtime installation")
 		}
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*config.Config)
+	}{
+		{
+			name: "HDB uploader credentials",
+			mutate: func(candidate *config.Config) {
+				hdb := candidate.Trackers.Trackers["HDB"]
+				hdb.Username = "synthetic-different-user"
+				hdb.Passkey = "synthetic-different-passkey"
+				candidate.Trackers.Trackers["HDB"] = hdb
+			},
+		},
+		{
+			name: "THR uploader credential",
+			mutate: func(candidate *config.Config) {
+				thr := candidate.Trackers.Trackers["THR"]
+				thr.ImgAPI = "synthetic-different-thr-key"
+				candidate.Trackers.Trackers["THR"] = thr
+			},
+		},
+		{
+			name: "tracker image host",
+			mutate: func(candidate *config.Config) {
+				ptp := candidate.Trackers.Trackers["PTP"]
+				ptp.ImageHost = "pixhost"
+				candidate.Trackers.Trackers["PTP"] = ptp
+			},
+		},
+		{
+			name: "tracker rehost policy",
+			mutate: func(candidate *config.Config) {
+				hdb := candidate.Trackers.Trackers["HDB"]
+				hdb.ImgRehost = false
+				candidate.Trackers.Trackers["HDB"] = hdb
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			candidate, err := cloneConfig(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			test.mutate(candidate)
+			err = activator.Activate(t.Context(), *candidate)
+			assertActivationStage(t, err, ActivationStageValidateStored)
+			if len(installer.generations) != 2 {
+				t.Fatal("tracker image-host change reached runtime installation")
+			}
+		})
+	}
+	duplicate, err := cloneConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicate.Trackers.Trackers["hdb"] = config.TrackerConfig{
+		Username: "synthetic-alias-user",
+		Passkey:  "synthetic-alias-passkey",
+	}
+	err = activator.Activate(t.Context(), *duplicate)
+	assertActivationStage(t, err, ActivationStageValidateStored)
+	if !strings.Contains(err.Error(), "duplicate case-insensitive names") || len(installer.generations) != 2 {
+		t.Fatalf("ambiguous tracker activation = %v, generations = %d", err, len(installer.generations))
+	}
+	unrelated, err := cloneConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hdb := unrelated.Trackers.Trackers["HDB"]
+	hdb.Channel = "synthetic-unrelated-channel"
+	unrelated.Trackers.Trackers["HDB"] = hdb
+	if err := activator.Activate(t.Context(), *unrelated); err != nil {
+		t.Fatalf("unrelated tracker setting rejected: %v", err)
 	}
 	// The loader used by both restart and cleanup retains the upload account.
 	retained, err := configstore.LoadLiveTestConfig(t.Context(), profile)

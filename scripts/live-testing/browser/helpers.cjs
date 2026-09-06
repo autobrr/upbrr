@@ -7,12 +7,26 @@ function createRequestPacer() {
   };
 }
 
-function isLostimgImageURL(value) {
+function isJournaledImageURL(value, journaledURLs) {
   try {
     const url = new URL(value);
-    return url.protocol === 'https:' && !url.username && !url.password &&
-      (url.hostname === 'lostimg.cc' || url.hostname.endsWith('.lostimg.cc'));
+    return url.protocol === 'https:' && !url.username && !url.password && journaledURLs.has(value);
   } catch { return false; }
+}
+
+// Public artifacts prefer viewer links; typed history retains the image URL.
+function hostedImageDecodeURL(artifact, links, journal) {
+  const matches = links.filter(link => {
+    const published = [link.WebURL, link.ImgURL, link.RawURL].map(value => (value || '').trim()).find(Boolean);
+    return (link.Host || '').trim().toLowerCase() === artifact.host && published === artifact.url;
+  });
+  if (matches.length !== 1) return '';
+  const image = (matches[0].ImgURL || matches[0].RawURL || '').trim();
+  return journal.some(record => {
+    if (record.kind !== 'uploaded' || record.provider !== artifact.host) return false;
+    const urls = new Set(record.urls || []);
+    return isJournaledImageURL(artifact.url, urls) && isJournaledImageURL(image, urls);
+  }) ? image : '';
 }
 
 function compareMediaOrder(left, right) {
@@ -47,4 +61,4 @@ async function recaptureScreenshotProbe(plan, capture, artifacts, remove) {
   return { status: await capture(plan.selections, false), deletedID: probe.id };
 }
 
-module.exports = { createRequestPacer, isLostimgImageURL, compareMediaOrder, screenshotLifecyclePlan, recaptureScreenshotProbe };
+module.exports = { createRequestPacer, isJournaledImageURL, hostedImageDecodeURL, compareMediaOrder, screenshotLifecyclePlan, recaptureScreenshotProbe };

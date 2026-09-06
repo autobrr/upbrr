@@ -72,4 +72,7 @@ func TestLiveTestPolicyNilAndInvalidIdentity(t *testing.T) {
 			t.Fatalf("invalid policy accepted: %#v, %v", policy, err)
 		}
 	}
+	if policy, err := NewLiveTestPolicy("run", "journal", MaxLiveTestImageUploads+1); err == nil || policy != nil {
+		t.Fatalf("over-limit policy accepted: %#v, %v", policy, err)
+	}
 }

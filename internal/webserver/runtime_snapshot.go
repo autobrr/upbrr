@@ -12,6 +12,7 @@ import (
 	"github.com/autobrr/upbrr/internal/livetest"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/services/db"
+	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 )
 
 // backendRuntimeSnapshot is a shallow, single-generation view of config and
@@ -222,8 +223,15 @@ func (b *Backend) runtimeActivator() (*RuntimeActivator, error) {
 		if profile.RunID != b.liveTest.RunID() {
 			return nil, errors.New("live-test activation run identity mismatch")
 		}
+		registry, err := trackerimpl.NewRegistry()
+		if err != nil {
+			return nil, fmt.Errorf("live-test activation tracker registry: %w", err)
+		}
+		liveConfig := b.currentConfig()
 		activator.liveProfile = &profile
-		activator.liveImageKey = b.currentConfig().ImageHosting.LostimgAPI
+		activator.liveImageConfig = liveConfig.ImageHosting
+		activator.liveImageRegistry = registry
+		activator.liveImageTrackerInputs = liveTestImageTrackerInputs(liveConfig, registry)
 		activator.deps.build = func(ctx context.Context, cfg config.Config, repo *db.SQLiteRepository) (RuntimeGeneration, error) {
 			return buildRuntimeGenerationWithLiveTest(ctx, cfg, repo, b.liveTest)
 		}

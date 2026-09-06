@@ -16,6 +16,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/httpclient"
@@ -26,6 +27,7 @@ import (
 const lostimgImagesEndpoint = "https://lostimg.cc/api/v1/images"
 
 var errLiveImageBudget = errors.New("image hosting: live-test image upload budget exceeded")
+var errLiveImageReconciliation = errors.New("image hosting: live-test image upload outcome requires reconciliation")
 
 // CleanupImageResult is a shareable outcome containing only a run-local opaque ID.
 type CleanupImageResult struct {
@@ -34,27 +36,30 @@ type CleanupImageResult struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// CleanupReport accounts for owned images and unresolved upload attempts without URLs.
-// Unknown outcomes require provider reconciliation and are never retried automatically.
+// CleanupReport accounts for uploaded images and unresolved upload attempts without URLs.
+// Unconfirmed deletions are retained with a reason and are never retried automatically;
+// Unknown counts are reserved for upload outcomes that require reconciliation.
 type CleanupReport struct {
-	RunID   string               `json:"runId"`
-	Deleted int                  `json:"deleted"`
-	Pending int                  `json:"pending"`
-	Unknown int                  `json:"unknown"`
-	Failed  int                  `json:"failed"`
-	Images  []CleanupImageResult `json:"images"`
+	RunID    string               `json:"runId"`
+	Deleted  int                  `json:"deleted"`
+	Retained int                  `json:"retained"`
+	Pending  int                  `json:"pending"`
+	Unknown  int                  `json:"unknown"`
+	Failed   int                  `json:"failed"`
+	Images   []CleanupImageResult `json:"images"`
 }
 
-// NewLiveTestServiceWithRegistry restricts remote uploads to journaled Lostimg
-// requests. The caller must own the run lock and validate the private run directory.
-// Normal host selection is preserved: unsupported cleanup lanes remain blocked.
+// NewLiveTestServiceWithRegistry wraps every configured production uploader in
+// a durable live-test journal guard. The caller must own the run lock and
+// validate the private run directory. Lostimg cleanup remains supported;
+// successful uploads to other providers are retained and reported.
 // maxImages bounds all journaled upload attempts; zero disables remote uploads.
 func NewLiveTestServiceWithRegistry(
 	cfg config.Config, logger api.Logger, repo repository, registry *trackers.Registry, runID, journalPath string,
 	maxImages int,
 ) (*Service, error) {
-	if maxImages < 0 {
-		return nil, errors.New("image hosting: live-test image upload budget must be nonnegative")
+	if maxImages < 0 || maxImages > api.MaxLiveTestImageUploads {
+		return nil, fmt.Errorf("image hosting: live-test image upload budget must be between 0 and %d", api.MaxLiveTestImageUploads)
 	}
 	journal, err := newImageEffectJournal(runID, journalPath)
 	if err != nil {
@@ -62,13 +67,10 @@ func NewLiveTestServiceWithRegistry(
 	}
 	service := NewServiceWithRegistry(cfg, logger, repo, registry)
 	client := liveImageClient(service.client)
-	service.uploaders = map[string]uploader{
-		"lostimg": &lostimgUploader{
-			apiKey:    cfg.ImageHosting.LostimgAPI,
-			client:    client,
-			journal:   journal,
-			maxImages: maxImages,
-		},
+	service.client = client
+	service.uploaders = newUploaderRegistry(cfg, client, registry)
+	for provider, delegate := range service.uploaders {
+		service.uploaders[provider] = wrapLiveTestUploader(provider, delegate, journal, maxImages)
 	}
 	return service, nil
 }
@@ -79,75 +81,272 @@ func liveImageClient(base *http.Client) *http.Client {
 	return client
 }
 
-func (u *lostimgUploader) uploadLiveTestBatch(ctx context.Context, paths []string) ([]uploadResult, error) {
-	imageEffectsMu.Lock()
-	defer imageEffectsMu.Unlock()
-	if strings.TrimSpace(u.apiKey) == "" || len(paths) == 0 {
-		return nil, errors.New("image hosting: live-test Lostimg upload requires images and configured authentication")
+type liveTestUploader struct {
+	provider  string
+	delegate  uploader
+	journal   *imageEffectJournal
+	maxImages int
+	uploadMu  sync.Mutex
+}
+
+type liveTestBatchUploader struct {
+	*liveTestUploader
+	batch batchUploader
+}
+
+type liveTestNamedBatchUploader struct {
+	*liveTestBatchUploader
+	named namedBatchUploader
+}
+
+func wrapLiveTestUploader(provider string, delegate uploader, journal *imageEffectJournal, maxImages int) uploader {
+	guard := &liveTestUploader{
+		provider:  provider,
+		delegate:  delegate,
+		journal:   journal,
+		maxImages: maxImages,
 	}
-	state, err := u.journal.read()
+	batch, supportsBatch := delegate.(batchUploader)
+	if !supportsBatch {
+		return guard
+	}
+	guardedBatch := &liveTestBatchUploader{liveTestUploader: guard, batch: batch}
+	if named, ok := delegate.(namedBatchUploader); ok {
+		return &liveTestNamedBatchUploader{liveTestBatchUploader: guardedBatch, named: named}
+	}
+	return guardedBatch
+}
+
+func (u *liveTestUploader) Upload(ctx context.Context, imagePath string) (uploadResult, error) {
+	results, err := u.upload(ctx, []string{imagePath}, func() ([]uploadResult, error) {
+		result, uploadErr := u.delegate.Upload(ctx, imagePath)
+		if uploadErr != nil {
+			return nil, fmt.Errorf("live-test image upload: %w", uploadErr)
+		}
+		return []uploadResult{result}, nil
+	})
+	if err != nil {
+		return uploadResult{}, err
+	}
+	return results[0], nil
+}
+
+func (u *liveTestBatchUploader) UploadBatch(ctx context.Context, imagePaths []string) ([]uploadResult, error) {
+	if u.provider == "lostimg" && u.journal.version == legacyImageJournalVersion && len(imagePaths) > lostimgMaxBatchUploadImages {
+		return u.uploadLegacyLostimgBatch(ctx, imagePaths)
+	}
+	return u.upload(ctx, imagePaths, func() ([]uploadResult, error) { return u.batch.UploadBatch(ctx, imagePaths) })
+}
+
+func (u *liveTestBatchUploader) uploadLegacyLostimgBatch(ctx context.Context, imagePaths []string) ([]uploadResult, error) {
+	u.uploadMu.Lock()
+	defer u.uploadMu.Unlock()
+
+	hashes, err := imageSourceHashes(imagePaths)
 	if err != nil {
 		return nil, err
 	}
-	if state.cleanupStarted {
-		return nil, errors.New("image hosting: live-test image cleanup has already started")
-	}
-	remaining := u.maxImages
-	for _, attempt := range state.attempts {
-		if len(attempt.sources) > remaining {
-			return nil, errLiveImageBudget
+	if err := u.checkUpload(hashes); err != nil {
+		if errors.Is(err, errLiveImageReconciliation) {
+			return nil, liveImageUnknownOutcome(err)
 		}
-		remaining -= len(attempt.sources)
+		return nil, err
 	}
-	if len(paths) > remaining {
-		return nil, errLiveImageBudget
+	results := make([]uploadResult, 0, len(imagePaths))
+	for start := 0; start < len(imagePaths); start += lostimgMaxBatchUploadImages {
+		chunk := imagePaths[start:min(start+lostimgMaxBatchUploadImages, len(imagePaths))]
+		chunkResults, uploadErr := u.uploadLocked(ctx, chunk, func() ([]uploadResult, error) {
+			return u.batch.UploadBatch(ctx, chunk)
+		})
+		results = append(results, chunkResults...)
+		if uploadErr != nil {
+			return results, uploadErr
+		}
+	}
+	return results, nil
+}
+
+func (u *liveTestNamedBatchUploader) UploadBatchWithName(
+	ctx context.Context,
+	imagePaths []string,
+	galleryName string,
+) ([]uploadResult, error) {
+	return u.upload(ctx, imagePaths, func() ([]uploadResult, error) {
+		return u.named.UploadBatchWithName(ctx, imagePaths, galleryName)
+	})
+}
+
+func (u *liveTestUploader) upload(
+	ctx context.Context,
+	paths []string,
+	upload func() ([]uploadResult, error),
+) ([]uploadResult, error) {
+	u.uploadMu.Lock()
+	defer u.uploadMu.Unlock()
+	return u.uploadLocked(ctx, paths, upload)
+}
+
+func (u *liveTestUploader) uploadLocked(
+	ctx context.Context,
+	paths []string,
+	upload func() ([]uploadResult, error),
+) ([]uploadResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("image hosting: live-test upload canceled: %w", err)
+	}
+	if len(paths) == 0 {
+		return nil, errors.New("image hosting: live-test upload requires images")
 	}
 	hashes, err := imageSourceHashes(paths)
 	if err != nil {
 		return nil, err
 	}
+	record, err := u.beginUpload(hashes)
+	if err != nil {
+		if errors.Is(err, errLiveImageReconciliation) {
+			return nil, liveImageUnknownOutcome(err)
+		}
+		return nil, err
+	}
+	results, uploadErr := upload()
+	urls, uploaded, valid := liveUploadResultURLs(results, len(paths), u.provider)
+	returned := u.journal.recordForProvider("uploaded", record.ID, u.provider)
+	returned.URLs = urls
+	returned.Uploaded = uploaded
+	if returned.Version == legacyImageJournalVersion {
+		returned.Uploaded = 0
+	}
+	returned.Complete = uploadErr == nil && valid && len(results) == len(paths) && uploaded == len(paths)
+	if err := u.finishUpload(returned); err != nil {
+		return nil, liveImageUnknownOutcome(errors.Join(errLiveImageReconciliation, err))
+	}
+	if !returned.Complete {
+		return results, liveImageUnknownOutcome(errors.Join(errLiveImageReconciliation, uploadErr))
+	}
+	return results, nil
+}
+
+func (u *liveTestUploader) checkUpload(hashes []string) error {
+	imageEffectsMu.Lock()
+	defer imageEffectsMu.Unlock()
+	state, err := u.journal.read()
+	if err != nil {
+		return err
+	}
+	return u.validateUpload(state, hashes)
+}
+
+func (u *liveTestUploader) beginUpload(hashes []string) (imageEffectRecord, error) {
+	imageEffectsMu.Lock()
+	defer imageEffectsMu.Unlock()
+	state, err := u.journal.read()
+	if err != nil {
+		return imageEffectRecord{}, err
+	}
+	if err := u.validateUpload(state, hashes); err != nil {
+		return imageEffectRecord{}, err
+	}
+	record := u.journal.recordForProvider("upload_pending", newImageEffectID(), u.provider)
+	record.Sources = slices.Clone(hashes)
+	if err := u.journal.append(record); err != nil {
+		return imageEffectRecord{}, err
+	}
+	return record, nil
+}
+
+func (u *liveTestUploader) validateUpload(state *imageEffectState, hashes []string) error {
+	if state.cleanupStarted {
+		return errors.New("image hosting: live-test image cleanup has already started")
+	}
+	if state.version == legacyImageJournalVersion && u.provider != "lostimg" {
+		return errors.New("image hosting: legacy live-test journals support Lostimg uploads only")
+	}
+	remaining := u.maxImages
 	for _, attempt := range state.attempts {
-		if attempt.complete {
+		if len(attempt.sources) > remaining {
+			return errLiveImageBudget
+		}
+		remaining -= len(attempt.sources)
+	}
+	if len(hashes) > remaining {
+		return errLiveImageBudget
+	}
+	for _, attempt := range state.attempts {
+		if attempt.complete || attempt.provider != u.provider {
 			continue
 		}
 		for _, hash := range hashes {
 			if slices.Contains(attempt.sources, hash) {
-				return nil, errors.New("image hosting: previous upload outcome requires reconciliation before retry")
+				return errLiveImageReconciliation
 			}
 		}
 	}
-	var results []uploadResult
-	for start := 0; start < len(paths); start += lostimgMaxBatchUploadImages {
-		if err := ctx.Err(); err != nil {
-			return results, fmt.Errorf("image hosting: live-test upload canceled: %w", err)
+	return nil
+}
+
+func (u *liveTestUploader) finishUpload(record imageEffectRecord) error {
+	imageEffectsMu.Lock()
+	defer imageEffectsMu.Unlock()
+	state, err := u.journal.read()
+	if err != nil {
+		return err
+	}
+	if state.cleanupStarted {
+		return errLiveImageReconciliation
+	}
+	if err := state.apply(record); err != nil {
+		return err
+	}
+	return u.journal.append(record)
+}
+
+func liveUploadResultURLs(results []uploadResult, expected int, provider string) ([]string, int, bool) {
+	urls := make([]string, 0, len(results)*3)
+	seen := make(map[string]struct{}, len(results)*3)
+	uploaded := 0
+	valid := len(results) <= expected
+	for _, result := range results {
+		resultValid := false
+		resultURLs := make(map[string]struct{}, 3)
+		for _, raw := range []string{result.ImgURL, result.RawURL, result.WebURL} {
+			if raw == "" {
+				continue
+			}
+			if !validEffectURL(raw) {
+				valid = false
+				continue
+			}
+			resultValid = true
+			if _, exists := resultURLs[raw]; exists {
+				continue
+			}
+			resultURLs[raw] = struct{}{}
+			if _, exists := seen[raw]; exists && provider != "lostimg" {
+				continue
+			}
+			seen[raw] = struct{}{}
+			urls = append(urls, raw)
 		}
-		end := min(start+lostimgMaxBatchUploadImages, len(paths))
-		record := u.journal.record("upload_pending", newImageEffectID())
-		record.Sources = hashes[start:end]
-		if err := u.journal.append(record); err != nil {
-			return results, err
-		}
-		headers := map[string]string{"Authorization": "Bearer " + strings.TrimSpace(u.apiKey)}
-		body, status, requestErr := postMultipartRepeatedFileField(ctx, liveImageClient(u.client), lostimgImagesEndpoint, "file[]", paths[start:end], headers)
-		urls, valid := parseLiveImageURLs(body)
-		returned := u.journal.record("uploaded", record.ID)
-		returned.URLs = urls
-		returned.Complete = requestErr == nil && status == http.StatusOK && valid && len(urls) == end-start
-		if err := u.journal.append(returned); err != nil {
-			return results, err
-		}
-		for _, raw := range urls {
-			results = append(results, uploadResult{
-				ImgURL: raw,
-				RawURL: raw,
-				WebURL: raw,
-			})
-		}
-		if !returned.Complete {
-			return results, errors.New("image hosting: live-test upload incomplete; retained image journal requires cleanup or reconciliation")
+		if resultValid {
+			uploaded++
+		} else {
+			valid = false
 		}
 	}
-	return results, nil
+	if uploaded > expected {
+		uploaded = expected
+		valid = false
+	}
+	return urls, uploaded, valid
+}
+
+func liveImageUnknownOutcome(cause error) error {
+	return api.NewOperationError(api.OperationFailure{
+		Code:      api.OperationFailureUnknownOutcome,
+		Operation: api.OperationKindImageHosting,
+		Message:   "A live-test image upload outcome is uncertain. Reconcile the private run journal before retrying.",
+		Recovery:  api.OperationRecoveryConfirm,
+	}, cause)
 }
 
 func imageSourceHashes(paths []string) ([]string, error) {
@@ -214,9 +413,6 @@ func cleanupLiveTestImages(ctx context.Context, cfg config.Config, runID, journa
 	if report.Pending == 0 {
 		return report, cleanupReportError(report)
 	}
-	if strings.TrimSpace(cfg.ImageHosting.LostimgAPI) == "" {
-		return report, errors.New("image hosting: live-test cleanup authentication is unavailable")
-	}
 	// Any prior outcome for an exact URL applies to duplicate returned references.
 	// This prevents repeating a possibly completed delete across attempts or chunks.
 	prior := make(map[string]string)
@@ -235,9 +431,6 @@ func cleanupLiveTestImages(ctx context.Context, cfg config.Config, runID, journa
 		}
 	}
 	for start := 0; start < len(pending); start += lostimgMaxBatchUploadImages {
-		if err := ctx.Err(); err != nil {
-			return state.report(runID), fmt.Errorf("image hosting: live-test cleanup canceled: %w", err)
-		}
 		ids := pending[start:min(start+lostimgMaxBatchUploadImages, len(pending))]
 		record := journal.record("cleanup_pending", newImageEffectID())
 		var urls []string
@@ -254,7 +447,10 @@ func cleanupLiveTestImages(ctx context.Context, cfg config.Config, runID, journa
 		if err := state.apply(record); err != nil {
 			return state.report(runID), err
 		}
-		confirmed := deleteLiveImages(ctx, client, cfg.ImageHosting.LostimgAPI, urls)
+		confirmed := make(map[string]bool)
+		if strings.TrimSpace(cfg.ImageHosting.LostimgAPI) != "" && ctx.Err() == nil {
+			confirmed = deleteLiveImages(ctx, client, cfg.ImageHosting.LostimgAPI, urls)
+		}
 		for _, raw := range urls {
 			prior[raw] = "cleanup_unknown"
 			if confirmed[raw] {
@@ -326,13 +522,19 @@ func (s *imageEffectState) report(runID string) CleanupReport {
 	report := CleanupReport{RunID: runID, Images: []CleanupImageResult{}}
 	for _, attemptID := range s.order {
 		attempt := s.attempts[attemptID]
-		for index := range attempt.urls {
+		for index := range attempt.uploaded {
 			image := s.images[fmt.Sprintf("%s_%d", attemptID, index)]
 			switch image.State {
 			case "deleted":
 				report.Deleted++
+			case "retained":
+				report.Retained++
 			case "uploaded":
 				report.Pending++
+			case "cleanup_pending", "cleanup_unknown":
+				image.State = "retained"
+				image.Reason = "deletion_unconfirmed"
+				report.Retained++
 			default:
 				image.State = "cleanup_unknown"
 				image.Reason = "provider_unconfirmed"
@@ -340,7 +542,7 @@ func (s *imageEffectState) report(runID string) CleanupReport {
 			}
 			report.Images = append(report.Images, image)
 		}
-		missing := max(0, len(attempt.sources)-len(attempt.urls))
+		missing := max(0, len(attempt.sources)-attempt.uploaded)
 		// Contradictory/malformed replies may hide effects even when URL counts match.
 		if !attempt.complete && missing == 0 {
 			missing = 1

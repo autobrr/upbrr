@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -24,8 +25,15 @@ import (
 	"github.com/autobrr/upbrr/internal/livetest"
 	"github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/trackers"
 	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
 )
+
+// LiveTestProfileOptions controls explicit, clone-only live-test adjustments.
+type LiveTestProfileOptions struct {
+	PreferDeletableHosts bool
+	Registry             *trackers.Registry
+}
 
 // LoadLiveTestConfig loads an already published profile without applying the
 // current environment. Runtime and cleanup therefore use the configuration
@@ -66,13 +74,42 @@ func ApplyLiveTestPaths(cfg *config.Config, profile livetest.Profile) {
 	}
 }
 
+// ValidateLiveTestTrackerConfigNames rejects ambiguous tracker aliases before
+// a live runtime can bind provider credentials or policy inputs.
+func ValidateLiveTestTrackerConfigNames(trackers map[string]config.TrackerConfig) error {
+	names := slices.Sorted(maps.Keys(trackers))
+	for index, name := range names {
+		for _, other := range names[index+1:] {
+			if strings.EqualFold(strings.TrimSpace(name), strings.TrimSpace(other)) {
+				return fmt.Errorf("live-test tracker configuration has duplicate case-insensitive names %q and %q", name, other)
+			}
+		}
+	}
+	return nil
+}
+
 // CreateLiveTestProfile snapshots real configuration and matching auth material
 // into a fresh private run. Only the clone is migrated or mutated. Backup failures
 // remove the new run directory; later construction failures leave a restricted
 // directory without a runnable ready marker.
 func CreateLiveTestProfile(ctx context.Context, sourceConfigPath string, sourceProvided bool, runDir string) (livetest.Profile, error) {
+	return CreateLiveTestProfileWithOptions(ctx, sourceConfigPath, sourceProvided, runDir, LiveTestProfileOptions{})
+}
+
+// CreateLiveTestProfileWithOptions snapshots real configuration and applies
+// explicit live-test preferences only to the isolated clone.
+func CreateLiveTestProfileWithOptions(
+	ctx context.Context,
+	sourceConfigPath string,
+	sourceProvided bool,
+	runDir string,
+	options LiveTestProfileOptions,
+) (livetest.Profile, error) {
 	if ctx == nil {
 		return livetest.Profile{}, errors.New("live-test context is required")
+	}
+	if options.PreferDeletableHosts && options.Registry == nil {
+		return livetest.Profile{}, errors.New("live-test deletable image-host preference requires a tracker registry")
 	}
 	runDir, err := livetest.ValidateRunDir(runDir)
 	if err != nil {
@@ -176,7 +213,7 @@ func CreateLiveTestProfile(ctx context.Context, sourceConfigPath string, sourceP
 	if err := os.WriteFile(authmaterial.AuthFilePath(p.DBPath), encoded, 0o600); err != nil {
 		return livetest.Profile{}, fmt.Errorf("live-test write private auth: %w", err)
 	}
-	if err := prepareLiveTestClone(ctx, p, sourceConfigPath, providedData, imported); err != nil {
+	if err := prepareLiveTestClone(ctx, p, sourceConfigPath, providedData, imported, options); err != nil {
 		return livetest.Profile{}, err
 	}
 	loaded, err := loadFromDBPath(ctx, p.DBPath, false)
@@ -293,7 +330,14 @@ func liveTestSource(configPath string, provided bool) (string, []byte, *config.C
 	return dbPath, data, imported, err
 }
 
-func prepareLiveTestClone(ctx context.Context, p livetest.Profile, configPath string, data []byte, imported *config.Config) error {
+func prepareLiveTestClone(
+	ctx context.Context,
+	p livetest.Profile,
+	configPath string,
+	data []byte,
+	imported *config.Config,
+	options LiveTestProfileOptions,
+) error {
 	repo, err := db.OpenContext(ctx, p.DBPath)
 	if err != nil {
 		return fmt.Errorf("live-test open clone: %w", err)
@@ -339,6 +383,12 @@ func prepareLiveTestClone(ctx context.Context, p livetest.Profile, configPath st
 	if len(loaded.Trackers.DefaultTrackers) == 0 {
 		return errors.New("live-test effective default tracker list is empty")
 	}
+	if err := ValidateLiveTestTrackerConfigNames(loaded.Trackers.Trackers); err != nil {
+		return err
+	}
+	if options.PreferDeletableHosts {
+		preferLiveTestDeletableHost(loaded, options.Registry)
+	}
 	if err := validateLiveTestAuth(ctx, repo, p.DBPath); err != nil {
 		return err
 	}
@@ -349,6 +399,43 @@ func prepareLiveTestClone(ctx context.Context, p livetest.Profile, configPath st
 		return fmt.Errorf("live-test persist isolated config: %w", err)
 	}
 	return nil
+}
+
+func preferLiveTestDeletableHost(cfg *config.Config, registry *trackers.Registry) {
+	const host = "lostimg"
+	configured, known := cfg.ImageHosting.ConditionalHostConfigured(host)
+	if !known || !configured {
+		return
+	}
+	owner := registry.OwnerForImageHost(host)
+	selectedTrackers := slices.Clone([]string(cfg.Trackers.DefaultTrackers))
+	for configuredTracker := range cfg.Trackers.Trackers {
+		selectedTrackers = append(selectedTrackers, configuredTracker)
+	}
+	for _, selected := range selectedTrackers {
+		tracker := strings.ToUpper(strings.TrimSpace(selected))
+		if tracker == "" || (owner != "" && !strings.EqualFold(owner, tracker)) {
+			continue
+		}
+		declared, ok := registry.LookupImageHostPolicy(tracker)
+		if !ok || (!strings.EqualFold(strings.TrimSpace(declared.ConditionalHost), host) &&
+			!slices.ContainsFunc(declared.AllowedHosts, func(candidate string) bool { return strings.EqualFold(strings.TrimSpace(candidate), host) })) {
+			continue
+		}
+		key := tracker
+		for configuredTracker := range cfg.Trackers.Trackers {
+			if strings.EqualFold(strings.TrimSpace(configuredTracker), tracker) {
+				key = configuredTracker
+				break
+			}
+		}
+		if cfg.Trackers.Trackers == nil {
+			cfg.Trackers.Trackers = make(map[string]config.TrackerConfig)
+		}
+		trackerCfg := cfg.Trackers.Trackers[key]
+		trackerCfg.ImageHost = host
+		cfg.Trackers.Trackers[key] = trackerCfg
+	}
 }
 
 func validateLiveTestAuth(ctx context.Context, repo *db.SQLiteRepository, dbPath string) error {
