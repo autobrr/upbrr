@@ -808,6 +808,16 @@ func TestNormalizeTrackerTitleHDRPreservesSpecificFormats(t *testing.T) {
 			formats: []api.HDRFormat{api.HDRFormatHDRVivid},
 		},
 		{
+			name:    "hyphenated HDR Vivid",
+			title:   "Example.Release.2026.HDR-Vivid.2160p-GRP",
+			formats: []api.HDRFormat{api.HDRFormatHDRVivid},
+		},
+		{
+			name:    "underscored HDR Vivid",
+			title:   "Example.Release.2026.HDR_Vivid.2160p-GRP",
+			formats: []api.HDRFormat{api.HDRFormatHDRVivid},
+		},
+		{
 			name:            "existing DV and HDR10+",
 			title:           "Example.Release.2026.DV.HDR10+.2160p-GRP",
 			formats:         []api.HDRFormat{api.HDRFormatDolbyVision, api.HDRFormatHDR10Plus},

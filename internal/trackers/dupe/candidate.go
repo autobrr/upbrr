@@ -195,7 +195,8 @@ func NormalizeTrackerTitleHDR(name string) api.HDRFacts {
 			facts.DolbyVisionProfile = "5"
 		}
 	}
-	hdrVivid := tokenPresent(upper, "HDRVIVID") || strings.Contains(upper, "HDR.VIVID") || strings.Contains(upper, "HDR VIVID")
+	hdrVivid := tokenPresent(upper, "HDRVIVID") || strings.Contains(upper, "HDR.VIVID") || strings.Contains(upper, "HDR VIVID") ||
+		strings.Contains(upper, "HDR-VIVID") || strings.Contains(upper, "HDR_VIVID")
 	if hdrVivid {
 		mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHDRVivid)
 	}
