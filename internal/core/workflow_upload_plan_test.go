@@ -405,11 +405,14 @@ func TestWorkflowUploadPlanPassesSavedClientTorrentForValidation(t *testing.T) {
 	t.Parallel()
 
 	clientTorrent := "C:\\client\\BT_backup\\example.torrent"
+	clientInfoHash := "0123456789abcdef0123456789abcdef01234567"
 	torrents := &workflowTorrentServiceCapture{}
 	builder := workflowUploadPlanBuilder{
 		resolver: workflowUploadResolverFixed{subject: api.UploadSubject{
-			SourcePath:        "C:\\media\\Example.Release.2026.mkv",
-			ClientTorrentPath: clientTorrent,
+			SourcePath:                "C:\\media\\Example.Release.2026.mkv",
+			InfoHash:                  clientInfoHash,
+			ClientTorrentPath:         clientTorrent,
+			ClientTorrentDataVerified: true,
 		}},
 		trackers: &workflowRetainedUploadServiceFake{},
 		torrents: torrents,
@@ -440,6 +443,12 @@ func TestWorkflowUploadPlanPassesSavedClientTorrentForValidation(t *testing.T) {
 	defer func() { _ = execution.Release() }()
 	if torrents.subject.ClientTorrentPath != clientTorrent {
 		t.Fatalf("client torrent path=%q, want %q", torrents.subject.ClientTorrentPath, clientTorrent)
+	}
+	if torrents.subject.ClientTorrentInfoHash != clientInfoHash {
+		t.Fatalf("client torrent infohash=%q, want %q", torrents.subject.ClientTorrentInfoHash, clientInfoHash)
+	}
+	if !torrents.subject.ClientTorrentDataVerified {
+		t.Fatal("client torrent verification evidence was not propagated")
 	}
 }
 

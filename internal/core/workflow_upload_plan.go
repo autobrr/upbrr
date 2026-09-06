@@ -295,14 +295,16 @@ func (b workflowUploadPlanBuilder) Build(
 	applyWorkflowCrossSeeds(&subject, dupeEvidence, dupes)
 	if len(eligible) > 0 && b.torrents != nil && !descriptionInstructions.Options.SkipAutoTorrent {
 		torrent, err := b.torrents.Create(ctx, api.TorrentSubject{
-			SourcePath:           subject.SourcePath,
-			SourceSize:           subject.SourceSize,
-			FileList:             append([]string(nil), subject.FileList...),
-			DiscType:             subject.DiscType,
-			ClientTorrentPath:    subject.ClientTorrentPath,
-			Trackers:             workflowProjectionTrackerNames(eligible),
-			SkipIfRehashTrackers: workflowSkipIfRehashTrackers(b.config, eligible),
-			TorrentOverrides:     descriptionInstructions.Torrent,
+			SourcePath:                subject.SourcePath,
+			SourceSize:                subject.SourceSize,
+			FileList:                  append([]string(nil), subject.FileList...),
+			DiscType:                  subject.DiscType,
+			ClientTorrentPath:         subject.ClientTorrentPath,
+			ClientTorrentInfoHash:     subject.InfoHash,
+			ClientTorrentDataVerified: subject.ClientTorrentDataVerified,
+			Trackers:                  workflowProjectionTrackerNames(eligible),
+			SkipIfRehashTrackers:      workflowSkipIfRehashTrackers(b.config, eligible),
+			TorrentOverrides:          descriptionInstructions.Torrent,
 		})
 		if err != nil {
 			return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: prepare torrent: %w", err)

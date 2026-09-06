@@ -108,6 +108,7 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		ArrReleaseGroup:             release.Naming.Group,
 		InfoHash:                    resources.clientEvidence.Result.InfoHash,
 		ClientTorrentPath:           resources.clientEvidence.Result.TorrentPath,
+		ClientTorrentDataVerified:   resources.clientEvidence.Result.TorrentDataVerified,
 		TrackerIDs:                  maps.Clone(resources.clientEvidence.Result.TrackerIDs),
 		MatchedTrackers:             append([]string(nil), resources.clientEvidence.Result.MatchedTrackers...),
 	}
