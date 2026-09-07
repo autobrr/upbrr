@@ -6,6 +6,7 @@ package releaseworkflow
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"sync/atomic"
@@ -79,7 +80,7 @@ func TestContinueHydratesPreparedGenerationBeforeRestartedMediaCapture(t *testin
 
 	forceRecheck := true
 	preparation := api.PrepareInput{
-		SourcePath: "C:\\releases\\Example.Release.2026.1080p-GRP",
+		SourcePath: filepath.Join(t.TempDir(), "releases", "Example.Release.2026.1080p-GRP"),
 		Instructions: api.ReleaseFactInstructions{
 			SourceLookup: "Example Release 2026",
 		},
@@ -269,11 +270,11 @@ func TestHydrateContinuationPreparedReleaseRejectsChangedOrMismatchedGeneration(
 	current := CommandResult{Release: &api.ReleaseSnapshot{Release: api.PreparedRelease{
 		Generation:    7,
 		Compatibility: compatibility,
-		Source:        api.SourceManifest{SourcePath: "C:\\releases\\retained"},
+		Source:        api.SourceManifest{SourcePath: filepath.Join(t.TempDir(), "releases", "retained")},
 	}}}
 	forceRecheck := true
 	input := api.PrepareInput{
-		SourcePath: "C:\\releases\\caller-supplied",
+		SourcePath: filepath.Join(t.TempDir(), "releases", "caller-supplied"),
 		Controls: api.PreparationControls{
 			ConfirmBDMVRescan: true,
 			ForceRecheck:      &forceRecheck,
