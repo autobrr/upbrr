@@ -449,7 +449,9 @@ function Record-Stage($Lane, $Current, [string]$Goal) {
   if ($actions.Count -gt 0) { $status = 'needs_input'; $reason = 'typed_action_required' }
   elseif ($value -and ($Goal -eq 'prepared' -or $value.status -in @('succeeded', 'completed', 'ready'))) { $status = 'pass'; $reason = 'retained_stage_succeeded' }
   elseif ($Current.operation.status -eq 'failed') { $status = 'fail'; $reason = 'workflow_operation_failed' }
+  elseif ($Goal -in @('media_ready', 'descriptions_ready') -and $value.status -eq 'skipped') { $status = 'pass'; $reason = 'retained_stage_not_required' }
   elseif ($value.status -in @('failed', 'blocked', 'partial', 'needs_input') -or $Current.continuation.disposition -in @('failed', 'blocked', 'partial')) { $status = 'blocked'; $reason = 'workflow_stage_blocked' }
+  elseif ($Goal -eq 'dry_run' -and $value.status -eq 'skipped' -and $Current.operation.status -eq 'completed') { $status = 'not_applicable'; $reason = 'tracker_dry_run_skipped' }
   if ($Goal -eq 'media_ready' -and $status -eq 'pass' -and @($value.artifacts | Where-Object { $_.kind -eq 'screenshot' }).Count -gt 0) { $status = 'inconclusive'; $reason = 'local_capture_requires_decode' }
   $failureCodes = @(Get-LiveFailureCodes $Current)
   if ($Current.selection -and (ConvertTo-Json -InputObject @($Current.selection.trackerIds) -Compress) -cne (ConvertTo-Json -InputObject @($Lane.trackerIds) -Compress)) { throw 'tracker_selection_changed' }
@@ -534,8 +536,12 @@ function Resume-Lane($Lane, $Current, [string]$CompletedGoal) {
   if ($script:Run.suite -eq 'Dupe') { $goals = @('prepared', 'trackers_assessed', 'duplicates_decided') }
   $start = [array]::IndexOf($goals, $CompletedGoal)
   if ($start -lt 0) { return $Current }
-  $intent = @{ executionMode = $script:Run.executionMode; interaction = 'unattended'; trackerIds = $Lane.trackerIds; noSeed = $true; skipRemoteDuplicates = [bool]$script:Run.skipRemoteDuplicates; media = @{ screenshotCount = $script:Run.budgets.screenshotCount; purpose = 'final'; captureDvdMenus = $false } }
+  $intent = @{ executionMode = $script:Run.executionMode; interaction = 'unattended'; trackerIds = $Lane.trackerIds; noSeed = $true; skipRemoteDuplicates = [bool]$script:Run.skipRemoteDuplicates }
   for ($index = $start + 1; $index -lt $goals.Count; $index++) {
+    if ($goals[$index] -eq 'media_ready') {
+      if (-not (Test-LiveContentLane $Lane)) { break }
+      $intent.media = Get-LiveMediaInstructions $Lane $Current
+    }
     $Current = Continue-Lane $Lane $goals[$index] $Current $intent
     $script:Results = @($script:Results | Where-Object { $_.laneId -cne $Lane.laneId -or $_.stage -cne $goals[$index] })
     if ((Record-Stage $Lane $Current $goals[$index]) -ne 'pass') { break }

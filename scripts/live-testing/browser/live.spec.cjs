@@ -58,6 +58,7 @@ test('owned embedded live runtime, controls, local images, and selection persist
   fs.mkdirSync(path.join(runDir, 'browser-artifacts'), { recursive: true });
   let controlsVerified = false;
   let lifecycleAttempted = false;
+  let allMediaSkipped = handoff.lanes.some(lane => lane.workflowId);
   const journal = handoff.hostedOnly ? fs.readFileSync(path.join(runDir, 'image-effects.private.jsonl'), 'utf8').split('\n')
     .filter(line => line.trim()).map(line => JSON.parse(line)).filter(record => record.kind === 'uploaded') : [];
   const journaledURLs = new Set(journal.flatMap(record => record.urls || []));
@@ -65,8 +66,8 @@ test('owned embedded live runtime, controls, local images, and selection persist
     for (const lane of handoff.lanes.filter(lane => lane.workflowId)) {
       let current = await api('GetReleaseWorkflow', { workflowId: lane.workflowId });
       expect(current.workflow.id).toBe(lane.workflowId);
+      allMediaSkipped &&= current.media?.status === 'skipped';
       const local = (current.media?.artifacts || []).filter(artifact => artifact.kind === 'screenshot');
-      if (!local.length && !handoff.hostedOnly) continue;
       await page.evaluate(workflowId => sessionStorage.setItem('upbrr.activeReleaseWorkflow', workflowId), lane.workflowId);
       await page.reload();
       await expect(page.getByText('Live testing active', { exact: true })).toBeVisible();
@@ -119,6 +120,7 @@ test('owned embedded live runtime, controls, local images, and selection persist
         results.push({ caseId: lane.caseId, laneId: lane.laneId, stage: 'hosted_preview', status: 'pass', reason: 'published_links_decode_and_survive_reload', evidence: { hosted: hosted.length } });
         continue;
       }
+      if (!local.length) continue;
       let decoded = 0;
       const frames = new Set();
       const imageHashes = new Set();
@@ -292,7 +294,7 @@ test('owned embedded live runtime, controls, local images, and selection persist
     }
     if (!handoff.restartOnly) {
       results.push({ caseId: '', laneId: '', stage: 'upload_controls', status: controlsVerified ? 'pass' : handoff.requireUploadControls ? 'inconclusive' : 'not_applicable', reason: controlsVerified ? 'dry_run_and_locked_no_seed_verified' : handoff.requireUploadControls ? 'no_eligible_upload_page' : 'outside_selected_suite' });
-      if (!handoff.hostedOnly && !lifecycleAttempted) results.push({ caseId: '', laneId: '', stage: 'screenshot_cancellation', status: 'inconclusive', reason: 'no_eligible_lifecycle_workflow' });
+      if (!handoff.hostedOnly && !lifecycleAttempted) results.push({ caseId: '', laneId: '', stage: 'screenshot_cancellation', status: allMediaSkipped ? 'not_applicable' : 'inconclusive', reason: allMediaSkipped ? 'tracker_images_not_required' : 'no_eligible_lifecycle_workflow' });
     }
   } finally {
     fs.writeFileSync(path.join(runDir, handoff.hostedOnly ? 'browser-hosted-results.json' : handoff.restartOnly ? 'browser-restart-results.json' : 'browser-results.json'), JSON.stringify({ requests, results }, null, 2));

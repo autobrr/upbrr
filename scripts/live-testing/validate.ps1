@@ -382,6 +382,19 @@ exit $LASTEXITCODE
   $current.selection.trackerIds = @('LST', 'BLU')
   $current.dryRun = @{ status = 'ready'; noSeed = $false }
   Assert-Check ((Record-Stage $lane $current 'dry_run') -eq 'fail') 'conflicting_no_seed_not_detected'
+  foreach ($goal in @('media_ready', 'descriptions_ready', 'dry_run')) {
+    $stageField = @{ media_ready = 'media'; descriptions_ready = 'descriptions'; dry_run = 'dryRun' }[$goal]
+    $skipped = @{ workflow = @{ id = 'workflow-1'; revision = 8 }; $stageField = @{ status = 'skipped'; noSeed = $true } }
+    Assert-Check (((Record-Stage $lane $skipped $goal) -eq 'pass') -eq ($goal -ne 'dry_run')) 'skipped_content_stage_handling_wrong'
+    $skipped.operation = @{ status = 'failed' }
+    Assert-Check ((Record-Stage $lane $skipped $goal) -eq 'fail') 'skipped_stage_hid_failed_operation'
+  }
+  $skipped.operation.status = 'completed'
+  Assert-Check ((Record-Stage $lane $skipped 'dry_run') -eq 'not_applicable') 'completed_tracker_skip_not_recorded'
+  $skipped.continuation = @{ disposition = 'blocked' }
+  Assert-Check ((Record-Stage $lane $skipped 'dry_run') -eq 'blocked') 'tracker_skip_hid_blocked_continuation'
+  $skipped.dryRun.noSeed = $false
+  Assert-Check ((Record-Stage $lane $skipped 'dry_run') -eq 'fail') 'tracker_skip_hid_unlocked_no_seed'
   $script:RunDir = $validationDir
   foreach ($phase in @('local', 'hosted', 'restart')) {
     foreach ($stage in @('selection_lifecycle', 'screenshot_delete_recapture', 'hosted_preview')) {

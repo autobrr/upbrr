@@ -40,16 +40,30 @@ type workflowMediaBuilder struct {
 	media       *mediaModule
 }
 
+// Plan resolves capture suggestions only when projections require media.
+// It retains zero-count requirements without resolving a source for image-free trackers.
 func (b workflowMediaBuilder) Plan(
 	ctx context.Context,
 	release api.ReleaseRef,
 	projections api.TrackerReleaseProjectionSet,
 	_ time.Time,
 ) (api.MediaPlan, error) {
+	requirements := make([]api.MediaCaptureRequirement, 0, len(projections.Projections))
+	for _, projection := range projections.Projections {
+		requirements = append(requirements, api.MediaCaptureRequirement{
+			TrackerID:       projection.TrackerID,
+			ScreenshotCount: projection.Artifacts.ScreenshotCount,
+			DVDMenuCount:    projection.Artifacts.DVDMenuCount,
+			Purpose:         api.ScreenshotPurposeFinal,
+		})
+	}
+	screenshotCount, dvdMenuCount := projectedMediaRequirements(projections.Projections)
+	if screenshotCount <= 0 && dvdMenuCount <= 0 {
+		return api.MediaPlan{Requirements: requirements}, nil
+	}
 	if b.resolver == nil || b.screenshots == nil {
 		return api.MediaPlan{}, errors.New("workflow media plan service is unavailable")
 	}
-	screenshotCount, _ := projectedMediaRequirements(projections.Projections)
 	if screenshotCount <= 0 {
 		screenshotCount = b.config.ScreenshotHandling.Screens
 	}
@@ -64,15 +78,6 @@ func (b workflowMediaBuilder) Plan(
 	plan, err := b.screenshots.Plan(ctx, subject, screenshotCount)
 	if err != nil {
 		return api.MediaPlan{}, fmt.Errorf("workflow media plan: %w", err)
-	}
-	requirements := make([]api.MediaCaptureRequirement, 0, len(projections.Projections))
-	for _, projection := range projections.Projections {
-		requirements = append(requirements, api.MediaCaptureRequirement{
-			TrackerID:       projection.TrackerID,
-			ScreenshotCount: projection.Artifacts.ScreenshotCount,
-			DVDMenuCount:    projection.Artifacts.DVDMenuCount,
-			Purpose:         api.ScreenshotPurposeFinal,
-		})
 	}
 	return api.MediaPlan{
 		DurationSeconds:     plan.DurationSeconds,

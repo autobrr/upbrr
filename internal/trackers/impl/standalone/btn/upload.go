@@ -120,13 +120,13 @@ func prepareBTNPreparedOperation(
 	req trackers.PreparationInput,
 	uploadCtx uploadContext,
 	torrentPath string,
-	releaseNameTried bool,
+	forceReleaseNameAutofill bool,
 ) (trackers.PreparedOperation, error) {
-	data, err := prepareUploadDataWithAutofill(ctx, req, uploadCtx, releaseNameTried)
+	data, releaseNameAutofill, err := prepareUploadDataWithAutofill(ctx, req, uploadCtx, forceReleaseNameAutofill)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
-	autofillAction := btnAutofillArtistAction(req.Meta, data["artist"], releaseNameTried)
+	autofillAction := btnAutofillArtistAction(req.Meta, data["artist"], releaseNameAutofill)
 	if autofillAction != nil {
 		if req.Meta.Options.InteractionMode == api.InteractionModeUnattended {
 			if req.Logger != nil {
@@ -176,7 +176,7 @@ func prepareBTNPreparedOperation(
 		return trackers.NewPreparedOperation(preview, submit, nil), nil
 	}
 	return trackers.NewPreparedOperationWithResolver(preview, submit, nil, func(resolveCtx context.Context) (trackers.PreparedOperation, error) {
-		if releaseNameTried {
+		if releaseNameAutofill {
 			return trackers.PreparedOperation{}, trackers.NewPreparationFailure(
 				"BTN",
 				trackers.PreparationFailureCodeSkipped,
@@ -386,15 +386,16 @@ func buildUploadDryRunAt(ctx context.Context, req trackers.PreparationInput, bas
 			return api.TrackerDryRunEntry{}, err
 		}
 		uploadCtx.client = client
-		fields, err := requestBTNAutofillFields(ctx, uploadCtx, autofillPayload, uploadType)
+		preparedPayload, releaseNameAutofill, err := prepareUploadDataWithAutofill(ctx, req, uploadCtx, false)
 		if err != nil {
 			return api.TrackerDryRunEntry{}, err
 		}
-		payload, err = buildBTNUploadPayload(req, fields)
-		if err != nil {
-			return api.TrackerDryRunEntry{}, err
+		payload = preparedPayload
+		if releaseNameAutofill {
+			autofillPayload, _ = buildBTNReleaseNameAutofillPayload(req.Meta, releaseName)
+			debugSections[0].Payload = urlValuesToPayloadMap(autofillPayload)
 		}
-		if action := btnAutofillArtistAction(req.Meta, fields["artist"], false); action != nil {
+		if action := btnAutofillArtistAction(req.Meta, payload["artist"], releaseNameAutofill); action != nil {
 			if req.Meta.Options.InteractionMode == api.InteractionModeUnattended {
 				status = "skipped"
 				message += "; BTN autofill series mismatched TVDB metadata; skipped in unattended mode"
@@ -444,7 +445,8 @@ func newUploadContextAt(ctx context.Context, req trackers.PreparationInput, base
 }
 
 func prepareUploadData(ctx context.Context, req trackers.PreparationInput, uploadCtx uploadContext) (map[string]string, error) {
-	return prepareUploadDataWithAutofill(ctx, req, uploadCtx, false)
+	data, _, err := prepareUploadDataWithAutofill(ctx, req, uploadCtx, false)
+	return data, err
 }
 
 // buildBTNUploadPayload merges BTN autofill fields with local metadata for the

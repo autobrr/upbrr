@@ -826,7 +826,7 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, s
 		TrackersRemove: splitCSV(opts.TrackersRemove),
 		Options: api.UploadOptions{
 			RunLogLevel:     runLogLevel,
-			Screens:         screens,
+			Screens:         max(screens, 0),
 			NoSeed:          opts.NoSeed,
 			SkipAutoTorrent: opts.SkipAutoTorrent,
 			KeepFolder:      opts.KeepFolder,
