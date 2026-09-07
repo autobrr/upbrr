@@ -90,10 +90,10 @@ func applyBHDMovieTitlePolicy(name string, meta api.UploadSubject) string {
 	return joinBHDName(prefix+" "+strconv.Itoa(year), name[end:])
 }
 
-// bhdMovieTitles prefers TMDB titles and the IMDb year, with release metadata and TMDB-year fallbacks.
+// bhdMovieTitles preserves the finalized alternate title while preferring TMDB titles and the IMDb year.
 func bhdMovieTitles(meta api.UploadSubject) (string, string, int) {
 	title := strings.TrimSpace(meta.Release.Title)
-	original := trimBHDAKAPrefix(meta.Release.Alt)
+	original := trimBHDAKAPrefix(meta.AlternateTitle)
 	omitAlternateTitle := meta.NamePresentation.Version == api.ReleaseNamePresentationVersionV1 && meta.NamePresentation.OmitAlternateTitle
 	if omitAlternateTitle {
 		original = ""
@@ -102,14 +102,8 @@ func bhdMovieTitles(meta api.UploadSubject) (string, string, int) {
 	switch {
 	case meta.ProviderMetadata.TMDB != nil && strings.TrimSpace(meta.ProviderMetadata.TMDB.Title) != "":
 		title = strings.TrimSpace(meta.ProviderMetadata.TMDB.Title)
-		if providerOriginal := trimBHDAKAPrefix(meta.ProviderMetadata.TMDB.OriginalTitle); providerOriginal != "" && !omitAlternateTitle {
-			original = providerOriginal
-		}
 	case meta.ProviderMetadata.IMDB != nil && strings.TrimSpace(meta.ProviderMetadata.IMDB.Title) != "":
 		title = strings.TrimSpace(meta.ProviderMetadata.IMDB.Title)
-		if providerOriginal := trimBHDAKAPrefix(meta.ProviderMetadata.IMDB.AKA); providerOriginal != "" && !omitAlternateTitle {
-			original = providerOriginal
-		}
 	}
 	if meta.ProviderMetadata.IMDB != nil && meta.ProviderMetadata.IMDB.Year > 0 {
 		year = meta.ProviderMetadata.IMDB.Year
@@ -132,10 +126,7 @@ func applyBHDTVTitlePolicy(name string, meta api.UploadSubject) string {
 	if title == "" {
 		title = strings.TrimSpace(meta.Release.Title)
 	}
-	original := trimBHDAKAPrefix(tvdb.Name)
-	if original == "" {
-		original = trimBHDAKAPrefix(meta.Release.Alt)
-	}
+	original := trimBHDAKAPrefix(meta.AlternateTitle)
 	if meta.NamePresentation.Version == api.ReleaseNamePresentationVersionV1 && meta.NamePresentation.OmitAlternateTitle {
 		original = ""
 	}

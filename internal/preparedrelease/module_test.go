@@ -548,6 +548,9 @@ func TestOperationSubjectsCarryCorrectedFactsConsistently(t *testing.T) {
 	if upload.Tag != "-OTHER" || upload.Release.Group != "OTHER" || upload.Edition != "Extended" || upload.Service != "AMZN" {
 		t.Fatalf("upload subject fact projections = %q/%q/%q/%q", upload.Tag, upload.Release.Group, upload.Edition, upload.Service)
 	}
+	if release.Naming.AlternateTitle != "AKA Rei no Shirizu" || upload.AlternateTitle != release.Naming.AlternateTitle {
+		t.Fatalf("alternate title projection = %q, prepared = %q", upload.AlternateTitle, release.Naming.AlternateTitle)
+	}
 
 	duplicate, err := module.ResolveDuplicateSubject(context.Background(), api.DuplicateCheckInput{Release: ref})
 	if err != nil {
@@ -805,14 +808,15 @@ type correctedFactsCollector struct{}
 func (correctedFactsCollector) Collect(_ context.Context, request preparationstate.Request) (CollectedFacts, error) {
 	return CollectedFacts{
 		Naming: api.NamingFacts{
-			Filename:    filepath.Base(request.Manifest.SourcePath),
-			ReleaseName: "Example Show 2027 S03E07 Extended 2160p BluRay REMUX-OTHER",
-			Tag:         "-OTHER",
-			Type:        "REMUX",
-			Source:      "BluRay",
-			Resolution:  "2160p",
-			Year:        2027,
-			Group:       "OTHER",
+			Filename:       filepath.Base(request.Manifest.SourcePath),
+			ReleaseName:    "Example Show 2027 S03E07 Extended 2160p BluRay REMUX-OTHER",
+			AlternateTitle: "AKA Rei no Shirizu",
+			Tag:            "-OTHER",
+			Type:           "REMUX",
+			Source:         "BluRay",
+			Resolution:     "2160p",
+			Year:           2027,
+			Group:          "OTHER",
 		},
 		Episode: api.EpisodeFacts{
 			Season:       3,
