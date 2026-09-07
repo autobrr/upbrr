@@ -128,6 +128,74 @@ func TestRebuildReleaseNamePersistsGeneratedEpisodeVariants(t *testing.T) {
 	}
 }
 
+func TestRebuildReleaseNamePersistsResolvedAlternateTitle(t *testing.T) {
+	t.Parallel()
+
+	for _, category := range []api.CanonicalCategory{api.CanonicalCategoryMovie, api.CanonicalCategoryTV} {
+		t.Run(string(category), func(t *testing.T) {
+			t.Parallel()
+
+			meta := preparationstate.State{
+				Identity: api.ExternalIdentity{
+					Category: category,
+					TMDBID:   1,
+					IMDBID:   1234567,
+					TVDBID:   2,
+				},
+				Release: api.ReleaseInfo{
+					Title:      "Example Title",
+					Alt:        "Example Title",
+					Year:       2026,
+					Resolution: "1080p",
+				},
+				ProviderMetadata: api.SourceScopedMetadata{
+					TMDB: &api.TMDBMetadata{
+						TMDBID:        1,
+						Title:         "Example Title",
+						OriginalTitle: "例の作品",
+						RetrievedAKA:  "AKA Rei no Sakuhin",
+					},
+					IMDB: &api.IMDBMetadata{
+						IMDBID: 1234567,
+						Title:  "Example Title",
+						AKA:    "Rei no Sakuhin",
+					},
+					TVDB: &api.TVDBMetadata{
+						TVDBID:      2,
+						Name:        "例の作品",
+						NameEnglish: "Example Title",
+					},
+				},
+				Type:        "WEBDL",
+				Source:      "WEB",
+				Audio:       "AAC 2.0",
+				VideoEncode: "H.264",
+				SeasonStr:   "S01",
+				EpisodeStr:  "E02",
+				Tag:         "-GRP",
+			}
+
+			RebuildReleaseName(&meta, api.NopLogger{})
+			const want = "AKA Rei no Sakuhin"
+			if meta.ResolvedAlternateTitle != want || !strings.Contains(meta.ReleaseName, want) {
+				t.Fatalf("resolved alternate = %q, generated name = %q", meta.ResolvedAlternateTitle, meta.ReleaseName)
+			}
+			if meta.Release.Alt != "Example Title" {
+				t.Fatalf("parsed alternate changed to %q", meta.Release.Alt)
+			}
+
+			meta.ProviderMetadata.TMDB.RetrievedAKA = ""
+			meta.ProviderMetadata.TMDB.OriginalTitle = "Example Title"
+			meta.ProviderMetadata.IMDB.AKA = "Example Title"
+			meta.ProviderMetadata.TVDB.Name = "Example Title"
+			RebuildReleaseName(&meta, api.NopLogger{})
+			if meta.ResolvedAlternateTitle != "" || strings.Contains(meta.ReleaseName, " AKA ") {
+				t.Fatalf("obsolete alternate survived rebuild: %q in %q", meta.ResolvedAlternateTitle, meta.ReleaseName)
+			}
+		})
+	}
+}
+
 func TestRebuildReleaseNameOmitsGeneratedEpisodeTitle(t *testing.T) {
 	t.Parallel()
 

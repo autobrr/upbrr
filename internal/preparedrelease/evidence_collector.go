@@ -187,7 +187,7 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 			Artist:                meta.Release.Artist,
 			Title:                 meta.Release.Title,
 			Subtitle:              meta.Release.Subtitle,
-			AlternateTitle:        meta.Release.Alt,
+			AlternateTitle:        meta.ResolvedAlternateTitle,
 			Year:                  meta.Release.Year,
 			Month:                 meta.Release.Month,
 			Day:                   meta.Release.Day,

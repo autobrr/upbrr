@@ -193,10 +193,12 @@ type State struct {
 	ReleaseName                    string
 	ReleaseNameNoTag               string
 	ReleaseNameClean               string
-	GeneratedReleaseNames          api.GeneratedReleaseNameVariants
-	ReleaseNamePresentation        api.ReleaseNamePresentation
-	ReleaseNameMissing             []string
-	BDInfo                         map[string]any
+	// ResolvedAlternateTitle is selected by metadata naming before presentation omissions.
+	ResolvedAlternateTitle  string
+	GeneratedReleaseNames   api.GeneratedReleaseNameVariants
+	ReleaseNamePresentation api.ReleaseNamePresentation
+	ReleaseNameMissing      []string
+	BDInfo                  map[string]any
 }
 
 // CollectionPolicy contains preparation-only controls used while gathering
