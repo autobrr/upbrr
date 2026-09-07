@@ -1285,6 +1285,7 @@ type DescriptionSubject struct {
 	MediaInfoTextPath     string
 	DVDVOBMediaInfoText   string
 	DescriptionTemplate   string
+	DescriptionGroups     []DescriptionBuilderGroup
 	EpisodeOverview       string
 	Options               UploadOptions
 	Release               ReleaseInfo
@@ -1318,6 +1319,7 @@ func NewDescriptionSubject(subject UploadSubject) DescriptionSubject {
 		MediaInfoTextPath:     subject.MediaInfoTextPath,
 		DVDVOBMediaInfoText:   subject.DVDVOBMediaInfoText,
 		DescriptionTemplate:   subject.DescriptionTemplate,
+		DescriptionGroups:     CloneDescriptionBuilderGroups(subject.DescriptionGroups),
 		EpisodeOverview:       subject.EpisodeOverview,
 		Options:               subject.Options,
 		Release:               subject.Release,

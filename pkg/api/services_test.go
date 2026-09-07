@@ -18,7 +18,16 @@ func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 			LocalizedTitles: map[string]string{"en": "Example Release 2026"},
 		}},
 		SelectedBDMVPlaylists: []PlaylistInfo{{File: "00001.mpls"}},
-		ImageHostOverrides:    ImageHostOverrides{FailedHosts: []string{"imgbox"}},
+		ImageHostOverrides:    ImageHostOverrides{FailedHosts: []string{"example-host"}},
+		DescriptionGroups: []DescriptionBuilderGroup{{
+			GroupKey:       "unit3d",
+			Trackers:       []string{"EXAMPLE"},
+			RawDescription: "Saved description.",
+			ImageHost: ImageHostFeedback{
+				AllowedHosts: []string{"example-host"},
+				Warnings:     []ImageHostWarning{{Host: "example-host", Message: "warning"}},
+			},
+		}},
 		ExactMedia: &ExactMediaAssets{
 			Screenshots: []ScreenshotImage{{
 				Path:    `C:\private\screen.png`,
@@ -35,6 +44,9 @@ func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 	projected.ProviderMetadata.TMDB.LocalizedTitles["en"] = "changed"
 	projected.SelectedBDMVPlaylists[0].File = "changed"
 	projected.ImageHost.FailedHosts[0] = "changed"
+	projected.DescriptionGroups[0].Trackers[0] = "changed"
+	projected.DescriptionGroups[0].ImageHost.AllowedHosts[0] = "changed"
+	projected.DescriptionGroups[0].ImageHost.Warnings[0].Message = "changed"
 	projected.ExactMedia.Screenshots[0].Path = "changed"
 	projected.ExactMedia.DVDMenus[0].Path = "changed"
 
@@ -47,8 +59,13 @@ func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 	if source.SelectedBDMVPlaylists[0].File != "00001.mpls" {
 		t.Fatal("playlist facts share storage with description subject")
 	}
-	if source.ImageHostOverrides.FailedHosts[0] != "imgbox" {
+	if source.ImageHostOverrides.FailedHosts[0] != "example-host" {
 		t.Fatal("failed image hosts share storage with description subject")
+	}
+	if source.DescriptionGroups[0].Trackers[0] != "EXAMPLE" ||
+		source.DescriptionGroups[0].ImageHost.AllowedHosts[0] != "example-host" ||
+		source.DescriptionGroups[0].ImageHost.Warnings[0].Message != "warning" {
+		t.Fatal("description groups share storage with description subject")
 	}
 	if source.ExactMedia.Screenshots[0].Path != `C:\private\screen.png` ||
 		source.ExactMedia.DVDMenus[0].Path != `C:\private\menu.png` {
