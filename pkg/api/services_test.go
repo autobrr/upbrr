@@ -34,10 +34,8 @@ func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 				Purpose: ScreenshotPurposeFinal,
 			}},
 			DVDMenus: []DVDMenuCaptureImage{{
-				ScreenshotImage: ScreenshotImage{
-					Path:    `C:\private\menu.png`,
-					Purpose: ScreenshotPurposeMenu,
-				},
+				Path:    `C:\private\menu.png`,
+				Purpose: ScreenshotPurposeMenu,
 			}},
 		},
 	}
@@ -94,10 +92,8 @@ func TestExactMediaAssetsValidateRejectsCrossChannelPurposesAndUploads(t *testin
 			Purpose: ScreenshotPurposeFinal,
 		}},
 		DVDMenus: []DVDMenuCaptureImage{{
-			ScreenshotImage: ScreenshotImage{
-				Path:    `C:\private\menu.png`,
-				Purpose: ScreenshotPurposeMenu,
-			},
+			Path:    `C:\private\menu.png`,
+			Purpose: ScreenshotPurposeMenu,
 		}},
 		ScreenshotUploads: []UploadedImageLink{{
 			ImagePath: `C:\private\menu.png`,

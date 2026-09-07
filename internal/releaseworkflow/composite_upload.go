@@ -148,12 +148,57 @@ func (m *Module) StartUpload(
 	ownerID string,
 	request api.CreateReleaseWorkflowUploadRequest,
 ) (CommandResult, error) {
+	if m.liveTest != nil && request.Execution.Mode != api.ReleaseWorkflowUploadModeDebug {
+		m.logger.Warnf("workflow: operation=upload_execute state=blocked reason=live_test")
+		return CommandResult{}, fmt.Errorf("live-test composite upload: %w", m.liveTest.RejectRequest(api.OperationKindUploadExecute))
+	}
+	return m.startUpload(ctx, ownerID, request, false)
+}
+
+// StartLiveTestUpload drives the requested execution mode to a dry-run. Its
+// effective goal and no-seed policy are bound into the durable session receipt.
+// It requires a live-test policy and never permits tracker or client writes.
+func (m *Module) StartLiveTestUpload(
+	ctx context.Context,
+	ownerID string,
+	request api.CreateReleaseWorkflowUploadRequest,
+) (CommandResult, error) {
+	if m.liveTest == nil {
+		return CommandResult{}, errors.New("release workflow: live-test policy is required")
+	}
+	return m.startUpload(ctx, ownerID, request, true)
+}
+
+func (m *Module) startUpload(
+	ctx context.Context,
+	ownerID string,
+	request api.CreateReleaseWorkflowUploadRequest,
+	liveTestDryRun bool,
+) (CommandResult, error) {
 	if err := request.Validate(); err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow start upload: %w", err)
 	}
 	session, instructions, err := normalizeCompositeUploadRequest(request)
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow normalize upload: %w", err)
+	}
+	if m.liveTest != nil {
+		session.Intent.NoSeed = true
+		if liveTestDryRun {
+			session.Goal = api.WorkflowGoalDryRun
+		}
+		session.RequestFingerprint, err = api.CanonicalWorkflowFingerprint(struct {
+			Request api.WorkflowFingerprint
+			RunID   string
+			Goal    api.WorkflowGoal
+		}{
+			Request: session.RequestFingerprint,
+			RunID:   m.liveTest.RunID(),
+			Goal:    session.Goal,
+		})
+		if err != nil {
+			return CommandResult{}, fmt.Errorf("release workflow live-test fingerprint: %w", err)
+		}
 	}
 	created, err := m.Execute(ctx, ownerID, CreateWorkflowCommand{
 		Instructions:        instructions,

@@ -288,8 +288,7 @@ func isRetryableAniListError(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
-	var rateLimitErr *anilistRateLimitError
-	if errors.As(err, &rateLimitErr) {
+	if _, ok := errors.AsType[*anilistRateLimitError](err); ok {
 		return true
 	}
 	var netErr net.Error

@@ -931,6 +931,8 @@ func normalizeAudioFormat(track map[string]any) string {
 		return "DTS"
 	case "aac", "aac lc":
 		return "AAC"
+	case "adpcm":
+		return "ADPCM"
 	case "ac-3":
 		return "DD"
 	case "e-ac-3", "a_eac3", "enhanced ac-3":
@@ -1851,8 +1853,8 @@ func parseMediaDurationColonValue(value string) float64 {
 	}
 	var seconds float64
 	multiplier := 1.0
-	for i := len(parts) - 1; i >= 0; i-- {
-		part := strings.TrimSpace(parts[i])
+	for _, part := range slices.Backward(parts) {
+		part := strings.TrimSpace(part)
 		if part == "" {
 			continue
 		}

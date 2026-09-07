@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -390,11 +391,8 @@ func similarity(a, b string) float64 {
 	}
 	common := 0
 	for _, token := range aTokens {
-		for _, other := range bTokens {
-			if token == other {
-				common++
-				break
-			}
+		if slices.Contains(bTokens, token) {
+			common++
 		}
 	}
 	return (2.0 * float64(common)) / float64(len(aTokens)+len(bTokens))

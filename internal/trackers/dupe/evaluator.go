@@ -45,11 +45,13 @@ func Evaluate(
 	search SearchEvidence,
 ) Evaluation {
 	targetFacts := normalizeTargetFacts(target)
+	targetFacts.Edition = editionFromNamingContract(targetFacts.Edition, target.Names, targetFacts.Resolution, policy.DefaultTitleEdition)
 	effectiveComplete := search.EffectiveComplete()
 	evaluation := Evaluation{Complete: effectiveComplete, TargetFacts: targetFacts}
 	candidateFacts := make([]normalizedFacts, 0, len(candidates))
 	for _, candidate := range candidates {
 		facts := normalizeCandidateFacts(candidate)
+		facts.Edition = editionFromNamingContract(facts.Edition, []string{candidate.Name}, facts.Resolution, policy.DefaultTitleEdition)
 		candidateFacts = append(candidateFacts, facts)
 		findings := collectCandidateFindings(target, targetFacts, candidate, facts, policy, search.WorkScope)
 		evaluation.Candidates = append(evaluation.Candidates, resolveCandidateFindings(candidate, facts, findings))

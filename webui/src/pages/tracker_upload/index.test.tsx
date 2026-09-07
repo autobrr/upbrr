@@ -19,6 +19,8 @@ const uploadFacet = (
     ignoredDupesFor: [],
     questionnaireAnswers: {},
     options: { noSeed: false, runLogLevel: "info" },
+    liveTest: false,
+    mutationsAllowed: true,
     dryRunStatus: "idle",
     uploadStatus: "idle",
     dryRunResult: null,
@@ -40,6 +42,39 @@ const uploadFacet = (
 const renderPage = (facet: UploadFacet) => render(<TrackerUploadPage facet={facet} />);
 
 describe("TrackerUploadPage", () => {
+  it("locks client injection and mutations while retaining the live-test dry run", () => {
+    const facet = uploadFacet({
+      liveTest: true,
+      mutationsAllowed: false,
+      options: { noSeed: true, runLogLevel: "info" },
+      result: {
+        results: [
+          { trackerId: "EXAMPLE", submissionStatus: "failed" },
+          {
+            trackerId: "OTHER",
+            submissionStatus: "completed",
+            clientInjectionStatus: "failed",
+            clientFailureCode: "client_injection",
+          },
+        ],
+      } as unknown as NonNullable<UploadFacet["view"]["result"]>,
+    });
+    renderPage(facet);
+    expect(screen.getByRole("checkbox", { name: "Skip client injection" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Skip client injection" })).toBeDisabled();
+    for (const name of ["Start upload", "Retry failed uploads", "Retry client injection"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button).toBeDisabled();
+      fireEvent.click(button);
+    }
+    expect(facet.start).not.toHaveBeenCalled();
+    expect(facet.retry).not.toHaveBeenCalled();
+    expect(facet.retryClientInjection).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Run dry run" }));
+    expect(facet.runDryRun).toHaveBeenCalledOnce();
+    expect(screen.getByLabelText("Log level")).toHaveValue("info");
+  });
+
   it("offers workflow dry run and direct upload without a review step", () => {
     const runDryRun = vi.fn(async () => true);
     const start = vi.fn(async () => true);

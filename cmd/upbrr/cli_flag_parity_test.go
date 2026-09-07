@@ -21,8 +21,8 @@ func TestEveryCanonicalCLIFlagIsClassifiedForCompositeUpload(t *testing.T) {
 
 	registered := commandFlagNames(newUploadRootCommand(cliIO{}, nil).Flags())
 	aliases := cliFlagAliases()
-	if len(registered) != 150 || len(aliases) != 53 {
-		t.Fatalf("upload flag inventory: registered=%d aliases=%d, want 150 and 53", len(registered), len(aliases))
+	if len(registered) != 152 || len(aliases) != 53 {
+		t.Fatalf("upload flag inventory: registered=%d aliases=%d, want 152 and 53", len(registered), len(aliases))
 	}
 	for alias, target := range aliases {
 		if _, exists := registered[alias]; !exists {
@@ -39,8 +39,8 @@ func TestEveryCanonicalCLIFlagIsClassifiedForCompositeUpload(t *testing.T) {
 		}
 		canonical[name] = struct{}{}
 	}
-	if len(canonical) != 97 {
-		t.Fatalf("canonical upload flags=%d, want 97", len(canonical))
+	if len(canonical) != 99 {
+		t.Fatalf("canonical upload flags=%d, want 99", len(canonical))
 	}
 
 	classified := cliCompositeFlagManifest()
@@ -70,6 +70,8 @@ func TestServeAndAPITokenFlagsStayOutsideUploadManifest(t *testing.T) {
 		"config",
 		"dev-no-auth",
 		"host",
+		"live-test",
+		"live-test-max-images",
 		"persist-listen",
 		"persist-web-config",
 		"port",
@@ -189,6 +191,8 @@ func cliCompositeFlagManifest() map[string]cliCompositeFlagClass {
 		"export-config-plaintext": "configuration administration",
 		"import-config":           "configuration administration",
 		"limit-queue":             "multi-source scheduling",
+		"live-test":               "immutable process safety policy",
+		"live-test-max-images":    "immutable journaled image budget",
 		"queue":                   "multi-source discovery and scheduling",
 		"version":                 "process information",
 	} {

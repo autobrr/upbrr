@@ -56,8 +56,7 @@ func (commandRunner) Run(ctx context.Context, name string, args []string, dir st
 	}
 	if err != nil {
 		exitCode := 1
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 			exitCode = exitErr.ExitCode()
 		}
 		result.ExitCode = exitCode

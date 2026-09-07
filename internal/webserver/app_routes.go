@@ -551,6 +551,9 @@ func writeAppError(w http.ResponseWriter, err error) {
 		if failure.Code == api.OperationFailureInvalidInput || failure.Code == api.OperationFailureInvalidSource {
 			status = http.StatusBadRequest
 		}
+		if failure.Code == api.OperationFailureLiveTestMutationDisabled {
+			status = http.StatusForbidden
+		}
 		writeJSON(w, status, map[string]any{
 			"error":   failure.Message,
 			"failure": failure,

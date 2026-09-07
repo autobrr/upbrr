@@ -33,6 +33,30 @@ func TestNormalizeDiscEncodeFromStructuredTypeAndTitleSource(t *testing.T) {
 	}
 }
 
+func TestNormalizeHigh10AVCCodecLabels(t *testing.T) {
+	t.Parallel()
+	for _, label := range []string{"Hi10P x264", "Hi10P H.264", "Hi10P AVC"} {
+		t.Run(label, func(t *testing.T) {
+			t.Parallel()
+			title := "Example.Release.2026.720p.BluRay.x264-GRP"
+			target := normalizeTargetFacts(api.TrackerDuplicateTarget{
+				Names:       []string{title},
+				VideoEncode: label,
+				VideoCodec:  "AVC",
+			})
+			candidate := normalizeCandidateFacts(NormalizeCandidate(api.DupeEntry{
+				Name:  title,
+				Codec: label,
+			}, "TEST"))
+			for _, fact := range []Fact{target.Codec, candidate.Codec} {
+				if fact.Value != "h264" || fact.Status != FactComplete || len(fact.Contradictions) != 0 {
+					t.Fatalf("codec label %q produced %#v", label, fact)
+				}
+			}
+		})
+	}
+}
+
 func TestNormalizeTitleRemuxOutranksStructuredDiscSource(t *testing.T) {
 	t.Parallel()
 
@@ -94,6 +118,44 @@ func TestNormalizeProviderFromAutobrrRLSCollection(t *testing.T) {
 	}
 }
 
+func TestCanonicalProviderAliases(t *testing.T) {
+	t.Parallel()
+
+	// Real codes are required to verify the production alias mappings.
+	for _, test := range []struct {
+		value string
+		want  string
+	}{
+		//nolint:misspell // ADN is the Animation Digital Network provider code.
+		{value: "AND", want: "adn"},
+		//nolint:misspell // ADN is the Animation Digital Network provider code.
+		{value: "ADN", want: "adn"},
+		{value: "Hotstar", want: "htsr"},
+		{value: "HSTR", want: "htsr"},
+		{value: "HTSR", want: "htsr"},
+		{value: "PROVIDER", want: "provider"},
+	} {
+		if got := canonicalProvider(test.value); got != test.want {
+			t.Errorf("canonicalProvider(%q) = %q, want %q", test.value, got, test.want)
+		}
+	}
+}
+
+func TestNormalizeEquivalentStructuredAndTitleProviderAliases(t *testing.T) {
+	t.Parallel()
+
+	// This production alias must agree across title parsing and API evidence.
+	facts := normalizeCandidateFacts(NormalizeCandidate(api.DupeEntry{
+		Name:     "Example.Release.2026.1080p.HTSR.WEB-DL.H.264-GRP",
+		Type:     "WEBDL",
+		Provider: "Hotstar",
+	}, "LST"))
+	if facts.Provider.Value != "htsr" || facts.Provider.Status != FactComplete ||
+		facts.Provider.Origin != FactOriginTrackerAPI || len(facts.Provider.Contradictions) != 0 {
+		t.Fatalf("provider fact = %#v", facts.Provider)
+	}
+}
+
 func TestCanonicalTitleEditionRecognizesLSTAspectRatioSlots(t *testing.T) {
 	t.Parallel()
 
@@ -102,6 +164,61 @@ func TestCanonicalTitleEditionRecognizesLSTAspectRatioSlots(t *testing.T) {
 	}
 	if got := canonicalTitleEdition(nil, nil, "Example.Release.2026.OAR.1080p-GRP"); got != "oar" {
 		t.Fatalf("OAR edition = %q", got)
+	}
+}
+
+func TestNormalizeTitleEditionPreservesParsedMetadata(t *testing.T) {
+	t.Parallel()
+	for marker, want := range map[string]string{
+		"Director's Cut":     "directors_cut",
+		"Director s Cut":     "directors_cut",
+		"Extended Cut":       "extended",
+		"Extended Edition":   "extended",
+		"Theatrical Cut":     "theatrical",
+		"Theatrical Edition": "theatrical",
+		"Final Cut":          "final_cut",
+		"International Cut":  "international_cut",
+		"Alternate Cut":      "alternate_cut",
+		"Open Matte":         "open_matte",
+		"OAR":                "oar",
+		"IMAX":               "imax",
+		"MAR":                "mar",
+		"Uncut":              "uncut",
+		"Unrated":            "unrated",
+		"Special Edition":    "special_edition",
+		"Super Duper Cut":    "super_duper_cut",
+	} {
+		t.Run(marker, func(t *testing.T) {
+			t.Parallel()
+			facts := normalizeCandidateFacts(NormalizeCandidate(api.DupeEntry{
+				Name: "Example Movie 2026 " + marker + " 1080p BluRay REMUX AVC-GRP",
+			}, "LST"))
+			if facts.Edition.Value != want || facts.Edition.Status != FactPartial {
+				t.Fatalf("edition = %#v, want partial %q", facts.Edition, want)
+			}
+		})
+	}
+	t.Run("OAR work title is not presentation metadata", func(t *testing.T) {
+		t.Parallel()
+		facts := normalizeCandidateFacts(NormalizeCandidate(api.DupeEntry{
+			Name: "OAR 2026 1080p BluRay REMUX AVC-GRP",
+		}, "LST"))
+		if facts.Edition.Status != FactMissing {
+			t.Fatalf("work title became edition evidence: %#v", facts.Edition)
+		}
+	})
+}
+
+func TestNormalizeCompoundTitleRetainsPartialCuts(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{
+		"Alpha 2026 Extended / Beta 2025 1080p BluRay REMUX AVC-GRP",
+		"Alpha 2026 / Beta 2025 Extended Cut 1080p BluRay REMUX AVC-GRP",
+	} {
+		facts := normalizeCandidateFacts(NormalizeCandidate(api.DupeEntry{Name: name}, "LST"))
+		if facts.Edition.Status != FactPartial || facts.Edition.Value != "extended" {
+			t.Fatalf("edition = %#v, want retained partial extended cut", facts.Edition)
+		}
 	}
 }
 
