@@ -102,7 +102,11 @@ foreach ($fault in @('none', 'full-two', 'excluded-failed', 'silent-omission', '
     'excluded-waiting' { $current.continuation.trackerOutcomes[0].lifecycle = 'waiting'; $current.continuation.trackerOutcomes[0].disposition = 'needs_action' }
     'excluded-no-failure' { $current.continuation.trackerOutcomes[0].Remove('failures') }
     'duplicate-outcome' { $current.continuation.trackerOutcomes += $current.continuation.trackerOutcomes[0] }
-    'extra-report' { $lane.trackerIds = @('SECOND') }
+    'extra-report' {
+      $extraReport = ConvertTo-Json $validReport -Depth 20 | ConvertFrom-Json -AsHashtable; $extraReport.trackerId = 'SECOND'
+      $current.dryRun.reports += $extraReport; $current.dryRun.trackerIds += 'SECOND'
+      $current.projections.projections += @{ trackerId = 'SECOND'; uploadReleaseName = $validReport.uploadReleaseName }
+    }
     'full-two' {
       $lane.trackerIds += 'SECOND'; $current.dryRun.trackerIds = @('SECOND', 'OPEN')
       $secondReport = ConvertTo-Json $validReport -Depth 20 | ConvertFrom-Json -AsHashtable; $secondReport.trackerId = 'SECOND'
@@ -115,9 +119,9 @@ foreach ($fault in @('none', 'full-two', 'excluded-failed', 'silent-omission', '
     'injection' { $current.dryRun.reports[0].clientInjection.status = 'completed' }
     'no-seed' { $current.dryRun.noSeed = $false }
     'missing-report' { $current.dryRun.reports = @() }
-    'skipped-report' { $lane.trackerIds += 'SECOND'; $current.dryRun.trackerIds += 'SECOND'; $current.dryRun.reports += @{ trackerId = 'SECOND'; status = 'skipped' } }
+    'skipped-report' { $current.dryRun.reports += @{ trackerId = 'OPEN'; status = 'skipped' } }
     'target-mismatch' { $current.dryRun.trackerIds = @('SECOND') }
-    'duplicate-report' { $lane.trackerIds += 'SECOND'; $current.dryRun.trackerIds += 'SECOND'; $current.dryRun.reports += $current.dryRun.reports[0] }
+    'duplicate-report' { $current.dryRun.reports += $current.dryRun.reports[0] }
   }
   $script:Results = @()
   Record-LiveDryRunPayload $lane $current
