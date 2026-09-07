@@ -140,7 +140,7 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 		s.logger.Debugf("metadata: media details audio=%q channels=%q commentary=%t", meta.Audio, meta.Channels, meta.HasCommentary)
 	}
 
-	meta.Is3D = threeDFromBDInfo(bdinfo)
+	meta.Is3D = threeDFromMedia(miDoc, bdinfo)
 	if s.logger != nil {
 		s.logger.Debugf("metadata: media details 3d=%q", meta.Is3D)
 	}
@@ -1217,11 +1217,21 @@ func fallbackChannelCount(channels int) string {
 	}
 }
 
-func threeDFromBDInfo(info *discparse.BDInfo) string {
-	if info == nil || len(info.Video) == 0 {
+// threeDFromMedia uses BDInfo's primary video when available; otherwise, it
+// requires multiple views on MediaInfo's primary video to report 3D.
+func threeDFromMedia(doc mediaInfoDoc, info *discparse.BDInfo) string {
+	if info != nil && len(info.Video) > 0 {
+		if strings.TrimSpace(info.Video[0].ThreeD) != "" {
+			return "3D"
+		}
 		return ""
 	}
-	if strings.TrimSpace(info.Video[0].ThreeD) != "" {
+	_, video, _ := splitMediaInfoTracks(doc)
+	if len(video) == 0 {
+		return ""
+	}
+	views, err := strconv.Atoi(trackString(video[0], "MultiView_Count"))
+	if err == nil && views > 1 {
 		return "3D"
 	}
 	return ""

@@ -997,6 +997,60 @@ func TestDeriveMediaFactsPreservesScanInResolvedNaming(t *testing.T) {
 	}
 }
 
+func TestDeriveMediaFactsResolvesNonDisc3D(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		tracks string
+		want   string
+	}{
+		{
+			name:   "stereoscopic primary video",
+			tracks: `{"@type":"General"},{"@type":"Video","MultiView_Count":"2"}`,
+			want:   "3D",
+		},
+		{name: "single view", tracks: `{"@type":"Video","MultiView_Count":"1"}`},
+		{name: "missing count", tracks: `{"@type":"Video"}`},
+		{name: "invalid count", tracks: `{"@type":"Video","MultiView_Count":"unknown"}`},
+		{name: "secondary video only", tracks: `{"@type":"Video","MultiView_Count":"1"},{"@type":"Video","MultiView_Count":"2"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			miPath := filepath.Join(t.TempDir(), "mediainfo.json")
+			if err := os.WriteFile(miPath, []byte(`{"media":{"track":[`+tc.tracks+`]}}`), 0o600); err != nil {
+				t.Fatalf("write mediainfo: %v", err)
+			}
+			svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+			meta, err := svc.deriveMediaFacts(t.Context(), preparationstate.State{
+				SourcePath:        filepath.Join(t.TempDir(), "Example.Movie.3D.mkv"),
+				MediaInfoJSONPath: miPath,
+				Release:           api.ReleaseInfo{Title: "Example Movie"},
+			})
+			if err != nil {
+				t.Fatalf("derive media facts: %v", err)
+			}
+			if meta.Is3D != tc.want {
+				t.Fatalf("3D = %q, want %q", meta.Is3D, tc.want)
+			}
+		})
+	}
+}
+
+func TestThreeDFromMediaPreservesBDInfoAuthority(t *testing.T) {
+	doc, err := loadMediaInfoDocFromJSONPayload(`{"media":{"track":[{"@type":"Video","MultiView_Count":"2"}]}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, eye := range []string{"Left Eye", ""} {
+		info := &discparse.BDInfo{Video: []discparse.BDVideo{{ThreeD: eye}}}
+		want := ""
+		if eye != "" {
+			want = "3D"
+		}
+		if got := threeDFromMedia(doc, info); got != want {
+			t.Fatalf("eye %q: 3D = %q, want %q", eye, got, want)
+		}
+	}
+}
+
 func TestDeriveMediaFactsFromPersistedUHDDiscSummary(t *testing.T) {
 	tests := []struct {
 		name       string
