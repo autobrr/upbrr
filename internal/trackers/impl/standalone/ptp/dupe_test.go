@@ -102,6 +102,18 @@ func TestPTPHandlerReturnsCompleteExactGroup(t *testing.T) {
 	}
 }
 
+func TestPTPCandidateHDRPreservesMarkersAroundRemasterYear(t *testing.T) {
+	t.Parallel()
+	for _, title := range []string{"HDR10 / 2020 Remaster", "2020 Remaster / HDR10", "Director's Cut / HDR10"} {
+		facts := ptpCandidateHDR(title)
+		if facts.Status != api.HDREvidenceComplete || facts.Origin != api.HDREvidenceTrackerAPI ||
+			len(facts.Formats) != 1 || facts.Formats[0] != api.HDRFormatHDR10 ||
+			len(facts.SourceFields) != 1 || facts.SourceFields[0] != "RemasterTitle" {
+			t.Fatalf("remaster %q HDR = %#v, want complete API HDR10", title, facts)
+		}
+	}
+}
+
 func TestPTPEmptyIMDbLookupIsComplete(t *testing.T) {
 	t.Parallel()
 

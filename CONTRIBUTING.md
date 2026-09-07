@@ -26,14 +26,14 @@ Install the following on your machine:
 - [Node.js](https://nodejs.org) (`^20.19.0`, `^22.13.0`, or `>=24`)
 - [pnpm](https://pnpm.io/installation) (10 or newer — version is pinned in `webui/package.json` via `packageManager`)
 - [GNU Make](https://www.gnu.org/software/make/) — top-level shortcuts for builds, checks, formatting, and hooks
-- [golangci-lint](https://golangci-lint.run/) — used by hooks and CI
+- [golangci-lint](https://golangci-lint.run/) — use the version pinned in the [CI workflow](./.github/workflows/golangci-lint.yml) for hooks and local checks
 - [Lefthook](https://github.com/evilmartians/lefthook) — git hooks runner (see [Git hooks](#git-hooks-lefthook))
 
 ### Supported platforms
 
 Every script, hook, and VS Code task runs on macOS, Linux, and Windows using native tooling:
 
-- **macOS** — zsh or bash.
+- **macOS 13 Ventura or newer** — zsh or bash (required by Go 1.27).
 - **Linux** — bash.
 - **Windows** — PowerShell 7+ or Git Bash. WSL works but is not required.
 
@@ -196,6 +196,8 @@ make frontend-bundle  # Vite bundle only
 ```
 
 ## Tests and checks
+
+For opt-in checks against configured services and local media, see the [live testing runner](scripts/live-testing/README.md). It uses an isolated profile and production build, blocks tracker submission and client writes, and defaults to no image uploads. Private media, credentials, screenshots, and run evidence stay outside the repository. These checks are separate from ordinary tests and CI.
 
 Run checks for the areas you touched:
 

@@ -13,7 +13,7 @@ import (
 
 func validationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID:    "standalone-nbl-policy-v2",
+		ID:    "standalone-nbl-policy-v3",
 		Check: checkEvidenceRules,
 	}
 }
@@ -56,7 +56,6 @@ func checkEvidenceRules(ctx context.Context, subject api.TrackerValidationSubjec
 			}},
 		},
 	)...)
-	failures = append(failures, validateNBLScreenshots(subject.AssetFacts.Screenshots)...)
 	if !trackers.IsDiscType(subject.DiscType) {
 		failures = append(failures, trackers.ValidateLanguageCombination(
 			subject.MediaFileFacts,
@@ -74,26 +73,5 @@ func nblEvidencePolicy(rule string) trackers.EvidencePredicatePolicy {
 		Rule:                       rule,
 		ViolationDisposition:       api.RuleDispositionStrict,
 		MissingEvidenceDisposition: api.RuleDispositionAdvisory,
-	}
-}
-
-func validateNBLScreenshots(evidence api.AssetEvidence) []api.RuleFailure {
-	switch {
-	case evidence.Status != api.MetadataEvidenceStatusComplete:
-		return []api.RuleFailure{trackers.NewEvidenceRuleFailure(
-			"nbl_screenshots",
-			"complete screenshot evidence is required",
-			api.RuleDispositionAdvisory,
-			evidence.Status,
-		)}
-	case evidence.Ready || evidence.Count > 0:
-		return []api.RuleFailure{trackers.NewEvidenceRuleFailure(
-			"nbl_screenshots",
-			"screenshots are not allowed",
-			api.RuleDispositionStrict,
-			evidence.Status,
-		)}
-	default:
-		return nil
 	}
 }

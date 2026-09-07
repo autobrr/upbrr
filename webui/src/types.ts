@@ -676,6 +676,24 @@ export type ApplicationInfo = {
   dvdMenuCapabilityStatus: "available" | "incompatible" | "unavailable";
   /** User-facing reason for dvdMenuCapabilityStatus. */
   dvdMenuCapabilityMessage: string;
+  /** Present only when the process enforces live-testing restrictions. */
+  testRuntime?: {
+    mode: "live_test";
+    runId: string;
+    trackerSubmissionAllowed: false;
+    clientMutationAllowed: false;
+    imageUploadsRequireJournal: true;
+    imageUploadLimit: number;
+    trackerSubmission: LiveTestEffectCounts;
+    clientMutation: LiveTestEffectCounts;
+  };
+};
+
+type LiveTestEffectCounts = {
+  requestsDenied: number;
+  mutationCallsDenied: number;
+  remoteCallsStarted: number;
+  remoteCallsSucceeded: number;
 };
 
 /** Tracker auth support metadata returned by the WebUI API. */

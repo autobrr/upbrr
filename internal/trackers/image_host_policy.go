@@ -370,6 +370,64 @@ func NeededImageUploadTargetsForMetadataExcludingWithRegistry(
 	return neededImageUploadTargets(registry, appCfg, trackerNames, selectedHost, excluded, &meta)
 }
 
+// ExplicitImageUploadTargetsForMetadataExcludingWithRegistry resolves only the
+// requested configured host for trackers whose active policy permits it.
+func ExplicitImageUploadTargetsForMetadataExcludingWithRegistry(
+	registry *Registry,
+	appCfg config.Config,
+	trackerNames []string,
+	selectedHost string,
+	excludedHosts []string,
+	meta api.UploadSubject,
+) ([]ImageUploadTarget, error) {
+	selectedHost = strings.ToLower(strings.TrimSpace(selectedHost))
+	if selectedHost == "" {
+		return nil, nil
+	}
+	for _, host := range excludedHosts {
+		if strings.EqualFold(strings.TrimSpace(host), selectedHost) {
+			return nil, nil
+		}
+	}
+
+	userHosts := configuredImageUploadHosts(registry, appCfg)
+	targets := make([]ImageUploadTarget, 0, 1)
+	seenTrackers := make(map[string]struct{}, len(trackerNames))
+	for _, tracker := range trackerNames {
+		name := strings.ToUpper(strings.TrimSpace(tracker))
+		if name == "" {
+			continue
+		}
+		seenTrackers[name] = struct{}{}
+		trackerCfg := trackerConfigForImageHostPolicy(appCfg, name)
+		policy, err := resolveImageHostPolicyForTarget(registry, name, appCfg, trackerCfg, &meta)
+		if err != nil {
+			return nil, err
+		}
+		candidates := imageUploadCandidatesForTracker(registry, appCfg, name, userHosts)
+		candidates = appendOwnedPolicyUploadHosts(registry, candidates, name, policy)
+		conditionalHost, conditionalEnabled := conditionalImageHost(registry, appCfg, name)
+		configuredHost := strings.ToLower(strings.TrimSpace(trackerCfg.ImageHost))
+		if configuredHost != "" && (configuredHost != conditionalHost || conditionalEnabled) {
+			candidates = appendUniqueHost(candidates, configuredHost)
+		}
+		if !hostInList(selectedHost, candidates) || !imageHostUsableForPolicy(registry, name, selectedHost, policy) {
+			continue
+		}
+		if len(targets) == 0 {
+			targets = append(targets, ImageUploadTarget{
+				Host:       selectedHost,
+				UsageScope: usageScopeForHost(registry, selectedHost),
+			})
+		}
+		targets[0].Trackers = appendUniqueTracker(targets[0].Trackers, name)
+	}
+	if len(targets) == 0 && len(seenTrackers) == 0 && trackerForOwnedHost(registry, selectedHost) == "" && hostInList(selectedHost, userHosts) {
+		targets = append(targets, ImageUploadTarget{Host: selectedHost, UsageScope: globalImageUsageScope})
+	}
+	return targets, nil
+}
+
 func neededImageUploadTargets(
 	registry *Registry,
 	appCfg config.Config,

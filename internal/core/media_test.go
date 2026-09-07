@@ -7,13 +7,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/imagehosting"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -165,7 +171,7 @@ func TestUploadImagesFallbackStartsBeforeUnrelatedPrimaryCompletes(t *testing.T)
 		result, err := module.uploadImagesToTargetsWithFallback(
 			context.Background(),
 			api.UploadSubject{SourcePath: "C:\\media\\Example.Release.2026.mkv"},
-			"pixhost",
+			"",
 			nil,
 			[]trackers.ImageUploadTarget{
 				{
@@ -237,6 +243,164 @@ func TestUploadImagesFallbackStartsBeforeUnrelatedPrimaryCompletes(t *testing.T)
 	}
 }
 
+func TestUploadImagesUnknownOutcomeStopsFallbackAndPartialAcceptance(t *testing.T) {
+	t.Parallel()
+
+	release := make(chan struct{})
+	close(release)
+	unknown := api.NewOperationError(api.OperationFailure{
+		Code:      api.OperationFailureUnknownOutcome,
+		Operation: api.OperationKindImageHosting,
+		Message:   "Synthetic uncertain image upload.",
+		Recovery:  api.OperationRecoveryConfirm,
+	}, errors.New("synthetic uncertain upload"))
+	service := &barrierImageHostingService{
+		entered: make(chan imageHostCall, 2),
+		behaviors: map[string]imageHostBehavior{
+			"pixhost": {release: release, err: unknown},
+			"imgbb":   {release: release},
+		},
+	}
+	module := &mediaModule{
+		cfg: config.Config{
+			ImageHosting:       config.ImageHostingConfig{Host1: "pixhost", Host2: "imgbb"},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{MinSuccessfulUploads: 1},
+		},
+		images:   service,
+		logger:   &recordingMediaLogger{},
+		registry: mediaImageHostRegistry(t),
+	}
+	_, err := module.uploadImagesToTargetsWithFallback(
+		t.Context(),
+		api.UploadSubject{SourcePath: "Example.Release.2026.mkv"},
+		"pixhost",
+		nil,
+		[]trackers.ImageUploadTarget{{
+			Host:       "pixhost",
+			UsageScope: "global",
+			Trackers:   []string{"ONE"},
+		}},
+		[]api.ScreenshotImage{{Path: "screen.png"}},
+	)
+	failure, ok := api.AsOperationFailure(err)
+	if !ok || failure.Code != api.OperationFailureUnknownOutcome {
+		t.Fatalf("unknown upload outcome = %v, failure = %#v", err, failure)
+	}
+	if len(service.entered) != 1 {
+		t.Fatalf("uncertain upload launched fallback: calls=%d", len(service.entered))
+	}
+}
+
+func TestUploadImagesExplicitHostDoesNotFallback(t *testing.T) {
+	t.Parallel()
+
+	release := make(chan struct{})
+	close(release)
+	service := &barrierImageHostingService{
+		entered: make(chan imageHostCall, 2),
+		behaviors: map[string]imageHostBehavior{
+			"pixhost": {release: release, err: errors.New("synthetic upload failure")},
+			"imgbb":   {release: release},
+		},
+	}
+	module := &mediaModule{
+		cfg:      config.Config{ImageHosting: config.ImageHostingConfig{Host1: "pixhost", Host2: "imgbb"}},
+		images:   service,
+		logger:   &recordingMediaLogger{},
+		registry: mediaImageHostRegistry(t),
+	}
+	result, err := module.uploadImagesToTargetsWithFallback(
+		t.Context(),
+		api.UploadSubject{SourcePath: "Example.Release.2026.mkv"},
+		"pixhost",
+		nil,
+		[]trackers.ImageUploadTarget{{
+			Host:       "pixhost",
+			UsageScope: "global",
+			Trackers:   []string{"ONE"},
+		}},
+		[]api.ScreenshotImage{{Path: "screen.png"}},
+	)
+	if err != nil {
+		t.Fatalf("explicit host upload: %v", err)
+	}
+	if len(service.entered) != 1 || len(result.Attempts) != 1 || result.Attempts[0].Host != "pixhost" || result.Attempts[0].Failure == nil {
+		t.Fatalf("explicit host fallback result = %#v, calls=%d", result, len(service.entered))
+	}
+}
+
+func TestUploadImagesRealServiceUnknownOutcomeStopsFallbackAndPartialAcceptance(t *testing.T) {
+	for _, minimum := range []int{1, 2} {
+		t.Run(fmt.Sprintf("minimum_%d", minimum), func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+				if requests.Add(1) == 1 {
+					_, _ = response.Write([]byte(`{"link":"https://images.example.invalid/success.png"}`))
+					return
+				}
+				_, _ = response.Write([]byte("{"))
+			}))
+			defer server.Close()
+
+			dir := t.TempDir()
+			images := []api.ScreenshotImage{
+				{Path: filepath.Join(dir, "screen-01.png")},
+				{Path: filepath.Join(dir, "screen-02.png")},
+			}
+			for _, image := range images {
+				if err := os.WriteFile(image.Path, []byte("synthetic image"), 0o600); err != nil {
+					t.Fatalf("write image: %v", err)
+				}
+			}
+			cfg := config.Config{
+				ImageHosting: config.ImageHostingConfig{
+					Host1:        "sharex",
+					Host2:        "imgbb",
+					ShareXURL:    server.URL,
+					ShareXAPIKey: "synthetic-key",
+				},
+				ScreenshotHandling: config.ScreenshotHandlingConfig{MaxConcurrentUploads: 1, MinSuccessfulUploads: minimum},
+			}
+			registry := mediaImageHostRegistry(t)
+			service, err := imagehosting.NewLiveTestServiceWithRegistry(
+				cfg, nil, nil, registry, "synthetic-run", filepath.Join(dir, "images.jsonl"), len(images),
+			)
+			if err != nil {
+				t.Fatalf("create live image service: %v", err)
+			}
+			logger := &recordingMediaLogger{}
+			module := &mediaModule{
+				cfg:      cfg,
+				images:   service,
+				logger:   logger,
+				registry: registry,
+			}
+			_, err = module.uploadImagesToTargetsWithFallback(
+				t.Context(),
+				api.UploadSubject{SourcePath: filepath.Join(dir, "Example.Release.2026.mkv")},
+				"sharex",
+				nil,
+				[]trackers.ImageUploadTarget{{
+					Host:       "sharex",
+					UsageScope: "global",
+					Trackers:   []string{"ONE"},
+				}},
+				images,
+			)
+			failure, ok := api.AsOperationFailure(err)
+			if !ok || failure.Code != api.OperationFailureUnknownOutcome {
+				t.Fatalf("real service unknown upload = %v, failure = %#v", err, failure)
+			}
+			if logger.countLevelContaining("INFO", "starting image upload fallback") != 0 {
+				t.Fatal("real service unknown upload launched fallback")
+			}
+			if requests.Load() != int32(len(images)) {
+				t.Fatalf("sharex requests = %d, want %d", requests.Load(), len(images))
+			}
+		})
+	}
+}
+
 func TestResolveImageUploadTargetsUsesExactWorkflowTrackerSelection(t *testing.T) {
 	t.Parallel()
 
@@ -285,7 +449,7 @@ func TestResolveImageUploadTargetsUsesExactWorkflowTrackerSelection(t *testing.T
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			targets, err := module.resolveImageUploadTargets([]string{"ONE", "LST"}, test.subject, "imgbb", nil)
+			targets, err := module.resolveImageUploadTargets([]string{"ONE", "LST"}, test.subject, "", nil)
 			if err != nil {
 				t.Fatalf("resolve image upload targets: %v", err)
 			}
@@ -297,6 +461,41 @@ func TestResolveImageUploadTargetsUsesExactWorkflowTrackerSelection(t *testing.T
 				t.Fatalf("LST target = %#v, targets=%#v", targets[1], targets)
 			}
 		})
+	}
+}
+
+func TestResolveImageUploadTargetsHonorsExplicitHost(t *testing.T) {
+	t.Parallel()
+
+	module := &mediaModule{
+		cfg: config.Config{
+			ImageHosting: config.ImageHostingConfig{Host1: "imgbb"},
+			Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+				"ONE": {ImageHost: "pixhost"},
+			}},
+		},
+		logger:   api.NopLogger{},
+		registry: mediaImageHostRegistry(t),
+	}
+
+	targets, err := module.resolveImageUploadTargets([]string{"ONE"}, api.UploadSubject{}, "imgbb", nil)
+	if err != nil {
+		t.Fatalf("resolve explicit image host: %v", err)
+	}
+	if got := uploadTargetHosts(targets); !slices.Equal(got, []string{"imgbb"}) {
+		t.Fatalf("explicit image host targets = %v, targets=%#v", got, targets)
+	}
+
+	targets, err = module.resolveImageUploadTargets([]string{"ONE"}, api.UploadSubject{}, "", nil)
+	if err != nil {
+		t.Fatalf("resolve planned image host: %v", err)
+	}
+	if got := uploadTargetHosts(targets); !slices.Equal(got, []string{"pixhost"}) {
+		t.Fatalf("planned image host targets = %v, targets=%#v", got, targets)
+	}
+
+	if _, err := module.resolveImageUploadTargets([]string{"ONE"}, api.UploadSubject{}, "sharex", nil); err == nil {
+		t.Fatal("unconfigured explicit image host accepted")
 	}
 }
 
@@ -315,7 +514,7 @@ func mediaImageHostRegistry(t *testing.T) *trackers.Registry {
 		name  string
 		hosts []string
 	}{
-		{name: "ONE", hosts: []string{"pixhost", "imgbb"}},
+		{name: "ONE", hosts: []string{"pixhost", "imgbb", "sharex"}},
 		{name: "TWO", hosts: []string{"onlyimage", "ptscreens"}},
 	} {
 		err := registry.RegisterDescriptor(trackers.Descriptor{
@@ -517,7 +716,7 @@ func TestUploadImagesAcceptsPartialHostBatchAtConfiguredMinimum(t *testing.T) {
 			result, err := module.uploadImagesToTargetsWithFallback(
 				ctx,
 				api.UploadSubject{SourcePath: "Example.Release.2026.mkv"},
-				"pixhost",
+				"",
 				nil,
 				[]trackers.ImageUploadTarget{target},
 				images,

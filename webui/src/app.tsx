@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { configClient, hostBrowser as hostBrowserClient } from "./api/app";
+import { applicationClient, configClient, hostBrowser as hostBrowserClient } from "./api/app";
 import { isHostPathCaseInsensitive } from "./api/client";
 import { WorkflowOperationProgress } from "./components/WorkflowOperationProgress";
 import { WorkflowRequiredActions } from "./components/WorkflowRequiredActions";
@@ -24,7 +24,7 @@ import { useTrackerIcons } from "./hooks/useTrackerIcons";
 import { ReleaseSessionProvider, useReleaseSession } from "./releaseSession";
 import { TrackerCatalogProvider, useTrackerCatalog } from "./trackerCatalog";
 import type { ReleaseRoute } from "./releaseSession/types";
-import type { BrowseDirectoryResponse, ConfigMap } from "./types";
+import type { ApplicationInfo, BrowseDirectoryResponse, ConfigMap } from "./types";
 import { cn } from "./utils/cn";
 import {
   addSourcePathHistoryEntry,
@@ -93,7 +93,10 @@ const browserStorage = () => {
 };
 
 /** Shell/router around the sole active release-session interface. */
-function AppShell() {
+function AppShell({
+  applicationInfo,
+  runtimeInfoError,
+}: Readonly<{ applicationInfo: ApplicationInfo | null; runtimeInfoError: boolean }>) {
   const releaseSession = useReleaseSession();
   const [activeTab, setActiveTab] = useState<ActiveTab>("input");
   const [navigationNotice, setNavigationNotice] = useState("");
@@ -449,6 +452,24 @@ function AppShell() {
         </aside>
 
         <main className="content">
+          {applicationInfo?.testRuntime?.mode === "live_test" ? (
+            <div className="panel mb-4 border-amber-500 p-4" role="status">
+              <strong>Live testing active</strong>
+              <p>
+                Tracker submission and torrent-client writes are disabled. Run a dry run to test
+                preparation with normal rules. Image uploads require a journal.
+              </p>
+              <p className="break-all">Run: {applicationInfo.testRuntime.runId}</p>
+            </div>
+          ) : runtimeInfoError ? (
+            <p className="error" role="alert">
+              Runtime capabilities could not be loaded. Uploads are disabled; reload to try again.
+            </p>
+          ) : !applicationInfo ? (
+            <p className="muted" role="status">
+              Checking runtime capabilities…
+            </p>
+          ) : null}
           {navigationNotice ? (
             <p className="muted" role="status">
               {navigationNotice}
@@ -751,6 +772,22 @@ export default function App() {
 
 function AppReleaseSession() {
   const { catalog } = useTrackerCatalog();
+  const [applicationInfo, setApplicationInfo] = useState<ApplicationInfo | null>(null);
+  const [runtimeInfoError, setRuntimeInfoError] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void applicationClient.getInfo().then(
+      (info) => {
+        if (active) setApplicationInfo(info);
+      },
+      () => {
+        if (active) setRuntimeInfoError(true);
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, []);
   const defaultTrackers = useMemo(
     () =>
       (catalog?.entries || [])
@@ -759,8 +796,12 @@ function AppReleaseSession() {
     [catalog],
   );
   return (
-    <ReleaseSessionProvider defaultTrackers={defaultTrackers}>
-      <AppShell />
+    <ReleaseSessionProvider
+      defaultTrackers={defaultTrackers}
+      testRuntime={applicationInfo?.testRuntime}
+      runtimeInfoReady={applicationInfo !== null}
+    >
+      <AppShell applicationInfo={applicationInfo} runtimeInfoError={runtimeInfoError} />
     </ReleaseSessionProvider>
   );
 }

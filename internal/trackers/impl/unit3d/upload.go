@@ -398,7 +398,7 @@ func buildUploadDryRunUnit3D(
 		logger.Infof("trackers: %s dry-run name formatting applied", trackerName)
 	}
 
-	assets := trackers.DescriptionAssets{}
+	var assets trackers.DescriptionAssets
 	if req.Assets != nil {
 		assets = *req.Assets
 	} else {

@@ -36,6 +36,7 @@ func newTrackerAuthService(cfg config.Config, logger api.Logger) *trackerauth.Se
 
 // Backend owns the embedded web API runtime.
 type Backend struct {
+	liveTest          *api.LiveTestPolicy
 	runtimeMu         sync.RWMutex
 	cfg               config.Config
 	runtimeGeneration uint64
@@ -89,6 +90,10 @@ func normalizePatterns(patterns []string) []string {
 // starts the core service when cfg validates. Invalid config keeps settings
 // routes usable while core-backed routes report the initialization error.
 func NewBackendWithContext(ctx context.Context, cfg config.Config, hub *eventHub) (*Backend, error) {
+	return newBackendWithLiveTest(ctx, cfg, hub, nil)
+}
+
+func newBackendWithLiveTest(ctx context.Context, cfg config.Config, hub *eventHub, policy *api.LiveTestPolicy) (*Backend, error) {
 	if ctx == nil {
 		return nil, errors.New("webserver: context is required")
 	}
@@ -116,8 +121,9 @@ func NewBackendWithContext(ctx context.Context, cfg config.Config, hub *eventHub
 		logger.Warnf("web: config invalid, core disabled until settings are fixed: %v", err)
 	} else {
 		coreSvc, coreErr := core.NewWithContext(ctx, api.CoreDependencies{
-			Config: cfg,
-			Logger: logger,
+			LiveTest: policy,
+			Config:   cfg,
+			Logger:   logger,
 			Services: api.ServiceSet{
 				Filesystem: filesystem.NewValidator(),
 			},
@@ -133,6 +139,7 @@ func NewBackendWithContext(ctx context.Context, cfg config.Config, hub *eventHub
 	}
 
 	backend := &Backend{
+		liveTest:          policy,
 		cfg:               cfg,
 		runtimeGeneration: AllocateRuntimeGenerationID(),
 		capabilities:      capabilities,
@@ -255,7 +262,9 @@ func (b *Backend) GetConfig() (string, error) {
 // DVD menu capability probe for embedded-web diagnostics.
 func (b *Backend) GetApplicationInfo() (api.ApplicationInfo, error) {
 	rt := b.runtimeSnapshot()
-	return CurrentApplicationInfo(context.Background(), rt.capabilities.DiagnosticProbe), nil
+	info := CurrentApplicationInfo(context.Background(), rt.capabilities.DiagnosticProbe)
+	info.TestRuntime = b.liveTest.Snapshot()
+	return info, nil
 }
 
 // GetReleaseWorkflowCapabilities returns authenticated, non-secret integration

@@ -4,12 +4,10 @@
 package ulcx
 
 import (
-	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 )
 
-// Profile returns ULCX's WEB-DL hybrid-name normalization, size-variance dupe
-// policy, tracker-owned rules, and banned groups.
+// Profile returns ULCX's naming, duplicate, validation, and banned-group policy.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
 		Name:             "ULCX",
@@ -21,16 +19,6 @@ func Profile() unit3d.Profile {
 			BuildName:        buildName,
 			BuildNameVersion: "v2",
 		},
-		DupePolicy: &trackers.DupePolicy{
-			ID:         "ulcx/duplicate/v2",
-			EvidenceID: "ulcx-upload-rules",
-			SearchScope: trackers.DupeSearchScope{
-				MaxPages: 100,
-			},
-			SlotDimensions:          []trackers.DupeDimension{trackers.DupeDimensionType, trackers.DupeDimensionResolution, trackers.DupeDimensionHDR},
-			PrecedenceRules:         trackers.DirectionalMediaKindRules("ulcx-upload-rules", "web_dl", "web_rip"),
-			SizeVariancePercent:     20,
-			SizeVarianceResolutions: []string{"1080p"},
-		},
+		DupePolicy: duplicatePolicy(),
 	}
 }

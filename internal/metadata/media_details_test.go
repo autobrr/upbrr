@@ -1418,6 +1418,49 @@ func TestAudioFromMediaAddsEXFormatSetting(t *testing.T) {
 	}
 }
 
+func TestAudioFromMediaDistinguishesLossyAndLosslessCodecs(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "ADPCM remains lossy",
+			input: `{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"ADPCM","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","StreamOrder":"1"}]}}`,
+			want:  "ADPCM 5.1",
+		},
+		{
+			name:  "PCM remains LPCM",
+			input: `{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"PCM","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","StreamOrder":"1"}]}}`,
+			want:  "LPCM 5.1",
+		},
+		{
+			name:  "DTS lossless extensions include DTS:X",
+			input: `{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"DTS","Format_AdditionalFeatures":"XLL X","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","StreamOrder":"1"}]}}`,
+			want:  "DTS:X 5.1",
+		},
+		{
+			name:  "DTS lossless extensions without DTS:X",
+			input: `{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"DTS","Format_AdditionalFeatures":"XLL","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","StreamOrder":"1"}]}}`,
+			want:  "DTS-HD MA 5.1",
+		},
+		{
+			name:  "DTS without lossless extensions",
+			input: `{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"DTS","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","StreamOrder":"1"}]}}`,
+			want:  "DTS 5.1",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			audio, channels, commentary := audioFromMedia(preparationstate.State{}, mustParseMediaInfoDoc(test.input), nil)
+			if audio != test.want || channels != "5.1" || commentary {
+				t.Fatalf("audio=%q channels=%q commentary=%t, want audio=%q channels=5.1 commentary=false", audio, channels, commentary, test.want)
+			}
+		})
+	}
+}
+
 func TestAudioFromMediaUsesCodecIDWhenFormatIsGenericAudio(t *testing.T) {
 	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"Audio","CodecID":"A_VORBIS","Channels":"2","StreamOrder":"1"}]}}`)
 	audio, channels, _ := audioFromMedia(preparationstate.State{}, doc, nil)
