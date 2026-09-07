@@ -11,8 +11,11 @@ import (
 
 func TestProfileResolvers(t *testing.T) {
 	profile := Profile().Site
-	if got := profile.ResolveTypeID(api.UploadSubject{ReleaseName: "Example.Release.2026.BD50.COMPLETE-GRP", DiscType: "BDMV"}); got != "5" {
+	if got := profile.ResolveTypeID(api.UploadSubject{Release: api.ReleaseInfo{Size: "BD50"}, DiscType: "BDMV"}); got != "5" {
 		t.Fatalf("BD50 type = %q", got)
+	}
+	if got := profile.ResolveTypeID(api.UploadSubject{ReleaseName: "Example.Release.2026.BD50.COMPLETE-GRP", DiscType: "BDMV"}); got != "1" {
+		t.Fatalf("raw-name BD50 type = %q", got)
 	}
 	disc := "BD66"
 	if got := profile.ResolveTypeID(api.UploadSubject{TrackerSiteOverrides: api.TrackerSiteOverrides{TIK: api.TIKOverrides{DiscType: &disc}}}); got != "4" {

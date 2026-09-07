@@ -51,6 +51,7 @@ try {
   $arguments = @('--live-test', '--live-test-max-images', '0', '--config', $profile.configPath, '--unattended', '--no-seed', '--trackers', ($lane.trackerIds -join ','))
   $arguments += @(Get-CaseIdentityCLIArguments $entry[0].case)
   if ($lane.sat) { $arguments += '--sat' }
+  if ($baseline.skipRemoteDuplicates) { $arguments += '--skip-dupe-check' }
   if ($baseline.executionMode -eq 'debug') { $arguments += '--debug' }
   elseif ($baseline.executionMode -ne 'normal') { throw 'cli_execution_mode_invalid' }
   $arguments += @('--', $entry[0].case.input_path)

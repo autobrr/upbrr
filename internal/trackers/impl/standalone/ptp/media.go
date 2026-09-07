@@ -13,13 +13,6 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func firstFile(meta api.UploadSubject) string {
-	if len(meta.FileList) > 0 {
-		return meta.FileList[0]
-	}
-	return meta.SourcePath
-}
-
 func readBDSummary(meta api.UploadSubject, dbPath string) (string, error) {
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {

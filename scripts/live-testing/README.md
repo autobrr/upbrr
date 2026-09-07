@@ -32,7 +32,7 @@ service fails. `-Config` selects the source configuration for cloning.
 independent ordinary and skip-client-lookup preparations. `Full` selects all 25
 cases, with the same explicit paired lookup comparison and representative dupe
 observations. Media preparation may itself require tracker duplicate searches;
-site duplicate checks always remain enabled. Sources blocked by exact duplicates,
+site duplicate checks remain enabled unless `-SkipDupes` is explicitly selected. Sources blocked by exact duplicates,
 client matches, authentication, rules, or missing facts remain blocked.
 
 `-CaseId` selects named cases from your corpus, including your own case IDs;
@@ -40,6 +40,8 @@ omitting it retains the suite's default case list. `-Sat` sets
 `PrepareInput.Search.Skip=true` on a fresh workflow and forces fresh preparation,
 without carrying client-derived matches from an earlier variant. It cannot clear
 an authoritative `in_client` block. Ordinary requests use `executionMode=normal`.
+`-SkipDupes` skips remote tracker duplicate checks through every workflow stage,
+including browser mutations and resumed dry-runs. Existing client blocks remain authoritative.
 `-DebugCoverage` explicitly records `executionMode=debug`, including its normal
 policy bypass semantics. Both modes prohibit tracker submission and client writes.
 
@@ -54,7 +56,10 @@ durable per-run dispatch budget, including failed/unknown attempts; it cannot be
 increased on resume. Use a budget appropriate to the number of eligible cases and
 required hosts. Tracker submissions and client writes remain prohibited.
 
-Upload-enabled runs clone the configuration with `live-test init
+`-UseConfiguredHosts` preserves configured image-host selection to share uploads
+across trackers through production host planning.
+
+Unless `-UseConfiguredHosts` is selected, upload-enabled runs clone the configuration with `live-test init
 --prefer-deletable-hosts`: configured Lostimg is preferred only for trackers whose
 registered policy permits it. This changes the private profile, never the source
 configuration. Other compatible configured hosts use their production uploaders,

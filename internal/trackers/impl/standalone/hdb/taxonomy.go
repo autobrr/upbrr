@@ -147,15 +147,12 @@ func resolveHDBType(meta api.UploadSubject) string {
 		typeValue = inferHDBTypeFromSource(meta.Source)
 	}
 	if typeValue == "" || isHDBCategoryType(typeValue) {
-		typeValue = inferHDBTypeFromPath(meta.SourcePath)
-	}
-	if typeValue == "" || isHDBCategoryType(typeValue) {
 		if strings.TrimSpace(meta.VideoEncode) != "" {
 			typeValue = "ENCODE"
 		}
 	}
 	if typeValue == "" || isHDBCategoryType(typeValue) {
-		if strings.TrimSpace(meta.VideoCodec) != "" || strings.TrimSpace(meta.Release.Resolution) != "" || strings.TrimSpace(meta.Release.Ext) != "" {
+		if strings.TrimSpace(meta.VideoCodec) != "" || strings.TrimSpace(meta.Release.Resolution) != "" {
 			typeValue = "ENCODE"
 		}
 	}
@@ -188,24 +185,6 @@ func inferHDBTypeFromSource(source string) string {
 		return "WEBRIP"
 	case strings.Contains(upper, "HDTV"):
 		return "HDTV"
-	}
-	return ""
-}
-
-func inferHDBTypeFromPath(path string) string {
-	base := strings.ToUpper(strings.TrimSpace(path))
-	compact := strings.NewReplacer(".", "", "-", "", "_", "", " ", "").Replace(base)
-	switch {
-	case strings.Contains(compact, "REMUX"):
-		return "REMUX"
-	case strings.Contains(compact, "WEBDL"):
-		return "WEBDL"
-	case strings.Contains(compact, "WEBRIP"):
-		return "WEBRIP"
-	case strings.Contains(compact, "HDTV"):
-		return "HDTV"
-	case strings.Contains(compact, "DVDRIP"):
-		return "DVDRIP"
 	}
 	return ""
 }

@@ -60,9 +60,6 @@ func resolveResolution(meta api.UploadSubject) map[string]string {
 	}
 
 	height := parseResolutionHeight(meta.Release.Resolution)
-	if height == 0 {
-		height = parseResolutionHeight(meta.ReleaseName)
-	}
 	width := 0
 	if height > 0 {
 		width = int(float64(height) * (16.0 / 9.0))

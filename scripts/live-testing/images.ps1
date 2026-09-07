@@ -32,10 +32,19 @@ function Record-LiveDryRunPayload($Lane, $Current) {
   $reports = @($Current.dryRun.reports | Where-Object status -EQ 'completed')
   if ($Current.dryRun.noSeed -ne $true -or $reports.Count -eq 0) { $reason = 'dry_run_completed_report_required' }
   $expectedTargets = @($Lane.trackerIds | Sort-Object -Unique)
-  if ($expectedTargets.Count -eq 0 -or @($Current.dryRun.reports).Count -ne $reports.Count -or
-      (($Current.dryRun.trackerIds | Sort-Object) -join ',') -cne ($expectedTargets -join ',') -or
-      (($reports.trackerId | Sort-Object) -join ',') -cne ($expectedTargets -join ',')) {
+  $reportTargets = @($reports.trackerId | Sort-Object -Unique)
+  $excludedTargets = @($expectedTargets | Where-Object { $_ -cnotin $reportTargets })
+  if ($expectedTargets.Count -eq 0 -or $expectedTargets.Count -ne @($Lane.trackerIds).Count -or
+      @($Current.dryRun.reports).Count -ne $reports.Count -or $reportTargets.Count -ne $reports.Count -or
+      (($Current.dryRun.trackerIds | Sort-Object) -join ',') -cne ($reportTargets -join ',')) {
     $reason = 'dry_run_complete_target_reports_required'
+  }
+  foreach ($trackerID in $excludedTargets) {
+    $outcome = @($Current.continuation.trackerOutcomes | Where-Object trackerId -CEQ $trackerID)
+    if ($outcome.Count -ne 1 -or $outcome[0].lifecycle -ne 'terminal' -or
+        $outcome[0].disposition -ne 'failed' -or -not $outcome[0].failures) {
+      $reason = 'dry_run_complete_target_reports_required'
+    }
   }
   foreach ($report in $reports) {
     $projection = @($Current.projections.projections | Where-Object trackerId -CEQ $report.trackerId)
@@ -51,7 +60,7 @@ function Record-LiveDryRunPayload($Lane, $Current) {
     }
     if ($report.clientInjection.status -ne 'skipped') { $reason = 'dry_run_client_injection_not_skipped' }
   }
-  Add-Result $Lane.caseId $Lane.laneId 'dry_run_payload' $(if ($reason -eq 'prepared_names_artifacts_and_no_seed_verified') { 'pass' } else { 'fail' }) $reason @{ completedReports = $reports.Count }
+  Add-Result $Lane.caseId $Lane.laneId 'dry_run_payload' $(if ($reason -eq 'prepared_names_artifacts_and_no_seed_verified') { 'pass' } else { 'fail' }) $reason @{ completedReports = $reports.Count; requestedTargets = $expectedTargets.Count; excludedTargets = $excludedTargets.Count }
 }
 
 function Invoke-LiveImageChecks($BrowserHandoff) {
@@ -133,7 +142,7 @@ function Invoke-LiveImageChecks($BrowserHandoff) {
       }
       if (@(Get-PendingActions $current).Count -gt 0 -or $script:RemoteStop) { continue }
       if ($script:Run.suite -notin @('Smoke', 'Full')) { continue }
-      $intent = @{ executionMode = $script:Run.executionMode; interaction = 'unattended'; trackerIds = $lane.trackerIds; noSeed = $true; skipRemoteDuplicates = $false; descriptions = @{ options = @{ NoSeed = $true; InteractionMode = 'unattended' }; imageHost = @{} } }
+      $intent = @{ executionMode = $script:Run.executionMode; interaction = 'unattended'; trackerIds = $lane.trackerIds; noSeed = $true; skipRemoteDuplicates = [bool]$script:Run.skipRemoteDuplicates; media = @{ screenshotCount = $script:Run.budgets.screenshotCount; purpose = 'final'; captureDvdMenus = $false }; descriptions = @{ options = @{ NoSeed = $true; InteractionMode = 'unattended' }; imageHost = @{} } }
       foreach ($stage in @('descriptions_ready', 'dry_run')) {
         $current = Continue-Lane $lane $stage $current $intent
         if ((Record-Stage $lane $current $stage) -ne 'pass') { break }

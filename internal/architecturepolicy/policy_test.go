@@ -398,6 +398,64 @@ func TestCheckRepositoryRejectsLateTrackerNameResolutionInUploadFile(t *testing.
 	assertViolationContains(t, violations, "must consume the reviewed release name")
 }
 
+func TestCheckRepositoryRejectsTrackerImportingMetadataCollection(t *testing.T) {
+	for _, imported := range []string{"internal/metadata", "internal/preparedrelease/state"} {
+		t.Run(imported, func(t *testing.T) {
+			root := t.TempDir()
+			writePolicyFixture(t, root, "internal/trackers/impl/standalone/example/name.go",
+				"package example\nimport _ \"github.com/autobrr/upbrr/"+imported+"\"\n")
+			violations, err := CheckRepository(root)
+			if err != nil {
+				t.Fatalf("check repository: %v", err)
+			}
+			assertViolationContains(t, violations, "must consume resolved operation subjects")
+		})
+	}
+}
+
+func TestCheckRepositoryAcceptsTrackerResolvedMetadata(t *testing.T) {
+	root := t.TempDir()
+	writePolicyFixture(t, root, "internal/trackers/impl/standalone/example/name.go",
+		"package example\nimport \"github.com/autobrr/upbrr/pkg/api\"\nfunc title(meta api.UploadSubject) string { return meta.Release.Title }\n")
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("check repository: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("resolved metadata violations = %v", violations)
+	}
+}
+
+func TestCheckRepositoryRejectsParserTokensAsTrackerMediaFacts(t *testing.T) {
+	for _, field := range []string{"Codec", "Audio", "HDR", "Language", "Ext"} {
+		t.Run(field, func(t *testing.T) {
+			root := t.TempDir()
+			writePolicyFixture(t, root, "internal/trackers/impl/standalone/example/taxonomy.go",
+				"package example\nfunc media(meta Meta) []string { return meta.Release."+field+" }\n")
+			violations, err := CheckRepository(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertViolationContains(t, violations, "tracker media facts must use resolved fields")
+		})
+	}
+}
+
+func TestCheckRepositoryAcceptsParserTokensForNameTransformations(t *testing.T) {
+	root := t.TempDir()
+	writePolicyFixture(t, root, "internal/trackers/impl/standalone/example/name.go",
+		"package example\nfunc sourceTokens(meta Meta) []string { return meta.Release.Codec }\n")
+	writePolicyFixture(t, root, "internal/trackers/release_name.go",
+		"package trackers\nfunc sourceExtension(meta Meta) string { return meta.Release.Ext }\n")
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("name transformation violations = %v", violations)
+	}
+}
+
 func TestCheckRepositoryRejectsUnversionedUnit3DCustomName(t *testing.T) {
 	root := t.TempDir()
 	writePolicyFixture(

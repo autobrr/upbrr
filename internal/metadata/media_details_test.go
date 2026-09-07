@@ -128,6 +128,122 @@ func TestRebuildReleaseNamePersistsGeneratedEpisodeVariants(t *testing.T) {
 	}
 }
 
+func TestRebuildReleaseNameCapturesResolvedNamingBeforePresentation(t *testing.T) {
+	t.Parallel()
+
+	meta := preparationstate.State{
+		SourcePath: "Example.Movie.2026.1080p.WEB-DL.H.264-GRP.mkv",
+		Identity: api.ExternalIdentity{
+			Category: api.CanonicalCategoryMovie,
+			TMDBID:   123456,
+		},
+		Release: api.ReleaseInfo{
+			Category:   "MOVIE",
+			Title:      "Parsed Title",
+			Alt:        "Resolved Title",
+			Genre:      "Parsed Genre",
+			Resolution: "1080p",
+			Source:     "unknown",
+			Type:       "MOVIE",
+		},
+		ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{
+			TMDBID:        123456,
+			Title:         "Resolved Title",
+			OriginalTitle: "Resolved Original",
+			RetrievedAKA:  "AKA Resolved Alternate",
+			Year:          2026,
+			Genres:        "Drama, Mystery",
+		}},
+		Audio:       "AAC 2.0",
+		VideoEncode: "H.264",
+		Tag:         "-GRP",
+		ReleaseNameOverrides: api.ReleaseNameOverrides{
+			NoAKA:  new(true),
+			NoYear: new(true),
+		},
+	}
+
+	RebuildReleaseName(&meta, api.NopLogger{})
+	want := preparationstate.ResolvedNaming{
+		Type:           "WEBDL",
+		Title:          "Resolved Title",
+		AlternateTitle: "AKA Resolved Original",
+		Year:           2026,
+		Source:         "Web",
+		Resolution:     "1080p",
+		Genre:          "Drama, Mystery",
+	}
+	if meta.ResolvedNaming != want {
+		t.Fatalf("resolved naming = %#v, want %#v", meta.ResolvedNaming, want)
+	}
+	if strings.Contains(meta.ReleaseName, "Resolved Original") || strings.Contains(meta.ReleaseName, "2026") {
+		t.Fatalf("presentation omissions missing from %q", meta.ReleaseName)
+	}
+	if meta.Release.Title != "Parsed Title" || meta.Release.Alt != "Resolved Title" || meta.Release.Year != 0 ||
+		meta.Release.Type != "MOVIE" || meta.Release.Source != "unknown" {
+		t.Fatalf("parser evidence changed during rebuild: %#v", meta.Release)
+	}
+
+	meta.Identity.TMDBID = 0
+	meta.ProviderMetadata.TMDB = nil
+	meta.Release.Title = "Replacement Parsed Title"
+	meta.Release.Alt = ""
+	meta.Release.Genre = "Replacement Genre"
+	RebuildReleaseName(&meta, api.NopLogger{})
+	if meta.ResolvedNaming.Title != "Replacement Parsed Title" || meta.ResolvedNaming.AlternateTitle != "" || meta.ResolvedNaming.Year != 0 ||
+		meta.ResolvedNaming.Genre != "Replacement Genre" {
+		t.Fatalf("stale resolved naming survived rebuild: %#v", meta.ResolvedNaming)
+	}
+}
+
+func TestRebuildReleaseNameCapturesResolvedEpisodeTitleBeforePresentation(t *testing.T) {
+	t.Parallel()
+
+	meta := preparationstate.State{
+		Identity: api.ExternalIdentity{Category: api.CanonicalCategoryTV, TVDBID: 22},
+		ProviderMetadata: api.SourceScopedMetadata{TVDB: &api.TVDBMetadata{
+			TVDBID:             22,
+			NameEnglish:        "Example Show",
+			OriginalLanguage:   "ja",
+			EpisodeSeason:      1,
+			EpisodeNumber:      2,
+			EpisodeName:        "Original Episode",
+			EpisodeNameEnglish: "English Episode",
+		}},
+		Release:      api.ReleaseInfo{Title: "Parsed Show", Resolution: "1080p"},
+		Type:         "WEBDL",
+		Source:       "WEB",
+		Service:      "EXM",
+		Audio:        "AAC 2.0",
+		VideoEncode:  "H.264",
+		SeasonInt:    1,
+		EpisodeInt:   2,
+		SeasonStr:    "S01",
+		EpisodeStr:   "E02",
+		EpisodeTitle: "Parsed Episode",
+	}
+
+	RebuildReleaseName(&meta, api.NopLogger{})
+	if meta.ResolvedNaming.EpisodeTitle != "English Episode" {
+		t.Fatalf("resolved episode title = %q, want TVDB English title", meta.ResolvedNaming.EpisodeTitle)
+	}
+
+	meta.TVPack = true
+	RebuildReleaseName(&meta, api.NopLogger{})
+	if meta.ResolvedNaming.EpisodeTitle != "English Episode" {
+		t.Fatalf("TV pack resolved episode title = %q, want TVDB English title", meta.ResolvedNaming.EpisodeTitle)
+	}
+	if strings.Contains(meta.ReleaseName, "English Episode") {
+		t.Fatalf("TV pack release name retained episode title: %q", meta.ReleaseName)
+	}
+
+	meta.ReleaseNameOverrides.EpisodeTitle = new("Manual Episode")
+	RebuildReleaseName(&meta, api.NopLogger{})
+	if meta.ResolvedNaming.EpisodeTitle != "Manual Episode" {
+		t.Fatalf("manual resolved episode title = %q", meta.ResolvedNaming.EpisodeTitle)
+	}
+}
+
 func TestRebuildReleaseNameOmitsGeneratedEpisodeTitle(t *testing.T) {
 	t.Parallel()
 
@@ -153,6 +269,9 @@ func TestRebuildReleaseNameOmitsGeneratedEpisodeTitle(t *testing.T) {
 	if strings.Contains(meta.ReleaseName, "Example Episode") ||
 		strings.Contains(meta.GeneratedReleaseNames.IncludeEpisodeTitle.Name, "Example Episode") {
 		t.Fatalf("generated release names retained episode title: %#v", meta.GeneratedReleaseNames)
+	}
+	if meta.ResolvedNaming.EpisodeTitle != "" {
+		t.Fatalf("resolved episode title = %q, want explicit clear", meta.ResolvedNaming.EpisodeTitle)
 	}
 }
 

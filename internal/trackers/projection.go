@@ -26,10 +26,11 @@ func pureReleaseProjection(input PreparationInput) api.TrackerReleaseProjection 
 	typeValue := projectionTaxonomyLabel(input.Meta.Type, input.Meta.Release.Type)
 	resolution := projectionTaxonomyLabel(input.Meta.Release.Resolution)
 	source := projectionTaxonomyLabel(input.Meta.Source, input.Meta.Release.Source)
-	container := projectionTaxonomyLabel(input.Meta.Container, input.Meta.Release.Ext)
+	container := projectionTaxonomyLabel(input.Meta.Container)
 	codec := projectionTaxonomyLabel(input.Meta.VideoCodec)
-	if codec.Label == "" && len(input.Meta.Release.Codec) > 0 {
-		codec = projectionTaxonomyLabel(input.Meta.Release.Codec[0])
+	var codecs []string
+	if codec.Label != "" {
+		codecs = []string{codec.Label}
 	}
 	criteria := api.TrackerDuplicateCriteria{
 		Name:        canonicalName,
@@ -39,7 +40,7 @@ func pureReleaseProjection(input PreparationInput) api.TrackerReleaseProjection 
 		Resolution:  resolution,
 		Source:      source,
 		Container:   container,
-		Codecs:      append([]string(nil), input.Meta.Release.Codec...),
+		Codecs:      codecs,
 		Season:      input.Meta.SeasonInt,
 		Episode:     input.Meta.EpisodeInt,
 		Date:        strings.TrimSpace(input.Meta.DailyEpisodeDate),
@@ -102,10 +103,12 @@ func projectDryRunEntry(input PreparationInput, preview api.TrackerDryRunEntry) 
 		Resolution:  taxonomyValue(preview.Payload, "resolution_id", "resolution", "res"),
 		Source:      taxonomyValue(preview.Payload, "source_id", "source", "origin"),
 		Container:   taxonomyValue(preview.Payload, "container_id", "container"),
-		Codecs:      append([]string(nil), input.Meta.Release.Codec...),
 		Season:      input.Meta.SeasonInt,
 		Episode:     input.Meta.EpisodeInt,
 		Date:        strings.TrimSpace(input.Meta.DailyEpisodeDate),
+	}
+	if codec := strings.TrimSpace(input.Meta.VideoCodec); codec != "" {
+		criteria.Codecs = []string{codec}
 	}
 	target := duplicateTarget(input.Meta)
 	target.ReleaseOrigin = taxonomyValue(preview.Payload, "origin").Label

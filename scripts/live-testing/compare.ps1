@@ -25,7 +25,7 @@ foreach ($field in @('suite', 'executionMode', 'configFingerprint', 'selectedTra
   if (-not $baseline.ContainsKey($field) -or -not $candidate.ContainsKey($field) -or
       (ConvertTo-Json -InputObject $baseline[$field] -Compress) -cne (ConvertTo-Json -InputObject $candidate[$field] -Compress)) { $mismatches += $field }
 }
-foreach ($field in @('sat', 'corpusSha256', 'rules')) {
+foreach ($field in @('sat', 'skipRemoteDuplicates', 'preferDeletableHosts', 'corpusSha256', 'rules')) {
   if (-not $baselineRun.ContainsKey($field) -or -not $candidateRun.ContainsKey($field) -or
       (ConvertTo-Json -InputObject $baselineRun[$field] -Depth 20 -Compress) -cne (ConvertTo-Json -InputObject $candidateRun[$field] -Depth 20 -Compress)) { $mismatches += $field }
 }

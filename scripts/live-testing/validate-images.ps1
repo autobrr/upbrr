@@ -64,12 +64,45 @@ foreach ($mode in @('images', 'no-images', 'explicit-sat', 'ordinary')) {
   Assert-ImageCheck (($variants -join ',') -ceq $expectedVariants -and ($allowedCaptures -join ',') -ceq $expectedCaptures) "runner_generation_order_wrong_$mode"
 }
 
+$cliAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'check-cli.ps1'), [ref]$null, [ref]$null)
+$cliSkipStatement = @($cliAst.FindAll({ param($node)
+  $node -is [Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.StartsWith('if ($baseline.skipRemoteDuplicates)')
+}, $true))
+Assert-ImageCheck ($cliSkipStatement.Count -eq 1) 'cli_skip_policy_binding_missing'
+foreach ($skip in @($false, $true)) {
+  $baseline = @{ skipRemoteDuplicates = $skip }; $arguments = @()
+  . ([scriptblock]::Create($cliSkipStatement[0].Extent.Text))
+  Assert-ImageCheck (($arguments -contains '--skip-dupe-check') -eq $skip) 'cli_skip_policy_changed'
+}
+$compareAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'compare.ps1'), [ref]$null, [ref]$null)
+$compareStatement = @($compareAst.FindAll({ param($node)
+  $node -is [Management.Automation.Language.ForEachStatementAst] -and $node.Extent.Text.StartsWith("foreach (`$field in @('sat'")
+}, $true))
+Assert-ImageCheck ($compareStatement.Count -eq 1) 'comparison_policy_binding_missing'
+foreach ($changedPolicy in @('none', 'skipRemoteDuplicates', 'preferDeletableHosts')) {
+  $baselineRun = @{ sat = $true; skipRemoteDuplicates = $false; preferDeletableHosts = $false; corpusSha256 = 'same'; rules = @() }
+  $candidateRun = $baselineRun.Clone(); $mismatches = @()
+  if ($changedPolicy -ne 'none') { $candidateRun[$changedPolicy] = $true }
+  . ([scriptblock]::Create($compareStatement[0].Extent.Text))
+  Assert-ImageCheck (($mismatches -join ',') -ceq $(if ($changedPolicy -eq 'none') { '' } else { $changedPolicy })) 'comparison_policy_difference_lost'
+}
+
 $lane = @{ caseId = 'CASE-A'; laneId = 'lane-a'; trackerIds = @('OPEN') }
 $validReport = @{ trackerId = 'OPEN'; status = 'completed'; uploadReleaseName = 'Example.2025.1080p-GRP'; fields = @(@{ key = 'name'; value = 'Example.2025.1080p-GRP' }); preparedOperationId = 'prepared-a'; torrentArtifactId = 'torrent-a'; torrentFingerprint = 'torrent-fingerprint'; semanticFingerprint = 'semantic-fingerprint'; clientInjection = @{ status = 'skipped' } }
-foreach ($fault in @('none', 'full-two', 'projection', 'payload', 'artifact', 'injection', 'no-seed', 'missing-report', 'skipped-report', 'target-mismatch', 'duplicate-report')) {
+foreach ($fault in @('none', 'full-two', 'excluded-failed', 'silent-omission', 'excluded-ready', 'excluded-waiting', 'excluded-no-failure', 'duplicate-outcome', 'extra-report', 'projection', 'payload', 'artifact', 'injection', 'no-seed', 'missing-report', 'skipped-report', 'target-mismatch', 'duplicate-report')) {
   $lane.trackerIds = @('OPEN')
   $current = @{ dryRun = @{ noSeed = $true; trackerIds = @('OPEN'); reports = @((ConvertTo-Json $validReport -Depth 20 | ConvertFrom-Json -AsHashtable)) }; projections = @{ projections = @(@{ trackerId = 'OPEN'; uploadReleaseName = 'Example.2025.1080p-GRP' }) } }
+  if ($fault -in @('excluded-failed', 'silent-omission', 'excluded-ready', 'excluded-waiting', 'excluded-no-failure', 'duplicate-outcome')) {
+    $lane.trackerIds += 'SECOND'
+    $current.continuation = @{ trackerOutcomes = @(@{ trackerId = 'SECOND'; lifecycle = 'terminal'; disposition = 'failed'; failures = @(@{ failure = @{ Code = 'no_eligible_trackers' } }) }) }
+  }
   switch ($fault) {
+    'silent-omission' { $current.continuation.trackerOutcomes = @() }
+    'excluded-ready' { $current.continuation.trackerOutcomes[0].lifecycle = 'ready'; $current.continuation.trackerOutcomes[0].disposition = 'none' }
+    'excluded-waiting' { $current.continuation.trackerOutcomes[0].lifecycle = 'waiting'; $current.continuation.trackerOutcomes[0].disposition = 'needs_action' }
+    'excluded-no-failure' { $current.continuation.trackerOutcomes[0].Remove('failures') }
+    'duplicate-outcome' { $current.continuation.trackerOutcomes += $current.continuation.trackerOutcomes[0] }
+    'extra-report' { $lane.trackerIds = @('SECOND') }
     'full-two' {
       $lane.trackerIds += 'SECOND'; $current.dryRun.trackerIds = @('SECOND', 'OPEN')
       $secondReport = ConvertTo-Json $validReport -Depth 20 | ConvertFrom-Json -AsHashtable; $secondReport.trackerId = 'SECOND'
@@ -88,7 +121,7 @@ foreach ($fault in @('none', 'full-two', 'projection', 'payload', 'artifact', 'i
   }
   $script:Results = @()
   Record-LiveDryRunPayload $lane $current
-  Assert-ImageCheck (($script:Results[0].status -eq 'pass') -eq ($fault -cin @('none', 'full-two'))) "payload_fault_not_detected_$fault"
+  Assert-ImageCheck (($script:Results[0].status -eq 'pass') -eq ($fault -cin @('none', 'full-two', 'excluded-failed'))) "payload_fault_not_detected_$fault"
 }
 
 # Exercise the actual multi-lane orchestration with local workflow doubles.
@@ -119,7 +152,8 @@ function Invoke-LiveAPI($Method, $Body = @{}, [int]$ExpectedStatus = 200) {
 function Wait-Workflow($Current, $SnapshotPath) { $Current }
 function Save-Feedback($Lane, $Current, $Goal) { if (@(Get-PendingActions $Current).Count -gt 0) { $script:ImageFeedback += $Lane.laneId } }
 function Continue-Lane($Lane, $Goal, $Current, $Intent) {
-  Assert-ImageCheck ($Intent.noSeed -eq $true -and $Intent.skipRemoteDuplicates -eq $false -and $Intent.interaction -eq 'unattended') 'image_dry_run_authority_changed'
+  Assert-ImageCheck ($Intent.noSeed -eq $true -and $Intent.skipRemoteDuplicates -eq [bool]$script:Run.skipRemoteDuplicates -and $Intent.interaction -eq 'unattended') 'image_dry_run_authority_changed'
+  Assert-ImageCheck ($Intent.media.screenshotCount -eq $script:Run.budgets.screenshotCount -and $Intent.media.purpose -ceq 'final' -and $Intent.media.captureDvdMenus -eq $false) 'image_dry_run_media_options_changed'
   $script:ImageGoals += "$($Lane.laneId):$Goal"
   if ($Goal -eq 'dry_run') { $Current.dryRun = @{ noSeed = $true; status = 'completed'; trackerIds = $Lane.trackerIds; reports = @($validReport) } }
   else { $Current.descriptions = @{ status = 'completed' } }
@@ -127,11 +161,11 @@ function Continue-Lane($Lane, $Goal, $Current, $Intent) {
 }
 function Invoke-BrowserCheck($Phase) { $script:ImageBrowserLanes = @((Read-PrivateJson (Join-Path $script:RunDir 'browser.private.json')).lanes.laneId) }
 
-foreach ($scenario in @('full', 'coverage', 'budget', 'feedback', 'stopped', 'resume', 'projected-count', 'insufficient-selection')) {
+foreach ($scenario in @('full', 'skip-dupes', 'coverage', 'budget', 'feedback', 'stopped', 'resume', 'projected-count', 'insufficient-selection')) {
   $script:ImageScenario = $scenario
   $script:ImageStates = @{}; $script:ImageDispatches = @(); $script:ImageGoals = @(); $script:ImageFeedback = @(); $script:ImageBrowserLanes = @()
   $script:Results = @(); $script:Lanes = @(); $script:RemoteStop = $scenario -eq 'stopped'; $script:RequestCount = 0
-  $script:Run = @{ suite = 'Full'; executionMode = 'normal'; imageHostCoverage = $scenario -eq 'coverage'; budgets = @{ maxImages = $(if ($scenario -in @('budget', 'resume')) { 3 } else { 20 }); screenshotCount = 3; maxRequests = 100 } }
+  $script:Run = @{ suite = 'Full'; executionMode = 'normal'; skipRemoteDuplicates = $scenario -eq 'skip-dupes'; imageHostCoverage = $scenario -eq 'coverage'; budgets = @{ maxImages = $(if ($scenario -in @('budget', 'resume')) { 3 } else { 20 }); screenshotCount = 3; maxRequests = 100 } }
   [IO.File]::WriteAllText($journalPath, '{"kind":"run"}' + "`n")
   foreach ($name in @('a', 'b', 'pending', 'undecoded')) {
     $script:Lanes += @{ caseId = "CASE-$name"; laneId = "lane-$name"; workflowId = "lane-$name"; trackerIds = @('OPEN'); pendingFeedback = $name -eq 'pending' }

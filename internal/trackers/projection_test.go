@@ -18,6 +18,48 @@ type projectionStubDefinition struct {
 	prepareCalls *int
 }
 
+func TestProjectionsUseResolvedMediaInsteadOfParserFallbacks(t *testing.T) {
+	for _, codec := range []string{"H.264", ""} {
+		t.Run(codec, func(t *testing.T) {
+			input := PreparationInput{
+				Tracker: "EXAMPLE",
+				Meta: api.UploadSubject{
+					ReleaseName: "Example Release 2026 1080p-GRP",
+					VideoCodec:  codec,
+					Release:     api.ReleaseInfo{Codec: []string{"HEVC"}, Ext: "mkv"},
+				},
+			}
+			var wantCodecs []string
+			if codec != "" {
+				wantCodecs = []string{codec}
+			}
+			pure := pureReleaseProjection(input)
+			if pure.Taxonomy.Codec.Label != codec || pure.Taxonomy.Container.Label != "" ||
+				!slices.Equal(pure.DuplicateCriteria.Codecs, wantCodecs) {
+				t.Fatalf("pure media projection = %#v, codecs = %v", pure.Taxonomy, pure.DuplicateCriteria.Codecs)
+			}
+			preview, err := projectDryRunEntry(input, api.TrackerDryRunEntry{Status: "ready"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(preview.DuplicateCriteria.Codecs, wantCodecs) {
+				t.Fatalf("preview codecs = %v, want %v", preview.DuplicateCriteria.Codecs, wantCodecs)
+			}
+		})
+	}
+}
+
+func TestHEVCRuleUsesResolvedCodec(t *testing.T) {
+	for _, codec := range []string{"HEVC", "H.265", "H.264", ""} {
+		t.Run(codec, func(t *testing.T) {
+			subject := api.RuleSubject{VideoCodec: codec, Release: api.ReleaseInfo{Codec: []string{"HEVC"}}}
+			if got, want := isHEVC(subject), codec == "HEVC" || codec == "H.265"; got != want {
+				t.Fatalf("isHEVC = %t, want %t", got, want)
+			}
+		})
+	}
+}
+
 func (d projectionStubDefinition) Prepare(ctx context.Context, input PreparationInput) (TrackerPlan, *PreparationFailure) {
 	if d.prepareCalls != nil {
 		*d.prepareCalls++

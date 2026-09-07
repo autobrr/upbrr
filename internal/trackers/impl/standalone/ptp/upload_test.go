@@ -41,6 +41,37 @@ func TestLoadCookiesSuccessReturnsNilError(t *testing.T) {
 	}
 }
 
+func TestResolveResolutionUsesResolvedFactOnly(t *testing.T) {
+	t.Parallel()
+
+	resolution, _, _ := resolveResolution(api.UploadSubject{
+		Release:     api.ReleaseInfo{Resolution: "1080p"},
+		ReleaseName: "Example.Movie.2026.2160p-GRP",
+		Filename:    "Example.Movie.2026.4320p-GRP.mkv",
+	})
+	if resolution != "1080p" {
+		t.Fatalf("resolved resolution = %q", resolution)
+	}
+	rawOnly, _, _ := resolveResolution(api.UploadSubject{ReleaseName: "Example.Movie.2026.2160p-GRP", Filename: "Example.4320p.mkv"})
+	if rawOnly != "Other" {
+		t.Fatalf("raw-only resolution = %q", rawOnly)
+	}
+}
+
+func TestResolveContainerUsesResolvedFactOnly(t *testing.T) {
+	t.Parallel()
+
+	if got := resolveContainer(api.UploadSubject{Container: "mp4", SourcePath: "example.mkv"}); got != "MP4" {
+		t.Fatalf("resolved container = %q", got)
+	}
+	if got := resolveContainer(api.UploadSubject{SourcePath: "example.mkv"}); got != "Other" {
+		t.Fatalf("path-only container = %q", got)
+	}
+	if got := resolveContainer(api.UploadSubject{DiscType: "DVD"}); got != "VOB IFO" {
+		t.Fatalf("disc container = %q", got)
+	}
+}
+
 func TestRequestAntiCsrfTokenRejectsBlankMarker(t *testing.T) {
 	t.Parallel()
 
