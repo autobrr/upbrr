@@ -92,6 +92,7 @@ func TestWorkflowMediaPlanHonorsProjectedContentRequirements(t *testing.T) {
 		wantPlanCount int
 	}{
 		{name: "none"},
+		{name: "dvd-menu-only", artifacts: api.TrackerArtifactRequirements{DVDMenuCount: 1}},
 		{
 			name:          "images",
 			artifacts:     api.TrackerArtifactRequirements{ScreenshotCount: 2},

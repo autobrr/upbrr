@@ -449,8 +449,8 @@ function Record-Stage($Lane, $Current, [string]$Goal) {
   if ($actions.Count -gt 0) { $status = 'needs_input'; $reason = 'typed_action_required' }
   elseif ($value -and ($Goal -eq 'prepared' -or $value.status -in @('succeeded', 'completed', 'ready'))) { $status = 'pass'; $reason = 'retained_stage_succeeded' }
   elseif ($Current.operation.status -eq 'failed') { $status = 'fail'; $reason = 'workflow_operation_failed' }
+  elseif ($value.status -in @('failed', 'blocked', 'partial', 'needs_input') -or $Current.continuation.disposition -in @('failed', 'needs_action', 'partial', 'canceled')) { $status = 'blocked'; $reason = 'workflow_stage_blocked' }
   elseif ($Goal -in @('media_ready', 'descriptions_ready') -and $value.status -eq 'skipped') { $status = 'pass'; $reason = 'retained_stage_not_required' }
-  elseif ($value.status -in @('failed', 'blocked', 'partial', 'needs_input') -or $Current.continuation.disposition -in @('failed', 'blocked', 'partial')) { $status = 'blocked'; $reason = 'workflow_stage_blocked' }
   elseif ($Goal -eq 'dry_run' -and $value.status -eq 'skipped' -and $Current.operation.status -eq 'completed') { $status = 'not_applicable'; $reason = 'tracker_dry_run_skipped' }
   if ($Goal -eq 'media_ready' -and $status -eq 'pass' -and @($value.artifacts | Where-Object { $_.kind -eq 'screenshot' }).Count -gt 0) { $status = 'inconclusive'; $reason = 'local_capture_requires_decode' }
   $failureCodes = @(Get-LiveFailureCodes $Current)

@@ -40,8 +40,8 @@ type workflowMediaBuilder struct {
 	media       *mediaModule
 }
 
-// Plan resolves capture suggestions only when projections require media.
-// It retains zero-count requirements without resolving a source for image-free trackers.
+// Plan resolves screenshot suggestions only when projections require screenshots.
+// It retains DVD-menu requirements for Build without resolving a screenshot source.
 func (b workflowMediaBuilder) Plan(
 	ctx context.Context,
 	release api.ReleaseRef,
@@ -57,15 +57,12 @@ func (b workflowMediaBuilder) Plan(
 			Purpose:         api.ScreenshotPurposeFinal,
 		})
 	}
-	screenshotCount, dvdMenuCount := projectedMediaRequirements(projections.Projections)
-	if screenshotCount <= 0 && dvdMenuCount <= 0 {
+	screenshotCount, _ := projectedMediaRequirements(projections.Projections)
+	if screenshotCount <= 0 {
 		return api.MediaPlan{Requirements: requirements}, nil
 	}
 	if b.resolver == nil || b.screenshots == nil {
 		return api.MediaPlan{}, errors.New("workflow media plan service is unavailable")
-	}
-	if screenshotCount <= 0 {
-		screenshotCount = b.config.ScreenshotHandling.Screens
 	}
 	subject, err := b.resolver.ResolveScreenshotSubject(ctx, api.MediaPlanInput{
 		Release: release,
