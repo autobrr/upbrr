@@ -317,10 +317,10 @@ function Invoke-BrowserCheck([ValidateSet('local', 'hosted', 'restart')][string]
     # Failed browser checks still consume the budget and retain completed evidence.
     if (Test-Path -LiteralPath $requestsPath) { $script:RequestCount += (Read-PrivateJson $requestsPath).requests }
     if (Test-Path -LiteralPath $receiptPath) {
+      $script:Results = @($script:Results | Where-Object { $_.evidence.browserPhase -cne $Phase })
       foreach ($row in (Read-PrivateJson $receiptPath).results) {
-        if ($row.stage -eq 'upload_controls' -and $row.status -eq 'pass') {
-          $script:Results = @($script:Results | Where-Object { $_.stage -ne 'upload_controls' -or $_.status -notin @('inconclusive', 'not_applicable') })
-        }
+        if (-not $row.evidence) { $row.evidence = @{} }
+        $row.evidence.browserPhase = $Phase
         Add-Result $row.caseId $row.laneId $row.stage $row.status $row.reason $row.evidence
       }
     }
@@ -415,6 +415,14 @@ function Resolve-FeedbackAuthority($Lane, $Feedback, $Current) {
 }
 
 function Add-Result([string]$CaseID, [string]$LaneID, [string]$Stage, [string]$Status, [string]$Reason, $Evidence = @{}) {
+  # Reports describe the latest stage observation. Safety violations remain historical.
+  if ($Stage -notin @('submission_negative_control', 'forbidden_effects', 'restart_forbidden_effects')) {
+    $script:Results = @($script:Results | Where-Object {
+      $_.caseId -cne $CaseID -or $_.laneId -cne $LaneID -or $_.stage -cne $Stage -or
+      $_.evidence.host -cne $Evidence.host -or $_.evidence.trackerId -cne $Evidence.trackerId -or
+      $_.evidence.browserPhase -cne $Evidence.browserPhase
+    })
+  }
   $script:Results += @{
     caseId = $CaseID; laneId = $LaneID; stage = $Stage; status = $Status; reason = $Reason; evidence = $Evidence
   }
@@ -440,8 +448,9 @@ function Record-Stage($Lane, $Current, [string]$Goal) {
   $status = 'inconclusive'; $reason = 'stage_result_missing'
   if ($actions.Count -gt 0) { $status = 'needs_input'; $reason = 'typed_action_required' }
   elseif ($value -and ($Goal -eq 'prepared' -or $value.status -in @('succeeded', 'completed', 'ready'))) { $status = 'pass'; $reason = 'retained_stage_succeeded' }
+  elseif ($Current.operation.status -eq 'failed') { $status = 'fail'; $reason = 'workflow_operation_failed' }
   elseif ($value.status -in @('failed', 'blocked', 'partial', 'needs_input') -or $Current.continuation.disposition -in @('failed', 'blocked', 'partial')) { $status = 'blocked'; $reason = 'workflow_stage_blocked' }
-  if ($Goal -eq 'media_ready' -and @($value.artifacts | Where-Object { $_.kind -eq 'screenshot' }).Count -gt 0) { $status = 'inconclusive'; $reason = 'local_capture_requires_decode' }
+  if ($Goal -eq 'media_ready' -and $status -eq 'pass' -and @($value.artifacts | Where-Object { $_.kind -eq 'screenshot' }).Count -gt 0) { $status = 'inconclusive'; $reason = 'local_capture_requires_decode' }
   $failureCodes = @(Get-LiveFailureCodes $Current)
   if ($Current.selection -and (ConvertTo-Json -InputObject @($Current.selection.trackerIds) -Compress) -cne (ConvertTo-Json -InputObject @($Lane.trackerIds) -Compress)) { throw 'tracker_selection_changed' }
   if ($Goal -eq 'dry_run' -and $value -and $value.noSeed -ne $true) { $status = 'fail'; $reason = 'dry_run_no_seed_not_locked' }
@@ -477,7 +486,21 @@ function Continue-Lane($Lane, [string]$Goal, $Current, $Intent, $Answers = @()) 
   $intentCopy = ConvertTo-Json -InputObject $Intent -Depth 100 | ConvertFrom-Json -AsHashtable
   $request = @{ idempotencyKey = [guid]::NewGuid().ToString('N'); goal = $Goal; intent = $intentCopy }
   if ($intentCopy.preparation) { $Lane.preparation = $intentCopy.preparation }
-  if (@($Answers).Count -gt 0) { $request.answers = @($Answers) }
+  $remainingAnswers = @()
+  foreach ($answer in $Answers) {
+    $action = @(Get-PendingActions $Current | Where-Object id -CEQ $answer.actionId)[0]
+    if ($action.kind -ne 'review_duplicates') { $remainingAnswers += $answer; continue }
+    if ($answer.workflowRevision -ne $Current.workflow.revision -or $action.trackerId -cnotin $Lane.trackerIds -or
+        @($answer.selectedValues).Count -ne 1 -or $answer.selectedValues[0] -cnotin @('accepted', 'ignored') -or
+        $answer.selectedValues[0] -cnotin @($action.options.value)) { throw 'feedback_duplicate_answer_invalid' }
+    # Duplicate review uses the decision command; generic action resolution only dismisses its prompt.
+    if (-not $intentCopy.duplicateDecisions) { $intentCopy.duplicateDecisions = @{} }
+    $intentCopy.duplicateDecisions[$action.trackerId] = $answer.selectedValues[0]
+  }
+  if ($remainingAnswers.Count -gt 0) {
+    if ($intentCopy.duplicateDecisions) { throw 'feedback_duplicate_requires_separate_transition' }
+    $request.answers = $remainingAnswers
+  }
   $snapshot = Join-Path $script:RunDir "snapshots/$($Lane.laneId).private.json"
   $deadline = [datetime]::UtcNow.AddSeconds($script:Run.budgets.timeoutSeconds)
   for ($transition = 0; $transition -lt 32; $transition++) {

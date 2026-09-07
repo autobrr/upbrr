@@ -201,16 +201,20 @@ try {
           if (-not $action -or -not $saved -or $answer.workflowRevision -ne $current.workflow.revision -or (Get-ActionSemantics @($action)) -cne (Get-ActionSemantics @($saved))) { throw 'feedback_action_stale' }
           if ($action.kind -in @('approve_upload', 'authenticate_tracker', 'provide_two_factor', 'reconcile_submission')) { throw 'feedback_action_not_permitted' }
         }
-        $intent = @{ executionMode = $script:Run.executionMode; interaction = 'unattended'; trackerIds = $lane.trackerIds; noSeed = $true; skipRemoteDuplicates = $false }
+        $intent = @{ executionMode = $script:Run.executionMode; interaction = 'unattended'; trackerIds = $lane.trackerIds; noSeed = $true; skipRemoteDuplicates = $false; media = @{ screenshotCount = $script:Run.budgets.screenshotCount; purpose = 'final'; captureDvdMenus = $false } }
         if ($lane.preparation) {
           $intent.preparation = $lane.preparation
           $intent.preparation.Instructions = $current.factInstructions.instructions
           if (@($actions | Where-Object kind -EQ 'reprepare').Count -gt 0) { $intent.preparation.Force = $true }
         }
         $current = Continue-Lane $lane $feedback.goal $current $intent $feedback.answers
-        $script:Results = @($script:Results | Where-Object { $_.laneId -cne $lane.laneId -or $_.stage -cne $feedback.goal })
+        foreach ($completedGoal in @('prepared', 'trackers_assessed', 'duplicates_decided', 'media_ready')) {
+          if ($completedGoal -eq $feedback.goal) { break }
+          $null = Record-Stage $lane $current $completedGoal
+        }
         $status = Record-Stage $lane $current $feedback.goal
         if (@(Get-PendingActions $current).Count -eq 0) {
+          $script:Results = @($script:Results | Where-Object { $_.laneId -cne $lane.laneId -or $_.stage -ne 'feedback' })
           $script:Feedback = @($script:Feedback | Where-Object laneId -CNE $lane.laneId)
           if ($status -eq 'pass') { $current = Resume-Lane $lane $current $feedback.goal }
         }
@@ -364,6 +368,7 @@ try {
       $afterRestart = Invoke-LiveAPI 'GetReleaseWorkflow' @{ workflowId = $lane.workflowId } -Poll
       Write-PrivateJson (Join-Path $script:RunDir 'restart-after.private.json') $afterRestart
       if ($afterRestart.workflow.id -cne $beforeRestart.workflow.id) { throw 'restart_workflow_identity_changed' }
+      $script:Results = @($script:Results | Where-Object { $_.laneId -cne $lane.laneId -or $_.stage -notin @('server_restart', 'restart_authority', 'restart_media', 'restart_media_decode') })
       Add-Result $lane.caseId $lane.laneId 'server_restart' 'pass' 'same_profile_runtime_policy_and_workflow_verified'
       $beforeMedia = @($beforeRestart.media.artifacts | Sort-Object id | ForEach-Object { [ordered]@{ id = $_.id; kind = $_.kind; selected = $_.selected; order = $_.order; index = $_.index; timestamp = $_.timestampSeconds; width = $_.width; height = $_.height; url = $_.url } })
       $afterMedia = @($afterRestart.media.artifacts | Sort-Object id | ForEach-Object { [ordered]@{ id = $_.id; kind = $_.kind; selected = $_.selected; order = $_.order; index = $_.index; timestamp = $_.timestampSeconds; width = $_.width; height = $_.height; url = $_.url } })
@@ -392,6 +397,7 @@ try {
     } else { Add-Result '' '' 'server_restart' 'inconclusive' 'no_workflow_to_recover' }
     $keepForFeedback = @($script:Feedback | Where-Object { $_.authority -and $_.status -eq 'needs_input' }).Count -gt 0
     Write-PrivateJson (Join-Path $script:RunDir 'feedback.private.json') $script:Feedback
+    $script:Results = @($script:Results | Where-Object stage -NE 'runner')
   }
 } catch {
   $exitCode = 2
@@ -428,10 +434,11 @@ try {
     $script:Run.requests = $script:RequestCount
     $script:Run.updatedAt = [datetime]::UtcNow.ToString('o')
     Write-PrivateJson (Join-Path $script:RunDir 'run.json') $script:Run
-    if (-not $CleanupRun) { Write-PrivateJson (Join-Path $script:RunDir 'results.private.json') $script:Results }
-    else {
-      if (Test-Path -LiteralPath (Join-Path $script:RunDir 'results.private.json')) { $script:Results = @(Read-PrivateJson (Join-Path $script:RunDir 'results.private.json')) }
+    if ($CleanupRun) {
+      if (Test-Path -LiteralPath (Join-Path $script:RunDir 'results.private.json')) { $script:Results = @(Read-PrivateJson (Join-Path $script:RunDir 'results.private.json')) + @($script:Results) }
     }
+    if ($script:Cleanup.state -eq 'complete') { $script:Results = @($script:Results | Where-Object stage -NE 'cleanup') }
+    Write-PrivateJson (Join-Path $script:RunDir 'results.private.json') $script:Results
     $counts = @{}
     foreach ($state in @('pass', 'fail', 'blocked', 'needs_input', 'inconclusive', 'not_applicable')) { $counts[$state] = @($script:Results | Where-Object status -EQ $state).Count }
     $overall = 'inconclusive'
