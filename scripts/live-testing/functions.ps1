@@ -534,7 +534,7 @@ function Resume-Lane($Lane, $Current, [string]$CompletedGoal) {
   if ($script:Run.suite -eq 'Dupe') { $goals = @('prepared', 'trackers_assessed', 'duplicates_decided') }
   $start = [array]::IndexOf($goals, $CompletedGoal)
   if ($start -lt 0) { return $Current }
-  $intent = @{ executionMode = $script:Run.executionMode; interaction = 'unattended'; trackerIds = $Lane.trackerIds; noSeed = $true; skipRemoteDuplicates = $false; media = @{ screenshotCount = $script:Run.budgets.screenshotCount; purpose = 'final'; captureDvdMenus = $false } }
+  $intent = @{ executionMode = $script:Run.executionMode; interaction = 'unattended'; trackerIds = $Lane.trackerIds; noSeed = $true; skipRemoteDuplicates = [bool]$script:Run.skipRemoteDuplicates; media = @{ screenshotCount = $script:Run.budgets.screenshotCount; purpose = 'final'; captureDvdMenus = $false } }
   for ($index = $start + 1; $index -lt $goals.Count; $index++) {
     $Current = Continue-Lane $Lane $goals[$index] $Current $intent
     $script:Results = @($script:Results | Where-Object { $_.laneId -cne $Lane.laneId -or $_.stage -cne $goals[$index] })

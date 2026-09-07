@@ -511,6 +511,42 @@ func preferredGeneratedEpisodeTitle(meta preparationstate.State) string {
 	return parsed
 }
 
+func resolvedEpisodeTitle(meta preparationstate.State) string {
+	overrides := meta.ReleaseNameOverrides
+	if overrides.NoEpisodeTitle != nil && *overrides.NoEpisodeTitle {
+		return ""
+	}
+	if overrides.EpisodeTitle != nil {
+		return strings.TrimSpace(*overrides.EpisodeTitle)
+	}
+	return preferredGeneratedEpisodeTitle(meta)
+}
+
+func resolvedGenre(meta preparationstate.State) string {
+	fallback := strings.TrimSpace(meta.Release.Genre)
+	if !namingProviderMetadataCurrent(meta) {
+		return fallback
+	}
+
+	tmdbGenres := ""
+	if value := meta.ProviderMetadata.TMDB; value != nil && meta.Identity.TMDBID > 0 && value.TMDBID == meta.Identity.TMDBID {
+		tmdbGenres = value.Genres
+	}
+	imdbGenres := ""
+	if value := meta.ProviderMetadata.IMDB; value != nil && meta.Identity.IMDBID > 0 && value.IMDBID == meta.Identity.IMDBID {
+		imdbGenres = value.Genres
+	}
+	tvdbGenres := ""
+	if value := meta.ProviderMetadata.TVDB; value != nil && meta.Identity.TVDBID > 0 && value.TVDBID == meta.Identity.TVDBID {
+		tvdbGenres = value.Genres
+	}
+	tvmazeGenres := ""
+	if value := meta.ProviderMetadata.TVmaze; value != nil && meta.Identity.TVmazeID > 0 && value.TVmazeID == meta.Identity.TVmazeID {
+		tvmazeGenres = value.Genres
+	}
+	return metautil.FirstNonEmptyTrimmed(tmdbGenres, imdbGenres, tvdbGenres, tvmazeGenres, fallback)
+}
+
 // resolveReleaseNameTitle selects naming fields from current matching provider
 // metadata while preserving parsed values when no eligible snapshot exists.
 func resolveReleaseNameTitle(category string, meta preparationstate.State) (string, string, int) {

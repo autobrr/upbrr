@@ -2056,8 +2056,10 @@ type TrackerMatch struct {
 	TrackerID string
 }
 
-// ReleaseInfo preserves release-name parser output before provider metadata can
-// remap episode identity.
+// ReleaseInfo carries canonical release fields to operations. Preparation also
+// uses it privately for detached release-name parser evidence.
+// Codec, Audio, HDR, Language, and Ext retain parser tokens for naming
+// transformations; operations must use resolved media fields for technical facts.
 type ReleaseInfo struct {
 	Category   string
 	Type       string

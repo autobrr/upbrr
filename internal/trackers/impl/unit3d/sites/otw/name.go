@@ -148,9 +148,6 @@ func otwVideoCodec(meta api.UploadSubject) string {
 			return value
 		}
 	}
-	if len(meta.Release.Codec) > 0 {
-		return strings.TrimSpace(meta.Release.Codec[0])
-	}
 	return ""
 }
 

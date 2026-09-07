@@ -215,7 +215,7 @@ test('owned embedded live runtime, controls, local images, and selection persist
               if (Date.now() >= deadline) throw new Error('browser_capture_deadline');
               const revision = current.workflow.revision;
               current = await api('ContinueReleaseWorkflow', { idempotencyKey, goal: 'media_ready', authority: { workflowId: current.workflow.id, expectedRevision: revision }, intent: {
-                executionMode: handoff.executionMode, interaction: 'unattended', trackerIds: lane.trackerIds, noSeed: true, skipRemoteDuplicates: false,
+                executionMode: handoff.executionMode, interaction: 'unattended', trackerIds: lane.trackerIds, noSeed: true, skipRemoteDuplicates: Boolean(handoff.skipRemoteDuplicates),
                 media: { screenshotCount: selections.length, purpose: 'final', selections, captureDvdMenus: false },
               } });
               if (cancel && current.operation?.command === 'capture_media' && current.operation.id !== previousOperation) {

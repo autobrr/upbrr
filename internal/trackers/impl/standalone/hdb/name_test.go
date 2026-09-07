@@ -74,6 +74,17 @@ func TestHDBReleaseNamePolicyBuildsStructuredOriginalIMDbName(t *testing.T) {
 	}
 }
 
+func TestHDBVideoCodecUsesResolvedMediaFact(t *testing.T) {
+	t.Parallel()
+
+	if got := hdbVideoCodecElement(api.UploadSubject{VideoCodec: "H.265", Release: api.ReleaseInfo{Codec: []string{"H.264"}}}); got != "H.265" {
+		t.Fatalf("resolved video codec = %q", got)
+	}
+	if got := hdbVideoCodecElement(api.UploadSubject{Release: api.ReleaseInfo{Codec: []string{"H.265"}}}); got != "" {
+		t.Fatalf("raw codec fallback = %q", got)
+	}
+}
+
 func TestBuildGeneratedHDBNameUsesMediumSpecificTechnicalOrder(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

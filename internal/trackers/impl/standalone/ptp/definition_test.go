@@ -106,6 +106,7 @@ func TestPTPFreshUploadTaxonomy(t *testing.T) {
 		Release: api.ReleaseInfo{
 			Resolution: "1440p",
 		},
+		Container: "mkv",
 		ProviderMetadata: api.SourceScopedMetadata{
 			IMDB: &api.IMDBMetadata{Type: "concert"},
 			TMDB: &api.TMDBMetadata{Genres: "Science Fiction, Mystery"},
@@ -166,7 +167,11 @@ func TestPTPFreshUploadTaxonomy(t *testing.T) {
 func TestPTPHardcodedSubtitleQuestionnaire(t *testing.T) {
 	t.Parallel()
 
-	meta := api.UploadSubject{ReleaseName: "Example.Release.2026.1080p.WEB-DL.x265.HARDSUB-GRP"}
+	meta := api.UploadSubject{
+		ReleaseName: "Example.Release.2026.1080p.WEB-DL.x265.HARDSUB-GRP",
+		Release:     api.ReleaseInfo{Resolution: "1080p"},
+		Container:   "mkv",
+	}
 	questionnaire := buildQuestionnaire(meta, "123")
 	if questionnaire == nil || len(questionnaire.Fields) != 1 || questionnaire.Fields[0].Key != "hardcoded_subtitle_languages" {
 		t.Fatalf("questionnaire=%#v", questionnaire)
@@ -291,6 +296,8 @@ func TestDefinitionBuildUploadDryRunForExistingGroup(t *testing.T) {
 			SourcePath:  filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath: torrentPath,
 			ReleaseName: "Movie.2026.1080p.BluRay.x264",
+			Release:     api.ReleaseInfo{Resolution: "1080p"},
+			Container:   "mkv",
 			Source:      "BluRay",
 			VideoCodec:  "AVC",
 			Identity:    api.ExternalIdentity{Category: "MOVIE", IMDBID: 456},
@@ -343,6 +350,8 @@ func TestDefinitionBuildUploadDryRunForNewGroupIncludesQuestionnaire(t *testing.
 			SourcePath:  filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath: torrentPath,
 			ReleaseName: "Movie.2026.1080p.BluRay.x264",
+			Release:     api.ReleaseInfo{Resolution: "1080p"},
+			Container:   "mkv",
 			Source:      "BluRay",
 			VideoCodec:  "AVC",
 			Identity:    api.ExternalIdentity{Category: "MOVIE"},
@@ -425,6 +434,8 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	meta := api.UploadSubject{
 		SourcePath:  filepath.Join(tmp, "Movie.mkv"),
 		ReleaseName: "Movie.2026.1080p.BluRay.x264",
+		Release:     api.ReleaseInfo{Resolution: "1080p"},
+		Container:   "mkv",
 		Source:      "BluRay",
 		VideoCodec:  "AVC",
 		Identity:    api.ExternalIdentity{Category: "MOVIE", IMDBID: 1234567},

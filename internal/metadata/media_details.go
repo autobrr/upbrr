@@ -651,8 +651,8 @@ func isCommentaryOrCompatibilityAudioValue(value string) bool {
 // RebuildReleaseName regenerates the prepared release-name fields from the
 // current metadata and the naming-only override controls. Fact-producing
 // instruction values are already part of the metadata by the final rebuild. It
-// is a no-op for nil input and replaces all name variants and missing-field
-// hints in place.
+// is a no-op for nil input and replaces ResolvedNaming, all name variants, and
+// missing-field hints in place without rewriting the detached Release evidence.
 func RebuildReleaseName(meta *preparationstate.State, logger api.Logger) {
 	if meta == nil {
 		return
@@ -660,6 +660,16 @@ func RebuildReleaseName(meta *preparationstate.State, logger api.Logger) {
 
 	nameRequest := releaseNameRequestFromMeta(*meta, logger)
 	nameRequest = applyReleaseNameOverrides(nameRequest, meta.ReleaseNameOverrides, logger)
+	meta.ResolvedNaming = preparationstate.ResolvedNaming{
+		Type:           nameRequest.Type,
+		Title:          nameRequest.Title,
+		AlternateTitle: nameRequest.AltTitle,
+		Year:           nameRequest.Year,
+		Source:         nameRequest.Source,
+		Resolution:     nameRequest.Resolution,
+		Genre:          resolvedGenre(*meta),
+		EpisodeTitle:   resolvedEpisodeTitle(*meta),
+	}
 	meta.ReleaseNamePresentation = api.ReleaseNamePresentation{
 		Version:            api.ReleaseNamePresentationVersionV1,
 		OmitAlternateTitle: nameRequest.NoAKA,

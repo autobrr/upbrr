@@ -5,8 +5,10 @@ param(
   [Parameter(ParameterSetName = 'New')][ValidatePattern('^[A-Z0-9]+$')][string]$Tracker,
   [Parameter(ParameterSetName = 'New')][string[]]$CaseId,
   [Parameter(ParameterSetName = 'New')][switch]$Sat,
+  [Parameter(ParameterSetName = 'New')][switch]$SkipDupes,
   [Parameter(ParameterSetName = 'New')][switch]$DebugCoverage,
   [Parameter(ParameterSetName = 'New')][switch]$UploadImages,
+  [Parameter(ParameterSetName = 'New')][switch]$UseConfiguredHosts,
   [Parameter(ParameterSetName = 'New')][switch]$ImageHostCoverage,
   [Parameter(ParameterSetName = 'New')][ValidateRange(1, 500)][int]$MaxImages = 3,
   [Parameter(ParameterSetName = 'New')][ValidateRange(1, 10)][int]$ScreenshotCount = 3,
@@ -90,7 +92,7 @@ try {
     if ((Get-FileHash -LiteralPath $Corpus).Hash -cne $corpusSHA256) { throw 'corpus_changed_during_run' }
     $initArgs = @('live-test', 'init', '--run-dir', $script:RunDir)
     if ($Config) { $initArgs += @('--config', $Config) }
-    if ($UploadImages) { $initArgs += '--prefer-deletable-hosts' }
+    if ($UploadImages -and -not $UseConfiguredHosts) { $initArgs += '--prefer-deletable-hosts' }
     Invoke-OwnedProcess $builtBinary $initArgs (Join-Path $buildDir 'init')
     $profile = Read-PrivateJson (Join-Path $buildDir 'init.stdout.private.log')
     $initialized = $true
@@ -130,8 +132,8 @@ try {
       configFingerprint = $profile.sourceFingerprint; profileConfigSha256 = (Get-FileHash -LiteralPath $profile.configPath).Hash
       configDefaultTrackers = @($profile.defaultTrackers); selectedTrackers = $trackers; trackerScope = $(if ($Tracker) { 'explicit' } else { 'config_defaults' })
       suite = $Suite; caseIds = @($selected); corpusPath = $Corpus; corpusSha256 = $corpusSHA256
-      sat = [bool]$Sat; executionMode = $(if ($DebugCoverage) { 'debug' } else { 'normal' })
-      imageHostCoverage = [bool]$ImageHostCoverage; preferDeletableHosts = [bool]$UploadImages
+      sat = [bool]$Sat; skipRemoteDuplicates = [bool]$SkipDupes; executionMode = $(if ($DebugCoverage) { 'debug' } else { 'normal' })
+      imageHostCoverage = [bool]$ImageHostCoverage; preferDeletableHosts = [bool]($UploadImages -and -not $UseConfiguredHosts)
       budgets = @{ maxImages = $(if ($UploadImages) { $MaxImages } else { 0 }); maxRequests = $MaxRequests; timeoutSeconds = $TimeoutSeconds; screenshotCount = $ScreenshotCount }
       buildLogs = $buildDir; expectedSafetyDenials = 0; requests = 0; gaps = @($scenarios.gaps)
     }
@@ -201,7 +203,7 @@ try {
           if (-not $action -or -not $saved -or $answer.workflowRevision -ne $current.workflow.revision -or (Get-ActionSemantics @($action)) -cne (Get-ActionSemantics @($saved))) { throw 'feedback_action_stale' }
           if ($action.kind -in @('approve_upload', 'authenticate_tracker', 'provide_two_factor', 'reconcile_submission')) { throw 'feedback_action_not_permitted' }
         }
-        $intent = @{ executionMode = $script:Run.executionMode; interaction = 'unattended'; trackerIds = $lane.trackerIds; noSeed = $true; skipRemoteDuplicates = $false; media = @{ screenshotCount = $script:Run.budgets.screenshotCount; purpose = 'final'; captureDvdMenus = $false } }
+        $intent = @{ executionMode = $script:Run.executionMode; interaction = 'unattended'; trackerIds = $lane.trackerIds; noSeed = $true; skipRemoteDuplicates = [bool]$script:Run.skipRemoteDuplicates; media = @{ screenshotCount = $script:Run.budgets.screenshotCount; purpose = 'final'; captureDvdMenus = $false } }
         if ($lane.preparation) {
           $intent.preparation = $lane.preparation
           $intent.preparation.Instructions = $current.factInstructions.instructions
@@ -244,7 +246,7 @@ try {
               if ((Get-SourceFingerprint $entry.case).fingerprint -cne $entry.stat.fingerprint) { throw 'source_changed_during_run' }
               if ($script:RemoteStop) { throw 'remote_work_stopped' }
               $intent = @{
-                executionMode = $script:Run.executionMode; interaction = 'unattended'; trackerIds = $ids; noSeed = $true; skipRemoteDuplicates = $false
+                executionMode = $script:Run.executionMode; interaction = 'unattended'; trackerIds = $ids; noSeed = $true; skipRemoteDuplicates = [bool]$script:Run.skipRemoteDuplicates
                 preparation = @{ SourcePath = $entry.case.input_path; Intent = 'preview'; Search = @{ Skip = $variant }; Controls = @{ Interaction = 'unattended' }; Force = $variant }
               }
               $identity = Get-CaseIdentityOverrides $entry.case
@@ -322,7 +324,7 @@ try {
     }
     # Browser handoff contains session authority and is always private, including its output.
     $cookies = @($script:Session.Cookies.GetCookies([uri]$script:BaseURL) | ForEach-Object { @{ name = $_.Name; value = $_.Value; domain = $_.Domain; path = $_.Path; httpOnly = $_.HttpOnly; secure = $_.Secure; sameSite = 'Lax' } })
-    $browserHandoff = @{ runId = $runID; buildIdentifier = $script:Run.buildIdentifier; executionMode = $script:Run.executionMode; imageUploadLimit = $script:Run.budgets.maxImages; requireUploadControls = $script:Run.suite -in @('Smoke', 'Full') -or $script:Run.budgets.maxImages -gt 0; remainingRequests = [Math]::Max(0, $script:Run.budgets.maxRequests - $script:RequestCount); baseURL = $script:BaseURL; cookies = $cookies; process = $processRecord; lanes = $script:Lanes }
+    $browserHandoff = @{ runId = $runID; buildIdentifier = $script:Run.buildIdentifier; executionMode = $script:Run.executionMode; skipRemoteDuplicates = [bool]$script:Run.skipRemoteDuplicates; imageUploadLimit = $script:Run.budgets.maxImages; requireUploadControls = $script:Run.suite -in @('Smoke', 'Full') -or $script:Run.budgets.maxImages -gt 0; remainingRequests = [Math]::Max(0, $script:Run.budgets.maxRequests - $script:RequestCount); baseURL = $script:BaseURL; cookies = $cookies; process = $processRecord; lanes = $script:Lanes }
     Write-PrivateJson (Join-Path $script:RunDir 'browser.private.json') $browserHandoff
     try {
       $browserReceipt = Invoke-BrowserCheck
