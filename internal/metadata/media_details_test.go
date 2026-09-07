@@ -959,6 +959,42 @@ func TestDeriveMediaFactsFoldsValueInstructionsIntoFactsAndName(t *testing.T) {
 	}
 }
 
+func TestDeriveMediaFactsPreservesScanInResolvedNaming(t *testing.T) {
+	for _, tc := range []struct {
+		scan       string
+		resolution string
+	}{
+		{scan: "MBAFF", resolution: "1080i"},
+		{scan: " mbaff ", resolution: "1080i"},
+		{scan: "Interlaced", resolution: "1080i"},
+		{scan: "Progressive", resolution: "1080p"},
+		{scan: "", resolution: "1080p"},
+	} {
+		t.Run(tc.scan, func(t *testing.T) {
+			miPath := filepath.Join(t.TempDir(), "mediainfo.json")
+			payload := `{"media":{"track":[{"@type":"Video","Format":"AVC","Width":"1920","Height":"1080","ScanType":"` + tc.scan + `"}]}}`
+			if err := os.WriteFile(miPath, []byte(payload), 0o600); err != nil {
+				t.Fatalf("write mediainfo: %v", err)
+			}
+			svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+			meta, err := svc.deriveMediaFacts(t.Context(), preparationstate.State{
+				SourcePath:        filepath.Join(t.TempDir(), "source.mkv"),
+				MediaInfoJSONPath: miPath,
+				Release:           api.ReleaseInfo{Title: "Example Film"},
+			})
+			if err != nil {
+				t.Fatalf("derive media facts: %v", err)
+			}
+			if meta.Release.Resolution != tc.resolution || meta.ResolvedNaming.Resolution != tc.resolution {
+				t.Fatalf("resolution=%q resolved=%q, want %q", meta.Release.Resolution, meta.ResolvedNaming.Resolution, tc.resolution)
+			}
+			if !strings.Contains(meta.ReleaseName, tc.resolution) {
+				t.Fatalf("release name %q lacks %q", meta.ReleaseName, tc.resolution)
+			}
+		})
+	}
+}
+
 func TestApplyMediaDetailsTreatsUsableMediaInfoWithoutHDRAsSDR(t *testing.T) {
 	miPath := filepath.Join(t.TempDir(), "mediainfo.json")
 	if err := os.WriteFile(miPath, []byte(`{"media":{"track":[{"@type":"General"},{"@type":"Video","Format":"HEVC","Width":"3840","Height":"2160"}]}}`), 0o600); err != nil {
