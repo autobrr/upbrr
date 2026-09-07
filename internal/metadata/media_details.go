@@ -212,6 +212,9 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	if strings.EqualFold(meta.DiscType, "BDMV") {
 		meta.Region = regionFromBDInfo(bdinfo, meta.Region)
 		meta.VideoCodec = videoCodecFromBDInfo(bdinfo)
+		if bdinfo != nil && len(bdinfo.Video) > 0 {
+			meta.BitDepth = numericPattern.FindString(bdinfo.Video[0].BitDepth)
+		}
 	} else {
 		meta.VideoEncode, meta.VideoCodec, meta.HasEncodeSettings, meta.BitDepth = videoEncodeFromMedia(miDoc, meta.Type)
 	}
