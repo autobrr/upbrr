@@ -1,5 +1,28 @@
 #Requires -Version 7.0
 
+function Test-LiveContentLane($Lane) {
+  if (@($script:Results | Where-Object {
+    $_.laneId -ceq $Lane.laneId -and $_.stage -eq 'media_ready' -and
+    $_.reason -in @('source_capture_deferred_to_normal_lane', 'source_capture_covered_in_another_lane')
+  }).Count -gt 0) { return $false }
+  if ($Lane.sat -and @($script:Lanes | Where-Object { $_.caseId -ceq $Lane.caseId -and -not $_.sat }).Count -gt 0) { return $false }
+  return $true
+}
+
+function Get-LiveMediaInstructions($Lane, $Current) {
+  $projections = @($Current.projections.projections | Where-Object { $_.trackerId -cin $Lane.trackerIds })
+  if ($projections.Count -eq 0) { throw 'tracker_projections_required' }
+  $count = 0
+  foreach ($projection in $projections) {
+    if (-not $projection.artifacts) { throw 'tracker_artifacts_required' }
+    $count = [Math]::Max($count, [int]$projection.artifacts.screenshotCount)
+  }
+  # Screenshots is an explicit capture suite; upload suites follow tracker requirements.
+  if ($count -gt 0 -or $script:Run.suite -eq 'Screenshots') { $count = [Math]::Max($count, $script:Run.budgets.screenshotCount) }
+  elseif ($script:Run.imageHostCoverage) { $count = 1 }
+  @{ screenshotCount = $count; purpose = 'final'; captureDvdMenus = $false }
+}
+
 function Get-LiveImageCoverageHosts($Metadata, $Config, [string[]]$TrackerIDs) {
   # Read only configured choices. The exported config must remain in memory;
   # credentials are neither evidence nor permission to probe every known host.
@@ -32,10 +55,19 @@ function Record-LiveDryRunPayload($Lane, $Current) {
   $reports = @($Current.dryRun.reports | Where-Object status -EQ 'completed')
   if ($Current.dryRun.noSeed -ne $true -or $reports.Count -eq 0) { $reason = 'dry_run_completed_report_required' }
   $expectedTargets = @($Lane.trackerIds | Sort-Object -Unique)
-  if ($expectedTargets.Count -eq 0 -or @($Current.dryRun.reports).Count -ne $reports.Count -or
-      (($Current.dryRun.trackerIds | Sort-Object) -join ',') -cne ($expectedTargets -join ',') -or
-      (($reports.trackerId | Sort-Object) -join ',') -cne ($expectedTargets -join ',')) {
+  $reportTargets = @($reports.trackerId | Sort-Object -Unique)
+  $excludedTargets = @($expectedTargets | Where-Object { $_ -cnotin $reportTargets })
+  if ($expectedTargets.Count -eq 0 -or $expectedTargets.Count -ne @($Lane.trackerIds).Count -or
+      @($Current.dryRun.reports).Count -ne $reports.Count -or $reportTargets.Count -ne $reports.Count -or
+      (($Current.dryRun.trackerIds | Sort-Object) -join ',') -cne ($reportTargets -join ',')) {
     $reason = 'dry_run_complete_target_reports_required'
+  }
+  foreach ($trackerID in $excludedTargets) {
+    $outcome = @($Current.continuation.trackerOutcomes | Where-Object trackerId -CEQ $trackerID)
+    if ($outcome.Count -ne 1 -or $outcome[0].lifecycle -ne 'terminal' -or
+        $outcome[0].disposition -ne 'failed' -or -not $outcome[0].failures) {
+      $reason = 'dry_run_complete_target_reports_required'
+    }
   }
   foreach ($report in $reports) {
     $projection = @($Current.projections.projections | Where-Object trackerId -CEQ $report.trackerId)
@@ -51,7 +83,7 @@ function Record-LiveDryRunPayload($Lane, $Current) {
     }
     if ($report.clientInjection.status -ne 'skipped') { $reason = 'dry_run_client_injection_not_skipped' }
   }
-  Add-Result $Lane.caseId $Lane.laneId 'dry_run_payload' $(if ($reason -eq 'prepared_names_artifacts_and_no_seed_verified') { 'pass' } else { 'fail' }) $reason @{ completedReports = $reports.Count }
+  Add-Result $Lane.caseId $Lane.laneId 'dry_run_payload' $(if ($reason -eq 'prepared_names_artifacts_and_no_seed_verified') { 'pass' } else { 'fail' }) $reason @{ completedReports = $reports.Count; requestedTargets = $expectedTargets.Count; excludedTargets = $excludedTargets.Count }
 }
 
 function Invoke-LiveImageChecks($BrowserHandoff) {
@@ -60,8 +92,8 @@ function Invoke-LiveImageChecks($BrowserHandoff) {
     $_.reason -notin @('image_uploads_not_authorized_or_remote_stopped', 'hosting_or_duplicate_prerequisites_unfulfilled')
   })
   $decoded = @($script:Results | Where-Object { $_.stage -eq 'image_decode' -and $_.status -eq 'pass' } | Select-Object -ExpandProperty laneId -Unique)
-  $lanes = @($script:Lanes | Where-Object { $_.laneId -cin $decoded -and -not $_.pendingFeedback })
-  if ($lanes.Count -eq 0) { Add-Result '' '' 'image_host' 'blocked' 'local_decode_required'; return }
+  $lanes = @($script:Lanes | Where-Object { $_.workflowId -and -not $_.pendingFeedback -and (Test-LiveContentLane $_) })
+  if ($lanes.Count -eq 0) { Add-Result '' '' 'image_host' 'blocked' 'no_eligible_lanes'; return }
   $script:Results = @($script:Results | Where-Object { $_.stage -ne 'image_host' -or $_.reason -ne 'local_decode_required' })
   $coverage = @{}
   $coverageTargets = @{}
@@ -78,62 +110,74 @@ function Invoke-LiveImageChecks($BrowserHandoff) {
     $script:Results = @($script:Results | Where-Object {
       $_.laneId -cne $lane.laneId -or $_.stage -notin @('image_host', 'image_host_coverage', 'descriptions_ready', 'dry_run', 'dry_run_payload')
     })
+    if ($script:Run.imageHostCoverage -and $coverageTargets[$lane.laneId].Count -eq 0) {
+      Add-Result $lane.caseId $lane.laneId 'image_host_coverage' 'not_applicable' 'no_configured_compatible_hosts'
+    }
     Write-Host "case=$($lane.caseId) stage=image_host decision=checking"
     $stage = 'image_host'
     $failureCodes = @()
     try {
       $current = Invoke-LiveAPI 'GetReleaseWorkflow' @{ workflowId = $lane.workflowId }
       if (@(Get-PendingActions $current).Count -gt 0) { Save-Feedback $lane $current 'media_ready'; Add-Result $lane.caseId $lane.laneId $stage 'needs_input' 'typed_action_required'; continue }
-      $requiredCount = $script:Run.budgets.screenshotCount
-      foreach ($projection in @($current.projections.projections | Where-Object { $_.trackerId -cin $lane.trackerIds })) {
-        $requiredCount = [Math]::Max($requiredCount, [int]$projection.artifacts.screenshotCount)
-      }
-      $local = @($current.media.artifacts | Where-Object { $_.kind -eq 'screenshot' -and $_.selected } | Sort-Object order | Select-Object -First $requiredCount)
-      if ($local.Count -eq 0) { throw 'selected_local_images_required' }
-      if ($local.Count -lt $requiredCount) { throw 'selected_local_images_insufficient' }
-      $retained = @($current.media.artifacts | Where-Object kind -EQ 'hosted_image')
-      $requirementsPrepared = $current.media.imageRequirementsPrepared -and $retained.Count -ge $local.Count
-      # The production command revalidates and reuses hosted images on resume.
-      # Its journal guard still enforces the remaining budget if dispatch is needed.
-      if (-not $requirementsPrepared -and (Get-LiveImageBudgetRemaining) -lt $local.Count) { throw 'image_budget_insufficient_for_lane' }
-      $command = @{ workflowId = $current.workflow.id; expectedRevision = $current.workflow.revision; media = @{ id = $current.media.id; revision = $current.media.revision }; artifactIds = @($local.id); idempotencyKey = [guid]::NewGuid().ToString('N') }
-      $current = Wait-Workflow (Invoke-LiveAPI 'UploadReleaseWorkflowImages' $command -ExpectedStatus 202) (Join-Path $script:RunDir "snapshots/$($lane.laneId).private.json")
-      $failureCodes = @(Get-LiveFailureCodes $current)
-      if (@(Get-PendingActions $current).Count -gt 0) { Save-Feedback $lane $current 'media_ready'; Add-Result $lane.caseId $lane.laneId $stage 'needs_input' 'typed_action_required'; continue }
-      $hosted = @($current.media.artifacts | Where-Object kind -EQ 'hosted_image')
-      if (-not $current.media.imageRequirementsPrepared -or $hosted.Count -lt $local.Count) { throw 'required_hosting_incomplete' }
-      Add-Result $lane.caseId $lane.laneId 'image_host' 'pass' 'required_images_hosted' @{ selected = $local.Count; hosted = $hosted.Count }
-      $hostedLanes += $lane
-      if ($script:Run.imageHostCoverage) {
-        foreach ($hostID in @($hosted.host | Where-Object { $_ -cin $metadata.UploadHosts } | Select-Object -Unique)) {
+      $media = Get-LiveMediaInstructions $lane $current
+      $requiredCount = $media.screenshotCount
+      if ($requiredCount -gt 0) {
+        if ($lane.laneId -cnotin $decoded) { throw 'local_decode_required' }
+        $local = @($current.media.artifacts | Where-Object { $_.kind -eq 'screenshot' -and $_.selected } | Sort-Object order | Select-Object -First $requiredCount)
+        if ($local.Count -eq 0) { throw 'selected_local_images_required' }
+        if ($local.Count -lt $requiredCount) { throw 'selected_local_images_insufficient' }
+        $coverageOnly = $script:Run.imageHostCoverage -and @($current.projections.projections | Where-Object { $_.trackerId -cin $lane.trackerIds -and $_.artifacts.screenshotCount -gt 0 }).Count -eq 0
+        if (-not $coverageOnly) {
+          $retained = @($current.media.artifacts | Where-Object kind -EQ 'hosted_image')
+          $requirementsPrepared = $current.media.imageRequirementsPrepared -and $retained.Count -ge $local.Count
+          # The production command revalidates and reuses hosted images on resume.
+          # Its journal guard still enforces the remaining budget if dispatch is needed.
+          if (-not $requirementsPrepared -and (Get-LiveImageBudgetRemaining) -lt $local.Count) { throw 'image_budget_insufficient_for_lane' }
+          $command = @{ workflowId = $current.workflow.id; expectedRevision = $current.workflow.revision; media = @{ id = $current.media.id; revision = $current.media.revision }; artifactIds = @($local.id); idempotencyKey = [guid]::NewGuid().ToString('N') }
+          $current = Wait-Workflow (Invoke-LiveAPI 'UploadReleaseWorkflowImages' $command -ExpectedStatus 202) (Join-Path $script:RunDir "snapshots/$($lane.laneId).private.json")
+          $failureCodes = @(Get-LiveFailureCodes $current)
+          if (@(Get-PendingActions $current).Count -gt 0) { Save-Feedback $lane $current 'media_ready'; Add-Result $lane.caseId $lane.laneId $stage 'needs_input' 'typed_action_required'; continue }
+          $hosted = @($current.media.artifacts | Where-Object kind -EQ 'hosted_image')
+          if (-not $current.media.imageRequirementsPrepared -or $hosted.Count -lt $local.Count) { throw 'required_hosting_incomplete' }
+          Add-Result $lane.caseId $lane.laneId 'image_host' 'pass' 'required_images_hosted' @{ selected = $local.Count; hosted = $hosted.Count }
+        } else {
+          Add-Result $lane.caseId $lane.laneId 'image_host' 'not_applicable' 'tracker_images_not_required'
+        }
+        $hosted = @($current.media.artifacts | Where-Object kind -EQ 'hosted_image')
+        if ($script:Run.imageHostCoverage) {
+          foreach ($hostID in @($hosted.host | Where-Object { $_ -cin $metadata.UploadHosts } | Select-Object -Unique)) {
+            if ($coverage.ContainsKey($hostID)) { continue }
+            $coverage[$hostID] = $true
+            Add-Result $lane.caseId $lane.laneId 'image_host_coverage' 'pass' 'required_upload_covered_host' @{ host = $hostID }
+          }
+        }
+        foreach ($hostID in $coverageTargets[$lane.laneId]) {
+          if ($script:RemoteStop) { break }
           if ($coverage.ContainsKey($hostID)) { continue }
           $coverage[$hostID] = $true
-          Add-Result $lane.caseId $lane.laneId 'image_host_coverage' 'pass' 'required_upload_covered_host' @{ host = $hostID }
+          if ((Get-LiveImageBudgetRemaining) -lt 1) {
+            Add-Result $lane.caseId $lane.laneId 'image_host_coverage' 'blocked' 'image_budget_exhausted' @{ host = $hostID }
+            continue
+          }
+          $stage = 'image_host_coverage'
+          $command = @{ workflowId = $current.workflow.id; expectedRevision = $current.workflow.revision; media = @{ id = $current.media.id; revision = $current.media.revision }; artifactIds = @($local[0].id); host = $hostID; idempotencyKey = [guid]::NewGuid().ToString('N') }
+          $current = Wait-Workflow (Invoke-LiveAPI 'UploadReleaseWorkflowImages' $command -ExpectedStatus 202) (Join-Path $script:RunDir "snapshots/$($lane.laneId).private.json")
+          $failureCodes = @(Get-LiveFailureCodes $current)
+          if (@(Get-PendingActions $current).Count -gt 0) {
+            Save-Feedback $lane $current 'media_ready'
+            Add-Result $lane.caseId $lane.laneId 'image_host_coverage' 'needs_input' 'typed_action_required' @{ host = $hostID }
+            break
+          }
+          $uploaded = @($current.media.artifacts | Where-Object { $_.kind -eq 'hosted_image' -and $_.host -ceq $hostID }).Count
+          Add-Result $lane.caseId $lane.laneId 'image_host_coverage' $(if ($uploaded -gt 0) { 'pass' } else { 'blocked' }) $(if ($uploaded -gt 0) { 'configured_host_uploaded' } else { 'configured_host_upload_incomplete' }) @{ host = $hostID }
         }
-      }
-      foreach ($hostID in $coverageTargets[$lane.laneId]) {
-        if ($script:RemoteStop) { break }
-        if ($coverage.ContainsKey($hostID)) { continue }
-        $coverage[$hostID] = $true
-        if ((Get-LiveImageBudgetRemaining) -lt 1) {
-          Add-Result $lane.caseId $lane.laneId 'image_host_coverage' 'blocked' 'image_budget_exhausted' @{ host = $hostID }
-          continue
-        }
-        $stage = 'image_host_coverage'
-        $command = @{ workflowId = $current.workflow.id; expectedRevision = $current.workflow.revision; media = @{ id = $current.media.id; revision = $current.media.revision }; artifactIds = @($local[0].id); host = $hostID; idempotencyKey = [guid]::NewGuid().ToString('N') }
-        $current = Wait-Workflow (Invoke-LiveAPI 'UploadReleaseWorkflowImages' $command -ExpectedStatus 202) (Join-Path $script:RunDir "snapshots/$($lane.laneId).private.json")
-        $failureCodes = @(Get-LiveFailureCodes $current)
-        if (@(Get-PendingActions $current).Count -gt 0) {
-          Save-Feedback $lane $current 'media_ready'
-          Add-Result $lane.caseId $lane.laneId 'image_host_coverage' 'needs_input' 'typed_action_required' @{ host = $hostID }
-          break
-        }
-        $uploaded = @($current.media.artifacts | Where-Object { $_.kind -eq 'hosted_image' -and $_.host -ceq $hostID }).Count
-        Add-Result $lane.caseId $lane.laneId 'image_host_coverage' $(if ($uploaded -gt 0) { 'pass' } else { 'blocked' }) $(if ($uploaded -gt 0) { 'configured_host_uploaded' } else { 'configured_host_upload_incomplete' }) @{ host = $hostID }
+        if (@($current.media.artifacts | Where-Object kind -EQ 'hosted_image').Count -gt 0) { $hostedLanes += $lane }
+      } else {
+        Add-Result $lane.caseId $lane.laneId 'image_host' 'not_applicable' 'tracker_images_not_required'
       }
       if (@(Get-PendingActions $current).Count -gt 0 -or $script:RemoteStop) { continue }
       if ($script:Run.suite -notin @('Smoke', 'Full')) { continue }
-      $intent = @{ executionMode = $script:Run.executionMode; interaction = 'unattended'; trackerIds = $lane.trackerIds; noSeed = $true; skipRemoteDuplicates = $false; descriptions = @{ options = @{ NoSeed = $true; InteractionMode = 'unattended' }; imageHost = @{} } }
+      $intent = @{ executionMode = $script:Run.executionMode; interaction = 'unattended'; trackerIds = $lane.trackerIds; noSeed = $true; skipRemoteDuplicates = [bool]$script:Run.skipRemoteDuplicates; media = $media; descriptions = @{ options = @{ NoSeed = $true; InteractionMode = 'unattended' }; imageHost = @{} } }
       foreach ($stage in @('descriptions_ready', 'dry_run')) {
         $current = Continue-Lane $lane $stage $current $intent
         if ((Record-Stage $lane $current $stage) -ne 'pass') { break }

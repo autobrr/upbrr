@@ -152,6 +152,7 @@ func (c *EvidenceCollector) ResolveIdentityCandidate(
 }
 
 func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
+	resolved := meta.ResolvedNaming
 	namingStatus := api.NamingStatusComplete
 	if len(meta.ReleaseNameMissing) > 0 {
 		namingStatus = api.NamingStatusIncomplete
@@ -183,30 +184,30 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 			NamePresentation:      meta.ReleaseNamePresentation,
 			GeneratedReleaseNames: meta.GeneratedReleaseNames,
 			Tag:                   meta.Tag,
-			Type:                  meta.Release.Type,
+			Type:                  resolved.Type,
 			Artist:                meta.Release.Artist,
-			Title:                 meta.Release.Title,
+			Title:                 resolved.Title,
 			Subtitle:              meta.Release.Subtitle,
-			AlternateTitle:        meta.ResolvedAlternateTitle,
-			Year:                  meta.Release.Year,
+			AlternateTitle:        resolved.AlternateTitle,
+			Year:                  resolved.Year,
 			Month:                 meta.Release.Month,
 			Day:                   meta.Release.Day,
-			Source:                meta.Release.Source,
-			Resolution:            meta.Release.Resolution,
+			Source:                resolved.Source,
+			Resolution:            resolved.Resolution,
 			Codecs:                append([]string(nil), meta.Release.Codec...),
 			Audio:                 append([]string(nil), meta.Release.Audio...),
 			HDR:                   append([]string(nil), meta.Release.HDR...),
 			Extension:             meta.Release.Ext,
 			Languages:             append([]string(nil), meta.Release.Language...),
 			Site:                  meta.Release.Site,
-			Genre:                 meta.Release.Genre,
-			Channels:              meta.Release.Channels,
+			Genre:                 resolved.Genre,
+			Channels:              meta.Channels,
 			Collection:            meta.Release.Collection,
-			Region:                meta.Release.Region,
+			Region:                meta.Region,
 			Size:                  meta.Release.Size,
-			Group:                 meta.Release.Group,
+			Group:                 strings.TrimPrefix(strings.TrimSpace(meta.Tag), "-"),
 			Disc:                  meta.Release.Disc,
-			Editions:              append([]string(nil), meta.Release.Edition...),
+			Editions:              singletonFact(meta.Edition),
 			Other:                 append([]string(nil), meta.Release.Other...),
 			Scene:                 meta.Scene,
 			SceneName:             meta.SceneName,
@@ -219,7 +220,7 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 			EpisodeLabel:      meta.EpisodeStr,
 			DailyDate:         meta.DailyEpisodeDate,
 			Pack:              meta.TVPack,
-			Title:             meta.EpisodeTitle,
+			Title:             resolved.EpisodeTitle,
 			Overview:          meta.EpisodeOverview,
 			Year:              meta.EpisodeYear,
 			AiredDate:         meta.TVDBAiredDate,
@@ -237,8 +238,8 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 			Channels:          meta.Channels,
 			Commentary:        meta.HasCommentary,
 			ThreeD:            meta.Is3D,
-			Source:            meta.Source,
-			Type:              meta.Type,
+			Source:            resolved.Source,
+			Type:              resolved.Type,
 			UHD:               meta.UHD,
 			HDR:               meta.HDR,
 			HDRFacts:          meta.HDRFacts,
@@ -266,14 +267,22 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 		},
 		Assessments: assessments,
 		Identity: externalidentity.ResolutionIntent{
-			Title:   meta.Release.Title,
-			Year:    meta.Release.Year,
+			Title:   resolved.Title,
+			Year:    resolved.Year,
 			Season:  meta.SeasonInt,
 			Episode: meta.EpisodeInt,
 		},
 		Diagnostics: diagnostics,
 		Resources:   collectedResources(meta),
 	}
+}
+
+func singletonFact(value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return []string{value}
 }
 
 func collectedResources(meta preparationstate.State) CollectedResources {

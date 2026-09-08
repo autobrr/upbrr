@@ -117,10 +117,6 @@ func submitPreparedUpload(
 	if resp.Request != nil && resp.Request.URL != nil {
 		finalURL = resp.Request.URL.String()
 	}
-	_, responsePreview, err := commonhttp.ReadUploadResponseBody(resp, resp.StatusCode == http.StatusOK, commonhttp.DefaultResponsePreviewBytes)
-	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: PTP read upload response: %w", err)
-	}
 	if matches := ptpSuccessPattern.FindStringSubmatch(finalURL); len(matches) == 3 {
 		groupID := strings.TrimSpace(matches[1])
 		torrentID := strings.TrimSpace(matches[2])
@@ -139,16 +135,17 @@ func submitPreparedUpload(
 		}, nil
 	}
 
+	_, responsePreview, err := commonhttp.ReadUploadResponseBody(resp, false, commonhttp.DefaultResponsePreviewBytes)
+	if err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: PTP read upload response: %w", err)
+	}
 	failurePath := ""
 	if pathValue, pathErr := resolveFailurePath(req.Meta, req.Runtime.DBPath); pathErr == nil {
 		failurePath = pathValue
 		redactedBody := []byte(redaction.RedactValue(string(responsePreview), nil))
 		_ = os.WriteFile(failurePath, redactedBody, 0o600)
 	}
-	errText := commonhttp.RedactErrorDetail(extractAlertError(string(responsePreview)))
-	if errText == "" {
-		errText = commonhttp.ExtractHTTPErrorDetail(responsePreview)
-	}
+	errText := commonhttp.ExtractHTTPErrorDetail(responsePreview)
 	if errText == "" {
 		errText = "upload failed"
 	}
@@ -559,37 +556,6 @@ func resolveGroupTitleYear(meta api.UploadSubject) (string, string) {
 		return title, ""
 	}
 	return title, strconv.Itoa(year)
-}
-
-func extractAlertError(body string) string {
-	start := strings.Index(body, `alert alert--error`)
-	if start == -1 {
-		return ""
-	}
-	segment := body[start:]
-	end := strings.Index(segment, "</div>")
-	if end != -1 {
-		segment = segment[:end]
-	}
-	return stripTags(segment)
-}
-
-func stripTags(value string) string {
-	inTag := false
-	var builder strings.Builder
-	for _, r := range value {
-		switch r {
-		case '<':
-			inTag = true
-		case '>':
-			inTag = false
-		default:
-			if !inTag {
-				builder.WriteRune(r)
-			}
-		}
-	}
-	return strings.Join(strings.Fields(builder.String()), " ")
 }
 
 func compactError(value string) string {

@@ -581,7 +581,11 @@ func compositeUploadMediaIntent(
 	if input.Screenshots.Count != nil {
 		count = *input.Screenshots.Count
 	}
-	selections := make([]api.ScreenshotSelection, 0, len(input.Screenshots.Frames))
+	// Nil selections preserve automatic capture; manual frames replace the projected count.
+	var selections []api.ScreenshotSelection
+	if len(input.Screenshots.Frames) > 0 {
+		selections = make([]api.ScreenshotSelection, 0, len(input.Screenshots.Frames))
+	}
 	for index, frame := range input.Screenshots.Frames {
 		selections = append(selections, api.ScreenshotSelection{
 			Index:  index,

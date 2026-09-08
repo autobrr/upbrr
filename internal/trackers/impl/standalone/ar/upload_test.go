@@ -18,6 +18,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 	servicedb "github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/trackers"
 	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -31,6 +32,36 @@ func TestResolveARNameUsesSourceFilenameWithoutExtension(t *testing.T) {
 	})
 	if got != "My Movie (2024)" {
 		t.Fatalf("unexpected AR name %q", got)
+	}
+}
+
+func TestSubmitPreparedUploadPreservesLateHTMLFailure(t *testing.T) {
+	t.Parallel()
+
+	const detail = "AR rejected the torrent after validation"
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body: io.NopCloser(strings.NewReader(
+				"<html><body>" + strings.Repeat("padding ", 10*1024) + `<div class="alert-danger">` + detail + "</div></body></html>",
+			)),
+			Request: req,
+		}, nil
+	})}
+
+	_, err := submitPreparedUpload(
+		t.Context(),
+		trackers.PreparationInput{},
+		uploadState{},
+		client,
+		nil,
+		"application/octet-stream",
+		"",
+		"",
+	)
+	if err == nil || !strings.Contains(err.Error(), detail) {
+		t.Fatalf("expected late HTML error detail, got %v", err)
 	}
 }
 

@@ -26,6 +26,20 @@ type Request struct {
 	Layout sourcelayout.Layout
 }
 
+// ResolvedNaming contains the naming fields selected from canonical provider,
+// media, and parser evidence before presentation-only omissions are applied.
+// EpisodeTitle honors explicit title and omission controls, including clearing.
+type ResolvedNaming struct {
+	Type           string
+	Title          string
+	AlternateTitle string
+	Year           int
+	Source         string
+	Resolution     string
+	Genre          string
+	EpisodeTitle   string
+}
+
 // ReleaseAssessments projects concrete source-derived validation facts from
 // private collection state into their canonical typed form.
 func (s State) ReleaseAssessments() api.ReleaseAssessments {
@@ -66,7 +80,9 @@ func (s State) requiresMediaInfoUniqueID() bool {
 }
 
 // State is mutable, source-scoped collection evidence used only during
-// preparation. It contains no upload outcome, tracker-selection result, client
+// preparation. Release remains detached parser evidence; ResolvedNaming is
+// rebuilt from Release and current canonical evidence whenever the release name
+// changes. State contains no upload outcome, tracker-selection result, client
 // instruction, or transport state. Callers must project it into canonical fact
 // groups or operation-owned subjects before it leaves this boundary.
 type State struct {
@@ -106,6 +122,7 @@ type State struct {
 	MatchedEvidenceTrackers []string
 	Tag                     string
 	Release                 api.ReleaseInfo
+	ResolvedNaming          ResolvedNaming
 	TagOverride             *api.TagOverride
 	MetadataOverrides       api.MetadataOverrides
 	PersonalRelease         bool
@@ -193,12 +210,10 @@ type State struct {
 	ReleaseName                    string
 	ReleaseNameNoTag               string
 	ReleaseNameClean               string
-	// ResolvedAlternateTitle is selected by metadata naming before presentation omissions.
-	ResolvedAlternateTitle  string
-	GeneratedReleaseNames   api.GeneratedReleaseNameVariants
-	ReleaseNamePresentation api.ReleaseNamePresentation
-	ReleaseNameMissing      []string
-	BDInfo                  map[string]any
+	GeneratedReleaseNames          api.GeneratedReleaseNameVariants
+	ReleaseNamePresentation        api.ReleaseNamePresentation
+	ReleaseNameMissing             []string
+	BDInfo                         map[string]any
 }
 
 // CollectionPolicy contains preparation-only controls used while gathering

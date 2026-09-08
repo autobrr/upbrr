@@ -5,8 +5,10 @@ param(
   [Parameter(ParameterSetName = 'New')][ValidatePattern('^[A-Z0-9]+$')][string]$Tracker,
   [Parameter(ParameterSetName = 'New')][string[]]$CaseId,
   [Parameter(ParameterSetName = 'New')][switch]$Sat,
+  [Parameter(ParameterSetName = 'New')][switch]$SkipDupes,
   [Parameter(ParameterSetName = 'New')][switch]$DebugCoverage,
   [Parameter(ParameterSetName = 'New')][switch]$UploadImages,
+  [Parameter(ParameterSetName = 'New')][switch]$UseConfiguredHosts,
   [Parameter(ParameterSetName = 'New')][switch]$ImageHostCoverage,
   [Parameter(ParameterSetName = 'New')][ValidateRange(1, 500)][int]$MaxImages = 3,
   [Parameter(ParameterSetName = 'New')][ValidateRange(1, 10)][int]$ScreenshotCount = 3,
@@ -90,7 +92,7 @@ try {
     if ((Get-FileHash -LiteralPath $Corpus).Hash -cne $corpusSHA256) { throw 'corpus_changed_during_run' }
     $initArgs = @('live-test', 'init', '--run-dir', $script:RunDir)
     if ($Config) { $initArgs += @('--config', $Config) }
-    if ($UploadImages) { $initArgs += '--prefer-deletable-hosts' }
+    if ($UploadImages -and -not $UseConfiguredHosts) { $initArgs += '--prefer-deletable-hosts' }
     Invoke-OwnedProcess $builtBinary $initArgs (Join-Path $buildDir 'init')
     $profile = Read-PrivateJson (Join-Path $buildDir 'init.stdout.private.log')
     $initialized = $true
@@ -130,8 +132,8 @@ try {
       configFingerprint = $profile.sourceFingerprint; profileConfigSha256 = (Get-FileHash -LiteralPath $profile.configPath).Hash
       configDefaultTrackers = @($profile.defaultTrackers); selectedTrackers = $trackers; trackerScope = $(if ($Tracker) { 'explicit' } else { 'config_defaults' })
       suite = $Suite; caseIds = @($selected); corpusPath = $Corpus; corpusSha256 = $corpusSHA256
-      sat = [bool]$Sat; executionMode = $(if ($DebugCoverage) { 'debug' } else { 'normal' })
-      imageHostCoverage = [bool]$ImageHostCoverage; preferDeletableHosts = [bool]$UploadImages
+      sat = [bool]$Sat; skipRemoteDuplicates = [bool]$SkipDupes; executionMode = $(if ($DebugCoverage) { 'debug' } else { 'normal' })
+      imageHostCoverage = [bool]$ImageHostCoverage; preferDeletableHosts = [bool]($UploadImages -and -not $UseConfiguredHosts)
       budgets = @{ maxImages = $(if ($UploadImages) { $MaxImages } else { 0 }); maxRequests = $MaxRequests; timeoutSeconds = $TimeoutSeconds; screenshotCount = $ScreenshotCount }
       buildLogs = $buildDir; expectedSafetyDenials = 0; requests = 0; gaps = @($scenarios.gaps)
     }
@@ -201,7 +203,8 @@ try {
           if (-not $action -or -not $saved -or $answer.workflowRevision -ne $current.workflow.revision -or (Get-ActionSemantics @($action)) -cne (Get-ActionSemantics @($saved))) { throw 'feedback_action_stale' }
           if ($action.kind -in @('approve_upload', 'authenticate_tracker', 'provide_two_factor', 'reconcile_submission')) { throw 'feedback_action_not_permitted' }
         }
-        $intent = @{ executionMode = $script:Run.executionMode; interaction = 'unattended'; trackerIds = $lane.trackerIds; noSeed = $true; skipRemoteDuplicates = $false; media = @{ screenshotCount = $script:Run.budgets.screenshotCount; purpose = 'final'; captureDvdMenus = $false } }
+        $intent = @{ executionMode = $script:Run.executionMode; interaction = 'unattended'; trackerIds = $lane.trackerIds; noSeed = $true; skipRemoteDuplicates = [bool]$script:Run.skipRemoteDuplicates }
+        if ($feedback.goal -in @('media_ready', 'descriptions_ready', 'dry_run')) { $intent.media = Get-LiveMediaInstructions $lane $current }
         if ($lane.preparation) {
           $intent.preparation = $lane.preparation
           $intent.preparation.Instructions = $current.factInstructions.instructions
@@ -244,7 +247,7 @@ try {
               if ((Get-SourceFingerprint $entry.case).fingerprint -cne $entry.stat.fingerprint) { throw 'source_changed_during_run' }
               if ($script:RemoteStop) { throw 'remote_work_stopped' }
               $intent = @{
-                executionMode = $script:Run.executionMode; interaction = 'unattended'; trackerIds = $ids; noSeed = $true; skipRemoteDuplicates = $false
+                executionMode = $script:Run.executionMode; interaction = 'unattended'; trackerIds = $ids; noSeed = $true; skipRemoteDuplicates = [bool]$script:Run.skipRemoteDuplicates
                 preparation = @{ SourcePath = $entry.case.input_path; Intent = 'preview'; Search = @{ Skip = $variant }; Controls = @{ Interaction = 'unattended' }; Force = $variant }
               }
               $identity = Get-CaseIdentityOverrides $entry.case
@@ -287,7 +290,7 @@ try {
                 Add-Result $lane.caseId $lane.laneId 'media_ready' 'not_applicable' 'source_capture_covered_in_another_lane'
                 continue
               }
-              $intent.media = @{ screenshotCount = $script:Run.budgets.screenshotCount; purpose = 'final'; captureDvdMenus = $false }
+              $intent.media = Get-LiveMediaInstructions $lane $current
               $current = Continue-Lane $lane 'media_ready' $current $intent
               $null = Record-Stage $lane $current 'media_ready'
               if ($current.dupes -and $script:Run.suite -eq 'Screenshots') {
@@ -322,7 +325,7 @@ try {
     }
     # Browser handoff contains session authority and is always private, including its output.
     $cookies = @($script:Session.Cookies.GetCookies([uri]$script:BaseURL) | ForEach-Object { @{ name = $_.Name; value = $_.Value; domain = $_.Domain; path = $_.Path; httpOnly = $_.HttpOnly; secure = $_.Secure; sameSite = 'Lax' } })
-    $browserHandoff = @{ runId = $runID; buildIdentifier = $script:Run.buildIdentifier; executionMode = $script:Run.executionMode; imageUploadLimit = $script:Run.budgets.maxImages; requireUploadControls = $script:Run.suite -in @('Smoke', 'Full') -or $script:Run.budgets.maxImages -gt 0; remainingRequests = [Math]::Max(0, $script:Run.budgets.maxRequests - $script:RequestCount); baseURL = $script:BaseURL; cookies = $cookies; process = $processRecord; lanes = $script:Lanes }
+    $browserHandoff = @{ runId = $runID; buildIdentifier = $script:Run.buildIdentifier; executionMode = $script:Run.executionMode; skipRemoteDuplicates = [bool]$script:Run.skipRemoteDuplicates; imageUploadLimit = $script:Run.budgets.maxImages; requireUploadControls = $script:Run.suite -in @('Smoke', 'Full') -or $script:Run.budgets.maxImages -gt 0; remainingRequests = [Math]::Max(0, $script:Run.budgets.maxRequests - $script:RequestCount); baseURL = $script:BaseURL; cookies = $cookies; process = $processRecord; lanes = @($script:Lanes | Where-Object { Test-LiveContentLane $_ }) }
     Write-PrivateJson (Join-Path $script:RunDir 'browser.private.json') $browserHandoff
     try {
       $browserReceipt = Invoke-BrowserCheck
@@ -341,7 +344,7 @@ try {
       Add-Result '' '' 'embedded_browser' 'pass' 'identity_and_banner_verified'
     } catch { Add-Result '' '' 'embedded_browser' 'fail' 'browser_check_failed'; $script:RemoteStop = $true }
 
-    if ($script:Run.budgets.maxImages -gt 0 -and -not $script:RemoteStop) {
+    if (-not $script:RemoteStop -and ($script:Run.budgets.maxImages -gt 0 -or $script:Run.suite -in @('Smoke', 'Full'))) {
       Invoke-LiveImageChecks $browserHandoff
     } else {
       Add-Result '' '' 'image_host' 'not_applicable' 'image_uploads_not_authorized_or_remote_stopped'
@@ -376,7 +379,8 @@ try {
       $restartActions = @(Get-PendingActions $afterRestart)
       if ($restartActions.Count -gt 0) { Save-Feedback $lane $afterRestart $lane.goal; Add-Result $lane.caseId $lane.laneId 'restart_authority' 'needs_input' 'restart_requires_fresh_typed_action' }
       else { Add-Result $lane.caseId $lane.laneId 'restart_authority' 'pass' 'no_pending_recovery_actions' }
-      Add-Result $lane.caseId $lane.laneId 'restart_media' $(if ($sameMedia -and $beforeMedia.Count -gt 0) { 'pass' } elseif ($restartActions.Count -gt 0) { 'needs_input' } elseif ($beforeMedia.Count -eq 0) { 'inconclusive' } else { 'fail' }) $(if ($sameMedia -and $beforeMedia.Count -gt 0) { 'artifact_identity_selection_and_order_retained' } elseif ($restartActions.Count -gt 0) { 'media_revalidation_requires_typed_action' } elseif ($beforeMedia.Count -eq 0) { 'no_retained_media_to_compare' } else { 'media_changed_without_recovery_action' })
+      $mediaSkipped = $sameMedia -and $beforeMedia.Count -eq 0 -and $beforeRestart.media.status -eq 'skipped' -and $afterRestart.media.status -eq 'skipped'
+      Add-Result $lane.caseId $lane.laneId 'restart_media' $(if ($sameMedia -and $beforeMedia.Count -gt 0) { 'pass' } elseif ($restartActions.Count -gt 0) { 'needs_input' } elseif ($mediaSkipped) { 'not_applicable' } elseif ($beforeMedia.Count -eq 0) { 'inconclusive' } else { 'fail' }) $(if ($sameMedia -and $beforeMedia.Count -gt 0) { 'artifact_identity_selection_and_order_retained' } elseif ($restartActions.Count -gt 0) { 'media_revalidation_requires_typed_action' } elseif ($mediaSkipped) { 'tracker_images_not_required' } elseif ($beforeMedia.Count -eq 0) { 'no_retained_media_to_compare' } else { 'media_changed_without_recovery_action' })
       if ($sameMedia -and @($afterRestart.media.artifacts | Where-Object kind -EQ 'screenshot').Count -gt 0) {
         $browserHandoff.hostedOnly = $false; $browserHandoff.restartOnly = $true; $browserHandoff.process = $processRecord; $browserHandoff.lanes = @($lane)
         $browserHandoff.cookies = @($script:Session.Cookies.GetCookies([uri]$script:BaseURL) | ForEach-Object { @{ name = $_.Name; value = $_.Value; domain = $_.Domain; path = $_.Path; httpOnly = $_.HttpOnly; secure = $_.Secure; sameSite = 'Lax' } })

@@ -10,6 +10,23 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestResolveHDBTypeDoesNotInferFromSourcePath(t *testing.T) {
+	t.Parallel()
+
+	if got := resolveHDBType(api.UploadSubject{SourcePath: "Example.Movie.2026.1080p.WEB-DL-GRP.mkv"}); got != "" {
+		t.Fatalf("source-path type = %q", got)
+	}
+	if got := resolveHDBType(api.UploadSubject{Source: "WEB-DL"}); got != "WEBDL" {
+		t.Fatalf("resolved-source type = %q", got)
+	}
+	if got := resolveHDBType(api.UploadSubject{Release: api.ReleaseInfo{Ext: "mkv"}}); got != "" {
+		t.Fatalf("extension-only type = %q", got)
+	}
+	if got := resolveHDBType(api.UploadSubject{VideoCodec: "H.265", Release: api.ReleaseInfo{Ext: "mkv"}}); got != "ENCODE" {
+		t.Fatalf("resolved-codec type = %q", got)
+	}
+}
+
 func TestHDBCategoryIDs(t *testing.T) {
 	t.Parallel()
 

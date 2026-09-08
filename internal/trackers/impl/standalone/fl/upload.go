@@ -119,7 +119,11 @@ func submitPreparedUpload(
 		}, nil
 	}
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "FL", "upload_failure", result.Preview, ".html")
-	return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("FL", result.StatusCode, result.FinalURL, result.Preview)
+	errorResponse := result.Preview
+	if result.Success {
+		errorResponse = result.Body
+	}
+	return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("FL", result.StatusCode, result.FinalURL, errorResponse)
 }
 
 func buildUploadPreview(state uploadState) api.TrackerDryRunEntry {

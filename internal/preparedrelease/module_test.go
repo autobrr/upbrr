@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -124,7 +125,7 @@ func TestPrepareUsesExactCompatibilityAndPublishesConcreteAssessments(t *testing
 	}
 }
 
-func TestPrepareRecomputesLegacyContractAfterRestart(t *testing.T) {
+func TestPrepareRecomputesPreviousContractAfterRestart(t *testing.T) {
 	t.Parallel()
 	path := writePreparedTestFile(t, "source.mkv", "synthetic media")
 	store := newMemoryStore()
@@ -134,11 +135,11 @@ func TestPrepareRecomputesLegacyContractAfterRestart(t *testing.T) {
 		t.Fatalf("initial prepare: %v", err)
 	}
 
-	legacy := prepared.Release
-	legacy.Compatibility.ContractVersion = "prepared-release-v3"
-	legacy.Assessments.VideoBitrate = api.VideoBitrateAssessment{}
+	previous := prepared.Release
+	previous.Compatibility.ContractVersion = "prepared-release-v7"
+	previous.Assessments.VideoBitrate = api.VideoBitrateAssessment{}
 	store.mu.Lock()
-	store.current[canonicalSourceKey(path)] = legacy
+	store.current[canonicalSourceKey(path)] = previous
 	store.mu.Unlock()
 
 	restartedCollector := &recordingCollector{}
@@ -539,7 +540,8 @@ func TestOperationSubjectsCarryCorrectedFactsConsistently(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveUploadSubject() error = %v", err)
 	}
-	if upload.Type != "REMUX" || upload.Source != "BluRay" || upload.Release.Type != "REMUX" || upload.Release.Resolution != "2160p" {
+	if upload.Type != "REMUX" || upload.Source != "BluRay" || upload.Release.Type != "REMUX" || upload.Release.Resolution != "2160p" ||
+		upload.Release.Title != "Resolved Series" || upload.Release.Alt != "AKA Resolved Original" || upload.Release.Year != 2027 {
 		t.Fatalf("upload subject type facts = %q/%q/%q/%q", upload.Type, upload.Source, upload.Release.Type, upload.Release.Resolution)
 	}
 	if upload.SeasonInt != 3 || upload.EpisodeInt != 7 || upload.SeasonStr != "S03" || upload.EpisodeStr != "E07" {
@@ -548,7 +550,7 @@ func TestOperationSubjectsCarryCorrectedFactsConsistently(t *testing.T) {
 	if upload.Tag != "-OTHER" || upload.Release.Group != "OTHER" || upload.Edition != "Extended" || upload.Service != "AMZN" {
 		t.Fatalf("upload subject fact projections = %q/%q/%q/%q", upload.Tag, upload.Release.Group, upload.Edition, upload.Service)
 	}
-	if release.Naming.AlternateTitle != "AKA Rei no Shirizu" || upload.AlternateTitle != release.Naming.AlternateTitle {
+	if release.Naming.AlternateTitle != "AKA Resolved Original" || upload.AlternateTitle != release.Naming.AlternateTitle {
 		t.Fatalf("alternate title projection = %q, prepared = %q", upload.AlternateTitle, release.Naming.AlternateTitle)
 	}
 
@@ -561,6 +563,53 @@ func TestOperationSubjectsCarryCorrectedFactsConsistently(t *testing.T) {
 	}
 	if duplicate.SeasonInt != upload.SeasonInt || duplicate.EpisodeInt != upload.EpisodeInt || duplicate.Release.Group != upload.Release.Group {
 		t.Fatalf("duplicate subject episode/group diverges: %d/%d %q", duplicate.SeasonInt, duplicate.EpisodeInt, duplicate.Release.Group)
+	}
+}
+
+func TestReleaseInfoDoesNotRestoreSupersededDuplicateFacts(t *testing.T) {
+	t.Parallel()
+
+	got := releaseInfo(api.PreparedRelease{
+		Naming: api.NamingFacts{
+			Title:     "Resolved Title",
+			Type:      "STALE-TYPE",
+			Source:    "STALE-SOURCE",
+			Channels:  "STALE-CHANNELS",
+			Region:    "STALE-REGION",
+			Editions:  []string{"Stale Edition"},
+			Codecs:    []string{"x265"},
+			Languages: []string{"English"},
+		},
+		Episode:  api.EpisodeFacts{Season: 2, Episode: 3},
+		Identity: api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+	})
+	if got.Category != "TV" || got.Title != "Resolved Title" || got.Season != 2 || got.Episode != 3 {
+		t.Fatalf("canonical identity projection = %#v", got)
+	}
+	if got.Type != "" || got.Source != "" || got.Channels != "" || got.Region != "" || got.Edition != nil {
+		t.Fatalf("superseded naming duplicates restored = %#v", got)
+	}
+	if !slices.Equal(got.Codec, []string{"x265"}) || !slices.Equal(got.Language, []string{"English"}) {
+		t.Fatalf("parser syntax tokens changed = %#v", got)
+	}
+}
+
+func TestPrepareRejectsProviderMetadataForDifferentCanonicalID(t *testing.T) {
+	t.Parallel()
+
+	path := writePreparedTestFile(t, "source.mkv", "source")
+	store := newMemoryStore()
+	module, err := New(store, mismatchedProviderIdentityResolver{}, &recordingCollector{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = module.Prepare(context.Background(), api.PrepareInput{SourcePath: path})
+	var incompatible *IncompatiblePreparationError
+	if !errors.As(err, &incompatible) || incompatible.Reason != "tmdb provider metadata does not match canonical identity" {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	if _, err := store.LoadPreparedRelease(context.Background(), path); !errors.Is(err, internalerrors.ErrNotFound) {
+		t.Fatalf("mismatched provider generation was published: %v", err)
 	}
 }
 
@@ -801,6 +850,24 @@ func (staticIdentityResolver) Resolve(_ context.Context, request externalidentit
 	}, nil
 }
 
+type mismatchedProviderIdentityResolver struct{}
+
+func (mismatchedProviderIdentityResolver) Resolve(_ context.Context, request externalidentity.Request) (externalidentity.Result, error) {
+	return externalidentity.Result{
+		Identity: api.ExternalIdentity{
+			SourcePath: request.SourcePath,
+			Generation: request.Generation,
+			TMDBID:     123456,
+			Category:   api.CanonicalCategoryMovie,
+		},
+		ProviderMetadata: api.SourceScopedMetadata{
+			SourcePath: request.SourcePath,
+			Generation: request.Generation,
+			TMDB:       &api.TMDBMetadata{TMDBID: 654321, Title: "Different Work"},
+		},
+	}, nil
+}
+
 // correctedFactsCollector returns fact groups as the metadata pipeline shapes
 // them after fact-producing release-name instructions were applied.
 type correctedFactsCollector struct{}
@@ -810,9 +877,10 @@ func (correctedFactsCollector) Collect(_ context.Context, request preparationsta
 		Naming: api.NamingFacts{
 			Filename:       filepath.Base(request.Manifest.SourcePath),
 			ReleaseName:    "Example Show 2027 S03E07 Extended 2160p BluRay REMUX-OTHER",
-			AlternateTitle: "AKA Rei no Shirizu",
 			Tag:            "-OTHER",
 			Type:           "REMUX",
+			Title:          "Resolved Series",
+			AlternateTitle: "AKA Resolved Original",
 			Source:         "BluRay",
 			Resolution:     "2160p",
 			Year:           2027,
@@ -825,10 +893,12 @@ func (correctedFactsCollector) Collect(_ context.Context, request preparationsta
 			EpisodeLabel: "E07",
 		},
 		Media: api.MediaFacts{
-			Type:    "REMUX",
-			Source:  "BluRay",
-			Edition: "Extended",
-			Service: "AMZN",
+			Type:     "REMUX",
+			Source:   "BluRay",
+			Edition:  "Extended",
+			Service:  "AMZN",
+			Region:   "B",
+			Channels: "5.1",
 		},
 	}, nil
 }

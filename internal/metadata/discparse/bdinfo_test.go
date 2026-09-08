@@ -40,6 +40,73 @@ func TestParseBDInfoSummary(t *testing.T) {
 	}
 }
 
+func TestParseBDInfoSummaryVideoLayouts(t *testing.T) {
+	tests := []struct {
+		name  string
+		line  string
+		video BDVideo
+	}{
+		{
+			name: "optional chroma subsampling",
+			line: "MPEG-H HEVC Video / 76852 kbps / 2160p / 23.976 fps / 16:9 / Main 10@Level 5.1@High / 4:2:0 / 10 bits / HDR10 / BT.2020",
+			video: BDVideo{
+				Codec:       "MPEG-H HEVC Video",
+				Bitrate:     "76852 kbps",
+				Resolution:  "2160p",
+				FPS:         "23.976 fps",
+				AspectRatio: "16:9",
+				Profile:     "Main 10@Level 5.1@High",
+				BitDepth:    "10 bits",
+				HDRDV:       "HDR10",
+				Color:       "BT.2020",
+			},
+		},
+		{
+			name: "legacy layout without chroma subsampling",
+			line: "MPEG-4 AVC Video / 30000 kbps / 1080p / 23.976 fps / 16:9 / High / 8 bits / SDR / BT.709",
+			video: BDVideo{
+				Codec:       "MPEG-4 AVC Video",
+				Bitrate:     "30000 kbps",
+				Resolution:  "1080p",
+				FPS:         "23.976 fps",
+				AspectRatio: "16:9",
+				Profile:     "High",
+				BitDepth:    "8 bits",
+				HDRDV:       "SDR",
+				Color:       "BT.709",
+			},
+		},
+		{
+			name: "eye layout",
+			line: "MPEG-4 MVC Video / 30000 kbps / Left Eye / 1080p / 23.976 fps / 16:9 / High / 8 bits / SDR / BT.709",
+			video: BDVideo{
+				Codec:       "MPEG-4 MVC Video",
+				Bitrate:     "30000 kbps",
+				Resolution:  "1080p",
+				FPS:         "23.976 fps",
+				AspectRatio: "16:9",
+				Profile:     "High",
+				BitDepth:    "8 bits",
+				HDRDV:       "SDR",
+				Color:       "BT.709",
+				ThreeD:      "Left Eye",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := ParseBDInfoSummary("Video: "+tt.line, "", "")
+			if len(info.Video) != 1 {
+				t.Fatalf("video track count = %d, want 1", len(info.Video))
+			}
+			if info.Video[0] != tt.video {
+				t.Fatalf("video = %#v, want %#v", info.Video[0], tt.video)
+			}
+		})
+	}
+}
+
 func TestSplitBDInfoReport(t *testing.T) {
 	report := "FILES:\n-------------\n00001.m2ts        00:10:00     1,000,000,000\nCHAPTERS:\nQUICK SUMMARY:\nPlaylist: 00001.MPLS\n********************\n[code]\nIGNORE\n[/code]\n[code]\nSUMMARY\nFILES:\n"
 	summary, files, ext := SplitBDInfoReport(report)
