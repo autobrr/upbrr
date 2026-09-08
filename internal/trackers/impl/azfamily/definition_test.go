@@ -358,6 +358,148 @@ func TestUploadScreenshotPreflightRejectsBeforeTask(t *testing.T) {
 	}
 }
 
+func TestUploadScreenshotPublishFailureDoesNotCreateTask(t *testing.T) {
+	tmp := t.TempDir()
+	torrentPath := filepath.Join(tmp, "release.torrent")
+	mediaInfoPath := filepath.Join(tmp, "MEDIAINFO.txt")
+	if err := os.WriteFile(torrentPath, []byte("torrent-bytes"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+	if err := os.WriteFile(mediaInfoPath, []byte("mediainfo"), 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+
+	var screenshotCount atomic.Int32
+	var taskCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/torrents":
+			_, _ = io.WriteString(w, `<meta name="_token" content="secret-token">`)
+		case r.URL.Path == "/ajax/movies/1":
+			_, _ = io.WriteString(w, `{"data":[{"id":"77","imdb":"tt0000123"}]}`)
+		case r.URL.Path == "/ajax/image/upload":
+			screenshotCount.Add(1)
+			w.WriteHeader(http.StatusInternalServerError)
+		case strings.Contains(r.URL.Path, "/upload/") && strings.Contains(r.Header.Get("Content-Type"), "multipart/form-data"):
+			taskCount.Add(1)
+			w.WriteHeader(http.StatusInternalServerError)
+		case strings.HasPrefix(r.URL.Path, "/img/"):
+			_, _ = w.Write([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	parsedServerURL, _ := url.Parse(server.URL)
+	writeAZCookieFile(t, tmp, parsedServerURL.Hostname())
+
+	_, failure := testDefinitionAt(server.URL).Prepare(context.Background(), trackers.PreparationInput{
+		Intent:  trackers.PreparationIntentUpload,
+		Tracker: "AZ",
+		Meta: api.UploadSubject{
+			SourcePath:        filepath.Join(tmp, "Example.Release.2026.mkv"),
+			TorrentPath:       torrentPath,
+			MediaInfoTextPath: mediaInfoPath,
+			Identity:          api.ExternalIdentity{Category: "MOVIE", IMDBID: 123},
+			ReleaseName:       "Example.Release.2026.1080p.WEB-DL.x265-GRP",
+			Release: api.ReleaseInfo{
+				Title:      "Example Release",
+				Resolution: "1080p",
+			},
+			Type: "WEBDL",
+		},
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}}),
+		Logger:  api.NopLogger{},
+		Assets: &trackers.DescriptionAssets{Screenshots: []api.ScreenshotImage{
+			{RawURL: server.URL + "/img/1.png"},
+			{RawURL: server.URL + "/img/2.png"},
+			{RawURL: server.URL + "/img/3.png"},
+		}},
+	})
+	if failure == nil || !strings.Contains(failure.Message(), "image host returned 0 of 3 required screenshots") {
+		t.Fatalf("failure = %#v", failure)
+	}
+	if screenshotCount.Load() != 3 {
+		t.Fatalf("published %d screenshots, want 3", screenshotCount.Load())
+	}
+	if taskCount.Load() != 0 {
+		t.Fatalf("created %d remote tasks after screenshot publication failed", taskCount.Load())
+	}
+}
+
+func TestUploadTagDecodeFailureDoesNotCreateTask(t *testing.T) {
+	tmp := t.TempDir()
+	torrentPath := filepath.Join(tmp, "release.torrent")
+	mediaInfoPath := filepath.Join(tmp, "MEDIAINFO.txt")
+	if err := os.WriteFile(torrentPath, []byte("torrent-bytes"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+	if err := os.WriteFile(mediaInfoPath, []byte("mediainfo"), 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+
+	imageBytes := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+	var screenshotCount atomic.Int32
+	var taskCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/torrents":
+			_, _ = io.WriteString(w, `<meta name="_token" content="secret-token">`)
+		case r.URL.Path == "/ajax/movies/1":
+			_, _ = io.WriteString(w, `{"data":[{"id":"77","imdb":"tt0000123"}]}`)
+		case r.URL.Path == "/ajax/image/upload":
+			screenshotCount.Add(1)
+			_, _ = io.WriteString(w, `{"success":true,"imageId":"image-id"}`)
+		case r.URL.Path == "/ajax/tags":
+			_, _ = io.WriteString(w, `invalid JSON`)
+		case strings.Contains(r.URL.Path, "/upload/") && strings.Contains(r.Header.Get("Content-Type"), "multipart/form-data"):
+			taskCount.Add(1)
+			w.WriteHeader(http.StatusInternalServerError)
+		case strings.HasPrefix(r.URL.Path, "/img/"):
+			_, _ = w.Write(imageBytes)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	parsedServerURL, _ := url.Parse(server.URL)
+	writeAZCookieFile(t, tmp, parsedServerURL.Hostname())
+
+	_, failure := testDefinitionAt(server.URL).Prepare(context.Background(), trackers.PreparationInput{
+		Intent:  trackers.PreparationIntentUpload,
+		Tracker: "AZ",
+		Meta: api.UploadSubject{
+			SourcePath:        filepath.Join(tmp, "Example.Release.2026.mkv"),
+			TorrentPath:       torrentPath,
+			MediaInfoTextPath: mediaInfoPath,
+			Identity:          api.ExternalIdentity{Category: "MOVIE", IMDBID: 123},
+			ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Keywords: "example"}},
+			ReleaseName:       "Example.Release.2026.1080p.WEB-DL.x265-GRP",
+			Release: api.ReleaseInfo{
+				Title:      "Example Release",
+				Resolution: "1080p",
+			},
+			Type: "WEBDL",
+		},
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}}),
+		Logger:  api.NopLogger{},
+		Assets: &trackers.DescriptionAssets{Screenshots: []api.ScreenshotImage{
+			{RawURL: server.URL + "/img/1.png"},
+			{RawURL: server.URL + "/img/2.png"},
+			{RawURL: server.URL + "/img/3.png"},
+		}},
+	})
+	if failure == nil || !strings.Contains(failure.Message(), "decode tag lookup response") {
+		t.Fatalf("failure = %#v", failure)
+	}
+	if screenshotCount.Load() != 3 {
+		t.Fatalf("published %d screenshots, want 3", screenshotCount.Load())
+	}
+	if taskCount.Load() != 0 {
+		t.Fatalf("created %d remote tasks after tag lookup failed", taskCount.Load())
+	}
+}
+
 func TestBuildUploadDryRunAllowsTVWebDLRipType(t *testing.T) {
 	tmp := t.TempDir()
 	torrentPath := filepath.Join(tmp, "release.torrent")

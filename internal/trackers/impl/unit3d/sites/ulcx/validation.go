@@ -19,7 +19,7 @@ import (
 // ValidationPolicy returns ULCX's tracker-specific semantic checks.
 func ValidationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID:    "unit3d-ulcx-policy-v3",
+		ID:    "unit3d-ulcx-policy-v4",
 		Check: checkRules,
 	}
 }
@@ -188,6 +188,17 @@ func ulcxChannelCount(value string) (float64, bool) {
 	}
 	if end == 0 {
 		return 0, false
+	}
+	if layout := strings.Split(value[:end], "."); len(layout) == 3 {
+		channels := 0.0
+		for _, component := range layout {
+			count, err := strconv.Atoi(component)
+			if err != nil {
+				return 0, false
+			}
+			channels += float64(count)
+		}
+		return channels, true
 	}
 	channels, err := strconv.ParseFloat(value[:end], 64)
 	return channels, err == nil

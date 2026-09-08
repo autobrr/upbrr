@@ -4773,6 +4773,8 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections []api
 	requiredScreenshots, requiredMenus := 0, 0
 	for _, projection := range readinessProjections {
 		requiredScreenshots = max(requiredScreenshots, projection.Artifacts.ScreenshotCount)
+	}
+	for _, projection := range projections {
 		requiredMenus = max(requiredMenus, projection.Artifacts.DVDMenuCount)
 	}
 	selectedScreenshots, selectedMenus := 0, 0

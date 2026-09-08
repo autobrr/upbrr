@@ -3874,15 +3874,49 @@ func TestRefreshMutatedMediaStatusExcludesOnlyTrackerScopedHostFailures(t *testi
 		name        string
 		projections []api.TrackerReleaseProjection
 		failures    []api.WorkflowFailure
+		menu        *api.MediaArtifact
 		wantStatus  api.StageStatus
 	}{
 		{
 			name: "surviving tracker completes",
 			projections: []api.TrackerReleaseProjection{
 				{TrackerID: alpha, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2}},
+				{TrackerID: beta, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 3}},
+			},
+			failures:   []api.WorkflowFailure{betaFailure},
+			wantStatus: api.StageStatusCompleted,
+		},
+		{
+			name: "failed tracker local menu requirement remains enforced",
+			projections: []api.TrackerReleaseProjection{
+				{TrackerID: alpha, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2}},
 				{TrackerID: beta, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 3, DVDMenuCount: 1}},
 			},
 			failures:   []api.WorkflowFailure{betaFailure},
+			wantStatus: api.StageStatusBlocked,
+		},
+		{
+			name: "unselected local menu does not satisfy failed tracker requirement",
+			projections: []api.TrackerReleaseProjection{
+				{TrackerID: alpha, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2}},
+				{TrackerID: beta, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 3, DVDMenuCount: 1}},
+			},
+			failures:   []api.WorkflowFailure{betaFailure},
+			menu:       &api.MediaArtifact{ID: "menu-0", Kind: api.MediaArtifactDVDMenu},
+			wantStatus: api.StageStatusBlocked,
+		},
+		{
+			name: "selected local menu satisfies failed tracker requirement",
+			projections: []api.TrackerReleaseProjection{
+				{TrackerID: alpha, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2}},
+				{TrackerID: beta, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 3, DVDMenuCount: 1}},
+			},
+			failures: []api.WorkflowFailure{betaFailure},
+			menu: &api.MediaArtifact{
+				ID:       "menu-0",
+				Kind:     api.MediaArtifactDVDMenu,
+				Selected: true,
+			},
 			wantStatus: api.StageStatusCompleted,
 		},
 		{
@@ -3927,6 +3961,9 @@ func TestRefreshMutatedMediaStatusExcludesOnlyTrackerScopedHostFailures(t *testi
 				HostAttempts:              []api.HostedImageAttempt{hostAttempt},
 				ImageRequirementsPrepared: true,
 				Failures:                  append([]api.WorkflowFailure(nil), test.failures...),
+			}
+			if test.menu != nil {
+				snapshot.Artifacts = append(snapshot.Artifacts, *test.menu)
 			}
 
 			refreshMutatedMediaStatus(&snapshot, test.projections)
