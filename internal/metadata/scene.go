@@ -928,16 +928,22 @@ const (
 	srrdbIMDBMaxPages = 25
 )
 
-// sceneIMDbID returns the resolved IMDb id on meta in precedence order. Detection
-// runs during media-detail enrichment after identity resolution, so the canonical IMDB ID
-// is normally populated; 0 means "no id known" and the imdb: search is skipped in
-// favor of the r: fallback.
+// sceneIMDbID returns an explicit or canonical IMDb ID, respecting explicit
+// clears. Arr supplies a fallback only without an explicit provider anchor.
+// Zero skips the IMDb search and leaves release-name detection available.
 func sceneIMDbID(meta preparationstate.State) int {
-	if id := meta.ExternalIDOverrides.IMDBID; id != nil && *id > 0 {
+	effectiveOverrides := effectiveProviderOverrides(meta.ExternalIDOverrides, meta.Identity)
+	if clearedProviderOverride(effectiveOverrides.IMDBID) {
+		return 0
+	}
+	if id := effectiveOverrides.IMDBID; id != nil && *id > 0 {
 		return *id
 	}
 	if meta.Identity.IMDBID > 0 {
 		return meta.Identity.IMDBID
+	}
+	if hasPositiveProviderOverride(effectiveOverrides) {
+		return 0
 	}
 	if meta.ArrIMDBID > 0 {
 		return meta.ArrIMDBID

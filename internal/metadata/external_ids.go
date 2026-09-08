@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -132,6 +133,10 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		if strings.TrimSpace(ids.SourcePath) == "" {
 			ids.SourcePath = meta.SourcePath
 		}
+	} else if storedIDs, err := s.repo.GetExternalIdentity(ctx, meta.SourcePath); err == nil {
+		copyStoredProviderPins(&ids, storedIDs)
+	} else if !errors.Is(err, internalerrors.ErrNotFound) {
+		return preparationstate.State{}, fmt.Errorf("metadata: load stored external identity: %w", err)
 	}
 	metadata := api.SourceScopedMetadata{SourcePath: meta.SourcePath}
 	if meta.StoredDataFresh && sourceScopedMetadataMatches(meta.ProviderMetadata.SourcePath, meta.SourcePath) {
@@ -159,11 +164,17 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		s.logger.Debugf("metadata: external ids start path=%q category=%q", meta.SourcePath, ids.Category)
 	}
 
-	overrideTMDB, clearedTMDB := applyOverrideID(&ids.TMDBID, &ids.Provenance.TMDB, &ids.Overrides.TMDB, meta.ExternalIDOverrides.TMDBID)
-	overrideIMDB, clearedIMDB := applyOverrideID(&ids.IMDBID, &ids.Provenance.IMDB, &ids.Overrides.IMDB, meta.ExternalIDOverrides.IMDBID)
-	overrideTVDB, clearedTVDB := applyOverrideID(&ids.TVDBID, &ids.Provenance.TVDB, &ids.Overrides.TVDB, meta.ExternalIDOverrides.TVDBID)
-	overrideTVmaze, _ := applyOverrideID(&ids.TVmazeID, &ids.Provenance.TVmaze, &ids.Overrides.TVmaze, meta.ExternalIDOverrides.TVmazeID)
-	overrideMAL, clearedMAL := applyOverrideID(&ids.MALID, &ids.Provenance.MAL, &ids.Overrides.MAL, meta.ExternalIDOverrides.MALID)
+	applyOverrideID(&ids.TMDBID, &ids.Provenance.TMDB, &ids.Overrides.TMDB, meta.ExternalIDOverrides.TMDBID)
+	applyOverrideID(&ids.IMDBID, &ids.Provenance.IMDB, &ids.Overrides.IMDB, meta.ExternalIDOverrides.IMDBID)
+	applyOverrideID(&ids.TVDBID, &ids.Provenance.TVDB, &ids.Overrides.TVDB, meta.ExternalIDOverrides.TVDBID)
+	applyOverrideID(&ids.TVmazeID, &ids.Provenance.TVmaze, &ids.Overrides.TVmaze, meta.ExternalIDOverrides.TVmazeID)
+	applyOverrideID(&ids.MALID, &ids.Provenance.MAL, &ids.Overrides.MAL, meta.ExternalIDOverrides.MALID)
+	effectiveOverrides := effectiveProviderOverrides(meta.ExternalIDOverrides, ids)
+	overrideTMDB, clearedTMDB := positiveProviderOverride(effectiveOverrides.TMDBID), clearedProviderOverride(effectiveOverrides.TMDBID)
+	overrideIMDB, clearedIMDB := positiveProviderOverride(effectiveOverrides.IMDBID), clearedProviderOverride(effectiveOverrides.IMDBID)
+	overrideTVDB, clearedTVDB := positiveProviderOverride(effectiveOverrides.TVDBID), clearedProviderOverride(effectiveOverrides.TVDBID)
+	overrideTVmaze, clearedTVmaze := positiveProviderOverride(effectiveOverrides.TVmazeID), clearedProviderOverride(effectiveOverrides.TVmazeID)
+	overrideMAL, clearedMAL := positiveProviderOverride(effectiveOverrides.MALID), clearedProviderOverride(effectiveOverrides.MALID)
 
 	trackerTMDB, trackerIMDB, trackerTVDB, trackerMAL := resolveTrackerIDs(meta.TrackerData)
 	if !overrideTMDB && !clearedTMDB {
@@ -198,7 +209,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	if !overrideTVDB && !clearedTVDB {
 		applyResolvedID(&ids.TVDBID, &ids.Provenance.TVDB, meta.SceneTVDBID, "scene")
 	}
-	if !overrideTVmaze {
+	if !overrideTVmaze && !clearedTVmaze {
 		applyResolvedID(&ids.TVmazeID, &ids.Provenance.TVmaze, meta.SceneTVmazeID, "scene")
 	}
 	if !overrideMAL && !clearedMAL {
@@ -216,8 +227,12 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	if !overrideTVDB && !clearedTVDB {
 		applyResolvedID(&ids.TVDBID, &ids.Provenance.TVDB, meta.ArrTVDBID, metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.ArrSource), "arr"))
 	}
-	if !overrideTVmaze {
+	if !overrideTVmaze && !clearedTVmaze {
 		applyResolvedID(&ids.TVmazeID, &ids.Provenance.TVmaze, meta.ArrTVmazeID, metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.ArrSource), "arr"))
+	}
+	hasExplicitProviderAnchor := hasPositiveProviderOverride(effectiveOverrides)
+	if hasExplicitProviderAnchor {
+		clearPreviouslyResolvedProviderIDs(&ids)
 	}
 	if s.logger != nil {
 		s.logger.Debugf(
@@ -231,6 +246,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		)
 	}
 	invalidateMismatchedProviderMetadata(&metadata, ids)
+	invalidateProviderMetadataForExplicitReconciliation(&metadata, effectiveOverrides)
 
 	tmdbClient, anilistClient, imdbClient, tvdbClient, tvmazeClient := s.ensureExternalClients()
 
@@ -241,9 +257,19 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		manualLanguage = strings.TrimSpace(*meta.MetadataOverrides.OriginalLanguage)
 	}
 	unattendedSearch := isUnattendedMetadataSearch(meta)
-	if tmdbClient != nil && !overrideTMDB && ids.TMDBID == 0 && ids.IMDBID != 0 {
+	lastTMDBLookupIMDB := 0
+	lastTMDBLookupTVDB := 0
+	resolveTMDBFromProviderIDs := func() {
+		if tmdbClient == nil || overrideTMDB || clearedTMDB || ids.TMDBID != 0 || ids.IMDBID == 0 && ids.TVDBID == 0 {
+			return
+		}
+		if ids.IMDBID == lastTMDBLookupIMDB && ids.TVDBID == lastTMDBLookupTVDB {
+			return
+		}
+		lastTMDBLookupIMDB = ids.IMDBID
+		lastTMDBLookupTVDB = ids.TVDBID
 		if s.logger != nil {
-			s.logger.Debugf("metadata: external ids lookup tmdb from imdb=%d", ids.IMDBID)
+			s.logger.Debugf("metadata: external ids lookup tmdb from imdb=%d tvdb=%d", ids.IMDBID, ids.TVDBID)
 		}
 		result, err := tmdbClient.FindByExternalID(ctx, tmdb.FindInput{
 			IMDbID:             formatIMDbID(ids.IMDBID),
@@ -256,26 +282,31 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 				OriginalTitle: secondary,
 				Year:          year,
 			},
-			Unattended: unattendedSearch,
-			Debug:      false,
+			RequireExternalIDAgreement: hasExplicitProviderAnchor,
+			Unattended:                 unattendedSearch,
+			Debug:                      false,
 		})
 		if err != nil {
 			if s.logger != nil {
 				s.logger.Warnf("metadata: tmdb external lookup failed: %v", err)
 			}
-		} else if result.TMDBID != 0 {
+		} else if result.TMDBID != 0 && (!result.FilenameSearch || !hasExplicitProviderAnchor) {
 			applyResolvedID(&ids.TMDBID, &ids.Provenance.TMDB, result.TMDBID, "tmdb_external")
 			if ids.Category == "" && result.Category != "" {
 				ids.Category, _ = api.NormalizeCanonicalCategory(result.Category)
 			}
 		}
+		if result.ExternalIDConflict {
+			appendIdentityCorrectionWarning(&meta, "TMDB could not reconcile the supplied IMDb and TVDB IDs. Correct one of the supplied provider IDs.")
+		}
 		if len(result.Candidates) > 0 && len(candidates.TMDB) == 0 {
 			candidates.TMDB = mapTMDBCandidates(result.Candidates, result.Category)
 		}
 	}
+	resolveTMDBFromProviderIDs()
 
-	needsTMDBSearch := tmdbClient != nil && !overrideTMDB && ids.TMDBID == 0
-	needsIMDBSearch := !overrideIMDB && ids.IMDBID == 0
+	needsTMDBSearch := tmdbClient != nil && !overrideTMDB && !clearedTMDB && ids.TMDBID == 0 && !hasExplicitProviderAnchor
+	needsIMDBSearch := !overrideIMDB && !clearedIMDB && ids.IMDBID == 0 && !hasExplicitProviderAnchor
 
 	if needsTMDBSearch || needsIMDBSearch {
 		searchYears := buildSearchYears(year)
@@ -297,8 +328,8 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 				break
 			}
 
-			stageNeedsTMDB := tmdbClient != nil && !overrideTMDB && ids.TMDBID == 0
-			stageNeedsIMDB := !overrideIMDB && ids.IMDBID == 0
+			stageNeedsTMDB := tmdbClient != nil && !overrideTMDB && !clearedTMDB && ids.TMDBID == 0
+			stageNeedsIMDB := !overrideIMDB && !clearedIMDB && ids.IMDBID == 0
 			if !stageNeedsTMDB && !stageNeedsIMDB {
 				break
 			}
@@ -412,12 +443,24 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	}
 
 	tmdbLogoFetchAttempted := false
+	tmdbAnchorVerificationAttempted := false
+	tmdbMetadataRejected := false
+	tvdbMetadataRejected := false
+	tvmazeMetadataRejected := false
+	tvmazeAnchorVerificationAttempted := false
 	anilistFetchAttempted := false
 	tvdbMetadataFetchAttempted := false
 	tvdbDisambiguationFetchAttempted := false
+	var acceptedTMDBLinks providerExternalLinks
+	var acceptedTVmazeLinks providerExternalLinks
+	hasAcceptedTMDBLinks := false
+	hasAcceptedTVmazeLinks := false
 	shouldFetchTMDBMetadata := func() bool {
 		if tmdbClient == nil || ids.TMDBID == 0 {
 			return false
+		}
+		if overrideTMDB {
+			return !tmdbAnchorVerificationAttempted
 		}
 		if !usableTMDBMetadata(metadata.TMDB, ids.TMDBID) {
 			return true
@@ -437,7 +480,13 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			!reusableTVDBNameDisambiguation(metadata.TVDB)
 	}
 	shouldFetchTVmazeMetadata := func() bool {
-		return tvmazeClient != nil && isTVForTVmaze() && ids.TVmazeID != 0 && !usableTVmazeMetadata(metadata.TVmaze, ids.TVmazeID)
+		if tvmazeClient == nil || !isTVForTVmaze() || ids.TVmazeID == 0 {
+			return false
+		}
+		if overrideTVmaze {
+			return !tvmazeAnchorVerificationAttempted
+		}
+		return !usableTVmazeMetadata(metadata.TVmaze, ids.TVmazeID)
 	}
 
 	shouldRunFetchPass := func() bool {
@@ -450,17 +499,22 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		if shouldFetchIMDBMetadata() || shouldFetchTVDBMetadata() || shouldRefreshTVDBDisambiguation() || shouldFetchTVmazeMetadata() {
 			return true
 		}
-		if shouldUseTVDBForCategory(meta, ids) && !overrideTVDB && ids.TVDBID == 0 && (ids.IMDBID != 0 || ids.TMDBID != 0) {
+		if shouldUseTVDBForCategory(meta, ids) && !overrideTVDB && !clearedTVDB && ids.TVDBID == 0 && (ids.IMDBID != 0 || ids.TMDBID != 0) {
 			return true
 		}
-		if isTVForTVmaze() && (shouldFetchTVmazeMetadata() || (!overrideTVmaze && ids.TVmazeID == 0 && (ids.IMDBID != 0 || ids.TVDBID != 0))) {
+		if isTVForTVmaze() &&
+			(shouldFetchTVmazeMetadata() || (!overrideTVmaze && !clearedTVmaze && ids.TVmazeID == 0 && (ids.IMDBID != 0 || ids.TVDBID != 0))) {
 			return true
 		}
 		return false
 	}
 
 	runFetchPass := func(allowTVmazeNameFallback bool) {
+		allowTVmazeNameFallback = allowTVmazeNameFallback && !hasExplicitProviderAnchor
 		fetchTMDB := shouldFetchTMDBMetadata()
+		if fetchTMDB && overrideTMDB {
+			tmdbAnchorVerificationAttempted = true
+		}
 		if fetchTMDB && s.cfg.Description.AddLogo {
 			tmdbLogoFetchAttempted = true
 		}
@@ -474,8 +528,12 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		if fetchTVDB {
 			tvdbMetadataFetchAttempted = true
 		}
-		lookupTVDB := shouldUseTVDBForCategory(meta, ids) && !overrideTVDB && ids.TVDBID == 0 && (ids.IMDBID != 0 || ids.TMDBID != 0)
-		lookupTVmaze := isTVForTVmaze() && (shouldFetchTVmazeMetadata() || (!overrideTVmaze && ids.TVmazeID == 0 && (ids.IMDBID != 0 || ids.TVDBID != 0)))
+		lookupTVDB := shouldUseTVDBForCategory(meta, ids) && !overrideTVDB && !clearedTVDB && ids.TVDBID == 0 && (ids.IMDBID != 0 || ids.TMDBID != 0)
+		lookupTVmaze := isTVForTVmaze() &&
+			(shouldFetchTVmazeMetadata() || (!overrideTVmaze && !clearedTVmaze && ids.TVmazeID == 0 && (ids.IMDBID != 0 || ids.TVDBID != 0)))
+		if lookupTVmaze && overrideTVmaze {
+			tvmazeAnchorVerificationAttempted = true
+		}
 
 		if s.logger != nil {
 			s.logger.Debugf(
@@ -502,16 +560,17 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		if fetchTMDB {
 			group.Go(func() error {
 				result, err := tmdbClient.FetchMetadata(gctx, tmdb.MetadataInput{
-					TMDBID:         ids.TMDBID,
-					Category:       string(ids.Category),
-					SearchYear:     year,
-					IMDbID:         ids.IMDBID,
-					TVDBID:         ids.TVDBID,
-					ManualLanguage: manualLanguage,
-					AddLogo:        s.cfg.Description.AddLogo,
-					LogoLanguages:  descriptionLogoLanguages(s.cfg.Description.LogoLanguage),
-					Filename:       filename,
-					Debug:          false,
+					TMDBID:          ids.TMDBID,
+					Category:        string(ids.Category),
+					SearchYear:      year,
+					IMDbID:          ids.IMDBID,
+					TVDBID:          ids.TVDBID,
+					ManualLanguage:  manualLanguage,
+					SkipAnimeLookup: hasExplicitProviderAnchor || clearedMAL,
+					AddLogo:         s.cfg.Description.AddLogo,
+					LogoLanguages:   descriptionLogoLanguages(s.cfg.Description.LogoLanguage),
+					Filename:        filename,
+					Debug:           false,
 				})
 				if err != nil {
 					mu.Lock()
@@ -635,36 +694,106 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 
 		_ = group.Wait()
 
+		tmdbAccepted := tmdbResult != nil && tmdbMetadataMatchesExplicitIDs(effectiveOverrides, *tmdbResult, &meta)
+		tvmazeAccepted := tvmazeResult != nil && tvmazeMetadataMatchesExplicitIDs(effectiveOverrides, *tvmazeResult, &meta)
+		candidateTMDBLinks := acceptedTMDBLinks
+		candidateTVmazeLinks := acceptedTVmazeLinks
+		candidateHasTMDBLinks := hasAcceptedTMDBLinks
+		candidateHasTVmazeLinks := hasAcceptedTVmazeLinks
+		if tmdbAccepted {
+			candidateTMDBLinks = providerExternalLinks{IMDBID: tmdbResult.ExternalIMDbID, TVDBID: tmdbResult.ExternalTVDBID}
+			candidateHasTMDBLinks = true
+		}
+		if tvmazeAccepted {
+			candidateTVmazeLinks = tvmazeResultExternalLinks(*tvmazeResult)
+			candidateHasTVmazeLinks = true
+		}
+		if hasExplicitProviderAnchor && candidateHasTMDBLinks && candidateHasTVmazeLinks &&
+			providerExternalLinksConflict(candidateTMDBLinks, candidateTVmazeLinks) {
+			appendIdentityCorrectionWarning(&meta, "TMDB and TVmaze metadata reference different IMDb or TVDB IDs. Correct one of the supplied provider IDs.")
+			switch {
+			case overrideTMDB && !overrideTVmaze:
+				tvmazeAccepted = false
+				metadata.TVmaze = nil
+				clearInferredProviderID(&ids.TVmazeID, &ids.Provenance.TVmaze)
+				tvmazeMetadataRejected = ids.TVmazeID != 0
+				candidateHasTVmazeLinks = false
+			case overrideTVmaze && !overrideTMDB:
+				tmdbAccepted = false
+				metadata.TMDB = nil
+				clearInferredProviderID(&ids.TMDBID, &ids.Provenance.TMDB)
+				tmdbMetadataRejected = ids.TMDBID != 0
+				candidateHasTMDBLinks = false
+			default:
+				tmdbAccepted = false
+				tvmazeAccepted = false
+				metadata.TMDB = nil
+				metadata.TVmaze = nil
+				clearInferredProviderID(&ids.TMDBID, &ids.Provenance.TMDB)
+				clearInferredProviderID(&ids.TVmazeID, &ids.Provenance.TVmaze)
+				tmdbMetadataRejected = ids.TMDBID != 0
+				tvmazeMetadataRejected = ids.TVmazeID != 0
+				candidateHasTMDBLinks = false
+				candidateHasTVmazeLinks = false
+			}
+		}
+		acceptedTMDBLinks = candidateTMDBLinks
+		acceptedTVmazeLinks = candidateTVmazeLinks
+		hasAcceptedTMDBLinks = candidateHasTMDBLinks
+		hasAcceptedTVmazeLinks = candidateHasTVmazeLinks
+
 		if tmdbResult != nil {
-			metadata.TMDB = mapTMDBMetadata(ids, *tmdbResult)
-			if !overrideIMDB && ids.IMDBID == 0 && tmdbResult.IMDbID != 0 {
-				applyResolvedID(&ids.IMDBID, &ids.Provenance.IMDB, tmdbResult.IMDbID, "tmdb")
-			}
-			if ids.Category == "" && tmdbResult.TMDBType != "" {
-				ids.Category, _ = api.NormalizeCanonicalCategory(tmdbResult.TMDBType)
-			}
-			if shouldUseTVDBForCategory(meta, ids) && !overrideTVDB && ids.TVDBID == 0 && tmdbResult.TVDBID != 0 {
-				applyResolvedID(&ids.TVDBID, &ids.Provenance.TVDB, tmdbResult.TVDBID, "tmdb")
-			}
-			if !overrideMAL && !clearedMAL && ids.MALID == 0 && tmdbResult.MALID != 0 {
-				applyResolvedID(&ids.MALID, &ids.Provenance.MAL, tmdbResult.MALID, "tmdb")
+			if tmdbAccepted {
+				tmdbMetadataRejected = false
+				metadata.TMDB = mapTMDBMetadata(ids, *tmdbResult)
+				if !overrideIMDB && !clearedIMDB && ids.IMDBID == 0 && tmdbResult.IMDbID != 0 {
+					applyResolvedID(&ids.IMDBID, &ids.Provenance.IMDB, tmdbResult.IMDbID, "tmdb")
+				}
+				if ids.Category == "" && tmdbResult.TMDBType != "" {
+					ids.Category, _ = api.NormalizeCanonicalCategory(tmdbResult.TMDBType)
+				}
+				if shouldUseTVDBForCategory(meta, ids) && !overrideTVDB && !clearedTVDB && ids.TVDBID == 0 && tmdbResult.TVDBID != 0 {
+					applyResolvedID(&ids.TVDBID, &ids.Provenance.TVDB, tmdbResult.TVDBID, "tmdb")
+				}
+				if !hasExplicitProviderAnchor && !overrideMAL && !clearedMAL && ids.MALID == 0 && tmdbResult.MALID != 0 {
+					applyResolvedID(&ids.MALID, &ids.Provenance.MAL, tmdbResult.MALID, "tmdb")
+				}
+			} else {
+				metadata.TMDB = nil
+				clearInferredProviderID(&ids.TMDBID, &ids.Provenance.TMDB)
+				tmdbMetadataRejected = ids.TMDBID != 0
 			}
 		}
 
-		if anilistResult != nil {
-			metadata.AniList = mapAniListMetadata(*anilistResult)
-		} else if fetchAniList {
-			if metadata.AniList != nil {
+		switch {
+		case anilistResult == nil:
+			if fetchAniList && metadata.AniList != nil {
 				metadata.AniList = nil
 			}
+		case providerIDMatchesExplicit(effectiveOverrides.MALID, anilistResult.MALID):
+			metadata.AniList = mapAniListMetadata(*anilistResult)
+		default:
+			appendProviderIDConflictWarning(&meta, "AniList", "MAL", *effectiveOverrides.MALID, anilistResult.MALID)
+			metadata.AniList = nil
+			clearInferredProviderID(&ids.MALID, &ids.Provenance.MAL)
 		}
 
-		if imdbInfo != nil {
+		if imdbInfo != nil && providerIDMatchesExplicit(effectiveOverrides.IMDBID, metautil.ParseIMDbNumeric(imdbInfo.IMDbID)) {
 			metadata.IMDB = mapIMDBMetadata(*imdbInfo)
+		} else if imdbInfo != nil {
+			appendProviderIDConflictWarning(
+				&meta,
+				"IMDb",
+				"IMDb",
+				*effectiveOverrides.IMDBID,
+				metautil.ParseIMDbNumeric(imdbInfo.IMDbID),
+			)
+			metadata.IMDB = nil
+			clearInferredProviderID(&ids.IMDBID, &ids.Provenance.IMDB)
 		}
 
 		if fetchedTVDBID != 0 {
-			if !overrideTVDB {
+			if !overrideTVDB && !clearedTVDB {
 				applyResolvedID(&ids.TVDBID, &ids.Provenance.TVDB, fetchedTVDBID, "tvdb")
 			}
 			if metadata.TVDB == nil || metadata.TVDB.TVDBID == 0 {
@@ -687,7 +816,13 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 					}
 				}
 			}
-			if err == nil {
+			switch {
+			case err != nil:
+				if tvdbErr == nil {
+					tvdbErr = err
+				}
+			case providerIDMatchesExplicit(effectiveOverrides.TVDBID, tvdbSeries.TVDBID):
+				tvdbMetadataRejected = false
 				mapped := mapTVDBMetadata(ids.TVDBID, fetchedTVDBName, tvdbSeries)
 				if metadata.TVDB == nil {
 					metadata.TVDB = mapped
@@ -712,8 +847,11 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 				if strings.TrimSpace(tvdbName) == "" {
 					tvdbName = strings.TrimSpace(mapped.Name)
 				}
-			} else if tvdbErr == nil {
-				tvdbErr = err
+			default:
+				appendProviderIDConflictWarning(&meta, "TVDB", "TVDB", *effectiveOverrides.TVDBID, tvdbSeries.TVDBID)
+				metadata.TVDB = nil
+				clearInferredProviderID(&ids.TVDBID, &ids.Provenance.TVDB)
+				tvdbMetadataRejected = ids.TVDBID != 0
 			}
 		}
 
@@ -723,17 +861,22 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			metadata.TVDB.NameDisambiguation = mapTVDBNameDisambiguation(refreshed)
 		}
 
-		if tvmazeResult != nil {
-			if !overrideTVmaze {
+		if tvmazeResult != nil && tvmazeAccepted {
+			tvmazeMetadataRejected = false
+			if !overrideTVmaze && !clearedTVmaze {
 				applyResolvedID(&ids.TVmazeID, &ids.Provenance.TVmaze, tvmazeResult.SelectedID, "tvmaze")
 			}
-			if !overrideIMDB && ids.IMDBID == 0 && tvmazeResult.IMDBID != 0 {
+			if !overrideIMDB && !clearedIMDB && ids.IMDBID == 0 && tvmazeResult.IMDBID != 0 {
 				applyResolvedID(&ids.IMDBID, &ids.Provenance.IMDB, tvmazeResult.IMDBID, "tvmaze")
 			}
-			if shouldUseTVDBForCategory(meta, ids) && !overrideTVDB && ids.TVDBID == 0 && tvmazeResult.TVDBID != 0 {
+			if shouldUseTVDBForCategory(meta, ids) && !overrideTVDB && !clearedTVDB && ids.TVDBID == 0 && tvmazeResult.TVDBID != 0 {
 				applyResolvedID(&ids.TVDBID, &ids.Provenance.TVDB, tvmazeResult.TVDBID, "tvmaze")
 			}
 			metadata.TVmaze = mapTVmazeMetadata(*tvmazeResult)
+		} else if tvmazeResult != nil {
+			metadata.TVmaze = nil
+			clearInferredProviderID(&ids.TVmazeID, &ids.Provenance.TVmaze)
+			tvmazeMetadataRejected = ids.TVmazeID != 0
 		}
 
 		if manualLanguage != "" {
@@ -755,10 +898,12 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	if shouldRunFetchPass() {
 		runFetchPass(false)
 	}
+	resolveTMDBFromProviderIDs()
 	// Tracker and media metadata can supply an episode IMDb ID where downstream
 	// providers require the parent series ID. Clear the episode snapshot so the
 	// second fetch pass refreshes series metadata after a successful adjustment.
-	if episodeClient, ok := imdbClient.(imdbEpisodeClient); ok && shouldUseTVDBForCategory(meta, ids) && metadata.IMDB != nil &&
+	if episodeClient, ok := imdbClient.(imdbEpisodeClient); ok && !overrideIMDB && !clearedIMDB && shouldUseTVDBForCategory(meta, ids) &&
+		metadata.IMDB != nil &&
 		strings.EqualFold(strings.TrimSpace(metadata.IMDB.Type), "tvEpisode") {
 		lookup, err := episodeClient.GetEpisodeInfo(ctx, formatIMDbID(ids.IMDBID), false)
 		if err != nil {
@@ -774,21 +919,36 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			}
 		}
 	}
+	resolveTMDBFromProviderIDs()
 	if shouldRunFetchPass() {
 		runFetchPass(true)
 	}
 
+	if positiveProviderOverride(effectiveOverrides.TVDBID) && !shouldUseTVDBForCategory(meta, ids) {
+		appendIdentityCorrectionWarning(&meta, "The supplied TVDB ID conflicts with the resolved movie category. Correct the TVDB ID or category.")
+	}
 	clearTVDBForNonTVCategory(meta, &ids, &metadata)
-	meta = s.applyTVEpisodeMetadata(ctx, meta, &ids, &metadata, tmdbClient, tvdbClient, tvmazeClient)
+	downstreamIDs := ids
+	if tmdbMetadataRejected {
+		downstreamIDs.TMDBID = 0
+	}
+	if tvdbMetadataRejected {
+		downstreamIDs.TVDBID = 0
+	}
+	if tvmazeMetadataRejected {
+		downstreamIDs.TVmazeID = 0
+	}
+	meta = s.applyTVEpisodeMetadata(ctx, meta, &downstreamIDs, &metadata, tmdbClient, tvdbClient, tvmazeClient)
+	ids.Category = downstreamIDs.Category
 
 	needsPTBR := s.registry.NeedsLocalizedMetadata(meta.EvidenceTrackers, "pt-BR") || s.registry.NeedsLocalizedMetadata(meta.MatchedEvidenceTrackers, "pt-BR")
 
-	if tmdbClient != nil && needsPTBR && ids.TMDBID != 0 {
+	if tmdbClient != nil && needsPTBR && downstreamIDs.TMDBID != 0 {
 		var mainData, seasonData, episodeData map[string]any
 		var localizedErr error
 		isTV := strings.EqualFold(string(ids.Category), "TV")
 		mainInput := tmdb.LocalizedDataInput{
-			TMDBID:           ids.TMDBID,
+			TMDBID:           downstreamIDs.TMDBID,
 			Category:         string(ids.Category),
 			DataType:         "main",
 			Language:         "pt-BR",
@@ -802,7 +962,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 
 		if isTV && meta.SeasonInt > 0 {
 			seasonInput := tmdb.LocalizedDataInput{
-				TMDBID:           ids.TMDBID,
+				TMDBID:           downstreamIDs.TMDBID,
 				Season:           meta.SeasonInt,
 				Category:         "TV",
 				DataType:         "season",
@@ -816,7 +976,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			}
 			if meta.EpisodeInt > 0 {
 				episodeInput := tmdb.LocalizedDataInput{
-					TMDBID:           ids.TMDBID,
+					TMDBID:           downstreamIDs.TMDBID,
 					Season:           meta.SeasonInt,
 					Episode:          meta.EpisodeInt,
 					Category:         "TV",
@@ -835,7 +995,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		if mainData != nil || seasonData != nil || episodeData != nil {
 			localized := parseTMDBLocalizedData(mainData, seasonData, episodeData)
 			if metadata.TMDB == nil {
-				metadata.TMDB = &api.TMDBMetadata{TMDBID: ids.TMDBID}
+				metadata.TMDB = &api.TMDBMetadata{TMDBID: downstreamIDs.TMDBID}
 			}
 			if metadata.TMDB.Localized == nil {
 				metadata.TMDB.Localized = make(map[string]api.TMDBLocalizedData)
@@ -905,6 +1065,215 @@ func sourceScopedMetadataMatches(storedSourcePath string, currentSourcePath stri
 	return strings.EqualFold(trimmedStored, strings.TrimSpace(currentSourcePath))
 }
 
+func copyStoredProviderPins(target *api.ExternalIdentity, stored api.ExternalIdentity) {
+	if target == nil || !sourceScopedMetadataMatches(stored.SourcePath, target.SourcePath) {
+		return
+	}
+	copyStoredProviderPin(&target.TMDBID, &target.Provenance.TMDB, &target.Overrides.TMDB, stored.TMDBID, stored.Provenance.TMDB, stored.Overrides.TMDB)
+	copyStoredProviderPin(&target.IMDBID, &target.Provenance.IMDB, &target.Overrides.IMDB, stored.IMDBID, stored.Provenance.IMDB, stored.Overrides.IMDB)
+	copyStoredProviderPin(&target.TVDBID, &target.Provenance.TVDB, &target.Overrides.TVDB, stored.TVDBID, stored.Provenance.TVDB, stored.Overrides.TVDB)
+	copyStoredProviderPin(
+		&target.TVmazeID,
+		&target.Provenance.TVmaze,
+		&target.Overrides.TVmaze,
+		stored.TVmazeID,
+		stored.Provenance.TVmaze,
+		stored.Overrides.TVmaze,
+	)
+	copyStoredProviderPin(&target.MALID, &target.Provenance.MAL, &target.Overrides.MAL, stored.MALID, stored.Provenance.MAL, stored.Overrides.MAL)
+}
+
+func copyStoredProviderPin(
+	target *int,
+	provenance *api.IdentityProvenance,
+	override *api.OverrideState,
+	storedID int,
+	storedProvenance api.IdentityProvenance,
+	storedOverride api.OverrideState,
+) {
+	switch {
+	case storedOverride == api.OverrideStateClear || storedID == 0 && storedProvenance == api.IdentityProvenanceExplicit:
+		*target = 0
+		*provenance = api.IdentityProvenanceExplicit
+		*override = api.OverrideStateClear
+	case storedID > 0 && (storedOverride == api.OverrideStateValue || storedProvenance == api.IdentityProvenanceExplicit):
+		*target = storedID
+		*provenance = api.IdentityProvenanceExplicit
+		*override = api.OverrideStateValue
+	}
+}
+
+func hasPositiveProviderOverride(overrides api.ExternalIDOverrides) bool {
+	return positiveProviderOverride(overrides.TMDBID) || positiveProviderOverride(overrides.IMDBID) ||
+		positiveProviderOverride(overrides.TVDBID) || positiveProviderOverride(overrides.TVmazeID) || positiveProviderOverride(overrides.MALID)
+}
+
+func positiveProviderOverride(value *int) bool {
+	return value != nil && *value > 0
+}
+
+func clearedProviderOverride(value *int) bool {
+	return value != nil && *value == 0
+}
+
+func effectiveProviderOverrides(current api.ExternalIDOverrides, ids api.ExternalIdentity) api.ExternalIDOverrides {
+	return api.ExternalIDOverrides{
+		TMDBID:   effectiveProviderOverride(current.TMDBID, ids.TMDBID, ids.Provenance.TMDB, ids.Overrides.TMDB),
+		IMDBID:   effectiveProviderOverride(current.IMDBID, ids.IMDBID, ids.Provenance.IMDB, ids.Overrides.IMDB),
+		TVDBID:   effectiveProviderOverride(current.TVDBID, ids.TVDBID, ids.Provenance.TVDB, ids.Overrides.TVDB),
+		TVmazeID: effectiveProviderOverride(current.TVmazeID, ids.TVmazeID, ids.Provenance.TVmaze, ids.Overrides.TVmaze),
+		MALID:    effectiveProviderOverride(current.MALID, ids.MALID, ids.Provenance.MAL, ids.Overrides.MAL),
+	}
+}
+
+func effectiveProviderOverride(current *int, id int, provenance api.IdentityProvenance, state api.OverrideState) *int {
+	if current != nil {
+		return current
+	}
+	if state == api.OverrideStateClear {
+		return new(0)
+	}
+	if state == api.OverrideStateValue || provenance == api.IdentityProvenanceExplicit {
+		return new(id)
+	}
+	return nil
+}
+
+type providerExternalLinks struct {
+	IMDBID int
+	TVDBID int
+}
+
+func tvmazeResultExternalLinks(result tvmaze.SearchResult) providerExternalLinks {
+	for _, candidate := range result.Candidates {
+		if candidate.ID == result.SelectedID {
+			return providerExternalLinks{
+				IMDBID: metautil.ParseIMDbNumeric(candidate.Externals.IMDB),
+				TVDBID: candidate.Externals.TVDB,
+			}
+		}
+	}
+	return providerExternalLinks{}
+}
+
+func providerExternalLinksConflict(first, second providerExternalLinks) bool {
+	return first.IMDBID != 0 && second.IMDBID != 0 && first.IMDBID != second.IMDBID ||
+		first.TVDBID != 0 && second.TVDBID != 0 && first.TVDBID != second.TVDBID
+}
+
+func clearPreviouslyResolvedProviderIDs(ids *api.ExternalIdentity) {
+	if ids == nil {
+		return
+	}
+	clearInferredProviderID(&ids.TMDBID, &ids.Provenance.TMDB)
+	clearInferredProviderID(&ids.IMDBID, &ids.Provenance.IMDB)
+	clearInferredProviderID(&ids.TVDBID, &ids.Provenance.TVDB)
+	clearInferredProviderID(&ids.TVmazeID, &ids.Provenance.TVmaze)
+	clearInferredProviderID(&ids.MALID, &ids.Provenance.MAL)
+}
+
+func clearInferredProviderID(id *int, provenance *api.IdentityProvenance) {
+	if id == nil || provenance == nil || *provenance == api.IdentityProvenanceExplicit {
+		return
+	}
+	*id = 0
+	*provenance = api.IdentityProvenanceUnknown
+}
+
+func providerIDMatchesExplicit(explicit *int, actual int) bool {
+	return !positiveProviderOverride(explicit) || actual == 0 || actual == *explicit
+}
+
+func tmdbMetadataMatchesExplicitIDs(overrides api.ExternalIDOverrides, result tmdb.MetadataResult, meta *preparationstate.State) bool {
+	matches := true
+	if !providerIDMatchesExplicit(overrides.IMDBID, result.ExternalIMDbID) {
+		appendProviderIDConflictWarning(meta, "TMDB", "IMDb", *overrides.IMDBID, result.ExternalIMDbID)
+		matches = false
+	}
+	if !providerIDMatchesExplicit(overrides.TVDBID, result.ExternalTVDBID) {
+		appendProviderIDConflictWarning(meta, "TMDB", "TVDB", *overrides.TVDBID, result.ExternalTVDBID)
+		matches = false
+	}
+	return matches
+}
+
+func tvmazeMetadataMatchesExplicitIDs(overrides api.ExternalIDOverrides, result tvmaze.SearchResult, meta *preparationstate.State) bool {
+	selected := tvmaze.Candidate{}
+	for _, candidate := range result.Candidates {
+		if candidate.ID == result.SelectedID {
+			selected = candidate
+			break
+		}
+	}
+	actualIMDB := metautil.ParseIMDbNumeric(selected.Externals.IMDB)
+	actualTVDB := selected.Externals.TVDB
+	matches := true
+	if !providerIDVerifiesExplicit(overrides.IMDBID, actualIMDB) {
+		appendProviderIDVerificationWarning(meta, "TVmaze", "IMDb", *overrides.IMDBID, actualIMDB)
+		matches = false
+	}
+	if !providerIDVerifiesExplicit(overrides.TVDBID, actualTVDB) {
+		appendProviderIDVerificationWarning(meta, "TVmaze", "TVDB", *overrides.TVDBID, actualTVDB)
+		matches = false
+	}
+	return matches
+}
+
+func providerIDVerifiesExplicit(explicit *int, actual int) bool {
+	return !positiveProviderOverride(explicit) || actual == *explicit
+}
+
+func appendProviderIDVerificationWarning(meta *preparationstate.State, source, provider string, expected, actual int) {
+	if actual == 0 {
+		appendIdentityCorrectionWarning(
+			meta,
+			fmt.Sprintf("%s metadata did not verify the supplied %s ID %d. Review the supplied provider IDs before upload.", source, provider, expected),
+		)
+		return
+	}
+	appendProviderIDConflictWarning(meta, source, provider, expected, actual)
+}
+
+func appendProviderIDConflictWarning(meta *preparationstate.State, source, provider string, expected, actual int) {
+	appendIdentityCorrectionWarning(
+		meta,
+		fmt.Sprintf(
+			"%s metadata references %s ID %d, but the supplied %s ID is %d. Correct one of the supplied provider IDs.",
+			source,
+			provider,
+			actual,
+			provider,
+			expected,
+		),
+	)
+}
+
+func appendIdentityCorrectionWarning(meta *preparationstate.State, warning string) {
+	if meta == nil || strings.TrimSpace(warning) == "" {
+		return
+	}
+	if slices.Contains(meta.LookupWarnings, warning) {
+		return
+	}
+	meta.LookupWarnings = append(meta.LookupWarnings, warning)
+}
+
+func invalidateProviderMetadataForExplicitReconciliation(metadata *api.SourceScopedMetadata, overrides api.ExternalIDOverrides) {
+	if metadata == nil {
+		return
+	}
+	if positiveProviderOverride(overrides.TMDBID) && (positiveProviderOverride(overrides.IMDBID) || positiveProviderOverride(overrides.TVDBID)) {
+		metadata.TMDB = nil
+	}
+	if positiveProviderOverride(overrides.TVmazeID) && (positiveProviderOverride(overrides.IMDBID) || positiveProviderOverride(overrides.TVDBID)) {
+		metadata.TVmaze = nil
+	}
+	if positiveProviderOverride(overrides.TMDBID) && positiveProviderOverride(overrides.TVmazeID) {
+		metadata.TMDB = nil
+		metadata.TVmaze = nil
+	}
+}
+
 func invalidateMismatchedProviderMetadata(metadata *api.SourceScopedMetadata, ids api.ExternalIdentity) bool {
 	if metadata == nil {
 		return false
@@ -924,6 +1293,10 @@ func invalidateMismatchedProviderMetadata(metadata *api.SourceScopedMetadata, id
 	}
 	if metadata.TVmaze != nil && (ids.TVmazeID == 0 || metadata.TVmaze.TVmazeID != ids.TVmazeID) {
 		metadata.TVmaze = nil
+		changed = true
+	}
+	if metadata.AniList != nil && (ids.MALID == 0 || metadata.AniList.MALID != ids.MALID) {
+		metadata.AniList = nil
 		changed = true
 	}
 	return changed
@@ -992,6 +1365,12 @@ func clearTVDBForNonTVCategory(meta preparationstate.State, ids *api.ExternalIde
 		return
 	}
 	if shouldUseTVDBForCategory(meta, *ids) {
+		return
+	}
+	if ids.Overrides.TVDB == api.OverrideStateValue || ids.Provenance.TVDB == api.IdentityProvenanceExplicit {
+		if metadata != nil {
+			metadata.TVDB = nil
+		}
 		return
 	}
 	ids.TVDBID = 0
@@ -1403,20 +1782,19 @@ func normalizeCategory(value string) string {
 	return ""
 }
 
-func applyOverrideID(target *int, source *api.IdentityProvenance, state *api.OverrideState, override *int) (bool, bool) {
+func applyOverrideID(target *int, source *api.IdentityProvenance, state *api.OverrideState, override *int) {
 	if target == nil || source == nil || state == nil || override == nil {
-		return false, false
+		return
 	}
 	if *override == 0 {
 		*target = 0
 		*source = api.IdentityProvenanceExplicit
 		*state = api.OverrideStateClear
-		return false, true
+		return
 	}
 	*target = *override
 	*source = api.IdentityProvenanceExplicit
 	*state = api.OverrideStateValue
-	return true, false
 }
 
 func applyResolvedID(target *int, source *api.IdentityProvenance, value int, origin string) {

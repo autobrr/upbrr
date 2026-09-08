@@ -45,6 +45,86 @@ func (r *sceneLogRecorder) join() string {
 	return strings.Join(r.lines, "\n")
 }
 
+func TestSceneIMDbIDRespectsEffectiveProviderLocks(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		meta preparationstate.State
+		want int
+	}{
+		{
+			name: "explicit IMDb clear suppresses Arr fallback",
+			meta: preparationstate.State{
+				ArrIMDBID: 7654321,
+				ExternalIDOverrides: api.ExternalIDOverrides{
+					IMDBID: new(0),
+				},
+			},
+		},
+		{
+			name: "positive TMDB anchor suppresses Arr fallback",
+			meta: preparationstate.State{
+				ArrIMDBID: 7654321,
+				ExternalIDOverrides: api.ExternalIDOverrides{
+					TMDBID: new(42),
+				},
+			},
+		},
+		{
+			name: "stored positive anchor provenance suppresses Arr fallback",
+			meta: preparationstate.State{
+				ArrIMDBID: 7654321,
+				Identity: api.ExternalIdentity{
+					TMDBID: 42,
+					Provenance: api.IdentityProvenanceSet{
+						TMDB: api.IdentityProvenanceExplicit,
+					},
+				},
+			},
+		},
+		{
+			name: "stored IMDb clear suppresses Arr fallback",
+			meta: preparationstate.State{
+				ArrIMDBID: 7654321,
+				Identity: api.ExternalIdentity{
+					Provenance: api.IdentityProvenanceSet{
+						IMDB: api.IdentityProvenanceExplicit,
+					},
+					Overrides: api.IdentityOverrideState{
+						IMDB: api.OverrideStateClear,
+					},
+				},
+			},
+		},
+		{
+			name: "verified canonical IMDb remains usable with another anchor",
+			meta: preparationstate.State{
+				Identity: api.ExternalIdentity{
+					TMDBID: 42,
+					IMDBID: 1234567,
+					Provenance: api.IdentityProvenanceSet{
+						TMDB: api.IdentityProvenanceExplicit,
+						IMDB: api.IdentityProvenanceProvider,
+					},
+				},
+			},
+			want: 1234567,
+		},
+		{
+			name: "unanchored Arr fallback remains available",
+			meta: preparationstate.State{
+				ArrIMDBID: 7654321,
+			},
+			want: 7654321,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sceneIMDbID(tc.meta); got != tc.want {
+				t.Fatalf("scene IMDb ID = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSceneDetectorSRRDB(t *testing.T) {
 	handler := http.NewServeMux()
 	handler.HandleFunc("/v1/search/r:Example.Release", func(w http.ResponseWriter, _ *http.Request) {

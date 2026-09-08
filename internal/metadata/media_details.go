@@ -320,9 +320,11 @@ func (s *Service) applySceneDetection(ctx context.Context, meta preparationstate
 		}
 	}
 	applySceneResult(&meta, result)
-	// Detection now runs after ID resolution, so backfill a scene-discovered IMDb
-	// id only when resolution found none, so upload payloads still carry it.
-	if meta.Identity.IMDBID == 0 && result.IMDBID > 0 {
+	// Backfill scene-discovered IMDb only when resolution found none and no
+	// explicit provider anchor or IMDb clear constrains the identity.
+	effectiveOverrides := effectiveProviderOverrides(meta.ExternalIDOverrides, meta.Identity)
+	if meta.Identity.IMDBID == 0 && result.IMDBID > 0 && !clearedProviderOverride(effectiveOverrides.IMDBID) &&
+		!hasPositiveProviderOverride(effectiveOverrides) {
 		meta.Identity.IMDBID = result.IMDBID
 	}
 	if s.logger != nil {

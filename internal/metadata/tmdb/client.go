@@ -62,83 +62,36 @@ func NormalizeTitle(title string) string {
 	return strings.TrimSpace(value)
 }
 
-// FindByExternalID tries IMDb, then TVDB, then filename search. External-ID
-// lookup errors are treated as misses. When an IMDb ID maps to movie and TV,
-// CategoryPreference chooses; otherwise movie wins. FilenameSearch reports that
-// identifier lookup did not resolve the result.
+// FindByExternalID tries IMDb, then TVDB, then filename search. When
+// RequireExternalIDAgreement is set and both IDs are supplied, an external-ID
+// match must appear in both result sets. Lookup errors are treated as misses.
+// CategoryPreference disambiguates movie and TV matches; otherwise movie wins.
+// FilenameSearch reports that identifier lookup did not resolve the result.
 func (c *Client) FindByExternalID(ctx context.Context, input FindInput) (FindResult, error) {
 	imdbID := metautil.NormalizeIMDbID(input.IMDbID)
-	filenameSearch := false
-
-	info, _ := c.findByExternal(ctx, imdbID, "imdb_id")
-	hasMovie := len(info.MovieResults) > 0
-	hasTV := len(info.TVResults) > 0
-
-	if hasMovie && hasTV && input.CategoryPreference != "" {
-		pref := strings.ToUpper(strings.TrimSpace(input.CategoryPreference))
-		switch pref {
-		case "MOVIE":
-			if c.logger != nil {
-				c.logger.Infof("tmdb: external match imdb=%s selected=movie tmdb_id=%d", imdbID, info.MovieResults[0].ID)
-			}
-			return FindResult{
-				Category:         "MOVIE",
-				TMDBID:           info.MovieResults[0].ID,
-				OriginalLanguage: info.MovieResults[0].OriginalLanguage,
-				FilenameSearch:   filenameSearch,
-			}, nil
-		case "TV":
-			if c.logger != nil {
-				c.logger.Infof("tmdb: external match imdb=%s selected=tv tmdb_id=%d", imdbID, info.TVResults[0].ID)
-			}
-			return FindResult{
-				Category:         "TV",
-				TMDBID:           info.TVResults[0].ID,
-				OriginalLanguage: info.TVResults[0].OriginalLanguage,
-				FilenameSearch:   filenameSearch,
-			}, nil
-		}
+	var imdbMatches FindResponse
+	if imdbID != "" {
+		imdbMatches, _ = c.findByExternal(ctx, imdbID, "imdb_id")
 	}
-
-	if hasMovie {
+	var tvdbMatches FindResponse
+	if input.TVDBID != 0 && (input.RequireExternalIDAgreement || len(imdbMatches.MovieResults)+len(imdbMatches.TVResults) == 0) {
+		tvdbMatches, _ = c.findByExternal(ctx, strconv.Itoa(input.TVDBID), "tvdb_id")
+	}
+	externalResult, externalConflict := selectExternalFindResult(
+		imdbMatches,
+		tvdbMatches,
+		imdbID != "",
+		input.TVDBID != 0,
+		input.CategoryPreference,
+		input.RequireExternalIDAgreement,
+	)
+	if externalResult.TMDBID != 0 {
 		if c.logger != nil {
-			c.logger.Infof("tmdb: external match imdb=%s selected=movie tmdb_id=%d", imdbID, info.MovieResults[0].ID)
+			c.logger.Infof("tmdb: external match selected=%s tmdb_id=%d", strings.ToLower(externalResult.Category), externalResult.TMDBID)
 		}
-		return FindResult{
-			Category:         "MOVIE",
-			TMDBID:           info.MovieResults[0].ID,
-			OriginalLanguage: info.MovieResults[0].OriginalLanguage,
-			FilenameSearch:   filenameSearch,
-		}, nil
-	}
-	if hasTV {
-		if c.logger != nil {
-			c.logger.Infof("tmdb: external match imdb=%s selected=tv tmdb_id=%d", imdbID, info.TVResults[0].ID)
-		}
-		return FindResult{
-			Category:         "TV",
-			TMDBID:           info.TVResults[0].ID,
-			OriginalLanguage: info.TVResults[0].OriginalLanguage,
-			FilenameSearch:   filenameSearch,
-		}, nil
+		return externalResult, nil
 	}
 
-	if input.TVDBID != 0 {
-		infoTVDB, _ := c.findByExternal(ctx, strconv.Itoa(input.TVDBID), "tvdb_id")
-		if len(infoTVDB.TVResults) > 0 {
-			if c.logger != nil {
-				c.logger.Infof("tmdb: external match tvdb=%d selected=tv tmdb_id=%d", input.TVDBID, infoTVDB.TVResults[0].ID)
-			}
-			return FindResult{
-				Category:         "TV",
-				TMDBID:           infoTVDB.TVResults[0].ID,
-				OriginalLanguage: infoTVDB.TVResults[0].OriginalLanguage,
-				FilenameSearch:   filenameSearch,
-			}, nil
-		}
-	}
-
-	filenameSearch = true
 	input = applyReleaseHints(input)
 	imdbInfo := input.IMDbInfo
 	title := ""
@@ -149,7 +102,7 @@ func (c *Client) FindByExternalID(ctx context.Context, input FindInput) (FindRes
 		title = strings.TrimSpace(input.Filename)
 	}
 	if title == "" {
-		return FindResult{FilenameSearch: filenameSearch}, nil
+		return FindResult{FilenameSearch: true, ExternalIDConflict: externalConflict}, nil
 	}
 
 	searchYear := input.SearchYear
@@ -184,13 +137,89 @@ func (c *Client) FindByExternalID(ctx context.Context, input FindInput) (FindRes
 		c.logger.Infof("tmdb: search match title=%q year=%d category=%s tmdb_id=%d", title, searchYear, outcome.Category, outcome.TMDBID)
 	}
 	return FindResult{
-		Category:         outcome.Category,
-		TMDBID:           outcome.TMDBID,
-		OriginalLanguage: originalLanguage,
-		FilenameSearch:   filenameSearch,
-		Candidates:       outcome.Candidates,
-		AutoSelected:     outcome.AutoSelected,
+		Category:           outcome.Category,
+		TMDBID:             outcome.TMDBID,
+		OriginalLanguage:   originalLanguage,
+		FilenameSearch:     true,
+		ExternalIDConflict: externalConflict,
+		Candidates:         outcome.Candidates,
+		AutoSelected:       outcome.AutoSelected,
 	}, nil
+}
+
+type externalFindCandidate struct {
+	category string
+	item     FindItem
+}
+
+func selectExternalFindResult(imdb, tvdb FindResponse, hasIMDb, hasTVDB bool, categoryPreference string, requireAgreement bool) (FindResult, bool) {
+	imdbCandidates := externalFindCandidates(imdb)
+	tvdbCandidates := externalFindCandidates(tvdb)
+	candidates := imdbCandidates
+	conflict := false
+	if requireAgreement && hasIMDb && hasTVDB {
+		candidates = intersectExternalFindCandidates(imdbCandidates, tvdbCandidates)
+		conflict = len(imdbCandidates) > 0 && len(tvdbCandidates) > 0 && len(candidates) == 0
+	} else if len(candidates) == 0 && hasTVDB {
+		candidates = tvdbCandidates
+	}
+	selected, ok := preferredExternalFindCandidate(candidates, categoryPreference)
+	if !ok {
+		return FindResult{}, conflict
+	}
+	return FindResult{
+		Category:         selected.category,
+		TMDBID:           selected.item.ID,
+		OriginalLanguage: selected.item.OriginalLanguage,
+	}, conflict
+}
+
+func externalFindCandidates(response FindResponse) []externalFindCandidate {
+	result := make([]externalFindCandidate, 0, len(response.MovieResults)+len(response.TVResults))
+	for _, item := range response.MovieResults {
+		if item.ID != 0 {
+			result = append(result, externalFindCandidate{category: "MOVIE", item: item})
+		}
+	}
+	for _, item := range response.TVResults {
+		if item.ID != 0 {
+			result = append(result, externalFindCandidate{category: "TV", item: item})
+		}
+	}
+	return result
+}
+
+func intersectExternalFindCandidates(left, right []externalFindCandidate) []externalFindCandidate {
+	result := make([]externalFindCandidate, 0, min(len(left), len(right)))
+	for _, candidate := range left {
+		for _, other := range right {
+			if candidate.category == other.category && candidate.item.ID == other.item.ID {
+				result = append(result, candidate)
+				break
+			}
+		}
+	}
+	return result
+}
+
+func preferredExternalFindCandidate(candidates []externalFindCandidate, categoryPreference string) (externalFindCandidate, bool) {
+	if len(candidates) == 0 {
+		return externalFindCandidate{}, false
+	}
+	preference := strings.ToUpper(strings.TrimSpace(categoryPreference))
+	if preference != "" {
+		for _, candidate := range candidates {
+			if candidate.category == preference {
+				return candidate, true
+			}
+		}
+	}
+	for _, candidate := range candidates {
+		if candidate.category == "MOVIE" {
+			return candidate, true
+		}
+	}
+	return candidates[0], true
 }
 
 // SearchID tries the parsed title, Roman-numeral and alternate titles, next year,
