@@ -1430,6 +1430,22 @@ func (m *Module) mutateOperation(
 	operationID api.WorkflowOperationID,
 	mutate func(*api.WorkflowOperationStatus),
 ) (api.WorkflowOperationStatus, error) {
+	return m.mutateOperationIf(ctx, ownerID, workflowID, operationID, func(status *api.WorkflowOperationStatus) bool {
+		mutate(status)
+		return true
+	})
+}
+
+// mutateOperationIf runs mutate under the operation lock. Returning false
+// discards the mutation and returns the prior status without writing a receipt,
+// checkpoint, or events.
+func (m *Module) mutateOperationIf(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+	operationID api.WorkflowOperationID,
+	mutate func(*api.WorkflowOperationStatus) bool,
+) (api.WorkflowOperationStatus, error) {
 	lock := m.operationLock(operationID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -1444,7 +1460,9 @@ func (m *Module) mutateOperation(
 		return api.WorkflowOperationStatus{}, err
 	}
 	record.Status.Events = nil
-	mutate(&record.Status)
+	if !mutate(&record.Status) {
+		return previousStatus, nil
+	}
 	record.Status.Sequence = expectedSequence + 1
 	record.Status.UpdatedAt = m.clock.Now().UTC()
 	ownsWorkLease := record.ProcessEpoch == m.processEpoch
@@ -2204,6 +2222,8 @@ func (m *Module) waitForOperationCleanup(ctx context.Context, operationID api.Wo
 }
 
 // CancelOperation requests cancellation of one active owner-scoped operation.
+// If the operation finishes before the cancellation message is saved, its
+// terminal status is returned unchanged.
 func (m *Module) CancelOperation(
 	ctx context.Context,
 	ownerID string,
@@ -2226,8 +2246,12 @@ func (m *Module) CancelOperation(
 	if worker.cancel != nil {
 		worker.cancel()
 	}
-	return m.mutateOperation(ctx, record.OwnerID, workflowID, operationID, func(status *api.WorkflowOperationStatus) {
+	return m.mutateOperationIf(ctx, record.OwnerID, workflowID, operationID, func(status *api.WorkflowOperationStatus) bool {
+		if !workflowOperationActive(status.Status) {
+			return false
+		}
 		status.Message = "Cancellation requested."
+		return true
 	})
 }
 
