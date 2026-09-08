@@ -6,6 +6,7 @@ package commonhttp
 import (
 	"context"
 	"errors"
+	"html"
 	"io"
 	"net/http"
 	"os"
@@ -374,14 +375,58 @@ func TestExtractHTTPErrorDetailHandlesMalformedAndEmbeddedJSON(t *testing.T) {
 func TestExtractHTTPErrorDetailSkipsInlineHiddenStyles(t *testing.T) {
 	t.Parallel()
 
-	for _, style := range []string{"display:none", "visibility:hidden", "color:red; DISPLAY : none !important", " VISIBILITY: hidden; color:red"} {
+	for _, style := range []string{
+		"display:none", "visibility:hidden", "color:red; DISPLAY : none !important", " VISIBILITY: hidden; color:red",
+		"display: none /* hidden */", "visibility: hidden /* hidden */", "display /* hidden */: none !important",
+		"display: /* comment ; */ none", `content:"/*"; display:none`, `content:'/*'; visibility:hidden`,
+		"display:none !/*x*/important", "visibility:hidden ! important", "--x:fn(a;b);display:none",
+		`--x:\(;display:none`,
+		"display:block;display:none", "display:none!important;display:block", "visibility:visible;visibility:hidden",
+		"visibility:hidden!important;visibility:visible", "display:none;display:block!invalid",
+	} {
 		t.Run(style, func(t *testing.T) {
-			body := []byte(`<div class="error">Invalid category<span style="` + style + `"><b>private-hidden-text</b></span>` +
+			body := []byte(`<div class="error">Invalid category<span style="` + html.EscapeString(style) + `"><b>private-hidden-text</b></span>` +
 				`<span style="display:block;visibility:visible">remains visible</span></div>`)
 			if got := ExtractHTTPErrorDetail(body); got != "Invalid category remains visible" {
 				t.Fatalf("inline hidden text entered diagnostics: %q", got)
 			}
 		})
+	}
+}
+
+func TestExtractHTTPErrorDetailPreservesVisibleInlineStyles(t *testing.T) {
+	t.Parallel()
+
+	for _, style := range []string{
+		`content:"x;display:none;y"`, `content:'x;visibility:hidden;y'`, `content:"x\";display:none;y"`,
+		"--x:fn(a;display:none;b)", "--x:[a;visibility:hidden;b]", "--x:{a;display:none;b}",
+		`content:"x;display:none`, `--x:foo\;display:none;`, "--x:fn(a];display:none;b)",
+		"display:none;display:block", "display:none;display:block!important", "display:block!important;display:none",
+		"visibility:hidden;visibility:visible", "visibility:visible!important;visibility:hidden",
+	} {
+		t.Run(style, func(t *testing.T) {
+			body := []byte(`<div class="error" style="` + html.EscapeString(style) + `">Invalid category</div>`)
+			if got := ExtractHTTPErrorDetail(body); got != "Invalid category" {
+				t.Fatalf("inline style hid visible diagnostic: %q", got)
+			}
+		})
+	}
+}
+
+func TestExtractHTMLFormErrorDetailOmitsUnrelatedPageText(t *testing.T) {
+	t.Parallel()
+
+	form := []byte(`<p>Unrelated upload rules</p><div class="error"></div><input name="artist" value="Autofill Fail">`)
+	if got := ExtractHTMLFormErrorDetail(form); got != "" {
+		t.Fatalf("empty form error included page text: %q", got)
+	}
+	form = append(form, []byte(`<div role="alert">Series lookup unavailable</div>`)...)
+	if got := ExtractHTMLFormErrorDetail(form); got != "Series lookup unavailable" {
+		t.Fatalf("form lost visible error detail: %q", got)
+	}
+	oversized := []byte(strings.Repeat(" ", int(maxHTTPErrorResponseBytes)) + `<div class="error">Beyond scan limit</div>`)
+	if got := ExtractHTMLFormErrorDetail(oversized); got != "" {
+		t.Fatalf("form error scanned beyond limit: %q", got)
 	}
 }
 
@@ -421,15 +466,15 @@ func TestReadUploadResponseBodyFindsLateHTMLFailure(t *testing.T) {
 		want string
 	}{
 		{
-name: "marked",
- html: `<div class="errors">Invalid category selected.</div>`,
- want: "Invalid category selected.",
-},
+			name: "marked",
+			html: `<div class="errors">Invalid category selected.</div>`,
+			want: "Invalid category selected.",
+		},
 		{
-name: "unmarked",
- html: `<h1>Upload failed!</h1><p>A matching torrent already exists.</p>`,
- want: "Upload failed! A matching torrent already exists.",
-},
+			name: "unmarked",
+			html: `<h1>Upload failed!</h1><p>A matching torrent already exists.</p>`,
+			want: "Upload failed! A matching torrent already exists.",
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			bodyText := `<html><head>` + strings.Repeat(`<link href="/favicon">`, 4000) + `</head><body>` + tt.html + `</body></html>`
