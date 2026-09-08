@@ -316,6 +316,19 @@ func TestEvidenceCollectorPublishesResolvedNamingFromMetadataProducer(t *testing
 	}
 }
 
+func TestMapCollectedFactsPublishesResolvedAlternateTitle(t *testing.T) {
+	t.Parallel()
+	for _, alternate := range []string{"AKA Rei no Sakuhin", ""} {
+		facts := mapCollectedFacts(preparationstate.State{
+			Release:        api.ReleaseInfo{Alt: "Parsed Original"},
+			ResolvedNaming: preparationstate.ResolvedNaming{AlternateTitle: alternate},
+		})
+		if facts.Naming.AlternateTitle != alternate {
+			t.Fatalf("alternate title = %q, want %q", facts.Naming.AlternateTitle, alternate)
+		}
+	}
+}
+
 func TestApplyBlurayFactInstructionSelectsCandidateBeforePublication(t *testing.T) {
 	t.Parallel()
 	meta := preparationstate.State{

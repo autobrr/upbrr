@@ -170,7 +170,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		descriptionOwner:  "standalone/bhd/description.go",
 		mediaOwner:        "standalone/bhd/media.go",
 		descriptionGroup:  "bhd",
-		releaseNamePolicy: "standalone/bhd/v4",
+		releaseNamePolicy: "standalone/bhd/v5",
 		projectorVersion:  "standalone-v2",
 		principalName:     "name",
 	},

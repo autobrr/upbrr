@@ -322,6 +322,10 @@ type UploadSubject struct {
 	ReleaseName                 string
 	ReleaseNameNoTag            string
 	ReleaseNameClean            string
+	// AlternateTitle is the finalized alternate from this subject's prepared naming facts.
+	// It may include an "AKA " prefix.
+	// Empty means no alternate was selected; NamePresentation controls omission.
+	AlternateTitle string
 	// GeneratedReleaseNames contains canonical structural alternatives. Empty
 	// variants mean ReleaseName must remain exact.
 	GeneratedReleaseNames GeneratedReleaseNameVariants

@@ -550,6 +550,9 @@ func TestOperationSubjectsCarryCorrectedFactsConsistently(t *testing.T) {
 	if upload.Tag != "-OTHER" || upload.Release.Group != "OTHER" || upload.Edition != "Extended" || upload.Service != "AMZN" {
 		t.Fatalf("upload subject fact projections = %q/%q/%q/%q", upload.Tag, upload.Release.Group, upload.Edition, upload.Service)
 	}
+	if release.Naming.AlternateTitle != "AKA Resolved Original" || upload.AlternateTitle != release.Naming.AlternateTitle {
+		t.Fatalf("alternate title projection = %q, prepared = %q", upload.AlternateTitle, release.Naming.AlternateTitle)
+	}
 
 	duplicate, err := module.ResolveDuplicateSubject(context.Background(), api.DuplicateCheckInput{Release: ref})
 	if err != nil {
