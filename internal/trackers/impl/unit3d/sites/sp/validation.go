@@ -18,7 +18,7 @@ import (
 // and resolution checks.
 func ValidationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID:    "unit3d-sp-policy-v4",
+		ID:    "unit3d-sp-policy-v5",
 		Check: checkRequirements,
 	}
 }
@@ -47,7 +47,7 @@ func checkRequirements(ctx context.Context, subject api.TrackerValidationSubject
 	failures = append(failures, trackers.ValidatePackageExtensions(
 		subject.PackageFacts,
 		trackers.PackageExtensionPolicy{
-			Evidence:          spEvidencePolicy("sp_package_safety"),
+			Evidence:          spEvidencePolicy("sp_package_safety", api.RuleDispositionStrict),
 			BlockArchives:     true,
 			BlockedExtraKinds: extraKinds,
 		},
@@ -56,14 +56,14 @@ func checkRequirements(ctx context.Context, subject api.TrackerValidationSubject
 		failures = append(failures, trackers.ValidateCompleteEpisodeRange(
 			subject.PackageFacts,
 			trackers.EpisodeRangePolicy{
-				Evidence: spEvidencePolicy("sp_pack_completeness"),
+				Evidence: spEvidencePolicy("sp_pack_completeness", api.RuleDispositionWaivable),
 				Season:   subject.SeasonInt,
 			},
 		)...)
 		failures = append(failures, trackers.ValidatePerFileUniformity(
 			subject.MediaFileFacts,
 			trackers.PerFileUniformityPolicy{
-				Evidence: spEvidencePolicy("sp_pack_uniformity"),
+				Evidence: spEvidencePolicy("sp_pack_uniformity", api.RuleDispositionStrict),
 				Fields: []trackers.MediaUniformityField{
 					trackers.MediaUniformityFieldSource,
 					trackers.MediaUniformityFieldResolution,
@@ -82,10 +82,10 @@ func checkRequirements(ctx context.Context, subject api.TrackerValidationSubject
 	return failures, nil
 }
 
-func spEvidencePolicy(rule string) trackers.EvidencePredicatePolicy {
+func spEvidencePolicy(rule string, violation api.RuleDisposition) trackers.EvidencePredicatePolicy {
 	return trackers.EvidencePredicatePolicy{
 		Rule:                       rule,
-		ViolationDisposition:       api.RuleDispositionStrict,
+		ViolationDisposition:       violation,
 		MissingEvidenceDisposition: api.RuleDispositionAdvisory,
 	}
 }

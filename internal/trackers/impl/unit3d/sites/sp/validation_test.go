@@ -39,12 +39,12 @@ func TestSPEvidencePolicyPassViolationAndMissingEvidence(t *testing.T) {
 			wantStatus:      api.MetadataEvidenceStatusUnavailable,
 		},
 		{
-			name: "incomplete local pack is strict",
+			name: "incomplete local pack is waivable",
 			mutate: func(subject *api.TrackerValidationSubject) {
 				subject.PackageFacts.DetectedEpisodes[0].Episodes = []int{1, 3}
 			},
 			wantRule:        "sp_pack_completeness",
-			wantDisposition: api.RuleDispositionStrict,
+			wantDisposition: api.RuleDispositionWaivable,
 			wantStatus:      api.MetadataEvidenceStatusComplete,
 		},
 		{
@@ -127,7 +127,7 @@ func TestSPEvidencePolicyPassViolationAndMissingEvidence(t *testing.T) {
 
 func TestSPValidationPolicyVersion(t *testing.T) {
 	t.Parallel()
-	if got := Profile().ValidationPolicy.ID; got != "unit3d-sp-policy-v4" {
+	if got := Profile().ValidationPolicy.ID; got != "unit3d-sp-policy-v5" {
 		t.Fatalf("validation policy ID = %q", got)
 	}
 }

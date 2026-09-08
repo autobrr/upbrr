@@ -15,7 +15,7 @@ import (
 
 func validationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID:    "standalone-btn-constructibility-v2",
+		ID:    "standalone-btn-constructibility-v3",
 		Check: checkRequirements,
 	}
 }
@@ -56,7 +56,7 @@ func checkRequirements(ctx context.Context, subject api.TrackerValidationSubject
 	)...)
 	if subject.TVPack {
 		failures = append(failures, trackers.ValidateCompleteEpisodeRange(subject.PackageFacts, trackers.EpisodeRangePolicy{
-			Evidence: btnEvidencePolicy("btn_episode_range", api.RuleDispositionStrict),
+			Evidence: btnEvidencePolicy("btn_episode_range", api.RuleDispositionWaivable),
 			Season:   subject.SeasonInt,
 		})...)
 		failures = append(failures, trackers.ValidatePerFileUniformity(subject.MediaFileFacts, trackers.PerFileUniformityPolicy{
