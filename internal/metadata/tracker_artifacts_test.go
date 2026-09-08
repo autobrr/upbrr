@@ -30,8 +30,8 @@ func (f artifactRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, err
 func TestPersistUnit3DArtifactsMaxConcurrentImageDownloads(t *testing.T) {
 	const imageCount = 12
 
-	var inFlight int32
-	var maxInFlight int32
+	var inFlight atomic.Int32
+	var maxInFlight atomic.Int32
 
 	png1x1 := []byte{
 		137, 80, 78, 71, 13, 10, 26, 10,
@@ -56,17 +56,17 @@ func TestPersistUnit3DArtifactsMaxConcurrentImageDownloads(t *testing.T) {
 				}, nil
 			}
 
-			current := atomic.AddInt32(&inFlight, 1)
+			current := inFlight.Add(1)
 			for {
-				peak := atomic.LoadInt32(&maxInFlight)
+				peak := maxInFlight.Load()
 				if current <= peak {
 					break
 				}
-				if atomic.CompareAndSwapInt32(&maxInFlight, peak, current) {
+				if maxInFlight.CompareAndSwap(peak, current) {
 					break
 				}
 			}
-			defer atomic.AddInt32(&inFlight, -1)
+			defer inFlight.Add(-1)
 
 			time.Sleep(75 * time.Millisecond)
 			return &http.Response{
@@ -102,10 +102,10 @@ func TestPersistUnit3DArtifactsMaxConcurrentImageDownloads(t *testing.T) {
 	if len(successful) != imageCount {
 		t.Fatalf("expected %d downloaded images, got %d", imageCount, len(successful))
 	}
-	if got := atomic.LoadInt32(&maxInFlight); got > unit3dImageWorkers {
+	if got := maxInFlight.Load(); got > unit3dImageWorkers {
 		t.Fatalf("expected max in-flight <= %d, got %d", unit3dImageWorkers, got)
 	}
-	if got := atomic.LoadInt32(&maxInFlight); got < 2 {
+	if got := maxInFlight.Load(); got < 2 {
 		t.Fatalf("expected concurrent downloads, max in-flight was %d", got)
 	}
 }

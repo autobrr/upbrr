@@ -4,7 +4,7 @@
 import type { ReactNode } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { MetadataPreview, PrepareInput } from "../types";
+import type { ApplicationInfo, MetadataPreview, PrepareInput } from "../types";
 import { emptyExternalIdentity } from "../utils/canonicalIdentity";
 import type {
   ContinueReleaseWorkflowRequest,
@@ -551,9 +551,37 @@ const workflowCurrentFromPreview = (
     },
   }) as unknown as ReleaseWorkflowCurrent;
 
-const wrapperFor = (ports: ReleaseSessionPorts) =>
+const liveTestRuntime: ApplicationInfo["testRuntime"] = {
+  mode: "live_test",
+  runId: "test-run",
+  trackerSubmissionAllowed: false,
+  clientMutationAllowed: false,
+  imageUploadsRequireJournal: true,
+  imageUploadLimit: 0,
+  trackerSubmission: {
+    requestsDenied: 0,
+    mutationCallsDenied: 0,
+    remoteCallsStarted: 0,
+    remoteCallsSucceeded: 0,
+  },
+  clientMutation: {
+    requestsDenied: 0,
+    mutationCallsDenied: 0,
+    remoteCallsStarted: 0,
+    remoteCallsSucceeded: 0,
+  },
+};
+
+const wrapperFor = (
+  ports: ReleaseSessionPorts,
+  runtime: { testRuntime?: ApplicationInfo["testRuntime"]; runtimeInfoReady?: boolean } = {},
+) =>
   function Wrapper({ children }: Readonly<{ children: ReactNode }>) {
-    return <ReleaseSessionProvider ports={ports}>{children}</ReleaseSessionProvider>;
+    return (
+      <ReleaseSessionProvider ports={ports} {...runtime}>
+        {children}
+      </ReleaseSessionProvider>
+    );
   };
 
 const selectAndPrepare = async (
@@ -612,6 +640,67 @@ describe("tracker workflow capabilities", () => {
 });
 
 describe("useReleaseSession", () => {
+  it.each([true, false])("blocks retained mutation actions with liveTest=%s", async (liveTest) => {
+    const workflowID = "workflow-live-test";
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const retained = {
+      ...workflowCurrent(workflowID, 7),
+      uploadResult: {
+        id: "retained-result",
+        revision: 1,
+        results: [
+          { trackerId: "EXAMPLE", submissionStatus: "failed" },
+          {
+            trackerId: "OTHER",
+            submissionStatus: "completed",
+            clientInjectionStatus: "failed",
+            clientFailureCode: "client_injection",
+          },
+        ],
+      },
+    } as unknown as ReleaseWorkflowCurrent;
+    const continueWorkflow = vi.fn(async () => retained);
+    const retryFailedUploads = vi.fn(async () => retained);
+    const retryClientInjections = vi.fn(async () => retained);
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          workflow: workflowPorts({
+            current: async () => retained,
+            continue: continueWorkflow,
+            retryFailedUploads,
+            retryClientInjections,
+          }),
+        }),
+        liveTest ? { testRuntime: liveTestRuntime } : { runtimeInfoReady: false },
+      ),
+    });
+    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+    act(() => result.current.upload.changeOptions({ noSeed: false }));
+    expect(result.current.upload.view.mutationsAllowed).toBe(false);
+    expect(result.current.upload.view.options.noSeed).toBe(liveTest);
+    await act(async () => {
+      expect(await result.current.upload.start()).toBe(false);
+      expect(await result.current.upload.retry()).toBe(false);
+      expect(await result.current.upload.retryClientInjection()).toBe(false);
+      expect(await result.current.workflow.executeUploads()).toBe(false);
+      expect(await result.current.workflow.retryFailedUploads()).toBe(false);
+      expect(await result.current.workflow.retryClientInjections()).toBe(false);
+    });
+    expect(continueWorkflow).not.toHaveBeenCalled();
+    expect(retryFailedUploads).not.toHaveBeenCalled();
+    expect(retryClientInjections).not.toHaveBeenCalled();
+    await act(() => result.current.upload.runDryRun());
+    expect(continueWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        goal: "dry_run",
+        intent: { interaction: "interactive", noSeed: liveTest },
+      }),
+      expect.any(AbortSignal),
+    );
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
   it("reloads authoritative workflow state from the retained browser workflow id", async () => {
     window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", "workflow-retained");
     const sourcePath = "C:\\media\\Example.Release.2026.1080p-GRP.mkv";
@@ -682,50 +771,54 @@ describe("useReleaseSession", () => {
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
 
-  it("confirms a retained rule authorization before upload", async () => {
-    const workflowID = "workflow-authorize-upload";
-    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
-    const action = {
-      createdAt: "2026-07-20T00:00:00Z",
-      id: "action-authorize",
-      kind: "authorize_rules" as const,
-      prompt: "Confirm BTN autofill.",
-      status: "pending" as const,
-      workflowRevision: 7,
-    };
-    const base = workflowCurrent(workflowID, 7);
-    const retained: ReleaseWorkflowCurrent = {
-      ...base,
-      workflow: { ...base.workflow, status: "blocked", requiredActions: [action] },
-      continuation: { ...base.continuation, requiredActions: [action] },
-    };
-    const continueWorkflow = vi.fn(async () => retained);
-    const { result, unmount } = renderHook(useReleaseSession, {
-      wrapper: wrapperFor(
-        portsFor({
-          workflow: workflowPorts({
-            current: async () => retained,
-            continue: continueWorkflow,
+  it.each([false, true])(
+    "confirms a retained rule authorization with liveTest=%s",
+    async (liveTest) => {
+      const workflowID = "workflow-authorize-upload";
+      window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+      const action = {
+        createdAt: "2026-07-20T00:00:00Z",
+        id: "action-authorize",
+        kind: "authorize_rules" as const,
+        prompt: "Confirm BTN autofill.",
+        status: "pending" as const,
+        workflowRevision: 7,
+      };
+      const base = workflowCurrent(workflowID, 7);
+      const retained: ReleaseWorkflowCurrent = {
+        ...base,
+        workflow: { ...base.workflow, status: "blocked", requiredActions: [action] },
+        continuation: { ...base.continuation, requiredActions: [action] },
+      };
+      const continueWorkflow = vi.fn(async () => retained);
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            workflow: workflowPorts({
+              current: async () => retained,
+              continue: continueWorkflow,
+            }),
           }),
+          { testRuntime: liveTest ? liveTestRuntime : undefined },
+        ),
+      });
+
+      await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+      await act(async () => {
+        expect(await result.current.workflow.confirmAction(action)).toBe(true);
+      });
+      expect(continueWorkflow).toHaveBeenCalledWith(
+        expect.objectContaining({
+          goal: liveTest ? "dry_run" : "uploaded",
+          answers: [{ actionId: action.id, workflowRevision: 7, confirmed: true }],
         }),
-      ),
-    });
+        expect.any(AbortSignal),
+      );
 
-    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
-    await act(async () => {
-      expect(await result.current.workflow.confirmAction(action)).toBe(true);
-    });
-    expect(continueWorkflow).toHaveBeenCalledWith(
-      expect.objectContaining({
-        goal: "uploaded",
-        answers: [{ actionId: action.id, workflowRevision: 7, confirmed: true }],
-      }),
-      expect.any(AbortSignal),
-    );
-
-    unmount();
-    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
-  });
+      unmount();
+      window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+    },
+  );
 
   it("accepts a tracker rule warning from the dupe facet", async () => {
     const workflowID = "workflow-dupe-rule-override";
@@ -867,54 +960,62 @@ describe("useReleaseSession", () => {
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
 
-  it("resumes an accepted workflow operation by polling without browser events", async () => {
+  it("resumes an accepted workflow operation without exceeding one poll per second", async () => {
+    vi.useFakeTimers();
     window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", "workflow-active");
-    const startedAt = "2026-07-20T00:00:00Z";
-    const operation = (status: "queued" | "running" | "completed", sequence: number) =>
-      ({
-        id: "operation-active",
-        workflowId: "workflow-active",
-        revision: 2,
-        resultRevision: status === "completed" ? 3 : undefined,
-        sequence,
-        command: "check_duplicates",
-        operation: "duplicate_check",
-        phase: "duplicate_check",
-        status,
-        progress: status === "queued" ? 0 : status === "running" ? 50 : 100,
-        completed: status === "completed" ? 1 : 0,
-        total: 1,
-        message: status === "completed" ? "Operation complete." : "Checking tracker.",
-        startedAt,
-        updatedAt: startedAt,
-        completedAt: status === "completed" ? startedAt : undefined,
-      }) as const;
-    const current = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ...workflowCurrent("workflow-active", 2),
-        operation: operation("queued", 1),
-      })
-      .mockResolvedValueOnce({
-        ...workflowCurrent("workflow-active", 3),
-        operation: operation("completed", 3),
+    try {
+      const startedAt = "2026-07-20T00:00:00Z";
+      const operation = (status: "queued" | "running" | "completed", sequence: number) =>
+        ({
+          id: "operation-active",
+          workflowId: "workflow-active",
+          revision: 2,
+          resultRevision: status === "completed" ? 3 : undefined,
+          sequence,
+          command: "check_duplicates",
+          operation: "duplicate_check",
+          phase: "duplicate_check",
+          status,
+          progress: status === "queued" ? 0 : status === "running" ? 50 : 100,
+          completed: status === "completed" ? 1 : 0,
+          total: 1,
+          message: status === "completed" ? "Operation complete." : "Checking tracker.",
+          startedAt,
+          updatedAt: startedAt,
+          completedAt: status === "completed" ? startedAt : undefined,
+        }) as const;
+      const current = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ...workflowCurrent("workflow-active", 2),
+          operation: operation("queued", 1),
+        })
+        .mockResolvedValueOnce({
+          ...workflowCurrent("workflow-active", 3),
+          operation: operation("completed", 3),
+        });
+      const poll = vi
+        .fn()
+        .mockResolvedValueOnce(operation("running", 2))
+        .mockResolvedValueOnce(operation("completed", 3));
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ current, operation: poll }) })),
       });
-    const poll = vi
-      .fn()
-      .mockResolvedValueOnce(operation("running", 2))
-      .mockResolvedValueOnce(operation("completed", 3));
-    const { result, unmount } = renderHook(useReleaseSession, {
-      wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ current, operation: poll }) })),
-    });
 
-    await waitFor(() => expect(result.current.workflow.view.current?.workflow.revision).toBe(3), {
-      timeout: 3000,
-    });
-    expect(poll).toHaveBeenCalledTimes(2);
-    expect(result.current.workflow.view.current?.operation?.status).toBe("completed");
+      await act(async () => vi.advanceTimersByTimeAsync(999));
+      expect(poll).not.toHaveBeenCalled();
+      await act(async () => vi.advanceTimersByTimeAsync(1));
+      expect(poll).toHaveBeenCalledOnce();
+      await act(async () => vi.advanceTimersByTimeAsync(1000));
+      expect(poll).toHaveBeenCalledTimes(2);
+      expect(result.current.workflow.view.current?.workflow.revision).toBe(3);
+      expect(result.current.workflow.view.current?.operation?.status).toBe("completed");
 
-    unmount();
-    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+      unmount();
+    } finally {
+      window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+      vi.useRealTimers();
+    }
   });
 
   it("surfaces the safe failure retained by a terminal workflow operation", async () => {
@@ -962,7 +1063,9 @@ describe("useReleaseSession", () => {
       wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ current, operation }) })),
     });
 
-    await waitFor(() => expect(result.current.workflow.view.status).toBe("error"));
+    await waitFor(() => expect(result.current.workflow.view.status).toBe("error"), {
+      timeout: 3000,
+    });
     expect(result.current.workflow.view.error).toBe(
       "The source path is unavailable. Recovery: edit input.",
     );

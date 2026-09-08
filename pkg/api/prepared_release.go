@@ -99,7 +99,8 @@ type SourceClassification struct {
 }
 
 // NamingFacts contains finalized reusable naming facts rather than raw parser
-// output or workflow-specific name overrides.
+// output or workflow-specific name overrides. AlternateTitle is resolved before
+// presentation omissions are applied.
 type NamingFacts struct {
 	Filename         string
 	ReleaseName      string

@@ -158,8 +158,7 @@ func trackerAuthError(kind string, trackerID string, reason string, err error) s
 }
 
 func asValidationError(err error) (*ValidationError, bool) {
-	var validationErr *ValidationError
-	if errors.As(err, &validationErr) {
+	if validationErr, ok := errors.AsType[*ValidationError](err); ok {
 		return validationErr, true
 	}
 	return nil, false

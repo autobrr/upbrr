@@ -23,7 +23,7 @@ func Rules() *trackers.RuleSet {
 
 // ValidationPolicy returns TTR's release-language metadata check.
 func ValidationPolicy() trackers.ValidationPolicyBinding {
-	return trackers.ValidationPolicyBinding{ID: "unit3d-ttr-language-v1", Check: checkSubtitleOnly}
+	return trackers.ValidationPolicyBinding{ID: "unit3d-ttr-language-v2", Check: checkSubtitleOnly}
 }
 
 func checkSubtitleOnly(ctx context.Context, meta api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
@@ -33,7 +33,8 @@ func checkSubtitleOnly(ctx context.Context, meta api.TrackerValidationSubject, _
 	if unit3d.IsDiscType(meta.DiscType) {
 		return nil, nil
 	}
-	if !unit3d.ContainsRuleValue(unit3d.NormalizeRuleValues(meta.Release.Language), []string{"spanish", "es", "spa"}) {
+	languages := append(append([]string(nil), meta.AudioLanguages...), meta.SubtitleLanguages...)
+	if !unit3d.ContainsRuleValue(unit3d.NormalizeRuleValues(languages), []string{"spanish", "es", "spa"}) {
 		return []api.RuleFailure{trackers.NewRuleFailure(
 			"spanish_track_required",
 			"TTR requires at least one Spanish audio or subtitle track.",

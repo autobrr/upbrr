@@ -35,6 +35,28 @@ type Service struct {
 	registry  *trackers.Registry
 }
 
+type uploadAggregateError struct {
+	message string
+	causes  []error
+}
+
+func (e *uploadAggregateError) Error() string   { return e.message }
+func (e *uploadAggregateError) Unwrap() []error { return e.causes }
+
+func preserveUnknownUploadOutcome(message string, unknownOutcome error, terminal error) error {
+	if unknownOutcome == nil {
+		if terminal != nil {
+			return terminal
+		}
+		return errors.New(message)
+	}
+	causes := []error{unknownOutcome}
+	if terminal != nil {
+		causes = append(causes, terminal)
+	}
+	return &uploadAggregateError{message: message, causes: causes}
+}
+
 type repository interface {
 	ListFinalSelections(context.Context, string) ([]api.ScreenshotFinalSelection, error)
 	ListScreenshotsByPath(context.Context, string) ([]api.Screenshot, error)
@@ -513,6 +535,7 @@ func (s *Service) Upload(
 		succeeded        int
 		failed           int
 		attemptDurations = make([]time.Duration, 0, len(unique))
+		unknownOutcome   error
 	)
 	sem := make(chan struct{}, limit)
 	recordProgress := func(success bool) {
@@ -588,8 +611,12 @@ dispatchLoop:
 
 			if err != nil {
 				s.logger.Warnf("image hosting: upload failed file=%s host=%s tracker=%s err=%s", fileName, normalizedHost, logTracker, redaction.RedactValue(err.Error(), nil))
+				failure := fmt.Errorf("image upload %s: %w", fileName, err)
 				mu.Lock()
-				failures = append(failures, fmt.Sprintf("image upload %s: %v", fileName, err))
+				failures = append(failures, failure.Error())
+				if operationFailure, ok := api.AsOperationFailure(failure); ok && operationFailure.Code == api.OperationFailureUnknownOutcome && unknownOutcome == nil {
+					unknownOutcome = failure
+				}
 				mu.Unlock()
 				recordProgress(false)
 				return
@@ -633,7 +660,8 @@ dispatchLoop:
 
 	wg.Wait()
 	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("image hosting: upload canceled: %w", err)
+		canceledErr := fmt.Errorf("image hosting: upload canceled: %w", err)
+		return nil, preserveUnknownUploadOutcome(canceledErr.Error(), unknownOutcome, canceledErr)
 	}
 
 	totalDuration := time.Since(uploadStart)
@@ -668,7 +696,8 @@ dispatchLoop:
 				failed,
 				"Uploaded images could not be saved.",
 			)
-			return nil, fmt.Errorf("image hosting: %w", err)
+			persistenceErr := fmt.Errorf("image hosting: %w", err)
+			return nil, preserveUnknownUploadOutcome(persistenceErr.Error(), unknownOutcome, persistenceErr)
 		}
 		summary, err := syncScreenshotSlotVariants(ctx, s.repo, meta.SourcePath, orderedResults)
 		if err != nil {
@@ -706,7 +735,8 @@ dispatchLoop:
 			failed,
 			fmt.Sprintf("%d of %d host uploads failed.", failed, len(unique)),
 		)
-		return orderedResults, fmt.Errorf("image hosting: %d of %d uploads failed: %s", len(failures), len(unique), strings.Join(failures, "; "))
+		message := fmt.Sprintf("image hosting: %d of %d uploads failed: %s", len(failures), len(unique), strings.Join(failures, "; "))
+		return orderedResults, preserveUnknownUploadOutcome(message, unknownOutcome, nil)
 	}
 
 	emitUploadProgress(

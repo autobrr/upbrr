@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
@@ -16,8 +17,10 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/configstore"
 	"github.com/autobrr/upbrr/internal/cookies"
+	"github.com/autobrr/upbrr/internal/livetest"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -99,11 +102,24 @@ func (e *runtimeCookiePersistenceError) Unwrap() error {
 // RuntimeActivator serializes and owns the complete config-candidate to active
 // runtime transition for one WebUI host.
 type RuntimeActivator struct {
-	mu          sync.Mutex
-	repo        *db.SQLiteRepository
-	fixedDBPath string
-	installer   RuntimeInstaller
-	deps        runtimeActivationDeps
+	liveProfile            *livetest.Profile
+	liveImageConfig        config.ImageHostingConfig
+	liveImageRegistry      *trackers.Registry
+	liveImageTrackerInputs []liveTestImageTrackerInput
+	mu                     sync.Mutex
+	repo                   *db.SQLiteRepository
+	fixedDBPath            string
+	installer              RuntimeInstaller
+	deps                   runtimeActivationDeps
+}
+
+type liveTestImageTrackerInput struct {
+	Tracker   string
+	Username  string
+	Passkey   string
+	ImgAPI    string
+	ImageHost string
+	ImgRehost bool
 }
 
 // NewRuntimeActivator constructs an activator for one already-open repository
@@ -152,6 +168,19 @@ func (a *RuntimeActivator) Activate(ctx context.Context, candidate config.Config
 		return activationError(ActivationStageNormalize, err)
 	}
 	stored.MainSettings.DBPath = a.fixedDBPath
+	if a.liveProfile != nil {
+		if err := configstore.ValidateLiveTestTrackerConfigNames(stored.Trackers.Trackers); err != nil {
+			return activationError(ActivationStageValidateStored, err)
+		}
+		trackerInputs := liveTestImageTrackerInputs(*stored, a.liveImageRegistry)
+		if stored.ImageHosting != a.liveImageConfig || !slices.Equal(trackerInputs, a.liveImageTrackerInputs) {
+			return activationError(
+				ActivationStageValidateStored,
+				errors.New("live-test image-host configuration cannot change during a run; create a new profile"),
+			)
+		}
+		configstore.ApplyLiveTestPaths(stored, *a.liveProfile)
+	}
 	if err := stored.Validate(); err != nil {
 		return activationError(ActivationStageValidateStored, err)
 	}
@@ -160,7 +189,9 @@ func (a *RuntimeActivator) Activate(ctx context.Context, candidate config.Config
 	if err != nil {
 		return activationError(ActivationStageNormalize, err)
 	}
-	config.ApplyEnvOverrides(runtimeCfg)
+	if a.liveProfile == nil {
+		config.ApplyEnvOverrides(runtimeCfg)
+	}
 	runtimeCfg.MainSettings.DBPath = a.fixedDBPath
 	if err := runtimeCfg.Validate(); err != nil {
 		return activationError(ActivationStageValidateRuntime, err)
@@ -181,8 +212,7 @@ func (a *RuntimeActivator) Activate(ctx context.Context, candidate config.Config
 		return activationError(ActivationStageCookies, err)
 	}
 	if err := a.deps.persist(ctx, stored, a.repo, a.fixedDBPath, generation.Logger); err != nil {
-		var cookieErr *runtimeCookiePersistenceError
-		if errors.As(err, &cookieErr) {
+		if _, ok := errors.AsType[*runtimeCookiePersistenceError](err); ok {
 			return activationError(ActivationStageCookies, err)
 		}
 		return activationError(ActivationStagePersist, err)
@@ -193,6 +223,35 @@ func (a *RuntimeActivator) Activate(ctx context.Context, candidate config.Config
 	installed = true
 	retired.Close()
 	return nil
+}
+
+func liveTestImageTrackerInputs(cfg config.Config, registry *trackers.Registry) []liveTestImageTrackerInput {
+	if registry == nil {
+		return nil
+	}
+	hdbOwner := registry.OwnerForImageHost("hdb")
+	thrOwner := registry.OwnerForImageHost("thr")
+	inputs := make([]liveTestImageTrackerInput, 0, len(registry.Names()))
+	for _, tracker := range registry.Names() {
+		trackerCfg, _ := config.TrackerConfigByName(cfg.Trackers.Trackers, tracker)
+		input := liveTestImageTrackerInput{
+			Tracker:   tracker,
+			ImageHost: strings.ToLower(strings.TrimSpace(trackerCfg.ImageHost)),
+		}
+		policy, hasPolicy := registry.LookupImageHostPolicy(tracker)
+		if hasPolicy && policy.DisableWithoutRehost {
+			input.ImgRehost = trackerCfg.ImgRehost
+		}
+		if (hasPolicy && policy.DisableWithoutAPI) || strings.EqualFold(tracker, thrOwner) {
+			input.ImgAPI = strings.TrimSpace(trackerCfg.ImgAPI)
+		}
+		if strings.EqualFold(tracker, hdbOwner) {
+			input.Username = strings.TrimSpace(trackerCfg.Username)
+			input.Passkey = strings.TrimSpace(trackerCfg.Passkey)
+		}
+		inputs = append(inputs, input)
+	}
+	return inputs
 }
 
 func activationError(stage ActivationStage, err error) error {

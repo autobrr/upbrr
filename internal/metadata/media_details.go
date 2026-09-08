@@ -140,7 +140,7 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 		s.logger.Debugf("metadata: media details audio=%q channels=%q commentary=%t", meta.Audio, meta.Channels, meta.HasCommentary)
 	}
 
-	meta.Is3D = threeDFromBDInfo(bdinfo)
+	meta.Is3D = threeDFromMedia(miDoc, bdinfo)
 	if s.logger != nil {
 		s.logger.Debugf("metadata: media details 3d=%q", meta.Is3D)
 	}
@@ -212,6 +212,9 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	if strings.EqualFold(meta.DiscType, "BDMV") {
 		meta.Region = regionFromBDInfo(bdinfo, meta.Region)
 		meta.VideoCodec = videoCodecFromBDInfo(bdinfo)
+		if bdinfo != nil && len(bdinfo.Video) > 0 {
+			meta.BitDepth = numericPattern.FindString(bdinfo.Video[0].BitDepth)
+		}
 	} else {
 		meta.VideoEncode, meta.VideoCodec, meta.HasEncodeSettings, meta.BitDepth = videoEncodeFromMedia(miDoc, meta.Type)
 	}
@@ -651,8 +654,8 @@ func isCommentaryOrCompatibilityAudioValue(value string) bool {
 // RebuildReleaseName regenerates the prepared release-name fields from the
 // current metadata and the naming-only override controls. Fact-producing
 // instruction values are already part of the metadata by the final rebuild. It
-// is a no-op for nil input and replaces all name variants and missing-field
-// hints in place.
+// is a no-op for nil input and replaces ResolvedNaming, all name variants, and
+// missing-field hints in place without rewriting the detached Release evidence.
 func RebuildReleaseName(meta *preparationstate.State, logger api.Logger) {
 	if meta == nil {
 		return
@@ -660,6 +663,16 @@ func RebuildReleaseName(meta *preparationstate.State, logger api.Logger) {
 
 	nameRequest := releaseNameRequestFromMeta(*meta, logger)
 	nameRequest = applyReleaseNameOverrides(nameRequest, meta.ReleaseNameOverrides, logger)
+	meta.ResolvedNaming = preparationstate.ResolvedNaming{
+		Type:           nameRequest.Type,
+		Title:          nameRequest.Title,
+		AlternateTitle: nameRequest.AltTitle,
+		Year:           nameRequest.Year,
+		Source:         nameRequest.Source,
+		Resolution:     nameRequest.Resolution,
+		Genre:          resolvedGenre(*meta),
+		EpisodeTitle:   resolvedEpisodeTitle(*meta),
+	}
 	meta.ReleaseNamePresentation = api.ReleaseNamePresentation{
 		Version:            api.ReleaseNamePresentationVersionV1,
 		OmitAlternateTitle: nameRequest.NoAKA,
@@ -931,6 +944,8 @@ func normalizeAudioFormat(track map[string]any) string {
 		return "DTS"
 	case "aac", "aac lc":
 		return "AAC"
+	case "adpcm":
+		return "ADPCM"
 	case "ac-3":
 		return "DD"
 	case "e-ac-3", "a_eac3", "enhanced ac-3":
@@ -1202,11 +1217,21 @@ func fallbackChannelCount(channels int) string {
 	}
 }
 
-func threeDFromBDInfo(info *discparse.BDInfo) string {
-	if info == nil || len(info.Video) == 0 {
+// threeDFromMedia uses BDInfo's primary video when available; otherwise, it
+// requires multiple views on MediaInfo's primary video to report 3D.
+func threeDFromMedia(doc mediaInfoDoc, info *discparse.BDInfo) string {
+	if info != nil && len(info.Video) > 0 {
+		if strings.TrimSpace(info.Video[0].ThreeD) != "" {
+			return "3D"
+		}
 		return ""
 	}
-	if strings.TrimSpace(info.Video[0].ThreeD) != "" {
+	_, video, _ := splitMediaInfoTracks(doc)
+	if len(video) == 0 {
+		return ""
+	}
+	views, err := strconv.Atoi(trackString(video[0], "MultiView_Count"))
+	if err == nil && views > 1 {
 		return "3D"
 	}
 	return ""
@@ -1851,8 +1876,8 @@ func parseMediaDurationColonValue(value string) float64 {
 	}
 	var seconds float64
 	multiplier := 1.0
-	for i := len(parts) - 1; i >= 0; i-- {
-		part := strings.TrimSpace(parts[i])
+	for _, part := range slices.Backward(parts) {
+		part := strings.TrimSpace(part)
 		if part == "" {
 			continue
 		}

@@ -132,8 +132,7 @@ func releaseWorkflowDiagnosticMessage(err error) string {
 		return "unknown error"
 	}
 	diagnostic := err
-	var operationError *api.OperationError
-	if errors.As(err, &operationError) {
+	if operationError, ok := errors.AsType[*api.OperationError](err); ok {
 		if cause := errors.Unwrap(operationError); cause != nil {
 			diagnostic = cause
 		}
@@ -314,8 +313,7 @@ func classifyReleaseWorkflowError(err error) error {
 	if err == nil {
 		return nil
 	}
-	var operationError *api.OperationError
-	if errors.As(err, &operationError) {
+	if operationError, ok := errors.AsType[*api.OperationError](err); ok {
 		return operationError
 	}
 	failure := api.OperationFailure{

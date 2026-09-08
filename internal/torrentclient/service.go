@@ -33,6 +33,7 @@ import (
 
 // Service coordinates torrent-client injection and search operations.
 type Service struct {
+	liveTest        *api.LiveTestPolicy
 	cfg             config.Config
 	logger          api.Logger
 	trackerPatterns map[string]trackerPattern
@@ -90,19 +91,24 @@ func NewService(cfg config.Config, logger api.Logger) *Service {
 // NewServiceWithRegistry returns a torrent-client service backed by registry.
 // A nil registry selects an empty registry, and a nil logger selects
 // [api.NopLogger]. Registry-derived policy is copied during construction.
-func NewServiceWithRegistry(cfg config.Config, logger api.Logger, registry *trackers.Registry) *Service {
+// An optional live-test policy blocks injection and force-recheck requests.
+func NewServiceWithRegistry(cfg config.Config, logger api.Logger, registry *trackers.Registry, liveTest ...*api.LiveTestPolicy) *Service {
 	if logger == nil {
 		logger = api.NopLogger{}
 	}
 	if registry == nil {
 		registry = trackers.NewRegistry()
 	}
-	return &Service{
+	service := &Service{
 		cfg:             cfg,
 		logger:          logger,
 		trackerPatterns: buildTrackerIDPatterns(registry),
 		trackerPriority: registry.Priority(),
 	}
+	if len(liveTest) > 0 {
+		service.liveTest = liveTest[0]
+	}
+	return service
 }
 
 // Inject dispatches a prepared torrent to selected clients in sorted name order
@@ -118,6 +124,10 @@ func NewServiceWithRegistry(cfg config.Config, logger api.Logger, registry *trac
 // client adds are not rolled back, while staging created for the failed
 // qBittorrent add is removed when owned by that attempt.
 func (s *Service) Inject(ctx context.Context, meta api.ClientSubject, torrent api.TorrentResult) (err error) {
+	if err := s.liveTest.RejectMutation(api.OperationKindClientInjection); err != nil {
+		s.logger.Warnf("clients: injection state=blocked reason=live_test")
+		return fmt.Errorf("live-test client injection: %w", err)
+	}
 	logger := logging.FromContext(ctx, s.logger)
 	defer func() {
 		if err != nil {

@@ -736,7 +736,12 @@ func resolveCandidateFindings(candidate TrackerCandidate, facts normalizedFacts,
 			return candidateResult(candidate, facts, findings, api.DupeRelationManualReview, "policy_conflict")
 		}
 	}
-	return candidateResult(candidate, facts, findings, topRelation, findingReason(top))
+	result := candidateResult(candidate, facts, findings, topRelation, findingReason(top))
+	if top.Status == RuleFindingIndeterminate && len(top.Missing) > 0 {
+		result.Reasons[0].Message += " Unavailable or incomplete comparison evidence: " +
+			strings.ReplaceAll(strings.Join(top.Missing, ", "), "_", " ") + "."
+	}
+	return result
 }
 
 func findingRelation(finding RuleFinding) api.DupeRelation {

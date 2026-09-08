@@ -6,7 +6,6 @@ package ptp
 import (
 	"errors"
 	"fmt"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -98,14 +97,6 @@ func resolveResolution(meta api.UploadSubject) (string, string, string) {
 			return source, "", ""
 		}
 	}
-	if resolution == "" {
-		for token := range strings.FieldsSeq(strings.NewReplacer(".", " ", "_", " ", "-", " ").Replace(meta.ReleaseName + " " + meta.Filename)) {
-			switch strings.ToLower(token) {
-			case "480i", "480p", "540p", "576i", "576p", "720p", "1080i", "1080p", "1440p", "2160p", "4320p", "8640p":
-				resolution = token
-			}
-		}
-	}
 	switch strings.ToLower(resolution) {
 	case "ntsc":
 		return "NTSC", "", ""
@@ -150,10 +141,10 @@ func resolveContainer(meta api.UploadSubject) string {
 	case "DVD":
 		return "VOB IFO"
 	default:
-		switch strings.ToLower(filepath.Ext(firstFile(meta))) {
-		case ".mkv":
+		switch strings.ToLower(strings.TrimPrefix(strings.TrimSpace(meta.Container), ".")) {
+		case "mkv":
 			return "MKV"
-		case ".mp4":
+		case "mp4":
 			return "MP4"
 		default:
 			return "Other"

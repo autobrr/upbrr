@@ -44,7 +44,8 @@ func GetText(ctx context.Context, client *http.Client, endpoint string, params u
 }
 
 // GetHTML performs a tracker GET request and parses successful responses.
-// Non-2xx responses return their status with a nil document and nil error.
+// Non-2xx responses return their status with a nil document and a redacted
+// error containing compact response detail when available.
 func GetHTML(ctx context.Context, client *http.Client, endpoint string, params url.Values, cookies []*http.Cookie) (int, *xhtml.Node, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -61,7 +62,14 @@ func GetHTML(ctx context.Context, client *http.Client, endpoint string, params u
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return resp.StatusCode, nil, nil
+		_, preview, readErr := readHTTPErrorResponse(resp.Body, DefaultResponsePreviewBytes)
+		if readErr != nil {
+			return resp.StatusCode, nil, fmt.Errorf("commonhttp: HTML GET request failed status=%d: %w", resp.StatusCode, readErr)
+		}
+		if len(preview) == 0 {
+			return resp.StatusCode, nil, fmt.Errorf("commonhttp: HTML GET request failed status=%d", resp.StatusCode)
+		}
+		return resp.StatusCode, nil, fmt.Errorf("commonhttp: HTML GET request failed status=%d: %s", resp.StatusCode, preview)
 	}
 	root, err := xhtml.Parse(resp.Body)
 	if err != nil {

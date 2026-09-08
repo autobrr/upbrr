@@ -1252,6 +1252,17 @@ func TestResolutionDependentRulesAreStrict(t *testing.T) {
 	tests := make([]ruleTest, 0, 20)
 	tests = append(tests, []ruleTest{
 		{
+			name:    "RHD does not reconstruct missing resolution from name",
+			tracker: "RHD",
+			meta: func() api.RuleSubject {
+				meta := base("")
+				meta.ReleaseName = "Example.Movie.2026.1080p.WEB-DL-GRP"
+				return meta
+			}(),
+			rule: "min_resolution",
+			want: true,
+		},
+		{
 			name:    "HDB DVD SD",
 			tracker: "HDB",
 			meta: func() api.RuleSubject {

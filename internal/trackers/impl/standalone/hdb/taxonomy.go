@@ -17,31 +17,63 @@ func isHDBTVCategory(meta api.UploadSubject) bool {
 }
 
 func hdbCategoryID(meta api.UploadSubject) int {
-	category, _ := meta.Identity.RequireCategory()
+	return resolveHDBCategoryID(meta.SourcePath, meta.Identity, meta.ProviderMetadata)
+}
+
+// resolveHDBCategoryID uses matching, current IMDb genres for documentaries in
+// either canonical category and TVDB genres as additional TV evidence. IMDb
+// metadata also identifies movie concert subtypes before the canonical fallback.
+func resolveHDBCategoryID(sourcePath string, identity api.ExternalIdentity, metadata api.SourceScopedMetadata) int {
+	category, err := identity.RequireCategory()
+	if err != nil {
+		return 0
+	}
+
+	if metadata.IsCurrentFor(sourcePath, identity) {
+		imdb := metadata.IMDB
+		imdbMatches := imdb != nil && identity.IMDBID > 0 && imdb.IMDBID == identity.IMDBID
+		switch category {
+		case api.CanonicalCategoryMovie:
+			if imdbMatches {
+				if hdbHasGenre(imdb.Genres, "documentary") {
+					return 3
+				}
+				imdbType := strings.ToLower(strings.TrimSpace(imdb.Type))
+				if strings.Contains(imdbType, "concert") || (strings.Contains(imdbType, "video") && hdbHasGenre(imdb.Genres, "music")) {
+					return 4
+				}
+			}
+		case api.CanonicalCategoryTV:
+			if imdbMatches && hdbHasGenre(imdb.Genres, "documentary") {
+				return 3
+			}
+			tvdb := metadata.TVDB
+			if tvdb != nil && identity.TVDBID > 0 && tvdb.TVDBID == identity.TVDBID && hdbHasGenre(tvdb.Genres, "documentary") {
+				return 3
+			}
+		case api.CanonicalCategoryUnknown:
+		}
+	}
+
 	switch category {
 	case api.CanonicalCategoryMovie:
 		return 1
 	case api.CanonicalCategoryTV:
 		return 2
 	case api.CanonicalCategoryUnknown:
+		return 0
+	default:
+		return 0
 	}
-	genres := ""
-	keywords := ""
-	if meta.ProviderMetadata.TMDB != nil {
-		genres = strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.TMDB.Genres))
-		keywords = strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.TMDB.Keywords))
-	}
-	if strings.Contains(genres, "documentary") || strings.Contains(keywords, "documentary") {
-		return 3
-	}
-	if meta.ProviderMetadata.IMDB != nil {
-		imdbType := strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.IMDB.Type))
-		imdbGenres := strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.IMDB.Genres))
-		if strings.Contains(imdbType, "concert") || (strings.Contains(imdbType, "video") && strings.Contains(imdbGenres, "music")) {
-			return 4
+}
+
+func hdbHasGenre(genres, target string) bool {
+	for genre := range strings.SplitSeq(genres, ",") {
+		if strings.EqualFold(strings.TrimSpace(genre), target) {
+			return true
 		}
 	}
-	return 0
+	return false
 }
 
 func hdbCodecID(meta api.UploadSubject) int {
@@ -115,15 +147,12 @@ func resolveHDBType(meta api.UploadSubject) string {
 		typeValue = inferHDBTypeFromSource(meta.Source)
 	}
 	if typeValue == "" || isHDBCategoryType(typeValue) {
-		typeValue = inferHDBTypeFromPath(meta.SourcePath)
-	}
-	if typeValue == "" || isHDBCategoryType(typeValue) {
 		if strings.TrimSpace(meta.VideoEncode) != "" {
 			typeValue = "ENCODE"
 		}
 	}
 	if typeValue == "" || isHDBCategoryType(typeValue) {
-		if strings.TrimSpace(meta.VideoCodec) != "" || strings.TrimSpace(meta.Release.Resolution) != "" || strings.TrimSpace(meta.Release.Ext) != "" {
+		if strings.TrimSpace(meta.VideoCodec) != "" || strings.TrimSpace(meta.Release.Resolution) != "" {
 			typeValue = "ENCODE"
 		}
 	}
@@ -156,24 +185,6 @@ func inferHDBTypeFromSource(source string) string {
 		return "WEBRIP"
 	case strings.Contains(upper, "HDTV"):
 		return "HDTV"
-	}
-	return ""
-}
-
-func inferHDBTypeFromPath(path string) string {
-	base := strings.ToUpper(strings.TrimSpace(path))
-	compact := strings.NewReplacer(".", "", "-", "", "_", "", " ", "").Replace(base)
-	switch {
-	case strings.Contains(compact, "REMUX"):
-		return "REMUX"
-	case strings.Contains(compact, "WEBDL"):
-		return "WEBDL"
-	case strings.Contains(compact, "WEBRIP"):
-		return "WEBRIP"
-	case strings.Contains(compact, "HDTV"):
-		return "HDTV"
-	case strings.Contains(compact, "DVDRIP"):
-		return "DVDRIP"
 	}
 	return ""
 }

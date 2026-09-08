@@ -26,6 +26,8 @@ const cliWorkflowOwnerID = "cli"
 // cliReleaseWorkflowCore is the in-process application seam used by the CLI.
 // It deliberately excludes HTTP and every legacy operation-specific entrypoint.
 type cliReleaseWorkflowCore interface {
+	LiveTestEnabled() bool
+	StartLiveTestReleaseWorkflowUpload(context.Context, string, api.CreateReleaseWorkflowUploadRequest) (releaseworkflow.CommandResult, error)
 	ContinueReleaseWorkflow(context.Context, string, api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error)
 	StartReleaseWorkflowUpload(
 		context.Context,
@@ -881,12 +883,16 @@ func printCLIWorkflowDryRun(
 	result api.UploadDryRunResult,
 	noSeed bool,
 	projections *api.TrackerReleaseProjectionSet,
+	liveTest ...bool,
 ) {
 	fmt.Fprintln(output)
 	fmt.Fprintln(output, "Upload dry run")
-	if noSeed {
+	switch {
+	case len(liveTest) > 0 && liveTest[0]:
+		fmt.Fprintln(output, "Live testing: tracker submissions and client mutations are disabled.")
+	case noSeed:
 		fmt.Fprintln(output, "Debug mode: tracker uploads and client injection are disabled.")
-	} else {
+	default:
 		fmt.Fprintln(output, "Debug mode: tracker uploads are disabled; client injection was attempted for each ready tracker.")
 	}
 	for index, report := range result.Reports {

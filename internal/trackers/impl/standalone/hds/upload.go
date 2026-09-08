@@ -125,7 +125,11 @@ func submitPreparedUpload(
 	}
 
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "HDS", "upload_failure", result.Preview, ".html")
-	return api.UploadSummary{}, commonhttp.UploadHTTPError("HDS", result.StatusCode, result.Preview)
+	errorResponse := result.Preview
+	if result.Success {
+		errorResponse = result.Body
+	}
+	return api.UploadSummary{}, commonhttp.UploadHTTPError("HDS", result.StatusCode, errorResponse)
 }
 
 func buildUploadPreview(state uploadState) api.TrackerDryRunEntry {
