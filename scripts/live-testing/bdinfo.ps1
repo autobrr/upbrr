@@ -8,11 +8,61 @@ function Get-CaseBDMVPlaylists($Case) {
       $selection.playlists -isnot [System.Collections.IList] -or $selection.playlists.Count -eq 0 -or
       $selection.source_fingerprint -isnot [string] -or $selection.source_fingerprint -cnotmatch '^[a-f0-9]{64}$') { throw 'corpus_bdmv_selection_invalid' }
   $seen = @{}
+  $scoped = $null
   foreach ($playlist in $selection.playlists) {
-    if ($playlist -isnot [string] -or $playlist -notmatch '^[0-9]{5}\.mpls$' -or $seen.ContainsKey($playlist)) { throw 'corpus_bdmv_selection_invalid' }
+    if ($playlist -isnot [string] -or $playlist -cnotmatch '^(disc-[a-f0-9]{64}:)?[0-9]{5}\.[mM][pP][lL][sS]$' -or $seen.ContainsKey($playlist)) { throw 'corpus_bdmv_selection_invalid' }
+    $hasDisc = $playlist.Contains(':')
+    if ($null -ne $scoped -and $scoped -ne $hasDisc) { throw 'corpus_bdmv_selection_invalid' }
+    $scoped = $hasDisc
     $seen[$playlist] = $true
-    $playlist.ToUpperInvariant()
+    if ($hasDisc) { $parts = $playlist.Split(':'); $parts[0] + ':' + $parts[1].ToUpperInvariant() }
+    else { $playlist.ToUpperInvariant() }
   }
+}
+
+function Get-CaseBDMVDiscs($Case) {
+  $source = [IO.Path]::GetFullPath($Case.input_path)
+  $pending = [Collections.Generic.Stack[string]]::new()
+  $pending.Push($source)
+  while ($pending.Count -gt 0) {
+    $directory = $pending.Pop()
+    if ((Get-Item -LiteralPath $directory -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'source_membership_reparse_point' }
+    $name = [IO.Path]::GetFileName($directory.TrimEnd('\', '/'))
+    if ($name -ieq 'BDMV') {
+      $relative = [IO.Path]::GetRelativePath($source, $directory)
+      if ($relative -eq '.') { $relative = $name }
+      # Match sourcelayout.newDiscoveredDisc and layout.DiscTempDir.
+      $id = 'disc-' + (Get-TextHash ('BDMV' + [char]0 + $relative.Replace('\', '/').ToLowerInvariant()))
+      @{ id = $id; root = $directory }
+      continue
+    }
+    if ($name -iin @('VIDEO_TS', 'HVDVD_TS')) { continue }
+    foreach ($child in @(Get-ChildItem -LiteralPath $directory -Directory -Force)) { $pending.Push($child.FullName) }
+  }
+}
+
+function Get-CaseBDMVScopedPlaylists($Case) {
+  $playlists = @(Get-CaseBDMVPlaylists $Case)
+  if ($playlists.Count -eq 0) { return }
+  $discs = @(Get-CaseBDMVDiscs $Case)
+  if ($discs.Count -eq 0) { throw 'bdmv_disc_missing' }
+  $selected = @()
+  foreach ($playlist in $playlists) {
+    if ($playlist.Contains(':')) {
+      if ($discs.Count -eq 1) { throw 'bdmv_disc_scope_unexpected' }
+      $parts = $playlist.Split(':')
+      $disc = @($discs | Where-Object id -CEQ $parts[0])
+      if ($disc.Count -ne 1) { throw 'bdmv_disc_missing' }
+      $file = $parts[1]
+    } else {
+      if ($discs.Count -ne 1) { throw 'bdmv_disc_scope_required' }
+      $disc = $discs; $file = $playlist
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $disc[0].root "PLAYLIST/$file") -PathType Leaf)) { throw 'bdmv_playlist_missing' }
+    $selected += $disc[0].id + ':' + $file
+  }
+  if (@($selected | ForEach-Object { $_.Split(':')[0] } | Select-Object -Unique).Count -ne $discs.Count) { throw 'bdmv_disc_selection_incomplete' }
+  $selected
 }
 
 function Get-BDInfoTempName($Case) {
@@ -34,7 +84,9 @@ function Get-BDInfoScannerFingerprint {
 
 function Get-BDInfoReportNames([string[]]$Playlists) {
   foreach ($playlist in $Playlists) {
-    foreach ($prefix in @('BD_SUMMARY_', 'BD_SUMMARY_EXT_', 'BD_SUMMARY_FULL_')) { "${prefix}${playlist}.txt" }
+    if ($playlist -cnotmatch '^(disc-[a-f0-9]{64}):([0-9]{5}\.MPLS)$') { throw 'bdinfo_playlist_key_invalid' }
+    $discID = $Matches[1]; $file = $Matches[2]
+    foreach ($prefix in @('BD_SUMMARY_', 'BD_SUMMARY_EXT_', 'BD_SUMMARY_FULL_')) { "discs/$discID/${prefix}${file}.txt" }
   }
 }
 
@@ -46,26 +98,28 @@ function Get-BDInfoReports($Directory, [string[]]$Playlists, $PrivateRoot) {
     $reports += @{ name = $name; sha256 = (Get-FileHash -LiteralPath $path).Hash }
   }
   foreach ($playlist in $Playlists) {
-    $summary = Get-Content -LiteralPath (Join-Path $Directory "BD_SUMMARY_${playlist}.txt") -Raw
+    $names = @(Get-BDInfoReportNames @($playlist))
+    $file = $playlist.Split(':')[1]
+    $summary = Get-Content -LiteralPath (Join-Path $Directory $names[0]) -Raw
     $matches = [regex]::Matches($summary, '(?mi)^Playlist:\s*([^\r\n]+?)\s*$')
-    if ($matches.Count -ne 1 -or $matches[0].Groups[1].Value.Trim() -ine $playlist) { throw 'bdinfo_report_playlist_mismatch' }
-    if ((Get-Item -LiteralPath (Join-Path $Directory "BD_SUMMARY_FULL_${playlist}.txt")).Length -eq 0) { throw 'bdinfo_full_report_empty' }
+    if ($matches.Count -ne 1 -or $matches[0].Groups[1].Value.Trim() -ine $file) { throw 'bdinfo_report_playlist_mismatch' }
+    if ((Get-Item -LiteralPath (Join-Path $Directory $names[2])).Length -eq 0) { throw 'bdinfo_full_report_empty' }
   }
   $reports
 }
 
 function Restore-BDInfoReports($Entry, $Profile, $PrivateRoot, [string]$ScannerFingerprint) {
-  $playlists = @(Get-CaseBDMVPlaylists $Entry.case)
-  if ($playlists.Count -eq 0) { return }
+  if (@(Get-CaseBDMVPlaylists $Entry.case).Count -eq 0) { return }
   if ((Get-SourceFingerprint $Entry.case).fingerprint -cne $Entry.stat.fingerprint) { throw 'source_changed_during_run' }
-  $key = Get-TextHash ('1|' + $Entry.stat.fingerprint + '|' + $ScannerFingerprint + '|' + ($playlists -join ','))
+  $playlists = @(Get-CaseBDMVScopedPlaylists $Entry.case)
+  $key = Get-TextHash ('2|' + $Entry.stat.fingerprint + '|' + $ScannerFingerprint + '|' + ($playlists -join ','))
   $directory = Assert-PrivatePath (Join-Path $PrivateRoot "bdinfo/$key") $PrivateRoot
   $target = Assert-PrivatePath (Join-Path (Split-Path -Parent $Profile.dbPath) ('tmp/' + (Get-BDInfoTempName $Entry.case))) $Profile.runDir
   $cache = @{ directory = $directory; target = $target; sourceFingerprint = $Entry.stat.fingerprint; scannerFingerprint = $ScannerFingerprint; playlists = $playlists; restored = $false }
   $manifestPath = Assert-PrivatePath (Join-Path $directory 'manifest.private.json') $PrivateRoot
   if (-not (Test-Path -LiteralPath $manifestPath)) { return $cache }
   $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -AsHashtable -NoEnumerate
-  if ($manifest -isnot [System.Collections.IDictionary] -or $manifest.version -isnot [long] -or $manifest.version -ne 1 -or
+  if ($manifest -isnot [System.Collections.IDictionary] -or $manifest.version -isnot [long] -or $manifest.version -ne 2 -or
       $manifest.sourceFingerprint -isnot [string] -or $manifest.sourceFingerprint -cne $cache.sourceFingerprint -or
       $manifest.scannerFingerprint -isnot [string] -or $manifest.scannerFingerprint -cne $ScannerFingerprint -or
       $manifest.playlists -isnot [System.Collections.IList] -or $manifest.playlists.Count -ne $playlists.Count) { throw 'bdinfo_cache_identity_mismatch' }
@@ -83,6 +137,7 @@ function Restore-BDInfoReports($Entry, $Profile, $PrivateRoot, [string]$ScannerF
   New-Item -ItemType Directory -Path $target -Force | Out-Null
   foreach ($report in $reports) {
     $destination = Assert-PrivatePath (Join-Path $target $report.name) $Profile.runDir
+    New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $directory $report.name) -Destination $destination -Force
     if ((Get-FileHash -LiteralPath $destination).Hash -cne $report.sha256) { throw 'bdinfo_cache_report_changed' }
   }
@@ -107,10 +162,11 @@ function Save-BDInfoReports($Cache, $Entry, $PrivateRoot, [string]$BinarySHA256)
   New-Item -ItemType Directory -Path $Cache.directory -Force | Out-Null
   foreach ($report in $reports) {
     $destination = Assert-PrivatePath (Join-Path $Cache.directory $report.name) $PrivateRoot
+    New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $Cache.target $report.name) -Destination $destination -Force
     if ((Get-FileHash -LiteralPath $destination).Hash -cne $report.sha256) { throw 'bdinfo_report_changed_during_save' }
   }
-  $manifest = @{ version = 1; sourceFingerprint = $Cache.sourceFingerprint; scannerFingerprint = $Cache.scannerFingerprint; playlists = $Cache.playlists; reports = $reports; producerBinarySHA256 = $BinarySHA256 }
+  $manifest = @{ version = 2; sourceFingerprint = $Cache.sourceFingerprint; scannerFingerprint = $Cache.scannerFingerprint; playlists = $Cache.playlists; reports = $reports; producerBinarySHA256 = $BinarySHA256 }
   Write-PrivateJson (Join-Path $Cache.directory 'manifest.private.json') $manifest
   $manifest
 }
