@@ -151,7 +151,7 @@ const isActiveWorkflowOperation = (
 const isFailedWorkflowOperation = (operation: WorkflowOperationStatus) =>
   ["failed", "interrupted", "canceled"].includes(operation.status);
 
-const waitForWorkflowPoll = (signal: AbortSignal, delay = 200) =>
+const waitForWorkflowPoll = (signal: AbortSignal, delay = 1000) =>
   new Promise<void>((resolve, reject) => {
     if (signal.aborted) {
       reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
