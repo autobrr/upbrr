@@ -64,8 +64,8 @@ func isBHDGeneratedReleaseName(meta api.UploadSubject, name string) bool {
 	return false
 }
 
-// applyBHDTitlePolicy replaces generated title/year elements with authoritative
-// provider metadata while retaining the technical suffix.
+// applyBHDTitlePolicy uses provider primary titles and years while preserving
+// the finalized alternate title and technical suffix.
 func applyBHDTitlePolicy(name string, meta api.UploadSubject) string {
 	if isBHDTV(meta) {
 		return applyBHDTVTitlePolicy(name, meta)
