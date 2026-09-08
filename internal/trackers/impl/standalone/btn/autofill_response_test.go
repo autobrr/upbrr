@@ -45,6 +45,14 @@ func TestBTNAutofillResponseErrors(t *testing.T) {
 			wantFailure: true,
 		},
 		{
+			name:        "empty error container does not expose page boilerplate",
+			status:      http.StatusOK,
+			body:        `<p>unrelated-page-text</p><div class="error"></div><input name="artist" value="Autofill Fail">`,
+			lookup:      "release_name",
+			want:        "fields=artist: Autofill Fail",
+			wantFailure: true,
+		},
+		{
 			name:   "http error beyond preview",
 			status: http.StatusServiceUnavailable,
 			body:   header + `<div class="errors">Metadata service unavailable</div>`,
@@ -109,7 +117,7 @@ func TestBTNAutofillResponseErrors(t *testing.T) {
 			if testCase.partial && !errors.Is(err, io.ErrUnexpectedEOF) {
 				t.Fatalf("partial response lost read cause: %v", err)
 			}
-			for _, privateValue := range []string{"private-script", "private-description", "synthetic-secret"} {
+			for _, privateValue := range []string{"private-script", "private-description", "synthetic-secret", "unrelated-page-text"} {
 				if strings.Contains(err.Error(), privateValue) {
 					t.Fatalf("response exposed excluded content: %v", err)
 				}

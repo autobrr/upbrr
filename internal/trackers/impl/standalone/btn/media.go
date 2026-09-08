@@ -193,13 +193,24 @@ func requestBTNAutofillFields(
 		)
 	}
 	fields := extractAutofillFields(string(htmlPayload))
-	if strings.EqualFold(strings.TrimSpace(fields["artist"]), "autofill fail") || strings.EqualFold(strings.TrimSpace(fields["title"]), "autofill fail") {
+	failedFields := make([]string, 0, 2)
+	for _, name := range []string{"artist", "title"} {
+		if strings.EqualFold(strings.TrimSpace(fields[name]), "autofill fail") {
+			failedFields = append(failedFields, name)
+		}
+	}
+	if len(failedFields) > 0 {
+		detail := commonhttp.ExtractHTMLFormErrorDetail(htmlPayload)
+		if detail == "" {
+			detail = "Autofill Fail"
+		}
 		return nil, fmt.Errorf(
-			"%w lookup=%s status=%d: %s",
+			"%w lookup=%s status=%d fields=%s: %s",
 			errBTNExplicitAutofillFailure,
 			lookup,
 			resp.StatusCode,
-			commonhttp.ExtractHTTPErrorDetail(htmlPayload),
+			strings.Join(failedFields, ","),
+			detail,
 		)
 	}
 	if !validateAutofill(fields, uploadType) {

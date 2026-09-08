@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -36,6 +37,8 @@ const maxHTTPErrorDetailLength = 700
 const maxHTTPErrorDetailDepth = 10
 
 const maxHTTPErrorResponseBytes int64 = 1 << 20
+
+var cssCommentsStringsAndEscapes = regexp.MustCompile(`(?s)/\*.*?(?:\*/|$)|"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)|\\.`)
 
 // DefaultResponsePreviewBytes bounds tracker response bodies used for failure
 // artifacts and error text.
@@ -522,6 +525,13 @@ func ExtractHTTPErrorDetail(body []byte) string {
 	return withHTTPErrorLimitDetail(compactHTTPErrorText(text), exceeded)
 }
 
+// ExtractHTMLFormErrorDetail returns compact, redacted text from visible HTML
+// error or alert containers. It scans at most 1 MiB and omits unrelated page text.
+func ExtractHTMLFormErrorDetail(body []byte) string {
+	marked, _ := extractHTTPErrorText(body)
+	return compactHTTPErrorText(marked)
+}
+
 func withHTTPErrorLimitDetail(detail string, exceeded bool) string {
 	if !exceeded {
 		return detail
@@ -540,7 +550,61 @@ func extractJSONErrorDetail(body []byte) string {
 	return compactHTTPErrorText(formatErrorValue(decoded, "", 0))
 }
 
+// inlineStyleHidesContent recognizes literal inline display and visibility values.
+// It does not resolve escaped keywords, variables, or stylesheet rules.
+func inlineStyleHidesContent(style string) bool {
+	style = cssCommentsStringsAndEscapes.ReplaceAllString(strings.ToLower(style), " ") + ";"
+	start := 0
+	var delimiters []rune
+	type propertyState struct {
+		hidden    bool
+		important bool
+	}
+	properties := make(map[string]propertyState, 2)
+	for i, char := range style {
+		switch char {
+		case '(', '[', '{':
+			delimiters = append(delimiters, char)
+		case ')', ']', '}':
+			if len(delimiters) > 0 {
+				last := delimiters[len(delimiters)-1]
+				if (last == '(' && char == ')') || (last == '[' && char == ']') || (last == '{' && char == '}') {
+					delimiters = delimiters[:len(delimiters)-1]
+				}
+			}
+		case ';':
+			if len(delimiters) != 0 {
+				continue
+			}
+			property, value, _ := strings.Cut(style[start:i], ":")
+			start = i + 1
+			property = strings.TrimSpace(property)
+			if property != "display" && property != "visibility" {
+				continue
+			}
+			important := false
+			if plain, priority, found := strings.Cut(value, "!"); found {
+				if strings.TrimSpace(priority) != "important" {
+					continue
+				}
+				important = true
+				value = plain
+			}
+			value = strings.TrimSpace(value)
+			if value == "" || (properties[property].important && !important) {
+				continue
+			}
+			properties[property] = propertyState{
+				hidden:    (property == "display" && value == "none") || (property == "visibility" && value == "hidden"),
+				important: important,
+			}
+		}
+	}
+	return properties["display"].hidden || properties["visibility"].hidden
+}
+
 func extractHTTPErrorText(body []byte) (string, string) {
+	body = body[:min(len(body), int(maxHTTPErrorResponseBytes))]
 	doc, err := xhtml.Parse(bytes.NewReader(body))
 	if err != nil {
 		return "", ""
@@ -563,13 +627,8 @@ func extractHTTPErrorText(body []byte) (string, string) {
 						return
 					}
 				case "style":
-					for declaration := range strings.SplitSeq(strings.ToLower(attr.Val), ";") {
-						property, value, _ := strings.Cut(declaration, ":")
-						property = strings.TrimSpace(property)
-						value = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(value), "!important"))
-						if (property == "display" && value == "none") || (property == "visibility" && value == "hidden") {
-							return
-						}
+					if inlineStyleHidesContent(attr.Val) {
+						return
 					}
 				case "role":
 					switch strings.ToLower(strings.TrimSpace(attr.Val)) {
