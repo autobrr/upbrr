@@ -64,25 +64,28 @@ func buildBTNReleaseNameAutofillPayload(meta api.UploadSubject, releaseName stri
 	return autofillPayload, uploadType
 }
 
+// prepareUploadDataWithAutofill retries an explicit TVDB autofill failure once by release name.
+// The boolean reports release-name use so callers preserve mismatch confirmation and skip behavior.
 func prepareUploadDataWithAutofill(
 	ctx context.Context,
 	req trackers.PreparationInput,
 	uploadCtx uploadContext,
 	releaseNameAutofill bool,
-) (map[string]string, error) {
+) (map[string]string, bool, error) {
 	var nameFailure *trackers.PreparationFailure
 	req, nameFailure = trackers.PrepareInputWithReleaseNamePolicy(req, Profile().ReleaseNamePolicy)
 	if nameFailure != nil {
-		return nil, nameFailure
+		return nil, releaseNameAutofill, nameFailure
 	}
 	if _, err := validateBTNTVPayloadMetadata(req.Meta); err != nil {
-		return nil, err
+		return nil, releaseNameAutofill, err
 	}
 	releaseName, err := req.ReviewedUploadName()
 	if err != nil {
-		return nil, fmt.Errorf("trackers: BTN reviewed upload name: %w", err)
+		return nil, releaseNameAutofill, fmt.Errorf("trackers: BTN reviewed upload name: %w", err)
 	}
 
+	releaseNameAutofill = releaseNameAutofill || req.Meta.Identity.TVDBID <= 0
 	var autofillPayload url.Values
 	var uploadType string
 	if releaseNameAutofill {
@@ -91,10 +94,19 @@ func prepareUploadDataWithAutofill(
 		autofillPayload, uploadType = buildBTNAutofillPayload(req.Meta, releaseName)
 	}
 	fields, err := requestBTNAutofillFields(ctx, uploadCtx, autofillPayload, uploadType)
-	if err != nil {
-		return nil, err
+	if errors.Is(err, errBTNExplicitAutofillFailure) && !releaseNameAutofill {
+		if req.Logger != nil {
+			req.Logger.Infof("trackers: BTN trying release-name scene autofill source=release_name reason=tvdb_autofill_failed")
+		}
+		releaseNameAutofill = true
+		autofillPayload, uploadType = buildBTNReleaseNameAutofillPayload(req.Meta, releaseName)
+		fields, err = requestBTNAutofillFields(ctx, uploadCtx, autofillPayload, uploadType)
 	}
-	return buildBTNUploadPayload(req, fields)
+	if err != nil {
+		return nil, releaseNameAutofill, err
+	}
+	data, err := buildBTNUploadPayload(req, fields)
+	return data, releaseNameAutofill, err
 }
 
 // preferredBTNTVDBSeriesName returns the English TVDB name, falling back to the native name.

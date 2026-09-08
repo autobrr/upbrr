@@ -383,6 +383,39 @@ exit $LASTEXITCODE
   $current.dryRun = @{ status = 'ready'; noSeed = $false }
   Assert-Check ((Record-Stage $lane $current 'dry_run') -eq 'fail') 'conflicting_no_seed_not_detected'
   $script:RunDir = $validationDir
+  foreach ($goal in @('media_ready', 'descriptions_ready', 'dry_run')) {
+    $stageField = @{ media_ready = 'media'; descriptions_ready = 'descriptions'; dry_run = 'dryRun' }[$goal]
+    $skipped = @{ workflow = @{ id = 'workflow-1'; revision = 8 }; $stageField = @{ status = 'skipped'; noSeed = $true } }
+    Assert-Check (((Record-Stage $lane $skipped $goal) -eq 'pass') -eq ($goal -ne 'dry_run')) 'skipped_content_stage_handling_wrong'
+    $skipped.operation = @{ status = 'failed' }
+    Assert-Check ((Record-Stage $lane $skipped $goal) -eq 'fail') 'skipped_stage_hid_failed_operation'
+    $skipped.operation.status = 'completed'
+    foreach ($disposition in @('failed', 'needs_action', 'partial', 'canceled')) {
+      $skipped.continuation = @{ disposition = $disposition }
+      Assert-Check ((Record-Stage $lane $skipped $goal) -eq 'blocked') "skipped_stage_hid_${disposition}_continuation_${goal}"
+    }
+    $skipped.continuation.requiredActions = @(@{ id = 'action-1'; status = 'pending' })
+    Assert-Check ((Record-Stage $lane $skipped $goal) -eq 'needs_input') 'skipped_stage_lost_pending_action_priority'
+    $skipped.continuation.Remove('requiredActions')
+    $skipped[$stageField].status = 'ready'
+    Assert-Check ((Record-Stage $lane $skipped $goal) -eq 'pass') 'retained_completed_stage_lost_priority'
+    $skipped[$stageField].status = 'skipped'
+    foreach ($disposition in @('none', 'succeeded')) {
+      $skipped.continuation.disposition = $disposition
+      $expectedStatus = $(if ($goal -eq 'dry_run') { 'not_applicable' } else { 'pass' })
+      Assert-Check ((Record-Stage $lane $skipped $goal) -eq $expectedStatus) 'unnecessary_stage_was_blocked'
+    }
+    $skipped[$stageField].status = 'blocked'
+    Assert-Check ((Record-Stage $lane $skipped $goal) -eq 'blocked') 'blocked_stage_was_passed'
+    $skipped[$stageField].status = 'skipped'
+    $skipped.Remove('continuation')
+  }
+  $skipped.operation.status = 'completed'
+  Assert-Check ((Record-Stage $lane $skipped 'dry_run') -eq 'not_applicable') 'completed_tracker_skip_not_recorded'
+  $skipped.continuation = @{ disposition = 'needs_action' }
+  Assert-Check ((Record-Stage $lane $skipped 'dry_run') -eq 'blocked') 'tracker_skip_hid_blocked_continuation'
+  $skipped.dryRun.noSeed = $false
+  Assert-Check ((Record-Stage $lane $skipped 'dry_run') -eq 'fail') 'tracker_skip_hid_unlocked_no_seed'
   foreach ($phase in @('local', 'hosted', 'restart')) {
     foreach ($stage in @('selection_lifecycle', 'screenshot_delete_recapture', 'hosted_preview')) {
       Add-Result 'RETRY' 'lane-retry' $stage 'needs_input' 'typed_action_required' @{ browserPhase = $phase }

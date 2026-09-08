@@ -136,7 +136,7 @@ func TestPrepareRecomputesPreviousContractAfterRestart(t *testing.T) {
 	}
 
 	previous := prepared.Release
-	previous.Compatibility.ContractVersion = "prepared-release-v6"
+	previous.Compatibility.ContractVersion = "prepared-release-v7"
 	previous.Assessments.VideoBitrate = api.VideoBitrateAssessment{}
 	store.mu.Lock()
 	store.current[canonicalSourceKey(path)] = previous

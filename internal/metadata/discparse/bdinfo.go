@@ -211,6 +211,8 @@ func ParseBDInfoFiles(files string) []BDFile {
 }
 
 // ParseBDInfoSummary parses a BDInfo summary and files section.
+// Video fields retain their report units and accept an optional chroma-subsampling
+// field before bit depth.
 func ParseBDInfoSummary(summary string, files string, path string) *BDInfo {
 	info := &BDInfo{Path: path}
 	for raw := range strings.SplitSeq(summary, "\n") {
@@ -269,9 +271,14 @@ func parseVideoLine(line string) BDVideo {
 		threeD = strings.TrimSpace(parts[2])
 	}
 
-	bitDepth := safeTrim(parts, index+6)
-	hdrDV := safeTrim(parts, index+7)
-	color := safeTrim(parts, index+8)
+	metadataIndex := index + 6
+	switch safeTrim(parts, metadataIndex) {
+	case "4:2:0", "4:2:2", "4:4:4":
+		metadataIndex++
+	}
+	bitDepth := safeTrim(parts, metadataIndex)
+	hdrDV := safeTrim(parts, metadataIndex+1)
+	color := safeTrim(parts, metadataIndex+2)
 
 	return BDVideo{
 		Codec:       strings.TrimSpace(parts[0]),
