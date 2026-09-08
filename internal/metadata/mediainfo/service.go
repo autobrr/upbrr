@@ -83,7 +83,8 @@ func NewService(logger api.Logger, analyzer Analyzer) *Service {
 // Export writes mode-0600 text and JSON reports beneath the release temporary
 // directory. Text reports reduce the analyzed target path to its basename;
 // JSON reports retain the analyzer output. Existing artifacts are reused only
-// when both files exist and the JSON has no conformance error; DVD VOB evidence
+// when both files exist and the JSON has no conformance error. Reuse cleans
+// cached text and reapplies mode 0600 without rewriting JSON. DVD VOB evidence
 // is analyzed on every call. Errors return no Result, although a failed JSON
 // write may leave the text file.
 func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
@@ -221,6 +222,8 @@ func (moduleAnalyzer) Analyze(_ context.Context, target string) (string, []byte,
 	return text, []byte(json), nil
 }
 
+// cleanMediaInfoText removes report attribution and replaces target occurrences
+// and Complete name values with the target basename. Other paths are not redacted.
 func cleanMediaInfoText(text, target string) string {
 	base := filepath.Base(target)
 	cleaned := strings.ReplaceAll(text, target, base)
@@ -243,8 +246,9 @@ func cleanMediaInfoText(text, target string) string {
 	return strings.Join(filtered, "\n")
 }
 
-// writeMediaInfoText replaces path from a synced same-directory temp file as a
-// single filesystem update where the platform supports it.
+// writeMediaInfoText replaces path from a synced mode-0600 temp file in the same
+// directory, atomically where the platform supports it. Failed writes leave the
+// destination untouched; temporary-file cleanup is best effort.
 func writeMediaInfoText(path string, data []byte) error {
 	tmpFile, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
 	if err != nil {
