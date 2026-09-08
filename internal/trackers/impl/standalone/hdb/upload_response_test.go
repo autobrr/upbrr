@@ -61,7 +61,7 @@ func TestSubmitPreparedUploadErrorResponse(t *testing.T) {
 			defer server.Close()
 			summary, err := submitPreparedUpload(t.Context(), trackers.PreparationInput{}, preparedUploadState{
 				uploadURL: server.URL + hdbUploadPath,
-				client: server.Client(),
+				client:    server.Client(),
 			})
 			want := "trackers: HDB upload failed status=200 url=" + server.URL + hdbUploadPath + ": " + tt.want
 			if err == nil || err.Error() != want {

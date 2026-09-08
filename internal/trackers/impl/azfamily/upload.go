@@ -228,8 +228,11 @@ func submitPreparedUpload(
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusFound {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return api.UploadSummary{}, commonhttp.UploadHTTPError(site.Name, resp.StatusCode, body)
+		_, responseDetail, readErr := commonhttp.ReadUploadResponseBody(resp, false, commonhttp.DefaultResponsePreviewBytes)
+		if readErr != nil {
+			return api.UploadSummary{}, fmt.Errorf("trackers: %s read upload response: %w", site.Name, readErr)
+		}
+		return api.UploadSummary{}, commonhttp.UploadHTTPError(site.Name, resp.StatusCode, responseDetail)
 	}
 
 	location := strings.TrimSpace(resp.Header.Get("Location"))
@@ -357,8 +360,15 @@ func createTask(
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusFound {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return taskInfo{}, fmt.Errorf("trackers: %s task creation failed: %w", site.Name, commonhttp.UploadHTTPError(site.Name, resp.StatusCode, body))
+		_, responseDetail, readErr := commonhttp.ReadUploadResponseBody(resp, false, commonhttp.DefaultResponsePreviewBytes)
+		if readErr != nil {
+			return taskInfo{}, fmt.Errorf("trackers: %s read task creation response: %w", site.Name, readErr)
+		}
+		return taskInfo{}, fmt.Errorf(
+			"trackers: %s task creation failed: %w",
+			site.Name,
+			commonhttp.UploadHTTPError(site.Name, resp.StatusCode, responseDetail),
+		)
 	}
 	location := strings.TrimSpace(resp.Header.Get("Location"))
 	taskID := extractPatternGroup(azTaskIDPattern, absoluteURL(site.BaseURL, location))

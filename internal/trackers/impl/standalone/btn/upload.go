@@ -257,15 +257,19 @@ func submitPreparedUpload(
 			groupID, torrentID, matched = btnUploadIDsFromText(string(responseBody))
 		}
 		if !matched && groupID == "" && torrentID == "" {
+			errorBody := responseBody
+			if resp.StatusCode < 200 || resp.StatusCode >= 400 {
+				errorBody = responsePreview
+			}
 			failurePath, _ := commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "BTN", "upload-failure", responsePreview, ".html")
 			if failurePath != "" {
 				return api.UploadSummary{}, fmt.Errorf(
 					"%w failure=%s",
-					commonhttp.UploadHTTPErrorWithURL("BTN", resp.StatusCode, finalURL, responsePreview),
+					commonhttp.UploadHTTPErrorWithURL("BTN", resp.StatusCode, finalURL, errorBody),
 					failurePath,
 				)
 			}
-			return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("BTN", resp.StatusCode, finalURL, responsePreview)
+			return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("BTN", resp.StatusCode, finalURL, errorBody)
 		}
 	}
 	torrentURL := buildBTNTorrentURL(uploadCtx.baseURL, groupID, torrentID)

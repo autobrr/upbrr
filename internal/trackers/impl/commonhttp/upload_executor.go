@@ -77,7 +77,7 @@ func ExecuteUpload(client *http.Client, req *http.Request, options UploadExecuti
 		return UploadExecution{}, fmt.Errorf("trackers: %s upload request: %w", tracker, safeWrappedError(err))
 	}
 	success := successStatus(resp.StatusCode)
-	body, readErr := readExecutedUploadBody(resp.Body, success, options.SuccessBody, options.SuccessBodyLimit, previewLimit)
+	body, preview, readErr := readExecutedUploadBody(resp.Body, success, options.SuccessBody, options.SuccessBodyLimit, previewLimit)
 	closeErr := resp.Body.Close()
 	if readErr != nil || closeErr != nil {
 		return UploadExecution{}, fmt.Errorf("trackers: %s read upload response: %w", tracker, errors.Join(readErr, closeErr))
@@ -87,9 +87,10 @@ func ExecuteUpload(client *http.Client, req *http.Request, options UploadExecuti
 	if resp.Request != nil && resp.Request.URL != nil {
 		finalURL = redaction.RedactValue(resp.Request.URL.String(), nil)
 	}
-	preview := ResponseBodyPreview(body, previewLimit)
-	preview = []byte(redaction.RedactValue(string(preview), nil))
-	if !success {
+	if success {
+		preview = ResponseBodyPreview(body, previewLimit)
+		preview = []byte(redaction.RedactValue(string(preview), nil))
+	} else {
 		body = append([]byte(nil), preview...)
 	}
 	return UploadExecution{
@@ -108,32 +109,28 @@ func readExecutedUploadBody(
 	policy SuccessBodyPolicy,
 	successLimit int64,
 	previewLimit int64,
-) ([]byte, error) {
+) ([]byte, []byte, error) {
 	if !success {
-		payload, err := io.ReadAll(io.LimitReader(body, previewLimit))
-		if err != nil {
-			return nil, fmt.Errorf("read bounded upload failure response: %w", err)
-		}
-		return payload, nil
+		return readHTTPErrorResponse(body, previewLimit)
 	}
 	if policy == FullSuccessBody {
 		payload, err := io.ReadAll(body)
 		if err != nil {
-			return nil, fmt.Errorf("read full upload success response: %w", err)
+			return nil, nil, fmt.Errorf("read full upload success response: %w", err)
 		}
-		return payload, nil
+		return payload, nil, nil
 	}
 	if successLimit <= 0 {
 		successLimit = defaultSuccessBodyBytes
 	}
 	payload, err := io.ReadAll(io.LimitReader(body, successLimit+1))
 	if err != nil {
-		return nil, fmt.Errorf("read bounded upload success response: %w", err)
+		return nil, nil, fmt.Errorf("read bounded upload success response: %w", err)
 	}
 	if int64(len(payload)) > successLimit {
-		return nil, fmt.Errorf("successful upload response exceeds %d bytes", successLimit)
+		return nil, nil, fmt.Errorf("successful upload response exceeds %d bytes", successLimit)
 	}
-	return payload, nil
+	return payload, nil, nil
 }
 
 type wrappedSafeError struct {

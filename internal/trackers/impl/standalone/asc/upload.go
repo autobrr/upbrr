@@ -134,14 +134,18 @@ func submitPreparedUpload(
 		redactedBody := []byte(redaction.RedactValue(string(responsePreview), nil))
 		_ = os.WriteFile(failurePath, redactedBody, 0o600)
 	}
+	errorResponse := responsePreview
+	if resp.StatusCode == http.StatusOK {
+		errorResponse = bodyBytes
+	}
 	if failurePath != "" {
 		return api.UploadSummary{}, fmt.Errorf(
 			"%w failure=%s",
-			commonhttp.UploadHTTPErrorWithURL("ASC", resp.StatusCode, finalURL, responsePreview),
+			commonhttp.UploadHTTPErrorWithURL("ASC", resp.StatusCode, finalURL, errorResponse),
 			failurePath,
 		)
 	}
-	return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("ASC", resp.StatusCode, finalURL, responsePreview)
+	return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("ASC", resp.StatusCode, finalURL, errorResponse)
 }
 
 func buildUploadPreview(state uploadState) api.TrackerDryRunEntry {

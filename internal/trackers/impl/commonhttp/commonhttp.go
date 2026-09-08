@@ -10,15 +10,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	stdhtml "html"
 	"io"
 	"maps"
 	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
+
+	xhtml "golang.org/x/net/html"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
@@ -33,11 +35,11 @@ const maxHTTPErrorDetailLength = 700
 
 const maxHTTPErrorDetailDepth = 10
 
+const maxHTTPErrorResponseBytes int64 = 1 << 20
+
 // DefaultResponsePreviewBytes bounds tracker response bodies used for failure
 // artifacts and error text.
 const DefaultResponsePreviewBytes int64 = 64 * 1024
-
-var htmlTagPattern = regexp.MustCompile(`<[^>]+>`)
 
 // FileField describes one file part in a tracker multipart upload. FieldName is
 // the form field; Content is used when present; otherwise Path is read from disk
@@ -328,26 +330,27 @@ func ApplyCookies(req *http.Request, cookies []*http.Cookie) {
 	}
 }
 
-// ReadUploadResponseBody reads a full success-candidate response for parsers and
-// always returns a bounded preview for diagnostics. Non-success responses are
-// read only up to previewLimit.
+// ReadUploadResponseBody reads a full success-candidate response and a bounded,
+// unredacted preview. Non-success responses return up to 1 MiB of raw body and
+// a compact, redacted preview that can include late error messages. On a failed
+// non-success read, the returned body and preview retain partial diagnostics.
 func ReadUploadResponseBody(resp *http.Response, successCandidate bool, previewLimit int64) ([]byte, []byte, error) {
 	if previewLimit <= 0 {
 		previewLimit = DefaultResponsePreviewBytes
 	}
-	var (
-		body []byte
-		err  error
-	)
 	if successCandidate {
-		body, err = io.ReadAll(resp.Body)
-	} else {
-		body, err = io.ReadAll(io.LimitReader(resp.Body, previewLimit))
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, nil, fmt.Errorf("read upload response body: %w", err)
+		}
+		return body, ResponseBodyPreview(body, previewLimit), nil
 	}
+
+	body, preview, err := readHTTPErrorResponse(resp.Body, previewLimit)
 	if err != nil {
-		return nil, nil, fmt.Errorf("read upload response body: %w", err)
+		return body, preview, fmt.Errorf("read upload response body: %w", err)
 	}
-	return body, ResponseBodyPreview(body, previewLimit), nil
+	return body, preview, nil
 }
 
 // ResponseBodyPreview returns body unchanged when it fits the limit, otherwise
@@ -486,27 +489,47 @@ func RedactErrorDetail(value string) string {
 	return strings.TrimSpace(redaction.RedactValue(value, nil))
 }
 
-// ExtractHTTPErrorDetail returns a compact, redacted error detail from plain
-// text, HTML, or JSON response bodies.
+// ExtractHTTPErrorDetail scans at most 1 MiB and returns a compact, redacted
+// error detail from plain text, HTML, or JSON response bodies. HTML extraction
+// ignores executable, hidden, navigation, and form-control content.
 func ExtractHTTPErrorDetail(body []byte) string {
-	text := RedactErrorDetail(string(body))
-	if text == "" {
-		return ""
+	exceeded := int64(len(body)) > maxHTTPErrorResponseBytes
+	if exceeded {
+		body = body[:maxHTTPErrorResponseBytes]
+	}
+	if len(bytes.TrimSpace(body)) == 0 {
+		return withHTTPErrorLimitDetail("", exceeded)
 	}
 
-	if detail := extractJSONErrorDetail([]byte(text)); detail != "" {
-		return detail
+	if detail := extractJSONErrorDetail(body); detail != "" {
+		return withHTTPErrorLimitDetail(detail, exceeded)
+	}
+
+	marked, visible := extractHTTPErrorText(body)
+	text := visible
+	if marked != "" {
+		text = marked
 	}
 	for _, block := range redaction.ExtractJSONBlocks(text) {
 		if block.Start < 0 || block.End > len(text) || block.Start >= block.End {
 			continue
 		}
 		if detail := extractJSONErrorDetail([]byte(text[block.Start:block.End])); detail != "" {
-			return detail
+			return withHTTPErrorLimitDetail(detail, exceeded)
 		}
 	}
 
-	return compactHTTPErrorText(text)
+	return withHTTPErrorLimitDetail(compactHTTPErrorText(text), exceeded)
+}
+
+func withHTTPErrorLimitDetail(detail string, exceeded bool) string {
+	if !exceeded {
+		return detail
+	}
+	if detail == "" {
+		return "response exceeded 1 MiB"
+	}
+	return compactHTTPErrorText("response exceeded 1 MiB; " + detail)
 }
 
 func extractJSONErrorDetail(body []byte) string {
@@ -515,6 +538,58 @@ func extractJSONErrorDetail(body []byte) string {
 		return ""
 	}
 	return compactHTTPErrorText(formatErrorValue(decoded, "", 0))
+}
+
+func extractHTTPErrorText(body []byte) (string, string) {
+	doc, err := xhtml.Parse(bytes.NewReader(body))
+	if err != nil {
+		return "", ""
+	}
+
+	var visible, messages strings.Builder
+	var visit func(*xhtml.Node, bool)
+	visit = func(node *xhtml.Node, isError bool) {
+		if node.Type == xhtml.ElementNode {
+			switch strings.ToLower(node.Data) {
+			case "head", "script", "style", "nav", "header", "footer", "input", "textarea", "select", "button", "noscript", "template":
+				return
+			}
+			for _, attr := range node.Attr {
+				switch strings.ToLower(attr.Key) {
+				case "hidden":
+					return
+				case "aria-hidden":
+					if strings.EqualFold(strings.TrimSpace(attr.Val), "true") {
+						return
+					}
+				case "role":
+					if strings.EqualFold(strings.TrimSpace(attr.Val), "alert") {
+						isError = true
+					}
+				case "class", "id":
+					for token := range strings.FieldsSeq(strings.ToLower(attr.Val)) {
+						switch token {
+						case "error", "errors", "error-message", "error_message", "alert-danger", "alert-error", "alert--error":
+							isError = true
+						}
+					}
+				}
+			}
+		}
+		if node.Type == xhtml.TextNode {
+			visible.WriteString(node.Data)
+			visible.WriteByte(' ')
+			if isError {
+				messages.WriteString(node.Data)
+				messages.WriteByte(' ')
+			}
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			visit(child, isError)
+		}
+	}
+	visit(doc, false)
+	return strings.Join(strings.Fields(messages.String()), " "), strings.Join(strings.Fields(visible.String()), " ")
 }
 
 func formatErrorValue(value any, key string, depth int) string {
@@ -541,7 +616,8 @@ func formatErrorValue(value any, key string, depth int) string {
 		}
 		return strings.Join(parts, "; ")
 	case string:
-		return RedactErrorDetail(typed)
+		_, visible := extractHTTPErrorText([]byte(typed))
+		return compactHTTPErrorText(visible)
 	case nil:
 		return ""
 	default:
@@ -596,15 +672,43 @@ func valueForKey(values map[string]any, target string) (any, bool) {
 }
 
 func compactHTTPErrorText(text string) string {
-	text = strings.TrimSpace(text)
+	text = strings.Join(strings.Fields(stdhtml.UnescapeString(text)), " ")
 	if text == "" {
 		return ""
 	}
 	text = RedactErrorDetail(text)
-	text = htmlTagPattern.ReplaceAllString(text, " ")
-	text = strings.Join(strings.Fields(text), " ")
 	if len(text) <= maxHTTPErrorDetailLength {
 		return text
 	}
 	return strings.TrimSpace(text[:maxHTTPErrorDetailLength]) + "..."
+}
+
+func readHTTPErrorResponse(reader io.Reader, previewLimit int64) ([]byte, []byte, error) {
+	if previewLimit <= 0 {
+		previewLimit = DefaultResponsePreviewBytes
+	}
+	body, err := io.ReadAll(io.LimitReader(reader, maxHTTPErrorResponseBytes+1))
+	exceeded := int64(len(body)) > maxHTTPErrorResponseBytes
+	if exceeded {
+		body = body[:maxHTTPErrorResponseBytes]
+	}
+	preview := ResponseBodyPreview(failureResponseDetail(body, exceeded, err != nil), previewLimit)
+	if err != nil {
+		return body, preview, fmt.Errorf("%s: %w", preview, safeWrappedError(err))
+	}
+	return body, preview, nil
+}
+
+func failureResponseDetail(body []byte, exceeded bool, readFailed bool) []byte {
+	parts := make([]string, 0, 3)
+	if readFailed {
+		parts = append(parts, "response body read failed")
+	}
+	if exceeded {
+		parts = append(parts, "response exceeded 1 MiB")
+	}
+	if detail := ExtractHTTPErrorDetail(body); detail != "" {
+		parts = append(parts, detail)
+	}
+	return []byte(compactHTTPErrorText(strings.Join(parts, "; ")))
 }
