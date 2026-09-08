@@ -3,7 +3,7 @@ module github.com/autobrr/upbrr
 go 1.27.1
 
 require (
-	github.com/autobrr/go-bdinfo v0.4.0
+	github.com/autobrr/go-bdinfo v0.4.2
 	github.com/autobrr/go-mediainfo v0.8.0
 	github.com/autobrr/go-qbittorrent v1.18.0
 	github.com/autobrr/go-torrent v1.1.1
