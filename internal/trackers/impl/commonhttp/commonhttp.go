@@ -562,11 +562,29 @@ func extractHTTPErrorText(body []byte) (string, string) {
 					if strings.EqualFold(strings.TrimSpace(attr.Val), "true") {
 						return
 					}
+				case "style":
+					for declaration := range strings.SplitSeq(strings.ToLower(attr.Val), ";") {
+						property, value, _ := strings.Cut(declaration, ":")
+						property = strings.TrimSpace(property)
+						value = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(value), "!important"))
+						if (property == "display" && value == "none") || (property == "visibility" && value == "hidden") {
+							return
+						}
+					}
 				case "role":
-					if strings.EqualFold(strings.TrimSpace(attr.Val), "alert") {
+					switch strings.ToLower(strings.TrimSpace(attr.Val)) {
+					case "banner", "navigation", "contentinfo":
+						return
+					case "alert":
 						isError = true
 					}
-				case "class", "id":
+				case "id":
+					switch strings.ToLower(strings.TrimSpace(attr.Val)) {
+					case "header", "footer":
+						return
+					}
+					fallthrough
+				case "class":
 					for token := range strings.FieldsSeq(strings.ToLower(attr.Val)) {
 						switch token {
 						case "error", "errors", "error-message", "error_message", "alert-danger", "alert-error", "alert--error":

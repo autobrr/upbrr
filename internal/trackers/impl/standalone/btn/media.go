@@ -172,7 +172,7 @@ func requestBTNAutofillFields(
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		_, detail, readErr := commonhttp.ReadUploadResponseBody(resp, false, commonhttp.DefaultResponsePreviewBytes)
 		if readErr != nil {
-			return nil, fmt.Errorf("trackers: BTN read autofill failure lookup=%s: %w", lookup, readErr)
+			return nil, fmt.Errorf("trackers: BTN read autofill failure lookup=%s status=%d: %w", lookup, resp.StatusCode, readErr)
 		}
 		return nil, fmt.Errorf("trackers: BTN autofill failed lookup=%s status=%d: %s", lookup, resp.StatusCode, detail)
 	}
@@ -180,10 +180,17 @@ func requestBTNAutofillFields(
 	htmlPayload, err := io.ReadAll(io.LimitReader(resp.Body, responseLimit+1))
 	boundedPayload := htmlPayload[:min(len(htmlPayload), responseLimit)]
 	if err != nil {
-		return nil, fmt.Errorf("trackers: BTN read autofill response lookup=%s: %w; %s", lookup, err, commonhttp.ExtractHTTPErrorDetail(boundedPayload))
+		return nil, fmt.Errorf(
+			"trackers: BTN read autofill response lookup=%s status=%d: %w; %s", lookup, resp.StatusCode, err, commonhttp.ExtractHTTPErrorDetail(boundedPayload),
+		)
 	}
 	if len(htmlPayload) > responseLimit {
-		return nil, fmt.Errorf("trackers: BTN autofill response exceeded 1 MiB lookup=%s: %s", lookup, commonhttp.ExtractHTTPErrorDetail(boundedPayload))
+		return nil, fmt.Errorf(
+			"trackers: BTN autofill response exceeded 1 MiB lookup=%s status=%d: %s",
+			lookup,
+			resp.StatusCode,
+			commonhttp.ExtractHTTPErrorDetail(boundedPayload),
+		)
 	}
 	fields := extractAutofillFields(string(htmlPayload))
 	if strings.EqualFold(strings.TrimSpace(fields["artist"]), "autofill fail") || strings.EqualFold(strings.TrimSpace(fields["title"]), "autofill fail") {

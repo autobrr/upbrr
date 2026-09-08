@@ -371,6 +371,34 @@ func TestExtractHTTPErrorDetailHandlesMalformedAndEmbeddedJSON(t *testing.T) {
 	}
 }
 
+func TestExtractHTTPErrorDetailSkipsInlineHiddenStyles(t *testing.T) {
+	t.Parallel()
+
+	for _, style := range []string{"display:none", "visibility:hidden", "color:red; DISPLAY : none !important", " VISIBILITY: hidden; color:red"} {
+		t.Run(style, func(t *testing.T) {
+			body := []byte(`<div class="error">Invalid category<span style="` + style + `"><b>private-hidden-text</b></span>` +
+				`<span style="display:block;visibility:visible">remains visible</span></div>`)
+			if got := ExtractHTTPErrorDetail(body); got != "Invalid category remains visible" {
+				t.Fatalf("inline hidden text entered diagnostics: %q", got)
+			}
+		})
+	}
+}
+
+func TestExtractHTTPErrorDetailSkipsNavigationContainers(t *testing.T) {
+	t.Parallel()
+
+	for _, attr := range []string{`id="header"`, `id="footer"`, `role="banner"`, `role="navigation"`, `role="contentinfo"`} {
+		t.Run(attr, func(t *testing.T) {
+			body := []byte(`<div ` + attr + `>` + strings.Repeat("Upload Bonus Torrents Forums Rules ", 100) +
+				`<span class="error">private-navigation-error</span></div><div id="content">Autofill could not find the series.</div>`)
+			if got := ExtractHTTPErrorDetail(body); got != "Autofill could not find the series." {
+				t.Fatalf("navigation obscured response detail: %q", got)
+			}
+		})
+	}
+}
+
 func TestExtractHTTPErrorDetailBoundsOversizedInput(t *testing.T) {
 	t.Parallel()
 

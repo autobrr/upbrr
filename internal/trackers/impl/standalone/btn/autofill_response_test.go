@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -25,6 +26,7 @@ func TestBTNAutofillResponseErrors(t *testing.T) {
 		lookup      string
 		want        string
 		wantFailure bool
+		partial     bool
 	}{
 		{
 			name:        "tvdb explicit failure with late message",
@@ -63,10 +65,29 @@ func TestBTNAutofillResponseErrors(t *testing.T) {
 			lookup: "tvdb",
 			want:   "response exceeded 1 MiB",
 		},
+		{
+			name:    "partial success-status response retains diagnostic",
+			status:  http.StatusOK,
+			body:    `<div class="error">Metadata response interrupted</div>`,
+			lookup:  "tvdb",
+			want:    "Metadata response interrupted",
+			partial: true,
+		},
+		{
+			name:    "partial HTTP error retains diagnostic",
+			status:  http.StatusServiceUnavailable,
+			body:    `<div class="error">Metadata response interrupted</div>`,
+			lookup:  "release_name",
+			want:    "Metadata response interrupted",
+			partial: true,
+		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if testCase.partial {
+					w.Header().Set("Content-Length", strconv.Itoa(len(testCase.body)+1))
+				}
 				w.WriteHeader(testCase.status)
 				_, _ = io.WriteString(w, testCase.body)
 			}))
@@ -81,6 +102,12 @@ func TestBTNAutofillResponseErrors(t *testing.T) {
 			}
 			if errors.Is(err, errBTNExplicitAutofillFailure) != testCase.wantFailure {
 				t.Fatalf("explicit failure classification changed: %v", err)
+			}
+			if !strings.Contains(err.Error(), "status="+strconv.Itoa(testCase.status)) {
+				t.Fatalf("response lost HTTP status: %v", err)
+			}
+			if testCase.partial && !errors.Is(err, io.ErrUnexpectedEOF) {
+				t.Fatalf("partial response lost read cause: %v", err)
 			}
 			for _, privateValue := range []string{"private-script", "private-description", "synthetic-secret"} {
 				if strings.Contains(err.Error(), privateValue) {

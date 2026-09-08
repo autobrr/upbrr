@@ -4,6 +4,7 @@
 package hdb
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,31 @@ import (
 
 	"github.com/autobrr/upbrr/internal/trackers"
 )
+
+func TestSubmitPreparedUploadPreservesPartialResponseCause(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "200")
+		_, _ = io.WriteString(w, `<div class="error">Invalid category</div>`)
+	}))
+	defer server.Close()
+	summary, err := submitPreparedUpload(t.Context(), trackers.PreparationInput{}, preparedUploadState{
+		uploadURL: server.URL + hdbUploadPath,
+		client:    server.Client(),
+	})
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("partial response lost read cause: %v", err)
+	}
+	for _, want := range []string{"HDB upload failed status=200", server.URL + hdbUploadPath, "Invalid category", "response body read failed"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("partial response lost %q: %v", want, err)
+		}
+	}
+	if summary.Uploaded != 0 || len(summary.UploadedTorrents) != 0 {
+		t.Fatalf("partial response returned registration authority: %+v", summary)
+	}
+}
 
 func TestSubmitPreparedUploadErrorResponse(t *testing.T) {
 	for _, tt := range []struct {

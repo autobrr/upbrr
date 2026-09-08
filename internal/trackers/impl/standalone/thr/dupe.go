@@ -134,14 +134,14 @@ func thrLogin(ctx context.Context, client *http.Client, baseURL, username, passw
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusBadRequest {
 		_, detail, readErr := commonhttp.ReadUploadResponseBody(resp, false, commonhttp.DefaultResponsePreviewBytes)
 		if readErr != nil {
-			return nil, fmt.Errorf("read THR login failure: %w", readErr)
+			return nil, fmt.Errorf("read THR login failure status=%d: %w", resp.StatusCode, readErr)
 		}
 		return nil, fmt.Errorf("THR login failed status=%d: %s", resp.StatusCode, detail)
 	}
 	if len(resp.Cookies()) == 0 {
 		_, detail, readErr := commonhttp.ReadUploadResponseBody(resp, false, commonhttp.DefaultResponsePreviewBytes)
 		if readErr != nil {
-			return nil, fmt.Errorf("read THR login failure: %w", readErr)
+			return nil, fmt.Errorf("read THR login failure status=%d: %w", resp.StatusCode, readErr)
 		}
 		return nil, fmt.Errorf("THR login failed: no cookies returned: %s", detail)
 	}

@@ -109,7 +109,7 @@ func submitPreparedUpload(
 
 	_, responsePreview, err := commonhttp.ReadUploadResponseBody(resp, false, commonhttp.DefaultResponsePreviewBytes)
 	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: THR read upload response: %w", err)
+		return api.UploadSummary{}, fmt.Errorf("trackers: THR read upload response status=%d: %w", resp.StatusCode, err)
 	}
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "THR", "upload_failure", responsePreview, ".html")
 	return api.UploadSummary{}, commonhttp.UploadHTTPError("THR", resp.StatusCode, responsePreview)

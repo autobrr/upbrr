@@ -4,6 +4,8 @@
 package azfamily
 
 import (
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +16,25 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestSubmitPreparedUploadPreservesPartialHTMLFailure(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "200")
+		_, _ = io.WriteString(w, `<div class="error">Invalid category</div>`)
+	}))
+	defer server.Close()
+	summary, err := submitPreparedUpload(
+		t.Context(), siteDefinition{Name: "AZ", BaseURL: server.URL}, server.Client(), server.URL, nil, "", api.NopLogger{},
+	)
+	if !errors.Is(err, io.ErrUnexpectedEOF) || !strings.Contains(err.Error(), "status=200") || !strings.Contains(err.Error(), "Invalid category") {
+		t.Fatalf("partial response lost status, detail or read cause: %v", err)
+	}
+	if summary.Uploaded != 0 || len(summary.UploadedTorrents) != 0 {
+		t.Fatalf("partial response returned registration authority: %+v", summary)
+	}
+}
 
 func TestSubmitPreparedUploadPreservesLateHTMLFailure(t *testing.T) {
 	t.Parallel()
