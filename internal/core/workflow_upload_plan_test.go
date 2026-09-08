@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -383,6 +384,52 @@ func TestDryRunClientInjectionReportsAggregateTerminalProgress(t *testing.T) {
 	}
 	if updates[1].Status != api.StageStatusCompleted || updates[1].Completed != 3 || updates[1].Total != 4 {
 		t.Fatalf("terminal client injection progress = %#v", updates[1])
+	}
+}
+
+func TestDryRunClientInjectionPreservesFailureRecovery(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name     string
+		err      error
+		code     api.OperationFailureCode
+		recovery api.OperationRecovery
+	}{
+		{
+			name:     "live-test rejection",
+			err:      fmt.Errorf("client policy: %w", api.ErrLiveTestMutationDisabled),
+			code:     api.OperationFailureLiveTestMutationDisabled,
+			recovery: api.OperationRecoveryNone,
+		},
+		{
+			name:     "client failure",
+			err:      errors.New("client unavailable"),
+			code:     api.OperationFailureDryRunClientInjection,
+			recovery: api.OperationRecoveryRetry,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			torrentPath := filepath.Join(t.TempDir(), "Example.Release.2026.torrent")
+			if err := os.WriteFile(torrentPath, []byte("exact tracker torrent"), 0o600); err != nil {
+				t.Fatalf("write exact tracker torrent: %v", err)
+			}
+			status, message, code, injected, err := injectWorkflowDryRunClient(
+				t.Context(), &dryRunClientService{injectErr: test.err}, api.ClientSubject{},
+				api.TrackerReleaseProjection{TrackerID: "ALPHA"}, torrentPath, 0, 1,
+			)
+			if err != nil || status != api.StageStatusFailed || code != test.code || injected {
+				t.Fatalf("injection status=%s code=%s injected=%t err=%v", status, code, injected, err)
+			}
+			failure := workflowDryRunClientFailure("ALPHA", code, message)
+			if failure.Failure.Recovery != test.recovery {
+				t.Fatalf("failure recovery=%s, want %s", failure.Failure.Recovery, test.recovery)
+			}
+			if code == api.OperationFailureLiveTestMutationDisabled && failure.Failure.Operation != api.OperationKindClientInjection {
+				t.Fatalf("live-test rejection operation=%s", failure.Failure.Operation)
+			}
+		})
 	}
 }
 

@@ -558,11 +558,17 @@ func TestCreateNoHashRequiresVerifiedClientDataToSkipBytes(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
-		name     string
-		verified bool
+		name         string
+		verified     bool
+		missingHash  bool
 	}{
 		{name: "verified", verified: true},
 		{name: "unverified"},
+		{
+			name:        "missing infohash",
+			verified:    true,
+			missingHash: true,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -579,6 +585,9 @@ func TestCreateNoHashRequiresVerifiedClientDataToSkipBytes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("load client torrent infohash: %v", err)
 			}
+			if test.missingHash {
+				clientInfoHash = ""
+			}
 
 			service := NewService(api.NopLogger{}, t.TempDir())
 			reuseOnly := true
@@ -591,12 +600,15 @@ func TestCreateNoHashRequiresVerifiedClientDataToSkipBytes(t *testing.T) {
 					NoHash: &reuseOnly,
 				},
 			})
-			if test.verified {
+			if test.verified && !test.missingHash {
 				if err != nil {
 					t.Fatalf("expected no error, got %v", err)
 				}
 				if result.Path != clientTorrentPath {
 					t.Fatalf("expected verified client torrent %s to be reused, got %s", clientTorrentPath, result.Path)
+				}
+				if result.InfoHash != clientInfoHash {
+					t.Fatalf("reused torrent infohash = %q, want %q", result.InfoHash, clientInfoHash)
 				}
 				return
 			}

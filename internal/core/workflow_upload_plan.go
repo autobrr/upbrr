@@ -867,6 +867,9 @@ func injectWorkflowDryRunClient(
 			total,
 			"Dry-run client injection failed.",
 		)
+		if errors.Is(injectErr, api.ErrLiveTestMutationDisabled) {
+			return api.StageStatusFailed, "Live testing prohibits torrent-client writes.", api.OperationFailureLiveTestMutationDisabled, false, nil
+		}
 		return api.StageStatusFailed, "Client injection failed. Review client settings and retry.", api.OperationFailureDryRunClientInjection, false, nil
 	}
 	emitWorkflowClientInjectionProgress(
