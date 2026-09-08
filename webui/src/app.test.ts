@@ -64,6 +64,42 @@ const metadataPreview = (sourcePath: string): MetadataPreview => ({
 });
 
 describe("App shell", () => {
+  it.each([false, true])("shows the process testing banner with liveTest=%s", async (liveTest) => {
+    setAppRequestHandlerForTests(async (method) => {
+      if (method === "GetApplicationInfo") {
+        return { testRuntime: liveTest ? { mode: "live_test", runId: "test-run" } : undefined };
+      }
+      if (method === "GetConfig" || method === "GetDefaultConfig") return "{}";
+      if (method === "GetTrackerCatalog") return trackerCatalog();
+      throw new Error(`unexpected app request: ${method}`);
+    });
+    render(createElement(App));
+    await waitFor(() =>
+      expect(screen.queryByText("Checking runtime capabilities…")).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByText("Live testing active") !== null).toBe(liveTest);
+    if (liveTest) {
+      expect(screen.getByText("Run: test-run")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+      expect(screen.getByText("Live testing active")).toBeInTheDocument();
+    }
+  });
+
+  it("shows a recoverable capability error while keeping preparation available", async () => {
+    setAppRequestHandlerForTests(async (method) => {
+      if (method === "GetConfig" || method === "GetDefaultConfig") return "{}";
+      if (method === "GetTrackerCatalog") return trackerCatalog();
+      throw new Error("unavailable");
+    });
+    render(createElement(App));
+    expect(
+      await screen.findByText(
+        "Runtime capabilities could not be loaded. Uploads are disabled; reload to try again.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Build Release Name" })).toBeInTheDocument();
+  });
+
   it("composes the release session and renders input routing", async () => {
     setAppRequestHandlerForTests(async (method) => {
       if (method === "GetConfig" || method === "GetDefaultConfig") return "{}";

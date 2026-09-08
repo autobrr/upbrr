@@ -18,7 +18,7 @@ func Resolution(meta api.UploadSubject) string { return resolveResolution(meta) 
 // RuleResolution returns the common normalized release resolution from the
 // narrower rule-evaluation read model.
 func RuleResolution(meta api.RuleSubject) string {
-	return resolveResolutionValues(meta.Release, meta.ReleaseName)
+	return resolveResolutionValues(meta.Release)
 }
 
 // Category returns the common normalized Unit3D category.

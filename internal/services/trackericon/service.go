@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -212,10 +213,8 @@ func iconCandidates(domain string, customURL string) []string {
 		if value == "" {
 			return
 		}
-		for _, existing := range candidates {
-			if existing == value {
-				return
-			}
+		if slices.Contains(candidates, value) {
+			return
 		}
 		candidates = append(candidates, value)
 	}

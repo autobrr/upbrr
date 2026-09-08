@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -124,9 +125,16 @@ func TestPrepareUsesExactCompatibilityAndPublishesConcreteAssessments(t *testing
 	}
 }
 
-func TestPrepareRecomputesLegacyContractAfterRestart(t *testing.T) {
+func TestPrepareRecomputesPreviousContractAfterRestart(t *testing.T) {
 	t.Parallel()
-	path := writePreparedTestFile(t, "source.mkv", "synthetic media")
+	path := filepath.Join(t.TempDir(), "Example Release 2026 PAL DVD")
+	videoTSPath := filepath.Join(path, "VIDEO_TS")
+	if err := os.MkdirAll(videoTSPath, 0o755); err != nil {
+		t.Fatalf("create VIDEO_TS: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(videoTSPath, "VTS_01_1.VOB"), []byte("dvd"), 0o600); err != nil {
+		t.Fatalf("write DVD content: %v", err)
+	}
 	store := newMemoryStore()
 	initial := newTestModule(t, store, &recordingCollector{})
 	prepared, err := initial.Prepare(context.Background(), api.PrepareInput{SourcePath: path})
@@ -134,14 +142,28 @@ func TestPrepareRecomputesLegacyContractAfterRestart(t *testing.T) {
 		t.Fatalf("initial prepare: %v", err)
 	}
 
-	legacy := prepared.Release
-	legacy.Compatibility.ContractVersion = "prepared-release-v3"
-	legacy.Assessments.VideoBitrate = api.VideoBitrateAssessment{}
+	previous := prepared.Release
+	previous.Compatibility.ContractVersion = "prepared-release-v8"
+	previous.Naming.ReleaseName = "Example Release 2026 PAL DVD"
+	previous.Naming.NameWithoutTag = "Example Release 2026 PAL DVD"
+	previous.Naming.Source = "PAL DVD"
+	previous.Naming.Size = ""
+	previous.Assessments.VideoBitrate = api.VideoBitrateAssessment{}
 	store.mu.Lock()
-	store.current[canonicalSourceKey(path)] = legacy
+	store.current[canonicalSourceKey(path)] = previous
 	store.mu.Unlock()
 
-	restartedCollector := &recordingCollector{}
+	correctedFacts := CollectedFacts{
+		Naming: api.NamingFacts{
+			Filename:       filepath.Base(path),
+			ReleaseName:    "Example Release 2026 PAL DVD9",
+			NameWithoutTag: "Example Release 2026 PAL DVD9",
+			Source:         "PAL DVD",
+			Size:           "DVD9",
+		},
+		Disc: api.DiscFacts{Type: "DVD"},
+	}
+	restartedCollector := &recordingCollector{facts: &correctedFacts}
 	restarted := newTestModule(t, store, restartedCollector)
 	recomputed, err := restarted.Prepare(context.Background(), api.PrepareInput{SourcePath: path})
 	if err != nil {
@@ -154,6 +176,10 @@ func TestPrepareRecomputesLegacyContractAfterRestart(t *testing.T) {
 			restartedCollector.callCount(),
 			prepared.Release.Generation+1,
 		)
+	}
+	if recomputed.Release.Compatibility.ContractVersion != ContractVersion || recomputed.Release.Naming.Size != "DVD9" ||
+		recomputed.Release.Naming.ReleaseName != "Example Release 2026 PAL DVD9" {
+		t.Fatalf("recomputed DVD naming = %#v", recomputed.Release.Naming)
 	}
 	if recomputed.Release.Assessments.VideoBitrate.Status != api.VideoBitrateStatusUnknown {
 		t.Fatalf("video bitrate status = %q, want %q", recomputed.Release.Assessments.VideoBitrate.Status, api.VideoBitrateStatusUnknown)
@@ -539,7 +565,8 @@ func TestOperationSubjectsCarryCorrectedFactsConsistently(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveUploadSubject() error = %v", err)
 	}
-	if upload.Type != "REMUX" || upload.Source != "BluRay" || upload.Release.Type != "REMUX" || upload.Release.Resolution != "2160p" {
+	if upload.Type != "REMUX" || upload.Source != "BluRay" || upload.Release.Type != "REMUX" || upload.Release.Resolution != "2160p" ||
+		upload.Release.Title != "Resolved Series" || upload.Release.Alt != "AKA Resolved Original" || upload.Release.Year != 2027 {
 		t.Fatalf("upload subject type facts = %q/%q/%q/%q", upload.Type, upload.Source, upload.Release.Type, upload.Release.Resolution)
 	}
 	if upload.SeasonInt != 3 || upload.EpisodeInt != 7 || upload.SeasonStr != "S03" || upload.EpisodeStr != "E07" {
@@ -547,6 +574,9 @@ func TestOperationSubjectsCarryCorrectedFactsConsistently(t *testing.T) {
 	}
 	if upload.Tag != "-OTHER" || upload.Release.Group != "OTHER" || upload.Edition != "Extended" || upload.Service != "AMZN" {
 		t.Fatalf("upload subject fact projections = %q/%q/%q/%q", upload.Tag, upload.Release.Group, upload.Edition, upload.Service)
+	}
+	if release.Naming.AlternateTitle != "AKA Resolved Original" || upload.AlternateTitle != release.Naming.AlternateTitle {
+		t.Fatalf("alternate title projection = %q, prepared = %q", upload.AlternateTitle, release.Naming.AlternateTitle)
 	}
 
 	duplicate, err := module.ResolveDuplicateSubject(context.Background(), api.DuplicateCheckInput{Release: ref})
@@ -558,6 +588,53 @@ func TestOperationSubjectsCarryCorrectedFactsConsistently(t *testing.T) {
 	}
 	if duplicate.SeasonInt != upload.SeasonInt || duplicate.EpisodeInt != upload.EpisodeInt || duplicate.Release.Group != upload.Release.Group {
 		t.Fatalf("duplicate subject episode/group diverges: %d/%d %q", duplicate.SeasonInt, duplicate.EpisodeInt, duplicate.Release.Group)
+	}
+}
+
+func TestReleaseInfoDoesNotRestoreSupersededDuplicateFacts(t *testing.T) {
+	t.Parallel()
+
+	got := releaseInfo(api.PreparedRelease{
+		Naming: api.NamingFacts{
+			Title:     "Resolved Title",
+			Type:      "STALE-TYPE",
+			Source:    "STALE-SOURCE",
+			Channels:  "STALE-CHANNELS",
+			Region:    "STALE-REGION",
+			Editions:  []string{"Stale Edition"},
+			Codecs:    []string{"x265"},
+			Languages: []string{"English"},
+		},
+		Episode:  api.EpisodeFacts{Season: 2, Episode: 3},
+		Identity: api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+	})
+	if got.Category != "TV" || got.Title != "Resolved Title" || got.Season != 2 || got.Episode != 3 {
+		t.Fatalf("canonical identity projection = %#v", got)
+	}
+	if got.Type != "" || got.Source != "" || got.Channels != "" || got.Region != "" || got.Edition != nil {
+		t.Fatalf("superseded naming duplicates restored = %#v", got)
+	}
+	if !slices.Equal(got.Codec, []string{"x265"}) || !slices.Equal(got.Language, []string{"English"}) {
+		t.Fatalf("parser syntax tokens changed = %#v", got)
+	}
+}
+
+func TestPrepareRejectsProviderMetadataForDifferentCanonicalID(t *testing.T) {
+	t.Parallel()
+
+	path := writePreparedTestFile(t, "source.mkv", "source")
+	store := newMemoryStore()
+	module, err := New(store, mismatchedProviderIdentityResolver{}, &recordingCollector{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = module.Prepare(context.Background(), api.PrepareInput{SourcePath: path})
+	var incompatible *IncompatiblePreparationError
+	if !errors.As(err, &incompatible) || incompatible.Reason != "tmdb provider metadata does not match canonical identity" {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	if _, err := store.LoadPreparedRelease(context.Background(), path); !errors.Is(err, internalerrors.ErrNotFound) {
+		t.Fatalf("mismatched provider generation was published: %v", err)
 	}
 }
 
@@ -798,6 +875,24 @@ func (staticIdentityResolver) Resolve(_ context.Context, request externalidentit
 	}, nil
 }
 
+type mismatchedProviderIdentityResolver struct{}
+
+func (mismatchedProviderIdentityResolver) Resolve(_ context.Context, request externalidentity.Request) (externalidentity.Result, error) {
+	return externalidentity.Result{
+		Identity: api.ExternalIdentity{
+			SourcePath: request.SourcePath,
+			Generation: request.Generation,
+			TMDBID:     123456,
+			Category:   api.CanonicalCategoryMovie,
+		},
+		ProviderMetadata: api.SourceScopedMetadata{
+			SourcePath: request.SourcePath,
+			Generation: request.Generation,
+			TMDB:       &api.TMDBMetadata{TMDBID: 654321, Title: "Different Work"},
+		},
+	}, nil
+}
+
 // correctedFactsCollector returns fact groups as the metadata pipeline shapes
 // them after fact-producing release-name instructions were applied.
 type correctedFactsCollector struct{}
@@ -805,14 +900,16 @@ type correctedFactsCollector struct{}
 func (correctedFactsCollector) Collect(_ context.Context, request preparationstate.Request) (CollectedFacts, error) {
 	return CollectedFacts{
 		Naming: api.NamingFacts{
-			Filename:    filepath.Base(request.Manifest.SourcePath),
-			ReleaseName: "Example Show 2027 S03E07 Extended 2160p BluRay REMUX-OTHER",
-			Tag:         "-OTHER",
-			Type:        "REMUX",
-			Source:      "BluRay",
-			Resolution:  "2160p",
-			Year:        2027,
-			Group:       "OTHER",
+			Filename:       filepath.Base(request.Manifest.SourcePath),
+			ReleaseName:    "Example Show 2027 S03E07 Extended 2160p BluRay REMUX-OTHER",
+			Tag:            "-OTHER",
+			Type:           "REMUX",
+			Title:          "Resolved Series",
+			AlternateTitle: "AKA Resolved Original",
+			Source:         "BluRay",
+			Resolution:     "2160p",
+			Year:           2027,
+			Group:          "OTHER",
 		},
 		Episode: api.EpisodeFacts{
 			Season:       3,
@@ -821,10 +918,12 @@ func (correctedFactsCollector) Collect(_ context.Context, request preparationsta
 			EpisodeLabel: "E07",
 		},
 		Media: api.MediaFacts{
-			Type:    "REMUX",
-			Source:  "BluRay",
-			Edition: "Extended",
-			Service: "AMZN",
+			Type:     "REMUX",
+			Source:   "BluRay",
+			Edition:  "Extended",
+			Service:  "AMZN",
+			Region:   "B",
+			Channels: "5.1",
 		},
 	}, nil
 }
@@ -832,12 +931,16 @@ func (correctedFactsCollector) Collect(_ context.Context, request preparationsta
 type recordingCollector struct {
 	mu    sync.Mutex
 	calls []string
+	facts *CollectedFacts
 }
 
 func (c *recordingCollector) Collect(_ context.Context, request preparationstate.Request) (CollectedFacts, error) {
 	c.mu.Lock()
 	c.calls = append(c.calls, request.Input.Instructions.SourceLookup)
 	c.mu.Unlock()
+	if c.facts != nil {
+		return *c.facts, nil
+	}
 	return CollectedFacts{
 		Naming: api.NamingFacts{
 			Filename:         filepath.Base(request.Manifest.SourcePath),

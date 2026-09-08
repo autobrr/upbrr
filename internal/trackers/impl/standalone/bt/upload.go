@@ -135,7 +135,11 @@ func submitPreparedUpload(
 		}, nil
 	}
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "BT", "upload_failure", responsePreview, ".html")
-	return api.UploadSummary{}, commonhttp.UploadHTTPError("BT", resp.StatusCode, responsePreview)
+	errorResponse := responsePreview
+	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+		errorResponse = responseBody
+	}
+	return api.UploadSummary{}, commonhttp.UploadHTTPError("BT", resp.StatusCode, errorResponse)
 }
 
 func buildUploadPreview(state uploadState) api.TrackerDryRunEntry {

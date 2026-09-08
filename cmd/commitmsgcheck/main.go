@@ -333,8 +333,8 @@ func splitBodyFooter(lines []string) parsedMessage {
 
 	// Find the start of the last non-empty block.
 	lastBlockStart := len(rest)
-	for i := len(rest) - 1; i >= 0; i-- {
-		if rest[i] == "" {
+	for i, r := range slices.Backward(rest) {
+		if r == "" {
 			lastBlockStart = i + 1
 			break
 		}

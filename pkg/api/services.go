@@ -325,6 +325,10 @@ type UploadSubject struct {
 	ReleaseName                 string
 	ReleaseNameNoTag            string
 	ReleaseNameClean            string
+	// AlternateTitle is the finalized alternate from this subject's prepared naming facts.
+	// It may include an "AKA " prefix.
+	// Empty means no alternate was selected; NamePresentation controls omission.
+	AlternateTitle string
 	// GeneratedReleaseNames contains canonical structural alternatives. Empty
 	// variants mean ReleaseName must remain exact.
 	GeneratedReleaseNames GeneratedReleaseNameVariants
@@ -1288,6 +1292,7 @@ type DescriptionSubject struct {
 	MediaInfoTextPath     string
 	DVDVOBMediaInfoText   string
 	DescriptionTemplate   string
+	DescriptionGroups     []DescriptionBuilderGroup
 	EpisodeOverview       string
 	Options               UploadOptions
 	Release               ReleaseInfo
@@ -1321,6 +1326,7 @@ func NewDescriptionSubject(subject UploadSubject) DescriptionSubject {
 		MediaInfoTextPath:     subject.MediaInfoTextPath,
 		DVDVOBMediaInfoText:   subject.DVDVOBMediaInfoText,
 		DescriptionTemplate:   subject.DescriptionTemplate,
+		DescriptionGroups:     CloneDescriptionBuilderGroups(subject.DescriptionGroups),
 		EpisodeOverview:       subject.EpisodeOverview,
 		Options:               subject.Options,
 		Release:               subject.Release,
@@ -2067,8 +2073,10 @@ type TrackerMatch struct {
 	TrackerID string
 }
 
-// ReleaseInfo preserves release-name parser output before provider metadata can
-// remap episode identity.
+// ReleaseInfo carries canonical release fields to operations. Preparation also
+// uses it privately for detached release-name parser evidence.
+// Codec, Audio, HDR, Language, and Ext retain parser tokens for naming
+// transformations; operations must use resolved media fields for technical facts.
 type ReleaseInfo struct {
 	Category   string
 	Type       string

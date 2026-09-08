@@ -138,6 +138,12 @@ func TestResolutionFromMediaInfo(t *testing.T) {
 			message:  "expected 1080i, got %q",
 		},
 		{
+			name:     "1080i MBAFF",
+			payload:  `{"media":{"track":[{"@type":"Video","Width":"1920","Height":"1080","ScanType":"MBAFF"}]}}`,
+			expected: "1080i",
+			message:  "expected 1080i for MBAFF, got %q",
+		},
+		{
 			name:     "2160p",
 			payload:  `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"3840","Height":"2160","ScanType":"Progressive"}]}}`,
 			expected: "2160p",

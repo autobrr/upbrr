@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -429,8 +430,8 @@ func (s *Store) ListAPITokens(ctx context.Context) ([]apitoken.Record, error) {
 		return nil, ErrUnavailable
 	}
 	result := make([]apitoken.Record, 0, len(record.APIKeys))
-	for index := len(record.APIKeys) - 1; index >= 0; index-- {
-		result = append(result, apiKeyMetadata(record.APIKeys[index]))
+	for _, v := range slices.Backward(record.APIKeys) {
+		result = append(result, apiKeyMetadata(v))
 	}
 	return result, nil
 }

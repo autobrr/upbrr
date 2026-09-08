@@ -8,6 +8,8 @@ Commands:
       List and revoke persistent API bearer tokens
   auth <password|browse-roots> [options]
       Manage the WebUI password and browse policy locally
+  live-test <init|cleanup> [options]
+      Create an isolated profile or clean up its owned hosted images
 
 Options:
 
@@ -40,6 +42,10 @@ Execution:
       Process a single tracker upload flow
   -debug, --debug
       Enable debug mode
+  -live-test, --live-test
+      Use an isolated live-test profile with tracker and client writes disabled
+  -live-test-max-images, --live-test-max-images int
+      Maximum journaled image uploads in this live-test run (zero keeps captures local)
   -log-level, --log-level string
       Set application log level for this run (error, warn, info, debug, trace)
   --console-log-level, -cll string

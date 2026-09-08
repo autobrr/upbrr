@@ -228,8 +228,8 @@ func submitPreparedUpload(
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusFound {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return api.UploadSummary{}, commonhttp.UploadHTTPError(site.Name, resp.StatusCode, body)
+		_, responseDetail, readErr := commonhttp.ReadUploadResponseBody(resp, false, commonhttp.DefaultResponsePreviewBytes)
+		return api.UploadSummary{}, errors.Join(commonhttp.UploadHTTPError(site.Name, resp.StatusCode, responseDetail), readErr)
 	}
 
 	location := strings.TrimSpace(resp.Header.Get("Location"))
@@ -357,8 +357,12 @@ func createTask(
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusFound {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return taskInfo{}, fmt.Errorf("trackers: %s task creation failed: %w", site.Name, commonhttp.UploadHTTPError(site.Name, resp.StatusCode, body))
+		_, responseDetail, readErr := commonhttp.ReadUploadResponseBody(resp, false, commonhttp.DefaultResponsePreviewBytes)
+		return taskInfo{}, fmt.Errorf(
+			"trackers: %s task creation failed: %w",
+			site.Name,
+			errors.Join(commonhttp.UploadHTTPError(site.Name, resp.StatusCode, responseDetail), readErr),
+		)
 	}
 	location := strings.TrimSpace(resp.Header.Get("Location"))
 	taskID := extractPatternGroup(azTaskIDPattern, absoluteURL(site.BaseURL, location))

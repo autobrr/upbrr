@@ -4,7 +4,7 @@
 import type { ReactNode } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { MetadataPreview, PrepareInput } from "../types";
+import type { ApplicationInfo, MetadataPreview, PrepareInput } from "../types";
 import { emptyExternalIdentity } from "../utils/canonicalIdentity";
 import type {
   ContinueReleaseWorkflowRequest,
@@ -551,9 +551,37 @@ const workflowCurrentFromPreview = (
     },
   }) as unknown as ReleaseWorkflowCurrent;
 
-const wrapperFor = (ports: ReleaseSessionPorts) =>
+const liveTestRuntime: ApplicationInfo["testRuntime"] = {
+  mode: "live_test",
+  runId: "test-run",
+  trackerSubmissionAllowed: false,
+  clientMutationAllowed: false,
+  imageUploadsRequireJournal: true,
+  imageUploadLimit: 0,
+  trackerSubmission: {
+    requestsDenied: 0,
+    mutationCallsDenied: 0,
+    remoteCallsStarted: 0,
+    remoteCallsSucceeded: 0,
+  },
+  clientMutation: {
+    requestsDenied: 0,
+    mutationCallsDenied: 0,
+    remoteCallsStarted: 0,
+    remoteCallsSucceeded: 0,
+  },
+};
+
+const wrapperFor = (
+  ports: ReleaseSessionPorts,
+  runtime: { testRuntime?: ApplicationInfo["testRuntime"]; runtimeInfoReady?: boolean } = {},
+) =>
   function Wrapper({ children }: Readonly<{ children: ReactNode }>) {
-    return <ReleaseSessionProvider ports={ports}>{children}</ReleaseSessionProvider>;
+    return (
+      <ReleaseSessionProvider ports={ports} {...runtime}>
+        {children}
+      </ReleaseSessionProvider>
+    );
   };
 
 const selectAndPrepare = async (
@@ -612,6 +640,67 @@ describe("tracker workflow capabilities", () => {
 });
 
 describe("useReleaseSession", () => {
+  it.each([true, false])("blocks retained mutation actions with liveTest=%s", async (liveTest) => {
+    const workflowID = "workflow-live-test";
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const retained = {
+      ...workflowCurrent(workflowID, 7),
+      uploadResult: {
+        id: "retained-result",
+        revision: 1,
+        results: [
+          { trackerId: "EXAMPLE", submissionStatus: "failed" },
+          {
+            trackerId: "OTHER",
+            submissionStatus: "completed",
+            clientInjectionStatus: "failed",
+            clientFailureCode: "client_injection",
+          },
+        ],
+      },
+    } as unknown as ReleaseWorkflowCurrent;
+    const continueWorkflow = vi.fn(async () => retained);
+    const retryFailedUploads = vi.fn(async () => retained);
+    const retryClientInjections = vi.fn(async () => retained);
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          workflow: workflowPorts({
+            current: async () => retained,
+            continue: continueWorkflow,
+            retryFailedUploads,
+            retryClientInjections,
+          }),
+        }),
+        liveTest ? { testRuntime: liveTestRuntime } : { runtimeInfoReady: false },
+      ),
+    });
+    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+    act(() => result.current.upload.changeOptions({ noSeed: false }));
+    expect(result.current.upload.view.mutationsAllowed).toBe(false);
+    expect(result.current.upload.view.options.noSeed).toBe(liveTest);
+    await act(async () => {
+      expect(await result.current.upload.start()).toBe(false);
+      expect(await result.current.upload.retry()).toBe(false);
+      expect(await result.current.upload.retryClientInjection()).toBe(false);
+      expect(await result.current.workflow.executeUploads()).toBe(false);
+      expect(await result.current.workflow.retryFailedUploads()).toBe(false);
+      expect(await result.current.workflow.retryClientInjections()).toBe(false);
+    });
+    expect(continueWorkflow).not.toHaveBeenCalled();
+    expect(retryFailedUploads).not.toHaveBeenCalled();
+    expect(retryClientInjections).not.toHaveBeenCalled();
+    await act(() => result.current.upload.runDryRun());
+    expect(continueWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        goal: "dry_run",
+        intent: { interaction: "interactive", noSeed: liveTest },
+      }),
+      expect.any(AbortSignal),
+    );
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
   it("reloads authoritative workflow state from the retained browser workflow id", async () => {
     window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", "workflow-retained");
     const sourcePath = "C:\\media\\Example.Release.2026.1080p-GRP.mkv";
@@ -682,50 +771,54 @@ describe("useReleaseSession", () => {
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
 
-  it("confirms a retained rule authorization before upload", async () => {
-    const workflowID = "workflow-authorize-upload";
-    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
-    const action = {
-      createdAt: "2026-07-20T00:00:00Z",
-      id: "action-authorize",
-      kind: "authorize_rules" as const,
-      prompt: "Confirm BTN autofill.",
-      status: "pending" as const,
-      workflowRevision: 7,
-    };
-    const base = workflowCurrent(workflowID, 7);
-    const retained: ReleaseWorkflowCurrent = {
-      ...base,
-      workflow: { ...base.workflow, status: "blocked", requiredActions: [action] },
-      continuation: { ...base.continuation, requiredActions: [action] },
-    };
-    const continueWorkflow = vi.fn(async () => retained);
-    const { result, unmount } = renderHook(useReleaseSession, {
-      wrapper: wrapperFor(
-        portsFor({
-          workflow: workflowPorts({
-            current: async () => retained,
-            continue: continueWorkflow,
+  it.each([false, true])(
+    "confirms a retained rule authorization with liveTest=%s",
+    async (liveTest) => {
+      const workflowID = "workflow-authorize-upload";
+      window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+      const action = {
+        createdAt: "2026-07-20T00:00:00Z",
+        id: "action-authorize",
+        kind: "authorize_rules" as const,
+        prompt: "Confirm BTN autofill.",
+        status: "pending" as const,
+        workflowRevision: 7,
+      };
+      const base = workflowCurrent(workflowID, 7);
+      const retained: ReleaseWorkflowCurrent = {
+        ...base,
+        workflow: { ...base.workflow, status: "blocked", requiredActions: [action] },
+        continuation: { ...base.continuation, requiredActions: [action] },
+      };
+      const continueWorkflow = vi.fn(async () => retained);
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            workflow: workflowPorts({
+              current: async () => retained,
+              continue: continueWorkflow,
+            }),
           }),
+          { testRuntime: liveTest ? liveTestRuntime : undefined },
+        ),
+      });
+
+      await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+      await act(async () => {
+        expect(await result.current.workflow.confirmAction(action)).toBe(true);
+      });
+      expect(continueWorkflow).toHaveBeenCalledWith(
+        expect.objectContaining({
+          goal: liveTest ? "dry_run" : "uploaded",
+          answers: [{ actionId: action.id, workflowRevision: 7, confirmed: true }],
         }),
-      ),
-    });
+        expect.any(AbortSignal),
+      );
 
-    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
-    await act(async () => {
-      expect(await result.current.workflow.confirmAction(action)).toBe(true);
-    });
-    expect(continueWorkflow).toHaveBeenCalledWith(
-      expect.objectContaining({
-        goal: "uploaded",
-        answers: [{ actionId: action.id, workflowRevision: 7, confirmed: true }],
-      }),
-      expect.any(AbortSignal),
-    );
-
-    unmount();
-    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
-  });
+      unmount();
+      window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+    },
+  );
 
   it("accepts a tracker rule warning from the dupe facet", async () => {
     const workflowID = "workflow-dupe-rule-override";

@@ -262,10 +262,10 @@ func removeMenuImportFiles(paths []string) {
 	}
 }
 
-// uploadAcceptedImages uploads selected images to the requested global host
-// and additional hosts required by eligible trackers. Host uploads run
-// concurrently, tracker-owned hosts use tracker-scoped records, and recoverable
-// host failures are returned in [api.UploadImagesResult].
+// uploadAcceptedImages uploads selected images to an explicit host, or plans
+// the required hosts when none is requested. Host uploads run concurrently,
+// tracker-owned hosts use tracker-scoped records, and recoverable host failures
+// are returned in [api.UploadImagesResult].
 func (m *mediaModule) uploadAcceptedImages(
 	ctx context.Context,
 	input api.ImageHostingInput,
@@ -305,14 +305,27 @@ func (m *mediaModule) resolveImageUploadTargets(
 	// The workflow already supplied its exact downstream-eligible projection set.
 	// Do not reapply legacy prepared-subject removals or client matches here.
 	resolvedTrackers := trackers.ResolveExplicitTrackersWithRegistry(trackerNames, m.logger, m.registry)
-	targets, err := trackers.NeededImageUploadTargetsForMetadataExcludingWithRegistry(
-		m.registry,
-		m.cfg,
-		resolvedTrackers,
-		normalizedHost,
-		excludedHosts,
-		subject,
-	)
+	var targets []trackers.ImageUploadTarget
+	var err error
+	if normalizedHost == "" {
+		targets, err = trackers.NeededImageUploadTargetsForMetadataExcludingWithRegistry(
+			m.registry,
+			m.cfg,
+			resolvedTrackers,
+			normalizedHost,
+			excludedHosts,
+			subject,
+		)
+	} else {
+		targets, err = trackers.ExplicitImageUploadTargetsForMetadataExcludingWithRegistry(
+			m.registry,
+			m.cfg,
+			resolvedTrackers,
+			normalizedHost,
+			excludedHosts,
+			subject,
+		)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("core: %w", err)
 	}
@@ -388,6 +401,7 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 	attempts := make([]*scheduledAttempt, 0, len(targets))
 	attemptByTarget := make(map[string]*scheduledAttempt, len(targets))
 	failedHosts := make(map[string]struct{}, len(targets)+len(excludedHosts))
+	allowFallback := strings.TrimSpace(host) == ""
 	for _, excludedHost := range excludedHosts {
 		if normalized := strings.ToLower(strings.TrimSpace(excludedHost)); normalized != "" {
 			failedHosts[normalized] = struct{}{}
@@ -469,9 +483,16 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 		if completed.err == nil || schedulerErr != nil {
 			continue
 		}
+		if failure, ok := api.AsOperationFailure(completed.err); ok && failure.Code == api.OperationFailureUnknownOutcome {
+			schedulerErr = completed.err
+			continue
+		}
 		failedHost := strings.ToLower(strings.TrimSpace(attempt.target.Host))
 		if failedHost != "" {
 			failedHosts[failedHost] = struct{}{}
+		}
+		if !allowFallback {
+			continue
 		}
 		blockedTrackers := uncoveredTrackers(attempt.target.Trackers)
 		if len(blockedTrackers) == 0 {
@@ -729,6 +750,9 @@ func (m *mediaModule) partialHostUploadIsUsable(
 	published int,
 	err error,
 ) bool {
+	if failure, ok := api.AsOperationFailure(err); ok && failure.Code == api.OperationFailureUnknownOutcome {
+		return false
+	}
 	minimum := m.cfg.ScreenshotHandling.ResolvedMinSuccessfulUploads()
 	if minimum <= 0 || published < minimum || requested < minimum {
 		return false

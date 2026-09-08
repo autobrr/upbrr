@@ -90,6 +90,82 @@ func TestCollectSourceEvidenceKeepsCanonicalSource(t *testing.T) {
 	}
 }
 
+func TestApplyDVDCapacityUsesMeasuredSourceSize(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		meta preparationstate.State
+		want string
+	}{
+		{
+			name: "below DVD5 boundary",
+			meta: preparationstate.State{DiscType: "DVD", SourceSize: dvd5CapacityThreshold - 1},
+			want: "DVD5",
+		},
+		{
+			name: "at DVD5 boundary",
+			meta: preparationstate.State{DiscType: "DVD", SourceSize: dvd5CapacityThreshold},
+			want: "DVD5",
+		},
+		{
+			name: "above DVD5 boundary",
+			meta: preparationstate.State{DiscType: "DVD", SourceSize: dvd5CapacityThreshold + 1},
+			want: "DVD9",
+		},
+		{
+			name: "zero size preserves parsed DVD fact",
+			meta: preparationstate.State{DiscType: "DVD", Release: api.ReleaseInfo{Size: "DVD9"}},
+			want: "DVD9",
+		},
+		{
+			name: "non-DVD preserves parsed size",
+			meta: preparationstate.State{
+				DiscType:   "BDMV",
+				SourceSize: dvd5CapacityThreshold + 1,
+				Release:    api.ReleaseInfo{Size: "BD50"},
+			},
+			want: "BD50",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			applyDVDCapacity(&test.meta)
+			if test.meta.Release.Size != test.want {
+				t.Fatalf("release size = %q, want %q", test.meta.Release.Size, test.want)
+			}
+		})
+	}
+}
+
+func TestCollectSourceEvidencePublishesMeasuredDVDCapacity(t *testing.T) {
+	t.Parallel()
+
+	sourcePath := filepath.Join(t.TempDir(), "Example Release 2026 PAL DVD")
+	videoTSPath := filepath.Join(sourcePath, "VIDEO_TS")
+	if err := os.MkdirAll(videoTSPath, 0o755); err != nil {
+		t.Fatalf("create VIDEO_TS: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(videoTSPath, "VTS_01_1.VOB"), []byte("dvd"), 0o600); err != nil {
+		t.Fatalf("write DVD content: %v", err)
+	}
+
+	repo := &stubRepo{}
+	service := NewService(repo, WithMediaInfoExporter(stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}))
+	meta, err := service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{SourcePath: sourcePath}))
+	if err != nil {
+		t.Fatalf("collect source evidence: %v", err)
+	}
+	if meta.DiscType != "DVD" || meta.SourceSize != 3 || meta.Release.Size != "DVD5" {
+		t.Fatalf("collected DVD facts = type %q, size %d, capacity %q", meta.DiscType, meta.SourceSize, meta.Release.Size)
+	}
+	if repo.saved.Size != "DVD5" {
+		t.Fatalf("persisted release size = %q, want DVD5", repo.saved.Size)
+	}
+}
+
 func TestCollectSourceEvidenceRejectsMalformedSeasonEpisodeInstructionsBeforeSourceScan(t *testing.T) {
 	t.Parallel()
 
