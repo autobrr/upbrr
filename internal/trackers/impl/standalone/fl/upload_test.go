@@ -216,6 +216,27 @@ func TestEnsureLoginCookieStorageAvailableRequiresWebAuth(t *testing.T) {
 	}
 }
 
+func TestSubmitPreparedUploadPreservesLateHTMLFailure(t *testing.T) {
+	t.Parallel()
+
+	const detail = "FL rejected the torrent after validation"
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body: io.NopCloser(strings.NewReader(
+				"<html><body>" + strings.Repeat("padding ", 10*1024) + `<div class="alert-danger">` + detail + "</div></body></html>",
+			)),
+			Request: req,
+		}, nil
+	})}
+
+	_, err := submitPreparedUpload(t.Context(), trackers.PreparationInput{}, client, nil, "application/octet-stream")
+	if err == nil || !strings.Contains(err.Error(), detail) {
+		t.Fatalf("expected late HTML error detail, got %v", err)
+	}
+}
+
 func newFLAuthTestDB(t *testing.T) string {
 	t.Helper()
 

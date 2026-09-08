@@ -19,6 +19,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 	servicedb "github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -691,6 +692,36 @@ func TestLoginAndFetchAntiCsrfTokenClassifiesHTMLResponseWithoutDecodeNoise(t *t
 	}
 	if strings.Contains(err.Error(), "invalid character") || strings.Contains(err.Error(), "temporary outage") {
 		t.Fatalf("HTML-response error exposed parser or remote-body detail: %v", err)
+	}
+}
+
+func TestSubmitPreparedUploadPreservesLateHTMLFailure(t *testing.T) {
+	t.Parallel()
+
+	const detail = "PTP rejected the torrent after validation"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte("<html><body>" + strings.Repeat("padding ", 10*1024) + `<div class="alert alert--error">` + detail + `<textarea>private-description</textarea><script>private-script</script></div></body></html>`))
+	}))
+	t.Cleanup(server.Close)
+
+	_, err := submitPreparedUpload(
+		t.Context(),
+		trackers.PreparationInput{},
+		uploadState{
+baseURL: server.URL,
+ uploadURL: server.URL,
+ client: server.Client(),
+},
+		nil,
+		"application/octet-stream",
+		"",
+	)
+	if err == nil || !strings.Contains(err.Error(), detail) {
+		t.Fatalf("expected late HTML error detail, got %v", err)
+	}
+	if strings.Contains(err.Error(), "private-description") || strings.Contains(err.Error(), "private-script") || strings.Contains(err.Error(), "padding") {
+		t.Fatalf("error included content outside the visible alert: %v", err)
 	}
 }
 

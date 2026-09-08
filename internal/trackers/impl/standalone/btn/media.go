@@ -25,6 +25,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+var errBTNExplicitAutofillFailure = errors.New("trackers: BTN autofill validation failed: explicit autofill failure")
+
 // buildBTNAutofillPayload returns the form fields for BTN's first upload.php
 // POST. TVDB-backed uploads submit the series id plus season or episode token;
 // scene-name autofill is used only when no TVDB series id is available.
@@ -163,16 +165,61 @@ func requestBTNAutofillFields(
 		return nil, fmt.Errorf("trackers: BTN autofill request: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("trackers: BTN autofill failed status=%d", resp.StatusCode)
+	lookup := "tvdb"
+	if autofillPayload.Get("scene_yesno") == "Yes" {
+		lookup = "release_name"
 	}
-	htmlPayload, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		_, detail, readErr := commonhttp.ReadUploadResponseBody(resp, false, commonhttp.DefaultResponsePreviewBytes)
+		if readErr != nil {
+			return nil, fmt.Errorf("trackers: BTN read autofill failure lookup=%s status=%d: %w", lookup, resp.StatusCode, readErr)
+		}
+		return nil, fmt.Errorf("trackers: BTN autofill failed lookup=%s status=%d: %s", lookup, resp.StatusCode, detail)
+	}
+	const responseLimit = 1 << 20
+	htmlPayload, err := io.ReadAll(io.LimitReader(resp.Body, responseLimit+1))
+	boundedPayload := htmlPayload[:min(len(htmlPayload), responseLimit)]
 	if err != nil {
-		return nil, fmt.Errorf("trackers: BTN read autofill response: %w", err)
+		return nil, fmt.Errorf(
+			"trackers: BTN read autofill response lookup=%s status=%d: %w; %s", lookup, resp.StatusCode, err, commonhttp.ExtractHTTPErrorDetail(boundedPayload),
+		)
+	}
+	if len(htmlPayload) > responseLimit {
+		return nil, fmt.Errorf(
+			"trackers: BTN autofill response exceeded 1 MiB lookup=%s status=%d: %s",
+			lookup,
+			resp.StatusCode,
+			commonhttp.ExtractHTTPErrorDetail(boundedPayload),
+		)
 	}
 	fields := extractAutofillFields(string(htmlPayload))
+	failedFields := make([]string, 0, 2)
+	for _, name := range []string{"artist", "title"} {
+		if strings.EqualFold(strings.TrimSpace(fields[name]), "autofill fail") {
+			failedFields = append(failedFields, name)
+		}
+	}
+	if len(failedFields) > 0 {
+		detail := commonhttp.ExtractHTMLFormErrorDetail(htmlPayload)
+		if detail == "" {
+			detail = "Autofill Fail"
+		}
+		return nil, fmt.Errorf(
+			"%w lookup=%s status=%d fields=%s: %s",
+			errBTNExplicitAutofillFailure,
+			lookup,
+			resp.StatusCode,
+			strings.Join(failedFields, ","),
+			detail,
+		)
+	}
 	if !validateAutofill(fields, uploadType) {
-		return nil, errors.New("trackers: BTN autofill validation failed")
+		return nil, fmt.Errorf(
+			"trackers: BTN autofill validation failed lookup=%s status=%d: %s",
+			lookup,
+			resp.StatusCode,
+			commonhttp.ExtractHTTPErrorDetail(htmlPayload),
+		)
 	}
 	return fields, nil
 }
