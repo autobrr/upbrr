@@ -991,9 +991,9 @@ func (m *sensitiveModel) declare(name string, value sensitiveValue, sensitive bo
 // assign updates the nearest existing binding or declares one when assignment
 // targets a name not yet seen by the model.
 func (m *sensitiveModel) assign(name string, value sensitiveValue, sensitive bool) {
-	for i := len(m.scopes) - 1; i >= 0; i-- {
-		if _, ok := m.scopes[i][name]; ok {
-			m.scopes[i][name] = sensitiveBinding{value: value, sensitive: sensitive}
+	for _, v := range slices.Backward(m.scopes) {
+		if _, ok := v[name]; ok {
+			v[name] = sensitiveBinding{value: value, sensitive: sensitive}
 			return
 		}
 	}
@@ -1003,8 +1003,8 @@ func (m *sensitiveModel) assign(name string, value sensitiveValue, sensitive boo
 // lookup resolves a binding from innermost to outermost scope and returns
 // whether the current value is sensitive.
 func (m *sensitiveModel) lookup(name string) (sensitiveValue, bool) {
-	for i := len(m.scopes) - 1; i >= 0; i-- {
-		binding, ok := m.scopes[i][name]
+	for _, v := range slices.Backward(m.scopes) {
+		binding, ok := v[name]
 		if !ok {
 			continue
 		}

@@ -144,10 +144,9 @@ func TestWorkflowDescriptionBuilderBindsProjectionMediaInputsAndImageFeedback(t 
 	}
 	privateMedia := workflowMediaPrivateArtifacts{
 		Screenshots: []api.ScreenshotImage{{Path: "C:\\private\\screen.png", Purpose: api.ScreenshotPurposeFinal}},
-		DVDMenus: []api.DVDMenuCaptureImage{{ScreenshotImage: api.ScreenshotImage{
+		DVDMenus: []api.DVDMenuCaptureImage{{
 			Path:    "C:\\private\\menu.png",
-			Purpose: api.ScreenshotPurposeMenu,
-		}}},
+			Purpose: api.ScreenshotPurposeMenu}},
 		HostedImages: map[api.PublicResourceID]api.UploadedImageLink{
 			"hosted-1": {
 				ImagePath: "C:\\private\\screen.png",
@@ -231,62 +230,62 @@ func TestResolveWorkflowExactMediaKeepsChannelsAndHostedVariantsSeparate(t *test
 
 	media := api.MediaArtifactSet{Artifacts: []api.MediaArtifact{
 		{
-ID: "screen-1",
- Kind: api.MediaArtifactScreenshot,
- Purpose: api.ScreenshotPurposeFinal,
- Selected: true,
- Order: 2,
-},
-		{
-ID: "menu-1",
- Kind: api.MediaArtifactDVDMenu,
- Purpose: api.ScreenshotPurposeMenu,
- Selected: true,
- Order: 1,
-},
-		{
-ID: "screen-2",
- Kind: api.MediaArtifactScreenshot,
- Purpose: api.ScreenshotPurposeFinal,
- Selected: true,
- Order: 0,
-},
-		{
-ID: "menu-2",
- Kind: api.MediaArtifactDVDMenu,
- Purpose: api.ScreenshotPurposeMenu,
- Selected: true,
- Order: 0,
-},
-		{
-ID: "screen-3",
- Kind: api.MediaArtifactScreenshot,
- Purpose: api.ScreenshotPurposeFinal,
- Selected: true,
- Order: 3,
-},
-		{
-ID: "screen-4",
- Kind: api.MediaArtifactScreenshot,
- Purpose: api.ScreenshotPurposeFinal,
- Selected: true,
- Order: 1,
-},
-		{
-			ID: "hosted-screen",
- Kind: api.MediaArtifactHostedImage,
- Purpose: api.ScreenshotPurposeFinal,
+			ID:       "screen-1",
+			Kind:     api.MediaArtifactScreenshot,
+			Purpose:  api.ScreenshotPurposeFinal,
 			Selected: true,
- Order: 6,
- Source: "screen-2",
+			Order:    2,
 		},
 		{
-			ID: "hosted-menu",
- Kind: api.MediaArtifactHostedImage,
- Purpose: api.ScreenshotPurposeMenu,
+			ID:       "menu-1",
+			Kind:     api.MediaArtifactDVDMenu,
+			Purpose:  api.ScreenshotPurposeMenu,
 			Selected: true,
- Order: 7,
- Source: "menu-2",
+			Order:    1,
+		},
+		{
+			ID:       "screen-2",
+			Kind:     api.MediaArtifactScreenshot,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+			Order:    0,
+		},
+		{
+			ID:       "menu-2",
+			Kind:     api.MediaArtifactDVDMenu,
+			Purpose:  api.ScreenshotPurposeMenu,
+			Selected: true,
+			Order:    0,
+		},
+		{
+			ID:       "screen-3",
+			Kind:     api.MediaArtifactScreenshot,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+			Order:    3,
+		},
+		{
+			ID:       "screen-4",
+			Kind:     api.MediaArtifactScreenshot,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+			Order:    1,
+		},
+		{
+			ID:       "hosted-screen",
+			Kind:     api.MediaArtifactHostedImage,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+			Order:    6,
+			Source:   "screen-2",
+		},
+		{
+			ID:       "hosted-menu",
+			Kind:     api.MediaArtifactHostedImage,
+			Purpose:  api.ScreenshotPurposeMenu,
+			Selected: true,
+			Order:    7,
+			Source:   "menu-2",
 		},
 	}}
 	private := workflowMediaPrivateArtifacts{
@@ -297,8 +296,8 @@ ID: "screen-4",
 			{Path: "screen-4.png", Purpose: api.ScreenshotPurposeFinal},
 		},
 		DVDMenus: []api.DVDMenuCaptureImage{
-			{ScreenshotImage: api.ScreenshotImage{Path: "menu-1.png", Purpose: api.ScreenshotPurposeMenu}},
-			{ScreenshotImage: api.ScreenshotImage{Path: "menu-2.png", Purpose: api.ScreenshotPurposeMenu}},
+			{Path: "menu-1.png", Purpose: api.ScreenshotPurposeMenu},
+			{Path: "menu-2.png", Purpose: api.ScreenshotPurposeMenu},
 		},
 		HostedImages: map[api.PublicResourceID]api.UploadedImageLink{
 			"hosted-screen": {ImagePath: "screen-2.png", RawURL: "https://img.example/screen-2.png"},

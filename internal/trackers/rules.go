@@ -343,21 +343,7 @@ func resolveGroup(meta api.RuleSubject) string {
 }
 
 func resolveResolution(meta api.RuleSubject) string {
-	resolution := strings.TrimSpace(meta.Release.Resolution)
-	if resolution == "" {
-		resolution = detectResolution(meta.ReleaseName)
-	}
-	return strings.ToLower(strings.TrimSpace(resolution))
-}
-
-func detectResolution(value string) string {
-	clean := strings.ToLower(value)
-	for _, candidate := range []string{"8640p", "4320p", "2160p", "1440p", "1080p", "1080i", "720p", "576p", "576i", "480p", "480i"} {
-		if strings.Contains(clean, candidate) {
-			return candidate
-		}
-	}
-	return ""
+	return strings.ToLower(strings.TrimSpace(meta.Release.Resolution))
 }
 
 func isDiscType(value string) bool {
@@ -372,14 +358,6 @@ func isDiscType(value string) bool {
 
 func isHEVC(meta api.RuleSubject) bool {
 	codec := strings.ToUpper(strings.TrimSpace(meta.VideoCodec))
-	if codec == "" {
-		for _, value := range meta.Release.Codec {
-			if strings.EqualFold(strings.TrimSpace(value), "HEVC") || strings.EqualFold(strings.TrimSpace(value), "H.265") {
-				return true
-			}
-		}
-		return false
-	}
 	return codec == "HEVC" || codec == "H.265"
 }
 

@@ -26,6 +26,36 @@ func TestResolveGenresPreservesUnknownGenres(t *testing.T) {
 	}
 }
 
+func TestResolveResolutionUsesResolvedFactOnly(t *testing.T) {
+	t.Parallel()
+
+	resolved := resolveResolution(api.UploadSubject{
+		Release:     api.ReleaseInfo{Resolution: "1080p"},
+		ReleaseName: "Example.Movie.2026.2160p-GRP",
+	})
+	if resolved["width"] != "1920" || resolved["height"] != "1080" {
+		t.Fatalf("resolved dimensions = %#v", resolved)
+	}
+	rawOnly := resolveResolution(api.UploadSubject{ReleaseName: "Example.Movie.2026.2160p-GRP"})
+	if rawOnly["width"] != "" || rawOnly["height"] != "" {
+		t.Fatalf("raw-only dimensions = %#v", rawOnly)
+	}
+}
+
+func TestResolveContainerUsesResolvedFactOnly(t *testing.T) {
+	t.Parallel()
+
+	if got := resolveContainer(api.UploadSubject{Container: "mkv", VideoPath: "example.mp4"}); got != "6" {
+		t.Fatalf("resolved container = %q", got)
+	}
+	if got := resolveContainer(api.UploadSubject{VideoPath: "example.mkv", SourcePath: "example.mp4"}); got != "" {
+		t.Fatalf("path-only container = %q", got)
+	}
+	if got := resolveContainer(api.UploadSubject{DiscType: "BDMV"}); got != "5" {
+		t.Fatalf("disc container = %q", got)
+	}
+}
+
 func TestResolveOverviewUsesScopedTVOverviewOnlyForEpisodeOrSeasonPack(t *testing.T) {
 	t.Parallel()
 

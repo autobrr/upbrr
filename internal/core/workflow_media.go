@@ -45,18 +45,29 @@ type discFrameKey struct {
 	index  int
 }
 
+// Plan resolves screenshot suggestions only when projections require screenshots.
+// It retains DVD-menu requirements for Build without resolving a screenshot source.
 func (b workflowMediaBuilder) Plan(
 	ctx context.Context,
 	release api.ReleaseRef,
 	projections api.TrackerReleaseProjectionSet,
 	_ time.Time,
 ) (api.MediaPlan, error) {
-	if b.resolver == nil || b.screenshots == nil {
-		return api.MediaPlan{}, errors.New("workflow media plan service is unavailable")
+	requirements := make([]api.MediaCaptureRequirement, 0, len(projections.Projections))
+	for _, projection := range projections.Projections {
+		requirements = append(requirements, api.MediaCaptureRequirement{
+			TrackerID:       projection.TrackerID,
+			ScreenshotCount: projection.Artifacts.ScreenshotCount,
+			DVDMenuCount:    projection.Artifacts.DVDMenuCount,
+			Purpose:         api.ScreenshotPurposeFinal,
+		})
 	}
 	screenshotCount, _ := projectedMediaRequirements(projections.Projections)
 	if screenshotCount <= 0 {
-		screenshotCount = b.config.ScreenshotHandling.Screens
+		return api.MediaPlan{Requirements: requirements}, nil
+	}
+	if b.resolver == nil || b.screenshots == nil {
+		return api.MediaPlan{}, errors.New("workflow media plan service is unavailable")
 	}
 	subject, err := b.resolver.ResolveScreenshotSubject(ctx, api.MediaPlanInput{
 		Release: release,
@@ -69,15 +80,6 @@ func (b workflowMediaBuilder) Plan(
 	plan, err := b.screenshots.Plan(ctx, subject, screenshotCount)
 	if err != nil {
 		return api.MediaPlan{}, fmt.Errorf("workflow media plan: %w", err)
-	}
-	requirements := make([]api.MediaCaptureRequirement, 0, len(projections.Projections))
-	for _, projection := range projections.Projections {
-		requirements = append(requirements, api.MediaCaptureRequirement{
-			TrackerID:       projection.TrackerID,
-			ScreenshotCount: projection.Artifacts.ScreenshotCount,
-			DVDMenuCount:    projection.Artifacts.DVDMenuCount,
-			Purpose:         api.ScreenshotPurposeFinal,
-		})
 	}
 	discs := make([]api.MediaDiscPlan, 0, len(plan.Discs))
 	for _, disc := range plan.Discs {
@@ -1481,20 +1483,20 @@ func (b workflowMediaBuilder) mediaMutationBase(
 		return api.MediaArtifactSet{}, workflowMediaPrivateArtifacts{}, fmt.Errorf("workflow media fingerprint: %w", err)
 	}
 	return api.MediaArtifactSet{
-			CaptureFingerprint:      fingerprint,
-			RequirementsFingerprint: requirements,
-			Artifacts:               []api.MediaArtifact{},
-			Status:                  api.StageStatusCompleted,
-		}, workflowMediaPrivateArtifacts{
-			ArtifactImages:    make(map[api.PublicResourceID]api.ScreenshotImage),
-			DVDMenuImages:     make(map[api.PublicResourceID]api.DVDMenuCaptureImage),
-			HostedImages:      make(map[api.PublicResourceID]api.UploadedImageLink),
-			HostedSources:     make(map[api.PublicResourceID]api.PublicResourceID),
-			screenshotService: b.screenshots,
-			dvdMenuService:    b.dvdMenus,
-			hostedRepository:  b.media.repo,
-			commitState:       &workflowMediaCommitState{},
-		}, nil
+		CaptureFingerprint:      fingerprint,
+		RequirementsFingerprint: requirements,
+		Artifacts:               []api.MediaArtifact{},
+		Status:                  api.StageStatusCompleted,
+	}, workflowMediaPrivateArtifacts{
+		ArtifactImages:    make(map[api.PublicResourceID]api.ScreenshotImage),
+		DVDMenuImages:     make(map[api.PublicResourceID]api.DVDMenuCaptureImage),
+		HostedImages:      make(map[api.PublicResourceID]api.UploadedImageLink),
+		HostedSources:     make(map[api.PublicResourceID]api.PublicResourceID),
+		screenshotService: b.screenshots,
+		dvdMenuService:    b.dvdMenus,
+		hostedRepository:  b.media.repo,
+		commitState:       &workflowMediaCommitState{},
+	}, nil
 }
 
 func hostedImageKey(sourceID api.PublicResourceID, link api.UploadedImageLink) string {

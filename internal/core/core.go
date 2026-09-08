@@ -46,6 +46,7 @@ import (
 // the repository only when construction opened that repository internally.
 // Operation contexts are per call and are not retained by Core.
 type Core struct {
+	liveTest  *api.LiveTestPolicy
 	logger    api.Logger
 	repoOwner api.RepositoryOwner
 	ownsRepo  bool
@@ -181,7 +182,10 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 		return nil, fmt.Errorf("core: tracker registry: %w", err)
 	}
 	if services.Clients == nil {
-		services.Clients = torrentclient.NewServiceWithRegistry(cfg, logger, registry)
+		services.Clients = torrentclient.NewServiceWithRegistry(cfg, logger, registry, deps.LiveTest)
+	}
+	if deps.LiveTest != nil {
+		services.Clients = clientdiscovery.WithLiveTestPolicy(services.Clients, deps.LiveTest)
 	}
 	clientDiscovery := clientdiscovery.New(services.Clients, logger)
 	if services.Metadata == nil {
@@ -233,7 +237,17 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 		services.DVDMenus = dvdmenus.NewService(logger, tmpDir, repositories.Media())
 	}
 	if services.Images == nil {
-		services.Images = imagehosting.NewServiceWithRegistry(cfg, logger, repositories.Media(), registry)
+		if deps.LiveTest != nil {
+			images, err := imagehosting.NewLiveTestServiceWithRegistry(
+				cfg, logger, repositories.Media(), registry, deps.LiveTest.RunID(), deps.LiveTest.ImageJournalPath(), deps.LiveTest.ImageUploadLimit(),
+			)
+			if err != nil {
+				return nil, fmt.Errorf("core: live-test image hosting: %w", err)
+			}
+			services.Images = images
+		} else {
+			services.Images = imagehosting.NewServiceWithRegistry(cfg, logger, repositories.Media(), registry)
+		}
 	}
 	if services.Trackers == nil {
 		services.Trackers = trackers.NewServiceWithRegistryAndImages(
@@ -247,13 +261,14 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 			},
 			registry,
 			services.Images,
+			deps.LiveTest,
 		)
 	}
 	if services.Filesystem == nil {
 		services.Filesystem = filesystem.NewValidatorWithLogger(logger)
 	}
 	if services.Dupes == nil {
-		services.Dupes = dupechecking.NewServiceWithRegistry(cfg, logger, registry)
+		services.Dupes = dupechecking.NewServiceWithRegistry(cfg, logger, registry, deps.LiveTest)
 	}
 	if services.TrackerAuth == nil {
 		services.TrackerAuth = trackerauth.NewServiceWithRegistryAndLogger(cfg, registry, logger)
@@ -330,7 +345,9 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 	}
 	e2eOptions := e2eReleaseWorkflowOptions()
 	workflowOptions := make([]releaseworkflow.Option, 0, 9+len(e2eOptions))
-	workflowOptions = append(workflowOptions,
+	workflowOptions = append(
+		workflowOptions,
+		releaseworkflow.WithLiveTestPolicy(deps.LiveTest),
 		releaseworkflow.WithTrackerProjectionBuilder(trackerWorkflowProjector),
 		releaseworkflow.WithTrackerPreflightBuilder(workflowPreflightBuilder{
 			auth:     services.TrackerAuth,
@@ -345,7 +362,9 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 			resolver: preparedFacts,
 			trackers: services.Trackers,
 		}),
-		releaseworkflow.WithUploadPlanBuilder(newWorkflowUploadPlanBuilder(cfg, preparedFacts, services.Trackers, services.Torrents, services.Clients)),
+		releaseworkflow.WithUploadPlanBuilder(
+			newWorkflowUploadPlanBuilder(cfg, preparedFacts, services.Trackers, services.Torrents, services.Clients, deps.LiveTest),
+		),
 		releaseworkflow.WithOperationErrorClassifier(classifyOperationError),
 		releaseworkflow.WithLogger(logger),
 	)
@@ -361,6 +380,7 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 	}
 
 	core := &Core{
+		liveTest:      deps.LiveTest,
 		logger:        logger,
 		repoOwner:     repoOwner,
 		ownsRepo:      ownsRepo,

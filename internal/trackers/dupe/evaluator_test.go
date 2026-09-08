@@ -5,11 +5,72 @@ package dupe
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestTitleEditionDefaultRequiresNamingContractAndRecognizableTitles(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name           string
+		defaultEdition string
+		recognizable   bool
+		want           api.DupeRelation
+	}{
+		{
+			name:         "no naming contract",
+			recognizable: true,
+			want:         api.DupeRelationInsufficientEvidence,
+		},
+		{
+			name:           "declared default cut",
+			defaultEdition: "Theatrical",
+			recognizable:   true,
+			want:           api.DupeRelationSameSlot,
+		},
+		{
+			name:           "unrecognizable titles",
+			defaultEdition: "Theatrical",
+			want:           api.DupeRelationInsufficientEvidence,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			target := api.TrackerDuplicateTarget{
+				Names:      []string{"Example PROPOSED"},
+				Type:       "REMUX",
+				Resolution: "1080p",
+			}
+			candidate := TrackerCandidate{
+				Name:       "Example EXISTING",
+				Type:       "REMUX",
+				Resolution: "1080p",
+			}
+			if test.recognizable {
+				target.Names = []string{"Example Movie 2026 1080p BluRay REMUX AVC-GRP"}
+				candidate.Name = "Example Movie 2026 1080p BluRay REMUX AVC-OTHER"
+			}
+			policy := trackerspkg.DupePolicy{
+				ID:                     "example/duplicate/v1",
+				DefaultTitleEdition:    test.defaultEdition,
+				SlotDimensions:         []trackerspkg.DupeDimension{trackerspkg.DupeDimensionEdition},
+				CompleteSlotDimensions: []trackerspkg.DupeDimension{trackerspkg.DupeDimensionEdition},
+			}
+			got := Evaluate(target, []TrackerCandidate{candidate}, policy, SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID})
+			if got.Candidates[0].Relation != test.want || got.Blocks || !got.RequiresAction {
+				t.Fatalf("evaluation = %#v, want relation %s and review without a hard block", got, test.want)
+			}
+			if test.want == api.DupeRelationSameSlot && (got.TargetFacts.Edition.Value != "theatrical" ||
+				got.TargetFacts.Edition.Status != FactComplete || got.Candidates[0].Facts.Edition.Value != "theatrical" ||
+				got.Candidates[0].Facts.Edition.Status != FactComplete) {
+				t.Fatalf("target/candidate default editions = %#v / %#v", got.TargetFacts.Edition, got.Candidates[0].Facts.Edition)
+			}
+		})
+	}
+}
 
 func TestEvaluateRetainsDistinctCandidateRelations(t *testing.T) {
 	t.Parallel()
@@ -716,6 +777,105 @@ func TestNormalizeCandidateUsesExplicitTitleHDRAsPartialEvidence(t *testing.T) {
 	}
 }
 
+func TestNormalizeTrackerTitleHDRPreservesSpecificFormats(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name               string
+		title              string
+		formats            []api.HDRFormat
+		fallbackFormats    []api.HDRFormat
+		dolbyVisionProfile string
+	}{
+		{
+			name:    "WCG",
+			title:   "Example.Release.2026.WCG.2160p-GRP",
+			formats: []api.HDRFormat{api.HDRFormatWCG},
+		},
+		{
+			name:    "joined HDR Vivid",
+			title:   "Example.Release.2026.HDRVivid.2160p-GRP",
+			formats: []api.HDRFormat{api.HDRFormatHDRVivid},
+		},
+		{
+			name:    "dotted HDR Vivid",
+			title:   "Example.Release.2026.HDR.Vivid.2160p-GRP",
+			formats: []api.HDRFormat{api.HDRFormatHDRVivid},
+		},
+		{
+			name:    "spaced HDR Vivid",
+			title:   "Example Release 2026 HDR Vivid 2160p-GRP",
+			formats: []api.HDRFormat{api.HDRFormatHDRVivid},
+		},
+		{
+			name:    "hyphenated HDR Vivid",
+			title:   "Example.Release.2026.HDR-Vivid.2160p-GRP",
+			formats: []api.HDRFormat{api.HDRFormatHDRVivid},
+		},
+		{
+			name:    "underscored HDR Vivid",
+			title:   "Example.Release.2026.HDR_Vivid.2160p-GRP",
+			formats: []api.HDRFormat{api.HDRFormatHDRVivid},
+		},
+		{
+			name:            "existing DV and HDR10+",
+			title:           "Example.Release.2026.DV.HDR10+.2160p-GRP",
+			formats:         []api.HDRFormat{api.HDRFormatDolbyVision, api.HDRFormatHDR10Plus},
+			fallbackFormats: []api.HDRFormat{api.HDRFormatHDR10Plus, api.HDRFormatHDR10},
+		},
+		{
+			name:               "existing dotted Dolby Vision profile",
+			title:              "Example.Release.2026.DOVI.P5.2160p-GRP",
+			formats:            []api.HDRFormat{api.HDRFormatDolbyVision},
+			dolbyVisionProfile: "5",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got := NormalizeTrackerTitleHDR(test.title)
+			if got.Status != api.HDREvidencePartial || got.Origin != api.HDREvidenceTrackerTitle ||
+				!slices.Equal(got.Formats, test.formats) || !slices.Equal(got.FallbackFormats, test.fallbackFormats) ||
+				got.DolbyVisionProfile != test.dolbyVisionProfile || !slices.Equal(got.SourceFields, []string{"title"}) {
+				t.Fatalf("title HDR = %#v", got)
+			}
+		})
+	}
+
+	plain := NormalizeTrackerTitleHDR("Example.Release.2026.2160p.WEB-DL-GRP")
+	if plain.Status != api.HDREvidenceMissing || plain.Origin != api.HDREvidenceUnknown || len(plain.Formats) != 0 ||
+		!slices.Equal(plain.SourceFields, []string{"title"}) {
+		t.Fatalf("plain title HDR = %#v", plain)
+	}
+}
+
+func TestTitleHDRExcludesWorkAndGroupNames(t *testing.T) {
+	t.Parallel()
+	for _, marker := range []string{"DV", "HDR", "HDR10+", "HLG", "PQ10", "WCG", "HDR Vivid"} {
+		for _, boundary := range []string{"2026", "S01E01"} {
+			t.Run(marker+" "+boundary, func(t *testing.T) {
+				t.Parallel()
+				facts := hdrFactsFromCandidateTitle("Example " + marker + " Movie " + boundary + " 2160p BluRay REMUX HEVC-GRP")
+				if facts.Status != api.HDREvidenceMissing || len(facts.Formats) != 0 {
+					t.Fatalf("work title became HDR metadata: %#v", facts)
+				}
+			})
+		}
+	}
+	for _, group := range []string{"DV", "HDR", "WCG", "HDRVivid"} {
+		t.Run("group "+group, func(t *testing.T) {
+			t.Parallel()
+			facts := hdrFactsFromCandidateTitle("Example Movie 2026 2160p BluRay REMUX HEVC-" + group)
+			if facts.Status != api.HDREvidenceMissing || len(facts.Formats) != 0 {
+				t.Fatalf("group became HDR metadata: %#v", facts)
+			}
+		})
+	}
+	if facts := hdrFactsFromCandidateTitle("HDR 2160p BluRay REMUX-GRP"); facts.Status != api.HDREvidencePartial {
+		t.Fatalf("unbounded explicit HDR must remain partial: %#v", facts)
+	}
+}
+
 func TestNormalizeCandidateUsesTitleCoordinatesForAllTrackers(t *testing.T) {
 	t.Parallel()
 
@@ -975,15 +1135,21 @@ func TestEvaluateTrackerRuleMissingEvidenceOnlyWhenViable(t *testing.T) {
 	policy := trackerspkg.DupePolicy{ID: "example/duplicate/v2", PrecedenceRules: []trackerspkg.DupeRule{rule}}
 	target := api.TrackerDuplicateTarget{Resolution: "1080p", Provider: "Example"}
 	candidate := TrackerCandidate{Resolution: "720p"}
-	got := Evaluate(target, []TrackerCandidate{candidate}, policy, SearchEvidence{Complete: true}).Candidates[0]
-	if got.Relation != api.DupeRelationInsufficientEvidence || got.WinningRule != rule.ID {
+	evaluation := Evaluate(target, []TrackerCandidate{candidate}, policy, SearchEvidence{Complete: true})
+	got := evaluation.Candidates[0]
+	if got.Relation != api.DupeRelationInsufficientEvidence || got.WinningRule != rule.ID ||
+		!strings.Contains(got.Reasons[0].Message, "comparison evidence: candidate provider.") {
 		t.Fatalf("viable missing rule = %#v", got)
+	}
+	if public := publicCandidateEvaluations(evaluation); !slices.Equal(public[0].Reasons, got.Reasons) {
+		t.Fatalf("public explanation lost comparison evidence: %#v", public)
 	}
 
 	rule.Conditions[0].TargetValues = []string{"2160p"}
 	policy.PrecedenceRules = []trackerspkg.DupeRule{rule}
 	got = Evaluate(target, []TrackerCandidate{candidate}, policy, SearchEvidence{Complete: true}).Candidates[0]
-	if got.Relation != api.DupeRelationCoexists || got.Reasons[0].Code != "resolution_differs" {
+	if got.Relation != api.DupeRelationCoexists || got.Reasons[0].Code != "resolution_differs" ||
+		strings.Contains(got.Reasons[0].Message, "provider") {
 		t.Fatalf("disproved missing rule = %#v", got)
 	}
 }

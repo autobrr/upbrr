@@ -7,11 +7,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/trackers"
 )
 
 func TestLoginSessionBootstrapsHiddenFieldsAndFollowsRedirect(t *testing.T) {
@@ -161,4 +164,40 @@ func TestLoginSessionRejectsWeakAuthenticatedMarkers(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSubmitPreparedUploadPreservesLateNonSuccessHTMLFailure(t *testing.T) {
+	t.Parallel()
+
+	const detail = "THR rejected the torrent after validation"
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusUnprocessableEntity,
+			Header:     make(http.Header),
+			Body: io.NopCloser(strings.NewReader(
+				"<html><body>" + strings.Repeat("padding ", 10*1024) + `<div class="alert-danger">` + detail + "</div></body></html>",
+			)),
+			Request: req,
+		}, nil
+	})}
+
+	_, err := submitPreparedUpload(
+		t.Context(),
+		trackers.PreparationInput{},
+		uploadState{},
+		client,
+		nil,
+		"application/octet-stream",
+		"",
+		"",
+	)
+	if err == nil || !strings.Contains(err.Error(), detail) {
+		t.Fatalf("expected late HTML error detail, got %v", err)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
 }

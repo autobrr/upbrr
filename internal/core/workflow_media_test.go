@@ -48,6 +48,29 @@ func (workflowMediaResolverFake) ResolveDVDMenuSubject(
 	return api.DVDMenuSubject{SourcePath: input.Release.SourcePath, DiscType: "DVD"}, nil
 }
 
+type workflowMediaPlanResolverFake struct {
+	screenshotInputs []api.MediaPlanInput
+	err              error
+}
+
+func (f *workflowMediaPlanResolverFake) ResolveScreenshotSubject(
+	_ context.Context,
+	input api.MediaPlanInput,
+) (api.ScreenshotSubject, error) {
+	f.screenshotInputs = append(f.screenshotInputs, input)
+	if f.err != nil {
+		return api.ScreenshotSubject{}, f.err
+	}
+	return api.ScreenshotSubject{SourcePath: input.Release.SourcePath}, nil
+}
+
+func (*workflowMediaPlanResolverFake) ResolveDVDMenuSubject(
+	context.Context,
+	api.MediaPlanInput,
+) (api.DVDMenuSubject, error) {
+	return api.DVDMenuSubject{}, nil
+}
+
 type workflowScreenshotFake struct {
 	root       string
 	plan       *api.ScreenshotPlan
@@ -55,20 +78,113 @@ type workflowScreenshotFake struct {
 	plans      int
 	captures   int
 	selections []api.ScreenshotSelection
+	planCounts []int
 	deleted    []string
 	err        error
 }
 
 func (f *workflowScreenshotFake) Plan(
-	context.Context,
-	api.ScreenshotSubject,
-	int,
+	_ context.Context,
+	_ api.ScreenshotSubject,
+	count int,
 ) (api.ScreenshotPlan, error) {
 	f.plans++
+	f.planCounts = append(f.planCounts, count)
 	if f.plan != nil {
 		return *f.plan, nil
 	}
 	return api.ScreenshotPlan{SuggestedSelections: []api.ScreenshotSelection{{Index: 1, TimestampSeconds: 60}}}, nil
+}
+
+func TestWorkflowMediaPlanHonorsProjectedContentRequirements(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name          string
+		artifacts     api.TrackerArtifactRequirements
+		wantPlanCount int
+	}{
+		{name: "none"},
+		{name: "dvd-menu-only", artifacts: api.TrackerArtifactRequirements{DVDMenuCount: 1}},
+		{
+			name:          "images",
+			artifacts:     api.TrackerArtifactRequirements{ScreenshotCount: 2},
+			wantPlanCount: 2,
+		},
+		{
+			name:          "full",
+			artifacts:     api.TrackerArtifactRequirements{ScreenshotCount: 3, Description: true},
+			wantPlanCount: 3,
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			resolver := &workflowMediaPlanResolverFake{}
+			if testCase.wantPlanCount == 0 {
+				resolver.err = errors.New("source artifact is unavailable")
+			}
+			screenshots := &workflowScreenshotFake{}
+			builder := workflowMediaBuilder{
+				config:      config.Config{ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 7}},
+				resolver:    resolver,
+				screenshots: screenshots,
+			}
+			plan, err := builder.Plan(
+				t.Context(),
+				api.ReleaseRef{SourcePath: "missing-source.mkv", Generation: 1},
+				api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
+					TrackerID: "SYNTHETIC",
+					Artifacts: testCase.artifacts,
+				}}},
+				time.Now(),
+			)
+			if err != nil {
+				t.Fatalf("plan workflow media: %v", err)
+			}
+			if len(plan.Requirements) != 1 || plan.Requirements[0].TrackerID != "SYNTHETIC" ||
+				plan.Requirements[0].ScreenshotCount != testCase.artifacts.ScreenshotCount ||
+				plan.Requirements[0].DVDMenuCount != testCase.artifacts.DVDMenuCount {
+				t.Fatalf("media requirements = %#v", plan.Requirements)
+			}
+			if testCase.wantPlanCount == 0 {
+				if len(resolver.screenshotInputs) != 0 || screenshots.plans != 0 || len(plan.SuggestedSelections) != 0 {
+					t.Fatalf("empty media plan resolved source: plan=%#v inputs=%#v calls=%d", plan, resolver.screenshotInputs, screenshots.plans)
+				}
+				return
+			}
+			if len(resolver.screenshotInputs) != 1 || resolver.screenshotInputs[0].Count != testCase.wantPlanCount ||
+				!slices.Equal(screenshots.planCounts, []int{testCase.wantPlanCount}) || len(plan.SuggestedSelections) != 1 {
+				t.Fatalf("media plan = %#v inputs=%#v counts=%v", plan, resolver.screenshotInputs, screenshots.planCounts)
+			}
+		})
+	}
+}
+
+func TestWorkflowMediaBuilderPreservesExplicitCaptureWithoutProjectedRequirement(t *testing.T) {
+	t.Parallel()
+
+	screenshots := &workflowScreenshotFake{root: t.TempDir()}
+	snapshot, _, err := (workflowMediaBuilder{
+		resolver:    workflowMediaResolverFake{},
+		screenshots: screenshots,
+	}).Build(
+		t.Context(),
+		api.ReleaseRef{SourcePath: "Example.Release.2026.mkv", Generation: 1},
+		api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{TrackerID: "SYNTHETIC"}}},
+		api.MediaCaptureInstructions{Purpose: api.ScreenshotPurposeFinal, ScreenshotCount: 1},
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("build explicit workflow media: %v", err)
+	}
+	if snapshot.Status != api.StageStatusCompleted || len(snapshot.Artifacts) != 1 || screenshots.plans != 1 || screenshots.captures != 1 {
+		t.Fatalf("explicit media capture = %#v plans=%d captures=%d", snapshot, screenshots.plans, screenshots.captures)
+	}
+	if !slices.Equal(screenshots.planCounts, []int{1}) || snapshot.Artifacts[0].Index != 1 || snapshot.Artifacts[0].TimestampSeconds != 60 {
+		t.Fatalf("explicit media artifact = %#v", snapshot.Artifacts[0])
+	}
 }
 
 func (f *workflowScreenshotFake) Capture(
@@ -392,13 +508,14 @@ func (f *workflowDVDMenuFake) Capture(
 		return *f.result, nil
 	}
 	return api.DVDMenuCaptureResult{
-		Images: []api.DVDMenuCaptureImage{{ScreenshotImage: api.ScreenshotImage{
+		Images: []api.DVDMenuCaptureImage{{
 			Path:      "C:\\private\\menu.png",
 			Purpose:   api.ScreenshotPurposeMenu,
 			Width:     720,
 			Height:    480,
 			SizeBytes: 4321,
-		}, Discovery: api.DVDMenuDiscoveryReachable}},
+			Discovery: api.DVDMenuDiscoveryReachable,
+		}},
 		MaxItems: maxItems,
 		Complete: true,
 	}, nil
@@ -805,10 +922,9 @@ func TestWorkflowMediaBuilderMenuRecaptureReplacesAutomaticAndPreservesManual(t 
 	t.Parallel()
 
 	dvdMenus := &workflowDVDMenuFake{result: &api.DVDMenuCaptureResult{
-		Images: []api.DVDMenuCaptureImage{{ScreenshotImage: api.ScreenshotImage{
+		Images: []api.DVDMenuCaptureImage{{
 			Path:    "new-auto-menu.png",
-			Purpose: api.ScreenshotPurposeMenu,
-		}}},
+			Purpose: api.ScreenshotPurposeMenu}},
 		Partial: true,
 		Warnings: []api.DVDMenuCaptureWarning{{
 			Code: "partial_coverage", Message: "Synthetic partial coverage.",
@@ -856,8 +972,8 @@ func TestWorkflowMediaBuilderMenuRecaptureReplacesAutomaticAndPreservesManual(t 
 	retained := workflowMediaPrivateArtifacts{
 		Screenshots: []api.ScreenshotImage{{Path: "screen.png", Purpose: api.ScreenshotPurposeFinal}},
 		DVDMenus: []api.DVDMenuCaptureImage{
-			{ScreenshotImage: api.ScreenshotImage{Path: "manual-menu.png", Purpose: api.ScreenshotPurposeMenu}},
-			{ScreenshotImage: api.ScreenshotImage{Path: "old-auto-menu.png", Purpose: api.ScreenshotPurposeMenu}},
+			{Path: "manual-menu.png", Purpose: api.ScreenshotPurposeMenu},
+			{Path: "old-auto-menu.png", Purpose: api.ScreenshotPurposeMenu},
 		},
 		ArtifactImages: map[api.PublicResourceID]api.ScreenshotImage{
 			"screen":      {Path: "screen.png", Purpose: api.ScreenshotPurposeFinal},
@@ -1048,6 +1164,27 @@ func TestWorkflowMediaBuilderRepeatedCaptureIsNoOp(t *testing.T) {
 			t.Fatalf("artifact %d changed across no-op capture: before=%q after=%q", index, first.Artifacts[index].ID, second.Artifacts[index].ID)
 		}
 	}
+
+	// The live lifecycle probe adds a spare slot without changing retained choices.
+	first.Artifacts[0].Selected = false
+	first.Artifacts[0].Order, first.Artifacts[1].Order = first.Artifacts[1].Order, first.Artifacts[0].Order
+	instructions.Selections = append(instructions.Selections, api.ScreenshotSelection{Index: 3, TimestampSeconds: 180})
+	third, _, err := builder.BuildIncremental(t.Context(), release, projections, instructions, &first, retained, time.Now())
+	if err != nil {
+		t.Fatalf("additional incremental capture: %v", err)
+	}
+	if len(third.Artifacts) != 3 || screenshots.captures != 2 {
+		t.Fatalf("extended media = %#v captures=%d", third, screenshots.captures)
+	}
+	for index := range first.Artifacts {
+		before, after := first.Artifacts[index], third.Artifacts[index]
+		if after.ID != before.ID || after.Selected != before.Selected || after.Order != before.Order || after.TimestampSeconds != before.TimestampSeconds {
+			t.Fatalf("retained artifact changed during spare capture: before=%#v after=%#v", before, after)
+		}
+	}
+	if third.Artifacts[2].Index != 3 {
+		t.Fatalf("spare frame used the wrong slot: %#v", third.Artifacts[2])
+	}
 }
 
 func TestWorkflowMediaBuilderRetainsMatchingExistingScreenshots(t *testing.T) {
@@ -1226,8 +1363,8 @@ func TestWorkflowMediaPrivateResourceDeletesThroughManagedServices(t *testing.T)
 	resource := workflowMediaPrivateArtifacts{
 		Screenshots: []api.ScreenshotImage{{Path: "C:\\private\\screen.png"}},
 		DVDMenus: []api.DVDMenuCaptureImage{{
-			ScreenshotImage: api.ScreenshotImage{Path: "C:\\private\\menu.png"},
-			Discovery:       api.DVDMenuDiscoveryReachable,
+			Path:      "C:\\private\\menu.png",
+			Discovery: api.DVDMenuDiscoveryReachable,
 		}},
 		screenshotService: screenshots,
 		dvdMenuService:    dvdMenus,
@@ -1269,8 +1406,8 @@ func TestWorkflowMediaCommitPropagatesMenuDeletionFailure(t *testing.T) {
 	}
 	resource := workflowMediaPrivateArtifacts{
 		DVDMenus: []api.DVDMenuCaptureImage{{
-			ScreenshotImage: api.ScreenshotImage{Path: menuPath},
-			Discovery:       api.DVDMenuDiscoveryReachable,
+			Path:      menuPath,
+			Discovery: api.DVDMenuDiscoveryReachable,
 		}},
 		dvdMenuService: dvdMenus,
 	}

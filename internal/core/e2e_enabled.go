@@ -178,6 +178,7 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 	tvdbID := 0
 	season := 0
 	episode := 0
+	episodeTitle := ""
 	if strings.EqualFold(strings.TrimSpace(os.Getenv(e2eMediaKindEnv)), "tv") {
 		releaseName = "E2E.Show.2026.S01E01.1080p.WEB-DL.DD5.1.H264-UPBRR"
 		releaseNameNoTag = "E2E.Show.2026.S01E01.1080p.WEB-DL.DD5.1.H264"
@@ -188,6 +189,7 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 		tvdbID = 2001
 		season = 1
 		episode = 1
+		episodeTitle = "Example Episode"
 	}
 	meta := preparationstate.State{
 		SourcePath: sourcePath,
@@ -226,6 +228,14 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 			Group:      "UPBRR",
 			Season:     season,
 			Episode:    episode,
+		},
+		ResolvedNaming: preparationstate.ResolvedNaming{
+			Type:         "WEBDL",
+			Title:        title,
+			Year:         2026,
+			Source:       "WEB-DL",
+			Resolution:   resolution,
+			EpisodeTitle: episodeTitle,
 		},
 		DescriptionTemplate: "E2E description fixture.",
 	}
@@ -546,6 +556,7 @@ func e2eClientEvidenceSnapshot(
 		Result: api.ClientSearchResult{
 			InfoHash:            evidence.InfoHash,
 			TorrentPath:         evidence.TorrentPath,
+			TorrentDataVerified: evidence.TorrentDataVerified,
 			TrackerIDs:          evidence.TrackerIDs,
 			FoundTrackerMatch:   evidence.FoundTrackerMatch,
 			TorrentComments:     evidence.TorrentComments,

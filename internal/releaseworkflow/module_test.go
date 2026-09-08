@@ -5,6 +5,7 @@ package releaseworkflow
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -3152,6 +3153,86 @@ func TestModuleOperationCancellationIsIdempotent(t *testing.T) {
 	}
 	if repeated.Sequence != terminal.Sequence || repeated.Status != api.StageStatusCanceled {
 		t.Fatalf("idempotent cancel = %#v, terminal=%#v", repeated, terminal)
+	}
+}
+
+func TestModuleCancellationPreservesRacingTerminalOperation(t *testing.T) {
+	t.Parallel()
+	for _, cancelFirst := range []bool{true, false} {
+		t.Run(fmt.Sprintf("cancel_first=%t", cancelFirst), func(t *testing.T) {
+			t.Parallel()
+			started := make(chan struct{})
+			release := make(chan struct{})
+			base := testPreparer()
+			preparer := ReleasePreparerFunc{
+				PrepareFunc: func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
+					close(started)
+					select {
+					case <-ctx.Done():
+						return api.PrepareResult{}, fmt.Errorf("wait for cancellation: %w", ctx.Err())
+					case <-release:
+						return base.Prepare(ctx, input)
+					}
+				},
+				DisplayFunc:   base.ResolveDisplay,
+				SubjectFunc:   base.ResolveUploadSubject,
+				DuplicateFunc: base.ResolveDuplicateSubject,
+			}
+			module, repository := newTestModule(t, preparer)
+			created := executeCommand(t, module, CreateWorkflowCommand{})
+			operation, err := module.Start(t.Context(), testOwnerID, PrepareReleaseCommand{
+				WorkflowID:       created.Workflow.ID,
+				ExpectedRevision: created.Workflow.Revision,
+				Input:            api.PrepareInput{SourcePath: "source"},
+				IdempotencyKey:   "cancel-racing-terminal",
+			})
+			if err != nil {
+				t.Fatalf("start operation: %v", err)
+			}
+			<-started
+			module.operationWorkersMu.Lock()
+			worker := module.operationWorkers[operation.ID]
+			cancel := worker.cancel
+			worker.cancel = func() {
+				// Force completion after cancellation's initial active-state read,
+				// but before it can publish the cancellation-request message.
+				if cancelFirst {
+					cancel()
+				} else {
+					close(release)
+				}
+				<-worker.done
+			}
+			module.operationWorkers[operation.ID] = worker
+			module.operationWorkersMu.Unlock()
+			t.Cleanup(cancel)
+
+			status, err := module.CancelOperation(t.Context(), testOwnerID, created.Workflow.ID, operation.ID)
+			if err != nil {
+				t.Fatalf("cancel racing terminal operation: %v", err)
+			}
+			wantStatus := api.StageStatusCompleted
+			if cancelFirst {
+				wantStatus = api.StageStatusCanceled
+			}
+			if status.Status != wantStatus {
+				t.Fatalf("cancel status = %s, want %s", status.Status, wantStatus)
+			}
+			work, err := repository.LoadWork(t.Context(), testOwnerID, created.Workflow.ID, operation.ID)
+			if err != nil {
+				t.Fatalf("load terminal checkpoint: %v", err)
+			}
+			var checkpoint api.WorkflowOperationStatus
+			if err := json.Unmarshal(work.Checkpoint, &checkpoint); err != nil {
+				t.Fatalf("decode terminal checkpoint: %v", err)
+			}
+			// Events are appended after the durable checkpoint is written.
+			status.Events = nil
+			checkpoint.Events = nil
+			if !reflect.DeepEqual(status, checkpoint) {
+				t.Fatalf("cancel changed terminal receipt: got %#v, want %#v", status, checkpoint)
+			}
+		})
 	}
 }
 

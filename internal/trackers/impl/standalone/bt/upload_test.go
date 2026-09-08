@@ -98,6 +98,18 @@ func TestResolveTagsPreservesUnknownGenres(t *testing.T) {
 	}
 }
 
+func TestResolveLanguageUsesResolvedAudioFacts(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{AudioLanguages: []string{"Portuguese"}, Release: api.ReleaseInfo{Language: []string{"English"}}}
+	if got := resolveLanguage(meta); got != "portuguese" {
+		t.Fatalf("resolved language = %q", got)
+	}
+	if got := resolveLanguage(api.UploadSubject{Release: api.ReleaseInfo{Language: []string{"English"}}}); got != "" {
+		t.Fatalf("raw language fallback = %q", got)
+	}
+}
+
 func TestBuildDescriptionOmitsBlankLocalizedEpisodeTitleRow(t *testing.T) {
 	t.Parallel()
 

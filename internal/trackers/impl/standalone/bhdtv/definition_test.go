@@ -40,9 +40,11 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 			TorrentPath:                 torrentPath,
 			MediaInfoTextPath:           mediaPath,
 			Type:                        "WEBDL",
+			VideoCodec:                  "H.265",
 			TVPack:                      false,
 			ReleaseName:                 "Show: S01E01 DD+ 1080p WEB-DL H.265",
 			ReleaseNameNoTag:            "Show: S01E01 DD+ 1080p WEB-DL H.265",
+			Release:                     api.ReleaseInfo{Resolution: "1080p"},
 			Identity:                    api.ExternalIdentity{Category: "TV", TVmazeID: 321},
 			ProviderMetadata:            api.SourceScopedMetadata{IMDB: &api.IMDBMetadata{IMDbURL: "https://www.imdb.com/title/tt1234567/"}},
 			TrackerQuestionnaireAnswers: map[string]map[string]string{},
@@ -171,7 +173,9 @@ func TestUploadParsesViewAndWritesArtifact(t *testing.T) {
 			TorrentPath:       torrentPath,
 			MediaInfoTextPath: mediaPath,
 			Type:              "REMUX",
+			VideoCodec:        "x265",
 			ReleaseName:       "Movie 2160p REMUX x265",
+			Release:           api.ReleaseInfo{Resolution: "2160p"},
 			Identity:          api.ExternalIdentity{Category: "MOVIE"},
 		},
 		TrackerConfig: config.TrackerConfig{
@@ -196,5 +200,21 @@ func TestUploadParsesViewAndWritesArtifact(t *testing.T) {
 	}
 	if strings.TrimSpace(summary.UploadedTorrents[0].TorrentPath) != "" {
 		t.Fatal("expected no personalized torrent path without my_announce_url")
+	}
+}
+
+func TestTaxonomyDoesNotInferTechnicalFactsFromRawName(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{
+		Type:        "REMUX",
+		ReleaseName: "Example.Movie.2160p.REMUX.x265-GRP",
+		Identity:    api.ExternalIdentity{Category: "MOVIE"},
+	}
+	if got := resolveResolutionID(meta); got != "10" {
+		t.Fatalf("raw-name resolution = %q", got)
+	}
+	if got := resolveMovieSubcategory(meta); got != "2" {
+		t.Fatalf("raw-name subcategory = %q", got)
 	}
 }

@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -88,8 +87,6 @@ func submitPreparedUpload(
 		return api.UploadSummary{}, fmt.Errorf("trackers: THR upload request: %w", err)
 	}
 	defer resp.Body.Close()
-	bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-
 	finalURL := ""
 	if resp.Request != nil && resp.Request.URL != nil {
 		finalURL = resp.Request.URL.String()
@@ -110,8 +107,12 @@ func submitPreparedUpload(
 		}}}, nil
 	}
 
-	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "THR", "upload_failure", bodyBytes, ".html")
-	return api.UploadSummary{}, commonhttp.UploadHTTPError("THR", resp.StatusCode, bodyBytes)
+	_, responsePreview, err := commonhttp.ReadUploadResponseBody(resp, false, commonhttp.DefaultResponsePreviewBytes)
+	if err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: THR read upload response status=%d: %w", resp.StatusCode, err)
+	}
+	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "THR", "upload_failure", responsePreview, ".html")
+	return api.UploadSummary{}, commonhttp.UploadHTTPError("THR", resp.StatusCode, responsePreview)
 }
 
 func buildUploadPreview(state uploadState) api.TrackerDryRunEntry {

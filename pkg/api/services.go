@@ -287,24 +287,27 @@ type UploadSubject struct {
 	DescriptionGroups   []DescriptionBuilderGroup
 	// DescriptionGroupsFinal distinguishes retained description output from
 	// pre-description subjects whose content may still be generated.
-	DescriptionGroupsFinal      bool
-	Trackers                    []string
-	Options                     UploadOptions
-	TrackersRemove              []string
-	MatchedTrackers             []string
-	Tag                         string
-	Release                     ReleaseInfo
-	DescriptionOverride         string
-	TrackerConfigOverrides      TrackerConfigOverrides
-	TrackerSiteOverrides        TrackerSiteOverrides
-	ImageHostOverrides          ImageHostOverrides
-	DescriptionTemplate         string
-	PersonalRelease             bool
-	InfoHash                    string
-	TrackerIDs                  map[string]string
-	TrackerData                 []TrackerMetadata
-	CrossSeedTorrents           []UploadedTorrent
-	ClientTorrentPath           string
+	DescriptionGroupsFinal bool
+	Trackers               []string
+	Options                UploadOptions
+	TrackersRemove         []string
+	MatchedTrackers        []string
+	Tag                    string
+	Release                ReleaseInfo
+	DescriptionOverride    string
+	TrackerConfigOverrides TrackerConfigOverrides
+	TrackerSiteOverrides   TrackerSiteOverrides
+	ImageHostOverrides     ImageHostOverrides
+	DescriptionTemplate    string
+	PersonalRelease        bool
+	InfoHash               string
+	TrackerIDs             map[string]string
+	TrackerData            []TrackerMetadata
+	CrossSeedTorrents      []UploadedTorrent
+	ClientTorrentPath      string
+	// ClientTorrentDataVerified reports that ClientTorrentPath and InfoHash came
+	// from a complete client record bound to the prepared source path.
+	ClientTorrentDataVerified   bool
 	TorrentPath                 string
 	ArrReleaseGroup             string
 	ReleaseNameOverrides        ReleaseNameOverrides
@@ -356,6 +359,10 @@ type UploadSubject struct {
 	ReleaseName                 string
 	ReleaseNameNoTag            string
 	ReleaseNameClean            string
+	// AlternateTitle is the finalized alternate from this subject's prepared naming facts.
+	// It may include an "AKA " prefix.
+	// Empty means no alternate was selected; NamePresentation controls omission.
+	AlternateTitle string
 	// GeneratedReleaseNames contains canonical structural alternatives. Empty
 	// variants mean ReleaseName must remain exact.
 	GeneratedReleaseNames GeneratedReleaseNameVariants
@@ -1402,6 +1409,7 @@ type DescriptionSubject struct {
 	MediaInfoTextPath     string
 	DVDVOBMediaInfoText   string
 	DescriptionTemplate   string
+	DescriptionGroups     []DescriptionBuilderGroup
 	EpisodeOverview       string
 	Options               UploadOptions
 	Release               ReleaseInfo
@@ -1438,6 +1446,7 @@ func NewDescriptionSubject(subject UploadSubject) DescriptionSubject {
 		MediaInfoTextPath:     subject.MediaInfoTextPath,
 		DVDVOBMediaInfoText:   subject.DVDVOBMediaInfoText,
 		DescriptionTemplate:   subject.DescriptionTemplate,
+		DescriptionGroups:     CloneDescriptionBuilderGroups(subject.DescriptionGroups),
 		EpisodeOverview:       subject.EpisodeOverview,
 		Options:               subject.Options,
 		Release:               subject.Release,
@@ -1520,12 +1529,19 @@ type TorrentOverrides struct {
 // TorrentSubject contains only facts and instructions required to create or
 // validate a torrent artifact for one prepared source.
 type TorrentSubject struct {
-	SourcePath        string
-	SourceSize        int64
-	FileList          []string
-	DiscType          string
+	SourcePath string
+	SourceSize int64
+	FileList   []string
+	DiscType   string
+	// ClientTorrentPath is reusable metainfo selected by client discovery.
 	ClientTorrentPath string
-	Trackers          []string
+	// ClientTorrentInfoHash is the infohash captured with ClientTorrentPath.
+	ClientTorrentInfoHash string
+	// ClientTorrentDataVerified permits skipping piece verification only for
+	// ClientTorrentPath when its current infohash still matches complete,
+	// source-path-bound client evidence.
+	ClientTorrentDataVerified bool
+	Trackers                  []string
 	// SkipIfRehashTrackers lists selected tracker names to omit when their
 	// torrent policy would otherwise require regeneration. Names are case-insensitive.
 	SkipIfRehashTrackers []string
@@ -2153,6 +2169,9 @@ type ClientSearchResult struct {
 	FoundPreferredPiece string
 	MatchedTrackers     []string
 	TorrentPath         string
+	// TorrentDataVerified reports that TorrentPath was selected from a complete
+	// client record whose content path exactly matched the searched source.
+	TorrentDataVerified bool
 }
 
 type TorrentMatch struct {
@@ -2176,8 +2195,10 @@ type TrackerMatch struct {
 	TrackerID string
 }
 
-// ReleaseInfo preserves release-name parser output before provider metadata can
-// remap episode identity.
+// ReleaseInfo carries canonical release fields to operations. Preparation also
+// uses it privately for detached release-name parser evidence.
+// Codec, Audio, HDR, Language, and Ext retain parser tokens for naming
+// transformations; operations must use resolved media fields for technical facts.
 type ReleaseInfo struct {
 	Category   string
 	Type       string

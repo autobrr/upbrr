@@ -34,6 +34,7 @@ func (c *metadataClientRecorder) SearchPathedTorrents(_ context.Context, input a
 	return api.ClientSearchResult{
 		InfoHash:            "client-hash",
 		TorrentPath:         "Example.Release.2026.torrent",
+		TorrentDataVerified: true,
 		TrackerIDs:          map[string]string{"btn": "client-id", "aither": "aither-id"},
 		FoundTrackerMatch:   true,
 		TorrentComments:     []api.TorrentMatch{{Name: "Example.Release.2026"}},
@@ -65,7 +66,8 @@ func TestCollectClientEvidencePrecedesTrackerCandidatesAndPreservesExplicitIDs(t
 	if state.TrackerIDs["btn"] != "explicit-id" || state.TrackerIDs["aither"] != "aither-id" {
 		t.Fatalf("tracker IDs = %#v", state.TrackerIDs)
 	}
-	if state.InfoHash != "client-hash" || state.DiscoveredTorrentPath != "Example.Release.2026.torrent" || !state.FoundTrackerMatch {
+	if state.InfoHash != "client-hash" || state.DiscoveredTorrentPath != "Example.Release.2026.torrent" ||
+		!state.ClientEvidence.Result.TorrentDataVerified || !state.FoundTrackerMatch {
 		t.Fatalf("client state = %#v", state)
 	}
 	if state.PieceSizeConstraint != "4194304" || state.FoundPreferredPiece != "4194304" || len(state.TorrentComments) != 1 {
@@ -105,7 +107,7 @@ func TestHydrateClientEvidenceSearchesManifestFilesOnce(t *testing.T) {
 		t.Fatalf("hydration search calls=%d input=%#v", client.calls, client.input)
 	}
 	if snapshot.Disposition != preparationstate.ClientEvidenceDispositionSearched || !snapshot.ForcedRecheck ||
-		snapshot.Result.InfoHash != "client-hash" {
+		snapshot.Result.InfoHash != "client-hash" || snapshot.Result.TorrentDataVerified {
 		t.Fatalf("hydrated snapshot = %#v", snapshot)
 	}
 }

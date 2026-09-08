@@ -767,6 +767,43 @@ func TestCompositeUploadRefreshesOnlyRecoverablePersistedMediaBlock(t *testing.T
 	}
 }
 
+func TestNormalizeCompositeUploadRequestPreservesManualFramesIntent(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name       string
+		frames     []int
+		wantFrames []int
+	}{
+		{name: "no_manual_frames", frames: []int{}},
+		{
+			name:       "manual_frames",
+			frames:     []int{120, 240},
+			wantFrames: []int{120, 240},
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			count := 4
+			request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeUpload, "media-intent-"+testCase.name)
+			request.Media.Screenshots.Count = &count
+			request.Media.Screenshots.Frames = testCase.frames
+			session, _, err := normalizeCompositeUploadRequest(request)
+			if err != nil {
+				t.Fatalf("normalize composite upload request: %v", err)
+			}
+			if session.Intent.Media == nil || session.Intent.Media.ScreenshotCount != count {
+				t.Fatalf("normalized media intent = %#v", session.Intent.Media)
+			}
+			if !reflect.DeepEqual(session.Intent.Media.ManualFrames, testCase.wantFrames) {
+				t.Fatalf("normalized manual frames = %#v, want %#v", session.Intent.Media.ManualFrames, testCase.wantFrames)
+			}
+		})
+	}
+}
+
 func seedPersistedCompositeMediaBlock(
 	t *testing.T,
 	repository *MemoryRepository,

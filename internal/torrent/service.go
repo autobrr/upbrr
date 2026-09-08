@@ -61,7 +61,9 @@ func NewServiceWithRegistry(logger api.Logger, tmpRoot string, registry *tracker
 
 // Create returns the first reusable torrent in client, source, temporary, then
 // adjacent-path order, unless Rehash requests a new artifact. Reused candidates
-// are checked against tracker policy, source layout, and source bytes. NoHash
+// are checked against tracker policy and source layout. Client-discovered
+// candidates with explicit source-bound complete-data evidence skip local
+// source-byte revalidation; all other candidates are checked against source bytes. NoHash
 // fails when none qualify, while Rehash takes precedence when both overrides
 // are enabled.
 //
@@ -526,6 +528,13 @@ func validateCandidateTorrentContent(path string, meta api.TorrentSubject, logge
 		}
 		return err
 	}
+	if meta.ClientTorrentDataVerified && pathutil.SamePath(path, meta.ClientTorrentPath) {
+		candidateInfoHash, err := loadInfoHash(path)
+		if err == nil && strings.TrimSpace(meta.ClientTorrentInfoHash) != "" &&
+			strings.EqualFold(candidateInfoHash, strings.TrimSpace(meta.ClientTorrentInfoHash)) {
+			return nil
+		}
+	}
 	if err := verifyCandidateTorrentData(path, meta); err != nil {
 		if logger != nil {
 			logger.Debugf("torrent: reusable candidate rejected path=%s stage=piece_hash reason=%s", path, redaction.RedactValue(err.Error(), nil))
@@ -866,7 +875,7 @@ func expectedTorrentFiles(meta api.TorrentSubject) ([]sourceContentFile, bool, e
 	info, err := os.Stat(source)
 	if err == nil && !info.IsDir() {
 		return []sourceContentFile{{
-			contentFile: contentFile{path: filepath.Base(source), length: info.Size()},
+			path: filepath.Base(source), length: info.Size(),
 		}}, true, nil
 	}
 	if err != nil {
@@ -889,7 +898,7 @@ func expectedTorrentFiles(meta api.TorrentSubject) ([]sourceContentFile, bool, e
 			return nil, false, fmt.Errorf("torrent: stat wanted file %q: %w", wanted[0], err)
 		}
 		return []sourceContentFile{{
-			contentFile: contentFile{path: filepath.Base(wanted[0]), length: info.Size()},
+			path: filepath.Base(wanted[0]), length: info.Size(),
 		}}, true, nil
 	}
 	expected := make([]sourceContentFile, 0, len(wanted))
@@ -907,7 +916,7 @@ func expectedTorrentFiles(meta api.TorrentSubject) ([]sourceContentFile, bool, e
 			return nil, false, fmt.Errorf("torrent: stat wanted file %q: %w", file, err)
 		}
 		expected = append(expected, sourceContentFile{
-			contentFile: contentFile{path: filepath.ToSlash(rel), length: info.Size()},
+			path: filepath.ToSlash(rel), length: info.Size(),
 		})
 	}
 	return expected, true, nil
@@ -966,7 +975,7 @@ func diskContentFiles(root string) ([]sourceContentFile, error) {
 	}
 	if !info.IsDir() {
 		return []sourceContentFile{{
-			contentFile: contentFile{path: filepath.Base(root), length: info.Size()},
+			path: filepath.Base(root), length: info.Size(),
 		}}, nil
 	}
 	paths := make([]sourceContentFile, 0)
@@ -1007,7 +1016,7 @@ func diskContentFiles(root string) ([]sourceContentFile, error) {
 			return nil
 		}
 		paths = append(paths, sourceContentFile{
-			contentFile: contentFile{path: filepath.ToSlash(rel), length: info.Size()},
+			path: filepath.ToSlash(rel), length: info.Size(),
 		})
 		return nil
 	})

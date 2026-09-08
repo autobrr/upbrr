@@ -12,13 +12,6 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func firstFile(meta api.UploadSubject) string {
-	if len(meta.FileList) > 0 {
-		return meta.FileList[0]
-	}
-	return meta.SourcePath
-}
-
 func readBDSummary(meta api.UploadSubject, dbPath string) (string, error) {
 	text, err := trackers.ReadBDInfo(dbPath, meta)
 	if err != nil {
@@ -40,24 +33,12 @@ func readTextFile(path string) (string, error) {
 }
 
 func buildMediaSection(meta api.UploadSubject, dbPath string) (string, error) {
-	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
+	discType := strings.ToUpper(strings.TrimSpace(meta.DiscType))
+	switch discType {
 	case "BDMV":
 		text, err := readBDSummary(meta, dbPath)
 		if err != nil {
 			return "", err
-		}
-		if strings.TrimSpace(text) == "" {
-			return "", nil
-		}
-		return "[mediainfo]" + strings.TrimSpace(text) + "[/mediainfo]", nil
-	case "DVD":
-		text := trackers.ReadDVDVOBMediaInfo(meta)
-		if strings.TrimSpace(text) == "" {
-			var err error
-			text, err = readTextFile(strings.TrimSpace(meta.MediaInfoTextPath))
-			if err != nil {
-				return "", err
-			}
 		}
 		if strings.TrimSpace(text) == "" {
 			return "", nil
@@ -68,9 +49,14 @@ func buildMediaSection(meta api.UploadSubject, dbPath string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if strings.TrimSpace(text) == "" {
-			return "", nil
+		text = strings.TrimSpace(text)
+		var sections []string
+		if text != "" {
+			sections = append(sections, "[mediainfo]"+text+"[/mediainfo]")
 		}
-		return "[mediainfo]" + strings.TrimSpace(text) + "[/mediainfo]", nil
+		if vobText := trackers.ReadDVDVOBMediaInfo(meta); discType == "DVD" && strings.TrimSpace(vobText) != "" {
+			sections = append(sections, "[mediainfo]"+vobText+"[/mediainfo]")
+		}
+		return strings.Join(sections, "\n\n"), nil
 	}
 }

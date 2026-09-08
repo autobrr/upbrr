@@ -94,6 +94,53 @@ func TestDefinitionBuildDescriptionUsesResolvedAssetsAndMediaInfo(t *testing.T) 
 	}
 }
 
+func TestBuildMediaSectionIncludesDVDIFOAndVOBMediaInfo(t *testing.T) {
+	tmp := t.TempDir()
+	ifoMediaInfoPath := filepath.Join(tmp, "ifo-mediainfo.txt")
+	if err := os.WriteFile(ifoMediaInfoPath, []byte("General\nFormat : DVD Video"), 0o600); err != nil {
+		t.Fatalf("write IFO mediainfo: %v", err)
+	}
+
+	got, err := buildMediaSection(api.UploadSubject{
+		DiscType:            "DVD",
+		MediaInfoTextPath:   ifoMediaInfoPath,
+		DVDVOBMediaInfoText: "General\nFormat : MPEG-PS",
+	}, "")
+	if err != nil {
+		t.Fatalf("build media section: %v", err)
+	}
+	want := "[mediainfo]General\nFormat : DVD Video[/mediainfo]\n\n[mediainfo]General\nFormat : MPEG-PS[/mediainfo]"
+	if got != want {
+		t.Fatalf("media section = %q, want %q", got, want)
+	}
+}
+
+func TestBuildMediaSectionIncludesEveryDVDVOBReport(t *testing.T) {
+	t.Parallel()
+	got, err := buildMediaSection(api.UploadSubject{
+		DiscType:            "DVD",
+		DVDVOBMediaInfoText: "stale primary report",
+		Discs: []api.DiscEvidenceResource{
+			{
+				Name:                "Disc 1",
+				Type:                "DVD",
+				DVDVOBMediaInfoText: "First VOB report",
+			},
+			{
+				Name:                "Disc 2",
+				Type:                "DVD",
+				DVDVOBMediaInfoText: "Second VOB report",
+			},
+		},
+	}, "")
+	if err != nil {
+		t.Fatalf("build media section: %v", err)
+	}
+	if !strings.Contains(got, "First VOB report") || !strings.Contains(got, "Second VOB report") || strings.Contains(got, "stale primary report") {
+		t.Fatalf("collection media section = %q", got)
+	}
+}
+
 func TestPTPFreshUploadTaxonomy(t *testing.T) {
 	t.Parallel()
 
@@ -106,6 +153,7 @@ func TestPTPFreshUploadTaxonomy(t *testing.T) {
 		Release: api.ReleaseInfo{
 			Resolution: "1440p",
 		},
+		Container: "mkv",
 		ProviderMetadata: api.SourceScopedMetadata{
 			IMDB: &api.IMDBMetadata{Type: "concert"},
 			TMDB: &api.TMDBMetadata{Genres: "Science Fiction, Mystery"},
@@ -166,7 +214,11 @@ func TestPTPFreshUploadTaxonomy(t *testing.T) {
 func TestPTPHardcodedSubtitleQuestionnaire(t *testing.T) {
 	t.Parallel()
 
-	meta := api.UploadSubject{ReleaseName: "Example.Release.2026.1080p.WEB-DL.x265.HARDSUB-GRP"}
+	meta := api.UploadSubject{
+		ReleaseName: "Example.Release.2026.1080p.WEB-DL.x265.HARDSUB-GRP",
+		Release:     api.ReleaseInfo{Resolution: "1080p"},
+		Container:   "mkv",
+	}
 	questionnaire := buildQuestionnaire(meta, "123")
 	if questionnaire == nil || len(questionnaire.Fields) != 1 || questionnaire.Fields[0].Key != "hardcoded_subtitle_languages" {
 		t.Fatalf("questionnaire=%#v", questionnaire)
@@ -291,6 +343,8 @@ func TestDefinitionBuildUploadDryRunForExistingGroup(t *testing.T) {
 			SourcePath:  filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath: torrentPath,
 			ReleaseName: "Movie.2026.1080p.BluRay.x264",
+			Release:     api.ReleaseInfo{Resolution: "1080p"},
+			Container:   "mkv",
 			Source:      "BluRay",
 			VideoCodec:  "AVC",
 			Identity:    api.ExternalIdentity{Category: "MOVIE", IMDBID: 456},
@@ -343,6 +397,8 @@ func TestDefinitionBuildUploadDryRunForNewGroupIncludesQuestionnaire(t *testing.
 			SourcePath:  filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath: torrentPath,
 			ReleaseName: "Movie.2026.1080p.BluRay.x264",
+			Release:     api.ReleaseInfo{Resolution: "1080p"},
+			Container:   "mkv",
 			Source:      "BluRay",
 			VideoCodec:  "AVC",
 			Identity:    api.ExternalIdentity{Category: "MOVIE"},
@@ -425,6 +481,8 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	meta := api.UploadSubject{
 		SourcePath:  filepath.Join(tmp, "Movie.mkv"),
 		ReleaseName: "Movie.2026.1080p.BluRay.x264",
+		Release:     api.ReleaseInfo{Resolution: "1080p"},
+		Container:   "mkv",
 		Source:      "BluRay",
 		VideoCodec:  "AVC",
 		Identity:    api.ExternalIdentity{Category: "MOVIE", IMDBID: 1234567},

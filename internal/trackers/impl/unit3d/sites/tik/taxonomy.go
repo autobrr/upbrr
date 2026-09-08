@@ -32,12 +32,11 @@ func discType(meta api.UploadSubject) string {
 	if strings.EqualFold(strings.TrimSpace(meta.Is3D), "3D") {
 		return "3D"
 	}
-	releaseName := strings.ToUpper(strings.TrimSpace(meta.ReleaseName))
 	source := strings.ToUpper(strings.TrimSpace(meta.Source))
 	if source == "" {
 		source = strings.ToUpper(strings.TrimSpace(meta.Release.Source))
 	}
-	combined := releaseName + " " + source
+	combined := strings.TrimSpace(source + " " + strings.ToUpper(strings.TrimSpace(meta.Release.Size)))
 	for _, marker := range []string{"BD100", "BD66", "BD50", "BD25"} {
 		if strings.Contains(combined, marker) {
 			return marker

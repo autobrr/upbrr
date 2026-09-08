@@ -110,11 +110,13 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		ReleaseName:                 release.Naming.ReleaseName,
 		ReleaseNameNoTag:            release.Naming.NameWithoutTag,
 		ReleaseNameClean:            release.Naming.CleanName,
+		AlternateTitle:              release.Naming.AlternateTitle,
 		NamePresentation:            release.Naming.NamePresentation,
 		GeneratedReleaseNames:       release.Naming.GeneratedReleaseNames,
 		ArrReleaseGroup:             release.Naming.Group,
 		InfoHash:                    resources.clientEvidence.Result.InfoHash,
 		ClientTorrentPath:           resources.clientEvidence.Result.TorrentPath,
+		ClientTorrentDataVerified:   resources.clientEvidence.Result.TorrentDataVerified,
 		TrackerIDs:                  maps.Clone(resources.clientEvidence.Result.TrackerIDs),
 		MatchedTrackers:             append([]string(nil), resources.clientEvidence.Result.MatchedTrackers...),
 	}
@@ -402,7 +404,8 @@ func (m *Module) resolveEnvelope(ctx context.Context, ref api.ReleaseRef) (envel
 func releaseInfo(release api.PreparedRelease) api.ReleaseInfo {
 	naming := release.Naming
 	return api.ReleaseInfo{
-		Type:       naming.Type,
+		Category:   releaseInfoCategory(release.Identity.Category),
+		Type:       release.Media.Type,
 		Artist:     naming.Artist,
 		Title:      naming.Title,
 		Subtitle:   naming.Subtitle,
@@ -410,7 +413,7 @@ func releaseInfo(release api.PreparedRelease) api.ReleaseInfo {
 		Year:       naming.Year,
 		Month:      naming.Month,
 		Day:        naming.Day,
-		Source:     naming.Source,
+		Source:     release.Media.Source,
 		Resolution: naming.Resolution,
 		Codec:      append([]string(nil), naming.Codecs...),
 		Audio:      append([]string(nil), naming.Audio...),
@@ -419,16 +422,29 @@ func releaseInfo(release api.PreparedRelease) api.ReleaseInfo {
 		Language:   append([]string(nil), naming.Languages...),
 		Site:       naming.Site,
 		Genre:      naming.Genre,
-		Channels:   naming.Channels,
+		Channels:   release.Media.Channels,
 		Collection: naming.Collection,
-		Region:     naming.Region,
+		Region:     release.Media.Region,
 		Size:       naming.Size,
 		Group:      naming.Group,
 		Disc:       naming.Disc,
 		Season:     release.Episode.Season,
 		Episode:    release.Episode.Episode,
-		Edition:    append([]string(nil), naming.Editions...),
+		Edition:    singletonFact(release.Media.Edition),
 		Other:      append([]string(nil), naming.Other...),
+	}
+}
+
+func releaseInfoCategory(category api.CanonicalCategory) string {
+	switch category {
+	case api.CanonicalCategoryMovie:
+		return string(api.CategoryMovie)
+	case api.CanonicalCategoryTV:
+		return string(api.CategoryTV)
+	case api.CanonicalCategoryUnknown:
+		return ""
+	default:
+		return ""
 	}
 }
 

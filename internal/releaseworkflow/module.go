@@ -178,6 +178,7 @@ func WithLogger(logger api.Logger) Option {
 
 // Module owns workflow sequencing, invalidation, idempotency, and private retention.
 type Module struct {
+	liveTest                 *api.LiveTestPolicy
 	repository               Repository
 	operations               OperationRepository
 	durability               DurabilityRepository
@@ -258,6 +259,9 @@ func (m *Module) Execute(ctx context.Context, ownerID string, command Command) (
 }
 
 func (m *Module) execute(ctx context.Context, ownerID string, command mutation) (CommandResult, error) {
+	if err := m.rejectLiveTestCommand(command); err != nil {
+		return CommandResult{}, err
+	}
 	if ctx == nil {
 		return CommandResult{}, errors.New("release workflow: context is required")
 	}
@@ -464,6 +468,9 @@ func (m *Module) cleanupSupersededMediaResources(
 // Start durably accepts one long-running command and returns its queued
 // operation before server-owned background work begins.
 func (m *Module) Start(ctx context.Context, ownerID string, command Command) (api.WorkflowOperationStatus, error) {
+	if err := m.rejectLiveTestCommand(command); err != nil {
+		return api.WorkflowOperationStatus{}, err
+	}
 	if ctx == nil {
 		return api.WorkflowOperationStatus{}, errors.New("release workflow: context is required")
 	}
@@ -1424,6 +1431,22 @@ func (m *Module) mutateOperation(
 	operationID api.WorkflowOperationID,
 	mutate func(*api.WorkflowOperationStatus),
 ) (api.WorkflowOperationStatus, error) {
+	return m.mutateOperationIf(ctx, ownerID, workflowID, operationID, func(status *api.WorkflowOperationStatus) bool {
+		mutate(status)
+		return true
+	})
+}
+
+// mutateOperationIf runs mutate under the operation lock. Returning false
+// discards the mutation and returns the prior status without writing a receipt,
+// checkpoint, or events.
+func (m *Module) mutateOperationIf(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+	operationID api.WorkflowOperationID,
+	mutate func(*api.WorkflowOperationStatus) bool,
+) (api.WorkflowOperationStatus, error) {
 	lock := m.operationLock(operationID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -1438,7 +1461,9 @@ func (m *Module) mutateOperation(
 		return api.WorkflowOperationStatus{}, err
 	}
 	record.Status.Events = nil
-	mutate(&record.Status)
+	if !mutate(&record.Status) {
+		return previousStatus, nil
+	}
 	record.Status.Sequence = expectedSequence + 1
 	record.Status.UpdatedAt = m.clock.Now().UTC()
 	ownsWorkLease := record.ProcessEpoch == m.processEpoch
@@ -2201,6 +2226,8 @@ func (m *Module) waitForOperationCleanup(ctx context.Context, operationID api.Wo
 }
 
 // CancelOperation requests cancellation of one active owner-scoped operation.
+// If the operation finishes before the cancellation message is saved, its
+// terminal status is returned unchanged.
 func (m *Module) CancelOperation(
 	ctx context.Context,
 	ownerID string,
@@ -2223,8 +2250,12 @@ func (m *Module) CancelOperation(
 	if worker.cancel != nil {
 		worker.cancel()
 	}
-	return m.mutateOperation(ctx, record.OwnerID, workflowID, operationID, func(status *api.WorkflowOperationStatus) {
+	return m.mutateOperationIf(ctx, record.OwnerID, workflowID, operationID, func(status *api.WorkflowOperationStatus) bool {
+		if !workflowOperationActive(status.Status) {
+			return false
+		}
 		status.Message = "Cancellation requested."
+		return true
 	})
 }
 
@@ -2885,8 +2916,7 @@ func (m *Module) prepareRelease(
 	command.Input.Instructions = facts.Instructions
 	prepared, err := m.preparer.Prepare(ctx, command.Input)
 	if err != nil {
-		var playlistRequired *api.PlaylistSelectionRequiredError
-		if errors.As(err, &playlistRequired) {
+		if playlistRequired, ok := errors.AsType[*api.PlaylistSelectionRequiredError](err); ok {
 			options := playlistActionOptions(playlistRequired.Candidates)
 			if len(options) > 0 {
 				if actionErr := m.blockForPlaylistSelection(state, nextRevision, now, options); actionErr != nil {
@@ -3417,20 +3447,36 @@ func applyPreflightInteractionPolicy(
 		if len(result.RequiredActions) == 0 {
 			continue
 		}
-		result.RequiredActions = nil
-		result.State = api.TrackerPreflightStateFailed
+		projectionIndex, ok := projectionIndexes[result.TrackerID]
 		if len(result.Failures) == 0 {
+			message := "Tracker requires manual input and was skipped in unattended mode."
+			if ok && slices.ContainsFunc(result.RequiredActions, func(action api.RequiredAction) bool {
+				return action.Kind == api.RequiredActionAuthorizeRules
+			}) {
+				var reasons []string
+				for _, decision := range finalized[projectionIndex].PolicyDecisions {
+					if decision.Blocking && decision.Decision == "authorization_required" {
+						if reason := strings.TrimSpace(logging.SanitizeMessage(decision.Message)); reason != "" {
+							reasons = append(reasons, reason)
+						}
+					}
+				}
+				if len(reasons) > 0 {
+					message += " " + strings.Join(reasons, "; ")
+				}
+			}
 			result.Failures = []api.WorkflowFailure{{
 				Failure: api.OperationFailure{
 					Code:      api.OperationFailureMissingPrerequisite,
 					Operation: api.OperationKindDuplicateCheck,
-					Message:   "Tracker requires manual input and was skipped in unattended mode.",
+					Message:   message,
 					Recovery:  api.OperationRecoveryCompletePrerequisite,
 				},
 				TrackerID: result.TrackerID,
 			}}
 		}
-		projectionIndex, ok := projectionIndexes[result.TrackerID]
+		result.RequiredActions = nil
+		result.State = api.TrackerPreflightStateFailed
 		if !ok {
 			continue
 		}

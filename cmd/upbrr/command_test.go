@@ -35,8 +35,7 @@ func executeCLIForTest(ctx context.Context, t *testing.T, args []string) cliExec
 	code := 0
 	if err != nil {
 		code = 1
-		var exitErr *cliExitError
-		if errors.As(err, &exitErr) {
+		if exitErr, ok := errors.AsType[*cliExitError](err); ok {
 			code = exitErr.code
 		}
 	}

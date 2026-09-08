@@ -255,12 +255,14 @@ func regexInt(pattern *regexp.Regexp, value string) int {
 	return parsed
 }
 
+// normalizeDVDScan maps MediaInfo scan types, including MBAFF, to resolution suffixes.
+// Unknown scan types use an interlaced source-name hint or default to progressive.
 func normalizeDVDScan(scanType string, sourceHint string) string {
 	scan := strings.TrimSpace(scanType)
 	if strings.EqualFold(scan, "Progressive") {
 		return "p"
 	}
-	if strings.EqualFold(scan, "Interlaced") {
+	if strings.EqualFold(scan, "Interlaced") || strings.EqualFold(scan, "MBAFF") {
 		return "i"
 	}
 	if interlacedResolutionHintRegex.MatchString(sourceHint) {

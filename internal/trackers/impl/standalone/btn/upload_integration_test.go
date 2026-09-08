@@ -775,6 +775,78 @@ func TestBTNExplicitDryRunRunsAutofillAndReportsBothPayloads(t *testing.T) {
 	}
 }
 
+func TestBTNExplicitDryRunRetriesExplicitTVDBAutofillFailureWithReleaseName(t *testing.T) {
+	t.Parallel()
+
+	dbPath := newBTNAuthDB(t)
+	if err := cookies.SaveTrackerCookieMap(context.Background(), dbPath, "BTN", map[string]string{"session": "imported"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+	var autofillCalls atomic.Int32
+	var uploadCalls atomic.Int32
+	var formsMu sync.Mutex
+	forms := make([]url.Values, 0, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/upload.php":
+			_, _ = io.WriteString(w, `<form action="/upload.php"><input name="autofill"></form>`)
+		case r.Method == http.MethodPost && r.URL.Path == "/upload.php" && strings.HasPrefix(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded"):
+			if err := r.ParseForm(); err != nil {
+				http.Error(w, "bad form", http.StatusBadRequest)
+				return
+			}
+			formsMu.Lock()
+			forms = append(forms, maps.Clone(r.PostForm))
+			formsMu.Unlock()
+			if autofillCalls.Add(1) == 1 {
+				_, _ = io.WriteString(w, `<input name="artist" value="Autofill Fail"><input name="title" value="Autofill Fail">`)
+				return
+			}
+			writeBTNTestAutofillResponse(w, "Expected Show")
+		case r.Method == http.MethodPost && r.URL.Path == "/upload.php":
+			uploadCalls.Add(1)
+			http.Error(w, "unexpected upload", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	logger := &captureBTNLogger{}
+	req := newBTNDryRunTestRequest(t, dbPath)
+	req.Intent = trackers.PreparationIntentDryRun
+	req.Logger = logger
+	req.Meta.MediaInfoTextPath = writeBTNTestMediaInfo(t, filepath.Dir(req.Meta.SourcePath), "General\nFormat: Matroska")
+	req.Meta.Identity.TVDBID = 12345
+	req.Meta.ProviderMetadata.TVDB = &api.TVDBMetadata{
+		TVDBID:           12345,
+		NameEnglish:      "Expected Show",
+		EpisodeSeason:    1,
+		EpisodeNumber:    1,
+		OriginalLanguage: "en",
+	}
+
+	entry, err := buildUploadDryRunAt(context.Background(), req, server.URL)
+	if err != nil {
+		t.Fatalf("BuildUploadDryRun: %v", err)
+	}
+	formsMu.Lock()
+	gotForms := append([]url.Values(nil), forms...)
+	formsMu.Unlock()
+	if entry.Status != "ready" || len(entry.RequiredActions) != 0 || entry.Payload["artist"] != "Expected Show" {
+		t.Fatalf("fallback dry-run entry = %#v", entry)
+	}
+	if autofillCalls.Load() != 2 || uploadCalls.Load() != 0 || len(gotForms) != 2 ||
+		gotForms[0].Get("scene_yesno") != "No" || gotForms[0].Get("auto_series") != "12345" ||
+		gotForms[1].Get("scene_yesno") != "Yes" || gotForms[1].Get("autofill") != entry.ReleaseName || gotForms[1].Get("auto_series") != "" {
+		t.Fatalf("autofills=%d uploads=%d forms=%#v", autofillCalls.Load(), uploadCalls.Load(), gotForms)
+	}
+	if len(entry.DebugSections) != 2 || entry.DebugSections[0].Payload["scene_yesno"] != "Yes" ||
+		entry.DebugSections[0].Payload["autofill"] != entry.ReleaseName || !logger.containsInfo("reason=tvdb_autofill_failed") {
+		t.Fatalf("fallback debug sections=%#v info=%v", entry.DebugSections, logger.containsInfo("reason=tvdb_autofill_failed"))
+	}
+}
+
 func TestBTNDirectUploadBlocksMismatchedAutofillArtist(t *testing.T) {
 	t.Parallel()
 
@@ -790,17 +862,11 @@ func TestBTNDirectUploadBlocksMismatchedAutofillArtist(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/upload.php":
 			_, _ = io.WriteString(w, `<form action="/upload.php"><input name="autofill"></form>`)
 		case r.Method == http.MethodPost && r.URL.Path == "/upload.php" && strings.HasPrefix(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded"):
-			autofillCalls.Add(1)
-			_, _ = io.WriteString(w, `
-				<input name="artist" value="Unexpected Show">
-				<input name="seriesid" value="999">
-				<input name="title" value="Episode One">
-				<input name="year" value="2026">
-				<select name="format"><option selected value="MKV">MKV</option></select>
-				<select name="bitrate"><option selected value="H.265">H.265</option></select>
-				<select name="media"><option selected value="WEB-DL">WEB-DL</option></select>
-				<select name="resolution"><option selected value="1080p">1080p</option></select>
-			`)
+			if autofillCalls.Add(1) == 2 {
+				_, _ = io.WriteString(w, `<input name="artist" value="Autofill Fail"><input name="title" value="Autofill Fail">`)
+				return
+			}
+			writeBTNTestAutofillResponse(w, "Unexpected Show")
 		case r.Method == http.MethodPost && r.URL.Path == "/upload.php":
 			uploadCalls.Add(1)
 			http.Error(w, "unexpected upload", http.StatusInternalServerError)
@@ -839,8 +905,9 @@ func TestBTNDirectUploadBlocksMismatchedAutofillArtist(t *testing.T) {
 	if !errors.As(err, &failure) || failure.Code() != trackers.PreparationFailureCodeSkipped {
 		t.Fatalf("unattended mismatch failure = %v", err)
 	}
-	if autofillCalls.Load() != 2 || uploadCalls.Load() != 0 ||
-		!logger.containsWarning("BTN autofill series mismatch decision=skip") {
+	if autofillCalls.Load() != 3 || uploadCalls.Load() != 0 ||
+		!logger.containsWarning("BTN autofill series mismatch decision=skip") ||
+		!logger.containsInfo("reason=tvdb_autofill_failed") {
 		t.Fatalf("unattended autofills=%d uploads=%d", autofillCalls.Load(), uploadCalls.Load())
 	}
 }
@@ -928,7 +995,7 @@ func TestBTNPreparedUploadRetriesMismatchWithReleaseNameAutofill(t *testing.T) {
 	}
 }
 
-func TestBTNPreparedUploadPromptsAgainWhenReleaseNameAutofillMismatches(t *testing.T) {
+func TestBTNPreparedUploadPromptsWhenReleaseNameAutofillAfterExplicitFailureMismatches(t *testing.T) {
 	t.Parallel()
 
 	dbPath := newBTNAuthDB(t)
@@ -942,11 +1009,11 @@ func TestBTNPreparedUploadPromptsAgainWhenReleaseNameAutofillMismatches(t *testi
 		case r.Method == http.MethodGet && r.URL.Path == "/upload.php":
 			_, _ = io.WriteString(w, `<form action="/upload.php"><input name="autofill"></form>`)
 		case r.Method == http.MethodPost && r.URL.Path == "/upload.php" && strings.HasPrefix(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded"):
-			artist := "First Unexpected Show"
-			if autofillCalls.Add(1) == 2 {
-				artist = "Second Unexpected Show"
+			if autofillCalls.Add(1) == 1 {
+				_, _ = io.WriteString(w, `<input name="artist" value="Autofill Fail"><input name="title" value="Autofill Fail">`)
+				return
 			}
-			writeBTNTestAutofillResponse(w, artist)
+			writeBTNTestAutofillResponse(w, "Unexpected Show")
 		case r.Method == http.MethodPost && r.URL.Path == "/upload.php":
 			uploadCalls.Add(1)
 			http.Error(w, "unexpected upload", http.StatusInternalServerError)
@@ -969,22 +1036,18 @@ func TestBTNPreparedUploadPromptsAgainWhenReleaseNameAutofillMismatches(t *testi
 		OriginalLanguage: "en",
 	}
 	plan := prepareBTNTestUploadPlan(t, req, server.URL)
-	resolved, err := plan.ResolveAction(context.Background(), api.RequiredActionResolveTrackerPreparation, false)
-	if err != nil {
-		t.Fatalf("resolve first mismatch: %v", err)
-	}
-	actions := resolved.DryRun().RequiredActions
-	if len(actions) != 1 || !strings.Contains(actions[0].Prompt, `BTN release-name autofill also returned series "Second Unexpected Show"`) ||
-		!strings.Contains(actions[0].Prompt, `upbrr tvdb is a different series "Expected Show"`) {
+	actions := plan.DryRun().RequiredActions
+	if len(actions) != 1 || !strings.Contains(actions[0].Prompt, `BTN release-name autofill also returned series "Unexpected Show"`) ||
+		!strings.Contains(actions[0].Prompt, `upbrr tvdb is a different series "Expected Show"`) || len(actions[0].Options) != 2 || actions[0].Options[1].Label != "Skip BTN" {
 		t.Fatalf("fallback required action = %#v", actions)
 	}
-	_, err = resolved.ResolveAction(context.Background(), api.RequiredActionResolveTrackerPreparation, false)
+	_, err := plan.ResolveAction(context.Background(), api.RequiredActionResolveTrackerPreparation, false)
 	var failure *trackers.PreparationFailure
 	if !errors.As(err, &failure) || failure.Code() != trackers.PreparationFailureCodeSkipped {
-		t.Fatalf("second decline error = %v", err)
+		t.Fatalf("decline error = %v", err)
 	}
-	if autofillCalls.Load() != 2 || uploadCalls.Load() != 0 || !logger.containsInfo("BTN trying release-name scene autofill") {
-		t.Fatalf("autofills=%d uploads=%d info=%v", autofillCalls.Load(), uploadCalls.Load(), logger.containsInfo("BTN trying release-name scene autofill"))
+	if autofillCalls.Load() != 2 || uploadCalls.Load() != 0 || !logger.containsInfo("reason=tvdb_autofill_failed") {
+		t.Fatalf("autofills=%d uploads=%d info=%v", autofillCalls.Load(), uploadCalls.Load(), logger.containsInfo("reason=tvdb_autofill_failed"))
 	}
 }
 
@@ -1108,28 +1171,10 @@ func TestResolveSessionForTrackerAuthLoginDecryptErrorPreventsPersistence(t *tes
 	}
 }
 
-func TestBTNPrepareUploadDataFailsOnAutofillFailure(t *testing.T) {
+func TestBTNPrepareUploadDataBoundsExplicitAutofillFailureFallback(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/upload.php":
-			_, _ = io.WriteString(w, `<input name="artist" value="Autofill Fail"><input name="title" value="Autofill Fail">`)
-		case "/login.php":
-			w.WriteHeader(http.StatusOK)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	uploadCtx := uploadContext{
-		baseURL:   server.URL,
-		uploadURL: server.URL + "/upload.php",
-		client:    server.Client(),
-	}
-
-	req := trackers.PreparationInput{Meta: api.UploadSubject{
+	baseReq := trackers.PreparationInput{Meta: api.UploadSubject{
 		Identity:    api.ExternalIdentity{Category: "TV"},
 		ReleaseName: "Show.S01E01",
 		Type:        "WEBDL",
@@ -1141,12 +1186,112 @@ func TestBTNPrepareUploadDataFailsOnAutofillFailure(t *testing.T) {
 		EpisodeInt:  1,
 		Release:     api.ReleaseInfo{Resolution: "1080p"},
 	}}
-	_, err := prepareUploadData(context.Background(), req, uploadCtx)
-	if err == nil {
-		t.Fatalf("expected autofill validation error")
+	for _, tt := range []struct {
+		name          string
+		tvdbID        int
+		wantAutofills int32
+	}{
+		{name: "release name already selected", wantAutofills: 1},
+		{
+			name:          "TVDB lookup retries release name once",
+			tvdbID:        12345,
+			wantAutofills: 2,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var autofillCalls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/upload.php" {
+					http.NotFound(w, r)
+					return
+				}
+				autofillCalls.Add(1)
+				_, _ = io.WriteString(w, `<input name="artist" value="Autofill Fail"><input name="title" value="Autofill Fail">`)
+			}))
+			t.Cleanup(server.Close)
+
+			req := baseReq
+			req.Meta.Identity.TVDBID = tt.tvdbID
+			_, err := prepareUploadData(context.Background(), req, uploadContext{
+				baseURL:   server.URL,
+				uploadURL: server.URL + "/upload.php",
+				client:    server.Client(),
+			})
+			if !errors.Is(err, errBTNExplicitAutofillFailure) {
+				t.Fatalf("expected explicit autofill failure, got %v", err)
+			}
+			if autofillCalls.Load() != tt.wantAutofills {
+				t.Fatalf("autofill calls=%d, want %d", autofillCalls.Load(), tt.wantAutofills)
+			}
+		})
 	}
-	if !strings.Contains(err.Error(), "autofill validation failed") {
-		t.Fatalf("unexpected error: %v", err)
+}
+
+func TestBTNPrepareUploadDataDoesNotRetryOtherAutofillFailures(t *testing.T) {
+	t.Parallel()
+
+	baseReq := trackers.PreparationInput{Meta: api.UploadSubject{
+		Identity:    api.ExternalIdentity{Category: "TV", TVDBID: 12345},
+		ReleaseName: "Show.S01E01",
+		Type:        "WEBDL",
+		Source:      "WEB-DL",
+		Container:   "MKV",
+		VideoEncode: "x265",
+		VideoCodec:  "HEVC",
+		SeasonInt:   1,
+		EpisodeInt:  1,
+		Release:     api.ReleaseInfo{Resolution: "1080p"},
+	}}
+	for _, tt := range []struct {
+		name       string
+		statusCode int
+		body       string
+	}{
+		{
+			name:       "missing required HTML field",
+			statusCode: http.StatusOK,
+			body:       `<input name="title" value="Episode One">`,
+		},
+		{
+			name:       "HTTP failure",
+			statusCode: http.StatusBadGateway,
+			body:       "upstream unavailable",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var autofillCalls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				autofillCalls.Add(1)
+				w.WriteHeader(tt.statusCode)
+				_, _ = io.WriteString(w, tt.body)
+			}))
+			t.Cleanup(server.Close)
+
+			_, err := prepareUploadData(context.Background(), baseReq, uploadContext{
+				baseURL:   server.URL,
+				uploadURL: server.URL + "/upload.php",
+				client:    server.Client(),
+			})
+			if err == nil || errors.Is(err, errBTNExplicitAutofillFailure) {
+				t.Fatalf("expected non-explicit autofill error, got %v", err)
+			}
+			if autofillCalls.Load() != 1 {
+				t.Fatalf("autofill calls=%d, want 1", autofillCalls.Load())
+			}
+		})
+	}
+
+	var transportCalls atomic.Int32
+	_, err := prepareUploadData(context.Background(), baseReq, uploadContext{
+		baseURL:   "https://btn.invalid",
+		uploadURL: "https://btn.invalid/upload.php",
+		client: &http.Client{Transport: btnRoundTripFunc(func(*http.Request) (*http.Response, error) {
+			transportCalls.Add(1)
+			return nil, errors.New("transport unavailable")
+		})},
+	})
+	if err == nil || errors.Is(err, errBTNExplicitAutofillFailure) || transportCalls.Load() != 1 {
+		t.Fatalf("transport error=%v calls=%d", err, transportCalls.Load())
 	}
 }
 

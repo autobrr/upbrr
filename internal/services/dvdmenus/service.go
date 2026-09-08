@@ -724,16 +724,14 @@ func writeCaptureImages(
 		bounds := capture.Image.Bounds()
 		discovery := api.DVDMenuDiscovery(capture.Discovery)
 		images = append(images, api.DVDMenuCaptureImage{
-			ScreenshotImage: api.ScreenshotImage{
-				DiscID:    selected.disc.ID,
-				DiscName:  selected.disc.Name,
-				Index:     index,
-				Path:      finalPath,
-				Purpose:   api.ScreenshotPurposeMenu,
-				Width:     bounds.Dx(),
-				Height:    bounds.Dy(),
-				SizeBytes: stat.Size(),
-			},
+			DiscID:    selected.disc.ID,
+			DiscName:  selected.disc.Name,
+			Index:     index,
+			Path:      finalPath,
+			Purpose:   api.ScreenshotPurposeMenu,
+			Width:     bounds.Dx(),
+			Height:    bounds.Dy(),
+			SizeBytes: stat.Size(),
 			Discovery: discovery,
 		})
 		records = append(records, api.Screenshot{

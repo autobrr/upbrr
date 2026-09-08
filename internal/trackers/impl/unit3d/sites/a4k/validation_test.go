@@ -143,9 +143,16 @@ func TestValidationRequirementsBoundaries(t *testing.T) {
 			wantRule: "a4k_webrip",
 		},
 		{
-			name:     "WEBRip no-tag release name is rejected",
-			subject:  api.TrackerValidationSubject{ReleaseNameNoTag: "Example.Release.2026.2160p.WEBRip-GRP"},
-			wantRule: "a4k_webrip",
+			name: "WEBRip release name does not replace resolved source",
+			subject: api.TrackerValidationSubject{
+				ReleaseNameNoTag: "Example.Release.2026.2160p.WEBRip-GRP",
+				Release:          api.ReleaseInfo{Resolution: "2160p"},
+				Assessments: api.ReleaseAssessments{VideoBitrate: api.VideoBitrateAssessment{
+					Status:        api.VideoBitrateStatusPresent,
+					BitsPerSecond: 10_000_000,
+				}},
+			},
+			wantPasses: true,
 		},
 		{
 			name: "WEBRipper is not a WEBRip token",
