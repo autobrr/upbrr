@@ -2035,8 +2035,8 @@ func TestResolveExternalIDsAllowsDownstreamTMDBAfterConflictingInferredIDIsRepla
 	tmdbClient := &stubTMDB{
 		findResult: tmdb.FindResult{TMDBID: 222, Category: "TV"},
 		metadataFn: func(input tmdb.MetadataInput) (tmdb.MetadataResult, error) {
-			if input.TMDBID == 111 {
-				return tmdb.MetadataResult{TMDBType: "Scripted", ExternalIMDbID: 7654321}, nil
+			if input.TMDBID != 222 {
+				t.Errorf("metadata lookup TMDB ID = %d, want replacement 222", input.TMDBID)
 			}
 			return tmdb.MetadataResult{}, errors.New("replacement metadata unavailable")
 		},
