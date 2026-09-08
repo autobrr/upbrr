@@ -4,6 +4,7 @@
 package znth
 
 import (
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -59,8 +60,7 @@ func findZNTHTitleStartBefore(prefix string, normalizedTitle string) (int, bool)
 		}
 	}
 
-	for i := len(candidates) - 1; i >= 0; i-- {
-		start := candidates[i]
+	for _, start := range slices.Backward(candidates) {
 		if normalizeZNTHAlphaNum(prefix[start:]) == normalizedTitle {
 			return start, true
 		}

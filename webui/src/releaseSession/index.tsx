@@ -4,6 +4,7 @@
 import type { ReactNode } from "react";
 import { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type {
+  ApplicationInfo,
   MetadataPreview,
   OperationFailure,
   PrepareInput,
@@ -325,13 +326,20 @@ const preparationInputForWorkflow = (
 export function ReleaseSessionProvider({
   ports,
   defaultTrackers = [],
+  testRuntime,
+  runtimeInfoReady = true,
   children,
 }: Readonly<{
   ports?: ReleaseSessionPorts;
   defaultTrackers?: readonly string[];
+  testRuntime?: ApplicationInfo["testRuntime"];
+  runtimeInfoReady?: boolean;
   children: ReactNode;
 }>) {
   const [state, dispatch] = useReducer(sessionReducer, undefined, initialSessionState);
+  const liveTest = testRuntime?.mode === "live_test";
+  const mutationsAllowed = runtimeInfoReady && !liveTest;
+  const uploadOptions = { ...state.uploadOptions, noSeed: liveTest || state.uploadOptions.noSeed };
   const normalizedDefaultTrackers = useMemo(
     () => normalizedNames(defaultTrackers),
     [defaultTrackers],
@@ -431,6 +439,9 @@ export function ReleaseSessionProvider({
     signal: AbortSignal,
     extra: Pick<ContinueReleaseWorkflowRequest, "answers" | "approval"> = {},
   ): Promise<ReleaseWorkflowCurrent> => {
+    if (goal === "uploaded" && !mutationsAllowed) {
+      throw new Error("Tracker submission is unavailable in this runtime.");
+    }
     let current = initial;
     for (let transition = 0; transition < 32; transition += 1) {
       const next = await awaitWorkflowCommand(
@@ -1235,7 +1246,7 @@ export function ReleaseSessionProvider({
             options: {
               RunLogLevel: state.uploadOptions.runLogLevel,
               Screens: workflowDescriptionScreenshotCount(current),
-              NoSeed: state.uploadOptions.noSeed,
+              NoSeed: uploadOptions.noSeed,
               SkipAutoTorrent: false,
               OnlyID: false,
               KeepFolder: false,
@@ -1307,7 +1318,7 @@ export function ReleaseSessionProvider({
   };
 
   // Selected trackers are pre-dupe UI state; retained backend evidence owns the exact downstream set.
-  const backendResolvedUploadIntent = () => ({ noSeed: state.uploadOptions.noSeed });
+  const backendResolvedUploadIntent = () => ({ noSeed: uploadOptions.noSeed });
 
   const runDryRun = async (): Promise<boolean> => {
     if (!workflowView.current) return false;
@@ -1317,6 +1328,7 @@ export function ReleaseSessionProvider({
   };
 
   const executeExactUpload = async (): Promise<boolean> => {
+    if (!mutationsAllowed) return false;
     if (!workflowView.current || controllers.current.workflow) return false;
     const controller = new AbortController();
     controllers.current.workflow = controller;
@@ -1526,6 +1538,7 @@ export function ReleaseSessionProvider({
       executeUploads: () => executeExactUpload(),
       confirmAction: (action: RequiredAction, confirmed = true) => {
         if (
+          !runtimeInfoReady ||
           (action.kind !== "authorize_rules" && action.kind !== "resolve_tracker_preparation") ||
           (action.kind === "authorize_rules" && !confirmed)
         ) {
@@ -1534,7 +1547,7 @@ export function ReleaseSessionProvider({
         return runBackendWorkflow((current, commandID, signal) =>
           continueBackendGoal(
             current,
-            "uploaded",
+            liveTest ? "dry_run" : "uploaded",
             backendResolvedUploadIntent(),
             commandID,
             signal,
@@ -1551,6 +1564,7 @@ export function ReleaseSessionProvider({
         );
       },
       retryFailedUploads: () => {
+        if (!mutationsAllowed) return Promise.resolve(false);
         const result = workflowView.current?.uploadResult;
         if (!result) return Promise.resolve(false);
         const trackerIDs = result.results
@@ -1569,6 +1583,7 @@ export function ReleaseSessionProvider({
         );
       },
       retryClientInjections: () => {
+        if (!mutationsAllowed) return Promise.resolve(false);
         const result = workflowView.current?.uploadResult;
         if (!result) return Promise.resolve(false);
         const trackerIDs = result.results
@@ -2032,7 +2047,9 @@ export function ReleaseSessionProvider({
         projections: workflowView.current?.projections || null,
         ignoredDupesFor: state.ignoredDupesFor,
         questionnaireAnswers: state.questionnaireAnswers,
-        options: state.uploadOptions,
+        options: uploadOptions,
+        liveTest,
+        mutationsAllowed,
         dryRunStatus: workflowDryRunStatus,
         uploadStatus: workflowUploadStatus,
         dryRunResult: workflowView.current?.dryRun || null,
@@ -2043,9 +2060,13 @@ export function ReleaseSessionProvider({
       answerQuestionnaire: (tracker, key, value) =>
         dispatch({ type: "questionnaire_answered", tracker, key, value }),
       changeOptions: (options: Partial<UploadRunOptions>) =>
-        dispatch({ type: "upload_options_changed", value: options }),
+        dispatch({
+          type: "upload_options_changed",
+          value: liveTest ? { ...options, noSeed: true } : options,
+        }),
       runDryRun,
       start: async () => {
+        if (!mutationsAllowed) return false;
         dispatch({ type: "job_command_started", kind: "upload" });
         if (!workflowView.current) {
           dispatch({
@@ -2070,6 +2091,7 @@ export function ReleaseSessionProvider({
         return cancelBackendWorkflow("upload canceled");
       },
       retry: async () => {
+        if (!mutationsAllowed) return false;
         const result = workflowView.current?.uploadResult;
         const trackerIDs = (result?.results || [])
           .filter((item) => item.submissionStatus === "failed")
@@ -2087,6 +2109,7 @@ export function ReleaseSessionProvider({
         );
       },
       retryClientInjection: async () => {
+        if (!mutationsAllowed) return false;
         const result = workflowView.current?.uploadResult;
         const trackerIDs = (result?.results || [])
           .filter(

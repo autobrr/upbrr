@@ -4,7 +4,6 @@
 package asc
 
 import (
-	"path/filepath"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
@@ -19,9 +18,7 @@ func resolveContainer(meta api.UploadSubject) string {
 		return "15"
 	}
 	ext := strings.ToLower(strings.TrimSpace(meta.Container))
-	if ext == "" {
-		ext = strings.ToLower(strings.TrimPrefix(filepath.Ext(metautil.FirstNonEmptyTrimmed(meta.VideoPath, meta.SourcePath)), "."))
-	}
+	ext = strings.TrimPrefix(ext, ".")
 	switch ext {
 	case "mkv":
 		return "6"

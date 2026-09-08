@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"modernc.org/sqlite"
@@ -295,8 +296,8 @@ func removeLegacyCookieCandidate(path string) (legacyCookieCandidateSnapshot, bo
 // rollback rebuilds parent paths after later candidates have been handled.
 func restoreLegacyCookieCandidates(snapshots []legacyCookieCandidateSnapshot) error {
 	var errs []error
-	for i := len(snapshots) - 1; i >= 0; i-- {
-		if err := snapshots[i].restore(); err != nil {
+	for _, snapshot := range slices.Backward(snapshots) {
+		if err := snapshot.restore(); err != nil {
 			errs = append(errs, err)
 		}
 	}

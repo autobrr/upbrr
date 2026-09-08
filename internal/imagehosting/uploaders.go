@@ -91,12 +91,8 @@ func ownedHostTrackerConfig(cfg config.Config, registry *trackers.Registry, host
 		return config.TrackerConfig{}
 	}
 	owner := registry.OwnerForImageHost(host)
-	for name, trackerConfig := range cfg.Trackers.Trackers {
-		if strings.EqualFold(strings.TrimSpace(name), owner) {
-			return trackerConfig
-		}
-	}
-	return config.TrackerConfig{}
+	trackerConfig, _ := config.TrackerConfigByName(cfg.Trackers.Trackers, owner)
+	return trackerConfig
 }
 
 type imgbbUploader struct {
@@ -521,7 +517,7 @@ func imgboxPickCookie(resp *http.Response) string {
 	}
 	parts := make([]string, 0, len(cookies))
 	for _, raw := range cookies {
-		segment := strings.SplitN(raw, ";", 2)[0]
+		segment, _, _ := strings.Cut(raw, ";")
 		if strings.TrimSpace(segment) != "" {
 			parts = append(parts, segment)
 		}
@@ -902,10 +898,10 @@ func (u *lostimgUploader) UploadBatch(ctx context.Context, imagePaths []string) 
 	for start := 0; start < len(imagePaths); start += lostimgMaxBatchUploadImages {
 		end := min(start+lostimgMaxBatchUploadImages, len(imagePaths))
 		chunkResults, err := u.uploadBatch(ctx, imagePaths[start:end])
-		if err != nil {
-			return nil, err
-		}
 		results = append(results, chunkResults...)
+		if err != nil {
+			return results, err
+		}
 	}
 	return results, nil
 }
@@ -916,40 +912,44 @@ func (u *lostimgUploader) uploadBatch(ctx context.Context, imagePaths []string) 
 	if err != nil {
 		return nil, err
 	}
-	if status != http.StatusOK {
-		return nil, fmt.Errorf("lostimg upload failed with status %d", status)
-	}
-
 	var response struct {
 		URL   string   `json:"url"`
 		URLs  []string `json:"urls"`
 		Error string   `json:"error"`
 	}
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, fmt.Errorf("lostimg invalid response: %w", err)
-	}
-	if safeResponseMessage(response.Error) != "" {
-		return nil, fmt.Errorf("lostimg upload failed: %s", safeResponseMessage(response.Error))
-	}
-
+	decodeErr := json.Unmarshal(body, &response)
 	urls := response.URLs
 	if len(urls) == 0 && strings.TrimSpace(response.URL) != "" {
 		urls = []string{response.URL}
 	}
-	if len(urls) != len(imagePaths) {
-		return nil, fmt.Errorf("lostimg upload returned %d images for %d uploads", len(urls), len(imagePaths))
-	}
 	results := make([]uploadResult, 0, len(urls))
+	emptyURL := false
 	for _, raw := range urls {
 		imageURL := strings.TrimSpace(raw)
 		if imageURL == "" {
-			return nil, errors.New("lostimg upload returned empty image URL")
+			emptyURL = true
+			continue
 		}
 		results = append(results, uploadResult{
 			ImgURL: imageURL,
 			RawURL: imageURL,
 			WebURL: imageURL,
 		})
+	}
+	if status != http.StatusOK {
+		return results, fmt.Errorf("lostimg upload failed with status %d", status)
+	}
+	if decodeErr != nil {
+		return results, fmt.Errorf("lostimg invalid response: %w", decodeErr)
+	}
+	if safeResponseMessage(response.Error) != "" {
+		return results, fmt.Errorf("lostimg upload failed: %s", safeResponseMessage(response.Error))
+	}
+	if len(urls) != len(imagePaths) {
+		return results, fmt.Errorf("lostimg upload returned %d images for %d uploads", len(urls), len(imagePaths))
+	}
+	if emptyURL {
+		return results, errors.New("lostimg upload returned empty image URL")
 	}
 	return results, nil
 }

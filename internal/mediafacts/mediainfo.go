@@ -49,6 +49,17 @@ func HDRFromMediaInfoText(value string) api.HDRFacts {
 	return hdrFromMediaInfoTrack(track)
 }
 
+// VideoCodecFromMediaInfoText returns the first MediaInfo video track's format.
+// Codec IDs and MPEG families need more evidence to establish codec equivalence.
+func VideoCodecFromMediaInfoText(value string) string {
+	track := firstMediaInfoTextVideoTrack(value)
+	format := mediaInfoValue(track, "Format")
+	if strings.EqualFold(format, "MPEG Video") || strings.EqualFold(format, "MPEG-4 Visual") {
+		return ""
+	}
+	return format
+}
+
 func firstMediaInfoTextVideoTrack(value string) map[string]any {
 	var track map[string]any
 	inFirstVideo := false

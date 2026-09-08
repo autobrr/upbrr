@@ -25,6 +25,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+var errBTNExplicitAutofillFailure = errors.New("trackers: BTN autofill validation failed: explicit autofill failure")
+
 // buildBTNAutofillPayload returns the form fields for BTN's first upload.php
 // POST. TVDB-backed uploads submit the series id plus season or episode token;
 // scene-name autofill is used only when no TVDB series id is available.
@@ -62,25 +64,28 @@ func buildBTNReleaseNameAutofillPayload(meta api.UploadSubject, releaseName stri
 	return autofillPayload, uploadType
 }
 
+// prepareUploadDataWithAutofill retries an explicit TVDB autofill failure once by release name.
+// The boolean reports release-name use so callers preserve mismatch confirmation and skip behavior.
 func prepareUploadDataWithAutofill(
 	ctx context.Context,
 	req trackers.PreparationInput,
 	uploadCtx uploadContext,
 	releaseNameAutofill bool,
-) (map[string]string, error) {
+) (map[string]string, bool, error) {
 	var nameFailure *trackers.PreparationFailure
 	req, nameFailure = trackers.PrepareInputWithReleaseNamePolicy(req, Profile().ReleaseNamePolicy)
 	if nameFailure != nil {
-		return nil, nameFailure
+		return nil, releaseNameAutofill, nameFailure
 	}
 	if _, err := validateBTNTVPayloadMetadata(req.Meta); err != nil {
-		return nil, err
+		return nil, releaseNameAutofill, err
 	}
 	releaseName, err := req.ReviewedUploadName()
 	if err != nil {
-		return nil, fmt.Errorf("trackers: BTN reviewed upload name: %w", err)
+		return nil, releaseNameAutofill, fmt.Errorf("trackers: BTN reviewed upload name: %w", err)
 	}
 
+	releaseNameAutofill = releaseNameAutofill || req.Meta.Identity.TVDBID <= 0
 	var autofillPayload url.Values
 	var uploadType string
 	if releaseNameAutofill {
@@ -89,10 +94,19 @@ func prepareUploadDataWithAutofill(
 		autofillPayload, uploadType = buildBTNAutofillPayload(req.Meta, releaseName)
 	}
 	fields, err := requestBTNAutofillFields(ctx, uploadCtx, autofillPayload, uploadType)
-	if err != nil {
-		return nil, err
+	if errors.Is(err, errBTNExplicitAutofillFailure) && !releaseNameAutofill {
+		if req.Logger != nil {
+			req.Logger.Infof("trackers: BTN trying release-name scene autofill source=release_name reason=tvdb_autofill_failed")
+		}
+		releaseNameAutofill = true
+		autofillPayload, uploadType = buildBTNReleaseNameAutofillPayload(req.Meta, releaseName)
+		fields, err = requestBTNAutofillFields(ctx, uploadCtx, autofillPayload, uploadType)
 	}
-	return buildBTNUploadPayload(req, fields)
+	if err != nil {
+		return nil, releaseNameAutofill, err
+	}
+	data, err := buildBTNUploadPayload(req, fields)
+	return data, releaseNameAutofill, err
 }
 
 // preferredBTNTVDBSeriesName returns the English TVDB name, falling back to the native name.
@@ -163,16 +177,61 @@ func requestBTNAutofillFields(
 		return nil, fmt.Errorf("trackers: BTN autofill request: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("trackers: BTN autofill failed status=%d", resp.StatusCode)
+	lookup := "tvdb"
+	if autofillPayload.Get("scene_yesno") == "Yes" {
+		lookup = "release_name"
 	}
-	htmlPayload, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		_, detail, readErr := commonhttp.ReadUploadResponseBody(resp, false, commonhttp.DefaultResponsePreviewBytes)
+		if readErr != nil {
+			return nil, fmt.Errorf("trackers: BTN read autofill failure lookup=%s status=%d: %w", lookup, resp.StatusCode, readErr)
+		}
+		return nil, fmt.Errorf("trackers: BTN autofill failed lookup=%s status=%d: %s", lookup, resp.StatusCode, detail)
+	}
+	const responseLimit = 1 << 20
+	htmlPayload, err := io.ReadAll(io.LimitReader(resp.Body, responseLimit+1))
+	boundedPayload := htmlPayload[:min(len(htmlPayload), responseLimit)]
 	if err != nil {
-		return nil, fmt.Errorf("trackers: BTN read autofill response: %w", err)
+		return nil, fmt.Errorf(
+			"trackers: BTN read autofill response lookup=%s status=%d: %w; %s", lookup, resp.StatusCode, err, commonhttp.ExtractHTTPErrorDetail(boundedPayload),
+		)
+	}
+	if len(htmlPayload) > responseLimit {
+		return nil, fmt.Errorf(
+			"trackers: BTN autofill response exceeded 1 MiB lookup=%s status=%d: %s",
+			lookup,
+			resp.StatusCode,
+			commonhttp.ExtractHTTPErrorDetail(boundedPayload),
+		)
 	}
 	fields := extractAutofillFields(string(htmlPayload))
+	failedFields := make([]string, 0, 2)
+	for _, name := range []string{"artist", "title"} {
+		if strings.EqualFold(strings.TrimSpace(fields[name]), "autofill fail") {
+			failedFields = append(failedFields, name)
+		}
+	}
+	if len(failedFields) > 0 {
+		detail := commonhttp.ExtractHTMLFormErrorDetail(htmlPayload)
+		if detail == "" {
+			detail = "Autofill Fail"
+		}
+		return nil, fmt.Errorf(
+			"%w lookup=%s status=%d fields=%s: %s",
+			errBTNExplicitAutofillFailure,
+			lookup,
+			resp.StatusCode,
+			strings.Join(failedFields, ","),
+			detail,
+		)
+	}
 	if !validateAutofill(fields, uploadType) {
-		return nil, errors.New("trackers: BTN autofill validation failed")
+		return nil, fmt.Errorf(
+			"trackers: BTN autofill validation failed lookup=%s status=%d: %s",
+			lookup,
+			resp.StatusCode,
+			commonhttp.ExtractHTTPErrorDetail(htmlPayload),
+		)
 	}
 	return fields, nil
 }

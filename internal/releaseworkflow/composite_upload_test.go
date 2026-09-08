@@ -672,6 +672,54 @@ func TestCompositeUploadTrackerRemovalUpdateIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestNormalizeCompositeUploadRequestPreservesScreenshotSelectionIntent(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name           string
+		frames         []int
+		wantSelections []api.ScreenshotSelection
+	}{
+		{name: "no_manual_frames", frames: []int{}},
+		{
+			name:   "manual_frames",
+			frames: []int{120, 240},
+			wantSelections: []api.ScreenshotSelection{
+				{
+					Index:  0,
+					Frame:  120,
+					Source: "manual",
+				},
+				{
+					Index:  1,
+					Frame:  240,
+					Source: "manual",
+				},
+			},
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			count := 4
+			request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeUpload, "media-intent-"+testCase.name)
+			request.Media.Screenshots.Count = &count
+			request.Media.Screenshots.Frames = testCase.frames
+			session, _, err := normalizeCompositeUploadRequest(request)
+			if err != nil {
+				t.Fatalf("normalize composite upload request: %v", err)
+			}
+			if session.Intent.Media == nil || session.Intent.Media.ScreenshotCount != count {
+				t.Fatalf("normalized media intent = %#v", session.Intent.Media)
+			}
+			if !reflect.DeepEqual(session.Intent.Media.Selections, testCase.wantSelections) {
+				t.Fatalf("normalized screenshot selections = %#v, want %#v", session.Intent.Media.Selections, testCase.wantSelections)
+			}
+		})
+	}
+}
+
 func compositeUploadTestOperationCount(repository *MemoryRepository, workflowID api.WorkflowID) int {
 	repository.mu.RLock()
 	defer repository.mu.RUnlock()

@@ -60,13 +60,15 @@ const (
 	DupeRelationInsufficientEvidence DupeRelation = "insufficient_evidence"
 )
 
-// DupeReason is one stable public-safe evaluator reason.
+// DupeReason pairs a stable evaluator code with a public-safe explanation.
 type DupeReason struct {
 	Code    string `json:"code"`
 	Message string `json:"message,omitempty"`
 }
 
 // DupeCandidateEvaluation is one sanitized per-candidate decision.
+// EvidenceStatus describes HDR evidence only; other comparison dimensions
+// may still be incomplete.
 type DupeCandidateEvaluation struct {
 	ID             string            `json:"id,omitempty"`
 	Name           string            `json:"name"`

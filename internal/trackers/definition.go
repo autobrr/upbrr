@@ -16,7 +16,7 @@ import (
 )
 
 // GeneralDuplicatePolicyID identifies the always-on duplicate comparison contract.
-const GeneralDuplicatePolicyID = "general/duplicate/v4"
+const GeneralDuplicatePolicyID = "general/duplicate/v5"
 
 // DuplicateSearchContractID identifies effective work-scope completion semantics.
 const DuplicateSearchContractID = "duplicate-search/work-scope/v1"
@@ -461,6 +461,15 @@ type DupePolicy struct {
 	// TargetReleaseOrigin derives tracker-native origin from the proposed release.
 	// ID versions this pure resolver; it is excluded from serialized fingerprints.
 	TargetReleaseOrigin func(api.UploadSubject) string `json:"-"`
+	// DefaultTitleEdition declares the omitted cut for recognizable release titles
+	// and makes recognized named cuts authoritative under the tracker's naming contract.
+	// Recognition requires source and video codec metadata in addition to a title boundary.
+	// DVD remux metadata with complete resolution evidence permits an omitted codec.
+	// A date or series marker must separate the work title from metadata. Unbounded
+	// or compound title-only cuts and ambiguous series text remain unavailable;
+	// generic editions and framing evidence stay partial.
+	// Empty disables this inference; recognized complete cuts and contradictory facts are preserved.
+	DefaultTitleEdition string
 	// SearchScope declares how many pages may be consumed before search becomes incomplete.
 	SearchScope DupeSearchScope
 	// SlotDimensions are compared to establish tracker slot membership.

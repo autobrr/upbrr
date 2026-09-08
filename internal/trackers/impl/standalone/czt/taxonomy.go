@@ -139,7 +139,7 @@ func missingRequiredCategory(state uploadState) bool {
 }
 
 func hasCodec(meta api.UploadSubject, want string) bool {
-	for _, c := range meta.Release.Codec {
+	for _, c := range []string{meta.VideoEncode, meta.VideoCodec} {
 		if strings.EqualFold(strings.TrimSpace(c), want) {
 			return true
 		}
@@ -148,7 +148,7 @@ func hasCodec(meta api.UploadSubject, want string) bool {
 }
 
 func firstCodec(meta api.UploadSubject) string {
-	for _, c := range meta.Release.Codec {
+	for _, c := range []string{meta.VideoEncode, meta.VideoCodec} {
 		if v := strings.TrimSpace(c); v != "" {
 			return v
 		}

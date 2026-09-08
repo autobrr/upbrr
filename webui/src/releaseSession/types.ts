@@ -285,6 +285,10 @@ export type UploadFacet = Readonly<{
     ignoredDupesFor: readonly string[];
     questionnaireAnswers: Readonly<Record<string, Readonly<Record<string, string>>>>;
     options: UploadRunOptions;
+    /** Whether the owning process enforces live-testing restrictions. */
+    liveTest: boolean;
+    /** Requires loaded runtime information and no live-test policy; workflow gates still apply. */
+    mutationsAllowed: boolean;
     dryRunStatus: FacetStatus;
     uploadStatus: FacetStatus;
     dryRunResult: UploadDryRunResult | null;

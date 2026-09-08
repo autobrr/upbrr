@@ -16,7 +16,7 @@ import (
 
 func releaseNamePolicy() trackers.ReleaseNamePolicyBinding {
 	return trackers.WithMovieYearProvider(trackers.WithEpisodeTitleMode(
-		trackers.NewReleaseNamePolicy("standalone/hdb/v4", resolveReleaseNames),
+		trackers.NewReleaseNamePolicy("standalone/hdb/v5", resolveReleaseNames),
 		api.EpisodeTitleModeOmit,
 	), api.IdentityProviderIMDB)
 }
@@ -229,9 +229,6 @@ func hdbVideoCodecElement(meta api.UploadSubject) string {
 		if value = normalizedHDBElement(value); value != "" {
 			return value
 		}
-	}
-	if len(meta.Release.Codec) > 0 {
-		return normalizedHDBElement(meta.Release.Codec[0])
 	}
 	return ""
 }

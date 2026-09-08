@@ -33,8 +33,7 @@ func (d *Definition) AuthSessionResolver() trackers.AuthSessionResolver {
 		if err == nil {
 			return nil
 		}
-		var resolution *trackers.AuthResolutionError
-		if errors.As(err, &resolution) {
+		if _, ok := errors.AsType[*trackers.AuthResolutionError](err); ok {
 			return err
 		}
 		if errors.Is(err, cookiepkg.ErrTrackerCookiesNotFound) {

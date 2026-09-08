@@ -241,7 +241,7 @@ func clusterSizeForVolume(volumeRoot string) (int64, error) {
 		uintptr(unsafe.Pointer(&totalClusters)),
 	)
 	if r1 == 0 {
-		if callErr != nil && !errors.Is(callErr, windows.ERROR_SUCCESS) {
+		if !errors.Is(callErr, windows.ERROR_SUCCESS) {
 			return 0, fmt.Errorf("get cluster size: %w", callErr)
 		}
 		return 0, errors.New("get cluster size: unknown error")
@@ -256,7 +256,7 @@ func isSparseFile(path string) (bool, error) {
 	}
 	r1, _, callErr := procGetFileAttributesW.Call(uintptr(unsafe.Pointer(pathPtr)))
 	if r1 == invalidFileAttributes {
-		if callErr != nil && !errors.Is(callErr, windows.ERROR_SUCCESS) {
+		if !errors.Is(callErr, windows.ERROR_SUCCESS) {
 			return false, fmt.Errorf("get file attributes: %w", callErr)
 		}
 		return false, errors.New("get file attributes: unknown error")
@@ -285,14 +285,14 @@ func setFileEnd(fileHandle windows.Handle, path string, size int64) error {
 		uintptr(fileBegin),
 	)
 	if r1 == 0 {
-		if callErr != nil && !errors.Is(callErr, windows.ERROR_SUCCESS) {
+		if !errors.Is(callErr, windows.ERROR_SUCCESS) {
 			return fmt.Errorf("seek EOF for %s: %w", path, callErr)
 		}
 		return fmt.Errorf("seek EOF for %s: unknown error", path)
 	}
 	r1, _, callErr = procSetEndOfFile.Call(uintptr(fileHandle))
 	if r1 == 0 {
-		if callErr != nil && !errors.Is(callErr, windows.ERROR_SUCCESS) {
+		if !errors.Is(callErr, windows.ERROR_SUCCESS) {
 			return fmt.Errorf("set EOF for %s: %w", path, callErr)
 		}
 		return fmt.Errorf("set EOF for %s: unknown error", path)

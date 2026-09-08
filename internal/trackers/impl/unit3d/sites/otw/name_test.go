@@ -127,7 +127,18 @@ func TestBuildNameUsesPreparedSeasonFactsOnly(t *testing.T) {
 
 func TestProfileBuildNameVersion(t *testing.T) {
 	t.Parallel()
-	if got := Profile().Site.BuildNameVersion; got != "v3" {
-		t.Fatalf("OTW BuildNameVersion = %q, want v3", got)
+	if got := Profile().Site.BuildNameVersion; got != "v4" {
+		t.Fatalf("OTW BuildNameVersion = %q, want v4", got)
+	}
+}
+
+func TestOTWVideoCodecUsesResolvedMediaFact(t *testing.T) {
+	t.Parallel()
+
+	if got := otwVideoCodec(api.UploadSubject{VideoCodec: "H.265", Release: api.ReleaseInfo{Codec: []string{"H.264"}}}); got != "H.265" {
+		t.Fatalf("resolved video codec = %q", got)
+	}
+	if got := otwVideoCodec(api.UploadSubject{Release: api.ReleaseInfo{Codec: []string{"H.265"}}}); got != "" {
+		t.Fatalf("raw codec fallback = %q", got)
 	}
 }

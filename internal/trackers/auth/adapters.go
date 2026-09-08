@@ -115,23 +115,19 @@ func classifyAdapterError(trackerID string, err error) error {
 	if err == nil {
 		return nil
 	}
-	var authRequired *AuthRequiredError
-	if errors.As(err, &authRequired) {
+	if authRequired, ok := errors.AsType[*AuthRequiredError](err); ok {
 		return authRequired
 	}
-	var needs2FA *Needs2FAError
-	if errors.As(err, &needs2FA) {
+	if needs2FA, ok := errors.AsType[*Needs2FAError](err); ok {
 		return needs2FA
 	}
-	var unsupported *UnsupportedAuthError
-	if errors.As(err, &unsupported) {
+	if unsupported, ok := errors.AsType[*UnsupportedAuthError](err); ok {
 		return unsupported
 	}
 	if validation, ok := asValidationError(err); ok {
 		return validation
 	}
-	var resolution *trackerscatalog.AuthResolutionError
-	if errors.As(err, &resolution) {
+	if resolution, ok := errors.AsType[*trackerscatalog.AuthResolutionError](err); ok {
 		if resolution.AuthRequired {
 			return &AuthRequiredError{
 				TrackerID: trackerID,

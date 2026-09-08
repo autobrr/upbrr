@@ -733,6 +733,7 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 	return meta, nil
 }
 
+// dvd5CapacityThreshold is the established 4.37 GiB DVD5 boundary, in bytes.
 const dvd5CapacityThreshold = 437 * (1 << 30) / 100
 
 func applyDVDCapacity(meta *preparationstate.State) {

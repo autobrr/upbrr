@@ -15,6 +15,6 @@ sh scripts/sync-webui-assets.sh
 
 echo "Building upbrr binary..."
 mkdir -p dist
-GOOS="" GOARCH="" go build -o dist/upbrr ./cmd/upbrr
+GOOS="$(go env GOHOSTOS)" GOARCH="$(go env GOHOSTARCH)" go build -o dist/upbrr ./cmd/upbrr
 
 echo "Done. Binary: dist/upbrr"

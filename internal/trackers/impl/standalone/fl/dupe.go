@@ -5,6 +5,7 @@ package fl
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -71,7 +72,11 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return dupe.Failed(dupe.FailureResponseStatus, "FL search failed", nil)
+		_, detail, readErr := commonhttp.ReadUploadResponseBody(resp, false, commonhttp.DefaultResponsePreviewBytes)
+		if readErr != nil {
+			return dupe.Failed(dupe.FailureResponseStatus, "FL search failed", readErr)
+		}
+		return dupe.Failed(dupe.FailureResponseStatus, "FL search failed", fmt.Errorf("FL search failed status=%d: %s", resp.StatusCode, detail))
 	}
 	root, err := xhtml.Parse(resp.Body)
 	if err != nil {

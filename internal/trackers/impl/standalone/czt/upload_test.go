@@ -25,6 +25,18 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestCodecSelectionUsesResolvedMediaFacts(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{VideoCodec: "H.265", Release: api.ReleaseInfo{Codec: []string{"H.264"}}}
+	if !hasCodec(meta, "H.265") || firstCodec(meta) != "H.265" {
+		t.Fatalf("resolved codec was not selected: %q", firstCodec(meta))
+	}
+	if got := firstCodec(api.UploadSubject{Release: api.ReleaseInfo{Codec: []string{"H.265"}}}); got != "" {
+		t.Fatalf("raw codec fallback = %q", got)
+	}
+}
+
 func TestUploadSuccessPersistsReturnedTorrentAndUsesProvidedAssets(t *testing.T) {
 	returnedTorrent := validTorrentBytes(t)
 	server := newCZTUploadTestServer(t, returnedTorrent, uploadPath)

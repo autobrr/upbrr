@@ -65,6 +65,42 @@ func TestHDRFromMediaInfoText(t *testing.T) {
 	}
 }
 
+func TestVideoCodecFromMediaInfoText(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name string
+		text string
+		want string
+	}{
+		{
+			name: "format",
+			text: "Video\nFormat : HEVC\nCodec ID : V_MPEGH/ISO/HEVC",
+			want: "HEVC",
+		},
+		{
+			name: "codec ID alone is not format evidence",
+			text: "Video\nCodec ID : V_MPEG4/ISO/AVC",
+		},
+		{
+			name: "MPEG family alone is not a codec",
+			text: "Video\nFormat : MPEG Video\nFormat version : Version 2",
+		},
+		{
+			name: "MPEG-4 Visual alone does not identify the encoder",
+			text: "Video\nFormat : MPEG-4 Visual\nWriting library : XviD",
+		},
+		{name: "no video", text: "General\nFormat : Matroska"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := VideoCodecFromMediaInfoText(test.text); got != test.want {
+				t.Fatalf("video codec = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestHDRFromMediaInfoDocumentMatchesTextNormalization(t *testing.T) {
 	t.Parallel()
 

@@ -1832,10 +1832,9 @@ func TestResolveDescriptionAssetsKeepsExactScreenshotsAndMenusSeparate(t *testin
 	}
 	for index := range 2 {
 		imagePath := filepath.Join(t.TempDir(), fmt.Sprintf("menu-%d.png", index))
-		exact.DVDMenus = append(exact.DVDMenus, api.DVDMenuCaptureImage{ScreenshotImage: api.ScreenshotImage{
+		exact.DVDMenus = append(exact.DVDMenus, api.DVDMenuCaptureImage{
 			Path:    imagePath,
-			Purpose: api.ScreenshotPurposeMenu,
-		}})
+			Purpose: api.ScreenshotPurposeMenu})
 		exact.DVDMenuUploads = append(exact.DVDMenuUploads, api.UploadedImageLink{
 			ImagePath:  imagePath,
 			UsageScope: globalImageUsageScope,

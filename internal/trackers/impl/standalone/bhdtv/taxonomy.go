@@ -6,7 +6,6 @@ package bhdtv
 import (
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -39,7 +38,7 @@ func resolveMovieSubcategory(meta api.UploadSubject) string {
 		return "2"
 	case "REMUX":
 		switch {
-		case strings.Contains(strings.ToUpper(metautil.FirstNonEmptyTrimmed(meta.ReleaseName, meta.ReleaseNameNoTag)), "265"):
+		case hasH265Video(meta):
 			return "48"
 		case meta.Is3D != "":
 			return "45"
@@ -50,7 +49,7 @@ func resolveMovieSubcategory(meta api.UploadSubject) string {
 		return "6"
 	case "ENCODE":
 		switch {
-		case strings.Contains(strings.ToUpper(metautil.FirstNonEmptyTrimmed(meta.ReleaseName, meta.ReleaseNameNoTag)), "265"):
+		case hasH265Video(meta):
 			return "43"
 		case meta.Is3D != "":
 			return "44"
@@ -101,7 +100,7 @@ func resolveTVPackSubcategory(typeValue string) string {
 }
 
 func resolveResolutionID(meta api.UploadSubject) string {
-	switch normalizeResolution(metautil.FirstNonEmptyTrimmed(meta.Release.Resolution, meta.ReleaseName, meta.Filename)) {
+	switch normalizeResolution(meta.Release.Resolution) {
 	case "2160P":
 		return "4"
 	case "1080P":
@@ -113,6 +112,16 @@ func resolveResolutionID(meta api.UploadSubject) string {
 	default:
 		return "10"
 	}
+}
+
+func hasH265Video(meta api.UploadSubject) bool {
+	for _, value := range []string{meta.VideoEncode, meta.VideoCodec} {
+		normalized := strings.NewReplacer(".", "", "-", "", "_", "", " ", "").Replace(strings.ToUpper(strings.TrimSpace(value)))
+		if normalized == "H265" || normalized == "X265" || normalized == "HEVC" {
+			return true
+		}
+	}
+	return false
 }
 
 func categoryOf(meta api.UploadSubject) string {

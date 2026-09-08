@@ -337,10 +337,8 @@ func resolveLanguage(meta api.UploadSubject) string {
 	if meta.ProviderMetadata.TMDB != nil {
 		lang = strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalLanguage)
 	}
-	if lang == "" {
-		if len(meta.Release.Language) > 0 {
-			lang = meta.Release.Language[0]
-		}
+	if lang == "" && len(meta.AudioLanguages) > 0 {
+		lang = meta.AudioLanguages[0]
 	}
 	lang = strings.ToLower(lang)
 	if lang == "" {
