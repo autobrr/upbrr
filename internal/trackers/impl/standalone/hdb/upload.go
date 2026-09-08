@@ -192,11 +192,11 @@ func submitPreparedUpload(ctx context.Context, req trackers.PreparationInput, st
 	}
 	matches := hdbSuccessURLPattern.FindStringSubmatch(finalURL)
 	if len(matches) < 2 {
-		_, responsePreview, _ := commonhttp.ReadUploadResponseBody(resp, false, commonhttp.DefaultResponsePreviewBytes)
+		_, responsePreview, readErr := commonhttp.ReadUploadResponseBody(resp, false, commonhttp.DefaultResponsePreviewBytes)
 		if len(responsePreview) == 0 {
 			responsePreview = []byte("no readable error message in upload response")
 		}
-		return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("HDB", resp.StatusCode, finalURL, responsePreview)
+		return api.UploadSummary{}, errors.Join(commonhttp.UploadHTTPErrorWithURL("HDB", resp.StatusCode, finalURL, responsePreview), readErr)
 	}
 
 	torrentID := strings.TrimSpace(matches[1])

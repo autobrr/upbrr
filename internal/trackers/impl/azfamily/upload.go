@@ -229,10 +229,7 @@ func submitPreparedUpload(
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusFound {
 		_, responseDetail, readErr := commonhttp.ReadUploadResponseBody(resp, false, commonhttp.DefaultResponsePreviewBytes)
-		if readErr != nil {
-			return api.UploadSummary{}, fmt.Errorf("trackers: %s read upload response: %w", site.Name, readErr)
-		}
-		return api.UploadSummary{}, commonhttp.UploadHTTPError(site.Name, resp.StatusCode, responseDetail)
+		return api.UploadSummary{}, errors.Join(commonhttp.UploadHTTPError(site.Name, resp.StatusCode, responseDetail), readErr)
 	}
 
 	location := strings.TrimSpace(resp.Header.Get("Location"))
@@ -361,13 +358,10 @@ func createTask(
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusFound {
 		_, responseDetail, readErr := commonhttp.ReadUploadResponseBody(resp, false, commonhttp.DefaultResponsePreviewBytes)
-		if readErr != nil {
-			return taskInfo{}, fmt.Errorf("trackers: %s read task creation response: %w", site.Name, readErr)
-		}
 		return taskInfo{}, fmt.Errorf(
 			"trackers: %s task creation failed: %w",
 			site.Name,
-			commonhttp.UploadHTTPError(site.Name, resp.StatusCode, responseDetail),
+			errors.Join(commonhttp.UploadHTTPError(site.Name, resp.StatusCode, responseDetail), readErr),
 		)
 	}
 	location := strings.TrimSpace(resp.Header.Get("Location"))
