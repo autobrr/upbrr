@@ -397,6 +397,7 @@ func e2eClientEvidenceSnapshot(
 		Result: api.ClientSearchResult{
 			InfoHash:            evidence.InfoHash,
 			TorrentPath:         evidence.TorrentPath,
+			TorrentDataVerified: evidence.TorrentDataVerified,
 			TrackerIDs:          evidence.TrackerIDs,
 			FoundTrackerMatch:   evidence.FoundTrackerMatch,
 			TorrentComments:     evidence.TorrentComments,
