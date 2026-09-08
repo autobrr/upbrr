@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/autobrr/rls"
@@ -37,9 +38,10 @@ const (
 // Client queries IMDb's public GraphQL endpoint for title, search, and episode
 // metadata.
 type Client struct {
-	baseURL string
-	http    *http.Client
-	logger  api.Logger
+	baseURL               string
+	http                  *http.Client
+	logger                api.Logger
+	knownPersistedQueries sync.Map
 }
 
 // NewClient substitutes a 15-second HTTP client and no-op logger for nil
@@ -69,13 +71,10 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 		return info, nil
 	}
 
-	query := fmt.Sprintf(
-		`query GetTitleInfo { title(id: "%s") { id titleText { text isOriginalTitle country { text } } originalTitleText { text } releaseYear { year endYear } titleType { id } plot { plotText { plainText } } ratingsSummary { aggregateRating voteCount } primaryImage { url } runtime { displayableProperty { value { plainText } } seconds } titleGenres { genres { genre { text } } } principalCredits { category { text id } credits { name { id nameText { text } } } } episodes { episodes(first: 500) { edges { node { id series { displayableEpisodeNumber { displayableSeason { season } episodeNumber { text } } } titleText { text } releaseYear { year } releaseDate { year month day } } } pageInfo { hasNextPage hasPreviousPage } total } } runtimes(first: 10) { edges { node { id seconds displayableProperty { value { plainText } } attributes { text } } } } technicalSpecifications { soundMixes { items { text attributes { text } } } } akas(first: 100) { edges { node { text country { text } language { text } attributes { text } } } } countriesOfOrigin { countries { text } } } }`,
-		escapeGraphQLString(id),
-	)
+	const query = `query GetTitleInfo($id: ID!) { title(id: $id) { id titleText { text isOriginalTitle country { text } } originalTitleText { text } releaseYear { year endYear } titleType { id } plot { plotText { plainText } } ratingsSummary { aggregateRating voteCount } primaryImage { url } runtime { displayableProperty { value { plainText } } seconds } titleGenres { genres { genre { text } } } principalCredits { category { text id } credits { name { id nameText { text } } } } episodes { episodes(first: 500) { edges { node { id series { displayableEpisodeNumber { displayableSeason { season } episodeNumber { text } } } titleText { text } releaseYear { year } releaseDate { year month day } } } pageInfo { hasNextPage hasPreviousPage } total } } runtimes(first: 10) { edges { node { id seconds displayableProperty { value { plainText } } attributes { text } } } } technicalSpecifications { soundMixes { items { text attributes { text } } } } akas(first: 100) { edges { node { text country { text } language { text } attributes { text } } } } countriesOfOrigin { countries { text } } } }`
 
 	var response map[string]any
-	if err := c.postGraphQL(ctx, "GetTitleInfo", query, &response); err != nil {
+	if err := c.postGraphQL(ctx, "GetTitleInfo", query, map[string]any{"id": id}, &response); err != nil {
 		return info, err
 	}
 
@@ -482,12 +481,9 @@ func (c *Client) GetEpisodeInfo(ctx context.Context, imdbID string, debug bool) 
 		return EpisodeLookup{}, nil
 	}
 
-	query := fmt.Sprintf(
-		`query GetEpisodeInfo { title(id: "%s") { id titleText { text } series { displayableEpisodeNumber { displayableSeason { id season text } episodeNumber { id text } } nextEpisode { id titleText { text } } previousEpisode { id titleText { text } } series { id titleText { text } } } } }`,
-		escapeGraphQLString(id),
-	)
+	const query = `query GetEpisodeInfo($id: ID!) { title(id: $id) { id titleText { text } series { displayableEpisodeNumber { displayableSeason { id season text } episodeNumber { id text } } nextEpisode { id titleText { text } } previousEpisode { id titleText { text } } series { id titleText { text } } } } }`
 	var response map[string]any
-	if err := c.postGraphQL(ctx, "GetEpisodeInfo", query, &response); err != nil {
+	if err := c.postGraphQL(ctx, "GetEpisodeInfo", query, map[string]any{"id": id}, &response); err != nil {
 		return EpisodeLookup{}, err
 	}
 	title := getMap(response, "data", "title")
@@ -553,23 +549,31 @@ func (c *Client) runSearch(ctx context.Context, filename string, searchYear int,
 		filename = strings.ReplaceAll(filename, "AND", "&")
 	}
 
-	constraints := []string{fmt.Sprintf("titleTextConstraint: {searchTerm: \"%s\"}", escapeGraphQLString(filename))}
+	constraints := map[string]any{
+		"titleTextConstraint": map[string]any{"searchTerm": filename},
+	}
 	if !wide && searchYear > 0 {
 		start := searchYear - 1
 		end := searchYear + 1
-		constraints = append(constraints, fmt.Sprintf("releaseDateConstraint: {releaseDateRange: {start: \"%d-01-01\", end: \"%d-12-31\"}}", start, end))
+		constraints["releaseDateConstraint"] = map[string]any{
+			"releaseDateRange": map[string]any{
+				"start": fmt.Sprintf("%d-01-01", start),
+				"end":   fmt.Sprintf("%d-12-31", end),
+			},
+		}
 	}
 	if !wide && duration > 0 {
-		constraints = append(constraints, fmt.Sprintf("runtimeConstraint: {runtimeRangeMinutes: {min: %d, max: %d}}", duration-10, duration+10))
+		constraints["runtimeConstraint"] = map[string]any{
+			"runtimeRangeMinutes": map[string]any{
+				"min": duration - 10,
+				"max": duration + 10,
+			},
+		}
 	}
-	constraintsString := strings.Join(constraints, ", ")
 
-	query := fmt.Sprintf(
-		`query SearchTitles { advancedTitleSearch(first: 10, constraints: {%s}) { total edges { node { title { id titleText { text } titleType { text } releaseYear { year } plot { plotText { plainText } } } } } } }`,
-		constraintsString,
-	)
+	const query = `query SearchTitles($constraints: AdvancedTitleSearchConstraints!) { advancedTitleSearch(first: 10, constraints: $constraints) { total edges { node { title { id titleText { text } titleType { text } releaseYear { year } plot { plotText { plainText } } } } } } }`
 	var response map[string]any
-	if err := c.postGraphQL(ctx, "SearchTitles", query, &response); err != nil {
+	if err := c.postGraphQL(ctx, "SearchTitles", query, map[string]any{"constraints": constraints}, &response); err != nil {
 		return nil
 	}
 	return getList(response, "data", "advancedTitleSearch", "edges")
@@ -591,6 +595,11 @@ type graphQLPersistedQuery struct {
 	SHA256Hash string `json:"sha256Hash"`
 }
 
+type persistedQueryCacheKey struct {
+	endpoint string
+	hash     string
+}
+
 type graphQLErrorEnvelope struct {
 	Errors []struct {
 		Message    string `json:"message"`
@@ -600,24 +609,35 @@ type graphQLErrorEnvelope struct {
 	} `json:"errors"`
 }
 
-func (c *Client) postGraphQL(ctx context.Context, operationName string, query string, target any) error {
+func (c *Client) postGraphQL(ctx context.Context, operationName string, query string, variables map[string]any, target any) error {
 	queryHash := sha256.Sum256([]byte(query))
+	hash := hex.EncodeToString(queryHash[:])
 	payload := graphQLRequest{
 		OperationName: operationName,
-		Variables:     map[string]any{},
+		Variables:     variables,
 		Extensions: graphQLExtensions{
 			PersistedQuery: graphQLPersistedQuery{
 				Version:    1,
-				SHA256Hash: hex.EncodeToString(queryHash[:]),
+				SHA256Hash: hash,
 			},
 		},
 	}
 
-	responseBody, err := c.executeGraphQLRequest(ctx, http.MethodGet, payload)
+	cacheKey := persistedQueryCacheKey{endpoint: c.baseURL, hash: hash}
+	_, known := c.knownPersistedQueries.Load(cacheKey)
+	method := http.MethodPost
+	if known {
+		method = http.MethodGet
+	} else {
+		payload.Query = query
+	}
+
+	responseBody, err := c.executeGraphQLRequest(ctx, method, payload)
 	if err != nil {
 		return err
 	}
-	if persistedQueryNotFound(responseBody) {
+	if known && persistedQueryNotFound(responseBody) {
+		c.knownPersistedQueries.Delete(cacheKey)
 		if c.logger != nil {
 			c.logger.Debugf("imdb: persisted query cache miss operation=%s action=register", operationName)
 		}
@@ -634,6 +654,7 @@ func (c *Client) postGraphQL(ctx context.Context, operationName string, query st
 	if err := json.Unmarshal(responseBody, target); err != nil {
 		return fmt.Errorf("imdb: decode GraphQL response: %w", err)
 	}
+	c.knownPersistedQueries.Store(cacheKey, struct{}{})
 	return nil
 }
 
@@ -692,6 +713,9 @@ func (c *Client) executeGraphQLRequest(ctx context.Context, method string, paylo
 		return nil, fmt.Errorf("imdb: GraphQL response exceeds %d bytes", maxGraphQLResponseSize)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if method == http.MethodGet && persistedQueryNotFound(responseBody) {
+			return responseBody, nil
+		}
 		return nil, fmt.Errorf(
 			"imdb: http %d: %s",
 			resp.StatusCode,
@@ -839,12 +863,6 @@ func fallbackParsedTitle(untouched string) string {
 	}
 	release := rls.ParseString(trimmed)
 	return strings.TrimSpace(release.Title)
-}
-
-func escapeGraphQLString(value string) string {
-	value = strings.ReplaceAll(value, "\\", "\\\\")
-	value = strings.ReplaceAll(value, "\"", "\\\"")
-	return value
 }
 
 func getMap(root map[string]any, path ...string) map[string]any {
