@@ -171,6 +171,8 @@ question in `bdmv_selection.playlists`: each value has the form
 `disc-<64-lowercase-hex-digits>:00000.MPLS`. Keep the selection bound to the reviewed
 collection fingerprint. At least one playlist must be selected for every disc;
 plain filenames are accepted only when the source contains one Blu-ray disc.
+A source with one Blu-ray disc requires plain filenames; disc-scoped values are
+rejected with `bdmv_disc_scope_unexpected`.
 Preflight checks each disc identity and playlist against the current layout.
 Repeated filenames on different discs remain separate selections.
 
