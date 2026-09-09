@@ -157,7 +157,7 @@ pwsh -NoProfile -File .\scripts\live-testing\run.ps1 -Suite Screenshots -CaseId 
 pwsh -NoProfile -File .\scripts\live-testing\run.ps1 -Suite Screenshots -CaseId MY-BD-DISC
 ```
 
-Only explicit five-digit MPLS filenames are accepted; no playlist is chosen by
+Only explicit playlist selections are accepted; no playlist is chosen by
 size or guessed from the folder name. Changing directory membership, file sizes
 or timestamps requires reviewing and recording the selection again. A fresh
 run passes the selection through the production preparation instructions and
@@ -165,11 +165,24 @@ checks the prepared playlist list. Duplicate, tracker and image-host gates still
 apply. Identical sanitized temporary basenames for different sources require
 separate runs, including two inputs both ending in `BDMV`.
 
+For a multidisc Blu-ray collection, point `input_path` at the collection parent.
+Use the exact disc-scoped option values from the accepted production playlist
+question in `bdmv_selection.playlists`: each value has the form
+`disc-<64-lowercase-hex-digits>:00000.MPLS`. Keep the selection bound to the reviewed
+collection fingerprint. At least one playlist must be selected for every disc;
+plain filenames are accepted only when the source contains one Blu-ray disc.
+A source with one Blu-ray disc requires plain filenames; disc-scoped values are
+rejected with `bdmv_disc_scope_unexpected`.
+Preflight checks each disc identity and playlist against the current layout.
+Repeated filenames on different discs remain separate selections.
+
 The first preparation scans the selected playlists with production BDInfo and
-saves its quick, extended and full reports under
+saves every disc's quick, extended and full reports under
 `%LOCALAPPDATA%\upbrr-live-testing\bdinfo`. Later runs validate report hashes and
-restore those files into their own private profile before preparation. They
-recollect release facts while the production metadata service reuses the reports.
+restore those files into the matching per-disc directories in their own private
+profile before preparation. Single-disc sources use the same namespaced layout.
+The runner recollects release facts while the production metadata service reuses
+the reports.
 The cache survives run cleanup and is keyed by source membership/stat evidence,
 playlist order, dependency lockfiles and the BDInfo scanner/report parser and
 artifact-layout source.

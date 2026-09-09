@@ -279,14 +279,14 @@ Assert-ImageCheck (($ownedLanes.laneId -join ',') -ceq 'lane-a,lane-b,lane-pendi
 $script:Lanes = @(@{ caseId = 'EXPLICIT'; laneId = 'explicit-sat'; sat = $true }); $script:Results = @()
 Assert-ImageCheck (Test-LiveContentLane $script:Lanes[0]) 'explicit_sat_content_disabled'
 $feedbackStatement = @($runnerAst.FindAll({ param($node)
-  $node -is [Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.StartsWith('if ($feedback.goal -in')
+  $node -is [Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.StartsWith('if ($feedbackItem.goal -in')
 }, $true))
 Assert-ImageCheck ($feedbackStatement.Count -eq 1) 'feedback_media_binding_missing'
 foreach ($goal in @('prepared', 'trackers_assessed', 'duplicates_decided', 'media_ready', 'descriptions_ready', 'dry_run')) {
   foreach ($count in @(0, 5)) {
     foreach ($coverage in @($false, $true)) {
       $script:Run = @{ suite = 'Full'; imageHostCoverage = $coverage; budgets = @{ screenshotCount = 3 } }
-      $feedback = @{ goal = $goal }; $intent = @{}; $lane = $resumeLane
+      $feedbackItem = @{ goal = $goal }; $intent = @{}; $lane = $resumeLane
       $laterGoal = $goal -in @('media_ready', 'descriptions_ready', 'dry_run')
       $current = $(if ($laterGoal) { @{ projections = @{ projections = @(@{ trackerId = 'NONE'; artifacts = @{ screenshotCount = $count } }) } } } else { @{} })
       . ([scriptblock]::Create($feedbackStatement[0].Extent.Text))

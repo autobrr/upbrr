@@ -129,6 +129,7 @@ try {
       version = 1; runId = $runID; state = 'running'; createdAt = [datetime]::UtcNow.ToString('o')
       buildIdentifier = $buildIdentifier; binaryPath = $script:Binary; binarySha256 = (Get-FileHash -LiteralPath $script:Binary).Hash
       candidate = $candidateAfter; frontend = $assets; tools = $versions; rules = @(Get-RuleState)
+      bdinfoScannerFingerprint = $bdinfoScannerFingerprint
       configFingerprint = $profile.sourceFingerprint; profileConfigSha256 = (Get-FileHash -LiteralPath $profile.configPath).Hash
       configDefaultTrackers = @($profile.defaultTrackers); selectedTrackers = $trackers; trackerScope = $(if ($Tracker) { 'explicit' } else { 'config_defaults' })
       suite = $Suite; caseIds = @($selected); corpusPath = $Corpus; corpusSha256 = $corpusSHA256
@@ -185,41 +186,41 @@ try {
 
     if ($ResumeRun) {
       Write-PrivateJson (Join-Path $script:RunDir ('feedback-input-' + [guid]::NewGuid().ToString('N') + '.private.json')) $script:Feedback
-      foreach ($feedback in @($script:Feedback)) {
-        if (-not $feedback.authority) { continue }
-        $lane = @($script:Lanes | Where-Object laneId -CEQ $feedback.laneId)[0]
-        if (-not $lane -or $lane.sourceFingerprint -cne $feedback.sourceFingerprint) { throw 'feedback_lane_mismatch' }
-        $current = Invoke-LiveAPI 'GetReleaseWorkflow' @{ workflowId = $feedback.authority.workflowId }
-        if ((Resolve-FeedbackAuthority $lane $feedback $current) -eq 'refreshed') {
+      foreach ($feedbackItem in @($script:Feedback)) {
+        if (-not $feedbackItem.authority) { continue }
+        $lane = @($script:Lanes | Where-Object laneId -CEQ $feedbackItem.laneId)[0]
+        if (-not $lane -or $lane.sourceFingerprint -cne $feedbackItem.sourceFingerprint) { throw 'feedback_lane_mismatch' }
+        $current = Invoke-LiveAPI 'GetReleaseWorkflow' @{ workflowId = $feedbackItem.authority.workflowId }
+        if ((Resolve-FeedbackAuthority $lane $feedbackItem $current) -eq 'refreshed') {
           Add-Result $lane.caseId $lane.laneId 'feedback' 'needs_input' 'changed_evidence_requires_acceptance'
           continue
         }
-        if (@($feedback.answers).Count -eq 0) { continue }
-        if (-not $feedback.acceptedAt -or -not $feedback.rationale) { throw 'feedback_acceptance_receipt_missing' }
+        if (@($feedbackItem.answers).Count -eq 0) { continue }
+        if (-not $feedbackItem.acceptedAt -or -not $feedbackItem.rationale) { throw 'feedback_acceptance_receipt_missing' }
         $actions = @(Get-PendingActions $current)
-        foreach ($answer in $feedback.answers) {
+        foreach ($answer in $feedbackItem.answers) {
           $action = @($actions | Where-Object id -CEQ $answer.actionId)[0]
-          $saved = @($feedback.requiredActions | Where-Object id -CEQ $answer.actionId)[0]
+          $saved = @($feedbackItem.requiredActions | Where-Object id -CEQ $answer.actionId)[0]
           if (-not $action -or -not $saved -or $answer.workflowRevision -ne $current.workflow.revision -or (Get-ActionSemantics @($action)) -cne (Get-ActionSemantics @($saved))) { throw 'feedback_action_stale' }
           if ($action.kind -in @('approve_upload', 'authenticate_tracker', 'provide_two_factor', 'reconcile_submission')) { throw 'feedback_action_not_permitted' }
         }
         $intent = @{ executionMode = $script:Run.executionMode; interaction = 'unattended'; trackerIds = $lane.trackerIds; noSeed = $true; skipRemoteDuplicates = [bool]$script:Run.skipRemoteDuplicates }
-        if ($feedback.goal -in @('media_ready', 'descriptions_ready', 'dry_run')) { $intent.media = Get-LiveMediaInstructions $lane $current }
+        if ($feedbackItem.goal -in @('media_ready', 'descriptions_ready', 'dry_run')) { $intent.media = Get-LiveMediaInstructions $lane $current }
         if ($lane.preparation) {
           $intent.preparation = $lane.preparation
           $intent.preparation.Instructions = $current.factInstructions.instructions
           if (@($actions | Where-Object kind -EQ 'reprepare').Count -gt 0) { $intent.preparation.Force = $true }
         }
-        $current = Continue-Lane $lane $feedback.goal $current $intent $feedback.answers
+        $current = Continue-Lane $lane $feedbackItem.goal $current $intent $feedbackItem.answers
         foreach ($completedGoal in @('prepared', 'trackers_assessed', 'duplicates_decided', 'media_ready')) {
-          if ($completedGoal -eq $feedback.goal) { break }
+          if ($completedGoal -eq $feedbackItem.goal) { break }
           $null = Record-Stage $lane $current $completedGoal
         }
-        $status = Record-Stage $lane $current $feedback.goal
+        $status = Record-Stage $lane $current $feedbackItem.goal
         if (@(Get-PendingActions $current).Count -eq 0) {
           $script:Results = @($script:Results | Where-Object { $_.laneId -cne $lane.laneId -or $_.stage -ne 'feedback' })
           $script:Feedback = @($script:Feedback | Where-Object laneId -CNE $lane.laneId)
-          if ($status -eq 'pass') { $current = Resume-Lane $lane $current $feedback.goal }
+          if ($status -eq 'pass') { $current = Resume-Lane $lane $current $feedbackItem.goal }
         }
       }
     } else {

@@ -144,6 +144,38 @@ try {
   # Execute the runner's real snapshot/build statements with deterministic edits at
   # read/build boundaries; external processes are replaced only in this child probe.
   $runnerSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'run.ps1') -Raw
+  # Execute the real resume loop at script scope, where its iterator must not alias
+  # the retained feedback collection or erase another lane's pending question.
+  $parseTokens = $null; $parseErrors = $null
+  $runnerAST = [System.Management.Automation.Language.Parser]::ParseInput($runnerSource, [ref]$parseTokens, [ref]$parseErrors)
+  $feedbackLoop = $runnerAST.Find({ param($node)
+    $node -is [System.Management.Automation.Language.ForEachStatementAst] -and $node.Condition.Extent.Text -ceq '@($script:Feedback)'
+  }, $true)
+  Assert-Check ([bool]$feedbackLoop) 'resume_feedback_loop_missing'
+  $resumeProbe = Join-Path $validationDir 'resume-feedback-probe.ps1'
+  $resumeHeader = @'
+param($Repo)
+$ErrorActionPreference = 'Stop'
+. (Join-Path $Repo 'scripts/live-testing/functions.ps1')
+$action = @{ id='playlist-1'; kind='select_playlist'; status='pending'; options=@(@{ value='disc-one:00000.MPLS' }) }
+$script:Feedback = @(
+  @{ laneId='lane-answered'; caseId='CASE-ANSWERED'; sourceFingerprint='source'; authority=@{ workflowId='workflow-1' }; goal='prepared'; requiredActions=@($action); answers=@(@{ actionId='playlist-1'; workflowRevision=1; selectedValues=@('disc-one:00000.MPLS') }); acceptedAt='2026-09-08T00:00:00Z'; rationale='Operator selected the retained option.' },
+  @{ laneId='lane-pending'; caseId='CASE-PENDING'; sourceFingerprint='source'; authority=@{ workflowId='workflow-2' }; goal='prepared'; requiredActions=@($action); answers=@() }
+)
+$script:Lanes = @($script:Feedback | ForEach-Object { @{ laneId=$_.laneId; caseId=$_.caseId; sourceFingerprint='source'; trackerIds=@('ULCX') } })
+$script:Run=@{ executionMode='normal'; skipRemoteDuplicates=$false }; $script:Results=@(); $script:ResumedGoals=@()
+function Invoke-LiveAPI { @{ workflow=@{ id='workflow-1'; revision=1; requiredActions=@($action) } } }
+function Resolve-FeedbackAuthority { 'current' }
+function Continue-Lane { @{ workflow=@{ id='workflow-1'; revision=2; requiredActions=@() }; release=@{ id='release-1' } } }
+function Record-Stage { 'pass' }
+function Resume-Lane($Lane,$Current,[string]$CompletedGoal) { $script:ResumedGoals += $CompletedGoal; $Current }
+'@
+  $resumeAssertions = @'
+if ($script:ResumedGoals.Count -ne 1 -or $script:ResumedGoals[0] -cne 'prepared') { throw 'accepted_feedback_goal_lost' }
+if ($script:Feedback.Count -ne 1 -or $script:Feedback[0].laneId -cne 'lane-pending') { throw 'unanswered_feedback_lost' }
+'@
+  [IO.File]::WriteAllText($resumeProbe, $resumeHeader + "`n" + $feedbackLoop.Extent.Text + "`n" + $resumeAssertions)
+  Invoke-OwnedProcess (Get-ToolPath 'pwsh') @('-NoProfile', '-File', $resumeProbe, '-Repo', $script:RepoRoot) (Join-Path $validationDir 'resume-feedback') 30
   $preflightStart = $runnerSource.IndexOf('    $scenariosSHA256 =')
   $preflightEnd = $runnerSource.IndexOf('    # The production temporary layout')
   $buildStart = $runnerSource.IndexOf('    $candidateBefore =')
@@ -243,12 +275,18 @@ exit $LASTEXITCODE
   $profileTwo = @{ runDir = (Join-Path $cacheRoot 'runs/two'); dbPath = (Join-Path $cacheRoot 'runs/two/profile/db.sqlite') }
   New-Item -ItemType Directory -Path $cacheRoot -Force | Out-Null
   $coldCache = Restore-BDInfoReports $discEntry $profileOne $cacheRoot 'scanner-one'
+  $scopedSingle = $disc.Clone()
+  $scopedSingle.bdmv_selection = @{ playlists = @($coldCache.playlists); source_fingerprint = $discStat.fingerprint }
+  $rejected = $false
+  try { Get-CaseBDMVScopedPlaylists $scopedSingle | Out-Null } catch { $rejected = $_.Exception.Message -eq 'bdmv_disc_scope_unexpected' }
+  Assert-Check $rejected 'scoped_single_disc_selection_accepted'
   $binaryOne = (Get-TextHash 'binary-one').ToUpperInvariant()
   $binaryTwo = Get-TextHash 'binary-two'
   Assert-Check (-not $coldCache.restored) 'cold_cache_reported_as_restored'
   Assert-Check (-not (Save-BDInfoReports $coldCache $discEntry $cacheRoot $binaryOne)) 'missing_reports_saved'
   New-Item -ItemType Directory -Path $coldCache.target -Force | Out-Null
-  foreach ($name in @(Get-BDInfoReportNames @('00001.MPLS'))) {
+  foreach ($name in @(Get-BDInfoReportNames $coldCache.playlists)) {
+    New-Item -ItemType Directory -Path (Split-Path -Parent (Join-Path $coldCache.target $name)) -Force | Out-Null
     [IO.File]::WriteAllText((Join-Path $coldCache.target $name), "Playlist: 00001.MPLS`nSynthetic report for cache transport testing.")
   }
   foreach ($invalid in @($null, 'binary-one', ('g' * 64), ($binaryOne + "`n"))) {
@@ -303,7 +341,8 @@ exit $LASTEXITCODE
   try { Restore-BDInfoReports $discEntry $profileTwo $cacheRoot 'scanner-one' | Out-Null } catch { $rejected = $_.Exception.Message -eq 'bdinfo_cache_identity_mismatch' }
   Assert-Check $rejected 'wrong_source_cache_manifest_accepted'
   [IO.File]::WriteAllBytes($manifestPath, $manifestBytes)
-  $summaryPath = Join-Path $warmCache.directory 'BD_SUMMARY_00001.MPLS.txt'
+  $singleReportNames = @(Get-BDInfoReportNames $warmCache.playlists)
+  $summaryPath = Join-Path $warmCache.directory $singleReportNames[0]
   $summaryBytes = [IO.File]::ReadAllBytes($summaryPath)
   [IO.File]::WriteAllText($summaryPath, 'Playlist: 00002.MPLS')
   $rejected = $false
@@ -312,7 +351,7 @@ exit $LASTEXITCODE
   [IO.File]::WriteAllBytes($summaryPath, $summaryBytes)
   $differentScanner = Restore-BDInfoReports $discEntry $profileTwo $cacheRoot 'scanner-two'
   Assert-Check (-not $differentScanner.restored -and $differentScanner.directory -cne $warmCache.directory) 'changed_scanner_reused_reports'
-  [IO.File]::AppendAllText((Join-Path $warmCache.directory 'BD_SUMMARY_FULL_00001.MPLS.txt'), 'changed report')
+  [IO.File]::AppendAllText((Join-Path $warmCache.directory $singleReportNames[2]), 'changed report')
   $rejected = $false
   try { Restore-BDInfoReports $discEntry $profileTwo $cacheRoot 'scanner-one' | Out-Null } catch { $rejected = $_.Exception.Message -eq 'bdinfo_cache_report_changed' }
   Assert-Check $rejected 'corrupt_cached_report_accepted'
@@ -321,6 +360,60 @@ exit $LASTEXITCODE
   $rejected = $false
   try { Save-BDInfoReports $coldCache $discEntry $cacheRoot $binaryOne | Out-Null } catch { $rejected = $_.Exception.Message -eq 'source_changed_during_run' }
   Assert-Check $rejected 'changed_source_published_cache'
+
+  $multi = @{ case_id = 'MY-MULTIDISC'; input_path = (Join-Path $validationDir 'Example.MultiDisc-GRP'); input_shape = 'disc-directory'; probe_status = 'ok' }
+  foreach ($part in @('Disc1', 'Disc2')) {
+    $multiDiscRoot = Join-Path $multi.input_path "$part/BDMV"
+    New-Item -ItemType Directory -Path (Join-Path $multiDiscRoot 'PLAYLIST') -Force | Out-Null
+    foreach ($file in @('00001.mpls', '00002.mpls')) { [IO.File]::WriteAllText((Join-Path $multiDiscRoot "PLAYLIST/$file"), 'synthetic playlist') }
+    [IO.File]::WriteAllText((Join-Path $multiDiscRoot 'stream.m2ts'), 'synthetic stream')
+  }
+  $multi.probe_path = Join-Path $multi.input_path 'Disc1/BDMV/stream.m2ts'
+  $multi.fingerprint = Get-SourceFingerprint $multi
+  $multiCorpus = Join-Path $validationDir 'multidisc-corpus.private.json'
+  Write-PrivateJson $multiCorpus @{ schema_version = 1; cases = @($multi) }
+  Assert-Check (@(Read-Corpus $multiCorpus @('MY-MULTIDISC'))[0].reason -eq 'source_selection_unconfirmed') 'nested_discs_bypassed_selection'
+  $discIDs = @((Get-CaseBDMVDiscs $multi).id | Sort-Object)
+  $multi.bdmv_selection = @{ playlists = @($discIDs | ForEach-Object { $_ + ':00001.MPLS' }); source_fingerprint = $multi.fingerprint.fingerprint }
+  Write-PrivateJson $multiCorpus @{ schema_version = 1; cases = @($multi) }
+  $multiEntry = @(Read-Corpus $multiCorpus @('MY-MULTIDISC'))[0]
+  Assert-Check ($multiEntry.status -eq 'ready') 'multidisc_selection_not_ready'
+  foreach ($badSelection in @(@('00001.MPLS'), @($discIDs[0] + ':00001.MPLS'), @(('disc-' + ('f' * 64) + ':00001.MPLS'), ($discIDs[1] + ':00001.MPLS')))) {
+    $invalidMulti = $multi.Clone(); $invalidMulti.bdmv_selection = @{ playlists = $badSelection; source_fingerprint = $multi.fingerprint.fingerprint }
+    Write-PrivateJson $multiCorpus @{ schema_version = 1; cases = @($invalidMulti) }
+    Assert-Check (@(Read-Corpus $multiCorpus @('MY-MULTIDISC'))[0].status -eq 'blocked') 'unbound_or_incomplete_disc_selection_accepted'
+  }
+  $multiCold = Restore-BDInfoReports $multiEntry $profileOne $cacheRoot 'scanner-one'
+  foreach ($name in @(Get-BDInfoReportNames $multiCold.playlists)) {
+    $path = Join-Path $multiCold.target $name
+    New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force | Out-Null
+    [IO.File]::WriteAllText($path, "Playlist: 00001.MPLS`nSynthetic disc report $name")
+  }
+  $multiSaved = Save-BDInfoReports $multiCold $multiEntry $cacheRoot $binaryOne
+  $multiWarm = Restore-BDInfoReports $multiEntry $profileTwo $cacheRoot 'scanner-one'
+  Assert-Check ($multiWarm.restored -and $multiSaved.reports.Count -eq 6 -and @($multiSaved.reports.name | Select-Object -Unique).Count -eq 6) 'same_playlist_discs_collided_in_cache'
+  Assert-Check ((Save-BDInfoReports $multiWarm $multiEntry $cacheRoot $binaryTwo).producerBinarySHA256 -ceq $binaryOne) 'multidisc_cache_producer_relabelled'
+  foreach ($choice in @(@($multiCold.playlists[1], $multiCold.playlists[0]), @($multiCold.playlists[0].Replace('00001', '00002'), $multiCold.playlists[1]))) {
+    $changed = $multi.Clone(); $changed.bdmv_selection = @{ playlists = $choice; source_fingerprint = $multi.fingerprint.fingerprint }
+    $changedCache = Restore-BDInfoReports @{ case = $changed; stat = $multi.fingerprint } $profileTwo $cacheRoot 'scanner-one'
+    Assert-Check (-not $changedCache.restored -and $changedCache.directory -cne $multiWarm.directory) 'changed_multidisc_selection_reused_cache'
+  }
+  $multiNames = @(Get-BDInfoReportNames $multiCold.playlists)
+  $firstReport = Join-Path $multiWarm.directory $multiNames[0]
+  $originalReport = [IO.File]::ReadAllBytes($firstReport)
+  Remove-Item -LiteralPath $firstReport
+  $rejected = $false
+  try { Restore-BDInfoReports $multiEntry $profileTwo $cacheRoot 'scanner-one' | Out-Null } catch { $rejected = $_.Exception.Message -eq 'bdinfo_cache_incomplete' }
+  Assert-Check $rejected 'incomplete_multidisc_cache_accepted'
+  Copy-Item -LiteralPath (Join-Path $multiWarm.directory $multiNames[3]) -Destination $firstReport
+  $rejected = $false
+  try { Restore-BDInfoReports $multiEntry $profileTwo $cacheRoot 'scanner-one' | Out-Null } catch { $rejected = $_.Exception.Message -eq 'bdinfo_cache_report_changed' }
+  Assert-Check $rejected 'cross_disc_report_swap_accepted'
+  [IO.File]::WriteAllBytes($firstReport, $originalReport)
+  [IO.File]::AppendAllText((Join-Path $multi.input_path 'Disc2/BDMV/PLAYLIST/00002.mpls'), ' changed source')
+  $rejected = $false
+  try { Restore-BDInfoReports $multiEntry $profileTwo $cacheRoot 'scanner-one' | Out-Null } catch { $rejected = $_.Exception.Message -eq 'source_changed_during_run' }
+  Assert-Check $rejected 'changed_secondary_disc_reused_cache'
   $probeScript = Join-Path $validationDir 'child.ps1'
   [IO.File]::WriteAllText($probeScript, '[pscustomobject]@{e2e=$env:UPBRR_E2E_RUNNER_VALIDATION;literal=$args[0]}|ConvertTo-Json -Compress')
   $prior = $env:UPBRR_E2E_RUNNER_VALIDATION
@@ -463,6 +556,14 @@ exit $LASTEXITCODE
   Assert-Check ((Record-Stage $identityLane $identityCurrent 'prepared') -eq 'pass') 'confirmed_prepared_playlist_rejected'
   $identityCurrent.release.release.Source.Remove('SelectedPlaylists')
   Assert-Check ((Record-Stage $identityLane $identityCurrent 'prepared') -eq 'fail') 'missing_prepared_playlist_accepted'
+  $identityLane.expectedPlaylists = @(('disc-' + ('a' * 64) + ':00001.MPLS'), ('disc-' + ('b' * 64) + ':00001.MPLS'))
+  $identityCurrent.release.release.Source.SelectedPlaylists = @(
+    @{ discId = ('disc-' + ('a' * 64)); file = '00001.mpls' },
+    @{ discId = ('disc-' + ('b' * 64)); file = '00001.mpls' }
+  )
+  Assert-Check ((Record-Stage $identityLane $identityCurrent 'prepared') -eq 'pass') 'prepared_disc_scoped_playlists_rejected'
+  $identityCurrent.release.release.Source.SelectedPlaylists[1].discId = 'disc-' + ('a' * 64)
+  Assert-Check ((Record-Stage $identityLane $identityCurrent 'prepared') -eq 'fail') 'prepared_playlist_wrong_disc_accepted'
   $gitPath = Get-ToolPath 'git'
   Assert-Check ($gitPath -is [string] -and $gitPath -ceq (Get-Command git -CommandType Application | Select-Object -First 1).Source) 'tool_path_not_single_application'
   Invoke-OwnedProcess $gitPath @('--version') (Join-Path $validationDir 'git-single-path') 30
@@ -519,6 +620,29 @@ exit $LASTEXITCODE
     Assert-Check ($script:FakeRequests[1].intent.preparation.Instructions.SourceLookup -ceq 'operator-selected-synthetic-source' -and -not $intent.preparation.Instructions.SourceLookup) 'accepted_facts_reset_or_caller_intent_mutated'
     Assert-Check ($lane.expectedIdentity.IMDBID -eq 1234567 -and $lane.preparation.Instructions.Identity.IMDBID -eq 7654321) 'answered_identity_replaced_case_expectation'
     Assert-Check ((Record-Stage $lane $answered 'prepared') -eq 'fail' -and $script:Results[-1].reason -eq 'metadata_identity_mismatch') 'answered_identity_mismatch_accepted'
+  } finally { Set-Item Function:Invoke-LiveAPI -Value $originalAPI }
+
+  $script:FakeRequests = @()
+  function Invoke-LiveAPI([string]$Method, $Body = @{}, [switch]$Poll, [int]$ExpectedStatus = 200) {
+    $script:FakeRequests += @(ConvertTo-Json $Body -Depth 40 | ConvertFrom-Json -AsHashtable)
+    if ($Body.answers -or -not $Body.intent.factInstructions.Playlist.Set -or
+        ($Body.intent.factInstructions.Playlist.Selected -join ',') -cne 'disc-one:00000.MPLS,disc-two:00000.MPLS,disc-three:00000.MPLS' -or
+        $Body.intent.preparation.Instructions.Identity.IMDBID -ne 1234567) { throw 'playlist_answer_not_routed_to_facts' }
+    @{ workflow = @{ id = 'workflow-1'; revision = 2 }; release = @{ id = 'release-1' } }
+  }
+  try {
+    $values = @('disc-one:00000.MPLS', 'disc-two:00000.MPLS', 'disc-three:00000.MPLS')
+    $action = @{ id = 'playlist-1'; kind = 'select_playlist'; status = 'pending'; options = @($values | ForEach-Object { @{ value = $_ } }) }
+    $old = @{ workflow = @{ id = 'workflow-1'; revision = 7; requiredActions = @($action) }; factInstructions = @{ instructions = @{ Identity = @{ IMDBID = 1234567 }; Playlist = @{ Set = $false } } } }
+    $intent = @{ preparation = @{ SourcePath = $source; Instructions = $old.factInstructions.instructions }; noSeed = $true }
+    $answer = @{ actionId = 'playlist-1'; workflowRevision = 7; selectedValues = $values }
+    $null = Continue-Lane $lane 'prepared' $old $intent @($answer)
+    Assert-Check ($script:FakeRequests.Count -eq 2 -and -not $intent.preparation.Instructions.Playlist.Set) 'playlist_resume_mutated_original_or_stopped_early'
+    foreach ($invalid in @(@{ actionId = 'playlist-1'; workflowRevision = 6; selectedValues = $values }, @{ actionId = 'playlist-1'; workflowRevision = 7; selectedValues = @('unknown:00000.MPLS') }, @{ actionId = 'playlist-1'; workflowRevision = 7; selectedValues = @() })) {
+      $rejected = $false
+      try { Continue-Lane $lane 'prepared' $old $intent @($invalid) | Out-Null } catch { $rejected = $_.Exception.Message -eq 'feedback_playlist_answer_invalid' }
+      Assert-Check $rejected 'invalid_playlist_feedback_accepted'
+    }
   } finally { Set-Item Function:Invoke-LiveAPI -Value $originalAPI }
 
   $script:FakeRequests = @()
