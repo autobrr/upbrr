@@ -10,96 +10,165 @@ import (
 	"path/filepath"
 	"strings"
 
-	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
-
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+	"github.com/autobrr/upbrr/internal/sourcelayout"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// resolveBDMVPlaylistSelection resolves a direct or remembered selection only
-// against playlists discovered from the current BDMV resource root.
+// resolveBDMVPlaylistSelection resolves one complete selection against every
+// discovered BDMV and persists it only after all discs validate.
 func (s *Service) resolveBDMVPlaylistSelection(ctx context.Context, request preparationstate.Request) ([]api.PlaylistInfo, error) {
-	bdmvRoot := strings.TrimSpace(request.Layout.BDMVRoot)
-	if bdmvRoot == "" {
-		return nil, fmt.Errorf("metadata: BDMV resource root is unavailable: %w", internalerrors.ErrInvalidInput)
+	discs := request.Layout.Discs
+	if len(discs) == 0 {
+		return nil, fmt.Errorf("metadata: BDMV resources are unavailable: %w", internalerrors.ErrInvalidInput)
 	}
-	discovered, err := discoverBDMVPlaylists(ctx, bdmvRoot)
-	if err != nil {
-		return nil, fmt.Errorf("metadata: discover BDMV playlists: %w", err)
+	candidates := make([]api.PlaylistInfo, 0)
+	for _, disc := range discs {
+		if disc.Type != "BDMV" {
+			return nil, fmt.Errorf("metadata: invalid BDMV resource set: %w", internalerrors.ErrInvalidInput)
+		}
+		discovered, err := discoverBDMVPlaylists(ctx, disc.Root)
+		if err != nil {
+			return nil, fmt.Errorf("metadata: discover BDMV playlists: %w", err)
+		}
+		if len(discovered) == 0 {
+			return nil, fmt.Errorf("metadata: BDMV disc has no discoverable playlists: %w", internalerrors.ErrInvalidInput)
+		}
+		for _, playlist := range discovered {
+			candidates = append(candidates, apiPlaylistForDisc(playlist, disc, len(discs) == 1))
+		}
 	}
 
 	instruction := request.Input.Instructions.Playlist
 	selected := append([]string(nil), instruction.Selected...)
 	useAll := instruction.UseAll
 	if !instruction.Set {
-		stored, lookupErr := s.repo.GetPlaylistSelection(ctx, playlistSelectionKey(request.Layout.SourcePath))
-		if lookupErr != nil {
-			if errors.Is(lookupErr, internalerrors.ErrNotFound) {
-				return nil, &api.PlaylistSelectionRequiredError{
-					SourcePath: request.Layout.SourcePath,
-					Candidates: apiPlaylists(discovered),
-				}
+		stored, err := s.repo.GetPlaylistSelection(ctx, playlistSelectionKey(request.Layout.SourcePath))
+		if err != nil {
+			if errors.Is(err, internalerrors.ErrNotFound) {
+				return nil, playlistSelectionRequired(request, candidates)
 			}
-			return nil, fmt.Errorf("metadata: load remembered playlist selection: %w", lookupErr)
+			return nil, fmt.Errorf("metadata: load remembered playlist selection: %w", err)
+		}
+		storedFingerprint := strings.TrimSpace(stored.SourceFingerprint)
+		currentFingerprint := strings.TrimSpace(request.SourceFingerprint)
+		if storedFingerprint != currentFingerprint && (storedFingerprint != "" || len(discs) != 1) {
+			return nil, playlistSelectionRequired(request, candidates)
 		}
 		selected = append([]string(nil), stored.SelectedPlaylists...)
 		useAll = stored.UseAll
 	}
 
+	resolved, err := resolvePlaylistIDs(request, candidates, selected, useAll)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, len(resolved))
+	for i := range resolved {
+		ids[i] = resolved[i].ID
+	}
+	if err := s.repo.SavePlaylistSelection(
+		ctx,
+		playlistSelectionKey(request.Layout.SourcePath),
+		strings.TrimSpace(request.SourceFingerprint),
+		ids,
+		useAll,
+	); err != nil {
+		return nil, fmt.Errorf("metadata: save playlist selection: %w", err)
+	}
+	return resolved, nil
+}
+
+func resolvePlaylistIDs(
+	request preparationstate.Request,
+	candidates []api.PlaylistInfo,
+	selected []string,
+	useAll bool,
+) ([]api.PlaylistInfo, error) {
 	if useAll {
-		return apiPlaylists(discovered), nil
+		return append([]api.PlaylistInfo(nil), candidates...), nil
 	}
 	if len(selected) == 0 {
-		return nil, &api.PlaylistSelectionRequiredError{
-			SourcePath: request.Layout.SourcePath,
-			Candidates: apiPlaylists(discovered),
-		}
+		return nil, playlistSelectionRequired(request, candidates)
 	}
 
-	byName := make(map[string]filesystem.PlaylistInfo, len(discovered))
-	for _, playlist := range discovered {
-		byName[discparse.NormalizePlaylistName(playlist.File)] = playlist
+	byID := make(map[string]api.PlaylistInfo, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.ID == "" {
+			return nil, fmt.Errorf("metadata: discovered playlist has no ID: %w", internalerrors.ErrInvalidInput)
+		}
+		if _, exists := byID[candidate.ID]; exists {
+			return nil, fmt.Errorf("metadata: duplicate playlist ID: %w", internalerrors.ErrInvalidInput)
+		}
+		byID[candidate.ID] = candidate
 	}
-	seen := make(map[string]struct{}, len(selected))
-	result := make([]api.PlaylistInfo, 0, len(selected))
+
+	selectedIDs := make(map[string]struct{}, len(selected))
+	selectedDiscs := make(map[string]struct{}, len(request.Layout.Discs))
 	for _, raw := range selected {
-		normalized, validationErr := validatePlaylistName(raw)
-		if validationErr != nil {
+		id, err := decodePlaylistSelectionID(raw, candidates, len(request.Layout.Discs) == 1)
+		if err != nil {
 			return nil, &api.InvalidPlaylistSelectionError{
 				SourcePath: request.Layout.SourcePath,
 				Playlist:   strings.TrimSpace(raw),
-				Reason:     validationErr.Error(),
+				Reason:     err.Error(),
 			}
 		}
-		if _, exists := seen[normalized]; exists {
-			return nil, &api.InvalidPlaylistSelectionError{
-				SourcePath: request.Layout.SourcePath,
-				Playlist:   normalized,
-				Reason:     "duplicate playlist",
-			}
+		if _, exists := selectedIDs[id]; exists {
+			continue
 		}
-		playlist, exists := byName[normalized]
-		if !exists {
-			return nil, &api.InvalidPlaylistSelectionError{
-				SourcePath: request.Layout.SourcePath,
-				Playlist:   normalized,
-				Reason:     "playlist was not found in the current source",
-			}
+		selectedIDs[id] = struct{}{}
+		selectedDiscs[byID[id].DiscID] = struct{}{}
+	}
+	if len(selectedDiscs) != len(request.Layout.Discs) {
+		return nil, &api.InvalidPlaylistSelectionError{
+			SourcePath: request.Layout.SourcePath,
+			Reason:     "at least one playlist must be selected for every disc",
 		}
-		seen[normalized] = struct{}{}
-		result = append(result, apiPlaylist(playlist))
+	}
+
+	result := make([]api.PlaylistInfo, 0, len(selectedIDs))
+	for _, candidate := range candidates {
+		if _, selected := selectedIDs[candidate.ID]; selected {
+			result = append(result, candidate)
+		}
 	}
 	return result, nil
 }
 
-// validatePlaylistName accepts one local MPLS filename and rejects paths or traversal.
-func validatePlaylistName(value string) (string, error) {
-	trimmed := strings.TrimSpace(value)
+func decodePlaylistSelectionID(raw string, candidates []api.PlaylistInfo, singleDisc bool) (string, error) {
+	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
-		return "", errors.New("playlist name is empty")
+		return "", errors.New("playlist ID is empty")
 	}
+	if !singleDisc {
+		for _, candidate := range candidates {
+			if candidate.ID == trimmed {
+				return candidate.ID, nil
+			}
+		}
+		return "", errors.New("playlist ID was not found in the current source")
+	}
+
+	normalized, err := validateLegacyPlaylistName(trimmed)
+	if err != nil {
+		return "", err
+	}
+	for _, candidate := range candidates {
+		if strings.EqualFold(candidate.ID, normalized) {
+			return candidate.ID, nil
+		}
+	}
+	return "", errors.New("playlist was not found in the current source")
+}
+
+// validateLegacyPlaylistName is the only compatibility decoder that treats a
+// selection as a one-disc MPLS basename.
+func validateLegacyPlaylistName(value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
 	if filepath.IsAbs(trimmed) || filepath.VolumeName(trimmed) != "" || strings.ContainsAny(trimmed, `/\\`) || trimmed == "." || trimmed == ".." {
 		return "", errors.New("playlist name must be a local filename")
 	}
@@ -110,28 +179,33 @@ func validatePlaylistName(value string) (string, error) {
 	return normalized, nil
 }
 
+func playlistSelectionRequired(request preparationstate.Request, candidates []api.PlaylistInfo) error {
+	return &api.PlaylistSelectionRequiredError{
+		SourcePath: request.Layout.SourcePath,
+		Candidates: append([]api.PlaylistInfo(nil), candidates...),
+	}
+}
+
 // playlistSelectionKey preserves the repository's slash-normalized source key.
 func playlistSelectionKey(sourcePath string) string {
 	return filepath.ToSlash(filepath.Clean(sourcePath))
 }
 
-// apiPlaylists projects discovered filesystem playlists into detached API values.
-func apiPlaylists(values []filesystem.PlaylistInfo) []api.PlaylistInfo {
-	result := make([]api.PlaylistInfo, 0, len(values))
-	for _, value := range values {
-		result = append(result, apiPlaylist(value))
-	}
-	return result
-}
-
-// apiPlaylist projects one filesystem playlist and detaches its item list.
-func apiPlaylist(value filesystem.PlaylistInfo) api.PlaylistInfo {
+func apiPlaylistForDisc(value filesystem.PlaylistInfo, disc sourcelayout.DiscResource, singleDisc bool) api.PlaylistInfo {
 	items := make([]api.PlaylistItem, 0, len(value.Items))
 	for _, item := range value.Items {
 		items = append(items, api.PlaylistItem{File: item.File, Size: item.Size})
 	}
+	file := discparse.NormalizePlaylistName(value.File)
+	id := file
+	if !singleDisc {
+		id = disc.ID + ":" + file
+	}
 	return api.PlaylistInfo{
-		File:     value.File,
+		ID:       id,
+		DiscID:   disc.ID,
+		DiscName: disc.Name,
+		File:     file,
 		Duration: value.Duration,
 		Items:    items,
 		Score:    value.Score,

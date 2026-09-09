@@ -43,6 +43,7 @@ type FakeCounters = {
 type FakeServer = {
   url: string;
   counters: FakeCounters;
+  trackerUploadBodies: Buffer[];
   delayTrackerUploads: (delayMs: number) => void;
   delayClientInjections: (delayMs: number) => void;
   close: () => Promise<void>;
@@ -57,6 +58,8 @@ export type E2EWorkspace = {
   screenshotPath: string;
   fake: FakeServer;
   env: NodeJS.ProcessEnv;
+  /** Current embedded server URL after startApp succeeds. */
+  appURL?: string;
   cleanup: () => Promise<void>;
 };
 
@@ -77,6 +80,7 @@ type StartAppOptions = {
 
 type E2EWorkspaceOptions = {
   screenshotCount?: number;
+  useLargestPlaylist?: boolean;
   /** Selects the fake metadata and source-name shape; defaults to a movie. */
   mediaKind?: "movie" | "tv";
 };
@@ -99,7 +103,10 @@ export async function createE2EWorkspace(options: E2EWorkspaceOptions = {}): Pro
   await writeFile(sourcePath, "e2e media fixture\n");
   await writeFile(screenshotPath, png1x1);
   const fake = await startFakeServer();
-  await writeFile(configPath, buildConfig(dbPath, options.screenshotCount));
+  await writeFile(
+    configPath,
+    buildConfig(dbPath, options.screenshotCount, options.useLargestPlaylist),
+  );
   const env = {
     ...process.env,
     UPBRR_E2E_FAKE_SERVICES: "1",
@@ -150,6 +157,20 @@ export async function readE2EAuthCounters(workspace: E2EWorkspace): Promise<E2EA
 /** Adds a minimal parseable BDMV source without invoking any external disc tool. */
 export async function createBluraySourceFixture(workspace: E2EWorkspace): Promise<string> {
   const discRoot = path.join(workspace.root, "media", "Example Disc");
+  await writeBlurayDisc(discRoot, "single");
+  return discRoot;
+}
+
+/** Adds two BDMV roots with the same playlist basename under one collection. */
+export async function createMultiBluraySourceFixture(workspace: E2EWorkspace): Promise<string> {
+  const collectionRoot = path.join(workspace.root, "media", "Example BDMV Collection");
+  for (const discName of ["Disc 1", "Disc 2"]) {
+    await writeBlurayDisc(path.join(collectionRoot, discName), discName);
+  }
+  return collectionRoot;
+}
+
+async function writeBlurayDisc(discRoot: string, contentLabel: string): Promise<void> {
   const bdmvRoot = path.join(discRoot, "BDMV");
   const playlistDir = path.join(bdmvRoot, "PLAYLIST");
   const streamDir = path.join(bdmvRoot, "STREAM");
@@ -171,18 +192,36 @@ export async function createBluraySourceFixture(workspace: E2EWorkspace): Promis
   playlist.writeUInt32BE(0, 56);
   playlist.writeUInt32BE(45_000 * 120, 60);
   await writeFile(path.join(playlistDir, "00001.mpls"), playlist);
-  await writeFile(path.join(streamDir, "00001.m2ts"), "synthetic Blu-ray stream\n");
-  return discRoot;
+  await writeFile(path.join(streamDir, "00001.m2ts"), `synthetic Blu-ray stream ${contentLabel}\n`);
 }
 
 /** Adds a minimal DVD folder layout without invoking external disc tooling. */
 export async function createDVDSourceFixture(workspace: E2EWorkspace): Promise<string> {
   const discRoot = path.join(workspace.root, "media", "Example DVD");
+  await writeDVDDisc(discRoot, "single");
+  return discRoot;
+}
+
+/** Adds two VIDEO_TS roots under one collection. */
+export async function createMultiDVDSourceFixture(workspace: E2EWorkspace): Promise<string> {
+  const collectionRoot = path.join(workspace.root, "media", "Example DVD Collection");
+  for (const discName of ["Disc 1", "Disc 2"]) {
+    await writeDVDDisc(path.join(collectionRoot, discName), discName);
+  }
+  return collectionRoot;
+}
+
+async function writeDVDDisc(discRoot: string, contentLabel: string): Promise<void> {
   const videoRoot = path.join(discRoot, "VIDEO_TS");
   await mkdir(videoRoot, { recursive: true });
-  await writeFile(path.join(videoRoot, "VIDEO_TS.IFO"), "synthetic DVD control data\n");
-  await writeFile(path.join(videoRoot, "VTS_01_1.VOB"), "synthetic DVD video data\n");
-  return discRoot;
+  await writeFile(
+    path.join(videoRoot, "VIDEO_TS.IFO"),
+    `synthetic DVD control data ${contentLabel}\n`,
+  );
+  await writeFile(
+    path.join(videoRoot, "VTS_01_1.VOB"),
+    `synthetic DVD video data ${contentLabel}\n`,
+  );
 }
 
 /**
@@ -243,8 +282,9 @@ async function startAppOnce(
     await stopProcess(child);
     throw error;
   }
+  workspace.appURL = `${origin}${basePath ? `${basePath}/` : "/"}`;
   return {
-    url: `${origin}${basePath ? `${basePath}/` : "/"}`,
+    url: workspace.appURL,
     output: () => output.join(""),
     stop: async () => {
       await stopProcess(child);
@@ -303,35 +343,43 @@ async function ensureE2EWebAuth(workspace: E2EWorkspace) {
   }
 }
 
-/** Generates one persistent API token through the public CLI without exposing it in diagnostics. */
+/** Generates one persistent API token through the authenticated app endpoint. */
 export async function createE2EAPIToken(
   workspace: E2EWorkspace,
   owner = "e2e-client",
 ): Promise<string> {
-  const result = await runProcess(
-    e2eBinary,
-    [
-      "api-token",
-      "create",
-      "--config",
-      workspace.configPath,
-      "--name",
-      `E2E ${owner}`,
-      "--owner",
-      owner,
-      "--scopes",
-      "workflow:read,workflow:write,workflow:execute",
-    ],
-    workspace.env,
-  );
-  if (result.code !== 0) {
-    throw new Error(`failed to generate e2e API credential:\n${result.output}`);
+  if (!workspace.appURL) {
+    throw new Error("e2e app must be running before API credential creation");
   }
-  const match = /^Token:\s*(\S+)$/m.exec(result.output);
-  if (!match?.[1]) {
-    throw new Error("API credential command did not return a one-time value");
+  const authResponse = await fetch(new URL("api/auth/status", workspace.appURL));
+  if (!authResponse.ok) {
+    throw new Error(`failed to load e2e auth status: HTTP ${authResponse.status}`);
   }
-  return match[1];
+  const auth = (await authResponse.json()) as { csrfToken?: string };
+  if (!auth.csrfToken) {
+    throw new Error("e2e auth status did not return a CSRF token");
+  }
+  const response = await fetch(new URL("api/app/CreateAPIToken", workspace.appURL), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Csrf-Token": auth.csrfToken,
+      Origin: new URL(workspace.appURL).origin,
+    },
+    body: JSON.stringify({
+      name: `E2E ${owner}`,
+      ownerId: owner,
+      scopes: ["workflow:read", "workflow:write", "workflow:execute"],
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`failed to generate e2e API credential: HTTP ${response.status}`);
+  }
+  const created = (await response.json()) as { token?: string };
+  if (!created.token) {
+    throw new Error("API credential endpoint did not return a one-time value");
+  }
+  return created.token;
 }
 
 export async function fetchMetadata(page: Page, appUrl: string, sourcePath: string) {
@@ -345,7 +393,23 @@ export async function fetchMetadata(page: Page, appUrl: string, sourcePath: stri
   await page.keyboard.press("Escape");
 }
 
-function buildConfig(dbPath: string, screenshotCount = 1): string {
+/** Verifies one uploaded torrent names the collection and includes every expected path segment. */
+export function expectSingleCollectionTorrentUpload(
+  workspace: E2EWorkspace,
+  collectionName: string,
+  expectedPathSegments: readonly string[],
+) {
+  expect(workspace.fake.trackerUploadBodies).toHaveLength(1);
+  const body = workspace.fake.trackerUploadBodies[0];
+  expect(body.includes(Buffer.from(`${Buffer.byteLength(collectionName)}:${collectionName}`))).toBe(
+    true,
+  );
+  for (const segment of expectedPathSegments) {
+    expect(body.includes(Buffer.from(`${Buffer.byteLength(segment)}:${segment}`))).toBe(true);
+  }
+}
+
+function buildConfig(dbPath: string, screenshotCount = 1, useLargestPlaylist = false): string {
   const yamlPath = dbPath.replaceAll("\\", "\\\\");
   return `main_settings:
   tmdb_api: "e2e"
@@ -358,6 +422,7 @@ image_hosting:
 metadata:
   skip_auto_torrent: false
   keep_images: true
+  use_largest_playlist: ${useLargestPlaylist}
 screenshot_handling:
   screens: ${Math.max(1, Math.trunc(screenshotCount))}
   min_successful_image_uploads: 1
@@ -405,6 +470,7 @@ async function startFakeServer(): Promise<FakeServer> {
     clientSearches: 0,
     clientInjections: 0,
   };
+  const trackerUploadBodies: Buffer[] = [];
   let trackerUploadDelayMs = 0;
   let clientInjectionDelayMs = 0;
   const server = createServer(async (req, res) => {
@@ -423,6 +489,7 @@ async function startFakeServer(): Promise<FakeServer> {
       const body = await readBody(req);
       if (body.includes(Buffer.from('name="tracker"'))) {
         counters.trackerUploads++;
+        trackerUploadBodies.push(body);
         await delay(trackerUploadDelayMs);
       } else {
         counters.imageUploads++;
@@ -445,6 +512,7 @@ async function startFakeServer(): Promise<FakeServer> {
   return {
     url: `http://127.0.0.1:${address.port}`,
     counters,
+    trackerUploadBodies,
     delayTrackerUploads: (delayMs) => {
       trackerUploadDelayMs = Math.max(0, delayMs);
     },

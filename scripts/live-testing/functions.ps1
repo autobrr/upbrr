@@ -115,19 +115,13 @@ function Read-Corpus([string]$Path, [string[]]$Selected) {
         if ($entry.fingerprint.fingerprint -cne $stat.fingerprint) {
           $status = 'needs_input'; $reason = 'source_changed_since_inventory'
         }
-        $bdmvRoot = [IO.Path]::GetFullPath($entry.input_path)
-        if ([IO.Path]::GetFileName($bdmvRoot.TrimEnd('\', '/')) -ine 'BDMV') { $bdmvRoot = Join-Path $bdmvRoot 'BDMV' }
         # DVD and episode directories use production preparation without MPLS instructions.
-        # Inspect the layout so a BDMV directory cannot bypass selection through its case shape.
-        if ($entry.bdmv_selection -or (Test-Path -LiteralPath $bdmvRoot -PathType Container)) {
+        # Nested discs also require source-bound, disc-scoped selections.
+        if ($entry.bdmv_selection -or @(Get-CaseBDMVDiscs $entry).Count -gt 0) {
           $playlists = @(Get-CaseBDMVPlaylists $entry)
           if ($playlists.Count -eq 0) { $status = 'needs_input'; $reason = 'source_selection_unconfirmed' }
           elseif ($entry.bdmv_selection.source_fingerprint -cne $stat.fingerprint) { $status = 'needs_input'; $reason = 'source_changed_since_selection' }
-          else {
-            foreach ($playlist in $playlists) {
-              if (-not (Test-Path -LiteralPath (Join-Path $bdmvRoot "PLAYLIST/$playlist") -PathType Leaf)) { throw 'bdmv_playlist_missing' }
-            }
-          }
+          else { $null = @(Get-CaseBDMVScopedPlaylists $entry) }
         }
       }
       @{ case = $entry; stat = $stat; status = $status; reason = $reason }
@@ -463,7 +457,10 @@ function Record-Stage($Lane, $Current, [string]$Goal) {
       }
     }
     if ($Lane.expectedPlaylists -and
-        (@($value.release.Source.SelectedPlaylists | ForEach-Object { ([string]$_.file).ToUpperInvariant() }) -join ',') -cne ($Lane.expectedPlaylists -join ',')) {
+        (@($value.release.Source.SelectedPlaylists | ForEach-Object {
+          $file = ([string]$_.file).ToUpperInvariant()
+          if ($Lane.expectedPlaylists[0].Contains(':')) { ([string]$_.discId) + ':' + $file } else { $file }
+        }) -join ',') -cne ($Lane.expectedPlaylists -join ',')) {
       $status = 'fail'; $reason = 'bdmv_playlist_selection_mismatch'
     }
   }
@@ -491,6 +488,17 @@ function Continue-Lane($Lane, [string]$Goal, $Current, $Intent, $Answers = @()) 
   $remainingAnswers = @()
   foreach ($answer in $Answers) {
     $action = @(Get-PendingActions $Current | Where-Object id -CEQ $answer.actionId)[0]
+    if ($action.kind -eq 'select_playlist') {
+      if ($Answers.Count -ne 1 -or $answer.workflowRevision -ne $Current.workflow.revision -or
+          -not $intentCopy.preparation -or @($answer.selectedValues).Count -eq 0 -or
+          @($answer.selectedValues | Where-Object { $_ -cnotin @($action.options.value) }).Count -gt 0) { throw 'feedback_playlist_answer_invalid' }
+      # Playlist answers replace preparation facts; generic action answers only dismiss the prompt.
+      $instructions = ConvertTo-Json -InputObject $Current.factInstructions.instructions -Depth 100 | ConvertFrom-Json -AsHashtable
+      $instructions.Playlist = @{ Set = $true; Selected = @($answer.selectedValues); UseAll = $false }
+      $intentCopy.preparation.Instructions = $instructions
+      $intentCopy.factInstructions = $instructions
+      continue
+    }
     if ($action.kind -ne 'review_duplicates') { $remainingAnswers += $answer; continue }
     if ($answer.workflowRevision -ne $Current.workflow.revision -or $action.trackerId -cnotin $Lane.trackerIds -or
         @($answer.selectedValues).Count -ne 1 -or $answer.selectedValues[0] -cnotin @('accepted', 'ignored') -or

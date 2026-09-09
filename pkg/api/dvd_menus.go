@@ -56,6 +56,10 @@ type DVDMenuCaptureImage struct {
 
 // DVDMenuCaptureWarning is a stable, redacted partial-capture diagnostic.
 type DVDMenuCaptureWarning struct {
+	// DiscID identifies the uncovered prepared disc when applicable.
+	DiscID string
+	// DiscName is the safe page-facing label for the uncovered disc.
+	DiscName string
 	// Code is a stable machine-readable warning identifier.
 	Code string
 	// Message is a redacted user-facing description of the incomplete coverage.

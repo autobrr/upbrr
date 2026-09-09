@@ -48,9 +48,18 @@ Run `ffmpeg -version` in the same environment that starts upbrr. On Windows, add
 
 The Web UI **Application Details** surface reports detected FFmpeg capability without exposing the local executable path.
 
+## A multi-disc source is rejected
+
+Multi-disc support accepts extracted, homogeneous DVD or BDMV directory collections. Select the collection parent and use one marker type under every disc folder:
+
+- `Disc 1/VIDEO_TS` and `Disc 2/VIDEO_TS`; or
+- `Disc 1/BDMV` and `Disc 2/BDMV`.
+
+Mixed DVD/BDMV collections are rejected. Nested or multi-disc HD DVD collections are unsupported; only an existing single direct or immediate `HVDVD_TS` layout remains compatible. ISO images and optical drives are not discovered as multi-disc inputs, so extract or copy each disc into a directory layout first. Directory symlinks are also rejected.
+
 ## Automatic DVD menu capture fails
 
-Automatic capture accepts an extracted DVD directory containing `VIDEO_TS`, or `VIDEO_TS` itself. It does not accept ISO images, optical drives, or Blu-ray menus.
+Automatic capture accepts an extracted DVD directory containing `VIDEO_TS`, `VIDEO_TS` itself, or a supported multi-disc DVD collection parent. Multi-disc results are grouped by disc; a partial-coverage warning means the collection-wide capture cap or available menus left at least one disc uncovered. Automatic capture does not accept ISO images, optical drives, or Blu-ray menus.
 
 The selected FFmpeg must expose the `dvdvideo` demuxer plus `menu`, `menu_lu`, `menu_vts`, `pgc`, and `pg`. Encrypted, protected, unreadable, region-restricted, or corrupt inputs can still fail. upbrr does not provide CSS decryption.
 

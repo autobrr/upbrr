@@ -139,10 +139,11 @@ func TestLiveTestSchemaRejectsUnknownMigrationAndConfig(t *testing.T) {
 		if err := repo.MigrateContext(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		for _, id := range liveTestHistoricalDiscardOnlyMigrations {
-			if _, err := repo.db.ExecContext(t.Context(), "INSERT INTO schema_migrations VALUES (?, 'synthetic')", id); err != nil {
-				t.Fatal(err)
-			}
+		if _, err := repo.db.ExecContext(
+			t.Context(),
+			"INSERT INTO schema_migrations VALUES ('2026_07_add_prepared_release_generations', 'synthetic')",
+		); err != nil {
+			t.Fatal(err)
 		}
 		if err := repo.ValidateLiveTestSchema(t.Context()); err != nil {
 			t.Fatalf("audited historical migrations rejected: %v", err)

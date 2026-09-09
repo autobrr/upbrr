@@ -45,7 +45,6 @@ func buildFinalPayload(
 	state sessionState,
 	req trackers.PreparationInput,
 	mediaCode string,
-	task taskInfo,
 	fileInfo string,
 	screenshotIDs []string,
 ) (url.Values, error) {
@@ -70,8 +69,6 @@ func buildFinalPayload(
 	values.Set("video_resolution", resolutionValue(req.Meta))
 	values.Set("movie_id", mediaCode)
 	values.Set("media_info", fileInfo)
-	values.Set("info_hash", task.InfoHash)
-	values.Set("task_id", task.TaskID)
 	if anonEnabled(req) {
 		values.Set("anon_upload", "1")
 	}

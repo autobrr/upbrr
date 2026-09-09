@@ -39,6 +39,12 @@ The left navigation follows the release workflow. Some pages appear or unlock on
 
 Navigation guards prevent later operations from silently using missing or stale prerequisites. When a page is unavailable, read the notice and return to the required stage.
 
+### Multi-disc sources
+
+On **Input**, select the parent containing all DVD or BDMV disc folders. BDMV playlist choices are grouped by disc, and preparation cannot continue until every disc has at least one selected playlist. Identical playlist filenames on different discs remain independent choices.
+
+The **Screenshots** page groups planned frames and generated images by disc and lets you choose the disc used for live preview. **Disc Menus** groups captured and imported menu images by disc. These groups survive release reloads, and **Upload** creates one collection-root torrent containing every disc folder.
+
 ## Settings
 
 Use **Settings** to manage:

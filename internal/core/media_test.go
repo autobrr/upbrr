@@ -377,7 +377,14 @@ func TestUploadImagesRealServiceUnknownOutcomeStopsFallbackAndPartialAcceptance(
 			}
 			_, err = module.uploadImagesToTargetsWithFallback(
 				t.Context(),
-				api.UploadSubject{SourcePath: filepath.Join(dir, "Example.Release.2026.mkv")},
+				api.UploadSubject{
+					SourcePath: filepath.Join(dir, "Example.Release.2026.mkv"),
+					MediaBinding: api.PreparedMediaBinding{
+						SourcePath: filepath.Join(dir, "Example.Release.2026.mkv"),
+						PreparedGeneration: 1,
+						PreparedMediaFingerprint: "test-prepared-media",
+					},
+				},
 				"sharex",
 				nil,
 				[]trackers.ImageUploadTarget{{
@@ -571,7 +578,7 @@ type reusableImageRepository struct {
 	links []api.UploadedImageLink
 }
 
-func (r *reusableImageRepository) ListUploadedImagesByPath(context.Context, string) ([]api.UploadedImageLink, error) {
+func (r *reusableImageRepository) ListUploadedImagesByPath(context.Context, api.PreparedMediaBinding) ([]api.UploadedImageLink, error) {
 	return slices.Clone(r.links), nil
 }
 

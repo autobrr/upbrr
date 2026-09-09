@@ -94,6 +94,53 @@ func TestDefinitionBuildDescriptionUsesResolvedAssetsAndMediaInfo(t *testing.T) 
 	}
 }
 
+func TestBuildMediaSectionIncludesDVDIFOAndVOBMediaInfo(t *testing.T) {
+	tmp := t.TempDir()
+	ifoMediaInfoPath := filepath.Join(tmp, "ifo-mediainfo.txt")
+	if err := os.WriteFile(ifoMediaInfoPath, []byte("General\nFormat : DVD Video"), 0o600); err != nil {
+		t.Fatalf("write IFO mediainfo: %v", err)
+	}
+
+	got, err := buildMediaSection(api.UploadSubject{
+		DiscType:            "DVD",
+		MediaInfoTextPath:   ifoMediaInfoPath,
+		DVDVOBMediaInfoText: "General\nFormat : MPEG-PS",
+	}, "")
+	if err != nil {
+		t.Fatalf("build media section: %v", err)
+	}
+	want := "[mediainfo]General\nFormat : DVD Video[/mediainfo]\n\n[mediainfo]General\nFormat : MPEG-PS[/mediainfo]"
+	if got != want {
+		t.Fatalf("media section = %q, want %q", got, want)
+	}
+}
+
+func TestBuildMediaSectionIncludesEveryDVDVOBReport(t *testing.T) {
+	t.Parallel()
+	got, err := buildMediaSection(api.UploadSubject{
+		DiscType:            "DVD",
+		DVDVOBMediaInfoText: "stale primary report",
+		Discs: []api.DiscEvidenceResource{
+			{
+				Name:                "Disc 1",
+				Type:                "DVD",
+				DVDVOBMediaInfoText: "First VOB report",
+			},
+			{
+				Name:                "Disc 2",
+				Type:                "DVD",
+				DVDVOBMediaInfoText: "Second VOB report",
+			},
+		},
+	}, "")
+	if err != nil {
+		t.Fatalf("build media section: %v", err)
+	}
+	if !strings.Contains(got, "First VOB report") || !strings.Contains(got, "Second VOB report") || strings.Contains(got, "stale primary report") {
+		t.Fatalf("collection media section = %q", got)
+	}
+}
+
 func TestPTPFreshUploadTaxonomy(t *testing.T) {
 	t.Parallel()
 

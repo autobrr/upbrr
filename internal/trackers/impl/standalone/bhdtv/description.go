@@ -16,7 +16,7 @@ func resolveInlineDescription(meta api.UploadSubject) string {
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
 		return "Disc so Check Mediainfo dump "
 	}
-	text, err := resolveMediaDump(meta)
+	text, err := resolveMediaDump(meta, "")
 	if err != nil {
 		return ""
 	}

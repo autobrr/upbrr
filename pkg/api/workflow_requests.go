@@ -138,6 +138,8 @@ func (r GetReleaseWorkflowMediaPlanRequest) Validate() error {
 // PreviewReleaseWorkflowFrameRequest creates a non-authoritative frame preview.
 type PreviewReleaseWorkflowFrameRequest struct {
 	ReleaseWorkflowCommandContext
+	// DiscID is required for multi-disc previews and optional for single-disc compatibility.
+	DiscID           string  `json:"discId,omitempty"`
 	TimestampSeconds float64 `json:"timestampSeconds"`
 }
 
@@ -234,7 +236,13 @@ type CaptureReleaseWorkflowMediaRequest struct {
 
 // Validate verifies exact revision authority.
 func (r CaptureReleaseWorkflowMediaRequest) Validate() error {
-	return r.ReleaseWorkflowCommandContext.Validate()
+	if err := r.ReleaseWorkflowCommandContext.Validate(); err != nil {
+		return err
+	}
+	if len(r.Instructions.Selections) > 0 && len(r.Instructions.ManualFrames) > 0 {
+		return errors.New("media selections and manual frames are mutually exclusive")
+	}
+	return nil
 }
 
 // SetReleaseWorkflowMediaSelectionRequest changes opaque artifact selection.

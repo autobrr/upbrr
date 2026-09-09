@@ -105,7 +105,7 @@ func TestCaptureRerunListAndDeletePreserveManualMenus(t *testing.T) {
 		t.Fatalf("write FFmpeg identity: %v", err)
 	}
 
-	meta := api.DVDMenuSubject{SourcePath: discRoot, DiscType: "DVD"}
+	meta := dvdMenuTestSubject(discRoot)
 	managedDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, api.ReleaseInfo{})
 	if err != nil {
 		t.Fatalf("managed dir: %v", err)
@@ -118,7 +118,7 @@ func TestCaptureRerunListAndDeletePreserveManualMenus(t *testing.T) {
 		A: 255,
 	})
 	now := time.Now().UTC()
-	if err := repo.AppendManualMenuScreenshots(context.Background(), meta.SourcePath,
+	if err := repo.AppendManualMenuScreenshots(context.Background(), meta.MediaBinding,
 		[]api.Screenshot{{
 			SourcePath: meta.SourcePath,
 			ImagePath:  manualPath,
@@ -211,11 +211,11 @@ func TestCaptureRerunListAndDeletePreserveManualMenus(t *testing.T) {
 		t.Fatalf("missing structural warning: %#v", first.Warnings)
 	}
 	for _, expected := range []string{
-		"DEBUG DVD menus: capture requested disc_type=DVD max_items=6",
+		"DEBUG DVD menus: capture requested disc_type=DVD discs=1 max_items=6",
 		"DEBUG DVD menus: FFmpeg capability probe complete dvdvideo=true options=5",
-		"INFO DVD menus: capture started language=en region=0",
-		"DEBUG DVD menus: progress phase=capturing",
-		`DEBUG DVD menus: warning recorded code=unsupported_pre_link detail="menu pre-command target was not resolved"`,
+		"INFO DVD menus: capture started discs=1 language=en region=0",
+		"DEBUG DVD menus: progress disc_id= phase=capturing",
+		"DEBUG DVD menus: warning recorded disc_id= code=unsupported_pre_link",
 		"DEBUG DVD menus: persistence started images=2",
 		"DEBUG DVD menus: persistence complete stored=2",
 		"WARN DVD menus: capture incomplete captured=2",
@@ -233,7 +233,7 @@ func TestCaptureRerunListAndDeletePreserveManualMenus(t *testing.T) {
 	}
 	assertProgressPhases(t, progressUpdates, []string{"preflight", "capturing", "persisting", "complete"})
 	firstAutoPaths := []string{first.Images[0].Path, first.Images[1].Path}
-	assertSelectionSources(t, repo, meta.SourcePath, []string{
+	assertSelectionSources(t, repo, meta.MediaBinding, []string{
 		api.ScreenshotSelectionSourceDVDMenu,
 		api.ScreenshotSelectionSourceDVDMenu,
 		api.ScreenshotSelectionSourceMenu,
@@ -269,7 +269,7 @@ func TestCaptureRerunListAndDeletePreserveManualMenus(t *testing.T) {
 		}
 	}
 
-	if err := repo.SaveUploadedImages(context.Background(), meta.SourcePath, "example-host", []api.UploadedImageLink{{
+	if err := repo.SaveUploadedImages(context.Background(), meta.MediaBinding, "example-host", []api.UploadedImageLink{{
 		SourcePath: meta.SourcePath,
 		ImagePath:  second.Images[0].Path,
 		Host:       "example-host",
@@ -285,7 +285,140 @@ func TestCaptureRerunListAndDeletePreserveManualMenus(t *testing.T) {
 	if _, err := os.Stat(second.Images[0].Path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("deleted image stat = %v", err)
 	}
-	assertSelectionSources(t, repo, meta.SourcePath, []string{api.ScreenshotSelectionSourceMenu})
+	assertSelectionSources(t, repo, meta.MediaBinding, []string{api.ScreenshotSelectionSourceMenu})
+}
+
+func TestCaptureDistributesCollectionCapAcrossDVDs(t *testing.T) {
+	t.Parallel()
+
+	repo := openTestRepository(t)
+	collectionRoot := t.TempDir()
+	discARoot := filepath.Join(collectionRoot, "Disc 1")
+	discBRoot := filepath.Join(collectionRoot, "Disc 2")
+	videoTSA := filepath.Join(discARoot, "VIDEO_TS")
+	videoTSB := filepath.Join(discBRoot, "VIDEO_TS")
+	for _, root := range []string{videoTSA, videoTSB} {
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			t.Fatalf("create VIDEO_TS: %v", err)
+		}
+	}
+	executable := filepath.Join(t.TempDir(), "ffmpeg-example")
+	if err := os.WriteFile(executable, []byte("example"), 0o600); err != nil {
+		t.Fatalf("write FFmpeg identity: %v", err)
+	}
+
+	service := newService(api.NopLogger{}, t.TempDir(), repo, &capabilityRunner{}, func() (string, error) { return executable, nil },
+		func(_ context.Context, root string, _ render.Runner, _ string, _ engine.Options) (engine.Result, error) {
+			if !sameExistingPath(t, root, videoTSA) && !sameExistingPath(t, root, videoTSB) {
+				t.Fatalf("capture root = %q", root)
+			}
+			return engine.Result{
+				Complete:    true,
+				Inventoried: 2,
+				Captures: []engine.Capture{
+					{Image: solidImage(color.NRGBA{R: 40, A: 255}), Discovery: graph.DiscoveryReachable},
+					{Image: solidImage(color.NRGBA{G: 40, A: 255}), Discovery: graph.DiscoveryReachable},
+				},
+			}, nil
+		})
+	subject := dvdMenuTestSubject(collectionRoot)
+	subject.Discs = []api.DVDMenuDiscSubject{
+		{
+			ID:   "disc-a",
+			Name: "Disc 1",
+			Root: discARoot,
+		},
+		{
+			ID:   "disc-b",
+			Name: "Disc 2",
+			Root: discBRoot,
+		},
+	}
+
+	result, err := service.Capture(context.Background(), subject, 3)
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	if len(result.Images) != 3 || !result.Truncated || result.Partial || result.Complete {
+		t.Fatalf("capture result = %#v", result)
+	}
+	for index, wantDiscID := range []string{"disc-a", "disc-b", "disc-a"} {
+		if result.Images[index].DiscID != wantDiscID || !strings.Contains(filepath.Base(result.Images[index].Path), "disc-"+wantDiscID+"-") {
+			t.Fatalf("image[%d] = %#v, want disc %q", index, result.Images[index], wantDiscID)
+		}
+	}
+}
+
+func TestCaptureRedistributesQuotaPastEmptyDVD(t *testing.T) {
+	t.Parallel()
+
+	repo := openTestRepository(t)
+	collectionRoot := t.TempDir()
+	discARoot := filepath.Join(collectionRoot, "Disc 1")
+	discBRoot := filepath.Join(collectionRoot, "Disc 2")
+	videoTSA := filepath.Join(discARoot, "VIDEO_TS")
+	videoTSB := filepath.Join(discBRoot, "VIDEO_TS")
+	for _, root := range []string{videoTSA, videoTSB} {
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			t.Fatalf("create VIDEO_TS: %v", err)
+		}
+	}
+	executable := filepath.Join(t.TempDir(), "ffmpeg-example")
+	if err := os.WriteFile(executable, []byte("example"), 0o600); err != nil {
+		t.Fatalf("write FFmpeg identity: %v", err)
+	}
+
+	service := newService(api.NopLogger{}, t.TempDir(), repo, &capabilityRunner{}, func() (string, error) { return executable, nil },
+		func(_ context.Context, root string, _ render.Runner, _ string, _ engine.Options) (engine.Result, error) {
+			if sameExistingPath(t, root, videoTSA) {
+				return engine.Result{}, nil
+			}
+			if !sameExistingPath(t, root, videoTSB) {
+				t.Fatalf("capture root = %q", root)
+			}
+			return engine.Result{Captures: []engine.Capture{
+				{Image: solidImage(color.NRGBA{B: 40, A: 255}), Discovery: graph.DiscoveryReachable},
+				{Image: solidImage(color.NRGBA{
+					R: 40,
+					B: 40,
+					A: 255,
+				}), Discovery: graph.DiscoveryReachable},
+				{Image: solidImage(color.NRGBA{
+					G: 40,
+					B: 40,
+					A: 255,
+				}), Discovery: graph.DiscoveryReachable},
+			}}, nil
+		})
+	subject := dvdMenuTestSubject(collectionRoot)
+	subject.Discs = []api.DVDMenuDiscSubject{
+		{
+			ID:   "disc-a",
+			Name: "Disc 1",
+			Root: discARoot,
+		},
+		{
+			ID:   "disc-b",
+			Name: "Disc 2",
+			Root: discBRoot,
+		},
+	}
+
+	result, err := service.Capture(context.Background(), subject, 2)
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	if len(result.Images) != 2 || !result.Partial || !result.Truncated {
+		t.Fatalf("capture result = %#v", result)
+	}
+	for index, image := range result.Images {
+		if image.DiscID != "disc-b" {
+			t.Fatalf("image[%d] = %#v", index, image)
+		}
+	}
+	if !hasDiscWarning(result.Warnings, "disc-a") {
+		t.Fatalf("missing uncovered warning for disc-a: %#v", result.Warnings)
+	}
 }
 
 func assertProgressPhases(t *testing.T, updates []api.DVDMenuProgressUpdate, want []string) {
@@ -318,7 +451,7 @@ func TestCaptureRollsBackCreatedFilesWhenPersistenceFails(t *testing.T) {
 			return engine.Result{Captures: []engine.Capture{{Image: solidImage(color.NRGBA{R: 50, A: 255}), Discovery: graph.DiscoveryReachable}}}, nil
 		})
 
-	_, err := service.Capture(context.Background(), api.DVDMenuSubject{SourcePath: discRoot, DiscType: "DVD"}, 1)
+	_, err := service.Capture(context.Background(), dvdMenuTestSubject(discRoot), 1)
 	if err == nil || !strings.Contains(err.Error(), "persist capture") {
 		t.Fatalf("capture error = %v", err)
 	}
@@ -343,7 +476,8 @@ func TestDeleteRejectsOriginalOutsideManagedDirectory(t *testing.T) {
 	discRoot := t.TempDir()
 	original := filepath.Join(t.TempDir(), "original-menu.png")
 	writePNG(t, original, color.NRGBA{B: 200, A: 255})
-	if err := repo.SaveFinalSelections(context.Background(), discRoot, []api.ScreenshotFinalSelection{{
+	meta := dvdMenuTestSubject(discRoot)
+	if err := repo.SaveFinalSelections(context.Background(), meta.MediaBinding, []api.ScreenshotFinalSelection{{
 		SourcePath: discRoot,
 		ImagePath:  original,
 		Source:     api.ScreenshotSelectionSourceMenu,
@@ -352,7 +486,7 @@ func TestDeleteRejectsOriginalOutsideManagedDirectory(t *testing.T) {
 		t.Fatalf("save original selection: %v", err)
 	}
 	service := NewService(api.NopLogger{}, tmpRoot, repo)
-	err := service.Delete(context.Background(), api.DVDMenuSubject{SourcePath: discRoot, DiscType: "DVD"}, original)
+	err := service.Delete(context.Background(), meta, original)
 	if err == nil || !strings.Contains(err.Error(), "outside the managed release directory") {
 		t.Fatalf("delete error = %v", err)
 	}
@@ -367,7 +501,7 @@ func TestDeleteRestoresFileAndRecordsWhenFinalRemoveFails(t *testing.T) {
 	repo := openTestRepository(t)
 	tmpRoot := t.TempDir()
 	discRoot := t.TempDir()
-	meta := api.DVDMenuSubject{SourcePath: discRoot, DiscType: "DVD"}
+	meta := dvdMenuTestSubject(discRoot)
 	managedDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, api.ReleaseInfo{})
 	if err != nil {
 		t.Fatal("create managed directory failed")
@@ -380,7 +514,7 @@ func TestDeleteRestoresFileAndRecordsWhenFinalRemoveFails(t *testing.T) {
 		A: 255,
 	})
 	now := time.Now().UTC()
-	if err := repo.AppendManualMenuScreenshots(context.Background(), meta.SourcePath,
+	if err := repo.AppendManualMenuScreenshots(context.Background(), meta.MediaBinding,
 		[]api.Screenshot{{
 			SourcePath: meta.SourcePath,
 			ImagePath:  imagePath,
@@ -398,7 +532,7 @@ func TestDeleteRestoresFileAndRecordsWhenFinalRemoveFails(t *testing.T) {
 	); err != nil {
 		t.Fatal("seed menu screenshot failed")
 	}
-	if err := repo.SaveUploadedImages(context.Background(), meta.SourcePath, "example-host", []api.UploadedImageLink{{
+	if err := repo.SaveUploadedImages(context.Background(), meta.MediaBinding, "example-host", []api.UploadedImageLink{{
 		SourcePath: meta.SourcePath,
 		ImagePath:  imagePath,
 		Host:       "example-host",
@@ -408,7 +542,7 @@ func TestDeleteRestoresFileAndRecordsWhenFinalRemoveFails(t *testing.T) {
 	}}); err != nil {
 		t.Fatal("seed menu upload record failed")
 	}
-	if err := repo.ReplaceScreenshotSlots(context.Background(), meta.SourcePath, []api.ScreenshotSlot{{
+	if err := repo.ReplaceScreenshotSlots(context.Background(), meta.MediaBinding, []api.ScreenshotSlot{{
 		SourcePath: meta.SourcePath,
 		SlotOrder:  0,
 		ImagePath:  imagePath,
@@ -441,7 +575,7 @@ func TestDeleteRestoresFileAndRecordsWhenFinalRemoveFails(t *testing.T) {
 	if len(listed) != 1 || listed[0].Path != imagePath {
 		t.Fatal("rolled-back image is not recoverable through the menu list")
 	}
-	uploads, err := repo.ListUploadedImagesByPath(context.Background(), meta.SourcePath)
+	uploads, err := repo.ListUploadedImagesByPath(context.Background(), meta.MediaBinding)
 	if err != nil {
 		t.Fatal("list rolled-back upload association failed")
 	}
@@ -455,7 +589,7 @@ func TestDeleteRestoresFileAndRecordsWhenFinalRemoveFails(t *testing.T) {
 	if !restoredUpload {
 		t.Fatal("rolled-back upload association was not restored")
 	}
-	slots, err := repo.ListScreenshotSlotsByPath(context.Background(), meta.SourcePath)
+	slots, err := repo.ListScreenshotSlotsByPath(context.Background(), meta.MediaBinding)
 	if err != nil || len(slots) != 1 || slots[0].ImagePath != imagePath || len(slots[0].Variants) != 1 {
 		t.Fatal("rolled-back screenshot slot associations were not restored")
 	}
@@ -474,7 +608,7 @@ func TestDeleteConvergesOnlyWhenFileAndRecordAreBothGone(t *testing.T) {
 
 	tmpRoot := t.TempDir()
 	discRoot := t.TempDir()
-	meta := api.DVDMenuSubject{SourcePath: discRoot, DiscType: "DVD"}
+	meta := dvdMenuTestSubject(discRoot)
 	managedDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, api.ReleaseInfo{})
 	if err != nil {
 		t.Fatal("create managed directory failed")
@@ -515,7 +649,7 @@ func TestDeleteFailsWhenMissingRecordAlsoFailsRestore(t *testing.T) {
 
 	tmpRoot := t.TempDir()
 	discRoot := t.TempDir()
-	meta := api.DVDMenuSubject{SourcePath: discRoot, DiscType: "DVD"}
+	meta := dvdMenuTestSubject(discRoot)
 	managedDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, api.ReleaseInfo{})
 	if err != nil {
 		t.Fatal("create managed directory failed")
@@ -595,7 +729,7 @@ type restoreBlockingRepository struct {
 
 func (*restoreBlockingRepository) DeleteDiscMenuScreenshot(
 	_ context.Context,
-	_ string,
+	_ api.PreparedMediaBinding,
 	imagePath string,
 ) (api.DiscMenuDeleteResult, error) {
 	if err := os.MkdirAll(imagePath, 0o700); err != nil {
@@ -604,7 +738,12 @@ func (*restoreBlockingRepository) DeleteDiscMenuScreenshot(
 	return api.DiscMenuDeleteResult{}, internalerrors.ErrNotFound
 }
 
-func (r *failingCaptureRepository) ReplaceDVDMenuScreenshots(context.Context, string, []api.Screenshot, []api.ScreenshotFinalSelection) ([]string, error) {
+func (r *failingCaptureRepository) ReplaceDVDMenuScreenshots(
+	context.Context,
+	api.PreparedMediaBinding,
+	[]api.Screenshot,
+	[]api.ScreenshotFinalSelection,
+) ([]string, error) {
 	return nil, errors.New("synthetic persistence failure")
 }
 
@@ -631,6 +770,19 @@ func solidImage(fill color.NRGBA) *image.NRGBA {
 	return result
 }
 
+func sameExistingPath(t *testing.T, left string, right string) bool {
+	t.Helper()
+	leftInfo, err := os.Stat(left)
+	if err != nil {
+		t.Fatalf("stat path %q: %v", left, err)
+	}
+	rightInfo, err := os.Stat(right)
+	if err != nil {
+		t.Fatalf("stat path %q: %v", right, err)
+	}
+	return os.SameFile(leftInfo, rightInfo)
+}
+
 func writePNG(t *testing.T, path string, fill color.NRGBA) {
 	t.Helper()
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
@@ -646,9 +798,9 @@ func writePNG(t *testing.T, path string, fill color.NRGBA) {
 	}
 }
 
-func assertSelectionSources(t *testing.T, repo *db.SQLiteRepository, sourcePath string, expected []string) {
+func assertSelectionSources(t *testing.T, repo *db.SQLiteRepository, binding api.PreparedMediaBinding, expected []string) {
 	t.Helper()
-	selections, err := repo.ListFinalSelections(context.Background(), sourcePath)
+	selections, err := repo.ListFinalSelections(context.Background(), binding)
 	if err != nil {
 		t.Fatalf("list final selections: %v", err)
 	}
@@ -662,9 +814,30 @@ func assertSelectionSources(t *testing.T, repo *db.SQLiteRepository, sourcePath 
 	}
 }
 
+func dvdMenuTestSubject(sourcePath string) api.DVDMenuSubject {
+	return api.DVDMenuSubject{
+		MediaBinding: api.PreparedMediaBinding{
+			SourcePath:               sourcePath,
+			PreparedMediaFingerprint: "test-prepared-media",
+			PreparedGeneration:       1,
+		},
+		SourcePath: sourcePath,
+		DiscType:   "DVD",
+	}
+}
+
 func hasWarning(warnings []api.DVDMenuCaptureWarning, code string) bool {
 	for _, warning := range warnings {
 		if warning.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDiscWarning(warnings []api.DVDMenuCaptureWarning, discID string) bool {
+	for _, warning := range warnings {
+		if warning.DiscID == discID {
 			return true
 		}
 	}

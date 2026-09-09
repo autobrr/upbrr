@@ -565,7 +565,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           status: action.error ? "error" : "awaiting_selection",
           required: true,
           candidates,
-          selected: candidates.length === 1 ? [candidates[0].file] : [],
+          selected: candidates.length === 1 ? [candidates[0].id] : [],
           useAll: false,
           error: action.error,
         },

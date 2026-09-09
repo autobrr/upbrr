@@ -3,8 +3,12 @@
 
 package api
 
-// PlaylistInfo represents a discovered playlist file with its metrics and scoring.
+// PlaylistInfo represents a discovered playlist with an opaque backend ID.
+// DiscID scopes duplicate filenames; File and DiscName are display evidence only.
 type PlaylistInfo struct {
+	ID       string         `json:"id"`
+	DiscID   string         `json:"discId"`
+	DiscName string         `json:"discName"`
 	File     string         `json:"file"`
 	Duration float64        `json:"duration"`
 	Items    []PlaylistItem `json:"items"`

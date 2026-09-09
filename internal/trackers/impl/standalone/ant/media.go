@@ -9,8 +9,7 @@ import (
 	"os"
 	"strings"
 
-	paths "github.com/autobrr/upbrr/internal/pathing/layout"
-	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -40,35 +39,9 @@ func resolveMediaFields(meta api.UploadSubject, dbPath string) (map[string]strin
 }
 
 func resolveBDInfo(meta api.UploadSubject, dbPath string) (string, error) {
-	if summary := strings.TrimSpace(meta.Disc.Summary); summary != "" {
-		return summary, nil
-	}
-
-	path, err := resolveBDInfoPath(meta, dbPath)
-	if err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(path) == "" {
-		return "", nil
-	}
-	payload, err := os.ReadFile(path)
+	text, err := trackers.ReadBDInfo(dbPath, meta)
 	if err != nil {
 		return "", fmt.Errorf("trackers: ANT read BDInfo: %w", err)
 	}
-	return string(payload), nil
-}
-
-func resolveBDInfoPath(meta api.UploadSubject, dbPath string) (string, error) {
-	if strings.TrimSpace(dbPath) == "" || strings.TrimSpace(meta.SourcePath) == "" {
-		return "", nil
-	}
-	tmpRoot, err := db.Subdir(dbPath, "tmp")
-	if err != nil {
-		return "", fmt.Errorf("trackers: %w", err)
-	}
-	path, err := paths.PrimaryBDMVSummaryPathFor(tmpRoot, meta.SourcePath, meta.Release, meta.SelectedBDMVPlaylists)
-	if err != nil {
-		return path, fmt.Errorf("trackers: ANT resolve BDInfo path: %w", err)
-	}
-	return path, nil
+	return text, nil
 }

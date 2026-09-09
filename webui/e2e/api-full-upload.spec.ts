@@ -5,6 +5,8 @@ import { expect, test } from "@playwright/test";
 import {
   createE2EAPIToken,
   createE2EWorkspace,
+  createMultiDVDSourceFixture,
+  expectSingleCollectionTorrentUpload,
   readE2EAuthCounters,
   releaseWorkflowParityFixture,
   startApp,
@@ -95,6 +97,50 @@ test("strict composite upload enforces contract authority and idempotency", asyn
       completed.workflow.id,
     );
     expect(crossOwner.status).toBe(404);
+  } finally {
+    await app.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("API uploads one collection torrent for two DVD discs", async () => {
+  const workspace = await createE2EWorkspace();
+  const sourcePath = await createMultiDVDSourceFixture(workspace);
+  const app = await startApp(workspace);
+  try {
+    const apiToken = await createE2EAPIToken(workspace);
+    const client = new ReleaseWorkflowV1Client(app.url, apiToken);
+    const trackerID = "HDS";
+    const body = uploadBody(sourcePath, {
+      confirm: false,
+      mode: "upload",
+      noSeed: true,
+      trackerIDs: [trackerID],
+    });
+    body.media.screenshots.count = 4;
+    body.media.dvdMenus.capture = true;
+    const started = await client.raw("/uploads", {
+      method: "POST",
+      idempotencyKey: "multi-dvd-upload",
+      body,
+    });
+    expect(started.status, await started.clone().text()).toBe(202);
+    const approvalBlocked = await client.accepted(started);
+    const approvalFeedback = await submitTrackerApproval(
+      client,
+      approvalBlocked,
+      "multi-dvd-upload-approval",
+      [trackerID],
+    );
+    const completed = await client.accepted(approvalFeedback);
+    expect(completed.uploadResult?.status).toBe("completed");
+    expect(workspace.fake.counters.trackerUploads).toBe(1);
+    expectSingleCollectionTorrentUpload(workspace, "Example DVD Collection", [
+      "Disc 1",
+      "Disc 2",
+      "VIDEO_TS",
+      "VTS_01_1.VOB",
+    ]);
   } finally {
     await app.stop();
     await workspace.cleanup();
