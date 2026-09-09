@@ -830,7 +830,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			case providerIDMatchesExplicit(effectiveOverrides.TVDBID, tvdbSeries.TVDBID):
 				tvdbMetadataRejected = false
 				mapped := mapTVDBMetadata(ids.TVDBID, fetchedTVDBName, tvdbSeries)
-				if metadata.TVDB == nil {
+				if metadata.TVDB == nil || metadata.TVDB.TVDBID != mapped.TVDBID {
 					metadata.TVDB = mapped
 				} else {
 					mergeTVDBMetadata(metadata.TVDB, mapped)

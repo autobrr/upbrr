@@ -310,6 +310,15 @@ const correctionPatchFor = (
     current.corrections?.revision ?? current.factInstructions?.correctionRevision ?? 0,
 });
 
+// The API serializes automatic corrections as null; local drafts omit those keys.
+const manualCorrections = <T extends object>(values: T): T => {
+  const corrections = { ...values };
+  for (const key in corrections) {
+    if (corrections[key] === null || corrections[key] === undefined) delete corrections[key];
+  }
+  return corrections;
+};
+
 const workflowPreparationIntent = (
   current: ReleaseWorkflowCurrent,
   submitted?: PreparationIntent,
@@ -318,9 +327,9 @@ const workflowPreparationIntent = (
   const corrections = current.corrections?.corrections;
   return {
     sourceLookupURL: instructions?.SourceLookup || "",
-    identity: { ...(corrections?.identity || instructions?.Identity || {}) },
-    metadata: { ...(corrections?.metadata || instructions?.Metadata || {}) },
-    releaseName: { ...(corrections?.releaseName || instructions?.ReleaseName || {}) },
+    identity: manualCorrections(corrections?.identity || instructions?.Identity || {}),
+    metadata: manualCorrections(corrections?.metadata || instructions?.Metadata || {}),
+    releaseName: manualCorrections(corrections?.releaseName || instructions?.ReleaseName || {}),
     playlist: {
       Set: Boolean(instructions?.Playlist?.Set),
       Selected: [...(instructions?.Playlist?.Selected || [])],

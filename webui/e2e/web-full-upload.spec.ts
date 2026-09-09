@@ -194,6 +194,14 @@ test("embedded web retains Input corrections without downstream workflow calls",
     await page.getByText("Edit Release Details", { exact: true }).click();
     const inputEditor = page.getByTestId("input-correction-editor");
     const dupeCheck = page.getByRole("button", { name: "Dupe Check" });
+    for (const provider of ["TMDB", "IMDB", "TVDB", "TVmaze", "MAL"]) {
+      await expect(
+        page.getByRole("button", { name: `Remove ${provider} ID`, exact: true }),
+      ).toBeEnabled();
+    }
+    await expect(page.getByRole("textbox", { name: "TMDB ID", exact: true })).not.toHaveValue("");
+    await expect(page.getByRole("textbox", { name: "Title", exact: true })).not.toHaveValue("");
+    await expect(page.getByRole("textbox", { name: "Category", exact: true })).not.toHaveValue("");
     for (const group of [
       "Provider IDs",
       "Release name",
@@ -213,6 +221,7 @@ test("embedded web retains Input corrections without downstream workflow calls",
     );
     await page.getByRole("button", { name: "Refresh metadata" }).click();
     await expect((await saved).ok()).toBe(true);
+    await expect(page.getByRole("button", { name: "Refresh metadata", exact: true })).toBeEnabled();
     await expect(dupeCheck).toBeEnabled();
     await expect(commentary).toHaveValue("no");
     const setCommand = workflowRequests.findLast(
@@ -245,6 +254,7 @@ test("embedded web retains Input corrections without downstream workflow calls",
     );
     await page.getByRole("button", { name: "Refresh metadata" }).click();
     await expect((await reset).ok()).toBe(true);
+    await expect(page.getByRole("button", { name: "Refresh metadata", exact: true })).toBeEnabled();
     await expect(dupeCheck).toBeEnabled();
     const resetCommand = workflowRequests.findLast(
       (request) =>
@@ -269,6 +279,7 @@ test("embedded web retains Input corrections without downstream workflow calls",
     );
     await page.getByRole("button", { name: "Refresh metadata" }).click();
     await expect((await retained).ok()).toBe(true);
+    await expect(page.getByRole("button", { name: "Refresh metadata", exact: true })).toBeEnabled();
     await expect(dupeCheck).toBeEnabled();
     const lastContinue = workflowRequests.findLast(
       (request) => request.method === "ContinueReleaseWorkflow",
@@ -301,6 +312,27 @@ test("embedded web retains Input corrections without downstream workflow calls",
     await page.getByText("Edit Release Details", { exact: true }).click();
     await expect(page.getByRole("combobox", { name: "Commentary" })).toHaveValue("no");
     expect(workspace.fake.counters).toEqual(initialCounters);
+
+    const removeTMDB = page.getByRole("button", { name: "Remove TMDB ID", exact: true });
+    await expect(removeTMDB).toBeEnabled();
+    await removeTMDB.click();
+    await skipClientSearch.check();
+    const removed = page.waitForResponse(
+      (response) =>
+        response.url().includes("/api/app/ContinueReleaseWorkflow") &&
+        Boolean(response.request().postDataJSON()?.intent?.preparation),
+    );
+    await page.getByRole("button", { name: "Refresh metadata" }).click();
+    await expect((await removed).ok()).toBe(true);
+    await expect(page.getByRole("button", { name: "Refresh metadata", exact: true })).toBeEnabled();
+    await expect(dupeCheck).toBeEnabled();
+    await page.reload();
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    await expect(removeTMDB).toBeDisabled();
+    await expect(removeTMDB).toHaveText("Removed");
+    await expect(page.getByRole("textbox", { name: "TMDB ID", exact: true })).toHaveValue("");
+    await expect(page.getByRole("button", { name: /^TMDB \d+ Source:/ })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Remove IMDB ID", exact: true })).toBeEnabled();
   } finally {
     await app?.stop();
     await workspace.cleanup();

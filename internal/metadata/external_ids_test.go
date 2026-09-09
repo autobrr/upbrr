@@ -2633,6 +2633,90 @@ func TestResolveExternalIDsPreservesUnanchoredProviderResultsWithConflictingLink
 	}
 }
 
+func TestResolveExternalIDsReplacesTVDBLookupStubWithTMDBLinkedSeriesMetadata(t *testing.T) {
+	const (
+		tmdbID            = 401001
+		imdbID            = 401002
+		lookupTVDBID      = 401003
+		canonicalTVDBID   = 401004
+		canonicalTVDBName = "Canonical Series B"
+	)
+	sourcePath := filepath.Join(t.TempDir(), "Canonical.Series.B.S01E01.1080p-GRP.mkv")
+	tvdbClient := &stubTVDB{
+		id:   lookupTVDBID,
+		name: "Lookup Series A",
+		seriesMetadata: tvdb.SeriesMetadata{
+			TVDBID:          canonicalTVDBID,
+			Name:            canonicalTVDBName,
+			Overview:        "Canonical overview B",
+			NameEnglish:     "Canonical English B",
+			FirstAired:      "2024-02-03",
+			Type:            "Scripted",
+			OriginalCountry: "AU",
+			Genres:          []string{"Drama", "Mystery"},
+		},
+	}
+	svc := NewService(&fakeRepo{},
+		WithTMDBClient(&stubTMDB{metadata: tmdb.MetadataResult{
+			TMDBType:       "TV",
+			TVDBID:         canonicalTVDBID,
+			ExternalTVDBID: canonicalTVDBID,
+		}}),
+		WithIMDBClient(&stubIMDB{info: imdb.Info{
+			IMDbID: "tt401002",
+			Title:  "Canonical Series B",
+			Type:   "tvSeries",
+		}}),
+		WithTVDBClient(tvdbClient),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+
+	result, err := svc.resolveExternalIdentity(t.Context(), preparationstate.State{
+		SourcePath:        sourcePath,
+		MediaInfoCategory: "TV",
+		SceneTMDBID:       tmdbID,
+		SceneIMDB:         imdbID,
+	})
+	if err != nil {
+		t.Fatalf("resolve TVDB link conflict: %v", err)
+	}
+	if result.Identity.TVDBID != canonicalTVDBID {
+		t.Fatalf("TVDB identity = %d, want canonical %d", result.Identity.TVDBID, canonicalTVDBID)
+	}
+	if tvdbClient.seriesMetadataCalls != 1 {
+		t.Fatalf("TVDB series metadata calls = %d, want 1", tvdbClient.seriesMetadataCalls)
+	}
+	if result.ProviderMetadata.TVDB == nil {
+		t.Fatal("expected canonical TVDB metadata")
+	}
+	if result.ProviderMetadata.TVDB.TVDBID != canonicalTVDBID ||
+		result.ProviderMetadata.TVDB.Name != canonicalTVDBName ||
+		result.ProviderMetadata.TVDB.Overview != "Canonical overview B" ||
+		result.ProviderMetadata.TVDB.Genres != "Drama, Mystery" {
+		t.Fatalf("TVDB metadata = %#v", result.ProviderMetadata.TVDB)
+	}
+	if result.ProviderMetadata.TVDB.TVDBID == lookupTVDBID || result.ProviderMetadata.TVDB.Name == "Lookup Series A" {
+		t.Fatalf("TVDB lookup stub leaked into canonical metadata: %#v", result.ProviderMetadata.TVDB)
+	}
+
+	display, err := preparedrelease.ProjectDisplay(api.PreparedRelease{
+		Identity:         result.Identity,
+		ProviderMetadata: result.ProviderMetadata,
+	})
+	if err != nil {
+		t.Fatalf("project display: %v", err)
+	}
+	for _, provider := range display.Providers {
+		if provider.Provider == api.IdentityProviderTVDB && provider.ID == canonicalTVDBID {
+			if provider.Summary.Title != canonicalTVDBName {
+				t.Fatalf("TVDB display title = %q, want %q", provider.Summary.Title, canonicalTVDBName)
+			}
+			return
+		}
+	}
+	t.Fatalf("display omitted canonical TVDB provider: %#v", display.Providers)
+}
+
 func TestResolveExternalIDsSQLiteFreshProvenanceOnlyAnchorClearsStoredGuess(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()

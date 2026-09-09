@@ -741,6 +741,69 @@ describe("useReleaseSession", () => {
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
 
+  it.each([true, false])(
+    "restores automatic and explicit corrections with stored corrections=%s",
+    async (stored) => {
+      const workflowID = "workflow-null-corrections";
+      window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+      const identity = { TMDBID: null, IMDBID: 1234567, TVDBID: 0, TVmazeID: null, MALID: null };
+      const releaseName = { Category: null, Tag: "", NoYear: false, ManualYear: 0 };
+      const metadata = {
+        Title: null,
+        OriginalTitle: "",
+        Commentary: false,
+        Genres: [],
+        AudioLanguages: null,
+      };
+      const initial = workflowCurrentFromPreview(
+        workflowCurrent(workflowID, 7),
+        preview("C:\\media\\Example.mkv", 1),
+      );
+      const current: ReleaseWorkflowCurrent = {
+        ...initial,
+        factInstructions: {
+          ...initial.factInstructions!,
+          instructions: {
+            ...initial.factInstructions!.instructions,
+            Identity: identity,
+            ReleaseName: releaseName,
+            Metadata: metadata,
+          },
+        },
+        ...(stored
+          ? {
+              corrections: {
+                revision: 1,
+                corrections: { version: 1, identity, releaseName, metadata },
+              },
+            }
+          : {}),
+      };
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({ workflow: workflowPorts({ current: async () => current }) }),
+        ),
+      });
+      await waitFor(() =>
+        expect(result.current.input.view.intent.identity).toEqual({ IMDBID: 1234567, TVDBID: 0 }),
+      );
+      expect(result.current.input.view.intent.releaseName).toEqual({
+        Tag: "",
+        NoYear: false,
+        ManualYear: 0,
+      });
+      expect(result.current.input.view.intent.metadata).toEqual({
+        OriginalTitle: "",
+        Commentary: false,
+        Genres: [],
+      });
+      expect(identity.TMDBID).toBeNull();
+      expect(metadata.AudioLanguages).toBeNull();
+      unmount();
+      window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+    },
+  );
+
   it("sends correction and tracker-answer patches separately while preparing effective facts", async () => {
     const workflowID = "workflow-input-edit";
     const sourcePath = "C:\\media\\Example.mkv";
