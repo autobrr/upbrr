@@ -448,6 +448,175 @@ func TestResolveAuthoritativeCandidatePreservesOrReplacesStoredExplicitSibling(t
 	}
 }
 
+func TestResolveResetStoredIdentityPinRefreshesOnlyResetProvider(t *testing.T) {
+	t.Parallel()
+
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv")
+	resetFields := []api.CorrectionField{api.CorrectionFieldIdentityTMDB}
+	stored := api.ExternalIdentity{
+		SourcePath: sourcePath,
+		TMDBID:     100,
+		IMDBID:     200,
+		Provenance: api.IdentityProvenanceSet{TMDB: api.IdentityProvenanceExplicit, IMDB: api.IdentityProvenanceExplicit},
+		Overrides:  api.IdentityOverrideState{TMDB: api.OverrideStateValue, IMDB: api.OverrideStateValue},
+	}
+	resolver := &Resolver{
+		evidence: evidenceLoaderFunc(func(context.Context, string) (legacyEvidence, error) {
+			return legacyEvidence{identity: stored, hasIDs: true}, nil
+		}),
+		candidate: candidateSourceFunc(func(_ context.Context, request Request) (CandidateEvidence, error) {
+			return CandidateEvidence{Identity: api.ExternalIdentity{
+				SourcePath: request.SourcePath,
+				TMDBID:     300,
+				IMDBID:     400,
+				Provenance: api.IdentityProvenanceSet{TMDB: api.IdentityProvenanceExplicit, IMDB: api.IdentityProvenanceProvider},
+				Overrides:  api.IdentityOverrideState{TMDB: api.OverrideStateValue},
+			}}, nil
+		}),
+		now: time.Now,
+	}
+
+	result, err := resolver.Resolve(context.Background(), Request{
+		SourcePath:        sourcePath,
+		SourceFingerprint: "source-fingerprint",
+		Generation:        1,
+		Intent:            ResolutionIntent{IdentityResetFields: resetFields},
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if result.Identity.TMDBID != 300 || result.Identity.Provenance.TMDB != api.IdentityProvenanceExplicit ||
+		result.Identity.Overrides.TMDB != api.OverrideStateValue || result.Identity.IMDBID != 200 ||
+		result.Identity.Provenance.IMDB != api.IdentityProvenanceExplicit || result.Identity.Overrides.IMDB != api.OverrideStateValue {
+		t.Fatalf("identity = %#v", result.Identity)
+	}
+	if stored.TMDBID != 100 || stored.Provenance.TMDB != api.IdentityProvenanceExplicit || stored.Overrides.TMDB != api.OverrideStateValue {
+		t.Fatalf("stored evidence mutated: %#v", stored)
+	}
+	if len(resetFields) != 1 || resetFields[0] != api.CorrectionFieldIdentityTMDB {
+		t.Fatalf("reset fields mutated: %#v", resetFields)
+	}
+}
+
+func TestResolveResetStoredExplicitClearRefreshesCrossReferenceMetadata(t *testing.T) {
+	t.Parallel()
+
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv")
+	resolver := &Resolver{
+		evidence: evidenceLoaderFunc(func(context.Context, string) (legacyEvidence, error) {
+			return legacyEvidence{identity: api.ExternalIdentity{
+				SourcePath: sourcePath,
+				Provenance: api.IdentityProvenanceSet{TMDB: api.IdentityProvenanceExplicit},
+				Overrides:  api.IdentityOverrideState{TMDB: api.OverrideStateClear},
+			}, hasIDs: true}, nil
+		}),
+		candidate: candidateSourceFunc(func(_ context.Context, request Request) (CandidateEvidence, error) {
+			return CandidateEvidence{
+				Identity: api.ExternalIdentity{
+					SourcePath: request.SourcePath,
+					TMDBID:     300,
+					IMDBID:     400,
+					Provenance: api.IdentityProvenanceSet{TMDB: api.IdentityProvenanceProvider, IMDB: api.IdentityProvenanceExplicit},
+					Overrides:  api.IdentityOverrideState{IMDB: api.OverrideStateValue},
+				},
+				Metadata: api.SourceScopedMetadata{
+					SourcePath: request.SourcePath,
+					TMDB:       &api.TMDBMetadata{
+TMDBID: 300,
+ IMDBID: 400,
+ Title: "Refreshed candidate",
+},
+				},
+			}, nil
+		}),
+		now: time.Now,
+	}
+
+	result, err := resolver.Resolve(context.Background(), Request{
+		SourcePath:        sourcePath,
+		SourceFingerprint: "source-fingerprint",
+		Generation:        1,
+		Intent: ResolutionIntent{IdentityResetFields: []api.CorrectionField{
+			api.CorrectionFieldIdentityTMDB,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if result.Identity.TMDBID != 300 || result.Identity.Provenance.TMDB != api.IdentityProvenanceProvider ||
+		result.Identity.Overrides.TMDB != api.OverrideStateUnset || result.ProviderMetadata.TMDB == nil ||
+		result.ProviderMetadata.TMDB.IMDBID != 400 {
+		t.Fatalf("refreshed result = %#v", result)
+	}
+}
+
+func TestResolveResetKeepsAutomaticStoredEvidenceAndChangesIntentFingerprint(t *testing.T) {
+	t.Parallel()
+
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv")
+	resolver := &Resolver{
+		evidence: evidenceLoaderFunc(func(context.Context, string) (legacyEvidence, error) {
+			return legacyEvidence{identity: api.ExternalIdentity{
+				SourcePath: sourcePath,
+				TMDBID:     100,
+				Provenance: api.IdentityProvenanceSet{TMDB: api.IdentityProvenanceProvider},
+			}, hasIDs: true}, nil
+		}),
+		now: time.Now,
+	}
+	request := Request{
+SourcePath: sourcePath,
+ SourceFingerprint: "source-fingerprint",
+ Generation: 1,
+}
+
+	baseline, err := resolver.Resolve(context.Background(), request)
+	if err != nil {
+		t.Fatalf("resolve baseline: %v", err)
+	}
+	request.Intent.IdentityResetFields = []api.CorrectionField{api.CorrectionFieldIdentityTMDB}
+	result, err := resolver.Resolve(context.Background(), request)
+	if err != nil {
+		t.Fatalf("resolve reset: %v", err)
+	}
+	if result.Identity.TMDBID != 100 || result.Identity.Provenance.TMDB != api.IdentityProvenanceProvider ||
+		result.Identity.Overrides.TMDB != api.OverrideStateUnset {
+		t.Fatalf("automatic stored evidence = %#v", result.Identity)
+	}
+	if result.Identity.Resolution.IntentFingerprint == baseline.Identity.Resolution.IntentFingerprint {
+		t.Fatalf("reset intent did not change lineage fingerprint: %#v", result.Identity.Resolution)
+	}
+}
+
+func TestNormalizeIdentityLineageFillsOnlyEmptyValues(t *testing.T) {
+	t.Parallel()
+
+	identity := api.ExternalIdentity{
+		Provenance: api.IdentityProvenanceSet{
+			IMDB:     api.IdentityProvenanceExplicit,
+			TVDB:     api.IdentityProvenanceProvider,
+			Category: api.IdentityProvenanceProvider,
+		},
+		Overrides: api.IdentityOverrideState{
+			IMDB:     api.OverrideStateValue,
+			TVDB:     api.OverrideStateClear,
+			Category: api.OverrideStateValue,
+		},
+	}
+
+	normalizeIdentityLineage(&identity)
+	if identity.Provenance.TMDB != api.IdentityProvenanceUnknown || identity.Provenance.TVmaze != api.IdentityProvenanceUnknown ||
+		identity.Provenance.MAL != api.IdentityProvenanceUnknown || identity.Overrides.TMDB != api.OverrideStateUnset ||
+		identity.Overrides.TVmaze != api.OverrideStateUnset || identity.Overrides.MAL != api.OverrideStateUnset {
+		t.Fatalf("empty lineage = %#v", identity)
+	}
+	if identity.Provenance.IMDB != api.IdentityProvenanceExplicit || identity.Provenance.TVDB != api.IdentityProvenanceProvider ||
+		identity.Provenance.Category != api.IdentityProvenanceProvider || identity.Overrides.IMDB != api.OverrideStateValue ||
+		identity.Overrides.TVDB != api.OverrideStateClear || identity.Overrides.Category != api.OverrideStateValue {
+		t.Fatalf("non-empty lineage changed: %#v", identity)
+	}
+}
+
 func TestResolveAppliesTriStateIntentWithoutPersisting(t *testing.T) {
 	repoPath := filepath.Join(t.TempDir(), "external-identity.db")
 	repo, err := db.OpenWithLogger(repoPath, api.NopLogger{})

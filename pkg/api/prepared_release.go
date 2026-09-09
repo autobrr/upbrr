@@ -46,6 +46,10 @@ type PreparedRelease struct {
 type PrepareResult struct {
 	Release     PreparedRelease
 	Diagnostics []PreparationDiagnostic
+	// EffectiveInstructions and Corrections retain accepted intent outside the
+	// immutable facts so workflow snapshots use the same preparation authority.
+	EffectiveInstructions ReleaseFactInstructions
+	Corrections           ReleaseCorrectionsSnapshot
 }
 
 // ReleaseRef identifies one exact prepared generation without exposing its
@@ -111,36 +115,43 @@ type NamingFacts struct {
 	NamePresentation ReleaseNamePresentation
 	// GeneratedReleaseNames contains safe canonical structural alternatives.
 	// Empty variants mean ReleaseName must remain exact.
-	GeneratedReleaseNames GeneratedReleaseNameVariants
-	Tag                   string
-	Type                  string
-	Artist                string
-	Title                 string
-	Subtitle              string
-	AlternateTitle        string
-	Year                  int
-	Month                 int
-	Day                   int
-	Source                string
-	Resolution            string
-	Codecs                []string
-	Audio                 []string
-	HDR                   []string
-	Extension             string
-	Languages             []string
-	Site                  string
-	Genre                 string
-	Channels              string
-	Collection            string
-	Region                string
-	Size                  string
-	Group                 string
-	Disc                  string
-	Editions              []string
-	Other                 []string
-	Scene                 bool
-	SceneName             string
-	Personal              bool
+	GeneratedReleaseNames    GeneratedReleaseNameVariants
+	Tag                      string
+	Type                     string
+	Artist                   string
+	Title                    string
+	Subtitle                 string
+	AlternateTitle           string
+	OriginalTitle            string
+	Genres                   []string
+	TitleProvenance          FactProvenance
+	AlternateTitleProvenance FactProvenance
+	OriginalTitleProvenance  FactProvenance
+	GenresProvenance         FactProvenance
+	YearProvenance           FactProvenance
+	Year                     int
+	Month                    int
+	Day                      int
+	Source                   string
+	Resolution               string
+	Codecs                   []string
+	Audio                    []string
+	HDR                      []string
+	Extension                string
+	Languages                []string
+	Site                     string
+	Genre                    string
+	Channels                 string
+	Collection               string
+	Region                   string
+	Size                     string
+	Group                    string
+	Disc                     string
+	Editions                 []string
+	Other                    []string
+	Scene                    bool
+	SceneName                string
+	Personal                 bool
 }
 
 // EpisodeFacts contains canonical reusable episodic identity and schedule
@@ -165,32 +176,45 @@ type EpisodeFacts struct {
 
 // MediaFacts contains finalized reusable media characteristics.
 type MediaFacts struct {
-	AudioLanguages    []string
-	SubtitleLanguages []string
-	Container         string
-	Audio             string
-	Channels          string
-	Commentary        bool
-	ThreeD            string
-	Source            string
-	Type              string
-	UHD               string
-	HDR               string
-	HDRFacts          HDRFacts
-	Distributor       string
-	Region            string
-	VideoCodec        string
-	VideoEncode       string
-	HasEncodeSettings bool
-	BitDepth          string
-	Edition           string
-	Repack            string
-	WebDV             bool
-	StreamOptimized   int
-	Service           string
-	ServiceLongName   string
-	MediaInfoUniqueID string
-	Anime             bool
+	AudioLanguages                       []string
+	SubtitleLanguages                    []string
+	TrackAudioLanguages                  []string
+	TrackSubtitleLanguages               []string
+	Tracks                               []MediaTrackFacts
+	TrackCoverageComplete                bool
+	AudioLanguagesProvenance             FactProvenance
+	SubtitleLanguagesProvenance          FactProvenance
+	HardcodedSubs                        bool
+	HardcodedSubtitleLanguages           []string
+	HardcodedSubsProvenance              FactProvenance
+	HardcodedSubtitleLanguagesProvenance FactProvenance
+	OriginalLanguage                     string
+	OriginalLanguageProvenance           FactProvenance
+	DistributorProvenance                FactProvenance
+	Container                            string
+	Audio                                string
+	Channels                             string
+	Commentary                           bool
+	ThreeD                               string
+	Source                               string
+	Type                                 string
+	UHD                                  string
+	HDR                                  string
+	HDRFacts                             HDRFacts
+	Distributor                          string
+	Region                               string
+	VideoCodec                           string
+	VideoEncode                          string
+	HasEncodeSettings                    bool
+	BitDepth                             string
+	Edition                              string
+	Repack                               string
+	WebDV                                bool
+	StreamOptimized                      int
+	Service                              string
+	ServiceLongName                      string
+	MediaInfoUniqueID                    string
+	Anime                                bool
 }
 
 // DiscFacts contains typed disc measurements that are safe to publish as

@@ -184,6 +184,12 @@ export type ClientSearchPolicy = Readonly<{
   Skip: boolean;
 }>;
 
+export type ContentBinding = Readonly<{
+  category: CanonicalCategory;
+  providerIds: ProviderIDSet;
+  sourceFingerprint: string;
+}>;
+
 export type ContinueReleaseWorkflowRequest = Readonly<{
   answers?: readonly RequiredActionAnswer[];
   /** @deprecated */
@@ -193,6 +199,20 @@ export type ContinueReleaseWorkflowRequest = Readonly<{
   idempotencyKey: string;
   intent: WorkflowIntent;
   trackerApproval?: TrackerApproval | null;
+}>;
+
+export type CorrectionConfirmation = Readonly<{
+  currentBinding: ContentBinding;
+  fields: readonly CorrectionField[];
+  previousBindings: Readonly<Record<string, ContentBinding>>;
+  revision: number;
+}>;
+
+export type CorrectionField = string;
+
+export type CorrectionFieldRef = Readonly<{
+  field: CorrectionField;
+  trackId?: string;
 }>;
 
 export type CreateReleaseWorkflowUploadRequest = Readonly<{
@@ -433,6 +453,8 @@ export type ExternalIdentityCandidate = Readonly<{
   Year: number;
 }>;
 
+export type FactProvenance = string;
+
 export type FailedTrackerRetryRef = Readonly<{
   result: UploadResultRef;
   trackerIds: readonly TrackerID[];
@@ -609,6 +631,40 @@ export type ImageHostOverrides = Readonly<{
   SkipUpload?: boolean | null;
 }>;
 
+export type InputReadinessFieldOutcome = Readonly<{
+  correctionField?: CorrectionField | null;
+  disposition: RuleDisposition;
+  key: string;
+  message?: string;
+  status: InputReadinessFieldStatus;
+  trackerIds?: readonly TrackerID[];
+}>;
+
+export type InputReadinessFieldStatus = string;
+
+export type InputReadinessSnapshot = Readonly<{
+  correctionRevision?: number;
+  createdAt: string;
+  factInstructions: ReleaseFactInstructionSnapshotRef;
+  fields?: readonly InputReadinessFieldOutcome[];
+  id: InputReadinessSnapshotID;
+  release: ReleaseRef;
+  requiredActions?: readonly RequiredAction[];
+  requirementsFingerprint: WorkflowFingerprint;
+  revision: WorkflowRevision;
+  schemas?: readonly TrackerQuestionnaire[];
+  selectedTrackerIds?: readonly TrackerID[];
+  status: StageStatus;
+  workflowId: WorkflowID;
+}>;
+
+export type InputReadinessSnapshotID = string;
+
+export type InputReadinessSnapshotRef = Readonly<{
+  id: InputReadinessSnapshotID;
+  revision: WorkflowRevision;
+}>;
+
 export type InteractionMode = string;
 
 export type InvalidateReleaseWorkflowTrackersRequest = Readonly<{
@@ -702,16 +758,24 @@ export type MediaFacts = Readonly<{
   Anime: boolean;
   Audio: string;
   AudioLanguages: readonly string[];
+  AudioLanguagesProvenance: FactProvenance;
   BitDepth: string;
   Channels: string;
   Commentary: boolean;
   Container: string;
   Distributor: string;
+  DistributorProvenance: FactProvenance;
   Edition: string;
   HDR: string;
   HDRFacts: HDRFacts;
+  HardcodedSubs: boolean;
+  HardcodedSubsProvenance: FactProvenance;
+  HardcodedSubtitleLanguages: readonly string[];
+  HardcodedSubtitleLanguagesProvenance: FactProvenance;
   HasEncodeSettings: boolean;
   MediaInfoUniqueID: string;
+  OriginalLanguage: string;
+  OriginalLanguageProvenance: FactProvenance;
   Region: string;
   Repack: string;
   Service: string;
@@ -719,7 +783,12 @@ export type MediaFacts = Readonly<{
   Source: string;
   StreamOptimized: number;
   SubtitleLanguages: readonly string[];
+  SubtitleLanguagesProvenance: FactProvenance;
   ThreeD: string;
+  TrackAudioLanguages: readonly string[];
+  TrackCoverageComplete: boolean;
+  TrackSubtitleLanguages: readonly string[];
+  Tracks: readonly MediaTrackFacts[];
   Type: string;
   UHD: string;
   VideoCodec: string;
@@ -745,15 +814,40 @@ export type MediaPlan = Readonly<{
 
 export type MediaPlanID = string;
 
+export type MediaTrackFacts = Readonly<{
+  Commentary: boolean;
+  Default: boolean;
+  DetectedLanguages: readonly string[];
+  ID: string;
+  Kind: MediaTrackKind;
+  LanguageProvenance: FactProvenance;
+  Languages: readonly string[];
+  ManifestFingerprint: string;
+  NativeID: string;
+  Ordinal: number;
+  ResourceID: string;
+}>;
+
+export type MediaTrackKind = string;
+
 export type MetadataEvidenceStatus = string;
 
 export type MetadataOverrides = Readonly<{
+  AlternateTitle?: string | null;
   Anime?: boolean | null;
+  AudioLanguages?: readonly string[] | null;
   Commentary?: boolean | null;
   Distributor?: string | null;
+  Genres?: readonly string[] | null;
+  HardcodedSubs?: boolean | null;
+  HardcodedSubtitleLanguages?: readonly string[] | null;
   OriginalLanguage?: string | null;
+  OriginalTitle?: string | null;
   PersonalRelease?: boolean | null;
   StreamOptimized?: boolean | null;
+  SubtitleLanguages?: readonly string[] | null;
+  Title?: string | null;
+  TrackLanguages?: readonly TrackLanguageCorrection[];
   WebDV?: boolean | null;
 }>;
 
@@ -764,6 +858,7 @@ export type NamingAssessment = Readonly<{
 
 export type NamingFacts = Readonly<{
   AlternateTitle: string;
+  AlternateTitleProvenance: FactProvenance;
   Artist: string;
   Audio: readonly string[];
   Channels: string;
@@ -777,12 +872,16 @@ export type NamingFacts = Readonly<{
   Filename: string;
   GeneratedReleaseNames: GeneratedReleaseNameVariants;
   Genre: string;
+  Genres: readonly string[];
+  GenresProvenance: FactProvenance;
   Group: string;
   HDR: readonly string[];
   Languages: readonly string[];
   Month: number;
   NamePresentation: ReleaseNamePresentation;
   NameWithoutTag: string;
+  OriginalTitle: string;
+  OriginalTitleProvenance: FactProvenance;
   Other: readonly string[];
   Personal: boolean;
   Region: string;
@@ -796,8 +895,10 @@ export type NamingFacts = Readonly<{
   Subtitle: string;
   Tag: string;
   Title: string;
+  TitleProvenance: FactProvenance;
   Type: string;
   Year: number;
+  YearProvenance: FactProvenance;
 }>;
 
 export type NamingRequirement = string;
@@ -983,6 +1084,14 @@ export type ProviderDisplaySummary = Readonly<{
   Year: number;
 }>;
 
+export type ProviderIDSet = Readonly<{
+  imdbId: number;
+  malId: number;
+  tmdbId: number;
+  tvdbId: number;
+  tvmazeId: number;
+}>;
+
 export type PublicResourceID = string;
 
 export type ReadinessStatus = "unknown" | "ready" | "blocked" | "ineligible" | "stale";
@@ -994,8 +1103,28 @@ export type ReleaseAssessments = Readonly<{
   VideoBitrate: VideoBitrateAssessment;
 }>;
 
+export type ReleaseCorrectionPatch = Readonly<{
+  confirmFields?: readonly CorrectionFieldRef[];
+  expectedRevision?: number | null;
+  resetFields?: readonly CorrectionFieldRef[];
+  values: ReleaseCorrectionValues;
+}>;
+
+export type ReleaseCorrectionValues = Readonly<{
+  Identity: ExternalIDOverrides;
+  Metadata: MetadataOverrides;
+  ReleaseName: ReleaseNameOverrides;
+}>;
+
+export type ReleaseCorrectionsSnapshot = Readonly<{
+  corrections: StoredReleaseCorrectionsV1;
+  revision: number;
+}>;
+
 export type ReleaseFactInstructionSnapshot = Readonly<{
+  correctionRevision?: number;
   createdAt: string;
+  explicitCorrectionFields?: readonly CorrectionFieldRef[];
   fingerprint: WorkflowFingerprint;
   id: ReleaseFactInstructionSnapshotID;
   instructions: ReleaseFactInstructions;
@@ -1095,6 +1224,7 @@ export type ReleaseWorkflow = Readonly<{
   factInstructions: ReleaseFactInstructionSnapshotRef;
   failures?: readonly WorkflowFailure[];
   id: WorkflowID;
+  inputReadiness?: InputReadinessSnapshotRef | null;
   media?: MediaArtifactSetRef | null;
   projectionInstructions?: TrackerProjectionInstructionSnapshotRef | null;
   release?: ReleaseSnapshotRef | null;
@@ -1153,10 +1283,12 @@ export type ReleaseWorkflowCapabilityTracker = Readonly<{
 export type ReleaseWorkflowCurrent = Readonly<{
   catalog?: TrackerCatalogSnapshot | null;
   continuation: WorkflowContinuation;
+  corrections?: ReleaseCorrectionsSnapshot | null;
   descriptions?: DescriptionSet | null;
   dryRun?: UploadDryRunResult | null;
   dupes?: DupeAssessment | null;
   factInstructions?: ReleaseFactInstructionSnapshot | null;
+  inputReadiness?: InputReadinessSnapshot | null;
   media?: MediaArtifactSet | null;
   operation?: Operation | null;
   preflight?: TrackerPreflightAssessment | null;
@@ -1490,6 +1622,7 @@ export type ReorderReleaseWorkflowMediaRequest = Readonly<{
 
 export type RequiredAction = Readonly<{
   allowsFreeText?: boolean;
+  correctionConfirmation?: CorrectionConfirmation | null;
   createdAt: string;
   effectKind?: WorkflowExternalEffectKind;
   effectScopeId?: string;
@@ -1624,6 +1757,17 @@ export type SourceScopedMetadata = Readonly<{
 }>;
 
 export type StageStatus = "pending" | "queued" | "ready" | "blocked" | "stale" | "failed" | "partial" | "skipped" | "running" | "completed" | "executed" | "interrupted" | "canceled" | "unavailable";
+
+export type StoredReleaseCorrectionsV1 = Readonly<{
+  contentBindings?: Readonly<Record<string, ContentBinding>>;
+  identity: ExternalIDOverrides;
+  identityResetFields?: readonly CorrectionField[];
+  metadata: MetadataOverrides;
+  releaseName: ReleaseNameOverrides;
+  sourceFingerprint?: string;
+  staleContentFields?: readonly CorrectionField[];
+  version: number;
+}>;
 
 export type TIKOverrides = Readonly<{
   Asian?: boolean | null;
@@ -1795,6 +1939,12 @@ export type TorrentOverrides = Readonly<{
   MaxPieceSizeMiB?: number | null;
   NoHash?: boolean | null;
   Rehash?: boolean | null;
+}>;
+
+export type TrackLanguageCorrection = Readonly<{
+  languages: readonly string[];
+  manifestFingerprint: string;
+  trackId: string;
 }>;
 
 export type TrackerApproval = Readonly<{
@@ -2087,6 +2237,22 @@ export type TrackerProjectionInstructions = Readonly<{
 export type TrackerProviderID = Readonly<{
   provider: string;
   value: string;
+}>;
+
+export type TrackerQuestionnaire = Readonly<{
+  Fields: readonly TrackerQuestionnaireField[];
+  Tracker: string;
+}>;
+
+export type TrackerQuestionnaireField = Readonly<{
+  Help: string;
+  Key: string;
+  Kind: string;
+  Label: string;
+  Options: readonly string[];
+  Placeholder: string;
+  Required: boolean;
+  Value: string;
 }>;
 
 export type TrackerQuestionnaireRequirement = Readonly<{
@@ -2411,6 +2577,7 @@ export type WorkflowGoal = string;
 export type WorkflowID = string;
 
 export type WorkflowIntent = Readonly<{
+  correctionPatch?: ReleaseCorrectionPatch | null;
   descriptions?: DescriptionInstructions | null;
   duplicateCheckCount?: number;
   duplicateDecisions?: Readonly<Record<string, DupeDecision>>;
@@ -2424,6 +2591,7 @@ export type WorkflowIntent = Readonly<{
   projectionInstructions?: Readonly<Record<string, TrackerProjectionInstructions>>;
   skipRemoteDuplicates?: boolean;
   trackerIds?: readonly TrackerID[];
+  trackerInputAnswers?: Readonly<Record<string, Readonly<Record<string, string | null>>>>;
   uploadTrackerIds?: readonly TrackerID[];
 }>;
 

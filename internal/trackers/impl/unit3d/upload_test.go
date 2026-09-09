@@ -83,6 +83,37 @@ func TestDefinitionsRetainIndependentSiteProfiles(t *testing.T) {
 	}
 }
 
+func TestValidationCallbacksReceiveEffectiveMetadata(t *testing.T) {
+	t.Parallel()
+
+	definition := NewWithProfile(Profile{
+		Name: "EFFECTIVE",
+		Site: SiteProfile{
+			ResolveCategoryID: func(meta api.UploadSubject) string {
+				if meta.EffectiveMetadata.Title == "Corrected Title" {
+					return "1"
+				}
+				return "0"
+			},
+			ResolveTypeID:       func(api.UploadSubject) string { return "1" },
+			ResolveResolutionID: func(api.UploadSubject) string { return "1" },
+		},
+	})
+
+	failures, err := definition.ValidationPolicy().Check(context.Background(), api.TrackerValidationSubject{
+		EffectiveMetadata: api.EffectiveMetadata{Title: "Corrected Title", TitleProvenance: api.FactProvenanceManual},
+		Identity:          api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+		Release:           api.ReleaseInfo{Resolution: "1080p"},
+		Type:              "WEBDL",
+	}, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("validate Unit3D subject: %v", err)
+	}
+	if len(failures) != 0 {
+		t.Fatalf("effective-metadata validation failures = %#v", failures)
+	}
+}
+
 func TestResolveUnit3DCategory(t *testing.T) {
 	tests := []struct {
 		name string

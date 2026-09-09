@@ -393,6 +393,12 @@ func normalizeState(state *State) {
 	if state.Releases == nil {
 		state.Releases = make(map[api.ReleaseSnapshotID]api.ReleaseSnapshot)
 	}
+	if state.InputReadiness == nil {
+		state.InputReadiness = make(map[api.InputReadinessSnapshotID]api.InputReadinessSnapshot)
+	}
+	if state.TrackerInputAnswers == nil {
+		state.TrackerInputAnswers = make(map[api.TrackerID]map[string]string)
+	}
 	if state.Catalogs == nil {
 		state.Catalogs = make(map[api.TrackerCatalogSnapshotID]api.TrackerCatalogSnapshot)
 	}

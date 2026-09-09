@@ -14,6 +14,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/languageutil"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -162,6 +163,9 @@ func buildLanguageTagLookup() {
 }
 
 func resolveOriginalLanguage(meta api.UploadSubject) string {
+	if meta.EffectiveMetadata.OriginalLanguageProvenance.IsManual() {
+		return trackers.PreferredOriginalLanguage(meta, "")
+	}
 	switch {
 	case meta.ProviderMetadata.TMDB != nil && strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalLanguage) != "":
 		return strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalLanguage)

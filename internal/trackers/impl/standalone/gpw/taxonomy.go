@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -98,6 +99,9 @@ func resolveSubtitles(meta api.UploadSubject) []string {
 }
 
 func resolveTags(meta api.UploadSubject) string {
+	if meta.EffectiveMetadata.GenresProvenance.IsManual() {
+		return strings.TrimSpace(strings.ToLower(strings.ReplaceAll(trackers.PreferredGenreText(meta, ""), ", ", ",")))
+	}
 	if meta.ProviderMetadata.TMDB != nil {
 		return strings.TrimSpace(strings.ToLower(strings.ReplaceAll(meta.ProviderMetadata.TMDB.Genres, ", ", ",")))
 	}

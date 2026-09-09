@@ -12,6 +12,7 @@ import type {
   TMDBMetadata,
 } from "../../types";
 import { emptyExternalIdentity } from "../../utils/canonicalIdentity";
+import { InputCorrectionEditor } from "./InputCorrectionEditor";
 import InputPage from "./index";
 
 afterEach(cleanup);
@@ -24,15 +25,25 @@ const inputFacet = (): InputFacet => ({
     error: "",
     failure: null,
     preparationDirty: false,
+    correctionDirty: false,
     intent: {
       sourceLookupURL: "",
       identity: {},
       metadata: {},
       releaseName: {},
       playlist: { Set: false, Selected: [], UseAll: false },
+      trackerSourceIDs: {},
+      policy: { keepFolder: false, keepImages: false, onlyID: false },
+      search: { skip: false, client: "" },
     },
+    corrections: null,
+    resetFields: [],
+    confirmFields: [],
+    trackerInputAnswers: {},
     selectedTrackers: [],
     preview: null,
+    release: null,
+    readiness: null,
     trackerData: [],
     source: { discCount: 0, discType: "" },
     playlist: {
@@ -50,6 +61,12 @@ const inputFacet = (): InputFacet => ({
   changeIdentity: vi.fn(),
   changeMetadata: vi.fn(),
   changeReleaseName: vi.fn(),
+  resetCorrection: vi.fn(),
+  confirmCorrection: vi.fn(),
+  changeTrackerInputAnswer: vi.fn(),
+  changeTrackerSourceID: vi.fn(),
+  changePreparationPolicy: vi.fn(),
+  changeClientSearch: vi.fn(),
   chooseTrackers: vi.fn(),
   choosePlaylists: vi.fn(),
   confirmPlaylists: vi.fn(async () => true),
@@ -146,6 +163,80 @@ const readyInputFacet = (generation: number): InputFacet => {
   };
 };
 
+const preparedRelease = () =>
+  ({
+    Identity: {
+      ...emptyExternalIdentity("C:\\media\\Example.mkv"),
+      TMDBID: 101,
+      IMDBID: 1_234_567,
+      MALID: 51,
+      Category: "movie",
+    },
+    Naming: {
+      Type: "encode",
+      Source: "BluRay",
+      Resolution: "1080p",
+      Tag: "GRP",
+      Year: 2026,
+      Region: "A",
+      Title: "Automatic Title",
+      AlternateTitle: "Automatic AKA",
+      OriginalTitle: "Automatic Original Title",
+      Genres: ["Drama"],
+      Personal: false,
+    },
+    Episode: {
+      SeasonLabel: "S01",
+      EpisodeLabel: "E02",
+      Title: "Example Episode",
+      DailyDate: "2026-09-09",
+    },
+    Media: {
+      Service: "Example Service",
+      Edition: "Director's Cut",
+      Region: "A",
+      Distributor: "Example Distributor",
+      OriginalLanguage: "Japanese",
+      AudioLanguages: ["Japanese"],
+      SubtitleLanguages: ["English"],
+      HardcodedSubtitleLanguages: [],
+      Commentary: false,
+      WebDV: false,
+      StreamOptimized: 0,
+      Anime: false,
+      HardcodedSubs: false,
+      TrackCoverageComplete: false,
+      Tracks: [
+        {
+          ID: "audio:resource-1:1",
+          Kind: "audio",
+          ResourceID: "resource-1",
+          ManifestFingerprint: "a".repeat(64),
+          NativeID: "1",
+          Ordinal: 1,
+          DetectedLanguages: ["Japanese"],
+          Languages: ["Japanese"],
+          LanguageProvenance: "automatic",
+          Default: true,
+          Commentary: false,
+        },
+        {
+          ID: "subtitle:resource-1:2",
+          Kind: "subtitle",
+          ResourceID: "resource-1",
+          ManifestFingerprint: "a".repeat(64),
+          NativeID: "2",
+          Ordinal: 1,
+          DetectedLanguages: ["English"],
+          Languages: ["English"],
+          LanguageProvenance: "automatic",
+          Default: true,
+          Commentary: false,
+        },
+      ],
+    },
+  }) as unknown as NonNullable<InputFacet["view"]["release"]>;
+
 describe("InputPage", () => {
   it("keeps typing as a draft and uses explicit preparation intent", () => {
     const facet = inputFacet();
@@ -168,6 +259,48 @@ describe("InputPage", () => {
     expect(facet.updateSourceDraft).toHaveBeenCalledWith("C:\\media\\Other.mkv");
     fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
     expect(facet.prepareSource).toHaveBeenCalledWith("C:\\media\\Example.mkv", facet.view.intent);
+  });
+
+  it("does not carry correction intent when fetching a different source", () => {
+    const base = readyInputFacet(1);
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        sourceDraft: "C:\\media\\Different.mkv",
+        intent: {
+          ...base.view.intent,
+          metadata: { Title: "Previous title" },
+          trackerSourceIDs: { AITHER: "123" },
+          policy: { keepFolder: true, keepImages: true, onlyID: true },
+        },
+      },
+    };
+    render(
+      <InputPage
+        facet={facet}
+        sourcePathHistory={[]}
+        handleBrowseFile={vi.fn()}
+        handleBrowseFolder={vi.fn()}
+        trackerUploadItems={[]}
+        showExternalIDInputUI={false}
+        setLightboxImage={vi.fn()}
+        setLightboxAlt={vi.fn()}
+        trackerIconSrcByName={{}}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh metadata" }));
+    expect(facet.prepareSource).toHaveBeenCalledWith("C:\\media\\Different.mkv", {
+      sourceLookupURL: "",
+      identity: {},
+      metadata: {},
+      releaseName: {},
+      playlist: { Set: false, Selected: [], UseAll: false },
+      trackerSourceIDs: {},
+      policy: { keepFolder: false, keepImages: false, onlyID: false },
+      search: { skip: false, client: "" },
+    });
   });
 
   it("renders BDMV playlist intent and confirms through the input facet", () => {
@@ -354,13 +487,11 @@ describe("InputPage", () => {
     );
 
     fireEvent.click(screen.getByText("Edit Release Details"));
-    fireEvent.click(screen.getByLabelText("No episode title"));
-    fireEvent.click(screen.getByLabelText("No distributor"));
+    fireEvent.change(screen.getByLabelText("No episode title"), { target: { value: "yes" } });
+    fireEvent.change(screen.getByLabelText("No distributor"), { target: { value: "yes" } });
 
-    expect(facet.changeReleaseName).toHaveBeenLastCalledWith({
-      NoEpisodeTitle: true,
-      NoDistributor: true,
-    });
+    expect(facet.changeReleaseName).toHaveBeenNthCalledWith(1, { NoEpisodeTitle: true });
+    expect(facet.changeReleaseName).toHaveBeenNthCalledWith(2, { NoDistributor: true });
   });
 
   it("removes each metadata provider without overriding untouched IDs", () => {
@@ -386,13 +517,11 @@ describe("InputPage", () => {
     for (const provider of ["TMDB", "IMDB", "TVDB", "TVmaze"]) {
       fireEvent.click(screen.getByRole("button", { name: `Remove ${provider} ID` }));
     }
-    expect(facet.changeIdentity).toHaveBeenLastCalledWith({
-      TMDBID: 0,
-      IMDBID: 0,
-      TVDBID: 0,
-      TVmazeID: 0,
-      MALID: 0,
-    });
+    expect(facet.changeIdentity).toHaveBeenCalledTimes(5);
+    expect(facet.changeIdentity).toHaveBeenNthCalledWith(2, { TMDBID: 0 });
+    expect(facet.changeIdentity).toHaveBeenNthCalledWith(3, { IMDBID: 0 });
+    expect(facet.changeIdentity).toHaveBeenNthCalledWith(4, { TVDBID: 0 });
+    expect(facet.changeIdentity).toHaveBeenNthCalledWith(5, { TVmazeID: 0 });
   });
 
   it("retains restored removals when a provider is re-enabled", () => {
@@ -436,7 +565,6 @@ describe("InputPage", () => {
     fireEvent.change(screen.getByLabelText("TMDB ID"), { target: { value: "550" } });
     const reenabledIDs = { ...removedIDs, TMDBID: 550 };
     expect(facet.changeIdentity).toHaveBeenLastCalledWith(reenabledIDs);
-    expect(screen.getByRole("button", { name: "Remove TMDB ID" })).toBeEnabled();
 
     const reenabledFacet: InputFacet = {
       ...facet,
@@ -446,6 +574,7 @@ describe("InputPage", () => {
       },
     };
     rerender(<InputPage facet={reenabledFacet} {...pageProps} />);
+    expect(screen.getByRole("button", { name: "Remove TMDB ID" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Refresh metadata" }));
     expect(facet.prepareSource).toHaveBeenCalledWith(
       "C:\\media\\Example.mkv",
@@ -527,5 +656,280 @@ describe("InputPage", () => {
       target: { value: "ja" },
     });
     expect(facet.changeMetadata).toHaveBeenLastCalledWith({ OriginalLanguage: "ja" });
+  });
+
+  it("keeps explicit false, empty, and Auto correction intents distinct", () => {
+    const base = readyInputFacet(1);
+    const facet: InputFacet = {
+      ...base,
+      view: { ...base.view, release: preparedRelease() },
+    };
+    render(<InputCorrectionEditor facet={facet} />);
+
+    fireEvent.change(screen.getByLabelText("TMDB ID"), { target: { value: "invalid" } });
+    expect(screen.getByLabelText("TMDB ID")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("alert")).toHaveTextContent("Enter digits only.");
+    expect(facet.changeIdentity).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("Hardcoded subtitles"), {
+      target: { value: "no" },
+    });
+    expect(facet.changeMetadata).toHaveBeenCalledWith({ HardcodedSubs: false });
+
+    fireEvent.change(screen.getByLabelText("Original language"), { target: { value: "" } });
+    expect(facet.changeMetadata).toHaveBeenCalledWith({ OriginalLanguage: "" });
+    fireEvent.click(screen.getByRole("button", { name: "Auto Original language" }));
+    expect(facet.resetCorrection).toHaveBeenCalledWith({
+      field: "metadata.original_language",
+    });
+
+    fireEvent.change(screen.getByLabelText("Audio languages"), {
+      target: { value: "English, Brazilian Portuguese, , English" },
+    });
+    expect(facet.changeMetadata).toHaveBeenCalledWith({
+      AudioLanguages: ["English", "Brazilian Portuguese", "English"],
+    });
+    fireEvent.change(screen.getByLabelText("Subtitle languages"), {
+      target: { value: " , " },
+    });
+    expect(facet.changeMetadata).toHaveBeenCalledWith({ SubtitleLanguages: [] });
+  });
+
+  it("renders the complete source-level correction inventory", () => {
+    const base = readyInputFacet(1);
+    const facet: InputFacet = {
+      ...base,
+      view: { ...base.view, release: preparedRelease() },
+    };
+    const { container } = render(<InputCorrectionEditor facet={facet} />);
+    const rendered = [...container.querySelectorAll<HTMLElement>("[data-correction-field]")]
+      .filter((element) => !element.dataset.trackId)
+      .map((element) => element.dataset.correctionField);
+
+    expect(rendered).toEqual([
+      "identity.tmdb",
+      "identity.imdb",
+      "identity.tvdb",
+      "identity.tvmaze",
+      "identity.mal",
+      "release_name.category",
+      "release_name.type",
+      "release_name.source",
+      "release_name.resolution",
+      "release_name.tag",
+      "release_name.service",
+      "release_name.edition",
+      "release_name.season",
+      "release_name.episode",
+      "release_name.episode_title",
+      "release_name.manual_year",
+      "release_name.manual_date",
+      "release_name.region",
+      "release_name.use_season_episode",
+      "release_name.no_season",
+      "release_name.no_year",
+      "release_name.no_aka",
+      "release_name.no_tag",
+      "release_name.no_episode_title",
+      "release_name.no_distributor",
+      "release_name.no_edition",
+      "release_name.no_dub",
+      "release_name.no_dual",
+      "release_name.dual_audio",
+      "metadata.distributor",
+      "metadata.original_language",
+      "metadata.title",
+      "metadata.alternate_title",
+      "metadata.original_title",
+      "metadata.genres",
+      "metadata.audio_languages",
+      "metadata.subtitle_languages",
+      "metadata.hardcoded_subtitle_languages",
+      "metadata.personal_release",
+      "metadata.commentary",
+      "metadata.web_dv",
+      "metadata.stream_optimized",
+      "metadata.anime",
+      "metadata.hardcoded_subs",
+    ]);
+  });
+
+  it("renders persisted releases that predate effective media facts", () => {
+    const base = readyInputFacet(1);
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        release: {
+          Generation: 1,
+          Naming: { ReleaseName: "Example.Release.2026.1080p.GRP" },
+          Identity: emptyExternalIdentity("C:\\media\\Example.mkv"),
+        } as NonNullable<InputFacet["view"]["release"]>,
+      },
+    };
+
+    render(<InputCorrectionEditor facet={facet} />);
+
+    expect(screen.getByLabelText("Service")).toHaveValue("");
+    expect(screen.getByText("No inspected audio or subtitle tracks.")).toBeInTheDocument();
+  });
+
+  it("binds track corrections and source options to their typed facet commands", () => {
+    const base = readyInputFacet(1);
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        release: preparedRelease(),
+        selectedTrackers: ["AITHER"],
+      },
+    };
+    render(<InputCorrectionEditor facet={facet} />);
+
+    expect(screen.getByText(/Track coverage is incomplete/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Audio track 1 languages")).toBeInTheDocument();
+    expect(screen.getByLabelText("Subtitle track 1 languages")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Audio track 1 languages"), {
+      target: { value: "Japanese, English" },
+    });
+    expect(facet.changeMetadata).toHaveBeenCalledWith({
+      TrackLanguages: [
+        {
+          trackId: "audio:resource-1:1",
+          languages: ["Japanese", "English"],
+          manifestFingerprint: "a".repeat(64),
+        },
+      ],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Auto Audio track 1 languages" }));
+    expect(facet.resetCorrection).toHaveBeenCalledWith({
+      field: "metadata.track_languages",
+      trackId: "audio:resource-1:1",
+    });
+
+    fireEvent.change(screen.getByLabelText("AITHER source ID"), { target: { value: "123" } });
+    expect(facet.changeTrackerSourceID).toHaveBeenCalledWith("AITHER", "123");
+    fireEvent.click(screen.getByLabelText("Keep images"));
+    expect(facet.changePreparationPolicy).toHaveBeenCalledWith({
+      keepFolder: false,
+      keepImages: true,
+      onlyID: false,
+    });
+  });
+
+  it("renders backend tracker schemas, readiness, and stale correction evidence", () => {
+    const base = readyInputFacet(1);
+    const priorBinding = {
+      category: "movie",
+      providerIds: { tmdbId: 101, imdbId: 0, tvdbId: 0, tvmazeId: 0, malId: 0 },
+      sourceFingerprint: "a".repeat(64),
+    };
+    const currentBinding = {
+      ...priorBinding,
+      category: "tv",
+      providerIds: { ...priorBinding.providerIds, tmdbId: 202 },
+      sourceFingerprint: "b".repeat(64),
+    };
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        release: preparedRelease(),
+        intent: { ...base.view.intent, metadata: { Title: "Saved title" } },
+        corrections: {
+          revision: 4,
+          corrections: {
+            version: 1,
+            identity: {},
+            releaseName: {},
+            metadata: { Title: "Saved title" },
+            staleContentFields: ["metadata.title"],
+            contentBindings: { "metadata.title": priorBinding },
+          },
+        },
+        readiness: {
+          id: "input-readiness-1",
+          workflowId: "workflow-1",
+          revision: 8,
+          release: { SourcePath: "C:\\media\\Example.mkv", Generation: 1 },
+          factInstructions: { id: "facts-1", revision: 4 },
+          correctionRevision: 4,
+          selectedTrackerIds: ["PTP"],
+          requirementsFingerprint: "c".repeat(64),
+          fields: [
+            {
+              key: "genres",
+              correctionField: "metadata.genres",
+              trackerIds: ["PTP"],
+              status: "missing",
+              disposition: "strict",
+              message: "Genres are required.",
+            },
+          ],
+          schemas: [
+            {
+              Tracker: "PTP",
+              Fields: [
+                {
+                  Key: "no_english_subtitles",
+                  Label: "No English subtitles",
+                  Kind: "select",
+                  Options: ["auto", "yes", "no"],
+                  Value: "yes",
+                  Placeholder: "",
+                  Help: "Use Auto unless explicit intent is needed.",
+                  Required: true,
+                },
+              ],
+            },
+          ],
+          requiredActions: [
+            {
+              id: "confirm-title",
+              kind: "confirm_correction",
+              prompt: "Confirm the saved title for the current content.",
+              status: "pending",
+              workflowRevision: 8,
+              createdAt: "2026-09-09T00:00:00Z",
+              correctionConfirmation: {
+                revision: 4,
+                fields: ["metadata.title"],
+                previousBindings: { "metadata.title": priorBinding },
+                currentBinding,
+              },
+            },
+          ],
+          status: "blocked",
+          createdAt: "2026-09-09T00:00:00Z",
+        },
+      },
+    };
+    const { rerender } = render(<InputCorrectionEditor facet={facet} />);
+
+    expect(screen.getByText("Genres are required.", { exact: false })).toBeInTheDocument();
+    expect(screen.getByText(/saved for movie.*TMDB 101.*current tv.*TMDB 202/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm saved Title" }));
+    expect(facet.confirmCorrection).toHaveBeenCalledWith({ field: "metadata.title" });
+    expect(screen.getByLabelText("PTP No English subtitles")).toHaveValue("yes");
+    fireEvent.change(screen.getByLabelText("PTP No English subtitles"), {
+      target: { value: "auto" },
+    });
+    expect(facet.changeTrackerInputAnswer).toHaveBeenCalledWith(
+      "PTP",
+      "no_english_subtitles",
+      null,
+    );
+    rerender(
+      <InputCorrectionEditor
+        facet={{
+          ...facet,
+          view: {
+            ...facet.view,
+            trackerInputAnswers: { PTP: { no_english_subtitles: null } },
+          },
+        }}
+      />,
+    );
+    expect(screen.getByLabelText("PTP No English subtitles")).toHaveValue("auto");
   });
 });

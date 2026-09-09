@@ -184,3 +184,36 @@ func TestHDBReleaseNamePolicyRejectsStaleIMDbOriginalTitle(t *testing.T) {
 		t.Fatalf("stale IMDb error = %v", err)
 	}
 }
+
+func TestHDBReleaseNamePolicyHonorsManualOriginalTitle(t *testing.T) {
+	t.Parallel()
+
+	const generated = "Example.Release.2026.1080p.WEB-DL.H.264-GRP"
+	meta := api.UploadSubject{
+		ReleaseName: generated,
+		GeneratedReleaseNames: api.GeneratedReleaseNameVariants{
+			IncludeEpisodeTitle: api.ReleaseNameVariant{Name: generated},
+		},
+		Identity:   api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+		Release:    api.ReleaseInfo{Year: 2026, Resolution: "1080p"},
+		Source:     "WEB-DL",
+		VideoCodec: "H.264",
+		EffectiveMetadata: api.EffectiveMetadata{
+			OriginalTitle:           "Manual Original",
+			OriginalTitleProvenance: api.FactProvenanceManual,
+		},
+	}
+	resolved, err := Profile().ReleaseNamePolicy.Resolver(trackers.ReleaseNameInput{Subject: meta})
+	if err != nil {
+		t.Fatalf("resolve manual HDB name: %v", err)
+	}
+	if !strings.HasPrefix(resolved.Upload, "Manual Original 2026") {
+		t.Fatalf("manual HDB name = %q", resolved.Upload)
+	}
+
+	meta.EffectiveMetadata = api.EffectiveMetadata{OriginalTitleProvenance: api.FactProvenanceManualEmpty}
+	_, err = Profile().ReleaseNamePolicy.Resolver(trackers.ReleaseNameInput{Subject: meta})
+	if err == nil || !strings.Contains(err.Error(), "current matching IMDb original title") {
+		t.Fatalf("manual empty original title error = %v", err)
+	}
+}

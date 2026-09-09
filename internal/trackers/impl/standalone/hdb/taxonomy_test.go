@@ -33,10 +33,11 @@ func TestHDBCategoryIDs(t *testing.T) {
 	const sourcePath = "Example.Release.2026.mkv"
 
 	tests := []struct {
-		name     string
-		identity api.ExternalIdentity
-		metadata api.SourceScopedMetadata
-		want     int
+		name      string
+		identity  api.ExternalIdentity
+		metadata  api.SourceScopedMetadata
+		effective api.EffectiveMetadata
+		want      int
 	}{
 		{
 			name: "movie documentary from IMDb",
@@ -50,6 +51,76 @@ func TestHDBCategoryIDs(t *testing.T) {
 				IMDB:       &api.IMDBMetadata{IMDBID: 1234567, Genres: "Drama, Documentary"},
 			},
 			want: 3,
+		},
+		{
+			name: "manual drama suppresses IMDb documentary",
+			identity: api.ExternalIdentity{
+				SourcePath: sourcePath,
+				Category:   api.CanonicalCategoryMovie,
+				IMDBID:     1234567,
+			},
+			metadata: api.SourceScopedMetadata{
+				SourcePath: sourcePath,
+				IMDB:       &api.IMDBMetadata{IMDBID: 1234567, Genres: "Documentary"},
+			},
+			effective: api.EffectiveMetadata{Genres: []string{"Drama"}, GenresProvenance: api.FactProvenanceManual},
+			want:      1,
+		},
+		{
+			name: "manual empty suppresses IMDb documentary",
+			identity: api.ExternalIdentity{
+				SourcePath: sourcePath,
+				Category:   api.CanonicalCategoryMovie,
+				IMDBID:     1234567,
+			},
+			metadata: api.SourceScopedMetadata{
+				SourcePath: sourcePath,
+				IMDB:       &api.IMDBMetadata{IMDBID: 1234567, Genres: "Documentary"},
+			},
+			effective: api.EffectiveMetadata{GenresProvenance: api.FactProvenanceManualEmpty},
+			want:      1,
+		},
+		{
+			name: "manual documentary overrides raw drama",
+			identity: api.ExternalIdentity{
+				SourcePath: sourcePath,
+				Category:   api.CanonicalCategoryMovie,
+				IMDBID:     1234567,
+			},
+			metadata: api.SourceScopedMetadata{
+				SourcePath: sourcePath,
+				IMDB:       &api.IMDBMetadata{IMDBID: 1234567, Genres: "Drama"},
+			},
+			effective: api.EffectiveMetadata{Genres: []string{"Documentary"}, GenresProvenance: api.FactProvenanceManual},
+			want:      3,
+		},
+		{
+			name: "manual documentary applies without provider metadata",
+			identity: api.ExternalIdentity{
+				SourcePath: sourcePath,
+				Category:   api.CanonicalCategoryMovie,
+				IMDBID:     1234567,
+			},
+			effective: api.EffectiveMetadata{Genres: []string{"Documentary"}, GenresProvenance: api.FactProvenanceManual},
+			want:      3,
+		},
+		{
+			name: "manual empty preserves IMDb concert type",
+			identity: api.ExternalIdentity{
+				SourcePath: sourcePath,
+				Category:   api.CanonicalCategoryMovie,
+				IMDBID:     1234567,
+			},
+			metadata: api.SourceScopedMetadata{
+				SourcePath: sourcePath,
+				IMDB: &api.IMDBMetadata{
+					IMDBID: 1234567,
+					Type:   "Concert",
+					Genres: "Music",
+				},
+			},
+			effective: api.EffectiveMetadata{GenresProvenance: api.FactProvenanceManualEmpty},
+			want:      4,
 		},
 		{
 			name: "TV documentary from TVDB",
@@ -192,16 +263,18 @@ func TestHDBCategoryIDs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := hdbCategoryID(api.UploadSubject{
-				SourcePath:       sourcePath,
-				Identity:         tt.identity,
-				ProviderMetadata: tt.metadata,
+				SourcePath:        sourcePath,
+				Identity:          tt.identity,
+				ProviderMetadata:  tt.metadata,
+				EffectiveMetadata: tt.effective,
 			}); got != tt.want {
 				t.Fatalf("upload category ID = %d, want %d", got, tt.want)
 			}
 			if got := hdbDupeCategoryID(api.DuplicateSubject{
-				SourcePath:       sourcePath,
-				Identity:         tt.identity,
-				ProviderMetadata: tt.metadata,
+				SourcePath:        sourcePath,
+				Identity:          tt.identity,
+				ProviderMetadata:  tt.metadata,
+				EffectiveMetadata: tt.effective,
 			}); got != tt.want {
 				t.Fatalf("duplicate-search category ID = %d, want %d", got, tt.want)
 			}

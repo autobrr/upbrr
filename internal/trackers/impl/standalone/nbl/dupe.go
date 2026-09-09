@@ -63,6 +63,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		if searchName == "" {
 			searchName = dupe.ProjectedSearchName(meta)
 		}
+		searchName = meta.EffectiveMetadata.PreferredTitle(searchName)
 		if searchName == "" {
 			return dupe.NotRun(dupe.NotRunMissingMetadata, "missing tvmaze/imdb/title for NBL dupe search", nil)
 		}

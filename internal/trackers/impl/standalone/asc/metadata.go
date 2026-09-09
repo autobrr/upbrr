@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/providerid"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -82,7 +84,7 @@ func resolveGenres(meta api.UploadSubject, answers map[string]string) string {
 	ptBR := api.ExtractTrackerLocalizedPTBR(meta)
 
 	// 1. Use localized if available
-	if ptBR.Genres != "" {
+	if !meta.EffectiveMetadata.GenresProvenance.IsManual() && ptBR.Genres != "" {
 		genres := strings.Split(strings.TrimSpace(ptBR.Genres), ",")
 		out := make([]string, 0, len(genres))
 		for _, genre := range genres {
@@ -110,6 +112,7 @@ func resolveGenres(meta api.UploadSubject, answers map[string]string) string {
 		genreText = strings.TrimSpace(meta.Release.Genre)
 	}
 
+	genreText = trackers.PreferredGenreText(meta, genreText)
 	if genreText == "" {
 		return ""
 	}
@@ -159,18 +162,24 @@ func resolveIMDbIDText(meta api.UploadSubject) string {
 }
 
 func resolveOriginalLanguage(meta api.UploadSubject) string {
+	provider := ""
 	switch {
 	case meta.ProviderMetadata.TMDB != nil && strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalLanguage) != "":
-		return strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalLanguage)
+		provider = meta.ProviderMetadata.TMDB.OriginalLanguage
 	case meta.ProviderMetadata.IMDB != nil && strings.TrimSpace(meta.ProviderMetadata.IMDB.OriginalLanguage) != "":
-		return strings.TrimSpace(meta.ProviderMetadata.IMDB.OriginalLanguage)
+		provider = meta.ProviderMetadata.IMDB.OriginalLanguage
 	case meta.ProviderMetadata.TVDB != nil && strings.TrimSpace(meta.ProviderMetadata.TVDB.OriginalLanguage) != "":
-		return strings.TrimSpace(meta.ProviderMetadata.TVDB.OriginalLanguage)
+		provider = meta.ProviderMetadata.TVDB.OriginalLanguage
 	case meta.ProviderMetadata.TVmaze != nil && strings.TrimSpace(meta.ProviderMetadata.TVmaze.Language) != "":
-		return strings.TrimSpace(meta.ProviderMetadata.TVmaze.Language)
-	default:
-		return ""
+		provider = meta.ProviderMetadata.TVmaze.Language
 	}
+	value := trackers.PreferredOriginalLanguage(meta, provider)
+	if meta.EffectiveMetadata.OriginalLanguageProvenance.IsManual() {
+		if normalized := languageutil.NormalizeLanguageCode(value); normalized != "" {
+			return normalized
+		}
+	}
+	return strings.TrimSpace(value)
 }
 
 func resolveRuntime(meta api.UploadSubject) string {
@@ -243,18 +252,18 @@ func resolveReleaseDate(meta api.UploadSubject) string {
 }
 
 func resolveYear(meta api.UploadSubject) int {
+	provider := 0
 	switch {
 	case meta.Release.Year > 0:
-		return meta.Release.Year
+		provider = meta.Release.Year
 	case meta.ProviderMetadata.TMDB != nil && meta.ProviderMetadata.TMDB.Year > 0:
-		return meta.ProviderMetadata.TMDB.Year
+		provider = meta.ProviderMetadata.TMDB.Year
 	case meta.ProviderMetadata.IMDB != nil && meta.ProviderMetadata.IMDB.Year > 0:
-		return meta.ProviderMetadata.IMDB.Year
+		provider = meta.ProviderMetadata.IMDB.Year
 	case meta.ProviderMetadata.TVDB != nil && meta.ProviderMetadata.TVDB.Year > 0:
-		return meta.ProviderMetadata.TVDB.Year
-	default:
-		return 0
+		provider = meta.ProviderMetadata.TVDB.Year
 	}
+	return trackers.PreferredYear(meta, provider)
 }
 
 func pluralSuffix(value int) string {

@@ -28,6 +28,9 @@ func applyDPTVDBDisambiguation(name string, meta api.UploadSubject) string {
 		return name
 	}
 	evidence := meta.ProviderMetadata.TVDB.NameDisambiguation
+	if meta.EffectiveMetadata.YearProvenance.IsManual() {
+		evidence.SeriesYear = meta.EffectiveMetadata.Year
+	}
 	title, alternate, tail, ok := unit3d.SplitTVDBName(name, meta, evidence)
 	if !ok {
 		return name

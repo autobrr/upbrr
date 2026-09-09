@@ -286,6 +286,10 @@ type PreparedReleaseRepository interface {
 	LoadPreparedRelease(ctx context.Context, sourcePath string) (PreparedRelease, error)
 	CommitPreparedRelease(ctx context.Context, release PreparedRelease) error
 	PurgePreparedRelease(ctx context.Context, sourcePath string) error
+	LoadReleaseCorrections(context.Context, string) (ReleaseCorrectionsSnapshot, error)
+	UpdateReleaseCorrections(context.Context, string, ReleaseCorrectionUpdate) (ReleaseCorrectionsSnapshot, error)
+	CompareAndSwapReleaseCorrections(context.Context, string, uint64, StoredReleaseCorrectionsV1) (ReleaseCorrectionsSnapshot, error)
+	CommitPreparedReleaseWithCorrections(context.Context, PreparedRelease, uint64, StoredReleaseCorrectionsV1) (uint64, error)
 }
 
 // ReleaseSelectionRepository persists user-selected description and playlist

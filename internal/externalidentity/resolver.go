@@ -41,12 +41,14 @@ type Request struct {
 // to set one. CategoryOverride similarly preserves on nil, clears on empty or
 // unknown, and accepts movie or TV as explicit values.
 type ResolutionIntent struct {
-	Title                   string
-	Year                    int
-	Season                  int
-	Episode                 int
-	TrackerContext          []string
-	ProviderOverrides       api.ExternalIDOverrides
+	Title             string
+	Year              int
+	Season            int
+	Episode           int
+	TrackerContext    []string
+	ProviderOverrides api.ExternalIDOverrides
+	// IdentityResetFields excludes prior explicit pins returned to Auto.
+	IdentityResetFields     []api.CorrectionField
 	CategoryOverride        *api.CanonicalCategory
 	ReResolve               bool
 	RefreshProviderMetadata bool
@@ -250,7 +252,7 @@ func (r *Resolver) resolveCandidate(
 	result := Result{Identity: identity, ProviderMetadata: metadata}
 
 	if evidence.hasIDs {
-		applyStoredIdentity(&result.Identity, evidence.identity)
+		applyStoredIdentity(&result.Identity, evidence.identity.WithoutResetPins(request.Intent.IdentityResetFields))
 		if err := appendEvidenceFingerprint(&result, "stored_identity", evidence.identity); err != nil {
 			return Result{}, err
 		}
@@ -272,6 +274,7 @@ func (r *Resolver) resolveCandidate(
 	if err := applyResolutionIntent(&result.Identity, request.Intent); err != nil {
 		return Result{}, err
 	}
+	normalizeIdentityLineage(&result.Identity)
 	invalidateMismatchedMetadata(&result.ProviderMetadata, result.Identity)
 	result.MissingRequirements = missingRequirements(result.Identity)
 	return result, nil
@@ -510,6 +513,36 @@ func applyResolutionIntent(identity *api.ExternalIdentity, intent ResolutionInte
 		identity.Provenance.Category = api.IdentityProvenanceExplicit
 	}
 	return nil
+}
+
+func normalizeIdentityLineage(identity *api.ExternalIdentity) {
+	if identity == nil {
+		return
+	}
+	for _, provenance := range []*api.IdentityProvenance{
+		&identity.Provenance.TMDB,
+		&identity.Provenance.IMDB,
+		&identity.Provenance.TVDB,
+		&identity.Provenance.TVmaze,
+		&identity.Provenance.MAL,
+		&identity.Provenance.Category,
+	} {
+		if *provenance == "" {
+			*provenance = api.IdentityProvenanceUnknown
+		}
+	}
+	for _, override := range []*api.OverrideState{
+		&identity.Overrides.TMDB,
+		&identity.Overrides.IMDB,
+		&identity.Overrides.TVDB,
+		&identity.Overrides.TVmaze,
+		&identity.Overrides.MAL,
+		&identity.Overrides.Category,
+	} {
+		if *override == "" {
+			*override = api.OverrideStateUnset
+		}
+	}
 }
 
 func applyProviderOverride(id *int, provenance *api.IdentityProvenance, state *api.OverrideState, override *int) {

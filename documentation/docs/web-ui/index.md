@@ -39,6 +39,20 @@ The left navigation follows the release workflow. Some pages appear or unlock on
 
 Navigation guards prevent later operations from silently using missing or stale prerequisites. When a page is unavailable, read the notice and return to the required stage.
 
+### Correct Input facts
+
+Use **Input** to correct titles, genre, release naming fields, and languages before duplicate checking. Selected trackers share provider lookups where possible. Missing fields identify the affected trackers. An unknown source or release type requires a correction.
+
+Corrections survive metadata refresh, history reload, and restart. Explicit values take precedence over saved values and provider results. **Auto** removes the saved correction. An empty list or explicit **No** remains a manual value.
+
+Clearing **Manual year** saves an explicit zero. Choose **Auto** to restore the derived year.
+
+Audio, subtitle, and hardcoded-subtitle fields accept comma-separated languages. Individual track edits apply only to the selected inspected track. Release-level language lists affect the aggregate without assigning languages to each track. Uninspected collection members remain marked as incomplete coverage.
+
+Changing Movie/TV with the same TMDB ID loads metadata from the correct category. If the source or provider identity changes, saved content corrections may require confirmation, replacement, or reset. A changed track manifest requires selecting a current track again.
+
+Input preparation stops after facts and local readiness. It does not run duplicate searches or later media operations. Generated descriptions later include manually supplied languages; complete custom descriptions remain unchanged.
+
 ### Clear a metadata provider
 
 On **Input**, open **Edit Release Details** and find **External IDs**. Click **Remove** beside TMDB, IMDb, TVDB, TVmaze, or MAL. You can also delete an existing ID from its field.

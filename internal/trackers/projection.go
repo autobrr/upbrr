@@ -444,6 +444,17 @@ func (r *Registry) ProjectRelease(
 			validationSubject,
 			input.Logger,
 		)
+		if provider, ok := descriptor.Definition.(InputReadinessProvider); ok {
+			for _, outcome := range provider.InputReadiness(input.Meta) {
+				if outcome.Status == api.InputReadinessFieldMissing || outcome.Status == api.InputReadinessFieldInvalid {
+					ruleFailures = append(ruleFailures, api.RuleFailure{
+						Rule:        "input." + outcome.Key,
+						Reason:      outcome.Message,
+						Disposition: outcome.Disposition,
+					})
+				}
+			}
+		}
 		if ruleErr != nil {
 			failure = NewPreparationFailure(input.Tracker, "rules", "tracker projection policy evaluation failed", ruleErr)
 			projection.Readiness = api.ReadinessStatusBlocked

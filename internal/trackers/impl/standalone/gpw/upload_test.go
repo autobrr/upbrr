@@ -37,3 +37,20 @@ func TestBuildFieldsPersonalReleaseAndExclusiveFlags(t *testing.T) {
 		t.Fatalf("did not expect diy for disc personal release, got %#v", disc)
 	}
 }
+
+func TestResolveTagsPreservesAutomaticTMDBPresenceAndManualFacts(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{Release: api.ReleaseInfo{Genre: "Release"}, ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Genres: ""}}}
+	if got := resolveTags(meta); got != "" {
+		t.Fatalf("blank TMDB tags = %q", got)
+	}
+	meta.ProviderMetadata.TMDB = nil
+	if got := resolveTags(meta); got != "release" {
+		t.Fatalf("release tags = %q", got)
+	}
+	meta.EffectiveMetadata = api.EffectiveMetadata{Genres: []string{"Manual Genre"}, GenresProvenance: api.FactProvenanceManual}
+	if got := resolveTags(meta); got != "manual genre" {
+		t.Fatalf("manual tags = %q", got)
+	}
+}

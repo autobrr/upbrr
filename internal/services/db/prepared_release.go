@@ -40,6 +40,73 @@ func (r *SQLiteRepository) CommitPreparedRelease(ctx context.Context, release ap
 		release.ProviderMetadata.UpdatedAt = preparedAt
 	}
 
+	return r.withWriteTx(ctx, "commit prepared release", func(tx *sql.Tx) error {
+		return commitPreparedReleaseTx(ctx, tx, release, generation)
+	})
+}
+
+// CommitPreparedReleaseWithCorrections atomically compares and stores the
+// correction record before publishing the prepared generation. Callers must
+// calculate the compatibility fingerprint using its returned revision.
+func (r *SQLiteRepository) CommitPreparedReleaseWithCorrections(
+	ctx context.Context,
+	release api.PreparedRelease,
+	expectedRevision uint64,
+	record api.StoredReleaseCorrectionsV1,
+) (uint64, error) {
+	if r == nil || r.db == nil {
+		return 0, errors.New("db: repository not initialized")
+	}
+	if record.Version != 1 {
+		return 0, &api.UnsupportedCorrectionVersionError{Version: record.Version}
+	}
+	generation, err := validatePreparedReleaseForCommit(release)
+	if err != nil {
+		return 0, err
+	}
+
+	preparedAt := release.PreparedAt.UTC()
+	if preparedAt.IsZero() {
+		preparedAt = time.Now().UTC()
+		release.PreparedAt = preparedAt
+	}
+	if release.Identity.ResolvedAt.IsZero() {
+		release.Identity.ResolvedAt = preparedAt
+	}
+	if release.ProviderMetadata.UpdatedAt.IsZero() {
+		release.ProviderMetadata.UpdatedAt = preparedAt
+	}
+
+	finalRevision := expectedRevision
+	err = r.withWriteTx(ctx, "commit prepared release with corrections", func(tx *sql.Tx) error {
+		snapshot, found, err := loadReleaseCorrectionsTx(ctx, tx, release.Source.SourcePath)
+		if err != nil {
+			return err
+		}
+		if snapshot.Revision != expectedRevision {
+			return &api.CorrectionRevisionConflictError{Expected: expectedRevision, Actual: snapshot.Revision}
+		}
+		if !releaseCorrectionsEqual(snapshot.Corrections, record) {
+			if snapshot.Revision == math.MaxUint64 {
+				return errors.New("db commit prepared release with corrections: revision overflow")
+			}
+			finalRevision = snapshot.Revision + 1
+			if err := writeReleaseCorrectionsTx(ctx, tx, release.Source.SourcePath, expectedRevision, api.ReleaseCorrectionsSnapshot{
+				Corrections: record,
+				Revision:    finalRevision,
+			}, found); err != nil {
+				return err
+			}
+		}
+		return commitPreparedReleaseTx(ctx, tx, release, generation)
+	})
+	if err != nil {
+		return 0, err
+	}
+	return finalRevision, nil
+}
+
+func commitPreparedReleaseTx(ctx context.Context, tx *sql.Tx, release api.PreparedRelease, generation int64) error {
 	sourceJSON, err := encodePreparedJSON(release.Source)
 	if err != nil {
 		return fmt.Errorf("db commit prepared release: encode source: %w", err)
@@ -64,12 +131,6 @@ func (r *SQLiteRepository) CommitPreparedRelease(ctx context.Context, release ap
 	if err != nil {
 		return fmt.Errorf("db commit prepared release: encode assessments: %w", err)
 	}
-
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("db commit prepared release: begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
 
 	compatibility := release.Compatibility
 	if _, err := tx.ExecContext(ctx, `
@@ -105,7 +166,7 @@ func (r *SQLiteRepository) CommitPreparedRelease(ctx context.Context, release ap
 		mediaJSON,
 		discJSON,
 		assessmentsJSON,
-		preparedAt.Format(time.RFC3339Nano),
+		release.PreparedAt.UTC().Format(time.RFC3339Nano),
 	); err != nil {
 		return fmt.Errorf("db commit prepared release: facts: %w", err)
 	}
@@ -114,9 +175,6 @@ func (r *SQLiteRepository) CommitPreparedRelease(ctx context.Context, release ap
 	}
 	if err := commitSourceScopedMetadataTx(ctx, tx, release.ProviderMetadata, generation); err != nil {
 		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("db commit prepared release: commit: %w", err)
 	}
 	return nil
 }

@@ -260,3 +260,78 @@ func generatedBHDNameSubject(name string) api.UploadSubject {
 		},
 	}
 }
+
+func TestApplyBHDTVTitlePolicyHonorsManualAlternateTitle(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{
+		AlternateTitle:   "AKA Provider",
+		SeasonStr:        "S01",
+		EpisodeStr:       "E02",
+		ProviderMetadata: api.SourceScopedMetadata{TVDB: &api.TVDBMetadata{NameEnglish: "English"}},
+	}
+	const name = "Raw AKA Provider S01E02 1080p-GRP"
+	if got := applyBHDTVTitlePolicy(name, meta); got != "English AKA Provider S01E02 1080p-GRP" {
+		t.Fatalf("automatic alternate title = %q", got)
+	}
+	meta.EffectiveMetadata = api.EffectiveMetadata{AlternateTitle: "AKA Manual", AlternateTitleProvenance: api.FactProvenanceManual}
+	if got := applyBHDTVTitlePolicy(name, meta); got != "English AKA Manual S01E02 1080p-GRP" {
+		t.Fatalf("manual alternate title = %q", got)
+	}
+	meta.EffectiveMetadata = api.EffectiveMetadata{AlternateTitleProvenance: api.FactProvenanceManualEmpty}
+	if got := applyBHDTVTitlePolicy(name, meta); got != "English S01E02 1080p-GRP" {
+		t.Fatalf("manual empty alternate title = %q", got)
+	}
+}
+
+func TestResolveUploadNameAppliesBHDManualTVDBYear(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		releaseName string
+		year        int
+		want        string
+	}{
+		{
+			name:        "manual year",
+			releaseName: "Example Series 2030 AKA Example Original S01E02 Example Episode 1080p WEB-DL DD+ 5.1 Atmos H.265-GRP",
+			year:        2030,
+			want:        "Example Series AKA Example Original 2030 S01E02 Example Episode 1080p WEB-DL DDP Atmos 5.1 H.265-GRP",
+		},
+		{
+			name:        "manual empty year",
+			releaseName: "Example Series AKA Example Original S01E02 Example Episode 1080p WEB-DL DD+ 5.1 Atmos H.265-GRP",
+			want:        "Example Series AKA Example Original S01E02 Example Episode 1080p WEB-DL DDP Atmos 5.1 H.265-GRP",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			meta := generatedBHDNameSubject(test.releaseName)
+			meta.Identity.Category = api.CanonicalCategoryTV
+			meta.Release = api.ReleaseInfo{
+				Category:   "TV",
+				Resolution: "1080p",
+				Group:      "GRP",
+			}
+			meta.AlternateTitle = "AKA Example Original"
+			meta.ProviderMetadata.TVDB = &api.TVDBMetadata{
+				NameEnglish: "Example Series",
+				NameDisambiguation: api.TVDBNameDisambiguation{
+					CanonicalName: "Example Series",
+					SeriesYear:    2026,
+					IncludeYear:   true,
+				},
+			}
+			meta.EffectiveMetadata = api.EffectiveMetadata{Year: test.year, YearProvenance: api.FactProvenanceManual}
+			meta.SeasonStr, meta.EpisodeStr = "S01", "E02"
+			meta.Type, meta.Source, meta.Audio = "WEBDL", "WEB", "DD+ 5.1 Atmos"
+
+			if got := resolveUploadName(meta); got != test.want {
+				t.Fatalf("BHD manual TVDB year name = %q, want %q", got, test.want)
+			}
+		})
+	}
+}

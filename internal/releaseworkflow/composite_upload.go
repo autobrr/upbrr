@@ -925,7 +925,7 @@ func (m *Module) runCompositeUpload(
 			}
 			continue
 		}
-		next, stage := planContinuationCommand(request, current, m.clock.Now().UTC())
+		next, stage := m.planContinuationCommand(request, current, m.clock.Now().UTC())
 		if next == nil {
 			if stage == "no-eligible-trackers" {
 				failure := compositeNoEligibleTrackersFailure(current, command.operationKind())
@@ -1064,6 +1064,7 @@ func compositeUploadGoalReached(current CommandResult, session *compositeUploadS
 	case api.WorkflowGoalUploaded:
 		return current.UploadResult != nil
 	case api.WorkflowGoalPrepared,
+		api.WorkflowGoalInputReady,
 		api.WorkflowGoalTrackersAssessed,
 		api.WorkflowGoalDuplicatesDecided,
 		api.WorkflowGoalMediaReady,

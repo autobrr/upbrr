@@ -1,0 +1,1602 @@
+{
+  "internal/trackers/impl/azfamily/common.go:lookupTitle": {
+    "sha256": "beb9a126a11f0d1e44733ebcd7c647de344ca2280ddefa5fde0f2e2193a64474",
+    "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged."
+  },
+  "internal/trackers/impl/azfamily/definition.go:*Definition.ReleaseNamePolicy": {
+    "sha256": "176bfe33d9690181150a62398739e9ba8210f893d902f986cd33fc9ad8755eed",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/azfamily/dupe.go:dupeSearcher.lookupMediaCode": {
+    "sha256": "9237ad60fc3384491123160dbca8187715053c814f00d8898fa3d702bac93c38",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/azfamily/dupe.go:dupeSearcher.Search": {
+    "sha256": "0fa7294286002985944d5fbb2d95b766cddf74a08cb1b1d5dd83d7a8016a5e88",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/azfamily/dupe.go:lookupAZDupeTitle": {
+    "sha256": "dd22bfacc0f7456107a02d05eadb297b8cfcf2f7d4b035f58369a37cbd76e0fc",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/azfamily/name.go:avistaZEnglishTitle": {
+    "sha256": "fd42635409aff29c3f354c20e7d5b6bb68d0fa95934636025850c4b1c31ff8e6",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/azfamily/name.go:cinemaZEnglishCountryAKA": {
+    "sha256": "e93ff79427f06a3a80bfd667082b15c0ad0c915bde8b839c7e46748d881d6f79",
+    "reason": "CinemaZ original-title callers handle manual provenance before consulting country AKA evidence."
+  },
+  "internal/trackers/impl/azfamily/name.go:cinemaZEpisodeTitleCandidates": {
+    "sha256": "ef470e72644226f4b4f0ba130eb4cabdbdd22f722f1f44ca710f2a8791b6b975",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/azfamily/name.go:cinemaZGeneratedNamePrefix": {
+    "sha256": "de8968eb92ea4f9e15bb65abef8ee776be9bb7ab4b4c8302011cce86c3c67de4",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/azfamily/name.go:cinemaZOriginalTitle": {
+    "sha256": "5b354fc359f8b8883ac84b2e66a47a0a09d272d3a417405cc49f74dc7737b8ed",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/azfamily/name.go:cinemaZRomanizedCandidates": {
+    "sha256": "558b743e15c38ed77569c1b739445baff6b96a4e600779825c8cb0e4f75e00ba",
+    "reason": "CinemaZ original-title callers handle manual provenance before consulting romanized provider candidates."
+  },
+  "internal/trackers/impl/azfamily/name.go:cinemaZTitle": {
+    "sha256": "b0c7c34b04f411e4e9891e4c19d93c0d130573b217751fbe0b4fa17b4e8539fd",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/azfamily/name.go:editGeneratedName": {
+    "sha256": "34a852b84725b2b79488f7596bb4b94f6d8205487aa41fc7cf0e064d39f1a1f5",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/azfamily/name.go:editName": {
+    "sha256": "a3acc97d8cb11ccd77c9aac1ab4cd6fa85e4722c222718ee4fadc2a7fb43f4dd",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/azfamily/name.go:editPHDName": {
+    "sha256": "2f3f23e337cffed5a187e9eb9499ff9765dec7938ec324b58606e69cf7fe0b7a",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/azfamily/name.go:normalizeCinemaZGeneratedName": {
+    "sha256": "0c2e9ab0ff203988c3bc8f2be950173e92d3e6cad5741a3df806f5c0b6d3f172",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/azfamily/name.go:releaseYear": {
+    "sha256": "c21367304e45cea4bb0639c1aca71728c6b3d35dfc41d77be07d0366724d3284",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/azfamily/name.go:resolveSearchName": {
+    "sha256": "60e394cd2a0b5608e458cb8acb9130fd34d2a806548826e6b576e1118e1b6802",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/azfamily/payload.go:buildFinalPayload": {
+    "sha256": "d5fa9e731b0464fd1ba197786611f85eb533a68420527b2d582dd1485ce9e77f",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/azfamily/payload.go:keywordsFor": {
+    "sha256": "99ad0bb2b9d5dbfa8a3ba69b46b02575582e764b4f8ec73e0985e38c350eb123",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/azfamily/payload.go:resolveTags": {
+    "sha256": "e1bd48a3a9d196da78204426f65b0853c5777e147f62ad0f9065b16f11e7333b",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/azfamily/rules.go:*Definition.evaluateRules": {
+    "sha256": "47ab67a2bb55666c7f3fb92566ac8273ababebb480a564cf9fadb396d9998517",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/azfamily/rules.go:*Definition.ValidationPolicy": {
+    "sha256": "299c3150097c5bcf9ea3e348c39ed06150d7958a7b69e5414f4a681d8571b3b7",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/azfamily/rules.go:isOlderThan50Years": {
+    "sha256": "0daec183cbed58f9e82a4446a212d9671522ada0a4c1022d730ddb66f9480d12",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/azfamily/rules.go:originCountries": {
+    "sha256": "416894de46577c7b7cfd37c2631673daed75fde28071202ca6f1431b86016e2c",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/azfamily/rules.go:originCountryEvidenceStatus": {
+    "sha256": "c717e39d572e56958e624415219d04b0a3a0892fb4e1e8158c8761f18072714d",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/azfamily/session.go:addMissingMedia": {
+    "sha256": "b88384b5f77fc037e2e26edd3ae9040d611a19b7e90eb3896e2464b5e240f69c",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/azfamily/session.go:lookupMediaCode": {
+    "sha256": "5fa9f2b253fe29d4f890eadcaeacc899fd78172548764077f69a608643df87e8",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/azfamily/session.go:searchRequests": {
+    "sha256": "f4bc4cbc0c43bc4a29adcdac0b4591b6e1186895b7fec1ca3c62cf63629c4cfb",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/azfamily/upload.go:buildUploadDryRun": {
+    "sha256": "a9eb8d7afde2137067232079986ce8309638dfcb376728b48597909e23c283a1",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/azfamily/upload.go:prepareMissingMediaOperation": {
+    "sha256": "e77d9d27f25d0eccef83469642ce6c27c47470c9e23241188ae52c7322761035",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/azfamily/upload.go:prepareResolvedUpload": {
+    "sha256": "8b67058b9b85f829c94cdf7593d362b65a09d542f6f9db767bfd13e8b4dc0084",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/azfamily/upload.go:prepareUpload": {
+    "sha256": "e6b54f4724bf9a470ed6956ef426001dee841da77798ae2142b04d9118bb1ecf",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/azfamily/validation.go:azUploadSubject": {
+    "sha256": "7ac0928500fcfc9021b0a0c85d1a5b7a2c476c8d6ae0d5c81d17f764ea4d95fd",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/ant/taxonomy.go:detectAdult": {
+    "sha256": "241c618ed9924a3390983d0eddfda979e6d08dd8f81e59125c365f277c31876d",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/ant/taxonomy.go:resolveTags": {
+    "sha256": "82014df5346f07868549cbcd51972c973749ecaa05bc541dbe349f1e6f5bd98e",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/ant/taxonomy.go:resolveType": {
+    "sha256": "1423c902d1ac46f983ebf90c63a26d12041b434f5462c1855537ea69200d1a30",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/ant/upload.go:prepareUploadState": {
+    "sha256": "2b8aa907a686e5443c0bd448655415195866f11a146d2f8d338c9d0b5b5d76c5",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/ant/upload.go:resolveKeywords": {
+    "sha256": "8209548d8420fcc71ea0118be8d19c360bebe37d2b722e8b5f963bba73d780e1",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/ant/validation.go:validationPolicy": {
+    "sha256": "00b852a3c7ee0a0e018391a078116d5d8dc644d6d19ac7a9319f48a906b9075d",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/ar/definition.go:prepareDescription": {
+    "sha256": "5e7451f9faf3fed9241d74928416ce5519193d3ff75dd9b542b48f76c0b82366",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/ar/description.go:buildDescription": {
+    "sha256": "697df449e479820e864eba98509839c50b70c5806cf985cd79b6a244303a994b",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/ar/description.go:resolveOverview": {
+    "sha256": "e5c024e3a7503b17b909387a39fd30fc2b1d6f5b7b21696e5bd65d292a7d7534",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/ar/description.go:resolvePoster": {
+    "sha256": "e9f348c49871854726e679d2741ba163e0b7cba60d277772f9d90f47cff30479",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/ar/dupe.go:arSearchQuery": {
+    "sha256": "6accac9c71c892b592d4aef8f20baa5192bc234cfb8f5efa40e4691cf550541b",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/ar/dupe.go:dupeSearcher.Search": {
+    "sha256": "ab7275b3788fe020b9a5340faf407bf580834f16420e059ee993d494fdb72449",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/ar/name.go:resolveARSearchName": {
+    "sha256": "6e07007565ec8021484e78e2239781e61dc9e71f21c60d5258287472b7e325df",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/ar/name.go:resolveARSearchNameFields": {
+    "sha256": "6881cd27bec9fcae5c38f0d47f0ff1faac2b3cd419af4bf6cf9ba2d28b8b55a1",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/ar/name.go:resolveARSearchNameParts": {
+    "sha256": "34cb615f580168c90ee8d01ff1c5cd0cff26fe25f8f901fe371ac19ad92a239f",
+    "reason": "AR name and search callers apply PreferredTitle and PreferredYear to these provider candidates."
+  },
+  "internal/trackers/impl/standalone/ar/profile.go:Profile": {
+    "sha256": "1e71723f3ebc3de923cef1bdbc82f94e6668a5af7476fcc167d61dc2c9c5c35a",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/ar/taxonomy.go:resolveGenres": {
+    "sha256": "1d53bbc32021de35b4bd26e7e33f991aa49e03555f0f54f91df48ce29ce89fc3",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/ar/taxonomy.go:resolveTags": {
+    "sha256": "9817fa87da68e636c7d9ae587cc30de25d7b331d834e4b9caf77e9b5eea11ead",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/ar/taxonomy.go:resolveTypeID": {
+    "sha256": "6f139100759b4ed13f24134d235066d82c507ddad25251e1e9cadf6378bfeff7",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/ar/upload.go:buildDatabaseLinks": {
+    "sha256": "678b835e7bd4dfb9fec77d35e3f44eb826e9c53eeabd3fe56a16750c7f15ce33",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/ar/upload.go:prepareUploadState": {
+    "sha256": "ebd3afe71fbcef242394375a709be09febe738d2bc2c259c702616b7bb9adefb",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/ar/upload.go:resolveIMDbURL": {
+    "sha256": "94f1c0571786be7073f7db1fc68dc0df26593b74877ae460bf03dea4b730610a",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/ar/upload.go:resolveKeywords": {
+    "sha256": "8209548d8420fcc71ea0118be8d19c360bebe37d2b722e8b5f963bba73d780e1",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/ar/upload.go:resolveYouTube": {
+    "sha256": "7e89c7505b94a7bd7ae8bf30d82c1752e5fdc97dc7ce7f992ed45ac629a810a8",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/ar/validation.go:validationPolicy": {
+    "sha256": "bac7ae377ed4621563d56b2da929325f20efbac2be85d567897202b519c28fb8",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/asc/description.go:buildCastSection": {
+    "sha256": "6ed55541d2c3733d026f7929794576859886e92e3240edf76148ffa757fda99e",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/asc/description.go:buildDescription": {
+    "sha256": "fb4c9c7600bb66462bf583faf5b42f1493f255ab455d5a15a151a128e0fedc33",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/asc/description.go:buildProductionCompanies": {
+    "sha256": "f6c4bf12abd9155d8c0414b1f28490bf2e4dd0ade2a17322fd9b7970429d7e9c",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/asc/description.go:buildRatingsBBCode": {
+    "sha256": "981fdb523546170574c1b9316a53e5c93fac63b86b0843aed4d99e125ccf7baf",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/asc/description.go:buildTechnicalSheet": {
+    "sha256": "f186dc0dc632caf7a79d5226703fdac4f3904fe34ed252c67aed13c5cac7b4af",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/asc/description.go:prepareDescription": {
+    "sha256": "ef548baac570e012dc68169000ee63509250c93e718190107a62591d2ad1917d",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/asc/dupe.go:buildASCSearchURL": {
+    "sha256": "f830ae9440368026839c0f2df010fefebf460abe8b0a18d99bfd574cc6ca4040",
+    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged."
+  },
+  "internal/trackers/impl/standalone/asc/dupe.go:dupeSearcher.Search": {
+    "sha256": "e796c895ae476c0d3bf7aa5aa3418294c4014ba8dce7e90b23baa5412a36aa1f",
+    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged."
+  },
+  "internal/trackers/impl/standalone/asc/dupe.go:resolveASCTitle": {
+    "sha256": "651305b97e1369809b13af6d7402783700c219f4b5c9d6e6a4b2968da71b19d4",
+    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged."
+  },
+  "internal/trackers/impl/standalone/asc/metadata.go:resolveCast": {
+    "sha256": "d2cbaadc094206f87a868078eeb4b473cf0a0a16e9578e94addc3711ef6f58c8",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/asc/metadata.go:resolveCountries": {
+    "sha256": "0a0f02e420f709c76062c66435bdd615d6696edf2fe9d443f75ab9198932eac6",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/asc/metadata.go:resolveGenres": {
+    "sha256": "b4f5b7617ea67ff6f0c01739e85aeac512b5afd44c8ead6d3cc97e83d7ff2013",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/asc/metadata.go:resolveOriginalLanguage": {
+    "sha256": "d3990142eff9654e41ffcaac8b4eac655d0595144fa1cf3c7fa1a3cf5f7f1c4e",
+    "reason": "Explicit manual original-language facts resolve full display names and codes to the tracker language code; empty values remain authoritative and automatic provider selection remains unchanged."
+  },
+  "internal/trackers/impl/standalone/asc/metadata.go:resolveOverview": {
+    "sha256": "db6ada52778b648bbf06cd67c5bacaca43d0a503eb7c7b335f9f141ec46d0d59",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/asc/metadata.go:resolvePoster": {
+    "sha256": "4b577bb38c9a6179cc2fbe7c8fdc439a1539378303023eb9ffcb1cc550ddb04b",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/asc/metadata.go:resolveReleaseDate": {
+    "sha256": "3578b636e477d7536520cc6dd8011ff419dad9b9a8d438368ec3b9c5b530853e",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/asc/metadata.go:resolveRuntime": {
+    "sha256": "937acbaa048d6923d78db8d80d893f2d851d8a8db1f82e8c122c0df4bcaef840",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/asc/metadata.go:resolveTrailer": {
+    "sha256": "8fbabaca70935b830c42d04f9b5109aac9a7e72081a53adbc7e93d88c523ba9a",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/asc/metadata.go:resolveYear": {
+    "sha256": "a2dce7e929608a0a3ddf159bcfc28bd00d8f7217d7be0b8619f56eb62b15a028",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/asc/name.go:resolveDisplayTitle": {
+    "sha256": "6e86c975425160b27c238e1d0feabdc0eabd87dd1a58139fefec634e8c71094f",
+    "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged."
+  },
+  "internal/trackers/impl/standalone/asc/name.go:resolveUploadTitle": {
+    "sha256": "3262a761092f75ef76cb9d4761052f368b4ad6abd2e6f194b19bb61e3c74cb69",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/asc/profile.go:Profile": {
+    "sha256": "fca552fb353e0cc81630b2e15b01fc982bf5e630e933ddee638b451f9af78955",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/asc/questionnaire.go:buildQuestionnaire": {
+    "sha256": "dbb2a21d1b8996eb40718fcd556e45797a1237b48c5c5ac2e52609bc73089ddb",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/asc/taxonomy.go:resolveAnimeAudioLanguage": {
+    "sha256": "e586016f1fd04e44d9f4b8fc919fd51255d07283c7e4979f9a3987ad2998a20c",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/asc/taxonomy.go:resolveAnimeLanguage": {
+    "sha256": "f5586708266a65f98c1d2b3ad620395ba4f3a0b3a1d99ea12b18e728f07b4936",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/asc/taxonomy.go:resolveAudio": {
+    "sha256": "3afaaf261a62ca03359a9220b4dcdd42b55ed685b9c75fea23e73e2595b753b0",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/asc/taxonomy.go:resolveLanguage": {
+    "sha256": "62a39d1d4981eae700c9deb69aa2be7e650bc37397ac152a25ccb29203915857",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/asc/upload.go:buildPayload": {
+    "sha256": "a7f5860f543862cb27bae94cac7667654dd6e7cd89150aa084af3a5c7f6aee25",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/asc/upload.go:prepareUpload": {
+    "sha256": "7876269547cf64d970a9a62c5bedff673618a9295caa690c96d314d3d9a05b99",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/asc/upload.go:prepareUploadState": {
+    "sha256": "070486d7f89d03140909ffaeb2a352b8d26af988cb0b8b033d1b2f2b1f4b2036",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/asc/validation.go:validatePayloadFields": {
+    "sha256": "4bb647cc901e533a1ca7945b5c7778c5fe81b4c920fa3076c1ff1557355b1798",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/asc/validation.go:validationPolicy": {
+    "sha256": "8d953776c596653d565c1d63db730f819fcf2b03df0afb02ab0e0ff46361a2a5",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/bhd/name.go:applyBHDMovieTitlePolicy": {
+    "sha256": "ec9ca57e26fba4fc006d1f089aef50745e28ebdef85200d73b8bc0ce99f50efd",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/bhd/name.go:applyBHDTitlePolicy": {
+    "sha256": "b9303b11e060331654f0cacf99264b21e3e6bd85e482d61faed12626f9329b81",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/bhd/name.go:applyBHDTVTitlePolicy": {
+    "sha256": "b22d55cc1aac34eec3285b00de50f29456c08fb425e556704dbe235022382f7a",
+    "reason": "Resolve explicit manual year, including zero, on a local evidence copy before name parsing or formatting; preserve automatic TVDB collision, locale, and year-inclusion policy."
+  },
+  "internal/trackers/impl/standalone/bhd/name.go:bhdMovieTitles": {
+    "sha256": "6935f9463a800fe0bcb38d6c5a518e107730fc034bca35e2ad33cd0a250e90c1",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/bhd/name.go:resolveUploadName": {
+    "sha256": "e1666b81912e1c3edc6ce263d82a0b6c22bc7c75f01bf9ba93d9d5c671aed3f2",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/bhd/profile.go:Profile": {
+    "sha256": "978ff3571c7b372c9b387e18dca79e8109ffacc1bdf7f0db5d16f93dad6778b1",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/bhdtv/upload.go:prepareUploadState": {
+    "sha256": "0af22e8551c67d676e5b37d02a72c73cde9cf5823ae0dc7a3212bddddcf19fe4",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/bhdtv/upload.go:resolveReferenceURL": {
+    "sha256": "8e89193728d07c7da0d0adf3a4232b2d445abc4a4b56573ca71dec5ccd0843ba",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/bjs/definition.go:prepareDescription": {
+    "sha256": "ed1c1a77df8f4845f3ab494b716917891fbfe438061dc6bd5497ba744cb622d6",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/bjs/description.go:buildDescription": {
+    "sha256": "6599078434cf229d2c63f558744187fe857ade6612e21ebdc7ac45a0e30284d3",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/bjs/description.go:resolveDirectors": {
+    "sha256": "2364d6988c796954a272dae5bbdc088b3b6625bd372ccb551c7c3c2e48b1c73b",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/bjs/description.go:resolveOverview": {
+    "sha256": "9f54e9e61b22d31c141ec13571384acd7d7211cb1f3d8da486634855081d0368",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/bjs/description.go:resolvePoster": {
+    "sha256": "d34c895b41ce7fcdf5aa109830b9f81ebc67dd94f2ec76f6d35d92586eb3ab70",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/bjs/media.go:resolveRuntime": {
+    "sha256": "5fe899edd54364abb30b2e2b7f0f527d37d39014fff744c753cff9b06a043464",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/bjs/taxonomy.go:resolveAdult": {
+    "sha256": "b3881889b8e6eec2083de58f0f9d1fabeaae2bdd93467a072a5b8fe6f8874190",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/bjs/taxonomy.go:resolveLanguage": {
+    "sha256": "a646549bb39872dedeefdee3c2e9097d189f622c2939883d75ea74e1954c3640",
+    "reason": "Explicit manual original-language facts resolve full display names and codes to the tracker language code; empty values remain authoritative and automatic provider selection remains unchanged."
+  },
+  "internal/trackers/impl/standalone/bjs/taxonomy.go:resolveTags": {
+    "sha256": "f842b38e1da2aa167cb1ecc18d87d2aa2fe721634b27c75ca153f21de57e23e4",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/bjs/upload.go:buildFields": {
+    "sha256": "3d3700bcd16aec4dcbf9622a84c525520cfe5553355deb3a7ed36ed916764f5d",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/bjs/upload.go:prepareUpload": {
+    "sha256": "1b4ea68456b81d1bbf92b9ac8b0e77f72a236972191aac69d0f2b26129ae465f",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/bjs/upload.go:prepareUploadState": {
+    "sha256": "214822bbceaf5fc5a5c7c349dd58eefcb55553a95a701473190056df9dab515e",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/bjs/upload.go:resolveCast": {
+    "sha256": "9b8f42eadc3eb041624684b7a9ddb14125e3b63be4efe86511f62f119cd161a7",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/bjs/upload.go:resolveCreators": {
+    "sha256": "949ff4d5cb9ea8ab8061dd561eb6f4d816571ffbc3f2cbd13754baaf2147d3af",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/bjs/upload.go:resolveIMDbRating": {
+    "sha256": "ddb2e2d4bd0b39cdc0aa787a578e42efeec80e9927da1898c67586aa6c351b96",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/bjs/upload.go:resolveLogo": {
+    "sha256": "6d62f0b746401aa326bb99e3ec8c5a975022c68676cf16e2f6416021182729de",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/bjs/upload.go:resolveNetworks": {
+    "sha256": "7abe967cec3b44a7270bcd9a35153458e6be4747a15e3de4b8978f8f0b244025",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/bjs/upload.go:resolveReleaseDate": {
+    "sha256": "9f4a6c6e981edab4af812a01f2d38fb25f61c0c8cdff7007c385092526dbd27b",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/bjs/upload.go:resolveYear": {
+    "sha256": "c8011db9b02f3ac9238c38e03c7a416a935d1852a251506a82987433b8ada3ba",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/bjs/upload.go:resolveYearLabel": {
+    "sha256": "c1c3341a7578ad3cd242439effc4269194b8158771b8c78e1ee92bbbed74fe3f",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/bjs/upload.go:resolveYouTube": {
+    "sha256": "8c44f7534b83f381c733beddb6344ebf3bf8a8fd5560c80a7cad20be2d469892",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/bjs/validation.go:validationPolicy": {
+    "sha256": "454774ed72b3c2b4dd5dacc19feb85ad05e6cf250d676570b6a05a31ac516e3f",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/bt/definition.go:prepareDescription": {
+    "sha256": "063f69eacb649728e0b339bb5635fc3cdcca378bacbdff4b7335b86610b45897",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/bt/description.go:buildDescription": {
+    "sha256": "aa84a59a9e27ac5f1fd424165d6f6a73f4d615ff2b1d8b361146ce730ddfe71e",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/bt/description.go:resolveDirectors": {
+    "sha256": "6791f5f314a9de9c58504789819f350f69b1f4596e7d40c57ba4dfd8d2bd18ed",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/bt/description.go:resolveOverview": {
+    "sha256": "9f54e9e61b22d31c141ec13571384acd7d7211cb1f3d8da486634855081d0368",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/bt/description.go:resolvePoster": {
+    "sha256": "f52890a936f5010efff101f414d3332cecca5a76ad91e6d2c8ebb8e42ecfb129",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/bt/dupe.go:animeSearchTitle": {
+    "sha256": "e16a2047350d81c0c5c8ec8b601e2f2df058d52e200f801c8b3787509f46a2fa",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/bt/dupe.go:dupeSearcher.Search": {
+    "sha256": "5809b4bd42f607a009e26782c970dfffbb7e082cf9db8e27e6dc931bba653357",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/bt/media.go:resolveRuntime": {
+    "sha256": "8d6e9b9cdfeeaf09abc7299c2aab9722cd4f9a589662e9a28a63d1865a874fb5",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/bt/name.go:resolveSearchName": {
+    "sha256": "7f5140247cc516ad4c879103dd3077eab1cc328d6e1f1d889bb56e29897858b4",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/bt/profile.go:Profile": {
+    "sha256": "92bbc463cc43e1f6ed10764fa6fad870b295630e05a752b16e0edfd3709f5c8a",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/bt/taxonomy.go:resolveAudio": {
+    "sha256": "c405467e9a8ec1abed4c5afcd3385442599f6978a24af0eeb442699d30394699",
+    "reason": "Explicit manual original-language facts resolve full display names and codes to the tracker language code; empty values remain authoritative and automatic provider selection remains unchanged."
+  },
+  "internal/trackers/impl/standalone/bt/taxonomy.go:resolveLanguage": {
+    "sha256": "7511d2deeebf5a1ab3da64688d9433d69f25cb1c4d6a4d2ffbdc65ea0308adcc",
+    "reason": "Explicit manual original-language facts resolve full display names and codes to the tracker language code; empty values remain authoritative and automatic provider selection remains unchanged."
+  },
+  "internal/trackers/impl/standalone/bt/taxonomy.go:resolveTags": {
+    "sha256": "a6e291d456c4f4dbd74ca378a1dabf5b77384011124c7b88229ba427729c9491",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/bt/upload.go:buildFields": {
+    "sha256": "2676ccb47a7030fa358f65a3578c349bbfd3e8e23fffbfe9a0ef4aba47d062f7",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/bt/upload.go:prepareUpload": {
+    "sha256": "b0f3053220acb2346ee3fe64c72eeb5a17868d8df67acd471b93687cab0711b4",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/bt/upload.go:prepareUploadState": {
+    "sha256": "84b4ed75692a766a667443c46aefd8b47039a288df25f4757b57ca3ecf5b3f0f",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/bt/upload.go:resolveBackdrop": {
+    "sha256": "2842ae892c1c825799d93295362335f72a10bff09c99254573f07b8cc54765ed",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/bt/upload.go:resolveIMDbRating": {
+    "sha256": "ddb2e2d4bd0b39cdc0aa787a578e42efeec80e9927da1898c67586aa6c351b96",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/bt/upload.go:resolveLocalizedTitle": {
+    "sha256": "1c9200c790221d92918c55a91c40da4cea6abc0672cc93c3c9b21096cf760487",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/bt/upload.go:resolveLogo": {
+    "sha256": "6d62f0b746401aa326bb99e3ec8c5a975022c68676cf16e2f6416021182729de",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/bt/upload.go:resolveTitle": {
+    "sha256": "d3f1287aca1545a1ca4f45f353e35200f22339e599674295e697e0e2fa304583",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/bt/upload.go:resolveYear": {
+    "sha256": "c8011db9b02f3ac9238c38e03c7a416a935d1852a251506a82987433b8ada3ba",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/bt/upload.go:resolveYouTube": {
+    "sha256": "e16c0f9f7b1d2e908161ea03cfdb884e62edfe49f86b0a7028c3de6963692f75",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/bt/validation.go:validationPolicy": {
+    "sha256": "8a208c101e9fda4be75124b6c6504c39c26dfea81c0f85e9fef1031c7501bf7a",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/btn/claims.go:*claimChecker.HasClaim": {
+    "sha256": "c20e020983d41254f039895c64b59ae4ceebe7367f8fb95ef255a263a7e9ae60",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/btn/claims.go:btnCandidateTitles": {
+    "sha256": "e13f8e46c5278f9c2f41ec2a4ec7431e88bc2e2b50bc4081805ece1ed0785778",
+    "reason": "Provider title aliases corroborate external identity claims; they do not select the effective release title."
+  },
+  "internal/trackers/impl/standalone/btn/claims.go:matchBTNClaimedTitle": {
+    "sha256": "93f5952c4338875c98732ecf35a08e8bdf725fc79deefdf631873ccec8490333",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/btn/description.go:btnTVDBEpisodeAired": {
+    "sha256": "70356c996b629c9276fa3ee3a3e86cdab116efc0fcc0317e02890b629a55d9f4",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/btn/description.go:buildAlbumDesc": {
+    "sha256": "a4a7e1f398099bbaea96ccd78ec05e09ebf04a22925a1d1b3ca212e5aa38789f",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/btn/description.go:buildTVDBAlbumDesc": {
+    "sha256": "323ccc8322ba3088c7aa61f0ef1f201513e0c7458f071bf8da7a4d19c876fc9c",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/btn/description.go:formatBTNEpisodeAlbumDesc": {
+    "sha256": "e6f32119ae752989f5e318bb501c0ee4668a712a8f2b21b7c52795edec59d9e9",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/btn/description.go:preferredBTNIMDBEpisode": {
+    "sha256": "8152805563eacb11dd1d4bf65e8d43dbacbcf1c69dd4872a87fc7bf3ea11e08b",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/btn/description.go:preferredBTNIMDBOverview": {
+    "sha256": "ab9b00a0093d4c645c73c61b52c7dba3f8c4f5073610bae0be6683fa348e58a1",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/btn/description.go:preferredBTNTVDBEpisodeTitle": {
+    "sha256": "a1f331e0be2d21e9163f18ebe1e365018fb4ea2b167fd3637b9d1e03afc24848",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/btn/description.go:preferredBTNTVDBOverview": {
+    "sha256": "de2e983edec5e25ae3657d7210c032802f55e5795199b53e43c1fec30f79ad63",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/btn/dupe.go:*dupeSearcher.Search": {
+    "sha256": "3f15c0edfc4784ea8c07244e18262e1b11763d09f6587ae16aebabb44e427cb7",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/btn/dupe.go:btnDupeFilter": {
+    "sha256": "1a26d0735a63e9c8fc4ec6040b74ce077271bdc3503cc8a43a13fa3e7abcce24",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/btn/dupe.go:searchTitle": {
+    "sha256": "c0d7706db61e43302503e55527b667a41c030ba388aed2f60d83834b4d428a08",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/btn/media.go:btnAutofillArtistAction": {
+    "sha256": "f7a708c987f74b5180e828bae2b0fbca659fc549cf595cf643f6108ea0b373c9",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/btn/media.go:btnTVPayloadMetadataMessage": {
+    "sha256": "d8d94e0b5ca07fbd4a312c4e88bbf7b33415f44bf554f4c27f156ccade3087b5",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/btn/media.go:buildBTNAutofillPayload": {
+    "sha256": "20de6a3cac1059a89eee31f0bfaf376cbf5493a31fec8baaf0ad7fda028c9113",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/btn/media.go:buildBTNReleaseNameAutofillPayload": {
+    "sha256": "7b24530283c00fca030fc066aed8f983f606549ec26d68ef2ae2a58a4b3283ef",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/btn/media.go:preferredBTNTVDBSeriesName": {
+    "sha256": "1e6cb885dfa858a06fa0d8ff0f105a76c112ac6e2a2019a455ad9e875f9b6770",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/btn/media.go:prepareUploadDataWithAutofill": {
+    "sha256": "2c2923796927fdf8b9eea7e7cc4c49370190236b75224e52be9ccf3ca0497eb6",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/btn/media.go:resolveBTNTVSeasonEpisode": {
+    "sha256": "d9249c14d989c7b984137c0c3e2fef6e9a3949b80a10327146c9451efdc1557b",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/btn/media.go:validateBTNTVPayloadMetadata": {
+    "sha256": "7797ecf3aa2dc4ae4925e9850dc73961b7cd97f85c1094a356a9632c9c821ca1",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/btn/name.go:resolveSearchName": {
+    "sha256": "a7d33e9b79c11661d773bc0768b0ccca80d3b54838e294af500b0ccc49a3a363",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/btn/profile.go:Profile": {
+    "sha256": "103b121c1630bbce257c12f33fe6b352b13debad80d6eea153b093d0de162793",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/btn/taxonomy.go:resolveBTNOriginalLanguage": {
+    "sha256": "4d6cd8ad9ee5a527ecc361c4391f40e1594938ee0f45a9c7ad42b7a314f32c26",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/btn/taxonomy.go:resolveBTNTags": {
+    "sha256": "625e09358880cbc423f4f07cd2294adfeb1a8a045e13f4c327cbd0f74d2335e3",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/btn/taxonomy.go:resolveCountryID": {
+    "sha256": "be0f1c3e9e812dbdb67a2243df3df2fbe07e2ba71c4783302c67475b8432b4f3",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/btn/taxonomy.go:resolveUploadType": {
+    "sha256": "d30ecbe632885239d88723cdd3df9f0b9fbe3ab81d5e46c6045734a96ce20f29",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/btn/upload.go:buildBTNUploadPayload": {
+    "sha256": "2a36bc29f8a5ded48ffbb3636edea7c2a20d2ae33ee3f9ce102368719b9f93f0",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/btn/upload.go:buildUploadDryRunAt": {
+    "sha256": "86ec3a1e2cde80be5c2a7a3acf0a5d1190bd0eaf70a8839995cc9148df4f2fdd",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/btn/upload.go:checkBTNSeasonPackReservation": {
+    "sha256": "e2b477065f0bb8fb12ef1470371115a71d4157740805475106581e1a799fbc8e",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/btn/upload.go:prepareBTNPreparedOperation": {
+    "sha256": "43746039406b95138b9f8dcc694cf372929092557c5ea71ed0bf0cafd64fdf53",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/btn/upload.go:prepareUploadAt": {
+    "sha256": "8152c29dec95af5914706f7c4c35186d4851528bbae29510510f527437b587d1",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/btn/upload.go:prepareUploadData": {
+    "sha256": "a1c3e429e3794709bca4d0f687d191476a469f172df115cbedd41867be890a7f",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/btn/upload.go:resolveBTNImage": {
+    "sha256": "7e2b5235095a7c6d4faa2bd2dcfa45d95f215bd4c4914413b3342add99cf5153",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/btn/validation.go:checkRequirements": {
+    "sha256": "66b2caee30f282136c2528aaac181412fc0a1bde9c9010652478205df686780e",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/btn/validation.go:validationPolicy": {
+    "sha256": "707d705ee742b06e9b326ea251a3f6c016d16a9703b8f16e0d3e60f46ea62e6b",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/czt/dupe.go:cztHandler.Search": {
+    "sha256": "908745a313439169085b7bc9445d9c687542dd59f9d6197e6c0711351332c93b",
+    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged."
+  },
+  "internal/trackers/impl/standalone/czt/dupe.go:cztSearchQuery": {
+    "sha256": "2d38ea4da0a0bf08231658a75447746ff14967056bbf73f4038656e8f5720c87",
+    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged."
+  },
+  "internal/trackers/impl/standalone/ff/description.go:resolvePoster": {
+    "sha256": "8bd3b09516d5a9c951334e330d4c8be7214c384e78c76e7e3dd72f565329b869",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/ff/dupe.go:*dupeSearcher.Search": {
+    "sha256": "84183370ecb504a33508a4114264cb1f89ac9b63763ed2105dc9880de59f84c8",
+    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged."
+  },
+  "internal/trackers/impl/standalone/ff/media.go:resolveExtraFiles": {
+    "sha256": "c139e8a9f685c0b9ea0b703945d27c797eb168cccb93aae8c62c371f89aac348",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/ff/upload.go:prepareUpload": {
+    "sha256": "021fd71ee93ffcb96aa33e553f03dca9adf293c883fb628221a85fe84c6fdfa3",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/ff/upload.go:prepareUploadState": {
+    "sha256": "8625a6305b008379404504b8dcd80afe089e0c4c404dbc84cdc98514f7a61415",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/ff/upload.go:resolveIMDbURL": {
+    "sha256": "7b6c56c25c46befd5677d40803617f2561b7b9e6c4daa1ff39a2bf10af5df144",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/fl/dupe.go:*dupeSearcher.Search": {
+    "sha256": "96d81b03c30bdbba953d8d930cb0912de8dbe61988403c446799c9607eabe71a",
+    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged."
+  },
+  "internal/trackers/impl/standalone/fl/taxonomy.go:resolveGenres": {
+    "sha256": "4b2b8180bfaf037b406ac10bcfff28d510ae8cc447d945b24d4ef716b8ef938e",
+    "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged."
+  },
+  "internal/trackers/impl/standalone/fl/upload.go:prepareUpload": {
+    "sha256": "f5783d1138c07dec1d9b092b6301201174f70b64d39c48ee30b1ce67578d6378",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/fl/upload.go:prepareUploadState": {
+    "sha256": "fe417f316845168a111e91a5dc32944907feee14d8babfb7279f81b6a5a21d1e",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/gpw/description.go:resolveDirectorName": {
+    "sha256": "86c92c9e2e84d5beafd237add016838ab443effca79f4de9ae2167aa8d530e5c",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/gpw/description.go:resolveOverview": {
+    "sha256": "467a06580134a1a9ee82c225958d278b196b0ffdf045d3d70c57dc8a4f6c299b",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/gpw/description.go:resolvePoster": {
+    "sha256": "8bd3b09516d5a9c951334e330d4c8be7214c384e78c76e7e3dd72f565329b869",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/gpw/questionnaire.go:buildQuestionnaire": {
+    "sha256": "6a2ce8a1eddfda7505af88955d298cfdc46f1fa4992a96958de4bb6ea41cdae2",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/gpw/taxonomy.go:resolveMovieType": {
+    "sha256": "f04b676d39088a29253dc0a76e932aef8e271c346831d3d98399b1274f9776c9",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/gpw/taxonomy.go:resolveTags": {
+    "sha256": "749756ab3bf9f523ea45560dec99f22eed2f2aeb9855955f765f9bb5983e154a",
+    "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged."
+  },
+  "internal/trackers/impl/standalone/gpw/upload.go:buildFields": {
+    "sha256": "2db17518ed27b2a5f1e0bf559a41f3f6327b100500621b73e1f133224e132040",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/gpw/upload.go:prepareUploadState": {
+    "sha256": "7219a10b243e5593d1b0884c6ded4f98fcd56ae6d216b49d3a897f3a82a65d64",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/gpw/upload.go:resolveYear": {
+    "sha256": "c8011db9b02f3ac9238c38e03c7a416a935d1852a251506a82987433b8ada3ba",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/hdb/dupe.go:*dupeSearcher.Search": {
+    "sha256": "150ea5d6461a864843e8fa2fb09193065ae032df0400bbb11452070ff8e71eb7",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/hdb/dupe.go:hdbDupeCategoryID": {
+    "sha256": "1f6d6b4de4085b49135f2f0bc4cc7d1c2be5697e6ad3ff67d7ffa85d162caf45",
+    "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence."
+  },
+  "internal/trackers/impl/standalone/hdb/name.go:authoritativeHDBOriginalTitle": {
+    "sha256": "0063e9bc54c2bc4cf92a8b171291e969297a9e450b7f33c67dd329221c9e306a",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/hdb/name.go:buildGeneratedHDBName": {
+    "sha256": "fceb66dbd7f849b84d9a7c3f7a19dccd3fe8b52cb0a37b44140c18957d3c28ea",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/hdb/name.go:hdbIMDbYear": {
+    "sha256": "6ac572e7593b3a536fe5022ca294e1e2d9f5e97116c916d0ead399a6789a3cc3",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/hdb/name.go:hdbProviderMetadataCurrent": {
+    "sha256": "1fcdf6010ad93147a870230d97f090c4f194cb4719b1e6c7c4293d05143ea188",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/hdb/name.go:resolveReleaseNames": {
+    "sha256": "a897f6e2ad17a7624e0cc6d8a5acaf46a2bdb3d544c4f2d534837b4671b09eb2",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/hdb/taxonomy.go:hdbCategoryID": {
+    "sha256": "6558c26929d8d473bf8ee0dbd790810b33f40a4b111d97bed9cde555cb2a0740",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/hdb/taxonomy.go:resolveHDBCategoryID": {
+    "sha256": "ca303dcb536d4a16860a4a7231058775ccf4367a8ed5097942bf3c36437d780d",
+    "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence."
+  },
+  "internal/trackers/impl/standalone/hdb/upload.go:buildUploadFields": {
+    "sha256": "23020c3793598d65ca051a1850f9f53ce1bdaa58a87234ccf916ecf072cbd275",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/hdb/upload.go:prepareUploadAt": {
+    "sha256": "b3b7c6b3e42c28ecfb45494db15275c8575ba139233529cfab2b3600ba0538d0",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/hdb/upload.go:resolveIMDbURL": {
+    "sha256": "974be80c7a930c532699cf6a137d207cd530046f5d7657908105b81066b91b2b",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/hdb/validation.go:checkRequirements": {
+    "sha256": "2e08206f6ca3f1e274ffb3fe41bf91460e14d5c5b43779b62ed732cdb329ae93",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/hdb/validation.go:hdbMetadataBranchFailures": {
+    "sha256": "5e4adf1acabb3529ffed199c6b36c2d35fb4dabf0bbf531bd6b5881c1bdba552",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/hdb/validation.go:hdbTitleFailures": {
+    "sha256": "315187c332b186f108e13bd7d78ce4b6b01a866070eb7615e1d3c7f29a243008",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/hdb/validation.go:hdbTitleForValidation": {
+    "sha256": "81567f861b320e76b0817ee0f08fbce8ae0e0cdb1a5515305d9ab43f9e58ffb7",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/hdb/validation.go:validationPolicy": {
+    "sha256": "864c809c0ccb27fb461e1cc595fa90f0bbe5a2262f265cfbcd772876a1963c16",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/hds/description.go:buildDescription": {
+    "sha256": "fcee2a651a044b013df9841fb6a6c3e49188932d12e0d528ef721b9b0892fdc5",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/hds/description.go:prepareDescription": {
+    "sha256": "c6484b4b4ba211838196aad4189a918fa5fc4f4ac59a2e3923c0237e409391b4",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/hds/rules.go:checkRules": {
+    "sha256": "0869972fd712f16465a7072103e6a2690db6bcd89aa49fe405aff40e85564dd2",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/hds/rules.go:validationPolicy": {
+    "sha256": "d853c14fd11714589cc472e02865981ef811db07d3ee67922525f42eee5ac050",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/hds/taxonomy.go:resolveCategoryID": {
+    "sha256": "04705e988a8d9eed2fb9497866f91e4bcf34574387985095d3c6bcd1bb58c23e",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/hds/taxonomy.go:resolveGenres": {
+    "sha256": "efbab05b69fd1a1cda14175918bc4ac071e6ae7aae93352d1e64dba11f643d63",
+    "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged."
+  },
+  "internal/trackers/impl/standalone/hds/upload.go:prepareUpload": {
+    "sha256": "b36917b86506381dcc0c47d2da9d1eb7dc97b482fc4f44c572ecca8c1b2a85e7",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/hds/upload.go:prepareUploadState": {
+    "sha256": "186cd1f251c4c69ac06be0a33b22bd4f3e017cd646e3f8307f6b4f4195a4caf4",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/hds/upload.go:resolveIMDbURL": {
+    "sha256": "94f1c0571786be7073f7db1fc68dc0df26593b74877ae460bf03dea4b730610a",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/hds/upload.go:resolveKeywords": {
+    "sha256": "8209548d8420fcc71ea0118be8d19c360bebe37d2b722e8b5f963bba73d780e1",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/hds/upload.go:resolveLogo": {
+    "sha256": "6d62f0b746401aa326bb99e3ec8c5a975022c68676cf16e2f6416021182729de",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/hds/upload.go:resolveYouTube": {
+    "sha256": "7e89c7505b94a7bd7ae8bf30d82c1752e5fdc97dc7ce7f992ed45ac629a810a8",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/hdt/description.go:buildDescription": {
+    "sha256": "35b4c7f44309c13ee875530949094a37b8e8b090d934c3fffdd00dd5e414b7ae",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/hdt/description.go:prepareDescription": {
+    "sha256": "2c459829d587a6e895e605ab4b16a004f8dc8e7e166ed9d9a514b72d3c66b7ea",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/hdt/dupe.go:*dupeSearcher.Search": {
+    "sha256": "6114f667068fc178b1591d2e7d1b6e96e15b6d620106b12989a6f17d9e79eb1f",
+    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged."
+  },
+  "internal/trackers/impl/standalone/hdt/upload.go:prepareUpload": {
+    "sha256": "69df54c1a53140bfd5045d3fd7241b78f4aa551f141d3b5023bdcab27d3a3186",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/hdt/upload.go:prepareUploadState": {
+    "sha256": "da33d9f209282fcfc295e30f89e6e0ed82514d30b54f565c288f72e52ff53197",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/hdt/upload.go:resolveIMDbURL": {
+    "sha256": "7b6c56c25c46befd5677d40803617f2561b7b9e6c4daa1ff39a2bf10af5df144",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/hdt/upload.go:resolveLogo": {
+    "sha256": "6d62f0b746401aa326bb99e3ec8c5a975022c68676cf16e2f6416021182729de",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/is/description.go:resolveOverview": {
+    "sha256": "6ee6057fa472655b2fe8c22772ad170f88bbf10406c5677c2c6e774280aea780",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/is/description.go:resolvePoster": {
+    "sha256": "2c7891f68e22dde9746619117364dd655ec44fb2f151024acbba16b6aa37cb9c",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/is/dupe.go:*dupeSearcher.Search": {
+    "sha256": "b077f245daa4c079ebb086cfc7863e4e96a5117274abcfa49381b6f74fbb9b81",
+    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged."
+  },
+  "internal/trackers/impl/standalone/is/taxonomy.go:resolveCategoryID": {
+    "sha256": "335f4c501560dfcb79a27a4dce17e55ea64da7c4a3fda3773c299e7b0a83aebe",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/is/taxonomy.go:resolveGenres": {
+    "sha256": "3c4606dd758a56f668bdec7a2fd5735b6747c19c40179a2c32f91fcf975bff67",
+    "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged."
+  },
+  "internal/trackers/impl/standalone/is/upload.go:buildMessage": {
+    "sha256": "4613d970d746b3c53710ac89ccf0912f124bcbd80d61a5f9d4f3723cea1145ce",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/is/upload.go:prepareUpload": {
+    "sha256": "ac969ac390ff5f040f6a857aa6d7424f2ad08903313f5b080478ffa628521f4d",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/is/upload.go:prepareUploadState": {
+    "sha256": "244b11d52b036b3ad9af10be89f51d7c8b17d0d5151ba7bde58b31192c3b6989",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/is/upload.go:resolveIMDbURL": {
+    "sha256": "7b6c56c25c46befd5677d40803617f2561b7b9e6c4daa1ff39a2bf10af5df144",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/is/upload.go:resolveKeywords": {
+    "sha256": "8209548d8420fcc71ea0118be8d19c360bebe37d2b722e8b5f963bba73d780e1",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/is/upload.go:resolveYouTube": {
+    "sha256": "7e89c7505b94a7bd7ae8bf30d82c1752e5fdc97dc7ce7f992ed45ac629a810a8",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/is/validation.go:validationPolicy": {
+    "sha256": "4eee21a393ea1a6121beba93b4824ecbf49ff88058acaa47b148372836e79d43",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/nbl/dupe.go:*dupeSearcher.Search": {
+    "sha256": "9b7bf8bf390c60ac891d22fc7d7d7bf395d94b7814d451b5ed0f278b206b2945",
+    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged."
+  },
+  "internal/trackers/impl/standalone/ptp/description.go:resolveDirectors": {
+    "sha256": "53d065bfbe4bf3171c0d8db3f4022015d37d28ea86d7e0b215b6385c48de4150",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/ptp/description.go:resolveOverview": {
+    "sha256": "4b5c3e1ea041c334a87316b0093e8fb963e2143d5c7c1c4ab295bebdc88c9479",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/ptp/description.go:resolvePoster": {
+    "sha256": "90a99c430412da95d438e07161c026c1ac7c6680d363e40e8dce6392bd95354d",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/ptp/description.go:resolveTrailer": {
+    "sha256": "3fe13eba64328115e1a0dc1783749c648454cb6f7bdd9688bf6641fd48a2cd87",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/ptp/questionnaire.go:buildQuestionnaire": {
+    "sha256": "0eebff6e96066f841747c804aada352ac3f10cd02bb2061824d521dcc45db344",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/ptp/taxonomy.go:resolveTags": {
+    "sha256": "fecad8f9407d55cdbed88f221a1c28133159eea0bb7b9da7416d4a06c6c68042",
+    "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged."
+  },
+  "internal/trackers/impl/standalone/ptp/taxonomy.go:resolveType": {
+    "sha256": "117bc1f2010be6c317d6ab460dae8a610e8dd50310270fcbe1b7d444798ee7de",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/ptp/upload.go:buildUploadFields": {
+    "sha256": "0ebd39d321f8299bba67ceb8d1c9c737d37078dd6f41d6f242035464564c7988",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/ptp/upload.go:prepareUploadStateAt": {
+    "sha256": "c18499be471ea708cbbc33dc5060235013ffdf60f225ed2449cdce76f8b76ddc",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/ptp/upload.go:resolveGroupTitleYear": {
+    "sha256": "7bd4ac69060f3f1776c27d2c7bf052c8cd314816f601a65828f710c75b560a66",
+    "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged."
+  },
+  "internal/trackers/impl/standalone/ptp/validation.go:validationPolicy": {
+    "sha256": "9d1cb915962e904b0b995976bf3cb7fbfc57dee02951ed58ad9ec4f18431b6a0",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/rtf/description.go:resolvePoster": {
+    "sha256": "ec1109c066bcccc24b157edbfd5d0cc7e08e41e0093e4db75bcbeaf20bac3555",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/rtf/dupe.go:buildRTFSearchParams": {
+    "sha256": "893dceacdfbdc722e3d3a1b5f08a65271376c6da4298f2f88d3e34bfec3a6159",
+    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged."
+  },
+  "internal/trackers/impl/standalone/rtf/dupe.go:cleanRTFSearchTitle": {
+    "sha256": "e03f3fa1b98d27ae525839d4d688471ae35156ed0b28f1f1a674d1b3566fee16",
+    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged."
+  },
+  "internal/trackers/impl/standalone/rtf/dupe.go:dupeSearcher.Search": {
+    "sha256": "6fdae23c8ffe36f4429ebe1bde3384d41389a4ce8766a1a4487b022430045f00",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/rtf/dupe.go:isRTFContentOldEnough": {
+    "sha256": "e3d5a04a513eac6b0bd93c4a0666fd74424b3f3de5aeec2a313d770431ab07f5",
+    "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence."
+  },
+  "internal/trackers/impl/standalone/rtf/rules.go:addRTFDateParts": {
+    "sha256": "454b8745f8c305813fe808ebd21f03ebf899cfe630f45097e09269fdf080c869",
+    "reason": "Primitive date inputs retain exact dates; includePartialYear gates fallback years under manual year authority."
+  },
+  "internal/trackers/impl/standalone/rtf/rules.go:addRTFDateText": {
+    "sha256": "0a91ed1adfc0baa68a30f72e3bba9c6e15aad9f23a604374b5c0c619828b3b07",
+    "reason": "Primitive date inputs retain exact dates; includePartialYear gates fallback years under manual year authority."
+  },
+  "internal/trackers/impl/standalone/rtf/rules.go:checkRules": {
+    "sha256": "d5da4ffe413ec25a2189bad2a3d8cb47a68902802d623beff6879c566a3d9d7f",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/rtf/rules.go:minimumContentAgeViolation": {
+    "sha256": "bdcb295642ba66b7c4531faaabb2470c9cc1ae3a737479c6b420fe72d8751c32",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/rtf/rules.go:rtfContentAgeEligibility": {
+    "sha256": "7d2be43309676cb687a210c4579ffc23b7e833b77a91067f7caa189f33d0f0cf",
+    "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence."
+  },
+  "internal/trackers/impl/standalone/rtf/rules.go:validationPolicy": {
+    "sha256": "f13bc58d540b1b9428023bfbf1f3898b4386759fa268ecfaab9c87640601beb4",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/rtf/rules.go:youngestRTFReleaseEvidence": {
+    "sha256": "63692862b529ab2bd35654a858795e0fd16c8a19b176e8c3659aac6868112077",
+    "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence."
+  },
+  "internal/trackers/impl/standalone/rtf/upload.go:prepareUploadState": {
+    "sha256": "29d450d28fb26618f64ff2b26f12cafc51c61635e37f3077e9dbba58f116aeab",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/spd/description.go:genresText": {
+    "sha256": "cfbdf203a78d1a19f240cb0282f436e621a197cf8c103ad84915b0cb80b24b06",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/spd/description.go:keywordsText": {
+    "sha256": "5acde8254bb8db49280da5d07269799784f92b7e49b7e2e08fd649b319756a17",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/spd/description.go:tmdbBackdrop": {
+    "sha256": "1eefccd0f98eba807ce9671e3acc1d11fc0239bfb8d11fbf2edf1480bef958b8",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/spd/description.go:tmdbOverview": {
+    "sha256": "b941efd3e8d8eb047073272f240471c080568c621f21f6f72aeacf765c0f41f8",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/spd/description.go:tmdbPoster": {
+    "sha256": "4af11926284c405778e814db3a81d38d46e17494644bacf0554ad948871a67dc",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/spd/dupe.go:*dupeSearcher.Search": {
+    "sha256": "5ae6c2104b73f956fd2944bfbdf81d0ea116b95ebbac53d877c9ed74f8614d55",
+    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged."
+  },
+  "internal/trackers/impl/standalone/spd/taxonomy.go:hasRomanian": {
+    "sha256": "b6de9aa48725aa6802945da45416afe1bc4dca16f10d2dd64e2c87473d2b80bc",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/spd/taxonomy.go:resolveCategory": {
+    "sha256": "3d066123f25784c5cb968cda94928388844b9463626092dbdc3f794aca67fb3a",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/spd/upload.go:prepareUploadState": {
+    "sha256": "e3dcdf9ea1a75af204ea3b8cbd0c23f06b63b1c063f02924c9bc0c86bec4fde1",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/spd/validation.go:validationPolicy": {
+    "sha256": "4d065d43b2fed639c4df454145b8ca5e2e486f0ff029452ec9730d3c4e5368b5",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/thr/definition.go:prepareDescription": {
+    "sha256": "400c4025cd66a2c3d0302d12e256cb9b914d99efb395ce45abb779ee3cb1b42d",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/thr/description.go:buildDescription": {
+    "sha256": "6d549159f70886c42655b5cccc4cc79e82befae6cec9753bed51f971226a7212",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/thr/description.go:genresText": {
+    "sha256": "cfbdf203a78d1a19f240cb0282f436e621a197cf8c103ad84915b0cb80b24b06",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/thr/description.go:keywordsText": {
+    "sha256": "5acde8254bb8db49280da5d07269799784f92b7e49b7e2e08fd649b319756a17",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/thr/description.go:tmdbOverview": {
+    "sha256": "b941efd3e8d8eb047073272f240471c080568c621f21f6f72aeacf765c0f41f8",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/thr/description.go:youtubeURL": {
+    "sha256": "51bc4fde54c023e9ed0cb93fd24f50e5d3fac1cf9f17d613f364b0776fb9ac0d",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/thr/taxonomy.go:resolveCategory": {
+    "sha256": "a710bab4d0074be5be62eea6109fa5eacbff4f3b1797dac73b5147f8be96dbb6",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/thr/upload.go:prepareUploadState": {
+    "sha256": "39fe1fee85d2f488f3a3e831c8a54ad15892bb04e2f96e54a78fbaf69ac4c886",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/thr/validation.go:validationPolicy": {
+    "sha256": "e56619aa212c5b74a88bb36b65a1aba9a10f758a9ff47aadb32572c9a9f67465",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/tl/description.go:genresText": {
+    "sha256": "6c40c69a16ef1a281261dd99b061e1fb5cda33989ef618c0983da4f65e711498",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/tl/dupe.go:*dupeSearcher.Search": {
+    "sha256": "3df89f91df4c9e67da2e98cacf9cc8e7ccd3305ae03613323278f851245c3b68",
+    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged."
+  },
+  "internal/trackers/impl/standalone/tl/taxonomy.go:resolveCategory": {
+    "sha256": "f79f27d1a41d6b892ad3553524f497832020d485ba637b878e9924bf9ed2bcc2",
+    "reason": "Explicit manual original-language facts resolve full display names and codes to the tracker language code; empty values remain authoritative and automatic provider selection remains unchanged."
+  },
+  "internal/trackers/impl/standalone/tl/upload.go:prepareUploadState": {
+    "sha256": "66734f64ec1ab193b7c17552b10663e42a6aa16f57a0c5924eb2278f840e602b",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/tl/validation.go:validationPolicy": {
+    "sha256": "1fbe5be09ed1464be925c27aa6add80de46ad7c8b253c5986034c3119cc28e13",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/tvc/definition.go:prepareDescription": {
+    "sha256": "4359b0de03575a9af36c79fefe53338683b642a02ea6e961259607ea6e31c931",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/tvc/description.go:buildDescription": {
+    "sha256": "7e1b3ec6918ed0052ad8d2f0f7e26caab50d2b8a0953e643e07752366e4ae258",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/tvc/description.go:genresText": {
+    "sha256": "6c40c69a16ef1a281261dd99b061e1fb5cda33989ef618c0983da4f65e711498",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/tvc/description.go:keywordsText": {
+    "sha256": "d43e5506425abc373b2674cf8d7e0cb326faa417a878b87d652c887c886e51e8",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/tvc/name.go:appendCountryCode": {
+    "sha256": "e8e37af6bbfd8428156d5cc75416de4caf836faa4f65e414e70b16ad03edf668",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/standalone/tvc/name.go:resolveName": {
+    "sha256": "9bf2a4f5f9a0d8ee0bfb69dd9084c5d534d139a8dc3142555445eac63e7ca3a7",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/standalone/tvc/profile.go:Profile": {
+    "sha256": "cc4b27bf355427c2ef07342d95f6031fa5f0c23fcd74f1cb44316a9b82f6317c",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/tvc/taxonomy.go:resolveCategory": {
+    "sha256": "0bdc38ca1b4a30b350b141481e69a19582e35a496825c0f9798a61e7026c736a",
+    "reason": "Explicit manual original-language facts resolve full display names and codes to the tracker language code; empty values remain authoritative and automatic provider selection remains unchanged."
+  },
+  "internal/trackers/impl/standalone/tvc/upload.go:prepareUploadState": {
+    "sha256": "aa001199562bacbb70aeffbba79bffdced64fb9ae9413f33013d4ad2d77acfb5",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/validation.go:UploadSubjectForValidation": {
+    "sha256": "3cb6528c302ff7db23f8e708d342e5faa21909cad10a4f6ca9cd74cb0df54d90",
+    "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence."
+  },
+  "internal/trackers/impl/unit3d/additional_rules.go:Anime": {
+    "sha256": "b0963b0520f2ab2c7ddf838ff6db4a01c086322786a58aecf9c6409243c0468f",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/unit3d/additional_rules.go:RuleKeywords": {
+    "sha256": "53ce63ac13bd01ba491889dedb92ffda0d09a6bfea7b1b9311a34a7163f88e56",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/unit3d/additional_rules.go:ruleMetadataMatchesSource": {
+    "sha256": "06c8b24de8ea7e88995ba0b339cc1fb998eb44a5516294b181e06b927b7962cd",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/unit3d/localized_name.go:FormatLocalizedName": {
+    "sha256": "f824334328f2d5f16bd667019aaf3a9cc433f4ba30683595a45d7e18bb103e85",
+    "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged."
+  },
+  "internal/trackers/impl/unit3d/name.go:resolveOriginalLanguage": {
+    "sha256": "4cf7d8391869c78c60ef3c6d9f10ecce9705c2535460f89db4f1fa257df86ce4",
+    "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged."
+  },
+  "internal/trackers/impl/unit3d/name.go:SplitTVDBName": {
+    "sha256": "06af1641e67ef45859a6e1b192d597f3fe912bf54118af18f1638d78d0f4145c",
+    "reason": "Callers resolve explicit manual year, including zero, before splitting generated names; automatic TVDB disambiguation evidence and release-tail parsing remain unchanged."
+  },
+  "internal/trackers/impl/unit3d/site_contract.go:IMDBGenres": {
+    "sha256": "427b4ddb2b0b1b8915d5e761a68f10f8d9454382c3f5818e64edea28730dab3f",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/site_contract.go:Keywords": {
+    "sha256": "a226b5664efa8ef99f10f407fb19f704666205e1caa6348c963b6b557c97e800",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/site_contract.go:TMDBGenres": {
+    "sha256": "8a846ac3d35b17c5a92d719323301046ac938bf86fed967fd6b85e5c90c1183f",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/site_helpers.go:resolveIMDBGenres": {
+    "sha256": "0bd5a511d8c3ac3e26af6632223e1f8c949562f53d4dc297ff5860d3946eff35",
+    "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged."
+  },
+  "internal/trackers/impl/unit3d/site_helpers.go:resolveTMDBGenres": {
+    "sha256": "e153f74172d76689217aff458140caed24ec18176775cb05492f3c1b869f16e4",
+    "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged."
+  },
+  "internal/trackers/impl/unit3d/sites/a4k/name.go:buildAIName": {
+    "sha256": "d51e1857ee24666c8005439fbd0e3e350c4c5a91fe9aee57c2dc5bb64ffcbca4",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/a4k/name.go:buildFanResName": {
+    "sha256": "6e5ce39ed779a24274ec9ec232cb1053d77fa3da73469504bab13f258f510778",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/a4k/name.go:buildName": {
+    "sha256": "8b0d70ada3333a3f95991f665abc7bd6cf98003993d5031caf5f4a5198d9e56b",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/a4k/name.go:titleAndYear": {
+    "sha256": "b119a9555e82be453ddaf8e3a93420df3e31ca27dcfd88a44ebc4915e74f554b",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/unit3d/sites/a4k/profile.go:Profile": {
+    "sha256": "e144e207bfe1092afda59404cc0e4a9d47523bfd7c6fdf122bfa4ee2659e2476",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/acm/name.go:buildACMName": {
+    "sha256": "8b195ecd505a2261e17f6a9b993fdbf73942828c2242cffa5bac47dc3e813072",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/acm/name.go:buildName": {
+    "sha256": "0e36eda4dccc8874626ce6e39440e28f43bfc2b66252ec2d92feaa6595afa86c",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/acm/name.go:resolveACMIMDBAKA": {
+    "sha256": "d40fb595b66f75d9154638d241b9eca0143fa253016ca6c265ea24b9ea3641f3",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/unit3d/sites/acm/name.go:resolveACMIMDBTitle": {
+    "sha256": "194a77cb0381764e68e1643c873d185a921aa620dec31b08bd1f04cf9b236dca",
+    "reason": "ACM title caller handles manual title provenance before selecting the IMDb candidate."
+  },
+  "internal/trackers/impl/unit3d/sites/acm/name.go:resolveACMOriginalTitle": {
+    "sha256": "219de5c5c8dfc790f999c487ad324511d2b6afef9c0b29dd332bbc821de741eb",
+    "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence."
+  },
+  "internal/trackers/impl/unit3d/sites/acm/name.go:resolveACMTitle": {
+    "sha256": "e6584b78cd81924a0bfee3bf29bc35e5082d427ba390e5033e1595a7b19d5abb",
+    "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence."
+  },
+  "internal/trackers/impl/unit3d/sites/acm/name.go:resolveACMTMDBOriginalTitle": {
+    "sha256": "a7cfa0551154c5df063afd563051d300bc25bd7a6c642b2be4dc849034251dfa",
+    "reason": "ACM original-title caller handles manual provenance before selecting the TMDB candidate."
+  },
+  "internal/trackers/impl/unit3d/sites/acm/name.go:resolveACMTMDBRetrievedAKA": {
+    "sha256": "8ffbc734dc29f14c5d9db1c75d23fa4a519cc7bd084b0be5b1dafa215a1bfda4",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/unit3d/sites/acm/name.go:resolveACMTMDBTitle": {
+    "sha256": "860702fb719884d2662238f38e5ce2a60534a0e082540a1e6f19468abf6bb7da",
+    "reason": "ACM title caller handles manual title provenance before selecting the TMDB candidate."
+  },
+  "internal/trackers/impl/unit3d/sites/acm/profile.go:Profile": {
+    "sha256": "e2867cd0999e938ff07d1c95b3f107252a72ede6e97734e2333743b57d692de7",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/acm/taxonomy.go:resolveACMKeywords": {
+    "sha256": "34d03ec0062a5d36e5b90a1552303a4818cd117e12b1d2dbb5cf36e585a46676",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/aither/name.go:applyAitherTVDBDisambiguation": {
+    "sha256": "cf809e172c8f42cd6ac2b71ea7d71aab2e744475a4d276680152fa119a9f29d5",
+    "reason": "Resolve explicit manual year, including zero, on a local evidence copy before name parsing or formatting; preserve automatic TVDB collision, locale, and year-inclusion policy."
+  },
+  "internal/trackers/impl/unit3d/sites/aither/name.go:buildName": {
+    "sha256": "b09ed6d86cbc8dc31d31d3bef6e7f0fd658235e26c6e13760b96fb5d9d8436cf",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/aither/profile.go:Profile": {
+    "sha256": "9cce7fdf90900bf7e65db64540414a6d1abc934a56f1118a3c8aeadce3e53240",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/cbr/name.go:buildName": {
+    "sha256": "c8e06e7a4b4c9868a37ba7dbe689e83f4b5af82073cdfe4423843d7051df8afc",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/cbr/profile.go:Profile": {
+    "sha256": "0bd188ca772487f87a0c2f867206fdf3bceb6266b703e9362ba06c75aa26d060",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/dp/name.go:applyDPTVDBDisambiguation": {
+    "sha256": "e3c882620e1ddc073f07ee8005ea10e5eea0d9350ab47b28344385f6a83b54df",
+    "reason": "Resolve explicit manual year, including zero, on a local evidence copy before name parsing or formatting; preserve automatic TVDB collision, locale, and year-inclusion policy."
+  },
+  "internal/trackers/impl/unit3d/sites/dp/name.go:buildName": {
+    "sha256": "ccdca5622477b709e5d9deda28be6d9d969a0a115f40dae3bbc76b667b9ce3c4",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/dp/profile.go:Profile": {
+    "sha256": "dc0783946055ba733fd76edee0a6343f2337a03951b304e5ce9e72e34a069c33",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/hhd/name.go:applyHHDTVDBDisambiguation": {
+    "sha256": "8e65312b434f1a363a1755e15bcbceafc6593ebd32c79bebc5efc478576500bc",
+    "reason": "Resolve explicit manual year, including zero, on a local evidence copy before name parsing or formatting; preserve automatic TVDB collision, locale, and year-inclusion policy."
+  },
+  "internal/trackers/impl/unit3d/sites/hhd/name.go:buildName": {
+    "sha256": "ddc449821aa4cf10cbf138add73a4516551bf686b4ec2a6f29ab0c6a7974ce27",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/hhd/name.go:insertHHDDiscDistributor": {
+    "sha256": "9edbd5b8a39647e961c1558878d621b78c996420ceaa84d5605e4ad6ca724f86",
+    "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence."
+  },
+  "internal/trackers/impl/unit3d/sites/hhd/profile.go:Profile": {
+    "sha256": "bf8efebf82fdec079a7deb1b01ec097e10470d9f988d6e00cfea0a14089da011",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/lcd/name.go:buildName": {
+    "sha256": "c8e06e7a4b4c9868a37ba7dbe689e83f4b5af82073cdfe4423843d7051df8afc",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/lcd/profile.go:Profile": {
+    "sha256": "914fd181329c8211c5fc02cda9852439fa6c13ce9c09bcf4bf31624473685ea0",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/ldu/name.go:buildName": {
+    "sha256": "17176b4a0927b8c8747d1c858dff2c775415d2431ac51a76309cf284288a2441",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/ldu/name.go:originalLanguage": {
+    "sha256": "e56d55c23191e1723c41a258e746e8d2604e322c67b44a7de47af18ec5a9c7b2",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/unit3d/sites/ldu/profile.go:Profile": {
+    "sha256": "18e9d220640ea27b1b6bf515e37b07c9e0947be042eaa95c8c078b63e33eec0c",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/ldu/taxonomy.go:categoryID": {
+    "sha256": "764fce6075342e0c5d24b9072d38a74c6d983ffc5ff4b1ec3d29d40bcc767dd3",
+    "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence."
+  },
+  "internal/trackers/impl/unit3d/sites/lume/name.go:applyLumeTVDBDisambiguation": {
+    "sha256": "1f1b0bbf05f1748ae383d884cb393500a410a21d4af60fae9ea9c41dd3db1a87",
+    "reason": "Resolve explicit manual year, including zero, on a local evidence copy before name parsing or formatting; preserve automatic TVDB collision, locale, and year-inclusion policy."
+  },
+  "internal/trackers/impl/unit3d/sites/lume/name.go:buildName": {
+    "sha256": "462dc94ffae895237170ddecde051a97a8e8de96385475a4d36adfc6a1c204ee",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/lume/profile.go:Profile": {
+    "sha256": "cf4e290ad91bd0807fea90d9212de331379ebf27831358fbde09569d017d4c8b",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/otw/name.go:buildName": {
+    "sha256": "e0ad8fcbaadc5cdd22ada99268edbb3618588ff67b08ff9f2b0df1bfe2712d3a",
+    "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence."
+  },
+  "internal/trackers/impl/unit3d/sites/otw/name.go:currentOTWTMDBTitleYear": {
+    "sha256": "c3f87582f0ef3b2d0d73822825dbfed0c6edcda9bb6a27b0f665fac713f4cd5b",
+    "reason": "OTW buildName applies PreferredTitle and PreferredYear; snapshot currentness remains an identity prerequisite."
+  },
+  "internal/trackers/impl/unit3d/sites/otw/name.go:otwProviderMetadataCurrent": {
+    "sha256": "31f03c020b50ac67eecc6fa7d688fb167cb03619651bb0d8b4992339e46e7450",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/unit3d/sites/otw/profile.go:Profile": {
+    "sha256": "2b08a6f8371a62cc22d8cd4d2a874f2305f8be0cff64ffc6acd6161d818a7127",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/otw/rules.go:ValidationPolicy": {
+    "sha256": "75286396d04120d75d7be43d9e5642f9390597b7ac989ee2c393f2af7b1c1082",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/otw/validation.go:checkRequirements": {
+    "sha256": "7c43a670f93d48fdc576c565c8598d2fc8286ae213f81b57646ed923f3530946",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/otw/validation.go:otwNamingFailures": {
+    "sha256": "475eea37592d81862bb2d64e218cf1d0c5eb060000f19f38d72d7212f01d3559",
+    "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence."
+  },
+  "internal/trackers/impl/unit3d/sites/otw/validation.go:otwUploadSubject": {
+    "sha256": "6cc1e0b4f20edb631ababa8a127b69a9fc1a3c08505aefd1d297af69c6d2edc2",
+    "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence."
+  },
+  "internal/trackers/impl/unit3d/sites/r4e/profile.go:Profile": {
+    "sha256": "96b26d5521320735572518695a448dbf92d2475ff9a017063681531eddd04086",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/r4e/taxonomy.go:categoryID": {
+    "sha256": "776d1d6fcd4fc8c61202322f9b4388220565bfbb8bb64d8343df6a7b87c0db87",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/unit3d/sites/rhd/name.go:buildName": {
+    "sha256": "41ceff671af0932fdbb3e42f1e3bdb90ca6f420ac3119b56d39b3c22a9de8d3f",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/unit3d/sites/rhd/profile.go:Profile": {
+    "sha256": "43a20c6702e4e1116ee98339aa98488a461da5d3ce67a2102e8c665f8e0041b1",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/rmc/name.go:buildName": {
+    "sha256": "1c515539b6830865961d6b43a32df169be9529c491492f46c83b0068d2ca9a94",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/unit3d/sites/rmc/name.go:buildYearlessName": {
+    "sha256": "adb990d4f6f96fd57a8293ac5105b8b342bf783caec464ea3d13dfff22cad41a",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/unit3d/sites/rmc/name.go:currentRMCTMDB": {
+    "sha256": "43f99b8b2d70fb004ff5debfe6caad501c6aa565aa5123c37e3022ad18d3317a",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/unit3d/sites/rmc/profile.go:Profile": {
+    "sha256": "05f0a2d3bd3f69999278ab768cd2312529fec6a83d2684ef8ca26c1e23ee15c4",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/rmc/rules.go:ValidationPolicy": {
+    "sha256": "28c3ebb2f7d0fe2bb291cc42f619e91a885f01b271e398344c76be9091434f1d",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/rmc/validation.go:checkRequirements": {
+    "sha256": "4d2bbdc68a8798ee6fa3b4ddf29fa6ac56818e031d69ccce3613a24e3a600b54",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/unit3d/sites/sam/name.go:buildName": {
+    "sha256": "c8e06e7a4b4c9868a37ba7dbe689e83f4b5af82073cdfe4423843d7051df8afc",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/sam/profile.go:Profile": {
+    "sha256": "59a1a5b0c5380ce1bdfba3f21cc9c36fdd7b3f6f2355a1eb192506d4552730ed",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/tik/profile.go:Profile": {
+    "sha256": "19aba601a96cd1310e1d067fd31f572bd78046dcb6ba323a1ac2c68383402788",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/tik/taxonomy.go:categoryID": {
+    "sha256": "c551e1e403bbd95f036633902985c2d60366e22c9c587e473bd8e35c69bbcc6d",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/tik/taxonomy.go:isAsian": {
+    "sha256": "17c6b4e5be04cf4843a105fd97574ecc00c75bf52498a4acb4a307453885bfdd",
+    "reason": "Explicit manual original-language facts resolve full display names and codes to the tracker language code; empty values remain authoritative and automatic provider selection remains unchanged."
+  },
+  "internal/trackers/impl/unit3d/sites/tik/taxonomy.go:isForeign": {
+    "sha256": "ca9922d23839c234f7bbb5e5f003a11f2525345c4a7e58032472170c5576c470",
+    "reason": "Explicit manual original-language facts resolve full display names and codes to the tracker language code; empty values remain authoritative and automatic provider selection remains unchanged."
+  },
+  "internal/trackers/impl/unit3d/sites/tik/taxonomy.go:isOpera": {
+    "sha256": "27fd3d3afb663df89578f692fabfc9ea6233007df6163827fd5cb7d9950e09e3",
+    "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged."
+  },
+  "internal/trackers/impl/unit3d/sites/ulcx/name.go:applyULCXTVDBDisambiguation": {
+    "sha256": "ca478b988e36ad391c314b6eb15eec3e2b2c947a176ad1fe4749ebe5b8a1ff58",
+    "reason": "Resolve explicit manual year, including zero, on a local evidence copy before name parsing or formatting; preserve automatic TVDB collision, locale, and year-inclusion policy."
+  },
+  "internal/trackers/impl/unit3d/sites/ulcx/name.go:buildName": {
+    "sha256": "4e67157a000c1137fa21fdbf78e4013484193eeefee5f7db2520c59964b458ae",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/ulcx/name.go:insertULCXDiscDistributor": {
+    "sha256": "aaab12c00f432e82911775c70bd639cb365d20a9df1a1fd02feae2422f62859c",
+    "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence."
+  },
+  "internal/trackers/impl/unit3d/sites/ulcx/profile.go:Profile": {
+    "sha256": "aa95e3fb2690fd45dad02d89caa3ee93a6abe16a31882a4419ba74305aaa2f46",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/ulcx/validation.go:checkRules": {
+    "sha256": "ba5f294c233935aaa9e23fde77c2152d0070439413c173253713382eafac24aa",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/ulcx/validation.go:ulcxEncodeFailures": {
+    "sha256": "2ae873be8cd073d8122018f212532fcfecff36d8c6fb3ebc6ae6832e688e10a3",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/ulcx/validation.go:ValidationPolicy": {
+    "sha256": "a76a96c1427c8823872d23b99136fe2d0d0cb2599baa32640f57471a347e464a",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/yus/name.go:applyYUSTMDBMovieYear": {
+    "sha256": "2f918806cc64b9732ac06b596eea141f48e36e2bad0c8c1ca2dec2deb8940556",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/unit3d/sites/yus/name.go:applyYUSTVDBDisambiguation": {
+    "sha256": "be2103013816fbaed7e8c90f17c7a9022ead72328bb7ab6fd5761ecf99a0a71c",
+    "reason": "Resolve explicit manual year, including zero, on a local evidence copy before name parsing or formatting; preserve automatic TVDB collision, locale, and year-inclusion policy."
+  },
+  "internal/trackers/impl/unit3d/sites/yus/name.go:buildName": {
+    "sha256": "618d69fb3dada6771dbc5e471a794d063030fc4b5ec5859093c90df1cb32537e",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/yus/name.go:insertYUSDiscDistributor": {
+    "sha256": "7fd887b3482faab255cd423c5479cfff514b75bf8614a6a92d6749d48ba1d0bc",
+    "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence."
+  },
+  "internal/trackers/impl/unit3d/sites/yus/profile.go:Profile": {
+    "sha256": "9acf88876fa5a39e48cb552da372dd7ebbc7aae4450383555acef1727bdd89e3",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/taxonomy.go:resolveKeywords": {
+    "sha256": "8209548d8420fcc71ea0118be8d19c360bebe37d2b722e8b5f963bba73d780e1",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/unit3d/taxonomy.go:resolveKeywordsForTracker": {
+    "sha256": "0ff0e269082cfef47cb0027208dff56c0ca921ace866e5a70f2724dcbb1c6e7d",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/upload.go:buildUnit3DData": {
+    "sha256": "c08267537232172d40e049edfb7e31cb3c4e641fe131ccaa59b6e4613b2526c5",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/upload.go:buildUploadDryRunUnit3D": {
+    "sha256": "0652c9602f94ef5ed53352241d29430d558e6a46171e008fd848a681fad4c494",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/validation.go:unit3DUploadSubject": {
+    "sha256": "6fff81843867656e5fe6d01ad8136290eab384b240873cb0f9598a7362fa41dd",
+    "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence."
+  }
+}

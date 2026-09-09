@@ -295,6 +295,57 @@ func TestReleaseWorkflowRejectsInvalidLineageAndBlockedStatus(t *testing.T) {
 	}
 }
 
+func TestReleaseWorkflowValidatesInputReadinessReference(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 7, 20, 1, 2, 3, 0, time.UTC)
+	for _, test := range []struct {
+		name    string
+		ref     InputReadinessSnapshotRef
+		release *ReleaseSnapshotRef
+		wantErr bool
+	}{
+		{
+			name:    "valid",
+			ref:     InputReadinessSnapshotRef{ID: "ready-1", Revision: 1},
+			release: &ReleaseSnapshotRef{ID: "release-1", Revision: 1},
+		},
+		{
+			name:    "empty id",
+			ref:     InputReadinessSnapshotRef{Revision: 1},
+			release: &ReleaseSnapshotRef{ID: "release-1", Revision: 1},
+			wantErr: true,
+		},
+		{
+			name:    "zero revision",
+			ref:     InputReadinessSnapshotRef{ID: "ready-1"},
+			release: &ReleaseSnapshotRef{ID: "release-1", Revision: 1},
+			wantErr: true,
+		},
+		{
+			name:    "missing release",
+			ref:     InputReadinessSnapshotRef{ID: "ready-1", Revision: 1},
+			wantErr: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			workflow := ReleaseWorkflow{
+				ID:               "workflow-1",
+				Revision:         1,
+				FactInstructions: ReleaseFactInstructionSnapshotRef{ID: "facts-1", Revision: 1},
+				Release:          test.release,
+				InputReadiness:   &test.ref,
+				Status:           WorkflowStatusActive,
+				CreatedAt:        now,
+				UpdatedAt:        now,
+			}
+			if err := workflow.Validate(); (err != nil) != test.wantErr {
+				t.Fatalf("validate input readiness reference: %v, want error %t", err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestDirectUploadContractsValidateExactLineageAndTerminalOutcomes(t *testing.T) {
 	t.Parallel()
 

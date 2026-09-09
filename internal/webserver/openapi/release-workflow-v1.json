@@ -825,6 +825,25 @@
           "Skip"
         ]
       },
+      "ContentBinding": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "$ref": "#/components/schemas/CanonicalCategory"
+          },
+          "providerIds": {
+            "$ref": "#/components/schemas/ProviderIDSet"
+          },
+          "sourceFingerprint": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "providerIds",
+          "sourceFingerprint"
+        ]
+      },
       "ContinueReleaseWorkflowRequest": {
         "type": "object",
         "properties": {
@@ -879,6 +898,52 @@
           "goal",
           "idempotencyKey",
           "intent"
+        ]
+      },
+      "CorrectionConfirmation": {
+        "type": "object",
+        "properties": {
+          "currentBinding": {
+            "$ref": "#/components/schemas/ContentBinding"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CorrectionField"
+            }
+          },
+          "previousBindings": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ContentBinding"
+            }
+          },
+          "revision": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "currentBinding",
+          "fields",
+          "previousBindings",
+          "revision"
+        ]
+      },
+      "CorrectionField": {
+        "type": "string"
+      },
+      "CorrectionFieldRef": {
+        "type": "object",
+        "properties": {
+          "field": {
+            "$ref": "#/components/schemas/CorrectionField"
+          },
+          "trackId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "field"
         ]
       },
       "CreateReleaseWorkflowUploadRequest": {
@@ -1746,6 +1811,9 @@
           "Year"
         ]
       },
+      "FactProvenance": {
+        "type": "string"
+      },
       "FailedTrackerRetryRef": {
         "type": "object",
         "properties": {
@@ -2390,6 +2458,131 @@
           "FailedHosts"
         ]
       },
+      "InputReadinessFieldOutcome": {
+        "type": "object",
+        "properties": {
+          "correctionField": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CorrectionField"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "disposition": {
+            "$ref": "#/components/schemas/RuleDisposition"
+          },
+          "key": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/InputReadinessFieldStatus"
+          },
+          "trackerIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerID"
+            }
+          }
+        },
+        "required": [
+          "disposition",
+          "key",
+          "status"
+        ]
+      },
+      "InputReadinessFieldStatus": {
+        "type": "string"
+      },
+      "InputReadinessSnapshot": {
+        "type": "object",
+        "properties": {
+          "correctionRevision": {
+            "type": "integer"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "factInstructions": {
+            "$ref": "#/components/schemas/ReleaseFactInstructionSnapshotRef"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InputReadinessFieldOutcome"
+            }
+          },
+          "id": {
+            "$ref": "#/components/schemas/InputReadinessSnapshotID"
+          },
+          "release": {
+            "$ref": "#/components/schemas/ReleaseRef"
+          },
+          "requiredActions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RequiredAction"
+            }
+          },
+          "requirementsFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/WorkflowRevision"
+          },
+          "schemas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerQuestionnaire"
+            }
+          },
+          "selectedTrackerIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerID"
+            }
+          },
+          "status": {
+            "$ref": "#/components/schemas/StageStatus"
+          },
+          "workflowId": {
+            "$ref": "#/components/schemas/WorkflowID"
+          }
+        },
+        "required": [
+          "createdAt",
+          "factInstructions",
+          "id",
+          "release",
+          "requirementsFingerprint",
+          "revision",
+          "status",
+          "workflowId"
+        ]
+      },
+      "InputReadinessSnapshotID": {
+        "type": "string"
+      },
+      "InputReadinessSnapshotRef": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/InputReadinessSnapshotID"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/WorkflowRevision"
+          }
+        },
+        "required": [
+          "id",
+          "revision"
+        ]
+      },
       "InteractionMode": {
         "type": "string"
       },
@@ -2718,6 +2911,9 @@
               "type": "string"
             }
           },
+          "AudioLanguagesProvenance": {
+            "$ref": "#/components/schemas/FactProvenance"
+          },
           "BitDepth": {
             "type": "string"
           },
@@ -2733,6 +2929,9 @@
           "Distributor": {
             "type": "string"
           },
+          "DistributorProvenance": {
+            "$ref": "#/components/schemas/FactProvenance"
+          },
           "Edition": {
             "type": "string"
           },
@@ -2742,11 +2941,32 @@
           "HDRFacts": {
             "$ref": "#/components/schemas/HDRFacts"
           },
+          "HardcodedSubs": {
+            "type": "boolean"
+          },
+          "HardcodedSubsProvenance": {
+            "$ref": "#/components/schemas/FactProvenance"
+          },
+          "HardcodedSubtitleLanguages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "HardcodedSubtitleLanguagesProvenance": {
+            "$ref": "#/components/schemas/FactProvenance"
+          },
           "HasEncodeSettings": {
             "type": "boolean"
           },
           "MediaInfoUniqueID": {
             "type": "string"
+          },
+          "OriginalLanguage": {
+            "type": "string"
+          },
+          "OriginalLanguageProvenance": {
+            "$ref": "#/components/schemas/FactProvenance"
           },
           "Region": {
             "type": "string"
@@ -2772,8 +2992,32 @@
               "type": "string"
             }
           },
+          "SubtitleLanguagesProvenance": {
+            "$ref": "#/components/schemas/FactProvenance"
+          },
           "ThreeD": {
             "type": "string"
+          },
+          "TrackAudioLanguages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "TrackCoverageComplete": {
+            "type": "boolean"
+          },
+          "TrackSubtitleLanguages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "Tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MediaTrackFacts"
+            }
           },
           "Type": {
             "type": "string"
@@ -2795,16 +3039,24 @@
           "Anime",
           "Audio",
           "AudioLanguages",
+          "AudioLanguagesProvenance",
           "BitDepth",
           "Channels",
           "Commentary",
           "Container",
           "Distributor",
+          "DistributorProvenance",
           "Edition",
           "HDR",
           "HDRFacts",
+          "HardcodedSubs",
+          "HardcodedSubsProvenance",
+          "HardcodedSubtitleLanguages",
+          "HardcodedSubtitleLanguagesProvenance",
           "HasEncodeSettings",
           "MediaInfoUniqueID",
+          "OriginalLanguage",
+          "OriginalLanguageProvenance",
           "Region",
           "Repack",
           "Service",
@@ -2812,7 +3064,12 @@
           "Source",
           "StreamOptimized",
           "SubtitleLanguages",
+          "SubtitleLanguagesProvenance",
           "ThreeD",
+          "TrackAudioLanguages",
+          "TrackCoverageComplete",
+          "TrackSubtitleLanguages",
+          "Tracks",
           "Type",
           "UHD",
           "VideoCodec",
@@ -2889,16 +3146,99 @@
       "MediaPlanID": {
         "type": "string"
       },
+      "MediaTrackFacts": {
+        "type": "object",
+        "properties": {
+          "Commentary": {
+            "type": "boolean"
+          },
+          "Default": {
+            "type": "boolean"
+          },
+          "DetectedLanguages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ID": {
+            "type": "string"
+          },
+          "Kind": {
+            "$ref": "#/components/schemas/MediaTrackKind"
+          },
+          "LanguageProvenance": {
+            "$ref": "#/components/schemas/FactProvenance"
+          },
+          "Languages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ManifestFingerprint": {
+            "type": "string"
+          },
+          "NativeID": {
+            "type": "string"
+          },
+          "Ordinal": {
+            "type": "integer"
+          },
+          "ResourceID": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "Commentary",
+          "Default",
+          "DetectedLanguages",
+          "ID",
+          "Kind",
+          "LanguageProvenance",
+          "Languages",
+          "ManifestFingerprint",
+          "NativeID",
+          "Ordinal",
+          "ResourceID"
+        ]
+      },
+      "MediaTrackKind": {
+        "type": "string"
+      },
       "MetadataEvidenceStatus": {
         "type": "string"
       },
       "MetadataOverrides": {
         "type": "object",
         "properties": {
+          "AlternateTitle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "Anime": {
             "anyOf": [
               {
                 "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "AudioLanguages": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               },
               {
                 "type": "null"
@@ -2925,7 +3265,53 @@
               }
             ]
           },
+          "Genres": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "HardcodedSubs": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "HardcodedSubtitleLanguages": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "OriginalLanguage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "OriginalTitle": {
             "anyOf": [
               {
                 "type": "string"
@@ -2954,6 +3340,35 @@
                 "type": "null"
               }
             ]
+          },
+          "SubtitleLanguages": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "Title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "TrackLanguages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackLanguageCorrection"
+            }
           },
           "WebDV": {
             "anyOf": [
@@ -2990,6 +3405,9 @@
         "properties": {
           "AlternateTitle": {
             "type": "string"
+          },
+          "AlternateTitleProvenance": {
+            "$ref": "#/components/schemas/FactProvenance"
           },
           "Artist": {
             "type": "string"
@@ -3039,6 +3457,15 @@
           "Genre": {
             "type": "string"
           },
+          "Genres": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "GenresProvenance": {
+            "$ref": "#/components/schemas/FactProvenance"
+          },
           "Group": {
             "type": "string"
           },
@@ -3062,6 +3489,12 @@
           },
           "NameWithoutTag": {
             "type": "string"
+          },
+          "OriginalTitle": {
+            "type": "string"
+          },
+          "OriginalTitleProvenance": {
+            "$ref": "#/components/schemas/FactProvenance"
           },
           "Other": {
             "type": "array",
@@ -3105,15 +3538,22 @@
           "Title": {
             "type": "string"
           },
+          "TitleProvenance": {
+            "$ref": "#/components/schemas/FactProvenance"
+          },
           "Type": {
             "type": "string"
           },
           "Year": {
             "type": "integer"
+          },
+          "YearProvenance": {
+            "$ref": "#/components/schemas/FactProvenance"
           }
         },
         "required": [
           "AlternateTitle",
+          "AlternateTitleProvenance",
           "Artist",
           "Audio",
           "Channels",
@@ -3127,12 +3567,16 @@
           "Filename",
           "GeneratedReleaseNames",
           "Genre",
+          "Genres",
+          "GenresProvenance",
           "Group",
           "HDR",
           "Languages",
           "Month",
           "NamePresentation",
           "NameWithoutTag",
+          "OriginalTitle",
+          "OriginalTitleProvenance",
           "Other",
           "Personal",
           "Region",
@@ -3146,8 +3590,10 @@
           "Subtitle",
           "Tag",
           "Title",
+          "TitleProvenance",
           "Type",
-          "Year"
+          "Year",
+          "YearProvenance"
         ]
       },
       "NamingRequirement": {
@@ -3803,6 +4249,33 @@
           "Year"
         ]
       },
+      "ProviderIDSet": {
+        "type": "object",
+        "properties": {
+          "imdbId": {
+            "type": "integer"
+          },
+          "malId": {
+            "type": "integer"
+          },
+          "tmdbId": {
+            "type": "integer"
+          },
+          "tvdbId": {
+            "type": "integer"
+          },
+          "tvmazeId": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "imdbId",
+          "malId",
+          "tmdbId",
+          "tvdbId",
+          "tvmazeId"
+        ]
+      },
       "PublicResourceID": {
         "type": "string"
       },
@@ -3839,11 +4312,87 @@
           "VideoBitrate"
         ]
       },
+      "ReleaseCorrectionPatch": {
+        "type": "object",
+        "properties": {
+          "confirmFields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CorrectionFieldRef"
+            }
+          },
+          "expectedRevision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resetFields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CorrectionFieldRef"
+            }
+          },
+          "values": {
+            "$ref": "#/components/schemas/ReleaseCorrectionValues"
+          }
+        },
+        "required": [
+          "values"
+        ]
+      },
+      "ReleaseCorrectionValues": {
+        "type": "object",
+        "properties": {
+          "Identity": {
+            "$ref": "#/components/schemas/ExternalIDOverrides"
+          },
+          "Metadata": {
+            "$ref": "#/components/schemas/MetadataOverrides"
+          },
+          "ReleaseName": {
+            "$ref": "#/components/schemas/ReleaseNameOverrides"
+          }
+        },
+        "required": [
+          "Identity",
+          "Metadata",
+          "ReleaseName"
+        ]
+      },
+      "ReleaseCorrectionsSnapshot": {
+        "type": "object",
+        "properties": {
+          "corrections": {
+            "$ref": "#/components/schemas/StoredReleaseCorrectionsV1"
+          },
+          "revision": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "corrections",
+          "revision"
+        ]
+      },
       "ReleaseFactInstructionSnapshot": {
         "type": "object",
         "properties": {
+          "correctionRevision": {
+            "type": "integer"
+          },
           "createdAt": {
             "type": "string"
+          },
+          "explicitCorrectionFields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CorrectionFieldRef"
+            }
           },
           "fingerprint": {
             "$ref": "#/components/schemas/WorkflowFingerprint"
@@ -4356,6 +4905,16 @@
           "id": {
             "$ref": "#/components/schemas/WorkflowID"
           },
+          "inputReadiness": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InputReadinessSnapshotRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "media": {
             "anyOf": [
               {
@@ -4642,6 +5201,16 @@
           "continuation": {
             "$ref": "#/components/schemas/WorkflowContinuation"
           },
+          "corrections": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseCorrectionsSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "descriptions": {
             "anyOf": [
               {
@@ -4676,6 +5245,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/ReleaseFactInstructionSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "inputReadiness": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InputReadinessSnapshot"
               },
               {
                 "type": "null"
@@ -6405,6 +6984,16 @@
           "allowsFreeText": {
             "type": "boolean"
           },
+          "correctionConfirmation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CorrectionConfirmation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "createdAt": {
             "type": "string"
           },
@@ -6929,6 +7518,50 @@
           "interrupted",
           "canceled",
           "unavailable"
+        ]
+      },
+      "StoredReleaseCorrectionsV1": {
+        "type": "object",
+        "properties": {
+          "contentBindings": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ContentBinding"
+            }
+          },
+          "identity": {
+            "$ref": "#/components/schemas/ExternalIDOverrides"
+          },
+          "identityResetFields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CorrectionField"
+            }
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/MetadataOverrides"
+          },
+          "releaseName": {
+            "$ref": "#/components/schemas/ReleaseNameOverrides"
+          },
+          "sourceFingerprint": {
+            "type": "string"
+          },
+          "staleContentFields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CorrectionField"
+            }
+          },
+          "version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "identity",
+          "metadata",
+          "releaseName",
+          "version"
         ]
       },
       "TIKOverrides": {
@@ -7640,6 +8273,28 @@
             ]
           }
         }
+      },
+      "TrackLanguageCorrection": {
+        "type": "object",
+        "properties": {
+          "languages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "manifestFingerprint": {
+            "type": "string"
+          },
+          "trackId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "languages",
+          "manifestFingerprint",
+          "trackId"
+        ]
       },
       "TrackerApproval": {
         "type": "object",
@@ -8714,6 +9369,66 @@
         "required": [
           "provider",
           "value"
+        ]
+      },
+      "TrackerQuestionnaire": {
+        "type": "object",
+        "properties": {
+          "Fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerQuestionnaireField"
+            }
+          },
+          "Tracker": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "Fields",
+          "Tracker"
+        ]
+      },
+      "TrackerQuestionnaireField": {
+        "type": "object",
+        "properties": {
+          "Help": {
+            "type": "string"
+          },
+          "Key": {
+            "type": "string"
+          },
+          "Kind": {
+            "type": "string"
+          },
+          "Label": {
+            "type": "string"
+          },
+          "Options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "Placeholder": {
+            "type": "string"
+          },
+          "Required": {
+            "type": "boolean"
+          },
+          "Value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "Help",
+          "Key",
+          "Kind",
+          "Label",
+          "Options",
+          "Placeholder",
+          "Required",
+          "Value"
         ]
       },
       "TrackerQuestionnaireRequirement": {
@@ -9882,6 +10597,16 @@
       "WorkflowIntent": {
         "type": "object",
         "properties": {
+          "correctionPatch": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseCorrectionPatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "descriptions": {
             "anyOf": [
               {
@@ -9963,6 +10688,22 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/TrackerID"
+            }
+          },
+          "trackerInputAnswers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
             }
           },
           "uploadTrackerIds": {

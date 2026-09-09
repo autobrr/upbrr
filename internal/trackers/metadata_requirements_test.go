@@ -654,6 +654,35 @@ func TestProviderUnavailableRequiresExplicitCurrentNotFoundEvidence(t *testing.T
 	}
 }
 
+func TestMetadataFieldTMDBLocalizedPTBRRequiresCurrentLocalizedEvidence(t *testing.T) {
+	t.Parallel()
+
+	meta := api.RuleSubject{
+		SourcePath: "current",
+		Identity: api.ExternalIdentity{
+			SourcePath: "current",
+			Generation: 1,
+			TMDBID:     42,
+		},
+		ProviderMetadata: api.SourceScopedMetadata{
+			SourcePath: "current",
+			Generation: 1,
+			TMDB:       &api.TMDBMetadata{TMDBID: 42},
+		},
+	}
+	if MetadataFieldPresent(MetadataFieldTMDBLocalizedPTBR, meta) {
+		t.Fatal("missing Portuguese localization satisfied the requirement")
+	}
+	meta.ProviderMetadata.TMDB.Localized = map[string]api.TMDBLocalizedData{"pt-BR": {Title: "Exemplo"}}
+	if !MetadataFieldPresent(MetadataFieldTMDBLocalizedPTBR, meta) {
+		t.Fatal("current Portuguese localization did not satisfy the requirement")
+	}
+	meta.ProviderMetadata.Generation = 2
+	if MetadataFieldPresent(MetadataFieldTMDBLocalizedPTBR, meta) {
+		t.Fatal("stale Portuguese localization satisfied the requirement")
+	}
+}
+
 func TestPTPMetadataAdvisoryDoesNotBlock(t *testing.T) {
 	t.Parallel()
 	failures, err := EvaluateRulesWithRegistry(context.Background(), newMetadataRegistry(t), "PTP", api.RuleSubject{Identity: api.ExternalIdentity{Category: "movie"}}, nil)

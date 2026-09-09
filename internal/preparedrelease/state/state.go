@@ -26,6 +26,8 @@ type Request struct {
 	Layout sourcelayout.Layout
 	// SourceFingerprint binds repository-backed selection to the inspected inventory.
 	SourceFingerprint string
+	// IdentityResetFields suppresses legacy explicit pins after a persisted Auto reset.
+	IdentityResetFields []api.CorrectionField
 }
 
 // DiscReportResource contains private paths and text for one selected BDMV report.
@@ -66,6 +68,7 @@ type ResolvedNaming struct {
 	Type           string
 	Title          string
 	AlternateTitle string
+	OriginalTitle  string
 	Year           int
 	Source         string
 	Resolution     string
@@ -119,6 +122,8 @@ func (s State) requiresMediaInfoUniqueID() bool {
 // instruction, or transport state. Callers must project it into canonical fact
 // groups or operation-owned subjects before it leaves this boundary.
 type State struct {
+	MetadataRequirements    api.MetadataRequirementSet
+	SourceFingerprint       string
 	SourcePath              string
 	SourceLookupURL         string
 	SourceLookupActive      bool
@@ -159,95 +164,107 @@ type State struct {
 	ResolvedNaming          ResolvedNaming
 	TagOverride             *api.TagOverride
 	MetadataOverrides       api.MetadataOverrides
+	EffectiveMetadata       api.EffectiveMetadata
 	PersonalRelease         bool
 	InfoHash                string
 	// ClientEvidence retains the complete detached preparation-owned client snapshot.
 	ClientEvidence ClientEvidenceSnapshot
 	// DiscoveredTorrentPath is a reusable local metainfo path found during client discovery.
-	DiscoveredTorrentPath          string
-	TrackerIDs                     map[string]string
-	FoundTrackerMatch              bool
-	TorrentComments                []api.TorrentMatch
-	DescriptionTemplate            string
-	PieceSizeConstraint            string
-	FoundPreferredPiece            string
-	StoredInfoHash                 string
-	StoredUpdatedAt                time.Time
-	StoredDataFresh                bool
-	TrackerData                    []api.TrackerMetadata
-	MediaInfoCategory              string
-	MediaInfoTMDBID                int
-	MediaInfoIMDBID                int
-	MediaInfoTVDBID                int
-	ArrSource                      string
-	ArrTMDBID                      int
-	ArrIMDBID                      int
-	ArrTVDBID                      int
-	ArrTVmazeID                    int
-	ArrYear                        int
-	ArrGenres                      []string
-	ArrReleaseGroup                string
-	MismatchedMediaInfoTMDBID      int
-	MismatchedMediaInfoIMDBID      int
-	MismatchedMediaInfoTVDBID      int
-	ExternalIDOverrides            api.ExternalIDOverrides
-	ReleaseNameOverrides           api.ReleaseNameOverrides
-	SeasonInt                      int
-	EpisodeInt                     int
-	SeasonStr                      string
-	EpisodeStr                     string
-	TVDBAiredDate                  string
-	TVDBAirsDays                   []string
-	TVDBAirsTime                   string
-	TVDBAirsTimezone               string
-	TVDBAirsTimezoneSource         string
-	TVPack                         bool
-	DailyEpisodeDate               string
-	TMDBDateMatch                  bool
-	Anime                          bool
-	MALID                          int
-	EpisodeTitle                   string
-	EpisodeOverview                string
-	EpisodeYear                    int
-	SelectedBDMVPlaylists          []api.PlaylistInfo
-	Identity                       api.ExternalIdentity
-	ExternalIdentityCandidates     []api.ExternalIdentityCandidate
-	ProviderMetadata               api.SourceScopedMetadata
-	AudioLanguages                 []string
-	SubtitleLanguages              []string
-	Container                      string
-	Audio                          string
-	Channels                       string
-	HasCommentary                  bool
-	Is3D                           string
-	Source                         string
-	Type                           string
-	UHD                            string
-	HDR                            string
-	HDRFacts                       api.HDRFacts
-	Distributor                    string
-	Region                         string
-	VideoCodec                     string
-	VideoEncode                    string
-	HasEncodeSettings              bool
-	BitDepth                       string
-	Edition                        string
-	Repack                         string
-	WebDV                          bool
-	MediaInfoUniqueIDPresent       bool
-	MediaInfoEncodeSettingsPresent bool
-	VideoBitrate                   api.VideoBitrateAssessment
-	StreamOptimized                int
-	Service                        string
-	ServiceLongName                string
-	Filename                       string
-	ReleaseName                    string
-	ReleaseNameNoTag               string
-	ReleaseNameClean               string
-	GeneratedReleaseNames          api.GeneratedReleaseNameVariants
-	ReleaseNamePresentation        api.ReleaseNamePresentation
-	ReleaseNameMissing             []string
-	BDInfo                         map[string]any
+	DiscoveredTorrentPath                string
+	TrackerIDs                           map[string]string
+	FoundTrackerMatch                    bool
+	TorrentComments                      []api.TorrentMatch
+	DescriptionTemplate                  string
+	PieceSizeConstraint                  string
+	FoundPreferredPiece                  string
+	StoredInfoHash                       string
+	StoredUpdatedAt                      time.Time
+	StoredDataFresh                      bool
+	TrackerData                          []api.TrackerMetadata
+	MediaInfoCategory                    string
+	MediaInfoTMDBID                      int
+	MediaInfoIMDBID                      int
+	MediaInfoTVDBID                      int
+	ArrSource                            string
+	ArrTMDBID                            int
+	ArrIMDBID                            int
+	ArrTVDBID                            int
+	ArrTVmazeID                          int
+	ArrYear                              int
+	ArrGenres                            []string
+	ArrReleaseGroup                      string
+	MismatchedMediaInfoTMDBID            int
+	MismatchedMediaInfoIMDBID            int
+	MismatchedMediaInfoTVDBID            int
+	ExternalIDOverrides                  api.ExternalIDOverrides
+	IdentityResetFields                  []api.CorrectionField
+	ReleaseNameOverrides                 api.ReleaseNameOverrides
+	SeasonInt                            int
+	EpisodeInt                           int
+	SeasonStr                            string
+	EpisodeStr                           string
+	TVDBAiredDate                        string
+	TVDBAirsDays                         []string
+	TVDBAirsTime                         string
+	TVDBAirsTimezone                     string
+	TVDBAirsTimezoneSource               string
+	TVPack                               bool
+	DailyEpisodeDate                     string
+	TMDBDateMatch                        bool
+	Anime                                bool
+	MALID                                int
+	EpisodeTitle                         string
+	EpisodeOverview                      string
+	EpisodeYear                          int
+	SelectedBDMVPlaylists                []api.PlaylistInfo
+	Identity                             api.ExternalIdentity
+	ExternalIdentityCandidates           []api.ExternalIdentityCandidate
+	ProviderMetadata                     api.SourceScopedMetadata
+	AudioLanguages                       []string
+	SubtitleLanguages                    []string
+	TrackAudioLanguages                  []string
+	TrackSubtitleLanguages               []string
+	MediaTracks                          []api.MediaTrackFacts
+	TrackCoverageComplete                bool
+	AudioLanguagesProvenance             api.FactProvenance
+	SubtitleLanguagesProvenance          api.FactProvenance
+	HardcodedSubs                        bool
+	HardcodedSubtitleLanguages           []string
+	HardcodedSubsProvenance              api.FactProvenance
+	HardcodedSubtitleLanguagesProvenance api.FactProvenance
+	Container                            string
+	Audio                                string
+	Channels                             string
+	HasCommentary                        bool
+	Is3D                                 string
+	Source                               string
+	Type                                 string
+	UHD                                  string
+	HDR                                  string
+	HDRFacts                             api.HDRFacts
+	Distributor                          string
+	Region                               string
+	VideoCodec                           string
+	VideoEncode                          string
+	HasEncodeSettings                    bool
+	BitDepth                             string
+	Edition                              string
+	Repack                               string
+	WebDV                                bool
+	MediaInfoUniqueIDPresent             bool
+	MediaInfoEncodeSettingsPresent       bool
+	VideoBitrate                         api.VideoBitrateAssessment
+	StreamOptimized                      int
+	Service                              string
+	ServiceLongName                      string
+	Filename                             string
+	ReleaseName                          string
+	ReleaseNameNoTag                     string
+	ReleaseNameClean                     string
+	GeneratedReleaseNames                api.GeneratedReleaseNameVariants
+	ReleaseNamePresentation              api.ReleaseNamePresentation
+	ReleaseNameMissing                   []string
+	BDInfo                               map[string]any
 }
 
 // CollectionPolicy contains preparation-only controls used while gathering

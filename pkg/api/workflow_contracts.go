@@ -7,12 +7,14 @@ import "time"
 
 // ReleaseFactInstructionSnapshot retains exact fact-producing caller intent.
 type ReleaseFactInstructionSnapshot struct {
-	ID           ReleaseFactInstructionSnapshotID `json:"id"`
-	WorkflowID   WorkflowID                       `json:"workflowId"`
-	Revision     WorkflowRevision                 `json:"revision"`
-	Instructions ReleaseFactInstructions          `json:"instructions"`
-	Fingerprint  WorkflowFingerprint              `json:"fingerprint"`
-	CreatedAt    time.Time                        `json:"createdAt" ts_type:"string"`
+	ID                       ReleaseFactInstructionSnapshotID `json:"id"`
+	WorkflowID               WorkflowID                       `json:"workflowId"`
+	Revision                 WorkflowRevision                 `json:"revision"`
+	Instructions             ReleaseFactInstructions          `json:"instructions"`
+	CorrectionRevision       uint64                           `json:"correctionRevision,omitempty"`
+	ExplicitCorrectionFields []CorrectionFieldRef             `json:"explicitCorrectionFields,omitempty"`
+	Fingerprint              WorkflowFingerprint              `json:"fingerprint"`
+	CreatedAt                time.Time                        `json:"createdAt" ts_type:"string"`
 }
 
 // ReleaseSnapshot exposes canonical release facts with derived display and diagnostics.
@@ -701,6 +703,7 @@ type ReleaseWorkflow struct {
 	Revision               WorkflowRevision                         `json:"revision"`
 	FactInstructions       ReleaseFactInstructionSnapshotRef        `json:"factInstructions"`
 	Release                *ReleaseSnapshotRef                      `json:"release,omitempty"`
+	InputReadiness         *InputReadinessSnapshotRef               `json:"inputReadiness,omitempty"`
 	TrackerCatalog         *TrackerCatalogSnapshotRef               `json:"trackerCatalog,omitempty"`
 	TrackerRuntime         *TrackerRuntimeSnapshotRef               `json:"trackerRuntime,omitempty"`
 	Selection              *TrackerSelectionRef                     `json:"selection,omitempty"`
@@ -726,6 +729,8 @@ type ReleaseWorkflowCurrent struct {
 	Workflow               ReleaseWorkflow                       `json:"workflow"`
 	FactInstructions       *ReleaseFactInstructionSnapshot       `json:"factInstructions,omitempty"`
 	Release                *ReleaseSnapshot                      `json:"release,omitempty"`
+	Corrections            *ReleaseCorrectionsSnapshot           `json:"corrections,omitempty"`
+	InputReadiness         *InputReadinessSnapshot               `json:"inputReadiness,omitempty"`
 	Catalog                *TrackerCatalogSnapshot               `json:"catalog,omitempty"`
 	Runtime                *TrackerRuntimeSnapshot               `json:"runtime,omitempty"`
 	Selection              *TrackerSelection                     `json:"selection,omitempty"`

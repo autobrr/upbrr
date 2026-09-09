@@ -127,6 +127,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	if strings.TrimSpace(meta.SourcePath) == "" {
 		return preparationstate.State{}, internalerrors.ErrInvalidInput
 	}
+	meta.Identity = meta.Identity.WithoutResetPins(meta.IdentityResetFields)
 
 	ids := api.ExternalIdentity{SourcePath: meta.SourcePath}
 	if meta.StoredDataFresh && sourceScopedMetadataMatches(meta.Identity.SourcePath, meta.SourcePath) {
@@ -135,7 +136,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			ids.SourcePath = meta.SourcePath
 		}
 	} else if storedIDs, err := s.repo.GetExternalIdentity(ctx, meta.SourcePath); err == nil {
-		copyStoredProviderPins(&ids, storedIDs)
+		copyStoredProviderPins(&ids, storedIDs.WithoutResetPins(meta.IdentityResetFields))
 	} else if !errors.Is(err, internalerrors.ErrNotFound) {
 		return preparationstate.State{}, fmt.Errorf("metadata: load stored external identity: %w", err)
 	}
@@ -253,10 +254,6 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 
 	filename, secondary := resolveSearchTitles(meta)
 	year := resolveSearchYear(meta)
-	manualLanguage := ""
-	if meta.MetadataOverrides.OriginalLanguage != nil {
-		manualLanguage = strings.TrimSpace(*meta.MetadataOverrides.OriginalLanguage)
-	}
 	unattendedSearch := isUnattendedMetadataSearch(meta)
 	lastTMDBLookupIMDB := 0
 	lastTMDBLookupTVDB := 0
@@ -463,17 +460,24 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		if overrideTMDB {
 			return !tmdbAnchorVerificationAttempted
 		}
-		if !usableTMDBMetadata(metadata.TMDB, ids.TMDBID) {
+		if !usableTMDBMetadata(metadata.TMDB, ids.TMDBID, ids.Category) {
+			return true
+		}
+		if requiresProviderMetadataRefresh(meta.MetadataRequirements, ids.Category, meta, ids, metadata, api.IdentityProviderTMDB) {
 			return true
 		}
 		return s.cfg.Description.AddLogo && strings.TrimSpace(metadata.TMDB.Logo) == "" && !tmdbLogoFetchAttempted
 	}
 	shouldFetchIMDBMetadata := func() bool {
-		return imdbClient != nil && ids.IMDBID != 0 && !usableIMDBMetadata(metadata.IMDB, ids.IMDBID)
+		return imdbClient != nil && ids.IMDBID != 0 &&
+			(!usableIMDBMetadata(metadata.IMDB, ids.IMDBID) ||
+				requiresProviderMetadataRefresh(meta.MetadataRequirements, ids.Category, meta, ids, metadata, api.IdentityProviderIMDB))
 	}
 	shouldFetchTVDBMetadata := func() bool {
 		return tvdbClient != nil && shouldUseTVDBForCategory(meta, ids) && ids.TVDBID != 0 &&
-			!tvdbMetadataFetchAttempted && !usableTVDBMetadata(metadata.TVDB, ids.TVDBID)
+			!tvdbMetadataFetchAttempted &&
+			(!usableTVDBMetadata(metadata.TVDB, ids.TVDBID) ||
+				requiresProviderMetadataRefresh(meta.MetadataRequirements, ids.Category, meta, ids, metadata, api.IdentityProviderTVDB))
 	}
 	shouldRefreshTVDBDisambiguation := func() bool {
 		return tvdbClient != nil && shouldUseTVDBForCategory(meta, ids) && ids.TVDBID != 0 &&
@@ -487,7 +491,8 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		if overrideTVmaze {
 			return !tvmazeAnchorVerificationAttempted
 		}
-		return !usableTVmazeMetadata(metadata.TVmaze, ids.TVmazeID)
+		return !usableTVmazeMetadata(metadata.TVmaze, ids.TVmazeID) ||
+			requiresProviderMetadataRefresh(meta.MetadataRequirements, ids.Category, meta, ids, metadata, api.IdentityProviderTVmaze)
 	}
 
 	shouldRunFetchPass := func() bool {
@@ -566,7 +571,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 					SearchYear:      year,
 					IMDbID:          ids.IMDBID,
 					TVDBID:          ids.TVDBID,
-					ManualLanguage:  manualLanguage,
+					ManualLanguage:  "",
 					SkipAnimeLookup: hasExplicitProviderAnchor || clearedMAL,
 					AddLogo:         s.cfg.Description.AddLogo,
 					LogoLanguages:   descriptionLogoLanguages(s.cfg.Description.LogoLanguage),
@@ -612,7 +617,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 
 		if fetchIMDB {
 			group.Go(func() error {
-				result, err := imdbClient.GetInfo(gctx, formatIMDbID(ids.IMDBID), manualLanguage, false)
+				result, err := imdbClient.GetInfo(gctx, formatIMDbID(ids.IMDBID), "", false)
 				if err != nil {
 					mu.Lock()
 					if imdbErr == nil {
@@ -879,21 +884,6 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			clearInferredProviderID(&ids.TVmazeID, &ids.Provenance.TVmaze)
 			tvmazeMetadataRejected = ids.TVmazeID != 0
 		}
-
-		if manualLanguage != "" {
-			if metadata.TMDB != nil {
-				metadata.TMDB.OriginalLanguage = manualLanguage
-			}
-			if metadata.IMDB != nil {
-				metadata.IMDB.OriginalLanguage = manualLanguage
-			}
-			if metadata.TVDB != nil {
-				metadata.TVDB.OriginalLanguage = manualLanguage
-			}
-			if metadata.TVmaze != nil {
-				metadata.TVmaze.Language = manualLanguage
-			}
-		}
 	}
 
 	if shouldRunFetchPass() {
@@ -942,7 +932,8 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	meta = s.applyTVEpisodeMetadata(ctx, meta, &downstreamIDs, &metadata, tmdbClient, tvdbClient, tvmazeClient)
 	ids.Category = downstreamIDs.Category
 
-	needsPTBR := s.registry.NeedsLocalizedMetadata(meta.EvidenceTrackers, "pt-BR") || s.registry.NeedsLocalizedMetadata(meta.MatchedEvidenceTrackers, "pt-BR")
+	needsPTBR := requiresTMDBLocalizedPTBRRefresh(meta.MetadataRequirements, ids.Category, meta, downstreamIDs, metadata) ||
+		s.registry.NeedsLocalizedMetadata(meta.EvidenceTrackers, "pt-BR") || s.registry.NeedsLocalizedMetadata(meta.MatchedEvidenceTrackers, "pt-BR")
 
 	if tmdbClient != nil && needsPTBR && downstreamIDs.TMDBID != 0 {
 		var mainData, seasonData, episodeData map[string]any
@@ -996,7 +987,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		if mainData != nil || seasonData != nil || episodeData != nil {
 			localized := parseTMDBLocalizedData(mainData, seasonData, episodeData)
 			if metadata.TMDB == nil {
-				metadata.TMDB = &api.TMDBMetadata{TMDBID: downstreamIDs.TMDBID}
+				metadata.TMDB = &api.TMDBMetadata{TMDBID: downstreamIDs.TMDBID, Category: string(ids.Category)}
 			}
 			if metadata.TMDB.Localized == nil {
 				metadata.TMDB.Localized = make(map[string]api.TMDBLocalizedData)
@@ -1280,7 +1271,7 @@ func invalidateMismatchedProviderMetadata(metadata *api.SourceScopedMetadata, id
 		return false
 	}
 	changed := false
-	if metadata.TMDB != nil && (ids.TMDBID == 0 || metadata.TMDB.TMDBID != ids.TMDBID) {
+	if metadata.TMDB != nil && (ids.TMDBID == 0 || metadata.TMDB.TMDBID != ids.TMDBID || !tmdbMetadataMatchesCategory(metadata.TMDB, ids.Category)) {
 		metadata.TMDB = nil
 		changed = true
 	}
@@ -1303,8 +1294,17 @@ func invalidateMismatchedProviderMetadata(metadata *api.SourceScopedMetadata, id
 	return changed
 }
 
-func usableTMDBMetadata(metadata *api.TMDBMetadata, tmdbID int) bool {
-	return metadata != nil && tmdbID > 0 && metadata.TMDBID == tmdbID && strings.TrimSpace(metadata.Title) != ""
+func usableTMDBMetadata(metadata *api.TMDBMetadata, tmdbID int, category api.CanonicalCategory) bool {
+	return metadata != nil && tmdbID > 0 && metadata.TMDBID == tmdbID && tmdbMetadataMatchesCategory(metadata, category) &&
+		strings.TrimSpace(metadata.Title) != ""
+}
+
+func tmdbMetadataMatchesCategory(metadata *api.TMDBMetadata, category api.CanonicalCategory) bool {
+	if metadata == nil {
+		return false
+	}
+	expected := normalizeCategory(string(category))
+	return expected == "" || normalizeCategory(metadata.Category) == expected
 }
 
 func usableIMDBMetadata(metadata *api.IMDBMetadata, imdbID int) bool {

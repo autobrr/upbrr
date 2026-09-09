@@ -15,83 +15,6 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func mergeReleaseNameOverrides(base api.ReleaseNameOverrides, incoming api.ReleaseNameOverrides) api.ReleaseNameOverrides {
-	result := base
-	if incoming.Category != nil {
-		result.Category = incoming.Category
-	}
-	if incoming.Type != nil {
-		result.Type = incoming.Type
-	}
-	if incoming.Source != nil {
-		result.Source = incoming.Source
-	}
-	if incoming.Resolution != nil {
-		result.Resolution = incoming.Resolution
-	}
-	if incoming.Tag != nil {
-		result.Tag = incoming.Tag
-	}
-	if incoming.Service != nil {
-		result.Service = incoming.Service
-	}
-	if incoming.Edition != nil {
-		result.Edition = incoming.Edition
-	}
-	if incoming.Season != nil {
-		result.Season = incoming.Season
-	}
-	if incoming.Episode != nil {
-		result.Episode = incoming.Episode
-	}
-	if incoming.EpisodeTitle != nil {
-		result.EpisodeTitle = incoming.EpisodeTitle
-	}
-	if incoming.ManualYear != nil {
-		result.ManualYear = incoming.ManualYear
-	}
-	if incoming.ManualDate != nil {
-		result.ManualDate = incoming.ManualDate
-	}
-	if incoming.UseSeasonEpisode != nil {
-		result.UseSeasonEpisode = incoming.UseSeasonEpisode
-	}
-	if incoming.NoSeason != nil {
-		result.NoSeason = incoming.NoSeason
-	}
-	if incoming.NoYear != nil {
-		result.NoYear = incoming.NoYear
-	}
-	if incoming.NoAKA != nil {
-		result.NoAKA = incoming.NoAKA
-	}
-	if incoming.NoTag != nil {
-		result.NoTag = incoming.NoTag
-	}
-	if incoming.NoEpisodeTitle != nil {
-		result.NoEpisodeTitle = incoming.NoEpisodeTitle
-	}
-	if incoming.NoDistributor != nil {
-		result.NoDistributor = incoming.NoDistributor
-	}
-	if incoming.NoEdition != nil {
-		result.NoEdition = incoming.NoEdition
-	}
-	if incoming.NoDub != nil {
-		result.NoDub = incoming.NoDub
-	}
-	if incoming.NoDual != nil {
-		result.NoDual = incoming.NoDual
-	}
-	if incoming.DualAudio != nil {
-		result.DualAudio = incoming.DualAudio
-	}
-	if incoming.Region != nil {
-		result.Region = incoming.Region
-	}
-	return result
-}
-
 func hasReleaseNameOverrides(overrides api.ReleaseNameOverrides) bool {
 	return overrides.Category != nil ||
 		overrides.Type != nil ||
@@ -209,7 +132,7 @@ func applyReleaseNameValueOverrides(meta *preparationstate.State) {
 	if overrides.NoDistributor != nil && *overrides.NoDistributor {
 		meta.Distributor = ""
 	}
-	if overrides.ManualYear != nil && *overrides.ManualYear > 0 {
+	if overrides.ManualYear != nil {
 		meta.Release.Year = *overrides.ManualYear
 	}
 	if overrides.ManualDate != nil {

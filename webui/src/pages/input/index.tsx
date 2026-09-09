@@ -5,17 +5,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { Button } from "../../components/ui/button";
 import { Checkbox, PillCheckbox } from "../../components/ui/checkbox";
-import { Switch } from "../../components/ui/switch";
 import { TrackerIconImage } from "../../components/ui/tracker-icon";
 import type { TrackerIconCache } from "../../hooks/useTrackerIcons";
 import { trackerIconFor } from "../../hooks/useTrackerIcons";
 import type { InputFacet } from "../../releaseSession/types";
+import { InputCorrectionEditor } from "./InputCorrectionEditor";
 import type {
   DetailBlock,
   DetailItem,
   ExternalIdentityCandidate,
   ExternalIDInfo,
-  ExternalIDOverrides,
   ProviderDisplay,
   IMDBAKA,
   IMDBEditionDetail,
@@ -24,9 +23,6 @@ import type {
   IMDBReleaseDate,
   IMDBSeasonSummary,
   MetadataPreview,
-  ReleaseNameOverrides,
-  ReleaseNameEditState,
-  ReleaseNameTouchedState,
   TMDBCompany,
   TMDBCountry,
   TMDBNetwork,
@@ -735,20 +731,6 @@ const PreviewDetailsList = ({ items }: { items: DetailItem[] }) => {
   );
 };
 
-type OverrideState<T> = {
-  overrides: T;
-  dirty: boolean;
-  invalid: boolean;
-};
-
-type IDEdits = {
-  tmdb: string;
-  imdb: string;
-  tvdb: string;
-  tvmaze: string;
-  mal: string;
-};
-
 type ProviderSelection = {
   sourcePath: string;
   generation: number;
@@ -768,6 +750,17 @@ const emptyMetadataPreview: MetadataPreview = {
   TrackerData: [],
   TrackerRuleFailures: {},
 };
+
+const emptyInputIntent = (): InputFacet["view"]["intent"] => ({
+  sourceLookupURL: "",
+  identity: {},
+  metadata: {},
+  releaseName: {},
+  playlist: { Set: false, Selected: [], UseAll: false },
+  trackerSourceIDs: {},
+  policy: { keepFolder: false, keepImages: false, onlyID: false },
+  search: { skip: false, client: "" },
+});
 
 type Props = Readonly<{
   facet: InputFacet;
@@ -811,250 +804,6 @@ export default function InputPage(props: Props) {
     generation: 0,
     provider: "",
   });
-  const [idEdits, setIDEditsState] = useState<IDEdits>({
-    tmdb: "",
-    imdb: "",
-    tvdb: "",
-    tvmaze: "",
-    mal: "",
-  });
-  const [idTouched, setIDTouchedState] = useState<Record<keyof IDEdits, boolean>>({
-    tmdb: false,
-    imdb: false,
-    tvdb: false,
-    tvmaze: false,
-    mal: false,
-  });
-  const [releaseEdits, setReleaseEditsState] = useState<ReleaseNameEditState>({
-    category: "",
-    type: "",
-    source: "",
-    resolution: "",
-    tag: "",
-    service: "",
-    edition: "",
-    season: "",
-    episode: "",
-    episodeTitle: "",
-    manualYear: "",
-    manualDate: "",
-    useSeasonEpisode: false,
-    noSeason: false,
-    noYear: false,
-    noAKA: false,
-    noTag: false,
-    noEpisodeTitle: false,
-    noDistributor: false,
-    noEdition: false,
-    noDub: false,
-    noDual: false,
-    dualAudio: false,
-    region: "",
-  });
-  const [releaseTouched, setReleaseTouchedState] = useState<ReleaseNameTouchedState>({
-    category: false,
-    type: false,
-    source: false,
-    resolution: false,
-    tag: false,
-    service: false,
-    edition: false,
-    season: false,
-    episode: false,
-    episodeTitle: false,
-    manualYear: false,
-    manualDate: false,
-    useSeasonEpisode: false,
-    noSeason: false,
-    noYear: false,
-    noAKA: false,
-    noTag: false,
-    noEpisodeTitle: false,
-    noDistributor: false,
-    noEdition: false,
-    noDub: false,
-    noDual: false,
-    dualAudio: false,
-    region: false,
-  });
-  const idEditsRef = useRef(idEdits);
-  const idTouchedRef = useRef(idTouched);
-  const releaseEditsRef = useRef(releaseEdits);
-  const releaseTouchedRef = useRef(releaseTouched);
-
-  const setIdEdits: Dispatch<SetStateAction<IDEdits>> = (action) => {
-    const next = typeof action === "function" ? action(idEditsRef.current) : action;
-    idEditsRef.current = next;
-    setIDEditsState(next);
-  };
-  const setReleaseEdits: Dispatch<SetStateAction<ReleaseNameEditState>> = (action) => {
-    const next = typeof action === "function" ? action(releaseEditsRef.current) : action;
-    releaseEditsRef.current = next;
-    setReleaseEditsState(next);
-  };
-
-  const parseID = (provider: keyof IDEdits, value: string): number | null => {
-    const trimmed = value.trim();
-    if (!trimmed) return 0;
-    const normalized = provider === "imdb" ? trimmed.replace(/^tt/i, "") : trimmed;
-    return /^\d+$/.test(normalized) ? Number(normalized) : null;
-  };
-  /**
-   * Merges valid touched edits into existing intent without mutating it, preserving prior provider clears.
-   * Touched blank fields become explicit zero overrides; any invalid field marks the result invalid.
-   * Dirty means the merged result contains overrides, including those restored from existing intent.
-   */
-  const buildIDOverrides = (
-    edits: IDEdits,
-    touched: Record<keyof IDEdits, boolean>,
-    existing: Readonly<ExternalIDOverrides>,
-  ): OverrideState<ExternalIDOverrides> => {
-    const parsed = {
-      tmdb: parseID("tmdb", edits.tmdb),
-      imdb: parseID("imdb", edits.imdb),
-      tvdb: parseID("tvdb", edits.tvdb),
-      tvmaze: parseID("tvmaze", edits.tvmaze),
-      mal: parseID("mal", edits.mal),
-    };
-    const invalid = Object.values(parsed).includes(null);
-    const overrides: ExternalIDOverrides = { ...existing };
-    if (touched.tmdb && parsed.tmdb !== null) overrides.TMDBID = parsed.tmdb;
-    if (touched.imdb && parsed.imdb !== null) overrides.IMDBID = parsed.imdb;
-    if (touched.tvdb && parsed.tvdb !== null) overrides.TVDBID = parsed.tvdb;
-    if (touched.tvmaze && parsed.tvmaze !== null) overrides.TVmazeID = parsed.tvmaze;
-    if (touched.mal && parsed.mal !== null) overrides.MALID = parsed.mal;
-    return { overrides, dirty: Object.keys(overrides).length > 0, invalid };
-  };
-  const normalizedTag = (value: string) => {
-    const trimmed = value.trim();
-    return !trimmed || trimmed.startsWith("-") ? trimmed : `-${trimmed}`;
-  };
-  const buildReleaseOverrides = (
-    edits: ReleaseNameEditState,
-    touched: ReleaseNameTouchedState,
-  ): OverrideState<ReleaseNameOverrides> => {
-    const overrides: ReleaseNameOverrides = {};
-    const assignString = (
-      key: keyof ReleaseNameTouchedState,
-      target: keyof ReleaseNameOverrides,
-      value: string,
-    ) => {
-      if (touched[key]) Object.assign(overrides, { [target]: value.trim() });
-    };
-    assignString("category", "Category", edits.category);
-    assignString("type", "Type", edits.type);
-    assignString("source", "Source", edits.source);
-    assignString("resolution", "Resolution", edits.resolution);
-    if (touched.tag) overrides.Tag = normalizedTag(edits.tag);
-    assignString("service", "Service", edits.service);
-    assignString("edition", "Edition", edits.edition);
-    assignString("season", "Season", edits.season);
-    assignString("episode", "Episode", edits.episode);
-    assignString("episodeTitle", "EpisodeTitle", edits.episodeTitle);
-    assignString("manualDate", "ManualDate", edits.manualDate);
-    assignString("region", "Region", edits.region);
-    let invalid = false;
-    if (touched.manualYear) {
-      const year = edits.manualYear.trim();
-      if (year && !/^\d+$/.test(year)) invalid = true;
-      else overrides.ManualYear = year ? Number(year) : 0;
-    }
-    if (
-      touched.manualDate &&
-      edits.manualDate.trim() &&
-      !/^\d{4}-\d{2}-\d{2}$/.test(edits.manualDate.trim())
-    )
-      invalid = true;
-    const bools: Array<[keyof ReleaseNameTouchedState, keyof ReleaseNameOverrides, boolean]> = [
-      ["useSeasonEpisode", "UseSeasonEpisode", edits.useSeasonEpisode],
-      ["noSeason", "NoSeason", edits.noSeason],
-      ["noYear", "NoYear", edits.noYear],
-      ["noAKA", "NoAKA", edits.noAKA],
-      ["noTag", "NoTag", edits.noTag],
-      ["noEpisodeTitle", "NoEpisodeTitle", edits.noEpisodeTitle],
-      ["noDistributor", "NoDistributor", edits.noDistributor],
-      ["noEdition", "NoEdition", edits.noEdition],
-      ["noDub", "NoDub", edits.noDub],
-      ["noDual", "NoDual", edits.noDual],
-      ["dualAudio", "DualAudio", edits.dualAudio],
-    ];
-    bools.forEach(([key, target, value]) => {
-      if (touched[key]) Object.assign(overrides, { [target]: value });
-    });
-    return { overrides, dirty: Object.keys(overrides).length > 0, invalid };
-  };
-
-  const idOverrideState = buildIDOverrides(idEdits, idTouched, view.intent.identity);
-  const releaseOverrideState = buildReleaseOverrides(releaseEdits, releaseTouched);
-  const markIDTouched = (key: keyof IDEdits) => {
-    const touched = { ...idTouchedRef.current, [key]: true };
-    idTouchedRef.current = touched;
-    setIDTouchedState(touched);
-    const next = buildIDOverrides(idEditsRef.current, touched, view.intent.identity);
-    if (!next.invalid) facet.changeIdentity(next.overrides);
-  };
-  const clearID = (key: keyof IDEdits) => {
-    setIdEdits((current) => ({ ...current, [key]: "" }));
-    markIDTouched(key);
-  };
-  const markReleaseTouched = (key: keyof ReleaseNameTouchedState) => {
-    const touched = { ...releaseTouchedRef.current, [key]: true };
-    releaseTouchedRef.current = touched;
-    setReleaseTouchedState(touched);
-    const next = buildReleaseOverrides(releaseEditsRef.current, touched);
-    if (!next.invalid) facet.changeReleaseName(next.overrides);
-  };
-
-  useEffect(() => {
-    const identity = externalIdentityDraftFromIdentity(preview.Identity);
-    const nextIDs: IDEdits = {
-      tmdb: identity.TMDBID ? String(identity.TMDBID) : "",
-      imdb: formatIMDbID(identity.IMDBID),
-      tvdb: identity.TVDBID ? String(identity.TVDBID) : "",
-      tvmaze: identity.TVmazeID ? String(identity.TVmazeID) : "",
-      mal: identity.MALID ? String(identity.MALID) : "",
-    };
-    const emptyIDTouched = { tmdb: false, imdb: false, tvdb: false, tvmaze: false, mal: false };
-    idEditsRef.current = nextIDs;
-    idTouchedRef.current = emptyIDTouched;
-    setIDEditsState(nextIDs);
-    setIDTouchedState(emptyIDTouched);
-    const stored = preview.ReleaseNameOverrides || {};
-    const nextRelease: ReleaseNameEditState = {
-      category: stored.Category || "",
-      type: stored.Type || "",
-      source: stored.Source || "",
-      resolution: stored.Resolution || "",
-      tag: stored.Tag || "",
-      service: stored.Service || "",
-      edition: stored.Edition || "",
-      season: stored.Season || "",
-      episode: stored.Episode || "",
-      episodeTitle: stored.EpisodeTitle || "",
-      manualYear: stored.ManualYear ? String(stored.ManualYear) : "",
-      manualDate: stored.ManualDate || "",
-      useSeasonEpisode: Boolean(stored.UseSeasonEpisode),
-      noSeason: Boolean(stored.NoSeason),
-      noYear: Boolean(stored.NoYear),
-      noAKA: Boolean(stored.NoAKA),
-      noTag: Boolean(stored.NoTag),
-      noEpisodeTitle: Boolean(stored.NoEpisodeTitle),
-      noDistributor: Boolean(stored.NoDistributor),
-      noEdition: Boolean(stored.NoEdition),
-      noDub: Boolean(stored.NoDub),
-      noDual: Boolean(stored.NoDual),
-      dualAudio: Boolean(stored.DualAudio),
-      region: stored.Region || "",
-    };
-    const emptyReleaseTouched = Object.fromEntries(
-      Object.keys(nextRelease).map((key) => [key, false]),
-    ) as ReleaseNameTouchedState;
-    releaseEditsRef.current = nextRelease;
-    releaseTouchedRef.current = emptyReleaseTouched;
-    setReleaseEditsState(nextRelease);
-    setReleaseTouchedState(emptyReleaseTouched);
-  }, [preview.Identity, preview.ReleaseNameOverrides]);
-
   const releasePageTrackerSelection = useMemo(
     () =>
       Object.fromEntries(
@@ -1077,17 +826,14 @@ export default function InputPage(props: Props) {
   const setSourceLookupURL: Dispatch<SetStateAction<string>> = (action) => {
     facet.changeSourceLookupURL(typeof action === "function" ? action(sourceLookupURL) : action);
   };
-  const handleFetch = () => {
-    if (!idOverrideState.invalid && !releaseOverrideState.invalid)
-      void facet.prepareSource(path, view.intent);
-  };
+  const handleFetch = () =>
+    void facet.prepareSource(
+      path,
+      view.selectedSource && path.trim() !== view.selectedSource ? emptyInputIntent() : view.intent,
+    );
   const handleRefresh = handleFetch;
-  const handleResetMetadata = () => {
-    if (!idOverrideState.invalid && !releaseOverrideState.invalid)
-      void facet.resetSource(path, view.intent);
-  };
-  const refreshDisabled =
-    loading || !path.trim() || idOverrideState.invalid || releaseOverrideState.invalid;
+  const handleResetMetadata = () => void facet.resetSource(path, view.intent);
+  const refreshDisabled = loading || !path.trim();
 
   const [sourcePathHistoryOpen, setSourcePathHistoryOpen] = useState(false);
   const sourcePathHistoryRef = useRef<HTMLDivElement | null>(null);
@@ -1138,7 +884,6 @@ export default function InputPage(props: Props) {
   const showReleaseDetails = Boolean(
     hasPreview || (path.trim() && (view.status === "ready" || view.status === "error")),
   );
-  const isTVEpisodePreview = (identityDraft.Category || "").trim().toUpperCase() === "TV";
   const hasResolvedPrimaryExternalID = identityDraft.TMDBID > 0 || identityDraft.IMDBID > 0;
   const selectedTrackerCount = useMemo(
     () =>
@@ -1219,27 +964,16 @@ export default function InputPage(props: Props) {
   } | null>(null);
 
   const selectedCandidateID = (provider: "tmdb" | "imdb") => {
-    if (provider === "tmdb") {
-      const value = idEdits.tmdb.trim();
-      if (!value || !/^\d+$/.test(value)) return 0;
-      return Number(value);
-    }
-    const normalized = idEdits.imdb.trim().replace(/^tt/i, "");
-    if (!normalized || !/^\d+$/.test(normalized)) return 0;
-    return Number(normalized);
+    const key = provider === "tmdb" ? "TMDBID" : "IMDBID";
+    return Number(view.intent.identity[key] ?? identityDraft[key] ?? 0);
   };
 
   const applyCandidateID = (provider: "tmdb" | "imdb", candidate: ExternalIdentityCandidate) => {
     if (!candidate?.ID) return;
     const currentSelectedID = selectedCandidateID(provider);
+    const key = provider === "tmdb" ? "TMDBID" : "IMDBID";
     if (currentSelectedID === candidate.ID) {
-      if (provider === "tmdb") {
-        setIdEdits((prev) => ({ ...prev, tmdb: "" }));
-        markIDTouched("tmdb");
-      } else {
-        setIdEdits((prev) => ({ ...prev, imdb: "" }));
-        markIDTouched("imdb");
-      }
+      facet.changeIdentity({ ...view.intent.identity, [key]: 0 });
       if (
         candidatePreview?.provider === provider &&
         candidatePreview.candidate.ID === candidate.ID
@@ -1249,13 +983,7 @@ export default function InputPage(props: Props) {
       return;
     }
     setCandidatePreview({ provider, candidate });
-    if (provider === "tmdb") {
-      setIdEdits((prev) => ({ ...prev, tmdb: candidate.ID.toString() }));
-      markIDTouched("tmdb");
-      return;
-    }
-    setIdEdits((prev) => ({ ...prev, imdb: formatIMDbID(candidate.ID) }));
-    markIDTouched("imdb");
+    facet.changeIdentity({ ...view.intent.identity, [key]: candidate.ID });
   };
 
   useEffect(() => {
@@ -1808,480 +1536,15 @@ export default function InputPage(props: Props) {
             </details>
           ) : null}
           {showReleaseDetails ? (
-            <p className="helper edit-helper">Edit external IDs and Release Name attributes.</p>
+            <p className="helper edit-helper">
+              Review release facts, source options, and selected tracker input.
+            </p>
           ) : null}
           {showReleaseDetails ? (
             <details className="edit-dropdown">
               <summary>Edit Release Details</summary>
               <div className="edit-dropdown__body">
-                <div className="settings-subgroup">
-                  <div className="settings-subgroup__title">External IDs</div>
-                  <p className="muted path-helper">
-                    Remove an ID to skip that provider. Enter an ID to use the provider again.
-                  </p>
-                  <div className="id-editor settings-grid">
-                    <div className="settings-field">
-                      <label htmlFor="external-tmdb-id">TMDB ID</label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          id="external-tmdb-id"
-                          className="min-w-0"
-                          value={idEdits.tmdb}
-                          onChange={(event) => {
-                            setIdEdits((prev) => ({ ...prev, tmdb: event.target.value }));
-                            markIDTouched("tmdb");
-                          }}
-                          placeholder="e.g. 550"
-                        />
-                        <Button
-                          type="button"
-                          className="shrink-0"
-                          aria-label="Remove TMDB ID"
-                          disabled={idOverrideState.overrides.TMDBID === 0}
-                          onClick={() => clearID("tmdb")}
-                        >
-                          {idOverrideState.overrides.TMDBID === 0 ? "Removed" : "Remove"}
-                        </Button>
-                      </div>
-                    </div>
-                    <div className="settings-field">
-                      <label htmlFor="external-imdb-id">IMDB ID</label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          id="external-imdb-id"
-                          className="min-w-0"
-                          value={idEdits.imdb}
-                          onChange={(event) => {
-                            setIdEdits((prev) => ({ ...prev, imdb: event.target.value }));
-                            markIDTouched("imdb");
-                          }}
-                          placeholder="e.g. tt0137523"
-                        />
-                        <Button
-                          type="button"
-                          className="shrink-0"
-                          aria-label="Remove IMDB ID"
-                          disabled={idOverrideState.overrides.IMDBID === 0}
-                          onClick={() => clearID("imdb")}
-                        >
-                          {idOverrideState.overrides.IMDBID === 0 ? "Removed" : "Remove"}
-                        </Button>
-                      </div>
-                    </div>
-                    <div className="settings-field">
-                      <label htmlFor="external-tvdb-id">TVDB ID</label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          id="external-tvdb-id"
-                          className="min-w-0"
-                          value={idEdits.tvdb}
-                          onChange={(event) => {
-                            setIdEdits((prev) => ({ ...prev, tvdb: event.target.value }));
-                            markIDTouched("tvdb");
-                          }}
-                          placeholder="e.g. 80379"
-                        />
-                        <Button
-                          type="button"
-                          className="shrink-0"
-                          aria-label="Remove TVDB ID"
-                          disabled={idOverrideState.overrides.TVDBID === 0}
-                          onClick={() => clearID("tvdb")}
-                        >
-                          {idOverrideState.overrides.TVDBID === 0 ? "Removed" : "Remove"}
-                        </Button>
-                      </div>
-                    </div>
-                    <div className="settings-field">
-                      <label htmlFor="external-tvmaze-id">TVmaze ID</label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          id="external-tvmaze-id"
-                          className="min-w-0"
-                          value={idEdits.tvmaze}
-                          onChange={(event) => {
-                            setIdEdits((prev) => ({ ...prev, tvmaze: event.target.value }));
-                            markIDTouched("tvmaze");
-                          }}
-                          placeholder="e.g. 82"
-                        />
-                        <Button
-                          type="button"
-                          className="shrink-0"
-                          aria-label="Remove TVmaze ID"
-                          disabled={idOverrideState.overrides.TVmazeID === 0}
-                          onClick={() => clearID("tvmaze")}
-                        >
-                          {idOverrideState.overrides.TVmazeID === 0 ? "Removed" : "Remove"}
-                        </Button>
-                      </div>
-                    </div>
-                    <div className="settings-field">
-                      <label htmlFor="external-mal-id">MAL ID</label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          id="external-mal-id"
-                          className="min-w-0"
-                          value={idEdits.mal}
-                          onChange={(event) => {
-                            setIdEdits((prev) => ({ ...prev, mal: event.target.value }));
-                            markIDTouched("mal");
-                          }}
-                          placeholder="e.g. 5114"
-                        />
-                        <Button
-                          type="button"
-                          className="shrink-0"
-                          aria-label="Remove MAL ID"
-                          disabled={idOverrideState.overrides.MALID === 0}
-                          onClick={() => clearID("mal")}
-                        >
-                          {idOverrideState.overrides.MALID === 0 ? "Removed" : "Remove"}
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div className="settings-subgroup">
-                  <div className="settings-subgroup__title">Release name overrides</div>
-                  <div className="settings-grid">
-                    <div className="settings-field">
-                      <label htmlFor="release-category">Category</label>
-                      <input
-                        id="release-category"
-                        value={releaseEdits?.category || ""}
-                        onChange={(event) => {
-                          setReleaseEdits((prev) => ({ ...prev, category: event.target.value }));
-                          markReleaseTouched("category");
-                        }}
-                        placeholder="movie or tv"
-                      />
-                    </div>
-                    <div className="settings-field">
-                      <label htmlFor="release-type">Type</label>
-                      <input
-                        id="release-type"
-                        value={releaseEdits?.type || ""}
-                        onChange={(event) => {
-                          setReleaseEdits((prev) => ({ ...prev, type: event.target.value }));
-                          markReleaseTouched("type");
-                        }}
-                        placeholder="remux, encode, webdl"
-                      />
-                    </div>
-                    <div className="settings-field">
-                      <label htmlFor="release-source">Source</label>
-                      <input
-                        id="release-source"
-                        value={releaseEdits?.source || ""}
-                        onChange={(event) => {
-                          setReleaseEdits((prev) => ({ ...prev, source: event.target.value }));
-                          markReleaseTouched("source");
-                        }}
-                        placeholder="BluRay, WEB, DVD"
-                      />
-                    </div>
-                    <div className="settings-field">
-                      <label htmlFor="release-resolution">Resolution</label>
-                      <input
-                        id="release-resolution"
-                        value={releaseEdits?.resolution || ""}
-                        onChange={(event) => {
-                          setReleaseEdits((prev) => ({ ...prev, resolution: event.target.value }));
-                          markReleaseTouched("resolution");
-                        }}
-                        placeholder="2160p"
-                      />
-                    </div>
-                    <div className="settings-field">
-                      <label htmlFor="release-tag">Tag</label>
-                      <input
-                        id="release-tag"
-                        value={releaseEdits?.tag || ""}
-                        onChange={(event) => {
-                          setReleaseEdits((prev) => ({ ...prev, tag: event.target.value }));
-                          markReleaseTouched("tag");
-                        }}
-                        placeholder="GROUP"
-                      />
-                    </div>
-                    <div className="settings-field">
-                      <label htmlFor="release-service">Service</label>
-                      <input
-                        id="release-service"
-                        value={releaseEdits?.service || ""}
-                        onChange={(event) => {
-                          setReleaseEdits((prev) => ({ ...prev, service: event.target.value }));
-                          markReleaseTouched("service");
-                        }}
-                        placeholder="Netflix"
-                      />
-                    </div>
-                    <div className="settings-field">
-                      <label htmlFor="release-distributor">Distributor</label>
-                      <input
-                        id="release-distributor"
-                        value={view.intent.metadata.Distributor ?? ""}
-                        onChange={(event) =>
-                          facet.changeMetadata({
-                            ...view.intent.metadata,
-                            Distributor: event.target.value,
-                          })
-                        }
-                        placeholder="Example Distributor"
-                      />
-                    </div>
-                    <div className="settings-field">
-                      <label htmlFor="release-original-language">Original language</label>
-                      <input
-                        id="release-original-language"
-                        value={view.intent.metadata.OriginalLanguage ?? ""}
-                        onChange={(event) =>
-                          facet.changeMetadata({
-                            ...view.intent.metadata,
-                            OriginalLanguage: event.target.value,
-                          })
-                        }
-                        placeholder="ja"
-                      />
-                    </div>
-                    <div className="settings-field">
-                      <label htmlFor="release-edition">Edition</label>
-                      <input
-                        id="release-edition"
-                        value={releaseEdits?.edition || ""}
-                        onChange={(event) => {
-                          setReleaseEdits((prev) => ({ ...prev, edition: event.target.value }));
-                          markReleaseTouched("edition");
-                        }}
-                        placeholder="Director's Cut"
-                      />
-                    </div>
-                    <div className="settings-field">
-                      <label htmlFor="release-region">Region</label>
-                      <input
-                        id="release-region"
-                        value={releaseEdits?.region || ""}
-                        onChange={(event) => {
-                          setReleaseEdits((prev) => ({ ...prev, region: event.target.value }));
-                          markReleaseTouched("region");
-                        }}
-                        placeholder="A, B, C"
-                      />
-                    </div>
-                    <div className="settings-field">
-                      <label htmlFor="release-season">Season</label>
-                      <input
-                        id="release-season"
-                        value={releaseEdits?.season || ""}
-                        onChange={(event) => {
-                          setReleaseEdits((prev) => ({ ...prev, season: event.target.value }));
-                          markReleaseTouched("season");
-                        }}
-                        placeholder="S01"
-                      />
-                    </div>
-                    <div className="settings-field">
-                      <label htmlFor="release-episode">Episode</label>
-                      <input
-                        id="release-episode"
-                        value={releaseEdits?.episode || ""}
-                        onChange={(event) => {
-                          setReleaseEdits((prev) => ({ ...prev, episode: event.target.value }));
-                          markReleaseTouched("episode");
-                        }}
-                        placeholder="E02"
-                      />
-                    </div>
-                    <div className="settings-field">
-                      <label htmlFor="release-episode-title">Episode title</label>
-                      <input
-                        id="release-episode-title"
-                        value={releaseEdits?.episodeTitle || ""}
-                        onChange={(event) => {
-                          setReleaseEdits((prev) => ({
-                            ...prev,
-                            episodeTitle: event.target.value,
-                          }));
-                          markReleaseTouched("episodeTitle");
-                        }}
-                        placeholder="Pilot"
-                      />
-                    </div>
-                    <div className="settings-field">
-                      <label htmlFor="release-manual-year">Manual year</label>
-                      <input
-                        id="release-manual-year"
-                        type="number"
-                        value={releaseEdits?.manualYear || ""}
-                        onChange={(event) => {
-                          setReleaseEdits((prev) => ({ ...prev, manualYear: event.target.value }));
-                          markReleaseTouched("manualYear");
-                        }}
-                        placeholder="2024"
-                      />
-                    </div>
-                    <div className="settings-field">
-                      <label htmlFor="release-manual-date">Manual date</label>
-                      <input
-                        id="release-manual-date"
-                        value={releaseEdits?.manualDate || ""}
-                        onChange={(event) => {
-                          setReleaseEdits((prev) => ({ ...prev, manualDate: event.target.value }));
-                          markReleaseTouched("manualDate");
-                        }}
-                        placeholder="YYYY-MM-DD"
-                      />
-                    </div>
-                    {isTVEpisodePreview ? (
-                      <div className="settings-toggle">
-                        <span>Use season/episode instead</span>
-                        <Switch
-                          aria-label="Use season/episode instead"
-                          checked={Boolean(releaseEdits?.useSeasonEpisode)}
-                          onChange={(event) => {
-                            setReleaseEdits((prev) => ({
-                              ...prev,
-                              useSeasonEpisode: event.target.checked,
-                            }));
-                            markReleaseTouched("useSeasonEpisode");
-                          }}
-                        />
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-                <div className="settings-subgroup">
-                  <div className="settings-subgroup__title">Flags</div>
-                  <div className="settings-grid">
-                    <div className="settings-toggle">
-                      <span>No season</span>
-                      <Switch
-                        aria-label="No season"
-                        checked={Boolean(releaseEdits?.noSeason)}
-                        onChange={(event) => {
-                          setReleaseEdits((prev) => ({ ...prev, noSeason: event.target.checked }));
-                          markReleaseTouched("noSeason");
-                        }}
-                      />
-                    </div>
-                    <div className="settings-toggle">
-                      <span>No year</span>
-                      <Switch
-                        aria-label="No year"
-                        checked={Boolean(releaseEdits?.noYear)}
-                        onChange={(event) => {
-                          setReleaseEdits((prev) => ({ ...prev, noYear: event.target.checked }));
-                          markReleaseTouched("noYear");
-                        }}
-                      />
-                    </div>
-                    <div className="settings-toggle">
-                      <span>No episode title</span>
-                      <Switch
-                        aria-label="No episode title"
-                        checked={Boolean(releaseEdits?.noEpisodeTitle)}
-                        onChange={(event) => {
-                          setReleaseEdits((prev) => ({
-                            ...prev,
-                            noEpisodeTitle: event.target.checked,
-                          }));
-                          markReleaseTouched("noEpisodeTitle");
-                        }}
-                      />
-                    </div>
-                    <div className="settings-toggle">
-                      <span>No AKA</span>
-                      <Switch
-                        aria-label="No AKA"
-                        checked={Boolean(releaseEdits?.noAKA)}
-                        onChange={(event) => {
-                          setReleaseEdits((prev) => ({ ...prev, noAKA: event.target.checked }));
-                          markReleaseTouched("noAKA");
-                        }}
-                      />
-                    </div>
-                    <div className="settings-toggle">
-                      <span>No tag</span>
-                      <Switch
-                        aria-label="No tag"
-                        checked={Boolean(releaseEdits?.noTag)}
-                        onChange={(event) => {
-                          setReleaseEdits((prev) => ({ ...prev, noTag: event.target.checked }));
-                          markReleaseTouched("noTag");
-                        }}
-                      />
-                    </div>
-                    <div className="settings-toggle">
-                      <span>No edition</span>
-                      <Switch
-                        aria-label="No edition"
-                        checked={Boolean(releaseEdits?.noEdition)}
-                        onChange={(event) => {
-                          setReleaseEdits((prev) => ({ ...prev, noEdition: event.target.checked }));
-                          markReleaseTouched("noEdition");
-                        }}
-                      />
-                    </div>
-                    <div className="settings-toggle">
-                      <span>No distributor</span>
-                      <Switch
-                        aria-label="No distributor"
-                        checked={Boolean(releaseEdits?.noDistributor)}
-                        onChange={(event) => {
-                          setReleaseEdits((prev) => ({
-                            ...prev,
-                            noDistributor: event.target.checked,
-                          }));
-                          markReleaseTouched("noDistributor");
-                        }}
-                      />
-                    </div>
-                    <div className="settings-toggle">
-                      <span>No dub</span>
-                      <Switch
-                        aria-label="No dub"
-                        checked={Boolean(releaseEdits?.noDub)}
-                        onChange={(event) => {
-                          setReleaseEdits((prev) => ({ ...prev, noDub: event.target.checked }));
-                          markReleaseTouched("noDub");
-                        }}
-                      />
-                    </div>
-                    <div className="settings-toggle">
-                      <span>No dual-audio</span>
-                      <Switch
-                        aria-label="No dual-audio"
-                        checked={Boolean(releaseEdits?.noDual)}
-                        onChange={(event) => {
-                          setReleaseEdits((prev) => ({ ...prev, noDual: event.target.checked }));
-                          markReleaseTouched("noDual");
-                        }}
-                      />
-                    </div>
-                    <div className="settings-toggle">
-                      <span>Force dual-audio</span>
-                      <Switch
-                        aria-label="Force dual-audio"
-                        checked={Boolean(releaseEdits?.dualAudio)}
-                        onChange={(event) => {
-                          setReleaseEdits((prev) => ({ ...prev, dualAudio: event.target.checked }));
-                          markReleaseTouched("dualAudio");
-                        }}
-                      />
-                    </div>
-                  </div>
-                </div>
-                {idOverrideState?.invalid ? (
-                  <p className="error">
-                    Enter numeric IDs only. IMDb supports an optional tt prefix.
-                  </p>
-                ) : null}
-                {releaseOverrideState?.invalid ? (
-                  <p className="error">
-                    Manual year must be numeric and manual date must be YYYY-MM-DD.
-                  </p>
-                ) : null}
+                <InputCorrectionEditor facet={facet} />
                 <div className="edit-actions">
                   {hasPreview ? (
                     <button

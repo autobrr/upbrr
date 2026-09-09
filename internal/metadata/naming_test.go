@@ -381,10 +381,10 @@ func TestApplyReleaseNameValueOverridesUpdatesCanonicalFacts(t *testing.T) {
 			},
 		},
 		{
-			name:      "zero manual year keeps the derived year",
+			name:      "zero manual year clears the derived year",
 			overrides: api.ReleaseNameOverrides{ManualYear: new(0)},
 			assert: func(t *testing.T, meta preparationstate.State) {
-				if meta.Release.Year != 2024 {
+				if meta.Release.Year != 0 {
 					t.Fatalf("year fact = %d", meta.Release.Year)
 				}
 			},

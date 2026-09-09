@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -330,15 +331,19 @@ func resolveCountryID(meta api.UploadSubject) string {
 // resolveBTNOriginalLanguage returns provider original language in BTN
 // priority order: TVDB first, then IMDb when TVDB has no value.
 func resolveBTNOriginalLanguage(meta api.UploadSubject) string {
+	provider := ""
 	if meta.ProviderMetadata.TVDB != nil {
 		if language := strings.TrimSpace(meta.ProviderMetadata.TVDB.OriginalLanguage); language != "" {
-			return language
+			provider = language
 		}
 	}
-	if meta.ProviderMetadata.IMDB != nil {
-		return strings.TrimSpace(meta.ProviderMetadata.IMDB.OriginalLanguage)
+	if provider == "" && meta.ProviderMetadata.IMDB != nil {
+		provider = meta.ProviderMetadata.IMDB.OriginalLanguage
 	}
-	return ""
+	if meta.EffectiveMetadata.OriginalLanguageProvenance.IsManual() {
+		return trackers.PreferredOriginalLanguage(meta, provider)
+	}
+	return strings.TrimSpace(provider)
 }
 
 // isBTNEnglishLanguage reports whether a provider language value represents
@@ -384,15 +389,17 @@ func resolveBTNTags(meta api.UploadSubject, fields map[string]string) string {
 	if tags := strings.TrimSpace(fields["tags"]); tags != "" {
 		return tags
 	}
-	if meta.ProviderMetadata.TVDB != nil {
-		if tags := mapBTNGenres(meta.ProviderMetadata.TVDB.Genres); tags != "" {
-			return tags
-		}
+	provider := ""
+	if meta.ProviderMetadata.TVDB != nil && strings.TrimSpace(meta.ProviderMetadata.TVDB.Genres) != "" {
+		provider = meta.ProviderMetadata.TVDB.Genres
 	}
-	if meta.ProviderMetadata.IMDB != nil {
-		return mapBTNGenres(meta.ProviderMetadata.IMDB.Genres)
+	if provider == "" && meta.ProviderMetadata.IMDB != nil {
+		provider = meta.ProviderMetadata.IMDB.Genres
 	}
-	return ""
+	if meta.EffectiveMetadata.GenresProvenance.IsManual() {
+		return mapBTNGenres(trackers.PreferredGenreText(meta, provider))
+	}
+	return mapBTNGenres(provider)
 }
 
 func mapBTNGenres(genres string) string {

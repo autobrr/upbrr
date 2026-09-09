@@ -367,6 +367,9 @@ func trackerID(meta api.DuplicateSubject) string {
 }
 
 func searchTitle(meta api.DuplicateSubject) string {
+	if meta.EffectiveMetadata.TitleProvenance.IsManual() {
+		return strings.TrimSpace(meta.EffectiveMetadata.PreferredTitle(""))
+	}
 	candidates := []string{strings.TrimSpace(meta.Release.Title)}
 	if meta.Projection != nil {
 		candidates = append(candidates, dupe.ProjectedSearchName(meta))

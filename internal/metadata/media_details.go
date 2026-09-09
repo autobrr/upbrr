@@ -113,7 +113,13 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	if !meta.MediaInfoUniqueIDPresent && s.logger != nil {
 		s.logger.Warnf("metadata: mediainfo validation failed (missing unique id)")
 	}
-	meta.AudioLanguages, meta.SubtitleLanguages = extractMediaInfoLanguages(miDoc)
+	meta.MediaTracks, meta.TrackAudioLanguages, meta.TrackSubtitleLanguages, err = mediaTrackFacts(meta, miDoc)
+	if err != nil {
+		return preparationstate.State{}, err
+	}
+	meta.TrackCoverageComplete = len(meta.Discs) <= 1 && len(meta.FileList) <= 1 && len(meta.SelectedBDMVPlaylists) <= 1
+	meta.AudioLanguages = append([]string(nil), meta.TrackAudioLanguages...)
+	meta.SubtitleLanguages = append([]string(nil), meta.TrackSubtitleLanguages...)
 
 	bdinfo := loadBDInfo(meta, s.cfg.MainSettings.DBPath)
 	bdAudioLanguages, bdSubtitleLanguages := extractBDInfoLanguages(bdinfo)
@@ -263,7 +269,9 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 		s.logger.Debugf("metadata: media details service=%q service_longname=%q", meta.Service, meta.ServiceLongName)
 	}
 
-	applyMetadataOverrides(&meta)
+	if err := applyMetadataOverrides(&meta); err != nil {
+		return preparationstate.State{}, err
+	}
 	meta.Audio = applyAudioLanguagePrefix(meta.Audio, meta)
 	RebuildReleaseName(&meta, s.logger)
 
@@ -342,16 +350,54 @@ func (s *Service) applySceneDetection(ctx context.Context, meta preparationstate
 	return meta, nil
 }
 
-func applyMetadataOverrides(meta *preparationstate.State) {
+func applyMetadataOverrides(meta *preparationstate.State) error {
 	if meta == nil {
-		return
+		return nil
 	}
 
 	overrides := meta.MetadataOverrides
 	if overrides.Distributor != nil {
 		meta.Distributor = normalizeDistributor(*overrides.Distributor)
 	}
-	applyOriginalLanguageOverride(meta, overrides.OriginalLanguage)
+	if err := applyTrackLanguageOverrides(meta, overrides.TrackLanguages); err != nil {
+		return err
+	}
+	trackAudioLanguages := aggregateTrackLanguages(meta.MediaTracks, api.MediaTrackAudio)
+	trackSubtitleLanguages := aggregateTrackLanguages(meta.MediaTracks, api.MediaTrackSubtitle)
+	meta.TrackAudioLanguages = append([]string(nil), trackAudioLanguages...)
+	meta.TrackSubtitleLanguages = append([]string(nil), trackSubtitleLanguages...)
+	if len(trackAudioLanguages) > 0 || slices.ContainsFunc(meta.MediaTracks, func(track api.MediaTrackFacts) bool {
+		return track.Kind == api.MediaTrackAudio && track.LanguageProvenance.IsManual()
+	}) {
+		meta.AudioLanguages = trackAudioLanguages
+	}
+	if len(trackSubtitleLanguages) > 0 || slices.ContainsFunc(meta.MediaTracks, func(track api.MediaTrackFacts) bool {
+		return track.Kind == api.MediaTrackSubtitle && track.LanguageProvenance.IsManual()
+	}) {
+		meta.SubtitleLanguages = trackSubtitleLanguages
+	}
+	meta.AudioLanguagesProvenance = api.FactProvenanceAutomatic
+	meta.SubtitleLanguagesProvenance = api.FactProvenanceAutomatic
+	if overrides.AudioLanguages != nil {
+		meta.AudioLanguages = languageutil.NormalizeLanguageList(*overrides.AudioLanguages)
+		meta.AudioLanguagesProvenance = factProvenanceForList(meta.AudioLanguages)
+	}
+	if overrides.SubtitleLanguages != nil {
+		meta.SubtitleLanguages = languageutil.NormalizeLanguageList(*overrides.SubtitleLanguages)
+		meta.SubtitleLanguagesProvenance = factProvenanceForList(meta.SubtitleLanguages)
+	}
+	meta.HardcodedSubs = hasHardcodedSubtitleMarker(meta.SourcePath)
+	meta.HardcodedSubsProvenance = api.FactProvenanceAutomatic
+	if overrides.HardcodedSubs != nil {
+		meta.HardcodedSubs = *overrides.HardcodedSubs
+		meta.HardcodedSubsProvenance = api.FactProvenanceManual
+	}
+	meta.HardcodedSubtitleLanguages = nil
+	meta.HardcodedSubtitleLanguagesProvenance = api.FactProvenanceAutomatic
+	if meta.HardcodedSubs && overrides.HardcodedSubtitleLanguages != nil {
+		meta.HardcodedSubtitleLanguages = languageutil.NormalizeLanguageList(*overrides.HardcodedSubtitleLanguages)
+		meta.HardcodedSubtitleLanguagesProvenance = factProvenanceForList(meta.HardcodedSubtitleLanguages)
+	}
 	if overrides.PersonalRelease != nil {
 		meta.PersonalRelease = *overrides.PersonalRelease
 	}
@@ -371,29 +417,7 @@ func applyMetadataOverrides(meta *preparationstate.State) {
 	if overrides.Anime != nil {
 		meta.Anime = *overrides.Anime
 	}
-}
-
-func applyOriginalLanguageOverride(meta *preparationstate.State, language *string) {
-	if meta == nil || language == nil {
-		return
-	}
-
-	trimmed := strings.TrimSpace(*language)
-	if trimmed == "" {
-		return
-	}
-	if meta.ProviderMetadata.TMDB != nil {
-		meta.ProviderMetadata.TMDB.OriginalLanguage = trimmed
-	}
-	if meta.ProviderMetadata.IMDB != nil {
-		meta.ProviderMetadata.IMDB.OriginalLanguage = trimmed
-	}
-	if meta.ProviderMetadata.TVDB != nil {
-		meta.ProviderMetadata.TVDB.OriginalLanguage = trimmed
-	}
-	if meta.ProviderMetadata.TVmaze != nil {
-		meta.ProviderMetadata.TVmaze.Language = trimmed
-	}
+	return nil
 }
 
 func loadBDInfo(meta preparationstate.State, dbPath string) *discparse.BDInfo {
@@ -607,6 +631,9 @@ func audioLanguagePrefixFromLanguages(meta preparationstate.State, languages []s
 }
 
 func originalAudioLanguage(meta preparationstate.State) string {
+	if meta.MetadataOverrides.OriginalLanguage != nil {
+		return *meta.MetadataOverrides.OriginalLanguage
+	}
 	switch {
 	case meta.ProviderMetadata.TMDB != nil && strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalLanguage) != "":
 		return meta.ProviderMetadata.TMDB.OriginalLanguage
@@ -642,6 +669,9 @@ func canonicalAudioLanguage(value string) string {
 	case "zxx", "xx", "und":
 		return "unknown"
 	}
+	if normalized := languageutil.NormalizeLanguageLabel(value); normalized != "" {
+		return strings.ToLower(normalized)
+	}
 	if normalized := strings.ToLower(strings.TrimSpace(languageutil.NormalizeLanguageDisplay(value))); normalized != "" {
 		return normalized
 	}
@@ -664,15 +694,18 @@ func RebuildReleaseName(meta *preparationstate.State, logger api.Logger) {
 	}
 
 	nameRequest := releaseNameRequestFromMeta(*meta, logger)
+	nameRequest = applyMetadataNamingOverrides(nameRequest, meta.MetadataOverrides)
 	nameRequest = applyReleaseNameOverrides(nameRequest, meta.ReleaseNameOverrides, logger)
+	meta.EffectiveMetadata = effectiveMetadata(*meta, nameRequest)
 	meta.ResolvedNaming = preparationstate.ResolvedNaming{
 		Type:           nameRequest.Type,
-		Title:          nameRequest.Title,
-		AlternateTitle: nameRequest.AltTitle,
-		Year:           nameRequest.Year,
+		Title:          meta.EffectiveMetadata.Title,
+		AlternateTitle: meta.EffectiveMetadata.AlternateTitle,
+		OriginalTitle:  meta.EffectiveMetadata.OriginalTitle,
+		Year:           meta.EffectiveMetadata.Year,
 		Source:         nameRequest.Source,
 		Resolution:     nameRequest.Resolution,
-		Genre:          resolvedGenre(*meta),
+		Genre:          strings.Join(meta.EffectiveMetadata.Genres, ", "),
 		EpisodeTitle:   resolvedEpisodeTitle(*meta),
 	}
 	meta.ReleaseNamePresentation = api.ReleaseNamePresentation{
@@ -791,10 +824,10 @@ func resolveAudioBloatPolicyWithRegistry(
 				continue
 			}
 			if isEnglishOriginalWithNonEnglish && policy.BlockEnglishOriginalWithForeign {
-				blocked[tracker] = appendUniqueString(blocked[tracker], languageutil.NormalizeLanguageDisplay(language))
+				blocked[tracker] = appendUniqueString(blocked[tracker], languageutil.NormalizeLanguageLabel(language))
 				continue
 			}
-			warned[tracker] = appendUniqueString(warned[tracker], languageutil.NormalizeLanguageDisplay(language))
+			warned[tracker] = appendUniqueString(warned[tracker], languageutil.NormalizeLanguageLabel(language))
 		}
 	}
 	if len(blocked) == 0 {
@@ -1242,6 +1275,9 @@ func threeDFromMedia(doc mediaInfoDoc, info *discparse.BDInfo) string {
 func sourceAndType(meta preparationstate.State, doc mediaInfoDoc) (string, string) {
 	source := strings.TrimSpace(meta.Release.Source)
 	typeValue := strings.TrimSpace(meta.Release.Type)
+	if isCategoryType(typeValue) {
+		typeValue = ""
+	}
 	if typeValue == "" || isCategoryType(typeValue) {
 		if inferred := inferReleaseTypeFromSource(source); inferred != "" {
 			typeValue = inferred
@@ -1298,11 +1334,7 @@ func sourceAndType(meta preparationstate.State, doc mediaInfoDoc) (string, strin
 	if strings.EqualFold(source, "Ultra HDTV") {
 		source = "UHDTV"
 	}
-	// Python get_type() falls back to "ENCODE" for any release that does not
-	// match a known keyword and is not a disc. Apply the same default here.
-	if typeValue == "" && !strings.EqualFold(meta.DiscType, "BDMV") && !strings.EqualFold(meta.DiscType, "DVD") && !strings.EqualFold(meta.DiscType, "HDDVD") {
-		typeValue = "ENCODE"
-	}
+	// Unknown evidence remains missing so Input can request a correction.
 	return source, typeValue
 }
 
@@ -2074,10 +2106,6 @@ func absFloat(value float64) float64 {
 }
 
 func validateMediaInfoSettings(doc mediaInfoDoc) bool {
-	_, _, audioTracks := splitMediaInfoTracks(doc)
-	if len(audioTracks) == 0 {
-		return false
-	}
 	_, videoTracks, _ := splitMediaInfoTracks(doc)
 	for _, track := range videoTracks {
 		settings := trackString(track, "Encoded_Library_Settings")

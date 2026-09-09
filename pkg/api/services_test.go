@@ -208,6 +208,54 @@ func TestNewTrackerValidationSubjectDetachesMutableFacts(t *testing.T) {
 	}
 }
 
+func TestRuleSubjectValidationProjectionPreservesEffectiveFacts(t *testing.T) {
+	t.Parallel()
+
+	source := RuleSubject{
+		EffectiveMetadata:          EffectiveMetadata{Title: "Manual title", Genres: []string{"Drama"}},
+		ManualLanguages:            ManualLanguageFacts{Audio: []string{"English"}},
+		HardcodedSubs:              true,
+		HardcodedSubtitleLanguages: []string{"French"},
+	}
+	projected := NewTrackerValidationSubjectFromRuleSubject(source, "example")
+	projected.EffectiveMetadata.Genres[0] = "Changed"
+	projected.ManualLanguages.Audio[0] = "Changed"
+	projected.HardcodedSubtitleLanguages[0] = "Changed"
+
+	if projected.Tracker != "EXAMPLE" || projected.EffectiveMetadata.Title != "Manual title" ||
+		!projected.HardcodedSubs || source.EffectiveMetadata.Genres[0] != "Drama" ||
+		source.ManualLanguages.Audio[0] != "English" || source.HardcodedSubtitleLanguages[0] != "French" {
+		t.Fatalf("rule validation projection = %#v", projected)
+	}
+}
+
+func TestPreparationInternalsStayOutsideJSONTransport(t *testing.T) {
+	t.Parallel()
+
+	payload, err := json.Marshal(PrepareInput{MetadataRequirements: MetadataRequirementSet{Version: "tracker-metadata-v1"}})
+	if err != nil {
+		t.Fatalf("marshal preparation input: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		t.Fatalf("decode preparation input: %v", err)
+	}
+	if _, present := fields["MetadataRequirements"]; present {
+		t.Fatalf("metadata requirements leaked into transport: %s", payload)
+	}
+
+	payload, err = json.Marshal(MetadataOverrides{})
+	if err != nil {
+		t.Fatalf("marshal empty metadata overrides: %v", err)
+	}
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		t.Fatalf("decode metadata overrides: %v", err)
+	}
+	if _, present := fields["TrackLanguages"]; present {
+		t.Fatalf("empty track corrections became required: %s", payload)
+	}
+}
+
 func TestNewTrackerValidationSubjectDerivesFailSafeEvidence(t *testing.T) {
 	t.Parallel()
 

@@ -21,10 +21,33 @@ func resolveARName(meta api.UploadSubject) string {
 }
 
 func resolveARSearchName(meta api.UploadSubject) string {
-	return resolveARSearchNameFields(meta.Release, meta.ReleaseName, meta.ProviderMetadata)
+	title, year := resolveARSearchNameParts(meta.Release, "", meta.ProviderMetadata)
+	title = trackers.PreferredTitle(meta, title)
+	year = trackers.PreferredYear(meta, year)
+	if title == "" && !meta.EffectiveMetadata.TitleProvenance.IsManual() {
+		title = strings.TrimSpace(meta.ReleaseName)
+	}
+	if title == "" {
+		return ""
+	}
+	if year > 0 {
+		return strings.TrimSpace(title + " " + strconv.Itoa(year))
+	}
+	return title
 }
 
 func resolveARSearchNameFields(release api.ReleaseInfo, releaseName string, metadata api.SourceScopedMetadata) string {
+	title, year := resolveARSearchNameParts(release, releaseName, metadata)
+	if title == "" {
+		return ""
+	}
+	if year > 0 {
+		return strings.TrimSpace(title + " " + strconv.Itoa(year))
+	}
+	return title
+}
+
+func resolveARSearchNameParts(release api.ReleaseInfo, releaseName string, metadata api.SourceScopedMetadata) (string, int) {
 	title := ""
 	if metadata.TMDB != nil {
 		title = strings.TrimSpace(metadata.TMDB.Title)
@@ -44,9 +67,6 @@ func resolveARSearchNameFields(release api.ReleaseInfo, releaseName string, meta
 	if title == "" {
 		title = strings.TrimSpace(releaseName)
 	}
-	if title == "" {
-		return ""
-	}
 	year := release.Year
 	if year == 0 && metadata.TMDB != nil {
 		year = metadata.TMDB.Year
@@ -57,8 +77,5 @@ func resolveARSearchNameFields(release api.ReleaseInfo, releaseName string, meta
 	if year == 0 && metadata.TVDB != nil {
 		year = metadata.TVDB.Year
 	}
-	if year > 0 {
-		return strings.TrimSpace(title + " " + strconv.Itoa(year))
-	}
-	return title
+	return title, year
 }

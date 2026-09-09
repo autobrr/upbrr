@@ -32,10 +32,37 @@ type PrepareInput struct {
 	Search ClientSearchPolicy
 	// Controls contains one-shot permissions excluded from compatibility.
 	Controls PreparationControls
-	Force    bool
+	// MetadataRequirements is the tracker-ID-free union of selected metadata demands.
+	// It affects canonical collection but is not a reusable prepared-release fact.
+	MetadataRequirements MetadataRequirementSet `json:"-"`
+	Force                bool
 	// RequirePrepared rejects collection when no compatible prepared generation exists.
 	RequirePrepared bool
 }
+
+// ResolvedPreparationInput carries accepted source corrections between internal
+// preparation owners. It is never accepted as a transport request.
+type ResolvedPreparationInput struct {
+	Input             PrepareInput
+	Corrections       ReleaseCorrectionsSnapshot
+	SourceFingerprint string
+	// ExplicitFields identifies values supplied for this preparation, whose
+	// content bindings may be finalized after provider discovery.
+	ExplicitFields []CorrectionFieldRef
+}
+
+// StaleContentCorrectionsError asks the workflow to confirm individual saved
+// values after provider discovery establishes a different content identity.
+type StaleContentCorrectionsError struct {
+	Corrections    ReleaseCorrectionsSnapshot
+	CurrentBinding ContentBinding
+}
+
+func (e *StaleContentCorrectionsError) Error() string {
+	return "saved content corrections require confirmation for the current source identity"
+}
+
+func (e *StaleContentCorrectionsError) Unwrap() error { return ErrCorrectionConflict }
 
 // ReleaseFactInstructions contains caller intent that can change finalized
 // reusable release facts.

@@ -6,10 +6,14 @@ package unit3d
 import (
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func resolveTMDBGenres(meta api.UploadSubject) string {
+	if meta.EffectiveMetadata.GenresProvenance.IsManual() {
+		return trackers.PreferredGenreText(meta, "")
+	}
 	if meta.ProviderMetadata.TMDB != nil {
 		return strings.TrimSpace(meta.ProviderMetadata.TMDB.Genres)
 	}
@@ -17,6 +21,9 @@ func resolveTMDBGenres(meta api.UploadSubject) string {
 }
 
 func resolveIMDBGenres(meta api.UploadSubject) string {
+	if meta.EffectiveMetadata.GenresProvenance.IsManual() {
+		return trackers.PreferredGenreText(meta, "")
+	}
 	if meta.ProviderMetadata.IMDB != nil {
 		return strings.TrimSpace(meta.ProviderMetadata.IMDB.Genres)
 	}

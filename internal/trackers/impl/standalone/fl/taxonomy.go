@@ -6,6 +6,7 @@ package fl
 import (
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -50,6 +51,9 @@ func resolveCategoryID(meta api.UploadSubject) int {
 }
 
 func resolveGenres(meta api.UploadSubject) string {
+	if meta.EffectiveMetadata.GenresProvenance.IsManual() {
+		return trackers.PreferredGenreText(meta, "")
+	}
 	if meta.ProviderMetadata.IMDB != nil {
 		return strings.TrimSpace(meta.ProviderMetadata.IMDB.Genres)
 	}

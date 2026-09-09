@@ -270,3 +270,54 @@ func TestMetadataCategoryDispositionUsesStrictestRequirement(t *testing.T) {
 		t.Fatalf("category disposition = %q, want strict", got)
 	}
 }
+
+func TestLanguageRuleUsesCorrectedOriginalLanguage(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		provider   string
+		manual     string
+		provenance api.FactProvenance
+		allowed    bool
+	}{
+		{
+			name:     "automatic provider",
+			provider: "ja",
+			allowed:  true,
+		},
+		{
+			name:       "manual enables original audio",
+			provider:   "fr",
+			manual:     "Japanese",
+			provenance: api.FactProvenanceManual,
+			allowed:    true,
+		},
+		{
+			name:       "manual rejects previous original",
+			provider:   "ja",
+			manual:     "French",
+			provenance: api.FactProvenanceManual,
+		},
+		{
+			name:       "manual empty rejects provider fallback",
+			provider:   "ja",
+			provenance: api.FactProvenanceManualEmpty,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			subject := api.RuleSubject{
+				AudioLanguages:    []string{"Japanese"},
+				SubtitleLanguages: []string{"English"},
+				ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{OriginalLanguage: test.provider}},
+				EffectiveMetadata: api.EffectiveMetadata{OriginalLanguage: test.manual, OriginalLanguageProvenance: test.provenance},
+			}
+			allowed, reason := evaluateLanguageRule(subject, &LanguageRule{
+				Languages:     []string{"English"},
+				RequireBoth:   true,
+				AllowOriginal: true,
+			})
+			if allowed != test.allowed {
+				t.Fatalf("allowed=%v, want %v: %#v", allowed, test.allowed, reason)
+			}
+		})
+	}
+}

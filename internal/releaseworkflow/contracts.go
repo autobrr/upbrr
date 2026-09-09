@@ -114,7 +114,10 @@ type IDGenerator interface {
 
 // ReleasePreparer owns canonical prepared-release generation.
 type ReleasePreparer interface {
+	CorrectionsCurrent(context.Context, string, uint64) (bool, error)
 	Prepare(context.Context, api.PrepareInput) (api.PrepareResult, error)
+	ResolveInput(context.Context, api.PrepareInput, api.ReleaseCorrectionUpdate) (api.ResolvedPreparationInput, error)
+	PrepareResolved(context.Context, api.ResolvedPreparationInput) (api.PrepareResult, error)
 	ResolveDisplay(context.Context, api.ReleaseRef) (api.PreparedReleaseDisplay, error)
 	ResolveUploadSubject(context.Context, api.UploadSubjectInput) (api.UploadSubject, error)
 	ResolveDuplicateSubject(context.Context, api.DuplicateCheckInput) (api.DuplicateSubject, error)
@@ -122,10 +125,44 @@ type ReleasePreparer interface {
 
 // ReleasePreparerFunc adapts a function to [ReleasePreparer].
 type ReleasePreparerFunc struct {
-	PrepareFunc   func(context.Context, api.PrepareInput) (api.PrepareResult, error)
-	DisplayFunc   func(context.Context, api.ReleaseRef) (api.PreparedReleaseDisplay, error)
-	SubjectFunc   func(context.Context, api.UploadSubjectInput) (api.UploadSubject, error)
-	DuplicateFunc func(context.Context, api.DuplicateCheckInput) (api.DuplicateSubject, error)
+	CorrectionsCurrentFunc func(context.Context, string, uint64) (bool, error)
+	PrepareFunc            func(context.Context, api.PrepareInput) (api.PrepareResult, error)
+	ResolveInputFunc       func(context.Context, api.PrepareInput, api.ReleaseCorrectionUpdate) (api.ResolvedPreparationInput, error)
+	PrepareResolvedFunc    func(context.Context, api.ResolvedPreparationInput) (api.PrepareResult, error)
+	DisplayFunc            func(context.Context, api.ReleaseRef) (api.PreparedReleaseDisplay, error)
+	SubjectFunc            func(context.Context, api.UploadSubjectInput) (api.UploadSubject, error)
+	DuplicateFunc          func(context.Context, api.DuplicateCheckInput) (api.DuplicateSubject, error)
+}
+
+// CorrectionsCurrent checks source correction authority before workflow reuse.
+// Function adapters without a mutable correction store retain their authority.
+func (f ReleasePreparerFunc) CorrectionsCurrent(ctx context.Context, source string, revision uint64) (bool, error) {
+	if f.CorrectionsCurrentFunc != nil {
+		return f.CorrectionsCurrentFunc(ctx, source, revision)
+	}
+	return true, nil
+}
+
+// ResolveInput delegates source correction resolution to the preparation owner.
+func (f ReleasePreparerFunc) ResolveInput(
+	ctx context.Context,
+	input api.PrepareInput,
+	update api.ReleaseCorrectionUpdate,
+) (api.ResolvedPreparationInput, error) {
+	if f.ResolveInputFunc != nil {
+		return f.ResolveInputFunc(ctx, input, update)
+	}
+	return api.ResolvedPreparationInput{Input: input}, nil
+}
+
+// PrepareResolved delegates collection of the accepted input to its owner.
+func (f ReleasePreparerFunc) PrepareResolved(ctx context.Context, input api.ResolvedPreparationInput) (api.PrepareResult, error) {
+	if f.PrepareResolvedFunc != nil {
+		return f.PrepareResolvedFunc(ctx, input)
+	}
+	result, err := f.PrepareFunc(ctx, input.Input)
+	result.EffectiveInstructions = input.Input.Instructions
+	return result, err
 }
 
 // Prepare calls the adapted preparation function.
@@ -168,6 +205,13 @@ type TrackerProjectionBuilder interface {
 		api.TrackerReleaseProjectionSet,
 		error,
 	)
+}
+
+// InputReadinessEvaluator evaluates selected tracker input demands without
+// authentication, duplicate checks, or other remote work.
+type InputReadinessEvaluator interface {
+	Requirements(context.Context, []api.TrackerID) (api.MetadataRequirementSet, error)
+	Evaluate(context.Context, api.UploadSubject, []api.TrackerID) (api.InputReadinessEvaluation, error)
 }
 
 // TrackerPreflightBuilder hides live tracker readiness checks behind one
@@ -411,12 +455,22 @@ type Application interface {
 // State is the repository value owned exclusively by the workflow module.
 // Snapshots are immutable; maps retain prior revisions for exact-reference reads.
 type State struct {
-	OwnerID                string
-	ProcessEpoch           string
-	TrackerDecisionMode    TrackerDecisionMode
-	Workflow               api.ReleaseWorkflow
+	OwnerID             string
+	ProcessEpoch        string
+	TrackerDecisionMode TrackerDecisionMode
+	Workflow            api.ReleaseWorkflow
+	Corrections         *api.ReleaseCorrectionsSnapshot
+	// PendingCorrectionConfirmation retains workflow-validated confirmation
+	// authority until canonical preparation completes.
+	PendingCorrectionConfirmation *api.CorrectionConfirmation
+	PreparationInput              *api.PrepareInput
+	// PreparationDemand retains normalized metadata requirements separately because
+	// PrepareInput omits its internal-only requirements from persisted JSON used for hydration.
+	PreparationDemand      api.MetadataRequirementSet
+	TrackerInputAnswers    map[api.TrackerID]map[string]string
 	FactInstructions       map[api.ReleaseFactInstructionSnapshotID]api.ReleaseFactInstructionSnapshot
 	Releases               map[api.ReleaseSnapshotID]api.ReleaseSnapshot
+	InputReadiness         map[api.InputReadinessSnapshotID]api.InputReadinessSnapshot
 	Catalogs               map[api.TrackerCatalogSnapshotID]api.TrackerCatalogSnapshot
 	Runtimes               map[api.TrackerRuntimeSnapshotID]api.TrackerRuntimeSnapshot
 	Selections             map[api.TrackerSelectionID]api.TrackerSelection
@@ -487,6 +541,8 @@ type ReplaceFactInstructionsCommand struct {
 	WorkflowID       api.WorkflowID
 	ExpectedRevision api.WorkflowRevision
 	Instructions     api.ReleaseFactInstructions
+	CorrectionPatch  *api.ReleaseCorrectionPatch
+	SourcePath       string
 	IdempotencyKey   string
 }
 
@@ -496,22 +552,37 @@ func (ReplaceFactInstructionsCommand) operationKind() api.OperationKind {
 	return api.OperationKindUnknown
 }
 func (c ReplaceFactInstructionsCommand) commandFingerprint() (api.WorkflowFingerprint, error) {
-	return canonicalCommandFingerprint(c.Instructions)
+	if c.CorrectionPatch != nil {
+		return canonicalCommandFingerprint(struct {
+			CorrectionPatch *api.ReleaseCorrectionPatch
+			SourcePath      string
+		}{c.CorrectionPatch, c.SourcePath})
+	}
+	return canonicalCommandFingerprint(struct {
+		Instructions    api.ReleaseFactInstructions
+		CorrectionPatch *api.ReleaseCorrectionPatch
+		SourcePath      string
+	}{c.Instructions, c.CorrectionPatch, c.SourcePath})
 }
 
 // PrepareReleaseCommand creates a canonical release snapshot from retained fact instructions.
 type PrepareReleaseCommand struct {
-	WorkflowID       api.WorkflowID
-	ExpectedRevision api.WorkflowRevision
-	Input            api.PrepareInput
-	IdempotencyKey   string
+	WorkflowID          api.WorkflowID
+	ExpectedRevision    api.WorkflowRevision
+	Input               api.PrepareInput
+	TrackerIDs          []api.TrackerID
+	TrackerInputAnswers map[api.TrackerID]map[string]*string
+	IdempotencyKey      string
 }
 
 func (PrepareReleaseCommand) commandName() string              { return "prepare_release" }
 func (PrepareReleaseCommand) userIntent()                      {}
 func (PrepareReleaseCommand) operationKind() api.OperationKind { return api.OperationKindPreparation }
 func (c PrepareReleaseCommand) commandFingerprint() (api.WorkflowFingerprint, error) {
-	return canonicalCommandFingerprint(c.Input)
+	return canonicalCommandFingerprint(struct {
+		Input      api.PrepareInput
+		TrackerIDs []api.TrackerID
+	}{c.Input, c.TrackerIDs})
 }
 
 // ResetReleaseCommand replaces exact fact instructions and force-reprepares in one operation.
@@ -519,6 +590,7 @@ type ResetReleaseCommand struct {
 	WorkflowID       api.WorkflowID
 	ExpectedRevision api.WorkflowRevision
 	Input            api.PrepareInput
+	TrackerIDs       []api.TrackerID
 	IdempotencyKey   string
 }
 
@@ -526,7 +598,10 @@ func (ResetReleaseCommand) commandName() string              { return "reset_rel
 func (ResetReleaseCommand) userIntent()                      {}
 func (ResetReleaseCommand) operationKind() api.OperationKind { return api.OperationKindPreparation }
 func (c ResetReleaseCommand) commandFingerprint() (api.WorkflowFingerprint, error) {
-	return canonicalCommandFingerprint(c.Input)
+	return canonicalCommandFingerprint(struct {
+		Input      api.PrepareInput
+		TrackerIDs []api.TrackerID
+	}{c.Input, c.TrackerIDs})
 }
 
 // SelectBlurayCandidateCommand validates and selects one retained candidate, then force-reprepares.
@@ -567,6 +642,27 @@ type ProjectTrackersCommand struct {
 	Instructions     map[api.TrackerID]api.TrackerProjectionInstructions
 	ExecutionMode    api.WorkflowExecutionMode
 	IdempotencyKey   string
+}
+
+// EvaluateInputReadinessCommand publishes local selected-tracker input readiness.
+type EvaluateInputReadinessCommand struct {
+	WorkflowID          api.WorkflowID
+	ExpectedRevision    api.WorkflowRevision
+	TrackerIDs          []api.TrackerID
+	TrackerInputAnswers map[api.TrackerID]map[string]*string
+	IdempotencyKey      string
+}
+
+func (EvaluateInputReadinessCommand) commandName() string { return "evaluate_input_readiness" }
+func (EvaluateInputReadinessCommand) userIntent()         {}
+func (EvaluateInputReadinessCommand) operationKind() api.OperationKind {
+	return api.OperationKindPreparation
+}
+func (c EvaluateInputReadinessCommand) commandFingerprint() (api.WorkflowFingerprint, error) {
+	return canonicalCommandFingerprint(struct {
+		TrackerIDs          []api.TrackerID
+		TrackerInputAnswers map[api.TrackerID]map[string]*string
+	}{c.TrackerIDs, c.TrackerInputAnswers})
 }
 
 func (ProjectTrackersCommand) commandName() string { return "project_trackers" }

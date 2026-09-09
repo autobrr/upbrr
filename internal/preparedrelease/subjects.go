@@ -38,6 +38,10 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		selectedPlaylists = clonePreparedPlaylists(release.Source.SelectedPlaylists)
 	}
 	subject := api.UploadSubject{
+		EffectiveMetadata:           release.MetadataFacts(),
+		ManualLanguages:             release.Media.ManualLanguages(),
+		HardcodedSubs:               release.Media.HardcodedSubs,
+		HardcodedSubtitleLanguages:  append([]string(nil), release.Media.HardcodedSubtitleLanguages...),
 		MediaBinding:                binding,
 		SourcePath:                  release.Source.SourcePath,
 		Paths:                       []string{resources.sourcePath},
@@ -141,6 +145,7 @@ func (m *Module) ResolveDuplicateSubject(ctx context.Context, input api.Duplicat
 		fileList = manifestFiles(release.Source)
 	}
 	subject := api.DuplicateSubject{
+		EffectiveMetadata: release.MetadataFacts(),
 		SourcePath:        release.Source.SourcePath,
 		SourceSize:        release.Source.Size,
 		VideoPath:         resources.videoPath,
@@ -305,30 +310,34 @@ func (m *Module) ResolveDescriptionSubject(ctx context.Context, input api.Descri
 		selectedPlaylists = clonePreparedPlaylists(release.Source.SelectedPlaylists)
 	}
 	return api.DescriptionSubject{
-		MediaBinding:          binding,
-		SourcePath:            release.Source.SourcePath,
-		DiscType:              firstNonEmpty(release.Disc.Type, release.Source.Classification.DiscType),
-		MediaInfoTextPath:     resources.mediaInfoTextPath,
-		DVDVOBMediaInfoText:   resources.dvdVOBMediaInfoText,
-		EpisodeOverview:       release.Episode.Overview,
-		DescriptionTemplate:   resources.descriptionTemplate,
-		Options:               input.Options,
-		Release:               releaseInfo(release),
-		SelectedBDMVPlaylists: selectedPlaylists,
-		Disc:                  release.Disc,
-		Discs:                 projectDiscResources(resources.discs),
-		Tag:                   release.Naming.Tag,
-		Identity:              release.Identity,
-		ProviderMetadata:      release.ProviderMetadata,
-		SeasonInt:             release.Episode.Season,
-		EpisodeInt:            release.Episode.Episode,
-		Filename:              release.Naming.Filename,
-		ReleaseName:           release.Naming.ReleaseName,
-		ReleaseNameNoTag:      release.Naming.NameWithoutTag,
-		ServiceLongName:       release.Media.ServiceLongName,
-		Type:                  release.Media.Type,
-		HDR:                   release.Media.HDR,
-		ArrReleaseGroup:       release.Naming.Group,
+		EffectiveMetadata:          release.MetadataFacts(),
+		ManualLanguages:            release.Media.ManualLanguages(),
+		HardcodedSubs:              release.Media.HardcodedSubs,
+		HardcodedSubtitleLanguages: append([]string(nil), release.Media.HardcodedSubtitleLanguages...),
+		MediaBinding:               binding,
+		SourcePath:                 release.Source.SourcePath,
+		DiscType:                   firstNonEmpty(release.Disc.Type, release.Source.Classification.DiscType),
+		MediaInfoTextPath:          resources.mediaInfoTextPath,
+		DVDVOBMediaInfoText:        resources.dvdVOBMediaInfoText,
+		EpisodeOverview:            release.Episode.Overview,
+		DescriptionTemplate:        resources.descriptionTemplate,
+		Options:                    input.Options,
+		Release:                    releaseInfo(release),
+		SelectedBDMVPlaylists:      selectedPlaylists,
+		Disc:                       release.Disc,
+		Discs:                      projectDiscResources(resources.discs),
+		Tag:                        release.Naming.Tag,
+		Identity:                   release.Identity,
+		ProviderMetadata:           release.ProviderMetadata,
+		SeasonInt:                  release.Episode.Season,
+		EpisodeInt:                 release.Episode.Episode,
+		Filename:                   release.Naming.Filename,
+		ReleaseName:                release.Naming.ReleaseName,
+		ReleaseNameNoTag:           release.Naming.NameWithoutTag,
+		ServiceLongName:            release.Media.ServiceLongName,
+		Type:                       release.Media.Type,
+		HDR:                        release.Media.HDR,
+		ArrReleaseGroup:            release.Naming.Group,
 	}, nil
 }
 

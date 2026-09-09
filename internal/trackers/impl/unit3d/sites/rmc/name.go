@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -27,24 +28,32 @@ func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
 	if name == "" || tmdb == nil || strings.TrimSpace(tmdb.Title) == "" {
 		return ""
 	}
-	yearMatches := rmcYearTokenRegex.FindAllStringSubmatchIndex(name, -1)
-	if len(yearMatches) == 0 {
-		if meta.NamePresentation.Version == api.ReleaseNamePresentationVersionV1 && meta.NamePresentation.OmitYear {
-			return buildYearlessName(name, meta, tmdb)
-		}
+	title := tmdb.Title
+	if meta.EffectiveMetadata.TitleProvenance.IsManual() {
+		title = trackers.PreferredTitle(meta, tmdb.Title)
+	}
+	if title == "" {
 		return ""
 	}
-	if tmdb.Year <= 0 {
+	year := tmdb.Year
+	if meta.EffectiveMetadata.YearProvenance.IsManual() {
+		year = trackers.PreferredYear(meta, tmdb.Year)
+	}
+	yearMatches := rmcYearTokenRegex.FindAllStringSubmatchIndex(name, -1)
+	switch {
+	case len(yearMatches) == 0 && meta.NamePresentation.Version == api.ReleaseNamePresentationVersionV1 && meta.NamePresentation.OmitYear:
+		return buildYearlessName(name, meta, tmdb, title)
+	case len(yearMatches) == 0 || year <= 0:
 		return ""
 	}
 	yearEnd := yearMatches[len(yearMatches)-1][5]
-	return sanitizeName(strings.TrimSpace(tmdb.Title) + " " + strconv.Itoa(tmdb.Year) + " " + strings.TrimSpace(name[yearEnd:]))
+	return sanitizeName(strings.TrimSpace(title) + " " + strconv.Itoa(year) + " " + strings.TrimSpace(name[yearEnd:]))
 }
 
-func buildYearlessName(name string, meta api.UploadSubject, tmdb *api.TMDBMetadata) string {
+func buildYearlessName(name string, meta api.UploadSubject, tmdb *api.TMDBMetadata, title string) string {
 	suffix := ""
-	for _, title := range []string{meta.Release.Title, tmdb.Title} {
-		if remainder, ok := trimLeadingNameElement(name, title); ok {
+	for _, candidate := range []string{title, meta.Release.Title, tmdb.Title} {
+		if remainder, ok := trimLeadingNameElement(name, candidate); ok {
 			suffix = remainder
 			break
 		}
@@ -53,9 +62,17 @@ func buildYearlessName(name string, meta api.UploadSubject, tmdb *api.TMDBMetada
 		return ""
 	}
 
-	alternates := []string{meta.Release.Alt, tmdb.RetrievedAKA, tmdb.OriginalTitle}
-	if imdb := meta.ProviderMetadata.IMDB; imdb != nil {
-		alternates = append(alternates, imdb.AKA)
+	alternates := make([]string, 0, 4)
+	switch {
+	case meta.EffectiveMetadata.AlternateTitleProvenance.IsManual():
+		alternates = append(alternates, trackers.PreferredAlternateTitle(meta, ""))
+	case meta.EffectiveMetadata.OriginalTitleProvenance.IsManual():
+		alternates = append(alternates, trackers.PreferredOriginalTitle(meta, ""))
+	default:
+		alternates = append(alternates, meta.Release.Alt, tmdb.RetrievedAKA, tmdb.OriginalTitle)
+		if imdb := meta.ProviderMetadata.IMDB; imdb != nil {
+			alternates = append(alternates, imdb.AKA)
+		}
 	}
 	for _, alternate := range alternates {
 		if remainder, ok := trimLeadingNameElement(suffix, alternate); ok {
@@ -66,7 +83,7 @@ func buildYearlessName(name string, meta api.UploadSubject, tmdb *api.TMDBMetada
 	if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(suffix)), "AKA ") {
 		return ""
 	}
-	return sanitizeName(strings.TrimSpace(tmdb.Title) + " " + suffix)
+	return sanitizeName(strings.TrimSpace(title) + " " + suffix)
 }
 
 func trimLeadingNameElement(name, element string) (string, bool) {

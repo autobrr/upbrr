@@ -44,6 +44,10 @@ Metadata providers and local media inspection produce shared release facts. Revi
 
 Overrides change the prepared generation. Later operations must use that exact generation rather than silently rebuilding it.
 
+Input readiness evaluates missing release facts and selected tracker metadata before tracker assessment. Correct missing source, type, genre, or languages on Input. A tracker-specific requirement affects that tracker; global missing facts prevent advancement.
+
+Explicit corrections win over history and provider metadata. Auto removes a correction, while an empty list, a zero manual year, or explicit false retains manual authority. Provider failures preserve accepted edits. A changed content identity can require confirmation of saved corrections.
+
 If a provider fails or selects the wrong title, supply a correct ID or [clear that provider](../cli/index.md#clear-a-metadata-provider). Clearing suppresses its ID and metadata for this source, including later reloads. Other providers remain available, but trackers that require the cleared provider may be blocked.
 
 ## 3. Resolve tracker names and eligibility

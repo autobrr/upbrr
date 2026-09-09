@@ -83,11 +83,11 @@ func TestSourceFingerprintExcludesPlaylistInstruction(t *testing.T) {
 	if absentFingerprint != explicitFingerprint {
 		t.Fatalf("source fingerprints differ: %q != %q", absentFingerprint, explicitFingerprint)
 	}
-	absentCompatibility, err := preparationCompatibility(absent, absentFingerprint)
+	absentCompatibility, err := preparationCompatibility(absent, absentFingerprint, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	explicitCompatibility, err := preparationCompatibility(explicit, explicitFingerprint)
+	explicitCompatibility, err := preparationCompatibility(explicit, explicitFingerprint, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -630,7 +630,7 @@ func TestPreparationCompatibilityIncludesEvidencePolicyAndExcludesOneShotControl
 	stringPtr := func(value string) *string { return &value }
 	boolPtr := func(value bool) *bool { return &value }
 	baseline := api.PrepareInput{SourcePath: "Example.Release.2026.mkv"}
-	want, err := preparationCompatibility(baseline, "source")
+	want, err := preparationCompatibility(baseline, "source", 0)
 	if err != nil {
 		t.Fatalf("baseline compatibility: %v", err)
 	}
@@ -649,7 +649,7 @@ func TestPreparationCompatibilityIncludesEvidencePolicyAndExcludesOneShotControl
 		t.Run(test.name, func(t *testing.T) {
 			input := baseline
 			test.mutate(&input)
-			got, compatibilityErr := preparationCompatibility(input, "source")
+			got, compatibilityErr := preparationCompatibility(input, "source", 0)
 			if compatibilityErr != nil {
 				t.Fatalf("compatibility: %v", compatibilityErr)
 			}
@@ -672,7 +672,7 @@ func TestPreparationCompatibilityIncludesEvidencePolicyAndExcludesOneShotControl
 		t.Run(test.name, func(t *testing.T) {
 			input := baseline
 			test.mutate(&input)
-			got, compatibilityErr := preparationCompatibility(input, "source")
+			got, compatibilityErr := preparationCompatibility(input, "source", 0)
 			if compatibilityErr != nil {
 				t.Fatalf("compatibility: %v", compatibilityErr)
 			}
@@ -853,7 +853,7 @@ func TestPreparationCompatibilityDistinguishesExplicitClearInstructions(t *testi
 	} {
 		input := api.PrepareInput{SourcePath: "Example.Release.2026.mkv"}
 		input.Instructions.ReleaseName.Season = season
-		compatibility, err := preparationCompatibility(input, "source")
+		compatibility, err := preparationCompatibility(input, "source", 0)
 		if err != nil {
 			t.Fatalf("compatibility for %s: %v", name, err)
 		}
@@ -1308,10 +1308,11 @@ func waitForString(t *testing.T, values <-chan string, want string) {
 }
 
 type memoryStore struct {
-	mu        sync.Mutex
-	current   map[string]api.PreparedRelease
-	commits   int
-	commitErr error
+	mu          sync.Mutex
+	current     map[string]api.PreparedRelease
+	commits     int
+	commitErr   error
+	corrections map[string]api.ReleaseCorrectionsSnapshot
 }
 
 func newMemoryStore() *memoryStore {

@@ -45,7 +45,7 @@ func checkRules(ctx context.Context, meta api.TrackerValidationSubject, _ api.Lo
 }
 
 func minimumContentAgeViolation(meta api.TrackerValidationSubject, now time.Time) bool {
-	return rtfContentAgeEligibility(meta.Release, meta.ProviderMetadata, now) != rtfAgeEligible
+	return rtfContentAgeEligibility(meta.Release, meta.ProviderMetadata, meta.EffectiveMetadata, now) != rtfAgeEligible
 }
 
 type rtfAgeEligibilityVerdict string
@@ -57,13 +57,15 @@ const (
 	rtfAgeIneligibleTooNew          rtfAgeEligibilityVerdict = "too_new"
 )
 
+// rtfContentAgeEligibility retains exact provider dates but not partial provider years when year is manual.
 func rtfContentAgeEligibility(
 	release api.ReleaseInfo,
 	metadata api.SourceScopedMetadata,
+	effective api.EffectiveMetadata,
 	now time.Time,
 ) rtfAgeEligibilityVerdict {
 	cutoff := now.UTC().AddDate(-10, -1, 0)
-	evidence := youngestRTFReleaseEvidence(release, metadata)
+	evidence := youngestRTFReleaseEvidence(release, metadata, effective)
 	if releaseDate, ok := evidence.exactDate(); ok {
 		if releaseDate.After(cutoff) {
 			return rtfAgeIneligibleTooNew
@@ -113,46 +115,65 @@ func (e *rtfReleaseAgeEvidence) exactDate() (time.Time, bool) {
 	return e.date, true
 }
 
-func youngestRTFReleaseEvidence(release api.ReleaseInfo, metadata api.SourceScopedMetadata) rtfReleaseAgeEvidence {
+func youngestRTFReleaseEvidence(
+	release api.ReleaseInfo,
+	metadata api.SourceScopedMetadata,
+	effective api.EffectiveMetadata,
+) rtfReleaseAgeEvidence {
 	var evidence rtfReleaseAgeEvidence
-	addRTFDateParts(&evidence, release.Year, release.Month, release.Day)
+	includePartialYears := !effective.YearProvenance.IsManual()
+	if !includePartialYears {
+		evidence.addYear(effective.Year)
+	}
+	addRTFDateParts(&evidence, release.Year, release.Month, release.Day, includePartialYears)
 
 	if value := metadata.TMDB; value != nil {
-		evidence.addYear(value.Year)
-		addRTFDateText(&evidence, value.ReleaseDate)
-		addRTFDateText(&evidence, value.FirstAirDate)
-		addRTFDateText(&evidence, value.LastAirDate)
+		if includePartialYears {
+			evidence.addYear(value.Year)
+		}
+		addRTFDateText(&evidence, value.ReleaseDate, includePartialYears)
+		addRTFDateText(&evidence, value.FirstAirDate, includePartialYears)
+		addRTFDateText(&evidence, value.LastAirDate, includePartialYears)
 	}
 	if value := metadata.IMDB; value != nil {
-		evidence.addYear(value.Year)
-		evidence.addYear(value.EndYear)
-		evidence.addYear(value.TVYear)
+		if includePartialYears {
+			evidence.addYear(value.Year)
+			evidence.addYear(value.EndYear)
+			evidence.addYear(value.TVYear)
+		}
 		for _, episode := range value.Episodes {
 			addRTFDateParts(
 				&evidence,
 				episode.ReleaseDate.Year,
 				episode.ReleaseDate.Month,
 				episode.ReleaseDate.Day,
+				includePartialYears,
 			)
-			evidence.addYear(episode.ReleaseYear)
+			if includePartialYears {
+				evidence.addYear(episode.ReleaseYear)
+			}
 		}
 	}
 	if value := metadata.TVDB; value != nil {
-		evidence.addYear(value.Year)
-		addRTFDateText(&evidence, value.FirstAired)
-		addRTFDateText(&evidence, value.EpisodeAired)
+		if includePartialYears {
+			evidence.addYear(value.Year)
+		}
+		addRTFDateText(&evidence, value.FirstAired, includePartialYears)
+		addRTFDateText(&evidence, value.EpisodeAired, includePartialYears)
 		for _, episode := range value.Episodes {
-			addRTFDateText(&evidence, episode.EpisodeAired)
+			addRTFDateText(&evidence, episode.EpisodeAired, includePartialYears)
 		}
 	}
 	if value := metadata.TVmaze; value != nil {
-		addRTFDateText(&evidence, value.Premiered)
-		addRTFDateText(&evidence, value.Ended)
+		addRTFDateText(&evidence, value.Premiered, includePartialYears)
+		addRTFDateText(&evidence, value.Ended, includePartialYears)
 	}
 	if value := metadata.AniList; value != nil {
-		evidence.addYear(value.SeasonYear)
-		addRTFDateText(&evidence, value.StartDate)
-		addRTFDateText(&evidence, value.EndDate)
+		if includePartialYears {
+			evidence.addYear(value.SeasonYear)
+		}
+		addRTFDateText(&evidence, value.StartDate, includePartialYears)
+		addRTFDateText(&evidence, value.EndDate, includePartialYears)
 		if value.NextAiringEpisode.AiringAt > 0 {
 			evidence.addDate(time.Unix(int64(value.NextAiringEpisode.AiringAt), 0))
 		}
@@ -161,9 +182,11 @@ func youngestRTFReleaseEvidence(release api.ReleaseInfo, metadata api.SourceScop
 	return evidence
 }
 
-func addRTFDateParts(evidence *rtfReleaseAgeEvidence, year, month, day int) {
-	evidence.addYear(year)
+func addRTFDateParts(evidence *rtfReleaseAgeEvidence, year, month, day int, includePartialYear bool) {
 	if year <= 0 || month <= 0 || day <= 0 {
+		if includePartialYear {
+			evidence.addYear(year)
+		}
 		return
 	}
 	value := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
@@ -173,12 +196,14 @@ func addRTFDateParts(evidence *rtfReleaseAgeEvidence, year, month, day int) {
 	evidence.addDate(value)
 }
 
-func addRTFDateText(evidence *rtfReleaseAgeEvidence, raw string) {
+func addRTFDateText(evidence *rtfReleaseAgeEvidence, raw string, includePartialYear bool) {
 	if value, ok := parseRTFDate(raw); ok {
 		evidence.addDate(value)
 		return
 	}
-	evidence.addYear(parseRTFYear(raw))
+	if includePartialYear {
+		evidence.addYear(parseRTFYear(raw))
+	}
 }
 
 func parseRTFDate(raw string) (time.Time, bool) {

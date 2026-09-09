@@ -382,3 +382,16 @@ func TestSceneLocalCandidates(t *testing.T) {
 		t.Fatalf("single-file file candidates = %v", single.files)
 	}
 }
+
+func TestSceneYearHonorsManualClear(t *testing.T) {
+	t.Parallel()
+
+	meta := preparationstate.State{
+		Release:              api.ReleaseInfo{Year: 2024},
+		ProviderMetadata:     api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Year: 2026}},
+		ReleaseNameOverrides: api.ReleaseNameOverrides{ManualYear: new(0)},
+	}
+	if got := sceneYear(meta); got != 0 {
+		t.Fatalf("manual clear scene year = %d", got)
+	}
+}

@@ -41,6 +41,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	if query == "" {
 		query = strings.TrimSpace(meta.ReleaseName)
 	}
+	query = meta.EffectiveMetadata.PreferredTitle(query)
 	if query == "" {
 		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing title for TL dupe search", nil)
 	}

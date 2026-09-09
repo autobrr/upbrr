@@ -98,3 +98,41 @@ func TestBuildNameUsesReleaseNameNoTagMarkers(t *testing.T) {
 		t.Fatalf("A4K FanRes name from ReleaseNameNoTag = %q, want %q", got, want)
 	}
 }
+
+func TestTitleAndYearHonorsEffectiveMetadata(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{
+		Release: api.ReleaseInfo{Title: "Canonical Title", Year: 2020},
+		ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{
+			Title:         "TMDB Title",
+			OriginalTitle: "TMDB Original",
+			Year:          2021,
+		}},
+	}
+	if title, year := titleAndYear(meta); title != "Canonical Title" || year != "2020" {
+		t.Fatalf("automatic canonical title/year = (%q, %q)", title, year)
+	}
+	meta.EffectiveMetadata = api.EffectiveMetadata{
+		Title:           "Manual Title",
+		TitleProvenance: api.FactProvenanceManual,
+		Year:            2030,
+		YearProvenance:  api.FactProvenanceManual,
+	}
+	if title, year := titleAndYear(meta); title != "Manual Title" || year != "2030" {
+		t.Fatalf("manual title/year = (%q, %q)", title, year)
+	}
+	meta.EffectiveMetadata = api.EffectiveMetadata{
+		TitleProvenance: api.FactProvenanceManualEmpty,
+		YearProvenance:  api.FactProvenanceManualEmpty,
+	}
+	if title, year := titleAndYear(meta); title != "" || year != "" {
+		t.Fatalf("manual empty title/year = (%q, %q)", title, year)
+	}
+	meta.EffectiveMetadata = api.EffectiveMetadata{}
+	meta.Release = api.ReleaseInfo{}
+	meta.ProviderMetadata.TMDB.Title = ""
+	if title, year := titleAndYear(meta); title != "TMDB Original" || year != "2021" {
+		t.Fatalf("automatic provider fallback title/year = (%q, %q)", title, year)
+	}
+}

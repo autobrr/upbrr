@@ -413,6 +413,9 @@ func releaseNameRequestFromMeta(meta preparationstate.State, logger api.Logger) 
 	}
 
 	title, altTitle, year := resolveReleaseNameTitle(category, meta)
+	if meta.ReleaseNameOverrides.ManualYear != nil {
+		year = *meta.ReleaseNameOverrides.ManualYear
+	}
 	searchYear := ""
 	if strings.EqualFold(category, "TV") && year > 0 {
 		title = trimTrailingParentheticalYear(title, year)

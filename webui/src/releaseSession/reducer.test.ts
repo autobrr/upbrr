@@ -2,7 +2,22 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { describe, expect, it } from "vitest";
-import { initialSessionState, sessionReducer } from "./reducer";
+import type { MetadataPreview } from "../types";
+import { emptyExternalIdentity } from "../utils/canonicalIdentity";
+import { correctionValuesFor, initialSessionState, sessionReducer } from "./reducer";
+
+const preview = (sourcePath: string, generation: number): MetadataPreview => ({
+  SourcePath: sourcePath,
+  TrackerName: "",
+  ReleaseName: "Example.Release.2026.1080p-GRP",
+  ReleaseNameOverrides: {},
+  Release: { SourcePath: sourcePath, Generation: generation },
+  Identity: { ...emptyExternalIdentity(sourcePath), Generation: generation },
+  Display: { ReleaseName: "Example.Release.2026.1080p-GRP", Providers: [] },
+  Bluray: null,
+  Diagnostics: [],
+  TrackerData: [],
+});
 
 describe("sessionReducer upload intent", () => {
   it("keeps duplicate decisions and questionnaire answers independent", () => {
@@ -117,5 +132,159 @@ describe("sessionReducer upload intent", () => {
       { ...suggestedSelections[0], TimestampSeconds: 30, Frame: 720 },
       suggestedSelections[1],
     ]);
+  });
+
+  it("tracks only changed correction values and keeps unrelated confirmations", () => {
+    let state = initialSessionState();
+    state = sessionReducer(state, {
+      type: "source_selected",
+      sourcePath: "C:\\media\\Example.mkv",
+    });
+    state = sessionReducer(state, {
+      type: "metadata_changed",
+      value: { Title: "Saved title" },
+    });
+    state = sessionReducer(state, {
+      type: "correction_confirmed",
+      field: { field: "metadata.title" },
+    });
+    state = sessionReducer(state, {
+      type: "metadata_changed",
+      value: { Title: "Saved title", Genres: ["Drama", "Mystery"] },
+    });
+
+    expect(state.correctionConfirmFields).toEqual([{ field: "metadata.title" }]);
+    expect(correctionValuesFor(state.preparationIntent, state.correctionValueFields)).toEqual({
+      Identity: {},
+      ReleaseName: {},
+      Metadata: { Genres: ["Drama", "Mystery"] },
+    });
+
+    state = sessionReducer(state, {
+      type: "correction_reset",
+      field: { field: "metadata.genres" },
+    });
+    expect(state.preparationIntent.metadata).toEqual({ Title: "Saved title" });
+    expect(state.correctionResetFields).toEqual([{ field: "metadata.genres" }]);
+    expect(state.correctionConfirmFields).toEqual([{ field: "metadata.title" }]);
+    expect(state.correctionValueFields).toEqual([]);
+  });
+
+  it("preserves a newer edit when an older preparation response succeeds", () => {
+    const sourcePath = "C:\\media\\Example.mkv";
+    let state = initialSessionState();
+    state = sessionReducer(state, { type: "source_selected", sourcePath });
+    state = sessionReducer(state, { type: "trackers_chosen", trackers: ["AITHER"] });
+    state = sessionReducer(state, {
+      type: "metadata_changed",
+      value: { Title: "Submitted title" },
+    });
+    const submittedRevision = state.inputEditRevision;
+    state = sessionReducer(state, {
+      type: "preparation_started",
+      sourcePath,
+      commandRevision: 2,
+      inputEditRevision: submittedRevision,
+      correlationID: "prepare-2",
+      intent: state.preparationIntent,
+    });
+    state = sessionReducer(state, {
+      type: "metadata_changed",
+      value: { Title: "Newer title" },
+    });
+    state = sessionReducer(state, {
+      type: "preparation_succeeded",
+      sourcePath,
+      commandRevision: 2,
+      correlationID: "prepare-2",
+      preview: preview(sourcePath, 2),
+      intent: {
+        ...state.preparationIntent,
+        metadata: { Title: "Submitted title" },
+      },
+    });
+
+    expect(state.preparationIntent.metadata).toEqual({ Title: "Newer title" });
+    expect(state.preparationDirty).toBe(true);
+    expect(state.correctionDirty).toBe(true);
+    expect(state.selectedTrackers).toEqual(["AITHER"]);
+    expect(state.correctionValueFields).toEqual([{ field: "metadata.title" }]);
+  });
+
+  it("clears accepted tracker answers while retaining deselected drafts", () => {
+    const sourcePath = "C:\\media\\Example.mkv";
+    let state = initialSessionState();
+    state = sessionReducer(state, { type: "source_selected", sourcePath });
+    state = sessionReducer(state, { type: "trackers_chosen", trackers: ["AITHER"] });
+    for (const tracker of ["AITHER", "PTP"]) {
+      state = sessionReducer(state, {
+        type: "tracker_input_answered",
+        tracker,
+        key: "choice",
+        value: "yes",
+      });
+    }
+    state = sessionReducer(state, {
+      type: "preparation_started",
+      sourcePath,
+      commandRevision: 1,
+      inputEditRevision: state.inputEditRevision,
+      correlationID: "prepare-1",
+      intent: state.preparationIntent,
+    });
+    state = sessionReducer(state, {
+      type: "preparation_succeeded",
+      sourcePath,
+      commandRevision: 1,
+      correlationID: "prepare-1",
+      preview: preview(sourcePath, 1),
+      intent: state.preparationIntent,
+      selectedTrackers: ["AITHER"],
+      trackerInputsAccepted: true,
+    });
+    expect(state.trackerInputAnswers).toEqual({ PTP: { choice: "yes" } });
+  });
+
+  it("accepts backend tracker selection only when no newer selection edit exists", () => {
+    const sourcePath = "C:\\media\\Example.mkv";
+    let state = initialSessionState();
+    state = sessionReducer(state, { type: "source_selected", sourcePath });
+    state = sessionReducer(state, { type: "trackers_chosen", trackers: ["AITHER"] });
+    state = sessionReducer(state, {
+      type: "preparation_started",
+      sourcePath,
+      commandRevision: 1,
+      inputEditRevision: state.inputEditRevision,
+      correlationID: "prepare-1",
+      intent: state.preparationIntent,
+    });
+    state = sessionReducer(state, {
+      type: "preparation_succeeded",
+      sourcePath,
+      commandRevision: 1,
+      correlationID: "prepare-1",
+      preview: preview(sourcePath, 1),
+      intent: state.preparationIntent,
+    });
+    expect(state.selectedTrackers).toEqual(["AITHER"]);
+
+    state = sessionReducer(state, {
+      type: "preparation_started",
+      sourcePath,
+      commandRevision: 2,
+      inputEditRevision: state.inputEditRevision,
+      correlationID: "prepare-2",
+      intent: state.preparationIntent,
+    });
+    state = sessionReducer(state, {
+      type: "preparation_succeeded",
+      sourcePath,
+      commandRevision: 2,
+      correlationID: "prepare-2",
+      preview: preview(sourcePath, 2),
+      intent: state.preparationIntent,
+      selectedTrackers: ["BLU"],
+    });
+    expect(state.selectedTrackers).toEqual(["BLU"]);
   });
 });

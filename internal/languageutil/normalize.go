@@ -43,6 +43,84 @@ func NormalizeLanguageDisplay(value string) string {
 	return baseDisplayName(name)
 }
 
+// NormalizeLanguageCode resolves a complete language code or English display
+// name to its ISO 639 base code. Blank and unrecognized inputs return empty.
+func NormalizeLanguageCode(value string) string {
+	langTag, ok := resolveCompleteLanguageTag(value)
+	if !ok {
+		return ""
+	}
+	base, _ := langTag.Base()
+	return base.String()
+}
+
+// NormalizeLanguageList splits comma-separated entries, normalizes recognized
+// labels, preserves unknown nonempty labels, and removes duplicates in order.
+func NormalizeLanguageList(values []string) []string {
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		for part := range strings.SplitSeq(value, ",") {
+			label := strings.TrimSpace(part)
+			if label == "" {
+				continue
+			}
+			if normalized := NormalizeLanguageLabel(label); normalized != "" {
+				label = normalized
+			}
+			key := strings.ToLower(label)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			result = append(result, label)
+		}
+	}
+	return result
+}
+
+// NormalizeLanguageLabel resolves a complete language code or English display
+// name to its complete English base-language label. Blank and unrecognized
+// inputs return empty.
+func NormalizeLanguageLabel(value string) string {
+	if tag, ok := resolveCompleteLanguageTag(value); ok {
+		return languageDisplayName(tag)
+	}
+	return ""
+}
+
+func languageDisplayName(langTag language.Tag) string {
+	base, _ := langTag.Base()
+	switch base.String() {
+	case "mul":
+		return "Multiple Languages"
+	case "zxx":
+		return "ZXX"
+	}
+	name := strings.TrimSpace(display.Languages(language.English).Name(language.Make(base.String())))
+	if name == "" {
+		return ""
+	}
+	return name
+}
+func resolveCompleteLanguageTag(value string) (language.Tag, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return language.Tag{}, false
+	}
+	if strings.EqualFold(trimmed, "Multiple Languages") {
+		return language.Make("mul"), true
+	}
+	tag, ok := lookupLanguageTagByName(trimmed)
+	if !ok {
+		tag, ok = resolveLanguageTag(trimmed)
+	}
+	if !ok {
+		return language.Tag{}, false
+	}
+	_, confidence := tag.Base()
+	return tag, confidence == language.Exact
+}
 func normalizeLanguageToken(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {

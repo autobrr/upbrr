@@ -58,6 +58,7 @@ const workflowCurrent = (workflowID: string, revision: number): ReleaseWorkflowC
     disposition: "none",
     refs: {},
     availableGoals: [
+      "input_ready",
       "prepared",
       "trackers_assessed",
       "duplicates_decided",
@@ -194,6 +195,7 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
 
     switch (request.goal) {
       case "prepared":
+      case "input_ready":
         if (!request.authority && step === 0) {
           const instructions =
             request.intent.factInstructions || request.intent.preparation?.Instructions;
@@ -733,7 +735,287 @@ describe("useReleaseSession", () => {
       id: "workflow-retained",
       revision: 7,
     });
-    expect(result.current.upload.view.selectedTrackers).toEqual(["AITHER"]);
+    await waitFor(() => expect(result.current.upload.view.selectedTrackers).toEqual(["AITHER"]));
+
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("sends correction and tracker-answer patches separately while preparing effective facts", async () => {
+    const workflowID = "workflow-input-edit";
+    const sourcePath = "C:\\media\\Example.mkv";
+    let selectedTrackers: readonly string[] = ["PTP"];
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const initialFacts = workflowCurrent(workflowID, 7).factInstructions!;
+    let current = {
+      ...workflowCurrentFromPreview(workflowCurrent(workflowID, 7), preview(sourcePath, 1)),
+      selection: {
+        id: "selection-input",
+        workflowId: workflowID,
+        revision: 3,
+        catalog: { id: "catalog-input", revision: 1 },
+        runtime: { id: "runtime-input", revision: 1 },
+        trackerIds: ["STALE"],
+        fingerprint: "3".repeat(64),
+        createdAt: "2026-09-09T00:00:00Z",
+      },
+      factInstructions: {
+        ...initialFacts,
+        correctionRevision: 3,
+        instructions: { ...initialFacts.instructions, Metadata: { Title: "Stored title" } },
+      },
+      corrections: {
+        revision: 3,
+        corrections: {
+          version: 1,
+          identity: {},
+          releaseName: {},
+          metadata: { Title: "Stored title" },
+        },
+      },
+    } as unknown as ReleaseWorkflowCurrent;
+    const inputReadiness = (value: string) =>
+      ({
+        id: `input-readiness-${current.workflow.revision}`,
+        workflowId: workflowID,
+        revision: current.workflow.revision,
+        release: {
+          SourcePath: sourcePath,
+          Generation: current.release!.release.Generation,
+        },
+        factInstructions: current.workflow.factInstructions!,
+        correctionRevision: current.corrections!.revision,
+        selectedTrackerIds: selectedTrackers,
+        requirementsFingerprint: "4".repeat(64),
+        fields: [],
+        schemas: [
+          {
+            Tracker: "PTP",
+            Fields: [
+              {
+                Key: "no_english_subtitles",
+                Label: "No English subtitles",
+                Kind: "select",
+                Options: ["auto", "yes", "no"],
+                Value: value,
+                Placeholder: "",
+                Help: "",
+                Required: true,
+              },
+            ],
+          },
+        ],
+        status: "completed",
+        createdAt: "2026-09-09T00:00:00Z",
+      }) as NonNullable<ReleaseWorkflowCurrent["inputReadiness"]>;
+    current = { ...current, inputReadiness: inputReadiness("auto") };
+
+    const continueWorkflow = vi.fn(
+      async (request: ContinueReleaseWorkflowRequest): Promise<ReleaseWorkflowCurrent> => {
+        if (request.intent.correctionPatch) {
+          const factRevision = current.factInstructions!.revision + 1;
+          current = {
+            ...current,
+            workflow: {
+              ...current.workflow,
+              revision: current.workflow.revision + 1,
+              factInstructions: { id: `${workflowID}-facts`, revision: factRevision },
+              inputReadiness: undefined,
+            },
+            factInstructions: {
+              ...current.factInstructions!,
+              revision: factRevision,
+              correctionRevision: 4,
+              instructions: {
+                ...current.factInstructions!.instructions,
+                Metadata: { Title: "Edited title" },
+              },
+            },
+            corrections: {
+              revision: 4,
+              corrections: {
+                version: 1,
+                identity: {},
+                releaseName: {},
+                metadata: { Title: "Edited title" },
+              },
+            },
+            inputReadiness: undefined,
+          } as ReleaseWorkflowCurrent;
+          return current;
+        }
+        if (request.intent.preparation) {
+          selectedTrackers = request.intent.trackerIds ?? selectedTrackers;
+          current = workflowCurrentFromPreview(
+            {
+              ...current,
+              workflow: { ...current.workflow, revision: current.workflow.revision + 1 },
+            },
+            preview(sourcePath, 2),
+          );
+          current = {
+            ...current,
+            factInstructions: {
+              ...current.factInstructions!,
+              instructions: request.intent.preparation.Instructions,
+            },
+          };
+          current = { ...current, inputReadiness: inputReadiness("auto") };
+          return current;
+        }
+        if (request.intent.trackerInputAnswers) {
+          expect(
+            Object.keys(request.intent.trackerInputAnswers).every((tracker) =>
+              selectedTrackers.includes(tracker),
+            ),
+          ).toBe(true);
+          const value =
+            request.intent.trackerInputAnswers.PTP?.no_english_subtitles === "yes" ? "yes" : "auto";
+          if (current.inputReadiness?.schemas?.[0]?.Fields[0]?.Value === value) return current;
+          current = {
+            ...current,
+            workflow: { ...current.workflow, revision: current.workflow.revision + 1 },
+          };
+          current = { ...current, inputReadiness: inputReadiness(value) };
+          return current;
+        }
+        if (!current.inputReadiness) {
+          current = {
+            ...current,
+            workflow: { ...current.workflow, revision: current.workflow.revision + 1 },
+          };
+          current = { ...current, inputReadiness: inputReadiness("auto") };
+          return current;
+        }
+        return current;
+      },
+    );
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          workflow: workflowPorts({
+            current: async () => current,
+            continue: continueWorkflow,
+          }),
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.input.view.status).toBe("ready"));
+    expect(result.current.input.view.selectedTrackers).toEqual(["PTP"]);
+
+    act(() => result.current.input.changeMetadata({ Title: "Edited title" }));
+    act(() => result.current.input.changeSourceLookupURL("https://example.invalid/source"));
+    act(() => result.current.input.changeTrackerSourceID("PTP", "123"));
+    act(() =>
+      result.current.input.changePreparationPolicy({
+        keepFolder: false,
+        keepImages: true,
+        onlyID: false,
+      }),
+    );
+    act(() => result.current.input.changeClientSearch({ skip: false, client: "Search name" }));
+    act(() => result.current.input.changeTrackerInputAnswer("PTP", "no_english_subtitles", "yes"));
+    await act(async () => {
+      expect(await result.current.input.prepare()).toBe(true);
+    });
+
+    const requests = continueWorkflow.mock.calls.map(([request]) => request);
+    const correctionIndex = requests.findIndex((request) =>
+      Boolean(request.intent.correctionPatch),
+    );
+    expect(correctionIndex).toBeGreaterThanOrEqual(0);
+    expect(requests[correctionIndex].intent).toMatchObject({
+      correctionPatch: {
+        values: {
+          Identity: {},
+          ReleaseName: {},
+          Metadata: { Title: "Edited title" },
+        },
+        resetFields: [],
+        confirmFields: [],
+        expectedRevision: 3,
+      },
+      preparation: {
+        Instructions: { Identity: {}, ReleaseName: {}, Metadata: {} },
+      },
+      trackerIds: ["PTP"],
+    });
+    expect(requests[correctionIndex + 1].intent.correctionPatch).toBeUndefined();
+    expect(requests[correctionIndex + 1].intent.preparation?.Instructions.Metadata).toEqual({
+      Title: "Edited title",
+    });
+    expect(requests[correctionIndex + 1].intent.preparation).toMatchObject({
+      Instructions: {
+        SourceLookup: "https://example.invalid/source",
+        TrackerIDs: { PTP: "123" },
+      },
+      Policy: { KeepImages: true },
+      Search: { Skip: false, Client: "Search name" },
+    });
+    const answerRequest = requests.find((request) => request.intent.trackerInputAnswers);
+    expect(answerRequest?.intent).toMatchObject({
+      trackerInputAnswers: { PTP: { no_english_subtitles: "yes" } },
+    });
+    expect(answerRequest?.intent.correctionPatch).toBeUndefined();
+    expect(answerRequest?.intent.preparation).toBeUndefined();
+    expect(
+      requests.every(
+        (request) =>
+          !request.intent.correctionPatch || request.intent.trackerInputAnswers === undefined,
+      ),
+    ).toBe(true);
+    expect(result.current.input.view.intent.metadata.Title).toBe("Edited title");
+    expect(result.current.input.view.intent).toMatchObject({
+      sourceLookupURL: "https://example.invalid/source",
+      trackerSourceIDs: { PTP: "123" },
+      policy: { keepImages: true },
+      search: { skip: false, client: "Search name" },
+    });
+    expect(result.current.input.view.readiness?.schemas?.[0]?.Fields[0]?.Value).toBe("yes");
+
+    const acceptedCallCount = continueWorkflow.mock.calls.length;
+    act(() => result.current.input.changeTrackerInputAnswer("PTP", "no_english_subtitles", null));
+    expect(result.current.input.view.trackerInputAnswers).toEqual({
+      PTP: { no_english_subtitles: null },
+    });
+    await act(async () => {
+      expect(await result.current.input.prepare()).toBe(true);
+    });
+    const resetAnswerRequest = continueWorkflow.mock.calls
+      .slice(acceptedCallCount)
+      .map(([request]) => request)
+      .find((request) => request.intent.trackerInputAnswers);
+    expect(resetAnswerRequest?.intent.trackerInputAnswers).toEqual({
+      PTP: { no_english_subtitles: null },
+    });
+    expect(result.current.input.view.readiness?.schemas?.[0]?.Fields[0]?.Value).toBe("auto");
+
+    act(() => result.current.input.changeTrackerInputAnswer("PTP", "no_english_subtitles", "yes"));
+    act(() => result.current.duplicates.chooseTrackers(["AITHER"]));
+    const deselectedCallCount = continueWorkflow.mock.calls.length;
+    await act(async () => {
+      expect(await result.current.input.prepare()).toBe(true);
+    });
+    expect(
+      continueWorkflow.mock.calls
+        .slice(deselectedCallCount)
+        .some(([request]) => request.intent.trackerInputAnswers),
+    ).toBe(false);
+    expect(result.current.input.view.trackerInputAnswers).toEqual({
+      PTP: { no_english_subtitles: "yes" },
+    });
+
+    act(() => result.current.duplicates.chooseTrackers(["PTP"]));
+    const reselectedCallCount = continueWorkflow.mock.calls.length;
+    await act(async () => {
+      expect(await result.current.input.prepare()).toBe(true);
+    });
+    expect(
+      continueWorkflow.mock.calls
+        .slice(reselectedCallCount)
+        .find(([request]) => request.intent.trackerInputAnswers)?.[0].intent.trackerInputAnswers,
+    ).toEqual({ PTP: { no_english_subtitles: "yes" } });
+    expect(result.current.input.view.trackerInputAnswers).toEqual({});
 
     unmount();
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
@@ -2357,7 +2639,7 @@ describe("useReleaseSession", () => {
     ]);
   });
 
-  it("preserves explicit-empty tracker intent and blocks duplicate start", async () => {
+  it("marks Input dirty while backend reconciliation accepts a changed tracker selection", async () => {
     const { result } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(portsFor()),
     });
@@ -2376,7 +2658,7 @@ describe("useReleaseSession", () => {
     );
 
     act(() => result.current.duplicates.chooseTrackers(["AITHER"]));
-    expect(result.current.input.view.preparationDirty).toBe(false);
+    expect(result.current.input.view.preparationDirty).toBe(true);
     await act(async () => {
       started = await result.current.duplicates.run();
     });

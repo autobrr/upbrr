@@ -104,14 +104,18 @@ func buildAIName(meta api.UploadSubject) string {
 func titleAndYear(meta api.UploadSubject) (string, string) {
 	title := strings.TrimSpace(meta.Release.Title)
 	tmdb := meta.ProviderMetadata.TMDB
-	if title == "" && tmdb != nil {
+	if meta.EffectiveMetadata.TitleProvenance.IsManual() {
+		title = strings.TrimSpace(meta.EffectiveMetadata.Title)
+	} else if title == "" && tmdb != nil {
 		title = strings.TrimSpace(tmdb.Title)
-	}
-	if title == "" && tmdb != nil {
-		title = strings.TrimSpace(tmdb.OriginalTitle)
+		if title == "" {
+			title = strings.TrimSpace(tmdb.OriginalTitle)
+		}
 	}
 	year := meta.Release.Year
-	if year == 0 && tmdb != nil {
+	if meta.EffectiveMetadata.YearProvenance.IsManual() {
+		year = meta.EffectiveMetadata.Year
+	} else if year == 0 && tmdb != nil {
 		year = tmdb.Year
 	}
 	if year == 0 {

@@ -115,7 +115,7 @@ test("embedded web reload restores the authoritative prepared workflow", async (
   }
 });
 
-test("embedded web removes and restores a metadata provider ID", async ({ page }) => {
+test("embedded web distinguishes a cleared metadata provider ID from Auto", async ({ page }) => {
   const workspace = await createE2EWorkspace();
   let app: AppServer | undefined;
   try {
@@ -123,15 +123,18 @@ test("embedded web removes and restores a metadata provider ID", async ({ page }
     await fetchMetadata(page, app.url, workspace.sourcePath);
 
     await page.getByText("Edit Release Details", { exact: true }).click();
-    await expect(page.getByRole("textbox", { name: "MAL ID" })).toHaveValue("");
-    await page.getByRole("button", { name: "Remove MAL ID" }).click();
-    const removed = page.waitForResponse((response) =>
+    const malRow = page.locator('[data-correction-field="identity.mal"]');
+    const malInput = page.getByRole("spinbutton", { name: "MAL ID" });
+    await expect(malInput).toHaveValue("");
+    await expect(malRow.getByText("Automatic value", { exact: true })).toBeVisible();
+    await malInput.fill("0");
+    const cleared = page.waitForResponse((response) =>
       response.url().includes("/api/app/ContinueReleaseWorkflow"),
     );
     await page.getByRole("button", { name: "Refresh metadata" }).click();
-    await expect((await removed).ok()).toBe(true);
+    await expect((await cleared).ok()).toBe(true);
     await expect(page.getByRole("progressbar")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Remove MAL ID" })).toBeDisabled();
+    await expect(malRow.getByText("Manual value", { exact: true })).toBeVisible();
 
     const restored = page.waitForResponse((response) =>
       response.url().includes("/api/app/GetReleaseWorkflow"),
@@ -139,18 +142,165 @@ test("embedded web removes and restores a metadata provider ID", async ({ page }
     await page.reload();
     await expect((await restored).ok()).toBe(true);
     await page.getByText("Edit Release Details", { exact: true }).click();
-    await expect(page.getByRole("textbox", { name: "MAL ID" })).toHaveValue("");
-    await expect(page.getByRole("button", { name: "Remove MAL ID" })).toBeDisabled();
+    await expect(malInput).toHaveValue("");
+    await expect(malRow.getByText("Manual value", { exact: true })).toBeVisible();
 
-    await page.getByRole("textbox", { name: "MAL ID" }).fill("5114");
-    await expect(page.getByRole("button", { name: "Remove MAL ID" })).toBeEnabled();
+    await page.getByRole("button", { name: "Auto MAL ID" }).click();
+    const reset = page.waitForResponse((response) =>
+      response.url().includes("/api/app/ContinueReleaseWorkflow"),
+    );
+    await page.getByRole("button", { name: "Refresh metadata" }).click();
+    await expect((await reset).ok()).toBe(true);
+    await expect(page.getByRole("progressbar")).toHaveCount(0);
+    await expect(malRow.getByText("Automatic value", { exact: true })).toBeVisible();
+
+    await malInput.fill("5114");
     const restoredID = page.waitForResponse((response) =>
       response.url().includes("/api/app/ContinueReleaseWorkflow"),
     );
     await page.getByRole("button", { name: "Refresh metadata" }).click();
     await expect((await restoredID).ok()).toBe(true);
     await expect(page.getByRole("progressbar")).toHaveCount(0);
-    await expect(page.getByRole("textbox", { name: "MAL ID" })).toHaveValue("5114");
+    await expect(malInput).toHaveValue("5114");
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("embedded web retains Input corrections without downstream workflow calls", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await expect.poll(() => workspace.fake.counters.clientSearches).toBe(1);
+    const initialCounters = { ...workspace.fake.counters };
+    const workflowRequests: Array<{ method: string; body: Record<string, unknown> }> = [];
+    page.on("request", (request) => {
+      const method = new URL(request.url()).pathname.split("/").pop() || "";
+      if (!method.includes("ReleaseWorkflow")) return;
+      let body: Record<string, unknown> = {};
+      try {
+        body = request.postDataJSON() as Record<string, unknown>;
+      } catch {
+        // GET-style workflow resource requests do not carry JSON.
+      }
+      workflowRequests.push({ method, body });
+    });
+
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    const inputEditor = page.getByTestId("input-correction-editor");
+    const dupeCheck = page.getByRole("button", { name: "Dupe Check" });
+    for (const group of [
+      "Provider IDs",
+      "Release name",
+      "Metadata and languages",
+      "Inspected tracks",
+      "Source options",
+      "Input readiness",
+    ]) {
+      await expect(inputEditor.getByText(group, { exact: true })).toBeVisible();
+    }
+    const skipClientSearch = page.getByRole("checkbox", { name: "Skip client search" });
+    await skipClientSearch.check();
+    const commentary = page.getByRole("combobox", { name: "Commentary" });
+    await commentary.selectOption({ label: "No" });
+    const saved = page.waitForResponse((response) =>
+      response.url().includes("/api/app/ContinueReleaseWorkflow"),
+    );
+    await page.getByRole("button", { name: "Refresh metadata" }).click();
+    await expect((await saved).ok()).toBe(true);
+    await expect(dupeCheck).toBeEnabled();
+    await expect(commentary).toHaveValue("no");
+    const setCommand = workflowRequests.findLast(
+      (request) =>
+        request.method === "ContinueReleaseWorkflow" &&
+        (request.body.intent as { correctionPatch?: unknown } | undefined)?.correctionPatch,
+    );
+    expect(setCommand?.body.goal).toBe("input_ready");
+    expect(
+      (setCommand?.body.intent as { correctionPatch?: { expectedRevision?: number } })
+        ?.correctionPatch?.expectedRevision ?? -1,
+    ).toBeGreaterThanOrEqual(0);
+    expect(workspace.fake.counters).toEqual(initialCounters);
+
+    const restored = page.waitForResponse((response) =>
+      response.url().includes("/api/app/GetReleaseWorkflow"),
+    );
+    await page.reload();
+    await expect((await restored).ok()).toBe(true);
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    await expect(commentary).toHaveValue("no");
+    await page.getByLabel("Source path", { exact: true }).click();
+    await expect(page.getByRole("listbox", { name: "Source path history" })).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    await commentary.selectOption({ label: "Auto" });
+    await skipClientSearch.check();
+    const reset = page.waitForResponse((response) =>
+      response.url().includes("/api/app/ContinueReleaseWorkflow"),
+    );
+    await page.getByRole("button", { name: "Refresh metadata" }).click();
+    await expect((await reset).ok()).toBe(true);
+    await expect(dupeCheck).toBeEnabled();
+    const resetCommand = workflowRequests.findLast(
+      (request) =>
+        request.method === "ContinueReleaseWorkflow" &&
+        Array.isArray(
+          (request.body.intent as { correctionPatch?: { resetFields?: unknown } } | undefined)
+            ?.correctionPatch?.resetFields,
+        ),
+    );
+    expect(
+      (
+        resetCommand?.body.intent as {
+          correctionPatch?: { resetFields?: Array<{ field: string }> };
+        }
+      )?.correctionPatch?.resetFields,
+    ).toContainEqual({ field: "metadata.commentary" });
+
+    await commentary.selectOption({ label: "No" });
+    await skipClientSearch.check();
+    const retained = page.waitForResponse((response) =>
+      response.url().includes("/api/app/ContinueReleaseWorkflow"),
+    );
+    await page.getByRole("button", { name: "Refresh metadata" }).click();
+    await expect((await retained).ok()).toBe(true);
+    await expect(dupeCheck).toBeEnabled();
+    const lastContinue = workflowRequests.findLast(
+      (request) => request.method === "ContinueReleaseWorkflow",
+    );
+    const workflowID = (lastContinue?.body.authority as { workflowId?: unknown } | undefined)
+      ?.workflowId;
+    if (typeof workflowID !== "string" || workflowID === "") {
+      throw new Error("workflow ID missing from Input correction request");
+    }
+
+    for (const request of workflowRequests) {
+      if (request.method === "ContinueReleaseWorkflow")
+        expect(request.body.goal).toBe("input_ready");
+      expect([
+        "ContinueReleaseWorkflow",
+        "GetReleaseWorkflow",
+        "GetReleaseWorkflowOperation",
+      ]).toContain(request.method);
+    }
+    expect(workspace.fake.counters).toEqual(initialCounters);
+
+    await app.stop();
+    app = await startApp(workspace, { seed: false });
+    await page.goto(app.url);
+    await page.evaluate(
+      (id) => sessionStorage.setItem("upbrr.activeReleaseWorkflow", id),
+      workflowID,
+    );
+    await page.reload();
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    await expect(page.getByRole("combobox", { name: "Commentary" })).toHaveValue("no");
+    expect(workspace.fake.counters).toEqual(initialCounters);
   } finally {
     await app?.stop();
     await workspace.cleanup();

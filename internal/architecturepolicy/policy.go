@@ -259,6 +259,11 @@ func CheckRepository(root string) ([]Violation, error) {
 	if err != nil {
 		return nil, fmt.Errorf("scan repository: %w", err)
 	}
+	providerViolations, err := checkProviderMetadata(root)
+	if err != nil {
+		return nil, err
+	}
+	violations = append(violations, providerViolations...)
 	slices.SortFunc(violations, func(left, right Violation) int {
 		if result := strings.Compare(left.File, right.File); result != 0 {
 			return result

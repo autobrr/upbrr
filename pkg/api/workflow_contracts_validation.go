@@ -66,7 +66,13 @@ func (s ReleaseFactInstructionSnapshot) ComputeFingerprint() (WorkflowFingerprin
 	if err != nil {
 		return "", err
 	}
-	return CanonicalWorkflowFingerprint(normalized.Instructions)
+	if normalized.CorrectionRevision == 0 {
+		return CanonicalWorkflowFingerprint(normalized.Instructions)
+	}
+	return CanonicalWorkflowFingerprint(struct {
+		Instructions       ReleaseFactInstructions
+		CorrectionRevision uint64
+	}{normalized.Instructions, normalized.CorrectionRevision})
 }
 
 // WithFingerprint returns a normalized snapshot with its deterministic fingerprint populated.
@@ -1608,6 +1614,14 @@ func (w ReleaseWorkflow) Validate() error {
 	}
 	if w.Selection != nil && (w.TrackerCatalog == nil || w.TrackerRuntime == nil) {
 		return errors.New("tracker selection requires catalog and runtime snapshots")
+	}
+	if w.InputReadiness != nil {
+		if err := validateTypedRef(w.InputReadiness.ID, w.InputReadiness.Revision, "input readiness"); err != nil {
+			return fmt.Errorf("release workflow: %w", err)
+		}
+		if w.Release == nil {
+			return errors.New("input readiness requires a release snapshot")
+		}
 	}
 	if w.TrackerProjections != nil && (w.Release == nil || w.Selection == nil || w.TrackerCatalog == nil || w.TrackerRuntime == nil) {
 		return errors.New("tracker projections require release, catalog, runtime, and selection")

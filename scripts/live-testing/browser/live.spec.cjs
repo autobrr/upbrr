@@ -11,6 +11,7 @@ test('owned embedded live runtime, controls, local images, and selection persist
   const privateRoot = path.join(process.env.LOCALAPPDATA, 'upbrr-live-testing', 'runs') + path.sep;
   if (!path.resolve(runDir).toLowerCase().startsWith(privateRoot.toLowerCase())) throw new Error('private_run_directory_required');
   const handoff = JSON.parse(fs.readFileSync(path.join(runDir, 'browser.private.json'), 'utf8'));
+  test.skip(handoff.suite === 'Input', 'Input uses the DOM-only correction lane.');
   if (handoff.baseURL !== 'http://127.0.0.1:7480' || !Number.isInteger(handoff.process.pid)) throw new Error('live_origin_or_process_invalid');
   if (fs.existsSync(path.join(runDir, 'cleanup-started'))) throw new Error('cleanup_already_started');
   // Check the current OS process/listener as well as the HTTP identity before touching the application.

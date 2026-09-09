@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/description"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/redaction"
@@ -634,7 +635,7 @@ func (s *Service) preparationInput(
 			BTNAPIToken: config.ResolveBTNAPIToken(s.cfg),
 		},
 		Logger: logger,
-		Assets: assets,
+		Assets: appendManualLanguagesToDescriptionAssets(assets, meta.ManualLanguages),
 	}
 	selectedHost, err := PreferredImageUploadHostWithRegistry(s.registry, tracker, trackerCfg, meta.ImageHostOverrides)
 	if err != nil {
@@ -649,6 +650,29 @@ func (s *Service) preparationInput(
 		}
 	}
 	return input
+}
+
+func appendManualLanguagesToDescriptionAssets(assets *DescriptionAssets, languages api.ManualLanguageFacts) *DescriptionAssets {
+	block := description.ManualLanguageBlock(languages)
+	if block == "" {
+		return assets
+	}
+	if assets == nil {
+		return &DescriptionAssets{Description: block}
+	}
+	cloned, err := PreparedDescriptionAssets(assets)
+	if err != nil {
+		return assets
+	}
+	if cloned.Override || cloned.Final {
+		return &cloned
+	}
+	if cloned.Description == "" {
+		cloned.Description = block
+	} else {
+		cloned.Description += "\n\n" + block
+	}
+	return &cloned
 }
 
 func (s *Service) createPendingRecords(ctx context.Context, meta api.UploadSubject, slots []trackerPlanSlot) {

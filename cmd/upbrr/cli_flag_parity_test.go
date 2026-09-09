@@ -21,8 +21,8 @@ func TestEveryCanonicalCLIFlagIsClassifiedForCompositeUpload(t *testing.T) {
 
 	registered := commandFlagNames(newUploadRootCommand(cliIO{}, nil).Flags())
 	aliases := cliFlagAliases()
-	if len(registered) != 152 || len(aliases) != 53 {
-		t.Fatalf("upload flag inventory: registered=%d aliases=%d, want 152 and 53", len(registered), len(aliases))
+	if len(registered) != 169 || len(aliases) != 54 {
+		t.Fatalf("upload flag inventory: registered=%d aliases=%d, want 169 and 54", len(registered), len(aliases))
 	}
 	for alias, target := range aliases {
 		if _, exists := registered[alias]; !exists {
@@ -39,8 +39,8 @@ func TestEveryCanonicalCLIFlagIsClassifiedForCompositeUpload(t *testing.T) {
 		}
 		canonical[name] = struct{}{}
 	}
-	if len(canonical) != 99 {
-		t.Fatalf("canonical upload flags=%d, want 99", len(canonical))
+	if len(canonical) != 115 {
+		t.Fatalf("canonical upload flags=%d, want 115", len(canonical))
 	}
 
 	classified := cliCompositeFlagManifest()
@@ -91,6 +91,9 @@ func TestServeAndAPITokenFlagsStayOutsideUploadManifest(t *testing.T) {
 func cliCompositeFlagManifest() map[string]cliCompositeFlagClass {
 	mapped := []string{
 		"aither",
+		"anime",
+		"alternate-title",
+		"audio-languages",
 		"anon",
 		"asian",
 		"bhd",
@@ -100,6 +103,7 @@ func cliCompositeFlagManifest() map[string]cliCompositeFlagClass {
 		"channel",
 		"client",
 		"commentary",
+		"confirm-input",
 		"comparison",
 		"comparison_index",
 		"daily",
@@ -117,9 +121,13 @@ func cliCompositeFlagManifest() map[string]cliCompositeFlagClass {
 		"force-recheck",
 		"foreign",
 		"get-dvd-menus",
+		"genres",
+		"hardcoded-subs",
+		"hardcoded-subtitle-languages",
 		"hdb",
 		"imdb",
 		"imghost",
+		"input-only",
 		"infohash",
 		"keep-folder",
 		"log-level",
@@ -146,11 +154,13 @@ func cliCompositeFlagManifest() map[string]cliCompositeFlagClass {
 		"onlyID",
 		"opera",
 		"original-language",
+		"original-title",
 		"personalrelease",
 		"ptp",
 		"qbit-cat",
 		"qbit-tag",
 		"region",
+		"reset-input",
 		"rehash",
 		"resolution",
 		"screens",
@@ -163,8 +173,13 @@ func cliCompositeFlagManifest() map[string]cliCompositeFlagClass {
 		"skip-dupe-check",
 		"skip-imagehost-upload",
 		"source",
+		"source-lookup",
 		"stream",
+		"subtitle-languages",
 		"tag",
+		"title",
+		"track-languages",
+		"tracker-input",
 		"tmdb",
 		"trackers",
 		"trackers-remove",
@@ -172,6 +187,7 @@ func cliCompositeFlagManifest() map[string]cliCompositeFlagClass {
 		"tvmaze",
 		"type",
 		"ulcx",
+		"use-season-episode",
 		"unattended",
 		"unattended_confirm",
 		"upload-only",

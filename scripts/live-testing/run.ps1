@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 [CmdletBinding(DefaultParameterSetName = 'New')]
 param(
-  [Parameter(ParameterSetName = 'New')][ValidateSet('Smoke', 'Screenshots', 'Dupe', 'Full')][string]$Suite = 'Smoke',
+  [Parameter(ParameterSetName = 'New')][ValidateSet('Smoke', 'Screenshots', 'Dupe', 'Full', 'Input')][string]$Suite = 'Smoke',
   [Parameter(ParameterSetName = 'New')][ValidatePattern('^[A-Z0-9]+$')][string]$Tracker,
   [Parameter(ParameterSetName = 'New')][string[]]$CaseId,
   [Parameter(ParameterSetName = 'New')][switch]$Sat,
@@ -34,11 +34,17 @@ $exitCode = 0; $script:Run = $null; $script:RunDir = $null
 
 try {
   if ($PSCmdlet.ParameterSetName -eq 'New') {
+    if ($Suite -eq 'Input') {
+      foreach ($name in @('DebugCoverage', 'UploadImages', 'UseConfiguredHosts', 'ImageHostCoverage', 'MaxImages', 'ScreenshotCount')) {
+        if ($PSBoundParameters.ContainsKey($name)) { throw 'input_suite_incompatible_flag' }
+      }
+      $SkipDupes = $true
+    }
     if ($ImageHostCoverage) { $UploadImages = $true }
     $Corpus = Assert-PrivatePath $Corpus $privateRoot
     $scenariosSHA256 = (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'scenarios.json')).Hash
     $scenarios = Read-PrivateJson (Join-Path $PSScriptRoot 'scenarios.json')
-    $selected = switch ($Suite) { 'Smoke' { $scenarios.smoke }; 'Dupe' { $scenarios.dupe }; default { $scenarios.screenshots } }
+    $selected = switch ($Suite) { 'Smoke' { $scenarios.smoke }; 'Dupe' { $scenarios.dupe }; 'Input' { $scenarios.input }; default { $scenarios.screenshots } }
     if ($CaseId) {
       $selected = @($CaseId | Select-Object -Unique)
     }
@@ -172,6 +178,10 @@ try {
     }
   }
 
+  if (-not $CleanupRun -and $script:Run.suite -eq 'Input') {
+    if (-not $script:Run.skipRemoteDuplicates -or $script:Run.executionMode -ne 'normal' -or $script:Run.budgets.maxImages -ne 0 -or $script:Run.imageHostCoverage) { throw 'input_saved_run_policy_invalid' }
+  }
+
   if (-not $CleanupRun) {
     $started = Start-VerifiedServer $profile
     $server = $started.handle; $processRecord = $started.process; $info = $started.info
@@ -179,10 +189,12 @@ try {
     Write-PrivateJson (Join-Path $script:RunDir 'run.json') $script:Run
     Write-Host "run=$runID ready=verified intendedTrackers=$($script:Run.selectedTrackers.Count) availableTrackers=$($script:Run.availableTrackers.Count) unavailableTrackers=$($script:Run.unavailableTrackers.Count) mode=$($script:Run.executionMode)"
     $initialCounters = $info.testRuntime
-    # One separately counted refusal proves the outer guard. It has valid request shape but no existing workflow.
-    Invoke-LiveAPI 'ContinueReleaseWorkflow' @{ idempotencyKey = [guid]::NewGuid().ToString('N'); goal = 'uploaded'; intent = @{ preparation = @{ SourcePath = 'live-test-negative-control' }; noSeed = $false } } -ExpectedStatus 403
-    $script:Run.expectedSafetyDenials++
-    Add-Result '' '' 'submission_negative_control' 'pass' 'http_403_expected'
+    # Input omits the deliberate submission denial so runtime mutation counters remain attributable to unexpected calls.
+    if ($script:Run.suite -ne 'Input') {
+      Invoke-LiveAPI 'ContinueReleaseWorkflow' @{ idempotencyKey = [guid]::NewGuid().ToString('N'); goal = 'uploaded'; intent = @{ preparation = @{ SourcePath = 'live-test-negative-control' }; noSeed = $false } } -ExpectedStatus 403
+      $script:Run.expectedSafetyDenials++
+      Add-Result '' '' 'submission_negative_control' 'pass' 'http_403_expected'
+    }
 
     if ($ResumeRun) {
       Write-PrivateJson (Join-Path $script:RunDir ('feedback-input-' + [guid]::NewGuid().ToString('N') + '.private.json')) $script:Feedback
@@ -242,7 +254,7 @@ try {
         foreach ($variant in $variants) {
           foreach ($trackerChoice in $laneTrackers) {
             $ids = @($trackerChoice)
-            $lane = @{ laneId = 'lane-' + ($script:Lanes.Count + 1).ToString('D4'); caseId = $entry.case.case_id; trackerIds = $ids; sat = $variant; sourceFingerprint = $entry.stat.fingerprint; workflowId = ''; goal = 'prepared' }
+            $lane = @{ laneId = 'lane-' + ($script:Lanes.Count + 1).ToString('D4'); caseId = $entry.case.case_id; trackerIds = $ids; sat = $variant; sourceFingerprint = $entry.stat.fingerprint; workflowId = ''; goal = $(if ($script:Run.suite -eq 'Input') { 'input_ready' } else { 'prepared' }) }
             $script:Lanes += $lane
             try {
               if ((Get-SourceFingerprint $entry.case).fingerprint -cne $entry.stat.fingerprint) { throw 'source_changed_during_run' }
@@ -253,7 +265,12 @@ try {
               }
               $identity = Get-CaseIdentityOverrides $entry.case
               $lane.expectedIdentity = $identity.Clone()
-              if ($identity.Count -gt 0) { $intent.preparation.Instructions = @{ Identity = $identity } }
+              $sourceInstructions = Get-CaseSourceLookupInstructions $entry.case
+              if ($identity.Count -gt 0 -or $sourceInstructions.Count -gt 0) {
+                $intent.preparation.Instructions = $sourceInstructions
+                if ($identity.Count -gt 0) { $intent.preparation.Instructions.Identity = $identity }
+              }
+              $lane.explicitSourceLookup = $sourceInstructions.Count -gt 0
               $playlists = @(Get-CaseBDMVPlaylists $entry.case)
               if ($playlists.Count -gt 0) {
                 if (-not $intent.preparation.Instructions) { $intent.preparation.Instructions = @{} }
@@ -263,14 +280,19 @@ try {
                 $lane.expectedPlaylists = $playlists
               }
               $bdinfoCache = Restore-BDInfoReports $entry $profile $privateRoot $bdinfoScannerFingerprint
-              $current = Continue-Lane $lane 'prepared' $null $intent
+              $firstGoal = $(if ($script:Run.suite -eq 'Input') { 'input_ready' } else { 'prepared' })
+              $current = Continue-Lane $lane $firstGoal $null $intent
               if ($bdinfoCache) {
                 $savedBDInfo = Save-BDInfoReports $bdinfoCache $entry $privateRoot $script:Run.binarySha256
                 $lane.bdinfo = @{ sourceFingerprint = $bdinfoCache.sourceFingerprint; scannerFingerprint = $bdinfoCache.scannerFingerprint; restored = $bdinfoCache.restored; reports = @($savedBDInfo.reports) }
                 if ($savedBDInfo) { Add-Result $lane.caseId $lane.laneId 'bdinfo_cache' 'pass' $(if ($bdinfoCache.restored) { 'reports_restored' } else { 'reports_saved' }) }
               }
-              $status = Record-Stage $lane $current 'prepared'
+              $status = Record-Stage $lane $current $firstGoal
               if (-not $current.release -or $status -eq 'fail') { continue }
+              if ($script:Run.suite -eq 'Input') {
+                Assert-InputOnlyBoundary $lane $current
+                continue
+              }
               $intent.Remove('preparation')
               $current = Continue-Lane $lane 'trackers_assessed' $current $intent
               $status = Record-Stage $lane $current 'trackers_assessed'
@@ -326,10 +348,14 @@ try {
     }
     # Browser handoff contains session authority and is always private, including its output.
     $cookies = @($script:Session.Cookies.GetCookies([uri]$script:BaseURL) | ForEach-Object { @{ name = $_.Name; value = $_.Value; domain = $_.Domain; path = $_.Path; httpOnly = $_.HttpOnly; secure = $_.Secure; sameSite = 'Lax' } })
-    $browserHandoff = @{ runId = $runID; buildIdentifier = $script:Run.buildIdentifier; executionMode = $script:Run.executionMode; skipRemoteDuplicates = [bool]$script:Run.skipRemoteDuplicates; imageUploadLimit = $script:Run.budgets.maxImages; requireUploadControls = $script:Run.suite -in @('Smoke', 'Full') -or $script:Run.budgets.maxImages -gt 0; remainingRequests = [Math]::Max(0, $script:Run.budgets.maxRequests - $script:RequestCount); baseURL = $script:BaseURL; cookies = $cookies; process = $processRecord; lanes = @($script:Lanes | Where-Object { Test-LiveContentLane $_ }) }
+    $browserLanes = @(
+      if ($script:Run.suite -eq 'Input') { $script:Lanes | Where-Object workflowId }
+      else { $script:Lanes | Where-Object { Test-LiveContentLane $_ } }
+    )
+    $browserHandoff = @{ runId = $runID; suite = $script:Run.suite; buildIdentifier = $script:Run.buildIdentifier; executionMode = $script:Run.executionMode; skipRemoteDuplicates = [bool]$script:Run.skipRemoteDuplicates; imageUploadLimit = $script:Run.budgets.maxImages; requireUploadControls = $script:Run.suite -in @('Smoke', 'Full') -or $script:Run.budgets.maxImages -gt 0; remainingRequests = [Math]::Max(0, $script:Run.budgets.maxRequests - $script:RequestCount); baseURL = $script:BaseURL; cookies = $cookies; process = $processRecord; lanes = [object[]]$browserLanes }
     Write-PrivateJson (Join-Path $script:RunDir 'browser.private.json') $browserHandoff
     try {
-      $browserReceipt = Invoke-BrowserCheck
+      $browserReceipt = Invoke-BrowserCheck $(if ($script:Run.suite -eq 'Input') { 'input' } else { 'local' })
       foreach ($lane in $script:Lanes | Where-Object workflowId) {
         $latest = Read-PrivateJson (Join-Path $script:RunDir "snapshots/$($lane.laneId).private.json")
         if (@(Get-PendingActions $latest).Count -gt 0) {
@@ -345,7 +371,10 @@ try {
       Add-Result '' '' 'embedded_browser' 'pass' 'identity_and_banner_verified'
     } catch { Add-Result '' '' 'embedded_browser' 'fail' 'browser_check_failed'; $script:RemoteStop = $true }
 
-    if (-not $script:RemoteStop -and ($script:Run.budgets.maxImages -gt 0 -or $script:Run.suite -in @('Smoke', 'Full'))) {
+    if ($script:Run.suite -eq 'Input') {
+      Add-Result '' '' 'image_host' 'not_applicable' 'input_only_scope'
+      Add-Result '' '' 'dry_run' 'not_applicable' 'input_only_scope'
+    } elseif (-not $script:RemoteStop -and ($script:Run.budgets.maxImages -gt 0 -or $script:Run.suite -in @('Smoke', 'Full'))) {
       Invoke-LiveImageChecks $browserHandoff
     } else {
       Add-Result '' '' 'image_host' 'not_applicable' 'image_uploads_not_authorized_or_remote_stopped'
@@ -355,9 +384,10 @@ try {
     $finalInfo = Invoke-LiveAPI 'GetApplicationInfo' -Poll
     Assert-Runtime $finalInfo
     $effects = $finalInfo.testRuntime
-    $unexpected = ($effects.trackerSubmission.requestsDenied - $initialCounters.trackerSubmission.requestsDenied - 1) + ($effects.clientMutation.requestsDenied - $initialCounters.clientMutation.requestsDenied) + $effects.trackerSubmission.mutationCallsDenied + $effects.clientMutation.mutationCallsDenied
+    $expectedDenials = $(if ($script:Run.suite -eq 'Input') { 0 } else { 1 })
+    $unexpected = ($effects.trackerSubmission.requestsDenied - $initialCounters.trackerSubmission.requestsDenied - $expectedDenials) + ($effects.clientMutation.requestsDenied - $initialCounters.clientMutation.requestsDenied) + $effects.trackerSubmission.mutationCallsDenied + $effects.clientMutation.mutationCallsDenied
     $remoteCalls = $effects.trackerSubmission.remoteCallsStarted + $effects.trackerSubmission.remoteCallsSucceeded + $effects.clientMutation.remoteCallsStarted + $effects.clientMutation.remoteCallsSucceeded
-    $script:Run.effects = @{ trackerSubmission = $effects.trackerSubmission; clientMutation = $effects.clientMutation; expectedNegativeDenialsThisSession = 1; unexpectedDenialsThisSession = $unexpected }
+    $script:Run.effects = @{ trackerSubmission = $effects.trackerSubmission; clientMutation = $effects.clientMutation; expectedNegativeDenialsThisSession = $expectedDenials; unexpectedDenialsThisSession = $unexpected }
     Add-Result '' '' 'forbidden_effects' $(if ($unexpected -eq 0 -and $remoteCalls -eq 0) { 'pass' } else { 'fail' }) $(if ($unexpected -eq 0 -and $remoteCalls -eq 0) { 'zero_forbidden_calls' } else { 'unexpected_policy_effect' })
     # One owned restart checks persistence without replaying choices or performing new remote work.
     $restartLane = @(Get-LiveRestartLane)
@@ -374,22 +404,35 @@ try {
       if ($afterRestart.workflow.id -cne $beforeRestart.workflow.id) { throw 'restart_workflow_identity_changed' }
       $script:Results = @($script:Results | Where-Object { $_.laneId -cne $lane.laneId -or $_.stage -notin @('server_restart', 'restart_authority', 'restart_media', 'restart_media_decode') })
       Add-Result $lane.caseId $lane.laneId 'server_restart' 'pass' 'same_profile_runtime_policy_and_workflow_verified'
-      $beforeMedia = @($beforeRestart.media.artifacts | Sort-Object id | ForEach-Object { [ordered]@{ id = $_.id; kind = $_.kind; selected = $_.selected; order = $_.order; index = $_.index; timestamp = $_.timestampSeconds; width = $_.width; height = $_.height; url = $_.url } })
-      $afterMedia = @($afterRestart.media.artifacts | Sort-Object id | ForEach-Object { [ordered]@{ id = $_.id; kind = $_.kind; selected = $_.selected; order = $_.order; index = $_.index; timestamp = $_.timestampSeconds; width = $_.width; height = $_.height; url = $_.url } })
-      $sameMedia = (ConvertTo-Json -InputObject $beforeMedia -Depth 20 -Compress) -ceq (ConvertTo-Json -InputObject $afterMedia -Depth 20 -Compress)
       $restartActions = @(Get-PendingActions $afterRestart)
       if ($restartActions.Count -gt 0) { Save-Feedback $lane $afterRestart $lane.goal; Add-Result $lane.caseId $lane.laneId 'restart_authority' 'needs_input' 'restart_requires_fresh_typed_action' }
       else { Add-Result $lane.caseId $lane.laneId 'restart_authority' 'pass' 'no_pending_recovery_actions' }
-      $mediaSkipped = $sameMedia -and $beforeMedia.Count -eq 0 -and $beforeRestart.media.status -eq 'skipped' -and $afterRestart.media.status -eq 'skipped'
-      Add-Result $lane.caseId $lane.laneId 'restart_media' $(if ($sameMedia -and $beforeMedia.Count -gt 0) { 'pass' } elseif ($restartActions.Count -gt 0) { 'needs_input' } elseif ($mediaSkipped) { 'not_applicable' } elseif ($beforeMedia.Count -eq 0) { 'inconclusive' } else { 'fail' }) $(if ($sameMedia -and $beforeMedia.Count -gt 0) { 'artifact_identity_selection_and_order_retained' } elseif ($restartActions.Count -gt 0) { 'media_revalidation_requires_typed_action' } elseif ($mediaSkipped) { 'tracker_images_not_required' } elseif ($beforeMedia.Count -eq 0) { 'no_retained_media_to_compare' } else { 'media_changed_without_recovery_action' })
-      if ($sameMedia -and @($afterRestart.media.artifacts | Where-Object kind -EQ 'screenshot').Count -gt 0) {
-        $browserHandoff.hostedOnly = $false; $browserHandoff.restartOnly = $true; $browserHandoff.process = $processRecord; $browserHandoff.lanes = @($lane)
+      if ($script:Run.suite -eq 'Input') {
+        Assert-InputOnlyBoundary $lane $afterRestart
+        $beforeInput = [ordered]@{ release = $beforeRestart.release.release; readiness = $beforeRestart.inputReadiness; facts = $beforeRestart.factInstructions }
+        $afterInput = [ordered]@{ release = $afterRestart.release.release; readiness = $afterRestart.inputReadiness; facts = $afterRestart.factInstructions }
+        $sameInput = (ConvertTo-Json -InputObject $beforeInput -Depth 100 -Compress) -ceq (ConvertTo-Json -InputObject $afterInput -Depth 100 -Compress)
+        Add-Result $lane.caseId $lane.laneId 'restart_input' $(if ($sameInput) { 'pass' } else { 'fail' }) $(if ($sameInput) { 'effective_facts_readiness_and_intent_retained' } else { 'retained_input_changed_after_restart' })
+        $browserHandoff.restartOnly = $true; $browserHandoff.process = $processRecord; $browserHandoff.lanes = [object[]]@($lane)
         $browserHandoff.cookies = @($script:Session.Cookies.GetCookies([uri]$script:BaseURL) | ForEach-Object { @{ name = $_.Name; value = $_.Value; domain = $_.Domain; path = $_.Path; httpOnly = $_.HttpOnly; secure = $_.Secure; sameSite = 'Lax' } })
         $browserHandoff.remainingRequests = [Math]::Max(0, $script:Run.budgets.maxRequests - $script:RequestCount)
         Write-PrivateJson (Join-Path $script:RunDir 'browser.private.json') $browserHandoff
-        try {
-          $null = Invoke-BrowserCheck 'restart'
-        } catch { Add-Result $lane.caseId $lane.laneId 'restart_media_decode' $(if ($restartActions.Count -gt 0) { 'needs_input' } else { 'fail' }) $(if ($restartActions.Count -gt 0) { 'private_resources_require_revalidation' } else { 'restart_browser_check_failed' }) }
+        try { $null = Invoke-BrowserCheck 'input-restart' }
+        catch { Add-Result $lane.caseId $lane.laneId 'restart_input_browser' 'fail' 'restart_browser_check_failed' }
+      } else {
+        $beforeMedia = @($beforeRestart.media.artifacts | Sort-Object id | ForEach-Object { [ordered]@{ id = $_.id; kind = $_.kind; selected = $_.selected; order = $_.order; index = $_.index; timestamp = $_.timestampSeconds; width = $_.width; height = $_.height; url = $_.url } })
+        $afterMedia = @($afterRestart.media.artifacts | Sort-Object id | ForEach-Object { [ordered]@{ id = $_.id; kind = $_.kind; selected = $_.selected; order = $_.order; index = $_.index; timestamp = $_.timestampSeconds; width = $_.width; height = $_.height; url = $_.url } })
+        $sameMedia = (ConvertTo-Json -InputObject $beforeMedia -Depth 20 -Compress) -ceq (ConvertTo-Json -InputObject $afterMedia -Depth 20 -Compress)
+        $mediaSkipped = $sameMedia -and $beforeMedia.Count -eq 0 -and $beforeRestart.media.status -eq 'skipped' -and $afterRestart.media.status -eq 'skipped'
+        Add-Result $lane.caseId $lane.laneId 'restart_media' $(if ($sameMedia -and $beforeMedia.Count -gt 0) { 'pass' } elseif ($restartActions.Count -gt 0) { 'needs_input' } elseif ($mediaSkipped) { 'not_applicable' } elseif ($beforeMedia.Count -eq 0) { 'inconclusive' } else { 'fail' }) $(if ($sameMedia -and $beforeMedia.Count -gt 0) { 'artifact_identity_selection_and_order_retained' } elseif ($restartActions.Count -gt 0) { 'media_revalidation_requires_typed_action' } elseif ($mediaSkipped) { 'tracker_images_not_required' } elseif ($beforeMedia.Count -eq 0) { 'no_retained_media_to_compare' } else { 'media_changed_without_recovery_action' })
+        if ($sameMedia -and @($afterRestart.media.artifacts | Where-Object kind -EQ 'screenshot').Count -gt 0) {
+          $browserHandoff.hostedOnly = $false; $browserHandoff.restartOnly = $true; $browserHandoff.process = $processRecord; $browserHandoff.lanes = [object[]]@($lane)
+          $browserHandoff.cookies = @($script:Session.Cookies.GetCookies([uri]$script:BaseURL) | ForEach-Object { @{ name = $_.Name; value = $_.Value; domain = $_.Domain; path = $_.Path; httpOnly = $_.HttpOnly; secure = $_.Secure; sameSite = 'Lax' } })
+          $browserHandoff.remainingRequests = [Math]::Max(0, $script:Run.budgets.maxRequests - $script:RequestCount)
+          Write-PrivateJson (Join-Path $script:RunDir 'browser.private.json') $browserHandoff
+          try { $null = Invoke-BrowserCheck 'restart' }
+          catch { Add-Result $lane.caseId $lane.laneId 'restart_media_decode' $(if ($restartActions.Count -gt 0) { 'needs_input' } else { 'fail' }) $(if ($restartActions.Count -gt 0) { 'private_resources_require_revalidation' } else { 'restart_browser_check_failed' }) }
+        }
       }
       $restartInfo = Invoke-LiveAPI 'GetApplicationInfo' -Poll
       Assert-Runtime $restartInfo

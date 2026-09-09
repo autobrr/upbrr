@@ -8,6 +8,7 @@ import type {
   OperationFailure,
   PlaylistInfo,
   PrepareInput,
+  PreparedRelease,
   ReleaseNameOverrides,
   ReleaseRef,
   ScreenshotPlan,
@@ -17,13 +18,16 @@ import type {
   UploadImageHostFailure,
 } from "../types";
 import type {
+  CorrectionFieldRef,
   DupeAssessment,
   DupeDecision,
   DescriptionInstructions,
   DescriptionSet,
+  InputReadinessSnapshot,
   MediaArtifactSet,
   MediaCaptureInstructions,
   MetadataOverrides,
+  ReleaseCorrectionsSnapshot,
   RequiredAction,
   ReleaseWorkflowCurrent,
   TrackerPreflightAssessment,
@@ -71,6 +75,9 @@ export type PreparationIntent = Readonly<{
   metadata: Readonly<MetadataOverrides>;
   releaseName: Readonly<ReleaseNameOverrides>;
   playlist: Readonly<{ Set: boolean; Selected: readonly string[]; UseAll: boolean }>;
+  trackerSourceIDs: Readonly<Record<string, string>>;
+  policy: Readonly<{ keepFolder: boolean; keepImages: boolean; onlyID: boolean }>;
+  search: Readonly<{ skip: boolean; client: string }>;
 }>;
 
 export type UploadRunOptions = Readonly<{
@@ -101,9 +108,16 @@ export type InputFacet = Readonly<{
     error: string;
     failure: OperationFailure | null;
     preparationDirty: boolean;
+    correctionDirty: boolean;
     intent: PreparationIntent;
+    corrections: ReleaseCorrectionsSnapshot | null;
+    resetFields: readonly CorrectionFieldRef[];
+    confirmFields: readonly CorrectionFieldRef[];
+    trackerInputAnswers: Readonly<Record<string, Readonly<Record<string, string | null>>>>;
     selectedTrackers: readonly string[];
     preview: MetadataPreview | null;
+    release: PreparedRelease | null;
+    readiness: InputReadinessSnapshot | null;
     trackerData: readonly TrackerPreview[];
     source: Readonly<{ discCount: number; discType: string }>;
     playlist: Readonly<{
@@ -121,6 +135,15 @@ export type InputFacet = Readonly<{
   changeIdentity(value: Readonly<ExternalIDOverrides>): void;
   changeMetadata(value: Readonly<MetadataOverrides>): void;
   changeReleaseName(value: Readonly<ReleaseNameOverrides>): void;
+  /** Queues removal of saved intent; the next preparation derives the field again. */
+  resetCorrection(field: CorrectionFieldRef): void;
+  /** Queues revision-bound confirmation of a saved content correction. */
+  confirmCorrection(field: CorrectionFieldRef): void;
+  /** Queues a tracker-local answer; null explicitly restores Auto. */
+  changeTrackerInputAnswer(tracker: string, key: string, value: string | null): void;
+  changeTrackerSourceID(tracker: string, value: string): void;
+  changePreparationPolicy(value: PreparationIntent["policy"]): void;
+  changeClientSearch(value: PreparationIntent["search"]): void;
   chooseTrackers(trackers: readonly string[]): void;
   choosePlaylists(playlists: readonly string[], useAll: boolean): void;
   confirmPlaylists(): Promise<boolean>;

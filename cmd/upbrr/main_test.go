@@ -19,6 +19,30 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestCLIRejectsMultipleSourcesBeforeTrackCorrectionWork(t *testing.T) {
+	for _, flags := range [][]string{
+		{"--track-languages", "audio-1=English"},
+		{"--reset-input", "metadata.track_languages:audio-1"},
+	} {
+		t.Run(flags[0], func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), "must-not-create", "config.yaml")
+			args := append(append([]string(nil), flags...), "--config", configPath, "first.mkv", "second.mkv")
+			err := executeCLI(t.Context(), args, cliIO{})
+			var exitErr *cliExitError
+			if !errors.As(err, &exitErr) || exitErr.code != 2 || !strings.Contains(err.Error(), "exactly one source") {
+				t.Fatalf("multi-source corrections reached setup: %v", err)
+			}
+			if _, err := os.Stat(filepath.Dir(configPath)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("rejected corrections initialized configuration")
+			}
+			args = append(append([]string(nil), flags...), "--queue", "example", "--config", configPath, "queue-root")
+			if err := executeCLI(t.Context(), args, cliIO{}); err == nil || !strings.Contains(err.Error(), "exactly one source") {
+				t.Fatalf("track correction allowed queue: %v", err)
+			}
+		})
+	}
+}
+
 func TestCLIPreparationBatchOwnsPerSourceInstructions(t *testing.T) {
 	t.Parallel()
 
@@ -93,6 +117,18 @@ func TestProcessCLIPathsNonQueueAbortsOnFirstError(t *testing.T) {
 	}
 	if attempted != 2 {
 		t.Fatalf("expected abort after the failing item (2 attempts), got %d", attempted)
+	}
+}
+
+func TestProcessCLIPathsNonQueuePreservesCLIExitCode(t *testing.T) {
+	t.Parallel()
+
+	err := processCLIPaths(context.Background(), []string{"a"}, false, time.Minute, api.NopLogger{}, func(context.Context, string) error {
+		return exitError(2, errors.New("required input is missing"))
+	})
+	exitErr, ok := errors.AsType[*cliExitError](err)
+	if !ok || exitErr.code != 2 {
+		t.Fatalf("expected cliExitError with code 2, got %v", err)
 	}
 }
 

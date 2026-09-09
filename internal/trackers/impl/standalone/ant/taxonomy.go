@@ -6,6 +6,7 @@ package ant
 import (
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -140,9 +141,11 @@ func resolveTags(meta api.UploadSubject, answers map[string]string) (string, boo
 	if tagValue := normalizeTags(strings.TrimSpace(answers["tags"])); tagValue != "" {
 		return tagValue, true
 	}
-	values := make([]string, 0, 8)
-	if meta.ProviderMetadata.TMDB != nil {
-		values = append(values, splitTags(meta.ProviderMetadata.TMDB.Genres)...)
+	values := []string(nil)
+	if meta.EffectiveMetadata.GenresProvenance.IsManual() {
+		values = splitTags(trackers.PreferredGenreText(meta, ""))
+	} else if meta.ProviderMetadata.TMDB != nil {
+		values = splitTags(meta.ProviderMetadata.TMDB.Genres)
 	}
 	if len(values) == 0 {
 		if meta.ProviderMetadata.IMDB != nil && len(splitTags(meta.ProviderMetadata.IMDB.Genres)) > 0 {
@@ -180,9 +183,14 @@ func resolveTags(meta api.UploadSubject, answers map[string]string) (string, boo
 }
 
 func detectAdult(meta api.UploadSubject) bool {
-	candidates := []string{meta.Release.Genre, resolveKeywords(meta)}
-	if meta.ProviderMetadata.TMDB != nil {
-		candidates = append(candidates, meta.ProviderMetadata.TMDB.Genres)
+	candidates := []string{resolveKeywords(meta)}
+	if meta.EffectiveMetadata.GenresProvenance.IsManual() {
+		candidates = append(candidates, strings.Join(meta.EffectiveMetadata.Genres, ","))
+	} else {
+		candidates = append(candidates, meta.Release.Genre)
+		if meta.ProviderMetadata.TMDB != nil {
+			candidates = append(candidates, meta.ProviderMetadata.TMDB.Genres)
+		}
 	}
 	for _, candidate := range candidates {
 		lower := strings.ToLower(candidate)

@@ -39,6 +39,10 @@ func normalizePrepareInput(input api.PrepareInput) (normalizedPrepareInput, erro
 	input.Instructions.Playlist.Selected = normalizePlaylistSelection(input.Instructions.Playlist.Selected)
 	input.Instructions.TrackerIDs = normalizeTrackerIDs(input.Instructions.TrackerIDs)
 	input.Search.Client = normalizeOptionalString(input.Search.Client)
+	input.MetadataRequirements, err = input.MetadataRequirements.Normalize()
+	if err != nil {
+		return normalizedPrepareInput{}, fmt.Errorf("prepared release: normalize metadata requirements: %w", err)
+	}
 	return normalizedPrepareInput{input: input, sourceKey: canonicalSourceKey(primary)}, nil
 }
 
@@ -273,15 +277,23 @@ func canonicalFingerprintEntries(entries []api.SourceManifestEntry) []sourceFing
 
 // preparationCompatibility fingerprints fact instructions and reusable policy;
 // intent and one-shot controls are deliberately excluded.
-func preparationCompatibility(input api.PrepareInput, sourceFingerprint string) (api.PreparationCompatibility, error) {
-	factInstructions, err := fingerprintJSON(input.Instructions)
+func preparationCompatibility(input api.PrepareInput, sourceFingerprint string, correctionRevision uint64) (api.PreparationCompatibility, error) {
+	factInstructions, err := fingerprintJSON(struct {
+		Instructions       api.ReleaseFactInstructions
+		CorrectionRevision uint64
+	}{input.Instructions, correctionRevision})
 	if err != nil {
 		return api.PreparationCompatibility{}, fmt.Errorf("prepared release: fingerprint fact instructions: %w", err)
 	}
 	policy, err := fingerprintJSON(struct {
-		Policy api.PreparationPolicy
-		Search api.ClientSearchPolicy
-	}{Policy: input.Policy, Search: input.Search})
+		Policy               api.PreparationPolicy
+		Search               api.ClientSearchPolicy
+		MetadataRequirements api.MetadataRequirementSet
+	}{
+		Policy:               input.Policy,
+		Search:               input.Search,
+		MetadataRequirements: input.MetadataRequirements,
+	})
 	if err != nil {
 		return api.PreparationCompatibility{}, fmt.Errorf("prepared release: fingerprint policy: %w", err)
 	}

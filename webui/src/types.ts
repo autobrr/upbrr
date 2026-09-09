@@ -81,6 +81,7 @@ export type SourceManifestEntry = {
   Size: number;
   ModifiedAt: string;
   Disc: string;
+  DiscID: string;
   Playlist: string;
 };
 
@@ -89,8 +90,10 @@ export type SourceManifest = {
   Size: number;
   Entries: SourceManifestEntry[];
   SelectedPlaylists: PlaylistInfo[];
-  Classification: { DiscType: string; Container: string; MediaType: string };
+  Classification: { DiscType: string; DiscCount: number; Container: string; MediaType: string };
 };
+
+export type FactProvenance = "automatic" | "manual" | "manual_empty" | string;
 
 export type ReleaseNamePresentation = {
   Version: string;
@@ -112,6 +115,13 @@ export type NamingFacts = {
   Title: string;
   Subtitle: string;
   AlternateTitle: string;
+  OriginalTitle: string;
+  Genres: string[];
+  TitleProvenance: FactProvenance;
+  AlternateTitleProvenance: FactProvenance;
+  OriginalTitleProvenance: FactProvenance;
+  GenresProvenance: FactProvenance;
+  YearProvenance: FactProvenance;
   Year: number;
   Month: number;
   Day: number;
@@ -158,6 +168,19 @@ export type EpisodeFacts = {
 export type MediaFacts = {
   AudioLanguages: string[];
   SubtitleLanguages: string[];
+  TrackAudioLanguages: string[];
+  TrackSubtitleLanguages: string[];
+  Tracks: MediaTrackFacts[];
+  TrackCoverageComplete: boolean;
+  AudioLanguagesProvenance: FactProvenance;
+  SubtitleLanguagesProvenance: FactProvenance;
+  HardcodedSubs: boolean;
+  HardcodedSubtitleLanguages: string[];
+  HardcodedSubsProvenance: FactProvenance;
+  HardcodedSubtitleLanguagesProvenance: FactProvenance;
+  OriginalLanguage: string;
+  OriginalLanguageProvenance: FactProvenance;
+  DistributorProvenance: FactProvenance;
   Container: string;
   Audio: string;
   Channels: string;
@@ -181,6 +204,20 @@ export type MediaFacts = {
   ServiceLongName: string;
   MediaInfoUniqueID: string;
   Anime: boolean;
+};
+
+export type MediaTrackFacts = {
+  ID: string;
+  Kind: "audio" | "subtitle" | string;
+  ResourceID: string;
+  ManifestFingerprint: string;
+  NativeID: string;
+  Ordinal: number;
+  DetectedLanguages: string[];
+  Languages: string[];
+  LanguageProvenance: FactProvenance;
+  Default: boolean;
+  Commentary: boolean;
 };
 
 export type DiscFacts = {
@@ -217,6 +254,12 @@ export type PreparedRelease = {
   PreparedAt: string;
 };
 
+export type TrackLanguageCorrection = Readonly<{
+  trackId: string;
+  languages: readonly string[];
+  manifestFingerprint: string;
+}>;
+
 export type PrepareInput = {
   SourcePath: string;
   Intent: "preview" | "duplicate_check" | "media" | "description" | "dry_run" | "upload" | string;
@@ -232,6 +275,15 @@ export type PrepareInput = {
       WebDV?: boolean | null;
       StreamOptimized?: boolean | null;
       Anime?: boolean | null;
+      Title?: string | null;
+      AlternateTitle?: string | null;
+      OriginalTitle?: string | null;
+      Genres?: readonly string[] | null;
+      AudioLanguages?: readonly string[] | null;
+      SubtitleLanguages?: readonly string[] | null;
+      HardcodedSubs?: boolean | null;
+      HardcodedSubtitleLanguages?: readonly string[] | null;
+      TrackLanguages?: readonly TrackLanguageCorrection[];
     };
     SourceLookup: string;
     BlurayReleaseID?: string;
