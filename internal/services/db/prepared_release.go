@@ -336,15 +336,20 @@ func commitPreparedIdentityTx(ctx context.Context, tx *sql.Tx, identity api.Exte
 	if err != nil {
 		return fmt.Errorf("db commit prepared release: encode identity overrides: %w", err)
 	}
+	dependencyJSON, err := encodePreparedJSON(identity.Dependencies)
+	if err != nil {
+		return fmt.Errorf("db commit prepared release: encode identity dependencies: %w", err)
+	}
 	resolvedAt := identity.ResolvedAt.UTC().Format(time.RFC3339Nano)
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO external_ids (
 			source_path, generation, tmdb_id, imdb_id, tvdb_id, tvmaze_id, mal_id,
 			category, source_tmdb, source_imdb, source_tvdb, source_tvmaze,
 			source_mal, category_provenance, override_json, conflict_status,
-			source_fingerprint, intent_fingerprint, contract_version, resolved_at, updated_at
+			source_fingerprint, intent_fingerprint, contract_version, dependency_json,
+			resolved_at, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source_path) DO UPDATE SET
 			generation = excluded.generation,
 			tmdb_id = excluded.tmdb_id,
@@ -364,6 +369,7 @@ func commitPreparedIdentityTx(ctx context.Context, tx *sql.Tx, identity api.Exte
 			source_fingerprint = excluded.source_fingerprint,
 			intent_fingerprint = excluded.intent_fingerprint,
 			contract_version = excluded.contract_version,
+			dependency_json = excluded.dependency_json,
 			resolved_at = excluded.resolved_at,
 			updated_at = excluded.updated_at
 	`,
@@ -386,6 +392,7 @@ func commitPreparedIdentityTx(ctx context.Context, tx *sql.Tx, identity api.Exte
 		identity.Resolution.SourceFingerprint,
 		identity.Resolution.IntentFingerprint,
 		identity.Resolution.ContractVersion,
+		dependencyJSON,
 		resolvedAt,
 		resolvedAt,
 	)
@@ -439,7 +446,7 @@ func loadPreparedIdentityTx(
 		SELECT generation, tmdb_id, imdb_id, tvdb_id, tvmaze_id, mal_id, category,
 			source_tmdb, source_imdb, source_tvdb, source_tvmaze, source_mal,
 			category_provenance, override_json, conflict_status, source_fingerprint,
-			intent_fingerprint, contract_version, resolved_at
+			intent_fingerprint, contract_version, dependency_json, resolved_at
 		FROM external_ids
 		WHERE source_path = ?
 	`, sourcePath)
@@ -454,6 +461,7 @@ func loadPreparedIdentityTx(
 	var categoryProvenance string
 	var overrideJSON string
 	var conflictStatus string
+	var dependencyJSON string
 	var resolvedAt string
 	if err := row.Scan(
 		&generation,
@@ -474,6 +482,7 @@ func loadPreparedIdentityTx(
 		&identity.Resolution.SourceFingerprint,
 		&identity.Resolution.IntentFingerprint,
 		&identity.Resolution.ContractVersion,
+		&dependencyJSON,
 		&resolvedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -497,6 +506,9 @@ func loadPreparedIdentityTx(
 	identity.Conflict = api.IdentityConflictStatus(conflictStatus)
 	if err := decodePreparedJSON(overrideJSON, &identity.Overrides); err != nil {
 		return api.ExternalIdentity{}, fmt.Errorf("db load prepared release: decode identity overrides: %w", err)
+	}
+	if err := decodePreparedJSON(dependencyJSON, &identity.Dependencies); err != nil {
+		return api.ExternalIdentity{}, fmt.Errorf("db load prepared release: decode identity dependencies: %w", err)
 	}
 	parsedResolvedAt, err := time.Parse(time.RFC3339Nano, resolvedAt)
 	if err != nil {

@@ -570,7 +570,8 @@ func (r *SQLiteRepository) GetExternalIdentity(ctx context.Context, path string)
 
 	row := r.db.QueryRowContext(ctx, `
 		SELECT source_path, tmdb_id, imdb_id, tvdb_id, tvmaze_id, mal_id, category,
-			source_tmdb, source_imdb, source_tvdb, source_tvmaze, source_mal, updated_at
+			source_tmdb, source_imdb, source_tvdb, source_tvmaze, source_mal,
+			dependency_json, updated_at
 		FROM external_ids
 		WHERE source_path = ?
 	`, path)
@@ -583,6 +584,7 @@ func (r *SQLiteRepository) GetExternalIdentity(ctx context.Context, path string)
 	var sourceTVDB string
 	var sourceTVmaze string
 	var sourceMAL string
+	var dependencyJSON string
 	if err := row.Scan(
 		&ids.SourcePath,
 		&ids.TMDBID,
@@ -596,6 +598,7 @@ func (r *SQLiteRepository) GetExternalIdentity(ctx context.Context, path string)
 		&sourceTVDB,
 		&sourceTVmaze,
 		&sourceMAL,
+		&dependencyJSON,
 		&updatedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -616,6 +619,9 @@ func (r *SQLiteRepository) GetExternalIdentity(ctx context.Context, path string)
 		TVmaze: api.IdentityProvenance(sourceTVmaze),
 		MAL:    api.IdentityProvenance(sourceMAL),
 	}
+	if err := decodePreparedJSON(dependencyJSON, &ids.Dependencies); err != nil {
+		return Identity{}, fmt.Errorf("db get external ids: decode identity dependencies: %w", err)
+	}
 
 	return ids, nil
 }
@@ -632,13 +638,18 @@ func (r *SQLiteRepository) SaveExternalIdentity(ctx context.Context, ids Identit
 	if timestamp.IsZero() {
 		timestamp = time.Now().UTC()
 	}
+	dependencyJSON, err := encodePreparedJSON(ids.Dependencies)
+	if err != nil {
+		return fmt.Errorf("db save external ids: encode identity dependencies: %w", err)
+	}
 
-	_, err := r.execWrite(ctx, "save external ids", `
+	_, err = r.execWrite(ctx, "save external ids", `
 		INSERT INTO external_ids (
 			source_path, tmdb_id, imdb_id, tvdb_id, tvmaze_id, mal_id, category,
-			source_tmdb, source_imdb, source_tvdb, source_tvmaze, source_mal, updated_at
+			source_tmdb, source_imdb, source_tvdb, source_tvmaze, source_mal,
+			dependency_json, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source_path) DO UPDATE SET
 			tmdb_id = excluded.tmdb_id,
 			imdb_id = excluded.imdb_id,
@@ -651,6 +662,7 @@ func (r *SQLiteRepository) SaveExternalIdentity(ctx context.Context, ids Identit
 			source_tvdb = excluded.source_tvdb,
 			source_tvmaze = excluded.source_tvmaze,
 			source_mal = excluded.source_mal,
+			dependency_json = excluded.dependency_json,
 			updated_at = excluded.updated_at
 	`,
 		ids.SourcePath,
@@ -665,6 +677,7 @@ func (r *SQLiteRepository) SaveExternalIdentity(ctx context.Context, ids Identit
 		ids.Provenance.TVDB,
 		ids.Provenance.TVmaze,
 		ids.Provenance.MAL,
+		dependencyJSON,
 		timestamp.Format(time.RFC3339Nano),
 	)
 	if err != nil {

@@ -46,6 +46,7 @@ func TestBaselineSchemaIncludesCurrentMigrationColumns(t *testing.T) {
 				"intent_fingerprint",
 				"contract_version",
 				"resolved_at",
+				"dependency_json",
 			},
 		},
 		{name: "external_metadata", columns: []string{"generation"}},
@@ -61,6 +62,40 @@ func TestBaselineSchemaIncludesCurrentMigrationColumns(t *testing.T) {
 				t.Fatalf("baseline missing current column %s.%s", table.name, column)
 			}
 		}
+	}
+}
+
+func TestMigrateAddExternalIdentityDependenciesPreservesExistingIdentity(t *testing.T) {
+	t.Parallel()
+
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	t.Cleanup(func() { _ = rawDB.Close() })
+
+	ctx := context.Background()
+	if _, err := rawDB.ExecContext(ctx, `CREATE TABLE external_ids (
+		source_path TEXT PRIMARY KEY, tmdb_id INTEGER NOT NULL, updated_at TEXT NOT NULL
+	)`); err != nil {
+		t.Fatalf("create legacy external ids: %v", err)
+	}
+	if _, err := rawDB.ExecContext(ctx, `INSERT INTO external_ids (source_path, tmdb_id, updated_at) VALUES (?, ?, ?)`, "/media/Example.Release.2026.1080p-GRP.mkv", 123456, "2026-09-10T00:00:00Z"); err != nil {
+		t.Fatalf("seed legacy identity: %v", err)
+	}
+	for range 2 {
+		if err := migrateAddExternalIdentityDependencies(ctx, rawDB); err != nil {
+			t.Fatalf("migrate identity dependencies: %v", err)
+		}
+	}
+
+	var tmdbID int
+	var dependencyJSON string
+	if err := rawDB.QueryRowContext(ctx, `SELECT tmdb_id, dependency_json FROM external_ids WHERE source_path = ?`, "/media/Example.Release.2026.1080p-GRP.mkv").Scan(&tmdbID, &dependencyJSON); err != nil {
+		t.Fatalf("read migrated identity: %v", err)
+	}
+	if tmdbID != 123456 || dependencyJSON != "{}" {
+		t.Fatalf("migrated identity = tmdb=%d dependencies=%q", tmdbID, dependencyJSON)
 	}
 }
 

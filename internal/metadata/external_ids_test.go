@@ -6,6 +6,7 @@ package metadata
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -447,6 +448,11 @@ func (s *stubIMDB) GetEpisodeInfo(_ context.Context, _ string, _ bool) (imdb.Epi
 }
 
 type stubTVDB struct {
+	searchResults            []tvdb.SeriesSearchResult
+	searchID                 int
+	searchTitles             []string
+	externalIMDbIDs          []string
+	externalTMDBIDs          []string
 	id                       int
 	name                     string
 	calls                    int
@@ -469,8 +475,15 @@ type stubTVDB struct {
 	lastEpisodeQuery         tvdb.EpisodeQuery
 }
 
-func (s *stubTVDB) GetByExternalID(_ context.Context, _, _ string, tvMovie bool) (int, string, error) {
+func (s *stubTVDB) SearchSeries(_ context.Context, filename, _ string) ([]tvdb.SeriesSearchResult, int, error) {
+	s.searchTitles = append(s.searchTitles, filename)
+	return s.searchResults, s.searchID, nil
+}
+
+func (s *stubTVDB) GetByExternalID(_ context.Context, imdbID, tmdbID string, tvMovie bool) (int, string, error) {
 	s.calls++
+	s.externalIMDbIDs = append(s.externalIMDbIDs, imdbID)
+	s.externalTMDBIDs = append(s.externalTMDBIDs, tmdbID)
 	s.tvMovieCalls = append(s.tvMovieCalls, tvMovie)
 	if tvMovie && s.idWhenTVMovie != 0 {
 		return s.idWhenTVMovie, s.nameWhenTVMovie, nil
@@ -2683,6 +2696,9 @@ func TestResolveExternalIDsReplacesTVDBLookupStubWithTMDBLinkedSeriesMetadata(t 
 	if result.Identity.TVDBID != canonicalTVDBID {
 		t.Fatalf("TVDB identity = %d, want canonical %d", result.Identity.TVDBID, canonicalTVDBID)
 	}
+	if result.Identity.Dependencies.TVDB != (api.IdentityDependency{ID: canonicalTVDBID, TMDBID: tmdbID}) {
+		t.Fatalf("TVDB dependency = %#v", result.Identity.Dependencies.TVDB)
+	}
 	if tvdbClient.seriesMetadataCalls != 1 {
 		t.Fatalf("TVDB series metadata calls = %d, want 1", tvdbClient.seriesMetadataCalls)
 	}
@@ -3752,6 +3768,79 @@ func TestResolveExternalIDsClearIMDBSuppressesTMDBSiblingEnrichment(t *testing.T
 	}
 	if imdbClient.infoCalls != 0 {
 		t.Fatalf("expected imdb lookup suppressed, got %d calls", imdbClient.infoCalls)
+	}
+}
+
+func TestResolveExternalIDsClearTMDBRefreshesDerivedTVDB(t *testing.T) {
+	for _, found := range []bool{true, false} {
+		t.Run(fmt.Sprintf("found=%t", found), func(t *testing.T) {
+			sourcePath := filepath.Join(t.TempDir(), "Example.Series.S01E01.mkv")
+			tmdbClient := &stubTMDB{}
+			imdbClient := &stubIMDB{}
+			tvdbClient := &stubTVDB{}
+			if found {
+				tvdbClient.id = 401003
+				tvdbClient.name = "Example Series"
+			}
+			svc := NewService(&fakeRepo{}, WithTMDBClient(tmdbClient), WithIMDBClient(imdbClient),
+				WithTVDBClient(tvdbClient), WithTVmazeClient(&stubTVmaze{}))
+			result, err := svc.resolveExternalIdentity(t.Context(), preparationstate.State{
+				SourcePath:        sourcePath,
+				StoredDataFresh:   true,
+				MediaInfoCategory: "TV",
+				Identity: api.ExternalIdentity{
+					SourcePath: sourcePath,
+					TMDBID:     401001,
+					IMDBID:     401002,
+					TVDBID:     401004,
+					Dependencies: api.IdentityDependencySet{
+						TMDB: api.IdentityDependency{ID: 401001},
+						IMDB: api.IdentityDependency{ID: 401002},
+						TVDB: api.IdentityDependency{ID: 401004, TMDBID: 401001},
+					},
+					Provenance: api.IdentityProvenanceSet{
+						TMDB: api.IdentityProvenanceProvider,
+						IMDB: api.IdentityProvenanceProvider,
+						TVDB: api.IdentityProvenanceProvider,
+					},
+				},
+				ProviderMetadata: api.SourceScopedMetadata{
+					SourcePath: sourcePath,
+					TMDB:       &api.TMDBMetadata{
+TMDBID: 401001,
+ TVDBID: 401004,
+ Title: "Different Series",
+ Category: "TV",
+},
+					IMDB:       &api.IMDBMetadata{
+IMDBID: 401002,
+ Title: "Example Series",
+ Type: "tvSeries",
+},
+					TVDB:       &api.TVDBMetadata{TVDBID: 401004, Name: "Different Series"},
+				},
+				ExternalIDOverrides: api.ExternalIDOverrides{TMDBID: new(0)},
+			})
+			if err != nil {
+				t.Fatalf("resolve after removal: %v", err)
+			}
+			if result.Identity.TMDBID != 0 || result.Identity.IMDBID != 401002 || result.Identity.TVDBID != tvdbClient.id {
+				t.Fatalf("refreshed identity = %#v", result.Identity)
+			}
+			if len(tvdbClient.externalIMDbIDs) == 0 || tvdbClient.externalIMDbIDs[0] != "tt0401002" || tvdbClient.externalTMDBIDs[0] != "" {
+				t.Fatalf("TVDB lookup anchors = IMDb:%v TMDB:%v", tvdbClient.externalIMDbIDs, tvdbClient.externalTMDBIDs)
+			}
+			if tmdbClient.findCalls+tmdbClient.searchCalls+tmdbClient.metaCalls != 0 || imdbClient.searchCalls != 0 {
+				t.Fatal("removed TMDB or retained IMDb triggered a search")
+			}
+			if found {
+				if result.ProviderMetadata.TVDB == nil || result.ProviderMetadata.TVDB.TVDBID != 401003 || result.ProviderMetadata.TVDB.Name != "Example Series" {
+					t.Fatalf("refreshed TVDB metadata = %#v", result.ProviderMetadata.TVDB)
+				}
+			} else if result.ProviderMetadata.TVDB != nil {
+				t.Fatalf("retained stale TVDB metadata = %#v", result.ProviderMetadata.TVDB)
+			}
+		})
 	}
 }
 

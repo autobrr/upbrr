@@ -553,22 +553,47 @@ type IdentityResolutionKey struct {
 	ContractVersion   string
 }
 
+// IdentityDependency records provider IDs supplied to the lookup that produced
+// ID. Zero ID means the derivation was not recorded; a positive ID with no
+// provider inputs records an independently resolved fact.
+// Inputs conservatively include every supplied provider ID, even when a lookup
+// uses only one. They describe invalidation dependencies, not the winning provider.
+type IdentityDependency struct {
+	ID       int
+	TMDBID   int
+	IMDBID   int
+	TVDBID   int
+	TVmazeID int
+	MALID    int
+}
+
+// IdentityDependencySet records derivation inputs for each canonical provider ID.
+// Each entry applies only while its ID matches that provider's canonical ID.
+type IdentityDependencySet struct {
+	TMDB   IdentityDependency
+	IMDB   IdentityDependency
+	TVDB   IdentityDependency
+	TVmaze IdentityDependency
+	MAL    IdentityDependency
+}
+
 // ExternalIdentity is the only prepared-release source for provider IDs and
 // top-level movie-or-TV classification.
 type ExternalIdentity struct {
-	SourcePath string
-	Generation PreparedGeneration
-	TMDBID     int
-	IMDBID     int
-	TVDBID     int
-	TVmazeID   int
-	MALID      int
-	Category   CanonicalCategory
-	Provenance IdentityProvenanceSet
-	Overrides  IdentityOverrideState
-	Conflict   IdentityConflictStatus
-	Resolution IdentityResolutionKey
-	ResolvedAt time.Time `ts_type:"string"`
+	SourcePath   string
+	Generation   PreparedGeneration
+	TMDBID       int
+	IMDBID       int
+	TVDBID       int
+	TVmazeID     int
+	MALID        int
+	Category     CanonicalCategory
+	Provenance   IdentityProvenanceSet
+	Overrides    IdentityOverrideState
+	Conflict     IdentityConflictStatus
+	Resolution   IdentityResolutionKey
+	Dependencies IdentityDependencySet
+	ResolvedAt   time.Time `ts_type:"string"`
 }
 
 // ProviderID returns the canonical ID for provider without applying fallbacks.

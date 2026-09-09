@@ -24,7 +24,7 @@ import (
 
 // ContractVersion changes whenever identity resolution semantics become
 // incompatible with a previously resolved identity.
-const ContractVersion = "external-identity-v2"
+const ContractVersion = "external-identity-v3"
 
 // Request contains normalized source scope and identity-resolution intent. It
 // carries no gathered MediaInfo, scene, Arr, tracker, or provider evidence.
@@ -274,6 +274,7 @@ func (r *Resolver) resolveCandidate(
 	if err := applyResolutionIntent(&result.Identity, request.Intent); err != nil {
 		return Result{}, err
 	}
+	normalizeIdentityDependencies(&result.Identity)
 	normalizeIdentityLineage(&result.Identity)
 	invalidateMismatchedMetadata(&result.ProviderMetadata, result.Identity)
 	result.MissingRequirements = missingRequirements(result.Identity)
@@ -290,8 +291,9 @@ func applyCandidateEvidence(
 	if result == nil {
 		return nil
 	}
-	authoritativeProviders := hasExplicitProviderValue(candidate.Identity)
-	if hasCandidateIdentity(candidate.Identity) && sourceEvidenceMatches(candidate.Identity.SourcePath, sourcePath) {
+	authoritativeProviders := hasExplicitProviderCorrection(candidate.Identity)
+	candidateIdentityApplies := hasCandidateIdentity(candidate.Identity) && sourceEvidenceMatches(candidate.Identity.SourcePath, sourcePath)
+	if candidateIdentityApplies {
 		if authoritativeProviders {
 			applyAuthoritativeCandidateProviders(&result.Identity, candidate.Identity)
 			applyCandidateCategory(&result.Identity, candidate.Identity)
@@ -302,7 +304,8 @@ func applyCandidateEvidence(
 			return err
 		}
 	}
-	if (authoritativeProviders || hasCandidateMetadata(candidate.Metadata)) && sourceEvidenceMatches(candidate.Metadata.SourcePath, sourcePath) {
+	if (hasCandidateMetadata(candidate.Metadata) || authoritativeProviders && candidateIdentityApplies) &&
+		sourceEvidenceMatches(candidate.Metadata.SourcePath, sourcePath) {
 		result.ProviderMetadata = sourceScopedMetadata(candidate.Metadata, sourcePath, generation, resolvedAt)
 		if err := appendEvidenceFingerprint(result, "provider_metadata_candidate", candidate.Metadata); err != nil {
 			return err
@@ -314,55 +317,68 @@ func applyCandidateEvidence(
 	return nil
 }
 
-func hasExplicitProviderValue(identity api.ExternalIdentity) bool {
-	return identity.TMDBID > 0 && providerIdentityLocked(identity.Overrides.TMDB, identity.Provenance.TMDB) ||
-		identity.IMDBID > 0 && providerIdentityLocked(identity.Overrides.IMDB, identity.Provenance.IMDB) ||
-		identity.TVDBID > 0 && providerIdentityLocked(identity.Overrides.TVDB, identity.Provenance.TVDB) ||
-		identity.TVmazeID > 0 && providerIdentityLocked(identity.Overrides.TVmaze, identity.Provenance.TVmaze) ||
-		identity.MALID > 0 && providerIdentityLocked(identity.Overrides.MAL, identity.Provenance.MAL)
+func hasExplicitProviderCorrection(identity api.ExternalIdentity) bool {
+	return providerIdentityLocked(identity.Overrides.TMDB, identity.Provenance.TMDB) ||
+		providerIdentityLocked(identity.Overrides.IMDB, identity.Provenance.IMDB) ||
+		providerIdentityLocked(identity.Overrides.TVDB, identity.Provenance.TVDB) ||
+		providerIdentityLocked(identity.Overrides.TVmaze, identity.Provenance.TVmaze) ||
+		providerIdentityLocked(identity.Overrides.MAL, identity.Provenance.MAL)
 }
 
+// applyAuthoritativeCandidateProviders replaces automatic IDs, including with
+// zero after a failed replacement lookup. Existing explicit corrections survive
+// unless the candidate supplies an explicit correction for the same provider.
 func applyAuthoritativeCandidateProviders(identity *api.ExternalIdentity, candidate api.ExternalIdentity) {
 	if identity == nil {
 		return
 	}
 	applyAuthoritativeCandidateProvider(
 		&identity.TMDBID,
+		&identity.Dependencies.TMDB,
 		&identity.Provenance.TMDB,
 		&identity.Overrides.TMDB,
 		candidate.TMDBID,
+		candidate.Dependencies.TMDB,
 		candidate.Provenance.TMDB,
 		candidate.Overrides.TMDB,
 	)
 	applyAuthoritativeCandidateProvider(
 		&identity.IMDBID,
+		&identity.Dependencies.IMDB,
 		&identity.Provenance.IMDB,
 		&identity.Overrides.IMDB,
 		candidate.IMDBID,
+		candidate.Dependencies.IMDB,
 		candidate.Provenance.IMDB,
 		candidate.Overrides.IMDB,
 	)
 	applyAuthoritativeCandidateProvider(
 		&identity.TVDBID,
+		&identity.Dependencies.TVDB,
 		&identity.Provenance.TVDB,
 		&identity.Overrides.TVDB,
 		candidate.TVDBID,
+		candidate.Dependencies.TVDB,
 		candidate.Provenance.TVDB,
 		candidate.Overrides.TVDB,
 	)
 	applyAuthoritativeCandidateProvider(
 		&identity.TVmazeID,
+		&identity.Dependencies.TVmaze,
 		&identity.Provenance.TVmaze,
 		&identity.Overrides.TVmaze,
 		candidate.TVmazeID,
+		candidate.Dependencies.TVmaze,
 		candidate.Provenance.TVmaze,
 		candidate.Overrides.TVmaze,
 	)
 	applyAuthoritativeCandidateProvider(
 		&identity.MALID,
+		&identity.Dependencies.MAL,
 		&identity.Provenance.MAL,
 		&identity.Overrides.MAL,
 		candidate.MALID,
+		candidate.Dependencies.MAL,
 		candidate.Provenance.MAL,
 		candidate.Overrides.MAL,
 	)
@@ -370,9 +386,11 @@ func applyAuthoritativeCandidateProviders(identity *api.ExternalIdentity, candid
 
 func applyAuthoritativeCandidateProvider(
 	target *int,
+	dependency *api.IdentityDependency,
 	provenance *api.IdentityProvenance,
 	override *api.OverrideState,
 	value int,
+	candidateDependency api.IdentityDependency,
 	source api.IdentityProvenance,
 	candidateOverride api.OverrideState,
 ) {
@@ -382,6 +400,7 @@ func applyAuthoritativeCandidateProvider(
 	*target = value
 	*provenance = source
 	*override = candidateOverride
+	applyIdentityDependency(dependency, value, candidateDependency)
 }
 
 func providerIdentityLocked(override api.OverrideState, provenance api.IdentityProvenance) bool {
@@ -389,7 +408,8 @@ func providerIdentityLocked(override api.OverrideState, provenance api.IdentityP
 }
 
 func hasCandidateIdentity(value api.ExternalIdentity) bool {
-	return value.TMDBID > 0 || value.IMDBID > 0 || value.TVDBID > 0 || value.TVmazeID > 0 || value.MALID > 0 || value.Category != ""
+	return hasExplicitProviderCorrection(value) || value.TMDBID > 0 || value.IMDBID > 0 || value.TVDBID > 0 || value.TVmazeID > 0 || value.MALID > 0 ||
+		value.Category != ""
 }
 
 func hasCandidateMetadata(value api.SourceScopedMetadata) bool {
@@ -400,11 +420,46 @@ func applyCandidateIdentity(identity *api.ExternalIdentity, candidate api.Extern
 	if identity == nil {
 		return
 	}
-	applyCandidateProvider(&identity.TMDBID, &identity.Provenance.TMDB, candidate.TMDBID, candidate.Provenance.TMDB)
-	applyCandidateProvider(&identity.IMDBID, &identity.Provenance.IMDB, candidate.IMDBID, candidate.Provenance.IMDB)
-	applyCandidateProvider(&identity.TVDBID, &identity.Provenance.TVDB, candidate.TVDBID, candidate.Provenance.TVDB)
-	applyCandidateProvider(&identity.TVmazeID, &identity.Provenance.TVmaze, candidate.TVmazeID, candidate.Provenance.TVmaze)
-	applyCandidateProvider(&identity.MALID, &identity.Provenance.MAL, candidate.MALID, candidate.Provenance.MAL)
+	applyCandidateProvider(
+		&identity.TMDBID,
+		&identity.Dependencies.TMDB,
+		&identity.Provenance.TMDB,
+		candidate.TMDBID,
+		candidate.Dependencies.TMDB,
+		candidate.Provenance.TMDB,
+	)
+	applyCandidateProvider(
+		&identity.IMDBID,
+		&identity.Dependencies.IMDB,
+		&identity.Provenance.IMDB,
+		candidate.IMDBID,
+		candidate.Dependencies.IMDB,
+		candidate.Provenance.IMDB,
+	)
+	applyCandidateProvider(
+		&identity.TVDBID,
+		&identity.Dependencies.TVDB,
+		&identity.Provenance.TVDB,
+		candidate.TVDBID,
+		candidate.Dependencies.TVDB,
+		candidate.Provenance.TVDB,
+	)
+	applyCandidateProvider(
+		&identity.TVmazeID,
+		&identity.Dependencies.TVmaze,
+		&identity.Provenance.TVmaze,
+		candidate.TVmazeID,
+		candidate.Dependencies.TVmaze,
+		candidate.Provenance.TVmaze,
+	)
+	applyCandidateProvider(
+		&identity.MALID,
+		&identity.Dependencies.MAL,
+		&identity.Provenance.MAL,
+		candidate.MALID,
+		candidate.Dependencies.MAL,
+		candidate.Provenance.MAL,
+	)
 	applyCandidateCategory(identity, candidate)
 }
 
@@ -418,11 +473,19 @@ func applyCandidateCategory(identity *api.ExternalIdentity, candidate api.Extern
 	}
 }
 
-func applyCandidateProvider(target *int, provenance *api.IdentityProvenance, value int, source api.IdentityProvenance) {
+func applyCandidateProvider(
+	target *int,
+	dependency *api.IdentityDependency,
+	provenance *api.IdentityProvenance,
+	value int,
+	candidateDependency api.IdentityDependency,
+	source api.IdentityProvenance,
+) {
 	if value <= 0 {
 		return
 	}
 	*target = value
+	applyIdentityDependency(dependency, value, candidateDependency)
 	*provenance = source
 	if *provenance == "" || *provenance == api.IdentityProvenanceUnknown {
 		*provenance = api.IdentityProvenanceProvider
@@ -475,6 +538,7 @@ func applyStoredIdentity(identity *api.ExternalIdentity, stored api.ExternalIden
 	}
 	identity.Provenance = stored.Provenance
 	identity.Overrides = stored.Overrides
+	identity.Dependencies = stored.Dependencies
 	ensureStoredProvenance(&identity.Provenance.TMDB, stored.TMDBID)
 	ensureStoredProvenance(&identity.Provenance.IMDB, stored.IMDBID)
 	ensureStoredProvenance(&identity.Provenance.TVDB, stored.TVDBID)
@@ -493,11 +557,17 @@ func applyResolutionIntent(identity *api.ExternalIdentity, intent ResolutionInte
 	if identity == nil {
 		return internalerrors.ErrInvalidInput
 	}
-	applyProviderOverride(&identity.TMDBID, &identity.Provenance.TMDB, &identity.Overrides.TMDB, intent.ProviderOverrides.TMDBID)
-	applyProviderOverride(&identity.IMDBID, &identity.Provenance.IMDB, &identity.Overrides.IMDB, intent.ProviderOverrides.IMDBID)
-	applyProviderOverride(&identity.TVDBID, &identity.Provenance.TVDB, &identity.Overrides.TVDB, intent.ProviderOverrides.TVDBID)
-	applyProviderOverride(&identity.TVmazeID, &identity.Provenance.TVmaze, &identity.Overrides.TVmaze, intent.ProviderOverrides.TVmazeID)
-	applyProviderOverride(&identity.MALID, &identity.Provenance.MAL, &identity.Overrides.MAL, intent.ProviderOverrides.MALID)
+	applyProviderOverride(&identity.TMDBID, &identity.Dependencies.TMDB, &identity.Provenance.TMDB, &identity.Overrides.TMDB, intent.ProviderOverrides.TMDBID)
+	applyProviderOverride(&identity.IMDBID, &identity.Dependencies.IMDB, &identity.Provenance.IMDB, &identity.Overrides.IMDB, intent.ProviderOverrides.IMDBID)
+	applyProviderOverride(&identity.TVDBID, &identity.Dependencies.TVDB, &identity.Provenance.TVDB, &identity.Overrides.TVDB, intent.ProviderOverrides.TVDBID)
+	applyProviderOverride(
+		&identity.TVmazeID,
+		&identity.Dependencies.TVmaze,
+		&identity.Provenance.TVmaze,
+		&identity.Overrides.TVmaze,
+		intent.ProviderOverrides.TVmazeID,
+	)
+	applyProviderOverride(&identity.MALID, &identity.Dependencies.MAL, &identity.Provenance.MAL, &identity.Overrides.MAL, intent.ProviderOverrides.MALID)
 	if intent.CategoryOverride != nil {
 		category := *intent.CategoryOverride
 		switch category {
@@ -545,18 +615,48 @@ func normalizeIdentityLineage(identity *api.ExternalIdentity) {
 	}
 }
 
-func applyProviderOverride(id *int, provenance *api.IdentityProvenance, state *api.OverrideState, override *int) {
+func applyProviderOverride(
+	id *int,
+	dependency *api.IdentityDependency,
+	provenance *api.IdentityProvenance,
+	state *api.OverrideState,
+	override *int,
+) {
 	if override == nil {
 		return
 	}
 	*provenance = api.IdentityProvenanceExplicit
 	if *override <= 0 {
 		*id = 0
+		*dependency = api.IdentityDependency{}
 		*state = api.OverrideStateClear
 		return
 	}
 	*id = *override
+	*dependency = api.IdentityDependency{ID: *override}
 	*state = api.OverrideStateValue
+}
+
+func applyIdentityDependency(target *api.IdentityDependency, id int, candidate api.IdentityDependency) {
+	if target == nil {
+		return
+	}
+	if id <= 0 || candidate.ID != id {
+		*target = api.IdentityDependency{}
+		return
+	}
+	*target = candidate
+}
+
+func normalizeIdentityDependencies(identity *api.ExternalIdentity) {
+	if identity == nil {
+		return
+	}
+	applyIdentityDependency(&identity.Dependencies.TMDB, identity.TMDBID, identity.Dependencies.TMDB)
+	applyIdentityDependency(&identity.Dependencies.IMDB, identity.IMDBID, identity.Dependencies.IMDB)
+	applyIdentityDependency(&identity.Dependencies.TVDB, identity.TVDBID, identity.Dependencies.TVDB)
+	applyIdentityDependency(&identity.Dependencies.TVmaze, identity.TVmazeID, identity.Dependencies.TVmaze)
+	applyIdentityDependency(&identity.Dependencies.MAL, identity.MALID, identity.Dependencies.MAL)
 }
 
 func sourceScopedMetadata(

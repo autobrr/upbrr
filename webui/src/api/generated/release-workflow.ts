@@ -427,6 +427,7 @@ export type ExternalIDOverrides = Readonly<{
 export type ExternalIdentity = Readonly<{
   Category: CanonicalCategory;
   Conflict: IdentityConflictStatus;
+  Dependencies: IdentityDependencySet;
   Generation: PreparedGeneration;
   IMDBID: number;
   MALID: number;
@@ -596,6 +597,23 @@ export type IMDBSeasonSummary = Readonly<{
 }>;
 
 export type IdentityConflictStatus = string;
+
+export type IdentityDependency = Readonly<{
+  ID: number;
+  IMDBID: number;
+  MALID: number;
+  TMDBID: number;
+  TVDBID: number;
+  TVmazeID: number;
+}>;
+
+export type IdentityDependencySet = Readonly<{
+  IMDB: IdentityDependency;
+  MAL: IdentityDependency;
+  TMDB: IdentityDependency;
+  TVDB: IdentityDependency;
+  TVmaze: IdentityDependency;
+}>;
 
 export type IdentityOverrideState = Readonly<{
   Category: OverrideState;

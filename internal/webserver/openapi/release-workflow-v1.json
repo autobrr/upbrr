@@ -1714,6 +1714,9 @@
           "Conflict": {
             "$ref": "#/components/schemas/IdentityConflictStatus"
           },
+          "Dependencies": {
+            "$ref": "#/components/schemas/IdentityDependencySet"
+          },
           "Generation": {
             "$ref": "#/components/schemas/PreparedGeneration"
           },
@@ -1751,6 +1754,7 @@
         "required": [
           "Category",
           "Conflict",
+          "Dependencies",
           "Generation",
           "IMDBID",
           "MALID",
@@ -2336,6 +2340,64 @@
       },
       "IdentityConflictStatus": {
         "type": "string"
+      },
+      "IdentityDependency": {
+        "type": "object",
+        "properties": {
+          "ID": {
+            "type": "integer"
+          },
+          "IMDBID": {
+            "type": "integer"
+          },
+          "MALID": {
+            "type": "integer"
+          },
+          "TMDBID": {
+            "type": "integer"
+          },
+          "TVDBID": {
+            "type": "integer"
+          },
+          "TVmazeID": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ID",
+          "IMDBID",
+          "MALID",
+          "TMDBID",
+          "TVDBID",
+          "TVmazeID"
+        ]
+      },
+      "IdentityDependencySet": {
+        "type": "object",
+        "properties": {
+          "IMDB": {
+            "$ref": "#/components/schemas/IdentityDependency"
+          },
+          "MAL": {
+            "$ref": "#/components/schemas/IdentityDependency"
+          },
+          "TMDB": {
+            "$ref": "#/components/schemas/IdentityDependency"
+          },
+          "TVDB": {
+            "$ref": "#/components/schemas/IdentityDependency"
+          },
+          "TVmaze": {
+            "$ref": "#/components/schemas/IdentityDependency"
+          }
+        },
+        "required": [
+          "IMDB",
+          "MAL",
+          "TMDB",
+          "TVDB",
+          "TVmaze"
+        ]
       },
       "IdentityOverrideState": {
         "type": "object",

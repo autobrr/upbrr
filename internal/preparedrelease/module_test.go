@@ -347,7 +347,7 @@ func TestPrepareRecomputesPreviousContractAfterRestart(t *testing.T) {
 	}
 
 	previous := prepared.Release
-	previous.Compatibility.ContractVersion = "prepared-release-v12"
+	previous.Compatibility.ContractVersion = "prepared-release-v13"
 	previous.Naming.ReleaseName = "Example Release 2026 PAL DVD"
 	previous.Naming.NameWithoutTag = "Example Release 2026 PAL DVD"
 	previous.Naming.Source = "PAL DVD"

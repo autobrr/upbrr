@@ -19,6 +19,23 @@ export type ExternalIdentityDraft = {
   SourceMAL: string;
 };
 
+export type IdentityDependency = {
+  ID: number;
+  TMDBID: number;
+  IMDBID: number;
+  TVDBID: number;
+  TVmazeID: number;
+  MALID: number;
+};
+
+export type IdentityDependencySet = {
+  TMDB: IdentityDependency;
+  IMDB: IdentityDependency;
+  TVDB: IdentityDependency;
+  TVmaze: IdentityDependency;
+  MAL: IdentityDependency;
+};
+
 export type ExternalIdentity = {
   SourcePath: string;
   Generation: number;
@@ -36,6 +53,7 @@ export type ExternalIdentity = {
     IntentFingerprint: string;
     ContractVersion: string;
   };
+  Dependencies: IdentityDependencySet;
   ResolvedAt: string;
 };
 
