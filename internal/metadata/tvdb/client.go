@@ -271,7 +271,11 @@ func (c *Client) GetEpisodesWithLanguage(ctx context.Context, seriesID int, quer
 							_ = writeEpisodesCache(cachePath, cached)
 						}
 					} else if c.logger != nil {
-						c.logger.Debugf("tvdb: cached episodes series metadata refresh failed series_id=%d: %v", seriesID, err)
+						c.logger.Debugf(
+							"tvdb: cached episodes series metadata refresh failed series_id=%d: %s",
+							seriesID,
+							redaction.RedactValue(err.Error(), nil),
+						)
 					}
 				}
 				return cached, specificSeriesAlias(cached), nil
@@ -289,6 +293,8 @@ func (c *Client) GetEpisodesWithLanguage(ctx context.Context, seriesID int, quer
 	details := seriesDetails{}
 	if fetchedDetails, err := c.fetchSeriesDetails(ctx, seriesID, language); err == nil {
 		details = fetchedDetails
+	} else if c.logger != nil {
+		c.logger.Debugf("tvdb: episodes series metadata lookup failed series_id=%d error=%s", seriesID, redaction.RedactValue(err.Error(), nil))
 	}
 	data := EpisodesData{
 		Episodes:             episodes,

@@ -570,6 +570,9 @@ func (c *Client) runSearch(ctx context.Context, filename string, searchYear int,
 	)
 	var response map[string]any
 	if err := c.postGraphQL(ctx, "SearchTitles", query, &response); err != nil {
+		if c.logger != nil {
+			c.logger.Debugf("imdb: title lookup failed year=%d wide=%t error=%s", searchYear, wide, redaction.RedactValue(err.Error(), nil))
+		}
 		return nil
 	}
 	return getList(response, "data", "advancedTitleSearch", "edges")

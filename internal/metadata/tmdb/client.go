@@ -380,6 +380,9 @@ func applySearchHints(input SearchInput) SearchInput {
 
 func (c *Client) searchTMDb(ctx context.Context, input SearchInput, category string) SearchOutcome {
 	items, err := c.searchTitle(ctx, input.Filename, input.SearchYear, category)
+	if err != nil && c.logger != nil {
+		c.logger.Debugf("tmdb: title lookup failed category=%s year=%d error=%s", category, input.SearchYear, redaction.RedactValue(err.Error(), nil))
+	}
 	if err != nil || len(items) == 0 {
 		return SearchOutcome{TMDBID: 0, Category: category}
 	}
@@ -603,6 +606,9 @@ func (c *Client) findByExternal(ctx context.Context, externalID, source string) 
 	path := "/find/" + url.PathEscape(externalID)
 	var resp FindResponse
 	if err := c.getJSON(ctx, path, params, &resp); err != nil {
+		if c.logger != nil {
+			c.logger.Debugf("tmdb: external lookup failed source=%s id=%s error=%s", source, externalID, redaction.RedactValue(err.Error(), nil))
+		}
 		return FindResponse{}, err
 	}
 	return resp, nil

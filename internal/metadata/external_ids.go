@@ -33,6 +33,7 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/tvmaze"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/providerid"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -2530,14 +2531,16 @@ func (s *Service) applyTVEpisodeMetadata(
 			if mappedSeason, mappedEpisode, err := xemClient.MapAbsoluteEpisode(ctx, ids.TVDBID, absoluteEpisode); err == nil {
 				season = metautil.FirstInt(mappedSeason, season)
 				episode = metautil.FirstInt(mappedEpisode, episode)
-			} else if !errors.Is(err, thexem.ErrUnavailable) && s.logger != nil {
-				s.logger.Debugf("metadata: thexem absolute mapping failed: %v", err)
+			} else if s.logger != nil {
+				s.logger.Debugf("metadata: thexem absolute mapping failed tvdb_id=%d error=%s", ids.TVDBID, redaction.RedactValue(err.Error(), nil))
 			}
 			if season == 0 {
 				title := resolveSeriesTitle(meta, external)
 				if title != "" {
 					if matchedSeason, err := xemClient.MatchSeasonByName(ctx, ids.TVDBID, title); err == nil && matchedSeason > 0 {
 						season = matchedSeason
+					} else if err != nil && s.logger != nil {
+						s.logger.Debugf("metadata: thexem season lookup failed tvdb_id=%d error=%s", ids.TVDBID, redaction.RedactValue(err.Error(), nil))
 					}
 				}
 			}

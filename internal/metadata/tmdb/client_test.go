@@ -7,9 +7,41 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
+
+func TestFindByExternalIDLogsRedactedErrorsAndPreservesFallback(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"api_key":"synthetic-secret","message":"lookup unavailable"}`, http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(server.Close)
+	logger := &captureTMDBLogger{}
+	client := NewClient(server.Client(), logger, "test-key")
+	client.baseURL = server.URL
+	result, err := client.FindByExternalID(t.Context(), FindInput{
+		IMDbID:                     "tt1234567",
+		TVDBID:                     987654,
+		RequireExternalIDAgreement: true,
+	})
+	if err != nil || !result.FilenameSearch || result.TMDBID != 0 {
+		t.Fatalf("external lookup no longer falls back: result=%#v err=%v", result, err)
+	}
+	if len(logger.debugs) != 2 {
+		t.Fatalf("debug messages = %d, want 2", len(logger.debugs))
+	}
+	for i, source := range []string{"source=imdb_id id=tt1234567", "source=tvdb_id id=987654"} {
+		message := logger.debugs[i]
+		if !strings.Contains(message, source) || !strings.Contains(message, "http 503") || !strings.Contains(message, "lookup unavailable") {
+			t.Error("debug message lacks lookup source or error details")
+		}
+		if strings.Contains(message, "synthetic-secret") {
+			t.Error("debug message exposes secret")
+		}
+	}
+}
 
 func TestSelectExternalFindResultRequiresAllSuppliedIDs(t *testing.T) {
 	t.Parallel()

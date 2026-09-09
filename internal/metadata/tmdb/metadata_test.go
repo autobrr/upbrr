@@ -407,12 +407,17 @@ func TestBuildLocalizedTitlesUsesTVTranslationName(t *testing.T) {
 }
 
 type captureTMDBLogger struct {
-	mu    sync.Mutex
-	warns []string
+	mu     sync.Mutex
+	warns  []string
+	debugs []string
 }
 
 func (l *captureTMDBLogger) Tracef(string, ...any) {}
-func (l *captureTMDBLogger) Debugf(string, ...any) {}
+func (l *captureTMDBLogger) Debugf(format string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.debugs = append(l.debugs, fmt.Sprintf(format, args...))
+}
 func (l *captureTMDBLogger) Infof(string, ...any)  {}
 func (l *captureTMDBLogger) Errorf(string, ...any) {}
 
