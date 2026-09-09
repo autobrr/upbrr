@@ -256,7 +256,7 @@ func (f *fakeRepo) GetPlaylistSelection(_ context.Context, _ string) (api.Playli
 	return api.PlaylistSelection{}, internalerrors.ErrNotFound
 }
 
-func (f *fakeRepo) SavePlaylistSelection(_ context.Context, _ string, _ []string, _ bool) error {
+func (f *fakeRepo) SavePlaylistSelection(_ context.Context, _ string, _ string, _ []string, _ bool) error {
 	return nil
 }
 

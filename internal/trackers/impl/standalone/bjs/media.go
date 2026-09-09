@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	metamediainfo "github.com/autobrr/upbrr/internal/metadata/mediainfo"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -15,7 +16,7 @@ import (
 func resolveRuntime(meta api.UploadSubject) int {
 	for _, candidate := range []string{
 		commonhttp.ReadOptionalFile(meta.MediaInfoTextPath),
-		strings.TrimSpace(meta.DVDVOBMediaInfoText),
+		trackers.ReadDVDVOBMediaInfo(meta),
 	} {
 		if minutes := parseMediaInfoDurationMinutes(candidate); minutes > 0 {
 			return minutes

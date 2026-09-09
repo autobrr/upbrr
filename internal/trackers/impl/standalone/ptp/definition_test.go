@@ -115,6 +115,32 @@ func TestBuildMediaSectionIncludesDVDIFOAndVOBMediaInfo(t *testing.T) {
 	}
 }
 
+func TestBuildMediaSectionIncludesEveryDVDVOBReport(t *testing.T) {
+	t.Parallel()
+	got, err := buildMediaSection(api.UploadSubject{
+		DiscType:            "DVD",
+		DVDVOBMediaInfoText: "stale primary report",
+		Discs: []api.DiscEvidenceResource{
+			{
+				Name:                "Disc 1",
+				Type:                "DVD",
+				DVDVOBMediaInfoText: "First VOB report",
+			},
+			{
+				Name:                "Disc 2",
+				Type:                "DVD",
+				DVDVOBMediaInfoText: "Second VOB report",
+			},
+		},
+	}, "")
+	if err != nil {
+		t.Fatalf("build media section: %v", err)
+	}
+	if !strings.Contains(got, "First VOB report") || !strings.Contains(got, "Second VOB report") || strings.Contains(got, "stale primary report") {
+		t.Fatalf("collection media section = %q", got)
+	}
+}
+
 func TestPTPFreshUploadTaxonomy(t *testing.T) {
 	t.Parallel()
 

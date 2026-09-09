@@ -69,7 +69,7 @@ func screenshotSlotsFromSource(
 		return nil, nil
 	}
 
-	slots, err := repo.ListScreenshotSlotsByPath(ctx, meta.SourcePath)
+	slots, err := repo.ListScreenshotSlotsByPath(ctx, meta.MediaBinding)
 	if err != nil {
 		return nil, fmt.Errorf("trackers: %w", err)
 	}
@@ -98,7 +98,7 @@ func screenshotSlotsFromSource(
 	if len(slots) == 0 {
 		return nil, nil
 	}
-	if err := repo.ReplaceScreenshotSlots(ctx, meta.SourcePath, slots); err != nil {
+	if err := repo.ReplaceScreenshotSlots(ctx, meta.MediaBinding, slots); err != nil {
 		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	return cloneScreenshotSlots(slots), nil
@@ -392,6 +392,7 @@ func attachSelectionPathsToSlots(slots []api.ScreenshotSlot, selections []api.Sc
 			continue
 		}
 		slots[idx].ImagePath = strings.TrimSpace(selections[idx].ImagePath)
+		slots[idx].DiscID = selections[idx].DiscID
 		if strings.TrimSpace(slots[idx].OriginalKey) == "" {
 			slots[idx].OriginalKey = slots[idx].ImagePath
 		}
@@ -451,6 +452,7 @@ func alignRenderableSlotsToSourceImages(slots []api.ScreenshotSlot, sourceImages
 			pathValue := strings.TrimSpace(source.Path)
 			if pathValue != "" && strings.TrimSpace(slots[idx].ImagePath) == "" {
 				slots[idx].ImagePath = pathValue
+				slots[idx].DiscID = source.DiscID
 				if strings.TrimSpace(slots[idx].OriginalKey) == "" {
 					slots[idx].OriginalKey = pathValue
 				}
@@ -495,6 +497,7 @@ func attachMatchingSourceImagesToSlots(slots []api.ScreenshotSlot, sourceImages 
 			continue
 		}
 		slots[idx].ImagePath = pathValue
+		slots[idx].DiscID = source.DiscID
 		if strings.TrimSpace(slots[idx].OriginalKey) == "" {
 			slots[idx].OriginalKey = pathValue
 		}
@@ -572,6 +575,7 @@ func appendSourceImageSlots(slots *[]api.ScreenshotSlot, sourcePath string, sour
 		}
 		*slots = append(*slots, api.ScreenshotSlot{
 			SourcePath:          sourcePath,
+			DiscID:              image.DiscID,
 			SourceKind:          screenshotSlotSourceTracker,
 			OriginalKey:         pathValue,
 			ImagePath:           pathValue,
@@ -605,6 +609,7 @@ func alignRenderableSlotsToSourceImagesByOrder(slots []api.ScreenshotSlot, sourc
 			continue
 		}
 		slots[idx].ImagePath = pathValue
+		slots[idx].DiscID = sourceImages[sourceIdx-1].DiscID
 		if strings.TrimSpace(slots[idx].OriginalKey) == "" {
 			slots[idx].OriginalKey = pathValue
 		}
@@ -655,6 +660,7 @@ func appendSelectionOnlySlots(slots *[]api.ScreenshotSlot, selections []api.Scre
 		}
 		*slots = append(*slots, api.ScreenshotSlot{
 			SourcePath:          selection.SourcePath,
+			DiscID:              selection.DiscID,
 			SourceKind:          screenshotSlotSourceSelection,
 			OriginalKey:         pathValue,
 			ImagePath:           pathValue,
@@ -673,6 +679,7 @@ func buildSelectionSlots(sourcePath string, selections []api.ScreenshotFinalSele
 		}
 		slots = append(slots, api.ScreenshotSlot{
 			SourcePath:          sourcePath,
+			DiscID:              selection.DiscID,
 			SourceKind:          screenshotSlotSourceSelection,
 			OriginalKey:         pathValue,
 			ImagePath:           pathValue,
@@ -715,6 +722,7 @@ func normalizeSlotOrders(slots []api.ScreenshotSlot) []api.ScreenshotSlot {
 		}
 		for variantIdx := range slots[idx].Variants {
 			slots[idx].Variants[variantIdx].SourcePath = slots[idx].SourcePath
+			slots[idx].Variants[variantIdx].DiscID = slots[idx].DiscID
 			slots[idx].Variants[variantIdx].SlotOrder = idx
 			if strings.TrimSpace(slots[idx].Variants[variantIdx].UsageScope) == "" {
 				slots[idx].Variants[variantIdx].UsageScope = globalImageUsageScope
@@ -790,6 +798,7 @@ func ApplyUploadedVariantsToSlots(slots []api.ScreenshotSlot, uploads []api.Uplo
 			directlyMatchedSlots[slotIndexByPointer[slot]] = struct{}{}
 			slot.Variants = upsertVariant(slot.Variants, api.ScreenshotSlotVariant{
 				SourcePath: slot.SourcePath,
+				DiscID:     firstNonEmptyScreenshotValue(upload.DiscID, slot.DiscID),
 				SlotOrder:  slot.SlotOrder,
 				Host:       strings.TrimSpace(upload.Host),
 				UsageScope: normalizeUsageScope(upload.UsageScope),
@@ -831,12 +840,14 @@ func ApplyUploadedVariantsToSlots(slots []api.ScreenshotSlot, uploads []api.Uplo
 		slot := &slots[fallbackSlotIndexes[idx]]
 		if strings.TrimSpace(slot.ImagePath) == "" {
 			slot.ImagePath = strings.TrimSpace(upload.ImagePath)
+			slot.DiscID = upload.DiscID
 			if strings.TrimSpace(slot.OriginalKey) == "" {
 				slot.OriginalKey = slot.ImagePath
 			}
 		}
 		slot.Variants = upsertVariant(slot.Variants, api.ScreenshotSlotVariant{
 			SourcePath: slot.SourcePath,
+			DiscID:     firstNonEmptyScreenshotValue(upload.DiscID, slot.DiscID),
 			SlotOrder:  slot.SlotOrder,
 			Host:       strings.TrimSpace(upload.Host),
 			UsageScope: normalizeUsageScope(upload.UsageScope),
@@ -937,6 +948,7 @@ func selectSlotImageForTracker(slot api.ScreenshotSlot, tracker string, policy i
 				host = strings.TrimSpace(imagehost.ExtractHost(originalURL))
 			}
 			return api.ScreenshotImage{
+				DiscID: slot.DiscID,
 				Path:   strings.TrimSpace(slot.ImagePath),
 				Host:   host,
 				ImgURL: originalURL,
@@ -985,6 +997,7 @@ func selectVariantForSlot(slot api.ScreenshotSlot, tracker string, policy imageH
 		})
 		chosen := candidates[0]
 		return api.ScreenshotImage{
+			DiscID:     firstNonEmptyScreenshotValue(chosen.DiscID, slot.DiscID),
 			Path:       strings.TrimSpace(chosen.ImagePath),
 			Host:       strings.TrimSpace(chosen.Host),
 			ImgURL:     strings.TrimSpace(chosen.ImgURL),
@@ -1061,7 +1074,7 @@ func slotIdentity(slot api.ScreenshotSlot) string {
 func upsertScreenshotVariantsFromUploads(
 	ctx context.Context,
 	repo UploadPersistence,
-	sourcePath string,
+	binding api.PreparedMediaBinding,
 	slots []api.ScreenshotSlot,
 	uploads []api.UploadedImageLink,
 ) error {
@@ -1082,7 +1095,7 @@ func upsertScreenshotVariantsFromUploads(
 		}
 		for _, slotOrder := range slotOrders {
 			variants = append(variants, api.ScreenshotSlotVariant{
-				SourcePath: sourcePath,
+				DiscID:     upload.DiscID,
 				SlotOrder:  slotOrder,
 				Host:       strings.TrimSpace(upload.Host),
 				UsageScope: normalizeUsageScope(upload.UsageScope),
@@ -1094,7 +1107,7 @@ func upsertScreenshotVariantsFromUploads(
 			})
 		}
 	}
-	return wrapTrackerError(repo.UpsertScreenshotSlotVariants(ctx, sourcePath, variants))
+	return wrapTrackerError(repo.UpsertScreenshotSlotVariants(ctx, binding, variants))
 }
 
 func slotSourceImagesForRehost(slots []api.ScreenshotSlot) []api.ScreenshotImage {
@@ -1106,8 +1119,9 @@ func slotSourceImagesForRehost(slots []api.ScreenshotSlot) []api.ScreenshotImage
 			continue
 		}
 		results = append(results, api.ScreenshotImage{
-			Index: preservedScreenshotImageIndex(slot.SlotOrder),
-			Path:  pathValue,
+			DiscID: slot.DiscID,
+			Index:  preservedScreenshotImageIndex(slot.SlotOrder),
+			Path:   pathValue,
 		})
 	}
 	return results
@@ -1115,6 +1129,15 @@ func slotSourceImagesForRehost(slots []api.ScreenshotSlot) []api.ScreenshotImage
 
 func errorsIsNotFound(err error) bool {
 	return errors.Is(err, internalerrors.ErrNotFound)
+}
+
+func firstNonEmptyScreenshotValue(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func syncSlotVariantsToPreloaded(preloaded *preloadedDescriptionAssetData, uploads []api.UploadedImageLink) {

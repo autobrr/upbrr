@@ -5,13 +5,68 @@ package ulcx
 
 import (
 	"context"
+	"math"
+	"strconv"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestULCXChannelCount(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		layout string
+		want   float64
+		known  bool
+	}{
+		{
+			layout: "2.0",
+			want:   2,
+			known:  true,
+		},
+		{
+			layout: "5.1",
+			want:   5.1,
+			known:  true,
+		},
+		{
+			layout: "5.1.4",
+			want:   10,
+			known:  true,
+		},
+		{
+			layout: " 7.1.4 Atmos ",
+			want:   12,
+			known:  true,
+		},
+		{
+			layout: "2.0.4",
+			want:   6,
+			known:  true,
+		},
+		{layout: "5..4"},
+		{layout: "Unknown"},
+		{
+			layout: strconv.Itoa(math.MaxInt) + ".1.1",
+			want:   float64(math.MaxInt) + 2,
+			known:  true,
+		},
+	} {
+		t.Run(test.layout, func(t *testing.T) {
+			got, known := ulcxChannelCount(test.layout)
+			if got != test.want || known != test.known {
+				t.Fatalf("ulcxChannelCount(%q) = (%v, %t), want (%v, %t)", test.layout, got, known, test.want, test.known)
+			}
+		})
+	}
+}
+
 func TestDeterministicValidationEvidence(t *testing.T) {
 	t.Parallel()
+	policy := ValidationPolicy()
+	if policy.ID != "unit3d-ulcx-policy-v4" {
+		t.Fatalf("validation policy = %q, want immersive channel policy v4", policy.ID)
+	}
 	tests := []struct {
 		name            string
 		mutate          func(*api.TrackerValidationSubject)
@@ -140,6 +195,37 @@ func TestDeterministicValidationEvidence(t *testing.T) {
 			},
 		},
 		{
+			name: "immersive FLAC is strict",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.Audio = "FLAC"
+				subject.Channels = "5.1.4"
+			},
+			wantRule:        "ulcx_flac_channels",
+			wantDisposition: api.RuleDispositionStrict,
+			wantStatus:      api.MetadataEvidenceStatusComplete,
+		},
+		{
+			name: "1080p immersive lossless encode is strict",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.Type = "ENCODE"
+				subject.Audio = "TrueHD"
+				subject.Channels = "7.1.4"
+			},
+			wantRule:        "ulcx_encode_lossless_multichannel",
+			wantDisposition: api.RuleDispositionStrict,
+			wantStatus:      api.MetadataEvidenceStatusComplete,
+		},
+		{
+			name: "2160p immersive lossless encode passes",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.Type = "ENCODE"
+				subject.Audio = "TrueHD"
+				subject.Channels = "7.1.4"
+				subject.Release.Resolution = "2160p"
+				subject.MediaFileFacts.Files[0].Source = "2160p Blu-ray"
+			},
+		},
+		{
 			name: "1080p encode lossless multichannel is strict",
 			mutate: func(subject *api.TrackerValidationSubject) {
 				subject.Type = "ENCODE"
@@ -249,7 +335,7 @@ func TestDeterministicValidationEvidence(t *testing.T) {
 			if test.mutate != nil {
 				test.mutate(&subject)
 			}
-			failures, err := ValidationPolicy().Check(context.Background(), subject, nil)
+			failures, err := policy.Check(context.Background(), subject, nil)
 			if err != nil {
 				t.Fatalf("validate ULCX subject: %v", err)
 			}

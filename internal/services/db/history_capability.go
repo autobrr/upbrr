@@ -55,14 +55,20 @@ func (r *SQLiteRepository) LoadHistoryRecord(ctx context.Context, sourcePath str
 	if record.TrackerRuleFailures, err = r.ListTrackerRuleFailuresByPath(ctx, sourcePath); err != nil {
 		return api.HistoryRecord{}, fmt.Errorf("db history record tracker failures: %w", err)
 	}
-	if record.Screenshots, err = r.ListScreenshotsByPath(ctx, sourcePath); err != nil {
-		return api.HistoryRecord{}, fmt.Errorf("db history record screenshots: %w", err)
-	}
-	if record.FinalSelections, err = r.ListFinalSelections(ctx, sourcePath); err != nil {
-		return api.HistoryRecord{}, fmt.Errorf("db history record final selections: %w", err)
-	}
-	if record.UploadedImages, err = r.ListUploadedImagesByPath(ctx, sourcePath); err != nil {
-		return api.HistoryRecord{}, fmt.Errorf("db history record uploaded images: %w", err)
+	if record.PreparedRelease != nil {
+		binding, bindingErr := record.PreparedRelease.MediaBinding()
+		if bindingErr != nil {
+			return api.HistoryRecord{}, fmt.Errorf("db history record media binding: %w", bindingErr)
+		}
+		if record.Screenshots, err = r.ListScreenshotsByPath(ctx, binding); err != nil {
+			return api.HistoryRecord{}, fmt.Errorf("db history record screenshots: %w", err)
+		}
+		if record.FinalSelections, err = r.ListFinalSelections(ctx, binding); err != nil {
+			return api.HistoryRecord{}, fmt.Errorf("db history record final selections: %w", err)
+		}
+		if record.UploadedImages, err = r.ListUploadedImagesByPath(ctx, binding); err != nil {
+			return api.HistoryRecord{}, fmt.Errorf("db history record uploaded images: %w", err)
+		}
 	}
 	if record.UploadHistory, err = r.ListUploadHistoryByPath(ctx, sourcePath); err != nil {
 		return api.HistoryRecord{}, fmt.Errorf("db history record upload history: %w", err)
@@ -78,40 +84,40 @@ func (r *SQLiteRepository) LoadHistoryRecord(ctx context.Context, sourcePath str
 // optional metadata needed to derive the managed release directory.
 func (r *SQLiteRepository) LoadHistoryCleanupSnapshot(ctx context.Context, sourcePath string) (api.HistoryCleanupSnapshot, error) {
 	snapshot := api.HistoryCleanupSnapshot{}
-	shots, err := r.ListScreenshotsByPath(ctx, sourcePath)
+	trimmed := strings.TrimSpace(sourcePath)
+	if trimmed == "" {
+		return api.HistoryCleanupSnapshot{}, internalerrors.ErrInvalidInput
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT image_path FROM screenshots WHERE source_path = ?
+		UNION
+		SELECT image_path FROM uploaded_images WHERE source_path = ?
+		UNION
+		SELECT image_path FROM screenshot_final_selections WHERE source_path = ?
+		UNION
+		SELECT image_path FROM screenshot_slots WHERE source_path = ?
+		UNION
+		SELECT image_path FROM screenshot_slot_variants WHERE source_path = ?
+	`, trimmed, trimmed, trimmed, trimmed, trimmed)
 	if err != nil {
-		return api.HistoryCleanupSnapshot{}, fmt.Errorf("db history cleanup screenshots: %w", err)
+		return api.HistoryCleanupSnapshot{}, fmt.Errorf("db history cleanup artifact paths: %w", err)
 	}
-	for _, shot := range shots {
-		snapshot.ArtifactPaths = append(snapshot.ArtifactPaths, shot.ImagePath)
-	}
-	uploaded, err := r.ListUploadedImagesByPath(ctx, sourcePath)
-	if err != nil {
-		return api.HistoryCleanupSnapshot{}, fmt.Errorf("db history cleanup uploaded images: %w", err)
-	}
-	for _, image := range uploaded {
-		snapshot.ArtifactPaths = append(snapshot.ArtifactPaths, image.ImagePath)
-	}
-	finals, err := r.ListFinalSelections(ctx, sourcePath)
-	if err != nil {
-		return api.HistoryCleanupSnapshot{}, fmt.Errorf("db history cleanup final selections: %w", err)
-	}
-	for _, image := range finals {
-		snapshot.ArtifactPaths = append(snapshot.ArtifactPaths, image.ImagePath)
-	}
-	slots, err := r.ListScreenshotSlotsByPath(ctx, sourcePath)
-	if err != nil {
-		return api.HistoryCleanupSnapshot{}, fmt.Errorf("db history cleanup screenshot slots: %w", err)
-	}
-	for _, slot := range slots {
-		snapshot.ArtifactPaths = append(snapshot.ArtifactPaths, slot.ImagePath)
-		for _, variant := range slot.Variants {
-			snapshot.ArtifactPaths = append(snapshot.ArtifactPaths, variant.ImagePath)
+	defer rows.Close()
+	for rows.Next() {
+		var artifactPath string
+		if err := rows.Scan(&artifactPath); err != nil {
+			return api.HistoryCleanupSnapshot{}, fmt.Errorf("db history cleanup scan artifact path: %w", err)
 		}
+		if artifactPath = strings.TrimSpace(artifactPath); artifactPath != "" {
+			snapshot.ArtifactPaths = append(snapshot.ArtifactPaths, artifactPath)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return api.HistoryCleanupSnapshot{}, fmt.Errorf("db history cleanup iterate artifact paths: %w", err)
 	}
 	// Metadata only refines the derived temp directory. Preserve cleanup of
 	// known artifact paths when the optional release row cannot be read.
-	if metadata, metadataErr := r.GetByPath(ctx, sourcePath); metadataErr == nil {
+	if metadata, metadataErr := r.GetByPath(ctx, trimmed); metadataErr == nil {
 		snapshot.Metadata = &metadata
 	}
 	return snapshot, nil

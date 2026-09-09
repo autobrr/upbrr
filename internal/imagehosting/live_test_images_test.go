@@ -402,7 +402,7 @@ func TestLiveImagesSerializesIdenticalNonBatchUploads(t *testing.T) {
 		err   error
 	}, 1)
 	go func() {
-		links, uploadErr := service.Upload(t.Context(), api.ImageHostingSubject{SourcePath: "Example.Release.2026.mkv"}, "pixhost", "global", []api.ScreenshotImage{
+		links, uploadErr := service.Upload(t.Context(), imageHostingTestSubject("Example.Release.2026.mkv"), "pixhost", "global", []api.ScreenshotImage{
 			{Path: paths[0]},
 			{Path: paths[1]},
 		})
@@ -719,7 +719,7 @@ func TestLiveImagesWrapsGenericProviderAndRetainsSuccess(t *testing.T) {
 		return imageTestResponse(http.StatusOK, `{"th_url":"https://t1.pixhost.invalid/thumbs/one.png","show_url":"https://pixhost.invalid/show/one"}`), nil
 	})}
 	links, err := service.Upload(
-		t.Context(), api.ImageHostingSubject{SourcePath: paths[0]}, "pixhost", "global", []api.ScreenshotImage{{Path: paths[0]}},
+		t.Context(), imageHostingTestSubject(paths[0]), "pixhost", "global", []api.ScreenshotImage{{Path: paths[0]}},
 	)
 	if err != nil || len(links) != 1 {
 		t.Fatalf("generic live upload: links=%#v err=%v", links, err)

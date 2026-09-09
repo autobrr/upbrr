@@ -31,7 +31,6 @@ type mediaLookupResult struct {
 
 type taskInfo struct {
 	TaskID      string
-	InfoHash    string
 	RedirectURL string
 }
 

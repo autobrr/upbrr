@@ -84,6 +84,23 @@ const workflowOperationFailureError = (failure: Readonly<{ Message: string; Reco
 const normalizedNames = (values: readonly string[]) =>
   Array.from(new Set(values.map((value) => value.trim().toUpperCase()).filter(Boolean)));
 
+const playlistSelectionComplete = (
+  candidates: readonly { id: string; discId: string }[],
+  selected: readonly string[],
+) => {
+  const selectedIDs = new Set(selected);
+  const selectedDiscs = new Set(
+    candidates
+      .filter((candidate) => selectedIDs.has(candidate.id))
+      .map((candidate) => candidate.discId.trim() || "single-disc"),
+  );
+  return (
+    candidates.length > 0 &&
+    new Set(candidates.map((candidate) => candidate.discId.trim() || "single-disc")).size ===
+      selectedDiscs.size
+  );
+};
+
 const workflowFactInstructions = (
   instructions: PrepareInput["Instructions"],
 ): ReleaseFactInstructions => ({
@@ -485,7 +502,10 @@ export function ReleaseSessionProvider({
         option.playlist
           ? { ...option.playlist, items: [...option.playlist.items] }
           : {
-              file: option.value,
+              id: option.value,
+              discId: "",
+              discName: "",
+              file: option.label || option.value,
               duration: 0,
               items: [],
               score: 0,
@@ -1026,6 +1046,13 @@ export function ReleaseSessionProvider({
       const plan: ScreenshotPlan = {
         SourcePath: workflowView.current.release?.release.Source.SourcePath || "",
         DiscType: workflowPlan.discType || "",
+        Discs: (workflowPlan.discs || []).map((disc) => ({
+          DiscID: disc.discId,
+          DiscName: disc.discName,
+          DurationSeconds: disc.durationSeconds,
+          FrameRate: disc.frameRate,
+          SuggestedSelections: [...(disc.suggestedSelections || [])],
+        })),
         DurationSeconds: workflowPlan.durationSeconds,
         FrameRate: workflowPlan.frameRate,
         SuggestedSelections: [...(workflowPlan.suggestedSelections || [])],
@@ -1062,10 +1089,13 @@ export function ReleaseSessionProvider({
       const requested = selections ?? state.screenshots.selections;
       const selection = requested[0];
       if (!selection) return false;
-      return previewWorkflowFrame(selection.TimestampSeconds);
+      return previewWorkflowFrame(selection.DiscID || "", selection.TimestampSeconds);
     }
     if (workflowView.current) {
-      const requested = [...(selections ?? state.screenshots.selections)];
+      const requested = [...(selections ?? state.screenshots.selections)].map((selection) => ({
+        ...selection,
+        DiscID: selection.DiscID || "",
+      }));
       return runBackendWorkflow((current, commandID, signal) =>
         continueBackendGoal(
           current,
@@ -1112,14 +1142,18 @@ export function ReleaseSessionProvider({
     );
   };
 
-  const previewWorkflowFrame = async (timestampSeconds: number): Promise<boolean> => {
+  const previewWorkflowFrame = async (
+    discID: string,
+    timestampSeconds: number,
+  ): Promise<boolean> => {
     const command = beginWorkflow("screenshots", access.screenshots.reason);
     if (!command || !workflowView.current) return false;
     try {
       const preview = await activePorts.workflow.previewFrame(
         workflowView.current,
+        discID,
         timestampSeconds,
-        `preview-${workflowView.current.workflow.id}-${workflowView.current.workflow.revision}-${timestampSeconds}`,
+        `preview-${workflowView.current.workflow.id}-${workflowView.current.workflow.revision}-${discID || "single"}-${timestampSeconds}`,
         command.controller.signal,
       );
       dispatch({
@@ -1146,6 +1180,8 @@ export function ReleaseSessionProvider({
         .map((artifact, index) => ({
           image: {
             artifactID: artifact.id,
+            discID: artifact.discId,
+            discName: artifact.discName,
             index: artifact.index ?? index,
             timestampSeconds: artifact.timestampSeconds || 0,
             purpose: "menu" as const,
@@ -1189,6 +1225,8 @@ export function ReleaseSessionProvider({
         .map((artifact, index) => ({
           image: {
             artifactID: artifact.id,
+            discID: artifact.discId,
+            discName: artifact.discName,
             index: artifact.index ?? index,
             timestampSeconds: artifact.timestampSeconds || 0,
             purpose: artifact.purpose as ScreenshotPurpose,
@@ -1409,6 +1447,8 @@ export function ReleaseSessionProvider({
     .map((artifact, index) => ({
       image: {
         artifactID: artifact.id,
+        discID: artifact.discId,
+        discName: artifact.discName,
         index: artifact.index ?? index,
         timestampSeconds: artifact.timestampSeconds || 0,
         purpose: "menu" as const,
@@ -1428,6 +1468,8 @@ export function ReleaseSessionProvider({
       .map((artifact, index) => ({
         image: {
           artifactID: artifact.id,
+          discID: artifact.discId,
+          discName: artifact.discName,
           index: artifact.index ?? index,
           timestampSeconds: artifact.timestampSeconds || 0,
           purpose: artifact.purpose as ScreenshotPurpose,
@@ -1631,6 +1673,10 @@ export function ReleaseSessionProvider({
         selectedTrackers: state.selectedTrackers,
         preview: state.preview,
         trackerData: state.preview?.TrackerData || [],
+        source: {
+          discCount: workflowView.current?.release?.release.Source.Classification?.DiscCount || 0,
+          discType: workflowView.current?.release?.release.Source.Classification?.DiscType || "",
+        },
         playlist: state.playlist,
       },
       updateSourceDraft: (value) => dispatch({ type: "draft_changed", value }),
@@ -1645,7 +1691,7 @@ export function ReleaseSessionProvider({
       confirmPlaylists: () => {
         if (
           !state.playlist.required ||
-          state.playlist.selected.length === 0 ||
+          !playlistSelectionComplete(state.playlist.candidates, state.playlist.selected) ||
           !state.preparation.correlationID
         ) {
           return Promise.resolve(false);

@@ -13,6 +13,24 @@ Provide a release folder or file. upbrr resolves the source layout, finds reusab
 
 Folder handling matters. `--keep-folder` preserves a supplied folder instead of processing only a selected video file.
 
+### Multi-disc DVD and Blu-ray folders
+
+Select the collection parent when every disc belongs to one release. Supported collections contain extracted folders of one disc format:
+
+```text
+Example DVD Collection/
+├── Disc 1/VIDEO_TS/...
+└── Disc 2/VIDEO_TS/...
+```
+
+```text
+Example BDMV Collection/
+├── Disc 1/BDMV/...
+└── Disc 2/BDMV/...
+```
+
+upbrr prepares one release and creates one torrent rooted at the selected collection, preserving every disc folder. For BDMV, select at least one playlist for every disc. Duplicate playlist names such as `00001.MPLS` remain separate because upbrr tracks their disc identity.
+
 ## 2. Review canonical metadata
 
 Metadata providers and local media inspection produce shared release facts. Review at least:
@@ -48,6 +66,8 @@ Depending on the source and trackers, upbrr can:
 - capture compatible DVD menus or import disc-menu images;
 - upload selected images to allowed hosts;
 - build tracker-specific BBCode descriptions.
+
+Automatic screenshot plans distribute the requested images across all prepared discs, with at least one planned image per disc. Manual frame numbers apply to every disc. Screenshot previews, captures, and DVD menu images remain grouped by disc; DVD menu capture can warn about partial coverage when its collection-wide safety cap or the available menus leave a disc uncovered.
 
 Inspect image ordering, host URLs, technical blocks, headers, and rendered BBCode.
 

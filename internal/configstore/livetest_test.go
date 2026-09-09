@@ -512,19 +512,15 @@ func TestCreateLiveTestProfilePreservesAuthWithHistoricalMediaMigrations(t *test
 	defer repo.Close()
 	mediaPath := filepath.Join(t.TempDir(), "Synthetic.Media")
 	imagePath := filepath.Join(t.TempDir(), "synthetic.png")
-	// The historical generation migration has the same three runtime tables
-	// as the current canonical generation migration already in this fixture.
-	for _, id := range []string{
-		"2026_07_add_prepared_release_generations",
-		"2026_08_add_multi_disc_media_binding",
-		"2026_08_bind_prepared_media_assets",
-	} {
-		if _, err := repo.RawDB().ExecContext(t.Context(), "INSERT INTO schema_migrations VALUES (?, 'synthetic')", id); err != nil {
-			t.Fatal(err)
-		}
+	// The superseded generation migration has the same runtime tables as the
+	// current canonical migration already applied to this fixture.
+	if _, err := repo.RawDB().ExecContext(
+		t.Context(),
+		"INSERT INTO schema_migrations VALUES ('2026_07_add_prepared_release_generations', 'synthetic')",
+	); err != nil {
+		t.Fatal(err)
 	}
 	for _, statement := range []string{
-		`ALTER TABLE playlist_selections ADD COLUMN source_fingerprint TEXT NOT NULL DEFAULT ""`,
 		`INSERT INTO playlist_selections (source_path, updated_at, source_fingerprint) VALUES (?, 'synthetic', 'synthetic-fingerprint')`,
 		`INSERT INTO external_ids (source_path, generation, updated_at) VALUES (?, 1, 'synthetic')`,
 		`INSERT INTO external_metadata (source_path, generation, updated_at) VALUES (?, 1, 'synthetic')`,
@@ -539,17 +535,6 @@ func TestCreateLiveTestProfilePreservesAuthWithHistoricalMediaMigrations(t *test
 		}
 		if _, err := repo.RawDB().ExecContext(t.Context(), statement, args...); err != nil {
 			t.Fatal(err)
-		}
-	}
-	for _, table := range []string{"screenshots", "screenshot_final_selections", "uploaded_images", "screenshot_slots", "screenshot_slot_variants"} {
-		for _, column := range []string{
-			`prepared_media_fingerprint TEXT NOT NULL DEFAULT ""`,
-			`prepared_generation INTEGER NOT NULL DEFAULT 0`,
-			`disc_id TEXT NOT NULL DEFAULT ""`,
-		} {
-			if _, err := repo.RawDB().ExecContext(t.Context(), "ALTER TABLE "+table+" ADD COLUMN "+column); err != nil {
-				t.Fatal(err)
-			}
 		}
 	}
 	for _, statement := range []string{

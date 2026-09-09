@@ -292,4 +292,80 @@ describe("ScreenshotsPage", () => {
     expect(screen.getByText("4 captured screenshot(s)")).toBeInTheDocument();
     expect(screen.getAllByAltText(/^Screenshot \d$/)).toHaveLength(4);
   });
+
+  it("groups planning, previews, and captures by prepared disc", () => {
+    const base = facet();
+    const selections = [
+      { DiscID: "disc-one", Index: 0, TimestampSeconds: 10, Frame: 240, Source: "auto" },
+      { DiscID: "disc-two", Index: 1, TimestampSeconds: 20, Frame: 600, Source: "auto" },
+    ];
+    const screenshots: ScreenshotsFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        plan: {
+          ...plan(),
+          DiscType: "BDMV",
+          Discs: [
+            {
+              DiscID: "disc-one",
+              DiscName: "Disc 1",
+              DurationSeconds: 120,
+              FrameRate: 24,
+              SuggestedSelections: [selections[0]],
+            },
+            {
+              DiscID: "disc-two",
+              DiscName: "Disc 2",
+              DurationSeconds: 90,
+              FrameRate: 30,
+              SuggestedSelections: [selections[1]],
+            },
+          ],
+          SuggestedSelections: selections,
+        },
+        selections,
+        artifacts: {
+          ...base.view.artifacts!,
+          artifacts: [
+            {
+              id: "screen-one",
+              discId: "disc-one",
+              discName: "Disc 1",
+              kind: "screenshot",
+              purpose: "final",
+              selected: true,
+              url: "/media/screen-one",
+            },
+            {
+              id: "screen-two",
+              discId: "disc-two",
+              discName: "Disc 2",
+              kind: "screenshot",
+              purpose: "final",
+              selected: true,
+              url: "/media/screen-two",
+            },
+          ],
+        },
+      },
+    };
+    render(
+      <ScreenshotsPage facet={screenshots} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
+    );
+
+    expect(screen.getAllByRole("heading", { name: "Disc 1" })).toHaveLength(2);
+    expect(screen.getAllByRole("heading", { name: "Disc 2" })).toHaveLength(2);
+    expect(screen.getByAltText("Disc 1 screenshot 1")).toBeVisible();
+    expect(screen.getByAltText("Disc 2 screenshot 1")).toBeVisible();
+
+    const preview = screen.getByRole("heading", { name: "Live Preview" }).closest("section");
+    if (!preview) throw new Error("live preview missing");
+    fireEvent.change(within(preview).getByLabelText("Preview disc"), {
+      target: { value: "disc-two" },
+    });
+    fireEvent.change(within(preview).getByLabelText("Seconds"), { target: { value: "30" } });
+    fireEvent.click(within(preview).getByRole("button", { name: "Run preview" }));
+    expect(screenshots.previewFrame).toHaveBeenCalledWith("disc-two", 30);
+  });
 });
