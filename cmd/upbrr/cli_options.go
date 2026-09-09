@@ -1141,7 +1141,7 @@ func buildExternalIDOverrides(opts cliOptions, visited map[string]bool) (api.Ext
 		if value := strings.TrimSpace(input.value); value != "" {
 			var err error
 			id, err = strconv.ParseInt(value, 0, strconv.IntSize)
-			if err != nil {
+			if err != nil || id < 0 {
 				return api.ExternalIDOverrides{}, fmt.Errorf("invalid %s id %q", input.name, input.value)
 			}
 		}

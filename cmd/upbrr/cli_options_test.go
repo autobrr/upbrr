@@ -992,6 +992,20 @@ func TestCLIProviderIDsRejectInvalidValues(t *testing.T) {
 	}
 }
 
+func TestCLIProviderIDsRejectNegativeNumericValues(t *testing.T) {
+	t.Parallel()
+	for _, provider := range []string{"tvdb", "tvmaze", "mal"} {
+		for _, value := range []string{"-1", "-0x1", " -1 "} {
+			t.Run(provider+"/"+value, func(t *testing.T) {
+				result := executeCLIForTest(t.Context(), t, []string{"--" + provider + "=" + value, "--version"})
+				if result.code != 2 || !strings.Contains(result.stderr, "invalid "+provider+" id") {
+					t.Fatalf("negative provider ID result: %#v", result)
+				}
+			})
+		}
+	}
+}
+
 func TestCLIProviderIDsBlankRootFlags(t *testing.T) {
 	t.Parallel()
 	for _, args := range [][]string{
