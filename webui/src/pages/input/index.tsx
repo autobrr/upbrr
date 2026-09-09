@@ -899,9 +899,15 @@ export default function InputPage(props: Props) {
     const normalized = provider === "imdb" ? trimmed.replace(/^tt/i, "") : trimmed;
     return /^\d+$/.test(normalized) ? Number(normalized) : null;
   };
+  /**
+   * Merges valid touched edits into existing intent without mutating it, preserving prior provider clears.
+   * Touched blank fields become explicit zero overrides; any invalid field marks the result invalid.
+   * Dirty means the merged result contains overrides, including those restored from existing intent.
+   */
   const buildIDOverrides = (
     edits: IDEdits,
     touched: Record<keyof IDEdits, boolean>,
+    existing: Readonly<ExternalIDOverrides>,
   ): OverrideState<ExternalIDOverrides> => {
     const parsed = {
       tmdb: parseID("tmdb", edits.tmdb),
@@ -911,7 +917,7 @@ export default function InputPage(props: Props) {
       mal: parseID("mal", edits.mal),
     };
     const invalid = Object.values(parsed).includes(null);
-    const overrides: ExternalIDOverrides = {};
+    const overrides: ExternalIDOverrides = { ...existing };
     if (touched.tmdb && parsed.tmdb !== null) overrides.TMDBID = parsed.tmdb;
     if (touched.imdb && parsed.imdb !== null) overrides.IMDBID = parsed.imdb;
     if (touched.tvdb && parsed.tvdb !== null) overrides.TVDBID = parsed.tvdb;
@@ -978,14 +984,18 @@ export default function InputPage(props: Props) {
     return { overrides, dirty: Object.keys(overrides).length > 0, invalid };
   };
 
-  const idOverrideState = buildIDOverrides(idEdits, idTouched);
+  const idOverrideState = buildIDOverrides(idEdits, idTouched, view.intent.identity);
   const releaseOverrideState = buildReleaseOverrides(releaseEdits, releaseTouched);
   const markIDTouched = (key: keyof IDEdits) => {
     const touched = { ...idTouchedRef.current, [key]: true };
     idTouchedRef.current = touched;
     setIDTouchedState(touched);
-    const next = buildIDOverrides(idEditsRef.current, touched);
+    const next = buildIDOverrides(idEditsRef.current, touched, view.intent.identity);
     if (!next.invalid) facet.changeIdentity(next.overrides);
+  };
+  const clearID = (key: keyof IDEdits) => {
+    setIdEdits((current) => ({ ...current, [key]: "" }));
+    markIDTouched(key);
   };
   const markReleaseTouched = (key: keyof ReleaseNameTouchedState) => {
     const touched = { ...releaseTouchedRef.current, [key]: true };
@@ -1125,6 +1135,9 @@ export default function InputPage(props: Props) {
   );
   const providerDisplays = preview.Display.Providers;
   const hasPreview = preview.ReleaseName || externalIDInfo.length > 0;
+  const showReleaseDetails = Boolean(
+    hasPreview || (path.trim() && (view.status === "ready" || view.status === "error")),
+  );
   const isTVEpisodePreview = (identityDraft.Category || "").trim().toUpperCase() === "TV";
   const hasResolvedPrimaryExternalID = identityDraft.TMDBID > 0 || identityDraft.IMDBID > 0;
   const selectedTrackerCount = useMemo(
@@ -1794,75 +1807,138 @@ export default function InputPage(props: Props) {
               </div>
             </details>
           ) : null}
-          {hasPreview ? (
+          {showReleaseDetails ? (
             <p className="helper edit-helper">Edit external IDs and Release Name attributes.</p>
           ) : null}
-          {hasPreview ? (
+          {showReleaseDetails ? (
             <details className="edit-dropdown">
               <summary>Edit Release Details</summary>
               <div className="edit-dropdown__body">
                 <div className="settings-subgroup">
                   <div className="settings-subgroup__title">External IDs</div>
+                  <p className="muted path-helper">
+                    Remove an ID to skip that provider. Enter an ID to use the provider again.
+                  </p>
                   <div className="id-editor settings-grid">
                     <div className="settings-field">
                       <label htmlFor="external-tmdb-id">TMDB ID</label>
-                      <input
-                        id="external-tmdb-id"
-                        value={idEdits.tmdb}
-                        onChange={(event) => {
-                          setIdEdits((prev) => ({ ...prev, tmdb: event.target.value }));
-                          markIDTouched("tmdb");
-                        }}
-                        placeholder="e.g. 550"
-                      />
+                      <div className="flex items-center gap-2">
+                        <input
+                          id="external-tmdb-id"
+                          className="min-w-0"
+                          value={idEdits.tmdb}
+                          onChange={(event) => {
+                            setIdEdits((prev) => ({ ...prev, tmdb: event.target.value }));
+                            markIDTouched("tmdb");
+                          }}
+                          placeholder="e.g. 550"
+                        />
+                        <Button
+                          type="button"
+                          className="shrink-0"
+                          aria-label="Remove TMDB ID"
+                          disabled={idOverrideState.overrides.TMDBID === 0}
+                          onClick={() => clearID("tmdb")}
+                        >
+                          {idOverrideState.overrides.TMDBID === 0 ? "Removed" : "Remove"}
+                        </Button>
+                      </div>
                     </div>
                     <div className="settings-field">
                       <label htmlFor="external-imdb-id">IMDB ID</label>
-                      <input
-                        id="external-imdb-id"
-                        value={idEdits.imdb}
-                        onChange={(event) => {
-                          setIdEdits((prev) => ({ ...prev, imdb: event.target.value }));
-                          markIDTouched("imdb");
-                        }}
-                        placeholder="e.g. tt0137523"
-                      />
+                      <div className="flex items-center gap-2">
+                        <input
+                          id="external-imdb-id"
+                          className="min-w-0"
+                          value={idEdits.imdb}
+                          onChange={(event) => {
+                            setIdEdits((prev) => ({ ...prev, imdb: event.target.value }));
+                            markIDTouched("imdb");
+                          }}
+                          placeholder="e.g. tt0137523"
+                        />
+                        <Button
+                          type="button"
+                          className="shrink-0"
+                          aria-label="Remove IMDB ID"
+                          disabled={idOverrideState.overrides.IMDBID === 0}
+                          onClick={() => clearID("imdb")}
+                        >
+                          {idOverrideState.overrides.IMDBID === 0 ? "Removed" : "Remove"}
+                        </Button>
+                      </div>
                     </div>
                     <div className="settings-field">
                       <label htmlFor="external-tvdb-id">TVDB ID</label>
-                      <input
-                        id="external-tvdb-id"
-                        value={idEdits.tvdb}
-                        onChange={(event) => {
-                          setIdEdits((prev) => ({ ...prev, tvdb: event.target.value }));
-                          markIDTouched("tvdb");
-                        }}
-                        placeholder="e.g. 80379"
-                      />
+                      <div className="flex items-center gap-2">
+                        <input
+                          id="external-tvdb-id"
+                          className="min-w-0"
+                          value={idEdits.tvdb}
+                          onChange={(event) => {
+                            setIdEdits((prev) => ({ ...prev, tvdb: event.target.value }));
+                            markIDTouched("tvdb");
+                          }}
+                          placeholder="e.g. 80379"
+                        />
+                        <Button
+                          type="button"
+                          className="shrink-0"
+                          aria-label="Remove TVDB ID"
+                          disabled={idOverrideState.overrides.TVDBID === 0}
+                          onClick={() => clearID("tvdb")}
+                        >
+                          {idOverrideState.overrides.TVDBID === 0 ? "Removed" : "Remove"}
+                        </Button>
+                      </div>
                     </div>
                     <div className="settings-field">
                       <label htmlFor="external-tvmaze-id">TVmaze ID</label>
-                      <input
-                        id="external-tvmaze-id"
-                        value={idEdits.tvmaze}
-                        onChange={(event) => {
-                          setIdEdits((prev) => ({ ...prev, tvmaze: event.target.value }));
-                          markIDTouched("tvmaze");
-                        }}
-                        placeholder="e.g. 82"
-                      />
+                      <div className="flex items-center gap-2">
+                        <input
+                          id="external-tvmaze-id"
+                          className="min-w-0"
+                          value={idEdits.tvmaze}
+                          onChange={(event) => {
+                            setIdEdits((prev) => ({ ...prev, tvmaze: event.target.value }));
+                            markIDTouched("tvmaze");
+                          }}
+                          placeholder="e.g. 82"
+                        />
+                        <Button
+                          type="button"
+                          className="shrink-0"
+                          aria-label="Remove TVmaze ID"
+                          disabled={idOverrideState.overrides.TVmazeID === 0}
+                          onClick={() => clearID("tvmaze")}
+                        >
+                          {idOverrideState.overrides.TVmazeID === 0 ? "Removed" : "Remove"}
+                        </Button>
+                      </div>
                     </div>
                     <div className="settings-field">
                       <label htmlFor="external-mal-id">MAL ID</label>
-                      <input
-                        id="external-mal-id"
-                        value={idEdits.mal}
-                        onChange={(event) => {
-                          setIdEdits((prev) => ({ ...prev, mal: event.target.value }));
-                          markIDTouched("mal");
-                        }}
-                        placeholder="e.g. 5114"
-                      />
+                      <div className="flex items-center gap-2">
+                        <input
+                          id="external-mal-id"
+                          className="min-w-0"
+                          value={idEdits.mal}
+                          onChange={(event) => {
+                            setIdEdits((prev) => ({ ...prev, mal: event.target.value }));
+                            markIDTouched("mal");
+                          }}
+                          placeholder="e.g. 5114"
+                        />
+                        <Button
+                          type="button"
+                          className="shrink-0"
+                          aria-label="Remove MAL ID"
+                          disabled={idOverrideState.overrides.MALID === 0}
+                          onClick={() => clearID("mal")}
+                        >
+                          {idOverrideState.overrides.MALID === 0 ? "Removed" : "Remove"}
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2207,21 +2283,29 @@ export default function InputPage(props: Props) {
                   </p>
                 ) : null}
                 <div className="edit-actions">
-                  <button
-                    className="ghost"
-                    type="button"
-                    onClick={handleResetMetadata}
-                    disabled={loading}
-                  >
-                    {metadataResetting ? "Resetting..." : "Reset data + refresh"}
-                  </button>
+                  {hasPreview ? (
+                    <button
+                      className="ghost"
+                      type="button"
+                      onClick={handleResetMetadata}
+                      disabled={loading}
+                    >
+                      {metadataResetting ? "Resetting..." : "Reset data + refresh"}
+                    </button>
+                  ) : null}
                   <button
                     className="primary"
                     type="button"
                     onClick={handleRefresh}
                     disabled={refreshDisabled}
                   >
-                    {loading ? "Refreshing..." : "Refresh metadata"}
+                    {loading
+                      ? hasPreview
+                        ? "Refreshing..."
+                        : "Retrying..."
+                      : hasPreview
+                        ? "Refresh metadata"
+                        : "Retry metadata"}
                   </button>
                 </div>
               </div>

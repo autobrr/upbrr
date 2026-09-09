@@ -139,15 +139,15 @@ Release Overrides:
 
 Metadata IDs:
   -tmdb, --tmdb string
-      Override TMDB id
+      Override TMDB id; empty or 0 clears and skips this provider
   -imdb, --imdb string
-      Override IMDb id
-  -mal, --mal int
-      Override MAL id
-  -tvdb, --tvdb int
-      Override TVDB id
-  -tvmaze, --tvmaze int
-      Override TVmaze id
+      Override IMDb id; empty or 0 clears and skips this provider
+  -mal, --mal string
+      Override MAL id; empty or 0 clears and skips this provider
+  -tvdb, --tvdb string
+      Override TVDB id; empty or 0 clears and skips this provider
+  -tvmaze, --tvmaze string
+      Override TVmaze id; empty or 0 clears and skips this provider
 
 Tracker Overrides:
   -skip-dupe-check, --skip-dupe-check, -sdc

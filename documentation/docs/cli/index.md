@@ -162,6 +162,24 @@ For BDMV, interactive preparation groups playlist choices by disc and requires a
 | `--tvdb <id>`   | `-tvdb`   | Override TVDB ID.   |
 | `--tvmaze <id>` | `-tvmaze` | Override TVmaze ID. |
 
+### Clear a metadata provider
+
+Pass an empty value or `0` to stop using a provider for this release. This works with `--tmdb`, `--imdb`, `--tvdb`, `--tvmaze`, and `--mal`.
+
+For example, clear TMDB and use a known IMDb ID:
+
+```powershell
+.\upbrr.exe --tmdb= --imdb tt1234567 "E:\Media\Example.Release.2026.1080p-GRP.mkv"
+```
+
+Use the equals sign in `--tmdb=` to pass an empty value reliably in PowerShell. `--tmdb=0` has the same effect. You can clear several providers in one command.
+
+Clearing removes that provider's ID and metadata from the prepared release. It also prevents automatic rediscovery through title searches, tracker data, or other providers. Other providers can still supply metadata.
+
+The clear is saved for that source path. Omitting the flag on a later run preserves the clear. Supply a positive ID to use that provider again, such as `--tmdb 123456`. Provider settings for other releases stay unchanged.
+
+Trackers that require the cleared provider can remain blocked. Continue with trackers whose metadata requirements are satisfied, or supply a correct ID before retrying. See [metadata troubleshooting](../troubleshooting/index.md#a-metadata-provider-fails-or-selects-the-wrong-title).
+
 ## Tracker overrides
 
 | Option                | Aliases                      | Purpose                                   |

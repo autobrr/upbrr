@@ -44,6 +44,8 @@ Metadata providers and local media inspection produce shared release facts. Revi
 
 Overrides change the prepared generation. Later operations must use that exact generation rather than silently rebuilding it.
 
+If a provider fails or selects the wrong title, supply a correct ID or [clear that provider](../cli/index.md#clear-a-metadata-provider). Clearing suppresses its ID and metadata for this source, including later reloads. Other providers remain available, but trackers that require the cleared provider may be blocked.
+
 ## 3. Resolve tracker names and eligibility
 
 Each tracker can project its own upload and duplicate-search names from the reviewed source facts. upbrr resolves those names before duplicate checks so the search evidence and eventual payload refer to the same reviewed identity.
