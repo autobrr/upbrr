@@ -39,6 +39,18 @@ The left navigation follows the release workflow. Some pages appear or unlock on
 
 Navigation guards prevent later operations from silently using missing or stale prerequisites. When a page is unavailable, read the notice and return to the required stage.
 
+### Clear a metadata provider
+
+On **Input**, open **Edit Release Details** and find **External IDs**. Click **Remove** beside TMDB, IMDb, TVDB, TVmaze, or MAL. You can also delete an existing ID from its field.
+
+Click **Refresh metadata** to apply the change. The provider's ID and metadata are removed from the prepared release, and automatic lookups cannot restore them. Other providers remain available.
+
+If the first fetch fails before a preview appears, **Edit Release Details** is still available. Remove the failing provider and click **Retry metadata**.
+
+The clear is saved for this source and survives release reloads. Enter a positive ID and refresh metadata to use that provider again. Check tracker eligibility afterward: trackers that require the cleared provider can remain blocked.
+
+See [metadata troubleshooting](../troubleshooting/index.md#a-metadata-provider-fails-or-selects-the-wrong-title) for CLI examples and recovery guidance.
+
 ### Multi-disc sources
 
 On **Input**, select the parent containing all DVD or BDMV disc folders. BDMV playlist choices are grouped by disc, and preparation cannot continue until every disc has at least one selected playlist. Identical playlist filenames on different discs remain independent choices.

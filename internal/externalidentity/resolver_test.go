@@ -80,6 +80,374 @@ func TestResolvePromotesProviderEvidenceAndKeepsCandidateListsDiagnostic(t *test
 	}
 }
 
+func TestResolveDropsProviderMetadataConflictingWithExplicitCrossReference(t *testing.T) {
+	t.Parallel()
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv")
+	imdbID := 1234567
+	resolver := &Resolver{
+		evidence: evidenceLoaderFunc(func(context.Context, string) (legacyEvidence, error) {
+			return legacyEvidence{}, nil
+		}),
+		candidate: candidateSourceFunc(func(_ context.Context, request Request) (CandidateEvidence, error) {
+			return CandidateEvidence{
+				Identity: api.ExternalIdentity{
+					SourcePath: request.SourcePath,
+					TMDBID:     222333,
+					IMDBID:     imdbID,
+					TVmazeID:   444555,
+				},
+				Metadata: api.SourceScopedMetadata{
+					SourcePath: request.SourcePath,
+					TMDB: &api.TMDBMetadata{
+						TMDBID: 222333,
+						IMDBID: 7654321,
+						Title:  "Conflicting TMDB",
+					},
+					TVmaze: &api.TVmazeMetadata{
+						TVmazeID: 444555,
+						IMDBID:   7654321,
+						Name:     "Conflicting TVmaze",
+					},
+				},
+			}, nil
+		}),
+		now: time.Now,
+	}
+
+	result, err := resolver.Resolve(context.Background(), Request{
+		SourcePath:        sourcePath,
+		SourceFingerprint: "source-fingerprint",
+		Generation:        1,
+		Intent: ResolutionIntent{ProviderOverrides: api.ExternalIDOverrides{
+			IMDBID: &imdbID,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if result.Identity.TMDBID != 222333 || result.Identity.TVmazeID != 444555 || result.Identity.IMDBID != imdbID {
+		t.Fatalf("identity = %#v", result.Identity)
+	}
+	if result.ProviderMetadata.TMDB != nil || result.ProviderMetadata.TVmaze != nil {
+		t.Fatalf("conflicting metadata retained: %#v", result.ProviderMetadata)
+	}
+}
+
+func TestResolveCrossReferenceMetadataHonorsStoredProvenancePins(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		provider           api.IdentityProvider
+		provenance         api.IdentityProvenance
+		wantTMDBMetadata   bool
+		wantTVmazeMetadata bool
+	}{
+		{
+			name:       "explicit IMDb provenance with unset override drops conflicting metadata",
+			provider:   api.IdentityProviderIMDB,
+			provenance: api.IdentityProvenanceExplicit,
+		},
+		{
+			name:       "explicit TVDB provenance with unset override drops conflicting metadata",
+			provider:   api.IdentityProviderTVDB,
+			provenance: api.IdentityProvenanceExplicit,
+		},
+		{
+			name:               "provider IMDb provenance retains conflicting metadata",
+			provider:           api.IdentityProviderIMDB,
+			provenance:         api.IdentityProvenanceProvider,
+			wantTMDBMetadata:   true,
+			wantTVmazeMetadata: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv")
+			storedID := 1234567
+			metadataIMDBID := 0
+			metadataTVDBID := 0
+			identity := api.ExternalIdentity{
+				SourcePath: sourcePath,
+				Overrides: api.IdentityOverrideState{
+					IMDB: api.OverrideStateUnset,
+					TVDB: api.OverrideStateUnset,
+				},
+			}
+			if tc.provider == api.IdentityProviderIMDB {
+				identity.IMDBID = storedID
+				identity.Provenance.IMDB = tc.provenance
+				metadataIMDBID = 9999999
+			} else {
+				identity.TVDBID = storedID
+				identity.Provenance.TVDB = tc.provenance
+				metadataTVDBID = 8888888
+			}
+			resolver := &Resolver{
+				evidence: evidenceLoaderFunc(func(context.Context, string) (legacyEvidence, error) {
+					return legacyEvidence{
+						identity: identity,
+						hasIDs:   true,
+					}, nil
+				}),
+				candidate: candidateSourceFunc(func(_ context.Context, request Request) (CandidateEvidence, error) {
+					return CandidateEvidence{
+						Identity: api.ExternalIdentity{
+							SourcePath: request.SourcePath,
+							TMDBID:     111222,
+							TVmazeID:   333444,
+						},
+						Metadata: api.SourceScopedMetadata{
+							SourcePath: request.SourcePath,
+							TMDB: &api.TMDBMetadata{
+								TMDBID: 111222,
+								IMDBID: metadataIMDBID,
+								TVDBID: metadataTVDBID,
+							},
+							TVmaze: &api.TVmazeMetadata{
+								TVmazeID: 333444,
+								IMDBID:   metadataIMDBID,
+								TVDBID:   metadataTVDBID,
+							},
+						},
+					}, nil
+				}),
+				now: time.Now,
+			}
+
+			result, err := resolver.Resolve(context.Background(), Request{
+				SourcePath:        sourcePath,
+				SourceFingerprint: "source-fingerprint",
+				Generation:        1,
+			})
+			if err != nil {
+				t.Fatalf("resolve: %v", err)
+			}
+			if id, ok := result.Identity.ProviderID(tc.provider); !ok || id != storedID {
+				t.Fatalf("stored %s identity = %#v", tc.provider, result.Identity)
+			}
+			if got := result.ProviderMetadata.TMDB != nil; got != tc.wantTMDBMetadata {
+				t.Fatalf("TMDB metadata = %#v", result.ProviderMetadata.TMDB)
+			}
+			if got := result.ProviderMetadata.TVmaze != nil; got != tc.wantTVmazeMetadata {
+				t.Fatalf("TVmaze metadata = %#v", result.ProviderMetadata.TVmaze)
+			}
+		})
+	}
+}
+
+func TestResolveClearsStoredProviderGuessesFromAuthoritativeCandidate(t *testing.T) {
+	t.Parallel()
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv")
+	imdbID := 1234567
+	resolver := &Resolver{
+		evidence: evidenceLoaderFunc(func(context.Context, string) (legacyEvidence, error) {
+			return legacyEvidence{
+				identity: api.ExternalIdentity{
+					SourcePath: sourcePath,
+					TMDBID:     999888,
+					Provenance: api.IdentityProvenanceSet{TMDB: api.IdentityProvenanceProvider},
+				},
+				metadata: api.SourceScopedMetadata{
+					SourcePath: sourcePath,
+					TMDB:       &api.TMDBMetadata{TMDBID: 999888, Title: "Stale Provider Guess"},
+				},
+				hasIDs:  true,
+				hasMeta: true,
+			}, nil
+		}),
+		candidate: candidateSourceFunc(func(_ context.Context, request Request) (CandidateEvidence, error) {
+			return CandidateEvidence{
+				Identity: api.ExternalIdentity{
+					SourcePath: request.SourcePath,
+					IMDBID:     imdbID,
+					Provenance: api.IdentityProvenanceSet{IMDB: api.IdentityProvenanceExplicit},
+					Overrides:  api.IdentityOverrideState{IMDB: api.OverrideStateValue},
+				},
+				Metadata: api.SourceScopedMetadata{SourcePath: request.SourcePath},
+			}, nil
+		}),
+		now: time.Now,
+	}
+
+	result, err := resolver.Resolve(context.Background(), Request{
+		SourcePath:        sourcePath,
+		SourceFingerprint: "source-fingerprint",
+		Generation:        1,
+		Intent: ResolutionIntent{ProviderOverrides: api.ExternalIDOverrides{
+			IMDBID: &imdbID,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if result.Identity.IMDBID != imdbID || result.Identity.TMDBID != 0 || result.ProviderMetadata.TMDB != nil {
+		t.Fatalf("stored provider guess restored: identity=%#v metadata=%#v", result.Identity, result.ProviderMetadata)
+	}
+}
+
+func TestHasExplicitProviderValueRecognizesProvenanceOnlyPins(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  func(*api.ExternalIdentity)
+		want bool
+	}{
+		{
+			name: "TMDB",
+			set: func(identity *api.ExternalIdentity) {
+				identity.TMDBID = 1
+				identity.Provenance.TMDB = api.IdentityProvenanceExplicit
+			},
+			want: true,
+		},
+		{
+			name: "IMDb",
+			set: func(identity *api.ExternalIdentity) {
+				identity.IMDBID = 1
+				identity.Provenance.IMDB = api.IdentityProvenanceExplicit
+			},
+			want: true,
+		},
+		{
+			name: "TVDB",
+			set: func(identity *api.ExternalIdentity) {
+				identity.TVDBID = 1
+				identity.Provenance.TVDB = api.IdentityProvenanceExplicit
+			},
+			want: true,
+		},
+		{
+			name: "TVmaze",
+			set: func(identity *api.ExternalIdentity) {
+				identity.TVmazeID = 1
+				identity.Provenance.TVmaze = api.IdentityProvenanceExplicit
+			},
+			want: true,
+		},
+		{
+			name: "MAL",
+			set: func(identity *api.ExternalIdentity) {
+				identity.MALID = 1
+				identity.Provenance.MAL = api.IdentityProvenanceExplicit
+			},
+			want: true,
+		},
+		{
+			name: "inferred",
+			set: func(identity *api.ExternalIdentity) {
+				identity.IMDBID = 1
+				identity.Provenance.IMDB = api.IdentityProvenanceProvider
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			identity := api.ExternalIdentity{}
+			tc.set(&identity)
+			if identity.Overrides != (api.IdentityOverrideState{}) {
+				t.Fatalf("test identity unexpectedly has override state: %#v", identity.Overrides)
+			}
+			if got := hasExplicitProviderValue(identity); got != tc.want {
+				t.Fatalf("hasExplicitProviderValue() = %t, want %t for %#v", got, tc.want, identity)
+			}
+		})
+	}
+}
+
+func TestResolveAuthoritativeCandidatePreservesOrReplacesStoredExplicitSibling(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		currentIMDBID    *int
+		candidateIMDBID  int
+		candidateIMDBRef int
+		candidateState   api.OverrideState
+		wantIMDBID       int
+		wantState        api.OverrideState
+		wantTMDBMetadata bool
+	}{
+		{
+			name:             "omitted sibling preserves stored pin and rejects conflicting metadata",
+			candidateIMDBID:  7654321,
+			candidateIMDBRef: 7654321,
+			wantIMDBID:       1234567,
+			wantState:        api.OverrideStateValue,
+		},
+		{
+			name:             "explicit clear replaces stored pin",
+			currentIMDBID:    new(0),
+			candidateIMDBRef: 7654321,
+			candidateState:   api.OverrideStateClear,
+			wantState:        api.OverrideStateClear,
+			wantTMDBMetadata: true,
+		},
+		{
+			name:             "explicit replacement replaces stored pin",
+			currentIMDBID:    new(7777777),
+			candidateIMDBID:  7777777,
+			candidateIMDBRef: 7777777,
+			candidateState:   api.OverrideStateValue,
+			wantIMDBID:       7777777,
+			wantState:        api.OverrideStateValue,
+			wantTMDBMetadata: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv")
+			tmdbID := 999888
+			resolver := &Resolver{
+				evidence: evidenceLoaderFunc(func(context.Context, string) (legacyEvidence, error) {
+					return legacyEvidence{
+						identity: api.ExternalIdentity{
+							SourcePath: sourcePath,
+							IMDBID:     1234567,
+							Provenance: api.IdentityProvenanceSet{IMDB: api.IdentityProvenanceExplicit},
+							Overrides:  api.IdentityOverrideState{IMDB: api.OverrideStateValue},
+						},
+						hasIDs: true,
+					}, nil
+				}),
+				candidate: candidateSourceFunc(func(_ context.Context, request Request) (CandidateEvidence, error) {
+					return CandidateEvidence{
+						Identity: api.ExternalIdentity{
+							SourcePath: request.SourcePath,
+							TMDBID:     tmdbID,
+							IMDBID:     tc.candidateIMDBID,
+							Provenance: api.IdentityProvenanceSet{TMDB: api.IdentityProvenanceExplicit, IMDB: api.IdentityProvenanceProvider},
+							Overrides:  api.IdentityOverrideState{TMDB: api.OverrideStateValue, IMDB: tc.candidateState},
+						},
+						Metadata: api.SourceScopedMetadata{
+							SourcePath: request.SourcePath,
+							TMDB: &api.TMDBMetadata{
+								TMDBID: tmdbID,
+								IMDBID: tc.candidateIMDBRef,
+								Title:  "Candidate TMDB",
+							},
+						},
+					}, nil
+				}),
+				now: time.Now,
+			}
+
+			result, err := resolver.Resolve(context.Background(), Request{
+				SourcePath:        sourcePath,
+				SourceFingerprint: "source-fingerprint",
+				Generation:        1,
+				Intent: ResolutionIntent{ProviderOverrides: api.ExternalIDOverrides{
+					TMDBID: &tmdbID,
+					IMDBID: tc.currentIMDBID,
+				}},
+			})
+			if err != nil {
+				t.Fatalf("resolve: %v", err)
+			}
+			if result.Identity.TMDBID != tmdbID || result.Identity.IMDBID != tc.wantIMDBID || result.Identity.Overrides.IMDB != tc.wantState {
+				t.Fatalf("identity = %#v", result.Identity)
+			}
+			if got := result.ProviderMetadata.TMDB != nil; got != tc.wantTMDBMetadata {
+				t.Fatalf("TMDB metadata = %#v", result.ProviderMetadata.TMDB)
+			}
+		})
+	}
+}
+
 func TestResolveAppliesTriStateIntentWithoutPersisting(t *testing.T) {
 	repoPath := filepath.Join(t.TempDir(), "external-identity.db")
 	repo, err := db.OpenWithLogger(repoPath, api.NopLogger{})
@@ -214,10 +582,10 @@ func TestResolveCancellationDoesNotReorderSourceWaiters(t *testing.T) {
 		now: time.Now,
 	}
 	request := Request{
-SourcePath: sourcePath,
- SourceFingerprint: "source-fingerprint",
- Generation: 1,
-}
+		SourcePath:        sourcePath,
+		SourceFingerprint: "source-fingerprint",
+		Generation:        1,
+	}
 	errs := make(chan error, 3)
 	go func() {
 		_, err := resolver.Resolve(context.Background(), request)

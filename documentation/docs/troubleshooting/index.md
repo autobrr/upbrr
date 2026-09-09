@@ -65,6 +65,16 @@ The selected FFmpeg must expose the `dvdvideo` demuxer plus `menu`, `menu_lu`, `
 
 Use manual disc-menu image import when automatic capture is not available.
 
+## A metadata provider fails or selects the wrong title
+
+Supply the correct provider ID, or clear the provider when you want to continue without it. For example, `--tmdb=` or `--tmdb=0` clears TMDB in the CLI. See [clearing a metadata provider](../cli/index.md#clear-a-metadata-provider) for all supported flags and examples.
+
+In the Web UI, use the [metadata ID controls on Input](../web-ui/index.md#clear-a-metadata-provider), then click **Refresh metadata**. If the first fetch fails before a preview appears, remove the provider and click **Retry metadata** instead.
+
+Clearing prevents that provider's ID and metadata from being rediscovered for this source. It persists across release reloads. Supply a positive ID to use the provider again.
+
+Check tracker eligibility after the change. A tracker that requires the missing provider can remain blocked, while other eligible trackers can continue.
+
 ## Tracker authentication is blocked
 
 1. Open the tracker in **Settings**.

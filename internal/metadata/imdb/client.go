@@ -574,6 +574,9 @@ func (c *Client) runSearch(ctx context.Context, filename string, searchYear int,
 	const query = `query SearchTitles($constraints: AdvancedTitleSearchConstraints!) { advancedTitleSearch(first: 10, constraints: $constraints) { total edges { node { title { id titleText { text } titleType { text } releaseYear { year } plot { plotText { plainText } } } } } } }`
 	var response map[string]any
 	if err := c.postGraphQL(ctx, "SearchTitles", query, map[string]any{"constraints": constraints}, &response); err != nil {
+		if c.logger != nil {
+			c.logger.Debugf("imdb: title lookup failed year=%d wide=%t error=%s", searchYear, wide, redaction.RedactValue(err.Error(), nil))
+		}
 		return nil
 	}
 	return getList(response, "data", "advancedTitleSearch", "edges")

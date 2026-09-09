@@ -73,10 +73,10 @@ type cliOptions struct {
 	DeleteTmp             bool
 	Cleanup               bool
 	TMDB                  string
-	TVDB                  int
-	TVmaze                int
+	TVDB                  string
+	TVmaze                string
 	IMDb                  string
-	MAL                   int
+	MAL                   string
 	Unattended            bool
 	UnattendedConfirm     bool
 	SkipDupeCheck         bool
@@ -219,11 +219,11 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.BoolVar(&opts.Cleanup, "cleanup", false, "Delete all stored database content for all releases and exit")
 	fs.StringVar(&opts.Region, "region", "", "Override disc region")
 	fs.StringVar(&opts.Region, "reg", "", "Override disc region")
-	fs.StringVar(&opts.TMDB, "tmdb", "", "Override TMDB id")
-	fs.StringVar(&opts.IMDb, "imdb", "", "Override IMDb id")
-	fs.IntVar(&opts.MAL, "mal", 0, "Override MAL id")
-	fs.IntVar(&opts.TVDB, "tvdb", 0, "Override TVDB id")
-	fs.IntVar(&opts.TVmaze, "tvmaze", 0, "Override TVmaze id")
+	fs.StringVar(&opts.TMDB, "tmdb", "", "Override TMDB id; empty or 0 clears and skips this provider")
+	fs.StringVar(&opts.IMDb, "imdb", "", "Override IMDb id; empty or 0 clears and skips this provider")
+	fs.StringVar(&opts.MAL, "mal", "", "Override MAL id; empty or 0 clears and skips this provider")
+	fs.StringVar(&opts.TVDB, "tvdb", "", "Override TVDB id; empty or 0 clears and skips this provider")
+	fs.StringVar(&opts.TVmaze, "tvmaze", "", "Override TVmaze id; empty or 0 clears and skips this provider")
 	fs.StringVar(&opts.PTP, "ptp", "", "PTP torrent id or URL")
 	fs.StringVar(&opts.BLU, "blu", "", "BLU torrent id or URL")
 	fs.StringVar(&opts.Aither, "aither", "", "Aither torrent id or URL")
@@ -329,13 +329,6 @@ func normalizeCLIOptions(opts *cliOptions, visited map[string]bool) error {
 		visited["unattended"] = true
 		visited["unattended_confirm"] = true
 	}
-	if visited["imdb"] {
-		if trimmed := strings.TrimSpace(opts.IMDb); trimmed != "" {
-			if _, err := parseIMDbID(trimmed); err != nil {
-				return err
-			}
-		}
-	}
 	if visited["infohash"] {
 		if _, err := parseInfoHash(opts.InfoHash); err != nil {
 			return err
@@ -392,13 +385,6 @@ func normalizeCLIOptions(opts *cliOptions, visited map[string]bool) error {
 		}
 		opts.ConsoleLogLevel = normalized
 	}
-	if visited["tmdb"] {
-		if trimmed := strings.TrimSpace(opts.TMDB); trimmed != "" {
-			if _, _, err := parseTMDBID(trimmed); err != nil {
-				return err
-			}
-		}
-	}
 	if visited["site-upload"] {
 		normalized := strings.ToUpper(strings.TrimSpace(opts.SiteUpload))
 		if normalized == "" {
@@ -423,6 +409,9 @@ func normalizeCLIOptions(opts *cliOptions, visited map[string]bool) error {
 		return errors.New("--export-config must have a non-empty value when --export-config-plaintext is used")
 	}
 	if _, err := buildTrackerIDOverrides(*opts, visited); err != nil {
+		return err
+	}
+	if _, err := buildExternalIDOverrides(*opts, visited); err != nil {
 		return err
 	}
 	return nil
@@ -1112,6 +1101,9 @@ func buildTrackerIDOverrides(opts cliOptions, visited map[string]bool) (map[stri
 	return overrides, nil
 }
 
+// buildExternalIDOverrides parses only explicitly supplied provider flags.
+// Omitted flags leave nil fields; blank or zero values produce explicit provider clears.
+// Invalid input returns an empty override set and an error.
 func buildExternalIDOverrides(opts cliOptions, visited map[string]bool) (api.ExternalIDOverrides, error) {
 	overrides := api.ExternalIDOverrides{}
 	if visited["tmdb"] {
@@ -1121,14 +1113,39 @@ func buildExternalIDOverrides(opts cliOptions, visited map[string]bool) (api.Ext
 		}
 		overrides.TMDBID = intPtr(id)
 	}
-	if visited["tvdb"] {
-		overrides.TVDBID = intPtr(opts.TVDB)
-	}
-	if visited["tvmaze"] {
-		overrides.TVmazeID = intPtr(opts.TVmaze)
-	}
-	if visited["mal"] {
-		overrides.MALID = intPtr(opts.MAL)
+	for _, input := range []struct {
+		name   string
+		value  string
+		target **int
+	}{
+		{
+			name:   "tvdb",
+			value:  opts.TVDB,
+			target: &overrides.TVDBID,
+		},
+		{
+			name:   "tvmaze",
+			value:  opts.TVmaze,
+			target: &overrides.TVmazeID,
+		},
+		{
+			name:   "mal",
+			value:  opts.MAL,
+			target: &overrides.MALID,
+		},
+	} {
+		if !visited[input.name] {
+			continue
+		}
+		var id int64
+		if value := strings.TrimSpace(input.value); value != "" {
+			var err error
+			id, err = strconv.ParseInt(value, 0, strconv.IntSize)
+			if err != nil || id < 0 {
+				return api.ExternalIDOverrides{}, fmt.Errorf("invalid %s id %q", input.name, input.value)
+			}
+		}
+		*input.target = intPtr(int(id))
 	}
 	if visited["imdb"] {
 		if strings.TrimSpace(opts.IMDb) == "" {
@@ -1144,10 +1161,13 @@ func buildExternalIDOverrides(opts cliOptions, visited map[string]bool) (api.Ext
 	return overrides, nil
 }
 
+// parseTMDBID accepts a positive ID, a movie/ or tv/ prefix, or a URL ending in an ID.
+// It returns a category hint when present. Blank or literal zero input clears the ID
+// without a category hint; other invalid input returns an error.
 func parseTMDBID(raw string) (int, string, error) {
 	trimmed := strings.TrimSpace(strings.ToLower(raw))
-	if trimmed == "" {
-		return 0, "", fmt.Errorf("invalid tmdb id %q", raw)
+	if trimmed == "" || trimmed == "0" {
+		return 0, "", nil
 	}
 
 	category := ""

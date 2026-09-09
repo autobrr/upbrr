@@ -929,6 +929,96 @@ func TestBuildCLIRequestTMDBCompatibilityParsing(t *testing.T) {
 	}
 }
 
+func TestCLIProviderIDOverrides(t *testing.T) {
+	t.Parallel()
+	for _, provider := range []string{"tmdb", "imdb", "tvdb", "tvmaze", "mal"} {
+		for _, tc := range []struct {
+			name  string
+			value string
+			want  int
+		}{
+			{name: "blank"},
+			{name: "zero", value: "0"},
+			{
+				name:  "positive",
+				value: "123",
+				want:  123,
+			},
+		} {
+			t.Run(provider+"/"+tc.name, func(t *testing.T) {
+				args := []string{"--" + provider + "=" + tc.value, "Example.Release.2026.1080p-GRP.mkv"}
+				opts, visited, paths, err := parseCLIOptions(args)
+				if err != nil {
+					t.Fatalf("parse: %v", err)
+				}
+				req, err := buildCLIRequest(opts, visited, paths, 4)
+				if err != nil {
+					t.Fatalf("build request: %v", err)
+				}
+				for name, id := range map[string]*int{
+					"tmdb":   req.ExternalIDOverrides.TMDBID,
+					"imdb":   req.ExternalIDOverrides.IMDBID,
+					"tvdb":   req.ExternalIDOverrides.TVDBID,
+					"tvmaze": req.ExternalIDOverrides.TVmazeID,
+					"mal":    req.ExternalIDOverrides.MALID,
+				} {
+					if name == provider {
+						if id == nil || *id != tc.want {
+							t.Fatalf("%s override = %v, want %d", name, id, tc.want)
+						}
+					} else if id != nil {
+						t.Fatalf("omitted %s override = %d, want unset", name, *id)
+					}
+				}
+				if req.ReleaseNameOverrides.Category != nil {
+					t.Fatalf("provider ID set category unexpectedly: %q", *req.ReleaseNameOverrides.Category)
+				}
+			})
+		}
+	}
+}
+
+func TestCLIProviderIDsRejectInvalidValues(t *testing.T) {
+	t.Parallel()
+	for _, provider := range []string{"tmdb", "imdb", "tvdb", "tvmaze", "mal"} {
+		for _, value := range []string{"not-an-id", "18446744073709551616"} {
+			t.Run(provider+"/"+value, func(t *testing.T) {
+				result := executeCLIForTest(t.Context(), t, []string{"--" + provider + "=" + value, "--version"})
+				if result.code != 2 || !strings.Contains(result.stderr, "invalid "+provider+" id") {
+					t.Fatalf("invalid provider ID result: %#v", result)
+				}
+			})
+		}
+	}
+}
+
+func TestCLIProviderIDsRejectNegativeNumericValues(t *testing.T) {
+	t.Parallel()
+	for _, provider := range []string{"tvdb", "tvmaze", "mal"} {
+		for _, value := range []string{"-1", "-0x1", " -1 "} {
+			t.Run(provider+"/"+value, func(t *testing.T) {
+				result := executeCLIForTest(t.Context(), t, []string{"--" + provider + "=" + value, "--version"})
+				if result.code != 2 || !strings.Contains(result.stderr, "invalid "+provider+" id") {
+					t.Fatalf("negative provider ID result: %#v", result)
+				}
+			})
+		}
+	}
+}
+
+func TestCLIProviderIDsBlankRootFlags(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{
+		{"--tmdb=", "--imdb=", "--tvdb=", "--tvmaze=", "--mal=", "--version"},
+		{"--tmdb", "", "--imdb", "", "--tvdb", "", "--tvmaze", "", "--mal", "", "--version"},
+	} {
+		result := executeCLIForTest(t.Context(), t, args)
+		if result.code != 0 || result.stderr != "" || result.stdout == "" {
+			t.Fatalf("args %v: blank provider ID result: %#v", args, result)
+		}
+	}
+}
+
 func TestParseCLIOptionsRejectsInvalidTMDBCompatibilityValue(t *testing.T) {
 	if _, _, _, err := parseCLIOptions([]string{"--tmdb", "movie/not-a-number", "movie.mkv"}); err == nil {
 		t.Fatal("expected invalid tmdb compatibility input to fail")

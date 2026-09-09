@@ -115,6 +115,48 @@ test("embedded web reload restores the authoritative prepared workflow", async (
   }
 });
 
+test("embedded web removes and restores a metadata provider ID", async ({ page }) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    await expect(page.getByRole("textbox", { name: "MAL ID" })).toHaveValue("");
+    await page.getByRole("button", { name: "Remove MAL ID" }).click();
+    const removed = page.waitForResponse((response) =>
+      response.url().includes("/api/app/ContinueReleaseWorkflow"),
+    );
+    await page.getByRole("button", { name: "Refresh metadata" }).click();
+    await expect((await removed).ok()).toBe(true);
+    await expect(page.getByRole("progressbar")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Remove MAL ID" })).toBeDisabled();
+
+    const restored = page.waitForResponse((response) =>
+      response.url().includes("/api/app/GetReleaseWorkflow"),
+    );
+    await page.reload();
+    await expect((await restored).ok()).toBe(true);
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    await expect(page.getByRole("textbox", { name: "MAL ID" })).toHaveValue("");
+    await expect(page.getByRole("button", { name: "Remove MAL ID" })).toBeDisabled();
+
+    await page.getByRole("textbox", { name: "MAL ID" }).fill("5114");
+    await expect(page.getByRole("button", { name: "Remove MAL ID" })).toBeEnabled();
+    const restoredID = page.waitForResponse((response) =>
+      response.url().includes("/api/app/ContinueReleaseWorkflow"),
+    );
+    await page.getByRole("button", { name: "Refresh metadata" }).click();
+    await expect((await restoredID).ok()).toBe(true);
+    await expect(page.getByRole("progressbar")).toHaveCount(0);
+    await expect(page.getByRole("textbox", { name: "MAL ID" })).toHaveValue("5114");
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
 test("embedded web selects a Blu-ray candidate through the authoritative workflow", async ({
   page,
 }) => {

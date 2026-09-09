@@ -243,7 +243,7 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 	if !result.Anime {
 		result.Anime = isAnime(media.OriginalLanguage, media.Genres)
 	}
-	if result.Anime {
+	if result.Anime && !input.SkipAnimeLookup {
 		// requestCtx, not ctx: the errgroup context above is canceled once Wait
 		// returns, which would fail every AniList request.
 		animeResult, err := c.ResolveAnime(requestCtx, title, input)
@@ -740,26 +740,25 @@ func shouldKeepAKA(title, aka string, year int) bool {
 }
 
 func applyExternalIDs(result MetadataResult, external externalIDsResponse, input MetadataInput, media mediaResponse) MetadataResult {
+	result.ExternalIMDbID = ExtractIMDbID(external.IMDbID)
+	result.ExternalTVDBID = external.TVDBID
 	originalIMDbID := input.IMDbID
 	imdbID := originalIMDbID
 	if input.QuickieSearch || imdbID == 0 {
-		if external.IMDbID != "" {
-			parsed := ExtractIMDbID(external.IMDbID)
-			if parsed != 0 {
-				if originalIMDbID != 0 && parsed != originalIMDbID && input.QuickieSearch {
-					result.IMDbMismatch = true
-					result.MismatchedIMDbID = parsed
-					imdbID = originalIMDbID
-				} else {
-					imdbID = parsed
-				}
+		if result.ExternalIMDbID != 0 {
+			if originalIMDbID != 0 && result.ExternalIMDbID != originalIMDbID && input.QuickieSearch {
+				result.IMDbMismatch = true
+				result.MismatchedIMDbID = result.ExternalIMDbID
+				imdbID = originalIMDbID
+			} else {
+				imdbID = result.ExternalIMDbID
 			}
 		}
 	}
 	result.IMDbID = imdbID
 	result.TVDBID = input.TVDBID
-	if result.TVDBID == 0 && external.TVDBID != 0 {
-		result.TVDBID = external.TVDBID
+	if result.TVDBID == 0 && result.ExternalTVDBID != 0 {
+		result.TVDBID = result.ExternalTVDBID
 	}
 	if result.IMDbID == 0 && media.IMDbID != "" {
 		result.IMDbID = ExtractIMDbID(media.IMDbID)

@@ -363,6 +363,142 @@ describe("InputPage", () => {
     });
   });
 
+  it("removes each metadata provider without overriding untouched IDs", () => {
+    const facet = readyInputFacet(1);
+    render(
+      <InputPage
+        facet={facet}
+        sourcePathHistory={[]}
+        handleBrowseFile={vi.fn()}
+        handleBrowseFolder={vi.fn()}
+        trackerUploadItems={[]}
+        showExternalIDInputUI={false}
+        setLightboxImage={vi.fn()}
+        setLightboxAlt={vi.fn()}
+        trackerIconSrcByName={{}}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    fireEvent.click(screen.getByRole("button", { name: "Remove MAL ID" }));
+    expect(facet.changeIdentity).toHaveBeenLastCalledWith({ MALID: 0 });
+
+    for (const provider of ["TMDB", "IMDB", "TVDB", "TVmaze"]) {
+      fireEvent.click(screen.getByRole("button", { name: `Remove ${provider} ID` }));
+    }
+    expect(facet.changeIdentity).toHaveBeenLastCalledWith({
+      TMDBID: 0,
+      IMDBID: 0,
+      TVDBID: 0,
+      TVmazeID: 0,
+      MALID: 0,
+    });
+  });
+
+  it("retains restored removals when a provider is re-enabled", () => {
+    const base = readyInputFacet(2);
+    const removedIDs = {
+      TMDBID: 0,
+      IMDBID: 0,
+      TVDBID: 0,
+      TVmazeID: 0,
+      MALID: 0,
+    };
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        intent: { ...base.view.intent, identity: removedIDs },
+        preview: {
+          ...metadataPreview(2),
+          Identity: { ...emptyExternalIdentity("C:\\media\\Example.mkv"), Generation: 2 },
+          Display: { ReleaseName: "Example.Release.2026.1080p-GRP", Providers: [] },
+        },
+      },
+    };
+    const pageProps = {
+      sourcePathHistory: [],
+      handleBrowseFile: vi.fn(),
+      handleBrowseFolder: vi.fn(),
+      trackerUploadItems: [],
+      showExternalIDInputUI: false,
+      setLightboxImage: vi.fn(),
+      setLightboxAlt: vi.fn(),
+      trackerIconSrcByName: {},
+    };
+    const { rerender } = render(<InputPage facet={facet} {...pageProps} />);
+
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    for (const provider of ["TMDB", "IMDB", "TVDB", "TVmaze", "MAL"]) {
+      expect(screen.getByRole("button", { name: `Remove ${provider} ID` })).toBeDisabled();
+    }
+
+    fireEvent.change(screen.getByLabelText("TMDB ID"), { target: { value: "550" } });
+    const reenabledIDs = { ...removedIDs, TMDBID: 550 };
+    expect(facet.changeIdentity).toHaveBeenLastCalledWith(reenabledIDs);
+    expect(screen.getByRole("button", { name: "Remove TMDB ID" })).toBeEnabled();
+
+    const reenabledFacet: InputFacet = {
+      ...facet,
+      view: {
+        ...facet.view,
+        intent: { ...facet.view.intent, identity: reenabledIDs },
+      },
+    };
+    rerender(<InputPage facet={reenabledFacet} {...pageProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh metadata" }));
+    expect(facet.prepareSource).toHaveBeenCalledWith(
+      "C:\\media\\Example.mkv",
+      reenabledFacet.view.intent,
+    );
+  });
+
+  for (const preparation of [
+    { name: "a failed first preparation", status: "error", error: "Metadata preparation failed." },
+    { name: "a first preparation without a metadata match", status: "ready", error: "" },
+  ] as const) {
+    it(`removes a blank provider before retrying ${preparation.name}`, () => {
+      const base = inputFacet();
+      const failedFacet: InputFacet = {
+        ...base,
+        view: {
+          ...base.view,
+          status: preparation.status,
+          error: preparation.error,
+        },
+      };
+      const pageProps = {
+        sourcePathHistory: [],
+        handleBrowseFile: vi.fn(),
+        handleBrowseFolder: vi.fn(),
+        trackerUploadItems: [],
+        showExternalIDInputUI: false,
+        setLightboxImage: vi.fn(),
+        setLightboxAlt: vi.fn(),
+        trackerIconSrcByName: {},
+      };
+      const { rerender } = render(<InputPage facet={failedFacet} {...pageProps} />);
+
+      fireEvent.click(screen.getByText("Edit Release Details"));
+      fireEvent.click(screen.getByRole("button", { name: "Remove TVDB ID" }));
+      expect(failedFacet.changeIdentity).toHaveBeenLastCalledWith({ TVDBID: 0 });
+
+      const retryFacet: InputFacet = {
+        ...failedFacet,
+        view: {
+          ...failedFacet.view,
+          intent: { ...failedFacet.view.intent, identity: { TVDBID: 0 } },
+        },
+      };
+      rerender(<InputPage facet={retryFacet} {...pageProps} />);
+      fireEvent.click(screen.getByRole("button", { name: "Retry metadata" }));
+      expect(failedFacet.prepareSource).toHaveBeenCalledWith(
+        "C:\\media\\Example.mkv",
+        retryFacet.view.intent,
+      );
+    });
+  }
+
   it("edits distributor and original-language metadata", () => {
     const facet = readyInputFacet(1);
     render(

@@ -344,6 +344,50 @@ func TestApplySceneDetectionBackfillsIMDbID(t *testing.T) {
 	if meta.Identity.IMDBID != 999 {
 		t.Fatalf("expected resolved imdb preserved, got %d", meta.Identity.IMDBID)
 	}
+
+	clearIMDB := 0
+	meta, err = service.applySceneDetection(context.Background(), preparationstate.State{
+		ExternalIDOverrides: api.ExternalIDOverrides{
+			IMDBID: &clearIMDB,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if meta.Identity.IMDBID != 0 || meta.SceneIMDB != 132245 {
+		t.Fatalf("explicit IMDb clear allowed canonical backfill: identity=%d scene=%d", meta.Identity.IMDBID, meta.SceneIMDB)
+	}
+
+	tmdbID := 42
+	meta, err = service.applySceneDetection(context.Background(), preparationstate.State{
+		Identity: api.ExternalIdentity{
+			TMDBID: tmdbID,
+		},
+		ExternalIDOverrides: api.ExternalIDOverrides{
+			TMDBID: &tmdbID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if meta.Identity.IMDBID != 0 || meta.SceneIMDB != 132245 {
+		t.Fatalf("positive TMDB anchor allowed canonical backfill: identity=%d scene=%d", meta.Identity.IMDBID, meta.SceneIMDB)
+	}
+
+	meta, err = service.applySceneDetection(context.Background(), preparationstate.State{
+		Identity: api.ExternalIdentity{
+			TMDBID: tmdbID,
+			Provenance: api.IdentityProvenanceSet{
+				TMDB: api.IdentityProvenanceExplicit,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if meta.Identity.IMDBID != 0 || meta.SceneIMDB != 132245 {
+		t.Fatalf("stored TMDB anchor allowed canonical backfill: identity=%d scene=%d", meta.Identity.IMDBID, meta.SceneIMDB)
+	}
 }
 
 func TestApplySceneDetectionPropagatesCancellation(t *testing.T) {
