@@ -129,6 +129,7 @@ function CorrectionRow({
   manual,
   stale,
   trackId,
+  readOnly = false,
   onAuto,
   onConfirm,
   children,
@@ -138,6 +139,7 @@ function CorrectionRow({
   manual: boolean;
   stale: boolean;
   trackId?: string;
+  readOnly?: boolean;
   onAuto: () => void;
   onConfirm: () => void;
   children: ReactNode;
@@ -148,18 +150,20 @@ function CorrectionRow({
       data-correction-field={field}
       {...(trackId ? { "data-track-id": trackId } : {})}
     >
-      <label htmlFor={`correction-${field}-${trackId || "value"}`}>{label}</label>
-      <div className="flex min-w-0 items-center gap-2">
-        <div className="min-w-0 flex-1">{children}</div>
-        <Button type="button" className="shrink-0" onClick={onAuto}>
-          Auto {label}
-        </Button>
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <label htmlFor={`correction-${field}-${trackId || "value"}`}>{label}</label>
+        {!readOnly ? (
+          <Button type="button" className="shrink-0" aria-label={`Auto ${label}`} onClick={onAuto}>
+            Auto
+          </Button>
+        ) : null}
       </div>
+      <div className="min-w-0 [&_input]:w-full">{children}</div>
       <span className="text-xs text-[var(--muted)]">
         {manual ? "Manual value" : "Automatic value"}
-        {stale ? " · Saved value needs confirmation" : ""}
+        {stale && !readOnly ? " · Saved value needs confirmation" : ""}
       </span>
-      {stale ? (
+      {stale && !readOnly ? (
         <Button type="button" onClick={onConfirm}>
           Confirm saved {label}
         </Button>
@@ -518,10 +522,18 @@ const bindingSummary = (binding: ContentBinding | undefined) => {
   return `${binding.category || "unknown category"}${providerIDs ? ` · ${providerIDs}` : ""}`;
 };
 
-/** Renders typed manual corrections while the release session owns draft and transport state. */
+/**
+ * Renders correction drafts while the release session owns edits and transport.
+ * Title, original title, and TV year are disabled. Source IDs default to resolved
+ * tracker data unless the draft supplies an override or an explicit empty value.
+ */
 export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>) {
   const { view } = facet;
   const release = view.release;
+  const category = (view.intent.releaseName.Category ?? "").trim().toLowerCase();
+  const isTV =
+    ["tv", "television", "series", "episode"].includes(category) ||
+    (!["movie", "film"].includes(category) && release?.Identity.Category === "tv");
   const staleFields = new Set(view.corrections?.corrections.staleContentFields || []);
 
   const reset = (field: string, trackId = "") => facet.resetCorrection(refFor(field, trackId));
@@ -539,7 +551,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
     <div className="grid gap-4" data-testid="input-correction-editor">
       <div className="settings-subgroup">
         <div className="settings-subgroup__title">Provider IDs</div>
-        <div className="settings-grid">
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,22rem),1fr))] gap-3">
           {identityFields.map(({ field, label, key }) => {
             const manual = hasOwn(view.intent.identity, key);
             const manualValue = view.intent.identity[key];
@@ -580,9 +592,10 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
 
       <div className="settings-subgroup">
         <div className="settings-subgroup__title">Release name</div>
-        <div className="settings-grid">
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,22rem),1fr))] gap-3">
           {releaseStringFields.map(({ field, label, key, automatic }) => {
-            const manual = hasOwn(view.intent.releaseName, key);
+            const readOnly = key === "ManualYear" && isTV;
+            const manual = !readOnly && hasOwn(view.intent.releaseName, key);
             const rawValue = manual ? view.intent.releaseName[key] : automatic(release);
             const numeric = key === "ManualYear";
             return (
@@ -591,6 +604,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                 field={field}
                 label={label}
                 manual={manual}
+                readOnly={readOnly}
                 stale={staleFields.has(field)}
                 onAuto={() => reset(field)}
                 onConfirm={() => confirm(field)}
@@ -599,12 +613,15 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                   id={`correction-${field}-value`}
                   aria-label={label}
                   type={numeric ? "number" : "text"}
+                  readOnly={readOnly}
+                  disabled={readOnly}
                   value={
                     rawValue === null || rawValue === undefined || rawValue === 0
                       ? ""
                       : String(rawValue)
                   }
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    if (readOnly) return;
                     setReleaseName(
                       key,
                       numeric
@@ -612,8 +629,8 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                           ? Number(event.target.value)
                           : 0
                         : event.target.value,
-                    )
-                  }
+                    );
+                  }}
                 />
               </CorrectionRow>
             );
@@ -639,9 +656,10 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
 
       <div className="settings-subgroup">
         <div className="settings-subgroup__title">Metadata and languages</div>
-        <div className="settings-grid">
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,22rem),1fr))] gap-3">
           {metadataStringFields.map(({ field, label, key, automatic }) => {
-            const manual = hasOwn(view.intent.metadata, key);
+            const readOnly = key === "Title" || key === "OriginalTitle";
+            const manual = !readOnly && hasOwn(view.intent.metadata, key);
             const value = manual ? view.intent.metadata[key] : automatic(release);
             return (
               <CorrectionRow
@@ -649,6 +667,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                 field={field}
                 label={label}
                 manual={manual}
+                readOnly={readOnly}
                 stale={staleFields.has(field)}
                 onAuto={() => reset(field)}
                 onConfirm={() => confirm(field)}
@@ -656,8 +675,12 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                 <input
                   id={`correction-${field}-value`}
                   aria-label={label}
+                  readOnly={readOnly}
+                  disabled={readOnly}
                   value={typeof value === "string" ? value : ""}
-                  onChange={(event) => setMetadata(key, event.target.value)}
+                  onChange={(event) => {
+                    if (!readOnly) setMetadata(key, event.target.value);
+                  }}
                 />
               </CorrectionRow>
             );
@@ -716,7 +739,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
         {(release?.Media?.Tracks || []).length === 0 ? (
           <p className="muted">No inspected audio or subtitle tracks.</p>
         ) : (
-          <div className="settings-grid">
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,22rem),1fr))] gap-3">
             {(release?.Media?.Tracks || []).map((track, index) => {
               const field = "metadata.track_languages";
               const correction = (view.intent.metadata.TrackLanguages || []).find(
@@ -772,15 +795,19 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
         )}
       </div>
 
-      <div className="settings-subgroup" data-testid="input-source-options">
-        <div className="settings-subgroup__title">Source options</div>
-        <div className="settings-grid">
+      <details className="settings-subgroup" data-testid="input-source-options">
+        <summary className="cursor-pointer font-semibold">Source options</summary>
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,22rem),1fr))] gap-3">
           {view.selectedTrackers.map((tracker) => (
             <div className="settings-field" key={tracker} data-tracker-source-id={tracker}>
               <label htmlFor={`tracker-source-${tracker}`}>{tracker} source ID</label>
               <input
                 id={`tracker-source-${tracker}`}
-                value={view.intent.trackerSourceIDs[tracker] || ""}
+                value={
+                  view.intent.trackerSourceIDs[tracker] ??
+                  view.trackerData.find((data) => data.Tracker === tracker)?.TrackerID ??
+                  ""
+                }
                 onChange={(event) => facet.changeTrackerSourceID(tracker, event.target.value)}
               />
             </div>
@@ -846,15 +873,15 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
             />
           </div>
         </div>
-      </div>
+      </details>
 
       {(view.readiness?.schemas || []).length > 0 ? (
-        <div className="settings-subgroup" data-testid="input-tracker-fields">
-          <div className="settings-subgroup__title">Tracker Input</div>
+        <details className="settings-subgroup" data-testid="input-tracker-fields">
+          <summary className="cursor-pointer font-semibold">Tracker Input</summary>
           {(view.readiness?.schemas || []).map((schema) => (
             <section key={schema.Tracker} aria-label={`${schema.Tracker} Input fields`}>
               <h4 className="mb-2 text-sm font-semibold">{schema.Tracker}</h4>
-              <div className="settings-grid">
+              <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,22rem),1fr))] gap-3">
                 {schema.Fields.map((field) => (
                   <TrackerInputField
                     key={field.Key}
@@ -873,12 +900,12 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
               </div>
             </section>
           ))}
-        </div>
+        </details>
       ) : null}
 
       {view.readiness ? (
-        <div className="settings-subgroup" data-testid="input-readiness">
-          <div className="settings-subgroup__title">Input readiness</div>
+        <details className="settings-subgroup" data-testid="input-readiness">
+          <summary className="cursor-pointer font-semibold">Input readiness</summary>
           <p className="muted">Status: {view.readiness.status}</p>
           {(view.readiness.fields || []).length === 0 ? (
             <p className="muted">No missing Input fields.</p>
@@ -910,7 +937,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
                 ))}
               </div>
             ))}
-        </div>
+        </details>
       ) : null}
     </div>
   );

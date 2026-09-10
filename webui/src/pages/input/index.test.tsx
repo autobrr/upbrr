@@ -17,6 +17,54 @@ import InputPage from "./index";
 
 afterEach(cleanup);
 
+it("shows the used tracker source ID while preserving an edited or cleared draft", () => {
+  const base = inputFacet();
+  const facet: InputFacet = {
+    ...base,
+    view: {
+      ...base.view,
+      selectedTrackers: ["AITHER", "PTP"],
+      trackerData: [
+        {
+          Tracker: "AITHER",
+          TrackerID: "123",
+          TorrentURL: "",
+          InfoHash: "",
+          TMDBID: 0,
+          IMDBID: 0,
+          TVDBID: 0,
+          MALID: 0,
+          Category: "movie",
+          Description: "",
+          DescriptionHTML: "",
+          ImageURLs: [],
+          Filename: "",
+          Matched: true,
+          UpdatedAt: "",
+        },
+      ],
+    },
+  };
+  const { rerender } = render(<InputCorrectionEditor facet={facet} />);
+  expect(screen.getByLabelText("AITHER source ID")).toHaveValue("123");
+  expect(screen.getByLabelText("PTP source ID")).toHaveValue("");
+  expect(facet.changeTrackerSourceID).not.toHaveBeenCalled();
+  for (const value of ["456", ""]) {
+    rerender(
+      <InputCorrectionEditor
+        facet={{
+          ...facet,
+          view: {
+            ...facet.view,
+            intent: { ...facet.view.intent, trackerSourceIDs: { AITHER: value } },
+          },
+        }}
+      />,
+    );
+    expect(screen.getByLabelText("AITHER source ID")).toHaveValue(value);
+  }
+});
+
 const inputFacet = (): InputFacet => ({
   view: {
     sourceDraft: "C:\\media\\Example.mkv",
@@ -695,6 +743,95 @@ describe("InputPage", () => {
     expect(facet.changeMetadata).toHaveBeenCalledWith({ SubtitleLanguages: [] });
   });
 
+  it.each(["movie", "tv"] as const)(
+    "locks provider titles and preserves the %s year policy",
+    (category) => {
+      const base = readyInputFacet(1);
+      const release = preparedRelease();
+      const facet: InputFacet = {
+        ...base,
+        view: {
+          ...base.view,
+          release: { ...release, Identity: { ...release.Identity, Category: category } },
+          intent: {
+            ...base.view.intent,
+            metadata: { Title: "Old manual title", OriginalTitle: "Old original title" },
+            releaseName: { ManualYear: 2001 },
+          },
+        },
+      };
+      render(<InputCorrectionEditor facet={facet} />);
+      for (const [label, value] of [
+        ["Title", "Automatic Title"],
+        ["Original title", "Automatic Original Title"],
+      ]) {
+        const field = screen.getByLabelText(label);
+        expect(field).toHaveAttribute("readonly");
+        expect(field).toBeDisabled();
+        expect(field).toHaveValue(value);
+        expect(screen.queryByRole("button", { name: `Auto ${label}` })).not.toBeInTheDocument();
+        fireEvent.change(field, { target: { value: "Disallowed edit" } });
+      }
+      expect(facet.changeMetadata).not.toHaveBeenCalled();
+      const year = screen.getByLabelText("Manual year");
+      if (category === "tv") {
+        expect(year).toHaveAttribute("readonly");
+        expect(year).toBeDisabled();
+        expect(year).toHaveValue(2026);
+        expect(screen.queryByRole("button", { name: "Auto Manual year" })).not.toBeInTheDocument();
+        fireEvent.change(year, { target: { value: "2002" } });
+        expect(facet.changeReleaseName).not.toHaveBeenCalled();
+      } else {
+        expect(year).not.toHaveAttribute("readonly");
+        expect(year).toBeEnabled();
+        expect(year).toHaveValue(2001);
+        fireEvent.change(year, { target: { value: "2002" } });
+        expect(facet.changeReleaseName).toHaveBeenCalledWith({ ManualYear: 2002 });
+      }
+      expect(screen.getByLabelText("Alternate title")).not.toHaveAttribute("readonly");
+    },
+  );
+
+  it.each([
+    ["movie", " TV ", true],
+    ["movie", "television", true],
+    ["movie", "series", true],
+    ["movie", "episode", true],
+    ["tv", "movie", false],
+    ["tv", " Film ", false],
+    ["tv", "", true],
+    ["tv", "unknown", true],
+  ] as const)(
+    "updates year editing for category change from %s to %s",
+    (preparedCategory, draftCategory, locked) => {
+      const base = readyInputFacet(1);
+      const release = preparedRelease();
+      const facet: InputFacet = {
+        ...base,
+        view: {
+          ...base.view,
+          release: { ...release, Identity: { ...release.Identity, Category: preparedCategory } },
+        },
+      };
+      const { rerender } = render(<InputCorrectionEditor facet={facet} />);
+      fireEvent.change(screen.getByLabelText("Category"), { target: { value: draftCategory } });
+      expect(facet.changeReleaseName).toHaveBeenCalledWith({ Category: draftCategory });
+      rerender(
+        <InputCorrectionEditor
+          facet={{
+            ...facet,
+            view: {
+              ...facet.view,
+              intent: { ...facet.view.intent, releaseName: { Category: draftCategory } },
+            },
+          }}
+        />,
+      );
+      if (locked) expect(screen.getByLabelText("Manual year")).toHaveAttribute("readonly");
+      else expect(screen.getByLabelText("Manual year")).not.toHaveAttribute("readonly");
+    },
+  );
+
   it("renders the complete source-level correction inventory", () => {
     const base = readyInputFacet(1);
     const facet: InputFacet = {
@@ -807,6 +944,8 @@ describe("InputPage", () => {
       trackId: "audio:resource-1:1",
     });
 
+    expect(screen.getByTestId("input-source-options")).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByText("Source options", { exact: true }));
     fireEvent.change(screen.getByLabelText("AITHER source ID"), { target: { value: "123" } });
     expect(facet.changeTrackerSourceID).toHaveBeenCalledWith("AITHER", "123");
     fireEvent.click(screen.getByLabelText("Keep images"));
@@ -835,16 +974,16 @@ describe("InputPage", () => {
       view: {
         ...base.view,
         release: preparedRelease(),
-        intent: { ...base.view.intent, metadata: { Title: "Saved title" } },
+        intent: { ...base.view.intent, metadata: { AlternateTitle: "Saved alternate title" } },
         corrections: {
           revision: 4,
           corrections: {
             version: 1,
             identity: {},
             releaseName: {},
-            metadata: { Title: "Saved title" },
-            staleContentFields: ["metadata.title"],
-            contentBindings: { "metadata.title": priorBinding },
+            metadata: { AlternateTitle: "Saved alternate title" },
+            staleContentFields: ["metadata.alternate_title"],
+            contentBindings: { "metadata.alternate_title": priorBinding },
           },
         },
         readiness: {
@@ -893,8 +1032,8 @@ describe("InputPage", () => {
               createdAt: "2026-09-09T00:00:00Z",
               correctionConfirmation: {
                 revision: 4,
-                fields: ["metadata.title"],
-                previousBindings: { "metadata.title": priorBinding },
+                fields: ["metadata.alternate_title"],
+                previousBindings: { "metadata.alternate_title": priorBinding },
                 currentBinding,
               },
             },
@@ -906,10 +1045,14 @@ describe("InputPage", () => {
     };
     const { rerender } = render(<InputCorrectionEditor facet={facet} />);
 
+    expect(screen.getByTestId("input-tracker-fields")).not.toHaveAttribute("open");
+    expect(screen.getByTestId("input-readiness")).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByText("Tracker Input", { exact: true }));
+    fireEvent.click(screen.getByText("Input readiness", { exact: true }));
     expect(screen.getByText("Genres are required.", { exact: false })).toBeInTheDocument();
     expect(screen.getByText(/saved for movie.*TMDB 101.*current tv.*TMDB 202/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Confirm saved Title" }));
-    expect(facet.confirmCorrection).toHaveBeenCalledWith({ field: "metadata.title" });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm saved Alternate title" }));
+    expect(facet.confirmCorrection).toHaveBeenCalledWith({ field: "metadata.alternate_title" });
     expect(screen.getByLabelText("PTP No English subtitles")).toHaveValue("yes");
     fireEvent.change(screen.getByLabelText("PTP No English subtitles"), {
       target: { value: "auto" },

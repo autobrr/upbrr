@@ -138,21 +138,18 @@ func metadataRequirementFieldPresentForCollection(
 			(tvdbCurrent && strings.TrimSpace(metadata.TVDB.Poster) != "") ||
 			(tvmazeCurrent && (strings.TrimSpace(metadata.TVmaze.Poster) != "" || strings.TrimSpace(metadata.TVmaze.PosterMedium) != ""))
 	case "title":
-		if meta.MetadataOverrides.Title != nil {
-			return explicitNonEmptyString(meta.MetadataOverrides.Title)
-		}
 		return strings.TrimSpace(meta.Release.Title) != "" ||
 			(tmdbCurrent && strings.TrimSpace(metadata.TMDB.Title) != "") ||
 			(imdbCurrent && strings.TrimSpace(metadata.IMDB.Title) != "") ||
 			(tvdbCurrent && (strings.TrimSpace(metadata.TVDB.NameEnglish) != "" || strings.TrimSpace(metadata.TVDB.Name) != "")) ||
 			(tvmazeCurrent && strings.TrimSpace(metadata.TVmaze.Name) != "")
 	case "original_title":
-		if meta.MetadataOverrides.OriginalTitle != nil {
-			return explicitNonEmptyString(meta.MetadataOverrides.OriginalTitle)
-		}
 		return (tmdbCurrent && strings.TrimSpace(metadata.TMDB.OriginalTitle) != "") ||
 			(tvdbCurrent && strings.TrimSpace(metadata.TVDB.Name) != "") || strings.TrimSpace(meta.Release.Title) != ""
 	case "year":
+		if identity.Category == api.CanonicalCategoryTV {
+			return tvdbCurrent && metadata.TVDB.Year > 0 && metadata.TVDB.YearFromAlias
+		}
 		if meta.ReleaseNameOverrides.ManualYear != nil {
 			return *meta.ReleaseNameOverrides.ManualYear > 0
 		}
@@ -220,10 +217,6 @@ func providerSuppliesMetadataRequirement(
 
 func metadataRequirementOverrideBlocksProvider(field api.MetadataRequirementField, overrides api.MetadataOverrides) bool {
 	switch field {
-	case "title":
-		return overrides.Title != nil
-	case "original_title":
-		return overrides.OriginalTitle != nil
 	case "genres":
 		return overrides.Genres != nil
 	case "original_language":

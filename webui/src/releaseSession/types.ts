@@ -75,6 +75,7 @@ export type PreparationIntent = Readonly<{
   metadata: Readonly<MetadataOverrides>;
   releaseName: Readonly<ReleaseNameOverrides>;
   playlist: Readonly<{ Set: boolean; Selected: readonly string[]; UseAll: boolean }>;
+  /** Manual drafts; absent keys display resolved IDs, while empty values clear the input and are omitted on submission. */
   trackerSourceIDs: Readonly<Record<string, string>>;
   policy: Readonly<{ keepFolder: boolean; keepImages: boolean; onlyID: boolean }>;
   search: Readonly<{ skip: boolean; client: string }>;
@@ -141,6 +142,7 @@ export type InputFacet = Readonly<{
   confirmCorrection(field: CorrectionFieldRef): void;
   /** Queues a tracker-local answer; null explicitly restores Auto. */
   changeTrackerInputAnswer(tracker: string, key: string, value: string | null): void;
+  /** Updates a source ID draft; clearing does not prevent discovery from finding an ID on the next preparation. */
   changeTrackerSourceID(tracker: string, value: string): void;
   changePreparationPolicy(value: PreparationIntent["policy"]): void;
   changeClientSearch(value: PreparationIntent["search"]): void;

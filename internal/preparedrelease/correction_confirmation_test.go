@@ -26,7 +26,7 @@ func TestCorrectionConfirmationRejectsChangedAuthorityBeforeWriting(t *testing.T
 				Mode: api.ReleaseCorrectionUpdatePatch,
 				Patch: &api.ReleaseCorrectionPatch{
 					ExpectedRevision: new(stale.Corrections.Revision),
-					ConfirmFields:    []api.CorrectionFieldRef{{Field: api.CorrectionFieldMetadataTitle}},
+					ConfirmFields:    []api.CorrectionFieldRef{{Field: api.CorrectionFieldMetadataAlternateTitle}},
 				},
 				Confirmation: confirmation,
 			}
@@ -40,9 +40,9 @@ func TestCorrectionConfirmationRejectsChangedAuthorityBeforeWriting(t *testing.T
 			case "fields":
 				confirmation.Fields = []api.CorrectionField{api.CorrectionFieldReleaseNameManualYear}
 			case "previous binding":
-				binding := confirmation.PreviousBindings[api.CorrectionFieldMetadataTitle]
+				binding := confirmation.PreviousBindings[api.CorrectionFieldMetadataAlternateTitle]
 				binding.ProviderIDs.TMDBID++
-				confirmation.PreviousBindings[api.CorrectionFieldMetadataTitle] = binding
+				confirmation.PreviousBindings[api.CorrectionFieldMetadataAlternateTitle] = binding
 			case "submitted identity":
 				update.Patch.Values.Identity.TMDBID = new(3456789)
 			}
@@ -68,14 +68,14 @@ func TestConfirmedCorrectionRemainsBoundAcrossRestartAndDiscovery(t *testing.T) 
 				Mode: api.ReleaseCorrectionUpdatePatch,
 				Patch: &api.ReleaseCorrectionPatch{
 					ExpectedRevision: new(stale.Corrections.Revision),
-					ConfirmFields:    []api.CorrectionFieldRef{{Field: api.CorrectionFieldMetadataTitle}},
+					ConfirmFields:    []api.CorrectionFieldRef{{Field: api.CorrectionFieldMetadataAlternateTitle}},
 				},
 				Confirmation: confirmation,
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(accepted.ExplicitFields) != 0 || accepted.Corrections.Corrections.ContentBindings[api.CorrectionFieldMetadataTitle] != confirmation.CurrentBinding {
+			if len(accepted.ExplicitFields) != 0 || accepted.Corrections.Corrections.ContentBindings[api.CorrectionFieldMetadataAlternateTitle] != confirmation.CurrentBinding {
 				t.Fatal("confirmation became fresh intent or lost its approved identity")
 			}
 			confirmation.Revision = accepted.Corrections.Revision
@@ -98,13 +98,13 @@ func TestConfirmedCorrectionRemainsBoundAcrossRestartAndDiscovery(t *testing.T) 
 			}
 			prepared, err := restarted.PrepareResolved(t.Context(), resolved)
 			if change == "unchanged" {
-				if err != nil || store.commitCount() != 2 || prepared.EffectiveInstructions.Metadata.Title == nil {
+				if err != nil || store.commitCount() != 2 || prepared.EffectiveInstructions.Metadata.AlternateTitle == nil {
 					t.Fatalf("confirmed identity did not publish after restart: %v", err)
 				}
 				return
 			}
 			changed, ok := errors.AsType[*api.StaleContentCorrectionsError](err)
-			if !ok || !slices.Contains(changed.Corrections.Corrections.StaleContentFields, api.CorrectionFieldMetadataTitle) || store.commitCount() != 1 {
+			if !ok || !slices.Contains(changed.Corrections.Corrections.StaleContentFields, api.CorrectionFieldMetadataAlternateTitle) || store.commitCount() != 1 {
 				t.Fatalf("changed identity reused old confirmation: %v", err)
 			}
 			if changed.CurrentBinding == confirmation.CurrentBinding {
@@ -125,7 +125,7 @@ func TestPartialCorrectionConfirmationDoesNotApproveRemainingFields(t *testing.T
 				_, err := module.Prepare(t.Context(), api.PrepareInput{
 					SourcePath: source,
 					Instructions: api.ReleaseFactInstructions{Metadata: api.MetadataOverrides{
-						Title: new("Manual title"), Genres: new([]string{"Drama"}),
+						AlternateTitle: new("Manual alternate title"), Genres: new([]string{"Drama"}),
 					}},
 				})
 				if err != nil {
@@ -148,7 +148,7 @@ func TestPartialCorrectionConfirmationDoesNotApproveRemainingFields(t *testing.T
 					Mode: api.ReleaseCorrectionUpdatePatch,
 					Patch: &api.ReleaseCorrectionPatch{
 						ExpectedRevision: new(stale.Corrections.Revision),
-						ConfirmFields:    []api.CorrectionFieldRef{{Field: api.CorrectionFieldMetadataTitle}},
+						ConfirmFields:    []api.CorrectionFieldRef{{Field: api.CorrectionFieldMetadataAlternateTitle}},
 					},
 					Confirmation: confirmation,
 				})
@@ -156,7 +156,7 @@ func TestPartialCorrectionConfirmationDoesNotApproveRemainingFields(t *testing.T
 					t.Fatal(err)
 				}
 				confirmation.Revision = accepted.Corrections.Revision
-				confirmation.Fields = []api.CorrectionField{api.CorrectionFieldMetadataTitle}
+				confirmation.Fields = []api.CorrectionField{api.CorrectionFieldMetadataAlternateTitle}
 				resolved, err := module.ResolveInput(t.Context(), api.PrepareInput{SourcePath: source}, api.ReleaseCorrectionUpdate{
 					Mode: api.ReleaseCorrectionUpdateInherit, Confirmation: confirmation,
 				})
@@ -168,7 +168,7 @@ func TestPartialCorrectionConfirmationDoesNotApproveRemainingFields(t *testing.T
 				if !ok || !slices.Equal(remaining.Corrections.Corrections.StaleContentFields, []api.CorrectionField{api.CorrectionFieldMetadataGenres}) {
 					t.Fatalf("partial confirmation approved another field: %v", err)
 				}
-				if remaining.Corrections.Corrections.ContentBindings[api.CorrectionFieldMetadataTitle] != confirmation.CurrentBinding || store.commitCount() != 1 {
+				if remaining.Corrections.Corrections.ContentBindings[api.CorrectionFieldMetadataAlternateTitle] != confirmation.CurrentBinding || store.commitCount() != 1 {
 					t.Fatal("partial confirmation lost its binding or published incomplete input")
 				}
 				patch := &api.ReleaseCorrectionPatch{ExpectedRevision: new(remaining.Corrections.Revision)}
@@ -186,8 +186,8 @@ func TestPartialCorrectionConfirmationDoesNotApproveRemainingFields(t *testing.T
 				if err != nil {
 					t.Fatal(err)
 				}
-				if len(accepted.Corrections.Corrections.StaleContentFields) != 0 || accepted.Input.Instructions.Metadata.Title == nil {
-					t.Fatal("resolving the remaining field invalidated the approved title")
+				if len(accepted.Corrections.Corrections.StaleContentFields) != 0 || accepted.Input.Instructions.Metadata.AlternateTitle == nil {
+					t.Fatal("resolving the remaining field invalidated the approved alternate title")
 				}
 				confirmation.Revision = accepted.Corrections.Revision
 				resolved, err = module.ResolveInput(t.Context(), api.PrepareInput{SourcePath: source}, api.ReleaseCorrectionUpdate{
@@ -198,7 +198,7 @@ func TestPartialCorrectionConfirmationDoesNotApproveRemainingFields(t *testing.T
 				}
 				resolved.ExplicitFields = accepted.ExplicitFields
 				prepared, err := module.PrepareResolved(t.Context(), resolved)
-				if err != nil || store.commitCount() != 2 || prepared.EffectiveInstructions.Metadata.Title == nil {
+				if err != nil || store.commitCount() != 2 || prepared.EffectiveInstructions.Metadata.AlternateTitle == nil {
 					t.Fatalf("resolving the remaining field did not publish confirmed input: %v", err)
 				}
 			})
@@ -213,7 +213,7 @@ func staleConfirmationFixture(t *testing.T) (*Module, *memoryStore, string, *api
 	module := newTestModule(t, store, &recordingCollector{})
 	_, err := module.Prepare(t.Context(), api.PrepareInput{
 		SourcePath:   source,
-		Instructions: api.ReleaseFactInstructions{Metadata: api.MetadataOverrides{Title: new("Manual title")}},
+		Instructions: api.ReleaseFactInstructions{Metadata: api.MetadataOverrides{AlternateTitle: new("Manual alternate title")}},
 	})
 	if err != nil {
 		t.Fatal(err)

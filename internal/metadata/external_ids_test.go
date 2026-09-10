@@ -2827,6 +2827,99 @@ func TestResolveExternalIDsSQLiteFreshProvenanceOnlyAnchorClearsStoredGuess(t *t
 	}
 }
 
+func TestResolveExternalIDsSQLiteStaleAutomaticTVCanDriftFromFallbackMovieNaming(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	sourcePath := filepath.Join(base, "unknown")
+	if err := os.Mkdir(sourcePath, 0o755); err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+	videoPath := filepath.Join(sourcePath, "untitled.mkv")
+	if err := os.WriteFile(videoPath, []byte("video"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	if parsed := ParseReleaseInfo(sourcePath); parsed.Category != "" || parsed.Season != 0 || parsed.Episode != 0 {
+		t.Fatalf("ambiguous source unexpectedly supplied category evidence: %#v", parsed)
+	}
+	dbPath := filepath.Join(base, "metadata.sqlite")
+	repo, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate repository: %v", err)
+	}
+
+	tmdbClient := &stubTMDB{searchErr: errors.New("tmdb unavailable")}
+	imdbClient := &stubIMDB{searchFn: func(imdb.SearchInput) (imdb.SearchResult, error) {
+		return imdb.SearchResult{}, errors.New("imdb unavailable")
+	}}
+	service := NewService(repo,
+		WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
+		WithMediaInfoExporter(&stubMediaInfo{}),
+		WithSceneDetector(stubSceneDetector{}),
+		WithTMDBClient(tmdbClient),
+		WithIMDBClient(imdbClient),
+		WithTVDBClient(&stubTVDB{}),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+	request := testCollectionRequest(t, api.Request{SourcePath: sourcePath})
+	request.Manifest.SourcePath = sourcePath
+	if _, err := service.CollectPreparationEvidence(ctx, request); err != nil {
+		t.Fatalf("seed source fingerprint: %v", err)
+	}
+	if err := repo.SaveExternalIdentity(ctx, api.ExternalIdentity{
+		SourcePath: sourcePath,
+		TVDBID:     123456,
+		Category:   api.CanonicalCategoryTV,
+		Provenance: api.IdentityProvenanceSet{
+			TVDB:     api.IdentityProvenanceProvider,
+			Category: api.IdentityProvenanceProvider,
+		},
+	}); err != nil {
+		t.Fatalf("save stale identity: %v", err)
+	}
+	if err := os.WriteFile(videoPath, []byte("updated video"), 0o600); err != nil {
+		t.Fatalf("stale source fingerprint: %v", err)
+	}
+
+	pipeline := &recordingEvidencePipeline{service: service}
+	collector, err := preparedrelease.NewEvidenceCollector(pipeline)
+	if err != nil {
+		t.Fatalf("new evidence collector: %v", err)
+	}
+	facts, err := collector.Collect(ctx, request)
+	if err != nil {
+		t.Fatalf("collect stale preparation: %v", err)
+	}
+	if pipeline.state.StoredDataFresh {
+		t.Fatal("expected changed source to invalidate stored metadata")
+	}
+	if tmdbClient.searchCalls == 0 || imdbClient.searchCalls == 0 {
+		t.Fatalf("expected failed provider lookups, tmdb=%d imdb=%d", tmdbClient.searchCalls, imdbClient.searchCalls)
+	}
+	if facts.NamingCategory != api.CanonicalCategoryMovie || pipeline.state.Identity.Category != "" {
+		t.Fatalf("collected naming category = %q, candidate category = %q, want movie and unknown", facts.NamingCategory, pipeline.state.Identity.Category)
+	}
+
+	resolver, err := externalidentity.NewWithCandidateSource(repo, collector)
+	if err != nil {
+		t.Fatalf("new identity resolver: %v", err)
+	}
+	resolved, err := resolver.Resolve(ctx, externalidentity.Request{
+		SourcePath:        sourcePath,
+		SourceFingerprint: "sqlite-stale-source",
+		Generation:        1,
+	})
+	if err != nil {
+		t.Fatalf("resolve stale identity: %v", err)
+	}
+	if resolved.Identity.Category != api.CanonicalCategoryTV {
+		t.Fatalf("resolved category = %q, candidate category = %q, want TV", resolved.Identity.Category, pipeline.state.Identity.Category)
+	}
+}
+
 func TestResolveExternalIDsSQLiteStaleProvenanceOnlyClearBlocksSiblingPromotion(t *testing.T) {
 	ctx := context.Background()
 	repo, err := db.Open(filepath.Join(t.TempDir(), "metadata.sqlite"))
@@ -3950,6 +4043,47 @@ func TestResolveSearchTitleYearFromPathFallback(t *testing.T) {
 	}
 	if year != 2026 {
 		t.Fatalf("expected inferred year 2026, got %d", year)
+	}
+}
+
+func TestResolveSearchYearIgnoresManualYearForKnownTV(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		meta preparationstate.State
+		want int
+	}{
+		{
+			name: "canonical TV manual clear",
+			meta: preparationstate.State{
+				Identity:             api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+				Release:              api.ReleaseInfo{Year: 2024},
+				ReleaseNameOverrides: api.ReleaseNameOverrides{ManualYear: new(0)},
+			},
+			want: 2024,
+		},
+		{
+			name: "parsed TV manual value",
+			meta: preparationstate.State{
+				Release:              api.ReleaseInfo{Category: "TV", Year: 2024},
+				ReleaseNameOverrides: api.ReleaseNameOverrides{ManualYear: new(2030)},
+			},
+			want: 2024,
+		},
+		{
+			name: "movie manual value",
+			meta: preparationstate.State{
+				Identity:             api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+				Release:              api.ReleaseInfo{Year: 2024},
+				ReleaseNameOverrides: api.ReleaseNameOverrides{ManualYear: new(2030)},
+			},
+			want: 2030,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolveSearchYear(tc.meta); got != tc.want {
+				t.Fatalf("resolveSearchYear() = %d, want %d", got, tc.want)
+			}
+		})
 	}
 }
 

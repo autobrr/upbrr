@@ -65,6 +65,8 @@ type DiscResource struct {
 // media, and parser evidence before presentation-only omissions are applied.
 // EpisodeTitle honors explicit title and omission controls, including clearing.
 type ResolvedNaming struct {
+	// Category records the naming decision before final identity resolution.
+	Category       api.CanonicalCategory
 	Type           string
 	Title          string
 	AlternateTitle string

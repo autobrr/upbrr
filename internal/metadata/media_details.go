@@ -688,6 +688,8 @@ func isCommentaryOrCompatibilityAudioValue(value string) bool {
 // instruction values are already part of the metadata by the final rebuild. It
 // is a no-op for nil input and replaces ResolvedNaming, all name variants, and
 // missing-field hints in place without rewriting the detached Release evidence.
+// Title and original-title overrides are ignored. TV year uses only a matching
+// TVDB alias year; ResolvedNaming.Category records the category used for naming.
 func RebuildReleaseName(meta *preparationstate.State, logger api.Logger) {
 	if meta == nil {
 		return
@@ -696,8 +698,10 @@ func RebuildReleaseName(meta *preparationstate.State, logger api.Logger) {
 	nameRequest := releaseNameRequestFromMeta(*meta, logger)
 	nameRequest = applyMetadataNamingOverrides(nameRequest, meta.MetadataOverrides)
 	nameRequest = applyReleaseNameOverrides(nameRequest, meta.ReleaseNameOverrides, logger)
+	namingCategory, _ := api.NormalizeCanonicalCategory(nameRequest.Category)
 	meta.EffectiveMetadata = effectiveMetadata(*meta, nameRequest)
 	meta.ResolvedNaming = preparationstate.ResolvedNaming{
+		Category:       namingCategory,
 		Type:           nameRequest.Type,
 		Title:          meta.EffectiveMetadata.Title,
 		AlternateTitle: meta.EffectiveMetadata.AlternateTitle,

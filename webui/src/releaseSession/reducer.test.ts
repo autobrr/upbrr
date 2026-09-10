@@ -20,6 +20,17 @@ const preview = (sourcePath: string, generation: number): MetadataPreview => ({
 });
 
 describe("sessionReducer upload intent", () => {
+  it("retains an explicit source ID clear until preparation resolves the source again", () => {
+    let state = initialSessionState();
+    for (const value of ["123", ""]) {
+      state = sessionReducer(state, {
+        type: "tracker_source_id_changed",
+        tracker: " aither ",
+        value,
+      });
+      expect(state.preparationIntent.trackerSourceIDs).toEqual({ AITHER: value });
+    }
+  });
   it("keeps duplicate decisions and questionnaire answers independent", () => {
     let state = initialSessionState();
     state = sessionReducer(state, {

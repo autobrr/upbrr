@@ -348,7 +348,8 @@ func TestEvidenceCollectorPublishesResolvedNamingFromMetadataProducer(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if facts.Naming.Title != "Resolved Series" || facts.Naming.AlternateTitle != "AKA Resolved Original" || facts.Naming.Year != 2026 ||
+	if facts.NamingCategory != api.CanonicalCategoryTV || facts.Naming.Title != "Resolved Series" ||
+		facts.Naming.AlternateTitle != "AKA Resolved Original" || facts.Naming.Year != 2026 ||
 		facts.Naming.Source != "BluRay" || facts.Naming.Type != "ENCODE" || facts.Naming.Resolution != "1080p" {
 		t.Fatalf("naming facts = %#v", facts.Naming)
 	}

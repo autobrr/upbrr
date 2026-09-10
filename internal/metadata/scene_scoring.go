@@ -166,7 +166,7 @@ func sceneResolution(meta preparationstate.State, localBase string) string {
 // sceneYear returns the best title year known after tracker, Arr, and external
 // metadata enrichment. Parsed filename year is only one possible source.
 func sceneYear(meta preparationstate.State) int {
-	if meta.ReleaseNameOverrides.ManualYear != nil {
+	if meta.ReleaseNameOverrides.ManualYear != nil && resolveCategoryPreference(meta) != "TV" {
 		return *meta.ReleaseNameOverrides.ManualYear
 	}
 	if meta.Release.Year > 0 {

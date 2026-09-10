@@ -11,11 +11,11 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestRebuildReleaseNameUsesManualMetadataFacts(t *testing.T) {
+func TestRebuildReleaseNameIgnoresLockedMetadataOverrides(t *testing.T) {
 	t.Parallel()
 
 	meta := preparationstate.State{
-		Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+		Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie, TMDBID: 12},
 		Release: api.ReleaseInfo{
 			Title:  "Automatic Title",
 			Genre:  "Drama",
@@ -29,10 +29,15 @@ func TestRebuildReleaseNameUsesManualMetadataFacts(t *testing.T) {
 			Genres:           &[]string{"Drama", " drama ", "Mystery"},
 			OriginalLanguage: new("fra"),
 		},
+		ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{
+			TMDBID:        12,
+			Title:         "Provider Title",
+			OriginalTitle: "Provider Original",
+		}},
 	}
 
 	RebuildReleaseName(&meta, api.NopLogger{})
-	if meta.ResolvedNaming.Title != "Manual Title" || meta.ResolvedNaming.AlternateTitle != "" || meta.ResolvedNaming.OriginalTitle != "Manual Original" {
+	if meta.ResolvedNaming.Title != "Provider Title" || meta.ResolvedNaming.AlternateTitle != "" || meta.ResolvedNaming.OriginalTitle != "Provider Original" {
 		t.Fatalf("resolved naming = %#v", meta.ResolvedNaming)
 	}
 	if !slices.Equal(meta.EffectiveMetadata.Genres, []string{"Drama", "Mystery"}) || meta.EffectiveMetadata.OriginalLanguage != "French" ||
@@ -44,7 +49,7 @@ func TestRebuildReleaseNameUsesManualMetadataFacts(t *testing.T) {
 	}
 }
 
-func TestRebuildReleaseNameManualYearOverridesTVDBAliasYear(t *testing.T) {
+func TestRebuildReleaseNameTVYearIgnoresManualOverrides(t *testing.T) {
 	t.Parallel()
 
 	meta := preparationstate.State{
@@ -59,13 +64,46 @@ func TestRebuildReleaseNameManualYearOverridesTVDBAliasYear(t *testing.T) {
 		ReleaseNameOverrides: api.ReleaseNameOverrides{ManualYear: new(2030)},
 	}
 	RebuildReleaseName(&meta, api.NopLogger{})
-	if meta.ResolvedNaming.Year != 2030 || meta.EffectiveMetadata.Year != 2030 || meta.EffectiveMetadata.YearProvenance != api.FactProvenanceManual {
-		t.Fatalf("manual year facts = naming=%d effective=%#v", meta.ResolvedNaming.Year, meta.EffectiveMetadata)
+	if meta.ResolvedNaming.Year != 2024 || meta.EffectiveMetadata.Year != 2024 || meta.EffectiveMetadata.YearProvenance != api.FactProvenanceAutomatic {
+		t.Fatalf("manual TV year facts = naming=%d effective=%#v", meta.ResolvedNaming.Year, meta.EffectiveMetadata)
 	}
 
-	meta.ReleaseNameOverrides.ManualYear = nil
+	meta.ReleaseNameOverrides.ManualYear = new(0)
 	RebuildReleaseName(&meta, api.NopLogger{})
 	if meta.ResolvedNaming.Year != 2024 || meta.EffectiveMetadata.Year != 2024 || meta.EffectiveMetadata.YearProvenance != api.FactProvenanceAutomatic {
 		t.Fatalf("automatic TVDB alias year facts = naming=%d effective=%#v", meta.ResolvedNaming.Year, meta.EffectiveMetadata)
+	}
+}
+
+func TestRebuildReleaseNameTVOmitsEffectiveYearWithoutEligibleTVDB(t *testing.T) {
+	t.Parallel()
+
+	meta := preparationstate.State{
+		Identity: api.ExternalIdentity{Category: api.CanonicalCategoryTV, IMDBID: 456},
+		Release:  api.ReleaseInfo{Title: "Parsed Show", Year: 2025},
+		ProviderMetadata: api.SourceScopedMetadata{IMDB: &api.IMDBMetadata{
+			IMDBID: 456,
+			Title:  "IMDb Show",
+			Year:   2026,
+		}},
+		ReleaseNameOverrides: api.ReleaseNameOverrides{ManualYear: new(2030)},
+	}
+	RebuildReleaseName(&meta, api.NopLogger{})
+	if meta.ResolvedNaming.Year != 0 || meta.EffectiveMetadata.Year != 0 || meta.EffectiveMetadata.YearProvenance != api.FactProvenanceAutomatic {
+		t.Fatalf("TV facts used a fallback year: naming=%d effective=%#v", meta.ResolvedNaming.Year, meta.EffectiveMetadata)
+	}
+}
+
+func TestRebuildReleaseNameManualYearRemainsEditableForMovie(t *testing.T) {
+	t.Parallel()
+
+	meta := preparationstate.State{
+		Identity:             api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+		Release:              api.ReleaseInfo{Title: "Example Movie", Year: 2024},
+		ReleaseNameOverrides: api.ReleaseNameOverrides{ManualYear: new(2030)},
+	}
+	RebuildReleaseName(&meta, api.NopLogger{})
+	if meta.ResolvedNaming.Year != 2030 || meta.EffectiveMetadata.Year != 2030 || meta.EffectiveMetadata.YearProvenance != api.FactProvenanceManual {
+		t.Fatalf("manual movie year facts = naming=%d effective=%#v", meta.ResolvedNaming.Year, meta.EffectiveMetadata)
 	}
 }

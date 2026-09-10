@@ -201,6 +201,15 @@ test("embedded web retains Input corrections without downstream workflow calls",
     }
     await expect(page.getByRole("textbox", { name: "TMDB ID", exact: true })).not.toHaveValue("");
     await expect(page.getByRole("textbox", { name: "Title", exact: true })).not.toHaveValue("");
+    await expect(page.getByRole("textbox", { name: "Title", exact: true })).toBeDisabled();
+    await expect(page.getByRole("textbox", { name: "Original title", exact: true })).toBeDisabled();
+    await expect(page.getByRole("spinbutton", { name: "Manual year", exact: true })).toBeEditable();
+    const categoryInput = page.getByRole("textbox", { name: "Category", exact: true });
+    await categoryInput.fill("TV");
+    await expect(page.getByRole("spinbutton", { name: "Manual year", exact: true })).toBeDisabled();
+    await categoryInput.fill("movie");
+    await expect(page.getByRole("spinbutton", { name: "Manual year", exact: true })).toBeEditable();
+    await page.getByRole("button", { name: "Auto Category", exact: true }).click();
     await expect(page.getByRole("textbox", { name: "Category", exact: true })).not.toHaveValue("");
     for (const group of [
       "Provider IDs",
@@ -213,6 +222,26 @@ test("embedded web retains Input corrections without downstream workflow calls",
       await expect(inputEditor.getByText(group, { exact: true })).toBeVisible();
     }
     const skipClientSearch = page.getByRole("checkbox", { name: "Skip client search" });
+    const sourceOptions = page.getByTestId("input-source-options");
+    await expect(sourceOptions).not.toHaveAttribute("open");
+    await expect(skipClientSearch).toBeHidden();
+    await sourceOptions.locator("summary").click();
+    await expect(skipClientSearch).toBeVisible();
+    const readiness = page.getByTestId("input-readiness");
+    await expect(readiness).not.toHaveAttribute("open");
+    await expect(readiness.getByText(/^Status:/)).toBeHidden();
+    await readiness.locator("summary").click();
+    await expect(readiness.getByText(/^Status:/)).toBeVisible();
+    await readiness.locator("summary").click();
+    const titleInput = page.getByRole("textbox", { name: "Title", exact: true });
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      const field = await titleInput.boundingBox();
+      expect(field).not.toBeNull();
+      expect(field?.width).toBeGreaterThan(240);
+      expect((field?.x || 0) + (field?.width || 0)).toBeLessThanOrEqual(width);
+    }
+    await page.setViewportSize({ width: 1280, height: 900 });
     await skipClientSearch.check();
     const commentary = page.getByRole("combobox", { name: "Commentary" });
     await commentary.selectOption({ label: "No" });
@@ -248,6 +277,7 @@ test("embedded web retains Input corrections without downstream workflow calls",
     await page.keyboard.press("Escape");
 
     await commentary.selectOption({ label: "Auto" });
+    await sourceOptions.locator("summary").click();
     await skipClientSearch.check();
     const reset = page.waitForResponse((response) =>
       response.url().includes("/api/app/ContinueReleaseWorkflow"),
@@ -316,6 +346,7 @@ test("embedded web retains Input corrections without downstream workflow calls",
     const removeTMDB = page.getByRole("button", { name: "Remove TMDB ID", exact: true });
     await expect(removeTMDB).toBeEnabled();
     await removeTMDB.click();
+    await sourceOptions.locator("summary").click();
     await skipClientSearch.check();
     const removed = page.waitForResponse(
       (response) =>

@@ -876,8 +876,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       if (!tracker) return state;
       const trackerSourceIDs = { ...state.preparationIntent.trackerSourceIDs };
       const value = action.value.trim();
-      if (value) trackerSourceIDs[tracker] = value;
-      else delete trackerSourceIDs[tracker];
+      trackerSourceIDs[tracker] = value;
       return preparationIntentChanged(
         state,
         { ...state.preparationIntent, trackerSourceIDs },

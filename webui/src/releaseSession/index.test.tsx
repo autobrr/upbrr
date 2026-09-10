@@ -707,10 +707,28 @@ describe("useReleaseSession", () => {
     window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", "workflow-retained");
     const sourcePath = "C:\\media\\Example.Release.2026.1080p-GRP.mkv";
     const current = vi.fn(async (workflowID: string) => {
-      const restored = workflowCurrentFromPreview(
-        workflowCurrent(workflowID, 7),
-        preview(sourcePath, 7),
-      );
+      const restored = workflowCurrentFromPreview(workflowCurrent(workflowID, 7), {
+        ...preview(sourcePath, 7),
+        TrackerData: [
+          {
+            Tracker: "AITHER",
+            TrackerID: "123",
+            TorrentURL: "",
+            InfoHash: "",
+            TMDBID: 0,
+            IMDBID: 0,
+            TVDBID: 0,
+            MALID: 0,
+            Category: "movie",
+            Description: "",
+            DescriptionHTML: "",
+            ImageURLs: [],
+            Filename: "",
+            Matched: true,
+            UpdatedAt: "",
+          },
+        ],
+      });
       return {
         ...restored,
         selection: {
@@ -736,6 +754,10 @@ describe("useReleaseSession", () => {
       revision: 7,
     });
     await waitFor(() => expect(result.current.upload.view.selectedTrackers).toEqual(["AITHER"]));
+    expect(result.current.input.view.trackerData).toEqual([
+      expect.objectContaining({ Tracker: "AITHER", TrackerID: "123" }),
+    ]);
+    expect(result.current.input.view.intent.trackerSourceIDs).toEqual({});
 
     unmount();
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
@@ -1037,6 +1059,8 @@ describe("useReleaseSession", () => {
     expect(result.current.input.view.readiness?.schemas?.[0]?.Fields[0]?.Value).toBe("yes");
 
     const acceptedCallCount = continueWorkflow.mock.calls.length;
+    act(() => result.current.input.changeTrackerSourceID("PTP", ""));
+    expect(result.current.input.view.intent.trackerSourceIDs.PTP).toBe("");
     act(() => result.current.input.changeTrackerInputAnswer("PTP", "no_english_subtitles", null));
     expect(result.current.input.view.trackerInputAnswers).toEqual({
       PTP: { no_english_subtitles: null },
@@ -1048,6 +1072,11 @@ describe("useReleaseSession", () => {
       .slice(acceptedCallCount)
       .map(([request]) => request)
       .find((request) => request.intent.trackerInputAnswers);
+    const clearedSourceRequest = continueWorkflow.mock.calls
+      .slice(acceptedCallCount)
+      .map(([request]) => request)
+      .find((request) => request.intent.preparation);
+    expect(clearedSourceRequest?.intent.preparation?.Instructions.TrackerIDs).toEqual({});
     expect(resetAnswerRequest?.intent.trackerInputAnswers).toEqual({
       PTP: { no_english_subtitles: null },
     });

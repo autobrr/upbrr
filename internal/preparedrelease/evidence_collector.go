@@ -176,6 +176,7 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 		}
 	}
 	return CollectedFacts{
+		NamingCategory: resolved.Category,
 		Naming: api.NamingFacts{
 			Filename:                 meta.Filename,
 			ReleaseName:              meta.ReleaseName,

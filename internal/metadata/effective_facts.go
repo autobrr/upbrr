@@ -12,9 +12,6 @@ import (
 )
 
 func applyMetadataNamingOverrides(request api.ReleaseNameRequest, overrides api.MetadataOverrides) api.ReleaseNameRequest {
-	if overrides.Title != nil {
-		request.Title = strings.TrimSpace(*overrides.Title)
-	}
 	if overrides.AlternateTitle != nil {
 		request.AltTitle = strings.TrimSpace(*overrides.AlternateTitle)
 	}
@@ -38,7 +35,7 @@ func effectiveMetadata(meta preparationstate.State, request api.ReleaseNameReque
 		OriginalLanguageProvenance: api.FactProvenanceAutomatic,
 		DistributorProvenance:      api.FactProvenanceAutomatic,
 	}
-	if value := meta.ReleaseNameOverrides.ManualYear; value != nil {
+	if value := meta.ReleaseNameOverrides.ManualYear; value != nil && !strings.EqualFold(request.Category, "TV") {
 		metadata.Year = *value
 		if *value == 0 {
 			metadata.YearProvenance = api.FactProvenanceManualEmpty
@@ -46,17 +43,9 @@ func effectiveMetadata(meta preparationstate.State, request api.ReleaseNameReque
 			metadata.YearProvenance = api.FactProvenanceManual
 		}
 	}
-	if value := meta.MetadataOverrides.Title; value != nil {
-		metadata.Title = strings.TrimSpace(*value)
-		metadata.TitleProvenance = factProvenanceForString(metadata.Title)
-	}
 	if value := meta.MetadataOverrides.AlternateTitle; value != nil {
 		metadata.AlternateTitle = strings.TrimSpace(*value)
 		metadata.AlternateTitleProvenance = factProvenanceForString(metadata.AlternateTitle)
-	}
-	if value := meta.MetadataOverrides.OriginalTitle; value != nil {
-		metadata.OriginalTitle = strings.TrimSpace(*value)
-		metadata.OriginalTitleProvenance = factProvenanceForString(metadata.OriginalTitle)
 	}
 	if value := meta.MetadataOverrides.Genres; value != nil {
 		metadata.Genres = normalizeGenres(*value)

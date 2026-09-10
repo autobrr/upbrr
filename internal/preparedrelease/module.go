@@ -25,7 +25,7 @@ import (
 
 // ContractVersion changes whenever prepared fact semantics or the private seed
 // contract become incompatible, forcing persisted generations to be recomputed.
-const ContractVersion = "prepared-release-v14"
+const ContractVersion = "prepared-release-v15"
 
 // Store is the prepared-release persistence port. Implementations must commit
 // facts, identity, and provider metadata as one generation transaction.
@@ -54,14 +54,17 @@ type Collector interface {
 // CollectedFacts is the collector-to-owner handoff. Identity and provider
 // metadata are supplied only by IdentityResolver.
 type CollectedFacts struct {
-	Naming      api.NamingFacts
-	Episode     api.EpisodeFacts
-	Media       api.MediaFacts
-	Disc        api.DiscFacts
-	Assessments api.ReleaseAssessments
-	Identity    externalidentity.ResolutionIntent
-	Diagnostics []api.PreparationDiagnostic
-	Resources   CollectedResources
+	// NamingCategory records the category used to derive the collected names.
+	// A concrete movie/TV mismatch with the resolved identity prevents generation commit.
+	NamingCategory api.CanonicalCategory
+	Naming         api.NamingFacts
+	Episode        api.EpisodeFacts
+	Media          api.MediaFacts
+	Disc           api.DiscFacts
+	Assessments    api.ReleaseAssessments
+	Identity       externalidentity.ResolutionIntent
+	Diagnostics    []api.PreparationDiagnostic
+	Resources      CollectedResources
 }
 
 // CollectedResources is the collector-to-owner handoff for local artifacts
@@ -137,6 +140,8 @@ func (m *Module) Prepare(ctx context.Context, input api.PrepareInput) (api.Prepa
 
 // PrepareResolved validates the accepted correction revision before collecting
 // and committing facts. Concurrent edits reject the old generation.
+// A movie/TV naming-category mismatch returns a CorrectionConflictError without
+// committing a generation. Retired corrections may still be removed from storage.
 func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPreparationInput) (api.PrepareResult, error) {
 	input := resolved.Input
 	if m == nil || m.store == nil || m.identity == nil || m.collector == nil {
@@ -309,7 +314,28 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 		return api.PrepareResult{}, fmt.Errorf("prepared release: resolve identity: %w", err)
 	}
 	identityFinish(nil)
+	if collected.NamingCategory == api.CanonicalCategoryMovie && identityResult.Identity.Category == api.CanonicalCategoryTV ||
+		collected.NamingCategory == api.CanonicalCategoryTV && identityResult.Identity.Category == api.CanonicalCategoryMovie {
+		cleaned, err := api.ApplyReleaseCorrectionUpdate(resolved.Corrections, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
+		if err != nil {
+			return api.PrepareResult{}, fmt.Errorf("prepared release: sanitize mismatched corrections: %w", err)
+		}
+		discardProviderOwnedCorrections(&cleaned, identityResult.Identity.Category)
+		if !reflect.DeepEqual(cleaned, resolved.Corrections.Corrections) {
+			if _, err := m.store.CompareAndSwapReleaseCorrections(ctx, input.SourcePath, resolved.Corrections.Revision, cleaned); err != nil {
+				return api.PrepareResult{}, fmt.Errorf("prepared release: persist sanitized corrections: %w", err)
+			}
+		}
+		return api.PrepareResult{}, &api.CorrectionConflictError{
+			Field:  api.CorrectionFieldReleaseNameCategory,
+			Reason: "resolved category differs from collected names; select Category and refresh metadata",
+		}
+	}
 	finalCorrections, err := m.finalizeCorrectionBindings(ctx, resolved, identityResult.Identity)
+	if err != nil {
+		return api.PrepareResult{}, err
+	}
+	input.Instructions, err = effectiveCorrectionInstructions(input.Instructions, finalCorrections.Corrections)
 	if err != nil {
 		return api.PrepareResult{}, err
 	}

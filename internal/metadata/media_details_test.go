@@ -345,6 +345,7 @@ func TestRebuildReleaseNameCapturesResolvedNamingBeforePresentation(t *testing.T
 
 	RebuildReleaseName(&meta, api.NopLogger{})
 	want := preparationstate.ResolvedNaming{
+		Category:       api.CanonicalCategoryMovie,
 		Type:           "WEBDL",
 		Title:          "Resolved Title",
 		AlternateTitle: "AKA Resolved Original",

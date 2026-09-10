@@ -420,7 +420,9 @@ const preparationInputForWorkflow = (
       Selected: [...intent.playlist.Selected],
       UseAll: intent.playlist.UseAll,
     },
-    TrackerIDs: { ...intent.trackerSourceIDs },
+    TrackerIDs: Object.fromEntries(
+      Object.entries(intent.trackerSourceIDs).filter(([, value]) => value !== ""),
+    ),
   },
   Policy: {
     KeepFolder: intent.policy.keepFolder,

@@ -31,6 +31,8 @@ func (m *Module) CorrectionsCurrent(ctx context.Context, source string, revision
 // ResolveInput accepts corrections before external collection. Optimistic
 // transactions keep same-source updates atomic without holding a database
 // transaction during source inspection or provider requests.
+// Title and original-title corrections are discarded, along with manual year
+// when the category is already TV. Final identity resolution repeats this cleanup.
 func (m *Module) ResolveInput(ctx context.Context, raw api.PrepareInput, update api.ReleaseCorrectionUpdate) (api.ResolvedPreparationInput, error) {
 	if m == nil || m.store == nil || ctx == nil {
 		return api.ResolvedPreparationInput{}, errors.New("prepared release: initialized module and context are required")
@@ -85,14 +87,15 @@ func (m *Module) ResolveInput(ctx context.Context, raw api.PrepareInput, update 
 		if err != nil {
 			return api.ResolvedPreparationInput{}, fmt.Errorf("prepared release: apply correction update: %w", err)
 		}
-		if err := normalizeAcceptedCorrections(&accepted); err != nil {
-			return api.ResolvedPreparationInput{}, err
-		}
 		binding := api.ContentBinding{SourceFingerprint: fingerprint}
 		if hasCurrent && current.Compatibility.SourceFingerprint == fingerprint {
 			binding = contentBinding(fingerprint, current.Identity)
 		}
 		applyCorrectionIdentity(&binding, accepted)
+		discardProviderOwnedCorrections(&accepted, binding.Category)
+		if err := normalizeAcceptedCorrections(&accepted); err != nil {
+			return api.ResolvedPreparationInput{}, err
+		}
 		confirmedBinding, hasConfirmation, err := correctionConfirmationBinding(update, stored, accepted, fingerprint)
 		if err != nil {
 			return api.ResolvedPreparationInput{}, err
@@ -220,6 +223,25 @@ func normalizeAcceptedCorrections(stored *api.StoredReleaseCorrectionsV1) error 
 	return nil
 }
 
+// discardProviderOwnedCorrections retires legacy overrides and their confirmation
+// evidence. TV year follows TVDB naming policy; movie year remains editable.
+func discardProviderOwnedCorrections(stored *api.StoredReleaseCorrectionsV1, category api.CanonicalCategory) {
+	stored.Metadata.Title = nil
+	stored.Metadata.OriginalTitle = nil
+	if category == api.CanonicalCategoryTV {
+		stored.ReleaseName.ManualYear = nil
+	}
+	for _, field := range []api.CorrectionField{
+		api.CorrectionFieldMetadataTitle, api.CorrectionFieldMetadataOriginalTitle, api.CorrectionFieldReleaseNameManualYear,
+	} {
+		if field == api.CorrectionFieldReleaseNameManualYear && category != api.CanonicalCategoryTV {
+			continue
+		}
+		delete(stored.ContentBindings, field)
+		stored.StaleContentFields = slices.DeleteFunc(stored.StaleContentFields, func(stale api.CorrectionField) bool { return stale == field })
+	}
+}
+
 func correctionValues(instructions api.ReleaseFactInstructions) api.ReleaseCorrectionValues {
 	return api.ReleaseCorrectionValues{
 		Identity:    instructions.Identity,
@@ -286,7 +308,7 @@ func applyCorrectionIdentity(binding *api.ContentBinding, stored api.StoredRelea
 
 func bindExplicitCorrections(stored *api.StoredReleaseCorrectionsV1, binding api.ContentBinding, fields []api.CorrectionFieldRef) {
 	for _, ref := range fields {
-		if !ref.Field.IsContentBound() {
+		if !ref.Field.IsContentBound() || !slices.Contains(correctionValuesFromStored(*stored).Fields(), ref) {
 			continue
 		}
 		if stored.ContentBindings == nil {
@@ -342,6 +364,9 @@ func validateTrackCorrections(corrections []api.TrackLanguageCorrection, current
 	return nil
 }
 
+// finalizeCorrectionBindings checks accepted corrections against the final identity.
+// Stale corrections and retired-field cleanup persist before a confirmation error.
+// On success, the returned revision and bindings are persisted by generation commit.
 func (m *Module) finalizeCorrectionBindings(
 	ctx context.Context,
 	resolved api.ResolvedPreparationInput,
@@ -352,16 +377,16 @@ func (m *Module) finalizeCorrectionBindings(
 		return api.ReleaseCorrectionsSnapshot{}, fmt.Errorf("prepared release: finalize correction update: %w", err)
 	}
 	binding := contentBinding(resolved.SourceFingerprint, identity)
-	before := slices.Clone(final.StaleContentFields)
+	discardProviderOwnedCorrections(&final, identity.Category)
 	markStaleContent(&final, binding, resolved.ExplicitFields)
-	stored := resolved.Corrections
-	if !slices.Equal(before, final.StaleContentFields) {
-		stored, err = m.store.CompareAndSwapReleaseCorrections(ctx, resolved.Input.SourcePath, resolved.Corrections.Revision, final)
-		if err != nil {
-			return api.ReleaseCorrectionsSnapshot{}, fmt.Errorf("prepared release: mark stale corrections: %w", err)
-		}
-	}
 	if len(final.StaleContentFields) > 0 {
+		stored := resolved.Corrections
+		if !reflect.DeepEqual(final, resolved.Corrections.Corrections) {
+			stored, err = m.store.CompareAndSwapReleaseCorrections(ctx, resolved.Input.SourcePath, resolved.Corrections.Revision, final)
+			if err != nil {
+				return api.ReleaseCorrectionsSnapshot{}, fmt.Errorf("prepared release: mark stale corrections: %w", err)
+			}
+		}
 		return api.ReleaseCorrectionsSnapshot{}, &api.StaleContentCorrectionsError{Corrections: stored, CurrentBinding: binding}
 	}
 	bindExplicitCorrections(&final, binding, resolved.ExplicitFields)

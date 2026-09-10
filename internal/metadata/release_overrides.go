@@ -132,7 +132,7 @@ func applyReleaseNameValueOverrides(meta *preparationstate.State) {
 	if overrides.NoDistributor != nil && *overrides.NoDistributor {
 		meta.Distributor = ""
 	}
-	if overrides.ManualYear != nil {
+	if overrides.ManualYear != nil && resolveCategoryPreference(*meta) != "TV" {
 		meta.Release.Year = *overrides.ManualYear
 	}
 	if overrides.ManualDate != nil {

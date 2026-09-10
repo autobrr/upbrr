@@ -40,6 +40,23 @@ func TestStateGeneratedReleaseNamesSurviveJSONRoundTrip(t *testing.T) {
 	}
 }
 
+func TestResolvedNamingCategorySurvivesJSONRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	original := State{ResolvedNaming: ResolvedNaming{Category: api.CanonicalCategoryTV}}
+	payload, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("marshal state: %v", err)
+	}
+	var restored State
+	if err := json.Unmarshal(payload, &restored); err != nil {
+		t.Fatalf("unmarshal state: %v", err)
+	}
+	if restored.ResolvedNaming.Category != original.ResolvedNaming.Category {
+		t.Fatalf("restored category = %q, want %q", restored.ResolvedNaming.Category, original.ResolvedNaming.Category)
+	}
+}
+
 func TestSeasonEpisodeHelpers(t *testing.T) {
 	t.Parallel()
 

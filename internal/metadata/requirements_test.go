@@ -105,7 +105,7 @@ func TestRequiresTMDBLocalizedPTBRRefreshPreservesAnyOf(t *testing.T) {
 func TestManualYearClearDoesNotFallBackToProviderEvidence(t *testing.T) {
 	t.Parallel()
 
-	identity := api.ExternalIdentity{TMDBID: 11}
+	identity := api.ExternalIdentity{Category: api.CanonicalCategoryMovie, TMDBID: 11}
 	metadata := api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{TMDBID: 11, Year: 2026}}
 	meta := preparationstate.State{ReleaseNameOverrides: api.ReleaseNameOverrides{ManualYear: new(0)}}
 	if metadataRequirementFieldPresentForCollection("year", meta, identity, metadata) {
@@ -114,5 +114,48 @@ func TestManualYearClearDoesNotFallBackToProviderEvidence(t *testing.T) {
 	meta.ReleaseNameOverrides.ManualYear = new(2027)
 	if !metadataRequirementFieldPresentForCollection("year", meta, identity, metadata) {
 		t.Fatal("positive manual year did not satisfy requirement")
+	}
+}
+
+func TestLockedMetadataOverridesDoNotSatisfyRequirements(t *testing.T) {
+	t.Parallel()
+
+	meta := preparationstate.State{MetadataOverrides: api.MetadataOverrides{
+		Title:         new("Legacy Title"),
+		OriginalTitle: new("Legacy Original"),
+	}}
+	if metadataRequirementFieldPresentForCollection("title", meta, api.ExternalIdentity{}, api.SourceScopedMetadata{}) {
+		t.Fatal("legacy title override satisfied title requirement")
+	}
+	if metadataRequirementFieldPresentForCollection("original_title", meta, api.ExternalIdentity{}, api.SourceScopedMetadata{}) {
+		t.Fatal("legacy original title override satisfied original-title requirement")
+	}
+	if !providerSuppliesMetadataRequirement(api.IdentityProviderTMDB, "title", meta) ||
+		!providerSuppliesMetadataRequirement(api.IdentityProviderTMDB, "original_title", meta) {
+		t.Fatal("legacy title override blocked provider enrichment")
+	}
+}
+
+func TestTVYearRequirementRequiresMatchingAliasDerivedTVDBYear(t *testing.T) {
+	t.Parallel()
+
+	identity := api.ExternalIdentity{
+		Category: api.CanonicalCategoryTV,
+		TVDBID:   22,
+		TMDBID:   11,
+		IMDBID:   33,
+	}
+	metadata := api.SourceScopedMetadata{
+		TMDB: &api.TMDBMetadata{TMDBID: 11, Year: 2026},
+		IMDB: &api.IMDBMetadata{IMDBID: 33, Year: 2027},
+		TVDB: &api.TVDBMetadata{TVDBID: 22, Year: 2024},
+	}
+	meta := preparationstate.State{Release: api.ReleaseInfo{Year: 2025}, ReleaseNameOverrides: api.ReleaseNameOverrides{ManualYear: new(2030)}}
+	if metadataRequirementFieldPresentForCollection("year", meta, identity, metadata) {
+		t.Fatal("TV year requirement accepted a non-alias TVDB or fallback year")
+	}
+	metadata.TVDB.YearFromAlias = true
+	if !metadataRequirementFieldPresentForCollection("year", meta, identity, metadata) {
+		t.Fatal("matching alias-derived TVDB year did not satisfy requirement")
 	}
 }
