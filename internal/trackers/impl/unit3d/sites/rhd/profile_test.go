@@ -193,6 +193,33 @@ func TestTypeAndSourceDVDDoesNotRepeatCapacity(t *testing.T) {
 	}
 }
 
+func TestBuildNamePrefersManualTitleAndYear(t *testing.T) {
+	meta := api.UploadSubject{
+		Type:           "WEBDL",
+		Tag:            "-GRP",
+		AudioLanguages: []string{"German"},
+		Release: api.ReleaseInfo{
+			Title:      "Parsed Title",
+			Year:       2021,
+			Resolution: "1080p",
+		},
+		ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{
+			Title:           "Provider Title",
+			Year:            2020,
+			LocalizedTitles: map[string]string{"de": "Lokaler Titel"},
+		}},
+		EffectiveMetadata: api.EffectiveMetadata{
+			Title:           "Manual Title",
+			TitleProvenance: api.FactProvenanceManual,
+			Year:            2030,
+			YearProvenance:  api.FactProvenanceManual,
+		},
+	}
+	if got := buildName(meta, config.TrackerConfig{}); !strings.HasPrefix(got, "Manual Title 2030 ") {
+		t.Fatalf("manual name = %q", got)
+	}
+}
+
 func TestProfileResolutionAndLanguages(t *testing.T) {
 	if got := Profile().Site.ResolveResolutionID(api.UploadSubject{Release: api.ReleaseInfo{Resolution: "576p"}}); got != "12" {
 		t.Fatalf("resolution = %q", got)

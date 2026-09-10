@@ -226,6 +226,20 @@ func TestExternalIdentityRequirementsUseCanonicalFieldsOnly(t *testing.T) {
 	assertMissingRequirement(t, err, RequirementKindCategory, "")
 }
 
+func TestIdentityDependenciesUseComparableValueTypes(t *testing.T) {
+	want := IdentityDependencySet{
+		TMDB:   IdentityDependency{ID: 100, IMDBID: 200},
+		IMDB:   IdentityDependency{ID: 200, TMDBID: 100},
+		TVDB:   IdentityDependency{ID: 300},
+		TVmaze: IdentityDependency{ID: 400, TVDBID: 300},
+		MAL:    IdentityDependency{ID: 500, TMDBID: 100},
+	}
+	identity := ExternalIdentity{Dependencies: want}
+	if identity.Dependencies != want {
+		t.Fatalf("identity dependencies = %#v, want %#v", identity.Dependencies, want)
+	}
+}
+
 func TestNormalizeCanonicalCategory(t *testing.T) {
 	tests := map[string]CanonicalCategory{
 		"":        CanonicalCategoryUnknown,

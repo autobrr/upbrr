@@ -52,6 +52,8 @@ Execution:
       Set console log level for this run without changing application logs (error, warn, info, debug, trace)
   -upload-only, --upload-only
       Upload using prepared metadata cache only
+  -input-only, --input-only
+      Prepare and evaluate local tracker input without remote tracker work
   -delete-tmp, --delete-tmp, -dtmp
       Delete stored database content for each input path before upload
   -unattended, --unattended, -ua
@@ -116,6 +118,8 @@ Release Overrides:
       Set daily episode air date (YYYY-MM-DD)
   -region, --region, -reg string
       Override disc region
+  -use-season-episode, --use-season-episode
+      Use the explicit season and episode values
   -no-season, --no-season
       Remove season and episode from name
   -no-year, --no-year
@@ -136,6 +140,34 @@ Release Overrides:
       Remove dual-audio tag from audio name
   -dual-audio, --dual-audio
       Add dual-audio tag to audio name
+  -title, --title string
+      Override title
+  -alternate-title, --alternate-title string
+      Override alternate title
+  -original-title, --original-title string
+      Override original title
+  -genres, --genres string
+      Override genres (comma-separated)
+  -audio-languages, --audio-languages string
+      Override audio languages (comma-separated)
+  -subtitle-languages, --subtitle-languages string
+      Override subtitle languages (comma-separated)
+  -hardcoded-subs, --hardcoded-subs, -hc
+      Mark release as containing hardcoded subtitles
+  -hardcoded-subtitle-languages, --hardcoded-subtitle-languages string
+      Override hardcoded subtitle languages (comma-separated)
+
+Input Corrections:
+  -source-lookup, --source-lookup string
+      Use a tracker source URL for metadata lookup
+  -track-languages, --track-languages stringArray
+      Override track languages as track-id=language[,language]
+  -reset-input, --reset-input stringArray
+      Reset a saved correction field or field:track-id
+  -confirm-input, --confirm-input stringArray
+      Confirm a saved content correction field or field:track-id
+  -tracker-input, --tracker-input stringArray
+      Set tracker input as TRACKER:field=yes|no|auto
 
 Metadata IDs:
   -tmdb, --tmdb string
@@ -174,6 +206,8 @@ Tracker Overrides:
       Mark release as WEB-DV
   -not-anime, --not-anime
       Force release to be treated as not anime
+  -anime, --anime
+      Force release to be treated as anime
   -anon, --anon, -a
       Upload anonymously
   -draft, --draft, -dr

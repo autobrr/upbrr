@@ -162,6 +162,7 @@ func isOlderThan50Years(meta api.TrackerValidationSubject) bool {
 	if year == 0 && meta.ProviderMetadata.TMDB != nil {
 		year = meta.ProviderMetadata.TMDB.Year
 	}
+	year = meta.EffectiveMetadata.PreferredYear(year)
 	return year > 0 && time.Now().UTC().Year()-year >= 50
 }
 

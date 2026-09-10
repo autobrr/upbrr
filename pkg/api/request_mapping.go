@@ -113,13 +113,22 @@ func cloneReleaseNameOverrides(value ReleaseNameOverrides) ReleaseNameOverrides 
 
 func cloneMetadataOverrides(value MetadataOverrides) MetadataOverrides {
 	return MetadataOverrides{
-		Distributor:      cloneString(value.Distributor),
-		OriginalLanguage: cloneString(value.OriginalLanguage),
-		PersonalRelease:  cloneBool(value.PersonalRelease),
-		Commentary:       cloneBool(value.Commentary),
-		WebDV:            cloneBool(value.WebDV),
-		StreamOptimized:  cloneBool(value.StreamOptimized),
-		Anime:            cloneBool(value.Anime),
+		Distributor:                cloneString(value.Distributor),
+		OriginalLanguage:           cloneString(value.OriginalLanguage),
+		PersonalRelease:            cloneBool(value.PersonalRelease),
+		Commentary:                 cloneBool(value.Commentary),
+		WebDV:                      cloneBool(value.WebDV),
+		StreamOptimized:            cloneBool(value.StreamOptimized),
+		Anime:                      cloneBool(value.Anime),
+		Title:                      cloneString(value.Title),
+		AlternateTitle:             cloneString(value.AlternateTitle),
+		OriginalTitle:              cloneString(value.OriginalTitle),
+		Genres:                     cloneStringSlice(value.Genres),
+		AudioLanguages:             cloneStringSlice(value.AudioLanguages),
+		SubtitleLanguages:          cloneStringSlice(value.SubtitleLanguages),
+		HardcodedSubs:              cloneBool(value.HardcodedSubs),
+		HardcodedSubtitleLanguages: cloneStringSlice(value.HardcodedSubtitleLanguages),
+		TrackLanguages:             cloneTrackLanguageCorrections(value.TrackLanguages),
 	}
 }
 
@@ -145,4 +154,31 @@ func cloneBool(value *bool) *bool {
 	}
 	cloned := *value
 	return &cloned
+}
+
+func cloneStringSlice(value *[]string) *[]string {
+	if value == nil {
+		return nil
+	}
+	cloned := make([]string, len(*value))
+	copy(cloned, *value)
+	return &cloned
+}
+
+func cloneTrackLanguageCorrections(value []TrackLanguageCorrection) []TrackLanguageCorrection {
+	if value == nil {
+		return nil
+	}
+	cloned := make([]TrackLanguageCorrection, len(value))
+	for i := range value {
+		cloned[i] = TrackLanguageCorrection{
+			TrackID:             value[i].TrackID,
+			ManifestFingerprint: value[i].ManifestFingerprint,
+		}
+		if value[i].Languages != nil {
+			cloned[i].Languages = make([]string, len(value[i].Languages))
+			copy(cloned[i].Languages, value[i].Languages)
+		}
+	}
+	return cloned
 }

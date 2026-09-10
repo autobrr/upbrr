@@ -413,6 +413,9 @@ func releaseNameRequestFromMeta(meta preparationstate.State, logger api.Logger) 
 	}
 
 	title, altTitle, year := resolveReleaseNameTitle(category, meta)
+	if meta.ReleaseNameOverrides.ManualYear != nil && !strings.EqualFold(category, "TV") {
+		year = *meta.ReleaseNameOverrides.ManualYear
+	}
 	searchYear := ""
 	if strings.EqualFold(category, "TV") && year > 0 {
 		title = trimTrailingParentheticalYear(title, year)
@@ -549,6 +552,7 @@ func resolvedGenre(meta preparationstate.State) string {
 
 // resolveReleaseNameTitle selects naming fields from current matching provider
 // metadata while preserving parsed values when no eligible snapshot exists.
+// TV year is zero unless matching TVDB metadata supplies a positive alias year.
 func resolveReleaseNameTitle(category string, meta preparationstate.State) (string, string, int) {
 	title := strings.TrimSpace(meta.Release.Title)
 	altTitle := strings.TrimSpace(meta.Release.Alt)
@@ -597,6 +601,9 @@ func resolveReleaseNameTitle(category string, meta preparationstate.State) (stri
 		if year == 0 && imdb.Year > 0 {
 			year = imdb.Year
 		}
+	}
+	if isTV {
+		year = 0
 	}
 	return title, altTitle, year
 }

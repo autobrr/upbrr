@@ -82,6 +82,7 @@ type ProjectionDupeService interface {
 // contains only facts, instructions, and prior workflow outcomes that affect
 // duplicate search or authorization.
 type DuplicateSubject struct {
+	EffectiveMetadata    EffectiveMetadata
 	SourcePath           string
 	SourceSize           int64
 	VideoPath            string
@@ -269,22 +270,26 @@ func validateExactMediaUploads(channel string, uploads []UploadedImageLink, allo
 // instruction, and prerequisite view. It excludes preparation diagnostics,
 // resolver evidence, cache freshness, and client-search implementation state.
 type UploadSubject struct {
-	MediaBinding        PreparedMediaBinding
-	SourcePath          string
-	Paths               []string
-	DiscType            string
-	VideoPath           string
-	FileList            []string
-	SourceSize          int64
-	MediaInfoJSONPath   string
-	MediaInfoTextPath   string
-	DVDVOBMediaInfoText string
-	Scene               bool
-	SceneName           string
-	SceneNFOPath        string
-	SceneRenamed        bool
-	SceneRenamedReason  string
-	DescriptionGroups   []DescriptionBuilderGroup
+	EffectiveMetadata          EffectiveMetadata
+	ManualLanguages            ManualLanguageFacts
+	HardcodedSubs              bool
+	HardcodedSubtitleLanguages []string
+	MediaBinding               PreparedMediaBinding
+	SourcePath                 string
+	Paths                      []string
+	DiscType                   string
+	VideoPath                  string
+	FileList                   []string
+	SourceSize                 int64
+	MediaInfoJSONPath          string
+	MediaInfoTextPath          string
+	DVDVOBMediaInfoText        string
+	Scene                      bool
+	SceneName                  string
+	SceneNFOPath               string
+	SceneRenamed               bool
+	SceneRenamedReason         string
+	DescriptionGroups          []DescriptionBuilderGroup
 	// DescriptionGroupsFinal distinguishes retained description output from
 	// pre-description subjects whose content may still be generated.
 	DescriptionGroupsFinal bool
@@ -407,40 +412,44 @@ func NewImageHostingSubject(subject UploadSubject) ImageHostingSubject {
 // RuleSubject contains only stable facts used by generic and tracker-specific
 // eligibility rules.
 type RuleSubject struct {
-	SourcePath           string
-	VideoPath            string
-	FileList             []string
-	DiscType             string
-	Scene                bool
-	SceneNFOPath         string
-	SceneRenamed         bool
-	SceneRenamedReason   string
-	PersonalRelease      bool
-	Release              ReleaseInfo
-	ReleaseName          string
-	ReleaseNameNoTag     string
-	Tag                  string
-	Identity             ExternalIdentity
-	ProviderMetadata     SourceScopedMetadata
-	AudioLanguages       []string
-	SubtitleLanguages    []string
-	TVPack               bool
-	Type                 string
-	Source               string
-	Container            string
-	BitDepth             string
-	VideoCodec           string
-	VideoEncode          string
-	HDR                  string
-	Region               string
-	WebDV                bool
-	Anime                bool
-	Assessments          ReleaseAssessments
-	DescriptionOverride  string
-	Disc                 DiscFacts
-	MediaInfoJSONReady   bool
-	MediaInfoTextReady   bool
-	DVDVOBMediaInfoReady bool
+	EffectiveMetadata          EffectiveMetadata
+	ManualLanguages            ManualLanguageFacts
+	HardcodedSubs              bool
+	HardcodedSubtitleLanguages []string
+	SourcePath                 string
+	VideoPath                  string
+	FileList                   []string
+	DiscType                   string
+	Scene                      bool
+	SceneNFOPath               string
+	SceneRenamed               bool
+	SceneRenamedReason         string
+	PersonalRelease            bool
+	Release                    ReleaseInfo
+	ReleaseName                string
+	ReleaseNameNoTag           string
+	Tag                        string
+	Identity                   ExternalIdentity
+	ProviderMetadata           SourceScopedMetadata
+	AudioLanguages             []string
+	SubtitleLanguages          []string
+	TVPack                     bool
+	Type                       string
+	Source                     string
+	Container                  string
+	BitDepth                   string
+	VideoCodec                 string
+	VideoEncode                string
+	HDR                        string
+	Region                     string
+	WebDV                      bool
+	Anime                      bool
+	Assessments                ReleaseAssessments
+	DescriptionOverride        string
+	Disc                       DiscFacts
+	MediaInfoJSONReady         bool
+	MediaInfoTextReady         bool
+	DVDVOBMediaInfoReady       bool
 }
 
 // PackageFileKind classifies a known package entry without applying
@@ -557,61 +566,65 @@ type ProvenanceFacts struct {
 // tracker answers, and prepared-resource readiness used by side-effect-free
 // pre-duplicate validation.
 type TrackerValidationSubject struct {
-	Tracker                string
-	SourcePath             string
-	VideoPath              string
-	FileList               []string
-	SourceSize             int64
-	DiscType               string
-	Scene                  bool
-	SceneNFOReady          bool
-	SceneRenamed           bool
-	SceneRenamedReason     string
-	PersonalRelease        bool
-	Release                ReleaseInfo
-	ReleaseName            string
-	ReleaseNameNoTag       string
-	Tag                    string
-	Identity               ExternalIdentity
-	ProviderMetadata       SourceScopedMetadata
-	AudioLanguages         []string
-	SubtitleLanguages      []string
-	SeasonInt              int
-	EpisodeInt             int
-	SeasonStr              string
-	EpisodeStr             string
-	TVPack                 bool
-	DailyEpisodeDate       string
-	Anime                  bool
-	EpisodeTitle           string
-	EpisodeOverview        string
-	Disc                   DiscFacts
-	Type                   string
-	Source                 string
-	Container              string
-	Audio                  string
-	Channels               string
-	HasCommentary          bool
-	Is3D                   string
-	BitDepth               string
-	VideoCodec             string
-	VideoEncode            string
-	HasEncodeSettings      bool
-	HDR                    string
-	UHD                    string
-	Distributor            string
-	Region                 string
-	Edition                string
-	Repack                 string
-	WebDV                  bool
-	Service                string
-	ServiceLongName        string
-	StreamOptimized        int
-	Assessments            ReleaseAssessments
-	QuestionnaireAnswers   map[string]string
-	TrackerConfigOverrides TrackerConfigOverrides
-	TrackerSiteOverrides   TrackerSiteOverrides
-	ReleaseNameOverrides   ReleaseNameOverrides
+	Tracker                    string
+	EffectiveMetadata          EffectiveMetadata
+	ManualLanguages            ManualLanguageFacts
+	HardcodedSubs              bool
+	HardcodedSubtitleLanguages []string
+	SourcePath                 string
+	VideoPath                  string
+	FileList                   []string
+	SourceSize                 int64
+	DiscType                   string
+	Scene                      bool
+	SceneNFOReady              bool
+	SceneRenamed               bool
+	SceneRenamedReason         string
+	PersonalRelease            bool
+	Release                    ReleaseInfo
+	ReleaseName                string
+	ReleaseNameNoTag           string
+	Tag                        string
+	Identity                   ExternalIdentity
+	ProviderMetadata           SourceScopedMetadata
+	AudioLanguages             []string
+	SubtitleLanguages          []string
+	SeasonInt                  int
+	EpisodeInt                 int
+	SeasonStr                  string
+	EpisodeStr                 string
+	TVPack                     bool
+	DailyEpisodeDate           string
+	Anime                      bool
+	EpisodeTitle               string
+	EpisodeOverview            string
+	Disc                       DiscFacts
+	Type                       string
+	Source                     string
+	Container                  string
+	Audio                      string
+	Channels                   string
+	HasCommentary              bool
+	Is3D                       string
+	BitDepth                   string
+	VideoCodec                 string
+	VideoEncode                string
+	HasEncodeSettings          bool
+	HDR                        string
+	UHD                        string
+	Distributor                string
+	Region                     string
+	Edition                    string
+	Repack                     string
+	WebDV                      bool
+	Service                    string
+	ServiceLongName            string
+	StreamOptimized            int
+	Assessments                ReleaseAssessments
+	QuestionnaireAnswers       map[string]string
+	TrackerConfigOverrides     TrackerConfigOverrides
+	TrackerSiteOverrides       TrackerSiteOverrides
+	ReleaseNameOverrides       ReleaseNameOverrides
 	// DescriptionOverride is the description selected for Tracker.
 	DescriptionOverride string
 	// DescriptionGroupsFinal distinguishes pending description work from final
@@ -668,6 +681,10 @@ func NewTrackerValidationSubject(subject UploadSubject, tracker string) TrackerV
 	provenanceFacts := deriveValidationProvenanceFacts(subject.Identity, subject.ProviderMetadata)
 	return TrackerValidationSubject{
 		Tracker:                     tracker,
+		EffectiveMetadata:           cloneTrackerValidationValue(subject.EffectiveMetadata),
+		ManualLanguages:             cloneTrackerValidationValue(subject.ManualLanguages),
+		HardcodedSubs:               subject.HardcodedSubs,
+		HardcodedSubtitleLanguages:  slices.Clone(subject.HardcodedSubtitleLanguages),
 		SourcePath:                  subject.SourcePath,
 		VideoPath:                   subject.VideoPath,
 		FileList:                    slices.Clone(subject.FileList),
@@ -1315,47 +1332,51 @@ func NewTrackerValidationSubjectFromRuleSubject(subject RuleSubject, tracker str
 	packageFacts := deriveValidationPackageFacts(subject.SourcePath, subject.FileList)
 	mediaFacts := deriveValidationRuleMediaFileFacts(subject, packageFacts.MediaFileCount)
 	return TrackerValidationSubject{
-		Tracker:              strings.ToUpper(strings.TrimSpace(tracker)),
-		SourcePath:           subject.SourcePath,
-		VideoPath:            subject.VideoPath,
-		FileList:             slices.Clone(subject.FileList),
-		DiscType:             subject.DiscType,
-		Scene:                subject.Scene,
-		SceneNFOReady:        strings.TrimSpace(subject.SceneNFOPath) != "",
-		SceneRenamed:         subject.SceneRenamed,
-		SceneRenamedReason:   subject.SceneRenamedReason,
-		PersonalRelease:      subject.PersonalRelease,
-		Release:              cloneTrackerValidationValue(subject.Release),
-		ReleaseName:          subject.ReleaseName,
-		ReleaseNameNoTag:     subject.ReleaseNameNoTag,
-		Tag:                  subject.Tag,
-		Identity:             cloneTrackerValidationValue(subject.Identity),
-		ProviderMetadata:     cloneTrackerValidationValue(subject.ProviderMetadata),
-		AudioLanguages:       slices.Clone(subject.AudioLanguages),
-		SubtitleLanguages:    slices.Clone(subject.SubtitleLanguages),
-		TVPack:               subject.TVPack,
-		Type:                 subject.Type,
-		Source:               subject.Source,
-		Container:            subject.Container,
-		BitDepth:             subject.BitDepth,
-		VideoCodec:           subject.VideoCodec,
-		VideoEncode:          subject.VideoEncode,
-		HDR:                  subject.HDR,
-		Region:               subject.Region,
-		WebDV:                subject.WebDV,
-		Anime:                subject.Anime,
-		Assessments:          cloneTrackerValidationValue(subject.Assessments),
-		DescriptionOverride:  subject.DescriptionOverride,
-		Disc:                 cloneTrackerValidationValue(subject.Disc),
-		MediaInfoJSONReady:   subject.MediaInfoJSONReady,
-		MediaInfoTextReady:   subject.MediaInfoTextReady,
-		DVDVOBMediaInfoReady: subject.DVDVOBMediaInfoReady,
-		BDInfoReady:          discBDInfoAssetEvidence(subject.Disc, subject.DiscType).Ready,
-		PackageFacts:         packageFacts,
-		MediaFileFacts:       mediaFacts,
-		AssetFacts:           deriveValidationRuleAssetFacts(subject),
-		AvailabilityFacts:    deriveValidationAvailabilityFacts(subject.ProviderMetadata),
-		ProvenanceFacts:      deriveValidationProvenanceFacts(subject.Identity, subject.ProviderMetadata),
+		Tracker:                    strings.ToUpper(strings.TrimSpace(tracker)),
+		EffectiveMetadata:          cloneTrackerValidationValue(subject.EffectiveMetadata),
+		ManualLanguages:            cloneTrackerValidationValue(subject.ManualLanguages),
+		HardcodedSubs:              subject.HardcodedSubs,
+		HardcodedSubtitleLanguages: slices.Clone(subject.HardcodedSubtitleLanguages),
+		SourcePath:                 subject.SourcePath,
+		VideoPath:                  subject.VideoPath,
+		FileList:                   slices.Clone(subject.FileList),
+		DiscType:                   subject.DiscType,
+		Scene:                      subject.Scene,
+		SceneNFOReady:              strings.TrimSpace(subject.SceneNFOPath) != "",
+		SceneRenamed:               subject.SceneRenamed,
+		SceneRenamedReason:         subject.SceneRenamedReason,
+		PersonalRelease:            subject.PersonalRelease,
+		Release:                    cloneTrackerValidationValue(subject.Release),
+		ReleaseName:                subject.ReleaseName,
+		ReleaseNameNoTag:           subject.ReleaseNameNoTag,
+		Tag:                        subject.Tag,
+		Identity:                   cloneTrackerValidationValue(subject.Identity),
+		ProviderMetadata:           cloneTrackerValidationValue(subject.ProviderMetadata),
+		AudioLanguages:             slices.Clone(subject.AudioLanguages),
+		SubtitleLanguages:          slices.Clone(subject.SubtitleLanguages),
+		TVPack:                     subject.TVPack,
+		Type:                       subject.Type,
+		Source:                     subject.Source,
+		Container:                  subject.Container,
+		BitDepth:                   subject.BitDepth,
+		VideoCodec:                 subject.VideoCodec,
+		VideoEncode:                subject.VideoEncode,
+		HDR:                        subject.HDR,
+		Region:                     subject.Region,
+		WebDV:                      subject.WebDV,
+		Anime:                      subject.Anime,
+		Assessments:                cloneTrackerValidationValue(subject.Assessments),
+		DescriptionOverride:        subject.DescriptionOverride,
+		Disc:                       cloneTrackerValidationValue(subject.Disc),
+		MediaInfoJSONReady:         subject.MediaInfoJSONReady,
+		MediaInfoTextReady:         subject.MediaInfoTextReady,
+		DVDVOBMediaInfoReady:       subject.DVDVOBMediaInfoReady,
+		BDInfoReady:                discBDInfoAssetEvidence(subject.Disc, subject.DiscType).Ready,
+		PackageFacts:               packageFacts,
+		MediaFileFacts:             mediaFacts,
+		AssetFacts:                 deriveValidationRuleAssetFacts(subject),
+		AvailabilityFacts:          deriveValidationAvailabilityFacts(subject.ProviderMetadata),
+		ProvenanceFacts:            deriveValidationProvenanceFacts(subject.Identity, subject.ProviderMetadata),
 	}
 }
 
@@ -1363,114 +1384,126 @@ func NewTrackerValidationSubjectFromRuleSubject(subject RuleSubject, tracker str
 func NewRuleSubject(subject UploadSubject) RuleSubject {
 	dvdVOBMediaInfoReady := preparedDVDVOBMediaInfoAssetEvidence(subject).Ready
 	return RuleSubject{
-		SourcePath:           subject.SourcePath,
-		VideoPath:            subject.VideoPath,
-		FileList:             append([]string(nil), subject.FileList...),
-		DiscType:             subject.DiscType,
-		Scene:                subject.Scene,
-		SceneNFOPath:         subject.SceneNFOPath,
-		SceneRenamed:         subject.SceneRenamed,
-		SceneRenamedReason:   subject.SceneRenamedReason,
-		PersonalRelease:      subject.PersonalRelease,
-		Release:              subject.Release,
-		ReleaseName:          subject.ReleaseName,
-		ReleaseNameNoTag:     subject.ReleaseNameNoTag,
-		Tag:                  subject.Tag,
-		Identity:             subject.Identity,
-		ProviderMetadata:     subject.ProviderMetadata,
-		AudioLanguages:       append([]string(nil), subject.AudioLanguages...),
-		SubtitleLanguages:    append([]string(nil), subject.SubtitleLanguages...),
-		TVPack:               subject.TVPack,
-		Type:                 subject.Type,
-		Source:               subject.Source,
-		Container:            subject.Container,
-		BitDepth:             subject.BitDepth,
-		VideoCodec:           subject.VideoCodec,
-		VideoEncode:          subject.VideoEncode,
-		HDR:                  subject.HDR,
-		Region:               subject.Region,
-		WebDV:                subject.WebDV,
-		Anime:                subject.Anime,
-		Assessments:          subject.Assessments,
-		DescriptionOverride:  subject.DescriptionOverride,
-		Disc:                 subject.Disc,
-		MediaInfoJSONReady:   strings.TrimSpace(subject.MediaInfoJSONPath) != "",
-		MediaInfoTextReady:   strings.TrimSpace(subject.MediaInfoTextPath) != "",
-		DVDVOBMediaInfoReady: dvdVOBMediaInfoReady,
+		EffectiveMetadata:          cloneTrackerValidationValue(subject.EffectiveMetadata),
+		ManualLanguages:            cloneTrackerValidationValue(subject.ManualLanguages),
+		HardcodedSubs:              subject.HardcodedSubs,
+		HardcodedSubtitleLanguages: slices.Clone(subject.HardcodedSubtitleLanguages),
+		SourcePath:                 subject.SourcePath,
+		VideoPath:                  subject.VideoPath,
+		FileList:                   append([]string(nil), subject.FileList...),
+		DiscType:                   subject.DiscType,
+		Scene:                      subject.Scene,
+		SceneNFOPath:               subject.SceneNFOPath,
+		SceneRenamed:               subject.SceneRenamed,
+		SceneRenamedReason:         subject.SceneRenamedReason,
+		PersonalRelease:            subject.PersonalRelease,
+		Release:                    subject.Release,
+		ReleaseName:                subject.ReleaseName,
+		ReleaseNameNoTag:           subject.ReleaseNameNoTag,
+		Tag:                        subject.Tag,
+		Identity:                   subject.Identity,
+		ProviderMetadata:           subject.ProviderMetadata,
+		AudioLanguages:             append([]string(nil), subject.AudioLanguages...),
+		SubtitleLanguages:          append([]string(nil), subject.SubtitleLanguages...),
+		TVPack:                     subject.TVPack,
+		Type:                       subject.Type,
+		Source:                     subject.Source,
+		Container:                  subject.Container,
+		BitDepth:                   subject.BitDepth,
+		VideoCodec:                 subject.VideoCodec,
+		VideoEncode:                subject.VideoEncode,
+		HDR:                        subject.HDR,
+		Region:                     subject.Region,
+		WebDV:                      subject.WebDV,
+		Anime:                      subject.Anime,
+		Assessments:                subject.Assessments,
+		DescriptionOverride:        subject.DescriptionOverride,
+		Disc:                       subject.Disc,
+		MediaInfoJSONReady:         strings.TrimSpace(subject.MediaInfoJSONPath) != "",
+		MediaInfoTextReady:         strings.TrimSpace(subject.MediaInfoTextPath) != "",
+		DVDVOBMediaInfoReady:       dvdVOBMediaInfoReady,
 	}
 }
 
 // DescriptionSubject contains only facts, local resources, and rendering
 // instructions consumed by tracker description builders.
 type DescriptionSubject struct {
-	MediaBinding          PreparedMediaBinding
-	SourcePath            string
-	DiscType              string
-	MediaInfoTextPath     string
-	DVDVOBMediaInfoText   string
-	DescriptionTemplate   string
-	DescriptionGroups     []DescriptionBuilderGroup
-	EpisodeOverview       string
-	Options               UploadOptions
-	Release               ReleaseInfo
-	SelectedBDMVPlaylists []PlaylistInfo
-	Disc                  DiscFacts
-	Discs                 []DiscEvidenceResource
-	Tag                   string
-	Identity              ExternalIdentity
-	ProviderMetadata      SourceScopedMetadata
-	SeasonInt             int
-	EpisodeInt            int
-	Filename              string
-	ReleaseName           string
-	ReleaseNameNoTag      string
-	ServiceLongName       string
-	Type                  string
-	HDR                   string
-	ArrReleaseGroup       string
-	Trackers              []string
-	TrackerConfig         TrackerConfigOverrides
-	TrackerSite           TrackerSiteOverrides
-	ImageHost             ImageHostOverrides
-	TrackerData           []TrackerMetadata
-	ExactMedia            *ExactMediaAssets
+	EffectiveMetadata          EffectiveMetadata
+	ManualLanguages            ManualLanguageFacts
+	HardcodedSubs              bool
+	HardcodedSubtitleLanguages []string
+	MediaBinding               PreparedMediaBinding
+	SourcePath                 string
+	DiscType                   string
+	MediaInfoTextPath          string
+	DVDVOBMediaInfoText        string
+	DescriptionTemplate        string
+	DescriptionGroups          []DescriptionBuilderGroup
+	EpisodeOverview            string
+	Options                    UploadOptions
+	Release                    ReleaseInfo
+	SelectedBDMVPlaylists      []PlaylistInfo
+	Disc                       DiscFacts
+	Discs                      []DiscEvidenceResource
+	Tag                        string
+	Identity                   ExternalIdentity
+	ProviderMetadata           SourceScopedMetadata
+	SeasonInt                  int
+	EpisodeInt                 int
+	Filename                   string
+	ReleaseName                string
+	ReleaseNameNoTag           string
+	ServiceLongName            string
+	Type                       string
+	HDR                        string
+	ArrReleaseGroup            string
+	Trackers                   []string
+	TrackerConfig              TrackerConfigOverrides
+	TrackerSite                TrackerSiteOverrides
+	ImageHost                  ImageHostOverrides
+	TrackerData                []TrackerMetadata
+	ExactMedia                 *ExactMediaAssets
 }
 
 // NewDescriptionSubject projects upload state into the description builder's
 // read model and detaches mutable collections.
 func NewDescriptionSubject(subject UploadSubject) DescriptionSubject {
 	projected := DescriptionSubject{
-		MediaBinding:          subject.MediaBinding,
-		SourcePath:            subject.SourcePath,
-		DiscType:              subject.DiscType,
-		MediaInfoTextPath:     subject.MediaInfoTextPath,
-		DVDVOBMediaInfoText:   subject.DVDVOBMediaInfoText,
-		DescriptionTemplate:   subject.DescriptionTemplate,
-		DescriptionGroups:     CloneDescriptionBuilderGroups(subject.DescriptionGroups),
-		EpisodeOverview:       subject.EpisodeOverview,
-		Options:               subject.Options,
-		Release:               subject.Release,
-		SelectedBDMVPlaylists: append([]PlaylistInfo(nil), subject.SelectedBDMVPlaylists...),
-		Disc:                  subject.Disc,
-		Discs:                 append([]DiscEvidenceResource(nil), subject.Discs...),
-		Tag:                   subject.Tag,
-		Identity:              subject.Identity,
-		ProviderMetadata:      subject.ProviderMetadata,
-		SeasonInt:             subject.SeasonInt,
-		EpisodeInt:            subject.EpisodeInt,
-		Filename:              subject.Filename,
-		ReleaseName:           subject.ReleaseName,
-		ReleaseNameNoTag:      subject.ReleaseNameNoTag,
-		ServiceLongName:       subject.ServiceLongName,
-		Type:                  subject.Type,
-		HDR:                   subject.HDR,
-		ArrReleaseGroup:       subject.ArrReleaseGroup,
-		Trackers:              append([]string(nil), subject.Trackers...),
-		TrackerConfig:         subject.TrackerConfigOverrides,
-		TrackerSite:           subject.TrackerSiteOverrides,
-		ImageHost:             subject.ImageHostOverrides,
-		TrackerData:           append([]TrackerMetadata(nil), subject.TrackerData...),
-		ExactMedia:            subject.ExactMedia.Clone(),
+		EffectiveMetadata:          cloneTrackerValidationValue(subject.EffectiveMetadata),
+		ManualLanguages:            cloneTrackerValidationValue(subject.ManualLanguages),
+		HardcodedSubs:              subject.HardcodedSubs,
+		HardcodedSubtitleLanguages: slices.Clone(subject.HardcodedSubtitleLanguages),
+		MediaBinding:               subject.MediaBinding,
+		SourcePath:                 subject.SourcePath,
+		DiscType:                   subject.DiscType,
+		MediaInfoTextPath:          subject.MediaInfoTextPath,
+		DVDVOBMediaInfoText:        subject.DVDVOBMediaInfoText,
+		DescriptionTemplate:        subject.DescriptionTemplate,
+		DescriptionGroups:          CloneDescriptionBuilderGroups(subject.DescriptionGroups),
+		EpisodeOverview:            subject.EpisodeOverview,
+		Options:                    subject.Options,
+		Release:                    subject.Release,
+		SelectedBDMVPlaylists:      append([]PlaylistInfo(nil), subject.SelectedBDMVPlaylists...),
+		Disc:                       subject.Disc,
+		Discs:                      append([]DiscEvidenceResource(nil), subject.Discs...),
+		Tag:                        subject.Tag,
+		Identity:                   subject.Identity,
+		ProviderMetadata:           subject.ProviderMetadata,
+		SeasonInt:                  subject.SeasonInt,
+		EpisodeInt:                 subject.EpisodeInt,
+		Filename:                   subject.Filename,
+		ReleaseName:                subject.ReleaseName,
+		ReleaseNameNoTag:           subject.ReleaseNameNoTag,
+		ServiceLongName:            subject.ServiceLongName,
+		Type:                       subject.Type,
+		HDR:                        subject.HDR,
+		ArrReleaseGroup:            subject.ArrReleaseGroup,
+		Trackers:                   append([]string(nil), subject.Trackers...),
+		TrackerConfig:              subject.TrackerConfigOverrides,
+		TrackerSite:                subject.TrackerSiteOverrides,
+		ImageHost:                  subject.ImageHostOverrides,
+		TrackerData:                append([]TrackerMetadata(nil), subject.TrackerData...),
+		ExactMedia:                 subject.ExactMedia.Clone(),
 	}
 	cloned, err := clonePreparedValue(projected)
 	if err != nil {
@@ -1495,13 +1528,31 @@ func (s UploadSubject) CanonicalSeasonEpisode() (int, int) {
 }
 
 type MetadataOverrides struct {
-	Distributor      *string
-	OriginalLanguage *string
-	PersonalRelease  *bool
-	Commentary       *bool
-	WebDV            *bool
-	StreamOptimized  *bool
-	Anime            *bool
+	Distributor                *string
+	OriginalLanguage           *string
+	PersonalRelease            *bool
+	Commentary                 *bool
+	WebDV                      *bool
+	StreamOptimized            *bool
+	Anime                      *bool
+	Title                      *string
+	AlternateTitle             *string
+	OriginalTitle              *string
+	Genres                     *[]string
+	AudioLanguages             *[]string
+	SubtitleLanguages          *[]string
+	HardcodedSubs              *bool
+	HardcodedSubtitleLanguages *[]string
+	TrackLanguages             []TrackLanguageCorrection `json:"TrackLanguages,omitempty"`
+}
+
+// TrackLanguageCorrection replaces the languages for one inspected track.
+// ManifestFingerprint binds the correction to the exact scan that supplied
+// TrackID; callers must not reuse a correction after that scan changes.
+type TrackLanguageCorrection struct {
+	TrackID             string   `json:"trackId"`
+	Languages           []string `json:"languages"`
+	ManifestFingerprint string   `json:"manifestFingerprint"`
 }
 
 type ClientOverrides struct {

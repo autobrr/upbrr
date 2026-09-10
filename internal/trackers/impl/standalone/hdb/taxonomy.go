@@ -17,38 +17,52 @@ func isHDBTVCategory(meta api.UploadSubject) bool {
 }
 
 func hdbCategoryID(meta api.UploadSubject) int {
-	return resolveHDBCategoryID(meta.SourcePath, meta.Identity, meta.ProviderMetadata)
+	return resolveHDBCategoryID(meta.SourcePath, meta.Identity, meta.ProviderMetadata, meta.EffectiveMetadata)
 }
 
-// resolveHDBCategoryID uses matching, current IMDb genres for documentaries in
-// either canonical category and TVDB genres as additional TV evidence. IMDb
-// metadata also identifies movie concert subtypes before the canonical fallback.
-func resolveHDBCategoryID(sourcePath string, identity api.ExternalIdentity, metadata api.SourceScopedMetadata) int {
+// resolveHDBCategoryID uses manual genres before matching, current provider
+// genres. IMDb type evidence independently identifies movie concert subtypes.
+func resolveHDBCategoryID(
+	sourcePath string,
+	identity api.ExternalIdentity,
+	metadata api.SourceScopedMetadata,
+	effective api.EffectiveMetadata,
+) int {
 	category, err := identity.RequireCategory()
 	if err != nil {
 		return 0
 	}
+	manualGenres := effective.GenresProvenance.IsManual()
+	if manualGenres && hdbHasGenre(strings.Join(effective.Genres, ","), "documentary") {
+		return 3
+	}
 
 	if metadata.IsCurrentFor(sourcePath, identity) {
+		genres := func(providerGenres string) string {
+			if manualGenres {
+				return strings.Join(effective.Genres, ",")
+			}
+			return providerGenres
+		}
 		imdb := metadata.IMDB
 		imdbMatches := imdb != nil && identity.IMDBID > 0 && imdb.IMDBID == identity.IMDBID
 		switch category {
 		case api.CanonicalCategoryMovie:
 			if imdbMatches {
-				if hdbHasGenre(imdb.Genres, "documentary") {
+				if hdbHasGenre(genres(imdb.Genres), "documentary") {
 					return 3
 				}
 				imdbType := strings.ToLower(strings.TrimSpace(imdb.Type))
-				if strings.Contains(imdbType, "concert") || (strings.Contains(imdbType, "video") && hdbHasGenre(imdb.Genres, "music")) {
+				if strings.Contains(imdbType, "concert") || (strings.Contains(imdbType, "video") && hdbHasGenre(genres(imdb.Genres), "music")) {
 					return 4
 				}
 			}
 		case api.CanonicalCategoryTV:
-			if imdbMatches && hdbHasGenre(imdb.Genres, "documentary") {
+			if imdbMatches && hdbHasGenre(genres(imdb.Genres), "documentary") {
 				return 3
 			}
 			tvdb := metadata.TVDB
-			if tvdb != nil && identity.TVDBID > 0 && tvdb.TVDBID == identity.TVDBID && hdbHasGenre(tvdb.Genres, "documentary") {
+			if tvdb != nil && identity.TVDBID > 0 && tvdb.TVDBID == identity.TVDBID && hdbHasGenre(genres(tvdb.Genres), "documentary") {
 				return 3
 			}
 		case api.CanonicalCategoryUnknown:

@@ -199,94 +199,29 @@ func TestCollectSourceEvidenceRejectsMalformedSeasonEpisodeInstructionsBeforeSou
 	}
 }
 
-func TestCollectSourceEvidenceMergesStoredReleaseNameOverrides(t *testing.T) {
+func TestCollectSourceEvidenceUsesResolvedInstructionsWithoutHistoryLookup(t *testing.T) {
 	t.Parallel()
-
-	base := t.TempDir()
-	sourcePath := filepath.Join(base, "Example.Release.2026.1080p-GRP.mkv")
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv")
 	if err := os.WriteFile(sourcePath, []byte("video"), 0o600); err != nil {
-		t.Fatalf("write video failed: %v", err)
+		t.Fatal(err)
 	}
-	lookupErr := errors.New("override lookup failed")
-	tests := []struct {
-		name      string
-		stored    api.ReleaseNameOverrides
-		lookupErr error
-		incoming  api.ReleaseNameOverrides
-		want      api.ReleaseNameOverrides
-		wantErr   error
-	}{
-		{
-			name:   "stored only",
-			stored: api.ReleaseNameOverrides{Type: new("ENCODE"), Season: new("S02")},
-			want:   api.ReleaseNameOverrides{Type: new("ENCODE"), Season: new("S02")},
-		},
-		{
-			name: "incoming overrides stored conflicts",
-			stored: api.ReleaseNameOverrides{
-				Type:    new("ENCODE"),
-				Season:  new("S02"),
-				Episode: new("E04"),
-			},
-			incoming: api.ReleaseNameOverrides{Type: new("REMUX"), Season: new("S03")},
-			want: api.ReleaseNameOverrides{
-				Type:    new("REMUX"),
-				Season:  new("S03"),
-				Episode: new("E04"),
-			},
-		},
-		{
-			name:    "invalid stored season",
-			stored:  api.ReleaseNameOverrides{Season: new("S01E05")},
-			wantErr: internalerrors.ErrInvalidInput,
-		},
-		{
-			name:     "invalid incoming episode",
-			stored:   api.ReleaseNameOverrides{Episode: new("E04")},
-			incoming: api.ReleaseNameOverrides{Episode: new("E01-E03")},
-			wantErr:  internalerrors.ErrInvalidInput,
-		},
-		{
-			name:    "invalid stored date",
-			stored:  api.ReleaseNameOverrides{ManualDate: new("not-a-date")},
-			wantErr: internalerrors.ErrInvalidInput,
-		},
-		{
-			name:      "not found uses incoming",
-			lookupErr: internalerrors.ErrNotFound,
-			incoming:  api.ReleaseNameOverrides{Type: new("REMUX")},
-			want:      api.ReleaseNameOverrides{Type: new("REMUX")},
-		},
-		{
-			name:      "lookup error propagates",
-			lookupErr: lookupErr,
-			wantErr:   lookupErr,
-		},
+	incoming := api.ReleaseNameOverrides{Type: new("REMUX"), Season: new("S03")}
+	repo := &stubRepo{
+		releaseNameOverrides:    api.ReleaseNameOverrides{Episode: new("E04")},
+		releaseNameOverridesErr: errors.New("collector must not read correction history"),
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			repo := &stubRepo{releaseNameOverrides: tc.stored, releaseNameOverridesErr: tc.lookupErr}
-			service := NewService(repo)
-			meta, err := service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{
-				SourcePath:           sourcePath,
-				ReleaseNameOverrides: tc.incoming,
-			}))
-			if tc.wantErr != nil {
-				if !errors.Is(err, tc.wantErr) {
-					t.Fatalf("expected %v, got %v", tc.wantErr, err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("collect source evidence: %v", err)
-			}
-			if !reflect.DeepEqual(meta.ReleaseNameOverrides, tc.want) {
-				t.Fatalf("release-name overrides = %#v, want %#v", meta.ReleaseNameOverrides, tc.want)
-			}
-		})
+	service := NewService(repo)
+	meta, err := service.collectSourceEvidence(t.Context(), testCollectionRequest(t, api.Request{
+		SourcePath:           sourcePath,
+		ReleaseNameOverrides: incoming,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(meta.ReleaseNameOverrides, incoming) {
+		t.Fatalf("resolved instructions changed: got %#v, want %#v", meta.ReleaseNameOverrides, incoming)
 	}
 }
-
 func TestApplySceneDetectionCopiesResultAfterRecoverableNFOFailure(t *testing.T) {
 	t.Parallel()
 

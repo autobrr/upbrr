@@ -216,6 +216,63 @@ func TestBuildFieldsWithNilMetadata(t *testing.T) {
 	}
 }
 
+func TestBuildFieldsYearLabelPreservesManualAuthorityAndTVRange(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		meta api.UploadSubject
+		want string
+	}{
+		{
+			name: "manual empty suppresses provider movie year",
+			meta: api.UploadSubject{
+				Identity:          api.ExternalIdentity{Category: "MOVIE"},
+				EffectiveMetadata: api.EffectiveMetadata{YearProvenance: api.FactProvenanceManualEmpty},
+				ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Year: 2026}},
+			},
+			want: "",
+		},
+		{
+			name: "manual empty suppresses provider year",
+			meta: api.UploadSubject{
+				Identity:          api.ExternalIdentity{Category: "TV"},
+				EffectiveMetadata: api.EffectiveMetadata{YearProvenance: api.FactProvenanceManualEmpty},
+				ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Year: 2026}, IMDB: &api.IMDBMetadata{EndYear: 2027}},
+			},
+			want: "",
+		},
+		{
+			name: "manual year preserves completed TV range",
+			meta: api.UploadSubject{
+				Identity:          api.ExternalIdentity{Category: "TV"},
+				EffectiveMetadata: api.EffectiveMetadata{Year: 2024, YearProvenance: api.FactProvenanceManual},
+				ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Year: 2026}, IMDB: &api.IMDBMetadata{EndYear: 2025}},
+			},
+			want: "2024-2025",
+		},
+		{
+			name: "provider year preserves open TV range",
+			meta: api.UploadSubject{
+				Identity:         api.ExternalIdentity{Category: "TV"},
+				ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Year: 2026}},
+			},
+			want: "2026-",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			fields := buildFields(tc.meta, "description", "auth", nil)
+			if got := fields["year"]; got != tc.want {
+				t.Fatalf("year = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestBuildFieldsWithTMDBNilAndIMDBPresent(t *testing.T) {
 	t.Parallel()
 

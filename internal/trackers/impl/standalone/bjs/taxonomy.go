@@ -7,7 +7,9 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 
 	"golang.org/x/text/runes"
@@ -36,19 +38,27 @@ func resolveContainer(meta api.UploadSubject) string {
 }
 
 func resolveLanguage(meta api.UploadSubject) string {
-	if meta.ProviderMetadata.TMDB == nil {
-		return "Outro"
+	provider := ""
+	if meta.ProviderMetadata.TMDB != nil {
+		provider = meta.ProviderMetadata.TMDB.OriginalLanguage
 	}
-
-	langCode := strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalLanguage))
+	if meta.EffectiveMetadata.OriginalLanguageProvenance.IsManual() {
+		provider = trackers.PreferredOriginalLanguage(meta, provider)
+		if normalized := languageutil.NormalizeLanguageCode(provider); normalized != "" {
+			provider = normalized
+		}
+	}
+	langCode := strings.ToLower(strings.TrimSpace(provider))
 	if langCode == "" {
 		return "Outro"
 	}
 
 	if langCode == "pt" {
-		for _, country := range meta.ProviderMetadata.TMDB.OriginCountry {
-			if strings.ToUpper(strings.TrimSpace(country)) == "PT" {
-				return "Português (pt)"
+		if meta.ProviderMetadata.TMDB != nil {
+			for _, country := range meta.ProviderMetadata.TMDB.OriginCountry {
+				if strings.ToUpper(strings.TrimSpace(country)) == "PT" {
+					return "Português (pt)"
+				}
 			}
 		}
 		return "Português"
@@ -160,7 +170,7 @@ func resolveQuality(meta api.UploadSubject) string {
 // genres, preserving unknown fallback genre names after tag normalization.
 func resolveTags(meta api.UploadSubject, ptBR api.TMDBLocalizedData) string {
 	// 1. Use localized if available
-	if ptBR.Genres != "" {
+	if !meta.EffectiveMetadata.GenresProvenance.IsManual() && ptBR.Genres != "" {
 		genres := strings.Split(strings.TrimSpace(ptBR.Genres), ",")
 		out := make([]string, 0, len(genres))
 		for _, g := range genres {
@@ -177,15 +187,14 @@ func resolveTags(meta api.UploadSubject, ptBR api.TMDBLocalizedData) string {
 	}
 
 	// 2. Use metautil.TranslateGenreToPortugueseStrict to translate
-	var genreText string
+	provider := ""
 	switch {
 	case meta.ProviderMetadata.TMDB != nil && strings.TrimSpace(meta.ProviderMetadata.TMDB.Genres) != "":
-		genreText = strings.TrimSpace(meta.ProviderMetadata.TMDB.Genres)
+		provider = meta.ProviderMetadata.TMDB.Genres
 	case meta.ProviderMetadata.IMDB != nil && strings.TrimSpace(meta.ProviderMetadata.IMDB.Genres) != "":
-		genreText = strings.TrimSpace(meta.ProviderMetadata.IMDB.Genres)
-	default:
-		genreText = strings.TrimSpace(meta.Release.Genre)
+		provider = meta.ProviderMetadata.IMDB.Genres
 	}
+	genreText := trackers.PreferredGenreText(meta, provider)
 
 	if genreText == "" {
 		return ""
@@ -216,14 +225,22 @@ func resolveTags(meta api.UploadSubject, ptBR api.TMDBLocalizedData) string {
 // release genre text after accent-insensitive keyword matching.
 func resolveAdult(meta api.UploadSubject) string {
 	ptBR := api.ExtractTrackerLocalizedPTBR(meta)
-	parts := []string{resolveTags(meta, ptBR), ptBR.Genres}
-	if meta.ProviderMetadata.TMDB != nil {
-		parts = append(parts, meta.ProviderMetadata.TMDB.Keywords, meta.ProviderMetadata.TMDB.Genres)
+	parts := []string{resolveTags(meta, ptBR)}
+	if !meta.EffectiveMetadata.GenresProvenance.IsManual() {
+		parts = append(parts, ptBR.Genres)
 	}
-	if meta.ProviderMetadata.IMDB != nil {
+	if meta.ProviderMetadata.TMDB != nil {
+		parts = append(parts, meta.ProviderMetadata.TMDB.Keywords)
+		if !meta.EffectiveMetadata.GenresProvenance.IsManual() {
+			parts = append(parts, meta.ProviderMetadata.TMDB.Genres)
+		}
+	}
+	if !meta.EffectiveMetadata.GenresProvenance.IsManual() && meta.ProviderMetadata.IMDB != nil {
 		parts = append(parts, meta.ProviderMetadata.IMDB.Genres)
 	}
-	parts = append(parts, meta.Release.Genre)
+	if !meta.EffectiveMetadata.GenresProvenance.IsManual() {
+		parts = append(parts, meta.Release.Genre)
+	}
 	genres := normalizeAdultText(strings.Join(parts, " "))
 	if meta.Anime && strings.Contains(genres, "hentai") {
 		return "1"

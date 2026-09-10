@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/logging"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -41,6 +43,7 @@ type cliReleaseWorkflowCore interface {
 		api.ReleaseWorkflowUploadFeedback,
 	) (releaseworkflow.CommandResult, error)
 	CurrentReleaseWorkflow(context.Context, string, api.WorkflowID) (releaseworkflow.CommandResult, error)
+	GetInputHistory(context.Context, string) (api.InputHistory, error)
 	ReleaseWorkflowOperation(
 		context.Context,
 		string,
@@ -297,6 +300,7 @@ func newCLIWorkflowSession(
 		Intent: api.WorkflowIntent{
 			FactInstructions: &input.Instructions,
 			Preparation:      &input,
+			TrackerIDs:       normalizeCLIWorkflowTrackerIDs(request.Trackers),
 		},
 	}); err != nil {
 		return nil, err
@@ -305,6 +309,9 @@ func newCLIWorkflowSession(
 		return nil, err
 	}
 	if session.current.Release == nil {
+		if pendingCLIWorkflowAction(session.current.Workflow.RequiredActions, api.RequiredActionConfirmCorrections) != nil {
+			return session, nil
+		}
 		return nil, errors.New("upbrr: release workflow produced no canonical release")
 	}
 	session.intent.sourcePath = session.current.Release.Release.Source.SourcePath
@@ -443,11 +450,22 @@ func runCLIWorkflowInteractive(
 	currentOpts := opts
 	currentVisited := copyVisited(visited)
 	var (
-		request api.Request
-		session *cliWorkflowSession
-		err     error
+		request     api.Request
+		session     *cliWorkflowSession
+		inputTracks []api.MediaTrackFacts
+		err         error
 	)
 	for {
+		if len(currentOpts.TrackLanguages) > 0 && inputTracks == nil {
+			history, historyErr := coreSvc.GetInputHistory(ctx, sourcePath)
+			if historyErr != nil || len(history.Tracks) == 0 {
+				if historyErr != nil {
+					return fmt.Errorf("upbrr: track-languages requires retained input history; run --input-only first: %w", historyErr)
+				}
+				return errors.New("upbrr: track-languages requires retained input history; run --input-only first")
+			}
+			inputTracks = history.Tracks
+		}
 		request, err = buildCLIRequest(currentOpts, currentVisited, []string{sourcePath}, screens)
 		if err != nil {
 			return err
@@ -457,9 +475,34 @@ func runCLIWorkflowInteractive(
 		if err != nil {
 			return err
 		}
+		if err := applyCLIInputCorrections(ctx, session, currentOpts, currentVisited, inputTracks); err != nil {
+			return err
+		}
+		if session.current.Release != nil {
+			session.intent.sourcePath = session.current.Release.Release.Source.SourcePath
+		}
+		if err := applyCLITrackerInput(ctx, session, currentOpts.TrackerInput); err != nil {
+			return err
+		}
+		if action := pendingCLIWorkflowAction(session.current.Workflow.RequiredActions, api.RequiredActionConfirmCorrections); action != nil {
+			fmt.Fprintln(streams.out, action.Prompt)
+			if details := action.CorrectionConfirmation; details != nil {
+				fmt.Fprintf(
+					streams.out,
+					"Current identity: category=%s tmdb=%d imdb=%s\n",
+					details.CurrentBinding.Category,
+					details.CurrentBinding.ProviderIDs.TMDBID,
+					providerid.IMDb(details.CurrentBinding.ProviderIDs.IMDBID).Prefixed(),
+				)
+				for _, field := range details.Fields {
+					fmt.Fprintf(streams.out, "Confirm with --confirm-input %s or reset with --reset-input %s\n", field, field)
+				}
+			}
+			return exitError(2, errors.New("saved input corrections require confirmation"))
+		}
 		preview := cliWorkflowMetadataPreview(session.current)
 		printMetadataPreview(streams.out, preview, currentOpts.Debug)
-		if currentOpts.interactionMode() == api.InteractionModeUnattended {
+		if currentOpts.InputOnly || currentOpts.interactionMode() == api.InteractionModeUnattended {
 			break
 		}
 		confirmed, promptErr := promptYesNo(reader, streams.out, "Metadata correct? [Y/n]: ", true)
@@ -481,7 +524,11 @@ func runCLIWorkflowInteractive(
 			fmt.Fprintf(streams.out, "Invalid override args: %v\n", splitErr)
 			continue
 		}
-		nextArgs := append(append([]string(nil), currentArgs...), editTokens...)
+		nextArgs, mergeErr := mergeCLIInputEditArgs(currentArgs, editTokens)
+		if mergeErr != nil {
+			fmt.Fprintf(streams.out, "Invalid override args: %v\n", mergeErr)
+			continue
+		}
 		nextOpts, nextVisited, _, parseErr := parseCLIOptions(nextArgs)
 		if parseErr != nil {
 			fmt.Fprintf(streams.out, "Invalid override args: %v\n", parseErr)
@@ -489,8 +536,131 @@ func runCLIWorkflowInteractive(
 		}
 		currentArgs, currentOpts, currentVisited = nextArgs, nextOpts, nextVisited
 	}
+	if currentOpts.InputOnly {
+		return completeCLIInputOnly(ctx, session, streams.out)
+	}
 	_, err = session.complete(ctx, currentOpts.Debug, reader, cfg, logger)
 	return err
+}
+
+func applyCLIInputCorrections(
+	ctx context.Context,
+	session *cliWorkflowSession,
+	opts cliOptions,
+	visited map[string]bool,
+	tracks []api.MediaTrackFacts,
+) error {
+	patch, err := buildCLIInputCorrectionPatch(opts, visited, tracks)
+	if err != nil || patch == nil {
+		return err
+	}
+	if session.current.Corrections == nil && session.current.FactInstructions == nil {
+		return errors.New("upbrr: release workflow has no correction revision")
+	}
+	var revision uint64
+	if session.current.Corrections != nil {
+		revision = session.current.Corrections.Revision
+	} else {
+		revision = session.current.FactInstructions.CorrectionRevision
+	}
+	if len(patch.ConfirmFields) > 0 {
+		action := pendingCLIWorkflowAction(session.current.Workflow.RequiredActions, api.RequiredActionConfirmCorrections)
+		if action == nil || action.CorrectionConfirmation == nil || action.WorkflowRevision != session.current.Workflow.Revision ||
+			session.current.Corrections == nil || action.CorrectionConfirmation.Revision != revision {
+			return errors.New("upbrr: confirm-input requires the current saved input correction action")
+		}
+		for _, field := range patch.ConfirmFields {
+			if !slices.Contains(action.CorrectionConfirmation.Fields, field.Field) {
+				return fmt.Errorf("upbrr: confirm-input field %s is not pending confirmation", field.Field)
+			}
+		}
+	}
+	patch.ExpectedRevision = &revision
+	return session.continueUntilStable(ctx, api.ContinueReleaseWorkflowRequest{
+		IdempotencyKey: session.nextIdempotencyKey("input-corrections"),
+		Goal:           api.WorkflowGoalPrepared,
+		Intent: api.WorkflowIntent{
+			CorrectionPatch: patch,
+		},
+	})
+}
+
+func applyCLITrackerInput(ctx context.Context, session *cliWorkflowSession, values []string) error {
+	if len(values) == 0 {
+		return nil
+	}
+	answers, err := buildCLITrackerInput(values)
+	if err != nil {
+		return err
+	}
+	patch := make(map[api.TrackerID]map[string]*string, len(answers))
+	for tracker, fields := range answers {
+		patch[api.TrackerID(tracker)] = make(map[string]*string, len(fields))
+		for field, value := range fields {
+			if value == "auto" {
+				patch[api.TrackerID(tracker)][field] = nil
+			} else {
+				patch[api.TrackerID(tracker)][field] = new(value)
+			}
+		}
+	}
+	return session.continueUntilStable(ctx, api.ContinueReleaseWorkflowRequest{
+		IdempotencyKey: session.nextIdempotencyKey("tracker-input"),
+		Goal:           api.WorkflowGoalInputReady,
+		Intent:         api.WorkflowIntent{TrackerIDs: normalizeCLIWorkflowTrackerIDs(session.uploadRequest.Trackers), TrackerInputAnswers: patch},
+	})
+}
+
+func completeCLIInputOnly(ctx context.Context, session *cliWorkflowSession, output io.Writer) error {
+	if err := session.continueUntilStable(ctx, api.ContinueReleaseWorkflowRequest{
+		IdempotencyKey: session.nextIdempotencyKey("input-ready"),
+		Goal:           api.WorkflowGoalInputReady,
+		Intent:         api.WorkflowIntent{TrackerIDs: normalizeCLIWorkflowTrackerIDs(session.uploadRequest.Trackers)},
+	}); err != nil {
+		return err
+	}
+	if session.current.Release != nil {
+		release := session.current.Release.Release
+		facts, err := json.Marshal(struct {
+			Identity api.ExternalIdentity `json:"identity"`
+			Naming   api.NamingFacts      `json:"naming"`
+			Episode  api.EpisodeFacts     `json:"episode"`
+			Media    api.MediaFacts       `json:"media"`
+		}{
+			Identity: release.Identity,
+			Naming:   release.Naming,
+			Episode:  release.Episode,
+			Media:    release.Media,
+		})
+		if err != nil {
+			return fmt.Errorf("upbrr: encode input facts: %w", err)
+		}
+		fmt.Fprintf(output, "Input facts: %s\n", facts)
+		for _, track := range release.Media.Tracks {
+			fmt.Fprintf(
+				output,
+				"Track %s: kind=%s languages=%s manifest=%s\n",
+				track.ID,
+				track.Kind,
+				strings.Join(track.Languages, ","),
+				track.ManifestFingerprint,
+			)
+		}
+	}
+	if session.current.InputReadiness == nil {
+		return errors.New("upbrr: input readiness was not produced")
+	}
+	ready := true
+	for _, field := range session.current.InputReadiness.Fields {
+		fmt.Fprintf(output, "Input %s: %s\n", field.Key, field.Status)
+		if field.Status != api.InputReadinessFieldReady && api.NormalizeRuleDisposition(field.Disposition) != api.RuleDispositionAdvisory {
+			ready = false
+		}
+	}
+	if !ready {
+		return exitError(2, errors.New("required input is missing or invalid"))
+	}
+	return nil
 }
 
 func cliWorkflowMetadataPreview(current releaseworkflow.CommandResult) api.MetadataPreview {
@@ -835,7 +1005,8 @@ func (s *cliWorkflowSession) collectContinuationActionAnswers(
 			// Desired intent or exact upload approval resolves these actions.
 		case api.RequiredActionApproveTrackers:
 			return nil, false, errors.New("upbrr: post-dupe tracker approval requires the composite upload flow")
-		case api.RequiredActionSelectPlaylist, api.RequiredActionSelectMetadata, api.RequiredActionConfirmRescan, api.RequiredActionReprepare:
+		case api.RequiredActionSelectPlaylist, api.RequiredActionSelectMetadata, api.RequiredActionConfirmRescan, api.RequiredActionReprepare,
+			api.RequiredActionConfirmCorrections:
 			return nil, false, fmt.Errorf("upbrr: release workflow requires action %s: %s", action.Kind, action.Prompt)
 		}
 	}

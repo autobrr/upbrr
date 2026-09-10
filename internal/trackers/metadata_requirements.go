@@ -51,6 +51,30 @@ const (
 	MetadataFieldTVDBUnavailable MetadataField = "tvdb_unavailable"
 	// MetadataFieldPoster represents poster artwork from matching provider metadata.
 	MetadataFieldPoster MetadataField = "poster"
+	// MetadataFieldTitle represents the resolved title used by tracker payloads.
+	MetadataFieldTitle MetadataField = "title"
+	// MetadataFieldAlternateTitle represents the resolved alternate title.
+	MetadataFieldAlternateTitle MetadataField = "alternate_title"
+	// MetadataFieldOriginalTitle represents the resolved original title.
+	MetadataFieldOriginalTitle MetadataField = "original_title"
+	// MetadataFieldYear represents the resolved year.
+	MetadataFieldYear MetadataField = "year"
+	// MetadataFieldGenres represents resolved genres.
+	MetadataFieldGenres MetadataField = "genres"
+	// MetadataFieldOriginalLanguage represents the resolved original language.
+	MetadataFieldOriginalLanguage MetadataField = "original_language"
+	// MetadataFieldDistributor represents the resolved distributor.
+	MetadataFieldDistributor MetadataField = "distributor"
+	// MetadataFieldAudioLanguages represents resolved audio language evidence.
+	MetadataFieldAudioLanguages MetadataField = "audio_languages"
+	// MetadataFieldSubtitleLanguages represents resolved subtitle language evidence.
+	MetadataFieldSubtitleLanguages MetadataField = "subtitle_languages"
+	// MetadataFieldHardcodedSubs represents finalized hardcoded-subtitle presence.
+	MetadataFieldHardcodedSubs MetadataField = "hardcoded_subs"
+	// MetadataFieldHardcodedSubtitleLanguages represents finalized hardcoded languages.
+	MetadataFieldHardcodedSubtitleLanguages MetadataField = "hardcoded_subtitle_languages"
+	// MetadataFieldTMDBLocalizedPTBR represents the selected Portuguese TMDB localization.
+	MetadataFieldTMDBLocalizedPTBR MetadataField = "tmdb_localized_pt_br"
 )
 
 // MetadataScope limits a metadata requirement to a content category.
@@ -226,6 +250,34 @@ func metadataFieldPresent(field MetadataField, meta api.RuleSubject) bool {
 		return matchingProviderUnavailable(meta, api.IdentityProviderTVDB)
 	case MetadataFieldPoster:
 		return matchingMetadataPoster(meta)
+	case MetadataFieldTitle:
+		return strings.TrimSpace(meta.EffectiveMetadata.Title) != ""
+	case MetadataFieldAlternateTitle:
+		return strings.TrimSpace(meta.EffectiveMetadata.AlternateTitle) != ""
+	case MetadataFieldOriginalTitle:
+		return strings.TrimSpace(meta.EffectiveMetadata.OriginalTitle) != ""
+	case MetadataFieldYear:
+		return meta.EffectiveMetadata.Year > 0
+	case MetadataFieldGenres:
+		return len(meta.EffectiveMetadata.Genres) > 0
+	case MetadataFieldOriginalLanguage:
+		return strings.TrimSpace(meta.EffectiveMetadata.OriginalLanguage) != ""
+	case MetadataFieldDistributor:
+		return strings.TrimSpace(meta.EffectiveMetadata.Distributor) != ""
+	case MetadataFieldAudioLanguages:
+		return len(meta.AudioLanguages) > 0
+	case MetadataFieldSubtitleLanguages:
+		return len(meta.SubtitleLanguages) > 0
+	case MetadataFieldHardcodedSubs:
+		return meta.HardcodedSubs
+	case MetadataFieldHardcodedSubtitleLanguages:
+		return len(meta.HardcodedSubtitleLanguages) > 0
+	case MetadataFieldTMDBLocalizedPTBR:
+		if !matchingTMDBMetadata(meta) || meta.ProviderMetadata.TMDB.Localized == nil {
+			return false
+		}
+		_, ok := meta.ProviderMetadata.TMDB.Localized["pt-BR"]
+		return ok
 	}
 	return false
 }
@@ -383,6 +435,30 @@ func metadataFieldList(fields []MetadataField) string {
 			labels = append(labels, "explicit TVDB entry-unavailable evidence")
 		case MetadataFieldPoster:
 			labels = append(labels, "metadata poster")
+		case MetadataFieldTitle:
+			labels = append(labels, "title")
+		case MetadataFieldAlternateTitle:
+			labels = append(labels, "alternate title")
+		case MetadataFieldOriginalTitle:
+			labels = append(labels, "original title")
+		case MetadataFieldYear:
+			labels = append(labels, "year")
+		case MetadataFieldGenres:
+			labels = append(labels, "genres")
+		case MetadataFieldOriginalLanguage:
+			labels = append(labels, "original language")
+		case MetadataFieldDistributor:
+			labels = append(labels, "distributor")
+		case MetadataFieldAudioLanguages:
+			labels = append(labels, "audio languages")
+		case MetadataFieldSubtitleLanguages:
+			labels = append(labels, "subtitle languages")
+		case MetadataFieldHardcodedSubs:
+			labels = append(labels, "hardcoded subtitles")
+		case MetadataFieldHardcodedSubtitleLanguages:
+			labels = append(labels, "hardcoded subtitle languages")
+		case MetadataFieldTMDBLocalizedPTBR:
+			labels = append(labels, "TMDB Portuguese localization")
 		}
 	}
 	if len(labels) == 0 {

@@ -97,6 +97,17 @@ func WithTrackerProjectionBuilder(builder TrackerProjectionBuilder) Option {
 	}
 }
 
+// WithInputReadinessEvaluator installs selected-tracker local input evaluation.
+func WithInputReadinessEvaluator(evaluator InputReadinessEvaluator) Option {
+	return func(module *Module) error {
+		if evaluator == nil {
+			return errors.New("release workflow: input readiness evaluator is required")
+		}
+		module.inputReadiness = evaluator
+		return nil
+	}
+}
+
 // WithTrackerPreflightBuilder installs projection-bound live readiness checks.
 func WithTrackerPreflightBuilder(builder TrackerPreflightBuilder) Option {
 	return func(module *Module) error {
@@ -184,6 +195,7 @@ type Module struct {
 	durability               DurabilityRepository
 	private                  PrivateResourceStore
 	preparer                 ReleasePreparer
+	inputReadiness           InputReadinessEvaluator
 	trackerProjector         TrackerProjectionBuilder
 	trackerPreflight         TrackerPreflightBuilder
 	dupeBuilder              DupeAssessmentBuilder
@@ -740,6 +752,10 @@ func (m *Module) operationResultIsCurrent(ownerID string, result *api.WorkflowOp
 		ref := state.Workflow.Release
 		snapshot, ok := state.Releases[api.ReleaseSnapshotID(result.RefID)]
 		return ref != nil && string(ref.ID) == result.RefID && ref.Revision == result.RefRevision && ok && snapshot.Revision == result.RefRevision
+	case api.WorkflowOperationResultInputReadiness:
+		ref := state.Workflow.InputReadiness
+		snapshot, ok := state.InputReadiness[api.InputReadinessSnapshotID(result.RefID)]
+		return ref != nil && string(ref.ID) == result.RefID && ref.Revision == result.RefRevision && ok && snapshot.Revision == result.RefRevision
 	case api.WorkflowOperationResultProjections:
 		ref := state.Workflow.TrackerProjections
 		snapshot, ok := state.Projections[api.TrackerReleaseProjectionSetID(result.RefID)]
@@ -1059,6 +1075,11 @@ func operationResultForCommand(command Command, result CommandResult) (*api.Work
 		if result.Projections != nil {
 			refID, revision = string(result.Projections.ID), result.Projections.Revision
 		}
+	case EvaluateInputReadinessCommand:
+		kind = api.WorkflowOperationResultInputReadiness
+		if result.InputReadiness != nil {
+			refID, revision = string(result.InputReadiness.ID), result.InputReadiness.Revision
+		}
 	case PreflightTrackersCommand:
 		kind = api.WorkflowOperationResultPreflight
 		if result.Preflight != nil {
@@ -1120,6 +1141,10 @@ func terminalOperationStatus(command Command, result CommandResult) api.StageSta
 	case ProjectTrackersCommand:
 		if result.Projections != nil {
 			stageStatus = result.Projections.Status
+		}
+	case EvaluateInputReadinessCommand:
+		if result.InputReadiness != nil {
+			stageStatus = result.InputReadiness.Status
 		}
 	case PreflightTrackersCommand:
 		if result.Preflight != nil {
@@ -1761,6 +1786,16 @@ func (m *Module) Current(ctx context.Context, ownerID string, workflowID api.Wor
 	if ref := state.Workflow.Release; ref != nil {
 		result.Release = currentSnapshot(state.Releases, ref.ID)
 	}
+	if state.Corrections != nil {
+		corrections, cloneErr := state.Corrections.Clone()
+		if cloneErr != nil {
+			return CommandResult{}, fmt.Errorf("release workflow current corrections: %w", cloneErr)
+		}
+		result.Corrections = &corrections
+	}
+	if ref := state.Workflow.InputReadiness; ref != nil {
+		result.InputReadiness = currentSnapshot(state.InputReadiness, ref.ID)
+	}
 	if ref := state.Workflow.TrackerCatalog; ref != nil {
 		result.Catalog = currentSnapshot(state.Catalogs, ref.ID)
 	}
@@ -2376,6 +2411,7 @@ func (m *Module) recoverAfterRestart(ctx context.Context, ownerID string, state 
 		case api.RequiredActionSelectPlaylist,
 			api.RequiredActionSelectMetadata,
 			api.RequiredActionConfirmRescan,
+			api.RequiredActionConfirmCorrections,
 			api.RequiredActionProvideTrackerInput,
 			api.RequiredActionAnswerQuestionnaire,
 			api.RequiredActionAuthorizeRules:
@@ -2623,6 +2659,8 @@ func newState(ownerID string, workflow api.ReleaseWorkflow) State {
 		Workflow:               workflow,
 		FactInstructions:       make(map[api.ReleaseFactInstructionSnapshotID]api.ReleaseFactInstructionSnapshot),
 		Releases:               make(map[api.ReleaseSnapshotID]api.ReleaseSnapshot),
+		InputReadiness:         make(map[api.InputReadinessSnapshotID]api.InputReadinessSnapshot),
+		TrackerInputAnswers:    make(map[api.TrackerID]map[string]string),
 		Catalogs:               make(map[api.TrackerCatalogSnapshotID]api.TrackerCatalogSnapshot),
 		Runtimes:               make(map[api.TrackerRuntimeSnapshotID]api.TrackerRuntimeSnapshot),
 		Selections:             make(map[api.TrackerSelectionID]api.TrackerSelection),
@@ -2697,6 +2735,8 @@ func commandTarget(command mutation) (api.WorkflowID, api.WorkflowRevision, stri
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case ProjectTrackersCommand:
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
+	case EvaluateInputReadinessCommand:
+		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case PreflightTrackersCommand:
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case CheckDuplicatesCommand:
@@ -2770,6 +2810,8 @@ func (m *Module) apply(
 		return m.selectBlurayCandidate(ctx, ownerID, state, nextRevision, now, typed)
 	case ProjectTrackersCommand:
 		return m.projectTrackers(ctx, ownerID, state, nextRevision, now, typed)
+	case EvaluateInputReadinessCommand:
+		return m.evaluateInputReadiness(ctx, state, nextRevision, now, typed)
 	case PreflightTrackersCommand:
 		return m.preflightTrackers(ctx, ownerID, state, nextRevision, now, typed)
 	case CheckDuplicatesCommand:
@@ -2847,6 +2889,7 @@ func (m *Module) cancelWorkflow(ctx context.Context, ownerID string, state *Stat
 	}
 	m.invalidateWorkflowPrivateResources(ctx, ownerID, state.Workflow.ID)
 	state.Workflow.Release = nil
+	state.Workflow.InputReadiness = nil
 	state.Workflow.TrackerCatalog = nil
 	state.Workflow.TrackerRuntime = nil
 	state.Workflow.Selection = nil
@@ -2862,6 +2905,7 @@ func (m *Module) cancelWorkflow(ctx context.Context, ownerID string, state *Stat
 	state.Workflow.RequiredActions = nil
 	state.Workflow.Failures = nil
 	state.Workflow.Status = api.WorkflowStatusCanceled
+	state.PendingCorrectionConfirmation = nil
 	return CommandResult{}, nil
 }
 
@@ -2873,6 +2917,61 @@ func (m *Module) replaceFactInstructions(
 	now time.Time,
 	command ReplaceFactInstructionsCommand,
 ) (CommandResult, error) {
+	if command.CorrectionPatch != nil {
+		facts, ok := state.FactInstructions[state.Workflow.FactInstructions.ID]
+		if !ok || facts.Revision != state.Workflow.FactInstructions.Revision {
+			return CommandResult{}, fmt.Errorf("%w: fact instructions unavailable", ErrInvalidTransition)
+		}
+		command.Instructions = facts.Instructions
+	}
+	var resolved *api.ResolvedPreparationInput
+	sourcePath := command.SourcePath
+	if sourcePath == "" && state.Workflow.Release != nil {
+		if release, exists := state.Releases[state.Workflow.Release.ID]; exists {
+			sourcePath = release.Release.Source.SourcePath
+		}
+	}
+	var (
+		confirmation        *api.CorrectionConfirmation
+		pendingConfirmation *api.CorrectionConfirmation
+	)
+	if command.CorrectionPatch != nil && len(command.CorrectionPatch.ConfirmFields) > 0 {
+		var confirmationErr error
+		confirmation, confirmationErr = pendingCorrectionConfirmation(state, sourcePath, *command.CorrectionPatch)
+		if confirmationErr != nil {
+			return CommandResult{}, confirmationErr
+		}
+		pendingConfirmation = cloneCorrectionConfirmation(confirmation)
+		pendingConfirmation.Fields = make([]api.CorrectionField, 0, len(command.CorrectionPatch.ConfirmFields))
+		for _, field := range command.CorrectionPatch.ConfirmFields {
+			pendingConfirmation.Fields = append(pendingConfirmation.Fields, field.Field)
+		}
+	} else if command.CorrectionPatch != nil {
+		pendingConfirmation = approvedCorrectionConfirmation(state, sourcePath, *command.CorrectionPatch)
+		confirmation = cloneCorrectionConfirmation(pendingConfirmation)
+	}
+	if sourcePath != "" {
+		update := api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateReplace, Values: api.ReleaseCorrectionValues{
+			Identity:    command.Instructions.Identity,
+			ReleaseName: command.Instructions.ReleaseName,
+			Metadata:    command.Instructions.Metadata,
+		}}
+		if command.CorrectionPatch != nil {
+			update = api.ReleaseCorrectionUpdate{
+				Mode:         api.ReleaseCorrectionUpdatePatch,
+				Patch:        command.CorrectionPatch,
+				Confirmation: confirmation,
+			}
+		}
+		input, err := m.preparer.ResolveInput(ctx, api.PrepareInput{SourcePath: sourcePath, Instructions: command.Instructions}, update)
+		if err != nil {
+			return CommandResult{}, fmt.Errorf("release workflow accept corrections: %w", err)
+		}
+		resolved = &input
+		command.Instructions = input.Input.Instructions
+	} else if command.CorrectionPatch != nil {
+		return CommandResult{}, fmt.Errorf("%w: source is required for corrections", ErrInvalidTransition)
+	}
 	id, err := m.newID("facts")
 	if err != nil {
 		return CommandResult{}, err
@@ -2883,6 +2982,19 @@ func (m *Module) replaceFactInstructions(
 		Revision:     nextRevision,
 		Instructions: command.Instructions,
 		CreatedAt:    now,
+	}
+	if resolved != nil {
+		snapshot.CorrectionRevision = resolved.Corrections.Revision
+		snapshot.ExplicitCorrectionFields = resolved.ExplicitFields
+		corrections, cloneErr := resolved.Corrections.Clone()
+		if cloneErr != nil {
+			return CommandResult{}, fmt.Errorf("release workflow clone corrections: %w", cloneErr)
+		}
+		state.Corrections = &corrections
+	}
+	state.PendingCorrectionConfirmation = nil
+	if resolved != nil {
+		state.PendingCorrectionConfirmation = confirmationAfterPatch(pendingConfirmation, resolved.Corrections, command.CorrectionPatch)
 	}
 	snapshot, err = snapshot.WithFingerprint()
 	if err != nil {
@@ -2909,13 +3021,61 @@ func (m *Module) prepareRelease(
 	now time.Time,
 	command PrepareReleaseCommand,
 ) (CommandResult, error) {
+	requestFingerprint, err := api.CanonicalWorkflowFingerprint(command.Input)
+	if err != nil {
+		return CommandResult{}, fmt.Errorf("release workflow fingerprint preparation request: %w", err)
+	}
+	if m.inputReadiness != nil && len(command.TrackerIDs) > 0 {
+		requirements, err := m.inputReadiness.Requirements(ctx, normalizeContinuationTrackerIDs(command.TrackerIDs))
+		if err != nil {
+			return CommandResult{}, fmt.Errorf("release workflow collect input requirements: %w", err)
+		}
+		command.Input.MetadataRequirements = requirements
+	}
+	command.Input.MetadataRequirements, err = command.Input.MetadataRequirements.Normalize()
+	if err != nil {
+		return CommandResult{}, fmt.Errorf("release workflow normalize input requirements: %w", err)
+	}
 	facts, ok := state.FactInstructions[state.Workflow.FactInstructions.ID]
 	if !ok || facts.Revision != state.Workflow.FactInstructions.Revision {
 		return CommandResult{}, fmt.Errorf("%w: fact instructions unavailable", ErrInvalidTransition)
 	}
 	command.Input.Instructions = facts.Instructions
-	prepared, err := m.preparer.Prepare(ctx, command.Input)
+	if facts.CorrectionRevision != 0 || state.Workflow.Release != nil {
+		command.Input.Instructions.Identity = api.ExternalIDOverrides{}
+		command.Input.Instructions.ReleaseName = api.ReleaseNameOverrides{}
+		command.Input.Instructions.Metadata = api.MetadataOverrides{}
+		command.Input.Instructions.Category = nil
+	}
+	resolved, err := m.preparer.ResolveInput(ctx, command.Input, api.ReleaseCorrectionUpdate{
+		Mode:         api.ReleaseCorrectionUpdateInherit,
+		Confirmation: cloneCorrectionConfirmation(state.PendingCorrectionConfirmation),
+	})
 	if err != nil {
+		return CommandResult{}, fmt.Errorf("release workflow resolve effective input: %w", err)
+	}
+	if facts.CorrectionRevision != 0 {
+		resolved.ExplicitFields = facts.ExplicitCorrectionFields
+	}
+	prepared, err := m.preparer.PrepareResolved(ctx, resolved)
+	if err != nil {
+		if stale, ok := errors.AsType[*api.StaleContentCorrectionsError](err); ok {
+			corrections, cloneErr := stale.Corrections.Clone()
+			if cloneErr != nil {
+				return CommandResult{}, fmt.Errorf("release workflow clone stale corrections: %w", cloneErr)
+			}
+			state.Corrections = &corrections
+			state.PreparationInput = &command.Input
+			state.PendingCorrectionConfirmation = retainCorrectionConfirmation(
+				state.PendingCorrectionConfirmation,
+				corrections,
+				stale.CurrentBinding,
+			)
+			if actionErr := m.blockForCorrectionConfirmation(state, nextRevision, now, stale.CurrentBinding); actionErr != nil {
+				return CommandResult{}, actionErr
+			}
+			return CommandResult{}, nil
+		}
 		if playlistRequired, ok := errors.AsType[*api.PlaylistSelectionRequiredError](err); ok {
 			options := playlistActionOptions(playlistRequired.Candidates)
 			if len(options) > 0 {
@@ -2927,6 +3087,29 @@ func (m *Module) prepareRelease(
 		}
 		return CommandResult{}, fmt.Errorf("release workflow prepare canonical release: %w", err)
 	}
+	command.Input = resolved.Input
+	command.Input.Instructions = prepared.EffectiveInstructions
+	corrections, cloneErr := prepared.Corrections.Clone()
+	if cloneErr != nil {
+		return CommandResult{}, fmt.Errorf("release workflow clone corrections: %w", cloneErr)
+	}
+	state.Corrections = &corrections
+	factID, err := m.newID("facts")
+	if err != nil {
+		return CommandResult{}, err
+	}
+	facts.ID = api.ReleaseFactInstructionSnapshotID(factID)
+	facts.Revision = nextRevision
+	facts.CreatedAt = now
+	facts.Instructions = prepared.EffectiveInstructions
+	facts.CorrectionRevision = prepared.Corrections.Revision
+	facts.ExplicitCorrectionFields = nil
+	facts, err = facts.WithFingerprint()
+	if err != nil {
+		return CommandResult{}, fmt.Errorf("release workflow effective facts fingerprint: %w", err)
+	}
+	state.FactInstructions[facts.ID] = facts
+	state.Workflow.FactInstructions = api.ReleaseFactInstructionSnapshotRef{ID: facts.ID, Revision: facts.Revision}
 	ref := api.ReleaseRef{SourcePath: prepared.Release.Source.SourcePath, Generation: prepared.Release.Generation}
 	display, err := m.preparer.ResolveDisplay(ctx, ref)
 	if err != nil {
@@ -2946,10 +3129,7 @@ func (m *Module) prepareRelease(
 		Diagnostics:      prepared.Diagnostics,
 		CreatedAt:        now,
 	}
-	snapshot.PreparationFingerprint, err = api.CanonicalWorkflowFingerprint(command.Input)
-	if err != nil {
-		return CommandResult{}, fmt.Errorf("release workflow fingerprint preparation input: %w", err)
-	}
+	snapshot.PreparationFingerprint = requestFingerprint
 	snapshot.Fingerprint, err = snapshot.ComputeFingerprint()
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow fingerprint release: %w", err)
@@ -2967,7 +3147,202 @@ func (m *Module) prepareRelease(
 	state.Workflow.Status = api.WorkflowStatusActive
 	state.Workflow.RequiredActions = nil
 	state.Workflow.Failures = nil
-	return CommandResult{Release: &snapshot}, nil
+	state.PreparationInput = &command.Input
+	state.PreparationDemand = command.Input.MetadataRequirements
+	state.PendingCorrectionConfirmation = nil
+	return CommandResult{Release: &snapshot, FactInstructions: &facts}, nil
+}
+
+func pendingCorrectionConfirmation(
+	state *State,
+	sourcePath string,
+	patch api.ReleaseCorrectionPatch,
+) (*api.CorrectionConfirmation, error) {
+	if err := patch.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: invalid correction confirmation: %w", ErrInvalidTransition, err)
+	}
+	if patch.ExpectedRevision == nil {
+		return nil, fmt.Errorf("%w: correction confirmation requires current corrections", ErrInvalidTransition)
+	}
+	details, err := currentCorrectionConfirmation(state, sourcePath, *patch.ExpectedRevision)
+	if err != nil {
+		return nil, err
+	}
+	for _, field := range patch.ConfirmFields {
+		if !slices.Contains(details.Fields, field.Field) {
+			return nil, fmt.Errorf("%w: correction confirmation field is unavailable", ErrInvalidTransition)
+		}
+	}
+	return details, nil
+}
+
+func currentCorrectionConfirmation(
+	state *State,
+	sourcePath string,
+	expectedRevision uint64,
+) (*api.CorrectionConfirmation, error) {
+	if state.Corrections == nil {
+		return nil, fmt.Errorf("%w: correction confirmation requires current corrections", ErrInvalidTransition)
+	}
+	if strings.TrimSpace(sourcePath) == "" || strings.TrimSpace(sourcePath) != currentWorkflowSourcePath(state) {
+		return nil, fmt.Errorf("%w: correction confirmation source does not match the current workflow", ErrInvalidTransition)
+	}
+	var action *api.RequiredAction
+	for index := range state.Workflow.RequiredActions {
+		candidate := &state.Workflow.RequiredActions[index]
+		if candidate.Kind != api.RequiredActionConfirmCorrections || candidate.Status != api.RequiredActionStatusPending {
+			continue
+		}
+		if action != nil {
+			return nil, fmt.Errorf("%w: correction confirmation action is ambiguous", ErrInvalidTransition)
+		}
+		action = candidate
+	}
+	if action == nil || action.CorrectionConfirmation == nil || action.WorkflowRevision != state.Workflow.Revision {
+		return nil, fmt.Errorf("%w: correction confirmation action is unavailable", ErrInvalidTransition)
+	}
+	details := action.CorrectionConfirmation
+	if details.Revision != state.Corrections.Revision || expectedRevision != state.Corrections.Revision ||
+		!sameCorrectionFields(details.Fields, state.Corrections.Corrections.StaleContentFields) ||
+		!maps.Equal(details.PreviousBindings, state.Corrections.Corrections.ContentBindings) {
+		return nil, fmt.Errorf("%w: correction confirmation action is stale", ErrInvalidTransition)
+	}
+	return cloneCorrectionConfirmation(details), nil
+}
+
+func approvedCorrectionConfirmation(
+	state *State,
+	sourcePath string,
+	patch api.ReleaseCorrectionPatch,
+) *api.CorrectionConfirmation {
+	if state.Corrections == nil {
+		return nil
+	}
+	revision := state.Corrections.Revision
+	if patch.ExpectedRevision != nil {
+		revision = *patch.ExpectedRevision
+	}
+	details, err := currentCorrectionConfirmation(state, sourcePath, revision)
+	if err != nil {
+		return nil
+	}
+	approved := cloneCorrectionConfirmation(details)
+	approved.Fields = nil
+	for field, previous := range details.PreviousBindings {
+		current, exists := state.Corrections.Corrections.ContentBindings[field]
+		if field.IsContentBound() && previous == details.CurrentBinding && exists && current == details.CurrentBinding &&
+			!slices.Contains(state.Corrections.Corrections.StaleContentFields, field) {
+			approved.Fields = append(approved.Fields, field)
+		}
+	}
+	slices.Sort(approved.Fields)
+	if len(approved.Fields) == 0 {
+		return nil
+	}
+	return approved
+}
+
+func confirmationAfterPatch(
+	confirmation *api.CorrectionConfirmation,
+	corrections api.ReleaseCorrectionsSnapshot,
+	patch *api.ReleaseCorrectionPatch,
+) *api.CorrectionConfirmation {
+	if confirmation == nil {
+		return nil
+	}
+	replaced := make(map[api.CorrectionField]struct{})
+	if patch != nil {
+		for _, field := range patch.ResetFields {
+			replaced[field.Field] = struct{}{}
+		}
+		for _, field := range patch.Values.Fields() {
+			replaced[field.Field] = struct{}{}
+		}
+	}
+	retained := retainCorrectionConfirmation(confirmation, corrections, confirmation.CurrentBinding)
+	if retained == nil {
+		return nil
+	}
+	retained.Fields = slices.DeleteFunc(retained.Fields, func(field api.CorrectionField) bool {
+		_, changed := replaced[field]
+		return changed
+	})
+	if len(retained.Fields) == 0 {
+		return nil
+	}
+	return retained
+}
+
+func retainCorrectionConfirmation(
+	confirmation *api.CorrectionConfirmation,
+	corrections api.ReleaseCorrectionsSnapshot,
+	binding api.ContentBinding,
+) *api.CorrectionConfirmation {
+	if confirmation == nil || confirmation.CurrentBinding != binding {
+		return nil
+	}
+	retained := cloneCorrectionConfirmation(confirmation)
+	retained.Revision = corrections.Revision
+	retained.Fields = slices.DeleteFunc(retained.Fields, func(field api.CorrectionField) bool {
+		current, exists := corrections.Corrections.ContentBindings[field]
+		return !field.IsContentBound() || !exists || current != binding || slices.Contains(corrections.Corrections.StaleContentFields, field)
+	})
+	if len(retained.Fields) == 0 {
+		return nil
+	}
+	return retained
+}
+
+func currentWorkflowSourcePath(state *State) string {
+	if state.Workflow.Release != nil {
+		if release, exists := state.Releases[state.Workflow.Release.ID]; exists {
+			return strings.TrimSpace(release.Release.Source.SourcePath)
+		}
+	}
+	if state.PreparationInput != nil {
+		return strings.TrimSpace(state.PreparationInput.SourcePath)
+	}
+	return ""
+}
+
+func sameCorrectionFields(left, right []api.CorrectionField) bool {
+	return slices.Equal(slices.Sorted(slices.Values(left)), slices.Sorted(slices.Values(right)))
+}
+
+func cloneCorrectionConfirmation(value *api.CorrectionConfirmation) *api.CorrectionConfirmation {
+	if value == nil {
+		return nil
+	}
+	return &api.CorrectionConfirmation{
+		Revision:         value.Revision,
+		Fields:           slices.Clone(value.Fields),
+		PreviousBindings: maps.Clone(value.PreviousBindings),
+		CurrentBinding:   value.CurrentBinding,
+	}
+}
+
+func (m *Module) blockForCorrectionConfirmation(state *State, nextRevision api.WorkflowRevision, now time.Time, binding api.ContentBinding) error {
+	actionID, err := m.newID("action")
+	if err != nil {
+		return err
+	}
+	state.Workflow.Status = api.WorkflowStatusBlocked
+	state.Workflow.RequiredActions = []api.RequiredAction{{
+		CorrectionConfirmation: &api.CorrectionConfirmation{
+			Revision:         state.Corrections.Revision,
+			Fields:           slices.Clone(state.Corrections.Corrections.StaleContentFields),
+			PreviousBindings: maps.Clone(state.Corrections.Corrections.ContentBindings),
+			CurrentBinding:   binding,
+		},
+		ID:               api.RequiredActionID(actionID),
+		Kind:             api.RequiredActionConfirmCorrections,
+		Status:           api.RequiredActionStatusPending,
+		WorkflowRevision: nextRevision,
+		Prompt:           "Confirm saved input corrections for the current source identity.",
+		CreatedAt:        now,
+	}}
+	state.Workflow.Failures = nil
+	return nil
 }
 
 func playlistActionOptions(candidates []api.PlaylistInfo) []api.RequiredActionOption {
@@ -3235,7 +3610,8 @@ func (m *Module) projectTrackersWithRuleAuthorizations(
 			SourcePath: release.Release.Source.SourcePath,
 			Generation: release.Release.Generation,
 		},
-		Trackers: trackerNames,
+		Trackers:             trackerNames,
+		QuestionnaireAnswers: cloneTrackerInputAnswers(state.TrackerInputAnswers),
 	})
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow resolve tracker projection subject: %w", err)
@@ -3365,8 +3741,9 @@ func (m *Module) preflightTrackers(
 		trackerIDs[index] = string(projection.TrackerID)
 	}
 	subject, err := m.preparer.ResolveUploadSubject(ctx, api.UploadSubjectInput{
-		Release:  initial.ReleaseRef,
-		Trackers: trackerIDs,
+		Release:              initial.ReleaseRef,
+		Trackers:             trackerIDs,
+		QuestionnaireAnswers: cloneTrackerInputAnswers(state.TrackerInputAnswers),
 	})
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow resolve tracker preflight subject: %w", err)
@@ -4940,6 +5317,7 @@ func (m *Module) generateDescriptions(
 	now time.Time,
 	command GenerateDescriptionsCommand,
 ) (CommandResult, error) {
+	command.Instructions = descriptionInstructionsWithTrackerInputs(command.Instructions, state)
 	if m.descriptionBuilder == nil {
 		return CommandResult{}, fmt.Errorf("%w: description builder is unavailable", ErrInvalidTransition)
 	}
@@ -5034,6 +5412,27 @@ func cloneDescriptionInstructions(input api.DescriptionInstructions) api.Descrip
 		cloned.QuestionnaireAnswers[trackerID] = clonedAnswers
 	}
 	return cloned
+}
+
+// descriptionInstructionsWithTrackerInputs carries canonical local answers into
+// retained description inputs, which also feed the reviewed upload payload.
+func descriptionInstructionsWithTrackerInputs(input api.DescriptionInstructions, state *State) api.DescriptionInstructions {
+	input = cloneDescriptionInstructions(input)
+	if ref := state.Workflow.InputReadiness; ref != nil {
+		for _, schema := range state.InputReadiness[ref.ID].Schemas {
+			trackerID := api.TrackerID(strings.ToUpper(strings.TrimSpace(schema.Tracker)))
+			for _, field := range schema.Fields {
+				delete(input.QuestionnaireAnswers[trackerID], field.Key)
+			}
+		}
+	}
+	for trackerID, fields := range state.TrackerInputAnswers {
+		if input.QuestionnaireAnswers[trackerID] == nil {
+			input.QuestionnaireAnswers[trackerID] = make(map[string]string)
+		}
+		maps.Copy(input.QuestionnaireAnswers[trackerID], fields)
+	}
+	return input
 }
 
 func (m *Module) mutateDescriptionOverride(
@@ -6848,6 +7247,7 @@ func finishUnavailableImageHostingReconciliation(workflow *api.ReleaseWorkflow, 
 
 func invalidatePreparedAndDownstream(workflow *api.ReleaseWorkflow) {
 	workflow.Release = nil
+	workflow.InputReadiness = nil
 	workflow.TrackerCatalog = nil
 	workflow.TrackerRuntime = nil
 	workflow.Selection = nil
@@ -6855,6 +7255,7 @@ func invalidatePreparedAndDownstream(workflow *api.ReleaseWorkflow) {
 }
 
 func invalidateTrackerAndDownstream(workflow *api.ReleaseWorkflow) {
+	workflow.InputReadiness = nil
 	workflow.TrackerCatalog = nil
 	workflow.TrackerRuntime = nil
 	workflow.Selection = nil

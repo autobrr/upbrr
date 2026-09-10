@@ -417,6 +417,47 @@ func TestHDBHandlerSearchFallsBackToTextSearchWhenIDsMissing(t *testing.T) {
 	}
 }
 
+func TestHDBHandlerTitleFallbackHonorsManualTitle(t *testing.T) {
+	t.Parallel()
+
+	requests := 0
+	handler := &dupeSearcher{
+		cfg: config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"HDB": {Username: "user", Passkey: "pk"},
+		}}},
+		http: &http.Client{Transport: hdbRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			requests++
+			var payload map[string]any
+			if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			if got := hdbTestString(payload["search"]); got != "Projected Release" {
+				t.Fatalf("automatic HDB search title = %q", got)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"status":0,"data":[]}`)),
+				Header:     make(http.Header),
+			}, nil
+		})},
+		logger:   api.NopLogger{},
+		endpoint: "https://hdbits.org/api/torrents",
+		maxPages: 1,
+	}
+	projection := &api.TrackerReleaseProjection{DuplicateCriteria: api.TrackerDuplicateCriteria{Name: "Projected Release"}}
+	manualEmpty := api.DuplicateSubject{
+		Projection:        projection,
+		EffectiveMetadata: api.EffectiveMetadata{TitleProvenance: api.FactProvenanceManualEmpty},
+	}
+	result := handler.Search(t.Context(), manualEmpty)
+	if result.Disposition() != dupe.DispositionNotRun || result.Code() != dupe.NotRunMissingMetadata || requests != 0 {
+		t.Fatalf("manual-empty HDB result=%v code=%q requests=%d", result.Disposition(), result.Code(), requests)
+	}
+	if result := handler.Search(t.Context(), api.DuplicateSubject{Projection: projection}); result.Disposition() != dupe.DispositionResolved || requests != 1 {
+		t.Fatalf("automatic HDB result=%v requests=%d", result.Disposition(), requests)
+	}
+}
+
 func TestHDBHandlerSearchUsesTVDBWhenIMDbMissing(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()

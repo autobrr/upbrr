@@ -1023,6 +1023,40 @@ func TestModuleResetAndBlurayCandidateSelectionUseExactRetainedAuthority(t *test
 	}
 }
 
+func TestModuleResetReplacesPreparationDemand(t *testing.T) {
+	t.Parallel()
+
+	module, repository := newTestModule(t, testPreparer())
+	result := executeCommand(t, module, CreateWorkflowCommand{WorkflowID: "workflow-reset-demand"})
+	result = executeCommand(t, module, PrepareReleaseCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Input: api.PrepareInput{
+			SourcePath: "Example.Release.2026.1080p-GRP",
+			MetadataRequirements: api.MetadataRequirementSet{
+				Version: "reset-demand-v1",
+				Requirements: []api.MetadataRequirement{{
+					Scope:       api.MetadataRequirementScopeAny,
+					AnyOf:       []api.MetadataRequirementField{"original_title"},
+					Disposition: api.RuleDispositionStrict,
+				}},
+			},
+		},
+	})
+	result = executeCommand(t, module, ResetReleaseCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Input:            api.PrepareInput{SourcePath: "Example.Release.2026.1080p-GRP"},
+	})
+	state, err := repository.Load(t.Context(), testOwnerID, result.Workflow.ID)
+	if err != nil {
+		t.Fatalf("load reset preparation demand: %v", err)
+	}
+	if state.PreparationDemand.Version != "" || len(state.PreparationDemand.Requirements) != 0 {
+		t.Fatalf("reset retained stale preparation demand = %#v", state.PreparationDemand)
+	}
+}
+
 func TestModuleBDMVPreparationRequiresTypedPlaylistSelection(t *testing.T) {
 	t.Parallel()
 
@@ -2510,10 +2544,7 @@ func TestModuleResumesExpiredCheckpointSafeOperationFromPrivateCommandCapsule(t 
 	releaseFirst := make(chan struct{})
 	firstDone := make(chan struct{})
 	var calls atomic.Int32
-	preparer, ok := testPreparer().(ReleasePreparerFunc)
-	if !ok {
-		t.Fatalf("test preparer type = %T, want ReleasePreparerFunc", testPreparer())
-	}
+	preparer := testPreparer()
 	prepare := preparer.PrepareFunc
 	preparer.PrepareFunc = func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
 		if calls.Add(1) == 1 {
@@ -4655,7 +4686,7 @@ func newTestModule(t *testing.T, preparer ReleasePreparer, options ...Option) (*
 	return module, repository
 }
 
-func testPreparer() ReleasePreparer {
+func testPreparer() ReleasePreparerFunc {
 	return ReleasePreparerFunc{
 		PrepareFunc: func(_ context.Context, input api.PrepareInput) (api.PrepareResult, error) {
 			return api.PrepareResult{Release: api.PreparedRelease{
@@ -4674,6 +4705,8 @@ func testPreparer() ReleasePreparer {
 				SourcePath:  input.Release.SourcePath,
 				Trackers:    append([]string(nil), input.Trackers...),
 				ReleaseName: "Example.Release.2026.1080p-GRP",
+				Source:      "bluray",
+				Type:        "movie",
 			}, nil
 		},
 		DuplicateFunc: func(_ context.Context, input api.DuplicateCheckInput) (api.DuplicateSubject, error) {

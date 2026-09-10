@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -37,6 +38,9 @@ func applyYUSTVDBDisambiguation(name string, meta api.UploadSubject) string {
 		return name
 	}
 	evidence := meta.ProviderMetadata.TVDB.NameDisambiguation
+	if meta.EffectiveMetadata.YearProvenance.IsManual() {
+		evidence.SeriesYear = meta.EffectiveMetadata.Year
+	}
 	title, alternate, tail, ok := unit3d.SplitTVDBName(name, meta, evidence)
 	if !ok {
 		return name
@@ -53,9 +57,15 @@ func applyYUSTVDBDisambiguation(name string, meta api.UploadSubject) string {
 }
 
 func applyYUSTMDBMovieYear(name string, meta api.UploadSubject) string {
-	if !meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) ||
-		meta.ProviderMetadata.TMDB == nil || meta.ProviderMetadata.TMDB.Year <= 0 ||
-		meta.Release.Year <= 0 || meta.ProviderMetadata.TMDB.Year == meta.Release.Year {
+	if meta.Release.Year <= 0 {
+		return name
+	}
+	providerYear := 0
+	if meta.ProviderMetadata.TMDB != nil && meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) {
+		providerYear = meta.ProviderMetadata.TMDB.Year
+	}
+	year := trackers.PreferredYear(meta, providerYear)
+	if year <= 0 || year == meta.Release.Year {
 		return name
 	}
 	searchEnd := len(name)
@@ -69,7 +79,7 @@ func applyYUSTMDBMovieYear(name string, meta api.UploadSubject) string {
 	if index < 0 {
 		return name
 	}
-	return name[:index] + strconv.Itoa(meta.ProviderMetadata.TMDB.Year) + name[index+len(oldYear):]
+	return name[:index] + strconv.Itoa(year) + name[index+len(oldYear):]
 }
 
 func removeYUSNameElement(name string, element string) string {
@@ -82,7 +92,7 @@ func removeYUSNameElement(name string, element string) string {
 }
 
 func insertYUSDiscDistributor(name string, meta api.UploadSubject) string {
-	distributor := strings.Join(strings.Fields(meta.Distributor), " ")
+	distributor := strings.Join(strings.Fields(trackers.PreferredDistributor(meta, meta.Distributor)), " ")
 	if distributor == "" || findYUSNameElement(name, distributor) >= 0 {
 		return name
 	}

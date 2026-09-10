@@ -51,3 +51,32 @@ func TestDuplicateSearchUsesSPDQueryHeadersAndProjection(t *testing.T) {
 		t.Fatalf("unexpected search evidence: %#v", search)
 	}
 }
+
+func TestDuplicateSearchTitleFallbackHonorsManualTitle(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests++
+		if got := request.URL.Query().Get("search"); got != "Projected Release" {
+			t.Errorf("automatic SPD search title = %q", got)
+		}
+		_, _ = writer.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+
+	searcher := &dupeSearcher{
+		cfg:      config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"SPD": {APIKey: "secret"}}}},
+		http:     server.Client(),
+		endpoint: server.URL,
+	}
+	projection := &api.TrackerReleaseProjection{DuplicateCriteria: api.TrackerDuplicateCriteria{Name: "Projected Release"}}
+	result := searcher.Search(t.Context(), api.DuplicateSubject{
+		Projection:        projection,
+		EffectiveMetadata: api.EffectiveMetadata{TitleProvenance: api.FactProvenanceManualEmpty},
+	})
+	if result.Disposition() != dupe.DispositionNotRun || result.Code() != dupe.NotRunMissingMetadata || requests != 0 {
+		t.Fatalf("manual-empty SPD result=%v code=%q requests=%d", result.Disposition(), result.Code(), requests)
+	}
+	if result := searcher.Search(t.Context(), api.DuplicateSubject{Projection: projection}); result.Disposition() != dupe.DispositionResolved || requests != 1 {
+		t.Fatalf("automatic SPD result=%v requests=%d", result.Disposition(), requests)
+	}
+}

@@ -274,35 +274,39 @@ func RuleSubjectFromValidation(subject api.TrackerValidationSubject) api.RuleSub
 		sceneNFOPath = "ready"
 	}
 	return api.RuleSubject{
-		SourcePath:         subject.SourcePath,
-		VideoPath:          subject.VideoPath,
-		FileList:           append([]string(nil), subject.FileList...),
-		DiscType:           subject.DiscType,
-		Scene:              subject.Scene,
-		SceneNFOPath:       sceneNFOPath,
-		SceneRenamed:       subject.SceneRenamed,
-		SceneRenamedReason: subject.SceneRenamedReason,
-		PersonalRelease:    subject.PersonalRelease,
-		Release:            subject.Release,
-		ReleaseName:        subject.ReleaseName,
-		ReleaseNameNoTag:   subject.ReleaseNameNoTag,
-		Tag:                subject.Tag,
-		Identity:           subject.Identity,
-		ProviderMetadata:   subject.ProviderMetadata,
-		AudioLanguages:     append([]string(nil), subject.AudioLanguages...),
-		SubtitleLanguages:  append([]string(nil), subject.SubtitleLanguages...),
-		TVPack:             subject.TVPack,
-		Type:               subject.Type,
-		Source:             subject.Source,
-		Container:          subject.Container,
-		BitDepth:           subject.BitDepth,
-		VideoCodec:         subject.VideoCodec,
-		VideoEncode:        subject.VideoEncode,
-		HDR:                subject.HDR,
-		Region:             subject.Region,
-		WebDV:              subject.WebDV,
-		Anime:              subject.Anime,
-		Assessments:        subject.Assessments,
+		EffectiveMetadata:          subject.EffectiveMetadata,
+		ManualLanguages:            subject.ManualLanguages,
+		HardcodedSubs:              subject.HardcodedSubs,
+		HardcodedSubtitleLanguages: append([]string(nil), subject.HardcodedSubtitleLanguages...),
+		SourcePath:                 subject.SourcePath,
+		VideoPath:                  subject.VideoPath,
+		FileList:                   append([]string(nil), subject.FileList...),
+		DiscType:                   subject.DiscType,
+		Scene:                      subject.Scene,
+		SceneNFOPath:               sceneNFOPath,
+		SceneRenamed:               subject.SceneRenamed,
+		SceneRenamedReason:         subject.SceneRenamedReason,
+		PersonalRelease:            subject.PersonalRelease,
+		Release:                    subject.Release,
+		ReleaseName:                subject.ReleaseName,
+		ReleaseNameNoTag:           subject.ReleaseNameNoTag,
+		Tag:                        subject.Tag,
+		Identity:                   subject.Identity,
+		ProviderMetadata:           subject.ProviderMetadata,
+		AudioLanguages:             append([]string(nil), subject.AudioLanguages...),
+		SubtitleLanguages:          append([]string(nil), subject.SubtitleLanguages...),
+		TVPack:                     subject.TVPack,
+		Type:                       subject.Type,
+		Source:                     subject.Source,
+		Container:                  subject.Container,
+		BitDepth:                   subject.BitDepth,
+		VideoCodec:                 subject.VideoCodec,
+		VideoEncode:                subject.VideoEncode,
+		HDR:                        subject.HDR,
+		Region:                     subject.Region,
+		WebDV:                      subject.WebDV,
+		Anime:                      subject.Anime,
+		Assessments:                subject.Assessments,
 	}
 }
 
@@ -409,6 +413,9 @@ func hasReleaseToken(meta api.RuleSubject, tokens []string) bool {
 // TVDB, and TVmaze metadata. Parsed release genres and provider keywords are
 // excluded.
 func RuleGenres(meta api.RuleSubject) []string {
+	if meta.EffectiveMetadata.GenresProvenance.IsManual() {
+		return normalizeStrings(meta.EffectiveMetadata.Genres)
+	}
 	if !ruleProviderMetadataCurrent(meta) {
 		return nil
 	}
@@ -575,6 +582,9 @@ func evaluateLanguageRule(meta api.RuleSubject, rule *LanguageRule) (bool, strin
 }
 
 func resolveOriginalLanguage(meta api.RuleSubject) string {
+	if meta.EffectiveMetadata.OriginalLanguageProvenance.IsManual() {
+		return strings.ToLower(strings.TrimSpace(meta.EffectiveMetadata.OriginalLanguage))
+	}
 	var raw string
 	if meta.ProviderMetadata.TMDB != nil {
 		raw = strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalLanguage)

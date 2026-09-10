@@ -198,6 +198,8 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 	}
 
 	switch action.Kind {
+	case api.RequiredActionConfirmCorrections:
+		return feedback, false, errors.New("upbrr: saved input corrections require --confirm-input or --reset-input before upload")
 	case legacyTrackerAuthActionKind, legacyTrackerTwoFactorActionKind:
 		return feedback, false, errors.New(
 			"upbrr: tracker authentication must be resolved outside the upload workflow; start a fresh attempt",

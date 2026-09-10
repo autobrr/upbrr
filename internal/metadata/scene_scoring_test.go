@@ -5,6 +5,7 @@ package metadata
 
 import (
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
@@ -380,5 +381,34 @@ func TestSceneLocalCandidates(t *testing.T) {
 	}
 	if len(single.files) != 1 || single.files[0] != "movie.2020.1080p.bluray.x264-grp" {
 		t.Fatalf("single-file file candidates = %v", single.files)
+	}
+}
+
+func TestSceneYearHonorsManualClear(t *testing.T) {
+	t.Parallel()
+
+	meta := preparationstate.State{
+		Identity:             api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+		Release:              api.ReleaseInfo{Year: 2024},
+		ProviderMetadata:     api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Year: 2026}},
+		ReleaseNameOverrides: api.ReleaseNameOverrides{ManualYear: new(0)},
+	}
+	if got := sceneYear(meta); got != 0 {
+		t.Fatalf("manual clear scene year = %d", got)
+	}
+}
+
+func TestSceneYearIgnoresManualYearForKnownTV(t *testing.T) {
+	for _, manualYear := range []int{0, 2030} {
+		t.Run(strconv.Itoa(manualYear), func(t *testing.T) {
+			meta := preparationstate.State{
+				Identity:             api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+				Release:              api.ReleaseInfo{Year: 2024},
+				ReleaseNameOverrides: api.ReleaseNameOverrides{ManualYear: new(manualYear)},
+			}
+			if got := sceneYear(meta); got != 2024 {
+				t.Fatalf("sceneYear() = %d, want 2024", got)
+			}
+		})
 	}
 }

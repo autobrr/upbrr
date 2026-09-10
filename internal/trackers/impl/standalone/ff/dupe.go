@@ -52,7 +52,10 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	}
 	query := providerid.IMDb(meta.Identity.IMDBID).Prefixed()
 	if meta.Anime {
-		query = metautil.FirstNonEmptyTrimmed(meta.Release.Title, dupe.ProjectedSearchName(meta), meta.ReleaseName)
+		query = meta.EffectiveMetadata.PreferredTitle(metautil.FirstNonEmptyTrimmed(meta.Release.Title, dupe.ProjectedSearchName(meta), meta.ReleaseName))
+		if query == "" {
+			return dupe.NotRun(dupe.NotRunMissingMetadata, "missing title for FF anime dupe search", nil)
+		}
 	}
 	status, root, err := commonhttp.GetHTML(ctx, s.http, baseURL+"/torrents.php", url.Values{"searchstr": {query}}, trackerCookies)
 	if err != nil || status < http.StatusOK || status >= http.StatusMultipleChoices || root == nil {

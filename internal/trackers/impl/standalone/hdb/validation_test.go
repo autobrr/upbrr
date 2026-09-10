@@ -94,6 +94,31 @@ func TestHDBValidationPolicyVersion(t *testing.T) {
 	}
 }
 
+func TestHDBValidationHonorsManualOriginalTitle(t *testing.T) {
+	t.Parallel()
+
+	subject := hdbPassingSubject()
+	subject.SourcePath = "source.mkv"
+	subject.ReleaseName = "Generated Release 2026 1080p-GRP"
+	subject.EffectiveMetadata = api.EffectiveMetadata{OriginalTitle: "Manual Original", OriginalTitleProvenance: api.FactProvenanceManual}
+	failures, err := validationPolicy().Check(context.Background(), subject, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("validate manual original title: %v", err)
+	}
+	for _, failure := range failures {
+		if failure.Rule == "hdb_title_prohibition" {
+			t.Fatalf("manual original title must construct validation name: %#v", failures)
+		}
+	}
+
+	subject.EffectiveMetadata = api.EffectiveMetadata{OriginalTitleProvenance: api.FactProvenanceManualEmpty}
+	failures, err = validationPolicy().Check(context.Background(), subject, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("validate manual empty original title: %v", err)
+	}
+	requireHDBValidationFailure(t, failures, "hdb_title_prohibition", api.RuleDispositionAdvisory, api.MetadataEvidenceStatusUnavailable)
+}
+
 func TestHDBTitleProhibitedElements(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

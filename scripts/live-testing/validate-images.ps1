@@ -269,11 +269,16 @@ foreach ($deferred in @('sat', 'deferred', 'covered')) {
   $null = Resume-Lane $deferredLane $resumeState 'duplicates_decided'
   Assert-ImageCheck ($script:ImageGoals.Count -eq 0) 'feedback_resume_captured_deferred_lane'
 }
+$browserLanesAssignment = @($runnerAst.FindAll({ param($node)
+  $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -ceq '$browserLanes'
+}, $true))
 $handoffAssignment = $runnerAst.Find({ param($node)
   $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -ceq '$browserHandoff'
 }, $true)
 $handoffTable = $handoffAssignment.Find({ param($node) $node -is [Management.Automation.Language.HashtableAst] }, $true)
 $handoffLanes = @($handoffTable.KeyValuePairs | Where-Object { $_.Item1.Value -ceq 'lanes' })
+Assert-ImageCheck ($browserLanesAssignment.Count -eq 1 -and $handoffLanes.Count -eq 1) 'browser_handoff_lane_binding_missing'
+. ([scriptblock]::Create($browserLanesAssignment[0].Extent.Text))
 $ownedLanes = @(. ([scriptblock]::Create($handoffLanes[0].Item2.Extent.Text)))
 Assert-ImageCheck (($ownedLanes.laneId -join ',') -ceq 'lane-a,lane-b,lane-pending,lane-undecoded') 'browser_handoff_lost_lane_ownership_or_pending_feedback'
 $script:Lanes = @(@{ caseId = 'EXPLICIT'; laneId = 'explicit-sat'; sat = $true }); $script:Results = @()

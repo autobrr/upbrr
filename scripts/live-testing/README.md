@@ -9,6 +9,8 @@ the owned process on `127.0.0.1:7480` before using it. Port 7480 must be unused.
 ```powershell
 pwsh -NoProfile -File .\scripts\live-testing\run.ps1 -Suite Smoke -ValidateOnly
 pwsh -NoProfile -File .\scripts\live-testing\run.ps1 -Suite Smoke
+pwsh -NoProfile -File .\scripts\live-testing\run.ps1 -Suite Input
+pwsh -NoProfile -File .\scripts\live-testing\run.ps1 -Suite Input -Sat
 pwsh -NoProfile -File .\scripts\live-testing\run.ps1 -Suite Screenshots
 pwsh -NoProfile -File .\scripts\live-testing\run.ps1 -Suite Dupe -Tracker LST -Sat
 pwsh -NoProfile -File .\scripts\live-testing\run.ps1 -Suite Screenshots -DebugCoverage
@@ -28,6 +30,13 @@ preserves blocked lanes. No replacement tracker is selected when a configured
 service fails. `-Config` selects the source configuration for cloning.
 
 `Smoke` uses five representative cases. `Screenshots` selects all 25 saved cases.
+`Input` selects the same 25 cases and stops each workflow at `input_ready`.
+It always skips remote tracker duplicate checks. `-Sat` also skips the primary
+client lookup on a fresh preparation. The selected tracker list is still passed
+to readiness so tracker-specific metadata requirements remain visible.
+Input rejects image, host, debug, and capture-count options because it never
+enters tracker preflight, duplicate decisions, media, descriptions, dry-run,
+submission, or client injection.
 `Dupe` uses one movie and the paired pack/episode inputs; without `-Sat` it creates
 independent ordinary and skip-client-lookup preparations. `Full` selects all 25
 cases, with the same explicit paired lookup comparison and representative dupe
@@ -114,7 +123,7 @@ observation, not automatic fingerprint replacement.
 
 An optional `metadata_ids` object pins operator-verified provider identities for
 one case, for example `"metadata_ids": { "imdb": 1234567, "tmdb": 12345 }`.
-Supported keys are `imdb`, `tmdb`, `tvdb`, and `tvmaze`; values must be positive
+Supported keys are `imdb`, `tmdb`, `tvdb`, `tvmaze`, and `mal`; values must be positive
 integers (omit IMDb's `tt` prefix and leading zeros). TV cases use series IDs,
 including when the input is one episode. Keep actual IDs in the private corpus.
 The runner sends these through the existing explicit identity overrides, checks
@@ -122,6 +131,12 @@ the prepared identity, and passes the same IDs to the CLI comparison helper.
 Omitted providers retain normal resolution. Changing IDs requires a new run;
 saved-run continuation and comparisons retain the corpus fingerprint. Overrides
 do not waive tracker rules or existing-client duplicate blocks.
+
+An Input case may also provide `source_lookup` and `tracker_ids`. `source_lookup`
+is an explicit source URL or identifier. `tracker_ids` maps tracker codes to
+operator-verified source IDs. The runner preserves only values present in the
+corpus and never derives source IDs from the selected tracker list. These values
+feed production Input preparation and remain subject to normal validation.
 
 DVD and episode directories proceed through normal production preparation after
 their probe and source checks pass. DVD metadata IDs identify the movie; they do
@@ -270,6 +285,13 @@ pages remain inconclusive. Human color/scene review, provider fault injection,
 and the listed missing media tiers remain explicit gaps. CLI/API parity and
 baseline comparisons use the separate opt-in helpers shown above.
 
+The Input browser pass verifies readiness and correction controls across the
+saved workflows without screenshots, traces, or video. It records field-level
+set, persistence, reload, reset, explicit-false, and history results where the
+case exposes those controls. The pass fails if the browser calls a downstream
+workflow method or continues beyond `input_ready`. The owned restart repeats the
+Input boundary and persistence checks.
+
 Reports distinguish `pass`, `fail`, `blocked`, `needs_input`, `inconclusive`, and
 `not_applicable`. A successful individual stage does not prove the whole suite.
 Normal forbidden-effect counters must be zero; the single explicit HTTP 403
@@ -281,6 +303,7 @@ building, launching a server, or making network requests.
 ```powershell
 pwsh -NoProfile -File .\scripts\live-testing\validate.ps1
 node --check .\scripts\live-testing\browser\live.spec.cjs
+node --check .\scripts\live-testing\browser\input.spec.cjs
 node .\webui\node_modules\@playwright\test\cli.js test --config .\scripts\live-testing\browser\playwright.config.cjs --list
 ```
 
@@ -293,3 +316,19 @@ and lane inputs in a separate zero-image profile and compares retained CLI/API
 observations. Full
 Go/frontend/E2E validation and a representative live run remain
 separate release-readiness checks.
+
+CLI parity defaults to `-InteractionMode unattended`. Select `interactive` when
+the baseline was last prepared by an interactive browser Auto reset. The
+`unattended_confirm` value maps to the CLI confirmation mode. The parity process
+receives closed standard input, so an unexpected prompt cannot consume invented
+answers or wait indefinitely.
+
+```powershell
+pwsh -NoProfile -File .\scripts\live-testing\check-cli.ps1 -BaselineRunDir '<absolute-private-baseline>' -LaneId 'lane-0001' -InteractionMode interactive
+```
+
+For an Input baseline, `check-cli.ps1` invokes the retained owned binary with
+`--input-only` and the same lane inputs. It compares readiness, selected trackers,
+effective facts, and durable corrections, including Auto markers. Each side uses
+its own local revisions, and every downstream workflow reference and effect count
+must remain absent.

@@ -6,6 +6,7 @@ package tik
 import (
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -98,11 +99,17 @@ func isForeign(meta api.UploadSubject) bool {
 	if meta.TrackerSiteOverrides.TIK.Foreign != nil {
 		return *meta.TrackerSiteOverrides.TIK.Foreign
 	}
-	if meta.ProviderMetadata.TMDB != nil {
-		original := strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalLanguage))
-		if original != "" && original != "en" {
-			return true
+	originalLanguage := ""
+	if meta.EffectiveMetadata.OriginalLanguageProvenance.IsManual() {
+		originalLanguage = meta.EffectiveMetadata.OriginalLanguage
+		if normalized := languageutil.NormalizeLanguageCode(originalLanguage); normalized != "" {
+			originalLanguage = normalized
 		}
+	} else if meta.ProviderMetadata.TMDB != nil {
+		originalLanguage = meta.ProviderMetadata.TMDB.OriginalLanguage
+	}
+	if original := strings.ToLower(strings.TrimSpace(originalLanguage)); original != "" && original != "en" {
+		return true
 	}
 	return !unit3d.HasEnglishLanguage(meta.AudioLanguages) && !unit3d.HasEnglishLanguage(meta.SubtitleLanguages)
 }
@@ -111,9 +118,13 @@ func isOpera(meta api.UploadSubject) bool {
 	if meta.TrackerSiteOverrides.TIK.Opera != nil {
 		return *meta.TrackerSiteOverrides.TIK.Opera
 	}
-	values := strings.ToLower(
-		strings.Join([]string{strings.TrimSpace(meta.Release.Genre), unit3d.TMDBGenres(meta), unit3d.IMDBGenres(meta), unit3d.Keywords(meta)}, ","),
-	)
+	var genres string
+	if meta.EffectiveMetadata.GenresProvenance.IsManual() {
+		genres = strings.Join(meta.EffectiveMetadata.Genres, ",")
+	} else {
+		genres = strings.Join([]string{strings.TrimSpace(meta.Release.Genre), unit3d.TMDBGenres(meta), unit3d.IMDBGenres(meta)}, ",")
+	}
+	values := strings.ToLower(strings.Join([]string{genres, unit3d.Keywords(meta)}, ","))
 	return strings.Contains(values, "opera") || strings.Contains(values, "musical")
 }
 
@@ -121,25 +132,36 @@ func isAsian(meta api.UploadSubject) bool {
 	if meta.TrackerSiteOverrides.TIK.Asian != nil {
 		return *meta.TrackerSiteOverrides.TIK.Asian
 	}
-	if meta.ProviderMetadata.TMDB == nil {
+	var originalLanguage string
+	switch {
+	case meta.EffectiveMetadata.OriginalLanguageProvenance.IsManual():
+		originalLanguage = meta.EffectiveMetadata.OriginalLanguage
+		if normalized := languageutil.NormalizeLanguageCode(originalLanguage); normalized != "" {
+			originalLanguage = normalized
+		}
+	case meta.ProviderMetadata.TMDB == nil:
 		return false
+	default:
+		originalLanguage = meta.ProviderMetadata.TMDB.OriginalLanguage
 	}
-	for _, country := range meta.ProviderMetadata.TMDB.OriginCountry {
-		if map[string]bool{
-			"JP": true,
-			"KR": true,
-			"CN": true,
-			"HK": true,
-			"TW": true,
-			"TH": true,
-			"VN": true,
-			"IN": true,
-			"ID": true,
-			"MY": true,
-			"PH": true,
-			"SG": true,
-		}[strings.ToUpper(strings.TrimSpace(country))] {
-			return true
+	if meta.ProviderMetadata.TMDB != nil {
+		for _, country := range meta.ProviderMetadata.TMDB.OriginCountry {
+			if map[string]bool{
+				"JP": true,
+				"KR": true,
+				"CN": true,
+				"HK": true,
+				"TW": true,
+				"TH": true,
+				"VN": true,
+				"IN": true,
+				"ID": true,
+				"MY": true,
+				"PH": true,
+				"SG": true,
+			}[strings.ToUpper(strings.TrimSpace(country))] {
+				return true
+			}
 		}
 	}
 	return map[string]bool{
@@ -154,5 +176,5 @@ func isAsian(meta api.UploadSubject) bool {
 		"ml": true,
 		"id": true,
 		"ms": true,
-	}[strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalLanguage))]
+	}[strings.ToLower(strings.TrimSpace(originalLanguage))]
 }

@@ -67,10 +67,10 @@ function Get-CaseIdentityOverrides($Case) {
   $identity = @{}
   if (-not $Case.Contains('metadata_ids')) { return $identity }
   if ($Case.metadata_ids -isnot [System.Collections.IDictionary]) { throw 'corpus_metadata_ids_invalid' }
-  $fields = @{ imdb = 'IMDBID'; tmdb = 'TMDBID'; tvdb = 'TVDBID'; tvmaze = 'TVmazeID' }
+  $fields = @{ imdb = 'IMDBID'; tmdb = 'TMDBID'; tvdb = 'TVDBID'; tvmaze = 'TVmazeID'; mal = 'MALID' }
   foreach ($provider in $Case.metadata_ids.Keys) {
     $value = $Case.metadata_ids[$provider]
-    if ($provider -cnotin @('imdb', 'tmdb', 'tvdb', 'tvmaze') -or
+    if ($provider -cnotin @('imdb', 'tmdb', 'tvdb', 'tvmaze', 'mal') -or
         ($value -isnot [int] -and $value -isnot [long]) -or $value -le 0 -or $value -gt [int]::MaxValue) {
       throw 'corpus_metadata_ids_invalid'
     }
@@ -81,12 +81,46 @@ function Get-CaseIdentityOverrides($Case) {
 
 function Get-CaseIdentityCLIArguments($Case) {
   $null = Get-CaseIdentityOverrides $Case
-  foreach ($provider in @('imdb', 'tmdb', 'tvdb', 'tvmaze')) {
+  foreach ($provider in @('imdb', 'tmdb', 'tvdb', 'tvmaze', 'mal')) {
     if ($Case.metadata_ids -and $Case.metadata_ids.Contains($provider)) {
       "--$provider"
       [string]$Case.metadata_ids[$provider]
     }
   }
+}
+
+function Get-CaseSourceCLIArguments($Case) {
+  $instructions = Get-CaseSourceLookupInstructions $Case
+  if ($instructions.Contains('SourceLookup')) {
+    '--source-lookup'
+    [string]$instructions.SourceLookup
+  }
+  if (-not $instructions.Contains('TrackerIDs')) { return }
+  $supported = @('PTP', 'BLU', 'AITHER', 'LST', 'OE', 'HDB', 'BTN', 'BHD', 'ULCX')
+  foreach ($tracker in $instructions.TrackerIDs.Keys | Sort-Object) {
+    if ($tracker -cnotin $supported) { throw 'cli_tracker_id_not_representable' }
+    '--' + $tracker.ToLowerInvariant()
+    [string]$instructions.TrackerIDs[$tracker]
+  }
+}
+
+function Get-CaseSourceLookupInstructions($Case) {
+  $instructions = @{}
+  if ($Case.Contains('source_lookup')) {
+    if ($Case.source_lookup -isnot [string] -or [string]::IsNullOrWhiteSpace($Case.source_lookup)) { throw 'corpus_source_lookup_invalid' }
+    $instructions.SourceLookup = $Case.source_lookup.Trim()
+  }
+  if ($Case.Contains('tracker_ids')) {
+    if ($Case.tracker_ids -isnot [System.Collections.IDictionary] -or $Case.tracker_ids.Count -eq 0) { throw 'corpus_tracker_ids_invalid' }
+    $ids = @{}
+    foreach ($tracker in $Case.tracker_ids.Keys) {
+      $id = $Case.tracker_ids[$tracker]
+      if ($tracker -cnotmatch '^[A-Za-z0-9]+$' -or $id -isnot [string] -or [string]::IsNullOrWhiteSpace($id)) { throw 'corpus_tracker_ids_invalid' }
+      $ids[$tracker.ToUpperInvariant()] = $id.Trim()
+    }
+    $instructions.TrackerIDs = $ids
+  }
+  $instructions
 }
 
 function Read-Corpus([string]$Path, [string[]]$Selected) {
@@ -97,6 +131,7 @@ function Read-Corpus([string]$Path, [string[]]$Selected) {
     if ($entry.case_id -cnotmatch '^[A-Z0-9]+(?:-[A-Z0-9]+)*$' -or $known.ContainsKey($entry.case_id)) { throw 'corpus_case_id_invalid' }
     if ($entry.input_shape -notin @('file', 'disc-directory', 'episode-directory') -or -not $entry.fingerprint) { throw 'corpus_case_schema_invalid' }
     $null = Get-CaseIdentityOverrides $entry
+    $null = Get-CaseSourceLookupInstructions $entry
     $null = @(Get-CaseBDMVPlaylists $entry)
     $known[$entry.case_id] = $entry
   }
@@ -131,7 +166,7 @@ function Read-Corpus([string]$Path, [string[]]$Selected) {
   }
 }
 
-function Start-OwnedProcess([string]$File, [string[]]$Arguments, [string]$LogBase, [hashtable]$Environment = @{}) {
+function Start-OwnedProcess([string]$File, [string[]]$Arguments, [string]$LogBase, [hashtable]$Environment = @{}, [switch]$CloseInput) {
   $info = [Diagnostics.ProcessStartInfo]::new()
   $info.FileName = $File
   $info.WorkingDirectory = $script:RepoRoot
@@ -139,6 +174,7 @@ function Start-OwnedProcess([string]$File, [string[]]$Arguments, [string]$LogBas
   $info.CreateNoWindow = $true
   $info.RedirectStandardOutput = $true
   $info.RedirectStandardError = $true
+  $info.RedirectStandardInput = $CloseInput
   if ([IO.Path]::GetExtension($File) -in @('.cmd', '.bat')) {
     # PowerShell quotes each token before invoking a package-manager command shim.
     $tokens = @($File) + @($Arguments) | ForEach-Object { "'" + $_.Replace("'", "''") + "'" }
@@ -157,6 +193,7 @@ function Start-OwnedProcess([string]$File, [string[]]$Arguments, [string]$LogBas
   $errFile = [IO.File]::Create("$LogBase.stderr.private.log")
   try {
     if (-not $child.Start()) { throw 'child_start_failed' }
+    if ($CloseInput) { $child.StandardInput.Close() }
     @{
       process = $child; outFile = $outFile; errFile = $errFile
       outTask = $child.StandardOutput.BaseStream.CopyToAsync($outFile)
@@ -224,9 +261,12 @@ function Invoke-LiveAPI([string]$Method, $Body = @{}, [switch]$Poll, [int]$Expec
     if ($response.StatusCode -eq 429 -or $response.StatusCode -ge 500) { $script:RemoteStop = $true }
     # Keep only fixed local API errors; response bodies may contain private data.
     $errorCode = 'unclassified'
+    $failureCode = 'unclassified'
+    $recovery = 'unclassified'
     try {
       if ($response.Content -is [string] -and $response.Content.Length -le 4096) {
-        $errorMessage = ($response.Content | ConvertFrom-Json -AsHashtable -ErrorAction Stop).error
+        $errorPayload = $response.Content | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+        $errorMessage = $errorPayload.error
         if ($errorMessage -is [string]) {
           $errorCode = switch -CaseSensitive ($errorMessage) {
             'rate limit exceeded' { 'rate_limit_exceeded' }
@@ -235,9 +275,15 @@ function Invoke-LiveAPI([string]$Method, $Body = @{}, [switch]$Poll, [int]$Expec
             default { 'unclassified' }
           }
         }
+        if ($errorPayload.failure -is [System.Collections.IDictionary]) {
+          $structuredCode = $(if ($errorPayload.failure.Contains('code')) { $errorPayload.failure.code } else { $errorPayload.failure.Code })
+          $structuredRecovery = $(if ($errorPayload.failure.Contains('recovery')) { $errorPayload.failure.recovery } else { $errorPayload.failure.Recovery })
+          if ($structuredCode -is [string] -and $structuredCode -cmatch '^[a-z_]{1,80}$') { $failureCode = $structuredCode }
+          if ($structuredRecovery -is [string] -and $structuredRecovery -cmatch '^[a-z_]{1,80}$') { $recovery = $structuredRecovery }
+        }
       }
     } catch { }
-    $diagnostic = @{ method = $(if ($Method -cmatch '^[A-Za-z]{1,80}$') { $Method } else { 'unknown' }); status = [int]$response.StatusCode; expectedStatus = $ExpectedStatus; errorCode = $errorCode }
+    $diagnostic = @{ method = $(if ($Method -cmatch '^[A-Za-z]{1,80}$') { $Method } else { 'unknown' }); status = [int]$response.StatusCode; expectedStatus = $ExpectedStatus; errorCode = $errorCode; failureCode = $failureCode; recovery = $recovery }
     [IO.File]::AppendAllText((Join-Path $script:RunDir 'api-errors.private.jsonl'), (ConvertTo-Json $diagnostic -Compress) + "`n")
     throw 'api_request_failed'
   }
@@ -299,7 +345,7 @@ function Start-VerifiedServer($Profile) {
   } catch { Stop-OwnedProcess $handle; throw }
 }
 
-function Invoke-BrowserCheck([ValidateSet('local', 'hosted', 'restart')][string]$Phase = 'local') {
+function Invoke-BrowserCheck([ValidateSet('local', 'hosted', 'restart', 'input', 'input-restart')][string]$Phase = 'local') {
   $name = $(if ($Phase -eq 'local') { 'browser' } else { "browser-$Phase" })
   $receiptPath = Join-Path $script:RunDir "$name-results.json"
   $requestsPath = Join-Path $script:RunDir "$name-requests.private.json"
@@ -436,12 +482,17 @@ function Get-LiveFailureCodes($Current) {
 }
 
 function Record-Stage($Lane, $Current, [string]$Goal) {
-  $field = @{ prepared = 'release'; trackers_assessed = 'preflight'; duplicates_decided = 'dupes'; media_ready = 'media'; descriptions_ready = 'descriptions'; dry_run = 'dryRun' }[$Goal]
+  $field = @{ prepared = 'release'; input_ready = 'inputReadiness'; trackers_assessed = 'preflight'; duplicates_decided = 'dupes'; media_ready = 'media'; descriptions_ready = 'descriptions'; dry_run = 'dryRun' }[$Goal]
   $value = $Current[$field]
   $actions = @(Get-PendingActions $Current)
+  $blockingInputFields = @()
+  if ($Goal -eq 'input_ready') {
+    $blockingInputFields = @($value.fields | Where-Object { $_.status -in @('missing', 'invalid') -and $_.disposition -ne 'advisory' })
+  }
   $status = 'inconclusive'; $reason = 'stage_result_missing'
   if ($actions.Count -gt 0) { $status = 'needs_input'; $reason = 'typed_action_required' }
-  elseif ($value -and ($Goal -eq 'prepared' -or $value.status -in @('succeeded', 'completed', 'ready'))) { $status = 'pass'; $reason = 'retained_stage_succeeded' }
+  elseif ($Goal -eq 'input_ready' -and $blockingInputFields.Count -gt 0) { $status = 'blocked'; $reason = 'input_readiness_incomplete' }
+  elseif ($value -and (($Goal -eq 'prepared') -or $value.status -in @('succeeded', 'completed', 'ready'))) { $status = 'pass'; $reason = 'retained_stage_succeeded' }
   elseif ($Current.operation.status -eq 'failed') { $status = 'fail'; $reason = 'workflow_operation_failed' }
   elseif ($value.status -in @('failed', 'blocked', 'partial', 'needs_input') -or $Current.continuation.disposition -in @('failed', 'needs_action', 'partial', 'canceled')) { $status = 'blocked'; $reason = 'workflow_stage_blocked' }
   elseif ($Goal -in @('media_ready', 'descriptions_ready') -and $value.status -eq 'skipped') { $status = 'pass'; $reason = 'retained_stage_not_required' }
@@ -450,14 +501,15 @@ function Record-Stage($Lane, $Current, [string]$Goal) {
   $failureCodes = @(Get-LiveFailureCodes $Current)
   if ($Current.selection -and (ConvertTo-Json -InputObject @($Current.selection.trackerIds) -Compress) -cne (ConvertTo-Json -InputObject @($Lane.trackerIds) -Compress)) { throw 'tracker_selection_changed' }
   if ($Goal -eq 'dry_run' -and $value -and $value.noSeed -ne $true) { $status = 'fail'; $reason = 'dry_run_no_seed_not_locked' }
-  if ($Goal -eq 'prepared' -and $status -eq 'pass') {
+  if ($Goal -in @('prepared', 'input_ready') -and $status -eq 'pass') {
+    $prepared = $(if ($Goal -eq 'input_ready') { $Current.release } else { $value })
     foreach ($field in $Lane.expectedIdentity.Keys) {
-      if ($value.release.Identity.$field -ne $Lane.expectedIdentity[$field]) {
+      if ($prepared.release.Identity.$field -ne $Lane.expectedIdentity[$field]) {
         $status = 'fail'; $reason = 'metadata_identity_mismatch'
       }
     }
     if ($Lane.expectedPlaylists -and
-        (@($value.release.Source.SelectedPlaylists | ForEach-Object {
+        (@($prepared.release.Source.SelectedPlaylists | ForEach-Object {
           $file = ([string]$_.file).ToUpperInvariant()
           if ($Lane.expectedPlaylists[0].Contains(':')) { ([string]$_.discId) + ':' + $file } else { $file }
         }) -join ',') -cne ($Lane.expectedPlaylists -join ',')) {
@@ -479,6 +531,47 @@ function Record-Stage($Lane, $Current, [string]$Goal) {
   Add-Result $Lane.caseId $Lane.laneId $Goal $status $reason @{ failureCodes = $failureCodes; trackerCount = @($Lane.trackerIds).Count; trackers = $trackers; duplicateSearches = $duplicateSearches; sat = $Lane.sat; requiredActionCount = $actions.Count; artifacts = @($Current.media.artifacts | Where-Object kind -EQ 'screenshot').Count }
   Save-Feedback $Lane $Current $Goal
   $status
+}
+
+function Assert-InputOnlyBoundary($Lane, $Current) {
+  if (-not $Current.release -or -not $Current.inputReadiness) { throw 'input_readiness_snapshot_missing' }
+  if (-not $Current.workflow.release -or $Current.workflow.release.id -cne $Current.release.id -or $Current.workflow.release.revision -ne $Current.release.revision) { throw 'input_release_ref_mismatch' }
+  if (-not $Current.factInstructions -or -not $Current.workflow.factInstructions -or $Current.workflow.factInstructions.id -cne $Current.factInstructions.id -or $Current.workflow.factInstructions.revision -ne $Current.factInstructions.revision) { throw 'input_fact_instructions_ref_mismatch' }
+  if (-not $Current.workflow.inputReadiness -or $Current.workflow.inputReadiness.id -cne $Current.inputReadiness.id -or $Current.workflow.inputReadiness.revision -ne $Current.inputReadiness.revision) { throw 'input_readiness_ref_mismatch' }
+  $selectedTrackerIDs = @($Current.inputReadiness.selectedTrackerIds | Sort-Object -CaseSensitive)
+  $expectedTrackerIDs = @($Lane.trackerIds | Sort-Object -CaseSensitive)
+  if ((ConvertTo-Json -InputObject $selectedTrackerIDs -Compress) -cne (ConvertTo-Json -InputObject $expectedTrackerIDs -Compress)) { throw 'input_tracker_requirements_changed' }
+  $currentStageNames = @('projections', 'preflight', 'dupes', 'media', 'descriptions', 'dryRun', 'uploadResult')
+  $workflowStageNames = @('trackerProjections', 'trackerPreflight', 'dupes', 'media', 'descriptions', 'dryRun', 'uploadResult')
+  $currentStageRefs = @($currentStageNames | Where-Object { $Current[$_] })
+  $workflowStageRefs = @($workflowStageNames | Where-Object { $Current.workflow[$_] })
+  if ($currentStageRefs.Count -gt 0) { throw 'input_only_boundary_crossed' }
+  if ($workflowStageRefs.Count -gt 0) { throw 'input_only_workflow_ref_crossed' }
+  $operationJournal = $null
+  if ($Current.operation) {
+    $operationJournal = [ordered]@{
+      operationId = [string]$Current.operation.id; status = [string]$Current.operation.status
+      eventCount = @($Current.operation.events).Count
+    }
+  }
+  Add-Result $Lane.caseId $Lane.laneId 'input_operation_receipt' 'pass' 'input_refs_bound_no_downstream_stage_refs' @{
+    refs = [ordered]@{
+      release = [ordered]@{ id = [string]$Current.release.id; revision = [uint64]$Current.release.revision }
+      factInstructions = [ordered]@{ id = [string]$Current.factInstructions.id; revision = [uint64]$Current.factInstructions.revision }
+      inputReadiness = [ordered]@{ id = [string]$Current.inputReadiness.id; revision = [uint64]$Current.inputReadiness.revision }
+    }
+    observed = [ordered]@{
+      currentDownstreamStageRefs = $currentStageRefs; workflowDownstreamStageRefs = $workflowStageRefs
+      workflowOperationJournal = $operationJournal
+    }
+    configured = [ordered]@{ clientSearchSkip = [bool]$Lane.preparation.Search.Skip }
+    correctionRevision = [uint64]$Current.inputReadiness.correctionRevision
+    workflowRevision = [uint64]$Current.workflow.revision; readinessFieldCount = @($Current.inputReadiness.fields).Count
+    selectedTrackerCount = @($Lane.trackerIds).Count
+  }
+  foreach ($stage in @('trackers_assessed', 'duplicates_decided', 'media_ready', 'image_host', 'descriptions_ready', 'dry_run', 'uploaded', 'client_write')) {
+    Add-Result $Lane.caseId $Lane.laneId $stage 'not_applicable' 'input_only_scope'
+  }
 }
 
 function Continue-Lane($Lane, [string]$Goal, $Current, $Intent, $Answers = @()) {
@@ -540,6 +633,11 @@ function Continue-Lane($Lane, [string]$Goal, $Current, $Intent, $Answers = @()) 
 }
 
 function Resume-Lane($Lane, $Current, [string]$CompletedGoal) {
+  if ($script:Run.suite -eq 'Input') {
+    if ($CompletedGoal -ne 'input_ready') { throw 'input_resume_goal_invalid' }
+    Assert-InputOnlyBoundary $Lane $Current
+    return $Current
+  }
   $goals = @('prepared', 'trackers_assessed', 'duplicates_decided', 'media_ready')
   if ($script:Run.suite -eq 'Dupe') { $goals = @('prepared', 'trackers_assessed', 'duplicates_decided') }
   $start = [array]::IndexOf($goals, $CompletedGoal)
@@ -569,6 +667,10 @@ function Stop-RecordedServer([string]$Directory) {
 }
 
 function Get-LiveRestartLane {
+  if ($script:Run.suite -eq 'Input') {
+    $passed = @($script:Results | Where-Object { $_.stage -eq 'input_ready' -and $_.status -eq 'pass' } | Select-Object -ExpandProperty laneId -Unique)
+    return $script:Lanes | Where-Object { $_.workflowId -and $_.laneId -cin $passed } | Select-Object -First 1
+  }
   foreach ($stage in @('image_host', 'media_ready')) {
     $passed = @($script:Results | Where-Object { $_.stage -eq $stage -and $_.status -eq 'pass' } | Select-Object -ExpandProperty laneId -Unique)
     $eligible = @($script:Lanes | Where-Object { $_.workflowId -and $_.laneId -cin $passed } | Select-Object -First 1)

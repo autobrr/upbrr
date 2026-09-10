@@ -77,6 +77,82 @@ func TestOTWValidationPolicyVersion(t *testing.T) {
 	}
 }
 
+func TestOTWNamingValidationUsesEffectiveMetadata(t *testing.T) {
+	t.Parallel()
+
+	subject := otwPassingSubject()
+	subject.EffectiveMetadata = api.EffectiveMetadata{
+		TitleProvenance: api.FactProvenanceManualEmpty,
+		YearProvenance:  api.FactProvenanceManualEmpty,
+	}
+	failures, err := ValidationPolicy().Check(context.Background(), subject, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("validate manual-empty OTW subject: %v", err)
+	}
+	requireOTWValidationFailure(
+		t,
+		failures,
+		"otw_naming_metadata",
+		api.RuleDispositionStrict,
+		api.MetadataEvidenceStatusComplete,
+	)
+
+	subject.EffectiveMetadata = api.EffectiveMetadata{
+		Title:           "Manual Release",
+		TitleProvenance: api.FactProvenanceManual,
+		Year:            2001,
+		YearProvenance:  api.FactProvenanceManual,
+	}
+	failures, err = ValidationPolicy().Check(context.Background(), subject, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("validate manual OTW subject: %v", err)
+	}
+	if len(failures) != 0 {
+		t.Fatalf("manual OTW metadata failures = %#v", failures)
+	}
+}
+
+func TestOTWNamingFallbackRetainsManualMetadataAuthority(t *testing.T) {
+	t.Parallel()
+
+	subject := otwPassingSubject()
+	subject.Identity.TMDBID = 0
+	subject.ProviderMetadata.TMDB = nil
+	subject.ProviderMetadata.ProviderAvailability = []api.ProviderAvailabilityEvidence{{
+		Provider: api.IdentityProviderTMDB,
+		Status:   api.ProviderAvailabilityStatusNotFound,
+		Source:   "tmdb_find/v1",
+	}}
+	subject.EffectiveMetadata = api.EffectiveMetadata{
+		TitleProvenance: api.FactProvenanceManualEmpty,
+		YearProvenance:  api.FactProvenanceManualEmpty,
+	}
+
+	failures, err := ValidationPolicy().Check(context.Background(), subject, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("validate manual-empty OTW fallback subject: %v", err)
+	}
+	requireOTWValidationFailure(
+		t,
+		failures,
+		"otw_naming_metadata",
+		api.RuleDispositionStrict,
+		api.MetadataEvidenceStatusComplete,
+	)
+
+	subject.EffectiveMetadata = api.EffectiveMetadata{
+		Title:           "Manual Release",
+		TitleProvenance: api.FactProvenanceManual,
+	}
+	failures, err = ValidationPolicy().Check(context.Background(), subject, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("validate manual-title OTW fallback subject: %v", err)
+	}
+	if hasOTWValidationRule(failures, "otw_naming_metadata") {
+		t.Fatalf("manual-title OTW fallback kept naming failure: %#v", failures)
+	}
+}
+
 func otwPassingSubject() api.TrackerValidationSubject {
 	const sourcePath = "Example.Release.2026.1080p.WEB-DL-GRP"
 	return api.TrackerValidationSubject{
@@ -127,4 +203,13 @@ func requireOTWValidationFailure(
 		}
 	}
 	t.Fatalf("missing failure rule=%s disposition=%s status=%s in %#v", rule, disposition, status, failures)
+}
+
+func hasOTWValidationRule(failures []api.RuleFailure, rule string) bool {
+	for _, failure := range failures {
+		if failure.Rule == rule {
+			return true
+		}
+	}
+	return false
 }

@@ -417,6 +417,7 @@ func reduceWorkflowOutcome(
 func projectAvailableGoals(current CommandResult) []api.GoalAvailability {
 	goals := []api.WorkflowGoal{
 		api.WorkflowGoalPrepared,
+		api.WorkflowGoalInputReady,
 		api.WorkflowGoalTrackersAssessed,
 		api.WorkflowGoalDuplicatesDecided,
 		api.WorkflowGoalMediaReady,
@@ -450,6 +451,11 @@ func goalAvailability(current CommandResult, goal api.WorkflowGoal) (bool, strin
 	}
 	switch goal {
 	case api.WorkflowGoalPrepared:
+		return true, goalReasonAvailable, ""
+	case api.WorkflowGoalInputReady:
+		if current.Release == nil {
+			return false, goalReasonPreparationRequired, "Prepare a release first."
+		}
 		return true, goalReasonAvailable, ""
 	case api.WorkflowGoalTrackersAssessed:
 		if current.Release == nil {

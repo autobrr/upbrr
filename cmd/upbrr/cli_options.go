@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,111 +18,128 @@ import (
 	"github.com/spf13/pflag"
 
 	imagehostpolicy "github.com/autobrr/upbrr/internal/imagehosting/policy"
+	"github.com/autobrr/upbrr/internal/languageutil"
 	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 type cliOptions struct {
-	LiveTestMaxImages     int
-	LiveTest              bool
-	ConfigPath            string
-	ShowVersion           bool
-	QueueName             string
-	LimitQueue            int
-	SiteCheck             bool
-	SiteUpload            string
-	Trackers              string
-	TrackersRemove        string
-	Debug                 bool
-	LogLevel              string
-	ConsoleLogLevel       string
-	Screens               int
-	NoSeed                bool
-	SkipAutoTorrent       bool
-	KeepFolder            bool
-	OnlyID                bool
-	UploadOnly            bool
-	Category              string
-	Type                  string
-	Source                string
-	Resolution            string
-	Tag                   string
-	Service               string
-	Distributor           string
-	OriginalLanguage      string
-	Edition               string
-	Season                string
-	Episode               string
-	EpisodeTitle          string
-	ManualYear            int
-	ManualDate            string
-	NoSeason              bool
-	NoYear                bool
-	NoAKA                 bool
-	NoTag                 bool
-	NoEpisodeTitle        bool
-	NoDistributor         bool
-	NoEdition             bool
-	NoDub                 bool
-	NoDual                bool
-	DualAudio             bool
-	Region                string
-	CreateAuth            bool
-	ExportConfigPath      string
-	ExportConfigPlaintext bool
-	ImportConfigPath      string
-	DeleteTmp             bool
-	Cleanup               bool
-	TMDB                  string
-	TVDB                  string
-	TVmaze                string
-	IMDb                  string
-	MAL                   string
-	Unattended            bool
-	UnattendedConfirm     bool
-	SkipDupeCheck         bool
-	SkipDupeAsActual      bool
-	DoubleDupeCheck       bool
-	Commentary            bool
-	PersonalRelease       bool
-	StreamOptimized       bool
-	WebDV                 bool
-	ConfirmBDMVRescan     bool
-	NotAnime              bool
-	Anon                  bool
-	Draft                 bool
-	ModQ                  bool
-	Channel               string
-	PTP                   string
-	BLU                   string
-	Aither                string
-	LST                   string
-	OE                    string
-	HDB                   string
-	BTN                   string
-	BHD                   string
-	ULCX                  string
-	DescriptionFile       string
-	DescriptionLink       string
-	Client                string
-	QbitTag               string
-	QbitCategory          string
-	ForceRecheck          bool
-	Foreign               bool
-	Opera                 bool
-	Asian                 bool
-	DiscType              string
-	ImageHost             string
-	SkipImageUpload       bool
-	ManualFrames          string
-	Comparison            string
-	ComparisonIndex       int
-	MenuImages            string
-	GetDVDMenus           bool
-	InfoHash              string
-	MaxPieceSize          int
-	NoHash                bool
-	Rehash                bool
+	LiveTestMaxImages          int
+	LiveTest                   bool
+	ConfigPath                 string
+	ShowVersion                bool
+	QueueName                  string
+	LimitQueue                 int
+	SiteCheck                  bool
+	SiteUpload                 string
+	Trackers                   string
+	TrackersRemove             string
+	Debug                      bool
+	LogLevel                   string
+	ConsoleLogLevel            string
+	Screens                    int
+	NoSeed                     bool
+	SkipAutoTorrent            bool
+	KeepFolder                 bool
+	OnlyID                     bool
+	UploadOnly                 bool
+	Category                   string
+	Type                       string
+	Source                     string
+	SourceLookup               string
+	Resolution                 string
+	Tag                        string
+	Service                    string
+	Distributor                string
+	OriginalLanguage           string
+	Edition                    string
+	Season                     string
+	Episode                    string
+	EpisodeTitle               string
+	ManualYear                 int
+	ManualDate                 string
+	NoSeason                   bool
+	NoYear                     bool
+	NoAKA                      bool
+	NoTag                      bool
+	NoEpisodeTitle             bool
+	NoDistributor              bool
+	NoEdition                  bool
+	NoDub                      bool
+	NoDual                     bool
+	DualAudio                  bool
+	Region                     string
+	CreateAuth                 bool
+	ExportConfigPath           string
+	ExportConfigPlaintext      bool
+	ImportConfigPath           string
+	DeleteTmp                  bool
+	Cleanup                    bool
+	TMDB                       string
+	TVDB                       string
+	TVmaze                     string
+	IMDb                       string
+	MAL                        string
+	Unattended                 bool
+	UnattendedConfirm          bool
+	SkipDupeCheck              bool
+	SkipDupeAsActual           bool
+	DoubleDupeCheck            bool
+	Commentary                 bool
+	PersonalRelease            bool
+	StreamOptimized            bool
+	WebDV                      bool
+	ConfirmBDMVRescan          bool
+	NotAnime                   bool
+	Anime                      bool
+	UseSeasonEpisode           bool
+	InputOnly                  bool
+	Title                      string
+	AlternateTitle             string
+	OriginalTitle              string
+	Genres                     string
+	AudioLanguages             string
+	SubtitleLanguages          string
+	HardcodedSubtitleLanguages string
+	HardcodedSubs              bool
+	TrackLanguages             []string
+	ResetInput                 []string
+	ConfirmInput               []string
+	TrackerInput               []string
+	Anon                       bool
+	Draft                      bool
+	ModQ                       bool
+	Channel                    string
+	PTP                        string
+	BLU                        string
+	Aither                     string
+	LST                        string
+	OE                         string
+	HDB                        string
+	BTN                        string
+	BHD                        string
+	ULCX                       string
+	DescriptionFile            string
+	DescriptionLink            string
+	Client                     string
+	QbitTag                    string
+	QbitCategory               string
+	ForceRecheck               bool
+	Foreign                    bool
+	Opera                      bool
+	Asian                      bool
+	DiscType                   string
+	ImageHost                  string
+	SkipImageUpload            bool
+	ManualFrames               string
+	Comparison                 string
+	ComparisonIndex            int
+	MenuImages                 string
+	GetDVDMenus                bool
+	InfoHash                   string
+	MaxPieceSize               int
+	NoHash                     bool
+	Rehash                     bool
 }
 
 type serveOptions struct {
@@ -287,6 +305,23 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.BoolVar(&opts.StreamOptimized, "stream", false, "Mark release as stream optimized")
 	fs.BoolVar(&opts.WebDV, "webdv", false, "Mark release as WEB-DV")
 	fs.BoolVar(&opts.NotAnime, "not-anime", false, "Force release to be treated as not anime")
+	fs.BoolVar(&opts.Anime, "anime", false, "Force release to be treated as anime")
+	fs.BoolVar(&opts.UseSeasonEpisode, "use-season-episode", false, "Use the explicit season and episode values")
+	fs.BoolVar(&opts.InputOnly, "input-only", false, "Prepare and evaluate local tracker input without remote tracker work")
+	fs.StringVar(&opts.SourceLookup, "source-lookup", "", "Use a tracker source URL for metadata lookup")
+	fs.StringVar(&opts.Title, "title", "", "Override title")
+	fs.StringVar(&opts.AlternateTitle, "alternate-title", "", "Override alternate title")
+	fs.StringVar(&opts.OriginalTitle, "original-title", "", "Override original title")
+	fs.StringVar(&opts.Genres, "genres", "", "Override genres (comma-separated)")
+	fs.StringVar(&opts.AudioLanguages, "audio-languages", "", "Override audio languages (comma-separated)")
+	fs.StringVar(&opts.SubtitleLanguages, "subtitle-languages", "", "Override subtitle languages (comma-separated)")
+	fs.StringVar(&opts.HardcodedSubtitleLanguages, "hardcoded-subtitle-languages", "", "Override hardcoded subtitle languages (comma-separated)")
+	fs.BoolVar(&opts.HardcodedSubs, "hardcoded-subs", false, "Mark release as containing hardcoded subtitles")
+	fs.BoolVar(&opts.HardcodedSubs, "hc", false, "Mark release as containing hardcoded subtitles")
+	fs.StringArrayVar(&opts.TrackLanguages, "track-languages", nil, "Override track languages as track-id=language[,language]")
+	fs.StringArrayVar(&opts.ResetInput, "reset-input", nil, "Reset a saved correction field or field:track-id")
+	fs.StringArrayVar(&opts.ConfirmInput, "confirm-input", nil, "Confirm a saved content correction field or field:track-id")
+	fs.StringArrayVar(&opts.TrackerInput, "tracker-input", nil, "Set tracker input as TRACKER:field=yes|no|auto")
 	fs.BoolVar(&opts.Anon, "a", false, "Upload anonymously")
 	fs.BoolVar(&opts.Anon, "anon", false, "Upload anonymously")
 	fs.BoolVar(&opts.Draft, "dr", false, "Send uploads to drafts where supported")
@@ -316,6 +351,9 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	}
 
 	visited := canonicalChangedFlags(fs, cliFlagAliases())
+	if err := validateCLIInputFlagOccurrences(fs, flagArgs); err != nil {
+		return cliOptions{}, nil, nil, err
+	}
 	if err := normalizeCLIOptions(&opts, visited); err != nil {
 		return cliOptions{}, nil, nil, err
 	}
@@ -355,6 +393,9 @@ func normalizeCLIOptions(opts *cliOptions, visited map[string]bool) error {
 	}
 	if visited["nohash"] && visited["rehash"] {
 		return errors.New("nohash and rehash cannot be used together")
+	}
+	if visited["anime"] && visited["not-anime"] {
+		return errors.New("anime and not-anime cannot be used together")
 	}
 	if visited["manual_frames"] {
 		if _, err := parseManualFrames(opts.ManualFrames); err != nil {
@@ -413,6 +454,18 @@ func normalizeCLIOptions(opts *cliOptions, visited map[string]bool) error {
 	}
 	if _, err := buildExternalIDOverrides(*opts, visited); err != nil {
 		return err
+	}
+	if _, err := buildCLITrackerInput(opts.TrackerInput); err != nil {
+		return err
+	}
+	if err := validateCLITrackLanguageInputs(opts.TrackLanguages); err != nil {
+		return err
+	}
+	if _, err := buildCLIInputCorrectionPatch(*opts, visited, nil); err != nil {
+		return err
+	}
+	if len(opts.TrackerInput) > 0 && hasCLIInputCorrections(visited) {
+		return errors.New("tracker-input cannot be combined with release corrections")
 	}
 	return nil
 }
@@ -577,6 +630,7 @@ func cliFlagAliases() map[string]string {
 		"dr":                   "draft",
 		"mq":                   "modq",
 		"ch":                   "channel",
+		"hc":                   "hardcoded-subs",
 	}
 }
 
@@ -691,20 +745,34 @@ func cliHelpSections(name string) []helpSection {
 		{title: "Config", names: []string{"config", "export-config", "export-config-plaintext", "import-config", "create-auth"}},
 		{title: "Application", names: []string{"version", "cleanup"}},
 		{title: "Execution", names: []string{
-			"queue", "limit-queue", "site-check", "site-upload", "debug", "live-test", "live-test-max-images", "log-level", "console-log-level", "upload-only",
-			"delete-tmp", "unattended", "unattended_confirm",
+			"queue",
+			"limit-queue",
+			"site-check",
+			"site-upload",
+			"debug",
+			"live-test",
+			"live-test-max-images",
+			"log-level",
+			"console-log-level",
+			"upload-only",
+			"input-only",
+			"delete-tmp",
+			"unattended",
+			"unattended_confirm",
 		}},
 		{title: "Tracker Selection", names: []string{"trackers", "trackers-remove"}},
 		{title: "Tracker IDs", names: []string{"ptp", "blu", "aither", "lst", "oe", "hdb", "btn", "bhd", "ulcx"}},
 		{title: "Release Overrides", names: []string{
 			"category", "type", "source", "resolution", "tag", "service", "distributor", "original-language",
-			"edition", "season", "episode", "episode-title", "manual-year", "daily", "region", "no-season", "no-year",
+			"edition", "season", "episode", "episode-title", "manual-year", "daily", "region", "use-season-episode", "no-season", "no-year",
 			"no-aka", "no-tag", "no-episode-title", "no-distributor", "no-edition", "no-dub", "no-dual", "dual-audio",
+			"title", "alternate-title", "original-title", "genres", "audio-languages", "subtitle-languages", "hardcoded-subs", "hardcoded-subtitle-languages",
 		}},
+		{title: "Input Corrections", names: []string{"source-lookup", "track-languages", "reset-input", "confirm-input", "tracker-input"}},
 		{title: "Metadata IDs", names: []string{"tmdb", "imdb", "mal", "tvdb", "tvmaze"}},
 		{title: "Tracker Overrides", names: []string{
 			"skip-dupe-check", "skip-dupe-asking", "double-dupe-check", "foreign", "opera", "asian", "disctype",
-			"commentary", "personalrelease", "stream", "webdv", "not-anime", "anon", "draft", "modq", "channel",
+			"commentary", "personalrelease", "stream", "webdv", "not-anime", "anime", "anon", "draft", "modq", "channel",
 		}},
 		{title: "Screenshots and Images", names: []string{
 			"screens", "manual_frames", "comparison", "comparison_index", "menu-images", "get-dvd-menus", "imghost", "skip-imagehost-upload",
@@ -804,7 +872,8 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, s
 		sourcePath = paths[0]
 	}
 	req := api.Request{
-		SourcePath: sourcePath,
+		SourcePath:      sourcePath,
+		SourceLookupURL: strings.TrimSpace(opts.SourceLookup),
 		Execution: api.ExecutionOptions{
 			QueueName:         strings.TrimSpace(opts.QueueName),
 			QueueLimit:        opts.LimitQueue,
@@ -824,42 +893,44 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, s
 			InteractionMode: opts.interactionMode(),
 		},
 		ReleaseNameOverrides: buildReleaseNameOverrides(visited, releaseOverrideInput{
-			Category:       opts.Category,
-			Type:           opts.Type,
-			Source:         opts.Source,
-			Resolution:     opts.Resolution,
-			Tag:            opts.Tag,
-			Service:        opts.Service,
-			Edition:        opts.Edition,
-			Season:         opts.Season,
-			Episode:        opts.Episode,
-			EpisodeTitle:   opts.EpisodeTitle,
-			ManualYear:     opts.ManualYear,
-			ManualDate:     opts.ManualDate,
-			NoSeason:       opts.NoSeason,
-			NoYear:         opts.NoYear,
-			NoAKA:          opts.NoAKA,
-			NoTag:          opts.NoTag,
-			NoEpisodeTitle: opts.NoEpisodeTitle,
-			NoDistributor:  opts.NoDistributor,
-			NoEdition:      opts.NoEdition,
-			NoDub:          opts.NoDub,
-			NoDual:         opts.NoDual,
-			DualAudio:      opts.DualAudio,
-			Region:         opts.Region,
+			Category:         opts.Category,
+			Type:             opts.Type,
+			Source:           opts.Source,
+			Resolution:       opts.Resolution,
+			Tag:              opts.Tag,
+			Service:          opts.Service,
+			Edition:          opts.Edition,
+			Season:           opts.Season,
+			Episode:          opts.Episode,
+			EpisodeTitle:     opts.EpisodeTitle,
+			ManualYear:       opts.ManualYear,
+			ManualDate:       opts.ManualDate,
+			UseSeasonEpisode: opts.UseSeasonEpisode,
+			NoSeason:         opts.NoSeason,
+			NoYear:           opts.NoYear,
+			NoAKA:            opts.NoAKA,
+			NoTag:            opts.NoTag,
+			NoEpisodeTitle:   opts.NoEpisodeTitle,
+			NoDistributor:    opts.NoDistributor,
+			NoEdition:        opts.NoEdition,
+			NoDub:            opts.NoDub,
+			NoDual:           opts.NoDual,
+			DualAudio:        opts.DualAudio,
+			Region:           opts.Region,
 		}),
-		SkipDupeCheck:          opts.SkipDupeCheck,
-		SkipDupeAsActual:       opts.SkipDupeAsActual,
-		DoubleDupeCheck:        opts.DoubleDupeCheck,
-		DescriptionOverrideURL: strings.TrimSpace(opts.DescriptionLink),
-		MetadataOverrides:      buildMetadataOverrides(opts, visited),
-		TrackerConfigOverrides: buildTrackerConfigOverrides(opts, visited),
-		TrackerSiteOverrides:   buildTrackerSiteOverrides(opts, visited),
-		ClientOverrides:        buildClientOverrides(opts, visited),
-		ImageHostOverrides:     buildImageHostOverrides(opts, visited),
-		ScreenshotOverrides:    buildScreenshotOverrides(opts, visited),
-		TorrentOverrides:       buildTorrentOverrides(opts, visited),
-		ConfirmBDMVRescan:      opts.ConfirmBDMVRescan,
+		SkipDupeCheck:               opts.SkipDupeCheck,
+		SkipDupeAsActual:            opts.SkipDupeAsActual,
+		DoubleDupeCheck:             opts.DoubleDupeCheck,
+		DescriptionOverrideURL:      strings.TrimSpace(opts.DescriptionLink),
+		MetadataOverrides:           buildMetadataOverrides(opts, visited),
+		TrackerQuestionnaireAnswers: mustBuildCLITrackerInput(opts.TrackerInput),
+		TrackerConfigOverrides:      buildTrackerConfigOverrides(opts, visited),
+		TrackerSiteOverrides:        buildTrackerSiteOverrides(opts, visited),
+		ClientOverrides:             buildClientOverrides(opts, visited),
+		ImageHostOverrides:          buildImageHostOverrides(opts, visited),
+		ScreenshotOverrides:         buildScreenshotOverrides(opts, visited),
+		TorrentOverrides:            buildTorrentOverrides(opts, visited),
+		ConfirmBDMVRescan:           opts.ConfirmBDMVRescan,
 	}
 	if req.Execution.SiteUploadTracker != "" {
 		req.Trackers = []string{req.Execution.SiteUploadTracker}
@@ -918,7 +989,324 @@ func buildMetadataOverrides(opts cliOptions, visited map[string]bool) api.Metada
 	if visited["not-anime"] {
 		overrides.Anime = boolPtr(false)
 	}
+	if visited["anime"] {
+		overrides.Anime = boolPtr(opts.Anime)
+	}
+	if visited["title"] {
+		overrides.Title = stringPtr(opts.Title)
+	}
+	if visited["alternate-title"] {
+		overrides.AlternateTitle = stringPtr(opts.AlternateTitle)
+	}
+	if visited["original-title"] {
+		overrides.OriginalTitle = stringPtr(opts.OriginalTitle)
+	}
+	if visited["genres"] {
+		values := splitCSV(opts.Genres)
+		overrides.Genres = &values
+	}
+	if visited["audio-languages"] {
+		values := languageutil.NormalizeLanguageList([]string{opts.AudioLanguages})
+		overrides.AudioLanguages = &values
+	}
+	if visited["subtitle-languages"] {
+		values := languageutil.NormalizeLanguageList([]string{opts.SubtitleLanguages})
+		overrides.SubtitleLanguages = &values
+	}
+	if visited["hardcoded-subs"] {
+		overrides.HardcodedSubs = boolPtr(opts.HardcodedSubs)
+	}
+	if visited["hardcoded-subtitle-languages"] {
+		values := languageutil.NormalizeLanguageList([]string{opts.HardcodedSubtitleLanguages})
+		overrides.HardcodedSubtitleLanguages = &values
+	}
 	return overrides
+}
+
+func hasCLIInputCorrections(visited map[string]bool) bool {
+	for name, changed := range visited {
+		if changed && isCLIInputCorrectionFlag(name) {
+			return true
+		}
+	}
+	return false
+}
+
+func isCLIInputCorrectionFlag(name string) bool {
+	return slices.Contains([]string{
+		"tmdb", "imdb", "tvdb", "tvmaze", "mal", "category", "type", "source", "resolution", "tag", "service", "edition",
+		"season", "episode", "episode-title", "manual-year", "daily", "use-season-episode", "no-season", "no-year", "no-aka", "no-tag",
+		"no-episode-title", "no-distributor", "no-edition", "no-dub", "no-dual", "dual-audio", "region", "distributor",
+		"original-language", "commentary", "personalrelease", "stream", "webdv", "not-anime", "anime", "title", "alternate-title",
+		"original-title", "genres", "audio-languages", "subtitle-languages", "hardcoded-subs", "hardcoded-subtitle-languages",
+		"track-languages", "reset-input", "confirm-input",
+	}, name)
+}
+
+func validateCLIInputFlagOccurrences(fs *pflag.FlagSet, flagArgs []string) error {
+	aliases := cliFlagAliases()
+	seen := make(map[string]bool)
+	for i := 0; i < len(flagArgs); i++ {
+		name, _, _ := normalizeLegacyFlag(flagArgs[i])
+		flag := fs.Lookup(name)
+		if flag == nil {
+			continue
+		}
+		if canonical, exists := aliases[name]; exists {
+			name = canonical
+		}
+		if isCLIInputCorrectionFlag(name) && flag.Value.Type() != "stringArray" {
+			if seen[name] {
+				return fmt.Errorf("duplicate input correction flag --%s", name)
+			}
+			seen[name] = true
+		}
+		if !strings.Contains(flagArgs[i], "=") && !isBoolFlag(flag) {
+			i++
+		}
+	}
+	return nil
+}
+
+func mergeCLIInputEditArgs(currentArgs, editArgs []string) ([]string, error) {
+	_, changed, _, err := parseCLIOptions(editArgs)
+	if err != nil {
+		return nil, err
+	}
+	var opts cliOptions
+	fs := pflag.NewFlagSet("upbrr", pflag.ContinueOnError)
+	bindUploadFlags(fs, &opts)
+	flags, paths := partitionUploadArgs(fs, currentArgs)
+	aliases := cliFlagAliases()
+	merged := make([]string, 0, len(currentArgs)+len(editArgs)+1)
+	for i := 0; i < len(flags); i++ {
+		start := i
+		name, _, _ := normalizeLegacyFlag(flags[i])
+		flag := fs.Lookup(name)
+		if flag != nil && !strings.Contains(flags[i], "=") && !isBoolFlag(flag) {
+			i++
+		}
+		if canonical, exists := aliases[name]; exists {
+			name = canonical
+		}
+		if !changed[name] {
+			merged = append(merged, flags[start:i+1]...)
+		}
+	}
+	merged = append(merged, editArgs...)
+	merged = append(merged, "--")
+	return append(merged, paths...), nil
+}
+
+func mustBuildCLITrackerInput(values []string) map[string]map[string]string {
+	answers, err := buildCLITrackerInput(values)
+	if err != nil {
+		return nil
+	}
+	for _, fields := range answers {
+		for field, value := range fields {
+			if value == "auto" {
+				delete(fields, field)
+			}
+		}
+	}
+	return answers
+}
+
+func buildCLITrackerInput(values []string) (map[string]map[string]string, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	answers := make(map[string]map[string]string)
+	seen := make(map[string]struct{}, len(values))
+	for _, raw := range values {
+		trackerAndField, value, ok := strings.Cut(raw, "=")
+		if !ok {
+			return nil, fmt.Errorf("invalid tracker-input %q", raw)
+		}
+		tracker, field, ok := strings.Cut(strings.TrimSpace(trackerAndField), ":")
+		tracker = strings.ToUpper(strings.TrimSpace(tracker))
+		field = strings.TrimSpace(field)
+		if !ok || tracker == "" || field == "" {
+			return nil, fmt.Errorf("invalid tracker-input %q", raw)
+		}
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value != "yes" && value != "no" && value != "auto" {
+			return nil, fmt.Errorf("invalid tracker-input value %q", raw)
+		}
+		key := tracker + "\x00" + field
+		if _, duplicate := seen[key]; duplicate {
+			return nil, fmt.Errorf("duplicate tracker-input target %s:%s", tracker, field)
+		}
+		seen[key] = struct{}{}
+		if answers[tracker] == nil {
+			answers[tracker] = make(map[string]string)
+		}
+		answers[tracker][field] = value
+	}
+	return answers, nil
+}
+
+func buildCLIInputCorrectionPatch(opts cliOptions, visited map[string]bool, tracks []api.MediaTrackFacts) (*api.ReleaseCorrectionPatch, error) {
+	patch := api.ReleaseCorrectionPatch{}
+	seen := make(map[string]struct{})
+	for _, raw := range opts.ResetInput {
+		ref, err := parseCLIInputFieldRef(raw)
+		if err != nil {
+			return nil, err
+		}
+		key := string(ref.Field) + "\x00" + ref.TrackID
+		if _, duplicate := seen[key]; duplicate {
+			return nil, fmt.Errorf("duplicate input correction target %s", raw)
+		}
+		seen[key] = struct{}{}
+		patch.ResetFields = append(patch.ResetFields, ref)
+	}
+	for _, raw := range opts.ConfirmInput {
+		ref, err := parseCLIInputFieldRef(raw)
+		if err != nil {
+			return nil, err
+		}
+		key := string(ref.Field) + "\x00" + ref.TrackID
+		if _, duplicate := seen[key]; duplicate {
+			return nil, fmt.Errorf("duplicate input correction target %s", raw)
+		}
+		seen[key] = struct{}{}
+		patch.ConfirmFields = append(patch.ConfirmFields, ref)
+	}
+	if len(opts.TrackLanguages) > 0 && tracks != nil {
+		corrections, err := buildCLITrackLanguageCorrections(opts.TrackLanguages, tracks)
+		if err != nil {
+			return nil, err
+		}
+		patch.Values.Metadata.TrackLanguages = corrections
+		for _, correction := range corrections {
+			key := string(api.CorrectionFieldMetadataTrackLanguages) + "\x00" + correction.TrackID
+			if _, duplicate := seen[key]; duplicate {
+				return nil, fmt.Errorf("duplicate input correction target %s:%s", api.CorrectionFieldMetadataTrackLanguages, correction.TrackID)
+			}
+			seen[key] = struct{}{}
+		}
+	}
+	if len(patch.ResetFields) == 0 && len(patch.ConfirmFields) == 0 && len(patch.Values.Metadata.TrackLanguages) == 0 {
+		return nil, nil
+	}
+	if len(patch.ConfirmFields) > 0 {
+		patch.ExpectedRevision = new(uint64)
+	}
+	validation := patch
+	values, err := buildCLIInputCorrectionValues(opts, visited)
+	if err != nil {
+		return nil, err
+	}
+	validation.Values = values
+	if err := validation.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid input correction: %w", err)
+	}
+	return &patch, nil
+}
+
+func buildCLIInputCorrectionValues(opts cliOptions, visited map[string]bool) (api.ReleaseCorrectionValues, error) {
+	identity, err := buildExternalIDOverrides(opts, visited)
+	if err != nil {
+		return api.ReleaseCorrectionValues{}, err
+	}
+	releaseName := buildReleaseNameOverrides(visited, releaseOverrideInput{
+		Category:         opts.Category,
+		Type:             opts.Type,
+		Source:           opts.Source,
+		Resolution:       opts.Resolution,
+		Tag:              opts.Tag,
+		Service:          opts.Service,
+		Edition:          opts.Edition,
+		Season:           opts.Season,
+		Episode:          opts.Episode,
+		EpisodeTitle:     opts.EpisodeTitle,
+		ManualYear:       opts.ManualYear,
+		ManualDate:       opts.ManualDate,
+		UseSeasonEpisode: opts.UseSeasonEpisode,
+		NoSeason:         opts.NoSeason,
+		NoYear:           opts.NoYear,
+		NoAKA:            opts.NoAKA,
+		NoTag:            opts.NoTag,
+		NoEpisodeTitle:   opts.NoEpisodeTitle,
+		NoDistributor:    opts.NoDistributor,
+		NoEdition:        opts.NoEdition,
+		NoDub:            opts.NoDub,
+		NoDual:           opts.NoDual,
+		DualAudio:        opts.DualAudio,
+		Region:           opts.Region,
+	})
+	if visited["tmdb"] {
+		_, category, err := parseTMDBID(opts.TMDB)
+		if err != nil {
+			return api.ReleaseCorrectionValues{}, err
+		}
+		if category != "" {
+			releaseName.Category = stringPtr(category)
+		}
+	}
+	return api.ReleaseCorrectionValues{
+		Identity:    identity,
+		ReleaseName: releaseName,
+		Metadata:    buildMetadataOverrides(opts, visited),
+	}, nil
+}
+
+func parseCLIInputFieldRef(raw string) (api.CorrectionFieldRef, error) {
+	field, trackID, hasTrack := strings.Cut(strings.TrimSpace(raw), ":")
+	field = strings.TrimSpace(field)
+	trackID = strings.TrimSpace(trackID)
+	if field == "" || (hasTrack && trackID == "") {
+		return api.CorrectionFieldRef{}, fmt.Errorf("invalid input correction target %q", raw)
+	}
+	return api.CorrectionFieldRef{Field: api.CorrectionField(field), TrackID: trackID}, nil
+}
+
+func validateCLITrackLanguageInputs(values []string) error {
+	seen := make(map[string]struct{}, len(values))
+	for _, raw := range values {
+		trackID, _, ok := strings.Cut(raw, "=")
+		trackID = strings.TrimSpace(trackID)
+		if !ok || trackID == "" {
+			return fmt.Errorf("invalid track-languages %q", raw)
+		}
+		if _, duplicate := seen[trackID]; duplicate {
+			return fmt.Errorf("duplicate track-languages target %q", trackID)
+		}
+		seen[trackID] = struct{}{}
+	}
+	return nil
+}
+
+func buildCLITrackLanguageCorrections(values []string, inputTracks []api.MediaTrackFacts) ([]api.TrackLanguageCorrection, error) {
+	tracks := make(map[string]api.MediaTrackFacts, len(inputTracks))
+	for _, track := range inputTracks {
+		tracks[track.ID] = track
+	}
+	corrections := make([]api.TrackLanguageCorrection, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, raw := range values {
+		trackID, languages, ok := strings.Cut(raw, "=")
+		trackID = strings.TrimSpace(trackID)
+		if !ok || trackID == "" {
+			return nil, fmt.Errorf("invalid track-languages %q", raw)
+		}
+		if _, duplicate := seen[trackID]; duplicate {
+			return nil, fmt.Errorf("duplicate track-languages target %q", trackID)
+		}
+		seen[trackID] = struct{}{}
+		track, exists := tracks[trackID]
+		if !exists || strings.TrimSpace(track.ManifestFingerprint) == "" {
+			return nil, fmt.Errorf("track-languages requires a prepared manifest track %q; run --input-only first", trackID)
+		}
+		corrections = append(corrections, api.TrackLanguageCorrection{
+			TrackID:             trackID,
+			Languages:           languageutil.NormalizeLanguageList([]string{languages}),
+			ManifestFingerprint: track.ManifestFingerprint,
+		})
+	}
+	return corrections, nil
 }
 
 func buildTrackerConfigOverrides(opts cliOptions, visited map[string]bool) api.TrackerConfigOverrides {

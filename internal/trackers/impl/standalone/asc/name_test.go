@@ -52,6 +52,36 @@ func TestResolveUploadTitleOmitsEmptySeasonEpisodeDelimiter(t *testing.T) {
 	}
 }
 
+func TestResolveDisplayTitlePrefersManualFacts(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{
+		Release:     api.ReleaseInfo{Title: "Parsed Title"},
+		ReleaseName: "Fallback Name",
+		ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{
+			Title:         "Provider Title",
+			OriginalTitle: "Provider Original",
+			Localized:     map[string]api.TMDBLocalizedData{"pt-BR": {Title: "Localized Title"}},
+		}},
+		EffectiveMetadata: api.EffectiveMetadata{
+			Title:                   "Manual Title",
+			TitleProvenance:         api.FactProvenanceManual,
+			OriginalTitle:           "Manual Original",
+			OriginalTitleProvenance: api.FactProvenanceManual,
+		},
+	}
+	if got := resolveDisplayTitle(meta); got != "Manual Title (Manual Original)" {
+		t.Fatalf("display title = %q", got)
+	}
+
+	meta.EffectiveMetadata = api.EffectiveMetadata{
+		TitleProvenance: api.FactProvenanceManualEmpty, OriginalTitleProvenance: api.FactProvenanceManualEmpty,
+	}
+	if got := resolveDisplayTitle(meta); got != "" {
+		t.Fatalf("manual-empty display title = %q", got)
+	}
+}
+
 func TestReleaseNamePolicyPreservesDailyEpisodeIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -84,5 +114,29 @@ func TestReleaseNamePolicyPreservesDailyEpisodeIdentity(t *testing.T) {
 	}
 	if got != "Example Show - 2026-02-03" {
 		t.Fatalf("daily upload title = %q", got)
+	}
+}
+
+func TestResolveDisplayTitlePreservesAutomaticAlternatesAndManualOriginalTitle(t *testing.T) {
+	t.Parallel()
+
+	movie := api.UploadSubject{Release: api.ReleaseInfo{Title: "Release"}, ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Title: "TMDB", OriginalTitle: ""}}}
+	if got := resolveDisplayTitle(movie); got != "TMDB" {
+		t.Fatalf("blank movie alternate display = %q", got)
+	}
+	tv := movie
+	tv.Identity = api.ExternalIdentity{Category: api.CanonicalCategoryTV}
+	tv.ProviderMetadata.TMDB.Title = ""
+	if got := resolveDisplayTitle(tv); got != "Release" {
+		t.Fatalf("TV alternate release fallback display = %q", got)
+	}
+	manual := api.UploadSubject{Release: api.ReleaseInfo{Title: "Release"}, EffectiveMetadata: api.EffectiveMetadata{OriginalTitle: "Manual Original", OriginalTitleProvenance: api.FactProvenanceManual}}
+	if got := resolveDisplayTitle(manual); got != "Release (Manual Original)" {
+		t.Fatalf("manual original without TMDB display = %q", got)
+	}
+	manual.EffectiveMetadata.OriginalTitle = ""
+	manual.EffectiveMetadata.OriginalTitleProvenance = api.FactProvenanceManualEmpty
+	if got := resolveDisplayTitle(manual); got != "Release" {
+		t.Fatalf("manual-empty original display = %q", got)
 	}
 }

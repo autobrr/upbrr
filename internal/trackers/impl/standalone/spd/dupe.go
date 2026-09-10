@@ -45,14 +45,17 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	switch {
 	case meta.Identity.IMDBID != 0:
 		params.Set("imdbId", providerid.IMDb(meta.Identity.IMDBID).Prefixed())
-	case strings.TrimSpace(meta.Release.Title) != "":
-		workScope = dupe.WorkScopeTitle
-		params.Set("search", strings.TrimSpace(meta.Release.Title))
-	case meta.Projection != nil:
-		workScope = dupe.WorkScopeTitle
-		params.Set("search", dupe.ProjectedSearchName(meta))
 	default:
-		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing imdb/title for SPD dupe search", nil)
+		workScope = dupe.WorkScopeTitle
+		query := strings.TrimSpace(meta.Release.Title)
+		if query == "" && meta.Projection != nil {
+			query = dupe.ProjectedSearchName(meta)
+		}
+		query = meta.EffectiveMetadata.PreferredTitle(query)
+		if query == "" {
+			return dupe.NotRun(dupe.NotRunMissingMetadata, "missing imdb/title for SPD dupe search", nil)
+		}
+		params.Set("search", query)
 	}
 	return jsondupe.Search(ctx, s.http, jsondupe.ListSpec{
 		Endpoint:       s.endpoint,

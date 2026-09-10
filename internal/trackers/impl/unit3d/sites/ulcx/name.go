@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -38,6 +39,9 @@ func applyULCXTVDBDisambiguation(name string, meta api.UploadSubject) string {
 		return name
 	}
 	evidence := meta.ProviderMetadata.TVDB.NameDisambiguation
+	if meta.EffectiveMetadata.YearProvenance.IsManual() {
+		evidence.SeriesYear = meta.EffectiveMetadata.Year
+	}
 	title, alternate, tail, ok := unit3d.SplitTVDBName(name, meta, evidence)
 	if !ok {
 		return name
@@ -64,7 +68,7 @@ func removeULCXNameElement(name string, element string) string {
 }
 
 func insertULCXDiscDistributor(name string, meta api.UploadSubject) string {
-	distributor := strings.Join(strings.Fields(meta.Distributor), " ")
+	distributor := strings.Join(strings.Fields(trackers.PreferredDistributor(meta, meta.Distributor)), " ")
 	if distributor == "" || findULCXNameElement(name, distributor) >= 0 {
 		return name
 	}

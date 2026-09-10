@@ -46,10 +46,11 @@ import (
 // the repository only when construction opened that repository internally.
 // Operation contexts are per call and are not retained by Core.
 type Core struct {
-	liveTest  *api.LiveTestPolicy
-	logger    api.Logger
-	repoOwner api.RepositoryOwner
-	ownsRepo  bool
+	liveTest         *api.LiveTestPolicy
+	logger           api.Logger
+	metadataDefaults config.MetadataConfig
+	repoOwner        api.RepositoryOwner
+	ownsRepo         bool
 
 	history       *historyModule
 	preparedFacts *preparedrelease.Module
@@ -68,6 +69,18 @@ func applyMetadataDefaults(input api.PrepareInput, configured config.MetadataCon
 	input.Policy.KeepImages = input.Policy.KeepImages || configured.KeepImages
 	input.Policy.OnlyID = input.Policy.OnlyID || configured.OnlyID
 	return input
+}
+
+func applyContinuationPreparationDefaults(
+	request api.ContinueReleaseWorkflowRequest,
+	configured config.MetadataConfig,
+) api.ContinueReleaseWorkflowRequest {
+	if request.Intent.Preparation == nil {
+		return request
+	}
+	input := applyMetadataDefaults(*request.Intent.Preparation, configured)
+	request.Intent.Preparation = &input
+	return request
 }
 
 // NewWithContext constructs a Core and applies ctx to initialization work such
@@ -299,6 +312,10 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 		return nil, fmt.Errorf("core: release workflow repository: %w", err)
 	}
 	workflowPreparer := releaseworkflow.ReleasePreparerFunc{
+		ResolveInputFunc: func(ctx context.Context, input api.PrepareInput, update api.ReleaseCorrectionUpdate) (api.ResolvedPreparationInput, error) {
+			return preparedFacts.ResolveInput(ctx, applyMetadataDefaults(input, cfg.Metadata), update)
+		},
+		PrepareResolvedFunc: preparedFacts.PrepareResolved,
 		PrepareFunc: func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
 			return preparedFacts.Prepare(ctx, applyMetadataDefaults(input, cfg.Metadata))
 		},
@@ -349,6 +366,7 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 		workflowOptions,
 		releaseworkflow.WithLiveTestPolicy(deps.LiveTest),
 		releaseworkflow.WithTrackerProjectionBuilder(trackerWorkflowProjector),
+		releaseworkflow.WithInputReadinessEvaluator(workflowInputReadiness{registry: registry}),
 		releaseworkflow.WithTrackerPreflightBuilder(workflowPreflightBuilder{
 			auth:     services.TrackerAuth,
 			config:   cfg,
@@ -380,12 +398,13 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 	}
 
 	core := &Core{
-		liveTest:      deps.LiveTest,
-		logger:        logger,
-		repoOwner:     repoOwner,
-		ownsRepo:      ownsRepo,
-		preparedFacts: preparedFacts,
-		workflow:      workflow,
+		liveTest:         deps.LiveTest,
+		logger:           logger,
+		metadataDefaults: cfg.Metadata,
+		repoOwner:        repoOwner,
+		ownsRepo:         ownsRepo,
+		preparedFacts:    preparedFacts,
+		workflow:         workflow,
 	}
 	core.history = newHistoryModule(repositories.History(), cfg.MainSettings.DBPath, logger)
 	core.history.preparedFacts = core.preparedFacts
@@ -400,6 +419,7 @@ func (c *Core) ContinueReleaseWorkflow(
 	ownerID string,
 	request api.ContinueReleaseWorkflowRequest,
 ) (releaseworkflow.CommandResult, error) {
+	request = applyContinuationPreparationDefaults(request, c.metadataDefaults)
 	result, err := c.workflow.Continue(ctx, ownerID, request)
 	return result, classifyOperationError(api.OperationKindUnknown, err)
 }

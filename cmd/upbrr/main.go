@@ -151,6 +151,14 @@ func runUpload(
 		fmt.Fprintf(streams.out, "upbrr %s\n", version)
 		return nil
 	}
+	trackScoped := len(opts.TrackLanguages) > 0
+	for _, raw := range opts.ResetInput {
+		field, _, _ := strings.Cut(raw, ":")
+		trackScoped = trackScoped || strings.TrimSpace(field) == string(api.CorrectionFieldMetadataTrackLanguages)
+	}
+	if trackScoped && (len(paths) != 1 || strings.TrimSpace(opts.QueueName) != "") {
+		return exitError(2, errors.New("track-specific input corrections require exactly one source and cannot use --queue"))
+	}
 	if opts.LiveTest && (opts.CreateAuth || opts.ExportConfigPath != "" || opts.ImportConfigPath != "" || opts.Cleanup || opts.DeleteTmp) {
 		return exitError(2, errors.New("--live-test cannot be combined with configuration or stored-release maintenance; use live-test init or cleanup"))
 	}
@@ -395,6 +403,9 @@ func processCLIPaths(
 			return abortErr
 		}
 		if !queueMode {
+			if _, ok := errors.AsType[*cliExitError](err); ok {
+				return err
+			}
 			return exitError(1, err)
 		}
 		if firstErr == nil {
@@ -1000,29 +1011,30 @@ func resolveExportDBPath(configPath string, configProvided bool) (string, error)
 }
 
 type releaseOverrideInput struct {
-	Category       string
-	Type           string
-	Source         string
-	Resolution     string
-	Tag            string
-	Service        string
-	Edition        string
-	Season         string
-	Episode        string
-	EpisodeTitle   string
-	ManualYear     int
-	ManualDate     string
-	NoSeason       bool
-	NoYear         bool
-	NoAKA          bool
-	NoTag          bool
-	NoEpisodeTitle bool
-	NoDistributor  bool
-	NoEdition      bool
-	NoDub          bool
-	NoDual         bool
-	DualAudio      bool
-	Region         string
+	Category         string
+	Type             string
+	Source           string
+	Resolution       string
+	Tag              string
+	Service          string
+	Edition          string
+	Season           string
+	Episode          string
+	EpisodeTitle     string
+	ManualYear       int
+	ManualDate       string
+	UseSeasonEpisode bool
+	NoSeason         bool
+	NoYear           bool
+	NoAKA            bool
+	NoTag            bool
+	NoEpisodeTitle   bool
+	NoDistributor    bool
+	NoEdition        bool
+	NoDub            bool
+	NoDual           bool
+	DualAudio        bool
+	Region           string
 }
 
 func buildReleaseNameOverrides(visited map[string]bool, input releaseOverrideInput) api.ReleaseNameOverrides {
@@ -1062,6 +1074,9 @@ func buildReleaseNameOverrides(visited map[string]bool, input releaseOverrideInp
 	}
 	if visited["daily"] {
 		overrides.ManualDate = stringPtr(input.ManualDate)
+	}
+	if visited["use-season-episode"] {
+		overrides.UseSeasonEpisode = boolPtr(input.UseSeasonEpisode)
 	}
 	if visited["no-season"] {
 		overrides.NoSeason = boolPtr(input.NoSeason)

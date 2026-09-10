@@ -353,3 +353,31 @@ func assertEvidenceFailure(
 		t.Fatalf("failure = %+v, want rule=%q disposition=%q evidence=%q", failure, rule, disposition, status)
 	}
 }
+
+func TestValidateLanguageCombinationAcceptsCompleteScottishGaelicLabel(t *testing.T) {
+	t.Parallel()
+
+	facts := api.MediaFileFacts{
+		Status:            api.MetadataEvidenceStatusComplete,
+		LanguageStatus:    api.MetadataEvidenceStatusComplete,
+		ExpectedFileCount: 1,
+		OriginalLanguage:  "Scottish Gaelic",
+		Files:             []api.MediaFileFact{{AudioLanguages: []string{"gd"}, SubtitleLanguages: []string{"English"}}},
+	}
+	policy := LanguageCombinationPolicy{
+		Evidence:               EvidencePredicatePolicy{Rule: "language", MissingEvidenceDisposition: api.RuleDispositionWaivable},
+		RequireOriginalAudio:   true,
+		RequireEnglishSubtitle: true,
+	}
+	if failures := ValidateLanguageCombination(facts, policy); len(failures) != 0 {
+		t.Fatalf("Scottish Gaelic language combination failed: %+v", failures)
+	}
+}
+
+func TestNormalizedLanguageSetPreservesCompleteScottishGaelicLabel(t *testing.T) {
+	t.Parallel()
+
+	if got, ok := normalizedLanguageSet([]string{"gd", "Scottish Gaelic"}); !ok || got != "scottish gaelic" {
+		t.Fatalf("normalized Scottish Gaelic set = (%q, %t)", got, ok)
+	}
+}

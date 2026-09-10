@@ -18,8 +18,12 @@ import (
 // is inherited from the canonical SQLite queries.
 func (r *SQLiteRepository) LoadHistoryRecord(ctx context.Context, sourcePath string) (api.HistoryRecord, error) {
 	metadata, err := r.GetByPath(ctx, sourcePath)
-	if err != nil {
+	metadataMissing := errors.Is(err, internalerrors.ErrNotFound)
+	if err != nil && !metadataMissing {
 		return api.HistoryRecord{}, fmt.Errorf("db history record metadata: %w", err)
+	}
+	if metadataMissing {
+		metadata.Path = sourcePath
 	}
 	record := api.HistoryRecord{
 		SourcePath:        metadata.Path,
@@ -29,12 +33,18 @@ func (r *SQLiteRepository) LoadHistoryRecord(ctx context.Context, sourcePath str
 		MetadataUpdatedAt: metadata.UpdatedAt,
 		Metadata:          metadata,
 	}
+	if record.Corrections, err = r.LoadReleaseCorrections(ctx, sourcePath); err != nil {
+		return api.HistoryRecord{}, fmt.Errorf("db history record corrections: %w", err)
+	}
 
 	prepared, preparedErr := r.LoadPreparedRelease(ctx, sourcePath)
 	if preparedErr == nil {
 		record.PreparedRelease = &prepared
 	} else if !errors.Is(preparedErr, internalerrors.ErrNotFound) {
 		return api.HistoryRecord{}, fmt.Errorf("db history record prepared release: %w", preparedErr)
+	}
+	if metadataMissing && record.PreparedRelease == nil && record.Corrections.Revision == 0 {
+		return api.HistoryRecord{}, fmt.Errorf("db history record: %w", internalerrors.ErrNotFound)
 	}
 	if record.ReleaseNameOverrides, err = r.GetReleaseNameOverrides(ctx, sourcePath); err != nil && !errors.Is(err, internalerrors.ErrNotFound) {
 		return api.HistoryRecord{}, fmt.Errorf("db history record release overrides: %w", err)

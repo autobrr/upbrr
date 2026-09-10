@@ -46,6 +46,10 @@ type PreparedRelease struct {
 type PrepareResult struct {
 	Release     PreparedRelease
 	Diagnostics []PreparationDiagnostic
+	// EffectiveInstructions and Corrections retain accepted intent outside the
+	// immutable facts so workflow snapshots use the same preparation authority.
+	EffectiveInstructions ReleaseFactInstructions
+	Corrections           ReleaseCorrectionsSnapshot
 }
 
 // ReleaseRef identifies one exact prepared generation without exposing its
@@ -111,36 +115,43 @@ type NamingFacts struct {
 	NamePresentation ReleaseNamePresentation
 	// GeneratedReleaseNames contains safe canonical structural alternatives.
 	// Empty variants mean ReleaseName must remain exact.
-	GeneratedReleaseNames GeneratedReleaseNameVariants
-	Tag                   string
-	Type                  string
-	Artist                string
-	Title                 string
-	Subtitle              string
-	AlternateTitle        string
-	Year                  int
-	Month                 int
-	Day                   int
-	Source                string
-	Resolution            string
-	Codecs                []string
-	Audio                 []string
-	HDR                   []string
-	Extension             string
-	Languages             []string
-	Site                  string
-	Genre                 string
-	Channels              string
-	Collection            string
-	Region                string
-	Size                  string
-	Group                 string
-	Disc                  string
-	Editions              []string
-	Other                 []string
-	Scene                 bool
-	SceneName             string
-	Personal              bool
+	GeneratedReleaseNames    GeneratedReleaseNameVariants
+	Tag                      string
+	Type                     string
+	Artist                   string
+	Title                    string
+	Subtitle                 string
+	AlternateTitle           string
+	OriginalTitle            string
+	Genres                   []string
+	TitleProvenance          FactProvenance
+	AlternateTitleProvenance FactProvenance
+	OriginalTitleProvenance  FactProvenance
+	GenresProvenance         FactProvenance
+	YearProvenance           FactProvenance
+	Year                     int
+	Month                    int
+	Day                      int
+	Source                   string
+	Resolution               string
+	Codecs                   []string
+	Audio                    []string
+	HDR                      []string
+	Extension                string
+	Languages                []string
+	Site                     string
+	Genre                    string
+	Channels                 string
+	Collection               string
+	Region                   string
+	Size                     string
+	Group                    string
+	Disc                     string
+	Editions                 []string
+	Other                    []string
+	Scene                    bool
+	SceneName                string
+	Personal                 bool
 }
 
 // EpisodeFacts contains canonical reusable episodic identity and schedule
@@ -165,32 +176,45 @@ type EpisodeFacts struct {
 
 // MediaFacts contains finalized reusable media characteristics.
 type MediaFacts struct {
-	AudioLanguages    []string
-	SubtitleLanguages []string
-	Container         string
-	Audio             string
-	Channels          string
-	Commentary        bool
-	ThreeD            string
-	Source            string
-	Type              string
-	UHD               string
-	HDR               string
-	HDRFacts          HDRFacts
-	Distributor       string
-	Region            string
-	VideoCodec        string
-	VideoEncode       string
-	HasEncodeSettings bool
-	BitDepth          string
-	Edition           string
-	Repack            string
-	WebDV             bool
-	StreamOptimized   int
-	Service           string
-	ServiceLongName   string
-	MediaInfoUniqueID string
-	Anime             bool
+	AudioLanguages                       []string
+	SubtitleLanguages                    []string
+	TrackAudioLanguages                  []string
+	TrackSubtitleLanguages               []string
+	Tracks                               []MediaTrackFacts
+	TrackCoverageComplete                bool
+	AudioLanguagesProvenance             FactProvenance
+	SubtitleLanguagesProvenance          FactProvenance
+	HardcodedSubs                        bool
+	HardcodedSubtitleLanguages           []string
+	HardcodedSubsProvenance              FactProvenance
+	HardcodedSubtitleLanguagesProvenance FactProvenance
+	OriginalLanguage                     string
+	OriginalLanguageProvenance           FactProvenance
+	DistributorProvenance                FactProvenance
+	Container                            string
+	Audio                                string
+	Channels                             string
+	Commentary                           bool
+	ThreeD                               string
+	Source                               string
+	Type                                 string
+	UHD                                  string
+	HDR                                  string
+	HDRFacts                             HDRFacts
+	Distributor                          string
+	Region                               string
+	VideoCodec                           string
+	VideoEncode                          string
+	HasEncodeSettings                    bool
+	BitDepth                             string
+	Edition                              string
+	Repack                               string
+	WebDV                                bool
+	StreamOptimized                      int
+	Service                              string
+	ServiceLongName                      string
+	MediaInfoUniqueID                    string
+	Anime                                bool
 }
 
 // DiscFacts contains typed disc measurements that are safe to publish as
@@ -529,22 +553,47 @@ type IdentityResolutionKey struct {
 	ContractVersion   string
 }
 
+// IdentityDependency records provider IDs supplied to the lookup that produced
+// ID. Zero ID means the derivation was not recorded; a positive ID with no
+// provider inputs records an independently resolved fact.
+// Inputs conservatively include every supplied provider ID, even when a lookup
+// uses only one. They describe invalidation dependencies, not the winning provider.
+type IdentityDependency struct {
+	ID       int
+	TMDBID   int
+	IMDBID   int
+	TVDBID   int
+	TVmazeID int
+	MALID    int
+}
+
+// IdentityDependencySet records derivation inputs for each canonical provider ID.
+// Each entry applies only while its ID matches that provider's canonical ID.
+type IdentityDependencySet struct {
+	TMDB   IdentityDependency
+	IMDB   IdentityDependency
+	TVDB   IdentityDependency
+	TVmaze IdentityDependency
+	MAL    IdentityDependency
+}
+
 // ExternalIdentity is the only prepared-release source for provider IDs and
 // top-level movie-or-TV classification.
 type ExternalIdentity struct {
-	SourcePath string
-	Generation PreparedGeneration
-	TMDBID     int
-	IMDBID     int
-	TVDBID     int
-	TVmazeID   int
-	MALID      int
-	Category   CanonicalCategory
-	Provenance IdentityProvenanceSet
-	Overrides  IdentityOverrideState
-	Conflict   IdentityConflictStatus
-	Resolution IdentityResolutionKey
-	ResolvedAt time.Time `ts_type:"string"`
+	SourcePath   string
+	Generation   PreparedGeneration
+	TMDBID       int
+	IMDBID       int
+	TVDBID       int
+	TVmazeID     int
+	MALID        int
+	Category     CanonicalCategory
+	Provenance   IdentityProvenanceSet
+	Overrides    IdentityOverrideState
+	Conflict     IdentityConflictStatus
+	Resolution   IdentityResolutionKey
+	Dependencies IdentityDependencySet
+	ResolvedAt   time.Time `ts_type:"string"`
 }
 
 // ProviderID returns the canonical ID for provider without applying fallbacks.

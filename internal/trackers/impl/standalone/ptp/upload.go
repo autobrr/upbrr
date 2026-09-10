@@ -552,6 +552,8 @@ func resolveGroupTitleYear(meta api.UploadSubject) (string, string) {
 	if year == 0 {
 		year = meta.Release.Year
 	}
+	title = trackers.PreferredTitle(meta, title)
+	year = trackers.PreferredYear(meta, year)
 	if year == 0 {
 		return title, ""
 	}
