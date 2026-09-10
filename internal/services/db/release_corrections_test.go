@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -305,7 +306,11 @@ func TestCommitPreparedReleaseWithCorrectionsRejectsStaleRevisionWithoutGenerati
 	if err != nil {
 		t.Fatalf("save corrections: %v", err)
 	}
-	_, err = repo.CommitPreparedReleaseWithCorrections(ctx, release, 0, snapshot.Corrections)
+	_, err = repo.CommitPreparedReleaseWithCorrections(ctx, release, 0, snapshot.Corrections,
+		func(uint64) (api.PreparationCompatibility, error) {
+			t.Fatal("stale corrections reached compatibility calculation")
+			return release.Compatibility, nil
+		})
 	var conflict *api.CorrectionRevisionConflictError
 	if !errors.As(err, &conflict) || conflict.Actual != snapshot.Revision {
 		t.Fatalf("commit conflict = %v, want current correction revision %d", err, snapshot.Revision)
@@ -336,7 +341,7 @@ func TestReleaseNameAdapterMaintainsCategoryResetAuthority(t *testing.T) {
 	}
 }
 
-func TestCommitPreparedReleaseWithCorrectionsPublishesPredictedRevision(t *testing.T) {
+func TestCommitPreparedReleaseWithCorrectionsUsesCommittedRevision(t *testing.T) {
 	t.Parallel()
 
 	repo := openPreparedReleaseTestRepo(t)
@@ -344,7 +349,12 @@ func TestCommitPreparedReleaseWithCorrectionsPublishesPredictedRevision(t *testi
 	release := preparedReleaseDBFixture("correction-commit-revision-source", 1)
 	tag := "GRP"
 	record := api.StoredReleaseCorrectionsV1{Version: 1, ReleaseName: api.ReleaseNameOverrides{Tag: &tag}}
-	finalRevision, err := repo.CommitPreparedReleaseWithCorrections(ctx, release, 0, record)
+	compatibility := func(revision uint64) (api.PreparationCompatibility, error) {
+		result := release.Compatibility
+		result.FactInstructionFingerprint = fmt.Sprintf("instructions-at-revision-%d", revision)
+		return result, nil
+	}
+	finalRevision, err := repo.CommitPreparedReleaseWithCorrections(ctx, release, 0, record, compatibility)
 	if err != nil {
 		t.Fatalf("commit prepared release with corrections: %v", err)
 	}
@@ -361,7 +371,36 @@ func TestCommitPreparedReleaseWithCorrectionsPublishesPredictedRevision(t *testi
 	if _, err := repo.LoadPreparedRelease(ctx, release.Source.SourcePath); err != nil {
 		t.Fatalf("load committed generation: %v", err)
 	}
-	if noOpRevision, err := repo.CommitPreparedReleaseWithCorrections(ctx, release, finalRevision, record); err != nil || noOpRevision != finalRevision {
+	// Empty optional collections differ under reflect.DeepEqual but serialize to
+	// the same stored correction payload. SQLite keeps the existing revision.
+	record.ContentBindings = map[api.CorrectionField]api.ContentBinding{}
+	record.StaleContentFields = []api.CorrectionField{}
+	if noOpRevision, err := repo.CommitPreparedReleaseWithCorrections(ctx, release, finalRevision, record, compatibility); err != nil || noOpRevision != finalRevision {
 		t.Fatalf("no-op commit revision = %d, %v; want %d, nil", noOpRevision, err, finalRevision)
+	}
+	committed, err := repo.LoadPreparedRelease(ctx, release.Source.SourcePath)
+	wantCompatibility, _ := compatibility(finalRevision)
+	if err != nil || committed.Compatibility != wantCompatibility {
+		t.Fatalf("persisted generation does not use the committed revision: %v", err)
+	}
+}
+
+func TestCommitPreparedReleaseWithCorrectionsRollsBackCompatibilityFailure(t *testing.T) {
+	t.Parallel()
+	repo := openPreparedReleaseTestRepo(t)
+	release := preparedReleaseDBFixture("correction-compatibility-failure", 1)
+	record := api.StoredReleaseCorrectionsV1{Version: 1, ReleaseName: api.ReleaseNameOverrides{Tag: new("GRP")}}
+	wantErr := errors.New("compatibility failure")
+	_, err := repo.CommitPreparedReleaseWithCorrections(t.Context(), release, 0, record,
+		func(uint64) (api.PreparationCompatibility, error) { return api.PreparationCompatibility{}, wantErr })
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("compatibility failure lost: %v", err)
+	}
+	stored, err := repo.LoadReleaseCorrections(t.Context(), release.Source.SourcePath)
+	if err != nil || stored.Revision != 0 || stored.Corrections.ReleaseName.Tag != nil {
+		t.Fatalf("failed commit persisted corrections: %v", err)
+	}
+	if _, err := repo.LoadPreparedRelease(t.Context(), release.Source.SourcePath); !errors.Is(err, internalerrors.ErrNotFound) {
+		t.Fatalf("failed commit persisted a generation: %v", err)
 	}
 }

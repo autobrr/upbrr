@@ -195,10 +195,14 @@ func normalizeAcceptedCorrections(stored *api.StoredReleaseCorrectionsV1) error 
 			return fmt.Errorf("prepared release: episode correction: %w", err)
 		}
 	}
-	if date := stored.ReleaseName.ManualDate; date != nil && strings.TrimSpace(*date) != "" {
-		if _, err := time.Parse("2006-01-02", strings.TrimSpace(*date)); err != nil {
-			return &api.CorrectionConflictError{Field: api.CorrectionFieldReleaseNameManualDate, Reason: "date must use YYYY-MM-DD"}
+	if date := stored.ReleaseName.ManualDate; date != nil {
+		trimmed := strings.TrimSpace(*date)
+		if trimmed != "" {
+			if _, err := time.Parse("2006-01-02", trimmed); err != nil {
+				return &api.CorrectionConflictError{Field: api.CorrectionFieldReleaseNameManualDate, Reason: "date must use YYYY-MM-DD"}
+			}
 		}
+		stored.ReleaseName.ManualDate = &trimmed
 	}
 	for _, languages := range []**[]string{&stored.Metadata.AudioLanguages, &stored.Metadata.SubtitleLanguages, &stored.Metadata.HardcodedSubtitleLanguages} {
 		if *languages != nil {
@@ -366,15 +370,15 @@ func validateTrackCorrections(corrections []api.TrackLanguageCorrection, current
 
 // finalizeCorrectionBindings checks accepted corrections against the final identity.
 // Stale corrections and retired-field cleanup persist before a confirmation error.
-// On success, the returned revision and bindings are persisted by generation commit.
+// On success, generation commit persists the returned bindings and assigns their revision.
 func (m *Module) finalizeCorrectionBindings(
 	ctx context.Context,
 	resolved api.ResolvedPreparationInput,
 	identity api.ExternalIdentity,
-) (api.ReleaseCorrectionsSnapshot, error) {
+) (api.StoredReleaseCorrectionsV1, error) {
 	final, err := api.ApplyReleaseCorrectionUpdate(resolved.Corrections, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
 	if err != nil {
-		return api.ReleaseCorrectionsSnapshot{}, fmt.Errorf("prepared release: finalize correction update: %w", err)
+		return api.StoredReleaseCorrectionsV1{}, fmt.Errorf("prepared release: finalize correction update: %w", err)
 	}
 	binding := contentBinding(resolved.SourceFingerprint, identity)
 	discardProviderOwnedCorrections(&final, identity.Category)
@@ -384,10 +388,10 @@ func (m *Module) finalizeCorrectionBindings(
 		if !reflect.DeepEqual(final, resolved.Corrections.Corrections) {
 			stored, err = m.store.CompareAndSwapReleaseCorrections(ctx, resolved.Input.SourcePath, resolved.Corrections.Revision, final)
 			if err != nil {
-				return api.ReleaseCorrectionsSnapshot{}, fmt.Errorf("prepared release: mark stale corrections: %w", err)
+				return api.StoredReleaseCorrectionsV1{}, fmt.Errorf("prepared release: mark stale corrections: %w", err)
 			}
 		}
-		return api.ReleaseCorrectionsSnapshot{}, &api.StaleContentCorrectionsError{Corrections: stored, CurrentBinding: binding}
+		return api.StoredReleaseCorrectionsV1{}, &api.StaleContentCorrectionsError{Corrections: stored, CurrentBinding: binding}
 	}
 	bindExplicitCorrections(&final, binding, resolved.ExplicitFields)
 	// Legacy name-only rows acquire evidence after their first accepted preparation.
@@ -398,9 +402,5 @@ func (m *Module) finalizeCorrectionBindings(
 			}
 		}
 	}
-	revision := resolved.Corrections.Revision
-	if !reflect.DeepEqual(final, resolved.Corrections.Corrections) {
-		revision++
-	}
-	return api.ReleaseCorrectionsSnapshot{Corrections: final, Revision: revision}, nil
+	return final, nil
 }
