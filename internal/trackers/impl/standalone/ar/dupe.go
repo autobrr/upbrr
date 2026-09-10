@@ -323,7 +323,17 @@ func mapCookiesToSlice(values map[string]*http.Cookie) []*http.Cookie {
 
 func arSearchQuery(meta api.DuplicateSubject) string {
 	query := resolveARSearchNameFields(meta.Release, meta.ReleaseName, meta.ProviderMetadata)
-	if query == "" && meta.Projection != nil {
+	if meta.EffectiveMetadata.TitleProvenance.IsManual() || meta.EffectiveMetadata.YearProvenance.IsManual() {
+		title, year := resolveARSearchNameParts(meta.Release, meta.ReleaseName, meta.ProviderMetadata)
+		title = meta.EffectiveMetadata.PreferredTitle(title)
+		year = meta.EffectiveMetadata.PreferredYear(year)
+		if title != "" && year > 0 {
+			query = strings.TrimSpace(title + " " + strconv.Itoa(year))
+		} else {
+			query = title
+		}
+	}
+	if query == "" && !meta.EffectiveMetadata.TitleProvenance.IsManual() && meta.Projection != nil {
 		query = dupe.ProjectedSearchName(meta)
 	}
 	return query

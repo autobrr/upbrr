@@ -7,18 +7,22 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func resolveName(meta api.UploadSubject) string {
 	typeName := strings.ReplaceAll(meta.Type, "WEBDL", "WEB-DL")
-	title := metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName)
-	name := title
-	year := meta.Release.Year
-	if meta.ProviderMetadata.TMDB != nil {
-		year = maxInt(year, meta.ProviderMetadata.TMDB.Year)
+	title := trackers.PreferredTitle(meta, "")
+	if title == "" && !meta.EffectiveMetadata.TitleProvenance.IsManual() {
+		title = meta.ReleaseName
 	}
+	name := title
+	providerYear := 0
+	if meta.ProviderMetadata.TMDB != nil {
+		providerYear = meta.ProviderMetadata.TMDB.Year
+	}
+	year := trackers.PreferredYear(meta, maxInt(meta.Release.Year, providerYear))
 	switch {
 	case !isTV(meta):
 		if year > 0 {

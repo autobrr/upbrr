@@ -11,6 +11,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -92,24 +93,26 @@ func applyBHDMovieTitlePolicy(name string, meta api.UploadSubject) string {
 
 // bhdMovieTitles preserves the finalized alternate title while preferring TMDB titles and the IMDb year.
 func bhdMovieTitles(meta api.UploadSubject) (string, string, int) {
-	title := strings.TrimSpace(meta.Release.Title)
-	original := trimBHDAKAPrefix(meta.AlternateTitle)
+	original := trimBHDAKAPrefix(trackers.PreferredAlternateTitle(meta, meta.AlternateTitle))
 	omitAlternateTitle := meta.NamePresentation.Version == api.ReleaseNamePresentationVersionV1 && meta.NamePresentation.OmitAlternateTitle
 	if omitAlternateTitle {
 		original = ""
 	}
-	year := meta.Release.Year
+	providerTitle := ""
 	switch {
 	case meta.ProviderMetadata.TMDB != nil && strings.TrimSpace(meta.ProviderMetadata.TMDB.Title) != "":
-		title = strings.TrimSpace(meta.ProviderMetadata.TMDB.Title)
+		providerTitle = meta.ProviderMetadata.TMDB.Title
 	case meta.ProviderMetadata.IMDB != nil && strings.TrimSpace(meta.ProviderMetadata.IMDB.Title) != "":
-		title = strings.TrimSpace(meta.ProviderMetadata.IMDB.Title)
+		providerTitle = meta.ProviderMetadata.IMDB.Title
 	}
+	title := trackers.PreferredTitle(meta, providerTitle)
+	providerYear := 0
 	if meta.ProviderMetadata.IMDB != nil && meta.ProviderMetadata.IMDB.Year > 0 {
-		year = meta.ProviderMetadata.IMDB.Year
+		providerYear = meta.ProviderMetadata.IMDB.Year
 	} else if meta.ProviderMetadata.TMDB != nil && meta.ProviderMetadata.TMDB.Year > 0 {
-		year = meta.ProviderMetadata.TMDB.Year
+		providerYear = meta.ProviderMetadata.TMDB.Year
 	}
+	year := trackers.PreferredYear(meta, providerYear)
 	return title, original, year
 }
 
@@ -119,14 +122,15 @@ func applyBHDTVTitlePolicy(name string, meta api.UploadSubject) string {
 		return name
 	}
 	evidence := tvdb.NameDisambiguation
-	title := strings.TrimSpace(tvdb.NameEnglish)
-	if title == "" {
-		title = strings.TrimSpace(evidence.CanonicalName)
+	if meta.EffectiveMetadata.YearProvenance.IsManual() {
+		evidence.SeriesYear = meta.EffectiveMetadata.Year
 	}
-	if title == "" {
-		title = strings.TrimSpace(meta.Release.Title)
+	providerTitle := strings.TrimSpace(tvdb.NameEnglish)
+	if providerTitle == "" {
+		providerTitle = strings.TrimSpace(evidence.CanonicalName)
 	}
-	original := trimBHDAKAPrefix(meta.AlternateTitle)
+	title := trackers.PreferredTitle(meta, providerTitle)
+	original := trimBHDAKAPrefix(trackers.PreferredAlternateTitle(meta, meta.AlternateTitle))
 	if meta.NamePresentation.Version == api.ReleaseNamePresentationVersionV1 && meta.NamePresentation.OmitAlternateTitle {
 		original = ""
 	}

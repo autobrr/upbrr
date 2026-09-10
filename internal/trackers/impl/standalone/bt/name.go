@@ -19,6 +19,9 @@ func resolveSearchName(meta api.UploadSubject) string {
 	if !meta.Anime {
 		return resolveUploadName(meta)
 	}
+	if meta.EffectiveMetadata.TitleProvenance.IsManual() {
+		return strings.TrimSpace(meta.EffectiveMetadata.Title)
+	}
 	candidates := make([]string, 0, 6)
 	if meta.ProviderMetadata.TVDB != nil {
 		candidates = append(candidates, strings.TrimSpace(meta.ProviderMetadata.TVDB.NameEnglish))

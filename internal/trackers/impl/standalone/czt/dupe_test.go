@@ -150,6 +150,32 @@ func TestCZTHandlerSearchPrefersBroadTitle(t *testing.T) {
 	}
 }
 
+func TestCZTSearchQueryHonorsManualTitle(t *testing.T) {
+	t.Parallel()
+
+	projection := &api.TrackerReleaseProjection{DuplicateCriteria: api.TrackerDuplicateCriteria{Name: "Projected Release"}}
+	manual := api.DuplicateSubject{
+		Release:    api.ReleaseInfo{Title: "Automatic Release"},
+		Projection: projection,
+		EffectiveMetadata: api.EffectiveMetadata{
+			Title:           "Manual Release",
+			TitleProvenance: api.FactProvenanceManual,
+		},
+	}
+	if got := cztSearchQuery(manual); got != "Manual Release" {
+		t.Fatalf("manual CZT search query = %q", got)
+	}
+
+	manual.EffectiveMetadata = api.EffectiveMetadata{TitleProvenance: api.FactProvenanceManualEmpty}
+	if got := cztSearchQuery(manual); got != "" {
+		t.Fatalf("manual-empty CZT search query = %q", got)
+	}
+
+	if got := cztSearchQuery(api.DuplicateSubject{Projection: projection}); got != "Projected Release" {
+		t.Fatalf("automatic CZT search query = %q", got)
+	}
+}
+
 func TestCZTHandlerSearchParsesWrappedAndAliasedResults(t *testing.T) {
 	t.Parallel()
 

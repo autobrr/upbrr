@@ -22,6 +22,29 @@ func UploadSubjectForValidation(subject api.TrackerValidationSubject) api.Upload
 		answers[tracker] = cloneAnswers(subject.QuestionnaireAnswers)
 	}
 	return api.UploadSubject{
+		EffectiveMetadata: api.EffectiveMetadata{
+			Title:                      subject.EffectiveMetadata.Title,
+			AlternateTitle:             subject.EffectiveMetadata.AlternateTitle,
+			OriginalTitle:              subject.EffectiveMetadata.OriginalTitle,
+			Year:                       subject.EffectiveMetadata.Year,
+			Genres:                     append([]string(nil), subject.EffectiveMetadata.Genres...),
+			OriginalLanguage:           subject.EffectiveMetadata.OriginalLanguage,
+			Distributor:                subject.EffectiveMetadata.Distributor,
+			TitleProvenance:            subject.EffectiveMetadata.TitleProvenance,
+			AlternateTitleProvenance:   subject.EffectiveMetadata.AlternateTitleProvenance,
+			OriginalTitleProvenance:    subject.EffectiveMetadata.OriginalTitleProvenance,
+			YearProvenance:             subject.EffectiveMetadata.YearProvenance,
+			GenresProvenance:           subject.EffectiveMetadata.GenresProvenance,
+			OriginalLanguageProvenance: subject.EffectiveMetadata.OriginalLanguageProvenance,
+			DistributorProvenance:      subject.EffectiveMetadata.DistributorProvenance,
+		},
+		ManualLanguages: api.ManualLanguageFacts{
+			Audio:              append([]string(nil), subject.ManualLanguages.Audio...),
+			Subtitles:          append([]string(nil), subject.ManualLanguages.Subtitles...),
+			HardcodedSubtitles: append([]string(nil), subject.ManualLanguages.HardcodedSubtitles...),
+		},
+		HardcodedSubs:               subject.HardcodedSubs,
+		HardcodedSubtitleLanguages:  append([]string(nil), subject.HardcodedSubtitleLanguages...),
 		SourcePath:                  subject.SourcePath,
 		VideoPath:                   subject.VideoPath,
 		FileList:                    append([]string(nil), subject.FileList...),

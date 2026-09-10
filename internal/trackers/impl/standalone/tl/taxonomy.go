@@ -6,6 +6,9 @@ package tl
 import (
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
+
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -13,15 +16,23 @@ func resolveCategory(meta api.UploadSubject) string {
 	if _, err := meta.Identity.RequireCategory(); err != nil {
 		return ""
 	}
-	originalLanguage := ""
+	provider := ""
 	if meta.ProviderMetadata.TMDB != nil {
-		originalLanguage = strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalLanguage)
+		provider = meta.ProviderMetadata.TMDB.OriginalLanguage
 	}
+	originalLanguage := provider
+	if meta.EffectiveMetadata.OriginalLanguageProvenance.IsManual() {
+		originalLanguage = trackers.PreferredOriginalLanguage(meta, provider)
+		if normalized := languageutil.NormalizeLanguageCode(originalLanguage); normalized != "" {
+			originalLanguage = normalized
+		}
+	}
+	isEnglish := strings.EqualFold(originalLanguage, "en")
 	if meta.Anime {
 		return "34"
 	}
 	if !isTV(meta) {
-		if originalLanguage != "" && !strings.EqualFold(originalLanguage, "en") {
+		if originalLanguage != "" && !isEnglish {
 			return "36"
 		}
 		if containsWord(genresText(meta), "Documentary") {
@@ -49,7 +60,7 @@ func resolveCategory(meta api.UploadSubject) string {
 			return "43"
 		}
 	}
-	if isTV(meta) && originalLanguage != "" && !strings.EqualFold(originalLanguage, "en") {
+	if isTV(meta) && originalLanguage != "" && !isEnglish {
 		return "44"
 	}
 	if meta.TVPack {

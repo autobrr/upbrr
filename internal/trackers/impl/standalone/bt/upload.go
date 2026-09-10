@@ -560,23 +560,28 @@ func resolveLogo(meta api.UploadSubject) string {
 }
 
 func resolveYear(meta api.UploadSubject) int {
-	if meta.ProviderMetadata.TMDB != nil && meta.ProviderMetadata.TMDB.Year > 0 {
-		return meta.ProviderMetadata.TMDB.Year
+	provider := 0
+	if meta.ProviderMetadata.TMDB != nil {
+		provider = meta.ProviderMetadata.TMDB.Year
 	}
-	if meta.ProviderMetadata.IMDB != nil && meta.ProviderMetadata.IMDB.Year > 0 {
-		return meta.ProviderMetadata.IMDB.Year
+	if provider == 0 && meta.ProviderMetadata.IMDB != nil {
+		provider = meta.ProviderMetadata.IMDB.Year
 	}
-	return meta.Release.Year
+	return trackers.PreferredYear(meta, provider)
 }
 
 func resolveTitle(meta api.UploadSubject) string {
+	provider := ""
 	if meta.ProviderMetadata.TMDB != nil {
-		return metautil.FirstNonEmptyTrimmed(meta.ProviderMetadata.TMDB.Title, meta.Release.Title)
+		provider = meta.ProviderMetadata.TMDB.Title
 	}
-	return meta.Release.Title
+	return trackers.PreferredTitle(meta, provider)
 }
 
 func resolveLocalizedTitle(meta api.UploadSubject, ptBR api.TMDBLocalizedData) string {
+	if meta.EffectiveMetadata.TitleProvenance.IsManual() {
+		return meta.EffectiveMetadata.Title
+	}
 	if ptBR.Title != "" {
 		if meta.ProviderMetadata.TMDB != nil {
 			return metautil.FirstNonEmptyTrimmed(ptBR.Title, meta.ProviderMetadata.TMDB.OriginalTitle)

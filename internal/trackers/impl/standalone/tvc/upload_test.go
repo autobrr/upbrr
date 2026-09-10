@@ -172,3 +172,35 @@ func TestPrepareUploadStateIncludesTVDBForCanonicalTVSeasonPack(t *testing.T) {
 		t.Fatalf("expected tvdb=456, got %q", got)
 	}
 }
+
+func TestResolveCategoryUsesManualOriginalLanguageOnlyWhenExplicit(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{
+		Identity:          api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+		ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{OriginalLanguage: "en"}},
+		EffectiveMetadata: api.EffectiveMetadata{OriginalLanguage: "fr"},
+	}
+	if got := resolveCategory(meta); got == categoryMap["foreign"] {
+		t.Fatalf("automatic effective language changed category = %q", got)
+	}
+	meta.EffectiveMetadata.OriginalLanguageProvenance = api.FactProvenanceManual
+	if got := resolveCategory(meta); got != categoryMap["foreign"] {
+		t.Fatalf("manual language category = %q", got)
+	}
+	meta.EffectiveMetadata = api.EffectiveMetadata{OriginalLanguageProvenance: api.FactProvenanceManualEmpty}
+	if got := resolveCategory(meta); got == categoryMap["foreign"] {
+		t.Fatalf("manual-empty language category = %q", got)
+	}
+}
+
+func TestResolveCategoryAcceptsManualCanonicalBritishLanguages(t *testing.T) {
+	t.Parallel()
+
+	for _, language := range []string{"English", "Irish", "Welsh", "en", "ga", "cy"} {
+		meta := api.UploadSubject{Identity: api.ExternalIdentity{Category: api.CanonicalCategoryTV}, EffectiveMetadata: api.EffectiveMetadata{OriginalLanguage: language, OriginalLanguageProvenance: api.FactProvenanceManual}}
+		if got := resolveCategory(meta); got == categoryMap["foreign"] {
+			t.Fatalf("manual %s category = %q", language, got)
+		}
+	}
+}

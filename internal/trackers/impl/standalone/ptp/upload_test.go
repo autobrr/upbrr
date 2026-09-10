@@ -709,10 +709,10 @@ func TestSubmitPreparedUploadPreservesLateHTMLFailure(t *testing.T) {
 		t.Context(),
 		trackers.PreparationInput{},
 		uploadState{
-baseURL: server.URL,
- uploadURL: server.URL,
- client: server.Client(),
-},
+			baseURL:   server.URL,
+			uploadURL: server.URL,
+			client:    server.Client(),
+		},
 		nil,
 		"application/octet-stream",
 		"",
@@ -741,4 +741,35 @@ func newPTPAuthDB(t *testing.T) string {
 	}
 	_ = repo.Close()
 	return dbPath
+}
+
+func TestResolveGroupTitleYearPreservesAutomaticProviderPairsAndManualCorrections(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Year: 2024}, IMDB: &api.IMDBMetadata{Title: "IMDb title", Year: 2023}}}
+	if title, year := resolveGroupTitleYear(meta); title != "IMDb title" || year != "2023" {
+		t.Fatalf("IMDb provider pair = (%q, %q)", title, year)
+	}
+	meta.ProviderMetadata.TMDB.Title = "TMDB title"
+	if title, year := resolveGroupTitleYear(meta); title != "TMDB title" || year != "2024" {
+		t.Fatalf("TMDB title/year = (%q, %q)", title, year)
+	}
+	meta.ProviderMetadata.TMDB.Year = 0
+	meta.Release.Year = 2025
+	if title, year := resolveGroupTitleYear(meta); title != "TMDB title" || year != "2025" {
+		t.Fatalf("TMDB title with release year = (%q, %q)", title, year)
+	}
+	meta.EffectiveMetadata = api.EffectiveMetadata{
+		Title:           "Manual title",
+		Year:            2022,
+		TitleProvenance: api.FactProvenanceManual,
+		YearProvenance:  api.FactProvenanceManual,
+	}
+	if title, year := resolveGroupTitleYear(meta); title != "Manual title" || year != "2022" {
+		t.Fatalf("manual title/year = (%q, %q)", title, year)
+	}
+	meta.EffectiveMetadata = api.EffectiveMetadata{TitleProvenance: api.FactProvenanceManualEmpty, YearProvenance: api.FactProvenanceManualEmpty}
+	if title, year := resolveGroupTitleYear(meta); title != "" || year != "" {
+		t.Fatalf("manual empty title/year = (%q, %q)", title, year)
+	}
 }

@@ -10,7 +10,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -288,7 +290,7 @@ func resolveEdition(meta api.UploadSubject) string {
 
 func resolveTags(meta api.UploadSubject, ptBR api.TMDBLocalizedData) string {
 	// 1. Use localized if available
-	if ptBR.Genres != "" {
+	if !meta.EffectiveMetadata.GenresProvenance.IsManual() && ptBR.Genres != "" {
 		genres := strings.Split(strings.TrimSpace(ptBR.Genres), ",")
 		out := make([]string, 0, len(genres))
 		for _, genre := range genres {
@@ -302,15 +304,14 @@ func resolveTags(meta api.UploadSubject, ptBR api.TMDBLocalizedData) string {
 	}
 
 	// 2. Use metautil.TranslateGenreToPortugueseStrict to translate
-	var genreText string
+	provider := ""
 	switch {
 	case meta.ProviderMetadata.TMDB != nil && strings.TrimSpace(meta.ProviderMetadata.TMDB.Genres) != "":
-		genreText = strings.TrimSpace(meta.ProviderMetadata.TMDB.Genres)
+		provider = meta.ProviderMetadata.TMDB.Genres
 	case meta.ProviderMetadata.IMDB != nil && strings.TrimSpace(meta.ProviderMetadata.IMDB.Genres) != "":
-		genreText = strings.TrimSpace(meta.ProviderMetadata.IMDB.Genres)
-	default:
-		genreText = strings.TrimSpace(meta.Release.Genre)
+		provider = meta.ProviderMetadata.IMDB.Genres
 	}
+	genreText := trackers.PreferredGenreText(meta, provider)
 
 	if genreText == "" {
 		return ""
@@ -333,12 +334,19 @@ func resolveTags(meta api.UploadSubject, ptBR api.TMDBLocalizedData) string {
 }
 
 func resolveLanguage(meta api.UploadSubject) string {
-	var lang string
-	if meta.ProviderMetadata.TMDB != nil {
-		lang = strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalLanguage)
-	}
-	if lang == "" && len(meta.AudioLanguages) > 0 {
-		lang = meta.AudioLanguages[0]
+	lang := ""
+	if meta.EffectiveMetadata.OriginalLanguageProvenance.IsManual() {
+		lang = trackers.PreferredOriginalLanguage(meta, "")
+		if normalized := languageutil.NormalizeLanguageCode(lang); normalized != "" {
+			lang = normalized
+		}
+	} else {
+		if meta.ProviderMetadata.TMDB != nil {
+			lang = strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalLanguage)
+		}
+		if lang == "" && len(meta.AudioLanguages) > 0 {
+			lang = meta.AudioLanguages[0]
+		}
 	}
 	lang = strings.ToLower(lang)
 	if lang == "" {
@@ -367,10 +375,16 @@ func resolveAudio(meta api.UploadSubject) string {
 	}
 	orig := ""
 	if meta.ProviderMetadata.TMDB != nil {
-		orig = strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalLanguage))
+		orig = meta.ProviderMetadata.TMDB.OriginalLanguage
+	}
+	if meta.EffectiveMetadata.OriginalLanguageProvenance.IsManual() {
+		orig = trackers.PreferredOriginalLanguage(meta, orig)
+		if normalized := languageutil.NormalizeLanguageCode(orig); normalized != "" {
+			orig = normalized
+		}
 	}
 	if pt {
-		if orig == "pt" {
+		if strings.EqualFold(strings.TrimSpace(orig), "pt") {
 			return "Nacional"
 		}
 		if len(meta.AudioLanguages) > 1 {

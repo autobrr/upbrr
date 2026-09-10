@@ -6,6 +6,7 @@ package is
 import (
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -96,6 +97,9 @@ func hasEnglishAudio(meta api.UploadSubject) bool {
 }
 
 func resolveGenres(meta api.UploadSubject) string {
+	if meta.EffectiveMetadata.GenresProvenance.IsManual() {
+		return trackers.PreferredGenreText(meta, "")
+	}
 	if meta.ProviderMetadata.TMDB != nil {
 		return strings.TrimSpace(meta.ProviderMetadata.TMDB.Genres)
 	}

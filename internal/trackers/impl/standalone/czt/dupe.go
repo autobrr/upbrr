@@ -145,17 +145,18 @@ func (h cztHandler) Search(ctx context.Context, meta api.DuplicateSubject) dupe.
 
 // cztSearchQuery prefers the release title to discover same-work candidates.
 func cztSearchQuery(meta api.DuplicateSubject) string {
-	if title := strings.TrimSpace(meta.Release.Title); title != "" {
-		return title
+	title := strings.TrimSpace(meta.Release.Title)
+	if title == "" && meta.Projection != nil {
+		title = dupe.ProjectedSearchName(meta)
 	}
-	if meta.Projection != nil {
-		return dupe.ProjectedSearchName(meta)
+	if title == "" {
+		title = metautil.FirstNonEmptyTrimmed(
+			meta.ReleaseName,
+			meta.SceneName,
+			meta.Filename,
+		)
 	}
-	return metautil.FirstNonEmptyTrimmed(
-		meta.ReleaseName,
-		meta.SceneName,
-		meta.Filename,
-	)
+	return meta.EffectiveMetadata.PreferredTitle(title)
 }
 
 // cztResultItems extracts torrent rows from the CZTeam search response. Auth or

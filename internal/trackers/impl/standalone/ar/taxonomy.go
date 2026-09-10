@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/providerid"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -79,18 +80,20 @@ func resolveTags(meta api.UploadSubject) string {
 }
 
 func resolveGenres(meta api.UploadSubject) string {
+	var provider string
 	switch {
 	case meta.ProviderMetadata.TMDB != nil && strings.TrimSpace(meta.ProviderMetadata.TMDB.Genres) != "":
-		return strings.TrimSpace(meta.ProviderMetadata.TMDB.Genres)
+		provider = meta.ProviderMetadata.TMDB.Genres
 	case meta.ProviderMetadata.IMDB != nil && strings.TrimSpace(meta.ProviderMetadata.IMDB.Genres) != "":
-		return strings.TrimSpace(meta.ProviderMetadata.IMDB.Genres)
+		provider = meta.ProviderMetadata.IMDB.Genres
 	case meta.ProviderMetadata.TVDB != nil && strings.TrimSpace(meta.ProviderMetadata.TVDB.Genres) != "":
-		return strings.TrimSpace(meta.ProviderMetadata.TVDB.Genres)
+		provider = meta.ProviderMetadata.TVDB.Genres
 	case meta.ProviderMetadata.TVmaze != nil && strings.TrimSpace(meta.ProviderMetadata.TVmaze.Genres) != "":
-		return strings.TrimSpace(meta.ProviderMetadata.TVmaze.Genres)
+		provider = meta.ProviderMetadata.TVmaze.Genres
 	default:
-		return strings.TrimSpace(meta.Release.Genre)
+		provider = meta.Release.Genre
 	}
+	return trackers.PreferredGenreText(meta, provider)
 }
 
 func isSD(resolution string) bool {

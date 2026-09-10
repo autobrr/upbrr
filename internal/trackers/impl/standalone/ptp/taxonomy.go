@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -174,12 +176,13 @@ func resolveSource(source string) string {
 }
 
 func resolveSubtitles(meta api.UploadSubject) []int {
-	if len(meta.SubtitleLanguages) == 0 {
+	languages := append(append([]string(nil), meta.SubtitleLanguages...), meta.HardcodedSubtitleLanguages...)
+	if len(languages) == 0 {
 		return []int{44}
 	}
-	ids := make([]int, 0, len(meta.SubtitleLanguages))
+	ids := make([]int, 0, len(languages))
 	seen := make(map[int]struct{})
-	for _, language := range meta.SubtitleLanguages {
+	for _, language := range languages {
 		if value, ok := subtitleIDs[strings.ToLower(strings.TrimSpace(language))]; ok {
 			if _, exists := seen[value]; exists {
 				continue
@@ -196,14 +199,21 @@ func resolveSubtitles(meta api.UploadSubject) []int {
 
 func resolveTags(meta api.UploadSubject) string {
 	values := make([]string, 0, 8)
-	if meta.ProviderMetadata.TMDB != nil {
-		for item := range strings.SplitSeq(meta.ProviderMetadata.TMDB.Genres, ",") {
-			if tag := ptpTag(item); tag != "" {
-				values = append(values, tag)
-			}
+	var genreText string
+	switch {
+	case meta.EffectiveMetadata.GenresProvenance.IsManual():
+		genreText = trackers.PreferredGenreText(meta, "")
+	case meta.ProviderMetadata.TMDB != nil:
+		genreText = meta.ProviderMetadata.TMDB.Genres
+	default:
+		genreText = meta.Release.Genre
+	}
+	for item := range strings.SplitSeq(genreText, ",") {
+		if tag := ptpTag(item); tag != "" {
+			values = append(values, tag)
 		}
 	}
-	if len(values) == 0 && strings.TrimSpace(meta.Release.Genre) != "" {
+	if len(values) == 0 && !meta.EffectiveMetadata.GenresProvenance.IsManual() {
 		for item := range strings.SplitSeq(meta.Release.Genre, ",") {
 			if tag := ptpTag(item); tag != "" {
 				values = append(values, tag)
@@ -253,29 +263,30 @@ func resolveTrumpable(meta api.UploadSubject) []int {
 	if hasHardcodedSubtitles(meta) {
 		values = append(values, 4)
 	}
-	if len(meta.AudioLanguages) > 0 && !ptpEnglishLanguage(meta.AudioLanguages[0]) && !ptpHasEnglishLanguage(meta.SubtitleLanguages) {
+	switch strings.ToLower(strings.TrimSpace(standalone.QuestionnaireAnswers(meta, "PTP")["no_english_subtitles"])) {
+	case "yes":
+		return append(values, 14)
+	case "no":
+		return values
+	}
+	subtitles := append(append([]string(nil), meta.SubtitleLanguages...), meta.HardcodedSubtitleLanguages...)
+	if len(meta.AudioLanguages) > 0 && !ptpEnglishLanguage(meta.AudioLanguages[0]) && !ptpHasEnglishLanguage(subtitles) {
 		values = append(values, 14)
 	}
 	return values
 }
 
 func hasHardcodedSubtitles(meta api.UploadSubject) bool {
-	name := strings.ToLower(strings.Join(append([]string{
-		meta.ReleaseName,
-		meta.ReleaseNameNoTag,
-		meta.Filename,
-	}, meta.FileList...), " "))
-	return strings.Contains(name, "hardsub") || strings.Contains(name, "hard-sub") || strings.Contains(name, "hardcoded")
+	return meta.HardcodedSubs
 }
 
 func withHardcodedSubtitleLanguages(meta api.UploadSubject, value string) (api.UploadSubject, error) {
-	if !hasHardcodedSubtitles(meta) {
+	if !hasHardcodedSubtitles(meta) || len(meta.HardcodedSubtitleLanguages) > 0 {
 		return meta, nil
 	}
 	if strings.TrimSpace(value) == "" {
 		return api.UploadSubject{}, errors.New("trackers: PTP hardcoded subtitle languages are required")
 	}
-	meta.SubtitleLanguages = append([]string(nil), meta.SubtitleLanguages...)
 	for language := range strings.SplitSeq(value, ",") {
 		language = strings.TrimSpace(language)
 		if language == "" {
@@ -284,7 +295,10 @@ func withHardcodedSubtitleLanguages(meta api.UploadSubject, value string) (api.U
 		if _, ok := subtitleIDs[strings.ToLower(language)]; !ok {
 			return api.UploadSubject{}, fmt.Errorf("trackers: PTP unsupported hardcoded subtitle language %q", language)
 		}
-		meta.SubtitleLanguages = append(meta.SubtitleLanguages, language)
+		meta.HardcodedSubtitleLanguages = append(meta.HardcodedSubtitleLanguages, language)
+	}
+	if len(meta.HardcodedSubtitleLanguages) == 0 {
+		return api.UploadSubject{}, errors.New("trackers: PTP hardcoded subtitle languages are required")
 	}
 	return meta, nil
 }

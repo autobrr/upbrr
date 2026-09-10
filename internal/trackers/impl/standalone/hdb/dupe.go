@@ -85,7 +85,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	}
 	if request.IMDB == nil && request.TVDB == nil {
 		workScope = dupe.WorkScopeTitle
-		query := firstHDBText(meta.Release.Title, dupe.ProjectedSearchName(meta), meta.ReleaseName, meta.Filename)
+		query := meta.EffectiveMetadata.PreferredTitle(firstHDBText(meta.Release.Title, dupe.ProjectedSearchName(meta), meta.ReleaseName, meta.Filename))
 		if query == "" {
 			s.logger.Warnf("dupechecking: HDB missing imdb/tvdb IDs and search text for %s", meta.SourcePath)
 			return dupe.NotRun(dupe.NotRunMissingMetadata, "missing imdb/tvdb id for HDB dupe search", nil)
@@ -349,5 +349,5 @@ func isHDBDupeTVCategory(meta api.DuplicateSubject) bool {
 }
 
 func hdbDupeCategoryID(meta api.DuplicateSubject) int {
-	return resolveHDBCategoryID(meta.SourcePath, meta.Identity, meta.ProviderMetadata)
+	return resolveHDBCategoryID(meta.SourcePath, meta.Identity, meta.ProviderMetadata, meta.EffectiveMetadata)
 }

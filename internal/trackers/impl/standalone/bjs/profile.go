@@ -32,6 +32,10 @@ func Profile() standalone.Profile {
 				Scope:       trackers.MetadataScopeAny,
 				AnyOf:       []trackers.MetadataField{trackers.MetadataFieldTMDB},
 				Disposition: api.RuleDispositionStrict,
+			}, {
+				Scope:       trackers.MetadataScopeAny,
+				AnyOf:       []trackers.MetadataField{trackers.MetadataFieldTMDBLocalizedPTBR},
+				Disposition: api.RuleDispositionAdvisory,
 			}},
 		},
 		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: sourceFlag, RequireAnnounce: true},

@@ -144,8 +144,9 @@ func screenshotBlock(images []api.ScreenshotImage) string {
 }
 
 func genresText(meta api.UploadSubject) string {
+	provider := ""
 	if meta.ProviderMetadata.TMDB != nil {
-		return metautil.FirstNonEmptyTrimmed(meta.ProviderMetadata.TMDB.Genres, meta.Release.Genre)
+		provider = meta.ProviderMetadata.TMDB.Genres
 	}
-	return strings.TrimSpace(meta.Release.Genre)
+	return trackers.PreferredGenreText(meta, provider)
 }

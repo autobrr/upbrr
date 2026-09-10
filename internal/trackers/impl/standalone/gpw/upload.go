@@ -339,13 +339,14 @@ func resolveIdentifier(meta api.UploadSubject) string {
 }
 
 func resolveYear(meta api.UploadSubject) int {
-	if meta.ProviderMetadata.TMDB != nil && meta.ProviderMetadata.TMDB.Year > 0 {
-		return meta.ProviderMetadata.TMDB.Year
+	provider := 0
+	if meta.ProviderMetadata.TMDB != nil {
+		provider = meta.ProviderMetadata.TMDB.Year
 	}
-	if meta.ProviderMetadata.IMDB != nil && meta.ProviderMetadata.IMDB.Year > 0 {
-		return meta.ProviderMetadata.IMDB.Year
+	if provider == 0 && meta.ProviderMetadata.IMDB != nil {
+		provider = meta.ProviderMetadata.IMDB.Year
 	}
-	return meta.Release.Year
+	return trackers.PreferredYear(meta, provider)
 }
 
 func onOff(value bool) string {

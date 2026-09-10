@@ -98,6 +98,24 @@ func TestResolveTagsPreservesUnknownGenres(t *testing.T) {
 	}
 }
 
+func TestResolveTagsManualCorrectionBeatsLocalizedGenres(t *testing.T) {
+	t.Parallel()
+
+	localized := api.TMDBLocalizedData{Genres: "Ação"}
+	meta := api.UploadSubject{}
+	if got := resolveTags(meta, localized); got != "acao" {
+		t.Fatalf("automatic localized tags = %q", got)
+	}
+	meta.EffectiveMetadata = api.EffectiveMetadata{Genres: []string{"Drama"}, GenresProvenance: api.FactProvenanceManual}
+	if got := resolveTags(meta, localized); got != "drama" {
+		t.Fatalf("manual tags = %q", got)
+	}
+	meta.EffectiveMetadata = api.EffectiveMetadata{GenresProvenance: api.FactProvenanceManualEmpty}
+	if got := resolveTags(meta, localized); got != "" {
+		t.Fatalf("manual empty tags = %q", got)
+	}
+}
+
 func TestResolveLanguageUsesResolvedAudioFacts(t *testing.T) {
 	t.Parallel()
 

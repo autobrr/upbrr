@@ -91,3 +91,79 @@ func TestResolveARSearchNameUsesTVDBWhenOnlyTVDBMetadataExists(t *testing.T) {
 		t.Fatalf("duplicate search name = %q", got)
 	}
 }
+
+func TestResolveARSearchNamePrefersManualFacts(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{
+		ReleaseName: "Fallback Release",
+		Release:     api.ReleaseInfo{Title: "Parsed Title", Year: 2020},
+		ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{
+			Title: "Provider Title", Year: 2021,
+		}},
+		EffectiveMetadata: api.EffectiveMetadata{
+			Title:           "Manual Title",
+			TitleProvenance: api.FactProvenanceManual,
+			Year:            2030,
+			YearProvenance:  api.FactProvenanceManual,
+		},
+	}
+	if got := resolveARSearchName(meta); got != "Manual Title 2030" {
+		t.Fatalf("manual search name = %q", got)
+	}
+
+	meta.EffectiveMetadata.Title = ""
+	meta.EffectiveMetadata.TitleProvenance = api.FactProvenanceManualEmpty
+	if got := resolveARSearchName(meta); got != "" {
+		t.Fatalf("manual-empty search name = %q", got)
+	}
+}
+
+func TestResolveARGenresPrefersManualFacts(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{
+		Release:          api.ReleaseInfo{Genre: "Parsed"},
+		ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Genres: "Provider"}},
+		EffectiveMetadata: api.EffectiveMetadata{
+			Genres: []string{"Manual"}, GenresProvenance: api.FactProvenanceManual,
+		},
+	}
+	if got := resolveGenres(meta); got != "Manual" {
+		t.Fatalf("manual genres = %q", got)
+	}
+	meta.EffectiveMetadata.Genres = nil
+	meta.EffectiveMetadata.GenresProvenance = api.FactProvenanceManualEmpty
+	if got := resolveGenres(meta); got != "" {
+		t.Fatalf("manual-empty genres = %q", got)
+	}
+}
+
+func TestARSearchQueryPrefersManualFacts(t *testing.T) {
+	t.Parallel()
+
+	meta := api.DuplicateSubject{
+		ReleaseName: "Fallback Release",
+		Release:     api.ReleaseInfo{Title: "Parsed Title", Year: 2020},
+		ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{
+			Title: "Provider Title", Year: 2021,
+		}},
+		EffectiveMetadata: api.EffectiveMetadata{
+			Title:           "Manual Title",
+			TitleProvenance: api.FactProvenanceManual,
+			Year:            2030,
+			YearProvenance:  api.FactProvenanceManual,
+		},
+	}
+	if got := arSearchQuery(meta); got != "Manual Title 2030" {
+		t.Fatalf("manual duplicate search = %q", got)
+	}
+	meta.EffectiveMetadata.Title = ""
+	meta.EffectiveMetadata.TitleProvenance = api.FactProvenanceManualEmpty
+	meta.Projection = &api.TrackerReleaseProjection{
+		DuplicateCriteria: api.TrackerDuplicateCriteria{Name: "Fallback Release 2030"},
+	}
+	if got := arSearchQuery(meta); got != "" {
+		t.Fatalf("manual-empty duplicate search = %q", got)
+	}
+}

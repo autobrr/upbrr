@@ -106,10 +106,16 @@ func imdbURL(meta api.UploadSubject) string {
 }
 
 func genresText(meta api.UploadSubject) string {
+	var provider string
 	if meta.ProviderMetadata.TMDB != nil {
-		return metautil.FirstNonEmptyTrimmed(meta.ProviderMetadata.TMDB.Genres, meta.Release.Genre)
+		provider = metautil.FirstNonEmptyTrimmed(meta.ProviderMetadata.TMDB.Genres, meta.Release.Genre)
+	} else {
+		provider = meta.Release.Genre
 	}
-	return strings.TrimSpace(meta.Release.Genre)
+	if meta.EffectiveMetadata.GenresProvenance.IsManual() {
+		return trackers.PreferredGenreText(meta, provider)
+	}
+	return strings.TrimSpace(provider)
 }
 
 func keywordsText(meta api.UploadSubject) string {

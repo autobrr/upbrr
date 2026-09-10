@@ -301,3 +301,26 @@ func textResponse(req *http.Request, body string) *http.Response {
 		Request:    req,
 	}
 }
+
+func TestResolveGenresPreservesAutomaticProviderPresenceAndManualFacts(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{Release: api.ReleaseInfo{Genre: "Release"}, ProviderMetadata: api.SourceScopedMetadata{
+		IMDB: &api.IMDBMetadata{Genres: ""}, TMDB: &api.TMDBMetadata{Genres: "TMDB"},
+	}}
+	if got := resolveGenres(meta); got != "" {
+		t.Fatalf("blank IMDb genres = %q", got)
+	}
+	meta.ProviderMetadata.IMDB = nil
+	if got := resolveGenres(meta); got != "TMDB" {
+		t.Fatalf("TMDB genres = %q", got)
+	}
+	meta.EffectiveMetadata = api.EffectiveMetadata{Genres: []string{"Manual"}, GenresProvenance: api.FactProvenanceManual}
+	if got := resolveGenres(meta); got != "Manual" {
+		t.Fatalf("manual genres = %q", got)
+	}
+	meta.EffectiveMetadata = api.EffectiveMetadata{GenresProvenance: api.FactProvenanceManualEmpty}
+	if got := resolveGenres(meta); got != "" {
+		t.Fatalf("manual-empty genres = %q", got)
+	}
+}
