@@ -4,10 +4,24 @@
 package asc
 
 import (
+	"net/http"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestASCSearchDoesNotUseSourcePathAsTitle(t *testing.T) {
+	t.Parallel()
+	meta := api.DuplicateSubject{Anime: true, SourcePath: `C:\private\Example.Release.2026.mkv`}
+	if got := resolveASCTitle(meta); got != "" {
+		t.Fatalf("source path became a search title: %q", got)
+	}
+	result := (dupeSearcher{http: &http.Client{}}).Search(t.Context(), meta)
+	if result.Disposition() != dupe.DispositionNotRun || result.Code() != dupe.NotRunMissingMetadata {
+		t.Fatalf("missing title outcome = %v/%s", result.Disposition(), result.Code())
+	}
+}
 
 func TestResolveASCTitleHonorsManualTitle(t *testing.T) {
 	t.Parallel()

@@ -268,8 +268,8 @@
     "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged."
   },
   "internal/trackers/impl/standalone/asc/dupe.go:resolveASCTitle": {
-    "sha256": "651305b97e1369809b13af6d7402783700c219f4b5c9d6e6a4b2968da71b19d4",
-    "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged."
+    "sha256": "61597eab2253ff8202fbfa974f6d1173dc1fd5e705818783538f8d742b124715",
+    "reason": "Finalized/manual title precedence remains intact; missing titles never fall back to the local source path."
   },
   "internal/trackers/impl/standalone/asc/metadata.go:resolveCast": {
     "sha256": "d2cbaadc094206f87a868078eeb4b473cf0a0a16e9578e94addc3711ef6f58c8",
@@ -472,8 +472,8 @@
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
   "internal/trackers/impl/standalone/bjs/upload.go:resolveYearLabel": {
-    "sha256": "c1c3341a7578ad3cd242439effc4269194b8158771b8c78e1ee92bbbed74fe3f",
-    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+    "sha256": "0776df5b1f0a3ae37aabc07ab009ef748df6375628d38f6392615c51377d2336",
+    "reason": "Manual-empty years stay absent before TV range formatting; positive manual/provider years retain existing precedence."
   },
   "internal/trackers/impl/standalone/bjs/upload.go:resolveYouTube": {
     "sha256": "8c44f7534b83f381c733beddb6344ebf3bf8a8fd5560c80a7cad20be2d469892",
@@ -536,8 +536,8 @@
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
   "internal/trackers/impl/standalone/bt/upload.go:buildFields": {
-    "sha256": "2676ccb47a7030fa358f65a3578c349bbfd3e8e23fffbfe9a0ef4aba47d062f7",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "3684c2471b11f4199fd2190c65bfa95dfcb96322cdf3e28192848e0c2f329f6a",
+    "reason": "Manual-aware metadata selectors retain authority; year and anime release-date fields encode absent years as blank."
   },
   "internal/trackers/impl/standalone/bt/upload.go:prepareUpload": {
     "sha256": "b0f3053220acb2346ee3fe64c72eeb5a17868d8df67acd471b93687cab0711b4",
@@ -800,8 +800,8 @@
     "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged."
   },
   "internal/trackers/impl/standalone/gpw/upload.go:buildFields": {
-    "sha256": "2db17518ed27b2a5f1e0bf559a41f3f6327b100500621b73e1f133224e132040",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "6bbf376e5dd04edf8179827ee210d43a4433ee1543e19d9b4832f83d7eb81f25",
+    "reason": "Manual-aware metadata selectors retain authority; new-group years encode absence as blank and existing groups omit the year field."
   },
   "internal/trackers/impl/standalone/gpw/upload.go:prepareUploadState": {
     "sha256": "7219a10b243e5593d1b0884c6ded4f98fcd56ae6d216b49d3a897f3a82a65d64",

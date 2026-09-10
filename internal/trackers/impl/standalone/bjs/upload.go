@@ -367,6 +367,9 @@ func resolveReleaseDate(meta api.UploadSubject) string {
 
 func resolveYearLabel(meta api.UploadSubject) string {
 	year := resolveYear(meta)
+	if year <= 0 {
+		return ""
+	}
 	if strings.EqualFold(categoryOf(meta), "TV") {
 		if meta.ProviderMetadata.IMDB != nil && meta.ProviderMetadata.IMDB.EndYear > 0 {
 			return fmt.Sprintf("%d-%d", year, meta.ProviderMetadata.IMDB.EndYear)

@@ -222,6 +222,10 @@ func buildFields(
 	hasPT, subtitleIDs := resolveSubtitle(meta)
 	width, height := resolveResolution(meta)
 	ptBR := api.ExtractTrackerLocalizedPTBR(meta)
+	yearLabel := ""
+	if year := resolveYear(meta); year > 0 {
+		yearLabel = strconv.Itoa(year)
+	}
 	fields := map[string][]string{
 		"audio_c":     {resolveAudioCodec(meta)},
 		"audio":       {resolveAudio(meta)},
@@ -244,7 +248,7 @@ func buildFields(
 		"title":       {resolveTitle(meta)},
 		"type":        {resolveType(meta)},
 		"video_c":     {resolveVideoCodec(meta)},
-		"year":        {strconv.Itoa(resolveYear(meta))},
+		"year":        {yearLabel},
 		"youtube":     {resolveYouTube(meta, ptBR)},
 	}
 
@@ -281,7 +285,7 @@ func buildFields(
 	if meta.Anime {
 		fields["fundo_torrent"] = []string{resolveBackdrop(meta)}
 		fields["rating"] = []string{resolveIMDbRating(meta)}
-		fields["releasedate"] = []string{strconv.Itoa(resolveYear(meta))}
+		fields["releasedate"] = []string{yearLabel}
 		fields["horas"] = []string{""}
 		fields["minutos"] = []string{""}
 		fields["vote"] = []string{""}

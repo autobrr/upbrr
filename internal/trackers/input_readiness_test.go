@@ -149,3 +149,65 @@ func TestEvaluateInputReadinessRequiresKnownCategory(t *testing.T) {
 		t.Fatalf("evaluation=%#v", evaluation)
 	}
 }
+
+func TestEvaluateInputReadinessChecksTrackerInputWithoutCategory(t *testing.T) {
+	t.Parallel()
+	registry := NewRegistry()
+	if err := registry.RegisterDescriptor(Descriptor{
+		Name: "ONE",
+		Definition: projectionInputDefinition{inputSchemaDefinition{
+			name:    "ONE",
+			options: []string{"valid"},
+		}},
+		Metadata: &TrackerMetadataPolicy{RequireKnownCategory: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	evaluation, err := EvaluateInputReadiness(registry, []api.TrackerID{"ONE"}, api.UploadSubject{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evaluation.Fields) != 2 || evaluation.Fields[0].Key != "metadata.category" ||
+		evaluation.Fields[1].Key != "tracker_input.choice" || evaluation.Fields[1].Status != api.InputReadinessFieldInvalid {
+		t.Fatalf("evaluation = %#v", evaluation)
+	}
+}
+
+type retainedInputSchemaDefinition struct {
+	stubDefinition
+	schema *api.TrackerQuestionnaire
+}
+
+func (d retainedInputSchemaDefinition) InputSchema(api.UploadSubject) *api.TrackerQuestionnaire {
+	return d.schema
+}
+
+func TestInputSchemaDetachesProviderStorage(t *testing.T) {
+	t.Parallel()
+	schema := &api.TrackerQuestionnaire{Tracker: "ONE", Fields: []api.TrackerQuestionnaireField{{
+		Key:     "choice",
+		Kind:    "select",
+		Options: []string{"valid"},
+	}}}
+	registry := NewRegistry()
+	if err := registry.Register(retainedInputSchemaDefinition{name: "ONE", schema: schema}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := EvaluateInputReadiness(registry, []api.TrackerID{"ONE"}, api.UploadSubject{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	detached := registry.InputSchema("ONE", api.UploadSubject{})
+	detached.Tracker = "changed"
+	detached.Fields[0].Key = "changed"
+	detached.Fields[0].Options[0] = "changed"
+	before.Schemas[0].Fields[0].Options[0] = "also changed"
+	after, err := EvaluateInputReadiness(registry, []api.TrackerID{"ONE"}, api.UploadSubject{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.RequirementsFingerprint != before.RequirementsFingerprint || schema.Tracker != "ONE" ||
+		schema.Fields[0].Key != "choice" || schema.Fields[0].Options[0] != "valid" {
+		t.Fatalf("caller mutated provider schema: %#v", schema)
+	}
+}
