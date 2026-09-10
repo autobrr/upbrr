@@ -37,7 +37,19 @@ jobs:
 
       - name: Run OSV dependency scan
         if: ${{ !cancelled() }}
-        run: go run github.com/google/osv-scanner/v2/cmd/osv-scanner@${OSV_SCANNER_VERSION} scan source --lockfile go.mod --lockfile webui/pnpm-lock.yaml
+        run: |
+          for attempt in 1 2 3; do
+            if go install github.com/google/osv-scanner/v2/cmd/osv-scanner@${OSV_SCANNER_VERSION}; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::OSV scanner installation failed after 3 attempts"
+              exit 1
+            fi
+            echo "::warning::OSV scanner installation failed; retrying in 10 seconds (attempt $attempt/3)"
+            sleep 10
+          done
+          "$(go env GOPATH)/bin/osv-scanner" scan source --lockfile go.mod --lockfile webui/pnpm-lock.yaml
 
   report_failure:
     name: Report vulnerability scan failure
