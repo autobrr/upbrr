@@ -39,7 +39,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           for attempt in 1 2 3; do
-            if go install github.com/google/osv-scanner/v2/cmd/osv-scanner@${OSV_SCANNER_VERSION}; then
+            if go install "github.com/google/osv-scanner/v2/cmd/osv-scanner@${OSV_SCANNER_VERSION}"; then
               break
             fi
             if [ "$attempt" -eq 3 ]; then
