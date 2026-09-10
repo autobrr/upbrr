@@ -368,8 +368,13 @@ func TestCommitPreparedReleaseWithCorrectionsUsesCommittedRevision(t *testing.T)
 	if stored.Revision != finalRevision || !reflect.DeepEqual(stored.Corrections, record) {
 		t.Fatalf("committed corrections = %#v, want %#v at revision %d", stored.Corrections, record, finalRevision)
 	}
-	if _, err := repo.LoadPreparedRelease(ctx, release.Source.SourcePath); err != nil {
+	committed, err := repo.LoadPreparedRelease(ctx, release.Source.SourcePath)
+	if err != nil {
 		t.Fatalf("load committed generation: %v", err)
+	}
+	wantCompatibility, _ := compatibility(finalRevision)
+	if committed.Compatibility != wantCompatibility {
+		t.Fatalf("first commit compatibility = %#v, want %#v", committed.Compatibility, wantCompatibility)
 	}
 	// Empty optional collections differ under reflect.DeepEqual but serialize to
 	// the same stored correction payload. SQLite keeps the existing revision.
@@ -378,10 +383,9 @@ func TestCommitPreparedReleaseWithCorrectionsUsesCommittedRevision(t *testing.T)
 	if noOpRevision, err := repo.CommitPreparedReleaseWithCorrections(ctx, release, finalRevision, record, compatibility); err != nil || noOpRevision != finalRevision {
 		t.Fatalf("no-op commit revision = %d, %v; want %d, nil", noOpRevision, err, finalRevision)
 	}
-	committed, err := repo.LoadPreparedRelease(ctx, release.Source.SourcePath)
-	wantCompatibility, _ := compatibility(finalRevision)
+	committed, err = repo.LoadPreparedRelease(ctx, release.Source.SourcePath)
 	if err != nil || committed.Compatibility != wantCompatibility {
-		t.Fatalf("persisted generation does not use the committed revision: %v", err)
+		t.Fatalf("no-op commit changed compatibility: got %#v, want %#v; error: %v", committed.Compatibility, wantCompatibility, err)
 	}
 }
 
