@@ -729,8 +729,8 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
         </div>
       </div>
 
-      <div className="settings-subgroup" data-testid="input-track-coverage">
-        <div className="settings-subgroup__title">Inspected tracks</div>
+      <details className="settings-subgroup" data-testid="input-track-coverage">
+        <summary className="cursor-pointer font-semibold">Inspected tracks</summary>
         <p className="muted">
           {release?.Media?.TrackCoverageComplete
             ? "Track coverage is complete."
@@ -793,7 +793,7 @@ export function InputCorrectionEditor({ facet }: Readonly<{ facet: InputFacet }>
             })}
           </div>
         )}
-      </div>
+      </details>
 
       <details className="settings-subgroup" data-testid="input-source-options">
         <summary className="cursor-pointer font-semibold">Source options</summary>
