@@ -68,6 +68,78 @@ func TestReleaseCorrectionPatchAcceptsClosedResetFields(t *testing.T) {
 	}
 }
 
+func TestReleaseCorrectionUpdateReplaceValidatesTrackValues(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		values ReleaseCorrectionValues
+	}{
+		{
+			name: "blank track ID",
+			values: ReleaseCorrectionValues{Metadata: MetadataOverrides{TrackLanguages: []TrackLanguageCorrection{{
+				ManifestFingerprint: "scan",
+			}}}},
+		},
+		{
+			name: "missing manifest fingerprint",
+			values: ReleaseCorrectionValues{Metadata: MetadataOverrides{TrackLanguages: []TrackLanguageCorrection{{
+				TrackID: "audio:1",
+			}}}},
+		},
+		{
+			name: "duplicate track ID",
+			values: ReleaseCorrectionValues{Metadata: MetadataOverrides{TrackLanguages: []TrackLanguageCorrection{
+				{TrackID: "audio:1", ManifestFingerprint: "first-scan"},
+				{TrackID: "audio:1", ManifestFingerprint: "second-scan"},
+			}}},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := ApplyReleaseCorrectionUpdate(ReleaseCorrectionsSnapshot{}, ReleaseCorrectionUpdate{
+				Mode:   ReleaseCorrectionUpdateReplace,
+				Values: test.values,
+			})
+			if !errors.Is(err, ErrCorrectionConflict) {
+				t.Fatalf("replace error = %v", err)
+			}
+		})
+	}
+
+	category := "television"
+	trackLanguages := []TrackLanguageCorrection{{
+		TrackID:             "subtitle:2",
+		Languages:           []string{"French"},
+		ManifestFingerprint: "scan",
+	}}
+	previousTitle := "Previous title"
+	stored, err := ApplyReleaseCorrectionUpdate(ReleaseCorrectionsSnapshot{Corrections: StoredReleaseCorrectionsV1{
+		Version:  1,
+		Metadata: MetadataOverrides{Title: &previousTitle},
+	}}, ReleaseCorrectionUpdate{
+		Mode: ReleaseCorrectionUpdateReplace,
+		Values: ReleaseCorrectionValues{
+			ReleaseName: ReleaseNameOverrides{Category: &category},
+			Metadata:    MetadataOverrides{TrackLanguages: trackLanguages},
+		},
+	})
+	if err != nil {
+		t.Fatalf("replace valid values: %v", err)
+	}
+	if stored.Metadata.Title != nil || stored.ReleaseName.Category == nil || *stored.ReleaseName.Category != "tv" ||
+		len(stored.Metadata.TrackLanguages) != 1 || stored.Metadata.TrackLanguages[0].TrackID != "subtitle:2" ||
+		!slices.Equal(stored.Metadata.TrackLanguages[0].Languages, []string{"French"}) {
+		t.Fatalf("replace result = %#v", stored)
+	}
+	if category != "television" {
+		t.Fatalf("replace normalized caller category = %q", category)
+	}
+	trackLanguages[0].Languages[0] = "German"
+	if !slices.Equal(stored.Metadata.TrackLanguages[0].Languages, []string{"French"}) {
+		t.Fatalf("replace result aliases caller track languages = %#v", stored.Metadata.TrackLanguages)
+	}
+}
+
 func TestApplyReleaseCorrectionUpdatePreservesExplicitZeroFalseAndEmpty(t *testing.T) {
 	t.Parallel()
 
@@ -293,8 +365,8 @@ func TestWithoutResetPinsPreservesOtherIdentityEvidence(t *testing.T) {
 	t.Parallel()
 	for _, provenance := range []IdentityProvenance{IdentityProvenanceExplicit, IdentityProvenanceProvider, IdentityProvenanceLegacy} {
 		original := ExternalIdentity{
-			TMDBID: 1234567,
- IMDBID: 2345678,
+			TMDBID:     1234567,
+			IMDBID:     2345678,
 			Provenance: IdentityProvenanceSet{TMDB: provenance, IMDB: IdentityProvenanceExplicit},
 		}
 		reset := original.WithoutResetPins([]CorrectionField{CorrectionFieldIdentityTMDB})

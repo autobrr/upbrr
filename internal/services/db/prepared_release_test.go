@@ -310,11 +310,11 @@ func preparedReleaseDBFixture(sourcePath string, generation api.PreparedGenerati
 				ContractVersion:   "identity-v1",
 			},
 			Dependencies: api.IdentityDependencySet{
-				TMDB:   api.IdentityDependency{
-ID: 123456,
- IMDBID: 7654321,
- TVDBID: 2001,
-},
+				TMDB: api.IdentityDependency{
+					ID:     123456,
+					IMDBID: 7654321,
+					TVDBID: 2001,
+				},
 				IMDB:   api.IdentityDependency{ID: 7654321, TMDBID: 123456},
 				TVDB:   api.IdentityDependency{ID: 2001},
 				TVmaze: api.IdentityDependency{ID: 3001, TVDBID: 2001},

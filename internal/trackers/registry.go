@@ -446,7 +446,16 @@ func (r *Registry) InputSchema(tracker string, subject api.UploadSubject) *api.T
 	if !ok {
 		return nil
 	}
-	return provider.InputSchema(subject)
+	schema := provider.InputSchema(subject)
+	if schema == nil {
+		return nil
+	}
+	detached := *schema
+	detached.Fields = slices.Clone(schema.Fields)
+	for index := range detached.Fields {
+		detached.Fields[index].Options = slices.Clone(detached.Fields[index].Options)
+	}
+	return &detached
 }
 
 // LookupBannedGroups returns tracker-owned static banned release groups.

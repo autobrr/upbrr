@@ -1322,11 +1322,11 @@ func TestCLIConfirmInputRequiresCurrentCorrectionAction(t *testing.T) {
 		t.Fatalf("parse confirmation: %v", err)
 	}
 	current := releaseworkflow.CommandResult{
-		Workflow:    api.ReleaseWorkflow{
-ID: "workflow-1",
- Revision: 3,
- Status: api.WorkflowStatusBlocked,
-},
+		Workflow: api.ReleaseWorkflow{
+			ID:       "workflow-1",
+			Revision: 3,
+			Status:   api.WorkflowStatusBlocked,
+		},
 		Corrections: &api.ReleaseCorrectionsSnapshot{Revision: 7},
 	}
 	for _, test := range []struct {
@@ -1379,9 +1379,9 @@ func TestCLIConfirmInputUsesCurrentCorrectionAction(t *testing.T) {
 	}
 	current := releaseworkflow.CommandResult{
 		Workflow: api.ReleaseWorkflow{
-			ID: "workflow-1",
- Revision: 3,
- Status: api.WorkflowStatusBlocked,
+			ID:       "workflow-1",
+			Revision: 3,
+			Status:   api.WorkflowStatusBlocked,
 			RequiredActions: []api.RequiredAction{{
 				Kind:             api.RequiredActionConfirmCorrections,
 				Status:           api.RequiredActionStatusPending,
@@ -1409,5 +1409,76 @@ func TestCLIConfirmInputUsesCurrentCorrectionAction(t *testing.T) {
 		*request.Intent.CorrectionPatch.ExpectedRevision != current.Corrections.Revision ||
 		!slices.Equal(request.Intent.CorrectionPatch.ConfirmFields, []api.CorrectionFieldRef{{Field: api.CorrectionFieldMetadataTitle}}) {
 		t.Fatalf("confirmation continuation = %#v", request)
+	}
+}
+
+func TestCLIConfirmInputUsesCanonicalSourceForNoTrackerCompletion(t *testing.T) {
+	const (
+		rawSource       = "raw-source.mkv"
+		canonicalSource = "canonical-source.mkv"
+	)
+	opts, visited, _, err := parseCLIOptions([]string{"--confirm-input", "metadata.title", "--unattended", rawSource})
+	if err != nil {
+		t.Fatalf("parse confirmation: %v", err)
+	}
+	pending := releaseworkflow.CommandResult{
+		Workflow: api.ReleaseWorkflow{
+			ID:       "workflow-1",
+			Revision: 1,
+			Status:   api.WorkflowStatusBlocked,
+			RequiredActions: []api.RequiredAction{{
+				Kind:             api.RequiredActionConfirmCorrections,
+				Status:           api.RequiredActionStatusPending,
+				WorkflowRevision: 1,
+				CorrectionConfirmation: &api.CorrectionConfirmation{
+					Revision: 7,
+					Fields:   []api.CorrectionField{api.CorrectionFieldMetadataTitle},
+				},
+			}},
+		},
+		Corrections: &api.ReleaseCorrectionsSnapshot{Revision: 7},
+	}
+	resolved := releaseworkflow.CommandResult{
+		Workflow: api.ReleaseWorkflow{
+			ID:       "workflow-1",
+			Revision: 2,
+			Status:   api.WorkflowStatusActive,
+		},
+		Release: &api.ReleaseSnapshot{Release: api.PreparedRelease{
+			Generation: 1,
+			Source:     api.SourceManifest{SourcePath: canonicalSource},
+			Naming:     api.NamingFacts{Title: "Example"},
+		}},
+		Selection: &api.TrackerSelection{},
+	}
+	coreSvc := &cliWorkflowCoreFake{current: pending}
+	coreSvc.continueFn = func(request api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) {
+		if request.Intent.CorrectionPatch != nil {
+			coreSvc.current = resolved
+			return resolved, nil
+		}
+		return coreSvc.current, nil
+	}
+	var output strings.Builder
+	if err := runCLIWorkflowInteractive(
+		t.Context(),
+		coreSvc,
+		[]string{"--confirm-input", "metadata.title", "--unattended", rawSource},
+		opts,
+		visited,
+		rawSource,
+		api.PlaylistInstruction{},
+		0,
+		config.Config{},
+		cliIO{in: strings.NewReader(""), out: &output},
+		api.NopLogger{},
+	); err != nil {
+		t.Fatalf("run confirmed workflow: %v", err)
+	}
+	if !strings.Contains(output.String(), "No trackers configured for "+formatPathLabel(canonicalSource)) {
+		t.Fatalf("no-tracker completion = %q", output.String())
+	}
+	if len(coreSvc.uploadRequests) != 1 || coreSvc.uploadRequests[0].Source.Path != rawSource {
+		t.Fatalf("composite source = %#v", coreSvc.uploadRequests)
 	}
 }

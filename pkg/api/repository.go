@@ -289,7 +289,11 @@ type PreparedReleaseRepository interface {
 	LoadReleaseCorrections(context.Context, string) (ReleaseCorrectionsSnapshot, error)
 	UpdateReleaseCorrections(context.Context, string, ReleaseCorrectionUpdate) (ReleaseCorrectionsSnapshot, error)
 	CompareAndSwapReleaseCorrections(context.Context, string, uint64, StoredReleaseCorrectionsV1) (ReleaseCorrectionsSnapshot, error)
-	CommitPreparedReleaseWithCorrections(context.Context, PreparedRelease, uint64, StoredReleaseCorrectionsV1) (uint64, error)
+	// CommitPreparedReleaseWithCorrections computes compatibility from the authoritative
+	// correction revision inside the generation transaction. The callback must perform
+	// only local computation; its error rolls back both corrections and generation.
+	CommitPreparedReleaseWithCorrections(context.Context, PreparedRelease, uint64, StoredReleaseCorrectionsV1,
+		func(uint64) (PreparationCompatibility, error)) (uint64, error)
 }
 
 // ReleaseSelectionRepository persists user-selected description and playlist

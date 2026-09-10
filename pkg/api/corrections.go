@@ -306,6 +306,9 @@ func ApplyReleaseCorrectionUpdate(snapshot ReleaseCorrectionsSnapshot, update Re
 		if err := normalizeReleaseCorrectionValues(&values); err != nil {
 			return StoredReleaseCorrectionsV1{}, err
 		}
+		if _, err := correctionValueRefs(values); err != nil {
+			return StoredReleaseCorrectionsV1{}, err
+		}
 		stored = StoredReleaseCorrectionsV1{Version: 1, IdentityResetFields: slices.Sorted(slices.Values(identityCorrectionFields))}
 		applyReleaseCorrectionValues(&stored, values)
 		return stored, nil

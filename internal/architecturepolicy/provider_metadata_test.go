@@ -129,3 +129,70 @@ func bad(s api.UploadSubject, payload map[string]string) { payload["title"] = ca
 	}
 	assertViolationContains(t, violations, ":bad")
 }
+
+func TestProviderMetadataReviewFollowsPointerGetters(t *testing.T) {
+	t.Parallel()
+	const pointerBaseline = `package sample
+func providerTitle(subject api.UploadSubject) *string { return &subject.ProviderMetadata.TMDB.Title }
+func forward(subject api.UploadSubject) **string { value := providerTitle(subject); return &value }
+`
+	const excludedBaseline = `package sample
+type providerHandle struct{}
+func providerTitle(subject api.UploadSubject) *providerHandle { _ = subject.ProviderMetadata.TMDB.Title; return nil }
+`
+	for _, test := range []struct {
+		baseline string
+		name     string
+		source   string
+		want     string
+	}{
+		{
+			baseline: pointerBaseline,
+			name:     "terminal consumer of nested pointer getter",
+			source:   pointerBaseline + "func bad(s api.UploadSubject, payload map[string]string) { payload[\"title\"] = **forward(s) }\n",
+			want:     ":bad",
+		},
+		{
+			baseline: excludedBaseline,
+			name:     "unsupported pointed-to named type",
+			source:   excludedBaseline + "func bad(s api.UploadSubject, payload map[string]string) { _ = providerTitle(s); payload[\"title\"] = \"preserved\" }\n",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			const path = "internal/trackers/impl/sample/name.go"
+			writePolicyFixture(t, root, path, test.baseline)
+			fset := token.NewFileSet()
+			consumers, err := collectProviderMetadataConsumers(root, fset)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reviews := make(map[string]providerMetadataReview, len(consumers))
+			for _, consumer := range consumers {
+				fingerprint, err := providerMetadataFingerprint(consumer.decl)
+				if err != nil {
+					t.Fatal(err)
+				}
+				reviews[consumer.key] = providerMetadataReview{SHA256: fingerprint, Reason: "Manual preference wraps title; identity remains provider evidence."}
+			}
+			writePolicyFixture(t, root, path, test.source)
+			fset = token.NewFileSet()
+			consumers, err = collectProviderMetadataConsumers(root, fset)
+			if err != nil {
+				t.Fatal(err)
+			}
+			violations, err := verifyProviderMetadataConsumers(consumers, reviews, fset)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.want == "" {
+				if len(violations) != 0 {
+					t.Fatalf("unsupported pointer result propagated: %v", violations)
+				}
+				return
+			}
+			assertViolationContains(t, violations, test.want)
+		})
+	}
+}

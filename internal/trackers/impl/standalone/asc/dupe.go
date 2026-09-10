@@ -425,8 +425,5 @@ func resolveASCTitle(meta api.DuplicateSubject) string {
 	if title == "" {
 		title = strings.TrimSpace(meta.ReleaseName)
 	}
-	if title == "" {
-		title = strings.TrimSpace(meta.SourcePath)
-	}
 	return meta.EffectiveMetadata.PreferredTitle(title)
 }

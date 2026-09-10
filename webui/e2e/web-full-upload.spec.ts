@@ -124,7 +124,7 @@ test("embedded web distinguishes a cleared metadata provider ID from Auto", asyn
 
     await page.getByText("Edit Release Details", { exact: true }).click();
     const malRow = page.locator('[data-correction-field="identity.mal"]');
-    const malInput = page.getByRole("spinbutton", { name: "MAL ID" });
+    const malInput = page.getByRole("textbox", { name: "MAL ID", exact: true });
     await expect(malInput).toHaveValue("");
     await expect(malRow.getByText("Automatic value", { exact: true })).toBeVisible();
     await malInput.fill("0");

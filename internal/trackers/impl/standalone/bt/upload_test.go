@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -125,6 +126,57 @@ func TestResolveLanguageUsesResolvedAudioFacts(t *testing.T) {
 	}
 	if got := resolveLanguage(api.UploadSubject{Release: api.ReleaseInfo{Language: []string{"English"}}}); got != "" {
 		t.Fatalf("raw language fallback = %q", got)
+	}
+}
+
+func TestBuildFieldsYearLabelsPreserveManualAuthority(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		meta api.UploadSubject
+		want string
+	}{
+		{
+			name: "manual empty suppresses provider year",
+			meta: api.UploadSubject{
+				Anime:             true,
+				EffectiveMetadata: api.EffectiveMetadata{YearProvenance: api.FactProvenanceManualEmpty},
+				ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Year: 2026}},
+			},
+			want: "",
+		},
+		{
+			name: "manual year overrides provider year",
+			meta: api.UploadSubject{
+				Anime:             true,
+				EffectiveMetadata: api.EffectiveMetadata{Year: 2024, YearProvenance: api.FactProvenanceManual},
+				ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Year: 2026}},
+			},
+			want: "2024",
+		},
+		{
+			name: "provider year remains available",
+			meta: api.UploadSubject{
+				Anime:            true,
+				ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Year: 2026}},
+			},
+			want: "2026",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			fields := buildFields(trackers.PreparationInput{Meta: tc.meta}, "description", "auth", config.TrackerConfig{}, trackers.DescriptionAssets{})
+			if got := fields["year"]; len(got) != 1 || got[0] != tc.want {
+				t.Fatalf("year = %#v, want %q", got, tc.want)
+			}
+			if got := fields["releasedate"]; len(got) != 1 || got[0] != tc.want {
+				t.Fatalf("releasedate = %#v, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
