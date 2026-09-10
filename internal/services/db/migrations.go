@@ -170,6 +170,66 @@ var migrationRegistry = []migrationStep{
 		dependsOn: []string{"2026_08_add_multi_disc_media_binding", "2026_04_add_screenshot_slot_tables"},
 		apply:     migrateBindPreparedMediaAssets,
 	},
+	{
+		id:        "2026_09_add_release_corrections",
+		dependsOn: []string{"2026_04_add_release_override_use_season_episode", "2026_08_add_release_omission_controls"},
+		apply:     migrateAddReleaseCorrections,
+	},
+	{
+		id:        "2026_09_add_external_identity_dependencies",
+		dependsOn: []string{"2026_07_add_canonical_release_generations"},
+		apply:     migrateAddExternalIdentityDependencies,
+	},
+}
+
+func migrateAddExternalIdentityDependencies(ctx context.Context, exec migrationExecutor) error {
+	exists, err := tableExists(ctx, exec, "external_ids")
+	if err != nil {
+		return fmt.Errorf("db: inspect external ids for dependencies: %w", err)
+	}
+	if !exists {
+		return nil
+	}
+	columnExists, err := tableColumnExists(ctx, exec, "external_ids", "dependency_json")
+	if err != nil {
+		return fmt.Errorf("db: inspect external_ids.dependency_json: %w", err)
+	}
+	if columnExists {
+		return nil
+	}
+	if _, err := exec.ExecContext(ctx, `ALTER TABLE external_ids ADD COLUMN dependency_json TEXT NOT NULL DEFAULT "{}"`); err != nil {
+		return fmt.Errorf("db: add external_ids.dependency_json: %w", err)
+	}
+	return nil
+}
+
+func migrateAddReleaseCorrections(ctx context.Context, exec migrationExecutor) error {
+	tablePresent, err := tableExists(ctx, exec, "release_overrides")
+	if err != nil {
+		return fmt.Errorf("db: inspect release overrides: %w", err)
+	}
+	if !tablePresent {
+		return nil
+	}
+	for _, column := range []struct {
+		name       string
+		definition string
+	}{
+		{name: "corrections_json", definition: "TEXT NULL"},
+		{name: "corrections_revision", definition: "INTEGER NOT NULL DEFAULT 0"},
+	} {
+		exists, err := tableColumnExists(ctx, exec, "release_overrides", column.name)
+		if err != nil {
+			return fmt.Errorf("db: inspect release corrections column %s: %w", column.name, err)
+		}
+		if exists {
+			continue
+		}
+		if _, err := exec.ExecContext(ctx, fmt.Sprintf("ALTER TABLE release_overrides ADD COLUMN %s %s", column.name, column.definition)); err != nil {
+			return fmt.Errorf("db: add release corrections column %s: %w", column.name, err)
+		}
+	}
+	return backfillLegacyReleaseCorrections(ctx, exec)
 }
 
 func migrateAddMultiDiscMediaBinding(ctx context.Context, exec migrationExecutor) error {
@@ -541,6 +601,7 @@ func ensurePreparedExternalIDsSchema(ctx context.Context, exec migrationExecutor
 		{name: "intent_fingerprint", ddl: `ALTER TABLE external_ids ADD COLUMN intent_fingerprint TEXT NOT NULL DEFAULT ""`},
 		{name: "contract_version", ddl: `ALTER TABLE external_ids ADD COLUMN contract_version TEXT NOT NULL DEFAULT "legacy"`},
 		{name: "resolved_at", ddl: `ALTER TABLE external_ids ADD COLUMN resolved_at TEXT NOT NULL DEFAULT ""`},
+		{name: "dependency_json", ddl: `ALTER TABLE external_ids ADD COLUMN dependency_json TEXT NOT NULL DEFAULT "{}"`},
 	}
 	for _, column := range columns {
 		if _, ok := existingColumns[strings.ToLower(column.name)]; ok {
@@ -1559,6 +1620,7 @@ func createBaselineSchema(ctx context.Context, exec migrationExecutor) error {
 			source_fingerprint TEXT NOT NULL DEFAULT "",
 			intent_fingerprint TEXT NOT NULL DEFAULT "",
 			contract_version TEXT NOT NULL DEFAULT "legacy",
+			dependency_json TEXT NOT NULL DEFAULT "{}",
 			resolved_at TEXT NOT NULL DEFAULT "",
 			updated_at TEXT NOT NULL
 		)
@@ -1600,6 +1662,8 @@ func createBaselineSchema(ctx context.Context, exec migrationExecutor) error {
 			dual_audio INTEGER,
 			region TEXT,
 			use_season_episode INTEGER,
+			corrections_json TEXT NULL,
+			corrections_revision INTEGER NOT NULL DEFAULT 0,
 			updated_at TEXT NOT NULL
 		)
 		`,

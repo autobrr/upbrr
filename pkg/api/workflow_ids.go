@@ -31,6 +31,9 @@ type ReleaseFactInstructionSnapshotID string
 // ReleaseSnapshotID identifies one immutable prepared-release projection.
 type ReleaseSnapshotID string
 
+// InputReadinessSnapshotID identifies one immutable local-input readiness projection.
+type InputReadinessSnapshotID string
+
 // TrackerCatalogSnapshotID identifies one immutable tracker catalog.
 type TrackerCatalogSnapshotID string
 
@@ -95,6 +98,12 @@ type ReleaseFactInstructionSnapshotRef struct {
 type ReleaseSnapshotRef struct {
 	ID       ReleaseSnapshotID `json:"id"`
 	Revision WorkflowRevision  `json:"revision"`
+}
+
+// InputReadinessSnapshotRef references one exact input-readiness snapshot revision.
+type InputReadinessSnapshotRef struct {
+	ID       InputReadinessSnapshotID `json:"id"`
+	Revision WorkflowRevision         `json:"revision"`
 }
 
 // TrackerCatalogSnapshotRef references one exact tracker catalog revision.
@@ -265,6 +274,8 @@ const (
 	RequiredActionProvideTrackerInput RequiredActionKind = "provide_tracker_input"
 	// RequiredActionAnswerQuestionnaire requests tracker questionnaire answers.
 	RequiredActionAnswerQuestionnaire RequiredActionKind = "answer_questionnaire"
+	// RequiredActionConfirmCorrections requests confirmation of stale saved input corrections.
+	RequiredActionConfirmCorrections RequiredActionKind = "confirm_corrections"
 	// RequiredActionAuthorizeRules requests acknowledgement of waivable rules.
 	RequiredActionAuthorizeRules RequiredActionKind = "authorize_rules"
 	// RequiredActionResolveTrackerPreparation requests a decision about one prepared tracker payload.
@@ -305,18 +316,19 @@ type RequiredActionOption struct {
 
 // RequiredAction is a transport-safe backend-defined manual action.
 type RequiredAction struct {
-	ID               RequiredActionID           `json:"id"`
-	Kind             RequiredActionKind         `json:"kind"`
-	Status           RequiredActionStatus       `json:"status"`
-	WorkflowRevision WorkflowRevision           `json:"workflowRevision"`
-	TrackerID        TrackerID                  `json:"trackerId,omitempty"`
-	EffectKind       WorkflowExternalEffectKind `json:"effectKind,omitempty"`
-	EffectScopeID    string                     `json:"effectScopeId,omitempty"`
-	Prompt           string                     `json:"prompt"`
-	Options          []RequiredActionOption     `json:"options,omitempty"`
-	AllowsFreeText   bool                       `json:"allowsFreeText,omitempty"`
-	CreatedAt        time.Time                  `json:"createdAt" ts_type:"string"`
-	ExpiresAt        *time.Time                 `json:"expiresAt,omitempty" ts_type:"string"`
+	CorrectionConfirmation *CorrectionConfirmation    `json:"correctionConfirmation,omitempty"`
+	ID                     RequiredActionID           `json:"id"`
+	Kind                   RequiredActionKind         `json:"kind"`
+	Status                 RequiredActionStatus       `json:"status"`
+	WorkflowRevision       WorkflowRevision           `json:"workflowRevision"`
+	TrackerID              TrackerID                  `json:"trackerId,omitempty"`
+	EffectKind             WorkflowExternalEffectKind `json:"effectKind,omitempty"`
+	EffectScopeID          string                     `json:"effectScopeId,omitempty"`
+	Prompt                 string                     `json:"prompt"`
+	Options                []RequiredActionOption     `json:"options,omitempty"`
+	AllowsFreeText         bool                       `json:"allowsFreeText,omitempty"`
+	CreatedAt              time.Time                  `json:"createdAt" ts_type:"string"`
+	ExpiresAt              *time.Time                 `json:"expiresAt,omitempty" ts_type:"string"`
 }
 
 const (
@@ -357,14 +369,15 @@ type WorkflowOperationItem struct {
 type WorkflowOperationResultKind string
 
 const (
-	WorkflowOperationResultRelease      WorkflowOperationResultKind = "release"
-	WorkflowOperationResultProjections  WorkflowOperationResultKind = "tracker_projections"
-	WorkflowOperationResultPreflight    WorkflowOperationResultKind = "tracker_preflight"
-	WorkflowOperationResultDupes        WorkflowOperationResultKind = "dupes"
-	WorkflowOperationResultMedia        WorkflowOperationResultKind = "media"
-	WorkflowOperationResultDescriptions WorkflowOperationResultKind = "descriptions"
-	WorkflowOperationResultDryRun       WorkflowOperationResultKind = "dry_run"
-	WorkflowOperationResultUpload       WorkflowOperationResultKind = "upload_result"
+	WorkflowOperationResultRelease        WorkflowOperationResultKind = "release"
+	WorkflowOperationResultInputReadiness WorkflowOperationResultKind = "input_readiness"
+	WorkflowOperationResultProjections    WorkflowOperationResultKind = "tracker_projections"
+	WorkflowOperationResultPreflight      WorkflowOperationResultKind = "tracker_preflight"
+	WorkflowOperationResultDupes          WorkflowOperationResultKind = "dupes"
+	WorkflowOperationResultMedia          WorkflowOperationResultKind = "media"
+	WorkflowOperationResultDescriptions   WorkflowOperationResultKind = "descriptions"
+	WorkflowOperationResultDryRun         WorkflowOperationResultKind = "dry_run"
+	WorkflowOperationResultUpload         WorkflowOperationResultKind = "upload_result"
 )
 
 // WorkflowOperationResult binds terminal success to one exact retained public

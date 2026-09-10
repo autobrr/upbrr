@@ -55,6 +55,7 @@ type WorkflowGoal string
 
 const (
 	WorkflowGoalPrepared          WorkflowGoal = "prepared"
+	WorkflowGoalInputReady        WorkflowGoal = "input_ready"
 	WorkflowGoalTrackersAssessed  WorkflowGoal = "trackers_assessed"
 	WorkflowGoalDuplicatesDecided WorkflowGoal = "duplicates_decided"
 	WorkflowGoalMediaReady        WorkflowGoal = "media_ready"
@@ -72,11 +73,15 @@ type WorkflowAuthority struct {
 
 // WorkflowIntent is desired workflow state. Internal stage ordering is absent by design.
 type WorkflowIntent struct {
-	FactInstructions       *ReleaseFactInstructions                    `json:"factInstructions,omitempty"`
-	Preparation            *PrepareInput                               `json:"preparation,omitempty"`
-	Interaction            InteractionMode                             `json:"interaction,omitempty"`
-	ExecutionMode          WorkflowExecutionMode                       `json:"executionMode,omitempty"`
-	TrackerIDs             []TrackerID                                 `json:"trackerIds,omitempty"`
+	FactInstructions *ReleaseFactInstructions `json:"factInstructions,omitempty"`
+	CorrectionPatch  *ReleaseCorrectionPatch  `json:"correctionPatch,omitempty"`
+	Preparation      *PrepareInput            `json:"preparation,omitempty"`
+	Interaction      InteractionMode          `json:"interaction,omitempty"`
+	ExecutionMode    WorkflowExecutionMode    `json:"executionMode,omitempty"`
+	TrackerIDs       []TrackerID              `json:"trackerIds,omitempty"`
+	// TrackerInputAnswers patches selected-tracker input. A null field value
+	// removes its prior answer; a string is an explicit answer.
+	TrackerInputAnswers    map[TrackerID]map[string]*string            `json:"trackerInputAnswers,omitempty"`
 	ProjectionInstructions map[TrackerID]TrackerProjectionInstructions `json:"projectionInstructions,omitempty"`
 	SkipRemoteDuplicates   bool                                        `json:"skipRemoteDuplicates,omitempty"`
 	DuplicateCheckCount    uint8                                       `json:"duplicateCheckCount,omitempty"`
@@ -124,6 +129,24 @@ type ContinueReleaseWorkflowRequest struct {
 
 // Validate verifies request identity and typed desired-state shape.
 func (r ContinueReleaseWorkflowRequest) Validate() error {
+	if len(r.Intent.TrackerInputAnswers) > 0 && (r.Intent.CorrectionPatch != nil || r.Intent.FactInstructions != nil ||
+		(r.Intent.Preparation != nil && continuationPreparationHasFactCorrections(*r.Intent.Preparation))) {
+		return errors.New("trackerInputAnswers cannot be combined with release corrections")
+	}
+	if patch := r.Intent.CorrectionPatch; patch != nil {
+		if r.Intent.FactInstructions != nil {
+			return errors.New("correctionPatch cannot be combined with factInstructions")
+		}
+		if r.Intent.Preparation != nil && continuationPreparationHasFactCorrections(*r.Intent.Preparation) {
+			return errors.New("correctionPatch cannot be combined with preparation fact corrections")
+		}
+		if r.Authority != nil && patch.ExpectedRevision == nil {
+			return errors.New("correctionPatch requires the loaded correction revision")
+		}
+		if err := patch.Validate(); err != nil {
+			return err
+		}
+	}
 	if strings.TrimSpace(r.IdempotencyKey) == "" {
 		return errors.New("idempotency key is required")
 	}
@@ -212,6 +235,15 @@ func (r ContinueReleaseWorkflowRequest) Validate() error {
 	return nil
 }
 
+func continuationPreparationHasFactCorrections(input PrepareInput) bool {
+	values := ReleaseCorrectionValues{
+		Identity:    input.Instructions.Identity,
+		ReleaseName: input.Instructions.ReleaseName,
+		Metadata:    input.Instructions.Metadata,
+	}
+	return !releaseCorrectionValuesZero(values) || input.Instructions.Category != nil
+}
+
 func validWorkflowInteraction(interaction InteractionMode) bool {
 	switch interaction {
 	case "", InteractionModeInteractive, InteractionModeUnattended, InteractionModeUnattendedConfirm:
@@ -233,6 +265,7 @@ func validWorkflowExecutionMode(mode WorkflowExecutionMode) bool {
 func validWorkflowGoal(goal WorkflowGoal) bool {
 	switch goal {
 	case WorkflowGoalPrepared,
+		WorkflowGoalInputReady,
 		WorkflowGoalTrackersAssessed,
 		WorkflowGoalDuplicatesDecided,
 		WorkflowGoalMediaReady,

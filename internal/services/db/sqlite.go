@@ -570,7 +570,8 @@ func (r *SQLiteRepository) GetExternalIdentity(ctx context.Context, path string)
 
 	row := r.db.QueryRowContext(ctx, `
 		SELECT source_path, tmdb_id, imdb_id, tvdb_id, tvmaze_id, mal_id, category,
-			source_tmdb, source_imdb, source_tvdb, source_tvmaze, source_mal, updated_at
+			source_tmdb, source_imdb, source_tvdb, source_tvmaze, source_mal,
+			dependency_json, updated_at
 		FROM external_ids
 		WHERE source_path = ?
 	`, path)
@@ -583,6 +584,7 @@ func (r *SQLiteRepository) GetExternalIdentity(ctx context.Context, path string)
 	var sourceTVDB string
 	var sourceTVmaze string
 	var sourceMAL string
+	var dependencyJSON string
 	if err := row.Scan(
 		&ids.SourcePath,
 		&ids.TMDBID,
@@ -596,6 +598,7 @@ func (r *SQLiteRepository) GetExternalIdentity(ctx context.Context, path string)
 		&sourceTVDB,
 		&sourceTVmaze,
 		&sourceMAL,
+		&dependencyJSON,
 		&updatedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -616,6 +619,9 @@ func (r *SQLiteRepository) GetExternalIdentity(ctx context.Context, path string)
 		TVmaze: api.IdentityProvenance(sourceTVmaze),
 		MAL:    api.IdentityProvenance(sourceMAL),
 	}
+	if err := decodePreparedJSON(dependencyJSON, &ids.Dependencies); err != nil {
+		return Identity{}, fmt.Errorf("db get external ids: decode identity dependencies: %w", err)
+	}
 
 	return ids, nil
 }
@@ -632,13 +638,18 @@ func (r *SQLiteRepository) SaveExternalIdentity(ctx context.Context, ids Identit
 	if timestamp.IsZero() {
 		timestamp = time.Now().UTC()
 	}
+	dependencyJSON, err := encodePreparedJSON(ids.Dependencies)
+	if err != nil {
+		return fmt.Errorf("db save external ids: encode identity dependencies: %w", err)
+	}
 
-	_, err := r.execWrite(ctx, "save external ids", `
+	_, err = r.execWrite(ctx, "save external ids", `
 		INSERT INTO external_ids (
 			source_path, tmdb_id, imdb_id, tvdb_id, tvmaze_id, mal_id, category,
-			source_tmdb, source_imdb, source_tvdb, source_tvmaze, source_mal, updated_at
+			source_tmdb, source_imdb, source_tvdb, source_tvmaze, source_mal,
+			dependency_json, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source_path) DO UPDATE SET
 			tmdb_id = excluded.tmdb_id,
 			imdb_id = excluded.imdb_id,
@@ -651,6 +662,7 @@ func (r *SQLiteRepository) SaveExternalIdentity(ctx context.Context, ids Identit
 			source_tvdb = excluded.source_tvdb,
 			source_tvmaze = excluded.source_tvmaze,
 			source_mal = excluded.source_mal,
+			dependency_json = excluded.dependency_json,
 			updated_at = excluded.updated_at
 	`,
 		ids.SourcePath,
@@ -665,6 +677,7 @@ func (r *SQLiteRepository) SaveExternalIdentity(ctx context.Context, ids Identit
 		ids.Provenance.TVDB,
 		ids.Provenance.TVmaze,
 		ids.Provenance.MAL,
+		dependencyJSON,
 		timestamp.Format(time.RFC3339Nano),
 	)
 	if err != nil {
@@ -903,203 +916,23 @@ func (r *SQLiteRepository) GetReleaseNameOverrides(ctx context.Context, path str
 	if r == nil || r.db == nil {
 		return ReleaseNameOverrides{}, errors.New("db: repository not initialized")
 	}
-	if strings.TrimSpace(path) == "" {
+	path = strings.TrimSpace(path)
+	if path == "" {
 		return ReleaseNameOverrides{}, internalerrors.ErrInvalidInput
 	}
 
-	row := r.db.QueryRowContext(ctx, `
-		SELECT category, release_type, release_source, release_resolution,
-			tag, service, edition, season, episode, episode_title,
-			manual_year, manual_date, use_season_episode, no_season, no_year, no_aka, no_tag,
-			no_episode_title, no_distributor, no_edition, no_dub, no_dual, dual_audio, region
-		FROM release_overrides
-		WHERE source_path = ?
-	`, path)
-
-	var overrides ReleaseNameOverrides
-	var category sql.NullString
-	var releaseType sql.NullString
-	var releaseSource sql.NullString
-	var releaseResolution sql.NullString
-	var tag sql.NullString
-	var service sql.NullString
-	var edition sql.NullString
-	var season sql.NullString
-	var episode sql.NullString
-	var episodeTitle sql.NullString
-	var manualYear sql.NullInt64
-	var manualDate sql.NullString
-	var useSeasonEpisode sql.NullBool
-	var noSeason sql.NullBool
-	var noYear sql.NullBool
-	var noAKA sql.NullBool
-	var noTag sql.NullBool
-	var noEpisodeTitle sql.NullBool
-	var noDistributor sql.NullBool
-	var noEdition sql.NullBool
-	var noDub sql.NullBool
-	var noDual sql.NullBool
-	var dualAudio sql.NullBool
-	var region sql.NullString
-
-	if err := row.Scan(
-		&category,
-		&releaseType,
-		&releaseSource,
-		&releaseResolution,
-		&tag,
-		&service,
-		&edition,
-		&season,
-		&episode,
-		&episodeTitle,
-		&manualYear,
-		&manualDate,
-		&useSeasonEpisode,
-		&noSeason,
-		&noYear,
-		&noAKA,
-		&noTag,
-		&noEpisodeTitle,
-		&noDistributor,
-		&noEdition,
-		&noDub,
-		&noDual,
-		&dualAudio,
-		&region,
-	); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ReleaseNameOverrides{}, internalerrors.ErrNotFound
-		}
+	snapshot, found, err := loadReleaseCorrectionsTx(ctx, r.db, path)
+	if err != nil {
 		return ReleaseNameOverrides{}, fmt.Errorf("db get release overrides: %w", err)
 	}
-
-	overrides.Category = nullStringPtr(category)
-	overrides.Type = nullStringPtr(releaseType)
-	overrides.Source = nullStringPtr(releaseSource)
-	overrides.Resolution = nullStringPtr(releaseResolution)
-	overrides.Tag = nullStringPtr(tag)
-	overrides.Service = nullStringPtr(service)
-	overrides.Edition = nullStringPtr(edition)
-	overrides.Season = nullStringPtr(season)
-	overrides.Episode = nullStringPtr(episode)
-	overrides.EpisodeTitle = nullStringPtr(episodeTitle)
-	overrides.ManualYear = nullIntPtr(manualYear)
-	overrides.ManualDate = nullStringPtr(manualDate)
-	overrides.UseSeasonEpisode = nullBoolPtr(useSeasonEpisode)
-	overrides.NoSeason = nullBoolPtr(noSeason)
-	overrides.NoYear = nullBoolPtr(noYear)
-	overrides.NoAKA = nullBoolPtr(noAKA)
-	overrides.NoTag = nullBoolPtr(noTag)
-	overrides.NoEpisodeTitle = nullBoolPtr(noEpisodeTitle)
-	overrides.NoDistributor = nullBoolPtr(noDistributor)
-	overrides.NoEdition = nullBoolPtr(noEdition)
-	overrides.NoDub = nullBoolPtr(noDub)
-	overrides.NoDual = nullBoolPtr(noDual)
-	overrides.DualAudio = nullBoolPtr(dualAudio)
-	overrides.Region = nullStringPtr(region)
-
-	return overrides, nil
+	if !found {
+		return ReleaseNameOverrides{}, internalerrors.ErrNotFound
+	}
+	return snapshot.Corrections.ReleaseName, nil
 }
 
 func (r *SQLiteRepository) SaveReleaseNameOverrides(ctx context.Context, path string, overrides ReleaseNameOverrides) error {
-	if r == nil || r.db == nil {
-		return errors.New("db: repository not initialized")
-	}
-	if strings.TrimSpace(path) == "" {
-		return internalerrors.ErrInvalidInput
-	}
-
-	timestamp := time.Now().UTC().Format(time.RFC3339Nano)
-
-	_, err := r.execWrite(ctx, "save release overrides", `
-		INSERT INTO release_overrides (
-			source_path,
-			category,
-			release_type,
-			release_source,
-			release_resolution,
-			tag,
-			service,
-			edition,
-			season,
-			episode,
-			episode_title,
-			manual_year,
-			manual_date,
-			use_season_episode,
-			no_season,
-			no_year,
-			no_aka,
-			no_tag,
-			no_episode_title,
-			no_distributor,
-			no_edition,
-			no_dub,
-			no_dual,
-			dual_audio,
-			region,
-			updated_at
-		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(source_path) DO UPDATE SET
-			category = excluded.category,
-			release_type = excluded.release_type,
-			release_source = excluded.release_source,
-			release_resolution = excluded.release_resolution,
-			tag = excluded.tag,
-			service = excluded.service,
-			edition = excluded.edition,
-			season = excluded.season,
-			episode = excluded.episode,
-			episode_title = excluded.episode_title,
-			manual_year = excluded.manual_year,
-			manual_date = excluded.manual_date,
-			use_season_episode = excluded.use_season_episode,
-			no_season = excluded.no_season,
-			no_year = excluded.no_year,
-			no_aka = excluded.no_aka,
-			no_tag = excluded.no_tag,
-			no_episode_title = excluded.no_episode_title,
-			no_distributor = excluded.no_distributor,
-			no_edition = excluded.no_edition,
-			no_dub = excluded.no_dub,
-			no_dual = excluded.no_dual,
-			dual_audio = excluded.dual_audio,
-			region = excluded.region,
-			updated_at = excluded.updated_at
-	`,
-		path,
-		nullString(overrides.Category),
-		nullString(overrides.Type),
-		nullString(overrides.Source),
-		nullString(overrides.Resolution),
-		nullString(overrides.Tag),
-		nullString(overrides.Service),
-		nullString(overrides.Edition),
-		nullString(overrides.Season),
-		nullString(overrides.Episode),
-		nullString(overrides.EpisodeTitle),
-		nullInt(overrides.ManualYear),
-		nullString(overrides.ManualDate),
-		nullBool(overrides.UseSeasonEpisode),
-		nullBool(overrides.NoSeason),
-		nullBool(overrides.NoYear),
-		nullBool(overrides.NoAKA),
-		nullBool(overrides.NoTag),
-		nullBool(overrides.NoEpisodeTitle),
-		nullBool(overrides.NoDistributor),
-		nullBool(overrides.NoEdition),
-		nullBool(overrides.NoDub),
-		nullBool(overrides.NoDual),
-		nullBool(overrides.DualAudio),
-		nullString(overrides.Region),
-		timestamp,
-	)
-	if err != nil {
-		return fmt.Errorf("db save release overrides: %w", err)
-	}
-	return nil
+	return r.saveReleaseNameOverrides(ctx, path, overrides)
 }
 
 // DeleteReleaseNameOverrides is retained for SQLite maintenance and migration
@@ -1352,30 +1185,6 @@ func (r *SQLiteRepository) DeleteDescriptionOverride(ctx context.Context, path s
 
 func normalizeDescriptionOverrideGroupKey(groupKey string) string {
 	return strings.ToLower(strings.TrimSpace(groupKey))
-}
-
-func nullString(value *string) any {
-	if value == nil {
-		return nil
-	}
-	return *value
-}
-
-func nullInt(value *int) any {
-	if value == nil {
-		return nil
-	}
-	return *value
-}
-
-func nullBool(value *bool) any {
-	if value == nil {
-		return nil
-	}
-	if *value {
-		return 1
-	}
-	return 0
 }
 
 func nullStringPtr(value sql.NullString) *string {

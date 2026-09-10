@@ -41,6 +41,24 @@ func TestWorkflowRequestFingerprintsAreDeterministic(t *testing.T) {
 	}
 }
 
+func TestContinueRejectsMixedCorrectionAndTrackerAnswerOwners(t *testing.T) {
+	for _, intent := range []WorkflowIntent{
+		{CorrectionPatch: &ReleaseCorrectionPatch{ExpectedRevision: new(uint64)}},
+		{FactInstructions: &ReleaseFactInstructions{}},
+		{Preparation: &PrepareInput{Instructions: ReleaseFactInstructions{Metadata: MetadataOverrides{Title: new("Manual title")}}}},
+	} {
+		intent.TrackerInputAnswers = map[TrackerID]map[string]*string{"PTP": {"no_english_subtitles": new("yes")}}
+		request := ContinueReleaseWorkflowRequest{
+			IdempotencyKey: "mixed",
+			Goal:           WorkflowGoalInputReady,
+			Intent:         intent,
+		}
+		if err := request.Validate(); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+			t.Fatalf("mixed mutation was not rejected: %v", err)
+		}
+	}
+}
+
 func TestContinueWorkflowRequestRequiresTypedGoalAndAuthority(t *testing.T) {
 	t.Parallel()
 

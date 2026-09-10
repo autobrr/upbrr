@@ -90,7 +90,17 @@ func TestContinueHydratesPreparedGenerationBeforeRestartedMediaCapture(t *testin
 			ForceRecheck:      &forceRecheck,
 		},
 		Force: true,
+		MetadataRequirements: api.MetadataRequirementSet{
+			Version: "restart-hydration-v1",
+			Requirements: []api.MetadataRequirement{{
+				Scope:       api.MetadataRequirementScopeAny,
+				AnyOf:       []api.MetadataRequirementField{"original_title"},
+				Disposition: api.RuleDispositionStrict,
+			}},
+		},
 	}
+	continuationPreparation := preparation
+	continuationPreparation.MetadataRequirements = api.MetadataRequirementSet{}
 	projector := trackerProjectionBuilderFunc(func(
 		_ context.Context,
 		_ api.ReleaseSnapshot,
@@ -145,7 +155,7 @@ func TestContinueHydratesPreparedGenerationBeforeRestartedMediaCapture(t *testin
 	})
 
 	var prepareCalls atomic.Int32
-	hydrationInputs := make(chan api.PrepareInput, 1)
+	hydrationInputs := make(chan api.PrepareInput, 2)
 	basePreparer := testPreparer()
 	restartedPreparer := ReleasePreparerFunc{
 		PrepareFunc: func(_ context.Context, input api.PrepareInput) (api.PrepareResult, error) {
@@ -158,7 +168,11 @@ func TestContinueHydratesPreparedGenerationBeforeRestartedMediaCapture(t *testin
 			if prepareCalls.Load() == 0 {
 				return api.UploadSubject{}, errors.New("stale_generation")
 			}
-			return api.UploadSubject{SourcePath: input.Release.SourcePath}, nil
+			return api.UploadSubject{
+				SourcePath: input.Release.SourcePath,
+				Source:     "bluray",
+				Type:       "movie",
+			}, nil
 		},
 		DuplicateFunc: basePreparer.ResolveDuplicateSubject,
 	}
@@ -191,11 +205,12 @@ func TestContinueHydratesPreparedGenerationBeforeRestartedMediaCapture(t *testin
 			Status: api.StageStatusCompleted,
 		}, nil, nil
 	})
+	restartClock := &mutableClock{now: time.Date(2026, time.July, 20, 12, 1, 0, 0, time.UTC)}
 	restarted, err := New(
 		repository,
 		first.private,
 		restartedPreparer,
-		WithClock(fixedClock{now: time.Date(2026, time.July, 20, 12, 1, 0, 0, time.UTC)}),
+		WithClock(restartClock),
 		WithIDGenerator(&sequenceIDGenerator{next: 100}),
 		WithProcessEpoch("restart-hydration"),
 		WithMediaArtifactBuilder(mediaBuilder),
@@ -219,7 +234,7 @@ func TestContinueHydratesPreparedGenerationBeforeRestartedMediaCapture(t *testin
 		IdempotencyKey: "continue-restarted-media",
 		Goal:           api.WorkflowGoalMediaReady,
 		Intent: api.WorkflowIntent{
-			Preparation:            &preparation,
+			Preparation:            &continuationPreparation,
 			TrackerIDs:             []api.TrackerID{"ALPHA", "BETA"},
 			ProjectionInstructions: map[api.TrackerID]api.TrackerProjectionInstructions{},
 			Media: &api.MediaCaptureInstructions{
@@ -237,6 +252,40 @@ func TestContinueHydratesPreparedGenerationBeforeRestartedMediaCapture(t *testin
 	waitForWorkflowOperation(t, restarted, current.Workflow.ID, continued.Operation.ID, func(status api.WorkflowOperationStatus) bool {
 		return isTerminalProgressStatus(status.Status)
 	})
+	readiness, err := restarted.Current(t.Context(), testOwnerID, current.Workflow.ID)
+	if err != nil {
+		t.Fatalf("load restarted input readiness: %v", err)
+	}
+	if readiness.InputReadiness == nil {
+		t.Fatalf("restarted input readiness = %#v", readiness)
+	}
+	restartClock.now = restartClock.now.Add(time.Second)
+	continued, err = restarted.Continue(t.Context(), testOwnerID, api.ContinueReleaseWorkflowRequest{
+		Authority: &api.WorkflowAuthority{
+			WorkflowID:       readiness.Workflow.ID,
+			ExpectedRevision: readiness.Workflow.Revision,
+		},
+		IdempotencyKey: "continue-restarted-media-capture",
+		Goal:           api.WorkflowGoalMediaReady,
+		Intent: api.WorkflowIntent{
+			Preparation:            &continuationPreparation,
+			TrackerIDs:             []api.TrackerID{"ALPHA", "BETA"},
+			ProjectionInstructions: map[api.TrackerID]api.TrackerProjectionInstructions{},
+			Media: &api.MediaCaptureInstructions{
+				ScreenshotCount: 4,
+				Purpose:         api.ScreenshotPurposeFinal,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("continue restarted media capture: %v", err)
+	}
+	if continued.Operation == nil {
+		t.Fatalf("restarted media capture operation = %#v", continued)
+	}
+	waitForWorkflowOperation(t, restarted, current.Workflow.ID, continued.Operation.ID, func(status api.WorkflowOperationStatus) bool {
+		return isTerminalProgressStatus(status.Status)
+	})
 	completed, err := restarted.Current(t.Context(), testOwnerID, current.Workflow.ID)
 	if err != nil {
 		t.Fatalf("load restarted media: %v", err)
@@ -244,13 +293,18 @@ func TestContinueHydratesPreparedGenerationBeforeRestartedMediaCapture(t *testin
 	if completed.Media == nil || completed.Media.Status != api.StageStatusCompleted {
 		t.Fatalf("restarted media = %#v, operation = %#v", completed.Media, completed.Operation)
 	}
-	if prepareCalls.Load() != 1 {
-		t.Fatalf("restart hydration calls = %d, want 1", prepareCalls.Load())
+	if prepareCalls.Load() != 2 {
+		t.Fatalf("restart hydration calls = %d, want one for Input readiness and one for media", prepareCalls.Load())
 	}
-	hydrationInput := <-hydrationInputs
-	if hydrationInput.SourcePath != preparedRelease.Source.SourcePath || hydrationInput.Force || !hydrationInput.RequirePrepared ||
-		hydrationInput.Controls.ConfirmBDMVRescan || hydrationInput.Controls.ForceRecheck != nil {
-		t.Fatalf("restart hydration input = %#v", hydrationInput)
+	for range 2 {
+		hydrationInput := <-hydrationInputs
+		if hydrationInput.SourcePath != preparedRelease.Source.SourcePath || hydrationInput.Force || !hydrationInput.RequirePrepared ||
+			hydrationInput.Controls.ConfirmBDMVRescan || hydrationInput.Controls.ForceRecheck != nil {
+			t.Fatalf("restart hydration input = %#v", hydrationInput)
+		}
+		if !reflect.DeepEqual(hydrationInput.MetadataRequirements, preparation.MetadataRequirements) {
+			t.Fatalf("restart hydration metadata requirements = %#v, want %#v", hydrationInput.MetadataRequirements, preparation.MetadataRequirements)
+		}
 	}
 	capturedRelease := <-capturedReleases
 	if capturedRelease.SourcePath != preparedRelease.Source.SourcePath || capturedRelease.Generation != preparedRelease.Generation {
@@ -281,6 +335,14 @@ func TestHydrateContinuationPreparedReleaseRejectsChangedOrMismatchedGeneration(
 			ForceRecheck:      &forceRecheck,
 		},
 		Force: true,
+	}
+	requirements := api.MetadataRequirementSet{
+		Version: "hydrate-requirements-v1",
+		Requirements: []api.MetadataRequirement{{
+			Scope:       api.MetadataRequirementScopeAny,
+			AnyOf:       []api.MetadataRequirementField{"original_title"},
+			Disposition: api.RuleDispositionStrict,
+		}},
 	}
 	tests := []struct {
 		name      string
@@ -322,13 +384,16 @@ func TestHydrateContinuationPreparedReleaseRejectsChangedOrMismatchedGeneration(
 				preparedInput = candidate
 				return test.prepare(current.Release.Release)
 			}}}
-			err := module.hydrateContinuationPreparedRelease(t.Context(), current, input)
+			err := module.hydrateContinuationPreparedRelease(t.Context(), current, input, requirements)
 			if !errors.Is(err, test.wantError) {
 				t.Fatalf("hydrate error = %v, want %v", err, test.wantError)
 			}
 			if preparedInput.SourcePath != current.Release.Release.Source.SourcePath || preparedInput.Force ||
 				!preparedInput.RequirePrepared || preparedInput.Controls.ConfirmBDMVRescan || preparedInput.Controls.ForceRecheck != nil {
 				t.Fatalf("hydration input = %#v", preparedInput)
+			}
+			if !reflect.DeepEqual(preparedInput.MetadataRequirements, requirements) {
+				t.Fatalf("hydration metadata requirements = %#v, want %#v", preparedInput.MetadataRequirements, requirements)
 			}
 		})
 	}

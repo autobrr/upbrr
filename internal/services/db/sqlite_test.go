@@ -226,6 +226,13 @@ func TestSQLiteRepositoryCRUD(t *testing.T) {
 			TVmaze: api.IdentityProvenanceProvider,
 			MAL:    api.IdentityProvenanceScene,
 		},
+		Dependencies: api.IdentityDependencySet{
+			TMDB:   api.IdentityDependency{ID: 100, IMDBID: 200},
+			IMDB:   api.IdentityDependency{ID: 200, TMDBID: 100},
+			TVDB:   api.IdentityDependency{ID: 300},
+			TVmaze: api.IdentityDependency{ID: 400, TVDBID: 300},
+			MAL:    api.IdentityDependency{ID: 500, TMDBID: 100},
+		},
 		ResolvedAt: idsStamp,
 	}); err != nil {
 		t.Fatalf("save external ids: %v", err)
@@ -255,6 +262,15 @@ func TestSQLiteRepositoryCRUD(t *testing.T) {
 	}
 	if !ids.ResolvedAt.Equal(idsStamp) {
 		t.Fatalf("unexpected external id timestamp: got %s want %s", ids.ResolvedAt, idsStamp)
+	}
+	if ids.Dependencies != (api.IdentityDependencySet{
+		TMDB:   api.IdentityDependency{ID: 100, IMDBID: 200},
+		IMDB:   api.IdentityDependency{ID: 200, TMDBID: 100},
+		TVDB:   api.IdentityDependency{ID: 300},
+		TVmaze: api.IdentityDependency{ID: 400, TVDBID: 300},
+		MAL:    api.IdentityDependency{ID: 500, TMDBID: 100},
+	}) {
+		t.Fatalf("unexpected external identity dependencies: %#v", ids.Dependencies)
 	}
 
 	if err := repo.SaveDVDMediaInfo(ctx, DVDMediaInfo{

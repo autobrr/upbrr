@@ -6,6 +6,7 @@ package metadata
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,6 +68,21 @@ type fakeRepo struct {
 type recordingEvidencePipeline struct {
 	service *Service
 	state   preparationstate.State
+}
+
+type staticCandidateSource struct {
+	state preparationstate.State
+}
+
+func (s staticCandidateSource) ResolveIdentityCandidate(
+	context.Context,
+	externalidentity.Request,
+) (externalidentity.CandidateEvidence, error) {
+	return externalidentity.CandidateEvidence{
+		Identity:   s.state.Identity,
+		Metadata:   s.state.ProviderMetadata,
+		Candidates: s.state.ExternalIdentityCandidates,
+	}, nil
 }
 
 func (p *recordingEvidencePipeline) CollectPreparationEvidence(
@@ -432,6 +448,11 @@ func (s *stubIMDB) GetEpisodeInfo(_ context.Context, _ string, _ bool) (imdb.Epi
 }
 
 type stubTVDB struct {
+	searchResults            []tvdb.SeriesSearchResult
+	searchID                 int
+	searchTitles             []string
+	externalIMDbIDs          []string
+	externalTMDBIDs          []string
 	id                       int
 	name                     string
 	calls                    int
@@ -454,8 +475,15 @@ type stubTVDB struct {
 	lastEpisodeQuery         tvdb.EpisodeQuery
 }
 
-func (s *stubTVDB) GetByExternalID(_ context.Context, _, _ string, tvMovie bool) (int, string, error) {
+func (s *stubTVDB) SearchSeries(_ context.Context, filename, _ string) ([]tvdb.SeriesSearchResult, int, error) {
+	s.searchTitles = append(s.searchTitles, filename)
+	return s.searchResults, s.searchID, nil
+}
+
+func (s *stubTVDB) GetByExternalID(_ context.Context, imdbID, tmdbID string, tvMovie bool) (int, string, error) {
 	s.calls++
+	s.externalIMDbIDs = append(s.externalIMDbIDs, imdbID)
+	s.externalTMDBIDs = append(s.externalTMDBIDs, tmdbID)
 	s.tvMovieCalls = append(s.tvMovieCalls, tvMovie)
 	if tvMovie && s.idWhenTVMovie != 0 {
 		return s.idWhenTVMovie, s.nameWhenTVMovie, nil
@@ -946,9 +974,13 @@ func TestResolveExternalIDsPreservesCanonicalTrackerIdentity(t *testing.T) {
 		},
 		ProviderMetadata: api.SourceScopedMetadata{
 			SourcePath: "/media/file.mkv",
-			TMDB:       &api.TMDBMetadata{TMDBID: 1, Title: "Stored TMDB"},
-			IMDB:       &api.IMDBMetadata{IMDBID: 2, Title: "Stored IMDb"},
-			TVDB:       &api.TVDBMetadata{TVDBID: 3, Name: "Stored TVDB"},
+			TMDB: &api.TMDBMetadata{
+				TMDBID:   1,
+				Category: "movie",
+				Title:    "Stored TMDB",
+			},
+			IMDB: &api.IMDBMetadata{IMDBID: 2, Title: "Stored IMDb"},
+			TVDB: &api.TVDBMetadata{TVDBID: 3, Name: "Stored TVDB"},
 		},
 		MediaInfoTMDBID:   999,
 		MediaInfoIMDBID:   888,
@@ -1346,8 +1378,12 @@ func TestResolveExternalIDsUsesStoredFreshData(t *testing.T) {
 		},
 		ProviderMetadata: api.SourceScopedMetadata{
 			SourcePath: "/media/file.mkv",
-			TMDB:       &api.TMDBMetadata{TMDBID: 42, Title: "Example"},
-			IMDB:       &api.IMDBMetadata{IMDBID: 24, Title: "Example"},
+			TMDB: &api.TMDBMetadata{
+				TMDBID:   42,
+				Category: "tv",
+				Title:    "Example",
+			},
+			IMDB: &api.IMDBMetadata{IMDBID: 24, Title: "Example"},
 			TVDB: &api.TVDBMetadata{
 				TVDBID: 12,
 				Name:   "Example",
@@ -1958,6 +1994,202 @@ func TestResolveExternalIDsUsesStaleStoredExplicitPinBeforeProviderFacts(t *test
 	}
 }
 
+func TestResolveExternalIDsResetStoredTMDBPinAllowsAutomaticLookup(t *testing.T) {
+	const sourcePath = "/media/Example.Movie.2026.1080p-GRP.mkv"
+	const storedTMDBID = 111
+	const storedIMDBID = 222
+	const resolvedTMDBID = 333
+
+	for _, test := range []struct {
+		name            string
+		storedDataFresh bool
+		storedOverride  api.OverrideState
+		storedTMDBID    int
+	}{
+		{
+			name:            "fresh stored value",
+			storedDataFresh: true,
+			storedOverride:  api.OverrideStateValue,
+			storedTMDBID:    storedTMDBID,
+		},
+		{
+			name:            "stale stored value",
+			storedDataFresh: false,
+			storedOverride:  api.OverrideStateValue,
+			storedTMDBID:    storedTMDBID,
+		},
+		{
+			name:            "fresh stored clear",
+			storedDataFresh: true,
+			storedOverride:  api.OverrideStateClear,
+		},
+		{
+			name:            "stale stored clear",
+			storedDataFresh: false,
+			storedOverride:  api.OverrideStateClear,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stored := api.ExternalIdentity{
+				SourcePath: sourcePath,
+				Category:   api.CanonicalCategoryMovie,
+				TMDBID:     test.storedTMDBID,
+				IMDBID:     storedIMDBID,
+				Provenance: api.IdentityProvenanceSet{
+					Category: api.IdentityProvenanceExplicit,
+					TMDB:     api.IdentityProvenanceExplicit,
+					IMDB:     api.IdentityProvenanceExplicit,
+				},
+				Overrides: api.IdentityOverrideState{
+					Category: api.OverrideStateValue,
+					TMDB:     test.storedOverride,
+					IMDB:     api.OverrideStateValue,
+				},
+			}
+			tmdbClient := &stubTMDB{
+				findResult: tmdb.FindResult{TMDBID: resolvedTMDBID, Category: "MOVIE"},
+				metadata: tmdb.MetadataResult{
+					TMDBType:       "Movie",
+					Title:          "Current Movie",
+					IMDbID:         storedIMDBID,
+					ExternalIMDbID: storedIMDBID,
+				},
+			}
+			repo := &fakeRepo{
+				ids: stored,
+				meta: api.SourceScopedMetadata{
+					SourcePath: sourcePath,
+					TMDB: &api.TMDBMetadata{
+						TMDBID:   storedTMDBID,
+						Category: "movie",
+						Title:    "Stored Movie",
+					},
+				},
+			}
+			svc := NewService(repo,
+				WithTMDBClient(tmdbClient),
+				WithIMDBClient(&stubIMDB{info: imdb.Info{
+					IMDbID: formatIMDbID(storedIMDBID),
+					Title:  "Current Movie",
+					Type:   "movie",
+				}}),
+				WithTVDBClient(&stubTVDB{}),
+				WithTVmazeClient(&stubTVmaze{}),
+			)
+			state := preparationstate.State{
+				SourcePath:          sourcePath,
+				StoredDataFresh:     test.storedDataFresh,
+				Release:             api.ReleaseInfo{Title: "Example Movie", Category: "MOVIE"},
+				IdentityResetFields: []api.CorrectionField{api.CorrectionFieldIdentityTMDB},
+			}
+			if test.storedDataFresh {
+				state.Identity = stored
+				state.ProviderMetadata = repo.meta
+			}
+			result, err := svc.resolveExternalIdentity(t.Context(), state)
+			if err != nil {
+				t.Fatalf("resolve reset identity: %v", err)
+			}
+			if result.Identity.TMDBID != resolvedTMDBID || result.Identity.Provenance.TMDB == api.IdentityProvenanceExplicit ||
+				result.Identity.Overrides.TMDB == api.OverrideStateValue || result.Identity.Overrides.TMDB == api.OverrideStateClear {
+				t.Fatalf("reset TMDB identity = %#v", result.Identity)
+			}
+			if result.Identity.IMDBID != storedIMDBID || result.Identity.Provenance.IMDB != api.IdentityProvenanceExplicit ||
+				result.Identity.Overrides.IMDB != api.OverrideStateValue || result.Identity.Category != api.CanonicalCategoryMovie {
+				t.Fatalf("unreset stored identity changed: %#v", result.Identity)
+			}
+			if tmdbClient.findCalls != 1 || tmdbClient.metaCalls != 1 || result.ProviderMetadata.TMDB == nil ||
+				result.ProviderMetadata.TMDB.TMDBID != resolvedTMDBID {
+				t.Fatalf("reset TMDB lookup = calls:%d/%d metadata:%#v", tmdbClient.findCalls, tmdbClient.metaCalls, result.ProviderMetadata.TMDB)
+			}
+		})
+	}
+}
+
+func TestResolveExternalIDsCategoryResetUsesParsedMovieCategory(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "Example.Movie.2026.1080p-GRP.mkv")
+
+	for _, test := range []struct {
+		name                    string
+		resetCategory           bool
+		wantCandidateProvenance api.IdentityProvenance
+		wantCanonicalProvenance api.IdentityProvenance
+	}{
+		{
+			name:                    "reset stored category",
+			resetCategory:           true,
+			wantCandidateProvenance: api.IdentityProvenanceUnknown,
+			wantCanonicalProvenance: api.IdentityProvenanceProvider,
+		},
+		{
+			name:                    "preserves unmarked category",
+			wantCandidateProvenance: api.IdentityProvenanceExplicit,
+			wantCanonicalProvenance: api.IdentityProvenanceExplicit,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stored := api.ExternalIdentity{
+				SourcePath: sourcePath,
+				Category:   api.CanonicalCategoryTV,
+				Provenance: api.IdentityProvenanceSet{Category: api.IdentityProvenanceExplicit},
+				Overrides:  api.IdentityOverrideState{Category: api.OverrideStateValue},
+			}
+			tmdbClient := &stubTMDB{
+				searchOutcome: tmdb.SearchOutcome{TMDBID: 333, Category: "MOVIE"},
+				metadata:      tmdb.MetadataResult{TMDBType: "Movie", Title: "Example Movie"},
+			}
+			repo := &fakeRepo{ids: stored}
+			service := NewService(repo,
+				WithTMDBClient(tmdbClient),
+				WithIMDBClient(&stubIMDB{}),
+				WithTVDBClient(&stubTVDB{}),
+				WithTVmazeClient(&stubTVmaze{}),
+			)
+			state := preparationstate.State{
+				SourcePath:      sourcePath,
+				StoredDataFresh: true,
+				Identity:        stored,
+				Release:         api.ReleaseInfo{Title: "Example Movie", Category: "MOVIE"},
+			}
+			if test.resetCategory {
+				state.IdentityResetFields = []api.CorrectionField{api.CorrectionFieldReleaseNameCategory}
+			}
+
+			candidate, err := service.resolveExternalIdentity(t.Context(), state)
+			if err != nil {
+				t.Fatalf("resolve provider candidate: %v", err)
+			}
+			if len(tmdbClient.searchInputs) != 1 || tmdbClient.searchInputs[0].Category != "MOVIE" {
+				t.Fatalf("TMDB search inputs = %#v", tmdbClient.searchInputs)
+			}
+			if candidate.Identity.Category != api.CanonicalCategoryMovie ||
+				candidate.Identity.Provenance.Category != test.wantCandidateProvenance {
+				t.Fatalf("provider candidate category = %#v", candidate.Identity)
+			}
+
+			resolver, err := externalidentity.NewWithCandidateSource(repo, staticCandidateSource{state: candidate})
+			if err != nil {
+				t.Fatalf("new identity resolver: %v", err)
+			}
+			resolved, err := resolver.Resolve(t.Context(), externalidentity.Request{
+				SourcePath:        sourcePath,
+				SourceFingerprint: "category-reset-source",
+				Generation:        1,
+				Intent: externalidentity.ResolutionIntent{
+					IdentityResetFields: state.IdentityResetFields,
+				},
+			})
+			if err != nil {
+				t.Fatalf("resolve canonical identity: %v", err)
+			}
+			if resolved.Identity.Category != api.CanonicalCategoryMovie ||
+				resolved.Identity.Provenance.Category != test.wantCanonicalProvenance {
+				t.Fatalf("canonical category = %#v", resolved.Identity)
+			}
+		})
+	}
+}
+
 func TestResolveExternalIDsGatesRejectedTVmazeFromEpisodeMetadata(t *testing.T) {
 	for _, tc := range []struct {
 		name             string
@@ -2414,6 +2646,93 @@ func TestResolveExternalIDsPreservesUnanchoredProviderResultsWithConflictingLink
 	}
 }
 
+func TestResolveExternalIDsReplacesTVDBLookupStubWithTMDBLinkedSeriesMetadata(t *testing.T) {
+	const (
+		tmdbID            = 401001
+		imdbID            = 401002
+		lookupTVDBID      = 401003
+		canonicalTVDBID   = 401004
+		canonicalTVDBName = "Canonical Series B"
+	)
+	sourcePath := filepath.Join(t.TempDir(), "Canonical.Series.B.S01E01.1080p-GRP.mkv")
+	tvdbClient := &stubTVDB{
+		id:   lookupTVDBID,
+		name: "Lookup Series A",
+		seriesMetadata: tvdb.SeriesMetadata{
+			TVDBID:          canonicalTVDBID,
+			Name:            canonicalTVDBName,
+			Overview:        "Canonical overview B",
+			NameEnglish:     "Canonical English B",
+			FirstAired:      "2024-02-03",
+			Type:            "Scripted",
+			OriginalCountry: "AU",
+			Genres:          []string{"Drama", "Mystery"},
+		},
+	}
+	svc := NewService(&fakeRepo{},
+		WithTMDBClient(&stubTMDB{metadata: tmdb.MetadataResult{
+			TMDBType:       "TV",
+			TVDBID:         canonicalTVDBID,
+			ExternalTVDBID: canonicalTVDBID,
+		}}),
+		WithIMDBClient(&stubIMDB{info: imdb.Info{
+			IMDbID: "tt401002",
+			Title:  "Canonical Series B",
+			Type:   "tvSeries",
+		}}),
+		WithTVDBClient(tvdbClient),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+
+	result, err := svc.resolveExternalIdentity(t.Context(), preparationstate.State{
+		SourcePath:        sourcePath,
+		MediaInfoCategory: "TV",
+		SceneTMDBID:       tmdbID,
+		SceneIMDB:         imdbID,
+	})
+	if err != nil {
+		t.Fatalf("resolve TVDB link conflict: %v", err)
+	}
+	if result.Identity.TVDBID != canonicalTVDBID {
+		t.Fatalf("TVDB identity = %d, want canonical %d", result.Identity.TVDBID, canonicalTVDBID)
+	}
+	if result.Identity.Dependencies.TVDB != (api.IdentityDependency{ID: canonicalTVDBID, TMDBID: tmdbID}) {
+		t.Fatalf("TVDB dependency = %#v", result.Identity.Dependencies.TVDB)
+	}
+	if tvdbClient.seriesMetadataCalls != 1 {
+		t.Fatalf("TVDB series metadata calls = %d, want 1", tvdbClient.seriesMetadataCalls)
+	}
+	if result.ProviderMetadata.TVDB == nil {
+		t.Fatal("expected canonical TVDB metadata")
+	}
+	if result.ProviderMetadata.TVDB.TVDBID != canonicalTVDBID ||
+		result.ProviderMetadata.TVDB.Name != canonicalTVDBName ||
+		result.ProviderMetadata.TVDB.Overview != "Canonical overview B" ||
+		result.ProviderMetadata.TVDB.Genres != "Drama, Mystery" {
+		t.Fatalf("TVDB metadata = %#v", result.ProviderMetadata.TVDB)
+	}
+	if result.ProviderMetadata.TVDB.TVDBID == lookupTVDBID || result.ProviderMetadata.TVDB.Name == "Lookup Series A" {
+		t.Fatalf("TVDB lookup stub leaked into canonical metadata: %#v", result.ProviderMetadata.TVDB)
+	}
+
+	display, err := preparedrelease.ProjectDisplay(api.PreparedRelease{
+		Identity:         result.Identity,
+		ProviderMetadata: result.ProviderMetadata,
+	})
+	if err != nil {
+		t.Fatalf("project display: %v", err)
+	}
+	for _, provider := range display.Providers {
+		if provider.Provider == api.IdentityProviderTVDB && provider.ID == canonicalTVDBID {
+			if provider.Summary.Title != canonicalTVDBName {
+				t.Fatalf("TVDB display title = %q, want %q", provider.Summary.Title, canonicalTVDBName)
+			}
+			return
+		}
+	}
+	t.Fatalf("display omitted canonical TVDB provider: %#v", display.Providers)
+}
+
 func TestResolveExternalIDsSQLiteFreshProvenanceOnlyAnchorClearsStoredGuess(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
@@ -2505,6 +2824,99 @@ func TestResolveExternalIDsSQLiteFreshProvenanceOnlyAnchorClearsStoredGuess(t *t
 	}
 	if resolved.ProviderMetadata.TMDB != nil {
 		t.Fatalf("resolved metadata restored rejected snapshot: %#v", resolved.ProviderMetadata)
+	}
+}
+
+func TestResolveExternalIDsSQLiteStaleAutomaticTVCanDriftFromFallbackMovieNaming(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	sourcePath := filepath.Join(base, "unknown")
+	if err := os.Mkdir(sourcePath, 0o755); err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+	videoPath := filepath.Join(sourcePath, "untitled.mkv")
+	if err := os.WriteFile(videoPath, []byte("video"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	if parsed := ParseReleaseInfo(sourcePath); parsed.Category != "" || parsed.Season != 0 || parsed.Episode != 0 {
+		t.Fatalf("ambiguous source unexpectedly supplied category evidence: %#v", parsed)
+	}
+	dbPath := filepath.Join(base, "metadata.sqlite")
+	repo, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate repository: %v", err)
+	}
+
+	tmdbClient := &stubTMDB{searchErr: errors.New("tmdb unavailable")}
+	imdbClient := &stubIMDB{searchFn: func(imdb.SearchInput) (imdb.SearchResult, error) {
+		return imdb.SearchResult{}, errors.New("imdb unavailable")
+	}}
+	service := NewService(repo,
+		WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
+		WithMediaInfoExporter(&stubMediaInfo{}),
+		WithSceneDetector(stubSceneDetector{}),
+		WithTMDBClient(tmdbClient),
+		WithIMDBClient(imdbClient),
+		WithTVDBClient(&stubTVDB{}),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+	request := testCollectionRequest(t, api.Request{SourcePath: sourcePath})
+	request.Manifest.SourcePath = sourcePath
+	if _, err := service.CollectPreparationEvidence(ctx, request); err != nil {
+		t.Fatalf("seed source fingerprint: %v", err)
+	}
+	if err := repo.SaveExternalIdentity(ctx, api.ExternalIdentity{
+		SourcePath: sourcePath,
+		TVDBID:     123456,
+		Category:   api.CanonicalCategoryTV,
+		Provenance: api.IdentityProvenanceSet{
+			TVDB:     api.IdentityProvenanceProvider,
+			Category: api.IdentityProvenanceProvider,
+		},
+	}); err != nil {
+		t.Fatalf("save stale identity: %v", err)
+	}
+	if err := os.WriteFile(videoPath, []byte("updated video"), 0o600); err != nil {
+		t.Fatalf("stale source fingerprint: %v", err)
+	}
+
+	pipeline := &recordingEvidencePipeline{service: service}
+	collector, err := preparedrelease.NewEvidenceCollector(pipeline)
+	if err != nil {
+		t.Fatalf("new evidence collector: %v", err)
+	}
+	facts, err := collector.Collect(ctx, request)
+	if err != nil {
+		t.Fatalf("collect stale preparation: %v", err)
+	}
+	if pipeline.state.StoredDataFresh {
+		t.Fatal("expected changed source to invalidate stored metadata")
+	}
+	if tmdbClient.searchCalls == 0 || imdbClient.searchCalls == 0 {
+		t.Fatalf("expected failed provider lookups, tmdb=%d imdb=%d", tmdbClient.searchCalls, imdbClient.searchCalls)
+	}
+	if facts.NamingCategory != api.CanonicalCategoryMovie || pipeline.state.Identity.Category != "" {
+		t.Fatalf("collected naming category = %q, candidate category = %q, want movie and unknown", facts.NamingCategory, pipeline.state.Identity.Category)
+	}
+
+	resolver, err := externalidentity.NewWithCandidateSource(repo, collector)
+	if err != nil {
+		t.Fatalf("new identity resolver: %v", err)
+	}
+	resolved, err := resolver.Resolve(ctx, externalidentity.Request{
+		SourcePath:        sourcePath,
+		SourceFingerprint: "sqlite-stale-source",
+		Generation:        1,
+	})
+	if err != nil {
+		t.Fatalf("resolve stale identity: %v", err)
+	}
+	if resolved.Identity.Category != api.CanonicalCategoryTV {
+		t.Fatalf("resolved category = %q, candidate category = %q, want TV", resolved.Identity.Category, pipeline.state.Identity.Category)
 	}
 }
 
@@ -3329,6 +3741,86 @@ func TestResolveExternalIDsRefetchesProviderSnapshotsAfterIDOverride(t *testing.
 	}
 }
 
+func TestResolveExternalIDsRefetchesTMDBMetadataWhenCategoryChangesWithSameID(t *testing.T) {
+	for _, test := range []struct {
+		name              string
+		storedCategory    api.CanonicalCategory
+		requestedCategory string
+		freshTitle        string
+		freshGenres       string
+		freshType         string
+	}{
+		{
+			name:              "movie to tv",
+			storedCategory:    api.CanonicalCategoryMovie,
+			requestedCategory: "TV",
+			freshTitle:        "Current Series",
+			freshGenres:       "Science Fiction",
+			freshType:         "Scripted",
+		},
+		{
+			name:              "tv to movie",
+			storedCategory:    api.CanonicalCategoryTV,
+			requestedCategory: "MOVIE",
+			freshTitle:        "Current Film",
+			freshGenres:       "Thriller",
+			freshType:         "Movie",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			category := test.requestedCategory
+			tmdbClient := &stubTMDB{metadataFn: func(input tmdb.MetadataInput) (tmdb.MetadataResult, error) {
+				if input.Category != strings.ToLower(test.requestedCategory) {
+					t.Errorf("TMDB category = %q, want %q", input.Category, test.requestedCategory)
+				}
+				return tmdb.MetadataResult{
+					Title:    test.freshTitle,
+					Genres:   test.freshGenres,
+					TMDBType: test.freshType,
+				}, nil
+			}}
+			svc := NewService(&fakeRepo{},
+				WithTMDBClient(tmdbClient),
+				WithIMDBClient(&stubIMDB{}),
+				WithTVDBClient(&stubTVDB{}),
+				WithTVmazeClient(&stubTVmaze{}),
+			)
+
+			result, err := svc.resolveExternalIdentity(t.Context(), preparationstate.State{
+				SourcePath:      "/media/Example.Release.2026.1080p-GRP.mkv",
+				StoredDataFresh: true,
+				Identity: api.ExternalIdentity{
+					SourcePath: "/media/Example.Release.2026.1080p-GRP.mkv",
+					Category:   test.storedCategory,
+					TMDBID:     12345,
+				},
+				ProviderMetadata: api.SourceScopedMetadata{
+					SourcePath: "/media/Example.Release.2026.1080p-GRP.mkv",
+					TMDB: &api.TMDBMetadata{
+						TMDBID:   12345,
+						Category: string(test.storedCategory),
+						Title:    "Stale title",
+						Genres:   "Stale genre",
+					},
+				},
+				ReleaseNameOverrides: api.ReleaseNameOverrides{Category: &category},
+			})
+			if err != nil {
+				t.Fatalf("resolve external identity: %v", err)
+			}
+			if tmdbClient.metaCalls != 1 {
+				t.Fatalf("TMDB metadata calls = %d, want 1", tmdbClient.metaCalls)
+			}
+			if result.ProviderMetadata.TMDB == nil || result.ProviderMetadata.TMDB.Title != test.freshTitle ||
+				result.ProviderMetadata.TMDB.Genres != test.freshGenres || result.ProviderMetadata.TMDB.Category != strings.ToLower(test.requestedCategory) {
+				t.Fatalf("TMDB metadata = %#v", result.ProviderMetadata.TMDB)
+			}
+		})
+	}
+}
+
 func TestResolveExternalIDsClearIMDBSuppressesTMDBSiblingEnrichment(t *testing.T) {
 	repo := &fakeRepo{}
 	tmdbClient := &stubTMDB{metadata: tmdb.MetadataResult{
@@ -3369,6 +3861,79 @@ func TestResolveExternalIDsClearIMDBSuppressesTMDBSiblingEnrichment(t *testing.T
 	}
 	if imdbClient.infoCalls != 0 {
 		t.Fatalf("expected imdb lookup suppressed, got %d calls", imdbClient.infoCalls)
+	}
+}
+
+func TestResolveExternalIDsClearTMDBRefreshesDerivedTVDB(t *testing.T) {
+	for _, found := range []bool{true, false} {
+		t.Run(fmt.Sprintf("found=%t", found), func(t *testing.T) {
+			sourcePath := filepath.Join(t.TempDir(), "Example.Series.S01E01.mkv")
+			tmdbClient := &stubTMDB{}
+			imdbClient := &stubIMDB{}
+			tvdbClient := &stubTVDB{}
+			if found {
+				tvdbClient.id = 401003
+				tvdbClient.name = "Example Series"
+			}
+			svc := NewService(&fakeRepo{}, WithTMDBClient(tmdbClient), WithIMDBClient(imdbClient),
+				WithTVDBClient(tvdbClient), WithTVmazeClient(&stubTVmaze{}))
+			result, err := svc.resolveExternalIdentity(t.Context(), preparationstate.State{
+				SourcePath:        sourcePath,
+				StoredDataFresh:   true,
+				MediaInfoCategory: "TV",
+				Identity: api.ExternalIdentity{
+					SourcePath: sourcePath,
+					TMDBID:     401001,
+					IMDBID:     401002,
+					TVDBID:     401004,
+					Dependencies: api.IdentityDependencySet{
+						TMDB: api.IdentityDependency{ID: 401001},
+						IMDB: api.IdentityDependency{ID: 401002},
+						TVDB: api.IdentityDependency{ID: 401004, TMDBID: 401001},
+					},
+					Provenance: api.IdentityProvenanceSet{
+						TMDB: api.IdentityProvenanceProvider,
+						IMDB: api.IdentityProvenanceProvider,
+						TVDB: api.IdentityProvenanceProvider,
+					},
+				},
+				ProviderMetadata: api.SourceScopedMetadata{
+					SourcePath: sourcePath,
+					TMDB:       &api.TMDBMetadata{
+TMDBID: 401001,
+ TVDBID: 401004,
+ Title: "Different Series",
+ Category: "TV",
+},
+					IMDB:       &api.IMDBMetadata{
+IMDBID: 401002,
+ Title: "Example Series",
+ Type: "tvSeries",
+},
+					TVDB:       &api.TVDBMetadata{TVDBID: 401004, Name: "Different Series"},
+				},
+				ExternalIDOverrides: api.ExternalIDOverrides{TMDBID: new(0)},
+			})
+			if err != nil {
+				t.Fatalf("resolve after removal: %v", err)
+			}
+			if result.Identity.TMDBID != 0 || result.Identity.IMDBID != 401002 || result.Identity.TVDBID != tvdbClient.id {
+				t.Fatalf("refreshed identity = %#v", result.Identity)
+			}
+			if len(tvdbClient.externalIMDbIDs) == 0 || tvdbClient.externalIMDbIDs[0] != "tt0401002" || tvdbClient.externalTMDBIDs[0] != "" {
+				t.Fatalf("TVDB lookup anchors = IMDb:%v TMDB:%v", tvdbClient.externalIMDbIDs, tvdbClient.externalTMDBIDs)
+			}
+			if tmdbClient.findCalls+tmdbClient.searchCalls+tmdbClient.metaCalls != 0 || imdbClient.searchCalls != 0 {
+				t.Fatal("removed TMDB or retained IMDb triggered a search")
+			}
+			if found {
+				if result.ProviderMetadata.TVDB == nil || result.ProviderMetadata.TVDB.TVDBID != 401003 || result.ProviderMetadata.TVDB.Name != "Example Series" {
+					t.Fatalf("refreshed TVDB metadata = %#v", result.ProviderMetadata.TVDB)
+				}
+			} else if result.ProviderMetadata.TVDB != nil {
+				t.Fatalf("retained stale TVDB metadata = %#v", result.ProviderMetadata.TVDB)
+			}
+		})
 	}
 }
 
@@ -3478,6 +4043,47 @@ func TestResolveSearchTitleYearFromPathFallback(t *testing.T) {
 	}
 	if year != 2026 {
 		t.Fatalf("expected inferred year 2026, got %d", year)
+	}
+}
+
+func TestResolveSearchYearIgnoresManualYearForKnownTV(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		meta preparationstate.State
+		want int
+	}{
+		{
+			name: "canonical TV manual clear",
+			meta: preparationstate.State{
+				Identity:             api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+				Release:              api.ReleaseInfo{Year: 2024},
+				ReleaseNameOverrides: api.ReleaseNameOverrides{ManualYear: new(0)},
+			},
+			want: 2024,
+		},
+		{
+			name: "parsed TV manual value",
+			meta: preparationstate.State{
+				Release:              api.ReleaseInfo{Category: "TV", Year: 2024},
+				ReleaseNameOverrides: api.ReleaseNameOverrides{ManualYear: new(2030)},
+			},
+			want: 2024,
+		},
+		{
+			name: "movie manual value",
+			meta: preparationstate.State{
+				Identity:             api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+				Release:              api.ReleaseInfo{Year: 2024},
+				ReleaseNameOverrides: api.ReleaseNameOverrides{ManualYear: new(2030)},
+			},
+			want: 2030,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolveSearchYear(tc.meta); got != tc.want {
+				t.Fatalf("resolveSearchYear() = %d, want %d", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -5051,7 +5657,7 @@ func TestResolveExternalIDsMALFallbacksAndClear(t *testing.T) {
 	}
 }
 
-func TestResolveExternalIDsAppliesOriginalLanguageOverride(t *testing.T) {
+func TestResolveExternalIDsPreservesProviderEvidenceWithOriginalLanguageOverride(t *testing.T) {
 	repo := &fakeRepo{}
 	tmdbClient := &stubTMDB{
 		metadata: tmdb.MetadataResult{
@@ -5087,17 +5693,17 @@ func TestResolveExternalIDsAppliesOriginalLanguageOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	if len(tmdbClient.metaInputs) == 0 || tmdbClient.metaInputs[0].ManualLanguage != "ja" {
-		t.Fatalf("expected tmdb fetch manual language ja, got %#v", tmdbClient.metaInputs)
+	if len(tmdbClient.metaInputs) == 0 || tmdbClient.metaInputs[0].ManualLanguage != "" {
+		t.Fatalf("manual correction changed TMDB evidence request: %#v", tmdbClient.metaInputs)
 	}
-	if imdbClient.lastManualLanguage != "ja" {
-		t.Fatalf("expected imdb manual language ja, got %q", imdbClient.lastManualLanguage)
+	if imdbClient.lastManualLanguage != "" {
+		t.Fatalf("manual correction changed IMDb evidence request: %q", imdbClient.lastManualLanguage)
 	}
-	if result.ProviderMetadata.TMDB == nil || result.ProviderMetadata.TMDB.OriginalLanguage != "ja" {
-		t.Fatalf("expected tmdb original language override, got %#v", result.ProviderMetadata.TMDB)
+	if result.ProviderMetadata.TMDB == nil || result.ProviderMetadata.TMDB.OriginalLanguage != "en" {
+		t.Fatalf("TMDB evidence changed: %#v", result.ProviderMetadata.TMDB)
 	}
-	if result.ProviderMetadata.IMDB == nil || result.ProviderMetadata.IMDB.OriginalLanguage != "ja" {
-		t.Fatalf("expected imdb original language override, got %#v", result.ProviderMetadata.IMDB)
+	if result.ProviderMetadata.IMDB == nil || result.ProviderMetadata.IMDB.OriginalLanguage != "en" {
+		t.Fatalf("IMDb evidence changed: %#v", result.ProviderMetadata.IMDB)
 	}
 }
 
@@ -5110,7 +5716,7 @@ func containsString(values []string, target string) bool {
 	return false
 }
 
-func TestResolveExternalIDsLocalizedFetchSucceedsWhenTMDBMetadataIsNil(t *testing.T) {
+func TestResolveExternalIDsSelectedDemandsShareLocalizedFetchWhenTMDBMetadataIsNil(t *testing.T) {
 	repo := &fakeRepo{}
 	tmdbClient := &stubTMDB{
 		searchOutcome: tmdb.SearchOutcome{TMDBID: 42, Category: "MOVIE"},
@@ -5128,11 +5734,15 @@ func TestResolveExternalIDsLocalizedFetchSucceedsWhenTMDBMetadataIsNil(t *testin
 		WithTVmazeClient(&stubTVmaze{}),
 	)
 
-	// Make sure BJS/BT/ASC is in Trackers list so needsPTBR is true
+	// Multiple selected trackers demand the same provider fact without supplying
+	// tracker evidence or leaking tracker selection into source instructions.
 	meta := preparationstate.State{
-		SourcePath:       "/media/file.mkv",
-		Release:          api.ReleaseInfo{Title: "Example", Year: 2024},
-		EvidenceTrackers: []string{"BJS"},
+		SourcePath: "/media/file.mkv",
+		Release:    api.ReleaseInfo{Title: "Example", Year: 2024},
+		MetadataRequirements: api.MetadataRequirementSet{Requirements: []api.MetadataRequirement{
+			{Scope: api.MetadataRequirementScopeAny, AnyOf: []api.MetadataRequirementField{"tmdb_localized_pt_br"}},
+			{Scope: api.MetadataRequirementScopeMovie, AnyOf: []api.MetadataRequirementField{"tmdb_localized_pt_br"}},
+		}},
 	}
 
 	result, err := svc.resolveExternalIdentity(context.Background(), meta)
@@ -5152,6 +5762,144 @@ func TestResolveExternalIDsLocalizedFetchSucceedsWhenTMDBMetadataIsNil(t *testin
 	}
 	if len(tmdbClient.localizedInputs) != 1 || tmdbClient.localizedInputs[0].AppendToResponse != "credits,videos,release_dates" {
 		t.Fatalf("expected movie localized fetch to append release_dates, got %#v", tmdbClient.localizedInputs)
+	}
+}
+
+func TestResolveExternalIDsRefreshesRetainedTMDBForSelectedDemands(t *testing.T) {
+	tmdbClient := &stubTMDB{metadata: tmdb.MetadataResult{
+		Title:            "Refreshed Example",
+		TMDBType:         "Movie",
+		OriginCountry:    []string{"US"},
+		Genres:           "Drama",
+		OriginalLanguage: "en",
+	}}
+	svc := NewService(&fakeRepo{},
+		WithTMDBClient(tmdbClient),
+		WithIMDBClient(&stubIMDB{}),
+		WithTVDBClient(&stubTVDB{}),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+
+	result, err := svc.resolveExternalIdentity(t.Context(), preparationstate.State{
+		SourcePath:      "/media/Example.Movie.2026.1080p-GRP.mkv",
+		StoredDataFresh: true,
+		Identity: api.ExternalIdentity{
+			SourcePath: "/media/Example.Movie.2026.1080p-GRP.mkv",
+			Category:   api.CanonicalCategoryMovie,
+			TMDBID:     42,
+		},
+		ProviderMetadata: api.SourceScopedMetadata{
+			SourcePath: "/media/Example.Movie.2026.1080p-GRP.mkv",
+			TMDB: &api.TMDBMetadata{
+				TMDBID:   42,
+				Category: "movie",
+				Title:    "Retained Example",
+			},
+		},
+		MetadataRequirements: api.MetadataRequirementSet{Requirements: []api.MetadataRequirement{
+			{Scope: api.MetadataRequirementScopeAny, AnyOf: []api.MetadataRequirementField{"tmdb_origin_countries"}},
+			{Scope: api.MetadataRequirementScopeMovie, AnyOf: []api.MetadataRequirementField{"tmdb_origin_countries"}},
+			{Scope: api.MetadataRequirementScopeAny, AnyOf: []api.MetadataRequirementField{"genres", "original_language"}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("resolve external identity: %v", err)
+	}
+	if tmdbClient.metaCalls != 1 {
+		t.Fatalf("TMDB metadata calls = %d, want 1", tmdbClient.metaCalls)
+	}
+	if result.ProviderMetadata.TMDB == nil || !containsString(result.ProviderMetadata.TMDB.OriginCountry, "US") ||
+		result.ProviderMetadata.TMDB.Genres != "Drama" || result.ProviderMetadata.TMDB.OriginalLanguage != "en" {
+		t.Fatalf("refreshed TMDB metadata = %#v", result.ProviderMetadata.TMDB)
+	}
+}
+
+func TestResolveExternalIDsRefreshesRetainedTVDBYearForSelectedDemand(t *testing.T) {
+	tvdbClient := &stubTVDB{seriesMetadata: tvdb.SeriesMetadata{
+		TVDBID: 7,
+		Name:   "Refreshed Series",
+		Year:   2024,
+	}}
+	svc := NewService(&fakeRepo{},
+		WithTMDBClient(&stubTMDB{}),
+		WithIMDBClient(&stubIMDB{}),
+		WithTVDBClient(tvdbClient),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+
+	result, err := svc.resolveExternalIdentity(t.Context(), preparationstate.State{
+		SourcePath:        "/media/Example.Show.S01E01.1080p-GRP.mkv",
+		StoredDataFresh:   true,
+		MediaInfoCategory: "TV",
+		Identity: api.ExternalIdentity{
+			SourcePath: "/media/Example.Show.S01E01.1080p-GRP.mkv",
+			Category:   api.CanonicalCategoryTV,
+			TVDBID:     7,
+		},
+		ProviderMetadata: api.SourceScopedMetadata{
+			SourcePath: "/media/Example.Show.S01E01.1080p-GRP.mkv",
+			TVDB:       &api.TVDBMetadata{TVDBID: 7, Name: "Retained Series"},
+		},
+		MetadataRequirements: api.MetadataRequirementSet{Requirements: []api.MetadataRequirement{{
+			Scope: api.MetadataRequirementScopeTV,
+			AnyOf: []api.MetadataRequirementField{"tvdb_year"},
+		}}},
+	})
+	if err != nil {
+		t.Fatalf("resolve external identity: %v", err)
+	}
+	if tvdbClient.seriesMetadataCalls != 1 {
+		t.Fatalf("TVDB series metadata calls = %d, want 1", tvdbClient.seriesMetadataCalls)
+	}
+	if result.ProviderMetadata.TVDB == nil || result.ProviderMetadata.TVDB.Year != 2024 {
+		t.Fatalf("refreshed TVDB metadata = %#v", result.ProviderMetadata.TVDB)
+	}
+}
+
+func TestResolveExternalIDsSkipsSelectedDemandRefreshForCompleteOrManualFacts(t *testing.T) {
+	genres := []string{"Drama"}
+	originalLanguage := "ja"
+	tmdbClient := &stubTMDB{metadata: tmdb.MetadataResult{Title: "Unexpected refresh", TMDBType: "Movie"}}
+	svc := NewService(&fakeRepo{},
+		WithTMDBClient(tmdbClient),
+		WithIMDBClient(&stubIMDB{}),
+		WithTVDBClient(&stubTVDB{}),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+
+	_, err := svc.resolveExternalIdentity(t.Context(), preparationstate.State{
+		SourcePath:      "/media/Example.Movie.2026.1080p-GRP.mkv",
+		StoredDataFresh: true,
+		Identity: api.ExternalIdentity{
+			SourcePath: "/media/Example.Movie.2026.1080p-GRP.mkv",
+			Category:   api.CanonicalCategoryMovie,
+			TMDBID:     42,
+		},
+		ProviderMetadata: api.SourceScopedMetadata{
+			SourcePath: "/media/Example.Movie.2026.1080p-GRP.mkv",
+			TMDB: &api.TMDBMetadata{
+				TMDBID:           42,
+				Category:         "movie",
+				Title:            "Retained Example",
+				OriginCountry:    []string{"US"},
+				OriginalLanguage: "",
+			},
+		},
+		MetadataOverrides: api.MetadataOverrides{
+			Genres:           &genres,
+			OriginalLanguage: &originalLanguage,
+		},
+		MetadataRequirements: api.MetadataRequirementSet{Requirements: []api.MetadataRequirement{
+			{Scope: api.MetadataRequirementScopeAny, AnyOf: []api.MetadataRequirementField{"tmdb_origin_countries"}},
+			{Scope: api.MetadataRequirementScopeAny, AnyOf: []api.MetadataRequirementField{"genres"}},
+			{Scope: api.MetadataRequirementScopeAny, AnyOf: []api.MetadataRequirementField{"original_language"}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("resolve external identity: %v", err)
+	}
+	if tmdbClient.metaCalls != 0 {
+		t.Fatalf("TMDB metadata calls = %d, want 0", tmdbClient.metaCalls)
 	}
 }
 
@@ -5304,7 +6052,8 @@ func TestResolveExternalIDsMergesLocalizedPTBRWithoutBlankOverwrite(t *testing.T
 		ProviderMetadata: api.SourceScopedMetadata{
 			SourcePath: "/media/file.mkv",
 			TMDB: &api.TMDBMetadata{
-				TMDBID: 42,
+				TMDBID:   42,
+				Category: "movie",
 				Localized: map[string]api.TMDBLocalizedData{
 					"pt-BR": existing,
 				},
@@ -5367,7 +6116,8 @@ func TestResolveExternalIDsPreservesExistingLocalizedPTBRWhenEpisodeFetchFails(t
 		ProviderMetadata: api.SourceScopedMetadata{
 			SourcePath: "/media/show.s01e02.mkv",
 			TMDB: &api.TMDBMetadata{
-				TMDBID: 42,
+				TMDBID:   42,
+				Category: "tv",
 				Localized: map[string]api.TMDBLocalizedData{
 					"pt-BR": existing,
 				},

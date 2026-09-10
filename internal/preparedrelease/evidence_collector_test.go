@@ -216,6 +216,52 @@ func TestMapCollectedFactsProjectsEffectiveInstructionValues(t *testing.T) {
 	}
 }
 
+func TestMapCollectedFactsProjectsDetachedMetadataAndTrackFacts(t *testing.T) {
+	t.Parallel()
+
+	meta := preparationstate.State{
+		ResolvedNaming: preparationstate.ResolvedNaming{
+			Title:         "Manual Title",
+			OriginalTitle: "Manual Original",
+			Year:          2026,
+		},
+		EffectiveMetadata: api.EffectiveMetadata{
+			OriginalTitle:              "Manual Original",
+			Genres:                     []string{"Drama"},
+			OriginalLanguage:           "French",
+			TitleProvenance:            api.FactProvenanceManual,
+			OriginalTitleProvenance:    api.FactProvenanceManual,
+			GenresProvenance:           api.FactProvenanceManual,
+			OriginalLanguageProvenance: api.FactProvenanceManual,
+		},
+		MediaTracks: []api.MediaTrackFacts{{
+			ID:                 "track_1",
+			Kind:               api.MediaTrackAudio,
+			DetectedLanguages:  []string{"English"},
+			Languages:          []string{"French"},
+			LanguageProvenance: api.FactProvenanceManual,
+		}},
+		TrackAudioLanguages:                  []string{"French"},
+		TrackCoverageComplete:                true,
+		AudioLanguages:                       []string{"French"},
+		AudioLanguagesProvenance:             api.FactProvenanceManual,
+		HardcodedSubs:                        true,
+		HardcodedSubsProvenance:              api.FactProvenanceManual,
+		HardcodedSubtitleLanguages:           []string{"French"},
+		HardcodedSubtitleLanguagesProvenance: api.FactProvenanceManual,
+	}
+
+	facts := mapCollectedFacts(meta)
+	if facts.Naming.OriginalTitle != "Manual Original" || facts.Naming.OriginalTitleProvenance != api.FactProvenanceManual ||
+		facts.Media.OriginalLanguage != "French" || !facts.Media.TrackCoverageComplete || !facts.Media.HardcodedSubs {
+		t.Fatalf("projected facts = %#v/%#v", facts.Naming, facts.Media)
+	}
+	facts.Media.Tracks[0].Languages[0] = "Changed"
+	if meta.MediaTracks[0].Languages[0] != "French" {
+		t.Fatalf("track languages aliased source state: %#v", meta.MediaTracks)
+	}
+}
+
 func TestMapCollectedFactsPreservesGeneratedReleaseNameVariants(t *testing.T) {
 	t.Parallel()
 
@@ -302,7 +348,8 @@ func TestEvidenceCollectorPublishesResolvedNamingFromMetadataProducer(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if facts.Naming.Title != "Resolved Series" || facts.Naming.AlternateTitle != "AKA Resolved Original" || facts.Naming.Year != 2026 ||
+	if facts.NamingCategory != api.CanonicalCategoryTV || facts.Naming.Title != "Resolved Series" ||
+		facts.Naming.AlternateTitle != "AKA Resolved Original" || facts.Naming.Year != 2026 ||
 		facts.Naming.Source != "BluRay" || facts.Naming.Type != "ENCODE" || facts.Naming.Resolution != "1080p" {
 		t.Fatalf("naming facts = %#v", facts.Naming)
 	}

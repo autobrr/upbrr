@@ -118,7 +118,7 @@ func TestPrepareInputMappingFieldDispositionIsExplicit(t *testing.T) {
 	t.Parallel()
 
 	assertFieldNames(t, reflect.TypeFor[PrepareInput](), []string{
-		"SourcePath", "Intent", "Instructions", "Policy", "Search", "Controls", "Force", "RequirePrepared",
+		"SourcePath", "Intent", "Instructions", "Policy", "Search", "Controls", "MetadataRequirements", "Force", "RequirePrepared",
 	})
 	assertFieldNames(t, reflect.TypeFor[ReleaseFactInstructions](), []string{
 		"Identity", "Category", "ReleaseName", "Metadata", "SourceLookup", "BlurayReleaseID", "Playlist", "TrackerIDs",
@@ -134,6 +134,37 @@ func TestMapPreparationRequestRejectsBlankSource(t *testing.T) {
 	_, err := MapPreparationRequest(Request{SourcePath: "  "}, PreparationIntentPreview)
 	if !errors.Is(err, ErrPreparationSourceRequired) {
 		t.Fatalf("error = %v, want ErrPreparationSourceRequired", err)
+	}
+}
+
+func TestMapPreparationRequestClonesCorrectionMetadata(t *testing.T) {
+	t.Parallel()
+
+	title := "Manual title"
+	languages := make([]string, 0, 1)
+	request := Request{
+		SourcePath: "Example.Release.2026.mkv",
+		MetadataOverrides: MetadataOverrides{
+			Title:          &title,
+			AudioLanguages: &languages,
+			TrackLanguages: []TrackLanguageCorrection{{
+				TrackID:             "audio:1",
+				Languages:           []string{"English"},
+				ManifestFingerprint: "scan-1",
+			}},
+		},
+	}
+	input, err := MapPreparationRequest(request, PreparationIntentPreview)
+	if err != nil {
+		t.Fatalf("map preparation request: %v", err)
+	}
+	title = "Changed"
+	languages = append(languages, "Spanish")
+	request.MetadataOverrides.TrackLanguages[0].Languages[0] = "Changed"
+	if input.Instructions.Metadata.Title == nil || *input.Instructions.Metadata.Title != "Manual title" ||
+		input.Instructions.Metadata.AudioLanguages == nil || len(*input.Instructions.Metadata.AudioLanguages) != 0 ||
+		input.Instructions.Metadata.TrackLanguages[0].Languages[0] != "English" {
+		t.Fatalf("mapped correction metadata aliases request: %#v", input.Instructions.Metadata)
 	}
 }
 

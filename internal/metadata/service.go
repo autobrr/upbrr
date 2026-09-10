@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -66,8 +67,6 @@ type repository interface {
 	GetExternalIdentity(context.Context, string) (api.ExternalIdentity, error)
 	GetExternalMetadata(context.Context, string) (api.SourceScopedMetadata, error)
 	SaveDVDMediaInfo(context.Context, api.DVDMediaInfo) error
-	GetReleaseNameOverrides(context.Context, string) (api.ReleaseNameOverrides, error)
-	SaveReleaseNameOverrides(context.Context, string, api.ReleaseNameOverrides) error
 	GetPlaylistSelection(context.Context, string) (api.PlaylistSelection, error)
 	SavePlaylistSelection(context.Context, string, string, []string, bool) error
 	GetTrackerTimestamp(context.Context, string) (time.Time, error)
@@ -392,9 +391,11 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 	s.logger.Tracef("metadata: normalized path %s", primary)
 
 	meta = preparationstate.State{
-		SourcePath:      primary,
-		SourceLookupURL: strings.TrimSpace(input.Instructions.SourceLookup),
-		Paths:           normalizedPaths,
+		MetadataRequirements: input.MetadataRequirements,
+		SourceFingerprint:    request.SourceFingerprint,
+		SourcePath:           primary,
+		SourceLookupURL:      strings.TrimSpace(input.Instructions.SourceLookup),
+		Paths:                normalizedPaths,
 		Policy: preparationstate.CollectionPolicy{
 			OnlyID:          input.Policy.OnlyID,
 			KeepFolder:      input.Policy.KeepFolder,
@@ -402,23 +403,16 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 			InteractionMode: input.Controls.Interaction,
 		},
 		TrackerIDs:           cloneTrackerIDs(input.Instructions.TrackerIDs),
+		IdentityResetFields:  slices.Clone(request.IdentityResetFields),
 		MetadataOverrides:    input.Instructions.Metadata,
 		ExternalIDOverrides:  input.Instructions.Identity,
 		ReleaseNameOverrides: input.Instructions.ReleaseName,
 	}
 	applySourceLookupOverrideWithRegistry(&meta, s.registry)
 	meta.Release = ParseReleaseInfo(primary)
-	storedOverrides := api.ReleaseNameOverrides{}
-	if stored, err := s.repo.GetReleaseNameOverrides(ctx, primary); err == nil {
-		storedOverrides = stored
-	} else if !errors.Is(err, internalerrors.ErrNotFound) {
-		return preparationstate.State{}, fmt.Errorf("metadata: release overrides lookup: %w", err)
-	}
-	mergedOverrides := mergeReleaseNameOverrides(storedOverrides, input.Instructions.ReleaseName)
-	if err := validateReleaseNameFactInstructions(mergedOverrides); err != nil {
+	if err := validateReleaseNameFactInstructions(input.Instructions.ReleaseName); err != nil {
 		return preparationstate.State{}, err
 	}
-	meta.ReleaseNameOverrides = mergedOverrides
 
 	discType := request.Layout.DiscType
 	meta.DiscType = discType
@@ -461,12 +455,6 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 	applySeasonEpisodeMetadata(&meta, seasonep.Extract(primary, meta), s.logger)
 	release := ParseReleaseInfo(primary)
 	meta.Release = release
-
-	if hasReleaseNameOverrides(input.Instructions.ReleaseName) {
-		if err := s.repo.SaveReleaseNameOverrides(ctx, primary, mergedOverrides); err != nil {
-			return preparationstate.State{}, fmt.Errorf("metadata: release overrides persist: %w", err)
-		}
-	}
 
 	size, err := filesystem.SourceSize(ctx, primary, meta.DiscType, meta.FileList, meta.VideoPath)
 	if err != nil {

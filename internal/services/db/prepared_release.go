@@ -40,6 +40,73 @@ func (r *SQLiteRepository) CommitPreparedRelease(ctx context.Context, release ap
 		release.ProviderMetadata.UpdatedAt = preparedAt
 	}
 
+	return r.withWriteTx(ctx, "commit prepared release", func(tx *sql.Tx) error {
+		return commitPreparedReleaseTx(ctx, tx, release, generation)
+	})
+}
+
+// CommitPreparedReleaseWithCorrections atomically compares and stores the
+// correction record before publishing the prepared generation. Callers must
+// calculate the compatibility fingerprint using its returned revision.
+func (r *SQLiteRepository) CommitPreparedReleaseWithCorrections(
+	ctx context.Context,
+	release api.PreparedRelease,
+	expectedRevision uint64,
+	record api.StoredReleaseCorrectionsV1,
+) (uint64, error) {
+	if r == nil || r.db == nil {
+		return 0, errors.New("db: repository not initialized")
+	}
+	if record.Version != 1 {
+		return 0, &api.UnsupportedCorrectionVersionError{Version: record.Version}
+	}
+	generation, err := validatePreparedReleaseForCommit(release)
+	if err != nil {
+		return 0, err
+	}
+
+	preparedAt := release.PreparedAt.UTC()
+	if preparedAt.IsZero() {
+		preparedAt = time.Now().UTC()
+		release.PreparedAt = preparedAt
+	}
+	if release.Identity.ResolvedAt.IsZero() {
+		release.Identity.ResolvedAt = preparedAt
+	}
+	if release.ProviderMetadata.UpdatedAt.IsZero() {
+		release.ProviderMetadata.UpdatedAt = preparedAt
+	}
+
+	finalRevision := expectedRevision
+	err = r.withWriteTx(ctx, "commit prepared release with corrections", func(tx *sql.Tx) error {
+		snapshot, found, err := loadReleaseCorrectionsTx(ctx, tx, release.Source.SourcePath)
+		if err != nil {
+			return err
+		}
+		if snapshot.Revision != expectedRevision {
+			return &api.CorrectionRevisionConflictError{Expected: expectedRevision, Actual: snapshot.Revision}
+		}
+		if !releaseCorrectionsEqual(snapshot.Corrections, record) {
+			if snapshot.Revision == math.MaxUint64 {
+				return errors.New("db commit prepared release with corrections: revision overflow")
+			}
+			finalRevision = snapshot.Revision + 1
+			if err := writeReleaseCorrectionsTx(ctx, tx, release.Source.SourcePath, expectedRevision, api.ReleaseCorrectionsSnapshot{
+				Corrections: record,
+				Revision:    finalRevision,
+			}, found); err != nil {
+				return err
+			}
+		}
+		return commitPreparedReleaseTx(ctx, tx, release, generation)
+	})
+	if err != nil {
+		return 0, err
+	}
+	return finalRevision, nil
+}
+
+func commitPreparedReleaseTx(ctx context.Context, tx *sql.Tx, release api.PreparedRelease, generation int64) error {
 	sourceJSON, err := encodePreparedJSON(release.Source)
 	if err != nil {
 		return fmt.Errorf("db commit prepared release: encode source: %w", err)
@@ -64,12 +131,6 @@ func (r *SQLiteRepository) CommitPreparedRelease(ctx context.Context, release ap
 	if err != nil {
 		return fmt.Errorf("db commit prepared release: encode assessments: %w", err)
 	}
-
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("db commit prepared release: begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
 
 	compatibility := release.Compatibility
 	if _, err := tx.ExecContext(ctx, `
@@ -105,7 +166,7 @@ func (r *SQLiteRepository) CommitPreparedRelease(ctx context.Context, release ap
 		mediaJSON,
 		discJSON,
 		assessmentsJSON,
-		preparedAt.Format(time.RFC3339Nano),
+		release.PreparedAt.UTC().Format(time.RFC3339Nano),
 	); err != nil {
 		return fmt.Errorf("db commit prepared release: facts: %w", err)
 	}
@@ -114,9 +175,6 @@ func (r *SQLiteRepository) CommitPreparedRelease(ctx context.Context, release ap
 	}
 	if err := commitSourceScopedMetadataTx(ctx, tx, release.ProviderMetadata, generation); err != nil {
 		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("db commit prepared release: commit: %w", err)
 	}
 	return nil
 }
@@ -278,15 +336,20 @@ func commitPreparedIdentityTx(ctx context.Context, tx *sql.Tx, identity api.Exte
 	if err != nil {
 		return fmt.Errorf("db commit prepared release: encode identity overrides: %w", err)
 	}
+	dependencyJSON, err := encodePreparedJSON(identity.Dependencies)
+	if err != nil {
+		return fmt.Errorf("db commit prepared release: encode identity dependencies: %w", err)
+	}
 	resolvedAt := identity.ResolvedAt.UTC().Format(time.RFC3339Nano)
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO external_ids (
 			source_path, generation, tmdb_id, imdb_id, tvdb_id, tvmaze_id, mal_id,
 			category, source_tmdb, source_imdb, source_tvdb, source_tvmaze,
 			source_mal, category_provenance, override_json, conflict_status,
-			source_fingerprint, intent_fingerprint, contract_version, resolved_at, updated_at
+			source_fingerprint, intent_fingerprint, contract_version, dependency_json,
+			resolved_at, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source_path) DO UPDATE SET
 			generation = excluded.generation,
 			tmdb_id = excluded.tmdb_id,
@@ -306,6 +369,7 @@ func commitPreparedIdentityTx(ctx context.Context, tx *sql.Tx, identity api.Exte
 			source_fingerprint = excluded.source_fingerprint,
 			intent_fingerprint = excluded.intent_fingerprint,
 			contract_version = excluded.contract_version,
+			dependency_json = excluded.dependency_json,
 			resolved_at = excluded.resolved_at,
 			updated_at = excluded.updated_at
 	`,
@@ -328,6 +392,7 @@ func commitPreparedIdentityTx(ctx context.Context, tx *sql.Tx, identity api.Exte
 		identity.Resolution.SourceFingerprint,
 		identity.Resolution.IntentFingerprint,
 		identity.Resolution.ContractVersion,
+		dependencyJSON,
 		resolvedAt,
 		resolvedAt,
 	)
@@ -381,7 +446,7 @@ func loadPreparedIdentityTx(
 		SELECT generation, tmdb_id, imdb_id, tvdb_id, tvmaze_id, mal_id, category,
 			source_tmdb, source_imdb, source_tvdb, source_tvmaze, source_mal,
 			category_provenance, override_json, conflict_status, source_fingerprint,
-			intent_fingerprint, contract_version, resolved_at
+			intent_fingerprint, contract_version, dependency_json, resolved_at
 		FROM external_ids
 		WHERE source_path = ?
 	`, sourcePath)
@@ -396,6 +461,7 @@ func loadPreparedIdentityTx(
 	var categoryProvenance string
 	var overrideJSON string
 	var conflictStatus string
+	var dependencyJSON string
 	var resolvedAt string
 	if err := row.Scan(
 		&generation,
@@ -416,6 +482,7 @@ func loadPreparedIdentityTx(
 		&identity.Resolution.SourceFingerprint,
 		&identity.Resolution.IntentFingerprint,
 		&identity.Resolution.ContractVersion,
+		&dependencyJSON,
 		&resolvedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -439,6 +506,9 @@ func loadPreparedIdentityTx(
 	identity.Conflict = api.IdentityConflictStatus(conflictStatus)
 	if err := decodePreparedJSON(overrideJSON, &identity.Overrides); err != nil {
 		return api.ExternalIdentity{}, fmt.Errorf("db load prepared release: decode identity overrides: %w", err)
+	}
+	if err := decodePreparedJSON(dependencyJSON, &identity.Dependencies); err != nil {
+		return api.ExternalIdentity{}, fmt.Errorf("db load prepared release: decode identity dependencies: %w", err)
 	}
 	parsedResolvedAt, err := time.Parse(time.RFC3339Nano, resolvedAt)
 	if err != nil {
