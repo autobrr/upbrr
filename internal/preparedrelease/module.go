@@ -36,7 +36,8 @@ type Store interface {
 	LoadReleaseCorrections(context.Context, string) (api.ReleaseCorrectionsSnapshot, error)
 	UpdateReleaseCorrections(context.Context, string, api.ReleaseCorrectionUpdate) (api.ReleaseCorrectionsSnapshot, error)
 	CompareAndSwapReleaseCorrections(context.Context, string, uint64, api.StoredReleaseCorrectionsV1) (api.ReleaseCorrectionsSnapshot, error)
-	CommitPreparedReleaseWithCorrections(context.Context, api.PreparedRelease, uint64, api.StoredReleaseCorrectionsV1) (uint64, error)
+	CommitPreparedReleaseWithCorrections(context.Context, api.PreparedRelease, uint64, api.StoredReleaseCorrectionsV1,
+		func(uint64) (api.PreparationCompatibility, error)) (uint64, error)
 }
 
 // IdentityResolver builds an unpersisted canonical identity candidate. The
@@ -335,15 +336,10 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 	if err != nil {
 		return api.PrepareResult{}, err
 	}
-	input.Instructions, err = effectiveCorrectionInstructions(input.Instructions, finalCorrections.Corrections)
+	input.Instructions, err = effectiveCorrectionInstructions(input.Instructions, finalCorrections)
 	if err != nil {
 		return api.PrepareResult{}, err
 	}
-	compatibility, err = preparationCompatibility(input, sourceFingerprint, finalCorrections.Revision)
-	if err != nil {
-		return api.PrepareResult{}, err
-	}
-
 	preparedAt := m.now().UTC()
 	release := api.PreparedRelease{
 		Generation:       generation,
@@ -363,7 +359,15 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 		commitFinish(err)
 		return api.PrepareResult{}, err
 	}
-	if _, err := m.store.CommitPreparedReleaseWithCorrections(ctx, release, resolved.Corrections.Revision, finalCorrections.Corrections); err != nil {
+	committedRevision, err := m.store.CommitPreparedReleaseWithCorrections(ctx, release, resolved.Corrections.Revision, finalCorrections,
+		func(revision uint64) (api.PreparationCompatibility, error) {
+			committedCompatibility, err := preparationCompatibility(input, sourceFingerprint, revision)
+			if err == nil {
+				release.Compatibility = committedCompatibility
+			}
+			return committedCompatibility, err
+		})
+	if err != nil {
 		commitFinish(err)
 		return api.PrepareResult{}, fmt.Errorf("prepared release: commit generation: %w", err)
 	}
@@ -375,7 +379,7 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 			Release:               release,
 			Diagnostics:           diagnostics,
 			EffectiveInstructions: input.Instructions,
-			Corrections:           finalCorrections,
+			Corrections:           api.ReleaseCorrectionsSnapshot{Corrections: finalCorrections, Revision: committedRevision},
 		},
 		resources: mergePreparationResources(resourcesFromManifest(manifest, input), resourcesFromCollected(collected.Resources)),
 	}

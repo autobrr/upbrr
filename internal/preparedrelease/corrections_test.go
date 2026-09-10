@@ -65,6 +65,43 @@ func TestCorrectionsPersistFalseResetAndFailedCollection(t *testing.T) {
 	}
 }
 
+func TestManualDateCorrectionPersistsNormalizedValue(t *testing.T) {
+	t.Parallel()
+	source := writePreparedTestFile(t, "Example.2026.mkv", "media")
+	store := newMemoryStore()
+	module := newTestModule(t, store, &recordingCollector{})
+	input := api.PrepareInput{SourcePath: source, Instructions: api.ReleaseFactInstructions{
+		ReleaseName: api.ReleaseNameOverrides{ManualDate: new(" 2026-01-02 ")},
+	}}
+	accepted, err := module.ResolveInput(t.Context(), input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := store.LoadReleaseCorrections(t.Context(), source)
+	if err != nil || saved.Corrections.ReleaseName.ManualDate == nil || *saved.Corrections.ReleaseName.ManualDate != "2026-01-02" {
+		t.Fatalf("manual date did not persist normalized: %v", err)
+	}
+	input.Instructions.ReleaseName.ManualDate = new("2026-01-02")
+	unchanged, err := module.ResolveInput(t.Context(), input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
+	if err != nil || unchanged.Corrections.Revision != accepted.Corrections.Revision {
+		t.Fatalf("equivalent date changed correction revision: %v", err)
+	}
+	input.Instructions.ReleaseName.ManualDate = new("2026-02-30")
+	if _, err := module.ResolveInput(t.Context(), input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit}); !errors.Is(err, api.ErrCorrectionConflict) {
+		t.Fatalf("invalid date accepted: %v", err)
+	}
+	input.Instructions.ReleaseName.ManualDate = new(" \t ")
+	blank, err := module.ResolveInput(t.Context(), input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
+	if err != nil || blank.Corrections.Corrections.ReleaseName.ManualDate == nil || *blank.Corrections.Corrections.ReleaseName.ManualDate != "" {
+		t.Fatalf("blank date did not normalize: %v", err)
+	}
+	input.Instructions.ReleaseName.ManualDate = new("")
+	unchanged, err = module.ResolveInput(t.Context(), input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
+	if err != nil || unchanged.Corrections.Revision != blank.Corrections.Revision {
+		t.Fatalf("equivalent blank date changed correction revision: %v", err)
+	}
+}
+
 func TestProviderOwnedCorrectionsAreRetiredOnRestart(t *testing.T) {
 	for _, category := range []api.CanonicalCategory{api.CanonicalCategoryMovie, api.CanonicalCategoryTV} {
 		t.Run(string(category), func(t *testing.T) {
@@ -409,11 +446,30 @@ func (s *memoryStore) saveCorrections(source string, revision uint64, record api
 	return current, nil
 }
 
-func (s *memoryStore) CommitPreparedReleaseWithCorrections(_ context.Context, release api.PreparedRelease, revision uint64, record api.StoredReleaseCorrectionsV1) (uint64, error) {
+func (s *memoryStore) CommitPreparedReleaseWithCorrections(
+	_ context.Context,
+	release api.PreparedRelease,
+	revision uint64,
+	record api.StoredReleaseCorrectionsV1,
+	compatibility func(uint64) (api.PreparationCompatibility, error),
+) (uint64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.commitErr != nil {
 		return 0, s.commitErr
+	}
+	previous := s.loadCorrections(release.Source.SourcePath)
+	if previous.Revision != revision {
+		return 0, api.ErrCorrectionConflict
+	}
+	finalRevision := revision
+	if !reflect.DeepEqual(previous.Corrections, record) {
+		finalRevision++
+	}
+	var err error
+	release.Compatibility, err = compatibility(finalRevision)
+	if err != nil {
+		return 0, err
 	}
 	cloned, err := release.Clone()
 	if err != nil {

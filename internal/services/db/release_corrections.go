@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"reflect"
 	"slices"
@@ -143,6 +144,9 @@ func (r *SQLiteRepository) saveReleaseNameOverrides(ctx context.Context, path st
 		}
 		record := snapshot.Corrections
 		record.Version = 1
+		record.ContentBindings = maps.Clone(record.ContentBindings)
+		record.StaleContentFields = slices.Clone(record.StaleContentFields)
+		record.IdentityResetFields = slices.Clone(record.IdentityResetFields)
 		clearReplacedReleaseNameCorrectionState(&record, record.ReleaseName, overrides)
 		record.ReleaseName = overrides
 		if releaseCorrectionsEqual(snapshot.Corrections, record) {

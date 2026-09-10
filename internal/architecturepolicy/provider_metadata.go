@@ -231,14 +231,23 @@ func providerValueReturn(decl ast.Decl) bool {
 		return false
 	}
 	for _, result := range function.Type.Results.List {
-		switch value := result.Type.(type) {
-		case *ast.ArrayType, *ast.MapType, *ast.InterfaceType, *ast.StructType, *ast.FuncType:
+		if providerValueType(result.Type) {
 			return true
-		case *ast.Ident:
-			switch value.Name {
-			case "string", "bool", "int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64", "float32", "float64", "any":
-				return true
-			}
+		}
+	}
+	return false
+}
+
+func providerValueType(value ast.Expr) bool {
+	switch value := value.(type) {
+	case *ast.StarExpr:
+		return providerValueType(value.X)
+	case *ast.ArrayType, *ast.MapType, *ast.InterfaceType, *ast.StructType, *ast.FuncType:
+		return true
+	case *ast.Ident:
+		switch value.Name {
+		case "string", "bool", "int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64", "float32", "float64", "any":
+			return true
 		}
 	}
 	return false

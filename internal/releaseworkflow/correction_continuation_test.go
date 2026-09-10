@@ -249,6 +249,14 @@ func TestReplaceFactInstructionsRejectsUntrustedCorrectionConfirmation(t *testin
 			},
 		},
 		{
+			name: "stale fact instructions",
+			mutate: func(state *State, _ *ReplaceFactInstructionsCommand) {
+				facts := state.FactInstructions[state.Workflow.FactInstructions.ID]
+				facts.Revision++
+				state.FactInstructions[facts.ID] = facts
+			},
+		},
+		{
 			name: "mismatched correction revision",
 			mutate: func(state *State, _ *ReplaceFactInstructionsCommand) {
 				state.Workflow.RequiredActions[0].CorrectionConfirmation.Revision++
@@ -547,15 +555,15 @@ func TestCorrectionConfirmationClearsWhenIdentityChangesAgain(t *testing.T) {
 
 func confirmationTestState() State {
 	previous := api.ContentBinding{
-SourceFingerprint: "previous",
- Category: api.CanonicalCategoryMovie,
- ProviderIDs: api.ProviderIDSet{TMDBID: 1},
-}
+		SourceFingerprint: "previous",
+		Category:          api.CanonicalCategoryMovie,
+		ProviderIDs:       api.ProviderIDSet{TMDBID: 1},
+	}
 	current := api.ContentBinding{
-SourceFingerprint: "current",
- Category: api.CanonicalCategoryMovie,
- ProviderIDs: api.ProviderIDSet{TMDBID: 2},
-}
+		SourceFingerprint: "current",
+		Category:          api.CanonicalCategoryMovie,
+		ProviderIDs:       api.ProviderIDSet{TMDBID: 2},
+	}
 	corrections := api.ReleaseCorrectionsSnapshot{
 		Revision: 7,
 		Corrections: api.StoredReleaseCorrectionsV1{
