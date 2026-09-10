@@ -13,6 +13,7 @@ import (
 	"golang.org/x/text/language/display"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -33,26 +34,34 @@ func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
 	parts := make([]string, 0)
 	fullDisc := strings.EqualFold(strings.TrimSpace(meta.Type), "DISC") || unit3d.IsDiscType(meta.DiscType)
 	markers := markerText(meta)
-	title := ""
+	providerTitle := ""
 	tmdb := meta.ProviderMetadata.TMDB
 	if tmdb != nil && tmdb.LocalizedTitles != nil {
-		title = strings.TrimSpace(tmdb.LocalizedTitles["de"])
+		providerTitle = strings.TrimSpace(tmdb.LocalizedTitles["de"])
 	}
-	if title == "" {
-		title = strings.TrimSpace(meta.Release.Title)
+	if providerTitle == "" {
+		providerTitle = strings.TrimSpace(meta.Release.Title)
 	}
-	if title == "" && tmdb != nil {
-		title = strings.TrimSpace(tmdb.Title)
+	if providerTitle == "" && tmdb != nil {
+		providerTitle = strings.TrimSpace(tmdb.Title)
 	}
-	if title == "" && tmdb != nil {
-		title = strings.TrimSpace(tmdb.OriginalTitle)
+	if providerTitle == "" && tmdb != nil {
+		providerTitle = strings.TrimSpace(tmdb.OriginalTitle)
+	}
+	title := providerTitle
+	if meta.EffectiveMetadata.TitleProvenance.IsManual() {
+		title = trackers.PreferredTitle(meta, providerTitle)
 	}
 	if title != "" {
 		parts = append(parts, title)
 	}
-	year := meta.Release.Year
-	if year == 0 && tmdb != nil {
-		year = tmdb.Year
+	providerYear := meta.Release.Year
+	if providerYear == 0 && tmdb != nil {
+		providerYear = tmdb.Year
+	}
+	year := providerYear
+	if meta.EffectiveMetadata.YearProvenance.IsManual() {
+		year = trackers.PreferredYear(meta, providerYear)
 	}
 	if year > 0 {
 		parts = append(parts, strconv.Itoa(year))

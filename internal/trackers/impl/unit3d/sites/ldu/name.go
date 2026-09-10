@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -78,13 +79,17 @@ func languageCode(value string) (string, bool, bool) {
 }
 
 func originalLanguage(meta api.UploadSubject) string {
+	provider := ""
 	if meta.ProviderMetadata.TMDB != nil && strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalLanguage) != "" {
-		return strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalLanguage)
+		provider = meta.ProviderMetadata.TMDB.OriginalLanguage
 	}
-	if meta.ProviderMetadata.IMDB != nil {
-		return strings.TrimSpace(meta.ProviderMetadata.IMDB.OriginalLanguage)
+	if provider == "" && meta.ProviderMetadata.IMDB != nil {
+		provider = meta.ProviderMetadata.IMDB.OriginalLanguage
 	}
-	return ""
+	if meta.EffectiveMetadata.OriginalLanguageProvenance.IsManual() {
+		return trackers.PreferredOriginalLanguage(meta, provider)
+	}
+	return strings.TrimSpace(provider)
 }
 
 func isEnglish(value string) bool {

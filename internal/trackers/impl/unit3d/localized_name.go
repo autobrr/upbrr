@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -40,7 +41,9 @@ func FormatLocalizedName(meta api.UploadSubject, customTag string) string {
 	}
 	originalLanguage := strings.ToLower(resolveOriginalLanguage(meta))
 	aka := ""
-	if meta.ProviderMetadata.TMDB != nil {
+	if meta.EffectiveMetadata.AlternateTitleProvenance.IsManual() {
+		aka = trackers.PreferredAlternateTitle(meta, "")
+	} else if meta.ProviderMetadata.TMDB != nil {
 		aka = meta.ProviderMetadata.TMDB.RetrievedAKA
 	}
 	_, portuguese := portugueseLanguageNames[originalLanguage]
@@ -53,8 +56,10 @@ func FormatLocalizedName(meta api.UploadSubject, customTag string) string {
 		title := meta.Release.Title
 		name = strings.ReplaceAll(name, aka, "")
 		name = strings.ReplaceAll(name, strings.ReplaceAll(aka, " ", "."), "")
-		name = strings.ReplaceAll(name, title, cleanAKA)
-		name = strings.ReplaceAll(name, strings.ReplaceAll(title, " ", "."), cleanAKA)
+		if strings.TrimSpace(title) != "" {
+			name = strings.ReplaceAll(name, title, cleanAKA)
+			name = strings.ReplaceAll(name, strings.ReplaceAll(title, " ", "."), cleanAKA)
+		}
 		name = strings.Join(strings.Fields(name), " ")
 	}
 	formatted := name

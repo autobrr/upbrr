@@ -93,6 +93,24 @@ func TestResolveReleaseNamesPreservesRequestedMovieYear(t *testing.T) {
 	}
 }
 
+func TestResolveReleaseNamesPreservesManualYearBeforeProviderPreference(t *testing.T) {
+	for _, provider := range []api.IdentityProvider{api.IdentityProviderTMDB, api.IdentityProviderIMDB} {
+		resolved, err := resolveReleaseNames(PreparationInput{Meta: api.UploadSubject{
+			ReleaseName:       "Example Release 2025 1080p-GRP",
+			Identity:          api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+			Release:           api.ReleaseInfo{Category: "MOVIE", Year: 2025},
+			EffectiveMetadata: api.EffectiveMetadata{Year: 2025, YearProvenance: api.FactProvenanceManual},
+			ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Year: 2026}, IMDB: &api.IMDBMetadata{Year: 2024}},
+		}}, WithMovieYearProvider(CanonicalReleaseNamePolicy(), provider))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resolved.Upload != "Example Release 2025 1080p-GRP" || resolved.Duplicate != resolved.Upload {
+			t.Fatalf("%s replaced manual year: %#v", provider, resolved)
+		}
+	}
+}
+
 func TestResolveReleaseNamesNormalizesUnspecifiedEpisodeTitleModeToInclude(t *testing.T) {
 	t.Parallel()
 

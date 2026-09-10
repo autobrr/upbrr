@@ -53,3 +53,36 @@ func TestMetadataPolicyAllowsSiteOverride(t *testing.T) {
 		t.Fatalf("mutated site override field = %q", got)
 	}
 }
+
+func TestMetadataHelpersUseManualGenresAndAutomaticNamedProviders(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Genres: ""}, IMDB: &api.IMDBMetadata{Genres: "IMDb"}}, EffectiveMetadata: api.EffectiveMetadata{Genres: []string{"Automatic"}}}
+	if got := resolveTMDBGenres(meta); got != "" {
+		t.Fatalf("automatic TMDB genres = %q", got)
+	}
+	if got := resolveIMDBGenres(meta); got != "IMDb" {
+		t.Fatalf("automatic IMDb genres = %q", got)
+	}
+	meta.EffectiveMetadata = api.EffectiveMetadata{Genres: []string{"Manual"}, GenresProvenance: api.FactProvenanceManual}
+	if got := resolveTMDBGenres(meta); got != "Manual" || resolveIMDBGenres(meta) != "Manual" {
+		t.Fatalf("manual genres were ignored: TMDB=%q IMDb=%q", resolveTMDBGenres(meta), resolveIMDBGenres(meta))
+	}
+	meta.EffectiveMetadata = api.EffectiveMetadata{GenresProvenance: api.FactProvenanceManualEmpty}
+	if got := resolveTMDBGenres(meta); got != "" || resolveIMDBGenres(meta) != "" {
+		t.Fatalf("manual-empty genres were ignored: TMDB=%q IMDb=%q", resolveTMDBGenres(meta), resolveIMDBGenres(meta))
+	}
+}
+
+func TestResolveOriginalLanguageUsesManualFactsOnlyWhenExplicit(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{ProviderMetadata: api.SourceScopedMetadata{IMDB: &api.IMDBMetadata{OriginalLanguage: "fr"}}, EffectiveMetadata: api.EffectiveMetadata{OriginalLanguage: "ja"}}
+	if got := resolveOriginalLanguage(meta); got != "fr" {
+		t.Fatalf("automatic effective language = %q", got)
+	}
+	meta.EffectiveMetadata.OriginalLanguageProvenance = api.FactProvenanceManual
+	if got := resolveOriginalLanguage(meta); got != "ja" {
+		t.Fatalf("manual language = %q", got)
+	}
+}

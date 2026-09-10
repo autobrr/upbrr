@@ -39,3 +39,21 @@ func TestBuildNameDoesNotAddLanguageMarkersToDiscs(t *testing.T) {
 		t.Fatalf("disc name added language markers: %q", got)
 	}
 }
+
+func TestOriginalLanguagePrefersManualFacts(t *testing.T) {
+	t.Parallel()
+	meta := api.UploadSubject{
+		ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"}},
+		EffectiveMetadata: api.EffectiveMetadata{
+			OriginalLanguage: "en", OriginalLanguageProvenance: api.FactProvenanceManual,
+		},
+	}
+	if got := originalLanguage(meta); got != "en" {
+		t.Fatalf("manual original language = %q", got)
+	}
+	meta.EffectiveMetadata.OriginalLanguage = ""
+	meta.EffectiveMetadata.OriginalLanguageProvenance = api.FactProvenanceManualEmpty
+	if got := originalLanguage(meta); got != "" {
+		t.Fatalf("manual-empty original language = %q", got)
+	}
+}

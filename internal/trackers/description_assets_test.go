@@ -393,6 +393,43 @@ func TestPreparedDescriptionAssetsReturnsDefensiveCopy(t *testing.T) {
 	}
 }
 
+func TestAppendManualLanguagesToDescriptionAssets(t *testing.T) {
+	t.Parallel()
+
+	assets := &DescriptionAssets{Description: "Generated"}
+	got := appendManualLanguagesToDescriptionAssets(assets, api.ManualLanguageFacts{
+		Audio:     []string{"English", "Spanish"},
+		Subtitles: []string{"Brazilian Portuguese"},
+	})
+	if got == assets {
+		t.Fatal("language annotation reused caller assets")
+	}
+	if assets.Description != "Generated" {
+		t.Fatalf("caller description=%q", assets.Description)
+	}
+	want := "Generated\n\nAudio Language/s: English, Spanish\nSubtitle Language/s: Brazilian Portuguese"
+	if got.Description != want {
+		t.Fatalf("description=%q, want %q", got.Description, want)
+	}
+	if again := appendManualLanguagesToDescriptionAssets(assets, api.ManualLanguageFacts{Audio: []string{"English", "Spanish"}}); again.Description != "Generated\n\nAudio Language/s: English, Spanish" {
+		t.Fatalf("repeat description=%q", again.Description)
+	}
+}
+
+func TestAppendManualLanguagesToDescriptionAssetsPreservesCustomAndFinal(t *testing.T) {
+	t.Parallel()
+
+	for _, assets := range []*DescriptionAssets{
+		{Description: "[b]Custom[/b]", Override: true},
+		{Description: "Reviewed", Final: true},
+	} {
+		got := appendManualLanguagesToDescriptionAssets(assets, api.ManualLanguageFacts{Audio: []string{"English"}})
+		if got.Description != assets.Description || got.Override != assets.Override || got.Final != assets.Final {
+			t.Fatalf("assets=%#v, got=%#v", assets, got)
+		}
+	}
+}
+
 func TestResolveDescriptionAssetsDedupesAfterSanitizingBotSignatures(t *testing.T) {
 	repo := &stubRepo{
 		trackerRecords: []api.TrackerMetadata{

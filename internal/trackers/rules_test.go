@@ -726,6 +726,22 @@ func TestRuleGenresUsesOnlyCurrentProviderGenres(t *testing.T) {
 	}
 }
 
+func TestRuleGenresPrefersManualEffectiveGenres(t *testing.T) {
+	t.Parallel()
+
+	meta := api.RuleSubject{
+		EffectiveMetadata: api.EffectiveMetadata{
+			Genres:           []string{"Animation", "animation", "Family"},
+			GenresProvenance: api.FactProvenanceManual,
+		},
+		ProviderMetadata: api.SourceScopedMetadata{Generation: 99},
+	}
+	want := []string{"animation", "family"}
+	if got := trackers.RuleGenres(meta); !slices.Equal(got, want) {
+		t.Fatalf("rule genres = %v, want %v", got, want)
+	}
+}
+
 func TestAdultContentUsesEveryProviderGenre(t *testing.T) {
 	t.Parallel()
 

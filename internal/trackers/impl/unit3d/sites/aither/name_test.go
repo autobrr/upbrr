@@ -223,3 +223,55 @@ func TestProfileBuildNameVersion(t *testing.T) {
 		t.Fatalf("BuildNameVersion = %q, want v2", got)
 	}
 }
+
+func TestBuildNameAppliesAitherManualTVDBYear(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		releaseName string
+		year        int
+		want        string
+	}{
+		{
+			name:        "manual year",
+			releaseName: "Example Series 2030 AKA Example Original S01E01 1080p EXM WEB-DL DD+ 5.1 H.264-GRP",
+			year:        2030,
+			want:        "Example Series AKA Example Original 2030 S01E01 1080p EXM WEB-DL DD+ 5.1 H.264-GRP",
+		},
+		{
+			name:        "manual empty year",
+			releaseName: "Example Series AKA Example Original S01E01 1080p EXM WEB-DL DD+ 5.1 H.264-GRP",
+			want:        "Example Series AKA Example Original S01E01 1080p EXM WEB-DL DD+ 5.1 H.264-GRP",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			meta := api.UploadSubject{
+				Type:        "WEBDL",
+				Source:      "Web",
+				Audio:       "DD+ 5.1",
+				SeasonStr:   "S01",
+				EpisodeStr:  "E01",
+				VideoEncode: "H.264",
+				Tag:         "-GRP",
+				ReleaseName: test.releaseName,
+				Identity:    api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+				Release:     api.ReleaseInfo{Resolution: "1080p"},
+				ProviderMetadata: api.SourceScopedMetadata{TVDB: &api.TVDBMetadata{
+					NameDisambiguation: api.TVDBNameDisambiguation{
+						CanonicalName: "Example Series",
+						SeriesYear:    2026,
+						IncludeYear:   true,
+					},
+				}},
+				EffectiveMetadata: api.EffectiveMetadata{Year: test.year, YearProvenance: api.FactProvenanceManual},
+			}
+			if got := buildName(meta, config.TrackerConfig{}); got != test.want {
+				t.Fatalf("AITHER manual TVDB year name = %q, want %q", got, test.want)
+			}
+		})
+	}
+}

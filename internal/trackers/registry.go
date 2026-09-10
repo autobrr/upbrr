@@ -436,6 +436,19 @@ func (r *Registry) LookupMetadataPolicy(tracker string) (TrackerMetadataPolicy, 
 	return cloneMetadataPolicy(*descriptor.Metadata), true
 }
 
+// InputSchema returns detached tracker-owned local Input controls.
+func (r *Registry) InputSchema(tracker string, subject api.UploadSubject) *api.TrackerQuestionnaire {
+	descriptor, ok := r.LookupDescriptor(tracker)
+	if !ok {
+		return nil
+	}
+	provider, ok := descriptor.Definition.(InputSchemaProvider)
+	if !ok {
+		return nil
+	}
+	return provider.InputSchema(subject)
+}
+
 // LookupBannedGroups returns tracker-owned static banned release groups.
 func (r *Registry) LookupBannedGroups(tracker string) ([]string, bool) {
 	descriptor, ok := r.LookupDescriptor(tracker)

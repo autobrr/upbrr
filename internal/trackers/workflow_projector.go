@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -87,12 +88,20 @@ func (p *WorkflowProjector) Build(
 			fmt.Errorf("trackers: selection fingerprint: %w", err)
 	}
 	inputFingerprint, err := api.CanonicalWorkflowFingerprint(struct {
-		Release            api.WorkflowFingerprint
-		TrackerIDs         []api.TrackerID
-		Instructions       map[api.TrackerID]api.TrackerProjectionInstructions
-		RuleAuthorizations map[api.TrackerID]api.WorkflowFingerprint
-		ExecutionMode      api.WorkflowExecutionMode
-	}{release.Fingerprint, selected, instructions, ruleAuthorizations, api.NormalizeWorkflowExecutionMode(executionMode)})
+		Release              api.WorkflowFingerprint
+		TrackerIDs           []api.TrackerID
+		QuestionnaireAnswers map[string]map[string]string
+		Instructions         map[api.TrackerID]api.TrackerProjectionInstructions
+		RuleAuthorizations   map[api.TrackerID]api.WorkflowFingerprint
+		ExecutionMode        api.WorkflowExecutionMode
+	}{
+		release.Fingerprint,
+		selected,
+		selectedTrackerQuestionnaireAnswers(subject, selected),
+		instructions,
+		ruleAuthorizations,
+		api.NormalizeWorkflowExecutionMode(executionMode),
+	})
 	if err != nil {
 		return api.TrackerCatalogSnapshot{}, api.TrackerRuntimeSnapshot{}, api.TrackerSelection{}, api.TrackerReleaseProjectionSet{},
 			fmt.Errorf("trackers: projection input fingerprint: %w", err)
@@ -137,6 +146,17 @@ func (p *WorkflowProjector) Build(
 		RequiredActions:   actions,
 		Failures:          failures,
 	}, nil
+}
+
+func selectedTrackerQuestionnaireAnswers(subject api.UploadSubject, selected []api.TrackerID) map[string]map[string]string {
+	answers := make(map[string]map[string]string, len(selected))
+	for _, trackerID := range selected {
+		values := subject.TrackerQuestionnaireAnswers[string(trackerID)]
+		if len(values) != 0 {
+			answers[string(trackerID)] = maps.Clone(values)
+		}
+	}
+	return answers
 }
 
 func (p *WorkflowProjector) resolveTrackerIDs(requested []api.TrackerID) ([]api.TrackerID, error) {
@@ -243,6 +263,12 @@ func (p *WorkflowProjector) projectSelected(
 		instruction := instructions[trackerID]
 		trackerSubject.TrackerConfigOverrides = instruction.TrackerConfig
 		trackerSubject.TrackerSiteOverrides = instruction.TrackerSite
+		if schema := p.registry.InputSchema(string(trackerID), trackerSubject); schema != nil {
+			instruction.Questionnaire = maps.Clone(instruction.Questionnaire)
+			for _, field := range schema.Fields {
+				delete(instruction.Questionnaire, field.Key)
+			}
+		}
 		applyQuestionnaireInstruction(&trackerSubject, trackerID, instruction)
 		requestedName := projectionRequestedUploadName(instruction)
 		projection, failure := p.registry.ProjectRelease(ctx, PreparationInput{
@@ -336,12 +362,23 @@ func applyQuestionnaireInstruction(subject *api.UploadSubject, trackerID api.Tra
 	}
 	if subject.TrackerQuestionnaireAnswers == nil {
 		subject.TrackerQuestionnaireAnswers = make(map[string]map[string]string)
+	} else {
+		subject.TrackerQuestionnaireAnswers = maps.Clone(subject.TrackerQuestionnaireAnswers)
 	}
-	answers := make(map[string]string, len(instruction.Questionnaire))
+	answers := maps.Clone(subject.TrackerQuestionnaireAnswers[string(trackerID)])
+	if answers == nil {
+		answers = make(map[string]string, len(instruction.Questionnaire))
+	}
 	for key, value := range instruction.Questionnaire {
-		if value != nil {
-			answers[key] = *value
+		if value == nil {
+			delete(answers, key)
+			continue
 		}
+		answers[key] = *value
+	}
+	if len(answers) == 0 {
+		delete(subject.TrackerQuestionnaireAnswers, string(trackerID))
+		return
 	}
 	subject.TrackerQuestionnaireAnswers[string(trackerID)] = answers
 }

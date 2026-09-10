@@ -116,16 +116,29 @@ func otwSeasonStructureFailures(subject api.TrackerValidationSubject) []api.Rule
 	return nil
 }
 
+// otwNamingFailures retains manual title and year authority when TMDB is unavailable.
 func otwNamingFailures(subject api.TrackerValidationSubject, meta api.UploadSubject) []api.RuleFailure {
 	title, year := currentOTWTMDBTitleYear(meta)
+	if meta.EffectiveMetadata.TitleProvenance.IsManual() {
+		title = meta.EffectiveMetadata.Title
+	}
+	if meta.EffectiveMetadata.YearProvenance.IsManual() {
+		year = meta.EffectiveMetadata.Year
+	}
 	if title != "" && year > 0 {
 		return nil
 	}
 	ruleSubject := unit3d.ValidationRuleSubject(subject)
-	if trackers.MetadataFieldPresent(trackers.MetadataFieldTMDBUnavailable, ruleSubject) &&
-		strings.TrimSpace(subject.Release.Title) != "" &&
-		subject.Release.Year > 0 {
-		return nil
+	if trackers.MetadataFieldPresent(trackers.MetadataFieldTMDBUnavailable, ruleSubject) {
+		if !meta.EffectiveMetadata.TitleProvenance.IsManual() && title == "" {
+			title = strings.TrimSpace(subject.Release.Title)
+		}
+		if !meta.EffectiveMetadata.YearProvenance.IsManual() && year <= 0 {
+			year = subject.Release.Year
+		}
+		if title != "" && year > 0 {
+			return nil
+		}
 	}
 	return []api.RuleFailure{trackers.NewEvidenceRuleFailure(
 		"otw_naming_metadata",
@@ -137,34 +150,35 @@ func otwNamingFailures(subject api.TrackerValidationSubject, meta api.UploadSubj
 
 func otwUploadSubject(subject api.TrackerValidationSubject) api.UploadSubject {
 	return api.UploadSubject{
-		SourcePath:       subject.SourcePath,
-		FileList:         append([]string(nil), subject.FileList...),
-		DiscType:         subject.DiscType,
-		Release:          subject.Release,
-		ReleaseName:      subject.ReleaseName,
-		ReleaseNameNoTag: subject.ReleaseNameNoTag,
-		Tag:              subject.Tag,
-		Identity:         subject.Identity,
-		ProviderMetadata: subject.ProviderMetadata,
-		SeasonInt:        subject.SeasonInt,
-		EpisodeInt:       subject.EpisodeInt,
-		SeasonStr:        subject.SeasonStr,
-		EpisodeStr:       subject.EpisodeStr,
-		TVPack:           subject.TVPack,
-		DailyEpisodeDate: subject.DailyEpisodeDate,
-		EpisodeTitle:     subject.EpisodeTitle,
-		Disc:             subject.Disc,
-		Type:             subject.Type,
-		Source:           subject.Source,
-		Audio:            subject.Audio,
-		Channels:         subject.Channels,
-		Is3D:             subject.Is3D,
-		VideoCodec:       subject.VideoCodec,
-		VideoEncode:      subject.VideoEncode,
-		HDR:              subject.HDR,
-		Distributor:      subject.Distributor,
-		Region:           subject.Region,
-		Repack:           subject.Repack,
-		Service:          subject.Service,
+		SourcePath:        subject.SourcePath,
+		FileList:          append([]string(nil), subject.FileList...),
+		DiscType:          subject.DiscType,
+		Release:           subject.Release,
+		ReleaseName:       subject.ReleaseName,
+		ReleaseNameNoTag:  subject.ReleaseNameNoTag,
+		Tag:               subject.Tag,
+		Identity:          subject.Identity,
+		ProviderMetadata:  subject.ProviderMetadata,
+		EffectiveMetadata: subject.EffectiveMetadata,
+		SeasonInt:         subject.SeasonInt,
+		EpisodeInt:        subject.EpisodeInt,
+		SeasonStr:         subject.SeasonStr,
+		EpisodeStr:        subject.EpisodeStr,
+		TVPack:            subject.TVPack,
+		DailyEpisodeDate:  subject.DailyEpisodeDate,
+		EpisodeTitle:      subject.EpisodeTitle,
+		Disc:              subject.Disc,
+		Type:              subject.Type,
+		Source:            subject.Source,
+		Audio:             subject.Audio,
+		Channels:          subject.Channels,
+		Is3D:              subject.Is3D,
+		VideoCodec:        subject.VideoCodec,
+		VideoEncode:       subject.VideoEncode,
+		HDR:               subject.HDR,
+		Distributor:       subject.Distributor,
+		Region:            subject.Region,
+		Repack:            subject.Repack,
+		Service:           subject.Service,
 	}
 }

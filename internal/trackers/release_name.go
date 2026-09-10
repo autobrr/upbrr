@@ -302,6 +302,9 @@ func applyProviderMovieYear(
 	meta api.UploadSubject,
 	provider api.IdentityProvider,
 ) ResolvedReleaseNames {
+	if meta.EffectiveMetadata.YearProvenance.IsManual() {
+		return resolved
+	}
 	category, err := api.NormalizeCanonicalCategory(firstProjectionValue(string(meta.Identity.Category), meta.Release.Category))
 	if err != nil || category != api.CanonicalCategoryMovie || meta.Release.Year <= 0 ||
 		!meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) {

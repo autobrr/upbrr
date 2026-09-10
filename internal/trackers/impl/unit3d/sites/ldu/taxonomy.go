@@ -6,17 +6,20 @@ package ldu
 import (
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func categoryID(meta api.UploadSubject) string {
 	category := unit3d.Category(meta)
-	genres := strings.ToLower(
-		strings.TrimSpace(
-			strings.Join([]string{strings.TrimSpace(meta.Release.Genre), unit3d.Keywords(meta), unit3d.TMDBGenres(meta), unit3d.IMDBGenres(meta)}, ","),
-		),
-	)
+	genreParts := []string{unit3d.Keywords(meta)}
+	if meta.EffectiveMetadata.GenresProvenance.IsManual() {
+		genreParts = append(genreParts, trackers.PreferredGenreText(meta, ""))
+	} else {
+		genreParts = append(genreParts, meta.Release.Genre, unit3d.TMDBGenres(meta), unit3d.IMDBGenres(meta))
+	}
+	genres := strings.ToLower(strings.TrimSpace(strings.Join(genreParts, ",")))
 	hasEnglishAudio := unit3d.HasEnglishLanguage(meta.AudioLanguages)
 	hasEnglishSubs := unit3d.HasEnglishLanguage(meta.SubtitleLanguages)
 	containsDubbed := strings.Contains(strings.ToLower(strings.TrimSpace(meta.Audio)), "dubbed")

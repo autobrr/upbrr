@@ -25,6 +25,55 @@ func adapterEvidence(result dupe.AdapterResult) ([]api.DupeEntry, []string, erro
 	return result.Entries(), result.Notes(), result.Cause()
 }
 
+func TestAZDupeTitlePreservesManualTitleAuthority(t *testing.T) {
+	t.Parallel()
+
+	projection := &api.TrackerReleaseProjection{
+		DuplicateCriteria: api.TrackerDuplicateCriteria{Name: "Projected title"},
+	}
+	for _, test := range []struct {
+		name string
+		meta api.DuplicateSubject
+		want string
+	}{
+		{
+			name: "manual title wins over projection",
+			meta: api.DuplicateSubject{
+				Release:           api.ReleaseInfo{Title: "Detected title"},
+				ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Title: "Provider title"}},
+				EffectiveMetadata: api.EffectiveMetadata{Title: "Corrected title", TitleProvenance: api.FactProvenanceManual},
+				Projection:        projection,
+			},
+			want: "Corrected title",
+		},
+		{
+			name: "manual clear wins over projection",
+			meta: api.DuplicateSubject{
+				Release:           api.ReleaseInfo{Title: "Detected title"},
+				ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Title: "Provider title"}},
+				EffectiveMetadata: api.EffectiveMetadata{TitleProvenance: api.FactProvenanceManualEmpty},
+				Projection:        projection,
+			},
+			want: "",
+		},
+		{
+			name: "automatic title keeps projection priority",
+			meta: api.DuplicateSubject{
+				Release:          api.ReleaseInfo{Title: "Detected title"},
+				ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Title: "Provider title"}},
+				Projection:       projection,
+			},
+			want: "Projected title",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := lookupAZDupeTitle(test.meta); got != test.want {
+				t.Fatalf("dupe title = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestAZNetworkHandlerSearchParsesHTMLResults(t *testing.T) {
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "ua.db")

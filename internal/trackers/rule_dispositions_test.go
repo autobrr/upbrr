@@ -230,7 +230,19 @@ func containsMetadataIdentityField(fields []trackers.MetadataField) bool {
 			trackers.MetadataFieldTMDBUnavailable,
 			trackers.MetadataFieldIMDBUnavailable,
 			trackers.MetadataFieldTVDBUnavailable,
-			trackers.MetadataFieldPoster:
+			trackers.MetadataFieldPoster,
+			trackers.MetadataFieldTitle,
+			trackers.MetadataFieldAlternateTitle,
+			trackers.MetadataFieldOriginalTitle,
+			trackers.MetadataFieldYear,
+			trackers.MetadataFieldGenres,
+			trackers.MetadataFieldOriginalLanguage,
+			trackers.MetadataFieldDistributor,
+			trackers.MetadataFieldAudioLanguages,
+			trackers.MetadataFieldSubtitleLanguages,
+			trackers.MetadataFieldHardcodedSubs,
+			trackers.MetadataFieldHardcodedSubtitleLanguages,
+			trackers.MetadataFieldTMDBLocalizedPTBR:
 			continue
 		}
 	}

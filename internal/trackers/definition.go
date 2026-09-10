@@ -433,6 +433,18 @@ type MetadataPolicyProvider interface {
 	MetadataPolicy() *TrackerMetadataPolicy
 }
 
+// InputReadinessProvider declares tracker-local Input requirements that depend
+// on finalized prepared facts and cannot be represented by static metadata rows.
+type InputReadinessProvider interface {
+	InputReadiness(api.UploadSubject) []api.InputReadinessFieldOutcome
+}
+
+// InputSchemaProvider declares tracker-owned Input controls without prompting
+// or performing tracker preparation.
+type InputSchemaProvider interface {
+	InputSchema(api.UploadSubject) *api.TrackerQuestionnaire
+}
+
 // UploadArtifactPolicy declares tracker torrent personalization fields.
 type UploadArtifactPolicy struct {
 	// Source replaces the torrent info dictionary's private-tracker source field.
