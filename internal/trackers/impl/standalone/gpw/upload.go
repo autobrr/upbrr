@@ -281,7 +281,11 @@ func buildFields(
 		fields["releasetype"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["release_type"]), resolveMovieType(meta))
 		fields["subname"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["subname"]), meta.Release.Title)
 		fields["tags"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["tags"]), resolveTags(meta))
-		fields["year"] = strconv.Itoa(resolveYear(meta))
+		if year := resolveYear(meta); year > 0 {
+			fields["year"] = strconv.Itoa(year)
+		} else {
+			fields["year"] = ""
+		}
 		fields["artists[]"] = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["director_name"]), resolveDirectorName(meta))
 		fields["importance[]"] = "1"
 		fields["artist_ids[]"] = strings.TrimSpace(answers["director_imdb"])

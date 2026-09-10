@@ -80,27 +80,27 @@ func EvaluateInputReadiness(registry *Registry, selected []api.TrackerID, subjec
 				Disposition:     metadataCategoryDisposition(policy),
 				Message:         "missing category required to select tracker metadata requirements",
 			}, trackerID)
-			continue
-		}
-		for _, requirement := range policy.Requirements {
-			if requirement.Scope != MetadataScopeAny && requirement.Scope != category {
-				continue
+		} else {
+			for _, requirement := range policy.Requirements {
+				if requirement.Scope != MetadataScopeAny && requirement.Scope != category {
+					continue
+				}
+				fields := metadataRequirementFields(requirement.AnyOf)
+				outcome := api.InputReadinessFieldOutcome{
+					Key:         "metadata." + strings.Join(metadataRequirementFieldStrings(fields), ".or."),
+					Status:      api.InputReadinessFieldMissing,
+					Disposition: api.NormalizeRuleDisposition(requirement.Disposition),
+					Message:     "missing required " + metadataFieldList(requirement.AnyOf),
+				}
+				if metadataRequirementPresent(requirement.AnyOf, ruleSubject) {
+					outcome.Status = api.InputReadinessFieldReady
+					outcome.Message = ""
+				}
+				if len(requirement.AnyOf) == 1 {
+					outcome.CorrectionField = metadataCorrectionField(requirement.AnyOf[0])
+				}
+				addInputReadinessOutcome(byIdentity, &evaluation.Fields, outcome, trackerID)
 			}
-			fields := metadataRequirementFields(requirement.AnyOf)
-			outcome := api.InputReadinessFieldOutcome{
-				Key:         "metadata." + strings.Join(metadataRequirementFieldStrings(fields), ".or."),
-				Status:      api.InputReadinessFieldMissing,
-				Disposition: api.NormalizeRuleDisposition(requirement.Disposition),
-				Message:     "missing required " + metadataFieldList(requirement.AnyOf),
-			}
-			if metadataRequirementPresent(requirement.AnyOf, ruleSubject) {
-				outcome.Status = api.InputReadinessFieldReady
-				outcome.Message = ""
-			}
-			if len(requirement.AnyOf) == 1 {
-				outcome.CorrectionField = metadataCorrectionField(requirement.AnyOf[0])
-			}
-			addInputReadinessOutcome(byIdentity, &evaluation.Fields, outcome, trackerID)
 		}
 		descriptor, found := registry.LookupDescriptor(string(trackerID))
 		if provider, ok := descriptor.Definition.(InputReadinessProvider); found && ok {

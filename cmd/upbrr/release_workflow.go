@@ -478,6 +478,9 @@ func runCLIWorkflowInteractive(
 		if err := applyCLIInputCorrections(ctx, session, currentOpts, currentVisited, inputTracks); err != nil {
 			return err
 		}
+		if session.current.Release != nil {
+			session.intent.sourcePath = session.current.Release.Release.Source.SourcePath
+		}
 		if err := applyCLITrackerInput(ctx, session, currentOpts.TrackerInput); err != nil {
 			return err
 		}

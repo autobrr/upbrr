@@ -46,13 +46,15 @@ func (r *SQLiteRepository) CommitPreparedRelease(ctx context.Context, release ap
 }
 
 // CommitPreparedReleaseWithCorrections atomically compares and stores the
-// correction record before publishing the prepared generation. Callers must
-// calculate the compatibility fingerprint using its returned revision.
+// correction record before publishing the prepared generation. Compatibility
+// is computed from the authoritative revision within the transaction. The callback
+// must perform only local computation; an error rolls back the complete commit.
 func (r *SQLiteRepository) CommitPreparedReleaseWithCorrections(
 	ctx context.Context,
 	release api.PreparedRelease,
 	expectedRevision uint64,
 	record api.StoredReleaseCorrectionsV1,
+	compatibility func(uint64) (api.PreparationCompatibility, error),
 ) (uint64, error) {
 	if r == nil || r.db == nil {
 		return 0, errors.New("db: repository not initialized")
@@ -60,9 +62,8 @@ func (r *SQLiteRepository) CommitPreparedReleaseWithCorrections(
 	if record.Version != 1 {
 		return 0, &api.UnsupportedCorrectionVersionError{Version: record.Version}
 	}
-	generation, err := validatePreparedReleaseForCommit(release)
-	if err != nil {
-		return 0, err
+	if compatibility == nil {
+		return 0, errors.New("db commit prepared release with corrections: compatibility callback is required")
 	}
 
 	preparedAt := release.PreparedAt.UTC()
@@ -78,7 +79,7 @@ func (r *SQLiteRepository) CommitPreparedReleaseWithCorrections(
 	}
 
 	finalRevision := expectedRevision
-	err = r.withWriteTx(ctx, "commit prepared release with corrections", func(tx *sql.Tx) error {
+	err := r.withWriteTx(ctx, "commit prepared release with corrections", func(tx *sql.Tx) error {
 		snapshot, found, err := loadReleaseCorrectionsTx(ctx, tx, release.Source.SourcePath)
 		if err != nil {
 			return err
@@ -86,11 +87,22 @@ func (r *SQLiteRepository) CommitPreparedReleaseWithCorrections(
 		if snapshot.Revision != expectedRevision {
 			return &api.CorrectionRevisionConflictError{Expected: expectedRevision, Actual: snapshot.Revision}
 		}
-		if !releaseCorrectionsEqual(snapshot.Corrections, record) {
+		changed := !releaseCorrectionsEqual(snapshot.Corrections, record)
+		if changed {
 			if snapshot.Revision == math.MaxUint64 {
 				return errors.New("db commit prepared release with corrections: revision overflow")
 			}
 			finalRevision = snapshot.Revision + 1
+		}
+		release.Compatibility, err = compatibility(finalRevision)
+		if err != nil {
+			return fmt.Errorf("db commit prepared release with corrections: compatibility: %w", err)
+		}
+		generation, err := validatePreparedReleaseForCommit(release)
+		if err != nil {
+			return err
+		}
+		if changed {
 			if err := writeReleaseCorrectionsTx(ctx, tx, release.Source.SourcePath, expectedRevision, api.ReleaseCorrectionsSnapshot{
 				Corrections: record,
 				Revision:    finalRevision,

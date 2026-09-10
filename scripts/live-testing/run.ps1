@@ -266,11 +266,11 @@ try {
               $identity = Get-CaseIdentityOverrides $entry.case
               $lane.expectedIdentity = $identity.Clone()
               $sourceInstructions = Get-CaseSourceLookupInstructions $entry.case
+              $lane.explicitSourceLookup = $sourceInstructions.Count -gt 0
               if ($identity.Count -gt 0 -or $sourceInstructions.Count -gt 0) {
                 $intent.preparation.Instructions = $sourceInstructions
                 if ($identity.Count -gt 0) { $intent.preparation.Instructions.Identity = $identity }
               }
-              $lane.explicitSourceLookup = $sourceInstructions.Count -gt 0
               $playlists = @(Get-CaseBDMVPlaylists $entry.case)
               if ($playlists.Count -gt 0) {
                 if (-not $intent.preparation.Instructions) { $intent.preparation.Instructions = @{} }

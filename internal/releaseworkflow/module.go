@@ -2919,7 +2919,7 @@ func (m *Module) replaceFactInstructions(
 ) (CommandResult, error) {
 	if command.CorrectionPatch != nil {
 		facts, ok := state.FactInstructions[state.Workflow.FactInstructions.ID]
-		if !ok {
+		if !ok || facts.Revision != state.Workflow.FactInstructions.Revision {
 			return CommandResult{}, fmt.Errorf("%w: fact instructions unavailable", ErrInvalidTransition)
 		}
 		command.Instructions = facts.Instructions
