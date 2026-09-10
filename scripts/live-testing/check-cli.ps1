@@ -2,11 +2,75 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory)][string]$BaselineRunDir,
-  [Parameter(Mandatory)][ValidatePattern('^lane-[0-9]{4}$')][string]$LaneId
+  [Parameter(Mandatory)][ValidatePattern('^lane-[0-9]{4}$')][string]$LaneId,
+  [ValidateSet('interactive', 'unattended', 'unattended_confirm')][string]$InteractionMode = 'unattended'
 )
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'functions.ps1')
+
+function Get-InteractionCLIArguments([string]$Mode) {
+  switch -CaseSensitive ($Mode) {
+    'interactive' { return }
+    'unattended' { '--unattended'; return }
+    'unattended_confirm' { '--unattended_confirm'; return }
+    default { throw 'cli_interaction_mode_invalid' }
+  }
+}
+
+function Get-RetainedInputCLIArguments($Case, $Snapshot) {
+  $stored = $Snapshot.corrections.corrections
+  if ($stored -isnot [System.Collections.IDictionary] -or $stored.identity -isnot [System.Collections.IDictionary] -or
+      $stored.releaseName -isnot [System.Collections.IDictionary] -or $stored.metadata -isnot [System.Collections.IDictionary]) {
+    throw 'cli_retained_corrections_not_representable'
+  }
+  $metadataIDs = $Case.metadata_ids
+  $identityProviders = @{ TMDBID = 'tmdb'; IMDBID = 'imdb'; TVDBID = 'tvdb'; TVmazeID = 'tvmaze'; MALID = 'mal' }
+  $identityResetProperties = @{
+    'identity.tmdb' = @('identity', 'TMDBID'); 'identity.imdb' = @('identity', 'IMDBID')
+    'identity.tvdb' = @('identity', 'TVDBID'); 'identity.tvmaze' = @('identity', 'TVmazeID')
+    'identity.mal' = @('identity', 'MALID'); 'release_name.category' = @('releaseName', 'Category')
+  }
+  foreach ($property in $stored.identity.Keys) {
+    $value = $stored.identity[$property]
+    if ($null -eq $value) { continue }
+    if (-not $identityProviders.Contains($property)) { throw 'cli_retained_corrections_not_representable' }
+    $provider = $identityProviders[$property]
+    if ($metadataIDs -isnot [System.Collections.IDictionary] -or -not $metadataIDs.Contains($provider) -or
+        ($value -isnot [int] -and $value -isnot [long]) -or [long]$value -ne [long]$metadataIDs[$provider]) {
+      throw 'cli_retained_corrections_not_representable'
+    }
+  }
+  if (@($stored.releaseName.Keys | Where-Object { $null -ne $stored.releaseName[$_] }).Count -gt 0) {
+    throw 'cli_retained_corrections_not_representable'
+  }
+  $arguments = @()
+  $resetFields = $stored.identityResetFields
+  if ($null -ne $resetFields) {
+    if ($resetFields -isnot [System.Collections.IList]) { throw 'cli_retained_corrections_not_representable' }
+    $seenResetFields = @{}
+    foreach ($field in $resetFields) {
+      if ($field -isnot [string] -or -not $identityResetProperties.Contains($field) -or $seenResetFields.Contains($field)) {
+        throw 'cli_retained_corrections_not_representable'
+      }
+      $seenResetFields[$field] = $true
+      $property = $identityResetProperties[$field]
+      if ($null -ne $stored[$property[0]][$property[1]]) { throw 'cli_retained_corrections_not_representable' }
+      $arguments += @('--reset-input', $field)
+    }
+  }
+  foreach ($property in $stored.metadata.Keys) {
+    $value = $stored.metadata[$property]
+    if ($null -eq $value) { continue }
+    if ($property -ceq 'TrackLanguages' -and $value -is [System.Collections.IList] -and $value.Count -eq 0) { continue }
+    if ($property -cne 'Commentary' -or $value -isnot [bool] -or $value -ne $false) {
+      throw 'cli_retained_corrections_not_representable'
+    }
+    $arguments += '--commentary=false'
+  }
+  $arguments
+}
+
 $script:RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $privateRoot = Join-Path $env:LOCALAPPDATA 'upbrr-live-testing'
 $baselineDir = Assert-PrivatePath $BaselineRunDir $privateRoot
@@ -24,7 +88,15 @@ $entries = @(Read-PrivateJson (Join-Path $baselineDir 'corpus.private.json'))
 $entry = @($entries | Where-Object { $_.case.case_id -ceq $lane.caseId })
 if ($entry.Count -ne 1 -or $entry[0].status -ne 'ready' -or (Get-SourceFingerprint $entry[0].case).fingerprint -cne $lane.sourceFingerprint) { throw 'cli_source_evidence_changed' }
 if (@($lane.trackerIds).Count -eq 0 -or @($lane.trackerIds | Where-Object { $_ -cnotmatch '^[A-Z0-9]+$' }).Count -gt 0) { throw 'cli_tracker_scope_invalid' }
+$inputOnly = $baseline.suite -eq 'Input'
+$interactionArguments = @(Get-InteractionCLIArguments $InteractionMode)
+$sourceCLIArguments = @(Get-CaseSourceCLIArguments $entry[0].case)
 $snapshot = Assert-PrivatePath (Join-Path $baselineDir "snapshots/$LaneId.private.json") $privateRoot
+$baselineSnapshot = Read-PrivateJson $snapshot
+$retainedCorrectionArguments = @()
+if ($inputOnly) {
+  $retainedCorrectionArguments = @(Get-RetainedInputCLIArguments $entry[0].case $baselineSnapshot)
+}
 $id = [datetime]::UtcNow.ToString('yyyyMMddTHHmmssZ') + '-cli-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
 $script:RunDir = Assert-PrivatePath (Join-Path $privateRoot "runs/$id") $privateRoot
 $logDir = Assert-PrivatePath (Join-Path $privateRoot "builds/$id") $privateRoot
@@ -44,30 +116,37 @@ try {
   $profile = Read-PrivateJson (Join-Path $logDir 'init.stdout.private.log')
   $initialized = $true
   $script:Binary = $binary
-  $script:Run = @{ version = 1; runId = $id; state = 'running'; binaryPath = $binary; binarySha256 = $baseline.binarySha256; baselineRunId = $baseline.runId; caseId = $lane.caseId; laneId = $LaneId; suite = 'CLIParity'; selectedTrackers = $lane.trackerIds; caseIds = @($lane.caseId); executionMode = $baseline.executionMode; gaps = @() }
+  $script:Run = @{ version = 1; runId = $id; state = 'running'; binaryPath = $binary; binarySha256 = $baseline.binarySha256; baselineRunId = $baseline.runId; caseId = $lane.caseId; laneId = $LaneId; suite = 'CLIParity'; interactionMode = $InteractionMode; selectedTrackers = $lane.trackerIds; caseIds = @($lane.caseId); executionMode = $baseline.executionMode; gaps = @() }
   Write-PrivateJson (Join-Path $script:RunDir 'run.json') $script:Run
   Write-PrivateJson (Join-Path $script:RunDir 'profile.private.json') $profile
   if ($profile.runId -cne $id -or $profile.runDir -cne $script:RunDir) { throw 'cli_profile_identity_mismatch' }
-  $arguments = @('--live-test', '--live-test-max-images', '0', '--config', $profile.configPath, '--unattended', '--no-seed', '--trackers', ($lane.trackerIds -join ','))
+  $arguments = @('--live-test', '--live-test-max-images', '0', '--config', $profile.configPath)
+  $arguments += $interactionArguments
+  $arguments += @('--trackers', ($lane.trackerIds -join ','))
+  if ($inputOnly) { $arguments += '--input-only' } else { $arguments += '--no-seed' }
   $arguments += @(Get-CaseIdentityCLIArguments $entry[0].case)
+  $arguments += $sourceCLIArguments
+  $arguments += $retainedCorrectionArguments
   if ($lane.sat) { $arguments += '--sat' }
-  if ($baseline.skipRemoteDuplicates) { $arguments += '--skip-dupe-check' }
+  if ($baseline.skipRemoteDuplicates) {
+    if (-not $inputOnly) { $arguments += '--skip-dupe-check' }
+  }
   if ($baseline.executionMode -eq 'debug') { $arguments += '--debug' }
   elseif ($baseline.executionMode -ne 'normal') { throw 'cli_execution_mode_invalid' }
   $arguments += @('--', $entry[0].case.input_path)
-  $handle = Start-OwnedProcess $binary $arguments (Join-Path $script:RunDir 'cli')
+  $handle = Start-OwnedProcess $binary $arguments (Join-Path $script:RunDir 'cli') -CloseInput
   try {
     if (-not $handle.process.WaitForExit([int]$baseline.budgets.timeoutSeconds * 1000)) { throw 'cli_deadline_exceeded' }
     $cliExit = $handle.process.ExitCode
   } finally { Stop-OwnedProcess $handle }
   $receiptPath = Join-Path $script:RunDir 'cli-parity.json'
-  Invoke-OwnedProcess $node @((Join-Path $PSScriptRoot 'read-cli-receipt.cjs'), $profile.dbPath, $snapshot, $receiptPath, $lane.workflowId) (Join-Path $script:RunDir 'inspect') 30
+  Invoke-OwnedProcess $node @((Join-Path $PSScriptRoot 'read-cli-receipt.cjs'), $profile.dbPath, $snapshot, $receiptPath, $lane.workflowId, $(if ($inputOnly) { 'input' } else { 'full' })) (Join-Path $script:RunDir 'inspect') 30
   $receipt = Read-PrivateJson $receiptPath
-  $receipt.runId = $id; $receipt.baselineRunId = $baseline.runId; $receipt.caseId = $lane.caseId; $receipt.laneId = $LaneId; $receipt.cliExitCode = $cliExit
+  $receipt.runId = $id; $receipt.baselineRunId = $baseline.runId; $receipt.caseId = $lane.caseId; $receipt.laneId = $LaneId; $receipt.cliExitCode = $cliExit; $receipt.interactionMode = $InteractionMode
   if ($receipt.executionMode -cne $baseline.executionMode) { $receipt.status = 'fail'; $receipt.reason = 'cli_execution_mode_changed' }
   if ($receipt.status -eq 'pass') { $exitCode = 0 }
 } catch {
-  $receipt = @{ version = 1; status = 'inconclusive'; reason = 'cli_check_incomplete'; runId = $id; caseId = $lane.caseId; laneId = $LaneId }
+  $receipt = @{ version = 1; status = 'inconclusive'; reason = 'cli_check_incomplete'; runId = $id; caseId = $lane.caseId; laneId = $LaneId; interactionMode = $InteractionMode }
   [IO.File]::WriteAllText((Join-Path $logDir 'error.private.log'), ($_ | Out-String))
   Write-Output 'status=inconclusive reason=cli_check_incomplete'
 } finally {

@@ -14,6 +14,10 @@ import type {
   UploadImageHostFailure,
 } from "../types";
 import type {
+  CorrectionFieldRef,
+  ReleaseCorrectionValues,
+} from "../api/generated/release-workflow";
+import type {
   FacetStatus,
   HostedImageView,
   MenuImagePreview,
@@ -73,6 +77,7 @@ type PreparationAttemptState = Readonly<{
   correlationID: string;
   sourcePath: string;
   commandRevision: number;
+  inputEditRevision: number;
   status: PreparationStatus;
   error: string;
   failure: OperationFailure | null;
@@ -86,12 +91,19 @@ export type SessionState = Readonly<{
   selectedSource: string;
   preparation: PreparationAttemptState;
   preparationDirty: boolean;
+  correctionDirty: boolean;
+  inputEditRevision: number;
   preparationIntent: PreparationIntent;
+  correctionResetFields: readonly CorrectionFieldRef[];
+  correctionConfirmFields: readonly CorrectionFieldRef[];
+  correctionValueFields: readonly CorrectionFieldRef[];
+  trackerInputAnswers: Readonly<Record<string, Readonly<Record<string, string | null>>>>;
   playlist: PlaylistState;
   release: ReleaseRef | null;
   preview: MetadataPreview | null;
   selectedTrackers: readonly string[];
   trackerSelectionTouched: boolean;
+  trackerSelectionInitialized: boolean;
   ignoredDupesFor: readonly string[];
   /** Tracker-name edits retained for the active prepared source. */
   releaseNameOverrides: Readonly<Record<string, string>>;
@@ -119,6 +131,17 @@ export type SessionAction =
   | Readonly<{ type: "identity_changed"; value: Readonly<ExternalIDOverrides> }>
   | Readonly<{ type: "metadata_changed"; value: PreparationIntent["metadata"] }>
   | Readonly<{ type: "release_name_changed"; value: Readonly<ReleaseNameOverrides> }>
+  | Readonly<{ type: "correction_reset"; field: CorrectionFieldRef }>
+  | Readonly<{ type: "correction_confirmed"; field: CorrectionFieldRef }>
+  | Readonly<{
+      type: "tracker_input_answered";
+      tracker: string;
+      key: string;
+      value: string | null;
+    }>
+  | Readonly<{ type: "tracker_source_id_changed"; tracker: string; value: string }>
+  | Readonly<{ type: "preparation_policy_changed"; value: PreparationIntent["policy"] }>
+  | Readonly<{ type: "client_search_changed"; value: PreparationIntent["search"] }>
   | Readonly<{
       type: "playlist_required";
       sourcePath: string;
@@ -140,6 +163,7 @@ export type SessionAction =
       type: "preparation_started";
       sourcePath: string;
       commandRevision: number;
+      inputEditRevision: number;
       correlationID: string;
       intent: PreparationIntent;
     }>
@@ -149,6 +173,9 @@ export type SessionAction =
       commandRevision: number;
       correlationID: string;
       preview: MetadataPreview;
+      intent?: PreparationIntent;
+      trackerInputsAccepted?: boolean;
+      selectedTrackers?: readonly string[];
     }>
   | Readonly<{
       type: "preparation_failed";
@@ -159,6 +186,7 @@ export type SessionAction =
       failure: OperationFailure | null;
     }>
   | Readonly<{ type: "trackers_chosen"; trackers: readonly string[] }>
+  | Readonly<{ type: "trackers_received"; trackers: readonly string[] }>
   | Readonly<{
       type: "default_trackers_received";
       sessionRevision: number;
@@ -265,6 +293,9 @@ const emptyIntent = (): PreparationIntent => ({
   metadata: {},
   releaseName: {},
   playlist: { Set: false, Selected: [], UseAll: false },
+  trackerSourceIDs: {},
+  policy: { keepFolder: false, keepImages: false, onlyID: false },
+  search: { skip: false, client: "" },
 });
 
 const clonePreparationIntent = (intent: PreparationIntent): PreparationIntent => ({
@@ -277,6 +308,9 @@ const clonePreparationIntent = (intent: PreparationIntent): PreparationIntent =>
     Selected: [...intent.playlist.Selected],
     UseAll: intent.playlist.UseAll,
   },
+  trackerSourceIDs: { ...intent.trackerSourceIDs },
+  policy: { ...intent.policy },
+  search: { ...intent.search },
 });
 
 const emptyOptions = (): UploadRunOptions => ({ noSeed: false, runLogLevel: "info" });
@@ -299,12 +333,19 @@ export const initialSessionState = (): SessionState => ({
     correlationID: "",
     sourcePath: "",
     commandRevision: 0,
+    inputEditRevision: 0,
     status: "idle",
     error: "",
     failure: null,
   },
   preparationDirty: false,
+  correctionDirty: false,
+  inputEditRevision: 0,
   preparationIntent: emptyIntent(),
+  correctionResetFields: [],
+  correctionConfirmFields: [],
+  correctionValueFields: [],
+  trackerInputAnswers: {},
   playlist: {
     status: "idle",
     required: false,
@@ -317,6 +358,7 @@ export const initialSessionState = (): SessionState => ({
   preview: null,
   selectedTrackers: [],
   trackerSelectionTouched: false,
+  trackerSelectionInitialized: false,
   ignoredDupesFor: [],
   releaseNameOverrides: {},
   questionnaireAnswers: {},
@@ -443,14 +485,210 @@ const readyWorkflow = <T extends WorkflowState<unknown>>(value: T): T =>
     error: "",
   }) as T;
 
+const correctionRefKey = (value: CorrectionFieldRef) =>
+  `${value.field}\u0000${value.trackId || ""}`;
+
+const mergeCorrectionRefs = (
+  previous: readonly CorrectionFieldRef[],
+  changed: readonly CorrectionFieldRef[],
+) => {
+  const merged = new Map(previous.map((field) => [correctionRefKey(field), field]));
+  changed.forEach((field) => merged.set(correctionRefKey(field), field));
+  return [...merged.values()];
+};
+
+const sameCorrectionValue = (left: unknown, right: unknown) =>
+  JSON.stringify(left) === JSON.stringify(right);
+
+const identityFieldKeys = {
+  "identity.tmdb": "TMDBID",
+  "identity.imdb": "IMDBID",
+  "identity.tvdb": "TVDBID",
+  "identity.tvmaze": "TVmazeID",
+  "identity.mal": "MALID",
+} as const;
+
+const releaseNameFieldKeys = {
+  "release_name.category": "Category",
+  "release_name.type": "Type",
+  "release_name.source": "Source",
+  "release_name.resolution": "Resolution",
+  "release_name.tag": "Tag",
+  "release_name.service": "Service",
+  "release_name.edition": "Edition",
+  "release_name.season": "Season",
+  "release_name.episode": "Episode",
+  "release_name.episode_title": "EpisodeTitle",
+  "release_name.manual_year": "ManualYear",
+  "release_name.manual_date": "ManualDate",
+  "release_name.use_season_episode": "UseSeasonEpisode",
+  "release_name.no_season": "NoSeason",
+  "release_name.no_year": "NoYear",
+  "release_name.no_aka": "NoAKA",
+  "release_name.no_tag": "NoTag",
+  "release_name.no_episode_title": "NoEpisodeTitle",
+  "release_name.no_distributor": "NoDistributor",
+  "release_name.no_edition": "NoEdition",
+  "release_name.no_dub": "NoDub",
+  "release_name.no_dual": "NoDual",
+  "release_name.dual_audio": "DualAudio",
+  "release_name.region": "Region",
+} as const;
+
+const metadataFieldKeys = {
+  "metadata.distributor": "Distributor",
+  "metadata.original_language": "OriginalLanguage",
+  "metadata.personal_release": "PersonalRelease",
+  "metadata.commentary": "Commentary",
+  "metadata.web_dv": "WebDV",
+  "metadata.stream_optimized": "StreamOptimized",
+  "metadata.anime": "Anime",
+  "metadata.title": "Title",
+  "metadata.alternate_title": "AlternateTitle",
+  "metadata.original_title": "OriginalTitle",
+  "metadata.genres": "Genres",
+  "metadata.audio_languages": "AudioLanguages",
+  "metadata.subtitle_languages": "SubtitleLanguages",
+  "metadata.hardcoded_subs": "HardcodedSubs",
+  "metadata.hardcoded_subtitle_languages": "HardcodedSubtitleLanguages",
+} as const;
+
+const changedCorrectionFields = (
+  previous: PreparationIntent,
+  next: PreparationIntent,
+): CorrectionFieldRef[] => {
+  const changed: CorrectionFieldRef[] = [];
+  const compareFields = (
+    before: object,
+    after: object,
+    fields: Readonly<Record<string, string>>,
+  ) => {
+    for (const [field, key] of Object.entries(fields)) {
+      const beforeValue = before[key as keyof typeof before];
+      const afterValue = after[key as keyof typeof after];
+      if (
+        Object.prototype.hasOwnProperty.call(before, key) !==
+          Object.prototype.hasOwnProperty.call(after, key) ||
+        !sameCorrectionValue(beforeValue, afterValue)
+      ) {
+        changed.push({ field });
+      }
+    }
+  };
+  compareFields(previous.identity, next.identity, identityFieldKeys);
+  compareFields(previous.releaseName, next.releaseName, releaseNameFieldKeys);
+  compareFields(previous.metadata, next.metadata, metadataFieldKeys);
+
+  const previousTracks = new Map(
+    (previous.metadata.TrackLanguages || []).map((track) => [track.trackId, track]),
+  );
+  const nextTracks = new Map(
+    (next.metadata.TrackLanguages || []).map((track) => [track.trackId, track]),
+  );
+  for (const trackID of new Set([...previousTracks.keys(), ...nextTracks.keys()])) {
+    if (!sameCorrectionValue(previousTracks.get(trackID), nextTracks.get(trackID))) {
+      changed.push({ field: "metadata.track_languages", trackId: trackID });
+    }
+  }
+  return changed;
+};
+
+/** Selects only fields edited in the current correction patch. */
+export const correctionValuesFor = (
+  intent: PreparationIntent,
+  fields: readonly CorrectionFieldRef[],
+): ReleaseCorrectionValues => {
+  const identity: Record<string, unknown> = {};
+  const releaseName: Record<string, unknown> = {};
+  const metadata: Record<string, unknown> = {};
+  const trackIDs = new Set(
+    fields
+      .filter((field) => field.field === "metadata.track_languages")
+      .map((field) => field.trackId || ""),
+  );
+  for (const field of fields) {
+    const identityKey = identityFieldKeys[field.field as keyof typeof identityFieldKeys];
+    if (identityKey && Object.prototype.hasOwnProperty.call(intent.identity, identityKey)) {
+      identity[identityKey] = intent.identity[identityKey];
+    }
+    const releaseNameKey = releaseNameFieldKeys[field.field as keyof typeof releaseNameFieldKeys];
+    if (
+      releaseNameKey &&
+      Object.prototype.hasOwnProperty.call(intent.releaseName, releaseNameKey)
+    ) {
+      releaseName[releaseNameKey] = intent.releaseName[releaseNameKey];
+    }
+    const metadataKey = metadataFieldKeys[field.field as keyof typeof metadataFieldKeys];
+    if (metadataKey && Object.prototype.hasOwnProperty.call(intent.metadata, metadataKey)) {
+      metadata[metadataKey] = intent.metadata[metadataKey];
+    }
+  }
+  const trackLanguages = (intent.metadata.TrackLanguages || []).filter((track) =>
+    trackIDs.has(track.trackId),
+  );
+  if (trackLanguages.length > 0) metadata.TrackLanguages = trackLanguages;
+  return {
+    Identity: identity,
+    ReleaseName: releaseName,
+    Metadata: metadata,
+  } as ReleaseCorrectionValues;
+};
+
+const withoutProperty = <T extends object>(value: T, key: keyof T): T => {
+  const next = { ...value };
+  Reflect.deleteProperty(next, key);
+  return next;
+};
+
+const withoutCorrection = (
+  intent: PreparationIntent,
+  ref: CorrectionFieldRef,
+): PreparationIntent => {
+  const identityKey = identityFieldKeys[ref.field as keyof typeof identityFieldKeys];
+  if (identityKey) return { ...intent, identity: withoutProperty(intent.identity, identityKey) };
+  const releaseNameKey = releaseNameFieldKeys[ref.field as keyof typeof releaseNameFieldKeys];
+  if (releaseNameKey) {
+    return { ...intent, releaseName: withoutProperty(intent.releaseName, releaseNameKey) };
+  }
+  if (ref.field === "metadata.track_languages") {
+    const retained = (intent.metadata.TrackLanguages || []).filter(
+      (correction) => correction.trackId !== ref.trackId,
+    );
+    return {
+      ...intent,
+      metadata:
+        retained.length > 0
+          ? { ...intent.metadata, TrackLanguages: retained }
+          : withoutProperty(intent.metadata, "TrackLanguages"),
+    };
+  }
+  const metadataKey = metadataFieldKeys[ref.field as keyof typeof metadataFieldKeys];
+  if (metadataKey) return { ...intent, metadata: withoutProperty(intent.metadata, metadataKey) };
+  return intent;
+};
+
 const preparationIntentChanged = (
   state: SessionState,
   intent: PreparationIntent,
-): SessionState => ({
-  ...state,
-  preparationIntent: intent,
-  preparationDirty: Boolean(state.release),
-});
+  correction = true,
+  changedFields: readonly CorrectionFieldRef[] = [],
+): SessionState => {
+  const changedKeys = new Set(changedFields.map(correctionRefKey));
+  return {
+    ...state,
+    preparationIntent: intent,
+    preparationDirty: Boolean(state.release),
+    correctionDirty: state.correctionDirty || correction,
+    inputEditRevision: state.inputEditRevision + 1,
+    correctionValueFields: mergeCorrectionRefs(state.correctionValueFields, changedFields),
+    correctionResetFields: state.correctionResetFields.filter(
+      (field) => !changedKeys.has(correctionRefKey(field)),
+    ),
+    correctionConfirmFields: state.correctionConfirmFields.filter(
+      (field) => !changedKeys.has(correctionRefKey(field)),
+    ),
+  };
+};
 
 const trackerSelectionChanged = (
   state: SessionState,
@@ -458,6 +696,8 @@ const trackerSelectionChanged = (
   touched: boolean,
 ): SessionState => ({
   ...state,
+  preparationDirty: touched ? Boolean(state.release) : state.preparationDirty,
+  inputEditRevision: touched ? state.inputEditRevision + 1 : state.inputEditRevision,
   screenshots:
     state.screenshots.status === "error"
       ? {
@@ -476,6 +716,7 @@ const trackerSelectionChanged = (
   },
   selectedTrackers: normalizeNames(trackers),
   trackerSelectionTouched: touched,
+  trackerSelectionInitialized: true,
 });
 
 /** Applies one transition, ignoring stale revision- or correlation-scoped completions. */
@@ -497,12 +738,19 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           correlationID: "",
           sourcePath,
           commandRevision: state.commandRevision + 1,
+          inputEditRevision: 0,
           status: "idle",
           error: "",
           failure: null,
         },
         preparationDirty: false,
+        correctionDirty: false,
+        inputEditRevision: 0,
         preparationIntent: emptyIntent(),
+        correctionResetFields: [],
+        correctionConfirmFields: [],
+        correctionValueFields: [],
+        trackerInputAnswers: {},
         playlist: {
           status: "idle",
           required: false,
@@ -515,6 +763,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         preview: null,
         selectedTrackers: normalizeNames(action.defaultTrackers || []),
         trackerSelectionTouched: false,
+        trackerSelectionInitialized: false,
         ignoredDupesFor: [],
         releaseNameOverrides: {},
         questionnaireAnswers: {},
@@ -524,25 +773,128 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       };
     }
     case "source_lookup_changed":
-      return preparationIntentChanged(state, {
-        ...state.preparationIntent,
-        sourceLookupURL: action.value,
-      });
-    case "identity_changed":
-      return preparationIntentChanged(state, {
+      return preparationIntentChanged(
+        state,
+        {
+          ...state.preparationIntent,
+          sourceLookupURL: action.value,
+        },
+        false,
+      );
+    case "identity_changed": {
+      const intent = {
         ...state.preparationIntent,
         identity: { ...action.value },
-      });
-    case "metadata_changed":
-      return preparationIntentChanged(state, {
+      };
+      return preparationIntentChanged(
+        state,
+        intent,
+        true,
+        changedCorrectionFields(state.preparationIntent, intent),
+      );
+    }
+    case "metadata_changed": {
+      const intent = {
         ...state.preparationIntent,
         metadata: { ...action.value },
-      });
-    case "release_name_changed":
-      return preparationIntentChanged(state, {
+      };
+      return preparationIntentChanged(
+        state,
+        intent,
+        true,
+        changedCorrectionFields(state.preparationIntent, intent),
+      );
+    }
+    case "release_name_changed": {
+      const intent = {
         ...state.preparationIntent,
         releaseName: { ...action.value },
-      });
+      };
+      return preparationIntentChanged(
+        state,
+        intent,
+        true,
+        changedCorrectionFields(state.preparationIntent, intent),
+      );
+    }
+    case "correction_reset": {
+      const key = correctionRefKey(action.field);
+      return {
+        ...state,
+        preparationIntent: withoutCorrection(state.preparationIntent, action.field),
+        preparationDirty: Boolean(state.release),
+        correctionDirty: true,
+        inputEditRevision: state.inputEditRevision + 1,
+        correctionResetFields: [
+          ...state.correctionResetFields.filter((field) => correctionRefKey(field) !== key),
+          { ...action.field },
+        ],
+        correctionConfirmFields: state.correctionConfirmFields.filter(
+          (field) => correctionRefKey(field) !== key,
+        ),
+        correctionValueFields: state.correctionValueFields.filter(
+          (field) => correctionRefKey(field) !== key,
+        ),
+      };
+    }
+    case "correction_confirmed": {
+      const key = correctionRefKey(action.field);
+      return {
+        ...state,
+        preparationDirty: Boolean(state.release),
+        correctionDirty: true,
+        inputEditRevision: state.inputEditRevision + 1,
+        correctionResetFields: state.correctionResetFields.filter(
+          (field) => correctionRefKey(field) !== key,
+        ),
+        correctionConfirmFields: [
+          ...state.correctionConfirmFields.filter((field) => correctionRefKey(field) !== key),
+          { ...action.field },
+        ],
+        correctionValueFields: state.correctionValueFields.filter(
+          (field) => correctionRefKey(field) !== key,
+        ),
+      };
+    }
+    case "tracker_input_answered": {
+      const tracker = action.tracker.trim().toUpperCase();
+      const key = action.key.trim();
+      if (!tracker || !key) return state;
+      const current = { ...(state.trackerInputAnswers[tracker] || {}) };
+      current[key] = action.value;
+      const trackerInputAnswers = { ...state.trackerInputAnswers };
+      trackerInputAnswers[tracker] = current;
+      return {
+        ...state,
+        trackerInputAnswers,
+        preparationDirty: Boolean(state.release),
+        inputEditRevision: state.inputEditRevision + 1,
+      };
+    }
+    case "tracker_source_id_changed": {
+      const tracker = action.tracker.trim().toUpperCase();
+      if (!tracker) return state;
+      const trackerSourceIDs = { ...state.preparationIntent.trackerSourceIDs };
+      const value = action.value.trim();
+      trackerSourceIDs[tracker] = value;
+      return preparationIntentChanged(
+        state,
+        { ...state.preparationIntent, trackerSourceIDs },
+        false,
+      );
+    }
+    case "preparation_policy_changed":
+      return preparationIntentChanged(
+        state,
+        { ...state.preparationIntent, policy: { ...action.value } },
+        false,
+      );
+    case "client_search_changed":
+      return preparationIntentChanged(
+        state,
+        { ...state.preparationIntent, search: { ...action.value } },
+        false,
+      );
     case "playlist_required": {
       if (
         !preparationMatches(state, action.sourcePath, action.commandRevision, action.correlationID)
@@ -575,6 +927,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       return {
         ...state,
         preparationDirty: Boolean(state.release),
+        inputEditRevision: state.inputEditRevision + 1,
         playlist: {
           ...state.playlist,
           selected: [...action.playlists],
@@ -618,6 +971,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           correlationID: action.correlationID,
           sourcePath: action.sourcePath,
           commandRevision: action.commandRevision,
+          inputEditRevision: action.inputEditRevision,
           status: "running",
           error: "",
           failure: null,
@@ -642,6 +996,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         return state;
       }
       const release = action.preview.Release;
+      const inputChanged = state.inputEditRevision !== state.preparation.inputEditRevision;
       const acceptedSource = release?.SourcePath?.trim() || action.preview.SourcePath.trim();
       if (!acceptedSource || !release?.Generation || acceptedSource !== action.sourcePath) {
         return {
@@ -666,7 +1021,35 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           error: "",
           failure: null,
         },
-        preparationDirty: false,
+        preparationDirty: inputChanged,
+        correctionDirty: inputChanged ? state.correctionDirty : false,
+        preparationIntent:
+          !inputChanged && action.intent
+            ? clonePreparationIntent(action.intent)
+            : state.preparationIntent,
+        correctionResetFields: inputChanged ? state.correctionResetFields : [],
+        correctionConfirmFields: inputChanged ? state.correctionConfirmFields : [],
+        correctionValueFields: inputChanged ? state.correctionValueFields : [],
+        trackerInputAnswers:
+          !inputChanged && action.trackerInputsAccepted
+            ? Object.fromEntries(
+                Object.entries(state.trackerInputAnswers).filter(
+                  ([tracker]) => !action.selectedTrackers?.includes(tracker),
+                ),
+              )
+            : state.trackerInputAnswers,
+        selectedTrackers:
+          !inputChanged && action.selectedTrackers !== undefined
+            ? normalizeNames(action.selectedTrackers)
+            : state.selectedTrackers,
+        trackerSelectionTouched:
+          inputChanged || action.selectedTrackers === undefined
+            ? state.trackerSelectionTouched
+            : false,
+        trackerSelectionInitialized:
+          inputChanged || action.selectedTrackers === undefined
+            ? state.trackerSelectionInitialized
+            : true,
         release: { SourcePath: acceptedSource, Generation: release.Generation },
         preview: action.preview,
         releaseNameOverrides: {},
@@ -704,8 +1087,12 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       };
     case "trackers_chosen":
       return trackerSelectionChanged(state, action.trackers, true);
+    case "trackers_received":
+      return state.trackerSelectionTouched
+        ? state
+        : trackerSelectionChanged(state, action.trackers, false);
     case "default_trackers_received": {
-      if (action.sessionRevision !== state.sessionRevision || state.trackerSelectionTouched) {
+      if (action.sessionRevision !== state.sessionRevision || state.trackerSelectionInitialized) {
         return state;
       }
       const trackers = normalizeNames(action.trackers);

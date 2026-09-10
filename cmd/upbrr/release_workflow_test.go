@@ -6,6 +6,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"slices"
@@ -19,27 +20,33 @@ import (
 )
 
 type cliWorkflowCoreFake struct {
-	liveTest       bool
-	liveStarts     int
-	current        releaseworkflow.CommandResult
-	commands       []releaseworkflow.Command
-	continuations  []api.ContinueReleaseWorkflowRequest
-	continueFn     func(api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error)
-	uploadRequests []api.CreateReleaseWorkflowUploadRequest
-	uploadFeedback []api.ReleaseWorkflowUploadFeedback
-	startUploadFn  func(api.CreateReleaseWorkflowUploadRequest) (releaseworkflow.CommandResult, error)
-	startProgress  []api.DupeProgressUpdate
-	feedbackFn     func(api.ReleaseWorkflowUploadFeedback) (releaseworkflow.CommandResult, error)
-	operation      api.WorkflowOperationStatus
-	events         []api.WorkflowEvent
-	eventBatches   [][]api.WorkflowEvent
-	eventBatch     int
-	eventAfters    []uint64
-	queueOperation bool
-	cancelCalls    int
+	liveTest        bool
+	liveStarts      int
+	current         releaseworkflow.CommandResult
+	commands        []releaseworkflow.Command
+	continuations   []api.ContinueReleaseWorkflowRequest
+	continueFn      func(api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error)
+	uploadRequests  []api.CreateReleaseWorkflowUploadRequest
+	uploadFeedback  []api.ReleaseWorkflowUploadFeedback
+	startUploadFn   func(api.CreateReleaseWorkflowUploadRequest) (releaseworkflow.CommandResult, error)
+	startProgress   []api.DupeProgressUpdate
+	feedbackFn      func(api.ReleaseWorkflowUploadFeedback) (releaseworkflow.CommandResult, error)
+	operation       api.WorkflowOperationStatus
+	events          []api.WorkflowEvent
+	eventBatches    [][]api.WorkflowEvent
+	eventBatch      int
+	eventAfters     []uint64
+	queueOperation  bool
+	cancelCalls     int
+	inputHistory    api.InputHistory
+	inputHistoryErr error
 }
 
 func (f *cliWorkflowCoreFake) LiveTestEnabled() bool { return f.liveTest }
+
+func (f *cliWorkflowCoreFake) GetInputHistory(context.Context, string) (api.InputHistory, error) {
+	return f.inputHistory, f.inputHistoryErr
+}
 
 func (f *cliWorkflowCoreFake) StartLiveTestReleaseWorkflowUpload(ctx context.Context, owner string, request api.CreateReleaseWorkflowUploadRequest) (releaseworkflow.CommandResult, error) {
 	f.liveStarts++
@@ -402,30 +409,30 @@ func (f *cliWorkflowCoreFake) ExecuteReleaseWorkflow(
 						Value: "disc-one:00001.mpls",
 						Label: "Disc 1 — 00001.mpls",
 						Playlist: &api.PlaylistInfo{
-							ID: "disc-one:00001.mpls",
- DiscID: "disc-one",
- DiscName: "Disc 1",
- File: "00001.mpls",
+							ID:       "disc-one:00001.mpls",
+							DiscID:   "disc-one",
+							DiscName: "Disc 1",
+							File:     "00001.mpls",
 						},
 					},
 					{
 						Value: "disc-one:00002.mpls",
 						Label: "Disc 1 — 00002.mpls",
 						Playlist: &api.PlaylistInfo{
-							ID: "disc-one:00002.mpls",
- DiscID: "disc-one",
- DiscName: "Disc 1",
- File: "00002.mpls",
+							ID:       "disc-one:00002.mpls",
+							DiscID:   "disc-one",
+							DiscName: "Disc 1",
+							File:     "00002.mpls",
 						},
 					},
 					{
 						Value: "disc-two:00001.mpls",
 						Label: "Disc 2 — 00001.mpls",
 						Playlist: &api.PlaylistInfo{
-							ID: "disc-two:00001.mpls",
- DiscID: "disc-two",
- DiscName: "Disc 2",
- File: "00001.mpls",
+							ID:       "disc-two:00001.mpls",
+							DiscID:   "disc-two",
+							DiscName: "Disc 2",
+							File:     "00001.mpls",
 						},
 					},
 				},
@@ -808,20 +815,20 @@ func TestSelectCLIWorkflowPlaylistsRequiresEveryDisc(t *testing.T) {
 
 	action := api.RequiredAction{Prompt: "Select playlist", Options: []api.RequiredActionOption{
 		{
-Value: "disc-one:00001.mpls",
- Label: "Disc 1 — 00001.mpls",
- Playlist: &api.PlaylistInfo{DiscID: "disc-one"},
-},
+			Value:    "disc-one:00001.mpls",
+			Label:    "Disc 1 — 00001.mpls",
+			Playlist: &api.PlaylistInfo{DiscID: "disc-one"},
+		},
 		{
-Value: "disc-one:00002.mpls",
- Label: "Disc 1 — 00002.mpls",
- Playlist: &api.PlaylistInfo{DiscID: "disc-one"},
-},
+			Value:    "disc-one:00002.mpls",
+			Label:    "Disc 1 — 00002.mpls",
+			Playlist: &api.PlaylistInfo{DiscID: "disc-one"},
+		},
 		{
-Value: "disc-two:00001.mpls",
- Label: "Disc 2 — 00001.mpls",
- Playlist: &api.PlaylistInfo{DiscID: "disc-two"},
-},
+			Value:    "disc-two:00001.mpls",
+			Label:    "Disc 2 — 00001.mpls",
+			Playlist: &api.PlaylistInfo{DiscID: "disc-two"},
+		},
 	}}
 	selected, err := selectCLIWorkflowPlaylists(bufio.NewReader(strings.NewReader("1,3\n")), io.Discard, action, false)
 	if err != nil {
@@ -1136,5 +1143,271 @@ func TestCLIWorkflowMediaInstructionsKeepDVDMenuCaptureIndependent(t *testing.T)
 	if withMenus.ScreenshotCount != 4 || !withMenus.CaptureDVDMenus ||
 		withMenus.MaxDVDMenuItems != 0 || withMenus.Selections != nil {
 		t.Fatalf("explicit DVD menu media instructions = %#v", withMenus)
+	}
+}
+
+func TestCLIInputOnlyReportsReadiness(t *testing.T) {
+	current := releaseworkflow.CommandResult{
+		Workflow: api.ReleaseWorkflow{ID: "workflow-1", Revision: 1},
+		Release: &api.ReleaseSnapshot{Release: api.PreparedRelease{
+			Generation: 1,
+			Source:     api.SourceManifest{SourcePath: "Example.Release.2026.1080p-GRP.mkv"},
+			Identity:   api.ExternalIdentity{TMDBID: 12345},
+			Naming: api.NamingFacts{
+				Title:  "Example Release",
+				Genres: []string{"Drama"},
+				Tag:    "GRP",
+			},
+			Media: api.MediaFacts{
+				Source:         "WEB",
+				AudioLanguages: []string{"English"},
+				Commentary:     false,
+				Tracks: []api.MediaTrackFacts{{
+					ID:                  "audio-1",
+					Kind:                api.MediaTrackAudio,
+					Languages:           []string{"English"},
+					ManifestFingerprint: "manifest-1",
+				}},
+			},
+		}},
+		InputReadiness: &api.InputReadinessSnapshot{Fields: []api.InputReadinessFieldOutcome{{Key: "title", Status: api.InputReadinessFieldReady}}},
+	}
+	coreSvc := &cliWorkflowCoreFake{current: current}
+	coreSvc.continueFn = func(api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) {
+		return coreSvc.current, nil
+	}
+	session := &cliWorkflowSession{
+		core:           coreSvc,
+		current:        current,
+		idempotencyRun: "input-only",
+	}
+	var output strings.Builder
+	if err := completeCLIInputOnly(t.Context(), session, &output); err != nil {
+		t.Fatalf("complete input only: %v", err)
+	}
+	if len(coreSvc.uploadRequests) != 0 || !strings.Contains(output.String(), "Track audio-1: kind=audio languages=English manifest=manifest-1") {
+		t.Fatalf("input-only result = uploads=%d output=%q", len(coreSvc.uploadRequests), output.String())
+	}
+	firstLine, _, _ := strings.Cut(output.String(), "\n")
+	var facts struct {
+		Identity api.ExternalIdentity `json:"identity"`
+		Naming   api.NamingFacts      `json:"naming"`
+		Media    struct {
+			Source         string
+			AudioLanguages []string
+			Commentary     *bool
+		} `json:"media"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(firstLine, "Input facts: ")), &facts); err != nil {
+		t.Fatalf("decode effective input facts: %v", err)
+	}
+	if facts.Identity.TMDBID != 12345 || facts.Naming.Tag != "GRP" || !slices.Equal(facts.Naming.Genres, []string{"Drama"}) ||
+		facts.Media.Source != "WEB" || !slices.Equal(facts.Media.AudioLanguages, []string{"English"}) ||
+		facts.Media.Commentary == nil || *facts.Media.Commentary {
+		t.Fatalf("effective input facts omitted corrections: %s", firstLine)
+	}
+
+	current.InputReadiness = &api.InputReadinessSnapshot{Fields: []api.InputReadinessFieldOutcome{{Key: "title", Status: api.InputReadinessFieldMissing}}}
+	coreSvc.current = current
+	session.current = current
+	err := completeCLIInputOnly(t.Context(), session, io.Discard)
+	exitErr, ok := errors.AsType[*cliExitError](err)
+	if !ok || exitErr.code != 2 {
+		t.Fatalf("missing input error = %v", err)
+	}
+	current.InputReadiness.Fields[0].Disposition = api.RuleDispositionAdvisory
+	coreSvc.current = current
+	session.current = current
+	if err := completeCLIInputOnly(t.Context(), session, io.Discard); err != nil {
+		t.Fatalf("advisory input blocked readiness: %v", err)
+	}
+}
+
+func TestCLITrackerInputPreservesSetAndAutoIntent(t *testing.T) {
+	for _, value := range []string{"yes", "no", "auto"} {
+		t.Run(value, func(t *testing.T) {
+			current := releaseworkflow.CommandResult{Workflow: api.ReleaseWorkflow{ID: "workflow-1", Revision: 1}}
+			coreSvc := &cliWorkflowCoreFake{current: current}
+			coreSvc.continueFn = func(api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) { return current, nil }
+			session := &cliWorkflowSession{
+				core:          coreSvc,
+				current:       current,
+				uploadRequest: api.Request{Trackers: []string{"PTP"}},
+			}
+			if err := applyCLITrackerInput(t.Context(), session, []string{"PTP:no_english_subtitles=" + value}); err != nil {
+				t.Fatal(err)
+			}
+			if len(coreSvc.continuations) != 1 {
+				t.Fatalf("continuations = %d", len(coreSvc.continuations))
+			}
+			request := coreSvc.continuations[0]
+			answer, exists := request.Intent.TrackerInputAnswers["PTP"]["no_english_subtitles"]
+			if !exists || (value == "auto" && answer != nil) || (value != "auto" && (answer == nil || *answer != value)) {
+				t.Fatalf("answer patch = %#v", request.Intent.TrackerInputAnswers)
+			}
+			if request.Goal != api.WorkflowGoalInputReady || request.Intent.CorrectionPatch != nil || request.Intent.FactInstructions != nil {
+				t.Fatalf("tracker input crossed correction boundary: %#v", request)
+			}
+		})
+	}
+}
+
+func TestCLIInputOnlyDoesNotStartCompositeUpload(t *testing.T) {
+	opts, visited, _, err := parseCLIOptions([]string{"--input-only", "example.mkv"})
+	if err != nil {
+		t.Fatalf("parse input-only: %v", err)
+	}
+	current := releaseworkflow.CommandResult{
+		Workflow: api.ReleaseWorkflow{ID: "workflow-1", Revision: 1},
+		Release: &api.ReleaseSnapshot{Release: api.PreparedRelease{
+			Generation: 1,
+			Source:     api.SourceManifest{SourcePath: "example.mkv"},
+			Naming:     api.NamingFacts{Title: "Example"},
+		}},
+		InputReadiness: &api.InputReadinessSnapshot{Fields: []api.InputReadinessFieldOutcome{{Key: "title", Status: api.InputReadinessFieldReady}}},
+	}
+	coreSvc := &cliWorkflowCoreFake{current: current}
+	coreSvc.continueFn = func(api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) {
+		return coreSvc.current, nil
+	}
+	var output strings.Builder
+	if err := runCLIWorkflowInteractive(t.Context(), coreSvc, []string{"--input-only", "example.mkv"}, opts, visited, "example.mkv", api.PlaylistInstruction{}, 0, config.Config{}, cliIO{in: strings.NewReader(""), out: &output}, api.NopLogger{}); err != nil {
+		t.Fatalf("run input-only workflow: %v", err)
+	}
+	if len(coreSvc.uploadRequests) != 0 {
+		t.Fatalf("input-only started composite upload: %#v", coreSvc.uploadRequests)
+	}
+	if len(coreSvc.continuations) < 2 || coreSvc.continuations[0].Goal != api.WorkflowGoalPrepared || coreSvc.continuations[len(coreSvc.continuations)-1].Goal != api.WorkflowGoalInputReady {
+		t.Fatalf("input-only continuations = %#v", coreSvc.continuations)
+	}
+}
+
+func TestCLIInputCorrectionUsesCurrentRevision(t *testing.T) {
+	opts, visited, _, err := parseCLIOptions([]string{"--reset-input", "metadata.title", "example.mkv"})
+	if err != nil {
+		t.Fatalf("parse correction: %v", err)
+	}
+	current := releaseworkflow.CommandResult{
+		Workflow:         api.ReleaseWorkflow{ID: "workflow-1", Revision: 1},
+		FactInstructions: &api.ReleaseFactInstructionSnapshot{CorrectionRevision: 7},
+	}
+	coreSvc := &cliWorkflowCoreFake{current: current}
+	coreSvc.continueFn = func(api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) {
+		return current, nil
+	}
+	session := &cliWorkflowSession{
+		core:           coreSvc,
+		current:        current,
+		uploadRequest:  api.Request{SourcePath: "example.mkv"},
+		idempotencyRun: "correction",
+	}
+	if err := applyCLIInputCorrections(t.Context(), session, opts, visited, nil); err != nil {
+		t.Fatalf("apply correction: %v", err)
+	}
+	if len(coreSvc.continuations) != 1 {
+		t.Fatalf("continuations = %#v", coreSvc.continuations)
+	}
+	request := coreSvc.continuations[0]
+	if request.Goal != api.WorkflowGoalPrepared || request.Intent.CorrectionPatch == nil || request.Intent.CorrectionPatch.ExpectedRevision == nil || *request.Intent.CorrectionPatch.ExpectedRevision != 7 {
+		t.Fatalf("correction continuation = %#v", request)
+	}
+	if request.Intent.Preparation != nil {
+		t.Fatalf("correction replaced retained preparation controls: %#v", request.Intent.Preparation)
+	}
+}
+
+func TestCLIConfirmInputRequiresCurrentCorrectionAction(t *testing.T) {
+	opts, visited, _, err := parseCLIOptions([]string{"--confirm-input", "metadata.title", "example.mkv"})
+	if err != nil {
+		t.Fatalf("parse confirmation: %v", err)
+	}
+	current := releaseworkflow.CommandResult{
+		Workflow:    api.ReleaseWorkflow{
+ID: "workflow-1",
+ Revision: 3,
+ Status: api.WorkflowStatusBlocked,
+},
+		Corrections: &api.ReleaseCorrectionsSnapshot{Revision: 7},
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*releaseworkflow.CommandResult)
+		want   string
+	}{
+		{
+			name: "without action",
+			want: "requires the current saved input correction action",
+		},
+		{
+			name: "wrong field",
+			mutate: func(current *releaseworkflow.CommandResult) {
+				current.Workflow.RequiredActions = []api.RequiredAction{{
+					Kind:             api.RequiredActionConfirmCorrections,
+					Status:           api.RequiredActionStatusPending,
+					WorkflowRevision: current.Workflow.Revision,
+					CorrectionConfirmation: &api.CorrectionConfirmation{
+						Revision: current.Corrections.Revision,
+						Fields:   []api.CorrectionField{api.CorrectionFieldMetadataAlternateTitle},
+					},
+				}}
+			},
+			want: "is not pending confirmation",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			caseCurrent := current
+			if test.mutate != nil {
+				test.mutate(&caseCurrent)
+			}
+			coreSvc := &cliWorkflowCoreFake{current: caseCurrent}
+			session := &cliWorkflowSession{core: coreSvc, current: caseCurrent}
+			err := applyCLIInputCorrections(t.Context(), session, opts, visited, nil)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("apply confirmation error = %v", err)
+			}
+			if len(coreSvc.continuations) != 0 {
+				t.Fatalf("rejected confirmation continued workflow: %#v", coreSvc.continuations)
+			}
+		})
+	}
+}
+
+func TestCLIConfirmInputUsesCurrentCorrectionAction(t *testing.T) {
+	opts, visited, _, err := parseCLIOptions([]string{"--confirm-input", "metadata.title", "example.mkv"})
+	if err != nil {
+		t.Fatalf("parse confirmation: %v", err)
+	}
+	current := releaseworkflow.CommandResult{
+		Workflow: api.ReleaseWorkflow{
+			ID: "workflow-1",
+ Revision: 3,
+ Status: api.WorkflowStatusBlocked,
+			RequiredActions: []api.RequiredAction{{
+				Kind:             api.RequiredActionConfirmCorrections,
+				Status:           api.RequiredActionStatusPending,
+				WorkflowRevision: 3,
+				CorrectionConfirmation: &api.CorrectionConfirmation{
+					Revision: 7,
+					Fields:   []api.CorrectionField{api.CorrectionFieldMetadataTitle, api.CorrectionFieldMetadataAlternateTitle},
+				},
+			}},
+		},
+		Corrections: &api.ReleaseCorrectionsSnapshot{Revision: 7},
+	}
+	coreSvc := &cliWorkflowCoreFake{current: current}
+	coreSvc.continueFn = func(api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) { return current, nil }
+	session := &cliWorkflowSession{core: coreSvc, current: current}
+	if err := applyCLIInputCorrections(t.Context(), session, opts, visited, nil); err != nil {
+		t.Fatalf("apply confirmation: %v", err)
+	}
+	if len(coreSvc.continuations) != 1 {
+		t.Fatalf("confirmation continuations = %#v", coreSvc.continuations)
+	}
+	request := coreSvc.continuations[0]
+	if request.Authority == nil || request.Authority.WorkflowID != current.Workflow.ID || request.Authority.ExpectedRevision != current.Workflow.Revision ||
+		request.Intent.CorrectionPatch == nil || request.Intent.CorrectionPatch.ExpectedRevision == nil ||
+		*request.Intent.CorrectionPatch.ExpectedRevision != current.Corrections.Revision ||
+		!slices.Equal(request.Intent.CorrectionPatch.ConfirmFields, []api.CorrectionFieldRef{{Field: api.CorrectionFieldMetadataTitle}}) {
+		t.Fatalf("confirmation continuation = %#v", request)
 	}
 }

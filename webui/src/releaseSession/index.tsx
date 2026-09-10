@@ -23,6 +23,7 @@ import type {
   PrepareInput as WorkflowPrepareInput,
   RequiredAction,
   ReleaseFactInstructions,
+  ReleaseCorrectionPatch,
   ReleaseWorkflowCurrent,
   WorkflowContinuation,
   WorkflowGoal,
@@ -30,7 +31,7 @@ import type {
 } from "../api/generated/release-workflow";
 import type { ReleaseSessionPorts } from "./ports";
 import { productionReleaseSessionPorts } from "./production";
-import { initialSessionState, sessionReducer } from "./reducer";
+import { correctionValuesFor, initialSessionState, sessionReducer } from "./reducer";
 import type {
   PreparationIntent,
   ReleaseRoute,
@@ -48,6 +49,16 @@ type WorkflowCommand = Readonly<{
   release: ReleaseRef;
   sessionRevision: number;
   revision: number;
+}>;
+
+type PendingInputUpdate = Readonly<{
+  inputEditRevision: number;
+  correctionDirty: boolean;
+  resetFields: NonNullable<ReleaseCorrectionPatch["resetFields"]>;
+  confirmFields: NonNullable<ReleaseCorrectionPatch["confirmFields"]>;
+  valueFields: NonNullable<ReleaseCorrectionPatch["resetFields"]>;
+  trackerInputAnswers: NonNullable<WorkflowIntent["trackerInputAnswers"]>;
+  selectedTrackers: readonly string[];
 }>;
 
 const errorText = (error: unknown) =>
@@ -244,29 +255,110 @@ export const routeAccess = (
 const cloneIntent = (intent: PreparationIntent): PreparationIntent => ({
   sourceLookupURL: intent.sourceLookupURL,
   identity: { ...intent.identity },
-  metadata: { ...intent.metadata },
+  metadata: {
+    ...intent.metadata,
+    ...(intent.metadata.Genres ? { Genres: [...intent.metadata.Genres] } : {}),
+    ...(intent.metadata.AudioLanguages
+      ? { AudioLanguages: [...intent.metadata.AudioLanguages] }
+      : {}),
+    ...(intent.metadata.SubtitleLanguages
+      ? { SubtitleLanguages: [...intent.metadata.SubtitleLanguages] }
+      : {}),
+    ...(intent.metadata.HardcodedSubtitleLanguages
+      ? { HardcodedSubtitleLanguages: [...intent.metadata.HardcodedSubtitleLanguages] }
+      : {}),
+    ...(intent.metadata.TrackLanguages
+      ? {
+          TrackLanguages: intent.metadata.TrackLanguages.map((correction) => ({
+            ...correction,
+            languages: [...correction.languages],
+          })),
+        }
+      : {}),
+  },
   releaseName: { ...intent.releaseName },
   playlist: {
     Set: intent.playlist.Set,
     Selected: [...intent.playlist.Selected],
     UseAll: intent.playlist.UseAll,
   },
+  trackerSourceIDs: { ...intent.trackerSourceIDs },
+  policy: { ...intent.policy },
+  search: { ...intent.search },
 });
 
-const workflowPreparationIntent = (current: ReleaseWorkflowCurrent): PreparationIntent => {
+const preparationWithoutFactCorrections = (input: WorkflowPrepareInput): WorkflowPrepareInput => ({
+  ...input,
+  Instructions: {
+    ...input.Instructions,
+    Identity: {},
+    ReleaseName: {},
+    Metadata: {},
+    ...(input.Instructions.Category !== undefined ? { Category: undefined } : {}),
+  },
+});
+
+const correctionPatchFor = (
+  current: ReleaseWorkflowCurrent,
+  intent: PreparationIntent,
+  update: PendingInputUpdate,
+): ReleaseCorrectionPatch => ({
+  values: correctionValuesFor(intent, update.valueFields),
+  resetFields: update.resetFields.map((field) => ({ ...field })),
+  confirmFields: update.confirmFields.map((field) => ({ ...field })),
+  expectedRevision:
+    current.corrections?.revision ?? current.factInstructions?.correctionRevision ?? 0,
+});
+
+// The API serializes automatic corrections as null; local drafts omit those keys.
+const manualCorrections = <T extends object>(values: T): T => {
+  const corrections = { ...values };
+  for (const key in corrections) {
+    if (corrections[key] === null || corrections[key] === undefined) delete corrections[key];
+  }
+  return corrections;
+};
+
+const workflowPreparationIntent = (
+  current: ReleaseWorkflowCurrent,
+  submitted?: PreparationIntent,
+): PreparationIntent => {
   const instructions = current.factInstructions?.instructions;
+  const corrections = current.corrections?.corrections;
   return {
     sourceLookupURL: instructions?.SourceLookup || "",
-    identity: { ...(instructions?.Identity || {}) },
-    metadata: { ...(instructions?.Metadata || {}) },
-    releaseName: { ...(instructions?.ReleaseName || {}) },
+    identity: manualCorrections(corrections?.identity || instructions?.Identity || {}),
+    metadata: manualCorrections(corrections?.metadata || instructions?.Metadata || {}),
+    releaseName: manualCorrections(corrections?.releaseName || instructions?.ReleaseName || {}),
     playlist: {
       Set: Boolean(instructions?.Playlist?.Set),
       Selected: [...(instructions?.Playlist?.Selected || [])],
       UseAll: Boolean(instructions?.Playlist?.UseAll),
     },
+    trackerSourceIDs: { ...(instructions?.TrackerIDs || {}) },
+    policy: submitted
+      ? { ...submitted.policy }
+      : { keepFolder: false, keepImages: false, onlyID: false },
+    search: submitted ? { ...submitted.search } : { skip: false, client: "" },
   };
 };
+
+const preparationWithEffectiveCorrections = (
+  preparation: WorkflowPrepareInput,
+  facts: ReleaseFactInstructions,
+): WorkflowPrepareInput => ({
+  ...preparation,
+  Instructions: {
+    ...preparation.Instructions,
+    Identity: facts.Identity,
+    ReleaseName: facts.ReleaseName,
+    Metadata: facts.Metadata,
+    ...(facts.Category !== undefined ? { Category: facts.Category } : { Category: undefined }),
+  },
+});
+
+const workflowSelectedInputTrackers = (current: ReleaseWorkflowCurrent) =>
+  current.inputReadiness?.selectedTrackerIds ?? current.selection?.trackerIds;
 
 const metadataPreviewFromWorkflow = (current: ReleaseWorkflowCurrent): MetadataPreview | null => {
   const snapshot = current.release;
@@ -328,10 +420,19 @@ const preparationInputForWorkflow = (
       Selected: [...intent.playlist.Selected],
       UseAll: intent.playlist.UseAll,
     },
-    TrackerIDs: {},
+    TrackerIDs: Object.fromEntries(
+      Object.entries(intent.trackerSourceIDs).filter(([, value]) => value !== ""),
+    ),
   },
-  Policy: { KeepFolder: false, KeepImages: false, OnlyID: false },
-  Search: { Skip: false },
+  Policy: {
+    KeepFolder: intent.policy.keepFolder,
+    KeepImages: intent.policy.keepImages,
+    OnlyID: intent.policy.onlyID,
+  },
+  Search: {
+    Skip: intent.search.skip,
+    ...(intent.search.client.trim() ? { Client: intent.search.client.trim() } : {}),
+  },
   Controls: {
     Interaction: "interactive",
     ConfirmBDMVRescan: confirmBDMVRescan,
@@ -388,8 +489,9 @@ export function ReleaseSessionProvider({
 
   const publishWorkflowCurrent = (current: ReleaseWorkflowCurrent, status: "running" | "ready") => {
     storeWorkflowID(current.workflow.id);
-    if (current.selection?.trackerIds) {
-      dispatch({ type: "trackers_chosen", trackers: current.selection.trackerIds });
+    const selectedTrackers = workflowSelectedInputTrackers(current);
+    if (selectedTrackers) {
+      dispatch({ type: "trackers_received", trackers: selectedTrackers });
     }
     setWorkflowView({ status, current, error: "", failure: null });
     return current;
@@ -460,6 +562,7 @@ export function ReleaseSessionProvider({
       throw new Error("Tracker submission is unavailable in this runtime.");
     }
     let current = initial;
+    let nextIntent = intent;
     for (let transition = 0; transition < 32; transition += 1) {
       const next = await awaitWorkflowCommand(
         await activePorts.workflow.continue(
@@ -469,7 +572,7 @@ export function ReleaseSessionProvider({
               expectedRevision: current.workflow.revision,
             },
             goal,
-            intent: { interaction: "interactive", ...intent },
+            intent: { interaction: "interactive", ...nextIntent },
             idempotencyKey,
             ...extra,
           },
@@ -479,6 +582,30 @@ export function ReleaseSessionProvider({
       );
       if (next.workflow.revision === current.workflow.revision) return next;
       current = next;
+      const { correctionPatch: _acceptedPatch, ...remainingIntent } = nextIntent;
+      nextIntent = remainingIntent;
+      if (nextIntent.preparation && current.factInstructions) {
+        nextIntent = {
+          ...nextIntent,
+          preparation: preparationWithEffectiveCorrections(
+            nextIntent.preparation,
+            current.factInstructions.instructions,
+          ),
+        };
+      }
+      if (
+        current.release &&
+        current.factInstructions &&
+        current.release.factInstructions.id === current.factInstructions.id &&
+        current.release.factInstructions.revision === current.factInstructions.revision
+      ) {
+        const {
+          factInstructions: _acceptedFacts,
+          preparation: _acceptedPreparation,
+          ...goalIntent
+        } = nextIntent;
+        nextIntent = goalIntent;
+      }
     }
     throw new Error("Release workflow continuation exceeded the transition limit.");
   };
@@ -544,13 +671,15 @@ export function ReleaseSessionProvider({
           sourcePath,
           defaultTrackers: normalizedDefaultTrackers,
         });
-        if (current.selection?.trackerIds) {
-          dispatch({ type: "trackers_chosen", trackers: current.selection.trackerIds });
+        const selectedTrackers = workflowSelectedInputTrackers(current);
+        if (selectedTrackers) {
+          dispatch({ type: "trackers_received", trackers: selectedTrackers });
         }
         dispatch({
           type: "preparation_started",
           sourcePath,
           commandRevision,
+          inputEditRevision: 0,
           correlationID,
           intent,
         });
@@ -563,6 +692,8 @@ export function ReleaseSessionProvider({
             commandRevision,
             correlationID,
             preview,
+            intent,
+            selectedTrackers,
           });
         }
       }
@@ -578,6 +709,15 @@ export function ReleaseSessionProvider({
 
   const startBackendWorkflow = async (
     input: PrepareInput,
+    update: PendingInputUpdate = {
+      inputEditRevision: state.inputEditRevision,
+      correctionDirty: state.correctionDirty,
+      resetFields: state.correctionResetFields,
+      confirmFields: state.correctionConfirmFields,
+      valueFields: state.correctionValueFields,
+      trackerInputAnswers: state.trackerInputAnswers,
+      selectedTrackers: state.selectedTrackers,
+    },
   ): Promise<ReleaseWorkflowCurrent | null> => {
     if (controllers.current.workflow) return null;
     const controller = new AbortController();
@@ -589,11 +729,12 @@ export function ReleaseSessionProvider({
       const intent: WorkflowIntent = {
         factInstructions: workflowFactInstructions(input.Instructions),
         preparation: workflowPrepareInput(input),
+        trackerIds: [...update.selectedTrackers],
       };
       const created = await awaitWorkflowCommand(
         await activePorts.workflow.continue(
           {
-            goal: "prepared",
+            goal: "input_ready",
             intent,
             idempotencyKey: commandID,
           },
@@ -603,7 +744,7 @@ export function ReleaseSessionProvider({
       );
       const prepared = await continueBackendGoal(
         created,
-        "prepared",
+        "input_ready",
         intent,
         commandID,
         controller.signal,
@@ -794,6 +935,7 @@ export function ReleaseSessionProvider({
     commandRevision: number,
     correlationID: string,
     controller: AbortController,
+    update: PendingInputUpdate,
     releaseID = "",
   ): Promise<boolean> => {
     try {
@@ -821,10 +963,13 @@ export function ReleaseSessionProvider({
         });
         current = await continueBackendGoal(
           previous,
-          "prepared",
+          "input_ready",
           {
-            factInstructions: candidateInput.Instructions,
-            preparation: candidateInput,
+            ...(update.correctionDirty
+              ? { correctionPatch: correctionPatchFor(previous, intent, update) }
+              : {}),
+            preparation: preparationWithoutFactCorrections(candidateInput),
+            trackerIds: [...update.selectedTrackers],
           },
           commandID,
           controller.signal,
@@ -844,10 +989,13 @@ export function ReleaseSessionProvider({
         const resetInput = workflowPrepareInput({ ...input, Force: true });
         current = await continueBackendGoal(
           previous,
-          "prepared",
+          "input_ready",
           {
-            factInstructions: resetInput.Instructions,
-            preparation: resetInput,
+            ...(update.correctionDirty
+              ? { correctionPatch: correctionPatchFor(previous, intent, update) }
+              : {}),
+            preparation: preparationWithoutFactCorrections(resetInput),
+            trackerIds: [...update.selectedTrackers],
           },
           commandID,
           controller.signal,
@@ -863,16 +1011,40 @@ export function ReleaseSessionProvider({
         const playlistInput = workflowPrepareInput(input);
         current = await continueBackendGoal(
           workflowView.current,
-          "prepared",
+          "input_ready",
           {
-            factInstructions: playlistInput.Instructions,
-            preparation: playlistInput,
+            ...(update.correctionDirty
+              ? {
+                  correctionPatch: correctionPatchFor(workflowView.current, intent, update),
+                }
+              : {}),
+            preparation: preparationWithoutFactCorrections(playlistInput),
+            trackerIds: [...update.selectedTrackers],
           },
           commandID,
           controller.signal,
         );
       } else {
-        current = await startBackendWorkflow(input);
+        const previous = workflowView.current;
+        if (previous?.release?.release.Source.SourcePath === sourcePath) {
+          const preparedInput = workflowPrepareInput(input);
+          const commandID = `workflow-input-${Date.now().toString(36)}-${previous.workflow.revision.toString(36)}`;
+          current = await continueBackendGoal(
+            previous,
+            "input_ready",
+            {
+              ...(update.correctionDirty
+                ? { correctionPatch: correctionPatchFor(previous, intent, update) }
+                : {}),
+              preparation: preparationWithoutFactCorrections(preparedInput),
+              trackerIds: [...update.selectedTrackers],
+            },
+            commandID,
+            controller.signal,
+          );
+        } else {
+          current = await startBackendWorkflow(input, update);
+        }
       }
       if (!current) {
         throw (
@@ -883,6 +1055,32 @@ export function ReleaseSessionProvider({
       if (dispatchPlaylistAction(current, sourcePath, commandRevision, correlationID)) {
         return false;
       }
+      const trackerInputAnswers = Object.fromEntries(
+        Object.entries(update.trackerInputAnswers).filter(([tracker]) =>
+          update.selectedTrackers.includes(tracker),
+        ),
+      );
+      const hasTrackerInputAnswers = Object.values(trackerInputAnswers).some(
+        (answers) => Object.keys(answers).length > 0,
+      );
+      let trackerInputsAccepted = false;
+      if (hasTrackerInputAnswers) {
+        if (!current.inputReadiness || !current.release) {
+          throw new Error(
+            "Fact corrections were saved, but tracker Input answers need refreshed readiness.",
+          );
+        }
+        const commandID = `workflow-input-answers-${Date.now().toString(36)}-${current.workflow.revision.toString(36)}`;
+        current = await continueBackendGoal(
+          current,
+          "input_ready",
+          { trackerInputAnswers },
+          commandID,
+          controller.signal,
+        );
+        trackerInputsAccepted = true;
+        acceptWorkflowCurrent(current);
+      }
       const preview = metadataPreviewFromWorkflow(current);
       if (!preview) throw new Error("Workflow release snapshot is unavailable.");
       dispatch({
@@ -891,6 +1089,9 @@ export function ReleaseSessionProvider({
         commandRevision,
         correlationID,
         preview,
+        intent: workflowPreparationIntent(current, intent),
+        trackerInputsAccepted,
+        selectedTrackers: workflowSelectedInputTrackers(current),
       });
       return !controller.signal.aborted;
     } catch (error) {
@@ -934,11 +1135,35 @@ export function ReleaseSessionProvider({
     preparationRevision.current = commandRevision;
     const correlationID = `preparation-${Date.now().toString(36)}-${commandRevision.toString(36)}`;
     const intent = cloneIntent(requestedIntent);
+    const existingSource = sourcePath === state.selectedSource;
+    const sourceChanged = Boolean(state.selectedSource) && !existingSource;
+    const inputEditRevision = existingSource ? state.inputEditRevision : 0;
+    const update: PendingInputUpdate = {
+      inputEditRevision,
+      correctionDirty: existingSource ? state.correctionDirty : false,
+      resetFields: existingSource ? state.correctionResetFields.map((field) => ({ ...field })) : [],
+      confirmFields: existingSource
+        ? state.correctionConfirmFields.map((field) => ({ ...field }))
+        : [],
+      valueFields: existingSource ? state.correctionValueFields.map((field) => ({ ...field })) : [],
+      trackerInputAnswers: sourceChanged
+        ? {}
+        : Object.fromEntries(
+            Object.entries(state.trackerInputAnswers).map(([tracker, answers]) => [
+              tracker,
+              { ...answers },
+            ]),
+          ),
+      selectedTrackers: sourceChanged
+        ? [...normalizedDefaultTrackers]
+        : [...state.selectedTrackers],
+    };
     lastPreparation.current = { operation, sourcePath, intent };
     dispatch({
       type: "preparation_started",
       sourcePath,
       commandRevision,
+      inputEditRevision,
       correlationID,
       intent,
     });
@@ -951,6 +1176,7 @@ export function ReleaseSessionProvider({
       commandRevision,
       correlationID,
       controller,
+      update,
     );
   };
 
@@ -968,10 +1194,25 @@ export function ReleaseSessionProvider({
     preparationRevision.current = commandRevision;
     const correlationID = `preparation-${Date.now().toString(36)}-${commandRevision.toString(36)}`;
     const intent = cloneIntent(state.preparationIntent);
+    const update: PendingInputUpdate = {
+      inputEditRevision: state.inputEditRevision,
+      correctionDirty: state.correctionDirty,
+      resetFields: state.correctionResetFields.map((field) => ({ ...field })),
+      confirmFields: state.correctionConfirmFields.map((field) => ({ ...field })),
+      valueFields: state.correctionValueFields.map((field) => ({ ...field })),
+      trackerInputAnswers: Object.fromEntries(
+        Object.entries(state.trackerInputAnswers).map(([tracker, answers]) => [
+          tracker,
+          { ...answers },
+        ]),
+      ),
+      selectedTrackers: [...state.selectedTrackers],
+    };
     dispatch({
       type: "preparation_started",
       sourcePath,
       commandRevision,
+      inputEditRevision: state.inputEditRevision,
       correlationID,
       intent,
     });
@@ -983,6 +1224,7 @@ export function ReleaseSessionProvider({
       commandRevision,
       correlationID,
       controller,
+      update,
       candidateID,
     );
   };
@@ -1519,6 +1761,7 @@ export function ReleaseSessionProvider({
       : workflowView.current?.uploadResult
         ? "ready"
         : "idle";
+  const trackerInputAnswers = state.trackerInputAnswers;
 
   const session: ReleaseSession = {
     workflow: {
@@ -1666,12 +1909,21 @@ export function ReleaseSessionProvider({
         sourceDraft: state.sourceDraft,
         selectedSource: state.selectedSource,
         status: state.preparation.status,
-        error: state.preparation.error,
+        error: state.preparation.error || workflowView.error,
         failure: state.preparation.failure,
         preparationDirty: state.preparationDirty,
+        correctionDirty: state.correctionDirty,
         intent: state.preparationIntent,
+        corrections: workflowView.current?.corrections || null,
+        resetFields: state.correctionResetFields,
+        confirmFields: state.correctionConfirmFields,
+        trackerInputAnswers,
         selectedTrackers: state.selectedTrackers,
         preview: state.preview,
+        release: workflowView.current?.release
+          ? workflowViewValue(workflowView.current.release.release)
+          : null,
+        readiness: workflowView.current?.inputReadiness || null,
         trackerData: state.preview?.TrackerData || [],
         source: {
           discCount: workflowView.current?.release?.release.Source.Classification?.DiscCount || 0,
@@ -1685,6 +1937,14 @@ export function ReleaseSessionProvider({
       changeIdentity: (value) => dispatch({ type: "identity_changed", value }),
       changeMetadata: (value) => dispatch({ type: "metadata_changed", value }),
       changeReleaseName: (value) => dispatch({ type: "release_name_changed", value }),
+      resetCorrection: (field) => dispatch({ type: "correction_reset", field }),
+      confirmCorrection: (field) => dispatch({ type: "correction_confirmed", field }),
+      changeTrackerInputAnswer: (tracker, key, value) =>
+        dispatch({ type: "tracker_input_answered", tracker, key, value }),
+      changeTrackerSourceID: (tracker, value) =>
+        dispatch({ type: "tracker_source_id_changed", tracker, value }),
+      changePreparationPolicy: (value) => dispatch({ type: "preparation_policy_changed", value }),
+      changeClientSearch: (value) => dispatch({ type: "client_search_changed", value }),
       chooseTrackers: (trackers) => dispatch({ type: "trackers_chosen", trackers }),
       choosePlaylists: (playlists, useAll) =>
         dispatch({ type: "playlist_draft_changed", playlists, useAll }),
@@ -1727,6 +1987,20 @@ export function ReleaseSessionProvider({
           commandRevision,
           correlationID,
           controller,
+          {
+            inputEditRevision: state.inputEditRevision,
+            correctionDirty: state.correctionDirty,
+            resetFields: state.correctionResetFields.map((field) => ({ ...field })),
+            confirmFields: state.correctionConfirmFields.map((field) => ({ ...field })),
+            valueFields: state.correctionValueFields.map((field) => ({ ...field })),
+            trackerInputAnswers: Object.fromEntries(
+              Object.entries(state.trackerInputAnswers).map(([tracker, answers]) => [
+                tracker,
+                { ...answers },
+              ]),
+            ),
+            selectedTrackers: [...state.selectedTrackers],
+          },
         );
       },
       cancelPlaylistSelection: () => {
