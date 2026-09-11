@@ -4,6 +4,7 @@
 package impl
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -11,6 +12,131 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestDVLProjectedEpisodeRanges(t *testing.T) {
+	t.Parallel()
+	registry, err := NewRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor, ok := registry.LookupDescriptor("DVL")
+	if !ok || descriptor.DupePolicy == nil {
+		t.Fatal("missing DVL duplicate policy")
+	}
+	for _, test := range []struct {
+		name             string
+		candidateRange   string
+		targetEpisode    int
+		candidateEpisode int
+		defaultPolicy    bool
+		want             api.DupeRelation
+	}{
+		{
+			name:           "default policy unchanged",
+			candidateRange: "S01E01-E03",
+			targetEpisode:  1,
+			defaultPolicy:  true,
+			want:           api.DupeRelationSameSlot,
+		},
+		{
+			name:           "overlapping single episode",
+			candidateRange: "S01E01",
+			targetEpisode:  1,
+			want:           api.DupeRelationInsufficientEvidence,
+		},
+		{
+			name:           "existing season pack",
+			candidateRange: "S01",
+			targetEpisode:  1,
+			want:           api.DupeRelationExistingPreferred,
+		},
+		{
+			name: "same range",
+			candidateRange: "S01E01-E03",
+			targetEpisode: 1,
+			want: api.DupeRelationCoexists,
+		},
+		{
+			name: "disjoint ranges",
+			candidateRange: "S01E04-E05",
+			targetEpisode: 1,
+			want: api.DupeRelationCoexists,
+		},
+		{
+			name: "overlapping ranges",
+			candidateRange: "S01E02-E04",
+			targetEpisode: 1,
+			want: api.DupeRelationInsufficientEvidence,
+		},
+		{
+			name: "same start different end",
+			candidateRange: "S01E01-E02",
+			targetEpisode: 1,
+			want: api.DupeRelationInsufficientEvidence,
+		},
+		{
+			name: "target coordinate conflict",
+			candidateRange: "S01E01-E03",
+			targetEpisode: 4,
+			want: api.DupeRelationManualReview,
+		},
+		{
+			name: "candidate coordinate conflict",
+			candidateRange: "S01E01-E03",
+			targetEpisode: 1,
+			candidateEpisode: 4,
+			want: api.DupeRelationManualReview,
+		},
+		{
+			name: "candidate season conflict",
+			candidateRange: "S02E01-E03",
+			targetEpisode: 1,
+			candidateEpisode: 1,
+			want: api.DupeRelationManualReview,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			projection, failure := registry.ProjectRelease(t.Context(), trackers.PreparationInput{
+				Tracker: "DVL",
+				Meta: api.UploadSubject{
+					ReleaseName: "Example.Series.S01E01-E03.1080p.WEB-DL-AAA",
+					Type:        "WEB-DL",
+					SeasonInt:   1,
+					EpisodeInt:  test.targetEpisode,
+					Release:     api.ReleaseInfo{Category: "TV", Resolution: "1080p"},
+				},
+			}, "", "", "")
+			if failure != nil {
+				t.Fatalf("project DVL: %v", failure)
+			}
+			entry := api.DupeEntry{
+				Name:          fmt.Sprintf("Example.Series.%s.1080p.WEB-DL-BBB", test.candidateRange),
+				CanonicalType: "WEB-DL",
+				Res:           "1080p",
+				Episode:       test.candidateEpisode,
+			}
+			if test.candidateEpisode != 0 {
+				entry.Season = 1
+			}
+			candidate := dupe.NormalizeCandidate(entry, "DVL")
+			policy := *descriptor.DupePolicy
+			if test.defaultPolicy {
+				policy.ExactMatchOnly = false
+			}
+			result := dupe.Evaluate(projection.DuplicateTarget, []dupe.TrackerCandidate{candidate}, policy,
+				dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeProviderID})
+			if len(result.Candidates) != 1 {
+				t.Fatalf("candidate count = %d", len(result.Candidates))
+			}
+			wantBlocks := test.want == api.DupeRelationExistingPreferred
+			wantAction := !wantBlocks && test.want != api.DupeRelationCoexists
+			if result.Candidates[0].Relation != test.want || result.Blocks != wantBlocks || result.RequiresAction != wantAction {
+				t.Fatalf("relation=%s blocks=%t action=%t, want %s", result.Candidates[0].Relation, result.Blocks, result.RequiresAction, test.want)
+			}
+		})
+	}
+}
 
 func TestULCXProjectedEditionMustDescribeACut(t *testing.T) {
 	t.Parallel()
@@ -133,6 +259,28 @@ func TestSourceBackedDupeOverlaysResolveDeterministically(t *testing.T) {
 				},
 			},
 			relation: api.DupeRelationProposedTrumps,
+		},
+		{
+			name:    "DVL distinct releases coexist",
+			tracker: "DVL",
+			target: api.TrackerDuplicateTarget{
+				Names:      []string{"Example.Release.2026.1080p.WEB-DL.VariantA-GRP"},
+				FileNames:  []string{"Example.Release.2026.1080p.WEB-DL.VariantA-GRP.mkv"},
+				SizeBytes:  100,
+				Type:       "WEB-DL",
+				Resolution: "1080p",
+				HDR:        completeSDR,
+			},
+			candidate: dupe.TrackerCandidate{
+				Name:       "Example.Release.2026.1080p.WEB-DL.VariantB-GRP",
+				Files:      []string{"Example.Release.2026.1080p.WEB-DL.VariantB-GRP.mkv"},
+				SizeBytes:  100,
+				SizeKnown:  true,
+				Type:       "WEB-DL",
+				Resolution: "1080p",
+				HDR:        completeSDR,
+			},
+			relation: api.DupeRelationCoexists,
 		},
 		{
 			name:    "LST hybrid remux HDR slot needs review",

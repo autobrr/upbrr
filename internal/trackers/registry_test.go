@@ -5,6 +5,7 @@ package trackers
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -163,16 +164,41 @@ func TestRegistryRuleCapability(t *testing.T) {
 func TestValidateDupePolicyRequiresEvidenceIDForAutomaticRules(t *testing.T) {
 	t.Parallel()
 
-	policy := DupePolicy{
-		ID:             "example/duplicate/v2",
-		SlotDimensions: []DupeDimension{DupeDimensionResolution},
+	for _, policy := range []DupePolicy{
+		{
+			ID:             "example/duplicate/v2",
+			SlotDimensions: []DupeDimension{DupeDimensionResolution},
+		},
+		{
+			ID:             "example/duplicate/v2",
+			ExactMatchOnly: true,
+		},
+		{
+			ID:             "example/duplicate-compat/v1",
+			ExactMatchOnly: true,
+		},
+	} {
+		if err := validateDupePolicy(policy); err == nil || !strings.Contains(err.Error(), "evidence ID") {
+			t.Fatalf("missing traceability error = %v", err)
+		}
+		policy.EvidenceID = "example-rules"
+		if err := validateDupePolicy(policy); err != nil {
+			t.Fatalf("evidence-backed policy rejected: %v", err)
+		}
 	}
-	if err := validateDupePolicy(policy); err == nil || !strings.Contains(err.Error(), "evidence ID") {
-		t.Fatalf("missing traceability error = %v", err)
-	}
-	policy.EvidenceID = "example-rules"
-	if err := validateDupePolicy(policy); err != nil {
-		t.Fatalf("evidence-backed policy rejected: %v", err)
+}
+
+func TestExactMatchOnlyDoesNotChangeOtherPolicyFingerprints(t *testing.T) {
+	t.Parallel()
+
+	for _, enabled := range []bool{false, true} {
+		encoded, err := json.Marshal(DupePolicy{ExactMatchOnly: enabled})
+		if err != nil {
+			t.Fatalf("marshal duplicate policy: %v", err)
+		}
+		if strings.Contains(string(encoded), `"ExactMatchOnly"`) != enabled {
+			t.Fatalf("serialized ExactMatchOnly present when enabled=%t: %s", enabled, encoded)
+		}
 	}
 }
 

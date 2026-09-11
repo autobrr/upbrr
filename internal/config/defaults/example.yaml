@@ -231,6 +231,10 @@ trackers:
     api_key: ""
     anon: false
     modq: false
+  DVL:
+    link_dir_name: ""
+    api_key: ""
+    anon: false
   EMUW:
     link_dir_name: ""
     api_key: ""

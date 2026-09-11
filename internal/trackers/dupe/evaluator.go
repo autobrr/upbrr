@@ -45,12 +45,18 @@ func Evaluate(
 	search SearchEvidence,
 ) Evaluation {
 	targetFacts := normalizeTargetFacts(target)
+	if policy.ExactMatchOnly {
+		targetFacts.Content = exactOnlyContentScope(targetFacts.Content, parseBestTitle(target.Names).Content)
+	}
 	targetFacts.Edition = editionFromNamingContract(targetFacts.Edition, target.Names, targetFacts.Resolution, policy.DefaultTitleEdition)
 	effectiveComplete := search.EffectiveComplete()
 	evaluation := Evaluation{Complete: effectiveComplete, TargetFacts: targetFacts}
 	candidateFacts := make([]normalizedFacts, 0, len(candidates))
 	for _, candidate := range candidates {
 		facts := normalizeCandidateFacts(candidate)
+		if policy.ExactMatchOnly {
+			facts.Content = exactOnlyContentScope(facts.Content, parseReleaseTitle(candidate.Name, FactOriginTrackerTitle).Content)
+		}
 		facts.Edition = editionFromNamingContract(facts.Edition, []string{candidate.Name}, facts.Resolution, policy.DefaultTitleEdition)
 		candidateFacts = append(candidateFacts, facts)
 		findings := collectCandidateFindings(target, targetFacts, candidate, facts, policy, search.WorkScope)

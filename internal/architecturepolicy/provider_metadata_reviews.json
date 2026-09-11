@@ -1367,6 +1367,14 @@
     "sha256": "0bd188ca772487f87a0c2f867206fdf3bceb6266b703e9362ba06c75aa26d060",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
+  "internal/trackers/impl/unit3d/sites/dvl/rules.go:ValidationPolicy": {
+    "sha256": "d7cf0948e54043b2c9d19fd27567284d8e50abc384190b3da733f57f74a23e54",
+    "reason": "Binds checkContent, which preserves manual genres through ValidationRuleSubject and RuleGenres; TMDB keywords remain current-source policy evidence."
+  },
+  "internal/trackers/impl/unit3d/sites/dvl/rules.go:checkContent": {
+    "sha256": "3cbfb44250cad8ac2dac79c4e87a0bd9efdb589114163f31d72fb5be32c3634c",
+    "reason": "ValidationRuleSubject preserves EffectiveMetadata; RuleGenres honors manual genres, including empty values, while RuleKeywords independently supplies current-source TMDB policy evidence."
+  },
   "internal/trackers/impl/unit3d/sites/dp/name.go:applyDPTVDBDisambiguation": {
     "sha256": "e3c882620e1ddc073f07ee8005ea10e5eea0d9350ab47b28344385f6a83b54df",
     "reason": "Resolve explicit manual year, including zero, on a local evidence copy before name parsing or formatting; preserve automatic TVDB collision, locale, and year-inclusion policy."
