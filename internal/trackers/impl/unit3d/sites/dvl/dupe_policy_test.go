@@ -14,7 +14,7 @@ func TestDuplicatePolicyPreservesSearchEvidence(t *testing.T) {
 	t.Parallel()
 
 	policy := Profile().DupePolicy
-	if policy == nil || policy.ID != "dvl/duplicate/v1" || policy.EvidenceID != "dvl-upload-rules-coexisting-releases" || !policy.ExactMatchOnly {
+	if policy == nil || policy.ID != "dvl/duplicate/v2" || policy.EvidenceID != "dvl-upload-rules-coexisting-releases" || !policy.ExactMatchOnly {
 		t.Fatalf("DVL duplicate policy = %#v", policy)
 	}
 	for _, test := range []struct {

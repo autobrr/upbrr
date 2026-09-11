@@ -8,7 +8,7 @@ import "github.com/autobrr/upbrr/internal/trackers"
 // duplicatePolicy enables DreadVault's policy allowing coexisting releases.
 func duplicatePolicy() *trackers.DupePolicy {
 	return &trackers.DupePolicy{
-		ID:             "dvl/duplicate/v1",
+		ID:             "dvl/duplicate/v2",
 		EvidenceID:     "dvl-upload-rules-coexisting-releases",
 		ExactMatchOnly: true,
 		SearchScope: trackers.DupeSearchScope{

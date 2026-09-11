@@ -183,6 +183,18 @@ func collectExactOnlyFinding(
 	return finding
 }
 
+// The prepared target and candidate adapters retain only the first episode.
+// Recover a matching title range before comparing scopes, without changing
+// the default policy or accepting a conflicting season or first episode.
+func exactOnlyContentScope(structured contentScope, title contentScope) contentScope {
+	if structured.Kind == contentScopeEpisode && title.Kind == contentScopeEpisodeRange &&
+		structured.Season > 0 && structured.Season == title.Season &&
+		structured.EpisodeStart == title.EpisodeStart && title.EpisodeEnd >= title.EpisodeStart {
+		return title
+	}
+	return structured
+}
+
 func contentScopesContradict(structured contentScope, title contentScope) bool {
 	if structured.Kind == contentScopeWork || structured.Kind == contentScopeUnknownTV ||
 		title.Kind == contentScopeWork || title.Kind == contentScopeUnknownTV {
