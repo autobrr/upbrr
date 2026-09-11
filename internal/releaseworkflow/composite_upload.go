@@ -836,18 +836,18 @@ func (m *Module) runCompositeUpload(
 	command CompositeUploadCommand,
 ) (CommandResult, error) {
 	operationID, _ := ctx.Value(operationExecutionContextKey{}).(api.WorkflowOperationID)
-	initial, session, err := m.currentCompositeUpload(ctx, ownerID, command, operationID)
+	initial, session, requirements, err := m.currentCompositeUpload(ctx, ownerID, command, operationID)
 	if err != nil {
 		return CommandResult{}, err
 	}
-	if err := m.hydrateCompositePreparedRelease(ctx, initial, session); err != nil {
+	if err := m.hydrateCompositePreparedRelease(ctx, initial, session, requirements); err != nil {
 		return CommandResult{}, err
 	}
 	for range compositeUploadTransitionLimit {
 		if err := ctx.Err(); err != nil {
 			return CommandResult{}, fmt.Errorf("release workflow composite upload: %w", err)
 		}
-		current, session, err := m.currentCompositeUpload(ctx, ownerID, command, operationID)
+		current, session, _, err := m.currentCompositeUpload(ctx, ownerID, command, operationID)
 		if err != nil {
 			return CommandResult{}, err
 		}
@@ -1011,6 +1011,7 @@ func (m *Module) hydrateCompositePreparedRelease(
 	ctx context.Context,
 	current CommandResult,
 	session *compositeUploadSession,
+	requirements api.MetadataRequirementSet,
 ) error {
 	if current.Release == nil {
 		return nil
@@ -1020,6 +1021,7 @@ func (m *Module) hydrateCompositePreparedRelease(
 	}
 	input := *session.Intent.Preparation
 	input.SourcePath = current.Release.Release.Source.SourcePath
+	input.MetadataRequirements = requirements
 	input.Force = false
 	input.RequirePrepared = true
 	input.Controls.ConfirmBDMVRescan = false
@@ -1040,21 +1042,21 @@ func (m *Module) currentCompositeUpload(
 	ownerID string,
 	command CompositeUploadCommand,
 	operationID api.WorkflowOperationID,
-) (CommandResult, *compositeUploadSession, error) {
+) (CommandResult, *compositeUploadSession, api.MetadataRequirementSet, error) {
 	current, err := m.Current(ctx, ownerID, command.WorkflowID)
 	if err != nil {
-		return CommandResult{}, nil, err
+		return CommandResult{}, nil, api.MetadataRequirementSet{}, err
 	}
 	state, err := m.repository.Load(ctx, ownerID, command.WorkflowID)
 	if err != nil {
-		return CommandResult{}, nil, fmt.Errorf("release workflow load composite session: %w", err)
+		return CommandResult{}, nil, api.MetadataRequirementSet{}, fmt.Errorf("release workflow load composite session: %w", err)
 	}
 	if state.Composite == nil || state.Composite.Version != compositeUploadSessionVersion ||
 		state.Composite.RequestFingerprint != command.SessionFingerprint ||
 		state.Composite.ActiveOperationID != operationID {
-		return CommandResult{}, nil, fmt.Errorf("%w: composite upload session failed integrity validation", ErrInvalidTransition)
+		return CommandResult{}, nil, api.MetadataRequirementSet{}, fmt.Errorf("%w: composite upload session failed integrity validation", ErrInvalidTransition)
 	}
-	return current, state.Composite, nil
+	return current, state.Composite, state.PreparationDemand, nil
 }
 
 func compositeUploadGoalReached(current CommandResult, session *compositeUploadSession) bool {
