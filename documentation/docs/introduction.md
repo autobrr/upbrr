@@ -25,6 +25,12 @@ upbrr is for uploaders who already understand:
 
 It guides those tasks. It does not replace tracker rules, staff direction, or operator judgment.
 
+## Documentation and versions
+
+The published site updates through the release workflow and is built from the exact release tag. Development builds can include changes documented only in the repository's [documentation source](https://github.com/autobrr/upbrr/tree/main/documentation/docs).
+
+Use your installed binary's `--help` and embedded [OpenAPI reference](./api/index.md) for its exact CLI and API contracts.
+
 ## What upbrr does
 
 A normal workflow can:

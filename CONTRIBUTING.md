@@ -23,7 +23,7 @@ Install the following on your machine:
 
 - [Git](https://git-scm.com/)
 - [Go](https://golang.org/dl/) — see [go.mod](./go.mod) for the required version
-- [Node.js](https://nodejs.org) (`^20.19.0`, `^22.13.0`, or `>=24`)
+- [Node.js](https://nodejs.org) (`^20.19.0`, `^22.13.0`, or `>=24` for the frontend; `>=24` for public documentation)
 - [pnpm](https://pnpm.io/installation) (10 or newer — version is pinned in `webui/package.json` via `packageManager`)
 - [GNU Make](https://www.gnu.org/software/make/) — top-level shortcuts for builds, checks, formatting, and hooks
 - [golangci-lint](https://golangci-lint.run/) — use the version pinned in the [CI workflow](./.github/workflows/golangci-lint.yml) for hooks and local checks
@@ -82,7 +82,7 @@ lefthook install
 
 What runs when Git invokes hooks:
 
-- `pre-commit` — on **staged files only**: `prettier --write` (webui), `eslint` (webui/src), `golangci-lint fmt` (Go), the composite-literal layout policy, `go run ./cmd/logpolicy` (when `internal/**` Go files change), and `go run ./cmd/pathpolicy` (when Go files change). Formatters auto-re-stage their fixes.
+- `pre-commit` — runs `prettier --write` (webui), `eslint` (webui/src), and `golangci-lint fmt` (Go) on staged files. Formatters auto-re-stage their fixes. Staged Go changes also trigger repository-wide composite-literal and path-policy checks; staged `internal/**` Go changes trigger the repository-wide log-policy check. These policy checks inspect the working tree, including unstaged changes.
 - `pre-push` — full-project TypeScript typecheck and `make lint`, which runs the architecture ownership, path-portability, composite-literal layout, and workflow-contract drift checkers before golangci-lint. CI mirrors these Go policy checks and frontend checks for pull requests.
 - `commit-msg` — `go run ./cmd/commitmsgcheck` enforces [Conventional Commits](https://www.conventionalcommits.org/) without requiring Node.js or `pnpm install`.
 
