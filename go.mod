@@ -4,7 +4,7 @@ go 1.27.1
 
 require (
 	github.com/autobrr/go-bdinfo v0.4.2
-	github.com/autobrr/go-mediainfo v0.8.0
+	github.com/autobrr/go-mediainfo v0.8.1-0.20260911072119-0b32d930ae1f
 	github.com/autobrr/go-qbittorrent v1.18.0
 	github.com/autobrr/go-torrent v1.1.1
 	github.com/autobrr/mkbrr v1.25.0
