@@ -18,6 +18,26 @@ try {
   $loaded = @(Read-Corpus $corpusPath @('MOV-1080-WEB'))
   Assert-Check ($loaded.Count -eq 1 -and $loaded[0].status -eq 'ready') 'valid_corpus_rejected'
   Assert-Check ((Get-CaseIdentityOverrides $case).Count -eq 0 -and @(Get-CaseIdentityCLIArguments $case).Count -eq 0) 'omitted_identity_changed_defaults'
+  Assert-Check ((Get-CaseFactOverrides $case).Count -eq 0) 'omitted_fact_overrides_changed_defaults'
+  $factCase = $case.Clone()
+  $factCase.fact_overrides = @{ Metadata = @{ Title = 'Example Override'; Commentary = $false; SubtitleLanguages = @(); TrackLanguages = @(@{ trackId = 'track-1'; manifestFingerprint = 'manifest-1'; languages = @('French') }) }; ReleaseName = @{ Tag = 'GRP'; ManualYear = 2001 } }
+  Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($factCase) }
+  $factEntry = @(Read-Corpus $corpusPath @('MOV-1080-WEB'))[0]
+  $factOverrides = Get-CaseFactOverrides $factEntry.case
+  Assert-Check ($factOverrides.Metadata.Title -ceq 'Example Override' -and $factOverrides.Metadata.Commentary -ceq $false -and
+    $factOverrides.Metadata.SubtitleLanguages.Count -eq 0 -and $factOverrides.ReleaseName.Tag -ceq 'GRP') 'fact_override_values_changed'
+  foreach ($invalid in @($null, 'invalid', @{ Identity = @{} }, @{ Metadata = 'invalid' },
+    @{ Metadata = @{ Titlle = 'Example' } }, @{ Metadata = @{ Title = 1 } }, @{ Metadata = @{ Commentary = 'false' } },
+    @{ Metadata = @{ Title = $null } }, @{ ReleaseName = @{ ManualYear = $null } }, @{ Metadata = @{ Genres = @($null) } },
+    @{ Metadata = @{ Genres = @($true) } }, @{ ReleaseName = @{ ManualYear = 1.5 } },
+    @{ Metadata = @{ TrackLanguages = @(@{ trackId = 'track-1'; languages = @('French') }) } },
+    @{ Metadata = @{ TrackLanguages = @(@{ trackId = 'track-1'; manifestFingerprint = 'manifest-1'; languages = @('French'); extra = 'invalid' }) } },
+    @{ Metadata = @{ TrackLanguages = @(@{ trackId = 'track-1'; manifestFingerprint = 'manifest-1'; languages = @($false) }) } })) {
+    $factCase.fact_overrides = $invalid
+    $rejected = $false
+    try { Get-CaseFactOverrides $factCase | Out-Null } catch { $rejected = $_.Exception.Message -eq 'corpus_fact_overrides_invalid' }
+    Assert-Check $rejected 'invalid_fact_overrides_accepted'
+  }
   $identityCase = $case.Clone()
   $identityCase.metadata_ids = @{ imdb = 1234567; tmdb = 12345; tvdb = 23456; tvmaze = 34567; mal = 45678 }
   Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($identityCase) }
