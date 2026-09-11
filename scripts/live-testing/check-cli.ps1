@@ -87,6 +87,7 @@ $lane = $lane[0]
 $entries = @(Read-PrivateJson (Join-Path $baselineDir 'corpus.private.json'))
 $entry = @($entries | Where-Object { $_.case.case_id -ceq $lane.caseId })
 if ($entry.Count -ne 1 -or $entry[0].status -ne 'ready' -or (Get-SourceFingerprint $entry[0].case).fingerprint -cne $lane.sourceFingerprint) { throw 'cli_source_evidence_changed' }
+if ((Get-CaseFactOverrides $entry[0].case).Count -gt 0) { throw 'cli_fact_overrides_not_representable' }
 if (@($lane.trackerIds).Count -eq 0 -or @($lane.trackerIds | Where-Object { $_ -cnotmatch '^[A-Z0-9]+$' }).Count -gt 0) { throw 'cli_tracker_scope_invalid' }
 $inputOnly = $baseline.suite -eq 'Input'
 $interactionArguments = @(Get-InteractionCLIArguments $InteractionMode)

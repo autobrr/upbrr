@@ -79,6 +79,55 @@ function Get-CaseIdentityOverrides($Case) {
   $identity
 }
 
+function Get-CaseFactOverrides($Case) {
+  if (-not $Case.Contains('fact_overrides')) { return @{} }
+  if ($Case.fact_overrides -isnot [System.Collections.IDictionary]) { throw 'corpus_fact_overrides_invalid' }
+  # Keep this test-input schema aligned with api.MetadataOverrides and
+  # api.ReleaseNameOverrides: the HTTP decoder ignores unknown JSON fields.
+  $fields = @{
+    Metadata = @{
+      String = @('Distributor', 'OriginalLanguage', 'Title', 'AlternateTitle', 'OriginalTitle')
+      Boolean = @('PersonalRelease', 'Commentary', 'WebDV', 'StreamOptimized', 'Anime', 'HardcodedSubs')
+      Strings = @('Genres', 'AudioLanguages', 'SubtitleLanguages', 'HardcodedSubtitleLanguages')
+      Tracks = @('TrackLanguages')
+    }
+    ReleaseName = @{
+      String = @('Category', 'Type', 'Source', 'Resolution', 'Tag', 'Service', 'Edition', 'Season', 'Episode', 'EpisodeTitle', 'ManualDate', 'Region')
+      Boolean = @('UseSeasonEpisode', 'NoSeason', 'NoYear', 'NoAKA', 'NoTag', 'NoEpisodeTitle', 'NoDistributor', 'NoEdition', 'NoDub', 'NoDual', 'DualAudio')
+      Integer = @('ManualYear')
+    }
+  }
+  foreach ($group in $Case.fact_overrides.Keys) {
+    if ($group -cnotin @('Metadata', 'ReleaseName') -or
+        $Case.fact_overrides[$group] -isnot [System.Collections.IDictionary]) { throw 'corpus_fact_overrides_invalid' }
+    foreach ($field in $Case.fact_overrides[$group].Keys) {
+      $kind = @($fields[$group].Keys | Where-Object { $field -cin $fields[$group][$_] })
+      if ($kind.Count -ne 1) { throw 'corpus_fact_overrides_invalid' }
+      $value = $Case.fact_overrides[$group][$field]
+      if ($null -eq $value) { throw 'corpus_fact_overrides_invalid' }
+      $valid = switch ($kind[0]) {
+        'String' { $value -is [string] }
+        'Boolean' { $value -is [bool] }
+        'Integer' { $value -is [int] -or $value -is [long] }
+        'Strings' { $value -is [System.Collections.IList] -and @($value | Where-Object { $_ -isnot [string] }).Count -eq 0 }
+        'Tracks' {
+          if ($value -isnot [System.Collections.IList]) { $false; break }
+          $invalidTracks = @($value | Where-Object {
+            $_ -isnot [System.Collections.IDictionary] -or
+            @($_.Keys | Where-Object { $_ -cnotin @('trackId', 'manifestFingerprint', 'languages') }).Count -gt 0 -or
+            $_.trackId -isnot [string] -or [string]::IsNullOrWhiteSpace($_.trackId) -or
+            $_.manifestFingerprint -isnot [string] -or [string]::IsNullOrWhiteSpace($_.manifestFingerprint) -or
+            $_.languages -isnot [System.Collections.IList] -or @($_.languages | Where-Object { $_ -isnot [string] }).Count -gt 0
+          })
+          $invalidTracks.Count -eq 0
+        }
+      }
+      if (-not $valid) { throw 'corpus_fact_overrides_invalid' }
+    }
+  }
+  $Case.fact_overrides
+}
+
 function Get-CaseIdentityCLIArguments($Case) {
   $null = Get-CaseIdentityOverrides $Case
   foreach ($provider in @('imdb', 'tmdb', 'tvdb', 'tvmaze', 'mal')) {
@@ -132,6 +181,7 @@ function Read-Corpus([string]$Path, [string[]]$Selected) {
     if ($entry.input_shape -notin @('file', 'disc-directory', 'episode-directory') -or -not $entry.fingerprint) { throw 'corpus_case_schema_invalid' }
     $null = Get-CaseIdentityOverrides $entry
     $null = Get-CaseSourceLookupInstructions $entry
+    $null = Get-CaseFactOverrides $entry
     $null = @(Get-CaseBDMVPlaylists $entry)
     $known[$entry.case_id] = $entry
   }

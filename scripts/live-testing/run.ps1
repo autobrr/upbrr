@@ -267,6 +267,8 @@ try {
               $lane.expectedIdentity = $identity.Clone()
               $sourceInstructions = Get-CaseSourceLookupInstructions $entry.case
               $lane.explicitSourceLookup = $sourceInstructions.Count -gt 0
+              $lane.expectedFactOverrides = Get-CaseFactOverrides $entry.case
+              foreach ($group in $lane.expectedFactOverrides.Keys) { $sourceInstructions[$group] = $lane.expectedFactOverrides[$group] }
               if ($identity.Count -gt 0 -or $sourceInstructions.Count -gt 0) {
                 $intent.preparation.Instructions = $sourceInstructions
                 if ($identity.Count -gt 0) { $intent.preparation.Instructions.Identity = $identity }

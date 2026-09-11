@@ -132,6 +132,16 @@ Omitted providers retain normal resolution. Changing IDs requires a new run;
 saved-run continuation and comparisons retain the corpus fingerprint. Overrides
 do not waive tracker rules or existing-client duplicate blocks.
 
+An optional `fact_overrides` object supplies `Metadata` and `ReleaseName` groups
+using the production `ReleaseFactInstructions` field names and value types.
+Use explicit values; null fields are rejected because they supply no override.
+For example, `"fact_overrides": { "Metadata": { "Commentary": false },
+"ReleaseName": { "Tag": "GRP" } }` tests explicit values through preparation
+and later tracker stages. Omitted fields retain normal resolution. The run saves
+the requested values in each lane for comparison with facts and payloads.
+Keep test values in the private corpus. The CLI comparison helper rejects these
+cases because it does not yet translate arbitrary fact overrides into CLI flags.
+
 An Input case may also provide `source_lookup` and `tracker_ids`. `source_lookup`
 is an explicit source URL or identifier. `tracker_ids` maps tracker codes to
 operator-verified source IDs. The runner preserves only values present in the
