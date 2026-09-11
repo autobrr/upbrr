@@ -56,6 +56,8 @@ Each tracker can project its own upload and duplicate-search names from the revi
 
 Tracker rules and constructibility checks can mark a lane ready, blocked, skipped, or requiring manual review. A tracker-specific block need not stop other eligible trackers.
 
+For warnings that permit an override, use **Upload anyway** on the tracker's **Dupe Check** card or answer the CLI prompt. Approval covers the current warnings; changed warnings require renewed approval. Strict failures cannot be overridden. See [tracker warning approval](../trackers/index.md#approve-tracker-warnings) for unattended and debug behavior.
+
 ## 4. Review duplicate evidence
 
 Duplicate search results are evidence, not an automatic upload decision. Review candidate names, metadata, and tracker warnings. Where approval is required, select an explicit non-empty tracker subset after the duplicate stage.

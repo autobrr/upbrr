@@ -42,6 +42,14 @@ Rule and validation outcomes can block a live upload while still allowing debug 
 
 `--skip-dupe-check` and similar bypasses remove safeguards. Use them only when you have manually completed the equivalent tracker checks.
 
+### Approve tracker warnings
+
+Some tracker warnings permit an explicit override. On **Dupe Check**, read the warnings on the affected tracker's card. Choose **Upload anyway** only after deciding that the release is appropriate for that tracker.
+
+Approval applies only to that tracker and its current warning set. Changed warnings require renewed approval. Strict failures remain blocked and cannot be overridden, including in debug mode.
+
+The interactive CLI and `--unattended_confirm` prompt for approval. Strict `--unattended` declines without prompting and skips that tracker; other eligible trackers can continue. Debug mode bypasses warnings that permit an override.
+
 ## Names and payloads
 
 upbrr resolves tracker-specific upload and search names before duplicate checking. Review the projected name for every tracker. The eventual payload uses that reviewed name rather than deriving a new name at submission time.
