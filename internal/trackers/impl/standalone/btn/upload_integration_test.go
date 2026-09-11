@@ -1620,10 +1620,10 @@ func TestBTNPrepareUploadDataBlocksMissingCanonicalTVMetadataBeforeAutofill(t *t
 	}
 }
 
-func TestBTNUploadCredentialLoginDoesNotPersistInvalidSession(t *testing.T) {
+func TestBTNUploadCredentialLoginDoesNotPersistUnvalidatedSession(t *testing.T) {
 	t.Parallel()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	dbPath := newBTNAuthDB(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -1646,11 +1646,42 @@ func TestBTNUploadCredentialLoginDoesNotPersistInvalidSession(t *testing.T) {
 		Username: "user",
 		Password: "pass",
 	}, dbPath, uploadContext{baseURL: server.URL})
-	if !errors.Is(err, errBTNSessionConfirmedInvalid) {
-		t.Fatalf("expected invalid session error, got %v", err)
+	resolution, ok := errors.AsType[*trackers.AuthResolutionError](err)
+	if !ok || !resolution.Transient || resolution.ConfirmedInvalid {
+		t.Fatalf("expected transient session validation error, got %v", err)
 	}
 	if values, err := loadBTNCookies(ctx, dbPath); err == nil {
 		t.Fatalf("expected invalid login cookies not to persist, got %#v", values)
+	}
+}
+
+func TestBTNUploadSessionKeepsStoredCookiesOnRedirectFailure(t *testing.T) {
+	t.Parallel()
+
+	dbPath := newBTNAuthDB(t)
+	if err := cookies.SaveTrackerCookieMap(t.Context(), dbPath, "BTN", map[string]string{"session": "stored"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.Header.Get("Cookie"), "session=stored") {
+			http.Error(w, "missing stored session", http.StatusInternalServerError)
+			return
+		}
+		http.Redirect(w, r, "/synthetic-secret.php?token=synthetic-secret", http.StatusFound)
+	}))
+	t.Cleanup(server.Close)
+
+	_, err := ensureBTNUploadSession(t.Context(), config.TrackerConfig{}, dbPath, uploadContext{baseURL: server.URL})
+	resolution, ok := errors.AsType[*trackers.AuthResolutionError](err)
+	if !ok || !resolution.Transient || resolution.ConfirmedInvalid {
+		t.Fatalf("expected transient session validation error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "synthetic-secret") || strings.Contains(err.Error(), "token=") {
+		t.Fatalf("expected safe redirect diagnostic, got %q", err)
+	}
+	values, err := loadBTNCookies(t.Context(), dbPath)
+	if err != nil || values["session"] != "stored" {
+		t.Fatalf("expected stored cookies preserved, values=%#v err=%v", values, err)
 	}
 }
 
@@ -1658,10 +1689,9 @@ func TestValidateBTNClientSessionRequiresUploadFormStructure(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name                 string
-		body                 string
-		wantErr              bool
-		wantConfirmedInvalid bool
+		name    string
+		body    string
+		wantErr bool
 	}{
 		{
 			name:    "help page upload text rejected",
@@ -1669,10 +1699,9 @@ func TestValidateBTNClientSessionRequiresUploadFormStructure(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:                 "logged out upload help rejected",
-			body:                 `<html><h1>Upload</h1><p>Please log in before using the upload page.</p></html>`,
-			wantErr:              true,
-			wantConfirmedInvalid: true,
+			name:    "logged out upload help rejected",
+			body:    `<html><h1>Upload</h1><p>Please log in before using the upload page.</p></html>`,
+			wantErr: true,
 		},
 		{
 			name:    "transient success body rejected",
@@ -1702,21 +1731,290 @@ func TestValidateBTNClientSessionRequiresUploadFormStructure(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			err := validateBTNClientSession(context.Background(), server.Client(), server.URL)
+			err := validateBTNClientSession(t.Context(), server.Client(), server.URL)
 			if tt.wantErr && err == nil {
 				t.Fatal("expected upload auth page validation error")
 			}
-			if tt.wantConfirmedInvalid && !errors.Is(err, errBTNSessionConfirmedInvalid) {
-				t.Fatalf("expected confirmed-invalid session error, got %v", err)
-			}
-			if tt.wantErr && !tt.wantConfirmedInvalid && !strings.Contains(err.Error(), "upload auth page validation failed") {
-				t.Fatalf("expected upload marker validation error, got %v", err)
+			if tt.wantErr {
+				resolution, ok := errors.AsType[*trackers.AuthResolutionError](err)
+				if !ok || !resolution.Transient || resolution.ConfirmedInvalid || errors.Is(err, errBTNSessionConfirmedInvalid) {
+					t.Fatalf("expected transient upload marker validation error, got %v", err)
+				}
 			}
 			if !tt.wantErr && err != nil {
 				t.Fatalf("validateBTNClientSession: %v", err)
 			}
 		})
 	}
+}
+
+func TestValidateBTNClientSessionReportsRedirectAndLayoutDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name                 string
+		handler              http.HandlerFunc
+		wantConfirmedInvalid bool
+		want                 []string
+		absent               []string
+	}{
+		{
+			name: "non-login redirect reports path and detail",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/upload.php":
+					http.Redirect(w, r, "/torrents.php?token=synthetic-secret", http.StatusFound)
+				case "/torrents.php":
+					w.WriteHeader(http.StatusServiceUnavailable)
+					_, _ = io.WriteString(w, `<div role="alert">Upload maintenance in progress</div>`)
+				default:
+					http.NotFound(w, r)
+				}
+			},
+			want:   []string{"status=503", "final_path=/torrents.php", "response_bytes=", "response_truncated=false"},
+			absent: []string{"synthetic-secret", "token=", "Upload maintenance in progress"},
+		},
+		{
+			name: "login redirect remains confirmed invalid and reports path",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/upload.php":
+					http.Redirect(w, r, "/login.php?passkey=synthetic-secret", http.StatusFound)
+				case "/login.php":
+					_, _ = io.WriteString(w, `<form action="/login.php"><input name="password"></form>`)
+				default:
+					http.NotFound(w, r)
+				}
+			},
+			wantConfirmedInvalid: true,
+			want:                 []string{"status=200", "final_path=/login.php"},
+			absent:               []string{"synthetic-secret", "passkey="},
+		},
+		{
+			name: "login-status redirect remains transient",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/upload.php":
+					http.Redirect(w, r, "/login-status.php", http.StatusFound)
+				case "/login-status.php":
+					_, _ = io.WriteString(w, `<form action="/login.php"><input name="password"></form>`)
+				default:
+					http.NotFound(w, r)
+				}
+			},
+			want:   []string{"status=200", "final_path=[REDACTED]", "page_state=logged_out_marker"},
+			absent: []string{"password", "login.php"},
+		},
+		{
+			name: "non-login redirect with logged-out page remains transient",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/upload.php":
+					http.Redirect(w, r, "/torrents.php", http.StatusFound)
+				case "/torrents.php":
+					_, _ = io.WriteString(w, `<div role="alert">Please log in before continuing</div>`)
+				default:
+					http.NotFound(w, r)
+				}
+			},
+			want:   []string{"status=200", "final_path=/torrents.php", "page_state=logged_out_marker"},
+			absent: []string{"Please log in before continuing"},
+		},
+		{
+			name: "secret redirect path is redacted",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/upload.php":
+					http.Redirect(w, r, "/synthetic-secret.php", http.StatusFound)
+				case "/synthetic-secret.php":
+					_, _ = io.WriteString(w, `<div role="alert">Upload maintenance in progress</div>`)
+				default:
+					http.NotFound(w, r)
+				}
+			},
+			want:   []string{"status=200", "final_path=[REDACTED]", "response_bytes="},
+			absent: []string{"synthetic-secret", "Upload maintenance in progress"},
+		},
+		{
+			name: "unknown short redirect path is redacted",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/upload.php":
+					http.Redirect(w, r, "/alice.php", http.StatusFound)
+				case "/alice.php":
+					_, _ = io.WriteString(w, `<div role="alert">Upload maintenance in progress</div>`)
+				default:
+					http.NotFound(w, r)
+				}
+			},
+			want:   []string{"status=200", "final_path=[REDACTED]", "response_bytes="},
+			absent: []string{"alice.php", "Upload maintenance in progress"},
+		},
+		{
+			name: "same upload path reports redacted layout detail",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/upload.php" {
+					http.NotFound(w, r)
+					return
+				}
+				_, _ = io.WriteString(w, `<div role="alert">Upload form disabled: passkey=synthetic-secret</div>`)
+				_, _ = io.WriteString(w, strings.Repeat(" ", 1024*1024))
+			},
+			want:   []string{"page validation failed", "status=200", "response_bytes=1048577", "response_truncated=true", "page_state=upload_form_missing"},
+			absent: []string{"synthetic-secret", "Upload form disabled", "passkey="},
+		},
+		{
+			name: "same upload path ignores prose and truncated JSON values",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/upload.php" {
+					http.NotFound(w, r)
+					return
+				}
+				_, _ = io.WriteString(w, `Account Jane Example token=synthetic-secret`)
+				_, _ = io.WriteString(w, `{"username":"synthetic-user","profile":"Jane\u0020Example","password":"synthetic-password","padding":"`)
+				_, _ = io.WriteString(w, strings.Repeat("x", 1024*1024))
+			},
+			want:   []string{"page validation failed", "status=200", "response_truncated=true", "page_state=upload_form_missing"},
+			absent: []string{"Jane Example", "synthetic-secret", "synthetic-user", "synthetic-password", "username", "password", "token="},
+		},
+		{
+			name: "same upload path missing-location redirect remains transient",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/upload.php" {
+					http.NotFound(w, r)
+					return
+				}
+				w.WriteHeader(http.StatusFound)
+			},
+			want: []string{"unexpected status", "status=302", "response_bytes=0", "response_truncated=false"},
+		},
+		{
+			name: "same upload path non-auth client error remains transient",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/upload.php" {
+					http.NotFound(w, r)
+					return
+				}
+				w.WriteHeader(http.StatusTooManyRequests)
+			},
+			want: []string{"unexpected status", "status=429", "response_bytes=0", "response_truncated=false"},
+		},
+		{
+			name: "same upload path server error remains transient",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/upload.php" {
+					http.NotFound(w, r)
+					return
+				}
+				w.WriteHeader(http.StatusServiceUnavailable)
+			},
+			want: []string{"response unavailable", "status=503", "response_bytes=0", "response_truncated=false"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(tt.handler)
+			t.Cleanup(server.Close)
+
+			err := validateBTNClientSession(t.Context(), server.Client(), server.URL)
+			if err == nil {
+				t.Fatal("expected upload auth validation error")
+			}
+			if tt.wantConfirmedInvalid != errors.Is(err, errBTNSessionConfirmedInvalid) {
+				t.Fatalf("confirmed-invalid classification=%t, want %t: %v", errors.Is(err, errBTNSessionConfirmedInvalid), tt.wantConfirmedInvalid, err)
+			}
+			if !tt.wantConfirmedInvalid {
+				resolution, ok := errors.AsType[*trackers.AuthResolutionError](err)
+				if !ok || !resolution.Transient || resolution.ConfirmedInvalid {
+					t.Fatalf("expected transient tracker-owned resolution error, got %v", err)
+				}
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error=%q, want %q", err, want)
+				}
+			}
+			for _, absent := range tt.absent {
+				if strings.Contains(err.Error(), absent) {
+					t.Fatalf("error=%q, must not contain %q", err, absent)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateBTNClientSessionKeepsRedirectFailureSafeAndTransient(t *testing.T) {
+	t.Parallel()
+
+	redirectCause := errors.New("redirect to https://tracker.invalid/synthetic-secret.php?token=synthetic-secret username password not configured")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/upload.php" {
+			http.NotFound(w, r)
+			return
+		}
+		http.Redirect(w, r, "/synthetic-secret.php?token=synthetic-secret", http.StatusFound)
+	}))
+	t.Cleanup(server.Close)
+	client := server.Client()
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return redirectCause
+	}
+
+	err := validateBTNClientSession(t.Context(), client, server.URL)
+	if !errors.Is(err, redirectCause) {
+		t.Fatalf("expected redirect cause preserved, got %v", err)
+	}
+	resolution, ok := errors.AsType[*trackers.AuthResolutionError](err)
+	if !ok || !resolution.Transient || resolution.ConfirmedInvalid {
+		t.Fatalf("expected transient tracker-owned redirect error, got %v", err)
+	}
+	for _, secret := range []string{"synthetic-secret", "tracker.invalid", "username", "password", "not configured"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("redirect failure leaked %q in %q", secret, err)
+		}
+	}
+}
+
+func TestValidateBTNClientSessionKeepsBodyReadFailureSafeAndTransient(t *testing.T) {
+	t.Parallel()
+
+	readCause := errors.New("read https://tracker.invalid/upload.php?token=synthetic-secret username=synthetic-user failed")
+	client := &http.Client{Transport: btnRoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(btnErrorReader{err: readCause}),
+			Request:    req,
+		}, nil
+	})}
+
+	err := validateBTNClientSession(t.Context(), client, "https://tracker.invalid")
+	if !errors.Is(err, readCause) {
+		t.Fatalf("expected read cause preserved, got %v", err)
+	}
+	resolution, ok := errors.AsType[*trackers.AuthResolutionError](err)
+	if !ok || !resolution.Transient || resolution.ConfirmedInvalid {
+		t.Fatalf("expected transient tracker-owned read error, got %v", err)
+	}
+	for _, secret := range []string{"tracker.invalid", "synthetic-secret", "synthetic-user", "username", "token="} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("read failure leaked %q in %q", secret, err)
+		}
+	}
+}
+
+type btnRoundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (fn btnRoundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
+}
+
+type btnErrorReader struct {
+	err error
+}
+
+func (r btnErrorReader) Read([]byte) (int, error) {
+	return 0, r.err
 }
 
 func TestExtractAutofillFieldsSelectsOptionsOrderIndependently(t *testing.T) {
