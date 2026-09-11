@@ -17,6 +17,10 @@ func Profile() unit3d.Profile {
 		DupePolicy:       duplicatePolicy(),
 		ValidationPolicy: ValidationPolicy(),
 		BannedGroups:     BannedGroups(),
+		Site: unit3d.SiteProfile{
+			BuildName:        buildName,
+			BuildNameVersion: "v1",
+		},
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,
 			Requirements: []trackers.MetadataRequirement{{
