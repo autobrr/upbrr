@@ -129,16 +129,17 @@ type ReleaseNameResult struct {
 }
 
 type ReleaseNameOverrides struct {
-	Category         *string
-	Type             *string
-	Source           *string
-	Resolution       *string
-	Tag              *string
-	Service          *string
-	Edition          *string
-	Season           *string
-	Episode          *string
-	EpisodeTitle     *string
+	Category     *string
+	Type         *string
+	Source       *string
+	Resolution   *string
+	Tag          *string
+	Service      *string
+	Edition      *string
+	Season       *string
+	Episode      *string
+	EpisodeTitle *string
+	// ManualYear replaces the derived year; zero explicitly clears it and nil restores automatic resolution.
 	ManualYear       *int
 	ManualDate       *string
 	UseSeasonEpisode *bool

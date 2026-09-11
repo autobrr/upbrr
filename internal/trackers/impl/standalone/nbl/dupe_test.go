@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -189,6 +190,36 @@ func TestNBLSearchUsesTagsAndTraversesAllPages(t *testing.T) {
 	}
 	if !entries[0].Pack || entries[0].Season != 1 || entries[1].Pack || entries[1].Episode != 1 {
 		t.Fatalf("NBL candidate coordinates = %#v", entries)
+	}
+}
+
+func TestNBLTitleFallbackHonorsManualTitle(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		requests++
+		if got := request.URL.Query().Get("release"); got != "Projected Release" {
+			t.Errorf("automatic NBL search title = %q", got)
+		}
+		_, _ = io.WriteString(response, `{"current_page":0,"total_pages":0,"count":0,"total_results":0,"items":[]}`)
+	}))
+	defer server.Close()
+
+	searcher := &dupeSearcher{
+		cfg:      config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"NBL": {APIKey: "synthetic-token"}}}},
+		http:     server.Client(),
+		endpoint: server.URL,
+		maxPages: 1,
+	}
+	projection := &api.TrackerReleaseProjection{DuplicateCriteria: api.TrackerDuplicateCriteria{Name: "Projected Release"}}
+	result := searcher.Search(t.Context(), api.DuplicateSubject{
+		Projection:        projection,
+		EffectiveMetadata: api.EffectiveMetadata{TitleProvenance: api.FactProvenanceManualEmpty},
+	})
+	if result.Disposition() != dupe.DispositionNotRun || result.Code() != dupe.NotRunMissingMetadata || requests != 0 {
+		t.Fatalf("manual-empty NBL result=%v code=%q requests=%d", result.Disposition(), result.Code(), requests)
+	}
+	if result := searcher.Search(t.Context(), api.DuplicateSubject{Projection: projection}); result.Disposition() != dupe.DispositionResolved || requests != 1 {
+		t.Fatalf("automatic NBL result=%v requests=%d", result.Disposition(), requests)
 	}
 }
 

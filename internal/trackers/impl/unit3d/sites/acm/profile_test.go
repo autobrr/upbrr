@@ -84,6 +84,30 @@ func TestBuildNameHonorsOmitAlternateTitle(t *testing.T) {
 	}
 }
 
+func TestBuildNamePrefersManualOriginalTitle(t *testing.T) {
+	meta := api.UploadSubject{
+		ReleaseName: "Manual Title 2026 1080p WEB-DL-GRP",
+		Release:     api.ReleaseInfo{Title: "Parsed Title"},
+		ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{
+			Title: "Provider Title", OriginalTitle: "Provider Original",
+		}},
+		EffectiveMetadata: api.EffectiveMetadata{
+			Title:                   "Manual Title",
+			TitleProvenance:         api.FactProvenanceManual,
+			OriginalTitle:           "Manual Original",
+			OriginalTitleProvenance: api.FactProvenanceManual,
+		},
+	}
+	if got := buildName(meta, config.TrackerConfig{}); !strings.Contains(got, "Manual Title / Manual Original") {
+		t.Fatalf("manual title name = %q", got)
+	}
+	meta.EffectiveMetadata.OriginalTitle = ""
+	meta.EffectiveMetadata.OriginalTitleProvenance = api.FactProvenanceManualEmpty
+	if got := buildName(meta, config.TrackerConfig{}); strings.Contains(got, "Provider Original") {
+		t.Fatalf("manual-empty original title retained provider value: %q", got)
+	}
+}
+
 func TestDescriptionParity(t *testing.T) {
 	meta := api.UploadSubject{Type: "WEBDL", ServiceLongName: "Example Stream"}
 	result, err := Profile().Site.BuildDescription(context.Background(), meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, "[pre]x[/pre]\n[hide=test]y[/hide]\n[img]https://img.example/z.png[/img]", nil, nil)

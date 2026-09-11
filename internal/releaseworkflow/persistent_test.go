@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -231,6 +232,25 @@ func TestPersistentWorkflowRestartRetriesAuthBlockedProjectionOnce(t *testing.T)
 		return isTerminalProgressStatus(status.Status)
 	})
 	projected, err := moduleB.Current(context.Background(), testOwnerID, recovered.Workflow.ID)
+	if err != nil {
+		t.Fatalf("load fresh input readiness: %v", err)
+	}
+	if projected.InputReadiness == nil || projected.Projections != nil {
+		t.Fatalf("fresh input readiness = %#v", projected)
+	}
+	request.Authority.ExpectedRevision = projected.Workflow.Revision
+	request.IdempotencyKey = "continue-auth-restart-project-after-readiness"
+	projecting, err = moduleB.Continue(context.Background(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("continue auth restart projection after readiness: %v", err)
+	}
+	if projecting.Operation == nil {
+		t.Fatalf("auth restart projection after readiness = %#v", projecting)
+	}
+	waitForWorkflowOperation(t, moduleB, recovered.Workflow.ID, projecting.Operation.ID, func(status api.WorkflowOperationStatus) bool {
+		return isTerminalProgressStatus(status.Status)
+	})
+	projected, err = moduleB.Current(context.Background(), testOwnerID, recovered.Workflow.ID)
 	if err != nil {
 		t.Fatalf("load fresh projection: %v", err)
 	}
@@ -630,6 +650,14 @@ func TestPersistentWorkflowRestartPreservesSafePreparedRelease(t *testing.T) {
 		ExpectedRevision: created.Workflow.Revision,
 		Input: api.PrepareInput{
 			SourcePath: "C:\\releases\\Example.Release.2026.1080p-GRP",
+			MetadataRequirements: api.MetadataRequirementSet{
+				Version: "persistent-restart-v1",
+				Requirements: []api.MetadataRequirement{{
+					Scope:       api.MetadataRequirementScopeAny,
+					AnyOf:       []api.MetadataRequirementField{"original_title"},
+					Disposition: api.RuleDispositionStrict,
+				}},
+			},
 		},
 	})
 
@@ -637,6 +665,10 @@ func TestPersistentWorkflowRestartPreservesSafePreparedRelease(t *testing.T) {
 	if err != nil {
 		_ = repoA.Close()
 		t.Fatalf("load prepared state: %v", err)
+	}
+	if len(state.PreparationDemand.Requirements) != 1 || state.PreparationDemand.Version != "persistent-restart-v1" {
+		_ = repoA.Close()
+		t.Fatalf("persisted preparation demand = %#v", state.PreparationDemand)
 	}
 	state.Workflow.Revision = 3
 	state.Workflow.Status = api.WorkflowStatusActive
@@ -698,6 +730,9 @@ func TestPersistentWorkflowRestartPreservesSafePreparedRelease(t *testing.T) {
 	}
 	if len(retained.Releases) != 1 {
 		t.Fatalf("safe release audit snapshot was removed: releases=%d", len(retained.Releases))
+	}
+	if !reflect.DeepEqual(retained.PreparationDemand, state.PreparationDemand) {
+		t.Fatalf("restarted preparation demand = %#v, want %#v", retained.PreparationDemand, state.PreparationDemand)
 	}
 	operation, err := moduleB.Operation(context.Background(), testOwnerID, state.Workflow.ID, operationID)
 	if err != nil {

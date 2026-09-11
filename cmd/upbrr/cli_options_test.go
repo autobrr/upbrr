@@ -929,6 +929,96 @@ func TestBuildCLIRequestTMDBCompatibilityParsing(t *testing.T) {
 	}
 }
 
+func TestCLIProviderIDOverrides(t *testing.T) {
+	t.Parallel()
+	for _, provider := range []string{"tmdb", "imdb", "tvdb", "tvmaze", "mal"} {
+		for _, tc := range []struct {
+			name  string
+			value string
+			want  int
+		}{
+			{name: "blank"},
+			{name: "zero", value: "0"},
+			{
+				name:  "positive",
+				value: "123",
+				want:  123,
+			},
+		} {
+			t.Run(provider+"/"+tc.name, func(t *testing.T) {
+				args := []string{"--" + provider + "=" + tc.value, "Example.Release.2026.1080p-GRP.mkv"}
+				opts, visited, paths, err := parseCLIOptions(args)
+				if err != nil {
+					t.Fatalf("parse: %v", err)
+				}
+				req, err := buildCLIRequest(opts, visited, paths, 4)
+				if err != nil {
+					t.Fatalf("build request: %v", err)
+				}
+				for name, id := range map[string]*int{
+					"tmdb":   req.ExternalIDOverrides.TMDBID,
+					"imdb":   req.ExternalIDOverrides.IMDBID,
+					"tvdb":   req.ExternalIDOverrides.TVDBID,
+					"tvmaze": req.ExternalIDOverrides.TVmazeID,
+					"mal":    req.ExternalIDOverrides.MALID,
+				} {
+					if name == provider {
+						if id == nil || *id != tc.want {
+							t.Fatalf("%s override = %v, want %d", name, id, tc.want)
+						}
+					} else if id != nil {
+						t.Fatalf("omitted %s override = %d, want unset", name, *id)
+					}
+				}
+				if req.ReleaseNameOverrides.Category != nil {
+					t.Fatalf("provider ID set category unexpectedly: %q", *req.ReleaseNameOverrides.Category)
+				}
+			})
+		}
+	}
+}
+
+func TestCLIProviderIDsRejectInvalidValues(t *testing.T) {
+	t.Parallel()
+	for _, provider := range []string{"tmdb", "imdb", "tvdb", "tvmaze", "mal"} {
+		for _, value := range []string{"not-an-id", "18446744073709551616"} {
+			t.Run(provider+"/"+value, func(t *testing.T) {
+				result := executeCLIForTest(t.Context(), t, []string{"--" + provider + "=" + value, "--version"})
+				if result.code != 2 || !strings.Contains(result.stderr, "invalid "+provider+" id") {
+					t.Fatalf("invalid provider ID result: %#v", result)
+				}
+			})
+		}
+	}
+}
+
+func TestCLIProviderIDsRejectNegativeNumericValues(t *testing.T) {
+	t.Parallel()
+	for _, provider := range []string{"tvdb", "tvmaze", "mal"} {
+		for _, value := range []string{"-1", "-0x1", " -1 "} {
+			t.Run(provider+"/"+value, func(t *testing.T) {
+				result := executeCLIForTest(t.Context(), t, []string{"--" + provider + "=" + value, "--version"})
+				if result.code != 2 || !strings.Contains(result.stderr, "invalid "+provider+" id") {
+					t.Fatalf("negative provider ID result: %#v", result)
+				}
+			})
+		}
+	}
+}
+
+func TestCLIProviderIDsBlankRootFlags(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{
+		{"--tmdb=", "--imdb=", "--tvdb=", "--tvmaze=", "--mal=", "--version"},
+		{"--tmdb", "", "--imdb", "", "--tvdb", "", "--tvmaze", "", "--mal", "", "--version"},
+	} {
+		result := executeCLIForTest(t.Context(), t, args)
+		if result.code != 0 || result.stderr != "" || result.stdout == "" {
+			t.Fatalf("args %v: blank provider ID result: %#v", args, result)
+		}
+	}
+}
+
 func TestParseCLIOptionsRejectsInvalidTMDBCompatibilityValue(t *testing.T) {
 	if _, _, _, err := parseCLIOptions([]string{"--tmdb", "movie/not-a-number", "movie.mkv"}); err == nil {
 		t.Fatal("expected invalid tmdb compatibility input to fail")
@@ -1387,5 +1477,136 @@ func TestBuildCLIRequestTorrentHashModeOverrides(t *testing.T) {
 func TestParseCLIOptionsRejectsConflictingHashModes(t *testing.T) {
 	if _, _, _, err := parseCLIOptions([]string{"--nohash", "--rehash", "movie.mkv"}); err == nil {
 		t.Fatal("expected conflicting nohash and rehash flags to fail")
+	}
+}
+
+func TestCLIInputSourceLookup(t *testing.T) {
+	opts, visited, paths, err := parseCLIOptions([]string{"--source-lookup", " https://tracker.example/torrents/123 ", "example.mkv"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := buildCLIRequest(opts, visited, paths, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.SourceLookupURL != "https://tracker.example/torrents/123" {
+		t.Fatalf("source lookup = %q", req.SourceLookupURL)
+	}
+}
+
+func TestCLIInputFlagsMapTypedCorrections(t *testing.T) {
+	t.Parallel()
+
+	opts, visited, paths, err := parseCLIOptions([]string{
+		"--title", "Example", "--alternate-title", "Alt", "--original-title", "Original", "--genres", "Drama, Mystery",
+		"--audio-languages", "en, Spanish", "--subtitle-languages", "fr, English", "--hardcoded-subs", "--hardcoded-subtitle-languages", "es",
+		"--anime", "--use-season-episode", "example.mkv",
+	})
+	if err != nil {
+		t.Fatalf("parse input flags: %v", err)
+	}
+	req, err := buildCLIRequest(opts, visited, paths, 0)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	metadata := req.MetadataOverrides
+	if metadata.Title == nil || *metadata.Title != "Example" || metadata.AlternateTitle == nil || *metadata.AlternateTitle != "Alt" || metadata.OriginalTitle == nil || *metadata.OriginalTitle != "Original" {
+		t.Fatalf("title overrides = %#v", metadata)
+	}
+	if metadata.Genres == nil || !slices.Equal(*metadata.Genres, []string{"Drama", "Mystery"}) {
+		t.Fatalf("genres = %#v", metadata.Genres)
+	}
+	if metadata.AudioLanguages == nil || !slices.Equal(*metadata.AudioLanguages, []string{"English", "Spanish"}) || metadata.SubtitleLanguages == nil || !slices.Equal(*metadata.SubtitleLanguages, []string{"French", "English"}) {
+		t.Fatalf("language overrides = %#v", metadata)
+	}
+	if metadata.HardcodedSubs == nil || !*metadata.HardcodedSubs || metadata.HardcodedSubtitleLanguages == nil || !slices.Equal(*metadata.HardcodedSubtitleLanguages, []string{"Spanish"}) || metadata.Anime == nil || !*metadata.Anime {
+		t.Fatalf("metadata flags = %#v", metadata)
+	}
+	if req.ReleaseNameOverrides.UseSeasonEpisode == nil || !*req.ReleaseNameOverrides.UseSeasonEpisode {
+		t.Fatalf("use season episode = %#v", req.ReleaseNameOverrides)
+	}
+}
+
+func TestCLIInputFlagsRejectConflicts(t *testing.T) {
+	t.Parallel()
+
+	for _, args := range [][]string{
+		{"--anime", "--not-anime", "example.mkv"},
+		{"--tracker-input", "PTP:feature=yes", "--title", "Example", "example.mkv"},
+		{"--reset-input", "metadata.title", "--title", "Example", "example.mkv"},
+		{"--track-languages", "a=English", "--track-languages", "a=Spanish", "example.mkv"},
+		{"--title", "Example", "--title=Other", "example.mkv"},
+		{"--audio-languages=en", "--audio-languages", "es", "example.mkv"},
+		{"--hardcoded-subs=false", "--hc", "example.mkv"},
+		{"-g", "GRP", "--tag", "OTHER", "example.mkv"},
+		{"--year=2026", "--manual-year", "2025", "example.mkv"},
+		{"--commentary", "--mc=false", "example.mkv"},
+	} {
+		if _, _, _, err := parseCLIOptions(args); err == nil {
+			t.Fatalf("parse %v succeeded", args)
+		}
+	}
+}
+
+func TestCLIInputFlagOccurrenceSkipsValuesAndLiteralPaths(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{
+		{"--title", "--title", "example.mkv"},
+		{"--title=Example", "--", "--title=literal-path.mkv"},
+		{"--title", "Example", "--original-title", "Other", "example.mkv"},
+	} {
+		if _, _, _, err := parseCLIOptions(args); err != nil {
+			t.Fatalf("parse %v: %v", args, err)
+		}
+	}
+}
+
+func TestCLIInputEditReplacesEarlierCorrection(t *testing.T) {
+	t.Parallel()
+	args, err := mergeCLIInputEditArgs([]string{"-g", "GRP", "--title=Old", "--commentary", "example.mkv"}, []string{"--tag=OTHER", "--title", "New", "--mc=false"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts, _, paths, err := parseCLIOptions(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.Tag != "OTHER" || opts.Title != "New" || opts.Commentary || !slices.Equal(paths, []string{"example.mkv"}) {
+		t.Fatalf("edited options = %#v, paths = %v", opts, paths)
+	}
+	if _, err := mergeCLIInputEditArgs(args, []string{"--title=A", "--title=B"}); err == nil {
+		t.Fatal("duplicate correction within one edit was accepted")
+	}
+}
+
+func TestCLITrackerInputAndTrackLanguageCorrection(t *testing.T) {
+	t.Parallel()
+
+	opts, visited, _, err := parseCLIOptions([]string{"--tracker-input", "ptp:feature=yes", "--tracker-input", "BTN:feature=auto", "example.mkv"})
+	if err != nil {
+		t.Fatalf("parse tracker input: %v", err)
+	}
+	answers, err := buildCLITrackerInput(opts.TrackerInput)
+	if err != nil {
+		t.Fatalf("build tracker input: %v", err)
+	}
+	if got := answers["PTP"]["feature"]; got != "yes" || answers["BTN"]["feature"] != "auto" || !visited["tracker-input"] {
+		t.Fatalf("tracker answers = %#v", answers)
+	}
+
+	opts, visited, _, err = parseCLIOptions([]string{"--track-languages", "audio-1=en, Spanish", "--confirm-input", "metadata.title", "example.mkv"})
+	if err != nil {
+		t.Fatalf("parse correction input: %v", err)
+	}
+	patch, err := buildCLIInputCorrectionPatch(opts, visited, []api.MediaTrackFacts{{ID: "audio-1", ManifestFingerprint: "manifest-1"}})
+	if err != nil {
+		t.Fatalf("build correction patch: %v", err)
+	}
+	if patch == nil || patch.ExpectedRevision == nil || len(patch.Values.Metadata.TrackLanguages) != 1 {
+		t.Fatalf("correction patch = %#v", patch)
+	}
+	track := patch.Values.Metadata.TrackLanguages[0]
+	if track.TrackID != "audio-1" || track.ManifestFingerprint != "manifest-1" || !slices.Equal(track.Languages, []string{"English", "Spanish"}) {
+		t.Fatalf("track correction = %#v", track)
 	}
 }

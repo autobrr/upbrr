@@ -1,0 +1,1126 @@
+#Requires -Version 7.0
+# Non-network regression checks. Synthetic files stay in the private validation directory.
+$ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'functions.ps1')
+$script:RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+$root = Join-Path $env:LOCALAPPDATA 'upbrr-live-testing'
+$validationDir = Assert-PrivatePath (Join-Path $root ('validation/' + [guid]::NewGuid().ToString('N'))) $root
+New-Item -ItemType Directory -Path $validationDir -Force | Out-Null
+function Assert-Check([bool]$Condition, [string]$Code) { if (-not $Condition) { throw $Code } }
+try {
+  $source = Join-Path $validationDir 'Example.Movie.2025.1080p.WEB-DL-GRP.mkv'
+  [IO.File]::WriteAllText($source, 'synthetic validation bytes; never treated as playable media')
+  $case = @{ case_id = 'MOV-1080-WEB'; input_path = $source; probe_path = $source; input_shape = 'file'; probe_status = 'ok'; fingerprint = @{ size_bytes = 0; mtime_ns = 0 } }
+  $stat = Get-SourceFingerprint $case
+  $case.fingerprint.size_bytes = $stat.size_bytes; $case.fingerprint.mtime_ns = $stat.mtime_ns
+  $corpusPath = Join-Path $validationDir 'corpus.private.json'
+  Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($case) }
+  $loaded = @(Read-Corpus $corpusPath @('MOV-1080-WEB'))
+  Assert-Check ($loaded.Count -eq 1 -and $loaded[0].status -eq 'ready') 'valid_corpus_rejected'
+  Assert-Check ((Get-CaseIdentityOverrides $case).Count -eq 0 -and @(Get-CaseIdentityCLIArguments $case).Count -eq 0) 'omitted_identity_changed_defaults'
+  Assert-Check ((Get-CaseFactOverrides $case).Count -eq 0) 'omitted_fact_overrides_changed_defaults'
+  $factCase = $case.Clone()
+  $factCase.fact_overrides = @{ Metadata = @{ Title = 'Example Override'; Commentary = $false; SubtitleLanguages = @(); TrackLanguages = @(@{ trackId = 'track-1'; manifestFingerprint = 'manifest-1'; languages = @('French') }) }; ReleaseName = @{ Tag = 'GRP'; ManualYear = 2001 } }
+  Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($factCase) }
+  $factEntry = @(Read-Corpus $corpusPath @('MOV-1080-WEB'))[0]
+  $factOverrides = Get-CaseFactOverrides $factEntry.case
+  Assert-Check ($factOverrides.Metadata.Title -ceq 'Example Override' -and $factOverrides.Metadata.Commentary -ceq $false -and
+    $factOverrides.Metadata.SubtitleLanguages.Count -eq 0 -and $factOverrides.ReleaseName.Tag -ceq 'GRP') 'fact_override_values_changed'
+  foreach ($invalid in @($null, 'invalid', @{ Identity = @{} }, @{ Metadata = 'invalid' },
+    @{ Metadata = @{ Titlle = 'Example' } }, @{ Metadata = @{ Title = 1 } }, @{ Metadata = @{ Commentary = 'false' } },
+    @{ Metadata = @{ Title = $null } }, @{ ReleaseName = @{ ManualYear = $null } }, @{ Metadata = @{ Genres = @($null) } },
+    @{ Metadata = @{ Genres = @($true) } }, @{ ReleaseName = @{ ManualYear = 1.5 } },
+    @{ Metadata = @{ TrackLanguages = @(@{ trackId = 'track-1'; languages = @('French') }) } },
+    @{ Metadata = @{ TrackLanguages = @(@{ trackId = 'track-1'; manifestFingerprint = 'manifest-1'; languages = @('French'); extra = 'invalid' }) } },
+    @{ Metadata = @{ TrackLanguages = @(@{ trackId = 'track-1'; manifestFingerprint = 'manifest-1'; languages = @($false) }) } })) {
+    $factCase.fact_overrides = $invalid
+    $rejected = $false
+    try { Get-CaseFactOverrides $factCase | Out-Null } catch { $rejected = $_.Exception.Message -eq 'corpus_fact_overrides_invalid' }
+    Assert-Check $rejected 'invalid_fact_overrides_accepted'
+  }
+  $identityCase = $case.Clone()
+  $identityCase.metadata_ids = @{ imdb = 1234567; tmdb = 12345; tvdb = 23456; tvmaze = 34567; mal = 45678 }
+  Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($identityCase) }
+  $identityEntry = @(Read-Corpus $corpusPath @('MOV-1080-WEB'))[0]
+  $identity = Get-CaseIdentityOverrides $identityEntry.case
+  Assert-Check ($identity.Count -eq 5 -and $identity.IMDBID -eq 1234567 -and $identity.TMDBID -eq 12345 -and $identity.TVDBID -eq 23456 -and $identity.TVmazeID -eq 34567 -and $identity.MALID -eq 45678) 'explicit_identity_not_mapped'
+  Assert-Check ((@(Get-CaseIdentityCLIArguments $identityEntry.case) -join '|') -ceq '--imdb|1234567|--tmdb|12345|--tvdb|23456|--tvmaze|34567|--mal|45678') 'cli_identity_flags_differ'
+  $lookupCase = $case.Clone()
+  $lookupCase.source_lookup = ' https://tracker.example/torrents/12345 '
+  $lookupCase.tracker_ids = @{ btn = ' 12345 '; PTP = '67890' }
+  $lookup = Get-CaseSourceLookupInstructions $lookupCase
+  Assert-Check ($lookup.SourceLookup -ceq 'https://tracker.example/torrents/12345' -and $lookup.TrackerIDs.BTN -ceq '12345' -and $lookup.TrackerIDs.PTP -ceq '67890') 'explicit_source_lookup_not_preserved'
+  Assert-Check (-not $lookup.TrackerIDs.Contains('LST')) 'selected_tracker_invented_source_id'
+  $trackerIDCase = $case.Clone()
+  $trackerIDCase.tracker_ids = @{ PTP = '67890'; BTN = '12345' }
+  Assert-Check ((@(Get-CaseSourceCLIArguments $trackerIDCase) -join '|') -ceq '--btn|12345|--ptp|67890') 'cli_tracker_ids_not_preserved'
+  Assert-Check ((@(Get-CaseSourceCLIArguments $lookupCase) -join '|') -ceq '--source-lookup|https://tracker.example/torrents/12345|--btn|12345|--ptp|67890') 'cli_source_lookup_not_preserved'
+  $unsupportedTrackerCase = $case.Clone()
+  $unsupportedTrackerCase.tracker_ids = @{ EXAMPLE = '12345' }
+  $unsupportedTrackerRejected = $false
+  try { Get-CaseSourceCLIArguments $unsupportedTrackerCase | Out-Null } catch { $unsupportedTrackerRejected = $_.Exception.Message -eq 'cli_tracker_id_not_representable' }
+  Assert-Check $unsupportedTrackerRejected 'cli_silently_dropped_tracker_id'
+  foreach ($invalid in @(@{ source_lookup = ''; tracker_ids = $null }, @{ source_lookup = 1; tracker_ids = $null }, @{ source_lookup = $null; tracker_ids = @{} }, @{ source_lookup = $null; tracker_ids = @{ 'bad-id' = '1' } }, @{ source_lookup = $null; tracker_ids = @{ BTN = '' } })) {
+    $invalidCase = $case.Clone()
+    if ($null -ne $invalid.source_lookup) { $invalidCase.source_lookup = $invalid.source_lookup }
+    if ($null -ne $invalid.tracker_ids) { $invalidCase.tracker_ids = $invalid.tracker_ids }
+    $rejected = $false
+    try { Get-CaseSourceLookupInstructions $invalidCase | Out-Null } catch { $rejected = $_.Exception.Message -in @('corpus_source_lookup_invalid', 'corpus_tracker_ids_invalid') }
+    Assert-Check $rejected 'invalid_source_lookup_accepted'
+  }
+  foreach ($invalid in @(@{ imdb_episode = 1234567 }, @{ IMDB = 1234567 }, @{ imdb = 'tt1234567' }, @{ imdb = 0 }, @{ tmdb = -1 }, @{ tvdb = 1.5 }, @{ tvmaze = 2147483648 }, @{ imdb = $true }, '1234567', $null)) {
+    $invalidCase = $case.Clone(); $invalidCase.metadata_ids = $invalid
+    Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($invalidCase) }
+    $rejected = $false
+    try { Read-Corpus $corpusPath @('MOV-1080-WEB') | Out-Null } catch { $rejected = $_.Exception.Message -eq 'corpus_metadata_ids_invalid' }
+    Assert-Check $rejected 'invalid_identity_accepted'
+  }
+  Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($case) }
+  Invoke-OwnedProcess (Get-ToolPath 'pwsh') @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'run.ps1'), '-ValidateOnly', '-CaseId', 'MOV-1080-WEB', '-Corpus', $corpusPath) (Join-Path $validationDir 'validate-only') 30
+  Assert-Check ((Get-SourceFingerprint $case).fingerprint -ceq $stat.fingerprint) 'validation_modified_source'
+  [IO.File]::AppendAllText($source, ' changed')
+  Assert-Check (@(Read-Corpus $corpusPath @('MOV-1080-WEB'))[0].reason -eq 'source_changed_since_inventory') 'changed_source_not_detected'
+  $duplicateRejected = $false
+  Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($case, $case) }
+  try { Read-Corpus $corpusPath @('MOV-1080-WEB') | Out-Null } catch { $duplicateRejected = $_.Exception.Message -eq 'corpus_case_id_invalid' }
+  Assert-Check $duplicateRejected 'duplicate_case_not_rejected'
+  $escapeRejected = $false
+  try { Assert-PrivatePath (Join-Path $script:RepoRoot 'private.json') $root | Out-Null } catch { $escapeRejected = $true }
+  Assert-Check $escapeRejected 'private_path_escape_not_rejected'
+  $dir = Join-Path $validationDir 'Example.Season.01-GRP'
+  New-Item -ItemType Directory -Path $dir | Out-Null
+  $episode = Join-Path $dir 'Example.S01E01-GRP.mkv'
+  [IO.File]::WriteAllText($episode, 'synthetic episode')
+  $pack = @{ case_id = 'TV-PACK'; input_path = $dir; probe_path = $episode; input_shape = 'episode-directory'; probe_status = 'ok'; fingerprint = @{} }
+  $packStat = Get-SourceFingerprint $pack
+  $pack.fingerprint = $packStat
+  Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($pack) }
+  $packEntry = @(Read-Corpus $corpusPath @('TV-PACK'))[0]
+  Assert-Check ($packEntry.status -eq 'ready' -and $packEntry.case.input_path -ceq $dir) 'pack_directory_not_ready_for_preparation'
+  Assert-Check (-not $packEntry.case.Contains('bdmv_selection') -and $packEntry.case.Count -eq $pack.Count) 'pack_preflight_invented_instructions'
+  $legacyPack = $pack.Clone(); $legacyPack.fingerprint = @{ size_bytes = $packStat.size_bytes; mtime_ns = $packStat.mtime_ns }
+  Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($legacyPack) }
+  Assert-Check (@(Read-Corpus $corpusPath @('TV-PACK'))[0].reason -eq 'source_changed_since_inventory') 'pack_missing_full_fingerprint_accepted'
+  Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($pack) }
+  [IO.File]::WriteAllText((Join-Path $dir 'Example.S01E02-GRP.mkv'), 'synthetic second episode')
+  Assert-Check ((Get-SourceFingerprint $pack).fingerprint -cne $packStat.fingerprint) 'membership_change_not_detected'
+  Assert-Check (@(Read-Corpus $corpusPath @('TV-PACK'))[0].reason -eq 'source_changed_since_inventory') 'pack_membership_change_accepted'
+  $pack.fingerprint = Get-SourceFingerprint $pack
+  Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($pack) }
+  Assert-Check (@(Read-Corpus $corpusPath @('TV-PACK'))[0].status -eq 'ready') 'refreshed_pack_inventory_rejected'
+  [IO.File]::AppendAllText($episode, ' changed')
+  Assert-Check (@(Read-Corpus $corpusPath @('TV-PACK'))[0].reason -eq 'source_changed_since_inventory') 'pack_probe_change_not_detected'
+  $dvdRoot = Join-Path $validationDir 'Example.DVD-GRP'
+  $dvdVideo = Join-Path $dvdRoot 'VIDEO_TS'
+  New-Item -ItemType Directory -Path $dvdVideo -Force | Out-Null
+  $dvdProbe = Join-Path $dvdVideo 'VTS_01_1.VOB'
+  [IO.File]::WriteAllText($dvdProbe, 'synthetic DVD video')
+  foreach ($dvdInput in @($dvdRoot, $dvdVideo)) {
+    $dvd = @{ case_id = 'MY-DVD'; input_path = $dvdInput; probe_path = $dvdProbe; input_shape = 'disc-directory'; probe_status = 'ok'; fingerprint = @{}; metadata_ids = @{ imdb = 1234567; tmdb = 12345 } }
+    $dvdStat = Get-SourceFingerprint $dvd
+    $dvd.fingerprint = $dvdStat
+    Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($dvd) }
+    $dvdEntry = @(Read-Corpus $corpusPath @('MY-DVD'))[0]
+    Assert-Check ($dvdEntry.status -eq 'ready' -and (Get-CaseIdentityOverrides $dvdEntry.case).TMDBID -eq 12345 -and @(Get-CaseBDMVPlaylists $dvdEntry.case).Count -eq 0) 'dvd_preparation_requires_bluray_selection'
+    $dvd.probe_status = 'failed'
+    Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($dvd) }
+    Assert-Check (@(Read-Corpus $corpusPath @('MY-DVD'))[0].reason -eq 'probe_not_verified') 'dvd_unverified_probe_accepted'
+    $dvd.probe_status = 'ok'; $dvd.fingerprint.size_bytes++
+    Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($dvd) }
+    Assert-Check (@(Read-Corpus $corpusPath @('MY-DVD'))[0].reason -eq 'source_changed_since_inventory') 'dvd_changed_inventory_accepted'
+    $dvd.fingerprint = Get-SourceFingerprint $dvd
+    Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($dvd) }
+    [IO.File]::AppendAllText((Join-Path $dvdVideo 'VIDEO_TS.IFO'), 'synthetic DVD metadata')
+    Assert-Check (@(Read-Corpus $corpusPath @('MY-DVD'))[0].reason -eq 'source_changed_since_inventory') 'dvd_non_probe_change_accepted'
+  }
+  $disc = @{ case_id = 'MY-BD-DISC'; input_path = (Join-Path $validationDir 'Example.Disc-GRP'); input_shape = 'disc-directory'; probe_status = 'ok'; fingerprint = @{} }
+  $playlistDir = Join-Path $disc.input_path 'BDMV/PLAYLIST'
+  New-Item -ItemType Directory -Path $playlistDir -Force | Out-Null
+  [IO.File]::WriteAllText((Join-Path $playlistDir '00001.mpls'), 'synthetic playlist, not playable')
+  $disc.probe_path = Join-Path $disc.input_path 'BDMV/stream.m2ts'
+  [IO.File]::WriteAllText($disc.probe_path, 'synthetic stream')
+  $discStat = Get-SourceFingerprint $disc
+  $disc.fingerprint = $discStat
+  foreach ($shape in @('disc-directory', 'episode-directory')) {
+    foreach ($discInput in @($disc.input_path, (Join-Path $disc.input_path 'BDMV'))) {
+      $unselected = $disc.Clone(); $unselected.input_shape = $shape; $unselected.input_path = $discInput
+      $unselected.fingerprint = Get-SourceFingerprint $unselected
+      Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($unselected) }
+      Assert-Check (@(Read-Corpus $corpusPath @('MY-BD-DISC'))[0].reason -eq 'source_selection_unconfirmed') 'bdmv_shape_bypassed_selection'
+    }
+  }
+  $disc.bdmv_selection = @{ playlists = @('00001.mpls'); source_fingerprint = $discStat.fingerprint }
+  Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($disc) }
+  $discEntry = @(Read-Corpus $corpusPath @('MY-BD-DISC'))[0]
+  Assert-Check ($discEntry.status -eq 'ready' -and (@(Get-CaseBDMVPlaylists $disc) -join ',') -ceq '00001.MPLS') 'confirmed_disc_not_ready'
+  foreach ($example in @(
+    @{ source = 'D:\'; expected = 'D_' },
+    @{ source = 'D:/'; expected = 'D_' },
+    @{ source = '\\server\Disc Share\'; expected = 'Disc_Share' },
+    @{ source = 'D:\Disc\BDMV\'; expected = 'BDMV' },
+    @{ source = 'D:\Disc\BDMV\..'; expected = 'Disc' },
+    @{ source = ('D:\Disc' + [char]::ConvertFromUtf32(0x1F4BF)); expected = 'Disc_' }
+  )) {
+    Assert-Check ((Get-BDInfoTempName @{ input_path = $example.source }) -ceq $example.expected) 'bdinfo_production_temp_basename_mismatch'
+  }
+  $originalRepoRoot = $script:RepoRoot
+  $scannerFixture = Join-Path $validationDir 'scanner-fixture'
+  $layoutSources = @('internal/services/db/paths.go', 'internal/sourcelayout/layout.go', 'internal/pathing/pathutil.go', 'internal/pathing/layout/release_tmp.go', 'internal/pathing/layout/bdinfo.go')
+  try {
+    foreach ($relative in @('go.mod', 'go.sum', 'internal/metadata/service.go') + $layoutSources) {
+      $path = Join-Path $scannerFixture $relative
+      New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force | Out-Null
+      [IO.File]::WriteAllText($path, 'synthetic cache contract source')
+    }
+    foreach ($relative in @('internal/services/bdinfo', 'internal/metadata/discparse')) { New-Item -ItemType Directory -Path (Join-Path $scannerFixture $relative) -Force | Out-Null }
+    $script:RepoRoot = $scannerFixture
+    $originalScanner = Get-BDInfoScannerFingerprint
+    foreach ($relative in $layoutSources) {
+      $path = Join-Path $scannerFixture $relative
+      [IO.File]::AppendAllText($path, ' changed layout')
+      Assert-Check ((Get-BDInfoScannerFingerprint) -cne $originalScanner) 'changed_production_layout_reused_cache_key'
+      [IO.File]::WriteAllText($path, 'synthetic cache contract source')
+    }
+    [IO.File]::WriteAllText((Join-Path $scannerFixture 'unrelated.txt'), 'unrelated change')
+    Assert-Check ((Get-BDInfoScannerFingerprint) -ceq $originalScanner) 'unrelated_change_invalidated_bdinfo_cache'
+  } finally { $script:RepoRoot = $originalRepoRoot }
+  # Execute the runner's real snapshot/build statements with deterministic edits at
+  # read/build boundaries; external processes are replaced only in this child probe.
+  $runnerSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'run.ps1') -Raw
+  # Execute the real resume loop at script scope, where its iterator must not alias
+  # the retained feedback collection or erase another lane's pending question.
+  $parseTokens = $null; $parseErrors = $null
+  $runnerAST = [System.Management.Automation.Language.Parser]::ParseInput($runnerSource, [ref]$parseTokens, [ref]$parseErrors)
+  $feedbackLoop = $runnerAST.Find({ param($node)
+    $node -is [System.Management.Automation.Language.ForEachStatementAst] -and $node.Condition.Extent.Text -ceq '@($script:Feedback)'
+  }, $true)
+  Assert-Check ([bool]$feedbackLoop) 'resume_feedback_loop_missing'
+  $resumeProbe = Join-Path $validationDir 'resume-feedback-probe.ps1'
+  $resumeHeader = @'
+param($Repo)
+$ErrorActionPreference = 'Stop'
+. (Join-Path $Repo 'scripts/live-testing/functions.ps1')
+$action = @{ id='playlist-1'; kind='select_playlist'; status='pending'; options=@(@{ value='disc-one:00000.MPLS' }) }
+$script:Feedback = @(
+  @{ laneId='lane-answered'; caseId='CASE-ANSWERED'; sourceFingerprint='source'; authority=@{ workflowId='workflow-1' }; goal='prepared'; requiredActions=@($action); answers=@(@{ actionId='playlist-1'; workflowRevision=1; selectedValues=@('disc-one:00000.MPLS') }); acceptedAt='2026-09-08T00:00:00Z'; rationale='Operator selected the retained option.' },
+  @{ laneId='lane-pending'; caseId='CASE-PENDING'; sourceFingerprint='source'; authority=@{ workflowId='workflow-2' }; goal='prepared'; requiredActions=@($action); answers=@() }
+)
+$script:Lanes = @($script:Feedback | ForEach-Object { @{ laneId=$_.laneId; caseId=$_.caseId; sourceFingerprint='source'; trackerIds=@('ULCX') } })
+$script:Run=@{ executionMode='normal'; skipRemoteDuplicates=$false }; $script:Results=@(); $script:ResumedGoals=@()
+function Invoke-LiveAPI { @{ workflow=@{ id='workflow-1'; revision=1; requiredActions=@($action) } } }
+function Resolve-FeedbackAuthority { 'current' }
+function Continue-Lane { @{ workflow=@{ id='workflow-1'; revision=2; requiredActions=@() }; release=@{ id='release-1' } } }
+function Record-Stage { 'pass' }
+function Resume-Lane($Lane,$Current,[string]$CompletedGoal) { $script:ResumedGoals += $CompletedGoal; $Current }
+'@
+  $resumeAssertions = @'
+if ($script:ResumedGoals.Count -ne 1 -or $script:ResumedGoals[0] -cne 'prepared') { throw 'accepted_feedback_goal_lost' }
+if ($script:Feedback.Count -ne 1 -or $script:Feedback[0].laneId -cne 'lane-pending') { throw 'unanswered_feedback_lost' }
+'@
+  [IO.File]::WriteAllText($resumeProbe, $resumeHeader + "`n" + $feedbackLoop.Extent.Text + "`n" + $resumeAssertions)
+  Invoke-OwnedProcess (Get-ToolPath 'pwsh') @('-NoProfile', '-File', $resumeProbe, '-Repo', $script:RepoRoot) (Join-Path $validationDir 'resume-feedback') 30
+  $preflightStart = $runnerSource.IndexOf('    $scenariosSHA256 =')
+  $preflightEnd = $runnerSource.IndexOf('    # The production temporary layout')
+  $buildStart = $runnerSource.IndexOf('    $candidateBefore =')
+  $buildEnd = $runnerSource.IndexOf('    $initArgs =')
+  $snapshotProbe = Join-Path $validationDir 'snapshot-probe.ps1'
+  $probeHeader = @'
+param($Repo, $Fixture, $Corpus, $Mutation, $OutputPath)
+$ErrorActionPreference = 'Stop'
+. (Join-Path $Repo 'scripts/live-testing/functions.ps1')
+$script:RepoRoot = $Fixture
+$script:OriginalReadCorpus = (Get-Command Read-Corpus).ScriptBlock
+$script:BuildCalls = 0; $script:CandidateCalls = 0
+$scannerSource = Join-Path $Fixture 'internal/metadata/service.go'
+$Suite = 'Screenshots'; $CaseId = @('MY-BD-DISC'); $runID = 'synthetic'; $buildDir = $PSScriptRoot
+function Read-Corpus($Path, $Selected) {
+  $result = @(& $script:OriginalReadCorpus $Path $Selected)
+  if ($Mutation -eq 'read') { [IO.File]::AppendAllText($Path, ' ') }
+  $result
+}
+function Get-CandidateState {
+  if (++$script:CandidateCalls -eq 1 -and $Mutation -eq 'candidate') { [IO.File]::AppendAllText($scannerSource, ' changed before capture') }
+  @{ fixed = 'candidate comparison isolated from the scanner assertion' }
+}
+function Get-ToolPath($Name) { $Name }
+function Invoke-OwnedProcess {
+  if (++$script:BuildCalls -ne 1) { return }
+  switch ($Mutation) {
+    'corpus' { [IO.File]::AppendAllText($Corpus, ' ') }
+    'scanner' { [IO.File]::AppendAllText($scannerSource, ' changed during build') }
+    'scenario' { [IO.File]::AppendAllText((Join-Path $PSScriptRoot 'scenarios.json'), ' ') }
+  }
+}
+$code = 'accepted'
+try {
+'@
+  $probeFooter = @'
+} catch { $code = $_.Exception.Message }
+Write-PrivateJson $OutputPath @{ code = $code; buildCalls = $script:BuildCalls; scannerMatches = ($bdinfoScannerFingerprint -ceq (Get-BDInfoScannerFingerprint)); corpusMatches = ($corpusSHA256 -ceq (Get-FileHash -LiteralPath $Corpus).Hash) }
+'@
+  [IO.File]::WriteAllText($snapshotProbe, $probeHeader + "`n" + $runnerSource.Substring($preflightStart, $preflightEnd - $preflightStart) + $runnerSource.Substring($buildStart, $buildEnd - $buildStart) + "`n" + $probeFooter)
+  foreach ($mutation in @('none', 'read', 'corpus', 'scanner', 'scenario', 'candidate')) {
+    Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($disc) }
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'scenarios.json') -Destination (Join-Path $validationDir 'scenarios.json') -Force
+    [IO.File]::WriteAllText((Join-Path $scannerFixture 'internal/metadata/service.go'), 'synthetic cache contract source')
+    $outputPath = Join-Path $validationDir "snapshot-$mutation.private.json"
+    Invoke-OwnedProcess (Get-ToolPath 'pwsh') @('-NoProfile', '-File', $snapshotProbe, $script:RepoRoot, $scannerFixture, $corpusPath, $mutation, $outputPath) (Join-Path $validationDir "snapshot-$mutation") 30
+    $observed = Read-PrivateJson $outputPath
+    $expected = switch ($mutation) { 'read' { 'corpus_changed_during_run' }; 'corpus' { 'corpus_changed_during_run' }; 'scanner' { 'bdinfo_scanner_changed_during_build' }; 'scenario' { 'scenarios_changed_during_run' }; default { 'accepted' } }
+    Assert-Check ($observed.code -ceq $expected) "snapshot_boundary_$mutation"
+    if ($mutation -eq 'read') { Assert-Check ($observed.buildCalls -eq 0) 'changed_corpus_started_build' }
+    if ($expected -eq 'accepted') { Assert-Check ($observed.scannerMatches -and $observed.corpusMatches) 'snapshot_did_not_match_used_inputs' }
+  }
+  Invoke-OwnedProcess (Get-ToolPath 'pwsh') @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'run.ps1'), '-ValidateOnly', '-CaseId', 'MY-BD-DISC', '-Corpus', $corpusPath) (Join-Path $validationDir 'custom-disc-case') 30
+  $blockedSource = @{ case_id = 'BAD-SOURCE'; input_path = $null; input_shape = 'file'; fingerprint = @{ size_bytes = 0; mtime_ns = 0 } }
+  $unconfirmedDisc = $disc.Clone()
+  $unconfirmedDisc.case_id = 'UNCONFIRMED-DISC'
+  $unconfirmedDisc.input_path = Join-Path $validationDir 'unconfirmed/Example.Disc-GRP'
+  $unconfirmedDisc.probe_path = Join-Path $unconfirmedDisc.input_path 'BDMV/stream.m2ts'
+  $unconfirmedDisc.Remove('bdmv_selection')
+  $otherPlaylistDir = Join-Path $unconfirmedDisc.input_path 'BDMV/PLAYLIST'
+  New-Item -ItemType Directory -Path $otherPlaylistDir -Force | Out-Null
+  [IO.File]::WriteAllText((Join-Path $otherPlaylistDir '00001.mpls'), 'synthetic playlist')
+  [IO.File]::WriteAllText($unconfirmedDisc.probe_path, 'synthetic stream')
+  $otherDiscStat = Get-SourceFingerprint $unconfirmedDisc
+  $unconfirmedDisc.fingerprint = $otherDiscStat
+  $mixedProbe = Join-Path $validationDir 'mixed-source-probe.ps1'
+  [IO.File]::WriteAllText($mixedProbe, @'
+param($Repo, $Corpus)
+& (Join-Path $Repo 'scripts/live-testing/run.ps1') -ValidateOnly -CaseId @('MY-BD-DISC', 'BAD-SOURCE', 'UNCONFIRMED-DISC') -Corpus $Corpus
+exit $LASTEXITCODE
+'@)
+  foreach ($confirmed in @($false, $true)) {
+    if ($confirmed) { $unconfirmedDisc.bdmv_selection = @{ playlists = @('00001.mpls'); source_fingerprint = $otherDiscStat.fingerprint } }
+    Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($disc, $blockedSource, $unconfirmedDisc) }
+    $logBase = Join-Path $validationDir "mixed-source-$confirmed"
+    $handle = Start-OwnedProcess (Get-ToolPath 'pwsh') @('-NoProfile', '-File', $mixedProbe, $script:RepoRoot, $corpusPath) $logBase
+    try {
+      Assert-Check ($handle.process.WaitForExit(30000)) 'mixed_source_probe_timeout'
+      $code = $handle.process.ExitCode
+    } finally { Stop-OwnedProcess $handle }
+    $stdout = Get-Content -LiteralPath "$logBase.stdout.private.log" -Raw
+    if ($confirmed) {
+      Assert-Check ($code -eq 2 -and $stdout -match 'reason=bdinfo_temp_name_collision_use_separate_runs') 'ready_disc_collision_accepted'
+    } else {
+      Assert-Check ($code -eq 2 -and $stdout -match 'case=MY-BD-DISC status=ready' -and $stdout -match 'case=BAD-SOURCE status=blocked' -and $stdout -match 'case=UNCONFIRMED-DISC status=needs_input') 'unready_source_aborted_ready_preflight'
+    }
+  }
+  Write-PrivateJson $corpusPath @{ schema_version = 1; cases = @($disc) }
+  foreach ($invalid in @(@(), @('../00001.mpls'), @('00001.mpls', '00001.MPLS'), @('*.mpls'), @('00001.mpls', 2), '00001.mpls')) {
+    $badDisc = $disc.Clone(); $badDisc.bdmv_selection = @{ playlists = $invalid; source_fingerprint = $discStat.fingerprint }
+    $rejected = $false
+    try { Get-CaseBDMVPlaylists $badDisc | Out-Null } catch { $rejected = $_.Exception.Message -eq 'corpus_bdmv_selection_invalid' }
+    Assert-Check $rejected 'invalid_playlist_selection_accepted'
+  }
+  $cacheRoot = Join-Path $validationDir 'cache-root'
+  $profileOne = @{ runDir = (Join-Path $cacheRoot 'runs/one'); dbPath = (Join-Path $cacheRoot 'runs/one/profile/db.sqlite') }
+  $profileTwo = @{ runDir = (Join-Path $cacheRoot 'runs/two'); dbPath = (Join-Path $cacheRoot 'runs/two/profile/db.sqlite') }
+  New-Item -ItemType Directory -Path $cacheRoot -Force | Out-Null
+  $coldCache = Restore-BDInfoReports $discEntry $profileOne $cacheRoot 'scanner-one'
+  $scopedSingle = $disc.Clone()
+  $scopedSingle.bdmv_selection = @{ playlists = @($coldCache.playlists); source_fingerprint = $discStat.fingerprint }
+  $rejected = $false
+  try { Get-CaseBDMVScopedPlaylists $scopedSingle | Out-Null } catch { $rejected = $_.Exception.Message -eq 'bdmv_disc_scope_unexpected' }
+  Assert-Check $rejected 'scoped_single_disc_selection_accepted'
+  $binaryOne = (Get-TextHash 'binary-one').ToUpperInvariant()
+  $binaryTwo = Get-TextHash 'binary-two'
+  Assert-Check (-not $coldCache.restored) 'cold_cache_reported_as_restored'
+  Assert-Check (-not (Save-BDInfoReports $coldCache $discEntry $cacheRoot $binaryOne)) 'missing_reports_saved'
+  New-Item -ItemType Directory -Path $coldCache.target -Force | Out-Null
+  foreach ($name in @(Get-BDInfoReportNames $coldCache.playlists)) {
+    New-Item -ItemType Directory -Path (Split-Path -Parent (Join-Path $coldCache.target $name)) -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $coldCache.target $name), "Playlist: 00001.MPLS`nSynthetic report for cache transport testing.")
+  }
+  foreach ($invalid in @($null, 'binary-one', ('g' * 64), ($binaryOne + "`n"))) {
+    $rejected = $false
+    try { Save-BDInfoReports $coldCache $discEntry $cacheRoot $invalid | Out-Null } catch { $rejected = $_.Exception.Message -eq 'bdinfo_cache_producer_invalid' }
+    Assert-Check ($rejected -and -not (Test-Path -LiteralPath $coldCache.directory)) 'invalid_producer_published_cache'
+  }
+  $saved = Save-BDInfoReports $coldCache $discEntry $cacheRoot $binaryOne
+  Assert-Check ($saved.reports.Count -eq 3 -and $saved.producerBinarySHA256 -ceq $binaryOne) 'complete_reports_not_saved'
+  $warmCache = Restore-BDInfoReports $discEntry $profileTwo $cacheRoot 'scanner-one'
+  Assert-Check ($warmCache.restored -and $warmCache.target -cne $coldCache.target) 'fresh_profile_did_not_restore_reports'
+  $warmSaved = Save-BDInfoReports $warmCache $discEntry $cacheRoot $binaryTwo
+  Assert-Check ($warmSaved.producerBinarySHA256 -ceq $binaryOne) 'cache_relabelled_original_producer'
+  $manifestPath = Join-Path $warmCache.directory 'manifest.private.json'
+  $manifestBytes = [IO.File]::ReadAllBytes($manifestPath)
+  foreach ($shape in @('top_array', 'version_string', 'source_array', 'scanner_array', 'playlist_scalar', 'playlist_item_array', 'reports_object', 'report_array', 'name_array', 'hash_array')) {
+    $wrongManifest = Read-PrivateJson $manifestPath
+    $expected = 'bdinfo_cache_identity_mismatch'
+    switch ($shape) {
+      'top_array' { $wrongManifest = @($wrongManifest) }
+      'version_string' { $wrongManifest.version = '1' }
+      'source_array' { $wrongManifest.sourceFingerprint = @() }
+      'scanner_array' { $wrongManifest.scannerFingerprint = @() }
+      'playlist_scalar' { $wrongManifest.playlists = '00001.MPLS' }
+      'playlist_item_array' { $wrongManifest.playlists[0] = @() }
+      'reports_object' { $wrongManifest.reports = $wrongManifest.reports[0]; $expected = 'bdinfo_cache_incomplete' }
+      'report_array' { $wrongManifest.reports[0] = @($wrongManifest.reports[0]); $expected = 'bdinfo_cache_report_changed' }
+      'name_array' { $wrongManifest.reports[0].name = @(); $expected = 'bdinfo_cache_report_changed' }
+      'hash_array' { $wrongManifest.reports[0].sha256 = @(); $expected = 'bdinfo_cache_report_changed' }
+    }
+    Write-PrivateJson $manifestPath $wrongManifest
+    $badProfileDir = Join-Path $cacheRoot "runs/malformed-$shape"
+    $badProfile = @{ runDir = $badProfileDir; dbPath = (Join-Path $badProfileDir 'profile/db.sqlite') }
+    $rejected = $false
+    try { Restore-BDInfoReports $discEntry $badProfile $cacheRoot 'scanner-one' | Out-Null } catch { $rejected = $_.Exception.Message -eq $expected }
+    Assert-Check ($rejected -and -not (Test-Path -LiteralPath $badProfileDir)) "malformed_manifest_admitted_$shape"
+    [IO.File]::WriteAllBytes($manifestPath, $manifestBytes)
+  }
+  foreach ($invalid in @($null, 'binary-one', ('g' * 64), ($binaryOne + "`n"), @($binaryOne))) {
+    $wrongManifest = Read-PrivateJson $manifestPath
+    if ($null -eq $invalid) { $wrongManifest.Remove('producerBinarySHA256') | Out-Null } else { $wrongManifest.producerBinarySHA256 = $invalid }
+    Write-PrivateJson $manifestPath $wrongManifest
+    $rejected = $false
+    try { Restore-BDInfoReports $discEntry $profileTwo $cacheRoot 'scanner-one' | Out-Null } catch { $rejected = $_.Exception.Message -eq 'bdinfo_cache_producer_invalid' }
+    Assert-Check $rejected 'invalid_cached_producer_accepted'
+    [IO.File]::WriteAllBytes($manifestPath, $manifestBytes)
+  }
+  $wrongManifest = Read-PrivateJson $manifestPath
+  $wrongManifest.sourceFingerprint = 'another-source'
+  Write-PrivateJson $manifestPath $wrongManifest
+  $rejected = $false
+  try { Restore-BDInfoReports $discEntry $profileTwo $cacheRoot 'scanner-one' | Out-Null } catch { $rejected = $_.Exception.Message -eq 'bdinfo_cache_identity_mismatch' }
+  Assert-Check $rejected 'wrong_source_cache_manifest_accepted'
+  [IO.File]::WriteAllBytes($manifestPath, $manifestBytes)
+  $singleReportNames = @(Get-BDInfoReportNames $warmCache.playlists)
+  $summaryPath = Join-Path $warmCache.directory $singleReportNames[0]
+  $summaryBytes = [IO.File]::ReadAllBytes($summaryPath)
+  [IO.File]::WriteAllText($summaryPath, 'Playlist: 00002.MPLS')
+  $rejected = $false
+  try { Restore-BDInfoReports $discEntry $profileTwo $cacheRoot 'scanner-one' | Out-Null } catch { $rejected = $_.Exception.Message -eq 'bdinfo_report_playlist_mismatch' }
+  Assert-Check $rejected 'wrong_report_playlist_accepted'
+  [IO.File]::WriteAllBytes($summaryPath, $summaryBytes)
+  $differentScanner = Restore-BDInfoReports $discEntry $profileTwo $cacheRoot 'scanner-two'
+  Assert-Check (-not $differentScanner.restored -and $differentScanner.directory -cne $warmCache.directory) 'changed_scanner_reused_reports'
+  [IO.File]::AppendAllText((Join-Path $warmCache.directory $singleReportNames[2]), 'changed report')
+  $rejected = $false
+  try { Restore-BDInfoReports $discEntry $profileTwo $cacheRoot 'scanner-one' | Out-Null } catch { $rejected = $_.Exception.Message -eq 'bdinfo_cache_report_changed' }
+  Assert-Check $rejected 'corrupt_cached_report_accepted'
+  [IO.File]::WriteAllText((Join-Path $playlistDir '00002.mpls'), 'another playlist')
+  Assert-Check (@(Read-Corpus $corpusPath @('MY-BD-DISC'))[0].reason -eq 'source_changed_since_selection') 'disc_membership_change_not_blocked'
+  $rejected = $false
+  try { Save-BDInfoReports $coldCache $discEntry $cacheRoot $binaryOne | Out-Null } catch { $rejected = $_.Exception.Message -eq 'source_changed_during_run' }
+  Assert-Check $rejected 'changed_source_published_cache'
+
+  $multi = @{ case_id = 'MY-MULTIDISC'; input_path = (Join-Path $validationDir 'Example.MultiDisc-GRP'); input_shape = 'disc-directory'; probe_status = 'ok' }
+  foreach ($part in @('Disc1', 'Disc2')) {
+    $multiDiscRoot = Join-Path $multi.input_path "$part/BDMV"
+    New-Item -ItemType Directory -Path (Join-Path $multiDiscRoot 'PLAYLIST') -Force | Out-Null
+    foreach ($file in @('00001.mpls', '00002.mpls')) { [IO.File]::WriteAllText((Join-Path $multiDiscRoot "PLAYLIST/$file"), 'synthetic playlist') }
+    [IO.File]::WriteAllText((Join-Path $multiDiscRoot 'stream.m2ts'), 'synthetic stream')
+  }
+  $multi.probe_path = Join-Path $multi.input_path 'Disc1/BDMV/stream.m2ts'
+  $multi.fingerprint = Get-SourceFingerprint $multi
+  $multiCorpus = Join-Path $validationDir 'multidisc-corpus.private.json'
+  Write-PrivateJson $multiCorpus @{ schema_version = 1; cases = @($multi) }
+  Assert-Check (@(Read-Corpus $multiCorpus @('MY-MULTIDISC'))[0].reason -eq 'source_selection_unconfirmed') 'nested_discs_bypassed_selection'
+  $discIDs = @((Get-CaseBDMVDiscs $multi).id | Sort-Object)
+  $multi.bdmv_selection = @{ playlists = @($discIDs | ForEach-Object { $_ + ':00001.MPLS' }); source_fingerprint = $multi.fingerprint.fingerprint }
+  Write-PrivateJson $multiCorpus @{ schema_version = 1; cases = @($multi) }
+  $multiEntry = @(Read-Corpus $multiCorpus @('MY-MULTIDISC'))[0]
+  Assert-Check ($multiEntry.status -eq 'ready') 'multidisc_selection_not_ready'
+  foreach ($badSelection in @(@('00001.MPLS'), @($discIDs[0] + ':00001.MPLS'), @(('disc-' + ('f' * 64) + ':00001.MPLS'), ($discIDs[1] + ':00001.MPLS')))) {
+    $invalidMulti = $multi.Clone(); $invalidMulti.bdmv_selection = @{ playlists = $badSelection; source_fingerprint = $multi.fingerprint.fingerprint }
+    Write-PrivateJson $multiCorpus @{ schema_version = 1; cases = @($invalidMulti) }
+    Assert-Check (@(Read-Corpus $multiCorpus @('MY-MULTIDISC'))[0].status -eq 'blocked') 'unbound_or_incomplete_disc_selection_accepted'
+  }
+  $multiCold = Restore-BDInfoReports $multiEntry $profileOne $cacheRoot 'scanner-one'
+  foreach ($name in @(Get-BDInfoReportNames $multiCold.playlists)) {
+    $path = Join-Path $multiCold.target $name
+    New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force | Out-Null
+    [IO.File]::WriteAllText($path, "Playlist: 00001.MPLS`nSynthetic disc report $name")
+  }
+  $multiSaved = Save-BDInfoReports $multiCold $multiEntry $cacheRoot $binaryOne
+  $multiWarm = Restore-BDInfoReports $multiEntry $profileTwo $cacheRoot 'scanner-one'
+  Assert-Check ($multiWarm.restored -and $multiSaved.reports.Count -eq 6 -and @($multiSaved.reports.name | Select-Object -Unique).Count -eq 6) 'same_playlist_discs_collided_in_cache'
+  Assert-Check ((Save-BDInfoReports $multiWarm $multiEntry $cacheRoot $binaryTwo).producerBinarySHA256 -ceq $binaryOne) 'multidisc_cache_producer_relabelled'
+  foreach ($choice in @(@($multiCold.playlists[1], $multiCold.playlists[0]), @($multiCold.playlists[0].Replace('00001', '00002'), $multiCold.playlists[1]))) {
+    $changed = $multi.Clone(); $changed.bdmv_selection = @{ playlists = $choice; source_fingerprint = $multi.fingerprint.fingerprint }
+    $changedCache = Restore-BDInfoReports @{ case = $changed; stat = $multi.fingerprint } $profileTwo $cacheRoot 'scanner-one'
+    Assert-Check (-not $changedCache.restored -and $changedCache.directory -cne $multiWarm.directory) 'changed_multidisc_selection_reused_cache'
+  }
+  $multiNames = @(Get-BDInfoReportNames $multiCold.playlists)
+  $firstReport = Join-Path $multiWarm.directory $multiNames[0]
+  $originalReport = [IO.File]::ReadAllBytes($firstReport)
+  Remove-Item -LiteralPath $firstReport
+  $rejected = $false
+  try { Restore-BDInfoReports $multiEntry $profileTwo $cacheRoot 'scanner-one' | Out-Null } catch { $rejected = $_.Exception.Message -eq 'bdinfo_cache_incomplete' }
+  Assert-Check $rejected 'incomplete_multidisc_cache_accepted'
+  Copy-Item -LiteralPath (Join-Path $multiWarm.directory $multiNames[3]) -Destination $firstReport
+  $rejected = $false
+  try { Restore-BDInfoReports $multiEntry $profileTwo $cacheRoot 'scanner-one' | Out-Null } catch { $rejected = $_.Exception.Message -eq 'bdinfo_cache_report_changed' }
+  Assert-Check $rejected 'cross_disc_report_swap_accepted'
+  [IO.File]::WriteAllBytes($firstReport, $originalReport)
+  [IO.File]::AppendAllText((Join-Path $multi.input_path 'Disc2/BDMV/PLAYLIST/00002.mpls'), ' changed source')
+  $rejected = $false
+  try { Restore-BDInfoReports $multiEntry $profileTwo $cacheRoot 'scanner-one' | Out-Null } catch { $rejected = $_.Exception.Message -eq 'source_changed_during_run' }
+  Assert-Check $rejected 'changed_secondary_disc_reused_cache'
+  $probeScript = Join-Path $validationDir 'child.ps1'
+  [IO.File]::WriteAllText($probeScript, '[pscustomobject]@{e2e=$env:UPBRR_E2E_RUNNER_VALIDATION;literal=$args[0]}|ConvertTo-Json -Compress')
+  $prior = $env:UPBRR_E2E_RUNNER_VALIDATION
+  try {
+    $env:UPBRR_E2E_RUNNER_VALIDATION = 'must-not-reach-child'
+    $literal = 'a space '' quote ` tick $(not-a-command)'
+    Invoke-OwnedProcess (Get-ToolPath 'pwsh') @('-NoProfile', '-File', $probeScript, $literal) (Join-Path $validationDir 'child') 30
+    $child = Read-PrivateJson (Join-Path $validationDir 'child.stdout.private.log')
+    Assert-Check (-not $child.e2e -and $child.literal -ceq $literal) 'child_environment_or_quoting_failed'
+    Assert-Check ($env:UPBRR_E2E_RUNNER_VALIDATION -ceq 'must-not-reach-child') 'parent_environment_changed'
+  } finally { $env:UPBRR_E2E_RUNNER_VALIDATION = $prior }
+  $script:Run = @{ runId = 'synthetic-run'; buildIdentifier = 'synthetic-build'; budgets = @{ maxImages = 0 } }
+  $runtime = @{ buildIdentifier = 'synthetic-build'; testRuntime = @{ mode = 'live_test'; runId = 'synthetic-run'; trackerSubmissionAllowed = $false; clientMutationAllowed = $false; imageUploadsRequireJournal = $true; imageUploadLimit = 0 } }
+  Assert-Runtime $runtime
+  $runtime.testRuntime.imageUploadLimit = 1
+  $policyRejected = $false
+  try { Assert-Runtime $runtime } catch { $policyRejected = $true }
+  Assert-Check $policyRejected 'unexpected_image_permission_not_rejected'
+  $scenarioContract = Read-PrivateJson (Join-Path $PSScriptRoot 'scenarios.json')
+  Assert-Check (@($scenarioContract.input).Count -eq 25 -and @($scenarioContract.input | Select-Object -Unique).Count -eq 25 -and ($scenarioContract.input -join ',') -ceq ($scenarioContract.screenshots -join ',')) 'input_suite_baseline_case_inventory_changed'
+  $invalidInput = Start-OwnedProcess (Get-ToolPath 'pwsh') @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'run.ps1'), '-Suite', 'Input', '-ValidateOnly', '-UploadImages') (Join-Path $validationDir 'input-incompatible')
+  try {
+    Assert-Check ($invalidInput.process.WaitForExit(30000) -and $invalidInput.process.ExitCode -eq 2) 'input_suite_incompatible_flag_accepted'
+  } finally { Stop-OwnedProcess $invalidInput }
+  Assert-Check ((Get-Content -LiteralPath (Join-Path $validationDir 'input-incompatible.stdout.private.log') -Raw) -match 'reason=input_suite_incompatible_flag') 'input_suite_incompatible_flag_reason_changed'
+  $closedInput = Start-OwnedProcess (Get-ToolPath 'pwsh') @(
+    '-NoProfile', '-Command', '$line = [Console]::In.ReadLine(); if ($null -ne $line) { exit 3 }'
+  ) (Join-Path $validationDir 'closed-input') -CloseInput
+  try {
+    Assert-Check ($closedInput.process.WaitForExit(30000) -and $closedInput.process.ExitCode -eq 0) 'owned_process_standard_input_not_closed'
+  } finally { Stop-OwnedProcess $closedInput }
+  $runnerText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'run.ps1') -Raw
+  Assert-Check ($runnerText.Contains("if (`$Suite -eq 'Input')") -and $runnerText.Contains('$SkipDupes = $true') -and $runnerText.Contains("'input_ready'")) 'input_suite_normalization_or_goal_missing'
+  Assert-Check ($runnerText.Contains('lanes = [object[]]$browserLanes') -and $runnerText.Contains('$browserHandoff.lanes = [object[]]@($lane)')) 'browser_handoff_array_contract_missing'
+  foreach ($laneCount in @(0, 1, 2)) {
+    $fixtureLanes = [object[]]@()
+    if ($laneCount -ge 1) { $fixtureLanes += @{ laneId = 'lane-1' } }
+    if ($laneCount -ge 2) { $fixtureLanes += @{ laneId = 'lane-2' } }
+    $handoffPath = Join-Path $validationDir "browser-handoff-$laneCount.private.json"
+    Write-PrivateJson $handoffPath @{ lanes = [object[]]$fixtureLanes }
+    $handoffFixture = Read-PrivateJson $handoffPath
+    Assert-Check ($handoffFixture.lanes -is [System.Collections.IList] -and @($handoffFixture.lanes).Count -eq $laneCount) "browser_handoff_${laneCount}_lanes_not_array"
+  }
+  $cliText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'check-cli.ps1') -Raw
+  Assert-Check ($cliText.Contains("if (`$inputOnly) { `$arguments += '--input-only' } else { `$arguments += '--no-seed' }")) 'input_cli_did_not_use_dedicated_mode'
+  Assert-Check ($cliText.Contains("Start-OwnedProcess `$binary `$arguments (Join-Path `$script:RunDir 'cli') -CloseInput")) 'cli_standard_input_not_closed'
+  $cliAST = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'check-cli.ps1'), [ref]$null, [ref]$null)
+  $interactionParameter = @($cliAST.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -ceq 'InteractionMode' })
+  Assert-Check ($interactionParameter.Count -eq 1 -and $interactionParameter[0].DefaultValue.Value -ceq 'unattended') 'cli_interaction_default_changed'
+  $validateSet = @($interactionParameter[0].Attributes | Where-Object { $_.TypeName.Name -ceq 'ValidateSet' })
+  $validModes = @($validateSet[0].PositionalArguments | ForEach-Object { $_.Value })
+  Assert-Check ($validateSet.Count -eq 1 -and ($validModes -join ',') -ceq 'interactive,unattended,unattended_confirm') 'cli_interaction_modes_changed'
+  $interactionFunction = @($cliAST.FindAll({ param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-InteractionCLIArguments'
+  }, $true))
+  Assert-Check ($interactionFunction.Count -eq 1) 'cli_interaction_mapping_missing'
+  $interactionScript = [scriptblock]::Create($interactionFunction[0].Extent.Text)
+  & {
+    param($Block)
+    . $Block
+    foreach ($fixture in @(
+      @{ mode = 'interactive'; arguments = @() },
+      @{ mode = 'unattended'; arguments = @('--unattended') },
+      @{ mode = 'unattended_confirm'; arguments = @('--unattended_confirm') }
+    )) {
+      $arguments = @(Get-InteractionCLIArguments $fixture.mode)
+      Assert-Check (($arguments -join ',') -ceq ($fixture.arguments -join ',')) "cli_interaction_arguments_wrong_$($fixture.mode)"
+    }
+    $rejected = $false
+    try { Get-InteractionCLIArguments 'unknown' | Out-Null } catch { $rejected = $_.Exception.Message -eq 'cli_interaction_mode_invalid' }
+    Assert-Check $rejected 'cli_invalid_interaction_mode_accepted'
+  } $interactionScript
+  $retainedCorrectionFunction = @($cliAST.FindAll({ param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-RetainedInputCLIArguments'
+  }, $true))
+  Assert-Check ($retainedCorrectionFunction.Count -eq 1) 'cli_retained_correction_binding_missing'
+  $retainedCorrectionScript = [scriptblock]::Create($retainedCorrectionFunction[0].Extent.Text)
+  foreach ($fixture in @(
+    @{ name = 'absent'; case = @{}; identity = @{ TMDBID = $null; IMDBID = $null; TVDBID = $null; TVmazeID = $null; MALID = $null }; releaseName = @{ Tag = $null; UseSeasonEpisode = $null }; metadata = @{ Commentary = $false; Distributor = $null }; allowed = $true; arguments = @('--commentary=false') },
+    @{ name = 'empty'; case = @{ metadata_ids = @{} }; identity = @{}; releaseName = @{}; metadata = @{ TrackLanguages = @() }; allowed = $true; arguments = @() },
+    @{ name = 'supported'; case = @{ metadata_ids = @{ imdb = 1234567; mal = 45678 } }; identity = @{ IMDBID = 1234567; MALID = 45678 }; identityResetFields = @('identity.tmdb', 'release_name.category'); releaseName = @{}; metadata = @{ Commentary = $false }; allowed = $true; arguments = @('--reset-input', 'identity.tmdb', '--reset-input', 'release_name.category', '--commentary=false') },
+    @{ name = 'duplicate_reset'; case = @{}; identity = @{}; identityResetFields = @('identity.tmdb', 'identity.tmdb'); releaseName = @{}; metadata = @{}; allowed = $false },
+    @{ name = 'unknown_reset'; case = @{}; identity = @{}; identityResetFields = @('metadata.title'); releaseName = @{}; metadata = @{}; allowed = $false },
+    @{ name = 'scalar_reset'; case = @{}; identity = @{}; identityResetFields = 'identity.tmdb'; releaseName = @{}; metadata = @{}; allowed = $false },
+    @{ name = 'reset_value_conflict'; case = @{ metadata_ids = @{ imdb = 1234567 } }; identity = @{ IMDBID = 1234567 }; identityResetFields = @('identity.imdb'); releaseName = @{}; metadata = @{}; allowed = $false },
+    @{ name = 'mismatch'; case = @{ metadata_ids = @{ imdb = 1234567 } }; identity = @{ IMDBID = 7654321 }; releaseName = @{}; metadata = @{}; allowed = $false },
+    @{ name = 'zero'; case = @{}; identity = @{ IMDBID = 0 }; releaseName = @{}; metadata = @{}; allowed = $false },
+    @{ name = 'empty_string'; case = @{}; identity = @{}; releaseName = @{ Tag = '' }; metadata = @{}; allowed = $false },
+    @{ name = 'empty_array'; case = @{}; identity = @{}; releaseName = @{}; metadata = @{ Genres = @() }; allowed = $false },
+    @{ name = 'true_commentary'; case = @{}; identity = @{}; releaseName = @{}; metadata = @{ Commentary = $true }; allowed = $false }
+  )) {
+    & {
+      param($Block, $Fixture)
+      . $Block
+      $snapshot = @{ corrections = @{ corrections = @{ identity = $Fixture.identity; identityResetFields = $Fixture.identityResetFields; releaseName = $Fixture.releaseName; metadata = $Fixture.metadata } } }
+      $rejected = $false
+      try { $arguments = @(Get-RetainedInputCLIArguments $Fixture.case $snapshot) } catch { $rejected = $_.Exception.Message -eq 'cli_retained_corrections_not_representable' }
+      Assert-Check ($rejected -eq (-not $Fixture.allowed)) "cli_retained_correction_fixture_wrong_$($Fixture.name)"
+      if ($Fixture.allowed) { Assert-Check (($arguments -join ',') -ceq ($Fixture.arguments -join ',')) "cli_retained_correction_arguments_wrong_$($Fixture.name)" }
+    } $retainedCorrectionScript $fixture
+  }
+  & {
+    $node = Get-ToolPath 'node'
+    $receiptScript = Join-Path $PSScriptRoot 'read-cli-receipt.cjs'
+    function New-InputParityFixture {
+      @{
+        workflow = @{ revision = 16; release = @{ revision = 14 }; factInstructions = @{ revision = 14 }; inputReadiness = @{ revision = 15 } }
+        corrections = @{ revision = 3; corrections = @{
+          version = 1
+          identity = @{ TMDBID = $null; IMDBID = 0; TVDBID = $null; TVmazeID = $null; MALID = $null }
+          identityResetFields = @('identity.tmdb', 'release_name.category')
+          releaseName = @{ Tag = ''; UseSeasonEpisode = $null }
+          metadata = @{ Commentary = $false; Distributor = $null; Genres = @() }
+        } }
+        factInstructions = @{ revision = 14; correctionRevision = 3 }
+        inputReadiness = @{
+          revision = 15; correctionRevision = 3; factInstructions = @{ revision = 14 }; selectedTrackerIds = @('PTP')
+          fields = @(@{ key = 'metadata.hardcoded_subtitle_languages'; correctionField = 'metadata.hardcoded_subtitle_languages'; trackerIds = @('PTP'); status = 'ready'; disposition = 'strict' })
+        }
+        release = @{
+          revision = 14; factInstructions = @{ revision = 14 }
+          release = @{ Naming = @{ Title = 'Synthetic Title'; Source = 'WEB'; Tag = ''; Genres = @() }; Media = @{ Commentary = $false }; Identity = @{ IMDBID = 0; Category = 'movie' } }
+        }
+      }
+    }
+    function Compare-InputParityFixture([string]$Name, $Baseline, $CLI) {
+      $baselinePath = Join-Path $validationDir "cli-input-$Name-baseline.private.json"
+      $cliPath = Join-Path $validationDir "cli-input-$Name-cli.private.json"
+      $outputPath = Join-Path $validationDir "cli-input-$Name-result.private.json"
+      Write-PrivateJson $baselinePath $Baseline
+      Write-PrivateJson $cliPath $CLI
+      Invoke-OwnedProcess $node @($receiptScript, '--compare-input-fixture', $baselinePath, $cliPath, $outputPath) (Join-Path $validationDir "cli-input-$Name") 30
+      Read-PrivateJson $outputPath
+    }
+    $baselineInput = New-InputParityFixture
+    $cliInput = ConvertTo-Json $baselineInput -Depth 100 | ConvertFrom-Json -AsHashtable
+    $cliInput.workflow.revision = 3; $cliInput.workflow.release.revision = 1; $cliInput.workflow.factInstructions.revision = 1; $cliInput.workflow.inputReadiness.revision = 2
+    $cliInput.release.revision = 1; $cliInput.release.factInstructions.revision = 1
+    $cliInput.factInstructions.revision = 1; $cliInput.factInstructions.correctionRevision = 1
+    $cliInput.inputReadiness.revision = 2; $cliInput.inputReadiness.factInstructions.revision = 1; $cliInput.inputReadiness.correctionRevision = 1
+    $cliInput.corrections.revision = 1
+    $sameIntent = Compare-InputParityFixture 'same-intent' $baselineInput $cliInput
+    Assert-Check ($sameIntent.matches -and $sameIntent.validIdentifiers -and $sameIntent.validLocalRevisions -and
+      $sameIntent.revisions.baseline.corrections -eq 3 -and $sameIntent.revisions.cli.corrections -eq 1 -and
+      ($sameIntent.baseline.corrections.field -join ',') -ceq 'identity.imdb,identity.tmdb,metadata.commentary,metadata.genres,release_name.category,release_name.tag' -and
+      ($sameIntent.baseline.corrections.mode -join ',') -ceq 'manual,automatic,manual,manual,automatic,manual' -and
+      $sameIntent.baseline.readiness[0].key -ceq 'metadata.hardcoded_subtitle_languages' -and
+      $sameIntent.baseline.readiness[0].correctionField -ceq 'metadata.hardcoded_subtitle_languages') 'cli_input_durable_intent_or_revision_domains_changed'
+    $changedReset = ConvertTo-Json $cliInput -Depth 100 | ConvertFrom-Json -AsHashtable
+    $changedReset.corrections.corrections.identityResetFields = @('identity.tmdb')
+    Assert-Check (-not (Compare-InputParityFixture 'changed-reset' $baselineInput $changedReset).matches) 'cli_input_changed_reset_marker_passed'
+    $unknownReset = ConvertTo-Json $cliInput -Depth 100 | ConvertFrom-Json -AsHashtable
+    $unknownReset.corrections.corrections.identityResetFields = @('identity.tmdb', 'metadata.title')
+    $unknownResetResult = Compare-InputParityFixture 'unknown-reset' $baselineInput $unknownReset
+    Assert-Check (-not $unknownResetResult.matches -and -not $unknownResetResult.validIdentifiers) 'cli_input_unknown_reset_marker_passed'
+    $duplicateReset = ConvertTo-Json $cliInput -Depth 100 | ConvertFrom-Json -AsHashtable
+    $duplicateReset.corrections.corrections.identityResetFields = @('identity.tmdb', 'identity.tmdb')
+    $duplicateResetResult = Compare-InputParityFixture 'duplicate-reset' $baselineInput $duplicateReset
+    Assert-Check (-not $duplicateResetResult.matches -and -not $duplicateResetResult.validIdentifiers) 'cli_input_duplicate_reset_marker_passed'
+    $conflictingReset = ConvertTo-Json $cliInput -Depth 100 | ConvertFrom-Json -AsHashtable
+    $conflictingReset.corrections.corrections.identity.TMDBID = 987654
+    $conflictingResetResult = Compare-InputParityFixture 'conflicting-reset' $baselineInput $conflictingReset
+    Assert-Check (-not $conflictingResetResult.matches -and -not $conflictingResetResult.validIdentifiers) 'cli_input_reset_marker_value_conflict_passed'
+    $inconsistent = ConvertTo-Json $cliInput -Depth 100 | ConvertFrom-Json -AsHashtable
+    $inconsistent.inputReadiness.correctionRevision = 2
+    Assert-Check (-not (Compare-InputParityFixture 'inconsistent-revision' $baselineInput $inconsistent).matches) 'cli_input_inconsistent_local_revision_passed'
+    $changedValue = ConvertTo-Json $cliInput -Depth 100 | ConvertFrom-Json -AsHashtable
+    $changedValue.corrections.corrections.metadata.Commentary = $true
+    Assert-Check (-not (Compare-InputParityFixture 'changed-value' $baselineInput $changedValue).matches) 'cli_input_changed_correction_value_passed'
+    $changedField = ConvertTo-Json $cliInput -Depth 100 | ConvertFrom-Json -AsHashtable
+    $changedField.corrections.corrections.metadata.Commentary = $null; $changedField.corrections.corrections.releaseName.UseSeasonEpisode = $false
+    Assert-Check (-not (Compare-InputParityFixture 'changed-field' $baselineInput $changedField).matches) 'cli_input_changed_correction_field_passed'
+    $changedReadiness = ConvertTo-Json $cliInput -Depth 100 | ConvertFrom-Json -AsHashtable
+    $changedReadiness.inputReadiness.fields[0].status = 'missing'
+    Assert-Check (-not (Compare-InputParityFixture 'changed-readiness' $baselineInput $changedReadiness).matches) 'cli_input_changed_readiness_passed'
+    $changedFacts = ConvertTo-Json $cliInput -Depth 100 | ConvertFrom-Json -AsHashtable
+    $changedFacts.release.release.Naming.Title = 'Different Synthetic Title'
+    Assert-Check (-not (Compare-InputParityFixture 'changed-facts' $baselineInput $changedFacts).matches) 'cli_input_changed_effective_facts_passed'
+    $malformed = ConvertTo-Json $cliInput -Depth 100 | ConvertFrom-Json -AsHashtable
+    $malformed.inputReadiness.fields[0].key = 'metadata.bad$field'
+    $malformedResult = Compare-InputParityFixture 'malformed-identifier' $baselineInput $malformed
+    Assert-Check (-not $malformedResult.matches -and -not $malformedResult.validIdentifiers) 'cli_input_malformed_identifier_passed'
+  }
+  $inputBrowserText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'browser/input.spec.cjs') -Raw
+  $inputBrowserFields = @([regex]::Matches($inputBrowserText, "'((?:identity|release_name|metadata)\.[a-z_]+)'") | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
+  Assert-Check ($inputBrowserFields.Count -eq 45) 'input_browser_field_inventory_changed'
+  Assert-Check ($inputBrowserText.Contains('current.corrections?.corrections') -and -not $inputBrowserText.Contains('explicitCorrectionFields')) 'input_browser_did_not_use_persisted_corrections'
+  Assert-Check ($inputBrowserText.Contains("body.goal !== 'input_ready'") -and $inputBrowserText.Contains("input_browser_crossed_effect_boundary")) 'input_browser_boundary_spy_missing'
+  $priorRun = $script:Run
+  $script:Results = @()
+  $inputLane = @{ laneId = 'lane-input'; caseId = 'INPUT'; trackerIds = @('BLU', 'LST'); sat = $true; expectedIdentity = @{}; preparation = @{ Search = @{ Skip = $true } } }
+  $inputCurrent = @{
+    workflow = @{ id = 'workflow-input'; revision = 4; factInstructions = @{ id = 'facts-1'; revision = 2 }; release = @{ id = 'release-1'; revision = 3 }; inputReadiness = @{ id = 'readiness-1'; revision = 4 } }
+    release = @{ id = 'release-1'; revision = 3; release = @{ Identity = @{}; Source = @{} } }
+    factInstructions = @{ id = 'facts-1'; revision = 2; correctionRevision = 2 }
+    inputReadiness = @{ id = 'readiness-1'; revision = 4; correctionRevision = 2; selectedTrackerIds = @('LST', 'BLU'); status = 'completed'; fields = @(@{ key = 'source'; status = 'ready'; disposition = 'required' }) }
+    operation = @{ id = 'operation-1'; status = 'completed'; events = @(@{ sequence = 1 }, @{ sequence = 2 }) }
+  }
+  Assert-InputOnlyBoundary $inputLane $inputCurrent
+  $receipt = @($script:Results | Where-Object stage -EQ 'input_operation_receipt')
+  Assert-Check ($receipt.Count -eq 1 -and $receipt[0].reason -eq 'input_refs_bound_no_downstream_stage_refs' -and
+    @($receipt[0].evidence.observed.currentDownstreamStageRefs).Count -eq 0 -and @($receipt[0].evidence.observed.workflowDownstreamStageRefs).Count -eq 0 -and
+    $receipt[0].evidence.observed.workflowOperationJournal.eventCount -eq 2 -and $receipt[0].evidence.configured.clientSearchSkip -eq $true -and
+    -not $receipt[0].evidence.Contains('excluded')) 'input_observed_boundary_receipt_missing'
+  foreach ($changedTrackerIdentity in @(
+    @{ name = 'missing'; trackerIds = @('BLU') },
+    @{ name = 'extra'; trackerIds = @('BLU', 'LST', 'PTP') },
+    @{ name = 'duplicate'; trackerIds = @('BLU', 'LST', 'LST') }
+  )) {
+    $changedInput = ConvertTo-Json $inputCurrent -Depth 30 | ConvertFrom-Json -AsHashtable
+    $changedInput.inputReadiness.selectedTrackerIds = $changedTrackerIdentity.trackerIds
+    $rejected = $false
+    try { Assert-InputOnlyBoundary $inputLane $changedInput } catch { $rejected = $_.Exception.Message -eq 'input_tracker_requirements_changed' }
+    Assert-Check $rejected "input_tracker_identity_$($changedTrackerIdentity.name)_accepted"
+  }
+  $incompleteInput = ConvertTo-Json $inputCurrent -Depth 30 | ConvertFrom-Json -AsHashtable
+  $incompleteInput.inputReadiness.fields = @(@{ key = 'source'; status = 'missing'; disposition = 'strict' })
+  Assert-Check ((Record-Stage $inputLane $incompleteInput 'input_ready') -eq 'blocked') 'completed_input_snapshot_with_missing_strict_field_passed'
+  foreach ($stage in @('trackers_assessed', 'duplicates_decided', 'media_ready', 'image_host', 'descriptions_ready', 'dry_run', 'uploaded', 'client_write')) {
+    Assert-Check (@($script:Results | Where-Object { $_.stage -eq $stage -and $_.status -eq 'not_applicable' -and $_.reason -eq 'input_only_scope' }).Count -eq 1) "input_later_stage_not_excluded_$stage"
+  }
+  $nonSatLane = $inputLane.Clone(); $nonSatLane.laneId = 'lane-input-normal'; $nonSatLane.sat = $false; $nonSatLane.preparation = @{ Search = @{ Skip = $false } }
+  Assert-InputOnlyBoundary $nonSatLane $inputCurrent
+  $nonSatReceipt = @($script:Results | Where-Object { $_.laneId -eq 'lane-input-normal' -and $_.stage -eq 'input_operation_receipt' })[0]
+  Assert-Check ($nonSatReceipt.evidence.configured.clientSearchSkip -eq $false -and -not $nonSatReceipt.evidence.Contains('excluded')) 'input_normal_lane_fabricated_effect_observation'
+  foreach ($field in @('projections', 'preflight', 'dupes', 'media', 'descriptions', 'dryRun', 'uploadResult')) {
+    $crossed = ConvertTo-Json $inputCurrent -Depth 30 | ConvertFrom-Json -AsHashtable
+    $crossed[$field] = @{ status = 'completed' }
+    $rejected = $false
+    try { Assert-InputOnlyBoundary $inputLane $crossed } catch { $rejected = $_.Exception.Message -eq 'input_only_boundary_crossed' }
+    Assert-Check $rejected "input_boundary_did_not_reject_$field"
+  }
+  $script:Run = @{ suite = 'Input' }
+  $resumedInput = Resume-Lane $inputLane $inputCurrent 'input_ready'
+  Assert-Check ($resumedInput.workflow.id -ceq 'workflow-input') 'input_resume_advanced_past_readiness'
+  $invalidResume = $false
+  try { Resume-Lane $inputLane $inputCurrent 'prepared' | Out-Null } catch { $invalidResume = $_.Exception.Message -eq 'input_resume_goal_invalid' }
+  Assert-Check $invalidResume 'input_resume_accepted_full_flow_goal'
+  try {
+    $script:Results = @()
+    $intended = @('BLU', 'RETIRED', 'LST')
+    $script:Run = @{ selectedTrackers = $intended; configDefaultTrackers = @($intended); trackerScope = 'config_defaults'; caseIds = @('MOV-1080-WEB', 'TV-480') }
+    $catalog = @{ entries = @(@{ name = 'LST'; configured = $true }, @{ name = 'ANT'; configured = $true }, @{ name = 'BLU'; configured = $false }) }
+    Set-RunTrackerScope $catalog
+    Assert-Check (($script:Run.selectedTrackers -join ',') -ceq 'BLU,RETIRED,LST' -and ($script:Run.configDefaultTrackers -join ',') -ceq 'BLU,RETIRED,LST') 'intended_default_scope_changed'
+    Assert-Check (($script:Run.availableTrackers -join ',') -ceq 'BLU,LST' -and ($script:Run.unavailableTrackers -join ',') -ceq 'RETIRED') 'available_scope_reordered_filtered_by_auth_or_substituted'
+    Assert-Check ($script:Results.Count -eq 2 -and @($script:Results | Where-Object { $_.stage -ne 'tracker_availability' -or $_.status -ne 'blocked' -or $_.evidence.trackerId -cne 'RETIRED' }).Count -eq 0) 'unavailable_default_not_reported_per_case'
+    Assert-Check (($script:Results.caseId -join ',') -ceq 'MOV-1080-WEB,TV-480') 'unavailable_case_order_changed'
+    Set-RunTrackerScope $catalog
+    Assert-Check ($script:Results.Count -eq 2) 'resume_duplicated_unavailable_results'
+    $script:Run.selectedTrackers = @('BLU', 'RETIRED', 'LST', 'MISSING')
+    $script:Run.caseIds = @('MOV-1080-WEB')
+    Set-RunTrackerScope $catalog
+    Assert-Check ($script:Results.Count -eq 2 -and ($script:Results.evidence.trackerId -join ',') -ceq 'RETIRED,MISSING') 'unavailable_tracker_results_overwrite_each_other'
+    $changedRejected = $false
+    try { Set-RunTrackerScope @{ entries = @(@{ name = 'BLU' }, @{ name = 'ANT' }) } } catch { $changedRejected = $_.Exception.Message -eq 'tracker_availability_changed_new_run_required' }
+    Assert-Check ($changedRejected -and ($script:Run.availableTrackers -join ',') -ceq 'BLU,LST') 'resume_silently_changed_tracker_availability'
+    $script:Run = @{ selectedTrackers = @('RETIRED'); configDefaultTrackers = $intended; trackerScope = 'explicit'; caseIds = @('MOV-1080-WEB') }
+    $explicitRejected = $false
+    try { Set-RunTrackerScope $catalog } catch { $explicitRejected = $_.Exception.Message -eq 'explicit_tracker_not_registered' }
+    Assert-Check ($explicitRejected -and $script:Run.availableTrackers.Count -eq 0 -and $script:Run.selectedTrackers[0] -ceq 'RETIRED' -and $script:Results.Count -eq 1) 'explicit_unknown_tracker_not_blocked'
+    $script:Run = @{ selectedTrackers = @('RETIRED'); trackerScope = 'config_defaults'; caseIds = @('MOV-1080-WEB') }
+    $emptyRejected = $false
+    try { Set-RunTrackerScope $catalog } catch { $emptyRejected = $_.Exception.Message -eq 'no_registered_selected_trackers' }
+    Assert-Check ($emptyRejected -and $script:Run.availableTrackers.Count -eq 0) 'empty_registered_scope_used_fallback'
+  } finally { $script:Run = $priorRun }
+  $script:Results = @(); $script:Feedback = @(); $script:RemoteStop = $false
+  $lane = @{ laneId = 'lane-0001'; caseId = 'MOV-1080-WEB'; trackerIds = @('LST', 'BLU'); sat = $true }
+  $current = @{ workflow = @{ id = 'workflow-1'; revision = 7 }; selection = @{ trackerIds = @('LST', 'BLU'); fingerprint = 'selection-1' }; preflight = @{ status = 'ready'; results = @(@{ trackerId = 'LST'; state = 'ready'; authReady = $true }) } }
+  Assert-Check ((Record-Stage $lane $current 'trackers_assessed') -eq 'pass') 'ready_stage_not_recorded'
+  $binding = Get-FeedbackEvidence $current
+  $current.workflow.revision++
+  Assert-Check ((Get-FeedbackEvidence $current) -cne $binding) 'feedback_revision_not_bound'
+  $current.selection.trackerIds = @('LST')
+  $selectionRejected = $false
+  try { Record-Stage $lane $current 'trackers_assessed' | Out-Null } catch { $selectionRejected = $_.Exception.Message -eq 'tracker_selection_changed' }
+  Assert-Check $selectionRejected 'narrowed_default_list_not_rejected'
+  $current.selection.trackerIds = @('LST', 'BLU')
+  $current.dryRun = @{ status = 'ready'; noSeed = $false }
+  Assert-Check ((Record-Stage $lane $current 'dry_run') -eq 'fail') 'conflicting_no_seed_not_detected'
+  $script:RunDir = $validationDir
+  foreach ($goal in @('media_ready', 'descriptions_ready', 'dry_run')) {
+    $stageField = @{ media_ready = 'media'; descriptions_ready = 'descriptions'; dry_run = 'dryRun' }[$goal]
+    $skipped = @{ workflow = @{ id = 'workflow-1'; revision = 8 }; $stageField = @{ status = 'skipped'; noSeed = $true } }
+    Assert-Check (((Record-Stage $lane $skipped $goal) -eq 'pass') -eq ($goal -ne 'dry_run')) 'skipped_content_stage_handling_wrong'
+    $skipped.operation = @{ status = 'failed' }
+    Assert-Check ((Record-Stage $lane $skipped $goal) -eq 'fail') 'skipped_stage_hid_failed_operation'
+    $skipped.operation.status = 'completed'
+    foreach ($disposition in @('failed', 'needs_action', 'partial', 'canceled')) {
+      $skipped.continuation = @{ disposition = $disposition }
+      Assert-Check ((Record-Stage $lane $skipped $goal) -eq 'blocked') "skipped_stage_hid_${disposition}_continuation_${goal}"
+    }
+    $skipped.continuation.requiredActions = @(@{ id = 'action-1'; status = 'pending' })
+    Assert-Check ((Record-Stage $lane $skipped $goal) -eq 'needs_input') 'skipped_stage_lost_pending_action_priority'
+    $skipped.continuation.Remove('requiredActions')
+    $skipped[$stageField].status = 'ready'
+    Assert-Check ((Record-Stage $lane $skipped $goal) -eq 'pass') 'retained_completed_stage_lost_priority'
+    $skipped[$stageField].status = 'skipped'
+    foreach ($disposition in @('none', 'succeeded')) {
+      $skipped.continuation.disposition = $disposition
+      $expectedStatus = $(if ($goal -eq 'dry_run') { 'not_applicable' } else { 'pass' })
+      Assert-Check ((Record-Stage $lane $skipped $goal) -eq $expectedStatus) 'unnecessary_stage_was_blocked'
+    }
+    $skipped[$stageField].status = 'blocked'
+    Assert-Check ((Record-Stage $lane $skipped $goal) -eq 'blocked') 'blocked_stage_was_passed'
+    $skipped[$stageField].status = 'skipped'
+    $skipped.Remove('continuation')
+  }
+  $skipped.operation.status = 'completed'
+  Assert-Check ((Record-Stage $lane $skipped 'dry_run') -eq 'not_applicable') 'completed_tracker_skip_not_recorded'
+  $skipped.continuation = @{ disposition = 'needs_action' }
+  Assert-Check ((Record-Stage $lane $skipped 'dry_run') -eq 'blocked') 'tracker_skip_hid_blocked_continuation'
+  $skipped.dryRun.noSeed = $false
+  Assert-Check ((Record-Stage $lane $skipped 'dry_run') -eq 'fail') 'tracker_skip_hid_unlocked_no_seed'
+  foreach ($phase in @('local', 'hosted', 'restart')) {
+    foreach ($stage in @('selection_lifecycle', 'screenshot_delete_recapture', 'hosted_preview')) {
+      Add-Result 'RETRY' 'lane-retry' $stage 'needs_input' 'typed_action_required' @{ browserPhase = $phase }
+      Add-Result 'RETRY' 'lane-retry' $stage 'pass' 'retry_succeeded' @{ browserPhase = $phase }
+      $rows = @($script:Results | Where-Object { $_.caseId -eq 'RETRY' -and $_.stage -eq $stage -and $_.evidence.browserPhase -eq $phase })
+      Assert-Check ($rows.Count -eq 1 -and $rows[0].status -eq 'pass') 'browser_phase_retry_retains_obsolete_result'
+    }
+  }
+  foreach ($stage in @('embedded_browser', 'hosted_preview', 'image_host', 'dry_run')) {
+    Add-Result '' '' $stage 'fail' 'previous_attempt_failed'
+    Add-Result '' '' $stage 'pass' 'retry_succeeded'
+    Assert-Check (@($script:Results | Where-Object { -not $_.laneId -and $_.stage -eq $stage -and $_.status -ne 'pass' }).Count -eq 0) 'global_retry_retains_obsolete_result'
+  }
+  Add-Result '' '' 'forbidden_effects' 'fail' 'unexpected_policy_effect'
+  Add-Result '' '' 'forbidden_effects' 'pass' 'zero_forbidden_calls'
+  Assert-Check (@($script:Results | Where-Object { $_.stage -eq 'forbidden_effects' -and $_.status -eq 'fail' }).Count -eq 1) 'retry_hides_forbidden_effect'
+  $failedCapture = @{ workflow = @{ id = 'workflow-failed'; revision = 2 }; operation = @{ status = 'failed'; failures = @(@{ failure = @{ Code = 'stale_generation' } }) } }
+  Assert-Check ((Record-Stage $lane $failedCapture 'media_ready') -eq 'fail') 'failed_capture_reported_as_missing_stage'
+  Assert-Check ($script:Results[-1].reason -eq 'workflow_operation_failed' -and $script:Results[-1].evidence.failureCodes -contains 'stale_generation') 'capture_failure_evidence_missing'
+  $failedCapture.media = @{ status = 'failed'; artifacts = @(@{ kind = 'screenshot' }) }
+  Assert-Check ((Record-Stage $lane $failedCapture 'media_ready') -eq 'fail') 'retained_screenshot_masks_failed_capture'
+  $pendingDupes = @{ workflow = @{ id = 'workflow-dupes'; revision = 1; requiredActions = @(@{ id = 'review'; kind = 'review_duplicates'; status = 'pending' }) }; dupes = @{ status = 'blocked' } }
+  Assert-Check ((Record-Stage $lane $pendingDupes 'duplicates_decided') -eq 'needs_input') 'pending_duplicate_review_not_recorded'
+  $pendingDupes.workflow.Remove('requiredActions'); $pendingDupes.dupes.status = 'completed'
+  Assert-Check ((Record-Stage $lane $pendingDupes 'duplicates_decided') -eq 'pass') 'resolved_duplicate_review_not_recorded'
+  $dupeRows = @($script:Results | Where-Object { $_.laneId -ceq $lane.laneId -and $_.stage -eq 'duplicates_decided' })
+  Assert-Check ($dupeRows.Count -eq 1 -and $dupeRows[0].status -eq 'pass') 'obsolete_duplicate_feedback_retained_in_report'
+  $identityLane = $lane.Clone()
+  $identityLane.expectedIdentity = $identity.Clone()
+  $identityCurrent = @{ workflow = @{ id = 'workflow-identity'; revision = 1 }; release = @{ release = @{ Identity = $identity.Clone() } } }
+  Assert-Check ((Record-Stage $identityLane $identityCurrent 'prepared') -eq 'pass') 'matching_prepared_identity_rejected'
+  $identityCurrent.release.release.Identity.IMDBID = 7654321
+  Assert-Check ((Record-Stage $identityLane $identityCurrent 'prepared') -eq 'fail' -and $script:Results[-1].reason -eq 'metadata_identity_mismatch') 'wrong_prepared_identity_accepted'
+  $identityCurrent.release.release.Remove('Identity')
+  Assert-Check ((Record-Stage $identityLane $identityCurrent 'prepared') -eq 'fail') 'missing_prepared_identity_accepted'
+  $identityCurrent.workflow.requiredActions = @(@{ id = 'identity-choice'; kind = 'select_metadata'; status = 'pending' })
+  Assert-Check ((Record-Stage $identityLane $identityCurrent 'prepared') -eq 'needs_input') 'pending_identity_question_changed_to_failure'
+  $identityLane.expectedPlaylists = @('00001.MPLS')
+  $identityCurrent.workflow.Remove('requiredActions')
+  $identityCurrent.release.release.Identity = $identity.Clone()
+  # PlaylistInfo uses explicit lower-case JSON tags, unlike SourceManifest.
+  $identityCurrent.release.release.Source = '{"SelectedPlaylists":[{"file":"00002.MPLS"}]}' | ConvertFrom-Json -AsHashtable
+  Assert-Check ((Record-Stage $identityLane $identityCurrent 'prepared') -eq 'fail' -and $script:Results[-1].reason -eq 'bdmv_playlist_selection_mismatch') 'wrong_prepared_playlist_accepted'
+  $identityCurrent.release.release.Source.SelectedPlaylists[0].file = '00001.mpls'
+  Assert-Check ((Record-Stage $identityLane $identityCurrent 'prepared') -eq 'pass') 'confirmed_prepared_playlist_rejected'
+  $identityCurrent.release.release.Source.Remove('SelectedPlaylists')
+  Assert-Check ((Record-Stage $identityLane $identityCurrent 'prepared') -eq 'fail') 'missing_prepared_playlist_accepted'
+  $identityLane.expectedPlaylists = @(('disc-' + ('a' * 64) + ':00001.MPLS'), ('disc-' + ('b' * 64) + ':00001.MPLS'))
+  $identityCurrent.release.release.Source.SelectedPlaylists = @(
+    @{ discId = ('disc-' + ('a' * 64)); file = '00001.mpls' },
+    @{ discId = ('disc-' + ('b' * 64)); file = '00001.mpls' }
+  )
+  Assert-Check ((Record-Stage $identityLane $identityCurrent 'prepared') -eq 'pass') 'prepared_disc_scoped_playlists_rejected'
+  $identityCurrent.release.release.Source.SelectedPlaylists[1].discId = 'disc-' + ('a' * 64)
+  Assert-Check ((Record-Stage $identityLane $identityCurrent 'prepared') -eq 'fail') 'prepared_playlist_wrong_disc_accepted'
+  $gitPath = Get-ToolPath 'git'
+  Assert-Check ($gitPath -is [string] -and $gitPath -ceq (Get-Command git -CommandType Application | Select-Object -First 1).Source) 'tool_path_not_single_application'
+  Invoke-OwnedProcess $gitPath @('--version') (Join-Path $validationDir 'git-single-path') 30
+  New-Item -ItemType Directory -Path (Join-Path $validationDir 'snapshots') | Out-Null
+  $script:Run.budgets.timeoutSeconds = 30
+  $script:Lanes = @($lane)
+  $originalAPI = (Get-Item Function:Invoke-LiveAPI).ScriptBlock
+  $script:FakeRequests = @(); $script:FakeStep = 0; $script:FakePolls = 0
+  function Invoke-LiveAPI([string]$Method, $Body = @{}, [switch]$Poll, [int]$ExpectedStatus = 200) {
+    if ($Method -eq 'GetReleaseWorkflow') {
+      $script:FakePolls++
+      return @{ workflow = @{ id = 'workflow-1'; revision = 3 }; operation = @{ status = 'completed' }; release = @{ id = 'release-1' } }
+    }
+    $script:FakeRequests += @(ConvertTo-Json $Body -Depth 40 | ConvertFrom-Json -AsHashtable)
+    $script:FakeStep++
+    switch ($script:FakeStep) {
+      1 { return @{ workflow = @{ id = 'workflow-1'; revision = 1 } } }
+      2 { return @{ workflow = @{ id = 'workflow-1'; revision = 2 }; operation = @{ status = 'queued' } } }
+      default {
+        return @{ workflow = @{ id = 'workflow-1'; revision = 4; requiredActions = @(@{ id = 'action-lst'; kind = 'provide_tracker_input'; trackerId = 'LST'; status = 'pending'; workflowRevision = 4 }) }; release = @{ id = 'release-1' }; preflight = @{ status = 'ready'; results = @(@{ trackerId = 'BLU'; state = 'ready'; authReady = $true }, @{ trackerId = 'LST'; state = 'blocked'; authReady = $false }) } }
+      }
+    }
+  }
+  try {
+    $lane.expectedIdentity = $identity.Clone()
+    $intent = @{ trackerIds = @('LST', 'BLU'); noSeed = $true; preparation = @{ SourcePath = $source; Search = @{ Skip = $true }; Force = $true; Instructions = @{ Identity = Get-CaseIdentityOverrides $identityCase } } }
+    $advanced = Continue-Lane $lane 'trackers_assessed' $null $intent
+    Assert-Check ($script:FakeStep -eq 4 -and $script:FakePolls -eq 1 -and $advanced.release -and $advanced.preflight) 'continuation_stopped_after_creation'
+    Assert-Check (-not $script:FakeRequests[0].authority -and $script:FakeRequests[1].authority.expectedRevision -eq 1 -and $script:FakeRequests[2].authority.expectedRevision -eq 3 -and $script:FakeRequests[3].authority.expectedRevision -eq 4) 'continuation_authority_not_current'
+    Assert-Check (@($script:FakeRequests.idempotencyKey | Select-Object -Unique).Count -eq 1) 'continuation_idempotency_changed'
+    Assert-Check (@($script:FakeRequests | Where-Object { -not $_.intent.preparation -or $_.intent.trackerIds.Count -ne 2 }).Count -eq 0) 'creation_intent_or_full_trackers_lost'
+    Assert-Check (@($script:FakeRequests | Where-Object { $_.intent.preparation.Instructions.Identity.IMDBID -ne 1234567 -or $_.intent.preparation.Instructions.Identity.TVmazeID -ne 34567 }).Count -eq 0) 'identity_lost_during_preparation'
+    $recorded = @(Read-PrivateJson (Join-Path $validationDir 'lanes.private.json'))[0]
+    Assert-Check ($recorded.authority.expectedRevision -eq 4 -and $recorded.preparation.SourcePath -ceq $source) 'latest_authority_or_preparation_not_saved'
+    Assert-Check ($recorded.preparation.Instructions.Identity.IMDBID -eq 1234567 -and $recorded.preparation.Instructions.Identity.TMDBID -eq 12345 -and $recorded.preparation.Instructions.Identity.TVDBID -eq 23456 -and $recorded.preparation.Instructions.Identity.TVmazeID -eq 34567) 'identity_not_saved_for_continuation'
+    Assert-Check ($recorded.expectedIdentity.IMDBID -eq 1234567 -and $recorded.expectedIdentity.TVmazeID -eq 34567) 'expected_identity_not_saved'
+    # The blocked LST action does not make the adapter stop before BLU's backend transition.
+    Assert-Check (@(Get-PendingActions $advanced).Count -eq 1 -and $advanced.preflight.results[0].state -eq 'ready') 'partial_tracker_evidence_lost'
+  } finally { Set-Item Function:Invoke-LiveAPI -Value $originalAPI }
+
+  $script:FakeRequests = @(); $script:FakeStep = 0
+  function Invoke-LiveAPI([string]$Method, $Body = @{}, [switch]$Poll, [int]$ExpectedStatus = 200) {
+    $script:FakeRequests += @(ConvertTo-Json $Body -Depth 40 | ConvertFrom-Json -AsHashtable)
+    $script:FakeStep++
+    $changedIdentity = $identity.Clone(); $changedIdentity.IMDBID = 7654321
+    @{ workflow = @{ id = 'workflow-1'; revision = 2 }; release = @{ id = 'release-1'; release = @{ Identity = $changedIdentity } }; factInstructions = @{ instructions = @{ SourceLookup = 'operator-selected-synthetic-source'; Identity = $changedIdentity } } }
+  }
+  try {
+    $old = @{ workflow = @{ id = 'workflow-1'; revision = 1 } }
+    $intent = @{ preparation = @{ SourcePath = $source; Instructions = @{ Identity = $identity.Clone() } }; noSeed = $true }
+    $answer = @{ actionId = 'action-1'; workflowRevision = 1; selectedValues = @('synthetic-1') }
+    $answered = Continue-Lane $lane 'prepared' $old $intent @($answer)
+    Assert-Check ($script:FakeRequests.Count -eq 2 -and $script:FakeRequests[0].answers.Count -eq 1 -and -not $script:FakeRequests[1].answers) 'revision_bound_answer_replayed'
+    Assert-Check ($script:FakeRequests[1].intent.preparation.Instructions.SourceLookup -ceq 'operator-selected-synthetic-source' -and -not $intent.preparation.Instructions.SourceLookup) 'accepted_facts_reset_or_caller_intent_mutated'
+    Assert-Check ($lane.expectedIdentity.IMDBID -eq 1234567 -and $lane.preparation.Instructions.Identity.IMDBID -eq 7654321) 'answered_identity_replaced_case_expectation'
+    Assert-Check ((Record-Stage $lane $answered 'prepared') -eq 'fail' -and $script:Results[-1].reason -eq 'metadata_identity_mismatch') 'answered_identity_mismatch_accepted'
+  } finally { Set-Item Function:Invoke-LiveAPI -Value $originalAPI }
+
+  $script:FakeRequests = @()
+  function Invoke-LiveAPI([string]$Method, $Body = @{}, [switch]$Poll, [int]$ExpectedStatus = 200) {
+    $script:FakeRequests += @(ConvertTo-Json $Body -Depth 40 | ConvertFrom-Json -AsHashtable)
+    if ($Body.answers -or -not $Body.intent.factInstructions.Playlist.Set -or
+        ($Body.intent.factInstructions.Playlist.Selected -join ',') -cne 'disc-one:00000.MPLS,disc-two:00000.MPLS,disc-three:00000.MPLS' -or
+        $Body.intent.preparation.Instructions.Identity.IMDBID -ne 1234567) { throw 'playlist_answer_not_routed_to_facts' }
+    @{ workflow = @{ id = 'workflow-1'; revision = 2 }; release = @{ id = 'release-1' } }
+  }
+  try {
+    $values = @('disc-one:00000.MPLS', 'disc-two:00000.MPLS', 'disc-three:00000.MPLS')
+    $action = @{ id = 'playlist-1'; kind = 'select_playlist'; status = 'pending'; options = @($values | ForEach-Object { @{ value = $_ } }) }
+    $old = @{ workflow = @{ id = 'workflow-1'; revision = 7; requiredActions = @($action) }; factInstructions = @{ instructions = @{ Identity = @{ IMDBID = 1234567 }; Playlist = @{ Set = $false } } } }
+    $intent = @{ preparation = @{ SourcePath = $source; Instructions = $old.factInstructions.instructions }; noSeed = $true }
+    $answer = @{ actionId = 'playlist-1'; workflowRevision = 7; selectedValues = $values }
+    $null = Continue-Lane $lane 'prepared' $old $intent @($answer)
+    Assert-Check ($script:FakeRequests.Count -eq 2 -and -not $intent.preparation.Instructions.Playlist.Set) 'playlist_resume_mutated_original_or_stopped_early'
+    foreach ($invalid in @(@{ actionId = 'playlist-1'; workflowRevision = 6; selectedValues = $values }, @{ actionId = 'playlist-1'; workflowRevision = 7; selectedValues = @('unknown:00000.MPLS') }, @{ actionId = 'playlist-1'; workflowRevision = 7; selectedValues = @() })) {
+      $rejected = $false
+      try { Continue-Lane $lane 'prepared' $old $intent @($invalid) | Out-Null } catch { $rejected = $_.Exception.Message -eq 'feedback_playlist_answer_invalid' }
+      Assert-Check $rejected 'invalid_playlist_feedback_accepted'
+    }
+  } finally { Set-Item Function:Invoke-LiveAPI -Value $originalAPI }
+
+  $script:FakeRequests = @()
+  function Invoke-LiveAPI([string]$Method, $Body = @{}, [switch]$Poll, [int]$ExpectedStatus = 200) {
+    $script:FakeRequests += @(ConvertTo-Json $Body -Depth 40 | ConvertFrom-Json -AsHashtable)
+    if ($Body.answers -or $Body.intent.duplicateDecisions.HDB -cne 'ignored') { throw 'duplicate_answer_not_routed_to_decision' }
+    if ($script:FakeRequests.Count -eq 1) {
+      return @{ workflow = @{ id = 'workflow-1'; revision = 2 }; dupes = @{ status = 'completed' } }
+    }
+    if ($Body.intent.media.screenshotCount -ne 4) { throw 'resumed_capture_instructions_missing' }
+    @{ workflow = @{ id = 'workflow-1'; revision = 3 }; media = @{ status = 'completed' } }
+  }
+  try {
+    $duplicateLane = @{ laneId = 'lane-duplicate'; trackerIds = @('HDB') }
+    $review = @{ id = 'review-1'; kind = 'review_duplicates'; status = 'pending'; trackerId = 'HDB'; options = @(@{ value = 'accepted' }, @{ value = 'ignored' }) }
+    $old = @{ workflow = @{ id = 'workflow-1'; revision = 1; requiredActions = @($review) } }
+    $intent = @{ trackerIds = @('HDB'); noSeed = $true; media = @{ screenshotCount = 4; purpose = 'final'; captureDvdMenus = $false } }
+    $answer = @{ actionId = 'review-1'; workflowRevision = 1; selectedValues = @('ignored') }
+    $resumed = Continue-Lane $duplicateLane 'media_ready' $old $intent @($answer)
+    Assert-Check ($resumed.media.status -eq 'completed' -and $script:FakeRequests.Count -eq 3) 'duplicate_resume_did_not_reach_media'
+    Assert-Check (-not $intent.duplicateDecisions) 'duplicate_resume_mutated_original_intent'
+    $mixedRejected = $false
+    try { Continue-Lane $duplicateLane 'media_ready' $old $intent @($answer, @{ actionId = 'metadata-1'; workflowRevision = 1; selectedValues = @('synthetic-1') }) | Out-Null } catch { $mixedRejected = $_.Exception.Message -eq 'feedback_duplicate_requires_separate_transition' }
+    Assert-Check $mixedRejected 'duplicate_decision_carried_across_other_answers'
+    foreach ($invalid in @(@{ actionId = 'review-1'; workflowRevision = 0; selectedValues = @('ignored') }, @{ actionId = 'review-1'; workflowRevision = 1; selectedValues = @('pending') }, @{ actionId = 'review-1'; workflowRevision = 1; selectedValues = @('accepted', 'ignored') })) {
+      $rejected = $false
+      try { Continue-Lane $duplicateLane 'media_ready' $old $intent @($invalid) | Out-Null } catch { $rejected = $_.Exception.Message -eq 'feedback_duplicate_answer_invalid' }
+      Assert-Check $rejected 'invalid_duplicate_answer_accepted'
+    }
+  } finally { Set-Item Function:Invoke-LiveAPI -Value $originalAPI }
+
+  $script:FakeStep = 0
+  function Invoke-LiveAPI([string]$Method, $Body = @{}, [switch]$Poll, [int]$ExpectedStatus = 200) {
+    $script:FakeStep++
+    @{ workflow = @{ id = 'workflow-1'; revision = $script:FakeStep + 1 } }
+  }
+  try {
+    $limited = $false
+    try { Continue-Lane $lane 'prepared' @{ workflow = @{ id = 'workflow-1'; revision = 1 } } @{ noSeed = $true } | Out-Null } catch { $limited = $_.Exception.Message -eq 'workflow_transition_limit_exceeded' }
+    Assert-Check ($limited -and $script:FakeStep -eq 32) 'continuation_not_bounded'
+  } finally { Set-Item Function:Invoke-LiveAPI -Value $originalAPI }
+
+  $action = @{ id = 'action-1'; kind = 'select_metadata'; status = 'pending'; trackerId = ''; workflowRevision = 7; prompt = 'Choose the verified synthetic work'; options = @(@{ value = 'synthetic-1'; label = 'Synthetic Work' }) }
+  $current = @{ workflow = @{ id = 'workflow-1'; revision = 7; requiredActions = @($action) }; selection = @{ fingerprint = 'selection-1' }; factInstructions = @{ fingerprint = 'facts-1' } }
+  Save-Feedback $lane $current 'prepared'
+  $feedback = $script:Feedback[0]
+  $feedback.answers = @(@{ actionId = 'action-1'; workflowRevision = 7; selectedValues = @('synthetic-1') })
+  $feedback.acceptedAt = '2026-09-05T00:00:00Z'; $feedback.rationale = 'Synthetic accepted choice'
+  $current = ConvertTo-Json $current -Depth 30 | ConvertFrom-Json -AsHashtable
+  $current.workflow.revision = 8; $current.workflow.requiredActions[0].workflowRevision = 8
+  Assert-Check ((Resolve-FeedbackAuthority $lane $feedback $current) -eq 'rebound') 'equivalent_restart_authority_not_rebound'
+  Assert-Check ($feedback.answers[0].workflowRevision -eq 8 -and $feedback.authority.expectedRevision -eq 8) 'answer_retains_old_authority'
+  $current.workflow.revision = 9; $current.workflow.requiredActions[0].workflowRevision = 9
+  $current.factInstructions.fingerprint = 'facts-changed'
+  Assert-Check ((Resolve-FeedbackAuthority $lane $feedback $current) -eq 'refreshed') 'changed_feedback_evidence_not_refreshed'
+  $refreshed = $script:Feedback[0]
+  Assert-Check ($refreshed.authority.expectedRevision -eq 9 -and @($refreshed.answers).Count -eq 0 -and -not $refreshed.acceptedAt -and $refreshed.status -eq 'needs_input') 'stale_answers_not_cleared'
+  # Another restart only changes authority: fresh user acceptance remains usable.
+  $refreshed.answers = @(@{ actionId = 'action-1'; workflowRevision = 9; selectedValues = @('synthetic-1') })
+  $refreshed.acceptedAt = '2026-09-05T01:00:00Z'; $refreshed.rationale = 'Reviewed changed synthetic evidence'
+  $current.workflow.revision = 10; $current.workflow.requiredActions[0].workflowRevision = 10
+  Assert-Check ((Resolve-FeedbackAuthority $lane $refreshed $current) -eq 'rebound' -and $refreshed.answers[0].workflowRevision -eq 10) 'restart_refresh_loop_prevents_resume'
+  $originalProcess = ${function:Invoke-OwnedProcess}
+  $requestsBeforeBrowser = $script:RequestCount
+  function Invoke-OwnedProcess {
+    Write-PrivateJson (Join-Path $script:RunDir 'browser-requests.private.json') @{ requests = 3 }
+    Write-PrivateJson (Join-Path $script:RunDir 'browser-results.json') @{ results = @(@{ caseId = 'MOV-1080-WEB'; laneId = 'lane-0001'; stage = 'synthetic_browser_evidence'; status = 'pass'; reason = 'completed_before_failure' }) }
+    throw 'synthetic_browser_failed'
+  }
+  try {
+    $browserFailed = $false
+    try { Invoke-BrowserCheck | Out-Null } catch { $browserFailed = $_.Exception.Message -eq 'synthetic_browser_failed' }
+    Assert-Check ($browserFailed -and $script:RequestCount -eq $requestsBeforeBrowser + 3) 'failed_browser_budget_lost'
+    Assert-Check (@($script:Results | Where-Object stage -EQ 'synthetic_browser_evidence').Count -eq 1) 'failed_browser_evidence_lost'
+    Add-Result 'MOV-1080-WEB' 'lane-0001' 'screenshot_cancellation' 'needs_input' 'typed_action_required' @{ browserPhase = 'local' }
+    Add-Result 'MOV-1080-WEB' 'lane-0001' 'screenshot_lifecycle_restore' 'needs_input' 'typed_action_required' @{ browserPhase = 'local' }
+    Add-Result 'MOV-1080-WEB' 'lane-0001' 'hosted_preview' 'pass' 'hosted_checked' @{ browserPhase = 'hosted' }
+    function Invoke-OwnedProcess {
+      Write-PrivateJson (Join-Path $script:RunDir 'browser-requests.private.json') @{ requests = 2 }
+      Write-PrivateJson (Join-Path $script:RunDir 'browser-results.json') @{ results = @(@{ caseId = 'MOV-1080-WEB'; laneId = 'lane-0001'; stage = 'screenshot_delete_recapture'; status = 'not_applicable'; reason = 'covered_in_another_lane' }) }
+    }
+    Invoke-BrowserCheck | Out-Null
+    $localRows = @($script:Results | Where-Object { $_.evidence.browserPhase -eq 'local' })
+    Assert-Check ($localRows.Count -eq 1 -and $localRows[0].stage -eq 'screenshot_delete_recapture') 'browser_retry_retains_omitted_previous_stages'
+    Assert-Check (@($script:Results | Where-Object { $_.laneId -eq 'lane-0001' -and $_.evidence.browserPhase -eq 'hosted' -and $_.stage -eq 'hosted_preview' }).Count -eq 1) 'browser_retry_erases_another_phase'
+  } finally { Set-Item Function:Invoke-OwnedProcess -Value $originalProcess }
+  $originalFeedback = (Get-Item Function:Save-Feedback).ScriptBlock
+  function Save-Feedback($Lane, $Current, [string]$Goal) {}
+  try {
+    $script:Results = @()
+    $dupeLane = @{ caseId = 'SYNTHETIC'; laneId = 'lane-0001'; trackerIds = @('LST', 'BHD'); sat = $false }
+    $dupeCurrent = @{ dupes = @{ status = 'completed'; results = @(
+      @{ trackerId = 'LST'; status = 'completed'; decision = 'accepted'; uploadReleaseName = 'PRIVATE_SENTINEL'; search = @{ scope = 'local_client'; complete = $true; candidateCount = 1 }; matches = @(@{ title = 'PRIVATE_SENTINEL' }) },
+      @{ trackerId = 'BHD'; status = 'completed'; decision = 'no_match'; search = @{ scope = 'work_category'; complete = $true; pages = 1 }; criteria = @{ privateURL = 'PRIVATE_SENTINEL' } }
+    ) } }
+    $null = Record-Stage $dupeLane $dupeCurrent 'duplicates_decided'
+    $observations = $script:Results[0].evidence.duplicateSearches
+    Assert-Check ($observations.Count -eq 2 -and $observations[0].scope -ceq 'local_client' -and $observations[0].pages -eq 0 -and $observations[1].scope -ceq 'work_category' -and $observations[1].pages -eq 1 -and $observations[1].candidateCount -eq 0) 'duplicate_search_scope_evidence_lost'
+    Assert-Check ((ConvertTo-Json $script:Results -Depth 40) -cnotmatch 'PRIVATE_SENTINEL') 'duplicate_search_report_leaked_private_fields'
+  } finally { Set-Item Function:Save-Feedback -Value $originalFeedback }
+  $script:AcceptedPolls = 0
+  $script:PacingSleeps = 0
+  function Start-Sleep([int]$Milliseconds) { if ($Milliseconds -eq 250) { $script:PacingSleeps++ } }
+  $script:BaseURL = 'http://127.0.0.1:7480'; $script:CSRF = 'synthetic-csrf'
+  function Invoke-WebRequest($Uri, $Method, $ContentType, $Body, $WebSession, $Headers, $TimeoutSec, [switch]$SkipHttpErrorCheck) {
+    Assert-Check ($Headers.Origin -ceq $script:BaseURL -and $Headers.'X-CSRF-Token' -ceq 'synthetic-csrf') 'application_request_origin_or_csrf_missing'
+    $script:AcceptedPolls++
+    Assert-Check ($script:PacingSleeps -eq $script:AcceptedPolls) 'application_request_not_paced'
+    if ($Uri.EndsWith('/UploadReleaseWorkflowImages')) {
+      return @{ StatusCode = 202; Content = '{"workflow":{"id":"synthetic-workflow"},"operation":{"status":"running"}}' }
+    }
+    Assert-Check ($Uri.EndsWith('/GetReleaseWorkflow')) 'accepted_operation_not_polled'
+    return @{ StatusCode = 200; Content = '{"workflow":{"id":"synthetic-workflow"},"operation":{"status":"completed"}}' }
+  }
+  try {
+    $accepted = Invoke-LiveAPI 'UploadReleaseWorkflowImages' @{} -ExpectedStatus 202 -Poll
+    $completed = Wait-Workflow $accepted (Join-Path $validationDir 'accepted.private.json')
+    Assert-Check ($script:AcceptedPolls -eq 2 -and $completed.operation.status -ceq 'completed') 'accepted_image_upload_not_awaited'
+  } finally { Remove-Item Function:Invoke-WebRequest; Remove-Item Function:Start-Sleep }
+  function Invoke-WebRequest { $script:FailedResponse }
+  try {
+    foreach ($status in @(401, 403, 409, 429, 500)) {
+      $script:RemoteStop = $false
+      $content = $(if ($status -eq 409) { '{"error":"PRIVATE_SENTINEL","failure":{"Code":"incompatible_generation","Operation":"preparation","Message":"PRIVATE_SENTINEL","Recovery":"reprepare"}}' } else { '{"error":"rate limit exceeded","private":"PRIVATE_SENTINEL"}' })
+      $script:FailedResponse = @{ StatusCode = $status; Content = $content }
+      $failed = $false
+      try { Invoke-LiveAPI 'GetApplicationInfo' -Poll | Out-Null } catch { $failed = $_.Exception.Message -ceq 'api_request_failed' }
+      Assert-Check $failed 'unexpected_http_status_not_rejected'
+      Assert-Check ($script:RemoteStop -eq ($status -eq 429 -or $status -ge 500)) 'http_failure_stop_policy_changed'
+    }
+    foreach ($content in @('{"error":"PRIVATE_SENTINEL"}', '{"error":["rate limit exceeded","PRIVATE_SENTINEL"]}', '{"error":"PRIVATE_SENTINEL","failure":{"Code":"INVALID-CODE","Recovery":"../retry"}}', ('PRIVATE_SENTINEL' * 300), 'not JSON')) {
+      $script:FailedResponse = @{ StatusCode = 403; Content = $content }
+      try { Invoke-LiveAPI 'GetApplicationInfo' -Poll | Out-Null } catch { }
+    }
+    $diagnosticPath = Join-Path $script:RunDir 'api-errors.private.jsonl'
+    $diagnostics = @(Get-Content -LiteralPath $diagnosticPath | ForEach-Object { $_ | ConvertFrom-Json -AsHashtable })
+    Assert-Check ($diagnostics.Count -eq 10 -and $diagnostics[2].status -eq 409 -and $diagnostics[2].failureCode -ceq 'incompatible_generation' -and $diagnostics[2].recovery -ceq 'reprepare' -and
+      $diagnostics[3].status -eq 429 -and $diagnostics[3].expectedStatus -eq 200 -and $diagnostics[3].method -ceq 'GetApplicationInfo' -and $diagnostics[3].errorCode -ceq 'rate_limit_exceeded' -and
+      @($diagnostics[5..9] | Where-Object { $_.errorCode -cne 'unclassified' -or $_.failureCode -cne 'unclassified' -or $_.recovery -cne 'unclassified' }).Count -eq 0) 'http_failure_diagnostic_lost'
+    Assert-Check ((Get-Content -LiteralPath $diagnosticPath -Raw) -cnotmatch 'PRIVATE_SENTINEL') 'http_failure_diagnostic_leaked_response'
+    Invoke-LiveAPI 'UploadReleaseWorkflow' -ExpectedStatus 403 -Poll | Out-Null
+    Assert-Check (@(Get-Content -LiteralPath $diagnosticPath).Count -eq 10) 'expected_http_status_reported_as_failure'
+  } finally { Remove-Item Function:Invoke-WebRequest }
+  $originalStart = ${function:Start-OwnedProcess}
+  $originalStop = ${function:Stop-OwnedProcess}
+  $originalRead = ${function:Read-PrivateJson}
+  function Start-OwnedProcess {
+    $process = [pscustomobject]@{ ExitCode = $script:CleanupExit }
+    $process | Add-Member ScriptMethod WaitForExit { param($Timeout) return $true }
+    @{ process = $process }
+  }
+  function Stop-OwnedProcess {}
+  function Read-PrivateJson { $script:CleanupReceipt }
+  try {
+    foreach ($failure in @('pending', 'unknown', 'failed', 'exit', 'identity', 'none')) {
+      $script:CleanupReceipt = @{ runId = $script:Run.runId; deleted = 2; pending = 0; unknown = 0; failed = 0 }
+      $script:CleanupExit = 0
+      if ($failure -in @('pending', 'unknown', 'failed')) { $script:CleanupReceipt[$failure] = 1 }
+      if ($failure -eq 'exit') { $script:CleanupExit = 2 }
+      if ($failure -eq 'identity') { $script:CleanupReceipt.runId = 'wrong-run' }
+      $failed = $false
+      try { Invoke-RunCleanup } catch { $failed = $true }
+      Assert-Check ($failed -eq ($failure -ne 'none')) 'cleanup_failure_not_propagated'
+      Assert-Check (($script:Cleanup.state -eq 'complete') -eq ($failure -eq 'none')) 'cleanup_incorrectly_complete'
+      if ($failure -in @('pending', 'unknown', 'failed')) { Assert-Check ($script:Cleanup[$failure] -eq 1) 'cleanup_counter_lost' }
+      if ($failure -eq 'identity') { Assert-Check ($null -eq $script:Cleanup.unknown) 'unverified_cleanup_claims_zero_unknown' }
+    }
+  } finally {
+    Set-Item Function:Start-OwnedProcess -Value $originalStart
+    Set-Item Function:Stop-OwnedProcess -Value $originalStop
+    Set-Item Function:Read-PrivateJson -Value $originalRead
+  }
+  # Exercise the real runner's catch/finally without using a runtime or live profile.
+  $resumeRoot = Join-Path $validationDir 'resume-appdata'
+  $resumePrivate = Join-Path $resumeRoot 'upbrr-live-testing'
+  foreach ($state in @('cleaned', 'cleanup_pending', 'needs_input', 'failed-cleanup')) {
+    $resumeDir = Join-Path $resumePrivate "runs/$state"
+    New-Item -ItemType Directory -Path $resumeDir -Force | Out-Null
+    $binary = Join-Path $resumeDir 'never-execute.txt'
+    [IO.File]::WriteAllText($binary, 'synthetic; terminal runs must never start a runtime')
+    Write-PrivateJson (Join-Path $resumeDir 'run.json') @{ runId = $state; state = $(if ($state -eq 'failed-cleanup') { 'needs_input' } else { $state }); binaryPath = $binary; binarySha256 = (Get-FileHash -LiteralPath $binary).Hash; requests = 17 }
+    Write-PrivateJson (Join-Path $resumeDir 'profile.private.json') @{ runId = $state }
+    Write-PrivateJson (Join-Path $resumeDir 'report.json') @{ cleanup = @{ state = 'unresolved'; unknown = 1 } }
+    Write-PrivateJson (Join-Path $resumeDir 'results.private.json') @(@{ stage = 'synthetic'; status = 'needs_input' })
+    if ($state -eq 'needs_input') { [IO.File]::WriteAllText((Join-Path $resumeDir 'cleanup-started'), 'terminal') }
+    if ($state -eq 'failed-cleanup') {
+      $child = Start-OwnedProcess (Get-ToolPath 'pwsh') @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'run.ps1'), '-CleanupRun', $state) (Join-Path $validationDir 'failed-cleanup') @{ LOCALAPPDATA = $resumeRoot }
+      try {
+        Assert-Check ($child.process.WaitForExit(30000)) 'failed_cleanup_did_not_exit'
+        Assert-Check ($child.process.ExitCode -eq 2) 'failed_cleanup_not_reported'
+      } finally { Stop-OwnedProcess $child }
+      Assert-Check ((Read-PrivateJson (Join-Path $resumeDir 'run.json')).state -eq 'cleanup_pending') 'failed_cleanup_lost_terminal_state'
+      Assert-Check ((Read-PrivateJson (Join-Path $resumeDir 'report.json')).cleanup.state -eq 'unresolved') 'failed_cleanup_reported_complete'
+      foreach ($rows in @(@(Read-PrivateJson (Join-Path $resumeDir 'results.private.json')), @((Read-PrivateJson (Join-Path $resumeDir 'report.json')).results))) {
+        Assert-Check (@($rows | Where-Object { $_.stage -eq 'synthetic' -and $_.status -eq 'needs_input' }).Count -eq 1) 'failed_cleanup_lost_saved_results'
+        Assert-Check (@($rows | Where-Object { $_.stage -eq 'runner' -and $_.status -eq 'blocked' -and $_.reason }).Count -eq 1) 'failed_cleanup_lost_current_error'
+      }
+      Assert-Check (-not (Test-Path -LiteralPath (Join-Path $resumeDir 'cleanup-started'))) 'failed_cleanup_unexpectedly_started_runtime'
+    }
+    $preserved = @('run.json', 'report.json', 'results.private.json', 'profile.private.json')
+    $before = @($preserved | ForEach-Object { (Get-FileHash -LiteralPath (Join-Path $resumeDir $_)).Hash })
+    $logBase = Join-Path $validationDir "resume-$state"
+    $child = Start-OwnedProcess (Get-ToolPath 'pwsh') @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'run.ps1'), '-ResumeRun', $state) $logBase @{ LOCALAPPDATA = $resumeRoot }
+    try {
+      Assert-Check ($child.process.WaitForExit(30000)) 'terminal_resume_did_not_exit'
+      Assert-Check ($child.process.ExitCode -eq 2) 'terminal_resume_not_rejected'
+    } finally { Stop-OwnedProcess $child }
+    Assert-Check ((Get-Content -LiteralPath "$logBase.stdout.private.log" -Raw) -match 'reason=cleaned_run_cannot_resume') 'terminal_resume_rejected_for_wrong_reason'
+    $after = @($preserved | ForEach-Object { (Get-FileHash -LiteralPath (Join-Path $resumeDir $_)).Hash })
+    Assert-Check (($before -join ',') -ceq ($after -join ',')) 'terminal_resume_rewrote_retained_evidence'
+    Assert-Check (-not (Test-Path -LiteralPath (Join-Path $resumeDir 'process.private.json'))) 'terminal_resume_started_server'
+  }
+  Write-Host 'PASS: cleanup failures remain unresolved; terminal resume preserves manifests, reports, and results without starting a runtime.'
+  & (Join-Path $PSScriptRoot 'validate-images.ps1') -ValidationDir $validationDir
+  Write-Host 'PASS: corpus/stat/process/policy checks; ordered partial tracker scope and per-case unavailable evidence; explicit/empty scope blocking; bounded continuation; feedback restart/rebind; failed browser budget/evidence retained; sanitized duplicate evidence; authenticated HTTP 202 upload polled to completion.'
+} finally {
+  $checked = Assert-PrivatePath $validationDir (Join-Path $root 'validation')
+  Remove-Item -LiteralPath $checked -Recurse -Force
+}

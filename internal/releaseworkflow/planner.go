@@ -6,6 +6,7 @@ package releaseworkflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -16,14 +17,28 @@ import (
 
 // Continue advances at most one backend-owned transition toward a desired goal.
 // Repeated calls plus Current polling are the complete adapter orchestration contract.
+// Matching preparation inputs restore the persisted generation before downstream work;
+// unavailable or incompatible prepared data returns an error instead of being rebuilt.
 func (m *Module) Continue(
 	ctx context.Context,
 	ownerID string,
 	request api.ContinueReleaseWorkflowRequest,
 ) (CommandResult, error) {
+	if m.liveTest != nil {
+		if request.Goal == api.WorkflowGoalUploaded {
+			m.logger.Warnf("workflow: operation=upload_execute state=blocked reason=live_test")
+			return CommandResult{}, fmt.Errorf("live-test workflow goal: %w", m.liveTest.RejectRequest(api.OperationKindUploadExecute))
+		}
+		request.Intent.NoSeed = true
+	}
 	if err := request.Validate(); err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow continue: %w", err)
 	}
+	trackerAnswers, err := normalizeTrackerInputAnswers(request.Intent.TrackerInputAnswers)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	request.Intent.TrackerInputAnswers = trackerAnswers
 	if request.Authority == nil {
 		instructions := request.Intent.FactInstructions
 		if instructions == nil && request.Intent.Preparation != nil {
@@ -54,6 +69,12 @@ func (m *Module) Continue(
 	state, err := m.repository.Load(ctx, ownerID, authority.WorkflowID)
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow continue load tracker decision policy: %w", err)
+	}
+	if err := consumeAcceptedCorrectionPatch(&request, current, state); err != nil {
+		return CommandResult{}, err
+	}
+	if !trackerInputAnswersChanged(state.TrackerInputAnswers, request.Intent.TrackerInputAnswers) {
+		request.Intent.TrackerInputAnswers = nil
 	}
 	trackerDecisionMode := normalizeTrackerDecisionMode(state.TrackerDecisionMode)
 	if err := m.acceptContinuationIntent(ctx, ownerID, authority.WorkflowID, request); err != nil {
@@ -98,6 +119,45 @@ func (m *Module) Continue(
 	); handled || answerErr != nil {
 		return updated, answerErr
 	}
+	if current.Release != nil && current.FactInstructions != nil {
+		correctionsCurrent, correctionErr := m.preparer.CorrectionsCurrent(
+			ctx,
+			current.Release.Release.Source.SourcePath,
+			current.FactInstructions.CorrectionRevision,
+		)
+		if correctionErr != nil {
+			return CommandResult{}, fmt.Errorf("release workflow check current corrections: %w", correctionErr)
+		}
+		if !correctionsCurrent {
+			input := request.Intent.Preparation
+			if input == nil {
+				input = state.PreparationInput
+			}
+			if input == nil {
+				return CommandResult{}, fmt.Errorf("%w: preparation input unavailable for changed corrections", ErrInvalidTransition)
+			}
+			operation, startErr := m.Start(ctx, ownerID, PrepareReleaseCommand{
+				WorkflowID:       current.Workflow.ID,
+				ExpectedRevision: current.Workflow.Revision,
+				Input:            *input,
+				TrackerIDs:       request.Intent.TrackerIDs,
+				IdempotencyKey:   continuationIdempotencyKey(request.IdempotencyKey, "refresh-corrections", current.Workflow.Revision),
+			})
+			if startErr != nil {
+				return CommandResult{}, fmt.Errorf("release workflow refresh changed corrections: %w", startErr)
+			}
+			return m.Current(ctx, ownerID, operation.WorkflowID)
+		}
+	}
+	if command, stage, required, enrichmentErr := m.planSelectionDemandRefresh(ctx, state, request, current); enrichmentErr != nil {
+		return CommandResult{}, enrichmentErr
+	} else if required {
+		operation, startErr := m.Start(ctx, ownerID, command)
+		if startErr != nil {
+			return CommandResult{}, fmt.Errorf("release workflow continue %s: %w", stage, startErr)
+		}
+		return m.Current(ctx, ownerID, operation.WorkflowID)
+	}
 	if request.TrackerApproval != nil {
 		result, approveErr := m.Execute(ctx, ownerID, ApproveTrackersCommand{
 			WorkflowID:       current.Workflow.ID,
@@ -122,10 +182,24 @@ func (m *Module) Continue(
 	if continuationGoalReached(current, request) {
 		return current, nil
 	}
-
-	command, stage := planContinuationCommand(request, current, m.clock.Now().UTC())
+	if refreshed, handled, _, refreshErr := m.recoverPersistedMediaForContinuation(
+		ctx,
+		ownerID,
+		request,
+		current,
+		m.clock.Now().UTC(),
+	); handled || refreshErr != nil {
+		return refreshed, refreshErr
+	}
+	command, stage := m.planContinuationCommand(request, current, m.clock.Now().UTC())
 	if command == nil {
 		return current, nil
+	}
+	if current.Release != nil && request.Intent.Preparation != nil &&
+		continuationPreparationSatisfied(current.Release, request.Intent.Preparation) {
+		if err := m.hydrateContinuationPreparedRelease(ctx, current, *request.Intent.Preparation, state.PreparationDemand); err != nil {
+			return CommandResult{}, err
+		}
 	}
 	if decision, ok := command.(DecideDuplicatesCommand); ok {
 		result, executeErr := m.Execute(ctx, ownerID, decision)
@@ -139,6 +213,163 @@ func (m *Module) Continue(
 		return CommandResult{}, fmt.Errorf("release workflow continue %s: %w", stage, err)
 	}
 	return m.Current(ctx, ownerID, operation.WorkflowID)
+}
+
+func (m *Module) planSelectionDemandRefresh(
+	ctx context.Context,
+	state State,
+	request api.ContinueReleaseWorkflowRequest,
+	current CommandResult,
+) (PrepareReleaseCommand, string, bool, error) {
+	if current.Release == nil || workflowGoalRank(request.Goal) <= workflowGoalRank(api.WorkflowGoalPrepared) || m.inputReadiness == nil {
+		return PrepareReleaseCommand{}, "", false, nil
+	}
+	trackerIDs := append([]api.TrackerID(nil), request.Intent.TrackerIDs...)
+	if len(trackerIDs) == 0 && current.Selection != nil {
+		trackerIDs = append(trackerIDs, current.Selection.TrackerIDs...)
+	}
+	requirements := api.MetadataRequirementSet{}
+	if len(trackerIDs) > 0 {
+		var err error
+		requirements, err = m.inputReadiness.Requirements(ctx, normalizeContinuationTrackerIDs(trackerIDs))
+		if err != nil {
+			return PrepareReleaseCommand{}, "", false, fmt.Errorf("release workflow collect selected input requirements: %w", err)
+		}
+	}
+	normalized, err := requirements.Normalize()
+	if err != nil {
+		return PrepareReleaseCommand{}, "", false, fmt.Errorf("release workflow normalize selected input requirements: %w", err)
+	}
+	if state.PreparationDemand.Version == normalized.Version &&
+		slices.EqualFunc(state.PreparationDemand.Requirements, normalized.Requirements, func(left, right api.MetadataRequirement) bool {
+			return left.Scope == right.Scope && left.Disposition == right.Disposition && slices.Equal(left.AnyOf, right.AnyOf)
+		}) {
+		return PrepareReleaseCommand{}, "", false, nil
+	}
+	input := request.Intent.Preparation
+	if input == nil {
+		input = state.PreparationInput
+	}
+	if input == nil {
+		return PrepareReleaseCommand{}, "", false, nil
+	}
+	return PrepareReleaseCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		Input:            *input,
+		TrackerIDs:       trackerIDs,
+		IdempotencyKey: continuationIdempotencyKey(
+			request.IdempotencyKey,
+			"refresh-selection-demands",
+			current.Workflow.Revision,
+		),
+	}, "refresh-selection-demands", true, nil
+}
+
+func (m *Module) recoverPersistedMediaForContinuation(
+	ctx context.Context,
+	ownerID string,
+	request api.ContinueReleaseWorkflowRequest,
+	current CommandResult,
+	now time.Time,
+) (CommandResult, bool, bool, error) {
+	if !persistedMediaRecoveryCandidate(current) {
+		return current, false, false, nil
+	}
+	command, stage := planContinuationCommand(request, current, now)
+	if command != nil || stage != "capture-media" {
+		return current, false, command != nil, nil
+	}
+	state, err := m.repository.Load(ctx, ownerID, current.Workflow.ID)
+	if err != nil {
+		return CommandResult{}, true, false, fmt.Errorf("release workflow load persisted media recovery: %w", err)
+	}
+	if state.Workflow.Revision != current.Workflow.Revision {
+		return CommandResult{}, true, false, ErrRevisionConflict
+	}
+	targets, err := resolveDownstreamTrackerSet(&state, nil, downstreamStageMedia, now)
+	if err != nil {
+		if errors.Is(err, ErrInvalidTransition) {
+			return current, false, false, nil
+		}
+		return CommandResult{}, true, false, err
+	}
+	projections := targets.Projections().Projections
+	if len(projections) == 0 {
+		return current, false, false, nil
+	}
+	refreshed := *current.Media
+	refreshMutatedMediaStatus(&refreshed, projections)
+	if refreshed.Status != api.StageStatusCompleted {
+		return current, false, false, nil
+	}
+	result, err := m.execute(ctx, ownerID, refreshPersistedMediaStatusCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		Media:            *current.Workflow.Media,
+		IdempotencyKey: continuationIdempotencyKey(
+			request.IdempotencyKey,
+			"refresh-persisted-media",
+			current.Workflow.Revision,
+		),
+	})
+	if err != nil {
+		return CommandResult{}, true, false, fmt.Errorf("release workflow refresh persisted media: %w", err)
+	}
+	updated, err := m.Current(ctx, ownerID, result.Workflow.ID)
+	return updated, true, false, err
+}
+
+func persistedMediaRecoveryCandidate(current CommandResult) bool {
+	if current.Media == nil || current.Workflow.Media == nil || current.Media.Status != api.StageStatusBlocked ||
+		!current.Media.ImageRequirementsPrepared {
+		return false
+	}
+	mediaActionIDs := make(map[api.RequiredActionID]struct{})
+	for _, action := range current.Media.RequiredActions {
+		if action.Status != api.RequiredActionStatusPending {
+			continue
+		}
+		if action.Kind != api.RequiredActionProvideTrackerInput || action.TrackerID != "" {
+			return false
+		}
+		mediaActionIDs[action.ID] = struct{}{}
+	}
+	if len(mediaActionIDs) != 1 {
+		return false
+	}
+	for _, action := range current.Continuation.RequiredActions {
+		if action.Status != api.RequiredActionStatusPending {
+			continue
+		}
+		if _, mediaAction := mediaActionIDs[action.ID]; !mediaAction {
+			return false
+		}
+	}
+	return true
+}
+
+func (m *Module) hydrateContinuationPreparedRelease(
+	ctx context.Context,
+	current CommandResult,
+	input api.PrepareInput,
+	requirements api.MetadataRequirementSet,
+) error {
+	input.SourcePath = current.Release.Release.Source.SourcePath
+	input.MetadataRequirements = requirements
+	input.Force = false
+	input.RequirePrepared = true
+	input.Controls.ConfirmBDMVRescan = false
+	input.Controls.ForceRecheck = nil
+	prepared, err := m.preparer.Prepare(ctx, input)
+	if err != nil {
+		return fmt.Errorf("release workflow hydrate continuation prepared release: %w", err)
+	}
+	if prepared.Release.Generation != current.Release.Release.Generation ||
+		prepared.Release.Compatibility != current.Release.Release.Compatibility {
+		return fmt.Errorf("%w: persisted prepared generation changed", ErrInvalidTransition)
+	}
+	return nil
 }
 
 func (m *Module) acceptContinuationIntent(
@@ -277,6 +508,9 @@ func continuationIntentResolvesAction(intent api.WorkflowIntent, current Command
 		decision, ok := intent.DuplicateDecisions[action.TrackerID]
 		return ok && decision != "" && decision != api.DupeDecisionPending
 	case api.RequiredActionProvideTrackerInput:
+		if len(intent.TrackerInputAnswers[action.TrackerID]) > 0 {
+			return true
+		}
 		if action.TrackerID == "" && intent.Media != nil && current.Media != nil {
 			return slices.ContainsFunc(current.Media.RequiredActions, func(mediaAction api.RequiredAction) bool {
 				return mediaAction.ID == action.ID
@@ -288,6 +522,7 @@ func continuationIntentResolvesAction(intent api.WorkflowIntent, current Command
 		instruction, ok := intent.ProjectionInstructions[action.TrackerID]
 		return ok && len(instruction.Questionnaire) > 0
 	case api.RequiredActionSelectPlaylist, api.RequiredActionSelectMetadata, api.RequiredActionConfirmRescan,
+		api.RequiredActionConfirmCorrections,
 		legacyTrackerAuthActionKind, legacyTrackerTwoFactorActionKind, api.RequiredActionAuthorizeRules,
 		api.RequiredActionResolveTrackerPreparation,
 		api.RequiredActionApproveTrackers,
@@ -323,12 +558,77 @@ func continuationActionBlocksAllLanesForMode(
 	return continuationActionBlocksAllLanes(current, action)
 }
 
+// consumeAcceptedCorrectionPatch advances a repeated desired-goal request past
+// its already committed correction, using the workflow's existing command receipt.
+func consumeAcceptedCorrectionPatch(request *api.ContinueReleaseWorkflowRequest, current CommandResult, state State) error {
+	if request.Intent.CorrectionPatch == nil {
+		return nil
+	}
+	command := ReplaceFactInstructionsCommand{
+		WorkflowID:      current.Workflow.ID,
+		CorrectionPatch: request.Intent.CorrectionPatch,
+		IdempotencyKey:  continuationIdempotencyKey(request.IdempotencyKey, "correction-patch", 0),
+	}
+	if request.Intent.Preparation != nil {
+		command.SourcePath = request.Intent.Preparation.SourcePath
+	}
+	key := commandReceiptKey(command.commandName(), command.IdempotencyKey, "")
+	receipt, ok := state.Receipts[key]
+	if !ok {
+		return nil
+	}
+	if receipt.Result.Workflow.Revision == 0 {
+		return ErrIdempotencyConflict
+	}
+	command.ExpectedRevision = receipt.Result.Workflow.Revision - 1
+	fingerprint, err := acceptedCommandFingerprint(command)
+	if err != nil {
+		return err
+	}
+	if fingerprint != receipt.Fingerprint {
+		return ErrIdempotencyConflict
+	}
+	request.Intent.CorrectionPatch = nil
+	if request.Intent.Preparation == nil {
+		request.Intent.Preparation = state.PreparationInput
+	}
+	if current.FactInstructions != nil && request.Intent.Preparation != nil {
+		input := *request.Intent.Preparation
+		input.Instructions = current.FactInstructions.Instructions
+		request.Intent.Preparation = &input
+	}
+	return nil
+}
+
 func (m *Module) reconcileContinuationFacts(
 	ctx context.Context,
 	ownerID string,
 	request api.ContinueReleaseWorkflowRequest,
 	current CommandResult,
 ) (CommandResult, bool, error) {
+	if patch := request.Intent.CorrectionPatch; patch != nil {
+		instructions := api.ReleaseFactInstructions{}
+		if current.FactInstructions != nil {
+			instructions = current.FactInstructions.Instructions
+		}
+		sourcePath := ""
+		if request.Intent.Preparation != nil {
+			sourcePath = request.Intent.Preparation.SourcePath
+		}
+		result, err := m.Execute(ctx, ownerID, ReplaceFactInstructionsCommand{
+			WorkflowID:       current.Workflow.ID,
+			ExpectedRevision: current.Workflow.Revision,
+			Instructions:     instructions,
+			CorrectionPatch:  patch,
+			SourcePath:       sourcePath,
+			IdempotencyKey:   continuationIdempotencyKey(request.IdempotencyKey, "correction-patch", 0),
+		})
+		if err != nil {
+			return CommandResult{}, true, err
+		}
+		updated, err := m.Current(ctx, ownerID, result.Workflow.ID)
+		return updated, true, err
+	}
 	desired := request.Intent.FactInstructions
 	if desired == nil && request.Intent.Preparation != nil {
 		desired = &request.Intent.Preparation.Instructions
@@ -336,11 +636,28 @@ func (m *Module) reconcileContinuationFacts(
 	if desired == nil || current.FactInstructions == nil {
 		return CommandResult{}, false, nil
 	}
+	if request.Intent.Preparation != nil && continuationPreparationSatisfied(current.Release, request.Intent.Preparation) {
+		preparationFacts, err := api.CanonicalWorkflowFingerprint(request.Intent.Preparation.Instructions)
+		if err != nil {
+			return CommandResult{}, true, fmt.Errorf("release workflow fingerprint preparation facts: %w", err)
+		}
+		desiredFacts, err := api.CanonicalWorkflowFingerprint(*desired)
+		if err != nil {
+			return CommandResult{}, true, fmt.Errorf("release workflow fingerprint desired facts: %w", err)
+		}
+		if preparationFacts == desiredFacts {
+			return CommandResult{}, false, nil
+		}
+	}
 	desiredFingerprint, err := api.CanonicalWorkflowFingerprint(*desired)
 	if err != nil {
 		return CommandResult{}, true, fmt.Errorf("release workflow continue fingerprint facts: %w", err)
 	}
-	if desiredFingerprint == current.FactInstructions.Fingerprint {
+	currentFingerprint, err := api.CanonicalWorkflowFingerprint(current.FactInstructions.Instructions)
+	if err != nil {
+		return CommandResult{}, true, fmt.Errorf("release workflow fingerprint current facts: %w", err)
+	}
+	if desiredFingerprint == currentFingerprint {
 		return CommandResult{}, false, nil
 	}
 	result, err := m.Execute(ctx, ownerID, ReplaceFactInstructionsCommand{
@@ -365,6 +682,23 @@ func planContinuationCommand(
 	current CommandResult,
 	now time.Time,
 ) (Command, string) {
+	return planContinuationCommandWithReadiness(request, current, now, false)
+}
+
+func (m *Module) planContinuationCommand(
+	request api.ContinueReleaseWorkflowRequest,
+	current CommandResult,
+	now time.Time,
+) (Command, string) {
+	return planContinuationCommandWithReadiness(request, current, now, true)
+}
+
+func planContinuationCommandWithReadiness(
+	request api.ContinueReleaseWorkflowRequest,
+	current CommandResult,
+	now time.Time,
+	includeInputReadiness bool,
+) (Command, string) {
 	workflowID := current.Workflow.ID
 	revision := current.Workflow.Revision
 	key := func(stage string) string {
@@ -378,6 +712,7 @@ func planContinuationCommand(
 			WorkflowID:       workflowID,
 			ExpectedRevision: revision,
 			Input:            *request.Intent.Preparation,
+			TrackerIDs:       append([]api.TrackerID(nil), request.Intent.TrackerIDs...),
 			IdempotencyKey:   key("prepare"),
 		}, "prepare"
 	}
@@ -386,17 +721,36 @@ func planContinuationCommand(
 			WorkflowID:       workflowID,
 			ExpectedRevision: revision,
 			Input:            *request.Intent.Preparation,
+			TrackerIDs:       append([]api.TrackerID(nil), request.Intent.TrackerIDs...),
 			IdempotencyKey:   key("reprepare"),
 		}, "reprepare"
 	}
 	if workflowGoalRank(request.Goal) <= workflowGoalRank(api.WorkflowGoalPrepared) {
 		return nil, ""
 	}
-	if current.Projections == nil || !trackerIntentMatches(request.Intent, current) {
-		trackerIDs := append([]api.TrackerID(nil), request.Intent.TrackerIDs...)
-		if len(trackerIDs) == 0 && current.Selection != nil {
-			trackerIDs = append(trackerIDs, current.Selection.TrackerIDs...)
+	trackerIDs := append([]api.TrackerID(nil), request.Intent.TrackerIDs...)
+	if len(trackerIDs) == 0 && current.Selection != nil {
+		trackerIDs = append(trackerIDs, current.Selection.TrackerIDs...)
+	}
+	if includeInputReadiness && (len(request.Intent.TrackerInputAnswers) > 0 || !inputReadinessMatches(current.InputReadiness, current, trackerIDs)) {
+		if inputReadinessBlocked(current.InputReadiness) && len(request.Intent.TrackerInputAnswers) == 0 {
+			return nil, "input-not-ready"
 		}
+		return EvaluateInputReadinessCommand{
+			WorkflowID:          workflowID,
+			ExpectedRevision:    revision,
+			TrackerIDs:          trackerIDs,
+			TrackerInputAnswers: request.Intent.TrackerInputAnswers,
+			IdempotencyKey:      key("evaluate-input-readiness"),
+		}, "evaluate-input-readiness"
+	}
+	if includeInputReadiness && workflowGoalRank(request.Goal) <= workflowGoalRank(api.WorkflowGoalInputReady) {
+		if !inputReadinessGoalSatisfied(current.InputReadiness, current, trackerIDs) {
+			return nil, "input-not-ready"
+		}
+		return nil, ""
+	}
+	if current.Projections == nil || !trackerIntentMatches(request.Intent, current) {
 		return ProjectTrackersCommand{
 			WorkflowID:       workflowID,
 			ExpectedRevision: revision,
@@ -631,18 +985,20 @@ func workflowGoalRank(goal api.WorkflowGoal) int {
 	switch goal {
 	case api.WorkflowGoalPrepared:
 		return 1
-	case api.WorkflowGoalTrackersAssessed:
+	case api.WorkflowGoalInputReady:
 		return 2
-	case api.WorkflowGoalDuplicatesDecided:
+	case api.WorkflowGoalTrackersAssessed:
 		return 3
-	case api.WorkflowGoalMediaReady:
+	case api.WorkflowGoalDuplicatesDecided:
 		return 4
-	case api.WorkflowGoalDescriptionsReady:
+	case api.WorkflowGoalMediaReady:
 		return 5
-	case api.WorkflowGoalUploadReviewed, api.WorkflowGoalDryRun:
+	case api.WorkflowGoalDescriptionsReady:
 		return 6
-	case api.WorkflowGoalUploaded:
+	case api.WorkflowGoalUploadReviewed, api.WorkflowGoalDryRun:
 		return 7
+	case api.WorkflowGoalUploaded:
+		return 8
 	default:
 		return 0
 	}
@@ -725,6 +1081,7 @@ func continuationUnattendedSkipsTrackerAction(intent api.WorkflowIntent, action 
 	case api.RequiredActionSelectPlaylist,
 		api.RequiredActionSelectMetadata,
 		api.RequiredActionConfirmRescan,
+		api.RequiredActionConfirmCorrections,
 		api.RequiredActionReviewDuplicates,
 		api.RequiredActionApproveTrackers,
 		api.RequiredActionApproveUpload, //nolint:staticcheck // Retained v1 action remains a global blocker.
@@ -766,6 +1123,9 @@ func normalizeContinuationTrackerIDs(values []api.TrackerID) []api.TrackerID {
 }
 
 func continuationGoalReached(current CommandResult, request api.ContinueReleaseWorkflowRequest) bool {
+	if len(request.Intent.TrackerInputAnswers) > 0 {
+		return false
+	}
 	if continuationInteractionMode(request.Intent) == api.InteractionModeUnattended &&
 		preflightRequiresManualAction(current.Preflight, current.Projections) {
 		return false
@@ -774,6 +1134,8 @@ func continuationGoalReached(current CommandResult, request api.ContinueReleaseW
 	switch request.Goal {
 	case api.WorkflowGoalPrepared:
 		return current.Release != nil && continuationPreparationSatisfied(current.Release, request.Intent.Preparation)
+	case api.WorkflowGoalInputReady:
+		return inputReadinessGoalSatisfied(current.InputReadiness, current, request.Intent.TrackerIDs)
 	case api.WorkflowGoalTrackersAssessed:
 		return current.Preflight != nil && current.Projections != nil
 	case api.WorkflowGoalDuplicatesDecided:

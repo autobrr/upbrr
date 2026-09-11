@@ -14,10 +14,14 @@ import (
 
 func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
 	title, year := currentOTWTMDBTitleYear(meta)
-	if title == "" {
+	if meta.EffectiveMetadata.TitleProvenance.IsManual() {
+		title = meta.EffectiveMetadata.Title
+	} else if title == "" {
 		title = strings.TrimSpace(meta.Release.Title)
 	}
-	if year <= 0 {
+	if meta.EffectiveMetadata.YearProvenance.IsManual() {
+		year = meta.EffectiveMetadata.Year
+	} else if year <= 0 {
 		year = meta.Release.Year
 	}
 	parts := []string{title}
@@ -147,9 +151,6 @@ func otwVideoCodec(meta api.UploadSubject) string {
 		if value = strings.TrimSpace(value); value != "" {
 			return value
 		}
-	}
-	if len(meta.Release.Codec) > 0 {
-		return strings.TrimSpace(meta.Release.Codec[0])
 	}
 	return ""
 }

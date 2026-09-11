@@ -6,6 +6,7 @@ package lst
 import (
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/trackers"
 )
 
@@ -18,6 +19,45 @@ func additionalPayload(req trackers.PreparationInput, data map[string]string) {
 	if editionID, ok := editionID(req.Meta.Edition); ok {
 		data["edition_id"] = editionID
 	}
+	if hdrDV, ok := mediafacts.Unit3DHDRDVFromFacts(req.Meta.HDRFacts); ok {
+		data["hdr_dv"] = hdrDV
+	}
+	if provider := lstProvider(req.Meta.Service); provider != "" {
+		data["provider"] = provider
+	}
+	if dualAudio, ok := lstDualAudio(req); ok {
+		data["dual_audio"] = dualAudio
+	}
+}
+
+func lstProvider(service string) string {
+	service = strings.TrimSpace(service)
+	switch strings.ToUpper(service) {
+	case "AND":
+		//nolint:misspell // ADN is LST's exact provider code.
+		return "ADN"
+	case "HOTSTAR", "HSTR":
+		return "HTSR"
+	default:
+		return service
+	}
+}
+
+func lstDualAudio(req trackers.PreparationInput) (string, bool) {
+	if value := req.Meta.ReleaseNameOverrides.DualAudio; value != nil {
+		if *value {
+			return "1", true
+		}
+		return "0", true
+	}
+	if value := req.Meta.ReleaseNameOverrides.NoDual; value != nil && *value {
+		return "0", true
+	}
+	audio := strings.ToLower(strings.ReplaceAll(req.Meta.Audio, " ", "-"))
+	if strings.Contains(audio, "dual-audio") {
+		return "1", true
+	}
+	return "", false
 }
 
 func editionID(edition string) (string, bool) {

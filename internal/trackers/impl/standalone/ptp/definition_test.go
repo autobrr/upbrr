@@ -94,6 +94,53 @@ func TestDefinitionBuildDescriptionUsesResolvedAssetsAndMediaInfo(t *testing.T) 
 	}
 }
 
+func TestBuildMediaSectionIncludesDVDIFOAndVOBMediaInfo(t *testing.T) {
+	tmp := t.TempDir()
+	ifoMediaInfoPath := filepath.Join(tmp, "ifo-mediainfo.txt")
+	if err := os.WriteFile(ifoMediaInfoPath, []byte("General\nFormat : DVD Video"), 0o600); err != nil {
+		t.Fatalf("write IFO mediainfo: %v", err)
+	}
+
+	got, err := buildMediaSection(api.UploadSubject{
+		DiscType:            "DVD",
+		MediaInfoTextPath:   ifoMediaInfoPath,
+		DVDVOBMediaInfoText: "General\nFormat : MPEG-PS",
+	}, "")
+	if err != nil {
+		t.Fatalf("build media section: %v", err)
+	}
+	want := "[mediainfo]General\nFormat : DVD Video[/mediainfo]\n\n[mediainfo]General\nFormat : MPEG-PS[/mediainfo]"
+	if got != want {
+		t.Fatalf("media section = %q, want %q", got, want)
+	}
+}
+
+func TestBuildMediaSectionIncludesEveryDVDVOBReport(t *testing.T) {
+	t.Parallel()
+	got, err := buildMediaSection(api.UploadSubject{
+		DiscType:            "DVD",
+		DVDVOBMediaInfoText: "stale primary report",
+		Discs: []api.DiscEvidenceResource{
+			{
+				Name:                "Disc 1",
+				Type:                "DVD",
+				DVDVOBMediaInfoText: "First VOB report",
+			},
+			{
+				Name:                "Disc 2",
+				Type:                "DVD",
+				DVDVOBMediaInfoText: "Second VOB report",
+			},
+		},
+	}, "")
+	if err != nil {
+		t.Fatalf("build media section: %v", err)
+	}
+	if !strings.Contains(got, "First VOB report") || !strings.Contains(got, "Second VOB report") || strings.Contains(got, "stale primary report") {
+		t.Fatalf("collection media section = %q", got)
+	}
+}
+
 func TestPTPFreshUploadTaxonomy(t *testing.T) {
 	t.Parallel()
 
@@ -101,11 +148,13 @@ func TestPTPFreshUploadTaxonomy(t *testing.T) {
 		Source:            "Web",
 		VideoCodec:        "HEVC",
 		HasEncodeSettings: true,
+		HardcodedSubs:     true,
 		ReleaseName:       "Example.Release.2026.1440p.WEB-DL.x265.HARDSUB-GRP",
 		FileList:          []string{"Example.Release.2026.1440p.WEB-DL.x265.HARDSUB-GRP.mkv"},
 		Release: api.ReleaseInfo{
 			Resolution: "1440p",
 		},
+		Container: "mkv",
 		ProviderMetadata: api.SourceScopedMetadata{
 			IMDB: &api.IMDBMetadata{Type: "concert"},
 			TMDB: &api.TMDBMetadata{Genres: "Science Fiction, Mystery"},
@@ -136,11 +185,13 @@ func TestPTPFreshUploadTaxonomy(t *testing.T) {
 	if got := resolveTags(meta); got != "sci.fi, mystery" {
 		t.Fatalf("tags=%q", got)
 	}
+	meta.HardcodedSubs = true
 	meta.ReleaseName = "Example.Release.2026.1080p.WEB-DL.x265.HARDSUB.FORCED-GRP"
 	if got := resolveTrumpable(meta); len(got) != 1 || got[0] != 4 {
 		t.Fatalf("forced hardcoded trumpable=%#v", got)
 	}
 	meta.ReleaseName = "Example.Release.2026.1080p.WEB-DL.x265-GRP"
+	meta.HardcodedSubs = false
 	meta.FileList = nil
 	meta.AudioLanguages = []string{"Japanese"}
 	meta.SubtitleLanguages = []string{"French"}
@@ -148,6 +199,7 @@ func TestPTPFreshUploadTaxonomy(t *testing.T) {
 		t.Fatalf("no-English trumpable=%#v", got)
 	}
 	meta.ReleaseName = "Example.Release.2026.1080p.WEB-DL.x265.HARDSUB-GRP"
+	meta.HardcodedSubs = true
 	if got := resolveTrumpable(meta); len(got) != 2 || got[0] != 4 || got[1] != 14 {
 		t.Fatalf("hardcoded no-English trumpable=%#v", got)
 	}
@@ -166,7 +218,12 @@ func TestPTPFreshUploadTaxonomy(t *testing.T) {
 func TestPTPHardcodedSubtitleQuestionnaire(t *testing.T) {
 	t.Parallel()
 
-	meta := api.UploadSubject{ReleaseName: "Example.Release.2026.1080p.WEB-DL.x265.HARDSUB-GRP"}
+	meta := api.UploadSubject{
+		ReleaseName:   "Example.Release.2026.1080p.WEB-DL.x265.HARDSUB-GRP",
+		HardcodedSubs: true,
+		Release:       api.ReleaseInfo{Resolution: "1080p"},
+		Container:     "mkv",
+	}
 	questionnaire := buildQuestionnaire(meta, "123")
 	if questionnaire == nil || len(questionnaire.Fields) != 1 || questionnaire.Fields[0].Key != "hardcoded_subtitle_languages" {
 		t.Fatalf("questionnaire=%#v", questionnaire)
@@ -182,6 +239,103 @@ func TestPTPHardcodedSubtitleQuestionnaire(t *testing.T) {
 	}
 	if fields["subtitles[]"] != "50" || fields["trumpable[]"] != "4" {
 		t.Fatalf("hardcoded fields=%#v", fields)
+	}
+}
+
+func TestPTPInputReadinessUsesFinalizedHardcodedLanguages(t *testing.T) {
+	t.Parallel()
+
+	definition := New()
+	missing := definition.InputReadiness(api.UploadSubject{HardcodedSubs: true})
+	if len(missing) != 1 || missing[0].Status != api.InputReadinessFieldMissing || missing[0].Key != "metadata.hardcoded_subtitle_languages" {
+		t.Fatalf("missing=%#v", missing)
+	}
+	invalid := definition.InputReadiness(api.UploadSubject{
+		HardcodedSubs:               true,
+		HardcodedSubtitleLanguages:  []string{"English"},
+		TrackerQuestionnaireAnswers: map[string]map[string]string{"PTP": {"no_english_subtitles": "yes"}},
+	})
+	if len(invalid) != 1 || invalid[0].Status != api.InputReadinessFieldInvalid || invalid[0].Key != "tracker_input.no_english_subtitles" {
+		t.Fatalf("invalid=%#v", invalid)
+	}
+	if schema := definition.InputSchema(api.UploadSubject{}); schema == nil || len(schema.Fields) != 1 || schema.Fields[0].Value != "auto" ||
+		len(schema.Fields[0].Options) != 3 {
+		t.Fatalf("schema=%#v", schema)
+	}
+}
+
+func TestPTPUploadNoEnglishSubtitlesAnswerControlsTrumpable(t *testing.T) {
+	t.Parallel()
+
+	base := api.UploadSubject{
+		Release:   api.ReleaseInfo{Resolution: "1080p"},
+		Container: "mkv",
+	}
+	tests := []struct {
+		name   string
+		meta   api.UploadSubject
+		answer string
+		want   string
+	}{
+		{
+			name: "auto retains finalized foreign audio heuristic",
+			meta: api.UploadSubject{
+				Release:        api.ReleaseInfo{Resolution: "1080p"},
+				Container:      "mkv",
+				AudioLanguages: []string{"Japanese"},
+			},
+			answer: "auto",
+			want:   "14",
+		},
+		{
+			name:   "yes adds trumpable without audio evidence",
+			meta:   base,
+			answer: "yes",
+			want:   "14",
+		},
+		{
+			name: "no suppresses finalized foreign audio heuristic",
+			meta: api.UploadSubject{
+				Release:        api.ReleaseInfo{Resolution: "1080p"},
+				Container:      "mkv",
+				AudioLanguages: []string{"Japanese"},
+			},
+			answer: "no",
+			want:   "",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			test.meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"PTP": {"no_english_subtitles": test.answer}}
+			fields, err := buildUploadFields(test.meta, "description", "123", map[string]string{"no_english_subtitles": test.answer}, "")
+			if err != nil {
+				t.Fatalf("build upload fields: %v", err)
+			}
+			if got := fields["trumpable[]"]; got != test.want {
+				t.Fatalf("trumpable = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestPTPUploadUsesPreparedHardcodedLanguages(t *testing.T) {
+	meta := api.UploadSubject{
+		HardcodedSubs:              true,
+		HardcodedSubtitleLanguages: []string{"English"},
+		Release:                    api.ReleaseInfo{Resolution: "1080p"},
+		Container:                  "mkv",
+	}
+	if questionnaire := buildQuestionnaire(meta, "123"); questionnaire != nil {
+		t.Fatalf("prepared languages still require input: %#v", questionnaire)
+	}
+	for _, answers := range []map[string]string{nil, {"hardcoded_subtitle_languages": "French"}} {
+		fields, err := buildUploadFields(meta, "description", "123", answers, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fields["subtitles[]"] != "3" || fields["trumpable[]"] != "4" {
+			t.Fatalf("prepared hardcoded language lost: %#v", fields)
+		}
 	}
 }
 
@@ -291,6 +445,8 @@ func TestDefinitionBuildUploadDryRunForExistingGroup(t *testing.T) {
 			SourcePath:  filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath: torrentPath,
 			ReleaseName: "Movie.2026.1080p.BluRay.x264",
+			Release:     api.ReleaseInfo{Resolution: "1080p"},
+			Container:   "mkv",
 			Source:      "BluRay",
 			VideoCodec:  "AVC",
 			Identity:    api.ExternalIdentity{Category: "MOVIE", IMDBID: 456},
@@ -343,6 +499,8 @@ func TestDefinitionBuildUploadDryRunForNewGroupIncludesQuestionnaire(t *testing.
 			SourcePath:  filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath: torrentPath,
 			ReleaseName: "Movie.2026.1080p.BluRay.x264",
+			Release:     api.ReleaseInfo{Resolution: "1080p"},
+			Container:   "mkv",
 			Source:      "BluRay",
 			VideoCodec:  "AVC",
 			Identity:    api.ExternalIdentity{Category: "MOVIE"},
@@ -425,6 +583,8 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	meta := api.UploadSubject{
 		SourcePath:  filepath.Join(tmp, "Movie.mkv"),
 		ReleaseName: "Movie.2026.1080p.BluRay.x264",
+		Release:     api.ReleaseInfo{Resolution: "1080p"},
+		Container:   "mkv",
 		Source:      "BluRay",
 		VideoCodec:  "AVC",
 		Identity:    api.ExternalIdentity{Category: "MOVIE", IMDBID: 1234567},

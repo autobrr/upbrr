@@ -21,6 +21,7 @@ import (
 
 // Service coordinates tracker preparation, dry-run rendering, and uploads.
 type Service struct {
+	liveTest *api.LiveTestPolicy
 	cfg      config.Config
 	logger   api.Logger
 	repo     UploadPersistence
@@ -44,17 +45,19 @@ func NewServiceWithRegistry(cfg config.Config, logger api.Logger, repo UploadPer
 // NewServiceWithRegistryAndImages substitutes a no-op logger and binds the
 // registry to tracker, banned-group, and image-host preparation. A nil registry
 // is retained so public operations can return their explicit configuration error.
+// An optional live-test policy blocks submission through the service and its plans.
 func NewServiceWithRegistryAndImages(
 	cfg config.Config,
 	logger api.Logger,
 	repo UploadPersistence,
 	registry *Registry,
 	images api.ImageHostingService,
+	liveTest ...*api.LiveTestPolicy,
 ) *Service {
 	if logger == nil {
 		logger = api.NopLogger{}
 	}
-	return &Service{
+	service := &Service{
 		cfg:      cfg,
 		logger:   logger,
 		repo:     repo,
@@ -62,6 +65,10 @@ func NewServiceWithRegistryAndImages(
 		banned:   NewBannedGroupCheckerWithRegistry(cfg.MainSettings.DBPath, registry),
 		registry: registry,
 	}
+	if len(liveTest) > 0 {
+		service.liveTest = liveTest[0]
+	}
+	return service
 }
 
 func (s *Service) maxConcurrentTrackerUploads(total int) int {
@@ -464,33 +471,41 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 // Callers provide only the description-owned contract.
 func uploadSubjectForDescription(subject api.DescriptionSubject) api.UploadSubject {
 	return api.UploadSubject{
-		SourcePath:             subject.SourcePath,
-		DiscType:               subject.DiscType,
-		MediaInfoTextPath:      subject.MediaInfoTextPath,
-		DVDVOBMediaInfoText:    subject.DVDVOBMediaInfoText,
-		DescriptionTemplate:    subject.DescriptionTemplate,
-		EpisodeOverview:        subject.EpisodeOverview,
-		Options:                subject.Options,
-		Release:                subject.Release,
-		SelectedBDMVPlaylists:  append([]api.PlaylistInfo(nil), subject.SelectedBDMVPlaylists...),
-		Tag:                    subject.Tag,
-		Identity:               subject.Identity,
-		ProviderMetadata:       subject.ProviderMetadata,
-		SeasonInt:              subject.SeasonInt,
-		EpisodeInt:             subject.EpisodeInt,
-		Filename:               subject.Filename,
-		ReleaseName:            subject.ReleaseName,
-		ReleaseNameNoTag:       subject.ReleaseNameNoTag,
-		ServiceLongName:        subject.ServiceLongName,
-		Type:                   subject.Type,
-		HDR:                    subject.HDR,
-		ArrReleaseGroup:        subject.ArrReleaseGroup,
-		Trackers:               append([]string(nil), subject.Trackers...),
-		TrackerConfigOverrides: subject.TrackerConfig,
-		TrackerSiteOverrides:   subject.TrackerSite,
-		ImageHostOverrides:     subject.ImageHost,
-		ExactMedia:             subject.ExactMedia.Clone(),
-		TrackerData:            append([]api.TrackerMetadata(nil), subject.TrackerData...),
+		EffectiveMetadata:          subject.EffectiveMetadata,
+		ManualLanguages:            subject.ManualLanguages,
+		HardcodedSubs:              subject.HardcodedSubs,
+		HardcodedSubtitleLanguages: append([]string(nil), subject.HardcodedSubtitleLanguages...),
+		MediaBinding:               subject.MediaBinding,
+		SourcePath:                 subject.SourcePath,
+		DiscType:                   subject.DiscType,
+		MediaInfoTextPath:          subject.MediaInfoTextPath,
+		DVDVOBMediaInfoText:        subject.DVDVOBMediaInfoText,
+		DescriptionTemplate:        subject.DescriptionTemplate,
+		DescriptionGroups:          api.CloneDescriptionBuilderGroups(subject.DescriptionGroups),
+		EpisodeOverview:            subject.EpisodeOverview,
+		Options:                    subject.Options,
+		Release:                    subject.Release,
+		SelectedBDMVPlaylists:      append([]api.PlaylistInfo(nil), subject.SelectedBDMVPlaylists...),
+		Disc:                       subject.Disc,
+		Discs:                      append([]api.DiscEvidenceResource(nil), subject.Discs...),
+		Tag:                        subject.Tag,
+		Identity:                   subject.Identity,
+		ProviderMetadata:           subject.ProviderMetadata,
+		SeasonInt:                  subject.SeasonInt,
+		EpisodeInt:                 subject.EpisodeInt,
+		Filename:                   subject.Filename,
+		ReleaseName:                subject.ReleaseName,
+		ReleaseNameNoTag:           subject.ReleaseNameNoTag,
+		ServiceLongName:            subject.ServiceLongName,
+		Type:                       subject.Type,
+		HDR:                        subject.HDR,
+		ArrReleaseGroup:            subject.ArrReleaseGroup,
+		Trackers:                   append([]string(nil), subject.Trackers...),
+		TrackerConfigOverrides:     subject.TrackerConfig,
+		TrackerSiteOverrides:       subject.TrackerSite,
+		ImageHostOverrides:         subject.ImageHost,
+		ExactMedia:                 subject.ExactMedia.Clone(),
+		TrackerData:                append([]api.TrackerMetadata(nil), subject.TrackerData...),
 	}
 }
 

@@ -413,6 +413,9 @@ func releaseNameRequestFromMeta(meta preparationstate.State, logger api.Logger) 
 	}
 
 	title, altTitle, year := resolveReleaseNameTitle(category, meta)
+	if meta.ReleaseNameOverrides.ManualYear != nil && !strings.EqualFold(category, "TV") {
+		year = *meta.ReleaseNameOverrides.ManualYear
+	}
 	searchYear := ""
 	if strings.EqualFold(category, "TV") && year > 0 {
 		title = trimTrailingParentheticalYear(title, year)
@@ -511,8 +514,45 @@ func preferredGeneratedEpisodeTitle(meta preparationstate.State) string {
 	return parsed
 }
 
+func resolvedEpisodeTitle(meta preparationstate.State) string {
+	overrides := meta.ReleaseNameOverrides
+	if overrides.NoEpisodeTitle != nil && *overrides.NoEpisodeTitle {
+		return ""
+	}
+	if overrides.EpisodeTitle != nil {
+		return strings.TrimSpace(*overrides.EpisodeTitle)
+	}
+	return preferredGeneratedEpisodeTitle(meta)
+}
+
+func resolvedGenre(meta preparationstate.State) string {
+	fallback := strings.TrimSpace(meta.Release.Genre)
+	if !namingProviderMetadataCurrent(meta) {
+		return fallback
+	}
+
+	tmdbGenres := ""
+	if value := meta.ProviderMetadata.TMDB; value != nil && meta.Identity.TMDBID > 0 && value.TMDBID == meta.Identity.TMDBID {
+		tmdbGenres = value.Genres
+	}
+	imdbGenres := ""
+	if value := meta.ProviderMetadata.IMDB; value != nil && meta.Identity.IMDBID > 0 && value.IMDBID == meta.Identity.IMDBID {
+		imdbGenres = value.Genres
+	}
+	tvdbGenres := ""
+	if value := meta.ProviderMetadata.TVDB; value != nil && meta.Identity.TVDBID > 0 && value.TVDBID == meta.Identity.TVDBID {
+		tvdbGenres = value.Genres
+	}
+	tvmazeGenres := ""
+	if value := meta.ProviderMetadata.TVmaze; value != nil && meta.Identity.TVmazeID > 0 && value.TVmazeID == meta.Identity.TVmazeID {
+		tvmazeGenres = value.Genres
+	}
+	return metautil.FirstNonEmptyTrimmed(tmdbGenres, imdbGenres, tvdbGenres, tvmazeGenres, fallback)
+}
+
 // resolveReleaseNameTitle selects naming fields from current matching provider
 // metadata while preserving parsed values when no eligible snapshot exists.
+// TV year is zero unless matching TVDB metadata supplies a positive alias year.
 func resolveReleaseNameTitle(category string, meta preparationstate.State) (string, string, int) {
 	title := strings.TrimSpace(meta.Release.Title)
 	altTitle := strings.TrimSpace(meta.Release.Alt)
@@ -561,6 +601,9 @@ func resolveReleaseNameTitle(category string, meta preparationstate.State) (stri
 		if year == 0 && imdb.Year > 0 {
 			year = imdb.Year
 		}
+	}
+	if isTV {
+		year = 0
 	}
 	return title, altTitle, year
 }

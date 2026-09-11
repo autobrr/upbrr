@@ -16,6 +16,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/providerid"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -249,6 +250,9 @@ func (c *Client) lookupShow(ctx context.Context, key, value string) (Candidate, 
 
 	var show showResponse
 	if err := c.getJSON(ctx, endpoint, params, &show); err != nil {
+		if c.logger != nil {
+			c.logger.Debugf("tvmaze: external lookup failed source=%s id=%s error=%s", key, value, redaction.RedactValue(err.Error(), nil))
+		}
 		return Candidate{}, err
 	}
 	return candidateFromShow(show), nil
@@ -261,6 +265,9 @@ func (c *Client) searchShows(ctx context.Context, query string) ([]Candidate, er
 
 	var items []searchResponse
 	if err := c.getJSON(ctx, endpoint, params, &items); err != nil {
+		if c.logger != nil {
+			c.logger.Debugf("tvmaze: title lookup failed error=%s", redaction.RedactValue(err.Error(), nil))
+		}
 		return nil, err
 	}
 
@@ -279,6 +286,9 @@ func (c *Client) getShow(ctx context.Context, id int) (Candidate, error) {
 
 	var show showResponse
 	if err := c.getJSON(ctx, endpoint, nil, &show); err != nil {
+		if c.logger != nil {
+			c.logger.Debugf("tvmaze: show lookup failed id=%d error=%s", id, redaction.RedactValue(err.Error(), nil))
+		}
 		return Candidate{}, err
 	}
 	return candidateFromShow(show), nil

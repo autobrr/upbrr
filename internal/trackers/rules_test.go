@@ -726,6 +726,22 @@ func TestRuleGenresUsesOnlyCurrentProviderGenres(t *testing.T) {
 	}
 }
 
+func TestRuleGenresPrefersManualEffectiveGenres(t *testing.T) {
+	t.Parallel()
+
+	meta := api.RuleSubject{
+		EffectiveMetadata: api.EffectiveMetadata{
+			Genres:           []string{"Animation", "animation", "Family"},
+			GenresProvenance: api.FactProvenanceManual,
+		},
+		ProviderMetadata: api.SourceScopedMetadata{Generation: 99},
+	}
+	want := []string{"animation", "family"}
+	if got := trackers.RuleGenres(meta); !slices.Equal(got, want) {
+		t.Fatalf("rule genres = %v, want %v", got, want)
+	}
+}
+
 func TestAdultContentUsesEveryProviderGenre(t *testing.T) {
 	t.Parallel()
 
@@ -1251,6 +1267,17 @@ func TestResolutionDependentRulesAreStrict(t *testing.T) {
 	}
 	tests := make([]ruleTest, 0, 20)
 	tests = append(tests, []ruleTest{
+		{
+			name:    "RHD does not reconstruct missing resolution from name",
+			tracker: "RHD",
+			meta: func() api.RuleSubject {
+				meta := base("")
+				meta.ReleaseName = "Example.Movie.2026.1080p.WEB-DL-GRP"
+				return meta
+			}(),
+			rule: "min_resolution",
+			want: true,
+		},
 		{
 			name:    "HDB DVD SD",
 			tracker: "HDB",

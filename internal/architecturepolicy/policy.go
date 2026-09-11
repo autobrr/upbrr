@@ -259,6 +259,11 @@ func CheckRepository(root string) ([]Violation, error) {
 	if err != nil {
 		return nil, fmt.Errorf("scan repository: %w", err)
 	}
+	providerViolations, err := checkProviderMetadata(root)
+	if err != nil {
+		return nil, err
+	}
+	violations = append(violations, providerViolations...)
 	slices.SortFunc(violations, func(left, right Violation) int {
 		if result := strings.Compare(left.File, right.File); result != 0 {
 			return result
@@ -475,8 +480,25 @@ func checkGoFile(path string, relative string) ([]Violation, error) {
 			selectedTypeName(selector.X) == "api" && selector.Sel.Name == "InteractionModeUnattended" {
 			add(selector.Pos(), "canonical preparation must preserve caller interaction mode")
 		}
+		if selector, ok := node.(*ast.SelectorExpr); ok && strings.HasPrefix(relative, "internal/trackers/") &&
+			filepath.Base(relative) != "name.go" {
+			if release, ok := selector.X.(*ast.SelectorExpr); ok && release.Sel.Name == "Release" {
+				switch selector.Sel.Name {
+				case "Codec", "Audio", "HDR", "Language":
+					add(selector.Pos(), "tracker media facts must use resolved fields; parser naming tokens belong only in name transformations")
+				case "Ext":
+					if relative != "internal/trackers/release_name.go" {
+						add(selector.Pos(), "tracker media facts must use resolved fields; parser extensions belong only in name transformations")
+					}
+				}
+			}
+		}
 		if importSpec, ok := node.(*ast.ImportSpec); ok && strings.HasPrefix(relative, "internal/trackers/impl/") {
 			importPath := strings.Trim(importSpec.Path.Value, `"`)
+			if importPath == "github.com/autobrr/upbrr/internal/metadata" ||
+				importPath == "github.com/autobrr/upbrr/internal/preparedrelease/state" {
+				add(importSpec.Path.Pos(), "tracker implementations must consume resolved operation subjects, not mutable metadata collection")
+			}
 			for _, prefix := range forbiddenTrackerImportPrefixes {
 				if importPath == prefix || strings.HasPrefix(importPath, prefix+"/") {
 					add(importSpec.Path.Pos(), "tracker implementations cannot import CLI, server, or workflow presentation owners")

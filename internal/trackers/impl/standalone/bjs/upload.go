@@ -132,7 +132,11 @@ func submitPreparedUpload(
 		}, nil
 	}
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "BJS", "upload_failure", responsePreview, ".html")
-	return api.UploadSummary{}, commonhttp.UploadHTTPError("BJS", resp.StatusCode, responsePreview)
+	errorResponse := responsePreview
+	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+		errorResponse = responseBody
+	}
+	return api.UploadSummary{}, commonhttp.UploadHTTPError("BJS", resp.StatusCode, errorResponse)
 }
 
 func buildUploadPreview(state uploadState) api.TrackerDryRunEntry {
@@ -207,7 +211,6 @@ func buildFields(meta api.UploadSubject, description string, auth string, answer
 		tmdbOriginalTitle = meta.ProviderMetadata.TMDB.OriginalTitle
 		tmdbTitle = meta.ProviderMetadata.TMDB.Title
 	}
-
 	fields := map[string]string{
 		"audio":            resolveAudio(meta),
 		"auth":             auth,
@@ -229,8 +232,8 @@ func buildFields(meta api.UploadSubject, description string, auth string, answer
 		"submit":           "true",
 		"tags":             metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["tags"]), resolveTags(meta, ptBR)),
 		"tipolegenda":      resolveSubtitle(meta),
-		"title":            metautil.FirstNonEmptyTrimmed(tmdbOriginalTitle, meta.Release.Title),
-		"titulobrasileiro": metautil.FirstNonEmptyTrimmed(ptBR.Title, tmdbTitle, meta.Release.Title),
+		"title":            trackers.PreferredOriginalTitle(meta, tmdbOriginalTitle),
+		"titulobrasileiro": trackers.PreferredTitle(meta, metautil.FirstNonEmptyTrimmed(ptBR.Title, tmdbTitle)),
 		"traileryoutube":   resolveYouTube(meta, ptBR),
 		"type":             resolveType(meta),
 		"year":             resolveYearLabel(meta),
@@ -364,6 +367,9 @@ func resolveReleaseDate(meta api.UploadSubject) string {
 
 func resolveYearLabel(meta api.UploadSubject) string {
 	year := resolveYear(meta)
+	if year <= 0 {
+		return ""
+	}
 	if strings.EqualFold(categoryOf(meta), "TV") {
 		if meta.ProviderMetadata.IMDB != nil && meta.ProviderMetadata.IMDB.EndYear > 0 {
 			return fmt.Sprintf("%d-%d", year, meta.ProviderMetadata.IMDB.EndYear)
@@ -460,13 +466,14 @@ func resolveRemasterTitle(meta api.UploadSubject) string {
 }
 
 func resolveYear(meta api.UploadSubject) int {
-	if meta.ProviderMetadata.TMDB != nil && meta.ProviderMetadata.TMDB.Year > 0 {
-		return meta.ProviderMetadata.TMDB.Year
+	provider := 0
+	if meta.ProviderMetadata.TMDB != nil {
+		provider = meta.ProviderMetadata.TMDB.Year
 	}
-	if meta.ProviderMetadata.IMDB != nil && meta.ProviderMetadata.IMDB.Year > 0 {
-		return meta.ProviderMetadata.IMDB.Year
+	if provider == 0 && meta.ProviderMetadata.IMDB != nil {
+		provider = meta.ProviderMetadata.IMDB.Year
 	}
-	return meta.Release.Year
+	return trackers.PreferredYear(meta, provider)
 }
 
 func resolveCreators(meta api.UploadSubject) string {

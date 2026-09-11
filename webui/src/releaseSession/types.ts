@@ -8,6 +8,7 @@ import type {
   OperationFailure,
   PlaylistInfo,
   PrepareInput,
+  PreparedRelease,
   ReleaseNameOverrides,
   ReleaseRef,
   ScreenshotPlan,
@@ -17,13 +18,16 @@ import type {
   UploadImageHostFailure,
 } from "../types";
 import type {
+  CorrectionFieldRef,
   DupeAssessment,
   DupeDecision,
   DescriptionInstructions,
   DescriptionSet,
+  InputReadinessSnapshot,
   MediaArtifactSet,
   MediaCaptureInstructions,
   MetadataOverrides,
+  ReleaseCorrectionsSnapshot,
   RequiredAction,
   ReleaseWorkflowCurrent,
   TrackerPreflightAssessment,
@@ -71,6 +75,10 @@ export type PreparationIntent = Readonly<{
   metadata: Readonly<MetadataOverrides>;
   releaseName: Readonly<ReleaseNameOverrides>;
   playlist: Readonly<{ Set: boolean; Selected: readonly string[]; UseAll: boolean }>;
+  /** Manual drafts; absent keys display resolved IDs, while empty values clear the input and are omitted on submission. */
+  trackerSourceIDs: Readonly<Record<string, string>>;
+  policy: Readonly<{ keepFolder: boolean; keepImages: boolean; onlyID: boolean }>;
+  search: Readonly<{ skip: boolean; client: string }>;
 }>;
 
 export type UploadRunOptions = Readonly<{
@@ -101,10 +109,18 @@ export type InputFacet = Readonly<{
     error: string;
     failure: OperationFailure | null;
     preparationDirty: boolean;
+    correctionDirty: boolean;
     intent: PreparationIntent;
+    corrections: ReleaseCorrectionsSnapshot | null;
+    resetFields: readonly CorrectionFieldRef[];
+    confirmFields: readonly CorrectionFieldRef[];
+    trackerInputAnswers: Readonly<Record<string, Readonly<Record<string, string | null>>>>;
     selectedTrackers: readonly string[];
     preview: MetadataPreview | null;
+    release: PreparedRelease | null;
+    readiness: InputReadinessSnapshot | null;
     trackerData: readonly TrackerPreview[];
+    source: Readonly<{ discCount: number; discType: string }>;
     playlist: Readonly<{
       status: PlaylistStatus;
       required: boolean;
@@ -120,6 +136,16 @@ export type InputFacet = Readonly<{
   changeIdentity(value: Readonly<ExternalIDOverrides>): void;
   changeMetadata(value: Readonly<MetadataOverrides>): void;
   changeReleaseName(value: Readonly<ReleaseNameOverrides>): void;
+  /** Queues removal of saved intent; the next preparation derives the field again. */
+  resetCorrection(field: CorrectionFieldRef): void;
+  /** Queues revision-bound confirmation of a saved content correction. */
+  confirmCorrection(field: CorrectionFieldRef): void;
+  /** Queues a tracker-local answer; null explicitly restores Auto. */
+  changeTrackerInputAnswer(tracker: string, key: string, value: string | null): void;
+  /** Updates a source ID draft; clearing does not prevent discovery from finding an ID on the next preparation. */
+  changeTrackerSourceID(tracker: string, value: string): void;
+  changePreparationPolicy(value: PreparationIntent["policy"]): void;
+  changeClientSearch(value: PreparationIntent["search"]): void;
   chooseTrackers(trackers: readonly string[]): void;
   choosePlaylists(playlists: readonly string[], useAll: boolean): void;
   confirmPlaylists(): Promise<boolean>;
@@ -182,7 +208,7 @@ export type ScreenshotsFacet = Readonly<{
     purpose: ScreenshotPurpose,
     selections?: readonly ScreenshotSelection[],
   ): Promise<boolean>;
-  previewFrame(timestampSeconds: number): Promise<boolean>;
+  previewFrame(discID: string, timestampSeconds: number): Promise<boolean>;
   remove(artifactID: string): Promise<boolean>;
   removeMany(artifactIDs: readonly string[]): Promise<boolean>;
   selectFinal(artifactID: string, selected: boolean): Promise<boolean>;
@@ -195,6 +221,8 @@ export type ScreenshotsFacet = Readonly<{
 
 export type MediaImageView = Readonly<{
   artifactID: string;
+  discID?: string;
+  discName?: string;
   index: number;
   timestampSeconds: number;
   purpose: ScreenshotPurpose;
@@ -285,6 +313,10 @@ export type UploadFacet = Readonly<{
     ignoredDupesFor: readonly string[];
     questionnaireAnswers: Readonly<Record<string, Readonly<Record<string, string>>>>;
     options: UploadRunOptions;
+    /** Whether the owning process enforces live-testing restrictions. */
+    liveTest: boolean;
+    /** Requires loaded runtime information and no live-test policy; workflow gates still apply. */
+    mutationsAllowed: boolean;
     dryRunStatus: FacetStatus;
     uploadStatus: FacetStatus;
     dryRunResult: UploadDryRunResult | null;

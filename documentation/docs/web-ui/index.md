@@ -39,6 +39,38 @@ The left navigation follows the release workflow. Some pages appear or unlock on
 
 Navigation guards prevent later operations from silently using missing or stale prerequisites. When a page is unavailable, read the notice and return to the required stage.
 
+### Correct Input facts
+
+Use **Input** to correct titles, genre, release naming fields, and languages before duplicate checking. Selected trackers share provider lookups where possible. Missing fields identify the affected trackers. An unknown source or release type requires a correction.
+
+Corrections survive metadata refresh, history reload, and restart. Explicit values take precedence over saved values and provider results. **Auto** removes the saved correction. An empty list or explicit **No** remains a manual value.
+
+Clearing **Manual year** saves an explicit zero. Choose **Auto** to restore the derived year.
+
+Audio, subtitle, and hardcoded-subtitle fields accept comma-separated languages. Individual track edits apply only to the selected inspected track. Release-level language lists affect the aggregate without assigning languages to each track. Uninspected collection members remain marked as incomplete coverage.
+
+Changing Movie/TV with the same TMDB ID loads metadata from the correct category. If the source or provider identity changes, saved content corrections may require confirmation, replacement, or reset. A changed track manifest requires selecting a current track again.
+
+Input preparation stops after facts and local readiness. It does not run duplicate searches or later media operations. Generated descriptions later include manually supplied languages; complete custom descriptions remain unchanged.
+
+### Clear a metadata provider
+
+On **Input**, open **Edit Release Details** and find **External IDs**. Click **Remove** beside TMDB, IMDb, TVDB, TVmaze, or MAL. You can also delete an existing ID from its field.
+
+Click **Refresh metadata** to apply the change. The provider's ID and metadata are removed from the prepared release, and automatic lookups cannot restore them. Other providers remain available.
+
+If the first fetch fails before a preview appears, **Edit Release Details** is still available. Remove the failing provider and click **Retry metadata**.
+
+The clear is saved for this source and survives release reloads. Enter a positive ID and refresh metadata to use that provider again. Check tracker eligibility afterward: trackers that require the cleared provider can remain blocked.
+
+See [metadata troubleshooting](../troubleshooting/index.md#a-metadata-provider-fails-or-selects-the-wrong-title) for CLI examples and recovery guidance.
+
+### Multi-disc sources
+
+On **Input**, select the parent containing all DVD or BDMV disc folders. BDMV playlist choices are grouped by disc, and preparation cannot continue until every disc has at least one selected playlist. Identical playlist filenames on different discs remain independent choices.
+
+The **Screenshots** page groups planned frames and generated images by disc and lets you choose the disc used for live preview. **Disc Menus** groups captured and imported menu images by disc. These groups survive release reloads, and **Upload** creates one collection-root torrent containing every disc folder.
+
 ## Settings
 
 Use **Settings** to manage:

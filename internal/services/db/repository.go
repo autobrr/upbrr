@@ -27,6 +27,7 @@ type ScreenshotFinalSelection = api.ScreenshotFinalSelection
 type ScreenshotSlot = api.ScreenshotSlot
 type ScreenshotSlotVariant = api.ScreenshotSlotVariant
 type UploadedImageLink = api.UploadedImageLink
+type PreparedMediaBinding = api.PreparedMediaBinding
 type PlaylistSelection = api.PlaylistSelection
 type PlaylistInfo = api.PlaylistInfo
 type PlaylistItem = api.PlaylistItem

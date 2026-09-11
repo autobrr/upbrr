@@ -274,35 +274,39 @@ func RuleSubjectFromValidation(subject api.TrackerValidationSubject) api.RuleSub
 		sceneNFOPath = "ready"
 	}
 	return api.RuleSubject{
-		SourcePath:         subject.SourcePath,
-		VideoPath:          subject.VideoPath,
-		FileList:           append([]string(nil), subject.FileList...),
-		DiscType:           subject.DiscType,
-		Scene:              subject.Scene,
-		SceneNFOPath:       sceneNFOPath,
-		SceneRenamed:       subject.SceneRenamed,
-		SceneRenamedReason: subject.SceneRenamedReason,
-		PersonalRelease:    subject.PersonalRelease,
-		Release:            subject.Release,
-		ReleaseName:        subject.ReleaseName,
-		ReleaseNameNoTag:   subject.ReleaseNameNoTag,
-		Tag:                subject.Tag,
-		Identity:           subject.Identity,
-		ProviderMetadata:   subject.ProviderMetadata,
-		AudioLanguages:     append([]string(nil), subject.AudioLanguages...),
-		SubtitleLanguages:  append([]string(nil), subject.SubtitleLanguages...),
-		TVPack:             subject.TVPack,
-		Type:               subject.Type,
-		Source:             subject.Source,
-		Container:          subject.Container,
-		BitDepth:           subject.BitDepth,
-		VideoCodec:         subject.VideoCodec,
-		VideoEncode:        subject.VideoEncode,
-		HDR:                subject.HDR,
-		Region:             subject.Region,
-		WebDV:              subject.WebDV,
-		Anime:              subject.Anime,
-		Assessments:        subject.Assessments,
+		EffectiveMetadata:          subject.EffectiveMetadata,
+		ManualLanguages:            subject.ManualLanguages,
+		HardcodedSubs:              subject.HardcodedSubs,
+		HardcodedSubtitleLanguages: append([]string(nil), subject.HardcodedSubtitleLanguages...),
+		SourcePath:                 subject.SourcePath,
+		VideoPath:                  subject.VideoPath,
+		FileList:                   append([]string(nil), subject.FileList...),
+		DiscType:                   subject.DiscType,
+		Scene:                      subject.Scene,
+		SceneNFOPath:               sceneNFOPath,
+		SceneRenamed:               subject.SceneRenamed,
+		SceneRenamedReason:         subject.SceneRenamedReason,
+		PersonalRelease:            subject.PersonalRelease,
+		Release:                    subject.Release,
+		ReleaseName:                subject.ReleaseName,
+		ReleaseNameNoTag:           subject.ReleaseNameNoTag,
+		Tag:                        subject.Tag,
+		Identity:                   subject.Identity,
+		ProviderMetadata:           subject.ProviderMetadata,
+		AudioLanguages:             append([]string(nil), subject.AudioLanguages...),
+		SubtitleLanguages:          append([]string(nil), subject.SubtitleLanguages...),
+		TVPack:                     subject.TVPack,
+		Type:                       subject.Type,
+		Source:                     subject.Source,
+		Container:                  subject.Container,
+		BitDepth:                   subject.BitDepth,
+		VideoCodec:                 subject.VideoCodec,
+		VideoEncode:                subject.VideoEncode,
+		HDR:                        subject.HDR,
+		Region:                     subject.Region,
+		WebDV:                      subject.WebDV,
+		Anime:                      subject.Anime,
+		Assessments:                subject.Assessments,
 	}
 }
 
@@ -343,21 +347,7 @@ func resolveGroup(meta api.RuleSubject) string {
 }
 
 func resolveResolution(meta api.RuleSubject) string {
-	resolution := strings.TrimSpace(meta.Release.Resolution)
-	if resolution == "" {
-		resolution = detectResolution(meta.ReleaseName)
-	}
-	return strings.ToLower(strings.TrimSpace(resolution))
-}
-
-func detectResolution(value string) string {
-	clean := strings.ToLower(value)
-	for _, candidate := range []string{"8640p", "4320p", "2160p", "1440p", "1080p", "1080i", "720p", "576p", "576i", "480p", "480i"} {
-		if strings.Contains(clean, candidate) {
-			return candidate
-		}
-	}
-	return ""
+	return strings.ToLower(strings.TrimSpace(meta.Release.Resolution))
 }
 
 func isDiscType(value string) bool {
@@ -372,14 +362,6 @@ func isDiscType(value string) bool {
 
 func isHEVC(meta api.RuleSubject) bool {
 	codec := strings.ToUpper(strings.TrimSpace(meta.VideoCodec))
-	if codec == "" {
-		for _, value := range meta.Release.Codec {
-			if strings.EqualFold(strings.TrimSpace(value), "HEVC") || strings.EqualFold(strings.TrimSpace(value), "H.265") {
-				return true
-			}
-		}
-		return false
-	}
 	return codec == "HEVC" || codec == "H.265"
 }
 
@@ -431,6 +413,9 @@ func hasReleaseToken(meta api.RuleSubject, tokens []string) bool {
 // TVDB, and TVmaze metadata. Parsed release genres and provider keywords are
 // excluded.
 func RuleGenres(meta api.RuleSubject) []string {
+	if meta.EffectiveMetadata.GenresProvenance.IsManual() {
+		return normalizeStrings(meta.EffectiveMetadata.Genres)
+	}
 	if !ruleProviderMetadataCurrent(meta) {
 		return nil
 	}
@@ -597,6 +582,9 @@ func evaluateLanguageRule(meta api.RuleSubject, rule *LanguageRule) (bool, strin
 }
 
 func resolveOriginalLanguage(meta api.RuleSubject) string {
+	if meta.EffectiveMetadata.OriginalLanguageProvenance.IsManual() {
+		return strings.ToLower(strings.TrimSpace(meta.EffectiveMetadata.OriginalLanguage))
+	}
 	var raw string
 	if meta.ProviderMetadata.TMDB != nil {
 		raw = strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalLanguage)

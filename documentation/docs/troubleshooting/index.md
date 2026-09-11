@@ -48,13 +48,32 @@ Run `ffmpeg -version` in the same environment that starts upbrr. On Windows, add
 
 The Web UI **Application Details** surface reports detected FFmpeg capability without exposing the local executable path.
 
+## A multi-disc source is rejected
+
+Multi-disc support accepts extracted, homogeneous DVD or BDMV directory collections. Select the collection parent and use one marker type under every disc folder:
+
+- `Disc 1/VIDEO_TS` and `Disc 2/VIDEO_TS`; or
+- `Disc 1/BDMV` and `Disc 2/BDMV`.
+
+Mixed DVD/BDMV collections are rejected. Nested or multi-disc HD DVD collections are unsupported; only an existing single direct or immediate `HVDVD_TS` layout remains compatible. ISO images and optical drives are not discovered as multi-disc inputs, so extract or copy each disc into a directory layout first. Directory symlinks are also rejected.
+
 ## Automatic DVD menu capture fails
 
-Automatic capture accepts an extracted DVD directory containing `VIDEO_TS`, or `VIDEO_TS` itself. It does not accept ISO images, optical drives, or Blu-ray menus.
+Automatic capture accepts an extracted DVD directory containing `VIDEO_TS`, `VIDEO_TS` itself, or a supported multi-disc DVD collection parent. Multi-disc results are grouped by disc; a partial-coverage warning means the collection-wide capture cap or available menus left at least one disc uncovered. Automatic capture does not accept ISO images, optical drives, or Blu-ray menus.
 
 The selected FFmpeg must expose the `dvdvideo` demuxer plus `menu`, `menu_lu`, `menu_vts`, `pgc`, and `pg`. Encrypted, protected, unreadable, region-restricted, or corrupt inputs can still fail. upbrr does not provide CSS decryption.
 
 Use manual disc-menu image import when automatic capture is not available.
+
+## A metadata provider fails or selects the wrong title
+
+Supply the correct provider ID, or clear the provider when you want to continue without it. For example, `--tmdb=` or `--tmdb=0` clears TMDB in the CLI. See [clearing a metadata provider](../cli/index.md#clear-a-metadata-provider) for all supported flags and examples.
+
+In the Web UI, use the [metadata ID controls on Input](../web-ui/index.md#clear-a-metadata-provider), then click **Refresh metadata**. If the first fetch fails before a preview appears, remove the provider and click **Retry metadata** instead.
+
+Clearing prevents that provider's ID and metadata from being rediscovered for this source. It persists across release reloads. Supply a positive ID to use the provider again.
+
+Check tracker eligibility after the change. A tracker that requires the missing provider can remain blocked, while other eligible trackers can continue.
 
 ## Tracker authentication is blocked
 

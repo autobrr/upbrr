@@ -84,6 +84,7 @@ func clientEvidenceSnapshot(input api.PrepareInput, evidence clientdiscovery.Evi
 	result := api.ClientSearchResult{
 		InfoHash:            evidence.InfoHash,
 		TorrentPath:         evidence.TorrentPath,
+		TorrentDataVerified: evidence.TorrentDataVerified,
 		TrackerIDs:          cloneTrackerIDs(evidence.TrackerIDs),
 		FoundTrackerMatch:   evidence.FoundTrackerMatch,
 		TorrentComments:     cloneTorrentMatches(evidence.TorrentComments),

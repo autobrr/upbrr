@@ -6,14 +6,12 @@ package hdb
 import (
 	"context"
 	"fmt"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
-	paths "github.com/autobrr/upbrr/internal/pathing/layout"
-	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -71,12 +69,12 @@ func BuildDescription(
 		if header := strings.TrimSpace(appConfig.Description.DiscMenuHeader); header != "" {
 			parts = append(parts, header)
 		}
-		if section := buildScreenshotSection(menuImages, 0); section != "" {
+		if section := buildDiscScreenshotSections(meta, menuImages, 0); section != "" {
 			parts = append(parts, section)
 		}
 	}
 
-	if section := buildScreenshotSection(screenshots, meta.Options.Screens); section != "" {
+	if section := buildDiscScreenshotSections(meta, screenshots, meta.Options.Screens); section != "" {
 		parts = append(parts, section)
 	}
 
@@ -88,37 +86,19 @@ func BuildDescription(
 }
 
 func buildDiscSection(meta api.UploadSubject, dbPath string) (string, error) {
-	if strings.TrimSpace(meta.DVDVOBMediaInfoText) != "" {
-		return "[quote=VOB MediaInfo]" + strings.TrimSpace(meta.DVDVOBMediaInfoText) + "[/quote]", nil
+	if media := trackers.ReadDVDVOBMediaInfo(meta); media != "" {
+		return "[quote=VOB MediaInfo]" + media + "[/quote]", nil
 	}
 
 	if !strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
 		return "", nil
 	}
 
-	if strings.TrimSpace(dbPath) == "" {
-		return "", nil
-	}
-	tmpRoot, err := db.Subdir(dbPath, "tmp")
+	content, err := trackers.ReadBDInfo(dbPath, meta)
 	if err != nil {
-		return "", fmt.Errorf("description: %w", err)
+		return "", fmt.Errorf("description: HDB read BDInfo: %w", err)
 	}
-	tmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
-	if err != nil {
-		return "", fmt.Errorf("description: %w", err)
-	}
-	path := paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylistFor(meta.SelectedBDMVPlaylists))
-	if strings.TrimSpace(path) == "" {
-		return "", nil
-	}
-	content, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", nil
-		}
-		return "", fmt.Errorf("description: HDB read MediaInfo file: %w", err)
-	}
-	trimmed := strings.TrimSpace(string(content))
+	trimmed := strings.TrimSpace(content)
 	if trimmed == "" {
 		return "", nil
 	}
@@ -238,6 +218,48 @@ func buildScreenshotSection(images []api.ScreenshotImage, maxCount int) string {
 	}
 	parts = append(parts, "[/center]")
 	return strings.Join(parts, "")
+}
+
+func buildDiscScreenshotSections(meta api.UploadSubject, images []api.ScreenshotImage, maxCount int) string {
+	if len(meta.Disc.Items) < 2 {
+		return buildScreenshotSection(images, maxCount)
+	}
+	if maxCount > 0 && maxCount < len(images) {
+		images = images[:maxCount]
+	}
+	parts := make([]string, 0, len(meta.Disc.Items)+1)
+	used := make(map[int]struct{}, len(images))
+	for _, disc := range meta.Disc.Items {
+		group := make([]api.ScreenshotImage, 0)
+		for index, image := range images {
+			if image.DiscID != disc.ID {
+				continue
+			}
+			group = append(group, image)
+			used[index] = struct{}{}
+		}
+		if section := buildScreenshotSection(group, 0); section != "" {
+			parts = append(parts, "[b]"+safeDiscLabel(disc.Name)+"[/b]\n"+section)
+		}
+	}
+	unscoped := make([]api.ScreenshotImage, 0, len(images)-len(used))
+	for index, image := range images {
+		if _, ok := used[index]; !ok {
+			unscoped = append(unscoped, image)
+		}
+	}
+	if section := buildScreenshotSection(unscoped, 0); section != "" {
+		parts = append(parts, section)
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func safeDiscLabel(value string) string {
+	value = strings.ReplaceAll(value, "[", "(")
+	value = strings.ReplaceAll(value, "]", ")")
+	value = strings.ReplaceAll(value, "\r", " ")
+	value = strings.ReplaceAll(value, "\n", " ")
+	return strings.Join(strings.Fields(value), " ")
 }
 
 func normalize(value string) string {

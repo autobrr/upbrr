@@ -46,6 +46,9 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 	if !meta.Anime && resolveASCIMDb(meta) == "" {
 		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing IMDb ID for ASC dupe search", nil)
 	}
+	if meta.Anime && resolveASCTitle(meta) == "" {
+		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing title for ASC anime dupe search", nil)
+	}
 
 	cookies, _, err := LoadCookies(ctx, h.cfg.MainSettings.DBPath)
 	if err != nil || len(cookies) == 0 {
@@ -415,14 +418,12 @@ func resolveASCCategory(meta api.DuplicateSubject) string {
 }
 
 func resolveASCTitle(meta api.DuplicateSubject) string {
-	if strings.TrimSpace(meta.Release.Title) != "" {
-		return strings.TrimSpace(meta.Release.Title)
+	title := strings.TrimSpace(meta.Release.Title)
+	if title == "" && meta.Projection != nil {
+		title = dupe.ProjectedSearchName(meta)
 	}
-	if meta.Projection != nil {
-		return dupe.ProjectedSearchName(meta)
+	if title == "" {
+		title = strings.TrimSpace(meta.ReleaseName)
 	}
-	if strings.TrimSpace(meta.ReleaseName) != "" {
-		return strings.TrimSpace(meta.ReleaseName)
-	}
-	return strings.TrimSpace(meta.SourcePath)
+	return meta.EffectiveMetadata.PreferredTitle(title)
 }

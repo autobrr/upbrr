@@ -46,6 +46,10 @@ type PreparedRelease struct {
 type PrepareResult struct {
 	Release     PreparedRelease
 	Diagnostics []PreparationDiagnostic
+	// EffectiveInstructions and Corrections retain accepted intent outside the
+	// immutable facts so workflow snapshots use the same preparation authority.
+	EffectiveInstructions ReleaseFactInstructions
+	Corrections           ReleaseCorrectionsSnapshot
 }
 
 // ReleaseRef identifies one exact prepared generation without exposing its
@@ -87,6 +91,7 @@ type SourceManifestEntry struct {
 	Size       int64
 	ModifiedAt time.Time `ts_type:"string"`
 	Disc       string
+	DiscID     string
 	Playlist   string
 }
 
@@ -94,12 +99,14 @@ type SourceManifestEntry struct {
 // preparation-resource paths.
 type SourceClassification struct {
 	DiscType  string
+	DiscCount int
 	Container string
 	MediaType string
 }
 
 // NamingFacts contains finalized reusable naming facts rather than raw parser
-// output or workflow-specific name overrides.
+// output or workflow-specific name overrides. AlternateTitle is resolved before
+// presentation omissions are applied.
 type NamingFacts struct {
 	Filename         string
 	ReleaseName      string
@@ -108,36 +115,43 @@ type NamingFacts struct {
 	NamePresentation ReleaseNamePresentation
 	// GeneratedReleaseNames contains safe canonical structural alternatives.
 	// Empty variants mean ReleaseName must remain exact.
-	GeneratedReleaseNames GeneratedReleaseNameVariants
-	Tag                   string
-	Type                  string
-	Artist                string
-	Title                 string
-	Subtitle              string
-	AlternateTitle        string
-	Year                  int
-	Month                 int
-	Day                   int
-	Source                string
-	Resolution            string
-	Codecs                []string
-	Audio                 []string
-	HDR                   []string
-	Extension             string
-	Languages             []string
-	Site                  string
-	Genre                 string
-	Channels              string
-	Collection            string
-	Region                string
-	Size                  string
-	Group                 string
-	Disc                  string
-	Editions              []string
-	Other                 []string
-	Scene                 bool
-	SceneName             string
-	Personal              bool
+	GeneratedReleaseNames    GeneratedReleaseNameVariants
+	Tag                      string
+	Type                     string
+	Artist                   string
+	Title                    string
+	Subtitle                 string
+	AlternateTitle           string
+	OriginalTitle            string
+	Genres                   []string
+	TitleProvenance          FactProvenance
+	AlternateTitleProvenance FactProvenance
+	OriginalTitleProvenance  FactProvenance
+	GenresProvenance         FactProvenance
+	YearProvenance           FactProvenance
+	Year                     int
+	Month                    int
+	Day                      int
+	Source                   string
+	Resolution               string
+	Codecs                   []string
+	Audio                    []string
+	HDR                      []string
+	Extension                string
+	Languages                []string
+	Site                     string
+	Genre                    string
+	Channels                 string
+	Collection               string
+	Region                   string
+	Size                     string
+	Group                    string
+	Disc                     string
+	Editions                 []string
+	Other                    []string
+	Scene                    bool
+	SceneName                string
+	Personal                 bool
 }
 
 // EpisodeFacts contains canonical reusable episodic identity and schedule
@@ -162,32 +176,45 @@ type EpisodeFacts struct {
 
 // MediaFacts contains finalized reusable media characteristics.
 type MediaFacts struct {
-	AudioLanguages    []string
-	SubtitleLanguages []string
-	Container         string
-	Audio             string
-	Channels          string
-	Commentary        bool
-	ThreeD            string
-	Source            string
-	Type              string
-	UHD               string
-	HDR               string
-	HDRFacts          HDRFacts
-	Distributor       string
-	Region            string
-	VideoCodec        string
-	VideoEncode       string
-	HasEncodeSettings bool
-	BitDepth          string
-	Edition           string
-	Repack            string
-	WebDV             bool
-	StreamOptimized   int
-	Service           string
-	ServiceLongName   string
-	MediaInfoUniqueID string
-	Anime             bool
+	AudioLanguages                       []string
+	SubtitleLanguages                    []string
+	TrackAudioLanguages                  []string
+	TrackSubtitleLanguages               []string
+	Tracks                               []MediaTrackFacts
+	TrackCoverageComplete                bool
+	AudioLanguagesProvenance             FactProvenance
+	SubtitleLanguagesProvenance          FactProvenance
+	HardcodedSubs                        bool
+	HardcodedSubtitleLanguages           []string
+	HardcodedSubsProvenance              FactProvenance
+	HardcodedSubtitleLanguagesProvenance FactProvenance
+	OriginalLanguage                     string
+	OriginalLanguageProvenance           FactProvenance
+	DistributorProvenance                FactProvenance
+	Container                            string
+	Audio                                string
+	Channels                             string
+	Commentary                           bool
+	ThreeD                               string
+	Source                               string
+	Type                                 string
+	UHD                                  string
+	HDR                                  string
+	HDRFacts                             HDRFacts
+	Distributor                          string
+	Region                               string
+	VideoCodec                           string
+	VideoEncode                          string
+	HasEncodeSettings                    bool
+	BitDepth                             string
+	Edition                              string
+	Repack                               string
+	WebDV                                bool
+	StreamOptimized                      int
+	Service                              string
+	ServiceLongName                      string
+	MediaInfoUniqueID                    string
+	Anime                                bool
 }
 
 // DiscFacts contains typed disc measurements that are safe to publish as
@@ -198,6 +225,136 @@ type DiscFacts struct {
 	DurationSeconds float64
 	PlaylistCount   int
 	DVDVOBSet       string
+	PrimaryDiscID   string
+	PrimaryReportID string
+	Items           []DiscItemFacts
+}
+
+// DiscItemFacts contains canonical public facts for one ordered source disc.
+type DiscItemFacts struct {
+	ID              string
+	Name            string
+	Type            string
+	Reports         []DiscReportFacts
+	DurationSeconds float64
+	DVDVOBSet       string
+}
+
+// DiscReportFacts contains canonical facts for one selected BDMV report.
+type DiscReportFacts struct {
+	Playlist PlaylistInfo
+	Summary  string
+}
+
+// SelectedPlaylists returns all canonical selected playlists in disc/report order.
+func (d DiscFacts) SelectedPlaylists() []PlaylistInfo {
+	playlists := make([]PlaylistInfo, 0, d.PlaylistCount)
+	for _, disc := range d.Items {
+		for _, report := range disc.Reports {
+			playlists = append(playlists, report.Playlist)
+		}
+	}
+	if len(playlists) == 0 {
+		return nil
+	}
+	return playlists
+}
+
+// AggregateSummary returns deterministic plain-text BDMV evidence in disc and report order.
+// One disc with one report remains unchanged after trimming; larger sets receive safe headings.
+func (d DiscFacts) AggregateSummary() string {
+	reportCount := 0
+	for _, disc := range d.Items {
+		reportCount += len(disc.Reports)
+	}
+	if len(d.Items) == 1 && reportCount == 1 {
+		return strings.TrimSpace(d.Items[0].Reports[0].Summary)
+	}
+
+	blocks := make([]string, 0, reportCount)
+	for _, disc := range d.Items {
+		for _, report := range disc.Reports {
+			heading := safeDiscHeading(disc.Name)
+			file := safeDiscHeading(report.Playlist.File)
+			if file != "" {
+				heading = strings.TrimSpace(heading + " — " + file)
+			}
+			if summary := strings.TrimSpace(report.Summary); summary != "" {
+				blocks = append(blocks, strings.TrimSpace(heading+"\n"+summary))
+			}
+		}
+	}
+	return strings.Join(blocks, "\n\n")
+}
+
+// AggregateDVDVOBMediaInfo returns deterministic plain-text DVD evidence in
+// disc order. One prepared DVD remains unchanged after trimming; collections
+// receive safe disc headings.
+func AggregateDVDVOBMediaInfo(discs []DiscEvidenceResource, fallback string) string {
+	blocks := make([]string, 0, len(discs))
+	for _, disc := range discs {
+		if !strings.EqualFold(strings.TrimSpace(disc.Type), "DVD") {
+			continue
+		}
+		text := strings.TrimSpace(disc.DVDVOBMediaInfoText)
+		if text == "" {
+			continue
+		}
+		blocks = append(blocks, strings.TrimSpace(safeDiscHeading(disc.Name)+"\n"+text))
+	}
+	if len(blocks) == 1 {
+		for _, disc := range discs {
+			if strings.EqualFold(strings.TrimSpace(disc.Type), "DVD") && strings.TrimSpace(disc.DVDVOBMediaInfoText) != "" {
+				return strings.TrimSpace(disc.DVDVOBMediaInfoText)
+			}
+		}
+	}
+	if len(blocks) > 1 {
+		return strings.Join(blocks, "\n\n")
+	}
+	return strings.TrimSpace(fallback)
+}
+
+// PrimaryReport returns the canonical primary BDMV report when one exists.
+func (d DiscFacts) PrimaryReport() (DiscItemFacts, DiscReportFacts, bool) {
+	for _, item := range d.Items {
+		if item.ID != d.PrimaryDiscID {
+			continue
+		}
+		for _, report := range item.Reports {
+			if report.Playlist.ID == d.PrimaryReportID {
+				return item, report, true
+			}
+		}
+		return DiscItemFacts{}, DiscReportFacts{}, false
+	}
+	return DiscItemFacts{}, DiscReportFacts{}, false
+}
+
+// CanonicalPrimary returns the first disc with a usable title. BDMV reports use
+// highest score with report-order ties; DVD titles use the selected VOB set.
+func (d DiscFacts) CanonicalPrimary() (discID string, reportID string, durationSeconds float64, dvdVOBSet string) {
+	for _, item := range d.Items {
+		if len(item.Reports) > 0 {
+			primary := 0
+			for index := 1; index < len(item.Reports); index++ {
+				if item.Reports[index].Playlist.Score > item.Reports[primary].Playlist.Score {
+					primary = index
+				}
+			}
+			return item.ID, item.Reports[primary].Playlist.ID, item.Reports[primary].Playlist.Duration, ""
+		}
+		if item.Type == "DVD" && strings.TrimSpace(item.DVDVOBSet) != "" {
+			return item.ID, "", item.DurationSeconds, item.DVDVOBSet
+		}
+	}
+	return "", "", 0, ""
+}
+
+func safeDiscHeading(value string) string {
+	value = strings.ReplaceAll(value, "\r", " ")
+	value = strings.ReplaceAll(value, "\n", " ")
+	return strings.Join(strings.Fields(value), " ")
 }
 
 // UniqueIDStatus records the concrete MediaInfo unique-ID assessment.
@@ -396,22 +553,47 @@ type IdentityResolutionKey struct {
 	ContractVersion   string
 }
 
+// IdentityDependency records provider IDs supplied to the lookup that produced
+// ID. Zero ID means the derivation was not recorded; a positive ID with no
+// provider inputs records an independently resolved fact.
+// Inputs conservatively include every supplied provider ID, even when a lookup
+// uses only one. They describe invalidation dependencies, not the winning provider.
+type IdentityDependency struct {
+	ID       int
+	TMDBID   int
+	IMDBID   int
+	TVDBID   int
+	TVmazeID int
+	MALID    int
+}
+
+// IdentityDependencySet records derivation inputs for each canonical provider ID.
+// Each entry applies only while its ID matches that provider's canonical ID.
+type IdentityDependencySet struct {
+	TMDB   IdentityDependency
+	IMDB   IdentityDependency
+	TVDB   IdentityDependency
+	TVmaze IdentityDependency
+	MAL    IdentityDependency
+}
+
 // ExternalIdentity is the only prepared-release source for provider IDs and
 // top-level movie-or-TV classification.
 type ExternalIdentity struct {
-	SourcePath string
-	Generation PreparedGeneration
-	TMDBID     int
-	IMDBID     int
-	TVDBID     int
-	TVmazeID   int
-	MALID      int
-	Category   CanonicalCategory
-	Provenance IdentityProvenanceSet
-	Overrides  IdentityOverrideState
-	Conflict   IdentityConflictStatus
-	Resolution IdentityResolutionKey
-	ResolvedAt time.Time `ts_type:"string"`
+	SourcePath   string
+	Generation   PreparedGeneration
+	TMDBID       int
+	IMDBID       int
+	TVDBID       int
+	TVmazeID     int
+	MALID        int
+	Category     CanonicalCategory
+	Provenance   IdentityProvenanceSet
+	Overrides    IdentityOverrideState
+	Conflict     IdentityConflictStatus
+	Resolution   IdentityResolutionKey
+	Dependencies IdentityDependencySet
+	ResolvedAt   time.Time `ts_type:"string"`
 }
 
 // ProviderID returns the canonical ID for provider without applying fallbacks.

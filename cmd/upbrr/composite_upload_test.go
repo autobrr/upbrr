@@ -17,6 +17,84 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestCLICompositeMediaUsesOnlyRequestedScreenshots(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		args   []string
+		count  int
+		frames []int
+	}{
+		{name: "tracker defaults", args: []string{"Example.Show.S01E01.mkv"}},
+		{
+			name:  "explicit count",
+			args:  []string{"--screens=5", "Example.Show.S01E01.mkv"},
+			count: 5,
+		},
+		{
+			name:   "manual frames",
+			args:   []string{"--manual_frames=100,200", "Example.Show.S01E01.mkv"},
+			frames: []int{100, 200},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts, visited, paths, err := parseCLIOptions(tc.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request, err := buildCLIRequest(opts, visited, paths, opts.Screens)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mapped, err := mapCLICompositeUploadRequest(request, false, "media-test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mapped.Media.Screenshots.Count == nil || *mapped.Media.Screenshots.Count != tc.count ||
+				!slices.Equal(mapped.Media.Screenshots.Frames, tc.frames) {
+				t.Fatalf("media screenshots = %#v, want count %d frames %v", mapped.Media.Screenshots, tc.count, tc.frames)
+			}
+		})
+	}
+}
+
+func TestCLICompositePreservesProviderClears(t *testing.T) {
+	t.Parallel()
+	opts, visited, paths, err := parseCLIOptions([]string{
+		"--tmdb=", "--imdb=", "--tvdb=", "--tvmaze=", "--mal=", "--category=MOVIE", "Example.Release.2026.1080p-GRP.mkv",
+	})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	request, err := buildCLIRequest(opts, visited, paths, opts.Screens)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	if request.ReleaseNameOverrides.Category == nil || *request.ReleaseNameOverrides.Category != "MOVIE" {
+		t.Fatalf("clearing TMDB replaced the explicit category: %#v", request.ReleaseNameOverrides.Category)
+	}
+	mapped, err := mapCLICompositeUploadRequest(request, false, "provider-clear-test")
+	if err != nil {
+		t.Fatalf("map request: %v", err)
+	}
+	if err := mapped.Validate(); err != nil {
+		t.Fatalf("validate provider clears: %v", err)
+	}
+	ids := mapped.Preparation.Facts.ExternalIDs
+	for provider, id := range map[string]*api.ReleaseWorkflowUploadNumericID{
+		"tmdb":   ids.TMDB,
+		"tvdb":   ids.TVDB,
+		"tvmaze": ids.TVmaze,
+		"mal":    ids.MAL,
+	} {
+		if id == nil || id.Value == nil || *id.Value != 0 {
+			t.Fatalf("%s clear missing from composite request: %#v", provider, id)
+		}
+	}
+	if ids.IMDB == nil || ids.IMDB.Value == nil || *ids.IMDB.Value != "" {
+		t.Fatalf("IMDb clear missing from composite request: %#v", ids.IMDB)
+	}
+}
+
 func TestMapCLICompositeUploadRequestPreservesPerUploadOptions(t *testing.T) {
 	t.Parallel()
 

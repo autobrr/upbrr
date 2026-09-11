@@ -46,9 +46,11 @@ import (
 // the repository only when construction opened that repository internally.
 // Operation contexts are per call and are not retained by Core.
 type Core struct {
-	logger    api.Logger
-	repoOwner api.RepositoryOwner
-	ownsRepo  bool
+	liveTest         *api.LiveTestPolicy
+	logger           api.Logger
+	metadataDefaults config.MetadataConfig
+	repoOwner        api.RepositoryOwner
+	ownsRepo         bool
 
 	history       *historyModule
 	preparedFacts *preparedrelease.Module
@@ -67,6 +69,18 @@ func applyMetadataDefaults(input api.PrepareInput, configured config.MetadataCon
 	input.Policy.KeepImages = input.Policy.KeepImages || configured.KeepImages
 	input.Policy.OnlyID = input.Policy.OnlyID || configured.OnlyID
 	return input
+}
+
+func applyContinuationPreparationDefaults(
+	request api.ContinueReleaseWorkflowRequest,
+	configured config.MetadataConfig,
+) api.ContinueReleaseWorkflowRequest {
+	if request.Intent.Preparation == nil {
+		return request
+	}
+	input := applyMetadataDefaults(*request.Intent.Preparation, configured)
+	request.Intent.Preparation = &input
+	return request
 }
 
 // NewWithContext constructs a Core and applies ctx to initialization work such
@@ -181,7 +195,10 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 		return nil, fmt.Errorf("core: tracker registry: %w", err)
 	}
 	if services.Clients == nil {
-		services.Clients = torrentclient.NewServiceWithRegistry(cfg, logger, registry)
+		services.Clients = torrentclient.NewServiceWithRegistry(cfg, logger, registry, deps.LiveTest)
+	}
+	if deps.LiveTest != nil {
+		services.Clients = clientdiscovery.WithLiveTestPolicy(services.Clients, deps.LiveTest)
 	}
 	clientDiscovery := clientdiscovery.New(services.Clients, logger)
 	if services.Metadata == nil {
@@ -233,7 +250,17 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 		services.DVDMenus = dvdmenus.NewService(logger, tmpDir, repositories.Media())
 	}
 	if services.Images == nil {
-		services.Images = imagehosting.NewServiceWithRegistry(cfg, logger, repositories.Media(), registry)
+		if deps.LiveTest != nil {
+			images, err := imagehosting.NewLiveTestServiceWithRegistry(
+				cfg, logger, repositories.Media(), registry, deps.LiveTest.RunID(), deps.LiveTest.ImageJournalPath(), deps.LiveTest.ImageUploadLimit(),
+			)
+			if err != nil {
+				return nil, fmt.Errorf("core: live-test image hosting: %w", err)
+			}
+			services.Images = images
+		} else {
+			services.Images = imagehosting.NewServiceWithRegistry(cfg, logger, repositories.Media(), registry)
+		}
 	}
 	if services.Trackers == nil {
 		services.Trackers = trackers.NewServiceWithRegistryAndImages(
@@ -247,13 +274,14 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 			},
 			registry,
 			services.Images,
+			deps.LiveTest,
 		)
 	}
 	if services.Filesystem == nil {
 		services.Filesystem = filesystem.NewValidatorWithLogger(logger)
 	}
 	if services.Dupes == nil {
-		services.Dupes = dupechecking.NewServiceWithRegistry(cfg, logger, registry)
+		services.Dupes = dupechecking.NewServiceWithRegistry(cfg, logger, registry, deps.LiveTest)
 	}
 	if services.TrackerAuth == nil {
 		services.TrackerAuth = trackerauth.NewServiceWithRegistryAndLogger(cfg, registry, logger)
@@ -284,6 +312,10 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 		return nil, fmt.Errorf("core: release workflow repository: %w", err)
 	}
 	workflowPreparer := releaseworkflow.ReleasePreparerFunc{
+		ResolveInputFunc: func(ctx context.Context, input api.PrepareInput, update api.ReleaseCorrectionUpdate) (api.ResolvedPreparationInput, error) {
+			return preparedFacts.ResolveInput(ctx, applyMetadataDefaults(input, cfg.Metadata), update)
+		},
+		PrepareResolvedFunc: preparedFacts.PrepareResolved,
 		PrepareFunc: func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
 			return preparedFacts.Prepare(ctx, applyMetadataDefaults(input, cfg.Metadata))
 		},
@@ -330,8 +362,11 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 	}
 	e2eOptions := e2eReleaseWorkflowOptions()
 	workflowOptions := make([]releaseworkflow.Option, 0, 9+len(e2eOptions))
-	workflowOptions = append(workflowOptions,
+	workflowOptions = append(
+		workflowOptions,
+		releaseworkflow.WithLiveTestPolicy(deps.LiveTest),
 		releaseworkflow.WithTrackerProjectionBuilder(trackerWorkflowProjector),
+		releaseworkflow.WithInputReadinessEvaluator(workflowInputReadiness{registry: registry}),
 		releaseworkflow.WithTrackerPreflightBuilder(workflowPreflightBuilder{
 			auth:     services.TrackerAuth,
 			config:   cfg,
@@ -345,7 +380,9 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 			resolver: preparedFacts,
 			trackers: services.Trackers,
 		}),
-		releaseworkflow.WithUploadPlanBuilder(newWorkflowUploadPlanBuilder(cfg, preparedFacts, services.Trackers, services.Torrents, services.Clients)),
+		releaseworkflow.WithUploadPlanBuilder(
+			newWorkflowUploadPlanBuilder(cfg, preparedFacts, services.Trackers, services.Torrents, services.Clients, deps.LiveTest),
+		),
 		releaseworkflow.WithOperationErrorClassifier(classifyOperationError),
 		releaseworkflow.WithLogger(logger),
 	)
@@ -361,11 +398,13 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 	}
 
 	core := &Core{
-		logger:        logger,
-		repoOwner:     repoOwner,
-		ownsRepo:      ownsRepo,
-		preparedFacts: preparedFacts,
-		workflow:      workflow,
+		liveTest:         deps.LiveTest,
+		logger:           logger,
+		metadataDefaults: cfg.Metadata,
+		repoOwner:        repoOwner,
+		ownsRepo:         ownsRepo,
+		preparedFacts:    preparedFacts,
+		workflow:         workflow,
 	}
 	core.history = newHistoryModule(repositories.History(), cfg.MainSettings.DBPath, logger)
 	core.history.preparedFacts = core.preparedFacts
@@ -380,6 +419,7 @@ func (c *Core) ContinueReleaseWorkflow(
 	ownerID string,
 	request api.ContinueReleaseWorkflowRequest,
 ) (releaseworkflow.CommandResult, error) {
+	request = applyContinuationPreparationDefaults(request, c.metadataDefaults)
 	result, err := c.workflow.Continue(ctx, ownerID, request)
 	return result, classifyOperationError(api.OperationKindUnknown, err)
 }
@@ -498,9 +538,10 @@ func (c *Core) PreviewReleaseWorkflowFrame(
 	ownerID string,
 	workflowID api.WorkflowID,
 	expectedRevision api.WorkflowRevision,
+	discID string,
 	timestampSeconds float64,
 ) (api.FramePreview, error) {
-	preview, err := c.workflow.PreviewFrame(ctx, ownerID, workflowID, expectedRevision, timestampSeconds)
+	preview, err := c.workflow.PreviewFrame(ctx, ownerID, workflowID, expectedRevision, discID, timestampSeconds)
 	if err != nil {
 		return api.FramePreview{}, classifyOperationError(api.OperationKindMedia, err)
 	}
@@ -609,36 +650,41 @@ func (c *Core) DiscoverPlaylists(ctx context.Context, sourcePath string) ([]api.
 	if err != nil {
 		return nil, classifyOperationError(api.OperationKindPreparation, fmt.Errorf("core: resolve playlist source: %w", err))
 	}
-	if strings.TrimSpace(layout.BDMVRoot) == "" {
+	if layout.DiscType != "BDMV" || len(layout.Discs) == 0 {
 		return nil, classifyOperationError(api.OperationKindPreparation, &api.InvalidPlaylistSelectionError{
 			SourcePath: layout.SourcePath,
 			Reason:     "source is not a Blu-ray disc",
 		})
 	}
 
-	playlists, err := filesystem.DiscoverPlaylists(ctx, layout.BDMVRoot)
-	if err != nil {
-		c.logger.Warnf("core: discover playlists failed: %v", err)
-		return nil, classifyOperationError(api.OperationKindPreparation, fmt.Errorf("core: discover playlists: %w", err))
-	}
-
-	// Convert filesystem types to API types.
 	var result []api.PlaylistInfo
-	for _, p := range playlists {
-		var items []api.PlaylistItem
-		for _, item := range p.Items {
-			items = append(items, api.PlaylistItem{
-				File: item.File,
-				Size: item.Size,
+	for _, disc := range layout.Discs {
+		playlists, err := filesystem.DiscoverPlaylists(ctx, disc.Root)
+		if err != nil {
+			c.logger.Warnf("core: discover playlists failed: %v", err)
+			return nil, classifyOperationError(api.OperationKindPreparation, fmt.Errorf("core: discover playlists: %w", err))
+		}
+		for _, playlist := range playlists {
+			items := make([]api.PlaylistItem, 0, len(playlist.Items))
+			for _, item := range playlist.Items {
+				items = append(items, api.PlaylistItem{File: item.File, Size: item.Size})
+			}
+			file := strings.ToUpper(filepath.Base(strings.TrimSpace(playlist.File)))
+			id := file
+			if len(layout.Discs) > 1 {
+				id = disc.ID + ":" + file
+			}
+			result = append(result, api.PlaylistInfo{
+				ID:       id,
+				DiscID:   disc.ID,
+				DiscName: disc.Name,
+				File:     file,
+				Duration: playlist.Duration,
+				Items:    items,
+				Score:    playlist.Score,
+				Edition:  playlist.Edition,
 			})
 		}
-		result = append(result, api.PlaylistInfo{
-			File:     p.File,
-			Duration: p.Duration,
-			Items:    items,
-			Score:    p.Score,
-			Edition:  p.Edition,
-		})
 	}
 
 	c.logger.Infof("core: discovered %d playlists", len(result))

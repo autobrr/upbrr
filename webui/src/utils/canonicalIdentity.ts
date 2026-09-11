@@ -26,6 +26,13 @@ export const emptyExternalIdentity = (sourcePath = ""): ExternalIdentity => ({
     IntentFingerprint: "",
     ContractVersion: "",
   },
+  Dependencies: {
+    TMDB: { ID: 0, TMDBID: 0, IMDBID: 0, TVDBID: 0, TVmazeID: 0, MALID: 0 },
+    IMDB: { ID: 0, TMDBID: 0, IMDBID: 0, TVDBID: 0, TVmazeID: 0, MALID: 0 },
+    TVDB: { ID: 0, TMDBID: 0, IMDBID: 0, TVDBID: 0, TVmazeID: 0, MALID: 0 },
+    TVmaze: { ID: 0, TMDBID: 0, IMDBID: 0, TVDBID: 0, TVmazeID: 0, MALID: 0 },
+    MAL: { ID: 0, TMDBID: 0, IMDBID: 0, TVDBID: 0, TVmazeID: 0, MALID: 0 },
+  },
   ResolvedAt: "",
 });
 

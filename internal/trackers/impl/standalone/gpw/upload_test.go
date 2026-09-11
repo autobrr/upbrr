@@ -37,3 +37,68 @@ func TestBuildFieldsPersonalReleaseAndExclusiveFlags(t *testing.T) {
 		t.Fatalf("did not expect diy for disc personal release, got %#v", disc)
 	}
 }
+
+func TestBuildFieldsNewGroupYearPreservesManualAuthority(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		meta api.UploadSubject
+		want string
+	}{
+		{
+			name: "manual empty suppresses provider year",
+			meta: api.UploadSubject{
+				EffectiveMetadata: api.EffectiveMetadata{YearProvenance: api.FactProvenanceManualEmpty},
+				ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Year: 2026}},
+			},
+			want: "",
+		},
+		{
+			name: "manual year overrides provider year",
+			meta: api.UploadSubject{
+				EffectiveMetadata: api.EffectiveMetadata{Year: 2024, YearProvenance: api.FactProvenanceManual},
+				ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Year: 2026}},
+			},
+			want: "2024",
+		},
+		{
+			name: "provider year remains available",
+			meta: api.UploadSubject{ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Year: 2026}}},
+			want: "2026",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			fields := buildFields(trackers.PreparationInput{Meta: tc.meta}, config.TrackerConfig{}, "description", "", nil)
+			if got, ok := fields["year"]; !ok || got != tc.want {
+				t.Fatalf("year = %q, present = %t, want %q", got, ok, tc.want)
+			}
+		})
+	}
+
+	existingGroup := buildFields(trackers.PreparationInput{Meta: api.UploadSubject{ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Year: 2026}}}}, config.TrackerConfig{}, "description", "group", nil)
+	if _, ok := existingGroup["year"]; ok {
+		t.Fatalf("existing group must omit year, got %#v", existingGroup)
+	}
+}
+
+func TestResolveTagsPreservesAutomaticTMDBPresenceAndManualFacts(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{Release: api.ReleaseInfo{Genre: "Release"}, ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Genres: ""}}}
+	if got := resolveTags(meta); got != "" {
+		t.Fatalf("blank TMDB tags = %q", got)
+	}
+	meta.ProviderMetadata.TMDB = nil
+	if got := resolveTags(meta); got != "release" {
+		t.Fatalf("release tags = %q", got)
+	}
+	meta.EffectiveMetadata = api.EffectiveMetadata{Genres: []string{"Manual Genre"}, GenresProvenance: api.FactProvenanceManual}
+	if got := resolveTags(meta); got != "manual genre" {
+		t.Fatalf("manual tags = %q", got)
+	}
+}

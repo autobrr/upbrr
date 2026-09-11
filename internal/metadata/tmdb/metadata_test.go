@@ -407,12 +407,17 @@ func TestBuildLocalizedTitlesUsesTVTranslationName(t *testing.T) {
 }
 
 type captureTMDBLogger struct {
-	mu    sync.Mutex
-	warns []string
+	mu     sync.Mutex
+	warns  []string
+	debugs []string
 }
 
 func (l *captureTMDBLogger) Tracef(string, ...any) {}
-func (l *captureTMDBLogger) Debugf(string, ...any) {}
+func (l *captureTMDBLogger) Debugf(format string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.debugs = append(l.debugs, fmt.Sprintf(format, args...))
+}
 func (l *captureTMDBLogger) Infof(string, ...any)  {}
 func (l *captureTMDBLogger) Errorf(string, ...any) {}
 
@@ -486,5 +491,45 @@ func TestFetchMetadataResolvesAnimeAKA(t *testing.T) {
 	}
 	if result.RetrievedAKA != "AKA Rei No Sakuhin" {
 		t.Fatalf("expected romaji AKA, got %q", result.RetrievedAKA)
+	}
+}
+
+func TestFetchMetadataSkipsUnverifiedAnimeLookup(t *testing.T) {
+	var anilistRequested atomic.Bool
+	anilist := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		anilistRequested.Store(true)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"Page":{"media":[{"id":1,"idMal":67890,"title":{"romaji":"Rei No Sakuhin"}}]}}}`))
+	}))
+	defer anilist.Close()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/tv/12345":
+			_, _ = w.Write([]byte(`{"name":"Example Anime Series","original_name":"サンプル作品","first_air_date":"2026-07-11","original_language":"ja","genres":[{"id":16,"name":"Animation"}]}`))
+		case "/tv/12345/credits":
+			_, _ = w.Write([]byte(`{"crew":[],"cast":[]}`))
+		default:
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client(), nil, "api-key")
+	client.baseURL = server.URL
+	client.anilistURL = anilist.URL
+	result, err := client.FetchMetadata(context.Background(), MetadataInput{
+		TMDBID:          12345,
+		Category:        "TV",
+		SkipAnimeLookup: true,
+	})
+	if err != nil {
+		t.Fatalf("fetch metadata: %v", err)
+	}
+	if anilistRequested.Load() {
+		t.Fatal("AniList request dispatched despite skip flag")
+	}
+	if !result.Anime || result.MALID != 0 || result.RetrievedAKA != "" {
+		t.Fatalf("skipped anime enrichment result = %#v", result)
 	}
 }

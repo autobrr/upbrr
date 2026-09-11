@@ -14,11 +14,12 @@ export const productionReleaseSessionPorts = (): ReleaseSessionPorts => ({
     cancelOperation: (workflowID, operationID, signal) =>
       releaseWorkflowClient.cancelOperation(workflowID, operationID, signal),
     mediaPlan: (workflowID, signal) => releaseWorkflowClient.mediaPlan(workflowID, signal),
-    previewFrame: (current, timestampSeconds, idempotencyKey, signal) =>
+    previewFrame: (current, discID, timestampSeconds, idempotencyKey, signal) =>
       releaseWorkflowClient.previewFrame(
         {
           workflowId: current.workflow.id,
           expectedRevision: current.workflow.revision,
+          ...(discID ? { discId: discID } : {}),
           timestampSeconds,
           idempotencyKey,
         },

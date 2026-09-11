@@ -18,7 +18,7 @@ var webRipRegex = regexp.MustCompile(`(?i)(^|[^[:alnum:]])web-?rip([^[:alnum:]]|
 
 func validationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID:    "unit3d-a4k-v1",
+		ID:    "unit3d-a4k-v2",
 		Check: checkRequirements,
 	}
 }
@@ -56,7 +56,5 @@ func checkRequirements(ctx context.Context, subject api.TrackerValidationSubject
 func isWebRip(subject api.TrackerValidationSubject) bool {
 	return strings.EqualFold(strings.TrimSpace(subject.Type), "WEBRIP") ||
 		webRipRegex.MatchString(subject.Source) ||
-		webRipRegex.MatchString(subject.Release.Source) ||
-		webRipRegex.MatchString(subject.ReleaseName) ||
-		webRipRegex.MatchString(subject.ReleaseNameNoTag)
+		webRipRegex.MatchString(subject.Release.Source)
 }

@@ -4,6 +4,7 @@
 package unit3d
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -80,6 +81,18 @@ func TestFormatLocalizedNamePortugueseConvention(t *testing.T) {
 				Tag: "-GRP",
 			},
 			want: "Filme Brasileiro 2023 1080p WEB-DL H.264-GRP",
+		},
+		{
+			name: "Portuguese manual-empty title does not inject AKA",
+			meta: api.UploadSubject{
+				ReleaseName: "Foreign Movie 2023 1080p WEB-DL H.264-GRP",
+				ProviderMetadata: api.SourceScopedMetadata{
+					TMDB: &api.TMDBMetadata{OriginalLanguage: "pt", RetrievedAKA: "Filme Brasileiro AKA"},
+				},
+				EffectiveMetadata: api.EffectiveMetadata{TitleProvenance: api.FactProvenanceManualEmpty},
+				Tag:               "-GRP",
+			},
+			want: "Foreign Movie 2023 1080p WEB-DL H.264-GRP",
 		},
 		{
 			name: "TV year stripping",
@@ -353,5 +366,31 @@ func TestFormatLocalizedNamePortugueseConvention(t *testing.T) {
 				t.Errorf("FormatLocalizedName() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestFormatLocalizedNameUsesManualAlternateTitleOnlyWhenExplicit(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{
+		ReleaseName:       "Title Provider AKA 2026 1080p-GRP",
+		Release:           api.ReleaseInfo{Title: "Title"},
+		ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{OriginalLanguage: "en", RetrievedAKA: "Provider AKA"}},
+		EffectiveMetadata: api.EffectiveMetadata{AlternateTitle: "Automatic AKA"},
+	}
+	if got := FormatLocalizedName(meta, ""); strings.Contains(got, "Automatic AKA") {
+		t.Fatalf("automatic alternate altered localized name = %q", got)
+	}
+	meta.EffectiveMetadata.AlternateTitle = "Manual AKA"
+	meta.EffectiveMetadata.AlternateTitleProvenance = api.FactProvenanceManual
+	meta.ReleaseName = "Title Manual AKA 2026 1080p-GRP"
+	if got := FormatLocalizedName(meta, ""); strings.Contains(got, "Manual AKA") {
+		t.Fatalf("manual alternate was not removed = %q", got)
+	}
+	meta.EffectiveMetadata.AlternateTitle = ""
+	meta.EffectiveMetadata.AlternateTitleProvenance = api.FactProvenanceManualEmpty
+	meta.ReleaseName = "Title Provider AKA 2026 1080p-GRP"
+	if got := FormatLocalizedName(meta, ""); !strings.Contains(got, "Provider AKA") {
+		t.Fatalf("manual-empty alternate removed provider AKA = %q", got)
 	}
 }

@@ -135,7 +135,11 @@ func submitPreparedUpload(
 		}, nil
 	}
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "BT", "upload_failure", responsePreview, ".html")
-	return api.UploadSummary{}, commonhttp.UploadHTTPError("BT", resp.StatusCode, responsePreview)
+	errorResponse := responsePreview
+	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+		errorResponse = responseBody
+	}
+	return api.UploadSummary{}, commonhttp.UploadHTTPError("BT", resp.StatusCode, errorResponse)
 }
 
 func buildUploadPreview(state uploadState) api.TrackerDryRunEntry {
@@ -218,6 +222,10 @@ func buildFields(
 	hasPT, subtitleIDs := resolveSubtitle(meta)
 	width, height := resolveResolution(meta)
 	ptBR := api.ExtractTrackerLocalizedPTBR(meta)
+	yearLabel := ""
+	if year := resolveYear(meta); year > 0 {
+		yearLabel = strconv.Itoa(year)
+	}
 	fields := map[string][]string{
 		"audio_c":     {resolveAudioCodec(meta)},
 		"audio":       {resolveAudio(meta)},
@@ -240,7 +248,7 @@ func buildFields(
 		"title":       {resolveTitle(meta)},
 		"type":        {resolveType(meta)},
 		"video_c":     {resolveVideoCodec(meta)},
-		"year":        {strconv.Itoa(resolveYear(meta))},
+		"year":        {yearLabel},
 		"youtube":     {resolveYouTube(meta, ptBR)},
 	}
 
@@ -277,7 +285,7 @@ func buildFields(
 	if meta.Anime {
 		fields["fundo_torrent"] = []string{resolveBackdrop(meta)}
 		fields["rating"] = []string{resolveIMDbRating(meta)}
-		fields["releasedate"] = []string{strconv.Itoa(resolveYear(meta))}
+		fields["releasedate"] = []string{yearLabel}
 		fields["horas"] = []string{""}
 		fields["minutos"] = []string{""}
 		fields["vote"] = []string{""}
@@ -556,23 +564,28 @@ func resolveLogo(meta api.UploadSubject) string {
 }
 
 func resolveYear(meta api.UploadSubject) int {
-	if meta.ProviderMetadata.TMDB != nil && meta.ProviderMetadata.TMDB.Year > 0 {
-		return meta.ProviderMetadata.TMDB.Year
+	provider := 0
+	if meta.ProviderMetadata.TMDB != nil {
+		provider = meta.ProviderMetadata.TMDB.Year
 	}
-	if meta.ProviderMetadata.IMDB != nil && meta.ProviderMetadata.IMDB.Year > 0 {
-		return meta.ProviderMetadata.IMDB.Year
+	if provider == 0 && meta.ProviderMetadata.IMDB != nil {
+		provider = meta.ProviderMetadata.IMDB.Year
 	}
-	return meta.Release.Year
+	return trackers.PreferredYear(meta, provider)
 }
 
 func resolveTitle(meta api.UploadSubject) string {
+	provider := ""
 	if meta.ProviderMetadata.TMDB != nil {
-		return metautil.FirstNonEmptyTrimmed(meta.ProviderMetadata.TMDB.Title, meta.Release.Title)
+		provider = meta.ProviderMetadata.TMDB.Title
 	}
-	return meta.Release.Title
+	return trackers.PreferredTitle(meta, provider)
 }
 
 func resolveLocalizedTitle(meta api.UploadSubject, ptBR api.TMDBLocalizedData) string {
+	if meta.EffectiveMetadata.TitleProvenance.IsManual() {
+		return meta.EffectiveMetadata.Title
+	}
 	if ptBR.Title != "" {
 		if meta.ProviderMetadata.TMDB != nil {
 			return metautil.FirstNonEmptyTrimmed(ptBR.Title, meta.ProviderMetadata.TMDB.OriginalTitle)

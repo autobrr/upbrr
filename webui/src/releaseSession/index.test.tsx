@@ -4,7 +4,7 @@
 import type { ReactNode } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { MetadataPreview, PrepareInput } from "../types";
+import type { ApplicationInfo, MetadataPreview, PrepareInput } from "../types";
 import { emptyExternalIdentity } from "../utils/canonicalIdentity";
 import type {
   ContinueReleaseWorkflowRequest,
@@ -58,6 +58,7 @@ const workflowCurrent = (workflowID: string, revision: number): ReleaseWorkflowC
     disposition: "none",
     refs: {},
     availableGoals: [
+      "input_ready",
       "prepared",
       "trackers_assessed",
       "duplicates_decided",
@@ -194,6 +195,7 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
 
     switch (request.goal) {
       case "prepared":
+      case "input_ready":
         if (!request.authority && step === 0) {
           const instructions =
             request.intent.factInstructions || request.intent.preparation?.Instructions;
@@ -461,7 +463,7 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
         suggestedSelections: [],
         createdAt: "2026-07-20T00:00:00Z",
       }) as Awaited<ReturnType<ReleaseSessionPorts["workflow"]["mediaPlan"]>>,
-    previewFrame: async (current, timestampSeconds) => ({
+    previewFrame: async (current, _discID, timestampSeconds) => ({
       id: "preview-1",
       workflowId: current.workflow.id,
       workflowRevision: current.workflow.revision,
@@ -551,9 +553,37 @@ const workflowCurrentFromPreview = (
     },
   }) as unknown as ReleaseWorkflowCurrent;
 
-const wrapperFor = (ports: ReleaseSessionPorts) =>
+const liveTestRuntime: ApplicationInfo["testRuntime"] = {
+  mode: "live_test",
+  runId: "test-run",
+  trackerSubmissionAllowed: false,
+  clientMutationAllowed: false,
+  imageUploadsRequireJournal: true,
+  imageUploadLimit: 0,
+  trackerSubmission: {
+    requestsDenied: 0,
+    mutationCallsDenied: 0,
+    remoteCallsStarted: 0,
+    remoteCallsSucceeded: 0,
+  },
+  clientMutation: {
+    requestsDenied: 0,
+    mutationCallsDenied: 0,
+    remoteCallsStarted: 0,
+    remoteCallsSucceeded: 0,
+  },
+};
+
+const wrapperFor = (
+  ports: ReleaseSessionPorts,
+  runtime: { testRuntime?: ApplicationInfo["testRuntime"]; runtimeInfoReady?: boolean } = {},
+) =>
   function Wrapper({ children }: Readonly<{ children: ReactNode }>) {
-    return <ReleaseSessionProvider ports={ports}>{children}</ReleaseSessionProvider>;
+    return (
+      <ReleaseSessionProvider ports={ports} {...runtime}>
+        {children}
+      </ReleaseSessionProvider>
+    );
   };
 
 const selectAndPrepare = async (
@@ -612,14 +642,93 @@ describe("tracker workflow capabilities", () => {
 });
 
 describe("useReleaseSession", () => {
+  it.each([true, false])("blocks retained mutation actions with liveTest=%s", async (liveTest) => {
+    const workflowID = "workflow-live-test";
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const retained = {
+      ...workflowCurrent(workflowID, 7),
+      uploadResult: {
+        id: "retained-result",
+        revision: 1,
+        results: [
+          { trackerId: "EXAMPLE", submissionStatus: "failed" },
+          {
+            trackerId: "OTHER",
+            submissionStatus: "completed",
+            clientInjectionStatus: "failed",
+            clientFailureCode: "client_injection",
+          },
+        ],
+      },
+    } as unknown as ReleaseWorkflowCurrent;
+    const continueWorkflow = vi.fn(async () => retained);
+    const retryFailedUploads = vi.fn(async () => retained);
+    const retryClientInjections = vi.fn(async () => retained);
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          workflow: workflowPorts({
+            current: async () => retained,
+            continue: continueWorkflow,
+            retryFailedUploads,
+            retryClientInjections,
+          }),
+        }),
+        liveTest ? { testRuntime: liveTestRuntime } : { runtimeInfoReady: false },
+      ),
+    });
+    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+    act(() => result.current.upload.changeOptions({ noSeed: false }));
+    expect(result.current.upload.view.mutationsAllowed).toBe(false);
+    expect(result.current.upload.view.options.noSeed).toBe(liveTest);
+    await act(async () => {
+      expect(await result.current.upload.start()).toBe(false);
+      expect(await result.current.upload.retry()).toBe(false);
+      expect(await result.current.upload.retryClientInjection()).toBe(false);
+      expect(await result.current.workflow.executeUploads()).toBe(false);
+      expect(await result.current.workflow.retryFailedUploads()).toBe(false);
+      expect(await result.current.workflow.retryClientInjections()).toBe(false);
+    });
+    expect(continueWorkflow).not.toHaveBeenCalled();
+    expect(retryFailedUploads).not.toHaveBeenCalled();
+    expect(retryClientInjections).not.toHaveBeenCalled();
+    await act(() => result.current.upload.runDryRun());
+    expect(continueWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        goal: "dry_run",
+        intent: { interaction: "interactive", noSeed: liveTest },
+      }),
+      expect.any(AbortSignal),
+    );
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
   it("reloads authoritative workflow state from the retained browser workflow id", async () => {
     window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", "workflow-retained");
     const sourcePath = "C:\\media\\Example.Release.2026.1080p-GRP.mkv";
     const current = vi.fn(async (workflowID: string) => {
-      const restored = workflowCurrentFromPreview(
-        workflowCurrent(workflowID, 7),
-        preview(sourcePath, 7),
-      );
+      const restored = workflowCurrentFromPreview(workflowCurrent(workflowID, 7), {
+        ...preview(sourcePath, 7),
+        TrackerData: [
+          {
+            Tracker: "AITHER",
+            TrackerID: "123",
+            TorrentURL: "",
+            InfoHash: "",
+            TMDBID: 0,
+            IMDBID: 0,
+            TVDBID: 0,
+            MALID: 0,
+            Category: "movie",
+            Description: "",
+            DescriptionHTML: "",
+            ImageURLs: [],
+            Filename: "",
+            Matched: true,
+            UpdatedAt: "",
+          },
+        ],
+      });
       return {
         ...restored,
         selection: {
@@ -644,7 +753,361 @@ describe("useReleaseSession", () => {
       id: "workflow-retained",
       revision: 7,
     });
-    expect(result.current.upload.view.selectedTrackers).toEqual(["AITHER"]);
+    await waitFor(() => expect(result.current.upload.view.selectedTrackers).toEqual(["AITHER"]));
+    expect(result.current.input.view.trackerData).toEqual([
+      expect.objectContaining({ Tracker: "AITHER", TrackerID: "123" }),
+    ]);
+    expect(result.current.input.view.intent.trackerSourceIDs).toEqual({});
+
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it.each([true, false])(
+    "restores automatic and explicit corrections with stored corrections=%s",
+    async (stored) => {
+      const workflowID = "workflow-null-corrections";
+      window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+      const identity = { TMDBID: null, IMDBID: 1234567, TVDBID: 0, TVmazeID: null, MALID: null };
+      const releaseName = { Category: null, Tag: "", NoYear: false, ManualYear: 0 };
+      const metadata = {
+        Title: null,
+        OriginalTitle: "",
+        Commentary: false,
+        Genres: [],
+        AudioLanguages: null,
+      };
+      const initial = workflowCurrentFromPreview(
+        workflowCurrent(workflowID, 7),
+        preview("C:\\media\\Example.mkv", 1),
+      );
+      const current: ReleaseWorkflowCurrent = {
+        ...initial,
+        factInstructions: {
+          ...initial.factInstructions!,
+          instructions: {
+            ...initial.factInstructions!.instructions,
+            Identity: identity,
+            ReleaseName: releaseName,
+            Metadata: metadata,
+          },
+        },
+        ...(stored
+          ? {
+              corrections: {
+                revision: 1,
+                corrections: { version: 1, identity, releaseName, metadata },
+              },
+            }
+          : {}),
+      };
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({ workflow: workflowPorts({ current: async () => current }) }),
+        ),
+      });
+      await waitFor(() =>
+        expect(result.current.input.view.intent.identity).toEqual({ IMDBID: 1234567, TVDBID: 0 }),
+      );
+      expect(result.current.input.view.intent.releaseName).toEqual({
+        Tag: "",
+        NoYear: false,
+        ManualYear: 0,
+      });
+      expect(result.current.input.view.intent.metadata).toEqual({
+        OriginalTitle: "",
+        Commentary: false,
+        Genres: [],
+      });
+      expect(identity.TMDBID).toBeNull();
+      expect(metadata.AudioLanguages).toBeNull();
+      unmount();
+      window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+    },
+  );
+
+  it("sends correction and tracker-answer patches separately while preparing effective facts", async () => {
+    const workflowID = "workflow-input-edit";
+    const sourcePath = "C:\\media\\Example.mkv";
+    let selectedTrackers: readonly string[] = ["PTP"];
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const initialFacts = workflowCurrent(workflowID, 7).factInstructions!;
+    let current = {
+      ...workflowCurrentFromPreview(workflowCurrent(workflowID, 7), preview(sourcePath, 1)),
+      selection: {
+        id: "selection-input",
+        workflowId: workflowID,
+        revision: 3,
+        catalog: { id: "catalog-input", revision: 1 },
+        runtime: { id: "runtime-input", revision: 1 },
+        trackerIds: ["STALE"],
+        fingerprint: "3".repeat(64),
+        createdAt: "2026-09-09T00:00:00Z",
+      },
+      factInstructions: {
+        ...initialFacts,
+        correctionRevision: 3,
+        instructions: { ...initialFacts.instructions, Metadata: { Title: "Stored title" } },
+      },
+      corrections: {
+        revision: 3,
+        corrections: {
+          version: 1,
+          identity: {},
+          releaseName: {},
+          metadata: { Title: "Stored title" },
+        },
+      },
+    } as unknown as ReleaseWorkflowCurrent;
+    const inputReadiness = (value: string) =>
+      ({
+        id: `input-readiness-${current.workflow.revision}`,
+        workflowId: workflowID,
+        revision: current.workflow.revision,
+        release: {
+          SourcePath: sourcePath,
+          Generation: current.release!.release.Generation,
+        },
+        factInstructions: current.workflow.factInstructions!,
+        correctionRevision: current.corrections!.revision,
+        selectedTrackerIds: selectedTrackers,
+        requirementsFingerprint: "4".repeat(64),
+        fields: [],
+        schemas: [
+          {
+            Tracker: "PTP",
+            Fields: [
+              {
+                Key: "no_english_subtitles",
+                Label: "No English subtitles",
+                Kind: "select",
+                Options: ["auto", "yes", "no"],
+                Value: value,
+                Placeholder: "",
+                Help: "",
+                Required: true,
+              },
+            ],
+          },
+        ],
+        status: "completed",
+        createdAt: "2026-09-09T00:00:00Z",
+      }) as NonNullable<ReleaseWorkflowCurrent["inputReadiness"]>;
+    current = { ...current, inputReadiness: inputReadiness("auto") };
+
+    const continueWorkflow = vi.fn(
+      async (request: ContinueReleaseWorkflowRequest): Promise<ReleaseWorkflowCurrent> => {
+        if (request.intent.correctionPatch) {
+          const factRevision = current.factInstructions!.revision + 1;
+          current = {
+            ...current,
+            workflow: {
+              ...current.workflow,
+              revision: current.workflow.revision + 1,
+              factInstructions: { id: `${workflowID}-facts`, revision: factRevision },
+              inputReadiness: undefined,
+            },
+            factInstructions: {
+              ...current.factInstructions!,
+              revision: factRevision,
+              correctionRevision: 4,
+              instructions: {
+                ...current.factInstructions!.instructions,
+                Metadata: { Title: "Edited title" },
+              },
+            },
+            corrections: {
+              revision: 4,
+              corrections: {
+                version: 1,
+                identity: {},
+                releaseName: {},
+                metadata: { Title: "Edited title" },
+              },
+            },
+            inputReadiness: undefined,
+          } as ReleaseWorkflowCurrent;
+          return current;
+        }
+        if (request.intent.preparation) {
+          selectedTrackers = request.intent.trackerIds ?? selectedTrackers;
+          current = workflowCurrentFromPreview(
+            {
+              ...current,
+              workflow: { ...current.workflow, revision: current.workflow.revision + 1 },
+            },
+            preview(sourcePath, 2),
+          );
+          current = {
+            ...current,
+            factInstructions: {
+              ...current.factInstructions!,
+              instructions: request.intent.preparation.Instructions,
+            },
+          };
+          current = { ...current, inputReadiness: inputReadiness("auto") };
+          return current;
+        }
+        if (request.intent.trackerInputAnswers) {
+          expect(
+            Object.keys(request.intent.trackerInputAnswers).every((tracker) =>
+              selectedTrackers.includes(tracker),
+            ),
+          ).toBe(true);
+          const value =
+            request.intent.trackerInputAnswers.PTP?.no_english_subtitles === "yes" ? "yes" : "auto";
+          if (current.inputReadiness?.schemas?.[0]?.Fields[0]?.Value === value) return current;
+          current = {
+            ...current,
+            workflow: { ...current.workflow, revision: current.workflow.revision + 1 },
+          };
+          current = { ...current, inputReadiness: inputReadiness(value) };
+          return current;
+        }
+        if (!current.inputReadiness) {
+          current = {
+            ...current,
+            workflow: { ...current.workflow, revision: current.workflow.revision + 1 },
+          };
+          current = { ...current, inputReadiness: inputReadiness("auto") };
+          return current;
+        }
+        return current;
+      },
+    );
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          workflow: workflowPorts({
+            current: async () => current,
+            continue: continueWorkflow,
+          }),
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.input.view.status).toBe("ready"));
+    expect(result.current.input.view.selectedTrackers).toEqual(["PTP"]);
+
+    act(() => result.current.input.changeMetadata({ Title: "Edited title" }));
+    act(() => result.current.input.changeSourceLookupURL("https://example.invalid/source"));
+    act(() => result.current.input.changeTrackerSourceID("PTP", "123"));
+    act(() =>
+      result.current.input.changePreparationPolicy({
+        keepFolder: false,
+        keepImages: true,
+        onlyID: false,
+      }),
+    );
+    act(() => result.current.input.changeClientSearch({ skip: false, client: "Search name" }));
+    act(() => result.current.input.changeTrackerInputAnswer("PTP", "no_english_subtitles", "yes"));
+    await act(async () => {
+      expect(await result.current.input.prepare()).toBe(true);
+    });
+
+    const requests = continueWorkflow.mock.calls.map(([request]) => request);
+    const correctionIndex = requests.findIndex((request) =>
+      Boolean(request.intent.correctionPatch),
+    );
+    expect(correctionIndex).toBeGreaterThanOrEqual(0);
+    expect(requests[correctionIndex].intent).toMatchObject({
+      correctionPatch: {
+        values: {
+          Identity: {},
+          ReleaseName: {},
+          Metadata: { Title: "Edited title" },
+        },
+        resetFields: [],
+        confirmFields: [],
+        expectedRevision: 3,
+      },
+      preparation: {
+        Instructions: { Identity: {}, ReleaseName: {}, Metadata: {} },
+      },
+      trackerIds: ["PTP"],
+    });
+    expect(requests[correctionIndex + 1].intent.correctionPatch).toBeUndefined();
+    expect(requests[correctionIndex + 1].intent.preparation?.Instructions.Metadata).toEqual({
+      Title: "Edited title",
+    });
+    expect(requests[correctionIndex + 1].intent.preparation).toMatchObject({
+      Instructions: {
+        SourceLookup: "https://example.invalid/source",
+        TrackerIDs: { PTP: "123" },
+      },
+      Policy: { KeepImages: true },
+      Search: { Skip: false, Client: "Search name" },
+    });
+    const answerRequest = requests.find((request) => request.intent.trackerInputAnswers);
+    expect(answerRequest?.intent).toMatchObject({
+      trackerInputAnswers: { PTP: { no_english_subtitles: "yes" } },
+    });
+    expect(answerRequest?.intent.correctionPatch).toBeUndefined();
+    expect(answerRequest?.intent.preparation).toBeUndefined();
+    expect(
+      requests.every(
+        (request) =>
+          !request.intent.correctionPatch || request.intent.trackerInputAnswers === undefined,
+      ),
+    ).toBe(true);
+    expect(result.current.input.view.intent.metadata.Title).toBe("Edited title");
+    expect(result.current.input.view.intent).toMatchObject({
+      sourceLookupURL: "https://example.invalid/source",
+      trackerSourceIDs: { PTP: "123" },
+      policy: { keepImages: true },
+      search: { skip: false, client: "Search name" },
+    });
+    expect(result.current.input.view.readiness?.schemas?.[0]?.Fields[0]?.Value).toBe("yes");
+
+    const acceptedCallCount = continueWorkflow.mock.calls.length;
+    act(() => result.current.input.changeTrackerSourceID("PTP", ""));
+    expect(result.current.input.view.intent.trackerSourceIDs.PTP).toBe("");
+    act(() => result.current.input.changeTrackerInputAnswer("PTP", "no_english_subtitles", null));
+    expect(result.current.input.view.trackerInputAnswers).toEqual({
+      PTP: { no_english_subtitles: null },
+    });
+    await act(async () => {
+      expect(await result.current.input.prepare()).toBe(true);
+    });
+    const resetAnswerRequest = continueWorkflow.mock.calls
+      .slice(acceptedCallCount)
+      .map(([request]) => request)
+      .find((request) => request.intent.trackerInputAnswers);
+    const clearedSourceRequest = continueWorkflow.mock.calls
+      .slice(acceptedCallCount)
+      .map(([request]) => request)
+      .find((request) => request.intent.preparation);
+    expect(clearedSourceRequest?.intent.preparation?.Instructions.TrackerIDs).toEqual({});
+    expect(resetAnswerRequest?.intent.trackerInputAnswers).toEqual({
+      PTP: { no_english_subtitles: null },
+    });
+    expect(result.current.input.view.readiness?.schemas?.[0]?.Fields[0]?.Value).toBe("auto");
+
+    act(() => result.current.input.changeTrackerInputAnswer("PTP", "no_english_subtitles", "yes"));
+    act(() => result.current.duplicates.chooseTrackers(["AITHER"]));
+    const deselectedCallCount = continueWorkflow.mock.calls.length;
+    await act(async () => {
+      expect(await result.current.input.prepare()).toBe(true);
+    });
+    expect(
+      continueWorkflow.mock.calls
+        .slice(deselectedCallCount)
+        .some(([request]) => request.intent.trackerInputAnswers),
+    ).toBe(false);
+    expect(result.current.input.view.trackerInputAnswers).toEqual({
+      PTP: { no_english_subtitles: "yes" },
+    });
+
+    act(() => result.current.duplicates.chooseTrackers(["PTP"]));
+    const reselectedCallCount = continueWorkflow.mock.calls.length;
+    await act(async () => {
+      expect(await result.current.input.prepare()).toBe(true);
+    });
+    expect(
+      continueWorkflow.mock.calls
+        .slice(reselectedCallCount)
+        .find(([request]) => request.intent.trackerInputAnswers)?.[0].intent.trackerInputAnswers,
+    ).toEqual({ PTP: { no_english_subtitles: "yes" } });
+    expect(result.current.input.view.trackerInputAnswers).toEqual({});
 
     unmount();
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
@@ -682,50 +1145,54 @@ describe("useReleaseSession", () => {
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
 
-  it("confirms a retained rule authorization before upload", async () => {
-    const workflowID = "workflow-authorize-upload";
-    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
-    const action = {
-      createdAt: "2026-07-20T00:00:00Z",
-      id: "action-authorize",
-      kind: "authorize_rules" as const,
-      prompt: "Confirm BTN autofill.",
-      status: "pending" as const,
-      workflowRevision: 7,
-    };
-    const base = workflowCurrent(workflowID, 7);
-    const retained: ReleaseWorkflowCurrent = {
-      ...base,
-      workflow: { ...base.workflow, status: "blocked", requiredActions: [action] },
-      continuation: { ...base.continuation, requiredActions: [action] },
-    };
-    const continueWorkflow = vi.fn(async () => retained);
-    const { result, unmount } = renderHook(useReleaseSession, {
-      wrapper: wrapperFor(
-        portsFor({
-          workflow: workflowPorts({
-            current: async () => retained,
-            continue: continueWorkflow,
+  it.each([false, true])(
+    "confirms a retained rule authorization with liveTest=%s",
+    async (liveTest) => {
+      const workflowID = "workflow-authorize-upload";
+      window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+      const action = {
+        createdAt: "2026-07-20T00:00:00Z",
+        id: "action-authorize",
+        kind: "authorize_rules" as const,
+        prompt: "Confirm BTN autofill.",
+        status: "pending" as const,
+        workflowRevision: 7,
+      };
+      const base = workflowCurrent(workflowID, 7);
+      const retained: ReleaseWorkflowCurrent = {
+        ...base,
+        workflow: { ...base.workflow, status: "blocked", requiredActions: [action] },
+        continuation: { ...base.continuation, requiredActions: [action] },
+      };
+      const continueWorkflow = vi.fn(async () => retained);
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(
+          portsFor({
+            workflow: workflowPorts({
+              current: async () => retained,
+              continue: continueWorkflow,
+            }),
           }),
+          { testRuntime: liveTest ? liveTestRuntime : undefined },
+        ),
+      });
+
+      await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+      await act(async () => {
+        expect(await result.current.workflow.confirmAction(action)).toBe(true);
+      });
+      expect(continueWorkflow).toHaveBeenCalledWith(
+        expect.objectContaining({
+          goal: liveTest ? "dry_run" : "uploaded",
+          answers: [{ actionId: action.id, workflowRevision: 7, confirmed: true }],
         }),
-      ),
-    });
+        expect.any(AbortSignal),
+      );
 
-    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
-    await act(async () => {
-      expect(await result.current.workflow.confirmAction(action)).toBe(true);
-    });
-    expect(continueWorkflow).toHaveBeenCalledWith(
-      expect.objectContaining({
-        goal: "uploaded",
-        answers: [{ actionId: action.id, workflowRevision: 7, confirmed: true }],
-      }),
-      expect.any(AbortSignal),
-    );
-
-    unmount();
-    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
-  });
+      unmount();
+      window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+    },
+  );
 
   it("accepts a tracker rule warning from the dupe facet", async () => {
     const workflowID = "workflow-dupe-rule-override";
@@ -867,54 +1334,62 @@ describe("useReleaseSession", () => {
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
 
-  it("resumes an accepted workflow operation by polling without browser events", async () => {
+  it("resumes an accepted workflow operation without exceeding one poll per second", async () => {
+    vi.useFakeTimers();
     window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", "workflow-active");
-    const startedAt = "2026-07-20T00:00:00Z";
-    const operation = (status: "queued" | "running" | "completed", sequence: number) =>
-      ({
-        id: "operation-active",
-        workflowId: "workflow-active",
-        revision: 2,
-        resultRevision: status === "completed" ? 3 : undefined,
-        sequence,
-        command: "check_duplicates",
-        operation: "duplicate_check",
-        phase: "duplicate_check",
-        status,
-        progress: status === "queued" ? 0 : status === "running" ? 50 : 100,
-        completed: status === "completed" ? 1 : 0,
-        total: 1,
-        message: status === "completed" ? "Operation complete." : "Checking tracker.",
-        startedAt,
-        updatedAt: startedAt,
-        completedAt: status === "completed" ? startedAt : undefined,
-      }) as const;
-    const current = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ...workflowCurrent("workflow-active", 2),
-        operation: operation("queued", 1),
-      })
-      .mockResolvedValueOnce({
-        ...workflowCurrent("workflow-active", 3),
-        operation: operation("completed", 3),
+    try {
+      const startedAt = "2026-07-20T00:00:00Z";
+      const operation = (status: "queued" | "running" | "completed", sequence: number) =>
+        ({
+          id: "operation-active",
+          workflowId: "workflow-active",
+          revision: 2,
+          resultRevision: status === "completed" ? 3 : undefined,
+          sequence,
+          command: "check_duplicates",
+          operation: "duplicate_check",
+          phase: "duplicate_check",
+          status,
+          progress: status === "queued" ? 0 : status === "running" ? 50 : 100,
+          completed: status === "completed" ? 1 : 0,
+          total: 1,
+          message: status === "completed" ? "Operation complete." : "Checking tracker.",
+          startedAt,
+          updatedAt: startedAt,
+          completedAt: status === "completed" ? startedAt : undefined,
+        }) as const;
+      const current = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ...workflowCurrent("workflow-active", 2),
+          operation: operation("queued", 1),
+        })
+        .mockResolvedValueOnce({
+          ...workflowCurrent("workflow-active", 3),
+          operation: operation("completed", 3),
+        });
+      const poll = vi
+        .fn()
+        .mockResolvedValueOnce(operation("running", 2))
+        .mockResolvedValueOnce(operation("completed", 3));
+      const { result, unmount } = renderHook(useReleaseSession, {
+        wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ current, operation: poll }) })),
       });
-    const poll = vi
-      .fn()
-      .mockResolvedValueOnce(operation("running", 2))
-      .mockResolvedValueOnce(operation("completed", 3));
-    const { result, unmount } = renderHook(useReleaseSession, {
-      wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ current, operation: poll }) })),
-    });
 
-    await waitFor(() => expect(result.current.workflow.view.current?.workflow.revision).toBe(3), {
-      timeout: 3000,
-    });
-    expect(poll).toHaveBeenCalledTimes(2);
-    expect(result.current.workflow.view.current?.operation?.status).toBe("completed");
+      await act(async () => vi.advanceTimersByTimeAsync(999));
+      expect(poll).not.toHaveBeenCalled();
+      await act(async () => vi.advanceTimersByTimeAsync(1));
+      expect(poll).toHaveBeenCalledOnce();
+      await act(async () => vi.advanceTimersByTimeAsync(1000));
+      expect(poll).toHaveBeenCalledTimes(2);
+      expect(result.current.workflow.view.current?.workflow.revision).toBe(3);
+      expect(result.current.workflow.view.current?.operation?.status).toBe("completed");
 
-    unmount();
-    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+      unmount();
+    } finally {
+      window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+      vi.useRealTimers();
+    }
   });
 
   it("surfaces the safe failure retained by a terminal workflow operation", async () => {
@@ -962,7 +1437,9 @@ describe("useReleaseSession", () => {
       wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ current, operation }) })),
     });
 
-    await waitFor(() => expect(result.current.workflow.view.status).toBe("error"));
+    await waitFor(() => expect(result.current.workflow.view.status).toBe("error"), {
+      timeout: 3000,
+    });
     expect(result.current.workflow.view.error).toBe(
       "The source path is unavailable. Recovery: edit input.",
     );
@@ -1157,13 +1634,30 @@ describe("useReleaseSession", () => {
                   prompt: "Select one or more Blu-ray playlists to analyze.",
                   options: [
                     {
-                      value: "00001.mpls",
-                      label: "00001.mpls",
+                      value: "disc-one:00001.mpls",
+                      label: "Disc 1 — 00001.mpls",
                       playlist: {
+                        id: "disc-one:00001.mpls",
+                        discId: "disc-one",
+                        discName: "Disc 1",
                         file: "00001.mpls",
                         duration: 7200,
                         items: [{ file: "00001.m2ts", size: 4_000_000_000 }],
                         score: 91.25,
+                        edition: "Example Edition",
+                      },
+                    },
+                    {
+                      value: "disc-two:00001.mpls",
+                      label: "Disc 2 — 00001.mpls",
+                      playlist: {
+                        id: "disc-two:00001.mpls",
+                        discId: "disc-two",
+                        discName: "Disc 2",
+                        file: "00001.mpls",
+                        duration: 7000,
+                        items: [{ file: "00001.m2ts", size: 3_000_000_000 }],
+                        score: 90,
                         edition: "Example Edition",
                       },
                     },
@@ -1199,19 +1693,38 @@ describe("useReleaseSession", () => {
     expect(result.current.input.view.playlist).toEqual(
       expect.objectContaining({
         required: true,
-        selected: ["00001.mpls"],
+        selected: [],
         candidates: [
           {
+            id: "disc-one:00001.mpls",
+            discId: "disc-one",
+            discName: "Disc 1",
             file: "00001.mpls",
             duration: 7200,
             items: [{ file: "00001.m2ts", size: 4_000_000_000 }],
             score: 91.25,
             edition: "Example Edition",
           },
+          {
+            id: "disc-two:00001.mpls",
+            discId: "disc-two",
+            discName: "Disc 2",
+            file: "00001.mpls",
+            duration: 7000,
+            items: [{ file: "00001.m2ts", size: 3_000_000_000 }],
+            score: 90,
+            edition: "Example Edition",
+          },
         ],
       }),
     );
 
+    act(() => result.current.input.choosePlaylists(["disc-one:00001.mpls"], false));
+    expect(await result.current.input.confirmPlaylists()).toBe(false);
+    expect(prepareWorkflow).toHaveBeenCalledOnce();
+    act(() =>
+      result.current.input.choosePlaylists(["disc-one:00001.mpls", "disc-two:00001.mpls"], false),
+    );
     await act(() => result.current.input.confirmPlaylists());
 
     expect(create).toHaveBeenCalledOnce();
@@ -1220,7 +1733,11 @@ describe("useReleaseSession", () => {
       expect.anything(),
       expect.objectContaining({
         Instructions: expect.objectContaining({
-          Playlist: { Set: true, Selected: ["00001.mpls"], UseAll: false },
+          Playlist: {
+            Set: true,
+            Selected: ["disc-one:00001.mpls", "disc-two:00001.mpls"],
+            UseAll: false,
+          },
         }),
       }),
       expect.any(String),
@@ -1820,6 +2337,8 @@ describe("useReleaseSession", () => {
           artifacts: [
             {
               id: "screen-existing",
+              discId: "disc-one",
+              discName: "Disc 1",
               kind: "screenshot" as const,
               purpose: "final" as const,
               selected: true,
@@ -1828,6 +2347,8 @@ describe("useReleaseSession", () => {
             },
             {
               id: "screen-generated",
+              discId: "disc-two",
+              discName: "Disc 2",
               kind: "screenshot" as const,
               purpose: "final" as const,
               selected: true,
@@ -1853,7 +2374,55 @@ describe("useReleaseSession", () => {
               projectionSet: { id: "projections-1", revision: 1 },
               durationSeconds: 60,
               frameRate: 24,
-              suggestedSelections: [{ Index: 1, TimestampSeconds: 10, Frame: 240, Source: "auto" }],
+              discType: "BDMV",
+              discs: [
+                {
+                  discId: "disc-one",
+                  discName: "Disc 1",
+                  durationSeconds: 60,
+                  frameRate: 24,
+                  suggestedSelections: [
+                    {
+                      DiscID: "disc-one",
+                      Index: 1,
+                      TimestampSeconds: 10,
+                      Frame: 240,
+                      Source: "auto",
+                    },
+                  ],
+                },
+                {
+                  discId: "disc-two",
+                  discName: "Disc 2",
+                  durationSeconds: 45,
+                  frameRate: 30,
+                  suggestedSelections: [
+                    {
+                      DiscID: "disc-two",
+                      Index: 2,
+                      TimestampSeconds: 20,
+                      Frame: 600,
+                      Source: "auto",
+                    },
+                  ],
+                },
+              ],
+              suggestedSelections: [
+                {
+                  DiscID: "disc-one",
+                  Index: 1,
+                  TimestampSeconds: 10,
+                  Frame: 240,
+                  Source: "auto",
+                },
+                {
+                  DiscID: "disc-two",
+                  Index: 2,
+                  TimestampSeconds: 20,
+                  Frame: 600,
+                  Source: "auto",
+                },
+              ],
               createdAt: "2026-07-20T00:00:00Z",
             }),
             captureMedia,
@@ -1867,13 +2436,32 @@ describe("useReleaseSession", () => {
       expect(result.current.navigation.view.access.screenshots.available).toBe(true),
     );
     await act(() => result.current.screenshots.load());
+    expect(result.current.screenshots.view.plan?.Discs?.map((disc) => disc.DiscName)).toEqual([
+      "Disc 1",
+      "Disc 2",
+    ]);
     await act(() => result.current.screenshots.generate("final"));
 
     expect(captureMedia).toHaveBeenCalledWith(
       expect.objectContaining({ workflow: expect.objectContaining({ id: "workflow-new" }) }),
       expect.objectContaining({
         purpose: "final",
-        selections: [{ Index: 1, TimestampSeconds: 10, Frame: 240, Source: "auto" }],
+        selections: [
+          {
+            DiscID: "disc-one",
+            Index: 1,
+            TimestampSeconds: 10,
+            Frame: 240,
+            Source: "auto",
+          },
+          {
+            DiscID: "disc-two",
+            Index: 2,
+            TimestampSeconds: 20,
+            Frame: 600,
+            Source: "auto",
+          },
+        ],
       }),
       expect.any(String),
       expect.any(AbortSignal),
@@ -2143,7 +2731,7 @@ describe("useReleaseSession", () => {
     ]);
   });
 
-  it("preserves explicit-empty tracker intent and blocks duplicate start", async () => {
+  it("marks Input dirty while backend reconciliation accepts a changed tracker selection", async () => {
     const { result } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(portsFor()),
     });
@@ -2162,7 +2750,7 @@ describe("useReleaseSession", () => {
     );
 
     act(() => result.current.duplicates.chooseTrackers(["AITHER"]));
-    expect(result.current.input.view.preparationDirty).toBe(false);
+    expect(result.current.input.view.preparationDirty).toBe(true);
     await act(async () => {
       started = await result.current.duplicates.run();
     });

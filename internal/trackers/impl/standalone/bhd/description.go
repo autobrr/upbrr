@@ -11,8 +11,6 @@ import (
 	"github.com/autobrr/upbrr/internal/bbcode"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
-	paths "github.com/autobrr/upbrr/internal/pathing/layout"
-	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -44,7 +42,10 @@ func buildDescription(meta api.UploadSubject, cfg config.Config, assets trackers
 	if descriptionBody != "" {
 		parts = append(parts, descriptionBody)
 	}
-	if screenshots := buildScreenshotSection(images, maxInt(1, meta.Options.Screens)); screenshots != "" {
+	if menus := buildDiscScreenshotSection(meta, assets.MenuImages, 0); menus != "" {
+		parts = append(parts, "[b]Disc Menus[/b]\n"+menus)
+	}
+	if screenshots := buildDiscScreenshotSection(meta, images, maxInt(1, meta.Options.Screens)); screenshots != "" {
 		parts = append(parts, screenshots)
 	}
 	parts = append(parts, `[align=right][url=https://github.com/autobrr/upbrr]Uploaded by upbrr[/url][/align]`)
@@ -54,13 +55,13 @@ func buildDescription(meta api.UploadSubject, cfg config.Config, assets trackers
 func buildDiscSection(meta api.UploadSubject, dbPath string) string {
 	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
 	case "DVD":
-		media := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.DVDVOBMediaInfoText), readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath)))
+		media := metautil.FirstNonEmptyTrimmed(trackers.ReadDVDVOBMediaInfo(meta), readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath)))
 		if media == "" {
 			return ""
 		}
 		return fmt.Sprintf("[spoiler=VOB MediaInfo][code]%s[/code][/spoiler]", media)
 	case "BDMV":
-		text := readBDInfoNoErr(dbPath, meta)
+		text, _ := trackers.ReadBDInfo(dbPath, meta)
 		if text == "" {
 			return ""
 		}
@@ -103,6 +104,48 @@ func buildScreenshotSection(images []api.ScreenshotImage, limit int) string {
 	}
 	section.WriteString("[/align]")
 	return section.String()
+}
+
+func buildDiscScreenshotSection(meta api.UploadSubject, images []api.ScreenshotImage, limit int) string {
+	if len(meta.Disc.Items) < 2 {
+		return buildScreenshotSection(images, limit)
+	}
+	if limit > 0 && limit < len(images) {
+		images = images[:limit]
+	}
+	parts := make([]string, 0, len(meta.Disc.Items)+1)
+	used := make(map[int]struct{}, len(images))
+	for _, disc := range meta.Disc.Items {
+		group := make([]api.ScreenshotImage, 0)
+		for index, image := range images {
+			if image.DiscID != disc.ID {
+				continue
+			}
+			group = append(group, image)
+			used[index] = struct{}{}
+		}
+		if section := buildScreenshotSection(group, len(group)); section != "" {
+			parts = append(parts, "[b]"+safeDiscLabel(disc.Name)+"[/b]\n"+section)
+		}
+	}
+	unscoped := make([]api.ScreenshotImage, 0, len(images)-len(used))
+	for index, image := range images {
+		if _, ok := used[index]; !ok {
+			unscoped = append(unscoped, image)
+		}
+	}
+	if section := buildScreenshotSection(unscoped, len(unscoped)); section != "" {
+		parts = append(parts, section)
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func safeDiscLabel(value string) string {
+	value = strings.ReplaceAll(value, "[", "(")
+	value = strings.ReplaceAll(value, "]", ")")
+	value = strings.ReplaceAll(value, "\r", " ")
+	value = strings.ReplaceAll(value, "\n", " ")
+	return strings.Join(strings.Fields(value), " ")
 }
 
 func screenshotsFromReport(images []bbcode.Image) []api.ScreenshotImage {
@@ -161,21 +204,6 @@ func readTextFileNoErr(path string) string {
 		return ""
 	}
 	return string(payload)
-}
-
-func readBDInfoNoErr(dbPath string, meta api.UploadSubject) string {
-	if strings.TrimSpace(dbPath) == "" || strings.TrimSpace(meta.SourcePath) == "" {
-		return ""
-	}
-	tmpRoot, err := db.Subdir(dbPath, "tmp")
-	if err != nil {
-		return ""
-	}
-	tmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
-	if err != nil {
-		return ""
-	}
-	return readTextFileNoErr(paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylistFor(meta.SelectedBDMVPlaylists)))
 }
 
 func hasGroup(tag string, name string) bool {

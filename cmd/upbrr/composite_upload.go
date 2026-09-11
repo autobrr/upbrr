@@ -49,7 +49,11 @@ func (s *cliWorkflowSession) completeComposite(
 	ctx = api.WithDupeProgressReporter(ctx, func(update api.DupeProgressUpdate) {
 		printCLIWorkflowDupeProgress(s.streams.out, update)
 	})
-	current, err := s.core.StartReleaseWorkflowUpload(ctx, cliWorkflowOwnerID, request)
+	startUpload := s.core.StartReleaseWorkflowUpload
+	if s.core.LiveTestEnabled() {
+		startUpload = s.core.StartLiveTestReleaseWorkflowUpload
+	}
+	current, err := startUpload(ctx, cliWorkflowOwnerID, request)
 	if err != nil {
 		return 0, fmt.Errorf("upbrr: start composite upload: %w", err)
 	}
@@ -66,8 +70,8 @@ func (s *cliWorkflowSession) completeComposite(
 	)
 	for range 64 {
 		s.printCompositeProjectionsOnce(printProjections)
-		if debug && s.current.DryRun != nil {
-			printCLIWorkflowDryRun(s.streams.out, *s.current.DryRun, s.intent.noSeed, s.current.Projections)
+		if (debug || s.core.LiveTestEnabled()) && s.current.DryRun != nil {
+			printCLIWorkflowDryRun(s.streams.out, *s.current.DryRun, s.intent.noSeed, s.current.Projections, s.core.LiveTestEnabled())
 			return 0, nil
 		}
 		if !debug && s.current.UploadResult != nil {
@@ -194,6 +198,8 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 	}
 
 	switch action.Kind {
+	case api.RequiredActionConfirmCorrections:
+		return feedback, false, errors.New("upbrr: saved input corrections require --confirm-input or --reset-input before upload")
 	case legacyTrackerAuthActionKind, legacyTrackerTwoFactorActionKind:
 		return feedback, false, errors.New(
 			"upbrr: tracker authentication must be resolved outside the upload workflow; start a fresh attempt",

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -23,6 +24,10 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 	}
 	release := owned.result.Release
 	resources := owned.resources
+	binding, err := preparedMediaBinding(release)
+	if err != nil {
+		return api.UploadSubject{}, err
+	}
 	discType := firstNonEmpty(release.Disc.Type, release.Source.Classification.DiscType)
 	fileList := append([]string(nil), resources.fileList...)
 	if len(fileList) == 0 {
@@ -33,6 +38,11 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		selectedPlaylists = clonePreparedPlaylists(release.Source.SelectedPlaylists)
 	}
 	subject := api.UploadSubject{
+		EffectiveMetadata:           release.MetadataFacts(),
+		ManualLanguages:             release.Media.ManualLanguages(),
+		HardcodedSubs:               release.Media.HardcodedSubs,
+		HardcodedSubtitleLanguages:  append([]string(nil), release.Media.HardcodedSubtitleLanguages...),
+		MediaBinding:                binding,
 		SourcePath:                  release.Source.SourcePath,
 		Paths:                       []string{resources.sourcePath},
 		DiscType:                    discType,
@@ -74,6 +84,7 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		Identity:                    release.Identity,
 		ProviderMetadata:            release.ProviderMetadata,
 		Disc:                        release.Disc,
+		Discs:                       projectDiscResources(resources.discs),
 		AudioLanguages:              append([]string(nil), release.Media.AudioLanguages...),
 		SubtitleLanguages:           append([]string(nil), release.Media.SubtitleLanguages...),
 		Container:                   release.Media.Container,
@@ -103,11 +114,13 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		ReleaseName:                 release.Naming.ReleaseName,
 		ReleaseNameNoTag:            release.Naming.NameWithoutTag,
 		ReleaseNameClean:            release.Naming.CleanName,
+		AlternateTitle:              release.Naming.AlternateTitle,
 		NamePresentation:            release.Naming.NamePresentation,
 		GeneratedReleaseNames:       release.Naming.GeneratedReleaseNames,
 		ArrReleaseGroup:             release.Naming.Group,
 		InfoHash:                    resources.clientEvidence.Result.InfoHash,
 		ClientTorrentPath:           resources.clientEvidence.Result.TorrentPath,
+		ClientTorrentDataVerified:   resources.clientEvidence.Result.TorrentDataVerified,
 		TrackerIDs:                  maps.Clone(resources.clientEvidence.Result.TrackerIDs),
 		MatchedTrackers:             append([]string(nil), resources.clientEvidence.Result.MatchedTrackers...),
 	}
@@ -132,6 +145,7 @@ func (m *Module) ResolveDuplicateSubject(ctx context.Context, input api.Duplicat
 		fileList = manifestFiles(release.Source)
 	}
 	subject := api.DuplicateSubject{
+		EffectiveMetadata: release.MetadataFacts(),
 		SourcePath:        release.Source.SourcePath,
 		SourceSize:        release.Source.Size,
 		VideoPath:         resources.videoPath,
@@ -143,6 +157,7 @@ func (m *Module) ResolveDuplicateSubject(ctx context.Context, input api.Duplicat
 		Identity:          release.Identity,
 		ProviderMetadata:  release.ProviderMetadata,
 		DiscType:          firstNonEmpty(release.Disc.Type, release.Source.Classification.DiscType),
+		Disc:              release.Disc,
 		Type:              release.Media.Type,
 		Source:            release.Media.Source,
 		Tag:               release.Naming.Tag,
@@ -177,9 +192,25 @@ func (m *Module) ResolveDVDMenuSubject(ctx context.Context, input api.MediaPlanI
 		return api.DVDMenuSubject{}, err
 	}
 	release := owned.result.Release
+	binding, err := preparedMediaBinding(release)
+	if err != nil {
+		return api.DVDMenuSubject{}, err
+	}
+	discs := make([]api.DVDMenuDiscSubject, 0, len(owned.resources.discs))
+	for _, disc := range owned.resources.discs {
+		if disc.Type == "DVD" {
+			discs = append(discs, api.DVDMenuDiscSubject{
+				ID:   disc.ID,
+				Name: disc.Name,
+				Root: disc.Root,
+			})
+		}
+	}
 	return api.DVDMenuSubject{
-		SourcePath: release.Source.SourcePath,
-		DiscType:   firstNonEmpty(release.Disc.Type, release.Source.Classification.DiscType),
+		MediaBinding: binding,
+		SourcePath:   release.Source.SourcePath,
+		DiscType:     firstNonEmpty(release.Disc.Type, release.Source.Classification.DiscType),
+		Discs:        discs,
 	}, nil
 }
 
@@ -192,11 +223,28 @@ func (m *Module) ResolveScreenshotSubject(ctx context.Context, input api.MediaPl
 	}
 	release := owned.result.Release
 	resources := owned.resources
+	binding, err := preparedMediaBinding(release)
+	if err != nil {
+		return api.ScreenshotSubject{}, err
+	}
 	selectedPlaylists := clonePreparedPlaylists(resources.selectedBDMVPlaylists)
 	if len(selectedPlaylists) == 0 {
 		selectedPlaylists = clonePreparedPlaylists(release.Source.SelectedPlaylists)
 	}
+	discs := make([]api.ScreenshotDiscSubject, 0, len(resources.discs))
+	for _, disc := range resources.discs {
+		discs = append(discs, api.ScreenshotDiscSubject{
+			ID:                    disc.ID,
+			Name:                  disc.Name,
+			Type:                  disc.Type,
+			Root:                  disc.Root,
+			VideoPath:             disc.VideoPath,
+			MediaInfoJSONPath:     disc.MediaInfoJSONPath,
+			SelectedBDMVPlaylists: clonePreparedPlaylists(disc.SelectedPlaylists),
+		})
+	}
 	return api.ScreenshotSubject{
+		MediaBinding:          binding,
 		SourcePath:            release.Source.SourcePath,
 		DiscType:              firstNonEmpty(release.Disc.Type, release.Source.Classification.DiscType),
 		VideoPath:             resources.videoPath,
@@ -209,6 +257,7 @@ func (m *Module) ResolveScreenshotSubject(ctx context.Context, input api.MediaPl
 		SelectedBDMVPlaylists: selectedPlaylists,
 		DefaultCount:          input.Count,
 		ManualFrames:          append([]int(nil), input.Options.ManualFrames...),
+		Discs:                 discs,
 	}, nil
 }
 
@@ -220,6 +269,10 @@ func (m *Module) ResolveImageHostingSubject(ctx context.Context, input api.Image
 		return api.ImageHostingSubject{}, err
 	}
 	release := owned.result.Release
+	binding, err := preparedMediaBinding(release)
+	if err != nil {
+		return api.ImageHostingSubject{}, err
+	}
 	galleryName := firstNonEmpty(
 		release.Naming.ReleaseName,
 		release.Naming.NameWithoutTag,
@@ -227,7 +280,16 @@ func (m *Module) ResolveImageHostingSubject(ctx context.Context, input api.Image
 		release.Naming.Filename,
 		filepath.Base(release.Source.SourcePath),
 	)
-	return api.ImageHostingSubject{SourcePath: release.Source.SourcePath, GalleryName: galleryName}, nil
+	discs := make([]api.ImageHostingDiscSubject, 0, len(release.Disc.Items))
+	for _, disc := range release.Disc.Items {
+		discs = append(discs, api.ImageHostingDiscSubject{ID: disc.ID, Name: disc.Name})
+	}
+	return api.ImageHostingSubject{
+		MediaBinding: binding,
+		SourcePath:   release.Source.SourcePath,
+		GalleryName:  galleryName,
+		Discs:        discs,
+	}, nil
 }
 
 // ResolveDescriptionSubject validates and projects one exact prepared
@@ -239,33 +301,81 @@ func (m *Module) ResolveDescriptionSubject(ctx context.Context, input api.Descri
 	}
 	release := owned.result.Release
 	resources := owned.resources
+	binding, err := preparedMediaBinding(release)
+	if err != nil {
+		return api.DescriptionSubject{}, err
+	}
 	selectedPlaylists := clonePreparedPlaylists(resources.selectedBDMVPlaylists)
 	if len(selectedPlaylists) == 0 {
 		selectedPlaylists = clonePreparedPlaylists(release.Source.SelectedPlaylists)
 	}
 	return api.DescriptionSubject{
-		SourcePath:            release.Source.SourcePath,
-		DiscType:              firstNonEmpty(release.Disc.Type, release.Source.Classification.DiscType),
-		MediaInfoTextPath:     resources.mediaInfoTextPath,
-		DVDVOBMediaInfoText:   resources.dvdVOBMediaInfoText,
-		EpisodeOverview:       release.Episode.Overview,
-		DescriptionTemplate:   resources.descriptionTemplate,
-		Options:               input.Options,
-		Release:               releaseInfo(release),
-		SelectedBDMVPlaylists: selectedPlaylists,
-		Tag:                   release.Naming.Tag,
-		Identity:              release.Identity,
-		ProviderMetadata:      release.ProviderMetadata,
-		SeasonInt:             release.Episode.Season,
-		EpisodeInt:            release.Episode.Episode,
-		Filename:              release.Naming.Filename,
-		ReleaseName:           release.Naming.ReleaseName,
-		ReleaseNameNoTag:      release.Naming.NameWithoutTag,
-		ServiceLongName:       release.Media.ServiceLongName,
-		Type:                  release.Media.Type,
-		HDR:                   release.Media.HDR,
-		ArrReleaseGroup:       release.Naming.Group,
+		EffectiveMetadata:          release.MetadataFacts(),
+		ManualLanguages:            release.Media.ManualLanguages(),
+		HardcodedSubs:              release.Media.HardcodedSubs,
+		HardcodedSubtitleLanguages: append([]string(nil), release.Media.HardcodedSubtitleLanguages...),
+		MediaBinding:               binding,
+		SourcePath:                 release.Source.SourcePath,
+		DiscType:                   firstNonEmpty(release.Disc.Type, release.Source.Classification.DiscType),
+		MediaInfoTextPath:          resources.mediaInfoTextPath,
+		DVDVOBMediaInfoText:        resources.dvdVOBMediaInfoText,
+		EpisodeOverview:            release.Episode.Overview,
+		DescriptionTemplate:        resources.descriptionTemplate,
+		Options:                    input.Options,
+		Release:                    releaseInfo(release),
+		SelectedBDMVPlaylists:      selectedPlaylists,
+		Disc:                       release.Disc,
+		Discs:                      projectDiscResources(resources.discs),
+		Tag:                        release.Naming.Tag,
+		Identity:                   release.Identity,
+		ProviderMetadata:           release.ProviderMetadata,
+		SeasonInt:                  release.Episode.Season,
+		EpisodeInt:                 release.Episode.Episode,
+		Filename:                   release.Naming.Filename,
+		ReleaseName:                release.Naming.ReleaseName,
+		ReleaseNameNoTag:           release.Naming.NameWithoutTag,
+		ServiceLongName:            release.Media.ServiceLongName,
+		Type:                       release.Media.Type,
+		HDR:                        release.Media.HDR,
+		ArrReleaseGroup:            release.Naming.Group,
 	}, nil
+}
+
+func projectDiscResources(resources []preparationstate.DiscResource) []api.DiscEvidenceResource {
+	result := make([]api.DiscEvidenceResource, 0, len(resources))
+	for _, resource := range resources {
+		reports := make([]api.DiscReportResource, 0, len(resource.Reports))
+		for _, report := range resource.Reports {
+			reports = append(reports, api.DiscReportResource{
+				Playlist:        report.Playlist,
+				Summary:         report.Summary,
+				ExtSummary:      report.ExtSummary,
+				FullSummary:     report.FullSummary,
+				SummaryPath:     report.SummaryPath,
+				ExtSummaryPath:  report.ExtSummaryPath,
+				FullSummaryPath: report.FullSummaryPath,
+			})
+		}
+		result = append(result, api.DiscEvidenceResource{
+			ID:                  resource.ID,
+			Name:                resource.Name,
+			Type:                resource.Type,
+			Root:                resource.Root,
+			SelectedPlaylists:   clonePreparedPlaylists(resource.SelectedPlaylists),
+			VideoPath:           resource.VideoPath,
+			FileList:            append([]string(nil), resource.FileList...),
+			Reports:             reports,
+			MediaInfoJSONPath:   resource.MediaInfoJSONPath,
+			MediaInfoTextPath:   resource.MediaInfoTextPath,
+			DVDIFOPath:          resource.DVDIFOPath,
+			DVDVOBPath:          resource.DVDVOBPath,
+			DVDVOBSet:           resource.DVDVOBSet,
+			DurationSeconds:     resource.DurationSeconds,
+			DVDVOBMediaInfoJSON: resource.DVDVOBMediaInfoJSON,
+			DVDVOBMediaInfoText: resource.DVDVOBMediaInfoText,
+		})
+	}
+	return result
 }
 
 func (m *Module) resolveEnvelope(ctx context.Context, ref api.ReleaseRef) (envelope, error) {
@@ -303,7 +413,8 @@ func (m *Module) resolveEnvelope(ctx context.Context, ref api.ReleaseRef) (envel
 func releaseInfo(release api.PreparedRelease) api.ReleaseInfo {
 	naming := release.Naming
 	return api.ReleaseInfo{
-		Type:       naming.Type,
+		Category:   releaseInfoCategory(release.Identity.Category),
+		Type:       release.Media.Type,
 		Artist:     naming.Artist,
 		Title:      naming.Title,
 		Subtitle:   naming.Subtitle,
@@ -311,7 +422,7 @@ func releaseInfo(release api.PreparedRelease) api.ReleaseInfo {
 		Year:       naming.Year,
 		Month:      naming.Month,
 		Day:        naming.Day,
-		Source:     naming.Source,
+		Source:     release.Media.Source,
 		Resolution: naming.Resolution,
 		Codec:      append([]string(nil), naming.Codecs...),
 		Audio:      append([]string(nil), naming.Audio...),
@@ -320,16 +431,29 @@ func releaseInfo(release api.PreparedRelease) api.ReleaseInfo {
 		Language:   append([]string(nil), naming.Languages...),
 		Site:       naming.Site,
 		Genre:      naming.Genre,
-		Channels:   naming.Channels,
+		Channels:   release.Media.Channels,
 		Collection: naming.Collection,
-		Region:     naming.Region,
+		Region:     release.Media.Region,
 		Size:       naming.Size,
 		Group:      naming.Group,
 		Disc:       naming.Disc,
 		Season:     release.Episode.Season,
 		Episode:    release.Episode.Episode,
-		Edition:    append([]string(nil), naming.Editions...),
+		Edition:    singletonFact(release.Media.Edition),
 		Other:      append([]string(nil), naming.Other...),
+	}
+}
+
+func releaseInfoCategory(category api.CanonicalCategory) string {
+	switch category {
+	case api.CanonicalCategoryMovie:
+		return string(api.CategoryMovie)
+	case api.CanonicalCategoryTV:
+		return string(api.CategoryTV)
+	case api.CanonicalCategoryUnknown:
+		return ""
+	default:
+		return ""
 	}
 }
 

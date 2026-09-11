@@ -13,27 +13,32 @@ type IMDbInfo struct {
 
 // FindInput supplies external-ID and filename evidence for TMDB identity
 // resolution. CategoryPreference disambiguates IDs that map to movie and TV.
+// RequireExternalIDAgreement restricts external-ID matches to the intersection
+// when both IMDb and TVDB IDs are supplied; filename fallback remains available.
 type FindInput struct {
-	IMDbID             string
-	TVDBID             int
-	SearchYear         int
-	Filename           string
-	CategoryPreference string
-	IMDbInfo           *IMDbInfo
-	Unattended         bool
-	Debug              bool
+	IMDbID                     string
+	TVDBID                     int
+	SearchYear                 int
+	Filename                   string
+	CategoryPreference         string
+	IMDbInfo                   *IMDbInfo
+	RequireExternalIDAgreement bool
+	Unattended                 bool
+	Debug                      bool
 }
 
 // FindResult retains filename-search candidates when identity cannot be selected
 // automatically. FilenameSearch distinguishes fallback results from external-ID
-// matches.
+// matches. ExternalIDConflict reports nonempty IMDb and TVDB result sets with
+// no shared title when agreement is required; a lookup miss is not a conflict.
 type FindResult struct {
-	Category         string
-	TMDBID           int
-	OriginalLanguage string
-	FilenameSearch   bool
-	Candidates       []Candidate
-	AutoSelected     bool
+	Category           string
+	TMDBID             int
+	OriginalLanguage   string
+	FilenameSearch     bool
+	ExternalIDConflict bool
+	Candidates         []Candidate
+	AutoSelected       bool
 }
 
 // SearchInput controls candidate fallback and selection. DontSwitch prevents
@@ -111,7 +116,8 @@ type TranslationData struct {
 }
 
 // MetadataInput controls primary TMDB enrichment and optional logo, anime,
-// language, identity, and season evidence.
+// language, identity, and season evidence. SkipAnimeLookup suppresses title-based
+// AniList enrichment without disabling anime classification.
 type MetadataInput struct {
 	TMDBID           int
 	Category         string
@@ -120,6 +126,7 @@ type MetadataInput struct {
 	TVDBID           int
 	ManualLanguage   string
 	Anime            bool
+	SkipAnimeLookup  bool
 	MALManual        int
 	AKA              string
 	OriginalLanguage string
@@ -137,13 +144,17 @@ type MetadataInput struct {
 // that completed successfully. Runtime is minutes; LocalizedTitles keys are
 // generic language codes or regional language tags.
 type MetadataResult struct {
-	Title            string
-	Year             int
-	ReleaseDate      string
-	FirstAirDate     string
-	LastAirDate      string
-	IMDbID           int
-	TVDBID           int
+	Title        string
+	Year         int
+	ReleaseDate  string
+	FirstAirDate string
+	LastAirDate  string
+	IMDbID       int
+	TVDBID       int
+	// ExternalIMDbID and ExternalTVDBID retain TMDB's returned references
+	// before caller-supplied IDs are applied; zero means no returned reference.
+	ExternalIMDbID   int
+	ExternalTVDBID   int
 	OriginCountry    []string
 	OriginalLanguage string
 	OriginalTitle    string

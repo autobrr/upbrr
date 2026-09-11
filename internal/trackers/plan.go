@@ -124,6 +124,7 @@ type planState struct {
 // TrackerPlan is an immutable operation-scoped adapter plan. Its private state
 // authorizes at most one submission and releases owned resources exactly once.
 type TrackerPlan struct {
+	liveTest    *api.LiveTestPolicy
 	tracker     string
 	intent      PreparationIntent
 	description DescriptionResult
@@ -346,6 +347,9 @@ func (p TrackerPlan) DryRun() api.TrackerDryRunEntry { return cloneTrackerDryRun
 // the submission attempt before invoking the callback, even when it returns an
 // error.
 func (p TrackerPlan) Submit(ctx context.Context) (api.UploadSummary, error) {
+	if err := p.liveTest.RejectMutation(api.OperationKindUploadExecute); err != nil {
+		return api.UploadSummary{}, fmt.Errorf("live-test tracker submission: %w", err)
+	}
 	if p.state == nil || p.intent != PreparationIntentUpload {
 		return api.UploadSummary{}, ErrPlanNotSubmittable
 	}
@@ -412,7 +416,7 @@ func (p TrackerPlan) ResolveAction(
 		if failure != nil {
 			return TrackerPlan{}, failure
 		}
-		return resolved, nil
+		return resolved.withLiveTestPolicy(p.liveTest), nil
 	}
 	if confirmed {
 		p.state.resolved = true
@@ -443,7 +447,14 @@ func (p TrackerPlan) ResolveAction(
 	if failure != nil {
 		return TrackerPlan{}, failure
 	}
-	return resolved, nil
+	return resolved.withLiveTestPolicy(p.liveTest), nil
+}
+
+func (p TrackerPlan) withLiveTestPolicy(policy *api.LiveTestPolicy) TrackerPlan {
+	if p.liveTest == nil {
+		p.liveTest = policy
+	}
+	return p
 }
 
 // Release invokes plan cleanup at most once and prevents later submission.

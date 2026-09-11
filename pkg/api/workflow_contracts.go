@@ -7,12 +7,14 @@ import "time"
 
 // ReleaseFactInstructionSnapshot retains exact fact-producing caller intent.
 type ReleaseFactInstructionSnapshot struct {
-	ID           ReleaseFactInstructionSnapshotID `json:"id"`
-	WorkflowID   WorkflowID                       `json:"workflowId"`
-	Revision     WorkflowRevision                 `json:"revision"`
-	Instructions ReleaseFactInstructions          `json:"instructions"`
-	Fingerprint  WorkflowFingerprint              `json:"fingerprint"`
-	CreatedAt    time.Time                        `json:"createdAt" ts_type:"string"`
+	ID                       ReleaseFactInstructionSnapshotID `json:"id"`
+	WorkflowID               WorkflowID                       `json:"workflowId"`
+	Revision                 WorkflowRevision                 `json:"revision"`
+	Instructions             ReleaseFactInstructions          `json:"instructions"`
+	CorrectionRevision       uint64                           `json:"correctionRevision,omitempty"`
+	ExplicitCorrectionFields []CorrectionFieldRef             `json:"explicitCorrectionFields,omitempty"`
+	Fingerprint              WorkflowFingerprint              `json:"fingerprint"`
+	CreatedAt                time.Time                        `json:"createdAt" ts_type:"string"`
 }
 
 // ReleaseSnapshot exposes canonical release facts with derived display and diagnostics.
@@ -498,7 +500,11 @@ const (
 
 // MediaArtifact is a safe opaque projection of one retained private artifact.
 type MediaArtifact struct {
-	ID               PublicResourceID  `json:"id"`
+	ID PublicResourceID `json:"id"`
+	// DiscID identifies the prepared disc that produced this artifact.
+	DiscID string `json:"discId,omitempty"`
+	// DiscName is the safe page-facing label derived from prepared facts.
+	DiscName         string            `json:"discName,omitempty"`
 	Kind             MediaArtifactKind `json:"kind"`
 	Purpose          ScreenshotPurpose `json:"purpose"`
 	Selected         bool              `json:"selected"`
@@ -519,7 +525,9 @@ type MediaCaptureInstructions struct {
 	ScreenshotCount int                   `json:"screenshotCount"`
 	Purpose         ScreenshotPurpose     `json:"purpose"`
 	Selections      []ScreenshotSelection `json:"selections,omitempty"`
-	CaptureDVDMenus bool                  `json:"captureDvdMenus"`
+	// ManualFrames applies the same raw frame numbers to every prepared disc.
+	ManualFrames    []int `json:"manualFrames,omitempty"`
+	CaptureDVDMenus bool  `json:"captureDvdMenus"`
 	// MaxDVDMenuItems caps an explicitly requested automatic menu capture.
 	MaxDVDMenuItems int `json:"maxDvdMenuItems,omitempty"`
 }
@@ -695,6 +703,7 @@ type ReleaseWorkflow struct {
 	Revision               WorkflowRevision                         `json:"revision"`
 	FactInstructions       ReleaseFactInstructionSnapshotRef        `json:"factInstructions"`
 	Release                *ReleaseSnapshotRef                      `json:"release,omitempty"`
+	InputReadiness         *InputReadinessSnapshotRef               `json:"inputReadiness,omitempty"`
 	TrackerCatalog         *TrackerCatalogSnapshotRef               `json:"trackerCatalog,omitempty"`
 	TrackerRuntime         *TrackerRuntimeSnapshotRef               `json:"trackerRuntime,omitempty"`
 	Selection              *TrackerSelectionRef                     `json:"selection,omitempty"`
@@ -720,6 +729,8 @@ type ReleaseWorkflowCurrent struct {
 	Workflow               ReleaseWorkflow                       `json:"workflow"`
 	FactInstructions       *ReleaseFactInstructionSnapshot       `json:"factInstructions,omitempty"`
 	Release                *ReleaseSnapshot                      `json:"release,omitempty"`
+	Corrections            *ReleaseCorrectionsSnapshot           `json:"corrections,omitempty"`
+	InputReadiness         *InputReadinessSnapshot               `json:"inputReadiness,omitempty"`
 	Catalog                *TrackerCatalogSnapshot               `json:"catalog,omitempty"`
 	Runtime                *TrackerRuntimeSnapshot               `json:"runtime,omitempty"`
 	Selection              *TrackerSelection                     `json:"selection,omitempty"`

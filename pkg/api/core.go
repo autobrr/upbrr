@@ -97,6 +97,8 @@ type RepositoryOwner interface {
 
 // CoreDependencies supplies the externally owned services used to construct the core runtime.
 type CoreDependencies struct {
+	// LiveTest is process-owned and must survive configuration activation.
+	LiveTest *LiveTestPolicy
 	// Config is validated before the core is created.
 	Config Config
 	// Logger receives core initialization and runtime messages. Nil uses NopLogger.

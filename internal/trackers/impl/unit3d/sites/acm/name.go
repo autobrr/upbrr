@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -58,6 +59,9 @@ func buildACMName(meta api.UploadSubject) string {
 }
 
 func resolveACMTitle(meta api.UploadSubject) string {
+	if meta.EffectiveMetadata.TitleProvenance.IsManual() {
+		return trackers.PreferredTitle(meta, "")
+	}
 	for _, value := range []string{
 		meta.Release.Title,
 		resolveACMTMDBTitle(meta),
@@ -71,6 +75,9 @@ func resolveACMTitle(meta api.UploadSubject) string {
 }
 
 func resolveACMOriginalTitle(meta api.UploadSubject) string {
+	if meta.EffectiveMetadata.OriginalTitleProvenance.IsManual() {
+		return strings.TrimPrefix(trackers.PreferredOriginalTitle(meta, ""), "AKA ")
+	}
 	for _, value := range []string{
 		resolveACMTMDBOriginalTitle(meta),
 		resolveACMTMDBRetrievedAKA(meta),

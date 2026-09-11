@@ -19,6 +19,23 @@ export type ExternalIdentityDraft = {
   SourceMAL: string;
 };
 
+export type IdentityDependency = {
+  ID: number;
+  TMDBID: number;
+  IMDBID: number;
+  TVDBID: number;
+  TVmazeID: number;
+  MALID: number;
+};
+
+export type IdentityDependencySet = {
+  TMDB: IdentityDependency;
+  IMDB: IdentityDependency;
+  TVDB: IdentityDependency;
+  TVmaze: IdentityDependency;
+  MAL: IdentityDependency;
+};
+
 export type ExternalIdentity = {
   SourcePath: string;
   Generation: number;
@@ -36,6 +53,7 @@ export type ExternalIdentity = {
     IntentFingerprint: string;
     ContractVersion: string;
   };
+  Dependencies: IdentityDependencySet;
   ResolvedAt: string;
 };
 
@@ -81,6 +99,7 @@ export type SourceManifestEntry = {
   Size: number;
   ModifiedAt: string;
   Disc: string;
+  DiscID: string;
   Playlist: string;
 };
 
@@ -89,8 +108,10 @@ export type SourceManifest = {
   Size: number;
   Entries: SourceManifestEntry[];
   SelectedPlaylists: PlaylistInfo[];
-  Classification: { DiscType: string; Container: string; MediaType: string };
+  Classification: { DiscType: string; DiscCount: number; Container: string; MediaType: string };
 };
+
+export type FactProvenance = "automatic" | "manual" | "manual_empty" | string;
 
 export type ReleaseNamePresentation = {
   Version: string;
@@ -112,6 +133,13 @@ export type NamingFacts = {
   Title: string;
   Subtitle: string;
   AlternateTitle: string;
+  OriginalTitle: string;
+  Genres: string[];
+  TitleProvenance: FactProvenance;
+  AlternateTitleProvenance: FactProvenance;
+  OriginalTitleProvenance: FactProvenance;
+  GenresProvenance: FactProvenance;
+  YearProvenance: FactProvenance;
   Year: number;
   Month: number;
   Day: number;
@@ -158,6 +186,19 @@ export type EpisodeFacts = {
 export type MediaFacts = {
   AudioLanguages: string[];
   SubtitleLanguages: string[];
+  TrackAudioLanguages: string[];
+  TrackSubtitleLanguages: string[];
+  Tracks: MediaTrackFacts[];
+  TrackCoverageComplete: boolean;
+  AudioLanguagesProvenance: FactProvenance;
+  SubtitleLanguagesProvenance: FactProvenance;
+  HardcodedSubs: boolean;
+  HardcodedSubtitleLanguages: string[];
+  HardcodedSubsProvenance: FactProvenance;
+  HardcodedSubtitleLanguagesProvenance: FactProvenance;
+  OriginalLanguage: string;
+  OriginalLanguageProvenance: FactProvenance;
+  DistributorProvenance: FactProvenance;
   Container: string;
   Audio: string;
   Channels: string;
@@ -181,6 +222,20 @@ export type MediaFacts = {
   ServiceLongName: string;
   MediaInfoUniqueID: string;
   Anime: boolean;
+};
+
+export type MediaTrackFacts = {
+  ID: string;
+  Kind: "audio" | "subtitle" | string;
+  ResourceID: string;
+  ManifestFingerprint: string;
+  NativeID: string;
+  Ordinal: number;
+  DetectedLanguages: string[];
+  Languages: string[];
+  LanguageProvenance: FactProvenance;
+  Default: boolean;
+  Commentary: boolean;
 };
 
 export type DiscFacts = {
@@ -217,6 +272,12 @@ export type PreparedRelease = {
   PreparedAt: string;
 };
 
+export type TrackLanguageCorrection = Readonly<{
+  trackId: string;
+  languages: readonly string[];
+  manifestFingerprint: string;
+}>;
+
 export type PrepareInput = {
   SourcePath: string;
   Intent: "preview" | "duplicate_check" | "media" | "description" | "dry_run" | "upload" | string;
@@ -232,6 +293,15 @@ export type PrepareInput = {
       WebDV?: boolean | null;
       StreamOptimized?: boolean | null;
       Anime?: boolean | null;
+      Title?: string | null;
+      AlternateTitle?: string | null;
+      OriginalTitle?: string | null;
+      Genres?: readonly string[] | null;
+      AudioLanguages?: readonly string[] | null;
+      SubtitleLanguages?: readonly string[] | null;
+      HardcodedSubs?: boolean | null;
+      HardcodedSubtitleLanguages?: readonly string[] | null;
+      TrackLanguages?: readonly TrackLanguageCorrection[];
     };
     SourceLookup: string;
     BlurayReleaseID?: string;
@@ -676,6 +746,24 @@ export type ApplicationInfo = {
   dvdMenuCapabilityStatus: "available" | "incompatible" | "unavailable";
   /** User-facing reason for dvdMenuCapabilityStatus. */
   dvdMenuCapabilityMessage: string;
+  /** Present only when the process enforces live-testing restrictions. */
+  testRuntime?: {
+    mode: "live_test";
+    runId: string;
+    trackerSubmissionAllowed: false;
+    clientMutationAllowed: false;
+    imageUploadsRequireJournal: true;
+    imageUploadLimit: number;
+    trackerSubmission: LiveTestEffectCounts;
+    clientMutation: LiveTestEffectCounts;
+  };
+};
+
+type LiveTestEffectCounts = {
+  requestsDenied: number;
+  mutationCallsDenied: number;
+  remoteCallsStarted: number;
+  remoteCallsSucceeded: number;
 };
 
 /** Tracker auth support metadata returned by the WebUI API. */
@@ -974,6 +1062,8 @@ export type ImageHostWarning = {
 export type ScreenshotPurpose = "preview" | "final" | "menu";
 
 export type ScreenshotSelection = {
+  /** Prepared disc identity; omitted only by legacy single-disc callers. */
+  DiscID?: string;
   Index: number;
   TimestampSeconds: number;
   Frame: number;
@@ -981,6 +1071,10 @@ export type ScreenshotSelection = {
 };
 
 export type ScreenshotImage = {
+  /** Prepared disc identity; omitted only for unscoped single-disc artifacts. */
+  DiscID?: string;
+  /** Safe prepared-disc label used for grouped display. */
+  DiscName?: string;
   Index: number;
   TimestampSeconds: number;
   Path: string;
@@ -1076,6 +1170,8 @@ export type ScreenshotResult = {
 export type ScreenshotPlan = {
   SourcePath: string;
   DiscType: string;
+  /** Independent prepared-disc timelines; absent for legacy single-source plans. */
+  Discs?: ScreenshotDiscPlan[];
   DurationSeconds: number;
   FrameRate: number;
   SuggestedSelections: ScreenshotSelection[];
@@ -1086,6 +1182,15 @@ export type ScreenshotPlan = {
   PreviewImages: ScreenshotImage[];
   MetadataTimestamp: string;
   RequiresManualFrames: boolean;
+};
+
+/** One prepared disc timeline and its suggested screenshot selections. */
+export type ScreenshotDiscPlan = {
+  DiscID: string;
+  DiscName: string;
+  DurationSeconds: number;
+  FrameRate: number;
+  SuggestedSelections: ScreenshotSelection[];
 };
 
 export type ScreenshotLinkedImage = {
@@ -1380,6 +1485,9 @@ export type PlaylistItem = {
 };
 
 export type PlaylistInfo = {
+  id: string;
+  discId: string;
+  discName: string;
   file: string;
   duration: number;
   items: PlaylistItem[];

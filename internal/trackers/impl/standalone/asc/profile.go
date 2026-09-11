@@ -9,6 +9,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // Profile returns ASC identity, preparation, dupe, auth, and policy behavior.
@@ -22,6 +23,11 @@ func Profile() standalone.Profile {
 		PrepareDescription:      prepareDescription,
 		PrepareUpload:           prepareUpload,
 		ValidationPolicy:        validationPolicy(),
+		MetadataPolicy: &trackers.TrackerMetadataPolicy{Requirements: []trackers.MetadataRequirement{{
+			Scope:       trackers.MetadataScopeAny,
+			AnyOf:       []trackers.MetadataField{trackers.MetadataFieldGenres},
+			Disposition: api.RuleDispositionStrict,
+		}}},
 		ReleaseNamePolicy: trackers.NewReleaseNamePolicy("standalone/asc/v2", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
 			uploadName := resolveUploadTitle(input.Subject)
 			if input.RequestedName != nil {

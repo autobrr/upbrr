@@ -6,7 +6,11 @@ package releaseworkflow
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"reflect"
 	"slices"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -72,6 +76,329 @@ func TestContinueBeginsAndAdvancesThroughCentralPlanner(t *testing.T) {
 	}
 }
 
+func TestContinueHydratesPreparedGenerationBeforeRestartedMediaCapture(t *testing.T) {
+	t.Parallel()
+
+	forceRecheck := true
+	preparation := api.PrepareInput{
+		SourcePath: filepath.Join(t.TempDir(), "releases", "Example.Release.2026.1080p-GRP"),
+		Instructions: api.ReleaseFactInstructions{
+			SourceLookup: "Example Release 2026",
+		},
+		Controls: api.PreparationControls{
+			ConfirmBDMVRescan: true,
+			ForceRecheck:      &forceRecheck,
+		},
+		Force: true,
+		MetadataRequirements: api.MetadataRequirementSet{
+			Version: "restart-hydration-v1",
+			Requirements: []api.MetadataRequirement{{
+				Scope:       api.MetadataRequirementScopeAny,
+				AnyOf:       []api.MetadataRequirementField{"original_title"},
+				Disposition: api.RuleDispositionStrict,
+			}},
+		},
+	}
+	continuationPreparation := preparation
+	continuationPreparation.MetadataRequirements = api.MetadataRequirementSet{}
+	projector := trackerProjectionBuilderFunc(func(
+		_ context.Context,
+		_ api.ReleaseSnapshot,
+		_ api.UploadSubject,
+		trackerIDs []api.TrackerID,
+		_ map[api.TrackerID]api.TrackerProjectionInstructions,
+		_ map[api.TrackerID]api.WorkflowFingerprint,
+		_ api.WorkflowExecutionMode,
+	) (
+		api.TrackerCatalogSnapshot,
+		api.TrackerRuntimeSnapshot,
+		api.TrackerSelection,
+		api.TrackerReleaseProjectionSet,
+		error,
+	) {
+		return testCatalog(t), testRuntime(t), api.TrackerSelection{TrackerIDs: trackerIDs}, testProjectionSet(t), nil
+	})
+	first, repository := newTestModule(
+		t,
+		testPreparer(),
+		WithTrackerProjectionBuilder(projector),
+		WithTrackerPreflightBuilder(readyPreflightBuilder(t)),
+		WithDupeAssessmentBuilder(readyDupeBuilder(t)),
+	)
+	current := executeCommand(t, first, CreateWorkflowCommand{
+		WorkflowID:          "workflow-continue-hydration",
+		Instructions:        preparation.Instructions,
+		TrackerDecisionMode: TrackerDecisionModeWebUIControls,
+	})
+	current = executeCommand(t, first, PrepareReleaseCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		Input:            preparation,
+	})
+	if current.Release == nil {
+		t.Fatal("prepared release is unavailable")
+	}
+	preparedRelease := current.Release.Release
+	current = executeCommand(t, first, ProjectTrackersCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		TrackerIDs:       []api.TrackerID{"ALPHA", "BETA"},
+		Instructions:     map[api.TrackerID]api.TrackerProjectionInstructions{},
+	})
+	current = executeCommand(t, first, PreflightTrackersCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+	})
+	current = executeCommand(t, first, CheckDuplicatesCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+	})
+
+	var prepareCalls atomic.Int32
+	hydrationInputs := make(chan api.PrepareInput, 2)
+	basePreparer := testPreparer()
+	restartedPreparer := ReleasePreparerFunc{
+		PrepareFunc: func(_ context.Context, input api.PrepareInput) (api.PrepareResult, error) {
+			prepareCalls.Add(1)
+			hydrationInputs <- input
+			return api.PrepareResult{Release: preparedRelease}, nil
+		},
+		DisplayFunc: basePreparer.ResolveDisplay,
+		SubjectFunc: func(_ context.Context, input api.UploadSubjectInput) (api.UploadSubject, error) {
+			if prepareCalls.Load() == 0 {
+				return api.UploadSubject{}, errors.New("stale_generation")
+			}
+			return api.UploadSubject{
+				SourcePath: input.Release.SourcePath,
+				Source:     "bluray",
+				Type:       "movie",
+			}, nil
+		},
+		DuplicateFunc: basePreparer.ResolveDuplicateSubject,
+	}
+	captureFingerprint := testFingerprint(t, "restart-capture")
+	capturedReleases := make(chan api.ReleaseRef, 1)
+	mediaBuilder := mediaArtifactBuilderFunc(func(
+		ctx context.Context,
+		release api.ReleaseRef,
+		projections api.TrackerReleaseProjectionSet,
+		_ api.MediaCaptureInstructions,
+		_ time.Time,
+	) (api.MediaArtifactSet, any, error) {
+		if _, err := restartedPreparer.ResolveUploadSubject(ctx, api.UploadSubjectInput{Release: release}); err != nil {
+			return api.MediaArtifactSet{}, nil, err
+		}
+		capturedReleases <- release
+		requirements, err := mediaRequirementsFingerprint(projections.Projections)
+		if err != nil {
+			return api.MediaArtifactSet{}, nil, err
+		}
+		return api.MediaArtifactSet{
+			CaptureFingerprint:      captureFingerprint,
+			RequirementsFingerprint: requirements,
+			Artifacts: []api.MediaArtifact{{
+				ID:       "restart-artifact",
+				Kind:     api.MediaArtifactScreenshot,
+				Purpose:  api.ScreenshotPurposeFinal,
+				Selected: true,
+			}},
+			Status: api.StageStatusCompleted,
+		}, nil, nil
+	})
+	restartClock := &mutableClock{now: time.Date(2026, time.July, 20, 12, 1, 0, 0, time.UTC)}
+	restarted, err := New(
+		repository,
+		first.private,
+		restartedPreparer,
+		WithClock(restartClock),
+		WithIDGenerator(&sequenceIDGenerator{next: 100}),
+		WithProcessEpoch("restart-hydration"),
+		WithMediaArtifactBuilder(mediaBuilder),
+	)
+	if err != nil {
+		t.Fatalf("new restarted workflow module: %v", err)
+	}
+	resumed, err := restarted.Current(t.Context(), testOwnerID, current.Workflow.ID)
+	if err != nil {
+		t.Fatalf("load workflow after restart: %v", err)
+	}
+	if resumed.Projections == nil || resumed.Preflight == nil || resumed.Dupes == nil {
+		t.Fatalf("restarted dependencies: projections=%#v preflight=%#v dupes=%#v", resumed.Projections, resumed.Preflight, resumed.Dupes)
+	}
+
+	continued, err := restarted.Continue(t.Context(), testOwnerID, api.ContinueReleaseWorkflowRequest{
+		Authority: &api.WorkflowAuthority{
+			WorkflowID:       resumed.Workflow.ID,
+			ExpectedRevision: resumed.Workflow.Revision,
+		},
+		IdempotencyKey: "continue-restarted-media",
+		Goal:           api.WorkflowGoalMediaReady,
+		Intent: api.WorkflowIntent{
+			Preparation:            &continuationPreparation,
+			TrackerIDs:             []api.TrackerID{"ALPHA", "BETA"},
+			ProjectionInstructions: map[api.TrackerID]api.TrackerProjectionInstructions{},
+			Media: &api.MediaCaptureInstructions{
+				ScreenshotCount: 4,
+				Purpose:         api.ScreenshotPurposeFinal,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("continue restarted media: %v", err)
+	}
+	if continued.Operation == nil {
+		t.Fatalf("restarted media operation = %#v", continued)
+	}
+	waitForWorkflowOperation(t, restarted, current.Workflow.ID, continued.Operation.ID, func(status api.WorkflowOperationStatus) bool {
+		return isTerminalProgressStatus(status.Status)
+	})
+	readiness, err := restarted.Current(t.Context(), testOwnerID, current.Workflow.ID)
+	if err != nil {
+		t.Fatalf("load restarted input readiness: %v", err)
+	}
+	if readiness.InputReadiness == nil {
+		t.Fatalf("restarted input readiness = %#v", readiness)
+	}
+	restartClock.now = restartClock.now.Add(time.Second)
+	continued, err = restarted.Continue(t.Context(), testOwnerID, api.ContinueReleaseWorkflowRequest{
+		Authority: &api.WorkflowAuthority{
+			WorkflowID:       readiness.Workflow.ID,
+			ExpectedRevision: readiness.Workflow.Revision,
+		},
+		IdempotencyKey: "continue-restarted-media-capture",
+		Goal:           api.WorkflowGoalMediaReady,
+		Intent: api.WorkflowIntent{
+			Preparation:            &continuationPreparation,
+			TrackerIDs:             []api.TrackerID{"ALPHA", "BETA"},
+			ProjectionInstructions: map[api.TrackerID]api.TrackerProjectionInstructions{},
+			Media: &api.MediaCaptureInstructions{
+				ScreenshotCount: 4,
+				Purpose:         api.ScreenshotPurposeFinal,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("continue restarted media capture: %v", err)
+	}
+	if continued.Operation == nil {
+		t.Fatalf("restarted media capture operation = %#v", continued)
+	}
+	waitForWorkflowOperation(t, restarted, current.Workflow.ID, continued.Operation.ID, func(status api.WorkflowOperationStatus) bool {
+		return isTerminalProgressStatus(status.Status)
+	})
+	completed, err := restarted.Current(t.Context(), testOwnerID, current.Workflow.ID)
+	if err != nil {
+		t.Fatalf("load restarted media: %v", err)
+	}
+	if completed.Media == nil || completed.Media.Status != api.StageStatusCompleted {
+		t.Fatalf("restarted media = %#v, operation = %#v", completed.Media, completed.Operation)
+	}
+	if prepareCalls.Load() != 2 {
+		t.Fatalf("restart hydration calls = %d, want one for Input readiness and one for media", prepareCalls.Load())
+	}
+	for range 2 {
+		hydrationInput := <-hydrationInputs
+		if hydrationInput.SourcePath != preparedRelease.Source.SourcePath || hydrationInput.Force || !hydrationInput.RequirePrepared ||
+			hydrationInput.Controls.ConfirmBDMVRescan || hydrationInput.Controls.ForceRecheck != nil {
+			t.Fatalf("restart hydration input = %#v", hydrationInput)
+		}
+		if !reflect.DeepEqual(hydrationInput.MetadataRequirements, preparation.MetadataRequirements) {
+			t.Fatalf("restart hydration metadata requirements = %#v, want %#v", hydrationInput.MetadataRequirements, preparation.MetadataRequirements)
+		}
+	}
+	capturedRelease := <-capturedReleases
+	if capturedRelease.SourcePath != preparedRelease.Source.SourcePath || capturedRelease.Generation != preparedRelease.Generation {
+		t.Fatalf("captured release = %#v, want generation %d", capturedRelease, preparedRelease.Generation)
+	}
+}
+
+func TestHydrateContinuationPreparedReleaseRejectsChangedOrMismatchedGeneration(t *testing.T) {
+	t.Parallel()
+
+	errSourceChanged := errors.New("prepared source changed")
+	compatibility := api.PreparationCompatibility{
+		SourceFingerprint:          "source-v1",
+		FactInstructionFingerprint: "facts-v1",
+		PolicyFingerprint:          "policy-v1",
+		ContractVersion:            "contract-v1",
+	}
+	current := CommandResult{Release: &api.ReleaseSnapshot{Release: api.PreparedRelease{
+		Generation:    7,
+		Compatibility: compatibility,
+		Source:        api.SourceManifest{SourcePath: filepath.Join(t.TempDir(), "releases", "retained")},
+	}}}
+	forceRecheck := true
+	input := api.PrepareInput{
+		SourcePath: filepath.Join(t.TempDir(), "releases", "caller-supplied"),
+		Controls: api.PreparationControls{
+			ConfirmBDMVRescan: true,
+			ForceRecheck:      &forceRecheck,
+		},
+		Force: true,
+	}
+	requirements := api.MetadataRequirementSet{
+		Version: "hydrate-requirements-v1",
+		Requirements: []api.MetadataRequirement{{
+			Scope:       api.MetadataRequirementScopeAny,
+			AnyOf:       []api.MetadataRequirementField{"original_title"},
+			Disposition: api.RuleDispositionStrict,
+		}},
+	}
+	tests := []struct {
+		name      string
+		prepare   func(api.PreparedRelease) (api.PrepareResult, error)
+		wantError error
+	}{
+		{
+			name: "changed source",
+			prepare: func(api.PreparedRelease) (api.PrepareResult, error) {
+				return api.PrepareResult{}, errSourceChanged
+			},
+			wantError: errSourceChanged,
+		},
+		{
+			name: "generation mismatch",
+			prepare: func(release api.PreparedRelease) (api.PrepareResult, error) {
+				release.Generation++
+				return api.PrepareResult{Release: release}, nil
+			},
+			wantError: ErrInvalidTransition,
+		},
+		{
+			name: "compatibility mismatch",
+			prepare: func(release api.PreparedRelease) (api.PrepareResult, error) {
+				release.Compatibility.SourceFingerprint = "source-v2"
+				return api.PrepareResult{Release: release}, nil
+			},
+			wantError: ErrInvalidTransition,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			var preparedInput api.PrepareInput
+			module := &Module{preparer: ReleasePreparerFunc{PrepareFunc: func(
+				_ context.Context,
+				candidate api.PrepareInput,
+			) (api.PrepareResult, error) {
+				preparedInput = candidate
+				return test.prepare(current.Release.Release)
+			}}}
+			err := module.hydrateContinuationPreparedRelease(t.Context(), current, input, requirements)
+			if !errors.Is(err, test.wantError) {
+				t.Fatalf("hydrate error = %v, want %v", err, test.wantError)
+			}
+			if preparedInput.SourcePath != current.Release.Release.Source.SourcePath || preparedInput.Force ||
+				!preparedInput.RequirePrepared || preparedInput.Controls.ConfirmBDMVRescan || preparedInput.Controls.ForceRecheck != nil {
+				t.Fatalf("hydration input = %#v", preparedInput)
+			}
+			if !reflect.DeepEqual(preparedInput.MetadataRequirements, requirements) {
+				t.Fatalf("hydration metadata requirements = %#v, want %#v", preparedInput.MetadataRequirements, requirements)
+			}
+		})
+	}
+}
+
 func TestContinueCreationPersistsTrustedTrackerDecisionMode(t *testing.T) {
 	t.Parallel()
 
@@ -116,6 +443,312 @@ func TestContinueCreationPersistsTrustedTrackerDecisionMode(t *testing.T) {
 	if appState.TrackerDecisionMode != TrackerDecisionModeWebUIControls {
 		t.Fatalf("app continuation tracker mode = %q", appState.TrackerDecisionMode)
 	}
+}
+
+func TestContinueRefreshesOnlyRecoverablePersistedMediaBlockForWebUIControls(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		failures         []api.WorkflowFailure
+		additionalAction *api.RequiredAction
+		wantDescriptions bool
+	}{
+		{
+			name:             "surviving tracker reaches descriptions",
+			failures:         []api.WorkflowFailure{compositeImageHostFailure("BETA")},
+			wantDescriptions: true,
+		},
+		{
+			name:     "genuine tracker action remains blocked",
+			failures: []api.WorkflowFailure{compositeImageHostFailure("BETA")},
+			additionalAction: &api.RequiredAction{
+				ID:             "action-webui-tracker-input",
+				Kind:           api.RequiredActionProvideTrackerInput,
+				Status:         api.RequiredActionStatusPending,
+				TrackerID:      "ALPHA",
+				Prompt:         "Provide the required tracker value.",
+				AllowsFreeText: true,
+			},
+		},
+		{
+			name: "all tracker hosts failed",
+			failures: []api.WorkflowFailure{
+				compositeImageHostFailure("ALPHA"),
+				compositeImageHostFailure("BETA"),
+			},
+		},
+		{
+			name:     "unscoped host failure remains blocked",
+			failures: []api.WorkflowFailure{compositeImageHostFailure("")},
+		},
+		{
+			name:     "unknown tracker host failure remains blocked",
+			failures: []api.WorkflowFailure{compositeImageHostFailure("GAMMA")},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			module, repository, request, initialRevision, initialMediaCount := preparePersistedWebUIMediaContinuation(
+				t,
+				test.failures,
+				test.additionalAction,
+			)
+			first, err := module.Continue(t.Context(), testOwnerID, request)
+			if err != nil {
+				t.Fatalf("continue persisted media: %v", err)
+			}
+			if !test.wantDescriptions {
+				state, loadErr := repository.Load(t.Context(), testOwnerID, first.Workflow.ID)
+				if loadErr != nil {
+					t.Fatalf("load blocked continuation: %v", loadErr)
+				}
+				if first.Media == nil || first.Media.Status != api.StageStatusBlocked || first.Descriptions != nil {
+					t.Fatalf("blocked WebUI continuation = %#v", first)
+				}
+				if state.Workflow.TrackerApproval != nil || state.Workflow.Revision != initialRevision || len(state.Media) != initialMediaCount {
+					t.Fatalf("blocked WebUI continuation churned state: workflow=%#v media=%d", state.Workflow, len(state.Media))
+				}
+				return
+			}
+			if first.Media == nil || first.Media.Status != api.StageStatusCompleted || first.Descriptions != nil {
+				t.Fatalf("first recovered WebUI transition = %#v", first)
+			}
+			request.Authority.ExpectedRevision = first.Workflow.Revision
+			describing, err := module.Continue(t.Context(), testOwnerID, request)
+			if err != nil {
+				t.Fatalf("continue recovered media to descriptions: %v", err)
+			}
+			if describing.Operation != nil && !isTerminalProgressStatus(describing.Operation.Status) {
+				waitForWorkflowOperation(t, module, first.Workflow.ID, describing.Operation.ID, func(status api.WorkflowOperationStatus) bool {
+					return isTerminalProgressStatus(status.Status)
+				})
+			}
+			active, activeErr := repository.ListActiveOperations(t.Context())
+			if activeErr != nil {
+				t.Fatalf("list active description operations: %v", activeErr)
+			}
+			for _, record := range active {
+				if record.WorkflowID != first.Workflow.ID {
+					continue
+				}
+				waitForWorkflowOperation(t, module, first.Workflow.ID, record.OperationID, func(status api.WorkflowOperationStatus) bool {
+					return isTerminalProgressStatus(status.Status)
+				})
+			}
+			current, err := module.Current(t.Context(), testOwnerID, first.Workflow.ID)
+			if err != nil {
+				t.Fatalf("load described WebUI continuation: %v", err)
+			}
+			if current.Descriptions == nil || len(current.Descriptions.Descriptions) != 1 ||
+				!slices.Equal(current.Descriptions.Descriptions[0].TrackerIDs, []api.TrackerID{"ALPHA"}) {
+				t.Fatalf("recovered WebUI descriptions retained failed lane: %#v", current.Descriptions)
+			}
+			if current.TrackerApproval != nil || current.Media == nil {
+				t.Fatalf("WebUI recovery unexpectedly required approval: approval=%#v media=%#v", current.TrackerApproval, current.Media)
+			}
+			if _, failed := TrackerImageHostFailure(*current.Media, "BETA"); !failed {
+				t.Fatalf("recovered WebUI media lost scoped failure: %#v", current.Media.Failures)
+			}
+		})
+	}
+}
+
+func TestContinueExpiredDupesReplansBeforePersistedMediaRecovery(t *testing.T) {
+	t.Parallel()
+
+	module, repository, request, initialRevision, initialMediaCount := preparePersistedWebUIMediaContinuation(
+		t,
+		[]api.WorkflowFailure{compositeImageHostFailure("BETA")},
+		nil,
+	)
+	state, err := repository.Load(t.Context(), testOwnerID, request.Authority.WorkflowID)
+	if err != nil {
+		t.Fatalf("load persisted media state: %v", err)
+	}
+	dupes := state.Dupes[state.Workflow.Dupes.ID]
+	dupes.ExpiresAt = module.clock.Now().UTC().Add(-time.Minute)
+	repository.mu.Lock()
+	state.Dupes[dupes.ID] = dupes
+	repository.states[state.Workflow.ID] = state
+	repository.mu.Unlock()
+
+	base := module.dupeBuilder
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var enteredOnce sync.Once
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	module.dupeBuilder = dupeAssessmentBuilderFunc(func(
+		ctx context.Context,
+		subject api.DuplicateSubject,
+		projections api.TrackerReleaseProjectionSet,
+		preflight api.TrackerPreflightAssessment,
+		now time.Time,
+		skipRemote bool,
+	) (api.DupeAssessment, any, error) {
+		enteredOnce.Do(func() { close(entered) })
+		<-release
+		return base.Build(ctx, subject, projections, preflight, now, skipRemote)
+	})
+
+	replanning, err := module.Continue(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("continue expired duplicate evidence: %v", err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("duplicate replanning did not start")
+	}
+	active, err := repository.ListActiveOperations(t.Context())
+	if err != nil {
+		t.Fatalf("list duplicate replanning operations: %v", err)
+	}
+	operationIndex := slices.IndexFunc(active, func(record api.ReleaseWorkflowOperationRecord) bool {
+		return record.WorkflowID == request.Authority.WorkflowID && record.Status.Command == (CheckDuplicatesCommand{}).commandName()
+	})
+	if operationIndex < 0 {
+		t.Fatalf("expired duplicate continuation = %#v", replanning.Operation)
+	}
+	replanningOperation := active[operationIndex]
+	retained, err := repository.Load(t.Context(), testOwnerID, request.Authority.WorkflowID)
+	if err != nil {
+		t.Fatalf("load duplicate replanning state: %v", err)
+	}
+	if retained.Workflow.Revision != initialRevision || retained.Workflow.Media == nil ||
+		*retained.Workflow.Media != *state.Workflow.Media || len(retained.Media) != initialMediaCount {
+		t.Fatalf("expired duplicate evidence refreshed stale media: workflow=%#v media=%d", retained.Workflow, len(retained.Media))
+	}
+	releaseOnce.Do(func() { close(release) })
+	waitForWorkflowOperation(t, module, retained.Workflow.ID, replanningOperation.OperationID, func(status api.WorkflowOperationStatus) bool {
+		return isTerminalProgressStatus(status.Status)
+	})
+}
+
+func TestRefreshPersistedMediaStatusRejectsEmptyApprovedTrackerSet(t *testing.T) {
+	t.Parallel()
+
+	module, repository, request, initialRevision, initialMediaCount := preparePersistedWebUIMediaContinuation(
+		t,
+		[]api.WorkflowFailure{compositeImageHostFailure("BETA")},
+		nil,
+	)
+	state, err := repository.Load(t.Context(), testOwnerID, request.Authority.WorkflowID)
+	if err != nil {
+		t.Fatalf("load persisted media state: %v", err)
+	}
+	state.TrackerDecisionMode = TrackerDecisionModePostDupeGate
+	now := module.clock.Now().UTC()
+	_, dupes, candidateIDs, err := trackerApprovalCandidates(&state, now)
+	if err != nil {
+		t.Fatalf("resolve tracker approval candidates: %v", err)
+	}
+	if !slices.Equal(candidateIDs, []api.TrackerID{"ALPHA", "BETA"}) {
+		t.Fatalf("tracker approval candidates = %#v", candidateIDs)
+	}
+	actionInput, err := trackerApprovalActionInput(&state, dupes, candidateIDs)
+	if err != nil {
+		t.Fatalf("fingerprint tracker approval action: %v", err)
+	}
+	approvedIDs := []api.TrackerID{}
+	approvalFingerprint, err := trackerApprovalFingerprint(actionInput, candidateIDs, approvedIDs)
+	if err != nil {
+		t.Fatalf("fingerprint empty tracker approval: %v", err)
+	}
+	// Simulate legacy persisted authority with current lineage but no approved
+	// trackers. New approval commands reject this state; reads must not advance it.
+	approval := api.TrackerApprovalSnapshot{
+		ID:                  "tracker-approval-empty",
+		WorkflowID:          state.Workflow.ID,
+		Revision:            state.Workflow.Revision,
+		Release:             *state.Workflow.Release,
+		Selection:           *state.Workflow.Selection,
+		ProjectionSet:       *state.Workflow.TrackerProjections,
+		Preflight:           *state.Workflow.TrackerPreflight,
+		Dupes:               *state.Workflow.Dupes,
+		CandidateTrackerIDs: append([]api.TrackerID(nil), candidateIDs...),
+		ApprovedTrackerIDs:  approvedIDs,
+		InputFingerprint:    approvalFingerprint,
+		CreatedAt:           now,
+	}
+	approvalRef := api.TrackerApprovalSnapshotRef{ID: approval.ID, Revision: approval.Revision}
+	media := state.Media[state.Workflow.Media.ID]
+	media.TrackerApproval = &approvalRef
+	media.Failures = nil
+	state.Media[media.ID] = media
+	state.TrackerApprovals[approval.ID] = approval
+	state.Workflow.TrackerApproval = &approvalRef
+	state.Workflow.Failures = nil
+	repository.mu.Lock()
+	repository.states[state.Workflow.ID] = state
+	repository.mu.Unlock()
+
+	withoutGuard := media
+	refreshMutatedMediaStatus(&withoutGuard, nil)
+	if withoutGuard.Status != api.StageStatusCompleted {
+		t.Fatalf("empty tracker fixture remains blocked without guard: %#v", withoutGuard)
+	}
+	_, err = module.execute(t.Context(), testOwnerID, refreshPersistedMediaStatusCommand{
+		WorkflowID:       state.Workflow.ID,
+		ExpectedRevision: state.Workflow.Revision,
+		Media:            *state.Workflow.Media,
+		IdempotencyKey:   "refresh-empty-approved-trackers",
+	})
+	if !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("refresh persisted media error = %v, want %v", err, ErrInvalidTransition)
+	}
+	retained, err := repository.Load(t.Context(), testOwnerID, state.Workflow.ID)
+	if err != nil {
+		t.Fatalf("reload persisted media state: %v", err)
+	}
+	if retained.Workflow.Revision != initialRevision || len(retained.Media) != initialMediaCount {
+		t.Fatalf("rejected persisted media refresh churned state: workflow=%#v media=%d", retained.Workflow, len(retained.Media))
+	}
+}
+
+func preparePersistedWebUIMediaContinuation(
+	t *testing.T,
+	failures []api.WorkflowFailure,
+	additionalAction *api.RequiredAction,
+) (*Module, *MemoryRepository, api.ContinueReleaseWorkflowRequest, api.WorkflowRevision, int) {
+	t.Helper()
+	module, repository, _ := newCompositeUploadTestModule(t)
+	requestID := "webui-persisted-media-" + string(failures[0].TrackerID)
+	request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, requestID)
+	started, err := module.StartUpload(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("start setup composite upload: %v", err)
+	}
+	blocked := waitCompositeUploadTestOperation(t, module, started)
+	completed := approveCompositeUploadTrackers(t, module, blocked, []api.TrackerID{"ALPHA", "BETA"}, "approve-"+requestID)
+	_, _, initialRevision, initialMediaCount := seedPersistedCompositeMediaBlock(
+		t,
+		repository,
+		completed.Workflow.ID,
+		failures,
+		additionalAction,
+	)
+	repository.mu.Lock()
+	state := repository.states[completed.Workflow.ID]
+	state.TrackerDecisionMode = TrackerDecisionModeWebUIControls
+	state.Workflow.TrackerApproval = nil
+	media := state.Media[state.Workflow.Media.ID]
+	media.TrackerApproval = nil
+	state.Media[media.ID] = media
+	state.Composite.ActiveOperationID = ""
+	intent := state.Composite.Intent
+	repository.states[completed.Workflow.ID] = state
+	repository.mu.Unlock()
+	return module, repository, api.ContinueReleaseWorkflowRequest{
+		Authority: &api.WorkflowAuthority{
+			WorkflowID:       completed.Workflow.ID,
+			ExpectedRevision: initialRevision,
+		},
+		IdempotencyKey: requestID + "-continue",
+		Goal:           api.WorkflowGoalDescriptionsReady,
+		Intent:         intent,
+	}, initialRevision, initialMediaCount
 }
 
 func TestContinuationNameReviewBlocksUploadButNotDuplicateChecking(t *testing.T) {
@@ -487,6 +1120,141 @@ func TestUnattendedPreflightPolicySkipsOnlyManualTrackerLane(t *testing.T) {
 	if assessment.Results[1].State != api.TrackerPreflightStateReady || finalized[1].Readiness != api.ReadinessStatusReady ||
 		!finalized[1].DupeReady || !finalized[1].UploadReady {
 		t.Fatalf("unattended BETA lane changed = %#v/%#v", assessment.Results[1], finalized[1])
+	}
+}
+
+func TestPreflightInteractionPolicyPreservesBlockingRuleReasons(t *testing.T) {
+	t.Parallel()
+
+	const genericMessage = "Tracker requires manual input and was skipped in unattended mode."
+	for _, tc := range []struct {
+		name            string
+		interaction     api.InteractionMode
+		actionKind      api.RequiredActionKind
+		existingFailure bool
+		wantMessage     string
+	}{
+		{
+			name:        "blocking authorization reasons are sanitized",
+			interaction: api.InteractionModeUnattended,
+			actionKind:  api.RequiredActionAuthorizeRules,
+			wantMessage: genericMessage + " missing language data; missing source data api_token=[REDACTED]",
+		},
+		{
+			name:        "other manual action keeps generic message",
+			interaction: api.InteractionModeUnattended,
+			actionKind:  legacyTrackerTwoFactorActionKind,
+			wantMessage: genericMessage,
+		},
+		{
+			name:            "existing failure is preserved",
+			interaction:     api.InteractionModeUnattended,
+			actionKind:      api.RequiredActionAuthorizeRules,
+			existingFailure: true,
+			wantMessage:     "Existing prerequisite failure.",
+		},
+		{
+			name:        "interactive action is preserved",
+			interaction: api.InteractionModeInteractive,
+			actionKind:  api.RequiredActionAuthorizeRules,
+		},
+		{
+			name:        "unattended confirm action is preserved",
+			interaction: api.InteractionModeUnattendedConfirm,
+			actionKind:  api.RequiredActionAuthorizeRules,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			actions := []api.RequiredAction{{
+				Kind:   tc.actionKind,
+				Prompt: "Private prompt must not become the skip reason.",
+			}}
+			decisions := []api.TrackerPolicyDecision{
+				{
+					Code:     "strict_rule",
+					Decision: "ineligible",
+					Blocking: true,
+					Message:  "unrelated strict blocker",
+				},
+				{
+					Code:     "language_rule",
+					Decision: "authorization_required",
+					Blocking: true,
+					Message:  " missing language data ",
+				},
+				{
+					Code:     "allowed_rule",
+					Decision: "authorization_required",
+					Message:  "nonblocking reason",
+				},
+				{
+					Code:     "empty_rule",
+					Decision: "authorization_required",
+					Blocking: true,
+					Message:  " ",
+				},
+				{
+					Code:     "source_rule",
+					Decision: "authorization_required",
+					Blocking: true,
+					Message:  "missing source data api_token=synthetic-secret",
+				},
+			}
+			assessment := api.TrackerPreflightAssessment{Results: []api.TrackerPreflightResult{{
+				TrackerID:       "ALPHA",
+				State:           api.TrackerPreflightStateActionRequired,
+				RequiredActions: actions,
+			}}}
+			finalized := []api.TrackerReleaseProjection{{
+				TrackerID:       "ALPHA",
+				Readiness:       api.ReadinessStatusBlocked,
+				RequiredActions: actions,
+				PolicyDecisions: slices.Clone(decisions),
+			}}
+			wantFailure := api.WorkflowFailure{
+				Failure: api.OperationFailure{
+					Code:      api.OperationFailureMissingPrerequisite,
+					Operation: api.OperationKindDuplicateCheck,
+					Message:   tc.wantMessage,
+					Recovery:  api.OperationRecoveryCompletePrerequisite,
+				},
+				TrackerID: "ALPHA",
+			}
+			if tc.existingFailure {
+				wantFailure.Failure.Code = api.OperationFailureTrackerAuthRequired
+				wantFailure.Failure.Recovery = api.OperationRecoveryAuthenticateTrackers
+				assessment.Results[0].Failures = []api.WorkflowFailure{wantFailure}
+				finalized[0].Failures = []api.WorkflowFailure{wantFailure}
+			}
+			originalResult, originalProjection := assessment.Results[0], finalized[0]
+
+			applyPreflightInteractionPolicy(tc.interaction, &assessment, finalized)
+
+			result, projection := assessment.Results[0], finalized[0]
+			if tc.interaction != api.InteractionModeUnattended {
+				if !reflect.DeepEqual(result, originalResult) || !reflect.DeepEqual(projection, originalProjection) {
+					t.Fatalf("manual interaction changed lane: %#v/%#v", result, projection)
+				}
+				return
+			}
+			if !reflect.DeepEqual(result.Failures, []api.WorkflowFailure{wantFailure}) || !reflect.DeepEqual(projection.Failures, result.Failures) {
+				t.Fatalf("unattended failures = %#v/%#v, want %#v", result.Failures, projection.Failures, wantFailure)
+			}
+			wantDecisions := append(slices.Clone(decisions), api.TrackerPolicyDecision{
+				Code:     string(wantFailure.Failure.Code),
+				Decision: "ineligible",
+				Blocking: true,
+				Message:  tc.wantMessage,
+			})
+			if !slices.Equal(projection.PolicyDecisions, wantDecisions) {
+				t.Fatalf("unattended decisions = %#v, want %#v", projection.PolicyDecisions, wantDecisions)
+			}
+			if result.State != api.TrackerPreflightStateFailed || len(result.RequiredActions) != 0 ||
+				projection.Readiness != api.ReadinessStatusIneligible || projection.DupeReady || projection.UploadReady || len(projection.RequiredActions) != 0 {
+				t.Fatalf("unattended lane = %#v/%#v", result, projection)
+			}
+		})
 	}
 }
 

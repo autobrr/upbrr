@@ -16,7 +16,7 @@ import (
 
 func releaseNamePolicy() trackers.ReleaseNamePolicyBinding {
 	return trackers.WithMovieYearProvider(trackers.WithEpisodeTitleMode(
-		trackers.NewReleaseNamePolicy("standalone/hdb/v4", resolveReleaseNames),
+		trackers.NewReleaseNamePolicy("standalone/hdb/v5", resolveReleaseNames),
 		api.EpisodeTitleModeOmit,
 	), api.IdentityProviderIMDB)
 }
@@ -75,6 +75,9 @@ func isGeneratedHDBReleaseName(meta api.UploadSubject, name string) bool {
 }
 
 func authoritativeHDBOriginalTitle(meta api.UploadSubject) string {
+	if meta.EffectiveMetadata.OriginalTitleProvenance.IsManual() {
+		return strings.TrimSpace(meta.EffectiveMetadata.OriginalTitle)
+	}
 	metadata := meta.ProviderMetadata.IMDB
 	if metadata == nil || meta.Identity.IMDBID <= 0 || metadata.IMDBID != meta.Identity.IMDBID ||
 		!hdbProviderMetadataCurrent(meta) {
@@ -139,11 +142,12 @@ func hdbCategory(meta api.UploadSubject) string {
 }
 
 func hdbIMDbYear(meta api.UploadSubject) string {
-	if meta.ProviderMetadata.IMDB != nil && meta.ProviderMetadata.IMDB.Year > 0 {
-		return strconv.Itoa(meta.ProviderMetadata.IMDB.Year)
+	provider := 0
+	if meta.ProviderMetadata.IMDB != nil {
+		provider = meta.ProviderMetadata.IMDB.Year
 	}
-	if meta.Release.Year > 0 {
-		return strconv.Itoa(meta.Release.Year)
+	if year := trackers.PreferredYear(meta, provider); year > 0 {
+		return strconv.Itoa(year)
 	}
 	return ""
 }
@@ -229,9 +233,6 @@ func hdbVideoCodecElement(meta api.UploadSubject) string {
 		if value = normalizedHDBElement(value); value != "" {
 			return value
 		}
-	}
-	if len(meta.Release.Codec) > 0 {
-		return normalizedHDBElement(meta.Release.Codec[0])
 	}
 	return ""
 }

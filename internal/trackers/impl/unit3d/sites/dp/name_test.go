@@ -110,3 +110,42 @@ func dpTVNameSubject(evidence api.TVDBNameDisambiguation) api.UploadSubject {
 		AudioLanguages: []string{"English", "Japanese"},
 	}
 }
+
+func TestBuildNameAppliesDPManualTVDBYear(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		releaseName string
+		year        int
+		want        string
+	}{
+		{
+			name:        "manual year",
+			releaseName: "Example Series 2030 AKA Example Original S01E02 Example Episode 1080p WEB-DL Dual-Audio DD+ 5.1 H.265-GRP",
+			year:        2030,
+			want:        "Example Series AKA Example Original 2030 S01E02 Example Episode 1080p WEB-DL Dual-Audio DD+ 5.1 H.265-GRP",
+		},
+		{
+			name:        "manual empty year",
+			releaseName: "Example Series AKA Example Original S01E02 Example Episode 1080p WEB-DL Dual-Audio DD+ 5.1 H.265-GRP",
+			want:        "Example Series AKA Example Original S01E02 Example Episode 1080p WEB-DL Dual-Audio DD+ 5.1 H.265-GRP",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			meta := dpTVNameSubject(api.TVDBNameDisambiguation{
+				CanonicalName: "Example Series",
+				SeriesYear:    2026,
+				IncludeYear:   true,
+			})
+			meta.ReleaseName = test.releaseName
+			meta.EffectiveMetadata = api.EffectiveMetadata{Year: test.year, YearProvenance: api.FactProvenanceManual}
+			if got := buildName(meta, config.TrackerConfig{}); got != test.want {
+				t.Fatalf("DP manual TVDB year name = %q, want %q", got, test.want)
+			}
+		})
+	}
+}

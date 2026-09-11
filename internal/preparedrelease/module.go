@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -23,7 +25,7 @@ import (
 
 // ContractVersion changes whenever prepared fact semantics or the private seed
 // contract become incompatible, forcing persisted generations to be recomputed.
-const ContractVersion = "prepared-release-v5"
+const ContractVersion = "prepared-release-v15"
 
 // Store is the prepared-release persistence port. Implementations must commit
 // facts, identity, and provider metadata as one generation transaction.
@@ -31,6 +33,11 @@ type Store interface {
 	LoadPreparedRelease(context.Context, string) (api.PreparedRelease, error)
 	CommitPreparedRelease(context.Context, api.PreparedRelease) error
 	PurgePreparedRelease(context.Context, string) error
+	LoadReleaseCorrections(context.Context, string) (api.ReleaseCorrectionsSnapshot, error)
+	UpdateReleaseCorrections(context.Context, string, api.ReleaseCorrectionUpdate) (api.ReleaseCorrectionsSnapshot, error)
+	CompareAndSwapReleaseCorrections(context.Context, string, uint64, api.StoredReleaseCorrectionsV1) (api.ReleaseCorrectionsSnapshot, error)
+	CommitPreparedReleaseWithCorrections(context.Context, api.PreparedRelease, uint64, api.StoredReleaseCorrectionsV1,
+		func(uint64) (api.PreparationCompatibility, error)) (uint64, error)
 }
 
 // IdentityResolver builds an unpersisted canonical identity candidate. The
@@ -48,14 +55,17 @@ type Collector interface {
 // CollectedFacts is the collector-to-owner handoff. Identity and provider
 // metadata are supplied only by IdentityResolver.
 type CollectedFacts struct {
-	Naming      api.NamingFacts
-	Episode     api.EpisodeFacts
-	Media       api.MediaFacts
-	Disc        api.DiscFacts
-	Assessments api.ReleaseAssessments
-	Identity    externalidentity.ResolutionIntent
-	Diagnostics []api.PreparationDiagnostic
-	Resources   CollectedResources
+	// NamingCategory records the category used to derive the collected names.
+	// A concrete movie/TV mismatch with the resolved identity prevents generation commit.
+	NamingCategory api.CanonicalCategory
+	Naming         api.NamingFacts
+	Episode        api.EpisodeFacts
+	Media          api.MediaFacts
+	Disc           api.DiscFacts
+	Assessments    api.ReleaseAssessments
+	Identity       externalidentity.ResolutionIntent
+	Diagnostics    []api.PreparationDiagnostic
+	Resources      CollectedResources
 }
 
 // CollectedResources is the collector-to-owner handoff for local artifacts
@@ -75,6 +85,7 @@ type CollectedResources struct {
 	SceneNFOPath          string
 	DescriptionTemplate   string
 	SelectedBDMVPlaylists []api.PlaylistInfo
+	Discs                 []preparationstate.DiscResource
 	ClientEvidence        preparationstate.ClientEvidenceSnapshot
 }
 
@@ -121,6 +132,19 @@ func New(store Store, identity IdentityResolver, collector Collector) (*Module, 
 // generation before publishing it; failed collection or commit leaves the
 // prior published generation intact.
 func (m *Module) Prepare(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
+	resolved, err := m.ResolveInput(ctx, input, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
+	if err != nil {
+		return api.PrepareResult{}, err
+	}
+	return m.PrepareResolved(ctx, resolved)
+}
+
+// PrepareResolved validates the accepted correction revision before collecting
+// and committing facts. Concurrent edits reject the old generation.
+// A movie/TV naming-category mismatch returns a CorrectionConflictError without
+// committing a generation. Retired corrections may still be removed from storage.
+func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPreparationInput) (api.PrepareResult, error) {
+	input := resolved.Input
 	if m == nil || m.store == nil || m.identity == nil || m.collector == nil {
 		return api.PrepareResult{}, errors.New("prepared release: module is not initialized")
 	}
@@ -162,6 +186,16 @@ func (m *Module) Prepare(ctx context.Context, input api.PrepareInput) (api.Prepa
 		)
 		return api.PrepareResult{}, err
 	}
+	if sourceFingerprint != resolved.SourceFingerprint {
+		return api.PrepareResult{}, fmt.Errorf("prepared release: source changed after input resolution: %w", api.ErrCorrectionConflict)
+	}
+	currentCorrections, err := m.store.LoadReleaseCorrections(ctx, input.SourcePath)
+	if err != nil {
+		return api.PrepareResult{}, fmt.Errorf("prepared release: load accepted corrections: %w", err)
+	}
+	if currentCorrections.Revision != resolved.Corrections.Revision {
+		return api.PrepareResult{}, api.ErrCorrectionConflict
+	}
 	api.EmitPreparationProgress(
 		ctx,
 		api.NewPreparationProgressUpdate(api.PreparationPhaseSourceInspection, api.PreparationProgressCompleted, "Source inspection complete."),
@@ -170,7 +204,7 @@ func (m *Module) Prepare(ctx context.Context, input api.PrepareInput) (api.Prepa
 		ctx,
 		api.NewPreparationProgressUpdate(api.PreparationPhasePreparedCache, api.PreparationProgressRunning, "Checking prepared generation compatibility."),
 	)
-	compatibility, err := preparationCompatibility(input, sourceFingerprint)
+	compatibility, err := preparationCompatibility(input, sourceFingerprint, resolved.Corrections.Revision)
 	if err != nil {
 		api.EmitPreparationProgress(
 			ctx,
@@ -201,9 +235,10 @@ func (m *Module) Prepare(ctx context.Context, input api.PrepareInput) (api.Prepa
 			}
 			finish := api.BeginPreparationProgress(ctx, api.PreparationPhaseClientDiscovery, "Hydrating private prepared resources.")
 			resources, hydrateErr := hydrator.HydratePrivateResources(ctx, preparationstate.Request{
-				Input:    input,
-				Manifest: current.Source,
-				Layout:   layout,
+				Input:             input,
+				Manifest:          current.Source,
+				Layout:            layout,
+				SourceFingerprint: sourceFingerprint,
 			})
 			finish(hydrateErr)
 			if hydrateErr != nil {
@@ -218,7 +253,18 @@ func (m *Module) Prepare(ctx context.Context, input api.PrepareInput) (api.Prepa
 			api.NewPreparationProgressUpdate(api.PreparationPhasePreparedCache, api.PreparationProgressCompleted, "Reused the compatible prepared generation."),
 		)
 		skipReusedPreparationStages(ctx)
-		return cloneResult(api.PrepareResult{Release: current})
+		latest, err := m.store.LoadReleaseCorrections(ctx, input.SourcePath)
+		if err != nil {
+			return api.PrepareResult{}, fmt.Errorf("prepared release: verify reused correction revision: %w", err)
+		}
+		if latest.Revision != resolved.Corrections.Revision {
+			return api.PrepareResult{}, api.ErrCorrectionConflict
+		}
+		return cloneResult(api.PrepareResult{
+			Release:               current,
+			EffectiveInstructions: input.Instructions,
+			Corrections:           resolved.Corrections,
+		})
 	}
 	if input.RequirePrepared {
 		api.EmitPreparationProgress(
@@ -244,15 +290,18 @@ func (m *Module) Prepare(ctx context.Context, input api.PrepareInput) (api.Prepa
 		}
 	}
 	collected, err := m.collector.Collect(ctx, preparationstate.Request{
-		Input:    input,
-		Manifest: manifest,
-		Layout:   layout,
+		Input:               input,
+		Manifest:            manifest,
+		Layout:              layout,
+		SourceFingerprint:   sourceFingerprint,
+		IdentityResetFields: slices.Clone(resolved.Corrections.Corrections.IdentityResetFields),
 	})
 	if err != nil {
 		return api.PrepareResult{}, fmt.Errorf("prepared release: collect facts: %w", err)
 	}
-	manifest.SelectedPlaylists = clonePreparedPlaylists(collected.Resources.SelectedBDMVPlaylists)
+	manifest.SelectedPlaylists = clonePreparedPlaylists(collected.Disc.SelectedPlaylists())
 	identityIntent := collected.Identity
+	identityIntent.IdentityResetFields = slices.Clone(resolved.Corrections.Corrections.IdentityResetFields)
 	mergeFactInstructions(&identityIntent, input.Instructions)
 	identityFinish := api.BeginPreparationProgress(ctx, api.PreparationPhaseCanonicalIdentity, "Resolving canonical identity.")
 	identityResult, err := m.identity.Resolve(ctx, externalidentity.Request{
@@ -266,7 +315,31 @@ func (m *Module) Prepare(ctx context.Context, input api.PrepareInput) (api.Prepa
 		return api.PrepareResult{}, fmt.Errorf("prepared release: resolve identity: %w", err)
 	}
 	identityFinish(nil)
-
+	if collected.NamingCategory == api.CanonicalCategoryMovie && identityResult.Identity.Category == api.CanonicalCategoryTV ||
+		collected.NamingCategory == api.CanonicalCategoryTV && identityResult.Identity.Category == api.CanonicalCategoryMovie {
+		cleaned, err := api.ApplyReleaseCorrectionUpdate(resolved.Corrections, api.ReleaseCorrectionUpdate{Mode: api.ReleaseCorrectionUpdateInherit})
+		if err != nil {
+			return api.PrepareResult{}, fmt.Errorf("prepared release: sanitize mismatched corrections: %w", err)
+		}
+		discardProviderOwnedCorrections(&cleaned, identityResult.Identity.Category)
+		if !reflect.DeepEqual(cleaned, resolved.Corrections.Corrections) {
+			if _, err := m.store.CompareAndSwapReleaseCorrections(ctx, input.SourcePath, resolved.Corrections.Revision, cleaned); err != nil {
+				return api.PrepareResult{}, fmt.Errorf("prepared release: persist sanitized corrections: %w", err)
+			}
+		}
+		return api.PrepareResult{}, &api.CorrectionConflictError{
+			Field:  api.CorrectionFieldReleaseNameCategory,
+			Reason: "resolved category differs from collected names; select Category and refresh metadata",
+		}
+	}
+	finalCorrections, err := m.finalizeCorrectionBindings(ctx, resolved, identityResult.Identity)
+	if err != nil {
+		return api.PrepareResult{}, err
+	}
+	input.Instructions, err = effectiveCorrectionInstructions(input.Instructions, finalCorrections)
+	if err != nil {
+		return api.PrepareResult{}, err
+	}
 	preparedAt := m.now().UTC()
 	release := api.PreparedRelease{
 		Generation:       generation,
@@ -286,7 +359,15 @@ func (m *Module) Prepare(ctx context.Context, input api.PrepareInput) (api.Prepa
 		commitFinish(err)
 		return api.PrepareResult{}, err
 	}
-	if err := m.store.CommitPreparedRelease(ctx, release); err != nil {
+	committedRevision, err := m.store.CommitPreparedReleaseWithCorrections(ctx, release, resolved.Corrections.Revision, finalCorrections,
+		func(revision uint64) (api.PreparationCompatibility, error) {
+			committedCompatibility, err := preparationCompatibility(input, sourceFingerprint, revision)
+			if err == nil {
+				release.Compatibility = committedCompatibility
+			}
+			return committedCompatibility, err
+		})
+	if err != nil {
 		commitFinish(err)
 		return api.PrepareResult{}, fmt.Errorf("prepared release: commit generation: %w", err)
 	}
@@ -295,8 +376,10 @@ func (m *Module) Prepare(ctx context.Context, input api.PrepareInput) (api.Prepa
 	diagnostics = append(diagnostics, identityResult.Diagnostics...)
 	owned := envelope{
 		result: api.PrepareResult{
-			Release:     release,
-			Diagnostics: diagnostics,
+			Release:               release,
+			Diagnostics:           diagnostics,
+			EffectiveInstructions: input.Instructions,
+			Corrections:           api.ReleaseCorrectionsSnapshot{Corrections: finalCorrections, Revision: committedRevision},
 		},
 		resources: mergePreparationResources(resourcesFromManifest(manifest, input), resourcesFromCollected(collected.Resources)),
 	}
@@ -524,7 +607,66 @@ func validateGeneration(release api.PreparedRelease) error {
 	if reason := providerIdentityMismatch(release); reason != "" {
 		return &IncompatiblePreparationError{SourcePath: release.Source.SourcePath, Reason: reason}
 	}
+	if reason := discProjectionMismatch(release); reason != "" {
+		return &IncompatiblePreparationError{SourcePath: release.Source.SourcePath, Reason: reason}
+	}
 	return nil
+}
+
+func discProjectionMismatch(release api.PreparedRelease) string {
+	disc := release.Disc
+	if release.Source.Classification.DiscCount != len(disc.Items) {
+		return "disc inventory count differs from canonical facts"
+	}
+	if release.Source.Classification.DiscType != disc.Type {
+		return "disc type differs from source classification"
+	}
+	selected := disc.SelectedPlaylists()
+	if !reflect.DeepEqual(selected, release.Source.SelectedPlaylists) {
+		return "selected playlist projection differs from canonical disc facts"
+	}
+	if disc.PlaylistCount != len(selected) || disc.Summary != disc.AggregateSummary() {
+		return "disc scalar projection differs from canonical disc facts"
+	}
+	itemByID := make(map[string]api.DiscItemFacts, len(disc.Items))
+	for _, item := range disc.Items {
+		if strings.TrimSpace(item.ID) == "" || strings.TrimSpace(item.Name) == "" || item.Type != disc.Type {
+			return "canonical disc item is invalid"
+		}
+		if _, exists := itemByID[item.ID]; exists {
+			return "canonical disc IDs are not unique"
+		}
+		itemByID[item.ID] = item
+		primaryReport := -1
+		for index, report := range item.Reports {
+			if strings.TrimSpace(report.Playlist.ID) == "" || report.Playlist.DiscID != item.ID || report.Playlist.DiscName != item.Name {
+				return "canonical disc report identity is invalid"
+			}
+			if item.Type != "BDMV" {
+				return "non-BDMV disc contains canonical reports"
+			}
+			if primaryReport < 0 || report.Playlist.Score > item.Reports[primaryReport].Playlist.Score {
+				primaryReport = index
+			}
+		}
+		if primaryReport >= 0 && item.DurationSeconds != item.Reports[primaryReport].Playlist.Duration {
+			return "disc duration differs from canonical primary report"
+		}
+	}
+	for _, entry := range release.Source.Entries {
+		if entry.DiscID == "" {
+			continue
+		}
+		if _, exists := itemByID[entry.DiscID]; !exists {
+			return "source manifest references an unknown disc"
+		}
+	}
+	expectedDiscID, expectedReportID, expectedDuration, expectedVOBSet := disc.CanonicalPrimary()
+	if disc.PrimaryDiscID != expectedDiscID || disc.PrimaryReportID != expectedReportID ||
+		disc.DurationSeconds != expectedDuration || disc.DVDVOBSet != expectedVOBSet {
+		return "disc primary projection differs from canonical disc items"
+	}
+	return ""
 }
 
 func providerIdentityMismatch(release api.PreparedRelease) string {
@@ -655,6 +797,7 @@ type preparationResources struct {
 	sceneNFOPath          string
 	descriptionTemplate   string
 	selectedBDMVPlaylists []api.PlaylistInfo
+	discs                 []preparationstate.DiscResource
 	clientEvidence        preparationstate.ClientEvidenceSnapshot
 }
 
@@ -689,6 +832,7 @@ func mergePreparationResources(base preparationResources, collected preparationR
 	base.sceneNFOPath = collected.sceneNFOPath
 	base.descriptionTemplate = collected.descriptionTemplate
 	base.selectedBDMVPlaylists = collected.selectedBDMVPlaylists
+	base.discs = clonePreparedDiscResources(collected.discs)
 	base.clientEvidence = preparationstate.CloneClientEvidenceSnapshot(collected.clientEvidence)
 	return base
 }
@@ -707,6 +851,7 @@ func resourcesFromCollected(collected CollectedResources) preparationResources {
 		sceneNFOPath:          collected.SceneNFOPath,
 		descriptionTemplate:   collected.DescriptionTemplate,
 		selectedBDMVPlaylists: clonePreparedPlaylists(collected.SelectedBDMVPlaylists),
+		discs:                 clonePreparedDiscResources(collected.Discs),
 		clientEvidence:        preparationstate.CloneClientEvidenceSnapshot(collected.ClientEvidence),
 	}
 }
@@ -736,6 +881,7 @@ func cloneEnvelope(value envelope) (envelope, error) {
 				UseAll:   value.resources.playlist.UseAll,
 			},
 			selectedBDMVPlaylists: clonePreparedPlaylists(value.resources.selectedBDMVPlaylists),
+			discs:                 clonePreparedDiscResources(value.resources.discs),
 			clientEvidence:        preparationstate.CloneClientEvidenceSnapshot(value.resources.clientEvidence),
 		},
 	}
@@ -746,6 +892,14 @@ func clonePreparedPlaylists(value []api.PlaylistInfo) []api.PlaylistInfo {
 	cloned, err := cloneWithJSON(value)
 	if err != nil {
 		panic(fmt.Sprintf("prepared release: clone playlists: %v", err))
+	}
+	return cloned
+}
+
+func clonePreparedDiscResources(value []preparationstate.DiscResource) []preparationstate.DiscResource {
+	cloned, err := cloneWithJSON(value)
+	if err != nil {
+		panic(fmt.Sprintf("prepared release: clone disc resources: %v", err))
 	}
 	return cloned
 }

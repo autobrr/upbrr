@@ -3,7 +3,11 @@
 
 package hds
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/autobrr/upbrr/pkg/api"
+)
 
 func TestSupportsHDSResolution(t *testing.T) {
 	t.Parallel()
@@ -44,5 +48,26 @@ func TestSupportsHDSResolution(t *testing.T) {
 		if got := supportsHDSResolution(tc.resolution); got != tc.expected {
 			t.Fatalf("%s: expected %t, got %t", tc.name, tc.expected, got)
 		}
+	}
+}
+
+func TestResolveGenresPreservesAutomaticProviderPresenceAndManualFacts(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Genres: "Action"}, IMDB: &api.IMDBMetadata{Genres: "Drama"}}}
+	if got := resolveGenres(meta); got != "Action" {
+		t.Fatalf("TMDB genres = %q", got)
+	}
+	meta.ProviderMetadata.TMDB.Genres = " \t"
+	if got := resolveGenres(meta); got != "" {
+		t.Fatalf("blank TMDB genres = %q", got)
+	}
+	meta.EffectiveMetadata = api.EffectiveMetadata{Genres: []string{"Comedy"}, GenresProvenance: api.FactProvenanceManual}
+	if got := resolveGenres(meta); got != "Comedy" {
+		t.Fatalf("manual genres = %q", got)
+	}
+	meta.EffectiveMetadata = api.EffectiveMetadata{GenresProvenance: api.FactProvenanceManualEmpty}
+	if got := resolveGenres(meta); got != "" {
+		t.Fatalf("manual empty genres = %q", got)
 	}
 }

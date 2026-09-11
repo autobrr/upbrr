@@ -7,6 +7,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // Profile returns BT identity, preparation, dupe, auth, and policy behavior.
@@ -22,10 +23,15 @@ func Profile() standalone.Profile {
 		ValidationPolicy:        validationPolicy(),
 		ReleaseNamePolicy:       trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/bt/v1", resolveUploadName, resolveSearchName),
 		NewDuplicateAdapter:     newDuplicateAdapter,
-		UploadArtifactPolicy:    &trackers.UploadArtifactPolicy{Source: sourceFlag, RequireAnnounce: true},
-		AudioPolicy:             &trackers.AudioPolicy{AllowBloat: true},
-		TorrentIdentityPolicy:   &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{"t.brasiltracker.org"}},
-		AuthCapability:          authcontract.CookieCapability("BT"),
+		MetadataPolicy: &trackers.TrackerMetadataPolicy{Requirements: []trackers.MetadataRequirement{{
+			Scope:       trackers.MetadataScopeAny,
+			AnyOf:       []trackers.MetadataField{trackers.MetadataFieldTMDBLocalizedPTBR},
+			Disposition: api.RuleDispositionAdvisory,
+		}}},
+		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: sourceFlag, RequireAnnounce: true},
+		AudioPolicy:           &trackers.AudioPolicy{AllowBloat: true},
+		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{"t.brasiltracker.org"}},
+		AuthCapability:        authcontract.CookieCapability("BT"),
 	}
 }
 

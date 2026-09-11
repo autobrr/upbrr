@@ -37,4 +37,24 @@ func TestResolveUnit3DTypeIDFollowsCorrectedMediaTypeFact(t *testing.T) {
 	if parsedID != "3" {
 		t.Fatalf("parsed type id = %q, want ENCODE id %q", parsedID, "3")
 	}
+
+	if _, err := resolveUnit3DTypeID(api.UploadSubject{ReleaseName: "Example.Movie.2027.2160p.BluRay.REMUX-GRP"}); err == nil {
+		t.Fatal("raw release name unexpectedly supplied a Unit3D type")
+	}
+}
+
+func TestResolutionUsesResolvedFactOnly(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{Release: api.ReleaseInfo{Resolution: "1080p"}, ReleaseName: "Example.Movie.2027.2160p-GRP"}
+	if got := Resolution(meta); got != "1080p" {
+		t.Fatalf("resolved resolution = %q", got)
+	}
+	if got := Resolution(api.UploadSubject{ReleaseName: "Example.Movie.2027.2160p-GRP"}); got != "" {
+		t.Fatalf("raw-only resolution = %q", got)
+	}
+	rule := api.RuleSubject{Release: api.ReleaseInfo{Resolution: "720p"}, ReleaseName: "Example.Movie.2027.4320p-GRP"}
+	if got := RuleResolution(rule); got != "720p" {
+		t.Fatalf("rule resolution = %q", got)
+	}
 }

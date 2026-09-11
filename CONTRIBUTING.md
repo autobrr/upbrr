@@ -197,6 +197,8 @@ make frontend-bundle  # Vite bundle only
 
 ## Tests and checks
 
+For opt-in checks against configured services and local media, see the [live testing runner](scripts/live-testing/README.md). It uses an isolated profile and production build, blocks tracker submission and client writes, and defaults to no image uploads. Private media, credentials, screenshots, and run evidence stay outside the repository. These checks are separate from ordinary tests and CI.
+
 Run checks for the areas you touched:
 
 ```sh
@@ -272,6 +274,8 @@ Alternatively, `make precommit` and `make prepush` run the configured Lefthook c
 - Standalone packages compose identity, preparation callbacks, duplicate factories, auth descriptors, versioned validation, and static policy in `profile.go`. Shared `standalone.Definition` supplies registry capabilities and a versioned no-extra-validation default; only dynamic data/claim factories need a small local wrapper. Upload preparation captures one immutable operation used by preview and submission.
 - Shared tracker contracts and registry-driven orchestration live under `internal/trackers`; generic auth, dupe, and tracker-data coordinators are in its `auth`, `dupe`, and `data` subpackages. Central auth owns cross-surface status/import/validate/login/2FA/delete coordination, secret-free effective requirements, reusable cookie-login lifecycle, and TOTP; tracker-local `auth.go` retains protocol forms/endpoints/markers/filtering. Encrypted cookie persistence remains in `internal/cookies`.
 - Every tracker has an explicit versioned release-name policy resolved before duplicate checking. Custom algorithms live in `name.go`; principal payload fields consume the reviewed projection rather than re-deriving a name during upload.
+- Metadata preparation resolves parser, provider, media, and user-instruction precedence before publishing a prepared generation. Tracker subjects consume those finalized facts; their `Release` fields are canonical projections. Keep release-level parser evidence private to preparation, and use resolved media fields for technical decisions. Tracker defaults and fallbacks must never use raw `rls` values. Per-file episode enumeration may parse filenames without replacing resolved release facts.
+- Any direct metadata-provider override remains valid, including title, year, AKA, original/localized titles, disambiguation, and other provider fields. Preserve existing site precedence and use finalized facts for fallback. Prepared provider snapshots belong to the same source, identity, and generation. Naming omissions affect presentation; they do not erase reusable facts. Metadata changes need producer-to-projection regression coverage, conflicting and empty parser evidence cases, and a prepared-contract version bump when cached semantics change.
 - Every tracker resolves a versioned, side-effect-free validation policy before duplicate checking. Tracker-specific payload constructibility checks live in `validation.go`; release-eligibility extensions may stay with `rules.go`. Both consume `api.TrackerValidationSubject`.
 - `make architecturepolicy` rejects validation and other tracker semantic algorithms in `upload.go`, misplaced static banned-group declarations, misplaced Unit3D callbacks/naming functions, unreviewed principal payload names, and tracker imports of presentation owners.
 - Generic release/path/torrent-client infrastructure lives under `internal/releasepolicy`, `internal/pathing`, and `internal/torrentclient`. Torrent metainfo helpers live under `internal/torrent/metainfo`.

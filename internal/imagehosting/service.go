@@ -35,14 +35,36 @@ type Service struct {
 	registry  *trackers.Registry
 }
 
+type uploadAggregateError struct {
+	message string
+	causes  []error
+}
+
+func (e *uploadAggregateError) Error() string   { return e.message }
+func (e *uploadAggregateError) Unwrap() []error { return e.causes }
+
+func preserveUnknownUploadOutcome(message string, unknownOutcome error, terminal error) error {
+	if unknownOutcome == nil {
+		if terminal != nil {
+			return terminal
+		}
+		return errors.New(message)
+	}
+	causes := []error{unknownOutcome}
+	if terminal != nil {
+		causes = append(causes, terminal)
+	}
+	return &uploadAggregateError{message: message, causes: causes}
+}
+
 type repository interface {
-	ListFinalSelections(context.Context, string) ([]api.ScreenshotFinalSelection, error)
-	ListScreenshotsByPath(context.Context, string) ([]api.Screenshot, error)
-	ListUploadedImagesByPath(context.Context, string) ([]api.UploadedImageLink, error)
-	SaveUploadedImages(context.Context, string, string, []api.UploadedImageLink) error
-	ListScreenshotSlotsByPath(context.Context, string) ([]api.ScreenshotSlot, error)
-	ReplaceScreenshotSlots(context.Context, string, []api.ScreenshotSlot) error
-	UpsertScreenshotSlotVariants(context.Context, string, []api.ScreenshotSlotVariant) error
+	ListFinalSelections(context.Context, api.PreparedMediaBinding) ([]api.ScreenshotFinalSelection, error)
+	ListScreenshotsByPath(context.Context, api.PreparedMediaBinding) ([]api.Screenshot, error)
+	ListUploadedImagesByPath(context.Context, api.PreparedMediaBinding) ([]api.UploadedImageLink, error)
+	SaveUploadedImages(context.Context, api.PreparedMediaBinding, string, []api.UploadedImageLink) error
+	ListScreenshotSlotsByPath(context.Context, api.PreparedMediaBinding) ([]api.ScreenshotSlot, error)
+	ReplaceScreenshotSlots(context.Context, api.PreparedMediaBinding, []api.ScreenshotSlot) error
+	UpsertScreenshotSlotVariants(context.Context, api.PreparedMediaBinding, []api.ScreenshotSlotVariant) error
 }
 
 // NewServiceWithRegistry returns an image-hosting service with tracker-owned host scope metadata.
@@ -75,29 +97,37 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubje
 	if s == nil || s.repo == nil {
 		return nil, errors.New("image hosting: repository not configured")
 	}
-	if strings.TrimSpace(meta.SourcePath) == "" {
+	if !meta.MediaBinding.Valid() {
 		return nil, internalerrors.ErrInvalidInput
 	}
 
 	// First, get all screenshots from the database
-	screens, err := s.repo.ListScreenshotsByPath(ctx, meta.SourcePath)
+	screens, err := s.repo.ListScreenshotsByPath(ctx, meta.MediaBinding)
 	if err != nil {
 		return nil, fmt.Errorf("image hosting: %w", err)
 	}
 
 	// Then, get all previously uploaded images
-	uploaded, err := s.repo.ListUploadedImagesByPath(ctx, meta.SourcePath)
+	uploaded, err := s.repo.ListUploadedImagesByPath(ctx, meta.MediaBinding)
 	if err != nil {
 		return nil, fmt.Errorf("image hosting: %w", err)
 	}
-	selections, err := s.repo.ListFinalSelections(ctx, meta.SourcePath)
+	selections, err := s.repo.ListFinalSelections(ctx, meta.MediaBinding)
 	if err != nil {
 		s.logger.Debugf("image hosting: final selections unavailable: %v", err)
 		selections = nil
 	}
 	selectionSourceByPath := make(map[string]string, len(selections))
+	selectionDiscByPath := make(map[string]string, len(selections))
 	for _, selection := range selections {
 		selectionSourceByPath[strings.TrimSpace(selection.ImagePath)] = strings.TrimSpace(selection.Source)
+		selectionDiscByPath[strings.TrimSpace(selection.ImagePath)] = strings.TrimSpace(selection.DiscID)
+	}
+	discNames := make(map[string]string, len(meta.Discs))
+	discOrder := make(map[string]int, len(meta.Discs))
+	for index, disc := range meta.Discs {
+		discNames[disc.ID] = disc.Name
+		discOrder[disc.ID] = index
 	}
 
 	// Build a map of uploaded images by path for quick lookup
@@ -119,6 +149,8 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubje
 		}
 
 		img := api.ScreenshotImage{
+			DiscID:           shot.DiscID,
+			DiscName:         discNames[shot.DiscID],
 			Path:             pathValue,
 			TimestampSeconds: shot.Timestamp,
 			Purpose:          shot.Purpose,
@@ -169,6 +201,8 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubje
 		}
 
 		img := api.ScreenshotImage{
+			DiscID:           sel.DiscID,
+			DiscName:         discNames[sel.DiscID],
 			Path:             pathValue,
 			TimestampSeconds: 0, // Fallback since it wasn't a generated frame
 			Purpose:          api.ScreenshotPurposeFinal,
@@ -214,7 +248,13 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubje
 		if api.IsDiscMenuSelectionSource(selectionSourceByPath[pathValue]) {
 			purpose = api.ScreenshotPurposeMenu
 		}
+		discID := strings.TrimSpace(upload.DiscID)
+		if discID == "" {
+			discID = selectionDiscByPath[pathValue]
+		}
 		images = append(images, api.ScreenshotImage{
+			DiscID:     discID,
+			DiscName:   discNames[discID],
 			Path:       pathValue,
 			Purpose:    purpose,
 			SizeBytes:  info.Size(),
@@ -233,8 +273,19 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubje
 		)
 	}
 
-	sort.Slice(images, func(i, j int) bool {
-		return images[i].TimestampSeconds < images[j].TimestampSeconds
+	sort.SliceStable(images, func(i, j int) bool {
+		leftRank, leftFound := discOrder[images[i].DiscID]
+		rightRank, rightFound := discOrder[images[j].DiscID]
+		if leftFound != rightFound {
+			return leftFound
+		}
+		if leftRank != rightRank {
+			return leftRank < rightRank
+		}
+		if images[i].TimestampSeconds != images[j].TimestampSeconds {
+			return images[i].TimestampSeconds < images[j].TimestampSeconds
+		}
+		return images[i].Path < images[j].Path
 	})
 
 	s.logger.Debugf("image hosting: returning candidate images count=%d uploaded=%d", len(images), len(uploadedByPath))
@@ -285,7 +336,7 @@ func (s *Service) Upload(
 	if uploader == nil {
 		return nil, fmt.Errorf("image hosting: unsupported host %q", normalizedHost)
 	}
-	if strings.TrimSpace(meta.SourcePath) == "" {
+	if !meta.MediaBinding.Valid() {
 		return nil, internalerrors.ErrInvalidInput
 	}
 	if err := ctx.Err(); err != nil {
@@ -323,6 +374,7 @@ func (s *Service) Upload(
 		}
 		seen[absPath] = struct{}{}
 		unique = append(unique, imageCandidate{
+			DiscID:    image.DiscID,
 			Path:      absPath,
 			Purpose:   image.Purpose,
 			SizeBytes: info.Size(),
@@ -427,20 +479,23 @@ func (s *Service) Upload(
 				uploaded.WebURL = uploaded.RawURL
 			}
 			results[idx] = api.UploadedImageLink{
-				SourcePath: meta.SourcePath,
-				ImagePath:  candidate.Path,
-				Host:       normalizedHost,
-				UsageScope: normalizedScope,
-				ImgURL:     strings.TrimSpace(uploaded.ImgURL),
-				RawURL:     strings.TrimSpace(uploaded.RawURL),
-				WebURL:     strings.TrimSpace(uploaded.WebURL),
-				SizeBytes:  candidate.SizeBytes,
-				UploadedAt: time.Now().UTC(),
+				SourcePath:               meta.MediaBinding.SourcePath,
+				PreparedMediaFingerprint: meta.MediaBinding.PreparedMediaFingerprint,
+				PreparedGeneration:       meta.MediaBinding.PreparedGeneration,
+				DiscID:                   candidate.DiscID,
+				ImagePath:                candidate.Path,
+				Host:                     normalizedHost,
+				UsageScope:               normalizedScope,
+				ImgURL:                   strings.TrimSpace(uploaded.ImgURL),
+				RawURL:                   strings.TrimSpace(uploaded.RawURL),
+				WebURL:                   strings.TrimSpace(uploaded.WebURL),
+				SizeBytes:                candidate.SizeBytes,
+				UploadedAt:               time.Now().UTC(),
 			}
 		}
 		if s.repo != nil {
 			s.logger.Tracef("image hosting: persisting upload records count=%d host=%s tracker=%s", len(results), normalizedHost, logTracker)
-			if err := s.repo.SaveUploadedImages(ctx, meta.SourcePath, normalizedHost, results); err != nil {
+			if err := s.repo.SaveUploadedImages(ctx, meta.MediaBinding, normalizedHost, results); err != nil {
 				s.logger.Errorf(
 					"image hosting: failed to save upload records host=%s tracker=%s err=%s",
 					normalizedHost,
@@ -458,7 +513,7 @@ func (s *Service) Upload(
 				)
 				return nil, fmt.Errorf("image hosting: %w", err)
 			}
-			summary, err := syncScreenshotSlotVariants(ctx, s.repo, meta.SourcePath, results)
+			summary, err := syncScreenshotSlotVariants(ctx, s.repo, meta.MediaBinding, results)
 			if err != nil {
 				s.logger.Warnf(
 					"image hosting: failed to sync screenshot slot variants host=%s tracker=%s err=%s",
@@ -513,6 +568,7 @@ func (s *Service) Upload(
 		succeeded        int
 		failed           int
 		attemptDurations = make([]time.Duration, 0, len(unique))
+		unknownOutcome   error
 	)
 	sem := make(chan struct{}, limit)
 	recordProgress := func(success bool) {
@@ -588,8 +644,12 @@ dispatchLoop:
 
 			if err != nil {
 				s.logger.Warnf("image hosting: upload failed file=%s host=%s tracker=%s err=%s", fileName, normalizedHost, logTracker, redaction.RedactValue(err.Error(), nil))
+				failure := fmt.Errorf("image upload %s: %w", fileName, err)
 				mu.Lock()
-				failures = append(failures, fmt.Sprintf("image upload %s: %v", fileName, err))
+				failures = append(failures, failure.Error())
+				if operationFailure, ok := api.AsOperationFailure(failure); ok && operationFailure.Code == api.OperationFailureUnknownOutcome && unknownOutcome == nil {
+					unknownOutcome = failure
+				}
 				mu.Unlock()
 				recordProgress(false)
 				return
@@ -614,15 +674,18 @@ dispatchLoop:
 			results = append(results, indexedUploadResult{
 				index: idx,
 				link: api.UploadedImageLink{
-					SourcePath: meta.SourcePath,
-					ImagePath:  candidate.Path,
-					Host:       normalizedHost,
-					UsageScope: normalizedScope,
-					ImgURL:     strings.TrimSpace(uploaded.ImgURL),
-					RawURL:     strings.TrimSpace(uploaded.RawURL),
-					WebURL:     strings.TrimSpace(uploaded.WebURL),
-					SizeBytes:  candidate.SizeBytes,
-					UploadedAt: time.Now().UTC(),
+					SourcePath:               meta.MediaBinding.SourcePath,
+					PreparedMediaFingerprint: meta.MediaBinding.PreparedMediaFingerprint,
+					PreparedGeneration:       meta.MediaBinding.PreparedGeneration,
+					DiscID:                   candidate.DiscID,
+					ImagePath:                candidate.Path,
+					Host:                     normalizedHost,
+					UsageScope:               normalizedScope,
+					ImgURL:                   strings.TrimSpace(uploaded.ImgURL),
+					RawURL:                   strings.TrimSpace(uploaded.RawURL),
+					WebURL:                   strings.TrimSpace(uploaded.WebURL),
+					SizeBytes:                candidate.SizeBytes,
+					UploadedAt:               time.Now().UTC(),
 				},
 			})
 			mu.Unlock()
@@ -633,7 +696,8 @@ dispatchLoop:
 
 	wg.Wait()
 	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("image hosting: upload canceled: %w", err)
+		canceledErr := fmt.Errorf("image hosting: upload canceled: %w", err)
+		return nil, preserveUnknownUploadOutcome(canceledErr.Error(), unknownOutcome, canceledErr)
 	}
 
 	totalDuration := time.Since(uploadStart)
@@ -652,7 +716,7 @@ dispatchLoop:
 
 	if s.repo != nil && len(orderedResults) > 0 {
 		s.logger.Tracef("image hosting: persisting upload records count=%d host=%s tracker=%s", len(orderedResults), normalizedHost, logTracker)
-		if err := s.repo.SaveUploadedImages(ctx, meta.SourcePath, normalizedHost, orderedResults); err != nil {
+		if err := s.repo.SaveUploadedImages(ctx, meta.MediaBinding, normalizedHost, orderedResults); err != nil {
 			s.logger.Errorf(
 				"image hosting: failed to save upload records host=%s tracker=%s err=%s",
 				normalizedHost,
@@ -668,9 +732,10 @@ dispatchLoop:
 				failed,
 				"Uploaded images could not be saved.",
 			)
-			return nil, fmt.Errorf("image hosting: %w", err)
+			persistenceErr := fmt.Errorf("image hosting: %w", err)
+			return nil, preserveUnknownUploadOutcome(persistenceErr.Error(), unknownOutcome, persistenceErr)
 		}
-		summary, err := syncScreenshotSlotVariants(ctx, s.repo, meta.SourcePath, orderedResults)
+		summary, err := syncScreenshotSlotVariants(ctx, s.repo, meta.MediaBinding, orderedResults)
 		if err != nil {
 			s.logger.Warnf(
 				"image hosting: failed to sync screenshot slot variants host=%s tracker=%s err=%s",
@@ -706,7 +771,8 @@ dispatchLoop:
 			failed,
 			fmt.Sprintf("%d of %d host uploads failed.", failed, len(unique)),
 		)
-		return orderedResults, fmt.Errorf("image hosting: %d of %d uploads failed: %s", len(failures), len(unique), strings.Join(failures, "; "))
+		message := fmt.Sprintf("image hosting: %d of %d uploads failed: %s", len(failures), len(unique), strings.Join(failures, "; "))
+		return orderedResults, preserveUnknownUploadOutcome(message, unknownOutcome, nil)
 	}
 
 	emitUploadProgress(
@@ -882,6 +948,7 @@ func imagePurposeCounts(images []imageCandidate) (normal int, menus int) {
 }
 
 type imageCandidate struct {
+	DiscID    string
 	Path      string
 	Purpose   api.ScreenshotPurpose
 	SizeBytes int64
@@ -916,13 +983,13 @@ func isAllowedImageExt(path string) bool {
 func syncScreenshotSlotVariants(
 	ctx context.Context,
 	repo repository,
-	sourcePath string,
+	binding api.PreparedMediaBinding,
 	uploaded []api.UploadedImageLink,
 ) (trackers.SlotUploadAttachmentResult, error) {
-	if repo == nil || len(uploaded) == 0 || strings.TrimSpace(sourcePath) == "" {
+	if repo == nil || len(uploaded) == 0 || !binding.Valid() {
 		return trackers.SlotUploadAttachmentResult{}, nil
 	}
-	slots, err := repo.ListScreenshotSlotsByPath(ctx, sourcePath)
+	slots, err := repo.ListScreenshotSlotsByPath(ctx, binding)
 	if err != nil {
 		return trackers.SlotUploadAttachmentResult{}, fmt.Errorf("image hosting: %w", err)
 	}
@@ -931,7 +998,7 @@ func syncScreenshotSlotVariants(
 	}
 	summary := trackers.ApplyUploadedVariantsToSlots(slots, uploaded)
 	if summary.FallbackMatched > 0 {
-		if err := repo.ReplaceScreenshotSlots(ctx, sourcePath, slots); err != nil {
+		if err := repo.ReplaceScreenshotSlots(ctx, binding, slots); err != nil {
 			return summary, fmt.Errorf("image hosting: %w", err)
 		}
 	}
@@ -948,7 +1015,7 @@ func syncScreenshotSlotVariants(
 			continue
 		}
 		variants = append(variants, api.ScreenshotSlotVariant{
-			SourcePath: sourcePath,
+			DiscID:     image.DiscID,
 			SlotOrder:  slotOrder,
 			Host:       strings.TrimSpace(image.Host),
 			UsageScope: strings.TrimSpace(image.UsageScope),
@@ -959,7 +1026,7 @@ func syncScreenshotSlotVariants(
 			UploadedAt: image.UploadedAt,
 		})
 	}
-	if err := repo.UpsertScreenshotSlotVariants(ctx, sourcePath, variants); err != nil {
+	if err := repo.UpsertScreenshotSlotVariants(ctx, binding, variants); err != nil {
 		return summary, fmt.Errorf("image hosting: upsert screenshot slot variants: %w", err)
 	}
 	return summary, nil

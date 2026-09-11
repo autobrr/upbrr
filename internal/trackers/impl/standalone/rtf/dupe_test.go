@@ -141,6 +141,32 @@ func TestRTFTitleFallbackRemainsExplicitlyIncomplete(t *testing.T) {
 	}
 }
 
+func TestCleanRTFSearchTitleHonorsManualTitle(t *testing.T) {
+	t.Parallel()
+
+	projection := &api.TrackerReleaseProjection{DuplicateCriteria: api.TrackerDuplicateCriteria{Name: "Projected Release"}}
+	manual := api.DuplicateSubject{
+		Release:    api.ReleaseInfo{Title: "Automatic Release"},
+		Projection: projection,
+		EffectiveMetadata: api.EffectiveMetadata{
+			Title:           "Manual Release",
+			TitleProvenance: api.FactProvenanceManual,
+		},
+	}
+	if got := cleanRTFSearchTitle(manual); got != "Manual Release" {
+		t.Fatalf("manual RTF search title = %q", got)
+	}
+
+	manual.EffectiveMetadata = api.EffectiveMetadata{TitleProvenance: api.FactProvenanceManualEmpty}
+	if got := cleanRTFSearchTitle(manual); got != "" {
+		t.Fatalf("manual-empty RTF search title = %q", got)
+	}
+
+	if got := cleanRTFSearchTitle(api.DuplicateSubject{Projection: projection}); got != "Projected Release" {
+		t.Fatalf("automatic RTF search title = %q", got)
+	}
+}
+
 func TestRTFMalformedTorrentPayloadFails(t *testing.T) {
 	t.Parallel()
 

@@ -102,25 +102,11 @@ func resolveUnit3DResolutionID(meta api.UploadSubject) string {
 }
 
 func resolveResolution(meta api.UploadSubject) string {
-	return resolveResolutionValues(meta.Release, meta.ReleaseName)
+	return resolveResolutionValues(meta.Release)
 }
 
-func resolveResolutionValues(release api.ReleaseInfo, releaseName string) string {
-	resolution := strings.TrimSpace(release.Resolution)
-	if resolution == "" {
-		resolution = detectResolution(releaseName)
-	}
-	return resolution
-}
-
-func detectResolution(value string) string {
-	clean := strings.ToLower(value)
-	for _, candidate := range []string{"8640p", "4320p", "2160p", "1440p", "1080p", "1080i", "720p", "576p", "576i", "480p", "480i"} {
-		if strings.Contains(clean, candidate) {
-			return candidate
-		}
-	}
-	return ""
+func resolveResolutionValues(release api.ReleaseInfo) string {
+	return strings.TrimSpace(release.Resolution)
 }
 
 func isSDResolution(resolution string) bool {
@@ -147,23 +133,9 @@ func inferUnit3DType(meta api.UploadSubject) string {
 		}
 	}
 
-	releaseName := strings.ToUpper(strings.TrimSpace(meta.ReleaseName))
 	source := strings.ToUpper(strings.TrimSpace(meta.Source))
 	if source == "" {
 		source = strings.ToUpper(strings.TrimSpace(meta.Release.Source))
-	}
-
-	switch {
-	case strings.Contains(releaseName, "REMUX"):
-		return "REMUX"
-	case strings.Contains(releaseName, "WEB-DL") || strings.Contains(releaseName, "WEBDL"):
-		return "WEBDL"
-	case strings.Contains(releaseName, "WEBRIP") || strings.Contains(releaseName, "WEB-RIP"):
-		return "WEBRIP"
-	case strings.Contains(releaseName, "DVDRIP"):
-		return "DVDRIP"
-	case strings.Contains(releaseName, "HDTV"):
-		return "HDTV"
 	}
 
 	if isDiscType(meta.DiscType) {

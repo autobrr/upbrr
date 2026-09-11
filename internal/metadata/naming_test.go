@@ -6,6 +6,7 @@ package metadata
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -103,6 +104,35 @@ func TestBuildReleaseNameDVDDiscDoesNotRepeatDVD(t *testing.T) {
 				t.Fatalf("name = %q, want %q", result.NameNoTag, test.want)
 			}
 		})
+	}
+}
+
+func TestRebuildReleaseNameUsesPreparedDVDCapacityWithoutNameToken(t *testing.T) {
+	t.Parallel()
+
+	meta := preparationstate.State{
+		SourcePath: "Example Release 2026",
+		DiscType:   "DVD",
+		SourceSize: dvd5CapacityThreshold + 1,
+		Source:     "PAL DVD",
+		Type:       "DISC",
+		Release: api.ReleaseInfo{
+			Category: "MOVIE",
+			Type:     "DISC",
+			Title:    "Example Release",
+			Year:     2026,
+			Source:   "PAL DVD",
+		},
+	}
+	applyDVDCapacity(&meta)
+	RebuildReleaseName(&meta, api.NopLogger{})
+
+	const want = "Example Release 2026 PAL DVD9"
+	if meta.Release.Size != "DVD9" || meta.ReleaseNameNoTag != want {
+		t.Fatalf("size/name = %q/%q, want DVD9/%q", meta.Release.Size, meta.ReleaseNameNoTag, want)
+	}
+	if meta.GeneratedReleaseNames.IncludeEpisodeTitle.NameNoTag != want || meta.GeneratedReleaseNames.OmitEpisodeTitle.NameNoTag != want {
+		t.Fatalf("generated names = %#v, want both %q", meta.GeneratedReleaseNames, want)
 	}
 }
 
@@ -230,6 +260,7 @@ func TestApplyReleaseNameOverridesKeepsNamingOnlyControls(t *testing.T) {
 func TestApplyReleaseNameValueOverridesUpdatesCanonicalFacts(t *testing.T) {
 	baseState := func() preparationstate.State {
 		return preparationstate.State{
+			Identity:         api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
 			Type:             "ENCODE",
 			Source:           "Web",
 			Service:          "NF",
@@ -352,10 +383,10 @@ func TestApplyReleaseNameValueOverridesUpdatesCanonicalFacts(t *testing.T) {
 			},
 		},
 		{
-			name:      "zero manual year keeps the derived year",
+			name:      "zero manual year clears the derived year",
 			overrides: api.ReleaseNameOverrides{ManualYear: new(0)},
 			assert: func(t *testing.T, meta preparationstate.State) {
-				if meta.Release.Year != 2024 {
+				if meta.Release.Year != 0 {
 					t.Fatalf("year fact = %d", meta.Release.Year)
 				}
 			},
@@ -479,6 +510,22 @@ func TestApplyReleaseNameValueOverridesUpdatesCanonicalFacts(t *testing.T) {
 			meta.ReleaseNameOverrides = tc.overrides
 			applyReleaseNameValueOverrides(&meta)
 			tc.assert(t, meta)
+		})
+	}
+}
+
+func TestApplyReleaseNameValueOverridesIgnoresManualYearForTV(t *testing.T) {
+	for _, manualYear := range []int{0, 2030} {
+		t.Run(strconv.Itoa(manualYear), func(t *testing.T) {
+			meta := preparationstate.State{
+				Identity:             api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+				Release:              api.ReleaseInfo{Year: 2024},
+				ReleaseNameOverrides: api.ReleaseNameOverrides{ManualYear: new(manualYear)},
+			}
+			applyReleaseNameValueOverrides(&meta)
+			if meta.Release.Year != 2024 {
+				t.Fatalf("TV manual year changed canonical release year to %d", meta.Release.Year)
+			}
 		})
 	}
 }
@@ -1158,23 +1205,24 @@ func TestResolveReleaseNameTitleTVFallsBackFromUnusableTVDBToIMDb(t *testing.T) 
 		},
 	}
 	title, alt, year := resolveReleaseNameTitle("TV", meta)
-	if title != "IMDb Series" || alt != "AKA Original Series" || year != 2026 {
+	if title != "IMDb Series" || alt != "AKA Original Series" || year != 0 {
 		t.Fatalf("unexpected IMDb fallback fields: title=%q alt=%q year=%d", title, alt, year)
 	}
 }
 
-func TestReleaseNameRequestFromMetaTVUsesIMDbWithoutTVDBOrTMDB(t *testing.T) {
+func TestReleaseNameRequestFromMetaTVOmitsYearWithoutEligibleTVDB(t *testing.T) {
 	meta := preparationstate.State{
-		SourcePath:  `D:\Shows\Parsed.Series.S01E01.1080p.WEB-DL.x264-GRP.mkv`,
-		Identity:    api.ExternalIdentity{Category: "TV", IMDBID: 1234567},
-		Type:        "WEBDL",
-		Source:      "Web",
-		Audio:       "AAC 2.0",
-		VideoEncode: "x264",
-		SeasonStr:   "S01",
-		EpisodeStr:  "E01",
-		Tag:         "-GRP",
-		Release:     api.ReleaseInfo{Title: "Parsed Series", Resolution: "1080p"},
+		SourcePath:           `D:\Shows\Parsed.Series.S01E01.1080p.WEB-DL.x264-GRP.mkv`,
+		Identity:             api.ExternalIdentity{Category: "TV", IMDBID: 1234567},
+		Type:                 "WEBDL",
+		Source:               "Web",
+		Audio:                "AAC 2.0",
+		VideoEncode:          "x264",
+		SeasonStr:            "S01",
+		EpisodeStr:           "E01",
+		Tag:                  "-GRP",
+		Release:              api.ReleaseInfo{Title: "Parsed Series", Resolution: "1080p"},
+		ReleaseNameOverrides: api.ReleaseNameOverrides{ManualYear: new(2030)},
 		ProviderMetadata: api.SourceScopedMetadata{
 			IMDB: &api.IMDBMetadata{
 				IMDBID: 1234567,
@@ -1185,12 +1233,12 @@ func TestReleaseNameRequestFromMetaTVUsesIMDbWithoutTVDBOrTMDB(t *testing.T) {
 		},
 	}
 	req := releaseNameRequestFromMeta(meta, api.NopLogger{})
-	if req.SearchYear != "2026" {
-		t.Fatalf("expected IMDb TV search year, got %q", req.SearchYear)
+	if req.Year != 0 || req.SearchYear != "" {
+		t.Fatalf("TV request used non-TVDB year: year=%d search_year=%q", req.Year, req.SearchYear)
 	}
 	result := BuildReleaseName(req, api.NopLogger{})
-	if !containsAll(result.NameNoTag, []string{"IMDb Series", "AKA Original Series", "2026", "S01E01"}) {
-		t.Fatalf("expected rebuilt IMDb-only TV name, got %q", result.NameNoTag)
+	if !containsAll(result.NameNoTag, []string{"IMDb Series", "AKA Original Series", "S01E01"}) || strings.Contains(result.NameNoTag, "2026") {
+		t.Fatalf("expected TV name without non-TVDB year, got %q", result.NameNoTag)
 	}
 }
 
@@ -1207,7 +1255,7 @@ func TestResolveReleaseNameTitleIgnoresTVmazeOnlyMetadata(t *testing.T) {
 		},
 	}
 	title, alt, year := resolveReleaseNameTitle("TV", meta)
-	if title != "Parsed Series" || alt != "" || year != 2025 {
+	if title != "Parsed Series" || alt != "" || year != 0 {
 		t.Fatalf("TVmaze changed shared naming: title=%q alt=%q year=%d", title, alt, year)
 	}
 }

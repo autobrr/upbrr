@@ -244,6 +244,42 @@ func TestBuildNameUsesTMDBTitleAndYearAndPreservesPlus(t *testing.T) {
 	}
 }
 
+func TestBuildNamePrefersManualTitleAndYear(t *testing.T) {
+	meta := rmcNameSubject("Wrong Title 2000 1080p Bluray x264-GRP", "Provider Title", 2000)
+	meta.EffectiveMetadata = api.EffectiveMetadata{
+		Title:           "Manual Title",
+		TitleProvenance: api.FactProvenanceManual,
+		Year:            2030,
+		YearProvenance:  api.FactProvenanceManual,
+	}
+	if got := Profile().Site.BuildName(meta, config.TrackerConfig{}); got != "Manual Title 2030 1080p Bluray x264-GRP" {
+		t.Fatalf("manual name = %q", got)
+	}
+	meta.EffectiveMetadata.Title = ""
+	meta.EffectiveMetadata.TitleProvenance = api.FactProvenanceManualEmpty
+	if got := Profile().Site.BuildName(meta, config.TrackerConfig{}); got != "" {
+		t.Fatalf("manual-empty title name = %q", got)
+	}
+}
+
+func TestBuildYearlessNamePrefersManualAlternateTitle(t *testing.T) {
+	meta := rmcNameSubject("Manual Title AKA Manual Alternate 1080p Bluray x264-GRP", "Provider Title", 0)
+	meta.Release.Title = "Manual Title"
+	meta.NamePresentation = api.ReleaseNamePresentation{
+		Version:  api.ReleaseNamePresentationVersionV1,
+		OmitYear: true,
+	}
+	meta.EffectiveMetadata = api.EffectiveMetadata{
+		Title:                    "Manual Title",
+		TitleProvenance:          api.FactProvenanceManual,
+		AlternateTitle:           "Manual Alternate",
+		AlternateTitleProvenance: api.FactProvenanceManual,
+	}
+	if got := Profile().Site.BuildName(meta, config.TrackerConfig{}); got != "Manual Title 1080p Bluray x264-GRP" {
+		t.Fatalf("manual alternate name = %q", got)
+	}
+}
+
 func TestBuildNameRejectsStaleTMDBMetadata(t *testing.T) {
 	meta := rmcNameSubject("Example Release 2000 1080p Bluray x264-GRP", "Example Release", 2000)
 	meta.SourcePath = "current-source"
@@ -256,6 +292,23 @@ func TestBuildNameRejectsStaleTMDBMetadata(t *testing.T) {
 
 func TestCheckRequirementsRequiresTMDBYear(t *testing.T) {
 	meta := rmcNameSubject("Example Release 2000 1080p Bluray x264-GRP", "Example Release", 0)
+	failures, err := checkRequirements(context.Background(), api.NewTrackerValidationSubject(meta, "RMC"), api.NopLogger{})
+	if err != nil {
+		t.Fatalf("check requirements: %v", err)
+	}
+	if len(failures) != 1 || failures[0].Rule != "rmc_release_year" {
+		t.Fatalf("failures = %#v, want rmc_release_year", failures)
+	}
+}
+
+func TestCheckRequirementsUsesManualEffectiveYear(t *testing.T) {
+	meta := rmcNameSubject("Example Release 2000 1080p Bluray x264-GRP", "Provider Title", 2000)
+	meta.EffectiveMetadata = api.EffectiveMetadata{
+		Title:           "Manual Title",
+		TitleProvenance: api.FactProvenanceManual,
+		Year:            2030,
+		YearProvenance:  api.FactProvenanceManual,
+	}
 	failures, err := checkRequirements(context.Background(), api.NewTrackerValidationSubject(meta, "RMC"), api.NopLogger{})
 	if err != nil {
 		t.Fatalf("check requirements: %v", err)

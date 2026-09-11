@@ -267,7 +267,7 @@ func knownString(value string) (string, bool) {
 func normalizedLanguageSet(values []string) (string, bool) {
 	normalized := make([]string, 0, len(values))
 	for _, value := range values {
-		if language := languageutil.NormalizeLanguageDisplay(value); language != "" {
+		if language := languageutil.NormalizeLanguageLabel(value); language != "" {
 			normalized = append(normalized, strings.ToLower(language))
 		}
 	}
@@ -561,7 +561,7 @@ type LanguageCombinationPolicy struct {
 func ValidateLanguageCombination(facts api.MediaFileFacts, policy LanguageCombinationPolicy) []api.RuleFailure {
 	policy.Evidence.ViolationDisposition = api.RuleDispositionWaivable
 	rule := predicateRule(policy.Evidence, "language_combination")
-	original := languageutil.NormalizeLanguageDisplay(facts.OriginalLanguage)
+	original := languageutil.NormalizeLanguageLabel(facts.OriginalLanguage)
 	needsOriginal := policy.RequireOriginalAudio || policy.RequireOriginalOrEnglishAudio ||
 		policy.RequireOriginalSubtitle || policy.RequireOriginalOrEnglishSubtitle
 	if needsOriginal && original == "" {
@@ -592,7 +592,7 @@ func ValidateLanguageCombination(facts api.MediaFileFacts, policy LanguageCombin
 func normalizedLanguages(values []string) []string {
 	normalized := make([]string, 0, len(values))
 	for _, value := range values {
-		if language := languageutil.NormalizeLanguageDisplay(value); language != "" {
+		if language := languageutil.NormalizeLanguageLabel(value); language != "" {
 			normalized = append(normalized, language)
 		}
 	}

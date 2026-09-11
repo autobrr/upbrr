@@ -3,9 +3,10 @@
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
-  createBluraySourceFixture,
-  createDVDSourceFixture,
   createE2EWorkspace,
+  createMultiBluraySourceFixture,
+  createMultiDVDSourceFixture,
+  expectSingleCollectionTorrentUpload,
   fetchMetadata,
   releaseWorkflowParityFixture,
   startApp,
@@ -108,6 +109,261 @@ test("embedded web reload restores the authoritative prepared workflow", async (
     await expect((await restored).ok()).toBe(true);
     await expect(page.getByText("E2E.Movie.2026.1080p.WEB-DL")).toBeVisible();
     await expect(page.getByRole("button", { name: "Dupe Check" })).toBeEnabled();
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("embedded web distinguishes a cleared metadata provider ID from Auto", async ({ page }) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    const malRow = page.locator('[data-correction-field="identity.mal"]');
+    const malInput = page.getByRole("textbox", { name: "MAL ID", exact: true });
+    await expect(malInput).toHaveValue("");
+    await expect(malRow.getByText("Automatic value", { exact: true })).toBeVisible();
+    await malInput.fill("0");
+    const cleared = page.waitForResponse((response) =>
+      response.url().includes("/api/app/ContinueReleaseWorkflow"),
+    );
+    await page.getByRole("button", { name: "Refresh metadata" }).click();
+    await expect((await cleared).ok()).toBe(true);
+    await expect(page.getByRole("progressbar")).toHaveCount(0);
+    await expect(malRow.getByText("Manual value", { exact: true })).toBeVisible();
+
+    const restored = page.waitForResponse((response) =>
+      response.url().includes("/api/app/GetReleaseWorkflow"),
+    );
+    await page.reload();
+    await expect((await restored).ok()).toBe(true);
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    await expect(malInput).toHaveValue("");
+    await expect(malRow.getByText("Manual value", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Auto MAL ID" }).click();
+    const reset = page.waitForResponse((response) =>
+      response.url().includes("/api/app/ContinueReleaseWorkflow"),
+    );
+    await page.getByRole("button", { name: "Refresh metadata" }).click();
+    await expect((await reset).ok()).toBe(true);
+    await expect(page.getByRole("progressbar")).toHaveCount(0);
+    await expect(malRow.getByText("Automatic value", { exact: true })).toBeVisible();
+
+    await malInput.fill("5114");
+    const restoredID = page.waitForResponse((response) =>
+      response.url().includes("/api/app/ContinueReleaseWorkflow"),
+    );
+    await page.getByRole("button", { name: "Refresh metadata" }).click();
+    await expect((await restoredID).ok()).toBe(true);
+    await expect(page.getByRole("progressbar")).toHaveCount(0);
+    await expect(malInput).toHaveValue("5114");
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("embedded web retains Input corrections without downstream workflow calls", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await expect.poll(() => workspace.fake.counters.clientSearches).toBe(1);
+    const initialCounters = { ...workspace.fake.counters };
+    const workflowRequests: Array<{ method: string; body: Record<string, unknown> }> = [];
+    page.on("request", (request) => {
+      const method = new URL(request.url()).pathname.split("/").pop() || "";
+      if (!method.includes("ReleaseWorkflow")) return;
+      let body: Record<string, unknown> = {};
+      try {
+        body = request.postDataJSON() as Record<string, unknown>;
+      } catch {
+        // GET-style workflow resource requests do not carry JSON.
+      }
+      workflowRequests.push({ method, body });
+    });
+
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    const inputEditor = page.getByTestId("input-correction-editor");
+    const dupeCheck = page.getByRole("button", { name: "Dupe Check" });
+    for (const provider of ["TMDB", "IMDB", "TVDB", "TVmaze", "MAL"]) {
+      await expect(
+        page.getByRole("button", { name: `Remove ${provider} ID`, exact: true }),
+      ).toBeEnabled();
+    }
+    await expect(page.getByRole("textbox", { name: "TMDB ID", exact: true })).not.toHaveValue("");
+    await expect(page.getByRole("textbox", { name: "Title", exact: true })).not.toHaveValue("");
+    await expect(page.getByRole("textbox", { name: "Title", exact: true })).toBeDisabled();
+    await expect(page.getByRole("textbox", { name: "Original title", exact: true })).toBeDisabled();
+    await expect(page.getByRole("spinbutton", { name: "Manual year", exact: true })).toBeEditable();
+    const categoryInput = page.getByRole("textbox", { name: "Category", exact: true });
+    await categoryInput.fill("TV");
+    await expect(page.getByRole("spinbutton", { name: "Manual year", exact: true })).toBeDisabled();
+    await categoryInput.fill("movie");
+    await expect(page.getByRole("spinbutton", { name: "Manual year", exact: true })).toBeEditable();
+    await page.getByRole("button", { name: "Auto Category", exact: true }).click();
+    await expect(page.getByRole("textbox", { name: "Category", exact: true })).not.toHaveValue("");
+    for (const group of [
+      "Provider IDs",
+      "Release name",
+      "Metadata and languages",
+      "Inspected tracks",
+      "Source options",
+      "Input readiness",
+    ]) {
+      await expect(inputEditor.getByText(group, { exact: true })).toBeVisible();
+    }
+    const skipClientSearch = page.getByRole("checkbox", { name: "Skip client search" });
+    const sourceOptions = page.getByTestId("input-source-options");
+    await expect(sourceOptions).not.toHaveAttribute("open");
+    await expect(skipClientSearch).toBeHidden();
+    await sourceOptions.locator("summary").click();
+    await expect(skipClientSearch).toBeVisible();
+    const readiness = page.getByTestId("input-readiness");
+    await expect(readiness).not.toHaveAttribute("open");
+    await expect(readiness.getByText(/^Status:/)).toBeHidden();
+    await readiness.locator("summary").click();
+    await expect(readiness.getByText(/^Status:/)).toBeVisible();
+    await readiness.locator("summary").click();
+    const titleInput = page.getByRole("textbox", { name: "Title", exact: true });
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      const field = await titleInput.boundingBox();
+      expect(field).not.toBeNull();
+      expect(field?.width).toBeGreaterThan(240);
+      expect((field?.x || 0) + (field?.width || 0)).toBeLessThanOrEqual(width);
+    }
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await skipClientSearch.check();
+    const commentary = page.getByRole("combobox", { name: "Commentary" });
+    await commentary.selectOption({ label: "No" });
+    const saved = page.waitForResponse((response) =>
+      response.url().includes("/api/app/ContinueReleaseWorkflow"),
+    );
+    await page.getByRole("button", { name: "Refresh metadata" }).click();
+    await expect((await saved).ok()).toBe(true);
+    await expect(page.getByRole("button", { name: "Refresh metadata", exact: true })).toBeEnabled();
+    await expect(dupeCheck).toBeEnabled();
+    await expect(commentary).toHaveValue("no");
+    const setCommand = workflowRequests.findLast(
+      (request) =>
+        request.method === "ContinueReleaseWorkflow" &&
+        (request.body.intent as { correctionPatch?: unknown } | undefined)?.correctionPatch,
+    );
+    expect(setCommand?.body.goal).toBe("input_ready");
+    expect(
+      (setCommand?.body.intent as { correctionPatch?: { expectedRevision?: number } })
+        ?.correctionPatch?.expectedRevision ?? -1,
+    ).toBeGreaterThanOrEqual(0);
+    expect(workspace.fake.counters).toEqual(initialCounters);
+
+    const restored = page.waitForResponse((response) =>
+      response.url().includes("/api/app/GetReleaseWorkflow"),
+    );
+    await page.reload();
+    await expect((await restored).ok()).toBe(true);
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    await expect(commentary).toHaveValue("no");
+    await page.getByLabel("Source path", { exact: true }).click();
+    await expect(page.getByRole("listbox", { name: "Source path history" })).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    await commentary.selectOption({ label: "Auto" });
+    await sourceOptions.locator("summary").click();
+    await skipClientSearch.check();
+    const reset = page.waitForResponse((response) =>
+      response.url().includes("/api/app/ContinueReleaseWorkflow"),
+    );
+    await page.getByRole("button", { name: "Refresh metadata" }).click();
+    await expect((await reset).ok()).toBe(true);
+    await expect(page.getByRole("button", { name: "Refresh metadata", exact: true })).toBeEnabled();
+    await expect(dupeCheck).toBeEnabled();
+    const resetCommand = workflowRequests.findLast(
+      (request) =>
+        request.method === "ContinueReleaseWorkflow" &&
+        Array.isArray(
+          (request.body.intent as { correctionPatch?: { resetFields?: unknown } } | undefined)
+            ?.correctionPatch?.resetFields,
+        ),
+    );
+    expect(
+      (
+        resetCommand?.body.intent as {
+          correctionPatch?: { resetFields?: Array<{ field: string }> };
+        }
+      )?.correctionPatch?.resetFields,
+    ).toContainEqual({ field: "metadata.commentary" });
+
+    await commentary.selectOption({ label: "No" });
+    await skipClientSearch.check();
+    const retained = page.waitForResponse((response) =>
+      response.url().includes("/api/app/ContinueReleaseWorkflow"),
+    );
+    await page.getByRole("button", { name: "Refresh metadata" }).click();
+    await expect((await retained).ok()).toBe(true);
+    await expect(page.getByRole("button", { name: "Refresh metadata", exact: true })).toBeEnabled();
+    await expect(dupeCheck).toBeEnabled();
+    const lastContinue = workflowRequests.findLast(
+      (request) => request.method === "ContinueReleaseWorkflow",
+    );
+    const workflowID = (lastContinue?.body.authority as { workflowId?: unknown } | undefined)
+      ?.workflowId;
+    if (typeof workflowID !== "string" || workflowID === "") {
+      throw new Error("workflow ID missing from Input correction request");
+    }
+
+    for (const request of workflowRequests) {
+      if (request.method === "ContinueReleaseWorkflow")
+        expect(request.body.goal).toBe("input_ready");
+      expect([
+        "ContinueReleaseWorkflow",
+        "GetReleaseWorkflow",
+        "GetReleaseWorkflowOperation",
+      ]).toContain(request.method);
+    }
+    expect(workspace.fake.counters).toEqual(initialCounters);
+
+    await app.stop();
+    app = await startApp(workspace, { seed: false });
+    await page.goto(app.url);
+    await page.evaluate(
+      (id) => sessionStorage.setItem("upbrr.activeReleaseWorkflow", id),
+      workflowID,
+    );
+    await page.reload();
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    await expect(page.getByRole("combobox", { name: "Commentary" })).toHaveValue("no");
+    expect(workspace.fake.counters).toEqual(initialCounters);
+
+    const removeTMDB = page.getByRole("button", { name: "Remove TMDB ID", exact: true });
+    await expect(removeTMDB).toBeEnabled();
+    await removeTMDB.click();
+    await sourceOptions.locator("summary").click();
+    await skipClientSearch.check();
+    const removed = page.waitForResponse(
+      (response) =>
+        response.url().includes("/api/app/ContinueReleaseWorkflow") &&
+        Boolean(response.request().postDataJSON()?.intent?.preparation),
+    );
+    await page.getByRole("button", { name: "Refresh metadata" }).click();
+    await expect((await removed).ok()).toBe(true);
+    await expect(page.getByRole("button", { name: "Refresh metadata", exact: true })).toBeEnabled();
+    await expect(dupeCheck).toBeEnabled();
+    await page.reload();
+    await page.getByText("Edit Release Details", { exact: true }).click();
+    await expect(removeTMDB).toBeDisabled();
+    await expect(removeTMDB).toHaveText("Removed");
+    await expect(page.getByRole("textbox", { name: "TMDB ID", exact: true })).toHaveValue("");
+    await expect(page.getByRole("button", { name: /^TMDB \d+ Source:/ })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Remove IMDB ID", exact: true })).toBeEnabled();
   } finally {
     await app?.stop();
     await workspace.cleanup();
@@ -260,7 +516,7 @@ test("embedded web reports an optional tracker dry run after a duplicate overrid
     await expect(page.getByText("Example.Release.2026.1080p-GRP")).toBeVisible();
     await expect(page.getByRole("button", { name: "Screenshots" })).toBeEnabled();
     await page.getByLabel("Ignore dupes for HDS").click();
-    await expect(page.getByText("1 candidate(s) · policy risk acknowledged")).toBeVisible();
+    await expect(page.getByText("1 potential dupe · acknowledged")).toBeVisible();
 
     await page.getByRole("button", { name: "Screenshots" }).click();
     await page.getByRole("button", { name: "Generate screenshots" }).click();
@@ -318,11 +574,9 @@ test("embedded web renders mixed, incomplete, and manual duplicate evidence", as
     await expect(page.getByText("proposed trumps")).toBeVisible();
     await expect(page.getByText("insufficient evidence")).toBeVisible();
     await expect(page.getByText("manual review", { exact: true })).toBeVisible();
-    await expect(page.getByText("Search incomplete · 2 page(s)")).toBeVisible();
     await expect(
       page.getByText("Synthetic search stopped at the configured page bound."),
     ).toBeVisible();
-    await expect(page.getByText(/evidence partial \(tracker_title\)/)).toBeVisible();
 
     for (const tracker of ["HDS", "PTP"]) {
       await expect(page.getByLabel(`Acknowledge dupe risk for ${tracker}`)).toBeVisible();
@@ -342,7 +596,7 @@ test("embedded web tracks BDMV playlist preparation and opens duplicate checking
   const workspace = await createE2EWorkspace();
   let app: AppServer | undefined;
   try {
-    const sourcePath = await createBluraySourceFixture(workspace);
+    const sourcePath = await createMultiBluraySourceFixture(workspace);
     app = await startApp(workspace);
     await page.goto(app.url);
     await page.getByLabel("Source path").fill(sourcePath);
@@ -358,7 +612,13 @@ test("embedded web tracks BDMV playlist preparation and opens duplicate checking
     await expect(
       page.getByText("Choose playlists for the selected preparation source."),
     ).toBeVisible();
-    await page.getByRole("checkbox", { name: "00001.mpls" }).check();
+    await expect(page.getByRole("heading", { name: "Disc 1" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Disc 2" })).toBeVisible();
+    const duplicatePlaylists = page.getByRole("checkbox", { name: "00001.mpls" });
+    await expect(duplicatePlaylists).toHaveCount(2);
+    await duplicatePlaylists.nth(0).check();
+    await expect(page.getByRole("button", { name: "Confirm Selection" })).toBeDisabled();
+    await duplicatePlaylists.nth(1).check();
     await page.getByRole("button", { name: "Confirm Selection" }).click();
 
     await expect(page.getByText("E2E.Movie.2026.1080p.WEB-DL")).toBeVisible();
@@ -380,9 +640,10 @@ test("embedded DVD media keeps normal screenshots and optional menus independent
   const workspace = await createE2EWorkspace({ screenshotCount: 4 });
   let app: AppServer | undefined;
   try {
-    const sourcePath = await createDVDSourceFixture(workspace);
+    const sourcePath = await createMultiDVDSourceFixture(workspace);
     app = await startApp(workspace);
     await fetchMetadata(page, app.url, sourcePath);
+    await expect(page.getByText(/Prepared source: 2 DVD discs/i)).toBeVisible();
     await page.getByRole("button", { name: "Dupe Check" }).click();
     await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
     await page.getByRole("checkbox", { name: "HDS" }).check();
@@ -397,7 +658,9 @@ test("embedded DVD media keeps normal screenshots and optional menus independent
     await page.getByRole("button", { name: "Generate screenshots" }).click();
     await expect((await screenshotCaptureResponse).ok()).toBe(true);
     await expect(page.getByText("4 captured screenshot(s)")).toBeVisible();
-    await expect(page.getByAltText(/^Screenshot \d$/)).toHaveCount(4);
+    await expect(page.getByAltText(/^Disc [12] screenshot \d$/)).toHaveCount(4);
+    await expect(page.getByRole("heading", { name: "Disc 1" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Disc 2" })).toBeVisible();
     await expect(page.getByText("Action required")).toHaveCount(0);
 
     await page.getByRole("button", { name: "Upload Images" }).click();
@@ -423,22 +686,37 @@ test("embedded DVD media keeps normal screenshots and optional menus independent
     await page.getByRole("button", { name: "Capture DVD menus" }).click();
     await expect((await captureResponse).ok()).toBe(true);
     await expect(page.getByRole("heading", { name: "Authoritative DVD menu set" })).toBeVisible();
-    await expect(page.getByText("1 captured menu image(s)")).toBeVisible();
+    await expect(page.getByText("2 captured menu image(s)")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Disc 1" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Disc 2" })).toBeVisible();
 
+    await page.reload();
     await page.getByRole("button", { name: "Screenshots" }).click();
     await expect(page.getByText("4 captured screenshot(s)")).toBeVisible();
-    await expect(page.getByAltText(/^Screenshot \d$/)).toHaveCount(4);
+    await expect(page.getByAltText(/^Disc [12] screenshot \d$/)).toHaveCount(4);
 
     await page.getByRole("button", { name: "Upload Images" }).click();
     await page.getByRole("button", { name: /^Prepare required hosts \(\d+\)$/ }).click();
-    await expect.poll(() => workspace.fake.counters.imageUploads).toBe(5);
-    await expect(page.getByText("5 saved")).toBeVisible();
+    await expect.poll(() => workspace.fake.counters.imageUploads).toBe(6);
+    await expect(page.getByText("6 saved")).toBeVisible();
 
     await page.getByRole("button", { name: "Descriptions" }).click();
     await page.getByRole("button", { name: "Refresh descriptions" }).click();
     await page.getByRole("button", { name: "Expand" }).click();
     await expect(page.getByRole("textbox")).toHaveValue("E2E description fixture.");
     await expect(page.getByText("Action required")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Upload", exact: true }).click();
+    const startButton = page.getByRole("button", { name: "Start upload" });
+    await expect(startButton).toBeEnabled();
+    await startButton.click();
+    await expect.poll(() => workspace.fake.counters.trackerUploads).toBe(1);
+    expectSingleCollectionTorrentUpload(workspace, "Example DVD Collection", [
+      "Disc 1",
+      "Disc 2",
+      "VIDEO_TS",
+      "VTS_01_1.VOB",
+    ]);
   } finally {
     await app?.stop();
     await workspace.cleanup();

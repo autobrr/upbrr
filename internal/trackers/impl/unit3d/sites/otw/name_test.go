@@ -127,7 +127,44 @@ func TestBuildNameUsesPreparedSeasonFactsOnly(t *testing.T) {
 
 func TestProfileBuildNameVersion(t *testing.T) {
 	t.Parallel()
-	if got := Profile().Site.BuildNameVersion; got != "v3" {
-		t.Fatalf("OTW BuildNameVersion = %q, want v3", got)
+	if got := Profile().Site.BuildNameVersion; got != "v4" {
+		t.Fatalf("OTW BuildNameVersion = %q, want v4", got)
+	}
+}
+
+func TestOTWVideoCodecUsesResolvedMediaFact(t *testing.T) {
+	t.Parallel()
+
+	if got := otwVideoCodec(api.UploadSubject{VideoCodec: "H.265", Release: api.ReleaseInfo{Codec: []string{"H.264"}}}); got != "H.265" {
+		t.Fatalf("resolved video codec = %q", got)
+	}
+	if got := otwVideoCodec(api.UploadSubject{Release: api.ReleaseInfo{Codec: []string{"H.265"}}}); got != "" {
+		t.Fatalf("raw codec fallback = %q", got)
+	}
+}
+
+func TestBuildNamePrefersManualTitleAndYear(t *testing.T) {
+	t.Parallel()
+	meta := api.UploadSubject{
+		Identity: api.ExternalIdentity{TMDBID: 912345},
+		ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{
+			TMDBID: 912345,
+			Title:  "Provider Title",
+			Year:   2020,
+		}},
+		Release: api.ReleaseInfo{
+			Title:      "Parsed Title",
+			Year:       2021,
+			Resolution: "1080p",
+		},
+		EffectiveMetadata: api.EffectiveMetadata{
+			Title:           "Manual Title",
+			TitleProvenance: api.FactProvenanceManual,
+			Year:            2030,
+			YearProvenance:  api.FactProvenanceManual,
+		},
+	}
+	if got := buildName(meta, config.TrackerConfig{}); !strings.HasPrefix(got, "Manual Title 2030 ") {
+		t.Fatalf("manual name = %q", got)
 	}
 }

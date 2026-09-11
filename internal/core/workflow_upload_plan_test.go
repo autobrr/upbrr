@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -386,6 +387,52 @@ func TestDryRunClientInjectionReportsAggregateTerminalProgress(t *testing.T) {
 	}
 }
 
+func TestDryRunClientInjectionPreservesFailureRecovery(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name     string
+		err      error
+		code     api.OperationFailureCode
+		recovery api.OperationRecovery
+	}{
+		{
+			name:     "live-test rejection",
+			err:      fmt.Errorf("client policy: %w", api.ErrLiveTestMutationDisabled),
+			code:     api.OperationFailureLiveTestMutationDisabled,
+			recovery: api.OperationRecoveryNone,
+		},
+		{
+			name:     "client failure",
+			err:      errors.New("client unavailable"),
+			code:     api.OperationFailureDryRunClientInjection,
+			recovery: api.OperationRecoveryRetry,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			torrentPath := filepath.Join(t.TempDir(), "Example.Release.2026.torrent")
+			if err := os.WriteFile(torrentPath, []byte("exact tracker torrent"), 0o600); err != nil {
+				t.Fatalf("write exact tracker torrent: %v", err)
+			}
+			status, message, code, injected, err := injectWorkflowDryRunClient(
+				t.Context(), &dryRunClientService{injectErr: test.err}, api.ClientSubject{},
+				api.TrackerReleaseProjection{TrackerID: "ALPHA"}, torrentPath, 0, 1,
+			)
+			if err != nil || status != api.StageStatusFailed || code != test.code || injected {
+				t.Fatalf("injection status=%s code=%s injected=%t err=%v", status, code, injected, err)
+			}
+			failure := workflowDryRunClientFailure("ALPHA", code, message)
+			if failure.Failure.Recovery != test.recovery {
+				t.Fatalf("failure recovery=%s, want %s", failure.Failure.Recovery, test.recovery)
+			}
+			if code == api.OperationFailureLiveTestMutationDisabled && failure.Failure.Operation != api.OperationKindClientInjection {
+				t.Fatalf("live-test rejection operation=%s", failure.Failure.Operation)
+			}
+		})
+	}
+}
+
 func TestWorkflowDryRunClientFailureRetainsReconciliationIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -405,11 +452,14 @@ func TestWorkflowUploadPlanPassesSavedClientTorrentForValidation(t *testing.T) {
 	t.Parallel()
 
 	clientTorrent := "C:\\client\\BT_backup\\example.torrent"
+	clientInfoHash := "0123456789abcdef0123456789abcdef01234567"
 	torrents := &workflowTorrentServiceCapture{}
 	builder := workflowUploadPlanBuilder{
 		resolver: workflowUploadResolverFixed{subject: api.UploadSubject{
-			SourcePath:        "C:\\media\\Example.Release.2026.mkv",
-			ClientTorrentPath: clientTorrent,
+			SourcePath:                "C:\\media\\Example.Release.2026.mkv",
+			InfoHash:                  clientInfoHash,
+			ClientTorrentPath:         clientTorrent,
+			ClientTorrentDataVerified: true,
 		}},
 		trackers: &workflowRetainedUploadServiceFake{},
 		torrents: torrents,
@@ -440,6 +490,12 @@ func TestWorkflowUploadPlanPassesSavedClientTorrentForValidation(t *testing.T) {
 	defer func() { _ = execution.Release() }()
 	if torrents.subject.ClientTorrentPath != clientTorrent {
 		t.Fatalf("client torrent path=%q, want %q", torrents.subject.ClientTorrentPath, clientTorrent)
+	}
+	if torrents.subject.ClientTorrentInfoHash != clientInfoHash {
+		t.Fatalf("client torrent infohash=%q, want %q", torrents.subject.ClientTorrentInfoHash, clientInfoHash)
+	}
+	if !torrents.subject.ClientTorrentDataVerified {
+		t.Fatal("client torrent verification evidence was not propagated")
 	}
 }
 

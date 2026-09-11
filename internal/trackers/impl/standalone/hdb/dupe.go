@@ -85,7 +85,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	}
 	if request.IMDB == nil && request.TVDB == nil {
 		workScope = dupe.WorkScopeTitle
-		query := firstHDBText(meta.Release.Title, dupe.ProjectedSearchName(meta), meta.ReleaseName, meta.Filename)
+		query := meta.EffectiveMetadata.PreferredTitle(firstHDBText(meta.Release.Title, dupe.ProjectedSearchName(meta), meta.ReleaseName, meta.Filename))
 		if query == "" {
 			s.logger.Warnf("dupechecking: HDB missing imdb/tvdb IDs and search text for %s", meta.SourcePath)
 			return dupe.NotRun(dupe.NotRunMissingMetadata, "missing imdb/tvdb id for HDB dupe search", nil)
@@ -349,28 +349,5 @@ func isHDBDupeTVCategory(meta api.DuplicateSubject) bool {
 }
 
 func hdbDupeCategoryID(meta api.DuplicateSubject) int {
-	category, _ := meta.Identity.RequireCategory()
-	switch category {
-	case api.CanonicalCategoryMovie:
-		return 1
-	case api.CanonicalCategoryTV:
-		return 2
-	case api.CanonicalCategoryUnknown:
-	}
-	genres, keywords := "", ""
-	if meta.ProviderMetadata.TMDB != nil {
-		genres = strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.TMDB.Genres))
-		keywords = strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.TMDB.Keywords))
-	}
-	if strings.Contains(genres, "documentary") || strings.Contains(keywords, "documentary") {
-		return 3
-	}
-	if meta.ProviderMetadata.IMDB != nil {
-		imdbType := strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.IMDB.Type))
-		imdbGenres := strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.IMDB.Genres))
-		if strings.Contains(imdbType, "concert") || (strings.Contains(imdbType, "video") && strings.Contains(imdbGenres, "music")) {
-			return 4
-		}
-	}
-	return 0
+	return resolveHDBCategoryID(meta.SourcePath, meta.Identity, meta.ProviderMetadata, meta.EffectiveMetadata)
 }

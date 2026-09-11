@@ -5,6 +5,7 @@ package releaseworkflow
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -1022,19 +1023,70 @@ func TestModuleResetAndBlurayCandidateSelectionUseExactRetainedAuthority(t *test
 	}
 }
 
+func TestModuleResetReplacesPreparationDemand(t *testing.T) {
+	t.Parallel()
+
+	module, repository := newTestModule(t, testPreparer())
+	result := executeCommand(t, module, CreateWorkflowCommand{WorkflowID: "workflow-reset-demand"})
+	result = executeCommand(t, module, PrepareReleaseCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Input: api.PrepareInput{
+			SourcePath: "Example.Release.2026.1080p-GRP",
+			MetadataRequirements: api.MetadataRequirementSet{
+				Version: "reset-demand-v1",
+				Requirements: []api.MetadataRequirement{{
+					Scope:       api.MetadataRequirementScopeAny,
+					AnyOf:       []api.MetadataRequirementField{"original_title"},
+					Disposition: api.RuleDispositionStrict,
+				}},
+			},
+		},
+	})
+	result = executeCommand(t, module, ResetReleaseCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Input:            api.PrepareInput{SourcePath: "Example.Release.2026.1080p-GRP"},
+	})
+	state, err := repository.Load(t.Context(), testOwnerID, result.Workflow.ID)
+	if err != nil {
+		t.Fatalf("load reset preparation demand: %v", err)
+	}
+	if state.PreparationDemand.Version != "" || len(state.PreparationDemand.Requirements) != 0 {
+		t.Fatalf("reset retained stale preparation demand = %#v", state.PreparationDemand)
+	}
+}
+
 func TestModuleBDMVPreparationRequiresTypedPlaylistSelection(t *testing.T) {
 	t.Parallel()
 
 	base := testPreparer()
-	candidates := make([]api.PlaylistInfo, 12)
-	for index := range candidates {
-		candidates[index] = api.PlaylistInfo{
-			File:     fmt.Sprintf("%05d.mpls", index+1),
+	candidates := make([]api.PlaylistInfo, 0, 15)
+	for index := range 12 {
+		file := fmt.Sprintf("%05d.mpls", index+1)
+		candidates = append(candidates, api.PlaylistInfo{
+			ID:       "disc-one:" + file,
+			DiscID:   "disc-one",
+			DiscName: "Disc 1",
+			File:     file,
 			Duration: float64(7200 - index),
 			Items:    []api.PlaylistItem{{File: fmt.Sprintf("%05d.m2ts", index+1), Size: int64(1000 - index)}},
 			Score:    float64(100 - index),
 			Edition:  "Example Edition",
-		}
+		})
+	}
+	for index := range 3 {
+		file := fmt.Sprintf("%05d.mpls", index+1)
+		candidates = append(candidates, api.PlaylistInfo{
+			ID:       "disc-two:" + file,
+			DiscID:   "disc-two",
+			DiscName: "Disc 2",
+			File:     file,
+			Duration: float64(5400 - index),
+			Items:    []api.PlaylistItem{{File: fmt.Sprintf("%05d.m2ts", index+1), Size: int64(900 - index)}},
+			Score:    float64(90 - index),
+			Edition:  "Example Edition",
+		})
 	}
 	preparer := ReleasePreparerFunc{
 		PrepareFunc: func(_ context.Context, input api.PrepareInput) (api.PrepareResult, error) {
@@ -1079,16 +1131,17 @@ func TestModuleBDMVPreparationRequiresTypedPlaylistSelection(t *testing.T) {
 		t.Fatalf("playlist preparation workflow = %#v", result.Workflow)
 	}
 	action := result.Workflow.RequiredActions[0]
-	if action.Kind != api.RequiredActionSelectPlaylist || len(action.Options) != maxPlaylistActionOptions || action.Options[0].Value != "00001.mpls" {
+	if action.Kind != api.RequiredActionSelectPlaylist || len(action.Options) != 13 || action.Options[0].Value != "disc-one:00001.mpls" {
 		t.Fatalf("playlist action = %#v", action)
 	}
 	if action.Options[0].Playlist == nil || !reflect.DeepEqual(*action.Options[0].Playlist, candidates[0]) ||
-		action.Options[len(action.Options)-1].Value != "00010.mpls" {
+		action.Options[0].Label != "Disc 1 — 00001.mpls" || action.Options[9].Value != "disc-one:00010.mpls" ||
+		action.Options[10].Value != "disc-two:00001.mpls" || action.Options[10].Label != "Disc 2 — 00001.mpls" {
 		t.Fatalf("playlist action details = %#v", action.Options)
 	}
 
 	instructions := api.ReleaseFactInstructions{
-		Playlist: api.PlaylistInstruction{Set: true, Selected: []string{"00001.mpls"}},
+		Playlist: api.PlaylistInstruction{Set: true, Selected: []string{"disc-one:00001.mpls", "disc-two:00001.mpls"}},
 	}
 	result = executeCommand(t, module, ReplaceFactInstructionsCommand{
 		WorkflowID:       result.Workflow.ID,
@@ -2491,10 +2544,7 @@ func TestModuleResumesExpiredCheckpointSafeOperationFromPrivateCommandCapsule(t 
 	releaseFirst := make(chan struct{})
 	firstDone := make(chan struct{})
 	var calls atomic.Int32
-	preparer, ok := testPreparer().(ReleasePreparerFunc)
-	if !ok {
-		t.Fatalf("test preparer type = %T, want ReleasePreparerFunc", testPreparer())
-	}
+	preparer := testPreparer()
 	prepare := preparer.PrepareFunc
 	preparer.PrepareFunc = func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
 		if calls.Add(1) == 1 {
@@ -3137,6 +3187,86 @@ func TestModuleOperationCancellationIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestModuleCancellationPreservesRacingTerminalOperation(t *testing.T) {
+	t.Parallel()
+	for _, cancelFirst := range []bool{true, false} {
+		t.Run(fmt.Sprintf("cancel_first=%t", cancelFirst), func(t *testing.T) {
+			t.Parallel()
+			started := make(chan struct{})
+			release := make(chan struct{})
+			base := testPreparer()
+			preparer := ReleasePreparerFunc{
+				PrepareFunc: func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
+					close(started)
+					select {
+					case <-ctx.Done():
+						return api.PrepareResult{}, fmt.Errorf("wait for cancellation: %w", ctx.Err())
+					case <-release:
+						return base.Prepare(ctx, input)
+					}
+				},
+				DisplayFunc:   base.ResolveDisplay,
+				SubjectFunc:   base.ResolveUploadSubject,
+				DuplicateFunc: base.ResolveDuplicateSubject,
+			}
+			module, repository := newTestModule(t, preparer)
+			created := executeCommand(t, module, CreateWorkflowCommand{})
+			operation, err := module.Start(t.Context(), testOwnerID, PrepareReleaseCommand{
+				WorkflowID:       created.Workflow.ID,
+				ExpectedRevision: created.Workflow.Revision,
+				Input:            api.PrepareInput{SourcePath: "source"},
+				IdempotencyKey:   "cancel-racing-terminal",
+			})
+			if err != nil {
+				t.Fatalf("start operation: %v", err)
+			}
+			<-started
+			module.operationWorkersMu.Lock()
+			worker := module.operationWorkers[operation.ID]
+			cancel := worker.cancel
+			worker.cancel = func() {
+				// Force completion after cancellation's initial active-state read,
+				// but before it can publish the cancellation-request message.
+				if cancelFirst {
+					cancel()
+				} else {
+					close(release)
+				}
+				<-worker.done
+			}
+			module.operationWorkers[operation.ID] = worker
+			module.operationWorkersMu.Unlock()
+			t.Cleanup(cancel)
+
+			status, err := module.CancelOperation(t.Context(), testOwnerID, created.Workflow.ID, operation.ID)
+			if err != nil {
+				t.Fatalf("cancel racing terminal operation: %v", err)
+			}
+			wantStatus := api.StageStatusCompleted
+			if cancelFirst {
+				wantStatus = api.StageStatusCanceled
+			}
+			if status.Status != wantStatus {
+				t.Fatalf("cancel status = %s, want %s", status.Status, wantStatus)
+			}
+			work, err := repository.LoadWork(t.Context(), testOwnerID, created.Workflow.ID, operation.ID)
+			if err != nil {
+				t.Fatalf("load terminal checkpoint: %v", err)
+			}
+			var checkpoint api.WorkflowOperationStatus
+			if err := json.Unmarshal(work.Checkpoint, &checkpoint); err != nil {
+				t.Fatalf("decode terminal checkpoint: %v", err)
+			}
+			// Events are appended after the durable checkpoint is written.
+			status.Events = nil
+			checkpoint.Events = nil
+			if !reflect.DeepEqual(status, checkpoint) {
+				t.Fatalf("cancel changed terminal receipt: got %#v, want %#v", status, checkpoint)
+			}
+		})
+	}
+}
+
 func TestValidateDescriptionBuildUsesArtifactRequirementNotGroupPresence(t *testing.T) {
 	t.Parallel()
 
@@ -3708,6 +3838,186 @@ func TestRefreshMutatedMediaStatusRequiresHostedScreenshotsPerTracker(t *testing
 	refreshMutatedMediaStatus(&snapshot, projections)
 	if snapshot.Status != api.StageStatusCompleted || len(snapshot.RequiredActions) != 0 {
 		t.Fatalf("six tracker-usable hosted screenshots did not satisfy the requirement: %#v", snapshot)
+	}
+}
+
+func TestRefreshMutatedMediaStatusExcludesOnlyTrackerScopedHostFailures(t *testing.T) {
+	t.Parallel()
+
+	const (
+		alpha api.TrackerID = "ALPHA"
+		beta  api.TrackerID = "BETA"
+	)
+	artifacts := []api.MediaArtifact{
+		{
+			ID:       "screen-0",
+			Kind:     api.MediaArtifactScreenshot,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+		},
+		{
+			ID:       "hosted-0",
+			Kind:     api.MediaArtifactHostedImage,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+			Source:   "screen-0",
+		},
+		{
+			ID:       "screen-1",
+			Kind:     api.MediaArtifactScreenshot,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+		},
+		{
+			ID:       "hosted-1",
+			Kind:     api.MediaArtifactHostedImage,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+			Source:   "screen-1",
+		},
+	}
+	hostAttempt := api.HostedImageAttempt{
+		UsageScope: "global",
+		TrackerIDs: []api.TrackerID{alpha},
+		Results:    []api.MediaArtifact{artifacts[1], artifacts[3]},
+	}
+	betaFailure := api.WorkflowFailure{
+		Failure:   api.OperationFailure{Operation: api.OperationKindImageHosting},
+		TrackerID: beta,
+		Resource:  "beta-host",
+	}
+	alphaFailure := api.WorkflowFailure{
+		Failure:   api.OperationFailure{Operation: api.OperationKindImageHosting},
+		TrackerID: alpha,
+		Resource:  "alpha-host",
+	}
+	unscopedFailure := api.WorkflowFailure{
+		Failure:  api.OperationFailure{Operation: api.OperationKindImageHosting},
+		Resource: "global-host",
+	}
+	unknownTrackerFailure := api.WorkflowFailure{
+		Failure:   api.OperationFailure{Operation: api.OperationKindImageHosting},
+		TrackerID: "GAMMA",
+		Resource:  "gamma-host",
+	}
+
+	tests := []struct {
+		name        string
+		projections []api.TrackerReleaseProjection
+		failures    []api.WorkflowFailure
+		menu        *api.MediaArtifact
+		wantStatus  api.StageStatus
+	}{
+		{
+			name: "surviving tracker completes",
+			projections: []api.TrackerReleaseProjection{
+				{TrackerID: alpha, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2}},
+				{TrackerID: beta, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 3}},
+			},
+			failures:   []api.WorkflowFailure{betaFailure},
+			wantStatus: api.StageStatusCompleted,
+		},
+		{
+			name: "failed tracker local menu requirement remains enforced",
+			projections: []api.TrackerReleaseProjection{
+				{TrackerID: alpha, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2}},
+				{TrackerID: beta, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 3, DVDMenuCount: 1}},
+			},
+			failures:   []api.WorkflowFailure{betaFailure},
+			wantStatus: api.StageStatusBlocked,
+		},
+		{
+			name: "unselected local menu does not satisfy failed tracker requirement",
+			projections: []api.TrackerReleaseProjection{
+				{TrackerID: alpha, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2}},
+				{TrackerID: beta, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 3, DVDMenuCount: 1}},
+			},
+			failures:   []api.WorkflowFailure{betaFailure},
+			menu:       &api.MediaArtifact{ID: "menu-0", Kind: api.MediaArtifactDVDMenu},
+			wantStatus: api.StageStatusBlocked,
+		},
+		{
+			name: "selected local menu satisfies failed tracker requirement",
+			projections: []api.TrackerReleaseProjection{
+				{TrackerID: alpha, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2}},
+				{TrackerID: beta, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 3, DVDMenuCount: 1}},
+			},
+			failures: []api.WorkflowFailure{betaFailure},
+			menu: &api.MediaArtifact{
+				ID:       "menu-0",
+				Kind:     api.MediaArtifactDVDMenu,
+				Selected: true,
+			},
+			wantStatus: api.StageStatusCompleted,
+		},
+		{
+			name: "surviving tracker requirements remain enforced",
+			projections: []api.TrackerReleaseProjection{
+				{TrackerID: alpha, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 3}},
+				{TrackerID: beta, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 3}},
+			},
+			failures:   []api.WorkflowFailure{betaFailure},
+			wantStatus: api.StageStatusBlocked,
+		},
+		{
+			name: "every tracker failed",
+			projections: []api.TrackerReleaseProjection{
+				{TrackerID: alpha},
+				{TrackerID: beta},
+			},
+			failures:   []api.WorkflowFailure{alphaFailure, betaFailure},
+			wantStatus: api.StageStatusBlocked,
+		},
+		{
+			name: "unscoped failure blocks otherwise satisfied requirements",
+			projections: []api.TrackerReleaseProjection{
+				{TrackerID: alpha, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2}},
+			},
+			failures:   []api.WorkflowFailure{unscopedFailure},
+			wantStatus: api.StageStatusBlocked,
+		},
+		{
+			name: "unknown tracker failure blocks otherwise satisfied requirements",
+			projections: []api.TrackerReleaseProjection{
+				{TrackerID: alpha, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2}},
+			},
+			failures:   []api.WorkflowFailure{unknownTrackerFailure},
+			wantStatus: api.StageStatusBlocked,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			snapshot := api.MediaArtifactSet{
+				Artifacts:                 append([]api.MediaArtifact(nil), artifacts...),
+				HostAttempts:              []api.HostedImageAttempt{hostAttempt},
+				ImageRequirementsPrepared: true,
+				Failures:                  append([]api.WorkflowFailure(nil), test.failures...),
+			}
+			if test.menu != nil {
+				snapshot.Artifacts = append(snapshot.Artifacts, *test.menu)
+			}
+
+			refreshMutatedMediaStatus(&snapshot, test.projections)
+			if snapshot.Status != test.wantStatus {
+				t.Fatalf("media status = %q, want %q: %#v", snapshot.Status, test.wantStatus, snapshot)
+			}
+			if len(snapshot.Failures) != len(test.failures) {
+				t.Fatalf("retained failures = %#v, want %#v", snapshot.Failures, test.failures)
+			}
+			if test.wantStatus == api.StageStatusCompleted {
+				if len(snapshot.RequiredActions) != 0 {
+					t.Fatalf("completed media actions = %#v", snapshot.RequiredActions)
+				}
+				failure, failed := TrackerImageHostFailure(snapshot, beta)
+				if !failed || failure.Resource != betaFailure.Resource {
+					t.Fatalf("retained tracker image-host failure = %#v, found=%t", failure, failed)
+				}
+				return
+			}
+			if len(snapshot.RequiredActions) != 1 || snapshot.RequiredActions[0].Kind != api.RequiredActionProvideTrackerInput {
+				t.Fatalf("blocked media actions = %#v", snapshot.RequiredActions)
+			}
+		})
 	}
 }
 
@@ -4376,7 +4686,7 @@ func newTestModule(t *testing.T, preparer ReleasePreparer, options ...Option) (*
 	return module, repository
 }
 
-func testPreparer() ReleasePreparer {
+func testPreparer() ReleasePreparerFunc {
 	return ReleasePreparerFunc{
 		PrepareFunc: func(_ context.Context, input api.PrepareInput) (api.PrepareResult, error) {
 			return api.PrepareResult{Release: api.PreparedRelease{
@@ -4395,6 +4705,8 @@ func testPreparer() ReleasePreparer {
 				SourcePath:  input.Release.SourcePath,
 				Trackers:    append([]string(nil), input.Trackers...),
 				ReleaseName: "Example.Release.2026.1080p-GRP",
+				Source:      "bluray",
+				Type:        "movie",
 			}, nil
 		},
 		DuplicateFunc: func(_ context.Context, input api.DuplicateCheckInput) (api.DuplicateSubject, error) {

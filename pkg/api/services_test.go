@@ -9,6 +9,35 @@ import (
 	"testing"
 )
 
+func TestNewImageHostingSubjectPreservesPreparedIdentityAndDiscs(t *testing.T) {
+	t.Parallel()
+
+	binding := PreparedMediaBinding{
+		SourcePath:               `C:\releases\Example.Release.2026`,
+		PreparedMediaFingerprint: "prepared-media",
+		PreparedGeneration:       3,
+	}
+	source := UploadSubject{
+		MediaBinding: binding,
+		SourcePath:   binding.SourcePath,
+		ReleaseName:  "Example.Release.2026.1080p-GRP",
+		Discs: []DiscEvidenceResource{
+			{ID: "disc-a", Name: "Disc 1"},
+			{ID: "disc-b", Name: "Disc 2"},
+		},
+	}
+
+	projected := NewImageHostingSubject(source)
+	if !projected.MediaBinding.Equal(binding) || projected.SourcePath != source.SourcePath ||
+		projected.GalleryName != source.ReleaseName || len(projected.Discs) != 2 || projected.Discs[1].ID != "disc-b" {
+		t.Fatalf("image hosting subject = %#v", projected)
+	}
+	projected.Discs[0].Name = "changed"
+	if source.Discs[0].Name != "Disc 1" {
+		t.Fatal("image hosting subject shares disc storage")
+	}
+}
+
 func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 	t.Parallel()
 
@@ -18,7 +47,16 @@ func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 			LocalizedTitles: map[string]string{"en": "Example Release 2026"},
 		}},
 		SelectedBDMVPlaylists: []PlaylistInfo{{File: "00001.mpls"}},
-		ImageHostOverrides:    ImageHostOverrides{FailedHosts: []string{"imgbox"}},
+		ImageHostOverrides:    ImageHostOverrides{FailedHosts: []string{"example-host"}},
+		DescriptionGroups: []DescriptionBuilderGroup{{
+			GroupKey:       "unit3d",
+			Trackers:       []string{"EXAMPLE"},
+			RawDescription: "Saved description.",
+			ImageHost: ImageHostFeedback{
+				AllowedHosts: []string{"example-host"},
+				Warnings:     []ImageHostWarning{{Host: "example-host", Message: "warning"}},
+			},
+		}},
 		ExactMedia: &ExactMediaAssets{
 			Screenshots: []ScreenshotImage{{
 				Path:    `C:\private\screen.png`,
@@ -35,6 +73,9 @@ func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 	projected.ProviderMetadata.TMDB.LocalizedTitles["en"] = "changed"
 	projected.SelectedBDMVPlaylists[0].File = "changed"
 	projected.ImageHost.FailedHosts[0] = "changed"
+	projected.DescriptionGroups[0].Trackers[0] = "changed"
+	projected.DescriptionGroups[0].ImageHost.AllowedHosts[0] = "changed"
+	projected.DescriptionGroups[0].ImageHost.Warnings[0].Message = "changed"
 	projected.ExactMedia.Screenshots[0].Path = "changed"
 	projected.ExactMedia.DVDMenus[0].Path = "changed"
 
@@ -47,8 +88,13 @@ func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 	if source.SelectedBDMVPlaylists[0].File != "00001.mpls" {
 		t.Fatal("playlist facts share storage with description subject")
 	}
-	if source.ImageHostOverrides.FailedHosts[0] != "imgbox" {
+	if source.ImageHostOverrides.FailedHosts[0] != "example-host" {
 		t.Fatal("failed image hosts share storage with description subject")
+	}
+	if source.DescriptionGroups[0].Trackers[0] != "EXAMPLE" ||
+		source.DescriptionGroups[0].ImageHost.AllowedHosts[0] != "example-host" ||
+		source.DescriptionGroups[0].ImageHost.Warnings[0].Message != "warning" {
+		t.Fatal("description groups share storage with description subject")
 	}
 	if source.ExactMedia.Screenshots[0].Path != `C:\private\screen.png` ||
 		source.ExactMedia.DVDMenus[0].Path != `C:\private\menu.png` {
@@ -159,6 +205,54 @@ func TestNewTrackerValidationSubjectDetachesMutableFacts(t *testing.T) {
 		projected.ProviderMetadata.TMDB.LocalizedTitles["en"] != "changed" ||
 		projected.QuestionnaireAnswers["edition"] != "changed" {
 		t.Fatal("validation subject changed after source mutation")
+	}
+}
+
+func TestRuleSubjectValidationProjectionPreservesEffectiveFacts(t *testing.T) {
+	t.Parallel()
+
+	source := RuleSubject{
+		EffectiveMetadata:          EffectiveMetadata{Title: "Manual title", Genres: []string{"Drama"}},
+		ManualLanguages:            ManualLanguageFacts{Audio: []string{"English"}},
+		HardcodedSubs:              true,
+		HardcodedSubtitleLanguages: []string{"French"},
+	}
+	projected := NewTrackerValidationSubjectFromRuleSubject(source, "example")
+	projected.EffectiveMetadata.Genres[0] = "Changed"
+	projected.ManualLanguages.Audio[0] = "Changed"
+	projected.HardcodedSubtitleLanguages[0] = "Changed"
+
+	if projected.Tracker != "EXAMPLE" || projected.EffectiveMetadata.Title != "Manual title" ||
+		!projected.HardcodedSubs || source.EffectiveMetadata.Genres[0] != "Drama" ||
+		source.ManualLanguages.Audio[0] != "English" || source.HardcodedSubtitleLanguages[0] != "French" {
+		t.Fatalf("rule validation projection = %#v", projected)
+	}
+}
+
+func TestPreparationInternalsStayOutsideJSONTransport(t *testing.T) {
+	t.Parallel()
+
+	payload, err := json.Marshal(PrepareInput{MetadataRequirements: MetadataRequirementSet{Version: "tracker-metadata-v1"}})
+	if err != nil {
+		t.Fatalf("marshal preparation input: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		t.Fatalf("decode preparation input: %v", err)
+	}
+	if _, present := fields["MetadataRequirements"]; present {
+		t.Fatalf("metadata requirements leaked into transport: %s", payload)
+	}
+
+	payload, err = json.Marshal(MetadataOverrides{})
+	if err != nil {
+		t.Fatalf("marshal empty metadata overrides: %v", err)
+	}
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		t.Fatalf("decode metadata overrides: %v", err)
+	}
+	if _, present := fields["TrackLanguages"]; present {
+		t.Fatalf("empty track corrections became required: %s", payload)
 	}
 }
 
@@ -294,6 +388,90 @@ func TestTrackerValidationResourceFingerprintIncludesBDInfoReadiness(t *testing.
 	withBDInfo := NewTrackerValidationSubject(UploadSubject{DiscType: "BDMV", Disc: DiscFacts{Summary: "BDINFO"}}, "EXAMPLE")
 	if withoutBDInfo.PreparedResourceFingerprint == withBDInfo.PreparedResourceFingerprint {
 		t.Fatal("BDInfo readiness did not invalidate the prepared-resource fingerprint")
+	}
+}
+
+func TestNewTrackerValidationSubjectRequiresEveryBDMVReport(t *testing.T) {
+	t.Parallel()
+
+	subject := UploadSubject{
+		DiscType: "BDMV",
+		Disc: DiscFacts{Items: []DiscItemFacts{
+			{
+				ID:   "disc-one",
+				Name: "Disc 1",
+				Type: "BDMV",
+				Reports: []DiscReportFacts{{
+					Playlist: PlaylistInfo{ID: "disc-one:00001.MPLS"},
+					Summary:  "BDINFO ONE",
+				}},
+			},
+			{
+				ID:   "disc-two",
+				Name: "Disc 2",
+				Type: "BDMV",
+				Reports: []DiscReportFacts{{
+					Playlist: PlaylistInfo{ID: "disc-two:00001.MPLS"},
+				}},
+			},
+		}},
+	}
+
+	partial := NewTrackerValidationSubject(subject, "EXAMPLE")
+	if partial.BDInfoReady || partial.AssetFacts.BDInfo.Ready || partial.AssetFacts.BDInfo.Count != 1 {
+		t.Fatalf("partial BDInfo evidence = %+v", partial.AssetFacts.BDInfo)
+	}
+	subject.Disc.Items[1].Reports[0].Summary = "BDINFO TWO"
+	complete := NewTrackerValidationSubject(subject, "EXAMPLE")
+	if !complete.BDInfoReady || !complete.AssetFacts.BDInfo.Ready || complete.AssetFacts.BDInfo.Count != 2 {
+		t.Fatalf("complete BDInfo evidence = %+v", complete.AssetFacts.BDInfo)
+	}
+	if partial.PreparedResourceFingerprint == complete.PreparedResourceFingerprint {
+		t.Fatal("disc report coverage did not invalidate the prepared-resource fingerprint")
+	}
+}
+
+func TestNewTrackerValidationSubjectRequiresEveryDVDReport(t *testing.T) {
+	t.Parallel()
+
+	subject := UploadSubject{
+		DiscType: "DVD",
+		Disc: DiscFacts{Items: []DiscItemFacts{
+			{
+				ID:   "disc-one",
+				Name: "Disc 1",
+				Type: "DVD",
+			},
+			{
+				ID:   "disc-two",
+				Name: "Disc 2",
+				Type: "DVD",
+			},
+		}},
+		Discs: []DiscEvidenceResource{
+			{
+				ID:                  "disc-one",
+				Name:                "Disc 1",
+				Type:                "DVD",
+				DVDVOBMediaInfoText: "VOB INFO ONE",
+			},
+			{
+				ID:   "disc-two",
+				Name: "Disc 2",
+				Type: "DVD",
+			},
+		},
+		DVDVOBMediaInfoText: "VOB INFO ONE",
+	}
+
+	partial := NewTrackerValidationSubject(subject, "EXAMPLE")
+	if partial.DVDVOBMediaInfoReady || partial.AssetFacts.DVDVOBMediaInfo.Ready || partial.AssetFacts.DVDVOBMediaInfo.Count != 1 {
+		t.Fatalf("partial DVD evidence = %+v", partial.AssetFacts.DVDVOBMediaInfo)
+	}
+	subject.Discs[1].DVDVOBMediaInfoText = "VOB INFO TWO"
+	complete := NewTrackerValidationSubject(subject, "EXAMPLE")
+	if !complete.DVDVOBMediaInfoReady || !complete.AssetFacts.DVDVOBMediaInfo.Ready || complete.AssetFacts.DVDVOBMediaInfo.Count != 2 {
+		t.Fatalf("complete DVD evidence = %+v", complete.AssetFacts.DVDVOBMediaInfo)
 	}
 }
 

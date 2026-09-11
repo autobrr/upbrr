@@ -45,21 +45,8 @@ func isTV(meta api.UploadSubject) bool {
 	return strings.EqualFold(category(meta), "TV")
 }
 
-func detectResolution(value string) string {
-	lower := strings.ToLower(strings.TrimSpace(value))
-	for _, candidate := range []string{"4320p", "2160p", "1080p", "1080i", "720p", "576p", "576i", "480p", "480i"} {
-		if strings.Contains(lower, candidate) {
-			return candidate
-		}
-	}
-	return ""
-}
-
 func resolutionValue(meta api.UploadSubject) string {
 	resolution := strings.TrimSpace(meta.Release.Resolution)
-	if resolution == "" {
-		resolution = detectResolution(meta.ReleaseName)
-	}
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") && resolution != "" {
 		height := strings.ToLower(strings.TrimSuffix(strings.TrimSuffix(resolution, "p"), "i"))
 		if value, err := strconv.Atoi(height); err == nil && value > 0 {
@@ -71,9 +58,6 @@ func resolutionValue(meta api.UploadSubject) string {
 
 func videoQualityID(site siteDefinition, meta api.UploadSubject) string {
 	resolution := strings.ToLower(strings.TrimSpace(meta.Release.Resolution))
-	if resolution == "" {
-		resolution = strings.ToLower(detectResolution(meta.ReleaseName))
-	}
 	if site.Name != "PHD" {
 		resolutionInt, _ := strconv.Atoi(strings.NewReplacer("p", "", "i", "").Replace(resolution))
 		if resolutionInt > 0 && resolutionInt < 720 {

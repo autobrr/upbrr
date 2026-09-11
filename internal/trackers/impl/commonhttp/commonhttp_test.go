@@ -6,6 +6,7 @@ package commonhttp
 import (
 	"context"
 	"errors"
+	"html"
 	"io"
 	"net/http"
 	"os"
@@ -28,7 +29,7 @@ func (s stubCookieStore) GetAllTrackerCookies(context.Context, string, []byte) (
 	return s.cookies, nil
 }
 
-func TestReadUploadResponseBodyUsesFullSuccessAndBoundedFailurePreview(t *testing.T) {
+func TestReadUploadResponseBodyUsesFullSuccessAndExtractedFailurePreview(t *testing.T) {
 	t.Parallel()
 
 	large := strings.Repeat("a", int(DefaultResponsePreviewBytes)+32)
@@ -49,11 +50,11 @@ func TestReadUploadResponseBodyUsesFullSuccessAndBoundedFailurePreview(t *testin
 	if err != nil {
 		t.Fatalf("ReadUploadResponseBody failure: %v", err)
 	}
-	if int64(len(body)) != DefaultResponsePreviewBytes {
-		t.Fatalf("expected bounded failure body length %d, got %d", DefaultResponsePreviewBytes, len(body))
+	if len(body) != len(large) {
+		t.Fatalf("expected failure scan body length %d, got %d", len(large), len(body))
 	}
-	if string(preview) != string(body) {
-		t.Fatal("expected failure preview to match bounded body")
+	if string(preview) != "[REDACTED]" {
+		t.Fatalf("expected compact redacted failure preview, got %q", preview)
 	}
 }
 
@@ -341,6 +342,204 @@ func TestExtractHTTPErrorDetailFallsBackToCompactBody(t *testing.T) {
 		t.Fatalf("unexpected compact body: %q", got)
 	}
 }
+
+func TestExtractHTTPErrorDetailUsesVisibleHTML(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`<html><head><title>Upload</title></head><body><nav>Browse</nav><p>Upload form</p>` +
+		`<script>{"message":"private-script"}</script><div role="alert">Invalid passkey&#61;synthetic-secret` +
+		`<input value="private-input"><textarea>private-textarea</textarea><select><option>private-select</option></select>` +
+		`<button>private-button</button><style>private-style</style><span hidden>private-hidden</span>` +
+		`<span aria-hidden="true">private-aria</span></div></body></html>`)
+	got := ExtractHTTPErrorDetail(body)
+
+	if got != "Invalid passkey=[REDACTED]" {
+		t.Fatalf("unexpected visible HTML detail: %q", got)
+	}
+}
+
+func TestExtractHTTPErrorDetailHandlesMalformedAndEmbeddedJSON(t *testing.T) {
+	t.Parallel()
+
+	if got := ExtractHTTPErrorDetail([]byte(`<div class=error>Invalid <b>category`)); got != "Invalid category" {
+		t.Fatalf("malformed HTML detail = %q", got)
+	}
+	if got := ExtractHTTPErrorDetail([]byte(`prefix {"message":"Invalid category selected."} suffix`)); got != "Invalid category selected." {
+		t.Fatalf("embedded JSON detail = %q", got)
+	}
+	if got := ExtractHTTPErrorDetail(nil); got != "" {
+		t.Fatalf("empty detail = %q", got)
+	}
+}
+
+func TestExtractHTTPErrorDetailSkipsInlineHiddenStyles(t *testing.T) {
+	t.Parallel()
+
+	for _, style := range []string{
+		"display:none", "visibility:hidden", "color:red; DISPLAY : none !important", " VISIBILITY: hidden; color:red",
+		"display: none /* hidden */", "visibility: hidden /* hidden */", "display /* hidden */: none !important",
+		"display: /* comment ; */ none", `content:"/*"; display:none`, `content:'/*'; visibility:hidden`,
+		"display:none !/*x*/important", "visibility:hidden ! important", "--x:fn(a;b);display:none",
+		`--x:\(;display:none`,
+		"display:block;display:none", "display:none!important;display:block", "visibility:visible;visibility:hidden",
+		"visibility:hidden!important;visibility:visible", "display:none;display:block!invalid",
+	} {
+		t.Run(style, func(t *testing.T) {
+			body := []byte(`<div class="error">Invalid category<span style="` + html.EscapeString(style) + `"><b>private-hidden-text</b></span>` +
+				`<span style="display:block;visibility:visible">remains visible</span></div>`)
+			if got := ExtractHTTPErrorDetail(body); got != "Invalid category remains visible" {
+				t.Fatalf("inline hidden text entered diagnostics: %q", got)
+			}
+		})
+	}
+}
+
+func TestExtractHTTPErrorDetailPreservesVisibleInlineStyles(t *testing.T) {
+	t.Parallel()
+
+	for _, style := range []string{
+		`content:"x;display:none;y"`, `content:'x;visibility:hidden;y'`, `content:"x\";display:none;y"`,
+		"--x:fn(a;display:none;b)", "--x:[a;visibility:hidden;b]", "--x:{a;display:none;b}",
+		`content:"x;display:none`, `--x:foo\;display:none;`, "--x:fn(a];display:none;b)",
+		"display:none;display:block", "display:none;display:block!important", "display:block!important;display:none",
+		"visibility:hidden;visibility:visible", "visibility:visible!important;visibility:hidden",
+	} {
+		t.Run(style, func(t *testing.T) {
+			body := []byte(`<div class="error" style="` + html.EscapeString(style) + `">Invalid category</div>`)
+			if got := ExtractHTTPErrorDetail(body); got != "Invalid category" {
+				t.Fatalf("inline style hid visible diagnostic: %q", got)
+			}
+		})
+	}
+}
+
+func TestExtractHTMLFormErrorDetailOmitsUnrelatedPageText(t *testing.T) {
+	t.Parallel()
+
+	form := []byte(`<p>Unrelated upload rules</p><div class="error"></div><input name="artist" value="Autofill Fail">`)
+	if got := ExtractHTMLFormErrorDetail(form); got != "" {
+		t.Fatalf("empty form error included page text: %q", got)
+	}
+	form = append(form, []byte(`<div role="alert">Series lookup unavailable</div>`)...)
+	if got := ExtractHTMLFormErrorDetail(form); got != "Series lookup unavailable" {
+		t.Fatalf("form lost visible error detail: %q", got)
+	}
+	oversized := []byte(strings.Repeat(" ", int(maxHTTPErrorResponseBytes)) + `<div class="error">Beyond scan limit</div>`)
+	if got := ExtractHTMLFormErrorDetail(oversized); got != "" {
+		t.Fatalf("form error scanned beyond limit: %q", got)
+	}
+}
+
+func TestExtractHTTPErrorDetailSkipsNavigationContainers(t *testing.T) {
+	t.Parallel()
+
+	for _, attr := range []string{`id="header"`, `id="footer"`, `role="banner"`, `role="navigation"`, `role="contentinfo"`} {
+		t.Run(attr, func(t *testing.T) {
+			body := []byte(`<div ` + attr + `>` + strings.Repeat("Upload Bonus Torrents Forums Rules ", 100) +
+				`<span class="error">private-navigation-error</span></div><div id="content">Autofill could not find the series.</div>`)
+			if got := ExtractHTTPErrorDetail(body); got != "Autofill could not find the series." {
+				t.Fatalf("navigation obscured response detail: %q", got)
+			}
+		})
+	}
+}
+
+func TestExtractHTTPErrorDetailBoundsOversizedInput(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`<div class="error">Invalid category</div>` + strings.Repeat("x", int(maxHTTPErrorResponseBytes)))
+	got := ExtractHTTPErrorDetail(body)
+	if got != "response exceeded 1 MiB; Invalid category" {
+		t.Fatalf("oversized detail = %q", got)
+	}
+	if got := ExtractHTTPErrorDetail([]byte(strings.Repeat(" ", int(maxHTTPErrorResponseBytes)+1))); got != "response exceeded 1 MiB" {
+		t.Fatalf("oversized blank detail = %q", got)
+	}
+}
+
+func TestReadUploadResponseBodyFindsLateHTMLFailure(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name string
+		html string
+		want string
+	}{
+		{
+			name: "marked",
+			html: `<div class="errors">Invalid category selected.</div>`,
+			want: "Invalid category selected.",
+		},
+		{
+			name: "unmarked",
+			html: `<h1>Upload failed!</h1><p>A matching torrent already exists.</p>`,
+			want: "Upload failed! A matching torrent already exists.",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			bodyText := `<html><head>` + strings.Repeat(`<link href="/favicon">`, 4000) + `</head><body>` + tt.html + `</body></html>`
+			resp := &http.Response{Body: ioNopCloser(bodyText)}
+			body, preview, err := ReadUploadResponseBody(resp, false, DefaultResponsePreviewBytes)
+			if err != nil {
+				t.Fatalf("ReadUploadResponseBody: %v", err)
+			}
+			if len(body) <= int(DefaultResponsePreviewBytes) {
+				t.Fatalf("expected scan beyond old preview limit, got %d bytes", len(body))
+			}
+			if string(preview) != tt.want {
+				t.Fatalf("late error preview = %q, want %q", preview, tt.want)
+			}
+		})
+	}
+}
+
+func TestReadUploadResponseBodyReportsOversizeAndPartialRead(t *testing.T) {
+	t.Parallel()
+
+	oversized := `<div class="error">Invalid category</div>` + strings.Repeat("x", int(maxHTTPErrorResponseBytes))
+	body, preview, err := ReadUploadResponseBody(&http.Response{Body: ioNopCloser(oversized)}, false, DefaultResponsePreviewBytes)
+	if err != nil {
+		t.Fatalf("oversized response: %v", err)
+	}
+	if int64(len(body)) != maxHTTPErrorResponseBytes {
+		t.Fatalf("oversized body length = %d", len(body))
+	}
+	if string(preview) != "response exceeded 1 MiB; Invalid category" {
+		t.Fatalf("oversized preview = %q", preview)
+	}
+
+	sentinel := errors.New("synthetic read failure")
+	resp := &http.Response{Body: &partialErrorReadCloser{payload: []byte(`<div class="error">Invalid source</div>`), err: sentinel}}
+	body, preview, err = ReadUploadResponseBody(resp, false, DefaultResponsePreviewBytes)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("expected read error identity, got %v", err)
+	}
+	if string(body) != `<div class="error">Invalid source</div>` {
+		t.Fatalf("partial body = %q", body)
+	}
+	if string(preview) != "response body read failed; Invalid source" {
+		t.Fatalf("partial read preview = %q", preview)
+	}
+}
+
+type partialErrorReadCloser struct {
+	payload []byte
+	err     error
+}
+
+func (r *partialErrorReadCloser) Read(p []byte) (int, error) {
+	if len(r.payload) == 0 {
+		return 0, r.err
+	}
+	n := copy(p, r.payload)
+	r.payload = r.payload[n:]
+	if len(r.payload) == 0 {
+		return n, r.err
+	}
+	return n, nil
+}
+
+func (*partialErrorReadCloser) Close() error { return nil }
 
 func TestFormatErrorValueStopsAtMaxDepth(t *testing.T) {
 	t.Parallel()

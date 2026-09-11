@@ -190,6 +190,7 @@ func cleanRTFSearchTitle(meta api.DuplicateSubject) string {
 	if query == "" {
 		query = strings.TrimSpace(meta.ReleaseName)
 	}
+	query = meta.EffectiveMetadata.PreferredTitle(query)
 	if query == "" {
 		return ""
 	}
@@ -300,7 +301,7 @@ func buildRTFDownloadLink(id string) string {
 }
 
 func isRTFContentOldEnough(meta api.DuplicateSubject, now time.Time) bool {
-	return rtfContentAgeEligibility(meta.Release, meta.ProviderMetadata, now) == rtfAgeEligible
+	return rtfContentAgeEligibility(meta.Release, meta.ProviderMetadata, meta.EffectiveMetadata, now) == rtfAgeEligible
 }
 
 func rtfJSONRequest(

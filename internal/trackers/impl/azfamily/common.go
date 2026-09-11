@@ -31,7 +31,6 @@ type mediaLookupResult struct {
 
 type taskInfo struct {
 	TaskID      string
-	InfoHash    string
 	RedirectURL string
 }
 
@@ -63,6 +62,9 @@ func tvdbForLookup(meta api.UploadSubject) string {
 }
 
 func lookupTitle(meta api.UploadSubject) string {
+	if meta.EffectiveMetadata.TitleProvenance.IsManual() {
+		return strings.TrimSpace(meta.EffectiveMetadata.Title)
+	}
 	if title := strings.TrimSpace(meta.Release.Title); title != "" {
 		return title
 	}

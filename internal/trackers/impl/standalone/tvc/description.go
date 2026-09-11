@@ -71,7 +71,11 @@ func screenshotBlock(images []api.ScreenshotImage, count int) string {
 }
 
 func genresText(meta api.UploadSubject) string {
-	return metautil.FirstNonEmptyTrimmed(meta.ProviderMetadata.TMDB.Genres, meta.Release.Genre)
+	provider := ""
+	if meta.ProviderMetadata.TMDB != nil {
+		provider = meta.ProviderMetadata.TMDB.Genres
+	}
+	return trackers.PreferredGenreText(meta, provider)
 }
 
 func keywordsText(meta api.UploadSubject) string {

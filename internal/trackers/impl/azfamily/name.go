@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -146,10 +147,14 @@ func editGeneratedName(site siteDefinition, meta api.UploadSubject, name string)
 }
 
 func editPHDName(meta api.UploadSubject, name string) string {
-	if meta.ProviderMetadata.TMDB != nil {
-		if originalTitle := strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalTitle); originalTitle != "" {
-			name = strings.ReplaceAll(name, originalTitle, "")
-		}
+	originalTitle := ""
+	if meta.EffectiveMetadata.OriginalTitleProvenance.IsManual() {
+		originalTitle = meta.EffectiveMetadata.OriginalTitle
+	} else if meta.ProviderMetadata.TMDB != nil {
+		originalTitle = strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalTitle)
+	}
+	if originalTitle != "" {
+		name = strings.ReplaceAll(name, originalTitle, "")
 	}
 	name = strings.ReplaceAll(name, "Dubbed", "")
 	name = strings.ReplaceAll(name, "Dual-Audio", "")
@@ -186,22 +191,17 @@ func editPHDName(meta api.UploadSubject, name string) string {
 }
 
 func avistaZEnglishTitle(meta api.UploadSubject) string {
+	provider := ""
 	if isTV(meta) && meta.ProviderMetadata.TVDB != nil {
-		if title := strings.TrimSpace(meta.ProviderMetadata.TVDB.NameEnglish); title != "" {
-			return title
-		}
+		provider = strings.TrimSpace(meta.ProviderMetadata.TVDB.NameEnglish)
 	}
-	if meta.ProviderMetadata.TMDB != nil {
-		if title := strings.TrimSpace(meta.ProviderMetadata.TMDB.Title); title != "" {
-			return title
-		}
+	if provider == "" && meta.ProviderMetadata.TMDB != nil {
+		provider = strings.TrimSpace(meta.ProviderMetadata.TMDB.Title)
 	}
-	if meta.ProviderMetadata.IMDB != nil {
-		if title := strings.TrimSpace(meta.ProviderMetadata.IMDB.Title); title != "" {
-			return title
-		}
+	if provider == "" && meta.ProviderMetadata.IMDB != nil {
+		provider = strings.TrimSpace(meta.ProviderMetadata.IMDB.Title)
 	}
-	return strings.TrimSpace(meta.Release.Title)
+	return trackers.PreferredTitle(meta, provider)
 }
 
 // cinemaZTitle selects the first permitted country-scoped English IMDb AKA, or
@@ -210,6 +210,16 @@ func avistaZEnglishTitle(meta api.UploadSubject) string {
 // result means no Latin-safe title is available.
 func cinemaZTitle(meta api.UploadSubject) string {
 	original := cinemaZOriginalTitle(meta)
+	if meta.EffectiveMetadata.OriginalTitleProvenance.IsManual() {
+		if original == "" || !containsNonLatinLetter(original) {
+			return original
+		}
+		transliterated := transliterateCinemaZTitle(original)
+		if transliterated != "" && !containsNonLatinLetter(transliterated) {
+			return transliterated
+		}
+		return ""
+	}
 	originalUsesNonLatin := containsNonLatinLetter(original)
 	if title := cinemaZEnglishCountryAKA(meta.ProviderMetadata.IMDB, originalUsesNonLatin); title != "" {
 		return title
@@ -288,22 +298,17 @@ func isEnglishName(language string) bool {
 // cinemaZOriginalTitle returns the IMDb original title when present, followed by
 // the TMDB original, parsed alternate title, and parsed primary title.
 func cinemaZOriginalTitle(meta api.UploadSubject) string {
+	provider := ""
 	if meta.ProviderMetadata.IMDB != nil {
-		if title := strings.TrimSpace(meta.ProviderMetadata.IMDB.AKA); title != "" {
-			return title
-		}
+		provider = strings.TrimSpace(meta.ProviderMetadata.IMDB.AKA)
 	}
-	if meta.ProviderMetadata.TMDB != nil {
-		if title := strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalTitle); title != "" {
-			return title
-		}
+	if provider == "" && meta.ProviderMetadata.TMDB != nil {
+		provider = strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalTitle)
 	}
-	if isTV(meta) && meta.ProviderMetadata.TVDB != nil {
-		if title := strings.TrimSpace(meta.ProviderMetadata.TVDB.Name); title != "" {
-			return title
-		}
+	if provider == "" && isTV(meta) && meta.ProviderMetadata.TVDB != nil {
+		provider = strings.TrimSpace(meta.ProviderMetadata.TVDB.Name)
 	}
-	return strings.TrimSpace(meta.Release.Title)
+	return trackers.PreferredOriginalTitle(meta, provider)
 }
 
 // cinemaZRomanizedCandidates returns provider and parsed title candidates in
@@ -612,24 +617,22 @@ func reorderCinemaZTechnicalTail(name, tag string, elements []string) string {
 }
 
 func releaseYear(meta api.UploadSubject) int {
-	if meta.Release.Year > 0 {
-		return meta.Release.Year
-	}
+	provider := meta.Release.Year
 	if meta.ProviderMetadata.IMDB != nil {
-		if isTV(meta) && meta.ProviderMetadata.IMDB.TVYear > 0 {
-			return meta.ProviderMetadata.IMDB.TVYear
+		if provider == 0 && isTV(meta) && meta.ProviderMetadata.IMDB.TVYear > 0 {
+			provider = meta.ProviderMetadata.IMDB.TVYear
 		}
-		if meta.ProviderMetadata.IMDB.Year > 0 {
-			return meta.ProviderMetadata.IMDB.Year
+		if provider == 0 && meta.ProviderMetadata.IMDB.Year > 0 {
+			provider = meta.ProviderMetadata.IMDB.Year
 		}
 	}
-	if isTV(meta) && meta.ProviderMetadata.TVDB != nil && meta.ProviderMetadata.TVDB.Year > 0 {
-		return meta.ProviderMetadata.TVDB.Year
+	if provider == 0 && isTV(meta) && meta.ProviderMetadata.TVDB != nil {
+		provider = meta.ProviderMetadata.TVDB.Year
 	}
-	if meta.ProviderMetadata.TMDB != nil {
-		return meta.ProviderMetadata.TMDB.Year
+	if provider == 0 && meta.ProviderMetadata.TMDB != nil {
+		provider = meta.ProviderMetadata.TMDB.Year
 	}
-	return 0
+	return trackers.PreferredYear(meta, provider)
 }
 
 func releaseSeasonEpisode(meta api.UploadSubject) string {
@@ -812,6 +815,9 @@ func transliterateCinemaZTitle(value string) string {
 // resolveSearchName returns the canonical AZ-family search key used for dupe
 // lookup, independent of the upload display name.
 func resolveSearchName(meta api.UploadSubject) string {
+	if meta.EffectiveMetadata.TitleProvenance.IsManual() {
+		return strings.TrimSpace(trackers.PreferredTitle(meta, ""))
+	}
 	if title := strings.TrimSpace(meta.Release.Title); title != "" {
 		return title
 	}

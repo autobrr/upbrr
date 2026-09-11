@@ -106,7 +106,11 @@ func submitPreparedUpload(
 	}
 	if torrentID == "" {
 		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "TL", "upload_failure", responsePreview, ".html")
-		return api.UploadSummary{}, commonhttp.UploadHTTPError("TL", resp.StatusCode, responsePreview)
+		errorResponse := responsePreview
+		if successCandidate {
+			errorResponse = responseBody
+		}
+		return api.UploadSummary{}, commonhttp.UploadHTTPError("TL", resp.StatusCode, errorResponse)
 	}
 
 	urlValue := torrentURL + torrentID

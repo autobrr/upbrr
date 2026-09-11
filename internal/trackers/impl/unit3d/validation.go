@@ -58,6 +58,7 @@ func unit3DUploadSubject(subject api.TrackerValidationSubject) api.UploadSubject
 		Release:                subject.Release,
 		Identity:               subject.Identity,
 		ProviderMetadata:       subject.ProviderMetadata,
+		EffectiveMetadata:      subject.EffectiveMetadata,
 		SeasonInt:              subject.SeasonInt,
 		EpisodeInt:             subject.EpisodeInt,
 		TVPack:                 subject.TVPack,

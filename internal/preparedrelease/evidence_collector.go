@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -152,6 +151,8 @@ func (c *EvidenceCollector) ResolveIdentityCandidate(
 }
 
 func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
+	resolved := meta.ResolvedNaming
+	effective := meta.EffectiveMetadata
 	namingStatus := api.NamingStatusComplete
 	if len(meta.ReleaseNameMissing) > 0 {
 		namingStatus = api.NamingStatusIncomplete
@@ -175,42 +176,50 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 		}
 	}
 	return CollectedFacts{
+		NamingCategory: resolved.Category,
 		Naming: api.NamingFacts{
-			Filename:              meta.Filename,
-			ReleaseName:           meta.ReleaseName,
-			NameWithoutTag:        meta.ReleaseNameNoTag,
-			CleanName:             meta.ReleaseNameClean,
-			NamePresentation:      meta.ReleaseNamePresentation,
-			GeneratedReleaseNames: meta.GeneratedReleaseNames,
-			Tag:                   meta.Tag,
-			Type:                  meta.Release.Type,
-			Artist:                meta.Release.Artist,
-			Title:                 meta.Release.Title,
-			Subtitle:              meta.Release.Subtitle,
-			AlternateTitle:        meta.Release.Alt,
-			Year:                  meta.Release.Year,
-			Month:                 meta.Release.Month,
-			Day:                   meta.Release.Day,
-			Source:                meta.Release.Source,
-			Resolution:            meta.Release.Resolution,
-			Codecs:                append([]string(nil), meta.Release.Codec...),
-			Audio:                 append([]string(nil), meta.Release.Audio...),
-			HDR:                   append([]string(nil), meta.Release.HDR...),
-			Extension:             meta.Release.Ext,
-			Languages:             append([]string(nil), meta.Release.Language...),
-			Site:                  meta.Release.Site,
-			Genre:                 meta.Release.Genre,
-			Channels:              meta.Release.Channels,
-			Collection:            meta.Release.Collection,
-			Region:                meta.Release.Region,
-			Size:                  meta.Release.Size,
-			Group:                 meta.Release.Group,
-			Disc:                  meta.Release.Disc,
-			Editions:              append([]string(nil), meta.Release.Edition...),
-			Other:                 append([]string(nil), meta.Release.Other...),
-			Scene:                 meta.Scene,
-			SceneName:             meta.SceneName,
-			Personal:              meta.PersonalRelease,
+			Filename:                 meta.Filename,
+			ReleaseName:              meta.ReleaseName,
+			NameWithoutTag:           meta.ReleaseNameNoTag,
+			CleanName:                meta.ReleaseNameClean,
+			NamePresentation:         meta.ReleaseNamePresentation,
+			GeneratedReleaseNames:    meta.GeneratedReleaseNames,
+			Tag:                      meta.Tag,
+			Type:                     resolved.Type,
+			Artist:                   meta.Release.Artist,
+			Title:                    resolved.Title,
+			Subtitle:                 meta.Release.Subtitle,
+			AlternateTitle:           resolved.AlternateTitle,
+			OriginalTitle:            effective.OriginalTitle,
+			Genres:                   append([]string(nil), effective.Genres...),
+			TitleProvenance:          effective.TitleProvenance,
+			AlternateTitleProvenance: effective.AlternateTitleProvenance,
+			OriginalTitleProvenance:  effective.OriginalTitleProvenance,
+			GenresProvenance:         effective.GenresProvenance,
+			YearProvenance:           effective.YearProvenance,
+			Year:                     resolved.Year,
+			Month:                    meta.Release.Month,
+			Day:                      meta.Release.Day,
+			Source:                   resolved.Source,
+			Resolution:               resolved.Resolution,
+			Codecs:                   append([]string(nil), meta.Release.Codec...),
+			Audio:                    append([]string(nil), meta.Release.Audio...),
+			HDR:                      append([]string(nil), meta.Release.HDR...),
+			Extension:                meta.Release.Ext,
+			Languages:                append([]string(nil), meta.Release.Language...),
+			Site:                     meta.Release.Site,
+			Genre:                    resolved.Genre,
+			Channels:                 meta.Channels,
+			Collection:               meta.Release.Collection,
+			Region:                   meta.Region,
+			Size:                     meta.Release.Size,
+			Group:                    strings.TrimPrefix(strings.TrimSpace(meta.Tag), "-"),
+			Disc:                     meta.Release.Disc,
+			Editions:                 singletonFact(meta.Edition),
+			Other:                    append([]string(nil), meta.Release.Other...),
+			Scene:                    meta.Scene,
+			SceneName:                meta.SceneName,
+			Personal:                 meta.PersonalRelease,
 		},
 		Episode: api.EpisodeFacts{
 			Season:            meta.SeasonInt,
@@ -219,7 +228,7 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 			EpisodeLabel:      meta.EpisodeStr,
 			DailyDate:         meta.DailyEpisodeDate,
 			Pack:              meta.TVPack,
-			Title:             meta.EpisodeTitle,
+			Title:             resolved.EpisodeTitle,
 			Overview:          meta.EpisodeOverview,
 			Year:              meta.EpisodeYear,
 			AiredDate:         meta.TVDBAiredDate,
@@ -230,50 +239,75 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 			DateMatched:       meta.TMDBDateMatch,
 		},
 		Media: api.MediaFacts{
-			AudioLanguages:    append([]string(nil), meta.AudioLanguages...),
-			SubtitleLanguages: append([]string(nil), meta.SubtitleLanguages...),
-			Container:         meta.Container,
-			Audio:             meta.Audio,
-			Channels:          meta.Channels,
-			Commentary:        meta.HasCommentary,
-			ThreeD:            meta.Is3D,
-			Source:            meta.Source,
-			Type:              meta.Type,
-			UHD:               meta.UHD,
-			HDR:               meta.HDR,
-			HDRFacts:          meta.HDRFacts,
-			Distributor:       meta.Distributor,
-			Region:            meta.Region,
-			VideoCodec:        meta.VideoCodec,
-			VideoEncode:       meta.VideoEncode,
-			HasEncodeSettings: meta.HasEncodeSettings,
-			BitDepth:          meta.BitDepth,
-			Edition:           meta.Edition,
-			Repack:            meta.Repack,
-			WebDV:             meta.WebDV,
-			StreamOptimized:   meta.StreamOptimized,
-			Service:           meta.Service,
-			ServiceLongName:   meta.ServiceLongName,
-			MediaInfoUniqueID: meta.MediaInfoUniqueID,
-			Anime:             meta.Anime,
+			AudioLanguages:                       append([]string(nil), meta.AudioLanguages...),
+			SubtitleLanguages:                    append([]string(nil), meta.SubtitleLanguages...),
+			TrackAudioLanguages:                  append([]string(nil), meta.TrackAudioLanguages...),
+			TrackSubtitleLanguages:               append([]string(nil), meta.TrackSubtitleLanguages...),
+			Tracks:                               cloneCollectedMediaTracks(meta.MediaTracks),
+			TrackCoverageComplete:                meta.TrackCoverageComplete,
+			AudioLanguagesProvenance:             meta.AudioLanguagesProvenance,
+			SubtitleLanguagesProvenance:          meta.SubtitleLanguagesProvenance,
+			HardcodedSubs:                        meta.HardcodedSubs,
+			HardcodedSubtitleLanguages:           append([]string(nil), meta.HardcodedSubtitleLanguages...),
+			HardcodedSubsProvenance:              meta.HardcodedSubsProvenance,
+			HardcodedSubtitleLanguagesProvenance: meta.HardcodedSubtitleLanguagesProvenance,
+			OriginalLanguage:                     effective.OriginalLanguage,
+			OriginalLanguageProvenance:           effective.OriginalLanguageProvenance,
+			DistributorProvenance:                effective.DistributorProvenance,
+			Container:                            meta.Container,
+			Audio:                                meta.Audio,
+			Channels:                             meta.Channels,
+			Commentary:                           meta.HasCommentary,
+			ThreeD:                               meta.Is3D,
+			Source:                               resolved.Source,
+			Type:                                 resolved.Type,
+			UHD:                                  meta.UHD,
+			HDR:                                  meta.HDR,
+			HDRFacts:                             meta.HDRFacts,
+			Distributor:                          meta.Distributor,
+			Region:                               meta.Region,
+			VideoCodec:                           meta.VideoCodec,
+			VideoEncode:                          meta.VideoEncode,
+			HasEncodeSettings:                    meta.HasEncodeSettings,
+			BitDepth:                             meta.BitDepth,
+			Edition:                              meta.Edition,
+			Repack:                               meta.Repack,
+			WebDV:                                meta.WebDV,
+			StreamOptimized:                      meta.StreamOptimized,
+			Service:                              meta.Service,
+			ServiceLongName:                      meta.ServiceLongName,
+			MediaInfoUniqueID:                    meta.MediaInfoUniqueID,
+			Anime:                                meta.Anime,
 		},
-		Disc: api.DiscFacts{
-			Type:            meta.DiscType,
-			Summary:         collectedBDInfoSummary(meta.BDInfo),
-			DurationSeconds: collectedBDInfoDurationSeconds(meta.BDInfo),
-			PlaylistCount:   len(meta.SelectedBDMVPlaylists),
-			DVDVOBSet:       meta.DVDVOBSet,
-		},
+		Disc:        collectedDiscFacts(meta),
 		Assessments: assessments,
 		Identity: externalidentity.ResolutionIntent{
-			Title:   meta.Release.Title,
-			Year:    meta.Release.Year,
+			Title:   resolved.Title,
+			Year:    resolved.Year,
 			Season:  meta.SeasonInt,
 			Episode: meta.EpisodeInt,
 		},
 		Diagnostics: diagnostics,
 		Resources:   collectedResources(meta),
 	}
+}
+
+func cloneCollectedMediaTracks(value []api.MediaTrackFacts) []api.MediaTrackFacts {
+	cloned := make([]api.MediaTrackFacts, len(value))
+	for index, track := range value {
+		cloned[index] = track
+		cloned[index].DetectedLanguages = append([]string(nil), track.DetectedLanguages...)
+		cloned[index].Languages = append([]string(nil), track.Languages...)
+	}
+	return cloned
+}
+
+func singletonFact(value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return []string{value}
 }
 
 func collectedResources(meta preparationstate.State) CollectedResources {
@@ -290,6 +324,7 @@ func collectedResources(meta preparationstate.State) CollectedResources {
 		SceneNFOPath:          meta.SceneNFOPath,
 		DescriptionTemplate:   meta.DescriptionTemplate,
 		SelectedBDMVPlaylists: clonePlaylists(meta.SelectedBDMVPlaylists),
+		Discs:                 cloneDiscResources(meta.Discs),
 		ClientEvidence:        preparationstate.CloneClientEvidenceSnapshot(meta.ClientEvidence),
 	}
 }
@@ -303,27 +338,42 @@ func firstCollectedSourcePath(paths []string) string {
 	return ""
 }
 
-func collectedBDInfoSummary(value map[string]any) string {
-	summary, _ := value["summary"].(string)
-	return strings.TrimSpace(summary)
-}
-
-func collectedBDInfoDurationSeconds(value map[string]any) float64 {
-	text := strings.TrimSpace(fmt.Sprint(value["length"]))
-	if text == "" || text == "<nil>" {
-		return 0
+func collectedDiscFacts(meta preparationstate.State) api.DiscFacts {
+	facts := api.DiscFacts{Type: meta.DiscType}
+	for _, resource := range meta.Discs {
+		item := api.DiscItemFacts{
+			ID:              resource.ID,
+			Name:            resource.Name,
+			Type:            resource.Type,
+			DurationSeconds: resource.DurationSeconds,
+			DVDVOBSet:       resource.DVDVOBSet,
+		}
+		reportsByID := make(map[string]preparationstate.DiscReportResource, len(resource.Reports))
+		for _, report := range resource.Reports {
+			reportsByID[report.Playlist.ID] = report
+		}
+		for _, playlist := range resource.SelectedPlaylists {
+			report := reportsByID[playlist.ID]
+			item.Reports = append(item.Reports, api.DiscReportFacts{
+				Playlist: playlist,
+				Summary:  strings.TrimSpace(report.Summary),
+			})
+			facts.PlaylistCount++
+		}
+		if len(item.Reports) > 0 {
+			primary := 0
+			for i := 1; i < len(item.Reports); i++ {
+				if item.Reports[i].Playlist.Score > item.Reports[primary].Playlist.Score {
+					primary = i
+				}
+			}
+			item.DurationSeconds = item.Reports[primary].Playlist.Duration
+		}
+		facts.Items = append(facts.Items, item)
 	}
-	parts := strings.Split(text, ":")
-	if len(parts) != 3 {
-		return 0
-	}
-	hours, hoursErr := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
-	minutes, minutesErr := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
-	seconds, secondsErr := strconv.ParseFloat(strings.TrimSpace(parts[2]), 64)
-	if hoursErr != nil || minutesErr != nil || secondsErr != nil || hours < 0 || minutes < 0 || seconds < 0 {
-		return 0
-	}
-	return hours*3600 + minutes*60 + seconds
+	facts.PrimaryDiscID, facts.PrimaryReportID, facts.DurationSeconds, facts.DVDVOBSet = facts.CanonicalPrimary()
+	facts.Summary = facts.AggregateSummary()
+	return facts
 }
 
 func cloneCollectedIdentity(value api.ExternalIdentity) api.ExternalIdentity {
@@ -347,6 +397,14 @@ func cloneCollectedCandidates(value []api.ExternalIdentityCandidate) []api.Exter
 }
 
 func clonePlaylists(value []api.PlaylistInfo) []api.PlaylistInfo {
+	cloned, err := cloneWithJSON(value)
+	if err != nil {
+		panic(err)
+	}
+	return cloned
+}
+
+func cloneDiscResources(value []preparationstate.DiscResource) []preparationstate.DiscResource {
 	cloned, err := cloneWithJSON(value)
 	if err != nil {
 		panic(err)

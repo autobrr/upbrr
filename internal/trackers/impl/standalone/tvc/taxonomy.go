@@ -6,6 +6,9 @@ package tvc
 import (
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
+
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -28,10 +31,17 @@ var categoryMap = map[string]string{
 }
 
 func resolveCategory(meta api.UploadSubject) string {
-	if meta.ProviderMetadata.TMDB.OriginalLanguage != "" && !strings.EqualFold(meta.ProviderMetadata.TMDB.OriginalLanguage, "en") &&
-		!strings.EqualFold(meta.ProviderMetadata.TMDB.OriginalLanguage, "ga") &&
-		!strings.EqualFold(meta.ProviderMetadata.TMDB.OriginalLanguage, "gd") &&
-		!strings.EqualFold(meta.ProviderMetadata.TMDB.OriginalLanguage, "cy") {
+	originalLanguage := ""
+	if meta.EffectiveMetadata.OriginalLanguageProvenance.IsManual() {
+		originalLanguage = trackers.PreferredOriginalLanguage(meta, "")
+		if normalized := languageutil.NormalizeLanguageCode(originalLanguage); normalized != "" {
+			originalLanguage = normalized
+		}
+	} else if meta.ProviderMetadata.TMDB != nil {
+		originalLanguage = meta.ProviderMetadata.TMDB.OriginalLanguage
+	}
+	if originalLanguage != "" && !strings.EqualFold(originalLanguage, "en") &&
+		!strings.EqualFold(originalLanguage, "ga") && !strings.EqualFold(originalLanguage, "gd") && !strings.EqualFold(originalLanguage, "cy") {
 		return categoryMap["foreign"]
 	}
 	genres := strings.ToLower(genresText(meta))

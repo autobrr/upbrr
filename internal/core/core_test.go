@@ -32,6 +32,34 @@ func TestApplyMetadataDefaults(t *testing.T) {
 	}
 }
 
+func TestApplyContinuationPreparationDefaultsUsesActiveConfigEachTime(t *testing.T) {
+	t.Parallel()
+
+	previous := api.ContinueReleaseWorkflowRequest{Intent: api.WorkflowIntent{
+		Preparation: &api.PrepareInput{Policy: api.PreparationPolicy{OnlyID: true}},
+	}}
+	previous = applyContinuationPreparationDefaults(previous, config.MetadataConfig{})
+	if previous.Intent.Preparation == nil || !previous.Intent.Preparation.Policy.OnlyID {
+		t.Fatalf("previous explicit only-id input = %#v", previous.Intent.Preparation)
+	}
+
+	explicitFalse := api.ContinueReleaseWorkflowRequest{Intent: api.WorkflowIntent{
+		Preparation: &api.PrepareInput{},
+	}}
+	explicitFalse = applyContinuationPreparationDefaults(explicitFalse, config.MetadataConfig{})
+	if explicitFalse.Intent.Preparation == nil || explicitFalse.Intent.Preparation.Policy.OnlyID {
+		t.Fatalf("explicit only-id false was retained from prior request: %#v", explicitFalse.Intent.Preparation)
+	}
+
+	configured := config.MetadataConfig{OnlyID: true}
+	first := applyContinuationPreparationDefaults(explicitFalse, configured)
+	second := applyContinuationPreparationDefaults(explicitFalse, configured)
+	if first.Intent.Preparation == nil || second.Intent.Preparation == nil ||
+		!first.Intent.Preparation.Policy.OnlyID || !second.Intent.Preparation.Policy.OnlyID {
+		t.Fatalf("configured only-id default was not applied consistently: %#v, %#v", first.Intent.Preparation, second.Intent.Preparation)
+	}
+}
+
 func TestWorkflowPrivateVaultRootIsDatabaseScoped(t *testing.T) {
 	t.Parallel()
 

@@ -119,6 +119,93 @@ func TestMinimumContentAgeYearFallback(t *testing.T) {
 	}
 }
 
+func TestRTFManualYearSuppressesProviderYearFallback(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.July, 18, 0, 0, 0, 0, time.UTC)
+	metadata := api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Year: 2025}}
+	manualYear := api.EffectiveMetadata{Year: 2010, YearProvenance: api.FactProvenanceManual}
+	validation := api.TrackerValidationSubject{
+		EffectiveMetadata: manualYear,
+		Release:           api.ReleaseInfo{Year: 2025},
+		ProviderMetadata:  metadata,
+	}
+	if minimumContentAgeViolation(validation, now) {
+		t.Fatal("manual release year did not suppress newer provider year")
+	}
+	if !isRTFContentOldEnough(api.DuplicateSubject{
+		EffectiveMetadata: manualYear,
+		Release:           validation.Release,
+		ProviderMetadata:  metadata,
+	}, now) {
+		t.Fatal("duplicate search did not use manual release year")
+	}
+
+	manualEmpty := api.EffectiveMetadata{YearProvenance: api.FactProvenanceManualEmpty}
+	validation.EffectiveMetadata = manualEmpty
+	if !minimumContentAgeViolation(validation, now) {
+		t.Fatal("manual-empty release year fell back to provider year")
+	}
+	if isRTFContentOldEnough(api.DuplicateSubject{
+		EffectiveMetadata: manualEmpty,
+		Release:           validation.Release,
+		ProviderMetadata:  metadata,
+	}, now) {
+		t.Fatal("duplicate search fell back to provider year for manual-empty year")
+	}
+
+	validation.EffectiveMetadata = manualYear
+	validation.ProviderMetadata.TMDB.ReleaseDate = "2025-01-01"
+	if !minimumContentAgeViolation(validation, now) {
+		t.Fatal("manual year overrode provider exact-date evidence")
+	}
+}
+
+func TestRTFManualYearSuppressesPartialDateYears(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.July, 18, 0, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name     string
+		metadata api.SourceScopedMetadata
+	}{
+		{
+			name: "AniList year-only date",
+			metadata: api.SourceScopedMetadata{
+				AniList: &api.AniListMetadata{StartDate: "2025"},
+			},
+		},
+		{
+			name: "AniList partial month date",
+			metadata: api.SourceScopedMetadata{
+				AniList: &api.AniListMetadata{StartDate: "2025-01"},
+			},
+		},
+		{
+			name: "IMDb episode partial date",
+			metadata: api.SourceScopedMetadata{
+				IMDB: &api.IMDBMetadata{Episodes: []api.IMDBEpisode{{
+					ReleaseDate: api.IMDBReleaseDate{Year: 2025},
+				}}},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			manualYear := api.EffectiveMetadata{Year: 2010, YearProvenance: api.FactProvenanceManual}
+			if got := rtfContentAgeEligibility(api.ReleaseInfo{}, test.metadata, manualYear, now); got != rtfAgeEligible {
+				t.Fatalf("manual year eligibility = %q, want %q", got, rtfAgeEligible)
+			}
+			manualEmpty := api.EffectiveMetadata{YearProvenance: api.FactProvenanceManualEmpty}
+			if got := rtfContentAgeEligibility(api.ReleaseInfo{}, test.metadata, manualEmpty, now); got != rtfAgeIneligibleMissingEvidence {
+				t.Fatalf("manual-empty year eligibility = %q, want %q", got, rtfAgeIneligibleMissingEvidence)
+			}
+		})
+	}
+}
+
 func TestRTFContentAgeEligibilityExactBoundaries(t *testing.T) {
 	t.Parallel()
 
@@ -198,7 +285,7 @@ func TestRTFContentAgeEligibilityExactBoundaries(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := rtfContentAgeEligibility(api.ReleaseInfo{}, tt.metadata, tt.now)
+			got := rtfContentAgeEligibility(api.ReleaseInfo{}, tt.metadata, api.EffectiveMetadata{}, tt.now)
 			if got != tt.want {
 				t.Fatalf("eligibility = %q, want %q", got, tt.want)
 			}
@@ -251,7 +338,7 @@ func TestRTFContentAgeEligibilityYearEvidence(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := rtfContentAgeEligibility(tt.release, api.SourceScopedMetadata{}, now)
+			got := rtfContentAgeEligibility(tt.release, api.SourceScopedMetadata{}, api.EffectiveMetadata{}, now)
 			if got != tt.want {
 				t.Fatalf("eligibility = %q, want %q", got, tt.want)
 			}
@@ -375,7 +462,7 @@ func TestYoungestRTFReleaseEvidenceUsesEveryExactDateSource(t *testing.T) {
 			}
 			tt.apply(&release, &metadata)
 
-			evidence := youngestRTFReleaseEvidence(release, metadata)
+			evidence := youngestRTFReleaseEvidence(release, metadata, api.EffectiveMetadata{})
 			got, ok := evidence.exactDate()
 			if !ok || !got.Equal(youngest) {
 				t.Fatalf("youngest exact date = (%s, %t), want (%s, true)", got.Format(time.DateOnly), ok, youngestText)
@@ -451,7 +538,7 @@ func TestYoungestRTFReleaseEvidenceUsesEveryYearSource(t *testing.T) {
 			metadata := api.SourceScopedMetadata{}
 			tt.apply(&release, &metadata)
 
-			evidence := youngestRTFReleaseEvidence(release, metadata)
+			evidence := youngestRTFReleaseEvidence(release, metadata, api.EffectiveMetadata{})
 			if evidence.year != youngestYear {
 				t.Fatalf("youngest year = %d, want %d", evidence.year, youngestYear)
 			}
@@ -476,7 +563,7 @@ func TestRTFAgeChecksUseYoungerYearOverOlderExactDate(t *testing.T) {
 		TMDB: &api.TMDBMetadata{ReleaseDate: "2010-01-01"},
 		IMDB: &api.IMDBMetadata{Year: 2025},
 	}
-	evidence := youngestRTFReleaseEvidence(api.ReleaseInfo{}, metadata)
+	evidence := youngestRTFReleaseEvidence(api.ReleaseInfo{}, metadata, api.EffectiveMetadata{})
 	if evidence.year != 2025 {
 		t.Fatalf("youngest year = %d, want 2025", evidence.year)
 	}
@@ -499,7 +586,7 @@ func TestRTFAgeChecksUseYoungerExactDateOverOlderYear(t *testing.T) {
 		TMDB: &api.TMDBMetadata{Year: 2010},
 		TVDB: &api.TVDBMetadata{EpisodeAired: "2016-07-19"},
 	}
-	evidence := youngestRTFReleaseEvidence(api.ReleaseInfo{}, metadata)
+	evidence := youngestRTFReleaseEvidence(api.ReleaseInfo{}, metadata, api.EffectiveMetadata{})
 	got, ok := evidence.exactDate()
 	if !ok || got.Format(time.DateOnly) != "2016-07-19" {
 		t.Fatalf("youngest exact date = (%s, %t), want (2016-07-19, true)", got.Format(time.DateOnly), ok)
@@ -523,7 +610,7 @@ func TestRTFReleaseEvidenceIgnoresBlurayMetadata(t *testing.T) {
 				MovieYear: "2025",
 			}},
 		},
-	})
+	}, api.EffectiveMetadata{})
 	if evidence.year != 2010 {
 		t.Fatalf("youngest year = %d, want canonical year 2010", evidence.year)
 	}

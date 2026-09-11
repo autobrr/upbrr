@@ -148,12 +148,57 @@ func (m *Module) StartUpload(
 	ownerID string,
 	request api.CreateReleaseWorkflowUploadRequest,
 ) (CommandResult, error) {
+	if m.liveTest != nil && request.Execution.Mode != api.ReleaseWorkflowUploadModeDebug {
+		m.logger.Warnf("workflow: operation=upload_execute state=blocked reason=live_test")
+		return CommandResult{}, fmt.Errorf("live-test composite upload: %w", m.liveTest.RejectRequest(api.OperationKindUploadExecute))
+	}
+	return m.startUpload(ctx, ownerID, request, false)
+}
+
+// StartLiveTestUpload drives the requested execution mode to a dry-run. Its
+// effective goal and no-seed policy are bound into the durable session receipt.
+// It requires a live-test policy and never permits tracker or client writes.
+func (m *Module) StartLiveTestUpload(
+	ctx context.Context,
+	ownerID string,
+	request api.CreateReleaseWorkflowUploadRequest,
+) (CommandResult, error) {
+	if m.liveTest == nil {
+		return CommandResult{}, errors.New("release workflow: live-test policy is required")
+	}
+	return m.startUpload(ctx, ownerID, request, true)
+}
+
+func (m *Module) startUpload(
+	ctx context.Context,
+	ownerID string,
+	request api.CreateReleaseWorkflowUploadRequest,
+	liveTestDryRun bool,
+) (CommandResult, error) {
 	if err := request.Validate(); err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow start upload: %w", err)
 	}
 	session, instructions, err := normalizeCompositeUploadRequest(request)
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow normalize upload: %w", err)
+	}
+	if m.liveTest != nil {
+		session.Intent.NoSeed = true
+		if liveTestDryRun {
+			session.Goal = api.WorkflowGoalDryRun
+		}
+		session.RequestFingerprint, err = api.CanonicalWorkflowFingerprint(struct {
+			Request api.WorkflowFingerprint
+			RunID   string
+			Goal    api.WorkflowGoal
+		}{
+			Request: session.RequestFingerprint,
+			RunID:   m.liveTest.RunID(),
+			Goal:    session.Goal,
+		})
+		if err != nil {
+			return CommandResult{}, fmt.Errorf("release workflow live-test fingerprint: %w", err)
+		}
 	}
 	created, err := m.Execute(ctx, ownerID, CreateWorkflowCommand{
 		Instructions:        instructions,
@@ -536,18 +581,10 @@ func compositeUploadMediaIntent(
 	if input.Screenshots.Count != nil {
 		count = *input.Screenshots.Count
 	}
-	selections := make([]api.ScreenshotSelection, 0, len(input.Screenshots.Frames))
-	for index, frame := range input.Screenshots.Frames {
-		selections = append(selections, api.ScreenshotSelection{
-			Index:  index,
-			Frame:  frame,
-			Source: "manual",
-		})
-	}
 	media := api.MediaCaptureInstructions{
 		ScreenshotCount: count,
 		Purpose:         api.ScreenshotPurposeFinal,
-		Selections:      selections,
+		ManualFrames:    append([]int(nil), input.Screenshots.Frames...),
 		CaptureDVDMenus: optionalBool(input.DVDMenus.Capture),
 	}
 	if input.DVDMenus.MaxItems != nil {
@@ -831,7 +868,28 @@ func (m *Module) runCompositeUpload(
 				Recovery:  api.OperationRecoverySelectTrackers,
 			}, errors.New("release workflow composite upload has no remaining trackers"))
 		}
-		if blocked := compositeUploadPendingAction(current, session); blocked != nil {
+		request := api.ContinueReleaseWorkflowRequest{
+			Authority: &api.WorkflowAuthority{
+				WorkflowID:       current.Workflow.ID,
+				ExpectedRevision: current.Workflow.Revision,
+			},
+			IdempotencyKey: compositeUploadOperationKey(string(session.RequestFingerprint), uint64(current.Workflow.Revision)),
+			Goal:           session.Goal,
+			Intent:         session.Intent,
+		}
+		_, recovered, plannerTransition, recoveryErr := m.recoverPersistedMediaForContinuation(
+			ctx,
+			ownerID,
+			request,
+			current,
+			m.clock.Now().UTC(),
+		)
+		if recoveryErr != nil {
+			return CommandResult{}, recoveryErr
+		} else if recovered {
+			continue
+		}
+		if blocked := compositeUploadPendingAction(current, session); blocked != nil && !plannerTransition {
 			if err := m.finishCompositeSession(ctx, ownerID, command.WorkflowID, operationID, "feedback_required"); err != nil {
 				return CommandResult{}, err
 			}
@@ -842,7 +900,7 @@ func (m *Module) runCompositeUpload(
 		} else if changed {
 			continue
 		}
-		if current.Media != nil && len(session.ManualMedia.Attachments) > 0 && !session.ManualMedia.Attached {
+		if !plannerTransition && current.Media != nil && len(session.ManualMedia.Attachments) > 0 && !session.ManualMedia.Attached {
 			m.reportCompositeStage(
 				ctx,
 				ownerID,
@@ -867,16 +925,7 @@ func (m *Module) runCompositeUpload(
 			}
 			continue
 		}
-		request := api.ContinueReleaseWorkflowRequest{
-			Authority: &api.WorkflowAuthority{
-				WorkflowID:       current.Workflow.ID,
-				ExpectedRevision: current.Workflow.Revision,
-			},
-			IdempotencyKey: compositeUploadOperationKey(string(session.RequestFingerprint), uint64(current.Workflow.Revision)),
-			Goal:           session.Goal,
-			Intent:         session.Intent,
-		}
-		next, stage := planContinuationCommand(request, current, m.clock.Now().UTC())
+		next, stage := m.planContinuationCommand(request, current, m.clock.Now().UTC())
 		if next == nil {
 			if stage == "no-eligible-trackers" {
 				failure := compositeNoEligibleTrackersFailure(current, command.operationKind())
@@ -1015,6 +1064,7 @@ func compositeUploadGoalReached(current CommandResult, session *compositeUploadS
 	case api.WorkflowGoalUploaded:
 		return current.UploadResult != nil
 	case api.WorkflowGoalPrepared,
+		api.WorkflowGoalInputReady,
 		api.WorkflowGoalTrackersAssessed,
 		api.WorkflowGoalDuplicatesDecided,
 		api.WorkflowGoalMediaReady,

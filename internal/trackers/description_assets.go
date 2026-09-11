@@ -261,6 +261,8 @@ func resolveDescriptionAssets(
 	if meta.ExactMedia == nil {
 		menuImages, normalScreenshots = splitDescriptionScreenshots(ctx, meta, repo, preloaded, screenshots)
 	}
+	menuImages = orderDescriptionMedia(meta, menuImages)
+	normalScreenshots = orderDescriptionMedia(meta, normalScreenshots)
 
 	if final {
 		description = strings.TrimSpace(description)
@@ -298,9 +300,44 @@ func applyResolvedDescriptionScreenshots(
 	}
 	if meta.ExactMedia != nil {
 		assets.MenuImages, assets.Screenshots = exactDescriptionMedia(tracker, meta, screenshots)
-		return
+	} else {
+		assets.MenuImages, assets.Screenshots = splitResolvedDescriptionScreenshots(ctx, meta, repo, preloaded, assets.Slots, screenshots)
 	}
-	assets.MenuImages, assets.Screenshots = splitResolvedDescriptionScreenshots(ctx, meta, repo, preloaded, assets.Slots, screenshots)
+	assets.MenuImages = orderDescriptionMedia(meta, assets.MenuImages)
+	assets.Screenshots = orderDescriptionMedia(meta, assets.Screenshots)
+}
+
+func orderDescriptionMedia(meta api.UploadSubject, images []api.ScreenshotImage) []api.ScreenshotImage {
+	if len(images) < 2 || len(meta.Disc.Items) == 0 {
+		return images
+	}
+	rank := make(map[string]int, len(meta.Disc.Items))
+	names := make(map[string]string, len(meta.Disc.Items))
+	for index, disc := range meta.Disc.Items {
+		rank[disc.ID] = index
+		names[disc.ID] = disc.Name
+	}
+	ordered := append([]api.ScreenshotImage(nil), images...)
+	for index := range ordered {
+		if ordered[index].DiscName == "" {
+			ordered[index].DiscName = names[ordered[index].DiscID]
+		}
+	}
+	sort.SliceStable(ordered, func(left, right int) bool {
+		leftRank, leftKnown := rank[ordered[left].DiscID]
+		rightRank, rightKnown := rank[ordered[right].DiscID]
+		switch {
+		case leftKnown && rightKnown:
+			return leftRank < rightRank
+		case leftKnown:
+			return true
+		case rightKnown:
+			return false
+		default:
+			return false
+		}
+	})
+	return ordered
 }
 
 func exactDescriptionMedia(
@@ -875,13 +912,13 @@ func preloadUploadAssetData(
 		return preloaded, nil
 	}
 
-	selections, err := repo.ListFinalSelections(ctx, meta.SourcePath)
+	selections, err := repo.ListFinalSelections(ctx, meta.MediaBinding)
 	if err != nil {
 		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	preloaded.selections = selections
 
-	uploads, err := repo.ListUploadedImagesByPath(ctx, meta.SourcePath)
+	uploads, err := repo.ListUploadedImagesByPath(ctx, meta.MediaBinding)
 	if err != nil {
 		return nil, fmt.Errorf("trackers: %w", err)
 	}
@@ -980,7 +1017,7 @@ func finalSelectionsFromSource(
 	if preloaded != nil {
 		return preloaded.selections, nil
 	}
-	return wrapTrackerResult(repo.ListFinalSelections(ctx, meta.SourcePath))
+	return wrapTrackerResult(repo.ListFinalSelections(ctx, meta.MediaBinding))
 }
 
 func uploadedImagesFromSource(
@@ -995,7 +1032,7 @@ func uploadedImagesFromSource(
 	if preloaded != nil {
 		return preloaded.uploads, nil
 	}
-	return wrapTrackerResult(repo.ListUploadedImagesByPath(ctx, meta.SourcePath))
+	return wrapTrackerResult(repo.ListUploadedImagesByPath(ctx, meta.MediaBinding))
 }
 
 func resolveTrackerImageURLs(

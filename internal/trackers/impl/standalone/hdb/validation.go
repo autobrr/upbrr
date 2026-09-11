@@ -189,8 +189,11 @@ func hdbRequiredAssetFailures(subject api.TrackerValidationSubject) []api.RuleFa
 		)}
 	}
 	kind := trackers.AssetKindMediaInfoText
-	if hdbDiscType(subject.DiscType) {
+	switch strings.ReplaceAll(strings.ToUpper(strings.TrimSpace(subject.DiscType)), " ", "") {
+	case "BDMV", "HDDVD":
 		kind = trackers.AssetKindBDInfo
+	case "DVD":
+		kind = trackers.AssetKindDVDVOBMediaInfo
 	}
 	return trackers.ValidateRequiredAssets(subject.AssetFacts, trackers.RequiredAssetPolicy{
 		Evidence: hdbEvidencePolicy("hdb_required_assets"),

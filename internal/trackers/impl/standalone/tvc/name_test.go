@@ -36,4 +36,9 @@ func TestResolveNameUsesOnlyAvailableTVPresentationFacts(t *testing.T) {
 	if got := resolveName(base); strings.Contains(got, "S01E01") || strings.Contains(got, "(0)") {
 		t.Fatalf("cleared-facts name = %q", got)
 	}
+
+	base.EffectiveMetadata.TitleProvenance = api.FactProvenanceManualEmpty
+	if got := resolveName(base); strings.Contains(got, "Example Show") {
+		t.Fatalf("manual-empty name restored release title = %q", got)
+	}
 }

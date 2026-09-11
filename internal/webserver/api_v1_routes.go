@@ -329,6 +329,7 @@ func (s *Server) handleAPIV1WorkflowResource(w http.ResponseWriter, r *http.Requ
 			principal.OwnerID,
 			workflowID,
 			revision,
+			request.DiscID,
 			request.TimestampSeconds,
 		)
 		if err != nil {

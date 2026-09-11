@@ -145,6 +145,9 @@ func resolveSearchName(meta api.UploadSubject) string {
 	if meta.Identity.IMDBID != 0 || meta.Identity.TVDBID != 0 {
 		return resolveUploadName(meta)
 	}
+	if meta.EffectiveMetadata.TitleProvenance.IsManual() {
+		return strings.TrimSpace(meta.EffectiveMetadata.Title)
+	}
 	candidates := []string{strings.TrimSpace(meta.Release.Title)}
 	if meta.ProviderMetadata.TVDB != nil {
 		candidates = append(candidates, strings.TrimSpace(meta.ProviderMetadata.TVDB.Name), strings.TrimSpace(meta.ProviderMetadata.TVDB.NameEnglish))

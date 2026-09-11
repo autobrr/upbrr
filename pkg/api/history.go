@@ -23,6 +23,7 @@ type HistoryEntry struct {
 
 // HistoryRecord is the persistence-facing history aggregate.
 type HistoryRecord struct {
+	Corrections          ReleaseCorrectionsSnapshot
 	SourcePath           string
 	ReleaseTitle         string
 	ReleaseSource        string

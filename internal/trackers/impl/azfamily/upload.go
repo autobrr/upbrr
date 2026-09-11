@@ -63,7 +63,7 @@ func prepareUpload(ctx context.Context, site siteDefinition, req trackers.Prepar
 	if err != nil {
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s prepared upload torrent: %w", site.Name, err)
 	}
-	fileInfo, err := resolveMediaInfoText(req.Meta)
+	fileInfo, err := resolveMediaInfoText(req.Meta, req.Runtime.DBPath)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
@@ -173,16 +173,11 @@ func prepareResolvedUpload(
 	if requests, err := searchRequests(ctx, site, state, req.Meta); err == nil && len(requests) > 0 && req.Logger != nil {
 		req.Logger.Infof("trackers: %s matched %d open request(s)", site.Name, len(requests))
 	}
-	// ponytail: image-host failure can leave the required step-one task behind; add rollback when AZ-family exposes task deletion.
-	task, err := createTask(ctx, site, state, req, mediaCode, fileInfo, torrentPath)
-	if err != nil {
-		return trackers.PreparedOperation{}, err
-	}
 	screenshots, err := uploadScreenshots(ctx, site, state, req, preparedScreenshots, screenshotMinimum)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
-	payload, err := buildFinalPayload(ctx, site, state, req, mediaCode, task, fileInfo, screenshots)
+	payload, err := buildFinalPayload(ctx, site, state, req, mediaCode, fileInfo, screenshots)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
@@ -190,6 +185,12 @@ func prepareResolvedUpload(
 	if err != nil {
 		return trackers.PreparedOperation{}, err
 	}
+	task, err := createTask(ctx, site, state, req, mediaCode, fileInfo, torrentPath)
+	if err != nil {
+		return trackers.PreparedOperation{}, err
+	}
+	payload.Set("info_hash", strings.TrimSpace(req.Meta.InfoHash))
+	payload.Set("task_id", task.TaskID)
 	preview := api.TrackerDryRunEntry{
 		Tracker:          site.Name,
 		Status:           "ready",
@@ -228,8 +229,8 @@ func submitPreparedUpload(
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusFound {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return api.UploadSummary{}, commonhttp.UploadHTTPError(site.Name, resp.StatusCode, body)
+		_, responseDetail, readErr := commonhttp.ReadUploadResponseBody(resp, false, commonhttp.DefaultResponsePreviewBytes)
+		return api.UploadSummary{}, errors.Join(commonhttp.UploadHTTPError(site.Name, resp.StatusCode, responseDetail), readErr)
 	}
 
 	location := strings.TrimSpace(resp.Header.Get("Location"))
@@ -279,18 +280,16 @@ func buildUploadDryRun(ctx context.Context, site siteDefinition, req trackers.Pr
 			}},
 		}, nil
 	}
-	fileInfo, err := resolveMediaInfoText(req.Meta)
+	fileInfo, err := resolveMediaInfoText(req.Meta, req.Runtime.DBPath)
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}
-	payload, err := buildFinalPayload(ctx, site, state, req, media.MediaCode, taskInfo{
-		TaskID:      "dry-run-task",
-		InfoHash:    "dry-run-info-hash",
-		RedirectURL: site.BaseURL + "/upload/" + categorySlug(req.Meta) + "/dry-run",
-	}, fileInfo, []string{"dry-run-image-1", "dry-run-image-2", "dry-run-image-3"})
+	payload, err := buildFinalPayload(ctx, site, state, req, media.MediaCode, fileInfo, []string{"dry-run-image-1", "dry-run-image-2", "dry-run-image-3"})
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}
+	payload.Set("info_hash", "dry-run-info-hash")
+	payload.Set("task_id", "dry-run-task")
 	return api.TrackerDryRunEntry{
 		Tracker:          site.Name,
 		Status:           "ready",
@@ -357,8 +356,12 @@ func createTask(
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusFound {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return taskInfo{}, fmt.Errorf("trackers: %s task creation failed: %w", site.Name, commonhttp.UploadHTTPError(site.Name, resp.StatusCode, body))
+		_, responseDetail, readErr := commonhttp.ReadUploadResponseBody(resp, false, commonhttp.DefaultResponsePreviewBytes)
+		return taskInfo{}, fmt.Errorf(
+			"trackers: %s task creation failed: %w",
+			site.Name,
+			errors.Join(commonhttp.UploadHTTPError(site.Name, resp.StatusCode, responseDetail), readErr),
+		)
 	}
 	location := strings.TrimSpace(resp.Header.Get("Location"))
 	taskID := extractPatternGroup(azTaskIDPattern, absoluteURL(site.BaseURL, location))
@@ -367,7 +370,6 @@ func createTask(
 	}
 	return taskInfo{
 		TaskID:      taskID,
-		InfoHash:    strings.TrimSpace(req.Meta.InfoHash),
 		RedirectURL: absoluteURL(site.BaseURL, location),
 	}, nil
 }

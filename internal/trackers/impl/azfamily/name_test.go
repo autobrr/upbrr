@@ -760,3 +760,51 @@ func containsNameElement(name, element string) bool {
 	_, ok := suffixAfterNameElement(name, element)
 	return ok
 }
+
+func TestEditPHDNameUsesOnlyManualOrTMDBOriginalTitle(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{Release: api.ReleaseInfo{Title: "Canonical"}}
+	if got := editPHDName(meta, "Canonical Original 2026"); got != "Canonical Original 2026" {
+		t.Fatalf("canonical title was removed: %q", got)
+	}
+	meta.EffectiveMetadata = api.EffectiveMetadata{OriginalTitle: "Original", OriginalTitleProvenance: api.FactProvenanceManual}
+	if got := editPHDName(meta, "Canonical Original 2026"); got != "Canonical  2026" {
+		t.Fatalf("manual original title = %q", got)
+	}
+	meta.ProviderMetadata.TMDB = &api.TMDBMetadata{OriginalTitle: "Provider"}
+	meta.EffectiveMetadata = api.EffectiveMetadata{OriginalTitleProvenance: api.FactProvenanceManualEmpty}
+	if got := editPHDName(meta, "Canonical Provider 2026"); got != "Canonical Provider 2026" {
+		t.Fatalf("manual empty original title = %q", got)
+	}
+	meta.EffectiveMetadata = api.EffectiveMetadata{}
+	if got := editPHDName(meta, "Canonical Provider 2026"); got != "Canonical  2026" {
+		t.Fatalf("TMDB original title = %q", got)
+	}
+}
+
+func TestAZFamilyProviderTitleFallbackSkipsWhitespace(t *testing.T) {
+	t.Parallel()
+
+	tv := api.UploadSubject{Identity: api.ExternalIdentity{Category: api.CanonicalCategoryTV}, ProviderMetadata: api.SourceScopedMetadata{
+		TVDB: &api.TVDBMetadata{NameEnglish: " \t"},
+		TMDB: &api.TMDBMetadata{Title: "TMDB title"},
+		IMDB: &api.IMDBMetadata{Title: "IMDb title"},
+	}}
+	if got := avistaZEnglishTitle(tv); got != "TMDB title" {
+		t.Fatalf("AZ English title = %q", got)
+	}
+	meta := api.UploadSubject{ProviderMetadata: api.SourceScopedMetadata{
+		IMDB: &api.IMDBMetadata{AKA: " \t"},
+		TMDB: &api.TMDBMetadata{OriginalTitle: "TMDB original"},
+		TVDB: &api.TVDBMetadata{Name: "TVDB original"},
+	}}
+	if got := cinemaZOriginalTitle(meta); got != "TMDB original" {
+		t.Fatalf("CZ original title = %q", got)
+	}
+	meta.ProviderMetadata.TMDB.OriginalTitle = " "
+	meta.Identity.Category = api.CanonicalCategoryTV
+	if got := cinemaZOriginalTitle(meta); got != "TVDB original" {
+		t.Fatalf("CZ TVDB fallback title = %q", got)
+	}
+}

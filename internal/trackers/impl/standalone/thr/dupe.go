@@ -5,7 +5,6 @@ package thr
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -133,10 +132,18 @@ func thrLogin(ctx context.Context, client *http.Client, baseURL, username, passw
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusBadRequest {
-		return nil, fmt.Errorf("status %d", resp.StatusCode)
+		_, detail, readErr := commonhttp.ReadUploadResponseBody(resp, false, commonhttp.DefaultResponsePreviewBytes)
+		if readErr != nil {
+			return nil, fmt.Errorf("read THR login failure status=%d: %w", resp.StatusCode, readErr)
+		}
+		return nil, fmt.Errorf("THR login failed status=%d: %s", resp.StatusCode, detail)
 	}
 	if len(resp.Cookies()) == 0 {
-		return nil, errors.New("no cookies returned")
+		_, detail, readErr := commonhttp.ReadUploadResponseBody(resp, false, commonhttp.DefaultResponsePreviewBytes)
+		if readErr != nil {
+			return nil, fmt.Errorf("read THR login failure status=%d: %w", resp.StatusCode, readErr)
+		}
+		return nil, fmt.Errorf("THR login failed: no cookies returned: %s", detail)
 	}
 	return resp.Cookies(), nil
 }

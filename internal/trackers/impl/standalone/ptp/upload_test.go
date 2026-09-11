@@ -19,6 +19,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 	servicedb "github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -38,6 +39,37 @@ func TestLoadCookiesSuccessReturnsNilError(t *testing.T) {
 	}
 	if got["session"] != "abc" {
 		t.Fatalf("unexpected cookies: %#v", got)
+	}
+}
+
+func TestResolveResolutionUsesResolvedFactOnly(t *testing.T) {
+	t.Parallel()
+
+	resolution, _, _ := resolveResolution(api.UploadSubject{
+		Release:     api.ReleaseInfo{Resolution: "1080p"},
+		ReleaseName: "Example.Movie.2026.2160p-GRP",
+		Filename:    "Example.Movie.2026.4320p-GRP.mkv",
+	})
+	if resolution != "1080p" {
+		t.Fatalf("resolved resolution = %q", resolution)
+	}
+	rawOnly, _, _ := resolveResolution(api.UploadSubject{ReleaseName: "Example.Movie.2026.2160p-GRP", Filename: "Example.4320p.mkv"})
+	if rawOnly != "Other" {
+		t.Fatalf("raw-only resolution = %q", rawOnly)
+	}
+}
+
+func TestResolveContainerUsesResolvedFactOnly(t *testing.T) {
+	t.Parallel()
+
+	if got := resolveContainer(api.UploadSubject{Container: "mp4", SourcePath: "example.mkv"}); got != "MP4" {
+		t.Fatalf("resolved container = %q", got)
+	}
+	if got := resolveContainer(api.UploadSubject{SourcePath: "example.mkv"}); got != "Other" {
+		t.Fatalf("path-only container = %q", got)
+	}
+	if got := resolveContainer(api.UploadSubject{DiscType: "DVD"}); got != "VOB IFO" {
+		t.Fatalf("disc container = %q", got)
 	}
 }
 
@@ -663,6 +695,36 @@ func TestLoginAndFetchAntiCsrfTokenClassifiesHTMLResponseWithoutDecodeNoise(t *t
 	}
 }
 
+func TestSubmitPreparedUploadPreservesLateHTMLFailure(t *testing.T) {
+	t.Parallel()
+
+	const detail = "PTP rejected the torrent after validation"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte("<html><body>" + strings.Repeat("padding ", 10*1024) + `<div class="alert alert--error">` + detail + `<textarea>private-description</textarea><script>private-script</script></div></body></html>`))
+	}))
+	t.Cleanup(server.Close)
+
+	_, err := submitPreparedUpload(
+		t.Context(),
+		trackers.PreparationInput{},
+		uploadState{
+			baseURL:   server.URL,
+			uploadURL: server.URL,
+			client:    server.Client(),
+		},
+		nil,
+		"application/octet-stream",
+		"",
+	)
+	if err == nil || !strings.Contains(err.Error(), detail) {
+		t.Fatalf("expected late HTML error detail, got %v", err)
+	}
+	if strings.Contains(err.Error(), "private-description") || strings.Contains(err.Error(), "private-script") || strings.Contains(err.Error(), "padding") {
+		t.Fatalf("error included content outside the visible alert: %v", err)
+	}
+}
+
 func newPTPAuthDB(t *testing.T) string {
 	t.Helper()
 
@@ -679,4 +741,35 @@ func newPTPAuthDB(t *testing.T) string {
 	}
 	_ = repo.Close()
 	return dbPath
+}
+
+func TestResolveGroupTitleYearPreservesAutomaticProviderPairsAndManualCorrections(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Year: 2024}, IMDB: &api.IMDBMetadata{Title: "IMDb title", Year: 2023}}}
+	if title, year := resolveGroupTitleYear(meta); title != "IMDb title" || year != "2023" {
+		t.Fatalf("IMDb provider pair = (%q, %q)", title, year)
+	}
+	meta.ProviderMetadata.TMDB.Title = "TMDB title"
+	if title, year := resolveGroupTitleYear(meta); title != "TMDB title" || year != "2024" {
+		t.Fatalf("TMDB title/year = (%q, %q)", title, year)
+	}
+	meta.ProviderMetadata.TMDB.Year = 0
+	meta.Release.Year = 2025
+	if title, year := resolveGroupTitleYear(meta); title != "TMDB title" || year != "2025" {
+		t.Fatalf("TMDB title with release year = (%q, %q)", title, year)
+	}
+	meta.EffectiveMetadata = api.EffectiveMetadata{
+		Title:           "Manual title",
+		Year:            2022,
+		TitleProvenance: api.FactProvenanceManual,
+		YearProvenance:  api.FactProvenanceManual,
+	}
+	if title, year := resolveGroupTitleYear(meta); title != "Manual title" || year != "2022" {
+		t.Fatalf("manual title/year = (%q, %q)", title, year)
+	}
+	meta.EffectiveMetadata = api.EffectiveMetadata{TitleProvenance: api.FactProvenanceManualEmpty, YearProvenance: api.FactProvenanceManualEmpty}
+	if title, year := resolveGroupTitleYear(meta); title != "" || year != "" {
+		t.Fatalf("manual empty title/year = (%q, %q)", title, year)
+	}
 }

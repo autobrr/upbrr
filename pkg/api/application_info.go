@@ -15,13 +15,15 @@ import (
 // ApplicationInfo describes the running build and optional runtime capability
 // probes returned by WebUI entrypoints.
 type ApplicationInfo struct {
-	Version         string `json:"version"`
-	BuildIdentifier string `json:"buildIdentifier"`
-	GoVersion       string `json:"goVersion"`
-	GOOS            string `json:"goos"`
-	GOARCH          string `json:"goarch"`
-	Uptime          string `json:"uptime"`
-	UptimeSeconds   int64  `json:"uptimeSeconds"`
+	// TestRuntime is present only when the process enforces live-testing restrictions.
+	TestRuntime     *TestRuntimeInfo `json:"testRuntime,omitempty"`
+	Version         string           `json:"version"`
+	BuildIdentifier string           `json:"buildIdentifier"`
+	GoVersion       string           `json:"goVersion"`
+	GOOS            string           `json:"goos"`
+	GOARCH          string           `json:"goarch"`
+	Uptime          string           `json:"uptime"`
+	UptimeSeconds   int64            `json:"uptimeSeconds"`
 	// DVDMenuEngine contains path-free engine and FFmpeg probe metadata.
 	DVDMenuEngine DVDMenuEngineInfo `json:"dvdMenuEngine"`
 	// DVDMenuCapabilityStatus is available, incompatible, or unavailable.

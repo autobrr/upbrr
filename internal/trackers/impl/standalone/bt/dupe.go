@@ -59,41 +59,7 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 	workScope := dupe.WorkScopeProviderID
 	if meta.Anime {
 		workScope = dupe.WorkScopeTitle
-		tvdbNameEnglish := ""
-		tvdbName := ""
-		if meta.ProviderMetadata.TVDB != nil {
-			tvdbNameEnglish = strings.TrimSpace(meta.ProviderMetadata.TVDB.NameEnglish)
-			tvdbName = strings.TrimSpace(meta.ProviderMetadata.TVDB.Name)
-		}
-
-		tmdbTitle := ""
-		tmdbOriginalTitle := ""
-		if meta.ProviderMetadata.TMDB != nil {
-			tmdbTitle = strings.TrimSpace(meta.ProviderMetadata.TMDB.Title)
-			tmdbOriginalTitle = strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalTitle)
-		}
-
-		imdbTitle := ""
-		if meta.ProviderMetadata.IMDB != nil {
-			imdbTitle = strings.TrimSpace(meta.ProviderMetadata.IMDB.Title)
-		}
-
-		switch {
-		case strings.TrimSpace(meta.Release.Title) != "":
-			searchStr = strings.TrimSpace(meta.Release.Title)
-		case tvdbNameEnglish != "":
-			searchStr = tvdbNameEnglish
-		case tmdbTitle != "":
-			searchStr = tmdbTitle
-		case imdbTitle != "":
-			searchStr = imdbTitle
-		case tvdbName != "":
-			searchStr = tvdbName
-		case tmdbOriginalTitle != "":
-			searchStr = tmdbOriginalTitle
-		case dupe.ProjectedSearchName(meta) != "":
-			searchStr = dupe.ProjectedSearchName(meta)
-		}
+		searchStr = animeSearchTitle(meta)
 	}
 
 	if searchStr == "" {
@@ -191,6 +157,44 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 		return dupe.Failed(dupe.FailureRequest, "BT search canceled", err)
 	}
 	return btResolved(entries, workScope)
+}
+
+func animeSearchTitle(meta api.DuplicateSubject) string {
+	if meta.EffectiveMetadata.TitleProvenance.IsManual() {
+		return strings.TrimSpace(meta.EffectiveMetadata.PreferredTitle(""))
+	}
+	tvdbNameEnglish := ""
+	tvdbName := ""
+	if meta.ProviderMetadata.TVDB != nil {
+		tvdbNameEnglish = strings.TrimSpace(meta.ProviderMetadata.TVDB.NameEnglish)
+		tvdbName = strings.TrimSpace(meta.ProviderMetadata.TVDB.Name)
+	}
+	tmdbTitle := ""
+	tmdbOriginalTitle := ""
+	if meta.ProviderMetadata.TMDB != nil {
+		tmdbTitle = strings.TrimSpace(meta.ProviderMetadata.TMDB.Title)
+		tmdbOriginalTitle = strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalTitle)
+	}
+	imdbTitle := ""
+	if meta.ProviderMetadata.IMDB != nil {
+		imdbTitle = strings.TrimSpace(meta.ProviderMetadata.IMDB.Title)
+	}
+	switch {
+	case strings.TrimSpace(meta.Release.Title) != "":
+		return strings.TrimSpace(meta.Release.Title)
+	case tvdbNameEnglish != "":
+		return tvdbNameEnglish
+	case tmdbTitle != "":
+		return tmdbTitle
+	case imdbTitle != "":
+		return imdbTitle
+	case tvdbName != "":
+		return tvdbName
+	case tmdbOriginalTitle != "":
+		return tmdbOriginalTitle
+	default:
+		return dupe.ProjectedSearchName(meta)
+	}
 }
 
 func btResolved(entries []api.DupeEntry, workScope dupe.WorkScope) dupe.AdapterResult {
