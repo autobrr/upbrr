@@ -348,7 +348,9 @@ func generalDimensionDiffers(dimension trackerspkg.DupeDimension, target Fact, c
 }
 
 func collectGeneralHDRFinding(target normalizedFacts, candidate normalizedFacts) (RuleFinding, bool) {
-	if target.Resolution.Status != FactComplete || candidate.Resolution.Status != FactComplete ||
+	// A candidate's explicit title resolution can bind the 2160p rule without
+	// treating title-only HDR markers as complete format evidence.
+	if target.Resolution.Status != FactComplete || candidate.Resolution.Status == FactContradictory ||
 		!strings.EqualFold(target.Resolution.Value, "2160p") || !strings.EqualFold(candidate.Resolution.Value, "2160p") {
 		return RuleFinding{}, false
 	}
@@ -363,18 +365,7 @@ func collectGeneralHDRFinding(target normalizedFacts, candidate normalizedFacts)
 	if !targetKnown || !candidateKnown || targetSlot == candidateSlot {
 		return RuleFinding{}, false
 	}
-	finding := generalFinding("hdr", "distinct_hdr_slot", findingPriorityGeneral)
-	switch {
-	case targetSlot == "dv_hdr" && candidateSlot == "hdr":
-		finding.Relation = api.DupeRelationProposedTrumps
-		finding.ReasonCode = "broader_hdr_compatibility"
-		finding.Priority = findingPriorityTrumpable
-	case targetSlot == "hdr" && candidateSlot == "dv_hdr":
-		finding.Relation = api.DupeRelationExistingPreferred
-		finding.ReasonCode = "existing_broader_hdr_compatibility"
-		finding.Priority = findingPriorityTrumpable
-	}
-	return finding, true
+	return generalFinding("hdr", "distinct_hdr_slot", findingPriorityGeneral), true
 }
 
 func generalDimensionSuppressed(policy trackerspkg.DupePolicy, dimension trackerspkg.DupeDimension) bool {
@@ -755,14 +746,23 @@ func compareTrackerHDR(target api.HDRFacts, candidate api.HDRFacts, policy track
 		}
 		return RuleFinding{}, false
 	}
-	if policy.HDRCompatibilityMode == trackerspkg.DupeHDRCompatibilityDirectional {
+	if policy.HDRCompatibilityMode == trackerspkg.DupeHDRCompatibilityDirectional ||
+		policy.HDRCompatibilityMode == trackerspkg.DupeHDRCompatibilityHDR10Plus {
 		targetCompatibility := hdrCompatibility(target)
 		candidateCompatibility := hdrCompatibility(candidate)
+		targetBroader := strictSuperset(targetCompatibility, candidateCompatibility)
+		candidateBroader := strictSuperset(candidateCompatibility, targetCompatibility)
+		if policy.HDRCompatibilityMode == trackerspkg.DupeHDRCompatibilityHDR10Plus {
+			targetBroader = targetBroader && len(targetCompatibility) == len(candidateCompatibility)+1 &&
+				slices.Contains(targetCompatibility, api.HDRFormatHDR10Plus) && !slices.Contains(candidateCompatibility, api.HDRFormatHDR10Plus)
+			candidateBroader = candidateBroader && len(candidateCompatibility) == len(targetCompatibility)+1 &&
+				slices.Contains(candidateCompatibility, api.HDRFormatHDR10Plus) && !slices.Contains(targetCompatibility, api.HDRFormatHDR10Plus)
+		}
 		switch {
-		case strictSuperset(targetCompatibility, candidateCompatibility):
+		case targetBroader:
 			finding.Relation = api.DupeRelationProposedTrumps
 			finding.ReasonCode = "broader_hdr_compatibility"
-		case strictSuperset(candidateCompatibility, targetCompatibility):
+		case candidateBroader:
 			finding.Relation = api.DupeRelationExistingPreferred
 			finding.ReasonCode = "existing_broader_hdr_compatibility"
 		}

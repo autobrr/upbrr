@@ -812,7 +812,7 @@
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
   "internal/trackers/impl/standalone/hdb/dupe.go:*dupeSearcher.Search": {
-    "sha256": "150ea5d6461a864843e8fa2fb09193065ae032df0400bbb11452070ff8e71eb7",
+    "sha256": "f5ef24576439f55dd06a2092e9a0392444497033950aa60990d87d9d06637c97",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/hdb/dupe.go:hdbDupeCategoryID": {

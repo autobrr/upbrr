@@ -13,6 +13,48 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestBuiltIn2160pDVHDRSlots(t *testing.T) {
+	t.Parallel()
+	registry, err := NewRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tracker := range registry.Names() {
+		// These trackers have documented broader-HDR trump rules, covered by
+		// their tracker-local policy tests.
+		if tracker == "LST" || tracker == "ULCX" || tracker == "LUME" {
+			continue
+		}
+		t.Run(tracker, func(t *testing.T) {
+			policy, _ := registry.LookupDupePolicy(tracker)
+			for _, format := range []api.HDRFormat{api.HDRFormatSDR, api.HDRFormatDolbyVision, api.HDRFormatHDR10} {
+				target := api.TrackerDuplicateTarget{
+					Names:      []string{"Example.Release.2026.2160p.WEB-DL.H.265-GRP"},
+					Type:       "WEBDL",
+					Source:     "WEB",
+					Resolution: "2160p",
+					VideoCodec: "H.265",
+					Group:      "GRP",
+					HDR:        completeHDR(api.HDRFormatDolbyVision, api.HDRFormatHDR10),
+				}
+				candidate := dupe.NormalizeCandidate(api.DupeEntry{
+					Name:          "Example.Release.2026.2160p.WEB-DL.H.265-OTHER",
+					CanonicalType: "WEBDL",
+					Source:        "WEB",
+					Res:           "2160p",
+					Codec:         "H.265",
+					HDR:           completeHDR(format),
+				}, tracker)
+				result := dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, policy,
+					dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeProviderID})
+				if result.Candidates[0].Relation != api.DupeRelationCoexists || result.RequiresAction {
+					t.Fatalf("DV+HDR versus %s: %#v", format, result)
+				}
+			}
+		})
+	}
+}
+
 func TestReleaseGroupsShareSlotsUnlessTrackerRulesAllowCoexistence(t *testing.T) {
 	t.Parallel()
 	registry, err := NewRegistry()

@@ -31,7 +31,7 @@ func Profile() standalone.Profile {
 		BannedGroups:         bannedGroups(),
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "ANT", RequireAnnounce: true},
 		DupePolicy: &trackers.DupePolicy{
-			ID:         "ant/duplicate/v3",
+			ID:         "ant/duplicate/v4",
 			EvidenceID: "ant-dupes-trumping",
 			SearchScope: trackers.DupeSearchScope{
 				MaxPages: 100,
@@ -44,10 +44,10 @@ func Profile() standalone.Profile {
 				trackers.DupeDimensionHDR,
 			},
 			HDRPartialMode:       trackers.DupeHDRPartialGenericMarker,
-			HDRCompatibilityMode: trackers.DupeHDRCompatibilityDirectional,
+			HDRCompatibilityMode: trackers.DupeHDRCompatibilityHDR10Plus,
 			PrecedenceRules: []trackers.DupeRule{
 				{
-					ID:         "ant/duplicate/v3/exact_full_disc",
+					ID:         "ant/duplicate/v4/exact_full_disc",
 					Relation:   string(api.DupeRelationExactDuplicate),
 					ReasonCode: "exact_identity",
 					Conditions: []trackers.DupeCondition{
@@ -69,7 +69,7 @@ func Profile() standalone.Profile {
 					},
 				},
 				{
-					ID:         "ant/duplicate/v3/single_full_disc",
+					ID:         "ant/duplicate/v4/single_full_disc",
 					Relation:   string(api.DupeRelationExistingPreferred),
 					ReasonCode: "existing_full_disc",
 					Conditions: []trackers.DupeCondition{{

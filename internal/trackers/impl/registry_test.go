@@ -426,7 +426,7 @@ func TestNewRegistryCapabilityInventory(t *testing.T) {
 	if _, ok := registry.LookupMetadataPolicy("ANT"); !ok {
 		t.Fatal("expected ANT tracker-owned metadata policy")
 	}
-	if policy, ok := registry.LookupDupePolicy("ANT"); !ok || policy.ID != "ant/duplicate/v3" ||
+	if policy, ok := registry.LookupDupePolicy("ANT"); !ok || policy.ID != "ant/duplicate/v4" ||
 		policy.EvidenceID != "ant-dupes-trumping" {
 		t.Fatalf("ANT dupe policy = %#v, %t", policy, ok)
 	}
