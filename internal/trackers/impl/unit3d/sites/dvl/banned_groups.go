@@ -6,8 +6,12 @@ package dvl
 // BannedGroups returns DreadVault's published release-group blacklist.
 func BannedGroups() []string {
 	return []string{
+		"AOC",
+		"AOS",
 		"BONE",
 		"EVO",
+		"FGT",
+		"LAMA",
 		"NeoNoir",
 		"PSA",
 		"RARBG",
