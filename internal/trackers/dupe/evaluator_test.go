@@ -1539,7 +1539,11 @@ func TestEvaluateSeasonPackRequiresWorkAndSeasonNotResolution(t *testing.T) {
 					Episode:    2,
 					Resolution: "2160p",
 				}
-				candidate := TrackerCandidate{Season: 1, Pack: true}
+				candidate := TrackerCandidate{
+					Season:     1,
+					Pack:       true,
+					Resolution: "1080p",
+				}
 				if proposedPack {
 					target.Pack, target.Episode, candidate.Pack, candidate.Episode = true, 0, false, 2
 				}
