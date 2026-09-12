@@ -217,7 +217,7 @@ func TestHDBHandlerSearchBuildsPayloadAndParsesResults(t *testing.T) {
 	}
 }
 
-func TestHDBFullDiscUsesMediumAndGroupSlot(t *testing.T) {
+func TestHDBFullDiscSharesSlotAcrossGroups(t *testing.T) {
 	t.Parallel()
 
 	target := api.TrackerDuplicateTarget{
@@ -240,8 +240,38 @@ func TestHDBFullDiscUsesMediumAndGroupSlot(t *testing.T) {
 
 	entry.Name = "Example Release 2026 1080p Blu-ray AVC TrueHD 7.1-OTHER"
 	result = dupe.Evaluate(target, []dupe.TrackerCandidate{dupe.NormalizeCandidate(entry, "HDB")}, policy, dupe.SearchEvidence{Complete: true})
-	if got := result.Candidates[0].Relation; got != api.DupeRelationCoexists {
+	if got := result.Candidates[0].Relation; got != api.DupeRelationSameSlot || !result.RequiresAction {
 		t.Fatalf("different-group HDB disc relation = %q", got)
+	}
+}
+
+func TestHDBEquivalentWEBReleasesShareSlotAcrossGroups(t *testing.T) {
+	t.Parallel()
+	target := api.TrackerDuplicateTarget{
+		Names:      []string{"Example.Series.S01E04.DV.HDR.2160p.WEB.H265-CAKES"},
+		Type:       "WEBDL",
+		Source:     "WEB",
+		Resolution: "2160p",
+		VideoCodec: "H.265",
+		Group:      "CAKES",
+		Season:     1,
+		Episode:    4,
+		HDR: api.HDRFacts{
+			Status:  api.HDREvidenceComplete,
+			Origin:  api.HDREvidenceMediaInfo,
+			Formats: []api.HDRFormat{api.HDRFormatDolbyVision, api.HDRFormatHDR10},
+		},
+	}
+	for _, group := range []string{"NTb", "CAKES"} {
+		candidate := dupe.NormalizeCandidate(api.DupeEntry{
+			Name: "Example Series S01E04 2160p WEB-DL DD+5.1 DoVi HDR HEVC-" + group,
+			HDR:  dupe.NormalizeTrackerHDRFlags([]string{"Dolby Vision", "HDR10"}, true, false),
+		}, "HDB")
+		result := dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, *Profile().DupePolicy,
+			dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeProviderID})
+		if got := result.Candidates[0].Relation; got != api.DupeRelationSameSlot || !result.RequiresAction {
+			t.Fatalf("group=%s: HDB WEB evaluation = %#v", group, result)
+		}
 	}
 }
 

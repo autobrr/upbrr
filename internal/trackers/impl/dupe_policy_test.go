@@ -13,6 +13,52 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestReleaseGroupsShareSlotsUnlessTrackerRulesAllowCoexistence(t *testing.T) {
+	t.Parallel()
+	registry, err := NewRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tracker := range []string{"", "HDB", "RF", "AR"} {
+		t.Run(tracker, func(t *testing.T) {
+			policy := trackers.DupePolicy{}
+			if tracker != "" {
+				var ok bool
+				policy, ok = registry.LookupDupePolicy(tracker)
+				if !ok {
+					t.Fatal("missing policy")
+				}
+			}
+			target := api.TrackerDuplicateTarget{
+				Type:       "WEBDL",
+				Source:     "WEB",
+				Resolution: "2160p",
+				VideoCodec: "H.265",
+				Group:      "GRP",
+				Season:     1,
+				Episode:    4,
+				HDR:        completeHDR(api.HDRFormatDolbyVision, api.HDRFormatHDR10),
+			}
+			candidate := dupe.NormalizeCandidate(api.DupeEntry{
+				Name:          "Example.Series.S01E04.2160p.WEB-DL.H.265-OTHER",
+				CanonicalType: "WEBDL",
+				Res:           "2160p",
+				HDR:           completeHDR(api.HDRFormatDolbyVision, api.HDRFormatHDR10),
+			}, tracker)
+			result := dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, policy,
+				dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeProviderID})
+			want := api.DupeRelationSameSlot
+			if tracker == "AR" {
+				// AlphaRatio's uploading guidelines explicitly permit different release groups to coexist.
+				want = api.DupeRelationCoexists
+			}
+			if got := result.Candidates[0].Relation; got != want || result.RequiresAction != (want == api.DupeRelationSameSlot) {
+				t.Fatalf("cross-group evaluation = %#v, want %s", result, want)
+			}
+		})
+	}
+}
+
 func TestBHDProjectedWEBMatchesAPIResolutionType(t *testing.T) {
 	t.Parallel()
 	registry, err := NewRegistry()
