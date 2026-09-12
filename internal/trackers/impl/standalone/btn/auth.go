@@ -22,12 +22,13 @@ import (
 )
 
 const (
-	btnDefaultBaseURL  = "https://backup.landof.tv"
-	btnUploadPath      = "/upload.php"
-	btnLoginPath       = "/login.php"
-	btnAPIRPCURL       = "https://api.broadcasthe.net/"
-	btnAPIJSONMaxBytes = 1024 * 1024
-	btnTorrentMaxBytes = 8 * 1024 * 1024
+	btnDefaultBaseURL       = "https://backup.landof.tv"
+	btnUploadPath           = "/upload.php"
+	btnLoginPath            = "/login.php"
+	btnAPIRPCURL            = "https://api.broadcasthe.net/"
+	btnAPIJSONMaxBytes      = 1024 * 1024
+	btnAuthResponseMaxBytes = 1024 * 1024
+	btnTorrentMaxBytes      = 8 * 1024 * 1024
 )
 
 // ErrSubmitted2FARejected marks a BTN failure after a submitted manual 2FA code
@@ -234,8 +235,8 @@ func loginBTNSession(ctx context.Context, cfg config.TrackerConfig, baseURL stri
 }
 
 // validateBTNClientSession confirms the client can reach BTN's upload page.
-// It treats explicit login redirects and logged-out markers as invalid session
-// evidence while keeping layout misses and upstream failures transient.
+// Only HTTP authorization failures and an exact login-page redirect prove a
+// stored session invalid. Other remote and layout failures stay transient.
 func validateBTNClientSession(ctx context.Context, client *http.Client, baseURL string) error {
 	if client == nil {
 		return errors.New("trackers: BTN session client missing")
@@ -247,32 +248,100 @@ func validateBTNClientSession(ctx context.Context, client *http.Client, baseURL 
 	req.Header.Set("User-Agent", "upbrr")
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("trackers: BTN upload auth request: %w", err)
+		return newBTNTransientAuthError("trackers: BTN upload auth request failed", err)
 	}
 	defer resp.Body.Close()
 	finalPath := ""
 	if resp.Request != nil && resp.Request.URL != nil {
-		finalPath = strings.ToLower(resp.Request.URL.EscapedPath())
+		finalPath = resp.Request.URL.Path
 	}
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, btnAuthResponseMaxBytes+1))
 	if readErr != nil {
-		return fmt.Errorf("trackers: BTN read upload auth response: %w", readErr)
+		return newBTNTransientAuthError("trackers: BTN upload auth response read failed", readErr)
 	}
 	bodyText := string(body)
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || strings.Contains(finalPath, "login") ||
-		btnLoggedOutPage(bodyText) {
-		return fmt.Errorf("%w: login required", errBTNSessionConfirmedInvalid)
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || finalPath == btnLoginPath {
+		if finalPath != "" {
+			return fmt.Errorf(
+				"%w: login required status=%d final_path=%s",
+				errBTNSessionConfirmedInvalid,
+				resp.StatusCode,
+				sanitizeBTNFinalPath(finalPath),
+			)
+		}
+		return fmt.Errorf("%w: login required status=%d", errBTNSessionConfirmedInvalid, resp.StatusCode)
+	}
+	if finalPath != btnUploadPath {
+		return newBTNTransientAuthError(btnAuthResponseDiagnostic("unexpected final path", resp.StatusCode, finalPath, body, btnAuthPageState(bodyText)), nil)
 	}
 	if resp.StatusCode >= 500 {
-		return fmt.Errorf("trackers: BTN upload auth unavailable status=%d", resp.StatusCode)
+		return newBTNTransientAuthError(btnAuthResponseDiagnostic("response unavailable", resp.StatusCode, finalPath, body, ""), nil)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("trackers: BTN upload auth failed status=%d", resp.StatusCode)
+		return newBTNTransientAuthError(btnAuthResponseDiagnostic("unexpected status", resp.StatusCode, finalPath, body, ""), nil)
 	}
 	if !btnLooksLikeUploadPage(bodyText) {
-		return errors.New("trackers: BTN upload auth page validation failed")
+		return newBTNTransientAuthError(btnAuthResponseDiagnostic("page validation failed", resp.StatusCode, finalPath, body, btnAuthPageState(bodyText)), nil)
 	}
 	return nil
+}
+
+type btnSafeError struct {
+	message string
+	cause   error
+}
+
+func (e btnSafeError) Error() string { return e.message }
+
+func (e btnSafeError) Unwrap() error { return e.cause }
+
+func newBTNTransientAuthError(message string, cause error) *trackers.AuthResolutionError {
+	var diagnostic error
+	if cause == nil {
+		diagnostic = errors.New(message)
+	} else {
+		diagnostic = btnSafeError{message: message, cause: cause}
+	}
+	return &trackers.AuthResolutionError{
+		Reason:    "remote validation failed",
+		Transient: true,
+		Err:       diagnostic,
+	}
+}
+
+func btnAuthResponseDiagnostic(reason string, status int, finalPath string, body []byte, pageState string) string {
+	message := fmt.Sprintf(
+		"trackers: BTN upload auth %s status=%d response_bytes=%d response_truncated=%t",
+		reason,
+		status,
+		len(body),
+		len(body) > btnAuthResponseMaxBytes,
+	)
+	if finalPath != btnUploadPath {
+		message += " final_path=" + sanitizeBTNFinalPath(finalPath)
+	}
+	if pageState != "" {
+		message += " page_state=" + pageState
+	}
+	return message
+}
+
+func btnAuthPageState(body string) string {
+	if btnLoggedOutPage(body) {
+		return "logged_out_marker"
+	}
+	return "upload_form_missing"
+}
+
+func sanitizeBTNFinalPath(finalPath string) string {
+	const redactedPath = "[REDACTED]"
+
+	switch finalPath {
+	case btnUploadPath, btnLoginPath, "/user.php", "/torrents.php":
+		return finalPath
+	default:
+		return redactedPath
+	}
 }
 
 // loadBTNCookiesIntoJar best-effort seeds an upload client with persisted BTN

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	trackerscatalog "github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -350,6 +351,53 @@ func TestEnsureSessionKeepsCookiesOnInvalidLookingTransientAdapterText(t *testin
 	}
 	if adapter.deleteCalls != 0 {
 		t.Fatal("transient invalid-looking text must not delete stored session")
+	}
+}
+
+func TestEnsureSessionKeepsTrackerOwnedTransientDiagnosticsTransient(t *testing.T) {
+	t.Parallel()
+
+	diagnostic := &trackerscatalog.AuthResolutionError{
+		Reason:    "remote validation failed",
+		Transient: true,
+		Err:       errors.New("username password not configured; 2FA required"),
+	}
+	classified := classifyAdapterError("BTN", diagnostic)
+	var classifiedValidation *ValidationError
+	if !errors.As(classified, &classifiedValidation) || !classifiedValidation.Transient || classifiedValidation.ConfirmedInvalid {
+		t.Fatalf("expected tracker-owned transient diagnostic classification, got %v", classified)
+	}
+
+	adapter := &fakeAdapter{
+		capability: api.TrackerAuthCapability{
+			TrackerID:         "BTN",
+			SupportsLogin:     true,
+			SupportsAutoLogin: true,
+			SupportsManual2FA: true,
+		},
+		validate: func() (Session, error) {
+			return Session{}, classified
+		},
+	}
+	service := &Service{adapters: map[string]Adapter{"BTN": adapter}, challenges: NewChallengeManager(defaultChallengeTTL)}
+
+	session, err := service.EnsureSession(t.Context(), EnsureRequest{
+		TrackerID: "BTN",
+		Config:    config.TrackerConfig{Username: "user", Password: "pass"},
+		AutoLogin: true,
+	})
+	var validationErr *ValidationError
+	if !errors.As(err, &validationErr) || !validationErr.Transient || validationErr.ConfirmedInvalid {
+		t.Fatalf("expected transient validation error, got session=%#v err=%v", session, err)
+	}
+	if session.ChallengeID != "" || adapter.validateCalls != 1 || adapter.loginCalls != 0 || adapter.deleteCalls != 0 {
+		t.Fatalf(
+			"transient diagnostic calls/session = validate=%d login=%d delete=%d session=%#v",
+			adapter.validateCalls,
+			adapter.loginCalls,
+			adapter.deleteCalls,
+			session,
+		)
 	}
 }
 
