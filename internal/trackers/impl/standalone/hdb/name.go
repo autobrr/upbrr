@@ -9,10 +9,32 @@ import (
 	"strings"
 	"unicode"
 
+	"golang.org/x/text/unicode/norm"
+
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+// uploadTorrentFilename keeps endpoint filename restrictions separate from the reviewed display name.
+func uploadTorrentFilename(name string) string {
+	name = strings.NewReplacer("DD+", "DDP", "HDR10+", "HDR10P", "DTS:", "DTS-", "&", " and ", "'", "", "’", "").Replace(name)
+	name = strings.Map(func(char rune) rune {
+		switch {
+		case unicode.Is(unicode.Mn, char):
+			return -1
+		case char >= 'a' && char <= 'z', char >= 'A' && char <= 'Z', char >= '0' && char <= '9', char == '-', char == '_':
+			return char
+		default:
+			return '.'
+		}
+	}, norm.NFD.String(name))
+	name = strings.Trim(strings.Join(strings.FieldsFunc(name, func(char rune) bool { return char == '.' }), "."), ".-_")
+	if name == "" {
+		name = "release"
+	}
+	return name + ".torrent"
+}
 
 func releaseNamePolicy() trackers.ReleaseNamePolicyBinding {
 	return trackers.WithMovieYearProvider(trackers.WithEpisodeTitleMode(
