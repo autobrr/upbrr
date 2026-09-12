@@ -115,6 +115,62 @@ func TestCompositeUploadStrictDebugContinuesWithEligibleTrackers(t *testing.T) {
 	}
 }
 
+func TestCompositeUploadFeedbackHydratesPersistedMetadataDemand(t *testing.T) {
+	t.Parallel()
+
+	requirements := api.MetadataRequirementSet{
+		Version: "composite-hydration-v1",
+		Requirements: []api.MetadataRequirement{{
+			Scope:       api.MetadataRequirementScopeAny,
+			AnyOf:       []api.MetadataRequirementField{"original_title"},
+			Disposition: api.RuleDispositionStrict,
+		}},
+	}
+	basePreparer := testPreparer()
+	hydrationInputs := make(chan api.PrepareInput, 1)
+	preparer := basePreparer
+	preparer.PrepareFunc = func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
+		if input.RequirePrepared {
+			hydrationInputs <- input
+			if !reflect.DeepEqual(input.MetadataRequirements, requirements) {
+				return api.PrepareResult{}, errors.New("compatible prepared generation is required")
+			}
+		}
+		return basePreparer.Prepare(ctx, input)
+	}
+	module, repository, _ := newCompositeUploadTestModule(t)
+	module.preparer = preparer
+	module.inputReadiness = compositeUploadDemandEvaluator{requirements: requirements}
+
+	started, err := module.StartUpload(t.Context(), testOwnerID, compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, "composite-hydration"))
+	if err != nil {
+		t.Fatalf("start composite debug upload: %v", err)
+	}
+	blocked := waitCompositeUploadTestOperation(t, module, started)
+	state, err := repository.Load(t.Context(), testOwnerID, blocked.Workflow.ID)
+	if err != nil {
+		t.Fatalf("load blocked composite state: %v", err)
+	}
+	if state.Composite == nil || state.Composite.Intent.Preparation == nil ||
+		!reflect.DeepEqual(state.PreparationDemand, requirements) || !reflect.DeepEqual(state.Composite.Intent.Preparation.MetadataRequirements, api.MetadataRequirementSet{}) {
+		t.Fatalf("persisted composite preparation state = %#v", state)
+	}
+
+	completed := approveCompositeUploadTrackers(t, module, blocked, []api.TrackerID{"ALPHA", "BETA"}, "approve-composite-hydration")
+	if completed.Operation == nil || completed.Operation.Status != api.StageStatusCompleted || completed.DryRun == nil {
+		t.Fatalf("resumed composite operation = %#v", completed)
+	}
+	select {
+	case input := <-hydrationInputs:
+		if input.SourcePath != blocked.Release.Release.Source.SourcePath || input.Force || !input.RequirePrepared ||
+			input.Controls.ConfirmBDMVRescan || input.Controls.ForceRecheck != nil || !reflect.DeepEqual(input.MetadataRequirements, requirements) {
+			t.Fatalf("composite hydration input = %#v", input)
+		}
+	default:
+		t.Fatal("composite resume did not hydrate the prepared release")
+	}
+}
+
 func TestCompositeUploadConfirmFeedbackResumesWithServerApproval(t *testing.T) {
 	t.Parallel()
 
@@ -975,6 +1031,15 @@ func compositeUploadTestRequest(
 		},
 		IdempotencyKey: idempotencyKey,
 	}
+}
+
+type compositeUploadDemandEvaluator struct {
+	readyInputReadinessEvaluator
+	requirements api.MetadataRequirementSet
+}
+
+func (e compositeUploadDemandEvaluator) Requirements(context.Context, []api.TrackerID) (api.MetadataRequirementSet, error) {
+	return e.requirements, nil
 }
 
 func newCompositeUploadTestModule(
