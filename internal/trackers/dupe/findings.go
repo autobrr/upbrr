@@ -58,7 +58,7 @@ const (
 	findingPriorityExact           = 1000
 	findingPriorityContentConflict = 950
 	findingPriorityDisjointContent = 900
-	findingPriorityPackContainment = 850
+	findingPriorityPackContainment = 890
 	findingPriorityTrackerRule     = 810
 	findingPriorityTrackerMatched  = 800
 	findingPriorityTrackerMissing  = 700
@@ -80,6 +80,20 @@ func collectCandidateFindings(
 ) []RuleFinding {
 	findings := make([]RuleFinding, 0, 12)
 	findings = append(findings, collectExactFindings(target, candidate)...)
+	targetTitleScope := parseBestTitle(target.Names).Content
+	candidateTitleScope := parseReleaseTitle(candidate.Name, FactOriginTrackerTitle).Content
+	if contentScopesContradict(exactOnlyContentScope(targetFacts.Content, targetTitleScope), targetTitleScope) ||
+		contentScopesContradict(exactOnlyContentScope(candidateFacts.Content, candidateTitleScope), candidateTitleScope) {
+		findings = append(findings, RuleFinding{
+			RuleID:         GeneralPolicyID + "/content_scope",
+			Source:         "general",
+			Status:         RuleFindingIndeterminate,
+			Relation:       api.DupeRelationManualReview,
+			ReasonCode:     "content_scope_contradictory",
+			Contradictions: []string{"content_scope"},
+			Priority:       findingPriorityContentConflict,
+		})
+	}
 	findings = append(findings, collectGeneralFindings(targetFacts, candidateFacts, policy, workScope)...)
 	if policy.ExactMatchOnly {
 		findings = append(findings, collectExactOnlyFinding(target, targetFacts, candidate, candidateFacts, policy))
@@ -149,17 +163,6 @@ func collectExactOnlyFinding(
 		finding.Relation = api.DupeRelationExactDuplicate
 		finding.ReasonCode = "exact_identity"
 		finding.Priority = findingPriorityExact
-		return finding
-	}
-	// Structured and title coordinates must not disagree: otherwise even a
-	// general disjoint-content or pack finding could rely on the wrong scope.
-	if contentScopesContradict(targetFacts.Content, parseBestTitle(target.Names).Content) ||
-		contentScopesContradict(candidateFacts.Content, parseReleaseTitle(candidate.Name, FactOriginTrackerTitle).Content) {
-		finding.Status = RuleFindingIndeterminate
-		finding.Relation = api.DupeRelationManualReview
-		finding.ReasonCode = "content_scope_contradictory"
-		finding.Contradictions = []string{"content_scope"}
-		finding.Priority = findingPriorityContentConflict
 		return finding
 	}
 	namesKnown := strings.TrimSpace(candidate.Name) != "" && slices.ContainsFunc(target.Names, func(name string) bool {
@@ -250,8 +253,7 @@ func collectGeneralFindings(target normalizedFacts, candidate normalizedFacts, p
 	// applies when the search authoritatively bound candidates to the same
 	// work; season numbers alone cannot relate releases across works on a
 	// title-fallback search.
-	if (workScope == WorkScopeProviderID || workScope == WorkScopeTrackerGroup) &&
-		compareDimensionFacts(trackerspkg.DupeDimensionResolution, target.Resolution, candidate.Resolution) == DimensionEqual {
+	if workScope == WorkScopeProviderID || workScope == WorkScopeTrackerGroup {
 		if finding, ok := collectPackContainmentFinding(target.Content, candidate.Content); ok {
 			findings = append(findings, finding)
 		}

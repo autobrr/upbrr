@@ -717,7 +717,7 @@ func TestULCXSeasonPackPrecedence(t *testing.T) {
 	}
 }
 
-func TestULCXSeasonPackWithMissingResolutionRemainsActionable(t *testing.T) {
+func TestULCXSeasonPackContainmentDoesNotRequireResolution(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		name      string
@@ -744,7 +744,7 @@ func TestULCXSeasonPackWithMissingResolutionRemainsActionable(t *testing.T) {
 			t.Parallel()
 			test.target.Season, test.candidate.Season = 1, 1
 			test.target.Episode, test.candidate.Pack = 2, true
-			assertULCXRelation(t, test.target, test.candidate, api.DupeRelationInsufficientEvidence)
+			assertULCXRelation(t, test.target, test.candidate, api.DupeRelationExistingPreferred)
 		})
 	}
 }

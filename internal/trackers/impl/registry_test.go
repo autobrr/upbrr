@@ -633,7 +633,10 @@ func TestNewRegistryIncludesBHDPolicies(t *testing.T) {
 	if groups, ok := registry.LookupBannedGroups("BHD"); !ok || !slices.Contains(groups, "TGS") {
 		t.Fatalf("BHD banned groups = %#v, %t", groups, ok)
 	}
-	if policy, ok := registry.LookupDupePolicy("BHD"); !ok || policy.ID != "bhd/duplicate/v2" || policy.SizeVariancePercent != 20 {
+	if policy, ok := registry.LookupDupePolicy("BHD"); !ok || policy.ID != "bhd/duplicate/v3" || policy.SizeVariancePercent != 0 ||
+		!slices.Equal(policy.SlotDimensions, []trackers.DupeDimension{
+			trackers.DupeDimensionMediaKind, trackers.DupeDimensionResolution,
+		}) {
 		t.Fatalf("BHD dupe policy = %#v, %t", policy, ok)
 	}
 	if definition, ok := registry.Lookup("BHD"); !ok {

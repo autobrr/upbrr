@@ -384,7 +384,7 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/bhd/profile.go:Profile": {
-    "sha256": "978ff3571c7b372c9b387e18dca79e8109ffacc1bdf7f0db5d16f93dad6778b1",
+    "sha256": "485dddf97ffd7fbb01e7fda47dc2315df394dbaf42120779b94f6152b4f2d0fb",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/bhdtv/upload.go:prepareUploadState": {

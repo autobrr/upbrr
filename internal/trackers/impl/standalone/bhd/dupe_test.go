@@ -50,11 +50,23 @@ func TestBHDSearchUsesExternalIDs(t *testing.T) {
 		{
 			name: "tv tmdb id",
 			meta: api.DuplicateSubject{
-				SourcePath: "source",
-				Identity:   api.ExternalIdentity{TMDBID: 123, Category: "TV"},
-				Release:    api.ReleaseInfo{Resolution: "1080p"},
+				SourcePath:  "source",
+				ReleaseName: "Example.Series.S01E04.1080p.WEB-DL-GRP",
+				Identity:    api.ExternalIdentity{TMDBID: 123, Category: "TV"},
+				Release:     api.ReleaseInfo{Resolution: "1080p"},
 			},
 			wantTMDBID:   "tv/123",
+			wantCategory: "TV",
+		},
+		{
+			name: "tv imdb with season override",
+			meta: api.DuplicateSubject{
+				ReleaseNameOverrides: api.ReleaseNameOverrides{Season: new("02")},
+				SourcePath:           "source",
+				ReleaseName:          "Example.Series.S01E04.1080p.WEB-DL-GRP",
+				Identity:             api.ExternalIdentity{IMDBID: 1234567, Category: "TV"},
+			},
+			wantIMDBID:   "tt1234567",
 			wantCategory: "TV",
 		},
 		{
@@ -159,69 +171,87 @@ func TestBHDSearchUsesExternalIDs(t *testing.T) {
 			if got := bhdStringFromAny(payload["categories"]); got != tc.wantCategory {
 				t.Fatalf("expected category %q, got %q", tc.wantCategory, got)
 			}
-			if value, ok := payload["types"]; !ok || value != nil {
-				t.Fatalf("expected policy-safe nil type filter, got %#v", value)
+			if value, ok := payload["types"]; ok {
+				t.Fatalf("expected no type filter, got %#v", value)
+			}
+			if value, ok := payload["search"]; ok {
+				t.Fatalf("expected no title or season filter, got %#v", value)
 			}
 		})
 	}
 }
 
-func TestBHDSearchContinuesFullPageWhenTotalPagesOmitted(t *testing.T) {
+func TestBHDSearchFollowsPages(t *testing.T) {
 	t.Parallel()
 
-	requestedPages := make([]int, 0, 2)
-	client := &http.Client{Transport: bhdRoundTripFunc(func(req *http.Request) (*http.Response, error) {
-		var request map[string]any
-		if err := json.NewDecoder(req.Body).Decode(&request); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
-		page := int(bhdInt(request["page"]))
-		requestedPages = append(requestedPages, page)
-		count := 100
-		if page == 2 {
-			count = 1
-		}
-		results := make([]map[string]any, count)
-		for index := range count {
-			results[index] = map[string]any{
-				"name": fmt.Sprintf("Example.Release.2026.%03d.1080p-GRP", index+(page-1)*100),
+	for _, advertised := range []bool{false, true} {
+		t.Run(fmt.Sprintf("advertised=%t", advertised), func(t *testing.T) {
+			requestedPages := make([]int, 0, 2)
+			client := &http.Client{Transport: bhdRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+				var request map[string]any
+				if err := json.NewDecoder(req.Body).Decode(&request); err != nil {
+					t.Fatalf("decode request: %v", err)
+				}
+				page := int(bhdInt(request["page"]))
+				requestedPages = append(requestedPages, page)
+				count := 100
+				if advertised {
+					count = 2
+				}
+				if page == 2 {
+					count = 1
+				}
+				results := make([]map[string]any, count)
+				for index := range count {
+					results[index] = map[string]any{
+						"name": fmt.Sprintf("Example.Release.2026.%03d.1080p-GRP", index+(page-1)*100),
+					}
+				}
+				response := map[string]any{
+					"status_code": 1,
+					"results":     results,
+				}
+				if advertised {
+					response["page"], response["total_pages"], response["total_results"] = page, 2, 3
+				}
+				body, err := json.Marshal(response)
+				if err != nil {
+					t.Fatalf("encode response: %v", err)
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(bytes.NewReader(body)),
+					Header:     make(http.Header),
+				}, nil
+			})}
+			searcher := &dupeSearcher{
+				cfg: config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+					"BHD": {APIKey: "placeholder"},
+				}}},
+				http:     client,
+				baseURL:  "https://example.invalid/",
+				maxPages: 2,
 			}
-		}
-		body, err := json.Marshal(map[string]any{
-			"status_code": 1,
-			"results":     results,
-		})
-		if err != nil {
-			t.Fatalf("encode response: %v", err)
-		}
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Body:       io.NopCloser(bytes.NewReader(body)),
-			Header:     make(http.Header),
-		}, nil
-	})}
-	searcher := &dupeSearcher{
-		cfg: config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-			"BHD": {APIKey: "placeholder"},
-		}}},
-		http:     client,
-		baseURL:  "https://example.invalid/",
-		maxPages: 2,
-	}
 
-	result := searcher.Search(context.Background(), api.DuplicateSubject{
-		Identity: api.ExternalIdentity{TMDBID: 1234567, Category: api.CanonicalCategoryMovie},
-	})
-	search := result.SearchEvidence()
-	if err := result.Cause(); err != nil {
-		t.Fatalf("search: %v", err)
-	}
-	if !slices.Equal(requestedPages, []int{1, 2}) ||
-		!search.Complete ||
-		search.Pages != 2 ||
-		len(search.Warnings) != 0 ||
-		len(result.Entries()) != 101 {
-		t.Fatalf("requested pages=%v search=%#v entries=%d", requestedPages, search, len(result.Entries()))
+			result := searcher.Search(context.Background(), api.DuplicateSubject{
+				Identity: api.ExternalIdentity{TMDBID: 1234567, Category: api.CanonicalCategoryMovie},
+			})
+			search := result.SearchEvidence()
+			if err := result.Cause(); err != nil {
+				t.Fatalf("search: %v", err)
+			}
+			wantEntries := 101
+			if advertised {
+				wantEntries = 3
+			}
+			if !slices.Equal(requestedPages, []int{1, 2}) ||
+				!search.Complete ||
+				search.Pages != 2 ||
+				len(search.Warnings) != 0 ||
+				len(result.Entries()) != wantEntries {
+				t.Fatalf("requested pages=%v search=%#v entries=%d", requestedPages, search, len(result.Entries()))
+			}
+		})
 	}
 }
 
@@ -306,5 +336,33 @@ func TestBHDSearchCountMismatchFailsClosed(t *testing.T) {
 	})
 	if search := result.SearchEvidence(); search.Complete || search.Pages != 1 || len(search.Warnings) != 1 || len(result.Entries()) != 1 {
 		t.Fatalf("count mismatch search=%#v entries=%d", search, len(result.Entries()))
+	}
+}
+
+func TestBHDSearchRejectsInvalidResults(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{
+		`{"status_code":1,"success":false,"results":[]}`,
+		`{"status_code":2,"results":[]}`,
+		`{"status_code":1}`,
+		`{"status_code":1,"results":null}`,
+		`{"status_code":1,"results":{}}`,
+		`{"status_code":1,"results":[null]}`,
+		`{"status_code":1,"results":[{"name":""}]}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			client := &http.Client{Transport: bhdRoundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})}
+			cfg := config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+				"BHD": {APIKey: "placeholder"},
+			}}}
+			result := dupe.NewAdapter(New(), "BHD", cfg, client, api.NopLogger{}).Search(t.Context(), api.DuplicateSubject{
+				Identity: api.ExternalIdentity{TMDBID: 123, Category: api.CanonicalCategoryTV},
+			})
+			if result.SearchEvidence().Complete || result.Disposition() != dupe.DispositionFailed {
+				t.Fatalf("invalid response must fail: %#v", result)
+			}
+		})
 	}
 }

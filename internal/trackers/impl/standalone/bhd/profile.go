@@ -32,19 +32,38 @@ func Profile() standalone.Profile {
 		AudioPolicy:          &trackers.AudioPolicy{BlockEnglishOriginalWithForeign: true},
 		ImageHostPolicy:      &trackers.ImageHostPolicy{AllowedHosts: []string{"imgbox", "imgbb", "pixhost", "bhd", "passtheimage"}},
 		DupePolicy: &trackers.DupePolicy{
-			ID:         "bhd/duplicate/v2",
+			ID:         "bhd/duplicate/v3",
 			EvidenceID: "bhd-upload-rules",
 			SearchScope: trackers.DupeSearchScope{
 				MaxPages: 100,
 			},
 			SlotDimensions: []trackers.DupeDimension{
-				trackers.DupeDimensionType,
-				trackers.DupeDimensionSource,
+				trackers.DupeDimensionMediaKind,
 				trackers.DupeDimensionResolution,
-				trackers.DupeDimensionHDR,
 			},
-			SizeVariancePercent:     20,
-			SizeVarianceResolutions: []string{"1080p"},
+			ManualReviewRules: []trackers.DupeRule{
+				{
+					ID:                 "web_quality_comparison",
+					EvidenceID:         "bhd-upload-rules-2.3.1",
+					Relation:           "manual_review",
+					ReasonCode:         "web_quality_requires_review",
+					RequiresManualStep: true,
+					OverridesGeneral:   true,
+					Conditions: []trackers.DupeCondition{
+						{
+							Dimension:       trackers.DupeDimensionMediaKind,
+							TargetValues:    []string{"web_dl", "web_rip"},
+							CandidateValues: []string{"web_dl", "web_rip"},
+							ValuesDifferent: true,
+						},
+						{
+							Dimension:        trackers.DupeDimensionResolution,
+							ValuesEqual:      true,
+							RequiresComplete: true,
+						},
+					},
+				},
+			},
 		},
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,

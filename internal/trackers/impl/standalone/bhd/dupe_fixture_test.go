@@ -27,7 +27,10 @@ func TestBHDHDRFixturePreservesIndependentFields(t *testing.T) {
 	if err := decoder.Decode(&payload); err != nil {
 		t.Fatalf("decode fixture: %v", err)
 	}
-	entries := bhdEntries(payload)
+	entries, err := bhdEntries(payload)
+	if err != nil {
+		t.Fatalf("parse entries: %v", err)
+	}
 	if len(entries) != 8 {
 		t.Fatalf("entries = %d", len(entries))
 	}

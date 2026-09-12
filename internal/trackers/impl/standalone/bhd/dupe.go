@@ -7,10 +7,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"net/http"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -20,8 +20,6 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
-
-var seasonPattern = regexp.MustCompile(`(?i)S(\d{1,2})`)
 
 type dupeSearcher struct {
 	cfg      config.Config
@@ -58,14 +56,10 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		category, tmdbPrefix = "TV", "tv"
 	}
 	payload := map[string]any{"action": "search", "categories": category}
-	payload["types"] = nil
 	if tmdbID != 0 {
 		payload["tmdb_id"] = tmdbPrefix + "/" + strconv.Itoa(tmdbID)
 	} else {
 		payload["imdb_id"] = imdbID
-	}
-	if season := bhdSeason(meta); season != "" && category == "TV" {
-		payload["search"] = season
 	}
 	if rss := strings.TrimSpace(cfg.BhdRSSKey); rss != "" {
 		payload["rsskey"] = rss
@@ -109,10 +103,16 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		if decodeErr != nil || len(decoded) == 0 {
 			return dupe.Failed(dupe.FailureResponseParse, "BHD search failed", decodeErr)
 		}
-		if bhdInt(decoded["status_code"]) == 0 {
+		if bhdInt(decoded["status_code"]) != 1 {
 			return dupe.Failed(dupe.FailureResponseStatus, "BHD api rejected search", nil)
 		}
-		pageEntries := bhdEntries(decoded)
+		if success, present, valid := bhdBoolField(decoded, "success"); present && (!valid || !success) {
+			return dupe.Failed(dupe.FailureResponseStatus, "BHD api rejected search", nil)
+		}
+		pageEntries, err := bhdEntries(decoded)
+		if err != nil {
+			return dupe.Failed(dupe.FailureResponseParse, "BHD search results malformed", err)
+		}
 		entries = append(entries, pageEntries...)
 		pages++
 		rawPage, pageKnown := decoded["page"]
@@ -164,22 +164,44 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	})
 }
 
-func bhdEntries(payload map[string]any) []api.DupeEntry {
-	results, _ := payload["results"].([]any)
+func bhdEntries(payload map[string]any) ([]api.DupeEntry, error) {
+	results, ok := payload["results"].([]any)
+	if !ok {
+		return nil, errors.New("BHD results must be an array")
+	}
 	entries := make([]api.DupeEntry, 0, len(results))
 	for _, raw := range results {
 		item, ok := raw.(map[string]any)
 		if !ok {
-			continue
+			return nil, errors.New("BHD result must be an object")
+		}
+		name, ok := item["name"].(string)
+		if !ok || strings.TrimSpace(name) == "" {
+			return nil, errors.New("BHD result name must be a non-empty string")
 		}
 		entry := api.DupeEntry{
-			Name:     bhdString(item["name"]),
+			Name:     strings.TrimSpace(name),
 			Link:     bhdString(item["url"]),
 			ID:       bhdString(item["id"]),
 			Category: bhdString(item["category"]),
 			Type:     bhdString(item["type"]),
 			Source:   bhdString(item["source"]),
 			Internal: bhdInt(item["internal"]) == 1,
+			Pack:     bhdInt(item["tv_pack"]) == 1,
+		}
+		switch resolution := normalizeResolution(entry.Type); resolution {
+		case "2160p", "1080p", "1080i", "720p", "576p", "540p", "480p":
+			entry.Res = resolution
+		case "bd remux", "uhd remux", "dvd remux":
+			entry.CanonicalType = "REMUX"
+		case "bd 25", "bd 50", "uhd 50", "uhd 66", "uhd 100", "dvd 5", "dvd 9":
+			entry.CanonicalType = "DISC"
+		}
+		if imdbID := bhdIMDBInt(item["imdb_id"]); imdbID > 0 {
+			entry.ProviderIDs = append(entry.ProviderIDs, api.TrackerProviderID{Provider: "imdb", Value: bhdIMDB(imdbID)})
+		}
+		if _, tmdbID := parseTMDB(item["tmdb_id"]); tmdbID > 0 {
+			entry.ProviderIDs = append(entry.ProviderIDs, api.TrackerProviderID{Provider: "tmdb", Value: strconv.Itoa(tmdbID)})
 		}
 		if size := bhdInt(item["size"]); size > 0 {
 			entry.SizeKnown, entry.SizeBytes = true, size
@@ -189,7 +211,7 @@ func bhdEntries(payload map[string]any) []api.DupeEntry {
 		entry.FlagsComplete = entry.HDR.Status == api.HDREvidenceComplete
 		entries = append(entries, entry)
 	}
-	return entries
+	return entries, nil
 }
 
 func bhdHDRFacts(item map[string]any) (api.HDRFacts, []string) {
@@ -306,31 +328,6 @@ func bhdConfig(cfg config.Config) (config.TrackerConfig, string) {
 		}
 	}
 	return config.TrackerConfig{}, ""
-}
-
-func bhdSeason(meta api.DuplicateSubject) string {
-	if meta.ReleaseNameOverrides.Season != nil {
-		return normalizeBHDSeason(*meta.ReleaseNameOverrides.Season)
-	}
-	match := seasonPattern.FindStringSubmatch(meta.ReleaseName)
-	if len(match) == 2 {
-		return normalizeBHDSeason(match[1])
-	}
-	return ""
-}
-
-func normalizeBHDSeason(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return ""
-	}
-	if strings.HasPrefix(strings.ToUpper(trimmed), "S") {
-		return strings.ToUpper(trimmed)
-	}
-	if number, err := strconv.Atoi(trimmed); err == nil {
-		return "S" + strconv.Itoa(number)
-	}
-	return strings.ToUpper(trimmed)
 }
 
 func bhdIMDB(id int) string {
