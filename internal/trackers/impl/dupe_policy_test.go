@@ -13,6 +13,47 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestBHDProjectedWEBMatchesAPIResolutionType(t *testing.T) {
+	t.Parallel()
+	registry, err := NewRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, ok := registry.LookupDupePolicy("BHD")
+	if !ok {
+		t.Fatal("missing BHD policy")
+	}
+	projection, failure := registry.ProjectRelease(t.Context(), trackers.PreparationInput{
+		Tracker: "BHD",
+		Meta: api.UploadSubject{
+			ReleaseName: "Example.Series.S01E04.2160p.WEB-DL-GRP",
+			Type:        "WEBDL",
+			Source:      "WEB",
+			SeasonInt:   1,
+			EpisodeInt:  4,
+			Identity: api.ExternalIdentity{
+				Category: api.CanonicalCategoryTV,
+				TMDBID:   123,
+				IMDBID:   1234567,
+			},
+			Release: api.ReleaseInfo{Category: "TV", Resolution: "2160p"},
+		},
+	}, "", "", "")
+	if failure != nil {
+		t.Fatalf("project BHD: %v", failure)
+	}
+	candidate := dupe.NormalizeCandidate(api.DupeEntry{
+		Name: "Example.Series.S01E04.2160p.WEB-DL-OTHER",
+		Type: "2160p",
+		Res:  "2160p",
+	}, "BHD")
+	result := dupe.Evaluate(projection.DuplicateTarget, []dupe.TrackerCandidate{candidate}, policy,
+		dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeProviderID})
+	if len(result.Candidates) != 1 || result.Candidates[0].Relation != api.DupeRelationSameSlot || !result.RequiresAction {
+		t.Fatalf("BHD WEB candidate hidden: %#v", result)
+	}
+}
+
 func TestDVLProjectedEpisodeRanges(t *testing.T) {
 	t.Parallel()
 	registry, err := NewRegistry()
@@ -51,48 +92,48 @@ func TestDVLProjectedEpisodeRanges(t *testing.T) {
 			want:           api.DupeRelationExistingPreferred,
 		},
 		{
-			name: "same range",
+			name:           "same range",
 			candidateRange: "S01E01-E03",
-			targetEpisode: 1,
-			want: api.DupeRelationCoexists,
+			targetEpisode:  1,
+			want:           api.DupeRelationCoexists,
 		},
 		{
-			name: "disjoint ranges",
+			name:           "disjoint ranges",
 			candidateRange: "S01E04-E05",
-			targetEpisode: 1,
-			want: api.DupeRelationCoexists,
+			targetEpisode:  1,
+			want:           api.DupeRelationCoexists,
 		},
 		{
-			name: "overlapping ranges",
+			name:           "overlapping ranges",
 			candidateRange: "S01E02-E04",
-			targetEpisode: 1,
-			want: api.DupeRelationInsufficientEvidence,
+			targetEpisode:  1,
+			want:           api.DupeRelationInsufficientEvidence,
 		},
 		{
-			name: "same start different end",
+			name:           "same start different end",
 			candidateRange: "S01E01-E02",
-			targetEpisode: 1,
-			want: api.DupeRelationInsufficientEvidence,
+			targetEpisode:  1,
+			want:           api.DupeRelationInsufficientEvidence,
 		},
 		{
-			name: "target coordinate conflict",
+			name:           "target coordinate conflict",
 			candidateRange: "S01E01-E03",
-			targetEpisode: 4,
-			want: api.DupeRelationManualReview,
+			targetEpisode:  4,
+			want:           api.DupeRelationManualReview,
 		},
 		{
-			name: "candidate coordinate conflict",
-			candidateRange: "S01E01-E03",
-			targetEpisode: 1,
+			name:             "candidate coordinate conflict",
+			candidateRange:   "S01E01-E03",
+			targetEpisode:    1,
 			candidateEpisode: 4,
-			want: api.DupeRelationManualReview,
+			want:             api.DupeRelationManualReview,
 		},
 		{
-			name: "candidate season conflict",
-			candidateRange: "S02E01-E03",
-			targetEpisode: 1,
+			name:             "candidate season conflict",
+			candidateRange:   "S02E01-E03",
+			targetEpisode:    1,
 			candidateEpisode: 1,
-			want: api.DupeRelationManualReview,
+			want:             api.DupeRelationManualReview,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {

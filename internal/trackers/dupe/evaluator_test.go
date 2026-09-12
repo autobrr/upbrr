@@ -1524,8 +1524,72 @@ func TestEvaluateGeneralSeasonPackContainmentIsDirectional(t *testing.T) {
 		trackerspkg.DupePolicy{},
 		SearchEvidence{WorkScope: WorkScopeProviderID},
 	)
-	if got := differentResolution.Candidates[0]; got.Relation != api.DupeRelationCoexists || differentResolution.Blocks {
+	if got := differentResolution.Candidates[0]; got.Relation != api.DupeRelationExistingPreferred || !differentResolution.Blocks {
 		t.Fatalf("different-resolution pack relation = %#v", differentResolution)
+	}
+}
+
+func TestEvaluateSeasonPackRequiresWorkAndSeasonNotResolution(t *testing.T) {
+	t.Parallel()
+	for _, scope := range []WorkScope{WorkScopeProviderID, WorkScopeTrackerGroup, WorkScopeTitle} {
+		for _, proposedPack := range []bool{false, true} {
+			for _, sameSeason := range []bool{false, true} {
+				target := api.TrackerDuplicateTarget{
+					Season:     1,
+					Episode:    2,
+					Resolution: "2160p",
+				}
+				candidate := TrackerCandidate{
+					Season:     1,
+					Pack:       true,
+					Resolution: "1080p",
+				}
+				if proposedPack {
+					target.Pack, target.Episode, candidate.Pack, candidate.Episode = true, 0, false, 2
+				}
+				if !sameSeason {
+					candidate.Season = 2
+				}
+				result := Evaluate(target, []TrackerCandidate{candidate}, trackerspkg.DupePolicy{}, SearchEvidence{WorkScope: scope})
+				got := result.Candidates[0]
+				wantContainment := sameSeason && scope != WorkScopeTitle
+				if wantContainment {
+					want := api.DupeRelationExistingPreferred
+					if proposedPack {
+						want = api.DupeRelationCoexists
+					}
+					if got.Relation != want || got.WinningRule != GeneralPolicyID+"/season_pack_containment" {
+						t.Fatalf("scope=%s proposed_pack=%t same_season=%t: %#v", scope, proposedPack, sameSeason, got)
+					}
+				} else if got.WinningRule == GeneralPolicyID+"/season_pack_containment" {
+					t.Fatalf("unbound pack containment: %#v", got)
+				}
+			}
+		}
+	}
+}
+
+func TestEvaluateContradictoryPackTitlesRequireReview(t *testing.T) {
+	t.Parallel()
+	for _, proposedPack := range []bool{false, true} {
+		target := api.TrackerDuplicateTarget{
+			Names:      []string{"Example.Series.S01E02.2160p.WEB-DL-OTHER"},
+			Season:     1,
+			Episode:    2,
+			Resolution: "2160p",
+		}
+		candidate := NormalizeCandidate(api.DupeEntry{
+			Name: "Example.Series.S01E02.1080p.WEB-DL-GRP",
+			Pack: true,
+			Res:  "1080p",
+		}, "BHD")
+		if proposedPack {
+			target.Pack, target.Episode, candidate.Pack = true, 0, false
+		}
+		result := Evaluate(target, []TrackerCandidate{candidate}, trackerspkg.DupePolicy{}, SearchEvidence{Complete: true, WorkScope: WorkScopeProviderID})
+		if result.Blocks || !result.RequiresAction || result.Candidates[0].Relation != api.DupeRelationManualReview {
+			t.Fatalf("contradictory pack proposed=%t: %#v", proposedPack, result)
+		}
 	}
 }
 

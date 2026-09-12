@@ -174,7 +174,7 @@ func TestEvaluateExactMatchOnlyEvidence(t *testing.T) {
 				candidate.Resolution = ""
 				candidate.Name = "Example.Series.VariantB-GRP"
 			},
-			want: api.DupeRelationInsufficientEvidence,
+			want: api.DupeRelationExistingPreferred,
 		},
 		{
 			name: "contradictory season overrides apparent disjoint scope",

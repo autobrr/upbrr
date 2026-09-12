@@ -176,7 +176,7 @@ func TestBTNDuplicatePolicySeasonPackCapacity(t *testing.T) {
 	}
 }
 
-func TestBTNDuplicatePolicySeasonPackContainmentUsesResolutionSlot(t *testing.T) {
+func TestBTNDuplicatePolicySeasonPackContainmentCrossesResolutionSlots(t *testing.T) {
 	t.Parallel()
 
 	target := btnPolicyTarget("WEB-DL", "2160p", "H.265", "P2P")
@@ -189,10 +189,13 @@ func TestBTNDuplicatePolicySeasonPackContainmentUsesResolutionSlot(t *testing.T)
 	pack2160.ID, pack2160.Pack = "2160", true
 
 	result := dupe.Evaluate(target, []dupe.TrackerCandidate{pack720, pack1080, pack2160}, *duplicatePolicy(), btnCompleteSearch())
-	if !result.Blocks || result.RequiresAction || result.Candidates[0].Candidate.ID != "2160" ||
-		result.Candidates[0].Relation != api.DupeRelationExistingPreferred ||
-		result.Candidates[1].Relation != api.DupeRelationCoexists || result.Candidates[2].Relation != api.DupeRelationCoexists {
+	if !result.Blocks || result.RequiresAction || len(result.Candidates) != 3 {
 		t.Fatalf("season-pack resolution slots = %#v", result)
+	}
+	for _, candidate := range result.Candidates {
+		if candidate.Relation != api.DupeRelationExistingPreferred {
+			t.Fatalf("season pack must contain the episode across resolutions: %#v", candidate)
+		}
 	}
 }
 

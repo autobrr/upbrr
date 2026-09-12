@@ -561,6 +561,34 @@ func TestLSTDuplicatePolicyMetadata(t *testing.T) {
 	}
 }
 
+func TestLSTSeasonPacksOutrankHighPriorityTrackerRules(t *testing.T) {
+	t.Parallel()
+	for _, pair := range []struct{ target, candidate string }{
+		{"WEBDL", "WEBRIP"}, {"WEBRIP", "WEBDL"}, {"WEBDL", "WEBDL"}, {"REMUX", "REMUX"},
+	} {
+		for _, proposedPack := range []bool{false, true} {
+			target := lstTarget("Example.Series-TARGET", pair.target, "2160p", "PROVIDER", "H.265", api.HDRFormatHDR10)
+			candidate := lstCandidateWithProvider("Example.Series-GRP", pair.candidate, "2160p", "PROVIDER", api.HDRFormatHDR10)
+			if pair.target == pair.candidate {
+				target.HDR = lstHDR(api.HDRFormatDolbyVision, api.HDRFormatHDR10)
+			}
+			target.Season, candidate.Season = 1, 1
+			target.Pack, candidate.Pack = proposedPack, !proposedPack
+			want := api.DupeRelationExistingPreferred
+			if proposedPack {
+				candidate.Episode, want = 1, api.DupeRelationCoexists
+			} else {
+				target.Episode = 1
+			}
+			result := dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, *Profile().DupePolicy,
+				dupe.SearchEvidence{Complete: true, WorkScope: dupe.WorkScopeProviderID})
+			if result.Candidates[0].Relation != want || result.RequiresAction || result.Blocks == proposedPack {
+				t.Fatalf("types=%v proposed_pack=%t: %#v", pair, proposedPack, result)
+			}
+		}
+	}
+}
+
 func lstTarget(
 	name string,
 	typeValue string,
