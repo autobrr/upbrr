@@ -21,18 +21,6 @@ func TestBTNDuplicatePolicyRelations(t *testing.T) {
 		want      api.DupeRelation
 	}{
 		{
-			name:      "scene and p2p coexist",
-			target:    btnPolicyTarget("WEB-DL", "1080p", "H.264", "Scene"),
-			candidate: btnPolicyCandidate("WEB-DL", "1080p", "H.264", "P2P"),
-			want:      api.DupeRelationCoexists,
-		},
-		{
-			name:      "p2p and scene coexist",
-			target:    btnPolicyTarget("WEB-DL", "1080p", "H.264", "P2P"),
-			candidate: btnPolicyCandidate("WEB-DL", "1080p", "H.264", "Scene"),
-			want:      api.DupeRelationCoexists,
-		},
-		{
 			name:      "web h265 and h264 coexist",
 			target:    btnPolicyTarget("WEB-DL", "1080p", "H.265", "P2P"),
 			candidate: btnPolicyCandidate("WEB-DL", "1080p", "H.264", "P2P"),
@@ -169,14 +157,12 @@ func TestBTNDuplicatePolicySeasonPackCapacity(t *testing.T) {
 	sceneTarget.ReleaseOrigin = "Scene"
 	scene := first
 	scene.ReleaseOrigin = "Scene"
-	separated := dupe.Evaluate(sceneTarget, []dupe.TrackerCandidate{first, scene}, policy, btnCompleteSearch())
+	internal := first
+	internal.ReleaseOrigin = "None"
+	separated := dupe.Evaluate(sceneTarget, []dupe.TrackerCandidate{first, scene, internal}, policy, btnCompleteSearch())
 	for _, candidate := range separated.Candidates {
-		want := api.DupeRelationSameSlot
-		if candidate.Candidate.ReleaseOrigin == "P2P" {
-			want = api.DupeRelationCoexists
-		}
-		if candidate.Relation != want {
-			t.Fatalf("scene single slot included P2P release: %#v", candidate)
+		if candidate.Relation != api.DupeRelationSameSlot {
+			t.Fatalf("scene target admitted an origin-specific slot: %#v", candidate)
 		}
 	}
 }
@@ -212,7 +198,7 @@ func TestBTNDuplicatePolicyWEBCapacityRequiresProviderEvidence(t *testing.T) {
 	first := btnPolicyCandidate("WEB-DL", "1080p", "H.264", "None")
 	first.ID, first.Pack, first.Provider = "1", true, "ExampleService"
 	second := first
-	second.ID = "2"
+	second.ID, second.ReleaseOrigin = "2", "Scene"
 	below := dupe.Evaluate(target, []dupe.TrackerCandidate{first}, *duplicatePolicy(), btnCompleteSearch())
 	if finding := btnSetFinding(t, below, "standalone/btn/duplicate/v1/web_hd_capacity"); finding.Relation != api.DupeRelationCoexists {
 		t.Fatalf("WEB below-capacity finding = %#v", finding)

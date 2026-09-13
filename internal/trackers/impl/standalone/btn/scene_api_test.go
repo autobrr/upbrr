@@ -44,52 +44,50 @@ func TestBTNSceneSeasonPackAPISlots(t *testing.T) {
 	for _, resolution := range []string{"1080p", "2160p"} {
 		for _, targetSlot := range slots[:4] {
 			for _, candidateSlot := range slots {
-				t.Run(resolution+"/"+targetSlot.name+"/"+candidateSlot.name, func(t *testing.T) {
-					t.Parallel()
-					torrent := map[string]any{
-						"TorrentID":   "777",
-						"TvdbID":      "1234567",
-						"ReleaseName": fmt.Sprintf("Example.Show.S01.%s.WEB-DL.H.265-GRP", resolution),
-						"GroupName":   "Season 1",
-						"Category":    "Season",
-						"Source":      "WEB-DL",
-						"Resolution":  resolution,
-						"Codec":       "H.265",
-						"Origin":      "Scene",
-						"Tags":        candidateSlot.tags,
-					}
-					raw, err := json.Marshal(map[string]any{"result": map[string]any{"results": "1", "torrents": map[string]any{"777": torrent}}})
-					if err != nil {
-						t.Fatal(err)
-					}
-					payloads := captureBTNPayloads(t, string(raw))
-					adapter := dupe.NewAdapter(New(), "BTN", configWithBTNAPIKey(), payloads.client, nil)
-					result := adapter.Search(t.Context(), api.DuplicateSubject{Identity: api.ExternalIdentity{Category: "TV", TVDBID: 1234567}})
-					if result.Cause() != nil || len(result.Entries()) != 1 {
-						t.Fatalf("search failed: %v", result.Cause())
-					}
-					candidate := dupe.NormalizeCandidate(result.Entries()[0], "BTN")
-					target := btnPolicyTarget("WEB-DL", resolution, "H.265", "Scene")
-					target.Category, target.Pack = "TV", true
-					target.Names = []string{fmt.Sprintf("Example.Show.S01.%s.WEB-DL.H.265-OTHER", resolution)}
-					target.HDR = api.HDRFacts{
-						Formats: targetSlot.formats,
-						Status:  api.HDREvidenceComplete,
-						Origin:  api.HDREvidenceMediaInfo,
-					}
-					evaluation := dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, *duplicatePolicy(), result.SearchEvidence())
-					wantAction := resolution == "1080p" || candidateSlot.name == "unknown" || targetSlot.name == candidateSlot.name
-					if evaluation.Blocks || evaluation.RequiresAction != wantAction {
-						t.Fatalf("scene slot decision: blocks=%t action=%t wantAction=%t candidates=%#v sets=%#v", evaluation.Blocks, evaluation.RequiresAction, wantAction, evaluation.Candidates, evaluation.SetFindings)
-					}
-					for _, origins := range [][2]string{{"Scene", "P2P"}, {"P2P", "Scene"}, {"Scene", "None"}, {"None", "Scene"}} {
-						target.ReleaseOrigin, candidate.ReleaseOrigin = origins[0], origins[1]
-						separated := dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, *duplicatePolicy(), result.SearchEvidence())
-						if separated.Blocks || separated.RequiresAction {
-							t.Fatalf("Scene/non-Scene packs did not coexist: target=%s candidates=%#v sets=%#v", origins[0], separated.Candidates, separated.SetFindings)
+				for _, origin := range []string{"Scene", "P2P", "Internal"} {
+					t.Run(resolution+"/"+targetSlot.name+"/"+candidateSlot.name+"/"+origin, func(t *testing.T) {
+						t.Parallel()
+						torrent := map[string]any{
+							"TorrentID":   "777",
+							"TvdbID":      "1234567",
+							"ReleaseName": fmt.Sprintf("Example.Show.S01.%s.WEB-DL.H.265-GRP", resolution),
+							"GroupName":   "Season 1",
+							"Category":    "Season",
+							"Source":      "WEB-DL",
+							"Resolution":  resolution,
+							"Codec":       "H.265",
+							"Origin":      origin,
+							"Tags":        candidateSlot.tags,
 						}
-					}
-				})
+						raw, err := json.Marshal(map[string]any{"result": map[string]any{"results": "1", "torrents": map[string]any{"777": torrent}}})
+						if err != nil {
+							t.Fatal(err)
+						}
+						payloads := captureBTNPayloads(t, string(raw))
+						adapter := dupe.NewAdapter(New(), "BTN", configWithBTNAPIKey(), payloads.client, nil)
+						result := adapter.Search(t.Context(), api.DuplicateSubject{Identity: api.ExternalIdentity{Category: "TV", TVDBID: 1234567}})
+						if result.Cause() != nil || len(result.Entries()) != 1 {
+							t.Fatalf("search failed: %v", result.Cause())
+						}
+						candidate := dupe.NormalizeCandidate(result.Entries()[0], "BTN")
+						if origin == "Internal" && (!candidate.Internal || candidate.ReleaseOrigin != "None") {
+							t.Fatalf("internal origin normalization = %#v", candidate)
+						}
+						target := btnPolicyTarget("WEB-DL", resolution, "H.265", "Scene")
+						target.Category, target.Pack = "TV", true
+						target.Names = []string{fmt.Sprintf("Example.Show.S01.%s.WEB-DL.H.265-OTHER", resolution)}
+						target.HDR = api.HDRFacts{
+							Formats: targetSlot.formats,
+							Status:  api.HDREvidenceComplete,
+							Origin:  api.HDREvidenceMediaInfo,
+						}
+						evaluation := dupe.Evaluate(target, []dupe.TrackerCandidate{candidate}, *duplicatePolicy(), result.SearchEvidence())
+						wantAction := resolution == "1080p" || candidateSlot.name == "unknown" || targetSlot.name == candidateSlot.name
+						if evaluation.Blocks || evaluation.RequiresAction != wantAction {
+							t.Fatalf("scene slot decision: blocks=%t action=%t wantAction=%t candidates=%#v sets=%#v", evaluation.Blocks, evaluation.RequiresAction, wantAction, evaluation.Candidates, evaluation.SetFindings)
+						}
+					})
+				}
 			}
 		}
 	}
