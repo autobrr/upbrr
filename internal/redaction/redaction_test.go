@@ -49,7 +49,7 @@ func TestRedactValueUsesCustomSensitiveKeysForURLValues(t *testing.T) {
 	t.Parallel()
 
 	keys := map[string]struct{}{"diagnosticcode": {}}
-	input := "https://tracker.example/diagnostics?diagnostic_code=query-secret&page=2#diagnostic-code=fragment-secret"
+	input := "https://tracker.example/diagnostics?diagnostic_code=query-secret&page=2#diagnostic-code=fragment-secret&state=a+b"
 	output := RedactValue(input, keys)
 
 	for _, secret := range []string{"query-secret", "fragment-secret"} {
@@ -59,6 +59,12 @@ func TestRedactValueUsesCustomSensitiveKeysForURLValues(t *testing.T) {
 	}
 	if !contains(output, "page=2") {
 		t.Fatal("expected ordinary URL query value preserved")
+	}
+	if !contains(output, "#diagnostic-code=[REDACTED]") || contains(output, "%255B") {
+		t.Fatal("expected readable custom fragment redaction marker")
+	}
+	if !contains(output, "state=a+b") || contains(output, "state=a%20b") {
+		t.Fatal("expected literal fragment plus preserved")
 	}
 }
 

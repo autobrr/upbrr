@@ -188,7 +188,12 @@ func redactURL(raw string, sensitiveKeys map[string]struct{}) string {
 		if !ok {
 			parsed.Fragment = "[REDACTED]"
 		} else {
-			parsed.Fragment = fragment
+			decodedFragment, err := url.PathUnescape(fragment)
+			if err != nil {
+				parsed.Fragment = "[REDACTED]"
+			} else {
+				parsed.Fragment = decodedFragment
+			}
 		}
 	}
 	parsed.RawFragment = ""
