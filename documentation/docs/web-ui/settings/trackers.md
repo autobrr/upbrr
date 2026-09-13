@@ -70,7 +70,9 @@ trackers:
 
 JSON uses arrays with the catalog field names `DupeBypassGroups`, `PersonalReleaseGroups`, and `InternalGroups`.
 
-For BTN, configured internal groups can bypass two restrictions when ownership is unambiguous. Claimed-show handling uses fresh structured rows from the scoped BTN claim-list post; stale or legacy cache data can still block an upload but cannot prove ownership for a bypass. Season-pack handling separately uses current BTN reservation API rows. Every applicable row from the relevant source must identify the same configured group.
+For BTN, configured internal groups can bypass two restrictions when ownership is unambiguous. Claimed-show handling uses fresh structured rows from the scoped BTN claim-list post. upbrr automatically refreshes an older title-only cache before evaluating ownership; if that refresh fails, the legacy data can still block an upload but cannot prove ownership for a bypass. Season-pack handling separately uses current BTN reservation API rows. Every applicable row from the relevant source must identify the same configured group.
+
+With debug logging enabled, `reason=legacy_format` identifies an automatic cache migration attempt. A blocked claim warning includes `release_group`, `internal_group`, `fresh_structured`, `own_claim`, and `matched_claims` so you can see which bypass prerequisite was missing.
 
 HDB uses BTN's authoritative claim-list data and the same claim window for non-Scene WEB TV uploads. upbrr reads an existing BTN session and its claim cache without starting a login or TOTP flow. If neither a usable structured cache nor BTN access is available, the HDB upload continues with a warning.
 

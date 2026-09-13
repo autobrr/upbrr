@@ -63,7 +63,7 @@ func TestExtractBTNClaimRecordsPreservesSitesGroupsAndConflicts(t *testing.T) {
 	records := extractBTNClaimRecords(`
 <div id="content1405482" class="postcontent">
   <strong>Current Shows:</strong><br>
-  Example Show -- HDB | BTN -- NTb -- AMZN<br>
+  Example Show -- <span><strong>HDB</strong></span> | <span><strong>BTN</strong></span> -- <strong><span>NTb</span></strong> -- AMZN<br>
   Example Show -- HDB | BTN -- NTb -- duplicate row<br>
   Example Show -- BTN -- Other -- NF<br>
   HDB Only -- HDB -- HDBGRP -- DSNP<br>
@@ -227,7 +227,7 @@ func TestStaleOrConflictingClaimsNeverAuthorizeOwnGroupBypass(t *testing.T) {
 	}
 }
 
-func TestLegacyClaimCacheCannotAuthorizeOwnGroupBypass(t *testing.T) {
+func TestLegacyClaimCacheRefreshesStructuredOwnership(t *testing.T) {
 	t.Parallel()
 
 	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
@@ -241,18 +241,89 @@ func TestLegacyClaimCacheCannotAuthorizeOwnGroupBypass(t *testing.T) {
 	cfg := config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
 		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-			"BTN": {InternalGroups: config.CSVList{"NTb"}},
+			"BTN": {InternalGroups: config.CSVList{"TBN"}},
 		}},
 	}
-	claimed, err := newClaimChecker(cfg, nil, "BTN").HasClaim(t.Context(), api.UploadSubject{
+	logger := &captureBTNLogger{}
+	fetchCalls := 0
+	checker := &claimChecker{
+		cfg:    cfg,
+		target: "BTN",
+		logger: logger,
+		fetchOverride: func(context.Context) (btnClaimData, error) {
+			fetchCalls++
+			return btnClaimData{Records: []btnClaimRecord{
+				{
+					Title: "Example Show",
+					Sites: []string{"HDB", "BTN"},
+					Group: "TBN",
+				},
+			}}, nil
+		},
+	}
+	claimed, err := checker.HasClaim(t.Context(), api.UploadSubject{
 		Identity:    api.ExternalIdentity{Category: "TV"},
 		SeasonInt:   1,
 		EpisodeInt:  1,
-		ReleaseName: "Example.Show.S01E01.1080p.WEB-DL-NTb",
-		Tag:         "-NTb",
+		ReleaseName: "Example.Show.S01E01.1080p.WEB-DL-TBN",
+		Tag:         "-TBN",
+	})
+	if err != nil || claimed {
+		t.Fatalf("refreshed own claim was not bypassed: claimed=%t err=%v", claimed, err)
+	}
+	if fetchCalls != 1 {
+		t.Fatalf("fetch calls = %d, want 1", fetchCalls)
+	}
+	if !logger.containsDebug("reason=legacy_format") || !logger.containsInfo("group=TBN decision=own_claim") {
+		t.Fatalf("debugs=%#v infos=%#v", logger.debugs, logger.infos)
+	}
+	claims, err := readBTNClaimCache(cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claims.Records) != 1 || claims.Records[0].Group != "TBN" {
+		t.Fatalf("migrated claims = %#v", claims.Records)
+	}
+}
+
+func TestLegacyClaimCacheCannotAuthorizeOwnGroupBypassWhenRefreshFails(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
+	cachePath, err := btnClaimsPath(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeBTNClaimedCache(cachePath, btnTitleVariants("Example Show")); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"BTN": {InternalGroups: config.CSVList{"TBN"}},
+		}},
+	}
+	logger := &captureBTNLogger{}
+	checker := &claimChecker{
+		cfg:    cfg,
+		target: "BTN",
+		logger: logger,
+		fetchOverride: func(context.Context) (btnClaimData, error) {
+			return btnClaimData{}, errors.New("BTN session unavailable")
+		},
+	}
+	claimed, err := checker.HasClaim(t.Context(), api.UploadSubject{
+		Identity:    api.ExternalIdentity{Category: "TV"},
+		SeasonInt:   1,
+		EpisodeInt:  1,
+		ReleaseName: "Example.Show.S01E01.1080p.WEB-DL-TBN",
+		Tag:         "-TBN",
 	})
 	if err != nil || !claimed {
 		t.Fatalf("legacy cache authorized bypass: claimed=%t err=%v", claimed, err)
+	}
+	if !logger.containsWarning("release_group=\"TBN\" internal_group=true fresh_structured=false own_claim=false") {
+		t.Fatalf("warnings=%#v", logger.warnings)
 	}
 }
 

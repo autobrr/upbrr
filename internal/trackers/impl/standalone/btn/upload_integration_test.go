@@ -71,12 +71,18 @@ func (r *httpHandlerErrorRecorder) Check() {
 // captureBTNLogger records selected log messages from upload paths under test.
 type captureBTNLogger struct {
 	mu       sync.Mutex
+	debugs   []string
 	infos    []string
 	warnings []string
 }
 
 func (l *captureBTNLogger) Tracef(string, ...any) {}
-func (l *captureBTNLogger) Debugf(string, ...any) {}
+
+func (l *captureBTNLogger) Debugf(format string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.debugs = append(l.debugs, fmt.Sprintf(format, args...))
+}
 
 func (l *captureBTNLogger) Infof(format string, args ...any) {
 	l.mu.Lock()
@@ -98,6 +104,18 @@ func (l *captureBTNLogger) containsInfo(value string) bool {
 	defer l.mu.Unlock()
 	for _, info := range l.infos {
 		if strings.Contains(info, value) {
+			return true
+		}
+	}
+	return false
+}
+
+// containsDebug reports whether any captured debug message contains value.
+func (l *captureBTNLogger) containsDebug(value string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, debug := range l.debugs {
+		if strings.Contains(debug, value) {
 			return true
 		}
 	}

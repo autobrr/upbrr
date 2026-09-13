@@ -580,7 +580,7 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/btn/claims.go:*claimChecker.HasClaim": {
-    "sha256": "cc284830538ce92689ea8a203718e23815c6f5b4ff6aa7b009259881515a6630",
+    "sha256": "ed536e1322a57125217d56718eba90670e4839be7ece048e68a031d3ec049c14",
     "reason": "Confirmed Scene evidence bypasses claims; finalized media facts scope HDB WEB TV checks, provider aliases only match claim identities, and fresh unambiguous tracker ownership controls the internal-group bypass."
   },
   "internal/trackers/impl/standalone/btn/claims.go:btnCandidateTitles": {

@@ -125,10 +125,12 @@ func newClaimChecker(cfg config.Config, logger api.Logger, target string) tracke
 }
 
 // HasClaim reports whether a TV title appears in BTN's claimed-show list and
-// remains inside its claim window. Confirmed Scene releases bypass claims.
-// Non-TV content and unavailable claim data
-// fail open as unclaimed; malformed or missing air dates keep a matched claim
-// active because expiry cannot be established.
+// remains inside its claim window. Confirmed Scene releases and configured
+// internal releases with fresh, unambiguous same-group ownership evidence
+// bypass claims. Legacy or stale cache data may preserve a claim block but
+// cannot authorize that bypass. Non-TV content and unavailable claim data fail
+// open as unclaimed; malformed or missing air dates keep a matched claim active
+// because expiry cannot be established.
 func (s *claimChecker) HasClaim(ctx context.Context, meta api.UploadSubject) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, fmt.Errorf("metadata: BTN claim check canceled: %w", err)
@@ -202,7 +204,8 @@ func (s *claimChecker) HasClaim(ctx context.Context, meta api.UploadSubject) (bo
 	}
 	trackerCfg, _ := trackerConfigFor(s.cfg, s.target)
 	groupPolicy := trackers.ResolveGroupPolicy(trackerCfg, meta)
-	if groupPolicy.Internal && claims.FreshStructured && claimsOwnedByGroup(matchedClaims, groupPolicy.Group) {
+	ownedByGroup := claimsOwnedByGroup(matchedClaims, groupPolicy.Group)
+	if groupPolicy.Internal && claims.FreshStructured && ownedByGroup {
 		if s.logger != nil {
 			s.logger.Infof("metadata: %s claim match bypassed group=%s decision=own_claim", s.target, groupPolicy.Group)
 		}
@@ -211,11 +214,16 @@ func (s *claimChecker) HasClaim(ctx context.Context, meta api.UploadSubject) (bo
 
 	if s.logger != nil {
 		s.logger.Warnf(
-			"metadata: %s claim match found title=%q threshold_hours=%d cache_ttl=%s",
+			"metadata: %s claim match found title=%q threshold_hours=%d cache_ttl=%s release_group=%q internal_group=%t fresh_structured=%t own_claim=%t matched_claims=%d",
 			s.target,
 			matchedTitle,
 			thresholdHours,
 			btnClaimedShowsCacheTTL,
+			groupPolicy.Group,
+			groupPolicy.Internal,
+			claims.FreshStructured,
+			ownedByGroup,
+			len(matchedClaims),
 		)
 	}
 	return true, nil
@@ -295,8 +303,9 @@ func (s *claimChecker) loadBTNClaims(ctx context.Context, cachePath string, cach
 		}
 	} else if s.logger != nil {
 		s.logger.Debugf(
-			"metadata: BTN claims cache loaded path=%s records=%d legacy_titles=%d fetched_at=%d",
+			"metadata: BTN claims cache loaded path=%s target=%s records=%d legacy_titles=%d fetched_at=%d",
 			cachePath,
+			s.target,
 			len(cached.Records),
 			len(cached.LegacyTitles),
 			cached.FetchedAt,
@@ -304,28 +313,42 @@ func (s *claimChecker) loadBTNClaims(ctx context.Context, cachePath string, cach
 	}
 	cacheAge := time.Since(time.Unix(cached.FetchedAt, 0))
 	cacheFresh := cached.hasClaims() && cacheAge >= 0 && cacheAge < cacheTTL
-	cacheCoversTarget := len(cached.Records) > 0 || s.target == "BTN"
-	if cacheFresh && cacheCoversTarget {
-		cached.FreshStructured = len(cached.Records) > 0
+	if cacheFresh && len(cached.Records) > 0 {
+		cached.FreshStructured = true
 		if s.logger != nil {
 			s.logger.Debugf(
-				"metadata: BTN claims cache hit path=%s age=%s ttl=%s",
+				"metadata: BTN claims cache hit path=%s target=%s age=%s ttl=%s records=%d",
 				cachePath,
-				time.Since(time.Unix(cached.FetchedAt, 0)).Round(time.Second),
+				s.target,
+				cacheAge.Round(time.Second),
 				cacheTTL,
+				len(cached.Records),
 			)
 		}
 		return cached, nil
 	}
 	if s.logger != nil {
-		if !cached.hasClaims() {
-			s.logger.Debugf("metadata: BTN claims cache miss path=%s", cachePath)
-		} else {
+		switch {
+		case !cached.hasClaims():
+			s.logger.Debugf("metadata: BTN claims cache miss path=%s target=%s", cachePath, s.target)
+		case cacheFresh:
 			s.logger.Debugf(
-				"metadata: BTN claims cache stale path=%s age=%s ttl=%s",
+				"metadata: BTN claims cache refresh required path=%s target=%s reason=legacy_format age=%s ttl=%s legacy_titles=%d",
 				cachePath,
-				time.Since(time.Unix(cached.FetchedAt, 0)).Round(time.Second),
+				s.target,
+				cacheAge.Round(time.Second),
 				cacheTTL,
+				len(cached.LegacyTitles),
+			)
+		default:
+			s.logger.Debugf(
+				"metadata: BTN claims cache refresh required path=%s target=%s reason=stale age=%s ttl=%s records=%d legacy_titles=%d",
+				cachePath,
+				s.target,
+				cacheAge.Round(time.Second),
+				cacheTTL,
+				len(cached.Records),
+				len(cached.LegacyTitles),
 			)
 		}
 	}
@@ -353,8 +376,9 @@ func (s *claimChecker) loadBTNClaims(ctx context.Context, cachePath string, cach
 		cached.FreshStructured = false
 		if s.logger != nil {
 			s.logger.Debugf(
-				"metadata: BTN claims using stale cache after fetch failure path=%s records=%d legacy_titles=%d",
+				"metadata: BTN claims cache fallback path=%s target=%s decision=non_authoritative records=%d legacy_titles=%d",
 				cachePath,
+				s.target,
 				len(cached.Records),
 				len(cached.LegacyTitles),
 			)
