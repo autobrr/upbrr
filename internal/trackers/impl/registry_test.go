@@ -5,6 +5,8 @@ package impl
 
 import (
 	"context"
+	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -157,6 +159,8 @@ func TestDescriptionDefinitionsPreserveFinalReviewedDescription(t *testing.T) {
 				Assets: &trackers.DescriptionAssets{
 					Description: finalDescription,
 					Final:       true,
+					Screenshots: []api.ScreenshotImage{{RawURL: "https://images.example/screen.png"}},
+					MenuImages:  []api.ScreenshotImage{{RawURL: "https://images.example/menu.png"}},
 				},
 			})
 			if failure != nil {
@@ -170,6 +174,104 @@ func TestDescriptionDefinitionsPreserveFinalReviewedDescription(t *testing.T) {
 
 			if got := plan.Description().Description; got != finalDescription {
 				t.Fatalf("final description changed:\nwant %q\ngot  %q", finalDescription, got)
+			}
+		})
+	}
+}
+
+type descriptionPreviewPersistence struct {
+	trackers.UploadPersistence
+}
+
+func (descriptionPreviewPersistence) ListTrackerMetadataByPath(context.Context, string) ([]api.TrackerMetadata, error) {
+	return nil, nil
+}
+
+func (descriptionPreviewPersistence) ListDescriptionOverridesByPath(context.Context, string) ([]api.DescriptionOverride, error) {
+	return nil, nil
+}
+
+func TestCustomDescriptionGroupsIncludeTrackerScreenshots(t *testing.T) {
+	t.Parallel()
+
+	registry := MustNewRegistry()
+	for _, tracker := range []string{"BHD", "AITHER", "PTP"} {
+		t.Run(tracker, func(t *testing.T) {
+			const body = "[b]User supplied release notes.[/b]"
+			source := filepath.Join(t.TempDir(), "Example.Release.2026.mkv")
+			media := &api.ExactMediaAssets{}
+			for index := range 6 {
+				imagePath := filepath.Join(t.TempDir(), fmt.Sprintf("screen-%d.png", index))
+				imageURL := fmt.Sprintf("https://images.example/screen-%d.png", index)
+				media.Screenshots = append(media.Screenshots, api.ScreenshotImage{
+					Path:    imagePath,
+					Purpose: api.ScreenshotPurposeFinal,
+				})
+				media.ScreenshotUploads = append(media.ScreenshotUploads, api.UploadedImageLink{
+					ImagePath:  imagePath,
+					Host:       "pixhost",
+					UsageScope: "global",
+					RawURL:     imageURL,
+					ImgURL:     imageURL,
+					WebURL:     imageURL,
+				})
+			}
+			meta := api.UploadSubject{
+				SourcePath:         source,
+				Options:            api.UploadOptions{Screens: 6},
+				ExactMedia:         media,
+				ImageHostOverrides: api.ImageHostOverrides{SkipUpload: new(true)},
+				DescriptionGroups: []api.DescriptionBuilderGroup{{
+					GroupKey:       trackers.DescriptionOverrideGroupForTrackerWithRegistry(tracker, registry),
+					Trackers:       []string{tracker},
+					RawDescription: body,
+					HasOverride:    true,
+				}},
+			}
+			cfg := config.Config{ImageHosting: config.ImageHostingConfig{Host1: "pixhost"}}
+			service := trackers.NewServiceWithRegistry(cfg, api.NopLogger{}, descriptionPreviewPersistence{}, registry)
+			preview, err := service.BuildPreparation(t.Context(), api.NewDescriptionSubject(meta), []string{tracker})
+			if err != nil || len(preview.ContentFailures) != 0 || len(preview.Descriptions) != 1 {
+				t.Fatalf("build custom description: preview=%+v err=%v", preview, err)
+			}
+			got := preview.Descriptions[0].RawDescription
+			bodyIndex := strings.Index(got, "User supplied release notes.")
+			if bodyIndex < 0 {
+				t.Fatalf("custom body missing: %q", got)
+			}
+			previous := bodyIndex
+			for index := range 6 {
+				image := fmt.Sprintf("screen-%d.png", index)
+				position := strings.Index(got, image)
+				if position <= previous {
+					t.Fatalf("screenshot %s missing or out of order after custom body: %q", image, got)
+				}
+				previous = position
+			}
+
+			meta.DescriptionGroups[0].RawDescription = got
+			meta.DescriptionGroupsFinal = true
+			assets, err := trackers.ResolveDescriptionAssets(t.Context(), tracker, meta, nil, api.NopLogger{}, registry)
+			if err != nil {
+				t.Fatalf("resolve retained description: %v", err)
+			}
+			definition, _ := registry.Lookup(tracker)
+			plan, failure := definition.Prepare(t.Context(), trackers.PreparationInput{
+				Intent:  trackers.PreparationIntentDescriptionPreview,
+				Tracker: tracker,
+				Meta:    meta,
+				Assets:  &assets,
+			})
+			if failure != nil {
+				t.Fatalf("prepare retained description: %v", failure)
+			}
+			defer func() {
+				if err := plan.Release(); err != nil {
+					t.Errorf("release retained description: %v", err)
+				}
+			}()
+			if plan.Description().Description != got {
+				t.Fatalf("retained description rebuilt: %q", plan.Description().Description)
 			}
 		})
 	}
@@ -352,6 +454,66 @@ func TestRegistryOmitsGeneratedEpisodeTitleForBLU(t *testing.T) {
 	}
 	if name != omitted {
 		t.Fatalf("BLU release name = %q, want %q", name, omitted)
+	}
+}
+
+func TestEveryTrackerProjectsScreenshotDefaultAndOverride(t *testing.T) {
+	t.Parallel()
+
+	registry := MustNewRegistry()
+	const configuredCount = 7
+	projector, err := trackers.NewWorkflowProjector(registry, config.Config{
+		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: configuredCount},
+	}, api.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := registry.Names()
+	ids := make([]api.TrackerID, len(names))
+	for index, name := range names {
+		ids[index] = api.TrackerID(name)
+	}
+	for _, test := range []struct {
+		name  string
+		count *int
+		want  int
+	}{
+		{name: "configured default", want: configuredCount},
+		{
+			name:  "lower override",
+			count: new(2),
+			want:  2,
+		},
+		{name: "zero override", count: new(0)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			instructions := make(map[api.TrackerID]api.TrackerProjectionInstructions, len(ids))
+			for _, id := range ids {
+				instructions[id] = api.TrackerProjectionInstructions{ScreenshotCount: test.count}
+			}
+			_, _, _, result, err := projector.Build(t.Context(), api.ReleaseSnapshot{}, api.UploadSubject{
+				ReleaseName: "Example.Release.2026.1080p-GRP",
+			}, ids, instructions, nil, api.WorkflowExecutionModeNormal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Projections) != len(names) {
+				t.Fatalf("projected %d trackers, want %d", len(result.Projections), len(names))
+			}
+			for _, projection := range result.Projections {
+				mode, ok := registry.LookupUploadContentMode(string(projection.TrackerID))
+				if !ok {
+					t.Fatalf("unknown projected tracker %s", projection.TrackerID)
+				}
+				want := 0
+				if mode.UsesImages() {
+					want = test.want
+				}
+				if projection.Artifacts.ScreenshotCount != want {
+					t.Errorf("tracker %s screenshot count = %d, want %d", projection.TrackerID, projection.Artifacts.ScreenshotCount, want)
+				}
+			}
+		})
 	}
 }
 

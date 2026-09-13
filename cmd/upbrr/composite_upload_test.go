@@ -17,22 +17,31 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestCLICompositeMediaUsesOnlyRequestedScreenshots(t *testing.T) {
+func TestCLICompositeMediaUsesConfiguredScreenshotsUnlessOverridden(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		args   []string
 		count  int
 		frames []int
 	}{
-		{name: "tracker defaults", args: []string{"Example.Show.S01E01.mkv"}},
+		{
+			name:  "configured default",
+			args:  []string{"Example.Show.S01E01.mkv"},
+			count: 7,
+		},
 		{
 			name:  "explicit count",
 			args:  []string{"--screens=5", "Example.Show.S01E01.mkv"},
 			count: 5,
 		},
 		{
+			name: "zero override",
+			args: []string{"-s", "0", "Example.Show.S01E01.mkv"},
+		},
+		{
 			name:   "manual frames",
 			args:   []string{"--manual_frames=100,200", "Example.Show.S01E01.mkv"},
+			count:  7,
 			frames: []int{100, 200},
 		},
 	} {
@@ -41,9 +50,13 @@ func TestCLICompositeMediaUsesOnlyRequestedScreenshots(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			request, err := buildCLIRequest(opts, visited, paths, opts.Screens)
+			cfg := config.Config{ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 7}}
+			request, err := buildCLIRequest(opts, visited, paths, cfg.ScreenshotHandling.Screens)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if request.Options.Screens != tc.count {
+				t.Fatalf("description screenshot count = %d, want %d", request.Options.Screens, tc.count)
 			}
 			mapped, err := mapCLICompositeUploadRequest(request, false, "media-test")
 			if err != nil {

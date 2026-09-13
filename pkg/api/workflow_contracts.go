@@ -107,13 +107,15 @@ type TrackerSelection struct {
 }
 
 // TrackerProjectionInstructions contains optional tracker-local caller intent.
-// Nil means automatic resolution; pointed-to empty values are explicit clears.
+// Nil values use automatic resolution; pointed-to empty strings explicitly clear their field.
 type TrackerProjectionInstructions struct {
-	UploadReleaseName WorkflowPatch[string]  `json:"-"`
-	AdditionalNames   map[string]*string     `json:"additionalNames,omitempty"`
-	Questionnaire     map[string]*string     `json:"questionnaire,omitempty"`
-	TrackerConfig     TrackerConfigOverrides `json:"trackerConfig,omitempty"`
-	TrackerSite       TrackerSiteOverrides   `json:"trackerSite,omitempty"`
+	UploadReleaseName WorkflowPatch[string] `json:"-"`
+	// ScreenshotCount overrides the global screenshot fallback. Zero disables that fallback, while a tracker ImageCount remains a minimum.
+	ScreenshotCount *int                   `json:"screenshotCount,omitempty"`
+	AdditionalNames map[string]*string     `json:"additionalNames,omitempty"`
+	Questionnaire   map[string]*string     `json:"questionnaire,omitempty"`
+	TrackerConfig   TrackerConfigOverrides `json:"trackerConfig,omitempty"`
+	TrackerSite     TrackerSiteOverrides   `json:"trackerSite,omitempty"`
 }
 
 // TrackerProjectionInstructionSnapshot retains tracker-local projection instructions.

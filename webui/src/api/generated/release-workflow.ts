@@ -2247,6 +2247,7 @@ export type TrackerProjectionInstructionSnapshotRef = Readonly<{
 export type TrackerProjectionInstructions = Readonly<{
   additionalNames?: Readonly<Record<string, string | null>>;
   questionnaire?: Readonly<Record<string, string | null>>;
+  screenshotCount?: number | null;
   trackerConfig?: TrackerConfigOverrides;
   trackerSite?: TrackerSiteOverrides;
   uploadReleaseName?: string | null;

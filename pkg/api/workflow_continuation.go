@@ -181,6 +181,9 @@ func (r ContinueReleaseWorkflowRequest) Validate() error {
 	if r.Intent.DuplicateCheckCount > 2 {
 		return errors.New("duplicate check count cannot exceed two")
 	}
+	if err := validateTrackerProjectionInstructions(r.Intent.ProjectionInstructions); err != nil {
+		return err
+	}
 	if r.Intent.MediaSelection != nil {
 		if len(r.Intent.MediaSelection.ArtifactIDs) == 0 {
 			return errors.New("explicit media selection requires at least one artifact")

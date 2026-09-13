@@ -1044,6 +1044,7 @@ func effectiveProjectionInstructions(
 
 func projectionInstructionIsEmpty(instruction api.TrackerProjectionInstructions) bool {
 	return instruction.UploadReleaseName.IsZero() &&
+		instruction.ScreenshotCount == nil &&
 		len(instruction.AdditionalNames) == 0 &&
 		len(instruction.Questionnaire) == 0 &&
 		instruction.TrackerConfig.Anon == nil &&

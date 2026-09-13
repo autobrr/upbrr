@@ -850,11 +850,432 @@ func TestNormalizeCompositeUploadRequestPreservesManualFramesIntent(t *testing.T
 			if err != nil {
 				t.Fatalf("normalize composite upload request: %v", err)
 			}
-			if session.Intent.Media == nil || session.Intent.Media.ScreenshotCount != count {
+			if session.Intent.Media == nil || session.Intent.Media.ScreenshotCount != 0 {
 				t.Fatalf("normalized media intent = %#v", session.Intent.Media)
 			}
 			if !reflect.DeepEqual(session.Intent.Media.ManualFrames, testCase.wantFrames) {
 				t.Fatalf("normalized manual frames = %#v, want %#v", session.Intent.Media.ManualFrames, testCase.wantFrames)
+			}
+		})
+	}
+}
+
+func TestNormalizeCompositeUploadRequestRetainsOptionalScreenshotCount(t *testing.T) {
+	t.Parallel()
+
+	zero, lower := 0, 1
+	for _, test := range []struct {
+		name    string
+		count   *int
+		present bool
+		want    int
+	}{
+		{name: "omitted"},
+		{
+			name:    "zero",
+			count:   &zero,
+			present: true,
+		},
+		{
+			name:    "lower",
+			count:   &lower,
+			present: true,
+			want:    lower,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeUpload, "screenshot-count-"+test.name)
+			request.Media.Screenshots.Count = test.count
+			session, _, err := normalizeCompositeUploadRequest(request)
+			if err != nil {
+				t.Fatalf("normalize composite upload request: %v", err)
+			}
+			if (session.RequestedScreenshotCount != nil) != test.present {
+				t.Fatalf("retained screenshot count = %#v, want present=%t", session.RequestedScreenshotCount, test.present)
+			}
+			for _, trackerID := range request.Trackers.Include {
+				instruction, ok := session.Intent.ProjectionInstructions[trackerID]
+				if ok != test.present || (ok && (instruction.ScreenshotCount == nil || *instruction.ScreenshotCount != test.want)) {
+					t.Fatalf("projection instruction for %s = %#v, want screenshot count present=%t value=%d", trackerID, instruction, test.present, test.want)
+				}
+			}
+		})
+	}
+}
+
+func TestCompositeUploadDynamicSelectionSeedsRequestedScreenshotCount(t *testing.T) {
+	t.Parallel()
+
+	zero, lower := 0, 1
+	for _, test := range []struct {
+		name    string
+		count   *int
+		present bool
+		want    int
+	}{
+		{name: "omitted"},
+		{
+			name:    "zero",
+			count:   &zero,
+			present: true,
+		},
+		{
+			name:    "lower",
+			count:   &lower,
+			present: true,
+			want:    lower,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			module, _, _ := newCompositeUploadTestModule(t)
+			module.mediaBuilder = mediaArtifactBuilderFunc(func(
+				_ context.Context,
+				_ api.ReleaseRef,
+				projections api.TrackerReleaseProjectionSet,
+				instructions api.MediaCaptureInstructions,
+				_ time.Time,
+			) (api.MediaArtifactSet, any, error) {
+				requirements, err := mediaRequirementsFingerprint(projections.Projections)
+				if err != nil {
+					return api.MediaArtifactSet{}, nil, err
+				}
+				if instructions.ScreenshotCount != 0 {
+					t.Fatalf("composite capture screenshot count = %d, want tracker projection requirements only", instructions.ScreenshotCount)
+				}
+				count := 0
+				for _, projection := range projections.Projections {
+					count = max(count, projection.Artifacts.ScreenshotCount)
+				}
+				artifacts := make([]api.MediaArtifact, 0, count+1)
+				for index := range count {
+					artifacts = append(artifacts, api.MediaArtifact{
+						ID:       api.PublicResourceID(fmt.Sprintf("screenshot-%d", index)),
+						Kind:     api.MediaArtifactScreenshot,
+						Purpose:  api.ScreenshotPurposeFinal,
+						Selected: true,
+						Index:    index,
+						Order:    index,
+					})
+				}
+				var attempts []api.HostedImageAttempt
+				if count > 0 {
+					hosted := api.MediaArtifact{
+						ID:       "hosted-screenshot-0",
+						Kind:     api.MediaArtifactHostedImage,
+						Purpose:  api.ScreenshotPurposeFinal,
+						Selected: true,
+						Source:   "screenshot-0",
+					}
+					artifacts = append(artifacts, hosted)
+					trackerIDs := make([]api.TrackerID, 0, len(projections.Projections))
+					for _, projection := range projections.Projections {
+						trackerIDs = append(trackerIDs, projection.TrackerID)
+					}
+					attempts = []api.HostedImageAttempt{{
+						ID:         "host-screenshot-0",
+						UsageScope: "global",
+						TrackerIDs: trackerIDs,
+						Results:    []api.MediaArtifact{hosted},
+					}}
+				}
+				return api.MediaArtifactSet{
+					CaptureFingerprint:        testFingerprint(t, "dynamic-screenshot-count-"+test.name),
+					RequirementsFingerprint:   requirements,
+					Artifacts:                 artifacts,
+					HostAttempts:              attempts,
+					ImageRequirementsPrepared: true,
+				}, struct{}{}, nil
+			})
+			base := module.trackerProjector
+			var builds []map[api.TrackerID]*int
+			module.trackerProjector = trackerProjectionBuilderFunc(func(
+				ctx context.Context,
+				release api.ReleaseSnapshot,
+				subject api.UploadSubject,
+				trackerIDs []api.TrackerID,
+				instructions map[api.TrackerID]api.TrackerProjectionInstructions,
+				ruleAuthorizations map[api.TrackerID]api.WorkflowFingerprint,
+				executionMode api.WorkflowExecutionMode,
+			) (api.TrackerCatalogSnapshot, api.TrackerRuntimeSnapshot, api.TrackerSelection, api.TrackerReleaseProjectionSet, error) {
+				captured := make(map[api.TrackerID]*int, len(instructions))
+				for trackerID, instruction := range instructions {
+					captured[trackerID] = cloneIntPointer(instruction.ScreenshotCount)
+				}
+				builds = append(builds, captured)
+				catalog, runtime, selection, projections, err := base.Build(ctx, release, subject, trackerIDs, instructions, ruleAuthorizations, executionMode)
+				if err != nil {
+					return catalog, runtime, selection, projections, fmt.Errorf("build test tracker projections: %w", err)
+				}
+				for index := range projections.Projections {
+					if count := instructions[projections.Projections[index].TrackerID].ScreenshotCount; count != nil {
+						projections.Projections[index].Artifacts.ScreenshotCount = max(projections.Projections[index].Artifacts.ScreenshotCount, *count)
+					}
+				}
+				return catalog, runtime, selection, projections, nil
+			})
+
+			request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, "dynamic-screenshot-count-"+test.name)
+			request.Trackers.Include = nil
+			request.Media.Screenshots.Count = test.count
+			started, err := module.StartUpload(t.Context(), testOwnerID, request)
+			if err != nil {
+				t.Fatalf("start composite upload: %v", err)
+			}
+			blocked := waitCompositeUploadTestOperation(t, module, started)
+			completed := approveCompositeUploadTrackers(t, module, blocked, []api.TrackerID{"ALPHA", "BETA"}, "approve-dynamic-screenshot-count-"+test.name)
+			if completed.Operation == nil || completed.Operation.Status != api.StageStatusCompleted || completed.DryRun == nil || completed.Media == nil {
+				t.Fatalf("completed dynamic screenshot count upload = %#v", completed)
+			}
+			selectedScreenshots := 0
+			for _, artifact := range completed.Media.Artifacts {
+				if artifact.Selected && artifact.Kind == api.MediaArtifactScreenshot && artifact.Purpose == api.ScreenshotPurposeFinal {
+					selectedScreenshots++
+				}
+			}
+			if selectedScreenshots != test.want {
+				t.Fatalf("selected dynamic screenshots = %d, want %d", selectedScreenshots, test.want)
+			}
+			if len(builds) == 0 {
+				t.Fatal("composite upload did not project dynamically selected trackers")
+			}
+			latest := builds[len(builds)-1]
+			for _, trackerID := range []api.TrackerID{"ALPHA", "BETA"} {
+				count := latest[trackerID]
+				if (count != nil) != test.present || (count != nil && *count != test.want) {
+					t.Fatalf("latest projection screenshot count for %s = %#v, want present=%t value=%d builds=%#v", trackerID, count, test.present, test.want, builds)
+				}
+			}
+		})
+	}
+}
+
+func TestCompositeUploadRequestedScreenshotCountDoesNotCaptureWithoutProjectionRequirement(t *testing.T) {
+	t.Parallel()
+
+	module, _, _ := newCompositeUploadTestModule(t)
+	var captureInstructions []api.MediaCaptureInstructions
+	module.mediaBuilder = mediaArtifactBuilderFunc(func(
+		_ context.Context,
+		_ api.ReleaseRef,
+		projections api.TrackerReleaseProjectionSet,
+		instructions api.MediaCaptureInstructions,
+		_ time.Time,
+	) (api.MediaArtifactSet, any, error) {
+		captureInstructions = append(captureInstructions, instructions)
+		requirements, err := mediaRequirementsFingerprint(projections.Projections)
+		if err != nil {
+			return api.MediaArtifactSet{}, nil, err
+		}
+		return api.MediaArtifactSet{
+			CaptureFingerprint:        testFingerprint(t, "no-image-requested-screenshot-count"),
+			RequirementsFingerprint:   requirements,
+			ImageRequirementsPrepared: true,
+			Status:                    api.StageStatusCompleted,
+		}, struct{}{}, nil
+	})
+	count := 7
+	request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, "no-image-requested-screenshot-count")
+	request.Media.Screenshots.Count = &count
+	started, err := module.StartUpload(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("start composite upload: %v", err)
+	}
+	blocked := waitCompositeUploadTestOperation(t, module, started)
+	completed := approveCompositeUploadTrackers(t, module, blocked, []api.TrackerID{"ALPHA", "BETA"}, "approve-no-image-requested-screenshot-count")
+	if completed.Operation == nil || completed.Operation.Status != api.StageStatusCompleted || completed.DryRun == nil || completed.Media == nil {
+		t.Fatalf("completed no-image screenshot count upload = %#v", completed)
+	}
+	if len(captureInstructions) == 0 {
+		t.Fatal("no-image composite upload did not prepare media")
+	}
+	for _, instructions := range captureInstructions {
+		if instructions.ScreenshotCount != 0 {
+			t.Fatalf("no-image composite capture screenshot count = %d, want 0", instructions.ScreenshotCount)
+		}
+	}
+	if len(completed.Media.Artifacts) != 0 {
+		t.Fatalf("no-image composite artifacts = %#v, want none", completed.Media.Artifacts)
+	}
+}
+
+func TestCompositeUploadSelectedScreenshotExcessRespectsTrackerMinimumAndOrder(t *testing.T) {
+	t.Parallel()
+
+	artifacts := []api.MediaArtifact{
+		{
+			ID:       "comparison",
+			Kind:     api.MediaArtifactScreenshot,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+			Source:   "comparison",
+		},
+		{
+			ID:       "third",
+			Kind:     api.MediaArtifactScreenshot,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+			Order:    3,
+		},
+		{
+			ID:       "first",
+			Kind:     api.MediaArtifactScreenshot,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+			Order:    1,
+		},
+		{
+			ID:       "second",
+			Kind:     api.MediaArtifactScreenshot,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+			Order:    2,
+		},
+		{
+			ID:       "menu",
+			Kind:     api.MediaArtifactDVDMenu,
+			Purpose:  api.ScreenshotPurposeMenu,
+			Selected: true,
+			Order:    0,
+		},
+	}
+	if actual, expected := compositeUploadSelectedScreenshotExcess(artifacts, 2), []api.PublicResourceID{"third"}; !slices.Equal(actual, expected) {
+		t.Fatalf("minimum-preserving screenshot excess = %#v, want %#v", actual, expected)
+	}
+	if actual, expected := compositeUploadSelectedScreenshotExcess(artifacts, 0), []api.PublicResourceID{"first", "second", "third"}; !slices.Equal(actual, expected) {
+		t.Fatalf("zero-count screenshot excess = %#v, want %#v", actual, expected)
+	}
+}
+
+func TestCompositeUploadAutomaticPolicyDeselectsExcessAutomaticScreenshots(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name  string
+		count int
+		want  []api.PublicResourceID
+	}{
+		{
+			name:  "lower",
+			count: 1,
+			want:  []api.PublicResourceID{"comparison", "first"},
+		},
+		{
+			name:  "zero",
+			count: 0,
+			want:  []api.PublicResourceID{"comparison"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			module, repository, _ := newCompositeUploadTestModule(t)
+			request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, "trim-automatic-screenshots-"+test.name)
+			started, err := module.StartUpload(t.Context(), testOwnerID, request)
+			if err != nil {
+				t.Fatalf("start composite upload: %v", err)
+			}
+			blocked := waitCompositeUploadTestOperation(t, module, started)
+			completed := approveCompositeUploadTrackers(t, module, blocked, []api.TrackerID{"ALPHA", "BETA"}, "approve-trim-automatic-screenshots-"+test.name)
+
+			const operationID api.WorkflowOperationID = "trim-automatic-screenshots"
+			if err := module.private.Put(
+				testOwnerID,
+				completed.Workflow.ID,
+				mediaPrivateResourceID(completed.Media.ID),
+				&retainedMediaResourceFake{stats: &retainedMediaResourceStats{}},
+				module.clock.Now().UTC().Add(time.Hour),
+			); err != nil {
+				t.Fatalf("replace retained test media: %v", err)
+			}
+			repository.mu.Lock()
+			state := repository.states[completed.Workflow.ID]
+			media := state.Media[state.Workflow.Media.ID]
+			media.Artifacts = []api.MediaArtifact{
+				{
+					ID:       "comparison",
+					Kind:     api.MediaArtifactScreenshot,
+					Purpose:  api.ScreenshotPurposeFinal,
+					Selected: true,
+					Source:   "comparison",
+				},
+				{
+					ID:       "third",
+					Kind:     api.MediaArtifactScreenshot,
+					Purpose:  api.ScreenshotPurposeFinal,
+					Selected: true,
+					Order:    3,
+				},
+				{
+					ID:       "first",
+					Kind:     api.MediaArtifactScreenshot,
+					Purpose:  api.ScreenshotPurposeFinal,
+					Selected: true,
+					Order:    1,
+				},
+				{
+					ID:       "second",
+					Kind:     api.MediaArtifactScreenshot,
+					Purpose:  api.ScreenshotPurposeFinal,
+					Selected: true,
+					Order:    2,
+				},
+				{
+					ID:       "menu",
+					Kind:     api.MediaArtifactDVDMenu,
+					Purpose:  api.ScreenshotPurposeMenu,
+					Selected: true,
+				},
+			}
+			state.Media[media.ID] = media
+			state.Composite.ActiveOperationID = operationID
+			state.Composite.RequestedScreenshotCount = &test.count
+			instructions := map[api.TrackerID]api.TrackerProjectionInstructions{}
+			for _, trackerID := range state.Selections[state.Workflow.Selection.ID].TrackerIDs {
+				instructions[trackerID] = api.TrackerProjectionInstructions{ScreenshotCount: cloneIntPointer(&test.count)}
+			}
+			state.Composite.Intent.ProjectionInstructions = instructions
+			instructionSnapshot := state.ProjectionInstructions[state.Workflow.ProjectionInstructions.ID]
+			instructionSnapshot.Instructions = instructions
+			state.ProjectionInstructions[instructionSnapshot.ID] = instructionSnapshot
+			projectionSnapshot := state.Projections[state.Workflow.TrackerProjections.ID]
+			for index := range projectionSnapshot.Projections {
+				projectionSnapshot.Projections[index].Artifacts.ScreenshotCount = test.count
+			}
+			state.Projections[projectionSnapshot.ID] = projectionSnapshot
+			repository.states[completed.Workflow.ID] = state
+			repository.mu.Unlock()
+
+			current, err := module.Current(t.Context(), testOwnerID, completed.Workflow.ID)
+			if err != nil {
+				t.Fatalf("load composite upload: %v", err)
+			}
+			updated, err := repository.Load(t.Context(), testOwnerID, completed.Workflow.ID)
+			if err != nil {
+				t.Fatalf("load composite state: %v", err)
+			}
+			changed, err := module.applyCompositeAutomaticPolicy(t.Context(), testOwnerID, current, updated.Composite, operationID)
+			if err != nil || !changed {
+				t.Fatalf("trim automatic screenshots changed=%t err=%v", changed, err)
+			}
+			after, err := module.Current(t.Context(), testOwnerID, completed.Workflow.ID)
+			if err != nil {
+				t.Fatalf("load trimmed media: %v", err)
+			}
+			if after.Media == nil {
+				t.Fatal("trimmed composite media is unavailable")
+			}
+			selectedScreenshots := make([]api.PublicResourceID, 0)
+			menuSelected := false
+			for _, artifact := range after.Media.Artifacts {
+				if artifact.Selected && artifact.Kind == api.MediaArtifactScreenshot && artifact.Purpose == api.ScreenshotPurposeFinal {
+					selectedScreenshots = append(selectedScreenshots, artifact.ID)
+				}
+				if artifact.Selected && artifact.Kind == api.MediaArtifactDVDMenu {
+					menuSelected = true
+				}
+			}
+			if !slices.Equal(selectedScreenshots, test.want) || !menuSelected {
+				t.Fatalf("trimmed media screenshots=%#v menuSelected=%t", selectedScreenshots, menuSelected)
 			}
 		})
 	}

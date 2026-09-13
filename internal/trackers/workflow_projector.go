@@ -283,7 +283,7 @@ func (p *WorkflowProjector) projectSelected(
 			Logger:                    logger,
 		}, inputFingerprint, catalogFingerprint, configFingerprints[trackerID])
 		if descriptor, ok := p.registry.LookupDescriptor(string(trackerID)); ok {
-			applyWorkflowProjectionRequirements(&projection, descriptor, subject, p.config)
+			applyWorkflowProjectionRequirements(&projection, descriptor, instruction.ScreenshotCount, p.config)
 		}
 		if failure != nil {
 			failures = append(failures, api.WorkflowFailure{
@@ -339,13 +339,18 @@ func projectionIneligibleProgressMessage(projection api.TrackerReleaseProjection
 func applyWorkflowProjectionRequirements(
 	projection *api.TrackerReleaseProjection,
 	descriptor Descriptor,
-	_ api.UploadSubject,
+	screenshotCount *int,
 	cfg config.Config,
 ) {
 	if descriptor.UploadContentMode.UsesImages() {
-		projection.Artifacts.ScreenshotCount = trackerConfigFor(cfg, descriptor.Name).ImageCount
-		if projection.Artifacts.ScreenshotCount <= 0 {
-			projection.Artifacts.ScreenshotCount = cfg.ScreenshotHandling.Screens
+		trackerScreenshotCount := trackerConfigFor(cfg, descriptor.Name).ImageCount
+		if screenshotCount != nil {
+			projection.Artifacts.ScreenshotCount = max(trackerScreenshotCount, *screenshotCount)
+		} else {
+			projection.Artifacts.ScreenshotCount = trackerScreenshotCount
+			if projection.Artifacts.ScreenshotCount <= 0 {
+				projection.Artifacts.ScreenshotCount = cfg.ScreenshotHandling.Screens
+			}
 		}
 	}
 	if descriptor.WorkflowMedia != nil {

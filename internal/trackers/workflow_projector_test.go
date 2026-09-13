@@ -145,12 +145,94 @@ func TestApplyWorkflowProjectionRequirementsDoesNotInferDVDMenuMinimumFromCaptur
 	applyWorkflowProjectionRequirements(
 		&projection,
 		Descriptor{Name: "EXAMPLE", UploadContentMode: UploadContentModeDescription},
-		api.UploadSubject{DiscType: "DVD"},
+		nil,
 		cfg,
 	)
 
 	if projection.Artifacts.ScreenshotCount != 4 || projection.Artifacts.DVDMenuCount != 0 {
 		t.Fatalf("projected media requirements = %#v", projection.Artifacts)
+	}
+}
+
+func TestApplyWorkflowProjectionRequirementsUsesOptionalScreenshotOverride(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name              string
+		trackerImageCount int
+		override          *int
+		want              int
+	}{
+		{
+			name:     "zero bypasses global fallback",
+			override: new(0),
+			want:     0,
+		},
+		{
+			name:              "override increases tracker minimum",
+			trackerImageCount: 3,
+			override:          new(5),
+			want:              5,
+		},
+		{
+			name:              "tracker minimum wins",
+			trackerImageCount: 5,
+			override:          new(3),
+			want:              5,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := config.Config{
+				ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 4},
+				Trackers:           config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"EXAMPLE": {ImageCount: test.trackerImageCount}}},
+			}
+			projection := api.TrackerReleaseProjection{}
+			applyWorkflowProjectionRequirements(
+				&projection,
+				Descriptor{Name: "EXAMPLE", UploadContentMode: UploadContentModeDescription},
+				test.override,
+				cfg,
+			)
+			if projection.Artifacts.ScreenshotCount != test.want {
+				t.Fatalf("projected screenshot count = %d, want %d", projection.Artifacts.ScreenshotCount, test.want)
+			}
+		})
+	}
+}
+
+func TestWorkflowProjectorPassesScreenshotOverride(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	if err := registry.RegisterDescriptor(Descriptor{
+		Name:              "EXAMPLE",
+		Definition:        stubDefinition{name: "EXAMPLE"},
+		UploadContentMode: UploadContentModeDescription,
+	}); err != nil {
+		t.Fatalf("register tracker: %v", err)
+	}
+	projector, err := NewWorkflowProjector(registry, config.Config{
+		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 4},
+	}, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("new workflow projector: %v", err)
+	}
+	override := 0
+	_, _, _, result, err := projector.Build(
+		t.Context(),
+		api.ReleaseSnapshot{},
+		api.UploadSubject{ReleaseName: "Example.Release.2026.1080p-GRP"},
+		[]api.TrackerID{"EXAMPLE"},
+		map[api.TrackerID]api.TrackerProjectionInstructions{"EXAMPLE": {ScreenshotCount: &override}},
+		nil,
+		api.WorkflowExecutionModeNormal,
+	)
+	if err != nil {
+		t.Fatalf("build projections: %v", err)
+	}
+	if len(result.Projections) != 1 || result.Projections[0].Artifacts.ScreenshotCount != 0 {
+		t.Fatalf("projected screenshot requirements = %#v", result.Projections)
 	}
 }
 
@@ -165,7 +247,7 @@ func TestApplyWorkflowProjectionRequirementsKeepsExplicitDVDMenuMinimum(t *testi
 			UploadContentMode: UploadContentModeDescription,
 			WorkflowMedia:     &WorkflowMediaRequirements{DVDMenuCount: 2},
 		},
-		api.UploadSubject{DiscType: "DVD"},
+		nil,
 		config.Config{},
 	)
 

@@ -230,7 +230,7 @@ func resolveDescriptionAssets(
 		final := false
 		if canonical := descriptionGroupFromPreparedMeta(meta, tracker, preloaded, registry); strings.TrimSpace(canonical) != "" {
 			description = canonical
-			final = true
+			final = meta.DescriptionGroupsFinal
 		}
 		if final {
 			description = strings.TrimSpace(description)
@@ -293,11 +293,6 @@ func applyResolvedDescriptionScreenshots(
 		return
 	}
 	assets.Description = rewriteDescriptionSlotURLs(assets.Description, assets.Slots, screenshots, assets.Final)
-	if assets.Final {
-		assets.MenuImages = nil
-		assets.Screenshots = nil
-		return
-	}
 	if meta.ExactMedia != nil {
 		assets.MenuImages, assets.Screenshots = exactDescriptionMedia(tracker, meta, screenshots)
 	} else {
@@ -527,7 +522,7 @@ func resolveTrackerDescription(
 				len(strings.TrimSpace(canonical)),
 			)
 		}
-		return canonical, true, true
+		return canonical, true, meta.DescriptionGroupsFinal
 	}
 	if trimmed := strings.TrimSpace(meta.DescriptionOverride); trimmed != "" {
 		if logger != nil {

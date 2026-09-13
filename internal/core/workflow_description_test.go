@@ -248,6 +248,7 @@ func TestResolveWorkflowExactMediaKeepsChannelsAndHostedVariantsSeparate(t *test
 			Kind:     api.MediaArtifactScreenshot,
 			Purpose:  api.ScreenshotPurposeFinal,
 			Selected: true,
+			Source:   "comparison",
 			Order:    0,
 		},
 		{
@@ -329,6 +330,19 @@ func TestResolveWorkflowExactMediaKeepsChannelsAndHostedVariantsSeparate(t *test
 	if exact.ScreenshotUploads[0].RawURL != "https://img.example/screen-2.png" ||
 		exact.DVDMenuUploads[0].RawURL != "https://img.example/menu-2.png" {
 		t.Fatalf("hosted channels = %#v", exact)
+	}
+	for index := range media.Artifacts {
+		if media.Artifacts[index].Kind == api.MediaArtifactScreenshot && media.Artifacts[index].Source != "comparison" {
+			media.Artifacts[index].Selected = false
+		}
+	}
+	exact, err = resolveWorkflowExactMedia(private, media)
+	if err != nil {
+		t.Fatalf("resolve deselected media: %v", err)
+	}
+	if len(exact.Screenshots) != 1 || exact.Screenshots[0].Path != "screen-2.png" || len(exact.ScreenshotUploads) != 1 ||
+		len(exact.DVDMenus) != 2 || len(exact.DVDMenuUploads) != 1 {
+		t.Fatalf("automatic screenshot deselection leaked images or removed comparison/menu assets: %#v", exact)
 	}
 }
 

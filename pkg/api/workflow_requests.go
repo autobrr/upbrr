@@ -181,7 +181,7 @@ func (r ProjectReleaseWorkflowTrackersRequest) Validate() error {
 	if !validWorkflowExecutionMode(r.ExecutionMode) {
 		return fmt.Errorf("unsupported workflow execution mode %q", r.ExecutionMode)
 	}
-	return nil
+	return validateTrackerProjectionInstructions(r.Instructions)
 }
 
 // PreflightReleaseWorkflowTrackersRequest runs live readiness checks.

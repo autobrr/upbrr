@@ -843,8 +843,8 @@ func TestResolveDescriptionAssetsUsesCompositeGroupOverride(t *testing.T) {
 	if !assets.Override {
 		t.Fatalf("expected composite group description to be treated as override")
 	}
-	if !assets.Final {
-		t.Fatal("expected prepared composite group description to be final")
+	if assets.Final {
+		t.Fatal("expected custom composite group description to remain open for tracker composition")
 	}
 }
 
@@ -852,7 +852,8 @@ func TestResolveDescriptionAssetsPreservesFinalDescriptionThatSanitizerWouldEmpt
 	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
 	finalDescription := "[center][url=https://github.com/z-ink/uploadrr][img=300]https://i.ibb.co/2NVWb0c/uploadrr.webp[/img][/url][/center]"
 	meta := api.UploadSubject{
-		SourcePath: sourcePath,
+		SourcePath:             sourcePath,
+		DescriptionGroupsFinal: true,
 		DescriptionGroups: []api.DescriptionBuilderGroup{{
 			GroupKey:       "unit3d",
 			Trackers:       []string{"AITHER"},
@@ -879,12 +880,12 @@ func TestResolveDescriptionAssetsPreservesFinalDescriptionThatSanitizerWouldEmpt
 		RawURL: "https://pixhost.example/raw-1.png",
 		Host:   "pixhost",
 	}})
-	if len(assets.Screenshots) != 0 {
-		t.Fatalf("expected screenshots not appended to final description, got %#v", assets.Screenshots)
+	if assets.Description != finalDescription || len(assets.Screenshots) != 1 {
+		t.Fatalf("expected unchanged final description with separate screenshot assets, got %#v", assets)
 	}
 }
 
-func TestApplyResolvedDescriptionScreenshotsDoesNotAppendFinalBuilderScreenshots(t *testing.T) {
+func TestApplyResolvedDescriptionScreenshotsRetainsFinalBuilderScreenshotAssets(t *testing.T) {
 	t.Parallel()
 
 	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
@@ -908,8 +909,42 @@ func TestApplyResolvedDescriptionScreenshotsDoesNotAppendFinalBuilderScreenshots
 	if !strings.Contains(assets.Description, "https://pixhost.example/raw-1.png") {
 		t.Fatalf("expected final description URL rewritten, got %q", assets.Description)
 	}
-	if len(assets.Screenshots) != 0 {
-		t.Fatalf("expected final builder screenshots not to be appendable, got %#v", assets.Screenshots)
+	if len(assets.Screenshots) != 1 || assets.Screenshots[0].RawURL != "https://pixhost.example/raw-1.png" {
+		t.Fatalf("expected screenshot assets retained for separate upload fields, got %#v", assets.Screenshots)
+	}
+}
+
+func TestPrepareUploadContentKeepsFinalDescriptionAndSeparateMedia(t *testing.T) {
+	t.Parallel()
+
+	const body = "[b]Reviewed description[/b]"
+	shot := api.ScreenshotImage{RawURL: "https://images.example/screen.png"}
+	menu := api.ScreenshotImage{RawURL: "https://images.example/menu.png", Purpose: api.ScreenshotPurposeMenu}
+	meta := api.UploadSubject{
+		SourcePath:             filepath.Join(t.TempDir(), "Example.Release.2026"),
+		DescriptionGroupsFinal: true,
+		DescriptionGroups: []api.DescriptionBuilderGroup{{
+			GroupKey:       "unit3d",
+			Trackers:       []string{"AITHER"},
+			RawDescription: body,
+		}},
+		ExactMedia: &api.ExactMediaAssets{DVDMenus: []api.DVDMenuCaptureImage{{ScreenshotImage: menu}}},
+	}
+	registry := descriptionAssetsTestRegistry(t)
+	service := NewServiceWithRegistry(config.Config{}, api.NopLogger{}, &stubRepo{}, registry)
+	content := service.prepareUploadContent(t.Context(), "AITHER", meta, config.TrackerConfig{}, nil, imageHostPreflight{
+		"AITHER": {screenshots: []api.ScreenshotImage{shot}},
+	})
+	if content.Failure != nil || content.Assets == nil {
+		t.Fatalf("prepare final content: %+v", content)
+	}
+	assets := content.Assets
+	if !assets.Final || assets.Description != body {
+		t.Fatalf("final description changed: %+v", assets)
+	}
+	if len(assets.Screenshots) != 1 || assets.Screenshots[0].RawURL != shot.RawURL ||
+		len(assets.MenuImages) != 1 || assets.MenuImages[0].RawURL != menu.RawURL {
+		t.Fatalf("separate upload media lost: %+v", assets)
 	}
 }
 
@@ -954,8 +989,8 @@ func TestApplyResolvedDescriptionScreenshotsPreservesFinalNonRenderableImages(t 
 	if !strings.Contains(assets.Description, "https://pixhost.example/raw-1.png") {
 		t.Fatalf("expected renderable final screenshot URL rewritten, got %q", assets.Description)
 	}
-	if len(assets.Screenshots) != 0 {
-		t.Fatalf("expected final builder screenshots not to be appendable, got %#v", assets.Screenshots)
+	if len(assets.Screenshots) != 1 {
+		t.Fatalf("expected final screenshot assets preserved, got %#v", assets.Screenshots)
 	}
 }
 
@@ -1491,6 +1526,7 @@ func TestResolveDescriptionAssetsPreservesFinalDescriptionGroups(t *testing.T) {
 		"[right][url=https://github.com/autobrr/upbrr]Uploaded by upbrr[/url][/right]",
 	}, "\n\n")
 	meta := api.UploadSubject{
+		DescriptionGroupsFinal: true,
 		DescriptionGroups: []api.DescriptionBuilderGroup{{
 			GroupKey:       "unit3d",
 			Trackers:       []string{"AITHER"},

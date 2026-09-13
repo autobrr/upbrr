@@ -167,7 +167,7 @@ Reset examples:
 
 Apply fact corrections before tracker answers in separate commands. Combining them is rejected. Changes to source identity can require confirmation of saved content fields. Track corrections always require current scan evidence.
 
-Generated descriptions include manually supplied audio, subtitle, and hardcoded language lines. A complete custom description remains unchanged.
+Generated descriptions include manually supplied audio, subtitle, and hardcoded language lines. User-supplied descriptions pass through each tracker's normal formatting. Selected screenshots still appear in the tracker's usual location, including separate screenshot fields where applicable.
 
 Saved corrections use a newer database format. Older binaries do not support writing this correction state.
 
@@ -252,9 +252,11 @@ Trackers that require the cleared provider can remain blocked. Continue with tra
 
 ## Screenshots, images, and descriptions
 
+Without `--screens`, the CLI uses `screenshot_handling.screens` when selected trackers require screenshots. Tracker-specific image counts and limits still apply. An override below a tracker's screenshot requirements can block that upload.
+
 | Option                       | Aliases                             | Purpose                                               |
 | ---------------------------- | ----------------------------------- | ----------------------------------------------------- |
-| `--screens <count>`          | `-screens`, `-s`                    | Set screenshot count.                                 |
+| `--screens <count>`          | `-screens`, `-s`                    | Override the configured screenshot count.             |
 | `--manual_frames <list>`     | `-manual_frames`, `-mf`             | Use comma-separated frame numbers.                    |
 | `--comparison <paths>`       | `-comparison`, `-comps`             | Set one comparison folder or comma-separated folders. |
 | `--comparison_index <index>` | `-comparison_index`, `-comps_index` | Select the primary comparison index.                  |

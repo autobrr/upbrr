@@ -255,7 +255,7 @@ func runUpload(
 			printCLIError(streams.errOut, err)
 		}
 	}()
-	screens := opts.Screens
+	screens := cfg.ScreenshotHandling.Screens
 	// Each input path runs under its own cliItemTimeout (applied per item in
 	// processCLIPaths) so a long queue is not killed by a single run-wide
 	// deadline. Pre-upload setup is split into purpose-scoped phase contexts,

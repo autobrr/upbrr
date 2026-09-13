@@ -34,6 +34,10 @@ func buildDescription(meta api.UploadSubject, cfg config.Config, assets trackers
 	if len(images) == 0 {
 		images = screenshotsFromReport(cleaned.Images)
 	}
+	screenshotLimit := len(images)
+	if meta.Options.Screens > 0 {
+		screenshotLimit = meta.Options.Screens
+	}
 
 	parts := make([]string, 0, 5)
 	if discSection := buildDiscSection(meta, cfg.MainSettings.DBPath); discSection != "" {
@@ -45,7 +49,7 @@ func buildDescription(meta api.UploadSubject, cfg config.Config, assets trackers
 	if menus := buildDiscScreenshotSection(meta, assets.MenuImages, 0); menus != "" {
 		parts = append(parts, "[b]Disc Menus[/b]\n"+menus)
 	}
-	if screenshots := buildDiscScreenshotSection(meta, images, maxInt(1, meta.Options.Screens)); screenshots != "" {
+	if screenshots := buildDiscScreenshotSection(meta, images, screenshotLimit); screenshots != "" {
 		parts = append(parts, screenshots)
 	}
 	parts = append(parts, `[align=right][url=https://github.com/autobrr/upbrr]Uploaded by upbrr[/url][/align]`)
@@ -209,11 +213,4 @@ func readTextFileNoErr(path string) string {
 func hasGroup(tag string, name string) bool {
 	trimmed := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(tag, "-")))
 	return trimmed == strings.ToLower(strings.TrimSpace(name))
-}
-
-func maxInt(left int, right int) int {
-	if left > right {
-		return left
-	}
-	return right
 }
