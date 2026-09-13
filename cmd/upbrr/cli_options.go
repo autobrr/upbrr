@@ -857,7 +857,11 @@ func (o cliOptions) interactionMode() api.InteractionMode {
 	return api.InteractionModeInteractive
 }
 
-func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, screens int) (api.Request, error) {
+func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, defaultScreens int) (api.Request, error) {
+	screens := defaultScreens
+	if visited["screens"] {
+		screens = opts.Screens
+	}
 	runLogLevel := ""
 	if visited["log-level"] {
 		normalized, err := api.ParseLogLevel(opts.LogLevel)

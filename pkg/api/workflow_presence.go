@@ -108,15 +108,18 @@ func (u *ReleaseFactInstructionUpdate) UnmarshalJSON(payload []byte) error {
 	return nil
 }
 
-// MarshalJSON preserves tracker projection instruction absence, null/reset, and explicit empty names.
+// MarshalJSON preserves tracker projection instruction absence, null/reset, explicit empty names, and screenshot counts.
 func (i TrackerProjectionInstructions) MarshalJSON() ([]byte, error) {
-	fields := make(map[string]any, 5)
+	fields := make(map[string]any, 6)
 	if i.UploadReleaseName.Present {
 		if i.UploadReleaseName.Reset {
 			fields["uploadReleaseName"] = nil
 		} else {
 			fields["uploadReleaseName"] = i.UploadReleaseName.Value
 		}
+	}
+	if i.ScreenshotCount != nil {
+		fields["screenshotCount"] = *i.ScreenshotCount
 	}
 	if i.AdditionalNames != nil {
 		fields["additionalNames"] = i.AdditionalNames
@@ -147,6 +150,11 @@ func (i *TrackerProjectionInstructions) UnmarshalJSON(payload []byte) error {
 	if raw, ok := fields["uploadReleaseName"]; ok {
 		if err := json.Unmarshal(raw, &i.UploadReleaseName); err != nil {
 			return fmt.Errorf("unmarshal tracker projection upload name: %w", err)
+		}
+	}
+	if raw, ok := fields["screenshotCount"]; ok {
+		if err := json.Unmarshal(raw, &i.ScreenshotCount); err != nil {
+			return fmt.Errorf("unmarshal tracker projection screenshot count: %w", err)
 		}
 	}
 	if raw, ok := fields["additionalNames"]; ok {

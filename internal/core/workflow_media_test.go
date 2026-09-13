@@ -18,6 +18,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -591,6 +592,95 @@ func TestWorkflowMediaBuilderCapturesOnlyProjectedNormalScreenshots(t *testing.T
 	}
 	if changed.CaptureFingerprint == snapshot.CaptureFingerprint {
 		t.Fatal("media capture fingerprint ignored release generation")
+	}
+}
+
+func TestWorkflowMediaCaptureUsesProjectedScreenshotOverride(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name          string
+		count         *int
+		minimum       int
+		want          int
+		withoutImages bool
+	}{
+		{name: "configured default", want: 7},
+		{
+			name:  "lower override",
+			count: new(2),
+			want:  2,
+		},
+		{name: "zero override", count: new(0)},
+		{name: "no-image tracker configured default", withoutImages: true},
+		{
+			name:          "no-image tracker explicit count",
+			count:         new(7),
+			withoutImages: true,
+		},
+		{
+			name:    "tracker minimum",
+			count:   new(0),
+			minimum: 3,
+			want:    3,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := config.Config{
+				ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 7},
+				Trackers:           config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"ONE": {ImageCount: test.minimum}}},
+			}
+			registry := mediaImageHostRegistry(t)
+			trackerID := api.TrackerID("ONE")
+			if test.withoutImages {
+				trackerID = "NONE"
+				if err := registry.RegisterDescriptor(trackers.Descriptor{
+					Name:              "NONE",
+					Definition:        mediaImageHostDefinition("NONE"),
+					UploadContentMode: trackers.UploadContentModeNone,
+					Family:            trackers.FamilyStandalone,
+					BaseURL:           "https://none.example.invalid",
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			projector, err := trackers.NewWorkflowProjector(registry, cfg, api.NopLogger{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _, _, projections, err := projector.Build(t.Context(), api.ReleaseSnapshot{}, api.UploadSubject{},
+				[]api.TrackerID{trackerID}, map[api.TrackerID]api.TrackerProjectionInstructions{trackerID: {ScreenshotCount: test.count}},
+				nil, api.WorkflowExecutionModeNormal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan := api.ScreenshotPlan{}
+			for index := range test.want {
+				plan.SuggestedSelections = append(plan.SuggestedSelections, api.ScreenshotSelection{Index: index + 1, TimestampSeconds: float64(index+1) * 60})
+			}
+			screenshots := &workflowScreenshotFake{root: t.TempDir(), plan: &plan}
+			builder := workflowMediaBuilder{
+				config:      cfg,
+				resolver:    workflowMediaResolverFake{},
+				screenshots: screenshots,
+			}
+			instructions := api.MediaCaptureInstructions{Purpose: api.ScreenshotPurposeFinal}
+			snapshot, _, err := builder.Build(t.Context(), api.ReleaseRef{SourcePath: "Example.Release.2026.mkv", Generation: 1},
+				projections, instructions, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(snapshot.Artifacts) != test.want {
+				t.Fatalf("captured %d screenshots, want %d", len(snapshot.Artifacts), test.want)
+			}
+			if test.want == 0 {
+				if screenshots.plans != 0 || screenshots.captures != 0 {
+					t.Fatal("zero override invoked screenshot capture")
+				}
+			} else if !slices.Equal(screenshots.planCounts, []int{test.want}) {
+				t.Fatalf("capture plan counts = %v, want %d", screenshots.planCounts, test.want)
+			}
+		})
 	}
 }
 

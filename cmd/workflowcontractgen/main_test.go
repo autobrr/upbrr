@@ -27,6 +27,13 @@ func TestTrackerProjectionInstructionsSchemaPreservesTriStateFields(t *testing.T
 	if name == nil || renderTypeScript(name, 0) != "string | null" {
 		t.Fatalf("upload release name schema = %#v", name)
 	}
+	count := definition.Properties["screenshotCount"]
+	if count == nil || renderTypeScript(count, 0) != "number | null" || slices.Contains(definition.Required, "screenshotCount") {
+		t.Fatalf("optional screenshot count schema = %#v", count)
+	}
+	if count.AnyOf[0].Minimum == nil || *count.AnyOf[0].Minimum != 0 {
+		t.Fatalf("screenshot count minimum = %#v, want zero", count.AnyOf[0].Minimum)
+	}
 	for _, field := range []string{"additionalNames", "questionnaire"} {
 		property := definition.Properties[field]
 		if property == nil || property.AdditionalProperties == nil ||

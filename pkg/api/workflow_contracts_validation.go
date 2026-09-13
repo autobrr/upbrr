@@ -15,6 +15,15 @@ func normalizeTrackerID(value TrackerID) TrackerID {
 	return TrackerID(strings.ToUpper(strings.TrimSpace(string(value))))
 }
 
+func validateTrackerProjectionInstructions(instructions map[TrackerID]TrackerProjectionInstructions) error {
+	for trackerID, instruction := range instructions {
+		if instruction.ScreenshotCount != nil && *instruction.ScreenshotCount < 0 {
+			return fmt.Errorf("tracker %s screenshot count must not be negative", trackerID)
+		}
+	}
+	return nil
+}
+
 func validateTypedRef[T ~string](id T, revision WorkflowRevision, label string) error {
 	if strings.TrimSpace(string(id)) == "" {
 		return fmt.Errorf("%s id is required", label)
@@ -489,6 +498,9 @@ func (s TrackerProjectionInstructionSnapshot) Validate() error {
 	}
 	if len(normalized.Instructions) != len(s.Instructions) {
 		return errors.New("tracker projection instructions contain blank or duplicate tracker ids")
+	}
+	if err := validateTrackerProjectionInstructions(normalized.Instructions); err != nil {
+		return fmt.Errorf("tracker projection instructions: %w", err)
 	}
 	want, err := normalized.ComputeFingerprint()
 	if err != nil {

@@ -4,6 +4,7 @@
 package releaseworkflow
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -24,26 +25,27 @@ const (
 )
 
 type compositeUploadSession struct {
-	Version               int                                         `json:"version"`
-	RequestFingerprint    api.WorkflowFingerprint                     `json:"requestFingerprint"`
-	Intent                api.WorkflowIntent                          `json:"intent"`
-	Goal                  api.WorkflowGoal                            `json:"goal"`
-	Confirm               bool                                        `json:"confirm"`
-	PreparedRelease       api.ReleaseWorkflowPreparedReleaseMode      `json:"preparedRelease,omitempty"`
-	DuplicateDisposition  api.ReleaseWorkflowDuplicateDisposition     `json:"duplicateDisposition"`
-	RemoveTrackers        []api.TrackerID                             `json:"removeTrackers,omitempty"`
-	DefaultProjection     *api.ReleaseWorkflowUploadTrackerProjection `json:"defaultProjection,omitempty"`
-	ManualMedia           compositeUploadManualMedia                  `json:"manualMedia,omitempty"`
-	ActiveOperationID     api.WorkflowOperationID                     `json:"activeOperationId,omitempty"`
-	LastOperationID       api.WorkflowOperationID                     `json:"lastOperationId,omitempty"`
-	LastCommittedRevision api.WorkflowRevision                        `json:"lastCommittedRevision"`
-	Cursor                string                                      `json:"cursor,omitempty"`
-	ApprovedDryRun        *api.UploadDryRunResultRef                  `json:"approvedDryRun,omitempty"`
-	ApprovedFingerprint   api.WorkflowFingerprint                     `json:"approvedFingerprint,omitempty"`
-	ApprovedTrackerIDs    []api.TrackerID                             `json:"approvedTrackerIds,omitempty"`
-	FeedbackSequence      uint64                                      `json:"feedbackSequence,omitempty"`
-	FeedbackReceipts      map[string]compositeUploadFeedbackReceipt   `json:"feedbackReceipts,omitempty"`
-	TerminalReason        string                                      `json:"terminalReason,omitempty"`
+	Version                  int                                         `json:"version"`
+	RequestFingerprint       api.WorkflowFingerprint                     `json:"requestFingerprint"`
+	Intent                   api.WorkflowIntent                          `json:"intent"`
+	Goal                     api.WorkflowGoal                            `json:"goal"`
+	Confirm                  bool                                        `json:"confirm"`
+	PreparedRelease          api.ReleaseWorkflowPreparedReleaseMode      `json:"preparedRelease,omitempty"`
+	DuplicateDisposition     api.ReleaseWorkflowDuplicateDisposition     `json:"duplicateDisposition"`
+	RemoveTrackers           []api.TrackerID                             `json:"removeTrackers,omitempty"`
+	DefaultProjection        *api.ReleaseWorkflowUploadTrackerProjection `json:"defaultProjection,omitempty"`
+	RequestedScreenshotCount *int                                        `json:"requestedScreenshotCount,omitempty"`
+	ManualMedia              compositeUploadManualMedia                  `json:"manualMedia,omitempty"`
+	ActiveOperationID        api.WorkflowOperationID                     `json:"activeOperationId,omitempty"`
+	LastOperationID          api.WorkflowOperationID                     `json:"lastOperationId,omitempty"`
+	LastCommittedRevision    api.WorkflowRevision                        `json:"lastCommittedRevision"`
+	Cursor                   string                                      `json:"cursor,omitempty"`
+	ApprovedDryRun           *api.UploadDryRunResultRef                  `json:"approvedDryRun,omitempty"`
+	ApprovedFingerprint      api.WorkflowFingerprint                     `json:"approvedFingerprint,omitempty"`
+	ApprovedTrackerIDs       []api.TrackerID                             `json:"approvedTrackerIds,omitempty"`
+	FeedbackSequence         uint64                                      `json:"feedbackSequence,omitempty"`
+	FeedbackReceipts         map[string]compositeUploadFeedbackReceipt   `json:"feedbackReceipts,omitempty"`
+	TerminalReason           string                                      `json:"terminalReason,omitempty"`
 }
 
 type compositeUploadManualMedia struct {
@@ -305,6 +307,7 @@ func normalizeCompositeUploadRequest(
 			return slices.Contains(normalizeCompositeTrackerIDs(request.Trackers.Remove), id)
 		})
 	}
+	projections = compositeUploadScreenshotCountInstructions(projections, trackerIDs, request.Media.Screenshots.Count)
 	checkCount := uint8(1)
 	if request.Duplicates.CheckCount != nil && *request.Duplicates.CheckCount == 2 {
 		checkCount = 2
@@ -346,16 +349,17 @@ func normalizeCompositeUploadRequest(
 		}
 	}
 	session := &compositeUploadSession{
-		Version:              compositeUploadSessionVersion,
-		RequestFingerprint:   fingerprint,
-		Intent:               intent,
-		Goal:                 goal,
-		Confirm:              request.Unattended.Confirm,
-		PreparedRelease:      request.Execution.PreparedRelease,
-		DuplicateDisposition: onEvidence,
-		RemoveTrackers:       normalizeCompositeTrackerIDs(request.Trackers.Remove),
-		DefaultProjection:    cloneCompositeUploadProjection(request.Trackers.DefaultProjection),
-		FeedbackReceipts:     make(map[string]compositeUploadFeedbackReceipt),
+		Version:                  compositeUploadSessionVersion,
+		RequestFingerprint:       fingerprint,
+		Intent:                   intent,
+		Goal:                     goal,
+		Confirm:                  request.Unattended.Confirm,
+		PreparedRelease:          request.Execution.PreparedRelease,
+		DuplicateDisposition:     onEvidence,
+		RemoveTrackers:           normalizeCompositeTrackerIDs(request.Trackers.Remove),
+		DefaultProjection:        cloneCompositeUploadProjection(request.Trackers.DefaultProjection),
+		RequestedScreenshotCount: cloneIntPointer(request.Media.Screenshots.Count),
+		FeedbackReceipts:         make(map[string]compositeUploadFeedbackReceipt),
 	}
 	return session, instructions, nil
 }
@@ -574,15 +578,29 @@ func compositeUploadProjectionInstructions(
 	return result
 }
 
+func compositeUploadScreenshotCountInstructions(
+	instructions map[api.TrackerID]api.TrackerProjectionInstructions,
+	trackerIDs []api.TrackerID,
+	count *int,
+) map[api.TrackerID]api.TrackerProjectionInstructions {
+	if count == nil || len(trackerIDs) == 0 {
+		return instructions
+	}
+	if instructions == nil {
+		instructions = make(map[api.TrackerID]api.TrackerProjectionInstructions, len(trackerIDs))
+	}
+	for _, trackerID := range trackerIDs {
+		instruction := instructions[trackerID]
+		instruction.ScreenshotCount = cloneIntPointer(count)
+		instructions[trackerID] = instruction
+	}
+	return instructions
+}
+
 func compositeUploadMediaIntent(
 	input api.ReleaseWorkflowUploadMedia,
 ) (api.MediaCaptureInstructions, *api.WorkflowMediaSelection) {
-	count := 0
-	if input.Screenshots.Count != nil {
-		count = *input.Screenshots.Count
-	}
 	media := api.MediaCaptureInstructions{
-		ScreenshotCount: count,
 		Purpose:         api.ScreenshotPurposeFinal,
 		ManualFrames:    append([]int(nil), input.Screenshots.Frames...),
 		CaptureDVDMenus: optionalBool(input.DVDMenus.Capture),
@@ -1127,15 +1145,21 @@ func (m *Module) applyCompositeAutomaticPolicy(
 			intent.TrackerIDs = trackerIDs
 		})
 	}
-	if current.Selection != nil && session.DefaultProjection != nil {
+	if current.Selection != nil && (session.DefaultProjection != nil || session.RequestedScreenshotCount != nil) {
 		next := make(map[api.TrackerID]api.TrackerProjectionInstructions, len(session.Intent.ProjectionInstructions))
 		maps.Copy(next, session.Intent.ProjectionInstructions)
 		changed := false
 		for _, trackerID := range current.Selection.TrackerIDs {
-			merged := mergeCompositeProjectionDefaults(next[trackerID], *session.DefaultProjection)
+			merged := next[trackerID]
 			before, fingerprintErr := api.CanonicalWorkflowFingerprint(next[trackerID])
 			if fingerprintErr != nil {
 				return false, fmt.Errorf("release workflow fingerprint current tracker defaults: %w", fingerprintErr)
+			}
+			if session.DefaultProjection != nil {
+				merged = mergeCompositeProjectionDefaults(merged, *session.DefaultProjection)
+			}
+			if session.RequestedScreenshotCount != nil {
+				merged.ScreenshotCount = cloneIntPointer(session.RequestedScreenshotCount)
 			}
 			after, fingerprintErr := api.CanonicalWorkflowFingerprint(merged)
 			if fingerprintErr != nil {
@@ -1158,6 +1182,21 @@ func (m *Module) applyCompositeAutomaticPolicy(
 				},
 			)
 		}
+	}
+	if artifactIDs, err := m.compositeUploadExcessScreenshotIDs(ctx, ownerID, current, session, operationID); err != nil {
+		return false, err
+	} else if len(artifactIDs) > 0 {
+		if _, err := m.execute(ctx, ownerID, SetMediaSelectionCommand{
+			WorkflowID:       current.Workflow.ID,
+			ExpectedRevision: current.Workflow.Revision,
+			Media:            *current.Workflow.Media,
+			ArtifactIDs:      artifactIDs,
+			Selected:         false,
+			IdempotencyKey:   compositeUploadOperationKey(string(session.RequestFingerprint)+":trim-screenshots", uint64(current.Workflow.Revision)),
+		}); err != nil {
+			return false, fmt.Errorf("release workflow trim composite screenshots: %w", err)
+		}
+		return true, nil
 	}
 	if current.Dupes == nil {
 		return false, nil
@@ -1197,6 +1236,59 @@ func (m *Module) applyCompositeAutomaticPolicy(
 		}
 		maps.Copy(intent.DuplicateDecisions, decisions)
 	})
+}
+
+func (m *Module) compositeUploadExcessScreenshotIDs(
+	ctx context.Context,
+	ownerID string,
+	current CommandResult,
+	session *compositeUploadSession,
+	operationID api.WorkflowOperationID,
+) ([]api.PublicResourceID, error) {
+	if session.RequestedScreenshotCount == nil || current.Media == nil || current.Workflow.Media == nil ||
+		session.Intent.Media == nil || session.Intent.Media.Selections != nil || len(session.Intent.Media.ManualFrames) > 0 ||
+		session.Intent.MediaSelection != nil {
+		return nil, nil
+	}
+	state, err := m.repository.Load(ctx, ownerID, current.Workflow.ID)
+	if err != nil {
+		return nil, fmt.Errorf("release workflow load composite media selection: %w", err)
+	}
+	if state.Workflow.Revision != current.Workflow.Revision || state.Composite == nil || state.Composite.ActiveOperationID != operationID {
+		return nil, ErrRevisionConflict
+	}
+	targets, err := resolveDownstreamTrackerSet(&state, nil, downstreamStageMedia, m.clock.Now().UTC())
+	if err != nil {
+		if errors.Is(err, ErrInvalidTransition) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	required := 0
+	for _, projection := range targets.Projections().Projections {
+		required = max(required, projection.Artifacts.ScreenshotCount)
+	}
+	return compositeUploadSelectedScreenshotExcess(current.Media.Artifacts, required), nil
+}
+
+func compositeUploadSelectedScreenshotExcess(artifacts []api.MediaArtifact, required int) []api.PublicResourceID {
+	ordered := append([]api.MediaArtifact(nil), artifacts...)
+	slices.SortStableFunc(ordered, func(left, right api.MediaArtifact) int {
+		return cmp.Compare(left.Order, right.Order)
+	})
+	selected := 0
+	excess := make([]api.PublicResourceID, 0)
+	for _, artifact := range ordered {
+		if !artifact.Selected || artifact.Kind != api.MediaArtifactScreenshot ||
+			artifact.Purpose != api.ScreenshotPurposeFinal || artifact.Source == "comparison" {
+			continue
+		}
+		selected++
+		if selected > required {
+			excess = append(excess, artifact.ID)
+		}
+	}
+	return excess
 }
 
 func compositeUploadTrackerRemovalUpdate(
@@ -1857,6 +1949,9 @@ func (m *Module) applyCompositeUploadFeedback(
 				command.Response.TrackerID: *command.Response.Projection,
 			})
 			instruction := mapped[command.Response.TrackerID]
+			if state.Composite.RequestedScreenshotCount != nil {
+				instruction.ScreenshotCount = cloneIntPointer(state.Composite.RequestedScreenshotCount)
+			}
 			state.Composite.Intent.ProjectionInstructions[command.Response.TrackerID] = instruction
 			var projections *api.TrackerReleaseProjectionSet
 			if state.Workflow.TrackerProjections != nil {

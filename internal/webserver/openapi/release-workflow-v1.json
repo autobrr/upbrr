@@ -9400,6 +9400,17 @@
               ]
             }
           },
+          "screenshotCount": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "trackerConfig": {
             "$ref": "#/components/schemas/TrackerConfigOverrides"
           },

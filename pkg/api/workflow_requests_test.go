@@ -41,6 +41,50 @@ func TestWorkflowRequestFingerprintsAreDeterministic(t *testing.T) {
 	}
 }
 
+func TestProjectReleaseWorkflowTrackersRequestRejectsNegativeScreenshotCount(t *testing.T) {
+	t.Parallel()
+
+	negative := -1
+	request := ProjectReleaseWorkflowTrackersRequest{
+		ReleaseWorkflowCommandContext: testWorkflowCommandContext(),
+		Instructions: map[TrackerID]TrackerProjectionInstructions{
+			"EXAMPLE": {ScreenshotCount: &negative},
+		},
+	}
+	if err := request.Validate(); err == nil || !strings.Contains(err.Error(), "screenshot count must not be negative") {
+		t.Fatalf("negative screenshot count error = %v", err)
+	}
+
+	zero := 0
+	request.Instructions["EXAMPLE"] = TrackerProjectionInstructions{ScreenshotCount: &zero}
+	if err := request.Validate(); err != nil {
+		t.Fatalf("zero screenshot count validation: %v", err)
+	}
+}
+
+func TestContinueReleaseWorkflowRequestRejectsNegativeScreenshotCount(t *testing.T) {
+	t.Parallel()
+
+	negative := -1
+	request := ContinueReleaseWorkflowRequest{
+		Authority:      &WorkflowAuthority{WorkflowID: "workflow-1", ExpectedRevision: 1},
+		IdempotencyKey: "continue-1",
+		Goal:           WorkflowGoalTrackersAssessed,
+		Intent: WorkflowIntent{ProjectionInstructions: map[TrackerID]TrackerProjectionInstructions{
+			"EXAMPLE": {ScreenshotCount: &negative},
+		}},
+	}
+	if err := request.Validate(); err == nil || !strings.Contains(err.Error(), "screenshot count must not be negative") {
+		t.Fatalf("negative screenshot count error = %v", err)
+	}
+
+	zero := 0
+	request.Intent.ProjectionInstructions["EXAMPLE"] = TrackerProjectionInstructions{ScreenshotCount: &zero}
+	if err := request.Validate(); err != nil {
+		t.Fatalf("zero screenshot count validation: %v", err)
+	}
+}
+
 func TestContinueRejectsMixedCorrectionAndTrackerAnswerOwners(t *testing.T) {
 	for _, intent := range []WorkflowIntent{
 		{CorrectionPatch: &ReleaseCorrectionPatch{ExpectedRevision: new(uint64)}},

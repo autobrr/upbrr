@@ -685,6 +685,66 @@ func TestBuildScreenshotSectionUsesTwoImagesPerRow(t *testing.T) {
 	}
 }
 
+func TestBuildDescriptionUsesAllSelectedScreenshotsByDefault(t *testing.T) {
+	images := []api.ScreenshotImage{
+		{RawURL: "https://img.example/1.png", WebURL: "https://img.example/1"},
+		{RawURL: "https://img.example/2.png", WebURL: "https://img.example/2"},
+		{RawURL: "https://img.example/3.png", WebURL: "https://img.example/3"},
+		{RawURL: "https://img.example/4.png", WebURL: "https://img.example/4"},
+		{RawURL: "https://img.example/5.png", WebURL: "https://img.example/5"},
+		{RawURL: "https://img.example/6.png", WebURL: "https://img.example/6"},
+	}
+
+	got := buildDescription(api.UploadSubject{}, config.Config{}, trackers.DescriptionAssets{
+		Description: "Custom user description",
+		Override:    true,
+		Screenshots: images,
+	})
+	want := strings.Join([]string{
+		"Custom user description",
+		strings.Join([]string{
+			`[align=center][url=https://img.example/1][img width=350]https://img.example/1.png[/img][/url] [url=https://img.example/2][img width=350]https://img.example/2.png[/img][/url]`,
+			`[url=https://img.example/3][img width=350]https://img.example/3.png[/img][/url] [url=https://img.example/4][img width=350]https://img.example/4.png[/img][/url]`,
+			`[url=https://img.example/5][img width=350]https://img.example/5.png[/img][/url] [url=https://img.example/6][img width=350]https://img.example/6.png[/img][/url][/align]`,
+		}, "\n\n"),
+		`[align=right][url=https://github.com/autobrr/upbrr]Uploaded by upbrr[/url][/align]`,
+	}, "\n\n")
+	if got != want {
+		t.Fatalf("unexpected BHD custom description: %q", got)
+	}
+}
+
+func TestBuildDescriptionHonorsExplicitScreenshotLimit(t *testing.T) {
+	images := []api.ScreenshotImage{
+		{RawURL: "https://img.example/1.png", WebURL: "https://img.example/1"},
+		{RawURL: "https://img.example/2.png", WebURL: "https://img.example/2"},
+		{RawURL: "https://img.example/3.png", WebURL: "https://img.example/3"},
+	}
+
+	got := buildDescription(api.UploadSubject{Options: api.UploadOptions{Screens: 2}}, config.Config{}, trackers.DescriptionAssets{
+		Description: "Custom user description",
+		Override:    true,
+		Screenshots: images,
+	})
+	if strings.Contains(got, "https://img.example/3.png") {
+		t.Fatalf("expected explicit screenshot limit to omit third image, got %q", got)
+	}
+	if strings.Count(got, "[img width=350]") != 2 {
+		t.Fatalf("expected explicit screenshot limit to retain two images, got %q", got)
+	}
+}
+
+func TestBuildDescriptionPreservesFinalDescription(t *testing.T) {
+	got := buildDescription(api.UploadSubject{}, config.Config{}, trackers.DescriptionAssets{
+		Description: " [b]Reviewed tracker description[/b] ",
+		Final:       true,
+		Screenshots: []api.ScreenshotImage{{RawURL: "https://img.example/1.png", WebURL: "https://img.example/1"}},
+	})
+	if got != "[b]Reviewed tracker description[/b]" {
+		t.Fatalf("expected final description to remain untouched, got %q", got)
+	}
+}
+
 func TestDefinitionBuildDescriptionStripsLegacyCreatedFooter(t *testing.T) {
 	result, err := prepareDescription(context.Background(), trackers.PreparationInput{
 		Tracker: "BHD",

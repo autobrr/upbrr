@@ -34,6 +34,7 @@ type schema struct {
 	Ref                  string             `json:"$ref,omitempty"`
 	Type                 string             `json:"type,omitempty"`
 	Format               string             `json:"format,omitempty"`
+	Minimum              *int               `json:"minimum,omitempty"`
 	Description          string             `json:"description,omitempty"`
 	Deprecated           bool               `json:"deprecated,omitempty"`
 	Enum                 []any              `json:"enum,omitempty"`
@@ -1211,6 +1212,7 @@ func (b *schemaBuilder) definition(value reflect.Type) *schema {
 			Type: "object",
 			Properties: map[string]*schema{
 				"uploadReleaseName": stringOrNull(),
+				"screenshotCount":   {AnyOf: []*schema{{Type: "integer", Minimum: new(0)}, {Type: "null"}}},
 				"additionalNames": {
 					Type:                 "object",
 					AdditionalProperties: stringOrNull(),

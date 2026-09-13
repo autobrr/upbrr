@@ -179,6 +179,96 @@ func TestTrackerProjectionInstructionsPreserveAbsentNullAndEmptyName(t *testing.
 	}
 }
 
+func TestTrackerProjectionInstructionsPreserveOptionalScreenshotCount(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		payload string
+		want    *int
+	}{
+		{name: "absent", payload: `{}`},
+		{
+			name:    "zero",
+			payload: `{"screenshotCount":0}`,
+			want:    new(0),
+		},
+		{
+			name:    "value",
+			payload: `{"screenshotCount":7}`,
+			want:    new(7),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var instructions TrackerProjectionInstructions
+			if err := json.Unmarshal([]byte(test.payload), &instructions); err != nil {
+				t.Fatalf("unmarshal projection instructions: %v", err)
+			}
+			if !reflect.DeepEqual(instructions.ScreenshotCount, test.want) {
+				t.Fatalf("screenshot count = %#v, want %#v", instructions.ScreenshotCount, test.want)
+			}
+			encoded, err := json.Marshal(instructions)
+			if err != nil {
+				t.Fatalf("marshal projection instructions: %v", err)
+			}
+			var roundTrip TrackerProjectionInstructions
+			if err := json.Unmarshal(encoded, &roundTrip); err != nil {
+				t.Fatalf("round-trip projection instructions: %v", err)
+			}
+			if !reflect.DeepEqual(roundTrip.ScreenshotCount, test.want) {
+				t.Fatalf("round-trip screenshot count = %#v, want %#v", roundTrip.ScreenshotCount, test.want)
+			}
+		})
+	}
+
+	zero := 0
+	snapshot := TrackerProjectionInstructionSnapshot{Instructions: map[TrackerID]TrackerProjectionInstructions{
+		"EXAMPLE": {ScreenshotCount: &zero},
+	}}
+	clone, err := snapshot.Clone()
+	if err != nil {
+		t.Fatalf("clone projection instructions: %v", err)
+	}
+	*clone.Instructions["EXAMPLE"].ScreenshotCount = 5
+	if *snapshot.Instructions["EXAMPLE"].ScreenshotCount != 0 {
+		t.Fatal("clone mutated screenshot count source value")
+	}
+}
+
+func TestTrackerProjectionInstructionSnapshotRejectsNegativeScreenshotCount(t *testing.T) {
+	t.Parallel()
+
+	negative := -1
+	snapshot := TrackerProjectionInstructionSnapshot{
+		ID:         "instructions-1",
+		WorkflowID: "workflow-1",
+		Revision:   1,
+		Instructions: map[TrackerID]TrackerProjectionInstructions{
+			"EXAMPLE": {ScreenshotCount: &negative},
+		},
+		CreatedAt: time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC),
+	}
+	var err error
+	snapshot, err = snapshot.WithFingerprint()
+	if err != nil {
+		t.Fatalf("fingerprint projection instructions: %v", err)
+	}
+	if err := snapshot.Validate(); err == nil || !strings.Contains(err.Error(), "screenshot count must not be negative") {
+		t.Fatalf("negative screenshot count error = %v", err)
+	}
+
+	zero := 0
+	snapshot.Instructions["EXAMPLE"] = TrackerProjectionInstructions{ScreenshotCount: &zero}
+	snapshot, err = snapshot.WithFingerprint()
+	if err != nil {
+		t.Fatalf("fingerprint zero screenshot count: %v", err)
+	}
+	if err := snapshot.Validate(); err != nil {
+		t.Fatalf("zero screenshot count validation: %v", err)
+	}
+}
+
 func TestTrackerProjectionInstructionsIgnoreRuleAuthorization(t *testing.T) {
 	t.Parallel()
 
