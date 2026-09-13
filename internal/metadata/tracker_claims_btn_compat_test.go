@@ -23,10 +23,12 @@ const (
 )
 
 type btnClaimedShowsCache struct {
-	FetchedAt int64    `json:"fetched_at"`
-	SourceURL string   `json:"source_url"`
-	PostID    string   `json:"post_id"`
-	Titles    []string `json:"titles"`
+	Version   int        `json:"version,omitempty"`
+	FetchedAt int64      `json:"fetched_at"`
+	SourceURL string     `json:"source_url"`
+	PostID    string     `json:"post_id"`
+	Claims    []struct{} `json:"claims,omitempty"`
+	Titles    []string   `json:"titles"`
 }
 
 type btnTrackerClaimProvider struct{}

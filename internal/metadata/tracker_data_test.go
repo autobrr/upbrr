@@ -456,7 +456,7 @@ func TestBTNTrackerClaimProviderUsesSharedCachePathAnd48HourTTL(t *testing.T) {
 	}
 }
 
-func TestLoadBTNClaimedTitlesUsesFreshCacheWithin48Hours(t *testing.T) {
+func TestLoadBTNClaimedTitlesRefreshesFreshLegacyCache(t *testing.T) {
 	tempDir := t.TempDir()
 	cachePath := filepath.Join(tempDir, "cache", "banned", "BTN_claimed_releases.json")
 	cached := map[string]struct{}{normalizeBTNTitle("Cached Show"): {}}
@@ -465,9 +465,20 @@ func TestLoadBTNClaimedTitlesUsesFreshCacheWithin48Hours(t *testing.T) {
 	}
 
 	clientCalls := 0
-	restore := swapDefaultTransport(roundTripperFunc(func(_ *http.Request) (*http.Response, error) {
+	restore := swapDefaultTransport(roundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		clientCalls++
-		return nil, context.Canceled
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body: io.NopCloser(strings.NewReader(`
+				<table id="post1405482">
+				  <tr><td><div id="content1405482" class="postcontent">
+				    <strong>Current Shows:</strong><br>
+				    Fresh Show -- HDB | BTN -- TBN -- AMZN<br>
+				  </div></td></tr>
+				</table>`)),
+			Header:  make(http.Header),
+			Request: req,
+		}, nil
 	}))
 	defer restore()
 
@@ -476,11 +487,23 @@ func TestLoadBTNClaimedTitlesUsesFreshCacheWithin48Hours(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load btn claimed titles: %v", err)
 	}
-	if clientCalls != 0 {
-		t.Fatalf("expected fresh cache to avoid fetch, got %d requests", clientCalls)
+	if clientCalls != 2 {
+		t.Fatalf("expected legacy cache to trigger session validation and fetch, got %d requests", clientCalls)
 	}
-	if _, ok := claimed[normalizeBTNTitle("Cached Show")]; !ok {
-		t.Fatalf("expected cached title, got %#v", claimed)
+	if _, ok := claimed[normalizeBTNTitle("Fresh Show")]; !ok {
+		t.Fatalf("expected refreshed title, got %#v", claimed)
+	}
+
+	cacheData, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatalf("read cache: %v", err)
+	}
+	var migrated btnClaimedShowsCache
+	if err := json.Unmarshal(cacheData, &migrated); err != nil {
+		t.Fatalf("decode migrated cache: %v", err)
+	}
+	if migrated.Version != 2 || len(migrated.Claims) != 1 {
+		t.Fatalf("expected v2 structured cache, got version=%d claims=%d", migrated.Version, len(migrated.Claims))
 	}
 }
 
