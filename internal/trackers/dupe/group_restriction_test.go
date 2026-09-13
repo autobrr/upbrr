@@ -82,6 +82,18 @@ func TestGroupRestrictionIgnoresOnlyConfirmedDifferentGroups(t *testing.T) {
 			wantReason: "same_tracker_slot",
 		},
 		{
+			name: "source hyphen without group",
+			candidate: TrackerCandidate{
+				Name:       "Example.Show.S01E01.1080p.WEB-DL",
+				Type:       "WEB-DL",
+				Resolution: "1080p",
+				Season:     1,
+				Episode:    1,
+			},
+			want:       api.DupeRelationSameSlot,
+			wantReason: "same_tracker_slot",
+		},
+		{
 			name: "contradictory group",
 			candidate: TrackerCandidate{
 				Name:       "Example.Show.S01E01.1080p.WEB-DL-Third",
@@ -128,6 +140,34 @@ func TestGroupRestrictionIgnoresOnlyConfirmedDifferentGroups(t *testing.T) {
 				t.Fatalf("candidate evaluation = %#v", got)
 			}
 		})
+	}
+}
+
+func TestGroupRestrictionKeepsConfiguredHyphenatedGroup(t *testing.T) {
+	t.Parallel()
+
+	target := api.TrackerDuplicateTarget{
+		Names:      []string{"Example.Show.S01E01.1080p.WEB-DL.H.265-A-B"},
+		Type:       "WEB-DL",
+		Resolution: "1080p",
+		Group:      "A-B",
+		Season:     1,
+		Episode:    1,
+	}
+	candidate := TrackerCandidate{
+		Name:       "Example.Show.S01E01.1080p.WEB-DL.H.264-A-B",
+		Type:       "WEB-DL",
+		Resolution: "1080p",
+		Season:     1,
+		Episode:    1,
+	}
+	policy := trackerspkg.DupePolicy{
+		GroupRestriction: trackerspkg.DupeGroupRestriction{Enabled: true, Group: "A-B"},
+	}
+
+	got := Evaluate(target, []TrackerCandidate{candidate}, policy, SearchEvidence{Complete: true}).Candidates[0]
+	if got.WinningRule == "configured_other_group" || got.Relation == api.DupeRelationCoexists {
+		t.Fatalf("candidate evaluation = %#v", got)
 	}
 }
 

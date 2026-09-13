@@ -128,12 +128,16 @@ func configuredOtherGroup(
 	if !restriction.Enabled || exactCandidate(target, candidate) {
 		return false
 	}
-	if facts.Group.Status != FactComplete && (facts.Group.Status != FactPartial || facts.Group.Origin != FactOriginTrackerTitle) {
+	targetGroup := trackerspkg.NormalizeTrackerReleaseGroup(restriction.Group)
+	if targetGroup == "" {
 		return false
 	}
-	targetGroup := trackerspkg.NormalizeTrackerReleaseGroup(restriction.Group)
-	candidateGroup := trackerspkg.NormalizeTrackerReleaseGroup(facts.Group.Value)
-	return targetGroup != "" && candidateGroup != "" && !strings.EqualFold(targetGroup, candidateGroup)
+	if facts.Group.Status == FactComplete {
+		candidateGroup := trackerspkg.NormalizeTrackerReleaseGroup(facts.Group.Value)
+		return candidateGroup != "" && !strings.EqualFold(targetGroup, candidateGroup)
+	}
+	return facts.Group.Status == FactPartial && facts.Group.Origin == FactOriginTrackerTitle &&
+		titleProvesDifferentGroup(candidate.Name, targetGroup)
 }
 
 func candidateEvaluationRank(candidate CandidateEvaluation) int {

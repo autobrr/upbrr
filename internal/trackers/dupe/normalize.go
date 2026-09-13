@@ -1030,6 +1030,25 @@ func groupFromTitle(name string) string {
 	return canonicalGroup(group)
 }
 
+// titleProvesDifferentGroup accepts only a parser-recognized release group.
+// It keeps candidates ending in the configured group because a generic parser
+// may otherwise split a valid hyphenated group at its last separator.
+func titleProvesDifferentGroup(name string, targetGroup string) bool {
+	name = strings.TrimSpace(name)
+	for _, extension := range []string{".mkv", ".mp4"} {
+		if strings.HasSuffix(strings.ToLower(name), extension) {
+			name = name[:len(name)-len(extension)]
+			break
+		}
+	}
+	targetSuffix := "-" + targetGroup
+	if len(name) >= len(targetSuffix) && strings.EqualFold(name[len(name)-len(targetSuffix):], targetSuffix) {
+		return false
+	}
+	candidateGroup := trackerspkg.NormalizeTrackerReleaseGroup(rls.ParseString(name).Group)
+	return candidateGroup != "" && !strings.EqualFold(candidateGroup, targetGroup)
+}
+
 func regionFromTitle(upper string) string {
 	for _, value := range []string{"PAL", "NTSC"} {
 		if tokenPresent(upper, value) {

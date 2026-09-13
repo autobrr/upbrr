@@ -64,7 +64,7 @@ For warnings that permit an override, use **Upload anyway** on the tracker's **D
 
 Duplicate search results are evidence, not an automatic upload decision. Review candidate names, metadata, and tracker warnings. Where approval is required, select an explicit non-empty tracker subset after the duplicate stage.
 
-A complete structured group is preferred for group-policy decisions. When a tracker omits that field, only one unambiguous normalized release-name suffix can establish the candidate group; conflicting, missing, or multi-group text keeps the normal duplicate review.
+A complete structured group is preferred for group-policy decisions. When a tracker omits that field, only one unambiguous normalized release-name suffix can prove different-group ownership; conflicting, missing, or multi-group text keeps the normal duplicate review.
 
 ## 5. Prepare media and descriptions
 
