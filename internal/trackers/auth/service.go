@@ -1248,7 +1248,7 @@ func mustTrackerConfig(cfg config.Config, trackerID string) config.TrackerConfig
 // invalid sessions clear the reported cookie count and include recovery action;
 // 2FA is actionable only when a reusable challenge id exists.
 func applyEnsureErrorToStatus(status *api.TrackerAuthStatus, err error) {
-	status.LastError = redact(err.Error())
+	status.LastError = redactEnsureError(err)
 	status.Message = "remote auth test failed"
 
 	if isCookieStorageFailure(err) {
@@ -1297,13 +1297,56 @@ func applyEnsureErrorToStatus(status *api.TrackerAuthStatus, err error) {
 	}
 }
 
+// redactEnsureError preserves complete joined storage failures with blanket URL
+// masking. Otherwise it exposes only an explicitly sanitized tracker public
+// detail, while all other error text retains blanket URL-path masking.
+func redactEnsureError(err error) string {
+	if !isCookieStorageFailure(err) {
+		if resolution, ok := errors.AsType[*trackerscatalog.AuthResolutionError](err); ok {
+			if publicDetail := strings.TrimSpace(resolution.PublicDetail); publicDetail != "" {
+				return strings.TrimSpace(redaction.RedactValue(publicDetail, nil))
+			}
+		}
+	}
+	return redact(err.Error())
+}
+
 // isCookieStorageFailure recognizes cookie persistence/load failures that should
 // be exposed as storage-unavailable rather than login-required auth states.
 func isCookieStorageFailure(err error) bool {
-	if err == nil || errors.Is(err, cookies.ErrTrackerCookiesNotFound) {
-		return false
+	matched, _ := cookieStorageFailureInChain(err)
+	return matched
+}
+
+func cookieStorageFailureInChain(err error) (matched bool, containsResolution bool) {
+	if err == nil {
+		return false, false
 	}
-	lower := strings.ToLower(err.Error())
+	if _, ok := err.(*trackerscatalog.AuthResolutionError); ok { //nolint:errorlint // Inspect this node so joined storage siblings remain visible.
+		return false, true
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, child := range joined.Unwrap() {
+			childMatched, childContainsResolution := cookieStorageFailureInChain(child)
+			matched = matched || childMatched
+			containsResolution = containsResolution || childContainsResolution
+		}
+		return matched, containsResolution
+	}
+	if errors.Is(err, cookies.ErrTrackerCookiesNotFound) {
+		return false, false
+	}
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
+		matched, containsResolution = cookieStorageFailureInChain(wrapped.Unwrap())
+		if containsResolution {
+			return matched, true
+		}
+	}
+	return matched || isCookieStorageMessage(err.Error()), false
+}
+
+func isCookieStorageMessage(message string) bool {
+	lower := strings.ToLower(message)
 	return strings.Contains(lower, "cookies:") ||
 		strings.Contains(lower, "cookie store") ||
 		strings.Contains(lower, "legacy cookie file")

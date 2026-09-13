@@ -26,8 +26,12 @@ var ErrSubmitted2FARejected = errors.New("trackers: submitted 2FA rejected")
 
 // AuthResolutionError reports tracker-owned remote auth classification to the generic coordinator.
 type AuthResolutionError struct {
-	// Reason is sanitized operator-facing failure detail.
+	// Reason identifies the tracker-owned auth resolution outcome.
 	Reason string
+	// PublicDetail is optional, already-sanitized operator-facing detail. The
+	// coordinator displays it only when the producer explicitly provides it.
+	// Err is never used as a public-detail source.
+	PublicDetail string
 	// AuthRequired reports that configured or interactive authentication is needed.
 	AuthRequired bool
 	// ConfirmedInvalid reports that existing authentication was rejected remotely.

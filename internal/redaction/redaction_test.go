@@ -27,6 +27,97 @@ func TestRedactValueURLPatterns(t *testing.T) {
 	}
 }
 
+func TestRedactValueStructurallyRedactsEncodedURLSecrets(t *testing.T) {
+	t.Parallel()
+
+	input := "https://synthetic-user:synthetic-password@tracker.example/%61nnounce/%30%31%32%33%34%35%36%37%38%39abcdef?pass%6bey=synthetic-passkey&session=synthetic-session&page=2#token=synthetic-token"
+	output := RedactValue(input, nil)
+
+	for _, secret := range []string{"synthetic-user", "synthetic-password", "0123456789abcdef", "synthetic-passkey", "synthetic-session", "synthetic-token"} {
+		if contains(output, secret) {
+			t.Fatal("expected URL secret redacted")
+		}
+	}
+	for _, marker := range []string{"https://[REDACTED]@tracker.example/announce/[REDACTED]", "passkey=[REDACTED]", "session=[REDACTED]", "page=2", "#token=[REDACTED]"} {
+		if !contains(output, marker) {
+			t.Fatalf("expected structural URL context %q", marker)
+		}
+	}
+}
+
+func TestRedactValueUsesCustomSensitiveKeysForURLValues(t *testing.T) {
+	t.Parallel()
+
+	keys := map[string]struct{}{"diagnosticcode": {}}
+	input := "https://tracker.example/diagnostics?diagnostic_code=query-secret&page=2#diagnostic-code=fragment-secret&state=a+b"
+	output := RedactValue(input, keys)
+
+	for _, secret := range []string{"query-secret", "fragment-secret"} {
+		if contains(output, secret) {
+			t.Fatal("expected custom URL secret redacted")
+		}
+	}
+	if !contains(output, "page=2") {
+		t.Fatal("expected ordinary URL query value preserved")
+	}
+	if !contains(output, "#diagnostic-code=[REDACTED]") || contains(output, "%255B") {
+		t.Fatal("expected readable custom fragment redaction marker")
+	}
+	if !contains(output, "state=a+b") || contains(output, "state=a%20b") {
+		t.Fatal("expected literal fragment plus preserved")
+	}
+}
+
+func TestRedactValuePreservesClosingURLParenthesis(t *testing.T) {
+	t.Parallel()
+
+	input := "web UI (browser URL http://127.0.0.1:7480/app)"
+	if output := RedactValue(input, nil); output != input {
+		t.Fatal("expected surrounding URL punctuation preserved")
+	}
+}
+
+func TestRedactValueSessionKeyVariants(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{name: "plain underscore", input: "session_id=plain-underscore-secret"},
+		{name: "plain hyphen", input: "session-id=plain-hyphen-secret"},
+		{name: "plain camel", input: "sessionId=plain-camel-secret"},
+		{name: "quoted underscore", input: `session_id="quoted-underscore-secret"`},
+		{name: "quoted hyphen", input: `session-id="quoted-hyphen-secret"`},
+		{name: "quoted camel", input: `sessionId="quoted-camel-secret"`},
+		{name: "query underscore", input: "error?session_id=query-underscore-secret"},
+		{name: "query hyphen", input: "error?session-id=query-hyphen-secret"},
+		{name: "query camel", input: "error?sessionId=query-camel-secret"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			output := RedactValue(tt.input, nil)
+			if contains(output, "secret") || !contains(output, "[REDACTED]") {
+				t.Fatal("expected session value redacted")
+			}
+		})
+	}
+}
+
+func TestRedactValueFailsClosedOnMalformedSensitiveURLQuery(t *testing.T) {
+	t.Parallel()
+
+	output := RedactValue("https://tracker.example/diagnostics?pass%6bey=%ZZ&page=2", nil)
+	if contains(output, "pass%6bey") || contains(output, "%ZZ") {
+		t.Fatal("expected malformed sensitive URL query redacted")
+	}
+	if !contains(output, "?[REDACTED]") {
+		t.Fatal("expected malformed sensitive URL query redaction marker")
+	}
+}
+
 func TestRedactValueAnnouncePathToken(t *testing.T) {
 	t.Parallel()
 
@@ -80,10 +171,10 @@ func TestRedactValueBareProxyPath(t *testing.T) {
 func TestRedactValuePlainKeyValuePairs(t *testing.T) {
 	t.Parallel()
 
-	input := `api_key: tracker-secret api-key=hyphen-secret apiToken: camel-secret auth_key=auth-secret rss-key=rss-secret torrentPass=torrent-secret AntiCsrfToken=csrf-secret token=plain-token Authorization=Bearer bearer-secret cookie: "session-secret" message=kept`
+	input := `api_key: tracker-secret api-key=hyphen-secret apiToken: camel-secret auth_key=auth-secret rss-key=rss-secret torrentPass=torrent-secret AntiCsrfToken=csrf-secret token=plain-token session=session-secret Authorization=Bearer bearer-secret cookie: "cookie-secret" message=kept`
 	output := RedactValue(input, nil)
 
-	for _, secret := range []string{"tracker-secret", "hyphen-secret", "camel-secret", "auth-secret", "rss-secret", "torrent-secret", "csrf-secret", "plain-token", "bearer-secret", "session-secret"} {
+	for _, secret := range []string{"tracker-secret", "hyphen-secret", "camel-secret", "auth-secret", "rss-secret", "torrent-secret", "csrf-secret", "plain-token", "session-secret", "bearer-secret", "cookie-secret"} {
 		if contains(output, secret) {
 			t.Fatal("expected sensitive key/value redacted")
 		}

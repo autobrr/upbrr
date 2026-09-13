@@ -1629,6 +1629,131 @@ func TestApplyEnsureErrorToStatusRedactsURLPath(t *testing.T) {
 	}
 }
 
+func TestApplyEnsureErrorToStatusKeepsTypedTrackerDiagnosticURLPath(t *testing.T) {
+	t.Parallel()
+
+	status := api.TrackerAuthStatus{TrackerID: "BTN", State: StateConfigured}
+	applyEnsureErrorToStatus(&status, &trackers.AuthResolutionError{
+		Transient:    true,
+		PublicDetail: "trackers: BTN upload auth unexpected final path final_url=https://www.tracker.invalid/diagnostics.php?page=2&pass%6bey=synthetic-passkey&session_id=synthetic-session response_detail=\"sessionId=synthetic-body-session\"",
+		Err:          errors.New("raw diagnostic must not be displayed"),
+	})
+
+	if !strings.Contains(status.LastError, "/diagnostics.php?page=2&passkey=[REDACTED]&session_id=[REDACTED]") {
+		t.Fatalf("typed diagnostic lost safe URL path: %#v", status)
+	}
+	if !strings.Contains(status.LastError, "sessionId=[REDACTED]") {
+		t.Fatalf("typed diagnostic lost redacted response detail: %#v", status)
+	}
+	if strings.Contains(status.LastError, "synthetic-passkey") || strings.Contains(status.LastError, "synthetic-session") {
+		t.Fatalf("typed diagnostic leaked URL secret: %#v", status)
+	}
+}
+
+func TestApplyEnsureErrorToStatusPreservesJoinedStorageFailure(t *testing.T) {
+	t.Parallel()
+
+	diagnostic := "trackers: BTN upload auth login required final_url=https://www.tracker.invalid/login.php?session_id=synthetic-session"
+	err := errors.Join(
+		&trackers.AuthResolutionError{
+			ConfirmedInvalid: true,
+			PublicDetail:     diagnostic,
+			Err:              errors.New(diagnostic),
+		},
+		errors.New("cookies: delete tracker BTN from db: storage unavailable"),
+	)
+	status := api.TrackerAuthStatus{TrackerID: "BTN", State: StateConfigured}
+
+	applyEnsureErrorToStatus(&status, err)
+
+	if status.State != StateEncryptedStorageUnavailable {
+		t.Fatalf("expected storage failure state, got %#v", status)
+	}
+	for _, want := range []string{"BTN upload auth login required", "cookies: delete tracker BTN from db"} {
+		if !strings.Contains(status.LastError, want) {
+			t.Fatalf("joined storage failure lost %q: %#v", want, status)
+		}
+	}
+	if strings.Contains(status.LastError, "/login.php") || strings.Contains(status.LastError, "synthetic-session") {
+		t.Fatalf("joined storage failure leaked URL detail: %#v", status)
+	}
+}
+
+func TestIsCookieStorageFailureIgnoresTrackerPublicDetail(t *testing.T) {
+	t.Parallel()
+
+	phrases := []string{
+		"cookies: temporarily unavailable",
+		"cookie store temporarily unavailable",
+		"legacy cookie file temporarily unavailable",
+	}
+	for _, phrase := range phrases {
+		t.Run(phrase, func(t *testing.T) {
+			t.Parallel()
+			if !isCookieStorageFailure(errors.New(phrase)) {
+				t.Fatal("expected direct storage failure classification")
+			}
+			remote := &ValidationError{
+				TrackerID: "BTN",
+				Transient: true,
+				Err: &trackers.AuthResolutionError{
+					Transient:    true,
+					PublicDetail: phrase,
+					Err:          errors.New(phrase),
+				},
+			}
+			if isCookieStorageFailure(remote) {
+				t.Fatal("tracker public detail must not classify as a storage failure")
+			}
+		})
+	}
+}
+
+func TestApplyEnsureErrorToStatusMasksTypedErrorWithoutPublicDetail(t *testing.T) {
+	t.Parallel()
+
+	status := api.TrackerAuthStatus{TrackerID: "BTN", State: StateConfigured}
+	applyEnsureErrorToStatus(&status, &trackers.AuthResolutionError{
+		Transient: true,
+		Err:       errors.New("final_url=https://www.tracker.invalid/diagnostics.php?page=2"),
+	})
+
+	if strings.Contains(status.LastError, "/diagnostics.php") {
+		t.Fatalf("missing public detail must retain blanket URL masking: %#v", status)
+	}
+	if !strings.Contains(status.LastError, "https://www.tracker.invalid/[REDACTED]") {
+		t.Fatalf("missing public detail lost masked URL host context: %#v", status)
+	}
+}
+
+func TestApplyEnsureErrorToStatusKeepsConfirmedInvalidPublicDetail(t *testing.T) {
+	t.Parallel()
+
+	status := api.TrackerAuthStatus{
+		TrackerID:   "BTN",
+		State:       StateConfigured,
+		CookieCount: 2,
+	}
+	err := classifyAdapterError("BTN", &trackers.AuthResolutionError{
+		ConfirmedInvalid: true,
+		PublicDetail:     "trackers: BTN upload auth login required final_url=https://www.tracker.invalid/login.php?pass%6bey=synthetic-passkey",
+		Err:              errors.New("raw diagnostic must not be displayed"),
+	})
+	applyEnsureErrorToStatus(&status, err)
+
+	if status.State != StateLoginRequired || status.CookieCount != 0 {
+		t.Fatalf("confirmed-invalid status=%#v", status)
+	}
+	if !strings.Contains(status.LastError, "/login.php?passkey=[REDACTED]") {
+		t.Fatalf("confirmed-invalid detail lost safe final URL: %#v", status)
+	}
+	for _, secret := range []string{"synthetic-passkey", "raw diagnostic"} {
+		if strings.Contains(status.LastError, secret) {
+			t.Fatalf("confirmed-invalid detail leaked %q: %#v", secret, status)
+		}
+	}
+}
+
 func TestCookiesToMapPreservesCookieValueWhitespace(t *testing.T) {
 	t.Parallel()
 
