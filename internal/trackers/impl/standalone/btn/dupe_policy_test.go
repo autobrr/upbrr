@@ -170,9 +170,14 @@ func TestBTNDuplicatePolicySeasonPackCapacity(t *testing.T) {
 	scene := first
 	scene.ReleaseOrigin = "Scene"
 	separated := dupe.Evaluate(sceneTarget, []dupe.TrackerCandidate{first, scene}, policy, btnCompleteSearch())
-	finding := btnSetFinding(t, separated, "standalone/btn/duplicate/v1/scene_season_pack_capacity")
-	if finding.ExistingOccupancy != 1 || !slices.Equal(finding.CandidateIDs, []string{"1"}) {
-		t.Fatalf("scene capacity included P2P release: %#v", finding)
+	for _, candidate := range separated.Candidates {
+		want := api.DupeRelationSameSlot
+		if candidate.Candidate.ReleaseOrigin == "P2P" {
+			want = api.DupeRelationCoexists
+		}
+		if candidate.Relation != want {
+			t.Fatalf("scene single slot included P2P release: %#v", candidate)
+		}
 	}
 }
 

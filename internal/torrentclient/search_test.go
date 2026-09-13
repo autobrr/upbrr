@@ -844,6 +844,37 @@ func TestMatchTrackerURLsMatchesBTNLandOfTVAnnounce(t *testing.T) {
 	}
 }
 
+func TestExtractTrackerMatchesUsesBTNTorrentID(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name    string
+		comment string
+		want    string
+	}{
+		{
+			name:    "upload comment",
+			comment: "https://broadcasthe.net/torrents.php?id=123&torrentid=456",
+			want:    "456",
+		},
+		{
+			name:    "torrent first",
+			comment: "https://broadcasthe.net/torrents.php?torrentid=456&id=123",
+			want:    "456",
+		},
+		{name: "group only", comment: "https://broadcasthe.net/torrents.php?id=123"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			matches, found := extractTrackerMatchesWithPatterns(tt.comment, []string{"https://landof.tv/redacted/announce"}, true,
+				[]string{"btn"}, buildTrackerIDPatterns(trackerPatternRegistry(t)))
+			ids := collectTrackerIDs([]api.TorrentMatch{{TrackerURLs: matches}}, []string{"btn"})
+			if ids["btn"] != tt.want || found != (tt.want != "") {
+				t.Fatalf("BTN identity=%q found=%t want=%q", ids["btn"], found, tt.want)
+			}
+		})
+	}
+}
+
 func TestMatchTrackerURLsMatchesCZTAnnounce(t *testing.T) {
 	t.Parallel()
 

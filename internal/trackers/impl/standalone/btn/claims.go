@@ -81,10 +81,17 @@ func (d *Definition) NewClaimChecker(cfg config.Config, logger api.Logger) track
 }
 
 // HasClaim reports whether a TV title appears in BTN's claimed-show list and
-// remains inside its claim window. Non-TV content and unavailable claim data
+// remains inside its claim window. Confirmed Scene releases bypass claims.
+// Non-TV content and unavailable claim data
 // fail open as unclaimed; malformed or missing air dates keep a matched claim
 // active because expiry cannot be established.
 func (s *claimChecker) HasClaim(ctx context.Context, meta api.UploadSubject) (bool, error) {
+	if isBTNSceneRelease(meta) {
+		if s.logger != nil {
+			s.logger.Debugf("metadata: BTN claims skipped origin=scene decision=allowed")
+		}
+		return false, nil
+	}
 	if !btnIsTVCategory(meta) {
 		if s.logger != nil {
 			s.logger.Debugf("metadata: BTN claims skipped for non-TV content")

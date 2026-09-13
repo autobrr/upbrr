@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -33,7 +34,8 @@ func (d *Definition) NewDataLookup(cfg config.Config, httpClient *http.Client, _
 
 // Lookup resolves IMDb and TVDB identifiers for a BTN torrent ID. Missing or
 // short API tokens, missing tracker IDs, non-success responses, API errors, and
-// empty torrent results produce an empty result without an error.
+// empty torrent results produce an empty result without an error. Ambiguous or
+// mismatched torrent results return an error before identifiers can be applied.
 func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest) (trackers.DataLookupResult, error) {
 	token := strings.TrimSpace(config.ResolveBTNAPIToken(l.cfg))
 	trackerID := strings.TrimSpace(req.TrackerID)
@@ -41,10 +43,14 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 		return trackers.DataLookupResult{}, nil
 	}
 	payload := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      "ua-go",
-		"method":  "getTorrentsSearch",
-		"params":  []any{token, map[string]any{"id": trackerID}, 50},
+		"id":     "ua-go",
+		"method": "getTorrents",
+		"params": map[string]any{
+			"key":     token,
+			"search":  map[string]any{"id": trackerID},
+			"results": 1,
+			"offset":  0,
+		},
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -75,14 +81,18 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 	if len(decoded.Error) > 0 {
 		return trackers.DataLookupResult{}, nil
 	}
-	for _, value := range decoded.Result.Torrents {
-		return trackers.DataLookupResult{
-			TrackerID: trackerID,
-			IMDBID:    int(btnInt(value["ImdbID"])),
-			TVDBID:    int(btnInt(value["TvdbID"])),
-		}, nil
+	if len(decoded.Result.Torrents) == 0 {
+		return trackers.DataLookupResult{}, nil
 	}
-	return trackers.DataLookupResult{}, nil
+	value, found := decoded.Result.Torrents[trackerID]
+	if len(decoded.Result.Torrents) != 1 || !found || decodeBTNTorrent(trackerID, value).id != trackerID {
+		return trackers.DataLookupResult{}, errors.New("trackerdata: btn response did not identify the requested torrent")
+	}
+	return trackers.DataLookupResult{
+		TrackerID: trackerID,
+		IMDBID:    int(btnInt(value["ImdbID"])),
+		TVDBID:    int(btnInt(value["TvdbID"])),
+	}, nil
 }
 
 func btnInt(value any) int64 {

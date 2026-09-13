@@ -22,7 +22,16 @@ func TestDataLookup(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"torrents": map[string]any{"1": map[string]any{"ImdbID": 1234567, "TvdbID": 76543}}}})
+		var rpc struct {
+			Method string `json:"method"`
+			Params struct {
+				Search map[string]string `json:"search"`
+			} `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&rpc); err != nil || rpc.Method != "getTorrents" || rpc.Params.Search["id"] != "42" {
+			t.Errorf("unexpected BTN lookup request: %#v err=%v", rpc, err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"torrents": map[string]any{"42": map[string]any{"ImdbID": 1234567, "TvdbID": 76543}}}})
 	}))
 	defer server.Close()
 	token := strings.Repeat("a", 30)
@@ -37,5 +46,34 @@ func TestDataLookup(t *testing.T) {
 	}
 	if result.IMDBID != 1234567 || result.TVDBID != 76543 {
 		t.Fatalf("unexpected result: %+v", result)
+	}
+}
+
+func TestDataLookupRejectsUnboundTorrents(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name string
+		rows map[string]any
+	}{
+		{name: "wrong map key", rows: map[string]any{"1": map[string]any{"ImdbID": 1234567}}},
+		{name: "wrong torrent ID", rows: map[string]any{"42": map[string]any{"TorrentID": "1", "ImdbID": 1234567}}},
+		{name: "multiple rows", rows: map[string]any{"42": map[string]any{"ImdbID": 1234567}, "43": map[string]any{"ImdbID": 2345678}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"torrents": tt.rows}})
+			}))
+			defer server.Close()
+			lookup := &dataLookup{
+				cfg:      configWithBTNAPIKey(),
+				http:     server.Client(),
+				endpoint: server.URL,
+			}
+			result, err := lookup.Lookup(t.Context(), trackers.DataLookupRequest{TrackerID: "42", OnlyID: true})
+			if err == nil || result.TrackerID != "" || result.IMDBID != 0 || result.TVDBID != 0 {
+				t.Fatalf("unbound response populated identifiers: result=%+v err=%v", result, err)
+			}
+		})
 	}
 }

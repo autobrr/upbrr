@@ -580,8 +580,8 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/btn/claims.go:*claimChecker.HasClaim": {
-    "sha256": "c20e020983d41254f039895c64b59ae4ceebe7367f8fb95ef255a263a7e9ae60",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "6b5c7d3159670a77d0627feadc50113cb14aebd8848d71c872b7355988dc9f90",
+    "reason": "Confirmed Scene evidence bypasses claims; existing provider aliases only match claim identities and do not select effective release metadata."
   },
   "internal/trackers/impl/standalone/btn/claims.go:btnCandidateTitles": {
     "sha256": "e13f8e46c5278f9c2f41ec2a4ec7431e88bc2e2b50bc4081805ece1ed0785778",
@@ -624,12 +624,12 @@
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
   },
   "internal/trackers/impl/standalone/btn/dupe.go:*dupeSearcher.Search": {
-    "sha256": "3f15c0edfc4784ea8c07244e18262e1b11763d09f6587ae16aebabb44e427cb7",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "ee62bd5fe64304d1518b02f6a3a25645678663794c90bec2afd228dac1dd1bfe",
+    "reason": "Explicit identity IDs precede source-torrent identity lookup; the existing manual-aware title helper remains an incomplete search fallback."
   },
   "internal/trackers/impl/standalone/btn/dupe.go:btnDupeFilter": {
-    "sha256": "1a26d0735a63e9c8fc4ec6040b74ce077271bdc3503cc8a43a13fa3e7abcce24",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "5144602664e824f0dd18448384e92a26c806fed4739aed7a458f9186a60e0062",
+    "reason": "TVDB and IMDb bind search identity without title narrowing; title-only searches retain the reviewed manual-aware preference and incomplete scope."
   },
   "internal/trackers/impl/standalone/btn/dupe.go:searchTitle": {
     "sha256": "c0d7706db61e43302503e55527b667a41c030ba388aed2f60d83834b4d428a08",
@@ -672,8 +672,8 @@
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
   "internal/trackers/impl/standalone/btn/profile.go:Profile": {
-    "sha256": "103b121c1630bbce257c12f33fe6b352b13debad80d6eea153b093d0de162793",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "f37146959dcf4c9970ddae66dc964550d5fa7b0557a13ea3fb63c5378baa8fcf",
+    "reason": "BTN torrent-comment identity now selects torrentid instead of group id; provider metadata requirements, manual precedence, and reviewed callback bindings remain unchanged."
   },
   "internal/trackers/impl/standalone/btn/taxonomy.go:resolveBTNOriginalLanguage": {
     "sha256": "4d6cd8ad9ee5a527ecc361c4391f40e1594938ee0f45a9c7ad42b7a314f32c26",
@@ -700,8 +700,8 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/btn/upload.go:checkBTNSeasonPackReservation": {
-    "sha256": "e2b477065f0bb8fb12ef1470371115a71d4157740805475106581e1a799fbc8e",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "0849eb61229e3e2726714cde41e4452d7517ddc4376225569d961a63d154b404",
+    "reason": "Reservation uses explicit TVDB/IMDb identity and the unchanged upload season resolver, preserving provider-translated coordinates without replacing effective metadata."
   },
   "internal/trackers/impl/standalone/btn/upload.go:prepareBTNPreparedOperation": {
     "sha256": "43746039406b95138b9f8dcc694cf372929092557c5ea71ed0bf0cafd64fdf53",

@@ -499,18 +499,18 @@ func TestSiteHandlersSearch(t *testing.T) {
 						return
 					}
 					var request struct {
-						JSONRPC string            `json:"jsonrpc"`
-						ID      string            `json:"id"`
-						Method  string            `json:"method"`
-						Params  []json.RawMessage `json:"params"`
+						JSONRPC string                     `json:"jsonrpc"`
+						ID      string                     `json:"id"`
+						Method  string                     `json:"method"`
+						Params  map[string]json.RawMessage `json:"params"`
 					}
-					if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.JSONRPC != "2.0" ||
+					if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.JSONRPC != "" ||
 						request.ID != "upbrr-btn-search" || request.Method != "getTorrents" || len(request.Params) != 4 {
 						http.Error(w, "invalid BTN search request", http.StatusBadRequest)
 						return
 					}
 					var filter map[string]string
-					if err := json.Unmarshal(request.Params[1], &filter); err != nil || filter["tvdb"] != "123" {
+					if err := json.Unmarshal(request.Params["search"], &filter); err != nil || filter["tvdb"] != "123" {
 						http.Error(w, "missing BTN TVDB provider ID", http.StatusBadRequest)
 						return
 					}

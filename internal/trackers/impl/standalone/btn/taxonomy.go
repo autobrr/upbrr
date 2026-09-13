@@ -154,6 +154,50 @@ func resolveOrigin(meta api.UploadSubject) string {
 	return "P2P"
 }
 
+func btnHDRTags(raw any, present bool) ([]string, bool, bool, api.HDRFacts) {
+	if !present {
+		return nil, false, false, api.HDRFacts{}
+	}
+
+	var tags []string
+	switch typed := raw.(type) {
+	case []any:
+		tags = make([]string, 0, len(typed))
+		for _, value := range typed {
+			tag, ok := value.(string)
+			if !ok {
+				return nil, true, false, btnPartialHDRTags()
+			}
+			tags = append(tags, tag)
+		}
+	case []string:
+		tags = typed
+	default:
+		return nil, true, false, btnPartialHDRTags()
+	}
+
+	flags := make([]string, 0, 3)
+	for _, tag := range tags {
+		switch strings.ToUpper(strings.TrimSpace(tag)) {
+		case "DOLBY VISION":
+			flags = append(flags, "DOLBY VISION")
+		case "HDR10 COMPATIBLE":
+			flags = append(flags, "HDR10")
+		case "HYBRID LOG GAMMA":
+			flags = append(flags, "HLG")
+		}
+	}
+	return flags, true, true, api.HDRFacts{}
+}
+
+func btnPartialHDRTags() api.HDRFacts {
+	return api.HDRFacts{
+		Origin:       api.HDREvidenceTrackerAPI,
+		Status:       api.HDREvidencePartial,
+		SourceFields: []string{"Tags"},
+	}
+}
+
 // resolveBTNSameOriginURL resolves an HTML URL attribute against the current
 // BTN page and accepts only URLs on the configured BTN origin.
 

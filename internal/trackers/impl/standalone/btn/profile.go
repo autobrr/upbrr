@@ -46,7 +46,7 @@ func Profile() standalone.Profile {
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{
 			TrackerURLPatterns:       []string{"https://broadcasthe.net", "https://backup.landof.tv", "https://landof.tv", "landof.tv/"},
 			CommentURLPatterns:       []string{"https://broadcasthe.net", "https://backup.landof.tv", "https://landof.tv"},
-			DetailIDPattern:          "id=(\\d+)",
+			DetailIDPattern:          `(?i)[?&]torrentid=(\d+)`,
 			InferMatchFromResolvedID: true,
 		},
 		AuthCapability: &api.TrackerAuthCapability{

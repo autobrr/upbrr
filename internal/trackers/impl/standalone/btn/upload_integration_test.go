@@ -2390,19 +2390,19 @@ func TestBTNUploadPreservesRemoteIdentityWhenRegisteredTorrentDownloadFails(t *t
 			_, _ = w.Write([]byte("<html>not a torrent</html>"))
 		case r.URL.Path == "/rpc" && r.Method == http.MethodPost:
 			var rpc struct {
-				Method string            `json:"method"`
-				Params []json.RawMessage `json:"params"`
+				Method string                     `json:"method"`
+				Params map[string]json.RawMessage `json:"params"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&rpc)
 			switch rpc.Method {
-			case "getTorrentsSearch":
+			case "getTorrents":
 				apiSearchCalls.Add(1)
 				_, _ = w.Write([]byte(`{"result":{"torrents":{"779":{"GroupID":"123","ReleaseName":"Example.Show.S01E01.1080p.WEB-DL.H.265-GRP"},"778":{"GroupID":"123","ReleaseName":"Example.Show.S01E01.720p.WEB-DL.H.265-GRP"},"777":{"GroupID":"999","ReleaseName":"Example.Show.S01E01.1080p.WEB-DL.H.265-GRP"}}}}`))
 			case "getTorrentById":
 				apiDownloadCalls.Add(1)
 				var selectedID string
 				if len(rpc.Params) > 1 {
-					_ = json.Unmarshal(rpc.Params[1], &selectedID)
+					_ = json.Unmarshal(rpc.Params["id"], &selectedID)
 				}
 				apiDownloadID.Store(selectedID)
 				_, _ = w.Write([]byte(`{"result":{"DownloadURL":"http://` + r.Host + `/mock-download"}}`))
@@ -2572,7 +2572,7 @@ func TestBTNSeasonPackReservationUsesTranslatedTVDBSeason(t *testing.T) {
 			return
 		}
 		apiSearchCalls.Add(1)
-		_, _ = fmt.Fprintf(w, `{"result":{"results":"3","torrents":{"10":{"ReleaseName":"Example.Show.S05E01.1080p-GRP","Time":%q},"9":{"ReleaseName":"Example.Show.S05E02.1080p-GRP","Time":%q},"8":{"ReleaseName":"Example.Show.S03E01.1080p-GRP","Time":%q}}}}`, old, now, old)
+		_, _ = fmt.Fprintf(w, `{"result":{"results":"3","torrents":{"10":{"ReleaseName":"Example.Show.S05E01.1080p-NTb","Origin":"Internal","Time":%q},"9":{"ReleaseName":"Example.Show.S05E02.1080p-NTb","Origin":"Internal","Time":%q},"8":{"ReleaseName":"Example.Show.S03E01.1080p-NTb","Origin":"Internal","Time":%q}}}}`, old, now, old)
 	}))
 	defer server.Close()
 
@@ -2629,17 +2629,17 @@ func TestBTNSeasonPackReservationRequiresCompleteTimestampEvidence(t *testing.T)
 	}{
 		{
 			name:     "missing time",
-			response: `{"result":{"results":"1","torrents":{"1":{"ReleaseName":"Example.Show.S01E01.1080p-GRP"}}}}`,
+			response: `{"result":{"results":"1","torrents":{"1":{"ReleaseName":"Example.Show.S01E01.1080p-NTb","Origin":"Internal"}}}}`,
 			wantErr:  "valid timestamp",
 		},
 		{
 			name:     "malformed time",
-			response: `{"result":{"results":"1","torrents":{"1":{"ReleaseName":"Example.Show.S01E01.1080p-GRP","Time":"later"}}}}`,
+			response: `{"result":{"results":"1","torrents":{"1":{"ReleaseName":"Example.Show.S01E01.1080p-NTb","Origin":"Internal","Time":"later"}}}}`,
 			wantErr:  "valid timestamp",
 		},
 		{
 			name:     "fractional time",
-			response: `{"result":{"results":"1","torrents":{"1":{"ReleaseName":"Example.Show.S01E01.1080p-GRP","Time":1.5}}}}`,
+			response: `{"result":{"results":"1","torrents":{"1":{"ReleaseName":"Example.Show.S01E01.1080p-NTb","Origin":"Internal","Time":1.5}}}}`,
 			wantErr:  "valid timestamp",
 		},
 		{
@@ -2686,7 +2686,7 @@ func TestBTNSeasonPackReservationPaginatesBeforeBlocking(t *testing.T) {
 	recent := strconv.FormatInt(time.Now().Add(-time.Hour).Unix(), 10)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var rpc struct {
-			Params []json.RawMessage `json:"params"`
+			Params map[string]json.RawMessage `json:"params"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&rpc); err != nil || len(rpc.Params) != 4 {
 			t.Errorf("decode reservation request: params=%d err=%v", len(rpc.Params), err)
@@ -2694,7 +2694,7 @@ func TestBTNSeasonPackReservationPaginatesBeforeBlocking(t *testing.T) {
 			return
 		}
 		var offset int
-		if err := json.Unmarshal(rpc.Params[3], &offset); err != nil {
+		if err := json.Unmarshal(rpc.Params["offset"], &offset); err != nil {
 			t.Errorf("decode reservation offset: %v", err)
 			http.Error(w, "invalid offset", http.StatusBadRequest)
 			return
@@ -2707,9 +2707,9 @@ func TestBTNSeasonPackReservationPaginatesBeforeBlocking(t *testing.T) {
 		}
 		switch call {
 		case 1:
-			_, _ = fmt.Fprintf(w, `{"result":{"results":"2","torrents":{"1":{"ReleaseName":"Example.Show.S01E01.1080p-GRP","Time":%q}}}}`, old)
+			_, _ = fmt.Fprintf(w, `{"result":{"results":"2","torrents":{"1":{"ReleaseName":"Example.Show.S01E01.1080p-NTb","Origin":"Internal","Time":%q}}}}`, old)
 		case 2:
-			_, _ = fmt.Fprintf(w, `{"result":{"results":"2","torrents":{"2":{"ReleaseName":"Example.Show.S01E02.1080p-GRP","Time":%q}}}}`, recent)
+			_, _ = fmt.Fprintf(w, `{"result":{"results":"2","torrents":{"2":{"ReleaseName":"Example.Show.S01E02.1080p-NTb","Origin":"Internal","Time":%q}}}}`, recent)
 		default:
 			http.Error(w, "unexpected request", http.StatusInternalServerError)
 		}
@@ -2735,7 +2735,7 @@ func TestBTNSeasonPackReservationRejectsPartialSearch(t *testing.T) {
 	old := strconv.FormatInt(time.Now().Add(-3*time.Hour).Unix(), 10)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if calls.Add(1) == 1 {
-			_, _ = fmt.Fprintf(w, `{"result":{"results":"2","torrents":{"1":{"ReleaseName":"Example.Show.S01E01.1080p-GRP","Time":%q}}}}`, old)
+			_, _ = fmt.Fprintf(w, `{"result":{"results":"2","torrents":{"1":{"ReleaseName":"Example.Show.S01E01.1080p-NTb","Origin":"Internal","Time":%q}}}}`, old)
 			return
 		}
 		http.Error(w, "unavailable", http.StatusServiceUnavailable)
@@ -2761,7 +2761,7 @@ func TestBTNSeasonPackReservationRejectsDuplicateIDs(t *testing.T) {
 	old := strconv.FormatInt(time.Now().Add(-3*time.Hour).Unix(), 10)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls.Add(1)
-		_, _ = fmt.Fprintf(w, `{"result":{"results":"2","torrents":{"1":{"ReleaseName":"Example.Show.S01E01.1080p-GRP","Time":%q}}}}`, old)
+		_, _ = fmt.Fprintf(w, `{"result":{"results":"2","torrents":{"1":{"ReleaseName":"Example.Show.S01E01.1080p-NTb","Origin":"Internal","Time":%q}}}}`, old)
 	}))
 	defer server.Close()
 
@@ -2912,12 +2912,12 @@ func TestBTNUploadIntermediateFailureFallsBackToAPI(t *testing.T) {
 			http.Error(w, "detail unavailable", http.StatusInternalServerError)
 		case r.URL.Path == "/rpc" && r.Method == http.MethodPost:
 			var rpc struct {
-				Method string            `json:"method"`
-				Params []json.RawMessage `json:"params"`
+				Method string                     `json:"method"`
+				Params map[string]json.RawMessage `json:"params"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&rpc)
 			switch rpc.Method {
-			case "getTorrentsSearch":
+			case "getTorrents":
 				apiSearchCalls.Add(1)
 				_, _ = w.Write([]byte(`{"result":{"torrents":{"779":{"GroupID":"123","ReleaseName":"Example.Show.S01E01.1080p.WEB-DL.x265-GRP"}}}}`))
 			case "getTorrentById":

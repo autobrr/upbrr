@@ -24,9 +24,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/rls"
+
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -851,12 +854,11 @@ func decodeBTNAPIJSON(r io.Reader, dest any) error {
 	return nil
 }
 
-func callBTNAPI(ctx context.Context, apiURL, id, method string, params []any, dest any) error {
+func callBTNAPI(ctx context.Context, apiURL, id, method string, params map[string]any, dest any) error {
 	payload := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"method":  method,
-		"params":  params,
+		"id":     id,
+		"method": method,
+		"params": params,
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -991,9 +993,9 @@ func resolveAndDownloadViaAPI(
 	if err != nil {
 		return "", "", fmt.Errorf("trackers: BTN reviewed upload name: %w", err)
 	}
-	filter := map[string]any{"searchstr": releaseName}
+	filter := map[string]any{"release": strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(releaseName)}
 	if strings.TrimSpace(groupID) != "" {
-		filter["group"] = groupID
+		filter["group_id"] = groupID
 	}
 
 	var response struct {
@@ -1001,7 +1003,12 @@ func resolveAndDownloadViaAPI(
 			Torrents map[string]map[string]any `json:"torrents"`
 		} `json:"result"`
 	}
-	if err := callBTNAPI(ctx, apiURL, "ua-btn-upload", "getTorrentsSearch", []any{apiToken, filter, 50}, &response); err != nil {
+	if err := callBTNAPI(ctx, apiURL, "ua-btn-upload", "getTorrents", map[string]any{
+		"key":     apiToken,
+		"search":  filter,
+		"results": 50,
+		"offset":  0,
+	}, &response); err != nil {
 		return "", "", err
 	}
 
@@ -1015,7 +1022,7 @@ func resolveAndDownloadViaAPI(
 			DownloadURL string `json:"DownloadURL"`
 		} `json:"result"`
 	}
-	if err := callBTNAPI(ctx, apiURL, "ua-btn-download", "getTorrentById", []any{apiToken, selection.ID}, &downloadResult); err != nil {
+	if err := callBTNAPI(ctx, apiURL, "ua-btn-download", "getTorrentById", map[string]any{"key": apiToken, "id": selection.ID}, &downloadResult); err != nil {
 		return selection.ID, selection.GroupID, err
 	}
 
@@ -1346,11 +1353,6 @@ func checkBTNSeasonPackReservation(ctx context.Context, uploadCtx uploadContext,
 		return nil
 	}
 
-	tvdbID := req.Meta.Identity.TVDBID
-	if tvdbID == 0 {
-		return nil
-	}
-
 	group := strings.TrimPrefix(req.Meta.Tag, "-")
 	if group == "" {
 		return nil
@@ -1362,9 +1364,18 @@ func checkBTNSeasonPackReservation(ctx context.Context, uploadCtx uploadContext,
 	}
 
 	filter := map[string]any{
-		"tvdb":     strconv.Itoa(tvdbID),
 		"category": "Episode",
-		"group":    group,
+		// Internal releases can remain None until BTN staff relabel them.
+		"origin": []string{"Internal", "None"},
+	}
+	switch {
+	case req.Meta.Identity.TVDBID > 0:
+		filter["tvdb"] = strconv.Itoa(req.Meta.Identity.TVDBID)
+	case req.Meta.Identity.IMDBID > 0:
+		filter["imdb"] = providerid.IMDb(req.Meta.Identity.IMDBID).Decimal()
+	default:
+		warnUnavailable("provider_id_missing")
+		return errors.New("trackers: BTN reservation evidence unavailable: provider ID is missing")
 	}
 	season, _ := resolveBTNTVSeasonEpisode(req.Meta)
 	if season <= 0 {
@@ -1378,16 +1389,34 @@ func checkBTNSeasonPackReservation(ctx context.Context, uploadCtx uploadContext,
 		return fmt.Errorf("trackers: BTN reservation evidence unavailable: %w", err)
 	}
 
-	seasonPrefix := fmt.Sprintf("S%02dE", season)
-
 	var newestInternal time.Time
 	for _, torrent := range torrents {
 		if strings.TrimSpace(torrent.releaseName) == "" {
 			warnUnavailable("release_name_missing")
 			return errors.New("trackers: BTN reservation evidence unavailable: result omitted a release name")
 		}
-		if !strings.Contains(strings.ToUpper(torrent.releaseName), seasonPrefix) {
+		torrentSeason, _ := btnGroupEpisode(torrent.releaseName)
+		if torrentSeason != season {
 			continue
+		}
+		releaseGroup := strings.TrimSpace(torrent.releaseGroup)
+		if releaseGroup == "" {
+			releaseGroup = rls.ParseString(torrent.releaseName).Group
+		}
+		if releaseGroup == "" {
+			warnUnavailable("release_group_missing")
+			return errors.New("trackers: BTN reservation evidence unavailable: matching result omitted a release group")
+		}
+		if !strings.EqualFold(releaseGroup, group) {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(torrent.origin)) {
+		case "internal", "none":
+		case "scene", "p2p", "user", "mixed":
+			continue
+		default:
+			warnUnavailable("origin_invalid")
+			return errors.New("trackers: BTN reservation evidence unavailable: matching result omitted a valid origin")
 		}
 		if !torrent.timePresent || !torrent.timeValid {
 			warnUnavailable("timestamp_invalid")
@@ -1421,7 +1450,13 @@ func btnAPISearchTorrents(ctx context.Context, apiURL, apiToken string, filter m
 	reportedTotal := -1
 	for range 100 {
 		var response btnTorrentsResponse
-		if err := callBTNAPI(ctx, apiURL, "ua-btn-upload-check", "getTorrents", []any{apiToken, filter, limit, offset}, &response); err != nil {
+		params := map[string]any{
+			"key":     apiToken,
+			"search":  filter,
+			"results": limit,
+			"offset":  offset,
+		}
+		if err := callBTNAPI(ctx, apiURL, "ua-btn-upload-check", "getTorrents", params, &response); err != nil {
 			return nil, err
 		}
 		if btnAPIErrorPresent(response.Error) {
