@@ -164,7 +164,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 				Group:         firstHDBText(hdbString(item["releaseGroup"]), hdbString(item["group"])),
 				Flags:         flags,
 				FlagsPresent:  flagsPresent,
-				HDR:           dupe.NormalizeTrackerHDRFlags(flags, flagsPresent, false),
+				HDR:           dupe.NormalizeTrackerHDRFlags(flags, flagsPresent, flagsPresent),
 				Internal:      hdbInt(item["origin"]) == 1,
 				Description:   hdbString(item["descr"]),
 			}
@@ -313,7 +313,7 @@ func hdbCandidateType(value any) string {
 	}
 }
 
-// hdbTags normalizes array or comma-delimited tags and reports whether the response supplied tag evidence.
+// hdbTags normalizes a tag-name array and rejects missing or malformed evidence.
 func hdbTags(item map[string]any) ([]string, bool) {
 	value, present := item["tags"]
 	if !present {
@@ -323,22 +323,25 @@ func hdbTags(item map[string]any) ([]string, bool) {
 	switch typed := value.(type) {
 	case []any:
 		for _, raw := range typed {
-			if tag := hdbString(raw); tag != "" {
-				tags = append(tags, tag)
+			tag, ok := raw.(string)
+			if !ok {
+				return nil, false
 			}
+			if tag = strings.TrimSpace(tag); tag == "" {
+				return nil, false
+			}
+			tags = append(tags, tag)
 		}
 	case []string:
 		for _, raw := range typed {
-			if tag := strings.TrimSpace(raw); tag != "" {
-				tags = append(tags, tag)
+			tag := strings.TrimSpace(raw)
+			if tag == "" {
+				return nil, false
 			}
+			tags = append(tags, tag)
 		}
-	case string:
-		for raw := range strings.SplitSeq(typed, ",") {
-			if tag := strings.TrimSpace(raw); tag != "" {
-				tags = append(tags, tag)
-			}
-		}
+	default:
+		return nil, false
 	}
 	return tags, true
 }

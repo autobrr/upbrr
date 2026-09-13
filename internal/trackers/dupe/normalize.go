@@ -1294,7 +1294,7 @@ func mergeHDRWithTitle(structured api.HDRFacts, title api.HDRFacts) api.HDRFacts
 	if structured.Status == api.HDREvidenceMissing {
 		return title
 	}
-	if !sameCandidateHDR(structured.Formats, title.Formats) && len(title.Formats) > 0 {
+	if !sameCandidateHDR(hdrCompatibility(structured), hdrCompatibility(title)) && len(title.Formats) > 0 {
 		structured.Status = api.HDREvidenceContradictory
 		structured.Contradictions = append(structured.Contradictions, "explicit title HDR differs from structured HDR")
 		if !containsFold(structured.SourceFields, "title") {

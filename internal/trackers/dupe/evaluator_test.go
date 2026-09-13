@@ -259,11 +259,11 @@ func TestEvaluateNBLUsesCoarseSDRHDRDVSlots(t *testing.T) {
 	}
 }
 
-func TestEvaluateANTHDRCompatibilityIsDirectional(t *testing.T) {
+func TestEvaluateExplicitHDRCompatibilityIsDirectional(t *testing.T) {
 	t.Parallel()
 
 	policy := trackerspkg.DupePolicy{
-		ID:                   "ant/duplicate/v3",
+		ID:                   "example/duplicate/v1",
 		SlotDimensions:       []trackerspkg.DupeDimension{trackerspkg.DupeDimensionHDR},
 		HDRCompatibilityMode: trackerspkg.DupeHDRCompatibilityDirectional,
 	}
@@ -1352,7 +1352,7 @@ func TestEvaluateGeneralHDRRequiresPositiveEvidence(t *testing.T) {
 			want: api.DupeRelationCoexists,
 		},
 		{
-			name: "2160p proposed DV HDR trumps HDR",
+			name: "2160p proposed DV HDR coexists with HDR",
 			target: api.TrackerDuplicateTarget{
 				Resolution: "2160p",
 				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatDolbyVision, api.HDRFormatHDR10),
@@ -1361,10 +1361,10 @@ func TestEvaluateGeneralHDRRequiresPositiveEvidence(t *testing.T) {
 				Resolution: "2160p",
 				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10Plus),
 			},
-			want: api.DupeRelationProposedTrumps,
+			want: api.DupeRelationCoexists,
 		},
 		{
-			name: "2160p existing DV HDR trumps HDR",
+			name: "2160p existing DV HDR coexists with HDR",
 			target: api.TrackerDuplicateTarget{
 				Resolution: "2160p",
 				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10),
@@ -1373,10 +1373,10 @@ func TestEvaluateGeneralHDRRequiresPositiveEvidence(t *testing.T) {
 				Resolution: "2160p",
 				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatDolbyVision, api.HDRFormatHDR10Plus),
 			},
-			want: api.DupeRelationExistingPreferred,
+			want: api.DupeRelationCoexists,
 		},
 		{
-			name: "distinct media class precedes DV HDR trumping",
+			name: "distinct media class preserves coexistence",
 			target: api.TrackerDuplicateTarget{
 				Type:       "WEB-DL",
 				Resolution: "2160p",
@@ -1426,7 +1426,7 @@ func TestEvaluateGeneralHDRRequiresPositiveEvidence(t *testing.T) {
 			want: api.DupeRelationSameSlot,
 		},
 		{
-			name: "partial 2160p resolution cannot prove coexistence",
+			name: "title resolution supports complete HDR evidence",
 			target: api.TrackerDuplicateTarget{
 				Resolution: "2160p",
 				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatSDR),
@@ -1434,6 +1434,17 @@ func TestEvaluateGeneralHDRRequiresPositiveEvidence(t *testing.T) {
 			candidate: TrackerCandidate{
 				Name: "Example.Release.2026.2160p.HDR-GRP",
 				HDR:  testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10),
+			},
+			want: api.DupeRelationCoexists,
+		},
+		{
+			name: "missing candidate resolution cannot establish 2160p HDR slots",
+			target: api.TrackerDuplicateTarget{
+				Resolution: "2160p",
+				HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatDolbyVision, api.HDRFormatHDR10),
+			},
+			candidate: TrackerCandidate{
+				HDR: testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10),
 			},
 			want: api.DupeRelationSameSlot,
 		},

@@ -16,7 +16,7 @@ import (
 )
 
 // GeneralDuplicatePolicyID identifies the always-on duplicate comparison contract.
-const GeneralDuplicatePolicyID = "general/duplicate/v6"
+const GeneralDuplicatePolicyID = "general/duplicate/v7"
 
 // DuplicateSearchContractID identifies effective work-scope completion semantics.
 const DuplicateSearchContractID = "duplicate-search/work-scope/v1"
@@ -608,6 +608,8 @@ type DupeHDRCompatibilityMode string
 const (
 	DupeHDRCompatibilityNone        DupeHDRCompatibilityMode = ""
 	DupeHDRCompatibilityDirectional DupeHDRCompatibilityMode = "directional"
+	// DupeHDRCompatibilityHDR10Plus permits only an added HDR10+ capability to trump.
+	DupeHDRCompatibilityHDR10Plus DupeHDRCompatibilityMode = "hdr10_plus"
 )
 
 // DupeCondition is one fact predicate inside a directional rule. Conditions

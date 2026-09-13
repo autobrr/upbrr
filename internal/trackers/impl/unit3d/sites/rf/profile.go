@@ -6,7 +6,7 @@ import (
 )
 
 // Profile returns RF's no-group naming, site-specific type and resolution
-// mappings, required release-group dupe policy, and optional owned image host.
+// mappings, duplicate policy, and optional owned image host.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
 		Name:             "RF",
@@ -20,7 +20,7 @@ func Profile() unit3d.Profile {
 			ResolveResolutionID: resolutionID,
 		},
 		DupePolicy: &trackers.DupePolicy{
-			ID:         "rf/duplicate/v2",
+			ID:         "rf/duplicate/v3",
 			EvidenceID: "rf-rules",
 			SearchScope: trackers.DupeSearchScope{
 				MaxPages: 100,
@@ -29,7 +29,6 @@ func Profile() unit3d.Profile {
 				trackers.DupeDimensionType,
 				trackers.DupeDimensionResolution,
 				trackers.DupeDimensionHDR,
-				trackers.DupeDimensionGroup,
 			},
 		},
 		ImageHost: &trackers.ImageHostPolicy{
