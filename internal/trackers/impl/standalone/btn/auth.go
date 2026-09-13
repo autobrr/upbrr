@@ -18,6 +18,7 @@ import (
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/trackers"
 	authtotp "github.com/autobrr/upbrr/internal/trackers/auth/totp"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -252,36 +253,42 @@ func validateBTNClientSession(ctx context.Context, client *http.Client, baseURL 
 	}
 	defer resp.Body.Close()
 	finalPath := ""
+	finalURL := ""
 	if resp.Request != nil && resp.Request.URL != nil {
 		finalPath = resp.Request.URL.Path
+		finalURL = resp.Request.URL.String()
+	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || finalPath == btnLoginPath {
+		message := btnAuthLoginDiagnostic(resp.StatusCode, finalURL)
+		return &trackers.AuthResolutionError{
+			Reason:           "remote validation failed",
+			PublicDetail:     message,
+			ConfirmedInvalid: true,
+			Err:              btnSafeError{message: message, cause: errBTNSessionConfirmedInvalid},
+		}
 	}
 	body, readErr := io.ReadAll(io.LimitReader(resp.Body, btnAuthResponseMaxBytes+1))
 	if readErr != nil {
 		return newBTNTransientAuthError("trackers: BTN upload auth response read failed", readErr)
 	}
 	bodyText := string(body)
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || finalPath == btnLoginPath {
-		if finalPath != "" {
-			return fmt.Errorf(
-				"%w: login required status=%d final_path=%s",
-				errBTNSessionConfirmedInvalid,
-				resp.StatusCode,
-				sanitizeBTNFinalPath(finalPath),
-			)
-		}
-		return fmt.Errorf("%w: login required status=%d", errBTNSessionConfirmedInvalid, resp.StatusCode)
-	}
 	if finalPath != btnUploadPath {
-		return newBTNTransientAuthError(btnAuthResponseDiagnostic("unexpected final path", resp.StatusCode, finalPath, body, btnAuthPageState(bodyText)), nil)
+		return newBTNTransientAuthError(
+			btnAuthResponseDiagnostic("unexpected final path", resp.StatusCode, finalPath, finalURL, body, btnAuthPageState(bodyText)),
+			nil,
+		)
 	}
 	if resp.StatusCode >= 500 {
-		return newBTNTransientAuthError(btnAuthResponseDiagnostic("response unavailable", resp.StatusCode, finalPath, body, ""), nil)
+		return newBTNTransientAuthError(btnAuthResponseDiagnostic("response unavailable", resp.StatusCode, finalPath, finalURL, body, ""), nil)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return newBTNTransientAuthError(btnAuthResponseDiagnostic("unexpected status", resp.StatusCode, finalPath, body, ""), nil)
+		return newBTNTransientAuthError(btnAuthResponseDiagnostic("unexpected status", resp.StatusCode, finalPath, finalURL, body, ""), nil)
 	}
 	if !btnLooksLikeUploadPage(bodyText) {
-		return newBTNTransientAuthError(btnAuthResponseDiagnostic("page validation failed", resp.StatusCode, finalPath, body, btnAuthPageState(bodyText)), nil)
+		return newBTNTransientAuthError(
+			btnAuthResponseDiagnostic("page validation failed", resp.StatusCode, finalPath, finalURL, body, btnAuthPageState(bodyText)),
+			nil,
+		)
 	}
 	return nil
 }
@@ -303,13 +310,22 @@ func newBTNTransientAuthError(message string, cause error) *trackers.AuthResolut
 		diagnostic = btnSafeError{message: message, cause: cause}
 	}
 	return &trackers.AuthResolutionError{
-		Reason:    "remote validation failed",
-		Transient: true,
-		Err:       diagnostic,
+		Reason:       "remote validation failed",
+		PublicDetail: message,
+		Transient:    true,
+		Err:          diagnostic,
 	}
 }
 
-func btnAuthResponseDiagnostic(reason string, status int, finalPath string, body []byte, pageState string) string {
+func btnAuthLoginDiagnostic(status int, finalURL string) string {
+	message := fmt.Sprintf("trackers: BTN upload auth login required status=%d", status)
+	if finalURL != "" {
+		message += " final_url=" + commonhttp.RedactErrorDetail(finalURL)
+	}
+	return message
+}
+
+func btnAuthResponseDiagnostic(reason string, status int, finalPath string, finalURL string, body []byte, pageState string) string {
 	message := fmt.Sprintf(
 		"trackers: BTN upload auth %s status=%d response_bytes=%d response_truncated=%t",
 		reason,
@@ -318,10 +334,13 @@ func btnAuthResponseDiagnostic(reason string, status int, finalPath string, body
 		len(body) > btnAuthResponseMaxBytes,
 	)
 	if finalPath != btnUploadPath {
-		message += " final_path=" + sanitizeBTNFinalPath(finalPath)
+		message += " final_url=" + commonhttp.RedactErrorDetail(finalURL)
 	}
 	if pageState != "" {
 		message += " page_state=" + pageState
+	}
+	if detail := commonhttp.ExtractHTTPErrorDetail(body); detail != "" {
+		message += fmt.Sprintf(" response_detail=%q", detail)
 	}
 	return message
 }
@@ -331,17 +350,6 @@ func btnAuthPageState(body string) string {
 		return "logged_out_marker"
 	}
 	return "upload_form_missing"
-}
-
-func sanitizeBTNFinalPath(finalPath string) string {
-	const redactedPath = "[REDACTED]"
-
-	switch finalPath {
-	case btnUploadPath, btnLoginPath, "/user.php", "/torrents.php":
-		return finalPath
-	default:
-		return redactedPath
-	}
 }
 
 // loadBTNCookiesIntoJar best-effort seeds an upload client with persisted BTN

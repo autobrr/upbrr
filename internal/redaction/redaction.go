@@ -5,6 +5,7 @@ package redaction
 
 import (
 	"encoding/json"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -26,6 +27,7 @@ var DefaultSensitiveKeys = map[string]struct{}{
 	"password":      {},
 	"auth":          {},
 	"cookie":        {},
+	"session":       {},
 	"csrf":          {},
 	"email":         {},
 	"username":      {},
@@ -42,15 +44,16 @@ var (
 	announcePathTokenRe = regexp.MustCompile(`(?i)(/announce(?:\.php)?/)([A-Za-z0-9]{10,})($|[/?#])`)
 	apiPathTokenRe      = regexp.MustCompile(`(?i)(/api/torrents/)([A-Za-z0-9]{10,})($|[/?#"])`)
 	proxyPathRe         = regexp.MustCompile(`(?i)(/proxy/)([^/\s?#"]+)`) // /proxy/<secret>
+	urlRe               = regexp.MustCompile(`(?i)(?:[a-z][a-z0-9+.-]*://|//)[^\s<>"']+`)
 	urlUserinfoRe       = regexp.MustCompile(`(?i)(\b[a-z][a-z0-9+.-]*://|//)([^/@\s]+)@`)
 	queryParamRe        = regexp.MustCompile(
-		`(?i)([?&](anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|auth|auth[_-]?key|csrf|info[_-]?hash|key|passkey|password|rss[_-]?key|secret|token|torrent[_-]?pass|uid|user|user[_-]?id|userid)=)(?:\[REDACTED\]|[^&\s,\[\])}"']+)`,
+		`(?i)([?&](anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|auth|auth[_-]?key|csrf|info[_-]?hash|key|passkey|password|rss[_-]?key|secret|session(?:[_-]?id)?|token|torrent[_-]?pass|uid|user|user[_-]?id|userid)=)(?:\[REDACTED\]|[^&\s,\[\])}"']+)`,
 	)
 	keyValueQuotedRe = regexp.MustCompile(
-		`(?i)\b(anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|authorization|auth|auth[_-]?key|cookie|csrf|passkey|password|rss[_-]?key|secret|token|torrent[_-]?pass)\b(\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')`,
+		`(?i)\b(anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|authorization|auth|auth[_-]?key|cookie|csrf|passkey|password|rss[_-]?key|secret|session(?:[_-]?id)?|token|torrent[_-]?pass)\b(\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')`,
 	)
 	keyValuePlainRe = regexp.MustCompile(
-		`(?i)\b(anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|authorization|auth|auth[_-]?key|cookie|csrf|passkey|password|rss[_-]?key|secret|token|torrent[_-]?pass)\b(\s*[:=]\s*)(bearer\s+)?([^"'\s,;)\]}]+)`,
+		`(?i)\b(anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|authorization|auth|auth[_-]?key|cookie|csrf|passkey|password|rss[_-]?key|secret|session(?:[_-]?id)?|token|torrent[_-]?pass)\b(\s*[:=]\s*)(bearer\s+)?([^"'\s,;)\]}]+)`,
 	)
 	cookieTailRe   = regexp.MustCompile(`(?i)(\bcookie\b\s*[:=]\s*\[REDACTED\])(?:[;]\s*[^,\r\n]+)+`)
 	authTailRe     = regexp.MustCompile(`(?i)(\bauthorization\b\s*[:=]\s*bearer\s+\[REDACTED\])(?:,\s*[^,\s]+)+`)
@@ -115,9 +118,10 @@ func ExtractJSONBlocks(text string) []Block {
 }
 
 // RedactValue redacts valid embedded JSON plus known secret-bearing URL, path,
-// query, key/value, cookie, authorization, and long-hex patterns. Nil keys use
-// [DefaultSensitiveKeys] for embedded JSON; textual patterns use the package's
-// fixed secret vocabulary.
+// query, key/value, cookie, authorization, and long-hex patterns. URL components
+// are decoded before matching sensitive keys and paths. Nil keys use
+// [DefaultSensitiveKeys] for embedded JSON and URL values; other textual
+// patterns use the package's fixed secret vocabulary.
 func RedactValue(value string, sensitiveKeys map[string]struct{}) string {
 	keys := sensitiveKeys
 	if keys == nil {
@@ -144,10 +148,10 @@ func RedactValue(value string, sensitiveKeys map[string]struct{}) string {
 		}
 	}
 
-	value = passkeyPathRe.ReplaceAllString(value, `/[REDACTED]$2`)
-	value = announcePathTokenRe.ReplaceAllString(value, `${1}[REDACTED]${3}`)
-	value = apiPathTokenRe.ReplaceAllString(value, `${1}[REDACTED]${3}`)
-	value = proxyPathRe.ReplaceAllString(value, `${1}[REDACTED]`)
+	value = urlRe.ReplaceAllStringFunc(value, func(raw string) string {
+		return redactURL(raw, keys)
+	})
+	value = redactURLPath(value)
 	value = urlUserinfoRe.ReplaceAllString(value, `${1}[REDACTED]@`)
 	value = queryParamRe.ReplaceAllString(value, `${1}[REDACTED]`)
 	value = keyValueQuotedRe.ReplaceAllStringFunc(value, redactQuotedKeyValue)
@@ -156,8 +160,62 @@ func RedactValue(value string, sensitiveKeys map[string]struct{}) string {
 	value = authTailRe.ReplaceAllString(value, `${1}`)
 	value = longHexTokenRe.ReplaceAllString(value, `[REDACTED]`)
 
-	_ = keys
 	return value
+}
+
+// redactURL preserves ordinary URL context while structurally redacting known
+// sensitive userinfo, path, query, and fragment values.
+func redactURL(raw string, sensitiveKeys map[string]struct{}) string {
+	trimmed := strings.TrimRight(raw, ".,;:")
+	suffix := strings.TrimPrefix(raw, trimmed)
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Host == "" {
+		return "[REDACTED]" + suffix
+	}
+	if parsed.User != nil {
+		parsed.User = url.User("[REDACTED]")
+	}
+	parsed.Path = redactURLPath(parsed.Path)
+	parsed.RawPath = ""
+	query, ok := redactURLValues(parsed.RawQuery, sensitiveKeys)
+	if !ok {
+		parsed.RawQuery = "[REDACTED]"
+	} else {
+		parsed.RawQuery = query
+	}
+	if strings.ContainsAny(parsed.Fragment, "=&") {
+		fragment, ok := redactURLValues(parsed.Fragment, sensitiveKeys)
+		if !ok {
+			parsed.Fragment = "[REDACTED]"
+		} else {
+			parsed.Fragment = fragment
+		}
+	}
+	parsed.RawFragment = ""
+	return strings.ReplaceAll(parsed.String(), url.QueryEscape("[REDACTED]"), "[REDACTED]") + suffix
+}
+
+func redactURLPath(path string) string {
+	path = passkeyPathRe.ReplaceAllString(path, `/[REDACTED]$2`)
+	path = announcePathTokenRe.ReplaceAllString(path, `${1}[REDACTED]${3}`)
+	path = apiPathTokenRe.ReplaceAllString(path, `${1}[REDACTED]${3}`)
+	return proxyPathRe.ReplaceAllString(path, `${1}[REDACTED]`)
+}
+
+func redactURLValues(raw string, sensitiveKeys map[string]struct{}) (string, bool) {
+	if raw == "" {
+		return "", true
+	}
+	values, err := url.ParseQuery(raw)
+	if err != nil {
+		return "", false
+	}
+	for key := range values {
+		if isSensitiveKey(key, sensitiveKeys) {
+			values[key] = []string{"[REDACTED]"}
+		}
+	}
+	return values.Encode(), true
 }
 
 // redactQuotedKeyValue replaces the value part of a matched quoted secret
