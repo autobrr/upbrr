@@ -86,6 +86,66 @@ func TestBuildName(t *testing.T) {
 			want: "PAL DVD Massacre 2001 480p DVDRip DD 2.0 x264-GRP",
 		},
 		{
+			name: "DVDRip title containing the encode value",
+			meta: api.UploadSubject{
+				ReleaseName: "x264 and x264 Tales 2001 PAL DVD x264 DVDRip DD 2.0-GRP",
+				Release: api.ReleaseInfo{
+					Year:       2001,
+					Resolution: "480p",
+				},
+				Type:        "DVDRIP",
+				Source:      "PAL DVD",
+				VideoEncode: "x264",
+				Audio:       "DD 2.0",
+			},
+			want: "x264 and x264 Tales 2001 480p DVDRip DD 2.0 x264-GRP",
+		},
+		{
+			name: "DVDRip title containing the audio value",
+			meta: api.UploadSubject{
+				ReleaseName: "DD 2.0 Tales 2001 PAL DVD x264 DVDRip DD 2.0-GRP",
+				Release: api.ReleaseInfo{
+					Year:       2001,
+					Resolution: "480p",
+				},
+				Type:        "DVDRIP",
+				Source:      "PAL DVD",
+				VideoEncode: "x264",
+				Audio:       "DD 2.0",
+			},
+			want: "DD 2.0 Tales 2001 480p DVDRip DD 2.0 x264-GRP",
+		},
+		{
+			name: "DVDRip title containing both encode and audio values",
+			meta: api.UploadSubject{
+				ReleaseName: "Example x264 and DD 2.0 Tales 2001 PAL DVD x264 DVDRip DD 2.0-GRP",
+				Release: api.ReleaseInfo{
+					Year:       2001,
+					Resolution: "480p",
+				},
+				Type:        "DVDRIP",
+				Source:      "PAL DVD",
+				VideoEncode: "x264",
+				Audio:       "DD 2.0",
+			},
+			want: "Example x264 and DD 2.0 Tales 2001 480p DVDRip DD 2.0 x264-GRP",
+		},
+		{
+			name: "DVDRip title containing the encode and DVDRip sequence",
+			meta: api.UploadSubject{
+				ReleaseName: "Example x264 DVDRip Tales 2001 PAL DVD x264 DVDRip DD 2.0-GRP",
+				Release: api.ReleaseInfo{
+					Year:       2001,
+					Resolution: "480p",
+				},
+				Type:        "DVDRIP",
+				Source:      "PAL DVD",
+				VideoEncode: "x264",
+				Audio:       "DD 2.0",
+			},
+			want: "Example x264 DVDRip Tales 2001 480p DVDRip DD 2.0 x264-GRP",
+		},
+		{
 			name: "DVD full disc with a DVD-suffixed source",
 			meta: api.UploadSubject{
 				ReleaseName: "Example Movie 2001 R1 NTSC DVD9 DD 5.1-GRP",
@@ -355,6 +415,81 @@ func TestBuildName(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			if got := profile.BuildName(tt.meta, config.TrackerConfig{}); got != tt.want {
+				t.Fatalf("name = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestInsertAfterLast(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		input  string
+		token  string
+		suffix string
+		want   string
+	}{
+		{
+			name:   "last match before release group",
+			input:  "DD 2.0 Tales DD 2.0-GRP",
+			token:  "DD 2.0",
+			suffix: "x264",
+			want:   "DD 2.0 Tales DD 2.0 x264-GRP",
+		},
+		{
+			name:   "token spans name",
+			input:  "DD 2.0",
+			token:  "DD 2.0",
+			suffix: "x264",
+			want:   "DD 2.0 x264",
+		},
+		{
+			name:   "no match",
+			input:  "Example FLAC 2.0-GRP",
+			token:  "DD 2.0",
+			suffix: "x264",
+			want:   "Example FLAC 2.0-GRP",
+		},
+		{
+			name:   "empty token",
+			input:  "Example DD 2.0-GRP",
+			suffix: "x264",
+			want:   "Example DD 2.0-GRP",
+		},
+		{
+			name:  "empty suffix",
+			input: "Example DD 2.0-GRP",
+			token: "DD 2.0",
+			want:  "Example DD 2.0-GRP",
+		},
+		{
+			name:   "skip trailing match without preceding boundary",
+			input:  "Example DD 2.0 EDD 2.0-GRP",
+			token:  "DD 2.0",
+			suffix: "x264",
+			want:   "Example DD 2.0 x264 EDD 2.0-GRP",
+		},
+		{
+			name:   "skip trailing match without following boundary",
+			input:  "Example DD 2.0 DD 2.00-GRP",
+			token:  "DD 2.0",
+			suffix: "x264",
+			want:   "Example DD 2.0 x264 DD 2.00-GRP",
+		},
+		{
+			name:   "skip partial match overlapping a whole token",
+			input:  "DD DD DDX",
+			token:  "DD DD",
+			suffix: "x264",
+			want:   "DD DD x264 DDX",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := insertAfterLast(tt.input, tt.token, tt.suffix); got != tt.want {
 				t.Fatalf("name = %q, want %q", got, tt.want)
 			}
 		})

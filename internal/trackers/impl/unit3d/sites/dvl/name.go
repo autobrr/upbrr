@@ -42,8 +42,10 @@ func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
 		}
 		name = removeLast(name, source)
 		if encode != "" && audio != "" {
-			name = strings.Replace(name, " "+encode, "", 1)
-			name = strings.Replace(name, audio, audio+" "+encode, 1)
+			if index := strings.LastIndex(name, " "+encode+" DVDRip"); index >= 0 {
+				name = name[:index] + name[index+len(encode)+1:]
+			}
+			name = insertAfterLast(name, audio, encode)
 		}
 		source = "DVDRip"
 		name = insertBefore(name, source, resolution)
@@ -138,4 +140,22 @@ func insertBefore(name, token, prefix string) string {
 		return name
 	}
 	return strings.TrimSpace(padded[:index+1] + prefix + " " + padded[index+1:])
+}
+
+func insertAfterLast(name, token, suffix string) string {
+	if token == "" || suffix == "" {
+		return name
+	}
+	for end := len(name); end > 0; {
+		index := strings.LastIndex(name[:end], token)
+		if index < 0 {
+			break
+		}
+		after := index + len(token)
+		if (index == 0 || name[index-1] == ' ') && (after == len(name) || name[after] == ' ' || name[after] == '-') {
+			return name[:after] + " " + suffix + name[after:]
+		}
+		end = index + len(token) - 1
+	}
+	return name
 }
