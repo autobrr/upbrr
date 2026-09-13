@@ -403,7 +403,7 @@ func TestDefinitionBuildUploadDryRunUsesProvidedAssets(t *testing.T) {
 func TestBuildUploadFieldsSkipsTVDBForMovie(t *testing.T) {
 	fields := buildUploadFields(api.UploadSubject{
 		Identity: api.ExternalIdentity{Category: "MOVIE", TVDBID: 765432},
-	}, config.Config{}, 1, 5, 6, "description", "Example.Release.2026.1080p-GRP")
+	}, false, 1, 5, 6, "description", "Example.Release.2026.1080p-GRP")
 
 	if _, ok := fields["tvdb"]; ok {
 		t.Fatalf("did not expect tvdb for movie payload")
@@ -421,7 +421,7 @@ func TestBuildUploadFieldsIncludesTVDBForTV(t *testing.T) {
 		Identity:   api.ExternalIdentity{Category: "TV", TVDBID: 765432},
 		SeasonInt:  2,
 		EpisodeInt: 3,
-	}, config.Config{}, 2, 5, 6, "description", "Example.Show.S02E03.1080p-GRP")
+	}, false, 2, 5, 6, "description", "Example.Show.S02E03.1080p-GRP")
 
 	if got := fields["tvdb"]; got != "765432" {
 		t.Fatalf("expected tvdb=765432, got %q", got)
@@ -431,5 +431,22 @@ func TestBuildUploadFieldsIncludesTVDBForTV(t *testing.T) {
 	}
 	if got := fields["tvdb_episode"]; got != "3" {
 		t.Fatalf("expected tvdb_episode=3, got %q", got)
+	}
+}
+
+func TestBuildUploadFieldsMarksResolvedInternalRelease(t *testing.T) {
+	t.Parallel()
+
+	fields := buildUploadFields(
+		api.UploadSubject{Identity: api.ExternalIdentity{Category: "MOVIE"}},
+		true,
+		1,
+		5,
+		6,
+		"description",
+		"Example.Release.2026.1080p-GRP",
+	)
+	if fields["origin"] != "1" {
+		t.Fatalf("origin = %q", fields["origin"])
 	}
 }

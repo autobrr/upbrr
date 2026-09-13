@@ -116,7 +116,7 @@ func submitPreparedUpload(
 			req.Logger, "ASC", state.torrentPath, artifactPath, announceURL, sourceFlag,
 		)
 		maybeAutoApprove(ctx, client, cookies, req.TrackerConfig, torrentID, req.Logger)
-		maybeSetInternal(ctx, client, cookies, req.TrackerConfig, req.Meta, torrentID, req.Logger)
+		maybeSetInternal(ctx, client, cookies, req.Runtime.Internal, torrentID, req.Logger)
 		return api.UploadSummary{
 			Uploaded: 1,
 			UploadedTorrents: []api.UploadedTorrent{{
@@ -346,23 +346,22 @@ func maybeSetInternal(
 	ctx context.Context,
 	client *http.Client,
 	cookies []*http.Cookie,
-	cfg config.TrackerConfig,
-	meta api.UploadSubject,
+	internal bool,
 	torrentID string,
 	logger api.Logger,
 ) {
-	if client == nil || !cfg.Internal || strings.TrimSpace(torrentID) == "" {
-		logger.Debugf("trackers: ASC internal flag skipped: %v", "client is nil or internal is false or torrentID is empty")
-		return
-	}
-	group := strings.TrimPrefix(strings.TrimSpace(meta.Tag), "-")
-	if group == "" || !containsFold(cfg.InternalGroups, group) {
-		logger.Debugf("trackers: ASC internal flag skipped: %v", "group is empty or not in internal groups")
+	if client == nil || !internal || strings.TrimSpace(torrentID) == "" {
+		if logger != nil {
+			logger.Debugf("trackers: ASC internal flag skipped reason=not_applicable")
+		}
 		return
 	}
 	values := url.Values{"id": {torrentID}, "internal": {"yes"}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/torrents-edit.php?action=doedit", strings.NewReader(values.Encode()))
 	if err != nil {
+		if logger != nil {
+			logger.Warnf("trackers: ASC internal flag failed: %v", err)
+		}
 		return
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -371,11 +370,17 @@ func maybeSetInternal(
 		req.AddCookie(cookie)
 	}
 	resp, err := client.Do(req)
-	if err != nil && logger != nil {
-		logger.Warnf("trackers: ASC internal flag failed: %v", err)
+	if err != nil {
+		if logger != nil {
+			logger.Warnf("trackers: ASC internal flag failed: %v", err)
+		}
+		return
 	}
-	if resp != nil {
-		resp.Body.Close()
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		if logger != nil {
+			logger.Warnf("trackers: ASC internal flag failed: status=%d", resp.StatusCode)
+		}
 	}
 }
 

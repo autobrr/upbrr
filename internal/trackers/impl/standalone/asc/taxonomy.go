@@ -270,12 +270,3 @@ func containsAny(values []string, targets []string) bool {
 	}
 	return false
 }
-
-func containsFold(values []string, target string) bool {
-	for _, value := range values {
-		if strings.EqualFold(strings.TrimSpace(value), strings.TrimSpace(target)) {
-			return true
-		}
-	}
-	return false
-}

@@ -536,8 +536,8 @@
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
   "internal/trackers/impl/standalone/bt/upload.go:buildFields": {
-    "sha256": "3684c2471b11f4199fd2190c65bfa95dfcb96322cdf3e28192848e0c2f329f6a",
-    "reason": "Manual-aware metadata selectors retain authority; year and anime release-date fields encode absent years as blank."
+    "sha256": "83076a63f4a300025e5bdbf37c31c8c1e5801fa7588764be1e039744565077c6",
+    "reason": "Manual-aware metadata selectors retain authority; year and anime release-date fields encode absent years as blank, while the new internal flag consumes only the resolved tracker runtime decision."
   },
   "internal/trackers/impl/standalone/bt/upload.go:prepareUpload": {
     "sha256": "b0f3053220acb2346ee3fe64c72eeb5a17868d8df67acd471b93687cab0711b4",
@@ -580,8 +580,8 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/btn/claims.go:*claimChecker.HasClaim": {
-    "sha256": "6b5c7d3159670a77d0627feadc50113cb14aebd8848d71c872b7355988dc9f90",
-    "reason": "Confirmed Scene evidence bypasses claims; existing provider aliases only match claim identities and do not select effective release metadata."
+    "sha256": "cc284830538ce92689ea8a203718e23815c6f5b4ff6aa7b009259881515a6630",
+    "reason": "Confirmed Scene evidence bypasses claims; finalized media facts scope HDB WEB TV checks, provider aliases only match claim identities, and fresh unambiguous tracker ownership controls the internal-group bypass."
   },
   "internal/trackers/impl/standalone/btn/claims.go:btnCandidateTitles": {
     "sha256": "e13f8e46c5278f9c2f41ec2a4ec7431e88bc2e2b50bc4081805ece1ed0785778",
@@ -590,6 +590,10 @@
   "internal/trackers/impl/standalone/btn/claims.go:matchBTNClaimedTitle": {
     "sha256": "93f5952c4338875c98732ecf35a08e8bdf725fc79deefdf631873ccec8490333",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/standalone/btn/claims.go:matchBTNClaimRecords": {
+    "sha256": "16d8e9f7e87da450bcc58cd3e0b134aa1f5bb5beb8c52bbfddd12f8ded32bf90",
+    "reason": "Provider title aliases corroborate claim identity through the reviewed candidate helper; tracker, claimant group, and freshness decide policy without replacing effective metadata."
   },
   "internal/trackers/impl/standalone/btn/description.go:btnTVDBEpisodeAired": {
     "sha256": "70356c996b629c9276fa3ee3a3e86cdab116efc0fcc0317e02890b629a55d9f4",
@@ -692,16 +696,16 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/btn/upload.go:buildBTNUploadPayload": {
-    "sha256": "2a36bc29f8a5ded48ffbb3636edea7c2a20d2ae33ee3f9ce102368719b9f93f0",
+    "sha256": "21d9f2bc33374127e28ca5cfe420b2f26bc553a5f38e9cd30d7cf0d97d6f00e4",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/btn/upload.go:buildUploadDryRunAt": {
-    "sha256": "86ec3a1e2cde80be5c2a7a3acf0a5d1190bd0eaf70a8839995cc9148df4f2fdd",
+    "sha256": "e69c58cd5b734a02e84ccfd6614baace5127a6a25cde099f939023f61a8048fe",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/btn/upload.go:checkBTNSeasonPackReservation": {
-    "sha256": "0849eb61229e3e2726714cde41e4452d7517ddc4376225569d961a63d154b404",
-    "reason": "Reservation uses explicit TVDB/IMDb identity and the unchanged upload season resolver, preserving provider-translated coordinates without replacing effective metadata."
+    "sha256": "3ba1e7b6b2e079231ecbac686207035a2b0bfe0bd63b5472f86e2c14ac37e1a9",
+    "reason": "Reservation uses explicit TVDB/IMDb identity and the unchanged upload season resolver, preserving provider-translated coordinates without replacing effective metadata; bypass requires normalized, unambiguous group evidence across every active tracker-returned reservation row."
   },
   "internal/trackers/impl/standalone/btn/upload.go:prepareBTNPreparedOperation": {
     "sha256": "43746039406b95138b9f8dcc694cf372929092557c5ea71ed0bf0cafd64fdf53",
@@ -848,11 +852,11 @@
     "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence."
   },
   "internal/trackers/impl/standalone/hdb/upload.go:buildUploadFields": {
-    "sha256": "23020c3793598d65ca051a1850f9f53ce1bdaa58a87234ccf916ecf072cbd275",
+    "sha256": "c0a3add70723f121dc2da375fae90532f630c08a056258c983313cf3bff251d1",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/hdb/upload.go:prepareUploadAt": {
-    "sha256": "b3b7c6b3e42c28ecfb45494db15275c8575ba139233529cfab2b3600ba0538d0",
+    "sha256": "097ec1ebdc0edf6c1039609df5bd4b9a9e38b52ba16bb327756f2bcf9018c02a",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/hdb/upload.go:resolveIMDbURL": {
@@ -1232,8 +1236,8 @@
     "reason": "Explicit manual original-language facts resolve full display names and codes to the tracker language code; empty values remain authoritative and automatic provider selection remains unchanged."
   },
   "internal/trackers/impl/standalone/tvc/upload.go:prepareUploadState": {
-    "sha256": "aa001199562bacbb70aeffbba79bffdced64fb9ae9413f33013d4ad2d77acfb5",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "dae56050443fd89240689b3984e943c61ad2ff2018e8fc481d52b91a6cd7e118",
+    "reason": "Calls reviewed provider consumers; personal and internal payload fields consume tracker-scoped effective policy values without selecting provider metadata."
   },
   "internal/trackers/impl/standalone/validation.go:UploadSubjectForValidation": {
     "sha256": "3cb6528c302ff7db23f8e708d342e5faa21909cad10a4f6ca9cd74cb0df54d90",

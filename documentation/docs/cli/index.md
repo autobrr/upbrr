@@ -241,7 +241,7 @@ Trackers that require the cleared provider can remain blocked. Continue with tra
 | `--asian`             | `-asian`                     | Mark a TIK release as Asian.              |
 | `--disctype <value>`  | `-disctype`                  | Override TIK disc type.                   |
 | `--commentary`        | `-commentary`, `-mc`         | Mark release as containing commentary.    |
-| `--personalrelease`   | `-personalrelease`, `-pr`    | Mark release as personal.                 |
+| `--personalrelease`   | `-personalrelease`, `-pr`    | Explicitly set personal-release handling. |
 | `--stream`            | `-stream`, `-st`             | Mark release as stream optimized.         |
 | `--webdv`             | `-webdv`                     | Mark release as WEB-DV.                   |
 | `--not-anime`         | `-not-anime`                 | Force release to be treated as not anime. |
@@ -249,6 +249,8 @@ Trackers that require the cleared provider can remain blocked. Continue with tra
 | `--draft`             | `-draft`, `-dr`              | Send to drafts where supported.           |
 | `--modq`              | `-modq`, `-mq`               | Opt into mod queue where supported.       |
 | `--channel <value>`   | `-channel`, `-ch`            | Override SPD channel.                     |
+
+`--personalrelease=true` and `--personalrelease=false` are both explicit choices and override tracker group defaults. Omit the option to leave **Personal Release** on **Auto**, where each tracker's configured personal-release groups can supply the default.
 
 ## Screenshots, images, and descriptions
 

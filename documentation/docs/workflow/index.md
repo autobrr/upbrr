@@ -54,6 +54,8 @@ If a provider fails or selects the wrong title, supply a correct ID or [clear th
 
 Each tracker can project its own upload and duplicate-search names from the reviewed source facts. upbrr resolves those names before duplicate checks so the search evidence and eventual payload refer to the same reviewed identity.
 
+Tracker group policies are evaluated separately for each selected tracker and travel with that tracker's reviewed projection. Changing a tracker's group lists invalidates the affected reviewed projection and duplicate decision so they are rebuilt from the new policy. A matching personal-release group supplies the default only while **Personal Release** is **Auto**; an explicit **Yes** or **No** remains authoritative through upload and restart.
+
 Tracker rules and constructibility checks can mark a lane ready, blocked, skipped, or requiring manual review. A tracker-specific block need not stop other eligible trackers.
 
 For warnings that permit an override, use **Upload anyway** on the tracker's **Dupe Check** card or answer the CLI prompt. Approval covers the current warnings; changed warnings require renewed approval. Strict failures cannot be overridden. See [tracker warning approval](../trackers/index.md#approve-tracker-warnings) for unattended and debug behavior.
@@ -62,7 +64,7 @@ For warnings that permit an override, use **Upload anyway** on the tracker's **D
 
 Duplicate search results are evidence, not an automatic upload decision. Review candidate names, metadata, and tracker warnings. Where approval is required, select an explicit non-empty tracker subset after the duplicate stage.
 
-Never infer trumping, coexistence, or slot capacity from a release name alone.
+A complete structured group is preferred for group-policy decisions. When a tracker omits that field, only one unambiguous normalized release-name suffix can establish the candidate group; conflicting, missing, or multi-group text keeps the normal duplicate review.
 
 ## 5. Prepare media and descriptions
 

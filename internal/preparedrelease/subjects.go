@@ -124,6 +124,10 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		TrackerIDs:                  maps.Clone(resources.clientEvidence.Result.TrackerIDs),
 		MatchedTrackers:             append([]string(nil), resources.clientEvidence.Result.MatchedTrackers...),
 	}
+	if override := owned.result.EffectiveInstructions.Metadata.PersonalRelease; override != nil {
+		value := *override
+		subject.PersonalReleaseOverride = &value
+	}
 	cloned, err := cloneWithJSON(subject)
 	if err != nil {
 		return api.UploadSubject{}, fmt.Errorf("prepared release: clone upload subject: %w", err)

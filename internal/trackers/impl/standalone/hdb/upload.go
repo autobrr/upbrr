@@ -19,7 +19,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/autobrr/upbrr/internal/config"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -123,7 +122,7 @@ func prepareUploadAt(
 	if err != nil {
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: HDB reviewed upload name: %w", err)
 	}
-	fields := buildUploadFields(req.Meta, req.Runtime.DescriptionConfig(), category, codec, medium, descriptionText, releaseName)
+	fields := buildUploadFields(req.Meta, req.Runtime.Internal, category, codec, medium, descriptionText, releaseName)
 	preview := standalone.BuildPreview(standalone.PreviewSpec{
 		Tracker:          "HDB",
 		ReleaseName:      releaseName,
@@ -236,7 +235,7 @@ func submitPreparedUpload(ctx context.Context, req trackers.PreparationInput, st
 
 func buildUploadFields(
 	meta api.UploadSubject,
-	appConfig config.Config,
+	internal bool,
 	categoryID int,
 	codecID int,
 	mediumID int,
@@ -253,7 +252,7 @@ func buildUploadFields(
 		"techinfo": "",
 	}
 
-	if trackers.IsInternalGroup(appConfig, "HDB", meta) {
+	if internal {
 		fields["origin"] = "1"
 	}
 

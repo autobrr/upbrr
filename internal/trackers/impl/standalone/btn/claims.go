@@ -17,10 +17,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	htmlnode "golang.org/x/net/html"
 
@@ -30,20 +32,20 @@ import (
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
-	authtotp "github.com/autobrr/upbrr/internal/trackers/auth/totp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 const (
-	btnSiteBaseURL             = "https://broadcasthe.net"
-	btnBackupBaseURL           = "https://backup.landof.tv"
-	btnUserPath                = "/user.php"
-	btnClaimsLoginPath         = "/login.php"
-	btnClaimedShowsURL         = "https://broadcasthe.net/forums.php?action=viewthread&threadid=30793"
-	btnClaimedShowsPostID      = "post1405482"
-	btnClaimedShowsCacheTTL    = 48 * time.Hour
-	btnClaimWindowBaseHours    = 48
-	btnClaimWindowDefaultGrace = 24
+	btnSiteBaseURL              = "https://broadcasthe.net"
+	btnBackupBaseURL            = "https://backup.landof.tv"
+	btnUserPath                 = "/user.php"
+	btnClaimsLoginPath          = "/login.php"
+	btnClaimedShowsURL          = "https://broadcasthe.net/forums.php?action=viewthread&threadid=30793"
+	btnClaimedShowsPostID       = "post1405482"
+	btnClaimedShowsCacheVersion = 2
+	btnClaimedShowsCacheTTL     = 48 * time.Hour
+	btnClaimWindowBaseHours     = 48
+	btnClaimWindowDefaultGrace  = 24
 )
 
 var (
@@ -60,24 +62,66 @@ var (
 )
 
 type btnClaimedShowsCache struct {
-	FetchedAt int64    `json:"fetched_at"`
-	SourceURL string   `json:"source_url"`
-	PostID    string   `json:"post_id"`
-	Titles    []string `json:"titles"`
+	Version   int              `json:"version,omitempty"`
+	FetchedAt int64            `json:"fetched_at"`
+	SourceURL string           `json:"source_url"`
+	PostID    string           `json:"post_id"`
+	Claims    []btnClaimRecord `json:"claims,omitempty"`
+	Titles    []string         `json:"titles,omitempty"`
+}
+
+type btnClaimRecord struct {
+	Title string   `json:"title"`
+	Sites []string `json:"sites"`
+	Group string   `json:"group"`
+}
+
+type btnClaimData struct {
+	Records         []btnClaimRecord
+	LegacyTitles    map[string]struct{}
+	FetchedAt       int64
+	FreshStructured bool
 }
 
 type claimChecker struct {
-	cfg    config.Config
-	logger api.Logger
+	cfg           config.Config
+	logger        api.Logger
+	target        string
+	fetchOverride func(context.Context) (btnClaimData, error)
+}
+
+type claimCheckerFactory struct {
+	target string
 }
 
 // NewClaimChecker returns a BTN claim checker backed by the configured claim
 // cache and tracker credentials. A nil logger is replaced with a no-op logger.
 func (d *Definition) NewClaimChecker(cfg config.Config, logger api.Logger) trackers.ClaimChecker {
+	return newClaimChecker(cfg, logger, "BTN")
+}
+
+// NewClaimCheckerFactory returns a BTN-backed claim source scoped to one tracker.
+func NewClaimCheckerFactory(target string) trackers.ClaimCheckerFactory {
+	return claimCheckerFactory{target: strings.ToUpper(strings.TrimSpace(target))}
+}
+
+func (f claimCheckerFactory) NewClaimChecker(cfg config.Config, logger api.Logger) trackers.ClaimChecker {
+	return newClaimChecker(cfg, logger, f.target)
+}
+
+func newClaimChecker(cfg config.Config, logger api.Logger, target string) trackers.ClaimChecker {
 	if logger == nil {
 		logger = api.NopLogger{}
 	}
-	return &claimChecker{cfg: cfg, logger: logger}
+	target = strings.ToUpper(strings.TrimSpace(target))
+	if target != "HDB" {
+		target = "BTN"
+	}
+	return &claimChecker{
+		cfg:    cfg,
+		logger: logger,
+		target: target,
+	}
 }
 
 // HasClaim reports whether a TV title appears in BTN's claimed-show list and
@@ -86,13 +130,27 @@ func (d *Definition) NewClaimChecker(cfg config.Config, logger api.Logger) track
 // fail open as unclaimed; malformed or missing air dates keep a matched claim
 // active because expiry cannot be established.
 func (s *claimChecker) HasClaim(ctx context.Context, meta api.UploadSubject) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, fmt.Errorf("metadata: BTN claim check canceled: %w", err)
+	}
 	if isBTNSceneRelease(meta) {
 		if s.logger != nil {
-			s.logger.Debugf("metadata: BTN claims skipped origin=scene decision=allowed")
+			s.logger.Debugf("metadata: %s claims skipped origin=scene decision=allowed", s.target)
 		}
 		return false, nil
 	}
-	if !btnIsTVCategory(meta) {
+	if s.target == "HDB" {
+		applies, known := hdbClaimPolicyApplies(meta)
+		if !known {
+			if s.logger != nil {
+				s.logger.Warnf("metadata: HDB claim check unavailable: WEB TV applicability is unknown")
+			}
+			return false, nil
+		}
+		if !applies {
+			return false, nil
+		}
+	} else if !btnIsTVCategory(meta) {
 		if s.logger != nil {
 			s.logger.Debugf("metadata: BTN claims skipped for non-TV content")
 		}
@@ -101,30 +159,29 @@ func (s *claimChecker) HasClaim(ctx context.Context, meta api.UploadSubject) (bo
 
 	cachePath, err := btnClaimsPath(s.cfg.MainSettings.DBPath)
 	if err != nil {
+		if s.target == "HDB" {
+			if s.logger != nil {
+				s.logger.Warnf("metadata: HDB claim list unavailable: %v", err)
+			}
+			return false, nil
+		}
 		return false, fmt.Errorf("metadata: BTN claims cache path: %w", err)
 	}
 
-	claimedTitles, err := s.loadBTNClaimedTitles(ctx, cachePath, btnClaimedShowsCacheTTL)
+	claims, err := s.loadBTNClaims(ctx, cachePath, btnClaimedShowsCacheTTL)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return false, err
+		}
 		if s.logger != nil {
-			s.logger.Warnf("metadata: BTN claim list unavailable: %v", err)
+			s.logger.Warnf("metadata: %s claim list unavailable: %v", s.target, err)
 		}
 		return false, nil
 	}
-	if len(claimedTitles) == 0 {
+	matchedClaims, matchedTitle := matchBTNClaimRecords(meta, claims, s.target)
+	if len(matchedClaims) == 0 {
 		if s.logger != nil {
-			s.logger.Debugf("metadata: BTN claims loaded 0 titles")
-		}
-		return false, nil
-	}
-	if s.logger != nil {
-		s.logger.Debugf("metadata: BTN claims loaded %d titles", len(claimedTitles))
-	}
-
-	matched, matchedTitle := matchBTNClaimedTitle(meta, claimedTitles)
-	if !matched {
-		if s.logger != nil {
-			s.logger.Debugf("metadata: BTN claims found no title match for release=%q", meta.ReleaseName)
+			s.logger.Debugf("metadata: %s claims found no title match for release=%q", s.target, meta.ReleaseName)
 		}
 		return false, nil
 	}
@@ -133,15 +190,70 @@ func (s *claimChecker) HasClaim(ctx context.Context, meta api.UploadSubject) (bo
 	expired, thresholdHours, hoursSinceAir := btnClaimWindowExpired(meta, graceHours)
 	if expired {
 		if s.logger != nil {
-			s.logger.Debugf("metadata: BTN claim window expired for %q (hours_since_air=%.2f threshold=%d)", matchedTitle, hoursSinceAir, thresholdHours)
+			s.logger.Debugf(
+				"metadata: %s claim window expired for %q (hours_since_air=%.2f threshold=%d)",
+				s.target,
+				matchedTitle,
+				hoursSinceAir,
+				thresholdHours,
+			)
+		}
+		return false, nil
+	}
+	trackerCfg, _ := trackerConfigFor(s.cfg, s.target)
+	groupPolicy := trackers.ResolveGroupPolicy(trackerCfg, meta)
+	if groupPolicy.Internal && claims.FreshStructured && claimsOwnedByGroup(matchedClaims, groupPolicy.Group) {
+		if s.logger != nil {
+			s.logger.Infof("metadata: %s claim match bypassed group=%s decision=own_claim", s.target, groupPolicy.Group)
 		}
 		return false, nil
 	}
 
 	if s.logger != nil {
-		s.logger.Warnf("metadata: BTN claim match found title=%q threshold_hours=%d cache_ttl=%s", matchedTitle, thresholdHours, btnClaimedShowsCacheTTL)
+		s.logger.Warnf(
+			"metadata: %s claim match found title=%q threshold_hours=%d cache_ttl=%s",
+			s.target,
+			matchedTitle,
+			thresholdHours,
+			btnClaimedShowsCacheTTL,
+		)
 	}
 	return true, nil
+}
+
+func hdbClaimPolicyApplies(meta api.UploadSubject) (bool, bool) {
+	isTV := btnIsTVCategory(meta) || strings.EqualFold(strings.TrimSpace(string(meta.Identity.Category)), "TV")
+	if !isTV {
+		return false, strings.TrimSpace(string(meta.Identity.Category)) != ""
+	}
+	hasKnownSource := false
+	for _, value := range []string{meta.Type, meta.Source, meta.Release.Type, meta.Release.Source} {
+		normalized := strings.NewReplacer("-", "", "_", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(value)))
+		if normalized == "" {
+			continue
+		}
+		if normalized == "web" || strings.Contains(normalized, "webdl") || strings.Contains(normalized, "webrip") {
+			return true, true
+		}
+		switch normalized {
+		case "bluray", "bdrip", "remux", "hdtv", "pdtv", "sdtv", "dvd", "dvdrip", "encode":
+			hasKnownSource = true
+		}
+	}
+	return false, hasKnownSource
+}
+
+func claimsOwnedByGroup(claims []btnClaimRecord, group string) bool {
+	if group == "" || len(claims) == 0 {
+		return false
+	}
+	for _, claim := range claims {
+		claimGroup := trackers.NormalizeTrackerReleaseGroup(claim.Group)
+		if claimGroup == "" || !strings.EqualFold(claimGroup, group) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *claimChecker) btnClaimWindowGraceHours() int {
@@ -165,58 +277,109 @@ func (s *claimChecker) btnClaimWindowGraceHours() int {
 }
 
 func (s *claimChecker) loadBTNClaimedTitles(ctx context.Context, cachePath string, cacheTTL time.Duration) (map[string]struct{}, error) {
-	cached, fetchedAt, cacheErr := readBTNClaimedCache(cachePath)
+	claims, err := s.loadBTNClaims(ctx, cachePath, cacheTTL)
+	if err != nil {
+		return nil, err
+	}
+	return claimDataTitles(claims), nil
+}
+
+func (s *claimChecker) loadBTNClaims(ctx context.Context, cachePath string, cacheTTL time.Duration) (btnClaimData, error) {
+	if err := ctx.Err(); err != nil {
+		return btnClaimData{}, fmt.Errorf("metadata: BTN claim cache load canceled: %w", err)
+	}
+	cached, cacheErr := readBTNClaimCache(cachePath)
 	if cacheErr != nil {
 		if s.logger != nil && !errors.Is(cacheErr, os.ErrNotExist) {
 			s.logger.Warnf("metadata: BTN claims cache read failed path=%s err=%s", cachePath, redaction.RedactValue(cacheErr.Error(), nil))
 		}
 	} else if s.logger != nil {
-		s.logger.Debugf("metadata: BTN claims cache loaded path=%s titles=%d fetched_at=%d", cachePath, len(cached), fetchedAt)
+		s.logger.Debugf(
+			"metadata: BTN claims cache loaded path=%s records=%d legacy_titles=%d fetched_at=%d",
+			cachePath,
+			len(cached.Records),
+			len(cached.LegacyTitles),
+			cached.FetchedAt,
+		)
 	}
-	if len(cached) > 0 && time.Since(time.Unix(fetchedAt, 0)) < cacheTTL {
+	cacheAge := time.Since(time.Unix(cached.FetchedAt, 0))
+	cacheFresh := cached.hasClaims() && cacheAge >= 0 && cacheAge < cacheTTL
+	cacheCoversTarget := len(cached.Records) > 0 || s.target == "BTN"
+	if cacheFresh && cacheCoversTarget {
+		cached.FreshStructured = len(cached.Records) > 0
 		if s.logger != nil {
-			s.logger.Debugf("metadata: BTN claims cache hit path=%s age=%s ttl=%s", cachePath, time.Since(time.Unix(fetchedAt, 0)).Round(time.Second), cacheTTL)
+			s.logger.Debugf(
+				"metadata: BTN claims cache hit path=%s age=%s ttl=%s",
+				cachePath,
+				time.Since(time.Unix(cached.FetchedAt, 0)).Round(time.Second),
+				cacheTTL,
+			)
 		}
 		return cached, nil
 	}
 	if s.logger != nil {
-		if len(cached) == 0 {
+		if !cached.hasClaims() {
 			s.logger.Debugf("metadata: BTN claims cache miss path=%s", cachePath)
 		} else {
 			s.logger.Debugf(
 				"metadata: BTN claims cache stale path=%s age=%s ttl=%s",
 				cachePath,
-				time.Since(time.Unix(fetchedAt, 0)).Round(time.Second),
+				time.Since(time.Unix(cached.FetchedAt, 0)).Round(time.Second),
 				cacheTTL,
 			)
 		}
 	}
 
-	fresh, fetchErr := s.fetchBTNClaimedTitles(ctx)
-	if fetchErr == nil && len(fresh) > 0 {
-		if err := writeBTNClaimedCache(cachePath, fresh); err != nil && s.logger != nil {
+	fresh, fetchErr := s.fetchClaims(ctx)
+	if fetchErr == nil && len(fresh.Records) > 0 {
+		fresh.FreshStructured = true
+		if err := writeBTNClaimCache(cachePath, fresh.Records); err != nil && s.logger != nil {
 			s.logger.Warnf("metadata: BTN claims cache write failed: %v", err)
 		} else if s.logger != nil {
-			s.logger.Debugf("metadata: BTN claims cache saved path=%s titles=%d", cachePath, len(fresh))
+			s.logger.Debugf("metadata: BTN claims cache saved path=%s records=%d", cachePath, len(fresh.Records))
 		}
 		return fresh, nil
 	}
-	if fetchErr == nil && len(fresh) == 0 && s.logger != nil {
-		s.logger.Warnf("metadata: BTN claims fetch succeeded but returned no titles")
+	if fetchErr == nil && len(fresh.Records) == 0 {
+		fetchErr = errors.New("metadata: BTN claims fetch returned no structured records")
 	}
 	if fetchErr != nil && s.logger != nil {
 		s.logger.Warnf("metadata: BTN claims fetch failed; falling back to cache: %v", fetchErr)
 	}
-	if len(cached) > 0 {
+	if errors.Is(fetchErr, context.Canceled) || errors.Is(fetchErr, context.DeadlineExceeded) {
+		return btnClaimData{}, fetchErr
+	}
+	if len(cached.Records) > 0 || (s.target == "BTN" && len(cached.LegacyTitles) > 0) {
+		cached.FreshStructured = false
 		if s.logger != nil {
-			s.logger.Debugf("metadata: BTN claims using cached titles after fetch failure path=%s titles=%d", cachePath, len(cached))
+			s.logger.Debugf(
+				"metadata: BTN claims using stale cache after fetch failure path=%s records=%d legacy_titles=%d",
+				cachePath,
+				len(cached.Records),
+				len(cached.LegacyTitles),
+			)
 		}
 		return cached, nil
 	}
-	return nil, fetchErr
+	return btnClaimData{}, fetchErr
+}
+
+func (s *claimChecker) fetchClaims(ctx context.Context) (btnClaimData, error) {
+	if s.fetchOverride != nil {
+		return s.fetchOverride(ctx)
+	}
+	return s.fetchBTNClaims(ctx)
 }
 
 func (s *claimChecker) fetchBTNClaimedTitles(ctx context.Context) (map[string]struct{}, error) {
+	claims, err := s.fetchBTNClaims(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return claimDataTitles(claims), nil
+}
+
+func (s *claimChecker) fetchBTNClaims(ctx context.Context) (btnClaimData, error) {
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Timeout: 30 * time.Second, Jar: jar}
 
@@ -235,23 +398,12 @@ func (s *claimChecker) fetchBTNClaimedTitles(ctx context.Context) (map[string]st
 		if s.logger != nil {
 			s.logger.Warnf("metadata: BTN claims session validation failed: %v", err)
 		}
+		return btnClaimData{}, err
 	} else if s.logger != nil {
 		s.logger.Debugf("metadata: BTN claims session valid=%t", isLoggedIn)
 	}
 	if !isLoggedIn {
-		if err := s.loginBTNForClaims(ctx, client); err != nil {
-			if s.logger != nil {
-				s.logger.Warnf("metadata: BTN claims login failed: %v", err)
-			}
-			return nil, err
-		} else if s.logger != nil {
-			s.logger.Debugf("metadata: BTN claims login completed")
-		}
-	} else if s.logger != nil {
-		s.logger.Debugf("metadata: BTN claims login skipped; existing session is valid")
-	}
-	if !isLoggedIn && s.logger != nil {
-		s.logger.Debugf("metadata: BTN claims continuing after login attempt")
+		return btnClaimData{}, errors.New("metadata: BTN claims require an existing valid session")
 	}
 	mirrorBTNCookiesForClaimedThread(client)
 	if s.logger != nil {
@@ -263,21 +415,21 @@ func (s *claimChecker) fetchBTNClaimedTitles(ctx context.Context) (map[string]st
 		if s.logger != nil {
 			s.logger.Warnf("metadata: BTN claims request build failed: %v", err)
 		}
-		return nil, fmt.Errorf("metadata: build BTN claims request: %w", err)
+		return btnClaimData{}, fmt.Errorf("metadata: build BTN claims request: %w", err)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Warnf("metadata: BTN claims fetch request failed: %v", err)
 		}
-		return nil, fmt.Errorf("metadata: execute BTN claims request: %w", err)
+		return btnClaimData{}, fmt.Errorf("metadata: execute BTN claims request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if s.logger != nil {
 			s.logger.Warnf("metadata: BTN claims fetch returned status=%d", resp.StatusCode)
 		}
-		return nil, fmt.Errorf("status %d", resp.StatusCode)
+		return btnClaimData{}, fmt.Errorf("status %d", resp.StatusCode)
 	}
 	if s.logger != nil {
 		s.logger.Debugf("metadata: BTN claims fetch returned status=%d", resp.StatusCode)
@@ -288,97 +440,20 @@ func (s *claimChecker) fetchBTNClaimedTitles(ctx context.Context) (map[string]st
 		if s.logger != nil {
 			s.logger.Warnf("metadata: BTN claims response read failed: %v", err)
 		}
-		return nil, err
+		return btnClaimData{}, err
 	}
-	titles := extractBTNClaimedShows(string(payload))
+	if err := ctx.Err(); err != nil {
+		return btnClaimData{}, fmt.Errorf("metadata: BTN claims response canceled: %w", err)
+	}
+	records := extractBTNClaimRecords(string(payload))
 	if s.logger != nil {
-		s.logger.Debugf("metadata: BTN claims parsed %d titles from claimed thread", len(titles))
+		s.logger.Debugf("metadata: BTN claims parsed %d structured records from claimed thread", len(records))
 	}
-	return titles, nil
-}
-
-func (s *claimChecker) loginBTNForClaims(ctx context.Context, client *http.Client) error {
-	entry, ok := trackerConfigFor(s.cfg, "BTN")
-	if !ok {
-		if s.logger != nil {
-			s.logger.Debugf("metadata: BTN claims login skipped; tracker not configured")
-		}
-		return nil
-	}
-	baseURL := resolveBTNLoginBaseURL(entry)
-	username := strings.TrimSpace(entry.Username)
-	password := strings.TrimSpace(entry.Password)
-	if username == "" || password == "" {
-		if s.logger != nil {
-			s.logger.Debugf("metadata: BTN claims login skipped; missing username or password")
-		}
-		return nil
-	}
-	if s.logger != nil {
-		s.logger.Debugf("metadata: BTN claims login attempting with configured credentials")
-	}
-
-	values := map[string]string{
-		"username":   username,
-		"password":   password,
-		"keeplogged": "1",
-		"login":      "Log In!",
-	}
-	if code, err := resolveBTNClaims2FACode(strings.TrimSpace(entry.OTPURI)); err == nil && code != "" {
-		values["code"] = code
-	} else if err != nil && s.logger != nil {
-		s.logger.Warnf("metadata: BTN claims TOTP generation failed: %v", err)
-	}
-	encoded := encodeForm(values)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+btnClaimsLoginPath, strings.NewReader(encoded))
-	if err != nil {
-		if s.logger != nil {
-			s.logger.Warnf("metadata: BTN claims login request build failed: %v", err)
-		}
-		return fmt.Errorf("metadata: build BTN claims login request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", "upbrr")
-	resp, err := client.Do(req)
-	if err != nil {
-		if s.logger != nil {
-			s.logger.Warnf("metadata: BTN claims login request failed: %v", err)
-		}
-		return fmt.Errorf("metadata: execute BTN claims login request: %w", err)
-	}
-	_ = resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
-		if s.logger != nil {
-			s.logger.Warnf("metadata: BTN claims login returned status=%d", resp.StatusCode)
-		}
-		return fmt.Errorf("login status %d", resp.StatusCode)
-	}
-	if s.logger != nil {
-		s.logger.Debugf("metadata: BTN claims login returned status=%d", resp.StatusCode)
-	}
-	if valid, err := s.btnClaimsSessionValid(ctx, client); err != nil {
-		if s.logger != nil {
-			s.logger.Warnf("metadata: BTN claims post-login validation failed: %v", err)
-		}
-		return err
-	} else if !valid {
-		return errors.New("BTN login failed to establish a valid session")
-	}
-	if s.logger != nil {
-		s.logger.Debugf("metadata: BTN claims login established a valid session; leaving cookie file unchanged")
-	}
-	return nil
-}
-
-func resolveBTNLoginBaseURL(entry config.TrackerConfig) string {
-	if baseURL := sanitizeBTNWebBaseURL(entry.AnnounceURL); baseURL != "" {
-		return baseURL
-	}
-	if baseURL := sanitizeBTNWebBaseURL(entry.MyAnnounceURL); baseURL != "" {
-		return baseURL
-	}
-
-	return btnSiteBaseURL
+	return btnClaimData{
+		Records:         records,
+		FetchedAt:       time.Now().Unix(),
+		FreshStructured: true,
+	}, nil
 }
 
 func (s *claimChecker) loadBTNCookiesForClaims(ctx context.Context, client *http.Client) error {
@@ -465,60 +540,24 @@ func (s *claimChecker) btnClaimsSessionValid(ctx context.Context, client *http.C
 	return resp.StatusCode >= 200 && resp.StatusCode < 400, nil
 }
 
-func resolveBTNClaims2FACode(otpURI string) (string, error) {
-	code, err := authtotp.FromURI(otpURI)
-	if err != nil {
-		return "", fmt.Errorf("trackers: BTN claims generate TOTP: %w", err)
-	}
-	return code, nil
-}
-
-func sanitizeBTNWebBaseURL(raw string) string {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return ""
-	}
-
-	parsed, err := url.Parse(trimmed)
-	if err != nil || parsed.Host == "" {
-		return ""
-	}
-	if parsed.Scheme == "" {
-		parsed.Scheme = "https"
-	}
-
-	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
-	switch host {
-	case "", "landof.tv":
-		return ""
-	case "broadcasthe.net", "www.broadcasthe.net":
-		host = "broadcasthe.net"
-	default:
-		return ""
-	}
-
-	lowerPath := strings.ToLower(strings.TrimSpace(parsed.Path))
-	if lowerPath != "" && lowerPath != "/" {
-		return ""
-	}
-
-	parsed.Host = host
-	parsed.Path = ""
-	parsed.RawPath = ""
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	return strings.TrimRight(parsed.String(), "/")
-}
-
 func extractBTNClaimedShows(rawHTML string) map[string]struct{} {
-	scopedHTML := extractBTNClaimedPostHTML(rawHTML)
+	records := extractBTNClaimRecords(rawHTML)
+	claims := btnClaimData{Records: records}
+	return claimDataTitles(claims)
+}
+
+func extractBTNClaimRecords(rawHTML string) []btnClaimRecord {
+	scopedHTML, ok := extractBTNClaimedPostHTML(rawHTML)
+	if !ok {
+		return nil
+	}
 	normalized := btnLineBreakPattern.ReplaceAllString(scopedHTML, "\n")
 	normalized = btnTagPattern.ReplaceAllString(normalized, "")
 	normalized = html.UnescapeString(normalized)
 
 	lines := strings.Split(normalized, "\n")
 	inCurrentShows := false
-	out := make(map[string]struct{})
+	records := make([]btnClaimRecord, 0)
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
@@ -535,57 +574,108 @@ func extractBTNClaimedShows(rawHTML string) map[string]struct{} {
 		if strings.Contains(lower, "upcoming shows:") || strings.Contains(lower, "available shows:") {
 			break
 		}
-		if !strings.Contains(trimmed, "--") || !strings.Contains(strings.ToUpper(trimmed), "BTN") {
+		parts := strings.SplitN(trimmed, "--", 4)
+		if len(parts) != 4 {
 			continue
 		}
-		title := strings.TrimSpace(strings.SplitN(trimmed, "--", 2)[0])
+		title := strings.TrimSpace(parts[0])
 		if strings.EqualFold(title, "show") || title == "" {
 			continue
 		}
-		for variant := range btnTitleVariants(title) {
-			out[variant] = struct{}{}
+		sites := parseBTNClaimSites(parts[1])
+		group := normalizeBTNClaimGroup(parts[2])
+		if len(sites) == 0 {
+			continue
 		}
+		records = append(records, btnClaimRecord{
+			Title: title,
+			Sites: sites,
+			Group: group,
+		})
 	}
-	return out
+	sort.SliceStable(records, func(left, right int) bool {
+		if titleOrder := strings.Compare(normalizeBTNTitle(records[left].Title), normalizeBTNTitle(records[right].Title)); titleOrder != 0 {
+			return titleOrder < 0
+		}
+		if groupOrder := strings.Compare(strings.ToLower(records[left].Group), strings.ToLower(records[right].Group)); groupOrder != 0 {
+			return groupOrder < 0
+		}
+		return strings.Join(records[left].Sites, "|") < strings.Join(records[right].Sites, "|")
+	})
+	return slices.CompactFunc(records, func(left, right btnClaimRecord) bool {
+		return normalizeBTNTitle(left.Title) == normalizeBTNTitle(right.Title) &&
+			strings.EqualFold(left.Group, right.Group) && slices.Equal(left.Sites, right.Sites)
+	})
 }
 
-func extractBTNClaimedPostHTML(rawHTML string) string {
+func normalizeBTNClaimGroup(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "-")
+	return strings.TrimSpace(value)
+}
+
+func parseBTNClaimSites(value string) []string {
+	seen := make(map[string]struct{}, 2)
+	sites := make([]string, 0, 2)
+	for token := range strings.FieldsFuncSeq(value, func(r rune) bool {
+		return r == '|' || unicode.IsSpace(r)
+	}) {
+		site := strings.ToUpper(strings.TrimSpace(token))
+		if site != "BTN" && site != "HDB" {
+			continue
+		}
+		if _, ok := seen[site]; ok {
+			continue
+		}
+		seen[site] = struct{}{}
+		sites = append(sites, site)
+	}
+	return sites
+}
+
+func extractBTNClaimedPostHTML(rawHTML string) (string, bool) {
 	if strings.TrimSpace(rawHTML) == "" {
-		return rawHTML
+		return "", false
 	}
 
 	doc, err := htmlnode.Parse(strings.NewReader(rawHTML))
 	if err != nil {
-		return rawHTML
+		return "", false
+	}
+
+	content := findBTNHTMLNode(doc, func(node *htmlnode.Node) bool {
+		return node.Type == htmlnode.ElementNode && node.Data == "div" && btnHTMLNodeID(node) == "content1405482"
+	})
+	if content != nil {
+		if rendered := renderBTNHTMLChildren(content); rendered != "" {
+			return rendered, true
+		}
 	}
 
 	scope := findBTNHTMLNode(doc, func(node *htmlnode.Node) bool {
 		return node.Type == htmlnode.ElementNode && node.Data == "table" && btnHTMLNodeID(node) == btnClaimedShowsPostID
 	})
 	if scope == nil {
-		return rawHTML
+		return "", false
 	}
 
-	content := findBTNHTMLNode(scope, func(node *htmlnode.Node) bool {
+	content = findBTNHTMLNode(scope, func(node *htmlnode.Node) bool {
 		if node.Type != htmlnode.ElementNode || node.Data != "div" {
 			return false
-		}
-		if btnHTMLNodeID(node) == "content1405482" {
-			return true
 		}
 		return btnHTMLNodeHasClass(node, "postcontent")
 	})
 	if content != nil {
 		if rendered := renderBTNHTMLChildren(content); rendered != "" {
-			return rendered
+			return rendered, true
 		}
 	}
 
 	if rendered := renderBTNHTMLChildren(scope); rendered != "" {
-		return rendered
+		return rendered, true
 	}
 
-	return rawHTML
+	return "", false
 }
 
 func findBTNHTMLNode(root *htmlnode.Node, match func(*htmlnode.Node) bool) *htmlnode.Node {
@@ -649,6 +739,55 @@ func matchBTNClaimedTitle(meta api.UploadSubject, claimed map[string]struct{}) (
 		}
 	}
 	return false, ""
+}
+
+func matchBTNClaimRecords(meta api.UploadSubject, claims btnClaimData, target string) ([]btnClaimRecord, string) {
+	candidates := btnCandidateTitles(meta)
+	target = strings.ToUpper(strings.TrimSpace(target))
+	matches := make([]btnClaimRecord, 0)
+	matchedTitle := ""
+	for _, claim := range claims.Records {
+		if !slices.Contains(claim.Sites, target) {
+			continue
+		}
+		for variant := range btnTitleVariants(claim.Title) {
+			if _, ok := candidates[variant]; !ok {
+				continue
+			}
+			matches = append(matches, claim)
+			if matchedTitle == "" {
+				matchedTitle = claim.Title
+			}
+			break
+		}
+	}
+	if len(matches) == 0 && target == "BTN" {
+		if matched, legacyTitle := matchBTNClaimedTitle(meta, claims.LegacyTitles); matched {
+			matches = append(matches, btnClaimRecord{Title: legacyTitle, Sites: []string{"BTN"}})
+			matchedTitle = legacyTitle
+		}
+	}
+	return matches, matchedTitle
+}
+
+func claimDataTitles(claims btnClaimData) map[string]struct{} {
+	titles := make(map[string]struct{}, len(claims.LegacyTitles)+len(claims.Records))
+	for title := range claims.LegacyTitles {
+		titles[title] = struct{}{}
+	}
+	for _, claim := range claims.Records {
+		if !slices.Contains(claim.Sites, "BTN") {
+			continue
+		}
+		for title := range btnTitleVariants(claim.Title) {
+			titles[title] = struct{}{}
+		}
+	}
+	return titles
+}
+
+func (claims btnClaimData) hasClaims() bool {
+	return len(claims.Records) > 0 || len(claims.LegacyTitles) > 0
 }
 
 func btnCandidateTitles(meta api.UploadSubject) map[string]struct{} {
@@ -802,19 +941,28 @@ func btnClaimWindowExpired(meta api.UploadSubject, graceHours int) (bool, int, f
 	return hoursSinceAir > float64(thresholdHours), thresholdHours, hoursSinceAir
 }
 
-func btnClaimFailureReason(meta api.UploadSubject, graceHours int) string {
+func btnClaimFailureReason(tracker string, meta api.UploadSubject, graceHours int) string {
+	tracker = strings.ToUpper(strings.TrimSpace(tracker))
+	if tracker == "" {
+		tracker = "BTN"
+	}
 	expired, thresholdHours, hoursSinceAir := btnClaimWindowExpired(meta, graceHours)
 	if expired {
-		return "BTN claim window has expired"
+		return tracker + " claim window has expired"
 	}
 	if thresholdHours <= 0 {
-		return "BTN has an active claim for this release"
+		return tracker + " has an active claim for this release"
 	}
 	if hoursSinceAir <= 0 {
-		return fmt.Sprintf("BTN has an active claim for this release; up to %d hours remain in the claim window", thresholdHours)
+		return fmt.Sprintf("%s has an active claim for this release; up to %d hours remain in the claim window", tracker, thresholdHours)
 	}
 	hoursRemaining := max(int(float64(thresholdHours)-hoursSinceAir+0.999999999), 1)
-	return fmt.Sprintf("BTN has an active claim for this release; approximately %d hours remain in the %d-hour claim window", hoursRemaining, thresholdHours)
+	return fmt.Sprintf(
+		"%s has an active claim for this release; approximately %d hours remain in the %d-hour claim window",
+		tracker,
+		hoursRemaining,
+		thresholdHours,
+	)
 }
 
 func parseBTNTime(value string) (time.Time, bool) {
@@ -847,14 +995,22 @@ func parseBTNTime(value string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-func readBTNClaimedCache(path string) (map[string]struct{}, int64, error) {
+func readBTNClaimCache(path string) (btnClaimData, error) {
 	payload, err := os.ReadFile(path)
 	if err != nil {
-		return nil, 0, fmt.Errorf("metadata: read BTN claimed cache: %w", err)
+		return btnClaimData{}, fmt.Errorf("metadata: read BTN claimed cache: %w", err)
 	}
 	var cache btnClaimedShowsCache
 	if err := json.Unmarshal(payload, &cache); err != nil {
-		return nil, 0, fmt.Errorf("metadata: unmarshal BTN claimed cache: %w", err)
+		return btnClaimData{}, fmt.Errorf("metadata: unmarshal BTN claimed cache: %w", err)
+	}
+	if cache.Version != 0 && cache.Version != btnClaimedShowsCacheVersion {
+		return btnClaimData{}, fmt.Errorf("metadata: unsupported BTN claimed cache version %d", cache.Version)
+	}
+	if cache.Version == btnClaimedShowsCacheVersion &&
+		(cache.SourceURL != btnClaimedShowsURL || cache.PostID != btnClaimedShowsPostID ||
+			cache.FetchedAt <= 0 || cache.FetchedAt > time.Now().Unix()) {
+		return btnClaimData{}, errors.New("metadata: BTN claimed cache identity is invalid")
 	}
 	titles := make(map[string]struct{}, len(cache.Titles))
 	for _, title := range cache.Titles {
@@ -862,7 +1018,23 @@ func readBTNClaimedCache(path string) (map[string]struct{}, int64, error) {
 			titles[normalized] = struct{}{}
 		}
 	}
-	return titles, cache.FetchedAt, nil
+	records := make([]btnClaimRecord, 0, len(cache.Claims))
+	if cache.Version == btnClaimedShowsCacheVersion {
+		for _, claim := range cache.Claims {
+			claim.Title = strings.TrimSpace(claim.Title)
+			claim.Group = normalizeBTNClaimGroup(claim.Group)
+			claim.Sites = parseBTNClaimSites(strings.Join(claim.Sites, " "))
+			if claim.Title == "" || len(claim.Sites) == 0 {
+				continue
+			}
+			records = append(records, claim)
+		}
+	}
+	return btnClaimData{
+		Records:      records,
+		LegacyTitles: titles,
+		FetchedAt:    cache.FetchedAt,
+	}, nil
 }
 
 func writeBTNClaimedCache(path string, titles map[string]struct{}) error {
@@ -884,10 +1056,123 @@ func writeBTNClaimedCache(path string, titles map[string]struct{}) error {
 	if err != nil {
 		return fmt.Errorf("metadata: marshal BTN claimed cache: %w", err)
 	}
-	if err := os.WriteFile(path, encoded, 0o600); err != nil {
-		return fmt.Errorf("metadata: write BTN claimed cache: %w", err)
+	return writeBTNClaimCacheFile(path, encoded)
+}
+
+func writeBTNClaimCache(path string, records []btnClaimRecord) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("metadata: create BTN claimed cache dir: %w", err)
 	}
+	records = append([]btnClaimRecord(nil), records...)
+	for index := range records {
+		records[index].Title = strings.TrimSpace(records[index].Title)
+		records[index].Group = normalizeBTNClaimGroup(records[index].Group)
+		records[index].Sites = append([]string(nil), records[index].Sites...)
+		sort.Strings(records[index].Sites)
+	}
+	sort.SliceStable(records, func(left, right int) bool {
+		if titleOrder := strings.Compare(normalizeBTNTitle(records[left].Title), normalizeBTNTitle(records[right].Title)); titleOrder != 0 {
+			return titleOrder < 0
+		}
+		if groupOrder := strings.Compare(strings.ToLower(records[left].Group), strings.ToLower(records[right].Group)); groupOrder != 0 {
+			return groupOrder < 0
+		}
+		return strings.Join(records[left].Sites, "|") < strings.Join(records[right].Sites, "|")
+	})
+	cache := btnClaimedShowsCache{
+		Version:   btnClaimedShowsCacheVersion,
+		FetchedAt: time.Now().Unix(),
+		SourceURL: btnClaimedShowsURL,
+		PostID:    btnClaimedShowsPostID,
+		Claims:    records,
+		Titles:    sortedClaimTitles(btnClaimData{Records: records}),
+	}
+	encoded, err := json.MarshalIndent(cache, "", "  ")
+	if err != nil {
+		return fmt.Errorf("metadata: marshal BTN claimed cache: %w", err)
+	}
+	return writeBTNClaimCacheFile(path, encoded)
+}
+
+func writeBTNClaimCacheFile(path string, encoded []byte) error {
+	dir := filepath.Dir(path)
+	tmpFile, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("metadata: create temporary BTN claimed cache: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	removeTemp := true
+	defer func() {
+		if removeTemp {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmpFile.Chmod(0o600); err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("metadata: chmod temporary BTN claimed cache: %w", err)
+	}
+	if _, err := tmpFile.Write(encoded); err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("metadata: write temporary BTN claimed cache: %w", err)
+	}
+	if err := tmpFile.Sync(); err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("metadata: sync temporary BTN claimed cache: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("metadata: close temporary BTN claimed cache: %w", err)
+	}
+	if err := replaceBTNClaimCacheFile(tmpPath, path); err != nil {
+		return err
+	}
+	removeTemp = false
 	return nil
+}
+
+func replaceBTNClaimCacheFile(tmpPath, path string) error {
+	if err := os.Rename(tmpPath, path); err == nil {
+		return nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("metadata: stat BTN claimed cache: %w", err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("metadata: BTN claimed cache path is a directory: %s", path)
+	}
+	backup, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".backup-*")
+	if err != nil {
+		return fmt.Errorf("metadata: reserve BTN claimed cache backup: %w", err)
+	}
+	backupPath := backup.Name()
+	if err := backup.Close(); err != nil {
+		_ = os.Remove(backupPath)
+		return fmt.Errorf("metadata: close BTN claimed cache backup: %w", err)
+	}
+	if err := os.Remove(backupPath); err != nil {
+		return fmt.Errorf("metadata: release BTN claimed cache backup: %w", err)
+	}
+	if err := os.Rename(path, backupPath); err != nil {
+		return fmt.Errorf("metadata: back up BTN claimed cache: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		if restoreErr := os.Rename(backupPath, path); restoreErr != nil {
+			return errors.Join(err, fmt.Errorf("metadata: restore BTN claimed cache: %w", restoreErr))
+		}
+		return fmt.Errorf("metadata: replace BTN claimed cache: %w", err)
+	}
+	_ = os.Remove(backupPath)
+	return nil
+}
+
+func sortedClaimTitles(claims btnClaimData) []string {
+	titles := claimDataTitles(claims)
+	result := make([]string, 0, len(titles))
+	for title := range titles {
+		result = append(result, title)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func parseOptionalInt(value any) int {
@@ -950,7 +1235,7 @@ func mirrorBTNCookiesForClaimedThread(client *http.Client) {
 // FailureReason describes an active BTN claim using the configured grace
 // period and the remaining or expired claim-window state.
 func (s *claimChecker) FailureReason(meta api.UploadSubject) string {
-	return btnClaimFailureReason(meta, s.btnClaimWindowGraceHours())
+	return btnClaimFailureReason(s.target, meta, s.btnClaimWindowGraceHours())
 }
 
 func btnClaimsPath(dbPath string) (string, error) {
@@ -991,20 +1276,20 @@ func ClaimWindowExpired(meta api.UploadSubject, graceHours int) (bool, int, floa
 
 // LoadClaimedTitles exposes BTN cache/fetch behavior for contract tests.
 func LoadClaimedTitles(ctx context.Context, cfg config.Config, logger api.Logger, cachePath string, cacheTTL time.Duration) (map[string]struct{}, error) {
-	return (&claimChecker{cfg: cfg, logger: logger}).loadBTNClaimedTitles(ctx, cachePath, cacheTTL)
+	return (&claimChecker{
+		cfg:    cfg,
+		logger: logger,
+		target: "BTN",
+	}).loadBTNClaimedTitles(ctx, cachePath, cacheTTL)
 }
 
 // FetchClaimedTitles exposes BTN remote claim retrieval for contract tests.
 func FetchClaimedTitles(ctx context.Context, cfg config.Config, logger api.Logger) (map[string]struct{}, error) {
-	return (&claimChecker{cfg: cfg, logger: logger}).fetchBTNClaimedTitles(ctx)
-}
-
-func encodeForm(values map[string]string) string {
-	encoded := url.Values{}
-	for key, value := range values {
-		encoded.Set(key, value)
-	}
-	return encoded.Encode()
+	return (&claimChecker{
+		cfg:    cfg,
+		logger: logger,
+		target: "BTN",
+	}).fetchBTNClaimedTitles(ctx)
 }
 
 func ioReadAllLimit(resp *http.Response, maxBytes int64) ([]byte, error) {

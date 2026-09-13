@@ -812,7 +812,10 @@ func resourcesFromManifest(manifest api.SourceManifest, input api.PrepareInput) 
 
 func envelopeFromPersisted(release api.PreparedRelease, input api.PrepareInput) envelope {
 	return envelope{
-		result:    api.PrepareResult{Release: release},
+		result: api.PrepareResult{
+			Release:               release,
+			EffectiveInstructions: input.Instructions,
+		},
 		resources: resourcesFromManifest(release.Source, input),
 	}
 }

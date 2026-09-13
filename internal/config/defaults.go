@@ -78,6 +78,8 @@ func cloneEmbeddedDefaultConfig(template *Config) *Config {
 }
 
 func cloneEmbeddedTrackerConfig(tracker TrackerConfig) TrackerConfig {
+	tracker.DupeBypassGroups = slices.Clone(tracker.DupeBypassGroups)
+	tracker.PersonalReleaseGroups = slices.Clone(tracker.PersonalReleaseGroups)
 	tracker.InternalGroups = slices.Clone(tracker.InternalGroups)
 	tracker.InjectDelay = cloneDefaultPointer(tracker.InjectDelay)
 	tracker.Unknown = cloneDefaultUnknownMap(tracker.Unknown)

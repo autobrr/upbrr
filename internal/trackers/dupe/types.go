@@ -101,6 +101,8 @@ func NewDependencies(
 	logger api.Logger,
 ) Dependencies {
 	tracker = strings.ToUpper(strings.TrimSpace(tracker))
+	trackerConfig.DupeBypassGroups = append([]string(nil), trackerConfig.DupeBypassGroups...)
+	trackerConfig.PersonalReleaseGroups = append([]string(nil), trackerConfig.PersonalReleaseGroups...)
 	trackerConfig.InternalGroups = append([]string(nil), trackerConfig.InternalGroups...)
 	trackerConfig.Unknown = maps.Clone(trackerConfig.Unknown)
 	if logger == nil {
@@ -145,6 +147,8 @@ func (d Dependencies) Tracker() string { return d.tracker }
 // TrackerConfig returns a defensive copy of the effective tracker config.
 func (d Dependencies) TrackerConfig() config.TrackerConfig {
 	copied := d.config
+	copied.DupeBypassGroups = append([]string(nil), d.config.DupeBypassGroups...)
+	copied.PersonalReleaseGroups = append([]string(nil), d.config.PersonalReleaseGroups...)
 	copied.InternalGroups = append([]string(nil), d.config.InternalGroups...)
 	copied.Unknown = maps.Clone(d.config.Unknown)
 	return copied

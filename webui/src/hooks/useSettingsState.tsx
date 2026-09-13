@@ -27,6 +27,51 @@ const settingsInputClass =
 const settingsSelectClass = `${settingsInputClass} cursor-pointer`;
 type FieldOption = NonNullable<FieldMeta["options"]>[number];
 
+const normalizeCommaSeparatedGroups = (value: string): string[] => {
+  const seen = new Set<string>();
+  const groups: string[] = [];
+  value.split(",").forEach((item) => {
+    const group = item.trim().replace(/^-/, "").trim();
+    const key = group.toLowerCase();
+    if (group === "" || seen.has(key)) return;
+    seen.add(key);
+    groups.push(group);
+  });
+  return groups;
+};
+
+type CommaSeparatedInputProps = {
+  label: string;
+  value: ConfigValue[];
+  onChange: (value: string[]) => void;
+};
+
+const CommaSeparatedInput = ({ label, value, onChange }: CommaSeparatedInputProps) => {
+  const serialized = value.map((item) => String(item ?? "")).join(", ");
+  const [draft, setDraft] = useState(serialized);
+  useEffect(() => setDraft(serialized), [serialized]);
+
+  return (
+    <input
+      aria-label={label}
+      className={settingsInputClass}
+      type="text"
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={() => {
+        const normalized = normalizeCommaSeparatedGroups(draft);
+        setDraft(normalized.join(", "));
+        if (
+          value.length !== normalized.length ||
+          value.some((item, index) => String(item ?? "") !== normalized[index])
+        ) {
+          onChange(normalized);
+        }
+      }}
+    />
+  );
+};
+
 type UseSettingsStateOptions = {
   activeTab: string;
 };
@@ -562,7 +607,7 @@ const normalizeTrackersForSave = (input: ConfigMap, catalog: TrackerCatalog | nu
         changed = true;
         return;
       }
-      if (allowed && !allowed.has(key)) {
+      if (allowed && !allowed.has(key) && key !== "Internal") {
         changed = true;
         return;
       }
@@ -1116,6 +1161,18 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     const displayLabel = meta?.label ?? formatLabel(label);
     const typeHint = meta?.type;
     if (Array.isArray(value)) {
+      if (meta?.commaSeparated) {
+        return (
+          <label className="settings-field" key={path.join(".")}>
+            <span>{displayLabel}</span>
+            <CommaSeparatedInput
+              label={displayLabel}
+              value={value}
+              onChange={(next) => updateConfigValue(path, next)}
+            />
+          </label>
+        );
+      }
       return (
         <div className="settings-field" key={path.join(".")}>
           <span>{displayLabel}</span>

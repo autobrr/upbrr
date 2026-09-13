@@ -187,6 +187,7 @@ function TrackerSettingsHarness() {
     null,
     state.renderTrackerSection(false),
     createElement("button", { type: "button", onClick: state.handleSaveSettings }, "Save settings"),
+    createElement("span", { "data-testid": "settings-dirty" }, String(state.settingsDirty)),
     createElement(PayloadCapture, { value: state.buildSavePayload() }),
   );
 }
@@ -1471,6 +1472,64 @@ describe("tracker catalog interactions", () => {
       Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
     }>();
     expect(payload.Trackers?.Trackers?.OLD).toBeUndefined();
+  });
+
+  it("edits tracker group policies as comma-separated lists and preserves legacy Internal", async () => {
+    installAppOperationMocks({
+      GetConfig: async () =>
+        JSON.stringify({
+          Trackers: {
+            DefaultTrackers: [],
+            PreferredTracker: "",
+            Trackers: {
+              NBL: {
+                APIKey: "tracker-token",
+                Internal: false,
+                DupeBypassGroups: ["NTb"],
+                PersonalReleaseGroups: [],
+                InternalGroups: ["GRP"],
+              },
+            },
+          },
+        }),
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () =>
+        trackerCatalog(
+          trackerCatalogEntry("NBL", [
+            ["APIKey", "", true],
+            ["DupeBypassGroups", []],
+            ["PersonalReleaseGroups", []],
+            ["InternalGroups", []],
+          ]),
+        ),
+      GetImageHostPolicyMetadata: async () => ({}),
+    });
+
+    render(createElement(TrackerSettingsHarness));
+
+    const cardName = await screen.findByText("NBL", {
+      selector: ".settings-card__summary-name",
+    });
+    fireEvent.click(cardName);
+
+    expect(screen.queryByLabelText("Internal")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Duplicate bypass groups")).toHaveValue("NTb");
+    fireEvent.blur(screen.getByLabelText("Duplicate bypass groups"));
+    expect(screen.getByTestId("settings-dirty")).toHaveTextContent("false");
+    fireEvent.change(screen.getByLabelText("Duplicate bypass groups"), {
+      target: { value: " NTb, -GRP, ntb " },
+    });
+    fireEvent.blur(screen.getByLabelText("Duplicate bypass groups"));
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Duplicate bypass groups")).toHaveValue("NTb, GRP"),
+    );
+    const payload = readPayload<{
+      Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
+    }>();
+    expect(payload.Trackers?.Trackers?.NBL?.DupeBypassGroups).toEqual(["NTb", "GRP"]);
+    expect(payload.Trackers?.Trackers?.NBL?.Internal).toBe(false);
+    expect(screen.getByTestId("settings-dirty")).toHaveTextContent("true");
   });
 
   it("reports a stable error for an unknown catalog field", async () => {

@@ -71,8 +71,18 @@ const trackerFieldMeta: Record<string, FieldMeta> = {
   LoginQuestion: stringField("LoginQuestion", { label: "Login question", sensitive: true }),
   LoginAnswer: stringField("LoginAnswer", { label: "Login answer", sensitive: true }),
   UserID: stringField("UserID", { label: "User ID", sensitive: true }),
-  Internal: boolField("Internal", { label: "Internal" }),
-  InternalGroups: stringField("InternalGroups", { label: "Internal groups" }),
+  DupeBypassGroups: stringField("DupeBypassGroups", {
+    label: "Duplicate bypass groups",
+    commaSeparated: true,
+  }),
+  PersonalReleaseGroups: stringField("PersonalReleaseGroups", {
+    label: "Personal release groups",
+    commaSeparated: true,
+  }),
+  InternalGroups: stringField("InternalGroups", {
+    label: "Internal groups",
+    commaSeparated: true,
+  }),
 };
 
 /** Resolves a catalog field to renderer metadata and rejects schema drift. */

@@ -10,12 +10,45 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 type projectionStubDefinition struct {
 	stubDefinition
 	prepareCalls *int
+}
+
+func TestSafeTrackerConfigFingerprintTracksGroupPolicies(t *testing.T) {
+	t.Parallel()
+
+	base, err := safeTrackerConfigFingerprint(config.TrackerConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, trackerConfig := range map[string]config.TrackerConfig{
+		"duplicate bypass": {DupeBypassGroups: config.CSVList{"GRP"}},
+		"personal release": {PersonalReleaseGroups: config.CSVList{"GRP"}},
+		"internal":         {InternalGroups: config.CSVList{"GRP"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fingerprint, fingerprintErr := safeTrackerConfigFingerprint(trackerConfig)
+			if fingerprintErr != nil {
+				t.Fatal(fingerprintErr)
+			}
+			if fingerprint == base {
+				t.Fatalf("group policy did not change safe config fingerprint")
+			}
+		})
+	}
+
+	legacy, err := safeTrackerConfigFingerprint(config.TrackerConfig{Internal: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy != base {
+		t.Fatalf("deprecated Internal changed safe config fingerprint")
+	}
 }
 
 func TestProjectionsUseResolvedMediaInsteadOfParserFallbacks(t *testing.T) {
@@ -211,6 +244,50 @@ func TestNilPolicyProjectionInvalidatesPreTitleInferenceContract(t *testing.T) {
 	}
 	if projection.DuplicatePolicyFingerprint == legacy || projection.DuplicatePolicyFingerprint == "" {
 		t.Fatalf("nil-policy projection retained the pre-title-inference fingerprint: %q", projection.DuplicatePolicyFingerprint)
+	}
+}
+
+func TestDuplicatePolicyFingerprintTracksSameGroupRestriction(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	if err := registry.RegisterDescriptor(Descriptor{
+		Name:       "EXAMPLE",
+		Family:     FamilyStandalone,
+		Definition: projectionStubDefinition{stubDefinition: stubDefinition{name: "EXAMPLE"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fingerprint := mustProjectionFingerprint(t, "projection")
+	project := func(trackerCfg config.TrackerConfig) api.WorkflowFingerprint {
+		t.Helper()
+		projection, failure := registry.ProjectRelease(context.Background(), PreparationInput{
+			Tracker:       "EXAMPLE",
+			TrackerConfig: trackerCfg,
+			Meta: api.UploadSubject{
+				ReleaseName: "Example.Movie.2026.1080p.WEB-DL-NTb",
+				Tag:         "-NTb",
+				Release:     api.ReleaseInfo{Category: "MOVIE", Resolution: "1080p"},
+			},
+		}, fingerprint, fingerprint, fingerprint)
+		if failure != nil {
+			t.Fatalf("project release: %v", failure)
+		}
+		return projection.DuplicatePolicyFingerprint
+	}
+
+	baseline := project(config.TrackerConfig{})
+	dupeBypass := project(config.TrackerConfig{DupeBypassGroups: config.CSVList{"NTb"}})
+	internal := project(config.TrackerConfig{InternalGroups: config.CSVList{"NTb"}})
+	personal := project(config.TrackerConfig{PersonalReleaseGroups: config.CSVList{"NTb"}})
+	if baseline == dupeBypass {
+		t.Fatal("same-group duplicate restriction did not change duplicate policy fingerprint")
+	}
+	if dupeBypass != internal {
+		t.Fatalf("equivalent duplicate restrictions produced different fingerprints: %q and %q", dupeBypass, internal)
+	}
+	if baseline != personal {
+		t.Fatalf("personal-only policy changed duplicate policy fingerprint: %q and %q", baseline, personal)
 	}
 }
 

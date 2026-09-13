@@ -1402,6 +1402,7 @@ export type FieldMeta = {
   type?: FieldType;
   advanced?: boolean;
   sensitive?: boolean;
+  commaSeparated?: boolean;
   options?: Array<{ value: string; label: string }>;
 };
 

@@ -6,7 +6,6 @@ package hdb
 import (
 	"testing"
 
-	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -299,7 +298,7 @@ func TestBuildUploadFieldsUsesTVIMDbDocumentaryCategory(t *testing.T) {
 			TVDB:       &api.TVDBMetadata{TVDBID: 765432, Genres: "Drama"},
 		},
 	}
-	fields := buildUploadFields(meta, config.Config{}, hdbCategoryID(meta), 5, 6, "description", "Example.Release.2026.1080p-GRP")
+	fields := buildUploadFields(meta, false, hdbCategoryID(meta), 5, 6, "description", "Example.Release.2026.1080p-GRP")
 
 	if got := fields["category"]; got != "3" {
 		t.Fatalf("upload category field = %q, want %q", got, "3")

@@ -97,6 +97,43 @@ func TestPrepareUploadStateIncludesTVDBForTV(t *testing.T) {
 	}
 }
 
+func TestPrepareUploadStateMapsGroupPolicyFlags(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	torrentPath := filepath.Join(tmp, "release.torrent")
+	if err := os.WriteFile(torrentPath, []byte("dummy"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+	state, err := prepareUploadState(t.Context(), trackers.PreparationInput{
+		Tracker: "TVC",
+		Meta: api.UploadSubject{
+			SourcePath:      filepath.Join(tmp, "Example.Release.2026.mkv"),
+			TorrentPath:     torrentPath,
+			ReleaseName:     "Example.Release.2026.1080p.WEB-DL-GRP",
+			PersonalRelease: true,
+			Identity:        api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+			ProviderMetadata: api.SourceScopedMetadata{
+				TMDB: &api.TMDBMetadata{Title: "Example Release", Year: 2026},
+			},
+			Release: api.ReleaseInfo{
+Title: "Example Release",
+ Year: 2026,
+ Resolution: "1080p",
+},
+			Type:    "WEBDL",
+		},
+		TrackerConfig: config.TrackerConfig{APIKey: "token"},
+		Runtime:       trackers.PreparationRuntime{Internal: true},
+	})
+	if err != nil {
+		t.Fatalf("prepare upload state: %v", err)
+	}
+	if state.fields["personal_release"] != "1" || state.fields["internal"] != "1" {
+		t.Fatalf("group policy fields = personal %q internal %q", state.fields["personal_release"], state.fields["internal"])
+	}
+}
+
 func TestPrepareUploadStateIncludesTVDBForMediaInfoTV(t *testing.T) {
 	tmp := t.TempDir()
 	torrentPath := filepath.Join(tmp, "show.torrent")

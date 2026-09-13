@@ -14,7 +14,7 @@ func duplicatePolicy() *trackers.DupePolicy {
 	return &trackers.DupePolicy{
 		ID:                  "standalone/btn/duplicate/v1",
 		EvidenceID:          btnDupeEvidenceID,
-		TargetReleaseOrigin: resolveOrigin,
+		TargetReleaseOrigin: resolveUploadOrigin,
 		SearchScope: trackers.DupeSearchScope{
 			MaxPages: 100,
 		},
