@@ -166,7 +166,7 @@ func RedactValue(value string, sensitiveKeys map[string]struct{}) string {
 // redactURL preserves ordinary URL context while structurally redacting known
 // sensitive userinfo, path, query, and fragment values.
 func redactURL(raw string, sensitiveKeys map[string]struct{}) string {
-	trimmed := strings.TrimRight(raw, ".,;:")
+	trimmed := strings.TrimRight(raw, ".,;:)")
 	suffix := strings.TrimPrefix(raw, trimmed)
 	parsed, err := url.Parse(trimmed)
 	if err != nil || parsed.Host == "" {

@@ -62,6 +62,15 @@ func TestRedactValueUsesCustomSensitiveKeysForURLValues(t *testing.T) {
 	}
 }
 
+func TestRedactValuePreservesClosingURLParenthesis(t *testing.T) {
+	t.Parallel()
+
+	input := "web UI (browser URL http://127.0.0.1:7480/app)"
+	if output := RedactValue(input, nil); output != input {
+		t.Fatal("expected surrounding URL punctuation preserved")
+	}
+}
+
 func TestRedactValueSessionKeyVariants(t *testing.T) {
 	t.Parallel()
 
