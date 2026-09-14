@@ -9,12 +9,15 @@ require (
 	github.com/autobrr/go-torrent v1.1.1
 	github.com/autobrr/mkbrr v1.25.0
 	github.com/autobrr/rls v0.9.0
+	github.com/coreos/go-oidc/v3 v3.19.0
 	github.com/frustra/bbcode v0.0.0-20201127003707-6ef347fbe1c8
+	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
 	golang.org/x/crypto v0.54.0
 	golang.org/x/net v0.57.0
+	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sync v0.22.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0
