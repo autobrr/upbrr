@@ -96,6 +96,64 @@ for (const scenario of [
   });
 }
 
+for (const tracker of ["ANT", "BTN"] as const) {
+  for (const action of ["Run dry run", "Start upload"] as const) {
+    test(`embedded web ${tracker} ${action} prepares content without the description editor`, async ({
+      page,
+    }) => {
+      const workspace = await createE2EWorkspace({
+        mediaKind: tracker === "BTN" ? "tv" : "movie",
+        preparedMediaInfo: true,
+      });
+      let app: AppServer | undefined;
+      try {
+        app = await startApp(workspace);
+        await fetchMetadata(
+          page,
+          app.url,
+          workspace.sourcePath,
+          tracker === "BTN" ? "E2E.Show.2026.S01E01.1080p.WEB-DL" : undefined,
+        );
+        await page.getByRole("button", { name: "Dupe Check" }).click();
+        if (tracker !== releaseWorkflowParityFixture.trackerID) {
+          await page
+            .getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID })
+            .uncheck();
+          await page.getByRole("checkbox", { name: tracker }).check();
+        }
+        await runDuplicateCheck(page);
+        if (tracker === "ANT") {
+          await page.getByRole("button", { name: "Screenshots" }).click();
+          await page.getByRole("button", { name: "Generate screenshots" }).click();
+          await expect(page.getByText("1 captured screenshot(s)")).toBeVisible();
+        }
+        await expect(page.getByRole("button", { name: "Descriptions" })).toBeDisabled();
+        await page.getByRole("button", { name: "Upload", exact: true }).click();
+        await page.getByRole("button", { name: action, exact: true }).click();
+        if (action === "Start upload") {
+          await expect(page.getByRole("heading", { name: "Workflow upload result" })).toBeVisible();
+          expect(workspace.fake.counters.trackerUploads).toBe(1);
+        } else {
+          await expect(
+            page
+              .getByRole("heading", { name: "Tracker uploads" })
+              .locator("..")
+              .getByText("completed", { exact: true }),
+          ).toBeVisible();
+          await expect(page.getByRole("button", { name: `Expand ${tracker}` })).toBeVisible();
+          expect(workspace.fake.counters.trackerUploads).toBe(0);
+          expect(workspace.fake.counters.clientInjections).toBe(0);
+        }
+        await expect(page.getByRole("button", { name: "Descriptions" })).toBeDisabled();
+        await expect(page.getByText("Exact upload dry run is unavailable.")).toHaveCount(0);
+      } finally {
+        await app?.stop();
+        await workspace.cleanup();
+      }
+    });
+  }
+}
+
 test("embedded web reload restores the authoritative prepared workflow", async ({ page }) => {
   const workspace = await createE2EWorkspace();
   let app: AppServer | undefined;

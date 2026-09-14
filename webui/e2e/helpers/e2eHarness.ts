@@ -81,6 +81,7 @@ type StartAppOptions = {
 type E2EWorkspaceOptions = {
   screenshotCount?: number;
   useLargestPlaylist?: boolean;
+  preparedMediaInfo?: boolean;
   /** Selects the fake metadata and source-name shape; defaults to a movie. */
   mediaKind?: "movie" | "tv";
 };
@@ -97,11 +98,15 @@ export async function createE2EWorkspace(options: E2EWorkspaceOptions = {}): Pro
       : "E2E.Movie.2026.1080p.WEB-DL.DD5.1.H264-UPBRR.mkv";
   const sourcePath = path.join(mediaDir, sourceName);
   const screenshotPath = path.join(mediaDir, "shot-01.png");
+  const mediaInfoPath = path.join(mediaDir, "MEDIAINFO.txt");
   const dbPath = path.join(root, "upbrr-e2e.db");
   const authCounterPath = path.join(root, "auth-counters.json");
   const configPath = path.join(root, "config.yaml");
   await writeFile(sourcePath, "e2e media fixture\n");
   await writeFile(screenshotPath, png1x1);
+  if (options.preparedMediaInfo) {
+    await writeFile(mediaInfoPath, "General\nUnique ID : e2e-unique-id\nVideo\nFormat : AVC\n");
+  }
   const fake = await startFakeServer();
   await writeFile(
     configPath,
@@ -114,6 +119,7 @@ export async function createE2EWorkspace(options: E2EWorkspaceOptions = {}): Pro
     UPBRR_E2E_IMAGE_URL: fake.url,
     UPBRR_E2E_CLIENT_URL: fake.url,
     UPBRR_E2E_SCREENSHOT_PATH: screenshotPath,
+    UPBRR_E2E_MEDIAINFO_PATH: options.preparedMediaInfo ? mediaInfoPath : "",
     UPBRR_E2E_AUTH_COUNTER_PATH: authCounterPath,
     UPBRR_E2E_MEDIA_KIND: mediaKind,
   };
@@ -382,12 +388,17 @@ export async function createE2EAPIToken(
   return created.token;
 }
 
-export async function fetchMetadata(page: Page, appUrl: string, sourcePath: string) {
+export async function fetchMetadata(
+  page: Page,
+  appUrl: string,
+  sourcePath: string,
+  releaseDisplayName: string = releaseWorkflowParityFixture.releaseDisplayName,
+) {
   await page.goto(appUrl);
   await expect(page.getByRole("heading", { name: "Build Release Name" })).toBeVisible();
   await page.getByLabel("Source path").fill(sourcePath);
   await page.getByRole("button", { name: "Fetch metadata" }).click();
-  await expect(page.getByText(releaseWorkflowParityFixture.releaseDisplayName)).toBeVisible();
+  await expect(page.getByText(releaseDisplayName)).toBeVisible();
   await page.getByText("Select Trackers").click();
   await expect(page.getByText("BTN").first()).toBeVisible();
   await page.keyboard.press("Escape");
