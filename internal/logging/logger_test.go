@@ -161,6 +161,24 @@ func TestSanitizeMessagePreservesSavePathFieldOnly(t *testing.T) {
 	}
 }
 
+func TestSanitizeMessageDoesntCensorPathsSimilarToTmp(t *testing.T) {
+	t.Parallel()
+
+	absTempDir, err := filepath.Abs(os.TempDir())
+	if err != nil {
+		t.Fatalf("could got get an absolute path for temporary directory %q", os.TempDir())
+	}
+	pathSimilarToTmp := absTempDir + "-similar"
+
+	savePath := filepath.Join(absTempDir, "Example.Release.2026-GRP")
+	sourcePath := filepath.Join(pathSimilarToTmp, "Example.Release.2026.Source-GRP")
+	got := SanitizeMessage(fmt.Sprintf("save_path=%s source=%s", savePath, sourcePath))
+
+	if !strings.Contains(got, "source="+pathSimilarToTmp) {
+		t.Fatalf("expected non-temp dir path to remain visible, got %q", got)
+	}
+}
+
 func TestLoggerSanitizesRequestSecretsAndApostrophePaths(t *testing.T) {
 	t.Parallel()
 
