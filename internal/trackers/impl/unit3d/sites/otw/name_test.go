@@ -127,8 +127,8 @@ func TestBuildNameUsesPreparedSeasonFactsOnly(t *testing.T) {
 
 func TestProfileBuildNameVersion(t *testing.T) {
 	t.Parallel()
-	if got := Profile().Site.BuildNameVersion; got != "v4" {
-		t.Fatalf("OTW BuildNameVersion = %q, want v4", got)
+	if got := Profile().Site.BuildNameVersion; got != "v5" {
+		t.Fatalf("OTW BuildNameVersion = %q, want v5", got)
 	}
 }
 

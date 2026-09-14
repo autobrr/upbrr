@@ -478,10 +478,10 @@ func generatedReleaseNameDocument(
 				space(api.NameRoleTitle, title),
 				space(api.NameRoleAlternateTitle, alternateTitle),
 				space(api.NameRoleYear, year),
-				space(api.NameRoleSource, source),
-				videoComponent(),
+				space(api.NameRoleSource, ""),
 				space(api.NameRoleVideoFormat, "DVDRip"),
 				space(api.NameRoleAudio, audio),
+				videoComponent(),
 			)
 		}
 	case "TV":
@@ -652,7 +652,7 @@ func generatedReleaseNameDocument(
 				space(api.NameRoleYear, year),
 				space(api.NameRoleAlternateTitle, alternateTitle),
 				seasonComponent,
-				space(api.NameRoleSource, source),
+				space(api.NameRoleSource, ""),
 				space(api.NameRoleVideoFormat, "DVDRip"),
 				space(api.NameRoleAudio, audio),
 				videoComponent(),

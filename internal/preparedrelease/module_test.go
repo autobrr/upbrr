@@ -332,6 +332,43 @@ func TestPrepareUsesExactCompatibilityAndPublishesConcreteAssessments(t *testing
 	}
 }
 
+func TestPrepareRecomputesV16DVDRipNameAfterRestart(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "Example.Movie.2026.DVDRip.x264-GRP.mkv")
+	if err := os.WriteFile(path, []byte("video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := newMemoryStore()
+	initial := newTestModule(t, store, &recordingCollector{})
+	input := api.PrepareInput{SourcePath: path}
+	prepared, err := initial.Prepare(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := prepared.Release
+	previous.Compatibility.ContractVersion = "prepared-release-v16"
+	previous.Naming.ReleaseName = "Example Movie 2026 DVD x264 DVDRip DD 2.0-GRP"
+	previous.Naming.Source = "DVD"
+	store.mu.Lock()
+	store.current[canonicalSourceKey(path)] = previous
+	store.mu.Unlock()
+	const want = "Example Movie 2026 DVDRip DD 2.0 x264-GRP"
+	collector := &recordingCollector{facts: &CollectedFacts{Naming: api.NamingFacts{ReleaseName: want, Source: "DVD"}}}
+	restarted := newTestModule(t, store, collector)
+	result, err := restarted.Prepare(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if collector.callCount() != 1 || result.Release.Generation != previous.Generation+1 ||
+		result.Release.Compatibility.ContractVersion != ContractVersion || result.Release.Naming.ReleaseName != want || result.Release.Naming.Source != "DVD" {
+		t.Fatalf("recomputed generation=%d collector=%d naming=%#v", result.Release.Generation, collector.callCount(), result.Release.Naming)
+	}
+	reused, err := restarted.Prepare(t.Context(), input)
+	if err != nil || reused.Release.Generation != result.Release.Generation || collector.callCount() != 1 {
+		t.Fatalf("reuse generation=%d collector=%d err=%v", reused.Release.Generation, collector.callCount(), err)
+	}
+}
+
 func TestPrepareRecomputesPreviousContractAfterRestart(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "Example Release 2026 PAL DVD")

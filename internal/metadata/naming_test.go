@@ -193,7 +193,7 @@ func TestBuildReleaseNameTVDVDRipRetainsSeasonOnlyAndNormalizesWhitespace(t *tes
 		Audio:       "DD   2.0",
 		VideoEncode: "x264",
 	}, api.NopLogger{})
-	if got, want := result.NameNoTag, "Example Show S01 DVD DVDRip DD 2.0 x264"; got != want {
+	if got, want := result.NameNoTag, "Example Show S01 DVDRip DD 2.0 x264"; got != want {
 		t.Fatalf("NameNoTag = %q, want %q", got, want)
 	}
 	season, ok := result.GeneratedName.Component(api.NameRoleSeason)

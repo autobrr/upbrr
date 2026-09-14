@@ -162,6 +162,11 @@ func TestAitherStructuredPolicyPreservesManualAndOpaqueNames(t *testing.T) {
 	manual := subject
 	manual.GeneratedName = manual.GeneratedName.Clone()
 	markAitherManual(t, manual.GeneratedName, api.NameRoleSource)
+	for index := range manual.GeneratedName.Components {
+		if manual.GeneratedName.Components[index].Role == api.NameRoleSource {
+			manual.GeneratedName.Components[index].Present = true
+		}
+	}
 	manual.ReleaseName = manual.GeneratedName.Render().Name
 	if got := aitherReviewedName(t, manual, nil); !strings.Contains(got, "PAL DVD") {
 		t.Fatalf("manual source was changed: %q", got)

@@ -15,6 +15,71 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestBuildReleaseNameDVDRipLayout(t *testing.T) {
+	for _, test := range []struct {
+		name, category, source, encode, codec, want string
+	}{
+		{"movie", "MOVIE", "DVD", "x264", "AVC", "DVD Story 2026 DVDRip DD 2.0 x264-DVDGRP"},
+		{"PAL movie", "MOVIE", "PAL DVD", "x264", "AVC", "DVD Story 2026 DVDRip DD 2.0 x264-DVDGRP"},
+		{"NTSC movie", "MOVIE", "NTSC DVD", "x264", "AVC", "DVD Story 2026 DVDRip DD 2.0 x264-DVDGRP"},
+		{"TV", "TV", "DVD", "x264", "AVC", "DVD Story 2026 S01 DVDRip DD 2.0 x264-DVDGRP"},
+		{"missing source", "MOVIE", "", "x264", "AVC", "DVD Story 2026 DVDRip DD 2.0 x264-DVDGRP"},
+		{"codec fallback", "MOVIE", "DVD", "", "MPEG-4 Visual", "DVD Story 2026 DVDRip DD 2.0 MPEG-4 Visual-DVDGRP"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := api.ReleaseNameRequest{
+				Category:    test.category,
+				Type:        "DVDRIP",
+				Title:       "DVD Story",
+				Year:        2026,
+				SearchYear:  "2026",
+				Season:      "S01",
+				Episode:     "E02",
+				Source:      test.source,
+				Audio:       "DD 2.0",
+				VideoEncode: test.encode,
+				VideoCodec:  test.codec,
+				Tag:         "-DVDGRP",
+			}
+			result := BuildReleaseName(request, api.NopLogger{})
+			if result.Name != test.want || result.CleanName != test.want || result.NameNoTag != strings.TrimSuffix(test.want, "-DVDGRP") {
+				t.Fatalf("name variants = %q / %q / %q; want %q", result.Name, result.CleanName, result.NameNoTag, test.want)
+			}
+			if err := result.GeneratedName.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			source, ok := result.GeneratedName.Component(api.NameRoleSource)
+			if !ok || source.Present || source.Value != test.source || source.AvailableValue != test.source {
+				t.Fatalf("retained source = %#v, found=%t", source, ok)
+			}
+			if test.source == "" {
+				return
+			}
+			subject := trackerLookupSubject(preparationstate.State{
+				Type:   request.Type,
+				Source: request.Source,
+				Release: api.ReleaseInfo{
+					Category: request.Category,
+					Title:    request.Title,
+					Year:     request.Year,
+					Type:     request.Type,
+					Source:   request.Source,
+				},
+				ReleaseName:      result.Name,
+				ReleaseNameNoTag: result.NameNoTag,
+				GeneratedName:    result.GeneratedName,
+			})
+			withSource := prepareStructuredName(t, subject, "metadata/dvdrip-source/v1", func(editor *trackers.NameEditor) error {
+				return editor.Include(api.NameRoleSource)
+			})
+			wantWithSource := strings.Replace(test.want, " DVDRip ", " "+test.source+" DVDRip ", 1)
+			if withSource != wantWithSource || result.GeneratedName.Render().Name != test.want {
+				t.Fatalf("tracker source inclusion = %q, want %q; canonical = %q", withSource, wantWithSource, result.GeneratedName.Render().Name)
+			}
+		})
+	}
+}
+
 func TestBuildReleaseNameUsesCodecRoleWhenMediaEncodeIsUnavailable(t *testing.T) {
 	media := mediaInfoDoc{}
 	media.Media.Track = []map[string]any{{

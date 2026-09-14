@@ -5,12 +5,101 @@ package impl
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestGeneratedDVDRipNamesOmitDVDSourceAcrossTrackers(t *testing.T) {
+	registry, err := NewRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tracker := range registry.Names() {
+		// These policies intentionally select an exact source name, not a generated name.
+		if tracker == "AR" || tracker == "SP" {
+			continue
+		}
+		t.Run(tracker, func(t *testing.T) {
+			generated := metadata.BuildReleaseName(api.ReleaseNameRequest{
+				Category:    "MOVIE",
+				Type:        "DVDRIP",
+				Title:       "Example Movie",
+				Year:        2026,
+				Source:      "DVD",
+				Resolution:  "576p",
+				Audio:       "DTS 2.0",
+				VideoEncode: "x264",
+				Tag:         "-GRP",
+			}, nil)
+			subject := api.UploadSubject{
+				ReleaseName:           generated.Name,
+				ReleaseNameNoTag:      generated.NameNoTag,
+				GeneratedName:         generated.GeneratedName,
+				GeneratedReleaseNames: generated.GeneratedVariants,
+				Type:                  "DVDRIP",
+				Source:                "DVD",
+				Audio:                 "DTS 2.0",
+				VideoEncode:           "x264",
+				Tag:                   "-GRP",
+				Identity: api.ExternalIdentity{
+					Category: api.CanonicalCategoryMovie,
+					IMDBID:   4242,
+					TMDBID:   4242,
+				},
+				ProviderMetadata: api.SourceScopedMetadata{
+					IMDB: &api.IMDBMetadata{
+						IMDBID: 4242,
+						Title:  "Example Movie",
+						AKA:    "Example Movie",
+						Year:   2026,
+					},
+					TMDB: &api.TMDBMetadata{
+						TMDBID: 4242,
+						Title:  "Example Movie",
+						Year:   2026,
+					},
+				},
+				Release: api.ReleaseInfo{
+					Title:      "Example Movie",
+					Year:       2026,
+					Category:   "MOVIE",
+					Type:       "DVDRIP",
+					Source:     "DVD",
+					Resolution: "576p",
+				},
+			}
+			descriptor, _ := registry.LookupDescriptor(tracker)
+			prepared, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{Tracker: tracker, Meta: subject}, descriptor.ReleaseNamePolicy)
+			if failure != nil {
+				t.Fatal(failure)
+			}
+			name, err := prepared.ReviewedUploadName()
+			if err != nil || name == "" {
+				t.Fatalf("name=%q err=%v", name, err)
+			}
+			if tracker == "HDB" || tracker == "OTW" {
+				const want = "Example Movie 2026 576p DVDRip DTS 2.0 x264-GRP"
+				if name != want {
+					t.Fatalf("custom generated name=%q, want %q", name, want)
+				}
+			}
+			tokens := strings.FieldsSeq(strings.ToUpper(strings.ReplaceAll(name, ".", " ")))
+			for token := range tokens {
+				if token == "DVD" || token == "PAL" || token == "NTSC" {
+					t.Fatalf("tracker restored DVD source in %q", name)
+				}
+			}
+			audio, video := strings.Index(name, "DTS"), strings.Index(name, "x264")
+			if audio >= 0 && video >= 0 && video < audio {
+				t.Fatalf("video precedes audio in %q", name)
+			}
+		})
+	}
+}
 
 func TestRemainingStandaloneNamesTargetComponents(t *testing.T) {
 	registry, err := NewRegistry()

@@ -433,6 +433,7 @@ func TestDVLStructuredReleaseNamePolicyPreservesOpaqueAndManualNames(t *testing.
 	manual.GeneratedName = manual.GeneratedName.Clone()
 	for index := range manual.GeneratedName.Components {
 		if manual.GeneratedName.Components[index].Role == api.NameRoleSource {
+			manual.GeneratedName.Components[index].Present = true
 			manual.GeneratedName.Components[index].Manual = true
 		}
 	}
