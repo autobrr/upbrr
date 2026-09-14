@@ -57,8 +57,8 @@ func TestExtractHDBClaimRecordsScopesListAndPreservesOwners(t *testing.T) {
 	if records, complete := extractHDBClaimRecords(`Show -- Site(s) Uploaded To -- Group<br>Only BTN -- BTN -- GRP<br>`); !complete || len(records) != 0 {
 		t.Fatalf("HDB-empty list = %#v, complete=%t", records, complete)
 	}
-	if records, complete := extractHDBClaimRecords(`Show -- Site(s) Uploaded To -- Group<br>Harbor Watch -- HDB -- NTb<br>Harbor Watch -- ??? -- Other<br>`); complete || records != nil {
-		t.Fatalf("partial list was accepted: %#v, complete=%t", records, complete)
+	if records, complete := extractHDBClaimRecords(`Show -- Site(s) Uploaded To -- Group<br>Harbor Watch -- HDB -- NTb<br>Harbor Watch -- ??? -- Other<br>`); complete || len(records) != 1 {
+		t.Fatalf("partial list must retain blocking evidence without authority: %#v, complete=%t", records, complete)
 	}
 }
 
@@ -98,6 +98,117 @@ func TestHDBClaimsUseOnlyHDBSessionAndCache(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(cachePath), "BTN_claimed_releases.json")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("unexpected BTN cache: %v", err)
+	}
+}
+
+func TestHDBAKABoundaries(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		value   string
+		aliases []string
+	}{
+		{value: "Harbor Watch (AKA: Portside Patrol) (2024)", aliases: []string{"Portside Patrol"}},
+		{value: "Harbor Watch (aka: Portside Patrol (US)) (2024)", aliases: []string{"Portside Patrol (US)"}},
+		{value: "Harbor Watch (AKA: Portside Patrol) (aka: Coastal Patrol) (2024)", aliases: []string{"Portside Patrol", "Coastal Patrol"}},
+	} {
+		t.Run(tt.value, func(t *testing.T) {
+			canonical, aliases := hdbExtractAKAAliases(tt.value)
+			if normalizeHDBClaimTitle(canonical) != "harbor watch 2024" || !slices.Equal(aliases, tt.aliases) {
+				t.Fatalf("AKA extraction = %q, %#v", canonical, aliases)
+			}
+			records, complete := extractHDBClaimRecords("Show -- Site(s) Uploaded To -- Group<br>" + tt.value + " -- HDB -- GRP<br>")
+			if !complete || len(records) != 1 || !slices.Equal(records[0].Aliases, tt.aliases) {
+				t.Fatalf("claim AKA extraction = %#v, complete=%t", records, complete)
+			}
+			for _, alias := range tt.aliases {
+				matches, _ := matchHDBClaimRecords(api.UploadSubject{Release: api.ReleaseInfo{Title: alias}}, hdbClaimData{Records: records})
+				if len(matches) != 1 {
+					t.Fatalf("alias %q did not match claim", alias)
+				}
+			}
+		})
+	}
+}
+
+func TestHDBClaimHeaderValidation(t *testing.T) {
+	t.Parallel()
+	page := `<div>Show</div><div>Show -- Site(s) Uploaded To -- Score<br>Decoy -- HDB -- Other</div>` + hdbClaimList + `<footer>Site footer</footer>`
+	records, complete := extractHDBClaimRecords(page)
+	if !complete || len(records) != 4 || records[0].Title != "Harbor Watch" {
+		t.Fatalf("validated list = %#v, complete=%t", records, complete)
+	}
+	if records, complete := extractHDBClaimRecords(`<div>Show -- Site(s) Uploaded To<br>Harbor Watch -- HDB -- GRP</div>`); complete || len(records) != 0 {
+		t.Fatalf("incomplete header accepted: %#v, complete=%t", records, complete)
+	}
+}
+
+func TestHDBTrailingTextRetainsBlockingEvidence(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name   string
+		cached bool
+	}{
+		{name: "fresh claim without cache"},
+		{name: "stale claim absent from partial page", cached: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(`<div>Show</div><div>Show -- Site(s) Uploaded To -- Group<br>Harbor Watch -- HDB -- NTb<br><div>Edited recently</div></div>`))
+			}))
+			defer server.Close()
+			cfg := hdbClaimConfig(t)
+			cfg.Trackers.Trackers = map[string]config.TrackerConfig{"HDB": {InternalGroups: config.CSVList{"NTb"}}}
+			d := New()
+			d.baseURL, d.httpClient = server.URL, server.Client()
+			meta := hdbClaimSubject()
+			meta.Tag = "NTb"
+			path := hdbClaimCachePathForTest(t, cfg)
+			var before []byte
+			if tt.cached {
+				meta.Release.Title = "Winter Watch"
+				writeHDBClaimCacheForTest(t, path, server.URL+hdbClaimsPath, []hdbClaimRecord{{
+					Title: "Winter Watch",
+					Sites: []string{"HDB"},
+					Group: "NTb",
+				}}, time.Now().Add(-49*time.Hour))
+				var err error
+				before, err = os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if claimed, err := d.NewClaimChecker(cfg, nil).HasClaim(t.Context(), meta); err != nil || !claimed {
+				t.Fatalf("partial evidence = %t, %v; want blocked", claimed, err)
+			}
+			after, err := os.ReadFile(path)
+			if tt.cached {
+				if err != nil || string(before) != string(after) {
+					t.Fatalf("partial parse replaced complete cache: %v", err)
+				}
+			} else if !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("partial parse was cached: %v", err)
+			}
+		})
+	}
+}
+
+func TestHDBHeaderAndRowsInSiblingContainers(t *testing.T) {
+	t.Parallel()
+	page := `<div><div>Show -- Site(s) Uploaded To -- Group</div><div>Harbor Watch -- HDB -- GRP</div></div>`
+	records, complete := extractHDBClaimRecords(page)
+	if !complete || len(records) != 1 || records[0].Title != "Harbor Watch" {
+		t.Fatalf("sibling list = %#v, complete=%t", records, complete)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(page))
+	}))
+	defer server.Close()
+	cfg := hdbClaimConfig(t)
+	d := New()
+	d.baseURL, d.httpClient = server.URL, server.Client()
+	if claimed, err := d.NewClaimChecker(cfg, nil).HasClaim(t.Context(), hdbClaimSubject()); err != nil || !claimed {
+		t.Fatalf("sibling list claim = %t, %v; want blocked", claimed, err)
 	}
 }
 
@@ -273,8 +384,8 @@ func TestHDBAlternateClaimConflictBlocksOwnPrimaryClaim(t *testing.T) {
 func TestHDBInterruptedListPreservesStaleClaims(t *testing.T) {
 	t.Parallel()
 	interrupted := `<div>Show -- Site(s) Uploaded To -- Group<br>Harbor Watch -- HDB -- NTb<br>Unexpected content<br>Harbor Watch -- HDB -- Other<br></div>`
-	if records, complete := extractHDBClaimRecords(interrupted); complete || records != nil {
-		t.Fatalf("interrupted list accepted: %#v, complete=%t", records, complete)
+	if records, complete := extractHDBClaimRecords(interrupted); complete || len(records) != 2 {
+		t.Fatalf("interrupted list must retain both owners without authority: %#v, complete=%t", records, complete)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(interrupted))
@@ -470,6 +581,7 @@ func TestInvalidHDBClaimCacheCannotAuthorizeBypass(t *testing.T) {
 		mutate func(*hdbClaimedShowsCache)
 	}{
 		{name: "wrong source", mutate: func(cache *hdbClaimedShowsCache) { cache.SourceURL = "https://other.example" }},
+		{name: "old parser version", mutate: func(cache *hdbClaimedShowsCache) { cache.Version = 1 }},
 		{name: "future timestamp", mutate: func(cache *hdbClaimedShowsCache) { cache.FetchedAt = time.Now().Add(time.Hour).Unix() }},
 		{name: "invalid record", mutate: func(cache *hdbClaimedShowsCache) {
 			cache.Claims = append(cache.Claims, hdbClaimRecord{Title: "Harbor Watch", Sites: []string{"unknown"}})

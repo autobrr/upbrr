@@ -32,7 +32,7 @@ import (
 
 const (
 	hdbClaimsPath         = "/forums/viewtopic?topicid=76939"
-	hdbClaimsCacheVersion = 1
+	hdbClaimsCacheVersion = 2
 	hdbClaimsCacheTTL     = 48 * time.Hour
 	hdbClaimsMaxBytes     = 4 << 20
 	hdbClaimWindowHours   = 48
@@ -40,7 +40,7 @@ const (
 )
 
 var (
-	hdbAKAExtractPattern = regexp.MustCompile(`(?i)\(\s*aka\s*:\s*(.+)\)`)
+	hdbAKAExtractPattern = regexp.MustCompile(`(?i)\(\s*aka\s*:\s*((?:[^()]|\([^()]*\))*)\)`)
 	hdbNonAlnumPattern   = regexp.MustCompile(`[^a-z0-9]+`)
 	hdbSpacePattern      = regexp.MustCompile(`\s+`)
 	hdbTime24Pattern     = regexp.MustCompile(`^(\d{1,2}):(\d{2})(?::(\d{2}))?$`)
@@ -100,7 +100,7 @@ func (d *Definition) NewClaimChecker(cfg config.Config, logger api.Logger) track
 // HasClaim reports an active HDB TV WEB claim. HDB claim-list access failures
 // are warnings and fail open, while cancellation remains observable by callers.
 // Only fresh, unambiguous direct ownership permits a configured internal group
-// to bypass its own claim; stale or relayed claims may still block uploads.
+// to bypass its own claim; stale, partial, or relayed claims may still block uploads.
 func (s *claimChecker) HasClaim(ctx context.Context, meta api.UploadSubject) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, fmt.Errorf("metadata: HDB claim check canceled: %w", err)
@@ -213,6 +213,14 @@ func (s *claimChecker) loadHDBClaims(ctx context.Context, cachePath string, cach
 	if errors.Is(fetchErr, context.Canceled) || errors.Is(fetchErr, context.DeadlineExceeded) {
 		return hdbClaimData{}, fetchErr
 	}
+	if fetchErr == nil && len(fresh.Records) > 0 {
+		fresh.FreshStructured = false
+		if cached.Complete {
+			fresh.Records = slices.Concat(fresh.Records, cached.Records)
+		}
+		s.logger.Warnf("metadata: HDB claims list is incomplete; recognized claims can block uploads but cannot authorize an ownership bypass")
+		return fresh, nil
+	}
 	if cached.Complete {
 		cached.FreshStructured = false
 		s.logger.Warnf("metadata: HDB claims fetch failed; using stale cache: %v", fetchErr)
@@ -258,14 +266,14 @@ func (s *claimChecker) fetchClaims(ctx context.Context) (hdbClaimData, error) {
 		return hdbClaimData{}, errors.New("metadata: HDB claims response exceeds limit")
 	}
 	records, complete := extractHDBClaimRecords(string(body))
-	if !complete {
+	if !complete && len(records) == 0 {
 		return hdbClaimData{}, errors.New("metadata: HDB claims list missing; check the stored session")
 	}
 	return hdbClaimData{
 		Records:         records,
 		FetchedAt:       time.Now().Unix(),
-		Complete:        true,
-		FreshStructured: true,
+		Complete:        complete,
+		FreshStructured: complete,
 	}, nil
 }
 
@@ -278,6 +286,7 @@ func extractHDBClaimRecords(rawHTML string) ([]hdbClaimRecord, bool) {
 	inList := false
 	records := make([]hdbClaimRecord, 0)
 	sawRow := false
+	complete := true
 	for line := range strings.SplitSeq(text, "\n") {
 		line = strings.Join(strings.Fields(line), " ")
 		if line == "" {
@@ -287,36 +296,28 @@ func extractHDBClaimRecords(rawHTML string) ([]hdbClaimRecord, bool) {
 			if strings.Contains(line, "ALL titles on the list are also claimed for HDB.") {
 				relay = true
 			}
-			if strings.HasPrefix(strings.ToLower(line), "show -- site(s) uploaded to") {
+			if isHDBClaimHeader(line) {
 				inList = true
 			}
 			continue
 		}
 		parts := strings.SplitN(line, "--", 4)
 		if len(parts) < 3 {
-			return nil, false
+			complete = false
+			continue
 		}
 		title := strings.TrimSpace(parts[0])
 		sites := parseHDBClaimSites(parts[1])
 		if title == "" || len(sites) == 0 {
-			return nil, false
+			complete = false
+			continue
 		}
 		sawRow = true
 		relayed := relay && slices.Contains(sites, "BTN") && !slices.Contains(sites, "HDB")
 		if !slices.Contains(sites, "HDB") && !relayed {
 			continue
 		}
-		aliases := make([]string, 0)
-		for _, match := range hdbAKAExtractPattern.FindAllStringSubmatch(line, -1) {
-			if len(match) < 2 {
-				continue
-			}
-			for _, alias := range strings.FieldsFunc(match[1], func(r rune) bool { return r == ',' || r == '/' || r == ';' }) {
-				if alias = strings.TrimSpace(alias); alias != "" {
-					aliases = append(aliases, alias)
-				}
-			}
-		}
+		_, aliases := hdbExtractAKAAliases(line)
 		records = append(records, hdbClaimRecord{
 			Title:          title,
 			Aliases:        aliases,
@@ -325,7 +326,13 @@ func extractHDBClaimRecords(rawHTML string) ([]hdbClaimRecord, bool) {
 			RelayedFromBTN: relayed,
 		})
 	}
-	return records, sawRow
+	return records, sawRow && complete
+}
+
+func isHDBClaimHeader(line string) bool {
+	parts := strings.Split(line, "--")
+	return len(parts) >= 3 && strings.EqualFold(strings.TrimSpace(parts[0]), "Show") &&
+		strings.EqualFold(strings.TrimSpace(parts[1]), "Site(s) Uploaded To") && strings.EqualFold(strings.TrimSpace(parts[2]), "Group")
 }
 
 func hdbClaimText(rawHTML string) string {
@@ -333,34 +340,43 @@ func hdbClaimText(rawHTML string) string {
 	if err != nil {
 		return ""
 	}
-	// The nearest post/list container owns the header and its rows. A fragment
-	// without a surrounding post uses the parser's synthetic body element.
-	var scope *htmlnode.Node
+	// Search children first so a validated post/list is selected before any
+	// enclosing forum container. A saved fragment uses the synthetic body.
+	var text string
 	var findHeader func(*htmlnode.Node)
 	findHeader = func(node *htmlnode.Node) {
-		if scope != nil {
+		if text != "" {
 			return
 		}
 		if node.Type == htmlnode.ElementNode && (node.Data == "script" || node.Data == "style") {
 			return
 		}
-		value := strings.Join(strings.Fields(node.Data), " ")
-		if node.Type == htmlnode.TextNode && (value == "Show" || strings.HasPrefix(strings.ToLower(value), "show -- site(s) uploaded to")) {
-			for parent := node.Parent; parent != nil; parent = parent.Parent {
-				if parent.Type == htmlnode.ElementNode && (parent.Data == "div" || parent.Data == "td" || parent.Data == "body") {
-					scope = parent
-					return
-				}
-			}
-		}
 		for child := node.FirstChild; child != nil; child = child.NextSibling {
 			findHeader(child)
 		}
+		if text != "" || node.Type != htmlnode.ElementNode || (node.Data != "div" && node.Data != "td" && node.Data != "body") {
+			return
+		}
+		candidate := hdbNodeText(node)
+		inList := false
+		for line := range strings.SplitSeq(candidate, "\n") {
+			line = strings.Join(strings.Fields(line), " ")
+			if isHDBClaimHeader(line) {
+				inList = true
+				continue
+			}
+			parts := strings.SplitN(line, "--", 4)
+			if inList && len(parts) >= 3 && strings.TrimSpace(parts[0]) != "" && len(parseHDBClaimSites(parts[1])) > 0 {
+				text = candidate
+				return
+			}
+		}
 	}
 	findHeader(doc)
-	if scope == nil {
-		return ""
-	}
+	return text
+}
+
+func hdbNodeText(scope *htmlnode.Node) string {
 	var text strings.Builder
 	var visit func(*htmlnode.Node)
 	visit = func(node *htmlnode.Node) {
@@ -501,14 +517,16 @@ func hdbTitleVariants(value string) map[string]struct{} {
 
 func hdbExtractAKAAliases(value string) (string, []string) {
 	value = strings.TrimSpace(value)
-	match := hdbAKAExtractPattern.FindStringSubmatch(value)
-	if len(match) < 2 {
+	matches := hdbAKAExtractPattern.FindAllStringSubmatch(value, -1)
+	if len(matches) == 0 {
 		return value, nil
 	}
 	aliases := make([]string, 0)
-	for alias := range strings.FieldsFuncSeq(match[1], func(r rune) bool { return r == ',' || r == '/' || r == ';' }) {
-		if alias = strings.TrimSpace(alias); alias != "" {
-			aliases = append(aliases, alias)
+	for _, match := range matches {
+		for alias := range strings.FieldsFuncSeq(match[1], func(r rune) bool { return r == ',' || r == '/' || r == ';' }) {
+			if alias = strings.TrimSpace(alias); alias != "" {
+				aliases = append(aliases, alias)
+			}
 		}
 	}
 	return strings.TrimSpace(hdbAKAExtractPattern.ReplaceAllString(value, "")), aliases
