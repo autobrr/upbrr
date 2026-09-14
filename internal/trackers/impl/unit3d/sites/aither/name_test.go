@@ -4,325 +4,274 @@
 package aither
 
 import (
-	"strings"
 	"testing"
 
-	"github.com/autobrr/upbrr/internal/metadata"
-	"github.com/autobrr/upbrr/internal/trackers"
-	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestAitherStructuredReleaseNamePolicy(t *testing.T) {
+func TestBuildNameAppliesAitherNamingGuide(t *testing.T) {
 	t.Parallel()
+
 	tests := []struct {
-		name      string
-		request   api.ReleaseNameRequest
-		languages []string
-		configure func(*api.UploadSubject)
-		want      string
+		name string
+		meta api.UploadSubject
+		want string
 	}{
 		{
-			name: "language marker has its own role when title collides",
-			request: api.ReleaseNameRequest{
-				Category:    "MOVIE",
-				Type:        "ENCODE",
-				Title:       "JAPANESE 1080p Cut Tales",
-				Year:        2026,
-				Resolution:  "1080p",
-				Source:      "BluRay",
-				Edition:     "Collector's",
-				Audio:       "DD 5.1",
-				VideoEncode: "x264",
-				Tag:         "-GRP",
+			name: "foreign language precedes cut and release modifiers",
+			meta: api.UploadSubject{
+				Type:           "WEBDL",
+				Source:         "Web",
+				Audio:          "DD+ 5.1",
+				AudioLanguages: []string{"Japanese"},
+				Edition:        "Extended",
+				WebDV:          true,
+				Repack:         "REPACK",
+				Tag:            "-GRP",
+				ReleaseName:    "Example Release 2026 Extended Hybrid REPACK 1080p EXM WEB-DL DD+ 5.1 H.264-GRP",
+				Release: api.ReleaseInfo{
+					Resolution: "1080p",
+				},
 			},
-			languages: []string{"Japanese"},
-			want:      "JAPANESE 1080p Cut Tales 2026 JAPANESE 1080p BluRay DD 5.1 x264-GRP",
+			want: "Example Release 2026 JAPANESE Extended Hybrid REPACK 1080p EXM WEB-DL DD+ 5.1 H.264-GRP",
 		},
 		{
-			name: "DVD rip moves structured resolution and video encode",
-			request: api.ReleaseNameRequest{
-				Category:    "MOVIE",
+			name: "actual English audio removes parsed foreign marker",
+			meta: api.UploadSubject{
+				Type:           "WEBDL",
+				Source:         "Web",
+				Audio:          "DD+ 5.1",
+				AudioLanguages: []string{"English"},
+				Tag:            "-GRP",
+				ReleaseName:    "Example Release 2026 FRENCH 1080p EXM WEB-DL DD+ 5.1 H.264-GRP",
+				Release: api.ReleaseInfo{
+					Resolution: "1080p",
+					Language:   []string{"French"},
+				},
+			},
+			want: "Example Release 2026 1080p EXM WEB-DL DD+ 5.1 H.264-GRP",
+		},
+		{
+			name: "no linguistic content uses ZXX",
+			meta: api.UploadSubject{
+				Type:           "REMUX",
+				Source:         "BluRay",
+				Audio:          "FLAC 2.0",
+				AudioLanguages: []string{"ZXX"},
+				VideoCodec:     "AVC",
+				Tag:            "-GRP",
+				ReleaseName:    "Example Release 2026 1080p BluRay REMUX AVC FLAC 2.0-GRP",
+				Release: api.ReleaseInfo{
+					Resolution: "1080p",
+				},
+			},
+			want: "Example Release 2026 ZXX 1080p BluRay REMUX AVC FLAC 2.0-GRP",
+		},
+		{
+			name: "single multilingual track uses full marker",
+			meta: api.UploadSubject{
+				Type:           "WEBDL",
+				Source:         "Web",
+				Audio:          "AAC 2.0",
+				AudioLanguages: []string{"Multiple Languages"},
+				Tag:            "-GRP",
+				ReleaseName:    "Example Release 2026 1080p EXM WEB-DL AAC 2.0 H.264-GRP",
+				Release: api.ReleaseInfo{
+					Resolution: "1080p",
+				},
+			},
+			want: "Example Release 2026 MULTIPLE LANGUAGES 1080p EXM WEB-DL AAC 2.0 H.264-GRP",
+		},
+		{
+			name: "original foreign and English tracks retain Dual-Audio",
+			meta: api.UploadSubject{
+				Type:           "WEBDL",
+				Source:         "Web",
+				Audio:          "Dual-Audio AAC 2.0",
+				AudioLanguages: []string{"Japanese", "English"},
+				Tag:            "-GRP",
+				ReleaseName:    "Example Release 2026 1080p EXM WEB-DL Dual-Audio AAC 2.0 H.264-GRP",
+				Release: api.ReleaseInfo{
+					Resolution: "1080p",
+				},
+				ProviderMetadata: api.SourceScopedMetadata{
+					TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
+				},
+			},
+			want: "Example Release 2026 1080p EXM WEB-DL Dual-Audio AAC 2.0 H.264-GRP",
+		},
+		{
+			name: "DVD remux follows component order",
+			meta: api.UploadSubject{
+				Type:           "REMUX",
+				Source:         "PAL DVD",
+				Audio:          "DD 2.0",
+				AudioLanguages: []string{"French"},
+				VideoCodec:     "MPEG-2",
+				Edition:        "Extended",
+				Repack:         "REPACK",
+				Tag:            "-GRP",
+				ReleaseName:    "Example Release 2026 Extended REPACK PAL DVD REMUX DD 2.0-GRP",
+				Release: api.ReleaseInfo{
+					Resolution: "576i",
+				},
+			},
+			want: "Example Release 2026 FRENCH Extended REPACK 576i PAL DVD REMUX MPEG-2 DD 2.0-GRP",
+		},
+		{
+			name: "DVDRip uses encode order and spacing",
+			meta: api.UploadSubject{
 				Type:        "DVDRIP",
-				Title:       "Example Release",
-				Year:        2026,
-				Resolution:  "480p",
 				Source:      "DVD",
 				Audio:       "DD 1.0",
 				VideoEncode: "x264",
 				Tag:         "-GRP",
+				ReleaseName: "Example Release 2026 DVD x264 DVDRip DD 1.0-GRP",
+				Release: api.ReleaseInfo{
+					Resolution: "480p",
+				},
 			},
 			want: "Example Release 2026 480p DVDRip DD 1.0 x264-GRP",
 		},
 		{
-			name: "DVD rip keeps video encode after dual audio marker",
-			request: api.ReleaseNameRequest{
-				Category:    "MOVIE",
-				Type:        "DVDRIP",
-				Title:       "Example Release",
-				Year:        2026,
-				Resolution:  "480p",
-				Source:      "DVD",
-				Audio:       "DD 1.0 Dual-Audio",
+			name: "DVD disc omits language and orders cut before resolution and region",
+			meta: api.UploadSubject{
+				DiscType:       "DVD",
+				Type:           "DISC",
+				Source:         "NTSC",
+				Audio:          "DD 2.0",
+				AudioLanguages: []string{"French"},
+				VideoCodec:     "MPEG-2",
+				Edition:        "Extended",
+				Repack:         "REPACK",
+				Region:         "USA",
+				Tag:            "-GRP",
+				ReleaseName:    "Example Release 2026 REPACK Extended USA NTSC DVD5 DD 2.0-GRP",
+				Release: api.ReleaseInfo{
+					Resolution: "480p",
+					Size:       "DVD5",
+				},
+			},
+			want: "Example Release 2026 Extended REPACK 480p USA NTSC DVD5 MPEG-2 DD 2.0-GRP",
+		},
+		{
+			name: "edition and no-group placeholder are omitted",
+			meta: api.UploadSubject{
+				Type:        "ENCODE",
+				Source:      "BluRay",
+				Audio:       "DD 5.1",
 				VideoEncode: "x264",
-				Tag:         "-GRP",
+				Edition:     "Collector's",
+				Tag:         "-NOGRP",
+				ReleaseName: "Example Release 2026 Collector's 1080p BluRay DD 5.1 x264-NOGRP",
+				Release: api.ReleaseInfo{
+					Resolution: "1080p",
+				},
 			},
-			want: "Example Release 2026 480p DVDRip DD 1.0 Dual-Audio x264-GRP",
+			want: "Example Release 2026 1080p BluRay DD 5.1 x264",
 		},
-		{
-			name: "DVD rip omits video encode when audio marker is absent",
-			request: api.ReleaseNameRequest{
-				Category:    "MOVIE",
-				Type:        "DVDRIP",
-				Title:       "Example Release",
-				Year:        2026,
-				Resolution:  "480p",
-				Source:      "DVD",
-				VideoEncode: "x264",
-				Tag:         "-GRP",
-			},
-			want: "Example Release 2026 480p DVDRip-GRP",
-		},
-		{
-			name: "DVD disc anchors resolution on DVD system when source is absent",
-			request: api.ReleaseNameRequest{
-				Category:   "MOVIE",
-				Type:       "DISC",
-				DiscType:   "DVD",
-				Title:      "Example Release",
-				Year:       2026,
-				Resolution: "480p",
-				Source:     "PAL DVD",
-				DVDSize:    "DVD5",
-				Audio:      "DD 1.0",
-				VideoCodec: "MPEG-2",
-				Tag:        "-GRP",
-			},
-			want: "Example Release 2026 480p PAL DVD5 MPEG-2 DD 1.0-GRP",
-		},
-		{
-			name: "TVDB locale and year are independent structured components",
-			request: api.ReleaseNameRequest{
-				Category:    "TV",
-				Type:        "WEBDL",
-				Title:       "Canonical Name",
-				AltTitle:    "AKA Original Name",
-				Year:        2024,
-				Season:      "S01",
-				Episode:     "E01",
-				Resolution:  "1080p",
-				Audio:       "DD+ 5.1",
-				VideoEncode: "H.264",
-				Tag:         "-GRP",
-			},
-			languages: []string{"English"},
-			configure: func(subject *api.UploadSubject) {
-				subject.ProviderMetadata.TVDB = &api.TVDBMetadata{NameDisambiguation: api.TVDBNameDisambiguation{
-					CanonicalName: "Canonical Name",
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := buildName(test.meta, config.TrackerConfig{}); got != test.want {
+				t.Fatalf("buildName() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestBuildNameAppliesAitherTVDBDisambiguation(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{
+		Type:           "WEBDL",
+		Source:         "Web",
+		Audio:          "DD+ 5.1",
+		SeasonStr:      "S01",
+		EpisodeStr:     "E01",
+		VideoEncode:    "H.264",
+		Tag:            "-GRP",
+		ReleaseName:    "Example Series 2026 AKA Example Original S01E01 1080p EXM WEB-DL DD+ 5.1 H.264-GRP",
+		Identity:       api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+		Release:        api.ReleaseInfo{Resolution: "1080p"},
+		AudioLanguages: []string{"English"},
+		ProviderMetadata: api.SourceScopedMetadata{
+			TVDB: &api.TVDBMetadata{
+				NameDisambiguation: api.TVDBNameDisambiguation{
+					CanonicalName: "Example Series",
 					SeriesYear:    2026,
 					Locale:        "US",
 					IncludeYear:   true,
 					IncludeLocale: true,
-				}}
+				},
 			},
-			want: "Canonical Name AKA Original Name US 2026 S01E01 1080p WEB-DL DD+ 5.1 H.264-GRP",
 		},
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			subject := aitherGeneratedSubject(t, test.request, test.languages)
-			if test.configure != nil {
-				test.configure(&subject)
-			}
-			if got := aitherReviewedName(t, subject, nil); got != test.want {
-				t.Fatalf("reviewed name = %q, want %q", got, test.want)
-			}
-		})
+	want := "Example Series AKA Example Original US 2026 S01E01 1080p EXM WEB-DL DD+ 5.1 H.264-GRP"
+	if got := buildName(meta, config.TrackerConfig{}); got != want {
+		t.Fatalf("buildName() = %q, want %q", got, want)
 	}
 }
 
-func TestAitherStructuredPolicyPreservesManualAndOpaqueNames(t *testing.T) {
+func TestProfileBuildNameVersion(t *testing.T) {
 	t.Parallel()
-	subject := aitherGeneratedSubject(t, api.ReleaseNameRequest{
-		Category:    "MOVIE",
-		Type:        "DVDRIP",
-		Title:       "Example Release",
-		Year:        2026,
-		Resolution:  "480p",
-		Source:      "PAL DVD",
-		Audio:       "DD 1.0",
-		VideoEncode: "x264",
-		Tag:         "-GRP",
-	}, []string{"Japanese"})
-	override := "Exact Manual AITHER Name-GRP"
-	if got := aitherReviewedName(t, subject, &override); got != override {
-		t.Fatalf("opaque override = %q, want %q", got, override)
-	}
-	manual := subject
-	manual.GeneratedName = manual.GeneratedName.Clone()
-	markAitherManual(t, manual.GeneratedName, api.NameRoleSource)
-	manual.ReleaseName = manual.GeneratedName.Render().Name
-	if got := aitherReviewedName(t, manual, nil); !strings.Contains(got, "PAL DVD") {
-		t.Fatalf("manual source was changed: %q", got)
-	}
-	manualDualAudio := aitherGeneratedSubject(t, api.ReleaseNameRequest{
-		Category:    "MOVIE",
-		Type:        "DVDRIP",
-		Title:       "Example Release",
-		Year:        2026,
-		Resolution:  "480p",
-		Source:      "DVD",
-		Audio:       "DD 1.0 Dual-Audio",
-		VideoEncode: "x264",
-		Tag:         "-GRP",
-	}, nil)
-	manualDualAudio.GeneratedName = manualDualAudio.GeneratedName.Clone()
-	markAitherManual(t, manualDualAudio.GeneratedName, api.NameRoleDualAudio)
-	manualDualAudio.ReleaseName = manualDualAudio.GeneratedName.Render().Name
-	if got, want := aitherReviewedName(t, manualDualAudio, nil), "Example Release 2026 480p DVDRip DD 1.0 Dual-Audio x264-GRP"; got != want {
-		t.Fatalf("manual dual-audio name = %q, want %q", got, want)
+
+	if got := Profile().Site.BuildNameVersion; got != "v2" {
+		t.Fatalf("BuildNameVersion = %q, want v2", got)
 	}
 }
 
-func TestAitherTVDBDisambiguationRequiresCurrentMatchingAutomaticTitle(t *testing.T) {
+func TestBuildNameAppliesAitherManualTVDBYear(t *testing.T) {
 	t.Parallel()
-	request := api.ReleaseNameRequest{
-		Category:    "TV",
-		Type:        "WEBDL",
-		Title:       "Example Series",
-		AltTitle:    "AKA Original",
-		Year:        2024,
-		Season:      "S01",
-		Episode:     "E01",
-		Resolution:  "1080p",
-		Audio:       "DD+ 5.1",
-		VideoEncode: "H.264",
-		Tag:         "-GRP",
-	}
+
 	tests := []struct {
-		name      string
-		configure func(*api.UploadSubject)
-		want      string
+		name        string
+		releaseName string
+		year        int
+		want        string
 	}{
-		{name: "missing evidence", configure: func(*api.UploadSubject) {}},
-		{name: "stale snapshot", configure: func(subject *api.UploadSubject) {
-			subject.SourcePath, subject.Identity.SourcePath, subject.ProviderMetadata.SourcePath = "current", "current", "stale"
-			subject.ProviderMetadata.TVDB = aitherTVDBEvidence()
-		}},
-		{name: "conflicting canonical title", configure: func(subject *api.UploadSubject) {
-			subject.ProviderMetadata.TVDB = &api.TVDBMetadata{NameDisambiguation: api.TVDBNameDisambiguation{
-				CanonicalName: "Other Series",
-				SeriesYear:    2030,
-				Locale:        "US",
-				IncludeYear:   true,
-				IncludeLocale: true,
-			}}
-		}},
 		{
-			name: "manual title",
-			configure: func(subject *api.UploadSubject) {
-				markAitherManual(t, subject.GeneratedName, api.NameRoleTitle)
-				subject.ReleaseName = subject.GeneratedName.Render().Name
-				subject.ProviderMetadata.TVDB = aitherTVDBEvidence()
-			},
-			want: "Example Series AKA Original US 2030 S01E01 1080p WEB-DL DD+ 5.1 H.264-GRP",
+			name:        "manual year",
+			releaseName: "Example Series 2030 AKA Example Original S01E01 1080p EXM WEB-DL DD+ 5.1 H.264-GRP",
+			year:        2030,
+			want:        "Example Series AKA Example Original 2030 S01E01 1080p EXM WEB-DL DD+ 5.1 H.264-GRP",
+		},
+		{
+			name:        "manual empty year",
+			releaseName: "Example Series AKA Example Original S01E01 1080p EXM WEB-DL DD+ 5.1 H.264-GRP",
+			want:        "Example Series AKA Example Original S01E01 1080p EXM WEB-DL DD+ 5.1 H.264-GRP",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			subject := aitherGeneratedSubject(t, request, []string{"English"})
-			want := test.want
-			if want == "" {
-				want = subject.ReleaseName
+
+			meta := api.UploadSubject{
+				Type:        "WEBDL",
+				Source:      "Web",
+				Audio:       "DD+ 5.1",
+				SeasonStr:   "S01",
+				EpisodeStr:  "E01",
+				VideoEncode: "H.264",
+				Tag:         "-GRP",
+				ReleaseName: test.releaseName,
+				Identity:    api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+				Release:     api.ReleaseInfo{Resolution: "1080p"},
+				ProviderMetadata: api.SourceScopedMetadata{TVDB: &api.TVDBMetadata{
+					NameDisambiguation: api.TVDBNameDisambiguation{
+						CanonicalName: "Example Series",
+						SeriesYear:    2026,
+						IncludeYear:   true,
+					},
+				}},
+				EffectiveMetadata: api.EffectiveMetadata{Year: test.year, YearProvenance: api.FactProvenanceManual},
 			}
-			test.configure(&subject)
-			if got := aitherReviewedName(t, subject, nil); got != want {
-				t.Fatalf("reviewed name = %q, want unchanged %q", got, want)
+			if got := buildName(meta, config.TrackerConfig{}); got != test.want {
+				t.Fatalf("AITHER manual TVDB year name = %q, want %q", got, test.want)
 			}
 		})
 	}
-}
-
-func aitherTVDBEvidence() *api.TVDBMetadata {
-	return &api.TVDBMetadata{NameDisambiguation: api.TVDBNameDisambiguation{
-		CanonicalName: "Example Series",
-		SeriesYear:    2030,
-		Locale:        "US",
-		IncludeYear:   true,
-		IncludeLocale: true,
-	}}
-}
-
-func TestAitherProfileUsesStructuredPolicy(t *testing.T) {
-	t.Parallel()
-	policy := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if policy.ID != "unit3d/aither/v3" || policy.Structured == nil || policy.Resolver != nil {
-		t.Fatalf("AITHER policy = %#v", policy)
-	}
-}
-
-func aitherGeneratedSubject(t *testing.T, request api.ReleaseNameRequest, languages []string) api.UploadSubject {
-	t.Helper()
-	generated := metadata.BuildReleaseName(request, api.NopLogger{})
-	if generated.GeneratedName == nil {
-		t.Fatal("BuildReleaseName did not produce a structured document")
-	}
-	category, _ := api.NormalizeCanonicalCategory(request.Category)
-	return api.UploadSubject{
-		ReleaseName:      generated.Name,
-		ReleaseNameNoTag: generated.NameNoTag,
-		GeneratedName:    generated.GeneratedName,
-		Identity:         api.ExternalIdentity{Category: category},
-		Release: api.ReleaseInfo{
-			Category:   request.Category,
-			Title:      request.Title,
-			Year:       request.Year,
-			Resolution: request.Resolution,
-			Size:       request.DVDSize,
-		},
-		AlternateTitle: request.AltTitle,
-		Type:           request.Type,
-		DiscType:       request.DiscType,
-		Source:         request.Source,
-		Audio:          request.Audio,
-		VideoCodec:     request.VideoCodec,
-		VideoEncode:    request.VideoEncode,
-		AudioLanguages: languages,
-		Edition:        request.Edition,
-		Repack:         request.Repack,
-		Tag:            request.Tag,
-		SeasonStr:      request.Season,
-		EpisodeStr:     request.Episode,
-		Region:         request.Region,
-	}
-}
-
-func aitherReviewedName(t *testing.T, subject api.UploadSubject, requested *string) string {
-	t.Helper()
-	prepared, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{
-		Tracker:             "AITHER",
-		Meta:                subject,
-		RequestedUploadName: requested,
-	}, unit3d.NewWithProfile(Profile()).ReleaseNamePolicy())
-	if failure != nil {
-		t.Fatal(failure)
-	}
-	name, err := prepared.ReviewedUploadName()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return name
-}
-
-func markAitherManual(t *testing.T, document *api.ReleaseNameDocument, role api.ReleaseNameRole) {
-	t.Helper()
-	for index := range document.Components {
-		if document.Components[index].Role == role {
-			document.Components[index].Manual = true
-			return
-		}
-	}
-	t.Fatalf("generated name is missing %s", role)
 }

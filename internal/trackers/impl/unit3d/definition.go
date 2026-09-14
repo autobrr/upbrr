@@ -213,7 +213,7 @@ func (d *Definition) TrackerFamily() trackers.Family { return trackers.FamilyUni
 func (d *Definition) ReleaseNamePolicy() trackers.ReleaseNamePolicyBinding {
 	var binding trackers.ReleaseNamePolicyBinding
 	switch {
-	case d.profile.ReleaseNamePolicy.Resolver != nil || d.profile.ReleaseNamePolicy.Structured != nil:
+	case d.profile.ReleaseNamePolicy.Resolver != nil:
 		binding = d.profile.ReleaseNamePolicy
 	case d.profile.Site.BuildName != nil:
 		version := strings.TrimSpace(d.profile.Site.BuildNameVersion)
@@ -228,7 +228,9 @@ func (d *Definition) ReleaseNamePolicy() trackers.ReleaseNamePolicyBinding {
 			},
 		)
 	default:
-		binding = trackers.StructuredReleaseNamePolicy("unit3d/canonical/v2", trackers.StructuredNamePolicy{})
+		binding = trackers.NewReleaseNamePolicy("unit3d/canonical/v1", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
+			return trackers.ResolvedReleaseNames{Upload: buildUnit3DName(d.profile.Name, input.Subject, input.TrackerConfig, d.profile.Site)}, nil
+		})
 	}
 	if d.profile.OmitEpisodeTitle {
 		binding = trackers.WithEpisodeTitleMode(binding, api.EpisodeTitleModeOmit)

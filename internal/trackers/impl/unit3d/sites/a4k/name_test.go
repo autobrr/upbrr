@@ -8,121 +8,94 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func TestBuildNameFanRes(t *testing.T) {
-	meta := a4kGeneratedSubject(t, api.ReleaseNameRequest{
-		Category:    "MOVIE",
+	meta := api.UploadSubject{
+		ReleaseName: "Example.Release.2026.FANRES.Open.Matte.2160p.UHD.35mm.FLAC.2.0.x265.V2-GRP",
 		Type:        "ENCODE",
-		Title:       "Example Release",
-		Year:        2026,
-		Resolution:  "2160p",
-		Source:      "35mm",
-		Edition:     "Open Matte",
-		Audio:       "FLAC 2.0",
+		Audio:       "FLAC",
+		Channels:    "2.0",
 		VideoEncode: "x265",
-		Tag:         "-GRP",
-	})
-	meta.Edition = "Open Matte"
-	if got, want := buildName(meta, config.TrackerConfig{}), "Example Release 2026 FANRES Open Matte 2160p UHD 35mm FLAC 2.0 x265"; got != want {
+		Release:     api.ReleaseInfo{Title: "Example Release", Year: 2026},
+	}
+	if got, want := buildName(meta, config.TrackerConfig{}), "Example Release 2026 FANRES Open Matte 2160p UHD 35mm FLAC 2.0 x265 V2"; got != want {
 		t.Fatalf("A4K FanRes name = %q, want %q", got, want)
 	}
 }
 
 func TestBuildNameAIUpscale(t *testing.T) {
-	meta := a4kGeneratedSubject(t, api.ReleaseNameRequest{
-		Category:    "MOVIE",
+	meta := api.UploadSubject{
+		ReleaseName: "Example.Release.2026.2160p.AI.Upscale.BluRay.TrueHD.5.1.AV1-GRP",
 		Type:        "REMUX",
-		Title:       "Example Release",
-		Year:        2026,
-		Resolution:  "2160p",
 		Source:      "BluRay",
-		Audio:       "TrueHD 5.1",
+		Audio:       "TrueHD",
+		Channels:    "5.1",
 		VideoEncode: "AV1",
 		Tag:         "-GRP",
-	})
-	meta.Release.Other = []string{"Upscaled (AI)"}
+		Release:     api.ReleaseInfo{Title: "Example Release", Year: 2026},
+	}
 	if got, want := buildName(meta, config.TrackerConfig{}), "Example Release 2026 2160p AI Upscale BluRay TrueHD 5.1 AV1-GRP"; got != want {
 		t.Fatalf("A4K AI name = %q, want %q", got, want)
 	}
 }
 
 func TestBuildNameAIUpscaleWithoutAIToken(t *testing.T) {
-	meta := a4kGeneratedSubject(t, api.ReleaseNameRequest{
-		Category:    "MOVIE",
+	meta := api.UploadSubject{
+		ReleaseName: "Example.Release.2026.2160p.Upscaled.BluRay.TrueHD.5.1.AV1-GRP",
 		Type:        "REMUX",
-		Title:       "Example Release",
-		Year:        2026,
-		Resolution:  "2160p",
 		Source:      "BluRay",
-		Audio:       "TrueHD 5.1",
+		Audio:       "TrueHD",
+		Channels:    "5.1",
 		VideoEncode: "AV1",
 		Tag:         "-GRP",
-	})
-	meta.Release.Other = []string{"Upscaled"}
+		Release:     api.ReleaseInfo{Title: "Example Release", Year: 2026},
+	}
 	if got := buildName(meta, config.TrackerConfig{}); !strings.Contains(got, "AI Upscale") {
 		t.Fatalf("A4K upscale-only name = %q, want AI Upscale", got)
 	}
 }
 
 func TestBuildNameVersionOnlyIsNotFanRes(t *testing.T) {
-	meta := a4kGeneratedSubject(t, api.ReleaseNameRequest{
-		Category:    "MOVIE",
+	meta := api.UploadSubject{
+		ReleaseName: "Example.Release.2026.2160p.V2.BluRay.x265-GRP",
 		Type:        "ENCODE",
-		Title:       "Example Release",
-		Year:        2026,
-		Resolution:  "2160p",
-		Source:      "BluRay",
-		VideoEncode: "x265",
-		Tag:         "-GRP",
-	})
-	meta.Repack = "V2"
+	}
 	if got := buildName(meta, config.TrackerConfig{}); strings.Contains(got, "FANRES") {
 		t.Fatalf("ordinary versioned encode was classified as FanRes: %q", got)
 	}
 }
 
-func TestBuildNameDoesNotInferMarkersFromTitleOrGroup(t *testing.T) {
-	meta := a4kGeneratedSubject(t, api.ReleaseNameRequest{
-		Category:   "MOVIE",
-		Type:       "REMUX",
-		Title:      "AI Upscaled FanRes",
-		Year:       2026,
-		Resolution: "2160p",
-		Source:     "BluRay",
-		Tag:        "-INTERNAL",
-	})
-	if got, want := typeID(meta), "2"; got != want {
-		t.Fatalf("A4K typeID inferred title/group marker = %q, want %q", got, want)
+func TestBuildNameUsesReleaseNameNoTagMarkers(t *testing.T) {
+	meta := api.UploadSubject{
+		ReleaseName:      "",
+		ReleaseNameNoTag: "Example.Release.2026.AI.Upscale.2160p.BluRay.TrueHD.5.1.AV1",
+		Type:             "REMUX",
+		Source:           "BluRay",
+		Audio:            "TrueHD",
+		Channels:         "5.1",
+		VideoEncode:      "AV1",
+		Tag:              "-GRP",
+		Release:          api.ReleaseInfo{Title: "Example Release", Year: 2026},
 	}
-	if got := buildName(meta, config.TrackerConfig{}); got != meta.ReleaseName {
-		t.Fatalf("A4K name inferred marker from title/group: %q, want %q", got, meta.ReleaseName)
+	if got, want := typeID(meta), "8"; got != want {
+		t.Fatalf("A4K typeID with AI markers only in ReleaseNameNoTag = %q, want %q", got, want)
 	}
-}
+	if got, want := buildName(meta, config.TrackerConfig{}), "Example Release 2026 2160p AI Upscale BluRay TrueHD 5.1 AV1-GRP"; got != want {
+		t.Fatalf("A4K AI name from ReleaseNameNoTag = %q, want %q", got, want)
+	}
 
-func a4kGeneratedSubject(t *testing.T, request api.ReleaseNameRequest) api.UploadSubject {
-	t.Helper()
-	result := metadata.BuildReleaseName(request, api.NopLogger{})
-	if result.GeneratedName == nil {
-		t.Fatal("BuildReleaseName did not produce a structured document")
+	meta.ReleaseNameNoTag = "Example.Release.2026.FANRES.NoDNR.2160p.UHD.35mm.FLAC.2.0.x265.V2"
+	meta.Type = "ENCODE"
+	meta.Audio = "FLAC"
+	meta.Channels = "2.0"
+	meta.VideoEncode = "x265"
+	if got, want := typeID(meta), "7"; got != want {
+		t.Fatalf("A4K typeID with FanRes markers only in ReleaseNameNoTag = %q, want %q", got, want)
 	}
-	return api.UploadSubject{
-		ReleaseName:      result.Name,
-		ReleaseNameNoTag: result.NameNoTag,
-		GeneratedName:    result.GeneratedName,
-		Type:             request.Type,
-		Source:           request.Source,
-		Edition:          request.Edition,
-		Audio:            request.Audio,
-		VideoEncode:      request.VideoEncode,
-		Tag:              request.Tag,
-		Release: api.ReleaseInfo{
-			Title:      request.Title,
-			Year:       request.Year,
-			Resolution: request.Resolution,
-		},
+	if got, want := buildName(meta, config.TrackerConfig{}), "Example Release 2026 FANRES NoDNR 2160p UHD 35mm FLAC 2.0 x265 V2"; got != want {
+		t.Fatalf("A4K FanRes name from ReleaseNameNoTag = %q, want %q", got, want)
 	}
 }
 
@@ -161,81 +134,5 @@ func TestTitleAndYearHonorsEffectiveMetadata(t *testing.T) {
 	meta.ProviderMetadata.TMDB.Title = ""
 	if title, year := titleAndYear(meta); title != "TMDB Original" || year != "2021" {
 		t.Fatalf("automatic provider fallback title/year = (%q, %q)", title, year)
-	}
-}
-
-func TestBuildNamePreservesParsedFanResMarkers(t *testing.T) {
-	meta := a4kGeneratedSubject(t, api.ReleaseNameRequest{
-		Category:    "MOVIE",
-		Type:        "ENCODE",
-		Title:       "Example Release",
-		Year:        2026,
-		Resolution:  "2160p",
-		Source:      "BluRay",
-		Audio:       "FLAC 2.0",
-		VideoEncode: "x265",
-		Tag:         "-GRP",
-	})
-	parsed := metadata.ParseReleaseInfo("Example.Release.2026.2160p.BluRay.No-DNR.x265.v2-GRP.mkv")
-	meta.Release.Other = parsed.Other
-	meta.Release.Version = parsed.Version
-	if got, want := buildName(meta, config.TrackerConfig{}), "Example Release 2026 FANRES NoDNR 2160p UHD 35mm FLAC 2.0 x265 v2"; got != want {
-		t.Fatalf("name=%q want=%q parsed=%+v", got, want, parsed)
-	}
-}
-
-func TestBuildNameUsesParsedAIAndFanResMarkers(t *testing.T) {
-	for _, tc := range []struct{ marker, wantType, want string }{
-		{"AI.Upscale", "8", "Example Release 2026 2160p AI Upscale BluRay FLAC 2.0 x265-GRP"},
-		{"Upscaled", "8", "Example Release 2026 2160p AI Upscale BluRay FLAC 2.0 x265-GRP"},
-		{"AI.Remaster", "8", "Example Release 2026 2160p AI Remaster BluRay FLAC 2.0 x265-GRP"},
-		{"FANRES", "7", "Example Release 2026 FANRES 2160p UHD 35mm FLAC 2.0 x265"},
-	} {
-		t.Run(tc.marker, func(t *testing.T) {
-			meta := a4kGeneratedSubject(t, api.ReleaseNameRequest{
-				Category:    "MOVIE",
-				Type:        "ENCODE",
-				Title:       "Example Release",
-				Year:        2026,
-				Resolution:  "2160p",
-				Source:      "BluRay",
-				Audio:       "FLAC 2.0",
-				VideoEncode: "x265",
-				Tag:         "-GRP",
-			})
-			meta.Release.Other = metadata.ParseReleaseInfo("Example.Release.2026.2160p.BluRay." + tc.marker + ".x265-GRP.mkv").Other
-			if got := typeID(meta); got != tc.wantType {
-				t.Fatalf("type=%q want=%q markers=%v", got, tc.wantType, meta.Release.Other)
-			}
-			if got := buildName(meta, config.TrackerConfig{}); got != tc.want {
-				t.Fatalf("name=%q want=%q", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestBuildNameFallbackAndEmpty(t *testing.T) {
-	meta := api.UploadSubject{ReleaseNameNoTag: "Example   Movie 2026", Type: "ENCODE"}
-	if got := buildName(meta, config.TrackerConfig{}); got != "Example Movie 2026" {
-		t.Fatalf("no-tag fallback=%q", got)
-	}
-	meta.ReleaseNameNoTag = ""
-	meta.Release.Other = []string{"FANRES"}
-	if got := buildName(meta, config.TrackerConfig{}); got != "" {
-		t.Fatalf("empty name invented=%q", got)
-	}
-}
-
-func TestTitleAndYearRejectsStaleProvider(t *testing.T) {
-	meta := api.UploadSubject{
-		Identity:         api.ExternalIdentity{Generation: 2},
-		ProviderMetadata: api.SourceScopedMetadata{Generation: 1, TMDB: &api.TMDBMetadata{Title: "Stale Title", Year: 2020}},
-	}
-	if title, year := titleAndYear(meta); title != "" || year != "" {
-		t.Fatalf("stale provider used: %q %q", title, year)
-	}
-	meta.ProviderMetadata.Generation = 2
-	if title, year := titleAndYear(meta); title != "Stale Title" || year != "2020" {
-		t.Fatalf("current provider ignored: %q %q", title, year)
 	}
 }

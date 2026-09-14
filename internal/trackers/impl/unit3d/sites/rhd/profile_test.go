@@ -8,13 +8,12 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func TestProfileNameParity(t *testing.T) {
 	profile := Profile().Site
-	if profile.BuildNameVersion != "v4" {
+	if profile.BuildNameVersion != "v3" {
 		t.Fatalf("RHD build-name version = %q", profile.BuildNameVersion)
 	}
 	build := profile.BuildName
@@ -72,8 +71,20 @@ func TestProfileNameParity(t *testing.T) {
 		},
 		{
 			name: "markers",
-			meta: rhdMarkerSubject(t, "Example Movie", "-GRP", []string{"UPSCALED"}),
-			want: "Example Movie 2024 GERMAN 1080p UPSCALE WEB-DL DDP5.1 H.264-GRP",
+			meta: api.UploadSubject{
+				ReleaseName:    "Example.Movie.2024.[INTERNAL].(UPSCALED).1080p.WEB-DL.DDP5.1.H.264-GRP",
+				Type:           "WEBDL",
+				Tag:            "-GRP",
+				Audio:          "DDP5.1",
+				VideoEncode:    "H.264",
+				AudioLanguages: []string{"German"},
+				Release: api.ReleaseInfo{
+					Title:      "Example Movie",
+					Year:       2024,
+					Resolution: "1080p",
+				},
+			},
+			want: "Example Movie 2024 GERMAN 1080p UPSCALE WEB-DL DDP5.1 H.264 iNTERNAL-GRP",
 		},
 		{
 			name: "hdr",
@@ -112,66 +123,23 @@ func TestProfileNameParity(t *testing.T) {
 			}
 		})
 	}
-	ignored := build(rhdMarkerSubject(t, "Example Regraded Upscaled Incomplete Dubbed", "-INTERNAL", nil), config.TrackerConfig{})
+	ignored := build(api.UploadSubject{
+		ReleaseName:    "Example.Movie.2024.Regradedness.Internalized.Lineage.1080p.WEB-DL.DDP5.1.H.264-LD",
+		Type:           "WEBDL",
+		Tag:            "-LD",
+		Audio:          "DDP5.1",
+		VideoEncode:    "H.264",
+		AudioLanguages: []string{"English"},
+		Release: api.ReleaseInfo{
+			Title:      "Example Movie",
+			Year:       2024,
+			Resolution: "1080p",
+		},
+	}, config.TrackerConfig{})
 	for _, marker := range []string{"REGRADED", "UPSCALE", "iNTERNAL", "DUBBED"} {
 		if strings.Contains(ignored, marker) {
 			t.Fatalf("unexpected marker %s in %q", marker, ignored)
 		}
-	}
-}
-
-func rhdMarkerSubject(t *testing.T, title, tag string, other []string) api.UploadSubject {
-	t.Helper()
-	request := api.ReleaseNameRequest{
-		Category:    "MOVIE",
-		Type:        "WEBDL",
-		Title:       title,
-		Year:        2024,
-		Resolution:  "1080p",
-		Audio:       "DDP5.1",
-		VideoEncode: "H.264",
-		Tag:         tag,
-	}
-	result := metadata.BuildReleaseName(request, api.NopLogger{})
-	if result.GeneratedName == nil {
-		t.Fatal("BuildReleaseName did not produce a structured document")
-	}
-	return api.UploadSubject{
-		ReleaseName:      result.Name,
-		ReleaseNameNoTag: result.NameNoTag,
-		GeneratedName:    result.GeneratedName,
-		Type:             request.Type,
-		Tag:              request.Tag,
-		Audio:            request.Audio,
-		VideoEncode:      request.VideoEncode,
-		AudioLanguages:   []string{"German"},
-		Release: api.ReleaseInfo{
-			Title:      request.Title,
-			Year:       request.Year,
-			Resolution: request.Resolution,
-			Other:      other,
-		},
-	}
-}
-
-func TestBuildNameUsesExactOtherMarkers(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name string
-		edit func(*api.UploadSubject)
-		want string
-	}{
-		{"upscale", func(meta *api.UploadSubject) { meta.Release.Other = []string{"UPSCALED"} }, "UPSCALE"},
-		{"ac3d dubbed", func(meta *api.UploadSubject) { meta.Release.Audio = []string{"AC3D"} }, "GERMAN DUBBED"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			meta := rhdMarkerSubject(t, "Example Movie", "-GRP", nil)
-			test.edit(&meta)
-			if got := buildName(meta, config.TrackerConfig{}); !strings.Contains(got, test.want) {
-				t.Fatalf("name = %q, missing %q", got, test.want)
-			}
-		})
 	}
 }
 
@@ -263,41 +231,5 @@ func TestProfileResolutionAndLanguages(t *testing.T) {
 		if got := resolveLanguage(api.UploadSubject{AudioLanguages: test.values}); got != test.want {
 			t.Fatalf("language = %q, want %q", got, test.want)
 		}
-	}
-}
-
-func TestBuildNameUsesParsedTechnicalMarkers(t *testing.T) {
-	parsed := metadata.ParseReleaseInfo("Example.Show.S01.1080p.WEB-DL.Incomplete.Regraded.UPSCL.Internal.x264-GRP.mkv")
-	meta := rhdMarkerSubject(t, "Example Show", "-GRP", parsed.Other)
-	meta.SeasonStr = "S01"
-	if got, want := buildName(meta, config.TrackerConfig{}), "Example Show 2024 S01 iNCOMPLETE GERMAN 1080p REGRADED UPSCALE WEB-DL DDP5.1 H.264 iNTERNAL-GRP"; got != want {
-		t.Fatalf("name=%q want=%q parsed=%+v", got, want, parsed)
-	}
-}
-
-func TestLanguageUsesParsedDubbedMarkers(t *testing.T) {
-	for _, marker := range []string{"LD", "MD", "DUBBED", "SYNCED", "AC3D", "LINE", "MIC"} {
-		t.Run(marker, func(t *testing.T) {
-			parsed := metadata.ParseReleaseInfo("Example.Movie.2024.1080p.BluRay." + marker + ".x264-GRP.mkv")
-			meta := api.UploadSubject{Release: parsed, AudioLanguages: []string{"German"}}
-			if got := resolveLanguage(meta); got != "GERMAN DUBBED" {
-				t.Fatalf("language=%q parsed=%+v", got, parsed)
-			}
-		})
-	}
-}
-
-func TestBuildNameRejectsStaleProvider(t *testing.T) {
-	meta := rhdMarkerSubject(t, "Example Movie", "-GRP", nil)
-	meta.Identity.Generation = 2
-	meta.ProviderMetadata = api.SourceScopedMetadata{
-		Generation: 1, TMDB: &api.TMDBMetadata{LocalizedTitles: map[string]string{"de": "Provider Title"}},
-	}
-	if got := buildName(meta, config.TrackerConfig{}); !strings.HasPrefix(got, "Example Movie 2024 ") {
-		t.Fatalf("stale provider used: %q", got)
-	}
-	meta.ProviderMetadata.Generation = 2
-	if got := buildName(meta, config.TrackerConfig{}); !strings.HasPrefix(got, "Provider Title 2024 ") {
-		t.Fatalf("current provider ignored: %q", got)
 	}
 }

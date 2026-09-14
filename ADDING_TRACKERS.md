@@ -66,8 +66,7 @@ Every registered definition has an explicit family/default or custom
 `trackers.ReleaseNamePolicyBinding`:
 
 - custom principal-name algorithms live in `name.go`;
-- new component-based policies use `trackers.StructuredReleaseNamePolicy`; legacy Unit3D
-  `SiteProfile.BuildName` callbacks still require `BuildNameVersion`;
+- Unit3D `SiteProfile.BuildName` callbacks also require `BuildNameVersion`;
 - requested-name instructions are inputs to the policy and may be normalized/rejected;
 - the registry resolves upload and duplicate-search names before preflight and duplicate checks;
 - intentionally different search names are explicit projection values;
@@ -77,191 +76,6 @@ Every registered definition has an explicit family/default or custom
 
 Questionnaire answers that affect naming must already participate in the projection input and
 fingerprint. Use synthetic naming fixtures such as `Example.Release.2026.1080p-GRP`.
-
-#### Target components, not matching text
-
-Preparation builds an `api.ReleaseNameDocument` while generating the canonical name, before
-tracker-specific formatting. Trackers receive it as `api.UploadSubject.GeneratedName`, tied to
-the exact prepared generation. Prepared naming facts store it in `api.NamingFacts.GeneratedName`.
-The versioned document is retained through prepared-state persistence and transport; it is not
-reconstructed by parsing `ReleaseName`.
-
-Each `api.ReleaseNameComponent` has a unique semantic `Role`. The complete supported role set is:
-
-| Name object | Role |
-| ----------- | ---- |
-| Main title | `api.NameRoleTitle` |
-| AKA / alternate title | `api.NameRoleAlternateTitle` |
-| Year | `api.NameRoleYear` |
-| Season | `api.NameRoleSeason` |
-| Episode | `api.NameRoleEpisode` |
-| Episode title | `api.NameRoleEpisodeTitle` |
-| Daily date | `api.NameRoleDailyDate` |
-| Part | `api.NameRolePart` |
-| 3D marker | `api.NameRoleThreeD` |
-| Edition | `api.NameRoleEdition` |
-| Hybrid marker | `api.NameRoleHybrid` |
-| Repack marker | `api.NameRoleRepack` |
-| Resolution | `api.NameRoleResolution` |
-| Region | `api.NameRoleRegion` |
-| UHD marker | `api.NameRoleUHD` |
-| Source | `api.NameRoleSource` |
-| DVD system | `api.NameRoleDVDSystem` |
-| DVD size | `api.NameRoleDVDSize` |
-| Service | `api.NameRoleService` |
-| Video format | `api.NameRoleVideoFormat` |
-| HDR | `api.NameRoleHDR` |
-| Video codec | `api.NameRoleVideoCodec` |
-| Video encode | `api.NameRoleVideoEncode` |
-| Audio | `api.NameRoleAudio` |
-| Dubbed marker | `api.NameRoleDubbed` |
-| Dual-audio marker | `api.NameRoleDualAudio` |
-| Language marker | `api.NameRoleLanguageMarker` |
-| Series locale / disambiguation | `api.NameRoleLocale` |
-| Disc distributor | `api.NameRoleDistributor` |
-| Subtitle-language marker | `api.NameRoleSubtitleMarker` |
-| Release group | `api.NameRoleGroup` |
-| Original group retained alongside a custom group | `api.NameRoleOriginalGroup` |
-
-These roles are defined in `pkg/api/naming_document.go`; not every release layout contains every
-role. Editing targets the whole component, so audio subfields, for example, are not separately
-addressable roles. Components retain their display
-`Value`, finalized `AvailableValue`, `Present` flag, `Manual` provenance, and layout information
-(`Join` and `AttachTo`). An omitted component may therefore remain available for a policy to
-include, but a missing value is not permission to invent evidence.
-
-Use `trackers.NameEditor` to edit a tracker-private copy. Do not mutate `GeneratedName`, split
-the rendered name to rediscover components, or use `strings.Replace`, regular expressions, or
-substring matching to select semantic objects. If the title contains the same words as the
-edition, omitting `NameRoleEdition` must leave the title untouched. The central renderer owns
-spacing and attachment after edits; `Separator: "."` requests dotted output.
-
-| Editor operation | Effect | Mandatory authority required for the target role |
-| ---------------- | ------ | ----------------------------------------------- |
-| `Omit(role)` | Hide the component | `NamePresence` |
-| `Include(role)` | Show the component, restoring an available value if needed | `NamePresence` |
-| `Set(role, value)` | Change its display value without changing presence | `NameValue` |
-| `SetJoin(role, join)` | Change the separator before a component, preserving attachment anchors | `NameOrder` |
-| `MoveBefore(role, anchor)` | Move a present component before a present anchor | `NameOrder` |
-| `MoveAfter(role, anchor)` | Move a present component after a present anchor | `NameOrder` |
-| `InsertBefore(role, value, anchor)` | Add or update a component at an explicit anchor | `NamePresence`, `NameValue`, and `NameOrder` |
-| `InsertAfter(role, value, anchor)` | Add or update a component after an explicit anchor | `NamePresence`, `NameValue`, and `NameOrder` |
-
-Use `PresentRoles()` for a detached snapshot of the editor's current present roles in render
-order. Select anchors after edits have run, since manual protection can prevent an optional
-insertion or inclusion. Preserve related components, such as audio and its dubbed/dual-audio
-markers, in their generated order; move automatic components around manually protected ones.
-
-`Component(role)` returns a detached snapshot of the current component, including its value,
-presence, and manual provenance. Use it to normalize a selected component's value, such as an
-audio label, without searching other components. If normalization produces an empty value,
-omit the component rather than leaving a present component empty.
-
-Use `StructuredNamePolicy.ExactName` only to select an existing authoritative whole name, such
-as a questionnaire answer or a tracker-required source filename. A nonempty result is opaque
-and bypasses defaults; an explicit requested name takes precedence. Mandatory opaque-name
-rules still apply. This callback is not an escape hatch for parsing generated names.
-If an exact selection must affect only upload naming, set `SearchGeneratedName: true`.
-An explicit nonempty `Search` result still wins; otherwise duplicate search renders the current
-generated document independently of the exact selection. Missing generated components fail
-with a reprepare instruction rather than silently searching for the opaque upload name.
-
-#### Preserve manual choices unless the tracker explicitly requires otherwise
-
-`StructuredNamePolicy.Defaults` applies optional presentation preferences. Its editor leaves
-manual components unchanged and skips unavailable targets. `Mandatory` runs after defaults and
-has absolute authority over the role/aspect pairs declared in `Authority`, including conflicting
-manual values or omissions. This is a tracker-owned policy declaration, not a user-configurable
-permission switch. Undeclared aspects remain protected.
-
-For example, put this optional AKA omission in the tracker's `name.go` (using the `config`,
-`trackers`, and `api` packages):
-
-```go
-func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/example/v1", trackers.StructuredNamePolicy{
-		Defaults:  omitAlternateTitle,
-		Separator: ".",
-	})
-}
-
-func omitAlternateTitle(editor *trackers.NameEditor, _ api.UploadSubject, _ config.TrackerConfig) error {
-	return editor.Omit(api.NameRoleAlternateTitle)
-}
-```
-
-If the tracker's actual rules prohibit AKA even when manually selected, replace that policy
-construction with:
-
-```go
-return trackers.StructuredReleaseNamePolicy("unit3d/example/v2", trackers.StructuredNamePolicy{
-	Mandatory: omitAlternateTitle,
-	Authority: []trackers.NameAuthority{
-		{Role: api.NameRoleAlternateTitle, Aspect: trackers.NamePresence},
-	},
-	Separator: ".",
-})
-```
-
-This grants authority over AKA presence only, not title text, AKA value, or component order.
-Declare only requirements the tracker actually has. Return editor errors rather than swallowing
-them: mandatory operations fail with `NameRuleError` when required targets, values, anchors, or
-authority are unavailable; unknown roles fail in either mode. Applied mandatory changes produce
-workflow decisions shown alongside effective names in CLI and WebUI.
-
-Use finalized facts from the supplied subject for replacement values. Direct provider overrides
-are allowed, but use provider evidence bound to the prepared source and identity; do not fetch
-metadata in a naming callback or fall back to raw parser output. Setting a value does not include
-an omitted component: call `Include` as well, and declare presence authority if mandatory.
-
-Keep technical substitutions scoped to their role: audio codec/channel rules must not run on
-titles or groups. Omit an automatic component when normalization leaves it empty. If a tracker
-requires canonical clean-filename substitutions, apply `api.CleanReleaseNameFilename` to the
-selected component value before the tracker's presentation formatting.
-
-For fact-built names, use finalized `Release.Other`, `Release.Language`, and `Release.Audio`
-markers, or `Release.Version` for a parsed release version. Missing marker evidence must be
-resolved during source preparation, not recovered by searching a rendered name. The source
-parser retains only final typed technical markers; candidates classified as title text or a
-release group are not marker evidence. Treat ambiguous or unavailable markers as absent.
-
-#### Handle opaque names explicitly
-
-Whole-name overrides, preserved scene names, and names without matching generated components are
-opaque. Optional policies preserve them and do not apply component edits or separator changes.
-Mandatory policies reject them by default (`OpaqueNameReject`); they must not guess whether a
-substring satisfies the rule.
-
-A tracker may explicitly set `Opaque: trackers.OpaqueNameRebuild` to replace opaque wording with
-the exact prepared generation's document and then apply its component policy. This produces a
-visible rebuild decision and can discard the whole manual or scene name, so use it deliberately.
-Rebuilding still fails without a valid generated document. Older prepared contracts require
-repreparation, not a migration that parses stored names.
-
-#### Register and test the policy
-
-- Set `unit3d.Profile.ReleaseNamePolicy: namePolicy()` for a Unit3D site, or the standalone
-  descriptor's `ReleaseNamePolicy` field. Keep the constructor and callbacks in `name.go`.
-- Unit3D without a custom binding or `BuildName` uses the structured family default. Existing
-  custom `BuildName` callbacks remain legacy string-based policies; migration is explicit. Prefer
-  a structured binding for new component edits rather than adding another legacy callback.
-- Bump the policy ID version when naming behavior changes. The registry resolves and fingerprints
-  the policy before duplicate checks; preview and submission must consume
-  `PreparationInput.ReviewedUploadName()` without further name transformations.
-- Use `StructuredNamePolicy.Search` only when duplicate-search wording intentionally differs.
-  It receives prepared facts adjusted for naming presentation, not the editor's final document.
-  Requested upload wording does not become the search query. Test both projected names.
-- Test repeated text across title, AKA, edition, and episode title; omitted and manually cleared
-  components; optional versus mandatory precedence; missing evidence and anchors; undeclared
-  authority; opaque reject/rebuild behavior; and spacing, season/episode attachment, and group
-  separators after removal or reordering.
-- Exercise registered projection and reviewed payload consumption, not only the callback. Assert
-  the canonical subject remains unchanged and policy decisions/fingerprints match the effective
-  names. For workflow changes, cover CLI/WebUI confirmation and persisted reload behavior too.
-
-The IS implementation in `internal/trackers/impl/standalone/is/name.go` demonstrates optional
-AKA/audio-marker omissions and an independent search name. The mandatory-policy cases in
-`internal/trackers/mandatory_authority_test.go` cover explicit authority and opaque-name handling.
 
 ### Authentication contract
 
@@ -477,7 +291,7 @@ Available upload callbacks are:
 
 | Callback                 | Use                                                                    |
 | ------------------------ | ---------------------------------------------------------------------- |
-| `BuildName`              | Legacy string naming; prefer `Profile.ReleaseNamePolicy` for component edits |
+| `BuildName`              | Replace shared release-name formatting                                 |
 | `BuildDescription`       | Replace shared Unit3D description rendering                            |
 | `ResolveKeywords`        | Filter or remap the `keywords` field                                   |
 | `ResolveTypeID`          | Map prepared release facts to a site type ID                           |
@@ -668,7 +482,6 @@ represented by `BannedGroupPolicy` needs a typed policy extension, not a tracker
 
 | Profile field      | Purpose                                                      |
 | ------------------ | ------------------------------------------------------------ |
-| `ReleaseNamePolicy` | Versioned structured naming, including explicit mandatory authority |
 | `ValidationPolicy` | Versioned site constructibility/custom policy binding        |
 | `AudioPolicy`      | Multi-language/bloat policy beyond release eligibility rules |
 | `DupePolicy`       | Candidate-comparison semantics after duplicate search        |

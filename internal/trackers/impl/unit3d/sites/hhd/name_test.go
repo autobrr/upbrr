@@ -1,142 +1,149 @@
+// Copyright (c) 2025-2026, Audionut and the autobrr contributors.
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 package hhd
 
 import (
-	"github.com/autobrr/upbrr/internal/metadata"
-	"github.com/autobrr/upbrr/internal/trackers"
-	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
-	"github.com/autobrr/upbrr/pkg/api"
 	"testing"
+
+	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestHHDStructuredName(t *testing.T) {
-	s := hhdSubject(t, api.ReleaseNameRequest{
-		Category:    "TV",
-		Type:        "WEBDL",
-		Title:       "Series",
-		AltTitle:    "AKA Alt",
-		Year:        2026,
-		SearchYear:  "2026",
-		Season:      "S01",
-		Episode:     "E02",
-		Resolution:  "1080p",
-		VideoEncode: "H.265",
-		Tag:         "-GRP",
-	})
-	s.ProviderMetadata = api.SourceScopedMetadata{
-		SourcePath: s.SourcePath,
-		Generation: 1,
-		TVDB: &api.TVDBMetadata{NameDisambiguation: api.TVDBNameDisambiguation{
-			CanonicalName: "Series",
-			IncludeYear:   true,
-			IncludeLocale: true,
-			Locale:        "US",
-		}},
-	}
-	if got, want := hhdName(t, s, nil), "Series AKA Alt US 2026 S01E02 1080p WEB-DL H.265-GRP"; got != want {
-		t.Fatalf("name=%q want=%q", got, want)
-	}
-	stale := s
-	stale.ProviderMetadata.Generation = 2
-	if got := hhdName(t, stale, nil); got != stale.ReleaseName {
-		t.Fatalf("stale metadata changed name: %q", got)
-	}
-	o := "Opaque-GRP"
-	if got := hhdName(t, s, &o); got != o {
-		t.Fatalf("opaque=%q", got)
-	}
-	manualEmptyYear := hhdSubject(t, api.ReleaseNameRequest{
-		Category:    "TV",
-		Type:        "WEBDL",
-		Title:       "Series",
-		NoAKA:       true,
-		Season:      "S01",
-		Episode:     "E02",
-		Resolution:  "1080p",
-		VideoEncode: "H.265",
-		Tag:         "-GRP",
-	})
-	manualEmptyYear.EffectiveMetadata.YearProvenance = api.FactProvenanceManualEmpty
-	manualEmptyYear.ProviderMetadata = api.SourceScopedMetadata{
-		SourcePath: manualEmptyYear.SourcePath,
-		Generation: 1,
-		TVDB: &api.TVDBMetadata{NameDisambiguation: api.TVDBNameDisambiguation{
-			CanonicalName: "Series",
-			IncludeLocale: true,
-			Locale:        "US",
-		}},
-	}
-	if got, want := hhdName(t, manualEmptyYear, nil), "Series US S01E02 1080p WEB-DL H.265-GRP"; got != want {
-		t.Fatalf("manual-empty year locale name = %q, want %q", got, want)
+func TestBuildNamePreservesHHDHDRVocabulary(t *testing.T) {
+	t.Parallel()
+
+	const want = "Example Release 2026 2160p WEB-DL PQ10 H.265-GRP"
+	if got := buildName(api.UploadSubject{ReleaseName: want}, config.TrackerConfig{}); got != want {
+		t.Fatalf("HHD name = %q", got)
 	}
 }
-func TestHHDDiscDistributorAndManualEdition(t *testing.T) {
-	s := hhdSubject(t, api.ReleaseNameRequest{
-		Category:   "MOVIE",
-		Type:       "DISC",
-		DiscType:   "BDMV",
-		Title:      "Example",
-		Year:       2026,
-		Resolution: "1080p",
-		Region:     "USA",
-		Source:     "BluRay",
-		VideoCodec: "AVC",
-		Tag:        "-GRP",
-	})
-	s.Distributor = "Criterion"
-	if got, want := hhdName(t, s, nil), "Example 2026 1080p Criterion USA BluRay AVC-GRP"; got != want {
-		t.Fatalf("disc=%q want=%q", got, want)
+
+func TestBuildNameAppliesHHDTVDBDisambiguationMatrix(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		evidence api.TVDBNameDisambiguation
+		want     string
+	}{
+		{
+			name:     "unique",
+			evidence: api.TVDBNameDisambiguation{CanonicalName: "Example Series", SeriesYear: 2026},
+			want:     "Example Series AKA Example Original S01E02 Example Episode 1080p WEB-DL H.265-GRP",
+		},
+		{
+			name: "different year",
+			evidence: api.TVDBNameDisambiguation{
+				CanonicalName: "Example Series",
+				SeriesYear:    2026,
+				IncludeYear:   true,
+			},
+			want: "Example Series AKA Example Original 2026 S01E02 Example Episode 1080p WEB-DL H.265-GRP",
+		},
+		{
+			name: "same year",
+			evidence: api.TVDBNameDisambiguation{
+				CanonicalName: "Example Series",
+				SeriesYear:    2026,
+				Locale:        "US",
+				IncludeYear:   true,
+				IncludeLocale: true,
+				Status:        api.MetadataEvidenceStatusPartial,
+			},
+			want: "Example Series AKA Example Original US 2026 S01E02 Example Episode 1080p WEB-DL H.265-GRP",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			meta := hhdTVNameSubject(tt.evidence)
+			if got := buildName(meta, config.TrackerConfig{}); got != tt.want {
+				t.Fatalf("HHD name = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
-func TestHHDPolicy(t *testing.T) {
-	p := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
-	if p.ID != "unit3d/hhd/v3" || p.Structured == nil {
-		t.Fatalf("%#v", p)
+
+func TestBuildNameOmitsHHDEditionAndRestrictsDistributorToDisc(t *testing.T) {
+	t.Parallel()
+
+	nonDisc := api.UploadSubject{
+		ReleaseName: "Example Release 2026 Limited 1080p BluRay x265-GRP",
+		Edition:     "Limited",
+		Distributor: "Criterion",
+		Type:        "ENCODE",
+	}
+	const nonDiscWant = "Example Release 2026 1080p BluRay x265-GRP"
+	if got := buildName(nonDisc, config.TrackerConfig{}); got != nonDiscWant {
+		t.Fatalf("HHD non-disc name = %q, want %q", got, nonDiscWant)
+	}
+
+	disc := api.UploadSubject{
+		ReleaseName: "Example Release 2026 Limited 1080p USA Blu-ray AVC-GRP",
+		Edition:     "Limited",
+		Distributor: "Criterion",
+		Type:        "DISC",
+		DiscType:    "BDMV",
+		Region:      "USA",
+		Release:     api.ReleaseInfo{Resolution: "1080p"},
+	}
+	const discWant = "Example Release 2026 1080p Criterion USA Blu-ray AVC-GRP"
+	if got := buildName(disc, config.TrackerConfig{}); got != discWant {
+		t.Fatalf("HHD disc name = %q, want %q", got, discWant)
 	}
 }
-func hhdSubject(t *testing.T, r api.ReleaseNameRequest) api.UploadSubject {
-	t.Helper()
-	n := metadata.BuildReleaseName(r, api.NopLogger{})
-	if n.GeneratedName == nil {
-		t.Fatal("document")
-	}
+
+func hhdTVNameSubject(evidence api.TVDBNameDisambiguation) api.UploadSubject {
 	return api.UploadSubject{
-		SourcePath:       "hhd",
-		ReleaseName:      n.Name,
-		ReleaseNameNoTag: n.NameNoTag,
-		GeneratedName:    n.GeneratedName,
-		Identity: api.ExternalIdentity{
-			SourcePath: "hhd",
-			Generation: 1,
-			Category:   api.CanonicalCategory(r.Category),
-		},
+		ReleaseName:  "Example Series 2026 AKA Example Original S01E02 Example Episode 1080p WEB-DL H.265-GRP",
+		SeasonStr:    "S01",
+		EpisodeStr:   "E02",
+		EpisodeTitle: "Example Episode",
+		Identity:     api.ExternalIdentity{Category: api.CanonicalCategoryTV},
 		Release: api.ReleaseInfo{
-			Category:   r.Category,
-			Title:      r.Title,
-			Year:       r.Year,
-			Resolution: r.Resolution,
+			Category:   "TV",
+			Resolution: "1080p",
 		},
-		Type:        r.Type,
-		DiscType:    r.DiscType,
-		Source:      r.Source,
-		Region:      r.Region,
-		Edition:     r.Edition,
-		VideoEncode: r.VideoEncode,
-		VideoCodec:  r.VideoCodec,
+		ProviderMetadata: api.SourceScopedMetadata{TVDB: &api.TVDBMetadata{NameDisambiguation: evidence}},
 	}
 }
-func hhdName(t *testing.T, s api.UploadSubject, o *string) string {
-	t.Helper()
-	p, f := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{
-		Tracker:             "HHD",
-		Meta:                s,
-		RequestedUploadName: o,
-	}, unit3d.NewWithProfile(Profile()).ReleaseNamePolicy())
-	if f != nil {
-		t.Fatal(f)
+
+func TestBuildNameAppliesHHDManualTVDBYear(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		releaseName string
+		year        int
+		want        string
+	}{
+		{
+			name:        "manual year",
+			releaseName: "Example Series 2030 AKA Example Original S01E02 Example Episode 1080p WEB-DL H.265-GRP",
+			year:        2030,
+			want:        "Example Series AKA Example Original 2030 S01E02 Example Episode 1080p WEB-DL H.265-GRP",
+		},
+		{
+			name:        "manual empty year",
+			releaseName: "Example Series AKA Example Original S01E02 Example Episode 1080p WEB-DL H.265-GRP",
+			want:        "Example Series AKA Example Original S01E02 Example Episode 1080p WEB-DL H.265-GRP",
+		},
 	}
-	n, e := p.ReviewedUploadName()
-	if e != nil {
-		t.Fatal(e)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			meta := hhdTVNameSubject(api.TVDBNameDisambiguation{
+				CanonicalName: "Example Series",
+				SeriesYear:    2026,
+				IncludeYear:   true,
+			})
+			meta.ReleaseName = test.releaseName
+			meta.EffectiveMetadata = api.EffectiveMetadata{Year: test.year, YearProvenance: api.FactProvenanceManual}
+			if got := buildName(meta, config.TrackerConfig{}); got != test.want {
+				t.Fatalf("HHD manual TVDB year name = %q, want %q", got, test.want)
+			}
+		})
 	}
-	return n
 }

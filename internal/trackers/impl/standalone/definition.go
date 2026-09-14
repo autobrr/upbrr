@@ -93,7 +93,7 @@ func (d *Definition) UploadContentMode() trackers.UploadContentMode {
 
 // ReleaseNamePolicy returns the profile policy or the explicit standalone default.
 func (d *Definition) ReleaseNamePolicy() trackers.ReleaseNamePolicyBinding {
-	if d.profile.ReleaseNamePolicy.Resolver != nil || d.profile.ReleaseNamePolicy.Structured != nil {
+	if d.profile.ReleaseNamePolicy.Resolver != nil {
 		return d.profile.ReleaseNamePolicy
 	}
 	return trackers.CanonicalReleaseNamePolicy()

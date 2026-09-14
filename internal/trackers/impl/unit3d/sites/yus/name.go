@@ -4,7 +4,7 @@
 package yus
 
 import (
-	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -13,78 +13,120 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/yus/v3", trackers.StructuredNamePolicy{Defaults: applyYUSNameDefaults})
-}
-
-func applyYUSNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
-	if err := applyYUSTVDBDisambiguation(editor, meta); err != nil {
-		return err
+func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
+	name := strings.TrimSpace(meta.ReleaseName)
+	if name == "" {
+		name = strings.TrimSpace(meta.ReleaseNameNoTag)
 	}
-	if err := editor.Omit(api.NameRoleEdition); err != nil {
-		return fmt.Errorf("omit YUS edition: %w", err)
+	name = strings.Join(strings.Fields(name), " ")
+	switch unit3d.Category(meta) {
+	case "TV":
+		name = applyYUSTVDBDisambiguation(name, meta)
+	case "MOVIE":
+		name = applyYUSTMDBMovieYear(name, meta)
 	}
+	name = removeYUSNameElement(name, meta.Edition)
 	if isYUSFullDisc(meta) {
-		if err := insertYUSDiscDistributor(editor, meta); err != nil {
-			return err
-		}
+		name = insertYUSDiscDistributor(name, meta)
 	}
-	return nil
+	return strings.Join(strings.Fields(name), " ")
 }
 
-func applyYUSTVDBDisambiguation(editor *trackers.NameEditor, meta api.UploadSubject) error {
-	if unit3d.Category(meta) != "TV" || !meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) || meta.ProviderMetadata.TVDB == nil {
-		return nil
+func applyYUSTVDBDisambiguation(name string, meta api.UploadSubject) string {
+	if !meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) ||
+		meta.ProviderMetadata.TVDB == nil {
+		return name
 	}
 	evidence := meta.ProviderMetadata.TVDB.NameDisambiguation
-	if !yusMatchesTVDBTitle(editor, evidence.CanonicalName) {
-		return nil
+	if meta.EffectiveMetadata.YearProvenance.IsManual() {
+		evidence.SeriesYear = meta.EffectiveMetadata.Year
 	}
-	if err := editor.MoveBefore(api.NameRoleAlternateTitle, api.NameRoleYear); err != nil {
-		return fmt.Errorf("move YUS alternate title before year: %w", err)
+	title, alternate, tail, ok := unit3d.SplitTVDBName(name, meta, evidence)
+	if !ok {
+		return name
 	}
-	if !evidence.IncludeYear {
-		if err := editor.Omit(api.NameRoleYear); err != nil {
-			return fmt.Errorf("omit YUS TVDB year: %w", err)
-		}
+	parts := []string{title, alternate}
+	if evidence.IncludeLocale && strings.TrimSpace(evidence.Locale) != "" {
+		parts = append(parts, evidence.Locale)
 	}
-	if !evidence.IncludeLocale || strings.TrimSpace(evidence.Locale) == "" {
-		return nil
+	if evidence.IncludeYear && evidence.SeriesYear > 0 {
+		parts = append(parts, strconv.Itoa(evidence.SeriesYear))
 	}
-	anchor := api.NameRoleAlternateTitle
-	if alternate, ok := editor.Component(anchor); !ok || !alternate.Present {
-		anchor = api.NameRoleTitle
-	}
-	if err := editor.InsertAfter(api.NameRoleLocale, evidence.Locale, anchor); err != nil {
-		return fmt.Errorf("insert YUS TVDB locale: %w", err)
-	}
-	return nil
+	parts = append(parts, tail)
+	return strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
 }
 
-func yusMatchesTVDBTitle(editor *trackers.NameEditor, title string) bool {
-	component, ok := editor.Component(api.NameRoleTitle)
-	return ok && component.Present && !component.Manual && strings.TrimSpace(title) != "" &&
-		strings.EqualFold(strings.Join(strings.Fields(component.Value), " "), strings.Join(strings.Fields(title), " "))
+func applyYUSTMDBMovieYear(name string, meta api.UploadSubject) string {
+	if meta.Release.Year <= 0 {
+		return name
+	}
+	providerYear := 0
+	if meta.ProviderMetadata.TMDB != nil && meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) {
+		providerYear = meta.ProviderMetadata.TMDB.Year
+	}
+	year := trackers.PreferredYear(meta, providerYear)
+	if year <= 0 || year == meta.Release.Year {
+		return name
+	}
+	searchEnd := len(name)
+	if resolution := unit3d.Resolution(meta); resolution != "" {
+		if index := findYUSNameElement(name, resolution); index >= 0 {
+			searchEnd = index
+		}
+	}
+	oldYear := strconv.Itoa(meta.Release.Year)
+	index := findYUSLastNameElement(name[:searchEnd], oldYear)
+	if index < 0 {
+		return name
+	}
+	return name[:index] + strconv.Itoa(year) + name[index+len(oldYear):]
 }
 
-func insertYUSDiscDistributor(editor *trackers.NameEditor, meta api.UploadSubject) error {
-	distributor := strings.TrimSpace(trackers.PreferredDistributor(meta, meta.Distributor))
-	if distributor == "" {
-		return nil
+func removeYUSNameElement(name string, element string) string {
+	element = strings.Join(strings.Fields(element), " ")
+	index := findYUSLastNameElement(name, element)
+	if index < 0 {
+		return name
 	}
-	if resolution, ok := editor.Component(api.NameRoleResolution); ok && resolution.Present {
-		if err := editor.InsertAfter(api.NameRoleDistributor, distributor, api.NameRoleResolution); err != nil {
-			return fmt.Errorf("insert YUS disc distributor after resolution: %w", err)
+	return strings.TrimSpace(name[:index] + " " + name[index+len(element):])
+}
+
+func insertYUSDiscDistributor(name string, meta api.UploadSubject) string {
+	distributor := strings.Join(strings.Fields(trackers.PreferredDistributor(meta, meta.Distributor)), " ")
+	if distributor == "" || findYUSNameElement(name, distributor) >= 0 {
+		return name
+	}
+	if resolution := strings.Join(strings.Fields(unit3d.Resolution(meta)), " "); resolution != "" {
+		if index := findYUSLastNameElement(name, resolution); index >= 0 {
+			end := index + len(resolution)
+			return strings.TrimSpace(name[:end] + " " + distributor + " " + name[end:])
 		}
-		return nil
 	}
-	if err := editor.InsertBefore(api.NameRoleDistributor, distributor, api.NameRoleRegion); err != nil {
-		return fmt.Errorf("insert YUS disc distributor before region: %w", err)
+	if region := strings.Join(strings.Fields(meta.Region), " "); region != "" {
+		if index := findYUSLastNameElement(name, region); index >= 0 {
+			return strings.TrimSpace(name[:index] + distributor + " " + name[index:])
+		}
 	}
-	return nil
+	return name
 }
 
 func isYUSFullDisc(meta api.UploadSubject) bool {
 	nameType := strings.TrimSpace(meta.Type)
 	return strings.EqualFold(nameType, "DISC") || nameType == "" && unit3d.IsDiscType(meta.DiscType)
+}
+
+func findYUSNameElement(value string, element string) int {
+	element = strings.Join(strings.Fields(element), " ")
+	if element == "" {
+		return -1
+	}
+	return strings.Index(" "+value+" ", " "+element+" ")
+}
+
+func findYUSLastNameElement(value string, element string) int {
+	element = strings.Join(strings.Fields(element), " ")
+	if element == "" {
+		return -1
+	}
+	return strings.LastIndex(" "+value+" ", " "+element+" ")
 }

@@ -4,6 +4,8 @@
 package thr
 
 import (
+	"strings"
+
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -13,13 +15,23 @@ import (
 // including the strict requirement for matching TMDB or IMDb metadata.
 func Profile() standalone.Profile {
 	return standalone.Profile{
-		Name:                "THR",
-		BaseURL:             baseURL,
-		DescriptionGroup:    "thr",
-		UploadContentMode:   trackers.UploadContentModeDescription,
-		PrepareDescription:  prepareDescription,
-		PrepareUpload:       prepareUpload,
-		ReleaseNamePolicy:   namePolicy(),
+		Name:               "THR",
+		BaseURL:            baseURL,
+		DescriptionGroup:   "thr",
+		UploadContentMode:  trackers.UploadContentModeDescription,
+		PrepareDescription: prepareDescription,
+		PrepareUpload:      prepareUpload,
+		ReleaseNamePolicy: trackers.NewReleaseNamePolicy("standalone/thr/v1", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
+			if input.RequestedName != nil {
+				subject := input.Subject
+				subject.ReleaseName = *input.RequestedName
+				return trackers.ResolvedReleaseNames{Upload: resolveName(subject)}, nil
+			}
+			if override := strings.TrimSpace(standalone.QuestionnaireAnswers(input.Subject, "THR")["name_override"]); override != "" {
+				return trackers.ResolvedReleaseNames{Upload: override}, nil
+			}
+			return trackers.ResolvedReleaseNames{Upload: resolveName(input.Subject)}, nil
+		}),
 		NewDuplicateAdapter: newDuplicateAdapter,
 		ValidationPolicy:    validationPolicy(),
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{

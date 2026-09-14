@@ -20,7 +20,7 @@ func Profile() standalone.Profile {
 		PrepareDescription:  prepareDescription,
 		PrepareUpload:       prepareUpload,
 		ValidationPolicy:    validationPolicy(),
-		ReleaseNamePolicy:   namePolicy(),
+		ReleaseNamePolicy:   trackers.SimpleSubjectReleaseNamePolicy("standalone/dc/v1", resolveUploadName),
 		NewDuplicateAdapter: newDuplicateAdapter,
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{
 			Source: sourceFlag,

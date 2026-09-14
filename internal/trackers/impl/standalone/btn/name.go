@@ -4,43 +4,48 @@
 package btn
 
 import (
-	"fmt"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
 
 	"golang.org/x/text/runes"
 	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"
 
-	"github.com/autobrr/upbrr/internal/config"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
-	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-var btnMediaExtensionPattern = regexp.MustCompile(`(?i)\.(?:avi|mkv|mp4|ts|m4v|m2ts|wmv|mpeg|mpg|vob)$`)
-
-var btnAudioNormalizationRules = []struct {
+type btnNameNormalizationRule struct {
 	pattern     *regexp.Regexp
 	replacement string
-}{
-	{regexp.MustCompile(`(?i)(?:^|\.)DDP\.(\d+(?:\.\d+)?)\.Atmos`), `.DDPA$1`},
-	{regexp.MustCompile(`(?i)(?:^|\.)TrueHD\.(\d+(?:\.\d+)?)\.Atmos`), `.TrueHDA$1`},
-	{regexp.MustCompile(`(?:^|\.)DDP\.(\d)`), `.DDP$1`},
-	{regexp.MustCompile(`(?:^|\.)DD\.(\d)`), `.DD$1`},
-	{regexp.MustCompile(`(?:^|\.)AC3\.(\d)`), `.AC3$1`},
-	{regexp.MustCompile(`(?:^|\.)DTS\.(\d)`), `.DTS$1`},
-	{regexp.MustCompile(`(?:^|\.)AAC\.(\d)`), `.AAC$1`},
-	{regexp.MustCompile(`(?:^|\.)FLAC\.(\d)`), `.FLAC$1`},
-	{regexp.MustCompile(`(?i)(?:^|\.)TrueHD\.(\d)`), `.TrueHD$1`},
-	{regexp.MustCompile(`(?i)(?:^|\.)PCM\.(\d)`), `.PCM$1`},
-	{regexp.MustCompile(`(?i)(?:^|\.)LPCM\.(\d)`), `.LPCM$1`},
 }
 
-// btnExactName retains scene and single-episode anime filenames as opaque BTN
-// inputs. Generated names continue through the structured role policy.
-func btnExactName(meta api.UploadSubject, _ config.TrackerConfig) string {
+var btnNameNormalizationRules = []btnNameNormalizationRule{
+	{pattern: regexp.MustCompile(`(?i)\.DDP\.(\d+(?:\.\d+)?)\.Atmos`), replacement: `.DDPA$1`},
+	{pattern: regexp.MustCompile(`(?i)\.TrueHD\.(\d+(?:\.\d+)?)\.Atmos`), replacement: `.TrueHDA$1`},
+	{pattern: regexp.MustCompile(`\.DDP\.(\d)`), replacement: `.DDP$1`},
+	{pattern: regexp.MustCompile(`\.DD\.(\d)`), replacement: `.DD$1`},
+	{pattern: regexp.MustCompile(`\.AC3\.(\d)`), replacement: `.AC3$1`},
+	{pattern: regexp.MustCompile(`\.DTS\.(\d)`), replacement: `.DTS$1`},
+	{pattern: regexp.MustCompile(`\.AAC\.(\d)`), replacement: `.AAC$1`},
+	{pattern: regexp.MustCompile(`\.FLAC\.(\d)`), replacement: `.FLAC$1`},
+	{pattern: regexp.MustCompile(`(?i)\.TrueHD\.(\d)`), replacement: `.TrueHD$1`},
+	{pattern: regexp.MustCompile(`(?i)\.PCM\.(\d)`), replacement: `.PCM$1`},
+	{pattern: regexp.MustCompile(`(?i)\.LPCM\.(\d)`), replacement: `.LPCM$1`},
+	{pattern: regexp.MustCompile(`[^a-zA-Z0-9.\-]`), replacement: `.`},
+	{pattern: regexp.MustCompile(`\.{2,}`), replacement: `.`},
+}
+
+var (
+	btnMediaExtensionPattern = regexp.MustCompile(`(?i)\.(?:avi|mkv|mp4|ts|m4v|m2ts|wmv|mpeg|mpg|vob)$`)
+	btnEpisodeTokenPattern   = regexp.MustCompile(`(?i)S\d{1,3}E\d{1,4}(?:-E?\d{1,4})?`)
+	btnDailyTokenPattern     = regexp.MustCompile(`\b20\d{2}[.\-_]\d{2}[.\-_]\d{2}\b`)
+	btnYearBeforeSeason      = regexp.MustCompile(`(?i)\.(?:19|20)\d{2}(\.S\d{1,3}(?:E\d{1,4})?)`)
+)
+
+func resolveUploadName(meta api.UploadSubject) string {
 	if isBTNSceneRelease(meta) {
 		for _, candidate := range []string{meta.SceneName, meta.ReleaseName, meta.ReleaseNameNoTag} {
 			if name := strings.TrimSpace(candidate); name != "" {
@@ -49,131 +54,145 @@ func btnExactName(meta api.UploadSubject, _ config.TrackerConfig) string {
 		}
 	}
 	if meta.Anime && !meta.TVPack {
-		return btnMediaExtensionPattern.ReplaceAllString(strings.TrimSpace(pathutil.Base(meta.Filename)), "")
+		if name := strings.TrimSpace(pathutil.Base(meta.Filename)); name != "" {
+			return btnMediaExtensionPattern.ReplaceAllString(name, "")
+		}
 	}
-	return ""
+	var name string
+	if n := strings.TrimSpace(meta.ReleaseName); n != "" {
+		name = n
+	} else if n := strings.TrimSpace(meta.ReleaseNameNoTag); n != "" {
+		name = n
+	} else if n := strings.TrimSpace(meta.Filename); n != "" {
+		name = n
+	} else {
+		name = pathutil.Base(meta.SourcePath)
+	}
+	name = btnMediaExtensionPattern.ReplaceAllString(name, "")
+	name = cleanAndNormalizeBTNName(name)
+	name = applyBTNDailyDate(name, meta.DailyEpisodeDate)
+	name = applyBTNYearRule(name, meta)
+	name = applyBTNSDResolutionRule(name, meta.Release.Resolution)
+	name = applyBTNNoGroupSuffix(name, meta)
+	if seasonPackHasMixedGroups(meta) {
+		name = regexp.MustCompile(`-[^-\.]+$`).ReplaceAllString(name, "-BTN")
+	}
+	codec := mapCodec(meta, nil)
+	if codec == "Mixed" {
+		codec = ""
+	}
+	source := mapSource(meta, nil)
+	if source == "Unknown" {
+		source = ""
+	}
+	return applyBTNNameMapping(name, codec, source)
 }
 
-// applyBTNNameDefaults expresses BTN's generated-name conventions by role.
-func applyBTNNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
-	if err := normalizeBTNComponents(editor); err != nil {
-		return btnNameEditorError("normalize components", err)
+func applyBTNDailyDate(name string, value string) string {
+	date, err := time.Parse("2006-01-02", strings.TrimSpace(value))
+	if err != nil {
+		return name
 	}
-	if strings.TrimSpace(meta.DailyEpisodeDate) != "" {
-		if err := editor.Omit(api.NameRoleSeason); err != nil {
-			return btnNameEditorError("omit daily season", err)
-		}
-		if err := editor.Omit(api.NameRoleEpisode); err != nil {
-			return btnNameEditorError("omit daily episode", err)
-		}
-		if err := editor.Include(api.NameRoleDailyDate); err != nil {
-			return btnNameEditorError("include daily date", err)
-		}
-		if err := editor.Set(api.NameRoleDailyDate, strings.ReplaceAll(strings.TrimSpace(meta.DailyEpisodeDate), "-", ".")); err != nil {
-			return btnNameEditorError("set daily date", err)
-		}
-	} else if !releaseTitleContainsYear(meta.Release.Title) {
-		if err := editor.Omit(api.NameRoleYear); err != nil {
-			return btnNameEditorError("omit broadcast year", err)
-		}
+	token := date.Format("2006.01.02")
+	if btnDailyTokenPattern.MatchString(name) {
+		return btnDailyTokenPattern.ReplaceAllString(name, token)
 	}
-	switch strings.ToLower(strings.TrimSpace(meta.Release.Resolution)) {
-	case "sd", "480i", "576i":
-		if err := editor.Omit(api.NameRoleResolution); err != nil {
-			return btnNameEditorError("omit SD resolution", err)
-		}
-	}
-	if err := applyBTNGroupDefaults(editor, meta); err != nil {
-		return btnNameEditorError("apply group", err)
-	}
-	if source := mapSource(meta, nil); source != "" && source != "Unknown" && source != "Mixed" {
-		if component, exists := editor.Component(api.NameRoleVideoFormat); exists && component.Present {
-			if err := editor.Set(api.NameRoleVideoFormat, source); err != nil {
-				return btnNameEditorError("set video format", err)
-			}
-		} else if err := editor.Set(api.NameRoleSource, source); err != nil {
-			return btnNameEditorError("set source", err)
-		}
-	}
-	if codec := mapCodec(meta, nil); codec != "" && codec != "Mixed" {
-		role := api.NameRoleVideoCodec
-		if component, exists := editor.Component(api.NameRoleVideoEncode); exists && component.Present {
-			role = api.NameRoleVideoEncode
-		}
-		if err := editor.Set(role, codec); err != nil {
-			return btnNameEditorError("set video codec", err)
-		}
-	}
-	return nil
+	return btnEpisodeTokenPattern.ReplaceAllString(name, token)
 }
 
-func normalizeBTNComponents(editor *trackers.NameEditor) error {
-	for _, role := range editor.PresentRoles() {
-		component, _ := editor.Component(role)
-		value := normalizeBTNComponent(component.Value, role)
-		if value == "" {
-			if err := editor.Omit(role); err != nil {
-				return btnNameEditorError("omit empty component", err)
-			}
-			continue
-		}
-		if err := editor.Set(role, value); err != nil {
-			return btnNameEditorError("normalize component", err)
-		}
+func applyBTNYearRule(name string, meta api.UploadSubject) string {
+	if strings.TrimSpace(meta.DailyEpisodeDate) != "" || releaseTitleContainsYear(meta.Release.Title) {
+		return name
 	}
-	return nil
-}
-
-func normalizeBTNComponent(value string, role api.ReleaseNameRole) string {
-	transformer := transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
-	value, _, _ = transform.String(transformer, value)
-	value = strings.ReplaceAll(value, "&", " and ")
-	value = strings.NewReplacer("'", "", "’", "").Replace(value)
-	value = strings.ReplaceAll(strings.Join(strings.Fields(value), " "), " ", ".")
-	if role == api.NameRoleAudio {
-		value = strings.ReplaceAll(value, "DD+", "DDP")
-		for _, rule := range btnAudioNormalizationRules {
-			value = rule.pattern.ReplaceAllString(value, rule.replacement)
-		}
-	}
-	value = strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' {
-			return r
-		}
-		return '.'
-	}, value)
-	return strings.Join(strings.FieldsFunc(value, func(r rune) bool { return r == '.' }), ".")
+	return btnYearBeforeSeason.ReplaceAllString(name, "$1")
 }
 
 func releaseTitleContainsYear(title string) bool {
 	return regexp.MustCompile(`(?:^|\s)(?:19|20)\d{2}(?:\s|$)`).MatchString(strings.Join(strings.Fields(title), " "))
 }
 
-func applyBTNGroupDefaults(editor *trackers.NameEditor, meta api.UploadSubject) error {
-	group := strings.TrimSpace(strings.TrimPrefix(meta.Tag, "-"))
-	if seasonPackHasMixedGroups(meta) {
-		group = "BTN"
+func applyBTNSDResolutionRule(name string, resolution string) string {
+	switch strings.ToLower(strings.TrimSpace(resolution)) {
+	case "sd", "480i", "480p", "576i", "576p":
+	default:
+		return name
 	}
-	if group == "" || isNoGroupTag(group) {
-		if component, exists := editor.Component(api.NameRoleGroup); exists && component.Present && !isNoGroupTag(strings.TrimPrefix(component.Value, "-")) {
-			return nil
+	parts := strings.Split(name, ".")
+	kept := parts[:0]
+	for _, part := range parts {
+		lower := strings.ToLower(part)
+		if lower == "sd" || btnDisallowedSDResolutionToken(lower) {
+			continue
 		}
-		group = "NOGRP"
+		kept = append(kept, part)
 	}
-	group = normalizeBTNComponent(group, api.NameRoleGroup)
-	if group == "" {
-		if err := editor.Omit(api.NameRoleGroup); err != nil {
-			return btnNameEditorError("omit empty group", err)
+	return strings.Join(kept, ".")
+}
+
+func btnDisallowedSDResolutionToken(value string) bool {
+	if value == "480p" || value == "576p" {
+		return false
+	}
+	return regexp.MustCompile(`^\d{3,4}[pi]$`).MatchString(value)
+}
+
+func resolveSearchName(meta api.UploadSubject) string {
+	for tracker, value := range meta.TrackerIDs {
+		if strings.EqualFold(strings.TrimSpace(tracker), "BTN") && strings.TrimSpace(value) != "" {
+			return resolveUploadName(meta)
 		}
-		return nil
 	}
-	if err := editor.Set(api.NameRoleGroup, "-"+group); err != nil {
-		return btnNameEditorError("set group", err)
+	if meta.Identity.IMDBID != 0 || meta.Identity.TVDBID != 0 {
+		return resolveUploadName(meta)
 	}
-	if err := editor.Include(api.NameRoleGroup); err != nil {
-		return btnNameEditorError("include group", err)
+	if meta.EffectiveMetadata.TitleProvenance.IsManual() {
+		return strings.TrimSpace(meta.EffectiveMetadata.Title)
 	}
-	return nil
+	candidates := []string{strings.TrimSpace(meta.Release.Title)}
+	if meta.ProviderMetadata.TVDB != nil {
+		candidates = append(candidates, strings.TrimSpace(meta.ProviderMetadata.TVDB.Name), strings.TrimSpace(meta.ProviderMetadata.TVDB.NameEnglish))
+	}
+	if meta.ProviderMetadata.TVmaze != nil {
+		candidates = append(candidates, strings.TrimSpace(meta.ProviderMetadata.TVmaze.Name))
+	}
+	candidates = append(candidates, strings.TrimSpace(meta.Filename), strings.TrimSpace(meta.ReleaseName))
+	for _, candidate := range candidates {
+		if candidate != "" {
+			return candidate
+		}
+	}
+	return resolveUploadName(meta)
+}
+
+func applyBTNNoGroupSuffix(name string, meta api.UploadSubject) string {
+	tag := strings.TrimSpace(strings.TrimPrefix(meta.Tag, "-"))
+	if tag != "" && !isNoGroupTag(tag) {
+		if selectedBTNReleaseNameNoTag(name, meta) || !hasBTNGroupSuffix(name) {
+			return strings.TrimRight(name, ".-") + "-" + tag
+		}
+		return name
+	}
+	if tag == "" && hasBTNGroupSuffix(name) && !hasBTNNoGroupSuffix(name) {
+		return name
+	}
+	normalizedName := regexp.MustCompile(`(?i)-(nogrp|nogroup|unknown|unk)$`).ReplaceAllString(name, "")
+	return strings.TrimRight(normalizedName, ".-") + "-NOGRP"
+}
+
+func selectedBTNReleaseNameNoTag(name string, meta api.UploadSubject) bool {
+	if strings.TrimSpace(meta.ReleaseName) != "" || strings.TrimSpace(meta.ReleaseNameNoTag) == "" {
+		return false
+	}
+	candidate := cleanAndNormalizeBTNName(strings.TrimSpace(meta.ReleaseNameNoTag))
+	return strings.TrimSpace(name) == candidate
+}
+
+func hasBTNGroupSuffix(name string) bool {
+	return regexp.MustCompile(`-[^-.\s]+$`).MatchString(strings.TrimSpace(name))
+}
+
+func hasBTNNoGroupSuffix(name string) bool {
+	return regexp.MustCompile(`(?i)-(nogrp|nogroup|unknown|unk)$`).MatchString(strings.TrimSpace(name))
 }
 
 func isNoGroupTag(tag string) bool {
@@ -185,36 +204,47 @@ func isNoGroupTag(tag string) bool {
 	}
 }
 
-// resolveSearchName retains fact-based search terms only. Returning no search
-// term for canonical tracker identities leaves duplicate comparison to the
-// central resolved upload semantics rather than reparsing a rendered name.
-func resolveSearchName(meta api.UploadSubject) string {
-	for tracker, value := range meta.TrackerIDs {
-		if strings.EqualFold(strings.TrimSpace(tracker), "BTN") && strings.TrimSpace(value) != "" {
-			return ""
-		}
-	}
-	if meta.Identity.IMDBID != 0 || meta.Identity.TVDBID != 0 {
-		return ""
-	}
-	if meta.EffectiveMetadata.TitleProvenance.IsManual() {
-		return strings.TrimSpace(meta.EffectiveMetadata.Title)
-	}
-	candidates := []string{strings.TrimSpace(meta.Release.Title)}
-	if meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) && meta.ProviderMetadata.TVDB != nil {
-		candidates = append(candidates, strings.TrimSpace(meta.ProviderMetadata.TVDB.Name), strings.TrimSpace(meta.ProviderMetadata.TVDB.NameEnglish))
-	}
-	if meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) && meta.ProviderMetadata.TVmaze != nil {
-		candidates = append(candidates, strings.TrimSpace(meta.ProviderMetadata.TVmaze.Name))
-	}
-	for _, candidate := range candidates {
-		if candidate != "" {
-			return candidate
-		}
-	}
-	return ""
+func removeDiacritics(value string) string {
+	transformer := transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
+	result, _, _ := transform.String(transformer, value)
+	return result
 }
 
-func btnNameEditorError(action string, err error) error {
-	return fmt.Errorf("BTN name policy %s: %w", action, err)
+func cleanAndNormalizeBTNName(value string) string {
+	value = removeDiacritics(value)
+	value = strings.ReplaceAll(value, "&", " and ")
+	value = strings.NewReplacer("'", "", "’", "").Replace(value)
+	value = strings.Join(strings.Fields(value), " ")
+	value = strings.ReplaceAll(value, " ", ".")
+	value = strings.ReplaceAll(value, "DD+", "DDP")
+	for _, rule := range btnNameNormalizationRules {
+		value = rule.pattern.ReplaceAllString(value, rule.replacement)
+	}
+	return strings.TrimSpace(value)
+}
+
+func applyBTNNameMapping(releaseName string, mappedCodec string, mappedSource string) string {
+	updated := releaseName
+	if mappedSource != "" {
+		sourcePattern := regexp.MustCompile(`(?i)\b(bluray|blu-ray|bdrip|brrip|web-dl|webrip|hdtv|dvdrip|hddvd|dvd5|dvd9|bd5|bd9|bd25|bd50)\b`)
+		updated = sourcePattern.ReplaceAllString(updated, mappedSource)
+	}
+	if mappedCodec == "" {
+		return updated
+	}
+	codecPatterns := map[string]*regexp.Regexp{
+		"H.264":      regexp.MustCompile(`(?i)\b(x264|h\.264|h264|avc)\b`),
+		"H.265":      regexp.MustCompile(`(?i)\b(x265|h\.265|h265|hevc)\b`),
+		"x264-Hi10P": regexp.MustCompile(`(?i)\b(x264-hi10p|hi10p)\b`),
+		"XViD":       regexp.MustCompile(`(?i)\b(xvid)\b`),
+		"DiVX":       regexp.MustCompile(`(?i)\b(divx)\b`),
+		"MPEG2":      regexp.MustCompile(`(?i)\b(mpeg-2|mpeg2)\b`),
+		"VC-1":       regexp.MustCompile(`(?i)\b(vc-1)\b`),
+		"WMV":        regexp.MustCompile(`(?i)\b(wmv)\b`),
+		"VP9":        regexp.MustCompile(`(?i)\b(vp9)\b`),
+	}
+	if pattern, ok := codecPatterns[mappedCodec]; ok {
+		updated = pattern.ReplaceAllString(updated, mappedCodec)
+	}
+	return updated
 }

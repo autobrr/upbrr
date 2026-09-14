@@ -20,46 +20,6 @@ func validateTrackerProjectionInstructions(instructions map[TrackerID]TrackerPro
 		if instruction.ScreenshotCount != nil && *instruction.ScreenshotCount < 0 {
 			return fmt.Errorf("tracker %s screenshot count must not be negative", trackerID)
 		}
-		if instruction.ConfirmedNameFingerprint != "" {
-			if instruction.UploadReleaseName.Present {
-				return fmt.Errorf("tracker %s confirmed generated name cannot also override upload name", trackerID)
-			}
-			if err := validateWorkflowFingerprint(instruction.ConfirmedNameFingerprint); err != nil {
-				return fmt.Errorf("tracker %s confirmed name: %w", trackerID, err)
-			}
-		}
-	}
-	return nil
-}
-
-const releaseNameOverrideDecisionCodePrefix = "release_name_override"
-
-func validateTrackerPolicyDecisions(trackerID TrackerID, decisions []TrackerPolicyDecision) error {
-	type namingDecisionKey struct {
-		code   string
-		role   string
-		ruleID string
-	}
-	seenNamingDecisions := make(map[namingDecisionKey]struct{}, len(decisions))
-	for _, decision := range decisions {
-		code := strings.TrimSpace(decision.Code)
-		if !strings.HasPrefix(code, releaseNameOverrideDecisionCodePrefix) {
-			continue
-		}
-		role := strings.TrimSpace(decision.NamingRole)
-		ruleID := strings.TrimSpace(decision.NamingRuleID)
-		if role == "" || ruleID == "" {
-			return fmt.Errorf("tracker projection %s naming decision %q requires naming role and rule id", trackerID, code)
-		}
-		key := namingDecisionKey{
-			code:   code,
-			role:   role,
-			ruleID: ruleID,
-		}
-		if _, exists := seenNamingDecisions[key]; exists {
-			return fmt.Errorf("tracker projection %s contains duplicate naming decision %q/%q/%q", trackerID, code, role, ruleID)
-		}
-		seenNamingDecisions[key] = struct{}{}
 	}
 	return nil
 }
@@ -656,9 +616,6 @@ func (s TrackerReleaseProjectionSet) Validate() error {
 				disposition == RuleDispositionWaivable && decision.Blocking {
 				return fmt.Errorf("tracker projection %s has blocking waivable rule authority", id)
 			}
-		}
-		if err := validateTrackerPolicyDecisions(id, projection.PolicyDecisions); err != nil {
-			return err
 		}
 		if projection.WaivableRuleFingerprint != "" && !hasWaivableDecision {
 			return fmt.Errorf("tracker projection %s has a waivable rule fingerprint without a waivable decision", id)

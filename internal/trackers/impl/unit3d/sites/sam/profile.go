@@ -11,15 +11,16 @@ import (
 // Profile returns SAM's Unit3D site manifest.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
-		Name:              "SAM",
-		BaseURL:           "https://samaritano.cc",
-		ReleaseNamePolicy: namePolicy(),
+		Name:    "SAM",
+		BaseURL: "https://samaritano.cc",
 		ImageHost: &trackers.ImageHostPolicy{
 			ConditionalHost:        "samaritano",
 			OwnedHosts:             []string{"samaritano"},
 			EnableWithImageHosting: true,
 		},
 		Site: unit3d.SiteProfile{
+			BuildName:         buildName,
+			BuildNameVersion:  "v1",
 			ResolveCategoryID: categoryID,
 		},
 	}

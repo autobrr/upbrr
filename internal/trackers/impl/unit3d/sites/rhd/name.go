@@ -4,6 +4,7 @@
 package rhd
 
 import (
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -17,14 +18,24 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+var (
+	regradedRegex   = tokenRegex(`regraded`)
+	upscaleRegex    = tokenRegex(`upscaled?`, `upscl`, `upsuhd`)
+	internalRegex   = tokenRegex(`internal`)
+	incompleteRegex = tokenRegex(`incomplete`)
+	dubbedRegex     = tokenRegex(`dubbed`, `synced`, `ac3d`, `ld`, `line`, `mic`, `md`)
+)
+
+func tokenRegex(tokens ...string) *regexp.Regexp {
+	return regexp.MustCompile(`(?i)(^|[^[:alnum:]])(?:` + strings.Join(tokens, "|") + `)([^[:alnum:]]|$)`)
+}
+
 func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
 	parts := make([]string, 0)
 	fullDisc := strings.EqualFold(strings.TrimSpace(meta.Type), "DISC") || unit3d.IsDiscType(meta.DiscType)
+	markers := markerText(meta)
 	providerTitle := ""
 	tmdb := meta.ProviderMetadata.TMDB
-	if !meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) {
-		tmdb = nil
-	}
 	if tmdb != nil && tmdb.LocalizedTitles != nil {
 		providerTitle = strings.TrimSpace(tmdb.LocalizedTitles["de"])
 	}
@@ -59,7 +70,7 @@ func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
 		parts = append(parts, meta.DailyEpisodeDate)
 	} else if meta.SeasonStr != "" || meta.EpisodeStr != "" {
 		parts = append(parts, strings.TrimSpace(meta.SeasonStr+meta.EpisodeStr))
-		if rhdHasOther(meta, "Incomplete") {
+		if incompleteRegex.MatchString(markers) {
 			parts = append(parts, "iNCOMPLETE")
 		}
 	}
@@ -77,10 +88,10 @@ func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
 	}
 	if meta.Release.Resolution != "" {
 		parts = append(parts, meta.Release.Resolution)
-		if rhdHasOther(meta, "Regraded") {
+		if regradedRegex.MatchString(markers) {
 			parts = append(parts, "REGRADED")
 		}
-		if rhdHasOther(meta, "upscaled", "UPSCL", "UPSUHD") {
+		if upscaleRegex.MatchString(markers) {
 			parts = append(parts, "UPSCALE")
 		}
 	}
@@ -113,7 +124,7 @@ func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
 	if codec != "" {
 		parts = append(parts, codec)
 	}
-	if rhdHasOther(meta, "Internal") {
+	if internalRegex.MatchString(markers) {
 		parts = append(parts, "iNTERNAL")
 	}
 	group := meta.Tag
@@ -174,6 +185,19 @@ func typeAndSource(meta api.UploadSubject) []string {
 	return parts
 }
 
+func markerText(meta api.UploadSubject) string {
+	value, tag := strings.TrimSpace(meta.ReleaseName), strings.TrimPrefix(strings.TrimSpace(meta.Tag), "-")
+	if value == "" || tag == "" {
+		return value
+	}
+	for _, suffix := range []string{"-" + tag, "." + tag, "_" + tag, " " + tag} {
+		if strings.HasSuffix(strings.ToLower(value), strings.ToLower(suffix)) {
+			return strings.TrimSpace(value[:len(value)-len(suffix)])
+		}
+	}
+	return value
+}
+
 func resolveLanguage(meta api.UploadSubject) string {
 	languages := normalizedAudioLanguages(meta.AudioLanguages)
 	german := slices.ContainsFunc(languages, isGerman)
@@ -188,10 +212,7 @@ func resolveLanguage(meta api.UploadSubject) string {
 	default:
 		base = "ENGLISH"
 	}
-	if rhdHasAudio(meta, "ac3d", "line") || rhdHasOther(meta, "LD", "MD", "MIC") ||
-		slices.ContainsFunc(meta.Release.Language, func(value string) bool {
-			return strings.EqualFold(strings.TrimSpace(value), "Dubbed") || strings.EqualFold(strings.TrimSpace(value), "Synced")
-		}) {
+	if dubbedRegex.MatchString(markerText(meta)) {
 		base += " DUBBED"
 	}
 	if len(languages) == 2 {
@@ -201,28 +222,6 @@ func resolveLanguage(meta api.UploadSubject) string {
 		return base + " ML"
 	}
 	return base
-}
-
-func rhdHasAudio(meta api.UploadSubject, candidates ...string) bool {
-	for _, value := range meta.Release.Audio {
-		for _, candidate := range candidates {
-			if strings.EqualFold(strings.TrimSpace(value), candidate) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func rhdHasOther(meta api.UploadSubject, candidates ...string) bool {
-	for _, value := range meta.Release.Other {
-		for _, candidate := range candidates {
-			if strings.EqualFold(strings.TrimSpace(value), candidate) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func normalizedAudioLanguages(values []string) []string {

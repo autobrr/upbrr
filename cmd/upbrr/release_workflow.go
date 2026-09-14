@@ -851,11 +851,6 @@ func printCLIWorkflowProjections(
 		} else {
 			fmt.Fprintf(output, "- %s: %s (readiness=%s)\n", projection.DisplayName, projection.UploadReleaseName, readiness)
 		}
-		for _, decision := range projection.PolicyDecisions {
-			if strings.HasPrefix(decision.Code, "release_name_override") && decision.Message != "" {
-				fmt.Fprintf(output, "  naming: %s\n", decision.Message)
-			}
-		}
 		if !includePolicyDetails {
 			continue
 		}

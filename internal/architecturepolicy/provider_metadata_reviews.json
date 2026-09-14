@@ -1,63 +1,75 @@
 {
   "internal/trackers/impl/azfamily/common.go:lookupTitle": {
-    "sha256": "bc4fd882822f69d4163161866b66b615cdb527d81bf606b30009f18a62229e15",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "beb9a126a11f0d1e44733ebcd7c647de344ca2280ddefa5fde0f2e2193a64474",
+    "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged."
   },
   "internal/trackers/impl/azfamily/definition.go:*Definition.ReleaseNamePolicy": {
-    "sha256": "5b95e32a36caee56b0936fd1fe073c4aeb264ddea4e38909b83c756f426bedcb",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
-  },
-  "internal/trackers/impl/azfamily/dupe.go:dupeSearcher.Search": {
-    "sha256": "0fa7294286002985944d5fbb2d95b766cddf74a08cb1b1d5dd83d7a8016a5e88",
+    "sha256": "176bfe33d9690181150a62398739e9ba8210f893d902f986cd33fc9ad8755eed",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/azfamily/dupe.go:dupeSearcher.lookupMediaCode": {
     "sha256": "9237ad60fc3384491123160dbca8187715053c814f00d8898fa3d702bac93c38",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
+  "internal/trackers/impl/azfamily/dupe.go:dupeSearcher.Search": {
+    "sha256": "0fa7294286002985944d5fbb2d95b766cddf74a08cb1b1d5dd83d7a8016a5e88",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
   "internal/trackers/impl/azfamily/dupe.go:lookupAZDupeTitle": {
-    "sha256": "ecc4717887dc181147f8dbd988de0bdc91e3fc01dd172a33fffe9ff3e3b92318",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
-  },
-  "internal/trackers/impl/azfamily/name.go:applyAZNameDefaults": {
-    "sha256": "702004bf21596e48985b7bb79575a581c6206f7f5997691f51624e43e5e09b2e",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
-  },
-  "internal/trackers/impl/azfamily/name.go:applyCinemaZNameDefaults": {
-    "sha256": "5b545af6665b01e14a0dad6c60c187d3221a09bd29e29495289c80e17e52dbd7",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "dd22bfacc0f7456107a02d05eadb297b8cfcf2f7d4b035f58369a37cbd76e0fc",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
   "internal/trackers/impl/azfamily/name.go:avistaZEnglishTitle": {
-    "sha256": "d11bf897bedcb72edbf4d5f588f03435bc223c64aca77776bfeec942f36dee3d",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "fd42635409aff29c3f354c20e7d5b6bb68d0fa95934636025850c4b1c31ff8e6",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
   "internal/trackers/impl/azfamily/name.go:cinemaZEnglishCountryAKA": {
-    "sha256": "b934792c59f5eefd2499bf8675ebf288d68b7c8a128881040045d9fc364a2cfa",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "e93ff79427f06a3a80bfd667082b15c0ad0c915bde8b839c7e46748d881d6f79",
+    "reason": "CinemaZ original-title callers handle manual provenance before consulting country AKA evidence."
+  },
+  "internal/trackers/impl/azfamily/name.go:cinemaZEpisodeTitleCandidates": {
+    "sha256": "ef470e72644226f4b4f0ba130eb4cabdbdd22f722f1f44ca710f2a8791b6b975",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/azfamily/name.go:cinemaZGeneratedNamePrefix": {
+    "sha256": "de8968eb92ea4f9e15bb65abef8ee776be9bb7ab4b4c8302011cce86c3c67de4",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/azfamily/name.go:cinemaZOriginalTitle": {
-    "sha256": "bad9211ba2602b5302809a904eaf6a685b75751527f465de616970efb247dace",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "5b354fc359f8b8883ac84b2e66a47a0a09d272d3a417405cc49f74dc7737b8ed",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
   "internal/trackers/impl/azfamily/name.go:cinemaZRomanizedCandidates": {
-    "sha256": "3cc086b008ee76fcbec648d7c84f16c0d71886fccff67d8b38d9cac083a01764",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "558b743e15c38ed77569c1b739445baff6b96a4e600779825c8cb0e4f75e00ba",
+    "reason": "CinemaZ original-title callers handle manual provenance before consulting romanized provider candidates."
   },
   "internal/trackers/impl/azfamily/name.go:cinemaZTitle": {
-    "sha256": "24611367fdca937bd2a8c36869dcfee462f7a447732da60a5eea93fdfd291c02",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "b0c7c34b04f411e4e9891e4c19d93c0d130573b217751fbe0b4fa17b4e8539fd",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
-  "internal/trackers/impl/azfamily/name.go:currentAZFamilyProviderMetadata": {
-    "sha256": "07f744464332b59a4b1f666cdecdfe9ccc6e99143f051abb5316158cbb45c7cd",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+  "internal/trackers/impl/azfamily/name.go:editGeneratedName": {
+    "sha256": "34a852b84725b2b79488f7596bb4b94f6d8205487aa41fc7cf0e064d39f1a1f5",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
-  "internal/trackers/impl/azfamily/name.go:releaseNamePolicy": {
-    "sha256": "94e68519c7b5b05150fc1d95fa7f19419f6b24b4c44e0961984e28c45e0ee65c",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+  "internal/trackers/impl/azfamily/name.go:editName": {
+    "sha256": "a3acc97d8cb11ccd77c9aac1ab4cd6fa85e4722c222718ee4fadc2a7fb43f4dd",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/azfamily/name.go:editPHDName": {
+    "sha256": "2f3f23e337cffed5a187e9eb9499ff9765dec7938ec324b58606e69cf7fe0b7a",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/azfamily/name.go:normalizeCinemaZGeneratedName": {
+    "sha256": "0c2e9ab0ff203988c3bc8f2be950173e92d3e6cad5741a3df806f5c0b6d3f172",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/azfamily/name.go:releaseYear": {
+    "sha256": "c21367304e45cea4bb0639c1aca71728c6b3d35dfc41d77be07d0366724d3284",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
   "internal/trackers/impl/azfamily/name.go:resolveSearchName": {
-    "sha256": "788bfbba6826e2246571f0ce6abf535aef4f78596dc6622feecdcb2b2f5a0a0b",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "60e394cd2a0b5608e458cb8acb9130fd34d2a806548826e6b576e1118e1b6802",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
   "internal/trackers/impl/azfamily/payload.go:buildFinalPayload": {
     "sha256": "d5fa9e731b0464fd1ba197786611f85eb533a68420527b2d582dd1485ce9e77f",
@@ -71,12 +83,12 @@
     "sha256": "e1bd48a3a9d196da78204426f65b0853c5777e147f62ad0f9065b16f11e7333b",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
-  "internal/trackers/impl/azfamily/rules.go:*Definition.ValidationPolicy": {
-    "sha256": "299c3150097c5bcf9ea3e348c39ed06150d7958a7b69e5414f4a681d8571b3b7",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
-  },
   "internal/trackers/impl/azfamily/rules.go:*Definition.evaluateRules": {
     "sha256": "47ab67a2bb55666c7f3fb92566ac8273ababebb480a564cf9fadb396d9998517",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/azfamily/rules.go:*Definition.ValidationPolicy": {
+    "sha256": "299c3150097c5bcf9ea3e348c39ed06150d7958a7b69e5414f4a681d8571b3b7",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/azfamily/rules.go:isOlderThan50Years": {
@@ -351,33 +363,29 @@
     "sha256": "8d953776c596653d565c1d63db730f819fcf2b03df0afb02ab0e0ff46361a2a5",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
-  "internal/trackers/impl/standalone/bhd/name.go:applyBHDMovieTitleDefaults": {
-    "sha256": "788a0e85ecb529a8fddcfd3bd5935e54a6f96f7cea981d3c5235add331adfe52",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+  "internal/trackers/impl/standalone/bhd/name.go:applyBHDMovieTitlePolicy": {
+    "sha256": "ec9ca57e26fba4fc006d1f089aef50745e28ebdef85200d73b8bc0ce99f50efd",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
-  "internal/trackers/impl/standalone/bhd/name.go:applyBHDTVTitleDefaults": {
-    "sha256": "83ef88e8824faa2a814122d2c6972ba2062e86a96db935da15b276cc6912a739",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+  "internal/trackers/impl/standalone/bhd/name.go:applyBHDTitlePolicy": {
+    "sha256": "b9303b11e060331654f0cacf99264b21e3e6bd85e482d61faed12626f9329b81",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
-  "internal/trackers/impl/standalone/bhd/name.go:bhdAlternateTitle": {
-    "sha256": "fd11af9de2fb77db136a7fcaff830b30d5bff684b96b612cea0c1ee12926db79",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
-  },
-  "internal/trackers/impl/standalone/bhd/name.go:bhdIMDBTitle": {
-    "sha256": "7359316e3174a7288b14035f2ec5b27a1fef291aba4b5070afe5d0de01e13935",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+  "internal/trackers/impl/standalone/bhd/name.go:applyBHDTVTitlePolicy": {
+    "sha256": "b22d55cc1aac34eec3285b00de50f29456c08fb425e556704dbe235022382f7a",
+    "reason": "Resolve explicit manual year, including zero, on a local evidence copy before name parsing or formatting; preserve automatic TVDB collision, locale, and year-inclusion policy."
   },
   "internal/trackers/impl/standalone/bhd/name.go:bhdMovieTitles": {
-    "sha256": "fe7625c2f1a2b79367d5c683464a87b573acb45880f34c165e072481d4211523",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "6935f9463a800fe0bcb38d6c5a518e107730fc034bca35e2ad33cd0a250e90c1",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
-  "internal/trackers/impl/standalone/bhd/name.go:bhdTMDBTitle": {
-    "sha256": "49bb64aec7a7e86d23aa5c739ba8ffaf3c08a9e18cbef5798042f336c1dbd7a9",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+  "internal/trackers/impl/standalone/bhd/name.go:resolveUploadName": {
+    "sha256": "e1666b81912e1c3edc6ce263d82a0b6c22bc7c75f01bf9ba93d9d5c671aed3f2",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/bhd/profile.go:Profile": {
-    "sha256": "54d32df04963e91738b80a0e1aae64c89fe2933ca2aca337ed17898da9c335ca",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "485dddf97ffd7fbb01e7fda47dc2315df394dbaf42120779b94f6152b4f2d0fb",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/bhdtv/upload.go:prepareUploadState": {
     "sha256": "0af22e8551c67d676e5b37d02a72c73cde9cf5823ae0dc7a3212bddddcf19fe4",
@@ -660,12 +668,12 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/btn/name.go:resolveSearchName": {
-    "sha256": "6be31af8d514728446e6f9d14a69ebfb39c757dfd2e945197795ce003a79a84a",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "a7d33e9b79c11661d773bc0768b0ccca80d3b54838e294af500b0ccc49a3a363",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
   "internal/trackers/impl/standalone/btn/profile.go:Profile": {
-    "sha256": "eeee3887b02115f048be9ade80421832ea1896f6f627e761faf0470334e24a87",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "f37146959dcf4c9970ddae66dc964550d5fa7b0557a13ea3fb63c5378baa8fcf",
+    "reason": "BTN torrent-comment identity now selects torrentid instead of group id; provider metadata requirements, manual precedence, and reviewed callback bindings remain unchanged."
   },
   "internal/trackers/impl/standalone/btn/taxonomy.go:resolveBTNOriginalLanguage": {
     "sha256": "4d6cd8ad9ee5a527ecc361c4391f40e1594938ee0f45a9c7ad42b7a314f32c26",
@@ -1243,17 +1251,17 @@
     "sha256": "06c8b24de8ea7e88995ba0b339cc1fb998eb44a5516294b181e06b927b7962cd",
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
   },
-  "internal/trackers/impl/unit3d/name.go:applyLocalizedAlternateTitle": {
-    "sha256": "c00ccda59006f108b3c5567502f054bfc4614083f93864b64ca3cc6f01cee3f3",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
-  },
-  "internal/trackers/impl/unit3d/name.go:applyLocalizedNameDefaults": {
-    "sha256": "cfa1dbff84cec212b964eb4513cbe68f5514e9da2cab28531f5090fe994cdf37",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+  "internal/trackers/impl/unit3d/localized_name.go:FormatLocalizedName": {
+    "sha256": "f824334328f2d5f16bd667019aaf3a9cc433f4ba30683595a45d7e18bb103e85",
+    "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged."
   },
   "internal/trackers/impl/unit3d/name.go:resolveOriginalLanguage": {
-    "sha256": "c0f484c64ee813d3882d35287040be5bab3a93127022f3c401d505d216766f95",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "4cf7d8391869c78c60ef3c6d9f10ecce9705c2535460f89db4f1fa257df86ce4",
+    "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged."
+  },
+  "internal/trackers/impl/unit3d/name.go:SplitTVDBName": {
+    "sha256": "06af1641e67ef45859a6e1b192d597f3fe912bf54118af18f1638d78d0f4145c",
+    "reason": "Callers resolve explicit manual year, including zero, before splitting generated names; automatic TVDB disambiguation evidence and release-tail parsing remain unchanged."
   },
   "internal/trackers/impl/unit3d/site_contract.go:IMDBGenres": {
     "sha256": "427b4ddb2b0b1b8915d5e761a68f10f8d9454382c3f5818e64edea28730dab3f",
@@ -1276,60 +1284,88 @@
     "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged."
   },
   "internal/trackers/impl/unit3d/sites/a4k/name.go:buildAIName": {
-    "sha256": "ca68e6a84cf2117aa9dd2a3df5dd8e445d9d9d966f9a2dd77601478f79434c1d",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "d51e1857ee24666c8005439fbd0e3e350c4c5a91fe9aee57c2dc5bb64ffcbca4",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/unit3d/sites/a4k/name.go:buildFanResName": {
-    "sha256": "d57158695496718b86fb33c8e4863fe5fb2ea7dde1de402770057129d63e4ae6",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "6e5ce39ed779a24274ec9ec232cb1053d77fa3da73469504bab13f258f510778",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/unit3d/sites/a4k/name.go:buildName": {
-    "sha256": "e2dce2fdad53c0987b96c267703f85376a5971d705fab86c1f41d25b82a03123",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "8b0d70ada3333a3f95991f665abc7bd6cf98003993d5031caf5f4a5198d9e56b",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/unit3d/sites/a4k/name.go:titleAndYear": {
-    "sha256": "860ac17c17d2df9a76bd23994235012512d2b12d2b00b78ff44d8b4d3cb8061d",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "b119a9555e82be453ddaf8e3a93420df3e31ca27dcfd88a44ebc4915e74f554b",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
   "internal/trackers/impl/unit3d/sites/a4k/profile.go:Profile": {
-    "sha256": "2e56dfaafc376dccdda65749ed0692775234855382279ca0eb75b6c8ad7d852d",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "e144e207bfe1092afda59404cc0e4a9d47523bfd7c6fdf122bfa4ee2659e2476",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
-  "internal/trackers/impl/unit3d/sites/acm/name.go:acmOriginalTitle": {
-    "sha256": "442c4f0b0948a94bf00a8925eedd59845f81209efb18a40ec2f8f0de071067b5",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+  "internal/trackers/impl/unit3d/sites/acm/name.go:buildACMName": {
+    "sha256": "8b195ecd505a2261e17f6a9b993fdbf73942828c2242cffa5bac47dc3e813072",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
-  "internal/trackers/impl/unit3d/sites/acm/name.go:applyACMAlternateTitle": {
-    "sha256": "b52a10e95facb1ddb35b2f77972d8cfdb68e06c7ea9b9e0e627bcb0b37fdf982",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+  "internal/trackers/impl/unit3d/sites/acm/name.go:buildName": {
+    "sha256": "0e36eda4dccc8874626ce6e39440e28f43bfc2b66252ec2d92feaa6595afa86c",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/acm/name.go:resolveACMIMDBAKA": {
+    "sha256": "d40fb595b66f75d9154638d241b9eca0143fa253016ca6c265ea24b9ea3641f3",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/unit3d/sites/acm/name.go:resolveACMIMDBTitle": {
+    "sha256": "194a77cb0381764e68e1643c873d185a921aa620dec31b08bd1f04cf9b236dca",
+    "reason": "ACM title caller handles manual title provenance before selecting the IMDb candidate."
+  },
+  "internal/trackers/impl/unit3d/sites/acm/name.go:resolveACMOriginalTitle": {
+    "sha256": "219de5c5c8dfc790f999c487ad324511d2b6afef9c0b29dd332bbc821de741eb",
+    "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence."
+  },
+  "internal/trackers/impl/unit3d/sites/acm/name.go:resolveACMTitle": {
+    "sha256": "e6584b78cd81924a0bfee3bf29bc35e5082d427ba390e5033e1595a7b19d5abb",
+    "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence."
+  },
+  "internal/trackers/impl/unit3d/sites/acm/name.go:resolveACMTMDBOriginalTitle": {
+    "sha256": "a7cfa0551154c5df063afd563051d300bc25bd7a6c642b2be4dc849034251dfa",
+    "reason": "ACM original-title caller handles manual provenance before selecting the TMDB candidate."
+  },
+  "internal/trackers/impl/unit3d/sites/acm/name.go:resolveACMTMDBRetrievedAKA": {
+    "sha256": "8ffbc734dc29f14c5d9db1c75d23fa4a519cc7bd084b0be5b1dafa215a1bfda4",
+    "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
+  },
+  "internal/trackers/impl/unit3d/sites/acm/name.go:resolveACMTMDBTitle": {
+    "sha256": "860702fb719884d2662238f38e5ce2a60534a0e082540a1e6f19468abf6bb7da",
+    "reason": "ACM title caller handles manual title provenance before selecting the TMDB candidate."
   },
   "internal/trackers/impl/unit3d/sites/acm/profile.go:Profile": {
-    "sha256": "46626357c9bdac1d9682611a524c8af09f9646bd93e16f54749815507fc1584e",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "e2867cd0999e938ff07d1c95b3f107252a72ede6e97734e2333743b57d692de7",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/unit3d/sites/acm/taxonomy.go:resolveACMKeywords": {
     "sha256": "34d03ec0062a5d36e5b90a1552303a4818cd117e12b1d2dbb5cf36e585a46676",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/unit3d/sites/aither/name.go:applyAitherTVDBDisambiguation": {
-    "sha256": "f80e3cdfd8b20d9c2552dbf635dcf130b434d04bf76cab0de282925cdb001c20",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "cf809e172c8f42cd6ac2b71ea7d71aab2e744475a4d276680152fa119a9f29d5",
+    "reason": "Resolve explicit manual year, including zero, on a local evidence copy before name parsing or formatting; preserve automatic TVDB collision, locale, and year-inclusion policy."
+  },
+  "internal/trackers/impl/unit3d/sites/aither/name.go:buildName": {
+    "sha256": "b09ed6d86cbc8dc31d31d3bef6e7f0fd658235e26c6e13760b96fb5d9d8436cf",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/unit3d/sites/aither/profile.go:Profile": {
-    "sha256": "7016ee2a18c35d5eb83305d104b1410120f938e4eb7caded0ea1258164652a2f",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "9cce7fdf90900bf7e65db64540414a6d1abc934a56f1118a3c8aeadce3e53240",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/cbr/name.go:buildName": {
+    "sha256": "c8e06e7a4b4c9868a37ba7dbe689e83f4b5af82073cdfe4423843d7051df8afc",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/unit3d/sites/cbr/profile.go:Profile": {
-    "sha256": "c98398ea416e840911bddc332143b554bc8df06151df6d2bd0b427e639504c12",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
-  },
-  "internal/trackers/impl/unit3d/sites/dp/name.go:applyDPTVDBDisambiguation": {
-    "sha256": "67b7400f6d66a8d55f1b84880d5ec9af04766463495bcc0c9cd66245ad253c8e",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
-  },
-  "internal/trackers/impl/unit3d/sites/dp/profile.go:Profile": {
-    "sha256": "ab4554d412271ca56cd2f46766224e46392f1cda0d78eba0900ab3348e50eabd",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "0bd188ca772487f87a0c2f867206fdf3bceb6266b703e9362ba06c75aa26d060",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/unit3d/sites/dvl/rules.go:ValidationPolicy": {
     "sha256": "d7cf0948e54043b2c9d19fd27567284d8e50abc384190b3da733f57f74a23e54",
@@ -1339,45 +1375,69 @@
     "sha256": "3cbfb44250cad8ac2dac79c4e87a0bd9efdb589114163f31d72fb5be32c3634c",
     "reason": "ValidationRuleSubject preserves EffectiveMetadata; RuleGenres honors manual genres, including empty values, while RuleKeywords independently supplies current-source TMDB policy evidence."
   },
+  "internal/trackers/impl/unit3d/sites/dp/name.go:applyDPTVDBDisambiguation": {
+    "sha256": "e3c882620e1ddc073f07ee8005ea10e5eea0d9350ab47b28344385f6a83b54df",
+    "reason": "Resolve explicit manual year, including zero, on a local evidence copy before name parsing or formatting; preserve automatic TVDB collision, locale, and year-inclusion policy."
+  },
+  "internal/trackers/impl/unit3d/sites/dp/name.go:buildName": {
+    "sha256": "ccdca5622477b709e5d9deda28be6d9d969a0a115f40dae3bbc76b667b9ce3c4",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/dp/profile.go:Profile": {
+    "sha256": "dc0783946055ba733fd76edee0a6343f2337a03951b304e5ce9e72e34a069c33",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
   "internal/trackers/impl/unit3d/sites/hhd/name.go:applyHHDTVDBDisambiguation": {
-    "sha256": "da3c4f62666b2f40800519fb580200b12f9d69a91f763e3eaab14796ce4410d8",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "8e65312b434f1a363a1755e15bcbceafc6593ebd32c79bebc5efc478576500bc",
+    "reason": "Resolve explicit manual year, including zero, on a local evidence copy before name parsing or formatting; preserve automatic TVDB collision, locale, and year-inclusion policy."
+  },
+  "internal/trackers/impl/unit3d/sites/hhd/name.go:buildName": {
+    "sha256": "ddc449821aa4cf10cbf138add73a4516551bf686b4ec2a6f29ab0c6a7974ce27",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/unit3d/sites/hhd/name.go:insertHHDDiscDistributor": {
-    "sha256": "717c19d2617349a151c2d426b4d52a1deb2c8beb2da5cb9dfac0f0cb6eaebc54",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "9edbd5b8a39647e961c1558878d621b78c996420ceaa84d5605e4ad6ca724f86",
+    "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence."
   },
   "internal/trackers/impl/unit3d/sites/hhd/profile.go:Profile": {
-    "sha256": "fe8857dd80f7dc11f7cb4470bbd12a30420f52fecc9cfba0041cafb070e9a9aa",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "bf8efebf82fdec079a7deb1b01ec097e10470d9f988d6e00cfea0a14089da011",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/lcd/name.go:buildName": {
+    "sha256": "c8e06e7a4b4c9868a37ba7dbe689e83f4b5af82073cdfe4423843d7051df8afc",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/unit3d/sites/lcd/profile.go:Profile": {
-    "sha256": "e9822154dd68d56c91d8fffb6d37447d8190f71d4235fc8d76b19617c4e3bd32",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "914fd181329c8211c5fc02cda9852439fa6c13ce9c09bcf4bf31624473685ea0",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
-  "internal/trackers/impl/unit3d/sites/ldu/name.go:applyLDUNameDefaults": {
-    "sha256": "0b4d48b1840434722c40d9bc5c04f3ad39e211b8d4441732503f002fe5a4d4b6",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+  "internal/trackers/impl/unit3d/sites/ldu/name.go:buildName": {
+    "sha256": "17176b4a0927b8c8747d1c858dff2c775415d2431ac51a76309cf284288a2441",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/unit3d/sites/ldu/name.go:originalLanguage": {
-    "sha256": "0b43524c6c53ea104f4a4761accaa78d92c28184e866112af2372c00f95681a6",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "e56d55c23191e1723c41a258e746e8d2604e322c67b44a7de47af18ec5a9c7b2",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
   "internal/trackers/impl/unit3d/sites/ldu/profile.go:Profile": {
-    "sha256": "71222b98a3f2e62d6cf1cde2b11372cbc1a9e6437923d03aa54b3420cbd1ce45",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "18e9d220640ea27b1b6bf515e37b07c9e0947be042eaa95c8c078b63e33eec0c",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/unit3d/sites/ldu/taxonomy.go:categoryID": {
     "sha256": "764fce6075342e0c5d24b9072d38a74c6d983ffc5ff4b1ec3d29d40bcc767dd3",
     "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence."
   },
   "internal/trackers/impl/unit3d/sites/lume/name.go:applyLumeTVDBDisambiguation": {
-    "sha256": "9fc5459c16d185a0d9085354724c506b506cacc15a74389b8d754fbd103cb9d9",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "1f1b0bbf05f1748ae383d884cb393500a410a21d4af60fae9ea9c41dd3db1a87",
+    "reason": "Resolve explicit manual year, including zero, on a local evidence copy before name parsing or formatting; preserve automatic TVDB collision, locale, and year-inclusion policy."
+  },
+  "internal/trackers/impl/unit3d/sites/lume/name.go:buildName": {
+    "sha256": "462dc94ffae895237170ddecde051a97a8e8de96385475a4d36adfc6a1c204ee",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/unit3d/sites/lume/profile.go:Profile": {
-    "sha256": "1e7ccde91e0205d7bc1d049fcfbe36b662cc588749c4e69b8ec25a0a448fd290",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "cf4e290ad91bd0807fea90d9212de331379ebf27831358fbde09569d017d4c8b",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/unit3d/sites/otw/name.go:buildName": {
     "sha256": "e0ad8fcbaadc5cdd22ada99268edbb3618588ff67b08ff9f2b0df1bfe2712d3a",
@@ -1420,24 +1480,28 @@
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
   },
   "internal/trackers/impl/unit3d/sites/rhd/name.go:buildName": {
-    "sha256": "09bae0cdfbef69ac7aa7fdb718ac55c3789e45331e725622020465b5a50e5d9f",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "41ceff671af0932fdbb3e42f1e3bdb90ca6f420ac3119b56d39b3c22a9de8d3f",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
   "internal/trackers/impl/unit3d/sites/rhd/profile.go:Profile": {
-    "sha256": "4a97ce87ef79c748f1aab2d4a7a9aaed1f85c406d86b992eea7b600af79ddb17",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "43a20c6702e4e1116ee98339aa98488a461da5d3ce67a2102e8c665f8e0041b1",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
-  "internal/trackers/impl/unit3d/sites/rmc/name.go:applyRMCNameDefaults": {
-    "sha256": "16efa814fd417ca9518d226fd226d1d29f8e035c4692d0fbb155adc611c84428",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+  "internal/trackers/impl/unit3d/sites/rmc/name.go:buildName": {
+    "sha256": "1c515539b6830865961d6b43a32df169be9529c491492f46c83b0068d2ca9a94",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
+  "internal/trackers/impl/unit3d/sites/rmc/name.go:buildYearlessName": {
+    "sha256": "adb990d4f6f96fd57a8293ac5105b8b342bf783caec464ea3d13dfff22cad41a",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
   "internal/trackers/impl/unit3d/sites/rmc/name.go:currentRMCTMDB": {
     "sha256": "43f99b8b2d70fb004ff5debfe6caad501c6aa565aa5123c37e3022ad18d3317a",
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
   },
   "internal/trackers/impl/unit3d/sites/rmc/profile.go:Profile": {
-    "sha256": "e7cf7d2c0dee815f93dc0c541c0c63b2255bc0eb4096fbdec866dd7dae93e966",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "05f0a2d3bd3f69999278ab768cd2312529fec6a83d2684ef8ca26c1e23ee15c4",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/unit3d/sites/rmc/rules.go:ValidationPolicy": {
     "sha256": "28c3ebb2f7d0fe2bb291cc42f619e91a885f01b271e398344c76be9091434f1d",
@@ -1447,9 +1511,13 @@
     "sha256": "4d2bbdc68a8798ee6fa3b4ddf29fa6ac56818e031d69ccce3613a24e3a600b54",
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
+  "internal/trackers/impl/unit3d/sites/sam/name.go:buildName": {
+    "sha256": "c8e06e7a4b4c9868a37ba7dbe689e83f4b5af82073cdfe4423843d7051df8afc",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
   "internal/trackers/impl/unit3d/sites/sam/profile.go:Profile": {
-    "sha256": "a348c14f04c00c764026c491ef34d72f8807ce9ec4916462e60963d4ef3b7747",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "59a1a5b0c5380ce1bdfba3f21cc9c36fdd7b3f6f2355a1eb192506d4552730ed",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/unit3d/sites/tik/profile.go:Profile": {
     "sha256": "19aba601a96cd1310e1d067fd31f572bd78046dcb6ba323a1ac2c68383402788",
@@ -1472,19 +1540,19 @@
     "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged."
   },
   "internal/trackers/impl/unit3d/sites/ulcx/name.go:applyULCXTVDBDisambiguation": {
-    "sha256": "0b3049eca03877b18c65597e5ff0cda8b5b0690ef722efd824a132c01b41ccd5",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "ca478b988e36ad391c314b6eb15eec3e2b2c947a176ad1fe4749ebe5b8a1ff58",
+    "reason": "Resolve explicit manual year, including zero, on a local evidence copy before name parsing or formatting; preserve automatic TVDB collision, locale, and year-inclusion policy."
+  },
+  "internal/trackers/impl/unit3d/sites/ulcx/name.go:buildName": {
+    "sha256": "4e67157a000c1137fa21fdbf78e4013484193eeefee5f7db2520c59964b458ae",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/unit3d/sites/ulcx/name.go:insertULCXDiscDistributor": {
-    "sha256": "0262a5061996d9037f722bc6a9bffbaa55d456ea6bc190c94e47ab32bcffb80e",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "aaab12c00f432e82911775c70bd639cb365d20a9df1a1fd02feae2422f62859c",
+    "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence."
   },
   "internal/trackers/impl/unit3d/sites/ulcx/profile.go:Profile": {
-    "sha256": "8cf26f738cb129bfc836d82e09da05150545674052d1f99102b67d09cfd497fd",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
-  },
-  "internal/trackers/impl/unit3d/sites/ulcx/validation.go:ValidationPolicy": {
-    "sha256": "a76a96c1427c8823872d23b99136fe2d0d0cb2599baa32640f57471a347e464a",
+    "sha256": "aa95e3fb2690fd45dad02d89caa3ee93a6abe16a31882a4419ba74305aaa2f46",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/unit3d/sites/ulcx/validation.go:checkRules": {
@@ -1495,17 +1563,29 @@
     "sha256": "2ae873be8cd073d8122018f212532fcfecff36d8c6fb3ebc6ae6832e688e10a3",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
+  "internal/trackers/impl/unit3d/sites/ulcx/validation.go:ValidationPolicy": {
+    "sha256": "a76a96c1427c8823872d23b99136fe2d0d0cb2599baa32640f57471a347e464a",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+  },
+  "internal/trackers/impl/unit3d/sites/yus/name.go:applyYUSTMDBMovieYear": {
+    "sha256": "2f918806cc64b9732ac06b596eea141f48e36e2bad0c8c1ca2dec2deb8940556",
+    "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
+  },
   "internal/trackers/impl/unit3d/sites/yus/name.go:applyYUSTVDBDisambiguation": {
-    "sha256": "18a67755983cfe6442a72da78c35f0fd824a5e08007573af4b214cf4091272d6",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "be2103013816fbaed7e8c90f17c7a9022ead72328bb7ab6fd5761ecf99a0a71c",
+    "reason": "Resolve explicit manual year, including zero, on a local evidence copy before name parsing or formatting; preserve automatic TVDB collision, locale, and year-inclusion policy."
+  },
+  "internal/trackers/impl/unit3d/sites/yus/name.go:buildName": {
+    "sha256": "618d69fb3dada6771dbc5e471a794d063030fc4b5ec5859093c90df1cb32537e",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/unit3d/sites/yus/name.go:insertYUSDiscDistributor": {
-    "sha256": "280086d2412e28ae814734e5593072cdfb937ac57ee6e0baecb7c6ade728b299",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "7fd887b3482faab255cd423c5479cfff514b75bf8614a6a92d6749d48ba1d0bc",
+    "reason": "Manual provenance or typed preference controls correctable values; provider snapshots remain evidence."
   },
   "internal/trackers/impl/unit3d/sites/yus/profile.go:Profile": {
-    "sha256": "8bb8366fcb1940842e763aa76e04e9d38ec940c1b06dc32718773bbe4470909a",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "9acf88876fa5a39e48cb552da372dd7ebbc7aae4450383555acef1727bdd89e3",
+    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/unit3d/taxonomy.go:resolveKeywords": {
     "sha256": "8209548d8420fcc71ea0118be8d19c360bebe37d2b722e8b5f963bba73d780e1",

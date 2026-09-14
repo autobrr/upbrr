@@ -9,12 +9,13 @@ import (
 // tracker-owned dupe, image-host, rule, and banned-group policies.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
-		Name:              "OE",
-		BaseURL:           "https://onlyencodes.cc",
-		Rules:             Rules(),
-		BannedGroups:      BannedGroups(),
-		ReleaseNamePolicy: namePolicy(),
+		Name:         "OE",
+		BaseURL:      "https://onlyencodes.cc",
+		Rules:        Rules(),
+		BannedGroups: BannedGroups(),
 		Site: unit3d.SiteProfile{
+			BuildName:              buildName,
+			BuildNameVersion:       "v1",
 			ResolveTypeID:          typeID,
 			ApplyAdditionalPayload: additionalPayload,
 		},

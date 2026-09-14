@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -394,34 +393,17 @@ func TestSourceReleaseNameDistinguishesDottedFoldersFromFiles(t *testing.T) {
 func TestPrepareInputWithReleaseNamePolicyRequiresNonSceneConfirmation(t *testing.T) {
 	t.Parallel()
 
-	binding := WithNonSceneReleaseNameConfirmation(StructuredReleaseNamePolicy("test/confirmation-rebuild/v1", StructuredNamePolicy{
-		Opaque:    OpaqueNameRebuild,
-		Authority: []NameAuthority{{Role: api.NameRoleEdition, Aspect: NamePresence}},
-		Mandatory: func(editor *NameEditor, _ api.UploadSubject, _ config.TrackerConfig) error {
-			return editor.Omit(api.NameRoleEdition)
-		},
-	}))
+	binding := WithNonSceneReleaseNameConfirmation(CanonicalReleaseNamePolicy())
 	input := PreparationInput{
 		Tracker: "EXAMPLE",
-		Meta:    structuredSubject(),
+		Meta:    api.UploadSubject{ReleaseName: "Example.Release.2026-GRP"},
 	}
 	if _, failure := PrepareInputWithReleaseNamePolicy(input, binding); failure == nil ||
 		failure.Code() != releaseNameConfirmationCode {
 		t.Fatalf("confirmation failure = %#v", failure)
 	}
 
-	resolved, err := resolveReleaseNames(input, binding)
-	if err != nil {
-		t.Fatalf("resolve automatic name: %v", err)
-	}
-	opaque := "Opaque Uncut Name-GRP"
-	input.RequestedUploadName = &opaque
-	if _, failure := PrepareInputWithReleaseNamePolicy(input, binding); failure == nil ||
-		failure.Code() != releaseNameConfirmationCode {
-		t.Fatalf("opaque rebuilt name bypassed confirmation: %#v", failure)
-	}
-
-	confirmed := resolved.Upload
+	confirmed := "Example.Release.2026-GRP"
 	input.RequestedUploadName = &confirmed
 	prepared, failure := PrepareInputWithReleaseNamePolicy(input, binding)
 	if failure != nil {

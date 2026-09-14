@@ -4,7 +4,6 @@
 package ldu
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -13,60 +12,37 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/ldu/v2", trackers.StructuredNamePolicy{Defaults: applyLDUNameDefaults})
-}
-
-func applyLDUNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
-	if unit3d.IsDiscType(meta.DiscType) {
-		return nil
+func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
+	name := strings.TrimSpace(meta.ReleaseName)
+	if name == "" {
+		name = strings.TrimSpace(meta.ReleaseNameNoTag)
 	}
-	original := originalLanguage(meta)
-	nonEnglishOriginal := original != "" && !isEnglish(original)
+	if unit3d.IsDiscType(meta.DiscType) {
+		return clean(name)
+	}
+	nonEnglishOriginal := !isEnglish(originalLanguage(meta))
 	audio, nonEnglishAudio := firstAudio(meta.AudioLanguages)
 	subtitle := firstSubtitle(meta.SubtitleLanguages)
 	if categoryID(meta) == "18" && subtitle != "" {
-		if err := appendLDURole(editor, api.NameRoleSubtitleMarker, "[Subs "+subtitle+"]", api.NameRoleGroup); err != nil {
-			return fmt.Errorf("insert LDU subtitle marker: %w", err)
-		}
-		return nil
+		return clean(name + " [Subs " + subtitle + "]")
 	}
 	if !nonEnglishOriginal && !nonEnglishAudio {
-		return nil
+		return clean(name)
 	}
+	parts := make([]string, 0, 2)
 	if audio != "" {
-		if err := appendLDURole(editor, api.NameRoleLanguageMarker, "["+audio+"]", api.NameRoleGroup); err != nil {
-			return fmt.Errorf("insert LDU audio language marker: %w", err)
-		}
+		parts = append(parts, "["+audio+"]")
 	}
 	if subtitle != "" {
-		anchor := api.NameRoleGroup
-		if audio != "" {
-			anchor = api.NameRoleLanguageMarker
-		}
-		if err := appendLDURole(editor, api.NameRoleSubtitleMarker, "[Subs "+subtitle+"]", anchor); err != nil {
-			return fmt.Errorf("insert LDU subtitle marker: %w", err)
-		}
+		parts = append(parts, "[Subs "+subtitle+"]")
 	}
-	return nil
+	if len(parts) == 0 {
+		return clean(name)
+	}
+	return clean(name + " " + strings.Join(parts, " "))
 }
 
-func appendLDURole(editor *trackers.NameEditor, role api.ReleaseNameRole, value string, preferred api.ReleaseNameRole) error {
-	if component, ok := editor.Component(preferred); ok && component.Present {
-		if err := editor.InsertAfter(role, value, preferred); err != nil {
-			return fmt.Errorf("insert LDU role after preferred anchor: %w", err)
-		}
-		return nil
-	}
-	roles := editor.PresentRoles()
-	if len(roles) == 0 {
-		return nil
-	}
-	if err := editor.InsertAfter(role, value, roles[len(roles)-1]); err != nil {
-		return fmt.Errorf("insert LDU role after fallback anchor: %w", err)
-	}
-	return nil
-}
+func clean(value string) string { return strings.TrimSpace(strings.Join(strings.Fields(value), " ")) }
 
 func firstAudio(values []string) (string, bool) {
 	for _, value := range values {
@@ -104,13 +80,11 @@ func languageCode(value string) (string, bool, bool) {
 
 func originalLanguage(meta api.UploadSubject) string {
 	provider := ""
-	if meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) {
-		if meta.ProviderMetadata.TMDB != nil && strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalLanguage) != "" {
-			provider = meta.ProviderMetadata.TMDB.OriginalLanguage
-		}
-		if provider == "" && meta.ProviderMetadata.IMDB != nil {
-			provider = meta.ProviderMetadata.IMDB.OriginalLanguage
-		}
+	if meta.ProviderMetadata.TMDB != nil && strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalLanguage) != "" {
+		provider = meta.ProviderMetadata.TMDB.OriginalLanguage
+	}
+	if provider == "" && meta.ProviderMetadata.IMDB != nil {
+		provider = meta.ProviderMetadata.IMDB.OriginalLanguage
 	}
 	if meta.EffectiveMetadata.OriginalLanguageProvenance.IsManual() {
 		return trackers.PreferredOriginalLanguage(meta, provider)

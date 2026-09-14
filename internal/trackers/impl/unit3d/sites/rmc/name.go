@@ -4,7 +4,6 @@
 package rmc
 
 import (
-	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -16,65 +15,98 @@ import (
 
 var (
 	disallowedNameCharsRegex = regexp.MustCompile(`[^A-Za-z0-9 ._+-]+`)
+	rmcYearTokenRegex        = regexp.MustCompile(`(^|[^0-9])((?:18|19|20)[0-9]{2})([^0-9]|$)`)
 )
 
-func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/rmc/v3", trackers.StructuredNamePolicy{Defaults: applyRMCNameDefaults})
-}
-
-func applyRMCNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
+// buildName replaces the generated title, AKA, and year prefix with RMC's
+// required English TMDB title and TMDB year, then removes rejected characters.
+// It returns empty unless the prepared name and current matching TMDB metadata
+// contain the values needed for a compliant name.
+func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
+	name := markerName(meta)
 	tmdb := currentRMCTMDB(meta.SourcePath, meta.Identity, meta.ProviderMetadata)
-	if tmdb == nil || strings.TrimSpace(tmdb.Title) == "" {
-		return &trackers.NameRuleError{
-			Rule:   "unit3d/rmc/v3",
-			Role:   api.NameRoleTitle,
-			Reason: "current TMDB title is required",
-		}
+	if name == "" || tmdb == nil || strings.TrimSpace(tmdb.Title) == "" {
+		return ""
 	}
 	title := tmdb.Title
 	if meta.EffectiveMetadata.TitleProvenance.IsManual() {
 		title = trackers.PreferredTitle(meta, tmdb.Title)
 	}
-	title = sanitizeName(title)
 	if title == "" {
-		return &trackers.NameRuleError{
-			Rule:   "unit3d/rmc/v3",
-			Role:   api.NameRoleTitle,
-			Reason: "title has no supported characters",
-		}
-	}
-	if err := editor.Set(api.NameRoleTitle, title); err != nil {
-		return fmt.Errorf("set RMC title: %w", err)
+		return ""
 	}
 	year := tmdb.Year
 	if meta.EffectiveMetadata.YearProvenance.IsManual() {
 		year = trackers.PreferredYear(meta, tmdb.Year)
 	}
-	if year > 0 {
-		if err := editor.Set(api.NameRoleYear, strconv.Itoa(year)); err != nil {
-			return fmt.Errorf("set RMC year: %w", err)
+	yearMatches := rmcYearTokenRegex.FindAllStringSubmatchIndex(name, -1)
+	switch {
+	case len(yearMatches) == 0 && meta.NamePresentation.Version == api.ReleaseNamePresentationVersionV1 && meta.NamePresentation.OmitYear:
+		return buildYearlessName(name, meta, tmdb, title)
+	case len(yearMatches) == 0 || year <= 0:
+		return ""
+	}
+	yearEnd := yearMatches[len(yearMatches)-1][5]
+	return sanitizeName(strings.TrimSpace(title) + " " + strconv.Itoa(year) + " " + strings.TrimSpace(name[yearEnd:]))
+}
+
+func buildYearlessName(name string, meta api.UploadSubject, tmdb *api.TMDBMetadata, title string) string {
+	suffix := ""
+	for _, candidate := range []string{title, meta.Release.Title, tmdb.Title} {
+		if remainder, ok := trimLeadingNameElement(name, candidate); ok {
+			suffix = remainder
+			break
 		}
 	}
-	if err := editor.Omit(api.NameRoleAlternateTitle); err != nil {
-		return fmt.Errorf("omit RMC alternate title: %w", err)
+	if suffix == "" {
+		return ""
 	}
-	for _, role := range editor.PresentRoles() {
-		component, ok := editor.Component(role)
-		if !ok {
+
+	alternates := make([]string, 0, 4)
+	switch {
+	case meta.EffectiveMetadata.AlternateTitleProvenance.IsManual():
+		alternates = append(alternates, trackers.PreferredAlternateTitle(meta, ""))
+	case meta.EffectiveMetadata.OriginalTitleProvenance.IsManual():
+		alternates = append(alternates, trackers.PreferredOriginalTitle(meta, ""))
+	default:
+		alternates = append(alternates, meta.Release.Alt, tmdb.RetrievedAKA, tmdb.OriginalTitle)
+		if imdb := meta.ProviderMetadata.IMDB; imdb != nil {
+			alternates = append(alternates, imdb.AKA)
+		}
+	}
+	for _, alternate := range alternates {
+		if remainder, ok := trimLeadingNameElement(suffix, alternate); ok {
+			suffix = remainder
+			break
+		}
+	}
+	if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(suffix)), "AKA ") {
+		return ""
+	}
+	return sanitizeName(strings.TrimSpace(title) + " " + suffix)
+}
+
+func trimLeadingNameElement(name, element string) (string, bool) {
+	element = strings.TrimSpace(element)
+	if element == "" {
+		return name, false
+	}
+	candidates := []string{element}
+	if len(element) > len("AKA ") && strings.EqualFold(element[:len("AKA ")], "AKA ") {
+		candidates = append(candidates, strings.TrimSpace(element[len("AKA "):]))
+	} else {
+		candidates = append(candidates, "AKA "+element)
+	}
+	for _, candidate := range candidates {
+		if len(name) < len(candidate) || !strings.EqualFold(name[:len(candidate)], candidate) {
 			continue
 		}
-		value := sanitizeName(component.Value)
-		if value == "" {
-			if err := editor.Omit(role); err != nil {
-				return fmt.Errorf("omit unsupported RMC component %s: %w", role, err)
-			}
+		if len(name) > len(candidate) && !strings.ContainsRune(" ._-", rune(name[len(candidate)])) {
 			continue
 		}
-		if err := editor.Set(role, value); err != nil {
-			return fmt.Errorf("sanitize RMC component %s: %w", role, err)
-		}
+		return strings.TrimSpace(name[len(candidate):]), true
 	}
-	return nil
+	return name, false
 }
 
 // markerName returns the prepared release name, falling back to its no-tag variant.

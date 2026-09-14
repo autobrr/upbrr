@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/a4k"
@@ -177,31 +176,15 @@ func TestExplicitUnit3DProfilesPreserveResolvers(t *testing.T) {
 	if aitherData["hdr10p"] != "1" || aitherData["dv"] != "1" {
 		t.Fatalf("AITHER HDR payload = %#v", aitherData)
 	}
-	generated := metadata.BuildReleaseName(api.ReleaseNameRequest{
-		Category:    "MOVIE",
-		Title:       "Example Release",
-		Year:        2020,
-		Resolution:  "480p",
+	aitherMeta := api.UploadSubject{
+		ReleaseName: "Example.Release.2020.DVD.DVDRIP.AAC.XVID-GRP",
+		Release:     api.ReleaseInfo{Year: 2020, Resolution: "480p"},
 		Type:        "DVDRIP",
 		Source:      "DVD",
 		Audio:       "AAC 2.0",
 		VideoEncode: "XVID",
-		Tag:         "-GRP",
-	}, nil)
-	aitherMeta := api.UploadSubject{
-		ReleaseName:   generated.Name,
-		GeneratedName: generated.GeneratedName,
-		Release:       api.ReleaseInfo{Year: 2020, Resolution: "480p"},
-		Type:          "DVDRIP",
-		Source:        "DVD",
-		Audio:         "AAC 2.0",
-		VideoEncode:   "XVID",
 	}
-	prepared, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{Tracker: "AITHER", Meta: aitherMeta}, unit3d.NewWithProfile(aither.Profile()).ReleaseNamePolicy())
-	if failure != nil {
-		t.Fatal(failure)
-	}
-	if got, err := prepared.ReviewedUploadName(); err != nil || got != "Example Release 2020 480p DVDRip AAC 2.0 XVID-GRP" {
+	if got := aither.Profile().Site.BuildName(aitherMeta, config.TrackerConfig{}); got == "" || got == aitherMeta.ReleaseName {
 		t.Fatalf("AITHER name = %q", got)
 	}
 	r4eMeta := api.UploadSubject{Identity: api.ExternalIdentity{Category: "TV"}, ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{GenreIDs: "99,18"}}}

@@ -283,7 +283,6 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	if err != nil {
 		return preparationstate.State{}, err
 	}
-	captureAvailableGeneratedName(&meta, s.logger)
 	// Fold fact-producing name instructions into canonical prepared state
 	// exactly once, after all evidence resolution, so explicit values and
 	// clears win over derived evidence and the final name cannot diverge from
@@ -721,11 +720,9 @@ func RebuildReleaseName(meta *preparationstate.State, logger api.Logger) {
 		UseDailyDate:       nameRequest.ManualDate,
 	}
 	nameResult := BuildReleaseName(nameRequest, logger)
-	mergeGeneratedNameAvailability(nameResult.GeneratedName, meta.AvailableGeneratedName, meta, nameRequest)
 	meta.ReleaseNameNoTag = nameResult.NameNoTag
 	meta.ReleaseName = nameResult.Name
 	meta.ReleaseNameClean = nameResult.CleanName
-	meta.GeneratedName = nameResult.GeneratedName.Clone()
 	meta.GeneratedReleaseNames = nameResult.GeneratedVariants
 	meta.ReleaseNameMissing = append([]string{}, nameResult.MissingFields...)
 	if logger != nil && nameResult.Name != "" {
@@ -733,226 +730,21 @@ func RebuildReleaseName(meta *preparationstate.State, logger api.Logger) {
 	}
 }
 
-func captureAvailableGeneratedName(meta *preparationstate.State, logger api.Logger) {
-	if meta == nil {
-		return
-	}
-	available := *meta
-	available.ReleaseNameOverrides = releaseNameAvailabilityOverrides(meta.ReleaseNameOverrides)
-	applyReleaseNameValueOverrides(&available)
-	request := releaseNameRequestFromMeta(available, logger)
-	request = applyMetadataNamingOverrides(request, available.MetadataOverrides)
-	request = applyReleaseNameOverrides(request, available.ReleaseNameOverrides, logger)
-	meta.AvailableGeneratedName = BuildReleaseName(request, logger).GeneratedName.Clone()
-}
-
-// releaseNameAvailabilityOverrides retains fact-producing instructions while
-// removing presentation-only controls. The availability snapshot uses the
-// resolved value before an omission hides it from the public effective facts.
-func releaseNameAvailabilityOverrides(overrides api.ReleaseNameOverrides) api.ReleaseNameOverrides {
-	overrides.NoSeason = nil
-	overrides.NoYear = nil
-	overrides.NoAKA = nil
-	overrides.NoTag = nil
-	overrides.NoEpisodeTitle = nil
-	overrides.NoDistributor = nil
-	overrides.NoEdition = nil
-	overrides.NoDub = nil
-	overrides.NoDual = nil
-	return overrides
-}
-
-func mergeGeneratedNameAvailability(
-	document, available *api.ReleaseNameDocument,
-	meta *preparationstate.State,
-	request api.ReleaseNameRequest,
-) {
-	if document == nil {
-		return
-	}
-	if available != nil {
-		for _, source := range available.Components {
-			if _, exists := document.Component(source.Role); exists {
-				continue
-			}
-			source.Present = false
-			document.Components = insertRetainedReleaseNameComponent(document.Components, source)
-		}
-	}
-	ensureManualGeneratedNameComponents(document, meta, request)
-	for index := range document.Components {
-		component := &document.Components[index]
-		if source, ok := available.Component(component.Role); ok {
-			component.AvailableValue = source.Value
-		}
-		component.Manual = releaseNameRoleIsManual(component.Role, meta.ReleaseNameOverrides) || releaseNameRoleUsesManualFact(component.Role, meta, request)
-	}
-	alignAudioMarkerLayout(document, available)
-}
-
-func ensureManualGeneratedNameComponents(document *api.ReleaseNameDocument, meta *preparationstate.State, request api.ReleaseNameRequest) {
-	if document == nil {
-		return
-	}
-	for _, role := range []api.ReleaseNameRole{
-		api.NameRoleTitle, api.NameRoleAlternateTitle, api.NameRoleYear, api.NameRoleSeason, api.NameRoleEpisode, api.NameRoleDailyDate, api.NameRoleEpisodeTitle,
-		api.NameRoleEdition, api.NameRoleHybrid, api.NameRoleRepack, api.NameRoleRegion, api.NameRoleSource, api.NameRoleService, api.NameRoleResolution,
-		api.NameRoleDVDSystem, api.NameRoleVideoFormat, api.NameRoleDubbed, api.NameRoleDualAudio, api.NameRoleGroup,
-	} {
-		manual := releaseNameRoleIsManual(role, meta.ReleaseNameOverrides) || releaseNameRoleUsesManualFact(role, meta, request)
-		if _, exists := document.Component(role); exists || !manual {
-			continue
-		}
-		document.Components = insertRetainedReleaseNameComponent(document.Components, api.ReleaseNameComponent{
-			Role:   role,
-			Join:   " ",
-			Manual: true,
-		})
-	}
-}
-
-func releaseNameRoleUsesManualFact(
-	role api.ReleaseNameRole,
-	meta *preparationstate.State,
-	request api.ReleaseNameRequest,
-) bool {
-	overrides := meta.ReleaseNameOverrides
-	facts := meta.EffectiveMetadata
-	switch role {
-	case api.NameRoleTitle:
-		return facts.TitleProvenance.IsManual()
-	case api.NameRoleAlternateTitle:
-		return facts.AlternateTitleProvenance.IsManual()
-	case api.NameRoleYear:
-		return facts.YearProvenance.IsManual() || overrides.ManualYear != nil
-	case api.NameRoleSeason:
-		return overrides.Season != nil
-	case api.NameRoleEpisode:
-		return overrides.Episode != nil
-	case api.NameRoleEpisodeTitle:
-		return request.ManualEpisodeTitle || overrides.EpisodeTitle != nil
-	case api.NameRoleDailyDate:
-		return overrides.ManualDate != nil
-	case api.NameRoleEdition:
-		return overrides.Edition != nil
-	case api.NameRoleHybrid:
-		return overrides.Edition != nil || meta.MetadataOverrides.WebDV != nil
-	case api.NameRoleDubbed, api.NameRoleDualAudio:
-		return meta.MetadataOverrides.OriginalLanguage != nil || manualAudioLanguages(*meta)
-	case api.NameRoleRegion:
-		return overrides.Region != nil
-	case api.NameRoleSource:
-		return overrides.Source != nil
-	case api.NameRoleDVDSystem:
-		return overrides.Source != nil
-	case api.NameRoleService:
-		return overrides.Service != nil
-	case api.NameRoleResolution:
-		return overrides.Resolution != nil
-	case api.NameRoleVideoFormat:
-		return overrides.Type != nil
-	case api.NameRoleGroup:
-		return overrides.Tag != nil
-	case api.NameRolePart, api.NameRoleThreeD, api.NameRoleRepack,
-		api.NameRoleUHD, api.NameRoleDVDSize, api.NameRoleHDR,
-		api.NameRoleVideoCodec, api.NameRoleVideoEncode, api.NameRoleAudio,
-		api.NameRoleLanguageMarker, api.NameRoleLocale, api.NameRoleDistributor,
-		api.NameRoleSubtitleMarker, api.NameRoleOriginalGroup:
-		return false
-	default:
-		return false
-	}
-}
-
-func alignAudioMarkerLayout(document, available *api.ReleaseNameDocument) {
-	if document == nil || available == nil {
-		return
-	}
-	for _, role := range []api.ReleaseNameRole{api.NameRoleDubbed, api.NameRoleDualAudio} {
-		sourceIndex, source := releaseNameComponentIndex(available, role)
-		targetIndex, target := releaseNameComponentIndex(document, role)
-		if sourceIndex < 0 || targetIndex < 0 || !source.Present || target.Present {
-			continue
-		}
-		sourceAudioIndex, _ := releaseNameComponentIndex(available, api.NameRoleAudio)
-		targetAudioIndex, _ := releaseNameComponentIndex(document, api.NameRoleAudio)
-		if sourceAudioIndex < 0 || targetAudioIndex < 0 || (sourceIndex < sourceAudioIndex) == (targetIndex < targetAudioIndex) {
-			continue
-		}
-		component := document.Components[targetIndex]
-		document.Components = slices.Delete(document.Components, targetIndex, targetIndex+1)
-		if sourceIndex < sourceAudioIndex {
-			targetAudioIndex, _ = releaseNameComponentIndex(document, api.NameRoleAudio)
-			document.Components = slices.Insert(document.Components, targetAudioIndex, component)
-			continue
-		}
-		targetAudioIndex, _ = releaseNameComponentIndex(document, api.NameRoleAudio)
-		targetAudioIndex++
-		document.Components = slices.Insert(document.Components, targetAudioIndex, component)
-	}
-}
-
-func releaseNameComponentIndex(document *api.ReleaseNameDocument, role api.ReleaseNameRole) (int, api.ReleaseNameComponent) {
-	if document == nil {
-		return -1, api.ReleaseNameComponent{}
-	}
-	for index, component := range document.Components {
-		if component.Role == role {
-			return index, component
-		}
-	}
-	return -1, api.ReleaseNameComponent{}
-}
-
-func releaseNameRoleIsManual(role api.ReleaseNameRole, overrides api.ReleaseNameOverrides) bool {
-	switch role {
-	case api.NameRoleAlternateTitle:
-		return overrides.NoAKA != nil
-	case api.NameRoleYear:
-		return overrides.ManualYear != nil || overrides.NoYear != nil
-	case api.NameRoleSeason:
-		return overrides.Season != nil || overrides.ManualDate != nil || overrides.UseSeasonEpisode != nil || overrides.NoSeason != nil
-	case api.NameRoleEpisode:
-		return overrides.Episode != nil || overrides.ManualDate != nil || overrides.UseSeasonEpisode != nil || overrides.NoSeason != nil
-	case api.NameRoleDailyDate:
-		return overrides.ManualDate != nil || overrides.UseSeasonEpisode != nil
-	case api.NameRoleEpisodeTitle:
-		return overrides.EpisodeTitle != nil || overrides.NoEpisodeTitle != nil
-	case api.NameRoleEdition, api.NameRoleHybrid:
-		return overrides.Edition != nil || overrides.NoEdition != nil
-	case api.NameRoleRepack:
-		return overrides.NoEdition != nil
-	case api.NameRoleRegion:
-		return overrides.Region != nil
-	case api.NameRoleSource:
-		return overrides.Source != nil
-	case api.NameRoleService:
-		return overrides.Service != nil
-	case api.NameRoleResolution:
-		return overrides.Resolution != nil
-	case api.NameRoleAudio:
-		return false
-	case api.NameRoleDubbed:
-		return overrides.NoDub != nil
-	case api.NameRoleDualAudio:
-		return overrides.NoDual != nil || overrides.DualAudio != nil
-	case api.NameRoleGroup:
-		return overrides.Tag != nil || overrides.NoTag != nil
-	case api.NameRoleTitle, api.NameRolePart, api.NameRoleThreeD,
-		api.NameRoleUHD, api.NameRoleDVDSystem, api.NameRoleDVDSize, api.NameRoleVideoFormat, api.NameRoleHDR,
-		api.NameRoleVideoCodec, api.NameRoleVideoEncode, api.NameRoleLanguageMarker,
-		api.NameRoleLocale, api.NameRoleDistributor, api.NameRoleSubtitleMarker, api.NameRoleOriginalGroup:
-		return false
-	default:
-		return false
-	}
-}
-
 func applyAudioLanguagePrefix(audio string, meta preparationstate.State) string {
-	base, existingMarkers := splitReleaseNameAudioMarkers(audio)
+	base := strings.TrimSpace(audio)
+	for _, prefix := range []string{"Dual-Audio", "Dubbed"} {
+		if strings.EqualFold(base, prefix) {
+			base = ""
+			break
+		}
+		if after, ok := strings.CutPrefix(base, prefix+" "); ok {
+			base = strings.TrimSpace(after)
+			break
+		}
+	}
 
 	if strings.TrimSpace(meta.DiscType) != "" {
-		return renderReleaseNameAudioMarkers(base, existingMarkers)
+		return base
 	}
 
 	filteredLanguages := make([]string, 0, len(meta.AudioLanguages))
@@ -963,29 +755,11 @@ func applyAudioLanguagePrefix(audio string, meta preparationstate.State) string 
 		filteredLanguages = append(filteredLanguages, language)
 	}
 
-	if len(filteredLanguages) == 0 || strings.TrimSpace(base) == "" {
-		if manualAudioLanguages(meta) {
-			// A language clear invalidates markers derived before corrections were applied.
-			return base
-		}
-		return renderReleaseNameAudioMarkers(base, existingMarkers)
+	prefix := audioLanguagePrefixFromLanguages(meta, filteredLanguages)
+	if prefix == "" || base == "" {
+		return base
 	}
-	markers := releaseNameAudioMarkers{}
-	switch audioLanguagePrefixFromLanguages(meta, filteredLanguages) {
-	case "Dubbed":
-		markers.Dubbed = true
-	case "Dual-Audio":
-		markers.DualAudio = true
-		markers.DualAudioFirst = true
-	}
-	return renderReleaseNameAudioMarkers(base, markers)
-}
-
-func manualAudioLanguages(meta preparationstate.State) bool {
-	return meta.MetadataOverrides.AudioLanguages != nil || meta.AudioLanguagesProvenance.IsManual() ||
-		slices.ContainsFunc(meta.MediaTracks, func(track api.MediaTrackFacts) bool {
-			return track.Kind == api.MediaTrackAudio && !track.Commentary && track.LanguageProvenance.IsManual()
-		})
+	return strings.TrimSpace(prefix + " " + base)
 }
 
 func resolveAudioBloatPolicyWithRegistry(
@@ -1889,6 +1663,9 @@ func editionFromMeta(meta preparationstate.State, doc mediaInfoDoc) (string, str
 	edition := ""
 	isIMDbEdition := false
 	applyAnimeOverride(&meta)
+	if hasNoEditionOverride(meta.ReleaseNameOverrides) {
+		return "", ""
+	}
 	hybrid := containsExactHybrid(meta.Release.Other)
 	if !hasManualEditionOverride(meta.ReleaseNameOverrides) {
 		edition = strings.TrimSpace(resolveIMDbEditionFromMediaDuration(meta, doc))
@@ -2305,6 +2082,10 @@ func applyAnimeOverride(meta *preparationstate.State) {
 
 func hasManualEditionOverride(overrides api.ReleaseNameOverrides) bool {
 	return overrides.Edition != nil
+}
+
+func hasNoEditionOverride(overrides api.ReleaseNameOverrides) bool {
+	return overrides.NoEdition != nil && *overrides.NoEdition
 }
 
 func isMovieMetadata(meta preparationstate.State) bool {
