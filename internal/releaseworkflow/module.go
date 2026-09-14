@@ -3591,6 +3591,11 @@ func (m *Module) projectTrackersWithRuleAuthorizations(
 	command ProjectTrackersCommand,
 	authorizations map[api.TrackerID]api.WorkflowFingerprint,
 ) (CommandResult, error) {
+	instructions, err := retainConfirmedNameProjectionInstructions(state, command.TrackerIDs, command.Instructions)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	command.Instructions = instructions
 	if m.trackerProjector == nil {
 		return CommandResult{}, fmt.Errorf("%w: tracker projection builder is unavailable", ErrInvalidTransition)
 	}
@@ -3671,6 +3676,64 @@ func (m *Module) projectTrackersWithRuleAuthorizations(
 		ProjectionInstructions: &instructionSnapshot,
 		Projections:            projectionResult.Projections,
 	}, nil
+}
+
+func validateConfirmedNameProjectionInstructions(
+	state *State,
+	instructions map[api.TrackerID]api.TrackerProjectionInstructions,
+) error {
+	for trackerID, instruction := range instructions {
+		if instruction.ConfirmedNameFingerprint == "" {
+			continue
+		}
+		if state.Workflow.ProjectionInstructions == nil {
+			return fmt.Errorf("%w: confirmed tracker name authority is server-owned", ErrInvalidTransition)
+		}
+		snapshot, ok := state.ProjectionInstructions[state.Workflow.ProjectionInstructions.ID]
+		if !ok || snapshot.Revision != state.Workflow.ProjectionInstructions.Revision {
+			return fmt.Errorf("%w: retained tracker name authority is unavailable", ErrInvalidTransition)
+		}
+		retained := snapshot.Instructions[api.TrackerID(strings.ToUpper(strings.TrimSpace(string(trackerID))))]
+		if retained.ConfirmedNameFingerprint != instruction.ConfirmedNameFingerprint {
+			return fmt.Errorf("%w: confirmed tracker name authority is server-owned", ErrInvalidTransition)
+		}
+	}
+	return nil
+}
+
+func retainConfirmedNameProjectionInstructions(
+	state *State,
+	trackerIDs []api.TrackerID,
+	instructions map[api.TrackerID]api.TrackerProjectionInstructions,
+) (map[api.TrackerID]api.TrackerProjectionInstructions, error) {
+	if err := validateConfirmedNameProjectionInstructions(state, instructions); err != nil {
+		return nil, err
+	}
+	if state.Workflow.ProjectionInstructions == nil {
+		return instructions, nil
+	}
+	snapshot, ok := state.ProjectionInstructions[state.Workflow.ProjectionInstructions.ID]
+	if !ok || snapshot.Revision != state.Workflow.ProjectionInstructions.Revision {
+		return nil, fmt.Errorf("%w: retained tracker name authority is unavailable", ErrInvalidTransition)
+	}
+	retained := maps.Clone(instructions)
+	if retained == nil {
+		retained = make(map[api.TrackerID]api.TrackerProjectionInstructions, len(trackerIDs))
+	}
+	for _, trackerID := range trackerIDs {
+		trackerID = api.TrackerID(strings.ToUpper(strings.TrimSpace(string(trackerID))))
+		previous := snapshot.Instructions[trackerID]
+		if previous.ConfirmedNameFingerprint == "" {
+			continue
+		}
+		current := retained[trackerID]
+		if current.UploadReleaseName.Present || current.ConfirmedNameFingerprint != "" {
+			continue
+		}
+		current.ConfirmedNameFingerprint = previous.ConfirmedNameFingerprint
+		retained[trackerID] = current
+	}
+	return retained, nil
 }
 
 func (m *Module) publishProjections(

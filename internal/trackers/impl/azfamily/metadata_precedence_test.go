@@ -79,3 +79,60 @@ func TestLookupTitlePreservesAutomaticCanonicalPrecedence(t *testing.T) {
 		t.Fatalf("manual-empty lookup title = %q", got)
 	}
 }
+
+func TestAZFamilyNamingUsesOnlyCurrentProviderMetadata(t *testing.T) {
+	t.Parallel()
+	meta := api.UploadSubject{
+		SourcePath: "prepared/current",
+		Identity:   api.ExternalIdentity{SourcePath: "prepared/current", Generation: 2},
+		Filename:   "Fallback File",
+		Release:    api.ReleaseInfo{Title: "Canonical Title", Alt: "Canonical Original"},
+		ProviderMetadata: api.SourceScopedMetadata{
+			SourcePath: "prepared/current",
+			Generation: 2,
+			TMDB:       &api.TMDBMetadata{Title: "Provider Title", OriginalTitle: "Provider Original"},
+			IMDB: &api.IMDBMetadata{AKA: "Provider Original", Akas: []api.IMDBAKA{{
+				Title:    "Provider English",
+				Country:  "US",
+				Language: "en",
+			}}},
+		},
+	}
+	if got := avistaZEnglishTitle(meta); got != "Provider Title" {
+		t.Fatalf("current AZ provider title = %q", got)
+	}
+	if got := cinemaZTitle(meta); got != "Provider English" {
+		t.Fatalf("current CinemaZ provider title = %q", got)
+	}
+	meta.Release.Title = ""
+	if got := resolveSearchName(meta); got != "Provider Title" {
+		t.Fatalf("current provider search title = %q", got)
+	}
+
+	meta.Release.Title = "Canonical Title"
+	meta.ProviderMetadata.SourcePath = "prepared/stale"
+	meta.ProviderMetadata.Generation = 1
+	if got := avistaZEnglishTitle(meta); got != "Canonical Title" {
+		t.Fatalf("stale AZ provider title = %q", got)
+	}
+	if got := cinemaZTitle(meta); got != "Canonical Title" {
+		t.Fatalf("stale CinemaZ provider title = %q", got)
+	}
+	meta.Release.Title = ""
+	if got := resolveSearchName(meta); got != "Fallback File" {
+		t.Fatalf("stale provider search title = %q", got)
+	}
+	if got := lookupTitle(meta); got != "Fallback File" {
+		t.Fatalf("stale lookup title = %q", got)
+	}
+
+	meta.ProviderMetadata = api.SourceScopedMetadata{}
+	meta.Release.Title = "Canonical Title"
+	if got := avistaZEnglishTitle(meta); got != "Canonical Title" {
+		t.Fatalf("missing provider AZ title = %q", got)
+	}
+	meta.EffectiveMetadata = api.EffectiveMetadata{Title: "Manual Title", TitleProvenance: api.FactProvenanceManual}
+	if got := avistaZEnglishTitle(meta); got != "Manual Title" {
+		t.Fatalf("missing provider manual title = %q", got)
+	}
+}

@@ -6,6 +6,7 @@ package metadata
 import (
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -76,7 +77,7 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 		resolution = ""
 	}
 
-	audio := normalizeAudioExtraOrder(strings.TrimSpace(req.Audio))
+	audio, audioMarkers := splitReleaseNameAudioMarkers(normalizeAudioExtraOrder(strings.TrimSpace(req.Audio)))
 	service := strings.TrimSpace(req.Service)
 	season := strings.TrimSpace(req.Season)
 	episode := strings.TrimSpace(req.Episode)
@@ -91,24 +92,59 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 	dailyDate := strings.TrimSpace(req.DailyDate)
 	videoCodec := strings.TrimSpace(req.VideoCodec)
 	videoEncode := strings.TrimSpace(req.VideoEncode)
-	videoName := videoEncode
-	if videoName == "" {
-		videoName = videoCodec
-	}
 	region := strings.TrimSpace(req.Region)
 	dvdSize := strings.TrimSpace(req.DVDSize)
-	dvdFormat := joinParts(source, dvdSize)
-	if sourceIn(source, "DVD", "PAL DVD", "NTSC DVD") &&
-		(strings.EqualFold(dvdSize, "DVD5") || strings.EqualFold(dvdSize, "DVD9")) {
-		dvdFormat = joinParts(strings.TrimSpace(source[:len(source)-len("DVD")]), dvdSize)
+	dvdSourceVisible := false
+	dvdSystem := ""
+	if matchType == "DISC" && strings.EqualFold(req.DiscType, "DVD") {
+		if sourceIn(source, "DVD", "PAL DVD", "NTSC DVD") {
+			if sourceIn(source, "PAL DVD", "NTSC DVD") {
+				dvdSystem = strings.TrimSpace(source[:len(source)-len("DVD")])
+			}
+			dvdSourceVisible = !strings.EqualFold(dvdSize, "DVD5") && !strings.EqualFold(dvdSize, "DVD9")
+			source = source[len(source)-len("DVD"):]
+		} else {
+			dvdSourceVisible = true
+		}
 	}
 	edition := strings.TrimSpace(req.Edition)
+	retained := retainedReleaseNameValues{
+		Title:          title,
+		AlternateTitle: altTitle,
+		Year:           releaseNameYearValue(year),
+		Season:         season,
+		Episode:        episode,
+		EpisodeTitle:   episodeTitle,
+		DailyDate:      dailyDate,
+		Edition:        edition,
+		Repack:         repack,
+		Resolution:     resolution,
+		Region:         region,
+		Source:         source,
+		UHD:            uhd,
+		HDR:            hdr,
+		Service:        service,
+		DVDSystem:      dvdSystem,
+		DVDSize:        dvdSize,
+		VideoCodec:     videoCodec,
+		VideoEncode:    videoEncode,
+		Audio:          audio,
+		ThreeD:         threeD,
+		Part:           part,
+	}
 
 	hybrid := ""
 	if req.WebDV || containsExactHybrid(strings.Fields(edition)) {
 		hybrid = "Hybrid"
 	}
 	edition = removeHybrid(edition)
+	retained.Edition = edition
+	retained.Hybrid = hybrid
+	retained.VideoFormat = releaseNameVideoFormat(matchType)
+	if matchType != "DISC" || !strings.EqualFold(req.DiscType, "DVD") {
+		retained.DVDSystem = ""
+		retained.DVDSize = ""
+	}
 
 	if category == "TV" && !req.ManualEpisodeTitle && episode == "" && !req.ManualDate {
 		episodeTitle = ""
@@ -154,9 +190,7 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 		episode,
 	)
 
-	name := ""
 	missing := make([]string, 0)
-	seasonEpisode := strings.TrimSpace(season + episode)
 	yearValue := ""
 	if year > 0 {
 		yearValue = strconv.Itoa(year)
@@ -165,74 +199,358 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 	switch category {
 	case "MOVIE":
 		switch {
-		case matchType == "DISC":
-			switch strings.ToUpper(strings.TrimSpace(req.DiscType)) {
-			case "BDMV":
-				name = joinParts(title, altTitle, yearValue, threeD, edition, hybrid, repack, resolution, region, uhd, source, hdr, videoCodec, audio)
-				missing = []string{"edition", "region", "distributor"}
-			case "DVD":
-				name = joinParts(title, altTitle, yearValue, repack, edition, region, dvdFormat, audio)
-				missing = []string{"edition", "distributor"}
-			case "HDDVD":
-				name = joinParts(title, altTitle, yearValue, edition, repack, resolution, source, videoCodec, audio)
-				missing = []string{"edition", "region", "distributor"}
-			}
-		case matchType == "REMUX" && sourceIn(source, "BluRay", "HDDVD"):
-			name = joinParts(title, altTitle, yearValue, threeD, edition, hybrid, repack, resolution, uhd, source, "REMUX", hdr, videoCodec, audio)
-			missing = []string{"edition", "description"}
-		case matchType == "REMUX" && sourceIn(source, "PAL DVD", "NTSC DVD", "DVD"):
-			name = joinParts(title, altTitle, yearValue, edition, repack, source, "REMUX", audio)
+		case matchType == "DISC" && strings.EqualFold(req.DiscType, "BDMV"):
+			missing = []string{"edition", "region", "distributor"}
+		case matchType == "DISC" && strings.EqualFold(req.DiscType, "DVD"):
+			missing = []string{"edition", "distributor"}
+		case matchType == "DISC" && strings.EqualFold(req.DiscType, "HDDVD"):
+			missing = []string{"edition", "region", "distributor"}
+		case matchType == "REMUX" && (sourceIn(source, "BluRay", "HDDVD") || sourceIn(source, "PAL DVD", "NTSC DVD", "DVD")):
 			missing = []string{"edition", "description"}
 		case matchType == "ENCODE":
-			name = joinParts(title, altTitle, yearValue, edition, hybrid, repack, resolution, uhd, source, audio, hdr, videoName)
 			missing = []string{"edition", "description"}
-		case matchType == "WEBDL":
-			name = joinParts(title, altTitle, yearValue, edition, hybrid, repack, resolution, uhd, service, "WEB-DL", audio, hdr, videoName)
+		case matchType == "WEBDL", matchType == "WEBRIP":
 			missing = []string{"edition", "service"}
-		case matchType == "WEBRIP":
-			name = joinParts(title, altTitle, yearValue, edition, hybrid, repack, resolution, uhd, service, "WEBRip", audio, hdr, videoName)
-			missing = []string{"edition", "service"}
-		case matchType == "HDTV":
-			name = joinParts(title, altTitle, yearValue, edition, repack, resolution, source, audio, videoName)
-		case matchType == "DVDRIP":
-			name = joinParts(title, altTitle, yearValue, source, videoName, "DVDRip", audio)
 		}
 	case "TV":
 		switch {
-		case matchType == "DISC":
-			switch strings.ToUpper(strings.TrimSpace(req.DiscType)) {
-			case "BDMV":
-				name = joinParts(
-					title,
-					yearValue,
-					altTitle,
-					seasonEpisode,
-					threeD,
-					edition,
-					hybrid,
+		case matchType == "DISC" && strings.EqualFold(req.DiscType, "BDMV"), matchType == "DISC" && strings.EqualFold(req.DiscType, "HDDVD"):
+			missing = []string{"edition", "region", "distributor"}
+		case matchType == "DISC" && strings.EqualFold(req.DiscType, "DVD"):
+			missing = []string{"edition", "distributor"}
+		case matchType == "REMUX" && (sourceIn(source, "BluRay", "HDDVD") || sourceIn(source, "PAL DVD", "NTSC DVD", "DVD")):
+			missing = []string{"edition", "description"}
+		case matchType == "ENCODE":
+			missing = []string{"edition", "description"}
+		case matchType == "WEBDL", matchType == "WEBRIP":
+			missing = []string{"edition", "service"}
+		}
+	}
+
+	document := generatedReleaseNameDocument(
+		category,
+		matchType,
+		strings.ToUpper(strings.TrimSpace(req.DiscType)),
+		title,
+		altTitle,
+		yearValue,
+		season,
+		episode,
+		episodeTitle,
+		dailyDate,
+		part,
+		threeD,
+		edition,
+		hybrid,
+		repack,
+		resolution,
+		region,
+		uhd,
+		source,
+		service,
+		dvdSystem,
+		dvdSourceVisible,
+		dvdSize,
+		hdr,
+		videoCodec,
+		videoEncode,
+		audio,
+		tag,
+		audioMarkers,
+		req.ManualDate,
+		retained,
+	)
+	if document == nil || document.Render().NameNoTag == "" {
+		logger.Tracef(
+			"metadata: release name build skipped (empty base) category=%q type=%q source=%q season=%q episode=%q",
+			category,
+			matchType,
+			source,
+			season,
+			episode,
+		)
+		return api.ReleaseNameResult{MissingFields: missing}
+	}
+	rendered := document.Render()
+	logger.Tracef("metadata: release name built name=%q clean=%q", rendered.Name, rendered.CleanName)
+	return api.ReleaseNameResult{
+		NameNoTag:     rendered.NameNoTag,
+		Name:          rendered.Name,
+		CleanName:     rendered.CleanName,
+		GeneratedName: document,
+		MissingFields: missing,
+	}
+}
+
+func releaseNameVariant(result api.ReleaseNameResult) api.ReleaseNameVariant {
+	return api.ReleaseNameVariant{
+		NameNoTag: result.NameNoTag,
+		Name:      result.Name,
+		CleanName: result.CleanName,
+	}
+}
+
+func generatedReleaseNameDocument(
+	category, releaseType, discType string,
+	title, alternateTitle, year, season, episode, episodeTitle, dailyDate, part, threeD, edition, hybrid, repack,
+	resolution, region, uhd, source, service, dvdSystem string,
+	dvdSourceVisible bool,
+	dvdSize, hdr, videoCodec, videoEncode, audio, tag string,
+	audioMarkers releaseNameAudioMarkers,
+	manualDate bool,
+	retained retainedReleaseNameValues,
+) *api.ReleaseNameDocument {
+	components := make([]api.ReleaseNameComponent, 0, 18)
+	appendComponents := func(values ...releaseNameDocumentValue) {
+		for _, value := range values {
+			components = append(components, api.ReleaseNameComponent{
+				Role:           value.role,
+				Value:          value.value,
+				AvailableValue: value.value,
+				Present:        strings.TrimSpace(value.value) != "",
+				Join:           value.join,
+				AttachTo:       append([]api.ReleaseNameRole(nil), value.attachTo...),
+			})
+		}
+	}
+	space := func(role api.ReleaseNameRole, value string) releaseNameDocumentValue {
+		return releaseNameDocumentValue{
+			role:  role,
+			value: value,
+			join:  " ",
+		}
+	}
+	attached := func(role api.ReleaseNameRole, value string, anchors ...api.ReleaseNameRole) releaseNameDocumentValue {
+		return releaseNameDocumentValue{
+			role:     role,
+			value:    value,
+			join:     " ",
+			attachTo: anchors,
+		}
+	}
+	seasonComponent := space(api.NameRoleSeason, season)
+	episodeComponent := attached(api.NameRoleEpisode, episode, api.NameRoleSeason)
+	dvdSourceComponent := space(api.NameRoleSource, "")
+	if dvdSourceVisible {
+		dvdSourceComponent = space(api.NameRoleSource, source)
+	}
+	videoComponent := func() releaseNameDocumentValue {
+		if videoEncode != "" {
+			return space(api.NameRoleVideoEncode, videoEncode)
+		}
+		return space(api.NameRoleVideoCodec, videoCodec)
+	}
+
+	switch category {
+	case "MOVIE":
+		switch {
+		case releaseType == "DISC" && discType == "BDMV":
+			appendComponents(space(api.NameRoleTitle, title), space(api.NameRoleAlternateTitle, alternateTitle), space(api.NameRoleYear, year),
+				space(api.NameRoleThreeD, threeD), space(api.NameRoleEdition, edition), space(api.NameRoleHybrid, hybrid), space(api.NameRoleRepack, repack),
+				space(api.NameRoleResolution, resolution), space(api.NameRoleRegion, region), space(api.NameRoleUHD, uhd), space(api.NameRoleSource, source),
+				space(api.NameRoleHDR, hdr), space(api.NameRoleVideoCodec, videoCodec), space(api.NameRoleAudio, audio))
+		case releaseType == "DISC" && discType == "DVD":
+			appendComponents(
+				space(api.NameRoleTitle, title),
+				space(api.NameRoleAlternateTitle, alternateTitle),
+				space(api.NameRoleYear, year),
+				space(
+					api.NameRoleRepack,
 					repack,
+				),
+				space(api.NameRoleEdition, edition),
+				space(api.NameRoleRegion, region),
+				space(api.NameRoleDVDSystem, dvdSystem),
+				dvdSourceComponent,
+				space(api.NameRoleDVDSize, dvdSize),
+				space(api.NameRoleAudio, audio),
+			)
+		case releaseType == "DISC" && discType == "HDDVD":
+			appendComponents(
+				space(api.NameRoleTitle, title),
+				space(api.NameRoleAlternateTitle, alternateTitle),
+				space(api.NameRoleYear, year),
+				space(
+					api.NameRoleEdition,
+					edition,
+				),
+				space(api.NameRoleRepack, repack),
+				space(api.NameRoleResolution, resolution),
+				space(api.NameRoleSource, source),
+				space(api.NameRoleVideoCodec, videoCodec),
+				space(api.NameRoleAudio, audio),
+			)
+		case releaseType == "REMUX" && sourceIn(source, "BluRay", "HDDVD"):
+			appendComponents(
+				space(api.NameRoleTitle, title),
+				space(api.NameRoleAlternateTitle, alternateTitle),
+				space(api.NameRoleYear, year),
+				space(api.NameRoleThreeD, threeD),
+				space(api.NameRoleEdition, edition),
+				space(api.NameRoleHybrid, hybrid),
+				space(api.NameRoleRepack, repack),
+				space(
+					api.NameRoleResolution,
 					resolution,
-					region,
+				),
+				space(api.NameRoleUHD, uhd),
+				space(api.NameRoleSource, source),
+				space(api.NameRoleVideoFormat, "REMUX"),
+				space(api.NameRoleHDR, hdr),
+				space(api.NameRoleVideoCodec, videoCodec),
+				space(api.NameRoleAudio, audio),
+			)
+		case releaseType == "REMUX" && sourceIn(source, "PAL DVD", "NTSC DVD", "DVD"):
+			appendComponents(
+				space(api.NameRoleTitle, title),
+				space(api.NameRoleAlternateTitle, alternateTitle),
+				space(api.NameRoleYear, year),
+				space(
+					api.NameRoleEdition,
+					edition,
+				),
+				space(api.NameRoleRepack, repack),
+				space(api.NameRoleSource, source),
+				space(api.NameRoleVideoFormat, "REMUX"),
+				space(api.NameRoleAudio, audio),
+			)
+		case releaseType == "ENCODE":
+			appendComponents(
+				space(api.NameRoleTitle, title),
+				space(api.NameRoleAlternateTitle, alternateTitle),
+				space(api.NameRoleYear, year),
+				space(
+					api.NameRoleEdition,
+					edition,
+				),
+				space(api.NameRoleHybrid, hybrid),
+				space(api.NameRoleRepack, repack),
+				space(api.NameRoleResolution, resolution),
+				space(
+					api.NameRoleUHD,
 					uhd,
-					source,
-					hdr,
-					videoCodec,
-					audio,
-				)
-				missing = []string{"edition", "region", "distributor"}
-			case "DVD":
-				name = joinParts(title, yearValue, altTitle, seasonEpisode+threeD, repack, edition, region, dvdFormat, audio)
-				missing = []string{"edition", "distributor"}
-			case "HDDVD":
-				name = joinParts(title, altTitle, yearValue, edition, repack, resolution, source, videoCodec, audio)
-				missing = []string{"edition", "region", "distributor"}
+				),
+				space(api.NameRoleSource, source),
+				space(api.NameRoleAudio, audio),
+				space(api.NameRoleHDR, hdr),
+				videoComponent(),
+			)
+		case releaseType == "WEBDL", releaseType == "WEBRIP":
+			webFormat := "WEB-DL"
+			if releaseType == "WEBRIP" {
+				webFormat = "WEBRip"
 			}
-		case matchType == "REMUX" && sourceIn(source, "BluRay", "HDDVD"):
-			name = joinParts(
+			appendComponents(
+				space(api.NameRoleTitle, title),
+				space(api.NameRoleAlternateTitle, alternateTitle),
+				space(api.NameRoleYear, year),
+				space(
+					api.NameRoleEdition,
+					edition,
+				),
+				space(api.NameRoleHybrid, hybrid),
+				space(api.NameRoleRepack, repack),
+				space(api.NameRoleResolution, resolution),
+				space(api.NameRoleUHD, uhd),
+				space(api.NameRoleService, service),
+				space(api.NameRoleVideoFormat, webFormat),
+				space(api.NameRoleAudio, audio),
+				space(api.NameRoleHDR, hdr),
+				videoComponent(),
+			)
+		case releaseType == "HDTV":
+			appendComponents(
+				space(api.NameRoleTitle, title),
+				space(api.NameRoleAlternateTitle, alternateTitle),
+				space(api.NameRoleYear, year),
+				space(api.NameRoleEdition, edition),
+				space(
+					api.NameRoleRepack,
+					repack,
+				),
+				space(api.NameRoleResolution, resolution),
+				space(api.NameRoleSource, source),
+				space(api.NameRoleAudio, audio),
+				videoComponent(),
+			)
+		case releaseType == "DVDRIP":
+			appendComponents(
+				space(api.NameRoleTitle, title),
+				space(api.NameRoleAlternateTitle, alternateTitle),
+				space(api.NameRoleYear, year),
+				space(api.NameRoleSource, source),
+				videoComponent(),
+				space(api.NameRoleVideoFormat, "DVDRip"),
+				space(api.NameRoleAudio, audio),
+			)
+		}
+	case "TV":
+		switch {
+		case releaseType == "DISC" && discType == "BDMV":
+			appendComponents(
+				space(api.NameRoleTitle, title),
+				space(api.NameRoleYear, year),
+				space(api.NameRoleAlternateTitle, alternateTitle),
+				seasonComponent,
+				episodeComponent,
+				space(
+					api.NameRoleThreeD,
+					threeD,
+				),
+				space(api.NameRoleEdition, edition),
+				space(api.NameRoleHybrid, hybrid),
+				space(api.NameRoleRepack, repack),
+				space(api.NameRoleResolution, resolution),
+				space(
+					api.NameRoleRegion,
+					region,
+				),
+				space(api.NameRoleUHD, uhd),
+				space(api.NameRoleSource, source),
+				space(api.NameRoleHDR, hdr),
+				space(api.NameRoleVideoCodec, videoCodec),
+				space(api.NameRoleAudio, audio),
+			)
+		case releaseType == "DISC" && discType == "DVD":
+			appendComponents(
+				space(api.NameRoleTitle, title),
+				space(api.NameRoleYear, year),
+				space(api.NameRoleAlternateTitle, alternateTitle),
+				seasonComponent,
+				episodeComponent,
+				attached(api.NameRoleThreeD, threeD, api.NameRoleEpisode, api.NameRoleSeason),
+				space(api.NameRoleRepack, repack),
+				space(api.NameRoleEdition, edition),
+				space(api.NameRoleRegion, region),
+				space(api.NameRoleDVDSystem, dvdSystem),
+				dvdSourceComponent,
+				space(api.NameRoleDVDSize, dvdSize),
+				space(api.NameRoleAudio, audio),
+			)
+		case releaseType == "DISC" && discType == "HDDVD":
+			appendComponents(
+				space(api.NameRoleTitle, title),
+				space(api.NameRoleAlternateTitle, alternateTitle),
+				space(api.NameRoleYear, year),
+				space(api.NameRoleEdition, edition),
+				space(
+					api.NameRoleRepack,
+					repack,
+				),
+				space(api.NameRoleResolution, resolution),
+				space(api.NameRoleSource, source),
+				space(api.NameRoleVideoCodec, videoCodec),
+				space(api.NameRoleAudio, audio),
+			)
+		case releaseType == "REMUX" && sourceIn(source, "BluRay", "HDDVD"):
+			appendTVStandardComponents(
+				appendComponents,
+				space,
 				title,
-				yearValue,
-				altTitle,
-				seasonEpisode,
+				year,
+				alternateTitle,
+				season,
+				episode,
 				episodeTitle,
 				part,
 				threeD,
@@ -247,16 +565,33 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 				videoCodec,
 				audio,
 			)
-			missing = []string{"edition", "description"}
-		case matchType == "REMUX" && sourceIn(source, "PAL DVD", "NTSC DVD", "DVD"):
-			name = joinParts(title, yearValue, altTitle, seasonEpisode, episodeTitle, part, edition, repack, source, "REMUX", audio)
-			missing = []string{"edition", "description"}
-		case matchType == "ENCODE":
-			name = joinParts(
+		case releaseType == "REMUX" && sourceIn(source, "PAL DVD", "NTSC DVD", "DVD"):
+			appendComponents(
+				space(api.NameRoleTitle, title),
+				space(api.NameRoleYear, year),
+				space(api.NameRoleAlternateTitle, alternateTitle),
+				seasonComponent,
+				episodeComponent,
+				space(
+					api.NameRoleEpisodeTitle,
+					episodeTitle,
+				),
+				space(api.NameRolePart, part),
+				space(api.NameRoleEdition, edition),
+				space(api.NameRoleRepack, repack),
+				space(api.NameRoleSource, source),
+				space(api.NameRoleVideoFormat, "REMUX"),
+				space(api.NameRoleAudio, audio),
+			)
+		case releaseType == "ENCODE":
+			appendTVEncodeComponents(
+				appendComponents,
+				space,
 				title,
-				yearValue,
-				altTitle,
-				seasonEpisode,
+				year,
+				alternateTitle,
+				season,
+				episode,
 				episodeTitle,
 				part,
 				edition,
@@ -267,15 +602,21 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 				source,
 				audio,
 				hdr,
-				videoName,
+				videoComponent(),
 			)
-			missing = []string{"edition", "description"}
-		case matchType == "WEBDL":
-			name = joinParts(
+		case releaseType == "WEBDL", releaseType == "WEBRIP":
+			webFormat := "WEB-DL"
+			if releaseType == "WEBRIP" {
+				webFormat = "WEBRip"
+			}
+			appendTVWebComponents(
+				appendComponents,
+				space,
 				title,
-				yearValue,
-				altTitle,
-				seasonEpisode,
+				year,
+				alternateTitle,
+				season,
+				episode,
 				episodeTitle,
 				part,
 				edition,
@@ -284,69 +625,498 @@ func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 				resolution,
 				uhd,
 				service,
-				"WEB-DL",
+				webFormat,
 				audio,
 				hdr,
-				videoName,
+				videoComponent(),
 			)
-			missing = []string{"edition", "service"}
-		case matchType == "WEBRIP":
-			name = joinParts(
-				title,
-				yearValue,
-				altTitle,
-				seasonEpisode,
-				episodeTitle,
-				part,
-				edition,
-				hybrid,
-				repack,
-				resolution,
-				uhd,
-				service,
-				"WEBRip",
-				audio,
-				hdr,
-				videoName,
+		case releaseType == "HDTV":
+			appendComponents(
+				space(api.NameRoleTitle, title),
+				space(api.NameRoleYear, year),
+				space(api.NameRoleAlternateTitle, alternateTitle),
+				seasonComponent,
+				episodeComponent,
+				space(api.NameRoleEpisodeTitle, episodeTitle),
+				space(api.NameRolePart, part),
+				space(api.NameRoleEdition, edition),
+				space(api.NameRoleRepack, repack),
+				space(api.NameRoleResolution, resolution),
+				space(api.NameRoleSource, source),
+				space(api.NameRoleAudio, audio),
+				videoComponent(),
 			)
-			missing = []string{"edition", "service"}
-		case matchType == "HDTV":
-			name = joinParts(title, yearValue, altTitle, seasonEpisode, episodeTitle, part, edition, repack, resolution, source, audio, videoName)
-		case matchType == "DVDRIP":
-			name = joinParts(title, yearValue, altTitle, season, source, "DVDRip", audio, videoName)
+		case releaseType == "DVDRIP":
+			appendComponents(
+				space(api.NameRoleTitle, title),
+				space(api.NameRoleYear, year),
+				space(api.NameRoleAlternateTitle, alternateTitle),
+				seasonComponent,
+				space(api.NameRoleSource, source),
+				space(api.NameRoleVideoFormat, "DVDRip"),
+				space(api.NameRoleAudio, audio),
+				videoComponent(),
+			)
 		}
 	}
-
-	nameNoTag := strings.TrimSpace(name)
-	if nameNoTag == "" {
-		logger.Tracef(
-			"metadata: release name build skipped (empty base) category=%q type=%q source=%q season=%q episode=%q",
-			category,
-			matchType,
-			source,
-			season,
-			episode,
-		)
-		return api.ReleaseNameResult{MissingFields: missing}
+	if len(components) == 0 {
+		return nil
 	}
-	nameWithTag := strings.TrimSpace(nameNoTag + tag)
-	cleanName := cleanFilename(nameWithTag)
+	if manualDate {
+		for index := range components {
+			if components[index].Role == api.NameRoleEpisodeTitle && components[index].Value == dailyDate {
+				components[index].Role = api.NameRoleDailyDate
+				break
+			}
+		}
+	}
+	components = retainUnavailableReleaseNameComponents(components, retained)
+	components = withReleaseNameAudioMarkers(components, audioMarkers)
+	appendComponents(releaseNameDocumentValue{role: api.NameRoleGroup, value: tag})
+	return &api.ReleaseNameDocument{Version: api.ReleaseNameDocumentVersionV1, Components: components}
+}
 
-	logger.Tracef("metadata: release name built name=%q clean=%q", nameWithTag, cleanName)
-	return api.ReleaseNameResult{
-		NameNoTag:     nameNoTag,
-		Name:          nameWithTag,
-		CleanName:     cleanName,
-		MissingFields: missing,
+type releaseNameAudioMarkers struct {
+	Dubbed         bool
+	DualAudio      bool
+	DualAudioFirst bool
+}
+
+func splitReleaseNameAudioMarkers(value string) (string, releaseNameAudioMarkers) {
+	value = strings.TrimSpace(value)
+	markers := releaseNameAudioMarkers{}
+	if after, ok := strings.CutPrefix(value, "Dubbed "); ok {
+		markers.Dubbed = true
+		value = strings.TrimSpace(after)
+	} else if strings.EqualFold(value, "Dubbed") {
+		markers.Dubbed = true
+		value = ""
+	}
+	if after, ok := strings.CutPrefix(value, "Dual-Audio "); ok {
+		markers.DualAudio = true
+		markers.DualAudioFirst = true
+		value = strings.TrimSpace(after)
+	} else if strings.EqualFold(value, "Dual-Audio") {
+		markers.DualAudio = true
+		markers.DualAudioFirst = true
+		value = ""
+	}
+	if before, ok := strings.CutSuffix(value, " Dual-Audio"); ok {
+		markers.DualAudio = true
+		value = strings.TrimSpace(before)
+	}
+	return value, markers
+}
+
+func renderReleaseNameAudioMarkers(value string, markers releaseNameAudioMarkers) string {
+	parts := make([]string, 0, 3)
+	if markers.Dubbed {
+		parts = append(parts, "Dubbed")
+	}
+	if markers.DualAudio && markers.DualAudioFirst {
+		parts = append(parts, "Dual-Audio")
+	}
+	if value = strings.TrimSpace(value); value != "" {
+		parts = append(parts, value)
+	}
+	if markers.DualAudio && !markers.DualAudioFirst {
+		parts = append(parts, "Dual-Audio")
+	}
+	return strings.Join(parts, " ")
+}
+
+func withReleaseNameAudioMarkers(components []api.ReleaseNameComponent, markers releaseNameAudioMarkers) []api.ReleaseNameComponent {
+	for index, component := range components {
+		if component.Role != api.NameRoleAudio {
+			continue
+		}
+		markerJoin := component.Join
+		audioJoin := component.Join
+		before := make([]api.ReleaseNameComponent, 0, 2)
+		after := make([]api.ReleaseNameComponent, 0, 1)
+		if markers.Dubbed {
+			before = append(before, api.ReleaseNameComponent{
+				Role:           api.NameRoleDubbed,
+				Value:          "Dubbed",
+				AvailableValue: "Dubbed",
+				Present:        true,
+				Join:           markerJoin,
+			})
+			audioJoin = " "
+		} else {
+			before = append(before, api.ReleaseNameComponent{Role: api.NameRoleDubbed, Join: markerJoin})
+		}
+		dual := api.ReleaseNameComponent{
+			Role:    api.NameRoleDualAudio,
+			Present: markers.DualAudio,
+			Join:    " ",
+		}
+		if markers.DualAudio {
+			dual.Value = "Dual-Audio"
+			dual.AvailableValue = "Dual-Audio"
+		}
+		if markers.DualAudio && markers.DualAudioFirst {
+			dual.Join = markerJoin
+			before = append(before, dual)
+			audioJoin = " "
+		} else {
+			after = append(after, dual)
+		}
+		component.Join = audioJoin
+		result := make([]api.ReleaseNameComponent, 0, len(components)+2)
+		result = append(result, components[:index]...)
+		result = append(result, before...)
+		result = append(result, component)
+		result = append(result, after...)
+		result = append(result, components[index+1:]...)
+		return result
+	}
+	return components
+}
+
+type releaseNameDocumentValue struct {
+	role     api.ReleaseNameRole
+	value    string
+	join     string
+	attachTo []api.ReleaseNameRole
+}
+
+type retainedReleaseNameValues struct {
+	Title          string
+	AlternateTitle string
+	Year           string
+	Season         string
+	Episode        string
+	DailyDate      string
+	EpisodeTitle   string
+	Edition        string
+	Hybrid         string
+	Repack         string
+	Resolution     string
+	Region         string
+	Source         string
+	UHD            string
+	HDR            string
+	Service        string
+	DVDSystem      string
+	DVDSize        string
+	VideoFormat    string
+	VideoCodec     string
+	VideoEncode    string
+	Audio          string
+	ThreeD         string
+	Part           string
+}
+
+func retainUnavailableReleaseNameComponents(
+	components []api.ReleaseNameComponent,
+	values retainedReleaseNameValues,
+) []api.ReleaseNameComponent {
+	for _, retained := range []releaseNameDocumentValue{
+		{
+			role:  api.NameRoleTitle,
+			value: values.Title,
+			join:  " ",
+		},
+		{
+			role:  api.NameRoleAlternateTitle,
+			value: values.AlternateTitle,
+			join:  " ",
+		},
+		{
+			role:  api.NameRoleYear,
+			value: values.Year,
+			join:  " ",
+		},
+		{
+			role:  api.NameRoleSeason,
+			value: values.Season,
+			join:  " ",
+		},
+		{
+			role:     api.NameRoleEpisode,
+			value:    values.Episode,
+			join:     " ",
+			attachTo: []api.ReleaseNameRole{api.NameRoleSeason},
+		},
+		{
+			role:  api.NameRoleDailyDate,
+			value: values.DailyDate,
+			join:  " ",
+		},
+		{
+			role:  api.NameRoleEpisodeTitle,
+			value: values.EpisodeTitle,
+			join:  " ",
+		},
+		{
+			role:  api.NameRoleEdition,
+			value: values.Edition,
+			join:  " ",
+		},
+		{
+			role:  api.NameRoleHybrid,
+			value: values.Hybrid,
+			join:  " ",
+		},
+		{
+			role:  api.NameRoleRepack,
+			value: values.Repack,
+			join:  " ",
+		},
+		{
+			role:  api.NameRoleResolution,
+			value: values.Resolution,
+			join:  " ",
+		},
+		{
+			role:  api.NameRoleRegion,
+			value: values.Region,
+			join:  " ",
+		},
+		{
+			role:  api.NameRoleSource,
+			value: values.Source,
+			join:  " ",
+		},
+		{
+			role:  api.NameRoleUHD,
+			value: values.UHD,
+			join:  " ",
+		},
+		{
+			role:  api.NameRoleHDR,
+			value: values.HDR,
+			join:  " ",
+		},
+		{
+			role:  api.NameRoleService,
+			value: values.Service,
+			join:  " ",
+		},
+		{
+			role:  api.NameRoleDVDSystem,
+			value: values.DVDSystem,
+			join:  " ",
+		},
+		{
+			role:  api.NameRoleDVDSize,
+			value: values.DVDSize,
+			join:  " ",
+		},
+		{
+			role:  api.NameRoleVideoFormat,
+			value: values.VideoFormat,
+			join:  " ",
+		},
+		{
+			role:  api.NameRoleVideoCodec,
+			value: values.VideoCodec,
+			join:  " ",
+		},
+		{
+			role:  api.NameRoleVideoEncode,
+			value: values.VideoEncode,
+			join:  " ",
+		},
+		{
+			role:  api.NameRoleAudio,
+			value: values.Audio,
+			join:  " ",
+		},
+		{
+			role:  api.NameRoleThreeD,
+			value: values.ThreeD,
+			join:  " ",
+		},
+		{
+			role:  api.NameRolePart,
+			value: values.Part,
+			join:  " ",
+		},
+	} {
+		if strings.TrimSpace(retained.value) == "" {
+			continue
+		}
+		if index := releaseNameComponentSliceIndex(components, retained.role); index >= 0 {
+			if strings.TrimSpace(components[index].Value) == "" {
+				components[index].Value = retained.value
+				components[index].AvailableValue = retained.value
+				components[index].AttachTo = append([]api.ReleaseNameRole(nil), retained.attachTo...)
+			}
+			continue
+		}
+		component := api.ReleaseNameComponent{
+			Role:           retained.role,
+			Value:          retained.value,
+			AvailableValue: retained.value,
+			Join:           retained.join,
+			AttachTo:       append([]api.ReleaseNameRole(nil), retained.attachTo...),
+		}
+		components = insertRetainedReleaseNameComponent(components, component)
+	}
+	return components
+}
+
+func insertRetainedReleaseNameComponent(components []api.ReleaseNameComponent, component api.ReleaseNameComponent) []api.ReleaseNameComponent {
+	return slices.Insert(components, retainedReleaseNameComponentIndex(components, component.Role), component)
+}
+
+func releaseNameComponentSliceIndex(components []api.ReleaseNameComponent, role api.ReleaseNameRole) int {
+	return slices.IndexFunc(components, func(component api.ReleaseNameComponent) bool { return component.Role == role })
+}
+
+func retainedReleaseNameComponentIndex(components []api.ReleaseNameComponent, role api.ReleaseNameRole) int {
+	anchors := retainedReleaseNameAnchors(role)
+	for index, component := range components {
+		if slices.Contains(anchors, component.Role) {
+			return index
+		}
+	}
+	if group := slices.IndexFunc(components, func(component api.ReleaseNameComponent) bool { return component.Role == api.NameRoleGroup }); group >= 0 {
+		return group
+	}
+	return len(components)
+}
+
+func retainedReleaseNameAnchors(role api.ReleaseNameRole) []api.ReleaseNameRole {
+	order := []api.ReleaseNameRole{
+		api.NameRoleSeason, api.NameRoleEpisode, api.NameRoleDailyDate, api.NameRoleEpisodeTitle,
+		api.NameRolePart, api.NameRoleThreeD, api.NameRoleEdition, api.NameRoleHybrid,
+		api.NameRoleRepack, api.NameRoleResolution, api.NameRoleRegion, api.NameRoleSource,
+	}
+	if index := slices.Index(order, role); index >= 0 {
+		return order[index+1:]
+	}
+	return nil
+}
+
+func releaseNameYearValue(year int) string {
+	if year <= 0 {
+		return ""
+	}
+	return strconv.Itoa(year)
+}
+
+func releaseNameVideoFormat(releaseType string) string {
+	switch releaseType {
+	case "DISC":
+		return "DISC"
+	case "REMUX":
+		return "REMUX"
+	case "WEBDL":
+		return "WEB-DL"
+	case "WEBRIP":
+		return "WEBRip"
+	case "DVDRIP":
+		return "DVDRip"
+	default:
+		return ""
 	}
 }
 
-func releaseNameVariant(result api.ReleaseNameResult) api.ReleaseNameVariant {
-	return api.ReleaseNameVariant{
-		NameNoTag: result.NameNoTag,
-		Name:      result.Name,
-		CleanName: result.CleanName,
-	}
+func appendTVStandardComponents(
+	appendComponents func(...releaseNameDocumentValue),
+	space func(api.ReleaseNameRole, string) releaseNameDocumentValue,
+	title, year, alternateTitle, season, episode, episodeTitle, part, threeD, edition, hybrid, repack, resolution, uhd, source, videoFormat, hdr, videoCodec, audio string,
+) {
+	appendComponents(
+		space(api.NameRoleTitle, title),
+		space(api.NameRoleYear, year),
+		space(api.NameRoleAlternateTitle, alternateTitle),
+		space(api.NameRoleSeason, season),
+		releaseNameDocumentValue{
+			role:     api.NameRoleEpisode,
+			value:    episode,
+			join:     " ",
+			attachTo: []api.ReleaseNameRole{api.NameRoleSeason},
+		},
+		space(
+			api.NameRoleEpisodeTitle,
+			episodeTitle,
+		),
+		space(api.NameRolePart, part),
+		space(api.NameRoleThreeD, threeD),
+		space(api.NameRoleEdition, edition),
+		space(api.NameRoleHybrid, hybrid),
+		space(api.NameRoleRepack, repack),
+		space(api.NameRoleResolution, resolution),
+		space(api.NameRoleUHD, uhd),
+		space(api.NameRoleSource, source),
+		space(api.NameRoleVideoFormat, videoFormat),
+		space(api.NameRoleHDR, hdr),
+		space(api.NameRoleVideoCodec, videoCodec),
+		space(api.NameRoleAudio, audio),
+	)
+}
+
+func appendTVEncodeComponents(
+	appendComponents func(...releaseNameDocumentValue),
+	space func(api.ReleaseNameRole, string) releaseNameDocumentValue,
+	title, year, alternateTitle, season, episode, episodeTitle, part, edition, hybrid, repack, resolution, uhd, source, audio, hdr string,
+	video releaseNameDocumentValue,
+) {
+	appendComponents(
+		space(api.NameRoleTitle, title),
+		space(api.NameRoleYear, year),
+		space(api.NameRoleAlternateTitle, alternateTitle),
+		space(api.NameRoleSeason, season),
+		releaseNameDocumentValue{
+			role:     api.NameRoleEpisode,
+			value:    episode,
+			join:     " ",
+			attachTo: []api.ReleaseNameRole{api.NameRoleSeason},
+		},
+		space(
+			api.NameRoleEpisodeTitle,
+			episodeTitle,
+		),
+		space(api.NameRolePart, part),
+		space(api.NameRoleEdition, edition),
+		space(api.NameRoleHybrid, hybrid),
+		space(api.NameRoleRepack, repack),
+		space(api.NameRoleResolution, resolution),
+		space(api.NameRoleUHD, uhd),
+		space(api.NameRoleSource, source),
+		space(api.NameRoleAudio, audio),
+		space(api.NameRoleHDR, hdr),
+		video,
+	)
+}
+
+func appendTVWebComponents(
+	appendComponents func(...releaseNameDocumentValue),
+	space func(api.ReleaseNameRole, string) releaseNameDocumentValue,
+	title, year, alternateTitle, season, episode, episodeTitle, part, edition, hybrid, repack, resolution, uhd, service, webFormat, audio, hdr string,
+	video releaseNameDocumentValue,
+) {
+	appendComponents(
+		space(api.NameRoleTitle, title),
+		space(api.NameRoleYear, year),
+		space(api.NameRoleAlternateTitle, alternateTitle),
+		space(api.NameRoleSeason, season),
+		releaseNameDocumentValue{
+			role:     api.NameRoleEpisode,
+			value:    episode,
+			join:     " ",
+			attachTo: []api.ReleaseNameRole{api.NameRoleSeason},
+		},
+		space(
+			api.NameRoleEpisodeTitle,
+			episodeTitle,
+		),
+		space(api.NameRolePart, part),
+		space(api.NameRoleEdition, edition),
+		space(api.NameRoleHybrid, hybrid),
+		space(api.NameRoleRepack, repack),
+		space(api.NameRoleResolution, resolution),
+		space(api.NameRoleUHD, uhd),
+		space(api.NameRoleService, service),
+		space(api.NameRoleVideoFormat, webFormat),
+		space(api.NameRoleAudio, audio),
+		space(api.NameRoleHDR, hdr),
+		video,
+	)
 }
 
 // releaseNameRequestFromMeta converts prepared metadata into the naming input,
@@ -732,11 +1502,6 @@ func isKnownReleaseSource(source string) bool {
 	return false
 }
 
-func joinParts(parts ...string) string {
-	combined := strings.Join(parts, " ")
-	return strings.Join(strings.Fields(combined), " ")
-}
-
 // normalizeAudioExtraOrder keeps object-audio markers after the channel token
 // even when an override or parsed input supplied the older "Atmos 7.1" order.
 func normalizeAudioExtraOrder(value string) string {
@@ -784,15 +1549,6 @@ func sourceIn(source string, candidates ...string) bool {
 		}
 	}
 	return false
-}
-
-func cleanFilename(name string) string {
-	invalid := "<>:\"/\\|?*"
-	result := name
-	for _, char := range invalid {
-		result = strings.ReplaceAll(result, string(char), "-")
-	}
-	return result
 }
 
 func removeHybrid(edition string) string {

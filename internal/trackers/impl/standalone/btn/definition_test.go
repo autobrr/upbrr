@@ -32,7 +32,7 @@ func TestBTNProfileOwnsPreparationAndPolicies(t *testing.T) {
 	if profile.PrepareUpload == nil || profile.NewDuplicateAdapter == nil {
 		t.Fatal("BTN profile must own upload preparation and duplicate search")
 	}
-	if profile.ReleaseNamePolicy.ID != "standalone/btn/v3" || profile.ValidationPolicy.ID != "standalone-btn-constructibility-v2" {
+	if profile.ReleaseNamePolicy.ID != "standalone/btn/v4" || profile.ValidationPolicy.ID != "standalone-btn-constructibility-v2" {
 		t.Fatalf("unexpected BTN naming/validation policies: %q %q", profile.ReleaseNamePolicy.ID, profile.ValidationPolicy.ID)
 	}
 	if profile.DupePolicy == nil || profile.DupePolicy.ID != "standalone/btn/duplicate/v1" {
@@ -69,27 +69,14 @@ func TestDefinitionProjectReleaseUsesBTNSceneName(t *testing.T) {
 	if projection.CanonicalReleaseName != "Example Show S01E01 Episode Name 1080p AAC 2.0 x264-GRP" {
 		t.Fatalf("canonical name = %q", projection.CanonicalReleaseName)
 	}
-	if projection.UploadReleaseName != "Example.Show.S01E01.Episode.Name.1080p.AAC2.0.x264-GRP" {
+	if projection.UploadReleaseName != "Example Show S01E01 Episode Name 1080p AAC 2.0 x264-GRP" {
 		t.Fatalf("BTN upload name = %q", projection.UploadReleaseName)
 	}
-	if projection.NamingPolicyID != "standalone/btn/v3" {
+	if projection.NamingPolicyID != "standalone/btn/v4" {
 		t.Fatalf("BTN release-name policy = %q", projection.NamingPolicyID)
 	}
 	if projection.DuplicateTarget.ReleaseOrigin != "P2P" {
 		t.Fatalf("BTN duplicate target origin = %q", projection.DuplicateTarget.ReleaseOrigin)
-	}
-}
-
-func TestApplyBTNNameMapping(t *testing.T) {
-	t.Parallel()
-
-	name := "Example.Show.S01E01.1080p.WEB-DL.x265-GRP"
-	mapped := applyBTNNameMapping(name, "H.265", "WEB-DL")
-	if mapped == "" {
-		t.Fatalf("expected mapped name")
-	}
-	if mapped != "Example.Show.S01E01.1080p.WEB-DL.H.265-GRP" {
-		t.Fatalf("unexpected mapped name: %s", mapped)
 	}
 }
 
@@ -130,185 +117,6 @@ func TestBuildBTNUploadPayloadLocksFinalNameAndTaxonomy(t *testing.T) {
 	}
 	if got := payload["resolution"]; got != "1080p" {
 		t.Fatalf("resolution = %q", got)
-	}
-}
-
-func TestCleanAndNormalizeBTNName(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "spaces become dots",
-			input:    "Example Show S01E01 1080p Web-DL DD+ 5.1 x265-GRP",
-			expected: "Example.Show.S01E01.1080p.Web-DL.DDP5.1.x265-GRP",
-		},
-		{
-			name:     "DDP Atmos compacts before generic DDP channel",
-			input:    "Some.Movie.2023.DDP.5.1.Atmos.x264",
-			expected: "Some.Movie.2023.DDPA5.1.x264",
-		},
-		{
-			name:     "duplicate dots collapse after DD channel",
-			input:    "Another.Show..S02E03.DD.2.0.x264",
-			expected: "Another.Show.S02E03.DD2.0.x264",
-		},
-		{
-			name:     "AC3 and DTS channel joins",
-			input:    "Test.AC3.5.1.and.DTS.5.1.Show",
-			expected: "Test.AC35.1.and.DTS5.1.Show",
-		},
-		{
-			name:     "TrueHD Atmos compacts before generic TrueHD channel",
-			input:    "Movie.TrueHD.7.1.Atmos.x264",
-			expected: "Movie.TrueHDA7.1.x264",
-		},
-		{
-			name:     "DDP channel joins",
-			input:    "Movie.DDP.5.1.x264",
-			expected: "Movie.DDP5.1.x264",
-		},
-		{
-			name:     "AAC channel joins",
-			input:    "Movie.AAC.2.0.x264",
-			expected: "Movie.AAC2.0.x264",
-		},
-		{
-			name:     "FLAC channel joins",
-			input:    "Movie.FLAC.2.0.x264",
-			expected: "Movie.FLAC2.0.x264",
-		},
-		{
-			name:     "TrueHD channel joins case-insensitively",
-			input:    "Movie.truehd.7.1.x264",
-			expected: "Movie.TrueHD7.1.x264",
-		},
-		{
-			name:     "PCM channel joins case-insensitively",
-			input:    "Movie.pcm.2.0.x264",
-			expected: "Movie.PCM2.0.x264",
-		},
-		{
-			name:     "LPCM channel joins case-insensitively",
-			input:    "Movie.lpcm.2.0.x264",
-			expected: "Movie.LPCM2.0.x264",
-		},
-		{
-			name:     "non-alphanumeric chars become dots",
-			input:    "Movie:Title[Cut].DDP.5.1-GRP",
-			expected: "Movie.Title.Cut.DDP5.1-GRP",
-		},
-		{
-			name:     "diacritics are removed",
-			input:    "Éxample Shōw S01E01",
-			expected: "Example.Show.S01E01",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := cleanAndNormalizeBTNName(tc.input)
-			if result != tc.expected {
-				t.Errorf("cleanAndNormalizeBTNName(%q) = %q; expected %q", tc.input, result, tc.expected)
-			}
-		})
-	}
-}
-
-func TestResolveUploadNameGroupTag(t *testing.T) {
-	tests := []struct {
-		name     string
-		meta     api.UploadSubject
-		expected string
-	}{
-		{
-			name: "Valid group tag in meta.Tag",
-			meta: api.UploadSubject{
-				ReleaseName: "Example.Show.S01E01.1080p.Web-DL.x265-GRP",
-				Tag:         "GRP",
-			},
-			expected: "Example.Show.S01E01.1080p.Web-DL.x265-GRP",
-		},
-		{
-			name: "Valid group tag appended to ReleaseNameNoTag",
-			meta: api.UploadSubject{
-				ReleaseNameNoTag: "Example.Show.S01E01.1080p.Web-DL",
-				Tag:              "GRP",
-			},
-			expected: "Example.Show.S01E01.1080p.Web-DL-GRP",
-		},
-		{
-			name: "Missing group tag",
-			meta: api.UploadSubject{
-				ReleaseName: "Example.Show.S01E01.1080p.Web-DL.x265",
-				Tag:         "",
-			},
-			expected: "Example.Show.S01E01.1080p.Web-DL.x265-NOGRP",
-		},
-		{
-			name: "Missing parsed tag preserves existing release suffix",
-			meta: api.UploadSubject{
-				ReleaseName: "Example.Show.S01E01.1080p.Web-DL.x265-GRP",
-				Tag:         "",
-			},
-			expected: "Example.Show.S01E01.1080p.Web-DL.x265-GRP",
-		},
-		{
-			name: "Unknown group tag in meta.Tag",
-			meta: api.UploadSubject{
-				ReleaseName: "Example.Show.S01E01.1080p.Web-DL.x265",
-				Tag:         "nogrp",
-			},
-			expected: "Example.Show.S01E01.1080p.Web-DL.x265-NOGRP",
-		},
-		{
-			name: "Existing unknown group tag in ReleaseName",
-			meta: api.UploadSubject{
-				ReleaseName: "Example.Show.S01E01.1080p.Web-DL.x265-unknown",
-				Tag:         "unknown",
-			},
-			expected: "Example.Show.S01E01.1080p.Web-DL.x265-NOGRP",
-		},
-		{
-			name: "Generated single episode title retained when absent from filename",
-			meta: api.UploadSubject{
-				Filename:     "Example.Show.S01E01.1080p.WEB-DL.x265-GRP.mkv",
-				ReleaseName:  "Example.Show.S01E01.Episode.One.1080p.WEB-DL.x265-GRP",
-				EpisodeTitle: "Episode One",
-				Tag:          "GRP",
-			},
-			expected: "Example.Show.S01E01.Episode.One.1080p.WEB-DL.x265-GRP",
-		},
-		{
-			name: "Filename episode title preserved",
-			meta: api.UploadSubject{
-				Filename:     "Example.Show.S01E01.Episode.One.1080p.WEB-DL.x265-GRP.mkv",
-				ReleaseName:  "Example.Show.S01E01.Episode.One.1080p.WEB-DL.x265-GRP",
-				EpisodeTitle: "Episode One",
-				Tag:          "GRP",
-			},
-			expected: "Example.Show.S01E01.Episode.One.1080p.WEB-DL.x265-GRP",
-		},
-		{
-			name: "Episode title substring preserved",
-			meta: api.UploadSubject{
-				Filename:     "Example.Show.S01E01.1080p.WEB-DL.x265-GRP.mkv",
-				ReleaseName:  "Example.Show.S01E01.Someone.1080p.WEB-DL.x265-GRP",
-				EpisodeTitle: "One",
-				Tag:          "GRP",
-			},
-			expected: "Example.Show.S01E01.Someone.1080p.WEB-DL.x265-GRP",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := resolveUploadName(tc.meta)
-			if result != tc.expected {
-				t.Errorf("resolveUploadName() = %q; expected %q", result, tc.expected)
-			}
-		})
 	}
 }
 

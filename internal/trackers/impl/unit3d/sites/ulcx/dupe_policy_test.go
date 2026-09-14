@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -465,11 +464,25 @@ func TestULCXEpisodeTitlesRetainDuplicateAction(t *testing.T) {
 	for _, episodeTitle := range []string{"Final Cut", "HDR", "Example Episode"} {
 		t.Run(episodeTitle, func(t *testing.T) {
 			t.Parallel()
-			meta := ulcxTVNameSubject(api.TVDBNameDisambiguation{CanonicalName: "Example Series", SeriesYear: 2026})
+			meta := ulcxSubject(t, api.ReleaseNameRequest{
+				Category:     "TV",
+				Type:         "REMUX",
+				Title:        "Example Series",
+				AltTitle:     "AKA Example Original",
+				Year:         2026,
+				SearchYear:   "2026",
+				Season:       "S01",
+				Episode:      "E02",
+				EpisodeTitle: "Example Episode",
+				Resolution:   "1080p",
+				Source:       "BluRay",
+				VideoCodec:   "AVC",
+				Tag:          "-GRP",
+			})
 			meta.EpisodeTitle = episodeTitle
 			meta.ReleaseName = strings.Replace(meta.ReleaseName, "Example Episode", episodeTitle, 1)
 			meta.ReleaseName = strings.Replace(meta.ReleaseName, "WEB-DL H.265", "BluRay REMUX AVC", 1)
-			generated := buildName(meta, config.TrackerConfig{})
+			generated := meta.ReleaseName
 			if !strings.Contains(generated, "S01E02 "+episodeTitle+" 1080p") {
 				t.Fatalf("generated name omitted episode title: %q", generated)
 			}

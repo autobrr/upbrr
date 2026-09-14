@@ -439,6 +439,52 @@ func TestRegistryOmitsGeneratedEpisodeTitleForBLU(t *testing.T) {
 		Tracker: "BLU",
 		Meta: api.UploadSubject{
 			ReleaseName: included,
+			GeneratedName: &api.ReleaseNameDocument{
+				Version: api.ReleaseNameDocumentVersionV1,
+				Components: []api.ReleaseNameComponent{
+					{
+						Role:    api.NameRoleTitle,
+						Value:   "Example.Show",
+						Present: true,
+					},
+					{
+						Role:    api.NameRoleSeason,
+						Value:   "S01",
+						Present: true,
+						Join:    ".",
+					},
+					{
+						Role:     api.NameRoleEpisode,
+						Value:    "E02",
+						Present:  true,
+						Join:     ".",
+						AttachTo: []api.ReleaseNameRole{api.NameRoleSeason},
+					},
+					{
+						Role:    api.NameRoleEpisodeTitle,
+						Value:   "Example.Episode",
+						Present: true,
+						Join:    ".",
+					},
+					{
+						Role:    api.NameRoleResolution,
+						Value:   "1080p",
+						Present: true,
+						Join:    ".",
+					},
+					{
+						Role:    api.NameRoleVideoFormat,
+						Value:   "WEB-DL",
+						Present: true,
+						Join:    ".",
+					},
+					{
+						Role:    api.NameRoleGroup,
+						Value:   "-GRP",
+						Present: true,
+					},
+				},
+			},
 			GeneratedReleaseNames: api.GeneratedReleaseNameVariants{
 				IncludeEpisodeTitle: api.ReleaseNameVariant{Name: included},
 				OmitEpisodeTitle:    api.ReleaseNameVariant{Name: omitted},
@@ -610,7 +656,7 @@ func TestNewRegistryMigrationInventoryClassifiesEveryBuiltIn(t *testing.T) {
 		if !ok {
 			t.Fatalf("%s definition missing", name)
 		}
-		if descriptor.ReleaseNamePolicy.Resolver == nil || strings.TrimSpace(descriptor.ReleaseNamePolicy.ID) == "" ||
+		if (descriptor.ReleaseNamePolicy.Resolver == nil && descriptor.ReleaseNamePolicy.Structured == nil) || strings.TrimSpace(descriptor.ReleaseNamePolicy.ID) == "" ||
 			strings.TrimSpace(descriptor.ProjectorVersion) == "" {
 			t.Fatalf("%s versioned release projector missing", name)
 		}

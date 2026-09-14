@@ -9,12 +9,35 @@ import (
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
 	"github.com/autobrr/rls"
+	"github.com/autobrr/rls/taginfo"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/metadata/seasonep"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+var releaseMarkerParser = rls.NewTagParser(taginfo.All(map[string][]*taginfo.Taginfo{
+	"other": {
+		taginfo.Must("FANRES", "FANRES", "fanres", "", "", ""),
+		taginfo.Must("Regraded", "Regraded", "regraded", "", "", ""),
+		taginfo.Must("Incomplete", "Incomplete", "incomplete", "", "", ""),
+		taginfo.Must("UPSCL", "UPSCL", "upscl", "", "", ""),
+		taginfo.Must("UPSUHD", "UPSUHD", "upsuhd", "", "", ""),
+		taginfo.Must("MIC", "MIC", "mic", "", "", ""),
+		taginfo.Must("AI Remaster", "AI Remaster", "ai[\\-\\._ ]remaster(?:ed)?", "", "", ""),
+	},
+}), rls.DefaultLexers()...)
+
+var releaseMarkerOther = map[string]struct{}{
+	"FANRES":      {},
+	"Regraded":    {},
+	"Incomplete":  {},
+	"UPSCL":       {},
+	"UPSUHD":      {},
+	"MIC":         {},
+	"AI Remaster": {},
+}
 
 // ParseReleaseInfo parses the host-path basename into detached release fields.
 // It derives the release format separately from the movie/TV category and fills
@@ -31,6 +54,8 @@ func ParseReleaseInfo(path string) api.ReleaseInfo {
 	}
 
 	release := rls.ParseString(base)
+	other := append([]string{}, release.Other...)
+	other = append(other, parsedReleaseMarkers(base)...)
 	typeValue := parsedReleaseType(base, release.Source, release.Other, release.Codec)
 	sourceValue := parsedReleaseSource(base, release.Source, typeValue)
 	groupValue := parsedReleaseGroup(base, release.Group, release.Site)
@@ -59,6 +84,7 @@ func ParseReleaseInfo(path string) api.ReleaseInfo {
 		Year:       release.Year,
 		Month:      release.Month,
 		Day:        release.Day,
+		Version:    release.Version,
 		Source:     sourceValue,
 		Resolution: release.Resolution,
 		Codec:      append([]string{}, release.Codec...),
@@ -77,8 +103,28 @@ func ParseReleaseInfo(path string) api.ReleaseInfo {
 		Season:     season,
 		Episode:    episode,
 		Edition:    append([]string{}, release.Edition...),
-		Other:      append([]string{}, release.Other...),
+		Other:      other,
 	}
+}
+
+func parsedReleaseMarkers(base string) []string {
+	parsed := releaseMarkerParser.ParseRelease([]byte(base))
+	markers := make([]string, 0)
+	technicalPosition := false
+	for _, tag := range parsed.Tags() {
+		if tag.Is(rls.TagTypeSource, rls.TagTypeResolution) {
+			technicalPosition = true
+			continue
+		}
+		if !tag.Is(rls.TagTypeOther) {
+			continue
+		}
+		marker := tag.Other()
+		if _, ok := releaseMarkerOther[marker]; ok && technicalPosition {
+			markers = append(markers, marker)
+		}
+	}
+	return markers
 }
 
 func parsedReleaseType(base string, source string, other []string, codec []string) string {

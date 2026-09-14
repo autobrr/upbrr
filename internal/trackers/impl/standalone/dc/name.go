@@ -4,34 +4,55 @@
 package dc
 
 import (
+	"fmt"
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func resolveUploadName(meta api.UploadSubject) string {
-	name := metautil.FirstNonEmptyTrimmed(
-		strings.TrimSpace(meta.SceneName),
-		strings.TrimSpace(meta.ReleaseNameClean),
-		strings.TrimSpace(meta.ReleaseName),
-		strings.TrimSpace(meta.Filename),
-	)
-	if name == "" {
-		name = "release"
-	}
-	if meta.Scene && strings.TrimSpace(meta.SceneName) != "" {
-		return strings.TrimSpace(meta.SceneName) + " [UNRAR]"
-	}
-	name = strings.NewReplacer("DD+", "DDP", "DTS:", "DTS-", "HDR10+", "HDR10P").Replace(name)
-	out := strings.Builder{}
-	for _, r := range name {
-		if r > 127 {
+func namePolicy() trackers.ReleaseNamePolicyBinding {
+	return trackers.StructuredReleaseNamePolicy("standalone/dc/v2", trackers.StructuredNamePolicy{
+		Defaults: normalizeDCComponents,
+		ExactName: func(meta api.UploadSubject, _ config.TrackerConfig) string {
+			if meta.Scene && strings.TrimSpace(meta.SceneName) != "" {
+				return strings.TrimSpace(meta.SceneName) + " [UNRAR]"
+			}
+			return ""
+		},
+	})
+}
+
+func normalizeDCComponents(editor *trackers.NameEditor, _ api.UploadSubject, _ config.TrackerConfig) error {
+	for _, role := range editor.PresentRoles() {
+		component, _ := editor.Component(role)
+		value := api.CleanReleaseNameFilename(component.Value)
+		if role == api.NameRoleAudio {
+			value = strings.NewReplacer("DD+", "DDP", "DTS:", "DTS-").Replace(value)
+		}
+		if role == api.NameRoleHDR {
+			value = strings.ReplaceAll(value, "HDR10+", "HDR10P")
+		}
+		value = normalizeDCComponent(value)
+		if value == "" {
+			if err := editor.Omit(role); err != nil {
+				return fmt.Errorf("omit empty DC %s: %w", role, err)
+			}
 			continue
 		}
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == ' ' || r == '.' || r == '-' {
-			out.WriteRune(r)
+		if err := editor.Set(role, value); err != nil {
+			return fmt.Errorf("normalize DC %s: %w", role, err)
 		}
 	}
-	return strings.TrimSpace(out.String())
+	return nil
+}
+
+func normalizeDCComponent(value string) string {
+	return strings.TrimSpace(strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == ' ' || r == '.' || r == '-' {
+			return r
+		}
+		return -1
+	}, value))
 }

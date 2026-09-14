@@ -4,645 +4,595 @@
 package dvl
 
 import (
+	"strings"
 	"testing"
 
-	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/metadata"
+	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestBuildName(t *testing.T) {
+func TestDVLStructuredReleaseNamePolicy(t *testing.T) {
 	t.Parallel()
 
-	profile := Profile().Site
-	if profile.BuildNameVersion != "v1" || profile.BuildName == nil {
-		t.Fatal("DVL requires its v1 name builder")
-	}
 	tests := []struct {
-		name string
-		meta api.UploadSubject
-		want string
+		name      string
+		request   api.ReleaseNameRequest
+		languages []string
+		want      string
 	}{
 		{
-			name: "DVD encode omits edition without changing title",
-			meta: api.UploadSubject{
-				Release: api.ReleaseInfo{
-					Category:   "MOVIE",
-					Title:      "Uncut Shadows",
-					Year:       2001,
-					Resolution: "480p",
-				},
-				Type:        "ENCODE",
+			name: "DVD rip moves resolution format audio and encode without touching title tokens",
+			request: api.ReleaseNameRequest{
+				Category:    "MOVIE",
+				Type:        "DVDRIP",
+				Title:       "DD 2.0 x264 DVDRip Tales",
+				Year:        2001,
+				Resolution:  "480p",
 				Source:      "PAL DVD",
-				VideoEncode: " x264",
+				VideoEncode: "x264",
 				Audio:       "DD 2.0",
+				Tag:         "-GRP",
+			},
+			want: "DD 2.0 x264 DVDRip Tales 2001 480p DVDRip DD 2.0 x264-GRP",
+		},
+		{
+			name: "DVD rip falls back to video codec",
+			request: api.ReleaseNameRequest{
+				Category:   "MOVIE",
+				Type:       "DVDRIP",
+				Title:      "Example Movie",
+				Year:       2001,
+				Resolution: "480p",
+				Source:     "PAL DVD",
+				VideoCodec: "XviD",
+				Audio:      "DD 2.0",
+				Tag:        "-GRP",
+			},
+			want: "Example Movie 2001 480p DVDRip DD 2.0 XviD-GRP",
+		},
+		{
+			name: "DVD rip keeps a dubbed audio prefix with its audio",
+			request: api.ReleaseNameRequest{
+				Category:    "MOVIE",
+				Type:        "DVDRIP",
+				Title:       "Example Movie",
+				Year:        2001,
+				Resolution:  "480p",
+				Source:      "PAL DVD",
+				VideoEncode: "x264",
+				Audio:       "Dubbed DD 2.0",
+				Tag:         "-GRP",
+			},
+			want: "Example Movie 2001 480p DVDRip Dubbed DD 2.0 x264-GRP",
+		},
+		{
+			name: "TV DVD rip keeps a dual audio suffix with its audio",
+			request: api.ReleaseNameRequest{
+				Category:    "TV",
+				Type:        "DVDRIP",
+				Title:       "Example Show",
+				Season:      "S01",
+				Resolution:  "576p",
+				Source:      "PAL DVD",
+				VideoEncode: "x264",
+				Audio:       "DD 2.0 Dual-Audio",
+				Tag:         "-GRP",
+			},
+			want: "Example Show S01 576p DVDRip DD 2.0 Dual-Audio x264-GRP",
+		},
+		{
+			name: "DVD rip keeps a marker only audio cluster before the codec",
+			request: api.ReleaseNameRequest{
+				Category:    "MOVIE",
+				Type:        "DVDRIP",
+				Title:       "Example Movie",
+				Year:        2001,
+				Resolution:  "480p",
+				Source:      "PAL DVD",
+				VideoEncode: "x264",
+				Audio:       "Dubbed",
+				Tag:         "-GRP",
+			},
+			want: "Example Movie 2001 480p DVDRip Dubbed x264-GRP",
+		},
+		{
+			name: "DVD rip without resolution evidence uses its format anchor",
+			request: api.ReleaseNameRequest{
+				Category:    "MOVIE",
+				Type:        "DVDRIP",
+				Title:       "Example Movie",
+				Year:        2001,
+				Source:      "PAL DVD",
+				VideoEncode: "x264",
+				Audio:       "DD 2.0",
+				Tag:         "-GRP",
+			},
+			languages: []string{"Japanese"},
+			want:      "Example Movie 2001 JAPANESE DVDRip DD 2.0 x264-GRP",
+		},
+		{
+			name: "DVD encode becomes DVD rip and omits edition and repack",
+			request: api.ReleaseNameRequest{
+				Category:    "MOVIE",
+				Type:        "ENCODE",
+				Title:       "Uncut Shadows",
+				Year:        2001,
+				Resolution:  "480p",
+				Source:      "PAL DVD",
 				Edition:     "Uncut",
 				Repack:      "REPACK",
+				VideoEncode: "x264",
+				Audio:       "DD 2.0",
 				Tag:         "-GRP",
 			},
 			want: "Uncut Shadows 2001 480p DVDRip DD 2.0 x264-GRP",
 		},
 		{
-			name: "DVDRip preserves edition title with DVD encode parity",
-			meta: api.UploadSubject{
-				Release: api.ReleaseInfo{
-					Category:   "MOVIE",
-					Title:      "Uncut Shadows",
-					Year:       2001,
-					Resolution: "480p",
-				},
-				Type:        "DVDRIP",
-				Source:      "PAL DVD",
-				VideoEncode: " x264",
-				Audio:       "DD 2.0",
+			name: "DVD encode without resolution keeps canonical source and edition",
+			request: api.ReleaseNameRequest{
+				Category:    "MOVIE",
+				Type:        "ENCODE",
+				Title:       "Example Movie",
+				Year:        2001,
+				Source:      "DVD",
 				Edition:     "Uncut",
-				Repack:      "REPACK",
-				Tag:         "-GRP",
-			},
-			want: "Uncut Shadows 2001 480p DVDRip DD 2.0 x264-GRP",
-		},
-		{
-			name: "DVDRip preserves repack title and edition alternate title",
-			meta: api.UploadSubject{
-				Release: api.ReleaseInfo{
-					Category:   "MOVIE",
-					Title:      "REPACK Shadows",
-					Year:       2001,
-					Resolution: "480p",
-				},
-				AlternateTitle: "AKA Uncut Nights",
-				Type:           "DVDRIP",
-				Source:         "PAL DVD",
-				VideoEncode:    "x264",
-				Audio:          "DD 2.0",
-				Edition:        "Uncut",
-				Repack:         "REPACK",
-				Tag:            "-GRP",
-			},
-			want: "REPACK Shadows AKA Uncut Nights 2001 480p DVDRip DD 2.0 x264-GRP",
-		},
-		{
-			name: "TV DVDRip keeps codec after audio",
-			meta: api.UploadSubject{
-				Release: api.ReleaseInfo{
-					Category:   "TV",
-					Title:      "Example Show",
-					Resolution: "576p",
-				},
-				SeasonStr:   "S01",
-				Type:        "DVDRIP",
-				Source:      "PAL DVD",
 				VideoEncode: "x264",
 				Audio:       "DD 2.0",
 				Tag:         "-GRP",
 			},
-			want: "Example Show S01 576p DVDRip DD 2.0 x264-GRP",
+			want: "Example Movie 2001 Uncut DVD DD 2.0 x264-GRP",
 		},
 		{
-			name: "DVDRip override keeps codec after audio",
-			meta: api.UploadSubject{
-				ReleaseName: "Example Show S01 576p DVDRip DD 2.0 x264-GRP",
-				Release:     api.ReleaseInfo{Resolution: "576p"},
-				Type:        "DVDRIP",
-				Source:      "PAL DVD",
-				VideoEncode: "x264",
-				Audio:       "DD 2.0",
-			},
-			want: "Example Show S01 576p DVDRip DD 2.0 x264-GRP",
-		},
-		{
-			name: "DVDRip typed as a DVD encode omits repack",
-			meta: api.UploadSubject{
-				Release: api.ReleaseInfo{
-					Category:   "MOVIE",
-					Title:      "REPACK3 Shadows",
-					Year:       1994,
-					Resolution: "480p",
-				},
-				Type:        "ENCODE",
-				Source:      "DVD",
-				VideoEncode: "x264",
-				Audio:       "DD 5.1",
-				Repack:      "REPACK3",
-				Tag:         "-GRP",
-			},
-			want: "REPACK3 Shadows 1994 480p DVDRip DD 5.1 x264-GRP",
-		},
-		{
-			name: "DVDRip typed as a DVD encode",
-			meta: api.UploadSubject{
-				Release: api.ReleaseInfo{
-					Category:   "MOVIE",
-					Title:      "Example Movie",
-					Year:       2001,
-					Resolution: "480p",
-				},
-				Type:        "ENCODE",
-				Source:      "DVD",
-				VideoEncode: "x264",
-				Audio:       "DD 2.0",
-				Tag:         "-GRP",
-			},
-			want: "Example Movie 2001 480p DVDRip DD 2.0 x264-GRP",
-		},
-		{
-			name: "German DVDRip typed as a DVD encode",
-			meta: api.UploadSubject{
-				Release: api.ReleaseInfo{
-					Category:   "TV",
-					Title:      "Example Show",
-					Resolution: "480p",
-				},
-				SeasonStr:      "S04",
-				EpisodeStr:     "E03",
-				EpisodeTitle:   "Title",
-				Type:           "ENCODE",
-				Source:         "NTSC DVD",
-				VideoEncode:    "x264",
-				Audio:          "DD 2.0",
-				AudioLanguages: []string{"German"},
-				Tag:            "-GRP",
-			},
-			want: "Example Show S04E03 Title GERMAN 480p DVDRip DD 2.0 x264-GRP",
-		},
-		{
-			name: "DVDRip title containing the source word",
-			meta: api.UploadSubject{
-				ReleaseName: "PAL DVD Massacre 2001 PAL DVD x264 DVDRip DD 2.0-GRP",
-				Release:     api.ReleaseInfo{Year: 2001, Resolution: "480p"},
-				Type:        "DVDRIP",
-				Source:      "PAL DVD",
-				VideoEncode: " x264",
-				Audio:       "DD 2.0",
-			},
-			want: "PAL DVD Massacre 2001 480p DVDRip DD 2.0 x264-GRP",
-		},
-		{
-			name: "DVDRip title containing the encode value",
-			meta: api.UploadSubject{
-				ReleaseName: "x264 and x264 Tales 2001 PAL DVD x264 DVDRip DD 2.0-GRP",
-				Release: api.ReleaseInfo{
-					Year:       2001,
-					Resolution: "480p",
-				},
-				Type:        "DVDRIP",
-				Source:      "PAL DVD",
-				VideoEncode: "x264",
-				Audio:       "DD 2.0",
-			},
-			want: "x264 and x264 Tales 2001 480p DVDRip DD 2.0 x264-GRP",
-		},
-		{
-			name: "DVDRip title containing the audio value",
-			meta: api.UploadSubject{
-				ReleaseName: "DD 2.0 Tales 2001 PAL DVD x264 DVDRip DD 2.0-GRP",
-				Release: api.ReleaseInfo{
-					Year:       2001,
-					Resolution: "480p",
-				},
-				Type:        "DVDRIP",
-				Source:      "PAL DVD",
-				VideoEncode: "x264",
-				Audio:       "DD 2.0",
-			},
-			want: "DD 2.0 Tales 2001 480p DVDRip DD 2.0 x264-GRP",
-		},
-		{
-			name: "DVDRip title containing both encode and audio values",
-			meta: api.UploadSubject{
-				ReleaseName: "Example x264 and DD 2.0 Tales 2001 PAL DVD x264 DVDRip DD 2.0-GRP",
-				Release: api.ReleaseInfo{
-					Year:       2001,
-					Resolution: "480p",
-				},
-				Type:        "DVDRIP",
-				Source:      "PAL DVD",
-				VideoEncode: "x264",
-				Audio:       "DD 2.0",
-			},
-			want: "Example x264 and DD 2.0 Tales 2001 480p DVDRip DD 2.0 x264-GRP",
-		},
-		{
-			name: "DVDRip title containing the encode and DVDRip sequence",
-			meta: api.UploadSubject{
-				ReleaseName: "Example x264 DVDRip Tales 2001 PAL DVD x264 DVDRip DD 2.0-GRP",
-				Release: api.ReleaseInfo{
-					Year:       2001,
-					Resolution: "480p",
-				},
-				Type:        "DVDRIP",
-				Source:      "PAL DVD",
-				VideoEncode: "x264",
-				Audio:       "DD 2.0",
-			},
-			want: "Example x264 DVDRip Tales 2001 480p DVDRip DD 2.0 x264-GRP",
-		},
-		{
-			name: "DVD encode title containing resolution and source",
-			meta: api.UploadSubject{
-				Release: api.ReleaseInfo{
-					Category:   "MOVIE",
-					Title:      "480p DVD Tales",
-					Year:       2001,
-					Resolution: "480p",
-				},
-				Type:        "ENCODE",
-				Source:      "DVD",
-				VideoEncode: "x264",
-				Audio:       "DD 2.0",
-				Tag:         "-GRP",
-			},
-			want: "480p DVD Tales 2001 480p DVDRip DD 2.0 x264-GRP",
-		},
-		{
-			name: "BluRay encode title containing DVD resolution and source",
-			meta: api.UploadSubject{
-				Release: api.ReleaseInfo{
-					Category:   "MOVIE",
-					Title:      "480p DVD Tales",
-					Year:       2001,
-					Resolution: "480p",
-				},
-				Type:        "ENCODE",
-				Source:      "BluRay",
-				VideoEncode: "x264",
-				Audio:       "DD 2.0",
-				Tag:         "-GRP",
-			},
-			want: "480p DVD Tales 2001 480p BluRay DD 2.0 x264-GRP",
-		},
-		{
-			name: "DVD full disc with a DVD-suffixed source",
-			meta: api.UploadSubject{
-				ReleaseName: "Example Movie 2001 R1 NTSC DVD9 DD 5.1-GRP",
-				Release: api.ReleaseInfo{
-					Year:       2001,
-					Resolution: "480p",
-					Size:       "DVD9",
-				},
+			name: "DVD disc derives PAL using the DVD system role",
+			request: api.ReleaseNameRequest{
+				Category:   "MOVIE",
 				Type:       "DISC",
 				DiscType:   "DVD",
-				Source:     "NTSC DVD",
-				Region:     "R1",
-				VideoCodec: "MPEG-2",
-				Audio:      "DD 5.1",
-			},
-			want: "Example Movie 2001 R1 NTSC DVD9 DD 5.1-GRP",
-		},
-		{
-			name: "DVD full disc without region or system",
-			meta: api.UploadSubject{
-				ReleaseName: "Example Movie 2001 DVD9 DD 5.1-GRP",
-				Release: api.ReleaseInfo{
-					Year:       2001,
-					Resolution: "576p",
-					Size:       "DVD9",
-				},
-				Type:           "DISC",
-				DiscType:       "DVD",
-				Source:         "DVD",
-				VideoCodec:     "MPEG-2",
-				Audio:          "DD 5.1",
-				AudioLanguages: []string{"Japanese"},
-			},
-			want: "Example Movie 2001 JAPANESE PAL DVD9 DD 5.1-GRP",
-		},
-		{
-			name: "DVD full disc derives PAL from resolution",
-			meta: api.UploadSubject{
-				ReleaseName: "Example Movie 1997 DVD5 DD 5.1-GRP",
-				Release: api.ReleaseInfo{
-					Year:       1997,
-					Resolution: "576p",
-					Size:       "DVD5",
-				},
-				Type:       "DISC",
-				DiscType:   "DVD",
+				Title:      "Example Movie",
+				Year:       1997,
+				Resolution: "576p",
 				Source:     "DVD",
-				VideoCodec: "MPEG-2",
+				DVDSize:    "DVD5",
 				Audio:      "DD 5.1",
+				Tag:        "-GRP",
 			},
 			want: "Example Movie 1997 PAL DVD5 DD 5.1-GRP",
 		},
 		{
-			name: "Hi10P DVDRip",
-			meta: api.UploadSubject{
-				ReleaseName: "Example Movie 2001 PAL DVD Hi10P x264 DVDRip DD 2.0-GRP",
-				Release:     api.ReleaseInfo{Year: 2001, Resolution: "480p"},
-				Type:        "DVDRIP",
-				Source:      "PAL DVD",
-				VideoEncode: "Hi10P x264",
-				Audio:       "DD 2.0",
-			},
-			want: "Example Movie 2001 480p DVDRip DD 2.0 Hi10P x264-GRP",
-		},
-		{
-			name: "DVD disc",
-			meta: api.UploadSubject{
-				ReleaseName: "Example Movie 2001 R1 NTSC DVD9 DD 5.1-GRP",
-				Release: api.ReleaseInfo{
-					Year:       2001,
-					Resolution: "480p",
-					Size:       "DVD9",
-				},
-				Type:       "DISC",
-				DiscType:   "DVD",
-				Source:     "NTSC",
-				Region:     "R1",
+			name: "DVD remux derives NTSC and puts foreign language after year",
+			request: api.ReleaseNameRequest{
+				Category:   "MOVIE",
+				Type:       "REMUX",
+				Title:      "Example Movie",
+				Year:       2001,
+				Resolution: "480i",
+				Source:     "DVD",
 				VideoCodec: "MPEG-2",
 				Audio:      "DD 5.1",
+				Tag:        "-GRP",
 			},
-			want: "Example Movie 2001 R1 NTSC DVD9 DD 5.1-GRP",
+			languages: []string{"Japanese"},
+			want:      "Example Movie 2001 JAPANESE NTSC DVD REMUX DD 5.1-GRP",
 		},
 		{
-			name: "bare DVD remux PAL",
-			meta: api.UploadSubject{
-				ReleaseName: "Example Movie 2001 DVD REMUX DD 5.1-GRP",
-				Release:     api.ReleaseInfo{Year: 2001, Resolution: "576p"},
-				Type:        "REMUX",
-				Source:      "DVD",
-				VideoCodec:  "MPEG-2",
+			name: "DVD remux puts foreign language before edition after year",
+			request: api.ReleaseNameRequest{
+				Category:   "MOVIE",
+				Type:       "REMUX",
+				Title:      "Example Movie",
+				Year:       2001,
+				Resolution: "480i",
+				Source:     "DVD",
+				Edition:    "Director Cut",
+				Audio:      "DD 5.1",
+				Tag:        "-GRP",
+			},
+			languages: []string{"Japanese"},
+			want:      "Example Movie 2001 JAPANESE Director Cut NTSC DVD REMUX DD 5.1-GRP",
+		},
+		{
+			name: "TV DVD remux puts foreign language before season",
+			request: api.ReleaseNameRequest{
+				Category:   "TV",
+				Type:       "REMUX",
+				Title:      "Example Show",
+				Year:       2024,
+				AltTitle:   "AKA Alt Show",
+				Season:     "S01",
+				Resolution: "576p",
+				Source:     "PAL DVD",
+				VideoCodec: "MPEG-2",
+				Audio:      "DD 2.0",
+				SearchYear: "2024",
+				Tag:        "-GRP",
+			},
+			languages: []string{"Japanese"},
+			want:      "Example Show AKA Alt Show 2024 JAPANESE S01 PAL DVD REMUX DD 2.0-GRP",
+		},
+		{
+			name: "foreign language is a separate marker even when title has matching text",
+			request: api.ReleaseNameRequest{
+				Category:    "MOVIE",
+				Type:        "ENCODE",
+				Title:       "Uncut JAPANESE 480p DVD Tales",
+				Year:        2001,
+				Resolution:  "480p",
+				Source:      "BluRay",
+				VideoEncode: "x264",
 				Audio:       "DD 5.1",
+				Tag:         "-GRP",
 			},
-			want: "Example Movie 2001 PAL DVD REMUX DD 5.1-GRP",
+			languages: []string{"Japanese"},
+			want:      "Uncut JAPANESE 480p DVD Tales 2001 JAPANESE 480p BluRay DD 5.1 x264-GRP",
 		},
 		{
-			name: "bare DVD remux NTSC",
-			meta: api.UploadSubject{
-				ReleaseName: "Example Movie 2001 DVD REMUX DD 5.1-GRP",
-				Release:     api.ReleaseInfo{Year: 2001, Resolution: "480i"},
-				Type:        "REMUX",
-				Source:      "DVD",
-				VideoCodec:  "MPEG-2",
+			name: "English audio leaves a non disc name unchanged",
+			request: api.ReleaseNameRequest{
+				Category:    "MOVIE",
+				Type:        "ENCODE",
+				Title:       "Example Movie",
+				Year:        2001,
+				Resolution:  "1080p",
+				Source:      "BluRay",
+				VideoEncode: "x264",
 				Audio:       "DD 5.1",
+				Tag:         "-GRP",
 			},
-			want: "Example Movie 2001 NTSC DVD REMUX DD 5.1-GRP",
+			languages: []string{"Japanese", "English"},
+			want:      "Example Movie 2001 1080p BluRay DD 5.1 x264-GRP",
 		},
 		{
-			name: "foreign audio before encode resolution",
-			meta: api.UploadSubject{
-				ReleaseName:    "Example Movie 2001 1080p BluRay DD 5.1 x264-GRP",
-				Release:        api.ReleaseInfo{Year: 2001, Resolution: "1080p"},
-				Type:           "ENCODE",
-				Source:         "BluRay",
-				AudioLanguages: []string{"Japanese"},
+			name: "BDMV omits foreign language marker",
+			request: api.ReleaseNameRequest{
+				Category:   "MOVIE",
+				Type:       "DISC",
+				DiscType:   "BDMV",
+				Title:      "Example Movie",
+				Year:       2001,
+				Resolution: "1080p",
+				Source:     "BluRay",
+				VideoCodec: "AVC",
+				Audio:      "DD 5.1",
+				Tag:        "-GRP",
 			},
-			want: "Example Movie 2001 JAPANESE 1080p BluRay DD 5.1 x264-GRP",
+			languages: []string{"Japanese"},
+			want:      "Example Movie 2001 1080p BluRay AVC DD 5.1-GRP",
 		},
 		{
-			name: "non-linguistic DVDRip audio omits marker",
-			meta: api.UploadSubject{
-				Release: api.ReleaseInfo{
-					Category:   "MOVIE",
-					Title:      "Example Movie",
-					Year:       1984,
-					Resolution: "480p",
-				},
-				Type:           "ENCODE",
-				Source:         "DVD",
-				VideoEncode:    "x264",
-				Audio:          "DD 2.0",
-				AudioLanguages: []string{"zxx"},
-				Tag:            "-GRP",
+			name: "first linguistic language marker skips non linguistic values",
+			request: api.ReleaseNameRequest{
+				Category:    "MOVIE",
+				Type:        "ENCODE",
+				Title:       "Example Movie",
+				Year:        2001,
+				Resolution:  "1080p",
+				Source:      "BluRay",
+				VideoEncode: "x264",
+				Audio:       "DD 5.1",
+				Tag:         "-GRP",
 			},
-			want: "Example Movie 1984 480p DVDRip DD 2.0 x264-GRP",
+			languages: []string{"zxx", "no linguistic content", "und", "undetermined", "Norwegian Nynorsk"},
+			want:      "Example Movie 2001 NORWEGIAN NYNORSK 1080p BluRay DD 5.1 x264-GRP",
 		},
 		{
-			name: "first linguistic audio supplies Norwegian Nynorsk marker",
-			meta: api.UploadSubject{
-				ReleaseName:    "Example Movie 2001 1080p BluRay DD 5.1 x264-GRP",
-				Release:        api.ReleaseInfo{Year: 2001, Resolution: "1080p"},
-				Type:           "ENCODE",
-				Source:         "BluRay",
-				AudioLanguages: []string{"zxx", "no linguistic content", "und", "undetermined", "Norwegian Nynorsk"},
+			name: "all non linguistic audio values omit the marker",
+			request: api.ReleaseNameRequest{
+				Category:    "MOVIE",
+				Type:        "ENCODE",
+				Title:       "Example Movie",
+				Year:        2001,
+				Resolution:  "1080p",
+				Source:      "BluRay",
+				VideoEncode: "x264",
+				Audio:       "DD 5.1",
+				Tag:         "-GRP",
 			},
-			want: "Example Movie 2001 NORWEGIAN NYNORSK 1080p BluRay DD 5.1 x264-GRP",
+			languages: []string{"zxx", "no linguistic content", "und", "undetermined"},
+			want:      "Example Movie 2001 1080p BluRay DD 5.1 x264-GRP",
 		},
 		{
-			name: "BDMV omits foreign audio marker",
-			meta: api.UploadSubject{
-				ReleaseName:    "Example Movie 2001 1080p BluRay AVC DD 5.1-GRP",
-				Release:        api.ReleaseInfo{Year: 2001, Resolution: "1080p"},
-				Type:           "DISC",
-				DiscType:       "BDMV",
-				Source:         "BluRay",
-				AudioLanguages: []string{"Japanese"},
+			name: "yearless DVD remux places foreign language before source",
+			request: api.ReleaseNameRequest{
+				Category:   "MOVIE",
+				Type:       "REMUX",
+				Title:      "Example Movie",
+				Resolution: "576p",
+				Source:     "PAL DVD",
+				Audio:      "DD 2.0",
+				Tag:        "-GRP",
 			},
-			want: "Example Movie 2001 1080p BluRay AVC DD 5.1-GRP",
+			languages: []string{"Japanese"},
+			want:      "Example Movie JAPANESE PAL DVD REMUX DD 2.0-GRP",
 		},
 		{
-			name: "English audio leaves name unchanged",
-			meta: api.UploadSubject{
-				ReleaseName:    "Example Movie 2001 1080p BluRay DD 5.1 x264-GRP",
-				Release:        api.ReleaseInfo{Year: 2001, Resolution: "1080p"},
-				Type:           "ENCODE",
-				Source:         "BluRay",
-				AudioLanguages: []string{"Japanese", "English"},
+			name: "DVD disc places foreign language before region and system",
+			request: api.ReleaseNameRequest{
+				Category:   "MOVIE",
+				Type:       "DISC",
+				DiscType:   "DVD",
+				Title:      "Example Movie",
+				Year:       1977,
+				Resolution: "480p",
+				Source:     "DVD",
+				Region:     "USA",
+				DVDSize:    "DVD9",
+				Audio:      "LPCM 2.0",
 			},
-			want: "Example Movie 2001 1080p BluRay DD 5.1 x264-GRP",
+			languages: []string{"Japanese"},
+			want:      "Example Movie 1977 JAPANESE USA NTSC DVD9 LPCM 2.0",
 		},
 		{
-			name: "foreign audio DVDRip",
-			meta: api.UploadSubject{
-				ReleaseName:    "Example Movie 1999 NTSC DVD x264 DVDRip DD 2.0-GRP",
-				Release:        api.ReleaseInfo{Year: 1999, Resolution: "480p"},
-				Type:           "DVDRIP",
-				Source:         "NTSC DVD",
-				VideoEncode:    " x264",
-				Audio:          "DD 2.0",
-				AudioLanguages: []string{"Japanese"},
+			name: "DVD disc places foreign language before visible PAL system and source",
+			request: api.ReleaseNameRequest{
+				Category:   "MOVIE",
+				Type:       "DISC",
+				DiscType:   "DVD",
+				Title:      "Example Movie",
+				Year:       1977,
+				Resolution: "576p",
+				Source:     "PAL DVD",
+				Audio:      "LPCM 2.0",
+				Tag:        "-GRP",
 			},
-			want: "Example Movie 1999 JAPANESE 480p DVDRip DD 2.0 x264-GRP",
+			languages: []string{"Japanese"},
+			want:      "Example Movie 1977 JAPANESE PAL DVD LPCM 2.0-GRP",
 		},
 		{
-			name: "foreign audio DVD full disc",
-			meta: api.UploadSubject{
-				ReleaseName: "Example Movie 1977 USA NTSC DVD9 LPCM 2.0",
-				Release: api.ReleaseInfo{
-					Year:       1977,
-					Resolution: "480p",
-					Size:       "DVD9",
-				},
-				Type:           "DISC",
-				DiscType:       "DVD",
-				Source:         "NTSC",
-				Region:         "USA",
-				VideoCodec:     "MPEG-2",
-				Audio:          "LPCM 2.0",
-				AudioLanguages: []string{"Japanese"},
+			name: "DVD disc places foreign language before visible NTSC system and source",
+			request: api.ReleaseNameRequest{
+				Category:   "MOVIE",
+				Type:       "DISC",
+				DiscType:   "DVD",
+				Title:      "Example Movie",
+				Year:       1977,
+				Resolution: "480p",
+				Source:     "NTSC DVD",
+				Audio:      "LPCM 2.0",
+				Tag:        "-GRP",
 			},
-			want: "Example Movie 1977 JAPANESE USA NTSC DVD9 LPCM 2.0",
+			languages: []string{"Japanese"},
+			want:      "Example Movie 1977 JAPANESE NTSC DVD LPCM 2.0-GRP",
 		},
 		{
-			name: "foreign audio after year for DVD remux",
-			meta: api.UploadSubject{
-				ReleaseName:    "Example Movie 2001 PAL DVD REMUX DD 5.1-GRP",
-				Release:        api.ReleaseInfo{Year: 2001, Resolution: "576p"},
-				Type:           "REMUX",
-				Source:         "PAL DVD",
-				VideoCodec:     "MPEG-2",
-				Audio:          "DD 5.1",
-				AudioLanguages: []string{"Japanese"},
+			name: "TV DVD encode retains episode attachment while becoming a rip",
+			request: api.ReleaseNameRequest{
+				Category:     "TV",
+				Type:         "ENCODE",
+				Title:        "Example Show",
+				Season:       "S04",
+				Episode:      "E03",
+				EpisodeTitle: "Title",
+				Resolution:   "480p",
+				Source:       "NTSC DVD",
+				VideoEncode:  "x264",
+				Audio:        "DD 2.0",
+				Tag:          "-GRP",
 			},
-			want: "Example Movie 2001 JAPANESE PAL DVD REMUX DD 5.1-GRP",
+			languages: []string{"German"},
+			want:      "Example Show S04E03 Title GERMAN 480p DVDRip DD 2.0 x264-GRP",
 		},
 		{
-			name: "DVD remux marker follows last year token",
-			meta: api.UploadSubject{
-				ReleaseName:    "Example Movie 2001 2001 PAL DVD REMUX DD 5.1-GRP",
-				Release:        api.ReleaseInfo{Year: 2001, Resolution: "576p"},
-				Type:           "REMUX",
-				Source:         "PAL DVD",
-				VideoCodec:     "MPEG-2",
-				Audio:          "DD 5.1",
-				AudioLanguages: []string{"Japanese"},
+			name: "DVD encode preserves repack text in the title while omitting repack component",
+			request: api.ReleaseNameRequest{
+				Category:    "MOVIE",
+				Type:        "ENCODE",
+				Title:       "REPACK3 Shadows",
+				Year:        1994,
+				Resolution:  "480p",
+				Source:      "DVD",
+				Repack:      "REPACK3",
+				VideoEncode: "x264",
+				Audio:       "DD 5.1",
+				Tag:         "-GRP",
 			},
-			want: "Example Movie 2001 2001 JAPANESE PAL DVD REMUX DD 5.1-GRP",
-		},
-		{
-			name: "DVL override name stays unchanged",
-			meta: api.UploadSubject{
-				ReleaseName:    "Example Movie 2001 JAPANESE PAL DVD REMUX DD 5.1-GRP",
-				Release:        api.ReleaseInfo{Year: 2001, Resolution: "576p"},
-				Type:           "REMUX",
-				Source:         "DVD",
-				VideoCodec:     "MPEG-2",
-				Audio:          "DD 5.1",
-				AudioLanguages: []string{"Japanese"},
-			},
-			want: "Example Movie 2001 JAPANESE PAL DVD REMUX DD 5.1-GRP",
-		},
-		{
-			name: "foreign audio before source for yearless DVD remux",
-			meta: api.UploadSubject{
-				ReleaseName:      "Example Movie PAL DVD REMUX DD 2.0-GRP",
-				Release:          api.ReleaseInfo{Year: 2001, Resolution: "576p"},
-				NamePresentation: api.ReleaseNamePresentation{OmitYear: true},
-				Type:             "REMUX",
-				Source:           "PAL DVD",
-				VideoCodec:       "MPEG-2",
-				Audio:            "DD 2.0",
-				AudioLanguages:   []string{"Japanese"},
-			},
-			want: "Example Movie JAPANESE PAL DVD REMUX DD 2.0-GRP",
-		},
-		{
-			name: "TV AKA before year with foreign audio",
-			meta: api.UploadSubject{
-				ReleaseName:    "Example Show 2024 AKA Alt Show S01 PAL DVD REMUX DD 2.0-GRP",
-				Release:        api.ReleaseInfo{Year: 2024, Resolution: "576p"},
-				Identity:       api.ExternalIdentity{Category: api.CanonicalCategoryTV},
-				AlternateTitle: "AKA Alt Show",
-				Type:           "REMUX",
-				Source:         "PAL DVD",
-				VideoCodec:     "MPEG-2",
-				Audio:          "DD 2.0",
-				AudioLanguages: []string{"Japanese"},
-			},
-			want: "Example Show AKA Alt Show 2024 JAPANESE S01 PAL DVD REMUX DD 2.0-GRP",
+			want: "REPACK3 Shadows 1994 480p DVDRip DD 5.1 x264-GRP",
 		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			if tt.meta.ReleaseName == "" {
-				tt.meta.ReleaseName = metadata.BuildReleaseName(api.ReleaseNameRequest{
-					Category:     tt.meta.Release.Category,
-					Type:         tt.meta.Type,
-					Title:        tt.meta.Release.Title,
-					AltTitle:     tt.meta.AlternateTitle,
-					Year:         tt.meta.Release.Year,
-					Resolution:   tt.meta.Release.Resolution,
-					Audio:        tt.meta.Audio,
-					Season:       tt.meta.SeasonStr,
-					Episode:      tt.meta.EpisodeStr,
-					EpisodeTitle: tt.meta.EpisodeTitle,
-					Repack:       tt.meta.Repack,
-					Tag:          tt.meta.Tag,
-					Source:       tt.meta.Source,
-					VideoCodec:   tt.meta.VideoCodec,
-					VideoEncode:  tt.meta.VideoEncode,
-					Edition:      tt.meta.Edition,
-				}, nil).Name
-			}
-			if got := profile.BuildName(tt.meta, config.TrackerConfig{}); got != tt.want {
-				t.Fatalf("name = %q, want %q", got, tt.want)
+
+			subject := dvlGeneratedSubject(t, test.request, test.languages)
+			if got := dvlReviewedName(t, subject, nil); got != test.want {
+				t.Fatalf("reviewed name = %q, want %q", got, test.want)
 			}
 		})
 	}
 }
 
-func TestInsertAfterLast(t *testing.T) {
+func TestDVLStructuredReleaseNamePolicyPreservesOpaqueAndManualNames(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name   string
-		input  string
-		token  string
-		suffix string
-		want   string
-	}{
-		{
-			name:   "last match before release group",
-			input:  "DD 2.0 Tales DD 2.0-GRP",
-			token:  "DD 2.0",
-			suffix: "x264",
-			want:   "DD 2.0 Tales DD 2.0 x264-GRP",
-		},
-		{
-			name:   "token spans name",
-			input:  "DD 2.0",
-			token:  "DD 2.0",
-			suffix: "x264",
-			want:   "DD 2.0 x264",
-		},
-		{
-			name:   "no match",
-			input:  "Example FLAC 2.0-GRP",
-			token:  "DD 2.0",
-			suffix: "x264",
-			want:   "Example FLAC 2.0-GRP",
-		},
-		{
-			name:   "empty token",
-			input:  "Example DD 2.0-GRP",
-			suffix: "x264",
-			want:   "Example DD 2.0-GRP",
-		},
-		{
-			name:  "empty suffix",
-			input: "Example DD 2.0-GRP",
-			token: "DD 2.0",
-			want:  "Example DD 2.0-GRP",
-		},
-		{
-			name:   "skip trailing match without preceding boundary",
-			input:  "Example DD 2.0 EDD 2.0-GRP",
-			token:  "DD 2.0",
-			suffix: "x264",
-			want:   "Example DD 2.0 x264 EDD 2.0-GRP",
-		},
-		{
-			name:   "skip trailing match without following boundary",
-			input:  "Example DD 2.0 DD 2.00-GRP",
-			token:  "DD 2.0",
-			suffix: "x264",
-			want:   "Example DD 2.0 x264 DD 2.00-GRP",
-		},
-		{
-			name:   "skip partial match overlapping a whole token",
-			input:  "DD DD DDX",
-			token:  "DD DD",
-			suffix: "x264",
-			want:   "DD DD x264 DDX",
-		},
+	request := api.ReleaseNameRequest{
+		Category:    "MOVIE",
+		Type:        "DVDRIP",
+		Title:       "Example Movie",
+		Year:        2001,
+		Resolution:  "480p",
+		Source:      "PAL DVD",
+		VideoEncode: "x264",
+		Audio:       "DD 2.0",
+		Tag:         "-GRP",
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			if got := insertAfterLast(tt.input, tt.token, tt.suffix); got != tt.want {
-				t.Fatalf("name = %q, want %q", got, tt.want)
-			}
-		})
+	subject := dvlGeneratedSubject(t, request, []string{"Japanese"})
+	override := "Manual DVL Name-GRP"
+	if got := dvlReviewedName(t, subject, &override); got != override {
+		t.Fatalf("opaque override = %q, want %q", got, override)
 	}
+	missingDocument := subject
+	missingDocument.GeneratedName = nil
+	missingDocument.ReleaseName = "Opaque Name Without Components-GRP"
+	if got := dvlReviewedName(t, missingDocument, nil); got != missingDocument.ReleaseName {
+		t.Fatalf("missing document name = %q, want %q", got, missingDocument.ReleaseName)
+	}
+
+	manual := subject
+	manual.GeneratedName = manual.GeneratedName.Clone()
+	for index := range manual.GeneratedName.Components {
+		if manual.GeneratedName.Components[index].Role == api.NameRoleSource {
+			manual.GeneratedName.Components[index].Manual = true
+		}
+	}
+	manual.ReleaseName = manual.GeneratedName.Render().Name
+	if got := dvlReviewedName(t, manual, nil); !strings.Contains(got, "PAL DVD") {
+		t.Fatalf("manual source was changed: %q", got)
+	}
+
+	manualDisc := dvlGeneratedSubject(t, api.ReleaseNameRequest{
+		Category:   "MOVIE",
+		Type:       "DISC",
+		DiscType:   "DVD",
+		Title:      "Example Movie",
+		Year:       1997,
+		Resolution: "576p",
+		Source:     "DVD",
+		DVDSize:    "DVD9",
+		Audio:      "DD 5.1",
+		Tag:        "-GRP",
+	}, []string{"Japanese"})
+	markDVLGeneratedComponentManual(t, manualDisc.GeneratedName, api.NameRoleSource, true)
+	markDVLGeneratedComponentManual(t, manualDisc.GeneratedName, api.NameRoleDVDSystem, false)
+	manualDisc.ReleaseName = manualDisc.GeneratedName.Render().Name
+	if got, want := dvlReviewedName(t, manualDisc, nil), "Example Movie 1997 JAPANESE DVD DVD9 DD 5.1-GRP"; got != want {
+		t.Fatalf("manual DVD source name = %q, want %q", got, want)
+	}
+
+	manualRemux := dvlGeneratedSubject(t, api.ReleaseNameRequest{
+		Category:   "MOVIE",
+		Type:       "REMUX",
+		Title:      "Example Movie",
+		Resolution: "576p",
+		Source:     "DVD",
+		Audio:      "DD 2.0",
+		Tag:        "-GRP",
+	}, []string{"Japanese"})
+	markDVLGeneratedComponentManual(t, manualRemux.GeneratedName, api.NameRoleSource, true)
+	appendDVLManualComponent(manualRemux.GeneratedName, api.NameRoleDVDSystem)
+	manualRemux.ReleaseName = manualRemux.GeneratedName.Render().Name
+	if got, want := dvlReviewedName(t, manualRemux, nil), "Example Movie JAPANESE DVD REMUX DD 2.0-GRP"; got != want {
+		t.Fatalf("manual DVD remux name = %q, want %q", got, want)
+	}
+
+	manualResolution := dvlGeneratedSubject(t, request, []string{"Japanese"})
+	markDVLGeneratedComponentManual(t, manualResolution.GeneratedName, api.NameRoleResolution, false)
+	manualResolution.ReleaseName = manualResolution.GeneratedName.Render().Name
+	if got, want := dvlReviewedName(t, manualResolution, nil), "Example Movie 2001 JAPANESE DVDRip DD 2.0 x264-GRP"; got != want {
+		t.Fatalf("manual omitted resolution name = %q, want %q", got, want)
+	}
+}
+
+func TestDVLProfileUsesStructuredPolicy(t *testing.T) {
+	t.Parallel()
+
+	policy := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
+	if policy.ID != "unit3d/dvl/v2" || policy.Structured == nil || policy.Resolver != nil {
+		t.Fatalf("DVL policy = %#v, want structured unit3d/dvl/v2", policy)
+	}
+}
+
+func TestDVLRipKeepsManualAudioMarkersWithAudio(t *testing.T) {
+	for _, category := range []string{"MOVIE", "TV"} {
+		for _, audio := range []string{"Dubbed DD 2.0", "DD 2.0 Dual-Audio", "Dubbed", "Dual-Audio", ""} {
+			t.Run(category+"/"+audio, func(t *testing.T) {
+				subject := dvlGeneratedSubject(t, api.ReleaseNameRequest{
+					Category:    category,
+					Type:        "DVDRIP",
+					Title:       "Example Release",
+					Year:        2001,
+					Source:      "PAL DVD",
+					Resolution:  "480p",
+					Audio:       audio,
+					VideoEncode: "x264",
+					Tag:         "-GRP",
+				}, nil)
+				for index := range subject.GeneratedName.Components {
+					component := &subject.GeneratedName.Components[index]
+					if component.Role == api.NameRoleDubbed || component.Role == api.NameRoleDualAudio || component.Role == api.NameRoleVideoFormat {
+						component.Manual = true
+					}
+				}
+				want := "Example Release 2001 480p DVDRip " + audio + " x264-GRP"
+				if category == "TV" {
+					want = "Example Release 480p DVDRip " + audio + " x264-GRP"
+				}
+				want = strings.Join(strings.Fields(want), " ")
+				if got := dvlReviewedName(t, subject, nil); got != want {
+					t.Fatalf("manual audio marker name = %q, want %q", got, want)
+				}
+			})
+		}
+	}
+}
+
+func dvlGeneratedSubject(t *testing.T, request api.ReleaseNameRequest, languages []string) api.UploadSubject {
+	t.Helper()
+
+	result := metadata.BuildReleaseName(request, api.NopLogger{})
+	if result.GeneratedName == nil {
+		t.Fatal("BuildReleaseName did not produce a structured document")
+	}
+	return api.UploadSubject{
+		ReleaseName:      result.Name,
+		ReleaseNameNoTag: result.NameNoTag,
+		GeneratedName:    result.GeneratedName,
+		Release: api.ReleaseInfo{
+			Category:   request.Category,
+			Title:      request.Title,
+			Year:       request.Year,
+			Resolution: request.Resolution,
+			Size:       request.DVDSize,
+		},
+		AlternateTitle: request.AltTitle,
+		Type:           request.Type,
+		DiscType:       request.DiscType,
+		Source:         request.Source,
+		Audio:          request.Audio,
+		VideoCodec:     request.VideoCodec,
+		VideoEncode:    request.VideoEncode,
+		AudioLanguages: languages,
+	}
+}
+
+func dvlReviewedName(t *testing.T, subject api.UploadSubject, requested *string) string {
+	t.Helper()
+
+	prepared, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{
+		Tracker:             "DVL",
+		Meta:                subject,
+		RequestedUploadName: requested,
+	}, unit3d.NewWithProfile(Profile()).ReleaseNamePolicy())
+	if failure != nil {
+		t.Fatal(failure)
+	}
+	name, err := prepared.ReviewedUploadName()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return name
+}
+
+func markDVLGeneratedComponentManual(t *testing.T, document *api.ReleaseNameDocument, role api.ReleaseNameRole, present bool) {
+	t.Helper()
+
+	for index := range document.Components {
+		component := &document.Components[index]
+		if component.Role != role {
+			continue
+		}
+		component.Manual = true
+		component.Present = present
+		return
+	}
+	t.Fatalf("generated name is missing %s", role)
+}
+
+func appendDVLManualComponent(document *api.ReleaseNameDocument, role api.ReleaseNameRole) {
+	document.Components = append(document.Components, api.ReleaseNameComponent{
+		Role:   role,
+		Join:   " ",
+		Manual: true,
+	})
 }

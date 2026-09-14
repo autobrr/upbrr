@@ -25,9 +25,8 @@ func Profile() unit3d.Profile {
 				Disposition: api.RuleDispositionStrict,
 			}},
 		},
+		ReleaseNamePolicy: namePolicy(),
 		Site: unit3d.SiteProfile{
-			BuildName:           buildName,
-			BuildNameVersion:    "v2",
 			ResolveTypeID:       typeID,
 			ResolveResolutionID: resolutionID,
 		},

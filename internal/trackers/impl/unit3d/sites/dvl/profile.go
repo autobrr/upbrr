@@ -12,15 +12,12 @@ import (
 // Profile returns DreadVault's Unit3D site manifest.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
-		Name:             "DVL",
-		BaseURL:          "https://dreadvault.org",
-		DupePolicy:       duplicatePolicy(),
-		ValidationPolicy: ValidationPolicy(),
-		BannedGroups:     BannedGroups(),
-		Site: unit3d.SiteProfile{
-			BuildName:        buildName,
-			BuildNameVersion: "v1",
-		},
+		Name:              "DVL",
+		BaseURL:           "https://dreadvault.org",
+		DupePolicy:        duplicatePolicy(),
+		ValidationPolicy:  ValidationPolicy(),
+		BannedGroups:      BannedGroups(),
+		ReleaseNamePolicy: namePolicy(),
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,
 			Requirements: []trackers.MetadataRequirement{{

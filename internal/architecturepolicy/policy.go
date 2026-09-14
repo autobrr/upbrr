@@ -446,6 +446,14 @@ func checkGoFile(path string, relative string) ([]Violation, error) {
 		if strings.HasSuffix(relative, "_test.go") {
 			return true
 		}
+		if strings.HasPrefix(relative, "internal/trackers/impl/") {
+			switch function := node.(type) {
+			case *ast.FuncDecl:
+				checkStructuredNameCallback(function.Type, function.Body, relative, add)
+			case *ast.FuncLit:
+				checkStructuredNameCallback(function.Type, function.Body, relative, add)
+			}
+		}
 		if !strings.HasPrefix(relative, "internal/providerid/") {
 			if call, ok := node.(*ast.CallExpr); ok {
 				checkAdHocIMDbFormatCall(call, add)
@@ -600,6 +608,40 @@ func checkGoFile(path string, relative string) ([]Violation, error) {
 		}
 	}
 	return violations, nil
+}
+
+func checkStructuredNameCallback(signature *ast.FuncType, body *ast.BlockStmt, relative string, add func(token.Pos, string)) {
+	if signature.Params == nil || body == nil {
+		return
+	}
+	structured := false
+	for _, field := range signature.Params.List {
+		pointer, ok := field.Type.(*ast.StarExpr)
+		if !ok {
+			continue
+		}
+		selector, ok := pointer.X.(*ast.SelectorExpr)
+		if ok && selector.Sel.Name == "NameEditor" {
+			structured = true
+		}
+	}
+	if !structured {
+		return
+	}
+	if filepath.Base(relative) != "name.go" {
+		add(body.Pos(), "structured naming callbacks belong in name.go")
+	}
+	ast.Inspect(body, func(node ast.Node) bool {
+		selector, ok := node.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		switch selector.Sel.Name {
+		case "ReleaseName", "ReleaseNameNoTag", "ReleaseNameClean", "SceneName", "GeneratedName", "GeneratedReleaseNames":
+			add(selector.Pos(), "structured naming callbacks must target components through NameEditor, not rendered names")
+		}
+		return true
+	})
 }
 
 func checkAdHocIMDbFormatCall(call *ast.CallExpr, add func(token.Pos, string)) {

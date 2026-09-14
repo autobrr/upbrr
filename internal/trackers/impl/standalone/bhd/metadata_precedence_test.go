@@ -11,21 +11,24 @@ import (
 
 func TestBHDTVTitlePolicyPrefersManualTitle(t *testing.T) {
 	t.Parallel()
-	meta := api.UploadSubject{
-		SeasonStr: "S01",
-		ProviderMetadata: api.SourceScopedMetadata{TVDB: &api.TVDBMetadata{
-			NameEnglish: "Provider Series",
-		}},
-		EffectiveMetadata: api.EffectiveMetadata{
-			Title: "Manual Series", TitleProvenance: api.FactProvenanceManual,
-		},
-	}
-	if got := applyBHDTVTitlePolicy("Provider Series S01 1080p WEB-DL-GRP", meta); got != "Manual Series S01 1080p WEB-DL-GRP" {
+	meta := bhdGeneratedSubject(t, api.ReleaseNameRequest{
+		Category:   "TV",
+		Type:       "WEBDL",
+		Title:      "Provider Series",
+		Season:     "S01",
+		Resolution: "1080p",
+		Source:     "Web",
+		Tag:        "-GRP",
+	})
+	meta.Identity.Category = api.CanonicalCategoryTV
+	meta.ProviderMetadata = api.SourceScopedMetadata{TVDB: &api.TVDBMetadata{NameEnglish: "Provider Series"}}
+	meta.EffectiveMetadata = api.EffectiveMetadata{Title: "Manual Series", TitleProvenance: api.FactProvenanceManual}
+	if got := bhdReviewedName(t, meta, nil); got != "Manual Series S01 1080p WEB-DL-GRP" {
 		t.Fatalf("manual title name = %q", got)
 	}
 	meta.EffectiveMetadata.Title = ""
 	meta.EffectiveMetadata.TitleProvenance = api.FactProvenanceManualEmpty
-	if got := applyBHDTVTitlePolicy("Provider Series S01 1080p WEB-DL-GRP", meta); got != "Provider Series S01 1080p WEB-DL-GRP" {
+	if got := bhdReviewedName(t, meta, nil); got != "Provider Series S01 1080p WEB-DL-GRP" {
 		t.Fatalf("manual-empty title name = %q", got)
 	}
 }

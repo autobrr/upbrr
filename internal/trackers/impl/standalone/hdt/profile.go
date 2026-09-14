@@ -18,7 +18,7 @@ func Profile() standalone.Profile {
 		UploadContentMode:   trackers.UploadContentModeDescription,
 		PrepareDescription:  prepareDescription,
 		PrepareUpload:       prepareUpload,
-		ReleaseNamePolicy:   trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/hdt/v1", resolveName, resolveSearchName),
+		ReleaseNamePolicy:   namePolicy(),
 		NewDuplicateAdapter: newDuplicateAdapter,
 		ValidationPolicy:    validationPolicy(),
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{

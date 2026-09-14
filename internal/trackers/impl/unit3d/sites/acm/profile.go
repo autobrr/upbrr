@@ -18,9 +18,8 @@ func Profile() unit3d.Profile {
 		UploadArtifact: &trackers.UploadArtifactPolicy{
 			Source: "AsianCinema",
 		},
+		ReleaseNamePolicy: namePolicy(),
 		Site: unit3d.SiteProfile{
-			BuildName:              buildName,
-			BuildNameVersion:       "v2",
 			BuildDescription:       buildACMDescription,
 			ResolveKeywords:        resolveACMKeywords,
 			ResolveTypeID:          resolveUnit3DACMTypeID,

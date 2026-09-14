@@ -312,7 +312,7 @@ func lookupAZDupeTitle(meta api.DuplicateSubject) string {
 	if title := strings.TrimSpace(meta.Release.Title); title != "" {
 		return title
 	}
-	if meta.ProviderMetadata.TMDB != nil {
+	if meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) && meta.ProviderMetadata.TMDB != nil {
 		if title := strings.TrimSpace(meta.ProviderMetadata.TMDB.Title); title != "" {
 			return title
 		}

@@ -110,11 +110,18 @@ func acmDiscBucket(sourceSize int64) int {
 }
 
 func acmDVDType(meta api.UploadSubject) string {
-	name := strings.ToUpper(strings.TrimSpace(baseName(meta)))
+	dvdSize := strings.TrimSpace(meta.Release.Size)
+	if component, ok := meta.GeneratedName.Component(api.NameRoleDVDSize); ok {
+		dvdSize = strings.TrimSpace(component.AvailableValue)
+		if dvdSize == "" {
+			dvdSize = strings.TrimSpace(component.Value)
+		}
+	}
+	dvdSize = strings.ToUpper(dvdSize)
 	switch {
-	case strings.Contains(name, "DVD5"):
+	case dvdSize == "DVD5":
 		return "DVD 5"
-	case strings.Contains(name, "DVD9"):
+	case dvdSize == "DVD9":
 		return "DVD 9"
 	case meta.SourceSize > 0 && meta.SourceSize <= 5*(1<<30):
 		return "DVD 5"

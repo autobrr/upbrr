@@ -18,7 +18,7 @@ func Profile() unit3d.Profile {
 			ResolveTypeID:       typeID,
 			ResolveResolutionID: resolutionID,
 			BuildName:           buildName,
-			BuildNameVersion:    "v1",
+			BuildNameVersion:    "v2",
 		},
 		ImageHost: &trackers.ImageHostPolicy{
 			AllowedHosts: []string{"onlyimage", "imgbox", "ptscreens", "imgbb", "imgur", "postimg"},
