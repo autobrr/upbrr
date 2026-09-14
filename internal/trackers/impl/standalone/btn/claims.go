@@ -86,41 +86,18 @@ type btnClaimData struct {
 type claimChecker struct {
 	cfg           config.Config
 	logger        api.Logger
-	target        string
 	fetchOverride func(context.Context) (btnClaimData, error)
 }
 
-type claimCheckerFactory struct {
-	target string
-}
-
-// NewClaimChecker returns a BTN claim checker backed by the configured claim
-// cache and tracker credentials. A nil logger is replaced with a no-op logger.
+// NewClaimChecker returns a BTN-only claim checker using BTN's stored session
+// and claim cache. A nil logger is replaced with a no-op logger.
 func (d *Definition) NewClaimChecker(cfg config.Config, logger api.Logger) trackers.ClaimChecker {
-	return newClaimChecker(cfg, logger, "BTN")
-}
-
-// NewClaimCheckerFactory returns a BTN-backed claim source scoped to one tracker.
-func NewClaimCheckerFactory(target string) trackers.ClaimCheckerFactory {
-	return claimCheckerFactory{target: strings.ToUpper(strings.TrimSpace(target))}
-}
-
-func (f claimCheckerFactory) NewClaimChecker(cfg config.Config, logger api.Logger) trackers.ClaimChecker {
-	return newClaimChecker(cfg, logger, f.target)
-}
-
-func newClaimChecker(cfg config.Config, logger api.Logger, target string) trackers.ClaimChecker {
 	if logger == nil {
 		logger = api.NopLogger{}
-	}
-	target = strings.ToUpper(strings.TrimSpace(target))
-	if target != "HDB" {
-		target = "BTN"
 	}
 	return &claimChecker{
 		cfg:    cfg,
 		logger: logger,
-		target: target,
 	}
 }
 
@@ -137,22 +114,11 @@ func (s *claimChecker) HasClaim(ctx context.Context, meta api.UploadSubject) (bo
 	}
 	if isBTNSceneRelease(meta) {
 		if s.logger != nil {
-			s.logger.Debugf("metadata: %s claims skipped origin=scene decision=allowed", s.target)
+			s.logger.Debugf("metadata: BTN claims skipped origin=scene decision=allowed")
 		}
 		return false, nil
 	}
-	if s.target == "HDB" {
-		applies, known := hdbClaimPolicyApplies(meta)
-		if !known {
-			if s.logger != nil {
-				s.logger.Warnf("metadata: HDB claim check unavailable: WEB TV applicability is unknown")
-			}
-			return false, nil
-		}
-		if !applies {
-			return false, nil
-		}
-	} else if !btnIsTVCategory(meta) {
+	if !btnIsTVCategory(meta) {
 		if s.logger != nil {
 			s.logger.Debugf("metadata: BTN claims skipped for non-TV content")
 		}
@@ -161,12 +127,6 @@ func (s *claimChecker) HasClaim(ctx context.Context, meta api.UploadSubject) (bo
 
 	cachePath, err := btnClaimsPath(s.cfg.MainSettings.DBPath)
 	if err != nil {
-		if s.target == "HDB" {
-			if s.logger != nil {
-				s.logger.Warnf("metadata: HDB claim list unavailable: %v", err)
-			}
-			return false, nil
-		}
 		return false, fmt.Errorf("metadata: BTN claims cache path: %w", err)
 	}
 
@@ -176,14 +136,14 @@ func (s *claimChecker) HasClaim(ctx context.Context, meta api.UploadSubject) (bo
 			return false, err
 		}
 		if s.logger != nil {
-			s.logger.Warnf("metadata: %s claim list unavailable: %v", s.target, err)
+			s.logger.Warnf("metadata: BTN claim list unavailable: %v", err)
 		}
 		return false, nil
 	}
-	matchedClaims, matchedTitle := matchBTNClaimRecords(meta, claims, s.target)
+	matchedClaims, matchedTitle := matchBTNClaimRecords(meta, claims)
 	if len(matchedClaims) == 0 {
 		if s.logger != nil {
-			s.logger.Debugf("metadata: %s claims found no title match for release=%q", s.target, meta.ReleaseName)
+			s.logger.Debugf("metadata: BTN claims found no title match for release=%q", meta.ReleaseName)
 		}
 		return false, nil
 	}
@@ -193,8 +153,7 @@ func (s *claimChecker) HasClaim(ctx context.Context, meta api.UploadSubject) (bo
 	if expired {
 		if s.logger != nil {
 			s.logger.Debugf(
-				"metadata: %s claim window expired for %q (hours_since_air=%.2f threshold=%d)",
-				s.target,
+				"metadata: BTN claim window expired for %q (hours_since_air=%.2f threshold=%d)",
 				matchedTitle,
 				hoursSinceAir,
 				thresholdHours,
@@ -202,20 +161,19 @@ func (s *claimChecker) HasClaim(ctx context.Context, meta api.UploadSubject) (bo
 		}
 		return false, nil
 	}
-	trackerCfg, _ := trackerConfigFor(s.cfg, s.target)
+	trackerCfg, _ := trackerConfigFor(s.cfg, "BTN")
 	groupPolicy := trackers.ResolveGroupPolicy(trackerCfg, meta)
 	ownedByGroup := claimsOwnedByGroup(matchedClaims, groupPolicy.Group)
 	if groupPolicy.Internal && claims.FreshStructured && ownedByGroup {
 		if s.logger != nil {
-			s.logger.Infof("metadata: %s claim match bypassed group=%s decision=own_claim", s.target, groupPolicy.Group)
+			s.logger.Infof("metadata: BTN claim match bypassed group=%s decision=own_claim", groupPolicy.Group)
 		}
 		return false, nil
 	}
 
 	if s.logger != nil {
 		s.logger.Warnf(
-			"metadata: %s claim match found title=%q threshold_hours=%d cache_ttl=%s release_group=%q internal_group=%t fresh_structured=%t own_claim=%t matched_claims=%d",
-			s.target,
+			"metadata: BTN claim match found title=%q threshold_hours=%d cache_ttl=%s release_group=%q internal_group=%t fresh_structured=%t own_claim=%t matched_claims=%d",
 			matchedTitle,
 			thresholdHours,
 			btnClaimedShowsCacheTTL,
@@ -227,28 +185,6 @@ func (s *claimChecker) HasClaim(ctx context.Context, meta api.UploadSubject) (bo
 		)
 	}
 	return true, nil
-}
-
-func hdbClaimPolicyApplies(meta api.UploadSubject) (bool, bool) {
-	isTV := btnIsTVCategory(meta) || strings.EqualFold(strings.TrimSpace(string(meta.Identity.Category)), "TV")
-	if !isTV {
-		return false, strings.TrimSpace(string(meta.Identity.Category)) != ""
-	}
-	hasKnownSource := false
-	for _, value := range []string{meta.Type, meta.Source, meta.Release.Type, meta.Release.Source} {
-		normalized := strings.NewReplacer("-", "", "_", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(value)))
-		if normalized == "" {
-			continue
-		}
-		if normalized == "web" || strings.Contains(normalized, "webdl") || strings.Contains(normalized, "webrip") {
-			return true, true
-		}
-		switch normalized {
-		case "bluray", "bdrip", "remux", "hdtv", "pdtv", "sdtv", "dvd", "dvdrip", "encode":
-			hasKnownSource = true
-		}
-	}
-	return false, hasKnownSource
 }
 
 func claimsOwnedByGroup(claims []btnClaimRecord, group string) bool {
@@ -303,9 +239,8 @@ func (s *claimChecker) loadBTNClaims(ctx context.Context, cachePath string, cach
 		}
 	} else if s.logger != nil {
 		s.logger.Debugf(
-			"metadata: BTN claims cache loaded path=%s target=%s records=%d legacy_titles=%d fetched_at=%d",
+			"metadata: BTN claims cache loaded path=%s target=BTN records=%d legacy_titles=%d fetched_at=%d",
 			cachePath,
-			s.target,
 			len(cached.Records),
 			len(cached.LegacyTitles),
 			cached.FetchedAt,
@@ -317,9 +252,8 @@ func (s *claimChecker) loadBTNClaims(ctx context.Context, cachePath string, cach
 		cached.FreshStructured = true
 		if s.logger != nil {
 			s.logger.Debugf(
-				"metadata: BTN claims cache hit path=%s target=%s age=%s ttl=%s records=%d",
+				"metadata: BTN claims cache hit path=%s target=BTN age=%s ttl=%s records=%d",
 				cachePath,
-				s.target,
 				cacheAge.Round(time.Second),
 				cacheTTL,
 				len(cached.Records),
@@ -330,21 +264,19 @@ func (s *claimChecker) loadBTNClaims(ctx context.Context, cachePath string, cach
 	if s.logger != nil {
 		switch {
 		case !cached.hasClaims():
-			s.logger.Debugf("metadata: BTN claims cache miss path=%s target=%s", cachePath, s.target)
+			s.logger.Debugf("metadata: BTN claims cache miss path=%s target=BTN", cachePath)
 		case cacheFresh:
 			s.logger.Debugf(
-				"metadata: BTN claims cache refresh required path=%s target=%s reason=legacy_format age=%s ttl=%s legacy_titles=%d",
+				"metadata: BTN claims cache refresh required path=%s target=BTN reason=legacy_format age=%s ttl=%s legacy_titles=%d",
 				cachePath,
-				s.target,
 				cacheAge.Round(time.Second),
 				cacheTTL,
 				len(cached.LegacyTitles),
 			)
 		default:
 			s.logger.Debugf(
-				"metadata: BTN claims cache refresh required path=%s target=%s reason=stale age=%s ttl=%s records=%d legacy_titles=%d",
+				"metadata: BTN claims cache refresh required path=%s target=BTN reason=stale age=%s ttl=%s records=%d legacy_titles=%d",
 				cachePath,
-				s.target,
 				cacheAge.Round(time.Second),
 				cacheTTL,
 				len(cached.Records),
@@ -372,13 +304,12 @@ func (s *claimChecker) loadBTNClaims(ctx context.Context, cachePath string, cach
 	if errors.Is(fetchErr, context.Canceled) || errors.Is(fetchErr, context.DeadlineExceeded) {
 		return btnClaimData{}, fetchErr
 	}
-	if len(cached.Records) > 0 || (s.target == "BTN" && len(cached.LegacyTitles) > 0) {
+	if len(cached.Records) > 0 || len(cached.LegacyTitles) > 0 {
 		cached.FreshStructured = false
 		if s.logger != nil {
 			s.logger.Debugf(
-				"metadata: BTN claims cache fallback path=%s target=%s decision=non_authoritative records=%d legacy_titles=%d",
+				"metadata: BTN claims cache fallback path=%s target=BTN decision=non_authoritative records=%d legacy_titles=%d",
 				cachePath,
-				s.target,
 				len(cached.Records),
 				len(cached.LegacyTitles),
 			)
@@ -765,13 +696,12 @@ func matchBTNClaimedTitle(meta api.UploadSubject, claimed map[string]struct{}) (
 	return false, ""
 }
 
-func matchBTNClaimRecords(meta api.UploadSubject, claims btnClaimData, target string) ([]btnClaimRecord, string) {
+func matchBTNClaimRecords(meta api.UploadSubject, claims btnClaimData) ([]btnClaimRecord, string) {
 	candidates := btnCandidateTitles(meta)
-	target = strings.ToUpper(strings.TrimSpace(target))
 	matches := make([]btnClaimRecord, 0)
 	matchedTitle := ""
 	for _, claim := range claims.Records {
-		if !slices.Contains(claim.Sites, target) {
+		if !slices.Contains(claim.Sites, "BTN") {
 			continue
 		}
 		for variant := range btnTitleVariants(claim.Title) {
@@ -785,7 +715,7 @@ func matchBTNClaimRecords(meta api.UploadSubject, claims btnClaimData, target st
 			break
 		}
 	}
-	if len(matches) == 0 && target == "BTN" {
+	if len(matches) == 0 {
 		if matched, legacyTitle := matchBTNClaimedTitle(meta, claims.LegacyTitles); matched {
 			matches = append(matches, btnClaimRecord{Title: legacyTitle, Sites: []string{"BTN"}})
 			matchedTitle = legacyTitle
@@ -965,25 +895,20 @@ func btnClaimWindowExpired(meta api.UploadSubject, graceHours int) (bool, int, f
 	return hoursSinceAir > float64(thresholdHours), thresholdHours, hoursSinceAir
 }
 
-func btnClaimFailureReason(tracker string, meta api.UploadSubject, graceHours int) string {
-	tracker = strings.ToUpper(strings.TrimSpace(tracker))
-	if tracker == "" {
-		tracker = "BTN"
-	}
+func btnClaimFailureReason(meta api.UploadSubject, graceHours int) string {
 	expired, thresholdHours, hoursSinceAir := btnClaimWindowExpired(meta, graceHours)
 	if expired {
-		return tracker + " claim window has expired"
+		return "BTN claim window has expired"
 	}
 	if thresholdHours <= 0 {
-		return tracker + " has an active claim for this release"
+		return "BTN has an active claim for this release"
 	}
 	if hoursSinceAir <= 0 {
-		return fmt.Sprintf("%s has an active claim for this release; up to %d hours remain in the claim window", tracker, thresholdHours)
+		return fmt.Sprintf("BTN has an active claim for this release; up to %d hours remain in the claim window", thresholdHours)
 	}
 	hoursRemaining := max(int(float64(thresholdHours)-hoursSinceAir+0.999999999), 1)
 	return fmt.Sprintf(
-		"%s has an active claim for this release; approximately %d hours remain in the %d-hour claim window",
-		tracker,
+		"BTN has an active claim for this release; approximately %d hours remain in the %d-hour claim window",
 		hoursRemaining,
 		thresholdHours,
 	)
@@ -1259,7 +1184,7 @@ func mirrorBTNCookiesForClaimedThread(client *http.Client) {
 // FailureReason describes an active BTN claim using the configured grace
 // period and the remaining or expired claim-window state.
 func (s *claimChecker) FailureReason(meta api.UploadSubject) string {
-	return btnClaimFailureReason(s.target, meta, s.btnClaimWindowGraceHours())
+	return btnClaimFailureReason(meta, s.btnClaimWindowGraceHours())
 }
 
 func btnClaimsPath(dbPath string) (string, error) {
@@ -1303,7 +1228,6 @@ func LoadClaimedTitles(ctx context.Context, cfg config.Config, logger api.Logger
 	return (&claimChecker{
 		cfg:    cfg,
 		logger: logger,
-		target: "BTN",
 	}).loadBTNClaimedTitles(ctx, cachePath, cacheTTL)
 }
 
@@ -1312,7 +1236,6 @@ func FetchClaimedTitles(ctx context.Context, cfg config.Config, logger api.Logge
 	return (&claimChecker{
 		cfg:    cfg,
 		logger: logger,
-		target: "BTN",
 	}).fetchBTNClaimedTitles(ctx)
 }
 

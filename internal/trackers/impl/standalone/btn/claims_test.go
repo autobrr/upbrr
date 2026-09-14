@@ -143,14 +143,9 @@ func TestInternalGroupBypassesOnlyFreshOwnClaimForTargetTracker(t *testing.T) {
 		Tag:         "-NTb",
 	}
 
-	btnClaimed, err := newClaimChecker(base, nil, "BTN").HasClaim(t.Context(), meta)
+	btnClaimed, err := New().NewClaimChecker(base, nil).HasClaim(t.Context(), meta)
 	if err != nil || btnClaimed {
 		t.Fatalf("BTN own claim was not bypassed: claimed=%t err=%v", btnClaimed, err)
-	}
-
-	hdbClaimed, err := newClaimChecker(base, nil, "HDB").HasClaim(t.Context(), meta)
-	if err != nil || !hdbClaimed {
-		t.Fatalf("HDB did not use its independent group list: claimed=%t err=%v", hdbClaimed, err)
 	}
 }
 
@@ -195,7 +190,7 @@ func TestStaleOrConflictingClaimsNeverAuthorizeOwnGroupBypass(t *testing.T) {
 		t.Fatal(err)
 	}
 	meta := api.UploadSubject{ReleaseName: "Example.Show.S01E01.1080p.WEB-DL-NTb"}
-	matched, _ := matchBTNClaimRecords(meta, claims, "BTN")
+	matched, _ := matchBTNClaimRecords(meta, claims)
 	if claimsOwnedByGroup(matched, "NTb") {
 		t.Fatalf("conflicting claims authorized bypass: %#v", matched)
 	}
@@ -208,7 +203,6 @@ func TestStaleOrConflictingClaimsNeverAuthorizeOwnGroupBypass(t *testing.T) {
 		t.Fatal(err)
 	}
 	checker := &claimChecker{
-		target: "BTN",
 		logger: api.NopLogger{},
 		fetchOverride: func(context.Context) (btnClaimData, error) {
 			return btnClaimData{}, errors.New("fetch unavailable")
@@ -221,7 +215,7 @@ func TestStaleOrConflictingClaimsNeverAuthorizeOwnGroupBypass(t *testing.T) {
 	if stale.FreshStructured {
 		t.Fatalf("stale cache reported as fresh structured data")
 	}
-	matched, _ = matchBTNClaimRecords(meta, stale, "BTN")
+	matched, _ = matchBTNClaimRecords(meta, stale)
 	if !claimsOwnedByGroup(matched, "NTb") {
 		t.Fatalf("stale same-group cache lost ownership evidence: %#v", matched)
 	}
@@ -248,7 +242,6 @@ func TestLegacyClaimCacheRefreshesStructuredOwnership(t *testing.T) {
 	fetchCalls := 0
 	checker := &claimChecker{
 		cfg:    cfg,
-		target: "BTN",
 		logger: logger,
 		fetchOverride: func(context.Context) (btnClaimData, error) {
 			fetchCalls++
@@ -306,7 +299,6 @@ func TestLegacyClaimCacheCannotAuthorizeOwnGroupBypassWhenRefreshFails(t *testin
 	logger := &captureBTNLogger{}
 	checker := &claimChecker{
 		cfg:    cfg,
-		target: "BTN",
 		logger: logger,
 		fetchOverride: func(context.Context) (btnClaimData, error) {
 			return btnClaimData{}, errors.New("BTN session unavailable")
@@ -332,7 +324,7 @@ func TestClaimCancellationPropagates(t *testing.T) {
 
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
-	checker := newClaimChecker(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "upbrr.db")}}, nil, "BTN")
+	checker := New().NewClaimChecker(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "upbrr.db")}}, nil)
 	_, err := checker.HasClaim(canceled, api.UploadSubject{
 		Identity:   api.ExternalIdentity{Category: "TV"},
 		SeasonInt:  1,
@@ -356,64 +348,9 @@ func TestFreshClaimCacheHonorsPreCanceledContext(t *testing.T) {
 	}
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
-	checker := &claimChecker{target: "BTN", logger: api.NopLogger{}}
+	checker := &claimChecker{logger: api.NopLogger{}}
 	if _, err := checker.loadBTNClaims(canceled, cachePath, btnClaimedShowsCacheTTL); !errors.Is(err, context.Canceled) {
 		t.Fatalf("loadBTNClaims() error = %v", err)
-	}
-}
-
-func TestHDBDoesNotUseLegacyBTNCacheAsCoverage(t *testing.T) {
-	t.Parallel()
-
-	cachePath := filepath.Join(t.TempDir(), "claims.json")
-	if err := writeBTNClaimedCache(cachePath, btnTitleVariants("Example Show")); err != nil {
-		t.Fatal(err)
-	}
-	fetchErr := errors.New("BTN session unavailable")
-	checker := &claimChecker{
-		target: "HDB",
-		logger: api.NopLogger{},
-		fetchOverride: func(context.Context) (btnClaimData, error) {
-			return btnClaimData{}, fetchErr
-		},
-	}
-	if _, err := checker.loadBTNClaims(t.Context(), cachePath, btnClaimedShowsCacheTTL); !errors.Is(err, fetchErr) {
-		t.Fatalf("loadBTNClaims() error = %v", err)
-	}
-}
-
-func TestHDBContinuesWithWarningWithoutBTNClaimAccess(t *testing.T) {
-	t.Parallel()
-
-	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
-	cachePath, err := btnClaimsPath(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := writeBTNClaimedCache(cachePath, btnTitleVariants("Example Show")); err != nil {
-		t.Fatal(err)
-	}
-	logger := &captureBTNLogger{}
-	checker := &claimChecker{
-		cfg:    config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
-		target: "HDB",
-		logger: logger,
-		fetchOverride: func(context.Context) (btnClaimData, error) {
-			return btnClaimData{}, errors.New("BTN session unavailable")
-		},
-	}
-	claimed, err := checker.HasClaim(t.Context(), api.UploadSubject{
-		Identity:    api.ExternalIdentity{Category: "TV"},
-		ReleaseName: "Example.Show.S01E01.1080p.WEB-DL-GRP",
-		Type:        "WEB-DL",
-		SeasonInt:   1,
-		EpisodeInt:  1,
-	})
-	if err != nil || claimed {
-		t.Fatalf("HasClaim() = (%t, %v), want (false, nil)", claimed, err)
-	}
-	if !logger.containsWarning("HDB claim list unavailable") {
-		t.Fatalf("warnings = %#v, want HDB unavailability warning", logger.warnings)
 	}
 }
 
@@ -472,63 +409,5 @@ func TestBTNClaimCacheValidatesIdentityAndReplacesExistingFile(t *testing.T) {
 	}
 	if _, err := readBTNClaimCache(cachePath); err == nil {
 		t.Fatalf("future cache timestamp was accepted")
-	}
-}
-
-func TestHDBClaimPolicyAppliesUsesAllSourceEvidence(t *testing.T) {
-	t.Parallel()
-
-	for _, tt := range []struct {
-		name        string
-		meta        api.UploadSubject
-		wantApplies bool
-		wantKnown   bool
-	}{
-		{
-			name: "later source confirms web",
-			meta: api.UploadSubject{
-				Identity: api.ExternalIdentity{Category: "TV"},
-				Type:     "Episode",
-				Source:   "WEB-DL",
-			},
-			wantApplies: true,
-			wantKnown:   true,
-		},
-		{
-			name: "canonical web source",
-			meta: api.UploadSubject{
-				Identity: api.ExternalIdentity{Category: "TV"},
-				Type:     "Episode",
-				Source:   "WEB",
-			},
-			wantApplies: true,
-			wantKnown:   true,
-		},
-		{
-			name:      "known non web source",
-			meta:      api.UploadSubject{Identity: api.ExternalIdentity{Category: "TV"}, Source: "HDTV"},
-			wantKnown: true,
-		},
-		{
-			name: "unknown source",
-			meta: api.UploadSubject{Identity: api.ExternalIdentity{Category: "TV"}},
-		},
-		{
-			name: "episode type is not source evidence",
-			meta: api.UploadSubject{Identity: api.ExternalIdentity{Category: "TV"}, Type: "Episode"},
-		},
-		{
-			name:      "known non tv category",
-			meta:      api.UploadSubject{Identity: api.ExternalIdentity{Category: "MOVIE"}, Source: "WEB-DL"},
-			wantKnown: true,
-		},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			gotApplies, gotKnown := hdbClaimPolicyApplies(tt.meta)
-			if gotApplies != tt.wantApplies || gotKnown != tt.wantKnown {
-				t.Fatalf("hdbClaimPolicyApplies() = (%t, %t), want (%t, %t)", gotApplies, gotKnown, tt.wantApplies, tt.wantKnown)
-			}
-		})
 	}
 }

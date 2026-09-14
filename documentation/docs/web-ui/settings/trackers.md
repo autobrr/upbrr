@@ -74,7 +74,7 @@ For BTN, configured internal groups can bypass two restrictions when ownership i
 
 With debug logging enabled, `reason=legacy_format` identifies an automatic cache migration attempt. A blocked claim warning includes `release_group`, `internal_group`, `fresh_structured`, `own_claim`, and `matched_claims` so you can see which bypass prerequisite was missing.
 
-HDB uses BTN's authoritative claim-list data and the same claim window for non-Scene WEB TV uploads. upbrr reads an existing BTN session and its claim cache without starting a login or TOTP flow. If neither a usable structured cache nor BTN access is available, the HDB upload continues with a warning.
+HDB checks its own signup page for non-Scene WEB TV uploads, using stored HDB cookies and a separate claim cache. BTN credentials and cached data are not required. Fresh, unambiguous claims owned by a configured HDB internal group can be bypassed; stale claims can block an upload but cannot authorize that bypass. When the signup page's relay notice is present, BTN-only entries also count as HDB claims, but their listed group does not prove ownership of the HDB relay. If neither usable HDB claim data nor HDB access is available, the upload continues with a warning. Claim checks never start a login or TOTP flow.
 
 The older per-tracker **Internal** boolean is retained only so existing configuration can be read and exported. It no longer enables internal handling. Add the relevant tags to **Internal groups**; a list match works even when the legacy value is `false`.
 

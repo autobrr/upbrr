@@ -86,30 +86,15 @@ func Profile() standalone.Profile {
 	}
 }
 
-// Definition extends the shared standalone definition with HDB data lookup and testable endpoints.
+// Definition extends the shared standalone definition with HDB data lookup,
+// claim checking, and testable endpoints.
 type Definition struct {
 	*standalone.Definition
 	baseURL    string
 	httpClient *http.Client
 }
 
-// DefinitionWithClaims adds an injected claim source to the HDB definition.
-type DefinitionWithClaims struct {
-	*Definition
-	claimFactory trackers.ClaimCheckerFactory
-}
-
 // New returns a fresh HDB definition from its tracker-local profile.
 func New() *Definition {
 	return &Definition{Definition: standalone.MustNew(Profile()), baseURL: hdbBaseURL}
-}
-
-// NewWithClaimFactory returns HDB with claim handling supplied by registry composition.
-func NewWithClaimFactory(factory trackers.ClaimCheckerFactory) *DefinitionWithClaims {
-	return &DefinitionWithClaims{Definition: New(), claimFactory: factory}
-}
-
-// NewClaimChecker constructs HDB's injected claim checker.
-func (d *DefinitionWithClaims) NewClaimChecker(cfg config.Config, logger api.Logger) trackers.ClaimChecker {
-	return d.claimFactory.NewClaimChecker(cfg, logger)
 }

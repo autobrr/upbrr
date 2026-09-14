@@ -154,9 +154,7 @@ func azFamilyDefinitions() []trackers.Definition {
 
 func standaloneDefinitions() []trackers.Definition {
 	return []trackers.Definition{
-		hdb.NewWithClaimFactory(
-			btn.NewClaimCheckerFactory("HDB"),
-		),
+		hdb.New(),
 		ant.New(),
 		ar.New(),
 		asc.New(),
