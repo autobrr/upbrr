@@ -23,6 +23,30 @@ type ModifiedReleaseSubject struct {
 	Release            api.ReleaseInfo
 }
 
+// ModifiedReleaseSignal identifies which modified-release detection fired. The
+// values are stable diagnostic identifiers for logs and dispositions only; they
+// must never enter a user-facing failure reason.
+type ModifiedReleaseSignal string
+
+const (
+	// ModifiedReleaseSignalNone is the zero value: no detection fired.
+	ModifiedReleaseSignalNone ModifiedReleaseSignal = ""
+	// ModifiedReleaseSignalSRRDB marks the authoritative srrdb scene comparison.
+	ModifiedReleaseSignalSRRDB ModifiedReleaseSignal = "srrdb"
+	// ModifiedReleaseSignalArrToken marks the *arr id-token heuristic.
+	ModifiedReleaseSignalArrToken ModifiedReleaseSignal = "arr-token"
+	// ModifiedReleaseSignalSpaceRename marks the whitespace rename heuristic.
+	ModifiedReleaseSignalSpaceRename ModifiedReleaseSignal = "space-rename"
+)
+
+// ModifiedReleaseDetection is the result of DetectModifiedRelease. The zero
+// value represents no detection.
+type ModifiedReleaseDetection struct {
+	Modified bool
+	Reason   string
+	Signal   ModifiedReleaseSignal
+}
+
 // DetectModifiedRelease reports whether source media was renamed away from its
 // original scene/P2P release name. Trackers reject such modified releases
 // ([Modified Release] Renamed), so detecting it lets us skip the upload before it
@@ -50,12 +74,15 @@ type ModifiedReleaseSubject struct {
 //
 // Both the source path (folder) and the primary video file are checked, since the
 // tracker inspects the file (MediaInfo "Complete name") and the in-torrent names.
-func DetectModifiedRelease(meta ModifiedReleaseSubject) (bool, string) {
+//
+// The returned detection carries the signal that fired so callers can derive
+// disposition and diagnostics from a single authority.
+func DetectModifiedRelease(meta ModifiedReleaseSubject) ModifiedReleaseDetection {
 	if meta.PersonalRelease {
-		return false, ""
+		return ModifiedReleaseDetection{}
 	}
 	if strings.TrimSpace(meta.DiscType) != "" {
-		return false, ""
+		return ModifiedReleaseDetection{}
 	}
 
 	// srrdb scene detection (the imdb: fallback) authoritatively compares the
@@ -68,12 +95,16 @@ func DetectModifiedRelease(meta ModifiedReleaseSubject) (bool, string) {
 		if reason == "" {
 			reason = modifiedReleaseReason
 		}
-		return true, reason
+		return ModifiedReleaseDetection{
+			Modified: true,
+			Reason:   reason,
+			Signal:   ModifiedReleaseSignalSRRDB,
+		}
 	}
 
 	group := strings.TrimSpace(meta.Release.Group)
 	if skipsStandardRenameCheck(group) {
-		return false, ""
+		return ModifiedReleaseDetection{}
 	}
 
 	names := candidateReleaseNames(meta)
@@ -82,19 +113,27 @@ func DetectModifiedRelease(meta ModifiedReleaseSubject) (bool, string) {
 	// (which an *arr rename often strips), so check them before the group gate.
 	for _, name := range names {
 		if arrRenameToken(name) != "" {
-			return true, modifiedReleaseReason
+			return ModifiedReleaseDetection{
+				Modified: true,
+				Reason:   modifiedReleaseReason,
+				Signal:   ModifiedReleaseSignalArrToken,
+			}
 		}
 	}
 
 	if group == "" {
-		return false, ""
+		return ModifiedReleaseDetection{}
 	}
 	for _, name := range names {
 		if isRenamedReleaseName(name, group) {
-			return true, modifiedReleaseReason
+			return ModifiedReleaseDetection{
+				Modified: true,
+				Reason:   modifiedReleaseReason,
+				Signal:   ModifiedReleaseSignalSpaceRename,
+			}
 		}
 	}
-	return false, ""
+	return ModifiedReleaseDetection{}
 }
 
 // modifiedReleaseReason is deliberately generic: it discloses neither the
