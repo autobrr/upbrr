@@ -312,11 +312,13 @@ type UploadSubject struct {
 	ClientTorrentPath      string
 	// ClientTorrentDataVerified reports that ClientTorrentPath and InfoHash came
 	// from a complete client record bound to the prepared source path.
-	ClientTorrentDataVerified   bool
-	TorrentPath                 string
-	ArrReleaseGroup             string
-	ReleaseNameOverrides        ReleaseNameOverrides
-	NamePresentation            ReleaseNamePresentation
+	ClientTorrentDataVerified bool
+	TorrentPath               string
+	ArrReleaseGroup           string
+	ReleaseNameOverrides      ReleaseNameOverrides
+	NamePresentation          ReleaseNamePresentation
+	// GeneratedName is the exact prepared generation's structured automatic name.
+	GeneratedName               *ReleaseNameDocument
 	TrackerQuestionnaireAnswers map[string]map[string]string
 	SeasonInt                   int
 	EpisodeInt                  int
@@ -2260,6 +2262,7 @@ type ReleaseInfo struct {
 	Year       int
 	Month      int
 	Day        int
+	Version    string
 	Source     string
 	Resolution string
 	Codec      []string

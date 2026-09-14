@@ -10,6 +10,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -19,4 +20,8 @@ func maybeApplyE2EServices(context.Context, *api.ServiceSet, config.Config, api.
 
 func e2eReleaseWorkflowOptions() []releaseworkflow.Option {
 	return nil
+}
+
+func maybeApplyE2ENamingRegistry(registry *trackers.Registry) (*trackers.Registry, error) {
+	return registry, nil
 }

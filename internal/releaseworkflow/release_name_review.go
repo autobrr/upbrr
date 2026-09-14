@@ -16,7 +16,11 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-const releaseNameConfirmationDecisionCode = "release_name_confirmation"
+const (
+	releaseNameConfirmationDecisionCode   = "release_name_confirmation"
+	releaseNameOverrideDecisionCodePrefix = "release_name_override"
+	releaseNameStructureDecisionCode      = "release_name_structure"
+)
 
 func releaseNameConfirmationAction(
 	projections *api.TrackerReleaseProjectionSet,
@@ -57,7 +61,7 @@ func (m *Module) reviewTrackerReleaseName(
 	action api.RequiredAction,
 	answer api.RequiredActionAnswer,
 ) (CommandResult, error) {
-	reviewedName, confirmed, err := validatedReleaseNameConfirmation(action, answer)
+	reviewedName, confirmed, submittedName, err := validatedReleaseNameConfirmation(action, answer)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -91,6 +95,17 @@ func (m *Module) reviewTrackerReleaseName(
 		!currentDupes.ExpiresAt.After(now) {
 		return CommandResult{}, fmt.Errorf("%w: tracker name review dependencies are stale", ErrInvalidTransition)
 	}
+	currentProjectionIndex := slices.IndexFunc(currentProjections.Projections, func(projection api.TrackerReleaseProjection) bool {
+		return projection.TrackerID == action.TrackerID
+	})
+	if currentProjectionIndex < 0 {
+		return CommandResult{}, fmt.Errorf("%w: tracker name review projection is unavailable", ErrInvalidTransition)
+	}
+	currentProjection := currentProjections.Projections[currentProjectionIndex]
+	editedName := confirmed && submittedName && reviewedName != strings.TrimSpace(currentProjection.UploadReleaseName)
+	if confirmed && !editedName && currentProjection.NamingFingerprint == "" {
+		return CommandResult{}, fmt.Errorf("%w: generated release-name confirmation authority is unavailable", ErrInvalidTransition)
+	}
 
 	instructionSnapshot, err = instructionSnapshot.Clone()
 	if err != nil {
@@ -100,11 +115,15 @@ func (m *Module) reviewTrackerReleaseName(
 		instructionSnapshot.Instructions = make(map[api.TrackerID]api.TrackerProjectionInstructions)
 	}
 	instruction := instructionSnapshot.Instructions[action.TrackerID]
-	if confirmed {
+	if confirmed && editedName {
 		instruction.UploadReleaseName = api.WorkflowPatch[string]{Present: true, Value: reviewedName}
 	} else {
 		instruction.UploadReleaseName = api.WorkflowPatch[string]{}
 	}
+	// Confirmation authority is derived only from the automatic projection after
+	// removing an override. A requested name participates in its projection
+	// fingerprint, so retaining the prior fingerprint would immediately go stale.
+	instruction.ConfirmedNameFingerprint = ""
 	instructionSnapshot.Instructions[action.TrackerID] = instruction
 
 	trackerNames := make([]string, len(selection.TrackerIDs))
@@ -134,6 +153,47 @@ func (m *Module) reviewTrackerReleaseName(
 	if rebuiltCatalog.Fingerprint != catalog.Fingerprint ||
 		!slices.Equal(rebuiltSelection.TrackerIDs, selection.TrackerIDs) {
 		return CommandResult{}, fmt.Errorf("%w: tracker catalog or selection changed during name review", ErrInvalidTransition)
+	}
+	if editedName {
+		rebuiltProjectionIndex := slices.IndexFunc(rebuiltProjections.Projections, func(projection api.TrackerReleaseProjection) bool {
+			return projection.TrackerID == action.TrackerID
+		})
+		if rebuiltProjectionIndex < 0 {
+			return CommandResult{}, fmt.Errorf("%w: tracker name review projection disappeared", ErrInvalidTransition)
+		}
+		if err := validateEditedReleaseName(action.TrackerID, reviewedName, rebuiltProjections.Projections[rebuiltProjectionIndex]); err != nil {
+			return CommandResult{}, err
+		}
+	}
+	if confirmed && !editedName {
+		rebuiltProjectionIndex := slices.IndexFunc(rebuiltProjections.Projections, func(projection api.TrackerReleaseProjection) bool {
+			return projection.TrackerID == action.TrackerID
+		})
+		if rebuiltProjectionIndex < 0 {
+			return CommandResult{}, fmt.Errorf("%w: tracker name review projection disappeared", ErrInvalidTransition)
+		}
+		automaticProjection := rebuiltProjections.Projections[rebuiltProjectionIndex]
+		if err := validateGeneratedReleaseNameConfirmation(action.TrackerID, currentProjection.UploadReleaseName, automaticProjection); err != nil {
+			return CommandResult{}, err
+		}
+		instruction.ConfirmedNameFingerprint = automaticProjection.NamingFingerprint
+		instructionSnapshot.Instructions[action.TrackerID] = instruction
+		rebuiltCatalog, _, rebuiltSelection, rebuiltProjections, err = m.trackerProjector.Build(
+			projectionContext,
+			release,
+			subject,
+			selection.TrackerIDs,
+			instructionSnapshot.Instructions,
+			projectionRuleAuthorizations(currentProjections),
+			currentProjections.ExecutionMode,
+		)
+		if err != nil {
+			return CommandResult{}, fmt.Errorf("release workflow confirm generated tracker name: %w", err)
+		}
+		if rebuiltCatalog.Fingerprint != catalog.Fingerprint ||
+			!slices.Equal(rebuiltSelection.TrackerIDs, selection.TrackerIDs) {
+			return CommandResult{}, fmt.Errorf("%w: tracker catalog or selection changed during name review", ErrInvalidTransition)
+		}
 	}
 
 	finalized, err := mergeReviewedReleaseNameProjections(
@@ -232,24 +292,70 @@ func (m *Module) reviewTrackerReleaseName(
 func validatedReleaseNameConfirmation(
 	action api.RequiredAction,
 	answer api.RequiredActionAnswer,
-) (string, bool, error) {
+) (string, bool, bool, error) {
 	if answer.Confirmed == nil || len(answer.SelectedValues) != 0 {
-		return "", false, fmt.Errorf("%w: tracker name review requires an exact confirmation state", ErrInvalidTransition)
+		return "", false, false, fmt.Errorf("%w: tracker name review requires an exact confirmation state", ErrInvalidTransition)
 	}
 	if !*answer.Confirmed {
 		if action.Status != api.RequiredActionStatusResolved || answer.TextValue != nil {
-			return "", false, fmt.Errorf("%w: only a resolved tracker name can be unconfirmed", ErrInvalidTransition)
+			return "", false, false, fmt.Errorf("%w: only a resolved tracker name can be unconfirmed", ErrInvalidTransition)
 		}
-		return "", false, nil
+		return "", false, false, nil
 	}
-	if action.Status != api.RequiredActionStatusPending || answer.TextValue == nil {
-		return "", false, fmt.Errorf("%w: tracker name review requires pending confirmed free text", ErrInvalidTransition)
+	if action.Status != api.RequiredActionStatusPending {
+		return "", false, false, fmt.Errorf("%w: tracker name review requires pending confirmation", ErrInvalidTransition)
+	}
+	if answer.TextValue == nil {
+		return "", true, false, nil
 	}
 	value := strings.TrimSpace(*answer.TextValue)
 	if value == "" || strings.IndexFunc(value, unicode.IsControl) >= 0 {
-		return "", false, fmt.Errorf("%w: reviewed tracker name is empty or contains control characters", ErrInvalidTransition)
+		return "", false, false, fmt.Errorf("%w: reviewed tracker name is empty or contains control characters", ErrInvalidTransition)
 	}
-	return value, true, nil
+	return value, true, true, nil
+}
+
+func validateEditedReleaseName(trackerID api.TrackerID, requested string, projection api.TrackerReleaseProjection) error {
+	if projection.UploadReleaseName == requested && projection.Readiness == api.ReadinessStatusReady &&
+		projection.DupeReady && projection.UploadReady && len(projection.Failures) == 0 {
+		return nil
+	}
+	message := fmt.Sprintf(
+		"Tracker %s cannot use the requested release name %q; the enforced name is %q. Edit the name or clear the override and confirm the generated name.",
+		trackerID,
+		requested,
+		projection.UploadReleaseName,
+	)
+	return api.NewOperationError(api.OperationFailure{
+		Code:      api.OperationFailureInvalidInput,
+		Operation: api.OperationKindPreparation,
+		Message:   message,
+		Recovery:  api.OperationRecoveryEditInput,
+	}, ErrInvalidTransition)
+}
+
+func validateGeneratedReleaseNameConfirmation(
+	trackerID api.TrackerID,
+	displayedName string,
+	projection api.TrackerReleaseProjection,
+) error {
+	if strings.TrimSpace(projection.UploadReleaseName) == strings.TrimSpace(displayedName) &&
+		projection.Readiness == api.ReadinessStatusReady && projection.DupeReady && len(projection.Failures) == 0 &&
+		projection.NamingFingerprint != "" {
+		return nil
+	}
+	message := fmt.Sprintf(
+		"Tracker %s cannot confirm the displayed release name %q; the generated name is %q. Clear the override and review the generated name again.",
+		trackerID,
+		displayedName,
+		projection.UploadReleaseName,
+	)
+	return api.NewOperationError(api.OperationFailure{
+		Code:      api.OperationFailureInvalidInput,
+		Operation: api.OperationKindPreparation,
+		Message:   message,
+		Recovery:  api.OperationRecoveryEditInput,
+	}, ErrInvalidTransition)
 }
 
 func mergeReviewedReleaseNameProjections(
@@ -341,7 +447,10 @@ func mergeReviewedReleaseNameProjections(
 			next.RequiredActions[actionIndex].ID = confirmationAction.ID
 		}
 		for _, decision := range previous.PolicyDecisions {
-			if decision.Code == releaseNameConfirmationDecisionCode || slices.Contains(next.PolicyDecisions, decision) {
+			if decision.Code == releaseNameConfirmationDecisionCode ||
+				decision.Code == releaseNameStructureDecisionCode ||
+				strings.HasPrefix(strings.TrimSpace(decision.Code), releaseNameOverrideDecisionCodePrefix) ||
+				slices.Contains(next.PolicyDecisions, decision) {
 				continue
 			}
 			next.PolicyDecisions = append(next.PolicyDecisions, decision)

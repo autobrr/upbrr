@@ -9,13 +9,12 @@ import (
 // mappings, duplicate policy, and optional owned image host.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
-		Name:             "RF",
-		BaseURL:          "https://reelflix.cc",
-		Rules:            Rules(),
-		ValidationPolicy: ValidationPolicy(),
+		Name:              "RF",
+		BaseURL:           "https://reelflix.cc",
+		Rules:             Rules(),
+		ValidationPolicy:  ValidationPolicy(),
+		ReleaseNamePolicy: trackers.StructuredReleaseNamePolicy("unit3d/rf/v3", trackers.StructuredNamePolicy{}),
 		Site: unit3d.SiteProfile{
-			BuildName:           buildName,
-			BuildNameVersion:    "v2",
 			ResolveTypeID:       typeID,
 			ResolveResolutionID: resolutionID,
 		},

@@ -276,6 +276,7 @@ func (p *WorkflowProjector) projectSelected(
 			Tracker:                   string(trackerID),
 			Meta:                      trackerSubject,
 			RequestedUploadName:       requestedName,
+			ConfirmedNameFingerprint:  instruction.ConfirmedNameFingerprint,
 			AdditionalReleaseNames:    projectionAdditionalNames(instruction),
 			AuthorizedRuleFingerprint: ruleAuthorizations[trackerID],
 			TrackerConfig:             applyTrackerConfigOverrides(trackerConfigFor(p.config, string(trackerID)), instruction.TrackerConfig),

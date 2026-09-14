@@ -110,6 +110,11 @@ type TrackerSelection struct {
 // Nil values use automatic resolution; pointed-to empty strings explicitly clear their field.
 type TrackerProjectionInstructions struct {
 	UploadReleaseName WorkflowPatch[string] `json:"-"`
+	// ConfirmedNameFingerprint binds a no-edit release-name confirmation to the
+	// generated naming result without turning it into an upload-name override.
+	// The server issues it after a valid review action; public input may only
+	// retain an already-issued marker, never create confirmation authority.
+	ConfirmedNameFingerprint WorkflowFingerprint `json:"confirmedNameFingerprint,omitempty"`
 	// ScreenshotCount overrides the global screenshot fallback. Zero disables that fallback, while a tracker ImageCount remains a minimum.
 	ScreenshotCount *int                   `json:"screenshotCount,omitempty"`
 	AdditionalNames map[string]*string     `json:"additionalNames,omitempty"`
@@ -247,6 +252,11 @@ type TrackerPolicyDecision struct {
 	Decision string `json:"decision"`
 	Blocking bool   `json:"blocking"`
 	Message  string `json:"message,omitempty"`
+	// NamingRole identifies the component affected by a naming policy outcome,
+	// or "name" when an opaque whole name was rebuilt.
+	NamingRole string `json:"namingRole,omitempty"`
+	// NamingRuleID identifies the tracker naming rule that produced the outcome.
+	NamingRuleID string `json:"namingRuleId,omitempty"`
 	// Disposition is the backend-owned execution effect of a failed rule.
 	Disposition RuleDisposition `json:"disposition,omitempty"`
 	// EvidenceStatus states how completely the backend could evaluate the rule.

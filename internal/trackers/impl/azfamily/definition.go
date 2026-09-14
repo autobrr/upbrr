@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -33,20 +32,10 @@ func (d *Definition) Name() string {
 // TrackerFamily identifies the definition as AZ-family-backed.
 func (d *Definition) TrackerFamily() trackers.Family { return trackers.FamilyAZFamily }
 
-// ReleaseNamePolicy returns the site's versioned upload/search naming contract.
-// CinemaZ v3 uses IMDb as movie-year authority; AZ and PHD v2 use TMDB.
+// ReleaseNamePolicy returns the site's versioned structured upload/search naming contract.
+// CinemaZ v4 uses IMDb as movie-year authority; AZ and PHD v3 use TMDB.
 func (d *Definition) ReleaseNamePolicy() trackers.ReleaseNamePolicyBinding {
-	version := "v2"
-	movieYearProvider := api.IdentityProviderTMDB
-	if d.site.Name == "CZ" {
-		version = "v3"
-		movieYearProvider = api.IdentityProviderIMDB
-	}
-	return trackers.WithMovieYearProvider(trackers.SubjectReleaseNameSearchPolicy(
-		fmt.Sprintf("azfamily/%s/%s", strings.ToLower(d.site.Name), version),
-		func(meta api.UploadSubject, _ config.TrackerConfig) string { return editName(d.site, meta) },
-		func(meta api.UploadSubject, _ config.TrackerConfig) string { return resolveSearchName(meta) },
-	), movieYearProvider)
+	return releaseNamePolicy(d.site)
 }
 
 // UploadContentMode declares the aggregate description workflow shared by AZ-family sites.

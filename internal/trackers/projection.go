@@ -5,6 +5,7 @@ package trackers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -362,12 +363,16 @@ func (r *Registry) ProjectRelease(
 		})
 	} else if resolvedNames, resolveErr := resolveProjectedReleaseNames(input, descriptor.ReleaseNamePolicy); resolveErr != nil {
 		code := "name_policy"
-		if input.RequestedUploadName != nil && strings.TrimSpace(*input.RequestedUploadName) == "" {
+		message := "tracker release-name policy failed"
+		if rule, ok := errors.AsType[*NameRuleError](resolveErr); ok {
+			code = "name_rule_unsatisfied"
+			message = rule.Error()
+		} else if input.RequestedUploadName != nil && strings.TrimSpace(*input.RequestedUploadName) == "" {
 			code = "name_instruction"
 		} else if strings.Contains(resolveErr.Error(), "required") {
 			code = "name_required"
 		}
-		failure = NewPreparationFailure(input.Tracker, code, "tracker release-name policy failed", resolveErr)
+		failure = NewPreparationFailure(input.Tracker, code, message, resolveErr)
 		projection.UploadReleaseName = ""
 		projection.DuplicateCriteria.Name = ""
 		projection.Readiness = api.ReadinessStatusBlocked
@@ -517,7 +522,8 @@ func (r *Registry) ProjectRelease(
 		if trackerName == "" {
 			trackerName = strings.TrimSpace(descriptor.Name)
 		}
-		if releaseNameConfirmationRequired(input, descriptor.ReleaseNamePolicy) {
+		if releaseNameConfirmationRequired(input, descriptor.ReleaseNamePolicy, projection.UploadReleaseName) &&
+			input.ConfirmedNameFingerprint != projection.NamingFingerprint {
 			projection.PolicyDecisions = append(projection.PolicyDecisions, api.TrackerPolicyDecision{
 				Code:     releaseNameConfirmationCode,
 				Decision: "confirmation_required",

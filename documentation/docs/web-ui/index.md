@@ -45,6 +45,10 @@ Use **Input** to correct titles, genre, release naming fields, and languages bef
 
 Corrections survive metadata refresh, history reload, and restart. Explicit values take precedence over saved values and provider results. **Auto** removes the saved correction. An empty list or explicit **No** remains a manual value.
 
+Tracker naming policies can declare mandatory rules for specific name components. Those rules take precedence over manual naming choices for that tracker only; they do not change the saved Input facts. When a rule overrides a choice or replaces a complete manual name, the review shows an explanation beside the effective tracker name. This authority is part of the tracker implementation, not a user setting.
+
+A complete manual name has no reliable component boundaries. If a mandatory rule cannot safely apply to it, clear the complete-name override and regenerate the automatic name. A tracker policy may explicitly rebuild it instead. Confirm the effective name shown in review: submitting an edit that would be changed by enforcement does not confirm the unseen replacement.
+
 Clearing **Manual year** saves an explicit zero. Choose **Auto** to restore the derived year.
 
 Audio, subtitle, and hardcoded-subtitle fields accept comma-separated languages. Individual track edits apply only to the selected inspected track. Release-level language lists affect the aggregate without assigning languages to each track. Uninspected collection members remain marked as incomplete coverage.

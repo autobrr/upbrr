@@ -25,7 +25,7 @@ import (
 
 // ContractVersion changes whenever prepared fact semantics or the private seed
 // contract become incompatible, forcing persisted generations to be recomputed.
-const ContractVersion = "prepared-release-v15"
+const ContractVersion = "prepared-release-v17"
 
 // Store is the prepared-release persistence port. Implementations must commit
 // facts, identity, and provider metadata as one generation transaction.
@@ -228,6 +228,13 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 	reuseAllowed := layout.DiscType != "BDMV" || input.Instructions.Playlist.Set
 	forceClientRefresh := input.Controls.ForceRecheck != nil && *input.Controls.ForceRecheck
 	if hasCurrent && reuseAllowed && !input.Force && !forceClientRefresh && current.Compatibility == compatibility {
+		if err := validateGeneration(current); err != nil {
+			api.EmitPreparationProgress(
+				ctx,
+				api.NewPreparationProgressUpdate(api.PreparationPhasePreparedCache, api.PreparationProgressFailed, "Prepared cache check failed."),
+			)
+			return api.PrepareResult{}, err
+		}
 		if !m.hasPublishedGeneration(current.Source.SourcePath, current.Generation) {
 			hydrator, ok := m.collector.(privateResourcesHydrator)
 			if !ok {
@@ -593,6 +600,11 @@ func validateGeneration(release api.PreparedRelease) error {
 	}
 	if release.Compatibility.ContractVersion != ContractVersion {
 		return &IncompatiblePreparationError{SourcePath: release.Source.SourcePath, Reason: "unsupported prepared-release contract"}
+	}
+	if document := release.Naming.GeneratedName; document != nil {
+		if err := document.Validate(); err != nil {
+			return &IncompatiblePreparationError{SourcePath: release.Source.SourcePath, Reason: "invalid generated name components; reprepare the release"}
+		}
 	}
 	if strings.TrimSpace(release.Compatibility.SourceFingerprint) == "" ||
 		strings.TrimSpace(release.Compatibility.FactInstructionFingerprint) == "" ||
@@ -987,7 +999,8 @@ func (e *StalePreparationError) Error() string {
 	return fmt.Sprintf("prepared release is stale: source=%s generation=%d reason=%s", e.SourcePath, e.Generation, e.Reason)
 }
 
-// IncompatiblePreparationError reports a prepared contract/lineage mismatch.
+// IncompatiblePreparationError reports a prepared contract/lineage mismatch or
+// invalid canonical facts. The release must be prepared again before reuse.
 type IncompatiblePreparationError struct {
 	SourcePath string
 	Reason     string

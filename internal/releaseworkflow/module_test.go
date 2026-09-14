@@ -1295,11 +1295,15 @@ func TestModuleReviewsTrackerReleaseNameWithoutRepeatingDupeSearch(t *testing.T)
 
 	const automaticName = "Example.Release.2026.ALPHA-GRP"
 	const reviewedName = "Example.Release.2026.REVIEWED-GRP"
+	const rejectedName = "Example.Release.2026.REJECTED-GRP"
+	const enforcedName = automaticName
 	catalog, err := testCatalog(t).WithFingerprint()
 	if err != nil {
 		t.Fatalf("fingerprint review catalog: %v", err)
 	}
 	waivableFingerprint := testFingerprint(t, "name-review-waivable-rules")
+	automaticNamingFingerprint := testFingerprint(t, "name-review-automatic-naming")
+	rebuiltRequestNamingFingerprint := testFingerprint(t, "name-review-rebuilt-request-naming")
 	var reviewedRuleAuthorization api.WorkflowFingerprint
 	projector := trackerProjectionBuilderFunc(func(
 		_ context.Context,
@@ -1317,6 +1321,12 @@ func TestModuleReviewsTrackerReleaseNameWithoutRepeatingDupeSearch(t *testing.T)
 		error,
 	) {
 		projection := testProjection(t, "ALPHA", automaticName)
+		projection.NamingFingerprint = automaticNamingFingerprint
+		projection.NamingPolicyID = "test/name-review/v1"
+		projection.DuplicatePolicyID = "test/dupe-review/v1"
+		projection.DuplicatePolicyFingerprint = testFingerprint(t, "name-review-duplicate-policy")
+		projection.DuplicateTargetFingerprint = testFingerprint(t, "name-review-duplicate-target")
+		projection.DuplicateSearchFingerprint = testFingerprint(t, "name-review-duplicate-search")
 		projection.WaivableRuleFingerprint = waivableFingerprint
 		projection.RuleAuthorizationFingerprint = waivableFingerprint
 		projection.PolicyDecisions = []api.TrackerPolicyDecision{
@@ -1338,12 +1348,32 @@ func TestModuleReviewsTrackerReleaseNameWithoutRepeatingDupeSearch(t *testing.T)
 		policyFingerprint := testFingerprint(t, "name-review-policy-automatic")
 		if instruction := instructions["ALPHA"]; instruction.UploadReleaseName.Present {
 			reviewedRuleAuthorization = ruleAuthorizations["ALPHA"]
-			projection.UploadReleaseName = instruction.UploadReleaseName.Value
-			projection.AdditionalNames = []api.TrackerReleaseName{{
-				Role:  api.TrackerReleaseNameRoleSearch,
-				Value: automaticName,
-			}}
-			projection.ProjectorFingerprint = testFingerprint(t, "ALPHA-projector-reviewed")
+			if instruction.UploadReleaseName.Value == rejectedName {
+				projection.UploadReleaseName = enforcedName
+				projection.NamingFingerprint = rebuiltRequestNamingFingerprint
+				inputFingerprint = testFingerprint(t, "name-review-rebuilt-request")
+				policyFingerprint = testFingerprint(t, "name-review-policy-rebuilt-request")
+			} else {
+				projection.UploadReleaseName = instruction.UploadReleaseName.Value
+				projection.AdditionalNames = []api.TrackerReleaseName{{
+					Role:  api.TrackerReleaseNameRoleSearch,
+					Value: automaticName,
+				}}
+				projection.ProjectorFingerprint = testFingerprint(t, "ALPHA-projector-reviewed")
+				projection.PolicyDecisions = []api.TrackerPolicyDecision{
+					{
+						Code:        "language_rule",
+						Decision:    "authorized",
+						Disposition: api.RuleDispositionWaivable,
+					},
+					{Code: releaseNameConfirmationDecisionCode, Decision: "confirmed"},
+				}
+				projection.RequiredActions = nil
+				projection.UploadReady = true
+				inputFingerprint = testFingerprint(t, "name-review-reviewed")
+				policyFingerprint = testFingerprint(t, "name-review-policy-reviewed")
+			}
+		} else if instruction.ConfirmedNameFingerprint == automaticNamingFingerprint {
 			projection.PolicyDecisions = []api.TrackerPolicyDecision{
 				{
 					Code:        "language_rule",
@@ -1354,8 +1384,8 @@ func TestModuleReviewsTrackerReleaseNameWithoutRepeatingDupeSearch(t *testing.T)
 			}
 			projection.RequiredActions = nil
 			projection.UploadReady = true
-			inputFingerprint = testFingerprint(t, "name-review-reviewed")
-			policyFingerprint = testFingerprint(t, "name-review-policy-reviewed")
+			inputFingerprint = testFingerprint(t, "name-review-confirmed-generated")
+			policyFingerprint = testFingerprint(t, "name-review-policy-confirmed-generated")
 		}
 		projection.InputFingerprint = inputFingerprint
 		return catalog, testRuntime(t), api.TrackerSelection{TrackerIDs: trackerIDs}, api.TrackerReleaseProjectionSet{
@@ -1425,7 +1455,13 @@ func TestModuleReviewsTrackerReleaseNameWithoutRepeatingDupeSearch(t *testing.T)
 				UploadReleaseName:     projection.UploadReleaseName,
 				ProjectionFingerprint: fingerprint,
 				CriteriaFingerprint:   projection.CriteriaFingerprint,
+				TargetFingerprint:     projection.DuplicateTargetFingerprint,
+				SearchFingerprint:     projection.DuplicateSearchFingerprint,
+				PolicyID:              projection.DuplicatePolicyID,
+				PolicyFingerprint:     projection.DuplicatePolicyFingerprint,
+				EvidenceFingerprint:   testFingerprint(t, "name-review-duplicate-evidence"),
 				Criteria:              projection.DuplicateCriteria,
+				Search:                api.DupeSearchEvidence{Complete: true},
 				Decision:              api.DupeDecisionNoMatch,
 				Status:                api.StageStatusCompleted,
 				CheckedAt:             now,
@@ -1435,7 +1471,7 @@ func TestModuleReviewsTrackerReleaseNameWithoutRepeatingDupeSearch(t *testing.T)
 			ExpiresAt: now.Add(time.Hour),
 		}, struct{ Evidence string }{Evidence: "retained"}, nil
 	})
-	module, _ := newTestModule(
+	module, repository := newTestModule(
 		t,
 		testPreparer(),
 		WithTrackerProjectionBuilder(projector),
@@ -1452,7 +1488,9 @@ func TestModuleReviewsTrackerReleaseNameWithoutRepeatingDupeSearch(t *testing.T)
 		WorkflowID:       result.Workflow.ID,
 		ExpectedRevision: result.Workflow.Revision,
 		TrackerIDs:       []api.TrackerID{"ALPHA"},
-		Instructions:     map[api.TrackerID]api.TrackerProjectionInstructions{"ALPHA": {}},
+		Instructions: map[api.TrackerID]api.TrackerProjectionInstructions{
+			"ALPHA": {UploadReleaseName: api.WorkflowPatch[string]{Present: true, Value: rejectedName}},
+		},
 	})
 	result = executeCommand(t, module, PreflightTrackersCommand{
 		WorkflowID:       result.Workflow.ID,
@@ -1465,9 +1503,77 @@ func TestModuleReviewsTrackerReleaseNameWithoutRepeatingDupeSearch(t *testing.T)
 	if dupeChecks != 1 || result.Dupes == nil || len(result.Workflow.RequiredActions) != 1 {
 		t.Fatalf("initial duplicate result = %#v checks=%d", result, dupeChecks)
 	}
-	priorDupeRef := *result.Workflow.Dupes
-	action := result.Workflow.RequiredActions[0]
 	confirmed := true
+	enforcedNameValue := enforcedName
+	action := result.Workflow.RequiredActions[0]
+	result = executeCommand(t, module, ResolveActionCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Answer: api.RequiredActionAnswer{
+			ActionID:         action.ID,
+			WorkflowRevision: result.Workflow.Revision,
+			TextValue:        &enforcedNameValue,
+			Confirmed:        &confirmed,
+		},
+		IdempotencyKey: "confirm-generated-tracker-name",
+	})
+	if result.Projections == nil || result.ProjectionInstructions == nil ||
+		result.Projections.Projections[0].UploadReleaseName != automaticName || !result.Projections.Projections[0].UploadReady ||
+		result.ProjectionInstructions.Instructions["ALPHA"].UploadReleaseName.Present ||
+		result.ProjectionInstructions.Instructions["ALPHA"].ConfirmedNameFingerprint != automaticNamingFingerprint ||
+		len(result.Workflow.RequiredActions) != 1 || result.Workflow.RequiredActions[0].Status != api.RequiredActionStatusResolved {
+		t.Fatalf("generated tracker-name confirmation = %#v", result)
+	}
+	loaded, err := repository.Load(context.Background(), testOwnerID, result.Workflow.ID)
+	if err != nil || loaded.ProjectionInstructions[result.Workflow.ProjectionInstructions.ID].Instructions["ALPHA"].ConfirmedNameFingerprint !=
+		result.ProjectionInstructions.Instructions["ALPHA"].ConfirmedNameFingerprint {
+		t.Fatalf("reload generated tracker-name confirmation = %#v, %v", loaded, err)
+	}
+
+	confirmed = false
+	action = result.Workflow.RequiredActions[0]
+	result = executeCommand(t, module, ResolveActionCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Answer: api.RequiredActionAnswer{
+			ActionID:         action.ID,
+			WorkflowRevision: result.Workflow.Revision,
+			Confirmed:        &confirmed,
+		},
+		IdempotencyKey: "unconfirm-generated-tracker-name",
+	})
+	if result.Projections == nil || result.Projections.Projections[0].UploadReady ||
+		len(result.Workflow.RequiredActions) != 1 || result.Workflow.RequiredActions[0].Status != api.RequiredActionStatusPending {
+		t.Fatalf("unconfirm generated tracker-name confirmation = %#v", result)
+	}
+
+	priorDupeRef := *result.Workflow.Dupes
+	action = result.Workflow.RequiredActions[0]
+	confirmed = true
+	rejectedNameValue := rejectedName
+	priorRevision := result.Workflow.Revision
+	_, err = module.Execute(context.Background(), testOwnerID, ResolveActionCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Answer: api.RequiredActionAnswer{
+			ActionID:         action.ID,
+			WorkflowRevision: result.Workflow.Revision,
+			TextValue:        &rejectedNameValue,
+			Confirmed:        &confirmed,
+		},
+		IdempotencyKey: "reject-rebuilt-tracker-name",
+	})
+	failure, failureOK := api.AsOperationFailure(err)
+	if !failureOK || failure.Code != api.OperationFailureInvalidInput || failure.Recovery != api.OperationRecoveryEditInput ||
+		!strings.Contains(failure.Message, enforcedName) {
+		t.Fatalf("rejected rebuilt tracker-name failure = %#v, %v", failure, err)
+	}
+	loaded, err = repository.Load(context.Background(), testOwnerID, result.Workflow.ID)
+	if err != nil || loaded.Workflow.Revision != priorRevision || loaded.Workflow.ProjectionInstructions == nil ||
+		loaded.ProjectionInstructions[loaded.Workflow.ProjectionInstructions.ID].Instructions["ALPHA"].UploadReleaseName.Present {
+		t.Fatalf("rejected rebuilt tracker-name persisted review state = %#v, %v", loaded, err)
+	}
+
 	reviewedNameValue := reviewedName
 	module.private = &failOncePutPrivateResourceStore{PrivateResourceStore: module.private}
 	_, err = module.Execute(context.Background(), testOwnerID, ResolveActionCommand{

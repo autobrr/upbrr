@@ -259,10 +259,35 @@ func preparedReleaseDBFixture(sourcePath string, generation api.PreparedGenerati
 		Naming: api.NamingFacts{
 			Filename:    filepath.Base(sourcePath),
 			ReleaseName: "Example.Release.2026.1080p-GRP",
-			Title:       "Example Release 2026",
-			Year:        2026,
-			Codecs:      []string{"H.264"},
-			Languages:   []string{"English"},
+			GeneratedName: &api.ReleaseNameDocument{
+				Version: api.ReleaseNameDocumentVersionV1,
+				Components: []api.ReleaseNameComponent{
+					{
+						Role:           api.NameRoleTitle,
+						Value:          "Example Release",
+						AvailableValue: "Example Release",
+						Present:        true,
+						Join:           " ",
+					},
+					{
+						Role:           api.NameRoleYear,
+						Value:          "2026",
+						AvailableValue: "2026",
+						Present:        true,
+						Join:           " ",
+					},
+					{
+						Role:           api.NameRoleGroup,
+						Value:          "-GRP",
+						AvailableValue: "-GRP",
+						Present:        true,
+					},
+				},
+			},
+			Title:     "Example Release 2026",
+			Year:      2026,
+			Codecs:    []string{"H.264"},
+			Languages: []string{"English"},
 		},
 		Episode: api.EpisodeFacts{
 			Season:       1,

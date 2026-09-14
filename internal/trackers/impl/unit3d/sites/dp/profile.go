@@ -10,13 +10,10 @@ import (
 // Profile returns DP's Unit3D site manifest.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
-		Name:         "DP",
-		BaseURL:      "https://darkpeers.org",
-		Rules:        Rules(),
-		BannedGroups: BannedGroups(),
-		Site: unit3d.SiteProfile{
-			BuildName:        buildName,
-			BuildNameVersion: "v2",
-		},
+		Name:              "DP",
+		BaseURL:           "https://darkpeers.org",
+		Rules:             Rules(),
+		BannedGroups:      BannedGroups(),
+		ReleaseNamePolicy: namePolicy(),
 	}
 }

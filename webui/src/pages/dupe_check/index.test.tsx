@@ -187,6 +187,71 @@ describe("DupeCheckPage", () => {
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 
+  it.each(["release_name_override", "release_name_override_generated"])(
+    "renders %s from the current projection when the effective name is unchanged",
+    (code) => {
+      const projection = (policyDecisions: object[]) =>
+        ({
+          projections: [
+            {
+              trackerId: "EXAMPLE",
+              displayName: "Example",
+              canonicalReleaseName: "Example.Release.2026.1080p-GRP",
+              uploadReleaseName: "Example.Release.2026.1080p-GRP",
+              policyDecisions,
+              readiness: "ready",
+            },
+          ],
+        }) as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>;
+      const notice = {
+        code,
+        decision: "enforced",
+        blocking: false,
+        namingRole: "year",
+        namingRuleId: "example/year/v1",
+        message: "Example requires the provider year in release names.",
+      };
+      const rendered = renderPage(facetFor({ projections: projection([notice]) }));
+
+      const names = screen.getByLabelText("Effective tracker names for EXAMPLE");
+      expect(within(names).getByText("Example.Release.2026.1080p-GRP")).toBeInTheDocument();
+      expect(
+        within(screen.getByLabelText("Tracker naming notices for EXAMPLE")).getByText(
+          notice.message,
+        ),
+      ).toBeInTheDocument();
+
+      const updatedMessage = "Example now requires its current provider year in release names.";
+      rendered.rerender(
+        <DupeCheckPage
+          facet={facetFor({
+            projections: projection([{ ...notice, message: updatedMessage }]),
+          })}
+          sourcePath="C:\\media\\Example"
+          trackerUploadItems={[{ name: "EXAMPLE", config: {} }]}
+          trackerIconSrcByName={{}}
+        />,
+      );
+
+      expect(screen.queryByText(notice.message)).not.toBeInTheDocument();
+      expect(screen.getByText(updatedMessage)).toBeInTheDocument();
+
+      rendered.rerender(
+        <DupeCheckPage
+          facet={facetFor({ projections: projection([]) })}
+          sourcePath="C:\\media\\Example"
+          trackerUploadItems={[{ name: "EXAMPLE", config: {} }]}
+          trackerIconSrcByName={{}}
+        />,
+      );
+
+      expect(screen.queryByLabelText("Tracker naming notices for EXAMPLE")).not.toBeInTheDocument();
+      expect(
+        screen.queryByLabelText("Effective tracker names for EXAMPLE"),
+      ).not.toBeInTheDocument();
+    },
+  );
+
   it("owns tracker selection and blocks execution while selection is empty", () => {
     const chooseTrackers = vi.fn();
     renderPage(facetFor({ selectedTrackers: [] }, { chooseTrackers }));

@@ -310,8 +310,8 @@ func TestBTNUploadEndToEndSuccess(t *testing.T) {
 	if got := uploadFormValues["release_desc"]; got != mediaInfoText {
 		t.Fatalf("expected MediaInfo release_desc, got %q", got)
 	}
-	if got := uploadFormValues["scenename"]; !strings.Contains(got, "H.265") || strings.Contains(got, "x265") {
-		t.Fatalf("expected scenename codec remap to H.265, got %q", got)
+	if got := uploadFormValues["scenename"]; got != "Example.Show.S01E01.1080p.WEB-DL.x265-GRP" {
+		t.Fatalf("expected opaque scenename authority, got %q", got)
 	}
 }
 

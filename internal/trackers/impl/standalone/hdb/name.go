@@ -38,7 +38,7 @@ func uploadTorrentFilename(name string) string {
 
 func releaseNamePolicy() trackers.ReleaseNamePolicyBinding {
 	return trackers.WithMovieYearProvider(trackers.WithEpisodeTitleMode(
-		trackers.NewReleaseNamePolicy("standalone/hdb/v5", resolveReleaseNames),
+		trackers.NewReleaseNamePolicy("standalone/hdb/v6", resolveReleaseNames),
 		api.EpisodeTitleModeOmit,
 	), api.IdentityProviderIMDB)
 }
@@ -211,6 +211,8 @@ func hdbSourceElement(meta api.UploadSubject) string {
 		source = "WEB-DL"
 	case "WEBRIP":
 		source = "WEBRip"
+	case "DVDRIP":
+		source = "DVDRip"
 	case "HDTV":
 		if source == "" || strings.EqualFold(source, "WEB") {
 			source = "HDTV"
@@ -243,7 +245,7 @@ func hdbSourceElement(meta api.UploadSubject) string {
 
 func hdbAudioBeforeVideo(meta api.UploadSubject) bool {
 	switch resolveHDBType(meta) {
-	case "ENCODE", "WEBDL", "WEBRIP":
+	case "ENCODE", "WEBDL", "WEBRIP", "DVDRIP":
 		return true
 	default:
 		return false

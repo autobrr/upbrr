@@ -6,182 +6,79 @@ package znth
 import (
 	"testing"
 
-	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/metadata"
+	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestBuildZNTHNameTV(t *testing.T) {
-	meta := api.UploadSubject{
-		ReleaseName:  "Show.S01E01.Episode.Title.1080p.WEB-DL-GRP",
+func TestZNTHStructuredReleaseNamePolicyOmitsOnlyEpisodeTitleRole(t *testing.T) {
+	t.Parallel()
+	result := metadata.BuildReleaseName(api.ReleaseNameRequest{
+		Category:     "TV",
+		Type:         "WEBDL",
+		Title:        "Episode Title Show",
+		Season:       "S01",
+		Episode:      "E02",
 		EpisodeTitle: "Episode Title",
-		Identity:     api.ExternalIdentity{Category: "TV"},
-		Release:      api.ReleaseInfo{Resolution: "1080p"},
+		Resolution:   "1080p",
+		Source:       "Web",
+		Tag:          "-GRP",
+	}, api.NopLogger{})
+	subject := api.UploadSubject{
+		ReleaseName:      result.Name,
+		ReleaseNameNoTag: result.NameNoTag,
+		GeneratedName:    result.GeneratedName,
+		Identity:         api.ExternalIdentity{Category: api.CanonicalCategoryTV},
 	}
-	got := Profile().Site.BuildName(meta, config.TrackerConfig{})
-	expected := "Show.S01E01.1080p.WEB-DL-GRP"
-	if got != expected {
-		t.Fatalf("expected %q, got %q", expected, got)
+	if got, want := znthReviewedName(t, subject, nil), "Episode Title Show S01E02 1080p WEB-DL-GRP"; got != want {
+		t.Fatalf("ZNTH name = %q, want %q", got, want)
 	}
-}
-
-func TestBuildZNTHNameLeavesMovieYearToFamilyPolicy(t *testing.T) {
-	meta := api.UploadSubject{
-		ReleaseName: "Movie.2024.1080p.WEB-DL-GRP",
-		Release:     api.ReleaseInfo{Year: 2024},
-		Identity:    api.ExternalIdentity{Category: "MOVIE"},
-		ProviderMetadata: api.SourceScopedMetadata{
-			IMDB: &api.IMDBMetadata{Year: 2025},
-		},
+	movie := subject
+	movie.Identity.Category = api.CanonicalCategoryMovie
+	if got := znthReviewedName(t, movie, nil); got != movie.ReleaseName {
+		t.Fatalf("movie episode title changed: %q", got)
 	}
-	got := Profile().Site.BuildName(meta, config.TrackerConfig{})
-	expected := "Movie.2024.1080p.WEB-DL-GRP"
-	if got != expected {
-		t.Fatalf("expected %q, got %q", expected, got)
+	manual := subject
+	markZNTHManual(t, manual.GeneratedName, api.NameRoleEpisodeTitle)
+	manual.ReleaseName = manual.GeneratedName.Render().Name
+	if got := znthReviewedName(t, manual, nil); got != manual.ReleaseName {
+		t.Fatalf("manual episode title changed: %q", got)
 	}
-}
-
-func TestBuildZNTHNameBlankCategoryDoesNotInferTVCategory(t *testing.T) {
-	meta := api.UploadSubject{
-		ReleaseName:  "Show.1x01.Episode.Title.1080p.WEB-DL-GRP",
-		EpisodeTitle: "Episode Title",
-		SeasonInt:    1,
-		EpisodeInt:   1,
-		Release: api.ReleaseInfo{
-			Category:   "TV",
-			Resolution: "1080p",
-		},
+	override := "Manual ZNTH Name-GRP"
+	if got := znthReviewedName(t, subject, &override); got != override {
+		t.Fatalf("opaque override = %q, want %q", got, override)
 	}
-
-	got := Profile().Site.BuildName(meta, config.TrackerConfig{})
-	expected := "Show.1x01.Episode.Title.1080p.WEB-DL-GRP"
-	if got != expected {
-		t.Fatalf("expected %q, got %q", expected, got)
+	policy := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
+	if policy.ID != "unit3d/znth/v2" || policy.Structured == nil || policy.Resolver != nil {
+		t.Fatalf("ZNTH policy = %#v", policy)
 	}
 }
 
-func TestBuildZNTHNameUnknownCategoryDoesNotInferTVCategory(t *testing.T) {
-	tests := []struct {
-		name string
-		meta api.UploadSubject
-	}{
-		{
-			name: "external unknown",
-			meta: api.UploadSubject{
-				Identity: api.ExternalIdentity{Category: "animation"},
-			},
-		},
-		{
-			name: "identity absent",
-			meta: api.UploadSubject{},
-		},
-		{
-			name: "external unknown ignores release tv",
-			meta: api.UploadSubject{
-				Identity: api.ExternalIdentity{Category: "animation"},
-			},
-		},
+func znthReviewedName(t *testing.T, subject api.UploadSubject, requested *string) string {
+	t.Helper()
+	prepared, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{
+		Tracker:             "ZNTH",
+		Meta:                subject,
+		RequestedUploadName: requested,
+	}, unit3d.NewWithProfile(Profile()).ReleaseNamePolicy())
+	if failure != nil {
+		t.Fatal(failure)
 	}
+	name, err := prepared.ReviewedUploadName()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return name
+}
 
-	for _, tc := range tests {
-		tc.meta.ReleaseName = "Show.S01E01.2024.Episode.Title.1080p.WEB-DL-GRP"
-		tc.meta.EpisodeTitle = "Episode Title"
-		tc.meta.SeasonInt = 1
-		tc.meta.EpisodeInt = 1
-		tc.meta.Release = api.ReleaseInfo{
-			Category:   "TV",
-			Resolution: "1080p",
-			Year:       2024,
-		}
-		tc.meta.ProviderMetadata = api.SourceScopedMetadata{
-			IMDB: &api.IMDBMetadata{Year: 2025},
-		}
-
-		got := Profile().Site.BuildName(tc.meta, config.TrackerConfig{})
-		expected := "Show.S01E01.2024.Episode.Title.1080p.WEB-DL-GRP"
-		if got != expected {
-			t.Fatalf("%s: expected %q, got %q", tc.name, expected, got)
+func markZNTHManual(t *testing.T, document *api.ReleaseNameDocument, role api.ReleaseNameRole) {
+	t.Helper()
+	for index := range document.Components {
+		if document.Components[index].Role == role {
+			document.Components[index].Manual = true
+			return
 		}
 	}
-}
-
-func TestBuildZNTHNameExplicitMoviePreservesEpisodeTitle(t *testing.T) {
-	meta := api.UploadSubject{
-		ReleaseName:  "Show.S01E01.2024.Episode.Title.1080p.WEB-DL-GRP",
-		EpisodeTitle: "Episode Title",
-		Identity:     api.ExternalIdentity{Category: "MOVIE"},
-		SeasonInt:    1,
-		EpisodeInt:   1,
-		Release: api.ReleaseInfo{
-			Category:   "TV",
-			Resolution: "1080p",
-			Year:       2024,
-		},
-		ProviderMetadata: api.SourceScopedMetadata{
-			IMDB: &api.IMDBMetadata{Year: 2025},
-		},
-	}
-
-	got := Profile().Site.BuildName(meta, config.TrackerConfig{})
-	expected := "Show.S01E01.2024.Episode.Title.1080p.WEB-DL-GRP"
-	if got != expected {
-		t.Fatalf("expected %q, got %q", expected, got)
-	}
-}
-
-func TestBuildZNTHNameBlankCategoryDoesNotInferMovieCategory(t *testing.T) {
-	meta := api.UploadSubject{
-		ReleaseName: "Example.Movie.2026.1080p.WEB-DL-GRP",
-		Release: api.ReleaseInfo{
-			Category: "MOVIE",
-			Year:     2026,
-		},
-		ProviderMetadata: api.SourceScopedMetadata{
-			IMDB: &api.IMDBMetadata{Year: 2027},
-		},
-	}
-
-	got := Profile().Site.BuildName(meta, config.TrackerConfig{})
-	expected := "Example.Movie.2026.1080p.WEB-DL-GRP"
-	if got != expected {
-		t.Fatalf("expected %q, got %q", expected, got)
-	}
-}
-
-func TestBuildZNTHNameTVUnicodePrefix(t *testing.T) {
-	meta := api.UploadSubject{
-		ReleaseName:  "\u212aShow.S01E01.Episode.Title.1080p.WEB-DL-GRP",
-		EpisodeTitle: "Episode Title",
-		Identity:     api.ExternalIdentity{Category: "TV"},
-		Release:      api.ReleaseInfo{Resolution: "1080p"},
-	}
-	got := Profile().Site.BuildName(meta, config.TrackerConfig{})
-	expected := "\u212aShow.S01E01.1080p.WEB-DL-GRP"
-	if got != expected {
-		t.Fatalf("expected %q, got %q", expected, got)
-	}
-}
-
-func TestFindZNTHTokenIndexesUnicodeBoundaries(t *testing.T) {
-	got := findZNTHTokenIndexes("Title.\u212a.1080p.Source", "1080p")
-	expected := len("Title.\u212a.")
-	if len(got) != 1 || got[0] != expected {
-		t.Fatalf("expected index %d, got %#v", expected, got)
-	}
-
-	if got := findZNTHTokenIndexes("Title.\u06611080p.Source", "1080p"); len(got) != 0 {
-		t.Fatalf("expected adjacent Unicode digit prefix to reject token, got %#v", got)
-	}
-	if got := findZNTHTokenIndexes("Title.1080p\u0661.Source", "1080p"); len(got) != 0 {
-		t.Fatalf("expected adjacent Unicode digit suffix to reject token, got %#v", got)
-	}
-}
-
-func TestZNTHEmptyTokenInputs(t *testing.T) {
-	name := "Show.S01E01.1080p.WEB-DL-GRP"
-	if got := replaceZNTHEpisodeTitle(name, "", "1080p"); got != name {
-		t.Fatalf("expected empty episode title to leave name unchanged, got %q", got)
-	}
-	if got := findZNTHTokenIndexes(name, " "); got != nil {
-		t.Fatalf("expected empty token indexes to be nil, got %#v", got)
-	}
+	t.Fatalf("generated document missing %s", role)
 }

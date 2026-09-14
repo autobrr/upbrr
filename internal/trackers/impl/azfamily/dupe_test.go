@@ -65,6 +65,20 @@ func TestAZDupeTitlePreservesManualTitleAuthority(t *testing.T) {
 			},
 			want: "Projected title",
 		},
+		{
+			name: "stale provider title is ignored without a projection",
+			meta: api.DuplicateSubject{
+				SourcePath: "prepared/current",
+				Identity:   api.ExternalIdentity{SourcePath: "prepared/current", Generation: 2},
+				Filename:   "Fallback title",
+				ProviderMetadata: api.SourceScopedMetadata{
+					SourcePath: "prepared/stale",
+					Generation: 1,
+					TMDB:       &api.TMDBMetadata{Title: "Stale title"},
+				},
+			},
+			want: "Fallback title",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if got := lookupAZDupeTitle(test.meta); got != test.want {

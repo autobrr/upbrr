@@ -26,6 +26,77 @@ func (projectionInputDefinition) InputReadiness(subject api.UploadSubject) []api
 	}}
 }
 
+func TestWorkflowProjectorRequiresConfirmationForRebuiltUploadNameOverride(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	policy := WithNonSceneReleaseNameConfirmation(StructuredReleaseNamePolicy("test/workflow-confirmation-rebuild/v1", StructuredNamePolicy{
+		Opaque:    OpaqueNameRebuild,
+		Authority: []NameAuthority{{Role: api.NameRoleEdition, Aspect: NamePresence}},
+		Mandatory: func(editor *NameEditor, _ api.UploadSubject, _ config.TrackerConfig) error {
+			return editor.Omit(api.NameRoleEdition)
+		},
+	}))
+	if err := registry.RegisterDescriptor(Descriptor{
+		Name:              "EXAMPLE",
+		DisplayName:       "Example Tracker",
+		ProjectorVersion:  "example-v2",
+		Definition:        projectionStubDefinition{stubDefinition: stubDefinition{name: "EXAMPLE"}},
+		Family:            FamilyStandalone,
+		ReleaseNamePolicy: policy,
+	}); err != nil {
+		t.Fatalf("register descriptor: %v", err)
+	}
+	projector, err := NewWorkflowProjector(registry, config.Config{}, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("new workflow projector: %v", err)
+	}
+	build := func(instruction api.TrackerProjectionInstructions) api.TrackerReleaseProjection {
+		t.Helper()
+		_, _, _, projections, buildErr := projector.Build(
+			t.Context(),
+			api.ReleaseSnapshot{},
+			structuredSubject(),
+			[]api.TrackerID{"EXAMPLE"},
+			map[api.TrackerID]api.TrackerProjectionInstructions{"EXAMPLE": instruction},
+			nil,
+			api.WorkflowExecutionModeNormal,
+		)
+		if buildErr != nil {
+			t.Fatalf("build projections: %v", buildErr)
+		}
+		return projections.Projections[0]
+	}
+
+	opaque := "Opaque Uncut Name-GRP"
+	rebuilt := build(api.TrackerProjectionInstructions{
+		UploadReleaseName: api.WorkflowPatch[string]{Present: true, Value: opaque},
+	})
+	if rebuilt.Readiness != api.ReadinessStatusReady || !rebuilt.DupeReady || rebuilt.UploadReady ||
+		len(rebuilt.RequiredActions) != 1 || rebuilt.UploadReleaseName == opaque {
+		t.Fatalf("rebuilt upload override bypassed confirmation: %#v", rebuilt)
+	}
+
+	exact := rebuilt.UploadReleaseName
+	accepted := build(api.TrackerProjectionInstructions{
+		UploadReleaseName: api.WorkflowPatch[string]{Present: true, Value: exact},
+	})
+	if accepted.Readiness != api.ReadinessStatusReady || !accepted.DupeReady || !accepted.UploadReady ||
+		len(accepted.RequiredActions) != 0 || accepted.UploadReleaseName != exact {
+		t.Fatalf("exact enforced upload override was not accepted: %#v", accepted)
+	}
+
+	automatic := build(api.TrackerProjectionInstructions{})
+	if automatic.UploadReady || automatic.NamingFingerprint == "" {
+		t.Fatalf("automatic projection = %#v", automatic)
+	}
+	confirmed := build(api.TrackerProjectionInstructions{ConfirmedNameFingerprint: automatic.NamingFingerprint})
+	if confirmed.Readiness != api.ReadinessStatusReady || !confirmed.DupeReady || !confirmed.UploadReady ||
+		len(confirmed.RequiredActions) != 0 || confirmed.UploadReleaseName != automatic.UploadReleaseName {
+		t.Fatalf("server-confirmed automatic projection = %#v", confirmed)
+	}
+}
+
 func TestWorkflowProjectionIsolatesInvalidInputAndPreservesItsAnswerOwner(t *testing.T) {
 	registry := NewRegistry()
 	if err := registry.Register(projectionInputDefinition{inputSchemaDefinition{name: "ONE", options: []string{"valid", "invalid"}}}); err != nil {

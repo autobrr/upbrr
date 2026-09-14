@@ -147,6 +147,62 @@ describe("TrackerUploadPage", () => {
     expect(screen.getByText("Example Release 2026 1080p-GRP")).toBeInTheDocument();
   });
 
+  it.each(["release_name_override", "release_name_override_generated"])(
+    "renders %s from the current projection during dry-run review",
+    (code) => {
+      const projection = (policyDecisions: object[]) =>
+        ({
+          projections: [
+            {
+              trackerId: "EXAMPLE",
+              displayName: "Example Tracker",
+              canonicalReleaseName: "Example.Release.2026.1080p-GRP",
+              uploadReleaseName: "Example.Release.2026.1080p-GRP",
+              policyDecisions,
+            },
+          ],
+        }) as unknown as NonNullable<UploadFacet["view"]["projections"]>;
+      const dryRunResult = {
+        status: "completed",
+        reports: [
+          {
+            trackerId: "EXAMPLE",
+            displayName: "Example Tracker",
+            uploadReleaseName: "Example.Release.2026.1080p-GRP",
+            status: "ready",
+          },
+        ],
+      } as unknown as NonNullable<UploadFacet["view"]["dryRunResult"]>;
+      const notice = {
+        code,
+        decision: "rebuilt",
+        blocking: false,
+        namingRuleId: "example/automatic-name/v1",
+        message: "Example requires automatic naming; the opaque name was replaced.",
+      };
+      const rendered = renderPage(
+        uploadFacet({ dryRunResult, dryRunStatus: "ready", projections: projection([notice]) }),
+      );
+
+      expect(screen.getByText("Example.Release.2026.1080p-GRP")).toBeInTheDocument();
+      expect(screen.getByLabelText("Tracker naming notices for EXAMPLE")).toHaveTextContent(
+        notice.message,
+      );
+
+      rendered.rerender(
+        <TrackerUploadPage
+          facet={uploadFacet({
+            dryRunResult,
+            dryRunStatus: "ready",
+            projections: projection([]),
+          })}
+        />,
+      );
+
+      expect(screen.queryByLabelText("Tracker naming notices for EXAMPLE")).not.toBeInTheDocument();
+    },
+  );
+
   it("keeps tracker names visible for collapsed, partial, and failed dry-run results", () => {
     const projections = {
       projections: [

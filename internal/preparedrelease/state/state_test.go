@@ -14,6 +14,17 @@ func TestStateGeneratedReleaseNamesSurviveJSONRoundTrip(t *testing.T) {
 	t.Parallel()
 
 	original := State{
+		AvailableGeneratedName: &api.ReleaseNameDocument{
+			Version: api.ReleaseNameDocumentVersionV1,
+			Components: []api.ReleaseNameComponent{
+				{
+					Role:           api.NameRoleEdition,
+					AvailableValue: "Director's Cut",
+					Manual:         true,
+					Join:           " ",
+				},
+			},
+		},
 		GeneratedReleaseNames: api.GeneratedReleaseNameVariants{
 			IncludeEpisodeTitle: api.ReleaseNameVariant{
 				NameNoTag: "Example.Show.S01E02.Example.Episode.1080p.WEB-DL",
@@ -37,6 +48,9 @@ func TestStateGeneratedReleaseNamesSurviveJSONRoundTrip(t *testing.T) {
 	}
 	if restored.GeneratedReleaseNames != original.GeneratedReleaseNames {
 		t.Fatalf("restored variants = %#v, want %#v", restored.GeneratedReleaseNames, original.GeneratedReleaseNames)
+	}
+	if restored.AvailableGeneratedName == nil || restored.AvailableGeneratedName.Components[0].AvailableValue != "Director's Cut" {
+		t.Fatalf("restored available document = %#v", restored.AvailableGeneratedName)
 	}
 }
 
