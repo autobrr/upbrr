@@ -95,6 +95,51 @@ const workflowCurrent = (workflowID: string, revision: number): ReleaseWorkflowC
   },
 });
 
+const workflowCurrentWithDescriptions = (
+  workflowID: string,
+  revision: number,
+  unit3dSource: string,
+  standaloneSource = "standalone source",
+): ReleaseWorkflowCurrent => {
+  const current = workflowCurrent(workflowID, revision);
+  return {
+    ...current,
+    workflow: {
+      ...current.workflow,
+      descriptions: { id: "descriptions-1", revision },
+    },
+    descriptions: {
+      id: "descriptions-1",
+      workflowId: workflowID,
+      revision,
+      release: { id: "release-1", revision: 1 },
+      releaseRef: { SourcePath: "C:\\media\\Example.Release.2026.1080p-GRP.mkv", Generation: 1 },
+      projectionSet: { id: "projections-1", revision: 2 },
+      media: { id: "media-1", revision: 3 },
+      inputFingerprint: "1".repeat(64),
+      templateFingerprint: "2".repeat(64),
+      descriptions: [
+        {
+          groupKey: "unit3d",
+          trackerIds: ["AITHER"],
+          source: unit3dSource,
+          rendered: `<p>${unit3dSource}</p>`,
+          contentFingerprint: "3".repeat(64),
+        },
+        {
+          groupKey: "standalone",
+          trackerIds: ["BLU"],
+          source: standaloneSource,
+          rendered: `<p>${standaloneSource}</p>`,
+          contentFingerprint: "4".repeat(64),
+        },
+      ],
+      status: "completed",
+      createdAt: "2026-07-21T00:00:00Z",
+    },
+  };
+};
+
 type WorkflowStageFixtures = Readonly<{
   create(
     instructions: PrepareInput["Instructions"],
@@ -1471,50 +1516,8 @@ describe("useReleaseSession", () => {
 
   it("saves and resets authoritative descriptions through revisioned workflow commands", async () => {
     const workflowID = "workflow-descriptions";
-    const sourcePath = "C:\\media\\Example.Release.2026.1080p-GRP.mkv";
-    const withDescription = (
-      revision: number,
-      unit3dSource: string,
-      standaloneSource = "standalone source",
-    ): ReleaseWorkflowCurrent => {
-      const current = workflowCurrent(workflowID, revision);
-      return {
-        ...current,
-        workflow: {
-          ...current.workflow,
-          descriptions: { id: "descriptions-1", revision },
-        },
-        descriptions: {
-          id: "descriptions-1",
-          workflowId: workflowID,
-          revision,
-          release: { id: "release-1", revision: 1 },
-          releaseRef: { SourcePath: sourcePath, Generation: 1 },
-          projectionSet: { id: "projections-1", revision: 2 },
-          media: { id: "media-1", revision: 3 },
-          inputFingerprint: "1".repeat(64),
-          templateFingerprint: "2".repeat(64),
-          descriptions: [
-            {
-              groupKey: "unit3d",
-              trackerIds: ["AITHER"],
-              source: unit3dSource,
-              rendered: `<p>${unit3dSource}</p>`,
-              contentFingerprint: "3".repeat(64),
-            },
-            {
-              groupKey: "standalone",
-              trackerIds: ["BLU"],
-              source: standaloneSource,
-              rendered: `<p>${standaloneSource}</p>`,
-              contentFingerprint: "4".repeat(64),
-            },
-          ],
-          status: "completed",
-          createdAt: "2026-07-21T00:00:00Z",
-        },
-      };
-    };
+    const withDescription = (revision: number, unit3dSource: string): ReleaseWorkflowCurrent =>
+      workflowCurrentWithDescriptions(workflowID, revision, unit3dSource);
     const saveDescriptionOverride = vi
       .fn()
       .mockResolvedValueOnce(withDescription(8, "edited source"));
@@ -1564,6 +1567,65 @@ describe("useReleaseSession", () => {
       "regenerated source",
     );
     expect(result.current.descriptions.view.notice).toBe("Description reset.");
+
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("renders and saves an unedited description group from its generated source", async () => {
+    const workflowID = "workflow-descriptions";
+    const sourcePath = "C:\\media\\Example.Release.2026.1080p-GRP.mkv";
+    const withPreparedDescription = (revision: number): ReleaseWorkflowCurrent => ({
+      ...workflowCurrentFromPreview(
+        workflowCurrentWithDescriptions(workflowID, revision, "generated source"),
+        preview(sourcePath, 1),
+      ),
+      projections: {
+        status: "ready",
+        projections: [
+          {
+            trackerId: "AITHER",
+            displayName: "AITHER",
+            artifacts: {
+              screenshotCount: 0,
+              dvdMenuCount: 0,
+              imageHosting: false,
+              description: true,
+            },
+          },
+        ],
+      } as unknown as NonNullable<ReleaseWorkflowCurrent["projections"]>,
+    });
+    const render = vi.fn(async (raw: string) => `<p>${raw}</p>`);
+    const saveDescriptionOverride = vi.fn().mockResolvedValueOnce(withPreparedDescription(8));
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor({
+        ...portsFor({
+          workflow: workflowPorts({
+            current: async () => withPreparedDescription(7),
+            saveDescriptionOverride,
+          }),
+        }),
+        descriptions: { render },
+      }),
+    });
+
+    await waitFor(() => expect(result.current.descriptions.view.artifact?.revision).toBe(7));
+    await act(() => result.current.descriptions.render("unit3d"));
+
+    expect(render).toHaveBeenCalledWith("generated source", expect.any(AbortSignal));
+    expect(result.current.descriptions.view.renderedByGroup.unit3d).toBe("<p>generated source</p>");
+
+    await act(() => result.current.descriptions.save("unit3d"));
+
+    expect(saveDescriptionOverride).toHaveBeenCalledWith(
+      expect.anything(),
+      "unit3d",
+      "generated source",
+      expect.any(String),
+      expect.any(AbortSignal),
+    );
 
     unmount();
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
