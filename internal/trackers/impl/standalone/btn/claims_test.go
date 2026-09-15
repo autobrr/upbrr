@@ -17,17 +17,35 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestBTNSceneReleasesBypassActiveClaims(t *testing.T) {
+func TestBTNSceneReleasesRespectActiveClaims(t *testing.T) {
 	t.Parallel()
 
 	for _, tt := range []struct {
-		name      string
-		scene     bool
-		sceneName string
-		wantClaim bool
+		name           string
+		scene          bool
+		sceneName      string
+		tag            string
+		internalGroups config.CSVList
+		wantClaim      bool
 	}{
-		{name: "confirmed scene", scene: true},
-		{name: "resolved scene name", sceneName: "Example.Show.S01E01.2160p-GRP"},
+		{
+			name:      "confirmed scene remains claimed",
+			scene:     true,
+			tag:       "-GRP",
+			wantClaim: true,
+		},
+		{
+			name:      "resolved scene name remains claimed",
+			sceneName: "Example.Show.S01E01.2160p-GRP",
+			tag:       "-GRP",
+			wantClaim: true,
+		},
+		{
+			name:           "matching claimed group bypasses",
+			scene:          true,
+			tag:            "-NTb",
+			internalGroups: config.CSVList{"NTb"},
+		},
 		{name: "unknown origin remains claimed", wantClaim: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -38,8 +56,15 @@ func TestBTNSceneReleasesBypassActiveClaims(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := writeBTNClaimedCache(cachePath, btnTitleVariants("Example Show")); err != nil {
+			if err := writeBTNClaimCache(cachePath, []btnClaimRecord{{
+				Title: "Example Show",
+				Sites: []string{"BTN"},
+				Group: "NTb",
+			}}); err != nil {
 				t.Fatal(err)
+			}
+			cfg.Trackers.Trackers = map[string]config.TrackerConfig{
+				"BTN": {InternalGroups: tt.internalGroups},
 			}
 			checker := New().NewClaimChecker(cfg, nil)
 			claimed, err := checker.HasClaim(t.Context(), api.UploadSubject{
@@ -49,6 +74,7 @@ func TestBTNSceneReleasesBypassActiveClaims(t *testing.T) {
 				ReleaseName: "Example.Show.S01E01.2160p-GRP",
 				Scene:       tt.scene,
 				SceneName:   tt.sceneName,
+				Tag:         tt.tag,
 			})
 			if err != nil || claimed != tt.wantClaim {
 				t.Fatalf("claimed=%t want=%t err=%v", claimed, tt.wantClaim, err)

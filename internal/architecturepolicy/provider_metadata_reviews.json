@@ -580,8 +580,8 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/btn/claims.go:*claimChecker.HasClaim": {
-    "sha256": "204b80ee8edd453dd6c4d7c1c9c33425abc65a6060ea67a608f4f66a79cab546",
-    "reason": "Confirmed Scene evidence bypasses BTN claims; provider aliases only match claim identities, and fresh unambiguous BTN ownership controls the internal-group bypass. HDB owns its independent claim checker."
+    "sha256": "fe2ea65d4736a5d45915bcd7453f40424f390ad3bc25ce36e19ae8a063dfca64",
+    "reason": "Scene classification no longer bypasses BTN claims. Provider aliases only match claim identities, and fresh unambiguous BTN ownership controls the configured internal-group bypass. HDB owns its independent claim checker."
   },
   "internal/trackers/impl/standalone/btn/claims.go:btnCandidateTitles": {
     "sha256": "e13f8e46c5278f9c2f41ec2a4ec7431e88bc2e2b50bc4081805ece1ed0785778",
@@ -816,8 +816,8 @@
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
   "internal/trackers/impl/standalone/hdb/claims.go:*claimChecker.HasClaim": {
-    "sha256": "3708b745cd93c43bf307d5cddea9d49f8a0b30a60f5e4a9f21484911835d5d47",
-    "reason": "Finalized Scene and WEB TV facts scope HDB claims. Provider aliases corroborate identity without replacing effective metadata; only fresh, direct, unambiguous HDB ownership authorizes a configured internal-group bypass."
+    "sha256": "331031fefc252ed5967a3ff99d7520792234b6348b0d11d05368d73ce0f211b6",
+    "reason": "Finalized WEB TV facts scope HDB claims; Scene classification no longer bypasses them. Provider aliases corroborate identity without replacing effective metadata; only fresh, direct, unambiguous HDB ownership authorizes a configured internal-group bypass."
   },
   "internal/trackers/impl/standalone/hdb/claims.go:hdbCandidateTitles": {
     "sha256": "e7580f5599f36dca3308d5f39a8f41cba4c4f268fd21f49c59f59364d7632724",

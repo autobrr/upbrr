@@ -105,10 +105,6 @@ func (s *claimChecker) HasClaim(ctx context.Context, meta api.UploadSubject) (bo
 	if err := ctx.Err(); err != nil {
 		return false, fmt.Errorf("metadata: HDB claim check canceled: %w", err)
 	}
-	if isHDBSceneRelease(meta) {
-		s.logger.Debugf("metadata: HDB claims skipped origin=scene decision=allowed")
-		return false, nil
-	}
 	applies, known := hdbClaimPolicyApplies(meta)
 	if !known {
 		s.logger.Warnf("metadata: HDB claim check unavailable: WEB TV applicability is unknown")
@@ -751,10 +747,6 @@ func hdbClaimPolicyApplies(meta api.UploadSubject) (bool, bool) {
 func hdbIsTVCategory(meta api.UploadSubject) bool {
 	return meta.SeasonInt > 0 || meta.EpisodeInt > 0 || meta.Release.Season > 0 || meta.Release.Episode > 0 || meta.TVPack ||
 		strings.TrimSpace(meta.DailyEpisodeDate) != ""
-}
-
-func isHDBSceneRelease(meta api.UploadSubject) bool {
-	return meta.Scene || strings.TrimSpace(meta.SceneName) != ""
 }
 
 func hdbClaimWindowExpired(meta api.UploadSubject, graceHours int) (bool, int, float64) {

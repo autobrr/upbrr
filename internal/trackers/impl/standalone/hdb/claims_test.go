@@ -101,6 +101,59 @@ func TestHDBClaimsUseOnlyHDBSessionAndCache(t *testing.T) {
 	}
 }
 
+func TestHDBSceneReleasesRespectActiveClaims(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name           string
+		scene          bool
+		sceneName      string
+		tag            string
+		internalGroups config.CSVList
+		wantClaim      bool
+	}{
+		{
+			name:      "scene release remains claimed",
+			scene:     true,
+			tag:       "-GRP",
+			wantClaim: true,
+		},
+		{
+			name:      "resolved scene name remains claimed",
+			sceneName: "Harbor.Watch.S01E01.2160p-GRP",
+			tag:       "-GRP",
+			wantClaim: true,
+		},
+		{
+			name:           "matching claimed group bypasses",
+			scene:          true,
+			tag:            "-NTb",
+			internalGroups: config.CSVList{"NTb"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := hdbConfigWithCache(t, []hdbClaimRecord{{
+				Title: "Harbor Watch",
+				Sites: []string{"HDB"},
+				Group: "NTb",
+			}})
+			cfg.Trackers.Trackers = map[string]config.TrackerConfig{
+				"HDB": {InternalGroups: tt.internalGroups},
+			}
+			meta := hdbClaimSubject()
+			meta.Scene = tt.scene
+			meta.SceneName = tt.sceneName
+			meta.Tag = tt.tag
+
+			claimed, err := New().NewClaimChecker(cfg, nil).HasClaim(t.Context(), meta)
+			if err != nil || claimed != tt.wantClaim {
+				t.Fatalf("claimed=%t want=%t err=%v", claimed, tt.wantClaim, err)
+			}
+		})
+	}
+}
+
 func TestHDBAKABoundaries(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {

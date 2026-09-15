@@ -70,11 +70,9 @@ trackers:
 
 JSON uses arrays with the catalog field names `DupeBypassGroups`, `PersonalReleaseGroups`, and `InternalGroups`.
 
-For BTN, configured internal groups can bypass two restrictions when ownership is unambiguous. Claimed-show handling uses fresh structured rows from the scoped BTN claim-list post. upbrr automatically refreshes an older title-only cache before evaluating ownership; if that refresh fails, the legacy data can still block an upload but cannot prove ownership for a bypass. Season-pack handling separately uses current BTN reservation API rows. Every applicable row from the relevant source must identify the same configured group.
+For BTN/HDB, configured internal groups can bypass claimed show blocking, allowing these groups to upload their claimed releases to BTN/HDB.
 
 With debug logging enabled, `reason=legacy_format` identifies an automatic cache migration attempt. A blocked claim warning includes `release_group`, `internal_group`, `fresh_structured`, `own_claim`, and `matched_claims` so you can see which bypass prerequisite was missing.
-
-HDB checks its own signup page for non-Scene WEB TV uploads, using stored HDB cookies and a separate claim cache. BTN credentials and cached data are not required. Fresh, unambiguous claims owned by a configured HDB internal group can be bypassed; stale or partially parsed claims can block an upload but cannot authorize that bypass. Partial results do not replace a complete cached list. When the signup page's relay notice is present, BTN-only entries also count as HDB claims, but their listed group does not prove ownership of the HDB relay. If neither usable HDB claim data nor HDB access is available, the upload continues with a warning. Claim checks never start a login or TOTP flow.
 
 The older per-tracker **Internal** boolean is retained only so existing configuration can be read and exported. It no longer enables internal handling. Add the relevant tags to **Internal groups**; a list match works even when the legacy value is `false`.
 
