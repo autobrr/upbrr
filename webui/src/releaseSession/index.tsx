@@ -1546,6 +1546,13 @@ export function ReleaseSessionProvider({
     return completed;
   };
 
+  // Unedited groups have no local raw entry; they keep the backend artifact source.
+  const descriptionSource = (key: string): string =>
+    state.descriptions.rawByGroup[key] ??
+    workflowView.current?.descriptions?.descriptions.find((group) => group.groupKey === key)
+      ?.source ??
+    "";
+
   const renderDescription = async (groupKey: string): Promise<boolean> => {
     const command = beginWorkflow("descriptions", access.descriptions.reason);
     if (!command) return false;
@@ -1553,7 +1560,7 @@ export function ReleaseSessionProvider({
     const inputRevision = state.descriptions.inputRevision;
     try {
       const html = await activePorts.descriptions.render(
-        state.descriptions.rawByGroup[key] || "",
+        descriptionSource(key),
         command.controller.signal,
       );
       dispatch({
@@ -1582,7 +1589,7 @@ export function ReleaseSessionProvider({
         : activePorts.workflow.saveDescriptionOverride(
             current,
             key,
-            state.descriptions.rawByGroup[key] || "",
+            descriptionSource(key),
             commandID,
             signal,
           ),
