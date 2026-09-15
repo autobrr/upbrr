@@ -1650,6 +1650,52 @@ describe("useReleaseSession", () => {
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
 
+  it("reloads the authoritative workflow when same-source preparation reports a stale revision", async () => {
+    const workflowID = "workflow-stale-preparation";
+    const sourcePath = "C:\\media\\Example.Release.2026.1080p-GRP.mkv";
+    const prepared = (revision: number) =>
+      workflowCurrentFromPreview(workflowCurrent(workflowID, revision), preview(sourcePath, 1));
+    const staleFailure = {
+      Code: "stale_review",
+      Operation: "preparation",
+      Message: "The release workflow changed. Reload its current state before continuing.",
+      Recovery: "review_again",
+    } as const;
+    const current = vi.fn().mockResolvedValueOnce(prepared(7)).mockResolvedValue(prepared(8));
+    const continueWorkflow = vi
+      .fn()
+      .mockRejectedValueOnce(
+        Object.assign(new Error(staleFailure.Message), { failure: staleFailure }),
+      )
+      .mockImplementation(async (request: ContinueReleaseWorkflowRequest) =>
+        prepared(request.authority?.expectedRevision ?? 0),
+      );
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({ workflow: workflowPorts({ current, continue: continueWorkflow }) }),
+      ),
+    });
+
+    await waitFor(() => expect(result.current.workflow.view.current?.workflow.revision).toBe(7));
+    await act(() => result.current.input.prepare());
+
+    expect(continueWorkflow).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(result.current.workflow.view.current?.workflow.revision).toBe(8));
+
+    await act(() => result.current.input.prepare());
+
+    expect(continueWorkflow).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        authority: { workflowId: workflowID, expectedRevision: 8 },
+      }),
+      expect.any(AbortSignal),
+    );
+
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
   it("prepares through the backend workflow and retains only its compatibility preview", async () => {
     const create = vi.fn(async () => workflowCurrent("workflow-browser", 1));
     const prepareWorkflow = vi.fn(

@@ -82,6 +82,9 @@ const operationFailureFromError = (error: unknown): OperationFailure | null => {
   return candidate as OperationFailure;
 };
 
+const isStaleWorkflowFailure = (failure: OperationFailure | null) =>
+  failure?.Code === "stale_review" && failure.Recovery === "review_again";
+
 const workflowOperationFailureError = (failure: Readonly<{ Message: string; Recovery: string }>) =>
   Object.assign(
     new Error(
@@ -568,9 +571,7 @@ export function ReleaseSessionProvider({
       error: errorText(error),
       failure,
     }));
-    if (failure?.Code === "stale_review" && failure.Recovery === "review_again") {
-      void refreshStaleWorkflow();
-    }
+    if (isStaleWorkflowFailure(failure)) void refreshStaleWorkflow();
     return null;
   };
 
@@ -1120,14 +1121,16 @@ export function ReleaseSessionProvider({
       return !controller.signal.aborted;
     } catch (error) {
       if (!controller.signal.aborted) {
+        const failure = operationFailureFromError(error);
         dispatch({
           type: "preparation_failed",
           sourcePath,
           commandRevision,
           correlationID,
           error: errorText(error),
-          failure: operationFailureFromError(error),
+          failure,
         });
+        if (isStaleWorkflowFailure(failure)) void refreshStaleWorkflow();
       }
       return false;
     } finally {
