@@ -233,7 +233,7 @@ func (b workflowUploadPlanBuilder) Build(
 				trackerReasons[projection.TrackerID] = "Tracker description outcome is unavailable."
 				planProjections = append(planProjections, projection)
 				continue
-			case result.Status == api.StageStatusSkipped:
+			case releaseworkflow.TrackerDescriptionSkipped(projection, result, hasResult):
 				continue
 			case result.Status != api.StageStatusCompleted:
 				trackerStatuses[projection.TrackerID] = api.StageStatusBlocked
@@ -1408,29 +1408,7 @@ func (e *workflowUploadExecution) Release() error {
 }
 
 func workflowDescriptionResultsByTracker(descriptions api.DescriptionSet) map[api.TrackerID]api.DescriptionTrackerResult {
-	results := make(map[api.TrackerID]api.DescriptionTrackerResult)
-	for _, description := range descriptions.Descriptions {
-		for _, trackerID := range description.TrackerIDs {
-			results[trackerID] = api.DescriptionTrackerResult{
-				TrackerID: trackerID,
-				Status:    api.StageStatusCompleted,
-			}
-		}
-	}
-	for _, failure := range descriptions.Failures {
-		if failure.TrackerID == "" {
-			continue
-		}
-		results[failure.TrackerID] = api.DescriptionTrackerResult{
-			TrackerID: failure.TrackerID,
-			Status:    api.StageStatusFailed,
-			Message:   strings.TrimSpace(failure.Failure.Message),
-		}
-	}
-	for _, result := range descriptions.TrackerResults {
-		results[result.TrackerID] = result
-	}
-	return results
+	return releaseworkflow.DescriptionResultsByTracker(descriptions)
 }
 
 func workflowUploadDescriptionGroups(

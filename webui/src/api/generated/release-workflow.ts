@@ -2161,6 +2161,8 @@ export type TrackerLaneOutcome = Readonly<{
   requiredActions?: readonly RequiredAction[];
   retryable: boolean;
   trackerId: TrackerID;
+  uploadEligibility?: UploadEligibility;
+  uploadSkipReason?: UploadSkipReason;
 }>;
 
 export type TrackerPolicyDecision = Readonly<{
@@ -2452,6 +2454,8 @@ export type UploadDryRunResultRef = Readonly<{
   revision: WorkflowRevision;
 }>;
 
+export type UploadEligibility = string;
+
 export type UploadOptions = Readonly<{
   CaptureDVDMenus: boolean;
   InteractionMode: InteractionMode;
@@ -2504,6 +2508,8 @@ export type UploadResultRef = Readonly<{
   id: UploadResultID;
   revision: WorkflowRevision;
 }>;
+
+export type UploadSkipReason = string;
 
 export type UploadTrackerResult = Readonly<{
   clientFailureCode?: OperationFailureCode;

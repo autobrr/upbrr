@@ -44,6 +44,30 @@ func (s downstreamTrackerSet) TrackerApproval() *api.TrackerApprovalSnapshotRef 
 	return &ref
 }
 
+// ProjectionDownstreamEligibility reports the retained projection and duplicate
+// decision for one tracker, with the structured cause of a skip. It is the
+// single source for both the downstream tracker set and the lane projection
+// adapters render.
+func ProjectionDownstreamEligibility(
+	projection api.TrackerReleaseProjection,
+	dupe api.TrackerDupeAssessment,
+	hasDupe bool,
+) (api.UploadEligibility, api.UploadSkipReason) {
+	if !projection.UploadReady || projection.Readiness != api.ReadinessStatusReady {
+		return api.UploadEligibilitySkipped, api.UploadSkipReasonNotReady
+	}
+	if !hasDupe || dupe.Decision == api.DupeDecisionPending {
+		return api.UploadEligibilityUnknown, ""
+	}
+	if dupe.Status == api.StageStatusFailed {
+		return api.UploadEligibilitySkipped, api.UploadSkipReasonDuplicateCheckFailed
+	}
+	if dupe.Decision == api.DupeDecisionAccepted {
+		return api.UploadEligibilitySkipped, api.UploadSkipReasonDuplicateFound
+	}
+	return api.UploadEligibilityEligible, ""
+}
+
 // ProjectionEligibleForDownstream reports whether retained projection and
 // duplicate state permit media, description, and upload-plan work.
 func ProjectionEligibleForDownstream(
@@ -51,13 +75,46 @@ func ProjectionEligibleForDownstream(
 	dupe api.TrackerDupeAssessment,
 	hasDupe bool,
 ) bool {
-	if !projection.UploadReady || projection.Readiness != api.ReadinessStatusReady || !hasDupe {
-		return false
+	eligibility, _ := ProjectionDownstreamEligibility(projection, dupe, hasDupe)
+	return eligibility == api.UploadEligibilityEligible
+}
+
+// DescriptionResultsByTracker reduces retained description evidence to one
+// outcome per tracker.
+func DescriptionResultsByTracker(descriptions api.DescriptionSet) map[api.TrackerID]api.DescriptionTrackerResult {
+	results := make(map[api.TrackerID]api.DescriptionTrackerResult)
+	for _, description := range descriptions.Descriptions {
+		for _, trackerID := range description.TrackerIDs {
+			results[trackerID] = api.DescriptionTrackerResult{
+				TrackerID: trackerID,
+				Status:    api.StageStatusCompleted,
+			}
+		}
 	}
-	if dupe.Status == api.StageStatusFailed || dupe.Decision == api.DupeDecisionPending || dupe.Decision == api.DupeDecisionAccepted {
-		return false
+	for _, failure := range descriptions.Failures {
+		if failure.TrackerID == "" {
+			continue
+		}
+		results[failure.TrackerID] = api.DescriptionTrackerResult{
+			TrackerID: failure.TrackerID,
+			Status:    api.StageStatusFailed,
+			Message:   strings.TrimSpace(failure.Failure.Message),
+		}
 	}
-	return true
+	for _, result := range descriptions.TrackerResults {
+		results[result.TrackerID] = result
+	}
+	return results
+}
+
+// TrackerDescriptionSkipped reports whether the retained description outcome
+// removes one tracker from the upload plan.
+func TrackerDescriptionSkipped(
+	projection api.TrackerReleaseProjection,
+	result api.DescriptionTrackerResult,
+	hasResult bool,
+) bool {
+	return projection.Artifacts.Description && hasResult && result.Status == api.StageStatusSkipped
 }
 
 // DownstreamEligibleProjections applies the shared retained eligibility
