@@ -248,20 +248,45 @@ func TestHDBTrailingTextRetainsBlockingEvidence(t *testing.T) {
 
 func TestHDBHeaderAndRowsInSiblingContainers(t *testing.T) {
 	t.Parallel()
-	page := `<div><div>Show -- Site(s) Uploaded To -- Group</div><div>Harbor Watch -- HDB -- GRP</div></div>`
+	page := `<div class="forum"><div class="post"><div>Show -- Site(s) Uploaded To -- Group<br>Harbor Watch -- HDB -- GRP</div><div>Winter Watch -- HDB -- OTHER</div></div><div class="reply">Reply from another user<br>Other Show -- HDB -- REPLY</div></div>`
 	records, complete := extractHDBClaimRecords(page)
-	if !complete || len(records) != 1 || records[0].Title != "Harbor Watch" {
+	if !complete || len(records) != 2 || records[0].Title != "Harbor Watch" || records[1].Title != "Winter Watch" {
 		t.Fatalf("sibling list = %#v, complete=%t", records, complete)
 	}
+	postAsList := `<div class="forum"><div class="post">Show -- Site(s) Uploaded To -- Group<br>Harbor Watch -- HDB -- GRP</div><div class="reply">Other Show -- HDB -- REPLY</div></div>`
+	if records, complete := extractHDBClaimRecords(postAsList); !complete || len(records) != 1 || records[0].Title != "Harbor Watch" {
+		t.Fatalf("post scope crossed into reply = %#v, complete=%t", records, complete)
+	}
+	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
 		_, _ = w.Write([]byte(page))
 	}))
 	defer server.Close()
 	cfg := hdbClaimConfig(t)
 	d := New()
 	d.baseURL, d.httpClient = server.URL, server.Client()
-	if claimed, err := d.NewClaimChecker(cfg, nil).HasClaim(t.Context(), hdbClaimSubject()); err != nil || !claimed {
-		t.Fatalf("sibling list claim = %t, %v; want blocked", claimed, err)
+	checker := d.NewClaimChecker(cfg, nil)
+	for _, tt := range []struct {
+		title   string
+		claimed bool
+	}{
+		{title: "Harbor Watch", claimed: true},
+		{title: "Winter Watch", claimed: true},
+		{title: "Other Show", claimed: false},
+	} {
+		meta := hdbClaimSubject()
+		meta.Release.Title = tt.title
+		if claimed, err := checker.HasClaim(t.Context(), meta); err != nil || claimed != tt.claimed {
+			t.Fatalf("sibling list claim for %q = %t, %v; want %t", tt.title, claimed, err, tt.claimed)
+		}
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want one fetch followed by a cache hit", requests)
+	}
+	cached, err := readHDBClaimCache(hdbClaimCachePathForTest(t, cfg), server.URL+hdbClaimsPath)
+	if err != nil || !cached.Complete || len(cached.Records) != 2 {
+		t.Fatalf("cached sibling claims = %#v, %v", cached, err)
 	}
 }
 

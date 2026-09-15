@@ -278,10 +278,15 @@ func extractHDBClaimRecords(rawHTML string) ([]hdbClaimRecord, bool) {
 	if text == "" {
 		return nil, false
 	}
+	records, _, complete := parseHDBClaimRecords(text)
+	return records, complete
+}
+
+func parseHDBClaimRecords(text string) ([]hdbClaimRecord, int, bool) {
 	relay := false
 	inList := false
 	records := make([]hdbClaimRecord, 0)
-	sawRow := false
+	rowCount := 0
 	complete := true
 	for line := range strings.SplitSeq(text, "\n") {
 		line = strings.Join(strings.Fields(line), " ")
@@ -308,7 +313,7 @@ func extractHDBClaimRecords(rawHTML string) ([]hdbClaimRecord, bool) {
 			complete = false
 			continue
 		}
-		sawRow = true
+		rowCount++
 		relayed := relay && slices.Contains(sites, "BTN") && !slices.Contains(sites, "HDB")
 		if !slices.Contains(sites, "HDB") && !relayed {
 			continue
@@ -322,7 +327,7 @@ func extractHDBClaimRecords(rawHTML string) ([]hdbClaimRecord, bool) {
 			RelayedFromBTN: relayed,
 		})
 	}
-	return records, sawRow && complete
+	return records, rowCount, rowCount > 0 && complete
 }
 
 func isHDBClaimHeader(line string) bool {
@@ -338,10 +343,10 @@ func hdbClaimText(rawHTML string) string {
 	}
 	// Search children first so a validated post/list is selected before any
 	// enclosing forum container. A saved fragment uses the synthetic body.
-	var text string
+	var scope *htmlnode.Node
 	var findHeader func(*htmlnode.Node)
 	findHeader = func(node *htmlnode.Node) {
-		if text != "" {
+		if scope != nil {
 			return
 		}
 		if node.Type == htmlnode.ElementNode && (node.Data == "script" || node.Data == "style") {
@@ -350,26 +355,53 @@ func hdbClaimText(rawHTML string) string {
 		for child := node.FirstChild; child != nil; child = child.NextSibling {
 			findHeader(child)
 		}
-		if text != "" || node.Type != htmlnode.ElementNode || (node.Data != "div" && node.Data != "td" && node.Data != "body") {
+		if scope != nil || node.Type != htmlnode.ElementNode || (node.Data != "div" && node.Data != "td" && node.Data != "body") {
 			return
 		}
 		candidate := hdbNodeText(node)
-		inList := false
-		for line := range strings.SplitSeq(candidate, "\n") {
-			line = strings.Join(strings.Fields(line), " ")
-			if isHDBClaimHeader(line) {
-				inList = true
-				continue
-			}
-			parts := strings.SplitN(line, "--", 4)
-			if inList && len(parts) >= 3 && strings.TrimSpace(parts[0]) != "" && len(parseHDBClaimSites(parts[1])) > 0 {
-				text = candidate
-				return
-			}
+		if _, rows, _ := parseHDBClaimRecords(candidate); rows > 0 {
+			scope = node
 		}
 	}
 	findHeader(doc)
+	if scope == nil {
+		return ""
+	}
+
+	text := hdbNodeText(scope)
+	if hdbNodeHasContainerMarker(scope, "post") {
+		return text
+	}
+	_, selectedRows, _ := parseHDBClaimRecords(text)
+	for parent := scope.Parent; parent != nil && parent.Data != "body"; parent = parent.Parent {
+		if parent.Type != htmlnode.ElementNode || (parent.Data != "div" && parent.Data != "td") {
+			continue
+		}
+		if hdbNodeHasContainerMarker(parent, "forum", "reply") {
+			break
+		}
+		candidate := hdbNodeText(parent)
+		if _, rows, _ := parseHDBClaimRecords(candidate); rows > selectedRows {
+			text = candidate
+		}
+		break
+	}
 	return text
+}
+
+func hdbNodeHasContainerMarker(node *htmlnode.Node, markers ...string) bool {
+	for _, attr := range node.Attr {
+		if attr.Key != "class" && attr.Key != "id" {
+			continue
+		}
+		value := strings.ToLower(attr.Val)
+		for _, marker := range markers {
+			if strings.Contains(value, marker) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func hdbNodeText(scope *htmlnode.Node) string {
