@@ -44,9 +44,10 @@ type CommaSeparatedInputProps = {
   label: string;
   value: ConfigValue[];
   onChange: (value: string[]) => void;
+  onInput: () => void;
 };
 
-const CommaSeparatedInput = ({ label, value, onChange }: CommaSeparatedInputProps) => {
+const CommaSeparatedInput = ({ label, value, onChange, onInput }: CommaSeparatedInputProps) => {
   const serialized = value.map((item) => String(item ?? "")).join(", ");
   const [draft, setDraft] = useState(serialized);
   useEffect(() => setDraft(serialized), [serialized]);
@@ -57,7 +58,10 @@ const CommaSeparatedInput = ({ label, value, onChange }: CommaSeparatedInputProp
       className={settingsInputClass}
       type="text"
       value={draft}
-      onChange={(event) => setDraft(event.target.value)}
+      onChange={(event) => {
+        setDraft(event.target.value);
+        onInput();
+      }}
       onBlur={() => {
         const normalized = normalizeCommaSeparatedGroups(draft);
         setDraft(normalized.join(", "));
@@ -1169,6 +1173,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
               label={displayLabel}
               value={value}
               onChange={(next) => updateConfigValue(path, next)}
+              onInput={markSettingsChanged}
             />
           </label>
         );
