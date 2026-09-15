@@ -72,6 +72,67 @@ func TestClassifyReleaseWorkflowError(t *testing.T) {
 	}
 }
 
+// Core wraps workflow errors in a generic internal failure before the web
+// boundary classifies them, so the wrapped cause must still select the recovery.
+func TestClassifyReleaseWorkflowErrorUnwrapsInternalOperationFailure(t *testing.T) {
+	t.Parallel()
+	internalFailure := func(cause error) error {
+		return api.NewOperationError(api.OperationFailure{
+			Code:      api.OperationFailureInternal,
+			Operation: api.OperationKindDescription,
+			Message:   "The operation could not be completed.",
+			Recovery:  api.OperationRecoveryRetry,
+		}, cause)
+	}
+	tests := []struct {
+		name     string
+		err      error
+		code     api.OperationFailureCode
+		recovery api.OperationRecovery
+	}{
+		{"revision", internalFailure(releaseworkflow.ErrRevisionConflict), api.OperationFailureStaleReview, api.OperationRecoveryReviewAgain},
+		{
+			"wrapped revision",
+			internalFailure(fmt.Errorf("release workflow save: %w", releaseworkflow.ErrRevisionConflict)),
+			api.OperationFailureStaleReview,
+			api.OperationRecoveryReviewAgain,
+		},
+		{"missing", internalFailure(releaseworkflow.ErrWorkflowNotFound), api.OperationFailureMissingPrerequisite, api.OperationRecoveryRefreshRelease},
+		{"unclassified", internalFailure(errors.New("metadata probe failed")), api.OperationFailureInternal, api.OperationRecoveryRetry},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			var operationError *api.OperationError
+			if !errors.As(classifyReleaseWorkflowError(test.err), &operationError) {
+				t.Fatal("expected structured operation error")
+			}
+			failure := operationError.Failure()
+			if failure.Code != test.code || failure.Recovery != test.recovery {
+				t.Fatalf("failure = %#v, want code=%s recovery=%s", failure, test.code, test.recovery)
+			}
+		})
+	}
+}
+
+func TestClassifyReleaseWorkflowErrorKeepsStructuredFailure(t *testing.T) {
+	t.Parallel()
+	structured := api.NewOperationError(api.OperationFailure{
+		Code:      api.OperationFailureInvalidSource,
+		Operation: api.OperationKindPreparation,
+		Message:   "The source path is unavailable.",
+		Recovery:  api.OperationRecoveryEditInput,
+	}, releaseworkflow.ErrRevisionConflict)
+
+	var operationError *api.OperationError
+	if !errors.As(classifyReleaseWorkflowError(structured), &operationError) {
+		t.Fatal("expected structured operation error")
+	}
+	if failure := operationError.Failure(); failure.Code != api.OperationFailureInvalidSource {
+		t.Fatalf("failure = %#v, want the existing structured failure", failure)
+	}
+}
+
 func TestRetiredReleaseWorkflowAppStageRoutesAreNotRegistered(t *testing.T) {
 	t.Parallel()
 

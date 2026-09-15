@@ -1569,6 +1569,133 @@ describe("useReleaseSession", () => {
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
 
+  it("reloads the authoritative workflow when a command reports a stale revision", async () => {
+    const workflowID = "workflow-stale-revision";
+    const revisioned = (revision: number): ReleaseWorkflowCurrent => {
+      const current = workflowCurrent(workflowID, revision);
+      return {
+        ...current,
+        workflow: {
+          ...current.workflow,
+          descriptions: { id: "descriptions-1", revision },
+        },
+        descriptions: {
+          id: "descriptions-1",
+          workflowId: workflowID,
+          revision,
+          release: { id: "release-1", revision: 1 },
+          releaseRef: {
+            SourcePath: "C:\\media\\Example.Release.2026.1080p-GRP.mkv",
+            Generation: 1,
+          },
+          projectionSet: { id: "projections-1", revision: 2 },
+          media: { id: "media-1", revision: 3 },
+          inputFingerprint: "1".repeat(64),
+          templateFingerprint: "2".repeat(64),
+          descriptions: [
+            {
+              groupKey: "unit3d",
+              trackerIds: ["AITHER"],
+              source: "generated source",
+              rendered: "<p>generated source</p>",
+              contentFingerprint: "3".repeat(64),
+            },
+          ],
+          status: "completed",
+          createdAt: "2026-07-21T00:00:00Z",
+        },
+      };
+    };
+    const staleFailure = {
+      Code: "stale_review",
+      Operation: "description",
+      Message: "The release workflow changed. Reload its current state before continuing.",
+      Recovery: "review_again",
+    } as const;
+    // The server advanced the revision (for example restart recovery after a
+    // settings save) between the browser's last read and its next command.
+    const current = vi.fn().mockResolvedValueOnce(revisioned(7)).mockResolvedValue(revisioned(8));
+    const saveDescriptionOverride = vi
+      .fn()
+      .mockRejectedValueOnce(
+        Object.assign(new Error(staleFailure.Message), { failure: staleFailure }),
+      )
+      .mockImplementation(async (retained: ReleaseWorkflowCurrent) => retained);
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({ workflow: workflowPorts({ current, saveDescriptionOverride }) }),
+      ),
+    });
+
+    await waitFor(() => expect(result.current.descriptions.view.artifact?.revision).toBe(7));
+    act(() => result.current.descriptions.edit("unit3d", "edited source"));
+    await act(() => result.current.descriptions.save("unit3d"));
+
+    await waitFor(() => expect(result.current.descriptions.view.artifact?.revision).toBe(8));
+    expect(result.current.descriptions.view.error).toContain("The release workflow changed.");
+
+    await act(() => result.current.descriptions.save("unit3d"));
+
+    expect(saveDescriptionOverride).toHaveBeenLastCalledWith(
+      expect.objectContaining({ workflow: expect.objectContaining({ revision: 8 }) }),
+      "unit3d",
+      "edited source",
+      expect.any(String),
+      expect.any(AbortSignal),
+    );
+    expect(result.current.descriptions.view.notice).toBe("Description saved.");
+
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("reloads the authoritative workflow when same-source preparation reports a stale revision", async () => {
+    const workflowID = "workflow-stale-preparation";
+    const sourcePath = "C:\\media\\Example.Release.2026.1080p-GRP.mkv";
+    const prepared = (revision: number) =>
+      workflowCurrentFromPreview(workflowCurrent(workflowID, revision), preview(sourcePath, 1));
+    const staleFailure = {
+      Code: "stale_review",
+      Operation: "preparation",
+      Message: "The release workflow changed. Reload its current state before continuing.",
+      Recovery: "review_again",
+    } as const;
+    const current = vi.fn().mockResolvedValueOnce(prepared(7)).mockResolvedValue(prepared(8));
+    const continueWorkflow = vi
+      .fn()
+      .mockRejectedValueOnce(
+        Object.assign(new Error(staleFailure.Message), { failure: staleFailure }),
+      )
+      .mockImplementation(async (request: ContinueReleaseWorkflowRequest) =>
+        prepared(request.authority?.expectedRevision ?? 0),
+      );
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({ workflow: workflowPorts({ current, continue: continueWorkflow }) }),
+      ),
+    });
+
+    await waitFor(() => expect(result.current.workflow.view.current?.workflow.revision).toBe(7));
+    await act(() => result.current.input.prepare());
+
+    expect(continueWorkflow).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(result.current.workflow.view.current?.workflow.revision).toBe(8));
+
+    await act(() => result.current.input.prepare());
+
+    expect(continueWorkflow).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        authority: { workflowId: workflowID, expectedRevision: 8 },
+      }),
+      expect.any(AbortSignal),
+    );
+
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
   it("prepares through the backend workflow and retains only its compatibility preview", async () => {
     const create = vi.fn(async () => workflowCurrent("workflow-browser", 1));
     const prepareWorkflow = vi.fn(

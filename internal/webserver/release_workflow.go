@@ -314,7 +314,10 @@ func classifyReleaseWorkflowError(err error) error {
 	if err == nil {
 		return nil
 	}
-	if operationError, ok := errors.AsType[*api.OperationError](err); ok {
+	// Core wraps unrecognized causes in a generic internal failure; only a
+	// specific classification may short-circuit the workflow causes below.
+	operationError, structured := errors.AsType[*api.OperationError](err)
+	if structured && operationError.Failure().Code != api.OperationFailureInternal {
 		return operationError
 	}
 	failure := api.OperationFailure{
@@ -322,6 +325,9 @@ func classifyReleaseWorkflowError(err error) error {
 		Operation: api.OperationKindUnknown,
 		Message:   "The release workflow command could not be completed.",
 		Recovery:  api.OperationRecoveryRetry,
+	}
+	if structured {
+		failure.Operation = operationError.Failure().Operation
 	}
 	switch {
 	case errors.Is(err, releaseworkflow.ErrWorkflowNotFound):
@@ -342,6 +348,10 @@ func classifyReleaseWorkflowError(err error) error {
 		failure.Operation = api.OperationKindUploadDryRun
 		failure.Message = "The reviewed upload authority is unavailable. Prepare and review the release again."
 		failure.Recovery = api.OperationRecoveryReviewAgain
+	default:
+		if structured {
+			return operationError
+		}
 	}
 	return api.NewOperationError(failure, err)
 }
