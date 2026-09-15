@@ -536,6 +536,27 @@ export function ReleaseSessionProvider({
     return current;
   };
 
+  // A stale command revision means the backend advanced the workflow (for
+  // example restart recovery after a settings save). Replace the retained
+  // snapshot so the next command carries the authoritative revision, and keep
+  // the failure visible so the owner reviews before retrying.
+  const refreshStaleWorkflow = async () => {
+    const workflowID = workflowView.current?.workflow.id || storedWorkflowID();
+    if (!workflowID || controllers.current.workflow) return;
+    const controller = new AbortController();
+    controllers.current.workflow = controller;
+    try {
+      const current = await activePorts.workflow.current(workflowID, controller.signal);
+      if (controller.signal.aborted) return;
+      storeWorkflowID(current.workflow.id);
+      setWorkflowView((view) => ({ ...view, current }));
+    } catch {
+      // The retained failure already tells the owner to reload.
+    } finally {
+      releaseWorkflowController(controller);
+    }
+  };
+
   const failBackendWorkflow = (error: unknown) => {
     const failure = operationFailureFromError(error);
     if (failure?.Code === "missing_prerequisite" && failure.Recovery === "refresh_release") {
@@ -547,6 +568,9 @@ export function ReleaseSessionProvider({
       error: errorText(error),
       failure,
     }));
+    if (failure?.Code === "stale_review" && failure.Recovery === "review_again") {
+      void refreshStaleWorkflow();
+    }
     return null;
   };
 
