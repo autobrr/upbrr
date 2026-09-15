@@ -926,6 +926,10 @@ func (s *Service) duplicatePolicy(tracker string, meta api.DuplicateSubject) tra
 	if policy.SearchScope.MaxPages <= 0 {
 		policy.SearchScope.MaxPages = 100
 	}
+	if s != nil {
+		group, enabled := trackerspkg.TrackerGroupRestriction(effectiveTrackerConfig(s.cfg, tracker), meta.Tag)
+		policy.GroupRestriction = trackerspkg.DupeGroupRestriction{Enabled: enabled, Group: group}
+	}
 	return policy
 }
 

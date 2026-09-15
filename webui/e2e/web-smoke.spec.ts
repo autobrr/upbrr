@@ -123,7 +123,14 @@ test("embedded tracker settings use the catalog for entries, reset, and unsuppor
     await expect(bluCard).toBeVisible();
     await expect(
       bluCard.locator("label.settings-field > span, .settings-switch-row > span"),
-    ).toHaveText(["API key", "Anonymous", "Image host"]);
+    ).toHaveText([
+      "API key",
+      "Anonymous",
+      "Image host",
+      "Duplicate bypass groups",
+      "Personal release groups",
+      "Internal groups",
+    ]);
     await bluCard.getByLabel("API key").fill("e2e-blu-activation");
 
     await page.getByRole("button", { name: "Save", exact: true }).click();

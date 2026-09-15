@@ -86,7 +86,8 @@ func Profile() standalone.Profile {
 	}
 }
 
-// Definition extends the shared standalone definition with HDB data lookup and testable endpoints.
+// Definition extends the shared standalone definition with HDB data lookup,
+// claim checking, and testable endpoints.
 type Definition struct {
 	*standalone.Definition
 	baseURL    string

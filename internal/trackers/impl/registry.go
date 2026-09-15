@@ -154,8 +154,31 @@ func azFamilyDefinitions() []trackers.Definition {
 
 func standaloneDefinitions() []trackers.Definition {
 	return []trackers.Definition{
-		hdb.New(), ant.New(), ar.New(), asc.New(), bhd.New(), bhdtv.New(), bjs.New(), btn.New(), bt.New(), czt.New(), dc.New(), ff.New(),
-		fl.New(), gpw.New(), hds.New(), hdt.New(), is.New(), nbl.New(), ptp.New(), pts.New(), rtf.New(), spd.New(), thr.New(), tl.New(), tvc.New(),
+		hdb.New(),
+		ant.New(),
+		ar.New(),
+		asc.New(),
+		bhd.New(),
+		bhdtv.New(),
+		bjs.New(),
+		btn.New(),
+		bt.New(),
+		czt.New(),
+		dc.New(),
+		ff.New(),
+		fl.New(),
+		gpw.New(),
+		hds.New(),
+		hdt.New(),
+		is.New(),
+		nbl.New(),
+		ptp.New(),
+		pts.New(),
+		rtf.New(),
+		spd.New(),
+		thr.New(),
+		tl.New(),
+		tvc.New(),
 	}
 }
 

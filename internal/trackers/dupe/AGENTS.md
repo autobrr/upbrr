@@ -13,7 +13,7 @@ Scoped rules for the shared duplicate-search coordinator and evaluator. Root, `i
   - different normalized media type or class. Full disc, remux, encode, WEB, and broadcast are distinct. Remux versus non-remux is bidirectional. DVD and BDMV must not block each other when both types are authoritative;
   - different evidenced HDR slot, edition/cut, region, or 2D/3D presentation.
 - A distinct candidate resolves to `coexists`: it must not block, count as actionable, or appear in the user-facing potential-duplicate list. Sanitized diagnostic/fingerprint evidence may retain the `coexists` evaluation.
-- Missing or partial facts never prove equality or coexistence. Use `insufficient_evidence`; contradictory facts require `manual_review`. Unresolved overlapping candidates fall back to actionable `same_slot`.
+- Missing or partial facts never prove equality or coexistence except for configured group restrictions: when the structured group is absent, one unambiguous normalized release-name suffix may prove different-group ownership. Structured/title conflicts and every other partial fact remain conservative. Use `insufficient_evidence`; contradictory facts require `manual_review`. Unresolved overlapping candidates fall back to actionable `same_slot`.
 - After authoritative same-work and same-season binding, a season pack always trumps individual episodes. An existing pack blocks a proposed episode; individual episodes are irrelevant to a proposed pack and must be discarded as potential duplicates.
 
 ## Evidence
@@ -36,7 +36,7 @@ Scoped rules for the shared duplicate-search coordinator and evaluator. Root, `i
 ## Tracker Overlays
 
 - Put evidence-backed slot, precedence, size, and set-capacity rules in the tracker definition/profile or tracker-local `dupe_policy.go`. Do not add tracker-name branches to the shared evaluator.
-- Read `docs/trackerdata/CONTEXT.md` and the relevant saved tracker snapshot before changing tracker-specific duplicate behavior.
+- Read `docs/trackerdata/CONTEXT.md` and the relevant saved tracker snapshots in `docs/trackerdata/` subfolders before changing tracker-specific duplicate behavior.
 - A tracker overlay may suppress a general coexistence axis only when its rules fully replace that axis. Missing overlay evidence must not erase a valid general finding.
 - Subjective, staff-discretion, age/seed, screenshot, approval, and unstructured trump rules remain manual.
 

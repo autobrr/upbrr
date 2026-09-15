@@ -112,6 +112,45 @@ func TestUploadOverrideTrackersReplaceDefaults(t *testing.T) {
 	}
 }
 
+func TestUploadAppliesGroupPoliciesPerTracker(t *testing.T) {
+	t.Parallel()
+
+	requests := make(chan PreparationInput, 2)
+	registry := NewRegistry()
+	for _, definition := range []Definition{
+		trackingUploadDefinition{name: "HDB", requests: requests},
+		trackingUploadDefinition{name: "PTP", requests: requests},
+	} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register stub: %v", err)
+		}
+	}
+	cfg := config.Config{Trackers: config.TrackersConfig{
+		DefaultTrackers: config.CSVList{"HDB", "PTP"},
+		Trackers: map[string]config.TrackerConfig{
+			"HDB": {PersonalReleaseGroups: config.CSVList{"Mine"}},
+			"PTP": {InternalGroups: config.CSVList{"Mine"}},
+		},
+	}}
+	svc := NewServiceWithRegistry(cfg, nil, nil, registry)
+	summary, err := svc.Upload(t.Context(), api.UploadSubject{SourcePath: "/tmp/file", Tag: "-Mine"})
+	if err != nil || summary.Uploaded != 2 {
+		t.Fatalf("Upload() summary=%#v err=%v", summary, err)
+	}
+
+	got := make(map[string]PreparationInput, 2)
+	for range 2 {
+		req := <-requests
+		got[req.Tracker] = req
+	}
+	if !got["HDB"].Meta.PersonalRelease || got["HDB"].Runtime.Internal {
+		t.Fatalf("HDB policy = meta=%#v runtime=%#v", got["HDB"].Meta, got["HDB"].Runtime)
+	}
+	if got["PTP"].Meta.PersonalRelease || !got["PTP"].Runtime.Internal {
+		t.Fatalf("PTP policy = meta=%#v runtime=%#v", got["PTP"].Meta, got["PTP"].Runtime)
+	}
+}
+
 func TestUploadRemovesTrackers(t *testing.T) {
 	t.Parallel()
 

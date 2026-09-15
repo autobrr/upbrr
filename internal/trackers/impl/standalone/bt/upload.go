@@ -293,7 +293,7 @@ func buildFields(
 	if trackerCfg.Anon {
 		fields["anonymous"] = []string{"1"}
 	}
-	if trackers.IsInternalGroup(config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"BT": trackerCfg}}}, "BT", meta) {
+	if req.Runtime.Internal {
 		fields["internal"] = []string{"1"}
 	}
 	return fields

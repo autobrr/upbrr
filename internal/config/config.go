@@ -310,54 +310,58 @@ type TrackersConfig struct {
 // omits the tracker when torrent preparation requires regeneration, including
 // forced regeneration of source data.
 type TrackerConfig struct {
-	LinkDirName         string         `yaml:"link_dir_name" json:"LinkDirName"`
-	APIKey              string         `yaml:"api_key" json:"APIKey"`
-	PTPAPIUser          string         `yaml:"ApiUser" json:"ApiUser"`
-	PTPAPIKey           string         `yaml:"ApiKey" json:"ApiKey"`
-	Username            string         `yaml:"username" json:"Username"`
-	Password            string         `yaml:"password" json:"Password"`
-	Passkey             string         `yaml:"passkey" json:"Passkey"`
-	AnnounceURL         string         `yaml:"announce_url" json:"AnnounceURL"`
-	MyAnnounceURL       string         `yaml:"my_announce_url" json:"MyAnnounceURL"`
-	FaviconURL          string         `yaml:"favicon_url" json:"FaviconURL"`
-	UploaderStatus      bool           `yaml:"uploader_status" json:"UploaderStatus"`
-	CustomLayout        string         `yaml:"custom_layout" json:"CustomLayout"`
-	TagForCustomRelease string         `yaml:"tag_for_custom_release" json:"TagForCustomRelease"`
-	CheckForRules       bool           `yaml:"check_for_rules" json:"CheckForRules"`
-	ModQ                bool           `yaml:"modq" json:"ModQ"`
-	Draft               bool           `yaml:"draft" json:"Draft"`
-	DraftDefault        bool           `yaml:"draft_default" json:"DraftDefault"`
-	Anon                bool           `yaml:"anon" json:"Anon"`
-	ShowGroupIfAnon     bool           `yaml:"show_group_if_anon" json:"ShowGroupIfAnon"`
-	BhdRSSKey           string         `yaml:"bhd_rss_key" json:"BhdRSSKey"`
-	CheckRequests       bool           `yaml:"check_requests" json:"CheckRequests"`
-	FullMediainfo       bool           `yaml:"full_mediainfo" json:"FullMediainfo"`
-	UploaderName        string         `yaml:"uploader_name" json:"UploaderName"`
-	ImgRehost           bool           `yaml:"img_rehost" json:"ImgRehost"`
-	ImageHost           string         `yaml:"image_host" json:"ImageHost"`
-	TorrentClient       string         `yaml:"torrent_client" json:"TorrentClient"`
-	UseSpanishTitle     bool           `yaml:"use_spanish_title" json:"UseSpanishTitle"`
-	UseItalianTitle     bool           `yaml:"use_italian_title" json:"UseItalianTitle"`
-	OTPURI              string         `yaml:"otp_uri" json:"OTPURI"`
-	SkipIfRehash        bool           `yaml:"skip_if_rehash" json:"SkipIfRehash"`
-	PTGenAPI            string         `yaml:"ptgen_api" json:"PTGenAPI"`
-	AddWebSourceToDesc  bool           `yaml:"add_web_source_to_desc" json:"AddWebSourceToDesc"`
-	UseMetadataName     bool           `yaml:"use_metadata_name" json:"UseMetadataName"`
-	InjectDelay         *int           `yaml:"inject_delay" json:"InjectDelay"`
-	ImageCount          int            `yaml:"image_count" json:"ImageCount"`
-	Channel             string         `yaml:"channel" json:"Channel"`
-	ImgAPI              string         `yaml:"img_api" json:"ImgAPI"`
-	PronfoAPIKey        string         `yaml:"pronfo_api_key" json:"PronfoAPIKey"`
-	PronfoTheme         string         `yaml:"pronfo_theme" json:"PronfoTheme"`
-	PronfoRAPIID        string         `yaml:"pronfo_rapi_id" json:"PronfoRAPIID"`
-	APIUpload           bool           `yaml:"api_upload" json:"APIUpload"`
-	Exclusive           bool           `yaml:"exclusive" json:"Exclusive"`
-	LoginQuestion       string         `yaml:"login_question" json:"LoginQuestion"`
-	LoginAnswer         string         `yaml:"login_answer" json:"LoginAnswer"`
-	UserID              string         `yaml:"user_id" json:"UserID"`
-	Internal            bool           `yaml:"internal" json:"Internal"`
-	InternalGroups      []string       `yaml:"internal_groups" json:"InternalGroups"`
-	Unknown             map[string]any `yaml:"-" json:"-"`
+	LinkDirName         string `yaml:"link_dir_name" json:"LinkDirName"`
+	APIKey              string `yaml:"api_key" json:"APIKey"`
+	PTPAPIUser          string `yaml:"ApiUser" json:"ApiUser"`
+	PTPAPIKey           string `yaml:"ApiKey" json:"ApiKey"`
+	Username            string `yaml:"username" json:"Username"`
+	Password            string `yaml:"password" json:"Password"`
+	Passkey             string `yaml:"passkey" json:"Passkey"`
+	AnnounceURL         string `yaml:"announce_url" json:"AnnounceURL"`
+	MyAnnounceURL       string `yaml:"my_announce_url" json:"MyAnnounceURL"`
+	FaviconURL          string `yaml:"favicon_url" json:"FaviconURL"`
+	UploaderStatus      bool   `yaml:"uploader_status" json:"UploaderStatus"`
+	CustomLayout        string `yaml:"custom_layout" json:"CustomLayout"`
+	TagForCustomRelease string `yaml:"tag_for_custom_release" json:"TagForCustomRelease"`
+	CheckForRules       bool   `yaml:"check_for_rules" json:"CheckForRules"`
+	ModQ                bool   `yaml:"modq" json:"ModQ"`
+	Draft               bool   `yaml:"draft" json:"Draft"`
+	DraftDefault        bool   `yaml:"draft_default" json:"DraftDefault"`
+	Anon                bool   `yaml:"anon" json:"Anon"`
+	ShowGroupIfAnon     bool   `yaml:"show_group_if_anon" json:"ShowGroupIfAnon"`
+	BhdRSSKey           string `yaml:"bhd_rss_key" json:"BhdRSSKey"`
+	CheckRequests       bool   `yaml:"check_requests" json:"CheckRequests"`
+	FullMediainfo       bool   `yaml:"full_mediainfo" json:"FullMediainfo"`
+	UploaderName        string `yaml:"uploader_name" json:"UploaderName"`
+	ImgRehost           bool   `yaml:"img_rehost" json:"ImgRehost"`
+	ImageHost           string `yaml:"image_host" json:"ImageHost"`
+	TorrentClient       string `yaml:"torrent_client" json:"TorrentClient"`
+	UseSpanishTitle     bool   `yaml:"use_spanish_title" json:"UseSpanishTitle"`
+	UseItalianTitle     bool   `yaml:"use_italian_title" json:"UseItalianTitle"`
+	OTPURI              string `yaml:"otp_uri" json:"OTPURI"`
+	SkipIfRehash        bool   `yaml:"skip_if_rehash" json:"SkipIfRehash"`
+	PTGenAPI            string `yaml:"ptgen_api" json:"PTGenAPI"`
+	AddWebSourceToDesc  bool   `yaml:"add_web_source_to_desc" json:"AddWebSourceToDesc"`
+	UseMetadataName     bool   `yaml:"use_metadata_name" json:"UseMetadataName"`
+	InjectDelay         *int   `yaml:"inject_delay" json:"InjectDelay"`
+	ImageCount          int    `yaml:"image_count" json:"ImageCount"`
+	Channel             string `yaml:"channel" json:"Channel"`
+	ImgAPI              string `yaml:"img_api" json:"ImgAPI"`
+	PronfoAPIKey        string `yaml:"pronfo_api_key" json:"PronfoAPIKey"`
+	PronfoTheme         string `yaml:"pronfo_theme" json:"PronfoTheme"`
+	PronfoRAPIID        string `yaml:"pronfo_rapi_id" json:"PronfoRAPIID"`
+	APIUpload           bool   `yaml:"api_upload" json:"APIUpload"`
+	Exclusive           bool   `yaml:"exclusive" json:"Exclusive"`
+	LoginQuestion       string `yaml:"login_question" json:"LoginQuestion"`
+	LoginAnswer         string `yaml:"login_answer" json:"LoginAnswer"`
+	UserID              string `yaml:"user_id" json:"UserID"`
+	// Internal is a deprecated compatibility field. Group-list matches alone
+	// determine tracker-specific internal handling.
+	Internal              bool           `yaml:"internal" json:"Internal"`
+	DupeBypassGroups      CSVList        `yaml:"dupe_bypass_groups" json:"DupeBypassGroups"`
+	PersonalReleaseGroups CSVList        `yaml:"personal_release_groups" json:"PersonalReleaseGroups"`
+	InternalGroups        CSVList        `yaml:"internal_groups" json:"InternalGroups"`
+	Unknown               map[string]any `yaml:"-" json:"-"`
 }
 
 type trackerConfigAlias TrackerConfig
@@ -429,6 +433,10 @@ func trackerAllowedYAMLKeys(trackerName string) map[string]struct{} {
 		keys["favicon_url"] = struct{}{}
 		keys["image_host"] = struct{}{}
 		keys["torrent_client"] = struct{}{}
+		keys["internal"] = struct{}{}
+		keys["dupe_bypass_groups"] = struct{}{}
+		keys["personal_release_groups"] = struct{}{}
+		keys["internal_groups"] = struct{}{}
 		return keys
 	}
 	if len(trackerSchema) == 0 {
@@ -607,6 +615,7 @@ func decodeTrackerConfigFromJSON(raw map[string]any) (TrackerConfig, error) {
 	if err := json.Unmarshal(payload, &cfg); err != nil {
 		return TrackerConfig{}, fmt.Errorf("config: unmarshal tracker config from json: %w", err)
 	}
+	normalizeTrackerGroupLists(&cfg)
 	cfg.Unknown = extractTrackerUnknown(raw)
 	return cfg, nil
 }
@@ -621,13 +630,44 @@ func decodeTrackerConfigFromYAML(raw map[string]any) (TrackerConfig, error) {
 	if err := yaml.Unmarshal(payload, &cfg); err != nil {
 		return TrackerConfig{}, fmt.Errorf("config: unmarshal tracker config from yaml: %w", err)
 	}
+	normalizeTrackerGroupLists(&cfg)
 	cfg.Unknown = extractTrackerUnknown(raw)
 	return cfg, nil
+}
+
+func normalizeTrackerGroupLists(cfg *TrackerConfig) {
+	if cfg == nil {
+		return
+	}
+	cfg.DupeBypassGroups = normalizeTrackerGroupList(cfg.DupeBypassGroups)
+	cfg.PersonalReleaseGroups = normalizeTrackerGroupList(cfg.PersonalReleaseGroups)
+	cfg.InternalGroups = normalizeTrackerGroupList(cfg.InternalGroups)
+}
+
+func normalizeTrackerGroupList(values CSVList) CSVList {
+	result := make(CSVList, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		value = strings.TrimPrefix(value, "-")
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		key := strings.ToLower(value)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 func (t TrackersConfig) MarshalJSON() ([]byte, error) {
 	trackers := make(map[string]map[string]any, len(t.Trackers))
 	for trackerName, trackerCfg := range t.Trackers {
+		normalizeTrackerGroupLists(&trackerCfg)
 		jsonMap, err := trackerConfigToJSONMap(trackerCfg)
 		if err != nil {
 			return nil, err
@@ -739,6 +779,7 @@ func (t TrackersConfig) MarshalYAML() (any, error) {
 	root["preferred_tracker"] = strings.TrimSpace(t.PreferredTracker)
 
 	for trackerName, trackerCfg := range t.Trackers {
+		normalizeTrackerGroupLists(&trackerCfg)
 		yamlMap, err := trackerConfigToYAMLMap(trackerCfg)
 		if err != nil {
 			return nil, err

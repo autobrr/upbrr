@@ -180,6 +180,21 @@ func TestBuildFieldsYearLabelsPreserveManualAuthority(t *testing.T) {
 	}
 }
 
+func TestBuildFieldsMarksResolvedInternalRelease(t *testing.T) {
+	t.Parallel()
+
+	fields := buildFields(
+		trackers.PreparationInput{Meta: api.UploadSubject{}, Runtime: trackers.PreparationRuntime{Internal: true}},
+		"description",
+		"auth",
+		config.TrackerConfig{},
+		trackers.DescriptionAssets{},
+	)
+	if got := fields["internal"]; len(got) != 1 || got[0] != "1" {
+		t.Fatalf("internal = %#v", got)
+	}
+}
+
 func TestBuildDescriptionOmitsBlankLocalizedEpisodeTitleRow(t *testing.T) {
 	t.Parallel()
 

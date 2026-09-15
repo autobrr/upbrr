@@ -368,7 +368,7 @@ func buildUploadDryRunAt(ctx context.Context, req trackers.PreparationInput, bas
 		"submit":       "true",
 		"type":         uploadType,
 		"scenename":    releaseName,
-		"origin":       resolveOrigin(req.Meta),
+		"origin":       resolveUploadOrigin(req.Meta, req.Runtime.Internal),
 		"release_desc": resolveBTNReleaseDesc(req.Meta),
 		"tvdb":         "autofilled",
 	}
@@ -499,7 +499,7 @@ func buildBTNUploadPayload(req trackers.PreparationInput, fields map[string]stri
 		"artist":       metautil.FirstNonEmptyTrimmed(fields["artist"]),
 		"title":        title,
 		"actors":       metautil.FirstNonEmptyTrimmed(fields["actors"]),
-		"origin":       resolveOrigin(req.Meta),
+		"origin":       resolveUploadOrigin(req.Meta, req.Runtime.Internal),
 		"year":         metautil.FirstNonEmptyTrimmed(fields["year"]),
 		"tags":         resolveBTNTags(req.Meta, fields),
 		"image":        resolveBTNImage(req.Meta, fields),
@@ -1349,11 +1349,11 @@ func checkBTNSeasonPackReservation(ctx context.Context, uploadCtx uploadContext,
 		return nil
 	}
 	// The 2-hour reservation ONLY applies to season packs made of internal releases.
-	if !isBTNInternalGroup(req.Meta) {
+	if !isBTNInternalGroup(req.Meta) && !req.Runtime.Internal {
 		return nil
 	}
 
-	group := strings.TrimPrefix(req.Meta.Tag, "-")
+	group := trackers.NormalizeTrackerReleaseGroup(req.Meta.Tag)
 	if group == "" {
 		return nil
 	}
@@ -1389,7 +1389,11 @@ func checkBTNSeasonPackReservation(ctx context.Context, uploadCtx uploadContext,
 		return fmt.Errorf("trackers: BTN reservation evidence unavailable: %w", err)
 	}
 
-	var newestInternal time.Time
+	var newestOwnGroup time.Time
+	var newestRelevant time.Time
+	allRelevantRowsOwned := true
+	relevantRows := 0
+	now := time.Now()
 	for _, torrent := range torrents {
 		if strings.TrimSpace(torrent.releaseName) == "" {
 			warnUnavailable("release_name_missing")
@@ -1399,16 +1403,14 @@ func checkBTNSeasonPackReservation(ctx context.Context, uploadCtx uploadContext,
 		if torrentSeason != season {
 			continue
 		}
-		releaseGroup := strings.TrimSpace(torrent.releaseGroup)
-		if releaseGroup == "" {
-			releaseGroup = rls.ParseString(torrent.releaseName).Group
+		rawReleaseGroup := strings.TrimSpace(torrent.releaseGroup)
+		releaseGroup := trackers.NormalizeTrackerReleaseGroup(rawReleaseGroup)
+		if rawReleaseGroup == "" {
+			releaseGroup = trackers.NormalizeTrackerReleaseGroup(rls.ParseString(torrent.releaseName).Group)
 		}
 		if releaseGroup == "" {
 			warnUnavailable("release_group_missing")
 			return errors.New("trackers: BTN reservation evidence unavailable: matching result omitted a release group")
-		}
-		if !strings.EqualFold(releaseGroup, group) {
-			continue
 		}
 		switch strings.ToLower(strings.TrimSpace(torrent.origin)) {
 		case "internal", "none":
@@ -1418,16 +1420,40 @@ func checkBTNSeasonPackReservation(ctx context.Context, uploadCtx uploadContext,
 			warnUnavailable("origin_invalid")
 			return errors.New("trackers: BTN reservation evidence unavailable: matching result omitted a valid origin")
 		}
+		ownGroup := strings.EqualFold(releaseGroup, group)
+		if !ownGroup && !req.Runtime.Internal {
+			continue
+		}
 		if !torrent.timePresent || !torrent.timeValid {
 			warnUnavailable("timestamp_invalid")
 			return errors.New("trackers: BTN reservation evidence unavailable: matching result omitted a valid timestamp")
 		}
-		if torrent.uploadedAt.After(newestInternal) {
-			newestInternal = torrent.uploadedAt
+		if !btnReservationActive(now, torrent.uploadedAt) {
+			continue
+		}
+		relevantRows++
+		if !ownGroup {
+			allRelevantRowsOwned = false
+		}
+		if torrent.uploadedAt.After(newestRelevant) {
+			newestRelevant = torrent.uploadedAt
+		}
+		if ownGroup && torrent.uploadedAt.After(newestOwnGroup) {
+			newestOwnGroup = torrent.uploadedAt
 		}
 	}
 
-	if btnReservationActive(time.Now(), newestInternal) {
+	newestReservation := newestOwnGroup
+	if req.Runtime.Internal {
+		newestReservation = newestRelevant
+	}
+	if btnReservationActive(now, newestReservation) {
+		if req.Runtime.Internal && relevantRows > 0 && allRelevantRowsOwned {
+			if req.Logger != nil {
+				req.Logger.Infof("trackers: BTN reservation check decision=bypassed reason=own_internal_group season=%d evidence_rows=%d", season, relevantRows)
+			}
+			return nil
+		}
 		if req.Logger != nil {
 			req.Logger.Warnf("trackers: BTN reservation check decision=blocked season=%d evidence_rows=%d", season, len(torrents))
 		}

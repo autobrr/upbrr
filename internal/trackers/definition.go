@@ -16,7 +16,7 @@ import (
 )
 
 // GeneralDuplicatePolicyID identifies the always-on duplicate comparison contract.
-const GeneralDuplicatePolicyID = "general/duplicate/v7"
+const GeneralDuplicatePolicyID = "general/duplicate/v8"
 
 // DuplicateSearchContractID identifies effective work-scope completion semantics.
 const DuplicateSearchContractID = "duplicate-search/work-scope/v1"
@@ -474,6 +474,9 @@ type DupePolicy struct {
 	// EvidenceID identifies the policy evidence backing automatic
 	// tracker-specific behavior.
 	EvidenceID string
+	// GroupRestriction suppresses confirmed different-group candidates after
+	// exact identity checks. It is resolved per tracker and upload.
+	GroupRestriction DupeGroupRestriction
 	// ExactMatchOnly permits distinct named releases or complete primary-video
 	// identities to coexist within the same known content scope. Exact identity
 	// and season-pack containment still take precedence; incomplete searches
@@ -482,7 +485,7 @@ type DupePolicy struct {
 	ExactMatchOnly bool `json:",omitempty"`
 	// TargetReleaseOrigin derives tracker-native origin from the proposed release.
 	// ID versions this pure resolver; it is excluded from serialized fingerprints.
-	TargetReleaseOrigin func(api.UploadSubject) string `json:"-"`
+	TargetReleaseOrigin func(api.UploadSubject, bool) string `json:"-"`
 	// DefaultTitleEdition declares the omitted cut for recognizable release titles
 	// and makes recognized named cuts authoritative under the tracker's naming contract.
 	// Recognition requires source and video codec metadata in addition to a title boundary.
@@ -543,6 +546,12 @@ type DupePolicy struct {
 	// TrumpableOverridesSlot permits an authoritative tracker-supplied
 	// trumpable flag to outrank ordinary slot/capacity review.
 	TrumpableOverridesSlot bool
+}
+
+// DupeGroupRestriction scopes duplicate competition to one release group.
+type DupeGroupRestriction struct {
+	Enabled bool
+	Group   string
 }
 
 // DupeSearchScope defines the remote-search completion bound.

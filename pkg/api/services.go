@@ -305,11 +305,14 @@ type UploadSubject struct {
 	ImageHostOverrides     ImageHostOverrides
 	DescriptionTemplate    string
 	PersonalRelease        bool
-	InfoHash               string
-	TrackerIDs             map[string]string
-	TrackerData            []TrackerMetadata
-	CrossSeedTorrents      []UploadedTorrent
-	ClientTorrentPath      string
+	// PersonalReleaseOverride retains an explicit per-upload choice so tracker
+	// group defaults can distinguish Auto from an explicit true or false value.
+	PersonalReleaseOverride *bool
+	InfoHash                string
+	TrackerIDs              map[string]string
+	TrackerData             []TrackerMetadata
+	CrossSeedTorrents       []UploadedTorrent
+	ClientTorrentPath       string
 	// ClientTorrentDataVerified reports that ClientTorrentPath and InfoHash came
 	// from a complete client record bound to the prepared source path.
 	ClientTorrentDataVerified   bool

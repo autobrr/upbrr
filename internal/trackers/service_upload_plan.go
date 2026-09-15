@@ -74,6 +74,7 @@ func (e *PartialUploadError) Unwrap() []error {
 type trackerPlanSlot struct {
 	tracker                  string
 	torrentPath              string
+	internal                 bool
 	plan                     TrackerPlan
 	failure                  *TrackerFailure
 	resolving                bool
@@ -249,6 +250,7 @@ func (s *Service) prepareUploadPlans(
 				continue
 			}
 			input := s.preparationInput(ctx, PreparationIntentUpload, tracker, trackerMeta, trackerCfg, content.Assets)
+			slot.internal = input.Runtime.Internal
 			if projection, ok := projections[normalizeTrackerName(tracker)]; ok {
 				projected := projection
 				input.Projection = &projected
@@ -623,6 +625,7 @@ func (s *Service) preparationInput(
 	assets *DescriptionAssets,
 ) PreparationInput {
 	logger := logging.FromContext(ctx, s.logger)
+	meta, groupPolicy := ApplyGroupPolicy(trackerCfg, meta)
 	input := PreparationInput{
 		Intent:        intent,
 		Tracker:       tracker,
@@ -631,7 +634,7 @@ func (s *Service) preparationInput(
 		Runtime: PreparationRuntime{
 			DBPath:      s.cfg.MainSettings.DBPath,
 			Description: s.cfg.Description,
-			Internal:    IsInternalGroup(s.cfg, tracker, meta),
+			Internal:    groupPolicy.Internal,
 			BTNAPIToken: config.ResolveBTNAPIToken(s.cfg),
 		},
 		Logger: logger,
@@ -695,7 +698,7 @@ func (s *Service) createPendingRecords(ctx context.Context, meta api.UploadSubje
 			}
 		}
 		status := "pending"
-		if IsInternalGroup(s.cfg, slot.tracker, meta) {
+		if slot.internal {
 			status = "pending-internal"
 		}
 		if err := s.repo.CreateUploadRecord(ctx, api.UploadRecord{

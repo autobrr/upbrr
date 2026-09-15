@@ -23,6 +23,7 @@ func TestBTNReservationAPIScope(t *testing.T) {
 		release  string
 		group    string
 		imdbOnly bool
+		ownGroup bool
 		wantErr  string
 	}{
 		{
@@ -30,6 +31,12 @@ func TestBTNReservationAPIScope(t *testing.T) {
 			origin:  "Internal",
 			release: "Example.Show.S01E01.1080p-NTb",
 			wantErr: "2-hour reservation",
+		},
+		{
+			name:     "configured own internal group bypass",
+			origin:   "Internal",
+			release:  "Example.Show.S01E01.1080p-NTb",
+			ownGroup: true,
 		},
 		{
 			name:    "pending internal classification",
@@ -89,10 +96,19 @@ func TestBTNReservationAPIScope(t *testing.T) {
 			group:   "NTb",
 			wantErr: "2-hour reservation",
 		},
+		{
+			name:     "ambiguous explicit group cannot authorize bypass",
+			origin:   "Internal",
+			release:  "Example.Show.S01E01.1080p.WEB-DL-NTb",
+			group:    "NTb / Other",
+			ownGroup: true,
+			wantErr:  "release group",
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			req := btnReservationTestInput()
+			req.Runtime.Internal = tt.ownGroup
 			if tt.imdbOnly {
 				req.Meta.Identity.TVDBID = 0
 				req.Meta.Identity.IMDBID = 1234567
@@ -133,5 +149,42 @@ func TestBTNReservationAPIScope(t *testing.T) {
 				t.Fatalf("reservation error=%v want=%q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestConfiguredInternalReservationBypassRejectsDifferentGroupEvidence(t *testing.T) {
+	t.Parallel()
+
+	req := btnReservationTestInput()
+	req.Runtime.Internal = true
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintf(w, `{"result":{"results":"2","torrents":{`+
+			`"1":{"ReleaseName":"Example.Show.S01E01.1080p-NTb","ReleaseGroup":"NTb","Origin":"Internal","Time":"%d"},`+
+			`"2":{"ReleaseName":"Example.Show.S01E02.1080p-GRP","ReleaseGroup":"GRP","Origin":"Internal","Time":"%d"}`+
+			`}}}`, time.Now().Unix(), time.Now().Unix())
+	}))
+	defer server.Close()
+
+	err := checkBTNSeasonPackReservation(t.Context(), uploadContext{apiURL: server.URL, apiToken: strings.Repeat("x", 30)}, req)
+	if err == nil || !strings.Contains(err.Error(), "2-hour reservation") {
+		t.Fatalf("different-group evidence did not retain reservation: %v", err)
+	}
+}
+
+func TestConfiguredInternalReservationBypassIgnoresExpiredDifferentGroupEvidence(t *testing.T) {
+	t.Parallel()
+
+	req := btnReservationTestInput()
+	req.Runtime.Internal = true
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintf(w, `{"result":{"results":"2","torrents":{`+
+			`"1":{"ReleaseName":"Example.Show.S01E01.1080p-NTb","ReleaseGroup":"NTb","Origin":"Internal","Time":"%d"},`+
+			`"2":{"ReleaseName":"Example.Show.S01E02.1080p-GRP","ReleaseGroup":"GRP","Origin":"Internal","Time":"%d"}`+
+			`}}}`, time.Now().Unix(), time.Now().Add(-3*time.Hour).Unix())
+	}))
+	defer server.Close()
+
+	if err := checkBTNSeasonPackReservation(t.Context(), uploadContext{apiURL: server.URL, apiToken: strings.Repeat("x", 30)}, req); err != nil {
+		t.Fatalf("expired different-group evidence blocked own reservation bypass: %v", err)
 	}
 }

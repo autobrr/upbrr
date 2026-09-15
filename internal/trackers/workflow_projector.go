@@ -263,6 +263,11 @@ func (p *WorkflowProjector) projectSelected(
 		instruction := instructions[trackerID]
 		trackerSubject.TrackerConfigOverrides = instruction.TrackerConfig
 		trackerSubject.TrackerSiteOverrides = instruction.TrackerSite
+		trackerConfig := applyTrackerConfigOverrides(trackerConfigFor(p.config, string(trackerID)), instruction.TrackerConfig)
+		var groupPolicy GroupPolicyDecision
+		trackerSubject, groupPolicy = ApplyGroupPolicy(trackerConfig, trackerSubject)
+		runtime := PreparationRuntimeFromConfig(p.config)
+		runtime.Internal = groupPolicy.Internal
 		if schema := p.registry.InputSchema(string(trackerID), trackerSubject); schema != nil {
 			instruction.Questionnaire = maps.Clone(instruction.Questionnaire)
 			for _, field := range schema.Fields {
@@ -278,8 +283,8 @@ func (p *WorkflowProjector) projectSelected(
 			RequestedUploadName:       requestedName,
 			AdditionalReleaseNames:    projectionAdditionalNames(instruction),
 			AuthorizedRuleFingerprint: ruleAuthorizations[trackerID],
-			TrackerConfig:             applyTrackerConfigOverrides(trackerConfigFor(p.config, string(trackerID)), instruction.TrackerConfig),
-			Runtime:                   PreparationRuntimeFromConfig(p.config),
+			TrackerConfig:             trackerConfig,
+			Runtime:                   runtime,
 			Logger:                    logger,
 		}, inputFingerprint, catalogFingerprint, configFingerprints[trackerID])
 		if descriptor, ok := p.registry.LookupDescriptor(string(trackerID)); ok {
@@ -436,7 +441,9 @@ func safeTrackerConfigFingerprint(trackerConfig config.TrackerConfig) (api.Workf
 		Channel            string
 		APIUpload          bool
 		Exclusive          bool
-		Internal           bool
+		DupeBypassGroups   config.CSVList
+		PersonalGroups     config.CSVList
+		InternalGroups     config.CSVList
 	}{
 		HasAPIKey:          strings.TrimSpace(trackerConfig.APIKey) != "" || strings.TrimSpace(trackerConfig.PTPAPIKey) != "",
 		HasLogin:           strings.TrimSpace(trackerConfig.Username) != "" && strings.TrimSpace(trackerConfig.Password) != "",
@@ -462,7 +469,9 @@ func safeTrackerConfigFingerprint(trackerConfig config.TrackerConfig) (api.Workf
 		Channel:            trackerConfig.Channel,
 		APIUpload:          trackerConfig.APIUpload,
 		Exclusive:          trackerConfig.Exclusive,
-		Internal:           trackerConfig.Internal,
+		DupeBypassGroups:   trackerConfig.DupeBypassGroups,
+		PersonalGroups:     trackerConfig.PersonalReleaseGroups,
+		InternalGroups:     trackerConfig.InternalGroups,
 	})
 	if err != nil {
 		return "", fmt.Errorf("trackers: safe config fingerprint: %w", err)

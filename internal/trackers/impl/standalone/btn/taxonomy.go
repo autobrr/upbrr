@@ -154,6 +154,14 @@ func resolveOrigin(meta api.UploadSubject) string {
 	return "P2P"
 }
 
+func resolveUploadOrigin(meta api.UploadSubject, internal bool) string {
+	origin := resolveOrigin(meta)
+	if internal && origin != "Scene" && origin != "Mixed" {
+		return "None"
+	}
+	return origin
+}
+
 func btnHDRTags(raw any, present bool) ([]string, bool, bool, api.HDRFacts) {
 	if !present {
 		return nil, false, false, api.HDRFacts{}

@@ -51,18 +51,31 @@ func Evaluate(
 	targetFacts.Edition = editionFromNamingContract(targetFacts.Edition, target.Names, targetFacts.Resolution, policy.DefaultTitleEdition)
 	effectiveComplete := search.EffectiveComplete()
 	evaluation := Evaluation{Complete: effectiveComplete, TargetFacts: targetFacts}
-	candidateFacts := make([]normalizedFacts, 0, len(candidates))
+	setCandidates := make([]TrackerCandidate, 0, len(candidates))
+	setCandidateFacts := make([]normalizedFacts, 0, len(candidates))
+	setCandidateIndexes := make([]int, 0, len(candidates))
 	for _, candidate := range candidates {
 		facts := normalizeCandidateFacts(candidate)
 		if policy.ExactMatchOnly {
 			facts.Content = exactOnlyContentScope(facts.Content, parseReleaseTitle(candidate.Name, FactOriginTrackerTitle).Content)
 		}
 		facts.Edition = editionFromNamingContract(facts.Edition, []string{candidate.Name}, facts.Resolution, policy.DefaultTitleEdition)
-		candidateFacts = append(candidateFacts, facts)
+		if configuredOtherGroup(target, candidate, facts, policy.GroupRestriction) {
+			evaluation.Candidates = append(evaluation.Candidates, candidateResult(candidate, facts, nil, api.DupeRelationCoexists, "configured_other_group"))
+			continue
+		}
+		setCandidateIndexes = append(setCandidateIndexes, len(evaluation.Candidates))
+		setCandidates = append(setCandidates, candidate)
+		setCandidateFacts = append(setCandidateFacts, facts)
 		findings := collectCandidateFindings(target, targetFacts, candidate, facts, policy, search.WorkScope)
 		evaluation.Candidates = append(evaluation.Candidates, resolveCandidateFindings(candidate, facts, findings))
 	}
-	evaluation.SetFindings = evaluateSetRules(targetFacts, candidates, candidateFacts, policy, search)
+	evaluation.SetFindings = evaluateSetRules(targetFacts, setCandidates, setCandidateFacts, policy, search)
+	for index := range evaluation.SetFindings {
+		for affectedIndex, candidateIndex := range evaluation.SetFindings[index].affectedCandidateIndexes {
+			evaluation.SetFindings[index].affectedCandidateIndexes[affectedIndex] = setCandidateIndexes[candidateIndex]
+		}
+	}
 	applySetFindings(&evaluation)
 	for _, candidate := range evaluation.Candidates {
 		switch candidate.Relation {
@@ -104,6 +117,27 @@ func Evaluate(
 		return strings.Compare(left.Candidate.Name, right.Candidate.Name)
 	})
 	return evaluation
+}
+
+func configuredOtherGroup(
+	target api.TrackerDuplicateTarget,
+	candidate TrackerCandidate,
+	facts normalizedFacts,
+	restriction trackerspkg.DupeGroupRestriction,
+) bool {
+	if !restriction.Enabled || exactCandidate(target, candidate) {
+		return false
+	}
+	targetGroup := trackerspkg.NormalizeTrackerReleaseGroup(restriction.Group)
+	if targetGroup == "" {
+		return false
+	}
+	if facts.Group.Status == FactComplete {
+		candidateGroup := trackerspkg.NormalizeTrackerReleaseGroup(facts.Group.Value)
+		return candidateGroup != "" && !strings.EqualFold(targetGroup, candidateGroup)
+	}
+	return facts.Group.Status == FactPartial && facts.Group.Origin == FactOriginTrackerTitle &&
+		titleProvesDifferentGroup(candidate.Name, targetGroup)
 }
 
 func candidateEvaluationRank(candidate CandidateEvaluation) int {
@@ -346,6 +380,8 @@ func dupeReasonMessage(reason string, relation api.DupeRelation) string {
 	switch strings.TrimSpace(reason) {
 	case "exact_identity":
 		return "Candidate has identical release or file identity."
+	case "configured_other_group":
+		return "Configured group policy ignores a confirmed release from another group."
 	case "existing_full_disc":
 		return "Tracker permits only one full disc for this work."
 	case "existing_season_pack":

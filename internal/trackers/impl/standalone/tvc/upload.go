@@ -197,7 +197,7 @@ func prepareUploadState(_ context.Context, req trackers.PreparationInput) (uploa
 		"sd":               boolNum(isSD(req.Meta.Release.Resolution)),
 		"keywords":         keywordsText(req.Meta),
 		"personal_release": boolNum(req.Meta.PersonalRelease),
-		"internal":         "0",
+		"internal":         boolNum(req.Runtime.Internal),
 		"featured":         "0",
 		"free":             "0",
 		"doubleup":         "0",

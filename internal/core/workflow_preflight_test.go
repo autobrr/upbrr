@@ -36,6 +36,7 @@ type workflowAudioPolicyDefinition struct {
 	policy     trackerspkg.AudioPolicy
 	banned     []string
 	claimCalls *int
+	claimErr   error
 }
 
 type workflowImageHostPolicyDefinition struct {
@@ -119,11 +120,12 @@ func (d workflowAudioPolicyDefinition) BannedGroups() []string {
 }
 
 func (d workflowAudioPolicyDefinition) NewClaimChecker(config.Config, api.Logger) trackerspkg.ClaimChecker {
-	return workflowClaimChecker{calls: d.claimCalls}
+	return workflowClaimChecker{calls: d.claimCalls, err: d.claimErr}
 }
 
 type workflowClaimChecker struct {
 	calls *int
+	err   error
 }
 
 type workflowPreparedResourceDefinition struct{}
@@ -163,7 +165,7 @@ func (c workflowClaimChecker) HasClaim(context.Context, api.UploadSubject) (bool
 	if c.calls != nil {
 		*c.calls++
 	}
-	return true, nil
+	return c.err == nil, c.err
 }
 
 func (workflowClaimChecker) FailureReason(api.UploadSubject) string { return "Synthetic claim." }
@@ -647,6 +649,27 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 				strings.Contains(update.Message, "policy_code=banned_group decision=bypassed")
 		}) {
 			t.Fatalf("debug preflight progress = %#v", progress)
+		}
+	})
+
+	t.Run("claim cancellation terminates preflight", func(t *testing.T) {
+		policyRegistry := trackerspkg.NewRegistry()
+		if err := policyRegistry.Register(workflowAudioPolicyDefinition{name: "ALPHA", claimErr: context.Canceled}); err != nil {
+			t.Fatalf("register claim policy: %v", err)
+		}
+		claimCatalog := catalog
+		claimCatalog.Trackers = append([]api.TrackerCatalogDescriptor(nil), catalog.Trackers...)
+		claimCatalog.Trackers[0].Capabilities.Claims = true
+		_, _, err := (workflowPreflightBuilder{auth: workflowPreflightAuthFake{}, registry: policyRegistry}).Build(
+			context.Background(),
+			api.UploadSubject{},
+			claimCatalog,
+			runtime,
+			projections,
+			now,
+		)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("claim cancellation error = %v", err)
 		}
 	})
 

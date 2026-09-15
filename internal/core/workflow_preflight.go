@@ -320,6 +320,9 @@ func (b workflowPreflightBuilder) Build(
 				checker := factory.NewClaimChecker(b.config, b.logger)
 				claimed, err := checker.HasClaim(ctx, subject)
 				if err != nil {
+					if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+						return api.TrackerPreflightAssessment{}, nil, fmt.Errorf("tracker preflight: %s claim check: %w", projection.TrackerID, err)
+					}
 					setRetryablePreflight(&result, "Tracker claim data could not be checked. Retry preflight.")
 					result.ClaimsReady = false
 				} else if claimed {

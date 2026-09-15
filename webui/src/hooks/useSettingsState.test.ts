@@ -3,6 +3,7 @@
 
 import { createElement } from "react";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { installAppOperationMocks } from "../test/appRequestMock";
 import type { ConfigValue, TrackerCatalog, TrackerCatalogEntry } from "../types";
@@ -187,6 +188,12 @@ function TrackerSettingsHarness() {
     null,
     state.renderTrackerSection(false),
     createElement("button", { type: "button", onClick: state.handleSaveSettings }, "Save settings"),
+    createElement(
+      "button",
+      { type: "button", disabled: !state.settingsDirty, onClick: state.handleSaveSettings },
+      "Save changes",
+    ),
+    createElement("span", { "data-testid": "settings-dirty" }, String(state.settingsDirty)),
     createElement(PayloadCapture, { value: state.buildSavePayload() }),
   );
 }
@@ -1471,6 +1478,161 @@ describe("tracker catalog interactions", () => {
       Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
     }>();
     expect(payload.Trackers?.Trackers?.OLD).toBeUndefined();
+  });
+
+  it("edits tracker group policies as comma-separated lists and preserves legacy Internal", async () => {
+    installAppOperationMocks({
+      GetConfig: async () =>
+        JSON.stringify({
+          Trackers: {
+            DefaultTrackers: [],
+            PreferredTracker: "",
+            Trackers: {
+              NBL: {
+                APIKey: "tracker-token",
+                Internal: false,
+                DupeBypassGroups: ["NTb"],
+                PersonalReleaseGroups: [],
+                InternalGroups: ["GRP"],
+              },
+            },
+          },
+        }),
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () =>
+        trackerCatalog(
+          trackerCatalogEntry("NBL", [
+            ["APIKey", "", true],
+            ["DupeBypassGroups", []],
+            ["PersonalReleaseGroups", []],
+            ["InternalGroups", []],
+          ]),
+        ),
+      GetImageHostPolicyMetadata: async () => ({}),
+    });
+
+    render(createElement(TrackerSettingsHarness));
+
+    const cardName = await screen.findByText("NBL", {
+      selector: ".settings-card__summary-name",
+    });
+    fireEvent.click(cardName);
+
+    expect(screen.queryByLabelText("Internal")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Duplicate bypass groups")).toHaveValue("NTb");
+    fireEvent.blur(screen.getByLabelText("Duplicate bypass groups"));
+    expect(screen.getByTestId("settings-dirty")).toHaveTextContent("false");
+    fireEvent.change(screen.getByLabelText("Duplicate bypass groups"), {
+      target: { value: " NTb, -GRP, ntb " },
+    });
+    fireEvent.blur(screen.getByLabelText("Duplicate bypass groups"));
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Duplicate bypass groups")).toHaveValue("NTb, GRP"),
+    );
+    const payload = readPayload<{
+      Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
+    }>();
+    expect(payload.Trackers?.Trackers?.NBL?.DupeBypassGroups).toEqual(["NTb", "GRP"]);
+    expect(payload.Trackers?.Trackers?.NBL?.Internal).toBe(false);
+    expect(screen.getByTestId("settings-dirty")).toHaveTextContent("true");
+  });
+
+  it.each([
+    ["Duplicate bypass groups", "DupeBypassGroups"],
+    ["Personal release groups", "PersonalReleaseGroups"],
+    ["Internal groups", "InternalGroups"],
+  ] as const)("enables and saves while typing in %s", async (label, key) => {
+    const user = userEvent.setup();
+    let saved: Record<string, unknown> | undefined;
+    installAppOperationMocks({
+      GetConfig: async () =>
+        JSON.stringify({
+          Trackers: {
+            DefaultTrackers: [],
+            PreferredTracker: "",
+            Trackers: {
+              NBL: {
+                APIKey: "tracker-token",
+                DupeBypassGroups: [],
+                PersonalReleaseGroups: [],
+                InternalGroups: [],
+              },
+            },
+          },
+        }),
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () =>
+        trackerCatalog(
+          trackerCatalogEntry("NBL", [
+            ["APIKey", "", true],
+            ["DupeBypassGroups", []],
+            ["PersonalReleaseGroups", []],
+            ["InternalGroups", []],
+          ]),
+        ),
+      GetImageHostPolicyMetadata: async () => ({}),
+      SaveConfig: async (payload: string) => {
+        const config = JSON.parse(payload) as {
+          Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
+        };
+        saved = config.Trackers?.Trackers?.NBL;
+      },
+    });
+
+    render(createElement(TrackerSettingsHarness));
+
+    const cardName = await screen.findByText("NBL", {
+      selector: ".settings-card__summary-name",
+    });
+    await user.click(cardName);
+    const saveButton = screen.getByRole("button", { name: "Save changes" });
+    expect(saveButton).toBeDisabled();
+    await user.type(screen.getByLabelText(label), "GRP");
+
+    expect(screen.getByTestId("settings-dirty")).toHaveTextContent("true");
+    expect(saveButton).toBeEnabled();
+    await user.click(saveButton);
+
+    await waitFor(() => expect(saved?.[key]).toEqual(["GRP"]));
+    expect(screen.getByTestId("settings-dirty")).toHaveTextContent("false");
+  });
+
+  it("preserves a sequentially typed group that temporarily matches an existing group", async () => {
+    const user = userEvent.setup();
+    installAppOperationMocks({
+      GetConfig: async () =>
+        JSON.stringify({
+          Trackers: {
+            DefaultTrackers: [],
+            PreferredTracker: "",
+            Trackers: { NBL: { APIKey: "tracker-token", InternalGroups: ["GRP"] } },
+          },
+        }),
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () =>
+        trackerCatalog(
+          trackerCatalogEntry("NBL", [
+            ["APIKey", "", true],
+            ["InternalGroups", []],
+          ]),
+        ),
+      GetImageHostPolicyMetadata: async () => ({}),
+    });
+
+    render(createElement(TrackerSettingsHarness));
+
+    await user.click(await screen.findByText("NBL", { selector: ".settings-card__summary-name" }));
+    const input = screen.getByLabelText("Internal groups");
+    await user.type(input, ", GRP2");
+
+    expect(input).toHaveValue("GRP, GRP2");
+    expect(screen.getByTestId("settings-dirty")).toHaveTextContent("true");
+    fireEvent.blur(input);
+    expect(
+      readPayload<{ Trackers?: { Trackers?: { NBL?: { InternalGroups?: string[] } } } }>().Trackers
+        ?.Trackers?.NBL?.InternalGroups,
+    ).toEqual(["GRP", "GRP2"]);
   });
 
   it("reports a stable error for an unknown catalog field", async () => {

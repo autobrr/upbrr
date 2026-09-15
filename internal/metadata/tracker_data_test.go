@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -455,7 +456,7 @@ func TestBTNTrackerClaimProviderUsesSharedCachePathAnd48HourTTL(t *testing.T) {
 	}
 }
 
-func TestLoadBTNClaimedTitlesUsesFreshCacheWithin48Hours(t *testing.T) {
+func TestLoadBTNClaimedTitlesRefreshesFreshLegacyCache(t *testing.T) {
 	tempDir := t.TempDir()
 	cachePath := filepath.Join(tempDir, "cache", "banned", "BTN_claimed_releases.json")
 	cached := map[string]struct{}{normalizeBTNTitle("Cached Show"): {}}
@@ -464,9 +465,20 @@ func TestLoadBTNClaimedTitlesUsesFreshCacheWithin48Hours(t *testing.T) {
 	}
 
 	clientCalls := 0
-	restore := swapDefaultTransport(roundTripperFunc(func(_ *http.Request) (*http.Response, error) {
+	restore := swapDefaultTransport(roundTripperFunc(func(req *http.Request) (*http.Response, error) {
 		clientCalls++
-		return nil, context.Canceled
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body: io.NopCloser(strings.NewReader(`
+				<table id="post1405482">
+				  <tr><td><div id="content1405482" class="postcontent">
+				    <strong>Current Shows:</strong><br>
+				    Fresh Show -- HDB | BTN -- TBN -- AMZN<br>
+				  </div></td></tr>
+				</table>`)),
+			Header:  make(http.Header),
+			Request: req,
+		}, nil
 	}))
 	defer restore()
 
@@ -475,11 +487,23 @@ func TestLoadBTNClaimedTitlesUsesFreshCacheWithin48Hours(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load btn claimed titles: %v", err)
 	}
-	if clientCalls != 0 {
-		t.Fatalf("expected fresh cache to avoid fetch, got %d requests", clientCalls)
+	if clientCalls != 2 {
+		t.Fatalf("expected legacy cache to trigger session validation and fetch, got %d requests", clientCalls)
 	}
-	if _, ok := claimed[normalizeBTNTitle("Cached Show")]; !ok {
-		t.Fatalf("expected cached title, got %#v", claimed)
+	if _, ok := claimed[normalizeBTNTitle("Fresh Show")]; !ok {
+		t.Fatalf("expected refreshed title, got %#v", claimed)
+	}
+
+	cacheData, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatalf("read cache: %v", err)
+	}
+	var migrated btnClaimedShowsCache
+	if err := json.Unmarshal(cacheData, &migrated); err != nil {
+		t.Fatalf("decode migrated cache: %v", err)
+	}
+	if migrated.Version != 2 || len(migrated.Claims) != 1 {
+		t.Fatalf("expected v2 structured cache, got version=%d claims=%d", migrated.Version, len(migrated.Claims))
 	}
 }
 
@@ -498,7 +522,7 @@ func TestLoadBTNClaimedTitlesRefetchesAfter48Hours(t *testing.T) {
 			<table id="post1405482">
 			  <tr><td><div id="content1405482" class="postcontent">
 			    <strong>Current Shows:</strong><br>
-			    Fresh Show -- BTN<br>
+			    Fresh Show -- BTN -- GRP -- AMZN<br>
 			  </div></td></tr>
 			</table>`))
 		return &http.Response{
@@ -550,7 +574,7 @@ func TestLoadBTNClaimedTitlesFallsBackToStaleCacheAfterFetchFailure(t *testing.T
 				Request:    req,
 			}, nil
 		}
-		return nil, context.Canceled
+		return nil, errors.New("synthetic fetch failure")
 	}))
 	defer restore()
 
@@ -567,7 +591,7 @@ func TestLoadBTNClaimedTitlesFallsBackToStaleCacheAfterFetchFailure(t *testing.T
 	}
 }
 
-func TestFetchBTNClaimedTitlesStopsAfterLoginFailure(t *testing.T) {
+func TestFetchBTNClaimedTitlesRequiresExistingSessionWithoutLogin(t *testing.T) {
 	tempDir := t.TempDir()
 	cfg := config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tempDir, "db.sqlite")},
@@ -616,8 +640,8 @@ func TestFetchBTNClaimedTitlesStopsAfterLoginFailure(t *testing.T) {
 	if len(claimed) != 0 {
 		t.Fatalf("expected no claimed titles, got %#v", claimed)
 	}
-	if len(requests) != 2 {
-		t.Fatalf("expected session validation and login request only, got %d requests: %v", len(requests), requests)
+	if len(requests) != 1 {
+		t.Fatalf("expected only session validation, got %d requests: %v", len(requests), requests)
 	}
 	if strings.Contains(strings.Join(requests, " "), "forums.php") {
 		t.Fatalf("did not expect claimed-thread fetch after login failure, got %v", requests)
@@ -1174,13 +1198,15 @@ func TestExtractBTNClaimedShowsParsesCurrentSection(t *testing.T) {
 	t.Parallel()
 
 	html := `
-	<div>
-	  <strong>Current Shows:</strong><br>
-	  Example Show -- BTN<br>
-	  Another Show (aka: Alt Name) -- BTN<br>
-	  Upcoming Shows:<br>
-	  Ignored Show -- BTN
-	</div>`
+	<table id="post1405482">
+	  <tr><td><div id="content1405482" class="postcontent">
+	    <strong>Current Shows:</strong><br>
+	    Example Show -- BTN -- GRP -- AMZN<br>
+	    Another Show (aka: Alt Name) -- BTN -- GRP -- AMZN<br>
+	    Upcoming Shows:<br>
+	    Ignored Show -- BTN -- GRP -- AMZN
+	  </div></td></tr>
+	</table>`
 
 	claimed := extractBTNClaimedShows(html)
 	if _, ok := claimed[normalizeBTNTitle("Example Show")]; !ok {
@@ -1203,17 +1229,17 @@ func TestExtractBTNClaimedShowsScopesToClaimedPost(t *testing.T) {
 	html := `
 	<div>
 	  <strong>Current Shows:</strong><br>
-	  Wrong Show -- BTN<br>
+	  Wrong Show -- BTN -- GRP -- AMZN<br>
 	</div>
 	<table id="post1405482">
 	  <tr>
 	    <td>
 	      <div id="content1405482" class="postcontent">
 	        <strong>Current Shows:</strong><br>
-	        Example Show -- BTN<br>
-	        Another Show (aka: Alt Name) -- BTN<br>
+	        Example Show -- BTN -- GRP -- AMZN<br>
+	        Another Show (aka: Alt Name) -- BTN -- GRP -- AMZN<br>
 	        Upcoming Shows:<br>
-	        Ignored Show -- BTN
+	        Ignored Show -- BTN -- GRP -- AMZN
 	      </div>
 	    </td>
 	  </tr>
@@ -1242,13 +1268,13 @@ func TestExtractBTNClaimedShowsParsesNestedClaimedPostContent(t *testing.T) {
 	        <div id="content1405482" class="postcontent">
 	          <div>
 	            <strong>Current Shows:</strong><br>
-	            Example Show (aka: Alt Name) -- BTN<br>
+	            Example Show (aka: Alt Name) -- BTN -- GRP -- AMZN<br>
 	            <div class="note">Some nested wrapper</div>
-	            Another Show -- BTN<br>
+	            Another Show -- BTN -- GRP -- AMZN<br>
 	          </div>
 	          <div>
 	            <strong>Upcoming Shows:</strong><br>
-	            Future Show -- BTN<br>
+	            Future Show -- BTN -- GRP -- AMZN<br>
 	          </div>
 	        </div>
 	      </td>

@@ -346,7 +346,7 @@ func (r *Registry) ProjectRelease(
 	}
 	projection := pureReleaseProjection(input)
 	if descriptor.DupePolicy != nil && descriptor.DupePolicy.TargetReleaseOrigin != nil {
-		projection.DuplicateTarget.ReleaseOrigin = strings.TrimSpace(descriptor.DupePolicy.TargetReleaseOrigin(input.Meta))
+		projection.DuplicateTarget.ReleaseOrigin = strings.TrimSpace(descriptor.DupePolicy.TargetReleaseOrigin(input.Meta, input.Runtime.Internal))
 	}
 	var failure *PreparationFailure
 	if contextErr := ctx.Err(); contextErr != nil {
@@ -410,14 +410,18 @@ func (r *Registry) ProjectRelease(
 		return projection, failure
 	}
 	projection.NamingFingerprint = projection.ProjectorFingerprint
+	group, sameGroupOnly := TrackerGroupRestriction(input.TrackerConfig, input.Meta.Tag)
+	groupRestriction := DupeGroupRestriction{Enabled: sameGroupOnly, Group: group}
 	projection.DuplicatePolicyFingerprint, err = api.CanonicalWorkflowFingerprint(struct {
-		GeneralPolicyID string
-		ID              string
-		Policy          *DupePolicy
+		GeneralPolicyID  string
+		ID               string
+		Policy           *DupePolicy
+		GroupRestriction DupeGroupRestriction
 	}{
-		GeneralPolicyID: GeneralDuplicatePolicyID,
-		ID:              projection.DuplicatePolicyID,
-		Policy:          descriptor.DupePolicy,
+		GeneralPolicyID:  GeneralDuplicatePolicyID,
+		ID:               projection.DuplicatePolicyID,
+		Policy:           descriptor.DupePolicy,
+		GroupRestriction: groupRestriction,
 	})
 	if err != nil {
 		failure = NewPreparationFailure(input.Tracker, "fingerprint", "tracker duplicate policy fingerprint failed", err)

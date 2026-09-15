@@ -538,6 +538,37 @@ func TestPrepareHydratesPersistedPrivateResourcesOnceAfterRestart(t *testing.T) 
 	}
 }
 
+func TestResolveUploadSubjectRetainsExplicitPersonalReleaseAfterRestart(t *testing.T) {
+	t.Parallel()
+
+	path := writePreparedTestFile(t, "source.mkv", "synthetic media")
+	store := newMemoryStore()
+	personal := false
+	input := api.PrepareInput{
+		SourcePath: path,
+		Instructions: api.ReleaseFactInstructions{Metadata: api.MetadataOverrides{
+			PersonalRelease: &personal,
+		}},
+	}
+	prepared, err := newTestModule(t, store, newClientEvidenceTestCollector(clientEvidenceTestSnapshot("initial-hash"))).Prepare(t.Context(), input)
+	if err != nil {
+		t.Fatalf("initial prepare: %v", err)
+	}
+	restarted := newTestModule(t, store, newClientEvidenceTestCollector(clientEvidenceTestSnapshot("hydrated-hash")))
+	if _, err := restarted.Prepare(t.Context(), input); err != nil {
+		t.Fatalf("restart prepare: %v", err)
+	}
+	upload, err := restarted.ResolveUploadSubject(t.Context(), api.UploadSubjectInput{
+		Release: api.ReleaseRef{SourcePath: path, Generation: prepared.Release.Generation},
+	})
+	if err != nil {
+		t.Fatalf("ResolveUploadSubject() error = %v", err)
+	}
+	if upload.PersonalReleaseOverride == nil || *upload.PersonalReleaseOverride {
+		t.Fatalf("explicit personal-release false was not retained: %#v", upload.PersonalReleaseOverride)
+	}
+}
+
 func TestPrepareForceRecheckBuildsOneFreshGeneration(t *testing.T) {
 	t.Parallel()
 

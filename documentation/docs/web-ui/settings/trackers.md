@@ -44,6 +44,38 @@ Each tracker shows a different subset.
 
 Other fields are tracker-owned. Their labels and defaults come from the running backend, not a universal schema. See [Trackers](../../trackers/index.md) for support boundaries.
 
+## Group policy lists
+
+Every tracker card provides three independent comma-separated release-group lists. Configure each tracker separately; a group listed for one tracker has no effect on another.
+
+| Field                       | Effect for a matching incoming group                                                                                                                                                                |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Duplicate bypass groups** | Ignores confirmed duplicate candidates from other groups. Same-group candidates, exact duplicates, and candidates whose group cannot be determined still receive normal duplicate handling.         |
+| **Personal release groups** | Selects the tracker API's personal-release option when that API supports one. An explicit Personal Release choice on the upload overrides this configured default, including an explicit **false**. |
+| **Internal groups**         | Selects the tracker API's internal option when supported and applies the same-group duplicate behavior described above.                                                                             |
+
+Enter tags without the conventional leading `-`, for example `NTb, GRP`. upbrr trims whitespace, removes one accidental leading hyphen, and removes repeated entries case-insensitively. Matching uses the complete group tag; wildcards and partial matches are not supported.
+
+YAML accepts either a comma-separated value or a sequence:
+
+```yaml
+trackers:
+  NBL:
+    dupe_bypass_groups: NTb, GRP
+    personal_release_groups:
+      - GRP
+  BTN:
+    internal_groups: NTb
+```
+
+JSON uses arrays with the catalog field names `DupeBypassGroups`, `PersonalReleaseGroups`, and `InternalGroups`.
+
+For BTN/HDB, configured internal groups can bypass claimed show blocking, allowing these groups to upload their claimed releases to BTN/HDB.
+
+With debug logging enabled, `reason=legacy_format` identifies an automatic cache migration attempt. A blocked claim warning includes `release_group`, `internal_group`, `fresh_structured`, `own_claim`, and `matched_claims` so you can see which bypass prerequisite was missing.
+
+The older per-tracker **Internal** boolean is retained only so existing configuration can be read and exported. It no longer enables internal handling. Add the relevant tags to **Internal groups**; a list match works even when the legacy value is `false`.
+
 ## Remove a tracker
 
 **Remove** resets the entry to catalog defaults, hides its card, and removes its default and preferred-source selections. Select **Save** to persist those changes. Unsupported preserved entries appear separately because no current implementation can use them; delete them only when you no longer need their retained config.

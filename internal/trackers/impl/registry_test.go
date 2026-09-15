@@ -859,6 +859,9 @@ func TestNewRegistryIncludesHDBPolicies(t *testing.T) {
 	if _, ok := registry.LookupDataFactory("HDB"); !ok {
 		t.Fatal("expected HDB data factory")
 	}
+	if _, ok := registry.LookupClaimCheckerFactory("HDB"); !ok {
+		t.Fatal("expected HDB-owned claim checker factory")
+	}
 	cfg := config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"HDB": {Username: "user", Passkey: "pass"}}}}
 	if ready, owned := registry.DataLookupConfigured("HDB", cfg); !owned || !ready {
 		t.Fatalf("HDB lookup readiness = %t, %t", ready, owned)
