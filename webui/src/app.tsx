@@ -579,7 +579,10 @@ function AppShell({
               trackerIconSrcByName={trackerIconSrcByName}
             />
           ) : activeTab === "upload" ? (
-            <TrackerUploadPage facet={releaseSession.upload} />
+            <TrackerUploadPage
+              facet={releaseSession.upload}
+              onOpenDuplicates={() => openReleaseTab("dupes", "duplicates")}
+            />
           ) : activeTab === "tracker" ? (
             <TrackerDataPage
               facet={releaseSession.input}

@@ -12,6 +12,7 @@ import type {
 
 type Props = Readonly<{
   facet: UploadFacet;
+  onOpenDuplicates: () => void;
 }>;
 
 /** One tracker upload card: the projection plus any dry-run report merged by tracker. */
@@ -44,7 +45,7 @@ function uploadEligibilityLabel(outcome?: TrackerLaneOutcome): string {
 }
 
 /** Thin presentation adapter for workflow dry-run and upload state. */
-export default function TrackerUploadPage({ facet }: Props) {
+export default function TrackerUploadPage({ facet, onOpenDuplicates }: Props) {
   const { view } = facet;
   const [expandedTrackers, setExpandedTrackers] = useState<Record<string, boolean>>({});
   const selected = useMemo(() => new Set(view.selectedTrackers), [view.selectedTrackers]);
@@ -267,6 +268,16 @@ export default function TrackerUploadPage({ facet }: Props) {
                     <strong>{trackerLabel}</strong>
                     {eligibilityLabel ? (
                       <span className={skipped ? "error" : "muted"}>{eligibilityLabel}</span>
+                    ) : null}
+                    {skipped && outcome?.uploadSkipReason === "duplicate_found" ? (
+                      <button
+                        aria-label={`Open Duplicates page for ${trackerLabel}`}
+                        className="ghost"
+                        type="button"
+                        onClick={onOpenDuplicates}
+                      >
+                        Open Duplicates
+                      </button>
                     ) : null}
                   </div>
                   {report ? (
