@@ -46,6 +46,7 @@ const (
 	e2eImageURLEnv     = "UPBRR_E2E_IMAGE_URL"
 	e2eClientURLEnv    = "UPBRR_E2E_CLIENT_URL"
 	e2eShotPathEnv     = "UPBRR_E2E_SCREENSHOT_PATH"
+	e2eMediaInfoEnv    = "UPBRR_E2E_MEDIAINFO_PATH"
 	e2eResolutionEnv   = "UPBRR_E2E_RESOLUTION"
 	e2eDuplicateEnv    = "UPBRR_E2E_DUPLICATE_TRACKERS"
 	e2eDupeScenarioEnv = "UPBRR_E2E_DUPE_SCENARIOS"
@@ -217,6 +218,7 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 		SubtitleLanguages:        []string{"English"},
 		MediaInfoUniqueID:        "e2e-unique-id",
 		MediaInfoUniqueIDPresent: true,
+		MediaInfoTextPath:        strings.TrimSpace(os.Getenv(e2eMediaInfoEnv)),
 		Release: api.ReleaseInfo{
 			Category:   string(category),
 			Type:       "WEBDL",

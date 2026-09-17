@@ -1513,6 +1513,23 @@ export function ReleaseSessionProvider({
     }
   };
 
+  const descriptionInstructions = (current: ReleaseWorkflowCurrent): DescriptionInstructions => ({
+    questionnaireAnswers: state.questionnaireAnswers,
+    options: {
+      RunLogLevel: state.uploadOptions.runLogLevel,
+      Screens: workflowDescriptionScreenshotCount(current),
+      NoSeed: uploadOptions.noSeed,
+      SkipAutoTorrent: false,
+      OnlyID: false,
+      KeepFolder: false,
+      KeepImages: false,
+      CaptureDVDMenus: false,
+      InteractionMode: "interactive",
+    },
+    imageHost: workflowDescriptionImageHostOverrides(current.media?.failedHosts || []),
+    templateVersion: "workflow-v1",
+  });
+
   const loadDescriptions = async (): Promise<boolean> => {
     if (!workflowView.current?.media) return false;
     if (workflowView.current.descriptions) return true;
@@ -1520,24 +1537,7 @@ export function ReleaseSessionProvider({
       continueBackendGoal(
         current,
         "descriptions_ready",
-        {
-          descriptions: {
-            questionnaireAnswers: state.questionnaireAnswers,
-            options: {
-              RunLogLevel: state.uploadOptions.runLogLevel,
-              Screens: workflowDescriptionScreenshotCount(current),
-              NoSeed: uploadOptions.noSeed,
-              SkipAutoTorrent: false,
-              OnlyID: false,
-              KeepFolder: false,
-              KeepImages: false,
-              CaptureDVDMenus: false,
-              InteractionMode: "interactive",
-            },
-            imageHost: workflowDescriptionImageHostOverrides(current.media?.failedHosts || []),
-            templateVersion: "workflow-v1",
-          },
-        },
+        { descriptions: descriptionInstructions(current) },
         `${commandID}-descriptions`,
         signal,
       ),
@@ -1598,12 +1598,25 @@ export function ReleaseSessionProvider({
   };
 
   // Selected trackers are pre-dupe UI state; retained backend evidence owns the exact downstream set.
-  const backendResolvedUploadIntent = () => ({ noSeed: uploadOptions.noSeed });
+  const backendResolvedUploadIntent = (current: ReleaseWorkflowCurrent): WorkflowIntent => ({
+    noSeed: uploadOptions.noSeed,
+    media:
+      !current.media && !requirements.needsImages
+        ? { screenshotCount: 0, purpose: "final", captureDvdMenus: false }
+        : undefined,
+    descriptions: descriptionInstructions(current),
+  });
 
   const runDryRun = async (): Promise<boolean> => {
     if (!workflowView.current) return false;
     return runBackendWorkflow((current, commandID, signal) =>
-      continueBackendGoal(current, "dry_run", backendResolvedUploadIntent(), commandID, signal),
+      continueBackendGoal(
+        current,
+        "dry_run",
+        backendResolvedUploadIntent(current),
+        commandID,
+        signal,
+      ),
     );
   };
 
@@ -1620,7 +1633,7 @@ export function ReleaseSessionProvider({
         current = await continueBackendGoal(
           current,
           "dry_run",
-          backendResolvedUploadIntent(),
+          backendResolvedUploadIntent(current),
           `${commandID}-review`,
           controller.signal,
         );
@@ -1631,7 +1644,7 @@ export function ReleaseSessionProvider({
       const uploaded = await continueBackendGoal(
         current,
         "uploaded",
-        backendResolvedUploadIntent(),
+        backendResolvedUploadIntent(current),
         `${commandID}-execute`,
         controller.signal,
       );
@@ -1818,7 +1831,13 @@ export function ReleaseSessionProvider({
         ),
       dryRunUploads: () =>
         runBackendWorkflow((current, commandID, signal) =>
-          continueBackendGoal(current, "dry_run", backendResolvedUploadIntent(), commandID, signal),
+          continueBackendGoal(
+            current,
+            "dry_run",
+            backendResolvedUploadIntent(current),
+            commandID,
+            signal,
+          ),
         ),
       executeUploads: () => executeExactUpload(),
       confirmAction: (action: RequiredAction, confirmed = true) => {
@@ -1833,7 +1852,7 @@ export function ReleaseSessionProvider({
           continueBackendGoal(
             current,
             liveTest ? "dry_run" : "uploaded",
-            backendResolvedUploadIntent(),
+            backendResolvedUploadIntent(current),
             commandID,
             signal,
             {

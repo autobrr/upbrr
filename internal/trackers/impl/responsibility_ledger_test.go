@@ -79,7 +79,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 	unit3DResponsibility("BLU", "canonical"),
 	unit3DResponsibility("CBR", "cbr"),
 	unit3DResponsibilityVersion("DP", "dp", "", "v2"),
-	unit3DResponsibility("DVL", "canonical"),
+	unit3DResponsibility("DVL", "dvl"),
 	unit3DResponsibility("EMUW", "canonical"),
 	unit3DResponsibility("FRIKI", "canonical"),
 	unit3DResponsibilityVersion("HHD", "hhd", "", "v2"),

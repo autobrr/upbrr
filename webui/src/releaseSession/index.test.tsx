@@ -696,7 +696,27 @@ describe("useReleaseSession", () => {
     expect(continueWorkflow).toHaveBeenCalledWith(
       expect.objectContaining({
         goal: "dry_run",
-        intent: { interaction: "interactive", noSeed: liveTest },
+        intent: {
+          interaction: "interactive",
+          noSeed: liveTest,
+          media: { screenshotCount: 0, purpose: "final", captureDvdMenus: false },
+          descriptions: {
+            questionnaireAnswers: {},
+            options: {
+              RunLogLevel: "info",
+              Screens: 0,
+              NoSeed: liveTest,
+              SkipAutoTorrent: false,
+              OnlyID: false,
+              KeepFolder: false,
+              KeepImages: false,
+              CaptureDVDMenus: false,
+              InteractionMode: "interactive",
+            },
+            imageHost: { FailedHosts: [], SkipUpload: true },
+            templateVersion: "workflow-v1",
+          },
+        },
       }),
       expect.any(AbortSignal),
     );
