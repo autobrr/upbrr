@@ -7,12 +7,13 @@ import (
 // Profile returns YUS's site-specific type mapping and banned groups.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
-		Name:              "YUS",
-		BaseURL:           "https://yu-scene.net",
-		BannedGroups:      BannedGroups(),
-		ReleaseNamePolicy: namePolicy(),
+		Name:         "YUS",
+		BaseURL:      "https://yu-scene.net",
+		BannedGroups: BannedGroups(),
 		Site: unit3d.SiteProfile{
-			ResolveTypeID: typeID,
+			BuildName:        buildName,
+			BuildNameVersion: "v2",
+			ResolveTypeID:    typeID,
 		},
 	}
 }

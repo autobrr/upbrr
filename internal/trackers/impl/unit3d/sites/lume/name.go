@@ -4,100 +4,62 @@
 package lume
 
 import (
-	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/lume/v3", trackers.StructuredNamePolicy{Defaults: applyLumeNameDefaults})
-}
-
-func applyLumeNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
-	if err := applyLumeTVDBDisambiguation(editor, meta); err != nil {
-		return err
+func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
+	name := strings.TrimSpace(meta.ReleaseName)
+	if name == "" {
+		name = strings.TrimSpace(meta.ReleaseNameNoTag)
 	}
+	name = strings.Join(strings.Fields(name), " ")
+	name = applyLumeTVDBDisambiguation(name, meta)
 	if !isLumeFullDisc(meta) {
-		if err := editor.Omit(api.NameRoleEdition); err != nil {
-			return fmt.Errorf("omit LUME edition: %w", err)
-		}
+		name = removeLumeNameElement(name, meta.Edition)
 	}
-	if err := applyLumeHDR(editor, meta.HDRFacts); err != nil {
-		return err
+	if meta.HDRFacts.Status != "" && meta.HDRFacts.Status != api.HDREvidenceMissing {
+		name = replaceLumeHDR(name, meta.HDR, lumeHDR(meta.HDRFacts))
 	}
-	if err := editor.Omit(api.NameRoleHybrid); err != nil {
-		return fmt.Errorf("omit LUME hybrid: %w", err)
-	}
-	return omitLumeHi10P(editor)
+	fields := strings.Fields(name)
+	fields = slices.DeleteFunc(fields, func(field string) bool {
+		return strings.EqualFold(field, "Hybrid") || strings.EqualFold(field, "Hi10P")
+	})
+	return strings.Join(fields, " ")
 }
 
-func applyLumeTVDBDisambiguation(editor *trackers.NameEditor, meta api.UploadSubject) error {
-	if unit3d.Category(meta) != "TV" || !meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) || meta.ProviderMetadata.TVDB == nil {
-		return nil
+func applyLumeTVDBDisambiguation(name string, meta api.UploadSubject) string {
+	if unit3d.Category(meta) != "TV" || meta.ProviderMetadata.TVDB == nil {
+		return name
 	}
 	evidence := meta.ProviderMetadata.TVDB.NameDisambiguation
-	if !lumeMatchesTVDBTitle(editor, evidence.CanonicalName) {
-		return nil
+	if meta.EffectiveMetadata.YearProvenance.IsManual() {
+		evidence.SeriesYear = meta.EffectiveMetadata.Year
 	}
-	if err := editor.MoveBefore(api.NameRoleAlternateTitle, api.NameRoleYear); err != nil {
-		return fmt.Errorf("move LUME alternate title before year: %w", err)
+	title, alternateAndLocale, tail, ok := unit3d.SplitTVDBName(name, meta, evidence)
+	if !ok {
+		return name
 	}
-	if !evidence.IncludeYear {
-		if err := editor.Omit(api.NameRoleYear); err != nil {
-			return fmt.Errorf("omit LUME TVDB year: %w", err)
-		}
+	parts := []string{title, alternateAndLocale}
+	if evidence.IncludeYear && evidence.SeriesYear > 0 {
+		parts = append(parts, strconv.Itoa(evidence.SeriesYear))
 	}
-	return nil
+	parts = append(parts, tail)
+	return strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
 }
 
-func lumeMatchesTVDBTitle(editor *trackers.NameEditor, title string) bool {
-	component, ok := editor.Component(api.NameRoleTitle)
-	return ok && component.Present && !component.Manual && strings.TrimSpace(title) != "" &&
-		strings.EqualFold(strings.Join(strings.Fields(component.Value), " "), strings.Join(strings.Fields(title), " "))
-}
-
-func applyLumeHDR(editor *trackers.NameEditor, facts api.HDRFacts) error {
-	if facts.Status == "" || facts.Status == api.HDREvidenceMissing {
-		return nil
+func removeLumeNameElement(name string, element string) string {
+	element = strings.Join(strings.Fields(element), " ")
+	index := findLumeLastNameElement(name, element)
+	if index < 0 {
+		return name
 	}
-	hdr := lumeHDR(facts)
-	if hdr == "" {
-		if err := editor.Omit(api.NameRoleHDR); err != nil {
-			return fmt.Errorf("omit LUME HDR: %w", err)
-		}
-		return nil
-	}
-	if err := editor.Set(api.NameRoleHDR, hdr); err != nil {
-		return fmt.Errorf("set LUME HDR: %w", err)
-	}
-	return nil
-}
-
-func omitLumeHi10P(editor *trackers.NameEditor) error {
-	for _, role := range []api.ReleaseNameRole{api.NameRoleVideoEncode, api.NameRoleVideoCodec} {
-		component, ok := editor.Component(role)
-		if !ok || !component.Present {
-			continue
-		}
-		value := strings.Join(slices.DeleteFunc(strings.Fields(component.Value), func(field string) bool {
-			return strings.EqualFold(field, "Hi10P")
-		}), " ")
-		if value == "" {
-			if err := editor.Omit(role); err != nil {
-				return fmt.Errorf("omit LUME Hi10P %s: %w", role, err)
-			}
-			continue
-		}
-		if err := editor.Set(role, value); err != nil {
-			return fmt.Errorf("remove LUME Hi10P from %s: %w", role, err)
-		}
-	}
-	return nil
+	return strings.TrimSpace(name[:index] + " " + name[index+len(element):])
 }
 
 func isLumeFullDisc(meta api.UploadSubject) bool {
@@ -105,11 +67,29 @@ func isLumeFullDisc(meta api.UploadSubject) bool {
 	return strings.EqualFold(nameType, "DISC") || nameType == "" && unit3d.IsDiscType(meta.DiscType)
 }
 
+func findLumeLastNameElement(value string, element string) int {
+	element = strings.Join(strings.Fields(element), " ")
+	if element == "" {
+		return -1
+	}
+	return strings.LastIndex(" "+value+" ", " "+element+" ")
+}
+
+func replaceLumeHDR(name string, current string, replacement string) string {
+	current = strings.TrimSpace(current)
+	if current != "" && strings.Contains(name, current) {
+		return strings.Replace(name, current, replacement, 1)
+	}
+	return name
+}
+
 func lumeHDR(facts api.HDRFacts) string {
 	hasDV := slices.Contains(facts.Formats, api.HDRFormatDolbyVision)
 	hasHDR10Plus := slices.Contains(facts.Formats, api.HDRFormatHDR10Plus)
-	hasHDR := hasHDR10Plus || slices.Contains(facts.Formats, api.HDRFormatHDR10) || slices.Contains(facts.Formats, api.HDRFormatHLG) ||
-		slices.Contains(facts.Formats, api.HDRFormatPQ10) || slices.Contains(facts.Formats, api.HDRFormatHDRVivid)
+	hasHDR := hasHDR10Plus || slices.Contains(facts.Formats, api.HDRFormatHDR10) ||
+		slices.Contains(facts.Formats, api.HDRFormatHLG) ||
+		slices.Contains(facts.Formats, api.HDRFormatPQ10) ||
+		slices.Contains(facts.Formats, api.HDRFormatHDRVivid)
 	switch {
 	case hasDV && hasHDR10Plus:
 		return "DV HDR10+"

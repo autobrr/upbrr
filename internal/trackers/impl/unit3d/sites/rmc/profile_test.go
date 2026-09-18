@@ -7,9 +7,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/autobrr/upbrr/internal/metadata"
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
-	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -21,9 +20,8 @@ func TestProfileIdentity(t *testing.T) {
 	if profile.BaseURL != "https://retro-movies.club" {
 		t.Fatalf("base URL = %q", profile.BaseURL)
 	}
-	policy := unit3d.NewWithProfile(profile).ReleaseNamePolicy()
-	if policy.ID != "unit3d/rmc/v3" || policy.Structured == nil || policy.Resolver != nil {
-		t.Fatalf("RMC policy = %#v", policy)
+	if profile.Site.BuildNameVersion != "v2" {
+		t.Fatalf("RMC build-name version = %q", profile.Site.BuildNameVersion)
 	}
 	if profile.MetadataPolicy == nil || len(profile.MetadataPolicy.Requirements) != 1 ||
 		len(profile.MetadataPolicy.Requirements[0].AnyOf) != 1 ||
@@ -181,62 +179,114 @@ func TestResolutionIDPrecedenceAndMarkerRecovery(t *testing.T) {
 	}
 }
 
-func TestRMCStructuredReleaseNamePolicyUsesProviderRoles(t *testing.T) {
-	t.Parallel()
-	result := metadata.BuildReleaseName(api.ReleaseNameRequest{
-		Category:   "MOVIE",
-		Type:       "ENCODE",
-		Title:      "Wrong Title",
-		AltTitle:   "AKA Wrong Alternate",
-		Year:       2001,
-		Resolution: "1080p",
-		Source:     "BluRay",
-		HDR:        "HDR10+",
-		Audio:      "DD+ 5.1",
-		VideoCodec: "x264",
-		Tag:        "-GRP",
-	}, api.NopLogger{})
-	if result.GeneratedName == nil {
-		t.Fatal("BuildReleaseName did not produce a structured document")
+func TestBuildNameSanitizesDisallowedCharacters(t *testing.T) {
+	meta := rmcNameSubject("Exämple: Rëlease! (2000) 1080p Bluray x264-GRP", "Exämple: Rëlease!", 2000)
+	got := Profile().Site.BuildName(meta, config.TrackerConfig{})
+	want := "Exmple Rlease 2000 1080p Bluray x264-GRP"
+	if got != want {
+		t.Fatalf("name = %q, want %q", got, want)
 	}
-	const tmdbID = 1234567
-	subject := api.UploadSubject{
-		ReleaseName:      result.Name,
-		ReleaseNameNoTag: result.NameNoTag,
-		GeneratedName:    result.GeneratedName,
-		Identity:         api.ExternalIdentity{Category: api.CanonicalCategoryMovie, TMDBID: tmdbID},
-		ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{
-			TMDBID: tmdbID,
-			Title:  "Exämple: Rëlease!",
-			Year:   2000,
-		}},
+}
+
+func TestBuildNameRemovesAKASegment(t *testing.T) {
+	meta := rmcNameSubject("Example Release AKA Example Alternate 1999 1080p Bluray x264-GRP", "Example Release", 1999)
+	meta.ProviderMetadata.TMDB.RetrievedAKA = "AKA Example Alternate"
+	got := Profile().Site.BuildName(meta, config.TrackerConfig{})
+	want := "Example Release 1999 1080p Bluray x264-GRP"
+	if got != want {
+		t.Fatalf("name = %q, want %q", got, want)
 	}
-	if got, want := rmcReviewedName(t, subject, nil), "Exmple Rlease 2000 1080p BluRay DD+ 5.1 HDR10+ x264-GRP"; got != want {
-		t.Fatalf("RMC name = %q, want %q", got, want)
+}
+
+func TestBuildNameFallsBackToReleaseNameNoTag(t *testing.T) {
+	meta := rmcNameSubject("", "Example Release", 2000)
+	meta.ReleaseNameNoTag = "Example Release 2000 1080p Bluray x264"
+	got := Profile().Site.BuildName(meta, config.TrackerConfig{})
+	if got != "Example Release 2000 1080p Bluray x264" {
+		t.Fatalf("name = %q", got)
 	}
-	manual := subject
-	markRMCManual(t, manual.GeneratedName, api.NameRoleTitle)
-	manual.ReleaseName = manual.GeneratedName.Render().Name
-	if got, want := rmcReviewedName(t, manual, nil), "Wrong Title 2000 1080p BluRay DD+ 5.1 HDR10+ x264-GRP"; got != want {
-		t.Fatalf("manual title changed: %q, want %q", got, want)
+}
+
+func TestBuildNameAllowsFinalizedYearOmission(t *testing.T) {
+	meta := rmcNameSubject("Example Release 1080p Bluray x264-GRP", "Example Release", 0)
+	meta.NamePresentation = api.ReleaseNamePresentation{
+		Version:  api.ReleaseNamePresentationVersionV1,
+		OmitYear: true,
 	}
-	override := "Opaque RMC Name-GRP"
-	if got := rmcReviewedName(t, subject, &override); got != override {
-		t.Fatalf("opaque name = %q, want %q", got, override)
+	if got := Profile().Site.BuildName(meta, config.TrackerConfig{}); got != "Example Release 1080p Bluray x264-GRP" {
+		t.Fatalf("name = %q", got)
 	}
-	missing := subject
-	missing.ProviderMetadata.TMDB = nil
-	if failure := rmcNameFailure(missing); failure == nil {
-		t.Fatal("missing current TMDB title did not reject RMC naming")
+}
+
+func TestBuildNameNormalizesTitleAndAKAWhenYearIsOmitted(t *testing.T) {
+	meta := rmcNameSubject("Wrong Title AKA Wrong Alternate 1080p Bluray x264-GRP", "Example Release", 0)
+	meta.Release.Title = "Wrong Title"
+	meta.Release.Alt = "AKA Wrong Alternate"
+	meta.ProviderMetadata.TMDB.RetrievedAKA = "AKA Wrong Alternate"
+	meta.NamePresentation = api.ReleaseNamePresentation{
+		Version:  api.ReleaseNamePresentationVersionV1,
+		OmitYear: true,
 	}
-	unsupported := subject
-	unsupported.ProviderMetadata.TMDB = &api.TMDBMetadata{
-		TMDBID: tmdbID,
-		Title:  "！！！",
-		Year:   2000,
+	got := Profile().Site.BuildName(meta, config.TrackerConfig{})
+	want := "Example Release 1080p Bluray x264-GRP"
+	if got != want {
+		t.Fatalf("name = %q, want %q", got, want)
 	}
-	if failure := rmcNameFailure(unsupported); failure == nil {
-		t.Fatal("unsupported TMDB title did not reject RMC naming")
+}
+
+func TestBuildNameUsesTMDBTitleAndYearAndPreservesPlus(t *testing.T) {
+	meta := rmcNameSubject("Wrong Title AKA Wrong Alternate 2001 1080p Bluray HDR10+ x264 DD+-GRP", "Example Release", 2000)
+	meta.Release.Year = 2001
+	got := Profile().Site.BuildName(meta, config.TrackerConfig{})
+	want := "Example Release 2000 1080p Bluray HDR10+ x264 DD+-GRP"
+	if got != want {
+		t.Fatalf("name = %q, want %q", got, want)
+	}
+}
+
+func TestBuildNamePrefersManualTitleAndYear(t *testing.T) {
+	meta := rmcNameSubject("Wrong Title 2000 1080p Bluray x264-GRP", "Provider Title", 2000)
+	meta.EffectiveMetadata = api.EffectiveMetadata{
+		Title:           "Manual Title",
+		TitleProvenance: api.FactProvenanceManual,
+		Year:            2030,
+		YearProvenance:  api.FactProvenanceManual,
+	}
+	if got := Profile().Site.BuildName(meta, config.TrackerConfig{}); got != "Manual Title 2030 1080p Bluray x264-GRP" {
+		t.Fatalf("manual name = %q", got)
+	}
+	meta.EffectiveMetadata.Title = ""
+	meta.EffectiveMetadata.TitleProvenance = api.FactProvenanceManualEmpty
+	if got := Profile().Site.BuildName(meta, config.TrackerConfig{}); got != "" {
+		t.Fatalf("manual-empty title name = %q", got)
+	}
+}
+
+func TestBuildYearlessNamePrefersManualAlternateTitle(t *testing.T) {
+	meta := rmcNameSubject("Manual Title AKA Manual Alternate 1080p Bluray x264-GRP", "Provider Title", 0)
+	meta.Release.Title = "Manual Title"
+	meta.NamePresentation = api.ReleaseNamePresentation{
+		Version:  api.ReleaseNamePresentationVersionV1,
+		OmitYear: true,
+	}
+	meta.EffectiveMetadata = api.EffectiveMetadata{
+		Title:                    "Manual Title",
+		TitleProvenance:          api.FactProvenanceManual,
+		AlternateTitle:           "Manual Alternate",
+		AlternateTitleProvenance: api.FactProvenanceManual,
+	}
+	if got := Profile().Site.BuildName(meta, config.TrackerConfig{}); got != "Manual Title 1080p Bluray x264-GRP" {
+		t.Fatalf("manual alternate name = %q", got)
+	}
+}
+
+func TestBuildNameRejectsStaleTMDBMetadata(t *testing.T) {
+	meta := rmcNameSubject("Example Release 2000 1080p Bluray x264-GRP", "Example Release", 2000)
+	meta.SourcePath = "current-source"
+	meta.Identity.SourcePath = meta.SourcePath
+	meta.ProviderMetadata.SourcePath = "stale-source"
+	if got := Profile().Site.BuildName(meta, config.TrackerConfig{}); got != "" {
+		t.Fatalf("name = %q, want empty for stale TMDB metadata", got)
 	}
 }
 
@@ -266,45 +316,6 @@ func TestCheckRequirementsUsesManualEffectiveYear(t *testing.T) {
 	if len(failures) != 1 || failures[0].Rule != "rmc_release_year" {
 		t.Fatalf("failures = %#v, want rmc_release_year", failures)
 	}
-}
-
-func rmcReviewedName(t *testing.T, subject api.UploadSubject, requested *string) string {
-	t.Helper()
-	prepared, failure := trackers.PrepareInputWithReleaseNamePolicy(
-		trackers.PreparationInput{
-			Tracker:             "RMC",
-			Meta:                subject,
-			RequestedUploadName: requested,
-		},
-		unit3d.NewWithProfile(Profile()).ReleaseNamePolicy(),
-	)
-	if failure != nil {
-		t.Fatal(failure)
-	}
-	name, err := prepared.ReviewedUploadName()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return name
-}
-
-func rmcNameFailure(subject api.UploadSubject) *trackers.PreparationFailure {
-	_, failure := trackers.PrepareInputWithReleaseNamePolicy(
-		trackers.PreparationInput{Tracker: "RMC", Meta: subject},
-		unit3d.NewWithProfile(Profile()).ReleaseNamePolicy(),
-	)
-	return failure
-}
-
-func markRMCManual(t *testing.T, document *api.ReleaseNameDocument, role api.ReleaseNameRole) {
-	t.Helper()
-	for index := range document.Components {
-		if document.Components[index].Role == role {
-			document.Components[index].Manual = true
-			return
-		}
-	}
-	t.Fatalf("generated document missing %s", role)
 }
 
 func rmcNameSubject(name, title string, year int) api.UploadSubject {

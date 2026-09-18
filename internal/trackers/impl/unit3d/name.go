@@ -4,7 +4,8 @@
 package unit3d
 
 import (
-	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -17,19 +18,11 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+var noGroupTagPattern = regexp.MustCompile(`(?i)-(nogrp|nogroup|unknown|-unk-)`)
 var (
 	languageTagLookupOnce sync.Once
 	languageTagLookup     map[string]language.Tag
 )
-
-var localizedCodecReplacer = strings.NewReplacer("DD+ ", "DDP", "DD ", "DD", "AAC ", "AAC", "FLAC ", "FLAC")
-
-var portugueseLanguageNames = map[string]struct{}{
-	"português":  {},
-	"portuguese": {},
-	"pt-br":      {},
-	"pt":         {},
-}
 
 func buildUnit3DName(_ string, meta api.UploadSubject, cfg config.TrackerConfig, profiles ...SiteProfile) string {
 	profile := firstSiteProfile(profiles)
@@ -52,126 +45,66 @@ func baseReleaseName(meta api.UploadSubject) string {
 	return strings.TrimSpace(strings.Join(strings.Fields(name), " "))
 }
 
-// LocalizedReleaseNamePolicy applies the shared Portuguese-localized naming
-// convention used by Unit3D sites that opt into it.
-func LocalizedReleaseNamePolicy(id string) trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy(id, trackers.StructuredNamePolicy{Defaults: applyLocalizedNameDefaults})
+// SplitTVDBName separates a generated TV name into canonical title, alternate title, and release tail.
+func SplitTVDBName(name string, meta api.UploadSubject, evidence api.TVDBNameDisambiguation) (string, string, string, bool) {
+	title := strings.Join(strings.Fields(evidence.CanonicalName), " ")
+	name = strings.Join(strings.Fields(name), " ")
+	if title == "" || len(name) < len(title) || !strings.EqualFold(name[:len(title)], title) ||
+		len(name) > len(title) && name[len(title)] != ' ' {
+		return "", "", "", false
+	}
+	remainder := trimTVDBLeadingYear(strings.TrimSpace(name[len(title):]), evidence.SeriesYear)
+	tailStart := findTVDBTailStart(remainder, meta)
+	if tailStart < 0 {
+		return "", "", "", false
+	}
+	return title, strings.TrimSpace(remainder[:tailStart]), strings.TrimSpace(remainder[tailStart:]), true
 }
 
-func applyLocalizedNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, cfg config.TrackerConfig) error {
-	if err := normalizeLocalizedGroup(editor, meta); err != nil {
-		return fmt.Errorf("normalize localized group: %w", err)
+func trimTVDBLeadingYear(value string, year int) string {
+	if year <= 0 {
+		return value
 	}
-	if (resolveUnit3DCategory(meta) == "TV" || meta.Anime) && meta.Release.Year > 0 {
-		if err := editor.Omit(api.NameRoleYear); err != nil {
-			return fmt.Errorf("omit localized year: %w", err)
-		}
-	}
-	if err := applyLocalizedAlternateTitle(editor, meta); err != nil {
-		return fmt.Errorf("apply localized alternate title: %w", err)
-	}
-	if audio, ok := editor.Component(api.NameRoleAudio); ok && audio.Present {
-		if err := editor.Set(api.NameRoleAudio, localizedCodecReplacer.Replace(audio.Value)); err != nil {
-			return fmt.Errorf("normalize localized audio: %w", err)
-		}
-	}
-	if IsDiscType(meta.DiscType) {
-		return nil
-	}
-
-	label := localizedAudioLabel(meta.AudioLanguages)
-	if label == "" {
-		return nil
-	}
-	if err := editor.Omit(api.NameRoleDubbed); err != nil {
-		return fmt.Errorf("omit localized dubbed marker: %w", err)
-	}
-	if err := insertLocalizedOriginalGroup(editor, meta, cfg); err != nil {
-		return fmt.Errorf("insert localized original group: %w", err)
-	}
-	if err := editor.InsertBefore(api.NameRoleDualAudio, label, api.NameRoleGroup); err != nil {
-		return fmt.Errorf("insert localized audio marker: %w", err)
-	}
-	return nil
-}
-
-func normalizeLocalizedGroup(editor *trackers.NameEditor, meta api.UploadSubject) error {
-	tag := strings.TrimSpace(strings.TrimPrefix(meta.Tag, "-"))
-	if tag == "" {
-		if group, ok := editor.Component(api.NameRoleGroup); ok && group.Present {
-			tag = strings.TrimSpace(strings.TrimPrefix(group.Value, "-"))
-		}
-	}
-	if tag != "" && !IsNoGroupTag(tag) {
-		return nil
-	}
-	if err := editor.Set(api.NameRoleGroup, "-NoGroup"); err != nil {
-		return fmt.Errorf("set localized no-group suffix: %w", err)
-	}
-	if err := editor.Include(api.NameRoleGroup); err != nil {
-		return fmt.Errorf("include localized no-group suffix: %w", err)
-	}
-	return nil
-}
-
-func applyLocalizedAlternateTitle(editor *trackers.NameEditor, meta api.UploadSubject) error {
-	alternate, ok := editor.Component(api.NameRoleAlternateTitle)
-	if !ok || !alternate.Present {
-		return nil
-	}
-	_, portuguese := portugueseLanguageNames[strings.ToLower(resolveOriginalLanguage(meta))]
-	if portuguese {
-		title := strings.TrimSpace(strings.TrimPrefix(alternate.Value, "AKA"))
-		if title != "" {
-			if err := editor.Set(api.NameRoleTitle, title); err != nil {
-				return fmt.Errorf("set localized Portuguese title: %w", err)
-			}
-		}
-	}
-	if err := editor.Omit(api.NameRoleAlternateTitle); err != nil {
-		return fmt.Errorf("omit localized alternate title: %w", err)
-	}
-	return nil
-}
-
-func localizedAudioLabel(values []string) string {
-	hasPortuguese := false
-	languages := make(map[string]struct{})
-	for _, value := range values {
-		if _, ok := portugueseLanguageNames[strings.ToLower(strings.TrimSpace(value))]; ok {
-			hasPortuguese = true
-		}
-		if code, _, ok := languageCode(value); ok {
-			languages[code] = struct{}{}
-		}
-	}
-	if !hasPortuguese {
+	token := strconv.Itoa(year)
+	if value == token {
 		return ""
 	}
-	if len(languages) >= 3 {
-		return "MULTI"
+	if strings.HasPrefix(value, token+" ") {
+		return strings.TrimSpace(value[len(token):])
 	}
-	if len(languages) == 2 {
-		return "DUAL"
-	}
-	return ""
+	return value
 }
 
-func insertLocalizedOriginalGroup(editor *trackers.NameEditor, meta api.UploadSubject, cfg config.TrackerConfig) error {
-	customTag := strings.TrimSpace(strings.TrimPrefix(cfg.TagForCustomRelease, "-"))
-	originalGroup := strings.TrimSpace(meta.Release.Group)
-	group, ok := editor.Component(api.NameRoleGroup)
-	if customTag == "" || originalGroup == "" || strings.EqualFold(customTag, originalGroup) || !ok || !group.Present ||
-		!strings.EqualFold(strings.TrimPrefix(group.Value, "-"), customTag) {
-		return nil
+func findTVDBTailStart(value string, meta api.UploadSubject) int {
+	best := -1
+	for _, candidate := range []string{
+		strings.TrimSpace(meta.SeasonStr + meta.EpisodeStr),
+		meta.SeasonStr,
+		meta.DailyEpisodeDate,
+		Resolution(meta),
+	} {
+		element := strings.Join(strings.Fields(candidate), " ")
+		if index := strings.Index(" "+value+" ", " "+element+" "); element != "" && index >= 0 && (best < 0 || index < best) {
+			best = index
+		}
 	}
-	if err := editor.InsertBefore(api.NameRoleOriginalGroup, "-"+originalGroup, api.NameRoleGroup); err != nil {
-		return fmt.Errorf("insert localized original group: %w", err)
+	return best
+}
+
+func addNoGroupSuffix(name string, meta api.UploadSubject, suffix string) string {
+	tag := strings.TrimSpace(strings.TrimPrefix(meta.Tag, "-"))
+	normalizedName := noGroupTagPattern.ReplaceAllString(name, "")
+	normalizedName = strings.TrimSpace(strings.Join(strings.Fields(normalizedName), " "))
+	if tag != "" && !isNoGroupTag(tag) {
+		return normalizedName
 	}
-	if err := editor.SetJoin(api.NameRoleOriginalGroup, ""); err != nil {
-		return fmt.Errorf("attach localized original group: %w", err)
+	if normalizedName == "" {
+		return normalizedName
 	}
-	return nil
+	if strings.HasSuffix(strings.ToUpper(normalizedName), "-"+strings.ToUpper(suffix)) {
+		return normalizedName
+	}
+	return normalizedName + "-" + suffix
 }
 
 func languageCode(value string) (string, bool, bool) {
@@ -232,9 +165,6 @@ func buildLanguageTagLookup() {
 func resolveOriginalLanguage(meta api.UploadSubject) string {
 	if meta.EffectiveMetadata.OriginalLanguageProvenance.IsManual() {
 		return trackers.PreferredOriginalLanguage(meta, "")
-	}
-	if !meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) {
-		return ""
 	}
 	switch {
 	case meta.ProviderMetadata.TMDB != nil && strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalLanguage) != "":

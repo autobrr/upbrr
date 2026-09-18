@@ -4,10 +4,11 @@
 package sam
 
 import (
-	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return unit3d.LocalizedReleaseNamePolicy("unit3d/sam/v2")
+func buildName(meta api.UploadSubject, cfg config.TrackerConfig) string {
+	return unit3d.FormatLocalizedName(meta, cfg.TagForCustomRelease)
 }

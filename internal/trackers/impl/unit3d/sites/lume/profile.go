@@ -11,11 +11,14 @@ import (
 // Profile returns LUME's Unit3D site manifest.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
-		Name:              "LUME",
-		BaseURL:           "https://luminarr.me",
-		Rules:             Rules(),
-		ValidationPolicy:  ValidationPolicy(),
-		ReleaseNamePolicy: namePolicy(),
+		Name:             "LUME",
+		BaseURL:          "https://luminarr.me",
+		Rules:            Rules(),
+		ValidationPolicy: ValidationPolicy(),
+		Site: unit3d.SiteProfile{
+			BuildName:        buildName,
+			BuildNameVersion: "v2",
+		},
 		DupePolicy: &trackers.DupePolicy{
 			ID:         "lume/duplicate/v2",
 			EvidenceID: "lume-rules-naming",

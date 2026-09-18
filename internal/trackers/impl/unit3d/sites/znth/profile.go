@@ -8,12 +8,13 @@ import (
 // including its dedicated DVDRip type ID.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
-		Name:              "ZNTH",
-		BaseURL:           "https://znth.cx",
-		Rules:             Rules(),
-		ReleaseNamePolicy: namePolicy(),
+		Name:    "ZNTH",
+		BaseURL: "https://znth.cx",
+		Rules:   Rules(),
 		Site: unit3d.SiteProfile{
-			ResolveTypeID: typeID,
+			BuildName:        buildName,
+			BuildNameVersion: "v1",
+			ResolveTypeID:    typeID,
 		},
 	}
 }

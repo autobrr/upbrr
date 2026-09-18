@@ -4,7 +4,7 @@
 package ulcx
 
 import (
-	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -13,104 +13,115 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/ulcx/v3", trackers.StructuredNamePolicy{Defaults: applyULCXNameDefaults})
-}
-
-func applyULCXNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
-	if err := applyULCXTVDBDisambiguation(editor, meta); err != nil {
-		return err
+func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
+	name := strings.TrimSpace(meta.ReleaseName)
+	if name == "" {
+		name = strings.TrimSpace(meta.ReleaseNameNoTag)
 	}
-	if err := editor.Omit(api.NameRoleEdition); err != nil {
-		return fmt.Errorf("omit ULCX edition: %w", err)
-	}
+	name = strings.Join(strings.Fields(name), " ")
+	name = applyULCXTVDBDisambiguation(name, meta)
+	name = removeULCXNameElement(name, meta.Edition)
 	if isULCXFullDisc(meta) {
-		if err := insertULCXDiscDistributor(editor, meta); err != nil {
-			return err
-		}
+		name = insertULCXDiscDistributor(name, meta)
 	}
 	if strings.EqualFold(strings.TrimSpace(meta.Type), "WEBDL") &&
 		(strings.Contains(strings.ToLower(strings.TrimSpace(meta.Edition)), "hybrid") || meta.WebDV) {
-		if err := editor.Omit(api.NameRoleHybrid); err != nil {
-			return fmt.Errorf("omit ULCX hybrid: %w", err)
-		}
+		name = strings.Replace(name, "Hybrid ", "", 1)
 	}
-	return correctULCXX265Token(editor, meta)
+	name = correctULCXX265Token(name, meta)
+	return strings.TrimSpace(strings.Join(strings.Fields(name), " "))
 }
 
-func applyULCXTVDBDisambiguation(editor *trackers.NameEditor, meta api.UploadSubject) error {
-	if unit3d.Category(meta) != "TV" || !meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) || meta.ProviderMetadata.TVDB == nil {
-		return nil
+func applyULCXTVDBDisambiguation(name string, meta api.UploadSubject) string {
+	if unit3d.Category(meta) != "TV" ||
+		!meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) ||
+		meta.ProviderMetadata.TVDB == nil {
+		return name
 	}
 	evidence := meta.ProviderMetadata.TVDB.NameDisambiguation
-	if !ulcxMatchesTVDBTitle(editor, evidence.CanonicalName) {
-		return nil
+	if meta.EffectiveMetadata.YearProvenance.IsManual() {
+		evidence.SeriesYear = meta.EffectiveMetadata.Year
 	}
-	if err := editor.MoveBefore(api.NameRoleAlternateTitle, api.NameRoleYear); err != nil {
-		return fmt.Errorf("move ULCX alternate title before year: %w", err)
+	title, alternate, tail, ok := unit3d.SplitTVDBName(name, meta, evidence)
+	if !ok {
+		return name
 	}
-	if evidence.IncludeLocale && strings.TrimSpace(evidence.Locale) != "" {
-		anchor := api.NameRoleAlternateTitle
-		if alternate, ok := editor.Component(anchor); !ok || !alternate.Present {
-			anchor = api.NameRoleTitle
-		}
-		if err := editor.InsertAfter(api.NameRoleLocale, evidence.Locale, anchor); err != nil {
-			return fmt.Errorf("insert ULCX TVDB locale: %w", err)
-		}
-		if err := editor.Omit(api.NameRoleYear); err != nil {
-			return fmt.Errorf("omit ULCX TVDB year with locale: %w", err)
-		}
-		return nil
+	locale := ""
+	if evidence.IncludeLocale {
+		locale = strings.TrimSpace(evidence.Locale)
 	}
-	if !evidence.IncludeYear {
-		if err := editor.Omit(api.NameRoleYear); err != nil {
-			return fmt.Errorf("omit ULCX TVDB year: %w", err)
-		}
+	parts := []string{title, alternate, locale}
+	if evidence.IncludeYear && evidence.SeriesYear > 0 && locale == "" {
+		parts = append(parts, strconv.Itoa(evidence.SeriesYear))
 	}
-	return nil
+	parts = append(parts, tail)
+	return strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
 }
 
-func ulcxMatchesTVDBTitle(editor *trackers.NameEditor, title string) bool {
-	component, ok := editor.Component(api.NameRoleTitle)
-	return ok && component.Present && !component.Manual && strings.TrimSpace(title) != "" &&
-		strings.EqualFold(strings.Join(strings.Fields(component.Value), " "), strings.Join(strings.Fields(title), " "))
+func removeULCXNameElement(name string, element string) string {
+	element = strings.Join(strings.Fields(element), " ")
+	index := findULCXLastNameElement(name, element)
+	if index < 0 {
+		return name
+	}
+	return strings.TrimSpace(name[:index] + " " + name[index+len(element):])
 }
 
-func insertULCXDiscDistributor(editor *trackers.NameEditor, meta api.UploadSubject) error {
-	distributor := strings.TrimSpace(trackers.PreferredDistributor(meta, meta.Distributor))
-	if distributor == "" {
-		return nil
+func insertULCXDiscDistributor(name string, meta api.UploadSubject) string {
+	distributor := strings.Join(strings.Fields(trackers.PreferredDistributor(meta, meta.Distributor)), " ")
+	if distributor == "" || findULCXNameElement(name, distributor) >= 0 {
+		return name
 	}
-	if resolution, ok := editor.Component(api.NameRoleResolution); ok && resolution.Present {
-		if err := editor.InsertAfter(api.NameRoleDistributor, distributor, api.NameRoleResolution); err != nil {
-			return fmt.Errorf("insert ULCX disc distributor after resolution: %w", err)
+	if resolution := strings.Join(strings.Fields(unit3d.Resolution(meta)), " "); resolution != "" {
+		if index := findULCXLastNameElement(name, resolution); index >= 0 {
+			end := index + len(resolution)
+			return strings.TrimSpace(name[:end] + " " + distributor + " " + name[end:])
 		}
-		return nil
 	}
-	if err := editor.InsertBefore(api.NameRoleDistributor, distributor, api.NameRoleRegion); err != nil {
-		return fmt.Errorf("insert ULCX disc distributor before region: %w", err)
+	if region := strings.Join(strings.Fields(meta.Region), " "); region != "" {
+		if index := findULCXLastNameElement(name, region); index >= 0 {
+			return strings.TrimSpace(name[:index] + distributor + " " + name[index:])
+		}
 	}
-	return nil
+	return name
 }
 
-func correctULCXX265Token(editor *trackers.NameEditor, meta api.UploadSubject) error {
+func correctULCXX265Token(name string, meta api.UploadSubject) string {
 	if !strings.EqualFold(strings.TrimSpace(meta.VideoEncode), "x265") {
-		return nil
+		return name
 	}
-	for _, role := range []api.ReleaseNameRole{api.NameRoleVideoEncode, api.NameRoleVideoCodec} {
-		component, ok := editor.Component(role)
-		if !ok || !component.Present {
-			continue
-		}
-		if err := editor.Set(role, "x265"); err != nil {
-			return fmt.Errorf("set ULCX %s to x265: %w", role, err)
-		}
-		return nil
+	if findULCXNameElement(name, "x265") >= 0 {
+		return name
 	}
-	return nil
+	for _, stale := range []string{"H.265", "HEVC"} {
+		if index := findULCXLastNameElement(name, stale); index >= 0 {
+			return name[:index] + "x265" + name[index+len(stale):]
+		}
+		if index := strings.LastIndex(name, " "+stale+"-"); index >= 0 {
+			start := index + 1
+			return name[:start] + "x265" + name[start+len(stale):]
+		}
+	}
+	return name
 }
 
 func isULCXFullDisc(meta api.UploadSubject) bool {
 	nameType := strings.TrimSpace(meta.Type)
 	return strings.EqualFold(nameType, "DISC") || nameType == "" && unit3d.IsDiscType(meta.DiscType)
+}
+
+func findULCXNameElement(value string, element string) int {
+	element = strings.Join(strings.Fields(element), " ")
+	if element == "" {
+		return -1
+	}
+	return strings.Index(" "+value+" ", " "+element+" ")
+}
+
+func findULCXLastNameElement(value string, element string) int {
+	element = strings.Join(strings.Fields(element), " ")
+	if element == "" {
+		return -1
+	}
+	return strings.LastIndex(" "+value+" ", " "+element+" ")
 }
