@@ -73,7 +73,7 @@ func azFamilyResponsibilityVersion(name string, version string) trackerResponsib
 }
 
 var trackerResponsibilityLedger = []trackerResponsibilityRow{
-	unit3DResponsibilityVersion("A4K", "a4k", "", "v2"),
+	unit3DResponsibilityVersion("A4K", "a4k", "", "v3"),
 	unit3DResponsibilityVersion("ACM", "acm", "acm", "v3"),
 	unit3DResponsibilityVersion("AITHER", "aither", "", "v3"),
 	unit3DResponsibility("BLU"),
@@ -232,7 +232,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 		descriptionOwner:  "standalone/btn/description.go",
 		mediaOwner:        "standalone/btn/media.go",
 		descriptionGroup:  "btn",
-		releaseNamePolicy: "standalone/btn/v4",
+		releaseNamePolicy: "standalone/btn/v5",
 		projectorVersion:  "standalone-v2",
 		principalName:     "release_name",
 	},

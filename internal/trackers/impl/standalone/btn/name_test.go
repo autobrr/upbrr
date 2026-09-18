@@ -20,6 +20,42 @@ func TestBTNStructuredNamePolicyProjectsGeneratedFacts(t *testing.T) {
 		want    string
 	}{
 		{
+			name: "BluRay remux preserves format while mapping source",
+			request: api.ReleaseNameRequest{
+				Category:   "TV",
+				Type:       "REMUX",
+				Title:      "Example Show",
+				Season:     "S01",
+				Episode:    "E01",
+				Resolution: "1080p",
+				Source:     "BluRay",
+				VideoCodec: "AVC",
+				Audio:      "DTS-HD MA 5.1",
+				Tag:        "-GRP",
+			},
+			adjust: func(subject *api.UploadSubject) {
+				subject.Type, subject.Source, subject.VideoCodec = "REMUX", "BluRay", "AVC"
+			},
+			want: "Example.Show.S01E01.1080p.Bluray.REMUX.H.264.DTS-HD.MA.5.1-GRP",
+		},
+		{
+			name: "DVD rip retains format without a source component",
+			request: api.ReleaseNameRequest{
+				Category:    "TV",
+				Type:        "DVDRIP",
+				Title:       "Example Show",
+				Season:      "S01",
+				Source:      "DVD",
+				VideoEncode: "XviD",
+				Audio:       "AC3 2.0",
+				Tag:         "-GRP",
+			},
+			adjust: func(subject *api.UploadSubject) {
+				subject.Type, subject.Source, subject.VideoEncode = "DVDRIP", "DVD", "XviD"
+			},
+			want: "Example.Show.S01.DVDRip.AC32.0.XViD-GRP",
+		},
+		{
 			name: "daily date and mapped codec source",
 			request: api.ReleaseNameRequest{
 				Category:    "TV",
@@ -179,7 +215,7 @@ func TestBTNStructuredNamePolicyUsesSemanticGroupAndSearch(t *testing.T) {
 
 func TestBTNNamingPolicyVersion(t *testing.T) {
 	t.Parallel()
-	if got := New().ReleaseNamePolicy().ID; got != "standalone/btn/v4" {
+	if got := New().ReleaseNamePolicy().ID; got != "standalone/btn/v5" {
 		t.Fatalf("BTN naming policy ID = %q", got)
 	}
 }

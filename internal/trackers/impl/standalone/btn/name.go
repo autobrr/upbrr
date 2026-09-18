@@ -87,11 +87,12 @@ func applyBTNNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _
 		return btnNameEditorError("apply group", err)
 	}
 	if source := mapSource(meta, nil); source != "" && source != "Unknown" && source != "Mixed" {
-		if component, exists := editor.Component(api.NameRoleVideoFormat); exists && component.Present {
-			if err := editor.Set(api.NameRoleVideoFormat, source); err != nil {
-				return btnNameEditorError("set video format", err)
-			}
-		} else if err := editor.Set(api.NameRoleSource, source); err != nil {
+		role := api.NameRoleSource
+		switch strings.ToUpper(strings.TrimSpace(meta.Type)) {
+		case "WEBDL", "WEBRIP", "DVDRIP":
+			role = api.NameRoleVideoFormat
+		}
+		if err := editor.Set(role, source); err != nil {
 			return btnNameEditorError("set source", err)
 		}
 	}

@@ -32,7 +32,7 @@ func TestBTNProfileOwnsPreparationAndPolicies(t *testing.T) {
 	if profile.PrepareUpload == nil || profile.NewDuplicateAdapter == nil {
 		t.Fatal("BTN profile must own upload preparation and duplicate search")
 	}
-	if profile.ReleaseNamePolicy.ID != "standalone/btn/v4" || profile.ValidationPolicy.ID != "standalone-btn-constructibility-v2" {
+	if profile.ReleaseNamePolicy.ID != "standalone/btn/v5" || profile.ValidationPolicy.ID != "standalone-btn-constructibility-v2" {
 		t.Fatalf("unexpected BTN naming/validation policies: %q %q", profile.ReleaseNamePolicy.ID, profile.ValidationPolicy.ID)
 	}
 	if profile.DupePolicy == nil || profile.DupePolicy.ID != "standalone/btn/duplicate/v1" {
@@ -72,7 +72,7 @@ func TestDefinitionProjectReleaseUsesBTNSceneName(t *testing.T) {
 	if projection.UploadReleaseName != "Example Show S01E01 Episode Name 1080p AAC 2.0 x264-GRP" {
 		t.Fatalf("BTN upload name = %q", projection.UploadReleaseName)
 	}
-	if projection.NamingPolicyID != "standalone/btn/v4" {
+	if projection.NamingPolicyID != "standalone/btn/v5" {
 		t.Fatalf("BTN release-name policy = %q", projection.NamingPolicyID)
 	}
 	if projection.DuplicateTarget.ReleaseOrigin != "P2P" {

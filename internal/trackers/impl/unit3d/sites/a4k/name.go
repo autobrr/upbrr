@@ -4,6 +4,7 @@
 package a4k
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -11,6 +12,8 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+var openMatteRegex = regexp.MustCompile(`(?i)(^|[^[:alnum:]])open[ ._-]matte([^[:alnum:]]|$)`)
 
 func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
 	name := strings.TrimSpace(meta.ReleaseName)
@@ -40,7 +43,7 @@ func buildFanResName(meta api.UploadSubject) string {
 		parts = append(parts, year)
 	}
 	parts = append(parts, "FANRES")
-	if strings.EqualFold(strings.TrimSpace(meta.Edition), "open matte") {
+	if openMatteRegex.MatchString(meta.Edition) {
 		parts = append(parts, "Open Matte")
 	}
 	if a4kHasOther(meta, "no-DNR", "No Digital Noise Reduction") {

@@ -664,7 +664,7 @@
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/standalone/btn/profile.go:Profile": {
-    "sha256": "eeee3887b02115f048be9ade80421832ea1896f6f627e761faf0470334e24a87",
+    "sha256": "e8b25e5b8241564572499762ddc0bce4deac9ec6a6af7d3cebdaa0bc62b3d09c",
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/standalone/btn/taxonomy.go:resolveBTNOriginalLanguage": {
@@ -1280,7 +1280,7 @@
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/unit3d/sites/a4k/name.go:buildFanResName": {
-    "sha256": "d57158695496718b86fb33c8e4863fe5fb2ea7dde1de402770057129d63e4ae6",
+    "sha256": "9bf29e3a5176467aaf2ea9865ef8323f65503ea6f2cf78ab698934084db82011",
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/unit3d/sites/a4k/name.go:buildName": {
@@ -1292,7 +1292,7 @@
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/unit3d/sites/a4k/profile.go:Profile": {
-    "sha256": "2e56dfaafc376dccdda65749ed0692775234855382279ca0eb75b6c8ad7d852d",
+    "sha256": "c96a7ad970011228bc5a6728362cdae5b53ce282e3e3d6b9dea0bdba8717a2ec",
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/unit3d/sites/acm/name.go:acmOriginalTitle": {

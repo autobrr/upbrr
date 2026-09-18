@@ -31,6 +31,45 @@ func TestBuildNameFanRes(t *testing.T) {
 	}
 }
 
+func TestBuildNameFanResEditionPhrase(t *testing.T) {
+	parsed := metadata.ParseReleaseInfo("Example.Release.2026.Open.Matte.2160p.35mm.x265-GRP.mkv")
+	for _, tc := range []struct {
+		name, edition string
+		wantOpenMatte bool
+	}{
+		{"parsed dotted edition", strings.Join(parsed.Edition, " "), true},
+		{"combined edition", "Director's Cut Open Matte", true},
+		{"underscore separator", "Open_Matte", true},
+		{"hyphen separator", "Open-Matte", true},
+		{"prefix substring", "Reopen Matte", false},
+		{"suffix substring", "Open Mattes", false},
+		{"title and group only", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			meta := a4kGeneratedSubject(t, api.ReleaseNameRequest{
+				Category:    "MOVIE",
+				Type:        "ENCODE",
+				Title:       "Open Matte Example",
+				Year:        2026,
+				Resolution:  "2160p",
+				Source:      "35mm",
+				Edition:     tc.edition,
+				Audio:       "FLAC 2.0",
+				VideoEncode: "x265",
+				Tag:         "-Open.Matte",
+			})
+			want := "Open Matte Example 2026 FANRES"
+			if tc.wantOpenMatte {
+				want += " Open Matte"
+			}
+			want += " 2160p UHD 35mm FLAC 2.0 x265"
+			if got := buildName(meta, config.TrackerConfig{}); got != want {
+				t.Fatalf("edition=%q name=%q want=%q", tc.edition, got, want)
+			}
+		})
+	}
+}
+
 func TestBuildNameAIUpscale(t *testing.T) {
 	meta := a4kGeneratedSubject(t, api.ReleaseNameRequest{
 		Category:    "MOVIE",
