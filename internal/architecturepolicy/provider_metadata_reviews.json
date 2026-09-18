@@ -24,7 +24,7 @@
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/azfamily/name.go:applyCinemaZNameDefaults": {
-    "sha256": "5b545af6665b01e14a0dad6c60c187d3221a09bd29e29495289c80e17e52dbd7",
+    "sha256": "01816f38e81200ac3d871b576e2d128b67c57b639263d1a880c3676fd9c0e1a6",
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/azfamily/name.go:avistaZEnglishTitle": {
@@ -52,7 +52,7 @@
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/azfamily/name.go:releaseNamePolicy": {
-    "sha256": "94e68519c7b5b05150fc1d95fa7f19419f6b24b4c44e0961984e28c45e0ee65c",
+    "sha256": "4b343b3879778786bd4ee2b6f9afba1b0bc2f33df1641a066e8e428c39e95390",
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/azfamily/name.go:resolveSearchName": {

@@ -4,7 +4,6 @@
 package azfamily
 
 import (
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -38,7 +37,7 @@ func releaseNamePolicy(site siteDefinition) trackers.ReleaseNamePolicyBinding {
 	version := "v3"
 	movieYearProvider := api.IdentityProviderTMDB
 	if site.Name == "CZ" {
-		version = "v4"
+		version = "v5"
 		movieYearProvider = api.IdentityProviderIMDB
 	}
 	return trackers.WithMovieYearProvider(trackers.StructuredReleaseNamePolicy(
@@ -104,7 +103,11 @@ func applyAZNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject) er
 func applyCinemaZNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject) error {
 	title := cinemaZTitle(meta)
 	if title == "" {
-		return errors.New("CinemaZ requires a Latin-safe generated title")
+		return &trackers.NameRuleError{
+			Rule:   "azfamily/cz/v5",
+			Role:   api.NameRoleTitle,
+			Reason: "no Latin-safe title is available; set a Latin-safe manual title and reprepare",
+		}
 	}
 	if err := setNameComponent(editor, api.NameRoleTitle, title); err != nil {
 		return err

@@ -4,6 +4,7 @@
 package azfamily
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -11,6 +12,32 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestCinemaZMissingTitleExplainsProjectionFailure(t *testing.T) {
+	t.Parallel()
+	subject := azFamilyGeneratedSubject(t, api.ReleaseNameRequest{
+		Category: "MOVIE",
+		Type:     "ENCODE",
+		Title:    "Example Film",
+	})
+	subject.EffectiveMetadata.OriginalTitleProvenance = api.FactProvenanceManualEmpty
+	registry := trackers.NewRegistry()
+	if err := registry.Register(New("CZ")); err != nil {
+		t.Fatal(err)
+	}
+	fingerprint, err := api.CanonicalWorkflowFingerprint("missing-title")
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection, failure := registry.ProjectRelease(context.Background(), trackers.PreparationInput{
+		Tracker: "CZ",
+		Meta:    subject,
+	}, fingerprint, fingerprint, fingerprint)
+	if failure == nil || failure.Code() != "name_rule_unsatisfied" ||
+		!strings.Contains(failure.Message(), "Latin-safe manual title") || projection.UploadReady {
+		t.Fatalf("missing CinemaZ title projection=%+v failure=%v", projection, failure)
+	}
+}
 
 func TestAZFamilyStructuredReleaseNamePolicy(t *testing.T) {
 	t.Parallel()
@@ -422,7 +449,7 @@ func TestAZFamilyNamingPolicyVersions(t *testing.T) {
 		provider   api.IdentityProvider
 	}{
 		{"AZ", "azfamily/az/v3", api.IdentityProviderTMDB},
-		{"CZ", "azfamily/cz/v4", api.IdentityProviderIMDB},
+		{"CZ", "azfamily/cz/v5", api.IdentityProviderIMDB},
 		{"PHD", "azfamily/phd/v3", api.IdentityProviderTMDB},
 	} {
 		t.Run(test.site, func(t *testing.T) {
