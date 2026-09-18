@@ -263,6 +263,8 @@ type State struct {
 	ReleaseName                          string
 	ReleaseNameNoTag                     string
 	ReleaseNameClean                     string
+	AvailableGeneratedName               *api.ReleaseNameDocument
+	GeneratedName                        *api.ReleaseNameDocument
 	GeneratedReleaseNames                api.GeneratedReleaseNameVariants
 	ReleaseNamePresentation              api.ReleaseNamePresentation
 	ReleaseNameMissing                   []string

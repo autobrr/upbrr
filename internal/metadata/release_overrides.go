@@ -151,6 +151,7 @@ func applyReleaseNameValueOverrides(meta *preparationstate.State) {
 	if overrides.NoEdition != nil && *overrides.NoEdition {
 		meta.Edition = ""
 		meta.Release.Edition = nil
+		meta.Repack = ""
 	}
 
 	// Malformed values cannot reach this point: the merged instructions were
@@ -247,20 +248,17 @@ func applyReleaseNameOverrides(req api.ReleaseNameRequest, overrides api.Release
 }
 
 func applyAudioOverrides(value string, overrides api.ReleaseNameOverrides) string {
-	result := value
+	base, markers := splitReleaseNameAudioMarkers(value)
 	if overrides.NoDub != nil && *overrides.NoDub {
-		result = strings.ReplaceAll(result, "Dubbed", "")
-		result = strings.ReplaceAll(result, "Dub", "")
+		markers.Dubbed = false
 	}
 	if overrides.NoDual != nil && *overrides.NoDual {
-		result = strings.ReplaceAll(result, "Dual-Audio", "")
-		result = strings.ReplaceAll(result, "Dual Audio", "")
+		markers.DualAudio = false
+		markers.DualAudioFirst = false
 	}
 	if overrides.DualAudio != nil && *overrides.DualAudio {
-		lower := strings.ToLower(result)
-		if !strings.Contains(lower, "dual") {
-			result = strings.TrimSpace(result + " Dual-Audio")
-		}
+		markers.DualAudio = true
+		markers.DualAudioFirst = false
 	}
-	return strings.TrimSpace(strings.Join(strings.Fields(result), " "))
+	return renderReleaseNameAudioMarkers(base, markers)
 }

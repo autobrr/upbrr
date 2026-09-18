@@ -122,6 +122,7 @@ export type ReleaseNamePresentation = {
 };
 
 export type NamingFacts = {
+  Version: string;
   Filename: string;
   ReleaseName: string;
   NamePresentation: ReleaseNamePresentation;

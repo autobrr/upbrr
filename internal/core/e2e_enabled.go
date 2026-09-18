@@ -56,6 +56,7 @@ const (
 	e2eAuthCounterEnv  = "UPBRR_E2E_AUTH_COUNTER_PATH"
 	e2eClockOffsetEnv  = "UPBRR_E2E_CLOCK_OFFSET"
 	e2eMediaKindEnv    = "UPBRR_E2E_MEDIA_KIND"
+	e2eNamingModeEnv   = "UPBRR_E2E_NAMING_MODE"
 )
 
 // maybeApplyE2EServices replaces only missing runtime capabilities when both
@@ -121,6 +122,58 @@ func maybeApplyE2EServices(_ context.Context, services *api.ServiceSet, cfg conf
 func isE2EEnabled() bool {
 	value := strings.TrimSpace(os.Getenv(e2eEnabledEnv))
 	return value == "1" || strings.EqualFold(value, "true")
+}
+
+func e2eNamingMode() (trackers.OpaqueNameMode, bool, error) {
+	if !isE2EEnabled() {
+		return trackers.OpaqueNameReject, false, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(e2eNamingModeEnv))) {
+	case "":
+		return trackers.OpaqueNameReject, false, nil
+	case "reject":
+		return trackers.OpaqueNameReject, true, nil
+	case "rebuild":
+		return trackers.OpaqueNameRebuild, true, nil
+	default:
+		return trackers.OpaqueNameReject, false, fmt.Errorf("unsupported %s value", e2eNamingModeEnv)
+	}
+}
+
+func maybeApplyE2ENamingRegistry(registry *trackers.Registry) (*trackers.Registry, error) {
+	mode, enabled, err := e2eNamingMode()
+	if err != nil {
+		return nil, err
+	}
+	if !enabled {
+		return registry, nil
+	}
+	if registry == nil {
+		return nil, errors.New("core: e2e naming registry is nil")
+	}
+	fixture := trackers.NewRegistry()
+	for _, name := range registry.Names() {
+		descriptor, ok := registry.LookupDescriptor(name)
+		if !ok {
+			return nil, fmt.Errorf("core: e2e naming registry missing %s", name)
+		}
+		if name == "BTN" {
+			descriptor.ReleaseNamePolicy = trackers.WithNonSceneReleaseNameConfirmation(
+				trackers.StructuredReleaseNamePolicy("e2e/btn/mandatory-edition/v1", trackers.StructuredNamePolicy{
+					Mandatory: func(editor *trackers.NameEditor, _ api.UploadSubject, _ config.TrackerConfig) error {
+						return editor.Omit(api.NameRoleEdition)
+					},
+					Authority: []trackers.NameAuthority{{Role: api.NameRoleEdition, Aspect: trackers.NamePresence}},
+					Opaque:    mode,
+				}),
+			)
+		}
+		if err := fixture.RegisterDescriptor(descriptor); err != nil {
+			return nil, fmt.Errorf("core: clone e2e naming descriptor %s: %w", name, err)
+		}
+	}
+	fixture.SetPriorityOrder(registry.Priority())
+	return fixture, nil
 }
 
 type e2eWorkflowClock struct {
@@ -192,6 +245,15 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 		episode = 1
 		episodeTitle = "Example Episode"
 	}
+	generatedName, namingFixture, err := e2eFixtureGeneratedName(category, title, resolution, season, episode, episodeTitle)
+	if err != nil {
+		return preparationstate.State{}, err
+	}
+	if namingFixture {
+		releaseName = generatedName.Name
+		releaseNameNoTag = generatedName.NameNoTag
+		releaseNameClean = generatedName.CleanName
+	}
 	meta := preparationstate.State{
 		SourcePath: sourcePath,
 		Paths:      []string{sourcePath},
@@ -240,6 +302,11 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 			EpisodeTitle: episodeTitle,
 		},
 		DescriptionTemplate: "E2E description fixture.",
+	}
+	if namingFixture {
+		meta.Edition = "Uncut"
+		meta.GeneratedName = generatedName.GeneratedName.Clone()
+		meta.AvailableGeneratedName = generatedName.GeneratedName.Clone()
 	}
 	if s.clients != nil {
 		api.EmitPreparationProgress(

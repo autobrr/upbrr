@@ -598,9 +598,70 @@ func TestReadyTrackerProjectionRequiresDeclaredSearchName(t *testing.T) {
 		t.Fatalf("expected ready projection blocking-policy rejection, got %v", err)
 	}
 	projectionSet.Projections[0].PolicyDecisions = nil
+	projectionSet.Projections[0].PolicyDecisions = []TrackerPolicyDecision{
+		{
+			Code:         "release_name_override_generated",
+			NamingRole:   "title",
+			NamingRuleID: "rule-1",
+		},
+		{
+			Code:         "release_name_override_generated",
+			NamingRole:   "title",
+			NamingRuleID: "rule-1",
+		},
+	}
+	if err := projectionSet.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate naming decision") {
+		t.Fatalf("expected duplicate naming-decision rejection, got %v", err)
+	}
+	projectionSet.Projections[0].PolicyDecisions[1].NamingRuleID = "rule-2"
+	if err := projectionSet.Validate(); err != nil {
+		t.Fatalf("validate distinct naming decision rules: %v", err)
+	}
+	projectionSet.Projections[0].PolicyDecisions = []TrackerPolicyDecision{{Code: "release_name_override_generated"}}
+	if err := projectionSet.Validate(); err == nil || !strings.Contains(err.Error(), "requires naming role and rule id") {
+		t.Fatalf("expected incomplete naming-decision rejection, got %v", err)
+	}
+	projectionSet.Projections[0].PolicyDecisions = nil
 	projectionSet.Projections[0].DuplicateCriteria.Name = ""
 	if err := projectionSet.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate-search name") {
 		t.Fatalf("expected missing search-name rejection, got %v", err)
+	}
+}
+
+func TestTrackerProjectionInstructionsPreserveGeneratedNameConfirmation(t *testing.T) {
+	t.Parallel()
+
+	fingerprint := WorkflowFingerprint(strings.Repeat("b", 64))
+	instructions := TrackerProjectionInstructions{ConfirmedNameFingerprint: fingerprint}
+	if err := validateTrackerProjectionInstructions(map[TrackerID]TrackerProjectionInstructions{"EXAMPLE": instructions}); err != nil {
+		t.Fatalf("validate generated name confirmation: %v", err)
+	}
+	payload, err := json.Marshal(instructions)
+	if err != nil {
+		t.Fatalf("marshal generated name confirmation: %v", err)
+	}
+	var decoded TrackerProjectionInstructions
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatalf("unmarshal generated name confirmation: %v", err)
+	}
+	if decoded.ConfirmedNameFingerprint != fingerprint || decoded.UploadReleaseName.Present {
+		t.Fatalf("generated name confirmation round-trip = %#v", decoded)
+	}
+	snapshot := TrackerProjectionInstructionSnapshot{Instructions: map[TrackerID]TrackerProjectionInstructions{"EXAMPLE": decoded}}
+	clone, err := snapshot.Clone()
+	if err != nil {
+		t.Fatalf("clone generated name confirmation: %v", err)
+	}
+	clonedInstruction := clone.Instructions["EXAMPLE"]
+	clonedInstruction.ConfirmedNameFingerprint = WorkflowFingerprint(strings.Repeat("c", 64))
+	clone.Instructions["EXAMPLE"] = clonedInstruction
+	if snapshot.Instructions["EXAMPLE"].ConfirmedNameFingerprint != fingerprint {
+		t.Fatalf("clone mutated generated name confirmation: %#v", snapshot)
+	}
+	decoded.UploadReleaseName = WorkflowPatch[string]{Present: true, Value: "Example.Release.2026-GRP"}
+	if err := validateTrackerProjectionInstructions(map[TrackerID]TrackerProjectionInstructions{"EXAMPLE": decoded}); err == nil ||
+		!strings.Contains(err.Error(), "cannot also override upload name") {
+		t.Fatalf("expected generated/override conflict, got %v", err)
 	}
 }
 

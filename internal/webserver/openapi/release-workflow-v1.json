@@ -3513,6 +3513,16 @@
           "Filename": {
             "type": "string"
           },
+          "GeneratedName": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseNameDocument"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "GeneratedReleaseNames": {
             "$ref": "#/components/schemas/GeneratedReleaseNameVariants"
           },
@@ -3606,6 +3616,9 @@
           "Type": {
             "type": "string"
           },
+          "Version": {
+            "type": "string"
+          },
           "Year": {
             "type": "integer"
           },
@@ -3654,6 +3667,7 @@
           "Title",
           "TitleProvenance",
           "Type",
+          "Version",
           "Year",
           "YearProvenance"
         ]
@@ -4547,6 +4561,61 @@
           "TrackerIDs"
         ]
       },
+      "ReleaseNameComponent": {
+        "type": "object",
+        "properties": {
+          "AttachTo": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseNameRole"
+            }
+          },
+          "AvailableValue": {
+            "type": "string"
+          },
+          "Join": {
+            "type": "string"
+          },
+          "Manual": {
+            "type": "boolean"
+          },
+          "Present": {
+            "type": "boolean"
+          },
+          "Role": {
+            "$ref": "#/components/schemas/ReleaseNameRole"
+          },
+          "Value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "AvailableValue",
+          "Join",
+          "Manual",
+          "Present",
+          "Role",
+          "Value"
+        ]
+      },
+      "ReleaseNameDocument": {
+        "type": "object",
+        "properties": {
+          "Components": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseNameComponent"
+            }
+          },
+          "Version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "Components",
+          "Version"
+        ]
+      },
       "ReleaseNameOverrides": {
         "type": "object",
         "properties": {
@@ -4818,6 +4887,9 @@
           "UseDailyDate",
           "Version"
         ]
+      },
+      "ReleaseNameRole": {
+        "type": "string"
       },
       "ReleaseNameVariant": {
         "type": "object",
@@ -9108,6 +9180,12 @@
           },
           "message": {
             "type": "string"
+          },
+          "namingRole": {
+            "type": "string"
+          },
+          "namingRuleId": {
+            "type": "string"
           }
         },
         "required": [
@@ -9386,6 +9464,9 @@
                 }
               ]
             }
+          },
+          "confirmedNameFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
           },
           "questionnaire": {
             "type": "object",

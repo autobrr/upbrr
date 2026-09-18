@@ -15,6 +15,63 @@ func TestParseReleaseInfoPreservesHybridOther(t *testing.T) {
 	}
 }
 
+func TestParseReleaseInfoCollectsFinalTechnicalMarkers(t *testing.T) {
+	t.Parallel()
+
+	release := ParseReleaseInfo("Example.Release.2026.2160p.BluRay.FANRES.Regraded.Incomplete.UPSCL.UPSUHD.MIC.x265.v2-GRP.mkv")
+	if !slices.Equal(release.Other, []string{"FANRES", "Regraded", "Incomplete", "UPSCL", "UPSUHD", "MIC"}) {
+		t.Fatalf("other = %#v", release.Other)
+	}
+	if release.Version != "v2" {
+		t.Fatalf("version = %q, want v2", release.Version)
+	}
+}
+
+func TestParseReleaseInfoOmitsMarkersOutsideTechnicalPosition(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "title",
+			input: "FANRES.Regraded.Incomplete.UPSCL.UPSUHD.MIC.2026.2160p.BluRay.x265-GRP.mkv",
+		},
+		{
+			name:  "group",
+			input: "Example.Release.2026.2160p.BluRay.x265-FANRES.mkv",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			release := ParseReleaseInfo(tc.input)
+			if len(release.Other) != 0 {
+				t.Fatalf("other = %#v, want none", release.Other)
+			}
+		})
+	}
+}
+
+func TestParseReleaseInfoPreservesDefaultParserFacts(t *testing.T) {
+	t.Parallel()
+
+	release := ParseReleaseInfo("Example.Release.2026.2160p.BluRay.HYBRiD.DDP5.1.H.265-GRP.mkv")
+	if release.Title != "Example Release" || release.Resolution != "2160p" || release.Group != "GRP" ||
+		!slices.Equal(release.Audio, []string{"DDP"}) || !slices.Equal(release.Other, []string{"HYBRiD"}) {
+		t.Fatalf("release = %#v", release)
+	}
+}
+
+func TestParseReleaseInfoCollectsAIRemasterMarker(t *testing.T) {
+	t.Parallel()
+
+	release := ParseReleaseInfo("Example.Release.2026.2160p.BluRay.AI.Remaster.x265-GRP.mkv")
+	if !slices.Contains(release.Other, "AI Remaster") {
+		t.Fatalf("other = %#v, want AI Remaster", release.Other)
+	}
+}
+
 func TestParseReleaseInfo(t *testing.T) {
 	tests := []struct {
 		name     string
