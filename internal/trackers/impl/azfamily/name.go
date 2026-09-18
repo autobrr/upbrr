@@ -106,7 +106,7 @@ func applyCinemaZNameDefaults(editor *trackers.NameEditor, meta api.UploadSubjec
 		return &trackers.NameRuleError{
 			Rule:   "azfamily/cz/v5",
 			Role:   api.NameRoleTitle,
-			Reason: "no Latin-safe title is available; set a Latin-safe manual title and reprepare",
+			Reason: "no Latin-safe title is available; set a Latin-safe manual original title and reprepare",
 		}
 	}
 	if err := setNameComponent(editor, api.NameRoleTitle, title); err != nil {

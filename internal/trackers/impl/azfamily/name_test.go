@@ -34,7 +34,7 @@ func TestCinemaZMissingTitleExplainsProjectionFailure(t *testing.T) {
 		Meta:    subject,
 	}, fingerprint, fingerprint, fingerprint)
 	if failure == nil || failure.Code() != "name_rule_unsatisfied" ||
-		!strings.Contains(failure.Message(), "Latin-safe manual title") || projection.UploadReady {
+		!strings.Contains(failure.Message(), "Latin-safe manual original title") || projection.UploadReady {
 		t.Fatalf("missing CinemaZ title projection=%+v failure=%v", projection, failure)
 	}
 }

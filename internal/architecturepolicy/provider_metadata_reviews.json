@@ -24,7 +24,7 @@
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/azfamily/name.go:applyCinemaZNameDefaults": {
-    "sha256": "01816f38e81200ac3d871b576e2d128b67c57b639263d1a880c3676fd9c0e1a6",
+    "sha256": "ff3d65d012adecd45d18f81b432471e161f19aceb3b23ab05a5d656edba4aec8",
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/azfamily/name.go:avistaZEnglishTitle": {
