@@ -979,6 +979,76 @@ func TestContinuationPlannerIgnoresSemanticallyEmptyProjectionInstructions(t *te
 	}
 }
 
+func TestContinuationPlannerIgnoresServerOwnedNameConfirmation(t *testing.T) {
+	t.Parallel()
+
+	fingerprint := testFingerprint(t, "confirmed-generated-name")
+	for _, tt := range []struct {
+		name          string
+		instruction   api.TrackerProjectionInstructions
+		questionnaire map[string]*string
+		wantStage     string
+	}{
+		{name: "omitted marker", wantStage: "preflight-trackers"},
+		{
+			name:        "echoed marker",
+			instruction: api.TrackerProjectionInstructions{ConfirmedNameFingerprint: fingerprint},
+			wantStage:   "preflight-trackers",
+		},
+		{
+			name:          "unchanged questionnaire without marker",
+			instruction:   api.TrackerProjectionInstructions{Questionnaire: map[string]*string{"format": new("disc")}},
+			questionnaire: map[string]*string{"format": new("disc")},
+			wantStage:     "preflight-trackers",
+		},
+		{
+			name:        "changed questionnaire",
+			instruction: api.TrackerProjectionInstructions{Questionnaire: map[string]*string{"format": new("disc")}},
+			wantStage:   "project-trackers",
+		},
+		{
+			name:        "explicit name override",
+			instruction: api.TrackerProjectionInstructions{UploadReleaseName: api.WorkflowPatch[string]{Present: true, Value: "Reviewed Name-GRP"}},
+			wantStage:   "project-trackers",
+		},
+		{
+			name:        "explicit name reset",
+			instruction: api.TrackerProjectionInstructions{UploadReleaseName: api.WorkflowPatch[string]{Present: true, Reset: true}},
+			wantStage:   "project-trackers",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			now := time.Date(2026, time.July, 23, 1, 2, 3, 0, time.UTC)
+			current := CommandResult{
+				Workflow:  api.ReleaseWorkflow{ID: "workflow-confirmed-name", Revision: 7},
+				Release:   &api.ReleaseSnapshot{ID: "release-confirmed-name", Revision: 2},
+				Selection: &api.TrackerSelection{TrackerIDs: []api.TrackerID{"ALPHA"}},
+				ProjectionInstructions: &api.TrackerProjectionInstructionSnapshot{
+					Instructions: map[api.TrackerID]api.TrackerProjectionInstructions{
+						"ALPHA": {ConfirmedNameFingerprint: fingerprint, Questionnaire: tt.questionnaire},
+					},
+				},
+				Projections: &api.TrackerReleaseProjectionSet{},
+			}
+			request := api.ContinueReleaseWorkflowRequest{
+				IdempotencyKey: "continue-confirmed-name",
+				Goal:           api.WorkflowGoalDuplicatesDecided,
+				Intent: api.WorkflowIntent{
+					TrackerIDs:             []api.TrackerID{"ALPHA"},
+					ProjectionInstructions: map[api.TrackerID]api.TrackerProjectionInstructions{"ALPHA": tt.instruction},
+				},
+			}
+			command, stage := planContinuationCommand(request, current, now)
+			if stage != tt.wantStage {
+				t.Fatalf("continuation plan: stage=%q command=%#v, want %q", stage, command, tt.wantStage)
+			}
+			if current.ProjectionInstructions.Instructions["ALPHA"].ConfirmedNameFingerprint != fingerprint {
+				t.Fatal("intent comparison mutated retained confirmation authority")
+			}
+		})
+	}
+}
+
 func TestContinuationPlannerReprojectsWhenExecutionModeChanges(t *testing.T) {
 	t.Parallel()
 

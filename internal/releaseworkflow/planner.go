@@ -1040,6 +1040,9 @@ func effectiveProjectionInstructions(
 ) map[api.TrackerID]api.TrackerProjectionInstructions {
 	effective := make(map[api.TrackerID]api.TrackerProjectionInstructions, len(instructions))
 	for trackerID, instruction := range instructions {
+		// Confirmation authority is validated separately and retained by the server;
+		// omitting it from client intent must not trigger another projection.
+		instruction.ConfirmedNameFingerprint = ""
 		if projectionInstructionIsEmpty(instruction) {
 			continue
 		}
@@ -1049,7 +1052,7 @@ func effectiveProjectionInstructions(
 }
 
 func projectionInstructionIsEmpty(instruction api.TrackerProjectionInstructions) bool {
-	return instruction.UploadReleaseName.IsZero() && instruction.ConfirmedNameFingerprint == "" &&
+	return instruction.UploadReleaseName.IsZero() &&
 		instruction.ScreenshotCount == nil &&
 		len(instruction.AdditionalNames) == 0 &&
 		len(instruction.Questionnaire) == 0 &&

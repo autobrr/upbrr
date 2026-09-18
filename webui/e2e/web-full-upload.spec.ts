@@ -182,6 +182,7 @@ for (const mode of ["rebuild", "reject"] as const) {
     let app: AppServer | undefined;
     let suppliedName = false;
     let supplyName = true;
+    let repeatDuplicateCheck = false;
     try {
       app = await startApp(workspace);
       // Supply an opaque user instruction through the real API; responses and
@@ -196,6 +197,11 @@ for (const mode of ["rebuild", "reject"] as const) {
           body.intent.projectionInstructions = {
             BTN: { uploadReleaseName: "Opaque Uncut Name-GRP" },
           };
+          await route.continue({ postData: JSON.stringify(body) });
+          return;
+        }
+        if (repeatDuplicateCheck && body.goal === "duplicates_decided") {
+          body.intent.duplicateCheckCount = 2;
           await route.continue({ postData: JSON.stringify(body) });
           return;
         }
@@ -225,12 +231,37 @@ for (const mode of ["rebuild", "reject"] as const) {
         await expect(name).toBeDisabled();
         await expect(name).toHaveValue(reviewedName);
 
+        const confirmedReload = page.waitForResponse((response) =>
+          response.url().endsWith("/api/app/GetReleaseWorkflow"),
+        );
         await page.reload();
+        const confirmedCurrent = (await (await confirmedReload).json()) as ReleaseWorkflowCurrent;
         await page.getByRole("button", { name: "Dupe Check" }).click();
         await expect(confirmName).toBeChecked();
         await expect(name).toHaveValue(reviewedName);
         await expect(notices.getByText(/controls edition/)).toBeVisible();
         await expect(notices.getByText(/opaque name was replaced/)).toHaveCount(0);
+
+        repeatDuplicateCheck = true;
+        await runDuplicateCheck(page);
+        await expect(page.getByRole("button", { name: "Run dupe check" })).toBeEnabled();
+        const rerunReload = page.waitForResponse((response) =>
+          response.url().endsWith("/api/app/GetReleaseWorkflow"),
+        );
+        await page.reload();
+        const current = (await (await rerunReload).json()) as ReleaseWorkflowCurrent;
+        expect(current.dupes?.checkOrdinal).toBe(2);
+        expect(current.workflow.trackerProjections).toEqual(
+          confirmedCurrent.workflow.trackerProjections,
+        );
+        expect(current.workflow.projectionInstructions).toEqual(
+          confirmedCurrent.workflow.projectionInstructions,
+        );
+        expect(
+          current.projectionInstructions?.instructions.BTN.confirmedNameFingerprint,
+        ).toBeTruthy();
+        await page.getByRole("button", { name: "Dupe Check" }).click();
+        await expect(confirmName).toBeChecked();
       } else {
         const tracker = page
           .getByRole("article")
