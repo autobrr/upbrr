@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -29,10 +30,10 @@ func TestBTNGroupOnlyUploadRetainsSuccessOnAPIError(t *testing.T) {
 		}
 		if r.URL.Path == "/rpc" {
 			apiCalls.Add(1)
-			_, _ = fmt.Fprint(w, `{"error":{"code":-32004,"message":"private upstream detail","data":"secret-token"},"result":null}`)
+			_, _ = io.WriteString(w, `{"error":{"code":-32004,"message":"private upstream detail","data":"secret-token"},"result":null}`)
 			return
 		}
-		_, _ = fmt.Fprint(w, "torrent group")
+		_, _ = io.WriteString(w, "torrent group")
 	}))
 	defer server.Close()
 	req := newBTNUploadTestRequest(t)
@@ -79,13 +80,13 @@ func TestBTNAPIVisibilityRetriesAreBounded(t *testing.T) {
 				case "/upload.php":
 					uploadCalls.Add(1)
 					if intermediate {
-						_, _ = fmt.Fprint(w, `<p>You need to download the torrent file.</p><form action="/torrents.php?id=123"></form>`)
+						_, _ = io.WriteString(w, `<p>You need to download the torrent file.</p><form action="/torrents.php?id=123"></form>`)
 					} else {
 						http.Redirect(w, r, "/torrents.php?id=123", http.StatusFound)
 					}
 				case "/rpc":
 					apiCalls.Add(1)
-					_, _ = fmt.Fprint(w, `{"result":{"results":"0"}}`)
+					_, _ = io.WriteString(w, `{"result":{"results":"0"}}`)
 				default:
 					http.Error(w, "detail unavailable", http.StatusInternalServerError)
 				}
@@ -126,7 +127,7 @@ func TestBTNAPIVisibilityWaitIsCancellable(t *testing.T) {
 	var apiCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		apiCalls.Add(1)
-		_, _ = fmt.Fprint(w, `{"result":{"results":"0"}}`)
+		_, _ = io.WriteString(w, `{"result":{"results":"0"}}`)
 	}))
 	defer server.Close()
 	req, failure := trackers.PrepareInputWithReleaseNamePolicy(newBTNUploadTestRequest(t), Profile().ReleaseNamePolicy)
@@ -181,22 +182,35 @@ func TestBTNGroupOnlyUploadWaitsForAPIVisibility(t *testing.T) {
 					handlerErrs.Errorf("incorrect upload lookup filter: %v", rpc.Params.Search)
 				}
 				if apiSearchCalls.Add(1) < 3 {
-					_, _ = fmt.Fprint(w, `{"result":{"results":"0"}}`)
+					_, _ = io.WriteString(w, `{"result":{"results":"0"}}`)
 					return
 				}
-				_, _ = fmt.Fprintf(w, `{"result":{"results":"1","torrents":{"456":{"TorrentID":"456","GroupID":"123","ReleaseName":%q}}}}`, releaseName)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"result": map[string]any{
+						"results": "1",
+						"torrents": map[string]any{
+							"456": map[string]string{
+								"TorrentID": "456",
+								"GroupID": "123",
+								"ReleaseName": releaseName,
+							},
+						},
+					},
+				})
 			case "getTorrentById":
 				if rpc.Params.ID != "456" {
 					handlerErrs.Errorf("incorrect torrent lookup ID: %q", rpc.Params.ID)
 				}
-				_, _ = fmt.Fprintf(w, `{"result":{"DownloadURL":"http://%s/download"}}`, r.Host)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"result": map[string]string{"DownloadURL": "http://" + r.Host + "/download"},
+				})
 			default:
 				handlerErrs.Errorf("unexpected method: %s", rpc.Method)
 			}
 		case "/download":
 			_, _ = w.Write(btnRegisteredTorrentFixture())
 		default:
-			_, _ = fmt.Fprint(w, "torrent group")
+			_, _ = io.WriteString(w, "torrent group")
 		}
 	}))
 	defer server.Close()
