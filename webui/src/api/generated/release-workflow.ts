@@ -888,7 +888,6 @@ export type NamingFacts = Readonly<{
   Editions: readonly string[];
   Extension: string;
   Filename: string;
-  GeneratedName?: ReleaseNameDocument | null;
   GeneratedReleaseNames: GeneratedReleaseNameVariants;
   Genre: string;
   Genres: readonly string[];
@@ -916,7 +915,6 @@ export type NamingFacts = Readonly<{
   Title: string;
   TitleProvenance: FactProvenance;
   Type: string;
-  Version: string;
   Year: number;
   YearProvenance: FactProvenance;
 }>;
@@ -1170,21 +1168,6 @@ export type ReleaseFactInstructions = Readonly<{
   TrackerIDs: Readonly<Record<string, string>>;
 }>;
 
-export type ReleaseNameComponent = Readonly<{
-  AttachTo?: readonly ReleaseNameRole[];
-  AvailableValue: string;
-  Join: string;
-  Manual: boolean;
-  Present: boolean;
-  Role: ReleaseNameRole;
-  Value: string;
-}>;
-
-export type ReleaseNameDocument = Readonly<{
-  Components: readonly ReleaseNameComponent[];
-  Version: string;
-}>;
-
 export type ReleaseNameOverrides = Readonly<{
   Category?: string | null;
   DualAudio?: boolean | null;
@@ -1219,8 +1202,6 @@ export type ReleaseNamePresentation = Readonly<{
   UseDailyDate: boolean;
   Version: string;
 }>;
-
-export type ReleaseNameRole = string;
 
 export type ReleaseNameVariant = Readonly<{
   CleanName: string;
@@ -2189,8 +2170,6 @@ export type TrackerPolicyDecision = Readonly<{
   disposition?: RuleDisposition;
   evidenceStatus?: MetadataEvidenceStatus;
   message?: string;
-  namingRole?: string;
-  namingRuleId?: string;
 }>;
 
 export type TrackerPreflightAssessment = Readonly<{
@@ -2267,7 +2246,6 @@ export type TrackerProjectionInstructionSnapshotRef = Readonly<{
 
 export type TrackerProjectionInstructions = Readonly<{
   additionalNames?: Readonly<Record<string, string | null>>;
-  confirmedNameFingerprint?: WorkflowFingerprint;
   questionnaire?: Readonly<Record<string, string | null>>;
   screenshotCount?: number | null;
   trackerConfig?: TrackerConfigOverrides;

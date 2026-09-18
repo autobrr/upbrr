@@ -34,9 +34,6 @@ func (m *Module) Continue(
 	if err := request.Validate(); err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow continue: %w", err)
 	}
-	if request.Authority == nil && hasConfirmedNameProjectionInstruction(request.Intent.ProjectionInstructions) {
-		return CommandResult{}, fmt.Errorf("%w: confirmed tracker name authority is server-owned", ErrInvalidTransition)
-	}
 	trackerAnswers, err := normalizeTrackerInputAnswers(request.Intent.TrackerInputAnswers)
 	if err != nil {
 		return CommandResult{}, err
@@ -72,9 +69,6 @@ func (m *Module) Continue(
 	state, err := m.repository.Load(ctx, ownerID, authority.WorkflowID)
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow continue load tracker decision policy: %w", err)
-	}
-	if err := validateConfirmedNameProjectionInstructions(&state, request.Intent.ProjectionInstructions); err != nil {
-		return CommandResult{}, err
 	}
 	if err := consumeAcceptedCorrectionPatch(&request, current, state); err != nil {
 		return CommandResult{}, err
@@ -1049,7 +1043,7 @@ func effectiveProjectionInstructions(
 }
 
 func projectionInstructionIsEmpty(instruction api.TrackerProjectionInstructions) bool {
-	return instruction.UploadReleaseName.IsZero() && instruction.ConfirmedNameFingerprint == "" &&
+	return instruction.UploadReleaseName.IsZero() &&
 		instruction.ScreenshotCount == nil &&
 		len(instruction.AdditionalNames) == 0 &&
 		len(instruction.Questionnaire) == 0 &&
@@ -1061,15 +1055,6 @@ func projectionInstructionIsEmpty(instruction api.TrackerProjectionInstructions)
 		instruction.TrackerSite.TIK.Opera == nil &&
 		instruction.TrackerSite.TIK.Asian == nil &&
 		instruction.TrackerSite.TIK.DiscType == nil
-}
-
-func hasConfirmedNameProjectionInstruction(instructions map[api.TrackerID]api.TrackerProjectionInstructions) bool {
-	for _, instruction := range instructions {
-		if instruction.ConfirmedNameFingerprint != "" {
-			return true
-		}
-	}
-	return false
 }
 
 func continuationInteractionMode(intent api.WorkflowIntent) api.InteractionMode {

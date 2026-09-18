@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -20,8 +19,6 @@ import (
 	"github.com/autobrr/upbrr/internal/externalidentity"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/internal/sourcelayout"
-	"github.com/autobrr/upbrr/internal/trackers"
-	isimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/is"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -332,43 +329,6 @@ func TestPrepareUsesExactCompatibilityAndPublishesConcreteAssessments(t *testing
 	}
 }
 
-func TestPrepareRecomputesV16DVDRipNameAfterRestart(t *testing.T) {
-	t.Parallel()
-	path := filepath.Join(t.TempDir(), "Example.Movie.2026.DVDRip.x264-GRP.mkv")
-	if err := os.WriteFile(path, []byte("video"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	store := newMemoryStore()
-	initial := newTestModule(t, store, &recordingCollector{})
-	input := api.PrepareInput{SourcePath: path}
-	prepared, err := initial.Prepare(t.Context(), input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	previous := prepared.Release
-	previous.Compatibility.ContractVersion = "prepared-release-v16"
-	previous.Naming.ReleaseName = "Example Movie 2026 DVD x264 DVDRip DD 2.0-GRP"
-	previous.Naming.Source = "DVD"
-	store.mu.Lock()
-	store.current[canonicalSourceKey(path)] = previous
-	store.mu.Unlock()
-	const want = "Example Movie 2026 DVDRip DD 2.0 x264-GRP"
-	collector := &recordingCollector{facts: &CollectedFacts{Naming: api.NamingFacts{ReleaseName: want, Source: "DVD"}}}
-	restarted := newTestModule(t, store, collector)
-	result, err := restarted.Prepare(t.Context(), input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if collector.callCount() != 1 || result.Release.Generation != previous.Generation+1 ||
-		result.Release.Compatibility.ContractVersion != ContractVersion || result.Release.Naming.ReleaseName != want || result.Release.Naming.Source != "DVD" {
-		t.Fatalf("recomputed generation=%d collector=%d naming=%#v", result.Release.Generation, collector.callCount(), result.Release.Naming)
-	}
-	reused, err := restarted.Prepare(t.Context(), input)
-	if err != nil || reused.Release.Generation != result.Release.Generation || collector.callCount() != 1 {
-		t.Fatalf("reuse generation=%d collector=%d err=%v", reused.Release.Generation, collector.callCount(), err)
-	}
-}
-
 func TestPrepareRecomputesPreviousContractAfterRestart(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "Example Release 2026 PAL DVD")
@@ -387,7 +347,7 @@ func TestPrepareRecomputesPreviousContractAfterRestart(t *testing.T) {
 	}
 
 	previous := prepared.Release
-	previous.Compatibility.ContractVersion = "prepared-release-v15"
+	previous.Compatibility.ContractVersion = "prepared-release-v14"
 	previous.Naming.ReleaseName = "Example Release 2026 PAL DVD"
 	previous.Naming.NameWithoutTag = "Example Release 2026 PAL DVD"
 	previous.Naming.Source = "PAL DVD"
@@ -753,9 +713,6 @@ func TestOperationSubjectsUseExactGenerationAndDetachedFacts(t *testing.T) {
 	if upload.GeneratedReleaseNames.OmitEpisodeTitle.Name != "Example.Show.S01E02.1080p.WEB-DL-GRP" {
 		t.Fatalf("upload generated variants = %#v", upload.GeneratedReleaseNames)
 	}
-	if upload.GeneratedName == nil || upload.GeneratedName.Render().Name != "Example.Release.2026.1080p-GRP" {
-		t.Fatalf("upload generated document = %#v", upload.GeneratedName)
-	}
 	if upload.NamePresentation != (api.ReleaseNamePresentation{Version: api.ReleaseNamePresentationVersionV1, OmitYear: true}) {
 		t.Fatalf("upload name presentation = %#v", upload.NamePresentation)
 	}
@@ -769,9 +726,6 @@ func TestOperationSubjectsUseExactGenerationAndDetachedFacts(t *testing.T) {
 			persisted.Naming.GeneratedReleaseNames,
 			upload.GeneratedReleaseNames,
 		)
-	}
-	if persisted.Naming.GeneratedName == nil || persisted.Naming.GeneratedName.Render().Name != upload.GeneratedName.Render().Name {
-		t.Fatalf("persisted generated document = %#v, upload document = %#v", persisted.Naming.GeneratedName, upload.GeneratedName)
 	}
 	if upload.Assessments.MediaInfoUniqueID != api.UniqueIDStatusPresent ||
 		upload.Assessments.MediaInfoEncodeSettings != api.EncodeSettingsStatusMissing {
@@ -885,221 +839,6 @@ func TestPrepareRejectsProviderMetadataForDifferentCanonicalID(t *testing.T) {
 	}
 	if _, err := store.LoadPreparedRelease(context.Background(), path); !errors.Is(err, internalerrors.ErrNotFound) {
 		t.Fatalf("mismatched provider generation was published: %v", err)
-	}
-}
-
-func TestPrepareRejectsInvalidGeneratedNameBeforeCommit(t *testing.T) {
-	for _, document := range []*api.ReleaseNameDocument{
-		{Version: "unsupported"},
-		{Version: api.ReleaseNameDocumentVersionV1, Components: []api.ReleaseNameComponent{{Role: api.NameRoleTitle, Present: true}}},
-		{Version: api.ReleaseNameDocumentVersionV1, Components: []api.ReleaseNameComponent{{Role: api.NameRoleTitle}, {Role: api.NameRoleTitle}}},
-	} {
-		t.Run(document.Version+strconv.Itoa(len(document.Components)), func(t *testing.T) {
-			store := newMemoryStore()
-			module := newTestModule(t, store, &recordingCollector{facts: &CollectedFacts{Naming: api.NamingFacts{GeneratedName: document}}})
-			_, err := module.Prepare(t.Context(), api.PrepareInput{SourcePath: writePreparedTestFile(t, "Example.mkv", "source")})
-			var incompatible *IncompatiblePreparationError
-			if !errors.As(err, &incompatible) || !strings.Contains(incompatible.Reason, "reprepare") {
-				t.Fatalf("invalid document error = %v", err)
-			}
-			if store.commits != 0 {
-				t.Fatal("invalid document was committed")
-			}
-		})
-	}
-}
-
-func TestPreparedISSearchPreservesNamingPresentation(t *testing.T) {
-	for _, test := range []struct {
-		name            string
-		presentation    api.ReleaseNamePresentation
-		requested       *string
-		scene           bool
-		missingDocument bool
-		want            string
-	}{
-		{
-			name:         "automatic episodes",
-			presentation: api.ReleaseNamePresentation{Version: api.ReleaseNamePresentationVersionV1},
-			want:         "Example Show S03E04",
-		},
-		{
-			name:         "omitted episodes",
-			presentation: api.ReleaseNamePresentation{Version: api.ReleaseNamePresentationVersionV1, OmitSeasonEpisode: true},
-			want:         "Example Show",
-		},
-		{
-			name:         "daily date",
-			presentation: api.ReleaseNamePresentation{Version: api.ReleaseNamePresentationVersionV1, UseDailyDate: true},
-			want:         "Example Show",
-		},
-		{
-			name:         "scene omitted episodes",
-			presentation: api.ReleaseNamePresentation{Version: api.ReleaseNamePresentationVersionV1, OmitSeasonEpisode: true},
-			scene:        true,
-			want:         "Example Show",
-		},
-		{
-			name:            "missing document daily",
-			presentation:    api.ReleaseNamePresentation{Version: api.ReleaseNamePresentationVersionV1, UseDailyDate: true},
-			missingDocument: true,
-			want:            "Example Show",
-		},
-		{
-			name:         "requested upload keeps automatic search",
-			presentation: api.ReleaseNamePresentation{Version: api.ReleaseNamePresentationVersionV1, OmitSeasonEpisode: true},
-			requested:    new("Requested.Name-GRP"),
-			want:         "Example Show",
-		},
-		{
-			name:         "unknown presentation",
-			presentation: api.ReleaseNamePresentation{Version: "unknown", OmitSeasonEpisode: true},
-			want:         "Example Show S03E04",
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			document := &api.ReleaseNameDocument{Version: api.ReleaseNameDocumentVersionV1, Components: []api.ReleaseNameComponent{
-				{
-					Role:    api.NameRoleTitle,
-					Value:   "Example Show",
-					Present: true,
-				},
-				{
-					Role:           api.NameRoleSeason,
-					Value:          "S03",
-					AvailableValue: "S03",
-					Present:        !test.presentation.OmitSeasonEpisode && !test.presentation.UseDailyDate,
-					Join:           " ",
-				},
-				{
-					Role:           api.NameRoleEpisode,
-					Value:          "E04",
-					AvailableValue: "E04",
-					Present:        !test.presentation.OmitSeasonEpisode && !test.presentation.UseDailyDate,
-					Join:           " ",
-					AttachTo:       []api.ReleaseNameRole{api.NameRoleSeason},
-				},
-			}}
-			name := document.Render().Name
-			if test.missingDocument {
-				document = nil
-			}
-			facts := &CollectedFacts{
-				Naming: api.NamingFacts{
-					Title:            "Example Show",
-					ReleaseName:      name,
-					GeneratedName:    document,
-					NamePresentation: test.presentation,
-					Scene:            test.scene,
-				},
-				Episode: api.EpisodeFacts{
-					Season:       3,
-					Episode:      4,
-					SeasonLabel:  "S03",
-					EpisodeLabel: "E04",
-					DailyDate:    "2026-04-05",
-				},
-			}
-			if test.scene {
-				facts.Naming.SceneName = "Exact.Scene.Name-GRP"
-				facts.Naming.ReleaseName = facts.Naming.SceneName
-			}
-			module := newTestModule(t, newMemoryStore(), &recordingCollector{facts: facts})
-			path := writePreparedTestFile(t, "Example.mkv", "source")
-			prepared, err := module.Prepare(t.Context(), api.PrepareInput{SourcePath: path})
-			if err != nil {
-				t.Fatal(err)
-			}
-			subject, err := module.ResolveUploadSubject(t.Context(), api.UploadSubjectInput{Release: api.ReleaseRef{SourcePath: path, Generation: prepared.Release.Generation}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			// The test resolver defaults to movies; exercise IS's TV search on the
-			// otherwise unmodified subject projected by the real prepared owner.
-			subject.Identity.Category = api.CanonicalCategoryTV
-			if subject.SeasonInt != 3 || subject.EpisodeInt != 4 || subject.NamePresentation != test.presentation {
-				t.Fatalf("prepared search inputs = %#v", subject)
-			}
-			resolved, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{
-				Tracker:             "IS",
-				Meta:                subject,
-				RequestedUploadName: test.requested,
-			}, isimpl.Profile().ReleaseNamePolicy)
-			if failure != nil {
-				t.Fatal(failure)
-			}
-			if got := resolved.Projection.DuplicateCriteria.Name; got != test.want {
-				t.Fatalf("search = %q, want %q", got, test.want)
-			}
-			if subject.SeasonInt != 3 || subject.EpisodeInt != 4 {
-				t.Fatal("search presentation mutated prepared facts")
-			}
-			if test.requested != nil && resolved.Projection.UploadReleaseName != *test.requested {
-				t.Fatal("search changed requested upload name")
-			}
-		})
-	}
-}
-
-func TestImportRejectsInvalidGeneratedNameBeforeCommit(t *testing.T) {
-	path := writePreparedTestFile(t, "Example.mkv", "source")
-	source := newTestModule(t, newMemoryStore(), &recordingCollector{})
-	prepared, err := source.Prepare(t.Context(), api.PrepareInput{SourcePath: path})
-	if err != nil {
-		t.Fatal(err)
-	}
-	seed, err := source.Export(t.Context(), api.ReleaseRef{SourcePath: path, Generation: prepared.Release.Generation})
-	if err != nil {
-		t.Fatal(err)
-	}
-	seed.payload.result.Release.Naming.GeneratedName.Version = "unsupported"
-	store := newMemoryStore()
-	target := newTestModule(t, store, &recordingCollector{})
-	_, err = target.Import(t.Context(), seed)
-	if _, ok := errors.AsType[*IncompatiblePreparationError](err); !ok {
-		t.Fatalf("Import error = %v", err)
-	}
-	if store.commits != 0 {
-		t.Fatal("invalid imported document was committed")
-	}
-}
-
-func TestPrepareRejectsInvalidCompatibleNamingCacheAndForceRegenerates(t *testing.T) {
-	path := writePreparedTestFile(t, "Example.mkv", "source")
-	store := newMemoryStore()
-	first := newTestModule(t, store, &recordingCollector{})
-	prepared, err := first.Prepare(t.Context(), api.PrepareInput{SourcePath: path})
-	if err != nil {
-		t.Fatal(err)
-	}
-	corrupt := prepared.Release
-	corrupt.Naming.GeneratedName.Version = "unsupported"
-	if err := store.CommitPreparedRelease(t.Context(), corrupt); err != nil {
-		t.Fatal(err)
-	}
-	collector := &recordingCollector{}
-	restarted := newTestModule(t, store, collector)
-	for _, required := range []bool{false, true} {
-		_, err := restarted.Prepare(t.Context(), api.PrepareInput{SourcePath: path, RequirePrepared: required})
-		if _, ok := errors.AsType[*IncompatiblePreparationError](err); !ok {
-			t.Fatalf("RequirePrepared=%t error = %v", required, err)
-		}
-		if restarted.hasPublishedGeneration(path, corrupt.Generation) {
-			t.Fatal("invalid cached generation was published")
-		}
-	}
-	if collector.callCount() != 0 {
-		t.Fatal("invalid cache reuse invoked collector")
-	}
-	regenerated, err := restarted.Prepare(t.Context(), api.PrepareInput{SourcePath: path, Force: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if regenerated.Release.Generation <= corrupt.Generation {
-		t.Fatal("force did not replace corrupt generation")
-	}
-	if err := regenerated.Release.Naming.GeneratedName.Validate(); err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -1408,40 +1147,8 @@ func (c *recordingCollector) Collect(_ context.Context, request preparationstate
 	}
 	facts := CollectedFacts{
 		Naming: api.NamingFacts{
-			Filename:    filepath.Base(request.Manifest.SourcePath),
-			ReleaseName: "Example.Release.2026.1080p-GRP",
-			GeneratedName: &api.ReleaseNameDocument{
-				Version: api.ReleaseNameDocumentVersionV1,
-				Components: []api.ReleaseNameComponent{
-					{
-						Role:           api.NameRoleTitle,
-						Value:          "Example.Release",
-						AvailableValue: "Example.Release",
-						Present:        true,
-						Join:           " ",
-					},
-					{
-						Role:           api.NameRoleYear,
-						Value:          "2026",
-						AvailableValue: "2026",
-						Present:        true,
-						Join:           ".",
-					},
-					{
-						Role:           api.NameRoleResolution,
-						Value:          "1080p",
-						AvailableValue: "1080p",
-						Present:        true,
-						Join:           ".",
-					},
-					{
-						Role:           api.NameRoleGroup,
-						Value:          "-GRP",
-						AvailableValue: "-GRP",
-						Present:        true,
-					},
-				},
-			},
+			Filename:         filepath.Base(request.Manifest.SourcePath),
+			ReleaseName:      "Example.Release.2026.1080p-GRP",
 			NamePresentation: api.ReleaseNamePresentation{Version: api.ReleaseNamePresentationVersionV1, OmitYear: true},
 			GeneratedReleaseNames: api.GeneratedReleaseNameVariants{
 				IncludeEpisodeTitle: api.ReleaseNameVariant{

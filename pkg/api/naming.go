@@ -121,12 +121,9 @@ type GeneratedReleaseNameVariants struct {
 }
 
 type ReleaseNameResult struct {
-	NameNoTag string
-	Name      string
-	CleanName string
-	// GeneratedName preserves the semantic layout of this automatically generated name.
-	// Nil means the current result is not structurally generated.
-	GeneratedName     *ReleaseNameDocument
+	NameNoTag         string
+	Name              string
+	CleanName         string
 	GeneratedVariants GeneratedReleaseNameVariants
 	MissingFields     []string
 }

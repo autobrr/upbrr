@@ -462,7 +462,6 @@ func trackerLookupSubject(meta preparationstate.State) api.UploadSubject {
 		ReleaseName:           meta.ReleaseName,
 		ReleaseNameNoTag:      meta.ReleaseNameNoTag,
 		ReleaseNameClean:      meta.ReleaseNameClean,
-		GeneratedName:         meta.GeneratedName.Clone(),
 	}
 }
 

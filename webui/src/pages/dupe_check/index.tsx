@@ -15,7 +15,6 @@ import type {
   DupeAssessment,
   DupeMatchProjection,
   TrackerPreflightAssessment,
-  TrackerPolicyDecision,
   TrackerReleaseProjection,
   TrackerReleaseProjectionSet,
 } from "../../api/generated/release-workflow";
@@ -38,16 +37,6 @@ const releaseNameConfirmationState = (projection: TrackerReleaseProjection | und
     pending: decision === "confirmation_required",
   };
 };
-
-const releaseNameOverrideNotices = (projection: TrackerReleaseProjection | undefined) =>
-  (projection?.policyDecisions || []).filter(
-    (decision) =>
-      decision.code.startsWith("release_name_override") &&
-      (decision.decision === "enforced" || decision.decision === "rebuilt"),
-  );
-
-const releaseNameOverrideKey = (decision: TrackerPolicyDecision) =>
-  [decision.code, decision.namingRole || "", decision.namingRuleId || ""].join("\u0000");
 
 const hasInClientMatch = (result: DupeAssessment["results"][number] | undefined) =>
   Boolean(result?.matches?.some((match) => match.reason?.trim().toLowerCase() === "in_client"));
@@ -244,7 +233,6 @@ function WorkflowDupeAssessmentView({
         const projection = projectionsByTracker.get(trackerID);
         const readiness = preflightByTracker.get(trackerID);
         const nameConfirmation = releaseNameConfirmationState(projection);
-        const releaseNameNotices = releaseNameOverrideNotices(projection);
         const ruleOverride = ruleOverrideAction(projection);
         const releaseName = releaseNameOverrides[trackerID] ?? projection?.uploadReleaseName ?? "";
         const inClient = hasInClientMatch(result);
@@ -265,9 +253,6 @@ function WorkflowDupeAssessmentView({
           canonicalName &&
           ((uploadName && uploadName !== canonicalName) ||
             (searchName && searchName !== canonicalName)),
-        );
-        const showEffectiveNames = Boolean(
-          namesModified || (uploadName && releaseNameNotices.length),
         );
         const blockReasons = trackerBlockReasons(projection, readiness, result);
         const riskAcknowledgement = requiresRiskAcknowledgement(result);
@@ -329,17 +314,15 @@ function WorkflowDupeAssessmentView({
               </div>
             ) : null}
 
-            {showEffectiveNames ? (
+            {namesModified ? (
               <div
-                aria-label={`${namesModified ? "Modified" : "Effective"} tracker names for ${trackerID}`}
+                aria-label={`Modified tracker names for ${trackerID}`}
                 className="grid gap-1 text-sm"
               >
-                {namesModified ? (
-                  <p className="muted">
-                    <span className="font-semibold text-[var(--text)]">Canonical:</span>{" "}
-                    {canonicalName}
-                  </p>
-                ) : null}
+                <p className="muted">
+                  <span className="font-semibold text-[var(--text)]">Canonical:</span>{" "}
+                  {canonicalName}
+                </p>
                 <p>
                   <span className="font-semibold">Tracker upload:</span> {uploadName}
                 </p>
@@ -347,16 +330,6 @@ function WorkflowDupeAssessmentView({
                   <p>
                     <span className="font-semibold">Duplicate search:</span> {searchName}
                   </p>
-                ) : null}
-                {releaseNameNotices.length ? (
-                  <div
-                    aria-label={`Tracker naming notices for ${trackerID}`}
-                    className="grid gap-1 rounded border border-amber-300/25 bg-amber-300/5 p-2"
-                  >
-                    {releaseNameNotices.map((notice) => (
-                      <p key={releaseNameOverrideKey(notice)}>{notice.message}</p>
-                    ))}
-                  </div>
                 ) : null}
               </div>
             ) : null}

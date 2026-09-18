@@ -295,18 +295,6 @@ func TestMapCollectedFactsPublishesDVDCapacityToReleaseInfo(t *testing.T) {
 	}
 }
 
-func TestMapCollectedFactsPublishesReleaseVersionToReleaseInfo(t *testing.T) {
-	t.Parallel()
-
-	facts := mapCollectedFacts(preparationstate.State{Release: api.ReleaseInfo{Version: "v2"}})
-	if facts.Naming.Version != "v2" {
-		t.Fatalf("naming version = %q, want v2", facts.Naming.Version)
-	}
-	if got := releaseInfo(api.PreparedRelease{Naming: facts.Naming}).Version; got != "v2" {
-		t.Fatalf("release info version = %q, want v2", got)
-	}
-}
-
 func TestEvidenceCollectorPublishesResolvedNamingFromMetadataProducer(t *testing.T) {
 	t.Parallel()
 	const sourcePath = "Example.Show.S01.2026.BDRip.1080p.x265-GRP.mkv"

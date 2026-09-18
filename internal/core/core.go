@@ -194,10 +194,6 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 	if err != nil {
 		return nil, fmt.Errorf("core: tracker registry: %w", err)
 	}
-	registry, err = maybeApplyE2ENamingRegistry(registry)
-	if err != nil {
-		return nil, fmt.Errorf("core: e2e naming registry: %w", err)
-	}
 	if services.Clients == nil {
 		services.Clients = torrentclient.NewServiceWithRegistry(cfg, logger, registry, deps.LiveTest)
 	}

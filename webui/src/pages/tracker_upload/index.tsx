@@ -6,7 +6,6 @@ import { Button } from "../../components/ui/button";
 import type { UploadFacet } from "../../releaseSession/types";
 import type {
   TrackerDryRunReport,
-  TrackerPolicyDecision,
   TrackerReleaseProjection,
 } from "../../api/generated/release-workflow";
 
@@ -20,16 +19,6 @@ type TrackerUploadCard = Readonly<{
   projection?: TrackerReleaseProjection;
   report?: TrackerDryRunReport;
 }>;
-
-const releaseNameOverrideNotices = (projection: TrackerReleaseProjection | undefined) =>
-  (projection?.policyDecisions || []).filter(
-    (decision) =>
-      decision.code.startsWith("release_name_override") &&
-      (decision.decision === "enforced" || decision.decision === "rebuilt"),
-  );
-
-const releaseNameOverrideKey = (decision: TrackerPolicyDecision) =>
-  [decision.code, decision.namingRole || "", decision.namingRuleId || ""].join("\u0000");
 
 /** Thin presentation adapter for workflow dry-run and upload state. */
 export default function TrackerUploadPage({ facet }: Props) {
@@ -233,7 +222,6 @@ export default function TrackerUploadPage({ facet }: Props) {
             const uploadName =
               projection?.uploadReleaseName || report?.uploadReleaseName || "Unavailable";
             const canonicalName = projection?.canonicalReleaseName || "";
-            const releaseNameNotices = releaseNameOverrideNotices(projection);
             return (
               <div
                 className="grid gap-2 rounded border border-white/10 bg-white/5 p-3"
@@ -261,16 +249,6 @@ export default function TrackerUploadPage({ facet }: Props) {
                 <p className="value break-all">
                   <span className="font-semibold">Tracker upload:</span> {uploadName}
                 </p>
-                {releaseNameNotices.length ? (
-                  <div
-                    aria-label={`Tracker naming notices for ${trackerId}`}
-                    className="grid gap-1 rounded border border-amber-300/25 bg-amber-300/5 p-2 text-sm"
-                  >
-                    {releaseNameNotices.map((notice) => (
-                      <p key={releaseNameOverrideKey(notice)}>{notice.message}</p>
-                    ))}
-                  </div>
-                ) : null}
                 {canonicalName && canonicalName !== uploadName ? (
                   <p className="muted break-all">
                     <span className="font-semibold">Canonical:</span> {canonicalName}

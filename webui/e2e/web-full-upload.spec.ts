@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import type { ReleaseWorkflowCurrent } from "../src/api/generated/release-workflow";
 import {
   createE2EWorkspace,
   createMultiBluraySourceFixture,
@@ -173,94 +172,6 @@ test("embedded web reload restores the authoritative prepared workflow", async (
     await workspace.cleanup();
   }
 });
-
-for (const mode of ["rebuild", "reject"] as const) {
-  test(`embedded web ${mode} naming authority survives reload`, async ({ page }) => {
-    const workspace = await createE2EWorkspace();
-    workspace.env.UPBRR_E2E_NAMING_MODE = mode;
-    workspace.env.UPBRR_E2E_MEDIA_KIND = "tv";
-    let app: AppServer | undefined;
-    let suppliedName = false;
-    let supplyName = true;
-    try {
-      app = await startApp(workspace);
-      // Supply an opaque user instruction through the real API; responses and
-      // policy outcomes remain entirely backend-owned.
-      await page.route("**/api/app/ContinueReleaseWorkflow", async (route) => {
-        const body = route.request().postDataJSON() as {
-          goal: string;
-          intent: Record<string, unknown>;
-        };
-        if (supplyName && body.goal === "duplicates_decided") {
-          suppliedName = true;
-          body.intent.projectionInstructions = {
-            BTN: { uploadReleaseName: "Opaque Uncut Name-GRP" },
-          };
-          await route.continue({ postData: JSON.stringify(body) });
-          return;
-        }
-        await route.continue();
-      });
-      await page.goto(app.url);
-      await page.getByLabel("Source path").fill(workspace.sourcePath);
-      await page.getByRole("button", { name: "Fetch metadata" }).click();
-      await expect(page.getByRole("button", { name: "Dupe Check" })).toBeEnabled();
-      await page.getByRole("button", { name: "Dupe Check" }).click();
-      await runDuplicateCheck(page);
-      await expect.poll(() => suppliedName).toBe(true);
-      await expect(page.getByRole("button", { name: "Run dupe check" })).toBeEnabled();
-      supplyName = false;
-
-      const confirmName = page.getByLabel("Confirm release name for BTN", { exact: true });
-      const notices = page.getByLabel("Tracker naming notices for BTN", { exact: true });
-      if (mode === "rebuild") {
-        await expect(notices.getByText(/opaque name was replaced/)).toBeVisible();
-        await expect(notices.getByText(/controls edition/)).toBeVisible();
-        const name = page.getByLabel("Release name for BTN", { exact: true });
-        const reviewedName = "E2E Show 2026 S01E01 Example Episode 1080p WEB-DL DD 5.1 H264-UPBRR";
-        await expect(name).toHaveValue(reviewedName);
-        await expect(confirmName).not.toBeChecked();
-        await confirmName.click();
-        await expect(confirmName).toBeChecked();
-        await expect(name).toBeDisabled();
-        await expect(name).toHaveValue(reviewedName);
-
-        await page.reload();
-        await page.getByRole("button", { name: "Dupe Check" }).click();
-        await expect(confirmName).toBeChecked();
-        await expect(name).toHaveValue(reviewedName);
-        await expect(notices.getByText(/controls edition/)).toBeVisible();
-        await expect(notices.getByText(/opaque name was replaced/)).toHaveCount(0);
-      } else {
-        const tracker = page
-          .getByRole("article")
-          .filter({ has: page.getByRole("heading", { name: "BTN", exact: true }) });
-        await expect(
-          tracker.getByText(/opaque name cannot satisfy mandatory component rules/),
-        ).toBeVisible();
-        await expect(confirmName).toHaveCount(0);
-        await expect(tracker.getByText("Blocked", { exact: true })).toBeVisible();
-        const restored = page.waitForResponse((response) =>
-          response.url().endsWith("/api/app/GetReleaseWorkflow"),
-        );
-        await page.reload();
-        const current = (await (await restored).json()) as ReleaseWorkflowCurrent;
-        expect(
-          current.projections?.projections.find((projection) => projection.trackerId === "BTN"),
-        ).toMatchObject({ readiness: "blocked", dupeReady: false, uploadReady: false });
-        await page.getByRole("button", { name: "Dupe Check" }).click();
-        await expect(
-          tracker.getByText(/opaque name cannot satisfy mandatory component rules/),
-        ).toBeVisible();
-        await expect(confirmName).toHaveCount(0);
-      }
-      expect(workspace.fake.counters.trackerUploads).toBe(0);
-    } finally {
-      await app?.stop();
-      await workspace.cleanup();
-    }
-  });
-}
 
 test("embedded web distinguishes a cleared metadata provider ID from Auto", async ({ page }) => {
   const workspace = await createE2EWorkspace();

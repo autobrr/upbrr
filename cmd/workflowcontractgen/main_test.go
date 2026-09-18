@@ -11,77 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/pkg/api"
 )
-
-func TestGeneratedNameAttachmentsMatchWorkflowTransportSchema(t *testing.T) {
-	t.Parallel()
-	builder := buildContractSchemaBuilder()
-	definition := builder.schemas["ReleaseNameComponent"]
-	if definition == nil || slices.Contains(definition.Required, "AttachTo") || definition.Properties["AttachTo"] == nil || definition.Properties["AttachTo"].Type != "array" {
-		t.Fatalf("attachment schema must be an optional array: %#v", definition)
-	}
-	if generated := string(generateTypeScript(builder.schemas)); !strings.Contains(generated, "AttachTo?: readonly ReleaseNameRole[];") {
-		t.Fatal("generated TypeScript does not make attachment anchors optional")
-	}
-	document := metadata.BuildReleaseName(api.ReleaseNameRequest{
-		Category:    "TV",
-		Type:        "WEBDL",
-		Title:       "Example Show",
-		Year:        2026,
-		Season:      "S01",
-		Episode:     "E02",
-		Source:      "Web",
-		Resolution:  "1080p",
-		VideoEncode: "H.264",
-		Audio:       "AC3 2.0",
-		Tag:         "-GRP",
-	}, api.NopLogger{}).GeneratedName
-	if document == nil {
-		t.Fatal("real name builder did not produce a document")
-	}
-	encoded, err := json.Marshal(document)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var decoded api.ReleaseNameDocument
-	if err := json.Unmarshal(encoded, &decoded); err != nil {
-		t.Fatal(err)
-	}
-	for _, current := range []*api.ReleaseNameDocument{document, document.Clone(), decoded.Clone()} {
-		response := api.ReleaseWorkflowCurrent{Release: &api.ReleaseSnapshot{Release: api.PreparedRelease{Naming: api.NamingFacts{GeneratedName: current}}}}
-		encoded, err := json.Marshal(response)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var transport map[string]any
-		if err := json.Unmarshal(encoded, &transport); err != nil {
-			t.Fatal(err)
-		}
-		snapshot := requireType[map[string]any](t, transport["release"])
-		release := requireType[map[string]any](t, snapshot["release"])
-		naming := requireType[map[string]any](t, release["Naming"])
-		name := requireType[map[string]any](t, naming["GeneratedName"])
-		components := requireType[[]any](t, name["Components"])
-		absent, attached := 0, 0
-		for _, value := range components {
-			component := requireType[map[string]any](t, value)
-			anchors, exists := component["AttachTo"]
-			if !exists {
-				absent++
-				continue
-			}
-			if list := requireType[[]any](t, anchors); len(list) == 0 {
-				t.Fatal("empty anchors should be omitted")
-			}
-			attached++
-		}
-		if absent == 0 || attached == 0 {
-			t.Fatalf("real layout did not exercise both attachment states: absent=%d attached=%d", absent, attached)
-		}
-	}
-}
 
 func TestTrackerProjectionInstructionsSchemaPreservesTriStateFields(t *testing.T) {
 	t.Parallel()
