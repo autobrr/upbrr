@@ -221,6 +221,7 @@ func submitPreparedUpload(
 	}
 	groupID, torrentID, matched := btnUploadIDsFromText(finalURL)
 	torrentDownloaded := false
+	apiResolutionAttempted := false
 	if !matched {
 		responseBody, responsePreview, err := commonhttp.ReadUploadResponseBody(resp, resp.StatusCode >= 200 && resp.StatusCode < 400, 2048)
 		if err != nil {
@@ -233,6 +234,7 @@ func submitPreparedUpload(
 					req.Logger.Warnf("trackers: BTN intermediate upload page fallback to API search: %s", commonhttp.RedactErrorDetail(err.Error()))
 				}
 				groupID = intermediate.groupID
+				apiResolutionAttempted = true
 				selectedID, selectedGroupID, resolveErr := resolveAndDownloadViaAPI(
 					ctx,
 					uploadCtx.apiURL,
@@ -248,7 +250,12 @@ func submitPreparedUpload(
 					groupID = selectedGroupID
 				}
 				if resolveErr != nil {
-					trackers.LogRegisteredTorrentUnavailable(req.Logger, "BTN")
+					if req.Logger != nil {
+						req.Logger.Warnf(
+							"trackers: BTN upload completed but registered torrent API resolution failed: %s",
+							commonhttp.RedactErrorDetail(resolveErr.Error()),
+						)
+					}
 				} else {
 					torrentDownloaded = true
 				}
@@ -283,7 +290,7 @@ func submitPreparedUpload(
 		} else {
 			torrentDownloaded = true
 		}
-	} else if torrentID == "" {
+	} else if torrentID == "" && !apiResolutionAttempted {
 		selectedID, selectedGroupID, resolveErr := resolveAndDownloadViaAPI(
 			ctx,
 			uploadCtx.apiURL,
@@ -300,7 +307,12 @@ func submitPreparedUpload(
 		}
 		torrentURL = buildBTNTorrentURL(uploadCtx.baseURL, groupID, torrentID)
 		if resolveErr != nil {
-			trackers.LogRegisteredTorrentUnavailable(req.Logger, "BTN")
+			if req.Logger != nil {
+				req.Logger.Warnf(
+					"trackers: BTN upload completed but registered torrent API resolution failed: %s",
+					commonhttp.RedactErrorDetail(resolveErr.Error()),
+				)
+			}
 		} else {
 			torrentURL = buildBTNTorrentURL(uploadCtx.baseURL, groupID, torrentID)
 			torrentDownloaded = true
@@ -368,7 +380,7 @@ func buildUploadDryRunAt(ctx context.Context, req trackers.PreparationInput, bas
 		"submit":       "true",
 		"type":         uploadType,
 		"scenename":    releaseName,
-		"origin":       resolveUploadOrigin(req.Meta, req.Runtime.Internal),
+		"origin":       resolveOrigin(req.Meta),
 		"release_desc": resolveBTNReleaseDesc(req.Meta),
 		"tvdb":         "autofilled",
 	}
@@ -499,7 +511,7 @@ func buildBTNUploadPayload(req trackers.PreparationInput, fields map[string]stri
 		"artist":       metautil.FirstNonEmptyTrimmed(fields["artist"]),
 		"title":        title,
 		"actors":       metautil.FirstNonEmptyTrimmed(fields["actors"]),
-		"origin":       resolveUploadOrigin(req.Meta, req.Runtime.Internal),
+		"origin":       resolveOrigin(req.Meta),
 		"year":         metautil.FirstNonEmptyTrimmed(fields["year"]),
 		"tags":         resolveBTNTags(req.Meta, fields),
 		"image":        resolveBTNImage(req.Meta, fields),
@@ -877,7 +889,26 @@ func callBTNAPI(ctx context.Context, apiURL, id, method string, params map[strin
 	if apiResp.StatusCode < 200 || apiResp.StatusCode >= 300 {
 		return fmt.Errorf("trackers: BTN API %s failed status=%d", method, apiResp.StatusCode)
 	}
-	if err := decodeBTNAPIJSON(apiResp.Body, dest); err != nil {
+	var response json.RawMessage
+	if err := decodeBTNAPIJSON(apiResp.Body, &response); err != nil {
+		return fmt.Errorf("trackers: BTN API decode %s response: %w", method, err)
+	}
+	var envelope struct {
+		Error json.RawMessage `json:"error"`
+	}
+	if err := json.Unmarshal(response, &envelope); err != nil {
+		return fmt.Errorf("trackers: BTN API decode %s envelope: %w", method, err)
+	}
+	if btnAPIErrorPresent(envelope.Error) {
+		var failure struct {
+			Code int `json:"code"`
+		}
+		if err := json.Unmarshal(envelope.Error, &failure); err != nil {
+			return fmt.Errorf("trackers: BTN API %s rejected request", method)
+		}
+		return fmt.Errorf("trackers: BTN API %s rejected request code=%d", method, failure.Code)
+	}
+	if err := json.Unmarshal(response, dest); err != nil {
 		return fmt.Errorf("trackers: BTN API decode %s response: %w", method, err)
 	}
 	return nil
@@ -998,23 +1029,42 @@ func resolveAndDownloadViaAPI(
 		filter["group_id"] = groupID
 	}
 
-	var response struct {
-		Result struct {
-			Torrents map[string]map[string]any `json:"torrents"`
-		} `json:"result"`
+	const attempts = 4
+	const retryDelay = 2 * time.Second
+	var selection btnAPITorrentSelection
+	for attempt := range attempts {
+		if attempt > 0 {
+			if req.Logger != nil {
+				req.Logger.Infof("trackers: BTN waiting for uploaded torrent API visibility attempt=%d attempts=%d delay=%s", attempt+1, attempts, retryDelay)
+			}
+			timer := time.NewTimer(retryDelay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return "", "", fmt.Errorf("trackers: BTN wait for uploaded torrent: %w", ctx.Err())
+			case <-timer.C:
+			}
+		}
+		var response struct {
+			Result struct {
+				Torrents map[string]map[string]any `json:"torrents"`
+			} `json:"result"`
+		}
+		if err := callBTNAPI(ctx, apiURL, "ua-btn-upload", "getTorrents", map[string]any{
+			"key":     apiToken,
+			"search":  filter,
+			"results": 50,
+			"offset":  0,
+		}, &response); err != nil {
+			return "", "", err
+		}
+		selection = selectBTNAPITorrent(response.Result.Torrents, releaseName, groupID)
+		if selection.ID != "" {
+			break
+		}
 	}
-	if err := callBTNAPI(ctx, apiURL, "ua-btn-upload", "getTorrents", map[string]any{
-		"key":     apiToken,
-		"search":  filter,
-		"results": 50,
-		"offset":  0,
-	}, &response); err != nil {
-		return "", "", err
-	}
-
-	selection := selectBTNAPITorrent(response.Result.Torrents, releaseName, groupID)
 	if selection.ID == "" {
-		return "", "", errors.New("trackers: BTN API did not return a matching torrent id")
+		return "", "", fmt.Errorf("trackers: BTN API did not return a matching torrent id after %d attempts", attempts)
 	}
 
 	var downloadResult struct {

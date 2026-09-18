@@ -148,15 +148,17 @@ func resolveOrigin(meta api.UploadSubject) string {
 	if isBTNSceneRelease(meta) {
 		return "Scene"
 	}
-	if group != "" && isNoGroupTag(group) || isBTNInternalGroup(meta) {
+	if group != "" && isNoGroupTag(group) {
 		return "None"
 	}
 	return "P2P"
 }
 
-func resolveUploadOrigin(meta api.UploadSubject, internal bool) string {
+// resolveDuplicateOrigin retains BTN's internal classification for duplicate
+// policy even though the upload form submits these releases as P2P.
+func resolveDuplicateOrigin(meta api.UploadSubject, internal bool) string {
 	origin := resolveOrigin(meta)
-	if internal && origin != "Scene" && origin != "Mixed" {
+	if (internal || isBTNInternalGroup(meta)) && origin != "Scene" && origin != "Mixed" {
 		return "None"
 	}
 	return origin

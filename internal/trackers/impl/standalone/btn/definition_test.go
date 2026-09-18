@@ -368,6 +368,14 @@ func TestResolveOrigin(t *testing.T) {
 			expected: "P2P",
 		},
 		{
+			name: "internal group uses p2p origin",
+			meta: api.UploadSubject{
+				Tag: "NTb",
+				Release: api.ReleaseInfo{Group: "NTb"},
+			},
+			expected: "P2P",
+		},
+		{
 			name: "none origin for no group tag",
 			meta: api.UploadSubject{
 				Release: api.ReleaseInfo{Group: "nogrp"},
@@ -380,6 +388,31 @@ func TestResolveOrigin(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := resolveOrigin(tc.meta); got != tc.expected {
 				t.Fatalf("expected origin %q, got %q", tc.expected, got)
+			}
+		})
+	}
+}
+
+func TestBTNInternalUploadOriginPreservesDuplicateClassification(t *testing.T) {
+	t.Parallel()
+	for _, group := range []string{"NTb", "GRP"} {
+		t.Run(group, func(t *testing.T) {
+			req, failure := trackers.PrepareInputWithReleaseNamePolicy(newBTNUploadTestRequest(t), Profile().ReleaseNamePolicy)
+			if failure != nil {
+				t.Fatal(failure)
+			}
+			req.Meta.Tag = group
+			req.Meta.Release.Group = group
+			req.Runtime.Internal = group == "GRP"
+			payload, err := buildBTNUploadPayload(req, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if payload["origin"] != "P2P" {
+				t.Fatalf("internal upload origin = %q", payload["origin"])
+			}
+			if got := duplicatePolicy().TargetReleaseOrigin(req.Meta, req.Runtime.Internal); got != "None" {
+				t.Fatalf("internal duplicate classification changed: %q", got)
 			}
 		})
 	}

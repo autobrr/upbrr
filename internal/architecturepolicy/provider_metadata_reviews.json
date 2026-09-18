@@ -696,12 +696,12 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/btn/upload.go:buildBTNUploadPayload": {
-    "sha256": "21d9f2bc33374127e28ca5cfe420b2f26bc553a5f38e9cd30d7cf0d97d6f00e4",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "2a36bc29f8a5ded48ffbb3636edea7c2a20d2ae33ee3f9ce102368719b9f93f0",
+    "reason": "Upload origin uses prepared scene and group facts; provider-value helpers and their manual metadata precedence are unchanged."
   },
   "internal/trackers/impl/standalone/btn/upload.go:buildUploadDryRunAt": {
-    "sha256": "e69c58cd5b734a02e84ccfd6614baace5127a6a25cde099f939023f61a8048fe",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "86ec3a1e2cde80be5c2a7a3acf0a5d1190bd0eaf70a8839995cc9148df4f2fdd",
+    "reason": "Preview origin uses prepared scene and group facts, matching submission; provider-value helpers and their manual metadata precedence are unchanged."
   },
   "internal/trackers/impl/standalone/btn/upload.go:checkBTNSeasonPackReservation": {
     "sha256": "3ba1e7b6b2e079231ecbac686207035a2b0bfe0bd63b5472f86e2c14ac37e1a9",
