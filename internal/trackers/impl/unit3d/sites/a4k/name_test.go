@@ -115,10 +115,12 @@ func TestBuildNameVersionOnlyIsNotFanRes(t *testing.T) {
 		Resolution:  "2160p",
 		Source:      "BluRay",
 		VideoEncode: "x265",
+		Repack:      "V2",
 		Tag:         "-GRP",
 	})
-	meta.Repack = "V2"
-	if got := buildName(meta, config.TrackerConfig{}); strings.Contains(got, "FANRES") {
+	if got := buildName(meta, config.TrackerConfig{}); !strings.Contains(got, "V2") {
+		t.Fatalf("versioned encode name omitted V2: %q", got)
+	} else if strings.Contains(got, "FANRES") {
 		t.Fatalf("ordinary versioned encode was classified as FanRes: %q", got)
 	}
 }

@@ -15,7 +15,7 @@ import (
 )
 
 func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("unit3d/acm/v3", trackers.StructuredNamePolicy{Defaults: applyACMNameDefaults})
+	return trackers.StructuredReleaseNamePolicy("unit3d/acm/v4", trackers.StructuredNamePolicy{Defaults: applyACMNameDefaults})
 }
 
 func applyACMNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
@@ -164,6 +164,9 @@ func firstACMPresentRole(present []api.ReleaseNameRole, candidates ...api.Releas
 		if slices.Contains(present, candidate) {
 			return candidate
 		}
+	}
+	if len(present) > 0 {
+		return present[len(present)-1]
 	}
 	return ""
 }

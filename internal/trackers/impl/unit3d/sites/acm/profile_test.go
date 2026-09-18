@@ -60,6 +60,17 @@ func TestACMStructuredReleaseNamePolicy(t *testing.T) {
 			want:      "Example 2024 1080p BluRay AAC2.0 x264-GRP",
 		},
 		{
+			name: "subtitles follow the last generated component when technical roles are absent",
+			request: api.ReleaseNameRequest{
+				Category: "MOVIE",
+				Type:     "ENCODE",
+				Title:    "Example",
+				Year:     2024,
+			},
+			subtitles: []string{"Japanese"},
+			want:      "Example 2024 [Jpn subs only]",
+		},
+		{
 			name: "H.265 video encode normalizes to HEVC",
 			request: api.ReleaseNameRequest{
 				Category:    "MOVIE",
@@ -243,7 +254,7 @@ func TestACMStructuredPolicyPreservesManualAndOpaqueNames(t *testing.T) {
 
 func TestProfileParity(t *testing.T) {
 	profile := Profile().Site
-	if got := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy(); got.ID != "unit3d/acm/v3" || got.Structured == nil || got.Resolver != nil {
+	if got := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy(); got.ID != "unit3d/acm/v4" || got.Structured == nil || got.Resolver != nil {
 		t.Fatalf("ACM policy = %#v", got)
 	}
 	if got := profile.ResolveTypeID(api.UploadSubject{
