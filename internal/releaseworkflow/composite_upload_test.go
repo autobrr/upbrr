@@ -766,26 +766,14 @@ func TestCompositeUploadRefreshesOnlyRecoverablePersistedMediaBlock(t *testing.T
 			failures: []api.WorkflowFailure{compositeImageHostFailure("")},
 		},
 	}
+	fixture := prepareCompletedCompositeUploadFixture(t)
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			module, repository, _ := newCompositeUploadTestModule(t)
-			request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, "persisted-media-"+strings.ReplaceAll(test.name, " ", "-"))
-			started, err := module.StartUpload(t.Context(), testOwnerID, request)
-			if err != nil {
-				t.Fatalf("start composite upload: %v", err)
-			}
-			blocked := waitCompositeUploadTestOperation(t, module, started)
-			completed := approveCompositeUploadTrackers(
-				t,
-				module,
-				blocked,
-				[]api.TrackerID{"ALPHA", "BETA"},
-				"approve-persisted-media-"+strings.ReplaceAll(test.name, " ", "-"),
-			)
+			module, repository, workflowID := newPersistedCompositeMediaFixture(t, fixture)
 			command, operationID, initialRevision, initialMediaCount := seedPersistedCompositeMediaBlock(
 				t,
 				repository,
-				completed.Workflow.ID,
+				workflowID,
 				test.failures,
 				test.additionalAction,
 			)
@@ -794,7 +782,7 @@ func TestCompositeUploadRefreshesOnlyRecoverablePersistedMediaBlock(t *testing.T
 			if err != nil {
 				t.Fatalf("resume persisted media block: %v", err)
 			}
-			state, err := repository.Load(t.Context(), testOwnerID, completed.Workflow.ID)
+			state, err := repository.Load(t.Context(), testOwnerID, workflowID)
 			if err != nil {
 				t.Fatalf("load resumed composite state: %v", err)
 			}
@@ -1371,6 +1359,66 @@ func seedPersistedCompositeMediaBlock(
 		SessionFingerprint: state.Composite.RequestFingerprint,
 		IdempotencyKey:     "resume-persisted-media",
 	}, operationID, state.Workflow.Revision, len(state.Media)
+}
+
+type completedCompositeUploadFixture struct {
+	state      State
+	idSequence int
+}
+
+// prepareCompletedCompositeUploadFixture exercises the full upload setup once
+// before each recovery test group. Callers install detached copies so each
+// recovery case has its own repository and private resource store.
+func prepareCompletedCompositeUploadFixture(t *testing.T) completedCompositeUploadFixture {
+	t.Helper()
+	module, repository, _ := newCompositeUploadTestModule(t)
+	request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, "persisted-media-fixture")
+	started, err := module.StartUpload(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("start composite upload fixture: %v", err)
+	}
+	blocked := waitCompositeUploadTestOperation(t, module, started)
+	completed := approveCompositeUploadTrackers(t, module, blocked, []api.TrackerID{"ALPHA", "BETA"}, "approve-persisted-media-fixture")
+	fixture, err := repository.Load(t.Context(), testOwnerID, completed.Workflow.ID)
+	if err != nil {
+		t.Fatalf("load completed composite upload fixture: %v", err)
+	}
+	ids, ok := module.ids.(*sequenceIDGenerator)
+	if !ok {
+		t.Fatal("completed composite upload fixture uses an unexpected ID generator")
+	}
+	return completedCompositeUploadFixture{state: fixture, idSequence: ids.next}
+}
+
+func newPersistedCompositeMediaFixture(
+	t *testing.T,
+	fixture completedCompositeUploadFixture,
+) (*Module, *MemoryRepository, api.WorkflowID) {
+	t.Helper()
+	module, repository, _ := newCompositeUploadTestModule(t)
+	ids, ok := module.ids.(*sequenceIDGenerator)
+	if !ok {
+		t.Fatal("persisted composite upload fixture uses an unexpected ID generator")
+	}
+	ids.next = fixture.idSequence
+	state := fixture.state
+	state.ProcessEpoch = module.processEpoch
+	if _, _, err := repository.Create(t.Context(), testOwnerID, "", testFingerprint(t, "persisted-composite-media-fixture"), state); err != nil {
+		t.Fatalf("create persisted composite upload fixture: %v", err)
+	}
+	if state.Workflow.Media == nil {
+		t.Fatal("persisted composite upload fixture has no media")
+	}
+	if err := module.private.Put(
+		testOwnerID,
+		state.Workflow.ID,
+		mediaPrivateResourceID(state.Workflow.Media.ID),
+		struct{}{},
+		module.clock.Now().UTC().Add(24*time.Hour),
+	); err != nil {
+		t.Fatalf("seed persisted composite media resource: %v", err)
+	}
+	return module, repository, state.Workflow.ID
 }
 
 func compositeImageHostFailure(trackerID api.TrackerID) api.WorkflowFailure {

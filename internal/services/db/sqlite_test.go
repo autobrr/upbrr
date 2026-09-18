@@ -1008,17 +1008,7 @@ func TestIsBusyErrorUnwrapsSQLiteErrors(t *testing.T) {
 func TestTrackerRuleFailuresCRUD(t *testing.T) {
 	t.Parallel()
 
-	repo, err := Open(":memory:")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = repo.Close()
-	})
-
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	ctx := context.Background()
 	path := "/tmp/source"
@@ -1073,20 +1063,10 @@ func TestTrackerRuleFailuresCRUD(t *testing.T) {
 func TestSQLiteDescriptionOverrides(t *testing.T) {
 	t.Parallel()
 
-	repo, err := Open(":memory:")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = repo.Close()
-	})
-
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	ctx := context.Background()
-	_, err = repo.GetDescriptionOverride(ctx, "/missing", "")
+	_, err := repo.GetDescriptionOverride(ctx, "/missing", "")
 	if !errors.Is(err, internalerrors.ErrNotFound) {
 		t.Fatalf("expected not found, got %v", err)
 	}
@@ -1529,17 +1509,7 @@ func TestValidatedMigrationRegistryRejectsInvalidDefinitions(t *testing.T) {
 func TestSQLiteDescriptionOverrideGroupKeysAreCaseInsensitive(t *testing.T) {
 	t.Parallel()
 
-	repo, err := Open(":memory:")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = repo.Close()
-	})
-
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	ctx := context.Background()
 	override := DescriptionOverride{
@@ -1584,17 +1554,7 @@ func TestSQLiteDescriptionOverrideGroupKeysAreCaseInsensitive(t *testing.T) {
 func TestSQLitePurgeContentData(t *testing.T) {
 	t.Parallel()
 
-	repo, err := Open(":memory:")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = repo.Close()
-	})
-
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	ctx := context.Background()
 	baseDir := t.TempDir()
@@ -1877,17 +1837,7 @@ func TestSQLitePurgeContentDataRemovesLegacyUIStateIDDataRows(t *testing.T) {
 func TestSQLiteRepositoryListStoredReleasePathsIncludesOrphans(t *testing.T) {
 	t.Parallel()
 
-	repo, err := Open(":memory:")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = repo.Close()
-	})
-
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -1947,17 +1897,7 @@ func TestSQLiteRepositoryListStoredReleasePathsIncludesOrphans(t *testing.T) {
 func TestSQLiteRepositoryListPendingUploadsIncludesInternal(t *testing.T) {
 	t.Parallel()
 
-	repo, err := Open(":memory:")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = repo.Close()
-	})
-
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	ctx := context.Background()
 	if err := repo.CreateUploadRecord(ctx, UploadRecord{
@@ -1994,17 +1934,7 @@ func TestSQLiteRepositoryListPendingUploadsIncludesInternal(t *testing.T) {
 func TestSQLiteUploadedImagesPersistUsageScope(t *testing.T) {
 	t.Parallel()
 
-	repo, err := Open(":memory:")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = repo.Close()
-	})
-
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -2091,17 +2021,7 @@ func TestSQLiteMigrationBackfillsUploadedImageUsageScope(t *testing.T) {
 func TestSQLiteRepositoryUpdateLatestUploadRecordStatus(t *testing.T) {
 	t.Parallel()
 
-	repo, err := Open(":memory:")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = repo.Close()
-	})
-
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	ctx := context.Background()
 	if err := repo.CreateUploadRecord(ctx, UploadRecord{
@@ -2141,19 +2061,9 @@ func TestSQLiteRepositoryUpdateLatestUploadRecordStatus(t *testing.T) {
 func TestSQLiteRepositoryUpdateLatestUploadRecordStatusNotFound(t *testing.T) {
 	t.Parallel()
 
-	repo, err := Open(":memory:")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = repo.Close()
-	})
+	repo := openMigratedTestRepo(t)
 
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-
-	err = repo.UpdateLatestUploadRecordStatus(context.Background(), "/missing", "BLU", "uploaded")
+	err := repo.UpdateLatestUploadRecordStatus(context.Background(), "/missing", "BLU", "uploaded")
 	if !errors.Is(err, internalerrors.ErrNotFound) {
 		t.Fatalf("expected not found, got %v", err)
 	}
@@ -2162,17 +2072,7 @@ func TestSQLiteRepositoryUpdateLatestUploadRecordStatusNotFound(t *testing.T) {
 func TestSQLiteRepositoryScreenshotSlotsRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	repo, err := Open(":memory:")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = repo.Close()
-	})
-
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	ctx := context.Background()
 	slots := []ScreenshotSlot{

@@ -17,14 +17,7 @@ import (
 func TestScreenshotLifecyclePreservesCategoriesAndCleansReferences(t *testing.T) {
 	t.Parallel()
 
-	repo, err := Open(":memory:")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	ctx := context.Background()
 	root := t.TempDir()
@@ -244,14 +237,7 @@ func TestScreenshotLifecyclePreservesCategoriesAndCleansReferences(t *testing.T)
 func TestAppendManualMenuScreenshotsRollsBackCrossSourceImageConflict(t *testing.T) {
 	t.Parallel()
 
-	repo, err := Open(":memory:")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	ctx := context.Background()
 	root := t.TempDir()
@@ -269,7 +255,7 @@ func TestAppendManualMenuScreenshotsRollsBackCrossSourceImageConflict(t *testing
 		t.Fatalf("seed screenshot: %v", err)
 	}
 
-	err = repo.AppendManualMenuScreenshots(ctx, secondBinding,
+	err := repo.AppendManualMenuScreenshots(ctx, secondBinding,
 		[]api.Screenshot{{
 			SourcePath: secondSource,
 			ImagePath:  imagePath,
@@ -303,14 +289,7 @@ func TestAppendManualMenuScreenshotsRollsBackCrossSourceImageConflict(t *testing
 func TestDeleteUploadedImageConvergesAfterRecordIsGone(t *testing.T) {
 	t.Parallel()
 
-	repo, err := Open(":memory:")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	ctx := context.Background()
 	root := t.TempDir()

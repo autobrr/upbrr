@@ -222,15 +222,7 @@ func TestCanonicalReleaseGenerationMigrationSeedsLegacyIdentityLineage(t *testin
 
 func openPreparedReleaseTestRepo(t *testing.T) *SQLiteRepository {
 	t.Helper()
-	repo, err := OpenWithLogger(filepath.Join(t.TempDir(), "prepared-release.db"), nopLogger{})
-	if err != nil {
-		t.Fatalf("open repository: %v", err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate repository: %v", err)
-	}
-	return repo
+	return openMigratedTestRepo(t)
 }
 
 func preparedReleaseDBFixture(sourcePath string, generation api.PreparedGeneration) api.PreparedRelease {

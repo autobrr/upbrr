@@ -6,7 +6,6 @@ package db
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,18 +14,7 @@ import (
 func TestConfigSectionSaveLoad(t *testing.T) {
 	t.Parallel()
 
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	repo, err := OpenWithLogger(dbPath, nopLogger{})
-	if err != nil {
-		t.Fatalf("open repository: %v", err)
-	}
-	defer repo.Close()
-
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	ctx := context.Background()
 
@@ -64,18 +52,7 @@ func TestConfigSectionSaveLoad(t *testing.T) {
 func TestConfigSectionUpdate(t *testing.T) {
 	t.Parallel()
 
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	repo, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("open repository: %v", err)
-	}
-	defer repo.Close()
-
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	ctx := context.Background()
 
@@ -109,24 +86,13 @@ func TestConfigSectionUpdate(t *testing.T) {
 func TestConfigLoadNotFound(t *testing.T) {
 	t.Parallel()
 
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	repo, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("open repository: %v", err)
-	}
-	defer repo.Close()
-
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	ctx := context.Background()
 
 	// Try to load non-existent section.
 	var loaded map[string]any
-	err = repo.LoadConfigSection(ctx, "nonexistent_section", &loaded)
+	err := repo.LoadConfigSection(ctx, "nonexistent_section", &loaded)
 	if err == nil {
 		t.Fatalf("expected error for non-existent section, got nil")
 	}
@@ -135,18 +101,7 @@ func TestConfigLoadNotFound(t *testing.T) {
 func TestFullConfigSaveLoad(t *testing.T) {
 	t.Parallel()
 
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	repo, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("open repository: %v", err)
-	}
-	defer repo.Close()
-
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	ctx := context.Background()
 
@@ -192,18 +147,7 @@ func TestFullConfigSaveLoad(t *testing.T) {
 func TestLoadFullConfigRejectsDuplicateRawSectionKeys(t *testing.T) {
 	t.Parallel()
 
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	repo, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("open repository: %v", err)
-	}
-	defer repo.Close()
-
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	ctx := context.Background()
 	if _, err := repo.RawDB().ExecContext(ctx, `
@@ -214,7 +158,7 @@ func TestLoadFullConfigRejectsDuplicateRawSectionKeys(t *testing.T) {
 	}
 
 	var loaded map[string]any
-	err = repo.LoadFullConfig(ctx, &loaded)
+	err := repo.LoadFullConfig(ctx, &loaded)
 	if err == nil {
 		t.Fatal("expected duplicate raw key error")
 	}
@@ -226,18 +170,7 @@ func TestLoadFullConfigRejectsDuplicateRawSectionKeys(t *testing.T) {
 func TestConfigLastUpdated(t *testing.T) {
 	t.Parallel()
 
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	repo, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("open repository: %v", err)
-	}
-	defer repo.Close()
-
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	ctx := context.Background()
 
@@ -267,23 +200,12 @@ func TestConfigLastUpdated(t *testing.T) {
 func TestConfigSectionNotFound(t *testing.T) {
 	t.Parallel()
 
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	repo, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("open repository: %v", err)
-	}
-	defer repo.Close()
-
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	ctx := context.Background()
 
 	// Try to get last updated for non-existent section.
-	_, err = repo.ConfigSectionLastUpdated(ctx, "nonexistent")
+	_, err := repo.ConfigSectionLastUpdated(ctx, "nonexistent")
 	if err == nil {
 		t.Fatalf("expected error for non-existent section, got nil")
 	}
@@ -292,18 +214,7 @@ func TestConfigSectionNotFound(t *testing.T) {
 func TestMultipleSectionsSaveLoad(t *testing.T) {
 	t.Parallel()
 
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	repo, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("open repository: %v", err)
-	}
-	defer repo.Close()
-
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	ctx := context.Background()
 
@@ -345,18 +256,7 @@ func TestMultipleSectionsSaveLoad(t *testing.T) {
 func TestConfigComplexTypes(t *testing.T) {
 	t.Parallel()
 
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	repo, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("open repository: %v", err)
-	}
-	defer repo.Close()
-
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	ctx := context.Background()
 
@@ -404,18 +304,7 @@ func TestConfigComplexTypes(t *testing.T) {
 func TestConfigContextCancellation(t *testing.T) {
 	t.Parallel()
 
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	repo, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("open repository: %v", err)
-	}
-	defer repo.Close()
-
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	// Create a cancelled context.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -426,7 +315,7 @@ func TestConfigContextCancellation(t *testing.T) {
 	}
 
 	// Try to save with cancelled context.
-	err = repo.SaveConfigSection(ctx, "test", section)
+	err := repo.SaveConfigSection(ctx, "test", section)
 	if err == nil {
 		t.Fatalf("expected context cancellation error, got nil")
 	}

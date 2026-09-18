@@ -29,10 +29,36 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Setup Go
+        id: go
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
+
+      - name: Locate Go caches
+        id: go-cache-paths
+        shell: pwsh
+        run: |
+          $paths = go env -json GOMODCACHE GOCACHE | ConvertFrom-Json
+          "modules=$($paths.GOMODCACHE)" >> $env:GITHUB_OUTPUT
+          "build=$($paths.GOCACHE)" >> $env:GITHUB_OUTPUT
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.go-cache-paths.outputs.modules }}
+          key: go-modules-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}
+
+      # Keep race-test outputs separate from other Go jobs. Restore the latest
+      # compatible snapshot, then save refreshed results under this commit's key.
+      - name: Cache Go test results
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.go-cache-paths.outputs.build }}
+          key: go-tests-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-race-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-tests-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-race-${{ hashFiles('go.sum') }}-
+            go-tests-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-race-
 
       - name: Run Go tests
         # These flags limit each package's test binary; package concurrency keeps Go's default -p.

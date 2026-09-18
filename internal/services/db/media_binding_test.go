@@ -15,14 +15,7 @@ import (
 func TestMediaAssetsRequireExactPreparedBinding(t *testing.T) {
 	t.Parallel()
 
-	repo, err := Open(":memory:")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	first := testPreparedMediaBinding("C:\\releases\\Example.Release.2026")
 	second := first
@@ -43,14 +36,7 @@ func TestMediaAssetsRequireExactPreparedBinding(t *testing.T) {
 func TestOlderPreparedBindingCannotReplaceNewerMediaAssets(t *testing.T) {
 	t.Parallel()
 
-	repo, err := Open(":memory:")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	ctx := context.Background()
 	older := testPreparedMediaBinding("C:\\releases\\Example.Release.2026")
@@ -127,14 +113,7 @@ func TestOlderPreparedBindingCannotReplaceNewerMediaAssets(t *testing.T) {
 func TestCurrentPreparedBindingCanReplaceOrphanedHigherGeneration(t *testing.T) {
 	t.Parallel()
 
-	repo, err := Open(":memory:")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	sourcePath := "C:\\releases\\Example.Release.2026"
 	orphaned := testPreparedMediaBinding(sourcePath)
