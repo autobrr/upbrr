@@ -15,17 +15,7 @@ import (
 func TestScreenshotFinalSelectionsCRUD(t *testing.T) {
 	t.Parallel()
 
-	repo, err := Open(":memory:")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = repo.Close()
-	})
-
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	ctx := context.Background()
 	sourcePath := "/media/file.mkv"
@@ -86,17 +76,7 @@ func TestScreenshotFinalSelectionsCRUD(t *testing.T) {
 func TestScreenshotFinalSelectionsInvalidInput(t *testing.T) {
 	t.Parallel()
 
-	repo, err := Open(":memory:")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = repo.Close()
-	})
-
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	ctx := context.Background()
 

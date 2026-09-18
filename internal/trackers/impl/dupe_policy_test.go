@@ -26,6 +26,7 @@ func TestBuiltIn2160pDVHDRSlots(t *testing.T) {
 			continue
 		}
 		t.Run(tracker, func(t *testing.T) {
+			t.Parallel()
 			policy, _ := registry.LookupDupePolicy(tracker)
 			for _, format := range []api.HDRFormat{api.HDRFormatSDR, api.HDRFormatDolbyVision, api.HDRFormatHDR10} {
 				target := api.TrackerDuplicateTarget{

@@ -487,10 +487,12 @@ func TestContinueRefreshesOnlyRecoverablePersistedMediaBlockForWebUIControls(t *
 			failures: []api.WorkflowFailure{compositeImageHostFailure("GAMMA")},
 		},
 	}
+	fixture := prepareCompletedCompositeUploadFixture(t)
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			module, repository, request, initialRevision, initialMediaCount := preparePersistedWebUIMediaContinuation(
 				t,
+				fixture,
 				test.failures,
 				test.additionalAction,
 			)
@@ -557,8 +559,10 @@ func TestContinueRefreshesOnlyRecoverablePersistedMediaBlockForWebUIControls(t *
 func TestContinueExpiredDupesReplansBeforePersistedMediaRecovery(t *testing.T) {
 	t.Parallel()
 
+	fixture := prepareCompletedCompositeUploadFixture(t)
 	module, repository, request, initialRevision, initialMediaCount := preparePersistedWebUIMediaContinuation(
 		t,
+		fixture,
 		[]api.WorkflowFailure{compositeImageHostFailure("BETA")},
 		nil,
 	)
@@ -629,8 +633,10 @@ func TestContinueExpiredDupesReplansBeforePersistedMediaRecovery(t *testing.T) {
 func TestRefreshPersistedMediaStatusRejectsEmptyApprovedTrackerSet(t *testing.T) {
 	t.Parallel()
 
+	fixture := prepareCompletedCompositeUploadFixture(t)
 	module, repository, request, initialRevision, initialMediaCount := preparePersistedWebUIMediaContinuation(
 		t,
+		fixture,
 		[]api.WorkflowFailure{compositeImageHostFailure("BETA")},
 		nil,
 	)
@@ -709,28 +715,22 @@ func TestRefreshPersistedMediaStatusRejectsEmptyApprovedTrackerSet(t *testing.T)
 
 func preparePersistedWebUIMediaContinuation(
 	t *testing.T,
+	fixture completedCompositeUploadFixture,
 	failures []api.WorkflowFailure,
 	additionalAction *api.RequiredAction,
 ) (*Module, *MemoryRepository, api.ContinueReleaseWorkflowRequest, api.WorkflowRevision, int) {
 	t.Helper()
-	module, repository, _ := newCompositeUploadTestModule(t)
+	module, repository, workflowID := newPersistedCompositeMediaFixture(t, fixture)
 	requestID := "webui-persisted-media-" + string(failures[0].TrackerID)
-	request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, requestID)
-	started, err := module.StartUpload(t.Context(), testOwnerID, request)
-	if err != nil {
-		t.Fatalf("start setup composite upload: %v", err)
-	}
-	blocked := waitCompositeUploadTestOperation(t, module, started)
-	completed := approveCompositeUploadTrackers(t, module, blocked, []api.TrackerID{"ALPHA", "BETA"}, "approve-"+requestID)
 	_, _, initialRevision, initialMediaCount := seedPersistedCompositeMediaBlock(
 		t,
 		repository,
-		completed.Workflow.ID,
+		workflowID,
 		failures,
 		additionalAction,
 	)
 	repository.mu.Lock()
-	state := repository.states[completed.Workflow.ID]
+	state := repository.states[workflowID]
 	state.TrackerDecisionMode = TrackerDecisionModeWebUIControls
 	state.Workflow.TrackerApproval = nil
 	media := state.Media[state.Workflow.Media.ID]
@@ -738,11 +738,11 @@ func preparePersistedWebUIMediaContinuation(
 	state.Media[media.ID] = media
 	state.Composite.ActiveOperationID = ""
 	intent := state.Composite.Intent
-	repository.states[completed.Workflow.ID] = state
+	repository.states[workflowID] = state
 	repository.mu.Unlock()
 	return module, repository, api.ContinueReleaseWorkflowRequest{
 		Authority: &api.WorkflowAuthority{
-			WorkflowID:       completed.Workflow.ID,
+			WorkflowID:       workflowID,
 			ExpectedRevision: initialRevision,
 		},
 		IdempotencyKey: requestID + "-continue",

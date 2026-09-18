@@ -6,7 +6,6 @@ package db
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -17,14 +16,7 @@ import (
 func TestReleaseWorkflowStatePersistenceAndRetention(t *testing.T) {
 	t.Parallel()
 
-	repo, err := Open(filepath.Join(t.TempDir(), "workflow-state.sqlite"))
-	if err != nil {
-		t.Fatalf("open repository: %v", err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate repository: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	ctx := context.Background()
 	now := time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC)
@@ -79,14 +71,7 @@ func TestReleaseWorkflowStatePersistenceAndRetention(t *testing.T) {
 func TestReleaseWorkflowStateConcurrentRevisionCAS(t *testing.T) {
 	t.Parallel()
 
-	repo, err := Open(filepath.Join(t.TempDir(), "workflow-cas.sqlite"))
-	if err != nil {
-		t.Fatalf("open repository: %v", err)
-	}
-	t.Cleanup(func() { _ = repo.Close() })
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate repository: %v", err)
-	}
+	repo := openMigratedTestRepo(t)
 
 	ctx := context.Background()
 	now := time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC)
