@@ -24,11 +24,12 @@ func Profile() standalone.Profile {
 		PrepareUpload: func(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
 			return prepareUploadAt(ctx, req, btnDefaultBaseURL)
 		},
-		ReleaseNamePolicy: trackers.SubjectReleaseNameSearchPolicy(
-			"standalone/btn/v3",
-			func(meta api.UploadSubject, _ config.TrackerConfig) string { return resolveUploadName(meta) },
-			func(meta api.UploadSubject, _ config.TrackerConfig) string { return resolveSearchName(meta) },
-		),
+		ReleaseNamePolicy: trackers.StructuredReleaseNamePolicy("standalone/btn/v5", trackers.StructuredNamePolicy{
+			Defaults:  applyBTNNameDefaults,
+			ExactName: btnExactName,
+			Separator: ".",
+			Search:    func(meta api.UploadSubject, _ config.TrackerConfig) string { return resolveSearchName(meta) },
+		}),
 		NewDuplicateAdapter: newDuplicateAdapter,
 		DupePolicy:          duplicatePolicy(),
 		Rules:               &trackers.RuleSet{RequireTVOnly: true},

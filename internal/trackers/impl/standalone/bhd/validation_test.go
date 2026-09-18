@@ -98,17 +98,17 @@ func bhdValidationSubject() api.TrackerValidationSubject {
 			MediaFileCount: 1,
 		},
 		AssetFacts: api.AssetFacts{
-			Status:            api.MetadataEvidenceStatusComplete,
-			MediaInfoText:     api.AssetEvidence{
-Status: api.MetadataEvidenceStatusComplete,
- Ready: true,
- Count: 1,
-},
+			Status: api.MetadataEvidenceStatusComplete,
+			MediaInfoText: api.AssetEvidence{
+				Status: api.MetadataEvidenceStatusComplete,
+				Ready:  true,
+				Count:  1,
+			},
 			HostedScreenshots: api.AssetEvidence{
-Status: api.MetadataEvidenceStatusComplete,
- Ready: true,
- Count: 3,
-},
+				Status: api.MetadataEvidenceStatusComplete,
+				Ready:  true,
+				Count:  3,
+			},
 		},
 	}
 }
