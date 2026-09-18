@@ -83,9 +83,6 @@ type PreparationInput struct {
 	// RequestedUploadName is an optional user instruction consumed by the
 	// tracker naming policy before projection. A non-nil empty value is invalid.
 	RequestedUploadName *string
-	// ConfirmedNameFingerprint confirms the unchanged generated projection, not an opaque name.
-	// The workflow issues this marker after validating the current review action.
-	ConfirmedNameFingerprint api.WorkflowFingerprint
 	// AdditionalReleaseNames contains typed user-supplied secondary names that
 	// are normalized and fingerprinted with the tracker naming result.
 	AdditionalReleaseNames []api.TrackerReleaseName
@@ -152,7 +149,6 @@ type ResolvedReleaseNames struct {
 	Upload     string
 	Duplicate  string
 	Additional []api.TrackerReleaseName
-	Decisions  []api.TrackerPolicyDecision
 }
 
 // ReleaseNamePolicy resolves tracker-facing names without I/O or mutable state.
@@ -175,12 +171,9 @@ type ReleaseNamePolicyBinding struct {
 	Elements     api.ReleaseNameElementPolicy
 	Confirmation ReleaseNameConfirmationMode
 	// MovieYearProvider selects authoritative current metadata for automatic movie-name years.
-	// Empty preserves the finalized year. Structured defaults respect manual year
-	// authority; opaque names are preserved unless the policy requires rebuilding.
+	// Empty preserves the parsed release year; requested upload names are never rewritten.
 	MovieYearProvider api.IdentityProvider
 	Resolver          ReleaseNamePolicy
-	// Structured selects component-based naming instead of the legacy string resolver.
-	Structured *StructuredNamePolicy
 }
 
 // ReleaseNamePolicyProvider declares tracker-owned release-name behavior.

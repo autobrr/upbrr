@@ -574,7 +574,7 @@ func (r *Registry) RegisterDescriptor(descriptor Descriptor) error {
 			descriptor.Family = provider.TrackerFamily()
 		}
 	}
-	if descriptor.ReleaseNamePolicy.Resolver == nil && descriptor.ReleaseNamePolicy.Structured == nil {
+	if descriptor.ReleaseNamePolicy.Resolver == nil {
 		if provider, ok := def.(ReleaseNamePolicyProvider); ok {
 			descriptor.ReleaseNamePolicy = provider.ReleaseNamePolicy()
 		} else {

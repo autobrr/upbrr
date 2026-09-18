@@ -20,7 +20,7 @@ func Profile() standalone.Profile {
 		AuthCapability:      authcontract.APIKeyCapability("BHDTV"),
 		PrepareDescription:  prepareDescription,
 		PrepareUpload:       prepareUpload,
-		ReleaseNamePolicy:   namePolicy(),
+		ReleaseNamePolicy:   trackers.SimpleSubjectReleaseNamePolicy("standalone/bhdtv/v1", resolveUploadName),
 		NewDuplicateAdapter: func(dupe.Dependencies) dupe.Adapter { return bhdtvDuplicateAdapter{} },
 		ValidationPolicy:    validationPolicy(),
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{

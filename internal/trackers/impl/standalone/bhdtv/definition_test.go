@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/metadata"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -33,17 +32,6 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 		t.Fatalf("write mediainfo: %v", err)
 	}
 
-	generated := metadata.BuildReleaseName(api.ReleaseNameRequest{
-		Category:    "TV",
-		Type:        "WEBDL",
-		Title:       "Show:",
-		Season:      "S01",
-		Episode:     "E01",
-		Resolution:  "1080p",
-		Source:      "WEB",
-		Audio:       "DD+",
-		VideoEncode: "H.265",
-	}, nil)
 	plan, failure := New().Prepare(context.Background(), trackers.PreparationInput{
 		Tracker: "BHDTV",
 		Intent:  trackers.PreparationIntentDryRun,
@@ -54,9 +42,8 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 			Type:                        "WEBDL",
 			VideoCodec:                  "H.265",
 			TVPack:                      false,
-			ReleaseName:                 generated.Name,
-			ReleaseNameNoTag:            generated.NameNoTag,
-			GeneratedName:               generated.GeneratedName,
+			ReleaseName:                 "Show: S01E01 DD+ 1080p WEB-DL H.265",
+			ReleaseNameNoTag:            "Show: S01E01 DD+ 1080p WEB-DL H.265",
 			Release:                     api.ReleaseInfo{Resolution: "1080p"},
 			Identity:                    api.ExternalIdentity{Category: "TV", TVmazeID: 321},
 			ProviderMetadata:            api.SourceScopedMetadata{IMDB: &api.IMDBMetadata{IMDbURL: "https://www.imdb.com/title/tt1234567/"}},
@@ -84,7 +71,7 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 	if entry.Payload["url"] != "https://www.tvmaze.com/shows/321" {
 		t.Fatalf("unexpected url %q", entry.Payload["url"])
 	}
-	if entry.Payload["name"] != "Show.S01E01.1080p.WEB-DL.DDP.H.265" {
+	if entry.Payload["name"] != "Show.S01E01.DDP.1080p.WEB-DL.H.265" {
 		t.Fatalf("unexpected name %q", entry.Payload["name"])
 	}
 }

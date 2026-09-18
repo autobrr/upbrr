@@ -4,158 +4,171 @@
 package bhd
 
 import (
-	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-var bhdAudioChannelPattern = regexp.MustCompile(`^(.+?)(\d+(?:\.\d+){1,2})$`)
+var (
+	bhdNoGroupSuffixPattern = regexp.MustCompile(`(?i)-(?:nogrp|nogroup|notag|unknown|unk)$`)
+	bhdAudioChannelPattern  = regexp.MustCompile(`^(.+?)(\d+(?:\.\d+){1,2})$`)
+)
 
-// applyBHDNameDefaults projects BHD's title, media, and group conventions onto
-// a generated document. It never interprets an already-rendered release name.
-func applyBHDNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
-	if isBHDTV(meta) {
-		if err := applyBHDTVTitleDefaults(editor, meta); err != nil {
-			return err
-		}
-	} else if err := applyBHDMovieTitleDefaults(editor, meta); err != nil {
-		return err
+// resolveUploadName preserves explicit P2P names and normalizes generated BHD
+// names using provider title, media, disc, and group rules.
+func resolveUploadName(meta api.UploadSubject) string {
+	name := selectedBHDReleaseName(meta)
+	if !isBHDGeneratedReleaseName(meta, name) {
+		return name
 	}
-	if component, exists := editor.Component(api.NameRoleAudio); exists && component.Present {
-		if audio := parseBHDAudioName(component.Value).formatted(); audio != "" {
-			if err := editor.Set(api.NameRoleAudio, audio); err != nil {
-				return bhdNameEditorError("format audio", err)
-			}
-		}
-	}
+
+	name = strings.Join(strings.Fields(name), " ")
+	name = strings.ReplaceAll(name, "DD+", "DDP")
+	name = applyBHDTitlePolicy(name, meta)
+	name, audio := applyBHDAudioPolicy(name, meta.Audio)
 	if isBHDFullDisc(meta) && IsDVDSource(meta.Source) {
-		if codec := strings.TrimSpace(meta.VideoCodec); codec != "" {
-			if component, exists := editor.Component(api.NameRoleVideoCodec); exists && component.Present {
-				if err := editor.MoveBefore(api.NameRoleVideoCodec, api.NameRoleAudio); err != nil {
-					return bhdNameEditorError("order DVD video codec", err)
-				}
-			} else if err := editor.InsertBefore(api.NameRoleVideoCodec, codec, api.NameRoleAudio); err != nil {
-				return bhdNameEditorError("insert DVD video codec", err)
+		name = applyBHDDVDVideoAudioOrder(name, strings.TrimSpace(meta.VideoCodec), audio)
+	}
+	name = applyBHDSDRMarker(name, meta)
+	name = applyBHDGroupPolicy(name, meta)
+	return strings.Join(strings.Fields(name), " ")
+}
+
+func selectedBHDReleaseName(meta api.UploadSubject) string {
+	return metautil.FirstNonEmptyTrimmed(
+		strings.TrimSpace(meta.ReleaseName),
+		strings.TrimSpace(meta.ReleaseNameNoTag),
+		strings.TrimSpace(meta.Filename),
+		pathutil.Base(meta.SourcePath),
+	)
+}
+
+func isBHDGeneratedReleaseName(meta api.UploadSubject, name string) bool {
+	name = strings.TrimSpace(name)
+	variants := []api.ReleaseNameVariant{
+		meta.GeneratedReleaseNames.IncludeEpisodeTitle,
+		meta.GeneratedReleaseNames.OmitEpisodeTitle,
+	}
+	for _, variant := range variants {
+		for _, candidate := range []string{variant.Name, variant.NameNoTag, variant.CleanName} {
+			if name != "" && name == strings.TrimSpace(candidate) {
+				return true
 			}
 		}
 	}
-	if isBHDSDRHEVC(meta) {
-		if err := editor.Set(api.NameRoleHDR, "SDR"); err != nil {
-			return bhdNameEditorError("set SDR marker", err)
-		}
-		if err := editor.Include(api.NameRoleHDR); err != nil {
-			return bhdNameEditorError("include SDR marker", err)
-		}
-		videoRole := api.NameRoleVideoCodec
-		if component, exists := editor.Component(api.NameRoleVideoEncode); exists && component.Present {
-			videoRole = api.NameRoleVideoEncode
-		}
-		if err := editor.MoveBefore(api.NameRoleHDR, videoRole); err != nil {
-			return bhdNameEditorError("order SDR marker", err)
-		}
-	}
-	return applyBHDGroupDefaults(editor, meta)
+	return false
 }
 
-func applyBHDMovieTitleDefaults(editor *trackers.NameEditor, meta api.UploadSubject) error {
-	title, alternate, year := bhdMovieTitles(meta)
-	if title != "" {
-		if err := editor.Set(api.NameRoleTitle, title); err != nil {
-			return bhdNameEditorError("set movie title", err)
-		}
+// applyBHDTitlePolicy uses provider primary titles and years while preserving
+// the finalized alternate title and technical suffix.
+func applyBHDTitlePolicy(name string, meta api.UploadSubject) string {
+	if isBHDTV(meta) {
+		return applyBHDTVTitlePolicy(name, meta)
 	}
-	if alternate == "" {
-		if err := editor.Omit(api.NameRoleAlternateTitle); err != nil {
-			return bhdNameEditorError("omit movie alternate title", err)
-		}
-	} else if err := editor.Set(api.NameRoleAlternateTitle, "AKA "+alternate); err != nil {
-		return bhdNameEditorError("set movie alternate title", err)
-	}
-	if year <= 0 {
-		return nil
-	}
-	if err := editor.Set(api.NameRoleYear, strconv.Itoa(year)); err != nil {
-		return bhdNameEditorError("set movie year", err)
-	}
-	if err := editor.Include(api.NameRoleYear); err != nil {
-		return bhdNameEditorError("include movie year", err)
-	}
-	return nil
+	return applyBHDMovieTitlePolicy(name, meta)
 }
 
-func applyBHDTVTitleDefaults(editor *trackers.NameEditor, meta api.UploadSubject) error {
-	if !meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) || meta.ProviderMetadata.TVDB == nil {
-		return nil
+func applyBHDMovieTitlePolicy(name string, meta api.UploadSubject) string {
+	title, original, year := bhdMovieTitles(meta)
+	if title == "" || year <= 0 {
+		return name
 	}
+	nameYear := meta.Release.Year
+	if nameYear <= 0 {
+		nameYear = year
+	}
+	_, end, ok := findBHDLastNameElement(name, strconv.Itoa(nameYear))
+	if !ok {
+		return name
+	}
+	prefix := bhdTitlePrefix(title, original)
+	return joinBHDName(prefix+" "+strconv.Itoa(year), name[end:])
+}
+
+// bhdMovieTitles preserves the finalized alternate title while preferring TMDB titles and the IMDb year.
+func bhdMovieTitles(meta api.UploadSubject) (string, string, int) {
+	original := trimBHDAKAPrefix(trackers.PreferredAlternateTitle(meta, meta.AlternateTitle))
+	omitAlternateTitle := meta.NamePresentation.Version == api.ReleaseNamePresentationVersionV1 && meta.NamePresentation.OmitAlternateTitle
+	if omitAlternateTitle {
+		original = ""
+	}
+	providerTitle := ""
+	switch {
+	case meta.ProviderMetadata.TMDB != nil && strings.TrimSpace(meta.ProviderMetadata.TMDB.Title) != "":
+		providerTitle = meta.ProviderMetadata.TMDB.Title
+	case meta.ProviderMetadata.IMDB != nil && strings.TrimSpace(meta.ProviderMetadata.IMDB.Title) != "":
+		providerTitle = meta.ProviderMetadata.IMDB.Title
+	}
+	title := trackers.PreferredTitle(meta, providerTitle)
+	providerYear := 0
+	if meta.ProviderMetadata.IMDB != nil && meta.ProviderMetadata.IMDB.Year > 0 {
+		providerYear = meta.ProviderMetadata.IMDB.Year
+	} else if meta.ProviderMetadata.TMDB != nil && meta.ProviderMetadata.TMDB.Year > 0 {
+		providerYear = meta.ProviderMetadata.TMDB.Year
+	}
+	year := trackers.PreferredYear(meta, providerYear)
+	return title, original, year
+}
+
+func applyBHDTVTitlePolicy(name string, meta api.UploadSubject) string {
 	tvdb := meta.ProviderMetadata.TVDB
-	title := trackers.PreferredTitle(meta, firstBHDTitle(tvdb.NameEnglish, tvdb.NameDisambiguation.CanonicalName))
-	if title != "" {
-		if err := editor.Set(api.NameRoleTitle, title); err != nil {
-			return bhdNameEditorError("set TV title", err)
-		}
-	}
-	if alternate := bhdAlternateTitle(meta); alternate == "" {
-		if err := editor.Omit(api.NameRoleAlternateTitle); err != nil {
-			return bhdNameEditorError("omit TV alternate title", err)
-		}
-	} else if err := editor.Set(api.NameRoleAlternateTitle, "AKA "+alternate); err != nil {
-		return bhdNameEditorError("set TV alternate title", err)
+	if tvdb == nil {
+		return name
 	}
 	evidence := tvdb.NameDisambiguation
 	if meta.EffectiveMetadata.YearProvenance.IsManual() {
 		evidence.SeriesYear = meta.EffectiveMetadata.Year
 	}
-	if !evidence.IncludeYear || evidence.SeriesYear <= 0 {
-		return nil
+	providerTitle := strings.TrimSpace(tvdb.NameEnglish)
+	if providerTitle == "" {
+		providerTitle = strings.TrimSpace(evidence.CanonicalName)
 	}
-	if err := editor.Set(api.NameRoleYear, strconv.Itoa(evidence.SeriesYear)); err != nil {
-		return bhdNameEditorError("set TV year", err)
-	}
-	if err := editor.Include(api.NameRoleYear); err != nil {
-		return bhdNameEditorError("include TV year", err)
-	}
-	return nil
-}
-
-func firstBHDTitle(values ...string) string {
-	for _, value := range values {
-		if value = strings.TrimSpace(value); value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-// bhdMovieTitles preserves finalized manual title facts while preferring the
-// provider title selected by BHD.
-func bhdMovieTitles(meta api.UploadSubject) (string, string, int) {
-	providerTitle := ""
-	providerYear := 0
-	if meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) {
-		providerTitle = firstBHDTitle(
-			bhdTMDBTitle(meta.ProviderMetadata.TMDB),
-			bhdIMDBTitle(meta.ProviderMetadata.IMDB),
-		)
-		if meta.ProviderMetadata.TMDB != nil {
-			providerYear = meta.ProviderMetadata.TMDB.Year
-		}
-		if meta.ProviderMetadata.IMDB != nil && meta.ProviderMetadata.IMDB.Year > 0 {
-			providerYear = meta.ProviderMetadata.IMDB.Year
-		}
-	}
-	return trackers.PreferredTitle(meta, providerTitle), bhdAlternateTitle(meta), trackers.PreferredYear(meta, providerYear)
-}
-
-func bhdAlternateTitle(meta api.UploadSubject) string {
+	title := trackers.PreferredTitle(meta, providerTitle)
+	original := trimBHDAKAPrefix(trackers.PreferredAlternateTitle(meta, meta.AlternateTitle))
 	if meta.NamePresentation.Version == api.ReleaseNamePresentationVersionV1 && meta.NamePresentation.OmitAlternateTitle {
-		return ""
+		original = ""
 	}
-	return trimBHDAKAPrefix(trackers.PreferredAlternateTitle(meta, meta.AlternateTitle))
+	tailStart := findBHDTVTailStart(name, meta)
+	if title == "" || tailStart < 0 {
+		return name
+	}
+	prefix := bhdTitlePrefix(title, original)
+	if evidence.IncludeYear && evidence.SeriesYear > 0 {
+		prefix = strings.TrimSpace(prefix + " " + strconv.Itoa(evidence.SeriesYear))
+	}
+	return joinBHDName(prefix, name[tailStart:])
+}
+
+func findBHDTVTailStart(name string, meta api.UploadSubject) int {
+	candidates := []string{
+		strings.TrimSpace(meta.SeasonStr + meta.EpisodeStr),
+		strings.TrimSpace(meta.SeasonStr),
+		strings.TrimSpace(meta.DailyEpisodeDate),
+		strings.TrimSpace(meta.Release.Resolution),
+	}
+	best := -1
+	for _, candidate := range candidates {
+		start, _, ok := findBHDNameElement(name, candidate)
+		if ok && (best < 0 || start < best) {
+			best = start
+		}
+	}
+	return best
+}
+
+func bhdTitlePrefix(title, original string) string {
+	title = strings.Join(strings.Fields(title), " ")
+	original = strings.Join(strings.Fields(trimBHDAKAPrefix(original)), " ")
+	if original == "" || strings.EqualFold(title, original) {
+		return title
+	}
+	return strings.TrimSpace(title + " AKA " + original)
 }
 
 func trimBHDAKAPrefix(value string) string {
@@ -171,10 +184,32 @@ func isBHDTV(meta api.UploadSubject) bool {
 		strings.EqualFold(strings.TrimSpace(meta.Release.Category), "TV")
 }
 
-type bhdAudioName struct{ codec, channels, object string }
+func applyBHDAudioPolicy(name, value string) (string, string) {
+	audio := parseBHDAudioName(value)
+	if audio.codec == "" {
+		return name, ""
+	}
+	for _, candidate := range audio.candidates() {
+		start, end, ok := findBHDNameElement(name, candidate)
+		if !ok {
+			continue
+		}
+		return name[:start] + audio.formatted() + name[end:], audio.formatted()
+	}
+	return name, audio.formatted()
+}
+
+type bhdAudioName struct {
+	codec    string
+	channels string
+	object   string
+}
 
 func parseBHDAudioName(value string) bhdAudioName {
 	fields := strings.Fields(strings.ReplaceAll(strings.TrimSpace(value), "DD+", "DDP"))
+	if len(fields) == 0 {
+		return bhdAudioName{}
+	}
 	result := bhdAudioName{}
 	codec := make([]string, 0, len(fields))
 	for _, field := range fields {
@@ -188,9 +223,9 @@ func parseBHDAudioName(value string) bhdAudioName {
 			if len(matches) == 3 && isBHDAudioChannel(matches[2]) {
 				codec = append(codec, matches[1])
 				result.channels = matches[2]
-			} else {
-				codec = append(codec, field)
+				continue
 			}
+			codec = append(codec, field)
 		}
 	}
 	result.codec = strings.Join(codec, " ")
@@ -202,6 +237,27 @@ func (a bhdAudioName) formatted() string {
 		return strings.TrimSpace(a.codec + a.channels + " " + a.object)
 	}
 	return strings.Join(strings.Fields(strings.Join([]string{a.codec, a.object, a.channels}, " ")), " ")
+}
+
+func (a bhdAudioName) candidates() []string {
+	candidates := []string{
+		strings.Join(strings.Fields(strings.Join([]string{a.codec, a.channels, a.object}, " ")), " "),
+		strings.Join(strings.Fields(strings.Join([]string{a.codec, a.object, a.channels}, " ")), " "),
+		a.formatted(),
+	}
+	if a.channels != "" {
+		candidates = append(candidates,
+			strings.TrimSpace(a.codec+a.channels+" "+a.object),
+			strings.TrimSpace(a.codec+a.object+" "+a.channels),
+		)
+	}
+	result := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate != "" && !slices.Contains(result, candidate) {
+			result = append(result, candidate)
+		}
+	}
+	return result
 }
 
 func isBHDAudioChannel(value string) bool {
@@ -222,50 +278,67 @@ func isBHDAudioChannel(value string) bool {
 	return true
 }
 
+func applyBHDDVDVideoAudioOrder(name, videoCodec, audio string) string {
+	videoCodec = strings.Join(strings.Fields(videoCodec), " ")
+	if videoCodec == "" || audio == "" {
+		return name
+	}
+	audioStart, _, audioFound := findBHDNameElement(name, audio)
+	if !audioFound {
+		return name
+	}
+	codecStart, codecEnd, codecFound := findBHDNameElement(name, videoCodec)
+	if codecFound && codecStart < audioStart {
+		return name
+	}
+	if codecFound {
+		name = strings.TrimSpace(name[:codecStart] + " " + name[codecEnd:])
+		audioStart, _, audioFound = findBHDNameElement(name, audio)
+		if !audioFound {
+			return name
+		}
+	}
+	return strings.TrimSpace(name[:audioStart] + videoCodec + " " + name[audioStart:])
+}
+
+func applyBHDSDRMarker(name string, meta api.UploadSubject) string {
+	if !isBHDSDRHEVC(meta) {
+		return name
+	}
+	if _, _, ok := findBHDNameElement(name, "SDR"); ok {
+		return name
+	}
+	start, _, ok := findBHDNameElement(name, strings.TrimSpace(meta.VideoCodec))
+	if !ok {
+		return name
+	}
+	return strings.TrimSpace(name[:start] + "SDR " + name[start:])
+}
+
 func isBHDSDRHEVC(meta api.UploadSubject) bool {
 	if !strings.EqualFold(strings.TrimSpace(meta.VideoCodec), "HEVC") ||
-		(!isBHDFullDisc(meta) && !strings.EqualFold(strings.TrimSpace(meta.Type), "REMUX")) {
+		!isBHDFullDisc(meta) && !strings.EqualFold(strings.TrimSpace(meta.Type), "REMUX") {
 		return false
 	}
-	return meta.HDRFacts.Status == api.HDREvidenceComplete && len(meta.HDRFacts.Formats) == 1 && meta.HDRFacts.Formats[0] == api.HDRFormatSDR
+	return meta.HDRFacts.Status == api.HDREvidenceComplete &&
+		len(meta.HDRFacts.Formats) == 1 &&
+		meta.HDRFacts.Formats[0] == api.HDRFormatSDR
 }
 
-func applyBHDGroupDefaults(editor *trackers.NameEditor, meta api.UploadSubject) error {
+func applyBHDGroupPolicy(name string, meta api.UploadSubject) string {
 	group := bhdReleaseGroup(meta)
-	if group == "" && isBHDFullDisc(meta) {
-		if err := editor.Omit(api.NameRoleGroup); err != nil {
-			return bhdNameEditorError("omit full-disc group", err)
+	if group != "" {
+		name = bhdNoGroupSuffixPattern.ReplaceAllString(name, "")
+		if !hasBHDGroupSuffix(name, group) {
+			name = strings.TrimRight(name, ".-_ ") + "-" + group
 		}
-		return nil
+		return name
 	}
-	if group == "" {
-		group = "NOGROUP"
+	name = bhdNoGroupSuffixPattern.ReplaceAllString(name, "")
+	if isBHDFullDisc(meta) {
+		return strings.TrimRight(name, ".-_ ")
 	}
-	if err := editor.Set(api.NameRoleGroup, "-"+group); err != nil {
-		return bhdNameEditorError("set group", err)
-	}
-	if err := editor.Include(api.NameRoleGroup); err != nil {
-		return bhdNameEditorError("include group", err)
-	}
-	return nil
-}
-
-func bhdTMDBTitle(metadata *api.TMDBMetadata) string {
-	if metadata == nil {
-		return ""
-	}
-	return metadata.Title
-}
-
-func bhdIMDBTitle(metadata *api.IMDBMetadata) string {
-	if metadata == nil {
-		return ""
-	}
-	return metadata.Title
-}
-
-func bhdNameEditorError(action string, err error) error {
-	return fmt.Errorf("BHD name policy %s: %w", action, err)
+	return strings.TrimRight(name, ".-_ ") + "-NOGROUP"
 }
 
 func bhdReleaseGroup(meta api.UploadSubject) string {
@@ -281,6 +354,10 @@ func bhdReleaseGroup(meta api.UploadSubject) string {
 	return ""
 }
 
+func hasBHDGroupSuffix(name, group string) bool {
+	return strings.HasSuffix(strings.ToLower(strings.TrimSpace(name)), "-"+strings.ToLower(strings.TrimSpace(group)))
+}
+
 func isBHDFullDisc(meta api.UploadSubject) bool {
 	if strings.EqualFold(strings.TrimSpace(meta.Type), "DISC") {
 		return true
@@ -291,4 +368,56 @@ func isBHDFullDisc(meta api.UploadSubject) bool {
 	default:
 		return false
 	}
+}
+
+func findBHDNameElement(value, element string) (int, int, bool) {
+	element = strings.Join(strings.Fields(element), " ")
+	if element == "" {
+		return 0, 0, false
+	}
+	lowerValue := strings.ToLower(value)
+	lowerElement := strings.ToLower(element)
+	offset := 0
+	for {
+		index := strings.Index(lowerValue[offset:], lowerElement)
+		if index < 0 {
+			return 0, 0, false
+		}
+		start := offset + index
+		end := start + len(element)
+		if (start == 0 || isBHDNameSeparator(value[start-1])) &&
+			(end == len(value) || isBHDNameSeparator(value[end])) {
+			return start, end, true
+		}
+		offset = start + 1
+	}
+}
+
+func findBHDLastNameElement(value, element string) (int, int, bool) {
+	lastStart := 0
+	lastEnd := 0
+	found := false
+	offset := 0
+	for offset < len(value) {
+		start, end, ok := findBHDNameElement(value[offset:], element)
+		if !ok {
+			break
+		}
+		lastStart = offset + start
+		lastEnd = offset + end
+		found = true
+		offset = lastStart + 1
+	}
+	return lastStart, lastEnd, found
+}
+
+func isBHDNameSeparator(value byte) bool {
+	return value == ' ' || value == '.' || value == '_' || value == '-'
+}
+
+func joinBHDName(prefix, suffix string) string {
+	if strings.HasPrefix(suffix, "-") {
+		return strings.TrimSpace(prefix) + suffix
+	}
+	return strings.Join(strings.Fields(strings.TrimSpace(prefix)+" "+strings.TrimSpace(suffix)), " ")
 }

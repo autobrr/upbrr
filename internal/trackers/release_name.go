@@ -182,7 +182,6 @@ func releaseNamePolicySubject(input ReleaseNameInput) (api.UploadSubject, error)
 	subject.SceneName = ""
 	subject.Filename = ""
 	subject.GeneratedReleaseNames = api.GeneratedReleaseNameVariants{}
-	subject.GeneratedName = nil
 	return subject, nil
 }
 
@@ -210,13 +209,8 @@ func validateReleaseNamePolicy(binding ReleaseNamePolicyBinding) error {
 	if !strings.Contains(binding.ID, "/v") {
 		return fmt.Errorf("release-name policy id %q is not versioned", binding.ID)
 	}
-	if (binding.Resolver == nil) == (binding.Structured == nil) {
-		return fmt.Errorf("release-name policy %q must have exactly one resolver", binding.ID)
-	}
-	if binding.Structured != nil {
-		if err := validateStructuredNamePolicy(binding.Structured); err != nil {
-			return fmt.Errorf("release-name policy %q: %w", binding.ID, err)
-		}
+	if binding.Resolver == nil {
+		return fmt.Errorf("release-name policy %q has no resolver", binding.ID)
 	}
 	if _, err := normalizedReleaseNameElementPolicy(binding.Elements); err != nil {
 		return fmt.Errorf("release-name policy %q element policy: %w", binding.ID, err)
@@ -234,12 +228,9 @@ func validateReleaseNamePolicy(binding ReleaseNamePolicyBinding) error {
 	return nil
 }
 
-func releaseNameConfirmationRequired(input PreparationInput, binding ReleaseNamePolicyBinding, resolvedUploadName string) bool {
-	if !releaseNameConfirmationApplies(input, binding) {
-		return false
-	}
-	return input.RequestedUploadName == nil ||
-		strings.TrimSpace(*input.RequestedUploadName) != strings.TrimSpace(resolvedUploadName)
+func releaseNameConfirmationRequired(input PreparationInput, binding ReleaseNamePolicyBinding) bool {
+	return releaseNameConfirmationApplies(input, binding) &&
+		input.RequestedUploadName == nil
 }
 
 func releaseNameConfirmationApplies(input PreparationInput, binding ReleaseNamePolicyBinding) bool {
@@ -270,27 +261,18 @@ func resolveReleaseNames(input PreparationInput, binding ReleaseNamePolicyBindin
 	if err != nil {
 		return ResolvedReleaseNames{}, err
 	}
-	subject := input.Meta
-	if binding.Structured == nil {
-		subject = applyReleaseNamePresentation(subject, input.RequestedUploadName)
-		subject = applyReleaseNameElementPolicy(subject, input.RequestedUploadName, elementPolicy)
-	}
-	nameInput := ReleaseNameInput{
+	subject := applyReleaseNamePresentation(input.Meta, input.RequestedUploadName)
+	subject = applyReleaseNameElementPolicy(subject, input.RequestedUploadName, elementPolicy)
+	resolved, err := binding.Resolver(ReleaseNameInput{
 		Subject:       subject,
 		TrackerConfig: input.TrackerConfig,
 		RequestedName: input.RequestedUploadName,
 		ElementPolicy: elementPolicy,
-	}
-	var resolved ResolvedReleaseNames
-	if binding.Structured != nil {
-		resolved, err = resolveStructuredNames(nameInput, binding)
-	} else {
-		resolved, err = binding.Resolver(nameInput)
-	}
+	})
 	if err != nil {
 		return ResolvedReleaseNames{}, fmt.Errorf("resolve release names with %s: %w", binding.ID, err)
 	}
-	if input.RequestedUploadName == nil && binding.Structured == nil {
+	if input.RequestedUploadName == nil {
 		resolved = applyProviderMovieYear(resolved, subject, binding.MovieYearProvider)
 	}
 	resolved.Upload = strings.TrimSpace(resolved.Upload)
@@ -585,7 +567,6 @@ func applyResolvedReleaseNames(projection *api.TrackerReleaseProjection, resolve
 	projection.UploadReleaseName = resolved.Upload
 	projection.DuplicateCriteria.Name = resolved.Duplicate
 	projection.AdditionalNames = normalizeReleaseNames(append(projection.AdditionalNames, resolved.Additional...))
-	projection.PolicyDecisions = append(projection.PolicyDecisions, resolved.Decisions...)
 }
 
 func releaseNameProjectionFingerprint(
@@ -612,11 +593,6 @@ func releaseNameProjectionFingerprint(
 		UploadName       string
 		DuplicateName    string
 		AdditionalNames  []api.TrackerReleaseName
-		Authority        []NameAuthority
-		Opaque           OpaqueNameMode
-		NamingDecisions  []api.TrackerPolicyDecision
-		DocumentVersion  string
-		NameSeparator    string
 	}{
 		Policy:           policyFingerprint,
 		PolicyID:         descriptor.ReleaseNamePolicy.ID,
@@ -630,11 +606,6 @@ func releaseNameProjectionFingerprint(
 		UploadName:       projection.UploadReleaseName,
 		DuplicateName:    projection.DuplicateCriteria.Name,
 		AdditionalNames:  projection.AdditionalNames,
-		Authority:        structuredNameAuthority(descriptor.ReleaseNamePolicy),
-		Opaque:           structuredNameOpaqueMode(descriptor.ReleaseNamePolicy),
-		NamingDecisions:  namingOverrideDecisions(projection.PolicyDecisions),
-		DocumentVersion:  structuredNameDocumentVersion(descriptor.ReleaseNamePolicy),
-		NameSeparator:    structuredNameSeparator(descriptor.ReleaseNamePolicy),
 	})
 	if err != nil {
 		return "", fmt.Errorf("release-name projection fingerprint: %w", err)
@@ -653,18 +624,18 @@ func PrepareInputWithReleaseNamePolicy(
 		return input, nil
 	}
 	if input.Projection == nil {
-		projection := pureReleaseProjection(input)
-		resolved, err := resolveProjectedReleaseNames(input, binding)
-		if err != nil {
-			return input, NewPreparationFailure(input.Tracker, "name_policy", "tracker release-name policy failed", err)
-		}
-		if releaseNameConfirmationRequired(input, binding, resolved.Upload) {
+		if releaseNameConfirmationRequired(input, binding) {
 			return input, NewPreparationFailure(
 				input.Tracker,
 				releaseNameConfirmationCode,
 				"tracker release name requires confirmation",
 				nil,
 			)
+		}
+		projection := pureReleaseProjection(input)
+		resolved, err := resolveProjectedReleaseNames(input, binding)
+		if err != nil {
+			return input, NewPreparationFailure(input.Tracker, "name_policy", "tracker release-name policy failed", err)
 		}
 		applyResolvedReleaseNames(&projection, resolved)
 		appendReleaseNameProvenance(&projection, binding, input.RequestedUploadName)
@@ -712,21 +683,10 @@ func releaseNamesMatchProjection(
 	applyResolvedReleaseNames(&expected, resolved)
 	elementPolicy := binding.Elements.Normalized()
 	return expected.UploadReleaseName == strings.TrimSpace(projection.UploadReleaseName) &&
-		slices.Equal(structuredNamingDecisions(expected.PolicyDecisions), structuredNamingDecisions(projection.PolicyDecisions)) &&
 		expected.DuplicateCriteria.Name == strings.TrimSpace(projection.DuplicateCriteria.Name) &&
 		slices.Equal(expected.AdditionalNames, normalizeReleaseNames(projection.AdditionalNames)) &&
 		elementPolicy.Version == strings.TrimSpace(projection.NamingElementPolicyVersion) &&
 		elementPolicy.EpisodeTitleMode == api.NormalizeEpisodeTitleMode(projection.EpisodeTitleMode)
-}
-
-func structuredNamingDecisions(decisions []api.TrackerPolicyDecision) []api.TrackerPolicyDecision {
-	var result []api.TrackerPolicyDecision
-	for _, decision := range decisions {
-		if decision.Code == "release_name_structure" || strings.HasPrefix(decision.Code, "release_name_override") {
-			result = append(result, decision)
-		}
-	}
-	return result
 }
 
 // ReviewedUploadName returns the exact reviewed principal name for payload construction.

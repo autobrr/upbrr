@@ -4,57 +4,30 @@
 package hdt
 
 import (
-	"fmt"
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func namePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.StructuredReleaseNamePolicy("standalone/hdt/v2", trackers.StructuredNamePolicy{
-		Defaults: applyNameDefaults,
-		Search: func(meta api.UploadSubject, _ config.TrackerConfig) string {
-			if meta.Identity.IMDBID != 0 {
-				return ""
-			}
-			return strings.TrimSpace(meta.Release.Title)
-		},
-	})
+func resolveName(meta api.UploadSubject) string {
+	name := strings.TrimSpace(meta.ReleaseName)
+	if strings.EqualFold(strings.TrimSpace(meta.Type), "WEBDL") || strings.EqualFold(strings.TrimSpace(meta.Type), "WEBRIP") ||
+		strings.EqualFold(strings.TrimSpace(meta.Type), "ENCODE") {
+		name = strings.Replace(name, meta.Audio, strings.Replace(meta.Audio, " ", "", 1), 1)
+	}
+	name = strings.ReplaceAll(name, " DV ", " DoVi ")
+	name = strings.ReplaceAll(name, "BluRay REMUX", "Blu-ray Remux")
+	name = strings.Join(strings.Fields(name), " ")
+	name = strings.ReplaceAll(name, ":", "")
+	return strings.TrimSpace(name)
 }
-func applyNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
-	switch strings.ToUpper(strings.TrimSpace(meta.Type)) {
-	case "WEBDL", "WEBRIP", "ENCODE":
-		if c, ok := editor.Component(api.NameRoleAudio); ok {
-			if err := editor.Set(c.Role, strings.Replace(c.Value, " ", "", 1)); err != nil {
-				return fmt.Errorf("normalize HDT audio: %w", err)
-			}
-		}
+
+func resolveSearchName(meta api.UploadSubject) string {
+	if meta.Identity.IMDBID != 0 {
+		return resolveName(meta)
 	}
-	if c, ok := editor.Component(api.NameRoleHDR); ok && c.Present {
-		if err := editor.Set(c.Role, strings.ReplaceAll(c.Value, "DV", "DoVi")); err != nil {
-			return fmt.Errorf("normalize HDT HDR: %w", err)
-		}
+	if title := strings.TrimSpace(meta.Release.Title); title != "" {
+		return title
 	}
-	if strings.EqualFold(meta.Type, "REMUX") && strings.EqualFold(meta.Source, "BluRay") {
-		if err := editor.Set(api.NameRoleSource, "Blu-ray"); err != nil {
-			return fmt.Errorf("set HDT remux source: %w", err)
-		}
-		if err := editor.Set(api.NameRoleVideoFormat, "Remux"); err != nil {
-			return fmt.Errorf("set HDT remux format: %w", err)
-		}
-	}
-	for _, role := range editor.PresentRoles() {
-		c, _ := editor.Component(role)
-		value := strings.ReplaceAll(c.Value, ":", "")
-		if strings.TrimSpace(value) == "" {
-			if err := editor.Omit(role); err != nil {
-				return fmt.Errorf("omit empty HDT %s: %w", role, err)
-			}
-		} else if err := editor.Set(role, value); err != nil {
-			return fmt.Errorf("sanitize HDT %s: %w", role, err)
-		}
-	}
-	return nil
+	return strings.TrimSpace(meta.ReleaseName)
 }

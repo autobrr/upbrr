@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -263,13 +262,14 @@ func TestRegistryProjectionRequiresNonSceneUploadNameConfirmationWithoutBlocking
 	t.Parallel()
 
 	registry := NewRegistry()
-	policy := WithNonSceneReleaseNameConfirmation(StructuredReleaseNamePolicy("test/confirmation-rebuild/v1", StructuredNamePolicy{
-		Opaque:    OpaqueNameRebuild,
-		Authority: []NameAuthority{{Role: api.NameRoleEdition, Aspect: NamePresence}},
-		Mandatory: func(editor *NameEditor, _ api.UploadSubject, _ config.TrackerConfig) error {
-			return editor.Omit(api.NameRoleEdition)
-		},
-	}))
+	policy := WithNonSceneReleaseNameConfirmation(
+		SimpleSubjectReleaseNamePolicy("standalone/example/v2", func(subject api.UploadSubject) string {
+			if subject.Scene {
+				return subject.SceneName
+			}
+			return subject.ReleaseName
+		}),
+	)
 	if err := registry.RegisterDescriptor(Descriptor{
 		Name:              "EXAMPLE",
 		DisplayName:       "Example Tracker",
@@ -281,13 +281,12 @@ func TestRegistryProjectionRequiresNonSceneUploadNameConfirmationWithoutBlocking
 		t.Fatalf("register descriptor: %v", err)
 	}
 	fingerprint := mustProjectionFingerprint(t, "projection")
-	project := func(meta api.UploadSubject, requested *string, confirmed api.WorkflowFingerprint) api.TrackerReleaseProjection {
+	project := func(meta api.UploadSubject, requested *string) api.TrackerReleaseProjection {
 		t.Helper()
 		projection, failure := registry.ProjectRelease(context.Background(), PreparationInput{
-			Tracker:                  "EXAMPLE",
-			Meta:                     meta,
-			RequestedUploadName:      requested,
-			ConfirmedNameFingerprint: confirmed,
+			Tracker:             "EXAMPLE",
+			Meta:                meta,
+			RequestedUploadName: requested,
 		}, fingerprint, fingerprint, fingerprint)
 		if failure != nil {
 			t.Fatalf("project release: %v", failure)
@@ -295,15 +294,15 @@ func TestRegistryProjectionRequiresNonSceneUploadNameConfirmationWithoutBlocking
 		return projection
 	}
 
-	subject := structuredSubject()
-	blocked := project(subject, nil, "")
+	const proposed = "Example.Release.2026-GRP"
+	blocked := project(api.UploadSubject{ReleaseName: proposed}, nil)
 	if blocked.Readiness != api.ReadinessStatusReady || !blocked.DupeReady || blocked.UploadReady ||
 		len(blocked.RequiredActions) != 1 {
 		t.Fatalf("upload-pending projection = %#v", blocked)
 	}
 	action := blocked.RequiredActions[0]
 	if action.Kind != api.RequiredActionProvideTrackerInput || action.TrackerID != "EXAMPLE" ||
-		!action.AllowsFreeText || len(action.Options) != 1 || action.Options[0].Value != blocked.UploadReleaseName {
+		!action.AllowsFreeText || len(action.Options) != 1 || action.Options[0].Value != proposed {
 		t.Fatalf("confirmation action = %#v", action)
 	}
 	if !slices.ContainsFunc(blocked.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
@@ -314,19 +313,20 @@ func TestRegistryProjectionRequiresNonSceneUploadNameConfirmationWithoutBlocking
 		t.Fatalf("confirmation policy decision missing: %#v", blocked.PolicyDecisions)
 	}
 
-	opaque := "Opaque Uncut Name-GRP"
-	rebuilt := project(subject, &opaque, blocked.NamingFingerprint)
-	if rebuilt.Readiness != api.ReadinessStatusReady || !rebuilt.DupeReady || rebuilt.UploadReady ||
-		len(rebuilt.RequiredActions) != 1 || rebuilt.UploadReleaseName != blocked.UploadReleaseName ||
-		rebuilt.NamingFingerprint == blocked.NamingFingerprint {
-		t.Fatalf("opaque rebuilt projection bypassed confirmation = %#v", rebuilt)
-	}
-
-	exact := blocked.UploadReleaseName
-	confirmed := project(subject, &exact, "")
+	const reviewed = "Example.Release.2026.REVIEWED-GRP"
+	confirmedName := reviewed
+	confirmed := project(api.UploadSubject{ReleaseName: proposed}, &confirmedName)
 	if confirmed.Readiness != api.ReadinessStatusReady || !confirmed.DupeReady || !confirmed.UploadReady ||
-		len(confirmed.RequiredActions) != 0 || confirmed.UploadReleaseName != exact {
-		t.Fatalf("exact rebuilt name was not accepted = %#v", confirmed)
+		len(confirmed.RequiredActions) != 0 || confirmed.UploadReleaseName != reviewed {
+		t.Fatalf("confirmed projection = %#v", confirmed)
+	}
+	if confirmed.CriteriaFingerprint != blocked.CriteriaFingerprint ||
+		confirmed.DuplicateTargetFingerprint != blocked.DuplicateTargetFingerprint ||
+		confirmed.DuplicateSearchFingerprint != blocked.DuplicateSearchFingerprint ||
+		confirmed.DuplicatePolicyFingerprint != blocked.DuplicatePolicyFingerprint ||
+		confirmed.DuplicateCriteria.Name != blocked.DuplicateCriteria.Name ||
+		!slices.Equal(confirmed.DuplicateTarget.Names, blocked.DuplicateTarget.Names) {
+		t.Fatalf("reviewed upload name changed duplicate semantics: pending=%#v confirmed=%#v", blocked, confirmed)
 	}
 	if !slices.ContainsFunc(confirmed.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
 		return decision.Code == releaseNameConfirmationCode &&
@@ -336,10 +336,15 @@ func TestRegistryProjectionRequiresNonSceneUploadNameConfirmationWithoutBlocking
 		t.Fatalf("confirmed policy decision missing: %#v", confirmed.PolicyDecisions)
 	}
 
-	marked := project(subject, nil, blocked.NamingFingerprint)
-	if marked.Readiness != api.ReadinessStatusReady || !marked.DupeReady || !marked.UploadReady ||
-		len(marked.RequiredActions) != 0 || marked.UploadReleaseName != blocked.UploadReleaseName {
-		t.Fatalf("server-confirmed generated projection = %#v", marked)
+	const sceneName = "Example Release [SCENE].2026-GRP"
+	scene := project(api.UploadSubject{
+		Scene:       true,
+		SceneName:   sceneName,
+		ReleaseName: proposed,
+	}, nil)
+	if scene.Readiness != api.ReadinessStatusReady || scene.UploadReleaseName != sceneName ||
+		len(scene.RequiredActions) != 0 {
+		t.Fatalf("scene projection = %#v", scene)
 	}
 }
 
@@ -369,41 +374,6 @@ func TestPrepareAdapterRejectsPayloadSemanticsThatDifferFromReviewedProjection(t
 	}
 	if got := plan.DryRun().ReleaseName; got != input.Projection.UploadReleaseName {
 		t.Fatalf("prepared release name = %q, want %q", got, input.Projection.UploadReleaseName)
-	}
-}
-
-func TestRegistryProjectionExplainsUnsatisfiedNamingRule(t *testing.T) {
-	registry := NewRegistry()
-	policy := StructuredReleaseNamePolicy("test/required-edition/v1", StructuredNamePolicy{
-		Authority: []NameAuthority{{Role: api.NameRoleEdition, Aspect: NamePresence}},
-		Mandatory: func(editor *NameEditor, _ api.UploadSubject, _ config.TrackerConfig) error {
-			return editor.Omit(api.NameRoleEdition)
-		},
-	})
-	if err := registry.RegisterDescriptor(Descriptor{
-		Name:              "EXAMPLE",
-		Definition:        projectionStubDefinition{stubDefinition: stubDefinition{name: "EXAMPLE"}},
-		Family:            FamilyStandalone,
-		ReleaseNamePolicy: policy,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	fingerprint := mustProjectionFingerprint(t, "blocked-naming")
-	projection, failure := registry.ProjectRelease(t.Context(), PreparationInput{
-		Tracker:             "EXAMPLE",
-		Meta:                structuredSubject(),
-		RequestedUploadName: new("Opaque Uncut Name-GRP"),
-	}, fingerprint, fingerprint, fingerprint)
-	if failure == nil || failure.Code() != "name_rule_unsatisfied" || projection.DupeReady || projection.UploadReady || projection.Readiness != api.ReadinessStatusBlocked {
-		t.Fatalf("unsatisfied naming outcome = %+v, %v", projection, failure)
-	}
-	if !strings.Contains(failure.Message(), "clear the name override and reprepare") {
-		t.Fatalf("missing actionable naming detail: %q", failure.Message())
-	}
-	if !slices.ContainsFunc(projection.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
-		return decision.Code == "name_rule_unsatisfied" && decision.Blocking && decision.Message == failure.Message()
-	}) {
-		t.Fatalf("projection lost naming recovery detail: %+v", projection.PolicyDecisions)
 	}
 }
 

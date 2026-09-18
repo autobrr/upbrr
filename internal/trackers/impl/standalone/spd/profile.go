@@ -21,7 +21,7 @@ func Profile() standalone.Profile {
 		AuthCapability:      authcontract.APIKeyCapability("SPD"),
 		PrepareDescription:  prepareDescription,
 		PrepareUpload:       prepareUpload,
-		ReleaseNamePolicy:   namePolicy(),
+		ReleaseNamePolicy:   trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/spd/v1", resolveUploadName, resolveSearchName),
 		NewDuplicateAdapter: newDuplicateAdapter,
 		ValidationPolicy:    validationPolicy(),
 		BannedGroupPolicy: &trackers.BannedGroupPolicy{
