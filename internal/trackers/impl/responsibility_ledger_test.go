@@ -113,7 +113,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 	unit3DResponsibilityVersion("YUS", "yus", "", "v3"),
 	unit3DResponsibilityVersion("ZNTH", "znth", "", "v2"),
 	azFamilyResponsibilityVersion("AZ", "v3"),
-	azFamilyResponsibilityVersion("CZ", "v4"),
+	azFamilyResponsibilityVersion("CZ", "v5"),
 	azFamilyResponsibilityVersion("PHD", "v3"),
 	{
 		name:              "ANT",

@@ -33,7 +33,7 @@ func (d *Definition) Name() string {
 func (d *Definition) TrackerFamily() trackers.Family { return trackers.FamilyAZFamily }
 
 // ReleaseNamePolicy returns the site's versioned structured upload/search naming contract.
-// CinemaZ v4 uses IMDb as movie-year authority; AZ and PHD v3 use TMDB.
+// CinemaZ v5 uses IMDb as movie-year authority; AZ and PHD v3 use TMDB.
 func (d *Definition) ReleaseNamePolicy() trackers.ReleaseNamePolicyBinding {
 	return releaseNamePolicy(d.site)
 }
