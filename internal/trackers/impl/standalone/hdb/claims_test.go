@@ -195,6 +195,66 @@ func TestHDBClaimHeaderValidation(t *testing.T) {
 	}
 }
 
+func TestHDBEditFooterAllowsConfiguredOwnClaim(t *testing.T) {
+	t.Parallel()
+	const footer = `<p><font size="1" class="small">Last edited by <a href="/userdetails.php?id=123"><b>editor</b></a> at 2026-09-02 12:54:49 </font></p>`
+	for _, tt := range []struct {
+		name           string
+		internalGroups config.CSVList
+		extra          string
+		wantClaim      bool
+		wantComplete   bool
+	}{
+		{
+name: "configured owner",
+ internalGroups: config.CSVList{"-grp"},
+ wantComplete: true,
+},
+		{
+name: "unconfigured owner",
+ wantClaim: true,
+ wantComplete: true,
+},
+		{
+name: "malformed row before footer",
+ internalGroups: config.CSVList{"GRP"},
+ extra: "Unrecognized claim row<br>",
+ wantClaim: true,
+},
+		{
+name: "conflicting owner before footer",
+ internalGroups: config.CSVList{"GRP"},
+ extra: "Harbor Watch -- HDB -- Other<br>",
+ wantClaim: true,
+ wantComplete: true,
+},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			page := `<div class="post">Show -- Site(s) Uploaded To -- Group<br>Harbor Watch -- HDB -- GRP<br>` + tt.extra + footer + `</div>`
+			if _, complete := extractHDBClaimRecords(page); complete != tt.wantComplete {
+				t.Fatalf("complete=%t want=%t", complete, tt.wantComplete)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(page))
+			}))
+			defer server.Close()
+			cfg := hdbClaimConfig(t)
+			cfg.Trackers.Trackers = map[string]config.TrackerConfig{"HDB": {InternalGroups: tt.internalGroups}}
+			d := New()
+			d.baseURL, d.httpClient = server.URL, server.Client()
+			meta := hdbClaimSubject()
+			meta.Tag = "GRP"
+			checker := d.NewClaimChecker(cfg, nil)
+			for range 2 {
+				if claimed, err := checker.HasClaim(t.Context(), meta); err != nil || claimed != tt.wantClaim {
+					t.Fatalf("claimed=%t want=%t err=%v", claimed, tt.wantClaim, err)
+				}
+			}
+		})
+	}
+}
+
 func TestHDBTrailingTextRetainsBlockingEvidence(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {

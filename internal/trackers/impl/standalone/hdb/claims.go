@@ -45,6 +45,7 @@ var (
 	hdbSpacePattern      = regexp.MustCompile(`\s+`)
 	hdbTime24Pattern     = regexp.MustCompile(`^(\d{1,2}):(\d{2})(?::(\d{2}))?$`)
 	hdbTime12Pattern     = regexp.MustCompile(`^(\d{1,2}):(\d{2})\s*([AaPp][Mm])$`)
+	hdbEditFooterPattern = regexp.MustCompile(`^Last edited by \S+ at \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$`)
 )
 
 type hdbClaimedShowsCache struct {
@@ -300,6 +301,10 @@ func parseHDBClaimRecords(text string) ([]hdbClaimRecord, int, bool) {
 			if isHDBClaimHeader(line) {
 				inList = true
 			}
+			continue
+		}
+		// The forum's edit footer is metadata, not an unparsed claim row.
+		if hdbEditFooterPattern.MatchString(line) {
 			continue
 		}
 		parts := strings.SplitN(line, "--", 4)
