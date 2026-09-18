@@ -131,8 +131,9 @@ func (m *Module) reviewTrackerReleaseName(
 		trackerNames[index] = string(trackerID)
 	}
 	subject, err := m.preparer.ResolveUploadSubject(ctx, api.UploadSubjectInput{
-		Release:  currentProjections.ReleaseRef,
-		Trackers: trackerNames,
+		Release:              currentProjections.ReleaseRef,
+		Trackers:             trackerNames,
+		QuestionnaireAnswers: cloneTrackerInputAnswers(state.TrackerInputAnswers),
 	})
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow resolve reviewed tracker name subject: %w", err)
