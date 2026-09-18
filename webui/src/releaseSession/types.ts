@@ -30,6 +30,7 @@ import type {
   ReleaseCorrectionsSnapshot,
   RequiredAction,
   ReleaseWorkflowCurrent,
+  TrackerLaneOutcome,
   TrackerPreflightAssessment,
   TrackerReleaseProjectionSet,
   TrackerProjectionInstructions,
@@ -321,6 +322,8 @@ export type UploadFacet = Readonly<{
     uploadStatus: FacetStatus;
     dryRunResult: UploadDryRunResult | null;
     result: UploadResult | null;
+    /** Backend-owned per-tracker downstream decision; never derived in views. */
+    trackerOutcomes: readonly TrackerLaneOutcome[];
     error: string;
   }>;
   chooseTrackers(trackers: readonly string[]): void;

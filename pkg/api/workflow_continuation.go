@@ -303,17 +303,58 @@ type WorkflowExactRefs struct {
 	UploadResult    *UploadResultRef                `json:"uploadResult,omitempty"`
 }
 
+// UploadEligibility reports whether retained evidence keeps one tracker in the
+// downstream media, description, and upload set.
+type UploadEligibility string
+
+const (
+	// UploadEligibilityUnknown means retained evidence cannot decide yet.
+	UploadEligibilityUnknown UploadEligibility = "unknown"
+	// UploadEligibilityEligible means retained evidence keeps the tracker.
+	UploadEligibilityEligible UploadEligibility = "eligible"
+	// UploadEligibilitySkipped means retained evidence excludes the tracker.
+	UploadEligibilitySkipped UploadEligibility = "skipped"
+)
+
+// UploadSkipReason is the backend-owned structured cause for excluding one
+// tracker from downstream work. Adapters render it without matching messages.
+type UploadSkipReason string
+
+const (
+	// UploadSkipReasonNotReady means the projection is not upload ready.
+	UploadSkipReasonNotReady UploadSkipReason = "not_ready"
+	// UploadSkipReasonDuplicateFound means retained duplicate evidence blocks
+	// upload and the owner has not accepted the risk.
+	UploadSkipReasonDuplicateFound UploadSkipReason = "duplicate_found"
+	// UploadSkipReasonDuplicateCheckFailed means the duplicate search failed.
+	UploadSkipReasonDuplicateCheckFailed UploadSkipReason = "duplicate_check_failed"
+	// UploadSkipReasonTrackerNotApprovedInGate means a post-dupe approval gate
+	// left the tracker out of the approved set. WebUI stage controls never
+	// produce this reason.
+	UploadSkipReasonTrackerNotApprovedInGate UploadSkipReason = "tracker_not_approved_in_gate"
+	// UploadSkipReasonImageHostingFailed means required image hosting failed.
+	UploadSkipReasonImageHostingFailed UploadSkipReason = "image_hosting_failed"
+	// UploadSkipReasonDescriptionSkipped means the retained description outcome
+	// skipped the tracker.
+	UploadSkipReasonDescriptionSkipped UploadSkipReason = "description_skipped"
+)
+
 // TrackerLaneOutcome is the canonical current result for one selected tracker.
 type TrackerLaneOutcome struct {
-	TrackerID       TrackerID           `json:"trackerId"`
-	DisplayName     string              `json:"displayName,omitempty"`
-	Goal            WorkflowGoal        `json:"goal,omitempty"`
-	Lifecycle       OperationLifecycle  `json:"lifecycle"`
-	Disposition     WorkflowDisposition `json:"disposition"`
-	Refs            WorkflowExactRefs   `json:"refs"`
-	RequiredActions []RequiredAction    `json:"requiredActions,omitempty"`
-	Failures        []WorkflowFailure   `json:"failures,omitempty"`
-	Retryable       bool                `json:"retryable"`
+	TrackerID   TrackerID           `json:"trackerId"`
+	DisplayName string              `json:"displayName,omitempty"`
+	Goal        WorkflowGoal        `json:"goal,omitempty"`
+	Lifecycle   OperationLifecycle  `json:"lifecycle"`
+	Disposition WorkflowDisposition `json:"disposition"`
+	// UploadEligibility reports the retained downstream decision for this
+	// tracker, so adapters never derive it from duplicate or media evidence.
+	UploadEligibility UploadEligibility `json:"uploadEligibility,omitempty"`
+	// UploadSkipReason explains a skipped eligibility and is empty otherwise.
+	UploadSkipReason UploadSkipReason  `json:"uploadSkipReason,omitempty"`
+	Refs             WorkflowExactRefs `json:"refs"`
+	RequiredActions  []RequiredAction  `json:"requiredActions,omitempty"`
+	Failures         []WorkflowFailure `json:"failures,omitempty"`
+	Retryable        bool              `json:"retryable"`
 }
 
 // WorkflowEventScope identifies the authority represented by one safe event.

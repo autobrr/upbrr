@@ -25,6 +25,7 @@ const uploadFacet = (
     uploadStatus: "idle",
     dryRunResult: null,
     result: null,
+    trackerOutcomes: [],
     error: "",
     ...view,
   },
@@ -39,7 +40,8 @@ const uploadFacet = (
   ...methods,
 });
 
-const renderPage = (facet: UploadFacet) => render(<TrackerUploadPage facet={facet} />);
+const renderPage = (facet: UploadFacet, onOpenDuplicates = vi.fn()) =>
+  render(<TrackerUploadPage facet={facet} onOpenDuplicates={onOpenDuplicates} />);
 
 describe("TrackerUploadPage", () => {
   it("locks client injection and mutations while retaining the live-test dry run", () => {
@@ -330,5 +332,71 @@ describe("TrackerUploadPage", () => {
     expect(container.textContent?.match(/Exact-torrent client injection failed\./g)).toHaveLength(
       1,
     );
+  });
+
+  it("marks each tracker with the backend upload decision before any dry run", () => {
+    const projections = {
+      projections: [
+        {
+          trackerId: "EXAMPLE",
+          displayName: "Example Tracker",
+          uploadReleaseName: "Example.Release.2026.1080p-GRP",
+        },
+        {
+          trackerId: "OTHER",
+          displayName: "Other Tracker",
+          uploadReleaseName: "Example.Release.2026.1080p-GRP",
+        },
+      ],
+    } as unknown as NonNullable<UploadFacet["view"]["projections"]>;
+    const trackerOutcomes = [
+      { trackerId: "EXAMPLE", uploadEligibility: "eligible" },
+      { trackerId: "OTHER", uploadEligibility: "skipped", uploadSkipReason: "duplicate_found" },
+    ] as unknown as UploadFacet["view"]["trackerOutcomes"];
+    const onOpenDuplicates = vi.fn();
+    renderPage(
+      uploadFacet({ selectedTrackers: ["EXAMPLE", "OTHER"], projections, trackerOutcomes }),
+      onOpenDuplicates,
+    );
+
+    expect(screen.getByText("Will upload")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Skipped: duplicate found. Override it on the Duplicates page to upload anyway",
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open Duplicates page for Other Tracker" }));
+    expect(onOpenDuplicates).toHaveBeenCalledTimes(1);
+  });
+
+  it("labels every backend skip reason and stays silent while the decision is unknown", () => {
+    const projections = {
+      projections: [
+        { trackerId: "EXAMPLE", displayName: "Example Tracker" },
+        { trackerId: "OTHER", displayName: "Other Tracker" },
+        { trackerId: "THIRD", displayName: "Third Tracker" },
+      ],
+    } as unknown as NonNullable<UploadFacet["view"]["projections"]>;
+    const trackerOutcomes = [
+      {
+        trackerId: "EXAMPLE",
+        uploadEligibility: "skipped",
+        uploadSkipReason: "image_hosting_failed",
+      },
+      { trackerId: "OTHER", uploadEligibility: "skipped", uploadSkipReason: "description_skipped" },
+      { trackerId: "THIRD", uploadEligibility: "unknown" },
+    ] as unknown as UploadFacet["view"]["trackerOutcomes"];
+    renderPage(
+      uploadFacet({
+        selectedTrackers: ["EXAMPLE", "OTHER", "THIRD"],
+        projections,
+        trackerOutcomes,
+      }),
+    );
+
+    expect(screen.getByText("Skipped: image hosting failed")).toBeInTheDocument();
+    expect(screen.getByText("Skipped: no description was prepared")).toBeInTheDocument();
+    expect(screen.queryByText("Will upload")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Open Duplicates page/ })).not.toBeInTheDocument();
   });
 });

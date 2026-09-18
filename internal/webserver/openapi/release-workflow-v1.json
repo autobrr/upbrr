@@ -9078,6 +9078,12 @@
           },
           "trackerId": {
             "$ref": "#/components/schemas/TrackerID"
+          },
+          "uploadEligibility": {
+            "$ref": "#/components/schemas/UploadEligibility"
+          },
+          "uploadSkipReason": {
+            "$ref": "#/components/schemas/UploadSkipReason"
           }
         },
         "required": [
@@ -10150,6 +10156,9 @@
           "revision"
         ]
       },
+      "UploadEligibility": {
+        "type": "string"
+      },
       "UploadOptions": {
         "type": "object",
         "properties": {
@@ -10336,6 +10345,9 @@
           "id",
           "revision"
         ]
+      },
+      "UploadSkipReason": {
+        "type": "string"
       },
       "UploadTrackerResult": {
         "type": "object",

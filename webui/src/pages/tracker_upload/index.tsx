@@ -6,11 +6,13 @@ import { Button } from "../../components/ui/button";
 import type { UploadFacet } from "../../releaseSession/types";
 import type {
   TrackerDryRunReport,
+  TrackerLaneOutcome,
   TrackerReleaseProjection,
 } from "../../api/generated/release-workflow";
 
 type Props = Readonly<{
   facet: UploadFacet;
+  onOpenDuplicates: () => void;
 }>;
 
 /** One tracker upload card: the projection plus any dry-run report merged by tracker. */
@@ -18,10 +20,32 @@ type TrackerUploadCard = Readonly<{
   trackerId: string;
   projection?: TrackerReleaseProjection;
   report?: TrackerDryRunReport;
+  outcome?: TrackerLaneOutcome;
 }>;
 
+/** Backend skip reasons rendered as operator-facing text. */
+const UPLOAD_SKIP_LABELS: Readonly<Record<string, string>> = {
+  duplicate_found: "duplicate found. Override it on the Duplicates page to upload anyway",
+  duplicate_check_failed: "duplicate check failed",
+  not_ready: "tracker is not ready to upload",
+  tracker_not_approved_in_gate: "tracker was not approved",
+  image_hosting_failed: "image hosting failed",
+  description_skipped: "no description was prepared",
+};
+
+/** Renders the backend downstream decision for one tracker; never derives it. */
+function uploadEligibilityLabel(outcome?: TrackerLaneOutcome): string {
+  if (!outcome) return "";
+  if (outcome.uploadEligibility === "eligible") return "Will upload";
+  if (outcome.uploadEligibility !== "skipped") return "";
+  const reason = outcome.uploadSkipReason
+    ? UPLOAD_SKIP_LABELS[outcome.uploadSkipReason]
+    : undefined;
+  return reason ? `Skipped: ${reason}` : "Skipped";
+}
+
 /** Thin presentation adapter for workflow dry-run and upload state. */
-export default function TrackerUploadPage({ facet }: Props) {
+export default function TrackerUploadPage({ facet, onOpenDuplicates }: Props) {
   const { view } = facet;
   const [expandedTrackers, setExpandedTrackers] = useState<Record<string, boolean>>({});
   const selected = useMemo(() => new Set(view.selectedTrackers), [view.selectedTrackers]);
@@ -35,21 +59,31 @@ export default function TrackerUploadPage({ facet }: Props) {
   const trackerCards = useMemo(() => {
     const reports = view.dryRunResult?.reports || [];
     const reportsByTracker = new Map(reports.map((report) => [report.trackerId, report]));
+    const outcomesByTracker = new Map(
+      view.trackerOutcomes.map((outcome) => [outcome.trackerId, outcome]),
+    );
     const cards: TrackerUploadCard[] = (view.projections?.projections || [])
       .filter((projection) => selected.has(projection.trackerId))
       .map((projection) => ({
         trackerId: projection.trackerId,
         projection,
         report: reportsByTracker.get(projection.trackerId),
+        outcome: outcomesByTracker.get(projection.trackerId),
       }));
     const projectedIDs = new Set(cards.map((card) => card.trackerId));
     return [
       ...cards,
       ...reports
         .filter((report) => !projectedIDs.has(report.trackerId))
-        .map((report): TrackerUploadCard => ({ trackerId: report.trackerId, report })),
+        .map(
+          (report): TrackerUploadCard => ({
+            trackerId: report.trackerId,
+            report,
+            outcome: outcomesByTracker.get(report.trackerId),
+          }),
+        ),
     ];
-  }, [selected, view.dryRunResult, view.projections]);
+  }, [selected, view.dryRunResult, view.projections, view.trackerOutcomes]);
   const uploadRunning = view.uploadStatus === "running";
   const failedTrackers = (view.result?.results || [])
     .filter((result) => result.submissionStatus === "failed")
@@ -213,10 +247,12 @@ export default function TrackerUploadPage({ facet }: Props) {
             <h2>Tracker uploads</h2>
             {view.dryRunResult ? <span className="muted">{view.dryRunResult.status}</span> : null}
           </div>
-          {trackerCards.map(({ trackerId, projection, report }) => {
+          {trackerCards.map(({ trackerId, projection, report, outcome }) => {
             const expansionKey = `dry-run-result:${trackerId}`;
             const expanded = expandedTrackers[expansionKey] ?? false;
             const trackerLabel = report?.displayName || projection?.displayName || trackerId;
+            const eligibilityLabel = uploadEligibilityLabel(outcome);
+            const skipped = outcome?.uploadEligibility === "skipped";
             // The projection carries the reviewed tracker name; a dry-run report
             // adds status and detail and must not replace it.
             const uploadName =
@@ -228,7 +264,22 @@ export default function TrackerUploadPage({ facet }: Props) {
                 key={trackerId}
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <strong>{trackerLabel}</strong>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <strong>{trackerLabel}</strong>
+                    {eligibilityLabel ? (
+                      <span className={skipped ? "error" : "muted"}>{eligibilityLabel}</span>
+                    ) : null}
+                    {skipped && outcome?.uploadSkipReason === "duplicate_found" ? (
+                      <button
+                        aria-label={`Open Duplicates page for ${trackerLabel}`}
+                        className="ghost"
+                        type="button"
+                        onClick={onOpenDuplicates}
+                      >
+                        Open Duplicates
+                      </button>
+                    ) : null}
+                  </div>
                   {report ? (
                     <div className="flex items-center gap-2">
                       <span className={report.status === "blocked" ? "error" : "muted"}>
