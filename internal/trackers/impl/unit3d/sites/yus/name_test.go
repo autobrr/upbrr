@@ -81,6 +81,10 @@ func yusSubject(t *testing.T, r api.ReleaseNameRequest) api.UploadSubject {
 	if n.GeneratedName == nil {
 		t.Fatal("document")
 	}
+	category, err := api.NormalizeCanonicalCategory(r.Category)
+	if err != nil {
+		t.Fatalf("normalize category %q: %v", r.Category, err)
+	}
 	return api.UploadSubject{
 		SourcePath:       "yus",
 		ReleaseName:      n.Name,
@@ -89,7 +93,7 @@ func yusSubject(t *testing.T, r api.ReleaseNameRequest) api.UploadSubject {
 		Identity: api.ExternalIdentity{
 			SourcePath: "yus",
 			Generation: 1,
-			Category:   api.CanonicalCategory(r.Category),
+			Category:   category,
 		},
 		Release: api.ReleaseInfo{
 			Category:   r.Category,

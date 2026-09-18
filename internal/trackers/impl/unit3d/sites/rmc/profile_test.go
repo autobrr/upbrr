@@ -215,6 +215,7 @@ func TestRMCStructuredReleaseNamePolicyUsesProviderRoles(t *testing.T) {
 		t.Fatalf("RMC name = %q, want %q", got, want)
 	}
 	manual := subject
+	manual.GeneratedName = manual.GeneratedName.Clone()
 	markRMCManual(t, manual.GeneratedName, api.NameRoleTitle)
 	manual.ReleaseName = manual.GeneratedName.Render().Name
 	if got, want := rmcReviewedName(t, manual, nil), "Wrong Title 2000 1080p BluRay DD+ 5.1 HDR10+ x264-GRP"; got != want {
