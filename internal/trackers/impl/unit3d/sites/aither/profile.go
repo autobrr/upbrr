@@ -11,14 +11,13 @@ import (
 // Profile returns AITHER's Unit3D site manifest.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
-		Name:             "AITHER",
-		BaseURL:          "https://aither.cc",
-		Rules:            Rules(),
-		ValidationPolicy: ValidationPolicy(),
-		AudioPolicy:      AudioPolicy(),
+		Name:              "AITHER",
+		BaseURL:           "https://aither.cc",
+		Rules:             Rules(),
+		ValidationPolicy:  ValidationPolicy(),
+		AudioPolicy:       AudioPolicy(),
+		ReleaseNamePolicy: namePolicy(),
 		Site: unit3d.SiteProfile{
-			BuildName:              buildName,
-			BuildNameVersion:       "v2",
 			ApplyAdditionalPayload: additionalPayload,
 		},
 		DupePolicy: &trackers.DupePolicy{

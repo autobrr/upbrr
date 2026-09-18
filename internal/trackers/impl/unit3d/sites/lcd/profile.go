@@ -10,11 +10,9 @@ import (
 // Profile returns LCD's Unit3D site manifest.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
-		Name:    "LCD",
-		BaseURL: "https://locadora.cc",
-		Site: unit3d.SiteProfile{
-			BuildName:        buildName,
-			BuildNameVersion: "v1",
-		},
+		Name:              "LCD",
+		BaseURL:           "https://locadora.cc",
+		ReleaseNamePolicy: namePolicy(),
+		Site:              unit3d.SiteProfile{},
 	}
 }

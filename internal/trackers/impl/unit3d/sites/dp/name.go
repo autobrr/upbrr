@@ -4,54 +4,79 @@
 package dp
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
-	name := baseName(meta)
-	name = applyDPTVDBDisambiguation(name, meta)
-	if !unit3d.IsDiscType(meta.DiscType) {
-		if label := audioLabel(meta.AudioLanguages); label != "" {
-			name = strings.Replace(name, "Dual-Audio", label, 1)
-		}
-	}
-	return strings.TrimSpace(strings.Join(strings.Fields(name), " "))
+func namePolicy() trackers.ReleaseNamePolicyBinding {
+	return trackers.StructuredReleaseNamePolicy("unit3d/dp/v3", trackers.StructuredNamePolicy{
+		Defaults: applyDPNameDefaults,
+	})
 }
 
-func applyDPTVDBDisambiguation(name string, meta api.UploadSubject) string {
-	if unit3d.Category(meta) != "TV" || meta.ProviderMetadata.TVDB == nil {
-		return name
+func applyDPNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
+	if err := applyDPTVDBDisambiguation(editor, meta); err != nil {
+		return err
+	}
+	if unit3d.IsDiscType(meta.DiscType) {
+		return nil
+	}
+	if label := audioLabel(meta.AudioLanguages); label != "" {
+		if err := editor.Set(api.NameRoleDualAudio, label); err != nil {
+			return fmt.Errorf("set DP audio label: %w", err)
+		}
+	}
+	return nil
+}
+
+func applyDPTVDBDisambiguation(editor *trackers.NameEditor, meta api.UploadSubject) error {
+	if unit3d.Category(meta) != "TV" || meta.ProviderMetadata.TVDB == nil || !meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) {
+		return nil
 	}
 	evidence := meta.ProviderMetadata.TVDB.NameDisambiguation
+	title, ok := editor.Component(api.NameRoleTitle)
+	if !ok || !title.Present || !strings.EqualFold(strings.Join(strings.Fields(title.Value), " "), strings.Join(strings.Fields(evidence.CanonicalName), " ")) {
+		return nil
+	}
 	if meta.EffectiveMetadata.YearProvenance.IsManual() {
 		evidence.SeriesYear = meta.EffectiveMetadata.Year
 	}
-	title, alternate, tail, ok := unit3d.SplitTVDBName(name, meta, evidence)
-	if !ok {
-		return name
+	if !evidence.IncludeYear || evidence.SeriesYear <= 0 {
+		if err := editor.Omit(api.NameRoleYear); err != nil {
+			return fmt.Errorf("omit DP TVDB year: %w", err)
+		}
+	} else {
+		if err := editor.Set(api.NameRoleYear, strconv.Itoa(evidence.SeriesYear)); err != nil {
+			return fmt.Errorf("set DP TVDB year: %w", err)
+		}
+		if err := editor.Include(api.NameRoleYear); err != nil {
+			return fmt.Errorf("include DP TVDB year: %w", err)
+		}
 	}
-	parts := []string{title, alternate}
+
+	anchor := api.NameRoleAlternateTitle
+	component, ok := editor.Component(anchor)
+	if !ok || !component.Present {
+		anchor = api.NameRoleTitle
+	}
 	if evidence.IncludeLocale && strings.TrimSpace(evidence.Locale) != "" {
-		parts = append(parts, evidence.Locale)
+		if err := editor.InsertAfter(api.NameRoleLocale, evidence.Locale, anchor); err != nil {
+			return fmt.Errorf("insert DP TVDB locale: %w", err)
+		}
+		anchor = api.NameRoleLocale
 	}
 	if evidence.IncludeYear && evidence.SeriesYear > 0 {
-		parts = append(parts, strconv.Itoa(evidence.SeriesYear))
+		if err := editor.MoveAfter(api.NameRoleYear, anchor); err != nil {
+			return fmt.Errorf("move DP TVDB year: %w", err)
+		}
 	}
-	parts = append(parts, tail)
-	return strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
-}
-
-func baseName(meta api.UploadSubject) string {
-	name := strings.TrimSpace(meta.ReleaseName)
-	if name == "" {
-		name = strings.TrimSpace(meta.ReleaseNameNoTag)
-	}
-	return strings.TrimSpace(strings.Join(strings.Fields(name), " "))
+	return nil
 }
 
 func audioLabel(values []string) string {

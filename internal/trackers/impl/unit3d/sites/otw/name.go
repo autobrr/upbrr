@@ -115,6 +115,9 @@ func isOTWCompleteDisc(meta api.UploadSubject) bool {
 }
 
 func otwSource(meta api.UploadSubject) string {
+	if strings.EqualFold(strings.TrimSpace(meta.Type), "DVDRIP") {
+		return ""
+	}
 	source := strings.TrimSpace(meta.Source)
 	if source == "" {
 		source = strings.TrimSpace(meta.Release.Source)
@@ -135,6 +138,8 @@ func otwType(meta api.UploadSubject) string {
 		typeValue = "WEB-DL"
 	case "WEBRIP":
 		typeValue = "WEBRip"
+	case "DVDRIP":
+		typeValue = "DVDRip"
 	case "REMUX":
 		typeValue = "REMUX"
 	default:

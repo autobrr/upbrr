@@ -1,32 +1,17 @@
 package a4k
 
 import (
-	"regexp"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-var (
-	aiRegex      = regexp.MustCompile(`(?i)(^|[^[:alnum:]])ai([^[:alnum:]]|$)`)
-	upscaleRegex = regexp.MustCompile(`(?i)(^|[^[:alnum:]])upscaled?([^[:alnum:]]|$)`)
-	fanresRegex  = regexp.MustCompile(`(?i)(^|[^[:alnum:]])(?:fanres|35mm|no[ ._-]?dnr)([^[:alnum:]]|$)`)
-)
-
-func markerName(meta api.UploadSubject) string {
-	if name := strings.TrimSpace(meta.ReleaseName); name != "" {
-		return name
-	}
-	return strings.TrimSpace(meta.ReleaseNameNoTag)
-}
-
 func typeID(meta api.UploadSubject) string {
-	name := markerName(meta)
-	if upscaleRegex.MatchString(name) || aiRegex.MatchString(name) {
+	if a4kHasOther(meta, "AI.Upscale", "upscaled (ai)", "upscaled", "AI Remaster") {
 		return "8"
 	}
-	if fanresRegex.MatchString(name) {
+	if a4kHasSource(meta, "35mm") || a4kHasOther(meta, "FANRES", "no-DNR", "No Digital Noise Reduction") {
 		return "7"
 	}
 	return map[string]string{
@@ -35,6 +20,26 @@ func typeID(meta api.UploadSubject) string {
 		"WEBDL":  "4",
 		"ENCODE": "3",
 	}[unit3d.InferType(meta)]
+}
+
+func a4kHasSource(meta api.UploadSubject, candidates ...string) bool {
+	for _, candidate := range candidates {
+		if strings.EqualFold(strings.TrimSpace(meta.Source), candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func a4kHasOther(meta api.UploadSubject, candidates ...string) bool {
+	for _, value := range meta.Release.Other {
+		for _, candidate := range candidates {
+			if strings.EqualFold(strings.TrimSpace(value), candidate) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func resolutionID(meta api.UploadSubject) string {

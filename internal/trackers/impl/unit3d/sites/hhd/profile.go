@@ -11,15 +11,12 @@ import (
 // Profile returns HHD's Unit3D site manifest.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
-		Name:             "HHD",
-		BaseURL:          "https://homiehelpdesk.net",
-		Rules:            Rules(),
-		ValidationPolicy: validationPolicy(),
-		BannedGroups:     BannedGroups(),
-		Site: unit3d.SiteProfile{
-			BuildName:        buildName,
-			BuildNameVersion: "v2",
-		},
+		Name:              "HHD",
+		BaseURL:           "https://homiehelpdesk.net",
+		Rules:             Rules(),
+		ValidationPolicy:  validationPolicy(),
+		BannedGroups:      BannedGroups(),
+		ReleaseNamePolicy: namePolicy(),
 		DupePolicy: &trackers.DupePolicy{
 			ID:         "hhd/duplicate/v2",
 			EvidenceID: "hhd-rules-naming",

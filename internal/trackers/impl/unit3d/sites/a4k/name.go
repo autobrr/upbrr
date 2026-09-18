@@ -13,26 +13,23 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-var (
-	upscaleTokenRegex = regexp.MustCompile(`(?i)(^|[^[:alnum:]])upscaled?([^[:alnum:]]|$)`)
-	openMatteRegex    = regexp.MustCompile(`(?i)(^|[^[:alnum:]])open[ ._-]matte([^[:alnum:]]|$)`)
-	noDNRRegex        = regexp.MustCompile(`(?i)(^|[^[:alnum:]])no[ ._-]?dnr([^[:alnum:]]|$)`)
-	versionRegex      = regexp.MustCompile(`(?i)(^|[^[:alnum:]])(v\d+(?:\.\d+)?)([^[:alnum:]]|$)`)
-)
+var openMatteRegex = regexp.MustCompile(`(?i)(^|[^[:alnum:]])open[ ._-]matte([^[:alnum:]]|$)`)
 
 func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
-	name := markerName(meta)
+	name := strings.TrimSpace(meta.ReleaseName)
+	if name == "" {
+		name = strings.TrimSpace(meta.ReleaseNameNoTag)
+	}
 	if name == "" {
 		return ""
 	}
-
 	switch typeID(meta) {
 	case "7":
 		return buildFanResName(meta)
 	case "8":
 		return buildAIName(meta)
 	default:
-		return strings.TrimSpace(strings.Join(strings.Fields(name), " "))
+		return cleanName(name)
 	}
 }
 
@@ -46,11 +43,10 @@ func buildFanResName(meta api.UploadSubject) string {
 		parts = append(parts, year)
 	}
 	parts = append(parts, "FANRES")
-	name := markerName(meta)
-	if openMatteRegex.MatchString(name) {
+	if openMatteRegex.MatchString(meta.Edition) {
 		parts = append(parts, "Open Matte")
 	}
-	if noDNRRegex.MatchString(name) {
+	if a4kHasOther(meta, "no-DNR", "No Digital Noise Reduction") {
 		parts = append(parts, "NoDNR")
 	}
 	parts = append(parts, "2160p", "UHD", "35mm")
@@ -64,8 +60,8 @@ func buildFanResName(meta api.UploadSubject) string {
 	if codec := videoCodec(meta); codec != "" {
 		parts = append(parts, codec)
 	}
-	if match := versionRegex.FindStringSubmatch(name); match != nil {
-		parts = append(parts, match[2])
+	if version := strings.TrimSpace(meta.Release.Version); version != "" {
+		parts = append(parts, version)
 	}
 	return cleanName(strings.Join(parts, " "))
 }
@@ -73,7 +69,7 @@ func buildFanResName(meta api.UploadSubject) string {
 func buildAIName(meta api.UploadSubject) string {
 	title, year := titleAndYear(meta)
 	label := "AI Remaster"
-	if upscaleTokenRegex.MatchString(markerName(meta)) {
+	if a4kHasOther(meta, "AI.Upscale", "upscaled (ai)", "upscaled") {
 		label = "AI Upscale"
 	}
 	parts := make([]string, 0, 12)
@@ -104,6 +100,9 @@ func buildAIName(meta api.UploadSubject) string {
 func titleAndYear(meta api.UploadSubject) (string, string) {
 	title := strings.TrimSpace(meta.Release.Title)
 	tmdb := meta.ProviderMetadata.TMDB
+	if !meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) {
+		tmdb = nil
+	}
 	if meta.EffectiveMetadata.TitleProvenance.IsManual() {
 		title = strings.TrimSpace(meta.EffectiveMetadata.Title)
 	} else if title == "" && tmdb != nil {

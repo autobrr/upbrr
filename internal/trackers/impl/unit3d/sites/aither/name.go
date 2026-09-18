@@ -4,111 +4,189 @@
 package aither
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/languageutil"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// buildName applies AITHER's v2 component ordering and omission rules to the
-// reviewed release name. It returns an empty string when no release name exists.
-func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
-	name := strings.TrimSpace(meta.ReleaseName)
-	if name == "" {
-		name = strings.TrimSpace(meta.ReleaseNameNoTag)
-	}
-	if name == "" {
-		return ""
-	}
-
-	name = applyAitherTVDBDisambiguation(name, meta)
-	name = stripParsedLanguages(name, meta.Release.Language)
-	resolution := unit3d.Resolution(meta)
-	videoCodec, videoEncode := strings.TrimSpace(meta.VideoCodec), strings.TrimSpace(meta.VideoEncode)
-	nameType, source, audio := strings.ToUpper(strings.TrimSpace(meta.Type)), strings.TrimSpace(meta.Source), strings.TrimSpace(meta.Audio)
-	edition := effectiveAitherEdition(meta)
-	if edition != "" && !isAitherCut(edition) {
-		name = removeLastComponent(name, edition)
-		edition = ""
-	}
-
-	if nameType == "DVDRIP" {
-		if meta.Source != "" {
-			name = replaceLast(name, meta.Source+" ", "")
-		}
-		if videoEncode != "" {
-			name = replaceLast(name, videoEncode, "")
-		}
-		if resolution != "" && !containsComponent(name, resolution) {
-			name = replaceLast(name, "DVDRip", resolution+" DVDRip")
-		}
-		if audio != "" && videoEncode != "" {
-			name = replaceLast(name, audio, audio+" "+videoEncode)
-		}
-	} else if strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") || (nameType == "REMUX" && isDVDSource(source)) {
-		if unit3d.IsDiscType(meta.DiscType) && edition != "" && strings.TrimSpace(meta.Repack) != "" {
-			name = replaceLast(name, strings.TrimSpace(meta.Repack)+" "+edition, edition+" "+strings.TrimSpace(meta.Repack))
-		}
-		if resolution != "" && !containsComponent(name, resolution) {
-			anchor := source
-			if unit3d.IsDiscType(meta.DiscType) && strings.TrimSpace(meta.Region) != "" {
-				anchor = strings.TrimSpace(meta.Region)
-			}
-			if anchor != "" {
-				name = replaceLast(name, anchor, resolution+" "+anchor)
-			}
-		}
-		if audio != "" && videoCodec != "" && !containsComponent(name, videoCodec) {
-			name = replaceLast(name, audio, videoCodec+" "+audio)
-		}
-	}
-
-	if language := aitherLanguage(meta); language != "" && !containsComponent(name, language) {
-		anchors := []string{strings.TrimSpace(meta.Is3D), edition, meta.Repack, resolution, source, "DVDRip"}
-		if meta.WebDV {
-			anchors = append(anchors, "Hybrid")
-		}
-		name = insertBeforeComponents(name, language, anchors...)
-	}
-	name = omitNoGroupTag(name, meta.Tag)
-	return cleanName(name)
+func namePolicy() trackers.ReleaseNamePolicyBinding {
+	return trackers.StructuredReleaseNamePolicy("unit3d/aither/v3", trackers.StructuredNamePolicy{
+		Defaults: applyAitherNameDefaults,
+	})
 }
 
-// applyAitherTVDBDisambiguation rebuilds TV titles when the shared splitter can
-// identify title components from TVDB disambiguation evidence.
-func applyAitherTVDBDisambiguation(name string, meta api.UploadSubject) string {
-	if unit3d.Category(meta) != "TV" || meta.ProviderMetadata.TVDB == nil {
-		return name
+func applyAitherNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, _ config.TrackerConfig) error {
+	if err := applyAitherTVDBDisambiguation(editor, meta); err != nil {
+		return err
+	}
+
+	edition := effectiveAitherEdition(meta)
+	if edition != "" && !isAitherCut(edition) {
+		if err := editor.Omit(api.NameRoleEdition); err != nil {
+			return fmt.Errorf("omit AITHER non-cut edition: %w", err)
+		}
+	}
+
+	nameType := strings.ToUpper(strings.TrimSpace(meta.Type))
+	source := strings.TrimSpace(meta.Source)
+	switch {
+	case nameType == "DVDRIP":
+		if err := applyAitherDVDRipNameOrder(editor); err != nil {
+			return err
+		}
+	case strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") || (nameType == "REMUX" && isDVDSource(source)):
+		if err := applyAitherDVDNameOrder(editor, meta); err != nil {
+			return err
+		}
+	}
+
+	if err := addAitherLanguageMarker(editor, meta); err != nil {
+		return err
+	}
+	if unit3d.IsNoGroupTag(meta.Tag) {
+		if err := editor.Omit(api.NameRoleGroup); err != nil {
+			return fmt.Errorf("omit AITHER no-group tag: %w", err)
+		}
+	}
+	return nil
+}
+
+func applyAitherTVDBDisambiguation(editor *trackers.NameEditor, meta api.UploadSubject) error {
+	if unit3d.Category(meta) != "TV" || meta.ProviderMetadata.TVDB == nil || !meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) {
+		return nil
 	}
 	evidence := meta.ProviderMetadata.TVDB.NameDisambiguation
+	title, ok := editor.Component(api.NameRoleTitle)
+	if !ok || !title.Present || !strings.EqualFold(strings.Join(strings.Fields(title.Value), " "), strings.Join(strings.Fields(evidence.CanonicalName), " ")) {
+		return nil
+	}
 	if meta.EffectiveMetadata.YearProvenance.IsManual() {
 		evidence.SeriesYear = meta.EffectiveMetadata.Year
 	}
-	title, alternate, tail, ok := unit3d.SplitTVDBName(name, meta, evidence)
-	if !ok {
-		return name
+	if !evidence.IncludeYear || evidence.SeriesYear <= 0 {
+		if err := editor.Omit(api.NameRoleYear); err != nil {
+			return fmt.Errorf("omit AITHER TVDB year: %w", err)
+		}
+	} else {
+		if err := editor.Set(api.NameRoleYear, strconv.Itoa(evidence.SeriesYear)); err != nil {
+			return fmt.Errorf("set AITHER TVDB year: %w", err)
+		}
+		if err := editor.Include(api.NameRoleYear); err != nil {
+			return fmt.Errorf("include AITHER TVDB year: %w", err)
+		}
 	}
-	parts := []string{title, alternate}
+	anchor := api.NameRoleAlternateTitle
+	component, ok := editor.Component(anchor)
+	if !ok || !component.Present {
+		anchor = api.NameRoleTitle
+	}
 	if evidence.IncludeLocale && strings.TrimSpace(evidence.Locale) != "" {
-		parts = append(parts, evidence.Locale)
+		if err := editor.InsertAfter(api.NameRoleLocale, strings.TrimSpace(evidence.Locale), anchor); err != nil {
+			return fmt.Errorf("insert AITHER TVDB locale: %w", err)
+		}
+		anchor = api.NameRoleLocale
 	}
 	if evidence.IncludeYear && evidence.SeriesYear > 0 {
-		parts = append(parts, strconv.Itoa(evidence.SeriesYear))
+		if err := editor.MoveAfter(api.NameRoleYear, anchor); err != nil {
+			return fmt.Errorf("move AITHER TVDB year: %w", err)
+		}
 	}
-	return cleanName(strings.Join(append(parts, tail), " "))
+	return nil
 }
 
-// stripParsedLanguages removes the last whole-component occurrence of each
-// parser-supplied language and its normalized AITHER label.
-func stripParsedLanguages(name string, languages []string) string {
-	for _, value := range languages {
-		name = removeLastComponent(name, value)
-		name = removeLastComponent(name, aitherLanguageComponent(value))
+func applyAitherDVDRipNameOrder(editor *trackers.NameEditor) error {
+	if source, ok := editor.Component(api.NameRoleSource); ok && strings.TrimSpace(source.Value) != "" {
+		if err := editor.Omit(api.NameRoleSource); err != nil {
+			return fmt.Errorf("omit AITHER DVDRip source: %w", err)
+		}
 	}
-	return name
+	if resolution, ok := editor.Component(api.NameRoleResolution); ok && strings.TrimSpace(resolution.AvailableValue) != "" {
+		if err := editor.Include(api.NameRoleResolution); err != nil {
+			return fmt.Errorf("include AITHER DVDRip resolution: %w", err)
+		}
+		if err := editor.MoveBefore(api.NameRoleResolution, api.NameRoleVideoFormat); err != nil {
+			return fmt.Errorf("move AITHER DVDRip resolution: %w", err)
+		}
+	}
+	encode, hasEncode := editor.Component(api.NameRoleVideoEncode)
+	if !hasEncode || strings.TrimSpace(encode.Value) == "" {
+		return nil
+	}
+	anchor := firstAitherPresentRole(editor.PresentRoles(), api.NameRoleDualAudio, api.NameRoleAudio)
+	if !anchor.Valid() {
+		if err := editor.Omit(api.NameRoleVideoEncode); err != nil {
+			return fmt.Errorf("omit AITHER DVDRip video encode without audio: %w", err)
+		}
+		return nil
+	}
+	if err := editor.MoveAfter(api.NameRoleVideoEncode, anchor); err != nil {
+		return fmt.Errorf("move AITHER DVDRip video encode: %w", err)
+	}
+	return nil
+}
+
+func applyAitherDVDNameOrder(editor *trackers.NameEditor, meta api.UploadSubject) error {
+	if unit3d.IsDiscType(meta.DiscType) && strings.TrimSpace(effectiveAitherEdition(meta)) != "" && strings.TrimSpace(meta.Repack) != "" {
+		if err := editor.MoveBefore(api.NameRoleEdition, api.NameRoleRepack); err != nil {
+			return fmt.Errorf("move AITHER DVD edition: %w", err)
+		}
+	}
+	if strings.TrimSpace(unit3d.Resolution(meta)) != "" {
+		if err := editor.Include(api.NameRoleResolution); err != nil {
+			return fmt.Errorf("include AITHER DVD resolution: %w", err)
+		}
+		anchors := []api.ReleaseNameRole{api.NameRoleSource, api.NameRoleDVDSystem, api.NameRoleDVDSize, api.NameRoleVideoFormat}
+		if unit3d.IsDiscType(meta.DiscType) && strings.TrimSpace(meta.Region) != "" {
+			anchors = append([]api.ReleaseNameRole{api.NameRoleRegion}, anchors...)
+		}
+		if anchor := firstAitherPresentRole(editor.PresentRoles(), anchors...); anchor.Valid() {
+			if err := editor.MoveBefore(api.NameRoleResolution, anchor); err != nil {
+				return fmt.Errorf("move AITHER DVD resolution: %w", err)
+			}
+		}
+	}
+	if strings.TrimSpace(meta.Audio) != "" && strings.TrimSpace(meta.VideoCodec) != "" {
+		if err := editor.Include(api.NameRoleVideoCodec); err != nil {
+			return fmt.Errorf("include AITHER DVD video codec: %w", err)
+		}
+		if err := editor.MoveBefore(api.NameRoleVideoCodec, api.NameRoleAudio); err != nil {
+			return fmt.Errorf("move AITHER DVD video codec: %w", err)
+		}
+	}
+	return nil
+}
+
+func addAitherLanguageMarker(editor *trackers.NameEditor, meta api.UploadSubject) error {
+	language := aitherLanguage(meta)
+	if language == "" {
+		return nil
+	}
+	anchor := firstAitherPresentRole(editor.PresentRoles(), api.NameRoleThreeD, api.NameRoleEdition, api.NameRoleRepack,
+		api.NameRoleResolution, api.NameRoleSource, api.NameRoleVideoFormat)
+	if !anchor.Valid() {
+		return nil
+	}
+	if err := editor.InsertBefore(api.NameRoleLanguageMarker, language, anchor); err != nil {
+		return fmt.Errorf("insert AITHER language marker: %w", err)
+	}
+	return nil
+}
+
+func firstAitherPresentRole(present []api.ReleaseNameRole, candidates ...api.ReleaseNameRole) api.ReleaseNameRole {
+	for _, candidate := range candidates {
+		for _, role := range present {
+			if role == candidate {
+				return role
+			}
+		}
+	}
+	return ""
 }
 
 // aitherLanguage returns the first AITHER language marker for a non-disc release
@@ -171,81 +249,6 @@ func isAitherCut(value string) bool {
 		}
 	}
 	return false
-}
-
-// omitNoGroupTag removes a trailing no-group placeholder when value identifies
-// that placeholder as the release tag.
-func omitNoGroupTag(name, value string) string {
-	tag := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(value), "-"))
-	if !unit3d.IsNoGroupTag(value) && !unit3d.IsNoGroupTag(tag) {
-		return name
-	}
-	for _, separator := range []string{"-", ".", "_", " "} {
-		suffix := separator + tag
-		if len(name) >= len(suffix) && strings.EqualFold(name[len(name)-len(suffix):], suffix) {
-			return strings.TrimSpace(name[:len(name)-len(suffix)])
-		}
-	}
-	return name
-}
-
-// insertBeforeComponents resolves each anchor to its final whole-component
-// match, inserts addition before the earliest resolved anchor, or appends it
-// when no anchor is present.
-func insertBeforeComponents(value, addition string, components ...string) string {
-	padded := " " + cleanName(value) + " "
-	lower := strings.ToLower(padded)
-	index := -1
-	for _, component := range components {
-		component = cleanName(component)
-		if component == "" {
-			continue
-		}
-		candidate := strings.LastIndex(lower, " "+strings.ToLower(component)+" ")
-		if candidate >= 0 && (index < 0 || candidate < index) {
-			index = candidate
-		}
-	}
-	if index < 0 {
-		return cleanName(value + " " + addition)
-	}
-	return cleanName(padded[:index] + " " + addition + padded[index:])
-}
-
-// removeLastComponent removes the final case-insensitive whole-component match.
-func removeLastComponent(value, component string) string {
-	component = cleanName(component)
-	if component == "" {
-		return value
-	}
-	padded := " " + cleanName(value) + " "
-	needle := " " + strings.ToLower(component) + " "
-	index := strings.LastIndex(strings.ToLower(padded), needle)
-	if index < 0 {
-		return value
-	}
-	return cleanName(padded[:index] + " " + padded[index+len(needle):])
-}
-
-// containsComponent reports whether value contains a case-insensitive whole-
-// component match.
-func containsComponent(value, component string) bool {
-	component = cleanName(component)
-	return component != "" && strings.Contains(strings.ToLower(" "+cleanName(value)+" "), " "+strings.ToLower(component)+" ")
-}
-
-// replaceLast replaces the final case-insensitive substring match.
-func replaceLast(value, old, replacement string) string {
-	index := strings.LastIndex(strings.ToLower(value), strings.ToLower(old))
-	if index < 0 {
-		return value
-	}
-	return value[:index] + replacement + value[index+len(old):]
-}
-
-// cleanName trims value and collapses whitespace runs to single spaces.
-func cleanName(value string) string {
-	return strings.TrimSpace(strings.Join(strings.Fields(value), " "))
 }
 
 func isDVDSource(source string) bool {
