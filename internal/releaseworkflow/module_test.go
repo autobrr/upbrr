@@ -1304,11 +1304,13 @@ func TestModuleReviewsTrackerReleaseNameWithoutRepeatingDupeSearch(t *testing.T)
 	waivableFingerprint := testFingerprint(t, "name-review-waivable-rules")
 	automaticNamingFingerprint := testFingerprint(t, "name-review-automatic-naming")
 	rebuiltRequestNamingFingerprint := testFingerprint(t, "name-review-rebuilt-request-naming")
+	trackerAnswer := "yes"
 	var reviewedRuleAuthorization api.WorkflowFingerprint
+	var generatedConfirmationSubjects []api.UploadSubject
 	projector := trackerProjectionBuilderFunc(func(
 		_ context.Context,
 		_ api.ReleaseSnapshot,
-		_ api.UploadSubject,
+		subject api.UploadSubject,
 		trackerIDs []api.TrackerID,
 		instructions map[api.TrackerID]api.TrackerProjectionInstructions,
 		ruleAuthorizations map[api.TrackerID]api.WorkflowFingerprint,
@@ -1320,6 +1322,11 @@ func TestModuleReviewsTrackerReleaseNameWithoutRepeatingDupeSearch(t *testing.T)
 		api.TrackerReleaseProjectionSet,
 		error,
 	) {
+		instruction := instructions["ALPHA"]
+		if !instruction.UploadReleaseName.Present &&
+			(instruction.ConfirmedNameFingerprint == "" || instruction.ConfirmedNameFingerprint == automaticNamingFingerprint) {
+			generatedConfirmationSubjects = append(generatedConfirmationSubjects, subject)
+		}
 		projection := testProjection(t, "ALPHA", automaticName)
 		projection.NamingFingerprint = automaticNamingFingerprint
 		projection.NamingPolicyID = "test/name-review/v1"
@@ -1346,7 +1353,7 @@ func TestModuleReviewsTrackerReleaseNameWithoutRepeatingDupeSearch(t *testing.T)
 		projection.UploadReady = false
 		inputFingerprint := testFingerprint(t, "name-review-automatic")
 		policyFingerprint := testFingerprint(t, "name-review-policy-automatic")
-		if instruction := instructions["ALPHA"]; instruction.UploadReleaseName.Present {
+		if instruction.UploadReleaseName.Present {
 			reviewedRuleAuthorization = ruleAuthorizations["ALPHA"]
 			if instruction.UploadReleaseName.Value == rejectedName {
 				projection.UploadReleaseName = enforcedName
@@ -1471,9 +1478,20 @@ func TestModuleReviewsTrackerReleaseNameWithoutRepeatingDupeSearch(t *testing.T)
 			ExpiresAt: now.Add(time.Hour),
 		}, struct{ Evidence string }{Evidence: "retained"}, nil
 	})
+	preparer := testPreparer()
+	preparer.SubjectFunc = func(_ context.Context, input api.UploadSubjectInput) (api.UploadSubject, error) {
+		return api.UploadSubject{
+			SourcePath:                  input.Release.SourcePath,
+			Trackers:                    slices.Clone(input.Trackers),
+			TrackerQuestionnaireAnswers: input.QuestionnaireAnswers,
+			Source:                      "bluray",
+			Type:                        "movie",
+		}, nil
+	}
 	module, repository := newTestModule(
 		t,
-		testPreparer(),
+		preparer,
+		WithInputReadinessEvaluator(alphaNameReviewInputEvaluator{}),
 		WithTrackerProjectionBuilder(projector),
 		WithTrackerPreflightBuilder(preflight),
 		WithDupeAssessmentBuilder(dupeBuilder),
@@ -1483,6 +1501,14 @@ func TestModuleReviewsTrackerReleaseNameWithoutRepeatingDupeSearch(t *testing.T)
 		WorkflowID:       result.Workflow.ID,
 		ExpectedRevision: result.Workflow.Revision,
 		Input:            api.PrepareInput{SourcePath: "C:\\releases\\Example.Release.2026.1080p-GRP"},
+	})
+	result = executeCommand(t, module, EvaluateInputReadinessCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		TrackerIDs:       []api.TrackerID{"ALPHA"},
+		TrackerInputAnswers: map[api.TrackerID]map[string]*string{
+			"ALPHA": {"no_english_subtitles": &trackerAnswer},
+		},
 	})
 	result = executeCommand(t, module, ProjectTrackersCommand{
 		WorkflowID:       result.Workflow.ID,
@@ -1523,6 +1549,14 @@ func TestModuleReviewsTrackerReleaseNameWithoutRepeatingDupeSearch(t *testing.T)
 		result.ProjectionInstructions.Instructions["ALPHA"].ConfirmedNameFingerprint != automaticNamingFingerprint ||
 		len(result.Workflow.RequiredActions) != 1 || result.Workflow.RequiredActions[0].Status != api.RequiredActionStatusResolved {
 		t.Fatalf("generated tracker-name confirmation = %#v", result)
+	}
+	if len(generatedConfirmationSubjects) != 2 {
+		t.Fatalf("generated tracker-name confirmation rebuild subjects = %#v", generatedConfirmationSubjects)
+	}
+	for _, subject := range generatedConfirmationSubjects {
+		if got := subject.TrackerQuestionnaireAnswers["ALPHA"]["no_english_subtitles"]; got != trackerAnswer {
+			t.Fatalf("generated tracker-name confirmation tracker answer = %q, want %q in %#v", got, trackerAnswer, subject)
+		}
 	}
 	loaded, err := repository.Load(context.Background(), testOwnerID, result.Workflow.ID)
 	if err != nil || loaded.ProjectionInstructions[result.Workflow.ProjectionInstructions.ID].Instructions["ALPHA"].ConfirmedNameFingerprint !=
@@ -1691,6 +1725,30 @@ func TestModuleReviewsTrackerReleaseNameWithoutRepeatingDupeSearch(t *testing.T)
 		result.Continuation.TrackerOutcomes[0].Disposition == api.WorkflowDispositionNeedsAction {
 		t.Fatalf("reconfirmed tracker name result = %#v checks=%d", result, dupeChecks)
 	}
+}
+
+type alphaNameReviewInputEvaluator struct{}
+
+func (alphaNameReviewInputEvaluator) Requirements(_ context.Context, _ []api.TrackerID) (api.MetadataRequirementSet, error) {
+	return api.MetadataRequirementSet{Version: "alpha-name-review-input-v1"}, nil
+}
+
+func (alphaNameReviewInputEvaluator) Evaluate(
+	_ context.Context,
+	_ api.UploadSubject,
+	trackerIDs []api.TrackerID,
+) (api.InputReadinessEvaluation, error) {
+	fingerprint, err := api.CanonicalWorkflowFingerprint(trackerIDs)
+	if err != nil {
+		return api.InputReadinessEvaluation{}, fmt.Errorf("fingerprint alpha name review input requirements: %w", err)
+	}
+	return api.InputReadinessEvaluation{
+		RequirementsFingerprint: fingerprint,
+		Schemas: []api.TrackerQuestionnaire{{
+			Tracker: "ALPHA",
+			Fields:  []api.TrackerQuestionnaireField{{Key: "no_english_subtitles"}},
+		}},
+	}, nil
 }
 
 func TestModulePreflightPublishesImmutableAssessmentAndFinalizedProjectionRevision(t *testing.T) {
