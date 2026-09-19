@@ -71,6 +71,7 @@ type mediaModule struct {
 	dvdMenus      mediaDVDMenuService
 	images        mediaImageHostingService
 	repo          mediaRepository
+	mediaReuse    api.MediaReuseRepository
 	registry      *trackers.Registry
 	preparedFacts *preparedrelease.Module
 }
@@ -80,6 +81,7 @@ func newMediaModule(
 	logger api.Logger,
 	services api.ServiceSet,
 	repo mediaRepository,
+	mediaReuse api.MediaReuseRepository,
 	registry *trackers.Registry,
 	preparedFacts *preparedrelease.Module,
 ) *mediaModule {
@@ -89,6 +91,7 @@ func newMediaModule(
 		dvdMenus:      services.DVDMenus,
 		images:        services.Images,
 		repo:          repo,
+		mediaReuse:    mediaReuse,
 		registry:      registry,
 		preparedFacts: preparedFacts,
 	}
