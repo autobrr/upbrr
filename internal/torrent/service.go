@@ -670,7 +670,6 @@ func wantedFilesWithin(root string, files []string) ([]string, error) {
 		return nil, fmt.Errorf("torrent: resolve source root: %w", err)
 	}
 	wanted := make([]string, 0, len(files))
-	seen := make(map[string]struct{}, len(files))
 	for _, file := range files {
 		trimmed := strings.TrimSpace(file)
 		if trimmed == "" {
@@ -694,14 +693,22 @@ func wantedFilesWithin(root string, files []string) ([]string, error) {
 			return nil, fmt.Errorf("torrent: wanted file %q is not a regular file", absFile)
 		}
 		cleanFile := filepath.Clean(absFile)
-		if _, ok := seen[cleanFile]; ok {
+		if containsSamePath(wanted, cleanFile) {
 			continue
 		}
-		seen[cleanFile] = struct{}{}
 		wanted = append(wanted, cleanFile)
 	}
 	sort.Strings(wanted)
 	return wanted, nil
+}
+
+func containsSamePath(paths []string, candidate string) bool {
+	for _, path := range paths {
+		if pathutil.SamePath(path, candidate) {
+			return true
+		}
+	}
+	return false
 }
 
 func includePatternsForFiles(root string, files []string) ([]string, error) {
@@ -863,61 +870,13 @@ func validateTorrentContent(path string, meta api.TorrentSubject) error {
 }
 
 func expectedTorrentFiles(meta api.TorrentSubject) ([]sourceContentFile, bool, error) {
-	source := strings.TrimSpace(meta.SourcePath)
-	if source == "" || strings.EqualFold(filepath.Ext(source), ".torrent") {
-		return nil, false, nil
+	inventory, ok, err := ResolveSubmissionContentInventory(meta)
+	if err != nil || !ok {
+		return nil, ok, err
 	}
-	if strings.TrimSpace(meta.DiscType) != "" {
-		root := normalizeDiscSource(source)
-		expected, err := diskContentFiles(root)
-		return expected, true, err
-	}
-	info, err := os.Stat(source)
-	if err == nil && !info.IsDir() {
-		return []sourceContentFile{{
-			path: filepath.Base(source), length: info.Size(),
-		}}, true, nil
-	}
-	if err != nil {
-		return nil, false, fmt.Errorf("torrent: stat source %q: %w", source, err)
-	}
-	if len(meta.FileList) == 0 {
-		expected, err := diskContentFiles(source)
-		return expected, true, err
-	}
-	wanted, err := wantedFilesWithin(source, meta.FileList)
-	if err != nil {
-		return nil, false, err
-	}
-	if len(wanted) == 0 {
-		return nil, false, errors.New("torrent: no valid wanted files")
-	}
-	if len(wanted) == 1 {
-		info, err := os.Stat(wanted[0])
-		if err != nil {
-			return nil, false, fmt.Errorf("torrent: stat wanted file %q: %w", wanted[0], err)
-		}
-		return []sourceContentFile{{
-			path: filepath.Base(wanted[0]), length: info.Size(),
-		}}, true, nil
-	}
-	expected := make([]sourceContentFile, 0, len(wanted))
-	root, err := filepath.Abs(source)
-	if err != nil {
-		return nil, false, fmt.Errorf("torrent: resolve source root: %w", err)
-	}
-	for _, file := range wanted {
-		rel, err := filepath.Rel(root, file)
-		if err != nil {
-			return nil, false, fmt.Errorf("torrent: wanted file relative path: %w", err)
-		}
-		info, err := os.Stat(file)
-		if err != nil {
-			return nil, false, fmt.Errorf("torrent: stat wanted file %q: %w", file, err)
-		}
-		expected = append(expected, sourceContentFile{
-			path: filepath.ToSlash(rel), length: info.Size(),
-		})
+	expected := make([]sourceContentFile, 0, len(inventory.Files))
+	for _, file := range inventory.Files {
+		expected = append(expected, sourceContentFile{path: file.TorrentPath, length: file.Size})
 	}
 	return expected, true, nil
 }

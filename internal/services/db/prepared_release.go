@@ -302,6 +302,16 @@ func (r *SQLiteRepository) PurgePreparedRelease(ctx context.Context, sourcePath 
 		return fmt.Errorf("db purge prepared release: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := rejectActiveHistoryPurge(ctx, tx, sourcePath); err != nil {
+		return err
+	}
+	workflowStates, err := matchingStoredReleaseWorkflowStates(ctx, tx, sourcePath)
+	if err != nil {
+		return err
+	}
+	if err := rejectHistoryPurgeWorkflowActivity(ctx, tx, workflowStates); err != nil {
+		return err
+	}
 	for _, table := range []string{"prepared_release_current", "external_ids", "external_metadata"} {
 		query := `DELETE FROM ` + table + ` WHERE source_path = ?` //nolint:gosec // Fixed internal table allowlist, no caller SQL.
 		if _, err := tx.ExecContext(ctx, query, sourcePath); err != nil {

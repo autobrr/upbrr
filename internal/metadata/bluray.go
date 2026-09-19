@@ -16,6 +16,9 @@ import (
 )
 
 func (s *Service) applyBlurayMetadata(ctx context.Context, meta preparationstate.State, bdinfo *discparse.BDInfo) preparationstate.State {
+	if meta.ExternalFreshness.RequiresRefresh() {
+		meta.ProviderMetadata.Bluray = nil
+	}
 	if reason := s.blurayLookupSkipReason(meta); reason != "" {
 		if s.logger != nil {
 			s.logger.Debugf("metadata: blu-ray.com lookup skipped: %s", reason)
@@ -59,6 +62,9 @@ func (s *Service) applyBlurayMetadata(ctx context.Context, meta preparationstate
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Warnf("metadata: blu-ray.com lookup failed: %v", err)
+		}
+		if meta.ExternalFreshness.RequiresRefresh() {
+			appendProviderRefreshWarning(&meta, "Blu-ray.com", err)
 		}
 		return meta
 	}

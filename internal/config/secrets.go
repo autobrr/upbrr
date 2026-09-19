@@ -210,7 +210,7 @@ func decryptConfigSecretsWithHelperFrom(cfg *Config, helper string, assumeCloned
 // re-encrypts them with newMaterial, and saves the updated config.
 func RewrapSecretsInDatabase(ctx context.Context, repo interface {
 	LoadFullConfig(ctx context.Context, dest any) error
-	SaveFullConfig(ctx context.Context, cfg any) error
+	SaveFullConfigIfUnchanged(ctx context.Context, cfg any, expected json.RawMessage) error
 }, oldMaterial, newMaterial authmaterial.Material) error {
 	return RewrapSecretsInDatabaseWithFallback(ctx, repo, []authmaterial.Material{oldMaterial}, newMaterial)
 }
@@ -219,7 +219,7 @@ func RewrapSecretsInDatabase(ctx context.Context, repo interface {
 // first matching source material, then re-encrypts them with newMaterial.
 func RewrapSecretsInDatabaseWithFallback(ctx context.Context, repo interface {
 	LoadFullConfig(ctx context.Context, dest any) error
-	SaveFullConfig(ctx context.Context, cfg any) error
+	SaveFullConfigIfUnchanged(ctx context.Context, cfg any, expected json.RawMessage) error
 }, sourceMaterials []authmaterial.Material, newMaterial authmaterial.Material) error {
 	if repo == nil {
 		return errors.New("config secret rewrap: nil repository")
@@ -238,9 +238,13 @@ func RewrapSecretsInDatabaseWithFallback(ctx context.Context, repo interface {
 		return fmt.Errorf("config secret rewrap: derive new helper: %w", err)
 	}
 
-	var stored Config
-	if err := repo.LoadFullConfig(ctx, &stored); err != nil {
+	var snapshot json.RawMessage
+	if err := repo.LoadFullConfig(ctx, &snapshot); err != nil {
 		return fmt.Errorf("config secret rewrap: load config: %w", err)
+	}
+	var stored Config
+	if err := json.Unmarshal(snapshot, &stored); err != nil {
+		return fmt.Errorf("config secret rewrap: decode config: %w", err)
 	}
 
 	decrypted, err := decryptConfigSecretsWithHelpers(&stored, sourceHelpers)
@@ -251,7 +255,7 @@ func RewrapSecretsInDatabaseWithFallback(ctx context.Context, repo interface {
 	if err != nil {
 		return fmt.Errorf("config secret rewrap: encrypt: %w", err)
 	}
-	if err := repo.SaveFullConfig(ctx, encrypted); err != nil {
+	if err := repo.SaveFullConfigIfUnchanged(ctx, encrypted, snapshot); err != nil {
 		return fmt.Errorf("config secret rewrap: save config: %w", err)
 	}
 
