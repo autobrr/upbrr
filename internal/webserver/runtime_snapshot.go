@@ -263,9 +263,11 @@ func (b *Backend) runtimeActivator() (*RuntimeActivator, error) {
 		}
 		return repo.ConfigActivationSafe(ctx)
 	}
-	activator.deps.acquireRuntimeAdmission = func() func() {
-		b.runtimeAdmissionMu.Lock()
-		return b.runtimeAdmissionMu.Unlock
+	activator.deps.tryAcquireRuntimeAdmission = func() (func(), bool) {
+		if !b.runtimeAdmissionMu.TryLock() {
+			return nil, false
+		}
+		return b.runtimeAdmissionMu.Unlock, true
 	}
 	activator.deps.loadActivation = func(ctx context.Context, repo *db.SQLiteRepository) (api.ConfigActivation, error) {
 		return repo.LoadConfigActivation(ctx)

@@ -204,17 +204,16 @@ func (b *Backend) CloseContext(ctx context.Context) error {
 	} else if b.workflowCoordinator != nil {
 		_ = b.workflowCoordinator.Shutdown(shutdownCtx)
 	}
-	rt := runtime
-	if b.runtimeBundle != nil {
-		b.runtimeBundle.retire()
-	} else if rt.coreOwner != nil {
-		_ = rt.coreOwner.Close()
+	if runtime.bundle != nil {
+		runtime.bundle.retire()
+	} else if runtime.coreOwner != nil {
+		_ = runtime.coreOwner.Close()
 	}
 	if b.repo != nil {
 		_ = b.repo.Close()
 	}
-	if b.runtimeBundle == nil && rt.logger != nil {
-		_ = rt.logger.Close()
+	if runtime.bundle == nil && runtime.logger != nil {
+		_ = runtime.logger.Close()
 	}
 	return nil
 }

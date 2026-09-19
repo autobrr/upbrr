@@ -124,6 +124,99 @@ func TestBackendDefersConfigActivationWhileRuntimeIsBorrowed(t *testing.T) {
 	}
 }
 
+func TestBackendActivationDoesNotWaitForLateRuntimeBorrower(t *testing.T) {
+	for _, mode := range []string{"deferred", "immediate", "pending"} {
+		t.Run(mode, func(t *testing.T) {
+			backend, err := NewBackendWithContext(t.Context(), backendConfigTestConfig(filepath.Join(t.TempDir(), "late-borrow.db")), newEventHub())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = backend.Close() })
+			activator, err := backend.runtimeActivator()
+			if err != nil {
+				t.Fatal(err)
+			}
+			build := activator.deps.build
+			borrowedCh := make(chan backendRuntimeSnapshot)
+			activator.deps.build = func(ctx context.Context, cfg config.Config, repo *db.SQLiteRepository) (RuntimeGeneration, error) {
+				borrowed, borrowErr := backend.borrowRuntime()
+				if borrowErr != nil {
+					return RuntimeGeneration{}, borrowErr
+				}
+				borrowedCh <- borrowed
+				return build(ctx, cfg, repo)
+			}
+			initialGeneration := backend.runtimeSnapshot().generationID
+			candidate := backend.currentConfig()
+			candidate.Metadata.KeepImages = true
+			var pendingID string
+			if mode == "pending" {
+				borrowed, borrowErr := backend.borrowRuntime()
+				if borrowErr != nil {
+					t.Fatal(borrowErr)
+				}
+				pending, pendingErr := activator.ActivateResult(t.Context(), candidate)
+				borrowed.release()
+				if pendingErr != nil || pending.Status != api.ConfigActivationPending {
+					t.Fatalf("initial pending activation = %#v, error = %v", pending, pendingErr)
+				}
+				pendingID = pending.ActivationID
+			}
+			var result api.ConfigActivation
+			var activateErr error
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				switch mode {
+				case "immediate":
+					activateErr = activator.ActivateImmediate(t.Context(), candidate)
+				case "pending":
+					result, activateErr = activator.ActivatePending(t.Context())
+				default:
+					result, activateErr = activator.ActivateResult(t.Context(), candidate)
+				}
+			}()
+			var borrowed backendRuntimeSnapshot
+			select {
+			case borrowed = <-borrowedCh:
+			case <-done:
+				t.Fatalf("activation completed without borrowing: %v", activateErr)
+			}
+			release := sync.OnceFunc(borrowed.release)
+			defer release()
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				release()
+				<-done
+				t.Fatal("activation waited for the borrowed runtime")
+			}
+			if mode == "immediate" {
+				if !errors.Is(activateErr, api.ErrActiveInputBusy) {
+					t.Fatalf("immediate activation error = %v", activateErr)
+				}
+			} else if activateErr != nil || result.Status != api.ConfigActivationPending {
+				t.Fatalf("deferred activation = %#v, error = %v", result, activateErr)
+			}
+			if mode == "pending" && result.ActivationID != pendingID {
+				t.Fatal("pending poll replaced the candidate")
+			}
+			if backend.runtimeSnapshot().generationID != initialGeneration || backend.currentConfig().Metadata.KeepImages {
+				t.Fatal("busy activation replaced the runtime")
+			}
+			activator.deps.build = build
+			release()
+			result, err = backend.ConfigActivation(t.Context())
+			if err != nil || result.Status != api.ConfigActivationActive {
+				t.Fatalf("activation after release = %#v, error = %v", result, err)
+			}
+			if backend.currentConfig().Metadata.KeepImages == (mode == "immediate") {
+				t.Fatal("pending activation was lost or immediate activation was queued")
+			}
+		})
+	}
+}
+
 func TestBackendFailedDeferredActivationRetainsRuntimeAndAcceptsCorrection(t *testing.T) {
 	t.Parallel()
 

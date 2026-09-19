@@ -33,6 +33,23 @@ func TestRuntimeBundleRetiresAfterBorrowerReleases(t *testing.T) {
 	}
 }
 
+func TestBackendCloseUsesSynchronizedRuntimeSnapshot(t *testing.T) {
+	backend := &Backend{runtimeBundle: newRuntimeBundle(nil, nil)}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 1000 {
+			backend.replaceRuntimeGeneration(AllocateRuntimeGenerationID(), config.Config{}, CoreCapabilities{}, nil, nil, nil)
+		}
+	}()
+	for range 1000 {
+		if err := backend.CloseContext(t.Context()); err != nil {
+			t.Error(err)
+		}
+	}
+	<-done
+}
+
 func clearSessionLogStopGeneration(s *Server, sessionID string) {
 	sessionLogStopGenerations.mu.Lock()
 	defer sessionLogStopGenerations.mu.Unlock()

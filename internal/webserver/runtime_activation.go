@@ -89,18 +89,18 @@ type RuntimeInstaller interface {
 }
 
 type runtimeActivationDeps struct {
-	build                   func(context.Context, config.Config, *db.SQLiteRepository) (RuntimeGeneration, error)
-	cookies                 func(context.Context, *db.SQLiteRepository, string, api.Logger) error
-	persist                 func(context.Context, *config.Config, *db.SQLiteRepository, string, api.Logger) error
-	loadStored              func(context.Context, *db.SQLiteRepository) (*config.Config, error)
-	activationSafe          func(context.Context, *db.SQLiteRepository) (bool, error)
-	loadActivation          func(context.Context, *db.SQLiteRepository) (api.ConfigActivation, error)
-	savePending             func(context.Context, *db.SQLiteRepository, string, []byte, []api.ConfigImpactDetail) (api.ConfigActivation, error)
-	failPending             func(context.Context, *db.SQLiteRepository, string, api.ConfigActivationFailureCode) (api.ConfigActivation, error)
-	clearFailure            func(context.Context, *db.SQLiteRepository, string) (api.ConfigActivation, error)
-	transform               db.ConfigActivationWorkflowTransform
-	acquireRuntimeAdmission func() func()
-	persistActivated        func(context.Context, *config.Config, *db.SQLiteRepository, string, api.Logger, uint64, api.WorkflowFingerprint, []api.ConfigImpactDetail, db.ConfigActivationWorkflowTransform) (api.ConfigActivation, error)
+	build                      func(context.Context, config.Config, *db.SQLiteRepository) (RuntimeGeneration, error)
+	cookies                    func(context.Context, *db.SQLiteRepository, string, api.Logger) error
+	persist                    func(context.Context, *config.Config, *db.SQLiteRepository, string, api.Logger) error
+	loadStored                 func(context.Context, *db.SQLiteRepository) (*config.Config, error)
+	activationSafe             func(context.Context, *db.SQLiteRepository) (bool, error)
+	loadActivation             func(context.Context, *db.SQLiteRepository) (api.ConfigActivation, error)
+	savePending                func(context.Context, *db.SQLiteRepository, string, []byte, []api.ConfigImpactDetail) (api.ConfigActivation, error)
+	failPending                func(context.Context, *db.SQLiteRepository, string, api.ConfigActivationFailureCode) (api.ConfigActivation, error)
+	clearFailure               func(context.Context, *db.SQLiteRepository, string) (api.ConfigActivation, error)
+	transform                  db.ConfigActivationWorkflowTransform
+	tryAcquireRuntimeAdmission func() (func(), bool)
+	persistActivated           func(context.Context, *config.Config, *db.SQLiteRepository, string, api.Logger, uint64, api.WorkflowFingerprint, []api.ConfigImpactDetail, db.ConfigActivationWorkflowTransform) (api.ConfigActivation, error)
 }
 
 type runtimeCookiePersistenceError struct {
@@ -429,13 +429,19 @@ func (a *RuntimeActivator) activateResultLocked(
 	}
 
 	impacts := configImpactDetails(currentRuntime, *runtimeCfg)
+	deferActivation := func(blockingErr error) (api.ConfigActivation, error) {
+		if !allowPending {
+			return api.ConfigActivation{}, activationError(ActivationStagePersist, blockingErr)
+		}
+		if consumingPending {
+			return activation, nil
+		}
+		return a.savePending(ctx, ownerID, stored, impacts)
+	}
 	if safe, safeErr := a.activationSafe(ctx); safeErr != nil {
 		return api.ConfigActivation{}, activationError(ActivationStagePersist, safeErr)
 	} else if !safe {
-		if !allowPending {
-			return api.ConfigActivation{}, activationError(ActivationStagePersist, api.ErrActiveInputBusy)
-		}
-		return a.savePending(ctx, ownerID, stored, impacts)
+		return deferActivation(api.ErrActiveInputBusy)
 	}
 
 	if activationKnown {
@@ -464,28 +470,25 @@ func (a *RuntimeActivator) activateResultLocked(
 	if err := a.deps.cookies(ctx, a.repo, a.fixedDBPath, generation.Logger); err != nil {
 		return api.ConfigActivation{}, activationError(ActivationStageCookies, err)
 	}
-	if a.deps.acquireRuntimeAdmission != nil {
-		releaseAdmission := a.deps.acquireRuntimeAdmission()
+	if a.deps.tryAcquireRuntimeAdmission != nil {
+		releaseAdmission, admitted := a.deps.tryAcquireRuntimeAdmission()
+		if !admitted {
+			return deferActivation(api.ErrActiveInputBusy)
+		}
 		defer releaseAdmission()
 	}
 	if safe, safeErr := a.activationSafe(ctx); safeErr != nil {
 		return api.ConfigActivation{}, activationError(ActivationStagePersist, safeErr)
 	} else if !safe {
-		if !allowPending {
-			return api.ConfigActivation{}, activationError(ActivationStagePersist, api.ErrActiveInputBusy)
-		}
-		return a.savePending(ctx, ownerID, stored, impacts)
+		return deferActivation(api.ErrActiveInputBusy)
 	}
-	activation, err = a.persistActivated(ctx, stored, activation, activationKnown, fingerprint, impacts, generation.Logger)
+	activated, err := a.persistActivated(ctx, stored, activation, activationKnown, fingerprint, impacts, generation.Logger)
 	if err != nil {
 		if _, ok := errors.AsType[*runtimeCookiePersistenceError](err); ok {
 			return api.ConfigActivation{}, activationError(ActivationStageCookies, err)
 		}
 		if errors.Is(err, api.ErrActiveInputBusy) || errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
-			if !allowPending {
-				return api.ConfigActivation{}, activationError(ActivationStagePersist, err)
-			}
-			return a.savePending(ctx, ownerID, stored, impacts)
+			return deferActivation(err)
 		}
 		return api.ConfigActivation{}, activationError(ActivationStagePersist, err)
 	}
@@ -494,7 +497,7 @@ func (a *RuntimeActivator) activateResultLocked(
 	retired := a.installer.Install(generation)
 	installed = true
 	retired.Close()
-	return activation, nil
+	return activated, nil
 }
 
 func (a *RuntimeActivator) clearFailedActivation(ctx context.Context, activation api.ConfigActivation) (api.ConfigActivation, error) {

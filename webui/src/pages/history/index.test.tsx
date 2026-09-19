@@ -68,6 +68,68 @@ describe("HistoryPage", () => {
     expect(onOpenInput).toHaveBeenCalledWith(sourcePath);
   });
 
+  it("reports a rejected open and clears the error on a successful retry", async () => {
+    const sourcePath = "C:\\media\\Stored.Release.2026.1080p-GRP.mkv";
+    let allowed = false;
+    const onOpenInput = vi.fn(async () => allowed);
+    installAppOperationMocks({
+      ListHistory: async () => [entry(sourcePath, "Stored Release 2026")],
+      GetHistoryOverview: async () => overview(sourcePath, "Stored Release 2026"),
+    });
+
+    render(<HistoryPage onOpenInput={onOpenInput} />);
+    const user = userEvent.setup();
+    const button = await screen.findByRole("button", { name: "Open input" });
+    await user.click(button);
+
+    const message =
+      "Input could not be opened. Check the Input page for errors or recovery actions.";
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    expect(button).toBeEnabled();
+
+    allowed = true;
+    await user.click(button);
+    expect(screen.queryByText(message)).not.toBeInTheDocument();
+    expect(onOpenInput).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["false", "throw"])(
+    "ignores an old open's %s result after selection changes",
+    async (outcome) => {
+      const firstPath = "C:\\media\\First.Release.2026.1080p-GRP.mkv";
+      const secondPath = "C:\\media\\Second.Release.2026.1080p-GRP.mkv";
+      let finish: () => void = () => undefined;
+      const pending = new Promise<boolean>((resolve, reject) => {
+        finish = () => {
+          if (outcome === "throw") reject(new Error("Old open failed"));
+          else resolve(false);
+        };
+      });
+      const onOpenInput = vi.fn(() => pending);
+      installAppOperationMocks({
+        ListHistory: async () => [
+          entry(firstPath, "First Release"),
+          entry(secondPath, "Second Release"),
+        ],
+        GetHistoryOverview: async (path) =>
+          overview(path, path === firstPath ? "First Release" : "Second Release"),
+      });
+
+      render(<HistoryPage onOpenInput={onOpenInput} />);
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("button", { name: "Open input" }));
+      await user.click(screen.getByRole("button", { name: /Second Release/ }));
+      expect(await screen.findByText(secondPath)).toBeInTheDocument();
+      await act(async () => finish());
+
+      expect(
+        screen.queryByText(/Input could not be opened|Old open failed/),
+      ).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Open input" })).toBeEnabled();
+      expect(onOpenInput).toHaveBeenCalledWith(firstPath);
+    },
+  );
+
   it("ignores superseded overview responses", async () => {
     const firstPath = "C:\\media\\Example.Release.2026.1080p-GRP.mkv";
     const secondPath = "C:\\media\\Second.Example.2026.1080p-GRP.mkv";

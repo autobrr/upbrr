@@ -75,6 +75,9 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
   const [deleting, setDeleting] = useState(false);
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState("");
+  const [openFailure, setOpenFailure] = useState<{ sourcePath: string; message: string } | null>(
+    null,
+  );
 
   useEffect(() => {
     const listHistory = historyClient.list;
@@ -126,6 +129,7 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
   }, [filteredEntries, selectedPath]);
 
   useEffect(() => {
+    setOpenFailure(null);
     if (!selectedPath) {
       setOverview(null);
       return;
@@ -183,6 +187,7 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
 
     setDeleting(true);
     setError("");
+    setOpenFailure(null);
     try {
       const deletedPath = selectedPath;
       await deleteHistoryRelease(deletedPath);
@@ -204,14 +209,25 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
     if (!selectedPath || !onOpenInput) return;
     setOpening(true);
     setError("");
+    setOpenFailure(null);
     try {
-      await onOpenInput(selectedPath);
+      const opened = await onOpenInput(selectedPath);
+      if (!opened) {
+        setOpenFailure({
+          sourcePath: selectedPath,
+          message:
+            "Input could not be opened. Check the Input page for errors or recovery actions.",
+        });
+      }
     } catch (err) {
-      setError(String(err));
+      setOpenFailure({ sourcePath: selectedPath, message: String(err) });
     } finally {
       setOpening(false);
     }
   };
+
+  const displayedError =
+    error || (openFailure?.sourcePath === selectedPath ? openFailure.message : "");
 
   return (
     <div className="content-stack">
@@ -465,7 +481,7 @@ export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
             </div>
           ) : null}
 
-          {error ? <p className="error">{error}</p> : null}
+          {displayedError ? <p className="error">{displayedError}</p> : null}
         </div>
       </section>
     </div>
