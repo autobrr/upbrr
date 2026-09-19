@@ -44,6 +44,30 @@ func (s downstreamTrackerSet) TrackerApproval() *api.TrackerApprovalSnapshotRef 
 	return &ref
 }
 
+// ProjectionDownstreamEligibility reports the retained projection and duplicate
+// decision for one tracker, with the structured cause of a skip. It is the
+// single source for both the downstream tracker set and the lane projection
+// adapters render.
+func ProjectionDownstreamEligibility(
+	projection api.TrackerReleaseProjection,
+	dupe api.TrackerDupeAssessment,
+	hasDupe bool,
+) (api.UploadEligibility, api.UploadSkipReason) {
+	if !projection.UploadReady || projection.Readiness != api.ReadinessStatusReady {
+		return api.UploadEligibilitySkipped, api.UploadSkipReasonNotReady
+	}
+	if !hasDupe || dupe.Decision == api.DupeDecisionPending {
+		return api.UploadEligibilityUnknown, ""
+	}
+	if dupe.Status == api.StageStatusFailed {
+		return api.UploadEligibilitySkipped, api.UploadSkipReasonDuplicateCheckFailed
+	}
+	if dupe.Decision == api.DupeDecisionAccepted {
+		return api.UploadEligibilitySkipped, api.UploadSkipReasonDuplicateFound
+	}
+	return api.UploadEligibilityEligible, ""
+}
+
 // ProjectionEligibleForDownstream reports whether retained projection and
 // duplicate state permit media, description, and upload-plan work.
 func ProjectionEligibleForDownstream(
@@ -51,13 +75,77 @@ func ProjectionEligibleForDownstream(
 	dupe api.TrackerDupeAssessment,
 	hasDupe bool,
 ) bool {
-	if !projection.UploadReady || projection.Readiness != api.ReadinessStatusReady || !hasDupe {
-		return false
+	eligibility, _ := ProjectionDownstreamEligibility(projection, dupe, hasDupe)
+	return eligibility == api.UploadEligibilityEligible
+}
+
+// DescriptionResultsByTracker reduces retained description evidence to one
+// outcome per tracker.
+func DescriptionResultsByTracker(descriptions api.DescriptionSet) map[api.TrackerID]api.DescriptionTrackerResult {
+	results := make(map[api.TrackerID]api.DescriptionTrackerResult)
+	for _, description := range descriptions.Descriptions {
+		for _, trackerID := range description.TrackerIDs {
+			results[trackerID] = api.DescriptionTrackerResult{
+				TrackerID: trackerID,
+				Status:    api.StageStatusCompleted,
+			}
+		}
 	}
-	if dupe.Status == api.StageStatusFailed || dupe.Decision == api.DupeDecisionPending || dupe.Decision == api.DupeDecisionAccepted {
-		return false
+	for _, failure := range descriptions.Failures {
+		if failure.TrackerID == "" {
+			continue
+		}
+		results[failure.TrackerID] = api.DescriptionTrackerResult{
+			TrackerID: failure.TrackerID,
+			Status:    api.StageStatusFailed,
+			Message:   strings.TrimSpace(failure.Failure.Message),
+		}
 	}
-	return true
+	for _, result := range descriptions.TrackerResults {
+		results[result.TrackerID] = result
+	}
+	return results
+}
+
+// TrackerDescriptionEligibility mirrors the upload plan's description gate. The
+// plan keeps a blocked tracker in its report but never submits it, so a missing
+// or incomplete outcome must read as skipped here rather than as eligible.
+func TrackerDescriptionEligibility(
+	projection api.TrackerReleaseProjection,
+	result api.DescriptionTrackerResult,
+	hasResult bool,
+) (api.UploadEligibility, api.UploadSkipReason) {
+	if !projection.Artifacts.Description {
+		return api.UploadEligibilityEligible, ""
+	}
+	switch {
+	case !hasResult:
+		return api.UploadEligibilitySkipped, api.UploadSkipReasonDescriptionFailed
+	case result.Status == api.StageStatusSkipped:
+		return api.UploadEligibilitySkipped, api.UploadSkipReasonDescriptionSkipped
+	case result.Status != api.StageStatusCompleted:
+		return api.UploadEligibilitySkipped, api.UploadSkipReasonDescriptionFailed
+	}
+	return api.UploadEligibilityEligible, ""
+}
+
+// TrackerDryRunEligibility reports the retained dry-run decision for one
+// tracker. Only an operation the dry run prepared reaches submission, so a
+// skipped or failed report excludes the tracker from the upload set.
+func TrackerDryRunEligibility(
+	report api.TrackerDryRunReport,
+	hasReport bool,
+) (api.UploadEligibility, api.UploadSkipReason) {
+	switch {
+	case !hasReport:
+		// A dry run can target a subset, so silence is not a decision.
+		return api.UploadEligibilityUnknown, ""
+	case report.Status == api.StageStatusSkipped:
+		return api.UploadEligibilitySkipped, api.UploadSkipReasonUploadPreparationSkipped
+	case stageSucceeded(report.Status):
+		return api.UploadEligibilityEligible, ""
+	}
+	return api.UploadEligibilitySkipped, api.UploadSkipReasonUploadPreparationFailed
 }
 
 // DownstreamEligibleProjections applies the shared retained eligibility

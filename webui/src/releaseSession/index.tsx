@@ -2400,6 +2400,7 @@ export function ReleaseSessionProvider({
         uploadStatus: workflowUploadStatus,
         dryRunResult: workflowView.current?.dryRun || null,
         result: workflowView.current?.uploadResult || null,
+        trackerOutcomes: workflowView.current?.continuation?.trackerOutcomes || [],
         error: workflowView.failure?.Message || workflowView.error || state.uploadError || "",
       },
       chooseTrackers: (trackers) => dispatch({ type: "trackers_chosen", trackers }),

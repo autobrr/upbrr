@@ -25,6 +25,7 @@ const uploadFacet = (
     uploadStatus: "idle",
     dryRunResult: null,
     result: null,
+    trackerOutcomes: [],
     error: "",
     ...view,
   },
@@ -386,5 +387,73 @@ describe("TrackerUploadPage", () => {
     expect(container.textContent?.match(/Exact-torrent client injection failed\./g)).toHaveLength(
       1,
     );
+  });
+
+  it("marks each tracker with the backend upload decision before any dry run", () => {
+    const projections = {
+      projections: [
+        {
+          trackerId: "EXAMPLE",
+          displayName: "Example Tracker",
+          uploadReleaseName: "Example.Release.2026.1080p-GRP",
+        },
+        {
+          trackerId: "OTHER",
+          displayName: "Other Tracker",
+          uploadReleaseName: "Example.Release.2026.1080p-GRP",
+        },
+      ],
+    } as unknown as NonNullable<UploadFacet["view"]["projections"]>;
+    const trackerOutcomes = [
+      { trackerId: "EXAMPLE", uploadEligibility: "eligible" },
+      { trackerId: "OTHER", uploadEligibility: "skipped", uploadSkipReason: "duplicate_found" },
+    ] as unknown as UploadFacet["view"]["trackerOutcomes"];
+    renderPage(
+      uploadFacet({ selectedTrackers: ["EXAMPLE", "OTHER"], projections, trackerOutcomes }),
+    );
+
+    expect(screen.getByText("Will upload")).toBeInTheDocument();
+    // An in-client duplicate cannot be overridden, so the label never sends the
+    // owner back to the Duplicates page.
+    expect(screen.getByText("Skipped: duplicate found")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Duplicates/ })).not.toBeInTheDocument();
+  });
+
+  it("stays silent while the decision is unknown and falls back when a reason has no label", () => {
+    const projections = {
+      projections: [
+        { trackerId: "EXAMPLE", displayName: "Example Tracker" },
+        { trackerId: "OTHER", displayName: "Other Tracker" },
+        { trackerId: "THIRD", displayName: "Third Tracker" },
+      ],
+    } as unknown as NonNullable<UploadFacet["view"]["projections"]>;
+    const trackerOutcomes = [
+      { trackerId: "EXAMPLE", uploadEligibility: "unknown" },
+      {
+        trackerId: "OTHER",
+        uploadEligibility: "skipped",
+        uploadSkipReason: "upload_preparation_skipped",
+      },
+      // A reason this build has no label for still has to read as skipped.
+      {
+        trackerId: "THIRD",
+        uploadEligibility: "skipped",
+        uploadSkipReason: "reason_from_a_newer_backend",
+      },
+    ] as unknown as UploadFacet["view"]["trackerOutcomes"];
+    renderPage(
+      uploadFacet({
+        selectedTrackers: ["EXAMPLE", "OTHER", "THIRD"],
+        projections,
+        trackerOutcomes,
+      }),
+    );
+
+    expect(screen.getByText("Skipped: skipped during upload preparation")).toBeInTheDocument();
+    expect(screen.getByText("Skipped")).toBeInTheDocument();
+    // The unknown card carries its name and no eligibility text of any kind,
+    // which a page-wide query cannot show because siblings are labelled.
+    expect(screen.getByText("Example Tracker").parentElement?.textContent).toBe("Example Tracker");
+    expect(screen.queryByText("Will upload")).not.toBeInTheDocument();
   });
 });
