@@ -2897,7 +2897,8 @@ func TestBTNUploadIntermediateFailureFallsBackToAPI(t *testing.T) {
 	t.Parallel()
 
 	var apiSearchCalls atomic.Int32
-	var apiDownloadCalls atomic.Int32
+	var uploadedName atomic.Value
+	handlerErrs := newHTTPHandlerErrorRecorder(t)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -2926,6 +2927,16 @@ func TestBTNUploadIntermediateFailureFallsBackToAPI(t *testing.T) {
 				`))
 				return
 			}
+			if err := r.ParseMultipartForm(1 << 20); err != nil {
+				handlerErrs.Errorf("parse upload: %v", err)
+				return
+			}
+			defer func() {
+				if err := r.MultipartForm.RemoveAll(); err != nil {
+					handlerErrs.Errorf("remove multipart form: %v", err)
+				}
+			}()
+			uploadedName.Store(r.FormValue("scenename"))
 			_, _ = w.Write([]byte(`
 				<p>Warning you need to download the torrent file before continuing.</p>
 				<form action="/torrents.php?id=123"><button>Continue</button></form>
@@ -2941,11 +2952,16 @@ func TestBTNUploadIntermediateFailureFallsBackToAPI(t *testing.T) {
 			switch rpc.Method {
 			case "getTorrents":
 				apiSearchCalls.Add(1)
-				_, _ = w.Write([]byte(`{"result":{"torrents":{"779":{"GroupID":"123","ReleaseName":"Example.Show.S01E01.1080p.WEB-DL.H.265-GRP"}}}}`))
-			case "getTorrentById":
-				apiDownloadCalls.Add(1)
-				_, _ = w.Write([]byte(`{"result":{"DownloadURL":"http://` + r.Host + `/mock-download"}}`))
+				_ = json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"torrents": map[string]any{
+					"779": map[string]any{
+						"GroupID":     "123",
+						"GroupName":   "S01E01",
+						"ReleaseName": uploadedName.Load(),
+						"DownloadURL": "http://" + r.Host + "/mock-download",
+					},
+				}}})
 			default:
+				handlerErrs.Errorf("unexpected API method: %s", rpc.Method)
 				http.NotFound(w, r)
 			}
 		case r.URL.Path == "/mock-download":
@@ -2959,6 +2975,7 @@ func TestBTNUploadIntermediateFailureFallsBackToAPI(t *testing.T) {
 	req := newBTNUploadTestRequest(t)
 	req.TrackerConfig.Unknown = map[string]any{"api_url": server.URL + "/rpc"}
 	summary, err := uploadAt(context.Background(), req, server.URL)
+	handlerErrs.Check()
 	if err != nil {
 		t.Fatalf("upload failed: %v", err)
 	}
@@ -2970,9 +2987,6 @@ func TestBTNUploadIntermediateFailureFallsBackToAPI(t *testing.T) {
 	}
 	if apiSearchCalls.Load() != 1 {
 		t.Fatalf("expected one API search call, got %d", apiSearchCalls.Load())
-	}
-	if apiDownloadCalls.Load() != 1 {
-		t.Fatalf("expected one API download call, got %d", apiDownloadCalls.Load())
 	}
 }
 
