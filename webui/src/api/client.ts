@@ -4,6 +4,7 @@
 import type { OperationFailure } from "../types";
 
 type EventCallback = (payload: unknown) => void;
+type EventConnectionCallback = () => void;
 type AppRequestOptions = Readonly<{
   signal?: AbortSignal;
   correlationID?: string;
@@ -21,6 +22,7 @@ declare global {
 }
 
 const callbacks = new Map<string, Set<EventCallback>>();
+const eventConnectionCallbacks = new Set<EventConnectionCallback>();
 let eventStreamController: AbortController | null = null;
 let eventStreamReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let csrfToken = "";
@@ -104,7 +106,13 @@ const closeEventStream = () => {
 };
 
 const ensureEventStream = () => {
-  if (eventStreamController || !csrfToken || callbacks.size === 0) return;
+  if (
+    eventStreamController ||
+    !csrfToken ||
+    (callbacks.size === 0 && eventConnectionCallbacks.size === 0)
+  ) {
+    return;
+  }
   const controller = new AbortController();
   eventStreamController = controller;
   void runEventStream(controller);
@@ -116,7 +124,13 @@ const recreateEventStream = () => {
 };
 
 const scheduleEventStreamReconnect = () => {
-  if (!csrfToken || callbacks.size === 0 || eventStreamReconnectTimer) return;
+  if (
+    !csrfToken ||
+    (callbacks.size === 0 && eventConnectionCallbacks.size === 0) ||
+    eventStreamReconnectTimer
+  ) {
+    return;
+  }
   eventStreamReconnectTimer = setTimeout(() => {
     eventStreamReconnectTimer = null;
     ensureEventStream();
@@ -138,6 +152,7 @@ const runEventStream = async (controller: AbortController) => {
       }
       return;
     }
+    eventConnectionCallbacks.forEach((callback) => callback());
     if (!response.body) throw new Error("Event stream response body is unavailable");
     await readEventStream(response.body, controller.signal);
   } catch (_error) {
@@ -217,6 +232,29 @@ const postJSON = async <T>(
   return payload as T;
 };
 
+const getJSON = async <T>(path: string, options: AppRequestOptions = {}): Promise<T> => {
+  const requestInit = (): RequestInit => ({
+    method: "GET",
+    credentials: "include",
+    headers: csrfToken ? { "X-CSRF-Token": csrfToken } : {},
+    signal: options.signal,
+  });
+  let response = await fetch(withBasePath(path), requestInit());
+  let payload = await parseJSONResponse<T & { error?: string; failure?: OperationFailure }>(
+    response,
+  );
+  if (!response.ok && isAuthFailureStatus(response.status) && (await refreshAuthState())) {
+    response = await fetch(withBasePath(path), requestInit());
+    payload = await parseJSONResponse<T & { error?: string; failure?: OperationFailure }>(response);
+  }
+  if (!response.ok) {
+    if (payload?.failure) throw new OperationFailureError(payload.failure);
+    throw new Error(String(payload?.error || response.statusText || "Request failed"));
+  }
+  if (payload === null) throw new Error("Request returned an empty response");
+  return payload as T;
+};
+
 const postForm = async <T>(
   path: string,
   body: FormData,
@@ -271,7 +309,17 @@ export const subscribeWebEvent = (eventName: string, callback: EventCallback) =>
   return () => {
     listeners.delete(callback);
     if (listeners.size === 0) callbacks.delete(eventName);
-    if (callbacks.size === 0) closeEventStream();
+    if (callbacks.size === 0 && eventConnectionCallbacks.size === 0) closeEventStream();
+  };
+};
+
+/** Runs after the authenticated browser event stream connects or reconnects. */
+export const subscribeWebEventConnection = (callback: EventConnectionCallback) => {
+  eventConnectionCallbacks.add(callback);
+  ensureEventStream();
+  return () => {
+    eventConnectionCallbacks.delete(callback);
+    if (callbacks.size === 0 && eventConnectionCallbacks.size === 0) closeEventStream();
   };
 };
 
@@ -285,6 +333,14 @@ export const requestApp = <T>(
     return testAppRequestHandler(method, body, options).then((result) => result as T);
   }
   return postJSON<T>(`/api/app/${method}`, body, options);
+};
+
+/** Reads one typed application snapshot through an HTTP GET route. */
+export const requestAppGet = <T>(method: string, options: AppRequestOptions = {}): Promise<T> => {
+  if (testAppRequestHandler) {
+    return testAppRequestHandler(method, undefined, options).then((result) => result as T);
+  }
+  return getJSON<T>(`/api/app/${method}`, options);
 };
 
 /** Uploads multipart application content with the same session/CSRF behavior. */

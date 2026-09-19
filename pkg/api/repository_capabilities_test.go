@@ -67,6 +67,8 @@ func TestRepositoryCapabilityInterfacesDoNotExposeLifecycleOrSQL(t *testing.T) {
 		reflect.TypeFor[UploadLedgerRepository](),
 		reflect.TypeFor[TrackerStateRepository](),
 		reflect.TypeFor[MediaAssetRepository](),
+		reflect.TypeFor[MediaReuseRepository](),
+		reflect.TypeFor[DescriptionReuseRepository](),
 		reflect.TypeFor[ReleaseWorkflowStateRepository](),
 		reflect.TypeFor[ScreenshotLifecycleRepository](),
 	}

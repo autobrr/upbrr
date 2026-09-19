@@ -38,6 +38,8 @@ const (
 // CreateReleaseWorkflowUploadRequest starts one durable single-source upload.
 // IdempotencyKey is supplied by the transport and is never decoded from JSON.
 type CreateReleaseWorkflowUploadRequest struct {
+	// Authority continues an already-open input without repeating source verification.
+	Authority      *WorkflowAuthority                `json:"authority,omitempty"`
 	Source         ReleaseWorkflowUploadSource       `json:"source"`
 	Unattended     *ReleaseWorkflowUploadUnattended  `json:"unattended"`
 	Execution      ReleaseWorkflowUploadExecution    `json:"execution,omitempty"`
@@ -276,6 +278,9 @@ type ReleaseWorkflowUploadTorrent struct {
 
 // Validate rejects malformed or contradictory composite upload requests.
 func (r CreateReleaseWorkflowUploadRequest) Validate() error {
+	if r.Authority != nil && (r.Authority.WorkflowID == "" || r.Authority.ExpectedRevision == 0) {
+		return errors.New("existing workflow authority requires an ID and revision")
+	}
 	if strings.TrimSpace(r.Source.Path) == "" {
 		return errors.New("source path is required")
 	}

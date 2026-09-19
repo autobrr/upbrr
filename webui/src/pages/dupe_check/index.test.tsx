@@ -44,6 +44,8 @@ const renderPage = (facet: DuplicatesFacet, trackers = ["EXAMPLE"]) =>
       sourcePath="C:\\media\\Example"
       trackerUploadItems={trackers.map((name) => ({ name, config: {} }))}
       trackerIconSrcByName={{}}
+      submissionExclusions={[]}
+      workflowComplete={false}
     />,
   );
 
@@ -54,6 +56,36 @@ describe("DupeCheckPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
     expect(run).toHaveBeenCalledOnce();
+  });
+
+  it("shows an all-uploaded terminal outcome without duplicate results or upload actions", () => {
+    const run = vi.fn(async () => true);
+    render(
+      <DupeCheckPage
+        facet={facetFor({ selectedTrackers: [] }, { run })}
+        sourcePath="C:\\media\\Example"
+        trackerUploadItems={[{ name: "HDS", config: {} }]}
+        trackerIconSrcByName={{}}
+        submissionExclusions={[
+          {
+            trackerId: "HDS",
+            reason: "already_uploaded",
+            confirmedAt: "2026-09-19T00:00:00Z",
+          },
+        ]}
+        workflowComplete
+      />,
+    );
+
+    const exclusions = screen.getByLabelText("Submission exclusions");
+    expect(exclusions).toHaveTextContent("HDS");
+    expect(exclusions).toHaveTextContent("Already uploaded");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "All selected trackers were already uploaded. No upload is needed.",
+    );
+    expect(screen.queryByText("No dupe results yet.")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run dupe check" })).toBeDisabled();
+    expect(run).not.toHaveBeenCalled();
   });
 
   it("keeps name review in the tracker card without blocking duplicate checking", () => {
@@ -230,6 +262,8 @@ describe("DupeCheckPage", () => {
           sourcePath="C:\\media\\Example"
           trackerUploadItems={[{ name: "EXAMPLE", config: {} }]}
           trackerIconSrcByName={{}}
+          submissionExclusions={[]}
+          workflowComplete={false}
         />,
       );
 
@@ -242,6 +276,8 @@ describe("DupeCheckPage", () => {
           sourcePath="C:\\media\\Example"
           trackerUploadItems={[{ name: "EXAMPLE", config: {} }]}
           trackerIconSrcByName={{}}
+          submissionExclusions={[]}
+          workflowComplete={false}
         />,
       );
 
@@ -261,18 +297,26 @@ describe("DupeCheckPage", () => {
     expect(chooseTrackers).toHaveBeenCalledWith(["EXAMPLE"]);
   });
 
-  it("leaves running progress to the release layout", () => {
+  it("leaves running progress to the release layout and blocks tracker changes", () => {
+    const chooseTrackers = vi.fn();
     renderPage(
-      facetFor({
-        status: "running",
-        completed: 1,
-        total: 3,
-        selectedTrackers: ["EXAMPLE", "SECOND", "THIRD"],
-      }),
+      facetFor(
+        {
+          status: "running",
+          completed: 1,
+          total: 3,
+          selectedTrackers: ["EXAMPLE", "SECOND", "THIRD"],
+        },
+        { chooseTrackers },
+      ),
       ["EXAMPLE", "SECOND", "THIRD"],
     );
 
     expect(screen.getByRole("button", { name: "Checking 1/3..." })).toBeDisabled();
+    const tracker = screen.getByRole("checkbox", { name: "EXAMPLE" });
+    expect(tracker).toBeDisabled();
+    fireEvent.click(tracker);
+    expect(chooseTrackers).not.toHaveBeenCalled();
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
   });
 
@@ -347,6 +391,8 @@ describe("DupeCheckPage", () => {
           sourcePath="C:\\media\\Example"
           trackerUploadItems={[{ name: "EXAMPLE", config: {} }]}
           trackerIconSrcByName={{}}
+          submissionExclusions={[]}
+          workflowComplete={false}
         />
       </>,
     );

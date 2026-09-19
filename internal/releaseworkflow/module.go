@@ -43,6 +43,7 @@ const (
 	workflowWorkLeaseTTL  = time.Minute
 	workflowWorkHeartbeat = 20 * time.Second
 	workflowCommandTTL    = 24 * time.Hour
+	operationCleanupTTL   = 5 * time.Second
 	// maxPlaylistActionOptionsPerDisc bounds retained selectable playlist details without
 	// allowing one disc to hide every option for another disc.
 	maxPlaylistActionOptionsPerDisc = 10
@@ -51,6 +52,16 @@ const (
 // Option configures a workflow module.
 type Option func(*Module) error
 
+// OperationLifetime retains a config-scoped dependency bundle until an
+// asynchronous operation worker has finished cleanup.
+type OperationLifetime func() (func(), bool)
+
+// ConfigActivationGuard rejects admissions from a runtime generation that is
+// no longer the durable active configuration.
+type ConfigActivationGuard func(context.Context) error
+
+type operationLifetimeContextKey struct{}
+
 // WithClock installs a deterministic workflow clock.
 func WithClock(clock Clock) Option {
 	return func(module *Module) error {
@@ -58,6 +69,27 @@ func WithClock(clock Clock) Option {
 			return errors.New("release workflow: clock is required")
 		}
 		module.clock = clock
+		return nil
+	}
+}
+
+// WithConfigActivationGuard installs the host's durable config-generation
+// admission check. A nil guard leaves non-WebUI callers unchanged.
+func WithConfigActivationGuard(guard ConfigActivationGuard) Option {
+	return func(module *Module) error {
+		module.configActivationGuard = guard
+		return nil
+	}
+}
+
+// WithConfigActivationAuthority binds all work from this immutable runtime
+// bundle to one durable effective configuration generation.
+func WithConfigActivationAuthority(authority api.ConfigActivationAuthority) Option {
+	return func(module *Module) error {
+		if authority.Fingerprint == "" {
+			return errors.New("release workflow: config activation fingerprint is required")
+		}
+		module.configActivationAuthority = authority
 		return nil
 	}
 }
@@ -82,6 +114,18 @@ func WithProcessEpoch(epoch string) Option {
 			return errors.New("release workflow: process epoch is required")
 		}
 		module.processEpoch = epoch
+		return nil
+	}
+}
+
+// WithCoordinator installs process-lifetime coordination shared by otherwise
+// immutable config-scoped workflow modules.
+func WithCoordinator(coordinator *Coordinator) Option {
+	return func(module *Module) error {
+		if coordinator == nil {
+			return errors.New("release workflow: coordinator is required")
+		}
+		module.Coordinator = coordinator
 		return nil
 	}
 }
@@ -189,32 +233,30 @@ func WithLogger(logger api.Logger) Option {
 
 // Module owns workflow sequencing, invalidation, idempotency, and private retention.
 type Module struct {
-	liveTest                 *api.LiveTestPolicy
-	repository               Repository
-	operations               OperationRepository
-	durability               DurabilityRepository
-	private                  PrivateResourceStore
-	preparer                 ReleasePreparer
-	inputReadiness           InputReadinessEvaluator
-	trackerProjector         TrackerProjectionBuilder
-	trackerPreflight         TrackerPreflightBuilder
-	dupeBuilder              DupeAssessmentBuilder
-	mediaBuilder             MediaArtifactBuilder
-	descriptionBuilder       DescriptionBuilder
-	uploadPlanBuilder        UploadPlanBuilder
-	operationErrorClassifier func(api.OperationKind, error) error
-	logger                   api.Logger
-	clock                    Clock
-	ids                      IDGenerator
-	processEpoch             string
-	locksMu                  sync.Mutex
-	locks                    map[string]*sync.Mutex
-	operationLocksMu         sync.Mutex
-	operationLocks           map[api.WorkflowOperationID]*sync.Mutex
-	operationWorkersMu       sync.Mutex
-	operationWorkers         map[api.WorkflowOperationID]operationWorker
-	operationRecovery        sync.Once
-	recoverError             error
+	*Coordinator
+	activeInputs              api.ActiveInputRepository
+	inputVerifier             InputVerifier
+	submissionHistory         SubmissionHistoryFilter
+	operationLifetime         OperationLifetime
+	configActivationGuard     ConfigActivationGuard
+	configActivationAuthority api.ConfigActivationAuthority
+	liveTest                  *api.LiveTestPolicy
+	repository                Repository
+	operations                OperationRepository
+	durability                DurabilityRepository
+	private                   PrivateResourceStore
+	preparer                  ReleasePreparer
+	inputReadiness            InputReadinessEvaluator
+	trackerProjector          TrackerProjectionBuilder
+	trackerPreflight          TrackerPreflightBuilder
+	dupeBuilder               DupeAssessmentBuilder
+	mediaBuilder              MediaArtifactBuilder
+	descriptionBuilder        DescriptionBuilder
+	uploadPlanBuilder         UploadPlanBuilder
+	operationErrorClassifier  func(api.OperationKind, error) error
+	logger                    api.Logger
+	clock                     Clock
+	ids                       IDGenerator
 }
 
 type operationWorker struct {
@@ -235,11 +277,12 @@ func New(repository Repository, privateStore PrivateResourceStore, preparer Rele
 	if !ok || durability == nil {
 		return nil, errors.New("release workflow: durability repository is required")
 	}
-	processEpoch, err := (randomIDGenerator{}).NewID("process")
+	coordinator, err := NewCoordinator()
 	if err != nil {
-		return nil, fmt.Errorf("release workflow: process epoch: %w", err)
+		return nil, err
 	}
 	module := &Module{
+		Coordinator:              coordinator,
 		repository:               repository,
 		operations:               operations,
 		durability:               durability,
@@ -249,10 +292,6 @@ func New(repository Repository, privateStore PrivateResourceStore, preparer Rele
 		logger:                   api.NopLogger{},
 		clock:                    systemClock{},
 		ids:                      randomIDGenerator{},
-		processEpoch:             processEpoch,
-		locks:                    make(map[string]*sync.Mutex),
-		operationLocks:           make(map[api.WorkflowOperationID]*sync.Mutex),
-		operationWorkers:         make(map[api.WorkflowOperationID]operationWorker),
 	}
 	for _, option := range options {
 		if option == nil {
@@ -263,6 +302,39 @@ func New(repository Repository, privateStore PrivateResourceStore, preparer Rele
 		}
 	}
 	return module, nil
+}
+
+// SharedCoordinator returns the process-lifetime coordinator used by m.
+func (m *Module) SharedCoordinator() *Coordinator {
+	if m == nil {
+		return nil
+	}
+	return m.Coordinator
+}
+
+// SetOperationLifetime installs the immutable runtime-bundle borrower before
+// the Module is published. It is used only by host runtime construction.
+func (m *Module) SetOperationLifetime(lifetime OperationLifetime) {
+	if m != nil {
+		m.operationLifetime = lifetime
+	}
+}
+
+func (m *Module) requireActiveConfig(ctx context.Context) error {
+	if m.configActivationGuard == nil {
+		return nil
+	}
+	if err := m.configActivationGuard(ctx); err != nil {
+		return fmt.Errorf("release workflow: config activation admission: %w", err)
+	}
+	return nil
+}
+
+func (m *Module) withConfigActivationAuthority(ctx context.Context) context.Context {
+	if m.configActivationAuthority.Fingerprint == "" {
+		return ctx
+	}
+	return api.WithConfigActivationAuthority(ctx, m.configActivationAuthority)
 }
 
 // Execute applies one typed command with owner scoping, optimistic concurrency, and idempotency.
@@ -280,9 +352,20 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	if err := ctx.Err(); err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow command: %w", err)
 	}
+	ctx = m.withConfigActivationAuthority(ctx)
+	if err := m.requireActiveConfig(ctx); err != nil {
+		return CommandResult{}, err
+	}
 	ownerID = strings.TrimSpace(ownerID)
 	if ownerID == "" || command == nil {
 		return CommandResult{}, errors.New("release workflow: owner and command are required")
+	}
+	if ctx.Value(operationLifetimeContextKey{}) == nil {
+		release, ok := m.borrowOperationLifetime()
+		if !ok {
+			return CommandResult{}, errors.New("release workflow: runtime generation retired")
+		}
+		defer release()
 	}
 	fingerprint, err := acceptedCommandFingerprint(command)
 	if err != nil {
@@ -298,6 +381,16 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	workflowID, expectedRevision, idempotencyKey, err := commandTarget(command)
 	if err != nil {
 		return CommandResult{}, err
+	}
+	ctx, legacyRecovery, err := m.legacyRecoveryMutationContext(ctx, ownerID, workflowID, command)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	if !legacyRecovery {
+		ctx, err = m.activeMutationContext(ctx, ownerID, workflowID)
+		if err != nil {
+			return CommandResult{}, err
+		}
 	}
 	if err := m.requireOperationOwnership(ctx, ownerID, workflowID); err != nil {
 		return CommandResult{}, err
@@ -321,8 +414,13 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 		if receipt.Fingerprint != fingerprint {
 			return CommandResult{}, ErrIdempotencyConflict
 		}
-		if commandFinalizesMedia(command) {
+		if receiptMediaIsCurrent(state.Workflow, receipt.Result.Media) && commandFinalizesMedia(command) {
 			if err := m.finalizeRetainedMedia(ctx, ownerID, state.Workflow.ID, receipt.Result.Media, true); err != nil {
+				return CommandResult{}, err
+			}
+		}
+		if receiptMediaIsCurrent(state.Workflow, receipt.Result.Media) {
+			if err := m.recordReusableMedia(ctx, ownerID, state.Workflow.ID, receipt.Result.Media, m.clock.Now().UTC()); err != nil {
 				return CommandResult{}, err
 			}
 		}
@@ -339,6 +437,12 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	if err != nil {
 		return CommandResult{}, err
 	}
+	if result.Dupes != nil || result.TrackerApproval != nil {
+		if err := m.restoreReusableMedia(ctx, ownerID, &state, nextRevision, now, &result); err != nil {
+			m.cleanupUncommittedResult(ownerID, priorWorkflow, result)
+			return CommandResult{}, err
+		}
+	}
 	state.Workflow.Revision = nextRevision
 	state.Workflow.UpdatedAt = now
 	result.Workflow = state.Workflow
@@ -346,7 +450,7 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 		m.checkpointCompositeStage(&state, operationID, command, nextRevision)
 	}
 	if err := state.Workflow.Validate(); err != nil {
-		m.cleanupUncommittedResult(ownerID, state.Workflow.ID, result)
+		m.cleanupUncommittedResult(ownerID, priorWorkflow, result)
 		return CommandResult{}, fmt.Errorf("release workflow validate transition: %w", err)
 	}
 	if state.Receipts == nil {
@@ -354,23 +458,32 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	}
 	state.Receipts[receiptKey] = commandReceipt{Fingerprint: fingerprint, Result: result}
 	if err := ctx.Err(); err != nil {
-		m.cleanupUncommittedResult(ownerID, state.Workflow.ID, result)
+		m.cleanupUncommittedResult(ownerID, priorWorkflow, result)
 		return CommandResult{}, fmt.Errorf("release workflow command canceled before commit: %w", err)
 	}
 	if commandCommitsMediaBeforeSave(command) {
 		if err := m.finalizeRetainedMedia(ctx, ownerID, state.Workflow.ID, result.Media, true); err != nil {
-			m.cleanupUncommittedResult(ownerID, state.Workflow.ID, result)
+			m.cleanupUncommittedResult(ownerID, priorWorkflow, result)
 			return CommandResult{}, err
 		}
 	}
+	if err := m.prepareReusableDescriptions(ctx, ownerID, &state, result.Descriptions, now); err != nil {
+		m.cleanupUncommittedResult(ownerID, priorWorkflow, result)
+		return CommandResult{}, err
+	}
 	if err := m.repository.Save(ctx, ownerID, expectedRevision, state); err != nil {
-		m.cleanupUncommittedResult(ownerID, state.Workflow.ID, result)
+		m.cleanupUncommittedResult(ownerID, priorWorkflow, result)
 		return CommandResult{}, fmt.Errorf("release workflow save: %w", err)
+	}
+	if legacyRecovery {
+		if err := m.finishLegacyInputRecovery(ctx, ownerID, workflowID); err != nil {
+			return CommandResult{}, err
+		}
 	}
 	if result.Dupes != nil {
 		m.cleanupSupersededDupeResources(ownerID, state.Workflow.ID, priorWorkflow, state.Workflow)
 	}
-	if result.Media != nil {
+	if result.Media != nil || result.Descriptions != nil {
 		m.cleanupSupersededMediaResources(ownerID, state.Workflow.ID, priorWorkflow, state.Workflow)
 	}
 	if commandFinalizesMedia(command) && !commandCommitsMediaBeforeSave(command) {
@@ -378,10 +491,17 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 			return CommandResult{}, err
 		}
 	}
+	if err := m.recordReusableMedia(ctx, ownerID, state.Workflow.ID, result.Media, now); err != nil {
+		return CommandResult{}, err
+	}
 	return cloneCommandResult(result)
 }
 
-func (m *Module) cleanupUncommittedResult(ownerID string, workflowID api.WorkflowID, result CommandResult) {
+func (m *Module) cleanupUncommittedResult(ownerID string, prior api.ReleaseWorkflow, result CommandResult) {
+	workflowID := prior.ID
+	if result.Descriptions != nil && (prior.Descriptions == nil || prior.Descriptions.ID != result.Descriptions.ID) {
+		m.private.Delete(ownerID, workflowID, descriptionPrivateResourceID(result.Descriptions.ID))
+	}
 	if result.Dupes != nil {
 		m.private.Delete(ownerID, workflowID, dupePrivateResourceID(result.Dupes.ID))
 	}
@@ -403,6 +523,10 @@ func commandFinalizesMedia(command mutation) bool {
 	default:
 		return false
 	}
+}
+
+func receiptMediaIsCurrent(workflow api.ReleaseWorkflow, media *api.MediaArtifactSet) bool {
+	return media != nil && workflow.Media != nil && media.ID == workflow.Media.ID && media.Revision == workflow.Media.Revision
 }
 
 // commandCommitsMediaBeforeSave selects commands whose staged local deletions
@@ -489,7 +613,8 @@ func (m *Module) Start(ctx context.Context, ownerID string, command Command) (ap
 	if err := ctx.Err(); err != nil {
 		return api.WorkflowOperationStatus{}, fmt.Errorf("release workflow start operation: %w", err)
 	}
-	if err := m.ensureOperationRecovery(ctx); err != nil {
+	ctx = m.withConfigActivationAuthority(ctx)
+	if err := m.requireActiveConfig(ctx); err != nil {
 		return api.WorkflowOperationStatus{}, err
 	}
 	ownerID = strings.TrimSpace(ownerID)
@@ -502,6 +627,13 @@ func (m *Module) Start(ctx context.Context, ownerID string, command Command) (ap
 	}
 	workflowID, expectedRevision, idempotencyKey, err := commandTarget(command)
 	if err != nil {
+		return api.WorkflowOperationStatus{}, err
+	}
+	ctx, err = m.activeMutationContext(ctx, ownerID, workflowID)
+	if err != nil {
+		return api.WorkflowOperationStatus{}, err
+	}
+	if err := m.ensureOperationRecovery(ctx); err != nil {
 		return api.WorkflowOperationStatus{}, err
 	}
 	fingerprint, err := acceptedCommandFingerprint(command)
@@ -548,6 +680,16 @@ func (m *Module) Start(ctx context.Context, ownerID string, command Command) (ap
 	} else if found {
 		return prior, nil
 	}
+	release, ok := m.borrowOperationLifetime()
+	if !ok {
+		return api.WorkflowOperationStatus{}, errors.New("release workflow: runtime generation retired")
+	}
+	transferredLifetime := false
+	defer func() {
+		if !transferredLifetime {
+			release()
+		}
+	}()
 	if state.Workflow.Revision != expectedRevision {
 		return api.WorkflowOperationStatus{}, ErrRevisionConflict
 	}
@@ -622,14 +764,21 @@ func (m *Module) Start(ctx context.Context, ownerID string, command Command) (ap
 		return cloneWorkflowOperationStatus(record.Status, "start idempotent operation")
 	}
 	if err := m.durability.ClaimWork(ctx, workflowWorkRecord(record, status, now, nil)); err != nil {
+		if m.failAcceptedOperation(ctx, record, false, "Operation work could not be claimed. Retry the stage.") {
+			m.finishCompositeAdmissionLocked(ctx, ownerID, &state, record.OperationID)
+		}
 		return api.WorkflowOperationStatus{}, fmt.Errorf("release workflow claim operation work: %w", err)
 	}
 	events, err := m.durability.AppendEvents(ctx, ownerID, workflowID, projectOperationEvents(status))
 	if err != nil {
+		if m.failAcceptedOperation(ctx, record, true, "Operation queue could not be published. Retry the stage.") {
+			m.finishCompositeAdmissionLocked(ctx, ownerID, &state, record.OperationID)
+		}
 		return api.WorkflowOperationStatus{}, fmt.Errorf("release workflow append queued operation event: %w", err)
 	}
 	status.Events = events
-	m.dispatchOperationWorker(ctx, ownerID, command, record)
+	m.dispatchOperationWorker(ctx, ownerID, command, record, release)
+	transferredLifetime = true
 	return cloneWorkflowOperationStatus(status, "start operation")
 }
 
@@ -638,6 +787,7 @@ func (m *Module) dispatchOperationWorker(
 	ownerID string,
 	command Command,
 	record api.ReleaseWorkflowOperationRecord,
+	release func(),
 ) {
 	workerCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	workerDone := make(chan struct{})
@@ -645,11 +795,17 @@ func (m *Module) dispatchOperationWorker(
 	if _, exists := m.operationWorkers[record.OperationID]; exists {
 		m.operationWorkersMu.Unlock()
 		cancel()
+		if release != nil {
+			release()
+		}
 		return
 	}
 	m.operationWorkers[record.OperationID] = operationWorker{cancel: cancel, done: workerDone}
 	m.operationWorkersMu.Unlock()
 	go func() {
+		if release != nil {
+			defer release()
+		}
 		defer cancel()
 		defer func() {
 			close(workerDone)
@@ -657,8 +813,15 @@ func (m *Module) dispatchOperationWorker(
 			delete(m.operationWorkers, record.OperationID)
 			m.operationWorkersMu.Unlock()
 		}()
-		m.runOperation(workerCtx, ownerID, command, record)
+		m.runOperation(context.WithValue(workerCtx, operationLifetimeContextKey{}, struct{}{}), ownerID, command, record)
 	}()
+}
+
+func (m *Module) borrowOperationLifetime() (func(), bool) {
+	if m.operationLifetime == nil {
+		return func() {}, true
+	}
+	return m.operationLifetime()
 }
 
 func (m *Module) loadActiveOperationReceipt(
@@ -748,6 +911,8 @@ func (m *Module) operationResultIsCurrent(ownerID string, result *api.WorkflowOp
 		return false
 	}
 	switch result.Kind {
+	case api.WorkflowOperationResultAlreadyUploaded:
+		return state.Workflow.AllSelectedTrackersAlreadyUploaded() && string(state.Workflow.ID) == result.RefID && state.Workflow.Revision == result.RefRevision
 	case api.WorkflowOperationResultRelease:
 		ref := state.Workflow.Release
 		snapshot, ok := state.Releases[api.ReleaseSnapshotID(result.RefID)]
@@ -859,6 +1024,16 @@ func (m *Module) runOperation(
 		status.Message = "Operation running."
 	})
 	if runningErr != nil {
+		if m.failAcceptedOperation(ctx, record, true, "Operation could not begin. Retry the stage.") {
+			if err := m.finishCompositeSession(ctx, record.OwnerID, record.WorkflowID, record.OperationID, "admission_failed"); err != nil {
+				m.logger.Warnf(
+					"releaseworkflow: workflow=%s operation=%s stage=admission_composite_cleanup state=retry_pending cause=%s",
+					record.WorkflowID,
+					record.OperationID,
+					logging.SanitizeMessage(err.Error()),
+				)
+			}
+		}
 		return
 	}
 	workerCtx := context.WithValue(ctx, operationExecutionContextKey{}, record.OperationID)
@@ -911,7 +1086,7 @@ func (m *Module) runOperation(
 			logging.SanitizeMessage(privateErr.Error()),
 		)
 	}
-	if _, terminalErr := m.completeOperation(ctx, record, func(status *api.WorkflowOperationStatus) {
+	if terminalErr := m.completeOperation(ctx, record, func(status *api.WorkflowOperationStatus) {
 		now := m.clock.Now().UTC()
 		status.CompletedAt = &now
 		switch {
@@ -976,7 +1151,7 @@ func (m *Module) completeOperation(
 	ctx context.Context,
 	record api.ReleaseWorkflowOperationRecord,
 	mutate func(*api.WorkflowOperationStatus),
-) (api.WorkflowOperationStatus, error) {
+) error {
 	lock := m.operationLock(record.OperationID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -984,15 +1159,15 @@ func (m *Module) completeOperation(
 	operationCtx := context.WithoutCancel(ctx)
 	current, err := m.operations.LoadOperation(operationCtx, record.OwnerID, record.WorkflowID, record.OperationID)
 	if err != nil {
-		return api.WorkflowOperationStatus{}, fmt.Errorf("release workflow load operation for completion: %w", err)
+		return fmt.Errorf("release workflow load operation for completion: %w", err)
 	}
 	if current.ProcessEpoch != m.processEpoch || !workflowOperationActive(current.Status.Status) {
-		return api.WorkflowOperationStatus{}, ErrOperationConflict
+		return ErrOperationConflict
 	}
 	expectedSequence := current.Status.Sequence
 	previousStatus, err := cloneWorkflowOperationStatus(current.Status, "capture operation state before completion")
 	if err != nil {
-		return api.WorkflowOperationStatus{}, err
+		return err
 	}
 	current.Status.Events = nil
 	mutate(&current.Status)
@@ -1008,23 +1183,150 @@ func (m *Module) completeOperation(
 		operationCtx,
 		workflowWorkRecord(current, current.Status, current.Status.UpdatedAt, &completedAt),
 	); err != nil {
-		return api.WorkflowOperationStatus{}, fmt.Errorf("release workflow complete operation work: %w", err)
+		return fmt.Errorf("release workflow complete operation work: %w", err)
 	}
 	if err := m.operations.SaveOperation(operationCtx, expectedSequence, current); err != nil {
-		return api.WorkflowOperationStatus{}, fmt.Errorf("release workflow publish completed operation: %w", err)
+		if retryErr := m.operations.SaveOperation(operationCtx, expectedSequence, current); retryErr != nil {
+			return fmt.Errorf("release workflow publish completed operation: %w", retryErr)
+		}
 	}
 	m.private.Delete(current.OwnerID, current.WorkflowID, operationCommandResourceID(current.OperationID))
-	events, err := m.durability.AppendEvents(
+	_, err = m.durability.AppendEvents(
 		operationCtx,
 		current.OwnerID,
 		current.WorkflowID,
 		eventChanges,
 	)
 	if err != nil {
-		return api.WorkflowOperationStatus{}, fmt.Errorf("release workflow append completed operation events: %w", err)
+		return fmt.Errorf("release workflow append completed operation events: %w", err)
 	}
+	return nil
+}
+
+// failAcceptedOperation closes an operation which was accepted before one of
+// its admission steps failed. It runs on a fresh bounded context so a request
+// cancellation cannot leave a same-process queued operation blocking retries.
+func (m *Module) failAcceptedOperation(
+	ctx context.Context,
+	record api.ReleaseWorkflowOperationRecord,
+	claimedWork bool,
+	reason string,
+) bool {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), operationCleanupTTL)
+	defer cancel()
+	if claimedWork {
+		if err := m.completeOperation(cleanupCtx, record, m.operationAdmissionFailure(reason)); err == nil {
+			return true
+		} else if _, loadErr := recoveredOperationStatus(cleanupCtx, m.operations, record); loadErr == nil {
+			return true
+		}
+	}
+	if err := m.publishOperationAdmissionFailure(cleanupCtx, record, reason); err != nil {
+		m.logger.Warnf(
+			"releaseworkflow: workflow=%s operation=%s stage=admission_cleanup state=failed cause=%s",
+			record.WorkflowID,
+			record.OperationID,
+			logging.SanitizeMessage(err.Error()),
+		)
+		return false
+	}
+	return true
+}
+
+// finishCompositeAdmissionLocked clears a composite slot after its matching
+// accepted operation is terminal. The caller holds the workflow command lock.
+func (m *Module) finishCompositeAdmissionLocked(
+	ctx context.Context,
+	ownerID string,
+	state *State,
+	operationID api.WorkflowOperationID,
+) {
+	if state == nil || state.Composite == nil || state.Composite.ActiveOperationID != operationID {
+		return
+	}
+	state.Composite.ActiveOperationID = ""
+	state.Composite.LastOperationID = operationID
+	state.Composite.TerminalReason = "admission_failed"
+	if err := m.saveCompositeMetadata(context.WithoutCancel(ctx), ownerID, state); err != nil {
+		m.logger.Warnf(
+			"releaseworkflow: workflow=%s operation=%s stage=admission_composite_cleanup state=retry_pending cause=%s",
+			state.Workflow.ID,
+			operationID,
+			logging.SanitizeMessage(err.Error()),
+		)
+	}
+}
+
+func (m *Module) operationAdmissionFailure(reason string) func(*api.WorkflowOperationStatus) {
+	return func(status *api.WorkflowOperationStatus) {
+		now := m.clock.Now().UTC()
+		status.Status = api.StageStatusFailed
+		status.Message = "Operation setup failed. Retry the stage."
+		status.CompletedAt = &now
+		status.Failures = []api.WorkflowFailure{{
+			Failure: api.OperationFailure{
+				Code:      api.OperationFailureInternal,
+				Operation: status.Operation,
+				Message:   "Operation setup failed. Retry the stage.",
+				Recovery:  api.OperationRecoveryRetry,
+			},
+			Resource: logging.SanitizeMessage(reason),
+		}}
+	}
+}
+
+func recoveredOperationStatus(
+	ctx context.Context,
+	repository OperationRepository,
+	record api.ReleaseWorkflowOperationRecord,
+) (api.WorkflowOperationStatus, error) {
+	current, err := repository.LoadOperation(ctx, record.OwnerID, record.WorkflowID, record.OperationID)
+	if err != nil {
+		return api.WorkflowOperationStatus{}, fmt.Errorf("release workflow load recovered operation: %w", err)
+	}
+	if workflowOperationActive(current.Status.Status) {
+		return api.WorkflowOperationStatus{}, ErrOperationConflict
+	}
+	return cloneWorkflowOperationStatus(current.Status, "recover terminal operation")
+}
+
+func (m *Module) publishOperationAdmissionFailure(
+	ctx context.Context,
+	record api.ReleaseWorkflowOperationRecord,
+	reason string,
+) error {
+	lock := m.operationLock(record.OperationID)
+	lock.Lock()
+	defer lock.Unlock()
+	current, err := m.operations.LoadOperation(ctx, record.OwnerID, record.WorkflowID, record.OperationID)
+	if err != nil {
+		return fmt.Errorf("release workflow load admission operation: %w", err)
+	}
+	if !workflowOperationActive(current.Status.Status) {
+		m.private.Delete(current.OwnerID, current.WorkflowID, operationCommandResourceID(current.OperationID))
+		return nil
+	}
+	expectedSequence := current.Status.Sequence
+	previous, err := cloneWorkflowOperationStatus(current.Status, "capture admission operation state")
+	if err != nil {
+		return err
+	}
+	current.Status.Events = nil
+	m.operationAdmissionFailure(reason)(&current.Status)
+	current.Status.Sequence = expectedSequence + 1
+	current.Status.UpdatedAt = m.clock.Now().UTC()
+	current.ProcessEpoch = m.processEpoch
+	sanitizeWorkflowOperationStatus(&current.Status)
+	events := projectOperationEventChanges(previous, current.Status)
 	current.Status.Events = events
-	return cloneWorkflowOperationStatus(current.Status, "complete operation")
+	if err := m.operations.SaveOperation(ctx, expectedSequence, current); err != nil {
+		return fmt.Errorf("release workflow save admission operation: %w", err)
+	}
+	m.private.Delete(current.OwnerID, current.WorkflowID, operationCommandResourceID(current.OperationID))
+	if _, err := m.durability.AppendEvents(ctx, current.OwnerID, current.WorkflowID, events); err != nil {
+		return fmt.Errorf("release workflow append admission events: %w", err)
+	}
+	return nil
 }
 
 func (m *Module) renewOperationWorkLease(ctx context.Context, record api.ReleaseWorkflowOperationRecord) {
@@ -1059,6 +1361,9 @@ func (m *Module) renewOperationWorkLease(ctx context.Context, record api.Release
 }
 
 func operationResultForCommand(command Command, result CommandResult) (*api.WorkflowOperationResult, error) {
+	if result.Workflow.AllSelectedTrackersAlreadyUploaded() {
+		return compositeUploadResult(result), nil
+	}
 	var (
 		kind     api.WorkflowOperationResultKind
 		refID    string
@@ -1250,14 +1555,8 @@ func (m *Module) recoverOperationAfterLease(
 		return fmt.Errorf("release workflow load interrupted work lease: %w", err)
 	}
 	if work.CompletedAt != nil {
-		var checkpoint api.WorkflowOperationStatus
-		if err := json.Unmarshal(work.Checkpoint, &checkpoint); err != nil ||
-			checkpoint.ID != record.OperationID ||
-			checkpoint.WorkflowID != record.WorkflowID ||
-			checkpoint.Command != record.Status.Command ||
-			checkpoint.Sequence != record.Status.Sequence+1 ||
-			!isTerminalProgressStatus(checkpoint.Status) ||
-			checkpoint.Validate() != nil {
+		checkpoint, checkpointErr := completedOperationCheckpoint(record, work)
+		if checkpointErr != nil {
 			return m.interruptRecoveredOperation(ctx, record, "The completed operation checkpoint failed its integrity check.")
 		}
 		return m.publishCompletedOperationCheckpoint(ctx, record, checkpoint)
@@ -1343,8 +1642,58 @@ func (m *Module) recoverOperationAfterLease(
 	); err != nil {
 		return fmt.Errorf("release workflow fence interrupted effects: %w", err)
 	}
-	m.dispatchOperationWorker(ctx, current.OwnerID, capsule.command, current)
+	release, ok := m.borrowOperationLifetime()
+	if !ok {
+		return errors.New("release workflow: runtime generation retired")
+	}
+	m.dispatchOperationWorker(ctx, current.OwnerID, capsule.command, current, release)
 	return nil
+}
+
+func completedOperationCheckpoint(
+	record api.ReleaseWorkflowOperationRecord,
+	work api.ReleaseWorkflowWorkRecord,
+) (api.WorkflowOperationStatus, error) {
+	var checkpoint api.WorkflowOperationStatus
+	if err := json.Unmarshal(work.Checkpoint, &checkpoint); err != nil ||
+		checkpoint.ID != record.OperationID ||
+		checkpoint.WorkflowID != record.WorkflowID ||
+		checkpoint.Command != record.Status.Command ||
+		checkpoint.Sequence != record.Status.Sequence+1 ||
+		!isTerminalProgressStatus(checkpoint.Status) ||
+		checkpoint.Validate() != nil {
+		return api.WorkflowOperationStatus{}, errors.New("completed operation checkpoint failed integrity validation")
+	}
+	return checkpoint, nil
+}
+
+// convergeCompletedOperationCheckpoint publishes a terminal durable checkpoint
+// left behind by a transient operation-record write failure in this process.
+func (m *Module) convergeCompletedOperationCheckpoint(
+	ctx context.Context,
+	record api.ReleaseWorkflowOperationRecord,
+) (bool, error) {
+	if !workflowOperationActive(record.Status.Status) {
+		return false, nil
+	}
+	work, err := m.durability.LoadWork(ctx, record.OwnerID, record.WorkflowID, record.OperationID)
+	if errors.Is(err, ErrWorkflowNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("release workflow load completed operation checkpoint: %w", err)
+	}
+	if work.CompletedAt == nil {
+		return false, nil
+	}
+	checkpoint, err := completedOperationCheckpoint(record, work)
+	if err != nil {
+		return false, err
+	}
+	if err := m.publishCompletedOperationCheckpoint(ctx, record, checkpoint); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (m *Module) publishCompletedOperationCheckpoint(
@@ -1770,16 +2119,21 @@ func (m *Module) Workflow(ctx context.Context, ownerID string, workflowID api.Wo
 // Current returns detached current stage snapshots without regenerating or
 // refreshing any workflow dependency.
 func (m *Module) Current(ctx context.Context, ownerID string, workflowID api.WorkflowID) (CommandResult, error) {
-	if err := m.ensureOperationRecovery(ctx); err != nil {
-		return CommandResult{}, err
+	_, admitted := api.ActiveInputAuthorityFromContext(ctx)
+	if m.activeInputs == nil || admitted {
+		if err := m.ensureOperationRecovery(ctx); err != nil {
+			return CommandResult{}, err
+		}
 	}
 	ownerID = strings.TrimSpace(ownerID)
 	state, err := m.repository.Load(ctx, ownerID, workflowID)
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow current query: %w", err)
 	}
-	if err := m.recoverAfterRestart(ctx, ownerID, &state); err != nil {
-		return CommandResult{}, err
+	if m.activeInputs == nil || admitted {
+		if err := m.recoverAfterRestart(ctx, ownerID, &state); err != nil {
+			return CommandResult{}, err
+		}
 	}
 	result := CommandResult{Workflow: state.Workflow}
 	result.FactInstructions = currentSnapshot(state.FactInstructions, state.Workflow.FactInstructions.ID)
@@ -1822,12 +2176,14 @@ func (m *Module) Current(ctx context.Context, ownerID string, workflowID api.Wor
 	}
 	if ref := state.Workflow.Media; ref != nil {
 		result.Media = currentSnapshot(state.Media, ref.ID)
-		if err := m.finalizeRetainedMedia(ctx, ownerID, workflowID, result.Media, false); err != nil {
-			m.logger.Warnf(
-				"releaseworkflow: workflow=%s stage=media_cleanup state=retry_pending cause=%s",
-				workflowID,
-				logging.SanitizeMessage(err.Error()),
-			)
+		if m.activeInputs == nil || admitted {
+			if err := m.finalizeRetainedMedia(ctx, ownerID, workflowID, result.Media, false); err != nil {
+				m.logger.Warnf(
+					"releaseworkflow: workflow=%s stage=media_cleanup state=retry_pending cause=%s",
+					workflowID,
+					logging.SanitizeMessage(err.Error()),
+				)
+			}
 		}
 	}
 	if ref := state.Workflow.Descriptions; ref != nil {
@@ -1863,18 +2219,20 @@ func (m *Module) Current(ctx context.Context, ownerID string, workflowID api.Wor
 		return CommandResult{}, fmt.Errorf("release workflow load retained events: %w", eventsErr)
 	}
 	result.Continuation.Events = events
-	continuationPayload, marshalErr := json.Marshal(result.Continuation)
-	if marshalErr != nil {
-		return CommandResult{}, fmt.Errorf("release workflow encode materialized continuation: %w", marshalErr)
-	}
-	if err := m.durability.SaveContinuation(ctx, api.ReleaseWorkflowContinuationRecord{
-		OwnerID:    ownerID,
-		WorkflowID: workflowID,
-		Revision:   result.Workflow.Revision,
-		Payload:    continuationPayload,
-		UpdatedAt:  result.Workflow.UpdatedAt,
-	}); err != nil {
-		return CommandResult{}, fmt.Errorf("release workflow save materialized continuation: %w", err)
+	if m.activeInputs == nil || admitted {
+		continuationPayload, marshalErr := json.Marshal(result.Continuation)
+		if marshalErr != nil {
+			return CommandResult{}, fmt.Errorf("release workflow encode materialized continuation: %w", marshalErr)
+		}
+		if err := m.durability.SaveContinuation(ctx, api.ReleaseWorkflowContinuationRecord{
+			OwnerID:    ownerID,
+			WorkflowID: workflowID,
+			Revision:   result.Workflow.Revision,
+			Payload:    continuationPayload,
+			UpdatedAt:  result.Workflow.UpdatedAt,
+		}); err != nil {
+			return CommandResult{}, fmt.Errorf("release workflow save materialized continuation: %w", err)
+		}
 	}
 	cloned, err := cloneCommandResult(result)
 	if err != nil {
@@ -1963,6 +2321,14 @@ func (m *Module) PreviewFrame(
 	discID string,
 	timestampSeconds float64,
 ) (api.FramePreview, error) {
+	var err error
+	ctx, err = m.activeMutationContext(ctx, strings.TrimSpace(ownerID), workflowID)
+	if err != nil {
+		return api.FramePreview{}, err
+	}
+	if err := m.requireActiveConfig(ctx); err != nil {
+		return api.FramePreview{}, err
+	}
 	if err := ctx.Err(); err != nil {
 		return api.FramePreview{}, fmt.Errorf("release workflow preview frame: %w", err)
 	}
@@ -2057,6 +2423,14 @@ func (m *Module) StageMediaResource(
 	expectedRevision api.WorkflowRevision,
 	content StagedMediaContent,
 ) (api.WorkflowResourceRef, error) {
+	var err error
+	ctx, err = m.activeMutationContext(ctx, strings.TrimSpace(ownerID), workflowID)
+	if err != nil {
+		return api.WorkflowResourceRef{}, err
+	}
+	if err := m.requireActiveConfig(ctx); err != nil {
+		return api.WorkflowResourceRef{}, err
+	}
 	if err := ctx.Err(); err != nil {
 		return api.WorkflowResourceRef{}, fmt.Errorf("release workflow stage media: %w", err)
 	}
@@ -2164,8 +2538,11 @@ func (m *Module) Operation(
 	workflowID api.WorkflowID,
 	operationID api.WorkflowOperationID,
 ) (api.WorkflowOperationStatus, error) {
-	if err := m.ensureOperationRecovery(ctx); err != nil {
-		return api.WorkflowOperationStatus{}, err
+	_, admitted := api.ActiveInputAuthorityFromContext(ctx)
+	if m.activeInputs == nil || admitted {
+		if err := m.ensureOperationRecovery(ctx); err != nil {
+			return api.WorkflowOperationStatus{}, err
+		}
 	}
 	ownerID = strings.TrimSpace(ownerID)
 	record, err := m.operations.LoadOperation(ctx, ownerID, workflowID, operationID)
@@ -2180,14 +2557,24 @@ func (m *Module) Operation(
 		if loadErr != nil {
 			return api.WorkflowOperationStatus{}, fmt.Errorf("release workflow operation legacy query: %w", loadErr)
 		}
-		if recoveryErr := m.recoverAfterRestart(ctx, ownerID, &state); recoveryErr != nil {
-			return api.WorkflowOperationStatus{}, recoveryErr
+		if m.activeInputs == nil || admitted {
+			if recoveryErr := m.recoverAfterRestart(ctx, ownerID, &state); recoveryErr != nil {
+				return api.WorkflowOperationStatus{}, recoveryErr
+			}
 		}
 		operation, ok := state.Operations[operationID]
 		if !ok {
 			return api.WorkflowOperationStatus{}, ErrWorkflowNotFound
 		}
 		return cloneWorkflowOperationStatus(operation, "query legacy operation")
+	}
+	if converged, convergenceErr := m.convergeCompletedOperationCheckpoint(ctx, record); convergenceErr != nil {
+		return api.WorkflowOperationStatus{}, fmt.Errorf("release workflow converge completed operation: %w", convergenceErr)
+	} else if converged {
+		record, err = m.operations.LoadOperation(ctx, ownerID, workflowID, operationID)
+		if err != nil {
+			return api.WorkflowOperationStatus{}, fmt.Errorf("release workflow reload converged operation: %w", err)
+		}
 	}
 	if isTerminalProgressStatus(record.Status.Status) {
 		if err := m.waitForOperationCleanup(ctx, operationID); err != nil {
@@ -2207,8 +2594,11 @@ func (m *Module) OperationEvents(
 	after uint64,
 	limit int,
 ) ([]api.WorkflowEvent, error) {
-	if err := m.ensureOperationRecovery(ctx); err != nil {
-		return nil, err
+	_, admitted := api.ActiveInputAuthorityFromContext(ctx)
+	if m.activeInputs == nil || admitted {
+		if err := m.ensureOperationRecovery(ctx); err != nil {
+			return nil, err
+		}
 	}
 	ownerID = strings.TrimSpace(ownerID)
 	if _, err := m.operations.LoadOperation(ctx, ownerID, workflowID, operationID); err != nil {
@@ -2269,6 +2659,11 @@ func (m *Module) CancelOperation(
 	workflowID api.WorkflowID,
 	operationID api.WorkflowOperationID,
 ) (api.WorkflowOperationStatus, error) {
+	var err error
+	ctx, err = m.activeMutationContext(ctx, strings.TrimSpace(ownerID), workflowID)
+	if err != nil {
+		return api.WorkflowOperationStatus{}, err
+	}
 	if err := m.ensureOperationRecovery(ctx); err != nil {
 		return api.WorkflowOperationStatus{}, err
 	}
@@ -2631,6 +3026,10 @@ func (m *Module) create(
 		return CommandResult{}, fmt.Errorf("release workflow create: %w", err)
 	}
 	state := newState(ownerID, workflow)
+	state.SourcePath = strings.TrimSpace(command.SourcePath)
+	if state.SourcePath == "" && command.Composite != nil && command.Composite.Intent.Preparation != nil {
+		state.SourcePath = strings.TrimSpace(command.Composite.Intent.Preparation.SourcePath)
+	}
 	state.ProcessEpoch = m.processEpoch
 	state.TrackerDecisionMode = normalizeTrackerDecisionMode(command.TrackerDecisionMode)
 	state.FactInstructions[facts.ID] = facts
@@ -3021,7 +3420,10 @@ func (m *Module) prepareRelease(
 	now time.Time,
 	command PrepareReleaseCommand,
 ) (CommandResult, error) {
-	requestFingerprint, err := api.CanonicalWorkflowFingerprint(command.Input)
+	if err := m.attachVerifiedInput(ctx, ownerID, state.Workflow.ID, &command.Input); err != nil {
+		return CommandResult{}, err
+	}
+	requestFingerprint, err := preparationLineageFingerprint(command.Input)
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow fingerprint preparation request: %w", err)
 	}
@@ -3596,9 +3998,6 @@ func (m *Module) projectTrackersWithRuleAuthorizations(
 		return CommandResult{}, err
 	}
 	command.Instructions = instructions
-	if m.trackerProjector == nil {
-		return CommandResult{}, fmt.Errorf("%w: tracker projection builder is unavailable", ErrInvalidTransition)
-	}
 	if state.Workflow.Release == nil {
 		return CommandResult{}, fmt.Errorf("%w: release is required before tracker projection", ErrInvalidTransition)
 	}
@@ -3620,6 +4019,23 @@ func (m *Module) projectTrackersWithRuleAuthorizations(
 	})
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow resolve tracker projection subject: %w", err)
+	}
+	if m.submissionHistory != nil {
+		remaining, exclusions, filterErr := m.submissionHistory.FilterConfirmedSubmissions(ctx, subject, command.TrackerIDs)
+		if filterErr != nil {
+			return CommandResult{}, fmt.Errorf("release workflow filter confirmed submissions: %w", filterErr)
+		}
+		state.Workflow.SubmissionExclusions = exclusions
+		command.TrackerIDs = remaining
+		if len(remaining) == 0 && len(exclusions) > 0 {
+			invalidateTrackerAndDownstream(&state.Workflow)
+			state.Workflow.Status = api.WorkflowStatusCompleted
+			state.Workflow.RequiredActions, state.Workflow.Failures = nil, nil
+			return CommandResult{}, nil
+		}
+	}
+	if m.trackerProjector == nil {
+		return CommandResult{}, fmt.Errorf("%w: tracker projection builder is unavailable", ErrInvalidTransition)
 	}
 	catalog, runtime, selection, projections, err := m.trackerProjector.Build(
 		ctx,
@@ -4554,6 +4970,17 @@ func (m *Module) captureMedia(
 	}
 	var snapshot api.MediaArtifactSet
 	var privateArtifacts any
+	if priorMedia == nil {
+		if restorer, ok := m.mediaBuilder.(CompatibleMediaRestorer); ok {
+			restored, retained, restoreErr := restorer.RestoreCompatible(ctx, projections.ReleaseRef, eligibleProjections, now)
+			if restoreErr != nil {
+				return CommandResult{}, fmt.Errorf("release workflow restore compatible media: %w", restoreErr)
+			}
+			if len(restored.Artifacts) > 0 {
+				priorMedia, priorPrivate = &restored, retained
+			}
+		}
+	}
 	if incremental, ok := m.mediaBuilder.(IncrementalMediaArtifactBuilder); ok {
 		var retained RetainedMediaResource
 		snapshot, retained, err = incremental.BuildIncremental(
@@ -5341,6 +5768,14 @@ func (m *Module) publishMedia(
 	snapshot.ReleaseRef = api.ReleaseRef{SourcePath: release.Release.Source.SourcePath, Generation: release.Release.Generation}
 	snapshot.ProjectionSet = *workflow.TrackerProjections
 	snapshot.CreatedAt = now
+	for index := range snapshot.HostAttempts {
+		attempt := &snapshot.HostAttempts[index]
+		if attempt.Media == (api.MediaArtifactSetRef{}) {
+			// Restored host coverage becomes authoritative with this publication.
+			attempt.Media = api.MediaArtifactSetRef{ID: snapshot.ID, Revision: snapshot.Revision}
+			attempt.AttemptedAt = now
+		}
+	}
 	if err := m.stampMediaActions(&snapshot, nextRevision, now); err != nil {
 		return CommandResult{}, err
 	}
@@ -5428,17 +5863,33 @@ func (m *Module) generateDescriptions(
 			return CommandResult{Descriptions: &current}, nil
 		}
 	}
-	snapshot, err := m.descriptionBuilder.Build(
-		ctx,
-		projections.ReleaseRef,
-		descriptionProjections,
-		media,
-		privateMedia,
-		command.Instructions,
-		now,
-	)
-	if err != nil {
-		return CommandResult{}, fmt.Errorf("release workflow build descriptions: %w", err)
+	var snapshot api.DescriptionSet
+	if restorer, ok := m.descriptionBuilder.(ReusableDescriptionBuilder); ok {
+		var instructions api.DescriptionInstructions
+		snapshot, instructions, err = restorer.RestoreCompatibleDescriptions(
+			ctx, projections.ReleaseRef, descriptionProjections, media, privateMedia, command.Instructions,
+		)
+		if err != nil {
+			return CommandResult{}, fmt.Errorf("release workflow restore descriptions: %w", err)
+		}
+		if len(snapshot.Descriptions) > 0 {
+			command.Instructions = instructions
+			inputFingerprint, templateFingerprint, err = m.descriptionBuilder.Fingerprints(
+				ctx, projections.ReleaseRef, descriptionProjections, media, privateMedia, instructions,
+			)
+			if err != nil {
+				return CommandResult{}, fmt.Errorf("release workflow fingerprint restored descriptions: %w", err)
+			}
+			m.logger.Debugf("release workflow: description reuse state=restored count=%d", len(snapshot.Descriptions))
+		}
+	}
+	if len(snapshot.Descriptions) == 0 {
+		snapshot, err = m.descriptionBuilder.Build(
+			ctx, projections.ReleaseRef, descriptionProjections, media, privateMedia, command.Instructions, now,
+		)
+		if err != nil {
+			return CommandResult{}, fmt.Errorf("release workflow build descriptions: %w", err)
+		}
 	}
 	if snapshot.InputFingerprint != inputFingerprint || snapshot.TemplateFingerprint != templateFingerprint {
 		return CommandResult{}, errors.New("release workflow build descriptions: dependency fingerprint mismatch")
@@ -5765,14 +6216,13 @@ func validateDescriptionBuild(projections api.TrackerReleaseProjectionSet, snaps
 }
 
 func (m *Module) publishDescriptions(
-	ownerID string,
+	_ string,
 	state *State,
 	nextRevision api.WorkflowRevision,
 	now time.Time,
 	command descriptionsPublication,
 ) (CommandResult, error) {
 	workflow := state.Workflow
-	priorDescriptions := workflow.Descriptions
 	if workflow.Release == nil || workflow.TrackerProjections == nil {
 		return CommandResult{}, fmt.Errorf("%w: description dependencies are incomplete", ErrInvalidTransition)
 	}
@@ -5796,9 +6246,6 @@ func (m *Module) publishDescriptions(
 	state.Descriptions[snapshot.ID] = snapshot
 	state.Workflow.Descriptions = &api.DescriptionSetRef{ID: snapshot.ID, Revision: snapshot.Revision}
 	invalidateUploadPlan(&state.Workflow)
-	if priorDescriptions != nil {
-		m.private.Delete(ownerID, state.Workflow.ID, descriptionPrivateResourceID(priorDescriptions.ID))
-	}
 	setWorkflowStageStatus(&state.Workflow, snapshot.Status, snapshot.RequiredActions, snapshot.Failures)
 	return CommandResult{Descriptions: &snapshot}, nil
 }
@@ -7347,6 +7794,9 @@ func invalidateDupeAndDownstream(workflow *api.ReleaseWorkflow) {
 func invalidateUploadPlan(workflow *api.ReleaseWorkflow) {
 	workflow.DryRun = nil
 	workflow.UploadResult = nil
+	if workflow.Status == api.WorkflowStatusCompleted {
+		workflow.Status = api.WorkflowStatusActive
+	}
 }
 
 func setWorkflowStageStatus(

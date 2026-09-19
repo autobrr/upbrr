@@ -18,6 +18,7 @@ import (
 const workflowStagedMediaMaxBytes = 20 << 20
 
 func (s *Server) registerReleaseWorkflowAppRoutes(mux *http.ServeMux) {
+	s.registerActiveInputRoutes(mux)
 	mux.HandleFunc("/api/app/ContinueReleaseWorkflow", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
 		if r.Method != http.MethodPost {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})

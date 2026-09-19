@@ -18,8 +18,10 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
+	"github.com/autobrr/upbrr/internal/core"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/logging"
+	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -58,6 +60,212 @@ func TestNewBackendKeepsSharedRepositoryUsableAfterCoreClose(t *testing.T) {
 		UpdatedAt: time.Now().UTC().Truncate(time.Second),
 	}); err != nil {
 		t.Fatalf("expected startup repo to remain usable after core close: %v", err)
+	}
+}
+
+func TestNewBackendInitializesConfigActivationFingerprint(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "activation.db")
+	cfg := backendConfigTestConfig(repoPath)
+	backend, err := NewBackendWithContext(t.Context(), cfg, newEventHub())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+
+	activation, err := backend.repo.LoadConfigActivation(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := config.EffectiveConfigFingerprint(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if activation.ActiveGeneration != 0 || activation.Fingerprint != want {
+		t.Fatalf("initial activation = %#v, want generation=0 fingerprint=%q", activation, want)
+	}
+}
+
+func TestBackendDefersConfigActivationWhileRuntimeIsBorrowed(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "borrowed-activation.db")
+	backend, err := NewBackendWithContext(t.Context(), backendConfigTestConfig(repoPath), newEventHub())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	borrowed, err := backend.borrowRuntime()
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialGeneration := backend.runtimeSnapshot().generationID
+	updated := backend.currentConfig()
+	updated.Metadata.KeepImages = true
+	payload, err := config.ExportToJSON(&updated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activation, err := backend.SaveConfigActivation(t.Context(), payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if activation.Status != api.ConfigActivationPending || backend.runtimeSnapshot().generationID != initialGeneration {
+		t.Fatalf("borrowed runtime activation = %#v, runtime generation=%d", activation, backend.runtimeSnapshot().generationID)
+	}
+	borrowed.release()
+	activation, err = backend.ConfigActivation(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if activation.Status != api.ConfigActivationActive || !backend.currentConfig().Metadata.KeepImages {
+		t.Fatalf("released runtime activation = %#v config=%#v", activation, backend.currentConfig().Metadata)
+	}
+}
+
+func TestBackendFailedDeferredActivationRetainsRuntimeAndAcceptsCorrection(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "failed-deferred-activation.db")
+	backend, err := NewBackendWithContext(t.Context(), backendConfigTestConfig(repoPath), newEventHub())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	initial := backend.currentConfig()
+	borrowed, err := backend.borrowRuntime()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pendingConfig := initial
+	pendingConfig.Metadata.KeepImages = true
+	payload, err := config.ExportToJSON(&pendingConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := backend.SaveConfigActivation(t.Context(), payload)
+	if err != nil {
+		t.Fatalf("defer config activation: %v", err)
+	}
+	if pending.Status != api.ConfigActivationPending {
+		t.Fatalf("pending activation = %#v", pending)
+	}
+	borrowed.release()
+
+	activator, err := backend.runtimeActivator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	build := activator.deps.build
+	activator.deps.build = func(context.Context, config.Config, *db.SQLiteRepository) (RuntimeGeneration, error) {
+		return RuntimeGeneration{}, errors.New("deferred runtime build failure token=should-not-leak")
+	}
+	failed, err := backend.ConfigActivation(t.Context())
+	if err != nil {
+		t.Fatalf("record deferred activation failure: %v", err)
+	}
+	if failed.Status != api.ConfigActivationFailed || failed.ActivationID != pending.ActivationID ||
+		failed.FailureCode != api.ConfigActivationFailureBuild {
+		t.Fatalf("failed activation = %#v", failed)
+	}
+	if backend.currentConfig().Metadata.KeepImages {
+		t.Fatal("failed activation changed the active runtime")
+	}
+	statusJSON, err := json.Marshal(failed)
+	if err != nil {
+		t.Fatalf("marshal failed activation status: %v", err)
+	}
+	if strings.Contains(string(statusJSON), "should-not-leak") {
+		t.Fatal("failed activation status leaked runtime error detail")
+	}
+	if _, _, err := backend.repo.LoadPendingConfigActivationCandidate(t.Context()); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("failed activation retained encrypted candidate: %v", err)
+	}
+	stored, loadErr := config.LoadFromDatabase(t.Context(), backend.repo)
+	if loadErr == nil && stored.Metadata.KeepImages {
+		t.Fatal("failed activation persisted the deferred config")
+	}
+	if loadErr != nil && !errors.Is(loadErr, internalerrors.ErrNotFound) {
+		t.Fatalf("load stored config after failed activation: %v", loadErr)
+	}
+
+	payload, err = config.ExportToJSON(&initial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acknowledged, err := backend.SaveConfigActivation(t.Context(), payload)
+	if err != nil {
+		t.Fatalf("acknowledge failed activation with active config: %v", err)
+	}
+	if acknowledged.Status != api.ConfigActivationActive || acknowledged.ActiveGeneration != 0 {
+		t.Fatalf("acknowledged activation = %#v", acknowledged)
+	}
+
+	activator.deps.build = build
+	corrected := initial
+	corrected.Metadata.OnlyID = true
+	payload, err = config.ExportToJSON(&corrected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := backend.SaveConfigActivation(t.Context(), payload)
+	if err != nil {
+		t.Fatalf("activate corrected config: %v", err)
+	}
+	if active.Status != api.ConfigActivationActive || active.ActiveGeneration != 1 {
+		t.Fatalf("corrected activation = %#v", active)
+	}
+	if !backend.currentConfig().Metadata.OnlyID || backend.currentConfig().Metadata.KeepImages {
+		t.Fatalf("corrected runtime config = %#v", backend.currentConfig().Metadata)
+	}
+	stored, err = config.LoadFromDatabase(t.Context(), backend.repo)
+	if err != nil {
+		t.Fatalf("load corrected stored config: %v", err)
+	}
+	if !stored.Metadata.OnlyID || stored.Metadata.KeepImages {
+		t.Fatalf("corrected stored config = %#v", stored.Metadata)
+	}
+}
+
+func TestBackendImportConfigRejectsDeferredActivationWithoutPendingCandidate(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "import-immediate.db")
+	backend, err := NewBackendWithContext(t.Context(), backendConfigTestConfig(repoPath), newEventHub())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	borrowed, err := backend.borrowRuntime()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(borrowed.release)
+	initial := backend.currentConfig()
+	if err := config.SaveToDatabase(t.Context(), &initial, backend.repo); err != nil {
+		t.Fatal(err)
+	}
+	imported := initial
+	imported.Metadata.KeepImages = true
+	content := exportConfigYAMLString(t, &imported)
+
+	if _, _, err := backend.ImportConfig("config.yaml", content); !errors.Is(err, api.ErrActiveInputBusy) {
+		t.Fatalf("deferred import error = %v", err)
+	}
+	activation, err := backend.repo.LoadConfigActivation(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if activation.Status != api.ConfigActivationActive || activation.PendingGeneration != 0 {
+		t.Fatalf("deferred import activation = %#v", activation)
+	}
+	stored, err := config.LoadFromDatabase(t.Context(), backend.repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Metadata.KeepImages {
+		t.Fatal("deferred import persisted config without activation")
 	}
 }
 
@@ -624,6 +832,100 @@ func TestBackendSaveConfigAfterInvalidStartupMigratesLegacyCookies(t *testing.T)
 	}
 }
 
+func TestBackendInvalidStartupSharesCoordinatorAcrossRuntimeActivations(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "backend-invalid-startup-coordinator.db")
+	startupCfg := backendConfigTestConfig(repoPath)
+	startupCfg.MainSettings.TMDBAPI = ""
+	startupCfg.ScreenshotHandling.Screens = 0
+	backend, err := NewBackendWithContext(t.Context(), startupCfg, newEventHub())
+	if err != nil {
+		t.Fatalf("new backend: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = backend.Close()
+	})
+	if backend.coreOwner != nil {
+		t.Fatal("expected invalid startup to leave core disabled")
+	}
+	coordinator := backend.workflowCoordinator
+	if coordinator == nil {
+		t.Fatal("expected backend coordinator before config repair")
+	}
+
+	repaired := backendConfigTestConfig(repoPath)
+	payload, err := config.ExportToJSON(&repaired)
+	if err != nil {
+		t.Fatalf("export repaired config: %v", err)
+	}
+	if err := backend.SaveConfig(payload); err != nil {
+		t.Fatalf("save repaired config: %v", err)
+	}
+	if got := backendWorkflowCoordinator(t, backend); got != coordinator {
+		t.Fatal("config repair built a core with a different coordinator")
+	}
+	workflowRepo, err := releaseworkflow.NewPersistentRepository(backend.repo)
+	if err != nil {
+		t.Fatalf("new workflow repository: %v", err)
+	}
+	idleWorkflow, err := releaseworkflow.New(
+		workflowRepo,
+		releaseworkflow.NewMemoryPrivateResourceStore(),
+		releaseworkflow.ReleasePreparerFunc{},
+		releaseworkflow.WithCoordinator(coordinator),
+		releaseworkflow.WithActiveInputs(backend.repo, func(_ context.Context, input api.PrepareInput) (api.InputRecord, error) {
+			return api.InputRecord{
+				CanonicalPath: input.SourcePath,
+				SourceVersion: "test-source-version",
+				Manifest:      []byte(`{"identity":{"digest":"test-source-version"}}`),
+			}, nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("new idle workflow: %v", err)
+	}
+	opened, err := idleWorkflow.OpenInput(t.Context(), "settings-owner", releaseworkflow.OpenInputRequest{
+		Input:          api.PrepareInput{SourcePath: filepath.Join(t.TempDir(), "release.mkv")},
+		IdempotencyKey: "open-idle-input",
+	})
+	if err != nil {
+		t.Fatalf("open idle input: %v", err)
+	}
+	if opened.State != api.ActiveInputActive {
+		t.Fatalf("opened idle input state = %q, want active", opened.State)
+	}
+
+	updated := repaired
+	updated.Metadata.KeepImages = true
+	payload, err = config.ExportToJSON(&updated)
+	if err != nil {
+		t.Fatalf("export updated config: %v", err)
+	}
+	if err := backend.SaveConfig(payload); err != nil {
+		t.Fatalf("save updated config: %v", err)
+	}
+	if got := backendWorkflowCoordinator(t, backend); got != coordinator {
+		t.Fatal("subsequent config activation built a core with a different coordinator")
+	}
+	activeCore, ok := backend.coreOwner.(*core.Core)
+	if !ok {
+		t.Fatalf("replacement core type = %T, want *core.Core", backend.coreOwner)
+	}
+	active, err := activeCore.GetActiveInput(t.Context(), "settings-owner")
+	if err != nil {
+		t.Fatalf("get idle input from replacement core: %v", err)
+	}
+	if active.Revision <= opened.Revision {
+		t.Fatalf("config activation did not advance active input revision: opened=%d active=%d", opened.Revision, active.Revision)
+	}
+	if _, err := activeCore.ReleaseActiveInput(t.Context(), "settings-owner", api.ReleaseActiveInputRequest{
+		ExpectedRevision: active.Revision,
+	}); err != nil {
+		t.Fatalf("release idle input through replacement core: %v", err)
+	}
+}
+
 func TestBackendSaveConfigRetriesLegacyCookieMigrationAfterAuthAppears(t *testing.T) {
 	t.Parallel()
 
@@ -680,11 +982,12 @@ func TestBackendLogStreamContinuesAcrossSaveConfigRuntimeReplacement(t *testing.
 	}
 	initialLogger.SetConsoleOutput(io.Discard, io.Discard)
 	backend := &Backend{
-		cfg:     initial,
-		logger:  initialLogger,
-		repo:    repo,
-		hub:     newEventHub(),
-		streams: make(map[string]*backendLogStream),
+		cfg:           initial,
+		logger:        initialLogger,
+		runtimeBundle: newRuntimeBundle(nil, initialLogger),
+		repo:          repo,
+		hub:           newEventHub(),
+		streams:       make(map[string]*backendLogStream),
 	}
 	t.Cleanup(func() {
 		backend.stopAllLogStreams()
@@ -1086,6 +1389,20 @@ func backendConfigTestConfig(repoPath string) config.Config {
 		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
 		Logging:            config.LoggingConfig{Level: "error"},
 	}
+}
+
+func backendWorkflowCoordinator(t *testing.T, backend *Backend) *releaseworkflow.Coordinator {
+	t.Helper()
+
+	coreSvc, ok := backend.coreOwner.(*core.Core)
+	if !ok {
+		t.Fatalf("runtime core type = %T, want *core.Core", backend.coreOwner)
+	}
+	coordinator := coreSvc.WorkflowCoordinator()
+	if coordinator == nil {
+		t.Fatal("runtime core has no workflow coordinator")
+	}
+	return coordinator
 }
 
 func writeBackendLegacyCookieFile(t *testing.T, repoPath, trackerID, payload string) string {

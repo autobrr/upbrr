@@ -276,6 +276,56 @@ func TestRTFHandlerRefreshesAndRetriesOn401(t *testing.T) {
 	}
 }
 
+func TestRTFHandlerRestoresEncryptedAPISessionInNewAdapter(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
+	writeRTFWebAuthFixture(t, dbPath)
+	trackerCfg := config.TrackerConfig{
+APIKey: "configured-key",
+ Username: "user",
+ Password: "pass",
+}
+	seedRTFConfig(t, dbPath, trackerCfg)
+	if err := persistRefreshedRTFAPIKey(ctx, dbPath, defaultBaseURL, trackerCfg, "restored-session-token"); err != nil {
+		t.Fatalf("persist API session: %v", err)
+	}
+
+	loginCalls := 0
+	client := &http.Client{Transport: rtfRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/api/login":
+			loginCalls++
+			t.Fatal("restored session should avoid an API login")
+		case "/api/torrent":
+			if req.Header.Get("Authorization") != "restored-session-token" {
+				t.Fatal("new adapter did not use its encrypted API session")
+			}
+			return &http.Response{
+StatusCode: http.StatusOK,
+ Body: io.NopCloser(strings.NewReader(`[]`)),
+ Header: make(http.Header),
+}, nil
+		default:
+			t.Fatalf("unexpected request path %q", req.URL.Path)
+		}
+		return nil, nil
+	})}
+
+	handler := dupe.NewAdapter(New(), "RTF", config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers:     config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"RTF": trackerCfg}},
+	}, client, api.NopLogger{})
+	result := handler.Search(ctx, api.DuplicateSubject{
+		Identity: api.ExternalIdentity{IMDBID: 123456, Category: "MOVIE"},
+		Release:  api.ReleaseInfo{Year: 1990},
+	})
+	if result.Disposition() != dupe.DispositionResolved || loginCalls != 0 {
+		t.Fatalf("restored session search disposition=%v loginCalls=%d", result.Disposition(), loginCalls)
+	}
+}
+
 func TestRTFHandlerSkipsTooRecentContent(t *testing.T) {
 	t.Parallel()
 

@@ -307,11 +307,18 @@ type ReleaseSelectionRepository interface {
 	SavePlaylistSelection(ctx context.Context, sourcePath string, sourceFingerprint string, playlists []string, useAll bool) error
 }
 
-// HistoryCleanupSnapshot contains persisted local paths needed by Core's
-// filesystem cleanup policy. ArtifactPaths is an isolated caller-owned slice.
+// WorkflowScope identifies one owner-scoped retained workflow.
+type WorkflowScope struct {
+	OwnerID    string
+	WorkflowID WorkflowID
+}
+
+// HistoryCleanupSnapshot contains persisted local paths and private workflow
+// scopes needed by Core's cleanup policy. Its slices are caller-owned.
 type HistoryCleanupSnapshot struct {
-	Metadata      *FileMetadata
-	ArtifactPaths []string
+	Metadata       *FileMetadata
+	ArtifactPaths  []string
+	WorkflowScopes []WorkflowScope
 }
 
 // HistoryRepository owns persisted history projection, cleanup discovery, and
@@ -320,6 +327,11 @@ type HistoryRepository interface {
 	ListHistoryEntries(ctx context.Context) ([]HistoryEntry, error)
 	LoadHistoryRecord(ctx context.Context, sourcePath string) (HistoryRecord, error)
 	LoadHistoryCleanupSnapshot(ctx context.Context, sourcePath string) (HistoryCleanupSnapshot, error)
+	// WithHistoryDeletion serializes guarded history cleanup with repository
+	// deletion. The callback context carries the transaction-scoped repository.
+	WithHistoryDeletion(context.Context, func(context.Context) error) error
+	ListHistoryProtectedSourcePaths(ctx context.Context) ([]string, error)
+	ListStoredHistoryArtifactPaths(ctx context.Context) ([]string, error)
 	ListStoredReleasePaths(ctx context.Context) ([]string, error)
 	PurgeContentData(ctx context.Context, path string) error
 }
@@ -385,6 +397,9 @@ type ReleaseWorkflowStateRecord struct {
 	Payload             []byte
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
+	// DescriptionReuse is a pending cache write coupled to a successful state
+	// update. It is intentionally excluded from transport and state payload JSON.
+	DescriptionReuse *ReusableDescriptionRecord `json:"-"`
 }
 
 // ReleaseWorkflowStateRepository persists safe public workflow state with
@@ -475,6 +490,9 @@ type ReleaseWorkflowEffectRecord struct {
 	StartedAt           time.Time
 	UpdatedAt           time.Time
 	CompletedAt         *time.Time
+	// Submission binds tracker-submission effects to repository-wide exact
+	// content exclusion. It is nil for other external effects.
+	Submission *SubmissionFenceAuthority
 }
 
 // ReleaseWorkflowWorkRecord is one durable operation lease and latest
@@ -500,6 +518,11 @@ type ReleaseWorkflowDurabilityRepository interface {
 	BeginReleaseWorkflowEffect(context.Context, ReleaseWorkflowEffectRecord) (ReleaseWorkflowEffectRecord, bool, error)
 	CompleteReleaseWorkflowEffect(context.Context, WorkflowEffectStatus, ReleaseWorkflowEffectRecord) error
 	MarkReleaseWorkflowOperationEffectsUnknown(context.Context, string, WorkflowID, WorkflowOperationID, time.Time) error
+	// RecoverLegacyReleaseWorkflowEffects fences every pre-active-input started
+	// effect for one owner-scoped workflow and returns its required manual
+	// reconciliation actions. It never creates a submission fence.
+	RecoverLegacyReleaseWorkflowEffects(context.Context, string, WorkflowID, time.Time) ([]ReleaseWorkflowEffectRecord, error)
+	ListLegacyReleaseWorkflowRecoveryWorkflowIDs(context.Context, string) ([]WorkflowID, error)
 	ResolveReleaseWorkflowEffectUnknown(context.Context, string, WorkflowID, WorkflowExternalEffectKind, string, time.Time) error
 	LoadReleaseWorkflowWork(context.Context, string, WorkflowID, WorkflowOperationID) (ReleaseWorkflowWorkRecord, error)
 	ClaimReleaseWorkflowWork(context.Context, ReleaseWorkflowWorkRecord) error
@@ -543,20 +566,24 @@ var (
 	ErrReleaseWorkflowEffectAlreadySucceeded = errors.New("api: release workflow external effect already succeeded")
 	// ErrReleaseWorkflowEffectConflict reports invalid effect identity or lifecycle reuse.
 	ErrReleaseWorkflowEffectConflict = errors.New("api: release workflow external effect conflict")
+	// ErrSubmissionFenceNotFound reports no durable submission fence for one exact content/site key.
+	ErrSubmissionFenceNotFound = errors.New("api: submission fence not found")
 )
 
 // RepositoryCapabilities is an immutable set of borrowed persistence
 // capabilities. Construct it from one adapter so production capabilities share
 // connection, retry, transaction, and lifecycle ownership.
 type RepositoryCapabilities struct {
-	releaseState ReleaseStateRepository
-	prepared     PreparedReleaseRepository
-	selections   ReleaseSelectionRepository
-	history      HistoryRepository
-	uploads      UploadLedgerRepository
-	trackers     TrackerStateRepository
-	media        MediaAssetRepository
-	workflows    ReleaseWorkflowStateRepository
+	releaseState     ReleaseStateRepository
+	prepared         PreparedReleaseRepository
+	selections       ReleaseSelectionRepository
+	history          HistoryRepository
+	uploads          UploadLedgerRepository
+	trackers         TrackerStateRepository
+	media            MediaAssetRepository
+	mediaReuse       MediaReuseRepository
+	descriptionReuse DescriptionReuseRepository
+	workflows        ReleaseWorkflowStateRepository
 }
 
 // RepositoryCapabilitiesFrom projects one adapter onto every repository seam.
@@ -569,16 +596,20 @@ func RepositoryCapabilitiesFrom(adapter any) RepositoryCapabilities {
 	uploads, _ := adapter.(UploadLedgerRepository)
 	trackers, _ := adapter.(TrackerStateRepository)
 	media, _ := adapter.(MediaAssetRepository)
+	mediaReuse, _ := adapter.(MediaReuseRepository)
+	descriptionReuse, _ := adapter.(DescriptionReuseRepository)
 	workflows, _ := adapter.(ReleaseWorkflowStateRepository)
 	return RepositoryCapabilities{
-		releaseState: releaseState,
-		prepared:     prepared,
-		selections:   selections,
-		history:      history,
-		uploads:      uploads,
-		trackers:     trackers,
-		media:        media,
-		workflows:    workflows,
+		releaseState:     releaseState,
+		prepared:         prepared,
+		selections:       selections,
+		history:          history,
+		uploads:          uploads,
+		trackers:         trackers,
+		media:            media,
+		mediaReuse:       mediaReuse,
+		descriptionReuse: descriptionReuse,
+		workflows:        workflows,
 	}
 }
 
@@ -641,6 +672,14 @@ func (c RepositoryCapabilities) Trackers() TrackerStateRepository { return c.tra
 
 // Media returns the borrowed media-asset capability.
 func (c RepositoryCapabilities) Media() MediaAssetRepository { return c.media }
+
+// MediaReuse returns the optional durable media-reuse capability.
+func (c RepositoryCapabilities) MediaReuse() MediaReuseRepository { return c.mediaReuse }
+
+// DescriptionReuse returns the optional durable description-reuse capability.
+func (c RepositoryCapabilities) DescriptionReuse() DescriptionReuseRepository {
+	return c.descriptionReuse
+}
 
 // Workflows returns the borrowed durable public workflow-state capability.
 func (c RepositoryCapabilities) Workflows() ReleaseWorkflowStateRepository { return c.workflows }

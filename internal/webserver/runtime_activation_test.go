@@ -5,8 +5,11 @@ package webserver
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -172,6 +175,8 @@ func TestRuntimeActivatorFailureStagesDoNotInstall(t *testing.T) {
 			}
 			owner := &activationTestOwner{}
 			test.configure(activator, owner)
+			activator.deps.persistActivated = nil
+			activator.deps.loadActivation = nil
 
 			err = activator.Activate(context.Background(), validRuntimeActivationConfig())
 			assertActivationStage(t, err, test.stage)
@@ -252,6 +257,287 @@ func TestRuntimeActivatorSerializesCompleteTransition(t *testing.T) {
 	}
 }
 
+func TestRuntimeActivatorPersistsStoredOnlyChangeWithoutBuilding(t *testing.T) {
+	t.Setenv("UA_DEFAULT_TMDB_API", "env-value")
+	repo := openRuntimeActivationTestRepo(t)
+	activator, err := NewRuntimeActivator(repo, repo.DBPath(), &activationTestInstaller{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := validRuntimeActivationConfig()
+	stored.MainSettings.DBPath = repo.DBPath()
+	candidate := stored
+	candidate.MainSettings.TMDBAPI = "saved-value"
+	var persisted config.Config
+	activator.deps = runtimeActivationDeps{
+		build: func(context.Context, config.Config, *db.SQLiteRepository) (RuntimeGeneration, error) {
+			t.Fatal("stored-only activation rebuilt runtime")
+			return RuntimeGeneration{}, nil
+		},
+		cookies: func(context.Context, *db.SQLiteRepository, string, api.Logger) error {
+			t.Fatal("stored-only activation maintained cookies")
+			return nil
+		},
+		persist: func(_ context.Context, cfg *config.Config, _ *db.SQLiteRepository, _ string, _ api.Logger) error {
+			persisted = *cfg
+			return nil
+		},
+		loadStored: func(context.Context, *db.SQLiteRepository) (*config.Config, error) { return &stored, nil },
+		loadActivation: func(context.Context, *db.SQLiteRepository) (api.ConfigActivation, error) {
+			return api.ConfigActivation{
+				Status:           api.ConfigActivationActive,
+				ActiveGeneration: 4,
+				Impacts:          []api.ConfigImpact{},
+			}, nil
+		},
+	}
+
+	result, err := activator.ActivateResult(t.Context(), candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.MainSettings.TMDBAPI != "saved-value" {
+		t.Fatal("persisted stored value did not match candidate")
+	}
+	if result.ActiveGeneration != 4 || result.Status != api.ConfigActivationActive {
+		t.Fatalf("activation result = %#v", result)
+	}
+}
+
+func TestRuntimeActivatorExactNoopDoesNotPersistOrBuild(t *testing.T) {
+	repo := openRuntimeActivationTestRepo(t)
+	activator, err := NewRuntimeActivator(repo, repo.DBPath(), &activationTestInstaller{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate := validRuntimeActivationConfig()
+	candidate.MainSettings.DBPath = repo.DBPath()
+	stored, err := cloneConfig(candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.MergeMissingTrackerDefaults(stored); err != nil {
+		t.Fatal(err)
+	}
+	activator.deps = runtimeActivationDeps{
+		build: func(context.Context, config.Config, *db.SQLiteRepository) (RuntimeGeneration, error) {
+			t.Fatal("exact no-op rebuilt runtime")
+			return RuntimeGeneration{}, nil
+		},
+		persist: func(context.Context, *config.Config, *db.SQLiteRepository, string, api.Logger) error {
+			t.Fatal("exact no-op persisted config")
+			return nil
+		},
+		loadStored: func(context.Context, *db.SQLiteRepository) (*config.Config, error) { return stored, nil },
+		loadActivation: func(context.Context, *db.SQLiteRepository) (api.ConfigActivation, error) {
+			return api.ConfigActivation{
+				Status:           api.ConfigActivationActive,
+				ActiveGeneration: 2,
+				Impacts:          []api.ConfigImpact{},
+			}, nil
+		},
+	}
+	result, err := activator.ActivateResult(t.Context(), candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ActiveGeneration != 2 {
+		t.Fatalf("activation result = %#v", result)
+	}
+}
+
+func TestRuntimeActivatorDefersEffectiveChangeWhileWorkflowIsActive(t *testing.T) {
+	repo := openRuntimeActivationTestRepo(t)
+	activator, err := NewRuntimeActivator(repo, repo.DBPath(), &activationTestInstaller{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := validRuntimeActivationConfig()
+	stored.MainSettings.DBPath = repo.DBPath()
+	candidate := stored
+	candidate.Metadata.KeepImages = true
+	var savedCandidate []byte
+	activator.deps = runtimeActivationDeps{
+		build: func(context.Context, config.Config, *db.SQLiteRepository) (RuntimeGeneration, error) {
+			t.Fatal("pending activation built a runtime")
+			return RuntimeGeneration{}, nil
+		},
+		loadStored:     func(context.Context, *db.SQLiteRepository) (*config.Config, error) { return &stored, nil },
+		activationSafe: func(context.Context, *db.SQLiteRepository) (bool, error) { return false, nil },
+		loadActivation: func(context.Context, *db.SQLiteRepository) (api.ConfigActivation, error) {
+			return api.ConfigActivation{
+				Status:           api.ConfigActivationActive,
+				ActiveGeneration: 8,
+				Impacts:          []api.ConfigImpact{},
+			}, nil
+		},
+		savePending: func(_ context.Context, _ *db.SQLiteRepository, ownerID string, candidate []byte, impacts []api.ConfigImpactDetail) (api.ConfigActivation, error) {
+			if ownerID != "system" {
+				t.Fatalf("pending owner = %q", ownerID)
+			}
+			savedCandidate = candidate
+			if !slices.ContainsFunc(impacts, func(impact api.ConfigImpactDetail) bool { return impact.Kind == api.ConfigImpactProvider }) {
+				t.Fatalf("impacts = %v, want provider", impacts)
+			}
+			return api.ConfigActivation{
+				Status:            api.ConfigActivationPending,
+				ActiveGeneration:  8,
+				PendingGeneration: 9,
+				Impacts:           []api.ConfigImpact{api.ConfigImpactProvider},
+			}, nil
+		},
+	}
+	result, err := activator.ActivateResult(t.Context(), candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != api.ConfigActivationPending || len(savedCandidate) == 0 {
+		t.Fatalf("pending result = %#v candidate=%d bytes", result, len(savedCandidate))
+	}
+}
+
+func TestRuntimeActivatorMarksDeferredFailuresTerminalAndAcceptsCorrection(t *testing.T) {
+	tests := []struct {
+		name             string
+		code             api.ConfigActivationFailureCode
+		configureFailure func(*RuntimeActivator)
+	}{
+		{
+			name: "build",
+			code: api.ConfigActivationFailureBuild,
+			configureFailure: func(activator *RuntimeActivator) {
+				activator.deps.build = func(context.Context, config.Config, *db.SQLiteRepository) (RuntimeGeneration, error) {
+					return RuntimeGeneration{}, errors.New("build failure")
+				}
+			},
+		},
+		{
+			name: "cookies",
+			code: api.ConfigActivationFailureCookies,
+			configureFailure: func(activator *RuntimeActivator) {
+				activator.deps.cookies = func(context.Context, *db.SQLiteRepository, string, api.Logger) error {
+					return errors.New("cookie failure")
+				}
+			},
+		},
+		{
+			name: "persist",
+			code: api.ConfigActivationFailurePersist,
+			configureFailure: func(activator *RuntimeActivator) {
+				activator.deps.persistActivated = func(
+					context.Context,
+					*config.Config,
+					*db.SQLiteRepository,
+					string,
+					api.Logger,
+					uint64,
+					api.WorkflowFingerprint,
+					[]api.ConfigImpactDetail,
+					db.ConfigActivationWorkflowTransform,
+				) (api.ConfigActivation, error) {
+					return api.ConfigActivation{}, errors.New("persistence failure")
+				}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repo := openRuntimeActivationTestRepo(t)
+			activator, err := NewRuntimeActivator(repo, repo.DBPath(), &activationTestInstaller{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			stored := validRuntimeActivationConfig()
+			stored.MainSettings.DBPath = repo.DBPath()
+			candidate := stored
+			candidate.Metadata.KeepImages = true
+			safe := false
+			activator.deps.loadStored = func(context.Context, *db.SQLiteRepository) (*config.Config, error) { return &stored, nil }
+			activator.deps.loadActivation = func(ctx context.Context, repo *db.SQLiteRepository) (api.ConfigActivation, error) {
+				return repo.LoadConfigActivation(ctx)
+			}
+			activator.deps.savePending = func(
+				ctx context.Context,
+				repo *db.SQLiteRepository,
+				ownerID string,
+				candidate []byte,
+				impacts []api.ConfigImpactDetail,
+			) (api.ConfigActivation, error) {
+				return repo.SavePendingConfigActivation(ctx, ownerID, candidate, impacts)
+			}
+			activator.deps.activationSafe = func(context.Context, *db.SQLiteRepository) (bool, error) { return safe, nil }
+			activator.deps.build = func(context.Context, config.Config, *db.SQLiteRepository) (RuntimeGeneration, error) {
+				return RuntimeGeneration{Owner: &activationTestOwner{}}, nil
+			}
+			activator.deps.cookies = activationTestCookies
+			activator.deps.persistActivated = activateRuntimeConfigForTest
+
+			pending, err := activator.ActivateResult(t.Context(), candidate)
+			if err != nil {
+				t.Fatalf("defer candidate: %v", err)
+			}
+			if pending.Status != api.ConfigActivationPending {
+				t.Fatalf("deferred activation = %#v", pending)
+			}
+			safe = true
+			test.configureFailure(activator)
+			failed, err := activator.ActivatePending(t.Context())
+			if err != nil {
+				t.Fatalf("activate deferred candidate: %v", err)
+			}
+			if failed.Status != api.ConfigActivationFailed || failed.ActivationID != pending.ActivationID || failed.FailureCode != test.code {
+				t.Fatalf("failed activation = %#v", failed)
+			}
+			if _, _, err := repo.LoadPendingConfigActivationCandidate(t.Context()); !errors.Is(err, sql.ErrNoRows) {
+				t.Fatalf("failed activation retained candidate: %v", err)
+			}
+
+			activator.deps.build = func(context.Context, config.Config, *db.SQLiteRepository) (RuntimeGeneration, error) {
+				return RuntimeGeneration{Owner: &activationTestOwner{}}, nil
+			}
+			activator.deps.cookies = activationTestCookies
+			activator.deps.persistActivated = activateRuntimeConfigForTest
+			corrected := stored
+			corrected.Metadata.OnlyID = true
+			active, err := activator.ActivateResult(t.Context(), corrected)
+			if err != nil {
+				t.Fatalf("activate corrected candidate: %v", err)
+			}
+			if active.Status != api.ConfigActivationActive || active.ActiveGeneration != 1 {
+				t.Fatalf("corrected activation = %#v", active)
+			}
+		})
+	}
+}
+
+func activateRuntimeConfigForTest(
+	ctx context.Context,
+	_ *config.Config,
+	repo *db.SQLiteRepository,
+	_ string,
+	_ api.Logger,
+	expectedGeneration uint64,
+	fingerprint api.WorkflowFingerprint,
+	impacts []api.ConfigImpactDetail,
+	transform db.ConfigActivationWorkflowTransform,
+) (api.ConfigActivation, error) {
+	tx, err := repo.RawDB().BeginTx(ctx, nil)
+	if err != nil {
+		return api.ConfigActivation{}, fmt.Errorf("begin test activation: %w", err)
+	}
+	activation, err := repo.ActivateConfigTx(ctx, tx, expectedGeneration, fingerprint, impacts, transform)
+	if err == nil {
+		err = tx.Commit()
+	} else {
+		_ = tx.Rollback()
+	}
+	if err != nil {
+		return api.ConfigActivation{}, fmt.Errorf("commit test activation: %w", err)
+	}
+	return activation, nil
+}
+
 func activationTestBuild(owner LifecycleOwner) func(context.Context, config.Config, *db.SQLiteRepository) (RuntimeGeneration, error) {
 	return func(_ context.Context, cfg config.Config, _ *db.SQLiteRepository) (RuntimeGeneration, error) {
 		return RuntimeGeneration{Config: cfg, Owner: owner}, nil
@@ -286,6 +572,9 @@ func openRuntimeActivationTestRepo(t *testing.T) *db.SQLiteRepository {
 	repo, err := db.OpenWithLogger(filepath.Join(t.TempDir(), "runtime-activation.db"), api.NopLogger{})
 	if err != nil {
 		t.Fatalf("open repository: %v", err)
+	}
+	if err := repo.MigrateContext(t.Context()); err != nil {
+		t.Fatalf("migrate repository: %v", err)
 	}
 	t.Cleanup(func() { _ = repo.Close() })
 	return repo

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/description"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -25,8 +26,10 @@ type workflowDescriptionTrackerService interface {
 }
 
 type workflowDescriptionBuilder struct {
+	config   config.Config
 	resolver workflowDescriptionSubjectResolver
 	trackers workflowDescriptionTrackerService
+	reuse    api.DescriptionReuseRepository
 }
 
 func (b workflowDescriptionBuilder) Fingerprints(

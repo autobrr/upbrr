@@ -114,4 +114,13 @@ type CoreDependencies struct {
 	// SkipCookieMigration skips legacy cookie migration for callers that already
 	// synchronize cookie encryption state with the shared repository.
 	SkipCookieMigration bool
+	// EnforceConfigActivationGeneration fences workflow admission against the
+	// durable active config generation owned by the WebUI runtime host.
+	EnforceConfigActivationGeneration bool
+	// ConfigActivationGeneration is the durable generation this Core was built
+	// to serve when EnforceConfigActivationGeneration is enabled.
+	ConfigActivationGeneration uint64
+	// ConfigActivationFingerprint is the private effective-config fingerprint
+	// expected for ConfigActivationGeneration. It never enters public state.
+	ConfigActivationFingerprint WorkflowFingerprint
 }

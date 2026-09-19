@@ -12,6 +12,8 @@ import (
 func TestPreparationProgressUpdateJSONContract(t *testing.T) {
 	update := NewPreparationProgressUpdate(PreparationPhaseBDInfo, PreparationProgressRunning, "Scanning playlist.")
 	update.CorrelationID = "attempt-1"
+	update.CompletedBytes = 1024
+	update.TotalBytes = 2048
 	update.Timestamp = "2026-07-16T00:00:00Z"
 	payload, err := json.Marshal(update)
 	if err != nil {
@@ -26,6 +28,9 @@ func TestPreparationProgressUpdateJSONContract(t *testing.T) {
 	}
 	if decoded["order"] != float64(350) || decoded["label"] != "Analyze Blu-ray playlists" {
 		t.Fatal("preparation progress presentation metadata changed")
+	}
+	if decoded["completedBytes"] != float64(1024) || decoded["totalBytes"] != float64(2048) {
+		t.Fatal("preparation progress byte metadata changed")
 	}
 }
 

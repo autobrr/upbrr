@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -87,14 +88,25 @@ func applyContinuationPreparationDefaults(
 // as opening and migrating an internally created repository. The context is not
 // retained after construction.
 func NewWithContext(ctx context.Context, deps api.CoreDependencies) (*Core, error) {
+	return NewWithContextAndCoordinator(ctx, deps, nil)
+}
+
+// NewWithContextAndCoordinator constructs a config-scoped Core that shares the
+// supplied process-lifetime workflow coordinator. A nil coordinator creates a
+// standalone coordinator for callers that do not replace runtime config.
+func NewWithContextAndCoordinator(
+	ctx context.Context,
+	deps api.CoreDependencies,
+	coordinator *releaseworkflow.Coordinator,
+) (*Core, error) {
 	if ctx == nil {
 		return nil, errors.New("core: context is required")
 	}
-	return newCore(ctx, deps)
+	return newCore(ctx, deps, coordinator)
 }
 
-func newCore(ctx context.Context, deps api.CoreDependencies) (*Core, error) {
-	return newCoreWithHooks(ctx, deps, coreConstructionHooks{})
+func newCore(ctx context.Context, deps api.CoreDependencies, coordinator *releaseworkflow.Coordinator) (*Core, error) {
+	return newCoreWithHooks(ctx, deps, coordinator, coreConstructionHooks{})
 }
 
 type coreConstructionHooks struct {
@@ -121,7 +133,12 @@ type mediaRepositoryView struct {
 
 // newCoreWithHooks constructs the runtime graph and closes only repositories it
 // opened itself when construction fails. Hooks expose that cleanup to tests.
-func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks coreConstructionHooks) (*Core, error) {
+func newCoreWithHooks(
+	ctx context.Context,
+	deps api.CoreDependencies,
+	coordinator *releaseworkflow.Coordinator,
+	hooks coreConstructionHooks,
+) (*Core, error) {
 	if ctx == nil {
 		return nil, errors.New("core: context is required")
 	}
@@ -187,9 +204,6 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 	}
 
 	services := deps.Services
-	if err := maybeApplyE2EServices(ctx, &services, cfg, repositories, logger); err != nil {
-		return nil, err
-	}
 	registry, err := trackerimpl.NewRegistry()
 	if err != nil {
 		return nil, fmt.Errorf("core: tracker registry: %w", err)
@@ -197,6 +211,9 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 	registry, err = maybeApplyE2ENamingRegistry(registry)
 	if err != nil {
 		return nil, fmt.Errorf("core: e2e naming registry: %w", err)
+	}
+	if err := maybeApplyE2EServices(ctx, &services, cfg, repositories, registry, logger); err != nil {
+		return nil, err
 	}
 	if services.Clients == nil {
 		services.Clients = torrentclient.NewServiceWithRegistry(cfg, logger, registry, deps.LiveTest)
@@ -343,6 +360,7 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 		logger,
 		services,
 		mediaRepositoryView{TrackerStateRepository: repositories.Trackers(), MediaAssetRepository: repositories.Media()},
+		repositories.MediaReuse(),
 		registry,
 		preparedFacts,
 	)
@@ -353,7 +371,12 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 		dvdMenus:    services.DVDMenus,
 		media:       workflowMedia,
 	}
+	descriptionReuse, _ := repoOwner.(api.DescriptionReuseRepository)
+	if descriptionReuse == nil {
+		descriptionReuse = repositories.DescriptionReuse()
+	}
 	var workflowPrivateResources releaseworkflow.PrivateResourceStore = releaseworkflow.NewMemoryPrivateResourceStore()
+	var workflowPrivateVault *releaseworkflow.PrivateArtifactVault
 	if sqliteRepo, ok := repoOwner.(*db.SQLiteRepository); ok && strings.TrimSpace(sqliteRepo.DBPath()) != "" {
 		vault, vaultErr := releaseworkflow.NewPrivateArtifactVault(
 			workflowPrivateVaultRoot(sqliteRepo.DBPath()),
@@ -363,6 +386,7 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 			return nil, fmt.Errorf("core: release workflow private artifact vault: %w", vaultErr)
 		}
 		workflowPrivateResources = vault
+		workflowPrivateVault = vault
 	}
 	e2eOptions := e2eReleaseWorkflowOptions()
 	workflowOptions := make([]releaseworkflow.Option, 0, 9+len(e2eOptions))
@@ -381,8 +405,10 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 		releaseworkflow.WithDupeAssessmentBuilder(workflowDupeBuilder{service: services.Dupes, logger: logger}),
 		releaseworkflow.WithMediaArtifactBuilder(workflowMediaArtifacts),
 		releaseworkflow.WithDescriptionBuilder(workflowDescriptionBuilder{
+			config:   cfg,
 			resolver: preparedFacts,
 			trackers: services.Trackers,
+			reuse:    descriptionReuse,
 		}),
 		releaseworkflow.WithUploadPlanBuilder(
 			newWorkflowUploadPlanBuilder(cfg, preparedFacts, services.Trackers, services.Torrents, services.Clients, deps.LiveTest),
@@ -390,6 +416,32 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 		releaseworkflow.WithOperationErrorClassifier(classifyOperationError),
 		releaseworkflow.WithLogger(logger),
 	)
+	if activeInputs, ok := repoOwner.(api.ActiveInputRepository); ok {
+		workflowOptions = append(workflowOptions, releaseworkflow.WithActiveInputs(activeInputs, verifyWorkflowInput))
+	}
+	if fences, ok := repoOwner.(api.SubmissionFenceRepository); ok {
+		workflowOptions = append(workflowOptions, releaseworkflow.WithSubmissionHistoryFilter(workflowSubmissionHistoryFilter{
+			fences: fences, registry: registry,
+		}))
+	}
+	if coordinator != nil {
+		workflowOptions = append(workflowOptions, releaseworkflow.WithCoordinator(coordinator))
+	}
+	if deps.EnforceConfigActivationGeneration {
+		sqliteRepo, ok := repoOwner.(*db.SQLiteRepository)
+		if !ok {
+			return nil, errors.New("core: config activation generation requires sqlite repository")
+		}
+		if deps.ConfigActivationFingerprint == "" {
+			return nil, errors.New("core: config activation fingerprint is required")
+		}
+		workflowOptions = append(workflowOptions, releaseworkflow.WithConfigActivationGuard(configActivationGenerationGuard(
+			sqliteRepo, deps.ConfigActivationGeneration, deps.ConfigActivationFingerprint,
+		)))
+		workflowOptions = append(workflowOptions, releaseworkflow.WithConfigActivationAuthority(api.ConfigActivationAuthority{
+			Generation: deps.ConfigActivationGeneration, Fingerprint: deps.ConfigActivationFingerprint,
+		}))
+	}
 	workflowOptions = append(workflowOptions, e2eOptions...)
 	workflow, err := releaseworkflow.New(
 		workflowRepository,
@@ -412,9 +464,86 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 	}
 	core.history = newHistoryModule(repositories.History(), cfg.MainSettings.DBPath, logger)
 	core.history.preparedFacts = core.preparedFacts
+	if activeInputs, ok := repoOwner.(api.ActiveInputRepository); ok {
+		core.history.activeInputs = activeInputs
+	}
+	core.history.privateVault = workflowPrivateVault
+	if err := workflow.ResetIdleInputOnStartup(ctx); err != nil {
+		return nil, fmt.Errorf("core: clear previous idle input: %w", err)
+	}
+	if sqliteRepo, ok := repoOwner.(*db.SQLiteRepository); ok {
+		if err := core.history.cleanupOrphanedHistory(ctx, sqliteRepo); err != nil {
+			return nil, fmt.Errorf("core: clean orphaned history: %w", err)
+		}
+	}
 	core.media = workflowMedia
 	constructionSucceeded = true
 	return core, nil
+}
+
+func configActivationGenerationGuard(
+	repo *db.SQLiteRepository, expectedGeneration uint64, expectedFingerprint api.WorkflowFingerprint,
+) releaseworkflow.ConfigActivationGuard {
+	return func(ctx context.Context) error {
+		activation, err := repo.LoadConfigActivation(ctx)
+		if err != nil {
+			return fmt.Errorf("load active config generation: %w", err)
+		}
+		if activation.ActiveGeneration != expectedGeneration || activation.Fingerprint != expectedFingerprint {
+			return api.ErrConfigActivationChanged
+		}
+		return nil
+	}
+}
+
+// WorkflowCoordinator returns the process-lifetime coordinator used by Core.
+func (c *Core) WorkflowCoordinator() *releaseworkflow.Coordinator {
+	if c == nil || c.workflow == nil {
+		return nil
+	}
+	return c.workflow.SharedCoordinator()
+}
+
+// ShutdownWorkflowCoordinator stops local workflow work and relinquishes the
+// active-input lease during process shutdown.
+func (c *Core) ShutdownWorkflowCoordinator(ctx context.Context) error {
+	if c == nil || c.workflow == nil {
+		return nil
+	}
+	if err := c.workflow.Shutdown(ctx); err != nil {
+		return fmt.Errorf("core: shutdown workflow coordinator: %w", err)
+	}
+	return nil
+}
+
+// SetOperationLifetime binds one host-owned immutable runtime bundle before
+// Core is published. The bundle remains borrowed through worker cleanup.
+func (c *Core) SetOperationLifetime(lifetime releaseworkflow.OperationLifetime) {
+	if c != nil && c.workflow != nil {
+		c.workflow.SetOperationLifetime(lifetime)
+	}
+}
+
+func verifyWorkflowInput(ctx context.Context, input api.PrepareInput) (api.InputRecord, error) {
+	finish := api.BeginPreparationProgress(ctx, api.PreparationPhaseSourceInspection, "Verifying source content.")
+	verified, err := preparedrelease.VerifyInputSourceWithProgress(ctx, input, sourceVerificationProgressReporter(ctx))
+	if err != nil {
+		finish(err)
+		return api.InputRecord{}, fmt.Errorf("core: verify workflow input: %w", err)
+	}
+	payload, err := json.Marshal(verified)
+	if err != nil {
+		err = fmt.Errorf("core: marshal verified source input: %w", err)
+		finish(err)
+		return api.InputRecord{}, err
+	}
+	result := api.InputRecord{
+		CanonicalPath: preparedrelease.CanonicalSourceKey(verified.Manifest.SourcePath),
+		SourceVersion: verified.Identity.Digest,
+		Manifest:      payload,
+	}
+	finish(nil)
+	return result, nil
 }
 
 // ContinueReleaseWorkflow reconciles typed desired state through the central planner.
@@ -710,12 +839,26 @@ func (c *Core) GetHistoryOverview(ctx context.Context, sourcePath string) (api.H
 // removing only artifacts validated beneath the configured tmp, cache, or nfo
 // roots.
 func (c *Core) DeleteHistoryRelease(ctx context.Context, sourcePath string) error {
+	if err := c.releaseHistoryInput(ctx, sourcePath); err != nil {
+		return err
+	}
 	return c.history.Delete(ctx, sourcePath)
 }
 
 // DeleteAllHistoryReleases deletes stored releases sequentially. On cancellation
 // or failure, the returned count includes releases deleted before the error.
 func (c *Core) DeleteAllHistoryReleases(ctx context.Context) (int, error) {
+	if c.workflow != nil && c.history != nil && c.history.repo != nil {
+		paths, err := c.history.repo.ListStoredReleasePaths(ctx)
+		if err != nil {
+			return 0, fmt.Errorf("core: list history inputs to close: %w", err)
+		}
+		for _, path := range paths {
+			if err := c.releaseHistoryInput(ctx, path); err != nil {
+				return 0, err
+			}
+		}
+	}
 	return c.history.DeleteAll(ctx)
 }
 
