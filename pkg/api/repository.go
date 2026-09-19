@@ -397,6 +397,9 @@ type ReleaseWorkflowStateRecord struct {
 	Payload             []byte
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
+	// DescriptionReuse is a pending cache write coupled to a successful state
+	// update. It is intentionally excluded from transport and state payload JSON.
+	DescriptionReuse *ReusableDescriptionRecord `json:"-"`
 }
 
 // ReleaseWorkflowStateRepository persists safe public workflow state with
@@ -571,15 +574,16 @@ var (
 // capabilities. Construct it from one adapter so production capabilities share
 // connection, retry, transaction, and lifecycle ownership.
 type RepositoryCapabilities struct {
-	releaseState ReleaseStateRepository
-	prepared     PreparedReleaseRepository
-	selections   ReleaseSelectionRepository
-	history      HistoryRepository
-	uploads      UploadLedgerRepository
-	trackers     TrackerStateRepository
-	media        MediaAssetRepository
-	mediaReuse   MediaReuseRepository
-	workflows    ReleaseWorkflowStateRepository
+	releaseState     ReleaseStateRepository
+	prepared         PreparedReleaseRepository
+	selections       ReleaseSelectionRepository
+	history          HistoryRepository
+	uploads          UploadLedgerRepository
+	trackers         TrackerStateRepository
+	media            MediaAssetRepository
+	mediaReuse       MediaReuseRepository
+	descriptionReuse DescriptionReuseRepository
+	workflows        ReleaseWorkflowStateRepository
 }
 
 // RepositoryCapabilitiesFrom projects one adapter onto every repository seam.
@@ -593,17 +597,19 @@ func RepositoryCapabilitiesFrom(adapter any) RepositoryCapabilities {
 	trackers, _ := adapter.(TrackerStateRepository)
 	media, _ := adapter.(MediaAssetRepository)
 	mediaReuse, _ := adapter.(MediaReuseRepository)
+	descriptionReuse, _ := adapter.(DescriptionReuseRepository)
 	workflows, _ := adapter.(ReleaseWorkflowStateRepository)
 	return RepositoryCapabilities{
-		releaseState: releaseState,
-		prepared:     prepared,
-		selections:   selections,
-		history:      history,
-		uploads:      uploads,
-		trackers:     trackers,
-		media:        media,
-		mediaReuse:   mediaReuse,
-		workflows:    workflows,
+		releaseState:     releaseState,
+		prepared:         prepared,
+		selections:       selections,
+		history:          history,
+		uploads:          uploads,
+		trackers:         trackers,
+		media:            media,
+		mediaReuse:       mediaReuse,
+		descriptionReuse: descriptionReuse,
+		workflows:        workflows,
 	}
 }
 
@@ -669,6 +675,11 @@ func (c RepositoryCapabilities) Media() MediaAssetRepository { return c.media }
 
 // MediaReuse returns the optional durable media-reuse capability.
 func (c RepositoryCapabilities) MediaReuse() MediaReuseRepository { return c.mediaReuse }
+
+// DescriptionReuse returns the optional durable description-reuse capability.
+func (c RepositoryCapabilities) DescriptionReuse() DescriptionReuseRepository {
+	return c.descriptionReuse
+}
 
 // Workflows returns the borrowed durable public workflow-state capability.
 func (c RepositoryCapabilities) Workflows() ReleaseWorkflowStateRepository { return c.workflows }

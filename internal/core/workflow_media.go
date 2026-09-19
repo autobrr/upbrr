@@ -1031,6 +1031,9 @@ func (b workflowMediaBuilder) RestoreCompatible(
 			if scopeErr != nil || accountScope != link.AccountScope || hostedImageURL(link) == "" {
 				continue
 			}
+			if localAvailable {
+				link.ImagePath = image.Path
+			}
 			link.SourcePath = binding.SourcePath
 			link.PreparedMediaFingerprint = binding.PreparedMediaFingerprint
 			link.PreparedGeneration = binding.PreparedGeneration
@@ -1060,7 +1063,197 @@ func (b workflowMediaBuilder) RestoreCompatible(
 	}
 	requiredScreenshots, requiredMenus := projectedMediaRequirements(projections.Projections)
 	applyWorkflowMediaMinimums(&snapshot, requiredScreenshots, requiredMenus)
+	if attempts, prepared := b.restoredHostedImageAttempts(ctx, release, snapshot, retained, projections.Projections); prepared {
+		snapshot.HostAttempts = attempts
+		snapshot.ImageRequirementsPrepared = true
+	}
 	return snapshot, retained, nil
+}
+
+// restoredHostedImageAttempts verifies restored cached links against the
+// current upload target policy without calling the image-host service. It uses
+// the same target resolver as uploadAcceptedImages, so the cache is ready only
+// when every selected local image already has a current host/scope link.
+func (b workflowMediaBuilder) restoredHostedImageAttempts(
+	ctx context.Context,
+	release api.ReleaseRef,
+	snapshot api.MediaArtifactSet,
+	retained workflowMediaPrivateArtifacts,
+	projections []api.TrackerReleaseProjection,
+) ([]api.HostedImageAttempt, bool) {
+	if b.media == nil || b.media.registry == nil || b.media.preparedFacts == nil {
+		return nil, false
+	}
+	trackerNames := make([]string, 0, len(projections))
+	for _, projection := range projections {
+		trackerNames = append(trackerNames, string(projection.TrackerID))
+	}
+	subject, err := b.media.preparedFacts.ResolveUploadSubject(ctx, api.UploadSubjectInput{
+		Release:  release,
+		Trackers: trackerNames,
+	})
+	if err != nil {
+		return nil, false
+	}
+	return b.restoredHostedImageAttemptsForSubject(snapshot, retained, projections, subject)
+}
+
+func (b workflowMediaBuilder) restoredHostedImageAttemptsForSubject(
+	snapshot api.MediaArtifactSet,
+	retained workflowMediaPrivateArtifacts,
+	projections []api.TrackerReleaseProjection,
+	subject api.UploadSubject,
+) ([]api.HostedImageAttempt, bool) {
+	if b.media == nil || b.media.registry == nil {
+		return nil, false
+	}
+	requiredScreenshots, requiredMenus := projectedMediaRequirements(projections)
+	selectedSources := make(map[api.PublicResourceID]struct{})
+	selectedArtifactIDs := make([]api.PublicResourceID, 0, len(snapshot.Artifacts))
+	selectedScreenshots, selectedMenus := 0, 0
+	for _, artifact := range snapshot.Artifacts {
+		if !artifact.Selected || (artifact.Kind != api.MediaArtifactScreenshot && artifact.Kind != api.MediaArtifactDVDMenu) {
+			continue
+		}
+		selectedSources[artifact.ID] = struct{}{}
+		selectedArtifactIDs = append(selectedArtifactIDs, artifact.ID)
+		if artifact.Kind == api.MediaArtifactScreenshot {
+			selectedScreenshots++
+		} else {
+			selectedMenus++
+		}
+	}
+	if selectedScreenshots < requiredScreenshots || selectedMenus < requiredMenus {
+		return nil, false
+	}
+	attempts := make([]api.HostedImageAttempt, 0, len(projections))
+	for _, projection := range projections {
+		if projection.Artifacts.ScreenshotCount <= 0 && projection.Artifacts.DVDMenuCount <= 0 {
+			continue
+		}
+		tracker := strings.ToUpper(strings.TrimSpace(string(projection.TrackerID)))
+		if tracker == "" {
+			return nil, false
+		}
+		excludedHosts := make([]string, 0)
+		for {
+			targets, err := b.media.resolveImageUploadTargets([]string{tracker}, subject, "", excludedHosts)
+			if err != nil || len(targets) == 0 {
+				return nil, false
+			}
+			covered, advanced := false, false
+			for _, target := range targets {
+				target = normalizeImageUploadTarget(target)
+				if target.Host == "" || len(target.Trackers) == 0 {
+					return nil, false
+				}
+				attempt, targetCovered := b.restoredHostedImageAttempt(
+					snapshot,
+					retained,
+					selectedSources,
+					selectedArtifactIDs,
+					target.Host,
+					target.UsageScope,
+					target.Trackers,
+				)
+				if targetCovered {
+					attempts = append(attempts, attempt)
+					covered = true
+					break
+				}
+				if !slices.Contains(excludedHosts, target.Host) {
+					excludedHosts = append(excludedHosts, target.Host)
+					advanced = true
+				}
+			}
+			if covered {
+				break
+			}
+			if !advanced {
+				return nil, false
+			}
+		}
+	}
+	return attempts, true
+}
+
+func (b workflowMediaBuilder) restoredHostedImageAttempt(
+	snapshot api.MediaArtifactSet,
+	retained workflowMediaPrivateArtifacts,
+	selectedSources map[api.PublicResourceID]struct{},
+	selectedArtifactIDs []api.PublicResourceID,
+	host string,
+	usageScope string,
+	trackers []string,
+) (api.HostedImageAttempt, bool) {
+	accountScope, err := workflowMediaHostAccountScope(b.config, host)
+	if err != nil {
+		return api.HostedImageAttempt{}, false
+	}
+	coveredSources := make(map[api.PublicResourceID]struct{}, len(selectedSources))
+	results := make([]api.MediaArtifact, 0, len(selectedSources))
+	for _, artifact := range snapshot.Artifacts {
+		if artifact.Kind != api.MediaArtifactHostedImage || !artifact.Selected {
+			continue
+		}
+		link, ok := retained.HostedImages[artifact.ID]
+		if !ok || !strings.EqualFold(strings.TrimSpace(link.Host), host) ||
+			normalizeImageUploadUsageScope(link.UsageScope) != usageScope || link.AccountScope != accountScope || hostedImageURL(link) == "" {
+			continue
+		}
+		sourceID := retained.HostedSources[artifact.ID]
+		if sourceID == "" || artifact.Source != string(sourceID) {
+			continue
+		}
+		if _, selected := selectedSources[sourceID]; !selected {
+			continue
+		}
+		if _, covered := coveredSources[sourceID]; covered {
+			continue
+		}
+		coveredSources[sourceID] = struct{}{}
+		results = append(results, artifact)
+	}
+	if len(coveredSources) != len(selectedSources) {
+		return api.HostedImageAttempt{}, false
+	}
+	trackerIDs := make([]api.TrackerID, 0, len(trackers))
+	for _, tracker := range trackers {
+		trackerIDs = append(trackerIDs, api.TrackerID(tracker))
+	}
+	attemptFingerprint, err := api.CanonicalWorkflowFingerprint(struct {
+		CaptureFingerprint api.WorkflowFingerprint
+		Host               string
+		UsageScope         string
+		TrackerIDs         []api.TrackerID
+		ResultIDs          []api.PublicResourceID
+	}{
+		CaptureFingerprint: snapshot.CaptureFingerprint,
+		Host:               host,
+		UsageScope:         usageScope,
+		TrackerIDs:         trackerIDs,
+		ResultIDs:          mediaArtifactIDs(results),
+	})
+	if err != nil {
+		return api.HostedImageAttempt{}, false
+	}
+	return api.HostedImageAttempt{
+		ID:          api.PublicResourceID("host_" + string(attemptFingerprint)[:24]),
+		Host:        host,
+		UsageScope:  usageScope,
+		TrackerIDs:  trackerIDs,
+		Status:      api.StageStatusCompleted,
+		ArtifactIDs: slices.Clone(selectedArtifactIDs),
+		Results:     results,
+	}, true
+}
+
+func mediaArtifactIDs(artifacts []api.MediaArtifact) []api.PublicResourceID {
+	ids := make([]api.PublicResourceID, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		ids = append(ids, artifact.ID)
+	}
+	return ids
 }
 
 // RecordReusableMedia persists final workflow selection, order, and hosted
@@ -1379,9 +1572,14 @@ func (b workflowMediaBuilder) UploadImages(
 	if err != nil {
 		return api.MediaArtifactSet{}, nil, nil, err
 	}
-	knownHosted := make(map[string]struct{}, len(retained.HostedImages))
+	knownHosted := make(map[string]api.MediaArtifact, len(retained.HostedImages))
 	for id, link := range retained.HostedImages {
-		knownHosted[hostedImageKey(retained.HostedSources[id], link)] = struct{}{}
+		for _, artifact := range snapshot.Artifacts {
+			if artifact.ID == id {
+				knownHosted[hostedImageKey(retained.HostedSources[id], link)] = artifact
+				break
+			}
+		}
 	}
 	attempts := make([]api.HostedImageAttempt, 0, len(result.Attempts))
 	for _, hostResult := range result.Attempts {
@@ -1444,8 +1642,14 @@ func (b workflowMediaBuilder) UploadImages(
 			if sourceID == "" {
 				continue
 			}
+			accountScope, scopeErr := workflowMediaHostAccountScope(b.config, link.Host)
+			if scopeErr != nil {
+				return api.MediaArtifactSet{}, nil, nil, fmt.Errorf("workflow media fingerprint hosted account scope: %w", scopeErr)
+			}
+			link.AccountScope = accountScope
 			key := hostedImageKey(sourceID, link)
-			if _, duplicate := knownHosted[key]; duplicate {
+			if existing, duplicate := knownHosted[key]; duplicate {
+				attempt.Results = append(attempt.Results, existing)
 				continue
 			}
 			sum := sha256.Sum256(fmt.Appendf(nil, "%s\x00%d\x00%s", attempt.ID, index, key))
@@ -1465,7 +1669,7 @@ func (b workflowMediaBuilder) UploadImages(
 			attempt.Results = append(attempt.Results, artifact)
 			retained.HostedImages[artifactID] = link
 			retained.HostedSources[artifactID] = sourceID
-			knownHosted[key] = struct{}{}
+			knownHosted[key] = artifact
 		}
 		attempts = append(attempts, attempt)
 	}

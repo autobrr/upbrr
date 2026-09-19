@@ -371,6 +371,10 @@ func newCoreWithHooks(
 		dvdMenus:    services.DVDMenus,
 		media:       workflowMedia,
 	}
+	descriptionReuse, _ := repoOwner.(api.DescriptionReuseRepository)
+	if descriptionReuse == nil {
+		descriptionReuse = repositories.DescriptionReuse()
+	}
 	var workflowPrivateResources releaseworkflow.PrivateResourceStore = releaseworkflow.NewMemoryPrivateResourceStore()
 	var workflowPrivateVault *releaseworkflow.PrivateArtifactVault
 	if sqliteRepo, ok := repoOwner.(*db.SQLiteRepository); ok && strings.TrimSpace(sqliteRepo.DBPath()) != "" {
@@ -401,8 +405,10 @@ func newCoreWithHooks(
 		releaseworkflow.WithDupeAssessmentBuilder(workflowDupeBuilder{service: services.Dupes, logger: logger}),
 		releaseworkflow.WithMediaArtifactBuilder(workflowMediaArtifacts),
 		releaseworkflow.WithDescriptionBuilder(workflowDescriptionBuilder{
+			config:   cfg,
 			resolver: preparedFacts,
 			trackers: services.Trackers,
+			reuse:    descriptionReuse,
 		}),
 		releaseworkflow.WithUploadPlanBuilder(
 			newWorkflowUploadPlanBuilder(cfg, preparedFacts, services.Trackers, services.Torrents, services.Clients, deps.LiveTest),

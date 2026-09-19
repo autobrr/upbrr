@@ -121,6 +121,11 @@ func (r *SQLiteRepository) SaveReleaseWorkflowState(
 			return fmt.Errorf("db save release workflow state rows: %w", err)
 		}
 		if rows == 1 {
+			if record.DescriptionReuse != nil {
+				if err := saveReusableDescriptionTx(ctx, tx, record.DescriptionReuse.SourcePath, record.DescriptionReuse.Description); err != nil {
+					return err
+				}
+			}
 			return nil
 		}
 		if _, err := loadWorkflowState(ctx, tx, record.OwnerID, record.WorkflowID); err != nil {
@@ -283,11 +288,18 @@ func validateWorkflowStateRecord(record api.ReleaseWorkflowStateRecord) error {
 	if record.CreationKey != "" && record.CreationFingerprint == "" {
 		return errors.New("db: release workflow creation fingerprint is required with creation key")
 	}
+	if record.DescriptionReuse != nil && !record.DescriptionReuse.Valid() {
+		return errors.New("db: release workflow reusable description is invalid")
+	}
 	return nil
 }
 
 func cloneWorkflowStateRecord(record api.ReleaseWorkflowStateRecord) api.ReleaseWorkflowStateRecord {
 	record.Payload = append([]byte(nil), record.Payload...)
+	if record.DescriptionReuse != nil {
+		cloned := record.DescriptionReuse.Clone()
+		record.DescriptionReuse = &cloned
+	}
 	return record
 }
 

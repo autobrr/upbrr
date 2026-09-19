@@ -6,11 +6,135 @@ package releaseworkflow
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestDuplicateCompletionRestoresMediaUnderCurrentTrackerAuthority(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []TrackerDecisionMode{TrackerDecisionModeWebUIControls, TrackerDecisionModePostDupeGate} {
+		t.Run(string(mode), func(t *testing.T) {
+			restorer := &compatibleMediaRestorerFake{testing: t}
+			module, repository := newTestModule(t, testPreparer(),
+				WithTrackerPreflightBuilder(readyPreflightBuilder(t)),
+				WithDupeAssessmentBuilder(readyDupeBuilder(t)),
+				WithMediaArtifactBuilder(restorer),
+			)
+			result := executeCommand(t, module, CreateWorkflowCommand{TrackerDecisionMode: mode})
+			result = executeCommand(t, module, PrepareReleaseCommand{
+				WorkflowID:       result.Workflow.ID,
+				ExpectedRevision: result.Workflow.Revision,
+				Input:            api.PrepareInput{SourcePath: filepath.Join(t.TempDir(), "Example.Release.mkv")},
+			})
+			result = executeTestPublication(t, module, trackerContextPublication{
+				WorkflowID:       result.Workflow.ID,
+				ExpectedRevision: result.Workflow.Revision,
+				Catalog:          testCatalog(t),
+				Runtime:          testRuntime(t),
+				Selection:        api.TrackerSelection{TrackerIDs: []api.TrackerID{"ALPHA", "BETA"}},
+			})
+			result = executeTestPublication(t, module, projectionSetPublication{
+				WorkflowID:       result.Workflow.ID,
+				ExpectedRevision: result.Workflow.Revision,
+				Snapshot:         testProjectionSet(t),
+			})
+			result = executeCommand(t, module, PreflightTrackersCommand{
+				WorkflowID: result.Workflow.ID, ExpectedRevision: result.Workflow.Revision,
+			})
+			command := CheckDuplicatesCommand{
+				WorkflowID:       result.Workflow.ID,
+				ExpectedRevision: result.Workflow.Revision,
+				IdempotencyKey:   "restore-on-dupes",
+			}
+			result = executeCommand(t, module, command)
+			wantTrackers := []api.TrackerID{"ALPHA", "BETA"}
+			if mode == TrackerDecisionModePostDupeGate {
+				if result.Media != nil || restorer.calls != 0 {
+					t.Fatal("media restored before explicit tracker approval")
+				}
+				state, err := repository.Load(t.Context(), testOwnerID, result.Workflow.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				action, _, err := projectedTrackerApprovalAction(&state, module.clock.Now())
+				if err != nil || action == nil {
+					t.Fatalf("approval action: %v, %v", action, err)
+				}
+				wantTrackers = []api.TrackerID{"BETA"}
+				result = executeCommand(t, module, ApproveTrackersCommand{
+					WorkflowID:       result.Workflow.ID,
+					ExpectedRevision: result.Workflow.Revision,
+					Approval: api.TrackerApproval{
+						ActionID:         action.ID,
+						Dupes:            *result.Workflow.Dupes,
+						InputFingerprint: result.Dupes.InputFingerprint,
+						TrackerIDs:       wantTrackers,
+					},
+				})
+			} else {
+				replayed := executeCommand(t, module, command)
+				if replayed.Media == nil || replayed.Media.ID != result.Media.ID || restorer.calls != 1 {
+					t.Fatal("duplicate command replay repeated restoration")
+				}
+			}
+			if restorer.calls != 1 || !slices.Equal(restorer.trackers, wantTrackers) {
+				t.Fatalf("restore calls=%d trackers=%v", restorer.calls, restorer.trackers)
+			}
+			if result.Media == nil || result.Media.WorkflowID != result.Workflow.ID || result.Media.Release != *result.Workflow.Release ||
+				result.Media.ProjectionSet != *result.Workflow.TrackerProjections || result.Media.Artifacts[0].Selected || result.Media.Artifacts[0].Order != 7 {
+				t.Fatalf("restored media lost current authority or selection/order: %#v", result.Media)
+			}
+			if _, err := module.private.Get(testOwnerID, result.Workflow.ID, mediaPrivateResourceID(result.Media.ID), module.clock.Now()); err != nil {
+				t.Fatalf("restored media unavailable in new workflow: %v", err)
+			}
+			attempt := result.Media.HostAttempts[0]
+			if attempt.Media != *result.Workflow.Media || !attempt.AttemptedAt.Equal(result.Media.CreatedAt) {
+				t.Fatalf("restored host coverage lost current media lineage: %#v", attempt)
+			}
+		})
+	}
+}
+
+type compatibleMediaRestorerFake struct {
+	testing  *testing.T
+	calls    int
+	trackers []api.TrackerID
+}
+
+func (*compatibleMediaRestorerFake) Build(context.Context, api.ReleaseRef, api.TrackerReleaseProjectionSet, api.MediaCaptureInstructions, time.Time) (api.MediaArtifactSet, any, error) {
+	return api.MediaArtifactSet{}, nil, errors.New("restoration must not capture images")
+}
+
+func (f *compatibleMediaRestorerFake) RestoreCompatible(_ context.Context, _ api.ReleaseRef, projections api.TrackerReleaseProjectionSet, _ time.Time) (api.MediaArtifactSet, RetainedMediaResource, error) {
+	f.calls++
+	for _, projection := range projections.Projections {
+		f.trackers = append(f.trackers, projection.TrackerID)
+	}
+	requirements, err := mediaRequirementsFingerprint(projections.Projections)
+	if err != nil {
+		return api.MediaArtifactSet{}, nil, err
+	}
+	return api.MediaArtifactSet{
+		CaptureFingerprint:      testFingerprint(f.testing, "restored-media"),
+		RequirementsFingerprint: requirements,
+		Artifacts: []api.MediaArtifact{{
+			ID:      "restored-screen",
+			Kind:    api.MediaArtifactScreenshot,
+			Purpose: api.ScreenshotPurposeFinal,
+			Order:   7,
+		}},
+		HostAttempts: []api.HostedImageAttempt{{
+			ID:     "restored-host",
+			Host:   "images.example",
+			Status: api.StageStatusCompleted,
+		}},
+		Status: api.StageStatusCompleted,
+	}, durableReusableMediaResource{}, nil
+}
 
 func TestOpenInputReconcilesCommittedMediaAfterPostSaveRecorderFailure(t *testing.T) {
 	t.Parallel()
@@ -105,17 +229,17 @@ func TestCommandReceiptReplayRetriesPostSaveReusableMediaRecording(t *testing.T)
 		Revision:   priorRevision + 1,
 		Artifacts: []api.MediaArtifact{
 			{
-ID: "kept",
- Kind: api.MediaArtifactScreenshot,
- Selected: true,
- Order: 7,
-},
+				ID:       "kept",
+				Kind:     api.MediaArtifactScreenshot,
+				Selected: true,
+				Order:    7,
+			},
 			{
-ID: "removed",
- Kind: api.MediaArtifactScreenshot,
- Selected: false,
- Order: 2,
-},
+				ID:       "removed",
+				Kind:     api.MediaArtifactScreenshot,
+				Selected: false,
+				Order:    2,
+			},
 		},
 	}
 	state.Workflow.Revision++
@@ -210,12 +334,12 @@ func TestCommandReceiptReplayDoesNotRecordSupersededMedia(t *testing.T) {
 		ID:         "media-old",
 		WorkflowID: opened.WorkflowID,
 		Revision:   priorRevision + 1,
-		Artifacts:  []api.MediaArtifact{{
-ID: "artifact",
- Kind: api.MediaArtifactScreenshot,
- Selected: false,
- Order: 1,
-}},
+		Artifacts: []api.MediaArtifact{{
+			ID:       "artifact",
+			Kind:     api.MediaArtifactScreenshot,
+			Selected: false,
+			Order:    1,
+		}},
 	}
 	oldCommand := SetMediaSelectionCommand{
 		WorkflowID:       opened.WorkflowID,
@@ -255,12 +379,12 @@ ID: "artifact",
 		ID:         "media-new",
 		WorkflowID: opened.WorkflowID,
 		Revision:   oldMedia.Revision + 1,
-		Artifacts:  []api.MediaArtifact{{
-ID: "artifact",
- Kind: api.MediaArtifactScreenshot,
- Selected: true,
- Order: 7,
-}},
+		Artifacts: []api.MediaArtifact{{
+			ID:       "artifact",
+			Kind:     api.MediaArtifactScreenshot,
+			Selected: true,
+			Order:    7,
+		}},
 	}
 	state.Workflow.Revision = newMedia.Revision
 	state.Workflow.UpdatedAt = clock.Now()

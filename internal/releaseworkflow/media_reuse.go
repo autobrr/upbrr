@@ -5,11 +5,55 @@ package releaseworkflow
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+// restoreReusableMedia attaches compatible saved images as soon as current
+// duplicate decisions and tracker authority permit media use. Reopening an
+// input must not require a new capture command to recover its saved selections.
+func (m *Module) restoreReusableMedia(
+	ctx context.Context,
+	ownerID string,
+	state *State,
+	nextRevision api.WorkflowRevision,
+	now time.Time,
+	result *CommandResult,
+) error {
+	restorer, ok := m.mediaBuilder.(CompatibleMediaRestorer)
+	if !ok || state.Workflow.Media != nil {
+		return nil
+	}
+	targets, err := resolveDownstreamTrackerSet(state, nil, downstreamStageMedia, now)
+	if errors.Is(err, ErrInvalidTransition) {
+		// Pending duplicate decisions or tracker approval do not authorize reuse.
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	projections := targets.Projections()
+	if len(projections.Projections) == 0 {
+		return nil
+	}
+	snapshot, retained, err := restorer.RestoreCompatible(ctx, projections.ReleaseRef, projections, now)
+	if err != nil {
+		return fmt.Errorf("release workflow restore saved media: %w", err)
+	}
+	if len(snapshot.Artifacts) == 0 {
+		return nil
+	}
+	restored, err := m.publishMediaMutation(ownerID, state, nextRevision, now, snapshot, retained)
+	if err != nil {
+		return err
+	}
+	result.Media = restored.Media
+	m.logger.Debugf("release workflow: media reuse state=restored count=%d", len(snapshot.Artifacts))
+	return nil
+}
 
 // recordReusableMedia records one committed snapshot unless its exact media
 // receipt is already durable. Command receipt replay calls this after a

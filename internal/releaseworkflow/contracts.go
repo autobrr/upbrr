@@ -347,6 +347,28 @@ type DescriptionBuilder interface {
 	) (api.DescriptionSet, error)
 }
 
+// ReusableDescriptionBuilder retains description content independently of a
+// workflow and restores it only when the current rendering inputs still match.
+type ReusableDescriptionBuilder interface {
+	PrepareReusableDescriptions(
+		context.Context,
+		api.ReleaseRef,
+		api.TrackerReleaseProjectionSet,
+		api.MediaArtifactSet,
+		any,
+		api.DescriptionInstructions,
+		api.DescriptionSet,
+	) (*api.ReusableDescriptionRecord, error)
+	RestoreCompatibleDescriptions(
+		context.Context,
+		api.ReleaseRef,
+		api.TrackerReleaseProjectionSet,
+		api.MediaArtifactSet,
+		any,
+		api.DescriptionInstructions,
+	) (api.DescriptionSet, api.DescriptionInstructions, error)
+}
+
 // RetainedUploadExecution is private single-use execution authority. Execute
 // must submit already-prepared operations without rebuilding semantic payloads.
 type RetainedUploadExecution interface {
@@ -475,6 +497,8 @@ type Application interface {
 // Snapshots are immutable; maps retain prior revisions for exact-reference reads.
 type State struct {
 	OwnerID string
+	// descriptionReuse accompanies one atomic save and is never durable workflow payload.
+	descriptionReuse *api.ReusableDescriptionRecord
 	// SourcePath durably binds this workflow to its source before preparation.
 	SourcePath          string `json:",omitempty"`
 	ProcessEpoch        string

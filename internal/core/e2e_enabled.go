@@ -25,6 +25,7 @@ import (
 	"github.com/autobrr/go-torrent/metainfo"
 
 	"github.com/autobrr/upbrr/internal/clientdiscovery"
+	"github.com/autobrr/upbrr/internal/description"
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
@@ -1519,13 +1520,20 @@ func (s e2eTrackerService) BuildPreparation(_ context.Context, meta api.Descript
 		if name == "" {
 			continue
 		}
+		source := "E2E description fixture."
+		for _, group := range meta.DescriptionGroups {
+			if group.HasOverride && (strings.EqualFold(group.GroupKey, name) || slices.Contains(group.Trackers, name)) {
+				source = group.RawDescription
+				break
+			}
+		}
 		descriptions = append(descriptions, api.PreparationDescription{
 			GroupKey:           strings.ToLower(name),
 			Trackers:           []string{name},
-			RawDescription:     "E2E description fixture.",
-			RawDescriptionHTML: "<p>E2E description fixture.</p>",
-			Description:        "E2E description fixture.",
-			DescriptionHTML:    "<p>E2E description fixture.</p>",
+			RawDescription:     source,
+			RawDescriptionHTML: description.Render(source),
+			Description:        source,
+			DescriptionHTML:    description.Render(source),
 		})
 	}
 	return api.PreparationPreview{SourcePath: meta.SourcePath, Descriptions: descriptions}, nil

@@ -437,6 +437,12 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	if err != nil {
 		return CommandResult{}, err
 	}
+	if result.Dupes != nil || result.TrackerApproval != nil {
+		if err := m.restoreReusableMedia(ctx, ownerID, &state, nextRevision, now, &result); err != nil {
+			m.cleanupUncommittedResult(ownerID, priorWorkflow, result)
+			return CommandResult{}, err
+		}
+	}
 	state.Workflow.Revision = nextRevision
 	state.Workflow.UpdatedAt = now
 	result.Workflow = state.Workflow
@@ -444,7 +450,7 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 		m.checkpointCompositeStage(&state, operationID, command, nextRevision)
 	}
 	if err := state.Workflow.Validate(); err != nil {
-		m.cleanupUncommittedResult(ownerID, state.Workflow.ID, result)
+		m.cleanupUncommittedResult(ownerID, priorWorkflow, result)
 		return CommandResult{}, fmt.Errorf("release workflow validate transition: %w", err)
 	}
 	if state.Receipts == nil {
@@ -452,17 +458,21 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	}
 	state.Receipts[receiptKey] = commandReceipt{Fingerprint: fingerprint, Result: result}
 	if err := ctx.Err(); err != nil {
-		m.cleanupUncommittedResult(ownerID, state.Workflow.ID, result)
+		m.cleanupUncommittedResult(ownerID, priorWorkflow, result)
 		return CommandResult{}, fmt.Errorf("release workflow command canceled before commit: %w", err)
 	}
 	if commandCommitsMediaBeforeSave(command) {
 		if err := m.finalizeRetainedMedia(ctx, ownerID, state.Workflow.ID, result.Media, true); err != nil {
-			m.cleanupUncommittedResult(ownerID, state.Workflow.ID, result)
+			m.cleanupUncommittedResult(ownerID, priorWorkflow, result)
 			return CommandResult{}, err
 		}
 	}
+	if err := m.prepareReusableDescriptions(ctx, ownerID, &state, result.Descriptions, now); err != nil {
+		m.cleanupUncommittedResult(ownerID, priorWorkflow, result)
+		return CommandResult{}, err
+	}
 	if err := m.repository.Save(ctx, ownerID, expectedRevision, state); err != nil {
-		m.cleanupUncommittedResult(ownerID, state.Workflow.ID, result)
+		m.cleanupUncommittedResult(ownerID, priorWorkflow, result)
 		return CommandResult{}, fmt.Errorf("release workflow save: %w", err)
 	}
 	if legacyRecovery {
@@ -473,7 +483,7 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	if result.Dupes != nil {
 		m.cleanupSupersededDupeResources(ownerID, state.Workflow.ID, priorWorkflow, state.Workflow)
 	}
-	if result.Media != nil {
+	if result.Media != nil || result.Descriptions != nil {
 		m.cleanupSupersededMediaResources(ownerID, state.Workflow.ID, priorWorkflow, state.Workflow)
 	}
 	if commandFinalizesMedia(command) && !commandCommitsMediaBeforeSave(command) {
@@ -487,7 +497,11 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	return cloneCommandResult(result)
 }
 
-func (m *Module) cleanupUncommittedResult(ownerID string, workflowID api.WorkflowID, result CommandResult) {
+func (m *Module) cleanupUncommittedResult(ownerID string, prior api.ReleaseWorkflow, result CommandResult) {
+	workflowID := prior.ID
+	if result.Descriptions != nil && (prior.Descriptions == nil || prior.Descriptions.ID != result.Descriptions.ID) {
+		m.private.Delete(ownerID, workflowID, descriptionPrivateResourceID(result.Descriptions.ID))
+	}
 	if result.Dupes != nil {
 		m.private.Delete(ownerID, workflowID, dupePrivateResourceID(result.Dupes.ID))
 	}
@@ -5754,6 +5768,14 @@ func (m *Module) publishMedia(
 	snapshot.ReleaseRef = api.ReleaseRef{SourcePath: release.Release.Source.SourcePath, Generation: release.Release.Generation}
 	snapshot.ProjectionSet = *workflow.TrackerProjections
 	snapshot.CreatedAt = now
+	for index := range snapshot.HostAttempts {
+		attempt := &snapshot.HostAttempts[index]
+		if attempt.Media == (api.MediaArtifactSetRef{}) {
+			// Restored host coverage becomes authoritative with this publication.
+			attempt.Media = api.MediaArtifactSetRef{ID: snapshot.ID, Revision: snapshot.Revision}
+			attempt.AttemptedAt = now
+		}
+	}
 	if err := m.stampMediaActions(&snapshot, nextRevision, now); err != nil {
 		return CommandResult{}, err
 	}
@@ -5841,17 +5863,33 @@ func (m *Module) generateDescriptions(
 			return CommandResult{Descriptions: &current}, nil
 		}
 	}
-	snapshot, err := m.descriptionBuilder.Build(
-		ctx,
-		projections.ReleaseRef,
-		descriptionProjections,
-		media,
-		privateMedia,
-		command.Instructions,
-		now,
-	)
-	if err != nil {
-		return CommandResult{}, fmt.Errorf("release workflow build descriptions: %w", err)
+	var snapshot api.DescriptionSet
+	if restorer, ok := m.descriptionBuilder.(ReusableDescriptionBuilder); ok {
+		var instructions api.DescriptionInstructions
+		snapshot, instructions, err = restorer.RestoreCompatibleDescriptions(
+			ctx, projections.ReleaseRef, descriptionProjections, media, privateMedia, command.Instructions,
+		)
+		if err != nil {
+			return CommandResult{}, fmt.Errorf("release workflow restore descriptions: %w", err)
+		}
+		if len(snapshot.Descriptions) > 0 {
+			command.Instructions = instructions
+			inputFingerprint, templateFingerprint, err = m.descriptionBuilder.Fingerprints(
+				ctx, projections.ReleaseRef, descriptionProjections, media, privateMedia, instructions,
+			)
+			if err != nil {
+				return CommandResult{}, fmt.Errorf("release workflow fingerprint restored descriptions: %w", err)
+			}
+			m.logger.Debugf("release workflow: description reuse state=restored count=%d", len(snapshot.Descriptions))
+		}
+	}
+	if len(snapshot.Descriptions) == 0 {
+		snapshot, err = m.descriptionBuilder.Build(
+			ctx, projections.ReleaseRef, descriptionProjections, media, privateMedia, command.Instructions, now,
+		)
+		if err != nil {
+			return CommandResult{}, fmt.Errorf("release workflow build descriptions: %w", err)
+		}
 	}
 	if snapshot.InputFingerprint != inputFingerprint || snapshot.TemplateFingerprint != templateFingerprint {
 		return CommandResult{}, errors.New("release workflow build descriptions: dependency fingerprint mismatch")
@@ -6178,14 +6216,13 @@ func validateDescriptionBuild(projections api.TrackerReleaseProjectionSet, snaps
 }
 
 func (m *Module) publishDescriptions(
-	ownerID string,
+	_ string,
 	state *State,
 	nextRevision api.WorkflowRevision,
 	now time.Time,
 	command descriptionsPublication,
 ) (CommandResult, error) {
 	workflow := state.Workflow
-	priorDescriptions := workflow.Descriptions
 	if workflow.Release == nil || workflow.TrackerProjections == nil {
 		return CommandResult{}, fmt.Errorf("%w: description dependencies are incomplete", ErrInvalidTransition)
 	}
@@ -6209,9 +6246,6 @@ func (m *Module) publishDescriptions(
 	state.Descriptions[snapshot.ID] = snapshot
 	state.Workflow.Descriptions = &api.DescriptionSetRef{ID: snapshot.ID, Revision: snapshot.Revision}
 	invalidateUploadPlan(&state.Workflow)
-	if priorDescriptions != nil {
-		m.private.Delete(ownerID, state.Workflow.ID, descriptionPrivateResourceID(priorDescriptions.ID))
-	}
 	setWorkflowStageStatus(&state.Workflow, snapshot.Status, snapshot.RequiredActions, snapshot.Failures)
 	return CommandResult{Descriptions: &snapshot}, nil
 }

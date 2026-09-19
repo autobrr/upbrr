@@ -354,14 +354,20 @@ func workflowStateRecord(ownerID string, state State) (api.ReleaseWorkflowStateR
 	if err != nil {
 		return api.ReleaseWorkflowStateRecord{}, fmt.Errorf("persist workflow state: marshal: %w", err)
 	}
+	var reuse *api.ReusableDescriptionRecord
+	if pending := state.descriptionReuse; pending != nil {
+		cloned := pending.Clone()
+		reuse = &cloned
+	}
 	return api.ReleaseWorkflowStateRecord{
-		OwnerID:    strings.TrimSpace(ownerID),
-		WorkflowID: state.Workflow.ID,
-		Revision:   state.Workflow.Revision,
-		Status:     state.Workflow.Status,
-		Payload:    payload,
-		CreatedAt:  state.Workflow.CreatedAt,
-		UpdatedAt:  state.Workflow.UpdatedAt,
+		DescriptionReuse: reuse,
+		OwnerID:          strings.TrimSpace(ownerID),
+		WorkflowID:       state.Workflow.ID,
+		Revision:         state.Workflow.Revision,
+		Status:           state.Workflow.Status,
+		Payload:          payload,
+		CreatedAt:        state.Workflow.CreatedAt,
+		UpdatedAt:        state.Workflow.UpdatedAt,
 	}, nil
 }
 

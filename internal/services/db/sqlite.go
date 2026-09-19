@@ -3578,6 +3578,8 @@ func (r *SQLiteRepository) ListStoredReleasePaths(ctx context.Context) ([]string
 			UNION
 			SELECT source_path FROM description_overrides
 			UNION
+			SELECT source_path FROM description_reusable
+			UNION
 			SELECT source_path FROM playlist_selections
 			UNION
 			SELECT source_path FROM tracker_metadata
@@ -3926,6 +3928,7 @@ func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) er
 		{sql: `DELETE FROM external_ids WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM release_overrides WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM description_overrides WHERE source_path = ?`, args: []any{trimmedPath}},
+		{sql: `DELETE FROM description_reusable WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM playlist_selections WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM tracker_metadata WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM tracker_rule_failures WHERE source_path = ?`, args: []any{trimmedPath}},

@@ -940,6 +940,147 @@ test("embedded web runs image upload, direct tracker upload, and history", async
   }
 });
 
+test("embedded web restores captured screens and hosted URLs after reopening an input", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace({ screenshotCount: 4 });
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "Dupe Check" }).click();
+    await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
+    await page.getByRole("checkbox", { name: "HDS" }).check();
+    await runDuplicateCheck(page);
+    await page.getByRole("button", { name: "Screenshots" }).click();
+    await page.getByRole("button", { name: "Generate screenshots" }).click();
+    await expect(page.getByText("4 captured screenshot(s)")).toBeVisible();
+    const reordered = waitForAppMethod(page, "ReorderReleaseWorkflowMedia");
+    await page
+      .getByAltText("Screenshot 3")
+      .locator("../..")
+      .dragTo(page.getByAltText("Screenshot 1").locator("../.."));
+    expect((await reordered).ok()).toBe(true);
+    const deselected = waitForAppMethod(page, "SetReleaseWorkflowMediaSelection");
+    await page
+      .getByAltText("Screenshot 4")
+      .locator("../..")
+      .getByRole("button", { name: "Unselect" })
+      .click();
+    expect((await deselected).ok()).toBe(true);
+    await page.getByRole("button", { name: "Upload Images" }).click();
+    await page.getByRole("button", { name: "Prepare required hosts (3)" }).click();
+    await expect(page.getByText("3 saved")).toBeVisible();
+    expect(workspace.fake.counters.imageUploads).toBe(3);
+    const savedResponse = await page.request.get(
+      new URL("api/app/GetActiveInput", app.url).toString(),
+    );
+    expect(savedResponse.ok()).toBe(true);
+    const beforeRestart = (await savedResponse.json()) as ActiveInputSnapshot;
+    const savedScreens = beforeRestart.current?.media?.artifacts
+      .filter((artifact) => artifact.kind === "screenshot")
+      .map(({ index, order, selected }) => ({ index, order, selected }))
+      .sort((left, right) => left.index - right.index);
+    const savedURLs = beforeRestart.current?.media?.artifacts
+      .filter((artifact) => artifact.kind === "hosted_image")
+      .map((artifact) => artifact.url)
+      .sort();
+    expect(savedScreens?.filter((artifact) => artifact.selected)).toHaveLength(3);
+    expect(savedScreens?.some((artifact) => artifact.order !== artifact.index)).toBe(true);
+    expect(savedURLs).toHaveLength(3);
+
+    await app.stop();
+    app = await startApp(workspace, { seed: false });
+    await page.goto(app.url);
+    await expect(page.getByLabel("Source path", { exact: true })).toHaveValue("");
+    await expect(page.getByRole("button", { name: "Close input" })).toBeDisabled();
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "Dupe Check" }).click();
+    await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
+    await page.getByRole("checkbox", { name: "HDS" }).check();
+    const restored = await runDuplicateCheck(page);
+    expect(
+      restored.media?.artifacts
+        .filter((artifact) => artifact.kind === "screenshot")
+        .map(({ index, order, selected }) => ({ index, order, selected }))
+        .sort((left, right) => left.index - right.index),
+    ).toEqual(savedScreens);
+    expect(
+      restored.media?.artifacts
+        .filter((artifact) => artifact.kind === "hosted_image")
+        .map((artifact) => artifact.url)
+        .sort(),
+    ).toEqual(savedURLs);
+    await page.getByRole("button", { name: "Screenshots" }).click();
+    await expect(page.getByText("4 captured screenshot(s)")).toBeVisible();
+    await expect(page.getByAltText("Screenshot 1")).toBeVisible();
+    await page.getByRole("button", { name: "Upload Images" }).click();
+    await expect(page.getByText("3 saved")).toBeVisible();
+    await page.getByRole("button", { name: "Prepare required hosts (3)" }).click();
+    await expect(page.getByRole("button", { name: "Prepare required hosts (3)" })).toBeEnabled();
+    await expect(page.getByText("3 saved")).toBeVisible();
+    expect(workspace.fake.counters.imageUploads).toBe(3);
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+    expect(workspace.fake.counters.clientInjections).toBe(0);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("embedded web restores edited descriptions after reopening an input", async ({ page }) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "Dupe Check" }).click();
+    await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
+    await page.getByRole("checkbox", { name: "HDS" }).check();
+    await runDuplicateCheck(page);
+    await page.getByRole("button", { name: "Screenshots" }).click();
+    await page.getByRole("button", { name: "Generate screenshots" }).click();
+    await expect(page.getByText("1 captured screenshot(s)")).toBeVisible();
+    await page.getByRole("button", { name: "Upload Images" }).click();
+    await page.getByRole("button", { name: "Prepare required hosts (1)" }).click();
+    await expect(page.getByText("1 saved")).toBeVisible();
+    await page.getByRole("button", { name: "Descriptions" }).click();
+    await page.getByRole("button", { name: "Refresh descriptions" }).click();
+    await page.getByRole("button", { name: "Expand" }).click();
+    await expect(page.getByRole("textbox")).toHaveValue("E2E description fixture.");
+    const editedDescription = "Retained description with [b]custom notes[/b].";
+    await page.getByRole("textbox").fill(editedDescription);
+    const descriptionSaved = waitForAppMethod(page, "SaveReleaseWorkflowDescriptionOverride");
+    await page.getByRole("button", { name: "Save group" }).click();
+    expect((await descriptionSaved).ok()).toBe(true);
+    await expect(page.getByRole("textbox")).toHaveValue(editedDescription);
+
+    await app.stop();
+    app = await startApp(workspace, { seed: false });
+    await page.goto(app.url);
+    await expect(page.getByLabel("Source path", { exact: true })).toHaveValue("");
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "Dupe Check" }).click();
+    await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
+    await page.getByRole("checkbox", { name: "HDS" }).check();
+    await runDuplicateCheck(page);
+    await page.getByRole("button", { name: "Descriptions" }).click();
+    await page.getByRole("button", { name: "Refresh descriptions" }).click();
+    await page.getByRole("button", { name: "Expand" }).click();
+    await expect(page.getByRole("textbox")).toHaveValue(editedDescription);
+    await page.getByRole("button", { name: "Upload", exact: true }).click();
+    await page.getByLabel("Skip client injection").check();
+    await page.getByRole("button", { name: "Run dry run" }).click();
+    await expect(page.getByRole("heading", { name: "Tracker uploads" })).toBeVisible();
+    expect(workspace.fake.counters.imageUploads).toBe(1);
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+    expect(workspace.fake.counters.clientInjections).toBe(0);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
 test("embedded web reports an optional tracker dry run after a duplicate override", async ({
   page,
 }) => {

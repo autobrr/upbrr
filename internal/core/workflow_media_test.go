@@ -163,7 +163,10 @@ func TestWorkflowMediaRestoreCompatibleRebuildsCurrentArtifacts(t *testing.T) {
 		Height:           1080,
 		SizeBytes:        int64(len("restorable image")),
 	}
-	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(baseDir, "workflow.db")}}
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(baseDir, "workflow.db")},
+		ImageHosting: config.ImageHostingConfig{Host1: "pixhost"},
+	}
 	captureFingerprint, err := workflowMediaReuseCaptureFingerprint(cfg, compatibilityKey, api.MediaArtifactScreenshot, image)
 	if err != nil {
 		t.Fatalf("capture fingerprint: %v", err)
@@ -201,10 +204,15 @@ func TestWorkflowMediaRestoreCompatibleRebuildsCurrentArtifacts(t *testing.T) {
 			SourcePath:   currentBinding.SourcePath,
 			Discs:        []api.ScreenshotDiscSubject{{ID: "disc-a", Name: "Disc A"}},
 		}},
-		media: &mediaModule{repo: repository, mediaReuse: repository},
+		media: &mediaModule{
+			cfg:        cfg,
+			repo:       repository,
+			mediaReuse: repository,
+			registry:   mediaImageHostRegistry(t),
+		},
 	}
 	snapshot, retainedResource, err := builder.RestoreCompatible(t.Context(), api.ReleaseRef{SourcePath: currentBinding.SourcePath, Generation: 7},
-		api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{TrackerID: "TEST", Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1}}}}, time.Now())
+		api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{TrackerID: "ONE", Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1}}}}, time.Now())
 	if err != nil {
 		t.Fatalf("restore compatible media: %v", err)
 	}
@@ -222,6 +230,209 @@ func TestWorkflowMediaRestoreCompatibleRebuildsCurrentArtifacts(t *testing.T) {
 	}
 	if !strings.HasPrefix(filepath.Base(filepath.Dir(repository.saved[0].Image.Path)), "@reused-") {
 		t.Fatalf("restored image path = %q, want dedicated reusable root", repository.saved[0].Image.Path)
+	}
+	hosted := retained.HostedImages[snapshot.Artifacts[1].ID]
+	if hosted.ImagePath != retained.Screenshots[0].Path {
+		t.Fatalf("restored hosted image path = %q, want materialized %q", hosted.ImagePath, retained.Screenshots[0].Path)
+	}
+}
+
+func TestWorkflowMediaRestoreCompatibleHostedLinksRequireCurrentCompleteCoverage(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{ImageHosting: config.ImageHostingConfig{Host1: "pixhost", Host2: "imgbb"}}
+	accountScope, err := workflowMediaHostAccountScope(cfg, "pixhost")
+	if err != nil {
+		t.Fatalf("host account scope: %v", err)
+	}
+	fallbackAccountScope, err := workflowMediaHostAccountScope(cfg, "imgbb")
+	if err != nil {
+		t.Fatalf("fallback host account scope: %v", err)
+	}
+	network := &countingWorkflowImageHost{}
+	builder := workflowMediaBuilder{
+		config: cfg,
+		media: &mediaModule{
+			cfg:      cfg,
+			images:   network,
+			registry: mediaImageHostRegistry(t),
+		},
+	}
+	snapshot := api.MediaArtifactSet{
+		CaptureFingerprint: workflowTestFingerprint(t, "restored-hosted-coverage"),
+		Artifacts: []api.MediaArtifact{
+			{
+				ID:       "screen-selected",
+				Kind:     api.MediaArtifactScreenshot,
+				Purpose:  api.ScreenshotPurposeFinal,
+				Selected: true,
+				Order:    4,
+			},
+			{
+				ID:       "screen-deselected",
+				Kind:     api.MediaArtifactScreenshot,
+				Purpose:  api.ScreenshotPurposeFinal,
+				Selected: false,
+				Order:    1,
+			},
+			{
+				ID:       "hosted-selected",
+				Kind:     api.MediaArtifactHostedImage,
+				Purpose:  api.ScreenshotPurposeFinal,
+				Selected: true,
+				Order:    4,
+				Source:   "screen-selected",
+				Host:     "pixhost",
+				URL:      "https://images.invalid/screen-selected.png",
+			},
+		},
+	}
+	retained := workflowMediaPrivateArtifacts{
+		HostedImages: map[api.PublicResourceID]api.UploadedImageLink{
+			"hosted-selected": {
+				Host:         "pixhost",
+				UsageScope:   "global",
+				AccountScope: accountScope,
+				RawURL:       "https://images.invalid/screen-selected.png",
+			},
+		},
+		HostedSources: map[api.PublicResourceID]api.PublicResourceID{"hosted-selected": "screen-selected"},
+	}
+	projections := []api.TrackerReleaseProjection{{
+		TrackerID: "ONE",
+		Artifacts: api.TrackerArtifactRequirements{
+			ScreenshotCount: 1,
+		},
+	}}
+	attempts, prepared := builder.restoredHostedImageAttemptsForSubject(snapshot, retained, projections, api.UploadSubject{})
+	if !prepared || len(attempts) != 1 || attempts[0].Host != "pixhost" || attempts[0].UsageScope != "global" ||
+		!slices.Equal(attempts[0].ArtifactIDs, []api.PublicResourceID{"screen-selected"}) ||
+		len(attempts[0].Results) != 1 || attempts[0].Results[0].ID != "hosted-selected" {
+		t.Fatalf("restored hosted attempts = %#v, prepared=%t", attempts, prepared)
+	}
+	if network.uploads != 0 {
+		t.Fatalf("restored coverage called image host %d times", network.uploads)
+	}
+	if snapshot.Artifacts[1].Selected || snapshot.Artifacts[1].Order != 1 || snapshot.Artifacts[0].Order != 4 {
+		t.Fatalf("restored coverage changed selections or order: %#v", snapshot.Artifacts)
+	}
+	fallbackSnapshot := snapshot
+	fallbackSnapshot.Artifacts = slices.Clone(snapshot.Artifacts)
+	fallbackSnapshot.Artifacts[2].Host = "imgbb"
+	fallbackSnapshot.Artifacts[2].URL = "https://images.invalid/fallback-screen-selected.png"
+	fallbackRetained := workflowMediaPrivateArtifacts{
+		HostedImages:  maps.Clone(retained.HostedImages),
+		HostedSources: maps.Clone(retained.HostedSources),
+	}
+	fallbackLink := fallbackRetained.HostedImages["hosted-selected"]
+	fallbackLink.Host = "imgbb"
+	fallbackLink.AccountScope = fallbackAccountScope
+	fallbackLink.RawURL = fallbackSnapshot.Artifacts[2].URL
+	fallbackRetained.HostedImages["hosted-selected"] = fallbackLink
+	attempts, prepared = builder.restoredHostedImageAttemptsForSubject(fallbackSnapshot, fallbackRetained, projections, api.UploadSubject{})
+	if !prepared || len(attempts) != 1 || attempts[0].Host != "imgbb" || len(attempts[0].Results) != 1 ||
+		attempts[0].Results[0].ID != "hosted-selected" {
+		t.Fatalf("current fallback host did not restore cached coverage: %#v, prepared=%t", attempts, prepared)
+	}
+	if network.uploads != 0 {
+		t.Fatalf("fallback coverage called image host %d times", network.uploads)
+	}
+
+	removedFallback := cfg
+	removedFallback.ImageHosting.Host2 = ""
+	builder.config = removedFallback
+	builder.media.cfg = removedFallback
+	if attempts, prepared := builder.restoredHostedImageAttemptsForSubject(fallbackSnapshot, fallbackRetained, projections, api.UploadSubject{}); prepared || len(attempts) != 0 {
+		t.Fatalf("removed fallback host accepted cached link: %#v, prepared=%t", attempts, prepared)
+	}
+
+	builder.config = cfg
+	builder.media.cfg = cfg
+	scopeMismatchRetained := workflowMediaPrivateArtifacts{
+		HostedImages:  maps.Clone(fallbackRetained.HostedImages),
+		HostedSources: maps.Clone(fallbackRetained.HostedSources),
+	}
+	scopeMismatchLink := scopeMismatchRetained.HostedImages["hosted-selected"]
+	scopeMismatchLink.UsageScope = "tracker:ONE"
+	scopeMismatchRetained.HostedImages["hosted-selected"] = scopeMismatchLink
+	if attempts, prepared := builder.restoredHostedImageAttemptsForSubject(fallbackSnapshot, scopeMismatchRetained, projections, api.UploadSubject{}); prepared || len(attempts) != 0 {
+		t.Fatalf("changed fallback scope accepted cached link: %#v, prepared=%t", attempts, prepared)
+	}
+
+	changedFallbackAccount := cfg
+	changedFallbackAccount.ImageHosting.Host3 = "sharex"
+	builder.config = changedFallbackAccount
+	builder.media.cfg = changedFallbackAccount
+	if attempts, prepared := builder.restoredHostedImageAttemptsForSubject(fallbackSnapshot, fallbackRetained, projections, api.UploadSubject{}); prepared || len(attempts) != 0 {
+		t.Fatalf("changed fallback account accepted cached link: %#v, prepared=%t", attempts, prepared)
+	}
+	builder.config = cfg
+	builder.media.cfg = cfg
+	missingMenu := snapshot
+	missingMenu.Artifacts = append(slices.Clone(snapshot.Artifacts), api.MediaArtifact{
+		ID:       "menu-selected",
+		Kind:     api.MediaArtifactDVDMenu,
+		Purpose:  api.ScreenshotPurposeMenu,
+		Selected: true,
+		Order:    5,
+	})
+	if attempts, prepared := builder.restoredHostedImageAttemptsForSubject(missingMenu, retained, projections, api.UploadSubject{}); prepared || len(attempts) != 0 {
+		t.Fatalf("selected DVD menu without a hosted link accepted: %#v, prepared=%t", attempts, prepared)
+	}
+	coveredMenu := missingMenu
+	coveredMenu.Artifacts = append(append([]api.MediaArtifact(nil), missingMenu.Artifacts...), api.MediaArtifact{
+		ID:       "hosted-menu",
+		Kind:     api.MediaArtifactHostedImage,
+		Purpose:  api.ScreenshotPurposeMenu,
+		Selected: true,
+		Order:    5,
+		Source:   "menu-selected",
+		Host:     "pixhost",
+		URL:      "https://images.invalid/menu-selected.png",
+	})
+	coveredRetained := workflowMediaPrivateArtifacts{
+		HostedImages:  maps.Clone(retained.HostedImages),
+		HostedSources: maps.Clone(retained.HostedSources),
+	}
+	coveredRetained.HostedImages["hosted-menu"] = api.UploadedImageLink{
+		Host:         "pixhost",
+		UsageScope:   "global",
+		AccountScope: accountScope,
+		RawURL:       "https://images.invalid/menu-selected.png",
+	}
+	coveredRetained.HostedSources["hosted-menu"] = "menu-selected"
+	attempts, prepared = builder.restoredHostedImageAttemptsForSubject(coveredMenu, coveredRetained, projections, api.UploadSubject{})
+	if !prepared || len(attempts) != 1 ||
+		!slices.Equal(attempts[0].ArtifactIDs, []api.PublicResourceID{"screen-selected", "menu-selected"}) ||
+		len(attempts[0].Results) != 2 || attempts[0].Results[0].ID != "hosted-selected" || attempts[0].Results[1].ID != "hosted-menu" {
+		t.Fatalf("covered DVD menu attempt = %#v, prepared=%t", attempts, prepared)
+	}
+
+	changedHost := cfg
+	changedHost.ImageHosting.Host1 = "imgbb"
+	builder.config = changedHost
+	builder.media.cfg = changedHost
+	if attempts, prepared := builder.restoredHostedImageAttemptsForSubject(snapshot, retained, projections, api.UploadSubject{}); prepared || len(attempts) != 0 {
+		t.Fatalf("changed current host accepted cached link: %#v, prepared=%t", attempts, prepared)
+	}
+
+	builder.config = cfg
+	builder.media.cfg = cfg
+	partial := snapshot
+	partial.Artifacts = append([]api.MediaArtifact(nil), snapshot.Artifacts...)
+	partial.Artifacts[1].Selected = true
+	partialProjections := append([]api.TrackerReleaseProjection(nil), projections...)
+	partialProjections[0].Artifacts.ScreenshotCount = 2
+	if attempts, prepared := builder.restoredHostedImageAttemptsForSubject(partial, retained, partialProjections, api.UploadSubject{}); prepared || len(attempts) != 0 {
+		t.Fatalf("partial cached links accepted: %#v, prepared=%t", attempts, prepared)
+	}
+
+	changedAccount := cfg
+	changedAccount.ImageHosting.Host3 = "sharex"
+	builder.config = changedAccount
+	builder.media.cfg = changedAccount
+	if attempts, prepared := builder.restoredHostedImageAttemptsForSubject(snapshot, retained, projections, api.UploadSubject{}); prepared || len(attempts) != 0 {
+		t.Fatalf("changed host account accepted cached link: %#v, prepared=%t", attempts, prepared)
 	}
 }
 
@@ -651,7 +862,7 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 	firstRelease := api.ReleaseRef{SourcePath: sourcePath, Generation: firstPrepared.Release.Generation}
 	capture := &durableWorkflowScreenshotFake{root: t.TempDir()}
 	host := &countingWorkflowImageHost{}
-	cfg := config.Config{ImageHosting: config.ImageHostingConfig{Host1: "pixhost"}}
+	cfg := config.Config{ImageHosting: config.ImageHostingConfig{Host1: "pixhost", Host2: "imgbb"}}
 	builder := workflowMediaBuilder{
 		config:      cfg,
 		resolver:    prepared,
@@ -667,7 +878,7 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 		},
 	}
 	projections := api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
-		TrackerID: "ONE", Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2},
+		TrackerID: "ONE", Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1},
 	}}}
 	snapshot, retainedAny, err := builder.Build(ctx, firstRelease, projections,
 		api.MediaCaptureInstructions{Purpose: api.ScreenshotPurposeFinal, ScreenshotCount: 2}, time.Now())
@@ -679,12 +890,35 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 	}
 	firstArtifactID, deletedArtifactID := snapshot.Artifacts[0].ID, snapshot.Artifacts[1].ID
 	snapshot, retainedResource, _, err := builder.UploadImages(ctx, firstRelease, projections, snapshot, retainedAny,
-		[]api.PublicResourceID{firstArtifactID}, "pixhost", false, time.Now())
+		[]api.PublicResourceID{firstArtifactID}, "imgbb", false, time.Now())
 	if err != nil {
 		t.Fatalf("host first generation: %v", err)
 	}
 	if host.uploads != 1 || countMediaArtifacts(snapshot.Artifacts, api.MediaArtifactHostedImage) != 1 {
 		t.Fatalf("initial host uploads=%d artifacts=%#v", host.uploads, snapshot.Artifacts)
+	}
+	snapshot, retainedResource, reusedAttempts, err := builder.UploadImages(ctx, firstRelease, projections, snapshot, retainedResource,
+		[]api.PublicResourceID{firstArtifactID}, "imgbb", false, time.Now())
+	if err != nil {
+		t.Fatalf("reuse first generation host: %v", err)
+	}
+	if host.uploads != 2 || countMediaArtifacts(snapshot.Artifacts, api.MediaArtifactHostedImage) != 1 ||
+		len(reusedAttempts) != 1 || len(reusedAttempts[0].Results) != 1 ||
+		reusedAttempts[0].Results[0].Kind != api.MediaArtifactHostedImage {
+		t.Fatalf("reused host result uploads=%d attempts=%#v artifacts=%#v", host.uploads, reusedAttempts, snapshot.Artifacts)
+	}
+	currentAccountScope, err := workflowMediaHostAccountScope(cfg, "imgbb")
+	if err != nil {
+		t.Fatalf("current account scope: %v", err)
+	}
+	initialRetained, ok := retainedResource.(workflowMediaPrivateArtifacts)
+	if !ok || len(initialRetained.HostedImages) != 1 {
+		t.Fatalf("initial retained hosted images = %#v", retainedResource)
+	}
+	for _, link := range initialRetained.HostedImages {
+		if link.AccountScope != currentAccountScope {
+			t.Fatalf("initial hosted account scope = %q, want %q", link.AccountScope, currentAccountScope)
+		}
 	}
 	for index := range snapshot.Artifacts {
 		if snapshot.Artifacts[index].ID == firstArtifactID {
@@ -715,13 +949,7 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 	if err != nil || !committed {
 		t.Fatalf("recorded media commit = %v, %v", committed, err)
 	}
-	retainedPrivate, ok := retainedResource.(workflowMediaPrivateArtifacts)
-	if !ok {
-		t.Fatalf("final media did not retain private artifacts: %T", retainedResource)
-	}
-	if err := os.Remove(retainedPrivate.ArtifactImages[firstArtifactID].Path); err != nil {
-		t.Fatalf("remove first local image: %v", err)
-	}
+	uploadsBeforeRestore := host.uploads
 	verified, err = preparedrelease.VerifyInputSource(ctx, api.PrepareInput{SourcePath: sourcePath})
 	if err != nil {
 		t.Fatalf("verify refreshed source: %v", err)
@@ -737,17 +965,28 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 	if secondPrepared.Release.Generation <= firstPrepared.Release.Generation {
 		t.Fatalf("prepared generation did not advance: %d -> %d", firstPrepared.Release.Generation, secondPrepared.Release.Generation)
 	}
-	restored, _, err := builder.RestoreCompatible(ctx,
+	restored, restoredResource, err := builder.RestoreCompatible(ctx,
 		api.ReleaseRef{SourcePath: sourcePath, Generation: secondPrepared.Release.Generation}, projections, time.Now())
 	if err != nil {
 		t.Fatalf("restore refreshed generation: %v", err)
 	}
-	if capture.captures != 1 || host.uploads != 1 {
-		t.Fatalf("restore repeated effects: captures=%d uploads=%d", capture.captures, host.uploads)
+	if capture.captures != 1 || host.uploads != uploadsBeforeRestore {
+		t.Fatalf("restore repeated effects: captures=%d uploads=%d before=%d", capture.captures, host.uploads, uploadsBeforeRestore)
 	}
-	if len(restored.Artifacts) != 1 || restored.Artifacts[0].Kind != api.MediaArtifactHostedImage ||
-		restored.Artifacts[0].Order != 7 || restored.Artifacts[0].URL == "" {
-		t.Fatalf("restored media did not preserve hosted-only order/deletion state: %#v", restored.Artifacts)
+	if len(restored.Artifacts) != 2 || restored.Artifacts[0].Kind != api.MediaArtifactScreenshot || restored.Artifacts[0].Order != 7 ||
+		restored.Artifacts[1].Kind != api.MediaArtifactHostedImage || restored.Artifacts[1].Order != 7 || restored.Artifacts[1].URL == "" ||
+		!restored.ImageRequirementsPrepared || len(restored.HostAttempts) != 1 || restored.HostAttempts[0].Host != "imgbb" || len(restored.HostAttempts[0].Results) != 1 ||
+		restored.HostAttempts[0].Results[0].ID != restored.Artifacts[1].ID {
+		t.Fatalf("restored media did not preserve ready current hosted state: %#v", restored)
+	}
+	restoredPrivate, ok := restoredResource.(workflowMediaPrivateArtifacts)
+	if !ok || len(restoredPrivate.HostedImages) != 1 {
+		t.Fatalf("restored private media = %#v", restoredResource)
+	}
+	for _, link := range restoredPrivate.HostedImages {
+		if link.AccountScope != currentAccountScope {
+			t.Fatalf("restored hosted account scope = %q, want %q", link.AccountScope, currentAccountScope)
+		}
 	}
 }
 

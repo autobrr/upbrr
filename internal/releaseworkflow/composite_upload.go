@@ -2010,6 +2010,7 @@ func (m *Module) applyCompositeUploadFeedback(
 		return CommandResult{}, fmt.Errorf("%w: upload feedback action is stale", ErrRevisionConflict)
 	}
 	resolvedByCommand := false
+	var result CommandResult
 	if action.Kind == api.RequiredActionReconcileSubmission {
 		if _, err := m.resolveAction(ctx, ownerID, state, nextRevision, now, ResolveActionCommand{
 			WorkflowID:       command.WorkflowID,
@@ -2127,7 +2128,7 @@ func (m *Module) applyCompositeUploadFeedback(
 		if state.Workflow.Dupes == nil {
 			return CommandResult{}, fmt.Errorf("%w: duplicate assessment is unavailable", ErrRevisionConflict)
 		}
-		if _, err := m.approveTrackers(state, nextRevision, now, ApproveTrackersCommand{
+		approved, err := m.approveTrackers(state, nextRevision, now, ApproveTrackersCommand{
 			WorkflowID:       command.WorkflowID,
 			ExpectedRevision: command.ExpectedRevision,
 			Approval: api.TrackerApproval{
@@ -2137,9 +2138,11 @@ func (m *Module) applyCompositeUploadFeedback(
 				TrackerIDs:       append([]api.TrackerID(nil), command.Response.TrackerIDs...),
 			},
 			IdempotencyKey: command.IdempotencyKey,
-		}); err != nil {
+		})
+		if err != nil {
 			return CommandResult{}, err
 		}
+		result = approved
 		resolvedByCommand = true
 	case api.ReleaseWorkflowUploadFeedbackUploadApproval: //nolint:staticcheck // Reject retained v1 feedback explicitly.
 		return CommandResult{}, fmt.Errorf("%w: final upload approval is no longer accepted", ErrInvalidTransition)
@@ -2224,7 +2227,7 @@ func (m *Module) applyCompositeUploadFeedback(
 		Revision:    nextRevision,
 		Sequence:    state.Composite.FeedbackSequence,
 	}
-	return CommandResult{}, nil
+	return result, nil
 }
 
 func deprecatedAuthFeedbackError() error {

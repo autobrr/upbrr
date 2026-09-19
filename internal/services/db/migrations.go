@@ -96,6 +96,11 @@ var migrationRegistry = []migrationStep{
 		apply:     migrateAddReusableMediaTombstoneSources,
 	},
 	{
+		id:        "2026_09_add_reusable_descriptions",
+		dependsOn: []string{"2026_09_add_active_input"},
+		apply:     migrateAddReusableDescriptions,
+	},
+	{
 		id:        "2026_04_add_dvd_mediainfo",
 		dependsOn: []string{baselineMigrationID},
 		apply:     migrateAddDVDMediaInfo,

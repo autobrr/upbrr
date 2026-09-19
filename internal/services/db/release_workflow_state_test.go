@@ -6,6 +6,7 @@ package db
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -112,6 +113,119 @@ func TestReleaseWorkflowStateConcurrentRevisionCAS(t *testing.T) {
 	}
 }
 
+func TestReleaseWorkflowStateSaveRollsBackReusableDescriptionWithState(t *testing.T) {
+	t.Parallel()
+
+	repo := openMigratedTestRepo(t)
+	ctx := t.Context()
+	now := time.Now().UTC().Truncate(time.Second)
+	state := workflowStateRecordForTest("workflow-description-cache", api.WorkflowStatusActive, now, `{"revision":1}`)
+	if _, _, err := repo.CreateReleaseWorkflowState(ctx, state); err != nil {
+		t.Fatal(err)
+	}
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.mkv")
+	updated := state
+	updated.Revision = 2
+	updated.UpdatedAt = now.Add(time.Minute)
+	updated.Payload = []byte(`{"revision":2}`)
+	updated.DescriptionReuse = &api.ReusableDescriptionRecord{
+		SourcePath:  sourcePath,
+		Description: reusableDescriptionForTest("a", "first"),
+	}
+	if _, err := repo.RawDB().ExecContext(ctx, `
+		CREATE TRIGGER fail_reusable_description_insert
+		BEFORE INSERT ON description_reusable
+		BEGIN SELECT RAISE(ABORT, 'forced reusable description failure'); END
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SaveReleaseWorkflowState(ctx, 1, updated); err == nil {
+		t.Fatal("expected reusable description failure")
+	}
+	stored, err := repo.LoadReleaseWorkflowState(ctx, state.OwnerID, state.WorkflowID)
+	if err != nil || stored.Revision != state.Revision || string(stored.Payload) != string(state.Payload) || stored.DescriptionReuse != nil {
+		t.Fatalf("failed save changed workflow state: %#v, err=%v", stored, err)
+	}
+	if _, found, err := repo.LoadReusableDescription(ctx, sourcePath); err != nil || found {
+		t.Fatalf("failed save persisted reusable description found=%t err=%v", found, err)
+	}
+	if _, err := repo.RawDB().ExecContext(ctx, `DROP TRIGGER fail_reusable_description_insert`); err != nil {
+		t.Fatal(err)
+	}
+	updated.DescriptionReuse.Description.Descriptions[0].Rendered = "retry"
+	if err := repo.SaveReleaseWorkflowState(ctx, 1, updated); err != nil {
+		t.Fatalf("retry same expected revision: %v", err)
+	}
+	stored, err = repo.LoadReleaseWorkflowState(ctx, state.OwnerID, state.WorkflowID)
+	if err != nil || stored.Revision != updated.Revision || string(stored.Payload) != string(updated.Payload) || stored.DescriptionReuse != nil {
+		t.Fatalf("retry workflow state = %#v, err=%v", stored, err)
+	}
+	cache, found, err := repo.LoadReusableDescription(ctx, sourcePath)
+	if err != nil || !found || cache.Descriptions[0].Rendered != "retry" {
+		t.Fatalf("retry reusable description = %#v found=%t err=%v", cache, found, err)
+	}
+}
+
+func TestReleaseWorkflowStateSaveRejectsUnauthorizedReusableDescription(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		descriptionPath func(string) string
+		context         func(context.Context, api.ActiveInputRecord) context.Context
+		wantErr         error
+	}{
+		{
+			name:            "mismatched source",
+			descriptionPath: func(sourcePath string) string { return sourcePath + ".other" },
+			context: func(ctx context.Context, active api.ActiveInputRecord) context.Context {
+				return api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: active.CoordinatorID, Fence: active.Fence})
+			},
+			wantErr: api.ErrActiveInputChanged,
+		},
+		{
+			name:            "stale coordinator",
+			descriptionPath: func(sourcePath string) string { return sourcePath },
+			context: func(ctx context.Context, _ api.ActiveInputRecord) context.Context {
+				return api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: "stale", Fence: 1})
+			},
+			wantErr: api.ErrActiveInputLeaseLost,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			repo := openMigratedTestRepo(t)
+			ctx := t.Context()
+			now := time.Now().UTC()
+			state := workflowStateRecordForTest(api.WorkflowID("workflow-"+test.name), api.WorkflowStatusActive, now, `{"revision":1}`)
+			if _, _, err := repo.CreateReleaseWorkflowState(ctx, state); err != nil {
+				t.Fatal(err)
+			}
+			sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.mkv")
+			active := activateReleaseWorkflowStateTestInput(t, repo, state, sourcePath, now)
+			updated := state
+			updated.Revision = 2
+			updated.UpdatedAt = now.Add(time.Minute)
+			updated.Payload = []byte(`{"revision":2}`)
+			updated.DescriptionReuse = &api.ReusableDescriptionRecord{
+				SourcePath:  test.descriptionPath(sourcePath),
+				Description: reusableDescriptionForTest("a", "rendered"),
+			}
+			if err := repo.SaveReleaseWorkflowState(test.context(ctx, active), 1, updated); !errors.Is(err, test.wantErr) {
+				t.Fatalf("save unauthorized reusable description = %v, want %v", err, test.wantErr)
+			}
+			stored, err := repo.LoadReleaseWorkflowState(ctx, state.OwnerID, state.WorkflowID)
+			if err != nil || stored.Revision != state.Revision || string(stored.Payload) != string(state.Payload) {
+				t.Fatalf("unauthorized save changed workflow state: %#v, err=%v", stored, err)
+			}
+			if _, found, err := repo.LoadReusableDescription(ctx, test.descriptionPath(sourcePath)); err != nil || found {
+				t.Fatalf("unauthorized save persisted reusable description found=%t err=%v", found, err)
+			}
+		})
+	}
+}
+
 func TestReleaseWorkflowStateDeletionPreservesActiveSlotWorkflow(t *testing.T) {
 	t.Parallel()
 
@@ -154,4 +268,54 @@ func workflowStateRecordForTest(
 		CreatedAt:           now,
 		UpdatedAt:           now,
 	}
+}
+
+func activateReleaseWorkflowStateTestInput(
+	t *testing.T,
+	repo *SQLiteRepository,
+	state api.ReleaseWorkflowStateRecord,
+	sourcePath string,
+	now time.Time,
+) api.ActiveInputRecord {
+	t.Helper()
+	input, err := repo.SaveInputRecord(t.Context(), api.InputRecord{
+		ID:            "input-" + string(state.WorkflowID),
+		CanonicalPath: sourcePath,
+		SourceVersion: "version",
+		Manifest:      []byte(`{}`),
+		UpdatedAt:     now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	empty, err := repo.LoadActiveInput(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	opening := api.ActiveInputRecord{
+		State:          api.ActiveInputOpening,
+		Revision:       empty.Revision + 1,
+		Fence:          empty.Fence + 1,
+		OwnerID:        state.OwnerID,
+		CoordinatorID:  "workflow-state-test",
+		LeaseExpiresAt: now.Add(time.Minute),
+		ReservationID:  "open",
+		RequestedPath:  sourcePath,
+		IdempotencyKey: "open",
+	}
+	if err := repo.CompareAndSwapActiveInput(t.Context(), empty, opening, now); err != nil {
+		t.Fatal(err)
+	}
+	active := opening
+	active.State = api.ActiveInputActive
+	active.Revision++
+	active.InputID = input.ID
+	active.SourceVersion = input.SourceVersion
+	active.WorkflowID = state.WorkflowID
+	active.ReservationID = ""
+	active.RequestedPath = ""
+	if err := repo.CompareAndSwapActiveInput(t.Context(), opening, active, now); err != nil {
+		t.Fatal(err)
+	}
+	return active
 }
