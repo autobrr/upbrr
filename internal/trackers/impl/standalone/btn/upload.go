@@ -1059,10 +1059,8 @@ func resolveAndDownloadViaAPI(
 		return "", "", fmt.Errorf("trackers: BTN reviewed upload name: %w", err)
 	}
 	filter := make(map[string]any)
-	if strings.TrimSpace(groupID) != "" {
-		filter["group_id"] = groupID
-	} else {
-		filter["release"] = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(releaseName)
+	if req.Meta.Identity.TVDBID > 0 {
+		filter["tvdb"] = strconv.Itoa(req.Meta.Identity.TVDBID)
 	}
 
 	const attempts = 4
@@ -1103,24 +1101,15 @@ func resolveAndDownloadViaAPI(
 		return "", "", fmt.Errorf("trackers: BTN API did not return a matching torrent id after %d attempts", attempts)
 	}
 
-	var downloadResult struct {
-		Result struct {
-			DownloadURL string `json:"DownloadURL"`
-		} `json:"result"`
-	}
-	if err := callBTNAPI(ctx, apiURL, "ua-btn-download", "getTorrentById", map[string]any{"key": apiToken, "id": selection.ID}, &downloadResult); err != nil {
-		return selection.ID, selection.GroupID, err
-	}
-
-	if downloadResult.Result.DownloadURL == "" {
+	if selection.DownloadURL == "" {
 		return selection.ID, selection.GroupID, errors.New("trackers: BTN API did not return DownloadURL")
 	}
 
-	if err := downloadOrigin.validateDownloadURL(ctx, downloadResult.Result.DownloadURL); err != nil {
+	if err := downloadOrigin.validateDownloadURL(ctx, selection.DownloadURL); err != nil {
 		return selection.ID, selection.GroupID, fmt.Errorf("trackers: BTN API invalid download url: %w", err)
 	}
 
-	dlReq, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadResult.Result.DownloadURL, nil)
+	dlReq, err := http.NewRequestWithContext(ctx, http.MethodGet, selection.DownloadURL, nil)
 	if err != nil {
 		return selection.ID, selection.GroupID, fmt.Errorf("trackers: BTN API torrent fetch request build: %w", err)
 	}
@@ -1265,8 +1254,9 @@ func validateBTNPublicResolvedAddrs(host string, addrs []netip.Addr) error {
 }
 
 type btnAPITorrentSelection struct {
-	ID      string
-	GroupID string
+	ID          string
+	GroupID     string
+	DownloadURL string
 }
 
 // selectBTNAPITorrent returns the BTN torrent that matches the uploaded
@@ -1293,7 +1283,11 @@ func selectBTNAPITorrent(torrents map[string]map[string]any, releaseName string,
 			}
 		}
 		if expectedRelease != "" && btnAPITorrentMatchesRelease(torrentData, expectedRelease) {
-			return btnAPITorrentSelection{ID: id, GroupID: btnAPITorrentGroupID(torrentData)}
+			return btnAPITorrentSelection{
+				ID:          id,
+				GroupID:     btnAPITorrentGroupID(torrentData),
+				DownloadURL: btnAPIStringField(torrentData, "DownloadURL"),
+			}
 		}
 	}
 	return btnAPITorrentSelection{}
