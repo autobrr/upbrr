@@ -4,6 +4,7 @@
 package releasepolicy
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -20,9 +21,10 @@ func TestIsRenamedRelease(t *testing.T) {
 	}
 
 	cases := []struct {
-		name string
-		meta ModifiedReleaseSubject
-		want bool
+		name   string
+		meta   ModifiedReleaseSubject
+		want   bool
+		signal ModifiedReleaseSignal
 	}{
 		{
 			name: "clean dotted folder with group",
@@ -30,14 +32,16 @@ func TestIsRenamedRelease(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "renamed spaced folder with group",
-			meta: grouped("/data/movies/Example Movie 2026 2160p MA WEB-DL DDP5 1 HDR H 265-GRP"),
-			want: true,
+			name:   "renamed spaced folder with group",
+			meta:   grouped("/data/movies/Example Movie 2026 2160p MA WEB-DL DDP5 1 HDR H 265-GRP"),
+			want:   true,
+			signal: ModifiedReleaseSignalSpaceRename,
 		},
 		{
-			name: "renamed spaced single file with group",
-			meta: grouped("/data/movies/Example Movie 2026 2160p MA WEB-DL DDP5 1 HDR H 265-GRP.mkv"),
-			want: true,
+			name:   "renamed spaced single file with group",
+			meta:   grouped("/data/movies/Example Movie 2026 2160p MA WEB-DL DDP5 1 HDR H 265-GRP.mkv"),
+			want:   true,
+			signal: ModifiedReleaseSignalSpaceRename,
 		},
 		{
 			name: "spaced name without group tag is not flagged",
@@ -58,7 +62,8 @@ func TestIsRenamedRelease(t *testing.T) {
 				SourcePath: "/data/movies/Example Movie (2026) {imdb-tt1234567}",
 				Release:    api.ReleaseInfo{Group: "tt1234567"},
 			},
-			want: true,
+			want:   true,
+			signal: ModifiedReleaseSignalArrToken,
 		},
 		{
 			name: "sonarr-renamed file with tmdb token is flagged",
@@ -66,54 +71,64 @@ func TestIsRenamedRelease(t *testing.T) {
 				SourcePath: "/data/tv/Example Show (2026) {tmdb-12345}/Example Show S01E01 {tmdb-12345}.mkv",
 				VideoPath:  "/data/tv/Example Show (2026) {tmdb-12345}/Example Show S01E01 {tmdb-12345}.mkv",
 			},
-			want: true,
+			want:   true,
+			signal: ModifiedReleaseSignalArrToken,
 		},
 		{
-			name: "tvdb token is flagged",
-			meta: ModifiedReleaseSubject{SourcePath: "/data/tv/Show (2020) {tvdb-360893}"},
-			want: true,
+			name:   "tvdb token is flagged",
+			meta:   ModifiedReleaseSubject{SourcePath: "/data/tv/Show (2020) {tvdb-360893}"},
+			want:   true,
+			signal: ModifiedReleaseSignalArrToken,
 		},
 		{
-			name: "arr token match is case-insensitive",
-			meta: ModifiedReleaseSubject{SourcePath: "/data/movies/Example Movie (2026) {IMDb-tt1234567}"},
-			want: true,
+			name:   "arr token match is case-insensitive",
+			meta:   ModifiedReleaseSubject{SourcePath: "/data/movies/Example Movie (2026) {IMDb-tt1234567}"},
+			want:   true,
+			signal: ModifiedReleaseSignalArrToken,
 		},
 		{
 			name: "arr token is flagged even when the group tag was stripped",
 			// *arr renames frequently drop the trailing -GROUP, so the token check
 			// must fire without a parsed group.
-			meta: ModifiedReleaseSubject{SourcePath: "/data/movies/Example Movie (2026) {tmdb-12345}"},
-			want: true,
+			meta:   ModifiedReleaseSubject{SourcePath: "/data/movies/Example Movie (2026) {tmdb-12345}"},
+			want:   true,
+			signal: ModifiedReleaseSignalArrToken,
 		},
 		{
-			name: "tmdb bracket token is flagged",
-			meta: ModifiedReleaseSubject{SourcePath: "/data/movies/Example Movie (2026) [tmdb-12345]"},
-			want: true,
+			name:   "tmdb bracket token is flagged",
+			meta:   ModifiedReleaseSubject{SourcePath: "/data/movies/Example Movie (2026) [tmdb-12345]"},
+			want:   true,
+			signal: ModifiedReleaseSignalArrToken,
 		},
 		{
-			name: "tmdb paren token is flagged",
-			meta: ModifiedReleaseSubject{SourcePath: "/data/movies/Example Movie (2026) (tmdb-12345)"},
-			want: true,
+			name:   "tmdb paren token is flagged",
+			meta:   ModifiedReleaseSubject{SourcePath: "/data/movies/Example Movie (2026) (tmdb-12345)"},
+			want:   true,
+			signal: ModifiedReleaseSignalArrToken,
 		},
 		{
-			name: "imdb bracket token is flagged",
-			meta: ModifiedReleaseSubject{SourcePath: "/data/movies/Example Movie (2026) [imdb-tt1234567]"},
-			want: true,
+			name:   "imdb bracket token is flagged",
+			meta:   ModifiedReleaseSubject{SourcePath: "/data/movies/Example Movie (2026) [imdb-tt1234567]"},
+			want:   true,
+			signal: ModifiedReleaseSignalArrToken,
 		},
 		{
-			name: "imdb paren token is flagged",
-			meta: ModifiedReleaseSubject{SourcePath: "/data/movies/Example Movie (2026) (imdb-tt1234567)"},
-			want: true,
+			name:   "imdb paren token is flagged",
+			meta:   ModifiedReleaseSubject{SourcePath: "/data/movies/Example Movie (2026) (imdb-tt1234567)"},
+			want:   true,
+			signal: ModifiedReleaseSignalArrToken,
 		},
 		{
-			name: "tvdb bracket token is flagged",
-			meta: ModifiedReleaseSubject{SourcePath: "/data/tv/Example Show (2026) [tvdb-12345]"},
-			want: true,
+			name:   "tvdb bracket token is flagged",
+			meta:   ModifiedReleaseSubject{SourcePath: "/data/tv/Example Show (2026) [tvdb-12345]"},
+			want:   true,
+			signal: ModifiedReleaseSignalArrToken,
 		},
 		{
-			name: "tvdb paren token is flagged",
-			meta: ModifiedReleaseSubject{SourcePath: "/data/tv/Example Show (2026) (tvdb-12345)"},
-			want: true,
+			name:   "tvdb paren token is flagged",
+			meta:   ModifiedReleaseSubject{SourcePath: "/data/tv/Example Show (2026) (tvdb-12345)"},
+			want:   true,
+			signal: ModifiedReleaseSignalArrToken,
 		},
 		{
 			name: "standard rename check skipped for configured group",
@@ -205,7 +220,8 @@ func TestIsRenamedRelease(t *testing.T) {
 				VideoPath:  "/data/movies/Example.Movie.2026.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-GRP/Example Movie 2026 2160p MA WEB-DL DDP5 1 HDR H 265-GRP.mkv",
 				Release:    api.ReleaseInfo{Group: "GRP"},
 			},
-			want: true,
+			want:   true,
+			signal: ModifiedReleaseSignalSpaceRename,
 		},
 		{
 			name: "falls back to video path when source path is empty",
@@ -214,7 +230,8 @@ func TestIsRenamedRelease(t *testing.T) {
 				VideoPath:  "/data/movies/Example Movie 2026 2160p MA WEB-DL DDP5 1 HDR H 265-GRP.mkv",
 				Release:    api.ReleaseInfo{Group: "GRP"},
 			},
-			want: true,
+			want:   true,
+			signal: ModifiedReleaseSignalSpaceRename,
 		},
 		{
 			name: "spaced folder retaining dotted tokens is still flagged",
@@ -222,8 +239,9 @@ func TestIsRenamedRelease(t *testing.T) {
 			// dotted tokens (DDP5.1, H.265) must not have its trailing "-GROUP" tag
 			// stripped by extension handling on the directory basename (filepath.Ext
 			// would otherwise treat ".265-GRP" as an extension).
-			meta: grouped("/data/movies/Example Movie 2026 2160p MA WEB-DL DDP5.1 HDR H.265-GRP"),
-			want: true,
+			meta:   grouped("/data/movies/Example Movie 2026 2160p MA WEB-DL DDP5.1 HDR H.265-GRP"),
+			want:   true,
+			signal: ModifiedReleaseSignalSpaceRename,
 		},
 		{
 			name: "srrdb rename signal flags a clean-looking name with no group",
@@ -234,7 +252,8 @@ func TestIsRenamedRelease(t *testing.T) {
 				SceneRenamed:       true,
 				SceneRenamedReason: "source appears renamed or modified from its original release name; verify the file hash and source provenance",
 			},
-			want: true,
+			want:   true,
+			signal: ModifiedReleaseSignalSRRDB,
 		},
 		{
 			name: "srrdb rename signal still flags configured standard-skip group",
@@ -243,7 +262,8 @@ func TestIsRenamedRelease(t *testing.T) {
 				Release:      api.ReleaseInfo{Group: "HiDt"},
 				SceneRenamed: true,
 			},
-			want: true,
+			want:   true,
+			signal: ModifiedReleaseSignalSRRDB,
 		},
 		{
 			name: "srrdb rename signal is exempt for personal release",
@@ -268,12 +288,28 @@ func TestIsRenamedRelease(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, reason := DetectModifiedRelease(tc.meta)
-			if got != tc.want {
-				t.Fatalf("isRenamedRelease = %v (%q), want %v", got, reason, tc.want)
+			got := DetectModifiedRelease(tc.meta)
+			if got.Modified != tc.want {
+				t.Fatalf("DetectModifiedRelease = %+v, want modified=%v", got, tc.want)
 			}
-			if got && reason == "" {
+			if got.Signal != tc.signal {
+				t.Fatalf("signal = %q, want %q", got.Signal, tc.signal)
+			}
+			// Clean, exempt, and skipped-group subjects must yield the zero value.
+			if !tc.want && got != (ModifiedReleaseDetection{}) {
+				t.Fatalf("expected zero-value detection, got %+v", got)
+			}
+			if got.Modified && got.Reason == "" {
 				t.Fatal("expected a non-empty reason when renamed")
+			}
+			// The signal is diagnostic-only and must never leak into the
+			// user-facing reason.
+			if got.Modified && strings.Contains(got.Reason, string(got.Signal)) {
+				t.Fatalf("signal %q leaked into user-facing reason %q", got.Signal, got.Reason)
+			}
+			// Heuristic detections must keep the generic disclosed reason.
+			if got.Modified && got.Signal != ModifiedReleaseSignalSRRDB && got.Reason != modifiedReleaseReason {
+				t.Fatalf("heuristic reason = %q, want the generic modified-release reason", got.Reason)
 			}
 		})
 	}
