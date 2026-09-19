@@ -98,7 +98,7 @@ var liveTestDiscardTables = []string{
 	"release_workflow_intents", "release_workflow_operations", "release_workflow_states", "description_overrides", "description_reusable",
 	"dvd_mediainfo", "external_ids", "external_metadata", "file_metadata", "playlist_selections", "prepared_release_current",
 	"release_overrides", "screenshot_final_selections", "screenshot_slot_variants", "screenshot_slots", "screenshots",
-	"tracker_metadata", "tracker_rule_failures", "tracker_timestamps", "upload_records", "uploaded_images", "ui_states",
+	"submission_fences", "tracker_metadata", "tracker_rule_failures", "tracker_timestamps", "upload_records", "uploaded_images", "ui_states",
 }
 
 var liveTestConfigSections = []string{

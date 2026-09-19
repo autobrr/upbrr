@@ -154,6 +154,107 @@ func TestApplyConfigImpactTrackerLanesPreservesUnaffectedProjection(t *testing.T
 	}
 }
 
+func TestApplyConfigImpactTrackerLanesPreservesHistoricalAssessments(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	release := api.ReleaseSnapshotRef{ID: "release", Revision: 1}
+	catalog := api.TrackerCatalogSnapshotRef{ID: "catalog", Revision: 1}
+	runtime := api.TrackerRuntimeSnapshotRef{ID: "runtime", Revision: 1}
+	selection := api.TrackerSelectionRef{ID: "selection", Revision: 1}
+	projections := api.TrackerReleaseProjectionSetRef{ID: "projections", Revision: 1}
+	preflight := api.TrackerPreflightAssessmentRef{ID: "preflight", Revision: 1}
+	dupes := api.DupeAssessmentRef{ID: "dupes", Revision: 1}
+	state := State{
+		OwnerID: "owner",
+		Workflow: api.ReleaseWorkflow{
+			ID:                 "workflow",
+			Revision:           4,
+			FactInstructions:   api.ReleaseFactInstructionSnapshotRef{ID: "facts", Revision: 1},
+			Release:            &release,
+			TrackerCatalog:     &catalog,
+			TrackerRuntime:     &runtime,
+			Selection:          &selection,
+			TrackerProjections: &projections,
+			TrackerPreflight:   &preflight,
+			Dupes:              &dupes,
+			Status:             api.WorkflowStatusActive,
+			CreatedAt:          now,
+			UpdatedAt:          now,
+		},
+		Projections: map[api.TrackerReleaseProjectionSetID]api.TrackerReleaseProjectionSet{
+			"projections": {
+				ID:       "projections",
+				Revision: 1,
+				Projections: []api.TrackerReleaseProjection{
+					{TrackerID: "ALPHA"},
+					{TrackerID: "BETA"},
+				},
+				RequiredActions: []api.RequiredAction{
+					{TrackerID: "ALPHA"},
+					{TrackerID: "BETA"},
+				},
+				Failures: []api.WorkflowFailure{
+					{TrackerID: "ALPHA"},
+					{TrackerID: "BETA"},
+				},
+			},
+		},
+		Preflights: map[api.TrackerPreflightAssessmentID]api.TrackerPreflightAssessment{
+			"preflight": {
+				ID:       "preflight",
+				Revision: 1,
+				Results: []api.TrackerPreflightResult{
+					{TrackerID: "ALPHA"},
+					{TrackerID: "BETA"},
+				},
+			},
+		},
+		Dupes: map[api.DupeAssessmentID]api.DupeAssessment{
+			"dupes": {
+				ID:       "dupes",
+				Revision: 1,
+				Results: []api.TrackerDupeAssessment{
+					{TrackerID: "ALPHA"},
+					{TrackerID: "BETA"},
+				},
+			},
+		},
+	}
+	record, err := workflowStateRecord("owner", state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := ApplyConfigImpact(record, api.ConfigImpactDetail{Kind: api.ConfigImpactTrackers, TrackerIDs: []api.TrackerID{"ALPHA"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := decodeWorkflowState(updated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if historical := result.Projections["projections"].Projections; len(historical) != 2 || historical[0].TrackerID != "ALPHA" || historical[1].TrackerID != "BETA" {
+		t.Fatalf("historical projections = %#v", historical)
+	}
+	if historical := result.Projections["projections"].RequiredActions; len(historical) != 2 || historical[0].TrackerID != "ALPHA" || historical[1].TrackerID != "BETA" {
+		t.Fatalf("historical projection actions = %#v", historical)
+	}
+	if historical := result.Projections["projections"].Failures; len(historical) != 2 || historical[0].TrackerID != "ALPHA" || historical[1].TrackerID != "BETA" {
+		t.Fatalf("historical projection failures = %#v", historical)
+	}
+	filtered := result.Projections[result.Workflow.TrackerProjections.ID]
+	if len(filtered.RequiredActions) != 1 || filtered.RequiredActions[0].TrackerID != "BETA" {
+		t.Fatalf("filtered projection actions = %#v", filtered.RequiredActions)
+	}
+	if len(filtered.Failures) != 1 || filtered.Failures[0].TrackerID != "BETA" {
+		t.Fatalf("filtered projection failures = %#v", filtered.Failures)
+	}
+	if historical := result.Preflights["preflight"].Results; len(historical) != 2 || historical[0].TrackerID != "ALPHA" || historical[1].TrackerID != "BETA" {
+		t.Fatalf("historical preflight = %#v", historical)
+	}
+	if historical := result.Dupes["dupes"].Results; len(historical) != 2 || historical[0].TrackerID != "ALPHA" || historical[1].TrackerID != "BETA" {
+		t.Fatalf("historical dupes = %#v", historical)
+	}
+}
+
 func TestApplyConfigImpactImageHostingWithdrawsCurrentMedia(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	release := api.ReleaseSnapshotRef{ID: "release", Revision: 1}

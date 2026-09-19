@@ -379,10 +379,13 @@ func (r *SQLiteRepository) RelinquishActiveInput(ctx context.Context, coordinato
 	})
 }
 
-// LoadInputRecord resolves a canonical source path to its stable input record.
+// LoadInputRecordByID resolves a stable input ID to its input record.
 func (r *SQLiteRepository) LoadInputRecordByID(ctx context.Context, id string) (api.InputRecord, error) {
 	var source string
 	if err := r.historyQuery(ctx).QueryRowContext(ctx, `SELECT canonical_path FROM input_records WHERE id = ?`, id).Scan(&source); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return api.InputRecord{}, api.ErrInputRecordNotFound
+		}
 		return api.InputRecord{}, fmt.Errorf("db resolve input id: %w", err)
 	}
 	return r.LoadInputRecord(ctx, source)

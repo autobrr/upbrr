@@ -5,10 +5,15 @@ package db
 
 import (
 	"database/sql"
+	"database/sql/driver"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
+
+	modernsqlite "modernc.org/sqlite"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -79,6 +84,189 @@ func TestConfigActivationPendingAndCommit(t *testing.T) {
 	if !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("pending candidate error = %v, want no rows", err)
 	}
+}
+
+func TestConfigActivationReadsUseConsistentSnapshot(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		load            func(*SQLiteRepository) configActivationReadResult
+		expectCandidate bool
+	}{
+		{
+			name: "activation",
+			load: func(repo *SQLiteRepository) configActivationReadResult {
+				activation, err := repo.LoadConfigActivation(t.Context())
+				return configActivationReadResult{activation: activation, err: err}
+			},
+		},
+		{
+			name: "candidate",
+			load: func(repo *SQLiteRepository) configActivationReadResult {
+				candidate, activation, err := repo.LoadPendingConfigActivationCandidate(t.Context())
+				return configActivationReadResult{
+					candidate:  candidate,
+					activation: activation,
+					err:        err,
+				}
+			},
+			expectCandidate: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			started, release := armConfigActivationReadHook(t)
+			releaseClosed := false
+			defer func() {
+				if !releaseClosed {
+					close(release)
+				}
+			}()
+
+			repo, err := Open(filepath.Join(t.TempDir(), "config-activation-consistent-read.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = repo.Close() })
+			if err := repo.MigrateContext(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			pending, err := repo.SavePendingConfigActivation(
+				t.Context(),
+				"owner",
+				[]byte(`{"candidate":"pending"}`),
+				[]api.ConfigImpactDetail{
+					{Kind: api.ConfigImpactDescription},
+				},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := installConfigActivationReadHookView(t, repo); err != nil {
+				t.Fatal(err)
+			}
+
+			resultCh := make(chan configActivationReadResult, 1)
+			go func() { resultCh <- test.load(repo) }()
+			select {
+			case <-started:
+			case <-t.Context().Done():
+				t.Fatal(t.Context().Err())
+			}
+
+			writer, err := Open(repo.DBPath())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = writer.Close() })
+			tx, err := writer.RawDB().BeginTx(t.Context(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = writer.ActivateConfigTx(
+				t.Context(),
+				tx,
+				pending.ActiveGeneration,
+				"next",
+				[]api.ConfigImpactDetail{
+					{Kind: api.ConfigImpactDescription},
+				},
+				nil,
+			)
+			if err == nil {
+				err = tx.Commit()
+			} else {
+				_ = tx.Rollback()
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			close(release)
+			releaseClosed = true
+			result := <-resultCh
+			if result.err != nil {
+				t.Fatalf("load = %v", result.err)
+			}
+			if result.activation.Status != api.ConfigActivationPending || result.activation.ActivationID != pending.ActivationID ||
+				result.activation.ActiveGeneration != pending.ActiveGeneration || result.activation.PendingGeneration != pending.PendingGeneration {
+				t.Fatalf("activation = %#v, want pending %#v", result.activation, pending)
+			}
+			if test.expectCandidate && string(result.candidate) != `{"candidate":"pending"}` {
+				t.Fatalf("candidate = %q", result.candidate)
+			}
+		})
+	}
+}
+
+type configActivationReadResult struct {
+	candidate  []byte
+	activation api.ConfigActivation
+	err        error
+}
+
+var configActivationReadHook struct {
+	sync.Mutex
+	started chan<- struct{}
+	release <-chan struct{}
+	armed   bool
+}
+
+var registerConfigActivationReadHook sync.Once
+var errRegisterConfigActivationReadHook error
+
+func armConfigActivationReadHook(t *testing.T) (<-chan struct{}, chan struct{}) {
+	t.Helper()
+	registerConfigActivationReadHook.Do(func() {
+		errRegisterConfigActivationReadHook = modernsqlite.RegisterScalarFunction(
+			"config_activation_test_read_hook",
+			0,
+			func(_ *modernsqlite.FunctionContext, _ []driver.Value) (driver.Value, error) {
+				configActivationReadHook.Lock()
+				started, release, armed := configActivationReadHook.started, configActivationReadHook.release, configActivationReadHook.armed
+				configActivationReadHook.armed = false
+				configActivationReadHook.Unlock()
+				if !armed {
+					return int64(0), nil
+				}
+				started <- struct{}{}
+				<-release
+				return int64(0), nil
+			},
+		)
+	})
+	if errRegisterConfigActivationReadHook != nil {
+		t.Fatal(errRegisterConfigActivationReadHook)
+	}
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	configActivationReadHook.Lock()
+	configActivationReadHook.started = started
+	configActivationReadHook.release = release
+	configActivationReadHook.armed = true
+	configActivationReadHook.Unlock()
+	return started, release
+}
+
+func installConfigActivationReadHookView(t *testing.T, repo *SQLiteRepository) error {
+	t.Helper()
+	for _, statement := range []string{
+		`ALTER TABLE config_activation RENAME TO config_activation_data`,
+		`CREATE VIEW config_activation AS
+			SELECT singleton, generation + config_activation_test_read_hook() AS generation,
+				fingerprint, impacts_json, updated_at, failed_activation_id, failed_code, failed_impacts_json, failed_at
+			FROM config_activation_data`,
+		`CREATE TRIGGER config_activation_test_update INSTEAD OF UPDATE ON config_activation BEGIN
+			UPDATE config_activation_data
+			SET generation = NEW.generation, fingerprint = NEW.fingerprint, impacts_json = NEW.impacts_json,
+				updated_at = NEW.updated_at, failed_activation_id = NEW.failed_activation_id, failed_code = NEW.failed_code,
+				failed_impacts_json = NEW.failed_impacts_json, failed_at = NEW.failed_at
+			WHERE singleton = OLD.singleton;
+		END`,
+	} {
+		if _, err := repo.RawDB().ExecContext(t.Context(), statement); err != nil {
+			return fmt.Errorf("install config activation read hook view: %w", err)
+		}
+	}
+	return nil
 }
 
 func TestConfigActivationFailureClearsCandidateAndAllowsReplacement(t *testing.T) {

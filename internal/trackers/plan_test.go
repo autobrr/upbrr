@@ -274,6 +274,29 @@ func TestCanonicalSubmissionTrackerSiteNormalizesNonSecretEndpoint(t *testing.T)
 	}
 }
 
+func TestCanonicalSubmissionTrackerSiteNormalizesDefaultPorts(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		endpoint string
+		want     string
+	}{
+		{endpoint: "https://tracker.example:443/", want: "ALPHA|https://tracker.example/"},
+		{endpoint: "http://tracker.example:80/deploy/", want: "ALPHA|http://tracker.example/deploy"},
+		{endpoint: "https://tracker.example:8443/", want: "ALPHA|https://tracker.example:8443/"},
+		{endpoint: "http://tracker.example:443/", want: "ALPHA|http://tracker.example:443/"},
+		{endpoint: "https://[2001:db8::1]:443/", want: "ALPHA|https://[2001:db8::1]/"},
+		{endpoint: "https://[2001:db8::1]:8443/", want: "ALPHA|https://[2001:db8::1]:8443/"},
+		{endpoint: "https://[2001:db8::1]/", want: "ALPHA|https://[2001:db8::1]/"},
+	} {
+		t.Run(tc.endpoint, func(t *testing.T) {
+			site, err := CanonicalSubmissionTrackerSite("ALPHA", tc.endpoint)
+			if err != nil || site != tc.want {
+				t.Fatalf("site=%q err=%v, want %q", site, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestNonUploadPlansCannotSubmit(t *testing.T) {
 	t.Parallel()
 	for _, plan := range []TrackerPlan{

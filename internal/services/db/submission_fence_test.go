@@ -90,6 +90,50 @@ func TestSubmissionFencePersistsSuccessAndFencesUnknownAttempts(t *testing.T) {
 	}
 }
 
+func TestSubmissionFenceCanonicalizesTrackerSiteForClaimAndCompletion(t *testing.T) {
+	for _, status := range []api.WorkflowEffectStatus{api.WorkflowEffectStatusSucceeded, api.WorkflowEffectStatusFailed} {
+		t.Run(string(status), func(t *testing.T) {
+			repo := openMigratedTestRepo(t)
+			ctx := t.Context()
+			now := time.Now().UTC().Truncate(time.Second)
+			workflow := workflowStateRecordForTest("submission-fence-site", api.WorkflowStatusActive, now, `{"revision":1}`)
+			if _, _, err := repo.CreateReleaseWorkflowState(ctx, workflow); err != nil {
+				t.Fatal(err)
+			}
+			if err := activateSubmissionFenceTestInput(ctx, repo, workflow, now); err != nil {
+				t.Fatal(err)
+			}
+			ctx = api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: "submission-fence-test", Fence: 1})
+			identity := submissionFenceTestIdentity(t, "c")
+			spaced := submissionFenceTestEffect(workflow, "spaced", identity, now)
+			spaced.Submission.TrackerSite = " " + spaced.Submission.TrackerSite + " "
+			started, idempotent, err := repo.BeginReleaseWorkflowEffect(ctx, spaced)
+			if err != nil || idempotent {
+				t.Fatalf("begin spaced tracker site = %#v, idempotent=%v, err=%v", started, idempotent, err)
+			}
+			canonical := submissionFenceTestEffect(workflow, "canonical", identity, now.Add(time.Second))
+			prior, idempotent, err := repo.BeginReleaseWorkflowEffect(ctx, canonical)
+			if !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) || idempotent || prior.EffectID != "" {
+				t.Fatalf("canonical claim = %#v, idempotent=%v, err=%v", prior, idempotent, err)
+			}
+
+			completedAt := now.Add(2 * time.Second)
+			started.UpdatedAt, started.CompletedAt = completedAt, &completedAt
+			if err := repo.CompleteReleaseWorkflowEffect(ctx, status, started); err != nil {
+				t.Fatalf("complete %s = %v", status, err)
+			}
+			fence, err := repo.LoadSubmissionFence(ctx, identity, canonical.Submission.TrackerSite)
+			if status == api.WorkflowEffectStatusSucceeded {
+				if err != nil || fence.Status != status || fence.TrackerSite != canonical.Submission.TrackerSite {
+					t.Fatalf("successful canonical fence = %#v, %v", fence, err)
+				}
+			} else if !errors.Is(err, api.ErrSubmissionFenceNotFound) {
+				t.Fatalf("failed canonical fence = %#v, %v", fence, err)
+			}
+		})
+	}
+}
+
 func TestPurgeContentDataPreservesSubmissionFences(t *testing.T) {
 	t.Parallel()
 
@@ -105,10 +149,10 @@ func TestPurgeContentDataPreservesSubmissionFences(t *testing.T) {
 	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.mkv")
 	now := time.Now().UTC().Truncate(time.Second)
 	if err := repo.Save(ctx, FileMetadata{
-Path: sourcePath,
- InfoHash: "history-target",
- UpdatedAt: now,
-}); err != nil {
+		Path:      sourcePath,
+		InfoHash:  "history-target",
+		UpdatedAt: now,
+	}); err != nil {
 		t.Fatalf("save display history: %v", err)
 	}
 	for _, test := range []struct {
@@ -173,11 +217,11 @@ func TestPurgeContentDataRejectsActiveInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := repo.SaveInputRecord(ctx, api.InputRecord{
-		ID: "active-history-input",
- CanonicalPath: sourcePath,
- SourceVersion: strings.Repeat("a", 64),
- Manifest: []byte(`{}`),
- UpdatedAt: now,
+		ID:            "active-history-input",
+		CanonicalPath: sourcePath,
+		SourceVersion: strings.Repeat("a", 64),
+		Manifest:      []byte(`{}`),
+		UpdatedAt:     now,
 	}); err != nil {
 		t.Fatalf("save active input: %v", err)
 	}
@@ -186,15 +230,15 @@ func TestPurgeContentDataRejectsActiveInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	opening := api.ActiveInputRecord{
-		State: api.ActiveInputOpening,
- Revision: empty.Revision + 1,
- Fence: empty.Fence + 1,
-		OwnerID: workflow.OwnerID,
- CoordinatorID: "active-history",
- LeaseExpiresAt: now.Add(time.Hour),
-		ReservationID: "active-history-reservation",
- RequestedPath: sourcePath,
- IdempotencyKey: "active-history-open",
+		State:          api.ActiveInputOpening,
+		Revision:       empty.Revision + 1,
+		Fence:          empty.Fence + 1,
+		OwnerID:        workflow.OwnerID,
+		CoordinatorID:  "active-history",
+		LeaseExpiresAt: now.Add(time.Hour),
+		ReservationID:  "active-history-reservation",
+		RequestedPath:  sourcePath,
+		IdempotencyKey: "active-history-open",
 	}
 	if err := repo.CompareAndSwapActiveInput(ctx, empty, opening, now); err != nil {
 		t.Fatalf("open active input: %v", err)
@@ -231,15 +275,15 @@ func activateSubmissionFenceTestInput(
 		return err
 	}
 	opening := api.ActiveInputRecord{
-		State: api.ActiveInputOpening,
- Revision: empty.Revision + 1,
- Fence: empty.Fence + 1,
-		OwnerID: workflow.OwnerID,
- CoordinatorID: "submission-fence-test",
- LeaseExpiresAt: now.Add(time.Hour),
-		ReservationID: "submission-fence-reservation",
- RequestedPath: "C:/synthetic/source.mkv",
- IdempotencyKey: "submission-fence-open",
+		State:          api.ActiveInputOpening,
+		Revision:       empty.Revision + 1,
+		Fence:          empty.Fence + 1,
+		OwnerID:        workflow.OwnerID,
+		CoordinatorID:  "submission-fence-test",
+		LeaseExpiresAt: now.Add(time.Hour),
+		ReservationID:  "submission-fence-reservation",
+		RequestedPath:  "C:/synthetic/source.mkv",
+		IdempotencyKey: "submission-fence-open",
 	}
 	if err := repo.CompareAndSwapActiveInput(ctx, empty, opening, now); err != nil {
 		return err
@@ -269,21 +313,21 @@ func submissionFenceTestEffect(
 	now time.Time,
 ) api.ReleaseWorkflowEffectRecord {
 	return api.ReleaseWorkflowEffectRecord{
-		OwnerID: workflow.OwnerID,
- WorkflowID: workflow.WorkflowID,
- OperationID: "submission-operation",
- EffectID: effectID,
-		Kind: string(api.WorkflowExternalEffectTrackerSubmission),
- ScopeID: "ALPHA",
- SemanticFingerprint: api.WorkflowFingerprint(effectID),
-		Status: api.WorkflowEffectStatusStarted,
- StartedAt: now,
- UpdatedAt: now,
+		OwnerID:             workflow.OwnerID,
+		WorkflowID:          workflow.WorkflowID,
+		OperationID:         "submission-operation",
+		EffectID:            effectID,
+		Kind:                string(api.WorkflowExternalEffectTrackerSubmission),
+		ScopeID:             "ALPHA",
+		SemanticFingerprint: api.WorkflowFingerprint(effectID),
+		Status:              api.WorkflowEffectStatusStarted,
+		StartedAt:           now,
+		UpdatedAt:           now,
 		Submission: &api.SubmissionFenceAuthority{
 			ContentIdentity: identity,
- TrackerSite: "ALPHA|https://alpha.example/",
- CoordinatorID: "submission-fence-test",
- Fence: 1,
+			TrackerSite:     "ALPHA|https://alpha.example/",
+			CoordinatorID:   "submission-fence-test",
+			Fence:           1,
 		},
 	}
 }

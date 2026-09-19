@@ -264,6 +264,7 @@ func (r *SQLiteRepository) beginSubmissionFence(
 	record api.ReleaseWorkflowEffectRecord,
 ) (api.ReleaseWorkflowEffectRecord, bool, error) {
 	authority := *record.Submission
+	authority.TrackerSite = strings.TrimSpace(authority.TrackerSite)
 	var result api.ReleaseWorkflowEffectRecord
 	var idempotent bool
 	err := r.withWriteTx(ctx, "begin submission fence", func(tx *sql.Tx) error {
@@ -374,6 +375,7 @@ func (r *SQLiteRepository) completeSubmissionFence(
 	record api.ReleaseWorkflowEffectRecord,
 ) error {
 	authority := *record.Submission
+	authority.TrackerSite = strings.TrimSpace(authority.TrackerSite)
 	return r.withWriteTx(ctx, "complete submission fence", func(tx *sql.Tx) error {
 		if err := requireWorkflowInputMutation(ctx, tx, record.OwnerID, record.WorkflowID, true); err != nil {
 			return err
@@ -784,6 +786,7 @@ func loadSubmissionFence(
 	identity api.SubmissionContentIdentity,
 	trackerSite string,
 ) (api.SubmissionFenceRecord, error) {
+	trackerSite = strings.TrimSpace(trackerSite)
 	var record api.SubmissionFenceRecord
 	var workflow string
 	var operation string
@@ -797,7 +800,7 @@ func loadSubmissionFence(
 			status, started_at, updated_at, confirmed_at
 		FROM submission_fences
 		WHERE content_version = ? AND content_digest = ? AND tracker_site = ?
-	`, identity.Version, identity.Digest, strings.TrimSpace(trackerSite)).Scan(
+	`, identity.Version, identity.Digest, trackerSite).Scan(
 		&content, &record.TrackerSite, &record.OwnerID, &workflow, &operation, &record.EffectID,
 		&status, &startedAt, &updatedAt, &confirmedAt,
 	)

@@ -22,24 +22,24 @@ func TestReusableMediaRejectsExpiredCoordinatorWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	opening := api.ActiveInputRecord{
-State: api.ActiveInputOpening,
- Revision: 1,
- Fence: 1,
-		OwnerID: "owner",
- CoordinatorID: "current",
- LeaseExpiresAt: now.Add(time.Minute),
-		ReservationID: "open",
- RequestedPath: `C:\releases\Example.Release.2026.mkv`,
- IdempotencyKey: "open",
-}
+		State:          api.ActiveInputOpening,
+		Revision:       1,
+		Fence:          1,
+		OwnerID:        "owner",
+		CoordinatorID:  "current",
+		LeaseExpiresAt: now.Add(time.Minute),
+		ReservationID:  "open",
+		RequestedPath:  `C:\releases\Example.Release.2026.mkv`,
+		IdempotencyKey: "open",
+	}
 	if err := repo.CompareAndSwapActiveInput(t.Context(), empty, opening, now); err != nil {
 		t.Fatal(err)
 	}
 	binding := api.PreparedMediaBinding{
-SourcePath: opening.RequestedPath,
- PreparedMediaFingerprint: "prepared",
- PreparedGeneration: 1,
-}
+		SourcePath:               opening.RequestedPath,
+		PreparedMediaFingerprint: "prepared",
+		PreparedGeneration:       1,
+	}
 	stale := api.WithActiveInputAuthority(t.Context(), api.ActiveInputAuthority{CoordinatorID: "previous", Fence: 1})
 	if err := repo.ReplaceReusableMediaAssets(stale, binding, api.MediaCompatibilityKey(mediaReuseTestSHA256("source")), nil); !errors.Is(err, api.ErrActiveInputLeaseLost) {
 		t.Fatalf("stale replace = %v", err)
@@ -141,6 +141,60 @@ func TestReusableMediaAssetsRoundTripOnlyStrongClaims(t *testing.T) {
 	}
 }
 
+func TestReusableMediaRecapturePreservesOtherSourceTombstone(t *testing.T) {
+	t.Parallel()
+
+	repo := openMigratedTestRepo(t)
+	compatibilityKey := api.MediaCompatibilityKey(mediaReuseTestSHA256("verified source"))
+	bindingA := api.PreparedMediaBinding{
+		SourcePath:               "C:\\releases\\a.mkv",
+		PreparedMediaFingerprint: "prepared-a",
+		PreparedGeneration:       1,
+	}
+	bindingB := api.PreparedMediaBinding{
+		SourcePath:               "C:\\releases\\b.mkv",
+		PreparedMediaFingerprint: "prepared-b",
+		PreparedGeneration:       1,
+	}
+	assetA := api.ReusableMediaAsset{
+		Binding:            bindingA,
+		CompatibilityKey:   compatibilityKey,
+		CaptureFingerprint: api.WorkflowFingerprint(mediaReuseTestSHA256("capture")),
+		ContentSHA256:      mediaReuseTestSHA256("image bytes"),
+		Kind:               api.MediaArtifactScreenshot,
+		Image: api.ScreenshotImage{
+			Path:    "C:\\vault\\a.png",
+			Purpose: api.ScreenshotPurposeFinal,
+		},
+		Selected: true,
+	}
+	assetB := assetA
+	assetB.Binding = bindingB
+	assetB.Image.Path = "C:\\vault\\b.png"
+	if err := repo.ReplaceReusableMediaAssets(t.Context(), bindingA, compatibilityKey, []api.ReusableMediaAsset{assetA}); err != nil {
+		t.Fatalf("store source A: %v", err)
+	}
+	if err := repo.ReplaceReusableMediaAssets(t.Context(), bindingB, compatibilityKey, []api.ReusableMediaAsset{assetB}); err != nil {
+		t.Fatalf("store source B: %v", err)
+	}
+	if err := repo.DeleteReusableMediaAssets(t.Context(), bindingA, []string{assetA.Image.Path}); err != nil {
+		t.Fatalf("delete source A: %v", err)
+	}
+	if err := repo.DeleteReusableMediaAssets(t.Context(), bindingB, []string{assetB.Image.Path}); err != nil {
+		t.Fatalf("delete source B: %v", err)
+	}
+	if err := repo.ReplaceReusableMediaAssets(t.Context(), bindingA, compatibilityKey, []api.ReusableMediaAsset{assetA}); err != nil {
+		t.Fatalf("recapture source A: %v", err)
+	}
+	if count := reusableTombstoneSourceCount(t, repo, bindingB.SourcePath, string(compatibilityKey), string(assetA.CaptureFingerprint), assetA.ContentSHA256); count != 1 {
+		t.Fatalf("source B tombstones after source A recapture = %d", count)
+	}
+	assets, err := repo.LoadReusableMediaAssets(t.Context(), compatibilityKey)
+	if err != nil || len(assets) != 0 {
+		t.Fatalf("source B suppression after source A recapture = %#v, %v", assets, err)
+	}
+}
+
 func TestReusableMediaCommitMarksExactSnapshot(t *testing.T) {
 	t.Parallel()
 
@@ -151,10 +205,10 @@ func TestReusableMediaCommitMarksExactSnapshot(t *testing.T) {
 		PreparedGeneration:       3,
 	}
 	commit := api.ReusableMediaCommit{
-WorkflowID: "workflow",
- MediaID: "media",
- Revision: 8,
-}
+		WorkflowID: "workflow",
+		MediaID:    "media",
+		Revision:   8,
+	}
 	if err := repo.CommitReusableMedia(
 		t.Context(),
 		binding,
@@ -170,8 +224,8 @@ WorkflowID: "workflow",
 	}
 	other, err := repo.HasReusableMediaCommit(t.Context(), api.ReusableMediaCommit{
 		WorkflowID: commit.WorkflowID,
- MediaID: commit.MediaID,
- Revision: commit.Revision + 1,
+		MediaID:    commit.MediaID,
+		Revision:   commit.Revision + 1,
 	})
 	if err != nil || other {
 		t.Fatalf("find different reusable media commit = %v, %v", other, err)

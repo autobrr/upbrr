@@ -112,7 +112,7 @@ func invalidateTrackerLanes(state *State, trackerIDs []api.TrackerID) {
 		invalidateTrackerAndDownstream(&state.Workflow)
 		return
 	}
-	projections.Projections = slices.DeleteFunc(projections.Projections, func(projection api.TrackerReleaseProjection) bool {
+	projections.Projections = slices.DeleteFunc(slices.Clone(projections.Projections), func(projection api.TrackerReleaseProjection) bool {
 		return slices.Contains(invalid, normalizeConfigImpactTrackerID(projection.TrackerID))
 	})
 	if len(projections.Projections) == 0 {
@@ -134,7 +134,7 @@ func invalidateTrackerLanes(state *State, trackerIDs []api.TrackerID) {
 	if state.Workflow.TrackerPreflight != nil {
 		ref := *state.Workflow.TrackerPreflight
 		if preflight, ok := state.Preflights[ref.ID]; ok && preflight.Revision == ref.Revision {
-			preflight.Results = slices.DeleteFunc(preflight.Results, func(result api.TrackerPreflightResult) bool {
+			preflight.Results = slices.DeleteFunc(slices.Clone(preflight.Results), func(result api.TrackerPreflightResult) bool {
 				return slices.Contains(invalid, normalizeConfigImpactTrackerID(result.TrackerID))
 			})
 			if len(preflight.Results) == 0 {
@@ -156,7 +156,7 @@ func invalidateTrackerLanes(state *State, trackerIDs []api.TrackerID) {
 	if state.Workflow.Dupes != nil {
 		ref := *state.Workflow.Dupes
 		if dupes, ok := state.Dupes[ref.ID]; ok && dupes.Revision == ref.Revision {
-			dupes.Results = slices.DeleteFunc(dupes.Results, func(result api.TrackerDupeAssessment) bool {
+			dupes.Results = slices.DeleteFunc(slices.Clone(dupes.Results), func(result api.TrackerDupeAssessment) bool {
 				return slices.Contains(invalid, normalizeConfigImpactTrackerID(result.TrackerID))
 			})
 			if len(dupes.Results) == 0 {
@@ -207,13 +207,13 @@ func configImpactSnapshotID(kind string, previous any, revision api.WorkflowRevi
 }
 
 func filterConfigImpactActions(actions []api.RequiredAction, invalid []api.TrackerID) []api.RequiredAction {
-	return slices.DeleteFunc(actions, func(action api.RequiredAction) bool {
+	return slices.DeleteFunc(slices.Clone(actions), func(action api.RequiredAction) bool {
 		return action.TrackerID != "" && slices.Contains(invalid, normalizeConfigImpactTrackerID(action.TrackerID))
 	})
 }
 
 func filterConfigImpactFailures(failures []api.WorkflowFailure, invalid []api.TrackerID) []api.WorkflowFailure {
-	return slices.DeleteFunc(failures, func(failure api.WorkflowFailure) bool {
+	return slices.DeleteFunc(slices.Clone(failures), func(failure api.WorkflowFailure) bool {
 		return failure.TrackerID != "" && slices.Contains(invalid, normalizeConfigImpactTrackerID(failure.TrackerID))
 	})
 }

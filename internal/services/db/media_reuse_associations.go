@@ -200,7 +200,8 @@ func (r *SQLiteRepository) replaceReusableMediaAssets(
 			if _, err := tx.ExecContext(ctx, `
 				DELETE FROM media_reusable_tombstones
 				WHERE compatibility_key = ? AND capture_fingerprint = ? AND content_sha256 = ?
-			`, compatibilityKey, asset.CaptureFingerprint, strings.ToLower(asset.ContentSHA256)); err != nil {
+					AND source_path IN (?, '')
+			`, compatibilityKey, asset.CaptureFingerprint, strings.ToLower(asset.ContentSHA256), bound.SourcePath); err != nil {
 				return fmt.Errorf("db reusable media: clear restored tombstone: %w", err)
 			}
 		}

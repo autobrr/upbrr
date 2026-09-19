@@ -116,6 +116,42 @@ func TestCLISourceVerificationProgressIsBoundedAndPathFree(t *testing.T) {
 	}
 }
 
+func TestCLISourceVerificationProgressResetsAfterTerminalUpdateWithProgress(t *testing.T) {
+	logger := &cliProgressTestLogger{}
+	ctx := withCLISourceVerificationProgressLogger(t.Context(), logger)
+
+	for _, update := range []api.PreparationProgressUpdate{
+		{
+			Phase:          api.PreparationPhaseSourceInspection,
+			Status:         api.PreparationProgressRunning,
+			CompletedBytes: 100,
+			TotalBytes:     100,
+		},
+		{
+			Phase:          api.PreparationPhaseSourceInspection,
+			Status:         api.PreparationProgressCompleted,
+			CompletedBytes: 100,
+			TotalBytes:     100,
+		},
+		{
+			Phase:          api.PreparationPhaseSourceInspection,
+			Status:         api.PreparationProgressRunning,
+			CompletedBytes: 0,
+			TotalBytes:     100,
+		},
+	} {
+		api.EmitPreparationProgress(ctx, update)
+	}
+
+	entries := logger.snapshot()
+	if len(entries) != 3 ||
+		!strings.Contains(entries[0], "state=running progress=100") ||
+		!strings.Contains(entries[1], "state=completed progress=100") ||
+		!strings.Contains(entries[2], "state=running progress=0") {
+		t.Fatalf("source verification entries = %#v", entries)
+	}
+}
+
 func TestCLIUploadProgressFailureUsesWarning(t *testing.T) {
 	logger := &cliProgressTestLogger{}
 

@@ -1464,18 +1464,16 @@ func (s e2eTrackerService) Upload(ctx context.Context, meta api.UploadSubject) (
 		if err != nil {
 			return api.UploadSummary{}, fmt.Errorf("e2e tracker: begin submission: %w", err)
 		}
-		if receipt.AlreadySucceeded {
-			summary.Uploaded++
-			continue
-		}
-		if err := postE2ETrackerUpload(ctx, s.endpoint, name, meta); err != nil {
-			if s.repo != nil {
-				_ = s.repo.UpdateLatestUploadRecordStatus(ctx, meta.SourcePath, name, "failed")
+		if !receipt.AlreadySucceeded {
+			if err := postE2ETrackerUpload(ctx, s.endpoint, name, meta); err != nil {
+				if s.repo != nil {
+					_ = s.repo.UpdateLatestUploadRecordStatus(ctx, meta.SourcePath, name, "failed")
+				}
+				return api.UploadSummary{}, err
 			}
-			return api.UploadSummary{}, err
-		}
-		if err := api.CompleteWorkflowExternalEffect(ctx, receipt, true); err != nil {
-			return api.UploadSummary{}, fmt.Errorf("e2e tracker: complete submission: %w", err)
+			if err := api.CompleteWorkflowExternalEffect(ctx, receipt, true); err != nil {
+				return api.UploadSummary{}, fmt.Errorf("e2e tracker: complete submission: %w", err)
+			}
 		}
 		artifactPath := ""
 		registeredPath, resolveErr := trackers.ResolveTrackerTorrentArtifactPath(meta, s.dbPath, name)

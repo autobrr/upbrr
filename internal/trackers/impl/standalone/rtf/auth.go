@@ -31,7 +31,7 @@ const (
 // token in encrypted session storage. Callers must complete no-upload
 // eligibility gates before invoking it.
 func resolveAPIKey(ctx context.Context, req trackers.PreparationInput, baseURL string) (string, error) {
-	return resolveRTFAPIKey(ctx, req.TrackerConfig, req.Runtime.DBPath, baseURL, req.Logger)
+	return resolveRTFAPIKey(ctx, req.TrackerConfig, req.Runtime.DBPath, baseURL, req.Logger, false)
 }
 
 // ResolveSessionForTrackerAuthLogin validates RTF API auth or refreshes its
@@ -47,11 +47,18 @@ func resolveSessionForTrackerAuthLoginAt(
 	_ api.TrackerAuthLoginRequest,
 	baseURL string,
 ) error {
-	_, err := resolveRTFAPIKey(ctx, cfg, dbPath, baseURL, nil)
+	_, err := resolveRTFAPIKey(ctx, cfg, dbPath, baseURL, nil, true)
 	return err
 }
 
-func resolveRTFAPIKey(ctx context.Context, cfg config.TrackerConfig, dbPath string, baseURL string, logger api.Logger) (string, error) {
+func resolveRTFAPIKey(
+	ctx context.Context,
+	cfg config.TrackerConfig,
+	dbPath string,
+	baseURL string,
+	logger api.Logger,
+	requirePersistence bool,
+) (string, error) {
 	cached, cacheErr := loadCachedRTFAPIKey(ctx, dbPath, baseURL, cfg)
 	if cacheErr != nil && logger != nil {
 		logger.Warnf("trackers: RTF failed to load refreshed API session: %v", cacheErr)
@@ -89,8 +96,13 @@ func resolveRTFAPIKey(ctx context.Context, cfg config.TrackerConfig, dbPath stri
 	if err != nil {
 		return "", err
 	}
-	if err := persistRefreshedRTFAPIKey(ctx, dbPath, baseURL, cfg, refreshed); err != nil && logger != nil {
-		logger.Warnf("trackers: RTF failed to persist refreshed API session: %v", err)
+	if err := persistRefreshedRTFAPIKey(ctx, dbPath, baseURL, cfg, refreshed); err != nil {
+		if requirePersistence {
+			return "", err
+		}
+		if logger != nil {
+			logger.Warnf("trackers: RTF failed to persist refreshed API session: %v", err)
+		}
 	}
 	return refreshed, nil
 }

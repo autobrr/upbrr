@@ -1492,6 +1492,64 @@ func TestCLIInputOnlyDoesNotStartCompositeUpload(t *testing.T) {
 	}
 }
 
+func TestCLIInteractiveCorrectionTransfersActiveInputClaim(t *testing.T) {
+	opts, visited, _, err := parseCLIOptions([]string{"example.mkv"})
+	if err != nil {
+		t.Fatalf("parse options: %v", err)
+	}
+	initial := releaseworkflow.CommandResult{
+		Workflow: api.ReleaseWorkflow{ID: "workflow-owned", Revision: 1},
+		Release: &api.ReleaseSnapshot{Release: api.PreparedRelease{
+			Generation: 1,
+			Source:     api.SourceManifest{SourcePath: "example.mkv"},
+			Naming:     api.NamingFacts{Title: "Example"},
+		}},
+		FactInstructions: &api.ReleaseFactInstructionSnapshot{CorrectionRevision: 1},
+	}
+	corrected := initial
+	corrected.Workflow.Revision = 2
+	corrected.Selection = &api.TrackerSelection{}
+	coreSvc := &cliWorkflowCoreFake{
+		current:     initial,
+		activeInput: api.ActiveInputSnapshot{State: api.ActiveInputEmpty, Revision: 5},
+	}
+	coreSvc.continueFn = func(request api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) {
+		if request.Intent.CorrectionPatch != nil {
+			coreSvc.current = corrected
+			return corrected, nil
+		}
+		if coreSvc.activeInput.State == api.ActiveInputEmpty {
+			coreSvc.activeInput = api.ActiveInputSnapshot{
+				State:    api.ActiveInputActive,
+				Revision: 7,
+				Current:  &api.ReleaseWorkflowCurrent{Workflow: initial.Workflow},
+			}
+		}
+		return coreSvc.current, nil
+	}
+
+	var output strings.Builder
+	err = runCLIWorkflowInteractive(
+		t.Context(),
+		coreSvc,
+		[]string{"example.mkv"},
+		opts,
+		visited,
+		"example.mkv",
+		api.PlaylistInstruction{},
+		0,
+		config.Config{},
+		cliIO{in: strings.NewReader("n\n--reset-input metadata.title\ny\n"), out: &output},
+		api.NopLogger{},
+	)
+	if err != nil {
+		t.Fatalf("run corrected workflow: %v", err)
+	}
+	if len(coreSvc.releaseRequests) != 1 || coreSvc.releaseRequests[0].ExpectedRevision != 7 {
+		t.Fatalf("active input release requests = %#v", coreSvc.releaseRequests)
+	}
+}
+
 func TestCLIInputCorrectionUsesCurrentRevision(t *testing.T) {
 	opts, visited, _, err := parseCLIOptions([]string{"--reset-input", "metadata.title", "example.mkv"})
 	if err != nil {

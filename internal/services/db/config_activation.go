@@ -82,7 +82,12 @@ func (r *SQLiteRepository) LoadConfigActivation(ctx context.Context) (api.Config
 	if r == nil || r.db == nil {
 		return api.ConfigActivation{}, errors.New("db: repository not initialized")
 	}
-	return loadConfigActivation(ctx, r.db)
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return api.ConfigActivation{}, fmt.Errorf("db load config activation begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	return loadConfigActivation(ctx, tx)
 }
 
 // InitializeConfigActivationFingerprint records the fingerprint for a legacy
@@ -354,7 +359,12 @@ func (r *SQLiteRepository) LoadPendingConfigActivationCandidate(ctx context.Cont
 	if r == nil || r.db == nil {
 		return nil, api.ConfigActivation{}, errors.New("db: repository not initialized")
 	}
-	activation, err := loadConfigActivation(ctx, r.db)
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, api.ConfigActivation{}, fmt.Errorf("db load pending config activation begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	activation, err := loadConfigActivation(ctx, tx)
 	if err != nil {
 		return nil, api.ConfigActivation{}, err
 	}
@@ -362,7 +372,7 @@ func (r *SQLiteRepository) LoadPendingConfigActivationCandidate(ctx context.Cont
 		return nil, activation, sql.ErrNoRows
 	}
 	var candidate []byte
-	if err := r.db.QueryRowContext(ctx, `SELECT candidate_json FROM config_activation_pending WHERE singleton = 1`).Scan(&candidate); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT candidate_json FROM config_activation_pending WHERE singleton = 1`).Scan(&candidate); err != nil {
 		return nil, api.ConfigActivation{}, fmt.Errorf("db load pending config activation candidate: %w", err)
 	}
 	return slices.Clone(candidate), activation, nil

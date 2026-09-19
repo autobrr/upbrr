@@ -278,23 +278,23 @@ func TestReleaseWorkflowDurabilityRejectsStaleActiveInputToken(t *testing.T) {
 		t.Fatalf("take over active input: %v", err)
 	}
 	intent := api.ReleaseWorkflowIntentRecord{
-		OwnerID: workflow.OwnerID,
- WorkflowID: workflow.WorkflowID,
- IdempotencyKey: "stale-intent",
+		OwnerID:            workflow.OwnerID,
+		WorkflowID:         workflow.WorkflowID,
+		IdempotencyKey:     "stale-intent",
 		RequestFingerprint: "stale-intent-fingerprint",
- Goal: api.WorkflowGoalUploaded,
-		IntentPayload: []byte(`{"goal":"uploaded"}`),
- AcceptedAt: now,
+		Goal:               api.WorkflowGoalUploaded,
+		IntentPayload:      []byte(`{"goal":"uploaded"}`),
+		AcceptedAt:         now,
 	}
 	if _, _, err := repo.AcceptReleaseWorkflowIntent(stale, intent); !errors.Is(err, api.ErrActiveInputLeaseLost) {
 		t.Fatalf("stale intent = %v", err)
 	}
 	if err := repo.SaveReleaseWorkflowContinuation(stale, api.ReleaseWorkflowContinuationRecord{
-		OwnerID: workflow.OwnerID,
- WorkflowID: workflow.WorkflowID,
- Revision: 2,
- Payload: []byte(`{"revision":2}`),
- UpdatedAt: now,
+		OwnerID:    workflow.OwnerID,
+		WorkflowID: workflow.WorkflowID,
+		Revision:   2,
+		Payload:    []byte(`{"revision":2}`),
+		UpdatedAt:  now,
 	}); !errors.Is(err, api.ErrActiveInputLeaseLost) {
 		t.Fatalf("stale continuation = %v", err)
 	}

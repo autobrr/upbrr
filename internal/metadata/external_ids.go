@@ -462,8 +462,8 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	}
 
 	tmdbLogoFetchAttempted := false
-	tmdbMetadataFetchAttempted := false
-	imdbMetadataFetchAttempted := false
+	tmdbMetadataFetchedID := 0
+	imdbMetadataFetchedID := 0
 	tmdbAnchorVerificationAttempted := false
 	tmdbMetadataRejected := false
 	tvdbMetadataRejected := false
@@ -481,7 +481,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		if tmdbClient == nil || ids.TMDBID == 0 {
 			return false
 		}
-		if refreshProviders && tmdbMetadataFetchAttempted {
+		if refreshProviders && tmdbMetadataFetchedID == ids.TMDBID {
 			return false
 		}
 		if overrideTMDB {
@@ -496,7 +496,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		return s.cfg.Description.AddLogo && strings.TrimSpace(metadata.TMDB.Logo) == "" && !tmdbLogoFetchAttempted
 	}
 	shouldFetchIMDBMetadata := func() bool {
-		if imdbClient == nil || ids.IMDBID == 0 || refreshProviders && imdbMetadataFetchAttempted {
+		if imdbClient == nil || ids.IMDBID == 0 || refreshProviders && imdbMetadataFetchedID == ids.IMDBID {
 			return false
 		}
 		if refreshProviders {
@@ -557,7 +557,10 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		allowProviderNameFallback = allowProviderNameFallback && !hasExplicitProviderAnchor
 		fetchTMDB := shouldFetchTMDBMetadata()
 		if fetchTMDB {
-			tmdbMetadataFetchAttempted = true
+			if tmdbMetadataFetchedID != ids.TMDBID {
+				tmdbErr = nil
+			}
+			tmdbMetadataFetchedID = ids.TMDBID
 		}
 		if fetchTMDB && overrideTMDB {
 			tmdbAnchorVerificationAttempted = true
@@ -571,7 +574,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		}
 		fetchIMDB := shouldFetchIMDBMetadata()
 		if fetchIMDB {
-			imdbMetadataFetchAttempted = true
+			imdbMetadataFetchedID = ids.IMDBID
 		}
 		fetchTVDB := shouldFetchTVDBMetadata()
 		refreshTVDBDisambiguation := shouldRefreshTVDBDisambiguation()

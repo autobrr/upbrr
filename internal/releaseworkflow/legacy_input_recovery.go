@@ -48,7 +48,7 @@ func (m *Module) RecoverLegacyInput(ctx context.Context, ownerID string, workflo
 	if err := m.publishLegacyRecoveryActions(recoveryCtx, ownerID, workflowID, effects); err != nil {
 		return api.ActiveInputRecord{}, err
 	}
-	if err := m.finishLegacyInputRecovery(recoveryCtx, ownerID, workflowID); err != nil {
+	if err := m.finishLegacyInputRecoveryLocked(recoveryCtx, ownerID, workflowID); err != nil {
 		return api.ActiveInputRecord{}, err
 	}
 	result, err := m.activeInputs.LoadActiveInput(ctx)
@@ -233,6 +233,12 @@ func (m *Module) legacyRecoveryMutationContext(
 }
 
 func (m *Module) finishLegacyInputRecovery(ctx context.Context, ownerID string, workflowID api.WorkflowID) error {
+	m.activeMu.Lock()
+	defer m.activeMu.Unlock()
+	return m.finishLegacyInputRecoveryLocked(ctx, ownerID, workflowID)
+}
+
+func (m *Module) finishLegacyInputRecoveryLocked(ctx context.Context, ownerID string, workflowID api.WorkflowID) error {
 	effects, err := m.durability.RecoverLegacyEffects(ctx, ownerID, workflowID, m.clock.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("release workflow inspect legacy recovery effects: %w", err)

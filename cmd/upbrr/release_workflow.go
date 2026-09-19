@@ -575,10 +575,14 @@ func runCLIWorkflowInteractive(
 			return err
 		}
 		request.PlaylistInstruction = cloneCLIPlaylistInstruction(playlist)
-		session, err = newCLIWorkflowSession(ctx, coreSvc, request, api.PreparationIntentPreview, reader, cfg, streams, logger)
+		replacement, err := newCLIWorkflowSession(ctx, coreSvc, request, api.PreparationIntentPreview, reader, cfg, streams, logger)
 		if err != nil {
 			return err
 		}
+		if session != nil && replacement.inputClaim.workflowID == "" {
+			replacement.inputClaim = session.inputClaim
+		}
+		session = replacement
 		if err := applyCLIInputCorrections(ctx, session, currentOpts, currentVisited, inputTracks); err != nil {
 			return err
 		}

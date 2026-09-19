@@ -387,6 +387,13 @@ func TestInputRecordPreservesIdentityAcrossVerification(t *testing.T) {
 	if err != nil || loaded.ID != "first" || loaded.SourceVersion != "changed" {
 		t.Fatalf("load identity = %#v, %v", loaded, err)
 	}
+	loaded, err = repo.LoadInputRecordByID(t.Context(), updated.ID)
+	if err != nil || loaded.ID != updated.ID || loaded.CanonicalPath != record.CanonicalPath {
+		t.Fatalf("load by ID = %#v, %v", loaded, err)
+	}
+	if _, err := repo.LoadInputRecordByID(t.Context(), "missing"); !errors.Is(err, api.ErrInputRecordNotFound) {
+		t.Fatalf("load missing ID = %v", err)
+	}
 }
 
 func TestActiveInputRejectsLateWorkflowMutation(t *testing.T) {

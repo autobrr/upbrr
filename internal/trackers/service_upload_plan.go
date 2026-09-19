@@ -958,6 +958,9 @@ func CanonicalSubmissionTrackerSite(tracker, baseURL string) (string, error) {
 	}
 	endpoint.Scheme = strings.ToLower(endpoint.Scheme)
 	endpoint.Host = strings.ToLower(endpoint.Host)
+	if endpoint.Scheme == "https" && endpoint.Port() == "443" || endpoint.Scheme == "http" && endpoint.Port() == "80" {
+		endpoint.Host = strings.TrimSuffix(endpoint.Host, ":"+endpoint.Port())
+	}
 	endpoint.RawPath = ""
 	endpoint.Path = strings.TrimRight(endpoint.Path, "/")
 	if endpoint.Path == "" {

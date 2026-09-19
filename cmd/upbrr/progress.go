@@ -86,6 +86,9 @@ func withCLISourceVerificationProgressLogger(ctx context.Context, logger api.Log
 			return
 		}
 		state.lastPercent = percent
+		if final {
+			state.lastPercent = -cliSourceVerificationProgressStep
+		}
 		format := "source verification: state=%s progress=%d completed=%d total=%d"
 		if update.Status == api.PreparationProgressFailed {
 			logger.Warnf(format, update.Status, percent, completed, total)

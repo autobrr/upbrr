@@ -92,3 +92,86 @@ func TestRecoverLegacyInputExposesOnlyReconciliationAndReopensAfterClose(t *test
 		t.Fatalf("legacy slot after reconciliation = %#v", closed)
 	}
 }
+
+func TestFinishLegacyInputRecoverySerializesHeartbeatCancellation(t *testing.T) {
+	ctx := t.Context()
+	clock := &mutableClock{now: time.Now().UTC()}
+	repo := openActiveInputRecoveryRepository(ctx, t)
+	persistent, err := NewPersistentRepository(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	module := newActiveInputRecoveryModule(t, persistent, repo, &hashingActiveInputVerifier{}, clock, "legacy-recovery")
+	created, err := module.Execute(ctx, testOwnerID, CreateWorkflowCommand{IdempotencyKey: "legacy-workflow"})
+	if err != nil {
+		t.Fatalf("create legacy workflow: %v", err)
+	}
+	empty, err := repo.LoadActiveInput(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := api.ActiveInputRecord{
+		State:          api.ActiveInputRecovering,
+		Revision:       empty.Revision + 1,
+		Fence:          empty.Fence + 1,
+		OwnerID:        testOwnerID,
+		CoordinatorID:  module.processEpoch,
+		WorkflowID:     created.Workflow.ID,
+		LeaseExpiresAt: clock.Now().Add(workflowWorkLeaseTTL),
+	}
+	effect := api.ReleaseWorkflowEffectRecord{
+		OwnerID:             testOwnerID,
+		WorkflowID:          created.Workflow.ID,
+		OperationID:         "legacy-operation",
+		EffectID:            "legacy-effect",
+		Kind:                string(api.WorkflowExternalEffectTrackerSubmission),
+		ScopeID:             "PTP",
+		SemanticFingerprint: "legacy-submission",
+		StartedAt:           clock.Now(),
+		UpdatedAt:           clock.Now(),
+	}
+	if _, _, err := persistent.BeginEffect(ctx, effect); err != nil {
+		t.Fatalf("begin legacy effect: %v", err)
+	}
+	if err := repo.CompareAndSwapActiveInput(ctx, empty, legacy, clock.Now()); err != nil {
+		t.Fatal(err)
+	}
+	recoveryCtx := api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: legacy.CoordinatorID, Fence: legacy.Fence})
+	completedAt := clock.Now()
+	effect.UpdatedAt, effect.CompletedAt = completedAt, &completedAt
+	if err := persistent.CompleteEffect(recoveryCtx, api.WorkflowEffectStatusSucceeded, effect); err != nil {
+		t.Fatalf("complete legacy effect: %v", err)
+	}
+
+	ready := make(chan struct{}, 2)
+	start := make(chan struct{})
+	heartbeatDone := make(chan struct{})
+	finishResult := make(chan error, 1)
+	go func() {
+		ready <- struct{}{}
+		<-start
+		module.activeMu.Lock()
+		module.startActiveInputHeartbeat(recoveryCtx, legacy.Fence)
+		module.activeMu.Unlock()
+		close(heartbeatDone)
+	}()
+	go func() {
+		ready <- struct{}{}
+		<-start
+		finishResult <- module.finishLegacyInputRecovery(recoveryCtx, testOwnerID, legacy.WorkflowID)
+	}()
+	<-ready
+	<-ready
+	close(start)
+	<-heartbeatDone
+	if err := <-finishResult; err != nil {
+		t.Fatalf("finish legacy recovery: %v", err)
+	}
+	closed, err := repo.LoadActiveInput(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closed.State != api.ActiveInputEmpty {
+		t.Fatalf("legacy recovery slot = %#v", closed)
+	}
+}
