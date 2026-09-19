@@ -42,6 +42,10 @@ func TestNewTestCoreWiresHistoryModule(t *testing.T) {
 
 type stubRepo struct{}
 
+func (stubRepo) ListStoredHistoryArtifactPaths(context.Context) ([]string, error) {
+	return nil, nil
+}
+
 func (stubRepo) ListHistoryEntries(context.Context) ([]api.HistoryEntry, error) {
 	return nil, internalerrors.ErrNotImplemented
 }
@@ -52,6 +56,14 @@ func (stubRepo) LoadHistoryRecord(context.Context, string) (api.HistoryRecord, e
 
 func (stubRepo) LoadHistoryCleanupSnapshot(context.Context, string) (api.HistoryCleanupSnapshot, error) {
 	return api.HistoryCleanupSnapshot{}, internalerrors.ErrNotImplemented
+}
+
+func (stubRepo) WithHistoryDeletion(ctx context.Context, callback func(context.Context) error) error {
+	return callback(ctx)
+}
+
+func (stubRepo) ListHistoryProtectedSourcePaths(context.Context) ([]string, error) {
+	return nil, nil
 }
 
 func (stubRepo) ListStoredReleasePaths(context.Context) ([]string, error) {

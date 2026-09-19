@@ -98,6 +98,12 @@ func canonicalSourceKey(value string) string {
 	return value
 }
 
+// CanonicalSourceKey returns the normalized source key used for prepared
+// release ownership and source-scoped persistence.
+func CanonicalSourceKey(value string) string {
+	return canonicalSourceKey(value)
+}
+
 func normalizePlaylistSelection(values []string) []string {
 	result := make([]string, 0, len(values))
 	seen := make(map[string]struct{}, len(values))

@@ -334,7 +334,8 @@ func TestHydrateContinuationPreparedReleaseRejectsChangedOrMismatchedGeneration(
 			ConfirmBDMVRescan: true,
 			ForceRecheck:      &forceRecheck,
 		},
-		Force: true,
+		Force:             true,
+		ExternalFreshness: api.ExternalFreshnessRefresh,
 	}
 	requirements := api.MetadataRequirementSet{
 		Version: "hydrate-requirements-v1",
@@ -384,11 +385,12 @@ func TestHydrateContinuationPreparedReleaseRejectsChangedOrMismatchedGeneration(
 				preparedInput = candidate
 				return test.prepare(current.Release.Release)
 			}}}
-			err := module.hydrateContinuationPreparedRelease(t.Context(), current, input, requirements)
+			err := module.hydrateContinuationPreparedRelease(t.Context(), testOwnerID, current, input, requirements)
 			if !errors.Is(err, test.wantError) {
 				t.Fatalf("hydrate error = %v, want %v", err, test.wantError)
 			}
 			if preparedInput.SourcePath != current.Release.Release.Source.SourcePath || preparedInput.Force ||
+				preparedInput.ExternalFreshness != api.ExternalFreshnessReuse ||
 				!preparedInput.RequirePrepared || preparedInput.Controls.ConfirmBDMVRescan || preparedInput.Controls.ForceRecheck != nil {
 				t.Fatalf("hydration input = %#v", preparedInput)
 			}
@@ -425,6 +427,9 @@ func TestContinueCreationPersistsTrustedTrackerDecisionMode(t *testing.T) {
 	}
 	if publicState.TrackerDecisionMode != TrackerDecisionModePostDupeGate {
 		t.Fatalf("public continuation tracker mode = %q", publicState.TrackerDecisionMode)
+	}
+	if publicState.SourcePath != request.Intent.Preparation.SourcePath {
+		t.Fatalf("public continuation source path = %q, want %q", publicState.SourcePath, request.Intent.Preparation.SourcePath)
 	}
 
 	appModule, appRepository := newTestModule(t, testPreparer())
@@ -1432,7 +1437,7 @@ func TestContinuationPlannerForceReprepareIsSatisfiedByRetainedInputLineage(t *t
 		},
 		Force: true,
 	}
-	fingerprint, err := api.CanonicalWorkflowFingerprint(input)
+	fingerprint, err := preparationLineageFingerprint(input)
 	if err != nil {
 		t.Fatalf("fingerprint preparation input: %v", err)
 	}
@@ -1461,6 +1466,58 @@ func TestContinuationPlannerForceReprepareIsSatisfiedByRetainedInputLineage(t *t
 	command, stage = planContinuationCommand(request, current, time.Now())
 	if _, ok := command.(ResetReleaseCommand); !ok || stage != "reprepare" {
 		t.Fatalf("stale preparation planned stage=%q command=%#v", stage, command)
+	}
+}
+
+func TestContinuationPreparationSatisfiedAfterFreshOpen(t *testing.T) {
+	t.Parallel()
+
+	forceRecheck := true
+	opened := api.PrepareInput{
+		SourcePath:        `C:\releases\Example.Release.2026.1080p-GRP`,
+		Intent:            api.PreparationIntentDryRun,
+		ExternalFreshness: api.ExternalFreshnessRefresh,
+		RequirePrepared:   false,
+		Instructions:      api.ReleaseFactInstructions{SourceLookup: "Example Release 2026"},
+		Controls: api.PreparationControls{
+			Interaction:       api.InteractionModeInteractive,
+			ConfirmBDMVRescan: true,
+			ForceRecheck:      &forceRecheck,
+		},
+	}
+	fingerprint, err := preparationLineageFingerprint(opened)
+	if err != nil {
+		t.Fatalf("fingerprint fresh preparation input: %v", err)
+	}
+	current := &api.ReleaseSnapshot{PreparationFingerprint: fingerprint}
+	continued := opened
+	continued.Intent = api.PreparationIntentUpload
+	continued.ExternalFreshness = api.ExternalFreshnessReuse
+	continued.RequirePrepared = true
+	continued.Controls.Interaction = api.InteractionModeUnattendedConfirm
+	continued.Controls.ConfirmBDMVRescan = false
+	continued.Controls.ForceRecheck = nil
+	continued.Instructions.TrackerIDs = map[string]string{}
+	if !continuationPreparationSatisfied(current, &continued) {
+		t.Fatal("fresh prepared generation was not retained for continuation")
+	}
+
+	changed := continued
+	changed.Force = true
+	if continuationPreparationSatisfied(current, &changed) {
+		t.Fatal("forced preparation was incorrectly satisfied by retained generation")
+	}
+
+	changed = continued
+	changed.Instructions.SourceLookup = "Changed Example Release 2026"
+	if continuationPreparationSatisfied(current, &changed) {
+		t.Fatal("changed fact instructions were incorrectly satisfied by retained generation")
+	}
+
+	changed = continued
+	changed.Instructions.TrackerIDs = map[string]string{"BTN": "123"}
+	if continuationPreparationSatisfied(current, &changed) {
+		t.Fatal("changed tracker source IDs were incorrectly satisfied by retained generation")
 	}
 }
 

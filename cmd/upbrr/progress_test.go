@@ -84,6 +84,38 @@ func TestCLIUploadProgressUsesStructuredLogger(t *testing.T) {
 	}
 }
 
+func TestCLISourceVerificationProgressIsBoundedAndPathFree(t *testing.T) {
+	logger := &cliProgressTestLogger{}
+	ctx := withCLISourceVerificationProgressLogger(context.Background(), logger)
+	for completed := int64(0); completed <= 100; completed++ {
+		api.EmitPreparationProgress(ctx, api.PreparationProgressUpdate{
+			Phase:          api.PreparationPhaseSourceInspection,
+			Status:         api.PreparationProgressRunning,
+			Message:        "Verifying C:\\private\\Release.mkv",
+			CompletedBytes: completed,
+			TotalBytes:     100,
+		})
+	}
+	api.EmitPreparationProgress(ctx, api.PreparationProgressUpdate{
+		Phase:   api.PreparationPhaseSourceInspection,
+		Status:  api.PreparationProgressCompleted,
+		Message: "Stage complete.",
+	})
+	entries := logger.snapshot()
+	if len(entries) < 3 || len(entries) > 23 {
+		t.Fatalf("source verification entries = %d, want bounded progress", len(entries))
+	}
+	if !strings.Contains(entries[0], "state=running progress=0 completed=0 total=100") ||
+		!strings.Contains(entries[len(entries)-1], "state=completed") {
+		t.Fatalf("source verification entries = %#v", entries)
+	}
+	for _, entry := range entries {
+		if strings.Contains(entry, "private") || strings.Contains(entry, "Release.mkv") {
+			t.Fatalf("source path leaked to CLI output: %q", entry)
+		}
+	}
+}
+
 func TestCLIUploadProgressFailureUsesWarning(t *testing.T) {
 	logger := &cliProgressTestLogger{}
 

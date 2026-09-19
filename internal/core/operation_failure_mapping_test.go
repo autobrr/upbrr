@@ -5,6 +5,7 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
@@ -44,6 +45,14 @@ func TestClassifyOperationErrorCanonicalMappings(t *testing.T) {
 		message   string
 		recovery  api.OperationRecovery
 	}{
+		{
+			name:      "unresolved earlier effect",
+			operation: api.OperationKindPreparation,
+			cause:     fmt.Errorf("reserve input: %w", api.ErrReleaseWorkflowEffectOutcomeUnknown),
+			wantCode:  api.OperationFailureUnknownOutcome,
+			message:   "An earlier external operation has an unknown outcome. Recover the interrupted input and confirm its outcome before continuing.",
+			recovery:  api.OperationRecoveryConfirm,
+		},
 		{
 			name:      "missing source",
 			operation: api.OperationKindPreparation,

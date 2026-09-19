@@ -124,7 +124,7 @@ func TestCompositeUploadHydrationRestoresDurableDemandForPreparedRelease(t *test
 		!reflect.DeepEqual(state.PreparationDemand, requirements) || !reflect.DeepEqual(state.Composite.Intent.Preparation.MetadataRequirements, api.MetadataRequirementSet{}) {
 		t.Fatalf("restarted composite preparation state = %#v", state)
 	}
-	if err := moduleB.hydrateCompositePreparedRelease(t.Context(), current, state.Composite, state.PreparationDemand); err != nil {
+	if err := moduleB.hydrateCompositePreparedRelease(t.Context(), testOwnerID, current, state.Composite, state.PreparationDemand); err != nil {
 		t.Fatalf("hydrate compatible prepared release: %v", err)
 	}
 
@@ -135,7 +135,7 @@ func TestCompositeUploadHydrationRestoresDurableDemandForPreparedRelease(t *test
 	if _, err := preparerB.Prepare(t.Context(), forced); err != nil {
 		t.Fatalf("replace prepared generation: %v", err)
 	}
-	if err := moduleB.hydrateCompositePreparedRelease(t.Context(), current, state.Composite, state.PreparationDemand); !errors.Is(err, ErrInvalidTransition) {
+	if err := moduleB.hydrateCompositePreparedRelease(t.Context(), testOwnerID, current, state.Composite, state.PreparationDemand); !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("hydrate changed generation error = %v", err)
 	}
 }

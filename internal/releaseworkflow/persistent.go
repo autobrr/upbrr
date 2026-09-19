@@ -259,6 +259,35 @@ func (r *PersistentRepository) MarkOperationEffectsUnknown(
 	)
 }
 
+// RecoverLegacyEffects fences pre-active-input attempts and returns the exact
+// owner-scoped effects that require manual reconciliation.
+func (r *PersistentRepository) RecoverLegacyEffects(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+	now time.Time,
+) ([]api.ReleaseWorkflowEffectRecord, error) {
+	if r.durability == nil {
+		return nil, errors.New("release workflow: durable effect repository is unavailable")
+	}
+	effects, err := r.durability.RecoverLegacyReleaseWorkflowEffects(ctx, ownerID, workflowID, now)
+	if err != nil {
+		return nil, mapPersistentRepositoryError(err)
+	}
+	return effects, nil
+}
+
+func (r *PersistentRepository) ListLegacyRecoveryWorkflowIDs(ctx context.Context, ownerID string) ([]api.WorkflowID, error) {
+	if r.durability == nil {
+		return nil, errors.New("release workflow: durable effect repository is unavailable")
+	}
+	workflowIDs, err := r.durability.ListLegacyReleaseWorkflowRecoveryWorkflowIDs(ctx, strings.TrimSpace(ownerID))
+	if err != nil {
+		return nil, mapPersistentRepositoryError(err)
+	}
+	return workflowIDs, nil
+}
+
 // ResolveEffectUnknown records manual verification that an uncertain effect did not complete.
 func (r *PersistentRepository) ResolveEffectUnknown(
 	ctx context.Context,
@@ -325,14 +354,20 @@ func workflowStateRecord(ownerID string, state State) (api.ReleaseWorkflowStateR
 	if err != nil {
 		return api.ReleaseWorkflowStateRecord{}, fmt.Errorf("persist workflow state: marshal: %w", err)
 	}
+	var reuse *api.ReusableDescriptionRecord
+	if pending := state.descriptionReuse; pending != nil {
+		cloned := pending.Clone()
+		reuse = &cloned
+	}
 	return api.ReleaseWorkflowStateRecord{
-		OwnerID:    strings.TrimSpace(ownerID),
-		WorkflowID: state.Workflow.ID,
-		Revision:   state.Workflow.Revision,
-		Status:     state.Workflow.Status,
-		Payload:    payload,
-		CreatedAt:  state.Workflow.CreatedAt,
-		UpdatedAt:  state.Workflow.UpdatedAt,
+		DescriptionReuse: reuse,
+		OwnerID:          strings.TrimSpace(ownerID),
+		WorkflowID:       state.Workflow.ID,
+		Revision:         state.Workflow.Revision,
+		Status:           state.Workflow.Status,
+		Payload:          payload,
+		CreatedAt:        state.Workflow.CreatedAt,
+		UpdatedAt:        state.Workflow.UpdatedAt,
 	}, nil
 }
 
