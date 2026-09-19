@@ -252,6 +252,59 @@ func TestReleaseWorkflowDurabilitySurvivesRestart(t *testing.T) {
 	}
 }
 
+func TestReleaseWorkflowDurabilityRejectsStaleActiveInputToken(t *testing.T) {
+	t.Parallel()
+
+	repo := openMigratedTestRepo(t)
+	ctx := t.Context()
+	now := time.Now().UTC()
+	workflow := workflowStateRecordForTest("stale-token", api.WorkflowStatusActive, now, `{"revision":1}`)
+	if _, _, err := repo.CreateReleaseWorkflowState(ctx, workflow); err != nil {
+		t.Fatal(err)
+	}
+	if err := activateSubmissionFenceTestInput(ctx, repo, workflow, now); err != nil {
+		t.Fatal(err)
+	}
+	stale := api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{CoordinatorID: "submission-fence-test", Fence: 1})
+	active, err := repo.LoadActiveInput(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	takeoverNow := active.LeaseExpiresAt.Add(time.Second)
+	takeover := active
+	takeover.State, takeover.Revision, takeover.Fence = api.ActiveInputRecovering, active.Revision+1, active.Fence+1
+	takeover.CoordinatorID, takeover.LeaseExpiresAt = "replacement", takeoverNow.Add(time.Hour)
+	if err := repo.CompareAndSwapActiveInput(ctx, active, takeover, takeoverNow); err != nil {
+		t.Fatalf("take over active input: %v", err)
+	}
+	intent := api.ReleaseWorkflowIntentRecord{
+		OwnerID: workflow.OwnerID,
+ WorkflowID: workflow.WorkflowID,
+ IdempotencyKey: "stale-intent",
+		RequestFingerprint: "stale-intent-fingerprint",
+ Goal: api.WorkflowGoalUploaded,
+		IntentPayload: []byte(`{"goal":"uploaded"}`),
+ AcceptedAt: now,
+	}
+	if _, _, err := repo.AcceptReleaseWorkflowIntent(stale, intent); !errors.Is(err, api.ErrActiveInputLeaseLost) {
+		t.Fatalf("stale intent = %v", err)
+	}
+	if err := repo.SaveReleaseWorkflowContinuation(stale, api.ReleaseWorkflowContinuationRecord{
+		OwnerID: workflow.OwnerID,
+ WorkflowID: workflow.WorkflowID,
+ Revision: 2,
+ Payload: []byte(`{"revision":2}`),
+ UpdatedAt: now,
+	}); !errors.Is(err, api.ErrActiveInputLeaseLost) {
+		t.Fatalf("stale continuation = %v", err)
+	}
+	if _, err := repo.AppendReleaseWorkflowEvents(stale, workflow.OwnerID, workflow.WorkflowID, []api.WorkflowEvent{
+		workflowEventForTest(workflow.WorkflowID, "stale-operation", 1, now),
+	}); !errors.Is(err, api.ErrActiveInputLeaseLost) {
+		t.Fatalf("stale events = %v", err)
+	}
+}
+
 func workflowEventForTest(
 	workflowID api.WorkflowID,
 	operationID api.WorkflowOperationID,

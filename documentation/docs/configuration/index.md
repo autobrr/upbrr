@@ -7,6 +7,10 @@ description: Where upbrr stores state, how setting groups map to behavior, and h
 
 The Web UI **Settings** page is the normal configuration surface. Runtime settings are persisted in SQLite; YAML and JSON are import/export formats rather than the primary state store.
 
+`serve --config <path>` can seed an empty database. Once that database has settings, the server uses its stored configuration; editing the startup file does not replace active settings. Apply later changes through Settings or configuration import. CLI workflow commands reject an effective configuration that differs from the database's active generation.
+
+Configuration imports take effect before reporting success. If work or an unresolved upload outcome prevents activation, the import is rejected without changing stored settings; finish or reconcile that work and retry. Settings saves can instead report a pending activation.
+
 ## State location
 
 Without `XDG_CONFIG_HOME`, upbrr uses:

@@ -38,6 +38,7 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 		selectedPlaylists = clonePreparedPlaylists(release.Source.SelectedPlaylists)
 	}
 	subject := api.UploadSubject{
+		SourceIdentity:              release.SourceIdentity,
 		EffectiveMetadata:           release.MetadataFacts(),
 		ManualLanguages:             release.Media.ManualLanguages(),
 		HardcodedSubs:               release.Media.HardcodedSubs,
@@ -133,6 +134,13 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubje
 	if err != nil {
 		return api.UploadSubject{}, fmt.Errorf("prepared release: clone upload subject: %w", err)
 	}
+	cloned.SourceIdentity = api.SourceContentIdentity{
+		Version:             subject.SourceIdentity.Version,
+		Digest:              subject.SourceIdentity.Digest,
+		ManifestFingerprint: subject.SourceIdentity.ManifestFingerprint,
+		Files:               append([]api.VerifiedSourceFile(nil), subject.SourceIdentity.Files...),
+	}
+	cloned.SourceManifest = release.Source
 	return cloned, nil
 }
 

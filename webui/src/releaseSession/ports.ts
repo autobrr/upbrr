@@ -2,14 +2,38 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type {
+  ActiveInputSnapshot,
   ContinueReleaseWorkflowRequest,
   FramePreview,
   MediaPlan,
+  OpenActiveInputRequest,
   Operation,
+  ReconcileActiveInputRequest,
+  RecoverLegacyActiveInputRequest,
+  ReleaseActiveInputRequest,
   ReleaseWorkflowCurrent,
   UploadResultRef,
   WorkflowResourceRef,
 } from "../api/generated/release-workflow";
+import type { SourceVerificationProgress } from "./types";
+
+export type ActiveInputPorts = Readonly<{
+  get(signal: AbortSignal): Promise<ActiveInputSnapshot>;
+  open(request: OpenActiveInputRequest, signal: AbortSignal): Promise<ActiveInputSnapshot>;
+  release(request: ReleaseActiveInputRequest, signal: AbortSignal): Promise<ActiveInputSnapshot>;
+  recover(
+    request: RecoverLegacyActiveInputRequest,
+    signal: AbortSignal,
+  ): Promise<ActiveInputSnapshot>;
+  reconcile(
+    request: ReconcileActiveInputRequest,
+    signal: AbortSignal,
+  ): Promise<ActiveInputSnapshot>;
+  subscribe(
+    callback: () => void,
+    onVerification: (update: SourceVerificationProgress) => void,
+  ): () => void;
+}>;
 
 export type ReleaseWorkflowPorts = Readonly<{
   continue(
@@ -125,6 +149,7 @@ export type DescriptionPorts = Readonly<{
 }>;
 
 export type ReleaseSessionPorts = Readonly<{
+  activeInput: ActiveInputPorts;
   workflow: ReleaseWorkflowPorts;
   descriptions: DescriptionPorts;
 }>;

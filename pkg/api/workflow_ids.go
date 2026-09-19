@@ -369,15 +369,16 @@ type WorkflowOperationItem struct {
 type WorkflowOperationResultKind string
 
 const (
-	WorkflowOperationResultRelease        WorkflowOperationResultKind = "release"
-	WorkflowOperationResultInputReadiness WorkflowOperationResultKind = "input_readiness"
-	WorkflowOperationResultProjections    WorkflowOperationResultKind = "tracker_projections"
-	WorkflowOperationResultPreflight      WorkflowOperationResultKind = "tracker_preflight"
-	WorkflowOperationResultDupes          WorkflowOperationResultKind = "dupes"
-	WorkflowOperationResultMedia          WorkflowOperationResultKind = "media"
-	WorkflowOperationResultDescriptions   WorkflowOperationResultKind = "descriptions"
-	WorkflowOperationResultDryRun         WorkflowOperationResultKind = "dry_run"
-	WorkflowOperationResultUpload         WorkflowOperationResultKind = "upload_result"
+	WorkflowOperationResultRelease         WorkflowOperationResultKind = "release"
+	WorkflowOperationResultInputReadiness  WorkflowOperationResultKind = "input_readiness"
+	WorkflowOperationResultProjections     WorkflowOperationResultKind = "tracker_projections"
+	WorkflowOperationResultPreflight       WorkflowOperationResultKind = "tracker_preflight"
+	WorkflowOperationResultDupes           WorkflowOperationResultKind = "dupes"
+	WorkflowOperationResultMedia           WorkflowOperationResultKind = "media"
+	WorkflowOperationResultDescriptions    WorkflowOperationResultKind = "descriptions"
+	WorkflowOperationResultDryRun          WorkflowOperationResultKind = "dry_run"
+	WorkflowOperationResultUpload          WorkflowOperationResultKind = "upload_result"
+	WorkflowOperationResultAlreadyUploaded WorkflowOperationResultKind = "already_uploaded"
 )
 
 // WorkflowOperationResult binds terminal success to one exact retained public

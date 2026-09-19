@@ -62,9 +62,10 @@ const ruleResultState = (failure: HistoryRuleFailure) => {
 
 type Props = {
   onReleaseDeleted?: (sourcePath: string) => void;
+  onOpenInput?: (sourcePath: string) => Promise<boolean>;
 };
 
-export default function HistoryPage({ onReleaseDeleted }: Props) {
+export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [selectedPath, setSelectedPath] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -72,6 +73,7 @@ export default function HistoryPage({ onReleaseDeleted }: Props) {
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [opening, setOpening] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -198,6 +200,19 @@ export default function HistoryPage({ onReleaseDeleted }: Props) {
     }
   };
 
+  const handleOpenInput = async () => {
+    if (!selectedPath || !onOpenInput) return;
+    setOpening(true);
+    setError("");
+    try {
+      await onOpenInput(selectedPath);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setOpening(false);
+    }
+  };
+
   return (
     <div className="content-stack">
       <header className="hero">
@@ -273,7 +288,15 @@ export default function HistoryPage({ onReleaseDeleted }: Props) {
 
           {overview ? (
             <div className="grid gap-3">
-              <div className="flex justify-end">
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  className="ghost"
+                  disabled={opening || deleting || detailLoading || !selectedPath || !onOpenInput}
+                  onClick={() => void handleOpenInput()}
+                >
+                  {opening ? "Opening..." : "Open input"}
+                </button>
                 <button
                   type="button"
                   className="ghost border-red-400/45 text-[var(--danger)]"

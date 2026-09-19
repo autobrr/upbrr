@@ -145,6 +145,7 @@ func TestLiveTestRuntimeGenerationPreservesDenialPolicy(t *testing.T) {
 		stored = *cfg
 		return configstore.SaveToRepository(ctx, cfg, repo, dbPath)
 	}
+	activator.deps.persistActivated = nil
 	cfg.MainSettings.DBPath = filepath.Join(base, "outside.db")
 	cfg.TorrentClients = map[string]config.TorrentClientConfig{"watch": {Type: "watch", WatchFolder: filepath.Join(base, "outside-watch")}}
 	for range 2 {
@@ -155,7 +156,6 @@ func TestLiveTestRuntimeGenerationPreservesDenialPolicy(t *testing.T) {
 		_, err = generation.Capabilities.ReleaseWorkflow.StartReleaseWorkflowUpload(t.Context(), "owner", api.CreateReleaseWorkflowUploadRequest{
 			Execution: api.ReleaseWorkflowUploadExecution{Mode: api.ReleaseWorkflowUploadModeUpload},
 		})
-		RetiredRuntime{Owner: generation.Owner, Logger: generation.Logger}.Close()
 		if !errors.Is(err, api.ErrLiveTestMutationDisabled) {
 			t.Fatalf("replacement runtime submission = %v", err)
 		}
@@ -165,6 +165,7 @@ func TestLiveTestRuntimeGenerationPreservesDenialPolicy(t *testing.T) {
 			t.Fatal("config activation escaped profile paths or reapplied environment overrides")
 		}
 	}
+	RetiredRuntime{Owner: installer.generations[0].Owner, Logger: installer.generations[0].Logger}.Close()
 	if got := policy.Snapshot().TrackerSubmission; got != (api.LiveTestEffectCounts{RequestsDenied: 2}) {
 		t.Fatalf("shared generation receipt = %#v", got)
 	}
@@ -181,7 +182,7 @@ func TestLiveTestRuntimeGenerationPreservesDenialPolicy(t *testing.T) {
 		mutate(&candidate.ImageHosting)
 		err := activator.Activate(t.Context(), candidate)
 		assertActivationStage(t, err, ActivationStageValidateStored)
-		if len(installer.generations) != 2 {
+		if len(installer.generations) != 1 {
 			t.Fatal("credential change reached runtime installation")
 		}
 	}
@@ -231,7 +232,7 @@ func TestLiveTestRuntimeGenerationPreservesDenialPolicy(t *testing.T) {
 			test.mutate(candidate)
 			err = activator.Activate(t.Context(), *candidate)
 			assertActivationStage(t, err, ActivationStageValidateStored)
-			if len(installer.generations) != 2 {
+			if len(installer.generations) != 1 {
 				t.Fatal("tracker image-host change reached runtime installation")
 			}
 		})
@@ -246,7 +247,7 @@ func TestLiveTestRuntimeGenerationPreservesDenialPolicy(t *testing.T) {
 	}
 	err = activator.Activate(t.Context(), *duplicate)
 	assertActivationStage(t, err, ActivationStageValidateStored)
-	if !strings.Contains(err.Error(), "duplicate case-insensitive names") || len(installer.generations) != 2 {
+	if !strings.Contains(err.Error(), "duplicate case-insensitive names") || len(installer.generations) != 1 {
 		t.Fatalf("ambiguous tracker activation = %v, generations = %d", err, len(installer.generations))
 	}
 	unrelated, err := cloneConfig(cfg)

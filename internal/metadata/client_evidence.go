@@ -54,10 +54,15 @@ func (s *Service) discoverClientEvidence(
 // applyClientEvidence merges a detached client snapshot into preparation state.
 // Explicit tracker IDs already present in state take precedence over discovered IDs.
 func applyClientEvidence(state *preparationstate.State, input api.PrepareInput, evidence clientdiscovery.Evidence) {
+	applyClientEvidenceSnapshot(state, clientEvidenceSnapshot(input, evidence))
+}
+
+func applyClientEvidenceSnapshot(state *preparationstate.State, snapshot preparationstate.ClientEvidenceSnapshot) {
 	if state == nil {
 		return
 	}
-	state.ClientEvidence = clientEvidenceSnapshot(input, evidence)
+	state.ClientEvidence = preparationstate.CloneClientEvidenceSnapshot(snapshot)
+	evidence := state.ClientEvidence.Result
 	if evidence.InfoHash != "" {
 		state.InfoHash = evidence.InfoHash
 	}

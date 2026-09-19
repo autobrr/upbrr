@@ -6,6 +6,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -1766,6 +1767,657 @@ func TestSQLitePurgeContentData(t *testing.T) {
 	}
 }
 
+func TestSQLitePurgeContentDataRemovesSourceAssociatedWorkflowState(t *testing.T) {
+	t.Parallel()
+
+	repo := openMigratedTestRepo(t)
+	ctx := t.Context()
+	now := time.Now().UTC().Truncate(time.Second)
+	targetPath := filepath.Join(t.TempDir(), "Example.Release.2026.mkv")
+	otherPath := filepath.Join(t.TempDir(), "Other.Release.2026.mkv")
+	target := workflowStateRecordForTest("history-target", api.WorkflowStatusCompleted, now, string(workflowSourcePathPayloadForTest(t, targetPath)))
+	other := workflowStateRecordForTest("history-other", api.WorkflowStatusCompleted, now, string(workflowHistoryPayloadForTest(t, otherPath)))
+	if _, _, err := repo.CreateReleaseWorkflowState(ctx, target); err != nil {
+		t.Fatalf("create target workflow: %v", err)
+	}
+	if _, _, err := repo.CreateReleaseWorkflowState(ctx, other); err != nil {
+		t.Fatalf("create other workflow: %v", err)
+	}
+	snapshot, err := repo.LoadHistoryCleanupSnapshot(ctx, targetPath)
+	if err != nil {
+		t.Fatalf("load target cleanup snapshot: %v", err)
+	}
+	if len(snapshot.WorkflowScopes) != 1 || snapshot.WorkflowScopes[0] != (api.WorkflowScope{OwnerID: target.OwnerID, WorkflowID: target.WorkflowID}) {
+		t.Fatalf("target cleanup scopes = %#v", snapshot.WorkflowScopes)
+	}
+	insertWorkflowHistoryEffectForTest(t, repo, target, api.WorkflowEffectStatusUnknown, now)
+	insertWorkflowHistoryEffectForTest(t, repo, other, api.WorkflowEffectStatusSucceeded, now)
+	targetIdentity := submissionFenceTestIdentity(t, "a")
+	otherIdentity := submissionFenceTestIdentity(t, "b")
+	insertWorkflowHistoryFenceForTest(t, repo, target, targetIdentity, api.WorkflowEffectStatusUnknown, now)
+	insertWorkflowHistoryFenceForTest(t, repo, other, otherIdentity, api.WorkflowEffectStatusSucceeded, now)
+
+	for _, path := range []string{targetPath, otherPath} {
+		if _, err := repo.SaveInputRecord(ctx, api.InputRecord{
+			ID:            "input-" + filepath.Base(path),
+			CanonicalPath: path,
+			SourceVersion: "source-version",
+			Manifest:      []byte(`{}`),
+			UpdatedAt:     now,
+		}); err != nil {
+			t.Fatalf("save input %q: %v", path, err)
+		}
+	}
+
+	if err := repo.PurgeContentData(ctx, targetPath); err != nil {
+		t.Fatalf("purge target history: %v", err)
+	}
+	if _, err := repo.LoadReleaseWorkflowState(ctx, target.OwnerID, target.WorkflowID); !errors.Is(err, api.ErrReleaseWorkflowStateNotFound) {
+		t.Fatalf("target workflow after purge = %v", err)
+	}
+	if _, err := repo.LoadSubmissionFence(ctx, targetIdentity, "ALPHA|https://alpha.example/"); !errors.Is(err, api.ErrSubmissionFenceNotFound) {
+		t.Fatalf("target fence after purge = %v", err)
+	}
+	if count := workflowHistoryEffectCount(t, repo, target); count != 0 {
+		t.Fatalf("target effects after purge = %d", count)
+	}
+	if _, err := repo.LoadInputRecord(ctx, targetPath); !errors.Is(err, api.ErrInputRecordNotFound) {
+		t.Fatalf("target input after purge = %v", err)
+	}
+
+	if _, err := repo.LoadReleaseWorkflowState(ctx, other.OwnerID, other.WorkflowID); err != nil {
+		t.Fatalf("other workflow after purge: %v", err)
+	}
+	if fence, err := repo.LoadSubmissionFence(ctx, otherIdentity, "ALPHA|https://alpha.example/"); err != nil || fence.Status != api.WorkflowEffectStatusSucceeded {
+		t.Fatalf("other fence after purge = %#v, %v", fence, err)
+	}
+	if count := workflowHistoryEffectCount(t, repo, other); count != 1 {
+		t.Fatalf("other effects after purge = %d", count)
+	}
+	if _, err := repo.LoadInputRecord(ctx, otherPath); err != nil {
+		t.Fatalf("other input after purge: %v", err)
+	}
+}
+
+func TestSQLitePurgeContentDataRejectsSourceMatchedQueuedWorkflow(t *testing.T) {
+	t.Parallel()
+
+	repo := openMigratedTestRepo(t)
+	ctx := t.Context()
+	now := time.Now().UTC().Truncate(time.Second)
+	targetPath := filepath.Join(t.TempDir(), "queued.mkv")
+	workflow := workflowStateRecordForTest("queued-history", api.WorkflowStatusActive, now, string(workflowHistoryPayloadForTest(t, targetPath)))
+	if _, _, err := repo.CreateReleaseWorkflowState(ctx, workflow); err != nil {
+		t.Fatalf("create queued workflow: %v", err)
+	}
+	if _, err := repo.RawDB().ExecContext(ctx, `
+		INSERT INTO release_workflow_operations (
+			owner_id, workflow_id, operation_id, expected_revision, idempotency_key,
+			command_fingerprint, command_name, process_epoch, status, sequence,
+			operation_json, started_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, workflow.OwnerID, workflow.WorkflowID, "queued-operation", 1, "", "fingerprint", "continue", "process",
+		api.StageStatusQueued, 1, []byte(`{}`), formatWorkflowStateTime(now), formatWorkflowStateTime(now)); err != nil {
+		t.Fatalf("insert queued operation: %v", err)
+	}
+	if _, err := repo.LoadHistoryCleanupSnapshot(ctx, targetPath); !errors.Is(err, api.ErrActiveInputBusy) {
+		t.Fatalf("snapshot queued workflow = %v", err)
+	}
+	if err := repo.PurgeContentData(ctx, targetPath); !errors.Is(err, api.ErrActiveInputBusy) {
+		t.Fatalf("purge queued workflow = %v", err)
+	}
+	if _, err := repo.LoadReleaseWorkflowState(ctx, workflow.OwnerID, workflow.WorkflowID); err != nil {
+		t.Fatalf("queued workflow removed: %v", err)
+	}
+}
+
+func TestSQLiteListHistoryProtectedSourcePathsIncludesActiveInputSources(t *testing.T) {
+	t.Parallel()
+
+	repo := openMigratedTestRepo(t)
+	ctx := t.Context()
+	now := time.Now().UTC().Truncate(time.Second)
+	requestedPath := filepath.Join(t.TempDir(), "requested.mkv")
+	canonicalPath := filepath.Join(t.TempDir(), "canonical.mkv")
+	workflowPath := filepath.Join(t.TempDir(), "workflow.mkv")
+	workflow := workflowStateRecordForTest("protected-active", api.WorkflowStatusActive, now, string(workflowSourcePathPayloadForTest(t, workflowPath)))
+	if _, _, err := repo.CreateReleaseWorkflowState(ctx, workflow); err != nil {
+		t.Fatalf("create active workflow: %v", err)
+	}
+	empty, err := repo.LoadActiveInput(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opening := api.ActiveInputRecord{
+		State:          api.ActiveInputOpening,
+		Revision:       empty.Revision + 1,
+		Fence:          empty.Fence + 1,
+		OwnerID:        workflow.OwnerID,
+		CoordinatorID:  "protected-source-test",
+		LeaseExpiresAt: now.Add(time.Hour),
+		ReservationID:  "protected-source-reservation",
+		RequestedPath:  requestedPath,
+		IdempotencyKey: "protected-source-open",
+	}
+	if err := repo.CompareAndSwapActiveInput(ctx, empty, opening, now); err != nil {
+		t.Fatalf("reserve input: %v", err)
+	}
+	paths, err := repo.ListHistoryProtectedSourcePaths(ctx)
+	if err != nil || !slices.Equal(paths, []string{requestedPath}) {
+		t.Fatalf("opening protected paths = %#v, %v", paths, err)
+	}
+
+	input := api.InputRecord{
+		ID:            "protected-active-input",
+		CanonicalPath: canonicalPath,
+		SourceVersion: "source-version",
+		Manifest:      []byte(`{}`),
+		UpdatedAt:     now,
+	}
+	active := opening
+	active.State, active.Revision = api.ActiveInputActive, opening.Revision+1
+	active.InputID, active.SourceVersion, active.WorkflowID = input.ID, input.SourceVersion, workflow.WorkflowID
+	active.ReservationID, active.RequestedPath = "", ""
+	if err := repo.FinalizeActiveInput(ctx, opening, active, input, nil, now); err != nil {
+		t.Fatalf("activate input: %v", err)
+	}
+	if err := repo.RelinquishActiveInput(ctx, active.CoordinatorID, active.Fence, now); err != nil {
+		t.Fatalf("expire active input: %v", err)
+	}
+	paths = nil
+	err = repo.WithHistoryDeletion(ctx, func(historyCtx context.Context) error {
+		paths, err = repo.ListHistoryProtectedSourcePaths(historyCtx)
+		return err
+	})
+	want := []string{canonicalPath, workflowPath}
+	slices.Sort(want)
+	if err != nil || !slices.Equal(paths, want) {
+		t.Fatalf("expired active protected paths = %#v, want %#v, %v", paths, want, err)
+	}
+}
+
+func TestSQLiteListHistoryProtectedSourcePathsIncludesBusyWorkflowSources(t *testing.T) {
+	t.Parallel()
+
+	repo := openMigratedTestRepo(t)
+	ctx := t.Context()
+	now := time.Now().UTC().Truncate(time.Second)
+	queuedPath := filepath.Join(t.TempDir(), "queued.mkv")
+	runningPath := filepath.Join(t.TempDir(), "running.mkv")
+	workPath := filepath.Join(t.TempDir(), "work.mkv")
+	staleWorkPath := filepath.Join(t.TempDir(), "stale-work.mkv")
+	terminalPath := filepath.Join(t.TempDir(), "terminal.mkv")
+	workflows := []struct {
+		id        api.WorkflowID
+		path      string
+		status    api.StageStatus
+		workLease time.Time
+	}{
+		{
+			id:     "protected-queued",
+			path:   queuedPath,
+			status: api.StageStatusQueued,
+		},
+		{
+			id:     "protected-running",
+			path:   runningPath,
+			status: api.StageStatusRunning,
+		},
+		{
+			id:        "protected-work",
+			path:      workPath,
+			status:    api.StageStatusCompleted,
+			workLease: now.Add(time.Hour),
+		},
+		{
+			id:        "protected-stale-work",
+			path:      staleWorkPath,
+			status:    api.StageStatusCompleted,
+			workLease: now.Add(-time.Hour),
+		},
+		{
+			id:     "protected-terminal",
+			path:   terminalPath,
+			status: api.StageStatusCompleted,
+		},
+	}
+	for _, item := range workflows {
+		workflow := workflowStateRecordForTest(item.id, api.WorkflowStatusActive, now, string(workflowHistoryPayloadForTest(t, item.path)))
+		if _, _, err := repo.CreateReleaseWorkflowState(ctx, workflow); err != nil {
+			t.Fatalf("create %s workflow: %v", item.id, err)
+		}
+		completedAt := any(nil)
+		if item.status == api.StageStatusCompleted {
+			completedAt = formatWorkflowStateTime(now)
+		}
+		if _, err := repo.RawDB().ExecContext(ctx, `
+			INSERT INTO release_workflow_operations (
+				owner_id, workflow_id, operation_id, expected_revision, idempotency_key,
+				command_fingerprint, command_name, process_epoch, status, sequence,
+				operation_json, started_at, updated_at, completed_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, workflow.OwnerID, workflow.WorkflowID, "operation", 1, "", "fingerprint", "continue", "process", item.status, 1,
+			[]byte(`{}`), formatWorkflowStateTime(now), formatWorkflowStateTime(now), completedAt); err != nil {
+			t.Fatalf("insert %s operation: %v", item.id, err)
+		}
+		if !item.workLease.IsZero() {
+			if _, err := repo.RawDB().ExecContext(ctx, `
+				INSERT INTO release_workflow_work (
+					owner_id, workflow_id, operation_id, lease_owner, lease_expires_at, checkpoint_json, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?)
+			`, workflow.OwnerID, workflow.WorkflowID, "operation", "worker", formatWorkflowStateTime(item.workLease), []byte(`{}`), formatWorkflowStateTime(now)); err != nil {
+				t.Fatalf("insert unfinished %s work: %v", item.id, err)
+			}
+		}
+	}
+
+	paths, err := repo.ListHistoryProtectedSourcePaths(ctx)
+	want := []string{queuedPath, runningPath, workPath}
+	slices.Sort(want)
+	if err != nil || !slices.Equal(paths, want) {
+		t.Fatalf("busy protected paths = %#v, want %#v, %v", paths, want, err)
+	}
+}
+
+func TestSQLiteListHistoryProtectedSourcePathsRejectsSourceLessRunningWorkflow(t *testing.T) {
+	t.Parallel()
+
+	repo := openMigratedTestRepo(t)
+	ctx := t.Context()
+	now := time.Now().UTC().Truncate(time.Second)
+	workflow := workflowStateRecordForTest("protected-unknown", api.WorkflowStatusActive, now, `{}`)
+	if _, _, err := repo.CreateReleaseWorkflowState(ctx, workflow); err != nil {
+		t.Fatalf("create source-less workflow: %v", err)
+	}
+	if _, err := repo.RawDB().ExecContext(ctx, `
+		INSERT INTO release_workflow_operations (
+			owner_id, workflow_id, operation_id, expected_revision, idempotency_key,
+			command_fingerprint, command_name, process_epoch, status, sequence,
+			operation_json, started_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, workflow.OwnerID, workflow.WorkflowID, "operation", 1, "", "fingerprint", "continue", "process", api.StageStatusRunning, 1,
+		[]byte(`{}`), formatWorkflowStateTime(now), formatWorkflowStateTime(now)); err != nil {
+		t.Fatalf("insert running operation: %v", err)
+	}
+	if _, err := repo.ListHistoryProtectedSourcePaths(ctx); !errors.Is(err, api.ErrActiveInputBusy) {
+		t.Fatalf("source-less running protected paths = %v", err)
+	}
+}
+
+func TestSQLitePurgeContentDataRemovesInactiveUnknownEffectsBeforeFirstInput(t *testing.T) {
+	t.Parallel()
+
+	repo := openMigratedTestRepo(t)
+	ctx := t.Context()
+	now := time.Now().UTC().Truncate(time.Second)
+	targetPath := filepath.Join(t.TempDir(), "inactive.mkv")
+	nextPath := filepath.Join(t.TempDir(), "next.mkv")
+	if _, err := repo.SaveInputRecord(ctx, api.InputRecord{
+		ID:            "next-input",
+		CanonicalPath: nextPath,
+		SourceVersion: "next-version",
+		Manifest:      []byte(`{}`),
+		UpdatedAt:     now,
+	}); err != nil {
+		t.Fatalf("save next input: %v", err)
+	}
+
+	empty, err := repo.LoadActiveInput(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opening := api.ActiveInputRecord{
+		State:          api.ActiveInputOpening,
+		Revision:       empty.Revision + 1,
+		Fence:          empty.Fence + 1,
+		OwnerID:        "next-owner",
+		CoordinatorID:  "next-coordinator",
+		LeaseExpiresAt: now.Add(time.Hour),
+		ReservationID:  "next-reservation",
+		RequestedPath:  nextPath,
+		IdempotencyKey: "next-open",
+	}
+	if err := repo.CompareAndSwapActiveInput(ctx, empty, opening, now); err != nil {
+		t.Fatalf("reserve first input: %v", err)
+	}
+	target := workflowStateRecordForTest("inactive-history", api.WorkflowStatusActive, now, string(workflowHistoryPayloadForTest(t, targetPath)))
+	if _, err := repo.RawDB().ExecContext(ctx, `
+		INSERT INTO release_workflow_states (
+			owner_id, workflow_id, revision, status, creation_key, creation_fingerprint, state_json, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, target.OwnerID, target.WorkflowID, target.Revision, target.Status, target.CreationKey, target.CreationFingerprint,
+		target.Payload, formatWorkflowStateTime(target.CreatedAt), formatWorkflowStateTime(target.UpdatedAt)); err != nil {
+		t.Fatalf("insert inactive workflow: %v", err)
+	}
+	insertWorkflowHistoryEffectForTest(t, repo, target, api.WorkflowEffectStatusUnknown, now)
+	active := opening
+	active.State, active.Revision = api.ActiveInputActive, opening.Revision+1
+	active.InputID, active.SourceVersion, active.WorkflowID = "next-input", "next-version", "next-workflow"
+	active.ReservationID, active.RequestedPath = "", ""
+	if err := repo.CompareAndSwapActiveInput(ctx, opening, active, now); !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
+		t.Fatalf("activate before purge = %v", err)
+	}
+
+	if err := repo.PurgeContentData(ctx, targetPath); err != nil {
+		t.Fatalf("purge inactive unknown history: %v", err)
+	}
+	if err := repo.CompareAndSwapActiveInput(ctx, opening, active, now); err != nil {
+		t.Fatalf("activate after purge: %v", err)
+	}
+}
+
+func TestSQLitePurgeContentDataRemovesReusableMediaAndCleanupSnapshotPaths(t *testing.T) {
+	t.Parallel()
+
+	repo := openMigratedTestRepo(t)
+	ctx := t.Context()
+	now := time.Now().UTC().Truncate(time.Second)
+	targetPath := filepath.Join(t.TempDir(), "reusable-target.mkv")
+	otherPath := filepath.Join(t.TempDir(), "reusable-other.mkv")
+	targetImagePath := filepath.Join(t.TempDir(), "target.png")
+	otherImagePath := filepath.Join(t.TempDir(), "other.png")
+	targetKey, targetCapture, targetContent := "target-key", "target-capture", "target-content"
+	otherKey, otherCapture, otherContent := "other-key", "other-capture", "other-content"
+	insertReusableMediaAssetForTest(t, repo, targetPath, targetImagePath, targetKey, targetCapture, targetContent, now)
+	insertReusableMediaAssetForTest(t, repo, otherPath, otherImagePath, otherKey, otherCapture, otherContent, now)
+	for _, tombstone := range []struct{ key, capture, content string }{
+		{targetKey, targetCapture, targetContent},
+		{otherKey, otherCapture, otherContent},
+		{"global-key", "global-capture", "global-content"},
+	} {
+		if _, err := repo.RawDB().ExecContext(ctx, `
+			INSERT INTO media_reusable_tombstones (compatibility_key, capture_fingerprint, content_sha256, deleted_at)
+			VALUES (?, ?, ?, ?)
+		`, tombstone.key, tombstone.capture, tombstone.content, formatWorkflowStateTime(now)); err != nil {
+			t.Fatalf("insert reusable tombstone: %v", err)
+		}
+	}
+
+	snapshot, err := repo.LoadHistoryCleanupSnapshot(ctx, targetPath)
+	if err != nil || !slices.Contains(snapshot.ArtifactPaths, targetImagePath) {
+		t.Fatalf("cleanup snapshot = %#v, %v", snapshot, err)
+	}
+	if err := repo.PurgeContentData(ctx, targetPath); err != nil {
+		t.Fatalf("purge reusable target: %v", err)
+	}
+	if count := reusableMediaRowCount(t, repo, "media_reusable_assets", targetPath); count != 0 {
+		t.Fatalf("target reusable assets after purge = %d", count)
+	}
+	if count := reusableTombstoneCount(t, repo, targetKey, targetCapture, targetContent); count != 0 {
+		t.Fatalf("target reusable tombstones after purge = %d", count)
+	}
+	if count := reusableMediaRowCount(t, repo, "media_reusable_assets", otherPath); count != 1 {
+		t.Fatalf("other reusable assets after purge = %d", count)
+	}
+	for _, tombstone := range []struct{ key, capture, content string }{
+		{otherKey, otherCapture, otherContent},
+		{"global-key", "global-capture", "global-content"},
+	} {
+		if count := reusableTombstoneCount(t, repo, tombstone.key, tombstone.capture, tombstone.content); count != 1 {
+			t.Fatalf("preserved tombstone %q after purge = %d", tombstone.key, count)
+		}
+	}
+}
+
+func TestSQLitePurgeContentDataRemovesSourceOwnedReusableTombstonesAfterAssociationsAreGone(t *testing.T) {
+	t.Parallel()
+
+	repo := openMigratedTestRepo(t)
+	ctx := t.Context()
+	sourcePath := filepath.Join(t.TempDir(), "reusable-source.mkv")
+	imagePath := filepath.Join(t.TempDir(), "reusable-source.png")
+	compatibilityKey := api.MediaCompatibilityKey(mediaReuseTestSHA256("source"))
+	captureFingerprint := mediaReuseTestSHA256("capture")
+	contentSHA256 := mediaReuseTestSHA256("content")
+	insertReusableMediaAssetForTest(t, repo, sourcePath, imagePath, string(compatibilityKey), captureFingerprint, contentSHA256, time.Now().UTC())
+	binding := api.PreparedMediaBinding{
+		SourcePath:               sourcePath,
+		PreparedMediaFingerprint: "prepared",
+		PreparedGeneration:       1,
+	}
+	if err := repo.DeleteReusableMediaAssets(ctx, binding, []string{imagePath}); err != nil {
+		t.Fatalf("delete reusable asset: %v", err)
+	}
+	if count := reusableTombstoneSourceCount(t, repo, sourcePath, string(compatibilityKey), captureFingerprint, contentSHA256); count != 1 {
+		t.Fatalf("source tombstones after delete = %d", count)
+	}
+	if err := repo.CommitReusableMedia(ctx, binding, compatibilityKey, nil, api.ReusableMediaCommit{
+		WorkflowID: "workflow",
+		MediaID:    "media",
+		Revision:   1,
+	}); err != nil {
+		t.Fatalf("commit empty reusable media: %v", err)
+	}
+	if count := reusableMediaRowCount(t, repo, "media_reusable_assets", sourcePath); count != 0 {
+		t.Fatalf("reusable assets after empty commit = %d", count)
+	}
+	if err := repo.PurgeContentData(ctx, sourcePath); err != nil {
+		t.Fatalf("purge source history: %v", err)
+	}
+	if count := reusableTombstoneSourceCount(t, repo, sourcePath, string(compatibilityKey), captureFingerprint, contentSHA256); count != 0 {
+		t.Fatalf("source tombstones after purge = %d", count)
+	}
+}
+
+func TestSQLitePurgeContentDataPreservesOtherSourceReusableTombstoneSuppression(t *testing.T) {
+	t.Parallel()
+
+	repo := openMigratedTestRepo(t)
+	ctx := t.Context()
+	sourceA := filepath.Join(t.TempDir(), "reusable-a.mkv")
+	sourceB := filepath.Join(t.TempDir(), "reusable-b.mkv")
+	imageA := filepath.Join(t.TempDir(), "reusable-a.png")
+	imageB := filepath.Join(t.TempDir(), "reusable-b.png")
+	compatibilityKey := api.MediaCompatibilityKey(mediaReuseTestSHA256("shared-source"))
+	captureFingerprint := mediaReuseTestSHA256("shared-capture")
+	contentSHA256 := mediaReuseTestSHA256("shared-content")
+	for _, asset := range []struct{ sourcePath, imagePath string }{{sourceA, imageA}, {sourceB, imageB}} {
+		insertReusableMediaAssetForTest(t, repo, asset.sourcePath, asset.imagePath, string(compatibilityKey), captureFingerprint, contentSHA256, time.Now().UTC())
+		binding := api.PreparedMediaBinding{
+			SourcePath:               asset.sourcePath,
+			PreparedMediaFingerprint: "prepared",
+			PreparedGeneration:       1,
+		}
+		if err := repo.DeleteReusableMediaAssets(ctx, binding, []string{asset.imagePath}); err != nil {
+			t.Fatalf("delete reusable asset for %q: %v", asset.sourcePath, err)
+		}
+	}
+	if count := reusableTombstoneCount(t, repo, string(compatibilityKey), captureFingerprint, contentSHA256); count != 2 {
+		t.Fatalf("shared tombstones after delete = %d", count)
+	}
+	if err := repo.PurgeContentData(ctx, sourceA); err != nil {
+		t.Fatalf("purge source A history: %v", err)
+	}
+	if count := reusableTombstoneSourceCount(t, repo, sourceA, string(compatibilityKey), captureFingerprint, contentSHA256); count != 0 {
+		t.Fatalf("source A tombstones after purge = %d", count)
+	}
+	if count := reusableTombstoneSourceCount(t, repo, sourceB, string(compatibilityKey), captureFingerprint, contentSHA256); count != 1 {
+		t.Fatalf("source B tombstones after source A purge = %d", count)
+	}
+	if assets, err := repo.LoadReusableMediaAssets(ctx, compatibilityKey); err != nil || len(assets) != 0 {
+		t.Fatalf("source B tombstone suppression = %#v, %v", assets, err)
+	}
+	if err := repo.PurgeContentData(ctx, sourceB); err != nil {
+		t.Fatalf("purge source B history: %v", err)
+	}
+	if count := reusableTombstoneCount(t, repo, string(compatibilityKey), captureFingerprint, contentSHA256); count != 0 {
+		t.Fatalf("shared tombstones after last source purge = %d", count)
+	}
+	insertReusableMediaAssetForTest(t, repo, sourceB, imageB, string(compatibilityKey), captureFingerprint, contentSHA256, time.Now().UTC())
+	if assets, err := repo.LoadReusableMediaAssets(ctx, compatibilityKey); err != nil || len(assets) != 1 {
+		t.Fatalf("assets after final tombstone purge = %#v, %v", assets, err)
+	}
+}
+
+func workflowHistoryPayloadForTest(t *testing.T, sourcePath string) []byte {
+	t.Helper()
+	payload, err := json.Marshal(storedReleaseWorkflowSource{
+		Releases: map[api.ReleaseSnapshotID]api.ReleaseSnapshot{
+			"release": {Release: api.PreparedRelease{Source: api.SourceManifest{SourcePath: sourcePath}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
+}
+
+func workflowSourcePathPayloadForTest(t *testing.T, sourcePath string) []byte {
+	t.Helper()
+	payload, err := json.Marshal(storedReleaseWorkflowSource{SourcePath: sourcePath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
+}
+
+func TestStoredReleaseWorkflowSourcePathsIncludesLegacyCompositeInput(t *testing.T) {
+	t.Parallel()
+
+	repo := openMigratedTestRepo(t)
+	sourcePath := filepath.Join(t.TempDir(), "legacy-composite.mkv")
+	payload, err := json.Marshal(storedReleaseWorkflowSource{
+		Composite: &storedReleaseWorkflowCompositeSource{
+			Intent: storedReleaseWorkflowIntentSource{
+				Preparation: &api.PrepareInput{SourcePath: sourcePath},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paths := storedReleaseWorkflowSourcePaths(payload); !slices.Contains(paths, sourcePath) {
+		t.Fatalf("legacy composite source paths = %#v, want %q", paths, sourcePath)
+	}
+	workflow := workflowStateRecordForTest("legacy-composite", api.WorkflowStatusDraft, time.Now().UTC(), string(payload))
+	if _, _, err := repo.CreateReleaseWorkflowState(t.Context(), workflow); err != nil {
+		t.Fatalf("create legacy composite workflow: %v", err)
+	}
+	paths, err := repo.ListStoredReleasePaths(t.Context())
+	if err != nil || !slices.Contains(paths, sourcePath) {
+		t.Fatalf("stored release paths = %#v, %v", paths, err)
+	}
+}
+
+func insertWorkflowHistoryEffectForTest(
+	t *testing.T,
+	repo *SQLiteRepository,
+	workflow api.ReleaseWorkflowStateRecord,
+	status api.WorkflowEffectStatus,
+	now time.Time,
+) {
+	t.Helper()
+	completedAt := any(nil)
+	if status != api.WorkflowEffectStatusStarted {
+		completedAt = formatWorkflowStateTime(now)
+	}
+	if _, err := repo.RawDB().ExecContext(t.Context(), `
+		INSERT INTO release_workflow_effects (
+			owner_id, workflow_id, operation_id, effect_id, kind, scope_id,
+			semantic_fingerprint, status, started_at, updated_at, completed_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, workflow.OwnerID, workflow.WorkflowID, "operation", "effect", "tracker_submission", "ALPHA", "fingerprint", status,
+		formatWorkflowStateTime(now), formatWorkflowStateTime(now), completedAt); err != nil {
+		t.Fatalf("insert workflow effect: %v", err)
+	}
+}
+
+func insertWorkflowHistoryFenceForTest(
+	t *testing.T,
+	repo *SQLiteRepository,
+	workflow api.ReleaseWorkflowStateRecord,
+	identity api.SubmissionContentIdentity,
+	status api.WorkflowEffectStatus,
+	now time.Time,
+) {
+	t.Helper()
+	payload, err := json.Marshal(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	confirmedAt := any(nil)
+	if status == api.WorkflowEffectStatusSucceeded {
+		confirmedAt = formatWorkflowStateTime(now)
+	}
+	if _, err := repo.RawDB().ExecContext(t.Context(), `
+		INSERT INTO submission_fences (
+			content_version, content_digest, content_scope, content_json, tracker_site,
+			owner_id, workflow_id, operation_id, effect_id, status, started_at, updated_at, confirmed_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, identity.Version, identity.Digest, identity.Scope, payload, "ALPHA|https://alpha.example/",
+		workflow.OwnerID, workflow.WorkflowID, "operation", "effect", status,
+		formatWorkflowStateTime(now), formatWorkflowStateTime(now), confirmedAt); err != nil {
+		t.Fatalf("insert workflow fence: %v", err)
+	}
+}
+
+func workflowHistoryEffectCount(t *testing.T, repo *SQLiteRepository, workflow api.ReleaseWorkflowStateRecord) int {
+	t.Helper()
+	var count int
+	if err := repo.RawDB().QueryRowContext(t.Context(), `
+		SELECT COUNT(*) FROM release_workflow_effects WHERE owner_id = ? AND workflow_id = ?
+	`, workflow.OwnerID, workflow.WorkflowID).Scan(&count); err != nil {
+		t.Fatalf("count workflow effects: %v", err)
+	}
+	return count
+}
+
+func insertReusableMediaAssetForTest(
+	t *testing.T,
+	repo *SQLiteRepository,
+	sourcePath, imagePath, compatibilityKey, captureFingerprint, contentSHA256 string,
+	now time.Time,
+) {
+	t.Helper()
+	if _, err := repo.RawDB().ExecContext(t.Context(), `
+		INSERT INTO media_reusable_assets (
+			source_path, prepared_media_fingerprint, prepared_generation, compatibility_key,
+			capture_fingerprint, content_sha256, kind, purpose, image_path, captured_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, sourcePath, "prepared", 1, compatibilityKey, captureFingerprint, contentSHA256,
+		"screenshot", "final", imagePath, formatWorkflowStateTime(now)); err != nil {
+		t.Fatalf("insert reusable asset: %v", err)
+	}
+}
+
+func reusableMediaRowCount(t *testing.T, repo *SQLiteRepository, table, sourcePath string) int {
+	t.Helper()
+	var count int
+	query := `SELECT COUNT(*) FROM ` + table + ` WHERE source_path = ?`
+	if err := repo.RawDB().QueryRowContext(t.Context(), query, sourcePath).Scan(&count); err != nil {
+		t.Fatalf("count reusable media rows: %v", err)
+	}
+	return count
+}
+
+func reusableTombstoneCount(t *testing.T, repo *SQLiteRepository, compatibilityKey, captureFingerprint, contentSHA256 string) int {
+	t.Helper()
+	var count int
+	if err := repo.RawDB().QueryRowContext(t.Context(), `
+		SELECT COUNT(*) FROM media_reusable_tombstones
+		WHERE compatibility_key = ? AND capture_fingerprint = ? AND content_sha256 = ?
+	`, compatibilityKey, captureFingerprint, contentSHA256).Scan(&count); err != nil {
+		t.Fatalf("count reusable tombstones: %v", err)
+	}
+	return count
+}
+
+func reusableTombstoneSourceCount(
+	t *testing.T,
+	repo *SQLiteRepository,
+	sourcePath, compatibilityKey, captureFingerprint, contentSHA256 string,
+) int {
+	t.Helper()
+	var count int
+	if err := repo.RawDB().QueryRowContext(t.Context(), `
+		SELECT COUNT(*) FROM media_reusable_tombstones
+		WHERE source_path = ? AND compatibility_key = ? AND capture_fingerprint = ? AND content_sha256 = ?
+	`, sourcePath, compatibilityKey, captureFingerprint, contentSHA256).Scan(&count); err != nil {
+		t.Fatalf("count source reusable tombstones: %v", err)
+	}
+	return count
+}
+
 func TestSQLitePurgeContentDataRemovesLegacyUIStateIDDataRows(t *testing.T) {
 	t.Parallel()
 
@@ -1878,12 +2530,47 @@ func TestSQLiteRepositoryListStoredReleasePathsIncludesOrphans(t *testing.T) {
 		t.Fatalf("save screenshot slot variant: %v", err)
 	}
 
+	if _, err := repo.SaveInputRecord(ctx, api.InputRecord{
+		ID:            "orphan-input",
+		CanonicalPath: "/media/orphan-input.mkv",
+		SourceVersion: "version",
+		Manifest:      []byte(`{}`),
+		UpdatedAt:     now,
+	}); err != nil {
+		t.Fatalf("save orphan input: %v", err)
+	}
+	if _, err := repo.RawDB().ExecContext(ctx, `
+		INSERT INTO prepared_release_current (
+			source_path, generation, source_fingerprint, fact_instruction_fingerprint,
+			policy_fingerprint, contract_version, source_json, naming_json, episode_json,
+			media_json, disc_json, assessments_json, prepared_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, "/media/orphan-prepared.mkv", 1, "source", "facts", "policy", "contract", "{}", "{}", "{}", "{}", "{}", "{}", now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("insert orphan prepared release: %v", err)
+	}
+	if _, err := repo.RawDB().ExecContext(ctx, `
+		INSERT INTO media_reusable_tombstones (
+			source_path, compatibility_key, capture_fingerprint, content_sha256, deleted_at
+		) VALUES (?, ?, ?, ?, ?)
+	`, "/media/orphan-tombstone.mkv", "key", "capture", "content", now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("insert orphan reusable tombstone: %v", err)
+	}
+	insertReusableMediaAssetForTest(t, repo, "/media/orphan-reusable.mkv", "/tmp/orphan-reusable.png", "key", "capture", "content", now)
+	workflow := workflowStateRecordForTest("orphan-workflow", api.WorkflowStatusActive, now, string(workflowHistoryPayloadForTest(t, "/media/orphan-workflow.mkv")))
+	if _, _, err := repo.CreateReleaseWorkflowState(ctx, workflow); err != nil {
+		t.Fatalf("create orphan workflow: %v", err)
+	}
+
 	paths, err := repo.ListStoredReleasePaths(ctx)
 	if err != nil {
 		t.Fatalf("list stored release paths: %v", err)
 	}
 
-	expected := []string{"/media/a.mkv", "/media/orphan-shot.mkv", "/media/orphan-slot.mkv", "/media/orphan-upload.mkv", "/media/orphan-variant.mkv"}
+	expected := []string{
+		"/media/a.mkv", "/media/orphan-input.mkv", "/media/orphan-prepared.mkv", "/media/orphan-reusable.mkv", "/media/orphan-shot.mkv",
+		"/media/orphan-slot.mkv", "/media/orphan-tombstone.mkv", "/media/orphan-upload.mkv", "/media/orphan-variant.mkv",
+		"/media/orphan-workflow.mkv",
+	}
 	if len(paths) != len(expected) {
 		t.Fatalf("expected %d stored paths, got %d (%#v)", len(expected), len(paths), paths)
 	}

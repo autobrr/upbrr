@@ -262,6 +262,25 @@ func TestDiscProjectionRequiresCanonicalPrimaryPair(t *testing.T) {
 	}
 }
 
+func TestInvalidateDropsOnlyPublishedPreparedGeneration(t *testing.T) {
+	t.Parallel()
+
+	path := writePreparedTestFile(t, "invalidate-source.mkv", "synthetic media")
+	store := newMemoryStore()
+	module := newTestModule(t, store, &recordingCollector{})
+	prepared, err := module.Prepare(t.Context(), api.PrepareInput{SourcePath: path})
+	if err != nil {
+		t.Fatalf("prepare source: %v", err)
+	}
+	module.Invalidate(path)
+	if _, err := module.ResolveResult(t.Context(), api.ReleaseRef{SourcePath: path, Generation: prepared.Release.Generation}); err == nil {
+		t.Fatal("invalidated generation remained published")
+	}
+	if _, err := store.LoadPreparedRelease(t.Context(), path); err != nil {
+		t.Fatalf("invalidate changed persisted generation: %v", err)
+	}
+}
+
 func TestPrepareUsesExactCompatibilityAndPublishesConcreteAssessments(t *testing.T) {
 	t.Parallel()
 	path := writePreparedTestFile(t, "source.mkv", "first")
@@ -643,6 +662,34 @@ func TestPrepareForceRecheckBuildsOneFreshGeneration(t *testing.T) {
 	}
 }
 
+func TestPrepareExternalRefreshBuildsFreshGeneration(t *testing.T) {
+	t.Parallel()
+
+	path := writePreparedTestFile(t, "source.mkv", "synthetic media")
+	collector := &recordingCollector{}
+	module := newTestModule(t, newMemoryStore(), collector)
+	first, err := module.Prepare(t.Context(), api.PrepareInput{SourcePath: path})
+	if err != nil {
+		t.Fatalf("initial prepare: %v", err)
+	}
+	second, err := module.Prepare(t.Context(), api.PrepareInput{
+		SourcePath:        path,
+		ExternalFreshness: api.ExternalFreshnessRefresh,
+	})
+	if err != nil {
+		t.Fatalf("external refresh prepare: %v", err)
+	}
+	if second.Release.Generation != first.Release.Generation+1 {
+		t.Fatalf("external refresh generation = %d, want %d", second.Release.Generation, first.Release.Generation+1)
+	}
+	if collector.callCount() != 2 {
+		t.Fatalf("external refresh collector calls = %d, want 2", collector.callCount())
+	}
+	if collector.externalFreshnessAt(1) != api.ExternalFreshnessRefresh {
+		t.Fatalf("collector external freshness = %q, want refresh", collector.externalFreshnessAt(1))
+	}
+}
+
 func hasPreparationProgress(
 	updates []api.PreparationProgressUpdate,
 	phase api.PreparationProgressPhase,
@@ -738,6 +785,7 @@ func TestPreparationCompatibilityIncludesEvidencePolicyAndExcludesOneShotControl
 		{name: "rescan permission", mutate: func(input *api.PrepareInput) { input.Controls.ConfirmBDMVRescan = true }},
 		{name: "force recheck", mutate: func(input *api.PrepareInput) { input.Controls.ForceRecheck = boolPtr(true) }},
 		{name: "force preparation", mutate: func(input *api.PrepareInput) { input.Force = true }},
+		{name: "external freshness", mutate: func(input *api.PrepareInput) { input.ExternalFreshness = api.ExternalFreshnessRefresh }},
 	}
 	for _, test := range excluded {
 		t.Run(test.name, func(t *testing.T) {
@@ -1425,14 +1473,16 @@ func (correctedFactsCollector) Collect(_ context.Context, request preparationsta
 }
 
 type recordingCollector struct {
-	mu    sync.Mutex
-	calls []string
-	facts *CollectedFacts
+	mu                  sync.Mutex
+	calls               []string
+	externalFreshnesses []api.ExternalFreshness
+	facts               *CollectedFacts
 }
 
 func (c *recordingCollector) Collect(_ context.Context, request preparationstate.Request) (CollectedFacts, error) {
 	c.mu.Lock()
 	c.calls = append(c.calls, request.Input.Instructions.SourceLookup)
+	c.externalFreshnesses = append(c.externalFreshnesses, request.Input.ExternalFreshness)
 	c.mu.Unlock()
 	if c.facts != nil {
 		return *c.facts, nil
@@ -1524,11 +1574,21 @@ func (c *recordingCollector) callCount() int {
 	return len(c.calls)
 }
 
+func (c *recordingCollector) externalFreshnessAt(index int) api.ExternalFreshness {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if index < 0 || index >= len(c.externalFreshnesses) {
+		return ""
+	}
+	return c.externalFreshnesses[index]
+}
+
 type clientEvidenceTestCollector struct {
 	base     recordingCollector
 	mu       sync.Mutex
 	hydrates int
 	snapshot preparationstate.ClientEvidenceSnapshot
+	retained []bool
 }
 
 func newClientEvidenceTestCollector(snapshot preparationstate.ClientEvidenceSnapshot) *clientEvidenceTestCollector {
@@ -1541,6 +1601,12 @@ func (c *clientEvidenceTestCollector) Collect(ctx context.Context, request prepa
 		return CollectedFacts{}, err
 	}
 	facts.Resources.ClientEvidence = preparationstate.CloneClientEvidenceSnapshot(c.snapshot)
+	c.mu.Lock()
+	c.retained = append(c.retained, request.RetainedClientEvidence != nil)
+	c.mu.Unlock()
+	if request.RetainedClientEvidence != nil {
+		facts.Resources.ClientEvidence = preparationstate.CloneClientEvidenceSnapshot(*request.RetainedClientEvidence)
+	}
 	return facts, nil
 }
 
@@ -1689,4 +1755,52 @@ func (s *memoryStore) commitCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.commits
+}
+
+func TestPreparationEnrichmentReusesOnlyCompatibleClientEvidence(t *testing.T) {
+	t.Parallel()
+	for _, scenario := range []struct {
+		name          string
+		change        func(*api.PrepareInput)
+		retained      bool
+		replaceSource bool
+	}{
+		{name: "metadata demand", retained: true},
+		{name: "explicit refresh", change: func(input *api.PrepareInput) { input.ExternalFreshness = api.ExternalFreshnessRefresh }},
+		{name: "forced preparation", change: func(input *api.PrepareInput) { input.Force = true }},
+		{name: "client recheck", change: func(input *api.PrepareInput) { force := true; input.Controls.ForceRecheck = &force }},
+		{name: "client policy", change: func(input *api.PrepareInput) { input.Search.Skip = true }},
+		{name: "client selection", change: func(input *api.PrepareInput) { client := "other"; input.Search.Client = &client }},
+		{name: "source bytes", replaceSource: true},
+		{name: "preparation policy", change: func(input *api.PrepareInput) { input.Policy.KeepImages = true }},
+		{name: "fact instruction", change: func(input *api.PrepareInput) { input.Instructions.SourceLookup = "different-source" }},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			t.Parallel()
+			path := writePreparedTestFile(t, "source.mkv", "synthetic media")
+			collector := newClientEvidenceTestCollector(clientEvidenceTestSnapshot("client-hash"))
+			module := newTestModule(t, newMemoryStore(), collector)
+			input := api.PrepareInput{SourcePath: path}
+			first, err := module.Prepare(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scenario.replaceSource {
+				if err := os.WriteFile(path, []byte("changed synthetic media"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			input.MetadataRequirements = api.MetadataRequirementSet{Version: "expanded-demand"}
+			if scenario.change != nil {
+				scenario.change(&input)
+			}
+			second, err := module.Prepare(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if second.Release.Generation != first.Release.Generation+1 || len(collector.retained) != 2 || collector.retained[0] || collector.retained[1] != scenario.retained {
+				t.Fatalf("enrichment generation=%d retained=%v, want retained=%t", second.Release.Generation, collector.retained, scenario.retained)
+			}
+		})
+	}
 }
