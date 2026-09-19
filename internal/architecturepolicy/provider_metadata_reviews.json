@@ -1072,7 +1072,7 @@
     "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged."
   },
   "internal/trackers/impl/standalone/rtf/dupe.go:dupeSearcher.Search": {
-    "sha256": "6fdae23c8ffe36f4429ebe1bde3384d41389a4ce8766a1a4487b022430045f00",
+    "sha256": "ea9e363b5d3c6de832b9ae162aa66f8171ac556fef99e5ef6273f34712dd4e33",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/rtf/dupe.go:isRTFContentOldEnough": {

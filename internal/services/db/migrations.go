@@ -61,6 +61,41 @@ type migrationExecutor interface {
 var migrationRegistry = []migrationStep{
 	{id: baselineMigrationID, apply: createBaselineSchema},
 	{
+		id:        "2026_09_add_active_input",
+		dependsOn: []string{baselineMigrationID},
+		apply:     migrateAddActiveInput,
+	},
+	{
+		id:        "2026_09_add_submission_fences",
+		dependsOn: []string{"2026_09_add_active_input", "2026_07_add_release_workflow_durability"},
+		apply:     migrateAddSubmissionFences,
+	},
+	{
+		id:        "2026_09_add_config_activation",
+		dependsOn: []string{"2026_09_add_active_input", "2026_07_add_release_workflow_durability"},
+		apply:     migrateAddConfigActivation,
+	},
+	{
+		id:        "2026_09_add_config_activation_failure",
+		dependsOn: []string{"2026_09_add_config_activation"},
+		apply:     migrateAddConfigActivationFailure,
+	},
+	{
+		id:        "2026_09_add_media_reuse_associations",
+		dependsOn: []string{"2026_08_bind_prepared_media_assets"},
+		apply:     migrateAddMediaReuseAssociations,
+	},
+	{
+		id:        "2026_09_add_reusable_media_commits",
+		dependsOn: []string{"2026_09_add_media_reuse_associations"},
+		apply:     migrateAddReusableMediaCommits,
+	},
+	{
+		id:        "2026_09_add_reusable_media_tombstone_sources",
+		dependsOn: []string{"2026_09_add_reusable_media_commits"},
+		apply:     migrateAddReusableMediaTombstoneSources,
+	},
+	{
 		id:        "2026_04_add_dvd_mediainfo",
 		dependsOn: []string{baselineMigrationID},
 		apply:     migrateAddDVDMediaInfo,

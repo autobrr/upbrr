@@ -62,6 +62,26 @@ describe("web client", () => {
     );
   });
 
+  it("reads the active-input snapshot with GET and session headers", async () => {
+    const snapshot = { state: "empty", revision: 4 };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(snapshot));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { initializeWebClient } = await import("./client");
+    const { activeInputClient } = await import("./app");
+    initializeWebClient("csrf-token", true);
+
+    await expect(activeInputClient.get()).resolves.toEqual(snapshot);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/app/GetActiveInput",
+      expect.objectContaining({
+        method: "GET",
+        credentials: "include",
+        headers: { "X-CSRF-Token": "csrf-token" },
+      }),
+    );
+  });
+
   it("uses exact opaque workflow media payloads", async () => {
     const fetchMock = vi
       .fn()
@@ -146,6 +166,33 @@ describe("web client", () => {
     initializeWebClient("csrf-token", true);
 
     await expect(trackerAuthClient.test("BTN")).rejects.toThrow("tracker auth: validation failed");
+  });
+
+  it("surfaces a pending config activation conflict without accepting the candidate", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(
+          {
+            error: "another validated configuration is already pending activation",
+            activation: {
+              status: "pending",
+              activationId: "activation-existing",
+              activeGeneration: 3,
+              pendingGeneration: 4,
+              impacts: ["trackers"],
+              updatedAt: "2026-09-19T00:00:00Z",
+            },
+          },
+          { status: 409 },
+        ),
+      ),
+    );
+
+    const { configClient } = await import("./app");
+    await expect(configClient.save("{}")).rejects.toThrow(
+      "another validated configuration is already pending activation",
+    );
   });
 
   it("renders structured operation failures with stable recovery guidance", async () => {
@@ -326,6 +373,23 @@ describe("web client", () => {
       }),
     );
     await vi.waitFor(() => expect(listener).toHaveBeenCalledWith({ jobID: "job-1" }));
+    off();
+    await vi.waitFor(() => expect(cancelStream).toHaveBeenCalledOnce());
+  });
+
+  it("notifies connection subscribers after the event stream connects", async () => {
+    const cancelStream = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(eventStreamResponse({ revision: 2 }, cancelStream)),
+    );
+
+    const { initializeWebClient, subscribeWebEventConnection } = await import("./client");
+    initializeWebClient("csrf-token", true);
+    const connected = vi.fn();
+    const off = subscribeWebEventConnection(connected);
+
+    await vi.waitFor(() => expect(connected).toHaveBeenCalledOnce());
     off();
     await vi.waitFor(() => expect(cancelStream).toHaveBeenCalledOnce());
   });

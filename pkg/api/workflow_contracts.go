@@ -711,6 +711,7 @@ type UploadResult struct {
 
 // ReleaseWorkflow is the revisioned aggregate of immutable stage references.
 type ReleaseWorkflow struct {
+	SubmissionExclusions   []SubmissionExclusion                    `json:"submissionExclusions,omitempty"`
 	ID                     WorkflowID                               `json:"id"`
 	Revision               WorkflowRevision                         `json:"revision"`
 	FactInstructions       ReleaseFactInstructionSnapshotRef        `json:"factInstructions"`

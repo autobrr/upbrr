@@ -70,7 +70,10 @@ test("embedded settings generates and revokes a persistent API token", async ({ 
         },
       },
     );
-    expect(authorized.status()).toBe(200);
+    expect(authorized.status()).toBe(400);
+    await expect(authorized.json()).resolves.toMatchObject({
+      failure: { Code: "invalid_source" },
+    });
 
     await page.getByRole("button", { name: "Revoke", exact: true }).click();
     await page.getByRole("button", { name: "Revoke token" }).click();

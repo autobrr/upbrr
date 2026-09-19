@@ -259,6 +259,35 @@ func (r *PersistentRepository) MarkOperationEffectsUnknown(
 	)
 }
 
+// RecoverLegacyEffects fences pre-active-input attempts and returns the exact
+// owner-scoped effects that require manual reconciliation.
+func (r *PersistentRepository) RecoverLegacyEffects(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+	now time.Time,
+) ([]api.ReleaseWorkflowEffectRecord, error) {
+	if r.durability == nil {
+		return nil, errors.New("release workflow: durable effect repository is unavailable")
+	}
+	effects, err := r.durability.RecoverLegacyReleaseWorkflowEffects(ctx, ownerID, workflowID, now)
+	if err != nil {
+		return nil, mapPersistentRepositoryError(err)
+	}
+	return effects, nil
+}
+
+func (r *PersistentRepository) ListLegacyRecoveryWorkflowIDs(ctx context.Context, ownerID string) ([]api.WorkflowID, error) {
+	if r.durability == nil {
+		return nil, errors.New("release workflow: durable effect repository is unavailable")
+	}
+	workflowIDs, err := r.durability.ListLegacyReleaseWorkflowRecoveryWorkflowIDs(ctx, strings.TrimSpace(ownerID))
+	if err != nil {
+		return nil, mapPersistentRepositoryError(err)
+	}
+	return workflowIDs, nil
+}
+
 // ResolveEffectUnknown records manual verification that an uncertain effect did not complete.
 func (r *PersistentRepository) ResolveEffectUnknown(
 	ctx context.Context,

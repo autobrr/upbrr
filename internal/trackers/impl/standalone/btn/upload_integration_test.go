@@ -2941,7 +2941,7 @@ func TestBTNUploadIntermediateFailureFallsBackToAPI(t *testing.T) {
 			switch rpc.Method {
 			case "getTorrents":
 				apiSearchCalls.Add(1)
-				_, _ = w.Write([]byte(`{"result":{"torrents":{"779":{"GroupID":"123","ReleaseName":"Example.Show.S01E01.1080p.WEB-DL.H.265-GRP"}}}}`))
+				_, _ = w.Write([]byte(`{"result":{"torrents":{"779":{"GroupID":"123","ReleaseName":"Example.Show.S01E01.1080p.WEB-DL.x265-GRP"}}}}`))
 			case "getTorrentById":
 				apiDownloadCalls.Add(1)
 				_, _ = w.Write([]byte(`{"result":{"DownloadURL":"http://` + r.Host + `/mock-download"}}`))

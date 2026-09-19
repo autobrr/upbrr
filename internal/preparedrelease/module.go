@@ -25,7 +25,7 @@ import (
 
 // ContractVersion changes whenever prepared fact semantics or the private seed
 // contract become incompatible, forcing persisted generations to be recomputed.
-const ContractVersion = "prepared-release-v17"
+const ContractVersion = "prepared-release-v18"
 
 // Store is the prepared-release persistence port. Implementations must commit
 // facts, identity, and provider metadata as one generation transaction.
@@ -186,6 +186,14 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 		)
 		return api.PrepareResult{}, err
 	}
+	verifiedSource, err := validatedVerifiedSource(manifest, sourceFingerprint, input.VerifiedSource)
+	if err != nil {
+		api.EmitPreparationProgress(
+			ctx,
+			api.NewPreparationProgressUpdate(api.PreparationPhaseSourceInspection, api.PreparationProgressFailed, "Source changed during verification."),
+		)
+		return api.PrepareResult{}, err
+	}
 	if sourceFingerprint != resolved.SourceFingerprint {
 		return api.PrepareResult{}, fmt.Errorf("prepared release: source changed after input resolution: %w", api.ErrCorrectionConflict)
 	}
@@ -227,7 +235,13 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 	// and WebUI calls carry their resolved selection directly and remain reusable.
 	reuseAllowed := layout.DiscType != "BDMV" || input.Instructions.Playlist.Set
 	forceClientRefresh := input.Controls.ForceRecheck != nil && *input.Controls.ForceRecheck
-	if hasCurrent && reuseAllowed && !input.Force && !forceClientRefresh && current.Compatibility == compatibility {
+	if hasCurrent && reuseAllowed && !input.Force && !input.ExternalFreshness.RequiresRefresh() && !forceClientRefresh &&
+		current.Compatibility == compatibility {
+		// Public prepared rows omit private byte-verification evidence. Restore
+		// it only from the current active input's validated private manifest.
+		if verifiedSource.Version != "" {
+			current.SourceIdentity = verifiedSource
+		}
 		if err := validateGeneration(current); err != nil {
 			api.EmitPreparationProgress(
 				ctx,
@@ -297,11 +311,12 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 		}
 	}
 	collected, err := m.collector.Collect(ctx, preparationstate.Request{
-		Input:               input,
-		Manifest:            manifest,
-		Layout:              layout,
-		SourceFingerprint:   sourceFingerprint,
-		IdentityResetFields: slices.Clone(resolved.Corrections.Corrections.IdentityResetFields),
+		Input:                  input,
+		Manifest:               manifest,
+		Layout:                 layout,
+		SourceFingerprint:      sourceFingerprint,
+		IdentityResetFields:    slices.Clone(resolved.Corrections.Corrections.IdentityResetFields),
+		RetainedClientEvidence: m.retainedClientEvidence(input, compatibility, current.Generation),
 	})
 	if err != nil {
 		return api.PrepareResult{}, fmt.Errorf("prepared release: collect facts: %w", err)
@@ -347,11 +362,17 @@ func (m *Module) PrepareResolved(ctx context.Context, resolved api.ResolvedPrepa
 	if err != nil {
 		return api.PrepareResult{}, err
 	}
+	if input.VerifiedSource != nil {
+		if err := VerifySourceManifestStability(ctx, manifest); err != nil {
+			return api.PrepareResult{}, err
+		}
+	}
 	preparedAt := m.now().UTC()
 	release := api.PreparedRelease{
 		Generation:       generation,
 		Compatibility:    compatibility,
 		Source:           manifest,
+		SourceIdentity:   verifiedSource,
 		Naming:           collected.Naming,
 		Episode:          collected.Episode,
 		Media:            collected.Media,
@@ -535,6 +556,22 @@ func (m *Module) Purge(ctx context.Context, sourcePath string) error {
 	return nil
 }
 
+// Invalidate removes one published prepared generation without changing
+// persisted state. History cleanup calls it after durable cleanup succeeds and
+// before its writer reservation releases.
+func (m *Module) Invalidate(sourcePath string) {
+	if m == nil {
+		return
+	}
+	normalized, err := normalizeSourcePath(sourcePath)
+	if err != nil {
+		return
+	}
+	m.mu.Lock()
+	delete(m.envelopes, canonicalSourceKey(normalized))
+	m.mu.Unlock()
+}
+
 func (m *Module) loadCurrent(ctx context.Context, sourcePath string) (api.PreparedRelease, bool, error) {
 	release, err := m.store.LoadPreparedRelease(ctx, sourcePath)
 	if err == nil {
@@ -567,6 +604,32 @@ func (m *Module) hasPublishedGeneration(sourcePath string, generation api.Prepar
 	current, ok := m.envelopes[key]
 	m.mu.RUnlock()
 	return ok && current.result.Release.Generation == generation
+}
+
+func (m *Module) retainedClientEvidence(
+	input api.PrepareInput,
+	compatibility api.PreparationCompatibility,
+	generation api.PreparedGeneration,
+) *preparationstate.ClientEvidenceSnapshot {
+	if input.Force || input.ExternalFreshness.RequiresRefresh() || input.Controls.ForceRecheck != nil && *input.Controls.ForceRecheck {
+		return nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	current, ok := m.envelopes[canonicalSourceKey(input.SourcePath)]
+	if !ok || current.result.Release.Generation != generation || current.resources.policy != input.Policy ||
+		current.result.Release.Compatibility.SourceFingerprint != compatibility.SourceFingerprint ||
+		current.result.Release.Compatibility.FactInstructionFingerprint != compatibility.FactInstructionFingerprint {
+		return nil
+	}
+	evidence := current.resources.clientEvidence
+	if evidence.Disposition != preparationstate.ClientEvidenceDispositionSearched || evidence.Policy.Skip != input.Search.Skip ||
+		(evidence.Policy.Client == nil) != (input.Search.Client == nil) ||
+		evidence.Policy.Client != nil && *evidence.Policy.Client != *input.Search.Client {
+		return nil
+	}
+	retained := preparationstate.CloneClientEvidenceSnapshot(evidence)
+	return &retained
 }
 
 func mergeFactInstructions(intent *externalidentity.ResolutionIntent, instructions api.ReleaseFactInstructions) {
@@ -610,6 +673,11 @@ func validateGeneration(release api.PreparedRelease) error {
 		strings.TrimSpace(release.Compatibility.FactInstructionFingerprint) == "" ||
 		strings.TrimSpace(release.Compatibility.PolicyFingerprint) == "" {
 		return internalerrors.ErrInvalidInput
+	}
+	if release.SourceIdentity.Version != "" &&
+		(release.SourceIdentity.Version != api.SourceContentIdentityVersion || !validIdentityDigest(release.SourceIdentity.Digest) ||
+			strings.TrimSpace(release.SourceIdentity.ManifestFingerprint) == "") {
+		return &IncompatiblePreparationError{SourcePath: release.Source.SourcePath, Reason: "invalid verified source identity"}
 	}
 	if release.Identity.Generation != release.Generation || release.ProviderMetadata.Generation != release.Generation ||
 		canonicalSourceKey(release.Identity.SourcePath) != canonicalSourceKey(release.Source.SourcePath) ||
@@ -796,6 +864,7 @@ type envelope struct {
 }
 
 type preparationResources struct {
+	policy                api.PreparationPolicy
 	sourcePath            string
 	playlist              api.PlaylistInstruction
 	videoPath             string
@@ -819,7 +888,11 @@ func resourcesFromManifest(manifest api.SourceManifest, input api.PrepareInput) 
 		Selected: append([]string(nil), input.Instructions.Playlist.Selected...),
 		UseAll:   input.Instructions.Playlist.UseAll,
 	}
-	return preparationResources{sourcePath: manifest.SourcePath, playlist: playlist}
+	return preparationResources{
+		policy:     input.Policy,
+		sourcePath: manifest.SourcePath,
+		playlist:   playlist,
+	}
 }
 
 func envelopeFromPersisted(release api.PreparedRelease, input api.PrepareInput) envelope {
@@ -879,6 +952,7 @@ func cloneEnvelope(value envelope) (envelope, error) {
 	cloned := envelope{
 		result: clonedResult,
 		resources: preparationResources{
+			policy:              value.resources.policy,
 			sourcePath:          value.resources.sourcePath,
 			videoPath:           value.resources.videoPath,
 			fileList:            append([]string(nil), value.resources.fileList...),

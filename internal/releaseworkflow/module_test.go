@@ -2931,7 +2931,7 @@ func TestModuleInterruptsRecoveredOperationWhenWorkflowAuthorityAdvanced(t *test
 	}
 }
 
-func TestModulePublishesCompletedWorkCheckpointAfterRestart(t *testing.T) {
+func TestModuleRepublishesCompletedWorkCheckpointWithinSameProcess(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.July, 23, 6, 30, 0, 0, time.UTC)
@@ -2968,12 +2968,11 @@ func TestModulePublishesCompletedWorkCheckpointAfterRestart(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("terminal operation save did not fail")
 	}
-	stored, err := repository.LoadOperation(context.Background(), testOwnerID, created.Workflow.ID, operation.ID)
-	if err != nil {
-		t.Fatalf("load operation before restart: %v", err)
-	}
-	if !workflowOperationActive(stored.Status.Status) {
-		t.Fatalf("operation status before restart = %s, want active", stored.Status.Status)
+	stored := waitForWorkflowOperation(t, moduleA, created.Workflow.ID, operation.ID, func(status api.WorkflowOperationStatus) bool {
+		return status.Status == api.StageStatusCompleted
+	})
+	if stored.Status != api.StageStatusCompleted || stored.Result == nil || stored.Result.Kind != api.WorkflowOperationResultRelease {
+		t.Fatalf("operation status after terminal save retry = %#v", stored)
 	}
 	work, err := repository.LoadWork(context.Background(), testOwnerID, created.Workflow.ID, operation.ID)
 	if err != nil {

@@ -261,6 +261,9 @@ func (r *SQLiteRepository) execWrite(ctx context.Context, operation string, quer
 // retry policy. The callback must keep work DB-local because any busy or locked
 // error retries the entire transaction.
 func (r *SQLiteRepository) withWriteTx(ctx context.Context, operation string, fn func(*sql.Tx) error) error {
+	if tx := r.historyTransaction(ctx); tx != nil {
+		return fn(tx)
+	}
 	return retryBusyContext(ctx, r.logger, operation, func() error {
 		tx, err := r.db.BeginTx(ctx, nil)
 		if err != nil {
@@ -327,7 +330,7 @@ func (r *SQLiteRepository) GetByPath(ctx context.Context, path string) (FileMeta
 		return FileMetadata{}, internalerrors.ErrInvalidInput
 	}
 
-	row := r.db.QueryRowContext(ctx, `
+	row := r.historyQuery(ctx).QueryRowContext(ctx, `
 		SELECT path, info_hash, updated_at, disc_type, video_path, file_list, scene, scene_name, scene_imdb,
 			release_category,
 			release_type, release_artist, release_title, release_subtitle, release_alt, release_year, release_month, release_day,
@@ -1097,7 +1100,7 @@ func (r *SQLiteRepository) ListDescriptionOverridesByPath(ctx context.Context, p
 		return nil, internalerrors.ErrInvalidInput
 	}
 
-	rows, err := r.db.QueryContext(ctx, `
+	rows, err := r.historyQuery(ctx).QueryContext(ctx, `
 		SELECT group_key, description, updated_at
 		FROM description_overrides
 		WHERE source_path = ?
@@ -1298,7 +1301,7 @@ func (r *SQLiteRepository) ListHistoryEntries(ctx context.Context) ([]HistoryEnt
 		return nil, errors.New("db: repository not initialized")
 	}
 
-	rows, err := r.db.QueryContext(ctx, `
+	rows, err := r.historyQuery(ctx).QueryContext(ctx, `
 		SELECT
 			fm.path,
 			fm.release_title,
@@ -3559,9 +3562,11 @@ func (r *SQLiteRepository) ListStoredReleasePaths(ctx context.Context) ([]string
 	if r == nil || r.db == nil {
 		return nil, errors.New("db: repository not initialized")
 	}
-	rows, err := r.db.QueryContext(ctx, `
+	rows, err := r.historyQuery(ctx).QueryContext(ctx, `
 		SELECT source_path FROM (
 			SELECT path AS source_path FROM file_metadata
+			UNION
+			SELECT source_path FROM prepared_release_current
 			UNION
 			SELECT source_path FROM dvd_mediainfo
 			UNION
@@ -3590,6 +3595,16 @@ func (r *SQLiteRepository) ListStoredReleasePaths(ctx context.Context) ([]string
 			SELECT source_path FROM uploaded_images
 			UNION
 			SELECT source_path FROM upload_records
+			UNION
+			SELECT canonical_path AS source_path FROM input_records
+			UNION
+			SELECT source_path FROM media_reusable_assets
+			UNION
+			SELECT source_path FROM media_reusable_hosted_links
+			UNION
+			SELECT source_path FROM media_reusable_commits
+			UNION
+			SELECT source_path FROM media_reusable_tombstones
 		)
 		WHERE TRIM(source_path) <> ''
 		ORDER BY source_path ASC
@@ -3600,22 +3615,292 @@ func (r *SQLiteRepository) ListStoredReleasePaths(ctx context.Context) ([]string
 	defer rows.Close()
 
 	paths := make([]string, 0)
+	seen := make(map[string]struct{})
 	for rows.Next() {
 		var sourcePath string
 		if err := rows.Scan(&sourcePath); err != nil {
 			return nil, fmt.Errorf("db list stored release paths: %w", err)
 		}
-		paths = append(paths, sourcePath)
+		if _, exists := seen[sourcePath]; !exists {
+			seen[sourcePath] = struct{}{}
+			paths = append(paths, sourcePath)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("db list stored release paths: %w", err)
 	}
+	workflowPaths, err := r.listStoredReleaseWorkflowPaths(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, sourcePath := range workflowPaths {
+		if _, exists := seen[sourcePath]; !exists {
+			seen[sourcePath] = struct{}{}
+			paths = append(paths, sourcePath)
+		}
+	}
+	legacyGroups, err := r.listLegacyUIStateSourceGroups(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, group := range legacyGroups {
+		for _, sourcePath := range group.paths {
+			if _, exists := seen[sourcePath]; !exists {
+				seen[sourcePath] = struct{}{}
+				paths = append(paths, sourcePath)
+			}
+		}
+	}
+	sort.Strings(paths)
 	return paths, nil
 }
 
-// PurgeContentData atomically deletes persisted release, metadata, upload, and
-// media rows for path, including matching retired UI-state rows. It does not
-// remove local files or remote uploads.
+type legacyUIStateSourceGroup struct {
+	paths []string
+}
+
+// listLegacyUIStateSourceGroups exposes recognizable source paths from the
+// retired ui_states table. Each group represents one stored row because the
+// legacy purge removes a complete row when any of its paths is selected.
+// Unsupported retired schemas and malformed data are ignored conservatively.
+func (r *SQLiteRepository) listLegacyUIStateSourceGroups(ctx context.Context) ([]legacyUIStateSourceGroup, error) {
+	query := r.historyQuery(ctx)
+	var exists int
+	err := query.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ui_states'
+	)`).Scan(&exists)
+	if err != nil {
+		return nil, fmt.Errorf("db list legacy ui_states: inspect table: %w", err)
+	}
+	if exists == 0 {
+		return nil, nil
+	}
+
+	columns, err := legacyUIStateColumns(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	if _, hasSourcePath := columns["source_path"]; hasSourcePath {
+		rows, err := query.QueryContext(ctx, `SELECT source_path FROM ui_states`)
+		if err != nil {
+			return nil, fmt.Errorf("db list legacy ui_states: read source_path: %w", err)
+		}
+		defer rows.Close()
+
+		groups := make([]legacyUIStateSourceGroup, 0)
+		for rows.Next() {
+			var sourcePath sql.NullString
+			if err := rows.Scan(&sourcePath); err != nil {
+				return nil, fmt.Errorf("db list legacy ui_states: scan source_path: %w", err)
+			}
+			if group := legacyUIStateSourceGroupForPaths(sourcePath.String); len(group.paths) > 0 {
+				groups = append(groups, group)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("db list legacy ui_states: iterate source_path: %w", err)
+		}
+		return groups, nil
+	}
+
+	if _, hasID := columns["id"]; !hasID {
+		return nil, nil
+	}
+	_, hasData := columns["data"]
+	selectColumns := "id"
+	if hasData {
+		selectColumns += ", data"
+	}
+	rows, err := query.QueryContext(ctx, `SELECT `+selectColumns+` FROM ui_states`)
+	if err != nil {
+		return nil, fmt.Errorf("db list legacy ui_states: read id/data: %w", err)
+	}
+	defer rows.Close()
+
+	groups := make([]legacyUIStateSourceGroup, 0)
+	for rows.Next() {
+		var id sql.NullString
+		var data sql.NullString
+		var scanErr error
+		if hasData {
+			scanErr = rows.Scan(&id, &data)
+		} else {
+			scanErr = rows.Scan(&id)
+		}
+		if scanErr != nil {
+			return nil, fmt.Errorf("db list legacy ui_states: scan id/data: %w", scanErr)
+		}
+		paths := make([]string, 0)
+		if legacyUIStateRecognizablePath(id.String) {
+			paths = append(paths, id.String)
+		}
+		if hasData {
+			for _, sourcePath := range legacyUIStateDataSourcePaths(data.String) {
+				if legacyUIStateRecognizablePath(sourcePath) {
+					paths = append(paths, sourcePath)
+				}
+			}
+		}
+		if group := legacyUIStateSourceGroupForPaths(paths...); len(group.paths) > 0 {
+			groups = append(groups, group)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("db list legacy ui_states: iterate id/data: %w", err)
+	}
+	return groups, nil
+}
+
+func legacyUIStateColumns(ctx context.Context, query historyQueryer) (map[string]struct{}, error) {
+	rows, err := query.QueryContext(ctx, `PRAGMA table_info(ui_states)`)
+	if err != nil {
+		return nil, fmt.Errorf("db list legacy ui_states: inspect columns: %w", err)
+	}
+	defer rows.Close()
+
+	columns := make(map[string]struct{})
+	for rows.Next() {
+		var cid int
+		var name string
+		var dataType string
+		var notNull int
+		var defaultValue any
+		var primaryKey int
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return nil, fmt.Errorf("db list legacy ui_states: scan column: %w", err)
+		}
+		columns[strings.ToLower(name)] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("db list legacy ui_states: iterate columns: %w", err)
+	}
+	return columns, nil
+}
+
+func legacyUIStateSourceGroupForPaths(paths ...string) legacyUIStateSourceGroup {
+	group := legacyUIStateSourceGroup{paths: make([]string, 0, len(paths))}
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path != "" && !slices.Contains(group.paths, path) {
+			group.paths = append(group.paths, path)
+		}
+	}
+	return group
+}
+
+func legacyUIStateRecognizablePath(path string) bool {
+	return filepath.IsAbs(strings.TrimSpace(path))
+}
+
+type storedReleaseWorkflowSource struct {
+	SourcePath       string
+	PreparationInput *api.PrepareInput
+	Releases         map[api.ReleaseSnapshotID]api.ReleaseSnapshot
+	Composite        *storedReleaseWorkflowCompositeSource
+}
+
+type storedReleaseWorkflowCompositeSource struct {
+	Intent storedReleaseWorkflowIntentSource
+}
+
+type storedReleaseWorkflowIntentSource struct {
+	Preparation *api.PrepareInput
+}
+
+func (r *SQLiteRepository) listStoredReleaseWorkflowPaths(ctx context.Context) ([]string, error) {
+	rows, err := r.historyQuery(ctx).QueryContext(ctx, `SELECT state_json FROM release_workflow_states`)
+	if err != nil {
+		return nil, fmt.Errorf("db list stored release workflow paths: %w", err)
+	}
+	defer rows.Close()
+
+	paths := make([]string, 0)
+	seen := make(map[string]struct{})
+	for rows.Next() {
+		var payload []byte
+		if err := rows.Scan(&payload); err != nil {
+			return nil, fmt.Errorf("db scan stored release workflow path: %w", err)
+		}
+		for _, sourcePath := range storedReleaseWorkflowSourcePaths(payload) {
+			if _, exists := seen[sourcePath]; !exists {
+				seen[sourcePath] = struct{}{}
+				paths = append(paths, sourcePath)
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("db iterate stored release workflow paths: %w", err)
+	}
+	return paths, nil
+}
+
+func storedReleaseWorkflowSourcePaths(payload []byte) []string {
+	var state storedReleaseWorkflowSource
+	if err := json.Unmarshal(payload, &state); err != nil {
+		return nil
+	}
+	paths := make([]string, 0, len(state.Releases)+2)
+	if sourcePath := strings.TrimSpace(state.SourcePath); sourcePath != "" {
+		paths = append(paths, sourcePath)
+	}
+	if state.PreparationInput != nil {
+		if sourcePath := strings.TrimSpace(state.PreparationInput.SourcePath); sourcePath != "" {
+			paths = append(paths, sourcePath)
+		}
+	}
+	if state.Composite != nil && state.Composite.Intent.Preparation != nil {
+		if sourcePath := strings.TrimSpace(state.Composite.Intent.Preparation.SourcePath); sourcePath != "" {
+			paths = append(paths, sourcePath)
+		}
+	}
+	for _, release := range state.Releases {
+		if sourcePath := strings.TrimSpace(release.Release.Source.SourcePath); sourcePath != "" {
+			paths = append(paths, sourcePath)
+		}
+	}
+	return paths
+}
+
+type storedReleaseWorkflowStateID struct {
+	ownerID    string
+	workflowID api.WorkflowID
+}
+
+func matchingStoredReleaseWorkflowStates(
+	ctx context.Context,
+	query historyQueryer,
+	path string,
+) ([]storedReleaseWorkflowStateID, error) {
+	rows, err := query.QueryContext(ctx, `SELECT owner_id, workflow_id, state_json FROM release_workflow_states`)
+	if err != nil {
+		return nil, fmt.Errorf("db purge content list release workflow states: %w", err)
+	}
+	defer rows.Close()
+
+	matches := make([]storedReleaseWorkflowStateID, 0)
+	for rows.Next() {
+		var ownerID string
+		var workflowID api.WorkflowID
+		var payload []byte
+		if err := rows.Scan(&ownerID, &workflowID, &payload); err != nil {
+			return nil, fmt.Errorf("db purge content scan release workflow state: %w", err)
+		}
+		for _, sourcePath := range storedReleaseWorkflowSourcePaths(payload) {
+			if pathutil.SamePath(sourcePath, path) {
+				matches = append(matches, storedReleaseWorkflowStateID{ownerID: ownerID, workflowID: workflowID})
+				break
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("db purge content iterate release workflow states: %w", err)
+	}
+	return matches, nil
+}
+
+// PurgeContentData atomically deletes persisted source-associated history for
+// path, including matching workflow state and retired UI-state rows. It does
+// not remove local files or remote uploads.
 func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
@@ -3649,13 +3934,69 @@ func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) er
 		{sql: `DELETE FROM screenshot_slot_variants WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM screenshot_slots WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM uploaded_images WHERE source_path = ?`, args: []any{trimmedPath}},
+		{sql: `DELETE FROM media_reusable_hosted_links WHERE source_path = ?`, args: []any{trimmedPath}},
+		{sql: `DELETE FROM media_reusable_assets WHERE source_path = ?`, args: []any{trimmedPath}},
+		{sql: `DELETE FROM media_reusable_commits WHERE source_path = ?`, args: []any{trimmedPath}},
+		{sql: `DELETE FROM input_records WHERE canonical_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM upload_records WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM file_metadata WHERE path = ?`, args: []any{trimmedPath}},
 	}
 
 	totalRemoved := int64(0)
 	if err := r.withWriteTx(ctx, "purge content", func(tx *sql.Tx) error {
+		if err := rejectActiveHistoryPurge(ctx, tx, trimmedPath); err != nil {
+			return err
+		}
 		totalRemoved = 0
+		workflowStates, err := matchingStoredReleaseWorkflowStates(ctx, tx, trimmedPath)
+		if err != nil {
+			return err
+		}
+		if err := rejectHistoryPurgeWorkflowActivity(ctx, tx, workflowStates); err != nil {
+			return err
+		}
+		for _, workflowState := range workflowStates {
+			for _, query := range []string{
+				`DELETE FROM submission_fences WHERE owner_id = ? AND workflow_id = ?`,
+				`DELETE FROM release_workflow_states WHERE owner_id = ? AND workflow_id = ?`,
+			} {
+				result, err := tx.ExecContext(ctx, query, workflowState.ownerID, workflowState.workflowID)
+				if err != nil {
+					return fmt.Errorf("db purge content workflow state: %w", err)
+				}
+				rows, err := result.RowsAffected()
+				if err == nil {
+					totalRemoved += rows
+				}
+			}
+		}
+		result, err := tx.ExecContext(ctx, `
+			DELETE FROM media_reusable_tombstones AS tombstone
+			WHERE tombstone.source_path = ?
+				OR (
+					tombstone.source_path = ''
+					AND EXISTS (
+						SELECT 1 FROM media_reusable_assets AS asset
+						WHERE asset.source_path = ?
+							AND asset.compatibility_key = tombstone.compatibility_key
+							AND asset.capture_fingerprint = tombstone.capture_fingerprint
+							AND asset.content_sha256 = tombstone.content_sha256
+					)
+					AND NOT EXISTS (
+						SELECT 1 FROM media_reusable_assets AS asset
+						WHERE asset.source_path <> ?
+							AND asset.compatibility_key = tombstone.compatibility_key
+							AND asset.capture_fingerprint = tombstone.capture_fingerprint
+							AND asset.content_sha256 = tombstone.content_sha256
+					)
+				)
+		`, trimmedPath, trimmedPath, trimmedPath)
+		if err != nil {
+			return fmt.Errorf("db purge content reusable tombstones: %w", err)
+		}
+		if rows, err := result.RowsAffected(); err == nil {
+			totalRemoved += rows
+		}
 		for _, query := range queries {
 			result, err := tx.ExecContext(ctx, query.sql, query.args...)
 			if err != nil {
@@ -3679,6 +4020,92 @@ func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) er
 		r.logger.Debugf("db: purge content data completed path=%s rows_removed=%d", trimmedPath, totalRemoved)
 	}
 	return nil
+}
+
+func rejectHistoryPurgeWorkflowActivity(
+	ctx context.Context,
+	query workflowStateQueryer,
+	workflowStates []storedReleaseWorkflowStateID,
+) error {
+	slot, err := loadActiveInput(ctx, query)
+	if err != nil {
+		return err
+	}
+	for _, workflowState := range workflowStates {
+		activeWorkflow := slot.State != api.ActiveInputEmpty && slot.OwnerID == workflowState.ownerID && slot.WorkflowID == workflowState.workflowID
+		if activeWorkflow {
+			var unresolved int
+			if err := query.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM release_workflow_effects
+				WHERE owner_id = ? AND workflow_id = ? AND status IN ('started', 'unknown'))`, workflowState.ownerID, workflowState.workflowID).Scan(&unresolved); err != nil {
+				return fmt.Errorf("db purge content: inspect matching active effects: %w", err)
+			}
+			if unresolved != 0 {
+				return api.ErrReleaseWorkflowEffectOutcomeUnknown
+			}
+		}
+		var running int
+		if err := query.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM release_workflow_operations
+			WHERE owner_id = ? AND workflow_id = ? AND status IN ('queued', 'running'))`, workflowState.ownerID, workflowState.workflowID).Scan(&running); err != nil {
+			return fmt.Errorf("db purge content: inspect matching workflow work: %w", err)
+		}
+		if running != 0 || activeWorkflow {
+			return api.ErrActiveInputBusy
+		}
+	}
+	return nil
+}
+
+// rejectActiveHistoryPurge prevents direct repository callers from deleting
+// history that is still attached to the active input.
+func rejectActiveHistoryPurge(ctx context.Context, query workflowStateQueryer, path string) error {
+	slot, err := loadActiveInput(ctx, query)
+	if err != nil {
+		return err
+	}
+	if slot.State == api.ActiveInputEmpty {
+		return nil
+	}
+	activePaths := []string{slot.RequestedPath}
+	if strings.TrimSpace(slot.InputID) != "" {
+		var canonicalPath string
+		err := query.QueryRowContext(ctx, `SELECT canonical_path FROM input_records WHERE id = ?`, slot.InputID).Scan(&canonicalPath)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return api.ErrActiveInputBusy
+			}
+			return fmt.Errorf("db purge content: active input path: %w", err)
+		}
+		activePaths = append(activePaths, canonicalPath)
+	}
+	active := false
+	for _, activePath := range activePaths {
+		if strings.TrimSpace(activePath) != "" && pathutil.SamePath(activePath, path) {
+			active = true
+			break
+		}
+	}
+	if !active {
+		return nil
+	}
+	if slot.WorkflowID != "" {
+		var unresolved int
+		if err := query.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM release_workflow_effects
+			WHERE owner_id = ? AND workflow_id = ? AND status IN ('started', 'unknown'))`, slot.OwnerID, slot.WorkflowID).Scan(&unresolved); err != nil {
+			return fmt.Errorf("db purge content: inspect active input effects: %w", err)
+		}
+		if unresolved != 0 {
+			return api.ErrReleaseWorkflowEffectOutcomeUnknown
+		}
+		var running int
+		if err := query.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM release_workflow_operations
+			WHERE owner_id = ? AND workflow_id = ? AND status IN ('queued', 'running'))`, slot.OwnerID, slot.WorkflowID).Scan(&running); err != nil {
+			return fmt.Errorf("db purge content: inspect active input work: %w", err)
+		}
+		if running != 0 {
+			return api.ErrActiveInputBusy
+		}
+	}
+	return api.ErrActiveInputBusy
 }
 
 // purgeLegacyUIState removes rows from the retired ui_states table when an old
@@ -3839,36 +4266,44 @@ func legacyUIStatePathMatches(stored string, target string) bool {
 // payload may be nested, path comparisons use host filesystem semantics, and
 // malformed JSON never matches.
 func legacyUIStateDataMatchesPath(data string, path string) bool {
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(data), &payload); err != nil {
-		return false
-	}
-	return legacyUIStateValueMatchesPath(payload, path)
-}
-
-// legacyUIStateValueMatchesPath walks legacy object/array payloads looking for
-// known source path keys without treating arbitrary string values as paths.
-func legacyUIStateValueMatchesPath(value any, path string) bool {
-	switch typed := value.(type) {
-	case map[string]any:
-		for _, key := range []string{"sourcePath", "SourcePath", "source_path", "path", "Path"} {
-			if value, ok := typed[key].(string); ok && legacyUIStatePathMatches(value, path) {
-				return true
-			}
-		}
-		for _, nested := range typed {
-			if legacyUIStateValueMatchesPath(nested, path) {
-				return true
-			}
-		}
-	case []any:
-		for _, nested := range typed {
-			if legacyUIStateValueMatchesPath(nested, path) {
-				return true
-			}
+	for _, sourcePath := range legacyUIStateDataSourcePaths(data) {
+		if legacyUIStatePathMatches(sourcePath, path) {
+			return true
 		}
 	}
 	return false
+}
+
+// legacyUIStateDataSourcePaths extracts recognizable paths from legacy object
+// and array payloads. Malformed JSON and arbitrary string values are ignored.
+func legacyUIStateDataSourcePaths(data string) []string {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		return nil
+	}
+	paths := make([]string, 0)
+	legacyUIStateValueSourcePaths(payload, &paths)
+	return paths
+}
+
+// legacyUIStateValueSourcePaths walks legacy object/array payloads looking for
+// known source path keys without treating arbitrary string values as paths.
+func legacyUIStateValueSourcePaths(value any, paths *[]string) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for _, key := range []string{"sourcePath", "SourcePath", "source_path", "path", "Path"} {
+			if value, ok := typed[key].(string); ok && strings.TrimSpace(value) != "" {
+				*paths = append(*paths, strings.TrimSpace(value))
+			}
+		}
+		for _, nested := range typed {
+			legacyUIStateValueSourcePaths(nested, paths)
+		}
+	case []any:
+		for _, nested := range typed {
+			legacyUIStateValueSourcePaths(nested, paths)
+		}
+	}
 }
 
 func resolvePath(path string) (string, error) {

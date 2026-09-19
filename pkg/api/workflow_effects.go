@@ -24,6 +24,9 @@ type WorkflowExternalEffect struct {
 	Kind                WorkflowExternalEffectKind
 	ScopeID             string
 	SemanticFingerprint WorkflowFingerprint
+	// Submission is required for tracker submissions admitted by an active
+	// input workflow. It carries the exact scoped content and site authority.
+	Submission *SubmissionFenceAuthority
 }
 
 // WorkflowExternalEffectReceipt is private in-process authority to complete a
@@ -40,6 +43,13 @@ type WorkflowExternalEffectReporter interface {
 }
 
 type workflowExternalEffectReporterContextKey struct{}
+
+// WorkflowExternalEffectReporterFromContext returns the current operation's
+// reporter so domain owners can add checks without replacing its durable fence.
+func WorkflowExternalEffectReporterFromContext(ctx context.Context) (WorkflowExternalEffectReporter, bool) {
+	reporter, ok := ctx.Value(workflowExternalEffectReporterContextKey{}).(WorkflowExternalEffectReporter)
+	return reporter, ok
+}
 
 // WithWorkflowExternalEffectReporter installs one operation-scoped effect fence.
 func WithWorkflowExternalEffectReporter(
@@ -63,6 +73,9 @@ func BeginWorkflowExternalEffect(
 	}
 	reporter, _ := ctx.Value(workflowExternalEffectReporterContextKey{}).(WorkflowExternalEffectReporter)
 	if reporter == nil {
+		if effect.Submission != nil {
+			return WorkflowExternalEffectReceipt{}, errors.New("workflow submission fence reporter is required")
+		}
 		return WorkflowExternalEffectReceipt{}, nil
 	}
 	receipt, err := reporter.Begin(ctx, effect)
@@ -101,6 +114,14 @@ func validateWorkflowExternalEffect(effect WorkflowExternalEffect) error {
 	}
 	if strings.TrimSpace(effect.ScopeID) == "" || effect.SemanticFingerprint == "" {
 		return errors.New("workflow external effect scope and semantic fingerprint are required")
+	}
+	if effect.Submission != nil {
+		if effect.Kind != WorkflowExternalEffectTrackerSubmission {
+			return errors.New("submission fence is only valid for tracker submission")
+		}
+		if err := effect.Submission.ValidateSubmission(); err != nil {
+			return fmt.Errorf("workflow external effect submission fence: %w", err)
+		}
 	}
 	return nil
 }

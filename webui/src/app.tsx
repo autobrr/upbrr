@@ -529,6 +529,11 @@ function AppShell({
             />
           ) : activeTab === "history" ? (
             <HistoryPage
+              onOpenInput={async (path) => {
+                const opened = await releaseSession.input.openSource(path);
+                if (opened) setActiveTab("input");
+                return opened;
+              }}
               onReleaseDeleted={(deletedPath) => {
                 if (deletedPath === sourcePath) releaseSession.input.selectSource("");
               }}
@@ -541,6 +546,10 @@ function AppShell({
               useFavicons={useFavicons}
               faviconOnly={faviconOnly}
               trackerIconSrcByName={trackerIconSrcByName}
+              submissionExclusions={releaseSession.upload.view.submissionExclusions}
+              workflowComplete={
+                releaseSession.workflow.view.current?.workflow.status === "completed"
+              }
             />
           ) : activeTab === "screenshots" ? (
             <ScreenshotsPage

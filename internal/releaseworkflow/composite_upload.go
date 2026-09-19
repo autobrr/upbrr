@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -202,13 +203,50 @@ func (m *Module) startUpload(
 			return CommandResult{}, fmt.Errorf("release workflow live-test fingerprint: %w", err)
 		}
 	}
-	created, err := m.Execute(ctx, ownerID, CreateWorkflowCommand{
-		Instructions:        instructions,
-		IdempotencyKey:      request.IdempotencyKey,
-		RequestFingerprint:  session.RequestFingerprint,
-		TrackerDecisionMode: TrackerDecisionModePostDupeGate,
-		Composite:           session,
-	})
+	var created CommandResult
+	openedFresh := false
+	switch {
+	case request.Authority != nil:
+		ctx, err = m.activeMutationContext(ctx, ownerID, request.Authority.WorkflowID)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		created, openedFresh, err = m.adoptCompositeInput(ctx, ownerID, *request.Authority, session)
+	case m.activeInputs != nil:
+		if session.Intent.Preparation == nil {
+			return CommandResult{}, api.ErrPreparationSourceRequired
+		}
+		slot, loadErr := m.ActiveInput(ctx, ownerID)
+		if loadErr != nil {
+			return CommandResult{}, loadErr
+		}
+		session.Intent.Preparation.ExternalFreshness = api.ExternalFreshnessRefresh
+		opened, openErr := m.OpenInput(ctx, ownerID, OpenInputRequest{
+			ExpectedRevision:    slot.Revision,
+			Input:               *session.Intent.Preparation,
+			IdempotencyKey:      request.IdempotencyKey,
+			TrackerDecisionMode: TrackerDecisionModePostDupeGate,
+			Composite:           session,
+			RequestFingerprint:  session.RequestFingerprint,
+		})
+		if openErr != nil {
+			return CommandResult{}, openErr
+		}
+		openedFresh = opened.Revision != slot.Revision
+		ctx, err = m.activeMutationContext(ctx, ownerID, opened.WorkflowID)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		created, err = m.Current(ctx, ownerID, opened.WorkflowID)
+	default:
+		created, err = m.Execute(ctx, ownerID, CreateWorkflowCommand{
+			Instructions:        instructions,
+			IdempotencyKey:      request.IdempotencyKey,
+			RequestFingerprint:  session.RequestFingerprint,
+			TrackerDecisionMode: TrackerDecisionModePostDupeGate,
+			Composite:           session,
+		})
+	}
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -216,7 +254,8 @@ func (m *Module) startUpload(
 	if err != nil {
 		return CommandResult{}, err
 	}
-	if current.Operation != nil && current.Operation.Command == (CompositeUploadCommand{}).commandName() {
+	if current.Operation != nil && current.Operation.Command == (CompositeUploadCommand{}).commandName() &&
+		(!openedFresh || current.Operation.CompletedAt == nil) {
 		return current, nil
 	}
 	if current.Workflow.Status == api.WorkflowStatusCompleted || current.UploadResult != nil ||
@@ -253,6 +292,59 @@ func (m *Module) startUpload(
 	}
 	current.Operation = &operation
 	return current, nil
+}
+
+func (m *Module) adoptCompositeInput(
+	ctx context.Context,
+	owner string,
+	authority api.WorkflowAuthority,
+	session *compositeUploadSession,
+) (CommandResult, bool, error) {
+	if err := m.requireActiveConfig(ctx); err != nil {
+		return CommandResult{}, false, err
+	}
+	lock := m.commandLock(owner + "\x00" + string(authority.WorkflowID))
+	lock.Lock()
+	defer lock.Unlock()
+	if err := m.requireOperationOwnership(ctx, owner, authority.WorkflowID); err != nil {
+		return CommandResult{}, false, err
+	}
+	state, err := m.repository.Load(ctx, owner, authority.WorkflowID)
+	if err != nil {
+		return CommandResult{}, false, fmt.Errorf("release workflow load composite input: %w", err)
+	}
+	if state.Composite != nil && state.Composite.RequestFingerprint == session.RequestFingerprint {
+		current, err := m.Current(ctx, owner, authority.WorkflowID)
+		return current, false, err
+	}
+	if state.Workflow.Revision != authority.ExpectedRevision {
+		return CommandResult{}, false, ErrRevisionConflict
+	}
+	if state.Workflow.Release == nil || session.Intent.Preparation == nil {
+		return CommandResult{}, false, ErrInvalidTransition
+	}
+	prepared, ok := state.Releases[state.Workflow.Release.ID]
+	if !ok || !pathing.SamePath(prepared.Release.Source.SourcePath, session.Intent.Preparation.SourcePath) {
+		return CommandResult{}, false, api.ErrActiveInputChanged
+	}
+	if session.Intent.Preparation.Force {
+		return CommandResult{}, false, fmt.Errorf("%w: forced preparation must complete before composite adoption", ErrInvalidTransition)
+	}
+	if err := m.reconcileReusableMedia(ctx, owner, authority.WorkflowID); err != nil {
+		return CommandResult{}, false, err
+	}
+	state.Composite = session
+	state.Workflow.Revision++
+	state.Workflow.UpdatedAt = m.clock.Now()
+	state.Workflow.Status = api.WorkflowStatusActive
+	state.Workflow.RequiredActions, state.Workflow.Failures, state.Workflow.SubmissionExclusions = nil, nil, nil
+	invalidateTrackerAndDownstream(&state.Workflow)
+	state.Composite.LastCommittedRevision = state.Workflow.Revision
+	if err := m.repository.Save(ctx, owner, authority.ExpectedRevision, state); err != nil {
+		return CommandResult{}, false, fmt.Errorf("release workflow adopt composite input: %w", err)
+	}
+	current, err := m.Current(ctx, owner, authority.WorkflowID)
+	return current, true, err
 }
 
 func normalizeCompositeUploadRequest(
@@ -482,11 +574,17 @@ func compositeUploadFactInstructions(
 		}
 		identity.IMDBID = &id
 	}
-	trackerIDs := make(map[string]string, len(sourceIDs))
-	for trackerID, sourceID := range sourceIDs {
-		normalized := strings.ToUpper(strings.TrimSpace(string(trackerID)))
-		if normalized != "" {
-			trackerIDs[normalized] = strings.TrimSpace(sourceID)
+	var trackerIDs map[string]string
+	if len(sourceIDs) > 0 {
+		trackerIDs = make(map[string]string, len(sourceIDs))
+		for trackerID, sourceID := range sourceIDs {
+			normalized := strings.ToUpper(strings.TrimSpace(string(trackerID)))
+			if normalized != "" {
+				trackerIDs[normalized] = strings.TrimSpace(sourceID)
+			}
+		}
+		if len(trackerIDs) == 0 {
+			trackerIDs = nil
 		}
 	}
 	releaseName := facts.ReleaseName
@@ -858,7 +956,7 @@ func (m *Module) runCompositeUpload(
 	if err != nil {
 		return CommandResult{}, err
 	}
-	if err := m.hydrateCompositePreparedRelease(ctx, initial, session, requirements); err != nil {
+	if err := m.hydrateCompositePreparedRelease(ctx, ownerID, initial, session, requirements); err != nil {
 		return CommandResult{}, err
 	}
 	for range compositeUploadTransitionLimit {
@@ -886,6 +984,7 @@ func (m *Module) runCompositeUpload(
 				Recovery:  api.OperationRecoverySelectTrackers,
 			}, errors.New("release workflow composite upload has no remaining trackers"))
 		}
+		intent := compositeContinuationIntent(initial, session)
 		request := api.ContinueReleaseWorkflowRequest{
 			Authority: &api.WorkflowAuthority{
 				WorkflowID:       current.Workflow.ID,
@@ -893,7 +992,7 @@ func (m *Module) runCompositeUpload(
 			},
 			IdempotencyKey: compositeUploadOperationKey(string(session.RequestFingerprint), uint64(current.Workflow.Revision)),
 			Goal:           session.Goal,
-			Intent:         session.Intent,
+			Intent:         intent,
 		}
 		_, recovered, plannerTransition, recoveryErr := m.recoverPersistedMediaForContinuation(
 			ctx,
@@ -988,6 +1087,19 @@ func (m *Module) runCompositeUpload(
 	}, errors.New("release workflow composite upload transition limit exceeded"))
 }
 
+func compositeContinuationIntent(initial CommandResult, session *compositeUploadSession) api.WorkflowIntent {
+	intent := session.Intent
+	if initial.Release != nil && intent.Preparation != nil && !intent.Preparation.Force {
+		// hydrateCompositePreparedRelease already required this exact prepared
+		// generation. Downstream planning only needs the retained generation;
+		// applying the broader request-lineage predicate again would turn a
+		// compatible hydrated release into an unnecessary reset. Feedback that
+		// explicitly requests Force must still reach the planner and reset.
+		intent.Preparation = nil
+	}
+	return intent
+}
+
 func compositeNoEligibleTrackersFailure(current CommandResult, operation api.OperationKind) api.OperationFailure {
 	failure := api.OperationFailure{
 		Code:      api.OperationFailureNoEligibleTrackers,
@@ -1027,6 +1139,7 @@ func compositeAllTrackerLanesAuthBlocked(current CommandResult) bool {
 
 func (m *Module) hydrateCompositePreparedRelease(
 	ctx context.Context,
+	ownerID string,
 	current CommandResult,
 	session *compositeUploadSession,
 	requirements api.MetadataRequirementSet,
@@ -1041,9 +1154,13 @@ func (m *Module) hydrateCompositePreparedRelease(
 	input.SourcePath = current.Release.Release.Source.SourcePath
 	input.MetadataRequirements = requirements
 	input.Force = false
+	input.ExternalFreshness = api.ExternalFreshnessReuse
 	input.RequirePrepared = true
 	input.Controls.ConfirmBDMVRescan = false
 	input.Controls.ForceRecheck = nil
+	if err := m.attachVerifiedInput(ctx, ownerID, current.Workflow.ID, &input); err != nil {
+		return err
+	}
 	prepared, err := m.preparer.Prepare(ctx, input)
 	if err != nil {
 		return fmt.Errorf("release workflow hydrate composite prepared release: %w", err)
@@ -1078,6 +1195,10 @@ func (m *Module) currentCompositeUpload(
 }
 
 func compositeUploadGoalReached(current CommandResult, session *compositeUploadSession) bool {
+	if current.Workflow.AllSelectedTrackersAlreadyUploaded() &&
+		len(withoutConfirmedSubmissions(session.Intent.TrackerIDs, current.Workflow.SubmissionExclusions)) == 0 {
+		return true
+	}
 	switch session.Goal {
 	case api.WorkflowGoalDryRun:
 		return current.DryRun != nil
@@ -1600,6 +1721,13 @@ func compositeUploadTerminalStatus(result CommandResult) api.StageStatus {
 
 func compositeUploadResult(result CommandResult) *api.WorkflowOperationResult {
 	switch {
+	case result.Workflow.AllSelectedTrackersAlreadyUploaded():
+		return &api.WorkflowOperationResult{
+			Kind:             api.WorkflowOperationResultAlreadyUploaded,
+			WorkflowRevision: result.Workflow.Revision,
+			RefID:            string(result.Workflow.ID),
+			RefRevision:      result.Workflow.Revision,
+		}
 	case result.UploadResult != nil:
 		return &api.WorkflowOperationResult{
 			Kind:             api.WorkflowOperationResultUpload,

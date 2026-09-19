@@ -130,8 +130,14 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	}
 	meta.Identity = meta.Identity.WithoutResetPins(meta.IdentityResetFields)
 
+	refreshProviders := meta.ExternalFreshness.RequiresRefresh()
+	if refreshProviders {
+		meta.Identity = api.ExternalIdentity{SourcePath: meta.SourcePath}
+		meta.MALID = 0
+		meta.ExternalIdentityCandidates = nil
+	}
 	ids := api.ExternalIdentity{SourcePath: meta.SourcePath}
-	if meta.StoredDataFresh && sourceScopedMetadataMatches(meta.Identity.SourcePath, meta.SourcePath) {
+	if !refreshProviders && meta.StoredDataFresh && sourceScopedMetadataMatches(meta.Identity.SourcePath, meta.SourcePath) {
 		ids = meta.Identity
 		if strings.TrimSpace(ids.SourcePath) == "" {
 			ids.SourcePath = meta.SourcePath
@@ -142,12 +148,12 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		return preparationstate.State{}, fmt.Errorf("metadata: load stored external identity: %w", err)
 	}
 	metadata := api.SourceScopedMetadata{SourcePath: meta.SourcePath}
-	if meta.StoredDataFresh && sourceScopedMetadataMatches(meta.ProviderMetadata.SourcePath, meta.SourcePath) {
+	if !refreshProviders && meta.StoredDataFresh && sourceScopedMetadataMatches(meta.ProviderMetadata.SourcePath, meta.SourcePath) {
 		metadata = meta.ProviderMetadata
 		if strings.TrimSpace(metadata.SourcePath) == "" {
 			metadata.SourcePath = meta.SourcePath
 		}
-	} else {
+	} else if !refreshProviders {
 		storedMeta, err := s.repo.GetExternalMetadata(ctx, meta.SourcePath)
 		if err != nil && !errors.Is(err, internalerrors.ErrNotFound) {
 			return preparationstate.State{}, fmt.Errorf("metadata: load stored external metadata: %w", err)
@@ -456,11 +462,14 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	}
 
 	tmdbLogoFetchAttempted := false
+	tmdbMetadataFetchAttempted := false
+	imdbMetadataFetchAttempted := false
 	tmdbAnchorVerificationAttempted := false
 	tmdbMetadataRejected := false
 	tvdbMetadataRejected := false
 	tvmazeMetadataRejected := false
 	tvmazeAnchorVerificationAttempted := false
+	tvmazeMetadataFetchAttempted := false
 	anilistFetchAttempted := false
 	tvdbMetadataFetchAttempted := false
 	tvdbDisambiguationFetchAttempted := false
@@ -470,6 +479,9 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	hasAcceptedTVmazeLinks := false
 	shouldFetchTMDBMetadata := func() bool {
 		if tmdbClient == nil || ids.TMDBID == 0 {
+			return false
+		}
+		if refreshProviders && tmdbMetadataFetchAttempted {
 			return false
 		}
 		if overrideTMDB {
@@ -484,14 +496,19 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		return s.cfg.Description.AddLogo && strings.TrimSpace(metadata.TMDB.Logo) == "" && !tmdbLogoFetchAttempted
 	}
 	shouldFetchIMDBMetadata := func() bool {
-		return imdbClient != nil && ids.IMDBID != 0 &&
-			(!usableIMDBMetadata(metadata.IMDB, ids.IMDBID) ||
-				requiresProviderMetadataRefresh(meta.MetadataRequirements, ids.Category, meta, ids, metadata, api.IdentityProviderIMDB))
+		if imdbClient == nil || ids.IMDBID == 0 || refreshProviders && imdbMetadataFetchAttempted {
+			return false
+		}
+		if refreshProviders {
+			return true
+		}
+		return !usableIMDBMetadata(metadata.IMDB, ids.IMDBID) ||
+			requiresProviderMetadataRefresh(meta.MetadataRequirements, ids.Category, meta, ids, metadata, api.IdentityProviderIMDB)
 	}
 	shouldFetchTVDBMetadata := func() bool {
 		return tvdbClient != nil && shouldUseTVDBForCategory(meta, ids) && ids.TVDBID != 0 &&
 			!tvdbMetadataFetchAttempted &&
-			(!usableTVDBMetadata(metadata.TVDB, ids.TVDBID) ||
+			(refreshProviders || !usableTVDBMetadata(metadata.TVDB, ids.TVDBID) ||
 				requiresProviderMetadataRefresh(meta.MetadataRequirements, ids.Category, meta, ids, metadata, api.IdentityProviderTVDB))
 	}
 	shouldRefreshTVDBDisambiguation := func() bool {
@@ -502,6 +519,12 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	shouldFetchTVmazeMetadata := func() bool {
 		if tvmazeClient == nil || !isTVForTVmaze() || ids.TVmazeID == 0 {
 			return false
+		}
+		if refreshProviders && tvmazeMetadataFetchAttempted {
+			return false
+		}
+		if refreshProviders {
+			return true
 		}
 		if overrideTVmaze {
 			return !tvmazeAnchorVerificationAttempted
@@ -530,9 +553,12 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		return false
 	}
 
-	runFetchPass := func(allowProviderNameFallback bool) {
+	runFetchPass := func(allowProviderNameFallback bool) error {
 		allowProviderNameFallback = allowProviderNameFallback && !hasExplicitProviderAnchor
 		fetchTMDB := shouldFetchTMDBMetadata()
+		if fetchTMDB {
+			tmdbMetadataFetchAttempted = true
+		}
 		if fetchTMDB && overrideTMDB {
 			tmdbAnchorVerificationAttempted = true
 		}
@@ -544,6 +570,9 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			anilistFetchAttempted = true
 		}
 		fetchIMDB := shouldFetchIMDBMetadata()
+		if fetchIMDB {
+			imdbMetadataFetchAttempted = true
+		}
 		fetchTVDB := shouldFetchTVDBMetadata()
 		refreshTVDBDisambiguation := shouldRefreshTVDBDisambiguation()
 		if fetchTVDB {
@@ -553,6 +582,9 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			(ids.IMDBID != 0 || ids.TMDBID != 0 || allowProviderNameFallback)
 		lookupTVmaze := isTVForTVmaze() &&
 			(shouldFetchTVmazeMetadata() || (!overrideTVmaze && !clearedTVmaze && ids.TVmazeID == 0 && (ids.IMDBID != 0 || ids.TVDBID != 0)))
+		if lookupTVmaze {
+			tvmazeMetadataFetchAttempted = true
+		}
 		if lookupTVmaze && overrideTVmaze {
 			tvmazeAnchorVerificationAttempted = true
 		}
@@ -730,6 +762,9 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		}
 
 		_ = group.Wait()
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("metadata: external provider refresh canceled: %w", err)
+		}
 
 		tmdbAccepted := tmdbResult != nil && tmdbMetadataMatchesExplicitIDs(effectiveOverrides, *tmdbResult, &meta)
 		tvmazeAccepted := tvmazeResult != nil && tvmazeMetadataMatchesExplicitIDs(effectiveOverrides, *tvmazeResult, &meta)
@@ -920,12 +955,18 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			clearInferredProviderID(&ids.TVmazeID, &ids.Provenance.TVmaze)
 			tvmazeMetadataRejected = ids.TVmazeID != 0
 		}
+		return nil
 	}
 
 	if shouldRunFetchPass() {
-		runFetchPass(false)
+		if err := runFetchPass(false); err != nil {
+			return preparationstate.State{}, err
+		}
 	}
 	resolveTMDBFromProviderIDs()
+	if err := ctx.Err(); err != nil {
+		return preparationstate.State{}, fmt.Errorf("metadata: external provider refresh canceled: %w", err)
+	}
 	// Tracker and media metadata can supply an episode IMDb ID where downstream
 	// providers require the parent series ID. Clear the episode snapshot so the
 	// second fetch pass refreshes series metadata after a successful adjustment.
@@ -953,7 +994,12 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	resolveTMDBFromProviderIDs()
 	if shouldRunFetchPass() || tvdbClient != nil && shouldUseTVDBForCategory(meta, ids) && !hasExplicitProviderAnchor &&
 		!clearedTVDB && ids.TVDBID == 0 && strings.TrimSpace(filename) != "" {
-		runFetchPass(true)
+		if err := runFetchPass(true); err != nil {
+			return preparationstate.State{}, err
+		}
+	}
+	if refreshProviders {
+		clearUnverifiedRefreshProviderIDs(&ids, &metadata, tmdbErr, imdbErr, tvdbErr, tvmazeErr, anilistErr)
 	}
 
 	if positiveProviderOverride(effectiveOverrides.TVDBID) && !shouldUseTVDBForCategory(meta, ids) {
@@ -1058,6 +1104,13 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	if anilistErr != nil && s.logger != nil {
 		s.logger.Warnf("metadata: anilist lookup failed: %v", anilistErr)
 	}
+	if refreshProviders {
+		appendProviderRefreshWarning(&meta, "TMDB", tmdbErr)
+		appendProviderRefreshWarning(&meta, "IMDb", imdbErr)
+		appendProviderRefreshWarning(&meta, "TVDB", tvdbErr)
+		appendProviderRefreshWarning(&meta, "TVmaze", tvmazeErr)
+		appendProviderRefreshWarning(&meta, "AniList", anilistErr)
+	}
 	if s.logger != nil {
 		s.logger.Debugf(
 			"metadata: external ids resolved tmdb=%d(%s) imdb=%d(%s) tvdb=%d(%s) tvmaze=%d(%s) mal=%d(%s)",
@@ -1091,6 +1144,42 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	meta.ExternalIdentityCandidates = append(append([]api.ExternalIdentityCandidate(nil), candidates.TMDB...), candidates.IMDB...)
 	meta.ProviderMetadata = metadata
 	return meta, nil
+}
+
+func appendProviderRefreshWarning(meta *preparationstate.State, provider string, err error) {
+	if meta == nil || err == nil {
+		return
+	}
+	appendIdentityCorrectionWarning(meta, provider+" refresh failed; dependent metadata is unavailable until it succeeds.")
+}
+
+func clearUnverifiedRefreshProviderIDs(
+	ids *api.ExternalIdentity,
+	metadata *api.SourceScopedMetadata,
+	tmdbErr error,
+	imdbErr error,
+	tvdbErr error,
+	tvmazeErr error,
+	anilistErr error,
+) {
+	if ids == nil || metadata == nil {
+		return
+	}
+	if tmdbErr != nil && metadata.TMDB == nil {
+		clearInferredProviderID(&ids.TMDBID, &ids.Provenance.TMDB)
+	}
+	if imdbErr != nil && metadata.IMDB == nil {
+		clearInferredProviderID(&ids.IMDBID, &ids.Provenance.IMDB)
+	}
+	if tvdbErr != nil && metadata.TVDB == nil {
+		clearInferredProviderID(&ids.TVDBID, &ids.Provenance.TVDB)
+	}
+	if tvmazeErr != nil && metadata.TVmaze == nil {
+		clearInferredProviderID(&ids.TVmazeID, &ids.Provenance.TVmaze)
+	}
+	if anilistErr != nil && metadata.AniList == nil {
+		clearInferredProviderID(&ids.MALID, &ids.Provenance.MAL)
+	}
 }
 
 func sourceScopedMetadataMatches(storedSourcePath string, currentSourcePath string) bool {

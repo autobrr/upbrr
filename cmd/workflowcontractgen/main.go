@@ -206,6 +206,11 @@ func markDeprecatedProperty(value *schema, property string) {
 
 func contractRoots() []reflect.Type {
 	values := []any{
+		api.ActiveInputSnapshot{},
+		api.OpenActiveInputRequest{},
+		api.ReleaseActiveInputRequest{},
+		api.RecoverLegacyActiveInputRequest{},
+		api.ReconcileActiveInputRequest{},
 		api.CreateReleaseWorkflowUploadRequest{},
 		api.ReleaseWorkflowUploadFeedback{},
 		api.ContinueReleaseWorkflowRequest{},

@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/logging"
+	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -48,6 +50,45 @@ func TestCompositeUploadStrictUnattendedStopsForTrackerApproval(t *testing.T) {
 	if state.Composite == nil || state.Composite.ActiveOperationID != "" ||
 		state.Composite.TerminalReason != "feedback_required" || state.Workflow.TrackerApproval != nil {
 		t.Fatalf("composite terminal session = %#v", state.Composite)
+	}
+}
+
+func TestCompositeUploadInitialOpenRequestsExternalProviderRefresh(t *testing.T) {
+	t.Parallel()
+	module, _, _ := newCompositeUploadTestModule(t)
+	activeInputs, err := db.Open(filepath.Join(t.TempDir(), "input.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = activeInputs.Close() })
+	if err := activeInputs.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	var verified []api.PrepareInput
+	module.activeInputs = activeInputs
+	module.inputVerifier = func(_ context.Context, input api.PrepareInput) (api.InputRecord, error) {
+		verified = append(verified, input)
+		return api.InputRecord{
+CanonicalPath: input.SourcePath,
+ SourceVersion: "verified",
+ Manifest: []byte(`{"identity":{"digest":"verified"}}`),
+}, nil
+	}
+	t.Cleanup(func() {
+		module.activeMu.Lock()
+		cancel, done := module.activeCancel, module.activeDone
+		module.activeMu.Unlock()
+		if cancel != nil {
+			cancel()
+			<-done
+		}
+	})
+	_, err = module.StartUpload(t.Context(), testOwnerID, compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, "composite-open-refresh"))
+	if err != nil {
+		t.Fatalf("start composite upload: %v", err)
+	}
+	if len(verified) != 1 || verified[0].ExternalFreshness != api.ExternalFreshnessRefresh {
+		t.Fatalf("verified preparation inputs = %#v", verified)
 	}
 }
 
@@ -163,7 +204,8 @@ func TestCompositeUploadFeedbackHydratesPersistedMetadataDemand(t *testing.T) {
 	select {
 	case input := <-hydrationInputs:
 		if input.SourcePath != blocked.Release.Release.Source.SourcePath || input.Force || !input.RequirePrepared ||
-			input.Controls.ConfirmBDMVRescan || input.Controls.ForceRecheck != nil || !reflect.DeepEqual(input.MetadataRequirements, requirements) {
+			input.ExternalFreshness != api.ExternalFreshnessReuse || input.Controls.ConfirmBDMVRescan || input.Controls.ForceRecheck != nil ||
+			!reflect.DeepEqual(input.MetadataRequirements, requirements) {
 			t.Fatalf("composite hydration input = %#v", input)
 		}
 	default:

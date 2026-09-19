@@ -14,9 +14,13 @@ The Web UI **Settings** page edits runtime configuration and manages related sec
 | **Reload** | Reloads persisted configuration and discards unsaved edits.                                     |
 | **Export** | Downloads the current configuration with secrets kept encrypted.                                |
 | **Import** | Replaces persisted settings with an imported Python, YAML, or JSON configuration after warning. |
-| **Save**   | Validates, persists, and activates all unsaved configuration edits.                             |
+| **Save**   | Validates edits and activates them when current operations have safely finished.                |
 
 Invalid configuration is rejected without replacing the active runtime. If an environment variable overrides a field, the stored value can save successfully while the environment value remains active.
+
+A **Pending** save is not active yet. The Settings page checks for activation when opened and keeps checking while the save is pending. Another save while activation is pending returns busy and preserves your draft. If activation fails, the previous settings remain active; correct the settings and save again. Pending and failed status survive a restart.
+
+Saving the same effective settings does not restart work. Changes invalidate the affected workflow stages, while compatible media and confirmed upload records remain available.
 
 :::warning Before importing
 

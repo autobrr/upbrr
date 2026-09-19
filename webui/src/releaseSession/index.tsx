@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { ReactNode } from "react";
-import { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useReducer, useRef } from "react";
 import type {
   ApplicationInfo,
   MetadataPreview,
@@ -15,6 +15,7 @@ import type {
   UploadImageHostFailure,
 } from "../types";
 import type {
+  ActiveInputSnapshot,
   DescriptionInstructions,
   ContinueReleaseWorkflowRequest,
   DupeDecision,
@@ -43,12 +44,18 @@ import type {
 const SessionContext = createContext<ReleaseSession | null>(null);
 
 type WorkflowFacet = "screenshots" | "menuImages" | "uploadedImages" | "descriptions";
-type ControllerKey = WorkflowFacet | "preparation" | "workflow";
+type ControllerKey = WorkflowFacet | "activeInput" | "preparation" | "workflow";
 type WorkflowCommand = Readonly<{
   controller: AbortController;
   release: ReleaseRef;
   sessionRevision: number;
   revision: number;
+}>;
+type ActiveSlotAuthority = Readonly<{
+  revision: number;
+  inputID: string;
+  sourceVersion: string;
+  workflowID: string;
 }>;
 
 type PendingInputUpdate = Readonly<{
@@ -128,6 +135,7 @@ const workflowFactInstructions = (
 const workflowPrepareInput = (input: PrepareInput): WorkflowPrepareInput => ({
   SourcePath: input.SourcePath,
   Intent: input.Intent,
+  ExternalFreshness: "refresh",
   Instructions: workflowFactInstructions(input.Instructions),
   Policy: {
     KeepFolder: input.Policy.KeepFolder,
@@ -287,6 +295,17 @@ const cloneIntent = (intent: PreparationIntent): PreparationIntent => ({
   search: { ...intent.search },
 });
 
+const emptyPreparationIntent = (): PreparationIntent => ({
+  sourceLookupURL: "",
+  identity: {},
+  metadata: {},
+  releaseName: {},
+  playlist: { Set: false, Selected: [], UseAll: false },
+  trackerSourceIDs: {},
+  policy: { keepFolder: false, keepImages: false, onlyID: false },
+  search: { skip: false, client: "" },
+});
+
 const preparationWithoutFactCorrections = (input: WorkflowPrepareInput): WorkflowPrepareInput => ({
   ...input,
   Instructions: {
@@ -384,13 +403,8 @@ const metadataPreviewFromWorkflow = (current: ReleaseWorkflowCurrent): MetadataP
 
 const workflowStorageKey = "upbrr.activeReleaseWorkflow";
 
-const storedWorkflowID = () => {
-  try {
-    return window.sessionStorage.getItem(workflowStorageKey)?.trim() || "";
-  } catch {
-    return "";
-  }
-};
+const timestampedCommandID = (prefix: string, revision?: number) =>
+  `${prefix}-${Date.now().toString(36)}${revision === undefined ? "" : `-${revision.toString(36)}`}`;
 
 const storeWorkflowID = (workflowID: string) => {
   try {
@@ -440,6 +454,28 @@ const preparationInputForWorkflow = (
   Force: false,
 });
 
+const preparationIntentFromInput = (input: PrepareInput): PreparationIntent => ({
+  sourceLookupURL: input.Instructions.SourceLookup,
+  identity: { ...input.Instructions.Identity },
+  metadata: { ...(input.Instructions.Metadata || {}) },
+  releaseName: { ...input.Instructions.ReleaseName },
+  playlist: {
+    Set: Boolean(input.Instructions.Playlist?.Set),
+    Selected: [...(input.Instructions.Playlist?.Selected || [])],
+    UseAll: Boolean(input.Instructions.Playlist?.UseAll),
+  },
+  trackerSourceIDs: { ...(input.Instructions.TrackerIDs || {}) },
+  policy: {
+    keepFolder: input.Policy.KeepFolder,
+    keepImages: input.Policy.KeepImages ?? false,
+    onlyID: input.Policy.OnlyID,
+  },
+  search: {
+    skip: input.Search?.Skip ?? false,
+    client: input.Search?.Client || "",
+  },
+});
+
 /** Owns canonical release workflow state, cancellation, correlation, and transport ports. */
 export function ReleaseSessionProvider({
   ports,
@@ -463,6 +499,16 @@ export function ReleaseSessionProvider({
     [defaultTrackers],
   );
   const controllers = useRef<Partial<Record<ControllerKey, AbortController>>>({});
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const activeAuthority = useRef({
+    state: "empty",
+    revision: 0,
+    inputID: "",
+    sourceVersion: "",
+    workflowID: "",
+    workflowRevision: 0,
+  });
   const preparationRevision = useRef(0);
   const lastPreparation = useRef<{
     operation: "prepare" | "reset";
@@ -472,12 +518,92 @@ export function ReleaseSessionProvider({
   const workflowRevisions = useRef<Partial<Record<WorkflowFacet, number>>>({});
   const lastWorkflowError = useRef<unknown>(null);
   const activePorts = useMemo(() => ports ?? productionReleaseSessionPorts(), [ports]);
-  const [workflowView, setWorkflowView] = useState<{
-    status: "idle" | "running" | "ready" | "error";
-    current: ReleaseWorkflowCurrent | null;
-    error: string;
-    failure: OperationFailure | null;
-  }>({ status: "idle", current: null, error: "", failure: null });
+  const workflowView = state.workflowView;
+
+  const applyActiveInputSnapshot = (
+    snapshot: ActiveInputSnapshot,
+    status: "running" | "ready",
+    capturedInputEditRevision: number,
+    preserveInputDraft = false,
+    submittedIntent?: PreparationIntent,
+    requestedSourcePath?: string,
+    submittedTrackers?: readonly string[],
+    trackerInputsAccepted = false,
+  ) => {
+    const latest = activeAuthority.current;
+    const inputID = snapshot.inputId || "";
+    const sourceVersion = snapshot.sourceVersion || "";
+    const workflowID = snapshot.current?.workflow.id || "";
+    const workflowRevision = snapshot.current?.workflow.revision || 0;
+    if (snapshot.revision < latest.revision) return false;
+    if (
+      snapshot.revision === latest.revision &&
+      latest.inputID &&
+      (inputID !== latest.inputID || sourceVersion !== latest.sourceVersion)
+    ) {
+      return false;
+    }
+    if (
+      snapshot.revision === latest.revision &&
+      latest.workflowID &&
+      (workflowID !== latest.workflowID || workflowRevision < latest.workflowRevision)
+    ) {
+      return false;
+    }
+    activeAuthority.current = {
+      state: snapshot.state,
+      revision: snapshot.revision,
+      inputID,
+      sourceVersion,
+      workflowID,
+      workflowRevision,
+    };
+    if (workflowID) storeWorkflowID(workflowID);
+    else storeWorkflowID("");
+    const current = snapshot.current || null;
+    dispatch({
+      type: "active_input_applied",
+      snapshot,
+      status,
+      preview: current ? metadataPreviewFromWorkflow(current) : null,
+      intent: current ? workflowPreparationIntent(current, submittedIntent) : null,
+      capturedInputEditRevision,
+      selectedTrackers: current
+        ? (workflowSelectedInputTrackers(current) ?? submittedTrackers)
+        : submittedTrackers,
+      ...(requestedSourcePath ? { requestedSourcePath } : {}),
+      trackerInputsAccepted,
+      preserveInputDraft,
+    });
+    return true;
+  };
+
+  const activeSnapshotWithCurrent = (current: ReleaseWorkflowCurrent): ActiveInputSnapshot => ({
+    state: activeAuthority.current.state,
+    revision: activeAuthority.current.revision,
+    ...(activeAuthority.current.inputID ? { inputId: activeAuthority.current.inputID } : {}),
+    ...(activeAuthority.current.sourceVersion
+      ? { sourceVersion: activeAuthority.current.sourceVersion }
+      : {}),
+    current,
+  });
+
+  const activeSlotAuthority = (): ActiveSlotAuthority => ({
+    revision: activeAuthority.current.revision,
+    inputID: activeAuthority.current.inputID,
+    sourceVersion: activeAuthority.current.sourceVersion,
+    workflowID: activeAuthority.current.workflowID,
+  });
+
+  const activeSlotMatches = (expected: ActiveSlotAuthority) => {
+    const current = activeAuthority.current;
+    return (
+      current.revision === expected.revision &&
+      current.inputID === expected.inputID &&
+      current.sourceVersion === expected.sourceVersion &&
+      current.workflowID === expected.workflowID
+    );
+  };
 
   useEffect(() => {
     dispatch({
@@ -488,12 +614,23 @@ export function ReleaseSessionProvider({
   }, [normalizedDefaultTrackers, state.sessionRevision]);
 
   const publishWorkflowCurrent = (current: ReleaseWorkflowCurrent, status: "running" | "ready") => {
+    const authority = activeAuthority.current;
+    if (
+      authority.workflowID !== current.workflow.id ||
+      current.workflow.revision < authority.workflowRevision
+    ) {
+      return current;
+    }
+    activeAuthority.current = {
+      ...authority,
+      workflowRevision: current.workflow.revision,
+    };
     storeWorkflowID(current.workflow.id);
     const selectedTrackers = workflowSelectedInputTrackers(current);
     if (selectedTrackers) {
       dispatch({ type: "trackers_received", trackers: selectedTrackers });
     }
-    setWorkflowView({ status, current, error: "", failure: null });
+    dispatch({ type: "workflow_current_published", status, current });
     return current;
   };
 
@@ -507,23 +644,44 @@ export function ReleaseSessionProvider({
   const awaitWorkflowCommand = async (
     initial: ReleaseWorkflowCurrent,
     signal: AbortSignal,
+    expectedSlot = activeSlotAuthority(),
   ): Promise<ReleaseWorkflowCurrent> => {
+    const workflowID = initial.workflow.id;
+    if (
+      signal.aborted ||
+      !activeSlotMatches(expectedSlot) ||
+      expectedSlot.workflowID !== workflowID
+    ) {
+      throw new DOMException("Active input changed.", "AbortError");
+    }
     publishWorkflowCurrent(initial, "running");
     let operation = initial.operation;
     if (!isActiveWorkflowOperation(operation)) return initial;
 
     while (operation && isActiveWorkflowOperation(operation)) {
       await waitForWorkflowPoll(signal);
-      operation = await activePorts.workflow.operation(initial.workflow.id, operation.id, signal);
+      if (signal.aborted || !activeSlotMatches(expectedSlot)) {
+        throw new DOMException("Active input changed.", "AbortError");
+      }
+      operation = await activePorts.workflow.operation(workflowID, operation.id, signal);
+      if (signal.aborted || !activeSlotMatches(expectedSlot)) {
+        throw new DOMException("Active input changed.", "AbortError");
+      }
       const update = operation;
-      setWorkflowView((view) => ({
-        ...view,
-        status: isActiveWorkflowOperation(update) ? "running" : view.status,
-        current: view.current ? { ...view.current, operation: update } : view.current,
-      }));
+      dispatch({
+        type: "workflow_operation_updated",
+        workflowID: initial.workflow.id,
+        operation: update,
+      });
     }
 
-    const current = await activePorts.workflow.current(initial.workflow.id, signal);
+    if (signal.aborted || !activeSlotMatches(expectedSlot)) {
+      throw new DOMException("Active input changed.", "AbortError");
+    }
+    const current = await activePorts.workflow.current(workflowID, signal);
+    if (signal.aborted || !activeSlotMatches(expectedSlot)) {
+      throw new DOMException("Active input changed.", "AbortError");
+    }
     publishWorkflowCurrent(current, "running");
     const terminalOperation = operation as WorkflowOperationStatus | undefined;
     if (terminalOperation && isFailedWorkflowOperation(terminalOperation)) {
@@ -541,12 +699,7 @@ export function ReleaseSessionProvider({
     if (failure?.Code === "missing_prerequisite" && failure.Recovery === "refresh_release") {
       storeWorkflowID("");
     }
-    setWorkflowView((current) => ({
-      ...current,
-      status: "error",
-      error: errorText(error),
-      failure,
-    }));
+    dispatch({ type: "workflow_view_failed", error: errorText(error), failure });
     return null;
   };
 
@@ -564,22 +717,27 @@ export function ReleaseSessionProvider({
     let current = initial;
     let nextIntent = intent;
     for (let transition = 0; transition < 32; transition += 1) {
-      const next = await awaitWorkflowCommand(
-        await activePorts.workflow.continue(
-          {
-            authority: {
-              workflowId: current.workflow.id,
-              expectedRevision: current.workflow.revision,
-            },
-            goal,
-            intent: { interaction: "interactive", ...nextIntent },
-            idempotencyKey,
-            ...extra,
+      if (activeAuthority.current.workflowID !== current.workflow.id) {
+        throw new DOMException("Active input changed.", "AbortError");
+      }
+      const expectedSlot = activeSlotAuthority();
+      const continued = await activePorts.workflow.continue(
+        {
+          authority: {
+            workflowId: current.workflow.id,
+            expectedRevision: current.workflow.revision,
           },
-          signal,
-        ),
+          goal,
+          intent: { interaction: "interactive", ...nextIntent },
+          idempotencyKey,
+          ...extra,
+        },
         signal,
       );
+      if (signal.aborted || !activeSlotMatches(expectedSlot)) {
+        throw new DOMException("Active input changed.", "AbortError");
+      }
+      const next = await awaitWorkflowCommand(continued, signal, expectedSlot);
       if (next.workflow.revision === current.workflow.revision) return next;
       current = next;
       const { correctionPatch: _acceptedPatch, ...remainingIntent } = nextIntent;
@@ -644,66 +802,75 @@ export function ReleaseSessionProvider({
     return true;
   };
 
-  const reloadBackendWorkflow = async (): Promise<boolean> => {
-    const workflowID = workflowView.current?.workflow.id || storedWorkflowID();
-    if (!workflowID) return false;
-    abortController("workflow");
+  const reloadBackendWorkflow = async (
+    preserveInputDraft = false,
+    completedController?: AbortController,
+  ): Promise<boolean> => {
+    if (controllers.current.activeInput) return false;
     const controller = new AbortController();
-    controllers.current.workflow = controller;
-    setWorkflowView((current) => ({ ...current, status: "running", error: "", failure: null }));
+    controllers.current.activeInput = controller;
+    const capturedInputEditRevision = stateRef.current.inputEditRevision;
+    const completionStatus = () => {
+      const workflowController = controllers.current.workflow;
+      const preparationController = controllers.current.preparation;
+      return (workflowController && workflowController !== completedController) ||
+        (preparationController && preparationController !== completedController)
+        ? "running"
+        : "ready";
+    };
     try {
-      const current = await awaitWorkflowCommand(
-        await activePorts.workflow.current(workflowID, controller.signal),
-        controller.signal,
-      );
-      releaseWorkflowController(controller);
+      const snapshot = await activePorts.activeInput.get(controller.signal);
       if (controller.signal.aborted) return false;
-      acceptWorkflowCurrent(current);
+      if (!snapshot.current) {
+        return applyActiveInputSnapshot(
+          snapshot,
+          completionStatus(),
+          capturedInputEditRevision,
+          preserveInputDraft,
+        );
+      }
+      if (
+        !applyActiveInputSnapshot(
+          snapshot,
+          "running",
+          capturedInputEditRevision,
+          preserveInputDraft,
+        )
+      ) {
+        return false;
+      }
+      const current = await awaitWorkflowCommand(snapshot.current, controller.signal);
+      if (controller.signal.aborted) return false;
+      const accepted = applyActiveInputSnapshot(
+        { ...snapshot, current },
+        completionStatus(),
+        capturedInputEditRevision,
+        preserveInputDraft,
+      );
       const sourcePath = current.release?.release.Source.SourcePath || "";
-      if (sourcePath) {
-        const commandRevision = current.workflow.revision;
-        const correlationID = `workflow-restore-${current.workflow.id}-${commandRevision}`;
-        const intent = workflowPreparationIntent(current);
-        preparationRevision.current = Math.max(preparationRevision.current, commandRevision);
-        lastPreparation.current = { operation: "prepare", sourcePath, intent };
-        dispatch({
-          type: "source_selected",
+      if (accepted && sourcePath) {
+        preparationRevision.current = Math.max(
+          preparationRevision.current,
+          current.workflow.revision,
+        );
+        lastPreparation.current = {
+          operation: "prepare",
           sourcePath,
-          defaultTrackers: normalizedDefaultTrackers,
-        });
-        const selectedTrackers = workflowSelectedInputTrackers(current);
-        if (selectedTrackers) {
-          dispatch({ type: "trackers_received", trackers: selectedTrackers });
-        }
-        dispatch({
-          type: "preparation_started",
-          sourcePath,
-          commandRevision,
-          inputEditRevision: 0,
-          correlationID,
-          intent,
-        });
-        if (!dispatchPlaylistAction(current, sourcePath, commandRevision, correlationID)) {
-          const preview = metadataPreviewFromWorkflow(current);
-          if (!preview) throw new Error("Workflow release snapshot is unavailable.");
-          dispatch({
-            type: "preparation_succeeded",
-            sourcePath,
-            commandRevision,
-            correlationID,
-            preview,
-            intent,
-            selectedTrackers,
-          });
-        }
+          intent: workflowPreparationIntent(current),
+        };
       }
       return true;
     } catch (error) {
-      releaseWorkflowController(controller);
-      if (!controller.signal.aborted) failBackendWorkflow(error);
+      if (!controller.signal.aborted) {
+        dispatch({
+          type: "active_input_failed",
+          error: errorText(error),
+          failure: operationFailureFromError(error),
+        });
+      }
       return false;
     } finally {
-      releaseWorkflowController(controller);
+      if (controllers.current.activeInput === controller) delete controllers.current.activeInput;
     }
   };
 
@@ -718,34 +885,74 @@ export function ReleaseSessionProvider({
       trackerInputAnswers: state.trackerInputAnswers,
       selectedTrackers: state.selectedTrackers,
     },
+    attempt?: Readonly<{ correlationID: string; controller: AbortController }>,
   ): Promise<ReleaseWorkflowCurrent | null> => {
+    if (activeAuthority.current.state === "recovering") return null;
     if (controllers.current.workflow) return null;
-    const controller = new AbortController();
+    abortController("activeInput");
+    const controller = attempt?.controller ?? new AbortController();
     controllers.current.workflow = controller;
-    setWorkflowView((current) => ({ ...current, status: "running", error: "", failure: null }));
-    const commandID = `workflow-${Date.now().toString(36)}-${state.commandRevision.toString(36)}`;
+    dispatch({ type: "active_input_loading" });
+    const commandID =
+      attempt?.correlationID || timestampedCommandID("workflow", state.commandRevision);
+    const expectedRevision = activeAuthority.current.revision;
     lastWorkflowError.current = null;
     try {
+      const previous = workflowView.current;
+      const correctionPatch =
+        update.correctionDirty && previous
+          ? correctionPatchFor(previous, preparationIntentFromInput(input), update)
+          : undefined;
+      const preparation = workflowPrepareInput(input);
       const intent: WorkflowIntent = {
-        factInstructions: workflowFactInstructions(input.Instructions),
-        preparation: workflowPrepareInput(input),
+        ...(correctionPatch ? { correctionPatch } : {}),
+        ...(correctionPatch
+          ? {}
+          : { factInstructions: workflowFactInstructions(input.Instructions) }),
+        preparation: correctionPatch ? preparationWithoutFactCorrections(preparation) : preparation,
         trackerIds: [...update.selectedTrackers],
       };
-      const created = await awaitWorkflowCommand(
-        await activePorts.workflow.continue(
-          {
+      const snapshot = await activePorts.activeInput.open(
+        {
+          expectedRevision,
+          request: {
             goal: "input_ready",
             intent,
             idempotencyKey: commandID,
           },
-          controller.signal,
-        ),
+        },
         controller.signal,
       );
+      if (
+        controller.signal.aborted ||
+        !applyActiveInputSnapshot(
+          snapshot,
+          "running",
+          update.inputEditRevision,
+          false,
+          preparationIntentFromInput(input),
+          input.SourcePath,
+          update.selectedTrackers,
+        ) ||
+        !snapshot.current
+      ) {
+        return null;
+      }
+      const created = await awaitWorkflowCommand(snapshot.current, controller.signal);
+      let continuationIntent: WorkflowIntent = { ...intent, correctionPatch: undefined };
+      if (correctionPatch && created.factInstructions && continuationIntent.preparation) {
+        continuationIntent = {
+          ...continuationIntent,
+          preparation: preparationWithEffectiveCorrections(
+            continuationIntent.preparation,
+            created.factInstructions.instructions,
+          ),
+        };
+      }
       const prepared = await continueBackendGoal(
         created,
         "input_ready",
-        intent,
+        continuationIntent,
         commandID,
         controller.signal,
       );
@@ -755,7 +962,12 @@ export function ReleaseSessionProvider({
     } catch (error) {
       releaseWorkflowController(controller);
       lastWorkflowError.current = error;
-      if (!controller.signal.aborted) failBackendWorkflow(error);
+      if (!controller.signal.aborted) {
+        failBackendWorkflow(error);
+        if (operationFailureFromError(error)?.Recovery === "review_again") {
+          await reloadBackendWorkflow(true, controller);
+        }
+      }
       return null;
     } finally {
       releaseWorkflowController(controller);
@@ -769,10 +981,11 @@ export function ReleaseSessionProvider({
       signal: AbortSignal,
     ) => Promise<ReleaseWorkflowCurrent>,
   ): Promise<boolean> => {
+    if (activeAuthority.current.state === "recovering") return false;
     if (!workflowView.current || controllers.current.workflow) return false;
     const controller = new AbortController();
     controllers.current.workflow = controller;
-    setWorkflowView((current) => ({ ...current, status: "running", error: "", failure: null }));
+    dispatch({ type: "active_input_loading" });
     const commandID = `workflow-${Date.now().toString(36)}-${workflowView.current.workflow.revision.toString(36)}`;
     try {
       const current = await awaitWorkflowCommand(
@@ -792,15 +1005,72 @@ export function ReleaseSessionProvider({
     }
   };
 
+  const reconcileRecoveryAction = async (action: RequiredAction): Promise<boolean> => {
+    const current = workflowView.current;
+    if (
+      (activeAuthority.current.state !== "recovering" &&
+        activeAuthority.current.state !== "active") ||
+      !runtimeInfoReady ||
+      !current ||
+      controllers.current.activeInput ||
+      action.kind !== "reconcile_submission" ||
+      !action.options?.some((option) => option.value === "not_completed")
+    ) {
+      return false;
+    }
+    const retainedAction = current.workflow.requiredActions?.find(
+      (candidate) =>
+        candidate.id === action.id &&
+        candidate.kind === "reconcile_submission" &&
+        candidate.status === "pending",
+    );
+    if (!retainedAction) return false;
+
+    const controller = new AbortController();
+    controllers.current.activeInput = controller;
+    dispatch({ type: "active_input_loading" });
+    const commandID = timestampedCommandID("workflow-reconcile", current.workflow.revision);
+    try {
+      const snapshot = await activePorts.activeInput.reconcile(
+        {
+          authority: {
+            workflowId: current.workflow.id,
+            expectedRevision: current.workflow.revision,
+          },
+          answer: {
+            actionId: retainedAction.id,
+            workflowRevision: current.workflow.revision,
+            selectedValues: ["not_completed"],
+          },
+          idempotencyKey: commandID,
+        },
+        controller.signal,
+      );
+      if (controller.signal.aborted) return false;
+      return applyActiveInputSnapshot(snapshot, "ready", stateRef.current.inputEditRevision);
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        dispatch({
+          type: "active_input_failed",
+          error: errorText(error),
+          failure: operationFailureFromError(error),
+        });
+      }
+      return false;
+    } finally {
+      if (controllers.current.activeInput === controller) delete controllers.current.activeInput;
+    }
+  };
+
   const cancelBackendWorkflow = async (reason: string): Promise<boolean> => {
-    const workflowID = workflowView.current?.workflow.id || storedWorkflowID();
+    const workflowID = workflowView.current?.workflow.id || activeAuthority.current.workflowID;
     if (!workflowID) return false;
     const operation = workflowView.current?.operation;
     abortController("workflow");
     const controller = new AbortController();
     controllers.current.workflow = controller;
-    setWorkflowView((current) => ({ ...current, status: "running", error: "", failure: null }));
-    const commandID = `workflow-cancel-${Date.now().toString(36)}`;
+    dispatch({ type: "active_input_loading" });
+    const commandID = timestampedCommandID("workflow-cancel");
     try {
       let current: ReleaseWorkflowCurrent;
       const cancelingOperation = isActiveWorkflowOperation(operation);
@@ -839,7 +1109,7 @@ export function ReleaseSessionProvider({
     }
     const controller = new AbortController();
     controllers.current.workflow = controller;
-    setWorkflowView((current) => ({ ...current, status: "running", error: "", failure: null }));
+    dispatch({ type: "active_input_loading" });
     const commandID = `workflow-dupes-${Date.now().toString(36)}-${workflowView.current.workflow.revision.toString(36)}`;
     try {
       const currentProjectionByTracker = new Map(
@@ -899,12 +1169,29 @@ export function ReleaseSessionProvider({
     }
   };
 
+  const reloadActiveInputRef = useRef(reloadBackendWorkflow);
+  reloadActiveInputRef.current = reloadBackendWorkflow;
+
   useEffect(() => {
-    if (!storedWorkflowID()) return;
-    void reloadBackendWorkflow();
-    // Reload once when the transport binding changes; commands own later refreshes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePorts.workflow]);
+    const reloadVisible = () => {
+      if (document.visibilityState !== "hidden") void reloadActiveInputRef.current();
+    };
+    const unsubscribe = activePorts.activeInput.subscribe(reloadVisible, (update) => {
+      dispatch({ type: "source_verification_progressed", update });
+    });
+    const interval = window.setInterval(reloadVisible, 15_000);
+    window.addEventListener("focus", reloadVisible);
+    window.addEventListener("online", reloadVisible);
+    document.addEventListener("visibilitychange", reloadVisible);
+    void reloadActiveInputRef.current();
+    return () => {
+      unsubscribe();
+      window.clearInterval(interval);
+      window.removeEventListener("focus", reloadVisible);
+      window.removeEventListener("online", reloadVisible);
+      document.removeEventListener("visibilitychange", reloadVisible);
+    };
+  }, [activePorts.activeInput]);
 
   const abortController = (key: ControllerKey) => {
     controllers.current[key]?.abort();
@@ -916,15 +1203,109 @@ export function ReleaseSessionProvider({
     controllers.current = {};
   };
 
+  const abortWorkflowFacets = () => {
+    (["screenshots", "menuImages", "uploadedImages", "descriptions"] as const).forEach((facet) => {
+      if (!controllers.current[facet]) return;
+      controllers.current[facet]?.abort();
+      delete controllers.current[facet];
+      dispatch({
+        type: "workflow_canceled",
+        facet,
+        sessionRevision: stateRef.current.sessionRevision,
+        revision: stateRef.current[facet].revision,
+        reason: "Preparation required.",
+      });
+    });
+  };
+
   useEffect(() => abortAll, []);
 
+  const cancelPreparation = () => {
+    const preparation = stateRef.current.preparation;
+    if (preparation.status !== "running") return;
+    abortController("preparation");
+    abortController("workflow");
+    dispatch({ type: "preparation_cancelled", correlationID: preparation.correlationID });
+  };
+
+  const releaseActiveInput = async (): Promise<boolean> => {
+    if (
+      activeAuthority.current.state === "empty" ||
+      activeAuthority.current.state === "recovering"
+    ) {
+      return false;
+    }
+    abortController("activeInput");
+    abortController("preparation");
+    abortController("workflow");
+    abortWorkflowFacets();
+    const controller = new AbortController();
+    controllers.current.activeInput = controller;
+    const expectedRevision = activeAuthority.current.revision;
+    dispatch({ type: "active_input_loading" });
+    try {
+      const snapshot = await activePorts.activeInput.release(
+        { expectedRevision },
+        controller.signal,
+      );
+      if (controller.signal.aborted) return false;
+      return applyActiveInputSnapshot(snapshot, "ready", stateRef.current.inputEditRevision);
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        dispatch({
+          type: "active_input_failed",
+          error: errorText(error),
+          failure: operationFailureFromError(error),
+        });
+        if (operationFailureFromError(error)?.Recovery === "review_again") {
+          if (controllers.current.activeInput === controller)
+            delete controllers.current.activeInput;
+          await reloadBackendWorkflow();
+        }
+      }
+      return false;
+    } finally {
+      if (controllers.current.activeInput === controller) delete controllers.current.activeInput;
+    }
+  };
+
+  const recoverLegacyWorkflow = async (workflowID: string): Promise<boolean> => {
+    const normalizedWorkflowID = workflowID.trim();
+    if (
+      activeAuthority.current.state !== "empty" ||
+      !normalizedWorkflowID ||
+      !stateRef.current.activeInput.recoveryWorkflowIDs.includes(normalizedWorkflowID) ||
+      controllers.current.activeInput
+    ) {
+      return false;
+    }
+    const controller = new AbortController();
+    controllers.current.activeInput = controller;
+    dispatch({ type: "active_input_loading" });
+    try {
+      const snapshot = await activePorts.activeInput.recover(
+        { workflowId: normalizedWorkflowID },
+        controller.signal,
+      );
+      if (controller.signal.aborted) return false;
+      return applyActiveInputSnapshot(snapshot, "ready", stateRef.current.inputEditRevision);
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        dispatch({
+          type: "active_input_failed",
+          error: errorText(error),
+          failure: operationFailureFromError(error),
+        });
+      }
+      return false;
+    } finally {
+      if (controllers.current.activeInput === controller) delete controllers.current.activeInput;
+    }
+  };
+
   const selectSource = (value: string) => {
-    abortAll();
-    dispatch({
-      type: "source_selected",
-      sourcePath: value,
-      defaultTrackers: normalizedDefaultTrackers,
-    });
+    cancelPreparation();
+    dispatch({ type: "draft_changed", value });
   };
 
   const executePreparation = async (
@@ -949,12 +1330,7 @@ export function ReleaseSessionProvider({
         if (!previous?.release || previous.release.release.Source.SourcePath !== sourcePath) {
           throw new Error("Blu-ray candidate selection requires the current prepared workflow.");
         }
-        setWorkflowView((view) => ({
-          ...view,
-          status: "running",
-          error: "",
-          failure: null,
-        }));
+        dispatch({ type: "active_input_loading" });
         const commandID = `workflow-candidate-${Date.now().toString(36)}-${previous.workflow.revision.toString(36)}`;
         const candidateInput = workflowPrepareInput({
           ...input,
@@ -979,34 +1355,12 @@ export function ReleaseSessionProvider({
         if (!previous?.release || previous.release.release.Source.SourcePath !== sourcePath) {
           throw new Error("Reset requires the current prepared workflow.");
         }
-        setWorkflowView((view) => ({
-          ...view,
-          status: "running",
-          error: "",
-          failure: null,
-        }));
-        const commandID = `workflow-reset-${Date.now().toString(36)}-${previous.workflow.revision.toString(36)}`;
-        const resetInput = workflowPrepareInput({ ...input, Force: true });
-        current = await continueBackendGoal(
-          previous,
-          "input_ready",
-          {
-            ...(update.correctionDirty
-              ? { correctionPatch: correctionPatchFor(previous, intent, update) }
-              : {}),
-            preparation: preparationWithoutFactCorrections(resetInput),
-            trackerIds: [...update.selectedTrackers],
-          },
-          commandID,
-          controller.signal,
-        );
+        current = await startBackendWorkflow({ ...input, Force: true }, update, {
+          correlationID,
+          controller,
+        });
       } else if (intent.playlist.Set && pendingPlaylist && workflowView.current) {
-        setWorkflowView((view) => ({
-          ...view,
-          status: "running",
-          error: "",
-          failure: null,
-        }));
+        dispatch({ type: "active_input_loading" });
         const commandID = `workflow-playlist-${Date.now().toString(36)}-${workflowView.current.workflow.revision.toString(36)}`;
         const playlistInput = workflowPrepareInput(input);
         current = await continueBackendGoal(
@@ -1025,34 +1379,15 @@ export function ReleaseSessionProvider({
           controller.signal,
         );
       } else {
-        const previous = workflowView.current;
-        if (previous?.release?.release.Source.SourcePath === sourcePath) {
-          const preparedInput = workflowPrepareInput(input);
-          const commandID = `workflow-input-${Date.now().toString(36)}-${previous.workflow.revision.toString(36)}`;
-          current = await continueBackendGoal(
-            previous,
-            "input_ready",
-            {
-              ...(update.correctionDirty
-                ? { correctionPatch: correctionPatchFor(previous, intent, update) }
-                : {}),
-              preparation: preparationWithoutFactCorrections(preparedInput),
-              trackerIds: [...update.selectedTrackers],
-            },
-            commandID,
-            controller.signal,
-          );
-        } else {
-          current = await startBackendWorkflow(input, update);
-        }
+        current = await startBackendWorkflow(input, update, { correlationID, controller });
       }
       if (!current) {
         throw (
           lastWorkflowError.current || new Error("Canonical workflow preparation did not complete.")
         );
       }
-      acceptWorkflowCurrent(current);
       if (dispatchPlaylistAction(current, sourcePath, commandRevision, correlationID)) {
+        publishWorkflowCurrent(current, "ready");
         return false;
       }
       const trackerInputAnswers = Object.fromEntries(
@@ -1079,20 +1414,23 @@ export function ReleaseSessionProvider({
           controller.signal,
         );
         trackerInputsAccepted = true;
-        acceptWorkflowCurrent(current);
       }
       const preview = metadataPreviewFromWorkflow(current);
       if (!preview) throw new Error("Workflow release snapshot is unavailable.");
-      dispatch({
-        type: "preparation_succeeded",
-        sourcePath,
-        commandRevision,
-        correlationID,
-        preview,
-        intent: workflowPreparationIntent(current, intent),
-        trackerInputsAccepted,
-        selectedTrackers: workflowSelectedInputTrackers(current),
-      });
+      if (
+        !applyActiveInputSnapshot(
+          activeSnapshotWithCurrent(current),
+          "ready",
+          update.inputEditRevision,
+          false,
+          intent,
+          sourcePath,
+          update.selectedTrackers,
+          trackerInputsAccepted,
+        )
+      ) {
+        return false;
+      }
       return !controller.signal.aborted;
     } catch (error) {
       if (!controller.signal.aborted) {
@@ -1117,18 +1455,15 @@ export function ReleaseSessionProvider({
     requestedIntent: PreparationIntent,
     controls = { confirmBDMVRescan: false },
   ): Promise<boolean> => {
+    if (activeAuthority.current.state === "recovering") return false;
     const sourcePath = requestedSource.trim();
     if (!sourcePath) return false;
     if (sourcePath !== state.selectedSource) {
-      abortAll();
-      dispatch({
-        type: "source_selected",
-        sourcePath,
-        defaultTrackers: normalizedDefaultTrackers,
-      });
+      dispatch({ type: "draft_changed", value: sourcePath });
     }
     abortController("preparation");
     abortController("workflow");
+    abortWorkflowFacets();
     const controller = new AbortController();
     controllers.current.preparation = controller;
     const commandRevision = Math.max(preparationRevision.current + 1, state.commandRevision + 1);
@@ -1180,14 +1515,21 @@ export function ReleaseSessionProvider({
     );
   };
 
-  const runPreparation = (operation: "prepare" | "reset") =>
-    runPreparationFor(operation, state.selectedSource, state.preparationIntent);
+  const runPreparation = (operation: "prepare" | "reset") => {
+    const sourcePath = state.sourceDraft.trim() || state.selectedSource;
+    const intent =
+      state.selectedSource && sourcePath !== state.selectedSource
+        ? emptyPreparationIntent()
+        : state.preparationIntent;
+    return runPreparationFor(operation, sourcePath, intent);
+  };
 
   const selectCandidate = async (releaseID: string): Promise<boolean> => {
     const sourcePath = state.selectedSource.trim();
     const candidateID = releaseID.trim();
     if (!sourcePath || !candidateID) return false;
     abortController("preparation");
+    abortWorkflowFacets();
     const controller = new AbortController();
     controllers.current.preparation = controller;
     const commandRevision = Math.max(preparationRevision.current + 1, state.commandRevision + 1);
@@ -1281,6 +1623,7 @@ export function ReleaseSessionProvider({
         workflowView.current.workflow.id,
         command.controller.signal,
       );
+      if (command.controller.signal.aborted) return false;
       const selectedArtifactIDs = (workflowView.current.media?.artifacts || [])
         .filter((artifact) => artifact.kind === "screenshot" && artifact.selected)
         .sort((left, right) => (left.order || 0) - (right.order || 0))
@@ -1398,6 +1741,7 @@ export function ReleaseSessionProvider({
         `preview-${workflowView.current.workflow.id}-${workflowView.current.workflow.revision}-${discID || "single"}-${timestampSeconds}`,
         command.controller.signal,
       );
+      if (command.controller.signal.aborted) return false;
       dispatch({
         type: "screenshot_previewed",
         sessionRevision: command.sessionRevision,
@@ -1563,6 +1907,7 @@ export function ReleaseSessionProvider({
         descriptionSource(key),
         command.controller.signal,
       );
+      if (command.controller.signal.aborted) return false;
       dispatch({
         type: "description_rendered",
         sessionRevision: command.sessionRevision,
@@ -1614,8 +1959,16 @@ export function ReleaseSessionProvider({
     descriptions: descriptionInstructions(current),
   });
 
+  const hasUploadEligibleTracker = (current: ReleaseWorkflowCurrent) => {
+    const exclusions = current.workflow.submissionExclusions || [];
+    if (exclusions.length === 0) return true;
+    if (state.selectedTrackers.length === 0) return false;
+    const excluded = new Set(exclusions.map((item) => item.trackerId));
+    return state.selectedTrackers.some((tracker) => !excluded.has(tracker));
+  };
+
   const runDryRun = async (): Promise<boolean> => {
-    if (!workflowView.current) return false;
+    if (!workflowView.current || !hasUploadEligibleTracker(workflowView.current)) return false;
     return runBackendWorkflow((current, commandID, signal) =>
       continueBackendGoal(
         current,
@@ -1629,10 +1982,16 @@ export function ReleaseSessionProvider({
 
   const executeExactUpload = async (): Promise<boolean> => {
     if (!mutationsAllowed) return false;
-    if (!workflowView.current || controllers.current.workflow) return false;
+    if (
+      !workflowView.current ||
+      controllers.current.workflow ||
+      !hasUploadEligibleTracker(workflowView.current)
+    ) {
+      return false;
+    }
     const controller = new AbortController();
     controllers.current.workflow = controller;
-    setWorkflowView((current) => ({ ...current, status: "running", error: "", failure: null }));
+    dispatch({ type: "active_input_loading" });
     const commandID = `workflow-upload-${Date.now().toString(36)}-${workflowView.current.workflow.revision.toString(36)}`;
     try {
       let current = workflowView.current;
@@ -1691,11 +2050,23 @@ export function ReleaseSessionProvider({
     ),
     needsDescriptions: projectedTrackers.some((projection) => projection.artifacts.description),
   };
-  const access = routeAccess(
-    workflowView.current?.continuation,
-    Boolean(state.preview?.TrackerData?.length),
-    requirements,
-  );
+  const access: Readonly<Record<ReleaseRoute, RouteAccess>> =
+    state.activeInput.state === "recovering"
+      ? {
+          input: { available: true, reason: "" },
+          trackerData: { available: false, reason: "Resolve recovery actions first." },
+          duplicates: { available: false, reason: "Resolve recovery actions first." },
+          screenshots: { available: false, reason: "Resolve recovery actions first." },
+          menuImages: { available: false, reason: "Resolve recovery actions first." },
+          uploadedImages: { available: false, reason: "Resolve recovery actions first." },
+          descriptions: { available: false, reason: "Resolve recovery actions first." },
+          upload: { available: false, reason: "Resolve recovery actions first." },
+        }
+      : routeAccess(
+          workflowView.current?.continuation,
+          Boolean(state.preview?.TrackerData?.length),
+          requirements,
+        );
   const workflowMedia = workflowView.current?.media;
   const workflowMediaURL = (artifactID: string) =>
     workflowView.current ? activePorts.workflow.mediaURL(workflowView.current, artifactID) : "";
@@ -1780,7 +2151,10 @@ export function ReleaseSessionProvider({
       ? "running"
       : workflowView.current?.uploadResult
         ? "ready"
-        : "idle";
+        : workflowView.current?.workflow.status === "completed" &&
+            (workflowView.current.workflow.submissionExclusions?.length || 0) > 0
+          ? "ready"
+          : "idle";
   const trackerInputAnswers = state.trackerInputAnswers;
 
   const session: ReleaseSession = {
@@ -1848,6 +2222,9 @@ export function ReleaseSessionProvider({
         ),
       executeUploads: () => executeExactUpload(),
       confirmAction: (action: RequiredAction, confirmed = true) => {
+        if (action.kind === "reconcile_submission") {
+          return reconcileRecoveryAction(action);
+        }
         if (
           !runtimeInfoReady ||
           (action.kind !== "authorize_rules" && action.kind !== "resolve_tracker_preparation") ||
@@ -1937,6 +2314,8 @@ export function ReleaseSessionProvider({
         status: state.preparation.status,
         error: state.preparation.error || workflowView.error,
         failure: state.preparation.failure,
+        activeInput: state.activeInput,
+        sourceVerification: state.sourceVerification,
         preparationDirty: state.preparationDirty,
         correctionDirty: state.correctionDirty,
         intent: state.preparationIntent,
@@ -1993,7 +2372,7 @@ export function ReleaseSessionProvider({
             UseAll: state.playlist.useAll,
           },
         });
-        const sourcePath = state.selectedSource;
+        const sourcePath = state.preparation.sourcePath;
         const commandRevision = state.commandRevision;
         const correlationID = state.preparation.correlationID;
         const operation = lastPreparation.current?.operation || "prepare";
@@ -2033,7 +2412,12 @@ export function ReleaseSessionProvider({
         abortController("preparation");
         dispatch({ type: "playlist_dismissed" });
       },
+      cancelPreparation,
       prepareSource: (sourcePath, intent) => runPreparationFor("prepare", sourcePath, intent),
+      openSource: (sourcePath) =>
+        runPreparationFor("prepare", sourcePath, emptyPreparationIntent()),
+      recoverLegacyWorkflow,
+      close: releaseActiveInput,
       resetSource: (sourcePath, intent) => runPreparationFor("reset", sourcePath, intent),
       prepare: () => runPreparation("prepare"),
       reset: () => runPreparation("reset"),
@@ -2395,11 +2779,12 @@ export function ReleaseSessionProvider({
         questionnaireAnswers: state.questionnaireAnswers,
         options: uploadOptions,
         liveTest,
-        mutationsAllowed,
+        mutationsAllowed: mutationsAllowed && state.activeInput.state !== "recovering",
         dryRunStatus: workflowDryRunStatus,
         uploadStatus: workflowUploadStatus,
         dryRunResult: workflowView.current?.dryRun || null,
         result: workflowView.current?.uploadResult || null,
+        submissionExclusions: workflowView.current?.workflow.submissionExclusions || [],
         error: workflowView.failure?.Message || workflowView.error || state.uploadError || "",
       },
       chooseTrackers: (trackers) => dispatch({ type: "trackers_chosen", trackers }),

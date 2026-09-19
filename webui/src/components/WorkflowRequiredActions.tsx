@@ -73,6 +73,13 @@ export function WorkflowRequiredActions({
                     Continue upload
                   </button>
                 </div>
+              ) : action.kind === "reconcile_submission" ? (
+                <div>
+                  <button className="ghost" type="button" onClick={() => onConfirm(action, true)}>
+                    {action.options?.find((option) => option.value === "not_completed")?.label ||
+                      "Confirmed not completed"}
+                  </button>
+                </div>
               ) : action.kind === "resolve_tracker_preparation" ? (
                 <div className="flex flex-wrap gap-2">
                   <button className="ghost" type="button" onClick={() => onConfirm(action, true)}>

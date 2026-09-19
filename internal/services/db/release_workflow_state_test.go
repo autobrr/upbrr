@@ -112,6 +112,31 @@ func TestReleaseWorkflowStateConcurrentRevisionCAS(t *testing.T) {
 	}
 }
 
+func TestReleaseWorkflowStateDeletionPreservesActiveSlotWorkflow(t *testing.T) {
+	t.Parallel()
+
+	repo := openMigratedTestRepo(t)
+	ctx := t.Context()
+	now := time.Now().UTC()
+	workflow := workflowStateRecordForTest("workflow-active-retention", api.WorkflowStatusCompleted, now, `{"revision":1}`)
+	if _, _, err := repo.CreateReleaseWorkflowState(ctx, workflow); err != nil {
+		t.Fatal(err)
+	}
+	if err := activateSubmissionFenceTestInput(ctx, repo, workflow, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DeleteReleaseWorkflowState(ctx, workflow.OwnerID, workflow.WorkflowID); !errors.Is(err, api.ErrActiveInputBusy) {
+		t.Fatalf("delete active workflow = %v", err)
+	}
+	deleted, err := repo.DeleteTerminalReleaseWorkflowStatesBefore(ctx, now.Add(time.Hour))
+	if err != nil || deleted != 0 {
+		t.Fatalf("retain active terminal workflow: deleted=%d err=%v", deleted, err)
+	}
+	if _, err := repo.LoadReleaseWorkflowState(ctx, workflow.OwnerID, workflow.WorkflowID); err != nil {
+		t.Fatalf("active workflow was removed by retention: %v", err)
+	}
+}
+
 func workflowStateRecordForTest(
 	workflowID api.WorkflowID,
 	status api.WorkflowStatus,
