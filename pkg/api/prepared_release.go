@@ -31,6 +31,7 @@ type PreparedRelease struct {
 	Generation       PreparedGeneration
 	Compatibility    PreparationCompatibility
 	Source           SourceManifest
+	SourceIdentity   SourceContentIdentity `json:"-"`
 	Naming           NamingFacts
 	Episode          EpisodeFacts
 	Media            MediaFacts
@@ -782,13 +783,31 @@ const (
 
 // Clone returns a detached prepared-release projection.
 func (r PreparedRelease) Clone() (PreparedRelease, error) {
-	return clonePreparedValue(r)
+	cloned, err := clonePreparedValue(r)
+	if err != nil {
+		return PreparedRelease{}, err
+	}
+	cloned.SourceIdentity = SourceContentIdentity{
+		Version:             r.SourceIdentity.Version,
+		Digest:              r.SourceIdentity.Digest,
+		ManifestFingerprint: r.SourceIdentity.ManifestFingerprint,
+		Files:               append([]VerifiedSourceFile(nil), r.SourceIdentity.Files...),
+	}
+	return cloned, nil
 }
 
 // Clone returns a detached result whose release and diagnostics can be mutated
 // by the caller without affecting module-owned state.
 func (r PrepareResult) Clone() (PrepareResult, error) {
-	return clonePreparedValue(r)
+	cloned, err := clonePreparedValue(r)
+	if err != nil {
+		return PrepareResult{}, err
+	}
+	cloned.Release, err = r.Release.Clone()
+	if err != nil {
+		return PrepareResult{}, err
+	}
+	return cloned, nil
 }
 
 func clonePreparedValue[T any](value T) (T, error) {

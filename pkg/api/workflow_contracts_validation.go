@@ -1698,7 +1698,7 @@ func (w ReleaseWorkflow) Validate() error {
 		(w.Release == nil || w.TrackerProjections == nil || w.Dupes == nil || w.Media == nil || w.Descriptions == nil) {
 		return errors.New("dry-run and upload results require exact workflow dependencies")
 	}
-	if w.Status == WorkflowStatusCompleted && w.UploadResult == nil {
+	if w.Status == WorkflowStatusCompleted && w.UploadResult == nil && !w.AllSelectedTrackersAlreadyUploaded() {
 		return errors.New("completed workflow requires an upload result")
 	}
 	if w.Status == WorkflowStatusBlocked && len(w.RequiredActions) == 0 && len(w.Failures) == 0 {

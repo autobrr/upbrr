@@ -72,6 +72,14 @@ const inputFacet = (): InputFacet => ({
     status: "idle",
     error: "",
     failure: null,
+    activeInput: {
+      state: "empty",
+      revision: 0,
+      inputID: "",
+      sourceVersion: "",
+      recoveryWorkflowIDs: [],
+    },
+    sourceVerification: null,
     preparationDirty: false,
     correctionDirty: false,
     intent: {
@@ -119,12 +127,27 @@ const inputFacet = (): InputFacet => ({
   choosePlaylists: vi.fn(),
   confirmPlaylists: vi.fn(async () => true),
   cancelPlaylistSelection: vi.fn(),
+  cancelPreparation: vi.fn(),
   prepareSource: vi.fn(async () => true),
+  openSource: vi.fn(async () => true),
+  recoverLegacyWorkflow: vi.fn(async () => true),
+  close: vi.fn(async () => true),
   resetSource: vi.fn(async () => true),
   prepare: vi.fn(async () => true),
   reset: vi.fn(async () => true),
   confirmBDMVRescan: vi.fn(async () => true),
   selectCandidate: vi.fn(async () => true),
+});
+
+const inputPageProps = () => ({
+  sourcePathHistory: [],
+  handleBrowseFile: vi.fn(),
+  handleBrowseFolder: vi.fn(),
+  trackerUploadItems: [],
+  showExternalIDInputUI: false,
+  setLightboxImage: vi.fn(),
+  setLightboxAlt: vi.fn(),
+  trackerIconSrcByName: {},
 });
 
 const providerSummary = (title: string): ProviderDisplaySummary => ({
@@ -286,6 +309,92 @@ const preparedRelease = () =>
   }) as unknown as NonNullable<InputFacet["view"]["release"]>;
 
 describe("InputPage", () => {
+  it("offers Blu-ray rescan confirmation only for a confirmation-required failure", () => {
+    const base = inputFacet();
+    const unknownOutcomeFacet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        status: "error",
+        error: "The prior submission outcome is unknown.",
+        failure: {
+          Code: "unknown_submission_outcome",
+          Operation: "upload_execute",
+          Message: "The prior submission outcome is unknown.",
+          Recovery: "confirm",
+        },
+      },
+    };
+    const { rerender } = render(<InputPage facet={unknownOutcomeFacet} {...inputPageProps()} />);
+
+    expect(screen.getByText("The prior submission outcome is unknown.")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Confirm Blu-ray rescan" }),
+    ).not.toBeInTheDocument();
+
+    const confirmationFacet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        status: "error",
+        error: "Confirm a full Blu-ray rescan.",
+        failure: {
+          Code: "confirmation_required",
+          Operation: "preparation",
+          Message: "Confirm a full Blu-ray rescan.",
+          Recovery: "confirm",
+        },
+      },
+    };
+    rerender(<InputPage facet={confirmationFacet} {...inputPageProps()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Blu-ray rescan" }));
+    expect(confirmationFacet.confirmBDMVRescan).toHaveBeenCalledOnce();
+  });
+
+  it("shows correlated source verification bytes and cancels the active preparation", () => {
+    const base = inputFacet();
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        status: "running",
+        sourceVerification: {
+          correlationID: "prepare-1",
+          completedBytes: 512,
+          totalBytes: 1024,
+          message: "Verifying source content.",
+          status: "running",
+        },
+      },
+    };
+    render(<InputPage facet={facet} {...inputPageProps()} />);
+
+    expect(screen.getByText("512 of 1,024 bytes verified")).toBeInTheDocument();
+    expect(screen.getByLabelText("Source verification progress")).toHaveValue(512);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel verification" }));
+    expect(facet.cancelPreparation).toHaveBeenCalledOnce();
+  });
+
+  it("offers owner-scoped legacy workflow recovery without preparing a source", () => {
+    const base = inputFacet();
+    const facet: InputFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        activeInput: {
+          ...base.view.activeInput,
+          recoveryWorkflowIDs: ["workflow-legacy"],
+        },
+      },
+    };
+    render(<InputPage facet={facet} {...inputPageProps()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Recover workflow workflow-legacy" }));
+    expect(facet.recoverLegacyWorkflow).toHaveBeenCalledWith("workflow-legacy");
+    expect(facet.prepareSource).not.toHaveBeenCalled();
+  });
+
   it("keeps typing as a draft and uses explicit preparation intent", () => {
     const facet = inputFacet();
     render(

@@ -74,6 +74,12 @@ type PreparationProgressUpdate struct {
 	Message string `json:"message"`
 	// Status is the latest advisory state for Phase.
 	Status PreparationProgressStatus `json:"status"`
+	// CompletedBytes is the verified local source content so far when known.
+	// It is advisory progress only and never identifies a local path.
+	CompletedBytes int64 `json:"completedBytes,omitempty"`
+	// TotalBytes is the local source content expected for this phase when known.
+	// It is advisory progress only and never identifies a local path.
+	TotalBytes int64 `json:"totalBytes,omitempty"`
 	// Timestamp is an RFC3339 timestamp injected by the WebUI boundary.
 	Timestamp string `json:"timestamp"`
 }

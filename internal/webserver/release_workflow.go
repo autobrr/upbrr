@@ -17,10 +17,11 @@ func (b *Backend) continueReleaseWorkflow(
 	ownerID string,
 	request api.ContinueReleaseWorkflowRequest,
 ) (releaseworkflow.CommandResult, error) {
-	runtime, err := b.requireRuntime()
+	runtime, err := b.borrowRuntime()
 	if err != nil {
 		return releaseworkflow.CommandResult{}, err
 	}
+	defer runtime.release()
 	workflowCore, err := runtime.releaseWorkflowCore()
 	if err != nil {
 		return releaseworkflow.CommandResult{}, err
@@ -37,10 +38,11 @@ func (b *Backend) startReleaseWorkflowUpload(
 	ownerID string,
 	request api.CreateReleaseWorkflowUploadRequest,
 ) (releaseworkflow.CommandResult, error) {
-	runtime, err := b.requireRuntime()
+	runtime, err := b.borrowRuntime()
 	if err != nil {
 		return releaseworkflow.CommandResult{}, err
 	}
+	defer runtime.release()
 	workflowCore, err := runtime.releaseWorkflowCore()
 	if err != nil {
 		return releaseworkflow.CommandResult{}, err
@@ -58,10 +60,11 @@ func (b *Backend) submitReleaseWorkflowUploadFeedback(
 	workflowID api.WorkflowID,
 	feedback api.ReleaseWorkflowUploadFeedback,
 ) (releaseworkflow.CommandResult, error) {
-	runtime, err := b.requireRuntime()
+	runtime, err := b.borrowRuntime()
 	if err != nil {
 		return releaseworkflow.CommandResult{}, err
 	}
+	defer runtime.release()
 	workflowCore, err := runtime.releaseWorkflowCore()
 	if err != nil {
 		return releaseworkflow.CommandResult{}, err
@@ -78,10 +81,11 @@ func (b *Backend) executeReleaseWorkflow(
 	ownerID string,
 	command releaseworkflow.Command,
 ) (releaseworkflow.CommandResult, error) {
-	runtime, err := b.requireRuntime()
+	runtime, err := b.borrowRuntime()
 	if err != nil {
 		return releaseworkflow.CommandResult{}, err
 	}
+	defer runtime.release()
 	workflowCore, err := runtime.releaseWorkflowCore()
 	if err != nil {
 		return releaseworkflow.CommandResult{}, err
@@ -104,10 +108,11 @@ func (b *Backend) startReleaseWorkflow(
 	ownerID string,
 	command releaseworkflow.Command,
 ) (api.WorkflowOperationStatus, error) {
-	runtime, err := b.requireRuntime()
+	runtime, err := b.borrowRuntime()
 	if err != nil {
 		return api.WorkflowOperationStatus{}, err
 	}
+	defer runtime.release()
 	workflowCore, err := runtime.releaseWorkflowCore()
 	if err != nil {
 		return api.WorkflowOperationStatus{}, err
@@ -166,10 +171,11 @@ func (b *Backend) releaseWorkflowOperation(
 	workflowID api.WorkflowID,
 	operationID api.WorkflowOperationID,
 ) (api.WorkflowOperationStatus, error) {
-	runtime, err := b.requireRuntime()
+	runtime, err := b.borrowRuntime()
 	if err != nil {
 		return api.WorkflowOperationStatus{}, err
 	}
+	defer runtime.release()
 	workflowCore, err := runtime.releaseWorkflowCore()
 	if err != nil {
 		return api.WorkflowOperationStatus{}, err
@@ -315,7 +321,9 @@ func classifyReleaseWorkflowError(err error) error {
 		return nil
 	}
 	if operationError, ok := errors.AsType[*api.OperationError](err); ok {
-		return operationError
+		if failure, found := api.AsOperationFailure(operationError); found && failure.Code != api.OperationFailureInternal {
+			return operationError
+		}
 	}
 	failure := api.OperationFailure{
 		Code:      api.OperationFailureInternal,
@@ -324,6 +332,18 @@ func classifyReleaseWorkflowError(err error) error {
 		Recovery:  api.OperationRecoveryRetry,
 	}
 	switch {
+	case errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown):
+		failure.Code = api.OperationFailureUnknownOutcome
+		failure.Message = "An earlier external operation has an unknown outcome. Recover the interrupted input and confirm its outcome before continuing."
+		failure.Recovery = api.OperationRecoveryConfirm
+	case errors.Is(err, api.ErrActiveInputBusy):
+		failure.Code = api.OperationFailureActiveInputBusy
+		failure.Message = "Another input is active. Close it or wait for its work to finish."
+		failure.Recovery = api.OperationRecoveryReviewAgain
+	case errors.Is(err, api.ErrActiveInputChanged), errors.Is(err, api.ErrActiveInputLeaseLost):
+		failure.Code = api.OperationFailureStaleReview
+		failure.Message = "The active input changed. Reload its current state before continuing."
+		failure.Recovery = api.OperationRecoveryReviewAgain
 	case errors.Is(err, releaseworkflow.ErrWorkflowNotFound):
 		failure.Code = api.OperationFailureMissingPrerequisite
 		failure.Message = "The release workflow is unavailable. Start a new workflow."

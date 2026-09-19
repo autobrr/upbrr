@@ -321,7 +321,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, value)
 	}))
 
-	mux.HandleFunc("/api/app/SaveConfig", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+	mux.HandleFunc("/api/app/SaveConfig", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
 		if r.Method != http.MethodPost {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 			return
@@ -331,11 +331,35 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		if err := s.backend.SaveConfig(req.Payload); err != nil {
+		result, err := s.backend.SaveConfigActivationForOwner(r.Context(), current.ID, req.Payload)
+		if err != nil {
+			if pending, ok := errors.AsType[*api.ConfigActivationPendingError](err); ok {
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"error":      "another validated configuration is already pending activation",
+					"activation": pending.Activation,
+				})
+				return
+			}
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		if s.backend.hub != nil {
+			s.backend.hub.Emit(current.ID, "input:changed", map[string]any{})
+		}
+		writeJSON(w, http.StatusOK, result)
+	}))
+
+	mux.HandleFunc("/api/app/GetConfigActivation", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		result, err := s.backend.ConfigActivation(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
 	}))
 
 	mux.HandleFunc("/api/app/ImportConfig", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
@@ -401,7 +425,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, value)
 	}))
 
-	mux.HandleFunc("/api/app/DeleteHistoryRelease", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+	mux.HandleFunc("/api/app/DeleteHistoryRelease", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
 		var req struct{ SourcePath string }
 		if err := decodeJSON(r, &req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -410,6 +434,9 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		if err := s.backend.DeleteHistoryRelease(req.SourcePath); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
+		}
+		if s.backend.hub != nil {
+			s.backend.hub.Emit(current.ID, "input:changed", map[string]bool{"historyDeleted": true})
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}))

@@ -3,7 +3,7 @@
 
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HistoryEntry, HistoryOverview } from "../../types";
 import { installAppOperationMocks } from "../../test/appRequestMock";
 import { emptyExternalIdentity } from "../../utils/canonicalIdentity";
@@ -53,6 +53,21 @@ const overview = (sourcePath: string, title: string): HistoryOverview => ({
 });
 
 describe("HistoryPage", () => {
+  it("opens a stored source through the shared active-input callback", async () => {
+    const sourcePath = "C:\\media\\Stored.Release.2026.1080p-GRP.mkv";
+    const onOpenInput = vi.fn(async () => true);
+    installAppOperationMocks({
+      ListHistory: async () => [entry(sourcePath, "Stored Release 2026")],
+      GetHistoryOverview: async () => overview(sourcePath, "Stored Release 2026"),
+    });
+
+    render(<HistoryPage onOpenInput={onOpenInput} />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Open input" }));
+
+    expect(onOpenInput).toHaveBeenCalledWith(sourcePath);
+  });
+
   it("ignores superseded overview responses", async () => {
     const firstPath = "C:\\media\\Example.Release.2026.1080p-GRP.mkv";
     const secondPath = "C:\\media\\Second.Example.2026.1080p-GRP.mkv";

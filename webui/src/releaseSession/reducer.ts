@@ -14,8 +14,10 @@ import type {
   UploadImageHostFailure,
 } from "../types";
 import type {
+  ActiveInputSnapshot,
   CorrectionFieldRef,
   ReleaseCorrectionValues,
+  ReleaseWorkflowCurrent,
 } from "../api/generated/release-workflow";
 import type {
   FacetStatus,
@@ -24,6 +26,7 @@ import type {
   PreparationIntent,
   PreparationStatus,
   PlaylistStatus,
+  SourceVerificationProgress,
   UploadedImageCandidate,
   UploadRunOptions,
 } from "./types";
@@ -83,13 +86,31 @@ type PreparationAttemptState = Readonly<{
   failure: OperationFailure | null;
 }>;
 
+type ActiveInputState = Readonly<{
+  state: string;
+  revision: number;
+  inputID: string;
+  sourceVersion: string;
+  recoveryWorkflowIDs: readonly string[];
+}>;
+
+type WorkflowViewState = Readonly<{
+  status: FacetStatus;
+  current: ReleaseWorkflowCurrent | null;
+  error: string;
+  failure: OperationFailure | null;
+}>;
+
 /** Canonical release-session state; revisions and correlation reject stale async results. */
 export type SessionState = Readonly<{
+  activeInput: ActiveInputState;
+  workflowView: WorkflowViewState;
   sessionRevision: number;
   commandRevision: number;
   sourceDraft: string;
   selectedSource: string;
   preparation: PreparationAttemptState;
+  sourceVerification: SourceVerificationProgress | null;
   preparationDirty: boolean;
   correctionDirty: boolean;
   inputEditRevision: number;
@@ -142,6 +163,37 @@ export type SessionAction =
   | Readonly<{ type: "tracker_source_id_changed"; tracker: string; value: string }>
   | Readonly<{ type: "preparation_policy_changed"; value: PreparationIntent["policy"] }>
   | Readonly<{ type: "client_search_changed"; value: PreparationIntent["search"] }>
+  | Readonly<{
+      type: "active_input_applied";
+      snapshot: ActiveInputSnapshot;
+      status: "running" | "ready";
+      preview: MetadataPreview | null;
+      intent: PreparationIntent | null;
+      capturedInputEditRevision: number;
+      selectedTrackers?: readonly string[];
+      requestedSourcePath?: string;
+      trackerInputsAccepted?: boolean;
+      preserveInputDraft?: boolean;
+    }>
+  | Readonly<{ type: "active_input_loading" }>
+  | Readonly<{ type: "active_input_failed"; error: string; failure: OperationFailure | null }>
+  | Readonly<{
+      type: "workflow_operation_updated";
+      workflowID: string;
+      operation: ReleaseWorkflowCurrent["operation"];
+    }>
+  | Readonly<{
+      type: "workflow_current_published";
+      current: ReleaseWorkflowCurrent;
+      status: "running" | "ready";
+    }>
+  | Readonly<{
+      type: "workflow_view_failed";
+      error: string;
+      failure: OperationFailure | null;
+    }>
+  | Readonly<{ type: "preparation_cancelled"; correlationID: string }>
+  | Readonly<{ type: "source_verification_progressed"; update: SourceVerificationProgress }>
   | Readonly<{
       type: "playlist_required";
       sourcePath: string;
@@ -225,6 +277,7 @@ export type SessionAction =
       facet: FacetName;
       sessionRevision: number;
       revision: number;
+      reason?: string;
     }>
   | Readonly<{
       type: "screenshots_loaded";
@@ -325,6 +378,14 @@ const emptyWorkflow = <T>(): WorkflowState<T> => ({
 
 /** Creates detached initial state for one release-session provider instance. */
 export const initialSessionState = (): SessionState => ({
+  activeInput: {
+    state: "empty",
+    revision: 0,
+    inputID: "",
+    sourceVersion: "",
+    recoveryWorkflowIDs: [],
+  },
+  workflowView: { status: "idle", current: null, error: "", failure: null },
   sessionRevision: 0,
   commandRevision: 0,
   sourceDraft: "",
@@ -338,6 +399,7 @@ export const initialSessionState = (): SessionState => ({
     error: "",
     failure: null,
   },
+  sourceVerification: null,
   preparationDirty: false,
   correctionDirty: false,
   inputEditRevision: 0,
@@ -401,7 +463,7 @@ const preparationMatches = (
   commandRevision: number,
   correlationID: string,
 ) =>
-  sourcePath === state.selectedSource &&
+  sourcePath === state.preparation.sourcePath &&
   commandRevision === state.commandRevision &&
   correlationID === state.preparation.correlationID;
 
@@ -722,8 +784,301 @@ const trackerSelectionChanged = (
 /** Applies one transition, ignoring stale revision- or correlation-scoped completions. */
 export const sessionReducer = (state: SessionState, action: SessionAction): SessionState => {
   switch (action.type) {
+    case "active_input_loading":
+      return {
+        ...state,
+        workflowView: { ...state.workflowView, status: "running", error: "", failure: null },
+      };
+    case "active_input_failed":
+      return {
+        ...state,
+        workflowView: {
+          ...state.workflowView,
+          status: "error",
+          error: action.error,
+          failure: action.failure,
+        },
+      };
+    case "workflow_view_failed":
+      return {
+        ...state,
+        workflowView: {
+          ...state.workflowView,
+          status: "error",
+          error: action.error,
+          failure: action.failure,
+        },
+      };
+    case "workflow_operation_updated":
+      if (state.workflowView.current?.workflow.id !== action.workflowID) return state;
+      return {
+        ...state,
+        workflowView: {
+          ...state.workflowView,
+          status:
+            action.operation?.status === "queued" || action.operation?.status === "running"
+              ? "running"
+              : state.workflowView.status,
+          current: { ...state.workflowView.current, operation: action.operation },
+        },
+      };
+    case "workflow_current_published": {
+      const previous = state.workflowView.current;
+      if (
+        previous &&
+        (previous.workflow.id !== action.current.workflow.id ||
+          previous.workflow.revision > action.current.workflow.revision)
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        workflowView: {
+          status: action.status,
+          current: action.current,
+          error: "",
+          failure: null,
+        },
+      };
+    }
+    case "active_input_applied": {
+      const snapshot = action.snapshot;
+      const previousActive = state.activeInput;
+      if (snapshot.revision < previousActive.revision) return state;
+      if (
+        snapshot.revision === previousActive.revision &&
+        previousActive.inputID &&
+        (snapshot.inputId !== previousActive.inputID ||
+          snapshot.sourceVersion !== previousActive.sourceVersion)
+      ) {
+        return state;
+      }
+      const activeInput: ActiveInputState = {
+        state: snapshot.state,
+        revision: snapshot.revision,
+        inputID: snapshot.inputId || "",
+        sourceVersion: snapshot.sourceVersion || "",
+        recoveryWorkflowIDs: [...(snapshot.recoveryWorkflowIds || [])],
+      };
+      const current = snapshot.current || null;
+      if (!current) {
+        if (snapshot.state === "empty") {
+          if (
+            previousActive.state === "empty" &&
+            previousActive.revision === activeInput.revision
+          ) {
+            return {
+              ...state,
+              activeInput,
+              workflowView: {
+                status: action.status,
+                current: null,
+                error: "",
+                failure: null,
+              },
+            };
+          }
+          const reset = initialSessionState();
+          if (state.preparation.status === "running" || state.preparation.status === "error") {
+            return {
+              ...reset,
+              activeInput,
+              workflowView: { status: action.status, current: null, error: "", failure: null },
+              sessionRevision: state.sessionRevision + 1,
+              commandRevision: state.commandRevision,
+              inputEditRevision: state.inputEditRevision,
+              sourceDraft: state.sourceDraft,
+              preparation: state.preparation,
+              sourceVerification: state.sourceVerification,
+              preparationDirty: state.preparationDirty,
+              correctionDirty: state.correctionDirty,
+              preparationIntent: state.preparationIntent,
+              correctionResetFields: state.correctionResetFields,
+              correctionConfirmFields: state.correctionConfirmFields,
+              correctionValueFields: state.correctionValueFields,
+              trackerInputAnswers: state.trackerInputAnswers,
+              playlist: state.playlist,
+              selectedTrackers: state.selectedTrackers,
+              trackerSelectionTouched: state.trackerSelectionTouched,
+              trackerSelectionInitialized: state.trackerSelectionInitialized,
+            };
+          }
+          return {
+            ...reset,
+            activeInput,
+            sessionRevision: state.sessionRevision + 1,
+          };
+        }
+        if (
+          previousActive.inputID !== activeInput.inputID ||
+          previousActive.sourceVersion !== activeInput.sourceVersion
+        ) {
+          const reset = initialSessionState();
+          return {
+            ...reset,
+            activeInput,
+            sessionRevision: state.sessionRevision + 1,
+            workflowView: { status: action.status, current: null, error: "", failure: null },
+          };
+        }
+        return {
+          ...state,
+          activeInput,
+          workflowView: {
+            status: action.status,
+            current: null,
+            error: "",
+            failure: null,
+          },
+        };
+      }
+      const previousCurrent = state.workflowView.current;
+      if (
+        snapshot.revision === previousActive.revision &&
+        previousCurrent?.workflow.id === current.workflow.id &&
+        previousCurrent.workflow.revision > current.workflow.revision
+      ) {
+        return state;
+      }
+      if (snapshot.state === "recovering") {
+        const reset = initialSessionState();
+        return {
+          ...reset,
+          activeInput,
+          workflowView: {
+            status: action.status,
+            current,
+            error: "",
+            failure: null,
+          },
+          sessionRevision: state.sessionRevision + 1,
+          commandRevision: Math.max(state.commandRevision, current.workflow.revision),
+        };
+      }
+      if (!action.preview || !action.intent) {
+        const requestedSourcePath = action.requestedSourcePath?.trim() || "";
+        if (
+          requestedSourcePath &&
+          action.intent &&
+          previousActive.inputID !== activeInput.inputID
+        ) {
+          const reset = initialSessionState();
+          return {
+            ...reset,
+            activeInput,
+            workflowView: {
+              status: action.status,
+              current,
+              error: "",
+              failure: null,
+            },
+            sessionRevision: state.sessionRevision + 1,
+            commandRevision: state.commandRevision,
+            inputEditRevision: state.inputEditRevision,
+            sourceDraft: requestedSourcePath,
+            selectedSource: requestedSourcePath,
+            preparation: {
+              correlationID: state.preparation.correlationID,
+              sourcePath: requestedSourcePath,
+              commandRevision: state.preparation.commandRevision,
+              inputEditRevision: action.capturedInputEditRevision,
+              status: "running",
+              error: "",
+              failure: null,
+            },
+            preparationIntent: clonePreparationIntent(action.intent),
+            selectedTrackers: normalizeNames(action.selectedTrackers || []),
+            trackerSelectionTouched: Boolean(action.selectedTrackers),
+            trackerSelectionInitialized: Boolean(action.selectedTrackers),
+          };
+        }
+        return {
+          ...state,
+          activeInput,
+          workflowView: {
+            status: action.status,
+            current,
+            error: "",
+            failure: null,
+          },
+        };
+      }
+      const sourcePath =
+        action.preview.Release?.SourcePath?.trim() || action.preview.SourcePath.trim();
+      const release = action.preview.Release;
+      if (!sourcePath || !release?.Generation) return state;
+      const sameDraftKey =
+        Boolean(previousActive.inputID) &&
+        previousActive.inputID === activeInput.inputID &&
+        previousActive.sourceVersion === activeInput.sourceVersion;
+      const retainDraft =
+        sameDraftKey &&
+        (action.preserveInputDraft || state.inputEditRevision > action.capturedInputEditRevision);
+      const base = sameDraftKey ? state : initialSessionState();
+      const releaseChanged =
+        !sameDraftKey ||
+        base.release?.SourcePath !== sourcePath ||
+        base.release.Generation !== release.Generation;
+      return {
+        ...base,
+        ...(sameDraftKey ? {} : invalidateReleaseWork(state, "Active input changed.")),
+        activeInput,
+        workflowView: {
+          status: action.status,
+          current,
+          error: "",
+          failure: null,
+        },
+        sessionRevision: releaseChanged ? state.sessionRevision + 1 : state.sessionRevision,
+        commandRevision: Math.max(base.commandRevision, current.workflow.revision),
+        sourceVerification: null,
+        sourceDraft: retainDraft ? state.sourceDraft : sourcePath,
+        selectedSource: sourcePath,
+        preparation: {
+          correlationID: "",
+          sourcePath,
+          commandRevision: current.workflow.revision,
+          inputEditRevision: retainDraft ? state.inputEditRevision : base.inputEditRevision,
+          status: action.status === "running" ? "running" : "ready",
+          error: "",
+          failure: null,
+        },
+        preparationDirty: retainDraft,
+        correctionDirty: retainDraft ? state.correctionDirty : false,
+        inputEditRevision: retainDraft ? state.inputEditRevision : base.inputEditRevision,
+        preparationIntent: retainDraft
+          ? state.preparationIntent
+          : clonePreparationIntent(action.intent),
+        correctionResetFields: retainDraft ? state.correctionResetFields : [],
+        correctionConfirmFields: retainDraft ? state.correctionConfirmFields : [],
+        correctionValueFields: retainDraft ? state.correctionValueFields : [],
+        trackerInputAnswers:
+          retainDraft || !action.trackerInputsAccepted
+            ? state.trackerInputAnswers
+            : Object.fromEntries(
+                Object.entries(state.trackerInputAnswers).filter(
+                  ([tracker]) => !action.selectedTrackers?.includes(tracker),
+                ),
+              ),
+        release: { SourcePath: sourcePath, Generation: release.Generation },
+        preview: action.preview,
+        selectedTrackers: retainDraft
+          ? state.selectedTrackers
+          : normalizeNames(action.selectedTrackers || []),
+        trackerSelectionTouched: retainDraft ? state.trackerSelectionTouched : false,
+        trackerSelectionInitialized: retainDraft ? state.trackerSelectionInitialized : true,
+        releaseNameOverrides: sameDraftKey ? state.releaseNameOverrides : {},
+        questionnaireAnswers: sameDraftKey ? state.questionnaireAnswers : {},
+        duplicatesError: "",
+        uploadError: "",
+      };
+    }
     case "draft_changed":
-      return { ...state, sourceDraft: action.value };
+      return {
+        ...state,
+        sourceDraft: action.value,
+        inputEditRevision: state.inputEditRevision + 1,
+      };
     case "source_selected": {
       const sourcePath = action.sourcePath.trim();
       if (sourcePath === state.selectedSource) return { ...state, sourceDraft: sourcePath };
@@ -962,7 +1317,6 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         playlist: { ...state.playlist, status: "processing", required: false, error: "" },
       };
     case "preparation_started":
-      if (action.sourcePath !== state.selectedSource) return state;
       return {
         ...state,
         commandRevision: action.commandRevision,
@@ -975,6 +1329,13 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           status: "running",
           error: "",
           failure: null,
+        },
+        sourceVerification: {
+          correlationID: action.correlationID,
+          completedBytes: 0,
+          totalBytes: 0,
+          message: "Waiting for source verification.",
+          status: "running",
         },
         playlist: {
           ...state.playlist,
@@ -1021,6 +1382,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           error: "",
           failure: null,
         },
+        sourceVerification: null,
         preparationDirty: inputChanged,
         correctionDirty: inputChanged ? state.correctionDirty : false,
         preparationIntent:
@@ -1080,11 +1442,63 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           error: action.error,
           failure: action.failure ? { ...action.failure } : null,
         },
+        sourceVerification: null,
         playlist:
           state.playlist.status === "processing"
             ? { ...state.playlist, status: "error", error: action.error }
             : state.playlist,
       };
+    case "preparation_cancelled":
+      if (state.preparation.correlationID !== action.correlationID) return state;
+      return {
+        ...state,
+        workflowView: {
+          ...state.workflowView,
+          status: state.workflowView.current ? "ready" : "idle",
+          error: "",
+          failure: null,
+        },
+        preparation: {
+          ...state.preparation,
+          status: "cancelled",
+          error: "",
+          failure: null,
+        },
+        sourceVerification: null,
+        playlist:
+          state.playlist.status === "processing"
+            ? { ...state.playlist, status: "cancelled", required: false, error: "" }
+            : state.playlist,
+      };
+    case "source_verification_progressed": {
+      const previous = state.sourceVerification;
+      if (
+        state.preparation.status !== "running" ||
+        state.preparation.correlationID !== action.update.correlationID ||
+        previous?.correlationID !== action.update.correlationID ||
+        (previous.status !== "running" && action.update.status === "running")
+      ) {
+        return state;
+      }
+      const incomingTotal = Math.max(0, action.update.totalBytes);
+      const totalBytes =
+        incomingTotal > 0 || action.update.status === "running"
+          ? incomingTotal
+          : previous.totalBytes;
+      const incomingCompleted = Math.max(0, action.update.completedBytes);
+      const completedBytes =
+        incomingCompleted > 0 || action.update.status === "running"
+          ? Math.min(incomingCompleted, totalBytes || Infinity)
+          : previous.completedBytes;
+      return {
+        ...state,
+        sourceVerification: {
+          ...action.update,
+          completedBytes,
+          totalBytes,
+        },
+      };
+    }
     case "trackers_chosen":
       return trackerSelectionChanged(state, action.trackers, true);
     case "trackers_received":
@@ -1187,7 +1601,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           ...state[action.facet],
           revision: state[action.facet].revision + 1,
           status: "idle",
-          staleReason: "Operation canceled.",
+          staleReason: action.reason || "Operation canceled.",
           error: "",
         },
       };
