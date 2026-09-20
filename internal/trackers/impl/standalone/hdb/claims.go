@@ -100,8 +100,9 @@ func (d *Definition) NewClaimChecker(cfg config.Config, logger api.Logger) track
 
 // HasClaim reports an active HDB TV WEB claim. HDB claim-list access failures
 // are warnings and fail open, while cancellation remains observable by callers.
-// Only fresh, unambiguous direct ownership permits a configured internal group
-// to bypass its own claim; stale, partial, or relayed claims may still block uploads.
+// An unambiguous direct ownership match permits a configured internal group to
+// bypass its own claim regardless of list freshness or completeness because HDB
+// allows only one claiming group per title. Relayed or conflicting matches block.
 func (s *claimChecker) HasClaim(ctx context.Context, meta api.UploadSubject) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, fmt.Errorf("metadata: HDB claim check canceled: %w", err)
@@ -143,7 +144,7 @@ func (s *claimChecker) HasClaim(ctx context.Context, meta api.UploadSubject) (bo
 	trackerCfg, _ := hdbTrackerConfig(s.cfg)
 	groupPolicy := trackers.ResolveGroupPolicy(trackerCfg, meta)
 	ownedByGroup := hdbClaimsOwnedByGroup(matchedClaims, groupPolicy.Group)
-	if groupPolicy.Internal && claims.FreshStructured && ownedByGroup {
+	if groupPolicy.Internal && ownedByGroup {
 		s.logger.Infof("metadata: HDB claim match bypassed group=%s decision=own_claim", groupPolicy.Group)
 		return false, nil
 	}
@@ -215,7 +216,7 @@ func (s *claimChecker) loadHDBClaims(ctx context.Context, cachePath string, cach
 		if cached.Complete {
 			fresh.Records = slices.Concat(fresh.Records, cached.Records)
 		}
-		s.logger.Warnf("metadata: HDB claims list is incomplete; recognized claims can block uploads but cannot authorize an ownership bypass")
+		s.logger.Warnf("metadata: HDB claims list is incomplete; recognized claims remain usable and the partial list will not replace the cache")
 		return fresh, nil
 	}
 	if cached.Complete {
@@ -303,9 +304,9 @@ func parseHDBClaimRecords(text string) ([]hdbClaimRecord, int, bool) {
 			}
 			continue
 		}
-		// The forum's edit footer is metadata, not an unparsed claim row.
+		// The forum's edit footer terminates the claims list; following page chrome is unrelated.
 		if hdbEditFooterPattern.MatchString(line) {
-			continue
+			break
 		}
 		parts := strings.SplitN(line, "--", 4)
 		if len(parts) < 3 {
