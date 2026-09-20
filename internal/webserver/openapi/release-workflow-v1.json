@@ -188,6 +188,29 @@
       "ActiveInputState": {
         "type": "string"
       },
+      "AnalyzeReleaseWorkflowAudioRequest": {
+        "type": "object",
+        "properties": {
+          "expectedRevision": {
+            "$ref": "#/components/schemas/WorkflowRevision"
+          },
+          "idempotencyKey": {
+            "type": "string"
+          },
+          "instructions": {
+            "$ref": "#/components/schemas/AudioAnalysisInstructions"
+          },
+          "workflowId": {
+            "$ref": "#/components/schemas/WorkflowID"
+          }
+        },
+        "required": [
+          "expectedRevision",
+          "idempotencyKey",
+          "instructions",
+          "workflowId"
+        ]
+      },
       "AniListAiringEpisode": {
         "type": "object",
         "properties": {
@@ -496,6 +519,263 @@
           "idempotencyKey",
           "workflowId"
         ]
+      },
+      "AudioAnalysisArtifact": {
+        "type": "object",
+        "properties": {
+          "failure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AudioAnalysisFailure"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "height": {
+            "type": "integer"
+          },
+          "id": {
+            "$ref": "#/components/schemas/PublicResourceID"
+          },
+          "status": {
+            "$ref": "#/components/schemas/StageStatus"
+          },
+          "variant": {
+            "$ref": "#/components/schemas/AudioAnalysisVariant"
+          },
+          "width": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "variant"
+        ]
+      },
+      "AudioAnalysisFailure": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/AudioAnalysisFailureCode"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ]
+      },
+      "AudioAnalysisFailureCode": {
+        "type": "string"
+      },
+      "AudioAnalysisInstructions": {
+        "type": "object",
+        "properties": {
+          "profileVersion": {
+            "type": "string"
+          },
+          "release": {
+            "$ref": "#/components/schemas/ReleaseRef"
+          },
+          "resourceId": {
+            "type": "string"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/AudioAnalysisSelectionMode"
+          },
+          "trackIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "variants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AudioAnalysisVariant"
+            }
+          }
+        },
+        "required": [
+          "profileVersion",
+          "release",
+          "resourceId",
+          "selection",
+          "trackIds",
+          "variants"
+        ]
+      },
+      "AudioAnalysisRef": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/AudioAnalysisResultID"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/WorkflowRevision"
+          }
+        },
+        "required": [
+          "id",
+          "revision"
+        ]
+      },
+      "AudioAnalysisResult": {
+        "type": "object",
+        "properties": {
+          "attemptId": {
+            "type": "string"
+          },
+          "completedAt": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/AudioAnalysisResultID"
+          },
+          "manifestFingerprint": {
+            "type": "string"
+          },
+          "profileVersion": {
+            "type": "string"
+          },
+          "release": {
+            "$ref": "#/components/schemas/ReleaseRef"
+          },
+          "resourceId": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/WorkflowRevision"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/AudioAnalysisSelectionMode"
+          },
+          "status": {
+            "$ref": "#/components/schemas/StageStatus"
+          },
+          "trackIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AudioAnalysisTrackResult"
+            }
+          },
+          "variants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AudioAnalysisVariant"
+            }
+          },
+          "workflowId": {
+            "$ref": "#/components/schemas/WorkflowID"
+          }
+        },
+        "required": [
+          "attemptId",
+          "createdAt",
+          "expiresAt",
+          "id",
+          "manifestFingerprint",
+          "profileVersion",
+          "release",
+          "resourceId",
+          "revision",
+          "selection",
+          "status",
+          "trackIds",
+          "tracks",
+          "variants",
+          "workflowId"
+        ]
+      },
+      "AudioAnalysisResultID": {
+        "type": "string"
+      },
+      "AudioAnalysisSelectionMode": {
+        "type": "string"
+      },
+      "AudioAnalysisTrackResult": {
+        "type": "object",
+        "properties": {
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AudioAnalysisArtifact"
+            }
+          },
+          "channelLayout": {
+            "type": "string"
+          },
+          "channels": {
+            "type": "integer"
+          },
+          "codec": {
+            "type": "string"
+          },
+          "durationSeconds": {
+            "type": "number"
+          },
+          "failure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AudioAnalysisFailure"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "language": {
+            "type": "string"
+          },
+          "ordinal": {
+            "type": "integer"
+          },
+          "sampleFrames": {
+            "type": "integer"
+          },
+          "sampleRate": {
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/StageStatus"
+          },
+          "title": {
+            "type": "string"
+          },
+          "trackId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "artifacts",
+          "channels",
+          "durationSeconds",
+          "ordinal",
+          "sampleFrames",
+          "sampleRate",
+          "status",
+          "trackId"
+        ]
+      },
+      "AudioAnalysisVariant": {
+        "type": "string"
       },
       "BlurayDiscSpec": {
         "type": "object",
@@ -3083,6 +3363,9 @@
           "OriginalLanguageProvenance": {
             "$ref": "#/components/schemas/FactProvenance"
           },
+          "PrimaryAudioTrackID": {
+            "type": "string"
+          },
           "Region": {
             "type": "string"
           },
@@ -3172,6 +3455,7 @@
           "MediaInfoUniqueID",
           "OriginalLanguage",
           "OriginalLanguageProvenance",
+          "PrimaryAudioTrackID",
           "Region",
           "Repack",
           "Service",
@@ -3264,6 +3548,15 @@
       "MediaTrackFacts": {
         "type": "object",
         "properties": {
+          "ChannelLayout": {
+            "type": "string"
+          },
+          "Channels": {
+            "type": "integer"
+          },
+          "Codec": {
+            "type": "string"
+          },
           "Commentary": {
             "type": "boolean"
           },
@@ -3302,9 +3595,18 @@
           },
           "ResourceID": {
             "type": "string"
+          },
+          "SampleRate": {
+            "type": "integer"
+          },
+          "Title": {
+            "type": "string"
           }
         },
         "required": [
+          "ChannelLayout",
+          "Channels",
+          "Codec",
           "Commentary",
           "Default",
           "DetectedLanguages",
@@ -3315,7 +3617,9 @@
           "ManifestFingerprint",
           "NativeID",
           "Ordinal",
-          "ResourceID"
+          "ResourceID",
+          "SampleRate",
+          "Title"
         ]
       },
       "MediaTrackKind": {
@@ -3844,6 +4148,9 @@
       "OperationFailure": {
         "type": "object",
         "properties": {
+          "AudioAnalysisCode": {
+            "$ref": "#/components/schemas/AudioAnalysisFailureCode"
+          },
           "Code": {
             "$ref": "#/components/schemas/OperationFailureCode"
           },
@@ -5107,6 +5414,19 @@
       "ReleaseWorkflow": {
         "type": "object",
         "properties": {
+          "audioAnalysis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AudioAnalysisRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "audioAnalysisEnabled": {
+            "type": "boolean"
+          },
           "createdAt": {
             "type": "string"
           },
@@ -5441,6 +5761,16 @@
       "ReleaseWorkflowCurrent": {
         "type": "object",
         "properties": {
+          "audioAnalysis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AudioAnalysisResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "catalog": {
             "anyOf": [
               {
@@ -7538,6 +7868,29 @@
           "Index",
           "Source",
           "TimestampSeconds"
+        ]
+      },
+      "SetReleaseWorkflowAudioAnalysisEnabledRequest": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "expectedRevision": {
+            "$ref": "#/components/schemas/WorkflowRevision"
+          },
+          "idempotencyKey": {
+            "type": "string"
+          },
+          "workflowId": {
+            "$ref": "#/components/schemas/WorkflowID"
+          }
+        },
+        "required": [
+          "enabled",
+          "expectedRevision",
+          "idempotencyKey",
+          "workflowId"
         ]
       },
       "SetReleaseWorkflowMediaSelectionRequest": {
@@ -10373,6 +10726,15 @@
       "UploadOptions": {
         "type": "object",
         "properties": {
+          "AudioAnalysis": {
+            "type": "boolean"
+          },
+          "AudioImages": {
+            "type": "string"
+          },
+          "AudioTracks": {
+            "type": "string"
+          },
           "CaptureDVDMenus": {
             "type": "boolean"
           },
@@ -10402,6 +10764,9 @@
           }
         },
         "required": [
+          "AudioAnalysis",
+          "AudioImages",
+          "AudioTracks",
           "CaptureDVDMenus",
           "InteractionMode",
           "KeepFolder",
@@ -11825,6 +12190,326 @@
         "summary": "Get workflow state",
         "tags": [
           "Workflow"
+        ]
+      }
+    },
+    "/workflows/{workflowId}/audio-analysis": {
+      "post": {
+        "description": "Starts durable, generation-bound waveform and spectrogram rendering for selected prepared audio tracks.",
+        "operationId": "analyzeWorkflowAudio",
+        "parameters": [
+          {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
+            "in": "path",
+            "name": "workflowId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optimistic workflow revision authority. Send the current ETag value returned by a workflow response.",
+            "example": "\"1\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "One stable key per logical mutation. Reuse it only when retrying that same logical request.",
+            "example": "example-command-001",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "instructions": {
+                    "$ref": "#/components/schemas/AudioAnalysisInstructions"
+                  }
+                },
+                "required": [
+                  "instructions"
+                ]
+              }
+            }
+          },
+          "description": "Top-level workflowId, expectedRevision, and idempotencyKey are supplied by the route and headers. Route-bound nested IDs are server supplied; compatibility values remain accepted but are ignored.",
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseWorkflowCurrent"
+                }
+              }
+            },
+            "description": "Workflow state with the non-terminal audio-analysis operation attached.",
+            "headers": {
+              "ETag": {
+                "description": "Quoted authoritative workflow revision for the next If-Match header.",
+                "example": "\"1\"",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "summary": "Generate audio analysis images",
+        "tags": [
+          "Audio Analysis"
+        ]
+      }
+    },
+    "/workflows/{workflowId}/audio-analysis/enabled": {
+      "put": {
+        "description": "Enables or disables the optional audio-analysis page without starting decoder work.",
+        "operationId": "setWorkflowAudioAnalysisEnabled",
+        "parameters": [
+          {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
+            "in": "path",
+            "name": "workflowId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optimistic workflow revision authority. Send the current ETag value returned by a workflow response.",
+            "example": "\"1\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "One stable key per logical mutation. Reuse it only when retrying that same logical request.",
+            "example": "example-command-001",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "enabled"
+                ]
+              }
+            }
+          },
+          "description": "Top-level workflowId, expectedRevision, and idempotencyKey are supplied by the route and headers. Route-bound nested IDs are server supplied; compatibility values remain accepted but are ignored.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseWorkflowCurrent"
+                }
+              }
+            },
+            "description": "Workflow state after changing audio-analysis enablement.",
+            "headers": {
+              "ETag": {
+                "description": "Quoted authoritative workflow revision for the next If-Match header.",
+                "example": "\"1\"",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "summary": "Set audio analysis enabled state",
+        "tags": [
+          "Audio Analysis"
+        ]
+      }
+    },
+    "/workflows/{workflowId}/audio-analysis/{analysisId}/artifacts/{artifactId}": {
+      "get": {
+        "description": "Streams a retained PNG from the exact requested audio-analysis revision.",
+        "operationId": "openWorkflowAudioAnalysisArtifact",
+        "parameters": [
+          {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
+            "in": "path",
+            "name": "workflowId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Route-bound audio-analysis result identifier.",
+            "example": "audio-analysis-example",
+            "in": "path",
+            "name": "analysisId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Opaque public artifact identifier.",
+            "example": "artifact-example",
+            "in": "path",
+            "name": "artifactId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact positive revision of the route-bound audio-analysis result.",
+            "example": 1,
+            "in": "query",
+            "name": "revision",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Audio analysis PNG bytes."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "summary": "Open audio analysis artifact",
+        "tags": [
+          "Audio Analysis"
         ]
       }
     },
@@ -14133,6 +14818,10 @@
     }
   ],
   "tags": [
+    {
+      "description": "Generation-bound local waveform and spectrogram analysis.",
+      "name": "Audio Analysis"
+    },
     {
       "description": "Description override management.",
       "name": "Descriptions"

@@ -113,7 +113,7 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	if !meta.MediaInfoUniqueIDPresent && s.logger != nil {
 		s.logger.Warnf("metadata: mediainfo validation failed (missing unique id)")
 	}
-	meta.MediaTracks, meta.TrackAudioLanguages, meta.TrackSubtitleLanguages, err = mediaTrackFacts(meta, miDoc)
+	meta.MediaTracks, meta.PrimaryAudioTrackID, meta.TrackAudioLanguages, meta.TrackSubtitleLanguages, err = mediaTrackFacts(meta, miDoc)
 	if err != nil {
 		return preparationstate.State{}, err
 	}
@@ -1113,55 +1113,47 @@ func containsCanonicalLanguage(values []string, target string) bool {
 // intentionally diverges from the Python reference, which selects from all
 // tracks, to avoid fallback tracks representing the release.
 func selectPrimaryAudioTrack(tracks []map[string]any) map[string]any {
-	if len(tracks) == 0 {
+	index := selectPrimaryAudioTrackIndex(tracks)
+	if index < 0 {
 		return nil
 	}
-	filtered := filterPrimaryAudioTracks(tracks)
-	if len(filtered) == 0 {
-		filtered = tracks
-	}
-	if selected, ok := lowestTrackByNumericField(filtered, "StreamOrder"); ok {
-		return selected
-	}
-	if selected, ok := lowestTrackByNumericField(filtered, "ID"); ok {
-		return selected
-	}
-	return filtered[0]
+	return tracks[index]
 }
 
-// filterPrimaryAudioTracks returns tracks eligible to represent primary release
-// audio by ignoring commentary and compatibility markers in any MediaInfo title
-// variant. It leaves all-track fallback decisions to the caller.
-func filterPrimaryAudioTracks(tracks []map[string]any) []map[string]any {
-	filtered := make([]map[string]any, 0, len(tracks))
-	for _, track := range tracks {
-		if isCommentaryOrCompatibilityAudioValue(audioTrackTitle(track)) {
-			continue
-		}
-		filtered = append(filtered, track)
+func selectPrimaryAudioTrackIndex(tracks []map[string]any) int {
+	if len(tracks) == 0 {
+		return -1
 	}
-	return filtered
-}
-
-func lowestTrackByNumericField(tracks []map[string]any, key string) (map[string]any, bool) {
-	var selected map[string]any
-	selectedValue := 0
-	found := false
-	for _, track := range tracks {
-		value, ok := trackFirstInt(track, key)
-		if !ok {
-			continue
-		}
-		if !found || value < selectedValue {
-			selected = track
-			selectedValue = value
-			found = true
+	eligible := make([]int, 0, len(tracks))
+	for index, track := range tracks {
+		if !isCommentaryOrCompatibilityAudioValue(audioTrackTitle(track)) {
+			eligible = append(eligible, index)
 		}
 	}
-	if !found {
-		return nil, false
+	if len(eligible) == 0 {
+		eligible = make([]int, len(tracks))
+		for index := range tracks {
+			eligible[index] = index
+		}
 	}
-	return selected, true
+	for _, key := range []string{"StreamOrder", "ID"} {
+		selectedIndex := -1
+		selectedValue := 0
+		for _, index := range eligible {
+			value, ok := trackFirstInt(tracks[index], key)
+			if !ok {
+				continue
+			}
+			if selectedIndex < 0 || value < selectedValue {
+				selectedIndex = index
+				selectedValue = value
+			}
+		}
+		if selectedIndex >= 0 {
+			return selectedIndex
+		}
+	}
+	return eligible[0]
 }
 
 func trackFirstInt(track map[string]any, key string) (int, bool) {

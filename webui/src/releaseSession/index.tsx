@@ -16,6 +16,7 @@ import type {
 } from "../types";
 import type {
   ActiveInputSnapshot,
+  AudioAnalysisInstructions,
   DescriptionInstructions,
   ContinueReleaseWorkflowRequest,
   DupeDecision,
@@ -26,6 +27,7 @@ import type {
   ReleaseFactInstructions,
   ReleaseCorrectionPatch,
   ReleaseWorkflowCurrent,
+  MediaTrackFacts,
   WorkflowContinuation,
   WorkflowGoal,
   WorkflowIntent,
@@ -34,6 +36,7 @@ import type { ReleaseSessionPorts } from "./ports";
 import { productionReleaseSessionPorts } from "./production";
 import { correctionValuesFor, initialSessionState, sessionReducer } from "./reducer";
 import type {
+  AudioAnalysisGenerateInput,
   PreparationIntent,
   ReleaseRoute,
   ReleaseSession,
@@ -213,6 +216,7 @@ export const routeAccess = (
   continuation: WorkflowContinuation | null | undefined,
   hasTrackerData: boolean,
   requirements: TrackerWorkflowRequirements,
+  hasAudioData = false,
 ): Readonly<Record<ReleaseRoute, RouteAccess>> => {
   const goal = (name: string): RouteAccess => {
     const availability = continuation?.availableGoals.find((candidate) => candidate.goal === name);
@@ -235,6 +239,10 @@ export const routeAccess = (
       reason: trackerAssessment.available
         ? "No tracker data is available."
         : trackerAssessment.reason,
+    },
+    audioAnalysis: {
+      available: hasAudioData,
+      reason: hasAudioData ? "" : "Prepare a source with authoritative audio-track facts first.",
     },
     duplicates: trackerAssessment,
     screenshots: {
@@ -692,6 +700,20 @@ export function ReleaseSessionProvider({
       );
     }
     return current;
+  };
+
+  const awaitWorkflowOperationTerminal = async (
+    workflowID: string,
+    initial: WorkflowOperationStatus,
+    signal: AbortSignal,
+  ): Promise<WorkflowOperationStatus> => {
+    let operation = initial;
+    while (isActiveWorkflowOperation(operation)) {
+      await waitForWorkflowPoll(signal);
+      operation = await activePorts.workflow.operation(workflowID, operation.id, signal);
+      dispatch({ type: "workflow_operation_updated", workflowID, operation });
+    }
+    return operation;
   };
 
   const failBackendWorkflow = (error: unknown) => {
@@ -1863,6 +1885,9 @@ export function ReleaseSessionProvider({
       RunLogLevel: state.uploadOptions.runLogLevel,
       Screens: workflowDescriptionScreenshotCount(current),
       NoSeed: uploadOptions.noSeed,
+      AudioAnalysis: false,
+      AudioTracks: "primary",
+      AudioImages: "both",
       SkipAutoTorrent: false,
       OnlyID: false,
       KeepFolder: false,
@@ -2055,6 +2080,7 @@ export function ReleaseSessionProvider({
       ? {
           input: { available: true, reason: "" },
           trackerData: { available: false, reason: "Resolve recovery actions first." },
+          audioAnalysis: { available: false, reason: "Resolve recovery actions first." },
           duplicates: { available: false, reason: "Resolve recovery actions first." },
           screenshots: { available: false, reason: "Resolve recovery actions first." },
           menuImages: { available: false, reason: "Resolve recovery actions first." },
@@ -2066,6 +2092,11 @@ export function ReleaseSessionProvider({
           workflowView.current?.continuation,
           Boolean(state.preview?.TrackerData?.length),
           requirements,
+          Boolean(
+            workflowView.current?.release?.release.Media?.Tracks?.some(
+              (track) => track.Kind === "audio",
+            ),
+          ),
         );
   const workflowMedia = workflowView.current?.media;
   const workflowMediaURL = (artifactID: string) =>
@@ -2155,7 +2186,130 @@ export function ReleaseSessionProvider({
             (workflowView.current.workflow.submissionExclusions?.length || 0) > 0
           ? "ready"
           : "idle";
+  const preparedRelease = workflowView.current?.release?.release;
+  const preparedAudioTracks = (preparedRelease?.Media?.Tracks || []).filter(
+    (track) => track.Kind === "audio",
+  );
+  const retainedAudioAnalysis = (() => {
+    const current = workflowView.current;
+    const result = current?.audioAnalysis;
+    const reference = current?.workflow.audioAnalysis;
+    if (
+      !current?.release ||
+      !result ||
+      !reference ||
+      reference.id !== result.id ||
+      reference.revision !== result.revision ||
+      result.release.Generation !== current.release.release.Generation ||
+      result.release.SourcePath !== current.release.release.Source.SourcePath
+    ) {
+      return null;
+    }
+    return result;
+  })();
+  const activeWorkflowOperation = isActiveWorkflowOperation(workflowView.current?.operation)
+    ? workflowView.current?.operation || null
+    : null;
+  const audioOperation =
+    activeWorkflowOperation?.operation === "analyze_audio" ? activeWorkflowOperation : null;
+  const audioMutationBlockedReason =
+    activeWorkflowOperation && !audioOperation
+      ? `Another workflow operation (${activeWorkflowOperation.operation.replaceAll("_", " ")}) is running. Wait for it to finish before changing audio analysis.`
+      : "";
+  const audioAnalysisStatus = isActiveWorkflowOperation(audioOperation ?? undefined)
+    ? "running"
+    : retainedAudioAnalysis?.status === "failed"
+      ? "error"
+      : retainedAudioAnalysis
+        ? "ready"
+        : "idle";
   const trackerInputAnswers = state.trackerInputAnswers;
+
+  const runAudioAnalysis = (input: AudioAnalysisGenerateInput): Promise<boolean> =>
+    runBackendWorkflow((current, commandID, signal) => {
+      const release = current.release?.release;
+      if (!release) throw new Error("Prepare the release before generating audio analysis.");
+      const instructions: AudioAnalysisInstructions = {
+        release: {
+          SourcePath: release.Source.SourcePath,
+          Generation: release.Generation,
+        },
+        resourceId: input.resourceID,
+        selection: input.selection,
+        trackIds: [...input.trackIDs],
+        variants: [...input.variants],
+        profileVersion: "audio-analysis-v1",
+      };
+      return activePorts.workflow.analyzeAudio(current, instructions, commandID, signal);
+    });
+
+  const cancelAudioAnalysis = async (): Promise<boolean> => {
+    const current = stateRef.current.workflowView.current;
+    const operation = current?.operation;
+    if (
+      !current ||
+      operation?.operation !== "analyze_audio" ||
+      !isActiveWorkflowOperation(operation)
+    ) {
+      return false;
+    }
+    abortController("workflow");
+    const controller = new AbortController();
+    controllers.current.workflow = controller;
+    dispatch({ type: "active_input_loading" });
+    try {
+      const canceled = await activePorts.workflow.cancelOperation(
+        current.workflow.id,
+        operation.id,
+        controller.signal,
+      );
+      await awaitWorkflowOperationTerminal(current.workflow.id, canceled, controller.signal);
+      const latest = await activePorts.workflow.current(current.workflow.id, controller.signal);
+      if (controller.signal.aborted) return false;
+      acceptWorkflowCurrent(latest);
+      return true;
+    } catch (error) {
+      if (!controller.signal.aborted) failBackendWorkflow(error);
+      return false;
+    } finally {
+      releaseWorkflowController(controller);
+    }
+  };
+
+  const disableAudioAnalysis = async (): Promise<boolean> => {
+    let current = stateRef.current.workflowView.current;
+    if (!current) return false;
+    abortController("workflow");
+    const controller = new AbortController();
+    controllers.current.workflow = controller;
+    dispatch({ type: "active_input_loading" });
+    try {
+      const operation = current.operation;
+      if (operation?.operation === "analyze_audio" && isActiveWorkflowOperation(operation)) {
+        const canceled = await activePorts.workflow.cancelOperation(
+          current.workflow.id,
+          operation.id,
+          controller.signal,
+        );
+        await awaitWorkflowOperationTerminal(current.workflow.id, canceled, controller.signal);
+        current = await activePorts.workflow.current(current.workflow.id, controller.signal);
+      }
+      const disabled = await activePorts.workflow.setAudioAnalysisEnabled(
+        current,
+        false,
+        timestampedCommandID("audio-analysis-disable", current.workflow.revision),
+        controller.signal,
+      );
+      if (controller.signal.aborted) return false;
+      acceptWorkflowCurrent(disabled);
+      return true;
+    } catch (error) {
+      if (!controller.signal.aborted) failBackendWorkflow(error);
+      return false;
+    } finally {
+      releaseWorkflowController(controller);
+    }
+  };
 
   const session: ReleaseSession = {
     workflow: {
@@ -2589,6 +2743,61 @@ export function ReleaseSessionProvider({
           ),
         );
       },
+    },
+    audioAnalysis: {
+      view: {
+        available: access.audioAnalysis.available,
+        enabled: workflowView.current?.workflow.audioAnalysisEnabled === true,
+        status: audioAnalysisStatus,
+        releaseGeneration: Number(preparedRelease?.Generation || 0),
+        sourceLabel:
+          workflowView.current?.release?.display.ReleaseName ||
+          preparedRelease?.Naming.ReleaseName ||
+          "Prepared source",
+        sourceContext: [
+          preparedRelease?.Source.Classification?.DiscType,
+          preparedRelease?.Source.Classification?.Container,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        primaryTrackID: preparedRelease?.Media?.PrimaryAudioTrackID || "",
+        tracks: preparedAudioTracks as readonly MediaTrackFacts[],
+        result: retainedAudioAnalysis,
+        completed: audioOperation?.completed || 0,
+        total: audioOperation?.total || retainedAudioAnalysis?.tracks.length || 0,
+        operationItems: audioOperation?.items || [],
+        mutationBlockedReason: audioMutationBlockedReason,
+        error:
+          retainedAudioAnalysis?.tracks
+            .flatMap((track) => [
+              track.failure?.message,
+              ...track.artifacts.map((artifact) => artifact.failure?.message),
+            ])
+            .filter((message): message is string => Boolean(message))
+            .join(" ") ||
+          (audioOperation?.failures || []).map((failure) => failure.failure.Message).join(" "),
+      },
+      generate: runAudioAnalysis,
+      retry: () => {
+        if (!retainedAudioAnalysis) return Promise.resolve(false);
+        return runAudioAnalysis({
+          resourceID: retainedAudioAnalysis.resourceId,
+          selection: retainedAudioAnalysis.selection,
+          trackIDs: retainedAudioAnalysis.trackIds,
+          variants: retainedAudioAnalysis.variants,
+        });
+      },
+      cancel: cancelAudioAnalysis,
+      disable: disableAudioAnalysis,
+      artifactURL: (artifactID) =>
+        workflowView.current && retainedAudioAnalysis
+          ? activePorts.workflow.audioAnalysisURL(
+              workflowView.current,
+              retainedAudioAnalysis.id,
+              retainedAudioAnalysis.revision,
+              artifactID,
+            )
+          : "",
     },
     screenshots: {
       view: {

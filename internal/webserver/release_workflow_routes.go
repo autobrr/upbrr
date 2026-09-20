@@ -55,6 +55,8 @@ func (s *Server) registerReleaseWorkflowAppRoutes(mux *http.ServeMux) {
 	registerReleaseWorkflowCommand[api.UploadReleaseWorkflowImagesRequest](s, mux, "UploadReleaseWorkflowImages", true)
 	registerReleaseWorkflowCommand[api.RetryReleaseWorkflowImageHostRequest](s, mux, "RetryReleaseWorkflowImageHost", true)
 	registerReleaseWorkflowCommand[api.RemoveReleaseWorkflowHostedImagesRequest](s, mux, "RemoveReleaseWorkflowHostedImages", false)
+	registerReleaseWorkflowCommand[api.AnalyzeReleaseWorkflowAudioRequest](s, mux, "AnalyzeReleaseWorkflowAudio", true)
+	registerReleaseWorkflowCommand[api.SetReleaseWorkflowAudioAnalysisEnabledRequest](s, mux, "SetReleaseWorkflowAudioAnalysisEnabled", false)
 	registerReleaseWorkflowCommand[api.SaveReleaseWorkflowDescriptionOverrideRequest](s, mux, "SaveReleaseWorkflowDescriptionOverride", false)
 	registerReleaseWorkflowCommand[api.ResetReleaseWorkflowDescriptionOverrideRequest](s, mux, "ResetReleaseWorkflowDescriptionOverride", false)
 	registerReleaseWorkflowCommand[api.RetryReleaseWorkflowUploadRequest](s, mux, "RetryReleaseWorkflowUpload", true)
@@ -233,13 +235,7 @@ func (s *Server) registerReleaseWorkflowAppRoutes(mux *http.ServeMux) {
 			writeAppError(w, err)
 			return
 		}
-		defer content.Body.Close()
-		w.Header().Set("Cache-Control", "private, no-store")
-		w.Header().Set("Content-Type", content.ContentType)
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		if _, err := io.Copy(w, content.Body); err != nil {
-			s.backend.logDebug("releaseworkflow: preview response interrupted")
-		}
+		s.writeReleaseWorkflowArtifact(w, content, "", "releaseworkflow: preview response interrupted")
 	}))
 
 	mux.HandleFunc("/api/app/release-workflow-media", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
@@ -266,14 +262,58 @@ func (s *Server) registerReleaseWorkflowAppRoutes(mux *http.ServeMux) {
 			writeAppError(w, err)
 			return
 		}
-		defer content.Body.Close()
-		w.Header().Set("Cache-Control", "private, no-store")
-		w.Header().Set("Content-Type", content.ContentType)
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		if _, err := io.Copy(w, content.Body); err != nil {
-			s.backend.logDebug("releaseworkflow: media response interrupted")
-		}
+		s.writeReleaseWorkflowArtifact(w, content, "", "releaseworkflow: media response interrupted")
 	}))
+
+	mux.HandleFunc("/api/app/release-workflow-audio-analysis", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
+		if r.Method != http.MethodGet {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		revision, err := strconv.ParseUint(r.URL.Query().Get("analysisRevision"), 10, 64)
+		if err != nil || revision == 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid audio analysis revision"})
+			return
+		}
+		content, err := s.backend.openReleaseWorkflowAudioAnalysisArtifact(
+			r.Context(),
+			current.ID,
+			api.WorkflowID(r.URL.Query().Get("workflowId")),
+			api.AudioAnalysisRef{
+				ID:       api.AudioAnalysisResultID(r.URL.Query().Get("analysisId")),
+				Revision: api.WorkflowRevision(revision),
+			},
+			api.PublicResourceID(r.URL.Query().Get("artifactId")),
+		)
+		if err != nil {
+			writeAppError(w, err)
+			return
+		}
+		s.writeReleaseWorkflowArtifact(
+			w,
+			content,
+			`inline; filename="audio-analysis.png"`,
+			"releaseworkflow: audio analysis response interrupted",
+		)
+	}))
+}
+
+func (s *Server) writeReleaseWorkflowArtifact(
+	w http.ResponseWriter,
+	content releaseworkflow.MediaArtifactContent,
+	contentDisposition string,
+	interruptedMessage string,
+) {
+	defer content.Body.Close()
+	w.Header().Set("Cache-Control", "private, no-store")
+	if contentDisposition != "" {
+		w.Header().Set("Content-Disposition", contentDisposition)
+	}
+	w.Header().Set("Content-Type", content.ContentType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if _, err := io.Copy(w, content.Body); err != nil {
+		s.backend.logDebug(interruptedMessage)
+	}
 }
 
 func readStagedMediaUpload(w http.ResponseWriter, r *http.Request) (releaseworkflow.StagedMediaContent, error) {

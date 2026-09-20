@@ -5,6 +5,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -51,6 +52,7 @@ type cliWorkflowCoreFake struct {
 	recoveryInput          api.ActiveInputSnapshot
 	recoverCalls           int
 	reconcileRequests      []api.ReconcileActiveInputRequest
+	audioResult            *api.AudioAnalysisResult
 }
 
 type cliWorkflowActiveInputCore struct {
@@ -646,6 +648,23 @@ func (f *cliWorkflowCoreFake) ExecuteReleaseWorkflow(
 		} else {
 			f.current.Workflow.RequiredActions = nil
 		}
+	case releaseworkflow.AnalyzeAudioCommand:
+		if f.audioResult == nil {
+			return releaseworkflow.CommandResult{}, errors.New("missing synthetic audio result")
+		}
+		f.current.Workflow.Revision++
+		result := *f.audioResult
+		result.WorkflowID = f.current.Workflow.ID
+		result.Revision = f.current.Workflow.Revision
+		result.Release = value.Instructions.Release
+		result.ResourceID = value.Instructions.ResourceID
+		result.Selection = value.Instructions.Selection
+		result.TrackIDs = append([]string(nil), value.Instructions.TrackIDs...)
+		result.Variants = append([]api.AudioAnalysisVariant(nil), value.Instructions.Variants...)
+		result.ProfileVersion = value.Instructions.ProfileVersion
+		f.current.AudioAnalysis = &result
+		f.current.Workflow.AudioAnalysisEnabled = true
+		f.current.Workflow.AudioAnalysis = &api.AudioAnalysisRef{ID: result.ID, Revision: result.Revision}
 	default:
 		return releaseworkflow.CommandResult{}, errors.New("unexpected command")
 	}
@@ -747,6 +766,16 @@ func (f *cliWorkflowCoreFake) CancelReleaseWorkflowOperation(
 	f.cancelCalls++
 	f.operation.Status = api.StageStatusCanceled
 	return f.operation, nil
+}
+
+func (f *cliWorkflowCoreFake) ReleaseWorkflowAudioAnalysisArtifactPath(
+	_ context.Context,
+	_ string,
+	_ api.WorkflowID,
+	_ api.AudioAnalysisRef,
+	artifactID api.PublicResourceID,
+) (string, error) {
+	return filepath.Join("test-output", string(artifactID)+".png"), nil
 }
 
 func TestCLIWorkflowCancellationCancelsAcceptedOperation(t *testing.T) {
@@ -1353,6 +1382,173 @@ func TestCLIWorkflowMediaInstructionsKeepDVDMenuCaptureIndependent(t *testing.T)
 	if withMenus.ScreenshotCount != 4 || !withMenus.CaptureDVDMenus ||
 		withMenus.MaxDVDMenuItems != 0 || withMenus.Selections != nil {
 		t.Fatalf("explicit DVD menu media instructions = %#v", withMenus)
+	}
+}
+
+func TestCLIWorkflowAudioAnalysisUsesPreparedStableTrackSelectionAndPrintsArtifacts(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.September, 21, 2, 0, 0, 0, time.UTC)
+	completed := now.Add(time.Second)
+	coreSvc := &cliWorkflowCoreFake{
+		current: cliAudioAnalysisCurrentForTest(),
+		audioResult: &api.AudioAnalysisResult{
+			ID: "analysis-cli",
+ ManifestFingerprint: "manifest-1",
+ AttemptID: "attempt-cli",
+ Status: api.StageStatusCompleted,
+			Tracks: []api.AudioAnalysisTrackResult{{
+				TrackID: "track-2",
+ Ordinal: 2,
+ Channels: 2,
+ SampleRate: 48_000,
+ SampleFrames: 96_000,
+ Duration: 2,
+				Status: api.StageStatusCompleted,
+				Artifacts: []api.AudioAnalysisArtifact{{
+					ID: "waveform-cli",
+ Variant: api.AudioAnalysisWaveform,
+ Status: api.StageStatusCompleted,
+ Width: 1812,
+ Height: 340,
+				}},
+			}},
+			CreatedAt: now,
+ CompletedAt: &completed,
+ ExpiresAt: now.Add(24 * time.Hour),
+		},
+	}
+	var output bytes.Buffer
+	var errorOutput bytes.Buffer
+	session := &cliWorkflowSession{
+		core: coreSvc,
+ current: coreSvc.current,
+		uploadRequest: api.Request{Options: api.UploadOptions{
+			AudioAnalysis: true,
+ AudioTracks: "2,2",
+ AudioImages: "waveform",
+		}},
+		streams: cliIO{out: &output, errOut: &errorOutput},
+	}
+	if err := session.completeAudioAnalysis(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	command, ok := coreSvc.commands[0].(releaseworkflow.AnalyzeAudioCommand)
+	if !ok || command.Instructions.Selection != api.AudioAnalysisSelectionSelected ||
+		!slices.Equal(command.Instructions.TrackIDs, []string{"track-2"}) ||
+		!slices.Equal(command.Instructions.Variants, []api.AudioAnalysisVariant{api.AudioAnalysisWaveform}) {
+		t.Fatalf("audio analysis command = %#v", coreSvc.commands)
+	}
+	if !strings.Contains(output.String(), "resource 1 track 2 waveform") ||
+		!strings.Contains(output.String(), "waveform-cli.png") || !strings.Contains(output.String(), "retained locally until") ||
+		errorOutput.Len() != 0 {
+		t.Fatalf("stdout=%q stderr=%q", output.String(), errorOutput.String())
+	}
+}
+
+func TestCLIWorkflowAudioAnalysisPartialStopsBeforeUploadSideEffects(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.September, 21, 2, 0, 0, 0, time.UTC)
+	completed := now.Add(time.Second)
+	failure := api.AudioAnalysisFailure{Code: api.AudioAnalysisFailureOutput, Message: "could not publish analysis image"}
+	coreSvc := &cliWorkflowCoreFake{
+		current: cliAudioAnalysisCurrentForTest(),
+		audioResult: &api.AudioAnalysisResult{
+			ID: "analysis-cli-partial",
+ ManifestFingerprint: "manifest-1",
+ AttemptID: "attempt-cli",
+ Status: api.StageStatusPartial,
+			Tracks: []api.AudioAnalysisTrackResult{{
+				TrackID: "track-1",
+ Ordinal: 1,
+ Channels: 6,
+ SampleRate: 48_000,
+ SampleFrames: 96_000,
+ Duration: 2,
+				Status: api.StageStatusPartial,
+				Artifacts: []api.AudioAnalysisArtifact{
+					{
+ID: "waveform-cli",
+ Variant: api.AudioAnalysisWaveform,
+ Status: api.StageStatusCompleted,
+ Width: 1812,
+ Height: 980,
+},
+					{
+Variant: api.AudioAnalysisSpectrogram,
+ Status: api.StageStatusFailed,
+ Failure: &failure,
+},
+				},
+			}},
+ CreatedAt: now,
+ CompletedAt: &completed,
+ ExpiresAt: now.Add(24 * time.Hour),
+		},
+	}
+	var output bytes.Buffer
+	var errorOutput bytes.Buffer
+	session := &cliWorkflowSession{
+		core: coreSvc,
+ current: coreSvc.current,
+		uploadRequest: api.Request{
+			SourcePath: "Example.Release.2026.mkv",
+			Options:    api.UploadOptions{
+AudioAnalysis: true,
+ AudioTracks: "primary",
+ AudioImages: "both",
+},
+		},
+		streams: cliIO{out: &output, errOut: &errorOutput},
+	}
+	_, err := session.complete(t.Context(), false, nil, config.Config{}, api.NopLogger{})
+	if err == nil || !strings.Contains(err.Error(), "status partial") {
+		t.Fatalf("partial analysis error = %v", err)
+	}
+	if len(coreSvc.continuations) != 0 || len(coreSvc.uploadRequests) != 0 {
+		t.Fatalf("upload side effects continued: continuations=%d uploads=%d", len(coreSvc.continuations), len(coreSvc.uploadRequests))
+	}
+	if !strings.Contains(output.String(), "waveform-cli.png") || !strings.Contains(errorOutput.String(), "spectrogram failed") {
+		t.Fatalf("stdout=%q stderr=%q", output.String(), errorOutput.String())
+	}
+}
+
+func cliAudioAnalysisCurrentForTest() releaseworkflow.CommandResult {
+	return releaseworkflow.CommandResult{
+		Workflow: api.ReleaseWorkflow{
+ID: "workflow-cli-audio",
+ Revision: 7,
+ Status: api.WorkflowStatusActive,
+},
+		Release: &api.ReleaseSnapshot{Release: api.PreparedRelease{
+			Generation: 4,
+ Source: api.SourceManifest{SourcePath: "Example.Release.2026.mkv"},
+			Media: api.MediaFacts{
+				PrimaryAudioTrackID: "track-1",
+ TrackCoverageComplete: true,
+				Tracks: []api.MediaTrackFacts{
+					{
+ID: "track-1",
+ Kind: api.MediaTrackAudio,
+ ResourceID: "resource-1",
+ ManifestFingerprint: "manifest-1",
+ Ordinal: 1,
+ Channels: 6,
+ SampleRate: 48_000,
+},
+					{
+ID: "track-2",
+ Kind: api.MediaTrackAudio,
+ ResourceID: "resource-1",
+ ManifestFingerprint: "manifest-1",
+ Ordinal: 2,
+ Channels: 2,
+ SampleRate: 48_000,
+},
+				},
+			},
+		}},
 	}
 }
 

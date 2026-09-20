@@ -275,6 +275,32 @@ Without `--screens`, the CLI uses `screenshot_handling.screens` when selected tr
 | `--descfile <path>`          | `-descfile`, `-df`                  | Use a custom description file.                        |
 | `--desclink <url>`           | `-desclink`, `-pb`                  | Use a custom description link.                        |
 
+### Audio analysis
+
+Audio analysis is disabled unless `--audio-analysis` is present. It runs after release preparation and before tracker submission or client injection.
+
+| Option                   | Purpose                                                                   |
+| ------------------------ | ------------------------------------------------------------------------- |
+| `--audio-analysis`       | Generate local audio-analysis PNGs.                                       |
+| `--audio-tracks <value>` | Select `primary`, `all`, or comma-separated one-based audio ordinals.     |
+| `--audio-images <value>` | Generate `both`, `waveform`, or `spectrogram` images. Defaults to `both`. |
+
+Generate waveform and spectrogram images for the prepared primary audio track:
+
+```powershell
+.\upbrr.exe --audio-analysis "D:\releases\Example.Release.2026.1080p-GRP.mkv"
+```
+
+Generate only spectrograms for the first and third audio tracks:
+
+```powershell
+.\upbrr.exe --audio-analysis --audio-tracks 1,3 --audio-images spectrogram "D:\releases\Example.Release.2026.1080p-GRP.mkv"
+```
+
+The numeric selectors are audio-only ordinals from the prepared source, not container-wide stream indexes. Repeated ordinals are ignored, and results retain source track order. `--audio-tracks` and `--audio-images` are rejected unless analysis is enabled.
+
+The CLI prints every successfully retained PNG and its expiry. A partial or failed analysis exits nonzero and stops before tracker or torrent-client effects, even when some images succeeded. See [Audio analysis](../workflow/audio-analysis.md) for output, retry, and retention behavior.
+
 ## Client and torrent
 
 | Option                   | Aliases                            | Purpose                                                          |

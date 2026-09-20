@@ -98,9 +98,12 @@ type DurablePrivateResource interface {
 }
 
 // PrivateResourceCodec rehydrates one private resource kind with current process services.
+// DecodeForRelease may omit serviceability checks that are unnecessary for
+// safely releasing owned files; when nil, Decode is used.
 type PrivateResourceCodec struct {
-	Kind   string
-	Decode func([]byte) (any, error)
+	Kind             string
+	Decode           func([]byte) (any, error)
+	DecodeForRelease func([]byte) (any, error)
 }
 
 // Clock supplies deterministic workflow timestamps.
@@ -252,6 +255,32 @@ type MediaArtifactBuilder interface {
 		api.MediaCaptureInstructions,
 		time.Time,
 	) (api.MediaArtifactSet, any, error)
+}
+
+// RetainedAudioAnalysisResource opens owner-scoped analysis images without
+// exposing their filesystem paths through workflow snapshots.
+type RetainedAudioAnalysisResource interface {
+	OpenArtifact(context.Context, api.AudioAnalysisResult, api.PublicResourceID) (MediaArtifactContent, error)
+}
+
+// RetainedAudioAnalysisLocalPath is implemented only by local resources whose
+// absolute path may be shown to the in-process CLI.
+type RetainedAudioAnalysisLocalPath interface {
+	LocalArtifactPath(api.AudioAnalysisResult, api.PublicResourceID) (string, error)
+}
+
+// AudioAnalysisBuilder resolves one exact prepared source and streams selected
+// audio tracks into locally retained artifacts, reusing compatible prior work.
+type AudioAnalysisBuilder interface {
+	Build(
+		context.Context,
+		api.ReleaseRef,
+		api.AudioAnalysisInstructions,
+		string,
+		time.Time,
+		*api.AudioAnalysisResult,
+		RetainedAudioAnalysisResource,
+	) (api.AudioAnalysisResult, RetainedAudioAnalysisResource, error)
 }
 
 // IncrementalMediaArtifactBuilder preserves current media and skips already
@@ -496,6 +525,8 @@ type Application interface {
 	PreviewArtifact(context.Context, string, api.WorkflowID, api.PublicResourceID) (MediaArtifactContent, error)
 	StageMediaResource(context.Context, string, api.WorkflowID, api.WorkflowRevision, StagedMediaContent) (api.WorkflowResourceRef, error)
 	MediaArtifact(context.Context, string, api.WorkflowID, api.MediaArtifactSetRef, api.PublicResourceID) (MediaArtifactContent, error)
+	AudioAnalysisArtifact(context.Context, string, api.WorkflowID, api.AudioAnalysisRef, api.PublicResourceID) (MediaArtifactContent, error)
+	AudioAnalysisArtifactPath(context.Context, string, api.WorkflowID, api.AudioAnalysisRef, api.PublicResourceID) (string, error)
 }
 
 // State is the repository value owned exclusively by the workflow module.
@@ -530,6 +561,7 @@ type State struct {
 	Dupes                  map[api.DupeAssessmentID]api.DupeAssessment
 	TrackerApprovals       map[api.TrackerApprovalSnapshotID]api.TrackerApprovalSnapshot
 	Media                  map[api.MediaArtifactSetID]api.MediaArtifactSet
+	AudioAnalyses          map[api.AudioAnalysisResultID]api.AudioAnalysisResult
 	Descriptions           map[api.DescriptionSetID]api.DescriptionSet
 	DryRuns                map[api.UploadDryRunResultID]api.UploadDryRunResult
 	UploadResults          map[api.UploadResultID]api.UploadResult
@@ -869,6 +901,45 @@ type CaptureMediaCommand struct {
 	ExpectedRevision api.WorkflowRevision
 	Instructions     api.MediaCaptureInstructions
 	IdempotencyKey   string
+}
+
+// AnalyzeAudioCommand creates or retries one exact-generation local audio analysis.
+type AnalyzeAudioCommand struct {
+	WorkflowID       api.WorkflowID
+	ExpectedRevision api.WorkflowRevision
+	Instructions     api.AudioAnalysisInstructions
+	IdempotencyKey   string
+}
+
+// SetAudioAnalysisEnabledCommand changes optional audio-analysis visibility
+// without running the decoder.
+type SetAudioAnalysisEnabledCommand struct {
+	WorkflowID       api.WorkflowID
+	ExpectedRevision api.WorkflowRevision
+	Enabled          bool
+	IdempotencyKey   string
+}
+
+func (SetAudioAnalysisEnabledCommand) commandName() string { return "set_audio_analysis_enabled" }
+func (SetAudioAnalysisEnabledCommand) userIntent()         {}
+func (SetAudioAnalysisEnabledCommand) operationKind() api.OperationKind {
+	return api.OperationKindUnknown
+}
+func (c SetAudioAnalysisEnabledCommand) commandFingerprint() (api.WorkflowFingerprint, error) {
+	return canonicalCommandFingerprint(struct {
+		ExpectedRevision api.WorkflowRevision
+		Enabled          bool
+	}{c.ExpectedRevision, c.Enabled})
+}
+
+func (AnalyzeAudioCommand) commandName() string              { return "analyze_audio" }
+func (AnalyzeAudioCommand) userIntent()                      {}
+func (AnalyzeAudioCommand) operationKind() api.OperationKind { return api.OperationKindAudioAnalysis }
+func (c AnalyzeAudioCommand) commandFingerprint() (api.WorkflowFingerprint, error) {
+	return canonicalCommandFingerprint(struct {
+		ExpectedRevision api.WorkflowRevision
+		Instructions     api.AudioAnalysisInstructions
+	}{c.ExpectedRevision, c.Instructions})
 }
 
 func (CaptureMediaCommand) commandName() string              { return "capture_media" }

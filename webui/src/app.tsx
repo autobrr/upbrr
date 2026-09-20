@@ -7,6 +7,7 @@ import { applicationClient, configClient, hostBrowser as hostBrowserClient } fro
 import { isHostPathCaseInsensitive } from "./api/client";
 import { WorkflowOperationProgress } from "./components/WorkflowOperationProgress";
 import { WorkflowRequiredActions } from "./components/WorkflowRequiredActions";
+import AudioAnalysisPage from "./pages/audio_analysis";
 import BlurayCandidatesPage from "./pages/bluray_candidates";
 import DescriptionBuilderPage from "./pages/description_builder";
 import DupeCheckPage from "./pages/dupe_check";
@@ -56,6 +57,7 @@ type ActiveTab =
   | "input"
   | "tracker"
   | "bluray"
+  | "audio_analysis"
   | "dupes"
   | "screenshots"
   | "menu_images"
@@ -70,6 +72,7 @@ type ThemeMode = "light" | "dark" | "auto";
 const releaseRouteTabs: Readonly<Record<ReleaseRoute, ActiveTab>> = {
   input: "input",
   trackerData: "tracker",
+  audioAnalysis: "audio_analysis",
   duplicates: "dupes",
   screenshots: "screenshots",
   menuImages: "menu_images",
@@ -191,6 +194,7 @@ function AppShell({
   const access = releaseSession.navigation.view.access;
   const hasTrackerData = releaseSession.input.view.trackerData.length > 0;
   const hasBlurayData = Boolean(preview?.Bluray);
+  const hasAudioData = releaseSession.audioAnalysis.view.available;
   const currentDiscType =
     releaseSession.workflow.view.current?.release?.release.Source.Classification.DiscType || "";
 
@@ -359,6 +363,17 @@ function AppShell({
                 onClick={() => setActiveTab("bluray")}
               >
                 Blu-ray Candidates
+              </button>
+            ) : null}
+            {hasAudioData ? (
+              <button
+                className={navButtonClass(activeTab === "audio_analysis", true)}
+                type="button"
+                disabled={!access.audioAnalysis.available}
+                title={access.audioAnalysis.reason}
+                onClick={() => openReleaseTab("audio_analysis", "audioAnalysis")}
+              >
+                Audio Analysis
               </button>
             ) : null}
             <button
@@ -578,6 +593,13 @@ function AppShell({
           ) : activeTab === "bluray" ? (
             <BlurayCandidatesPage
               facet={releaseSession.input}
+              setLightboxImage={setLightboxImage}
+              setLightboxAlt={setLightboxAlt}
+            />
+          ) : activeTab === "audio_analysis" ? (
+            <AudioAnalysisPage
+              key={releaseSession.audioAnalysis.view.releaseGeneration}
+              facet={releaseSession.audioAnalysis}
               setLightboxImage={setLightboxImage}
               setLightboxAlt={setLightboxAlt}
             />

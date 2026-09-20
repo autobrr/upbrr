@@ -61,6 +61,9 @@ type TrackerApprovalSnapshotID string
 // MediaArtifactSetID identifies one immutable media-artifact set.
 type MediaArtifactSetID string
 
+// AudioAnalysisResultID identifies one immutable audio-analysis attempt.
+type AudioAnalysisResultID string
+
 // MediaPlanID identifies one immutable workflow media plan.
 type MediaPlanID string
 
@@ -158,6 +161,12 @@ type TrackerApprovalSnapshotRef struct {
 type MediaArtifactSetRef struct {
 	ID       MediaArtifactSetID `json:"id"`
 	Revision WorkflowRevision   `json:"revision"`
+}
+
+// AudioAnalysisRef references one exact audio-analysis attempt.
+type AudioAnalysisRef struct {
+	ID       AudioAnalysisResultID `json:"id"`
+	Revision WorkflowRevision      `json:"revision"`
 }
 
 // MediaPlanRef references one exact immutable media plan.
@@ -375,6 +384,7 @@ const (
 	WorkflowOperationResultPreflight       WorkflowOperationResultKind = "tracker_preflight"
 	WorkflowOperationResultDupes           WorkflowOperationResultKind = "dupes"
 	WorkflowOperationResultMedia           WorkflowOperationResultKind = "media"
+	WorkflowOperationResultAudioAnalysis   WorkflowOperationResultKind = "audio_analysis"
 	WorkflowOperationResultDescriptions    WorkflowOperationResultKind = "descriptions"
 	WorkflowOperationResultDryRun          WorkflowOperationResultKind = "dry_run"
 	WorkflowOperationResultUpload          WorkflowOperationResultKind = "upload_result"

@@ -18,6 +18,10 @@ import type {
   UploadImageHostFailure,
 } from "../types";
 import type {
+  AudioAnalysisResult,
+  AudioAnalysisSelectionMode,
+  AudioAnalysisVariant,
+  MediaTrackFacts,
   CorrectionFieldRef,
   DupeAssessment,
   DupeDecision,
@@ -36,11 +40,13 @@ import type {
   TrackerProjectionInstructions,
   UploadDryRunResult,
   UploadResult,
+  WorkflowOperationItem,
 } from "../api/generated/release-workflow";
 
 export type ReleaseRoute =
   | "input"
   | "trackerData"
+  | "audioAnalysis"
   | "duplicates"
   | "screenshots"
   | "menuImages"
@@ -246,6 +252,39 @@ export type ScreenshotsFacet = Readonly<{
   readImage(artifactID: string): Promise<string>;
 }>;
 
+/** Exact prepared-resource selection submitted for one audio-analysis attempt. */
+export type AudioAnalysisGenerateInput = Readonly<{
+  resourceID: string;
+  selection: AudioAnalysisSelectionMode;
+  trackIDs: readonly string[];
+  variants: readonly AudioAnalysisVariant[];
+}>;
+
+/** Optional exact-generation waveform and spectrogram operation state. */
+export type AudioAnalysisFacet = Readonly<{
+  view: Readonly<{
+    available: boolean;
+    enabled: boolean;
+    status: FacetStatus;
+    releaseGeneration: number;
+    sourceLabel: string;
+    sourceContext: string;
+    primaryTrackID: string;
+    tracks: readonly MediaTrackFacts[];
+    result: AudioAnalysisResult | null;
+    completed: number;
+    total: number;
+    operationItems: readonly WorkflowOperationItem[];
+    mutationBlockedReason: string;
+    error: string;
+  }>;
+  generate(input: AudioAnalysisGenerateInput): Promise<boolean>;
+  retry(): Promise<boolean>;
+  cancel(): Promise<boolean>;
+  disable(): Promise<boolean>;
+  artifactURL(artifactID: string): string;
+}>;
+
 export type MediaImageView = Readonly<{
   artifactID: string;
   discID?: string;
@@ -397,6 +436,7 @@ export type ReleaseSession = Readonly<{
   navigation: NavigationFacet;
   input: InputFacet;
   duplicates: DuplicatesFacet;
+  audioAnalysis: AudioAnalysisFacet;
   screenshots: ScreenshotsFacet;
   menuImages: MenuImagesFacet;
   uploadedImages: UploadedImagesFacet;

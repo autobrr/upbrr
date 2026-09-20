@@ -273,6 +273,7 @@ func TestOpenAPIRoutesUseProjectedBodiesAndAccurateResponses(t *testing.T) {
 	}
 
 	for _, requestPath := range []string{
+		"/workflows/{workflowId}/audio-analysis",
 		"/workflows/{workflowId}/media/{mediaId}/images/upload",
 		"/workflows/{workflowId}/media/{mediaId}/images/retry",
 		"/workflows/{workflowId}/uploads/{resultId}/retry",
@@ -300,6 +301,16 @@ func TestOpenAPIRoutesUseProjectedBodiesAndAccurateResponses(t *testing.T) {
 	revisionSchema := requireType[map[string]any](t, revision["schema"])
 	if revisionSchema["minimum"] != 1 {
 		t.Fatalf("media revision schema = %#v", revisionSchema)
+	}
+	audioArtifact := operationAt(
+		t,
+		paths,
+		"/workflows/{workflowId}/audio-analysis/{analysisId}/artifacts/{artifactId}",
+		"get",
+	)
+	audioRevision := parameterAt(t, audioArtifact, "query", "revision")
+	if audioRevision["required"] != true || audioRevision["example"] != 1 {
+		t.Fatalf("audio analysis revision parameter = %#v", audioRevision)
 	}
 }
 

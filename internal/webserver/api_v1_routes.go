@@ -429,13 +429,7 @@ func (s *Server) handleAPIV1WorkflowRead(
 			writeAPIV1WorkflowError(w, err)
 			return
 		}
-		defer content.Body.Close()
-		w.Header().Set("Cache-Control", "private, no-store")
-		w.Header().Set("Content-Type", content.ContentType)
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		if _, err := io.Copy(w, content.Body); err != nil {
-			s.backend.logDebug("releaseworkflow: preview API response interrupted")
-		}
+		s.writeReleaseWorkflowArtifact(w, content, "", "releaseworkflow: preview API response interrupted")
 	case len(segments) == 5 && segments[1] == "media" && segments[3] == "artifacts":
 		revision, err := strconv.ParseUint(strings.TrimSpace(r.URL.Query().Get("revision")), 10, 64)
 		if err != nil || revision == 0 {
@@ -456,13 +450,33 @@ func (s *Server) handleAPIV1WorkflowRead(
 			writeAPIV1WorkflowError(w, err)
 			return
 		}
-		defer content.Body.Close()
-		w.Header().Set("Cache-Control", "private, no-store")
-		w.Header().Set("Content-Type", content.ContentType)
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		if _, err := io.Copy(w, content.Body); err != nil {
-			s.backend.logDebug("releaseworkflow: media API response interrupted")
+		s.writeReleaseWorkflowArtifact(w, content, "", "releaseworkflow: media API response interrupted")
+	case len(segments) == 5 && segments[1] == "audio-analysis" && segments[3] == "artifacts":
+		revision, err := strconv.ParseUint(strings.TrimSpace(r.URL.Query().Get("revision")), 10, 64)
+		if err != nil || revision == 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "valid audio analysis revision is required"})
+			return
 		}
+		content, err := s.backend.openReleaseWorkflowAudioAnalysisArtifact(
+			r.Context(),
+			principal.OwnerID,
+			workflowID,
+			api.AudioAnalysisRef{
+				ID:       api.AudioAnalysisResultID(segments[2]),
+				Revision: api.WorkflowRevision(revision),
+			},
+			api.PublicResourceID(segments[4]),
+		)
+		if err != nil {
+			writeAPIV1WorkflowError(w, err)
+			return
+		}
+		s.writeReleaseWorkflowArtifact(
+			w,
+			content,
+			`inline; filename="audio-analysis.png"`,
+			"releaseworkflow: audio analysis API response interrupted",
+		)
 	default:
 		http.NotFound(w, r)
 	}
@@ -482,6 +496,20 @@ func (s *Server) apiV1WorkflowCommand(
 		IdempotencyKey:   idempotencyKey,
 	}
 	switch {
+	case len(segments) == 3 && segments[1] == "audio-analysis" && segments[2] == "enabled":
+		var request api.SetReleaseWorkflowAudioAnalysisEnabledRequest
+		if !decodeAPIV1JSON(w, r, &request) {
+			return nil, false
+		}
+		request.ReleaseWorkflowCommandContext = commandContext
+		return mapAPIV1WorkflowRequest(w, request)
+	case len(segments) == 2 && segments[1] == "audio-analysis":
+		var request api.AnalyzeReleaseWorkflowAudioRequest
+		if !decodeAPIV1JSON(w, r, &request) {
+			return nil, false
+		}
+		request.ReleaseWorkflowCommandContext = commandContext
+		return mapAPIV1WorkflowRequest(w, request)
 	case len(segments) == 3 && segments[1] == "trackers" && segments[2] == "invalidate":
 		var request api.InvalidateReleaseWorkflowTrackersRequest
 		if !decodeAPIV1JSON(w, r, &request) {

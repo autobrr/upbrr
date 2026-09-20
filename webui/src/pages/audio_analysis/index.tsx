@@ -1,0 +1,340 @@
+// Copyright (c) 2025-2026, Audionut and the autobrr contributors.
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+import { useMemo, useState } from "react";
+import type { AudioAnalysisFacet, AudioAnalysisGenerateInput } from "../../releaseSession/types";
+
+type Props = Readonly<{
+  facet: AudioAnalysisFacet;
+  setLightboxImage: (value: string) => void;
+  setLightboxAlt: (value: string) => void;
+}>;
+
+const trackLabel = (ordinal: number, title: string) =>
+  title.trim() ? `Track ${ordinal}: ${title.trim()}` : `Track ${ordinal}`;
+
+/** Presents opt-in prepared-track selection and retained local analysis images. */
+export default function AudioAnalysisPage({ facet, setLightboxImage, setLightboxAlt }: Props) {
+  const { view } = facet;
+  const resourceIDs = useMemo(
+    () => Array.from(new Set(view.tracks.map((track) => track.ResourceID).filter(Boolean))),
+    [view.tracks],
+  );
+  const primaryResourceID =
+    view.tracks.find((track) => track.ID === view.primaryTrackID)?.ResourceID ||
+    resourceIDs[0] ||
+    "";
+  const [resourceID, setResourceID] = useState(primaryResourceID);
+  const [selection, setSelection] = useState<AudioAnalysisGenerateInput["selection"]>("primary");
+  const [selectedTrackIDs, setSelectedTrackIDs] = useState<readonly string[]>([]);
+  const [variants, setVariants] = useState<readonly string[]>(["waveform", "spectrogram"]);
+
+  const effectiveResourceID = resourceIDs.includes(resourceID) ? resourceID : primaryResourceID;
+  const tracks = view.tracks.filter((track) => track.ResourceID === effectiveResourceID);
+  const primaryTrack = tracks.find((track) => track.ID === view.primaryTrackID);
+  const selected = new Set(selectedTrackIDs);
+  const requestedTrackIDs =
+    selection === "primary"
+      ? primaryTrack
+        ? [primaryTrack.ID]
+        : []
+      : selection === "all"
+        ? tracks.map((track) => track.ID)
+        : tracks.filter((track) => selected.has(track.ID)).map((track) => track.ID);
+  const busy = view.status === "running";
+  const mutationsBlocked = busy || Boolean(view.mutationBlockedReason);
+  const canGenerate =
+    view.available &&
+    !mutationsBlocked &&
+    Boolean(effectiveResourceID) &&
+    requestedTrackIDs.length > 0 &&
+    variants.length > 0;
+
+  const toggleSelectedTrack = (trackID: string, checked: boolean) => {
+    setSelectedTrackIDs((current) =>
+      checked
+        ? Array.from(new Set([...current, trackID]))
+        : current.filter((candidate) => candidate !== trackID),
+    );
+  };
+  const toggleVariant = (variant: string, checked: boolean) => {
+    setVariants((current) =>
+      checked
+        ? Array.from(new Set([...current, variant]))
+        : current.filter((candidate) => candidate !== variant),
+    );
+  };
+  const generate = () =>
+    facet.generate({
+      resourceID: effectiveResourceID,
+      selection,
+      trackIDs: requestedTrackIDs,
+      variants,
+    });
+
+  return (
+    <section className="grid gap-4">
+      <header>
+        <p className="eyebrow">Audio Analysis</p>
+        <h1>Waveforms &amp; Spectrograms</h1>
+        <p className="subtitle">
+          Stream selected prepared audio tracks through FFmpeg and render local PNG previews in Go.
+          Nothing runs until you choose Generate.
+        </p>
+      </header>
+
+      <section className="panel grid gap-3" aria-labelledby="audio-analysis-source">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 id="audio-analysis-source" className="break-words">
+              {view.sourceLabel}
+            </h2>
+            <p className="muted">
+              Generation {view.releaseGeneration}
+              {view.sourceContext ? ` · ${view.sourceContext}` : ""}
+            </p>
+          </div>
+          <span className="muted">{view.enabled ? "Enabled" : "Disabled"}</span>
+        </div>
+
+        {resourceIDs.length > 1 ? (
+          <label className="grid gap-1">
+            <span>Prepared resource</span>
+            <select
+              value={effectiveResourceID}
+              disabled={mutationsBlocked}
+              onChange={(event) => {
+                setResourceID(event.target.value);
+                setSelectedTrackIDs([]);
+              }}
+            >
+              {resourceIDs.map((id, index) => (
+                <option key={id} value={id}>
+                  Resource {index + 1}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+
+        <fieldset className="grid gap-2" disabled={mutationsBlocked}>
+          <legend>Tracks</legend>
+          <div className="flex flex-wrap gap-4">
+            <label>
+              <input
+                type="radio"
+                name="audio-analysis-selection"
+                value="primary"
+                checked={selection === "primary"}
+                disabled={!primaryTrack}
+                onChange={() => setSelection("primary")}
+              />{" "}
+              Primary
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="audio-analysis-selection"
+                value="all"
+                checked={selection === "all"}
+                onChange={() => setSelection("all")}
+              />{" "}
+              All
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="audio-analysis-selection"
+                value="selected"
+                checked={selection === "selected"}
+                onChange={() => setSelection("selected")}
+              />{" "}
+              Selected
+            </label>
+          </div>
+          {selection === "selected" && requestedTrackIDs.length === 0 ? (
+            <p className="error" role="alert">
+              Select at least one audio track.
+            </p>
+          ) : null}
+          <div className="grid gap-2 sm:grid-cols-2">
+            {tracks.map((track) => (
+              <label key={track.ID} className="panel min-w-0 p-3">
+                {selection === "selected" ? (
+                  <input
+                    type="checkbox"
+                    checked={selected.has(track.ID)}
+                    onChange={(event) => toggleSelectedTrack(track.ID, event.target.checked)}
+                  />
+                ) : null}{" "}
+                <strong className="break-words">{trackLabel(track.Ordinal, track.Title)}</strong>
+                <span className="mt-1 block break-words text-sm muted">
+                  {[
+                    track.Codec,
+                    track.ChannelLayout || `${track.Channels} channels`,
+                    track.SampleRate ? `${track.SampleRate} Hz` : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
+                <span className="block text-sm muted">
+                  {track.Languages.join(", ") || "Language unknown"}
+                  {track.Default ? " · default" : ""}
+                  {track.Commentary ? " · commentary" : ""}
+                </span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+
+        <fieldset className="grid gap-2" disabled={mutationsBlocked}>
+          <legend>Images</legend>
+          <div className="flex flex-wrap gap-4">
+            {[
+              ["waveform", "Waveform"],
+              ["spectrogram", "Spectrogram"],
+            ].map(([variant, label]) => (
+              <label key={variant}>
+                <input
+                  type="checkbox"
+                  checked={variants.includes(variant)}
+                  onChange={(event) => toggleVariant(variant, event.target.checked)}
+                />{" "}
+                {label}
+              </label>
+            ))}
+          </div>
+          {variants.length === 0 ? (
+            <p className="error" role="alert">
+              Select at least one image type.
+            </p>
+          ) : null}
+        </fieldset>
+
+        <div className="flex flex-wrap gap-2">
+          <button type="button" disabled={!canGenerate} onClick={() => void generate()}>
+            {view.result ? "Generate again" : "Generate"}
+          </button>
+          {busy ? (
+            <button type="button" className="secondary" onClick={() => void facet.cancel()}>
+              Cancel
+            </button>
+          ) : null}
+          {view.enabled ? (
+            <button
+              type="button"
+              className="secondary"
+              disabled={Boolean(view.mutationBlockedReason)}
+              onClick={() => void facet.disable()}
+            >
+              Disable
+            </button>
+          ) : null}
+          {view.result &&
+          ["partial", "failed", "canceled", "interrupted"].includes(view.result.status) &&
+          !mutationsBlocked ? (
+            <button type="button" className="secondary" onClick={() => void facet.retry()}>
+              Retry failed work
+            </button>
+          ) : null}
+        </div>
+        {busy ? (
+          <div role="status" className="grid gap-2 muted">
+            <p>
+              Generating audio analysis… {view.completed}/{view.total || requestedTrackIDs.length}
+            </p>
+            {view.operationItems.length > 0 ? (
+              <ul>
+                {view.operationItems.map((item) => (
+                  <li key={item.id}>
+                    {item.label}: {item.status}
+                    {item.message ? ` — ${item.message}` : ""}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : null}
+        {view.mutationBlockedReason ? (
+          <p className="muted" role="status">
+            {view.mutationBlockedReason}
+          </p>
+        ) : null}
+        {view.error ? (
+          <p className="error" role="alert">
+            {view.error}
+          </p>
+        ) : null}
+      </section>
+
+      {view.result ? (
+        <section className="grid gap-4" aria-labelledby="audio-analysis-results">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 id="audio-analysis-results">Results</h2>
+            <span className="muted">
+              {view.result.status} · expires {new Date(view.result.expiresAt).toLocaleString()}
+            </span>
+          </div>
+          {view.result.tracks.map((track) => (
+            <article key={track.trackId} className="panel grid gap-3">
+              <div>
+                <h3 className="break-words">{trackLabel(track.ordinal, track.title || "")}</h3>
+                <p className="muted">
+                  {[
+                    track.codec,
+                    track.channelLayout || `${track.channels} channels`,
+                    `${track.sampleRate} Hz`,
+                    `${track.durationSeconds.toFixed(2)} s`,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+              </div>
+              {track.failure ? (
+                <p className="error">
+                  {track.failure.code}: {track.failure.message}
+                </p>
+              ) : null}
+              <div className="grid gap-4">
+                {track.artifacts.map((artifact) => {
+                  const url = artifact.status === "completed" ? facet.artifactURL(artifact.id) : "";
+                  const alt = `${trackLabel(track.ordinal, track.title || "")} ${artifact.variant}`;
+                  return (
+                    <section key={artifact.variant} className="grid gap-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h4 className="capitalize">{artifact.variant}</h4>
+                        {url ? (
+                          <a href={url} download>
+                            Download native PNG
+                          </a>
+                        ) : null}
+                      </div>
+                      {url ? (
+                        <button
+                          type="button"
+                          className="block max-w-full overflow-auto border-0 bg-transparent p-0 text-left"
+                          onClick={() => {
+                            setLightboxImage(url);
+                            setLightboxAlt(alt);
+                          }}
+                        >
+                          <img className="h-auto max-w-full" src={url} alt={alt} loading="lazy" />
+                        </button>
+                      ) : artifact.failure ? (
+                        <p className="error">
+                          {artifact.failure.code}: {artifact.failure.message}
+                        </p>
+                      ) : (
+                        <p className="muted">No retained image is available.</p>
+                      )}
+                    </section>
+                  );
+                })}
+              </div>
+            </article>
+          ))}
+        </section>
+      ) : null}
+    </section>
+  );
+}

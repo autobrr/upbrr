@@ -30,6 +30,8 @@ type randomIDGenerator struct{}
 
 type operationExecutionContextKey struct{}
 
+type recoveredOperationContextKey struct{}
+
 func (randomIDGenerator) NewID(prefix string) (string, error) {
 	var bytes [16]byte
 	if _, err := rand.Read(bytes[:]); err != nil {
@@ -185,6 +187,17 @@ func WithMediaArtifactBuilder(builder MediaArtifactBuilder) Option {
 	}
 }
 
+// WithAudioAnalysisBuilder installs exact-generation local audio analysis.
+func WithAudioAnalysisBuilder(builder AudioAnalysisBuilder) Option {
+	return func(module *Module) error {
+		if builder == nil {
+			return errors.New("release workflow: audio analysis builder is required")
+		}
+		module.audioAnalysisBuilder = builder
+		return nil
+	}
+}
+
 // WithDescriptionBuilder installs retained description generation.
 func WithDescriptionBuilder(builder DescriptionBuilder) Option {
 	return func(module *Module) error {
@@ -251,6 +264,7 @@ type Module struct {
 	trackerPreflight          TrackerPreflightBuilder
 	dupeBuilder               DupeAssessmentBuilder
 	mediaBuilder              MediaArtifactBuilder
+	audioAnalysisBuilder      AudioAnalysisBuilder
 	descriptionBuilder        DescriptionBuilder
 	uploadPlanBuilder         UploadPlanBuilder
 	operationErrorClassifier  func(api.OperationKind, error) error
@@ -457,26 +471,29 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 		state.Receipts = make(map[string]commandReceipt)
 	}
 	state.Receipts[receiptKey] = commandReceipt{Fingerprint: fingerprint, Result: result}
-	if err := ctx.Err(); err != nil {
+	commitCtx := ctx
+	if retainsStoppedAudioAnalysis(command, result) {
+		commitCtx = context.WithoutCancel(ctx)
+	} else if err := ctx.Err(); err != nil {
 		m.cleanupUncommittedResult(ownerID, priorWorkflow, result)
 		return CommandResult{}, fmt.Errorf("release workflow command canceled before commit: %w", err)
 	}
 	if commandCommitsMediaBeforeSave(command) {
-		if err := m.finalizeRetainedMedia(ctx, ownerID, state.Workflow.ID, result.Media, true); err != nil {
+		if err := m.finalizeRetainedMedia(commitCtx, ownerID, state.Workflow.ID, result.Media, true); err != nil {
 			m.cleanupUncommittedResult(ownerID, priorWorkflow, result)
 			return CommandResult{}, err
 		}
 	}
-	if err := m.prepareReusableDescriptions(ctx, ownerID, &state, result.Descriptions, now); err != nil {
+	if err := m.prepareReusableDescriptions(commitCtx, ownerID, &state, result.Descriptions, now); err != nil {
 		m.cleanupUncommittedResult(ownerID, priorWorkflow, result)
 		return CommandResult{}, err
 	}
-	if err := m.repository.Save(ctx, ownerID, expectedRevision, state); err != nil {
+	if err := m.repository.Save(commitCtx, ownerID, expectedRevision, state); err != nil {
 		m.cleanupUncommittedResult(ownerID, priorWorkflow, result)
 		return CommandResult{}, fmt.Errorf("release workflow save: %w", err)
 	}
 	if legacyRecovery {
-		if err := m.finishLegacyInputRecovery(ctx, ownerID, workflowID); err != nil {
+		if err := m.finishLegacyInputRecovery(commitCtx, ownerID, workflowID); err != nil {
 			return CommandResult{}, err
 		}
 	}
@@ -485,6 +502,12 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	}
 	if result.Media != nil || result.Descriptions != nil {
 		m.cleanupSupersededMediaResources(ownerID, state.Workflow.ID, priorWorkflow, state.Workflow)
+	}
+	if result.AudioAnalysis != nil && priorWorkflow.AudioAnalysis != nil &&
+		(state.Workflow.AudioAnalysis == nil || *priorWorkflow.AudioAnalysis != *state.Workflow.AudioAnalysis) {
+		if prior, ok := state.AudioAnalyses[priorWorkflow.AudioAnalysis.ID]; ok {
+			m.private.Delete(ownerID, state.Workflow.ID, audioAnalysisPrivateResourceID(prior.AttemptID))
+		}
 	}
 	if commandFinalizesMedia(command) && !commandCommitsMediaBeforeSave(command) {
 		if err := m.finalizeRetainedMedia(ctx, ownerID, state.Workflow.ID, result.Media, true); err != nil {
@@ -497,6 +520,12 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	return cloneCommandResult(result)
 }
 
+func retainsStoppedAudioAnalysis(command mutation, result CommandResult) bool {
+	_, audioCommand := command.(AnalyzeAudioCommand)
+	return audioCommand && result.AudioAnalysis != nil &&
+		(result.AudioAnalysis.Status == api.StageStatusCanceled || result.AudioAnalysis.Status == api.StageStatusInterrupted)
+}
+
 func (m *Module) cleanupUncommittedResult(ownerID string, prior api.ReleaseWorkflow, result CommandResult) {
 	workflowID := prior.ID
 	if result.Descriptions != nil && (prior.Descriptions == nil || prior.Descriptions.ID != result.Descriptions.ID) {
@@ -507,6 +536,9 @@ func (m *Module) cleanupUncommittedResult(ownerID string, prior api.ReleaseWorkf
 	}
 	if result.Media != nil && (prior.Media == nil || prior.Media.ID != result.Media.ID) {
 		m.private.Delete(ownerID, workflowID, mediaPrivateResourceID(result.Media.ID))
+	}
+	if result.AudioAnalysis != nil && (prior.AudioAnalysis == nil || prior.AudioAnalysis.ID != result.AudioAnalysis.ID) {
+		m.private.Delete(ownerID, workflowID, audioAnalysisPrivateResourceID(result.AudioAnalysis.AttemptID))
 	}
 	if result.DryRun != nil {
 		m.private.Delete(ownerID, workflowID, uploadPlanPrivateResourceID(result.DryRun.ID))
@@ -937,6 +969,10 @@ func (m *Module) operationResultIsCurrent(ownerID string, result *api.WorkflowOp
 		ref := state.Workflow.Media
 		snapshot, ok := state.Media[api.MediaArtifactSetID(result.RefID)]
 		return ref != nil && string(ref.ID) == result.RefID && ref.Revision == result.RefRevision && ok && snapshot.Revision == result.RefRevision
+	case api.WorkflowOperationResultAudioAnalysis:
+		ref := state.Workflow.AudioAnalysis
+		snapshot, ok := state.AudioAnalyses[api.AudioAnalysisResultID(result.RefID)]
+		return ref != nil && string(ref.ID) == result.RefID && ref.Revision == result.RefRevision && ok && snapshot.Revision == result.RefRevision
 	case api.WorkflowOperationResultDescriptions:
 		ref := state.Workflow.Descriptions
 		snapshot, ok := state.Descriptions[api.DescriptionSetID(result.RefID)]
@@ -1124,6 +1160,10 @@ func (m *Module) runOperation(
 				status.Message = "Operation completed with mixed outcomes."
 			case api.StageStatusExecuted:
 				status.Message = "Operation executed."
+			case api.StageStatusInterrupted:
+				status.Message = "Operation interrupted."
+			case api.StageStatusCanceled:
+				status.Message = "Operation canceled."
 			case api.StageStatusPending,
 				api.StageStatusQueued,
 				api.StageStatusReady,
@@ -1131,8 +1171,6 @@ func (m *Module) runOperation(
 				api.StageStatusSkipped,
 				api.StageStatusRunning,
 				api.StageStatusCompleted,
-				api.StageStatusInterrupted,
-				api.StageStatusCanceled,
 				api.StageStatusUnavailable:
 				status.Message = "Operation complete."
 			}
@@ -1400,6 +1438,11 @@ func operationResultForCommand(command Command, result CommandResult) (*api.Work
 		if result.Media != nil {
 			refID, revision = string(result.Media.ID), result.Media.Revision
 		}
+	case AnalyzeAudioCommand:
+		kind = api.WorkflowOperationResultAudioAnalysis
+		if result.AudioAnalysis != nil {
+			refID, revision = string(result.AudioAnalysis.ID), result.AudioAnalysis.Revision
+		}
 	case GenerateDescriptionsCommand:
 		kind = api.WorkflowOperationResultDescriptions
 		if result.Descriptions != nil {
@@ -1463,6 +1506,10 @@ func terminalOperationStatus(command Command, result CommandResult) api.StageSta
 		if result.Media != nil {
 			stageStatus = result.Media.Status
 		}
+	case AnalyzeAudioCommand:
+		if result.AudioAnalysis != nil {
+			stageStatus = result.AudioAnalysis.Status
+		}
 	case UploadMediaImagesCommand:
 		if result.Media != nil && len(result.Media.HostAttempts) > 0 {
 			hasHostedResult := slices.ContainsFunc(latestHostedImageAttempts(result.Media.HostAttempts), func(attempt api.HostedImageAttempt) bool {
@@ -1494,13 +1541,15 @@ func terminalOperationStatus(command Command, result CommandResult) api.StageSta
 		return api.StageStatusCompleted
 	case api.StageStatusBlocked, api.StageStatusFailed, api.StageStatusPartial, api.StageStatusExecuted:
 		return stageStatus
+	case api.StageStatusCanceled:
+		return api.StageStatusCanceled
+	case api.StageStatusInterrupted:
+		return api.StageStatusInterrupted
 	case api.StageStatusPending,
 		api.StageStatusQueued,
 		api.StageStatusStale,
 		api.StageStatusRunning,
 		api.StageStatusCompleted,
-		api.StageStatusInterrupted,
-		api.StageStatusCanceled,
 		api.StageStatusUnavailable:
 		return api.StageStatusCompleted
 	}
@@ -1633,6 +1682,13 @@ func (m *Module) recoverOperationAfterLease(
 	if state.Workflow.Revision != current.ExpectedRevision && !commandCommitted && !compositeValid {
 		return m.interruptRecoveredOperation(ctx, current, "The retained operation authority is stale.")
 	}
+	if _, audioCommand := capsule.command.(AnalyzeAudioCommand); audioCommand && !commandCommitted {
+		m.private.Delete(
+			current.OwnerID,
+			current.WorkflowID,
+			audioAnalysisPrivateResourceID(string(current.OperationID)),
+		)
+	}
 	if err := m.durability.MarkOperationEffectsUnknown(
 		ctx,
 		current.OwnerID,
@@ -1642,11 +1698,28 @@ func (m *Module) recoverOperationAfterLease(
 	); err != nil {
 		return fmt.Errorf("release workflow fence interrupted effects: %w", err)
 	}
+	claimedStatus, err := m.mutateOperation(
+		ctx,
+		current.OwnerID,
+		current.WorkflowID,
+		current.OperationID,
+		func(*api.WorkflowOperationStatus) {},
+	)
+	if err != nil {
+		return fmt.Errorf("release workflow claim interrupted operation record: %w", err)
+	}
+	current.Status = claimedStatus
 	release, ok := m.borrowOperationLifetime()
 	if !ok {
 		return errors.New("release workflow: runtime generation retired")
 	}
-	m.dispatchOperationWorker(ctx, current.OwnerID, capsule.command, current, release)
+	m.dispatchOperationWorker(
+		context.WithValue(ctx, recoveredOperationContextKey{}, true),
+		current.OwnerID,
+		capsule.command,
+		current,
+		release,
+	)
 	return nil
 }
 
@@ -2186,6 +2259,9 @@ func (m *Module) Current(ctx context.Context, ownerID string, workflowID api.Wor
 			}
 		}
 	}
+	if ref := state.Workflow.AudioAnalysis; ref != nil {
+		result.AudioAnalysis = currentSnapshot(state.AudioAnalyses, ref.ID)
+	}
 	if ref := state.Workflow.Descriptions; ref != nil {
 		result.Descriptions = currentSnapshot(state.Descriptions, ref.ID)
 	}
@@ -2524,6 +2600,89 @@ func (m *Module) MediaArtifact(
 	return content, nil
 }
 
+// AudioAnalysisArtifact returns one owner-scoped retained waveform or
+// spectrogram addressed by its exact analysis revision and opaque artifact ID.
+func (m *Module) AudioAnalysisArtifact(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+	analysisRef api.AudioAnalysisRef,
+	artifactID api.PublicResourceID,
+) (MediaArtifactContent, error) {
+	snapshot, value, err := m.audioAnalysisResource(ctx, ownerID, workflowID, analysisRef, artifactID)
+	if err != nil {
+		return MediaArtifactContent{}, err
+	}
+	resource, ok := value.(RetainedAudioAnalysisResource)
+	if !ok {
+		return MediaArtifactContent{}, ErrPrivateResourceUnavailable
+	}
+	content, err := resource.OpenArtifact(ctx, snapshot, artifactID)
+	if err != nil {
+		return MediaArtifactContent{}, fmt.Errorf("release workflow open audio analysis artifact: %w", err)
+	}
+	return content, nil
+}
+
+// AudioAnalysisArtifactPath returns a private local path only to in-process
+// callers after the same owner, revision, and artifact checks as content reads.
+func (m *Module) AudioAnalysisArtifactPath(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+	analysisRef api.AudioAnalysisRef,
+	artifactID api.PublicResourceID,
+) (string, error) {
+	snapshot, value, err := m.audioAnalysisResource(ctx, ownerID, workflowID, analysisRef, artifactID)
+	if err != nil {
+		return "", err
+	}
+	resource, ok := value.(RetainedAudioAnalysisLocalPath)
+	if !ok {
+		return "", ErrPrivateResourceUnavailable
+	}
+	pathValue, err := resource.LocalArtifactPath(snapshot, artifactID)
+	if err != nil {
+		return "", fmt.Errorf("release workflow resolve audio analysis artifact path: %w", err)
+	}
+	return pathValue, nil
+}
+
+func (m *Module) audioAnalysisResource(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+	analysisRef api.AudioAnalysisRef,
+	artifactID api.PublicResourceID,
+) (api.AudioAnalysisResult, any, error) {
+	if err := ctx.Err(); err != nil {
+		return api.AudioAnalysisResult{}, nil, fmt.Errorf("release workflow audio analysis resource: %w", err)
+	}
+	ownerID = strings.TrimSpace(ownerID)
+	if ownerID == "" || workflowID == "" || analysisRef.ID == "" || analysisRef.Revision == 0 || artifactID == "" {
+		return api.AudioAnalysisResult{}, nil, ErrWorkflowNotFound
+	}
+	lock := m.commandLock(ownerID + "\x00" + string(workflowID))
+	lock.Lock()
+	defer lock.Unlock()
+	state, err := m.repository.Load(ctx, ownerID, workflowID)
+	if err != nil {
+		return api.AudioAnalysisResult{}, nil, fmt.Errorf("release workflow audio analysis resource load: %w", err)
+	}
+	if state.Workflow.AudioAnalysis == nil || *state.Workflow.AudioAnalysis != analysisRef {
+		return api.AudioAnalysisResult{}, nil, ErrRevisionConflict
+	}
+	snapshot, ok := state.AudioAnalyses[analysisRef.ID]
+	if !ok || snapshot.Revision != analysisRef.Revision {
+		return api.AudioAnalysisResult{}, nil, ErrRevisionConflict
+	}
+	value, err := m.private.Get(ownerID, workflowID, audioAnalysisPrivateResourceID(snapshot.AttemptID), m.clock.Now().UTC())
+	if err != nil {
+		return api.AudioAnalysisResult{}, nil, fmt.Errorf("release workflow audio analysis private resource: %w", err)
+	}
+	return snapshot, value, nil
+}
+
 func currentSnapshot[ID comparable, Snapshot any](values map[ID]Snapshot, id ID) *Snapshot {
 	value, ok := values[id]
 	if !ok {
@@ -2711,6 +2870,20 @@ func (m *Module) commandLock(key string) *sync.Mutex {
 
 func (m *Module) recoverAfterRestart(ctx context.Context, ownerID string, state *State) error {
 	if state.ProcessEpoch == m.processEpoch {
+		return nil
+	}
+	if recovered, _ := ctx.Value(recoveredOperationContextKey{}).(bool); recovered {
+		state.ProcessEpoch = m.processEpoch
+		return nil
+	}
+	operations, err := m.operations.ListActiveOperations(ctx)
+	if err != nil {
+		return fmt.Errorf("release workflow list active operations during restart recovery: %w", err)
+	}
+	if slices.ContainsFunc(operations, func(operation api.ReleaseWorkflowOperationRecord) bool {
+		return operation.OwnerID == ownerID && operation.WorkflowID == state.Workflow.ID && operation.ProcessEpoch == m.processEpoch
+	}) {
+		state.ProcessEpoch = m.processEpoch
 		return nil
 	}
 	authRetryRequired, obsoletePreflightActions := currentPreflightAuthRetry(*state)
@@ -3070,6 +3243,7 @@ func newState(ownerID string, workflow api.ReleaseWorkflow) State {
 		Dupes:                  make(map[api.DupeAssessmentID]api.DupeAssessment),
 		TrackerApprovals:       make(map[api.TrackerApprovalSnapshotID]api.TrackerApprovalSnapshot),
 		Media:                  make(map[api.MediaArtifactSetID]api.MediaArtifactSet),
+		AudioAnalyses:          make(map[api.AudioAnalysisResultID]api.AudioAnalysisResult),
 		Descriptions:           make(map[api.DescriptionSetID]api.DescriptionSet),
 		DryRuns:                make(map[api.UploadDryRunResultID]api.UploadDryRunResult),
 		UploadResults:          make(map[api.UploadResultID]api.UploadResult),
@@ -3149,6 +3323,10 @@ func commandTarget(command mutation) (api.WorkflowID, api.WorkflowRevision, stri
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case CaptureMediaCommand:
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
+	case AnalyzeAudioCommand:
+		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
+	case SetAudioAnalysisEnabledCommand:
+		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case SetMediaSelectionCommand:
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case DeleteMediaArtifactsCommand:
@@ -3224,6 +3402,11 @@ func (m *Module) apply(
 		return m.refreshPersistedMediaStatus(ctx, ownerID, state, nextRevision, now, typed)
 	case CaptureMediaCommand:
 		return m.captureMedia(ctx, ownerID, state, nextRevision, now, typed)
+	case AnalyzeAudioCommand:
+		return m.analyzeAudio(ctx, ownerID, state, nextRevision, now, typed)
+	case SetAudioAnalysisEnabledCommand:
+		m.setAudioAnalysisEnabled(state, typed)
+		return CommandResult{}, nil
 	case SetMediaSelectionCommand:
 		return m.setMediaSelection(ctx, ownerID, state, nextRevision, now, typed)
 	case DeleteMediaArtifactsCommand:
@@ -3267,18 +3450,24 @@ func (m *Module) apply(
 }
 
 // invalidateWorkflowPrivateResources clears stale stage authority while
-// retaining the active operation's durable command capsule.
+// retaining the current audio result and active operation command capsule.
 func (m *Module) invalidateWorkflowPrivateResources(
 	ctx context.Context,
 	ownerID string,
-	workflowID api.WorkflowID,
+	state *State,
 ) {
-	operationID, _ := ctx.Value(operationExecutionContextKey{}).(api.WorkflowOperationID)
-	if operationID == "" {
-		m.private.InvalidateWorkflow(ownerID, workflowID)
-		return
+	var preserved []string
+	if state.Workflow.AudioAnalysis != nil {
+		if analysis, ok := state.AudioAnalyses[state.Workflow.AudioAnalysis.ID]; ok &&
+			analysis.Revision == state.Workflow.AudioAnalysis.Revision {
+			preserved = append(preserved, audioAnalysisPrivateResourceID(analysis.AttemptID))
+		}
 	}
-	m.private.InvalidateWorkflowExcept(ownerID, workflowID, operationCommandResourceID(operationID))
+	operationID, _ := ctx.Value(operationExecutionContextKey{}).(api.WorkflowOperationID)
+	if operationID != "" {
+		preserved = append(preserved, operationCommandResourceID(operationID))
+	}
+	m.private.InvalidateWorkflowExcept(ownerID, state.Workflow.ID, preserved...)
 }
 
 func (m *Module) cancelWorkflow(ctx context.Context, ownerID string, state *State) (CommandResult, error) {
@@ -3287,7 +3476,6 @@ func (m *Module) cancelWorkflow(ctx context.Context, ownerID string, state *Stat
 		return CommandResult{}, fmt.Errorf("%w: terminal workflow cannot be canceled", ErrInvalidTransition)
 	case api.WorkflowStatusDraft, api.WorkflowStatusActive, api.WorkflowStatusBlocked, api.WorkflowStatusFailed:
 	}
-	m.invalidateWorkflowPrivateResources(ctx, ownerID, state.Workflow.ID)
 	state.Workflow.Release = nil
 	state.Workflow.InputReadiness = nil
 	state.Workflow.TrackerCatalog = nil
@@ -3299,6 +3487,8 @@ func (m *Module) cancelWorkflow(ctx context.Context, ownerID string, state *Stat
 	state.Workflow.Dupes = nil
 	state.Workflow.TrackerApproval = nil
 	state.Workflow.Media = nil
+	state.Workflow.AudioAnalysis = nil
+	state.Workflow.AudioAnalysisEnabled = false
 	state.Workflow.Descriptions = nil
 	state.Workflow.DryRun = nil
 	state.Workflow.UploadResult = nil
@@ -3306,6 +3496,7 @@ func (m *Module) cancelWorkflow(ctx context.Context, ownerID string, state *Stat
 	state.Workflow.Failures = nil
 	state.Workflow.Status = api.WorkflowStatusCanceled
 	state.PendingCorrectionConfirmation = nil
+	m.invalidateWorkflowPrivateResources(ctx, ownerID, state)
 	return CommandResult{}, nil
 }
 
@@ -3409,7 +3600,7 @@ func (m *Module) replaceFactInstructions(
 	state.Workflow.Status = api.WorkflowStatusDraft
 	state.Workflow.RequiredActions = nil
 	state.Workflow.Failures = nil
-	m.invalidateWorkflowPrivateResources(ctx, ownerID, state.Workflow.ID)
+	m.invalidateWorkflowPrivateResources(ctx, ownerID, state)
 	return CommandResult{FactInstructions: &snapshot}, nil
 }
 
@@ -3545,7 +3736,14 @@ func (m *Module) prepareRelease(
 	state.Workflow.Release = &api.ReleaseSnapshotRef{ID: snapshot.ID, Revision: snapshot.Revision}
 	if prior == nil || prior.ID != snapshot.ID || prior.Revision != snapshot.Revision {
 		invalidateTrackerAndDownstream(&state.Workflow)
-		m.invalidateWorkflowPrivateResources(ctx, ownerID, state.Workflow.ID)
+		if state.Workflow.AudioAnalysis != nil {
+			analysis, ok := state.AudioAnalyses[state.Workflow.AudioAnalysis.ID]
+			if !ok || analysis.Revision != state.Workflow.AudioAnalysis.Revision || analysis.Release != ref {
+				state.Workflow.AudioAnalysis = nil
+				state.Workflow.AudioAnalysisEnabled = false
+			}
+		}
+		m.invalidateWorkflowPrivateResources(ctx, ownerID, state)
 	}
 	state.Workflow.Status = api.WorkflowStatusActive
 	state.Workflow.RequiredActions = nil
@@ -3965,7 +4163,7 @@ func (m *Module) setTrackerContext(
 	state.Workflow.TrackerRuntime = &api.TrackerRuntimeSnapshotRef{ID: runtime.ID, Revision: runtime.Revision}
 	state.Workflow.Selection = &api.TrackerSelectionRef{ID: selection.ID, Revision: selection.Revision}
 	invalidateProjectionAndDownstream(&state.Workflow)
-	m.invalidateWorkflowPrivateResources(ctx, ownerID, state.Workflow.ID)
+	m.invalidateWorkflowPrivateResources(ctx, ownerID, state)
 	state.Workflow.Status = api.WorkflowStatusActive
 	return CommandResult{
 		Catalog:   &catalog,
@@ -4189,7 +4387,7 @@ func (m *Module) publishProjections(
 	state.Projections[snapshot.ID] = snapshot
 	state.Workflow.TrackerProjections = &api.TrackerReleaseProjectionSetRef{ID: snapshot.ID, Revision: snapshot.Revision}
 	invalidatePreflightAndDownstream(&state.Workflow)
-	m.invalidateWorkflowPrivateResources(ctx, ownerID, state.Workflow.ID)
+	m.invalidateWorkflowPrivateResources(ctx, ownerID, state)
 	setWorkflowStageStatus(&state.Workflow, snapshot.Status, snapshot.RequiredActions, snapshot.Failures)
 	return CommandResult{Projections: &snapshot}, nil
 }
@@ -4282,7 +4480,7 @@ func (m *Module) preflightTrackers(
 	state.Workflow.TrackerPreflight = finalSet.Preflight
 	state.Workflow.TrackerProjections = &api.TrackerReleaseProjectionSetRef{ID: finalSet.ID, Revision: finalSet.Revision}
 	invalidateDupeAndDownstream(&state.Workflow)
-	m.invalidateWorkflowPrivateResources(ctx, ownerID, state.Workflow.ID)
+	m.invalidateWorkflowPrivateResources(ctx, ownerID, state)
 	setWorkflowStageStatus(&state.Workflow, finalSet.Status, finalSet.RequiredActions, finalSet.Failures)
 	return CommandResult{Preflight: &assessment, Projections: &finalSet}, nil
 }
@@ -5027,6 +5225,133 @@ func (m *Module) captureMedia(
 		}
 	}
 	return result, nil
+}
+
+func (m *Module) analyzeAudio(
+	ctx context.Context,
+	ownerID string,
+	state *State,
+	nextRevision api.WorkflowRevision,
+	now time.Time,
+	command AnalyzeAudioCommand,
+) (CommandResult, error) {
+	if m.audioAnalysisBuilder == nil {
+		return CommandResult{}, fmt.Errorf("%w: audio analysis builder is unavailable", ErrInvalidTransition)
+	}
+	release, err := currentReleaseSnapshot(state)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	releaseRef := api.ReleaseRef{SourcePath: release.Release.Source.SourcePath, Generation: release.Release.Generation}
+	normalized, err := command.Instructions.Normalize()
+	if err != nil {
+		return CommandResult{}, fmt.Errorf("%w: %w", ErrInvalidTransition, err)
+	}
+	if normalized.Release != releaseRef {
+		return CommandResult{}, fmt.Errorf("%w: audio analysis must target the current prepared release", ErrInvalidTransition)
+	}
+	attemptID := ""
+	if operationID, ok := ctx.Value(operationExecutionContextKey{}).(api.WorkflowOperationID); ok {
+		attemptID = string(operationID)
+	}
+	if attemptID == "" {
+		attemptID, err = m.newID("audio-attempt")
+		if err != nil {
+			return CommandResult{}, err
+		}
+	}
+	var prior *api.AudioAnalysisResult
+	var priorResource RetainedAudioAnalysisResource
+	if state.Workflow.AudioAnalysis != nil {
+		candidate, ok := state.AudioAnalyses[state.Workflow.AudioAnalysis.ID]
+		if ok && candidate.Revision == state.Workflow.AudioAnalysis.Revision &&
+			audioAnalysisRetryCompatible(candidate, normalized, releaseRef, now) {
+			prior = &candidate
+			if retained, getErr := m.private.Get(
+				ownerID,
+				state.Workflow.ID,
+				audioAnalysisPrivateResourceID(candidate.AttemptID),
+				now,
+			); getErr == nil {
+				priorResource, _ = retained.(RetainedAudioAnalysisResource)
+			}
+		}
+	}
+	snapshot, resource, err := m.audioAnalysisBuilder.Build(
+		ctx,
+		releaseRef,
+		normalized,
+		attemptID,
+		now,
+		prior,
+		priorResource,
+	)
+	if err != nil {
+		return CommandResult{}, fmt.Errorf("release workflow analyze audio: %w", err)
+	}
+	id, err := m.newID("audio-analysis")
+	if err != nil {
+		releasePrivateResource(resource)
+		return CommandResult{}, err
+	}
+	snapshot.ID = api.AudioAnalysisResultID(id)
+	snapshot.WorkflowID = state.Workflow.ID
+	snapshot.Revision = nextRevision
+	snapshot.Release = releaseRef
+	snapshot.AttemptID = attemptID
+	if snapshot.CreatedAt.IsZero() {
+		snapshot.CreatedAt = now
+	}
+	if snapshot.CompletedAt == nil {
+		completedAt := now
+		snapshot.CompletedAt = &completedAt
+	}
+	if !snapshot.ExpiresAt.After(now) {
+		snapshot.ExpiresAt = now.Add(24 * time.Hour)
+	}
+	if err := snapshot.Validate(); err != nil {
+		releasePrivateResource(resource)
+		return CommandResult{}, fmt.Errorf("release workflow publish audio analysis: %w", err)
+	}
+	if resource != nil {
+		if err := m.private.Put(
+			ownerID,
+			state.Workflow.ID,
+			audioAnalysisPrivateResourceID(snapshot.AttemptID),
+			resource,
+			snapshot.ExpiresAt,
+		); err != nil {
+			releasePrivateResource(resource)
+			return CommandResult{}, fmt.Errorf("release workflow retain audio analysis: %w", err)
+		}
+	}
+	state.AudioAnalyses[snapshot.ID] = snapshot
+	state.Workflow.AudioAnalysisEnabled = true
+	state.Workflow.AudioAnalysis = &api.AudioAnalysisRef{ID: snapshot.ID, Revision: snapshot.Revision}
+	return CommandResult{AudioAnalysis: &snapshot}, nil
+}
+
+func (m *Module) setAudioAnalysisEnabled(state *State, command SetAudioAnalysisEnabledCommand) {
+	state.Workflow.AudioAnalysisEnabled = command.Enabled
+	if !command.Enabled {
+		state.Workflow.AudioAnalysis = nil
+	}
+}
+
+func audioAnalysisRetryCompatible(
+	prior api.AudioAnalysisResult,
+	instructions api.AudioAnalysisInstructions,
+	release api.ReleaseRef,
+	now time.Time,
+) bool {
+	return prior.Release == release && prior.ResourceID == instructions.ResourceID &&
+		prior.Selection == instructions.Selection && prior.ProfileVersion == instructions.ProfileVersion &&
+		slices.Equal(prior.TrackIDs, instructions.TrackIDs) && slices.Equal(prior.Variants, instructions.Variants) &&
+		prior.ExpiresAt.After(now)
+}
+
+func audioAnalysisPrivateResourceID(attemptID string) string {
+	return "audio-analysis:" + strings.TrimSpace(attemptID)
 }
 
 func mediaRequirementsFingerprint(projections []api.TrackerReleaseProjection) (api.WorkflowFingerprint, error) {
@@ -7432,7 +7757,7 @@ func (m *Module) invalidateTrackers(
 	invalidateUploadPlan(&state.Workflow)
 	state.Workflow.Status = api.WorkflowStatusBlocked
 	state.Workflow.RequiredActions = append(state.Workflow.RequiredActions, action)
-	m.invalidateWorkflowPrivateResources(ctx, ownerID, state.Workflow.ID)
+	m.invalidateWorkflowPrivateResources(ctx, ownerID, state)
 	return result, nil
 }
 
@@ -7760,6 +8085,8 @@ func finishUnavailableImageHostingReconciliation(workflow *api.ReleaseWorkflow, 
 
 func invalidatePreparedAndDownstream(workflow *api.ReleaseWorkflow) {
 	workflow.Release = nil
+	workflow.AudioAnalysis = nil
+	workflow.AudioAnalysisEnabled = false
 	workflow.InputReadiness = nil
 	workflow.TrackerCatalog = nil
 	workflow.TrackerRuntime = nil

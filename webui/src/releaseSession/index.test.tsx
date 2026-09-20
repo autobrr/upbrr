@@ -454,6 +454,17 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
       startedAt: "2026-07-20T00:00:00Z",
       updatedAt: "2026-07-20T00:00:01Z",
     }),
+    analyzeAudio: async (current) => current,
+    setAudioAnalysisEnabled: async (current, enabled) => ({
+      ...current,
+      workflow: {
+        ...current.workflow,
+        audioAnalysisEnabled: enabled,
+        ...(enabled ? {} : { audioAnalysis: null }),
+      },
+    }),
+    audioAnalysisURL: (_current, analysisID, analysisRevision, artifactID) =>
+      `/api/app/release-workflow-audio-analysis?analysisId=${analysisID}&analysisRevision=${analysisRevision}&artifactId=${artifactID}`,
     prepare: async (current, input) =>
       workflowCurrentFromPreview(
         workflowCurrent(current.workflow.id, current.workflow.revision + 1),
@@ -588,6 +599,9 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
     reorderMedia: async (...args) => remember(await configured.reorderMedia(...args)),
     deleteMedia: async (...args) => remember(await configured.deleteMedia(...args)),
     attachMedia: async (...args) => remember(await configured.attachMedia(...args)),
+    analyzeAudio: async (...args) => remember(await configured.analyzeAudio(...args)),
+    setAudioAnalysisEnabled: async (...args) =>
+      remember(await configured.setAudioAnalysisEnabled(...args)),
     uploadImages: async (...args) => remember(await configured.uploadImages(...args)),
     retryImageHost: async (...args) => remember(await configured.retryImageHost(...args)),
     removeHostedImages: async (...args) => remember(await configured.removeHostedImages(...args)),
@@ -722,6 +736,222 @@ describe("tracker workflow capabilities", () => {
 });
 
 describe("useReleaseSession", () => {
+  it("builds exact-generation audio instructions from prepared stable track IDs", async () => {
+    const workflowID = "workflow-audio";
+    const sourcePath = "C:\\media\\Example.mkv";
+    const prepared = workflowCurrentFromPreview(
+      workflowCurrent(workflowID, 7),
+      preview(sourcePath, 4),
+    );
+    const current = {
+      ...prepared,
+      release: {
+        ...prepared.release!,
+        release: {
+          ...prepared.release!.release,
+          Source: {
+            ...prepared.release!.release.Source,
+            Classification: { Container: "Matroska" },
+          },
+          Media: {
+            Tracks: [
+              {
+                ID: "audio-main",
+                Kind: "audio",
+                ResourceID: "resource-one",
+                ManifestFingerprint: "a".repeat(64),
+                NativeID: "1",
+                Ordinal: 1,
+                Title: "Main",
+                Codec: "FLAC",
+                ChannelLayout: "5.1",
+                Channels: 6,
+                SampleRate: 48000,
+                DetectedLanguages: ["English"],
+                Languages: ["English"],
+                LanguageProvenance: "automatic",
+                Default: true,
+                Commentary: false,
+              },
+            ],
+            PrimaryAudioTrackID: "audio-main",
+          },
+        },
+      },
+    } as unknown as ReleaseWorkflowCurrent;
+    const analyzeAudio = vi.fn(async (value: ReleaseWorkflowCurrent) => value);
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: workflowID,
+          workflow: workflowPorts({ current: async () => current, analyzeAudio }),
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.audioAnalysis.view.available).toBe(true));
+
+    await act(() =>
+      result.current.audioAnalysis.generate({
+        resourceID: "resource-one",
+        selection: "primary",
+        trackIDs: ["audio-main"],
+        variants: ["waveform", "spectrogram"],
+      }),
+    );
+
+    expect(analyzeAudio).toHaveBeenCalledWith(
+      expect.objectContaining({ workflow: expect.objectContaining({ id: workflowID }) }),
+      {
+        release: { SourcePath: sourcePath, Generation: 4 },
+        resourceId: "resource-one",
+        selection: "primary",
+        trackIds: ["audio-main"],
+        variants: ["waveform", "spectrogram"],
+        profileVersion: "audio-analysis-v1",
+      },
+      expect.any(String),
+      expect.any(AbortSignal),
+    );
+    unmount();
+  });
+
+  it("exposes other active workflow operations as an audio mutation block", async () => {
+    const workflowID = "workflow-audio-blocked";
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const sourcePath = "C:\\media\\Example.mkv";
+    const prepared = workflowCurrentFromPreview(
+      workflowCurrent(workflowID, 7),
+      preview(sourcePath, 4),
+    );
+    const current = {
+      ...prepared,
+      operation: {
+        id: "operation-upload",
+        workflowId: workflowID,
+        revision: 7,
+        sequence: 1,
+        command: "execute_uploads",
+        operation: "upload_execute",
+        status: "running",
+        progress: 25,
+        completed: 0,
+        total: 1,
+        startedAt: "2026-09-21T00:00:00Z",
+        updatedAt: "2026-09-21T00:00:01Z",
+      },
+      release: {
+        ...prepared.release!,
+        release: {
+          ...prepared.release!.release,
+          Media: {
+            Tracks: [
+              {
+                ID: "audio-main",
+                Kind: "audio",
+                ResourceID: "resource-one",
+                ManifestFingerprint: "a".repeat(64),
+                NativeID: "1",
+                Ordinal: 1,
+                Title: "Main",
+                Codec: "FLAC",
+                ChannelLayout: "stereo",
+                Channels: 2,
+                SampleRate: 48000,
+                DetectedLanguages: ["English"],
+                Languages: ["English"],
+                LanguageProvenance: "automatic",
+                Default: true,
+                Commentary: false,
+              },
+            ],
+            PrimaryAudioTrackID: "audio-main",
+          },
+        },
+      },
+    } as unknown as ReleaseWorkflowCurrent;
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: workflowID,
+          workflow: workflowPorts({ current: async () => current }),
+        }),
+      ),
+    });
+
+    await waitFor(() =>
+      expect(result.current.audioAnalysis.view.mutationBlockedReason).toContain(
+        "Another workflow operation (upload execute) is running",
+      ),
+    );
+    expect(result.current.audioAnalysis.view.status).toBe("idle");
+    expect(result.current.audioAnalysis.view.operationItems).toEqual([]);
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("recognizes analyze_audio operations and cancels them before disabling", async () => {
+    const workflowID = "workflow-audio-running";
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const base = workflowCurrent(workflowID, 4);
+    const runningOperation = {
+      id: "operation-audio",
+      workflowId: workflowID,
+      revision: 4,
+      sequence: 1,
+      command: "analyze_audio",
+      operation: "analyze_audio",
+      status: "running",
+      progress: 25,
+      completed: 0,
+      total: 1,
+      startedAt: "2026-09-21T00:00:00Z",
+      updatedAt: "2026-09-21T00:00:01Z",
+    } as const;
+    const canceledOperation = {
+      ...runningOperation,
+      sequence: 2,
+      status: "canceled",
+      updatedAt: "2026-09-21T00:00:02Z",
+      completedAt: "2026-09-21T00:00:02Z",
+    } as const;
+    const running = { ...base, operation: runningOperation } as ReleaseWorkflowCurrent;
+    const terminal = { ...base, operation: canceledOperation } as ReleaseWorkflowCurrent;
+    const current = vi.fn().mockResolvedValueOnce(running).mockResolvedValue(terminal);
+    const cancelOperation = vi.fn(async () => canceledOperation);
+    const setAudioAnalysisEnabled = vi.fn(async (value: ReleaseWorkflowCurrent) => ({
+      ...value,
+      workflow: { ...value.workflow, audioAnalysisEnabled: false, audioAnalysis: null },
+    }));
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: workflowID,
+          workflow: workflowPorts({ current, cancelOperation, setAudioAnalysisEnabled }),
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.audioAnalysis.view.status).toBe("running"));
+
+    await act(() => result.current.audioAnalysis.disable());
+
+    expect(cancelOperation).toHaveBeenCalledWith(
+      workflowID,
+      "operation-audio",
+      expect.any(AbortSignal),
+    );
+    expect(setAudioAnalysisEnabled).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: expect.objectContaining({ status: "canceled" }) }),
+      false,
+      expect.any(String),
+      expect.any(AbortSignal),
+    );
+    expect(cancelOperation.mock.invocationCallOrder[0]).toBeLessThan(
+      setAudioAnalysisEnabled.mock.invocationCallOrder[0],
+    );
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
   it.each([true, false])("blocks retained mutation actions with liveTest=%s", async (liveTest) => {
     const workflowID = "workflow-live-test";
     window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
@@ -787,6 +1017,9 @@ describe("useReleaseSession", () => {
               RunLogLevel: "info",
               Screens: 0,
               NoSeed: liveTest,
+              AudioAnalysis: false,
+              AudioTracks: "primary",
+              AudioImages: "both",
               SkipAutoTorrent: false,
               OnlyID: false,
               KeepFolder: false,

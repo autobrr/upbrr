@@ -85,6 +85,7 @@ A complete structured group is preferred for group-policy decisions. When a trac
 Depending on the source and trackers, upbrr can:
 
 - inspect MediaInfo, BDInfo, DVD, or other prepared technical data;
+- optionally generate local waveform and spectrogram PNGs from prepared audio tracks;
 - select Blu-ray playlists;
 - generate screenshots at chosen frames;
 - capture compatible DVD menus or import disc-menu images;
@@ -96,6 +97,8 @@ Automatic screenshot plans distribute the requested images across all prepared d
 Inspect image ordering, host URLs, technical blocks, headers, and rendered BBCode.
 
 Compatible images retain their selection and order across refresh. Deleted images stay removed. upbrr verifies local image bytes before reuse and reuses hosted links only for a compatible host account and purpose. A hosted link can remain usable when its local preview is missing. Changed capture settings or stricter tracker requirements can require additional images.
+
+[Audio analysis](audio-analysis.md) is a separate, optional local operation. It streams decoded samples from FFmpeg into Go without writing a full decoded-audio file. Its PNGs are retained for preview and download but are not image-hosted or added to tracker descriptions automatically.
 
 ## 6. Preview immutable tracker operations
 

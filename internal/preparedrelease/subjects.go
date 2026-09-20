@@ -227,6 +227,136 @@ func (m *Module) ResolveDVDMenuSubject(ctx context.Context, input api.MediaPlanI
 	}, nil
 }
 
+// ResolveAudioAnalysisSubject validates one exact generation and projects the
+// private decode path together with its authoritative stable audio inventory.
+func (m *Module) ResolveAudioAnalysisSubject(
+	ctx context.Context,
+	instructions api.AudioAnalysisInstructions,
+) (api.AudioAnalysisSubject, error) {
+	normalized, err := instructions.Normalize()
+	if err != nil {
+		return api.AudioAnalysisSubject{}, fmt.Errorf("prepared release: audio analysis instructions: %w", err)
+	}
+	owned, err := m.resolveEnvelope(ctx, normalized.Release)
+	if err != nil {
+		if _, ok := errors.AsType[*StalePreparationError](err); ok {
+			return api.AudioAnalysisSubject{}, fmt.Errorf("resolve audio-analysis source: %w", api.NewAudioAnalysisError(api.AudioAnalysisFailure{
+				Code:    api.AudioAnalysisFailureStaleSource,
+				Message: "the prepared audio source changed and must be refreshed",
+			}, err))
+		}
+		return api.AudioAnalysisSubject{}, err
+	}
+	release := owned.result.Release
+	if !release.Media.TrackCoverageComplete {
+		cause := &IncompatiblePreparationError{
+			SourcePath: release.Source.SourcePath,
+			Reason:     "audio stream mapping is not authoritative for this source",
+		}
+		return api.AudioAnalysisSubject{}, fmt.Errorf("resolve audio-analysis subject: %w", api.NewAudioAnalysisError(api.AudioAnalysisFailure{
+			Code:    api.AudioAnalysisFailureAmbiguousBinding,
+			Message: "prepared audio stream mapping is not authoritative",
+		}, cause))
+	}
+	tracks := make([]api.MediaTrackFacts, 0)
+	manifestFingerprint := ""
+	for _, track := range release.Media.Tracks {
+		if track.Kind != api.MediaTrackAudio || track.ResourceID != normalized.ResourceID {
+			continue
+		}
+		if manifestFingerprint == "" {
+			manifestFingerprint = track.ManifestFingerprint
+		}
+		if track.ManifestFingerprint != manifestFingerprint {
+			cause := &IncompatiblePreparationError{
+				SourcePath: release.Source.SourcePath,
+				Reason:     "audio track manifest is inconsistent",
+			}
+			return api.AudioAnalysisSubject{}, fmt.Errorf("resolve audio-analysis manifest: %w", api.NewAudioAnalysisError(api.AudioAnalysisFailure{
+				Code:    api.AudioAnalysisFailureStaleSource,
+				Message: "prepared audio facts no longer match one source manifest",
+			}, cause))
+		}
+		cloned := track
+		cloned.DetectedLanguages = append([]string(nil), track.DetectedLanguages...)
+		cloned.Languages = append([]string(nil), track.Languages...)
+		tracks = append(tracks, cloned)
+	}
+	if len(tracks) == 0 {
+		cause := &IncompatiblePreparationError{
+			SourcePath: release.Source.SourcePath,
+			Reason:     "prepared resource has no audio tracks",
+		}
+		return api.AudioAnalysisSubject{}, fmt.Errorf("resolve audio-analysis tracks: %w", api.NewAudioAnalysisError(api.AudioAnalysisFailure{
+			Code:    api.AudioAnalysisFailureNoAudio,
+			Message: "the prepared resource has no audio tracks",
+		}, cause))
+	}
+	if err := validateAudioAnalysisSelection(normalized, tracks, release.Media.PrimaryAudioTrackID); err != nil {
+		cause := &IncompatiblePreparationError{SourcePath: release.Source.SourcePath, Reason: err.Error()}
+		return api.AudioAnalysisSubject{}, fmt.Errorf("validate audio-analysis selection: %w", api.NewAudioAnalysisError(api.AudioAnalysisFailure{
+			Code:    api.AudioAnalysisFailureInvalidSelection,
+			Message: "the requested audio-track selection is invalid",
+		}, cause))
+	}
+	videoPath := strings.TrimSpace(owned.resources.videoPath)
+	if videoPath == "" {
+		cause := &IncompatiblePreparationError{
+			SourcePath: release.Source.SourcePath,
+			Reason:     "prepared resource has no decodable media path",
+		}
+		return api.AudioAnalysisSubject{}, fmt.Errorf("resolve audio-analysis media path: %w", api.NewAudioAnalysisError(api.AudioAnalysisFailure{
+			Code:    api.AudioAnalysisFailureUnsupportedSource,
+			Message: "the prepared resource has no decodable media path",
+		}, cause))
+	}
+	return api.AudioAnalysisSubject{
+		Release:             normalized.Release,
+		SourcePath:          release.Source.SourcePath,
+		VideoPath:           videoPath,
+		SourceFingerprint:   release.Compatibility.SourceFingerprint,
+		ResourceID:          normalized.ResourceID,
+		ManifestFingerprint: manifestFingerprint,
+		PrimaryTrackID:      release.Media.PrimaryAudioTrackID,
+		Tracks:              tracks,
+	}, nil
+}
+
+func validateAudioAnalysisSelection(instructions api.AudioAnalysisInstructions, tracks []api.MediaTrackFacts, primaryTrackID string) error {
+	byID := make(map[string]int, len(tracks))
+	for index, track := range tracks {
+		byID[track.ID] = index
+	}
+	lastIndex := -1
+	for _, trackID := range instructions.TrackIDs {
+		index, ok := byID[trackID]
+		if !ok {
+			return errors.New("audio analysis selection contains an unknown track")
+		}
+		if index <= lastIndex {
+			return errors.New("audio analysis tracks must use prepared source order")
+		}
+		lastIndex = index
+	}
+	switch instructions.Selection {
+	case api.AudioAnalysisSelectionPrimary:
+		if strings.TrimSpace(primaryTrackID) == "" || len(instructions.TrackIDs) != 1 || instructions.TrackIDs[0] != primaryTrackID {
+			return errors.New("primary audio track is ambiguous")
+		}
+	case api.AudioAnalysisSelectionAll:
+		if len(instructions.TrackIDs) != len(tracks) {
+			return errors.New("all audio tracks must be selected")
+		}
+		for index := range tracks {
+			if instructions.TrackIDs[index] != tracks[index].ID {
+				return errors.New("all audio tracks must use prepared source order")
+			}
+		}
+	case api.AudioAnalysisSelectionSelected:
+	}
+	return nil
+}
+
 // ResolveScreenshotSubject validates and projects one exact prepared
 // generation into the screenshot module's operation-owned read model.
 func (m *Module) ResolveScreenshotSubject(ctx context.Context, input api.MediaPlanInput) (api.ScreenshotSubject, error) {

@@ -3,6 +3,7 @@
 
 import type {
   ActiveInputSnapshot,
+  AudioAnalysisInstructions,
   ContinueReleaseWorkflowRequest,
   FramePreview,
   MediaPlan,
@@ -45,6 +46,24 @@ export type ReleaseWorkflowPorts = Readonly<{
   current(workflowID: string, signal: AbortSignal): Promise<ReleaseWorkflowCurrent>;
   operation(workflowID: string, operationID: string, signal: AbortSignal): Promise<Operation>;
   cancelOperation(workflowID: string, operationID: string, signal: AbortSignal): Promise<Operation>;
+  analyzeAudio(
+    current: ReleaseWorkflowCurrent,
+    instructions: AudioAnalysisInstructions,
+    idempotencyKey: string,
+    signal: AbortSignal,
+  ): Promise<ReleaseWorkflowCurrent>;
+  setAudioAnalysisEnabled(
+    current: ReleaseWorkflowCurrent,
+    enabled: boolean,
+    idempotencyKey: string,
+    signal: AbortSignal,
+  ): Promise<ReleaseWorkflowCurrent>;
+  audioAnalysisURL(
+    current: ReleaseWorkflowCurrent,
+    analysisID: string,
+    analysisRevision: number,
+    artifactID: string,
+  ): string;
   mediaPlan(workflowID: string, signal: AbortSignal): Promise<MediaPlan>;
   previewFrame(
     current: ReleaseWorkflowCurrent,

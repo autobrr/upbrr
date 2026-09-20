@@ -21,8 +21,8 @@ func TestEveryCanonicalCLIFlagIsClassifiedForCompositeUpload(t *testing.T) {
 
 	registered := commandFlagNames(newUploadRootCommand(cliIO{}, nil).Flags())
 	aliases := cliFlagAliases()
-	if len(registered) != 169 || len(aliases) != 54 {
-		t.Fatalf("upload flag inventory: registered=%d aliases=%d, want 169 and 54", len(registered), len(aliases))
+	if len(registered) != 172 || len(aliases) != 54 {
+		t.Fatalf("upload flag inventory: registered=%d aliases=%d, want 172 and 54", len(registered), len(aliases))
 	}
 	for alias, target := range aliases {
 		if _, exists := registered[alias]; !exists {
@@ -39,8 +39,8 @@ func TestEveryCanonicalCLIFlagIsClassifiedForCompositeUpload(t *testing.T) {
 		}
 		canonical[name] = struct{}{}
 	}
-	if len(canonical) != 115 {
-		t.Fatalf("canonical upload flags=%d, want 115", len(canonical))
+	if len(canonical) != 118 {
+		t.Fatalf("canonical upload flags=%d, want 118", len(canonical))
 	}
 
 	classified := cliCompositeFlagManifest()
@@ -93,7 +93,10 @@ func cliCompositeFlagManifest() map[string]cliCompositeFlagClass {
 		"aither",
 		"anime",
 		"alternate-title",
+		"audio-analysis",
+		"audio-images",
 		"audio-languages",
+		"audio-tracks",
 		"anon",
 		"asian",
 		"bhd",

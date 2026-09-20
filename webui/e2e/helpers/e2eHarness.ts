@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, rm, truncate, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -83,6 +83,10 @@ type E2EWorkspaceOptions = {
   screenshotCount?: number;
   useLargestPlaylist?: boolean;
   preparedMediaInfo?: boolean;
+  /** Provides a small valid PCM source and exposes authoritative audio-track facts. */
+  audioAnalysis?: boolean;
+  /** Overrides the synthetic audio duration; long fixtures are written sparsely. */
+  audioAnalysisDurationSeconds?: number;
   /** Selects the fake metadata and source-name shape; defaults to a movie. */
   mediaKind?: "movie" | "tv";
 };
@@ -103,7 +107,11 @@ export async function createE2EWorkspace(options: E2EWorkspaceOptions = {}): Pro
   const dbPath = path.join(root, "upbrr-e2e.db");
   const authCounterPath = path.join(root, "auth-counters.json");
   const configPath = path.join(root, "config.yaml");
-  await writeFile(sourcePath, "e2e media fixture\n");
+  if (options.audioAnalysis) {
+    await writeStereoPCMFixture(sourcePath, options.audioAnalysisDurationSeconds ?? 2, 48_000);
+  } else {
+    await writeFile(sourcePath, "e2e media fixture\n");
+  }
   await writeFile(screenshotPath, png1x1);
   if (options.preparedMediaInfo) {
     await writeFile(mediaInfoPath, "General\nUnique ID : e2e-unique-id\nVideo\nFormat : AVC\n");
@@ -123,6 +131,7 @@ export async function createE2EWorkspace(options: E2EWorkspaceOptions = {}): Pro
     UPBRR_E2E_MEDIAINFO_PATH: options.preparedMediaInfo ? mediaInfoPath : "",
     UPBRR_E2E_AUTH_COUNTER_PATH: authCounterPath,
     UPBRR_E2E_MEDIA_KIND: mediaKind,
+    UPBRR_E2E_AUDIO_ANALYSIS: options.audioAnalysis ? "1" : "",
   };
   return {
     root,
@@ -138,6 +147,70 @@ export async function createE2EWorkspace(options: E2EWorkspaceOptions = {}): Pro
       await rm(root, { recursive: true, force: true });
     },
   };
+}
+
+async function writeStereoPCMFixture(
+  outputPath: string,
+  durationSeconds: number,
+  sampleRate: number,
+): Promise<void> {
+  if (!Number.isInteger(durationSeconds) || durationSeconds <= 0) {
+    throw new Error("audio analysis fixture duration must be a positive whole number");
+  }
+  const dataSize = stereoPCMDataSize(durationSeconds, sampleRate);
+  if (durationSeconds > 10) {
+    await writeFile(outputPath, stereoPCMHeader(dataSize, sampleRate));
+    await truncate(outputPath, 44 + dataSize);
+    return;
+  }
+  await writeFile(outputPath, stereoPCMFixture(durationSeconds, sampleRate));
+}
+
+function stereoPCMDataSize(durationSeconds: number, sampleRate: number): number {
+  return durationSeconds * sampleRate * 2 * 2;
+}
+
+function stereoPCMHeader(dataSize: number, sampleRate: number): Buffer {
+  const channels = 2;
+  const bytesPerSample = 2;
+  const header = Buffer.alloc(44);
+
+  header.write("RIFF", 0, "ascii");
+  header.writeUInt32LE(36 + dataSize, 4);
+  header.write("WAVE", 8, "ascii");
+  header.write("fmt ", 12, "ascii");
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * channels * bytesPerSample, 28);
+  header.writeUInt16LE(channels * bytesPerSample, 32);
+  header.writeUInt16LE(bytesPerSample * 8, 34);
+  header.write("data", 36, "ascii");
+  header.writeUInt32LE(dataSize, 40);
+  return header;
+}
+
+function stereoPCMFixture(durationSeconds: number, sampleRate: number): Buffer {
+  const channels = 2;
+  const bytesPerSample = 2;
+  const frameCount = durationSeconds * sampleRate;
+  const dataSize = stereoPCMDataSize(durationSeconds, sampleRate);
+  const fixture = Buffer.alloc(44 + dataSize);
+  stereoPCMHeader(dataSize, sampleRate).copy(fixture);
+
+  for (let frame = 0; frame < frameCount; frame += 1) {
+    const offset = 44 + frame * channels * bytesPerSample;
+    fixture.writeInt16LE(
+      Math.round(Math.sin((2 * Math.PI * 375 * frame) / sampleRate) * 16_000),
+      offset,
+    );
+    fixture.writeInt16LE(
+      Math.round(Math.sin((2 * Math.PI * 750 * frame) / sampleRate) * 8_000),
+      offset + bytesPerSample,
+    );
+  }
+  return fixture;
 }
 
 /** Adds a second normal-file source for active-input switching scenarios. */

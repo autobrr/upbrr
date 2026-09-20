@@ -461,6 +461,9 @@ func normalizeState(state *State) {
 	if state.Media == nil {
 		state.Media = make(map[api.MediaArtifactSetID]api.MediaArtifactSet)
 	}
+	if state.AudioAnalyses == nil {
+		state.AudioAnalyses = make(map[api.AudioAnalysisResultID]api.AudioAnalysisResult)
+	}
 	if state.Descriptions == nil {
 		state.Descriptions = make(map[api.DescriptionSetID]api.DescriptionSet)
 	}

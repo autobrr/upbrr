@@ -19,6 +19,7 @@ const (
 	OperationKindMedia           OperationKind = "media"
 	OperationKindDescription     OperationKind = "description"
 	OperationKindImageHosting    OperationKind = "image_hosting"
+	OperationKindAudioAnalysis   OperationKind = "analyze_audio"
 )
 
 // OperationFailureCode is a stable machine-readable failure classification.
@@ -44,6 +45,7 @@ const (
 	OperationFailureDryRunClientInjection    OperationFailureCode = "dry_run_client_injection_failed"
 	OperationFailureClientInjection          OperationFailureCode = "client_injection_failed"
 	OperationFailureImageHostUnavailable     OperationFailureCode = "image_host_unavailable"
+	OperationFailureAudioAnalysis            OperationFailureCode = "audio_analysis_failed"
 	OperationFailureUnknownOutcome           OperationFailureCode = "unknown_submission_outcome"
 	OperationFailureInternal                 OperationFailureCode = "internal"
 )
@@ -67,10 +69,11 @@ const (
 // OperationFailure is safe for CLI and browser transport. Raw causes are
 // intentionally excluded.
 type OperationFailure struct {
-	Code      OperationFailureCode
-	Operation OperationKind
-	Message   string
-	Recovery  OperationRecovery
+	Code              OperationFailureCode
+	Operation         OperationKind
+	AudioAnalysisCode AudioAnalysisFailureCode `json:"AudioAnalysisCode,omitempty"`
+	Message           string
+	Recovery          OperationRecovery
 }
 
 // OperationError preserves one wrapped cause while exposing only its safe

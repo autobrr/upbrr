@@ -88,6 +88,20 @@ func CommandFromRequest(request any) (Command, error) {
 			Instructions:     request.Instructions,
 			IdempotencyKey:   request.IdempotencyKey,
 		}, nil
+	case api.AnalyzeReleaseWorkflowAudioRequest:
+		return AnalyzeAudioCommand{
+			WorkflowID:       request.WorkflowID,
+			ExpectedRevision: request.ExpectedRevision,
+			Instructions:     request.Instructions,
+			IdempotencyKey:   request.IdempotencyKey,
+		}, nil
+	case api.SetReleaseWorkflowAudioAnalysisEnabledRequest:
+		return SetAudioAnalysisEnabledCommand{
+			WorkflowID:       request.WorkflowID,
+			ExpectedRevision: request.ExpectedRevision,
+			Enabled:          request.Enabled,
+			IdempotencyKey:   request.IdempotencyKey,
+		}, nil
 	case api.SetReleaseWorkflowMediaSelectionRequest:
 		return SetMediaSelectionCommand{
 			WorkflowID:       request.WorkflowID,

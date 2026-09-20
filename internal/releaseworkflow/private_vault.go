@@ -42,7 +42,7 @@ type PrivateArtifactVault struct {
 	mu       sync.Mutex
 	entries  map[privateResourceKey]privateResourceEntry
 	consumed map[privateResourceKey]struct{}
-	codecs   map[string]func([]byte) (any, error)
+	codecs   map[string]PrivateResourceCodec
 }
 
 // NewPrivateArtifactVault opens or creates one restricted private artifact root.
@@ -65,12 +65,22 @@ func NewPrivateArtifactVault(root string, codecs ...PrivateResourceCodec) (*Priv
 		root:     absolute,
 		entries:  make(map[privateResourceKey]privateResourceEntry),
 		consumed: make(map[privateResourceKey]struct{}),
-		codecs: map[string]func([]byte) (any, error){
-			privateResourceKindMediaPreview:                decodeMediaPreviewContent,
-			privateResourceKindStagedMedia:                 decodeStagedMediaContent,
-			privateResourceKindDescriptions:                decodeDescriptionInstructions,
-			privateResourceKindOperationCommand:            decodeDurableOperationCommand,
-			privateResourceKindRegisteredArtifactAuthority: decodeRegisteredArtifactAuthority,
+		codecs: map[string]PrivateResourceCodec{
+			privateResourceKindMediaPreview: {
+				Kind: privateResourceKindMediaPreview, Decode: decodeMediaPreviewContent,
+			},
+			privateResourceKindStagedMedia: {
+				Kind: privateResourceKindStagedMedia, Decode: decodeStagedMediaContent,
+			},
+			privateResourceKindDescriptions: {
+				Kind: privateResourceKindDescriptions, Decode: decodeDescriptionInstructions,
+			},
+			privateResourceKindOperationCommand: {
+				Kind: privateResourceKindOperationCommand, Decode: decodeDurableOperationCommand,
+			},
+			privateResourceKindRegisteredArtifactAuthority: {
+				Kind: privateResourceKindRegisteredArtifactAuthority, Decode: decodeRegisteredArtifactAuthority,
+			},
 		},
 	}
 	for _, codec := range codecs {
@@ -81,7 +91,7 @@ func NewPrivateArtifactVault(root string, codecs ...PrivateResourceCodec) (*Priv
 		if _, exists := vault.codecs[kind]; exists {
 			return nil, fmt.Errorf("private artifact vault codec %q is duplicated", kind)
 		}
-		vault.codecs[kind] = codec.Decode
+		vault.codecs[kind] = codec
 	}
 	return vault, nil
 }
@@ -180,6 +190,24 @@ func (v *PrivateArtifactVault) Delete(ownerID string, workflowID api.WorkflowID,
 	}
 	v.mu.Lock()
 	entry, ok := v.entries[key]
+	if !ok {
+		metadata, metadataErr := v.readMetadataLocked(key)
+		if metadataErr != nil && !errors.Is(metadataErr, ErrPrivateResourceUnavailable) {
+			v.mu.Unlock()
+			return
+		}
+		if metadataErr == nil {
+			value, decodeErr := v.decodeResourceForReleaseLocked(v.metadataPath(key), metadata)
+			if decodeErr != nil {
+				v.mu.Unlock()
+				return
+			}
+			if value != nil {
+				entry = privateResourceEntry{value: value, expiresAt: metadata.ExpiresAt}
+				ok = true
+			}
+		}
+	}
 	delete(v.entries, key)
 	delete(v.consumed, key)
 	_ = removeIfPresent(v.blobFilePath(key))
@@ -241,7 +269,8 @@ func (v *PrivateArtifactVault) deleteWorkflowExcept(
 	}
 	if ownerID == "" || strings.TrimSpace(string(workflowID)) == "" {
 		if invalidateMemoryOnFailure {
-			return v.removeWorkflowEntries(ownerID, workflowID, preserved), errors.New("private artifact vault workflow scope is required")
+			return v.removeWorkflowEntries(ownerID, workflowID, preserved),
+				errors.New("private artifact vault workflow scope is required")
 		}
 		return nil, errors.New("private artifact vault workflow scope is required")
 	}
@@ -261,6 +290,12 @@ func (v *PrivateArtifactVault) deleteWorkflowExcept(
 			return nil, metadataErr
 		}
 		metadataFilesToDelete := make([]string, 0)
+		loadedDigests := make(map[string]struct{})
+		for key := range v.entries {
+			if key.ownerID == ownerID && key.workflowID == workflowID {
+				loadedDigests[privateKeyDigest(key)] = struct{}{}
+			}
+		}
 		for _, metadataFile := range metadataFiles {
 			payload, readErr := os.ReadFile(metadataFile)
 			if errors.Is(readErr, os.ErrNotExist) {
@@ -276,6 +311,15 @@ func (v *PrivateArtifactVault) deleteWorkflowExcept(
 			if _, ok := preservedDigests[metadata.KeyDigest]; ok {
 				continue
 			}
+			if _, loaded := loadedDigests[metadata.KeyDigest]; !loaded {
+				resource, decodeErr := v.decodeResourceForReleaseLocked(metadataFile, metadata)
+				if decodeErr != nil {
+					return nil, decodeErr
+				}
+				if resource != nil {
+					resources = append(resources, resource)
+				}
+			}
 			metadataFilesToDelete = append(metadataFilesToDelete, metadataFile)
 		}
 		for _, metadataFile := range metadataFilesToDelete {
@@ -287,7 +331,8 @@ func (v *PrivateArtifactVault) deleteWorkflowExcept(
 				return nil, removeErr
 			}
 		}
-		return v.removeWorkflowEntriesLocked(ownerID, workflowID, preserved), nil
+		resources = append(resources, v.removeWorkflowEntriesLocked(ownerID, workflowID, preserved)...)
+		return resources, nil
 	}()
 }
 
@@ -340,7 +385,9 @@ func (v *PrivateArtifactVault) InvalidateAll() {
 	clear(v.consumed)
 	v.mu.Unlock()
 	for _, resource := range resources {
-		releasePrivateResource(resource)
+		if _, durable := resource.(DurablePrivateResource); !durable {
+			releasePrivateResource(resource)
+		}
 	}
 }
 
@@ -350,32 +397,128 @@ func (v *PrivateArtifactVault) CleanupExpired(now time.Time) error {
 		return errors.New("private artifact vault cleanup time is required")
 	}
 	v.mu.Lock()
-	defer v.mu.Unlock()
 	metadataFiles, err := v.metadataFilesLocked()
 	if err != nil {
+		v.mu.Unlock()
 		return err
 	}
+	type cleanupCandidate struct {
+		metadataFile string
+		metadata     privateArtifactMetadata
+		resource     any
+	}
+	candidates := make([]cleanupCandidate, 0)
 	for _, metadataFile := range metadataFiles {
 		payload, err := os.ReadFile(metadataFile)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
 		if err != nil {
+			v.mu.Unlock()
 			return fmt.Errorf("private artifact vault read cleanup metadata: %w", err)
 		}
 		var metadata privateArtifactMetadata
 		if err := json.Unmarshal(payload, &metadata); err != nil {
-			return fmt.Errorf("private artifact vault decode cleanup metadata: %w", err)
+			v.mu.Unlock()
+			return fmt.Errorf("private artifact vault decode cleanup metadata: %w", errors.Join(ErrPrivateResourceIntegrity, err))
+		}
+		base := strings.TrimSuffix(metadataFile, ".json")
+		if metadata.KeyDigest == "" || filepath.Base(base) != metadata.KeyDigest || metadata.ScopeDigest == "" ||
+			metadata.Kind == "" || metadata.Digest == "" || metadata.ExpiresAt.IsZero() || metadata.RefCount == 0 {
+			v.mu.Unlock()
+			return fmt.Errorf("private artifact vault validate cleanup metadata: %w", ErrPrivateResourceIntegrity)
 		}
 		if metadata.ExpiresAt.After(now) && metadata.ConsumedAt.IsZero() {
 			continue
 		}
-		base := strings.TrimSuffix(metadataFile, ".json")
-		if err := removeIfPresent(base + ".blob"); err != nil {
-			return err
+		resource, decodeErr := v.decodeResourceForReleaseLocked(metadataFile, metadata)
+		if decodeErr != nil {
+			v.mu.Unlock()
+			return fmt.Errorf("private artifact vault decode expired resource: %w", decodeErr)
 		}
-		if err := removeIfPresent(metadataFile); err != nil {
-			return err
+		candidates = append(candidates, cleanupCandidate{
+			metadataFile: metadataFile,
+			metadata:     metadata,
+			resource:     resource,
+		})
+	}
+	resources := make([]any, 0, len(candidates))
+	resourceDigests := make(map[string]struct{}, len(candidates))
+	expiredDigests := make(map[string]struct{}, len(candidates))
+	var cleanupErr error
+	for _, candidate := range candidates {
+		if err := removePrivateResourceFiles(candidate.metadataFile); err != nil {
+			cleanupErr = err
+			break
+		}
+		expiredDigests[candidate.metadata.KeyDigest] = struct{}{}
+		if candidate.resource != nil {
+			resources = append(resources, candidate.resource)
+			resourceDigests[candidate.metadata.KeyDigest] = struct{}{}
 		}
 	}
-	return nil
+	for key, entry := range v.entries {
+		if !entry.expiresAt.After(now) {
+			digest := privateKeyDigest(key)
+			if cleanupErr != nil {
+				if _, removed := expiredDigests[digest]; !removed {
+					continue
+				}
+			}
+			if _, alreadyAdded := resourceDigests[digest]; !alreadyAdded {
+				resources = append(resources, entry.value)
+			}
+			delete(v.entries, key)
+			delete(v.consumed, key)
+		}
+	}
+	for key := range v.consumed {
+		if _, expired := expiredDigests[privateKeyDigest(key)]; expired {
+			delete(v.consumed, key)
+		}
+	}
+	v.mu.Unlock()
+	for _, resource := range resources {
+		releasePrivateResource(resource)
+	}
+	return cleanupErr
+}
+
+func removePrivateResourceFiles(metadataFile string) error {
+	base := strings.TrimSuffix(metadataFile, ".json")
+	return errors.Join(removeIfPresent(base+".blob"), removeIfPresent(metadataFile))
+}
+
+func (v *PrivateArtifactVault) decodeResourceForReleaseLocked(
+	metadataFile string,
+	metadata privateArtifactMetadata,
+) (any, error) {
+	if !metadata.ConsumedAt.IsZero() {
+		return nil, nil
+	}
+	payload, err := os.ReadFile(strings.TrimSuffix(metadataFile, ".json") + ".blob")
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrPrivateResourceIntegrity
+	}
+	if err != nil {
+		return nil, fmt.Errorf("private artifact vault read release payload: %w", err)
+	}
+	if privatePayloadDigest(payload) != metadata.Digest {
+		return nil, ErrPrivateResourceIntegrity
+	}
+	codec, ok := v.codecs[metadata.Kind]
+	if !ok {
+		return nil, fmt.Errorf("private artifact vault release codec %q: %w", metadata.Kind, ErrPrivateResourceUnavailable)
+	}
+	decode := codec.DecodeForRelease
+	if decode == nil {
+		decode = codec.Decode
+	}
+	value, err := decode(payload)
+	if err != nil {
+		return nil, fmt.Errorf("private artifact vault decode release %s: %w", metadata.Kind, err)
+	}
+	return value, nil
 }
 
 func (v *PrivateArtifactVault) metadataFilesLocked() ([]string, error) {
@@ -417,6 +560,13 @@ func (v *PrivateArtifactVault) getLocked(key privateResourceKey, now time.Time) 
 		return nil, ErrPrivateResourceConsumed
 	}
 	if !metadata.ExpiresAt.After(now) {
+		value, decodeErr := v.decodeResourceForReleaseLocked(v.metadataPath(key), metadata)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		if value != nil {
+			releasePrivateResource(value)
+		}
 		_ = removeIfPresent(v.blobFilePath(key))
 		_ = removeIfPresent(v.metadataPath(key))
 		return nil, ErrPrivateResourceUnavailable
@@ -431,11 +581,11 @@ func (v *PrivateArtifactVault) getLocked(key privateResourceKey, now time.Time) 
 	if privatePayloadDigest(payload) != metadata.Digest {
 		return nil, ErrPrivateResourceIntegrity
 	}
-	decode := v.codecs[metadata.Kind]
-	if decode == nil {
+	codec, ok := v.codecs[metadata.Kind]
+	if !ok || codec.Decode == nil {
 		return nil, ErrPrivateResourceUnavailable
 	}
-	value, err := decode(payload)
+	value, err := codec.Decode(payload)
 	if err != nil {
 		return nil, fmt.Errorf("private artifact vault decode %s: %w", metadata.Kind, err)
 	}

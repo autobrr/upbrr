@@ -234,6 +234,12 @@ Screenshots and Images:
       Override image host
   -skip-imagehost-upload, --skip-imagehost-upload, -siu
       Skip automatic image host uploads
+  -audio-analysis, --audio-analysis
+      Generate local PNGs in managed release temporary storage before upload
+  -audio-tracks, --audio-tracks string
+      Audio tracks: primary (default), all, or comma-separated one-based audio ordinals
+  -audio-images, --audio-images string
+      Audio images: both (default), waveform, or spectrogram
   -descfile, --descfile, -df string
       Custom description file path
   -desclink, --desclink, -pb string

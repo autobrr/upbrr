@@ -246,6 +246,7 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 			TrackAudioLanguages:                  append([]string(nil), meta.TrackAudioLanguages...),
 			TrackSubtitleLanguages:               append([]string(nil), meta.TrackSubtitleLanguages...),
 			Tracks:                               cloneCollectedMediaTracks(meta.MediaTracks),
+			PrimaryAudioTrackID:                  meta.PrimaryAudioTrackID,
 			TrackCoverageComplete:                meta.TrackCoverageComplete,
 			AudioLanguagesProvenance:             meta.AudioLanguagesProvenance,
 			SubtitleLanguagesProvenance:          meta.SubtitleLanguagesProvenance,

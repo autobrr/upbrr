@@ -35,6 +35,7 @@ type cliReleaseWorkflowCore interface {
 	LiveTestEnabled() bool
 	StartLiveTestReleaseWorkflowUpload(context.Context, string, api.CreateReleaseWorkflowUploadRequest) (releaseworkflow.CommandResult, error)
 	ContinueReleaseWorkflow(context.Context, string, api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error)
+	StartReleaseWorkflow(context.Context, string, releaseworkflow.Command) (api.WorkflowOperationStatus, error)
 	StartReleaseWorkflowUpload(
 		context.Context,
 		string,
@@ -68,6 +69,13 @@ type cliReleaseWorkflowCore interface {
 		api.WorkflowID,
 		api.WorkflowOperationID,
 	) (api.WorkflowOperationStatus, error)
+	ReleaseWorkflowAudioAnalysisArtifactPath(
+		context.Context,
+		string,
+		api.WorkflowID,
+		api.AudioAnalysisRef,
+		api.PublicResourceID,
+	) (string, error)
 }
 
 type cliWorkflowSession struct {
@@ -306,6 +314,9 @@ func (s *cliWorkflowSession) waitForOperation(
 		operation.Status == api.StageStatusBlocked ||
 		operation.Status == api.StageStatusPartial ||
 		operation.Status == api.StageStatusExecuted {
+		return operation, nil
+	}
+	if operation.Operation == api.OperationKindAudioAnalysis && operation.Status == api.StageStatusFailed && operation.Result != nil {
 		return operation, nil
 	}
 	if len(operation.Failures) > 0 {
@@ -808,7 +819,148 @@ func (s *cliWorkflowSession) complete(
 	if strings.TrimSpace(s.uploadRequest.SourcePath) == "" {
 		return 0, errors.New("upbrr: composite upload source is unavailable")
 	}
+	if s.uploadRequest.Options.AudioAnalysis {
+		if err := s.completeAudioAnalysis(ctx); err != nil {
+			return 0, err
+		}
+	}
 	return s.completeComposite(ctx, debug, reader, cfg, logger)
+}
+
+func (s *cliWorkflowSession) completeAudioAnalysis(ctx context.Context) error {
+	if s.current.Release == nil {
+		return errors.New("upbrr: audio analysis requires a prepared release")
+	}
+	release := s.current.Release.Release
+	audioTracks := make([]api.MediaTrackFacts, 0)
+	for _, track := range release.Media.Tracks {
+		if track.Kind == api.MediaTrackAudio {
+			audioTracks = append(audioTracks, track)
+		}
+	}
+	if len(audioTracks) == 0 {
+		return errors.New("upbrr: requested audio analysis but the prepared source has no audio tracks")
+	}
+	selection, ordinals, err := parseCLIAudioTrackSelection(s.uploadRequest.Options.AudioTracks)
+	if err != nil {
+		return err
+	}
+	selected := make([]api.MediaTrackFacts, 0, len(audioTracks))
+	switch selection {
+	case api.AudioAnalysisSelectionPrimary:
+		for _, track := range audioTracks {
+			if track.ID == release.Media.PrimaryAudioTrackID {
+				selected = append(selected, track)
+				break
+			}
+		}
+		if len(selected) == 0 {
+			return errors.New("upbrr: prepared primary audio track is unavailable or ambiguous")
+		}
+	case api.AudioAnalysisSelectionAll:
+		selected = append(selected, audioTracks...)
+	case api.AudioAnalysisSelectionSelected:
+		wanted := make(map[int]struct{}, len(ordinals))
+		for _, ordinal := range ordinals {
+			wanted[ordinal] = struct{}{}
+		}
+		for _, track := range audioTracks {
+			if _, ok := wanted[track.Ordinal]; ok {
+				selected = append(selected, track)
+				delete(wanted, track.Ordinal)
+			}
+		}
+		if len(wanted) != 0 {
+			return errors.New("upbrr: audio-tracks contains an ordinal not present in the prepared source")
+		}
+	}
+	resourceID := selected[0].ResourceID
+	trackIDs := make([]string, len(selected))
+	for index, track := range selected {
+		if track.ResourceID != resourceID {
+			return errors.New("upbrr: selected audio tracks do not belong to one decodable prepared resource")
+		}
+		trackIDs[index] = track.ID
+	}
+	variants, err := parseCLIAudioVariants(s.uploadRequest.Options.AudioImages)
+	if err != nil {
+		return err
+	}
+	request := api.AnalyzeReleaseWorkflowAudioRequest{
+		WorkflowID:       s.current.Workflow.ID,
+		ExpectedRevision: s.current.Workflow.Revision,
+		IdempotencyKey:   s.nextIdempotencyKey("audio-analysis"),
+		Instructions: api.AudioAnalysisInstructions{
+			Release:        api.ReleaseRef{SourcePath: release.Source.SourcePath, Generation: release.Generation},
+			ResourceID:     resourceID,
+			Selection:      selection,
+			TrackIDs:       trackIDs,
+			Variants:       variants,
+			ProfileVersion: api.AudioAnalysisProfileVersion,
+		},
+	}
+	command, err := releaseworkflow.CommandFromRequest(request)
+	if err != nil {
+		return fmt.Errorf("upbrr: prepare audio analysis command: %w", err)
+	}
+	operation, err := s.core.StartReleaseWorkflow(ctx, cliWorkflowOwnerID, command)
+	if err != nil {
+		return fmt.Errorf("upbrr: start audio analysis: %w", err)
+	}
+	operation, err = s.waitForOperation(ctx, operation)
+	if err != nil {
+		return err
+	}
+	current, err := s.core.CurrentReleaseWorkflow(ctx, cliWorkflowOwnerID, operation.WorkflowID)
+	if err != nil {
+		return fmt.Errorf("upbrr: load audio analysis result: %w", err)
+	}
+	s.current = current
+	if current.AudioAnalysis == nil || current.Workflow.AudioAnalysis == nil {
+		return errors.New("upbrr: audio analysis produced no retained result")
+	}
+	analysis := current.AudioAnalysis
+	analysisRef := *current.Workflow.AudioAnalysis
+	for _, track := range analysis.Tracks {
+		for _, artifact := range track.Artifacts {
+			if artifact.Status != api.StageStatusCompleted {
+				continue
+			}
+			pathValue, pathErr := s.core.ReleaseWorkflowAudioAnalysisArtifactPath(
+				ctx, cliWorkflowOwnerID, current.Workflow.ID, analysisRef, artifact.ID,
+			)
+			if pathErr != nil {
+				return fmt.Errorf("upbrr: resolve audio analysis artifact: %w", pathErr)
+			}
+			fmt.Fprintf(
+				s.streams.out,
+				"Audio analysis resource 1 track %d %s: %s\n",
+				track.Ordinal,
+				artifact.Variant,
+				//logpolicy:allow local CLI output intentionally exposes an owner-authorized retained artifact path
+				pathValue,
+			)
+		}
+		if track.Failure != nil {
+			fmt.Fprintf(s.streams.errOut, "Audio track %d failed: %s\n", track.Ordinal, logging.SanitizeMessage(track.Failure.Message))
+		}
+		for _, artifact := range track.Artifacts {
+			if artifact.Failure != nil {
+				fmt.Fprintf(
+					s.streams.errOut,
+					"Audio track %d %s failed: %s\n",
+					track.Ordinal,
+					artifact.Variant,
+					logging.SanitizeMessage(artifact.Failure.Message),
+				)
+			}
+		}
+	}
+	fmt.Fprintf(s.streams.out, "Audio analysis artifacts are retained locally until %s.\n", analysis.ExpiresAt.Local().Format(time.RFC3339))
+	if analysis.Status == api.StageStatusPartial || analysis.Status == api.StageStatusFailed {
+		return fmt.Errorf("upbrr: audio analysis completed with status %s", analysis.Status)
+	}
+	return nil
 }
 
 func cliProjectionInstructions(request api.Request) map[api.TrackerID]api.TrackerProjectionInstructions {

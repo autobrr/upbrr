@@ -4,13 +4,16 @@
 package webserver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -106,5 +109,41 @@ func TestRetiredReleaseWorkflowAppStageRoutesAreNotRegistered(t *testing.T) {
 		if _, pattern := mux.Handler(request); pattern != "" {
 			t.Fatalf("retired app stage route %s remains registered as %s", method, pattern)
 		}
+	}
+}
+
+func TestReleaseWorkflowAppAudioAnalysisArtifactUsesAuthenticatedSessionAuthority(t *testing.T) {
+	t.Parallel()
+
+	server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state.db"))
+	current, err := server.sessions.Create("admin", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coreFake := &audioAnalysisArtifactCoreFake{expectedOwner: current.ID}
+	server.backend.replaceRuntime(config.Config{}, CoreCapabilities{ReleaseWorkflow: coreFake}, nil)
+	mux := http.NewServeMux()
+	server.registerReleaseWorkflowAppRoutes(mux)
+	request := httptest.NewRequestWithContext(
+		context.Background(), http.MethodGet,
+		"/api/app/release-workflow-audio-analysis?workflowId=workflow-1&analysisId=analysis-1&analysisRevision=4&artifactId=artifact-1", nil,
+	)
+	request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: current.ID})
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Body.String() != "synthetic-png" ||
+		coreFake.owner != current.ID || coreFake.analysis.Revision != 4 || coreFake.artifactID != "artifact-1" {
+		t.Fatalf("app artifact status=%d owner=%q analysis=%#v artifact=%q body=%q", response.Code, coreFake.owner, coreFake.analysis, coreFake.artifactID, response.Body.String())
+	}
+	if response.Header().Get("X-Content-Type-Options") != "nosniff" || response.Header().Get("Cache-Control") != "private, no-store" ||
+		response.Header().Get("Content-Disposition") != `inline; filename="audio-analysis.png"` {
+		t.Fatalf("app artifact headers = %v", response.Header())
+	}
+
+	unauthorized := httptest.NewRecorder()
+	request = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/app/release-workflow-audio-analysis", nil)
+	mux.ServeHTTP(unauthorized, request)
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized app artifact status = %d", unauthorized.Code)
 	}
 }

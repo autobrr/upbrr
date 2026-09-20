@@ -1548,6 +1548,49 @@ func TestCLIInputFlagsRejectConflicts(t *testing.T) {
 	}
 }
 
+func TestCLIAudioAnalysisOptionsRequireEnablementAndNormalizeSelection(t *testing.T) {
+	t.Parallel()
+
+	if _, _, _, err := parseCLIOptions([]string{"--audio-tracks", "primary", "example.mkv"}); err == nil {
+		t.Fatal("audio-tracks without audio-analysis succeeded")
+	}
+	if _, _, _, err := parseCLIOptions([]string{"--audio-images=both", "example.mkv"}); err == nil {
+		t.Fatal("explicit default audio-images without audio-analysis succeeded")
+	}
+	opts, visited, paths, err := parseCLIOptions([]string{
+		"--audio-analysis", "--audio-tracks", "3,1,3", "--audio-images", "spectrogram", "example.mkv",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection, ordinals, err := parseCLIAudioTrackSelection(opts.AudioTracks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	variants, err := parseCLIAudioVariants(opts.AudioImages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opts.AudioAnalysis || !visited["audio-analysis"] || selection != api.AudioAnalysisSelectionSelected ||
+		!slices.Equal(ordinals, []int{3, 1}) || !slices.Equal(variants, []api.AudioAnalysisVariant{api.AudioAnalysisSpectrogram}) ||
+		!slices.Equal(paths, []string{"example.mkv"}) {
+		t.Fatalf("audio options = %#v selection=%q ordinals=%v variants=%v visited=%v paths=%v", opts, selection, ordinals, variants, visited, paths)
+	}
+}
+
+func TestCLIAudioAnalysisOptionsRejectMalformedSelection(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{"", "0", "-1", "1,,2", "all,2", "primary,2", "nope"} {
+		if _, _, err := parseCLIAudioTrackSelection(value); err == nil {
+			t.Fatalf("audio track selection %q succeeded", value)
+		}
+	}
+	if _, err := parseCLIAudioVariants("jpeg"); err == nil {
+		t.Fatal("unsupported audio image variant succeeded")
+	}
+}
+
 func TestCLIInputFlagOccurrenceSkipsValuesAndLiteralPaths(t *testing.T) {
 	t.Parallel()
 	for _, args := range [][]string{

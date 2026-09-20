@@ -48,6 +48,22 @@ Run `ffmpeg -version` in the same environment that starts upbrr. On Windows, add
 
 The Web UI **Application Details** surface reports detected FFmpeg capability without exposing the local executable path.
 
+## Audio analysis fails or is incomplete
+
+Audio analysis depends on the exact audio streams found during release preparation. If no tracks are available, return to Input and verify the source and prepared technical data. If an explicit ordinal is rejected, remember that `--audio-tracks` uses one-based audio-only ordinals rather than container-wide stream indexes.
+
+For a failed track or image:
+
+1. verify that the same FFmpeg installation can inspect the source;
+2. check whether the source changed after preparation;
+3. review the bounded failure message shown for that track and variant;
+4. retry the analysis to regenerate only compatible missing or failed images;
+5. re-prepare Input when the source or stream mapping changed.
+
+Sources with more than eight channels per selected track are unsupported. Malformed or truncated decoded sample data is rejected rather than rendered. Cancellation can leave a partial result; successful PNGs remain visible while failed or missing variants can be retried.
+
+FFmpeg streams decoded float PCM directly to upbrr. No full decoded-audio file is saved, but the source is decoded twice so complete-duration waveform and spectrogram geometry can be produced with bounded memory. Tracks are processed one at a time at their native sample rate and channel layout, without normalization, resampling, or downmixing.
+
 ## A multi-disc source is rejected
 
 Multi-disc support accepts extracted, homogeneous DVD or BDMV directory collections. Select the collection parent and use one marker type under every disc folder:
