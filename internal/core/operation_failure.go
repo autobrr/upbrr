@@ -37,6 +37,22 @@ func classifyOperationError(operation api.OperationKind, err error) error {
 	var authRequired *trackerauth.AuthRequiredError
 	var needs2FA *trackerauth.Needs2FAError
 	switch {
+	case errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown):
+		failure.Code = api.OperationFailureUnknownOutcome
+		failure.Message = "An earlier external operation has an unknown outcome. Recover the interrupted input and confirm its outcome before continuing."
+		failure.Recovery = api.OperationRecoveryConfirm
+	case errors.Is(err, api.ErrActiveInputBusy):
+		failure.Code = api.OperationFailureActiveInputBusy
+		failure.Message = "Another input is active. Close it or wait for its work to finish."
+		failure.Recovery = api.OperationRecoveryReviewAgain
+	case errors.Is(err, api.ErrActiveInputChanged), errors.Is(err, api.ErrActiveInputLeaseLost):
+		failure.Code = api.OperationFailureStaleReview
+		failure.Message = "The active input changed. Reload its current state before continuing."
+		failure.Recovery = api.OperationRecoveryReviewAgain
+	case errors.Is(err, preparedrelease.ErrSourceChanged):
+		failure.Code = api.OperationFailureStaleGeneration
+		failure.Message = "The source changed. Open the input again."
+		failure.Recovery = api.OperationRecoveryRefreshRelease
 	case errors.Is(err, api.ErrPreparationSourceRequired):
 		failure.Code = api.OperationFailureInvalidSource
 		failure.Message = "A source path is required."

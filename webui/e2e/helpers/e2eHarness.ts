@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, type Page } from "@playwright/test";
+import type { ActiveInputSnapshot } from "../../src/api/generated/release-workflow";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const repoRoot = path.resolve(here, "../../..");
@@ -137,6 +138,17 @@ export async function createE2EWorkspace(options: E2EWorkspaceOptions = {}): Pro
       await rm(root, { recursive: true, force: true });
     },
   };
+}
+
+/** Adds a second normal-file source for active-input switching scenarios. */
+export async function createAlternateSourceFixture(workspace: E2EWorkspace): Promise<string> {
+  const sourcePath = path.join(
+    workspace.root,
+    "media",
+    "E2E.Alternate.2026.1080p.WEB-DL.DD5.1.H264-GRP.mkv",
+  );
+  await writeFile(sourcePath, "alternate e2e media fixture\n");
+  return sourcePath;
 }
 
 export type E2EAuthCounters = Readonly<{
@@ -393,15 +405,53 @@ export async function fetchMetadata(
   appUrl: string,
   sourcePath: string,
   releaseDisplayName: string = releaseWorkflowParityFixture.releaseDisplayName,
-) {
+): Promise<ActiveInputSnapshot> {
   await page.goto(appUrl);
   await expect(page.getByRole("heading", { name: "Build Release Name" })).toBeVisible();
   await page.getByLabel("Source path").fill(sourcePath);
+  const opened = page.waitForResponse((response) =>
+    response.url().endsWith("/api/app/OpenActiveInput"),
+  );
   await page.getByRole("button", { name: "Fetch metadata" }).click();
+  const response = await opened;
+  expect(response.ok()).toBe(true);
+  const snapshot = (await response.json()) as ActiveInputSnapshot;
+  expect(snapshot.current?.workflow.id).toBeTruthy();
   await expect(page.getByText(releaseDisplayName)).toBeVisible();
+  const authoritative = await waitForMetadataReady(page, appUrl);
   await page.getByText("Select Trackers").click();
   await expect(page.getByText("BTN").first()).toBeVisible();
   await page.keyboard.press("Escape");
+  return authoritative;
+}
+
+/** Waits for both backend input readiness and the frontend command loop to settle. */
+export async function waitForMetadataReady(
+  page: Page,
+  appUrl: string,
+): Promise<ActiveInputSnapshot> {
+  let authoritative: ActiveInputSnapshot | undefined;
+  await expect
+    .poll(
+      async () => {
+        const current = await page
+          .context()
+          .request.get(new URL("api/app/GetActiveInput", appUrl).toString());
+        if (!current.ok()) return "";
+        authoritative = (await current.json()) as ActiveInputSnapshot;
+        const workflow = authoritative.current;
+        return workflow?.inputReadiness?.status === "completed" &&
+          workflow.operation?.status === "completed"
+          ? "ready"
+          : "";
+      },
+      { timeout: 10_000 },
+    )
+    .toBe("ready");
+  await expect(page.getByRole("button", { name: "Fetch metadata", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Dupe Check", exact: true })).toBeEnabled();
+  if (!authoritative) throw new Error("active input did not become ready");
+  return authoritative;
 }
 
 /** Verifies one uploaded torrent names the collection and includes every expected path segment. */

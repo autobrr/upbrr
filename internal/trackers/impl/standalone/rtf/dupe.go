@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -28,27 +29,28 @@ const (
 )
 
 type dupeSearcher struct {
-	cfg    config.Config
+	cfg    config.TrackerConfig
+	dbPath string
 	http   *http.Client
 	logger api.Logger
+
+	mu    sync.Mutex
+	token string
 }
 
 // newDuplicateAdapter returns a duplicate-search adapter bound to one immutable dependency set.
 func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
-	cfg := deps.BoundConfig()
-	httpClient := deps.HTTPClient()
-	logger := deps.Logger()
-	_ = logger
 	return &dupeSearcher{
-		cfg:    cfg,
-		http:   httpClient,
-		logger: logger,
+		cfg:    deps.TrackerConfig(),
+		dbPath: deps.DBPath(),
+		http:   deps.HTTPClient(),
+		logger: deps.Logger(),
 	}
 }
 
-func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dupe.AdapterResult {
-	cfg, ok := rtfTrackerConfig(h.cfg)
-	if !ok || (rtfAPIKey(cfg) == "" && !rtfHasCredentials(cfg)) {
+func (h *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dupe.AdapterResult {
+	cfg := h.cfg
+	if rtfAPIKey(cfg) == "" && !rtfHasCredentials(cfg) {
 		return dupe.NotRun(dupe.NotRunMissingCredentials, "missing api_key for tracker", nil)
 	}
 	if h.http == nil {
@@ -80,7 +82,8 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 		if refreshErr != nil {
 			return dupe.Failed(dupe.FailureAuthentication, "RTF api key refresh failed", refreshErr)
 		}
-		h.cacheRTFAPIKey(cfg, refreshedKey)
+		h.cacheRTFAPIKey(refreshedKey)
+		h.persistAPIKeySession(ctx, cfg, refreshedKey)
 		status, payload, err = h.search(ctx, params, refreshedKey)
 		if err != nil {
 			return dupe.Failed(dupe.FailureRequest, "RTF request failed", err)
@@ -204,7 +207,7 @@ func cleanRTFSearchTitle(meta api.DuplicateSubject) string {
 	return strings.Join(strings.Fields(query), " ")
 }
 
-func (h dupeSearcher) search(ctx context.Context, params url.Values, apiKey string) (int, any, error) {
+func (h *dupeSearcher) search(ctx context.Context, params url.Values, apiKey string) (int, any, error) {
 	headers := map[string]string{
 		"accept":        "application/json",
 		"Authorization": strings.TrimSpace(apiKey),
@@ -212,9 +215,19 @@ func (h dupeSearcher) search(ctx context.Context, params url.Values, apiKey stri
 	return rtfJSONRequest(ctx, h.http, http.MethodGet, rtfTorrentEndpoint, params, nil, headers)
 }
 
-func (h dupeSearcher) ensureAPIKey(ctx context.Context, cfg config.TrackerConfig) (string, error) {
-	apiKey := rtfAPIKey(cfg)
-	if apiKey != "" {
+func (h *dupeSearcher) ensureAPIKey(ctx context.Context, cfg config.TrackerConfig) (string, error) {
+	if token := h.cachedAPIKey(); token != "" {
+		return token, nil
+	}
+	cached, err := loadCachedRTFAPIKey(ctx, h.dbPath, defaultBaseURL, cfg)
+	if err != nil && h.logger != nil {
+		h.logger.Warnf("trackers: RTF failed to load refreshed API session: %v", err)
+	}
+	if cached != "" {
+		h.cacheRTFAPIKey(cached)
+		return cached, nil
+	}
+	if apiKey := rtfAPIKey(cfg); apiKey != "" {
 		return apiKey, nil
 	}
 	if !rtfHasCredentials(cfg) {
@@ -224,11 +237,12 @@ func (h dupeSearcher) ensureAPIKey(ctx context.Context, cfg config.TrackerConfig
 	if err != nil {
 		return "", fmt.Errorf("RTF api key unavailable: %w", err)
 	}
-	h.cacheRTFAPIKey(cfg, token)
+	h.cacheRTFAPIKey(token)
+	h.persistAPIKeySession(ctx, cfg, token)
 	return token, nil
 }
 
-func (h dupeSearcher) refreshToken(ctx context.Context, cfg config.TrackerConfig) (string, error) {
+func (h *dupeSearcher) refreshToken(ctx context.Context, cfg config.TrackerConfig) (string, error) {
 	body := map[string]any{
 		"username": strings.TrimSpace(cfg.Username),
 		"password": strings.TrimSpace(cfg.Password),
@@ -251,25 +265,24 @@ func (h dupeSearcher) refreshToken(ctx context.Context, cfg config.TrackerConfig
 	return token, nil
 }
 
-// cacheRTFAPIKey updates the in-memory config map so later searches in this
-// process can reuse a refreshed token. Writing back to durable config storage
-// is handled elsewhere.
-func (h dupeSearcher) cacheRTFAPIKey(cfg config.TrackerConfig, token string) {
-	if strings.TrimSpace(token) == "" || len(h.cfg.Trackers.Trackers) == 0 {
-		return
+// cacheRTFAPIKey keeps a refreshed token only in synchronized adapter session
+// state. The immutable effective configuration is never rewritten.
+func (h *dupeSearcher) cacheRTFAPIKey(token string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.token = strings.TrimSpace(token)
+}
+
+func (h *dupeSearcher) cachedAPIKey() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.token
+}
+
+func (h *dupeSearcher) persistAPIKeySession(ctx context.Context, cfg config.TrackerConfig, token string) {
+	if err := persistRefreshedRTFAPIKey(ctx, h.dbPath, defaultBaseURL, cfg, token); err != nil && h.logger != nil {
+		h.logger.Warnf("trackers: RTF failed to persist refreshed API session: %v", err)
 	}
-	for key, current := range h.cfg.Trackers.Trackers {
-		if !strings.EqualFold(key, "RTF") {
-			continue
-		}
-		current.APIKey = token
-		current.PTPAPIKey = token
-		h.cfg.Trackers.Trackers[key] = current
-		return
-	}
-	cfg.APIKey = token
-	cfg.PTPAPIKey = token
-	h.cfg.Trackers.Trackers["RTF"] = cfg
 }
 
 func rtfAPIKey(cfg config.TrackerConfig) string {
@@ -350,14 +363,6 @@ func rtfJSONRequest(
 	return resp.StatusCode, result, nil
 }
 
-func rtfTrackerConfig(cfg config.Config) (config.TrackerConfig, bool) {
-	for name, entry := range cfg.Trackers.Trackers {
-		if strings.EqualFold(strings.TrimSpace(name), "RTF") {
-			return entry, true
-		}
-	}
-	return config.TrackerConfig{}, false
-}
 func anyToSlice(value any) ([]any, bool) {
 	items, ok := value.([]any)
 	if ok {

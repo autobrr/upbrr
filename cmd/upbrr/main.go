@@ -6,6 +6,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -23,8 +24,10 @@ import (
 	"github.com/autobrr/upbrr/internal/config/importer"
 	"github.com/autobrr/upbrr/internal/configstore"
 	"github.com/autobrr/upbrr/internal/core"
+	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/logging"
+	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/webserver"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -137,6 +140,28 @@ func run() error {
 	})
 }
 
+type cliWorkflowCoreLifecycle interface {
+	ShutdownWorkflowCoordinator(context.Context) error
+	Close() error
+}
+
+// closeCLIWorkflowCore relinquishes active workflow ownership before closing
+// the Core-owned repository. It preserves the command result by reporting
+// shutdown and close failures independently from the deferred cleanup path.
+func closeCLIWorkflowCore(ctx context.Context, coreSvc cliWorkflowCoreLifecycle, errOut io.Writer) {
+	if coreSvc == nil {
+		return
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := coreSvc.ShutdownWorkflowCoordinator(shutdownCtx); err != nil {
+		printCLIError(errOut, err)
+	}
+	if err := coreSvc.Close(); err != nil {
+		printCLIError(errOut, err)
+	}
+}
+
 func runUpload(
 	ctx context.Context,
 	originalArgs []string,
@@ -237,7 +262,7 @@ func runUpload(
 		dbPath = cfg.MainSettings.DBPath
 		opts.NoSeed = true
 	} else {
-		cfg, dbPath, err = loadCLIConfig(ctx, resolvedConfigPath, configFlagProvided)
+		cfg, dbPath, _, err = loadCLIConfigWithSeed(ctx, resolvedConfigPath, configFlagProvided)
 		if err != nil {
 			return exitError(1, err)
 		}
@@ -268,9 +293,14 @@ func runUpload(
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	ctx = withCLIUploadProgressLogger(ctx, logger)
+	ctx = withCLISourceVerificationProgressLogger(ctx, logger)
 	// Phase 1: core init + cleanup + delete-tmp run under cliSetupTimeout.
 	setupCtx, setupCancel := context.WithTimeout(ctx, cliSetupTimeout)
 	defer setupCancel()
+	configGeneration, configFingerprint, err := cliConfigActivation(setupCtx, cfg, dbPath)
+	if err != nil {
+		return exitError(1, err)
+	}
 	coreSvc, err := core.NewWithContext(setupCtx, api.CoreDependencies{
 		LiveTest: livePolicy,
 		Config:   cfg,
@@ -278,15 +308,14 @@ func runUpload(
 		Services: api.ServiceSet{
 			Filesystem: filesystem.NewValidator(),
 		},
+		EnforceConfigActivationGeneration: true,
+		ConfigActivationGeneration:        configGeneration,
+		ConfigActivationFingerprint:       configFingerprint,
 	})
 	if err != nil {
 		return exitError(1, err)
 	}
-	defer func() {
-		if err := coreSvc.Close(); err != nil {
-			printCLIError(streams.errOut, err)
-		}
-	}()
+	defer closeCLIWorkflowCore(ctx, coreSvc, streams.errOut)
 
 	if opts.Cleanup {
 		deleted, err := purgeCLIStoredReleases(setupCtx, coreSvc)
@@ -610,7 +639,9 @@ func runServe(ctx context.Context, opts serveOptions, visitedFlags map[string]bo
 	if err != nil {
 		return fmt.Errorf("upbrr: %w", err)
 	}
-	defer server.Close()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer shutdownCancel()
+	defer func() { _ = server.CloseContext(shutdownCtx) }()
 
 	if visitedFlags["persist-listen"] || visitedFlags["persist-web-config"] {
 		return wrapUpbrrError(server.RunAfterListen(ctx, func() error {
@@ -933,25 +964,124 @@ func parseServePortValue(value string) (int, error) {
 // loadCLIConfig bootstraps CLI config and validates both the env-applied
 // pre-persist candidate and the returned runtime config.
 func loadCLIConfig(ctx context.Context, configPath string, configProvided bool) (config.Config, string, error) {
-	cfg, dbPath, err := configstore.BootstrapWithValidator(ctx, configPath, configProvided, true, func(cfg *config.Config) error {
+	cfg, dbPath, _, err := loadCLIConfigWithSeed(ctx, configPath, configProvided)
+	return cfg, dbPath, err
+}
+
+// loadCLIConfigWithSeed reports whether this invocation persisted a provided
+// config into an otherwise unconfigured database.
+func loadCLIConfigWithSeed(ctx context.Context, configPath string, configProvided bool) (config.Config, string, bool, error) {
+	persistProvided := !configProvided
+	cfg, dbPath, err := configstore.BootstrapWithValidator(ctx, configPath, configProvided, persistProvided, func(cfg *config.Config) error {
 		return cfg.Validate()
 	})
 	if err != nil {
-		return config.Config{}, "", fmt.Errorf("upbrr: %w", err)
+		return config.Config{}, "", false, fmt.Errorf("upbrr: %w", err)
+	}
+	seeded := false
+	if configProvided {
+		repo, openErr := db.OpenContext(ctx, dbPath)
+		if openErr != nil {
+			return config.Config{}, "", false, fmt.Errorf("upbrr: open provided config database: %w", openErr)
+		}
+		defer repo.Close()
+		if migrateErr := repo.MigrateContext(ctx); migrateErr != nil {
+			return config.Config{}, "", false, fmt.Errorf("upbrr: migrate provided config database: %w", migrateErr)
+		}
+		_, loadErr := config.LoadFromDatabase(ctx, repo)
+		switch {
+		case loadErr == nil:
+		case errors.Is(loadErr, internalerrors.ErrNotFound):
+			cfg, dbPath, err = configstore.BootstrapWithValidator(ctx, configPath, true, true, func(cfg *config.Config) error {
+				return cfg.Validate()
+			})
+			if err != nil {
+				return config.Config{}, "", false, fmt.Errorf("upbrr: %w", err)
+			}
+			seeded = true
+		default:
+			return config.Config{}, "", false, fmt.Errorf("upbrr: load provided config database: %w", loadErr)
+		}
+	}
+	if seeded {
+		stored, loadErr := configstore.LoadFromDBPath(ctx, dbPath)
+		if loadErr != nil {
+			return config.Config{}, "", false, fmt.Errorf("upbrr: load seeded config database: %w", loadErr)
+		}
+		cfg = *stored
 	}
 	if err := cfg.Validate(); err != nil {
-		return config.Config{}, "", fmt.Errorf("upbrr: %w", err)
+		return config.Config{}, "", false, fmt.Errorf("upbrr: %w", err)
 	}
-	return cfg, dbPath, nil
+	return cfg, dbPath, seeded, nil
+}
+
+// cliConfigActivation binds one CLI process to the durable active effective
+// configuration. A config file or environment that differs from the active
+// runtime must be activated through the settings path before it can mutate a
+// workflow.
+func cliConfigActivation(
+	ctx context.Context, cfg config.Config, dbPath string,
+) (uint64, api.WorkflowFingerprint, error) {
+	fingerprint, err := config.EffectiveConfigFingerprint(cfg)
+	if err != nil {
+		return 0, "", fmt.Errorf("fingerprint CLI effective config: %w", err)
+	}
+	repo, err := db.OpenContext(ctx, dbPath)
+	if err != nil {
+		return 0, "", fmt.Errorf("open config activation database: %w", err)
+	}
+	defer repo.Close()
+	if err := repo.MigrateContext(ctx); err != nil {
+		return 0, "", fmt.Errorf("migrate config activation database: %w", err)
+	}
+	activation, err := repo.LoadConfigActivation(ctx)
+	if err != nil {
+		return 0, "", fmt.Errorf("load active config generation: %w", err)
+	}
+	if activation.Status != api.ConfigActivationActive && activation.Status != api.ConfigActivationPending {
+		return 0, "", errors.New("active config activation state is invalid")
+	}
+	if activation.Fingerprint == "" {
+		stored, err := config.LoadFromDatabase(ctx, repo)
+		if err != nil {
+			return 0, "", fmt.Errorf("load durable active config: %w", err)
+		}
+		config.ApplyEnvOverrides(stored)
+		stored.MainSettings.DBPath = dbPath
+		activation.Fingerprint, err = config.EffectiveConfigFingerprint(*stored)
+		if err != nil {
+			return 0, "", fmt.Errorf("fingerprint durable active config: %w", err)
+		}
+	}
+	if activation.Fingerprint != "" && activation.Fingerprint != fingerprint {
+		return 0, "", errors.New("CLI effective config does not match the active durable configuration")
+	}
+	activation, err = repo.InitializeConfigActivationFingerprint(ctx, fingerprint)
+	if err != nil {
+		return 0, "", fmt.Errorf("initialize active config fingerprint: %w", err)
+	}
+	return activation.ActiveGeneration, activation.Fingerprint, nil
 }
 
 // loadServeConfig loads config for the web server without requiring a fully
 // valid config. The web UI handles initial setup, so the server must be able
-// to start even on a fresh install with no config yet. A
-// provided --config may seed or merge database config, but invalid env-applied
-// input is not persisted over stored settings.
+// to start even on a fresh install with no config yet. A provided --config
+// seeds an empty database; once durable config exists, the server uses it so
+// file input cannot silently replace the active config generation.
 func loadServeConfig(ctx context.Context, configPath string, configProvided bool) (config.Config, string, error) {
-	return wrapUpbrrResult2(configstore.Bootstrap(ctx, configPath, configProvided, configProvided))
+	cfg, dbPath, err := configstore.Bootstrap(ctx, configPath, configProvided, false)
+	if err != nil || !configProvided {
+		return cfg, dbPath, wrapUpbrrError(err)
+	}
+	stored, loadErr := configstore.LoadFromDBPath(ctx, dbPath)
+	if loadErr == nil {
+		return *stored, dbPath, nil
+	}
+	if !errors.Is(loadErr, internalerrors.ErrNotFound) {
+		return config.Config{}, "", fmt.Errorf("upbrr: load serve config database: %w", loadErr)
+	}
+	return wrapUpbrrResult2(configstore.Bootstrap(ctx, configPath, true, true))
 }
 
 func exportConfigToYAML(ctx context.Context, configPath string, configProvided bool, outputPath string, plaintext bool) error {
@@ -1282,8 +1412,8 @@ func importConfig(ctx context.Context, importPath, configPath string, configProv
 		return fmt.Errorf("validate imported config: %w", err)
 	}
 
-	if err := configstore.SaveToDBPath(ctx, cfg, dbPath); err != nil {
-		return fmt.Errorf("save imported config: %w", err)
+	if _, err := activateImportedConfig(ctx, cfg, dbPath); err != nil {
+		return fmt.Errorf("activate imported config: %w", err)
 	}
 
 	if len(warnings) > 0 {
@@ -1292,4 +1422,87 @@ func importConfig(ctx context.Context, importPath, configPath string, configProv
 		fmt.Fprintf(streams.out, "imported config from %s\n", formatPathLabel(importPath))
 	}
 	return nil
+}
+
+// activateImportedConfig commits an imported effective configuration with its
+// generation and workflow impacts. CLI import has no retained process to
+// activate a pending candidate later, so busy work is rejected without writing
+// the imported config.
+func activateImportedConfig(ctx context.Context, imported *config.Config, dbPath string) (api.ConfigActivation, error) {
+	if imported == nil {
+		return api.ConfigActivation{}, errors.New("imported config is required")
+	}
+	repo, err := db.OpenContext(ctx, dbPath)
+	if err != nil {
+		return api.ConfigActivation{}, fmt.Errorf("open config database: %w", err)
+	}
+	defer repo.Close()
+	if err := repo.MigrateContext(ctx); err != nil {
+		return api.ConfigActivation{}, fmt.Errorf("migrate config database: %w", err)
+	}
+	stored := *imported
+	stored.MainSettings.DBPath = dbPath
+	if err := stored.Validate(); err != nil {
+		return api.ConfigActivation{}, fmt.Errorf("validate imported stored config: %w", err)
+	}
+	runtime := stored
+	config.ApplyEnvOverrides(&runtime)
+	runtime.MainSettings.DBPath = dbPath
+	if err := runtime.Validate(); err != nil {
+		return api.ConfigActivation{}, fmt.Errorf("validate imported runtime config: %w", err)
+	}
+	nextFingerprint, err := config.EffectiveConfigFingerprint(runtime)
+	if err != nil {
+		return api.ConfigActivation{}, fmt.Errorf("fingerprint imported runtime config: %w", err)
+	}
+	activation, err := repo.LoadConfigActivation(ctx)
+	if err != nil {
+		return api.ConfigActivation{}, fmt.Errorf("load active config generation: %w", err)
+	}
+	if activation.Status == api.ConfigActivationPending {
+		return activation, &api.ConfigActivationPendingError{Activation: activation}
+	}
+
+	currentRuntime := config.Config{}
+	storedConfig, loadErr := config.LoadFromDatabase(ctx, repo)
+	if loadErr == nil {
+		config.ApplyEnvOverrides(storedConfig)
+		storedConfig.MainSettings.DBPath = dbPath
+		currentRuntime = *storedConfig
+	} else if !errors.Is(loadErr, internalerrors.ErrNotFound) {
+		return api.ConfigActivation{}, fmt.Errorf("load active config: %w", loadErr)
+	}
+	currentFingerprint, err := config.EffectiveConfigFingerprint(currentRuntime)
+	if err != nil {
+		return api.ConfigActivation{}, fmt.Errorf("fingerprint active runtime config: %w", err)
+	}
+	needsActivation := loadErr != nil || currentFingerprint != nextFingerprint || activation.Fingerprint == ""
+	if !needsActivation {
+		if err := configstore.SaveToRepository(ctx, &stored, repo, dbPath); err != nil {
+			return activation, fmt.Errorf("persist imported stored config: %w", err)
+		}
+		return activation, nil
+	}
+
+	impacts := webserver.ConfigImpactDetails(currentRuntime, runtime)
+	var committed api.ConfigActivation
+	err = configstore.SaveToRepositoryWithPreSave(ctx, &stored, repo, dbPath, func(ctx context.Context, tx *sql.Tx, _ []byte) error {
+		var activationErr error
+		committed, activationErr = repo.ActivateConfigTx(
+			ctx,
+			tx,
+			activation,
+			nextFingerprint,
+			impacts,
+			releaseworkflow.ApplyConfigImpact,
+		)
+		if activationErr != nil {
+			return fmt.Errorf("activate imported config generation: %w", activationErr)
+		}
+		return nil
+	})
+	if err != nil {
+		return api.ConfigActivation{}, fmt.Errorf("persist activated imported config: %w", err)
+	}
+	return committed, nil
 }

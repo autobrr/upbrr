@@ -25,6 +25,7 @@ import (
 	"github.com/autobrr/go-torrent/metainfo"
 
 	"github.com/autobrr/upbrr/internal/clientdiscovery"
+	"github.com/autobrr/upbrr/internal/description"
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
@@ -61,7 +62,14 @@ const (
 
 // maybeApplyE2EServices replaces only missing runtime capabilities when both
 // the e2e build tag and fake-services environment gate are active.
-func maybeApplyE2EServices(_ context.Context, services *api.ServiceSet, cfg config.Config, repositories api.RepositoryCapabilities, logger api.Logger) error {
+func maybeApplyE2EServices(
+	_ context.Context,
+	services *api.ServiceSet,
+	cfg config.Config,
+	repositories api.RepositoryCapabilities,
+	registry *trackers.Registry,
+	logger api.Logger,
+) error {
 	if !isE2EEnabled() {
 		return nil
 	}
@@ -87,6 +95,7 @@ func maybeApplyE2EServices(_ context.Context, services *api.ServiceSet, cfg conf
 	}
 	if services.Trackers == nil {
 		services.Trackers = e2eTrackerService{
+			registry: registry,
 			endpoint: os.Getenv(e2eTrackerURLEnv),
 			dbPath:   cfg.MainSettings.DBPath,
 			repo:     repositories.Uploads(),
@@ -308,22 +317,27 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 		meta.GeneratedName = generatedName.GeneratedName.Clone()
 		meta.AvailableGeneratedName = generatedName.GeneratedName.Clone()
 	}
-	if s.clients != nil {
+	if s.clients != nil || request.RetainedClientEvidence != nil {
 		api.EmitPreparationProgress(
 			ctx,
 			api.NewPreparationProgressUpdate(api.PreparationPhaseClientDiscovery, api.PreparationProgressRunning, "Searching the synthetic torrent client."),
 		)
-		evidence, err := s.clients.Discover(ctx, clientdiscovery.SearchInput{
-			SourcePath:   sourcePath,
-			FileList:     meta.FileList,
-			DiscType:     request.Layout.DiscType,
-			Policy:       input.Search,
-			ForceRecheck: input.Controls.ForceRecheck,
-		})
-		if err != nil {
-			return preparationstate.State{}, fmt.Errorf("e2e metadata: discover client evidence: %w", err)
+		if request.RetainedClientEvidence != nil {
+			meta.ClientEvidence = preparationstate.CloneClientEvidenceSnapshot(*request.RetainedClientEvidence)
+		} else {
+			evidence, err := s.clients.Discover(ctx, clientdiscovery.SearchInput{
+				SourcePath:   sourcePath,
+				FileList:     meta.FileList,
+				DiscType:     request.Layout.DiscType,
+				Policy:       input.Search,
+				ForceRecheck: input.Controls.ForceRecheck,
+			})
+			if err != nil {
+				return preparationstate.State{}, fmt.Errorf("e2e metadata: discover client evidence: %w", err)
+			}
+			meta.ClientEvidence = e2eClientEvidenceSnapshot(input, evidence)
 		}
-		meta.ClientEvidence = e2eClientEvidenceSnapshot(input, evidence)
+		evidence := meta.ClientEvidence.Result
 		meta.InfoHash = evidence.InfoHash
 		meta.DiscoveredTorrentPath = evidence.TorrentPath
 		meta.TrackerIDs = evidence.TrackerIDs
@@ -1183,6 +1197,7 @@ func e2eTrackerSet(environment string) map[string]struct{} {
 }
 
 type e2eTrackerService struct {
+	registry *trackers.Registry
 	endpoint string
 	dbPath   string
 	repo     api.UploadLedgerRepository
@@ -1413,11 +1428,52 @@ func (s e2eTrackerService) Upload(ctx context.Context, meta api.UploadSubject) (
 				return api.UploadSummary{}, fmt.Errorf("e2e tracker: create record: %w", err)
 			}
 		}
-		if err := postE2ETrackerUpload(ctx, s.endpoint, name, meta); err != nil {
-			if s.repo != nil {
-				_ = s.repo.UpdateLatestUploadRecordStatus(ctx, meta.SourcePath, name, "failed")
+		var submission *api.SubmissionFenceAuthority
+		if active, ok := api.ActiveInputAuthorityFromContext(ctx); ok {
+			if s.registry == nil {
+				return api.UploadSummary{}, errors.New("e2e tracker: submission registry is unavailable")
 			}
-			return api.UploadSummary{}, err
+			descriptor, found := s.registry.LookupDescriptor(name)
+			if !found {
+				return api.UploadSummary{}, fmt.Errorf("e2e tracker: registered tracker %s is unavailable", name)
+			}
+			site, err := trackers.CanonicalSubmissionTrackerSite(descriptor.Name, descriptor.BaseURL)
+			if err != nil {
+				return api.UploadSummary{}, fmt.Errorf("e2e tracker: submission site: %w", err)
+			}
+			submission = &api.SubmissionFenceAuthority{
+				ContentIdentity: meta.SubmissionContentIdentity,
+				TrackerSite:     site,
+				CoordinatorID:   active.CoordinatorID,
+				Fence:           active.Fence,
+			}
+		}
+		fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
+			Tracker string
+			Content api.SubmissionContentIdentity
+		}{Tracker: name, Content: meta.SubmissionContentIdentity})
+		if err != nil {
+			return api.UploadSummary{}, fmt.Errorf("e2e tracker: fingerprint submission: %w", err)
+		}
+		receipt, err := api.BeginWorkflowExternalEffect(ctx, api.WorkflowExternalEffect{
+			Kind:                api.WorkflowExternalEffectTrackerSubmission,
+			ScopeID:             name,
+			SemanticFingerprint: fingerprint,
+			Submission:          submission,
+		})
+		if err != nil {
+			return api.UploadSummary{}, fmt.Errorf("e2e tracker: begin submission: %w", err)
+		}
+		if !receipt.AlreadySucceeded {
+			if err := postE2ETrackerUpload(ctx, s.endpoint, name, meta); err != nil {
+				if s.repo != nil {
+					_ = s.repo.UpdateLatestUploadRecordStatus(ctx, meta.SourcePath, name, "failed")
+				}
+				return api.UploadSummary{}, err
+			}
+			if err := api.CompleteWorkflowExternalEffect(ctx, receipt, true); err != nil {
+				return api.UploadSummary{}, fmt.Errorf("e2e tracker: complete submission: %w", err)
+			}
 		}
 		artifactPath := ""
 		registeredPath, resolveErr := trackers.ResolveTrackerTorrentArtifactPath(meta, s.dbPath, name)
@@ -1462,13 +1518,20 @@ func (s e2eTrackerService) BuildPreparation(_ context.Context, meta api.Descript
 		if name == "" {
 			continue
 		}
+		source := "E2E description fixture."
+		for _, group := range meta.DescriptionGroups {
+			if group.HasOverride && (strings.EqualFold(group.GroupKey, name) || slices.Contains(group.Trackers, name)) {
+				source = group.RawDescription
+				break
+			}
+		}
 		descriptions = append(descriptions, api.PreparationDescription{
 			GroupKey:           strings.ToLower(name),
 			Trackers:           []string{name},
-			RawDescription:     "E2E description fixture.",
-			RawDescriptionHTML: "<p>E2E description fixture.</p>",
-			Description:        "E2E description fixture.",
-			DescriptionHTML:    "<p>E2E description fixture.</p>",
+			RawDescription:     source,
+			RawDescriptionHTML: description.Render(source),
+			Description:        source,
+			DescriptionHTML:    description.Render(source),
 		})
 	}
 	return api.PreparationPreview{SourcePath: meta.SourcePath, Descriptions: descriptions}, nil

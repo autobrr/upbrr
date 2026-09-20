@@ -14,9 +14,15 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+const cliSourceVerificationProgressStep = 5
+
 type cliProgressLogState struct {
 	lastPercent int
 	lastLog     time.Time
+}
+
+type cliSourceVerificationLogState struct {
+	lastPercent int
 }
 
 type cliWorkflowLogState struct {
@@ -50,6 +56,45 @@ func withCLIUploadProgressLogger(ctx context.Context, logger api.Logger) context
 			return
 		}
 		logCLIProgress(logger, update, states, &mu)
+	})
+}
+
+func withCLISourceVerificationProgressLogger(ctx context.Context, logger api.Logger) context.Context {
+	if logger == nil {
+		return ctx
+	}
+
+	var mu sync.Mutex
+	state := cliSourceVerificationLogState{lastPercent: -cliSourceVerificationProgressStep}
+	return api.WithPreparationProgressReporter(ctx, func(update api.PreparationProgressUpdate) {
+		if update.Phase != api.PreparationPhaseSourceInspection {
+			return
+		}
+		completed := max(update.CompletedBytes, int64(0))
+		total := max(update.TotalBytes, int64(0))
+		if total > 0 {
+			completed = min(completed, total)
+		}
+		percent := 0
+		if total > 0 {
+			percent = int(float64(completed) / float64(total) * 100)
+		}
+		final := update.Status == api.PreparationProgressCompleted || update.Status == api.PreparationProgressFailed
+		mu.Lock()
+		defer mu.Unlock()
+		if !final && percent < state.lastPercent+cliSourceVerificationProgressStep {
+			return
+		}
+		state.lastPercent = percent
+		if final {
+			state.lastPercent = -cliSourceVerificationProgressStep
+		}
+		format := "source verification: state=%s progress=%d completed=%d total=%d"
+		if update.Status == api.PreparationProgressFailed {
+			logger.Warnf(format, update.Status, percent, completed, total)
+			return
+		}
+		logger.Infof(format, update.Status, percent, completed, total)
 	})
 }
 

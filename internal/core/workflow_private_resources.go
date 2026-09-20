@@ -157,6 +157,7 @@ func decodeWorkflowMediaPrivateArtifacts(builder workflowMediaBuilder, payload [
 		dvdMenuService:    builder.dvdMenus,
 		dvdMenuSubject:    persisted.DVDMenuSubject,
 		hostedRepository:  builder.media.repo,
+		mediaReuse:        builder.media.mediaReuse,
 		commitState:       commitState,
 	}, nil
 }

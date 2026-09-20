@@ -2,11 +2,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { createElement } from "react";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { installAppOperationMocks } from "../test/appRequestMock";
-import type { ConfigValue, TrackerCatalog, TrackerCatalogEntry } from "../types";
+import {
+  installAppOperationMocks as installRawAppOperationMocks,
+  type AppOperationMocks,
+} from "../test/appRequestMock";
+import type { ConfigMap, ConfigValue, TrackerCatalog, TrackerCatalogEntry } from "../types";
 
 import {
   nextQbitDirectState,
@@ -14,6 +17,17 @@ import {
   normalizeTorrentClientsForSave,
   useSettingsState,
 } from "./useSettingsState";
+
+const installAppOperationMocks = (operations: AppOperationMocks) =>
+  installRawAppOperationMocks({
+    GetConfigActivation: async () => ({
+      status: "active",
+      activeGeneration: 1,
+      impacts: [],
+      updatedAt: "2026-09-19T00:00:00Z",
+    }),
+    ...operations,
+  });
 
 afterEach(() => {
   cleanup();
@@ -143,7 +157,7 @@ function TorrentClientsHarness() {
 
 function ClientSetupHarness() {
   const state = useSettingsState({ activeTab: "settings" });
-  const clientSetup = state.configData?.ClientSetup;
+  const clientSetup = state.settingsConfigData?.ClientSetup;
 
   if (!clientSetup || typeof clientSetup !== "object" || Array.isArray(clientSetup)) {
     return createElement("div", null);
@@ -163,7 +177,7 @@ function ClientSetupHarness() {
 
 function TorrentCreationHarness() {
   const state = useSettingsState({ activeTab: "settings" });
-  const torrentCreation = state.configData?.TorrentCreation;
+  const torrentCreation = state.settingsConfigData?.TorrentCreation;
 
   if (!torrentCreation || typeof torrentCreation !== "object" || Array.isArray(torrentCreation)) {
     return createElement("div", null);
@@ -182,6 +196,16 @@ function TorrentCreationHarness() {
 
 function TrackerSettingsHarness() {
   const state = useSettingsState({ activeTab: "settings" });
+  const trackerAnonymous = (config: ConfigMap | null) => {
+    const trackers = config?.Trackers;
+    if (!trackers || typeof trackers !== "object" || Array.isArray(trackers)) return false;
+    const entries = trackers.Trackers;
+    if (!entries || typeof entries !== "object" || Array.isArray(entries)) return false;
+    const tracker = entries.AITHER;
+    return Boolean(
+      tracker && typeof tracker === "object" && !Array.isArray(tracker) && tracker.Anon,
+    );
+  };
 
   return createElement(
     "div",
@@ -194,6 +218,18 @@ function TrackerSettingsHarness() {
       "Save changes",
     ),
     createElement("span", { "data-testid": "settings-dirty" }, String(state.settingsDirty)),
+    createElement("span", { "data-testid": "settings-saved" }, state.settingsSaved),
+    createElement("span", { "data-testid": "settings-error" }, state.settingsError),
+    createElement(
+      "span",
+      { "data-testid": "active-anonymous" },
+      String(trackerAnonymous(state.configData)),
+    ),
+    createElement(
+      "span",
+      { "data-testid": "draft-anonymous" },
+      String(trackerAnonymous(state.settingsConfigData)),
+    ),
     createElement(PayloadCapture, { value: state.buildSavePayload() }),
   );
 }
@@ -253,7 +289,13 @@ function ImageHostingHarness() {
 
 function ScreenshotSettingsHarness() {
   const state = useSettingsState({ activeTab: "settings" });
-  const config = state.screenshotConfig;
+  const screenshotHandling = state.settingsConfigData?.ScreenshotHandling;
+  const config =
+    screenshotHandling &&
+    typeof screenshotHandling === "object" &&
+    !Array.isArray(screenshotHandling)
+      ? screenshotHandling
+      : null;
   if (!config) {
     return createElement("div");
   }
@@ -307,6 +349,25 @@ function trackerCatalogEntry(
 /** Wraps catalog entries in the backend response shape. */
 function trackerCatalog(...entries: TrackerCatalogEntry[]): TrackerCatalog {
   return { entries, unsupported: [] };
+}
+
+function aitherConfig(anonymous: boolean) {
+  return JSON.stringify({
+    Trackers: {
+      DefaultTrackers: [],
+      PreferredTracker: "",
+      Trackers: { AITHER: { APIKey: "stored-token", Anon: anonymous } },
+    },
+  });
+}
+
+function aitherCatalog() {
+  return trackerCatalog(
+    trackerCatalogEntry("AITHER", [
+      ["APIKey", "", true],
+      ["Anon", false],
+    ]),
+  );
 }
 
 /** Captures save payloads without rendering secret-shaped values into DOM snapshots. */
@@ -903,24 +964,29 @@ describe("Tracker client selectors", () => {
     expect(screen.getByText("1/1")).toBeInTheDocument();
   });
 
-  it("masks tracker credentials after saving while preserving them in the payload", async () => {
+  it("adopts authoritative normalized settings after an immediately active save", async () => {
     const encryptedAPIKey = "upbrr-enc:v1:encrypted-btn-api-key";
-    let savedReplacement = false;
+    const authoritativeAPIKey = "upbrr-enc:v1:normalized-btn-api-key";
+    const savedAPIKeys: unknown[] = [];
+    let getConfigCalls = 0;
     installAppOperationMocks({
-      GetConfig: async () =>
-        JSON.stringify({
+      GetConfig: async () => {
+        getConfigCalls += 1;
+        const authoritative = getConfigCalls > 2;
+        return JSON.stringify({
           Trackers: {
             DefaultTrackers: [],
             PreferredTracker: "",
             Trackers: {
               BTN: {
-                APIKey: encryptedAPIKey,
-                Username: "",
+                APIKey: authoritative ? authoritativeAPIKey : encryptedAPIKey,
+                Username: authoritative ? "normalized-user" : "",
                 Password: "",
               },
             },
           },
-        }),
+        });
+      },
       GetDefaultConfig: async () => JSON.stringify({}),
       ListTrackerCatalog: async () =>
         trackerCatalog(
@@ -940,7 +1006,13 @@ describe("Tracker client selectors", () => {
         const saved = JSON.parse(payload) as {
           Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
         };
-        savedReplacement = saved.Trackers?.Trackers?.BTN?.APIKey === "replacement-api-key";
+        savedAPIKeys.push(saved.Trackers?.Trackers?.BTN?.APIKey);
+        return {
+          status: "active",
+          activeGeneration: 2,
+          impacts: [],
+          updatedAt: "2026-09-19T00:00:00Z",
+        };
       },
     });
 
@@ -976,12 +1048,494 @@ describe("Tracker client selectors", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
 
     await waitFor(() => expect(screen.getByLabelText("API key")).toHaveValue("[REDACTED]"));
-    expect(savedReplacement).toBe(true);
+    await waitFor(() => expect(screen.getByLabelText("Username")).toHaveValue("normalized-user"));
+    expect(savedAPIKeys).toEqual(["replacement-api-key"]);
 
-    savedReplacement = false;
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
 
-    await waitFor(() => expect(savedReplacement).toBe(true));
+    await waitFor(() => expect(savedAPIKeys).toHaveLength(2));
+    await waitFor(() => expect(getConfigCalls).toBe(4));
+    expect(savedAPIKeys[1] === authoritativeAPIKey).toBe(true);
+  });
+
+  it("preserves newer edits while an immediately active config refresh completes", async () => {
+    const config = aitherConfig(false);
+    const activeRefresh = deferred<string>();
+    const getConfig = vi
+      .fn()
+      .mockResolvedValueOnce(config)
+      .mockResolvedValueOnce(config)
+      .mockImplementationOnce(() => activeRefresh.promise);
+    installAppOperationMocks({
+      GetConfig: getConfig,
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () => aitherCatalog(),
+      GetImageHostPolicyMetadata: async () => ({}),
+      SaveConfig: async () => ({
+        status: "active" as const,
+        activeGeneration: 2,
+        impacts: ["trackers" as const],
+        updatedAt: "2026-09-19T00:00:01Z",
+      }),
+    });
+
+    render(createElement(TrackerSettingsHarness));
+    await userEvent.click(
+      await screen.findByText("AITHER", { selector: ".settings-card__summary-name" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(getConfig).toHaveBeenCalledTimes(2));
+
+    fireEvent.click(screen.getByLabelText("Anonymous"));
+    expect(screen.getByTestId("draft-anonymous")).toHaveTextContent("true");
+    expect(screen.getByTestId("settings-dirty")).toHaveTextContent("true");
+
+    await act(async () => activeRefresh.resolve(config));
+
+    expect(screen.getByTestId("active-anonymous")).toHaveTextContent("false");
+    expect(screen.getByTestId("draft-anonymous")).toHaveTextContent("true");
+    expect(screen.getByTestId("settings-dirty")).toHaveTextContent("true");
+  });
+
+  it("refreshes config after the first activation lookup applies a pending candidate", async () => {
+    const oldConfig = aitherConfig(false);
+    const activeConfig = aitherConfig(true);
+    const oldInitialRead = deferred<string>();
+    const getConfig = vi
+      .fn()
+      .mockImplementationOnce(() => oldInitialRead.promise)
+      .mockResolvedValueOnce(activeConfig);
+    const getActivation = vi.fn(async () => ({
+      status: "active" as const,
+      activeGeneration: 2,
+      impacts: ["trackers" as const],
+      updatedAt: "2026-09-19T00:00:01Z",
+    }));
+    installAppOperationMocks({
+      GetConfig: getConfig,
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () => aitherCatalog(),
+      GetImageHostPolicyMetadata: async () => ({}),
+      GetConfigActivation: getActivation,
+    });
+
+    render(createElement(TrackerSettingsHarness));
+    await waitFor(() => expect(getActivation).toHaveBeenCalledOnce());
+    await act(async () => oldInitialRead.resolve(oldConfig));
+
+    await waitFor(() => expect(getConfig).toHaveBeenCalledTimes(2));
+    expect(screen.getByTestId("active-anonymous")).toHaveTextContent("true");
+    expect(screen.getByTestId("draft-anonymous")).toHaveTextContent("true");
+    expect(screen.getByTestId("settings-saved")).toBeEmptyDOMElement();
+  });
+
+  it("preserves initial editor changes while the activation refresh completes", async () => {
+    const oldConfig = aitherConfig(false);
+    const activeConfig = aitherConfig(true);
+    const oldInitialRead = deferred<string>();
+    const activeRefresh = deferred<string>();
+    const activationLookup = deferred<{
+      status: "active";
+      activeGeneration: number;
+      impacts: Array<"trackers">;
+      updatedAt: string;
+    }>();
+    const getConfig = vi
+      .fn()
+      .mockImplementationOnce(() => oldInitialRead.promise)
+      .mockImplementationOnce(() => activeRefresh.promise);
+    installAppOperationMocks({
+      GetConfig: getConfig,
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () => aitherCatalog(),
+      GetImageHostPolicyMetadata: async () => ({}),
+      GetConfigActivation: () => activationLookup.promise,
+    });
+
+    render(createElement(TrackerSettingsHarness));
+    await act(async () => oldInitialRead.resolve(oldConfig));
+    await userEvent.click(
+      await screen.findByText("AITHER", { selector: ".settings-card__summary-name" }),
+    );
+    fireEvent.click(screen.getByLabelText("Anonymous"));
+    fireEvent.click(screen.getByLabelText("Anonymous"));
+    expect(screen.getByTestId("draft-anonymous")).toHaveTextContent("false");
+    expect(screen.getByTestId("settings-dirty")).toHaveTextContent("true");
+
+    await act(async () =>
+      activationLookup.resolve({
+        status: "active",
+        activeGeneration: 2,
+        impacts: ["trackers"],
+        updatedAt: "2026-09-19T00:00:01Z",
+      }),
+    );
+    await waitFor(() => expect(getConfig).toHaveBeenCalledTimes(2));
+    await act(async () => activeRefresh.resolve(activeConfig));
+
+    expect(screen.getByTestId("active-anonymous")).toHaveTextContent("true");
+    expect(screen.getByTestId("draft-anonymous")).toHaveTextContent("false");
+    expect(screen.getByTestId("settings-dirty")).toHaveTextContent("true");
+    expect(screen.getByTestId("settings-saved")).toBeEmptyDOMElement();
+  });
+
+  it("keeps a pending candidate in the editor until activation publishes it", async () => {
+    let getConfigCalls = 0;
+    const getActivation = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: "active" as const,
+        activeGeneration: 1,
+        impacts: [],
+        updatedAt: "2026-09-19T00:00:00Z",
+      })
+      .mockResolvedValueOnce({
+        status: "active" as const,
+        activeGeneration: 2,
+        impacts: ["trackers" as const],
+        updatedAt: "2026-09-19T00:00:02Z",
+      });
+    installAppOperationMocks({
+      GetConfig: async () => {
+        getConfigCalls += 1;
+        return aitherConfig(getConfigCalls > 2);
+      },
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () => aitherCatalog(),
+      GetImageHostPolicyMetadata: async () => ({}),
+      SaveConfig: async () => ({
+        status: "pending" as const,
+        activeGeneration: 1,
+        pendingGeneration: 2,
+        impacts: ["trackers" as const],
+        updatedAt: "2026-09-19T00:00:01Z",
+      }),
+      GetConfigActivation: getActivation,
+    });
+
+    render(createElement(TrackerSettingsHarness));
+    await userEvent.click(
+      await screen.findByText("AITHER", { selector: ".settings-card__summary-name" }),
+    );
+    await waitFor(() => expect(getActivation).toHaveBeenCalledOnce());
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByLabelText("Anonymous"));
+      fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+      await act(async () => Promise.resolve());
+
+      expect(screen.getByTestId("draft-anonymous")).toHaveTextContent("true");
+      expect(screen.getByTestId("active-anonymous")).toHaveTextContent("false");
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+
+      expect(getActivation).toHaveBeenCalledTimes(2);
+      expect(getConfigCalls).toBe(3);
+      expect(screen.getByTestId("active-anonymous")).toHaveTextContent("true");
+      expect(screen.getByTestId("settings-saved")).toHaveTextContent("Settings saved and applied.");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries a transient activation lookup until the durable config becomes active", async () => {
+    let activationChecks = 0;
+    const getActivation = vi.fn(async () => {
+      activationChecks += 1;
+      if (activationChecks === 2) throw new Error("activation status temporarily unavailable");
+      return {
+        status: "active" as const,
+        activeGeneration: 2,
+        impacts: ["trackers" as const],
+        updatedAt: "2026-09-19T00:00:01Z",
+      };
+    });
+    installAppOperationMocks({
+      GetConfig: async () =>
+        JSON.stringify({
+          Trackers: { DefaultTrackers: [], PreferredTracker: "", Trackers: {} },
+        }),
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () => trackerCatalog(),
+      GetImageHostPolicyMetadata: async () => ({}),
+      SaveConfig: async () => ({
+        status: "pending" as const,
+        activeGeneration: 1,
+        pendingGeneration: 2,
+        impacts: ["trackers" as const],
+        updatedAt: "2026-09-19T00:00:00Z",
+      }),
+      GetConfigActivation: getActivation,
+    });
+
+    render(createElement(TrackerSettingsHarness));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Save settings" })).toBeEnabled(),
+    );
+    await waitFor(() => expect(getActivation).toHaveBeenCalledOnce());
+    getActivation.mockClear();
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+      await act(async () => Promise.resolve());
+      expect(screen.getByTestId("settings-saved")).toHaveTextContent(
+        "Settings saved. Waiting for the active input to close before applying.",
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(getActivation).toHaveBeenCalledOnce();
+      expect(screen.getByTestId("settings-error")).toHaveTextContent(
+        "activation status temporarily unavailable",
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(getActivation).toHaveBeenCalledTimes(2);
+      expect(screen.getByTestId("settings-error")).toBeEmptyDOMElement();
+      expect(screen.getByTestId("settings-saved")).toHaveTextContent("Settings saved and applied.");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rediscovers a pending activation after an error and remount", async () => {
+    const pending = {
+      status: "pending" as const,
+      activeGeneration: 1,
+      pendingGeneration: 2,
+      impacts: ["trackers" as const],
+      updatedAt: "2026-09-19T00:00:00Z",
+    };
+    const active = {
+      status: "active" as const,
+      activeGeneration: 2,
+      impacts: ["trackers" as const],
+      updatedAt: "2026-09-19T00:00:02Z",
+    };
+    const firstDiscovery = deferred<typeof pending>();
+    const resumedDiscovery = deferred<typeof pending>();
+    const getActivation = vi
+      .fn()
+      .mockImplementationOnce(() => firstDiscovery.promise)
+      .mockRejectedValueOnce(new Error("activation status temporarily unavailable"))
+      .mockImplementationOnce(() => resumedDiscovery.promise)
+      .mockResolvedValueOnce(active);
+    installAppOperationMocks({
+      GetConfig: async () =>
+        JSON.stringify({
+          Trackers: { DefaultTrackers: [], PreferredTracker: "", Trackers: {} },
+        }),
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () => trackerCatalog(),
+      GetImageHostPolicyMetadata: async () => ({}),
+      SaveConfig: async () => active,
+      GetConfigActivation: getActivation,
+    });
+
+    let mounted = render(createElement(TrackerSettingsHarness));
+    await waitFor(() => expect(getActivation).toHaveBeenCalledOnce());
+    vi.useFakeTimers();
+    try {
+      await act(async () => firstDiscovery.resolve(pending));
+      expect(screen.getByTestId("settings-saved")).toHaveTextContent(
+        "Settings saved. Waiting for the active input to close before applying.",
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(screen.getByTestId("settings-error")).toHaveTextContent(
+        "activation status temporarily unavailable",
+      );
+
+      mounted.unmount();
+      vi.clearAllTimers();
+      vi.useRealTimers();
+      mounted = render(createElement(TrackerSettingsHarness));
+      await waitFor(() => expect(getActivation).toHaveBeenCalledTimes(3));
+
+      vi.useFakeTimers();
+      await act(async () => resumedDiscovery.resolve(pending));
+      expect(screen.getByTestId("settings-saved")).toHaveTextContent(
+        "Settings saved. Waiting for the active input to close before applying.",
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(getActivation).toHaveBeenCalledTimes(4);
+      expect(screen.getByTestId("settings-saved")).toHaveTextContent("Settings saved and applied.");
+      expect(screen.getByTestId("settings-error")).toBeEmptyDOMElement();
+    } finally {
+      mounted.unmount();
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops on terminal activation failure and keeps the candidate as a correctable draft", async () => {
+    const getConfig = vi.fn(async () => aitherConfig(false));
+    const getActivation = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: "active" as const,
+        activeGeneration: 1,
+        impacts: [],
+        updatedAt: "2026-09-19T00:00:00Z",
+      })
+      .mockResolvedValueOnce({
+        status: "failed" as const,
+        activeGeneration: 1,
+        activationId: "activation-failed",
+        failureCode: "validate_runtime" as const,
+        impacts: ["trackers" as const],
+        updatedAt: "2026-09-19T00:00:02Z",
+      });
+    let saveCalls = 0;
+    installAppOperationMocks({
+      GetConfig: getConfig,
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () => aitherCatalog(),
+      GetImageHostPolicyMetadata: async () => ({}),
+      SaveConfig: async () => {
+        saveCalls += 1;
+        return saveCalls === 1
+          ? {
+              status: "pending" as const,
+              activeGeneration: 1,
+              pendingGeneration: 2,
+              activationId: "activation-failed",
+              impacts: ["trackers" as const],
+              updatedAt: "2026-09-19T00:00:01Z",
+            }
+          : {
+              status: "active" as const,
+              activeGeneration: 2,
+              activationId: "activation-corrected",
+              impacts: ["trackers" as const],
+              updatedAt: "2026-09-19T00:00:03Z",
+            };
+      },
+      GetConfigActivation: getActivation,
+    });
+
+    render(createElement(TrackerSettingsHarness));
+    await userEvent.click(
+      await screen.findByText("AITHER", { selector: ".settings-card__summary-name" }),
+    );
+    await waitFor(() => expect(getActivation).toHaveBeenCalledOnce());
+    getActivation.mockClear();
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByLabelText("Anonymous"));
+      fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+      await act(async () => Promise.resolve());
+      expect(screen.getByTestId("settings-dirty")).toHaveTextContent("false");
+      expect(screen.getByTestId("draft-anonymous")).toHaveTextContent("true");
+      expect(screen.getByTestId("active-anonymous")).toHaveTextContent("false");
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(getActivation).toHaveBeenCalledOnce();
+      expect(screen.getByTestId("settings-error")).toHaveTextContent(
+        "Settings could not be applied during runtime configuration validation. Review the settings and save again.",
+      );
+      expect(screen.getByTestId("settings-dirty")).toHaveTextContent("true");
+      expect(screen.getByLabelText("Anonymous")).toBeChecked();
+      expect(screen.getByTestId("draft-anonymous")).toHaveTextContent("true");
+      expect(screen.getByTestId("active-anonymous")).toHaveTextContent("false");
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+      expect(getActivation).toHaveBeenCalledOnce();
+
+      fireEvent.click(screen.getByLabelText("Anonymous"));
+      fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+      await act(async () => Promise.resolve());
+      expect(saveCalls).toBe(2);
+      expect(getConfig).toHaveBeenCalledTimes(3);
+      expect(screen.getByTestId("settings-error")).toBeEmptyDOMElement();
+      expect(screen.getByTestId("settings-saved")).toHaveTextContent("Settings saved and applied.");
+      expect(screen.getByTestId("settings-dirty")).toHaveTextContent("false");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps polling an accepted config when a newer save conflicts", async () => {
+    const getActivation = vi.fn(async () => ({
+      status: "active" as const,
+      activeGeneration: 2,
+      impacts: ["trackers" as const],
+      updatedAt: "2026-09-19T00:00:02Z",
+    }));
+    let saveCalls = 0;
+    installAppOperationMocks({
+      GetConfig: async () => aitherConfig(false),
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () => aitherCatalog(),
+      GetImageHostPolicyMetadata: async () => ({}),
+      SaveConfig: async () => {
+        saveCalls += 1;
+        if (saveCalls === 1) {
+          return {
+            status: "pending" as const,
+            activeGeneration: 1,
+            pendingGeneration: 2,
+            impacts: ["trackers" as const],
+            updatedAt: "2026-09-19T00:00:01Z",
+          };
+        }
+        throw new Error("another validated configuration is already pending activation");
+      },
+      GetConfigActivation: getActivation,
+    });
+
+    render(createElement(TrackerSettingsHarness));
+    await userEvent.click(
+      await screen.findByText("AITHER", { selector: ".settings-card__summary-name" }),
+    );
+    await waitFor(() => expect(getActivation).toHaveBeenCalledOnce());
+    getActivation.mockClear();
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByLabelText("Anonymous"));
+      expect(screen.getByTestId("settings-dirty")).toHaveTextContent("true");
+
+      fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+      await act(async () => Promise.resolve());
+      expect(screen.getByTestId("settings-saved")).toHaveTextContent(
+        "Settings saved. Waiting for the active input to close before applying.",
+      );
+      expect(screen.getByTestId("settings-dirty")).toHaveTextContent("false");
+
+      fireEvent.click(screen.getByLabelText("Anonymous"));
+      expect(screen.getByTestId("settings-dirty")).toHaveTextContent("true");
+
+      fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+      await act(async () => Promise.resolve());
+      expect(screen.getByTestId("settings-error")).toHaveTextContent(
+        "another validated configuration is already pending activation",
+      );
+      expect(getActivation).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(getActivation).toHaveBeenCalledOnce();
+      expect(screen.getByTestId("settings-saved")).toHaveTextContent(
+        "Earlier changes applied. Newer edits remain unsaved.",
+      );
+      expect(screen.getByTestId("settings-dirty")).toHaveTextContent("true");
+      expect(screen.getByLabelText("Anonymous")).not.toBeChecked();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("renders BTN announce URL from tracker schema when stored config lacks the key", async () => {
@@ -1267,7 +1821,7 @@ describe("tracker catalog interactions", () => {
     let request = 0;
     const getConfig = vi.fn(() => {
       request += 1;
-      return request === 1 ? Promise.resolve(config) : pendingReload.promise;
+      return request <= 2 ? Promise.resolve(config) : pendingReload.promise;
     });
     installAppOperationMocks({
       GetConfig: getConfig,
@@ -1284,7 +1838,7 @@ describe("tracker catalog interactions", () => {
     });
     await waitFor(() => expect(screen.getByRole("button", { name: "Reload" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Reload" }));
-    await waitFor(() => expect(getConfig).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(getConfig).toHaveBeenCalledTimes(3));
 
     const card = cardName.closest(".settings-card");
     fireEvent.click(within(card as HTMLElement).getByRole("button", { name: "Remove" }));
@@ -1577,6 +2131,12 @@ describe("tracker catalog interactions", () => {
           Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
         };
         saved = config.Trackers?.Trackers?.NBL;
+        return {
+          status: "active",
+          activeGeneration: 2,
+          impacts: [],
+          updatedAt: "2026-09-19T00:00:00Z",
+        };
       },
     });
 

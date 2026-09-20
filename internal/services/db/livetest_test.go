@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -18,7 +19,11 @@ func TestLiveTestPruningClearsEveryDomainAndRetainsAuth(t *testing.T) {
 	defer repo.Close()
 	// Use minimal populated domains to make every explicit pruning entry a
 	// regression requirement, independently of incidental fixture columns.
-	for _, table := range append(append([]string(nil), liveTestDiscardTables...), "tracker_cookies", "tracker_auth_state") {
+	discardTables := append([]string(nil), liveTestDiscardTables...)
+	if !slices.Contains(discardTables, "submission_fences") {
+		discardTables = append(discardTables, "submission_fences")
+	}
+	for _, table := range append(discardTables, "tracker_cookies", "tracker_auth_state") {
 		if _, err := repo.db.ExecContext(t.Context(), `CREATE TABLE "`+table+`" (id INTEGER PRIMARY KEY AUTOINCREMENT, value TEXT); INSERT INTO "`+table+`" (value) VALUES ('synthetic')`); err != nil {
 			t.Fatal(err)
 		}
@@ -29,7 +34,7 @@ func TestLiveTestPruningClearsEveryDomainAndRetainsAuth(t *testing.T) {
 	if err := repo.PruneLiveTestState(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range liveTestDiscardTables {
+	for _, table := range discardTables {
 		var count int
 		if err := repo.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM "`+table+`"`).Scan(&count); err != nil {
 			t.Fatal(err)

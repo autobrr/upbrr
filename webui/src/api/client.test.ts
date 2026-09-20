@@ -62,6 +62,26 @@ describe("web client", () => {
     );
   });
 
+  it("reads the active-input snapshot with GET and session headers", async () => {
+    const snapshot = { state: "empty", revision: 4 };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(snapshot));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { initializeWebClient } = await import("./client");
+    const { activeInputClient } = await import("./app");
+    initializeWebClient("csrf-token", true);
+
+    await expect(activeInputClient.get()).resolves.toEqual(snapshot);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/app/GetActiveInput",
+      expect.objectContaining({
+        method: "GET",
+        credentials: "include",
+        headers: { "X-CSRF-Token": "csrf-token" },
+      }),
+    );
+  });
+
   it("uses exact opaque workflow media payloads", async () => {
     const fetchMock = vi
       .fn()
@@ -146,6 +166,33 @@ describe("web client", () => {
     initializeWebClient("csrf-token", true);
 
     await expect(trackerAuthClient.test("BTN")).rejects.toThrow("tracker auth: validation failed");
+  });
+
+  it("surfaces a pending config activation conflict without accepting the candidate", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(
+          {
+            error: "another validated configuration is already pending activation",
+            activation: {
+              status: "pending",
+              activationId: "activation-existing",
+              activeGeneration: 3,
+              pendingGeneration: 4,
+              impacts: ["trackers"],
+              updatedAt: "2026-09-19T00:00:00Z",
+            },
+          },
+          { status: 409 },
+        ),
+      ),
+    );
+
+    const { configClient } = await import("./app");
+    await expect(configClient.save("{}")).rejects.toThrow(
+      "another validated configuration is already pending activation",
+    );
   });
 
   it("renders structured operation failures with stable recovery guidance", async () => {
@@ -269,6 +316,68 @@ describe("web client", () => {
     );
   });
 
+  it.each(["GET", "JSON", "form"] as const)(
+    "preserves %s transport and structured failures across an auth retry",
+    async (kind) => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse({ error: "csrf validation failed" }, { status: 403 }))
+        .mockResolvedValueOnce(jsonResponse({ authenticated: true, csrfToken: "csrf-token" }))
+        .mockResolvedValueOnce(
+          jsonResponse(
+            {
+              failure: {
+                Code: "stale_generation",
+                Operation: "media",
+                Message: "Prepared release changed.",
+                Recovery: "refresh_release",
+              },
+            },
+            { status: 409 },
+          ),
+        );
+      vi.stubGlobal("fetch", fetchMock);
+      const { initializeWebClient, requestApp, requestAppGet, requestAppForm } =
+        await import("./client");
+      initializeWebClient("csrf-token", false);
+      const signal = new AbortController().signal;
+      const options = { signal, correlationID: "request-1" };
+      const form = new FormData();
+      form.append("source", "example");
+      const request =
+        kind === "GET"
+          ? requestAppGet("Example", options)
+          : kind === "JSON"
+            ? requestApp("Example", { source: "example" }, options)
+            : requestAppForm("Example", form, options);
+
+      await expect(request).rejects.toThrow("Prepared release changed. Recovery: refresh release.");
+      const expected = {
+        method: kind === "GET" ? "GET" : "POST",
+        credentials: "include",
+        headers:
+          kind === "JSON"
+            ? {
+                "Content-Type": "application/json",
+                "X-CSRF-Token": "csrf-token",
+                "X-Upbrr-Correlation-Id": "request-1",
+              }
+            : { "X-CSRF-Token": "csrf-token" },
+        signal,
+        ...(kind === "GET" ? {} : { body: kind === "JSON" ? '{"source":"example"}' : form }),
+      };
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/app/Example", expected);
+      expect(fetchMock).toHaveBeenNthCalledWith(3, "/api/app/Example", expected);
+    },
+  );
+
+  it("rejects an empty successful application response", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
+    const { requestAppGet } = await import("./client");
+    await expect(requestAppGet("Example")).rejects.toThrow("Request returned an empty response");
+  });
+
   it("does not adopt a different browser session during auth refresh", async () => {
     const fetchMock = vi
       .fn()
@@ -326,6 +435,23 @@ describe("web client", () => {
       }),
     );
     await vi.waitFor(() => expect(listener).toHaveBeenCalledWith({ jobID: "job-1" }));
+    off();
+    await vi.waitFor(() => expect(cancelStream).toHaveBeenCalledOnce());
+  });
+
+  it("notifies connection subscribers after the event stream connects", async () => {
+    const cancelStream = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(eventStreamResponse({ revision: 2 }, cancelStream)),
+    );
+
+    const { initializeWebClient, subscribeWebEventConnection } = await import("./client");
+    initializeWebClient("csrf-token", true);
+    const connected = vi.fn();
+    const off = subscribeWebEventConnection(connected);
+
+    await vi.waitFor(() => expect(connected).toHaveBeenCalledOnce());
     off();
     await vi.waitFor(() => expect(cancelStream).toHaveBeenCalledOnce());
   });

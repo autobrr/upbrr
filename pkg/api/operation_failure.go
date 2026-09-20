@@ -26,6 +26,7 @@ type OperationFailureCode string
 
 const (
 	OperationFailureInvalidInput             OperationFailureCode = "invalid_input"
+	OperationFailureActiveInputBusy          OperationFailureCode = "active_input_busy"
 	OperationFailureLiveTestMutationDisabled OperationFailureCode = "live_test_mutation_disabled"
 	OperationFailureInvalidSource            OperationFailureCode = "invalid_source"
 	OperationFailureConfirmationRequired     OperationFailureCode = "confirmation_required"

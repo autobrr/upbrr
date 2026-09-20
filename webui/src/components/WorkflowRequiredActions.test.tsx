@@ -163,6 +163,34 @@ describe("WorkflowRequiredActions", () => {
     expect(screen.queryByText("Action required")).not.toBeInTheDocument();
   });
 
+  it("submits the exact legacy reconciliation choice", () => {
+    const confirm = vi.fn();
+    const recovery = action({
+      kind: "reconcile_submission",
+      prompt: "Verify whether the interrupted upload completed.",
+      options: [
+        {
+          value: "not_completed",
+          label: "Confirmed not completed; allow a fresh exact attempt",
+        },
+      ],
+    });
+    render(
+      <WorkflowRequiredActions
+        continuation={continuation([recovery])}
+        onConfirm={confirm}
+        onNavigate={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Confirmed not completed; allow a fresh exact attempt",
+      }),
+    );
+    expect(confirm).toHaveBeenCalledWith(recovery, true);
+  });
+
   it("leaves duplicate review and tracker naming inside dupe tracker cards", () => {
     const navigate = vi.fn();
     render(
