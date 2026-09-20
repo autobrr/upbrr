@@ -125,6 +125,55 @@ func TestMigrateAddReleaseOmissionControlsIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestMigrateAddReusableMediaTombstoneSourcesPreservesLegacyRows(t *testing.T) {
+	t.Parallel()
+
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	t.Cleanup(func() { _ = rawDB.Close() })
+
+	ctx := t.Context()
+	if _, err := rawDB.ExecContext(ctx, `
+		CREATE TABLE media_reusable_tombstones (
+			compatibility_key TEXT NOT NULL,
+			capture_fingerprint TEXT NOT NULL,
+			content_sha256 TEXT NOT NULL,
+			deleted_at TEXT NOT NULL,
+			PRIMARY KEY (compatibility_key, capture_fingerprint, content_sha256)
+		)
+	`); err != nil {
+		t.Fatalf("create legacy tombstones: %v", err)
+	}
+	if _, err := rawDB.ExecContext(ctx, `
+		INSERT INTO media_reusable_tombstones (compatibility_key, capture_fingerprint, content_sha256, deleted_at)
+		VALUES (?, ?, ?, ?)
+	`, "compatibility", "capture", "content", "2026-09-19T00:00:00Z"); err != nil {
+		t.Fatalf("insert legacy tombstone: %v", err)
+	}
+	for range 2 {
+		if err := Migrate(rawDB); err != nil {
+			t.Fatalf("migrate legacy tombstones: %v", err)
+		}
+	}
+
+	if exists, err := tableColumnExists(ctx, rawDB, "media_reusable_tombstones", "source_path"); err != nil || !exists {
+		t.Fatalf("tombstone source_path exists=%t err=%v", exists, err)
+	}
+	var sourcePath, deletedAt string
+	if err := rawDB.QueryRowContext(ctx, `
+		SELECT source_path, deleted_at
+		FROM media_reusable_tombstones
+		WHERE compatibility_key = ? AND capture_fingerprint = ? AND content_sha256 = ?
+	`, "compatibility", "capture", "content").Scan(&sourcePath, &deletedAt); err != nil {
+		t.Fatalf("read migrated tombstone: %v", err)
+	}
+	if sourcePath != "" || deletedAt != "2026-09-19T00:00:00Z" {
+		t.Fatalf("migrated tombstone source=%q deleted_at=%q", sourcePath, deletedAt)
+	}
+}
+
 func TestMigrateNormalizeDescriptionOverridesKeepsCurrentRows(t *testing.T) {
 	t.Parallel()
 

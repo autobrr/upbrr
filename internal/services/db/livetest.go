@@ -91,11 +91,14 @@ func BackupReadOnly(ctx context.Context, sourcePath, destinationPath string) err
 }
 
 var liveTestDiscardTables = []string{
+	"config_activation_pending",
+	"input_records",
+	"media_reusable_assets", "media_reusable_hosted_links", "media_reusable_tombstones", "media_reusable_commits",
 	"release_workflow_work", "release_workflow_effects", "release_workflow_events", "release_workflow_continuations",
-	"release_workflow_intents", "release_workflow_operations", "release_workflow_states", "description_overrides",
+	"release_workflow_intents", "release_workflow_operations", "release_workflow_states", "description_overrides", "description_reusable",
 	"dvd_mediainfo", "external_ids", "external_metadata", "file_metadata", "playlist_selections", "prepared_release_current",
 	"release_overrides", "screenshot_final_selections", "screenshot_slot_variants", "screenshot_slots", "screenshots",
-	"tracker_metadata", "tracker_rule_failures", "tracker_timestamps", "upload_records", "uploaded_images", "ui_states",
+	"submission_fences", "tracker_metadata", "tracker_rule_failures", "tracker_timestamps", "upload_records", "uploaded_images", "ui_states",
 }
 
 var liveTestConfigSections = []string{
@@ -166,7 +169,18 @@ func validateLiveTestSchema(ctx context.Context, exec migrationExecutor) error {
 	}
 	for _, name := range names {
 		if strings.HasPrefix(name, "sqlite_") || slices.Contains(liveTestDiscardTables, name) ||
-			slices.Contains([]string{"schema_migrations", "config_settings", "tracker_cookies", "tracker_auth_state"}, name) {
+			slices.Contains(
+				[]string{
+					"schema_migrations",
+					"config_settings",
+					"config_activation",
+					"tracker_cookies",
+					"tracker_auth_state",
+					"active_input",
+					"submission_fences",
+				},
+				name,
+			) {
 			continue
 		}
 		var count int
@@ -221,6 +235,15 @@ func (r *SQLiteRepository) PruneLiveTestState(ctx context.Context) error {
 	defer func() { _ = tx.Rollback() }()
 	if err := validateLiveTestSchema(ctx, tx); err != nil {
 		return err
+	}
+	activeExists, err := tableExists(ctx, tx, "active_input")
+	if err != nil {
+		return err
+	}
+	if activeExists {
+		if _, err := tx.ExecContext(ctx, `UPDATE active_input SET revision = 0, fence = 0, record_json = '{"State":"empty"}' WHERE singleton = 1`); err != nil {
+			return fmt.Errorf("snapshot clear active input ownership: %w", err)
+		}
 	}
 	sequenceExists, err := tableExists(ctx, tx, "sqlite_sequence")
 	if err != nil {

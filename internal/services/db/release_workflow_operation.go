@@ -33,6 +33,9 @@ func (r *SQLiteRepository) CreateReleaseWorkflowOperation(
 	var result api.ReleaseWorkflowOperationRecord
 	var idempotent bool
 	err = r.withWriteTx(ctx, "create release workflow operation", func(tx *sql.Tx) error {
+		if err := requireWorkflowInputMutation(ctx, tx, record.OwnerID, record.WorkflowID, false); err != nil {
+			return err
+		}
 		if record.IdempotencyKey != "" {
 			prior, loadErr := loadWorkflowOperationByIdempotency(
 				ctx,
@@ -146,6 +149,9 @@ func (r *SQLiteRepository) SaveReleaseWorkflowOperation(
 		completedAt = formatWorkflowStateTime(*record.Status.CompletedAt)
 	}
 	return r.withWriteTx(ctx, "save release workflow operation", func(tx *sql.Tx) error {
+		if err := requireWorkflowInputMutation(ctx, tx, record.OwnerID, record.WorkflowID, true); err != nil {
+			return err
+		}
 		result, updateErr := tx.ExecContext(ctx, `
 			UPDATE release_workflow_operations
 			SET process_epoch = ?, status = ?, sequence = ?, operation_json = ?, updated_at = ?, completed_at = ?
