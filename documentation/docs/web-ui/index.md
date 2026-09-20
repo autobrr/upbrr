@@ -25,6 +25,10 @@ Use a dedicated account password. Do not expose an unconfigured instance to an u
 
 The left navigation follows the release workflow. Some pages appear or unlock only when their input exists.
 
+The database owns one active input. Tabs in the same session follow its current state, including after reconnecting. Use **Close input** to release it before another session or CLI process starts work. Selecting another input waits for safe cleanup; an unfinished submission or unknown outcome must be resolved first. See [input lifecycle and reuse](../workflow/index.md#1-select-the-source).
+
+If **Legacy workflow recovery** appears, choose **Recover workflow** and check the tracker or torrent client for the interrupted operation. Use **Confirmed not completed; allow a fresh exact attempt** only after verifying that it did not complete. Recovery does not resubmit anything, and unresolved outcomes keep new inputs blocked.
+
 | Page              | Purpose                                                                  |
 | ----------------- | ------------------------------------------------------------------------ |
 | **Input**         | Choose the source path, trackers, metadata IDs, and preparation options. |
@@ -44,6 +48,8 @@ Navigation guards prevent later operations from silently using missing or stale 
 Use **Input** to correct titles, genre, release naming fields, and languages before duplicate checking. Selected trackers share provider lookups where possible. Missing fields identify the affected trackers. An unknown source or release type requires a correction.
 
 Corrections survive metadata refresh, history reload, and restart. Explicit values take precedence over saved values and provider results. **Auto** removes the saved correction. An empty list or explicit **No** remains a manual value.
+
+**Refresh metadata** verifies the source again and fetches current provider facts. Compatible screenshot content, selection, order, and hosted links can be reused when media preparation runs again. Earlier duplicate decisions and upload approval must be renewed.
 
 Tracker naming policies can declare mandatory rules for specific name components. Those rules take precedence over manual naming choices for that tracker only; they do not change the saved Input facts. When a rule overrides a choice or replaces a complete manual name, the review shows an explanation beside the effective tracker name. This authority is part of the tracker implementation, not a user setting.
 
@@ -87,13 +93,17 @@ Use **Settings** to manage:
 - post-upload behavior;
 - config import and export.
 
-Saving settings activates the new runtime configuration. Recheck tracker auth and run a dry run after changing credentials or upload behavior.
+Saving settings can remain **Pending** until current operations finish safely. Wait for activation status before using the change. Recheck tracker auth and run a dry run after changing credentials or upload behavior.
 
 See the [Settings reference](./settings/index.md) for every section, field behavior, and verification guidance.
 
 ## History
 
 **History** shows retained releases and lets you reopen their overview. Deleting a release from History removes its stored release state; it does not delete the source media.
+
+Opening a historical input checks its local source before adopting reusable content. Deleting an idle active release closes its input automatically; running work still prevents deletion. Deletion removes associated workflow, effect, reusable-media, and submission records, plus generated files managed by upbrr, even if the original source folder is missing. Local repeat-submission protection is removed with those records. Shared generated files and their directories are kept while another retained release still references them. Remote uploads and source media are unchanged.
+
+Restarting the application leaves the previous idle input closed. Its History and saved corrections remain available when you explicitly reopen it. Reloading a browser tab while the application keeps running restores the current input.
 
 ## Logging
 

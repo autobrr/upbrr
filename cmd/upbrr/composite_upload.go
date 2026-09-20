@@ -39,8 +39,12 @@ func (s *cliWorkflowSession) completeComposite(
 	if err != nil {
 		return 0, err
 	}
-	if s.current.FactInstructions != nil {
-		request.Preparation.Facts = compositeCLIFacts(s.current.FactInstructions.Instructions)
+	if s.current.Workflow.ID != "" {
+		request.Authority = &api.WorkflowAuthority{WorkflowID: s.current.Workflow.ID, ExpectedRevision: s.current.Workflow.Revision}
+		// The CLI prepared this exact workflow before starting the composite
+		// upload. Its initial force has already been consumed; retaining it
+		// would ask authority adoption to force a second generation.
+		request.Preparation.Force = false
 	}
 	ctx, request, err = resolveCLICompositeUploadInputs(ctx, request)
 	if err != nil {
@@ -57,6 +61,7 @@ func (s *cliWorkflowSession) completeComposite(
 	if err != nil {
 		return 0, fmt.Errorf("upbrr: start composite upload: %w", err)
 	}
+	s.current = current
 	current, err = s.waitForCompositeUpload(ctx, current)
 	if err != nil {
 		return 0, err
@@ -69,6 +74,10 @@ func (s *cliWorkflowSession) completeComposite(
 		debug,
 	)
 	for range 64 {
+		if s.current.Workflow.AllSelectedTrackersAlreadyUploaded() {
+			fmt.Fprintln(s.streams.out, "Already uploaded to all selected trackers.")
+			return 0, nil
+		}
 		s.printCompositeProjectionsOnce(printProjections)
 		if (debug || s.core.LiveTestEnabled()) && s.current.DryRun != nil {
 			printCLIWorkflowDryRun(s.streams.out, *s.current.DryRun, s.intent.noSeed, s.current.Projections, s.core.LiveTestEnabled())
@@ -692,11 +701,17 @@ func mapCLICompositeUploadRequest(
 		mode = api.ReleaseWorkflowUploadModeDebug
 	}
 	confirm := request.Options.InteractionMode != api.InteractionModeUnattended
-	sourceIDs := make(map[api.TrackerID]string, len(preparation.Instructions.TrackerIDs))
-	for trackerID, sourceID := range preparation.Instructions.TrackerIDs {
-		normalized := api.TrackerID(strings.ToUpper(strings.TrimSpace(trackerID)))
-		if normalized != "" {
-			sourceIDs[normalized] = strings.TrimSpace(sourceID)
+	var sourceIDs map[api.TrackerID]string
+	if len(preparation.Instructions.TrackerIDs) > 0 {
+		sourceIDs = make(map[api.TrackerID]string, len(preparation.Instructions.TrackerIDs))
+		for trackerID, sourceID := range preparation.Instructions.TrackerIDs {
+			normalized := api.TrackerID(strings.ToUpper(strings.TrimSpace(trackerID)))
+			if normalized != "" {
+				sourceIDs[normalized] = strings.TrimSpace(sourceID)
+			}
+		}
+		if len(sourceIDs) == 0 {
+			sourceIDs = nil
 		}
 	}
 	projections := make(map[api.TrackerID]api.ReleaseWorkflowUploadTrackerProjection)

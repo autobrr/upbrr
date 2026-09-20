@@ -40,6 +40,15 @@ func (r *durableExternalEffectReporter) Begin(
 	ctx context.Context,
 	effect api.WorkflowExternalEffect,
 ) (api.WorkflowExternalEffectReceipt, error) {
+	if effect.Submission != nil {
+		authority, ok := api.ActiveInputAuthorityFromContext(ctx)
+		if !ok || authority.CoordinatorID == "" || authority.Fence == 0 {
+			return api.WorkflowExternalEffectReceipt{}, api.ErrActiveInputLeaseLost
+		}
+		if effect.Submission.CoordinatorID != authority.CoordinatorID || effect.Submission.Fence != authority.Fence {
+			return api.WorkflowExternalEffectReceipt{}, api.ErrActiveInputLeaseLost
+		}
+	}
 	effectID, err := r.module.newID("effect")
 	if err != nil {
 		return api.WorkflowExternalEffectReceipt{}, err
@@ -56,6 +65,7 @@ func (r *durableExternalEffectReporter) Begin(
 		Status:              api.WorkflowEffectStatusStarted,
 		StartedAt:           now,
 		UpdatedAt:           now,
+		Submission:          effect.Submission,
 	})
 	if err != nil {
 		return api.WorkflowExternalEffectReceipt{}, fmt.Errorf("release workflow fence external effect: %w", err)

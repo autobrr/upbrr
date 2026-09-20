@@ -9,7 +9,9 @@ upbrr applies forward-only SQLite migrations during startup. Back up application
 
 ## 1. Stop upbrr
 
-Stop the binary, service, or container so the database is not changing while copied.
+Stop every binary, service, and container using the database before upgrading or copying it. Disable scheduled tasks and automatic restarts that could start an older process during the upgrade. Take the backup only after all writers have stopped.
+
+Running old and new versions against the same database is unsupported. Older binaries do not enforce the newer active-input and submission protections.
 
 ## 2. Back up the state directory
 
@@ -46,8 +48,14 @@ Keep the same `/config` volume.
 4. confirm Settings, tracker authentication status, history, and browse roots;
 5. select **Skip client injection**, then run **Dry Run** before the next live upload. Dry Run suppresses tracker submission; the skip option prevents torrent injection. For CLI verification, use `--debug --no-seed` (`-ns`).
 
+Startup automatically removes identifiable leftovers from previously deleted History releases, including their workflow records and generated artifacts. Retained History, active work, and records with ambiguous ownership are preserved.
+
+If a retained older workflow has an unresolved external outcome, opening another input remains blocked. In the Web UI, choose **Recover workflow** under **Legacy workflow recovery**. Check the tracker or torrent client before resolving the action. Choose **Confirmed not completed; allow a fresh exact attempt** only when you have verified that the operation did not complete. Recovery itself does not resubmit anything.
+
+The CLI presents the same confirmation when run interactively or with `--unattended_confirm`. Strict `--unattended` exits without prompting. An unknown outcome remains blocked while its workflow is retained. Deleting the associated release from History removes its local workflow and effect records; it does not establish whether the external operation completed.
+
 :::caution Downgrades
 
-Do not assume an older binary can use a database migrated by a newer binary. To roll back safely, stop upbrr and restore the matching pre-upgrade state backup before starting the older version.
+Never start an older binary against the upgraded database. To roll back, stop every upbrr process and restore the matching pre-upgrade state backup before starting the older version.
 
 :::

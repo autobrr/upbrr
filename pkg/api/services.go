@@ -270,6 +270,14 @@ func validateExactMediaUploads(channel string, uploads []UploadedImageLink, allo
 // instruction, and prerequisite view. It excludes preparation diagnostics,
 // resolver evidence, cache freshness, and client-search implementation state.
 type UploadSubject struct {
+	// SourceIdentity is private verified source evidence used to derive exact
+	// submission and media reuse identities. It must not enter transport JSON.
+	SourceIdentity SourceContentIdentity `json:"-"`
+	// SourceManifest retains the verified local state for final consumption checks.
+	SourceManifest SourceManifest `json:"-"`
+	// SubmissionContentIdentity is finalized from the exact torrent inclusion
+	// scope and freshly verified local bytes before tracker submission.
+	SubmissionContentIdentity  SubmissionContentIdentity `json:"-"`
 	EffectiveMetadata          EffectiveMetadata
 	ManualLanguages            ManualLanguageFacts
 	HardcodedSubs              bool

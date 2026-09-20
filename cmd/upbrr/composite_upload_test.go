@@ -425,6 +425,48 @@ func TestCLICompleteUsesCompositeStartAndFeedback(t *testing.T) {
 	}
 }
 
+func TestCLICompositeAdoptionPreservesRequestedFacts(t *testing.T) {
+	t.Parallel()
+
+	requestedSourceLookup := "Requested Example Release"
+	effectiveSourceLookup := "Provider Resolved Example Release"
+	coreSvc := &cliWorkflowCoreFake{
+		startUploadFn: func(request api.CreateReleaseWorkflowUploadRequest) (releaseworkflow.CommandResult, error) {
+			if request.Authority == nil || request.Authority.WorkflowID != "workflow-composite" || request.Authority.ExpectedRevision != 7 {
+				t.Fatalf("composite authority = %#v", request.Authority)
+			}
+			if request.Trackers.SourceIDs != nil {
+				t.Fatalf("empty source IDs changed requested facts: %#v", request.Trackers.SourceIDs)
+			}
+			if request.Preparation.Facts.SourceLookup == nil || *request.Preparation.Facts.SourceLookup != requestedSourceLookup {
+				t.Fatalf("composite facts = %#v", request.Preparation.Facts)
+			}
+			return releaseworkflow.CommandResult{DryRun: &api.UploadDryRunResult{Status: api.StageStatusCompleted}}, nil
+		},
+	}
+	session := &cliWorkflowSession{
+		core: coreSvc,
+		current: releaseworkflow.CommandResult{
+			Workflow: api.ReleaseWorkflow{ID: "workflow-composite", Revision: 7},
+			FactInstructions: &api.ReleaseFactInstructionSnapshot{
+				Instructions: api.ReleaseFactInstructions{SourceLookup: effectiveSourceLookup},
+			},
+		},
+		uploadRequest: api.Request{
+			SourcePath:      `C:\releases\Example.Release.2026.1080p-GRP`,
+			SourceLookupURL: requestedSourceLookup,
+			Options:         api.UploadOptions{InteractionMode: api.InteractionModeInteractive},
+		},
+		streams: cliIO{out: io.Discard},
+	}
+	if _, err := session.completeComposite(t.Context(), true, bufio.NewReader(strings.NewReader("")), config.Config{}, api.NopLogger{}); err != nil {
+		t.Fatalf("complete composite upload: %v", err)
+	}
+	if len(coreSvc.uploadRequests) != 1 {
+		t.Fatalf("composite starts = %d", len(coreSvc.uploadRequests))
+	}
+}
+
 func TestCLICompositePrintsTrackerProjectionsOnce(t *testing.T) {
 	logger, err := logging.NewWithConsoleLevel(config.LoggingConfig{Level: "trace"}, "", "info")
 	if err != nil {

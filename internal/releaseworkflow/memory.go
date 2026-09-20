@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -181,6 +182,9 @@ func (r *MemoryRepository) Delete(ctx context.Context, ownerID string, workflowI
 	return nil
 }
 
+// CreateOperation stores a detached operation or returns a matching command receipt
+// with replay=true. Conflicting command fingerprints, active work, or reused operation IDs
+// return ErrOperationConflict.
 func (r *MemoryRepository) CreateOperation(
 	ctx context.Context,
 	record api.ReleaseWorkflowOperationRecord,
@@ -214,6 +218,8 @@ func (r *MemoryRepository) CreateOperation(
 	return cloneMemoryOperationRecord(record), false, nil
 }
 
+// LoadOperation returns a detached operation scoped to its owner and workflow.
+// Missing operations and mismatched ownership both return ErrWorkflowNotFound.
 func (r *MemoryRepository) LoadOperation(
 	ctx context.Context,
 	ownerID string,
@@ -257,6 +263,8 @@ func (r *MemoryRepository) LoadOperationByIdempotency(
 	return api.ReleaseWorkflowOperationRecord{}, ErrWorkflowNotFound
 }
 
+// LoadLatestOperation returns a detached operation with the latest UpdatedAt for
+// this owner and workflow, or ErrWorkflowNotFound when none exists.
 func (r *MemoryRepository) LoadLatestOperation(
 	ctx context.Context,
 	ownerID string,
@@ -285,6 +293,9 @@ func (r *MemoryRepository) LoadLatestOperation(
 	return cloneMemoryOperationRecord(latest), nil
 }
 
+// SaveOperation replaces an owned operation only when its stored sequence matches
+// expectedSequence and the replacement advances it by exactly one. Sequence conflicts
+// return ErrRevisionConflict; missing or foreign records return ErrWorkflowNotFound.
 func (r *MemoryRepository) SaveOperation(
 	ctx context.Context,
 	expectedSequence uint64,
@@ -309,6 +320,8 @@ func (r *MemoryRepository) SaveOperation(
 	return nil
 }
 
+// ListActiveOperations returns detached queued or running operations across all owners.
+// The result has no guaranteed ordering and is intended for process-level recovery.
 func (r *MemoryRepository) ListActiveOperations(ctx context.Context) ([]api.ReleaseWorkflowOperationRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("list active workflow operations: %w", err)
@@ -510,6 +523,17 @@ func (r *MemoryRepository) MarkOperationEffectsUnknown(
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.markOperationEffectsUnknown(ownerID, workflowID, operationID, now)
+	return nil
+}
+
+// markOperationEffectsUnknown requires r.mu to be held.
+func (r *MemoryRepository) markOperationEffectsUnknown(
+	ownerID string,
+	workflowID api.WorkflowID,
+	operationID api.WorkflowOperationID,
+	now time.Time,
+) {
 	for key, effect := range r.effects {
 		if effect.OwnerID == ownerID && effect.WorkflowID == workflowID && effect.OperationID == operationID &&
 			effect.Status == api.WorkflowEffectStatusStarted {
@@ -520,7 +544,76 @@ func (r *MemoryRepository) MarkOperationEffectsUnknown(
 			r.effects[key] = effect
 		}
 	}
-	return nil
+}
+
+// RecoverLegacyEffects marks started in-memory effects unknown and returns the
+// exact owner-scoped effects that require reconciliation.
+func (r *MemoryRepository) RecoverLegacyEffects(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+	now time.Time,
+) ([]api.ReleaseWorkflowEffectRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("recover legacy workflow effects: %w", err)
+	}
+	if strings.TrimSpace(ownerID) == "" || workflowID == "" || now.IsZero() {
+		return nil, api.ErrReleaseWorkflowEffectConflict
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	effects := make([]api.ReleaseWorkflowEffectRecord, 0)
+	for key, effect := range r.effects {
+		if effect.OwnerID != ownerID || effect.WorkflowID != workflowID ||
+			(effect.Status != api.WorkflowEffectStatusStarted && effect.Status != api.WorkflowEffectStatusUnknown) {
+			continue
+		}
+		if effect.Status == api.WorkflowEffectStatusStarted {
+			effect.Status = api.WorkflowEffectStatusUnknown
+			effect.UpdatedAt = now
+			completed := now
+			effect.CompletedAt = &completed
+			r.effects[key] = effect
+		}
+		effects = append(effects, effect)
+	}
+	slices.SortFunc(effects, func(left, right api.ReleaseWorkflowEffectRecord) int {
+		if left.StartedAt.Equal(right.StartedAt) {
+			return strings.Compare(left.EffectID, right.EffectID)
+		}
+		if left.StartedAt.Before(right.StartedAt) {
+			return -1
+		}
+		return 1
+	})
+	return effects, nil
+}
+
+// ListLegacyRecoveryWorkflowIDs returns sorted, distinct workflow IDs for this
+// owner's started or unknown effects. This in-memory implementation does not require
+// migration metadata; an empty owner returns api.ErrReleaseWorkflowStateNotFound.
+func (r *MemoryRepository) ListLegacyRecoveryWorkflowIDs(ctx context.Context, ownerID string) ([]api.WorkflowID, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("list legacy recovery workflows: %w", err)
+	}
+	ownerID = strings.TrimSpace(ownerID)
+	if ownerID == "" {
+		return nil, api.ErrReleaseWorkflowStateNotFound
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	workflowIDs := make(map[api.WorkflowID]struct{})
+	for _, effect := range r.effects {
+		if effect.OwnerID == ownerID && (effect.Status == api.WorkflowEffectStatusStarted || effect.Status == api.WorkflowEffectStatusUnknown) {
+			workflowIDs[effect.WorkflowID] = struct{}{}
+		}
+	}
+	result := make([]api.WorkflowID, 0, len(workflowIDs))
+	for workflowID := range workflowIDs {
+		result = append(result, workflowID)
+	}
+	slices.Sort(result)
+	return result, nil
 }
 
 // ResolveEffectUnknown records manual verification for one uncertain in-memory effect.
@@ -671,6 +764,7 @@ func (r *MemoryRepository) CompleteWork(ctx context.Context, record api.ReleaseW
 	prior.UpdatedAt = record.UpdatedAt
 	completed := *record.CompletedAt
 	prior.CompletedAt = &completed
+	r.markOperationEffectsUnknown(record.OwnerID, record.WorkflowID, record.OperationID, completed)
 	r.work[key] = prior
 	return nil
 }

@@ -13,11 +13,14 @@ type UploadedImageLink struct {
 	ImagePath                string
 	Host                     string
 	UsageScope               string
-	ImgURL                   string
-	RawURL                   string
-	WebURL                   string
-	SizeBytes                int64
-	UploadedAt               time.Time `ts_type:"string"`
+	// AccountScope is a private configuration fingerprint used only for durable
+	// hosted-link reuse. It is never a transport field.
+	AccountScope string `json:"-"`
+	ImgURL       string
+	RawURL       string
+	WebURL       string
+	SizeBytes    int64
+	UploadedAt   time.Time `ts_type:"string"`
 }
 
 // UploadImageHostFailure describes a single host-level image upload failure

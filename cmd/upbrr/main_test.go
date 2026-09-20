@@ -5,7 +5,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -14,10 +17,52 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/configstore"
+	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/webserver"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+type cliWorkflowCoreLifecycleFake struct {
+	order                  []string
+	shutdownCtxErr         error
+	shutdownCtxHasDeadline bool
+	shutdownErr            error
+	closeErr               error
+}
+
+func (f *cliWorkflowCoreLifecycleFake) ShutdownWorkflowCoordinator(ctx context.Context) error {
+	f.order = append(f.order, "shutdown")
+	f.shutdownCtxErr = ctx.Err()
+	_, f.shutdownCtxHasDeadline = ctx.Deadline()
+	return f.shutdownErr
+}
+
+func (f *cliWorkflowCoreLifecycleFake) Close() error {
+	f.order = append(f.order, "close")
+	return f.closeErr
+}
+
+func TestCloseCLIWorkflowCoreShutsDownBeforeClosingRepository(t *testing.T) {
+	fake := &cliWorkflowCoreLifecycleFake{shutdownErr: errors.New("synthetic shutdown")}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	var stderr strings.Builder
+	closeCLIWorkflowCore(ctx, fake, &stderr)
+	if len(fake.order) != 2 || fake.order[0] != "shutdown" || fake.order[1] != "close" {
+		t.Fatalf("lifecycle order = %v", fake.order)
+	}
+	if fake.shutdownCtxErr != nil {
+		t.Fatalf("shutdown context error = %v", fake.shutdownCtxErr)
+	}
+	if !fake.shutdownCtxHasDeadline {
+		t.Fatal("shutdown context has no deadline")
+	}
+	if !strings.Contains(stderr.String(), "synthetic shutdown") {
+		t.Fatalf("shutdown failure was not reported: %q", stderr.String())
+	}
+}
 
 func TestCLIRejectsMultipleSourcesBeforeTrackCorrectionWork(t *testing.T) {
 	for _, flags := range [][]string{
@@ -43,6 +88,350 @@ func TestCLIRejectsMultipleSourcesBeforeTrackCorrectionWork(t *testing.T) {
 	}
 }
 
+func TestLoadCLIConfigProvidedDoesNotOverwriteDurableConfig(t *testing.T) {
+	ctx := t.Context()
+	dbPath := filepath.Join(t.TempDir(), "state", "upbrr.db")
+	stored := &config.Config{
+		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: dbPath},
+		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		Logging:            config.LoggingConfig{Level: "error"},
+	}
+	if err := configstore.SaveToDBPath(ctx, stored, dbPath); err != nil {
+		t.Fatal(err)
+	}
+	provided := *stored
+	provided.Metadata.KeepImages = true
+	configPath := filepath.Join(t.TempDir(), "provided.yaml")
+	if err := config.ExportToYAML(&provided, configPath); err != nil {
+		t.Fatal(err)
+	}
+	loaded, resolvedDBPath, err := loadCLIConfig(ctx, configPath, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.Metadata.KeepImages || resolvedDBPath != dbPath {
+		t.Fatalf("provided runtime config = %#v, db path=%q", loaded.Metadata, resolvedDBPath)
+	}
+	repo, err := db.OpenContext(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	actual, err := config.LoadFromDatabase(ctx, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual.Metadata.KeepImages {
+		t.Fatal("provided CLI config overwrote durable active configuration")
+	}
+}
+
+func TestCLIConfigActivationRegistersFirstRunSeed(t *testing.T) {
+	ctx := t.Context()
+	dbPath := filepath.Join(t.TempDir(), "state", "upbrr.db")
+	configPath := filepath.Join(t.TempDir(), "e2e-seed.yaml")
+	seedConfig := &config.Config{
+		MainSettings: config.MainSettingsConfig{
+			TMDBAPI:           "e2e",
+			DBPath:            dbPath,
+			TrackerPassChecks: 1,
+			InputHistoryLimit: 20,
+		},
+		ImageHosting:       config.ImageHostingConfig{Host1: "imgbb", ImgBBAPI: "e2e"},
+		Metadata:           config.MetadataConfig{KeepImages: true},
+		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1, MinSuccessfulUploads: 1},
+		Logging:            config.LoggingConfig{Level: "debug", FileEnabled: false},
+		Trackers:           config.TrackersConfig{Trackers: map[string]config.TrackerConfig{}},
+		TorrentClients:     map[string]config.TorrentClientConfig{},
+	}
+	if err := config.ExportToYAML(seedConfig, configPath); err != nil {
+		t.Fatal(err)
+	}
+	cfg, resolvedDBPath, seeded, err := loadCLIConfigWithSeed(ctx, configPath, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !seeded || resolvedDBPath != dbPath {
+		t.Fatalf("first-run config seeded=%t dbPath=%q", seeded, resolvedDBPath)
+	}
+	generation, fingerprint, err := cliConfigActivation(ctx, cfg, resolvedDBPath)
+	if err != nil {
+		t.Fatalf("register first-run config activation: %v", err)
+	}
+	if generation != 0 || fingerprint == "" {
+		t.Fatalf("first-run config activation generation=%d fingerprint=%q", generation, fingerprint)
+	}
+}
+
+func TestCLISeededConfigActivationMatchesServeAndLaterCLI(t *testing.T) {
+	ctx := t.Context()
+	dbPath := filepath.Join(t.TempDir(), "state", "upbrr.db")
+	configPath := filepath.Join(t.TempDir(), "e2e-seed.yaml")
+	configYAML := strings.Join([]string{
+		"main_settings:",
+		"  tmdb_api: \"e2e\"",
+		"  tracker_pass_checks: 1",
+		"  input_history_limit: 20",
+		fmt.Sprintf("  db_path: %q", dbPath),
+		"image_hosting:",
+		"  img_host_1: \"imgbb\"",
+		"  imgbb_api: \"e2e\"",
+		"metadata:",
+		"  keep_images: true",
+		"screenshot_handling:",
+		"  screens: 1",
+		"  min_successful_image_uploads: 1",
+		"logging:",
+		"  level: \"debug\"",
+		"  file_enabled: false",
+		"trackers:",
+		"  default_trackers: [\"BTN\"]",
+		"  BTN:",
+		"    api_key: \"e2e\"",
+		"    username: \"e2e\"",
+		"    password: \"e2e\"",
+		"    url: \"http://127.0.0.1\"",
+		"    image_host: \"imgbb\"",
+		"torrent_clients: {}",
+	}, "\n")
+	if err := os.WriteFile(configPath, []byte(configYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	seededConfig, resolvedDBPath, seeded, err := loadCLIConfigWithSeed(ctx, configPath, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !seeded || resolvedDBPath != dbPath {
+		t.Fatalf("initial CLI config seeded=%t dbPath=%q", seeded, resolvedDBPath)
+	}
+	_, seededFingerprint, err := cliConfigActivation(ctx, seededConfig, resolvedDBPath)
+	if err != nil {
+		t.Fatalf("register seeded CLI config: %v", err)
+	}
+
+	serveConfig, serveDBPath, err := loadServeConfig(ctx, configPath, true)
+	if err != nil {
+		t.Fatalf("load serve config after CLI seed: %v", err)
+	}
+	if serveDBPath != dbPath {
+		t.Fatalf("serve DB path = %q, want %q", serveDBPath, dbPath)
+	}
+	serveFingerprint, err := config.EffectiveConfigFingerprint(serveConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if serveFingerprint != seededFingerprint {
+		t.Fatal("serve config fingerprint does not match CLI seed")
+	}
+
+	laterCLIConfig, laterDBPath, laterSeeded, err := loadCLIConfigWithSeed(ctx, configPath, true)
+	if err != nil {
+		t.Fatalf("load later CLI config: %v", err)
+	}
+	if laterSeeded || laterDBPath != dbPath {
+		t.Fatalf("later CLI config seeded=%t dbPath=%q", laterSeeded, laterDBPath)
+	}
+	if _, laterFingerprint, err := cliConfigActivation(ctx, laterCLIConfig, laterDBPath); err != nil {
+		t.Fatalf("register later CLI config: %v", err)
+	} else if laterFingerprint != seededFingerprint {
+		t.Fatal("later CLI fingerprint does not match seed")
+	}
+	if err := executeCLI(ctx, []string{"--config", configPath, "--cleanup"}, cliIO{}); err != nil {
+		t.Fatalf("run later CLI cleanup: %v", err)
+	}
+}
+
+func TestActivateImportedConfigCommitsNewGeneration(t *testing.T) {
+	ctx := t.Context()
+	dbPath := filepath.Join(t.TempDir(), "import.db")
+	initial := &config.Config{
+		MainSettings:       config.MainSettingsConfig{TMDBAPI: "initial", DBPath: dbPath},
+		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		Logging:            config.LoggingConfig{Level: "error"},
+	}
+	if err := configstore.SaveToDBPath(ctx, initial, dbPath); err != nil {
+		t.Fatal(err)
+	}
+	imported := *initial
+	imported.Metadata.KeepImages = true
+	activation, err := activateImportedConfig(ctx, &imported, dbPath)
+	if err != nil {
+		t.Fatalf("activate imported config: %v", err)
+	}
+	if activation.Status != api.ConfigActivationActive || activation.ActiveGeneration != 1 || activation.Fingerprint == "" {
+		t.Fatalf("import activation = %#v", activation)
+	}
+	repo, err := db.OpenContext(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	persisted, err := config.LoadFromDatabase(ctx, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !persisted.Metadata.KeepImages {
+		t.Fatal("safe import did not persist config")
+	}
+}
+
+func TestImportConfigUsesActivationTransaction(t *testing.T) {
+	ctx := t.Context()
+	dbPath := filepath.Join(t.TempDir(), "import-command.db")
+	configPath := filepath.Join(t.TempDir(), "active.yaml")
+	initial := &config.Config{
+		MainSettings:       config.MainSettingsConfig{TMDBAPI: "initial", DBPath: dbPath},
+		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		Logging:            config.LoggingConfig{Level: "error"},
+	}
+	if err := configstore.SaveToDBPath(ctx, initial, dbPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.ExportToYAML(initial, configPath); err != nil {
+		t.Fatal(err)
+	}
+	imported := *initial
+	imported.Metadata.KeepImages = true
+	importPath := filepath.Join(t.TempDir(), "import.yaml")
+	if err := config.ExportToYAML(&imported, importPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := importConfig(ctx, importPath, configPath, true, cliIO{out: io.Discard, errOut: io.Discard}); err != nil {
+		t.Fatalf("import config: %v", err)
+	}
+	repo, err := db.OpenContext(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	activation, err := repo.LoadConfigActivation(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if activation.ActiveGeneration != 1 {
+		t.Fatalf("import generation = %d, want 1", activation.ActiveGeneration)
+	}
+}
+
+func TestActivateImportedConfigInvalidatesIdleActiveWorkflow(t *testing.T) {
+	ctx := t.Context()
+	dbPath := filepath.Join(t.TempDir(), "import-idle-workflow.db")
+	initial := &config.Config{
+		MainSettings:       config.MainSettingsConfig{TMDBAPI: "initial", DBPath: dbPath},
+		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		Logging:            config.LoggingConfig{Level: "error"},
+	}
+	if err := configstore.SaveToDBPath(ctx, initial, dbPath); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := db.OpenContext(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.MigrateContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	release := api.ReleaseSnapshotRef{ID: "release", Revision: 1}
+	state := releaseworkflow.State{
+		OwnerID: "owner",
+		Workflow: api.ReleaseWorkflow{
+			ID:               "workflow",
+			Revision:         1,
+			FactInstructions: api.ReleaseFactInstructionSnapshotRef{ID: "facts", Revision: 1},
+			Release:          &release,
+			Status:           api.WorkflowStatusActive,
+			CreatedAt:        now,
+			UpdatedAt:        now,
+		},
+	}
+	payload, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO release_workflow_states (
+		owner_id, workflow_id, revision, status, creation_key, creation_fingerprint, state_json, created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"owner", "workflow", 1, api.WorkflowStatusActive, "", "", payload, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.RawDB().ExecContext(ctx, `UPDATE active_input
+		SET revision = 1, fence = 1, record_json = ?
+		WHERE singleton = 1`,
+		`{"State":"active","Revision":1,"Fence":1,"CoordinatorID":"test","OwnerID":"owner","WorkflowID":"workflow","InputID":"input","SourceVersion":"version"}`); err != nil {
+		t.Fatal(err)
+	}
+	imported := *initial
+	imported.Metadata.KeepImages = true
+	activation, err := activateImportedConfig(ctx, &imported, dbPath)
+	if err != nil {
+		t.Fatalf("activate imported config: %v", err)
+	}
+	if activation.ActiveGeneration != 1 {
+		t.Fatalf("import generation = %d, want 1", activation.ActiveGeneration)
+	}
+	var statePayload []byte
+	var revision api.WorkflowRevision
+	if err := repo.RawDB().QueryRowContext(ctx, `SELECT revision, state_json FROM release_workflow_states WHERE owner_id = ? AND workflow_id = ?`, "owner", "workflow").Scan(&revision, &statePayload); err != nil {
+		t.Fatal(err)
+	}
+	if revision <= 1 {
+		t.Fatalf("workflow revision = %d, want greater than 1", revision)
+	}
+	var updated releaseworkflow.State
+	if err := json.Unmarshal(statePayload, &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Workflow.Release != nil {
+		t.Fatalf("provider impact retained current release: %#v", updated.Workflow)
+	}
+	active, err := repo.LoadActiveInput(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.Revision != 2 {
+		t.Fatalf("active input revision = %d, want 2", active.Revision)
+	}
+}
+
+func TestActivateImportedConfigRejectsBusyWithoutPersisting(t *testing.T) {
+	ctx := t.Context()
+	dbPath := filepath.Join(t.TempDir(), "import-busy.db")
+	initial := &config.Config{
+		MainSettings:       config.MainSettingsConfig{TMDBAPI: "initial", DBPath: dbPath},
+		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		Logging:            config.LoggingConfig{Level: "error"},
+	}
+	if err := configstore.SaveToDBPath(ctx, initial, dbPath); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := db.OpenContext(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.MigrateContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.RawDB().ExecContext(ctx, `UPDATE active_input SET record_json = ? WHERE singleton = 1`,
+		`{"State":"opening","Revision":1,"Fence":1,"CoordinatorID":"test","OwnerID":"owner"}`); err != nil {
+		t.Fatal(err)
+	}
+	imported := *initial
+	imported.Metadata.KeepImages = true
+	if _, err := activateImportedConfig(ctx, &imported, dbPath); !errors.Is(err, api.ErrActiveInputBusy) {
+		t.Fatalf("busy import error = %v", err)
+	}
+	persisted, err := config.LoadFromDatabase(ctx, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Metadata.KeepImages {
+		t.Fatal("busy import persisted config before activation")
+	}
+}
 func TestCLIPreparationBatchOwnsPerSourceInstructions(t *testing.T) {
 	t.Parallel()
 

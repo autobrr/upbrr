@@ -24,12 +24,16 @@ type WorkflowExternalEffect struct {
 	Kind                WorkflowExternalEffectKind
 	ScopeID             string
 	SemanticFingerprint WorkflowFingerprint
+	// Submission is required for tracker submissions admitted by an active
+	// input workflow. It carries the exact scoped content and site authority.
+	Submission *SubmissionFenceAuthority
 }
 
 // WorkflowExternalEffectReceipt is private in-process authority to complete a
 // previously persisted attempt_started record.
 type WorkflowExternalEffectReceipt struct {
-	EffectID         string
+	EffectID string
+	// AlreadySucceeded tells the caller to reuse the prior result instead of repeating the external effect.
 	AlreadySucceeded bool
 }
 
@@ -40,6 +44,13 @@ type WorkflowExternalEffectReporter interface {
 }
 
 type workflowExternalEffectReporterContextKey struct{}
+
+// WorkflowExternalEffectReporterFromContext returns the current operation's
+// reporter so domain owners can add checks without replacing its durable fence.
+func WorkflowExternalEffectReporterFromContext(ctx context.Context) (WorkflowExternalEffectReporter, bool) {
+	reporter, ok := ctx.Value(workflowExternalEffectReporterContextKey{}).(WorkflowExternalEffectReporter)
+	return reporter, ok
+}
 
 // WithWorkflowExternalEffectReporter installs one operation-scoped effect fence.
 func WithWorkflowExternalEffectReporter(
@@ -53,7 +64,9 @@ func WithWorkflowExternalEffectReporter(
 }
 
 // BeginWorkflowExternalEffect durably fences one external attempt when the
-// current workflow operation installed a reporter.
+// current workflow operation installed a reporter. Invalid effect authority is rejected first.
+// Without a reporter, effects lacking submission authority return an empty receipt;
+// effects carrying submission authority require a reporter.
 func BeginWorkflowExternalEffect(
 	ctx context.Context,
 	effect WorkflowExternalEffect,
@@ -63,6 +76,9 @@ func BeginWorkflowExternalEffect(
 	}
 	reporter, _ := ctx.Value(workflowExternalEffectReporterContextKey{}).(WorkflowExternalEffectReporter)
 	if reporter == nil {
+		if effect.Submission != nil {
+			return WorkflowExternalEffectReceipt{}, errors.New("workflow submission fence reporter is required")
+		}
 		return WorkflowExternalEffectReceipt{}, nil
 	}
 	receipt, err := reporter.Begin(ctx, effect)
@@ -73,6 +89,8 @@ func BeginWorkflowExternalEffect(
 }
 
 // CompleteWorkflowExternalEffect persists a known success or failure receipt.
+// Empty receipts, already-succeeded attempts, and absent reporters are no-ops;
+// an uncertain remote outcome must not be reported as a known failure.
 func CompleteWorkflowExternalEffect(
 	ctx context.Context,
 	receipt WorkflowExternalEffectReceipt,
@@ -101,6 +119,14 @@ func validateWorkflowExternalEffect(effect WorkflowExternalEffect) error {
 	}
 	if strings.TrimSpace(effect.ScopeID) == "" || effect.SemanticFingerprint == "" {
 		return errors.New("workflow external effect scope and semantic fingerprint are required")
+	}
+	if effect.Submission != nil {
+		if effect.Kind != WorkflowExternalEffectTrackerSubmission {
+			return errors.New("submission fence is only valid for tracker submission")
+		}
+		if err := effect.Submission.ValidateSubmission(); err != nil {
+			return fmt.Errorf("workflow external effect submission fence: %w", err)
+		}
 	}
 	return nil
 }

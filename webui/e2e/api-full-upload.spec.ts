@@ -166,6 +166,8 @@ test("confirm composite resolves duplicate and approval feedback after restart",
     expect(workspace.fake.counters.trackerUploads).toBe(0);
 
     await app.stop();
+    // Windows force-stops the process; recovery must wait for its coordinator lease to expire.
+    workspace.env.UPBRR_E2E_CLOCK_OFFSET = "2m";
     app = await startApp(workspace, { seed: false });
     client = new ReleaseWorkflowV1Client(app.url, apiToken);
     const restartedResponse = await client.get(duplicateBlocked.workflow.id);
@@ -192,6 +194,26 @@ test("confirm composite resolves duplicate and approval feedback after restart",
       },
     });
     expect(stale.status).toBe(409);
+
+    // Stale feedback is rejected before admission. Explicitly resume the expired
+    // coordinator, then re-read its recovered revision before reviewed feedback.
+    const resumed = await client.raw("/continuations", {
+      method: "POST",
+      idempotencyKey: "confirm-duplicate-recover",
+      body: {
+        authority: {
+          workflowId: duplicateBlocked.workflow.id,
+          expectedRevision: duplicateBlocked.workflow.revision,
+        },
+        goal: "prepared",
+        intent: {},
+      },
+    });
+    expect(resumed.status, await resumed.clone().text()).toBe(409);
+    const recoveredResponse = await client.get(duplicateBlocked.workflow.id);
+    expect(recoveredResponse.status).toBe(200);
+    duplicateBlocked = (await recoveredResponse.json()) as WorkflowV1Current;
+    duplicateAction = pendingAction(duplicateBlocked, "review_duplicates");
 
     const duplicateFeedback = await client.raw(
       `/uploads/${duplicateBlocked.workflow.id}/feedback`,
@@ -582,6 +604,25 @@ test("restart stops at reconciliation after an uncertain client effect", async (
     workspace.env.UPBRR_E2E_CLOCK_OFFSET = "2m";
     app = await startApp(workspace, { seed: false });
     client = new ReleaseWorkflowV1Client(app.url, apiToken);
+    // Plain reads do not claim a coordinator lease or recover external work.
+    // An explicit owner-authorized resume performs recovery and rejects the
+    // old revision so callers review the resulting reconciliation action.
+    const beforeResumeResponse = await client.get(accepted.workflow.id);
+    expect(beforeResumeResponse.status).toBe(200);
+    const beforeResume = (await beforeResumeResponse.json()) as WorkflowV1Current;
+    const resumed = await client.raw("/continuations", {
+      method: "POST",
+      idempotencyKey: "recover-uncertain-client-effect",
+      body: {
+        authority: {
+          workflowId: beforeResume.workflow.id,
+          expectedRevision: beforeResume.workflow.revision,
+        },
+        goal: "prepared",
+        intent: {},
+      },
+    });
+    expect(resumed.status, await resumed.clone().text()).toBe(409);
     const recoveredOperation = await waitForTerminalOperation(
       client,
       accepted.workflow.id,
