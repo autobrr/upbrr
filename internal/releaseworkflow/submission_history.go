@@ -15,6 +15,8 @@ type SubmissionHistoryFilter interface {
 	FilterConfirmedSubmissions(context.Context, api.UploadSubject, []api.TrackerID) ([]api.TrackerID, []api.SubmissionExclusion, error)
 }
 
+// WithSubmissionHistoryFilter installs the confirmed-submission exclusion boundary.
+// Applying the option rejects a nil filter.
 func WithSubmissionHistoryFilter(filter SubmissionHistoryFilter) Option {
 	return func(module *Module) error {
 		if filter == nil {

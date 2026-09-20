@@ -140,7 +140,7 @@ export type SessionState = Readonly<{
 
 type FacetName = "screenshots" | "menuImages" | "uploadedImages" | "descriptions";
 
-/** Closed set of source, preparation, asset, review, and Job state transitions. */
+/** Closed set of source, preparation, asset, review, and workflow-operation state transitions. */
 export type SessionAction =
   | Readonly<{ type: "draft_changed"; value: string }>
   | Readonly<{

@@ -29,7 +29,10 @@ const sourceVerificationProgressFromEvent = (
     status,
   };
 };
-/** Composes production transports once at the application boundary. */
+/**
+ * Composes production transports at the application boundary. Input subscriptions also
+ * request resynchronization after reconnecting; their cleanup removes all three listeners.
+ */
 export const productionReleaseSessionPorts = (): ReleaseSessionPorts => ({
   activeInput: {
     get: (signal) => activeInputClient.get(signal),

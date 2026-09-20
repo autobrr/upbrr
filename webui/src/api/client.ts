@@ -291,7 +291,10 @@ export const subscribeWebEvent = (eventName: string, callback: EventCallback) =>
   };
 };
 
-/** Runs after the authenticated browser event stream connects or reconnects. */
+/**
+ * Subscribes to successful event-stream connections, including reconnects, and returns cleanup.
+ * Callers must fetch current state because missed events are not replayed here.
+ */
 export const subscribeWebEventConnection = (callback: EventConnectionCallback) => {
   eventConnectionCallbacks.add(callback);
   ensureEventStream();
@@ -313,7 +316,11 @@ export const requestApp = <T>(
   return postJSON<T>(`/api/app/${method}`, body, options);
 };
 
-/** Reads one typed application snapshot through an HTTP GET route. */
+/**
+ * Reads a snapshot using session cookies and the caller's abort signal.
+ * Production requests retry once after a successful auth refresh and reject with structured
+ * operation failures when supplied by the server; empty responses also reject.
+ */
 export const requestAppGet = <T>(method: string, options: AppRequestOptions = {}): Promise<T> => {
   if (testAppRequestHandler) {
     return testAppRequestHandler(method, undefined, options).then((result) => result as T);

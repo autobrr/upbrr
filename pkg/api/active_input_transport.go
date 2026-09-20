@@ -23,6 +23,8 @@ type OpenActiveInputRequest struct {
 	Request          ContinueReleaseWorkflowRequest `json:"request"`
 }
 
+// ReleaseActiveInputRequest closes the caller's input only at the observed slot revision.
+// Closing an input does not delete its release history or reusable artifacts.
 type ReleaseActiveInputRequest struct {
 	ExpectedRevision uint64 `json:"expectedRevision"`
 }

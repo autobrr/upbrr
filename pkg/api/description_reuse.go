@@ -28,7 +28,7 @@ type ReusableDescriptionRecord struct {
 }
 
 // Valid reports whether the record names a source and contains reusable safe
-// description output.
+// description output. This checks structure, not compatibility with a later workflow.
 func (r ReusableDescriptionRecord) Valid() bool {
 	return strings.TrimSpace(r.SourcePath) != "" && r.Description.Valid()
 }
@@ -46,7 +46,8 @@ func (r ReusableDescriptionRecord) Clone() ReusableDescriptionRecord {
 }
 
 // Valid reports whether the record contains reusable public output and
-// explicit description text overrides.
+// explicit description text overrides. It validates fingerprints, group/tracker uniqueness,
+// and terminal tracker outcomes; it does not sanitize text or recompute content fingerprints.
 func (r ReusableDescription) Valid() bool {
 	if err := validateWorkflowFingerprint(r.CompatibilityFingerprint); err != nil || len(r.Descriptions) == 0 {
 		return false

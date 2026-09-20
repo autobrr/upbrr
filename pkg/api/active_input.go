@@ -79,10 +79,14 @@ type ActiveInputAuthority struct {
 
 type activeInputAuthorityKey struct{}
 
+// WithActiveInputAuthority attaches backend-issued coordinator authority for repository admission checks.
+// Attaching a value does not validate its fence or renew the coordinator lease.
 func WithActiveInputAuthority(ctx context.Context, authority ActiveInputAuthority) context.Context {
 	return context.WithValue(ctx, activeInputAuthorityKey{}, authority)
 }
 
+// ActiveInputAuthorityFromContext returns the attached authority and whether it was present.
+// Repository mutation checks remain responsible for validating it against the current slot.
 func ActiveInputAuthorityFromContext(ctx context.Context) (ActiveInputAuthority, bool) {
 	authority, ok := ctx.Value(activeInputAuthorityKey{}).(ActiveInputAuthority)
 	return authority, ok

@@ -651,7 +651,8 @@ const normalizeTrackersForSave = (input: ConfigMap, catalog: TrackerCatalog | nu
 /**
  * Owns settings-screen state, WebUI config loading, sensitive-value masking,
  * render helpers, and save payload construction for tabs that need config data.
- * Save payloads restore masked secrets before serialization.
+ * Save payloads restore masked secrets before serialization. Deferred activation is polled
+ * separately from saving; completion of an earlier save preserves newer unsaved edits.
  */
 export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsStateResult => {
   const { activeTab } = options;

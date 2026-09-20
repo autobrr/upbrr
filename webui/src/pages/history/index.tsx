@@ -65,6 +65,7 @@ type Props = {
   onOpenInput?: (sourcePath: string) => Promise<boolean>;
 };
 
+/** Displays persisted history and optionally reopens a source through the active release session. */
 export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [selectedPath, setSelectedPath] = useState("");

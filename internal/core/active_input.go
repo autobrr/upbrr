@@ -139,6 +139,9 @@ func (c *Core) OpenActiveInput(ctx context.Context, owner string, request api.Op
 	return view, nil
 }
 
+// ReleaseActiveInput closes the caller-owned input at the expected slot revision
+// and reads the resulting snapshot. Busy work or changed authority leaves the close rejected;
+// retained history and reusable artifacts are not deleted.
 func (c *Core) ReleaseActiveInput(ctx context.Context, owner string, request api.ReleaseActiveInputRequest) (api.ActiveInputSnapshot, error) {
 	if err := c.workflow.ReleaseInput(ctx, owner, request.ExpectedRevision); err != nil {
 		return api.ActiveInputSnapshot{}, fmt.Errorf("release active input: %w", err)

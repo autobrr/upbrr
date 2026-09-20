@@ -32,7 +32,8 @@ type WorkflowExternalEffect struct {
 // WorkflowExternalEffectReceipt is private in-process authority to complete a
 // previously persisted attempt_started record.
 type WorkflowExternalEffectReceipt struct {
-	EffectID         string
+	EffectID string
+	// AlreadySucceeded tells the caller to reuse the prior result instead of repeating the external effect.
 	AlreadySucceeded bool
 }
 
@@ -63,7 +64,9 @@ func WithWorkflowExternalEffectReporter(
 }
 
 // BeginWorkflowExternalEffect durably fences one external attempt when the
-// current workflow operation installed a reporter.
+// current workflow operation installed a reporter. Invalid effect authority is rejected first.
+// Without a reporter, effects lacking submission authority return an empty receipt;
+// effects carrying submission authority require a reporter.
 func BeginWorkflowExternalEffect(
 	ctx context.Context,
 	effect WorkflowExternalEffect,
@@ -86,6 +89,8 @@ func BeginWorkflowExternalEffect(
 }
 
 // CompleteWorkflowExternalEffect persists a known success or failure receipt.
+// Empty receipts, already-succeeded attempts, and absent reporters are no-ops;
+// an uncertain remote outcome must not be reported as a known failure.
 func CompleteWorkflowExternalEffect(
 	ctx context.Context,
 	receipt WorkflowExternalEffectReceipt,

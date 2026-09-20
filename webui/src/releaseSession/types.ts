@@ -118,6 +118,7 @@ export type InputFacet = Readonly<{
     status: PreparationStatus;
     error: string;
     failure: OperationFailure | null;
+    /** Last accepted server slot; its revision fences open and close requests across tabs. */
     activeInput: Readonly<{
       state: string;
       revision: number;
@@ -168,10 +169,14 @@ export type InputFacet = Readonly<{
   choosePlaylists(playlists: readonly string[], useAll: boolean): void;
   confirmPlaylists(): Promise<boolean>;
   cancelPlaylistSelection(): void;
+  /** Aborts local preparation/workflow requests; this does not close the durable active input. */
   cancelPreparation(): void;
   prepareSource(sourcePath: string, intent: PreparationIntent): Promise<boolean>;
+  /** Explicitly opens or refreshes a source and reports whether its returned state was accepted. */
   openSource(sourcePath: string): Promise<boolean>;
+  /** Claims a listed legacy workflow for reconciliation only while the input slot is empty. */
   recoverLegacyWorkflow(workflowID: string): Promise<boolean>;
+  /** Aborts local work and requests a revision-checked close; false includes rejection or cancellation. */
   close(): Promise<boolean>;
   resetSource(sourcePath: string, intent: PreparationIntent): Promise<boolean>;
   prepare(): Promise<boolean>;
@@ -343,6 +348,7 @@ export type UploadFacet = Readonly<{
     uploadStatus: FacetStatus;
     dryRunResult: UploadDryRunResult | null;
     result: UploadResult | null;
+    /** Backend evidence for tracker lanes excluded because submission was already recorded. */
     submissionExclusions: readonly SubmissionExclusion[];
     error: string;
   }>;

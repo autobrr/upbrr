@@ -15,7 +15,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// InputVerifier inspects and hashes local source bytes without collecting provider facts.
+// InputVerifier inspects the source layout and hashes bounded initial-file samples
+// without collecting provider facts or proving full-file byte equality.
 // The coordinator supplies the opaque input ID after verification succeeds.
 type InputVerifier func(context.Context, api.PrepareInput) (api.InputRecord, error)
 

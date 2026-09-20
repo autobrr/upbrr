@@ -84,7 +84,10 @@ type SubmissionContentIdentity struct {
 }
 
 // NewSubmissionContentIdentity canonicalizes sampled submitted files and
-// derives their versioned SHA-256 identity.
+// derives their versioned SHA-256 identity without modifying files.
+// Single-file scope drops the filename; other scopes normalize and sort relative paths.
+// Empty inventories, unsupported scopes, invalid sizes or sample digests, escaping paths,
+// and duplicate normalized paths return a zero identity and an error.
 func NewSubmissionContentIdentity(
 	scope SubmissionContentScope,
 	files []SubmissionContentFile,

@@ -17,6 +17,7 @@ import type {
 } from "../api/generated/release-workflow";
 import type { SourceVerificationProgress } from "./types";
 
+/** Authoritative singleton-input transport; failed requests reject instead of fabricating local state. */
 export type ActiveInputPorts = Readonly<{
   get(signal: AbortSignal): Promise<ActiveInputSnapshot>;
   open(request: OpenActiveInputRequest, signal: AbortSignal): Promise<ActiveInputSnapshot>;
@@ -29,6 +30,7 @@ export type ActiveInputPorts = Readonly<{
     request: ReconcileActiveInputRequest,
     signal: AbortSignal,
   ): Promise<ActiveInputSnapshot>;
+  /** Signals input changes and stream reconnections, delivers verification progress, and returns cleanup. */
   subscribe(
     callback: () => void,
     onVerification: (update: SourceVerificationProgress) => void,

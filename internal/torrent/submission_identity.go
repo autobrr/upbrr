@@ -32,7 +32,8 @@ type SubmissionContentInventory struct {
 
 // ResolveSubmissionContentInventory resolves the same effective file inventory
 // used to validate torrent content. A false result means the TorrentSubject
-// names only a .torrent artifact and has no local submitted-content scope.
+// names a .torrent artifact or no source and has no local submitted-content scope.
+// Filesystem or inventory-validation failures return false with an error.
 func ResolveSubmissionContentInventory(meta api.TorrentSubject) (SubmissionContentInventory, bool, error) {
 	source := strings.TrimSpace(meta.SourcePath)
 	if source == "" || strings.EqualFold(filepath.Ext(source), ".torrent") {
@@ -105,7 +106,9 @@ func ResolveSubmissionContentInventory(meta api.TorrentSubject) (SubmissionConte
 }
 
 // SubmissionContentIdentity derives a path-free submitted-inventory identity
-// from the exact selected inventory and fresh bounded source samples.
+// from the exact selected inventory and supplied bounded source samples. It does not
+// reread file bytes; the caller must provide fresh evidence. Missing or ambiguous
+// path matches, differing sizes, or invalid inventory entries return an error.
 func SubmissionContentIdentity(
 	inventory SubmissionContentInventory,
 	verified api.SourceContentIdentity,

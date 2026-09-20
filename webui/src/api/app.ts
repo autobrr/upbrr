@@ -50,6 +50,7 @@ type LogEntry = {
 
 type ConfigImportResult = { message: string; warnings: string[] };
 
+/** Workflow projection families affected by the effective configuration change. */
 export type ConfigImpact =
   | "provider"
   | "trackers"
@@ -60,6 +61,7 @@ export type ConfigImpact =
   | "client_injection"
   | "presentation";
 
+/** Safe activation-stage identifiers; underlying candidate data and errors stay on the server. */
 export type ConfigActivationFailureCode =
   | "normalize"
   | "validate_stored"
@@ -68,6 +70,7 @@ export type ConfigActivationFailureCode =
   | "cookies"
   | "persist";
 
+/** Pollable saved-config activation state; pending or failed candidates do not replace the active generation. */
 export type ConfigActivation = Readonly<{
   status: "active" | "pending" | "failed";
   activeGeneration: number;
@@ -242,7 +245,9 @@ export const descriptionClient = {
 export const configClient = {
   get: () => requestApp<string>("GetConfig"),
   getDefault: () => requestApp<string>("GetDefaultConfig"),
+  /** Reads activation status without exposing the pending configuration. */
   getActivation: () => requestApp<ConfigActivation>("GetConfigActivation"),
+  /** Saves a candidate and returns its activation status, which may still be pending. */
   save: (payload: string) => requestApp<ConfigActivation>("SaveConfig", { Payload: payload }),
   exportDownload: async () => {
     const payload = await requestApp<string>("ExportConfig");
