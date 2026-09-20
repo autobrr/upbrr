@@ -13,6 +13,7 @@ import (
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
+	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -24,6 +25,8 @@ type historyModule struct {
 	fs            historyFilesystem
 	logger        api.Logger
 	preparedFacts *preparedrelease.Module
+	activeInputs  api.ActiveInputRepository
+	privateVault  *releaseworkflow.PrivateArtifactVault
 }
 
 type historyFilesystem interface {

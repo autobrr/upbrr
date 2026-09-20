@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -267,6 +268,27 @@ type IncrementalMediaArtifactBuilder interface {
 	) (api.MediaArtifactSet, RetainedMediaResource, error)
 }
 
+// CompatibleMediaRestorer adopts verified reusable bytes into a new exact generation,
+// or refreshes current tracker coverage from an existing snapshot and private resource
+// without reloading its bytes. Retained artifacts keep their identity and selection.
+type CompatibleMediaRestorer interface {
+	RestoreCompatible(
+		context.Context,
+		api.ReleaseRef,
+		api.TrackerReleaseProjectionSet,
+		*api.MediaArtifactSet,
+		any,
+		time.Time,
+	) (api.MediaArtifactSet, RetainedMediaResource, error)
+}
+
+// ReusableMediaRecorder retains the committed selection and hosted-link state,
+// and identifies an exact snapshot already recorded durably.
+type ReusableMediaRecorder interface {
+	RecordReusableMedia(context.Context, api.MediaArtifactSet, any) error
+	HasReusableMediaCommit(context.Context, api.MediaArtifactSet) (bool, error)
+}
+
 // MediaArtifactMutator owns private attachment and image-host mutations while
 // the workflow module owns revision checks and snapshot publication.
 type MediaArtifactMutator interface {
@@ -328,6 +350,28 @@ type DescriptionBuilder interface {
 		api.DescriptionInstructions,
 		time.Time,
 	) (api.DescriptionSet, error)
+}
+
+// ReusableDescriptionBuilder retains description content independently of a
+// workflow and restores it only when the current rendering inputs still match.
+type ReusableDescriptionBuilder interface {
+	PrepareReusableDescriptions(
+		context.Context,
+		api.ReleaseRef,
+		api.TrackerReleaseProjectionSet,
+		api.MediaArtifactSet,
+		any,
+		api.DescriptionInstructions,
+		api.DescriptionSet,
+	) (*api.ReusableDescriptionRecord, error)
+	RestoreCompatibleDescriptions(
+		context.Context,
+		api.ReleaseRef,
+		api.TrackerReleaseProjectionSet,
+		api.MediaArtifactSet,
+		any,
+		api.DescriptionInstructions,
+	) (api.DescriptionSet, api.DescriptionInstructions, error)
 }
 
 // RetainedUploadExecution is private single-use execution authority. Execute
@@ -414,6 +458,8 @@ type DurabilityRepository interface {
 	BeginEffect(context.Context, api.ReleaseWorkflowEffectRecord) (api.ReleaseWorkflowEffectRecord, bool, error)
 	CompleteEffect(context.Context, api.WorkflowEffectStatus, api.ReleaseWorkflowEffectRecord) error
 	MarkOperationEffectsUnknown(context.Context, string, api.WorkflowID, api.WorkflowOperationID, time.Time) error
+	RecoverLegacyEffects(context.Context, string, api.WorkflowID, time.Time) ([]api.ReleaseWorkflowEffectRecord, error)
+	ListLegacyRecoveryWorkflowIDs(context.Context, string) ([]api.WorkflowID, error)
 	ResolveEffectUnknown(context.Context, string, api.WorkflowID, api.WorkflowExternalEffectKind, string, time.Time) error
 	LoadWork(context.Context, string, api.WorkflowID, api.WorkflowOperationID) (api.ReleaseWorkflowWorkRecord, error)
 	ClaimWork(context.Context, api.ReleaseWorkflowWorkRecord) error
@@ -455,7 +501,11 @@ type Application interface {
 // State is the repository value owned exclusively by the workflow module.
 // Snapshots are immutable; maps retain prior revisions for exact-reference reads.
 type State struct {
-	OwnerID             string
+	OwnerID string
+	// descriptionReuse accompanies one atomic save and is never durable workflow payload.
+	descriptionReuse *api.ReusableDescriptionRecord
+	// SourcePath durably binds this workflow to its source before preparation.
+	SourcePath          string `json:",omitempty"`
 	ProcessEpoch        string
 	TrackerDecisionMode TrackerDecisionMode
 	Workflow            api.ReleaseWorkflow
@@ -514,6 +564,7 @@ type Command interface {
 // Composite, when set, installs retained composite state in the same mutation.
 type CreateWorkflowCommand struct {
 	WorkflowID          api.WorkflowID
+	SourcePath          string
 	Instructions        api.ReleaseFactInstructions
 	IdempotencyKey      string
 	RequestFingerprint  api.WorkflowFingerprint
@@ -526,10 +577,12 @@ func (CreateWorkflowCommand) userIntent()                      {}
 func (CreateWorkflowCommand) operationKind() api.OperationKind { return api.OperationKindUnknown }
 func (c CreateWorkflowCommand) commandFingerprint() (api.WorkflowFingerprint, error) {
 	return canonicalCommandFingerprint(struct {
+		SourcePath          string `json:",omitempty"`
 		Instructions        api.ReleaseFactInstructions
 		RequestFingerprint  api.WorkflowFingerprint
 		TrackerDecisionMode TrackerDecisionMode
 	}{
+		SourcePath:          strings.TrimSpace(c.SourcePath),
 		Instructions:        c.Instructions,
 		RequestFingerprint:  c.RequestFingerprint,
 		TrackerDecisionMode: normalizeTrackerDecisionMode(c.TrackerDecisionMode),

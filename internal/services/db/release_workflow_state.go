@@ -31,6 +31,18 @@ func (r *SQLiteRepository) CreateReleaseWorkflowState(
 	var result api.ReleaseWorkflowStateRecord
 	var idempotent bool
 	err := r.withWriteTx(ctx, "create release workflow state", func(tx *sql.Tx) error {
+		slot, slotErr := loadActiveInput(ctx, tx)
+		if slotErr != nil {
+			return slotErr
+		}
+		if slot.Fence != 0 {
+			authority, ok := api.ActiveInputAuthorityFromContext(ctx)
+			if !ok || authority.Fence != slot.Fence || authority.CoordinatorID != slot.CoordinatorID ||
+				slot.OwnerID != record.OwnerID || !slot.LeaseExpiresAt.After(time.Now().UTC()) ||
+				(slot.State != api.ActiveInputOpening && slot.State != api.ActiveInputSwitchPending) {
+				return api.ErrActiveInputLeaseLost
+			}
+		}
 		if record.CreationKey != "" {
 			prior, err := loadWorkflowStateByCreationKey(ctx, tx, record.OwnerID, record.CreationKey)
 			switch {
@@ -92,6 +104,9 @@ func (r *SQLiteRepository) SaveReleaseWorkflowState(
 		return errors.New("db: release workflow revision must advance by one")
 	}
 	return r.withWriteTx(ctx, "save release workflow state", func(tx *sql.Tx) error {
+		if err := requireWorkflowInputMutation(ctx, tx, record.OwnerID, record.WorkflowID, true); err != nil {
+			return err
+		}
 		result, err := tx.ExecContext(ctx, `
 			UPDATE release_workflow_states
 			SET revision = ?, status = ?, state_json = ?, updated_at = ?
@@ -106,6 +121,11 @@ func (r *SQLiteRepository) SaveReleaseWorkflowState(
 			return fmt.Errorf("db save release workflow state rows: %w", err)
 		}
 		if rows == 1 {
+			if record.DescriptionReuse != nil {
+				if err := saveReusableDescriptionTx(ctx, tx, record.DescriptionReuse.SourcePath, record.DescriptionReuse.Description); err != nil {
+					return err
+				}
+			}
 			return nil
 		}
 		if _, err := loadWorkflowState(ctx, tx, record.OwnerID, record.WorkflowID); err != nil {
@@ -115,46 +135,82 @@ func (r *SQLiteRepository) SaveReleaseWorkflowState(
 	})
 }
 
-// DeleteReleaseWorkflowState removes one owner-scoped workflow.
+// DeleteReleaseWorkflowState removes one owner-scoped workflow without submission
+// fences. Fenced workflows retain their source association until history deletion.
 func (r *SQLiteRepository) DeleteReleaseWorkflowState(ctx context.Context, ownerID string, workflowID api.WorkflowID) error {
 	ownerID = strings.TrimSpace(ownerID)
 	if ownerID == "" || strings.TrimSpace(string(workflowID)) == "" {
 		return errors.New("db: release workflow owner and id are required")
 	}
-	result, err := r.execWrite(ctx, "delete release workflow state", `
-		DELETE FROM release_workflow_states WHERE owner_id = ? AND workflow_id = ?
-	`, ownerID, workflowID)
-	if err != nil {
-		return err
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("db delete release workflow state rows: %w", err)
-	}
-	if rows == 0 {
-		return api.ErrReleaseWorkflowStateNotFound
-	}
-	return nil
+	return r.withWriteTx(ctx, "delete release workflow state", func(tx *sql.Tx) error {
+		slot, err := loadActiveInput(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if slot.State != api.ActiveInputEmpty && slot.OwnerID == ownerID && slot.WorkflowID == workflowID {
+			return api.ErrActiveInputBusy
+		}
+		var fenced bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+			SELECT 1 FROM submission_fences WHERE owner_id = ? AND workflow_id = ?
+		)`, ownerID, workflowID).Scan(&fenced); err != nil {
+			return fmt.Errorf("db check workflow submission fences: %w", err)
+		}
+		if fenced {
+			return api.ErrReleaseWorkflowEffectConflict
+		}
+		result, err := tx.ExecContext(ctx, `DELETE FROM release_workflow_states WHERE owner_id = ? AND workflow_id = ?`, ownerID, workflowID)
+		if err != nil {
+			return fmt.Errorf("db delete release workflow state: %w", err)
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("db delete release workflow state rows: %w", err)
+		}
+		if rows == 0 {
+			return api.ErrReleaseWorkflowStateNotFound
+		}
+		return nil
+	})
 }
 
 // DeleteTerminalReleaseWorkflowStatesBefore deletes bounded terminal audit
-// rows. Draft, active, and blocked workflows are never retention candidates.
+// rows. Draft, active, blocked, and submission-fenced workflows are never
+// retention candidates; history deletion removes fenced workflows explicitly.
 func (r *SQLiteRepository) DeleteTerminalReleaseWorkflowStatesBefore(ctx context.Context, before time.Time) (int64, error) {
 	if before.IsZero() {
 		return 0, errors.New("db: release workflow retention cutoff is required")
 	}
-	result, err := r.execWrite(ctx, "delete terminal release workflow states", `
-		DELETE FROM release_workflow_states
-		WHERE status IN (?, ?, ?) AND updated_at < ?
-	`, api.WorkflowStatusCompleted, api.WorkflowStatusCanceled, api.WorkflowStatusFailed, formatWorkflowStateTime(before))
-	if err != nil {
-		return 0, err
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("db delete terminal release workflow states rows: %w", err)
-	}
-	return rows, nil
+	var deleted int64
+	err := r.withWriteTx(ctx, "delete terminal release workflow states", func(tx *sql.Tx) error {
+		slot, err := loadActiveInput(ctx, tx)
+		if err != nil {
+			return err
+		}
+		query := `
+			DELETE FROM release_workflow_states
+			WHERE status IN (?, ?, ?) AND updated_at < ?
+			AND NOT EXISTS (
+				SELECT 1 FROM submission_fences
+				WHERE submission_fences.owner_id = release_workflow_states.owner_id
+				AND submission_fences.workflow_id = release_workflow_states.workflow_id
+			)`
+		args := []any{api.WorkflowStatusCompleted, api.WorkflowStatusCanceled, api.WorkflowStatusFailed, formatWorkflowStateTime(before)}
+		if slot.State != api.ActiveInputEmpty && slot.OwnerID != "" && slot.WorkflowID != "" {
+			query += ` AND NOT (owner_id = ? AND workflow_id = ?)`
+			args = append(args, slot.OwnerID, slot.WorkflowID)
+		}
+		result, err := tx.ExecContext(ctx, query, args...)
+		if err != nil {
+			return fmt.Errorf("db delete terminal release workflow states: %w", err)
+		}
+		deleted, err = result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("db delete terminal release workflow states rows: %w", err)
+		}
+		return nil
+	})
+	return deleted, err
 }
 
 func loadWorkflowState(
@@ -232,11 +288,18 @@ func validateWorkflowStateRecord(record api.ReleaseWorkflowStateRecord) error {
 	if record.CreationKey != "" && record.CreationFingerprint == "" {
 		return errors.New("db: release workflow creation fingerprint is required with creation key")
 	}
+	if record.DescriptionReuse != nil && !record.DescriptionReuse.Valid() {
+		return errors.New("db: release workflow reusable description is invalid")
+	}
 	return nil
 }
 
 func cloneWorkflowStateRecord(record api.ReleaseWorkflowStateRecord) api.ReleaseWorkflowStateRecord {
 	record.Payload = append([]byte(nil), record.Payload...)
+	if record.DescriptionReuse != nil {
+		cloned := record.DescriptionReuse.Clone()
+		record.DescriptionReuse = &cloned
+	}
 	return record
 }
 

@@ -184,4 +184,15 @@ func TestCanonicalEvidencePipelineUsesClientTrackerIDBeforeProviderResolution(t 
 	if !slices.Equal(completed, wantCompleted) {
 		t.Fatalf("completed progress phases=%v, want %v", completed, wantCompleted)
 	}
+
+	enrichment := testCollectionRequest(t, api.Request{SourcePath: sourcePath})
+	enrichment.RetainedClientEvidence = &state.ClientEvidence
+	enriched, err := service.CollectPreparationEvidence(t.Context(), enrichment)
+	if err != nil {
+		t.Fatalf("enrich canonical evidence: %v", err)
+	}
+	if client.calls != 1 || enriched.TrackerIDs["ant"] != "client-release-id" ||
+		enriched.ClientEvidence.Result.TrackerIDs["ant"] != "client-release-id" {
+		t.Fatalf("enrichment lost retained evidence or searched again: calls=%d trackers=%v evidence=%#v", client.calls, enriched.TrackerIDs, enriched.ClientEvidence)
+	}
 }

@@ -8,7 +8,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -16,30 +18,234 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
+	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 type cliWorkflowCoreFake struct {
-	liveTest        bool
-	liveStarts      int
-	current         releaseworkflow.CommandResult
-	commands        []releaseworkflow.Command
-	continuations   []api.ContinueReleaseWorkflowRequest
-	continueFn      func(api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error)
-	uploadRequests  []api.CreateReleaseWorkflowUploadRequest
-	uploadFeedback  []api.ReleaseWorkflowUploadFeedback
-	startUploadFn   func(api.CreateReleaseWorkflowUploadRequest) (releaseworkflow.CommandResult, error)
-	startProgress   []api.DupeProgressUpdate
-	feedbackFn      func(api.ReleaseWorkflowUploadFeedback) (releaseworkflow.CommandResult, error)
-	operation       api.WorkflowOperationStatus
-	events          []api.WorkflowEvent
-	eventBatches    [][]api.WorkflowEvent
-	eventBatch      int
-	eventAfters     []uint64
-	queueOperation  bool
-	cancelCalls     int
-	inputHistory    api.InputHistory
-	inputHistoryErr error
+	liveTest               bool
+	liveStarts             int
+	current                releaseworkflow.CommandResult
+	commands               []releaseworkflow.Command
+	continuations          []api.ContinueReleaseWorkflowRequest
+	continueFn             func(api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error)
+	uploadRequests         []api.CreateReleaseWorkflowUploadRequest
+	uploadFeedback         []api.ReleaseWorkflowUploadFeedback
+	startUploadFn          func(api.CreateReleaseWorkflowUploadRequest) (releaseworkflow.CommandResult, error)
+	startProgress          []api.DupeProgressUpdate
+	feedbackFn             func(api.ReleaseWorkflowUploadFeedback) (releaseworkflow.CommandResult, error)
+	operation              api.WorkflowOperationStatus
+	events                 []api.WorkflowEvent
+	eventBatches           [][]api.WorkflowEvent
+	eventBatch             int
+	eventAfters            []uint64
+	queueOperation         bool
+	cancelCalls            int
+	inputHistory           api.InputHistory
+	inputHistoryErr        error
+	activeInput            api.ActiveInputSnapshot
+	releaseRequests        []api.ReleaseActiveInputRequest
+	cleanupContextErr      error
+	activeInputContextErr  error
+	activeInputHasDeadline bool
+	recoveryInput          api.ActiveInputSnapshot
+	recoverCalls           int
+	reconcileRequests      []api.ReconcileActiveInputRequest
+}
+
+type cliWorkflowActiveInputCore struct {
+	*cliWorkflowCoreFake
+	module *releaseworkflow.Module
+}
+
+func (c *cliWorkflowActiveInputCore) GetActiveInput(ctx context.Context, ownerID string) (api.ActiveInputSnapshot, error) {
+	record, err := c.module.ActiveInput(ctx, ownerID)
+	if err != nil {
+		return api.ActiveInputSnapshot{}, fmt.Errorf("test active input: %w", err)
+	}
+	snapshot := api.ActiveInputSnapshot{
+		State:         record.State,
+		Revision:      record.Revision,
+		InputID:       record.InputID,
+		SourceVersion: record.SourceVersion,
+	}
+	if record.WorkflowID == "" {
+		return snapshot, nil
+	}
+	current, err := c.module.Current(ctx, ownerID, record.WorkflowID)
+	if err != nil {
+		return api.ActiveInputSnapshot{}, fmt.Errorf("test current workflow: %w", err)
+	}
+	snapshot.Current = &current
+	return snapshot, nil
+}
+
+func (c *cliWorkflowActiveInputCore) ContinueReleaseWorkflow(
+	ctx context.Context,
+	ownerID string,
+	request api.ContinueReleaseWorkflowRequest,
+) (releaseworkflow.CommandResult, error) {
+	current, err := c.module.Continue(ctx, ownerID, request)
+	if err != nil {
+		return releaseworkflow.CommandResult{}, fmt.Errorf("test continue workflow: %w", err)
+	}
+	return current, nil
+}
+
+func (f *cliWorkflowCoreFake) RecoverLegacyActiveInput(context.Context, string, api.RecoverLegacyActiveInputRequest) (api.ActiveInputSnapshot, error) {
+	f.recoverCalls++
+	return f.recoveryInput, nil
+}
+
+func (f *cliWorkflowCoreFake) ReconcileActiveInput(_ context.Context, _ string, request api.ReconcileActiveInputRequest) (api.ActiveInputSnapshot, error) {
+	f.reconcileRequests = append(f.reconcileRequests, request)
+	return api.ActiveInputSnapshot{State: api.ActiveInputEmpty}, nil
+}
+
+func (f *cliWorkflowCoreFake) GetActiveInput(ctx context.Context, _ string) (api.ActiveInputSnapshot, error) {
+	f.activeInputContextErr = ctx.Err()
+	_, f.activeInputHasDeadline = ctx.Deadline()
+	return f.activeInput, nil
+}
+
+func (f *cliWorkflowCoreFake) ReleaseActiveInput(ctx context.Context, _ string, request api.ReleaseActiveInputRequest) (api.ActiveInputSnapshot, error) {
+	f.cleanupContextErr = ctx.Err()
+	f.releaseRequests = append(f.releaseRequests, request)
+	return api.ActiveInputSnapshot{State: api.ActiveInputEmpty}, nil
+}
+
+func TestCLIReleasesOnlyOwnedInputWithFreshCleanupContext(t *testing.T) {
+	t.Parallel()
+	current := releaseworkflow.CommandResult{Workflow: api.ReleaseWorkflow{ID: "workflow-owned"}}
+	core := &cliWorkflowCoreFake{activeInput: api.ActiveInputSnapshot{
+		State:    api.ActiveInputActive,
+		Revision: 7,
+		Current:  &api.ReleaseWorkflowCurrent{Workflow: current.Workflow},
+	}}
+	session := &cliWorkflowSession{
+		core:       core,
+		current:    current,
+		logger:     api.NopLogger{},
+		inputClaim: cliInputSlotClaim{workflowID: current.Workflow.ID, revision: 7},
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	session.releaseActiveInput(ctx)
+	if core.cleanupContextErr != nil || len(core.releaseRequests) != 1 || core.releaseRequests[0].ExpectedRevision != 7 {
+		t.Fatalf("cleanup requests = %#v, context = %v", core.releaseRequests, core.cleanupContextErr)
+	}
+	core.activeInput.Current.Workflow.ID = "workflow-other"
+	session.releaseActiveInput(ctx)
+	if len(core.releaseRequests) != 1 {
+		t.Fatal("cleanup released a replacement input")
+	}
+}
+
+func TestCLIInitialContinuationBindsPostDupeTrackerPolicy(t *testing.T) {
+	t.Parallel()
+	inputs, err := db.Open(filepath.Join(t.TempDir(), "input.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = inputs.Close() })
+	if err := inputs.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	workflows := releaseworkflow.NewMemoryRepository()
+	module, err := releaseworkflow.New(
+		workflows,
+		releaseworkflow.NewMemoryPrivateResourceStore(),
+		releaseworkflow.ReleasePreparerFunc{},
+		releaseworkflow.WithActiveInputs(inputs, func(_ context.Context, input api.PrepareInput) (api.InputRecord, error) {
+			return api.InputRecord{
+				CanonicalPath: input.SourcePath,
+				SourceVersion: "verified",
+				Manifest:      []byte(`{}`),
+			}, nil
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = module.SharedCoordinator().Shutdown(context.Background()) })
+	coreSvc := &cliWorkflowActiveInputCore{cliWorkflowCoreFake: &cliWorkflowCoreFake{}, module: module}
+	session := &cliWorkflowSession{core: coreSvc, logger: api.NopLogger{}}
+	if err := session.executeContinuation(t.Context(), api.ContinueReleaseWorkflowRequest{
+		IdempotencyKey: "cli-initial-tracker-policy",
+		Goal:           api.WorkflowGoalInputReady,
+		Intent:         api.WorkflowIntent{Preparation: &api.PrepareInput{SourcePath: filepath.Join(t.TempDir(), "source.mkv")}},
+	}); err != nil {
+		t.Fatalf("execute initial continuation: %v", err)
+	}
+	state, err := workflows.Load(t.Context(), cliWorkflowOwnerID, session.current.Workflow.ID)
+	if err != nil {
+		t.Fatalf("load CLI-created workflow: %v", err)
+	}
+	if state.TrackerDecisionMode != releaseworkflow.TrackerDecisionModePostDupeGate {
+		t.Fatalf("CLI initial tracker decision mode = %q", state.TrackerDecisionMode)
+	}
+}
+
+func TestCLIReleasesCommittedInitialInputAfterContinuationFailure(t *testing.T) {
+	core := &cliWorkflowCoreFake{activeInput: api.ActiveInputSnapshot{State: api.ActiveInputEmpty, Revision: 5}}
+	ctx, cancel := context.WithCancel(t.Context())
+	core.continueFn = func(api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) {
+		core.activeInput = api.ActiveInputSnapshot{
+			State:    api.ActiveInputActive,
+			Revision: 7,
+			Current:  &api.ReleaseWorkflowCurrent{Workflow: api.ReleaseWorkflow{ID: "workflow-committed"}},
+		}
+		cancel()
+		return releaseworkflow.CommandResult{}, errors.New("synthetic post-open failure")
+	}
+	session := &cliWorkflowSession{core: core, logger: api.NopLogger{}}
+	if err := session.executeContinuation(ctx, api.ContinueReleaseWorkflowRequest{IdempotencyKey: "initial", Goal: api.WorkflowGoalPrepared}); err == nil {
+		t.Fatal("expected post-open continuation failure")
+	}
+	if session.current.Workflow.ID != "" {
+		t.Fatalf("failed continuation retained current workflow %#v", session.current.Workflow)
+	}
+	if session.inputClaim.workflowID != "workflow-committed" || session.inputClaim.revision != 7 {
+		t.Fatalf("failed continuation cleanup claim = %#v", session.inputClaim)
+	}
+	if core.activeInputContextErr != nil || !core.activeInputHasDeadline {
+		t.Fatalf("post-open resync context err=%v deadline=%t", core.activeInputContextErr, core.activeInputHasDeadline)
+	}
+	session.releaseActiveInput(ctx)
+	if core.cleanupContextErr != nil || len(core.releaseRequests) != 1 || core.releaseRequests[0].ExpectedRevision != 7 {
+		t.Fatalf("failed continuation cleanup = %#v context=%v", core.releaseRequests, core.cleanupContextErr)
+	}
+
+	core.activeInput = api.ActiveInputSnapshot{
+		State:    api.ActiveInputActive,
+		Revision: 8,
+		Current:  &api.ReleaseWorkflowCurrent{Workflow: api.ReleaseWorkflow{ID: "workflow-newer"}},
+	}
+	session.releaseActiveInput(ctx)
+	if len(core.releaseRequests) != 1 {
+		t.Fatal("cleanup released a newer unrelated input")
+	}
+}
+
+func TestCLIDoesNotReleasePreexistingInputAfterInitialContinuation(t *testing.T) {
+	current := releaseworkflow.CommandResult{Workflow: api.ReleaseWorkflow{ID: "workflow-preexisting"}}
+	core := &cliWorkflowCoreFake{activeInput: api.ActiveInputSnapshot{
+		State:    api.ActiveInputActive,
+		Revision: 7,
+		Current:  &api.ReleaseWorkflowCurrent{Workflow: current.Workflow},
+	}}
+	core.continueFn = func(api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) { return current, nil }
+	session := &cliWorkflowSession{core: core, logger: api.NopLogger{}}
+	if err := session.executeContinuation(t.Context(), api.ContinueReleaseWorkflowRequest{IdempotencyKey: "initial", Goal: api.WorkflowGoalPrepared}); err != nil {
+		t.Fatal(err)
+	}
+	if session.inputClaim.workflowID != "" {
+		t.Fatalf("preexisting input became cleanup claim %#v", session.inputClaim)
+	}
+	session.releaseActiveInput(t.Context())
+	if len(core.releaseRequests) != 0 {
+		t.Fatal("cleanup released a preexisting input")
+	}
 }
 
 func (f *cliWorkflowCoreFake) LiveTestEnabled() bool { return f.liveTest }
@@ -781,7 +987,7 @@ func TestCLIWorkflowLargestPlaylistUsesTypedFactReplacement(t *testing.T) {
 	t.Parallel()
 
 	coreSvc := &cliWorkflowCoreFake{}
-	_, err := newCLIWorkflowSession(
+	session, err := newCLIWorkflowSession(
 		context.Background(),
 		coreSvc,
 		api.Request{
@@ -807,6 +1013,10 @@ func TestCLIWorkflowLargestPlaylistUsesTypedFactReplacement(t *testing.T) {
 	if !replace.Instructions.Playlist.Set ||
 		!slices.Equal(replace.Instructions.Playlist.Selected, []string{"disc-one:00001.mpls", "disc-two:00001.mpls"}) {
 		t.Fatalf("playlist instructions = %#v", replace.Instructions.Playlist)
+	}
+	if !session.uploadRequest.PlaylistInstruction.Set ||
+		!slices.Equal(session.uploadRequest.PlaylistInstruction.Selected, []string{"disc-one:00001.mpls", "disc-two:00001.mpls"}) {
+		t.Fatalf("composite playlist instruction = %#v", session.uploadRequest.PlaylistInstruction)
 	}
 }
 
@@ -1279,6 +1489,64 @@ func TestCLIInputOnlyDoesNotStartCompositeUpload(t *testing.T) {
 	}
 	if len(coreSvc.continuations) < 2 || coreSvc.continuations[0].Goal != api.WorkflowGoalPrepared || coreSvc.continuations[len(coreSvc.continuations)-1].Goal != api.WorkflowGoalInputReady {
 		t.Fatalf("input-only continuations = %#v", coreSvc.continuations)
+	}
+}
+
+func TestCLIInteractiveCorrectionTransfersActiveInputClaim(t *testing.T) {
+	opts, visited, _, err := parseCLIOptions([]string{"example.mkv"})
+	if err != nil {
+		t.Fatalf("parse options: %v", err)
+	}
+	initial := releaseworkflow.CommandResult{
+		Workflow: api.ReleaseWorkflow{ID: "workflow-owned", Revision: 1},
+		Release: &api.ReleaseSnapshot{Release: api.PreparedRelease{
+			Generation: 1,
+			Source:     api.SourceManifest{SourcePath: "example.mkv"},
+			Naming:     api.NamingFacts{Title: "Example"},
+		}},
+		FactInstructions: &api.ReleaseFactInstructionSnapshot{CorrectionRevision: 1},
+	}
+	corrected := initial
+	corrected.Workflow.Revision = 2
+	corrected.Selection = &api.TrackerSelection{}
+	coreSvc := &cliWorkflowCoreFake{
+		current:     initial,
+		activeInput: api.ActiveInputSnapshot{State: api.ActiveInputEmpty, Revision: 5},
+	}
+	coreSvc.continueFn = func(request api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) {
+		if request.Intent.CorrectionPatch != nil {
+			coreSvc.current = corrected
+			return corrected, nil
+		}
+		if coreSvc.activeInput.State == api.ActiveInputEmpty {
+			coreSvc.activeInput = api.ActiveInputSnapshot{
+				State:    api.ActiveInputActive,
+				Revision: 7,
+				Current:  &api.ReleaseWorkflowCurrent{Workflow: initial.Workflow},
+			}
+		}
+		return coreSvc.current, nil
+	}
+
+	var output strings.Builder
+	err = runCLIWorkflowInteractive(
+		t.Context(),
+		coreSvc,
+		[]string{"example.mkv"},
+		opts,
+		visited,
+		"example.mkv",
+		api.PlaylistInstruction{},
+		0,
+		config.Config{},
+		cliIO{in: strings.NewReader("n\n--reset-input metadata.title\ny\n"), out: &output},
+		api.NopLogger{},
+	)
+	if err != nil {
+		t.Fatalf("run corrected workflow: %v", err)
+	}
+	if len(coreSvc.releaseRequests) != 1 || coreSvc.releaseRequests[0].ExpectedRevision != 7 {
+		t.Fatalf("active input release requests = %#v", coreSvc.releaseRequests)
 	}
 }
 

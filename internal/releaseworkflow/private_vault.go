@@ -195,6 +195,20 @@ func (v *PrivateArtifactVault) InvalidateWorkflow(ownerID string, workflowID api
 	v.InvalidateWorkflowExcept(ownerID, workflowID)
 }
 
+// DeleteWorkflow removes every private resource owned by one workflow and
+// reports durable cleanup failures so callers can keep the owning state for a
+// retry.
+func (v *PrivateArtifactVault) DeleteWorkflow(ownerID string, workflowID api.WorkflowID) error {
+	resources, err := v.deleteWorkflowExcept(ownerID, workflowID, false)
+	if err != nil {
+		return err
+	}
+	for _, resource := range resources {
+		releasePrivateResource(resource)
+	}
+	return nil
+}
+
 // InvalidateWorkflowExcept removes workflow resources except explicitly
 // preserved IDs, including their durable payload and metadata.
 func (v *PrivateArtifactVault) InvalidateWorkflowExcept(
@@ -202,8 +216,19 @@ func (v *PrivateArtifactVault) InvalidateWorkflowExcept(
 	workflowID api.WorkflowID,
 	preservedResourceIDs ...string,
 ) {
+	resources, _ := v.deleteWorkflowExcept(ownerID, workflowID, true, preservedResourceIDs...)
+	for _, resource := range resources {
+		releasePrivateResource(resource)
+	}
+}
+
+func (v *PrivateArtifactVault) deleteWorkflowExcept(
+	ownerID string,
+	workflowID api.WorkflowID,
+	invalidateMemoryOnFailure bool,
+	preservedResourceIDs ...string,
+) ([]any, error) {
 	ownerID = strings.TrimSpace(ownerID)
-	scopeDigest := privateScopeDigest(ownerID, workflowID)
 	preserved := make(map[privateResourceKey]struct{}, len(preservedResourceIDs))
 	preservedDigests := make(map[string]struct{}, len(preservedResourceIDs))
 	for _, resourceID := range preservedResourceIDs {
@@ -214,39 +239,93 @@ func (v *PrivateArtifactVault) InvalidateWorkflowExcept(
 		preserved[key] = struct{}{}
 		preservedDigests[privateKeyDigest(key)] = struct{}{}
 	}
-	v.mu.Lock()
-	resources := make([]any, 0)
-	for key, entry := range v.entries {
-		if key.ownerID == ownerID && key.workflowID == workflowID {
-			if _, ok := preserved[key]; ok {
+	if ownerID == "" || strings.TrimSpace(string(workflowID)) == "" {
+		if invalidateMemoryOnFailure {
+			return v.removeWorkflowEntries(ownerID, workflowID, preserved), errors.New("private artifact vault workflow scope is required")
+		}
+		return nil, errors.New("private artifact vault workflow scope is required")
+	}
+	scopeDigest := privateScopeDigest(ownerID, workflowID)
+	return func() (resources []any, err error) {
+		v.mu.Lock()
+		defer v.mu.Unlock()
+		if invalidateMemoryOnFailure {
+			defer func() {
+				if err != nil {
+					resources = v.removeWorkflowEntriesLocked(ownerID, workflowID, preserved)
+				}
+			}()
+		}
+		metadataFiles, metadataErr := v.metadataFilesLocked()
+		if metadataErr != nil {
+			return nil, metadataErr
+		}
+		metadataFilesToDelete := make([]string, 0)
+		for _, metadataFile := range metadataFiles {
+			payload, readErr := os.ReadFile(metadataFile)
+			if errors.Is(readErr, os.ErrNotExist) {
 				continue
 			}
-			resources = append(resources, entry.value)
-			delete(v.entries, key)
-			delete(v.consumed, key)
+			if readErr != nil {
+				return nil, fmt.Errorf("private artifact vault read workflow metadata: %w", readErr)
+			}
+			var metadata privateArtifactMetadata
+			if json.Unmarshal(payload, &metadata) != nil || metadata.ScopeDigest != scopeDigest {
+				continue
+			}
+			if _, ok := preservedDigests[metadata.KeyDigest]; ok {
+				continue
+			}
+			metadataFilesToDelete = append(metadataFilesToDelete, metadataFile)
 		}
-	}
-	metadataFiles, _ := v.metadataFilesLocked()
-	for _, metadataFile := range metadataFiles {
-		payload, err := os.ReadFile(metadataFile)
-		if err != nil {
+		for _, metadataFile := range metadataFilesToDelete {
+			base := strings.TrimSuffix(metadataFile, ".json")
+			if removeErr := removeIfPresent(base + ".blob"); removeErr != nil {
+				return nil, removeErr
+			}
+			if removeErr := removeIfPresent(metadataFile); removeErr != nil {
+				return nil, removeErr
+			}
+		}
+		return v.removeWorkflowEntriesLocked(ownerID, workflowID, preserved), nil
+	}()
+}
+
+func (v *PrivateArtifactVault) removeWorkflowEntries(
+	ownerID string,
+	workflowID api.WorkflowID,
+	preserved map[privateResourceKey]struct{},
+) []any {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.removeWorkflowEntriesLocked(ownerID, workflowID, preserved)
+}
+
+func (v *PrivateArtifactVault) removeWorkflowEntriesLocked(
+	ownerID string,
+	workflowID api.WorkflowID,
+	preserved map[privateResourceKey]struct{},
+) []any {
+	resources := make([]any, 0)
+	for key, entry := range v.entries {
+		if key.ownerID != ownerID || key.workflowID != workflowID {
 			continue
 		}
-		var metadata privateArtifactMetadata
-		if json.Unmarshal(payload, &metadata) != nil || metadata.ScopeDigest != scopeDigest {
+		if _, ok := preserved[key]; ok {
 			continue
 		}
-		if _, ok := preservedDigests[metadata.KeyDigest]; ok {
-			continue
+		resources = append(resources, entry.value)
+		delete(v.entries, key)
+		delete(v.consumed, key)
+	}
+	for key := range v.consumed {
+		if key.ownerID == ownerID && key.workflowID == workflowID {
+			if _, ok := preserved[key]; !ok {
+				delete(v.consumed, key)
+			}
 		}
-		base := strings.TrimSuffix(metadataFile, ".json")
-		_ = removeIfPresent(base + ".blob")
-		_ = removeIfPresent(metadataFile)
 	}
-	v.mu.Unlock()
-	for _, resource := range resources {
-		releasePrivateResource(resource)
-	}
+	return resources
 }
 
 // InvalidateAll clears process-local handles while preserving durable files,

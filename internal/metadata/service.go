@@ -392,6 +392,7 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 
 	meta = preparationstate.State{
 		MetadataRequirements: input.MetadataRequirements,
+		ExternalFreshness:    input.ExternalFreshness,
 		SourceFingerprint:    request.SourceFingerprint,
 		SourcePath:           primary,
 		SourceLookupURL:      strings.TrimSpace(input.Instructions.SourceLookup),
