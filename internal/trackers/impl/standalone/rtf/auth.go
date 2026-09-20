@@ -36,6 +36,7 @@ func resolveAPIKey(ctx context.Context, req trackers.PreparationInput, baseURL s
 
 // ResolveSessionForTrackerAuthLogin validates RTF API auth or refreshes its
 // encrypted API session with configured credentials for tracker-auth checks.
+// Refreshed sessions must be persisted before this reports success.
 func ResolveSessionForTrackerAuthLogin(ctx context.Context, cfg config.TrackerConfig, dbPath string, _ api.TrackerAuthLoginRequest) error {
 	return resolveSessionForTrackerAuthLoginAt(ctx, cfg, dbPath, api.TrackerAuthLoginRequest{}, defaultBaseURL)
 }
@@ -92,6 +93,9 @@ func resolveRTFAPIKey(
 		return "", errors.New("trackers: RTF missing api_key or username/password")
 	}
 
+	if requirePersistence && strings.TrimSpace(dbPath) == "" {
+		return "", errors.New("trackers: RTF save API session: database path is required")
+	}
 	refreshed, err := refreshAPIKey(ctx, baseURL, cfg)
 	if err != nil {
 		return "", err

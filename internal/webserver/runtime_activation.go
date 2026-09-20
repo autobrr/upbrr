@@ -99,7 +99,7 @@ type runtimeActivationDeps struct {
 	clearFailure               func(context.Context, *db.SQLiteRepository, string) (api.ConfigActivation, error)
 	transform                  db.ConfigActivationWorkflowTransform
 	tryAcquireRuntimeAdmission func() (func(), bool)
-	persistActivated           func(context.Context, *config.Config, *db.SQLiteRepository, string, api.Logger, uint64, api.WorkflowFingerprint, []api.ConfigImpactDetail, db.ConfigActivationWorkflowTransform) (api.ConfigActivation, error)
+	persistActivated           func(context.Context, *config.Config, *db.SQLiteRepository, string, api.Logger, api.ConfigActivation, api.WorkflowFingerprint, []api.ConfigImpactDetail, db.ConfigActivationWorkflowTransform) (api.ConfigActivation, error)
 }
 
 type runtimeCookiePersistenceError struct {
@@ -235,7 +235,7 @@ func (a *RuntimeActivator) ActivateResultForOwner(
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.activateResultLocked(ctx, ownerID, candidate, false, true)
+	return a.activateResultLocked(ctx, ownerID, candidate, "", true)
 }
 
 // ActivateImmediate activates a candidate only when it can become effective
@@ -251,7 +251,7 @@ func (a *RuntimeActivator) ActivateImmediate(ctx context.Context, candidate conf
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	_, err := a.activateResultLocked(ctx, "system", candidate, false, false)
+	_, err := a.activateResultLocked(ctx, "system", candidate, "", false)
 	return err
 }
 
@@ -300,7 +300,7 @@ func (a *RuntimeActivator) ActivatePending(ctx context.Context) (api.ConfigActiv
 	if err != nil {
 		return a.failPendingActivation(ctx, persisted, activationError(ActivationStagePersist, fmt.Errorf("decrypt pending config: %w", err)))
 	}
-	result, err := a.activateResultLocked(ctx, "system", *candidate, true, true)
+	result, err := a.activateResultLocked(ctx, "system", *candidate, persisted.ActivationID, true)
 	if err != nil {
 		return a.failPendingActivation(ctx, persisted, err)
 	}
@@ -355,7 +355,7 @@ func configActivationFailureCode(err error) api.ConfigActivationFailureCode {
 }
 
 func (a *RuntimeActivator) activateResultLocked(
-	ctx context.Context, ownerID string, candidate config.Config, consumingPending, allowPending bool,
+	ctx context.Context, ownerID string, candidate config.Config, pendingActivationID string, allowPending bool,
 ) (api.ConfigActivation, error) {
 	stored, err := cloneConfig(candidate)
 	if err != nil {
@@ -408,7 +408,10 @@ func (a *RuntimeActivator) activateResultLocked(
 	if err != nil {
 		return api.ConfigActivation{}, activationError(ActivationStagePersist, err)
 	}
-	if activation.Status == api.ConfigActivationPending && !consumingPending {
+	if pendingActivationID != "" && (activation.Status != api.ConfigActivationPending || activation.ActivationID != pendingActivationID) {
+		return api.ConfigActivation{}, activationError(ActivationStagePersist, api.ErrConfigActivationChanged)
+	}
+	if activation.Status == api.ConfigActivationPending && pendingActivationID == "" {
 		return activation, &api.ConfigActivationPendingError{Activation: activation}
 	}
 	if !storedChanged && !effectiveChanged {
@@ -432,7 +435,7 @@ func (a *RuntimeActivator) activateResultLocked(
 		if !allowPending {
 			return api.ConfigActivation{}, activationError(ActivationStagePersist, blockingErr)
 		}
-		if consumingPending {
+		if pendingActivationID != "" {
 			return activation, nil
 		}
 		return a.savePending(ctx, ownerID, stored, impacts)
@@ -624,7 +627,7 @@ func (a *RuntimeActivator) persistActivated(
 		if !activationKnown {
 			return api.ConfigActivation{}, errors.New("runtime activation: config activation generation is unavailable")
 		}
-		return a.deps.persistActivated(ctx, stored, a.repo, a.fixedDBPath, logger, activation.ActiveGeneration, fingerprint, impacts, a.deps.transform)
+		return a.deps.persistActivated(ctx, stored, a.repo, a.fixedDBPath, logger, activation, fingerprint, impacts, a.deps.transform)
 	}
 	if err := a.persistStored(ctx, stored, logger); err != nil {
 		return api.ConfigActivation{}, err
@@ -703,7 +706,7 @@ func persistRuntimeConfigAndActivate(
 	repo *db.SQLiteRepository,
 	dbPath string,
 	logger api.Logger,
-	expectedGeneration uint64,
+	expected api.ConfigActivation,
 	fingerprint api.WorkflowFingerprint,
 	impacts []api.ConfigImpactDetail,
 	transform db.ConfigActivationWorkflowTransform,
@@ -711,7 +714,7 @@ func persistRuntimeConfigAndActivate(
 	var activation api.ConfigActivation
 	err := persistRuntimeConfigAndCookiesWithPreSave(ctx, cfg, repo, dbPath, logger, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
-		activation, err = repo.ActivateConfigTx(ctx, tx, expectedGeneration, fingerprint, impacts, transform)
+		activation, err = repo.ActivateConfigTx(ctx, tx, expected, fingerprint, impacts, transform)
 		if err != nil {
 			return fmt.Errorf("activate config generation: %w", err)
 		}

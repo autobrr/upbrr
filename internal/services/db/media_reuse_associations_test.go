@@ -4,6 +4,7 @@
 package db
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -54,6 +55,123 @@ func TestReusableMediaRejectsExpiredCoordinatorWrites(t *testing.T) {
 	}
 }
 
+func TestReusableMediaAuthorityHandlesUnavailableActiveInput(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		setup   func(context.Context, *testing.T, *SQLiteRepository, time.Time) (context.Context, api.PreparedMediaBinding)
+		changed bool
+		failed  bool
+	}{
+		{
+			name: "legacy recovery without input",
+			setup: func(ctx context.Context, t *testing.T, repo *SQLiteRepository, now time.Time) (context.Context, api.PreparedMediaBinding) {
+				t.Helper()
+				workflow := workflowStateRecordForTest("legacy-media", api.WorkflowStatusActive, now, `{}`)
+				if _, _, err := repo.CreateReleaseWorkflowState(ctx, workflow); err != nil {
+					t.Fatalf("create legacy workflow: %v", err)
+				}
+				if _, _, err := repo.BeginReleaseWorkflowEffect(
+					ctx,
+					workflowEffectForTest(workflow, "legacy-operation", "legacy-effect", "PTP", now),
+				); err != nil {
+					t.Fatalf("begin legacy effect: %v", err)
+				}
+				empty, err := repo.LoadActiveInput(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				recovering := api.ActiveInputRecord{
+					State:          api.ActiveInputRecovering,
+					Revision:       empty.Revision + 1,
+					Fence:          empty.Fence + 1,
+					OwnerID:        workflow.OwnerID,
+					CoordinatorID:  "legacy-recovery",
+					WorkflowID:     workflow.WorkflowID,
+					LeaseExpiresAt: now.Add(time.Minute),
+				}
+				if err := repo.CompareAndSwapActiveInput(ctx, empty, recovering, now); err != nil {
+					t.Fatalf("claim legacy recovery: %v", err)
+				}
+				return api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{
+					CoordinatorID: recovering.CoordinatorID,
+					Fence:         recovering.Fence,
+				}), api.PreparedMediaBinding{
+					SourcePath:               `C:\releases\legacy.mkv`,
+					PreparedMediaFingerprint: "legacy-prepared",
+					PreparedGeneration:       1,
+				}
+			},
+			changed: true,
+		},
+		{
+			name: "input lookup database failure",
+			setup: func(ctx context.Context, t *testing.T, repo *SQLiteRepository, now time.Time) (context.Context, api.PreparedMediaBinding) {
+				t.Helper()
+				active := createIdleActiveInputForTest(ctx, t, repo, now, "owner", "media-workflow", "active-coordinator")
+				if _, err := repo.db.ExecContext(ctx, `DROP TABLE input_records`); err != nil {
+					t.Fatalf("drop input records: %v", err)
+				}
+				return api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{
+					CoordinatorID: active.CoordinatorID,
+					Fence:         active.Fence,
+				}), api.PreparedMediaBinding{
+					SourcePath:               `C:\releases\failed.mkv`,
+					PreparedMediaFingerprint: "failed-prepared",
+					PreparedGeneration:       1,
+				}
+			},
+			failed: true,
+		},
+		{
+			name: "matching active input",
+			setup: func(ctx context.Context, t *testing.T, repo *SQLiteRepository, now time.Time) (context.Context, api.PreparedMediaBinding) {
+				t.Helper()
+				active := createIdleActiveInputForTest(ctx, t, repo, now, "owner", "media-workflow", "active-coordinator")
+				binding := api.PreparedMediaBinding{
+					SourcePath:               `C:\releases\active.mkv`,
+					PreparedMediaFingerprint: "active-prepared",
+					PreparedGeneration:       1,
+				}
+				if _, err := repo.SaveInputRecord(ctx, api.InputRecord{
+					ID:            active.InputID,
+					CanonicalPath: binding.SourcePath,
+					SourceVersion: active.SourceVersion,
+					Manifest:      []byte(`{"source":"active"}`),
+					UpdatedAt:     now,
+				}); err != nil {
+					t.Fatalf("save active input: %v", err)
+				}
+				return api.WithActiveInputAuthority(ctx, api.ActiveInputAuthority{
+					CoordinatorID: active.CoordinatorID,
+					Fence:         active.Fence,
+				}), binding
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repo := openMigratedTestRepo(t)
+			ctx, binding := test.setup(t.Context(), t, repo, time.Now().UTC())
+			err := repo.CommitReusableMedia(ctx, binding, api.MediaCompatibilityKey(mediaReuseTestSHA256(test.name)), nil, reusableMediaCommitForTest(binding))
+			switch {
+			case test.changed:
+				if !errors.Is(err, api.ErrActiveInputChanged) {
+					t.Fatalf("commit unavailable active input = %v", err)
+				}
+			case test.failed:
+				if err == nil || errors.Is(err, api.ErrActiveInputChanged) {
+					t.Fatalf("commit input lookup failure = %v", err)
+				}
+			case err != nil:
+				t.Fatalf("commit matching active input: %v", err)
+			}
+		})
+	}
+}
+
 func TestReusableMediaAssetsRoundTripOnlyStrongClaims(t *testing.T) {
 	t.Parallel()
 
@@ -91,7 +209,13 @@ func TestReusableMediaAssetsRoundTripOnlyStrongClaims(t *testing.T) {
 			UploadedAt:   time.Date(2026, time.September, 19, 0, 0, 0, 0, time.UTC),
 		}},
 	}
-	if err := repo.CommitReusableMedia(t.Context(), binding, compatibilityKey, []api.ReusableMediaAsset{asset}, reusableMediaCommitForTest(binding)); err != nil {
+	if err := repo.CommitReusableMedia(
+		t.Context(),
+		binding,
+		compatibilityKey,
+		[]api.ReusableMediaAsset{asset},
+		reusableMediaCommitForTest(binding),
+	); err != nil {
 		t.Fatalf("store reusable assets: %v", err)
 	}
 	loaded, err := repo.LoadReusableMediaAssets(t.Context(), compatibilityKey)
@@ -116,7 +240,13 @@ func TestReusableMediaAssetsRoundTripOnlyStrongClaims(t *testing.T) {
 	if len(deleted) != 0 {
 		t.Fatalf("deleted reusable assets remained available: %#v", deleted)
 	}
-	if err := repo.CommitReusableMedia(t.Context(), binding, compatibilityKey, []api.ReusableMediaAsset{asset}, reusableMediaCommitForTest(binding)); err != nil {
+	if err := repo.CommitReusableMedia(
+		t.Context(),
+		binding,
+		compatibilityKey,
+		[]api.ReusableMediaAsset{asset},
+		reusableMediaCommitForTest(binding),
+	); err != nil {
 		t.Fatalf("re-capture reusable asset: %v", err)
 	}
 	recaptured, err := repo.LoadReusableMediaAssets(t.Context(), compatibilityKey)
@@ -131,7 +261,13 @@ func TestReusableMediaAssetsRoundTripOnlyStrongClaims(t *testing.T) {
 	updated.Binding = updatedBinding
 	updated.Order = 9
 	updated.HostedLinks = nil
-	if err := repo.CommitReusableMedia(t.Context(), updatedBinding, compatibilityKey, []api.ReusableMediaAsset{updated}, reusableMediaCommitForTest(updatedBinding)); err != nil {
+	if err := repo.CommitReusableMedia(
+		t.Context(),
+		updatedBinding,
+		compatibilityKey,
+		[]api.ReusableMediaAsset{updated},
+		reusableMediaCommitForTest(updatedBinding),
+	); err != nil {
 		t.Fatalf("store current reusable asset: %v", err)
 	}
 	if _, err := repo.db.ExecContext(t.Context(), `
@@ -176,10 +312,22 @@ func TestReusableMediaRecapturePreservesOtherSourceTombstone(t *testing.T) {
 	assetB := assetA
 	assetB.Binding = bindingB
 	assetB.Image.Path = "C:\\vault\\b.png"
-	if err := repo.CommitReusableMedia(t.Context(), bindingA, compatibilityKey, []api.ReusableMediaAsset{assetA}, reusableMediaCommitForTest(bindingA)); err != nil {
+	if err := repo.CommitReusableMedia(
+		t.Context(),
+		bindingA,
+		compatibilityKey,
+		[]api.ReusableMediaAsset{assetA},
+		reusableMediaCommitForTest(bindingA),
+	); err != nil {
 		t.Fatalf("store source A: %v", err)
 	}
-	if err := repo.CommitReusableMedia(t.Context(), bindingB, compatibilityKey, []api.ReusableMediaAsset{assetB}, reusableMediaCommitForTest(bindingB)); err != nil {
+	if err := repo.CommitReusableMedia(
+		t.Context(),
+		bindingB,
+		compatibilityKey,
+		[]api.ReusableMediaAsset{assetB},
+		reusableMediaCommitForTest(bindingB),
+	); err != nil {
 		t.Fatalf("store source B: %v", err)
 	}
 	if err := repo.DeleteReusableMediaAssets(t.Context(), bindingA, []string{assetA.Image.Path}); err != nil {
@@ -188,10 +336,23 @@ func TestReusableMediaRecapturePreservesOtherSourceTombstone(t *testing.T) {
 	if err := repo.DeleteReusableMediaAssets(t.Context(), bindingB, []string{assetB.Image.Path}); err != nil {
 		t.Fatalf("delete source B: %v", err)
 	}
-	if err := repo.CommitReusableMedia(t.Context(), bindingA, compatibilityKey, []api.ReusableMediaAsset{assetA}, reusableMediaCommitForTest(bindingA)); err != nil {
+	if err := repo.CommitReusableMedia(
+		t.Context(),
+		bindingA,
+		compatibilityKey,
+		[]api.ReusableMediaAsset{assetA},
+		reusableMediaCommitForTest(bindingA),
+	); err != nil {
 		t.Fatalf("recapture source A: %v", err)
 	}
-	if count := reusableTombstoneSourceCount(t, repo, bindingB.SourcePath, string(compatibilityKey), string(assetA.CaptureFingerprint), assetA.ContentSHA256); count != 1 {
+	if count := reusableTombstoneSourceCount(
+		t,
+		repo,
+		bindingB.SourcePath,
+		string(compatibilityKey),
+		string(assetA.CaptureFingerprint),
+		assetA.ContentSHA256,
+	); count != 1 {
 		t.Fatalf("source B tombstones after source A recapture = %d", count)
 	}
 	assets, err := repo.LoadReusableMediaAssets(t.Context(), compatibilityKey)

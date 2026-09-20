@@ -380,12 +380,15 @@ func (r *SQLiteRepository) LoadPendingConfigActivationCandidate(ctx context.Cont
 }
 
 // ActivateConfigTx commits one configuration generation only while the exact
-// transaction observes no active input, unfinished operation, or unresolved
+// transaction observes no busy input, unfinished operation, or unresolved
 // external effect. The caller owns the surrounding full-config transaction.
+// expected binds the active generation and, when pending, the candidate ID;
+// stale generations or candidates return api.ErrConfigActivationChanged.
+// An immediate activation rejects a newly pending candidate without consuming it.
 func (r *SQLiteRepository) ActivateConfigTx(
 	ctx context.Context,
 	tx *sql.Tx,
-	expectedGeneration uint64,
+	expected api.ConfigActivation,
 	nextFingerprint api.WorkflowFingerprint,
 	impacts []api.ConfigImpactDetail,
 	transform ConfigActivationWorkflowTransform,
@@ -397,8 +400,21 @@ func (r *SQLiteRepository) ActivateConfigTx(
 	if err != nil {
 		return api.ConfigActivation{}, err
 	}
-	if current.ActiveGeneration != expectedGeneration || expectedGeneration == math.MaxInt64 || strings.TrimSpace(string(nextFingerprint)) == "" {
-		return api.ConfigActivation{}, errors.New("db: config activation generation changed")
+	if strings.TrimSpace(string(nextFingerprint)) == "" {
+		return api.ConfigActivation{}, errors.New("db: config activation fingerprint is required")
+	}
+	if expected.ActiveGeneration >= math.MaxInt64 {
+		return api.ConfigActivation{}, errors.New("db: config activation generation exhausted")
+	}
+	if current.ActiveGeneration != expected.ActiveGeneration {
+		return api.ConfigActivation{}, api.ErrConfigActivationChanged
+	}
+	if expected.Status == api.ConfigActivationPending {
+		if expected.ActivationID == "" || current.Status != api.ConfigActivationPending || current.ActivationID != expected.ActivationID {
+			return api.ConfigActivation{}, api.ErrConfigActivationChanged
+		}
+	} else if current.Status == api.ConfigActivationPending {
+		return current, &api.ConfigActivationPendingError{Activation: current}
 	}
 	slot, err := requireConfigActivationSafe(ctx, tx)
 	if err != nil {
@@ -426,15 +442,17 @@ func (r *SQLiteRepository) ActivateConfigTx(
 		UPDATE config_activation
 		SET generation = ?, fingerprint = ?, impacts_json = ?, updated_at = ?,
 			failed_activation_id = '', failed_code = '', failed_impacts_json = '[]', failed_at = ''
-		WHERE singleton = 1`, expectedGeneration+1, nextFingerprint, impactsJSON, formatWorkflowStateTime(now)); err != nil {
+		WHERE singleton = 1`, expected.ActiveGeneration+1, nextFingerprint, impactsJSON, formatWorkflowStateTime(now)); err != nil {
 		return api.ConfigActivation{}, fmt.Errorf("db update config activation: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM config_activation_pending WHERE singleton = 1`); err != nil {
-		return api.ConfigActivation{}, fmt.Errorf("db clear pending config activation: %w", err)
+	if expected.Status == api.ConfigActivationPending {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM config_activation_pending WHERE singleton = 1 AND activation_id = ?`, expected.ActivationID); err != nil {
+			return api.ConfigActivation{}, fmt.Errorf("db clear pending config activation: %w", err)
+		}
 	}
 	return api.ConfigActivation{
 		Status:           api.ConfigActivationActive,
-		ActiveGeneration: expectedGeneration + 1,
+		ActiveGeneration: expected.ActiveGeneration + 1,
 		Fingerprint:      nextFingerprint,
 		Impacts:          configImpactKinds(impacts),
 		UpdatedAt:        now,

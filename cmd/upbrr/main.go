@@ -1491,7 +1491,7 @@ func activateImportedConfig(ctx context.Context, imported *config.Config, dbPath
 		committed, activationErr = repo.ActivateConfigTx(
 			ctx,
 			tx,
-			activation.ActiveGeneration,
+			activation,
 			nextFingerprint,
 			impacts,
 			releaseworkflow.ApplyConfigImpact,

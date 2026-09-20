@@ -19,6 +19,8 @@ import (
 // Repeated calls plus Current polling are the complete adapter orchestration contract.
 // Matching preparation inputs restore the persisted generation before downstream work;
 // unavailable or incompatible prepared data returns an error instead of being rebuilt.
+// New workflows default to post-dupe-gate tracker decisions unless the context
+// supplies an explicit tracker decision mode.
 func (m *Module) Continue(
 	ctx context.Context,
 	ownerID string,
@@ -53,9 +55,10 @@ func (m *Module) Continue(
 			}
 			request.Intent.Preparation.ExternalFreshness = api.ExternalFreshnessRefresh
 			opened, err := m.OpenInput(ctx, ownerID, OpenInputRequest{
-				ExpectedRevision: slot.Revision,
-				Input:            *request.Intent.Preparation,
-				IdempotencyKey:   request.IdempotencyKey,
+				ExpectedRevision:    slot.Revision,
+				Input:               *request.Intent.Preparation,
+				IdempotencyKey:      request.IdempotencyKey,
+				TrackerDecisionMode: trackerDecisionModeFromContext(ctx, TrackerDecisionModePostDupeGate),
 			})
 			if err != nil {
 				return CommandResult{}, err

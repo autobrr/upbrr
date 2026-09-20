@@ -35,7 +35,7 @@ func TestConfigActivationGenerationGuardRejectsRetiredRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = repo.ActivateConfigTx(ctx, tx, 0, "replacement", []api.ConfigImpactDetail{{Kind: api.ConfigImpactPresentation}}, nil)
+	_, err = repo.ActivateConfigTx(ctx, tx, api.ConfigActivation{}, "replacement", []api.ConfigImpactDetail{{Kind: api.ConfigImpactPresentation}}, nil)
 	if err == nil {
 		err = tx.Commit()
 	} else {

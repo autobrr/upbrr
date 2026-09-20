@@ -450,6 +450,55 @@ func TestContinueCreationPersistsTrustedTrackerDecisionMode(t *testing.T) {
 	}
 }
 
+func TestContinueActiveInputCreationPersistsTrackerDecisionMode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		mode TrackerDecisionMode
+		want TrackerDecisionMode
+	}{
+		{name: "default", want: TrackerDecisionModePostDupeGate},
+		{
+			name: "webui",
+			mode: TrackerDecisionModeWebUIControls,
+			want: TrackerDecisionModeWebUIControls,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := t.Context()
+			if test.mode != "" {
+				ctx = WithTrackerDecisionMode(ctx, test.mode)
+			}
+			clock := &mutableClock{now: time.Now().UTC()}
+			repository := openActiveInputRecoveryRepository(ctx, t)
+			persistent, err := NewPersistentRepository(repository)
+			if err != nil {
+				t.Fatal(err)
+			}
+			module := newActiveInputRecoveryModule(t, persistent, repository, &hashingActiveInputVerifier{}, clock, "planner-mode")
+			current, err := module.Continue(ctx, testOwnerID, api.ContinueReleaseWorkflowRequest{
+				IdempotencyKey: "continue-active-input-mode-" + test.name,
+				Goal:           api.WorkflowGoalInputReady,
+				Intent: api.WorkflowIntent{Preparation: &api.PrepareInput{
+					SourcePath: writeActiveInputRecoverySource(t, test.name+".mkv", test.name),
+				}},
+			})
+			if err != nil {
+				t.Fatalf("continue active input: %v", err)
+			}
+			state, err := persistent.Load(ctx, testOwnerID, current.Workflow.ID)
+			if err != nil {
+				t.Fatalf("load active-input continuation: %v", err)
+			}
+			if state.TrackerDecisionMode != test.want {
+				t.Fatalf("active-input continuation tracker mode = %q, want %q", state.TrackerDecisionMode, test.want)
+			}
+		})
+	}
+}
+
 func TestContinueRefreshesOnlyRecoverablePersistedMediaBlockForWebUIControls(t *testing.T) {
 	t.Parallel()
 

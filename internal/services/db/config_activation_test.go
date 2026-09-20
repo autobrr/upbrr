@@ -39,7 +39,12 @@ func TestConfigActivationPendingAndCommit(t *testing.T) {
 	if initial.Status != api.ConfigActivationActive || initial.ActiveGeneration != 0 {
 		t.Fatalf("initial activation = %#v", initial)
 	}
-	pending, err := repo.SavePendingConfigActivation(ctx, "session-owner", []byte(`{"stored":"candidate"}`), []api.ConfigImpactDetail{{Kind: api.ConfigImpactDescription}})
+	pending, err := repo.SavePendingConfigActivation(
+		ctx,
+		"session-owner",
+		[]byte(`{"stored":"candidate"}`),
+		[]api.ConfigImpactDetail{{Kind: api.ConfigImpactDescription}},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +54,12 @@ func TestConfigActivationPendingAndCommit(t *testing.T) {
 	if pending.ActivationID == "" {
 		t.Fatal("pending activation ID is empty")
 	}
-	second, err := repo.SavePendingConfigActivation(ctx, "other-session", []byte(`{"stored":"second"}`), []api.ConfigImpactDetail{{Kind: api.ConfigImpactProvider}})
+	second, err := repo.SavePendingConfigActivation(
+		ctx,
+		"other-session",
+		[]byte(`{"stored":"second"}`),
+		[]api.ConfigImpactDetail{{Kind: api.ConfigImpactProvider}},
+	)
 	if !errors.Is(err, api.ErrConfigActivationPending) {
 		t.Fatalf("second pending activation error = %v", err)
 	}
@@ -68,7 +78,7 @@ func TestConfigActivationPendingAndCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	activation, err := repo.ActivateConfigTx(ctx, tx, 0, "next-fingerprint", []api.ConfigImpactDetail{{Kind: api.ConfigImpactDescription}}, nil)
+	activation, err := repo.ActivateConfigTx(ctx, tx, pending, "next-fingerprint", []api.ConfigImpactDetail{{Kind: api.ConfigImpactDescription}}, nil)
 	if err == nil {
 		err = tx.Commit()
 	} else {
@@ -83,6 +93,67 @@ func TestConfigActivationPendingAndCommit(t *testing.T) {
 	_, _, err = repo.LoadPendingConfigActivationCandidate(ctx)
 	if !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("pending candidate error = %v, want no rows", err)
+	}
+	tx, err = repo.RawDB().BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = repo.ActivateConfigTx(ctx, tx, initial, "stale-fingerprint", nil, nil)
+	_ = tx.Rollback()
+	if !errors.Is(err, api.ErrConfigActivationChanged) {
+		t.Fatalf("stale generation error = %v", err)
+	}
+}
+
+func TestConfigActivationRejectsReplacedCandidate(t *testing.T) {
+	for _, consumePending := range []bool{false, true} {
+		t.Run(fmt.Sprintf("pending=%t", consumePending), func(t *testing.T) {
+			ctx := t.Context()
+			repo, err := Open(filepath.Join(t.TempDir(), "activation.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = repo.Close() })
+			if err := repo.MigrateContext(ctx); err != nil {
+				t.Fatal(err)
+			}
+			expected, err := repo.LoadConfigActivation(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if consumePending {
+				expected, err = repo.SavePendingConfigActivation(ctx, "owner", []byte(`{"candidate":"old"}`), nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := repo.FailPendingConfigActivation(ctx, expected.ActivationID, api.ConfigActivationFailureBuild); err != nil {
+					t.Fatal(err)
+				}
+			}
+			candidate := []byte(`{"candidate":"replacement"}`)
+			replacement, err := repo.SavePendingConfigActivation(ctx, "other-owner", candidate, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tx, err := repo.RawDB().BeginTx(ctx, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = repo.ActivateConfigTx(ctx, tx, expected, "stale", nil, nil)
+			if err == nil {
+				err = tx.Commit()
+			} else {
+				_ = tx.Rollback()
+			}
+			if !errors.Is(err, api.ErrConfigActivationChanged) && !errors.Is(err, api.ErrConfigActivationPending) {
+				t.Fatalf("stale activation error = %v", err)
+			}
+			payload, retained, err := repo.LoadPendingConfigActivationCandidate(ctx)
+			if err != nil || string(payload) != string(candidate) || retained.ActivationID != replacement.ActivationID ||
+				retained.ActiveGeneration != expected.ActiveGeneration {
+				t.Fatalf("replacement changed: activation=%#v payload=%q err=%v", retained, payload, err)
+			}
+		})
 	}
 }
 
@@ -164,7 +235,7 @@ func TestConfigActivationReadsUseConsistentSnapshot(t *testing.T) {
 			_, err = writer.ActivateConfigTx(
 				t.Context(),
 				tx,
-				pending.ActiveGeneration,
+				pending,
 				"next",
 				[]api.ConfigImpactDetail{
 					{Kind: api.ConfigImpactDescription},
@@ -348,8 +419,11 @@ func TestConfigActivationSafeAllowsIdleWorkflowSlot(t *testing.T) {
 	if err := migrateAddConfigActivation(ctx, repo.RawDB()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.RawDB().ExecContext(ctx, `UPDATE active_input SET record_json = ? WHERE singleton = 1`,
-		`{"State":"active","Revision":1,"Fence":1,"CoordinatorID":"test","OwnerID":"owner","WorkflowID":"workflow","InputID":"input","SourceVersion":"version"}`); err != nil {
+	if _, err := repo.RawDB().ExecContext(
+		ctx,
+		`UPDATE active_input SET record_json = ? WHERE singleton = 1`,
+		`{"State":"active","Revision":1,"Fence":1,"CoordinatorID":"test","OwnerID":"owner","WorkflowID":"workflow","InputID":"input","SourceVersion":"version"}`,
+	); err != nil {
 		t.Fatal(err)
 	}
 	safe, err := repo.ConfigActivationSafe(ctx)
@@ -382,20 +456,30 @@ func TestActivateConfigTxTransformsIdleActiveWorkflowAndAdvancesSlot(t *testing.
 		formatWorkflowStateTime(now), formatWorkflowStateTime(now)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.RawDB().ExecContext(ctx, `UPDATE active_input SET revision = 5, fence = 1, record_json = ? WHERE singleton = 1`,
-		`{"State":"active","Revision":5,"Fence":1,"CoordinatorID":"test","OwnerID":"owner","WorkflowID":"workflow","InputID":"input","SourceVersion":"version"}`); err != nil {
+	if _, err := repo.RawDB().ExecContext(
+		ctx,
+		`UPDATE active_input SET revision = 5, fence = 1, record_json = ? WHERE singleton = 1`,
+		`{"State":"active","Revision":5,"Fence":1,"CoordinatorID":"test","OwnerID":"owner","WorkflowID":"workflow","InputID":"input","SourceVersion":"version"}`,
+	); err != nil {
 		t.Fatal(err)
 	}
 	tx, err := repo.RawDB().BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = repo.ActivateConfigTx(ctx, tx, 0, "next-fingerprint", []api.ConfigImpactDetail{{Kind: api.ConfigImpactDescription}}, func(record api.ReleaseWorkflowStateRecord, _ api.ConfigImpactDetail) (api.ReleaseWorkflowStateRecord, error) {
-		record.Revision++
-		record.UpdatedAt = record.UpdatedAt.Add(time.Nanosecond)
-		record.Payload = []byte(`{"safe":"updated"}`)
-		return record, nil
-	})
+	_, err = repo.ActivateConfigTx(
+		ctx,
+		tx,
+		api.ConfigActivation{},
+		"next-fingerprint",
+		[]api.ConfigImpactDetail{{Kind: api.ConfigImpactDescription}},
+		func(record api.ReleaseWorkflowStateRecord, _ api.ConfigImpactDetail) (api.ReleaseWorkflowStateRecord, error) {
+			record.Revision++
+			record.UpdatedAt = record.UpdatedAt.Add(time.Nanosecond)
+			record.Payload = []byte(`{"safe":"updated"}`)
+			return record, nil
+		},
+	)
 	if err == nil {
 		err = tx.Commit()
 	} else {
@@ -405,7 +489,12 @@ func TestActivateConfigTxTransformsIdleActiveWorkflowAndAdvancesSlot(t *testing.
 		t.Fatal(err)
 	}
 	var workflowRevision uint64
-	if err := repo.RawDB().QueryRowContext(ctx, `SELECT revision FROM release_workflow_states WHERE owner_id = 'owner' AND workflow_id = 'workflow'`).Scan(&workflowRevision); err != nil {
+	if err := repo.RawDB().QueryRowContext(
+		ctx,
+		`SELECT revision FROM release_workflow_states WHERE owner_id = 'owner' AND workflow_id = 'workflow'`,
+	).Scan(
+		&workflowRevision,
+	); err != nil {
 		t.Fatal(err)
 	}
 	if workflowRevision != 2 {

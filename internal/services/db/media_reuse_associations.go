@@ -463,6 +463,9 @@ func requireReusableMediaAuthority(ctx context.Context, tx *sql.Tx, sourcePath s
 	}
 	var activePath string
 	if err := tx.QueryRowContext(ctx, `SELECT canonical_path FROM input_records WHERE id = ?`, slot.InputID).Scan(&activePath); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return api.ErrActiveInputChanged
+		}
 		return fmt.Errorf("db reusable media: active source: %w", err)
 	}
 	if !pathing.SamePath(activePath, sourcePath) {

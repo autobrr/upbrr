@@ -430,7 +430,7 @@ func TestRuntimeActivatorMarksDeferredFailuresTerminalAndAcceptsCorrection(t *te
 					*db.SQLiteRepository,
 					string,
 					api.Logger,
-					uint64,
+					api.ConfigActivation,
 					api.WorkflowFingerprint,
 					[]api.ConfigImpactDetail,
 					db.ConfigActivationWorkflowTransform,
@@ -511,13 +511,227 @@ func TestRuntimeActivatorMarksDeferredFailuresTerminalAndAcceptsCorrection(t *te
 	}
 }
 
+func TestRuntimeActivatorPendingReplacementBeforeActivationSnapshotRetainsNewCandidate(t *testing.T) {
+	repo := openRuntimeActivationTestRepo(t)
+	installer := &activationTestInstaller{}
+	activator, err := NewRuntimeActivator(repo, repo.DBPath(), installer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := validRuntimeActivationConfig()
+	stored.MainSettings.DBPath = repo.DBPath()
+	staleCandidate := stored
+	staleCandidate.Metadata.KeepImages = true
+	replacementCandidate := stored
+	replacementCandidate.Metadata.OnlyID = true
+
+	var stalePending api.ConfigActivation
+	var replacement api.ConfigActivation
+	var replacementPayload []byte
+	replaceAtStoredLoad := false
+	var staleFailureAttempts int
+	builds := 0
+	activator.deps.loadStored = func(ctx context.Context, _ *db.SQLiteRepository) (*config.Config, error) {
+		if replaceAtStoredLoad {
+			replaceAtStoredLoad = false
+			failed, failErr := repo.FailPendingConfigActivation(ctx, stalePending.ActivationID, api.ConfigActivationFailureBuild)
+			if failErr != nil {
+				t.Fatalf("fail stale pending candidate: %v", failErr)
+			}
+			if failed.Status != api.ConfigActivationFailed || failed.ActivationID != stalePending.ActivationID {
+				t.Fatalf("failed stale candidate = %#v", failed)
+			}
+			var saveErr error
+			replacement, saveErr = activator.savePending(ctx, "replacement", &replacementCandidate, nil)
+			if saveErr != nil {
+				t.Fatalf("save replacement pending candidate: %v", saveErr)
+			}
+		}
+		return &stored, nil
+	}
+	activator.deps.loadActivation = func(ctx context.Context, repo *db.SQLiteRepository) (api.ConfigActivation, error) {
+		return repo.LoadConfigActivation(ctx)
+	}
+	activator.deps.savePending = func(
+		ctx context.Context,
+		repo *db.SQLiteRepository,
+		ownerID string,
+		candidate []byte,
+		impacts []api.ConfigImpactDetail,
+	) (api.ConfigActivation, error) {
+		if ownerID == "replacement" {
+			replacementPayload = slices.Clone(candidate)
+		}
+		return repo.SavePendingConfigActivation(ctx, ownerID, candidate, impacts)
+	}
+	activator.deps.failPending = func(
+		ctx context.Context,
+		repo *db.SQLiteRepository,
+		activationID string,
+		code api.ConfigActivationFailureCode,
+	) (api.ConfigActivation, error) {
+		staleFailureAttempts++
+		return repo.FailPendingConfigActivation(ctx, activationID, code)
+	}
+	activator.deps.activationSafe = func(context.Context, *db.SQLiteRepository) (bool, error) { return true, nil }
+	activator.deps.build = func(context.Context, config.Config, *db.SQLiteRepository) (RuntimeGeneration, error) {
+		builds++
+		return RuntimeGeneration{Owner: &activationTestOwner{}}, nil
+	}
+	activator.deps.cookies = activationTestCookies
+	activator.deps.persistActivated = activateRuntimeConfigForTest
+
+	stalePending, err = activator.savePending(t.Context(), "stale", &staleCandidate, nil)
+	if err != nil {
+		t.Fatalf("save stale pending candidate: %v", err)
+	}
+	replaceAtStoredLoad = true
+	result, err := activator.ActivatePending(t.Context())
+	if err != nil {
+		t.Fatalf("activate stale pending candidate: %v", err)
+	}
+	if result.Status != api.ConfigActivationPending || result.ActivationID != replacement.ActivationID ||
+		result.PendingGeneration != replacement.PendingGeneration {
+		t.Fatalf("activation result = %#v, replacement = %#v", result, replacement)
+	}
+	if builds != 0 {
+		t.Fatalf("stale candidate constructed %d runtime generations", builds)
+	}
+	if staleFailureAttempts != 1 {
+		t.Fatalf("stale candidate failure attempts = %d, want 1", staleFailureAttempts)
+	}
+	if len(installer.generations) != 0 {
+		t.Fatalf("installed stale candidate generations = %d", len(installer.generations))
+	}
+	payload, persisted, err := repo.LoadPendingConfigActivationCandidate(t.Context())
+	if err != nil {
+		t.Fatalf("load replacement pending candidate: %v", err)
+	}
+	if persisted.ActivationID != replacement.ActivationID || !slices.Equal(payload, replacementPayload) {
+		t.Fatalf("persisted replacement = %#v payloadMatches=%t", persisted, slices.Equal(payload, replacementPayload))
+	}
+}
+
+func TestRuntimeActivatorPendingReplacementDuringBuildRetiresStaleRuntime(t *testing.T) {
+	repo := openRuntimeActivationTestRepo(t)
+	installer := &activationTestInstaller{}
+	activator, err := NewRuntimeActivator(repo, repo.DBPath(), installer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := validRuntimeActivationConfig()
+	stored.MainSettings.DBPath = repo.DBPath()
+	staleCandidate := stored
+	staleCandidate.Metadata.KeepImages = true
+	replacementCandidate := stored
+	replacementCandidate.Metadata.OnlyID = true
+
+	var stalePending api.ConfigActivation
+	var replacement api.ConfigActivation
+	var replacementPayload []byte
+	var staleFailureAttempts int
+	staleOwner := &activationTestOwner{}
+	persistAttempts := 0
+	var persistErr error
+	activator.deps.loadStored = func(context.Context, *db.SQLiteRepository) (*config.Config, error) { return &stored, nil }
+	activator.deps.loadActivation = func(ctx context.Context, repo *db.SQLiteRepository) (api.ConfigActivation, error) {
+		return repo.LoadConfigActivation(ctx)
+	}
+	activator.deps.savePending = func(
+		ctx context.Context,
+		repo *db.SQLiteRepository,
+		ownerID string,
+		candidate []byte,
+		impacts []api.ConfigImpactDetail,
+	) (api.ConfigActivation, error) {
+		if ownerID == "replacement" {
+			replacementPayload = slices.Clone(candidate)
+		}
+		return repo.SavePendingConfigActivation(ctx, ownerID, candidate, impacts)
+	}
+	activator.deps.failPending = func(
+		ctx context.Context,
+		repo *db.SQLiteRepository,
+		activationID string,
+		code api.ConfigActivationFailureCode,
+	) (api.ConfigActivation, error) {
+		staleFailureAttempts++
+		return repo.FailPendingConfigActivation(ctx, activationID, code)
+	}
+	activator.deps.activationSafe = func(context.Context, *db.SQLiteRepository) (bool, error) { return true, nil }
+	activator.deps.build = func(ctx context.Context, _ config.Config, _ *db.SQLiteRepository) (RuntimeGeneration, error) {
+		failed, failErr := repo.FailPendingConfigActivation(ctx, stalePending.ActivationID, api.ConfigActivationFailureBuild)
+		if failErr != nil {
+			t.Fatalf("fail stale pending candidate: %v", failErr)
+		}
+		if failed.Status != api.ConfigActivationFailed || failed.ActivationID != stalePending.ActivationID {
+			t.Fatalf("failed stale candidate = %#v", failed)
+		}
+		var saveErr error
+		replacement, saveErr = activator.savePending(ctx, "replacement", &replacementCandidate, nil)
+		if saveErr != nil {
+			t.Fatalf("save replacement pending candidate: %v", saveErr)
+		}
+		return RuntimeGeneration{Owner: staleOwner}, nil
+	}
+	activator.deps.cookies = activationTestCookies
+	activator.deps.persistActivated = func(
+		ctx context.Context,
+		stored *config.Config,
+		repo *db.SQLiteRepository,
+		dbPath string,
+		logger api.Logger,
+		expected api.ConfigActivation,
+		fingerprint api.WorkflowFingerprint,
+		impacts []api.ConfigImpactDetail,
+		transform db.ConfigActivationWorkflowTransform,
+	) (api.ConfigActivation, error) {
+		persistAttempts++
+		activation, err := activateRuntimeConfigForTest(ctx, stored, repo, dbPath, logger, expected, fingerprint, impacts, transform)
+		persistErr = err
+		return activation, err
+	}
+
+	stalePending, err = activator.savePending(t.Context(), "stale", &staleCandidate, nil)
+	if err != nil {
+		t.Fatalf("save stale pending candidate: %v", err)
+	}
+	result, err := activator.ActivatePending(t.Context())
+	if err != nil {
+		t.Fatalf("activate stale pending candidate: %v", err)
+	}
+	if result.Status != api.ConfigActivationPending || result.ActivationID != replacement.ActivationID ||
+		result.PendingGeneration != replacement.PendingGeneration {
+		t.Fatalf("activation result = %#v, replacement = %#v", result, replacement)
+	}
+	if persistAttempts != 1 || !errors.Is(persistErr, api.ErrConfigActivationChanged) {
+		t.Fatalf("stale persistence = attempts:%d err:%v", persistAttempts, persistErr)
+	}
+	if staleFailureAttempts != 1 {
+		t.Fatalf("stale candidate failure attempts = %d, want 1", staleFailureAttempts)
+	}
+	if !staleOwner.closed.Load() {
+		t.Fatal("stale runtime resources were not retired")
+	}
+	if len(installer.generations) != 0 {
+		t.Fatalf("installed stale candidate generations = %d", len(installer.generations))
+	}
+	payload, persisted, err := repo.LoadPendingConfigActivationCandidate(t.Context())
+	if err != nil {
+		t.Fatalf("load replacement pending candidate: %v", err)
+	}
+	if persisted.ActivationID != replacement.ActivationID || !slices.Equal(payload, replacementPayload) {
+		t.Fatalf("persisted replacement = %#v payloadMatches=%t", persisted, slices.Equal(payload, replacementPayload))
+	}
+}
+
 func activateRuntimeConfigForTest(
 	ctx context.Context,
 	_ *config.Config,
 	repo *db.SQLiteRepository,
 	_ string,
 	_ api.Logger,
-	expectedGeneration uint64,
+	expected api.ConfigActivation,
 	fingerprint api.WorkflowFingerprint,
 	impacts []api.ConfigImpactDetail,
 	transform db.ConfigActivationWorkflowTransform,
@@ -526,7 +740,7 @@ func activateRuntimeConfigForTest(
 	if err != nil {
 		return api.ConfigActivation{}, fmt.Errorf("begin test activation: %w", err)
 	}
-	activation, err := repo.ActivateConfigTx(ctx, tx, expectedGeneration, fingerprint, impacts, transform)
+	activation, err := repo.ActivateConfigTx(ctx, tx, expected, fingerprint, impacts, transform)
 	if err == nil {
 		err = tx.Commit()
 	} else {

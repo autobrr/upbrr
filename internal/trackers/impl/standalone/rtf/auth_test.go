@@ -25,22 +25,28 @@ func TestTrackerAuthLoginReportsSessionPersistenceFailure(t *testing.T) {
 		_, _ = w.Write([]byte(`{"token":"refreshed-session"}`))
 	}))
 	t.Cleanup(server.Close)
-	// A directory cannot be opened as the session database.
-	dbPath := t.TempDir()
 	cfg := config.TrackerConfig{Username: "user", Password: "pass"}
-	err := resolveSessionForTrackerAuthLoginAt(t.Context(), cfg, dbPath, api.TrackerAuthLoginRequest{}, server.URL)
-	if err == nil || !strings.Contains(err.Error(), "save API session") {
-		t.Fatalf("tracker-auth persistence error = %v", err)
-	}
-	for _, logger := range []api.Logger{nil, api.NopLogger{}} {
-		token, err := resolveAPIKey(t.Context(), trackers.PreparationInput{
-			TrackerConfig: cfg,
-			Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
-			Logger:        logger,
-		}, server.URL)
-		if err != nil || token != "refreshed-session" {
-			t.Fatalf("current upload token=%q err=%v", token, err)
-		}
+	for _, tc := range []struct{ name, dbPath string }{
+		{name: "directory", dbPath: t.TempDir()},
+		{name: "empty"},
+		{name: "whitespace", dbPath: " \t "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := resolveSessionForTrackerAuthLoginAt(t.Context(), cfg, tc.dbPath, api.TrackerAuthLoginRequest{}, server.URL)
+			if err == nil || !strings.Contains(err.Error(), "save API session") {
+				t.Fatalf("tracker-auth persistence error = %v", err)
+			}
+			for _, logger := range []api.Logger{nil, api.NopLogger{}} {
+				token, err := resolveAPIKey(t.Context(), trackers.PreparationInput{
+					TrackerConfig: cfg,
+					Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: tc.dbPath}}),
+					Logger:        logger,
+				}, server.URL)
+				if err != nil || token != "refreshed-session" {
+					t.Fatalf("current upload token=%q err=%v", token, err)
+				}
+			}
+		})
 	}
 }
 
