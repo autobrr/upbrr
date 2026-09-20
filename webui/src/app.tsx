@@ -129,6 +129,7 @@ function AppShell({
   const settings = useSettingsState({ activeTab });
   const {
     configData,
+    settingsConfigData,
     settingsLoading,
     settingsDirty,
     settingsSaved,
@@ -151,6 +152,7 @@ function AppShell({
     clearSettingsStatus,
     resolveImageHostLabel,
     trackerSelectionNames,
+    settingsTrackerSelectionNames,
   } = settings;
 
   const inputHistoryLimit = useMemo(() => {
@@ -485,7 +487,7 @@ function AppShell({
           />
           {activeTab === "settings" ? (
             <SettingsPage
-              configData={configData}
+              configData={settingsConfigData}
               settingsLoading={settingsLoading}
               settingsExporting={settingsExporting}
               settingsImporting={settingsImporting}
@@ -496,7 +498,7 @@ function AppShell({
               dismissConfigOpStatus={() => setConfigOpStatus(null)}
               settingsSection={settingsSection}
               settingsSections={settingsSections}
-              trackerSelectionNames={trackerSelectionNames}
+              trackerSelectionNames={settingsTrackerSelectionNames}
               showAdvancedToggle={showAdvancedToggle}
               advancedOpen={advancedOpen}
               setSettingsSection={setSettingsSection}
@@ -516,7 +518,7 @@ function AppShell({
             />
           ) : activeTab === "logging" ? (
             <LoggingPage
-              configData={configData}
+              configData={settingsConfigData}
               settingsLoading={settingsLoading}
               settingsDirty={settingsDirty}
               settingsSaved={settingsSaved}

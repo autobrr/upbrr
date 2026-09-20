@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"slices"
 
@@ -59,8 +58,8 @@ func (c *Core) RecoverLegacyActiveInput(
 	owner string,
 	request api.RecoverLegacyActiveInputRequest,
 ) (api.ActiveInputSnapshot, error) {
-	if request.WorkflowID == "" {
-		return api.ActiveInputSnapshot{}, errors.New("legacy recovery workflow is required")
+	if err := request.Validate(); err != nil {
+		return api.ActiveInputSnapshot{}, fmt.Errorf("validate legacy recovery request: %w", err)
 	}
 	workflowIDs, err := c.workflow.LegacyRecoveryWorkflowIDs(ctx, owner)
 	if err != nil {
@@ -92,9 +91,8 @@ func (c *Core) ReconcileActiveInput(
 	owner string,
 	request api.ReconcileActiveInputRequest,
 ) (api.ActiveInputSnapshot, error) {
-	if request.Authority.WorkflowID == "" || request.Authority.ExpectedRevision == 0 || request.Answer.ActionID == "" ||
-		request.Answer.WorkflowRevision != request.Authority.ExpectedRevision || request.IdempotencyKey == "" {
-		return api.ActiveInputSnapshot{}, errors.New("input reconciliation requires exact workflow authority, action answer, and idempotency key")
+	if err := request.Validate(); err != nil {
+		return api.ActiveInputSnapshot{}, fmt.Errorf("validate input reconciliation request: %w", err)
 	}
 	if _, err := c.workflow.Execute(ctx, owner, releaseworkflow.ResolveActionCommand{
 		WorkflowID:       request.Authority.WorkflowID,
@@ -110,10 +108,7 @@ func (c *Core) ReconcileActiveInput(
 // OpenActiveInput verifies the source and advances its exact workflow toward input readiness.
 func (c *Core) OpenActiveInput(ctx context.Context, owner string, request api.OpenActiveInputRequest) (api.ActiveInputSnapshot, error) {
 	request.Request = applyContinuationPreparationDefaults(request.Request, c.metadataDefaults)
-	if request.Request.Intent.Preparation == nil || request.Request.Authority != nil {
-		return api.ActiveInputSnapshot{}, errors.New("open input requires preparation without workflow authority")
-	}
-	if err := request.Request.Validate(); err != nil {
+	if err := request.Validate(); err != nil {
 		return api.ActiveInputSnapshot{}, fmt.Errorf("validate active input request: %w", err)
 	}
 	request.Request.Intent.Preparation.ExternalFreshness = api.ExternalFreshnessRefresh

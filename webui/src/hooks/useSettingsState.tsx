@@ -97,7 +97,10 @@ type UseSettingsStateOptions = {
 };
 
 type UseSettingsStateResult = {
+  /** Last applied configuration, kept separate from the editable settings draft. */
   configData: ConfigMap | null;
+  /** Editable settings draft, including a candidate waiting for activation. */
+  settingsConfigData: ConfigMap | null;
   settingsLoading: boolean;
   settingsDirty: boolean;
   settingsSaved: string;
@@ -136,6 +139,7 @@ type UseSettingsStateResult = {
   resolveImageHostLabel: (value: string) => string;
   knownTrackersLoading: boolean;
   trackerSelectionNames: string[];
+  settingsTrackerSelectionNames: string[];
 };
 
 const settingsSections: SettingsSection[] = [
@@ -277,6 +281,30 @@ const trackerConfigValue = (entries: ConfigMap, name: string): ConfigMap | null 
   if (!foldedName) return null;
   const value = entries[foldedName];
   return value && typeof value === "object" && !Array.isArray(value) ? (value as ConfigMap) : null;
+};
+
+const selectConfiguredTrackerNames = (
+  configData: ConfigMap | null,
+  catalog: TrackerCatalog | null,
+  isConfigured: (entry: TrackerCatalogEntry, value: ConfigMap) => boolean,
+  draftEntries: Readonly<Record<string, boolean>> = {},
+) => {
+  const trackerConfig = configData?.Trackers;
+  if (!trackerConfig || typeof trackerConfig !== "object" || Array.isArray(trackerConfig)) {
+    return [] as string[];
+  }
+  const rawEntries = trackerConfig.Trackers;
+  const entries =
+    rawEntries && typeof rawEntries === "object" && !Array.isArray(rawEntries)
+      ? (rawEntries as ConfigMap)
+      : {};
+
+  return (catalog?.entries ?? [])
+    .filter((entry) => {
+      const value = trackerConfigValue(entries, entry.name);
+      return draftEntries[entry.name] || (value ? isConfigured(entry, value) : entry.configured);
+    })
+    .map((entry) => entry.name);
 };
 const sensitiveKeyHints = [
   "password",
@@ -657,6 +685,7 @@ const normalizeTrackersForSave = (input: ConfigMap, catalog: TrackerCatalog | nu
 export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsStateResult => {
   const { activeTab } = options;
   const [configData, setConfigData] = useState<ConfigMap | null>(null);
+  const [settingsConfigData, setSettingsConfigData] = useState<ConfigMap | null>(null);
   const {
     catalog: trackerCatalog,
     loading: knownTrackersLoading,
@@ -678,22 +707,28 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   const [sensitiveValues, setSensitiveValues] = useState<Record<string, string>>({});
   const settingsMutationVersion = useRef(0);
   const activationPollRevision = useRef(0);
+  const configLoadRevision = useRef(0);
 
   useEffect(
     () => () => {
       activationPollRevision.current += 1;
+      configLoadRevision.current += 1;
     },
     [],
   );
 
   const configuredImageHosts = useMemo(() => {
-    if (!configData || !configData.ImageHosting || typeof configData.ImageHosting !== "object") {
+    if (
+      !settingsConfigData ||
+      !settingsConfigData.ImageHosting ||
+      typeof settingsConfigData.ImageHosting !== "object"
+    ) {
       return [] as string[];
     }
-    if (Array.isArray(configData.ImageHosting)) {
+    if (Array.isArray(settingsConfigData.ImageHosting)) {
       return [] as string[];
     }
-    const imageCfg = configData.ImageHosting as ConfigMap;
+    const imageCfg = settingsConfigData.ImageHosting as ConfigMap;
     const hostFields = ["Host1", "Host2", "Host3", "Host4", "Host5", "Host6"];
     const hosts: string[] = [];
     hostFields.forEach((field) => {
@@ -704,7 +739,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
       }
     });
     return hosts;
-  }, [configData]);
+  }, [settingsConfigData]);
 
   const screenshotConfig = useMemo(() => {
     if (
@@ -722,21 +757,21 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
 
   const torrentClientOptions = useMemo<FieldOption[]>(() => {
     if (
-      !configData ||
-      !configData.TorrentClients ||
-      typeof configData.TorrentClients !== "object" ||
-      Array.isArray(configData.TorrentClients)
+      !settingsConfigData ||
+      !settingsConfigData.TorrentClients ||
+      typeof settingsConfigData.TorrentClients !== "object" ||
+      Array.isArray(settingsConfigData.TorrentClients)
     ) {
       return [];
     }
 
-    return Object.entries(configData.TorrentClients as ConfigMap)
+    return Object.entries(settingsConfigData.TorrentClients as ConfigMap)
       .filter(
         ([name, value]) =>
           name.trim() !== "" && value && typeof value === "object" && !Array.isArray(value),
       )
       .map(([name]) => ({ value: name, label: name }));
-  }, [configData]);
+  }, [settingsConfigData]);
 
   const effectiveSectionFieldMeta = useMemo<Record<string, Record<string, FieldMeta>>>(() => {
     const clientOptions = [{ value: "", label: "" }, ...torrentClientOptions];
@@ -785,11 +820,11 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   };
 
   const buildSavePayload = () => {
-    if (!configData) {
+    if (!settingsConfigData) {
       return null;
     }
     const restored = normalizeTrackersForSave(
-      normalizeTorrentClientsForSave(restoreSensitiveConfig(configData, sensitiveValues)),
+      normalizeTorrentClientsForSave(restoreSensitiveConfig(settingsConfigData, sensitiveValues)),
       trackerCatalog,
     );
     return JSON.stringify(restored, null, 2);
@@ -827,10 +862,10 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         imageHostOptions.filter((option) => option.value).map((option) => option.value);
       const ownerByHost = imageHostPolicyMetadata.OwnedHosts ?? {};
       const imageCfg =
-        configData?.ImageHosting &&
-        typeof configData.ImageHosting === "object" &&
-        !Array.isArray(configData.ImageHosting)
-          ? (configData.ImageHosting as ConfigMap)
+        settingsConfigData?.ImageHosting &&
+        typeof settingsConfigData.ImageHosting === "object" &&
+        !Array.isArray(settingsConfigData.ImageHosting)
+          ? (settingsConfigData.ImageHosting as ConfigMap)
           : null;
       const globalFallbackHosts = fallbackHosts.filter((host) => !ownerByHost[host]);
       const globalHosts = (configuredImageHosts.length ? configuredImageHosts : globalFallbackHosts)
@@ -864,13 +899,13 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
 
       return buildImageHostOptions(hosts);
     },
-    [buildImageHostOptions, configData, configuredImageHosts, imageHostPolicyMetadata],
+    [buildImageHostOptions, configuredImageHosts, imageHostPolicyMetadata, settingsConfigData],
   );
 
   const updateConfigValue = (path: string[], value: ConfigValue) => {
-    if (!configData) return;
+    if (!settingsConfigData) return;
     markSettingsChanged();
-    setConfigData((prev) => {
+    setSettingsConfigData((prev) => {
       if (!prev) return prev;
       const clone = structuredClone(prev) as ConfigMap;
       let cursor: ConfigMap = clone;
@@ -908,9 +943,9 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   };
 
   const removeConfigKey = (path: string[], key: string) => {
-    if (!configData) return;
+    if (!settingsConfigData) return;
     markSettingsChanged();
-    setConfigData((prev) => {
+    setSettingsConfigData((prev) => {
       if (!prev) return prev;
       const clone = structuredClone(prev) as ConfigMap;
       let cursor: ConfigMap = clone;
@@ -983,9 +1018,9 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   };
 
   const addConfigKey = (path: string[], key: string, value: ConfigValue) => {
-    if (!configData || !key.trim()) return;
+    if (!settingsConfigData || !key.trim()) return;
     markSettingsChanged();
-    setConfigData((prev) => {
+    setSettingsConfigData((prev) => {
       if (!prev) return prev;
       const clone = structuredClone(prev) as ConfigMap;
       let cursor: ConfigMap = clone;
@@ -1003,17 +1038,30 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     });
   };
 
+  // Superseded reads, including their errors, cannot publish an older configuration.
+  const loadLatestConfig = useCallback(async () => {
+    const loadRevision = configLoadRevision.current + 1;
+    configLoadRevision.current = loadRevision;
+    try {
+      const result = await configClient.get();
+      if (configLoadRevision.current !== loadRevision) return null;
+      return maskSensitiveConfig(JSON.parse(result) as ConfigMap);
+    } catch (err) {
+      if (configLoadRevision.current !== loadRevision) return null;
+      throw err;
+    }
+  }, []);
+
   const loadSettingsData = useCallback(async () => {
     clearSettingsStatus();
-    const getConfig = configClient.get;
     const mutationVersion = settingsMutationVersion.current;
     setSettingsLoading(true);
     try {
-      const result = await getConfig();
-      const parsed = JSON.parse(result) as ConfigMap;
-      const masked = maskSensitiveConfig(parsed);
+      const masked = await loadLatestConfig();
+      if (!masked) return;
+      setConfigData(masked.masked);
       if (settingsMutationVersion.current === mutationVersion) {
-        setConfigData(masked.masked);
+        setSettingsConfigData(masked.masked);
         setSensitiveValues(masked.originals);
         setDraftTrackerEntries({});
         setSettingsDirty(false);
@@ -1023,7 +1071,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     } finally {
       setSettingsLoading(false);
     }
-  }, [clearSettingsStatus]);
+  }, [clearSettingsStatus, loadLatestConfig]);
 
   const loadImageHostPolicyMetadata = useCallback(async () => {
     const getMetadata = trackerCatalogClient.getImageHostPolicyMetadata;
@@ -1048,6 +1096,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
       void (async () => {
         let current = initialActivation;
         let sawPending = current?.status === "pending";
+        const refreshOnActive = initialActivation === null;
         let pollError = "";
         const waitForNextPoll = () =>
           new Promise<void>((resolve) =>
@@ -1076,6 +1125,25 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
           }
 
           if (current.status === "active") {
+            if (sawPending || refreshOnActive) {
+              try {
+                const masked = await loadLatestConfig();
+                if (activationPollRevision.current !== pollRevision || !masked) return;
+                setConfigData(masked.masked);
+                if (settingsMutationVersion.current === mutationVersion) {
+                  setSettingsConfigData(masked.masked);
+                  setSensitiveValues(masked.originals);
+                  setDraftTrackerEntries({});
+                }
+                clearPollError();
+              } catch (err) {
+                if (activationPollRevision.current !== pollRevision) return;
+                pollError = String(err);
+                setSettingsError(pollError);
+                await waitForNextPoll();
+                continue;
+              }
+            }
             if (sawPending) {
               setSettingsSaved(
                 settingsMutationVersion.current === mutationVersion
@@ -1107,7 +1175,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         }
       })();
     },
-    [],
+    [loadLatestConfig],
   );
 
   const loadSettings = useCallback(() => {
@@ -1127,9 +1195,15 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     setSettingsLoading(true);
     try {
       const activation = await saveConfig(payload);
-      if (settingsMutationVersion.current === mutationVersion) {
-        const masked = maskSensitiveConfig(JSON.parse(payload) as ConfigMap);
+      const masked = maskSensitiveConfig(JSON.parse(payload) as ConfigMap);
+      let activeRefreshRevision = 0;
+      if (activation.status === "active") {
+        activeRefreshRevision = activationPollRevision.current + 1;
+        activationPollRevision.current = activeRefreshRevision;
         setConfigData(masked.masked);
+      }
+      if (settingsMutationVersion.current === mutationVersion) {
+        setSettingsConfigData(masked.masked);
         setSensitiveValues(masked.originals);
         if (activation.status === "active") {
           markSettingsSaved("Settings saved and applied.");
@@ -1149,6 +1223,22 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
       }
       if (activation.status === "pending") {
         startConfigActivationMonitor(activation, mutationVersion, true);
+      } else if (activation.status === "active") {
+        try {
+          const activeConfig = await loadLatestConfig();
+          if (activationPollRevision.current !== activeRefreshRevision || !activeConfig) {
+            return;
+          }
+          setConfigData(activeConfig.masked);
+          if (settingsMutationVersion.current === mutationVersion) {
+            setSettingsConfigData(activeConfig.masked);
+            setSensitiveValues(activeConfig.originals);
+            setDraftTrackerEntries({});
+          }
+        } catch (err) {
+          if (activationPollRevision.current !== activeRefreshRevision) return;
+          setSettingsError(String(err));
+        }
       } else {
         activationPollRevision.current += 1;
       }
@@ -1168,11 +1258,11 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         activeTab === "logging" ||
         activeTab === "upload" ||
         activeTab === "upload_images") &&
-      !configData
+      !settingsConfigData
     ) {
       loadSettings();
     }
-  }, [activeTab, configData, loadSettings]);
+  }, [activeTab, loadSettings, settingsConfigData]);
 
   useEffect(() => {
     try {
@@ -1475,15 +1565,15 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
 
   const renderTorrentClientsSection = (advancedOpen: boolean) => {
     if (
-      !configData ||
-      !configData.TorrentClients ||
-      typeof configData.TorrentClients !== "object" ||
-      Array.isArray(configData.TorrentClients)
+      !settingsConfigData ||
+      !settingsConfigData.TorrentClients ||
+      typeof settingsConfigData.TorrentClients !== "object" ||
+      Array.isArray(settingsConfigData.TorrentClients)
     ) {
       return null;
     }
 
-    const clients = Object.entries(configData.TorrentClients as ConfigMap).filter(
+    const clients = Object.entries(settingsConfigData.TorrentClients as ConfigMap).filter(
       ([, value]) => value && typeof value === "object" && !Array.isArray(value),
     ) as Array<[string, ConfigMap]>;
     const meta = effectiveSectionFieldMeta.TorrentClients || {};
@@ -1763,51 +1853,32 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     [],
   );
 
-  const trackerSelectionNames = useMemo(() => {
-    if (
-      !configData ||
-      !configData.Trackers ||
-      typeof configData.Trackers !== "object" ||
-      Array.isArray(configData.Trackers)
-    ) {
-      return [] as string[];
-    }
-
-    const trackerRoot = configData.Trackers as ConfigMap;
-    const rawEntries = trackerRoot.Trackers;
-    const entriesRoot =
-      rawEntries && typeof rawEntries === "object" && !Array.isArray(rawEntries)
-        ? (rawEntries as ConfigMap)
-        : {};
-    const draftTrackerSet = new Set(
-      Object.entries(draftTrackerEntries)
-        .filter(([, enabled]) => enabled)
-        .map(([name]) => name),
+  const settingsTrackerSelectionNames = useMemo(() => {
+    return selectConfiguredTrackerNames(
+      settingsConfigData,
+      trackerCatalog,
+      isTrackerConfigured,
+      draftTrackerEntries,
     );
+  }, [draftTrackerEntries, isTrackerConfigured, settingsConfigData, trackerCatalog]);
 
-    return (trackerCatalog?.entries ?? [])
-      .filter((entry) => {
-        const value = trackerConfigValue(entriesRoot, entry.name);
-        return (
-          draftTrackerSet.has(entry.name) ||
-          (value ? isTrackerConfigured(entry, value) : entry.configured)
-        );
-      })
-      .map((entry) => entry.name);
-  }, [configData, draftTrackerEntries, isTrackerConfigured, trackerCatalog]);
+  const trackerSelectionNames = useMemo(
+    () => selectConfiguredTrackerNames(configData, trackerCatalog, isTrackerConfigured),
+    [configData, isTrackerConfigured, trackerCatalog],
+  );
 
   const renderTrackerSection = (advancedOpen: boolean) => {
     try {
       if (
-        !configData ||
-        !configData.Trackers ||
-        typeof configData.Trackers !== "object" ||
-        Array.isArray(configData.Trackers)
+        !settingsConfigData ||
+        !settingsConfigData.Trackers ||
+        typeof settingsConfigData.Trackers !== "object" ||
+        Array.isArray(settingsConfigData.Trackers)
       ) {
         return null;
       }
 
-      const trackerRoot = configData.Trackers as ConfigMap;
+      const trackerRoot = settingsConfigData.Trackers as ConfigMap;
       const defaultTrackers = (trackerRoot.DefaultTrackers as ConfigValue) ?? [];
       const rawEntries = trackerRoot.Trackers;
       const entriesRoot =
@@ -1815,7 +1886,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
           ? (rawEntries as ConfigMap)
           : {};
 
-      const visibleTrackerSet = new Set(trackerSelectionNames);
+      const visibleTrackerSet = new Set(settingsTrackerSelectionNames);
       const catalogEntries = trackerCatalog?.entries ?? [];
       const visibleEntries = catalogEntries
         .filter((entry) => visibleTrackerSet.has(entry.name))
@@ -1825,7 +1896,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
       const preferredTrackerRaw = trackerRoot.PreferredTracker;
       const preferredTracker =
         typeof preferredTrackerRaw === "string" ? preferredTrackerRaw.trim() : "";
-      const trackerNames = trackerSelectionNames;
+      const trackerNames = settingsTrackerSelectionNames;
       const normalizedTrackerNameSet = new Set(trackerNames.map((name) => name.toLowerCase()));
       const selectedDefaultTrackerCount = normalizedDefaultTrackers.filter((name) =>
         normalizedTrackerNameSet.has(name.toLowerCase()),
@@ -1834,10 +1905,10 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
       const availableTrackers = trackerOptions.filter((name) => !visibleTrackerSet.has(name));
       const trackerClientOptions = [{ value: "", label: "" }, ...torrentClientOptions];
       const imageCfg =
-        configData.ImageHosting &&
-        typeof configData.ImageHosting === "object" &&
-        !Array.isArray(configData.ImageHosting)
-          ? (configData.ImageHosting as ConfigMap)
+        settingsConfigData.ImageHosting &&
+        typeof settingsConfigData.ImageHosting === "object" &&
+        !Array.isArray(settingsConfigData.ImageHosting)
+          ? (settingsConfigData.ImageHosting as ConfigMap)
           : null;
 
       const trackerHasEnabledOwnedImageHost = (trackerName: string) => {
@@ -2098,11 +2169,15 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   };
 
   const renderImageHostingSection = () => {
-    if (!configData || !configData.ImageHosting || typeof configData.ImageHosting !== "object") {
+    if (
+      !settingsConfigData ||
+      !settingsConfigData.ImageHosting ||
+      typeof settingsConfigData.ImageHosting !== "object"
+    ) {
       return null;
     }
 
-    const imageCfg = configData.ImageHosting as ConfigMap;
+    const imageCfg = settingsConfigData.ImageHosting as ConfigMap;
     const hostFields = ["Host1", "Host2", "Host3", "Host4", "Host5", "Host6"];
     const requiredKeys = new Set<string>();
     hostFields.forEach((field) => {
@@ -2212,6 +2287,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
 
   return {
     configData,
+    settingsConfigData,
     settingsLoading,
     settingsDirty,
     settingsSaved,
@@ -2241,5 +2317,6 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     resolveImageHostLabel,
     knownTrackersLoading,
     trackerSelectionNames,
+    settingsTrackerSelectionNames,
   };
 };

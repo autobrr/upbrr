@@ -1291,12 +1291,12 @@ export default function InputPage(props: Props) {
               </Button>
             </div>
             {recovering ? (
-              <p className="muted" role="status">
+              <p className="muted col-span-full" role="status">
                 Resolve the recovery action above before opening or preparing an input.
               </p>
             ) : null}
             {view.activeInput.recoveryWorkflowIDs.length ? (
-              <section className="grid gap-2" aria-label="Legacy workflow recovery">
+              <section className="col-span-full grid gap-2" aria-label="Legacy workflow recovery">
                 <p className="muted">
                   Resolve interrupted external effects before opening another input.
                 </p>
@@ -1315,7 +1315,7 @@ export default function InputPage(props: Props) {
               </section>
             ) : null}
             {verification ? (
-              <div className="grid gap-1" role="status" aria-live="polite">
+              <div className="col-span-full grid gap-1" role="status" aria-live="polite">
                 <p>{verification.message || "Verifying source content."}</p>
                 {verification.totalBytes > 0 ? (
                   <>

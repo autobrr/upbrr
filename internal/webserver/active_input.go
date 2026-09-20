@@ -43,6 +43,10 @@ func (s *Server) registerActiveInputRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
+		if err := request.Validate(); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 		s.withActiveInput(w, r, func(ctx context.Context, capability activeInputCapability) (api.ActiveInputSnapshot, error) {
 			ctx = api.WithPreparationProgressReporter(
 				ctx,
@@ -93,6 +97,10 @@ func (s *Server) registerActiveInputRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
+		if err := request.Validate(); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 		s.withActiveInput(w, r, func(ctx context.Context, capability activeInputCapability) (api.ActiveInputSnapshot, error) {
 			result, err := capability.RecoverLegacyActiveInput(ctx, current.ID, request)
 			if err != nil {
@@ -111,6 +119,10 @@ func (s *Server) registerActiveInputRoutes(mux *http.ServeMux) {
 		}
 		var request api.ReconcileActiveInputRequest
 		if err := decodeJSON(r, &request); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := request.Validate(); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}

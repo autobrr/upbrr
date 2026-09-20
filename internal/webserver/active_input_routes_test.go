@@ -25,6 +25,7 @@ type activeInputRouteFake struct {
 	openErr    error
 	recovered  api.RecoverLegacyActiveInputRequest
 	reconciled api.ReconcileActiveInputRequest
+	calls      int
 }
 
 func (f *activeInputRouteFake) GetActiveInput(context.Context, string) (api.ActiveInputSnapshot, error) {
@@ -32,10 +33,12 @@ func (f *activeInputRouteFake) GetActiveInput(context.Context, string) (api.Acti
 }
 
 func (f *activeInputRouteFake) OpenActiveInput(context.Context, string, api.OpenActiveInputRequest) (api.ActiveInputSnapshot, error) {
+	f.calls++
 	return api.ActiveInputSnapshot{}, f.openErr
 }
 
 func (f *activeInputRouteFake) ReleaseActiveInput(context.Context, string, api.ReleaseActiveInputRequest) (api.ActiveInputSnapshot, error) {
+	f.calls++
 	return api.ActiveInputSnapshot{}, nil
 }
 
@@ -44,6 +47,7 @@ func (f *activeInputRouteFake) RecoverLegacyActiveInput(
 	_ string,
 	request api.RecoverLegacyActiveInputRequest,
 ) (api.ActiveInputSnapshot, error) {
+	f.calls++
 	f.recovered = request
 	return api.ActiveInputSnapshot{State: api.ActiveInputRecovering, Revision: 2}, nil
 }
@@ -53,6 +57,7 @@ func (f *activeInputRouteFake) ReconcileActiveInput(
 	_ string,
 	request api.ReconcileActiveInputRequest,
 ) (api.ActiveInputSnapshot, error) {
+	f.calls++
 	f.reconciled = request
 	return api.ActiveInputSnapshot{State: api.ActiveInputEmpty, Revision: 3}, nil
 }
@@ -133,7 +138,8 @@ func TestActiveInputOpenReportsUnresolvedEffectWithoutPrivateDetails(t *testing.
 	if getResponse.Code != http.StatusOK || snapshot.State != api.ActiveInputEmpty || len(snapshot.RecoveryWorkflowIDs) != 0 {
 		t.Fatalf("foreign recovery discovery = %#v, status=%d", snapshot, getResponse.Code)
 	}
-	response := serveLegacyRecoveryRequest(t.Context(), t, mux, current, "/api/app/OpenActiveInput", `{"request":{}}`)
+	response := serveLegacyRecoveryRequest(t.Context(), t, mux, current, "/api/app/OpenActiveInput",
+		`{"request":{"idempotencyKey":"open-1","goal":"input_ready","intent":{"preparation":{"SourcePath":"Example.mkv"}}}}`)
 	var body struct {
 		Failure api.OperationFailure `json:"failure"`
 	}
@@ -179,4 +185,87 @@ func serveLegacyRecoveryRequest(
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, request)
 	return response
+}
+
+func TestActiveInputRoutesValidateBeforeDispatch(t *testing.T) {
+	tests := []struct {
+		name  string
+		route string
+		body  string
+		valid bool
+	}{
+		{
+			name:  "open missing preparation",
+			route: "OpenActiveInput",
+			body:  `{"request":{"idempotencyKey":"open-1","goal":"input_ready"}}`,
+		},
+		{
+			name:  "open with workflow authority",
+			route: "OpenActiveInput",
+			body:  `{"request":{"authority":{"workflowId":"workflow-1","expectedRevision":1},"idempotencyKey":"open-1","goal":"input_ready","intent":{"preparation":{"SourcePath":"Example.mkv"}}}}`,
+		},
+		{
+			name:  "open missing idempotency",
+			route: "OpenActiveInput",
+			body:  `{"request":{"goal":"input_ready","intent":{"preparation":{"SourcePath":"Example.mkv"}}}}`,
+		},
+		{
+			name:  "open invalid goal",
+			route: "OpenActiveInput",
+			body:  `{"request":{"idempotencyKey":"open-1","goal":"invalid","intent":{"preparation":{"SourcePath":"Example.mkv"}}}}`,
+		},
+		{
+			name:  "open missing source",
+			route: "OpenActiveInput",
+			body:  `{"request":{"idempotencyKey":"open-1","goal":"input_ready","intent":{"preparation":{}}}}`,
+		},
+		{
+			name:  "recover missing workflow",
+			route: "RecoverLegacyActiveInput",
+			body:  `{}`,
+		},
+		{
+			name:  "reconcile missing authority",
+			route: "ReconcileActiveInput",
+			body:  `{}`,
+		},
+		{
+			name:  "reconcile mismatched revision",
+			route: "ReconcileActiveInput",
+			body:  `{"authority":{"workflowId":"workflow-1","expectedRevision":2},"answer":{"actionId":"action-1","workflowRevision":1},"idempotencyKey":"resolve-1"}`,
+		},
+		{
+			name:  "open valid",
+			route: "OpenActiveInput",
+			body:  `{"request":{"idempotencyKey":"open-1","goal":"input_ready","intent":{"preparation":{"SourcePath":"Example.mkv"}}}}`,
+			valid: true,
+		},
+		{
+			name:  "release empty slot",
+			route: "ReleaseActiveInput",
+			body:  `{}`,
+			valid: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state.db"))
+			capability := &activeInputRouteFake{}
+			server.backend.replaceRuntime(config.Config{}, CoreCapabilities{ReleaseWorkflow: capability}, nil)
+			mux := http.NewServeMux()
+			server.registerActiveInputRoutes(mux)
+			current, err := server.sessions.Create("admin", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := serveLegacyRecoveryRequest(t.Context(), t, mux, current, "/api/app/"+test.route, test.body)
+			wantStatus, wantCalls := http.StatusBadRequest, 0
+			if test.valid {
+				wantStatus, wantCalls = http.StatusOK, 1
+			}
+			if response.Code != wantStatus || capability.calls != wantCalls {
+				t.Fatalf("status=%d calls=%d; want status=%d calls=%d", response.Code, capability.calls, wantStatus, wantCalls)
+			}
+		})
+	}
 }
