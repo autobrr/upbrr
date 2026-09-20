@@ -19,9 +19,10 @@ func TestContinueRefreshesPreparationForChangedSelectedMetadataDemand(t *testing
 	client := "example-client"
 	forceRecheck := true
 	preparation := api.PrepareInput{
-		SourcePath: `C:\releases\Example.Release.2026.1080p-GRP`,
-		Policy:     api.PreparationPolicy{KeepFolder: true},
-		Search:     api.ClientSearchPolicy{Client: &client},
+		SourcePath:        `C:\releases\Example.Release.2026.1080p-GRP`,
+		ExternalFreshness: api.ExternalFreshnessRefresh,
+		Policy:            api.PreparationPolicy{KeepFolder: true},
+		Search:            api.ClientSearchPolicy{Client: &client},
 		Controls: api.PreparationControls{
 			ConfirmBDMVRescan: true,
 			ForceRecheck:      &forceRecheck,
@@ -30,10 +31,14 @@ func TestContinueRefreshesPreparationForChangedSelectedMetadataDemand(t *testing
 	preparer := testPreparer()
 	basePrepare := preparer.PrepareFunc
 	var prepareCalls atomic.Int32
+	var freshPrepareCalls atomic.Int32
 	var inputsMu sync.Mutex
 	inputs := make([]api.PrepareInput, 0, 2)
 	preparer.PrepareFunc = func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
 		prepareCalls.Add(1)
+		if input.ExternalFreshness == api.ExternalFreshnessRefresh {
+			freshPrepareCalls.Add(1)
+		}
 		inputsMu.Lock()
 		inputs = append(inputs, input)
 		inputsMu.Unlock()
@@ -59,8 +64,8 @@ func TestContinueRefreshesPreparationForChangedSelectedMetadataDemand(t *testing
 	}
 
 	current = continueForSelectionEnrichment(t, module, current, []api.TrackerID{"BETA"})
-	if prepareCalls.Load() != 2 || current.Release == nil || current.InputReadiness != nil {
-		t.Fatalf("demand refresh = prepares %d, release %#v, readiness %#v", prepareCalls.Load(), current.Release, current.InputReadiness)
+	if prepareCalls.Load() != 2 || freshPrepareCalls.Load() != 1 || current.Release == nil || current.InputReadiness != nil {
+		t.Fatalf("demand refresh = prepares %d fresh=%d, release %#v, readiness %#v", prepareCalls.Load(), freshPrepareCalls.Load(), current.Release, current.InputReadiness)
 	}
 	inputsMu.Lock()
 	refreshedInput := inputs[1]
@@ -68,6 +73,9 @@ func TestContinueRefreshesPreparationForChangedSelectedMetadataDemand(t *testing
 	if !refreshedInput.Policy.KeepFolder || refreshedInput.Search.Client == nil || *refreshedInput.Search.Client != client ||
 		!refreshedInput.Controls.ConfirmBDMVRescan || refreshedInput.Controls.ForceRecheck == nil || !*refreshedInput.Controls.ForceRecheck {
 		t.Fatalf("refreshed input did not retain accepted policy, search, and controls: %#v", refreshedInput)
+	}
+	if refreshedInput.ExternalFreshness != api.ExternalFreshnessReuse {
+		t.Fatalf("selection-demand refresh requested external freshness %#v", refreshedInput.ExternalFreshness)
 	}
 
 	current = continueForSelectionEnrichment(t, module, current, []api.TrackerID{"BETA"})

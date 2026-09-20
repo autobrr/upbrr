@@ -77,6 +77,7 @@ type trackerPlanSlot struct {
 	internal                 bool
 	plan                     TrackerPlan
 	failure                  *TrackerFailure
+	alreadySucceeded         bool
 	resolving                bool
 	summary                  api.UploadSummary
 	ruleFailures             []api.TrackerRuleFailure
@@ -319,6 +320,8 @@ type RetainedTrackerResult struct {
 	Tracker string
 	Summary api.UploadSummary
 	Failure *TrackerFailure
+	// AlreadySucceeded reports a durable tracker submission completed before this plan executed.
+	AlreadySucceeded bool
 }
 
 // RetainedUploadPlan owns exact single-use tracker plans produced by one
@@ -539,7 +542,11 @@ func (p *RetainedUploadPlan) execute(
 
 	results := make([]RetainedTrackerResult, 0, len(selectedSlots))
 	for _, slot := range selectedSlots {
-		result := RetainedTrackerResult{Tracker: slot.tracker, Summary: slot.summary}
+		result := RetainedTrackerResult{
+			Tracker:          slot.tracker,
+			Summary:          slot.summary,
+			AlreadySucceeded: slot.alreadySucceeded,
+		}
 		if slot.failure != nil {
 			failure := *slot.failure
 			result.Failure = &failure
@@ -769,6 +776,17 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 				continue
 			}
 			emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "running", "Uploading to tracker")
+			submission, submissionErr := s.submissionFenceAuthority(ctx, meta, slot.tracker)
+			if submissionErr != nil {
+				slot.failure = trackerFailure(slot.tracker, "submission_scope", submissionErr)
+				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, "failed")
+				emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "failed", slot.failure.Message)
+				if releaseErr := slot.plan.Release(); releaseErr != nil {
+					s.warnPlanRelease(slot.tracker, releaseErr)
+				}
+				phase.Done()
+				continue
+			}
 			effectFingerprint, fingerprintErr := api.CanonicalWorkflowFingerprint(struct {
 				Tracker string
 				Preview api.TrackerDryRunEntry
@@ -787,6 +805,7 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 				Kind:                api.WorkflowExternalEffectTrackerSubmission,
 				ScopeID:             slot.tracker,
 				SemanticFingerprint: effectFingerprint,
+				Submission:          submission,
 			})
 			if effectErr != nil {
 				code := "effect_fence"
@@ -800,15 +819,22 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 				continue
 			}
 			if effectReceipt.AlreadySucceeded {
-				slot.failure = trackerFailure(slot.tracker, "unknown_outcome", api.ErrReleaseWorkflowEffectAlreadySucceeded)
-				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, "unknown_outcome")
-				emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "failed", slot.failure.Message)
+				slot.alreadySucceeded = true
+				slot.summary = api.UploadSummary{Uploaded: 1}
+				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, "uploaded")
+				emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "completed", "Tracker upload was already completed")
 				phase.Done()
 				continue
 			}
 			summary, err := slot.plan.Submit(ctx)
 			slot.canceledDuringSubmission = ctx.Err() != nil
-			receiptErr := api.CompleteWorkflowExternalEffect(ctx, effectReceipt, err == nil)
+			// A tracker plan returning an error cannot prove that the remote did
+			// not accept the request. Preserve the started submission fence for
+			// authorized reconciliation instead of releasing it for retry.
+			receiptErr := error(nil)
+			if err == nil || submission == nil {
+				receiptErr = api.CompleteWorkflowExternalEffect(ctx, effectReceipt, err == nil)
+			}
 			if receiptErr != nil {
 				slot.failure = trackerFailure(slot.tracker, "unknown_outcome", receiptErr)
 				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, "unknown_outcome")
@@ -817,8 +843,14 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 				continue
 			}
 			if err != nil {
-				slot.failure = trackerFailure(slot.tracker, "submit", err)
-				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, "failed")
+				code := "submit"
+				recordStatus := "failed"
+				if submission != nil {
+					code = "unknown_outcome"
+					recordStatus = code
+				}
+				slot.failure = trackerFailure(slot.tracker, code, err)
+				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, recordStatus)
 				emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "failed", slot.failure.Message)
 			} else {
 				slot.summary = summary
@@ -878,6 +910,63 @@ enqueue:
 		s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, "canceled")
 		emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "canceled", "Upload canceled")
 	}
+}
+
+// submissionFenceAuthority binds one exact prepared submission scope to the
+// canonical registered tracker site. Tracker credentials deliberately do not
+// participate in the site identity.
+func (s *Service) submissionFenceAuthority(
+	ctx context.Context,
+	meta api.UploadSubject,
+	tracker string,
+) (*api.SubmissionFenceAuthority, error) {
+	active, activeWorkflow := api.ActiveInputAuthorityFromContext(ctx)
+	if !activeWorkflow {
+		return nil, nil
+	}
+	if s.registry == nil {
+		return nil, errors.New("tracker registry is required for submission fence")
+	}
+	descriptor, ok := s.registry.LookupDescriptor(tracker)
+	if !ok || strings.TrimSpace(descriptor.Name) == "" {
+		return nil, fmt.Errorf("registered tracker identity is unavailable for %q", tracker)
+	}
+	site, err := CanonicalSubmissionTrackerSite(descriptor.Name, descriptor.BaseURL)
+	if err != nil {
+		return nil, err
+	}
+	authority := &api.SubmissionFenceAuthority{
+		ContentIdentity: meta.SubmissionContentIdentity,
+		TrackerSite:     site,
+		CoordinatorID:   active.CoordinatorID,
+		Fence:           active.Fence,
+	}
+	if err := authority.ValidateSubmission(); err != nil {
+		return nil, fmt.Errorf("trackers validate submission authority: %w", err)
+	}
+	return authority, nil
+}
+
+// CanonicalSubmissionTrackerSite returns the stable tracker deployment key
+// used by submission fences. Credentials and request-specific URL material
+// are rejected so they cannot alter the protected tracker site identity.
+func CanonicalSubmissionTrackerSite(tracker, baseURL string) (string, error) {
+	tracker = strings.ToUpper(strings.TrimSpace(tracker))
+	endpoint, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil || endpoint.Scheme == "" || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+		return "", fmt.Errorf("registered tracker site is invalid for %q", tracker)
+	}
+	endpoint.Scheme = strings.ToLower(endpoint.Scheme)
+	endpoint.Host = strings.ToLower(endpoint.Host)
+	if endpoint.Scheme == "https" && endpoint.Port() == "443" || endpoint.Scheme == "http" && endpoint.Port() == "80" {
+		endpoint.Host = strings.TrimSuffix(endpoint.Host, ":"+endpoint.Port())
+	}
+	endpoint.RawPath = ""
+	endpoint.Path = strings.TrimRight(endpoint.Path, "/")
+	if endpoint.Path == "" {
+		endpoint.Path = "/"
+	}
+	return tracker + "|" + endpoint.String(), nil
 }
 
 // orderedReadyTrackerPlanIndexes stably partitions ready upload plans so

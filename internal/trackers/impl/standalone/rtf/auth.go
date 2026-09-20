@@ -5,50 +5,37 @@ package rtf
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
-	servicedb "github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// resolveAPIKey validates configured RTF API auth and persists a refreshed token when credentials are used.
-// Callers must complete no-upload eligibility gates before invoking it.
+const (
+	rtfAPISessionStorageID  = "RTF_API_SESSION"
+	rtfAPISessionTokenKey   = "token"
+	rtfAPISessionBindingKey = "binding"
+)
+
+// resolveAPIKey validates configured RTF API auth and keeps any refreshed
+// token in encrypted session storage. Callers must complete no-upload
+// eligibility gates before invoking it.
 func resolveAPIKey(ctx context.Context, req trackers.PreparationInput, baseURL string) (string, error) {
-	apiKey := strings.TrimSpace(req.TrackerConfig.APIKey)
-	if apiKey != "" {
-		valid, err := testAPIKey(ctx, baseURL, apiKey)
-		if err == nil && valid {
-			return apiKey, nil
-		}
-		if strings.TrimSpace(req.TrackerConfig.Username) == "" || strings.TrimSpace(req.TrackerConfig.Password) == "" {
-			if err != nil {
-				return "", fmt.Errorf("trackers: RTF API key validation failed and username/password not configured: %w", err)
-			}
-			return "", errors.New("trackers: RTF API key invalid and username/password not configured")
-		}
-	}
-	if strings.TrimSpace(req.TrackerConfig.Username) == "" || strings.TrimSpace(req.TrackerConfig.Password) == "" {
-		return "", errors.New("trackers: RTF missing api_key or username/password")
-	}
-	refreshed, err := refreshAPIKey(ctx, baseURL, req.TrackerConfig)
-	if err != nil {
-		return "", err
-	}
-	if err := persistRefreshedAPIKey(ctx, req.Runtime.DBPath, refreshed); err != nil && req.Logger != nil {
-		req.Logger.Warnf("trackers: RTF failed to persist refreshed API key: %v", err)
-	}
-	return refreshed, nil
+	return resolveRTFAPIKey(ctx, req.TrackerConfig, req.Runtime.DBPath, baseURL, req.Logger, false)
 }
 
-// ResolveSessionForTrackerAuthLogin validates RTF API auth or refreshes and
-// persists the API key with configured credentials for tracker-auth checks.
+// ResolveSessionForTrackerAuthLogin validates RTF API auth or refreshes its
+// encrypted API session with configured credentials for tracker-auth checks.
 func ResolveSessionForTrackerAuthLogin(ctx context.Context, cfg config.TrackerConfig, dbPath string, _ api.TrackerAuthLoginRequest) error {
 	return resolveSessionForTrackerAuthLoginAt(ctx, cfg, dbPath, api.TrackerAuthLoginRequest{}, defaultBaseURL)
 }
@@ -60,30 +47,121 @@ func resolveSessionForTrackerAuthLoginAt(
 	_ api.TrackerAuthLoginRequest,
 	baseURL string,
 ) error {
-	apiKey := strings.TrimSpace(cfg.APIKey)
-	if apiKey != "" {
+	_, err := resolveRTFAPIKey(ctx, cfg, dbPath, baseURL, nil, true)
+	return err
+}
+
+func resolveRTFAPIKey(
+	ctx context.Context,
+	cfg config.TrackerConfig,
+	dbPath string,
+	baseURL string,
+	logger api.Logger,
+	requirePersistence bool,
+) (string, error) {
+	cached, cacheErr := loadCachedRTFAPIKey(ctx, dbPath, baseURL, cfg)
+	if cacheErr != nil && logger != nil {
+		logger.Warnf("trackers: RTF failed to load refreshed API session: %v", cacheErr)
+	}
+
+	candidates := make([]string, 0, 2)
+	if cached != "" {
+		candidates = append(candidates, cached)
+	}
+	if configured := rtfAPIKey(cfg); configured != "" && configured != cached {
+		candidates = append(candidates, configured)
+	}
+
+	var validationErr error
+	for _, apiKey := range candidates {
 		valid, err := testAPIKey(ctx, baseURL, apiKey)
 		if err == nil && valid {
-			return nil
+			return apiKey, nil
 		}
-		if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
-			if err != nil {
-				return fmt.Errorf("trackers: RTF API key validation failed and username/password not configured: %w", err)
-			}
-			return errors.New("trackers: RTF API key invalid and username/password not configured")
+		if err != nil {
+			validationErr = err
 		}
 	}
-	if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
-		return errors.New("trackers: RTF missing api_key or username/password")
+	if !rtfHasCredentials(cfg) {
+		if validationErr != nil {
+			return "", fmt.Errorf("trackers: RTF API key validation failed and username/password not configured: %w", validationErr)
+		}
+		if len(candidates) > 0 {
+			return "", errors.New("trackers: RTF API key invalid and username/password not configured")
+		}
+		return "", errors.New("trackers: RTF missing api_key or username/password")
 	}
+
 	refreshed, err := refreshAPIKey(ctx, baseURL, cfg)
+	if err != nil {
+		return "", err
+	}
+	if err := persistRefreshedRTFAPIKey(ctx, dbPath, baseURL, cfg, refreshed); err != nil {
+		if requirePersistence {
+			return "", err
+		}
+		if logger != nil {
+			logger.Warnf("trackers: RTF failed to persist refreshed API session: %v", err)
+		}
+	}
+	return refreshed, nil
+}
+
+func loadCachedRTFAPIKey(ctx context.Context, dbPath string, baseURL string, cfg config.TrackerConfig) (string, error) {
+	if strings.TrimSpace(dbPath) == "" {
+		return "", nil
+	}
+	binding, err := rtfAPISessionBinding(baseURL, cfg)
+	if err != nil {
+		return "", err
+	}
+	values, err := cookies.LoadTrackerCookieMap(ctx, dbPath, rtfAPISessionStorageID)
+	if errors.Is(err, cookies.ErrTrackerCookiesNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("trackers: RTF load API session: %w", err)
+	}
+	if values[rtfAPISessionBindingKey] != binding {
+		return "", nil
+	}
+	return strings.TrimSpace(values[rtfAPISessionTokenKey]), nil
+}
+
+func persistRefreshedRTFAPIKey(ctx context.Context, dbPath string, baseURL string, cfg config.TrackerConfig, token string) error {
+	if strings.TrimSpace(dbPath) == "" {
+		return nil
+	}
+	binding, err := rtfAPISessionBinding(baseURL, cfg)
 	if err != nil {
 		return err
 	}
-	if err := persistRefreshedAPIKey(ctx, dbPath, refreshed); err != nil {
-		return err
+	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, rtfAPISessionStorageID, map[string]string{
+		rtfAPISessionTokenKey:   strings.TrimSpace(token),
+		rtfAPISessionBindingKey: binding,
+	}); err != nil {
+		return fmt.Errorf("trackers: RTF save API session: %w", err)
 	}
 	return nil
+}
+
+func rtfAPISessionBinding(baseURL string, cfg config.TrackerConfig) (string, error) {
+	baseURL = strings.TrimSpace(baseURL)
+	parsed, err := url.ParseRequestURI(baseURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", errors.New("trackers: RTF invalid API session base URL")
+	}
+	origin := parsed.Scheme + "://" + parsed.Host
+	value := strings.Join([]string{
+		baseURL,
+		origin,
+		cfg.APIKey,
+		cfg.PTPAPIKey,
+		cfg.Username,
+		cfg.Password,
+	}, "\x00")
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func testAPIKey(ctx context.Context, baseURL string, apiKey string) (bool, error) {
@@ -144,37 +222,4 @@ func refreshAPIKey(ctx context.Context, baseURL string, cfg config.TrackerConfig
 		return "", errors.New("trackers: RTF API login response missing token")
 	}
 	return token, nil
-}
-
-func persistRefreshedAPIKey(ctx context.Context, dbPath string, token string) error {
-	dbPath = strings.TrimSpace(dbPath)
-	if dbPath == "" {
-		return errors.New("trackers: RTF persist refreshed API key: db path not configured")
-	}
-	repo, err := servicedb.OpenContext(ctx, dbPath)
-	if err != nil {
-		return fmt.Errorf("trackers: RTF persist refreshed API key open db: %w", err)
-	}
-	defer repo.Close()
-	cfg, err := config.LoadFromDatabase(ctx, repo)
-	if err != nil {
-		return fmt.Errorf("trackers: RTF persist refreshed API key load config: %w", err)
-	}
-	if cfg.Trackers.Trackers == nil {
-		cfg.Trackers.Trackers = map[string]config.TrackerConfig{}
-	}
-	trackerKey := "RTF"
-	for key := range cfg.Trackers.Trackers {
-		if strings.EqualFold(strings.TrimSpace(key), "RTF") {
-			trackerKey = key
-			break
-		}
-	}
-	trackerCfg := cfg.Trackers.Trackers[trackerKey]
-	trackerCfg.APIKey = strings.TrimSpace(token)
-	cfg.Trackers.Trackers[trackerKey] = trackerCfg
-	if err := config.SaveToDatabase(ctx, cfg, repo); err != nil {
-		return fmt.Errorf("trackers: RTF persist refreshed API key: %w", err)
-	}
-	return nil
 }

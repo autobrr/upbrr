@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/logging"
+	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -48,6 +50,45 @@ func TestCompositeUploadStrictUnattendedStopsForTrackerApproval(t *testing.T) {
 	if state.Composite == nil || state.Composite.ActiveOperationID != "" ||
 		state.Composite.TerminalReason != "feedback_required" || state.Workflow.TrackerApproval != nil {
 		t.Fatalf("composite terminal session = %#v", state.Composite)
+	}
+}
+
+func TestCompositeUploadInitialOpenRequestsExternalProviderRefresh(t *testing.T) {
+	t.Parallel()
+	module, _, _ := newCompositeUploadTestModule(t)
+	activeInputs, err := db.Open(filepath.Join(t.TempDir(), "input.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = activeInputs.Close() })
+	if err := activeInputs.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	var verified []api.PrepareInput
+	module.activeInputs = activeInputs
+	module.inputVerifier = func(_ context.Context, input api.PrepareInput) (api.InputRecord, error) {
+		verified = append(verified, input)
+		return api.InputRecord{
+			CanonicalPath: input.SourcePath,
+			SourceVersion: "verified",
+			Manifest:      []byte(`{"identity":{"digest":"verified"}}`),
+		}, nil
+	}
+	t.Cleanup(func() {
+		module.activeMu.Lock()
+		cancel, done := module.activeCancel, module.activeDone
+		module.activeMu.Unlock()
+		if cancel != nil {
+			cancel()
+			<-done
+		}
+	})
+	_, err = module.StartUpload(t.Context(), testOwnerID, compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, "composite-open-refresh"))
+	if err != nil {
+		t.Fatalf("start composite upload: %v", err)
+	}
+	if len(verified) != 1 || verified[0].ExternalFreshness != api.ExternalFreshnessRefresh {
+		t.Fatalf("verified preparation inputs = %#v", verified)
 	}
 }
 
@@ -163,7 +204,8 @@ func TestCompositeUploadFeedbackHydratesPersistedMetadataDemand(t *testing.T) {
 	select {
 	case input := <-hydrationInputs:
 		if input.SourcePath != blocked.Release.Release.Source.SourcePath || input.Force || !input.RequirePrepared ||
-			input.Controls.ConfirmBDMVRescan || input.Controls.ForceRecheck != nil || !reflect.DeepEqual(input.MetadataRequirements, requirements) {
+			input.ExternalFreshness != api.ExternalFreshnessReuse || input.Controls.ConfirmBDMVRescan || input.Controls.ForceRecheck != nil ||
+			!reflect.DeepEqual(input.MetadataRequirements, requirements) {
 			t.Fatalf("composite hydration input = %#v", input)
 		}
 	default:
@@ -232,6 +274,104 @@ func TestCompositeUploadConfirmFeedbackResumesWithServerApproval(t *testing.T) {
 	if count := compositeUploadTestOperationCount(repository, completed.Workflow.ID); count != 2 {
 		t.Fatalf("confirm composite created %d operations, want start plus resume", count)
 	}
+}
+
+func TestCompositeUploadApprovalRestoresMediaWithoutRecapture(t *testing.T) {
+	t.Parallel()
+	module, _, _ := newCompositeUploadTestModule(t)
+	restorer := &compositeReusableMediaBuilder{testing: t}
+	module.mediaBuilder = restorer
+	started, err := module.StartUpload(t.Context(), testOwnerID,
+		compositeUploadTestRequest(true, api.ReleaseWorkflowUploadModeUpload, "composite-reuse"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocked := waitCompositeUploadTestOperation(t, module, started)
+	if blocked.Media != nil || restorer.calls != 0 {
+		t.Fatal("reused media before tracker approval")
+	}
+	index := slices.IndexFunc(blocked.Continuation.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionApproveTrackers && action.Status == api.RequiredActionStatusPending
+	})
+	if index < 0 {
+		t.Fatalf("missing tracker approval: %#v", blocked)
+	}
+	feedback := api.ReleaseWorkflowUploadFeedback{
+		Action: api.ReleaseWorkflowUploadActionIdentity{
+			ID: blocked.Continuation.RequiredActions[index].ID, WorkflowRevision: blocked.Workflow.Revision,
+		},
+		Response: api.ReleaseWorkflowUploadFeedbackResponse{
+			Kind:            api.ReleaseWorkflowUploadFeedbackTrackerApproval,
+			TrackerApproval: &api.ReleaseWorkflowUploadTrackerApproval{Confirmed: true, TrackerIDs: []api.TrackerID{"ALPHA"}},
+		},
+		IdempotencyKey: "approve-reusable-media",
+	}
+	resumed, err := module.SubmitUploadFeedback(t.Context(), testOwnerID, blocked.Workflow.ID, feedback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed := waitCompositeUploadTestOperation(t, module, resumed)
+	if completed.Operation == nil || completed.Operation.Status != api.StageStatusExecuted || completed.UploadResult == nil {
+		t.Fatalf("restored composite did not complete: %#v", completed)
+	}
+	if restorer.calls != 1 || !slices.Equal(restorer.trackers, []api.TrackerID{"ALPHA"}) || completed.Media == nil ||
+		!reflect.DeepEqual(completed.Media.Artifacts, restorer.artifacts) {
+		t.Fatalf("composite lost restored selection/order/URLs or tracker scope: media=%#v restorer=%#v", completed.Media, restorer)
+	}
+	if _, err := module.SubmitUploadFeedback(t.Context(), testOwnerID, blocked.Workflow.ID, feedback); err != nil {
+		t.Fatalf("replay approval: %v", err)
+	}
+	if restorer.calls != 1 {
+		t.Fatal("approval replay repeated restoration")
+	}
+}
+
+type compositeReusableMediaBuilder struct {
+	compatibleMediaRestorerFake
+	artifacts []api.MediaArtifact
+}
+
+func (*compositeReusableMediaBuilder) BuildIncremental(context.Context, api.ReleaseRef, api.TrackerReleaseProjectionSet,
+	api.MediaCaptureInstructions, *api.MediaArtifactSet, any, time.Time,
+) (api.MediaArtifactSet, RetainedMediaResource, error) {
+	return api.MediaArtifactSet{}, nil, errors.New("restored composite must not recapture media")
+}
+
+func (f *compositeReusableMediaBuilder) RestoreCompatible(ctx context.Context, release api.ReleaseRef,
+	projections api.TrackerReleaseProjectionSet, existing *api.MediaArtifactSet, privateExisting any, now time.Time,
+) (api.MediaArtifactSet, RetainedMediaResource, error) {
+	snapshot, retained, err := f.compatibleMediaRestorerFake.RestoreCompatible(ctx, release, projections, existing, privateExisting, now)
+	if err != nil {
+		return api.MediaArtifactSet{}, nil, err
+	}
+	if existing != nil {
+		return snapshot, retained, nil
+	}
+	snapshot.Artifacts[0].Selected = true
+	snapshot.Artifacts = append(snapshot.Artifacts,
+		api.MediaArtifact{
+			ID:      "deselected-screen",
+			Kind:    api.MediaArtifactScreenshot,
+			Purpose: api.ScreenshotPurposeFinal,
+			Order:   2,
+		},
+		api.MediaArtifact{
+			ID:       "retained-hosted",
+			Kind:     api.MediaArtifactHostedImage,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+			Order:    7,
+			Source:   "restored-screen",
+			Host:     "images.example",
+			URL:      "https://images.example/retained.png",
+		},
+	)
+	snapshot.ImageRequirementsPrepared = true
+	snapshot.HostAttempts[0].TrackerIDs = slices.Clone(f.trackers)
+	snapshot.HostAttempts[0].ArtifactIDs = []api.PublicResourceID{"restored-screen"}
+	snapshot.HostAttempts[0].Results = []api.MediaArtifact{snapshot.Artifacts[2]}
+	f.artifacts = slices.Clone(snapshot.Artifacts)
+	return snapshot, retained, nil
 }
 
 func TestCompositeUploadReleaseNameFeedbackPreservesSiblingProjection(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -19,6 +20,7 @@ type trackerEffectReporterStub struct {
 	completeErr      error
 	alreadySucceeded bool
 	begun            []api.WorkflowExternalEffect
+	completeCalls    int
 }
 
 func (r *trackerEffectReporterStub) Begin(
@@ -40,6 +42,7 @@ func (r *trackerEffectReporterStub) Complete(
 	api.WorkflowExternalEffectReceipt,
 	bool,
 ) error {
+	r.completeCalls++
 	return r.completeErr
 }
 
@@ -167,11 +170,12 @@ func TestTrackerSubmissionReceiptFailureBecomesUnknownOutcome(t *testing.T) {
 	}
 }
 
-func TestTrackerSubmissionSucceededReceiptWithoutResultBecomesUnknownOutcome(t *testing.T) {
+func TestTrackerSubmissionFinalFenceAlreadySucceededIsSuccessfulNoOp(t *testing.T) {
 	t.Parallel()
 
 	var submits atomic.Int32
 	reporter := &trackerEffectReporterStub{alreadySucceeded: true}
+	repo := &stubRepo{}
 	ctx := api.WithWorkflowExternalEffectReporter(t.Context(), reporter)
 	slots := []trackerPlanSlot{{
 		tracker: "ALPHA",
@@ -185,13 +189,111 @@ func TestTrackerSubmissionSucceededReceiptWithoutResultBecomesUnknownOutcome(t *
 			nil,
 		),
 	}}
-	(&Service{}).submitTrackerPlans(ctx, api.UploadSubject{SourcePath: "Example.Release.2026"}, slots)
-	if submits.Load() != 0 || slots[0].failure == nil || slots[0].failure.Code != "unknown_outcome" ||
-		!errors.Is(slots[0].failure.cause, api.ErrReleaseWorkflowEffectAlreadySucceeded) {
-		t.Fatalf("retained tracker receipt submits=%d failure=%#v", submits.Load(), slots[0].failure)
+	(&Service{repo: repo}).submitTrackerPlans(ctx, api.UploadSubject{SourcePath: "Example.Release.2026"}, slots)
+	if submits.Load() != 0 || reporter.completeCalls != 0 || slots[0].failure != nil || !slots[0].alreadySucceeded {
+		t.Fatalf(
+			"already-succeeded tracker submission submits=%d completes=%d failure=%#v slot=%#v",
+			submits.Load(), reporter.completeCalls, slots[0].failure, slots[0],
+		)
 	}
-	if slots[0].summary.Uploaded != 0 || len(slots[0].summary.UploadedTorrents) != 0 || slots[0].summary.PendingPublication {
-		t.Fatalf("retained tracker receipt synthesized summary=%#v", slots[0].summary)
+	if slots[0].summary.Uploaded != 1 || len(slots[0].summary.UploadedTorrents) != 0 || slots[0].summary.PendingPublication {
+		t.Fatalf("already-succeeded tracker summary=%#v", slots[0].summary)
+	}
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	if !reflect.DeepEqual(repo.statusUpdates, []uploadStatusUpdate{{tracker: "ALPHA", status: "uploaded"}}) {
+		t.Fatalf("already-succeeded tracker record status=%#v", repo.statusUpdates)
+	}
+}
+
+func TestTrackerSubmissionFenceCarriesFinalizedScopeForActiveWorkflow(t *testing.T) {
+	t.Parallel()
+	identity, err := api.NewSubmissionContentIdentity(api.SubmissionContentScopeSingleFile, []api.SubmissionContentFile{{
+		Size: 4, SHA256: strings.Repeat("a", 64),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reporter := &trackerEffectReporterStub{}
+	ctx := api.WithActiveInputAuthority(t.Context(), api.ActiveInputAuthority{CoordinatorID: "coordinator", Fence: 7})
+	ctx = api.WithWorkflowExternalEffectReporter(ctx, reporter)
+	var submits atomic.Int32
+	slots := []trackerPlanSlot{{
+		tracker: "PTP",
+		plan: NewUploadPlan("PTP", api.TrackerDryRunEntry{Tracker: "PTP", Status: "ready"}, func(context.Context) (api.UploadSummary, error) {
+			submits.Add(1)
+			return api.UploadSummary{Uploaded: 1}, nil
+		}, nil),
+	}}
+	registry := NewRegistry()
+	if err := registry.Register(stubDefinition{name: "PTP"}); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewServiceWithRegistry(config.Config{}, api.NopLogger{}, nil, registry)
+	svc.submitTrackerPlans(ctx, api.UploadSubject{SourcePath: "C:/synthetic", SubmissionContentIdentity: identity}, slots)
+	if submits.Load() != 1 || len(reporter.begun) != 1 || reporter.begun[0].Submission == nil {
+		t.Fatalf("submits=%d effects=%#v", submits.Load(), reporter.begun)
+	}
+	got := reporter.begun[0].Submission
+	if got.ContentIdentity.Digest != identity.Digest || got.CoordinatorID != "coordinator" || got.Fence != 7 ||
+		got.TrackerSite == "" || !strings.HasPrefix(got.TrackerSite, "PTP|") {
+		t.Fatalf("submission authority=%#v", got)
+	}
+}
+
+func TestTrackerSubmissionFenceRejectsMissingFinalizedScopeForActiveWorkflow(t *testing.T) {
+	t.Parallel()
+	ctx := api.WithActiveInputAuthority(t.Context(), api.ActiveInputAuthority{CoordinatorID: "coordinator", Fence: 7})
+	var submits atomic.Int32
+	slots := []trackerPlanSlot{{
+		tracker: "PTP",
+		plan: NewUploadPlan("PTP", api.TrackerDryRunEntry{Tracker: "PTP", Status: "ready"}, func(context.Context) (api.UploadSummary, error) {
+			submits.Add(1)
+			return api.UploadSummary{Uploaded: 1}, nil
+		}, nil),
+	}}
+	registry := NewRegistry()
+	if err := registry.Register(stubDefinition{name: "PTP"}); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewServiceWithRegistry(config.Config{}, api.NopLogger{}, nil, registry)
+	svc.submitTrackerPlans(ctx, api.UploadSubject{SourcePath: "C:/synthetic"}, slots)
+	if submits.Load() != 0 || slots[0].failure == nil || slots[0].failure.Code != "submission_scope" {
+		t.Fatalf("submits=%d failure=%#v", submits.Load(), slots[0].failure)
+	}
+}
+
+func TestCanonicalSubmissionTrackerSiteNormalizesNonSecretEndpoint(t *testing.T) {
+	t.Parallel()
+	site, err := CanonicalSubmissionTrackerSite(" ptp ", "HTTPS://Tracker.Example.invalid/deploy/")
+	if err != nil || site != "PTP|https://tracker.example.invalid/deploy" {
+		t.Fatalf("site=%q err=%v", site, err)
+	}
+	if _, err := CanonicalSubmissionTrackerSite("PTP", "https://user:secret@tracker.example.invalid/"); err == nil {
+		t.Fatal("credential-bearing tracker site accepted")
+	}
+}
+
+func TestCanonicalSubmissionTrackerSiteNormalizesDefaultPorts(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		endpoint string
+		want     string
+	}{
+		{endpoint: "https://tracker.example:443/", want: "ALPHA|https://tracker.example/"},
+		{endpoint: "http://tracker.example:80/deploy/", want: "ALPHA|http://tracker.example/deploy"},
+		{endpoint: "https://tracker.example:8443/", want: "ALPHA|https://tracker.example:8443/"},
+		{endpoint: "http://tracker.example:443/", want: "ALPHA|http://tracker.example:443/"},
+		{endpoint: "https://[2001:db8::1]:443/", want: "ALPHA|https://[2001:db8::1]/"},
+		{endpoint: "https://[2001:db8::1]:8443/", want: "ALPHA|https://[2001:db8::1]:8443/"},
+		{endpoint: "https://[2001:db8::1]/", want: "ALPHA|https://[2001:db8::1]/"},
+	} {
+		t.Run(tc.endpoint, func(t *testing.T) {
+			site, err := CanonicalSubmissionTrackerSite("ALPHA", tc.endpoint)
+			if err != nil || site != tc.want {
+				t.Fatalf("site=%q err=%v, want %q", site, err, tc.want)
+			}
+		})
 	}
 }
 
