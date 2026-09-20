@@ -268,9 +268,18 @@ type IncrementalMediaArtifactBuilder interface {
 	) (api.MediaArtifactSet, RetainedMediaResource, error)
 }
 
-// CompatibleMediaRestorer adopts verified reusable bytes into a new exact generation.
+// CompatibleMediaRestorer adopts verified reusable bytes into a new exact generation,
+// or refreshes current tracker coverage from an existing snapshot and private resource
+// without reloading its bytes. Retained artifacts keep their identity and selection.
 type CompatibleMediaRestorer interface {
-	RestoreCompatible(context.Context, api.ReleaseRef, api.TrackerReleaseProjectionSet, time.Time) (api.MediaArtifactSet, RetainedMediaResource, error)
+	RestoreCompatible(
+		context.Context,
+		api.ReleaseRef,
+		api.TrackerReleaseProjectionSet,
+		*api.MediaArtifactSet,
+		any,
+		time.Time,
+	) (api.MediaArtifactSet, RetainedMediaResource, error)
 }
 
 // ReusableMediaRecorder retains the committed selection and hosted-link state,

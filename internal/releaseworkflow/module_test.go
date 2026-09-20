@@ -3925,7 +3925,7 @@ func TestRefreshMutatedMediaStatusPreservesOnlyGenuineMediaActions(t *testing.T)
 		}},
 	}
 
-	refreshMutatedMediaStatus(&snapshot, projections)
+	refreshMutatedMediaStatus(&snapshot, projections, projections)
 	if snapshot.Status != api.StageStatusBlocked || len(snapshot.RequiredActions) != 1 ||
 		snapshot.RequiredActions[0].Kind != api.RequiredActionProvideTrackerInput {
 		t.Fatalf("genuine missing menu action was not republished: %#v", snapshot)
@@ -3937,7 +3937,7 @@ func TestRefreshMutatedMediaStatusPreservesOnlyGenuineMediaActions(t *testing.T)
 		Purpose:  api.ScreenshotPurposeMenu,
 		Selected: true,
 	})
-	refreshMutatedMediaStatus(&snapshot, projections)
+	refreshMutatedMediaStatus(&snapshot, projections, projections)
 	if snapshot.Status != api.StageStatusCompleted || len(snapshot.RequiredActions) != 0 {
 		t.Fatalf("satisfied media retained stale action: %#v", snapshot)
 	}
@@ -3992,13 +3992,13 @@ func TestRefreshMutatedMediaStatusRequiresHostedScreenshotsPerTracker(t *testing
 		},
 	}
 
-	refreshMutatedMediaStatus(&snapshot, projections)
+	refreshMutatedMediaStatus(&snapshot, projections, projections)
 	if snapshot.Status != api.StageStatusBlocked || len(snapshot.RequiredActions) != 1 {
 		t.Fatalf("three tracker-usable hosted screenshots satisfied six required screenshots: %#v", snapshot)
 	}
 
 	snapshot.HostAttempts[1].UsageScope = "global"
-	refreshMutatedMediaStatus(&snapshot, projections)
+	refreshMutatedMediaStatus(&snapshot, projections, projections)
 	if snapshot.Status != api.StageStatusCompleted || len(snapshot.RequiredActions) != 0 {
 		t.Fatalf("six tracker-usable hosted screenshots did not satisfy the requirement: %#v", snapshot)
 	}
@@ -4065,11 +4065,12 @@ func TestRefreshMutatedMediaStatusExcludesOnlyTrackerScopedHostFailures(t *testi
 	}
 
 	tests := []struct {
-		name        string
-		projections []api.TrackerReleaseProjection
-		failures    []api.WorkflowFailure
-		menu        *api.MediaArtifact
-		wantStatus  api.StageStatus
+		name             string
+		projections      []api.TrackerReleaseProjection
+		knownProjections []api.TrackerReleaseProjection
+		failures         []api.WorkflowFailure
+		menu             *api.MediaArtifact
+		wantStatus       api.StageStatus
 	}{
 		{
 			name: "surviving tracker completes",
@@ -4140,6 +4141,15 @@ func TestRefreshMutatedMediaStatusExcludesOnlyTrackerScopedHostFailures(t *testi
 			wantStatus: api.StageStatusBlocked,
 		},
 		{
+			name: "excluded known tracker failure does not block current trackers",
+			projections: []api.TrackerReleaseProjection{
+				{TrackerID: alpha, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2}},
+			},
+			knownProjections: []api.TrackerReleaseProjection{{TrackerID: alpha}, {TrackerID: beta}},
+			failures:         []api.WorkflowFailure{betaFailure},
+			wantStatus:       api.StageStatusCompleted,
+		},
+		{
 			name: "unknown tracker failure blocks otherwise satisfied requirements",
 			projections: []api.TrackerReleaseProjection{
 				{TrackerID: alpha, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2}},
@@ -4160,7 +4170,11 @@ func TestRefreshMutatedMediaStatusExcludesOnlyTrackerScopedHostFailures(t *testi
 				snapshot.Artifacts = append(snapshot.Artifacts, *test.menu)
 			}
 
-			refreshMutatedMediaStatus(&snapshot, test.projections)
+			known := test.knownProjections
+			if known == nil {
+				known = test.projections
+			}
+			refreshMutatedMediaStatus(&snapshot, test.projections, known)
 			if snapshot.Status != test.wantStatus {
 				t.Fatalf("media status = %q, want %q: %#v", snapshot.Status, test.wantStatus, snapshot)
 			}

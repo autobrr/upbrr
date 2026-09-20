@@ -342,7 +342,7 @@ func (m *Module) recoverPersistedMediaForContinuation(
 		return current, false, false, nil
 	}
 	refreshed := *current.Media
-	refreshMutatedMediaStatus(&refreshed, projections)
+	refreshMutatedMediaStatus(&refreshed, projections, state.Projections[state.Workflow.TrackerProjections.ID].Projections)
 	if refreshed.Status != api.StageStatusCompleted {
 		return current, false, false, nil
 	}

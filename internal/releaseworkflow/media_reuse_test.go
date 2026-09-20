@@ -6,7 +6,9 @@ package releaseworkflow
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -95,13 +97,133 @@ func TestDuplicateCompletionRestoresMediaUnderCurrentTrackerAuthority(t *testing
 			if attempt.Media != *result.Workflow.Media || !attempt.AttemptedAt.Equal(result.Media.CreatedAt) {
 				t.Fatalf("restored host coverage lost current media lineage: %#v", attempt)
 			}
+			if mode == TrackerDecisionModePostDupeGate {
+				result = executeCommand(t, module, DecideDuplicatesCommand{
+					WorkflowID: result.Workflow.ID, ExpectedRevision: result.Workflow.Revision,
+				})
+				if result.Media != nil || result.Workflow.Media != nil || restorer.calls != 1 || restorer.rebinds != 0 {
+					t.Fatal("changed duplicate evidence retained media without renewed tracker approval")
+				}
+				if _, err := module.MediaPlan(t.Context(), testOwnerID, result.Workflow.ID); !errors.Is(err, ErrInvalidTransition) {
+					t.Fatalf("media plan without renewed approval = %v", err)
+				}
+			}
 		})
+	}
+}
+
+func TestDuplicateDecisionsRetainAndRebindCurrentMedia(t *testing.T) {
+	t.Parallel()
+	restorer := &compatibleMediaRestorerFake{testing: t}
+	dupeBuilder := dupeAssessmentBuilderFunc(func(ctx context.Context, subject api.DuplicateSubject, projections api.TrackerReleaseProjectionSet,
+		preflight api.TrackerPreflightAssessment, now time.Time, skip bool,
+	) (api.DupeAssessment, any, error) {
+		snapshot, evidence, err := readyDupeBuilder(t)(ctx, subject, projections, preflight, now, skip)
+		for index := range snapshot.Results {
+			snapshot.Results[index].Decision = api.DupeDecisionIgnored
+			snapshot.Results[index].Matches = []api.DupeMatchProjection{{ID: "existing", Name: "Example.Release.2026-GRP"}}
+		}
+		return snapshot, evidence, err
+	})
+	module, repository := newTestModule(t, testPreparer(), WithTrackerPreflightBuilder(readyPreflightBuilder(t)),
+		WithDupeAssessmentBuilder(dupeBuilder), WithMediaArtifactBuilder(restorer))
+	result := executeCommand(t, module, CreateWorkflowCommand{TrackerDecisionMode: TrackerDecisionModeWebUIControls})
+	result = executeCommand(t, module, PrepareReleaseCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Input:            api.PrepareInput{SourcePath: filepath.Join(t.TempDir(), "Example.Release.mkv")},
+	})
+	result = executeTestPublication(t, module, trackerContextPublication{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Catalog:          testCatalog(t),
+		Runtime:          testRuntime(t),
+		Selection:        api.TrackerSelection{TrackerIDs: []api.TrackerID{"ALPHA", "BETA"}},
+	})
+	result = executeTestPublication(t, module, projectionSetPublication{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Snapshot:         testProjectionSet(t),
+	})
+	result = executeCommand(t, module, PreflightTrackersCommand{WorkflowID: result.Workflow.ID, ExpectedRevision: result.Workflow.Revision})
+	result = executeCommand(t, module, CheckDuplicatesCommand{WorkflowID: result.Workflow.ID, ExpectedRevision: result.Workflow.Revision})
+	if result.Media == nil || restorer.calls != 1 {
+		t.Fatalf("initial restore = %#v calls=%d", result.Media, restorer.calls)
+	}
+	original := *result.Media
+	command := DecideDuplicatesCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Decisions:        map[api.TrackerID]api.DupeDecision{"ALPHA": api.DupeDecisionIgnored},
+	}
+	module.repository = &failOnceSaveRepository{Repository: repository}
+	if _, err := module.Execute(t.Context(), testOwnerID, command); err == nil {
+		t.Fatal("expected injected save failure")
+	}
+	if _, err := module.private.Get(testOwnerID, result.Workflow.ID, mediaPrivateResourceID(original.ID), module.clock.Now()); err != nil {
+		t.Fatalf("failed unchanged decision discarded current media: %v", err)
+	}
+	result = executeCommand(t, module, command)
+	if !reflect.DeepEqual(result.Media, &original) || restorer.calls != 1 || restorer.rebinds != 0 {
+		t.Fatalf("unchanged decision repeated restoration: calls=%d rebinds=%d media=%#v", restorer.calls, restorer.rebinds, result.Media)
+	}
+	module.repository = &failOnceSaveRepository{Repository: repository}
+	if _, err := module.Execute(t.Context(), testOwnerID, DecideDuplicatesCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Decisions:        map[api.TrackerID]api.DupeDecision{"ALPHA": api.DupeDecisionAccepted},
+	}); err == nil {
+		t.Fatal("expected rebound snapshot save failure")
+	}
+	unchanged, err := repository.Load(t.Context(), testOwnerID, result.Workflow.ID)
+	if err != nil || unchanged.Workflow.Media == nil || unchanged.Workflow.Media.ID != original.ID ||
+		!reflect.DeepEqual(unchanged.Media[original.ID], original) {
+		t.Fatalf("failed rebind changed durable media: %v", err)
+	}
+	if _, err := module.private.Get(testOwnerID, result.Workflow.ID, mediaPrivateResourceID(original.ID), module.clock.Now()); err != nil {
+		t.Fatalf("failed rebind discarded current media: %v", err)
+	}
+	for _, decision := range []api.DupeDecision{api.DupeDecisionAccepted, api.DupeDecisionIgnored} {
+		result = executeCommand(t, module, DecideDuplicatesCommand{
+			WorkflowID:       result.Workflow.ID,
+			ExpectedRevision: result.Workflow.Revision,
+			Decisions:        map[api.TrackerID]api.DupeDecision{"ALPHA": decision},
+		})
+		wantTrackers := []api.TrackerID{"ALPHA", "BETA"}
+		if decision == api.DupeDecisionAccepted {
+			wantTrackers = []api.TrackerID{"BETA"}
+		}
+		if result.Media == nil || result.Media.ID == original.ID || restorer.calls != 1 ||
+			!slices.Equal(restorer.trackers, wantTrackers) || !reflect.DeepEqual(result.Media.Artifacts, original.Artifacts) {
+			t.Fatalf("changed decision did not preserve media with exact targets: calls=%d targets=%v media=%#v", restorer.calls, restorer.trackers, result.Media)
+		}
+	}
+	if restorer.rebinds != 3 {
+		t.Fatalf("rebinds = %d, want 3 including failed publication", restorer.rebinds)
+	}
+	module.private.Delete(testOwnerID, result.Workflow.ID, mediaPrivateResourceID(result.Media.ID))
+	result = executeCommand(t, module, DecideDuplicatesCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Decisions:        map[api.TrackerID]api.DupeDecision{"ALPHA": api.DupeDecisionIgnored},
+	})
+	if result.Media == nil || restorer.calls != 2 {
+		t.Fatalf("missing retained resource did not fall back to verified restore: calls=%d", restorer.calls)
+	}
+	result = executeCommand(t, module, DecideDuplicatesCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Decisions:        map[api.TrackerID]api.DupeDecision{"ALPHA": api.DupeDecisionAccepted, "BETA": api.DupeDecisionAccepted},
+	})
+	if result.Media != nil || result.Workflow.Media != nil || restorer.calls != 2 || restorer.rebinds != 3 {
+		t.Fatal("media retained without an eligible tracker")
 	}
 }
 
 type compatibleMediaRestorerFake struct {
 	testing  *testing.T
 	calls    int
+	rebinds  int
 	trackers []api.TrackerID
 }
 
@@ -109,14 +231,27 @@ func (*compatibleMediaRestorerFake) Build(context.Context, api.ReleaseRef, api.T
 	return api.MediaArtifactSet{}, nil, errors.New("restoration must not capture images")
 }
 
-func (f *compatibleMediaRestorerFake) RestoreCompatible(_ context.Context, _ api.ReleaseRef, projections api.TrackerReleaseProjectionSet, _ time.Time) (api.MediaArtifactSet, RetainedMediaResource, error) {
-	f.calls++
+func (f *compatibleMediaRestorerFake) RestoreCompatible(_ context.Context, _ api.ReleaseRef, projections api.TrackerReleaseProjectionSet, existing *api.MediaArtifactSet, _ any, _ time.Time) (api.MediaArtifactSet, RetainedMediaResource, error) {
+	if existing == nil {
+		f.calls++
+	} else {
+		f.rebinds++
+	}
+	f.trackers = nil
 	for _, projection := range projections.Projections {
 		f.trackers = append(f.trackers, projection.TrackerID)
 	}
 	requirements, err := mediaRequirementsFingerprint(projections.Projections)
 	if err != nil {
 		return api.MediaArtifactSet{}, nil, err
+	}
+	if existing != nil {
+		snapshot, cloneErr := existing.Clone()
+		if cloneErr != nil {
+			return api.MediaArtifactSet{}, nil, fmt.Errorf("clone retained test media: %w", cloneErr)
+		}
+		snapshot.RequirementsFingerprint = requirements
+		return snapshot, durableReusableMediaResource{}, nil
 	}
 	return api.MediaArtifactSet{
 		CaptureFingerprint:      testFingerprint(f.testing, "restored-media"),

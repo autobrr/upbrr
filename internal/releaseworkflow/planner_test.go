@@ -696,7 +696,7 @@ func TestRefreshPersistedMediaStatusRejectsEmptyApprovedTrackerSet(t *testing.T)
 	repository.mu.Unlock()
 
 	withoutGuard := media
-	refreshMutatedMediaStatus(&withoutGuard, nil)
+	refreshMutatedMediaStatus(&withoutGuard, nil, nil)
 	if withoutGuard.Status != api.StageStatusCompleted {
 		t.Fatalf("empty tracker fixture remains blocked without guard: %#v", withoutGuard)
 	}

@@ -928,16 +928,43 @@ func (b workflowMediaBuilder) BuildIncremental(
 }
 
 // RestoreCompatible re-materializes a fresh current-generation media snapshot
-// from independently verified reusable assets. It reads no legacy weak media
-// records and does not reuse a prior workflow's opaque artifact authority.
+// from independently verified reusable assets. When the caller retains an
+// exact current snapshot and its private resource, it instead rebinds that
+// snapshot to current tracker requirements without reloading local media.
 func (b workflowMediaBuilder) RestoreCompatible(
 	ctx context.Context,
 	release api.ReleaseRef,
 	projections api.TrackerReleaseProjectionSet,
+	existing *api.MediaArtifactSet,
+	privateExisting any,
 	_ time.Time,
 ) (api.MediaArtifactSet, releaseworkflow.RetainedMediaResource, error) {
 	if err := ctx.Err(); err != nil {
 		return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media restore: %w", err)
+	}
+	if existing != nil {
+		retained, ok := privateExisting.(workflowMediaPrivateArtifacts)
+		if !ok {
+			return api.MediaArtifactSet{}, nil, errors.New("workflow media retained resource is incompatible")
+		}
+		snapshot, err := existing.Clone()
+		if err != nil {
+			return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media clone existing capture: %w", err)
+		}
+		requirements, err := workflowMediaRequirementsFingerprint(projections.Projections)
+		if err != nil {
+			return api.MediaArtifactSet{}, nil, err
+		}
+		snapshot.RequirementsFingerprint = requirements
+		retained = cloneWorkflowMediaPrivateArtifacts(retained)
+		if attempts, prepared := b.restoredHostedImageAttempts(ctx, release, snapshot, retained, projections.Projections); prepared {
+			snapshot.HostAttempts = slices.DeleteFunc(snapshot.HostAttempts, func(attempt api.HostedImageAttempt) bool {
+				return attempt.Status == api.StageStatusCompleted
+			})
+			snapshot.HostAttempts = append(snapshot.HostAttempts, attempts...)
+			snapshot.ImageRequirementsPrepared = true
+		}
+		return snapshot, retained, nil
 	}
 	if b.media == nil || b.media.repo == nil || b.resolver == nil {
 		return api.MediaArtifactSet{}, nil, errors.New("workflow media restore service is unavailable")

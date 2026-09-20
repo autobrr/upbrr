@@ -19,6 +19,7 @@ func (m *Module) restoreReusableMedia(
 	ctx context.Context,
 	ownerID string,
 	state *State,
+	priorMedia *api.MediaArtifactSetRef,
 	nextRevision api.WorkflowRevision,
 	now time.Time,
 	result *CommandResult,
@@ -39,7 +40,39 @@ func (m *Module) restoreReusableMedia(
 	if len(projections.Projections) == 0 {
 		return nil
 	}
-	snapshot, retained, err := restorer.RestoreCompatible(ctx, projections.ReleaseRef, projections, now)
+	var existing *api.MediaArtifactSet
+	var privateExisting any
+	if priorMedia != nil {
+		current, found := state.Media[priorMedia.ID]
+		if found && current.Revision == priorMedia.Revision && current.WorkflowID == state.Workflow.ID &&
+			state.Workflow.Release != nil && current.Release == *state.Workflow.Release && current.ReleaseRef == projections.ReleaseRef &&
+			state.Workflow.TrackerProjections != nil && current.ProjectionSet == *state.Workflow.TrackerProjections {
+			privateExisting, err = m.private.Get(ownerID, state.Workflow.ID, mediaPrivateResourceID(current.ID), now)
+			if err != nil && !errors.Is(err, ErrPrivateResourceUnavailable) {
+				return fmt.Errorf("release workflow load current reusable media: %w", err)
+			}
+			if err == nil {
+				existing = &current
+			}
+		}
+	}
+	if existing != nil {
+		requirements, fingerprintErr := mediaRequirementsFingerprint(projections.Projections)
+		if fingerprintErr != nil {
+			return fingerprintErr
+		}
+		approval := targets.TrackerApproval()
+		sameApproval := existing.TrackerApproval == nil && approval == nil ||
+			existing.TrackerApproval != nil && approval != nil && *existing.TrackerApproval == *approval
+		if existing.RequirementsFingerprint == requirements && sameApproval {
+			state.Workflow.Media = &api.MediaArtifactSetRef{ID: existing.ID, Revision: existing.Revision}
+			setWorkflowStageStatus(&state.Workflow, existing.Status, existing.RequiredActions, existing.Failures)
+			result.Media = existing
+			m.logMediaInventory("retained", existing.Artifacts)
+			return nil
+		}
+	}
+	snapshot, retained, err := restorer.RestoreCompatible(ctx, projections.ReleaseRef, projections, existing, privateExisting, now)
 	if err != nil {
 		return fmt.Errorf("release workflow restore saved media: %w", err)
 	}
@@ -51,7 +84,11 @@ func (m *Module) restoreReusableMedia(
 		return err
 	}
 	result.Media = restored.Media
-	m.logMediaInventory("restored", snapshot.Artifacts)
+	stage := "restored"
+	if existing != nil {
+		stage = "rebound"
+	}
+	m.logMediaInventory(stage, snapshot.Artifacts)
 	return nil
 }
 

@@ -40,6 +40,19 @@ type workflowMediaResolverFake struct {
 
 type workflowMediaRepositoryFake struct{ mediaRepository }
 
+type workflowMediaReuseLookupGuard struct {
+	api.MediaReuseRepository
+	calls int
+}
+
+func (r *workflowMediaReuseLookupGuard) LoadReusableMediaAssets(
+	context.Context,
+	api.MediaCompatibilityKey,
+) ([]api.ReusableMediaAsset, error) {
+	r.calls++
+	return nil, errors.New("rebind must not load reusable media")
+}
+
 type reusableWorkflowMediaRepository struct {
 	mediaRepository
 	assets           []api.ReusableMediaAsset
@@ -116,6 +129,8 @@ func TestWorkflowMediaRestoreCompatibleWithoutReuseCapabilityReturnsNoMedia(t *t
 		t.Context(),
 		api.ReleaseRef{SourcePath: "C:\\releases\\Example.Release.2026.mkv"},
 		api.TrackerReleaseProjectionSet{},
+		nil,
+		nil,
 		time.Now(),
 	)
 	if err != nil {
@@ -226,7 +241,7 @@ func TestWorkflowMediaRestoreCompatibleRebuildsCurrentArtifacts(t *testing.T) {
 		},
 	}
 	snapshot, retainedResource, err := builder.RestoreCompatible(t.Context(), api.ReleaseRef{SourcePath: currentBinding.SourcePath, Generation: 7},
-		api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{TrackerID: "ONE", Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1}}}}, time.Now())
+		api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{TrackerID: "ONE", Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1}}}}, nil, nil, time.Now())
 	if err != nil {
 		t.Fatalf("restore compatible media: %v", err)
 	}
@@ -257,6 +272,231 @@ func TestWorkflowMediaRestoreCompatibleRebuildsCurrentArtifacts(t *testing.T) {
 	hosted := retained.HostedImages[snapshot.Artifacts[1].ID]
 	if hosted.ImagePath != retained.Screenshots[0].Path {
 		t.Fatalf("restored hosted image path = %q, want materialized %q", hosted.ImagePath, retained.Screenshots[0].Path)
+	}
+}
+
+func TestWorkflowMediaRestoreCompatibleRebindsRetainedSnapshotWithoutCacheLookup(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.mkv")
+	if err := os.WriteFile(sourcePath, []byte("verified source bytes"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	repository, err := db.Open(filepath.Join(t.TempDir(), "workflow-media.sqlite"))
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	t.Cleanup(func() { _ = repository.Close() })
+	if err := repository.Migrate(); err != nil {
+		t.Fatalf("migrate repository: %v", err)
+	}
+	prepared, err := preparedrelease.New(repository, workflowMediaIdentityResolver{}, workflowMediaCollector{})
+	if err != nil {
+		t.Fatalf("create prepared release module: %v", err)
+	}
+	verified, err := preparedrelease.VerifyInputSource(ctx, api.PrepareInput{SourcePath: sourcePath})
+	if err != nil {
+		t.Fatalf("verify source: %v", err)
+	}
+	preparedResult, err := prepared.Prepare(ctx, api.PrepareInput{SourcePath: sourcePath, VerifiedSource: &verified})
+	if err != nil {
+		t.Fatalf("prepare source: %v", err)
+	}
+	release := api.ReleaseRef{SourcePath: sourcePath, Generation: preparedResult.Release.Generation}
+
+	registry := mediaImageHostRegistry(t)
+	if err := registry.RegisterDescriptor(trackers.Descriptor{
+		Name:              "THREE",
+		Definition:        mediaImageHostDefinition("THREE"),
+		Family:            trackers.FamilyStandalone,
+		BaseURL:           "https://three.example.invalid",
+		UploadContentMode: trackers.UploadContentModeScreenshots,
+		ImageHost:         &trackers.ImageHostPolicy{AllowedHosts: []string{"pixhost"}},
+	}); err != nil {
+		t.Fatalf("register third tracker: %v", err)
+	}
+	cfg := config.Config{ImageHosting: config.ImageHostingConfig{Host1: "pixhost"}}
+	accountScope, err := workflowMediaHostAccountScope(cfg, "pixhost")
+	if err != nil {
+		t.Fatalf("host account scope: %v", err)
+	}
+	guard := &workflowMediaReuseLookupGuard{}
+	builder := workflowMediaBuilder{
+		config: cfg,
+		media: &mediaModule{
+			cfg:           cfg,
+			mediaReuse:    guard,
+			registry:      registry,
+			preparedFacts: prepared,
+		},
+	}
+	missingPath := filepath.Join(t.TempDir(), "missing-retained-screen.png")
+	selected := api.MediaArtifact{
+		ID:       "screen-selected",
+		Kind:     api.MediaArtifactScreenshot,
+		Purpose:  api.ScreenshotPurposeFinal,
+		Selected: true,
+		Order:    8,
+	}
+	hosted := api.MediaArtifact{
+		ID:       "hosted-selected",
+		Kind:     api.MediaArtifactHostedImage,
+		Purpose:  api.ScreenshotPurposeFinal,
+		Selected: true,
+		Order:    8,
+		Source:   string(selected.ID),
+		Host:     "pixhost",
+		URL:      "https://images.invalid/retained.png",
+	}
+	deselected := api.MediaArtifact{
+		ID:       "screen-deselected",
+		Kind:     api.MediaArtifactScreenshot,
+		Purpose:  api.ScreenshotPurposeFinal,
+		Selected: false,
+		Order:    1,
+	}
+	completedCoverage := api.HostedImageAttempt{
+		ID:          "historic-host",
+		Media:       api.MediaArtifactSetRef{ID: "prior-media", Revision: 4},
+		Host:        "pixhost",
+		UsageScope:  "global",
+		TrackerIDs:  []api.TrackerID{"ONE"},
+		Status:      api.StageStatusCompleted,
+		ArtifactIDs: []api.PublicResourceID{selected.ID},
+		Results:     []api.MediaArtifact{hosted},
+	}
+	failure := hostedImageFailure("ONE", "old-host", "previous host failure")
+	historicalAttempt := api.HostedImageAttempt{
+		ID:         "historic-failure",
+		Media:      api.MediaArtifactSetRef{ID: "prior-media", Revision: 4},
+		Host:       "old-host",
+		UsageScope: "tracker:ONE",
+		TrackerIDs: []api.TrackerID{"ONE"},
+		Status:     api.StageStatusFailed,
+		Failures:   []api.WorkflowFailure{failure},
+	}
+	reconcile := api.RequiredAction{Kind: api.RequiredActionReconcileSubmission, EffectKind: api.WorkflowExternalEffectImageHosting}
+	existing := api.MediaArtifactSet{
+		CaptureFingerprint:        workflowTestFingerprint(t, "retained-rebind"),
+		RequirementsFingerprint:   workflowTestFingerprint(t, "prior-requirements"),
+		Artifacts:                 []api.MediaArtifact{selected, hosted, deselected},
+		HostAttempts:              []api.HostedImageAttempt{completedCoverage, historicalAttempt},
+		FailedHosts:               []string{"old-host"},
+		ImageRequirementsPrepared: true,
+		Status:                    api.StageStatusBlocked,
+		RequiredActions:           []api.RequiredAction{reconcile},
+		Failures:                  []api.WorkflowFailure{failure},
+	}
+	retained := workflowMediaPrivateArtifacts{
+		Screenshots: []api.ScreenshotImage{
+			{Path: missingPath, Purpose: api.ScreenshotPurposeFinal},
+			{Path: filepath.Join(t.TempDir(), "also-missing-retained-screen.png"), Purpose: api.ScreenshotPurposeFinal},
+		},
+		ArtifactImages: map[api.PublicResourceID]api.ScreenshotImage{
+			selected.ID:   {Path: missingPath, Purpose: api.ScreenshotPurposeFinal},
+			deselected.ID: {Path: filepath.Join(t.TempDir(), "also-missing-retained-screen.png"), Purpose: api.ScreenshotPurposeFinal},
+		},
+		HostedImages: map[api.PublicResourceID]api.UploadedImageLink{
+			hosted.ID: {
+				Host:         "pixhost",
+				UsageScope:   "global",
+				AccountScope: accountScope,
+				RawURL:       hosted.URL,
+			},
+		},
+		HostedSources: map[api.PublicResourceID]api.PublicResourceID{hosted.ID: selected.ID},
+	}
+	projections := api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{
+		{TrackerID: "ONE", Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1}},
+		{TrackerID: "THREE", Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1}},
+	}}
+
+	for _, testCase := range []struct {
+		name                    string
+		usageScope              string
+		wantPreservedAttempts   int
+		wantSynthesizedAttempts int
+	}{
+		{
+name: "global link covers added tracker",
+ usageScope: "global",
+ wantPreservedAttempts: 1,
+ wantSynthesizedAttempts: 2,
+},
+		{
+name: "tracker scoped link does not widen to added tracker",
+ usageScope: "tracker:ONE",
+ wantPreservedAttempts: 2,
+},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			private := cloneWorkflowMediaPrivateArtifacts(retained)
+			link := private.HostedImages[hosted.ID]
+			link.UsageScope = testCase.usageScope
+			private.HostedImages[hosted.ID] = link
+
+			rebound, reboundResource, restoreErr := builder.RestoreCompatible(ctx, release, projections, &existing, private, time.Now())
+			if restoreErr != nil {
+				t.Fatalf("rebind retained media: %v", restoreErr)
+			}
+			if !reflect.DeepEqual(rebound.Artifacts, existing.Artifacts) || rebound.Artifacts[2].Selected ||
+				rebound.Artifacts[0].Order != 8 || rebound.Artifacts[2].Order != 1 {
+				t.Fatalf("rebind changed retained selection/order/artifacts: %#v", rebound.Artifacts)
+			}
+			requirements, fingerprintErr := workflowMediaRequirementsFingerprint(projections.Projections)
+			if fingerprintErr != nil || rebound.RequirementsFingerprint != requirements {
+				t.Fatalf("rebound requirements fingerprint = %q, %v; want %q", rebound.RequirementsFingerprint, fingerprintErr, requirements)
+			}
+			if !rebound.ImageRequirementsPrepared || !reflect.DeepEqual(rebound.FailedHosts, existing.FailedHosts) ||
+				!reflect.DeepEqual(rebound.Failures, existing.Failures) || !reflect.DeepEqual(rebound.RequiredActions, existing.RequiredActions) {
+				t.Fatalf("rebind changed retained host readiness/failures/actions: %#v", rebound)
+			}
+			if len(rebound.HostAttempts) != testCase.wantPreservedAttempts+testCase.wantSynthesizedAttempts {
+				t.Fatalf("rebind host attempts = %#v", rebound.HostAttempts)
+			}
+			if testCase.wantSynthesizedAttempts == 0 {
+				if !reflect.DeepEqual(rebound.HostAttempts, existing.HostAttempts) {
+					t.Fatalf("tracker-scoped retained link widened into current coverage: %#v", rebound.HostAttempts)
+				}
+			} else if !reflect.DeepEqual(rebound.HostAttempts[0], historicalAttempt) {
+				t.Fatalf("rebind discarded failed historical attempt: %#v", rebound.HostAttempts)
+			}
+			attemptIDs := make(map[api.PublicResourceID]struct{}, len(rebound.HostAttempts))
+			for _, attempt := range rebound.HostAttempts {
+				if _, exists := attemptIDs[attempt.ID]; exists {
+					t.Fatalf("rebind retained duplicate host attempt %q: %#v", attempt.ID, rebound.HostAttempts)
+				}
+				attemptIDs[attempt.ID] = struct{}{}
+			}
+			for _, attempt := range rebound.HostAttempts[testCase.wantPreservedAttempts:] {
+				if attempt.Media != (api.MediaArtifactSetRef{}) || attempt.UsageScope != "global" ||
+					len(attempt.TrackerIDs) != 1 || len(attempt.Results) != 1 || attempt.Results[0].ID != hosted.ID {
+					t.Fatalf("rebound synthetic host coverage = %#v", attempt)
+				}
+			}
+			if testCase.wantSynthesizedAttempts > 0 {
+				repeated, _, repeatErr := builder.RestoreCompatible(ctx, release, projections, &existing, private, time.Now())
+				if repeatErr != nil || !reflect.DeepEqual(repeated.HostAttempts, rebound.HostAttempts) {
+					t.Fatalf("repeated rebind host coverage = %#v, %v; want %#v", repeated.HostAttempts, repeatErr, rebound.HostAttempts)
+				}
+			}
+			updatedPrivate, ok := reboundResource.(workflowMediaPrivateArtifacts)
+			if !ok || updatedPrivate.ArtifactImages[selected.ID].Path != missingPath {
+				t.Fatalf("rebound retained resource = %#v", reboundResource)
+			}
+			updatedPrivate.ArtifactImages[selected.ID] = api.ScreenshotImage{Path: "changed"}
+			if private.ArtifactImages[selected.ID].Path != missingPath {
+				t.Fatal("rebind shared retained private media")
+			}
+		})
+	}
+	if guard.calls != 0 {
+		t.Fatalf("rebind loaded reusable media %d times", guard.calls)
+	}
+	if _, err := os.Stat(missingPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("retained local media unexpectedly available: %v", err)
 	}
 }
 
@@ -554,7 +794,7 @@ func TestWorkflowMediaRestoreCompatibleMaterializesBeforeSourceCleanup(t *testin
 	result := make(chan restoreResult, 1)
 	go func() {
 		snapshot, retained, restoreErr := builder.RestoreCompatible(t.Context(), api.ReleaseRef{SourcePath: secondSource, Generation: 2},
-			api.TrackerReleaseProjectionSet{}, time.Now())
+			api.TrackerReleaseProjectionSet{}, nil, nil, time.Now())
 		if restoreErr == nil {
 			snapshot.WorkflowID = "workflow-media-reuse"
 			snapshot.ID = "restored-media"
@@ -701,7 +941,7 @@ func TestWorkflowMediaRestoreCompatiblePersistsDistinctPathsForEqualBytes(t *tes
 	}
 	projections := api.TrackerReleaseProjectionSet{}
 	firstSnapshot, firstRetained, err := builder.RestoreCompatible(ctx,
-		api.ReleaseRef{SourcePath: secondSource, Generation: currentBinding.PreparedGeneration}, projections, time.Now())
+		api.ReleaseRef{SourcePath: secondSource, Generation: currentBinding.PreparedGeneration}, projections, nil, nil, time.Now())
 	if err != nil {
 		t.Fatalf("restore reusable media: %v", err)
 	}
@@ -736,7 +976,7 @@ func TestWorkflowMediaRestoreCompatiblePersistsDistinctPathsForEqualBytes(t *tes
 	}
 
 	secondSnapshot, _, err := builder.RestoreCompatible(ctx,
-		api.ReleaseRef{SourcePath: secondSource, Generation: currentBinding.PreparedGeneration}, projections, time.Now())
+		api.ReleaseRef{SourcePath: secondSource, Generation: currentBinding.PreparedGeneration}, projections, nil, nil, time.Now())
 	if err != nil {
 		t.Fatalf("repeat restore reusable media: %v", err)
 	}
@@ -856,7 +1096,7 @@ func TestWorkflowMediaRestoreCompatiblePreservesHostedLinkWhenLocalImageIsMissin
 		resolver: workflowMediaResolverFake{screenshotSubject: &api.ScreenshotSubject{MediaBinding: binding, SourcePath: binding.SourcePath}},
 		media:    &mediaModule{repo: repository, mediaReuse: repository},
 	}
-	snapshot, _, err := builder.RestoreCompatible(t.Context(), api.ReleaseRef{SourcePath: binding.SourcePath, Generation: binding.PreparedGeneration}, api.TrackerReleaseProjectionSet{}, time.Now())
+	snapshot, _, err := builder.RestoreCompatible(t.Context(), api.ReleaseRef{SourcePath: binding.SourcePath, Generation: binding.PreparedGeneration}, api.TrackerReleaseProjectionSet{}, nil, nil, time.Now())
 	if err != nil {
 		t.Fatalf("restore compatible hosted link: %v", err)
 	}
@@ -1036,7 +1276,7 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 		t.Fatalf("prepared generation did not advance: %d -> %d", firstPrepared.Release.Generation, secondPrepared.Release.Generation)
 	}
 	restored, restoredResource, err := builder.RestoreCompatible(ctx,
-		api.ReleaseRef{SourcePath: sourcePath, Generation: secondPrepared.Release.Generation}, projections, time.Now())
+		api.ReleaseRef{SourcePath: sourcePath, Generation: secondPrepared.Release.Generation}, projections, nil, nil, time.Now())
 	if err != nil {
 		t.Fatalf("restore refreshed generation: %v", err)
 	}

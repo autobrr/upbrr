@@ -438,7 +438,7 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 		return CommandResult{}, err
 	}
 	if result.Dupes != nil || result.TrackerApproval != nil {
-		if err := m.restoreReusableMedia(ctx, ownerID, &state, nextRevision, now, &result); err != nil {
+		if err := m.restoreReusableMedia(ctx, ownerID, &state, priorWorkflow.Media, nextRevision, now, &result); err != nil {
 			m.cleanupUncommittedResult(ownerID, priorWorkflow, result)
 			return CommandResult{}, err
 		}
@@ -505,7 +505,7 @@ func (m *Module) cleanupUncommittedResult(ownerID string, prior api.ReleaseWorkf
 	if result.Dupes != nil {
 		m.private.Delete(ownerID, workflowID, dupePrivateResourceID(result.Dupes.ID))
 	}
-	if result.Media != nil {
+	if result.Media != nil && (prior.Media == nil || prior.Media.ID != result.Media.ID) {
 		m.private.Delete(ownerID, workflowID, mediaPrivateResourceID(result.Media.ID))
 	}
 	if result.DryRun != nil {
@@ -4973,7 +4973,7 @@ func (m *Module) captureMedia(
 	var privateArtifacts any
 	if priorMedia == nil {
 		if restorer, ok := m.mediaBuilder.(CompatibleMediaRestorer); ok {
-			restored, retained, restoreErr := restorer.RestoreCompatible(ctx, projections.ReleaseRef, eligibleProjections, now)
+			restored, retained, restoreErr := restorer.RestoreCompatible(ctx, projections.ReleaseRef, eligibleProjections, nil, nil, now)
 			if restoreErr != nil {
 				return CommandResult{}, fmt.Errorf("release workflow restore compatible media: %w", restoreErr)
 			}
@@ -5008,7 +5008,7 @@ func (m *Module) captureMedia(
 		return CommandResult{}, errors.New("release workflow build media artifacts: requirements fingerprint mismatch")
 	}
 	if len(snapshot.Failures) == 0 {
-		refreshMutatedMediaStatus(&snapshot, eligibleProjections.Projections)
+		refreshMutatedMediaStatus(&snapshot, eligibleProjections.Projections, projections.Projections)
 	}
 	snapshot.TrackerApproval = targets.TrackerApproval()
 	result, err := m.publishMedia(ownerID, state, nextRevision, now, mediaArtifactsPublication{Snapshot: snapshot})
@@ -5165,7 +5165,7 @@ func (m *Module) attachMediaArtifacts(
 	if err := validateMediaRequirementsFingerprint(updated, projections); err != nil {
 		return CommandResult{}, err
 	}
-	refreshMutatedMediaStatus(&updated, eligible.Projections)
+	refreshMutatedMediaStatus(&updated, eligible.Projections, projections.Projections)
 	updated.ImageRequirementsPrepared = false
 	return m.publishMediaReplacement(ownerID, state, nextRevision, now, updated, retained)
 }
@@ -5497,7 +5497,7 @@ func (m *Module) publishMediaMutation(
 		return CommandResult{}, err
 	}
 	eligible := targets.Projections()
-	refreshMutatedMediaStatus(&snapshot, eligible.Projections)
+	refreshMutatedMediaStatus(&snapshot, eligible.Projections, projections.Projections)
 	snapshot.TrackerApproval = targets.TrackerApproval()
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
 		Prior                     api.WorkflowFingerprint
@@ -5592,7 +5592,7 @@ func (m *Module) refreshPersistedMediaStatus(
 	now time.Time,
 	command refreshPersistedMediaStatusCommand,
 ) (CommandResult, error) {
-	_, _, eligible, snapshot, resource, err := m.mediaExtensionContext(ctx, ownerID, state, &command.Media, now)
+	_, projections, eligible, snapshot, resource, err := m.mediaExtensionContext(ctx, ownerID, state, &command.Media, now)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -5603,7 +5603,7 @@ func (m *Module) refreshPersistedMediaStatus(
 		return CommandResult{}, fmt.Errorf("%w: persisted media requirements remain blocked", ErrInvalidTransition)
 	}
 	refreshed := *snapshot
-	refreshMutatedMediaStatus(&refreshed, eligible.Projections)
+	refreshMutatedMediaStatus(&refreshed, eligible.Projections, projections.Projections)
 	if refreshed.Status != api.StageStatusCompleted {
 		return CommandResult{}, fmt.Errorf("%w: persisted media requirements remain blocked", ErrInvalidTransition)
 	}
@@ -5614,7 +5614,9 @@ func (m *Module) refreshPersistedMediaStatus(
 // retaining image-host failures and pending reconciliation actions. Before
 // required hosting runs, selected local assets determine readiness; afterward,
 // each surviving tracker must have enough applicable hosted screenshot sources.
-func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections []api.TrackerReleaseProjection) {
+// The full known projection set distinguishes an excluded tracker's retained
+// failure from an unscoped or unknown-tracker failure that must still block.
+func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections, knownProjections []api.TrackerReleaseProjection) {
 	hostFailures := make([]api.WorkflowFailure, 0, len(snapshot.Failures))
 	for _, failure := range snapshot.Failures {
 		if failure.Failure.Operation == api.OperationKindImageHosting {
@@ -5625,7 +5627,7 @@ func refreshMutatedMediaStatus(snapshot *api.MediaArtifactSet, projections []api
 	allTrackerHostsFailed := false
 	unmatchedTrackerHostFailure := false
 	if snapshot.ImageRequirementsPrepared {
-		unmatchedTrackerHostFailure = mediaHasUnscopedOrUnknownImageHostFailure(*snapshot, projections)
+		unmatchedTrackerHostFailure = mediaHasUnscopedOrUnknownImageHostFailure(*snapshot, knownProjections)
 		readinessProjections = slices.DeleteFunc(
 			append([]api.TrackerReleaseProjection(nil), projections...),
 			func(projection api.TrackerReleaseProjection) bool {

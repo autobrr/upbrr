@@ -338,11 +338,14 @@ func (*compositeReusableMediaBuilder) BuildIncremental(context.Context, api.Rele
 }
 
 func (f *compositeReusableMediaBuilder) RestoreCompatible(ctx context.Context, release api.ReleaseRef,
-	projections api.TrackerReleaseProjectionSet, now time.Time,
+	projections api.TrackerReleaseProjectionSet, existing *api.MediaArtifactSet, privateExisting any, now time.Time,
 ) (api.MediaArtifactSet, RetainedMediaResource, error) {
-	snapshot, retained, err := f.compatibleMediaRestorerFake.RestoreCompatible(ctx, release, projections, now)
+	snapshot, retained, err := f.compatibleMediaRestorerFake.RestoreCompatible(ctx, release, projections, existing, privateExisting, now)
 	if err != nil {
 		return api.MediaArtifactSet{}, nil, err
+	}
+	if existing != nil {
+		return snapshot, retained, nil
 	}
 	snapshot.Artifacts[0].Selected = true
 	snapshot.Artifacts = append(snapshot.Artifacts,
