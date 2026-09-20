@@ -167,7 +167,6 @@ func TestBTNGroupOnlyUploadWaitsForAPIVisibility(t *testing.T) {
 				Method string `json:"method"`
 				Params struct {
 					Key     string            `json:"key"`
-					ID      string            `json:"id"`
 					Search  map[string]string `json:"search"`
 					Results int               `json:"results"`
 				} `json:"params"`
@@ -181,7 +180,7 @@ func TestBTNGroupOnlyUploadWaitsForAPIVisibility(t *testing.T) {
 			}
 			switch rpc.Method {
 			case "getTorrents":
-				if len(rpc.Params.Search) != 1 || rpc.Params.Search["group_id"] != "123" || rpc.Params.Results != 1000 {
+				if len(rpc.Params.Search) != 0 || rpc.Params.Results != 1000 {
 					handlerErrs.Errorf("incorrect upload lookup filter: %v", rpc.Params.Search)
 				}
 				if apiSearchCalls.Add(1) < 3 {
@@ -201,19 +200,14 @@ func TestBTNGroupOnlyUploadWaitsForAPIVisibility(t *testing.T) {
 								"ReleaseName": strings.Replace(releaseName, "1080p", "720p", 1),
 							},
 							"456": map[string]string{
+								"DownloadURL": "http://" + r.Host + "/download",
+								"GroupName":   "S01E01",
 								"TorrentID":   "456",
 								"GroupID":     "123",
 								"ReleaseName": " " + strings.ToUpper(releaseName) + " ",
 							},
 						},
 					},
-				})
-			case "getTorrentById":
-				if rpc.Params.ID != "456" {
-					handlerErrs.Errorf("incorrect torrent lookup ID: %q", rpc.Params.ID)
-				}
-				_ = json.NewEncoder(w).Encode(map[string]any{
-					"result": map[string]string{"DownloadURL": "http://" + r.Host + "/download"},
 				})
 			default:
 				handlerErrs.Errorf("unexpected method: %s", rpc.Method)
@@ -252,13 +246,12 @@ func TestBTNGroupOnlyUploadWaitsForAPIVisibility(t *testing.T) {
 func TestBTNUploadReadsRegisteredTorrentLink(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name         string
-		page         string
-		redirect     bool
-		wantAPI      bool
-		failAPI      bool
-		unknownGroup bool
-		pageStatus   int
+		name       string
+		page       string
+		redirect   bool
+		wantAPI    bool
+		failAPI    bool
+		pageStatus int
 	}{
 		{
 			name:     "redirected warning with canonical link after group navigation",
@@ -303,10 +296,9 @@ func TestBTNUploadReadsRegisteredTorrentLink(t *testing.T) {
 			wantAPI:  true,
 		},
 		{
-			name:         "direct response conflicting groups use name search",
-			page:         `<a href="/torrents.php?id=999&amp;torrentid=789">Older</a><a href="/torrents.php?id=123&amp;torrentid=456">New</a>`,
-			wantAPI:      true,
-			unknownGroup: true,
+			name:    "direct response conflicting groups use unfiltered search",
+			page:    `<a href="/torrents.php?id=999&amp;torrentid=789">Older</a><a href="/torrents.php?id=123&amp;torrentid=456">New</a>`,
+			wantAPI: true,
 		},
 		{
 			name:     "warning unrelated canonical group uses confirmed group API",
@@ -397,7 +389,6 @@ func TestBTNUploadReadsRegisteredTorrentLink(t *testing.T) {
 					var rpc struct {
 						Method string `json:"method"`
 						Params struct {
-							ID     string            `json:"id"`
 							Search map[string]string `json:"search"`
 						} `json:"params"`
 					}
@@ -408,27 +399,20 @@ func TestBTNUploadReadsRegisteredTorrentLink(t *testing.T) {
 					switch rpc.Method {
 					case "getTorrents":
 						searches.Add(1)
-						key, value := "group_id", "123"
-						if tc.unknownGroup {
-							key, value = "release", releaseName
-						}
-						if len(rpc.Params.Search) != 1 || rpc.Params.Search[key] != value {
+						if len(rpc.Params.Search) != 0 {
 							handlerErrs.Errorf("incorrect upload search: %v", rpc.Params.Search)
 						}
-						_ = json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"torrents": map[string]any{
-							"456": map[string]string{"GroupID": "123", "ReleaseName": releaseName},
-						}}})
-					case "getTorrentById":
-						if rpc.Params.ID != "456" {
-							handlerErrs.Errorf("resolved another torrent: %s", rpc.Params.ID)
-						}
+						downloadURL := "http://" + r.Host + "/torrents.php?action=download&id=456"
 						if tc.failAPI {
-							_, _ = io.WriteString(w, `{"error":{"code":-32002},"result":null}`)
-							return
+							downloadURL = ""
 						}
-						_ = json.NewEncoder(w).Encode(map[string]any{"result": map[string]string{
-							"DownloadURL": "http://" + r.Host + "/torrents.php?action=download&id=456",
-						}})
+						_ = json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"torrents": map[string]any{
+							"456": map[string]string{
+								"GroupID":     "123",
+								"ReleaseName": releaseName,
+								"DownloadURL": downloadURL,
+							},
+						}}})
 					default:
 						handlerErrs.Errorf("unexpected API method: %s", rpc.Method)
 					}
@@ -509,7 +493,6 @@ func TestBTNOversizedUploadPageFallsBackToAPI(t *testing.T) {
 						Method string `json:"method"`
 						Params struct {
 							Search map[string]string `json:"search"`
-							ID     string            `json:"id"`
 						} `json:"params"`
 					}
 					if err := json.NewDecoder(r.Body).Decode(&rpc); err != nil {
@@ -518,17 +501,16 @@ func TestBTNOversizedUploadPageFallsBackToAPI(t *testing.T) {
 					}
 					switch rpc.Method {
 					case "getTorrents":
-						if rpc.Params.Search["group_id"] != "123" {
-							handlerErrs.Errorf("confirmed group lost after oversized page: %v", rpc.Params.Search)
+						if len(rpc.Params.Search) != 0 {
+							handlerErrs.Errorf("incorrect upload search: %v", rpc.Params.Search)
 						}
 						_ = json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"torrents": map[string]any{
-							"456": map[string]string{"GroupID": "123", "ReleaseName": releaseName},
+							"456": map[string]string{
+								"GroupID":     "123",
+								"ReleaseName": releaseName,
+								"DownloadURL": "http://" + r.Host + "/download",
+							},
 						}}})
-					case "getTorrentById":
-						if rpc.Params.ID != "456" {
-							handlerErrs.Errorf("selected torrent from truncated page: %q", rpc.Params.ID)
-						}
-						_ = json.NewEncoder(w).Encode(map[string]any{"result": map[string]string{"DownloadURL": "http://" + r.Host + "/download"}})
 					default:
 						handlerErrs.Errorf("unexpected method: %s", rpc.Method)
 					}
@@ -607,5 +589,81 @@ func TestBTNFailedUploadResponseCannotSupplyTorrentIdentity(t *testing.T) {
 	}, filepath.Join(t.TempDir(), "registered.torrent"), nil, "application/octet-stream")
 	if err == nil || summary.Uploaded != 0 || calls != 1 {
 		t.Fatalf("failed upload supplied artifact authority: summary=%+v err=%v requests=%d", summary, err, calls)
+	}
+}
+
+func TestBTNAPIUploadSearchUsesTVDBOrFirstPage(t *testing.T) {
+	t.Parallel()
+	for _, tvdbID := range []int{0, 123456} {
+		t.Run(fmt.Sprintf("tvdb=%d", tvdbID), func(t *testing.T) {
+			t.Parallel()
+			req := newBTNUploadTestRequest(t)
+			req.Meta.Identity.TVDBID = tvdbID
+			req, failure := trackers.PrepareInputWithReleaseNamePolicy(req, Profile().ReleaseNamePolicy)
+			if failure != nil {
+				t.Fatal(failure)
+			}
+			releaseName, err := req.ReviewedUploadName()
+			if err != nil {
+				t.Fatal(err)
+			}
+			handlerErrs := newHTTPHandlerErrorRecorder(t)
+			var searches, downloads atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/registered" {
+					downloads.Add(1)
+					_, _ = w.Write(btnRegisteredTorrentFixture())
+					return
+				}
+				var rpc struct {
+					Method string `json:"method"`
+					Params struct {
+						Search  map[string]string `json:"search"`
+						Results int               `json:"results"`
+						Offset  int               `json:"offset"`
+					} `json:"params"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&rpc); err != nil {
+					handlerErrs.Errorf("decode request: %v", err)
+					return
+				}
+				searches.Add(1)
+				if rpc.Method != "getTorrents" || rpc.Params.Results != 1000 || rpc.Params.Offset != 0 {
+					handlerErrs.Errorf("unexpected lookup: %+v", rpc)
+				}
+				if tvdbID == 0 {
+					if rpc.Params.Search == nil || len(rpc.Params.Search) != 0 {
+						handlerErrs.Errorf("expected empty search object: %v", rpc.Params.Search)
+					}
+				} else if len(rpc.Params.Search) != 1 || rpc.Params.Search["tvdb"] != "123456" {
+					handlerErrs.Errorf("expected only TVDB search: %v", rpc.Params.Search)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"torrents": map[string]any{
+					"999": map[string]string{
+						"GroupID":     "789",
+						"GroupName":   "S01E01",
+						"ReleaseName": "Other.Show.S01E01.1080p.WEB-DL.H.265-GRP",
+						"DownloadURL": "http://" + r.Host + "/wrong",
+					},
+					"456": map[string]string{
+						"GroupID":     "123",
+						"GroupName":   "S01E01",
+						"ReleaseName": releaseName,
+						"DownloadURL": "http://" + r.Host + "/registered",
+					},
+				}}})
+			}))
+			defer server.Close()
+			outputPath := filepath.Join(t.TempDir(), "registered.torrent")
+			id, group, err := resolveAndDownloadViaAPI(t.Context(), server.URL, "test-api-token", req, "", outputPath)
+			handlerErrs.Check()
+			if err != nil || id != "456" || group != "123" {
+				t.Fatalf("incorrect resolution: id=%s group=%s err=%v", id, group, err)
+			}
+			payload, err := os.ReadFile(outputPath)
+			if err != nil || !bytes.Equal(payload, btnRegisteredTorrentFixture()) || searches.Load() != 1 || downloads.Load() != 1 {
+				t.Fatalf("incorrect artifact: err=%v searches=%d downloads=%d", err, searches.Load(), downloads.Load())
+			}
+		})
 	}
 }
