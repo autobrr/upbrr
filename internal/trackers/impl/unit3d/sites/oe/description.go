@@ -4,6 +4,7 @@
 package oe
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -80,7 +81,7 @@ func oeRenderableScreenshots(screenshots []api.ScreenshotImage) ([]api.Screensho
 	prepared := make([]api.ScreenshotImage, 0, len(screenshots))
 	seen := make(map[string]struct{}, len(screenshots))
 	for _, screenshot := range screenshots {
-		key := oeScreenshotIdentity(screenshot)
+		key := cmp.Or(strings.TrimSpace(screenshot.RawURL), strings.TrimSpace(screenshot.ImgURL))
 		if key == "" {
 			continue
 		}
@@ -101,18 +102,6 @@ func oeRenderableScreenshots(screenshots []api.ScreenshotImage) ([]api.Screensho
 		return nil, fmt.Errorf("OE requires at least %d unique renderable screenshots", oeMinimumScreenshots)
 	}
 	return prepared, nil
-}
-
-// oeScreenshotIdentity follows the shared Unit3D image fallback order while
-// deduplicating by the full image URL when it is available.
-func oeScreenshotIdentity(screenshot api.ScreenshotImage) string {
-	if rawURL := strings.TrimSpace(screenshot.RawURL); rawURL != "" {
-		return rawURL
-	}
-	if imageURL := strings.TrimSpace(screenshot.ImgURL); imageURL != "" {
-		return imageURL
-	}
-	return ""
 }
 
 func oeAppendMissingScreenshotLinks(description string, screenshots []api.ScreenshotImage, thumbnailSize int) string {

@@ -114,7 +114,7 @@ func TestOperationConvergesCompletedCheckpointAfterRepeatedPublicationFailures(t
 	if err := json.Unmarshal(work.Checkpoint, &checkpoint); err != nil {
 		t.Fatal(err)
 	}
-	// Deferring sequence validation must not permit a checkpoint that skips
+	// Refreshing the receipt must not permit a checkpoint that skips
 	// the current receipt, even when the caller's snapshot is stale.
 	checkpoint.Sequence++
 	if err := module.publishCompletedOperationCheckpoint(t.Context(), stored, checkpoint); err == nil {

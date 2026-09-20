@@ -1440,6 +1440,9 @@ func NewRuleSubject(subject UploadSubject) RuleSubject {
 
 // DescriptionSubject contains only facts, local resources, and rendering
 // instructions consumed by tracker description builders.
+// VideoCodec and HasEncodeSettings come from the prepared generation;
+// TrackerQuestionnaireAnswers contains operation-local evidence keyed by tracker
+// and field, rather than reusable media facts.
 type DescriptionSubject struct {
 	VideoCodec                  string
 	HasEncodeSettings           bool

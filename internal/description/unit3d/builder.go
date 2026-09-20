@@ -74,6 +74,9 @@ func BuildDescription(
 
 // ComposeDescription assembles prepared markup, configured sections, and images
 // without applying Unit3D cleanup or tag conversion to tracker-owned content.
+// Callers own removal of stale signatures, NFO, and screenshot blocks. Composition
+// still normalizes whitespace, skips duplicate parts and images, and appends the
+// configured or default signature. A canceled context returns an error.
 func ComposeDescription(
 	ctx context.Context,
 	meta api.DescriptionSubject,

@@ -215,6 +215,8 @@ type DescriptionGroupProvider interface {
 
 // DescriptionCleanupProvider opts a definition into shared description cleanup.
 // Definitions with tracker-owned markup handling leave this disabled.
+// The destination tracker controls cleanup of imported descriptions; reviewed
+// final descriptions bypass cleanup regardless of this capability.
 type DescriptionCleanupProvider interface {
 	UseGenericDescriptionCleanup() bool
 }
