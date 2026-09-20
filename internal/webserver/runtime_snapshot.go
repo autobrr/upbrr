@@ -11,8 +11,10 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/livetest"
 	"github.com/autobrr/upbrr/internal/logging"
+	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
 	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // backendRuntimeSnapshot is a shallow, single-generation view of config and
@@ -25,6 +27,8 @@ type backendRuntimeSnapshot struct {
 	coreOwner    LifecycleOwner
 	coreInitErr  error
 	logger       *logging.Logger
+	bundle       *runtimeBundle
+	release      func()
 }
 
 // runtimeSnapshot copies all runtime fields under one read lock so callers do
@@ -42,7 +46,29 @@ func (b *Backend) runtimeSnapshot() backendRuntimeSnapshot {
 		coreOwner:    b.coreOwner,
 		coreInitErr:  b.coreInitErr,
 		logger:       b.logger,
+		bundle:       b.runtimeBundle,
 	}
+}
+
+// borrowRuntime acquires one immutable runtime generation for the operation.
+// Callers must invoke the returned snapshot's release function after cleanup.
+func (b *Backend) borrowRuntime() (backendRuntimeSnapshot, error) {
+	b.runtimeAdmissionMu.RLock()
+	rt, err := b.requireRuntime()
+	if err != nil {
+		b.runtimeAdmissionMu.RUnlock()
+		return backendRuntimeSnapshot{}, err
+	}
+	release, ok := rt.bundle.borrow()
+	if !ok {
+		b.runtimeAdmissionMu.RUnlock()
+		return backendRuntimeSnapshot{}, errors.New("runtime generation retired")
+	}
+	rt.release = func() {
+		release()
+		b.runtimeAdmissionMu.RUnlock()
+	}
+	return rt, nil
 }
 
 func (b *Backend) requireRuntime() (backendRuntimeSnapshot, error) {
@@ -166,17 +192,26 @@ func (b *Backend) replaceRuntimeGeneration(
 	capabilities CoreCapabilities,
 	owner LifecycleOwner,
 	logger *logging.Logger,
+	bundle *runtimeBundle,
 ) (LifecycleOwner, *logging.Logger) {
 	b.runtimeMu.Lock()
 	defer b.runtimeMu.Unlock()
 	oldOwner := b.coreOwner
 	oldLogger := b.logger
+	oldBundle := b.runtimeBundle
 	b.capabilities = capabilities
 	b.runtimeGeneration = generationID
 	b.coreOwner = owner
 	b.coreInitErr = nil
 	b.logger = logger
+	if bundle == nil {
+		bundle = newRuntimeBundle(owner, logger)
+	}
+	b.runtimeBundle = bundle
 	b.cfg = cfg
+	if oldBundle != nil {
+		return nil, oldLogger
+	}
 	return oldOwner, oldLogger
 }
 
@@ -185,18 +220,24 @@ type backendRuntimeInstaller struct {
 }
 
 func (i backendRuntimeInstaller) Install(generation RuntimeGeneration) RetiredRuntime {
+	oldBundle := i.backend.runtimeSnapshot().bundle
 	oldOwner, oldLogger := i.backend.replaceRuntimeGeneration(
 		generation.ID,
 		generation.Config,
 		generation.Capabilities,
 		generation.Owner,
 		generation.Logger,
+		generation.Bundle,
 	)
 	if i.backend.hub != nil {
 		i.backend.hub.SetLogger(generation.Logger)
 	}
 	i.backend.rebindLogStreams(oldLogger, generation.Logger)
-	return RetiredRuntime{Owner: oldOwner, Logger: oldLogger}
+	return RetiredRuntime{
+		Bundle: oldBundle,
+		Owner:  oldOwner,
+		Logger: oldLogger,
+	}
 }
 
 func (b *Backend) runtimeActivator() (*RuntimeActivator, error) {
@@ -215,6 +256,33 @@ func (b *Backend) runtimeActivator() (*RuntimeActivator, error) {
 	if err != nil {
 		return nil, fmt.Errorf("initialize runtime activator: %w", err)
 	}
+	activator.currentConfig = b.currentConfig
+	activator.deps.activationSafe = func(ctx context.Context, repo *db.SQLiteRepository) (bool, error) {
+		if runtime := b.runtimeSnapshot(); runtime.bundle != nil && runtime.bundle.hasBorrowers() {
+			return false, nil
+		}
+		return repo.ConfigActivationSafe(ctx)
+	}
+	activator.deps.tryAcquireRuntimeAdmission = func() (func(), bool) {
+		if !b.runtimeAdmissionMu.TryLock() {
+			return nil, false
+		}
+		return b.runtimeAdmissionMu.Unlock, true
+	}
+	activator.deps.loadActivation = func(ctx context.Context, repo *db.SQLiteRepository) (api.ConfigActivation, error) {
+		return repo.LoadConfigActivation(ctx)
+	}
+	activator.deps.savePending = func(ctx context.Context, repo *db.SQLiteRepository, ownerID string, candidate []byte, impacts []api.ConfigImpactDetail) (api.ConfigActivation, error) {
+		return repo.SavePendingConfigActivation(ctx, ownerID, candidate, impacts)
+	}
+	activator.deps.failPending = func(ctx context.Context, repo *db.SQLiteRepository, activationID string, code api.ConfigActivationFailureCode) (api.ConfigActivation, error) {
+		return repo.FailPendingConfigActivation(ctx, activationID, code)
+	}
+	activator.deps.clearFailure = func(ctx context.Context, repo *db.SQLiteRepository, activationID string) (api.ConfigActivation, error) {
+		return repo.ClearConfigActivationFailure(ctx, activationID)
+	}
+	activator.deps.transform = releaseworkflow.ApplyConfigImpact
+	activator.deps.persistActivated = persistRuntimeConfigAndActivate
 	if b.liveTest != nil {
 		profile, err := livetest.ProfileForDB(b.repo.DBPath())
 		if err != nil {
@@ -232,9 +300,11 @@ func (b *Backend) runtimeActivator() (*RuntimeActivator, error) {
 		activator.liveImageConfig = liveConfig.ImageHosting
 		activator.liveImageRegistry = registry
 		activator.liveImageTrackerInputs = liveTestImageTrackerInputs(liveConfig, registry)
-		activator.deps.build = func(ctx context.Context, cfg config.Config, repo *db.SQLiteRepository) (RuntimeGeneration, error) {
-			return buildRuntimeGenerationWithLiveTest(ctx, cfg, repo, b.liveTest)
-		}
+	}
+	activator.deps.build = func(ctx context.Context, cfg config.Config, repo *db.SQLiteRepository) (RuntimeGeneration, error) {
+		return buildRuntimeGenerationWithCoordinator(
+			ctx, cfg, repo, b.liveTest, b.workflowCoordinator, activator.buildingConfigGeneration, activator.buildingConfigFingerprint,
+		)
 	}
 	b.activator = activator
 	return activator, nil

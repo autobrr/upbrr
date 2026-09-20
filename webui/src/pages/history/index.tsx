@@ -62,9 +62,11 @@ const ruleResultState = (failure: HistoryRuleFailure) => {
 
 type Props = {
   onReleaseDeleted?: (sourcePath: string) => void;
+  onOpenInput?: (sourcePath: string) => Promise<boolean>;
 };
 
-export default function HistoryPage({ onReleaseDeleted }: Props) {
+/** Displays persisted history and optionally reopens a source through the active release session. */
+export default function HistoryPage({ onReleaseDeleted, onOpenInput }: Props) {
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [selectedPath, setSelectedPath] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -72,7 +74,11 @@ export default function HistoryPage({ onReleaseDeleted }: Props) {
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [opening, setOpening] = useState(false);
   const [error, setError] = useState("");
+  const [openFailure, setOpenFailure] = useState<{ sourcePath: string; message: string } | null>(
+    null,
+  );
 
   useEffect(() => {
     const listHistory = historyClient.list;
@@ -124,6 +130,7 @@ export default function HistoryPage({ onReleaseDeleted }: Props) {
   }, [filteredEntries, selectedPath]);
 
   useEffect(() => {
+    setOpenFailure(null);
     if (!selectedPath) {
       setOverview(null);
       return;
@@ -181,6 +188,7 @@ export default function HistoryPage({ onReleaseDeleted }: Props) {
 
     setDeleting(true);
     setError("");
+    setOpenFailure(null);
     try {
       const deletedPath = selectedPath;
       await deleteHistoryRelease(deletedPath);
@@ -197,6 +205,30 @@ export default function HistoryPage({ onReleaseDeleted }: Props) {
       setDeleting(false);
     }
   };
+
+  const handleOpenInput = async () => {
+    if (!selectedPath || !onOpenInput) return;
+    setOpening(true);
+    setError("");
+    setOpenFailure(null);
+    try {
+      const opened = await onOpenInput(selectedPath);
+      if (!opened) {
+        setOpenFailure({
+          sourcePath: selectedPath,
+          message:
+            "Input could not be opened. Check the Input page for errors or recovery actions.",
+        });
+      }
+    } catch (err) {
+      setOpenFailure({ sourcePath: selectedPath, message: String(err) });
+    } finally {
+      setOpening(false);
+    }
+  };
+
+  const displayedError =
+    error || (openFailure?.sourcePath === selectedPath ? openFailure.message : "");
 
   return (
     <div className="content-stack">
@@ -273,7 +305,15 @@ export default function HistoryPage({ onReleaseDeleted }: Props) {
 
           {overview ? (
             <div className="grid gap-3">
-              <div className="flex justify-end">
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  className="ghost"
+                  disabled={opening || deleting || detailLoading || !selectedPath || !onOpenInput}
+                  onClick={() => void handleOpenInput()}
+                >
+                  {opening ? "Opening..." : "Open input"}
+                </button>
                 <button
                   type="button"
                   className="ghost border-red-400/45 text-[var(--danger)]"
@@ -442,7 +482,7 @@ export default function HistoryPage({ onReleaseDeleted }: Props) {
             </div>
           ) : null}
 
-          {error ? <p className="error">{error}</p> : null}
+          {displayedError ? <p className="error">{displayedError}</p> : null}
         </div>
       </section>
     </div>

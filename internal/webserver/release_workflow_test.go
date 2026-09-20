@@ -50,6 +50,10 @@ func TestClassifyReleaseWorkflowError(t *testing.T) {
 		code     api.OperationFailureCode
 		recovery api.OperationRecovery
 	}{
+		{"unresolved effect", fmt.Errorf("reserve input: %w", api.ErrReleaseWorkflowEffectOutcomeUnknown), api.OperationFailureUnknownOutcome, api.OperationRecoveryConfirm},
+		{"active busy", api.ErrActiveInputBusy, api.OperationFailureActiveInputBusy, api.OperationRecoveryReviewAgain},
+		{"active changed", api.ErrActiveInputChanged, api.OperationFailureStaleReview, api.OperationRecoveryReviewAgain},
+		{"active lease lost", api.ErrActiveInputLeaseLost, api.OperationFailureStaleReview, api.OperationRecoveryReviewAgain},
 		{"missing", releaseworkflow.ErrWorkflowNotFound, api.OperationFailureMissingPrerequisite, api.OperationRecoveryRefreshRelease},
 		{"revision", releaseworkflow.ErrRevisionConflict, api.OperationFailureStaleReview, api.OperationRecoveryReviewAgain},
 		{"idempotency", releaseworkflow.ErrIdempotencyConflict, api.OperationFailureStaleReview, api.OperationRecoveryReviewAgain},

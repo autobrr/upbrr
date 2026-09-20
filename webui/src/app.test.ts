@@ -66,6 +66,7 @@ const metadataPreview = (sourcePath: string): MetadataPreview => ({
 describe("App shell", () => {
   it.each([false, true])("shows the process testing banner with liveTest=%s", async (liveTest) => {
     setAppRequestHandlerForTests(async (method) => {
+      if (method === "GetActiveInput") return { state: "empty", revision: 0 };
       if (method === "GetApplicationInfo") {
         return { testRuntime: liveTest ? { mode: "live_test", runId: "test-run" } : undefined };
       }
@@ -87,6 +88,7 @@ describe("App shell", () => {
 
   it("shows a recoverable capability error while keeping preparation available", async () => {
     setAppRequestHandlerForTests(async (method) => {
+      if (method === "GetActiveInput") return { state: "empty", revision: 0 };
       if (method === "GetConfig" || method === "GetDefaultConfig") return "{}";
       if (method === "GetTrackerCatalog") return trackerCatalog();
       throw new Error("unavailable");
@@ -102,6 +104,7 @@ describe("App shell", () => {
 
   it("composes the release session and renders input routing", async () => {
     setAppRequestHandlerForTests(async (method) => {
+      if (method === "GetActiveInput") return { state: "empty", revision: 0 };
       if (method === "GetConfig" || method === "GetDefaultConfig") return "{}";
       throw new Error(`unexpected app request: ${method}`);
     });
@@ -131,6 +134,7 @@ describe("App shell", () => {
             ],
     }));
     setAppRequestHandlerForTests(async (method, body) => {
+      if (method === "GetActiveInput") return { state: "empty", revision: 0 };
       if (method === "GetConfig" || method === "GetDefaultConfig") return "{}";
       if (method === "BrowseDirectory") return browse((body as { path: string }).path);
       throw new Error(`unexpected app request: ${method}`);
@@ -163,6 +167,7 @@ describe("App shell", () => {
       JSON.stringify([{ path: "C:\\media\\Previously.Used.mkv", mode: "file" }]),
     );
     setAppRequestHandlerForTests(async (method) => {
+      if (method === "GetActiveInput") return { state: "empty", revision: 0 };
       if (method === "GetConfig" || method === "GetDefaultConfig") return "{}";
       throw new Error(`unexpected app request: ${method}`);
     });
@@ -224,6 +229,7 @@ describe("App shell", () => {
         : {}),
     });
     setAppRequestHandlerForTests(async (method, body) => {
+      if (method === "GetActiveInput") return { state: "empty", revision: 0 };
       if (method === "ListTrackerCatalog") return trackerCatalog();
       if (method === "GetDefaultConfig") return "{}";
       if (method === "GetConfig") {
@@ -237,17 +243,28 @@ describe("App shell", () => {
           },
         });
       }
+      if (method === "OpenActiveInput") {
+        const open = body as {
+          expectedRevision: number;
+          request: { intent: { preparation?: { SourcePath: string } } };
+        };
+        workflowSequence += 1;
+        const created = workflowCurrent(`workflow-${workflowSequence}`, 1);
+        workflows.set(created.workflow.id, created);
+        const openedSource = open.request.intent.preparation?.SourcePath || "";
+        return {
+          state: "active",
+          revision: open.expectedRevision + 1,
+          inputId: openedSource,
+          sourceVersion: openedSource,
+          current: created,
+        };
+      }
       if (method === "ContinueReleaseWorkflow") {
         const command = body as {
-          authority?: { workflowId: string };
+          authority: { workflowId: string };
           intent: { preparation?: { SourcePath: string } };
         };
-        if (!command.authority) {
-          workflowSequence += 1;
-          const created = workflowCurrent(`workflow-${workflowSequence}`, 1);
-          workflows.set(created.workflow.id, created);
-          return created;
-        }
         const retained = workflows.get(command.authority.workflowId);
         if (retained?.release) return retained;
         sourcePath = command.intent.preparation?.SourcePath || "";
@@ -285,6 +302,9 @@ describe("App shell", () => {
     });
 
     render(createElement(App));
+    await waitFor(() =>
+      expect(screen.queryByText("Checking runtime capabilities…")).not.toBeInTheDocument(),
+    );
     const sourceInput = screen.getByLabelText("Source path");
     fireEvent.change(sourceInput, { target: { value: "C:\\media\\Example.Release.2026.mkv" } });
     fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));

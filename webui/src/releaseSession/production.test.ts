@@ -1,14 +1,16 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { afterEach, describe, expect, it } from "vitest";
-import { setAppRequestHandlerForTests } from "../api/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { initializeWebClient, setAppRequestHandlerForTests } from "../api/client";
 import type { ReleaseWorkflowCurrent } from "../api/generated/release-workflow";
 import { productionReleaseSessionPorts } from "./production";
 
 afterEach(() => {
   setAppRequestHandlerForTests(null);
   delete window.__UPBRR_BASE_URL__;
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("productionReleaseSessionPorts", () => {
@@ -40,6 +42,7 @@ describe("productionReleaseSessionPorts", () => {
         preparation: {
           SourcePath: sourcePath,
           Intent: "upload",
+          ExternalFreshness: "refresh",
           Instructions: {
             Identity: {},
             ReleaseName: {},
@@ -176,5 +179,41 @@ describe("productionReleaseSessionPorts", () => {
     expect(ports.workflow.mediaURL(current, "artifact?1")).toBe(
       "/upbrr/api/app/release-workflow-media?workflowId=workflow+1&mediaId=media%2F1&mediaRevision=4&artifactId=artifact%3F1",
     );
+  });
+
+  it("uses both input-change hints and event-stream reconnects to request resync", async () => {
+    const verification = vi.fn();
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            'event: input:verification\ndata: {"correlationID":"prepare-1","phase":"source_inspection","status":"running","message":"Verifying source content.","completedBytes":50,"totalBytes":100}\n\n',
+          ),
+        );
+        controller.enqueue(encoder.encode('event: input:changed\ndata: {"revision":2}\n\n'));
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(stream, { headers: { "Content-Type": "text/event-stream" } }),
+        ),
+    );
+    initializeWebClient("csrf-token", true);
+    const resync = vi.fn();
+    const unsubscribe = productionReleaseSessionPorts().activeInput.subscribe(resync, verification);
+
+    await vi.waitFor(() => expect(resync).toHaveBeenCalledTimes(2));
+    expect(verification).toHaveBeenCalledWith({
+      correlationID: "prepare-1",
+      completedBytes: 50,
+      totalBytes: 100,
+      message: "Verifying source content.",
+      status: "running",
+    });
+    unsubscribe();
   });
 });

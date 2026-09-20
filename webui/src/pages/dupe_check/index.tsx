@@ -14,6 +14,7 @@ import { handleExternalLinkClick } from "../../utils/externalLinks";
 import type {
   DupeAssessment,
   DupeMatchProjection,
+  SubmissionExclusion,
   TrackerPreflightAssessment,
   TrackerPolicyDecision,
   TrackerReleaseProjection,
@@ -27,6 +28,8 @@ type Props = {
   useFavicons?: boolean;
   faviconOnly?: boolean;
   trackerIconSrcByName: TrackerIconCache;
+  submissionExclusions: readonly SubmissionExclusion[];
+  workflowComplete: boolean;
 };
 
 const releaseNameConfirmationState = (projection: TrackerReleaseProjection | undefined) => {
@@ -430,6 +433,8 @@ export default function DupeCheckPage({
   useFavicons = true,
   faviconOnly = false,
   trackerIconSrcByName,
+  submissionExclusions,
+  workflowComplete,
 }: Readonly<Props>) {
   const { view } = facet;
   const assessment = view.assessment || null;
@@ -441,6 +446,13 @@ export default function DupeCheckPage({
   const trackerSelectionRequired = selectedTrackers.size === 0;
   const dupeLoading = view.status === "running";
   const hideTrackerNames = faviconOnly && useFavicons;
+  const excludedTrackerIDs = new Set(submissionExclusions.map((exclusion) => exclusion.trackerId));
+  const allSelectedTrackersAlreadyUploaded =
+    workflowComplete &&
+    trackerIDs.length === 0 &&
+    submissionExclusions.length > 0 &&
+    submissionExclusions.every((exclusion) => exclusion.reason === "already_uploaded") &&
+    [...selectedTrackers].every((tracker) => excludedTrackerIDs.has(tracker));
 
   return (
     <section className="flex flex-col gap-3">
@@ -468,6 +480,7 @@ export default function DupeCheckPage({
                 <PillCheckbox
                   aria-label={tracker.name}
                   checked={selectedTrackers.has(normalized)}
+                  disabled={dupeLoading}
                   key={tracker.name}
                   onCheckedChange={(checked) => {
                     const next = new Set(selectedTrackers);
@@ -507,6 +520,34 @@ export default function DupeCheckPage({
 
       {view.error ? <p className="error">{view.error}</p> : null}
 
+      {submissionExclusions.length ? (
+        <section className="panel grid gap-3" aria-label="Submission exclusions">
+          <h2>Already submitted</h2>
+          <p className="muted">
+            Confirmed tracker submissions are excluded from duplicate checks and upload actions.
+          </p>
+          <ul className="grid gap-2">
+            {submissionExclusions.map((exclusion) => (
+              <li
+                className="rounded border border-white/10 bg-white/5 p-3"
+                key={exclusion.trackerId}
+              >
+                <strong>{exclusion.trackerId}</strong>
+                <span className="muted">
+                  {exclusion.reason === "already_uploaded"
+                    ? "Already uploaded"
+                    : exclusion.reason.replaceAll("_", " ")}
+                  {exclusion.confirmedAt ? ` · ${exclusion.confirmedAt}` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {allSelectedTrackersAlreadyUploaded ? (
+            <p role="status">All selected trackers were already uploaded. No upload is needed.</p>
+          ) : null}
+        </section>
+      ) : null}
+
       {trackerIDs.length ? (
         <WorkflowDupeAssessmentView
           acknowledgeReleaseName={facet.acknowledgeReleaseName}
@@ -520,9 +561,9 @@ export default function DupeCheckPage({
           releaseNameOverrides={view.releaseNameOverrides}
           setIgnored={facet.setIgnored}
         />
-      ) : (
+      ) : submissionExclusions.length === 0 ? (
         <p className="muted">No dupe results yet.</p>
-      )}
+      ) : null}
     </section>
   );
 }

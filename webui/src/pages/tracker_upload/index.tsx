@@ -62,6 +62,13 @@ export default function TrackerUploadPage({ facet }: Props) {
     ];
   }, [selected, view.dryRunResult, view.projections]);
   const uploadRunning = view.uploadStatus === "running";
+  const excludedTrackers = useMemo(
+    () => new Set(view.submissionExclusions.map((item) => item.trackerId)),
+    [view.submissionExclusions],
+  );
+  const hasEligibleTracker = view.selectedTrackers.some(
+    (tracker) => !excludedTrackers.has(tracker),
+  );
   const failedTrackers = (view.result?.results || [])
     .filter((result) => result.submissionStatus === "failed")
     .map((result) => result.trackerId);
@@ -139,6 +146,34 @@ export default function TrackerUploadPage({ facet }: Props) {
         </section>
       ) : null}
 
+      {view.submissionExclusions.length ? (
+        <section className="panel grid gap-3" aria-label="Submission exclusions">
+          <h2>Already submitted</h2>
+          <p className="muted">
+            Confirmed tracker submissions are excluded from duplicate checks and upload actions.
+          </p>
+          <ul className="grid gap-2">
+            {view.submissionExclusions.map((exclusion) => (
+              <li
+                className="rounded border border-white/10 bg-white/5 p-3"
+                key={exclusion.trackerId}
+              >
+                <strong>{exclusion.trackerId}</strong>
+                <span className="muted">
+                  {exclusion.reason === "already_uploaded"
+                    ? "Already uploaded"
+                    : exclusion.reason.replaceAll("_", " ")}
+                  {exclusion.confirmedAt ? ` · ${exclusion.confirmedAt}` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {!hasEligibleTracker ? (
+            <p role="status">All selected trackers were already uploaded. No upload is needed.</p>
+          ) : null}
+        </section>
+      ) : null}
+
       <section className="panel grid gap-3">
         <h2>Run options</h2>
         <div className="flex flex-wrap gap-4">
@@ -172,7 +207,7 @@ export default function TrackerUploadPage({ facet }: Props) {
           <Button
             variant="primary"
             type="button"
-            disabled={view.dryRunStatus === "running" || view.selectedTrackers.length === 0}
+            disabled={view.dryRunStatus === "running" || !hasEligibleTracker}
             onClick={() => void facet.runDryRun()}
           >
             {view.dryRunStatus === "running" ? "Running dry run..." : "Run dry run"}
@@ -180,7 +215,7 @@ export default function TrackerUploadPage({ facet }: Props) {
           <Button
             variant="primary"
             type="button"
-            disabled={!view.mutationsAllowed || uploadRunning || view.selectedTrackers.length === 0}
+            disabled={!view.mutationsAllowed || uploadRunning || !hasEligibleTracker}
             onClick={() => void facet.start()}
           >
             {uploadRunning ? "Uploading..." : "Start upload"}
