@@ -176,7 +176,6 @@ export type SessionAction =
       preserveInputDraft?: boolean;
     }>
   | Readonly<{ type: "active_input_loading" }>
-  | Readonly<{ type: "active_input_failed"; error: string; failure: OperationFailure | null }>
   | Readonly<{
       type: "workflow_operation_updated";
       workflowID: string;
@@ -788,16 +787,6 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       return {
         ...state,
         workflowView: { ...state.workflowView, status: "running", error: "", failure: null },
-      };
-    case "active_input_failed":
-      return {
-        ...state,
-        workflowView: {
-          ...state.workflowView,
-          status: "error",
-          error: action.error,
-          failure: action.failure,
-        },
       };
     case "workflow_view_failed":
       return {

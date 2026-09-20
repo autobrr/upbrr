@@ -347,23 +347,7 @@ func (r *SQLiteRepository) CompleteReleaseWorkflowEffect(
 		if err := requireWorkflowInputMutation(ctx, tx, record.OwnerID, record.WorkflowID, true); err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(ctx, `
-			UPDATE release_workflow_effects
-			SET status = ?, updated_at = ?, completed_at = ?
-			WHERE owner_id = ? AND workflow_id = ? AND operation_id = ? AND effect_id = ? AND status = ?
-		`, status, formatWorkflowStateTime(record.UpdatedAt), formatWorkflowStateTime(*record.CompletedAt),
-			record.OwnerID, record.WorkflowID, record.OperationID, record.EffectID, api.WorkflowEffectStatusStarted)
-		if err != nil {
-			return fmt.Errorf("db complete release workflow effect: %w", err)
-		}
-		rows, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("db complete release workflow effect rows: %w", err)
-		}
-		if rows != 1 {
-			return api.ErrReleaseWorkflowEffectConflict
-		}
-		return nil
+		return completeReleaseWorkflowEffect(ctx, tx, status, record, "effect")
 	})
 }
 
@@ -413,24 +397,34 @@ func (r *SQLiteRepository) completeSubmissionFence(
 		if rows != 1 {
 			return api.ErrReleaseWorkflowEffectConflict
 		}
-		result, err = tx.ExecContext(ctx, `
-			UPDATE release_workflow_effects
-			SET status = ?, updated_at = ?, completed_at = ?
-			WHERE owner_id = ? AND workflow_id = ? AND operation_id = ? AND effect_id = ? AND status = ?
-		`, status, formatWorkflowStateTime(record.UpdatedAt), formatWorkflowStateTime(*record.CompletedAt),
-			record.OwnerID, record.WorkflowID, record.OperationID, record.EffectID, api.WorkflowEffectStatusStarted)
-		if err != nil {
-			return fmt.Errorf("db complete release workflow submission effect: %w", err)
-		}
-		rows, err = result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("db complete release workflow submission effect rows: %w", err)
-		}
-		if rows != 1 {
-			return api.ErrReleaseWorkflowEffectConflict
-		}
-		return nil
+		return completeReleaseWorkflowEffect(ctx, tx, status, record, "submission effect")
 	})
+}
+
+func completeReleaseWorkflowEffect(
+	ctx context.Context,
+	tx *sql.Tx,
+	status api.WorkflowEffectStatus,
+	record api.ReleaseWorkflowEffectRecord,
+	effectName string,
+) error {
+	result, err := tx.ExecContext(ctx, `
+		UPDATE release_workflow_effects
+		SET status = ?, updated_at = ?, completed_at = ?
+		WHERE owner_id = ? AND workflow_id = ? AND operation_id = ? AND effect_id = ? AND status = ?
+	`, status, formatWorkflowStateTime(record.UpdatedAt), formatWorkflowStateTime(*record.CompletedAt),
+		record.OwnerID, record.WorkflowID, record.OperationID, record.EffectID, api.WorkflowEffectStatusStarted)
+	if err != nil {
+		return fmt.Errorf("db complete release workflow %s: %w", effectName, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("db complete release workflow %s rows: %w", effectName, err)
+	}
+	if rows != 1 {
+		return api.ErrReleaseWorkflowEffectConflict
+	}
+	return nil
 }
 
 // MarkReleaseWorkflowOperationEffectsUnknown fences attempts interrupted by restart.

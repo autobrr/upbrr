@@ -1884,7 +1884,7 @@ func (b workflowMediaBuilder) UploadImages(
 	if retry && retrySucceeded && !slices.Contains(result.FailedHosts, host) {
 		delete(failedHosts, host)
 	}
-	snapshot.FailedHosts = sortedNonEmptyKeys(failedHosts)
+	snapshot.FailedHosts = sortedMapKeys(failedHosts)
 	return snapshot, retained, attempts, nil
 }
 
@@ -2457,17 +2457,6 @@ func hostedImageFailure(trackerID api.TrackerID, host string, message string) ap
 		TrackerID: trackerID,
 		Resource:  strings.ToLower(strings.TrimSpace(host)),
 	}
-}
-
-func sortedNonEmptyKeys(values map[string]struct{}) []string {
-	result := make([]string, 0, len(values))
-	for value := range values {
-		if value != "" {
-			result = append(result, value)
-		}
-	}
-	slices.Sort(result)
-	return result
 }
 
 func projectedMediaRequirements(projections []api.TrackerReleaseProjection) (int, int) {

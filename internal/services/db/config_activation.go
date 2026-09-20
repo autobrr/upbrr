@@ -4,6 +4,7 @@
 package db
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -578,11 +579,8 @@ func normalizeConfigImpactDetails(impacts []api.ConfigImpactDetail) []api.Config
 		result[index].TrackerIDs = normalizeConfigImpactTrackerIDs(result[index].TrackerIDs)
 	}
 	slices.SortFunc(result, func(left, right api.ConfigImpactDetail) int {
-		if left.Kind < right.Kind {
-			return -1
-		}
-		if left.Kind > right.Kind {
-			return 1
+		if comparison := cmp.Compare(left.Kind, right.Kind); comparison != 0 {
+			return comparison
 		}
 		return strings.Compare(strings.Join(trackerIDStrings(left.TrackerIDs), ","), strings.Join(trackerIDStrings(right.TrackerIDs), ","))
 	})

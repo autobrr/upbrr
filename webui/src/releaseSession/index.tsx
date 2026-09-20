@@ -863,7 +863,7 @@ export function ReleaseSessionProvider({
     } catch (error) {
       if (!controller.signal.aborted) {
         dispatch({
-          type: "active_input_failed",
+          type: "workflow_view_failed",
           error: errorText(error),
           failure: operationFailureFromError(error),
         });
@@ -1051,7 +1051,7 @@ export function ReleaseSessionProvider({
     } catch (error) {
       if (!controller.signal.aborted) {
         dispatch({
-          type: "active_input_failed",
+          type: "workflow_view_failed",
           error: errorText(error),
           failure: operationFailureFromError(error),
         });
@@ -1253,7 +1253,7 @@ export function ReleaseSessionProvider({
     } catch (error) {
       if (!controller.signal.aborted) {
         dispatch({
-          type: "active_input_failed",
+          type: "workflow_view_failed",
           error: errorText(error),
           failure: operationFailureFromError(error),
         });
@@ -1292,7 +1292,7 @@ export function ReleaseSessionProvider({
     } catch (error) {
       if (!controller.signal.aborted) {
         dispatch({
-          type: "active_input_failed",
+          type: "workflow_view_failed",
           error: errorText(error),
           failure: operationFailureFromError(error),
         });
