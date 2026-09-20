@@ -48,3 +48,20 @@ func TestDescriptionValidationRejectsRemovedFinalEvidence(t *testing.T) {
 		t.Fatalf("repeated image must not meet minimum: %+v %v", failures, err)
 	}
 }
+
+func TestDescriptionValidationAcceptsReformattedFinalEvidence(t *testing.T) {
+	meta := oeTestSubject()
+	description, err := buildDescription(t.Context(), meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, "notes", nil, oeTestScreenshots())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The required evidence can be moved into uploader prose; OE does not
+	// require the composer's headings or code blocks in the final description.
+	description = oeEvidenceBlockPattern.ReplaceAllString(description, "")
+	meta.DescriptionOverride = description + "\n\nEncoder: SVT-AV1 preset=4 crf=20\nSource: Example BluRay source; original HDR10 only"
+	meta.DescriptionGroupsFinal = true
+	failures, err := checkDescriptionRequirements(t.Context(), api.NewTrackerValidationSubject(meta, "OE"), api.NopLogger{})
+	if err != nil || len(failures) != 0 {
+		t.Fatalf("reformatted evidence must remain valid: %+v %v", failures, err)
+	}
+}

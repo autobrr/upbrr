@@ -460,7 +460,7 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 		var first api.ReleaseInfo
 		for _, file := range meta.FileList {
 			candidate := ParseReleaseInfo(file)
-			if candidate.Episode <= 0 {
+			if candidate.Episode <= 0 || meta.SeasonInt > 0 && candidate.Season != meta.SeasonInt {
 				continue
 			}
 			if first.Episode == 0 || candidate.Season < first.Season || candidate.Season == first.Season && candidate.Episode < first.Episode {
