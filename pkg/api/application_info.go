@@ -14,15 +14,15 @@ import (
 )
 
 // ApplicationInfo describes the running build and optional runtime capability
-// probes returned by WebUI entrypoints.
+// probes shared by CLI and WebUI entrypoints.
 type ApplicationInfo struct {
 	// TestRuntime is present only when the process enforces live-testing restrictions.
 	TestRuntime     *TestRuntimeInfo `json:"testRuntime,omitempty"`
 	Version         string           `json:"version"`
 	BuildIdentifier string           `json:"buildIdentifier"`
-	// BuildTime is the VCS commit time in RFC3339 UTC, when embedded in the binary.
+	// BuildTime is the embedded VCS commit time in RFC3339 UTC, or empty when unavailable.
 	BuildTime string `json:"buildTime"`
-	// Dependencies lists the autobrr modules linked into this binary.
+	// Dependencies lists linked autobrr modules; CurrentApplicationInfo returns an empty slice when unavailable.
 	Dependencies  []ApplicationDependency `json:"dependencies"`
 	GoVersion     string                  `json:"goVersion"`
 	GOOS          string                  `json:"goos"`
@@ -41,6 +41,7 @@ type ApplicationInfo struct {
 type ApplicationDependency struct {
 	Path string `json:"path"`
 	// Version is a release tag or commit and UTC date, including replacement metadata.
+	// Local replacements are labeled "local build" without exposing their paths.
 	Version string `json:"version"`
 }
 
@@ -61,21 +62,17 @@ func SetApplicationBuild(version string, buildIdentifier string) {
 	applicationBuildID = strings.TrimSpace(buildIdentifier)
 }
 
-// CurrentApplicationInfo returns process build, platform, and uptime metadata.
+// CurrentApplicationInfo returns process build, linked dependency, platform, and uptime metadata.
 // Optional capability fields remain zero until an entrypoint probes them.
 func CurrentApplicationInfo() ApplicationInfo {
 	uptime := max(time.Since(applicationStartedAt), 0)
 
 	build, _ := debug.ReadBuildInfo()
 	version, buildIdentifier := resolvedApplicationBuild(build)
-	buildTime := ""
-	if date, err := time.Parse(time.RFC3339, buildSetting(build, "vcs.time")); err == nil {
-		buildTime = date.UTC().Format(time.RFC3339)
-	}
 	return ApplicationInfo{
 		Version:         version,
 		BuildIdentifier: buildIdentifier,
-		BuildTime:       buildTime,
+		BuildTime:       buildSetting(build, "vcs.time"),
 		Dependencies:    applicationDependencies(build),
 		GoVersion:       runtime.Version(),
 		GOOS:            runtime.GOOS,
@@ -101,7 +98,7 @@ func resolvedApplicationBuild(info *debug.BuildInfo) (string, string) {
 	if version == "" {
 		candidate := strings.TrimSpace(info.Main.Version)
 		if candidate != "" && candidate != "(devel)" {
-			version = candidate
+			version = applicationModuleVersion(candidate)
 		} else {
 			version = "dev"
 		}

@@ -5,7 +5,10 @@ import type { ApplicationInfo } from "../types";
 
 type ApplicationBuild = Pick<ApplicationInfo, "version" | "buildIdentifier" | "buildTime">;
 
-/** Resolves the release tag, or the development revision and its known UTC commit date. */
+/**
+ * Resolves the release tag, or the development revision and its known UTC commit date.
+ * Expects the API's RFC3339 UTC buildTime or an empty string; release tags omit the date.
+ */
 export const getApplicationVersionDisplay = ({
   version,
   buildIdentifier,

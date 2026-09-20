@@ -9,6 +9,29 @@ import (
 	"testing"
 )
 
+func TestResolvedApplicationBuildVersion(t *testing.T) {
+	applicationInfoMu.RLock()
+	previousVersion, previousBuildID := applicationVersion, applicationBuildID
+	applicationInfoMu.RUnlock()
+	t.Cleanup(func() { SetApplicationBuild(previousVersion, previousBuildID) })
+
+	for _, test := range []struct{ name, override, moduleVersion, want string }{
+		{"pseudo-version", "", "v0.0.0-20260911072119-0b32d930ae1f", "0b32d930ae1f (2026-09-11 07:21:19 UTC)"},
+		{"release", "", " v0.3.4 ", "v0.3.4"},
+		{"development", "", "(devel)", "dev"},
+		{"empty", "", "", "dev"},
+		{"override", "v0.3.5", "v0.0.0-20260911072119-0b32d930ae1f", "v0.3.5"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			SetApplicationBuild(test.override, "")
+			build := &debug.BuildInfo{Main: debug.Module{Version: test.moduleVersion}}
+			if got, _ := resolvedApplicationBuild(build); got != test.want {
+				t.Fatalf("version = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestApplicationModuleVersion(t *testing.T) {
 	for _, test := range []struct{ version, want string }{
 		{"v0.3.4", "v0.3.4"},
