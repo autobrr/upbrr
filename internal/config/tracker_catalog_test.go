@@ -18,8 +18,8 @@ func TestOrderedTrackerSchemasPreserveExampleOrderAndActivation(t *testing.T) {
 	if len(schemas) == 0 {
 		t.Fatal("OrderedTrackerSchemas() returned no schemas")
 	}
-	if schemas[0].Name != "A4K" {
-		t.Fatalf("first schema = %q, want A4K", schemas[0].Name)
+	if schemas[0].Name != "ACM" {
+		t.Fatalf("first schema = %q, want ACM", schemas[0].Name)
 	}
 	if slices.ContainsFunc(schemas, func(schema TrackerSchema) bool { return schema.Name == "MANUAL" }) {
 		t.Fatal("catalog contains removed MANUAL entry")
@@ -47,16 +47,16 @@ func TestTrackerConfiguredUsesOnlyActivationFields(t *testing.T) {
 		Name: "EXAMPLE",
 		Fields: []TrackerFieldSchema{
 			{
-JSONKey: "APIKey",
- YAMLKey: "api_key",
- Default: "",
- Activation: true,
-},
+				JSONKey:    "APIKey",
+				YAMLKey:    "api_key",
+				Default:    "",
+				Activation: true,
+			},
 			{
-JSONKey: "ImageHost",
- YAMLKey: "image_host",
- Default: "",
-},
+				JSONKey: "ImageHost",
+				YAMLKey: "image_host",
+				Default: "",
+			},
 		},
 	}
 	if TrackerConfigured(TrackerConfig{ImageHost: "imgbox"}, schema) {
@@ -73,17 +73,17 @@ JSONKey: "ImageHost",
 		Name: "PARTIAL",
 		Fields: []TrackerFieldSchema{
 			{
-JSONKey: "Username",
- YAMLKey: "username",
- Default: "",
- Activation: true,
-},
+				JSONKey:    "Username",
+				YAMLKey:    "username",
+				Default:    "",
+				Activation: true,
+			},
 			{
-JSONKey: "Password",
- YAMLKey: "password",
- Default: "",
- Activation: true,
-},
+				JSONKey:    "Password",
+				YAMLKey:    "password",
+				Default:    "",
+				Activation: true,
+			},
 		},
 	}
 	if !TrackerConfigured(TrackerConfig{Username: "configured", Password: ""}, partialSchema) {
