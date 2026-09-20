@@ -67,6 +67,36 @@ func TestValidate(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "valid qbit client with empty password",
+			cfg: Config{
+				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
+				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+				TorrentClients: map[string]TorrentClientConfig{
+					"qbit": {
+						Type:     "qbit",
+						URL:      "http://localhost",
+						Username: "user",
+						Password: "",
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "qbit client still requires username without qui proxy",
+			cfg: Config{
+				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
+				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+				TorrentClients: map[string]TorrentClientConfig{
+					"qbit": {
+						Type: "qbit",
+						URL:  "http://localhost",
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
 			name: "valid global torrent client refs",
 			cfg: Config{
 				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},

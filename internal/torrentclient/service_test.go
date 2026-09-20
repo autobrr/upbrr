@@ -235,6 +235,48 @@ func TestInjectQbitClient(t *testing.T) {
 	}
 }
 
+func TestInjectQbitClientAllowsEmptyPassword(t *testing.T) {
+	t.Parallel()
+
+	server, capture := newQbitAddCaptureServer(t)
+	root := t.TempDir()
+	mediaRoot := filepath.Join(root, "media")
+	sourcePath := filepath.Join(mediaRoot, "video.mkv")
+	torrentPath := filepath.Join(root, "sample.torrent")
+	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	svc := NewService(config.Config{
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:       "qbit",
+				URL:        server.URL,
+				Username:   "user",
+				Password:   "",
+				LocalPath:  config.StringList{""},
+				RemotePath: config.StringList{""},
+			},
+		},
+	}, nil)
+
+	if err := svc.Inject(context.Background(), api.ClientSubject{SourcePath: sourcePath}, api.TorrentResult{Path: torrentPath}); err != nil {
+		t.Fatalf("inject with empty password: %v", err)
+	}
+
+	select {
+	case err := <-capture.errCh:
+		t.Fatalf("handler: %v", err)
+	default:
+	}
+
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	if capture.addCalls != 1 {
+		t.Fatalf("expected 1 add call, got %d", capture.addCalls)
+	}
+}
+
 func TestInjectQbitClientRejectsMissingPreparedSourceForURLArtifact(t *testing.T) {
 	t.Parallel()
 

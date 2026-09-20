@@ -1029,9 +1029,6 @@ func (c Config) Validate() error {
 				if strings.TrimSpace(client.QbitUsername()) == "" {
 					return fmt.Errorf("config: torrent_clients.%s.username or qbit_user is required", name)
 				}
-				if strings.TrimSpace(client.QbitPassword()) == "" {
-					return fmt.Errorf("config: torrent_clients.%s.password or qbit_pass is required", name)
-				}
 			}
 			switch strings.ToLower(strings.TrimSpace(client.Linking)) {
 			case "", "none", "disabled", "symlink", "hardlink", "reflink":

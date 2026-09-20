@@ -232,6 +232,23 @@ func TestQbitSpecificFieldsWinOverLegacyAliases(t *testing.T) {
 	}
 }
 
+func TestValidateQbitAllowsEmptyPassword(t *testing.T) {
+	t.Parallel()
+
+	cfg := withBase(func(c *Config) {
+		c.TorrentClients = map[string]TorrentClientConfig{
+			"q": {
+				Type:     "qbit",
+				URL:      "http://x",
+				Username: "u",
+			},
+		}
+	})
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("empty password should be allowed: %v", err)
+	}
+}
+
 func TestValidateQbitMissingCredentials(t *testing.T) {
 	t.Parallel()
 
@@ -250,11 +267,6 @@ func TestValidateQbitMissingCredentials(t *testing.T) {
 			URL:      "http://x",
 			Password: "p",
 		}, "username"},
-		{"missing pass", TorrentClientConfig{
-			Type:     "qbit",
-			URL:      "http://x",
-			Username: "u",
-		}, "password"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
