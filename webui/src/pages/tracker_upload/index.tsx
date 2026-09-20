@@ -4,6 +4,7 @@
 import { useMemo, useState } from "react";
 import { Button } from "../../components/ui/button";
 import type { UploadFacet } from "../../releaseSession/types";
+import { canExecuteUpload } from "../../releaseSession/uploadEligibility";
 import type {
   TrackerDryRunReport,
   TrackerLaneOutcome,
@@ -22,16 +23,6 @@ type TrackerUploadCard = Readonly<{
   report?: TrackerDryRunReport;
   outcome?: TrackerLaneOutcome;
 }>;
-
-const releaseNameOverrideNotices = (projection: TrackerReleaseProjection | undefined) =>
-  (projection?.policyDecisions || []).filter(
-    (decision) =>
-      decision.code.startsWith("release_name_override") &&
-      (decision.decision === "enforced" || decision.decision === "rebuilt"),
-  );
-
-const releaseNameOverrideKey = (decision: TrackerPolicyDecision) =>
-  [decision.code, decision.namingRole || "", decision.namingRuleId || ""].join("\u0000");
 
 /**
  * Backend skip reasons rendered as operator-facing text. These state the
@@ -60,6 +51,16 @@ function uploadEligibilityLabel(outcome?: TrackerLaneOutcome): string {
     : undefined;
   return reason ? `Skipped: ${reason}` : "Skipped";
 }
+
+const releaseNameOverrideNotices = (projection: TrackerReleaseProjection | undefined) =>
+  (projection?.policyDecisions || []).filter(
+    (decision) =>
+      decision.code.startsWith("release_name_override") &&
+      (decision.decision === "enforced" || decision.decision === "rebuilt"),
+  );
+
+const releaseNameOverrideKey = (decision: TrackerPolicyDecision) =>
+  [decision.code, decision.namingRole || "", decision.namingRuleId || ""].join("\u0000");
 
 /** Thin presentation adapter for workflow dry-run and upload state. */
 export default function TrackerUploadPage({ facet }: Props) {
@@ -102,6 +103,18 @@ export default function TrackerUploadPage({ facet }: Props) {
     ];
   }, [selected, view.dryRunResult, view.projections, view.trackerOutcomes]);
   const uploadRunning = view.uploadStatus === "running";
+  const excludedTrackers = useMemo(
+    () => new Set(view.submissionExclusions.map((item) => item.trackerId)),
+    [view.submissionExclusions],
+  );
+  const hasDryRunCandidate =
+    view.submissionExclusions.length === 0 ||
+    view.selectedTrackers.some((tracker) => !excludedTrackers.has(tracker));
+  const hasExecutableUpload = canExecuteUpload(
+    view.trackerOutcomes,
+    view.selectedTrackers,
+    excludedTrackers,
+  );
   const failedTrackers = (view.result?.results || [])
     .filter((result) => result.submissionStatus === "failed")
     .map((result) => result.trackerId);
@@ -179,6 +192,34 @@ export default function TrackerUploadPage({ facet }: Props) {
         </section>
       ) : null}
 
+      {view.submissionExclusions.length ? (
+        <section className="panel grid gap-3" aria-label="Submission exclusions">
+          <h2>Already submitted</h2>
+          <p className="muted">
+            Confirmed tracker submissions are excluded from duplicate checks and upload actions.
+          </p>
+          <ul className="grid gap-2">
+            {view.submissionExclusions.map((exclusion) => (
+              <li
+                className="rounded border border-white/10 bg-white/5 p-3"
+                key={exclusion.trackerId}
+              >
+                <strong>{exclusion.trackerId}</strong>
+                <span className="muted">
+                  {exclusion.reason === "already_uploaded"
+                    ? "Already uploaded"
+                    : exclusion.reason.replaceAll("_", " ")}
+                  {exclusion.confirmedAt ? ` · ${exclusion.confirmedAt}` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {!hasDryRunCandidate ? (
+            <p role="status">All selected trackers were already uploaded. No upload is needed.</p>
+          ) : null}
+        </section>
+      ) : null}
+
       <section className="panel grid gap-3">
         <h2>Run options</h2>
         <div className="flex flex-wrap gap-4">
@@ -212,7 +253,7 @@ export default function TrackerUploadPage({ facet }: Props) {
           <Button
             variant="primary"
             type="button"
-            disabled={view.dryRunStatus === "running" || view.selectedTrackers.length === 0}
+            disabled={view.dryRunStatus === "running" || !hasDryRunCandidate}
             onClick={() => void facet.runDryRun()}
           >
             {view.dryRunStatus === "running" ? "Running dry run..." : "Run dry run"}
@@ -220,7 +261,7 @@ export default function TrackerUploadPage({ facet }: Props) {
           <Button
             variant="primary"
             type="button"
-            disabled={!view.mutationsAllowed || uploadRunning || view.selectedTrackers.length === 0}
+            disabled={!view.mutationsAllowed || uploadRunning || !hasExecutableUpload}
             onClick={() => void facet.start()}
           >
             {uploadRunning ? "Uploading..." : "Start upload"}

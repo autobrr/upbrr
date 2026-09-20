@@ -4,6 +4,7 @@
 import type { OperationFailure } from "../types";
 
 type EventCallback = (payload: unknown) => void;
+type EventConnectionCallback = () => void;
 type AppRequestOptions = Readonly<{
   signal?: AbortSignal;
   correlationID?: string;
@@ -21,6 +22,7 @@ declare global {
 }
 
 const callbacks = new Map<string, Set<EventCallback>>();
+const eventConnectionCallbacks = new Set<EventConnectionCallback>();
 let eventStreamController: AbortController | null = null;
 let eventStreamReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let csrfToken = "";
@@ -104,7 +106,13 @@ const closeEventStream = () => {
 };
 
 const ensureEventStream = () => {
-  if (eventStreamController || !csrfToken || callbacks.size === 0) return;
+  if (
+    eventStreamController ||
+    !csrfToken ||
+    (callbacks.size === 0 && eventConnectionCallbacks.size === 0)
+  ) {
+    return;
+  }
   const controller = new AbortController();
   eventStreamController = controller;
   void runEventStream(controller);
@@ -116,7 +124,13 @@ const recreateEventStream = () => {
 };
 
 const scheduleEventStreamReconnect = () => {
-  if (!csrfToken || callbacks.size === 0 || eventStreamReconnectTimer) return;
+  if (
+    !csrfToken ||
+    (callbacks.size === 0 && eventConnectionCallbacks.size === 0) ||
+    eventStreamReconnectTimer
+  ) {
+    return;
+  }
   eventStreamReconnectTimer = setTimeout(() => {
     eventStreamReconnectTimer = null;
     ensureEventStream();
@@ -138,6 +152,7 @@ const runEventStream = async (controller: AbortController) => {
       }
       return;
     }
+    eventConnectionCallbacks.forEach((callback) => callback());
     if (!response.body) throw new Error("Event stream response body is unavailable");
     await readEventStream(response.body, controller.signal);
   } catch (_error) {
@@ -184,6 +199,23 @@ const dispatchEventBlock = (block: string) => {
   callbacks.get(eventName)?.forEach((callback) => callback(payload));
 };
 
+const requestJSON = async <T>(path: string, requestInit: () => RequestInit): Promise<T> => {
+  let response = await fetch(withBasePath(path), requestInit());
+  let payload = await parseJSONResponse<T & { error?: string; failure?: OperationFailure }>(
+    response,
+  );
+  if (!response.ok && isAuthFailureStatus(response.status) && (await refreshAuthState())) {
+    response = await fetch(withBasePath(path), requestInit());
+    payload = await parseJSONResponse<T & { error?: string; failure?: OperationFailure }>(response);
+  }
+  if (!response.ok) {
+    if (payload?.failure) throw new OperationFailureError(payload.failure);
+    throw new Error(String(payload?.error || response.statusText || "Request failed"));
+  }
+  if (payload === null) throw new Error("Request returned an empty response");
+  return payload as T;
+};
+
 const postJSON = async <T>(
   path: string,
   body?: unknown,
@@ -201,20 +233,17 @@ const postJSON = async <T>(
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: options.signal,
   });
-  let response = await fetch(withBasePath(path), requestInit());
-  let payload = await parseJSONResponse<T & { error?: string; failure?: OperationFailure }>(
-    response,
-  );
-  if (!response.ok && isAuthFailureStatus(response.status) && (await refreshAuthState())) {
-    response = await fetch(withBasePath(path), requestInit());
-    payload = await parseJSONResponse<T & { error?: string }>(response);
-  }
-  if (!response.ok) {
-    if (payload?.failure) throw new OperationFailureError(payload.failure);
-    throw new Error(String(payload?.error || response.statusText || "Request failed"));
-  }
-  if (payload === null) throw new Error("Request returned an empty response");
-  return payload as T;
+  return requestJSON<T>(path, requestInit);
+};
+
+const getJSON = async <T>(path: string, options: AppRequestOptions = {}): Promise<T> => {
+  const requestInit = (): RequestInit => ({
+    method: "GET",
+    credentials: "include",
+    headers: csrfToken ? { "X-CSRF-Token": csrfToken } : {},
+    signal: options.signal,
+  });
+  return requestJSON<T>(path, requestInit);
 };
 
 const postForm = async <T>(
@@ -229,20 +258,7 @@ const postForm = async <T>(
     body,
     signal: options.signal,
   });
-  let response = await fetch(withBasePath(path), requestInit());
-  let payload = await parseJSONResponse<T & { error?: string; failure?: OperationFailure }>(
-    response,
-  );
-  if (!response.ok && isAuthFailureStatus(response.status) && (await refreshAuthState())) {
-    response = await fetch(withBasePath(path), requestInit());
-    payload = await parseJSONResponse<T & { error?: string; failure?: OperationFailure }>(response);
-  }
-  if (!response.ok) {
-    if (payload?.failure) throw new OperationFailureError(payload.failure);
-    throw new Error(String(payload?.error || response.statusText || "Request failed"));
-  }
-  if (payload === null) throw new Error("Request returned an empty response");
-  return payload as T;
+  return requestJSON<T>(path, requestInit);
 };
 
 /** Initializes cookie-bound WebUI requests and event delivery for one authenticated session. */
@@ -271,7 +287,20 @@ export const subscribeWebEvent = (eventName: string, callback: EventCallback) =>
   return () => {
     listeners.delete(callback);
     if (listeners.size === 0) callbacks.delete(eventName);
-    if (callbacks.size === 0) closeEventStream();
+    if (callbacks.size === 0 && eventConnectionCallbacks.size === 0) closeEventStream();
+  };
+};
+
+/**
+ * Subscribes to successful event-stream connections, including reconnects, and returns cleanup.
+ * Callers must fetch current state because missed events are not replayed here.
+ */
+export const subscribeWebEventConnection = (callback: EventConnectionCallback) => {
+  eventConnectionCallbacks.add(callback);
+  ensureEventStream();
+  return () => {
+    eventConnectionCallbacks.delete(callback);
+    if (callbacks.size === 0 && eventConnectionCallbacks.size === 0) closeEventStream();
   };
 };
 
@@ -285,6 +314,18 @@ export const requestApp = <T>(
     return testAppRequestHandler(method, body, options).then((result) => result as T);
   }
   return postJSON<T>(`/api/app/${method}`, body, options);
+};
+
+/**
+ * Reads a snapshot using session cookies and the caller's abort signal.
+ * Production requests retry once after a successful auth refresh and reject with structured
+ * operation failures when supplied by the server; empty responses also reject.
+ */
+export const requestAppGet = <T>(method: string, options: AppRequestOptions = {}): Promise<T> => {
+  if (testAppRequestHandler) {
+    return testAppRequestHandler(method, undefined, options).then((result) => result as T);
+  }
+  return getJSON<T>(`/api/app/${method}`, options);
 };
 
 /** Uploads multipart application content with the same session/CSRF behavior. */

@@ -28,6 +28,9 @@ type Request struct {
 	SourceFingerprint string
 	// IdentityResetFields suppresses legacy explicit pins after a persisted Auto reset.
 	IdentityResetFields []api.CorrectionField
+	// RetainedClientEvidence is compatible evidence from this process's current
+	// generation, supplied only for downstream enrichment without a fresh search.
+	RetainedClientEvidence *ClientEvidenceSnapshot
 }
 
 // DiscReportResource contains private paths and text for one selected BDMV report.
@@ -125,6 +128,7 @@ func (s State) requiresMediaInfoUniqueID() bool {
 // groups or operation-owned subjects before it leaves this boundary.
 type State struct {
 	MetadataRequirements    api.MetadataRequirementSet
+	ExternalFreshness       api.ExternalFreshness
 	SourceFingerprint       string
 	SourcePath              string
 	SourceLookupURL         string

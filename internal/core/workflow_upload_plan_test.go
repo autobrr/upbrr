@@ -5,6 +5,8 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +21,7 @@ import (
 	"github.com/autobrr/go-torrent/metainfo"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -42,6 +45,29 @@ type workflowTorrentServiceCapture struct {
 	subject api.TorrentSubject
 	result  api.TorrentResult
 	calls   int
+}
+
+type workflowSubmissionFenceRepositoryFake struct {
+	records map[string]api.SubmissionFenceRecord
+}
+
+func (f workflowSubmissionFenceRepositoryFake) LoadSubmissionFence(
+	_ context.Context,
+	identity api.SubmissionContentIdentity,
+	site string,
+) (api.SubmissionFenceRecord, error) {
+	record, ok := f.records[identity.Digest+"|"+site]
+	if !ok {
+		return api.SubmissionFenceRecord{}, api.ErrSubmissionFenceNotFound
+	}
+	return record, nil
+}
+
+type workflowSubmissionTrackerRegistryFake map[string]trackers.Descriptor
+
+func (f workflowSubmissionTrackerRegistryFake) LookupDescriptor(name string) (trackers.Descriptor, bool) {
+	descriptor, ok := f[strings.ToUpper(strings.TrimSpace(name))]
+	return descriptor, ok
 }
 
 func (f *workflowTorrentServiceCapture) Create(_ context.Context, subject api.TorrentSubject) (api.TorrentResult, error) {
@@ -496,6 +522,183 @@ func TestWorkflowUploadPlanPassesSavedClientTorrentForValidation(t *testing.T) {
 	}
 	if !torrents.subject.ClientTorrentDataVerified {
 		t.Fatal("client torrent verification evidence was not propagated")
+	}
+}
+
+func TestWorkflowUploadPlanDerivesSubmissionContentIdentityForActiveInput(t *testing.T) {
+	t.Parallel()
+
+	source := filepath.Join(t.TempDir(), "Example.Release.2026.mkv")
+	contents := []byte("verified release bytes")
+	if err := os.WriteFile(source, contents, 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	digest := sha256.Sum256(contents)
+	inspection, err := preparedrelease.VerifyInputSource(t.Context(), api.PrepareInput{SourcePath: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified := api.SourceContentIdentity{
+		Version: api.SourceContentIdentityVersion,
+		Digest:  strings.Repeat("a", 64),
+		Files: []api.VerifiedSourceFile{{
+			LocalPath: source,
+			Size:      int64(len(contents)),
+			SHA256:    hex.EncodeToString(digest[:]),
+		}},
+	}
+	retained := &workflowRetainedUploadServiceFake{}
+	builder := workflowUploadPlanBuilder{
+		resolver: workflowUploadResolverFixed{subject: api.UploadSubject{
+			SourcePath:     source,
+			SourceIdentity: verified,
+			SourceManifest: inspection.Manifest,
+		}},
+		trackers: retained,
+		torrents: &workflowTorrentServiceCapture{},
+	}
+	ctx := api.WithActiveInputAuthority(context.Background(), api.ActiveInputAuthority{CoordinatorID: "coordinator", Fence: 1})
+	_, execution, err := builder.Build(
+		ctx,
+		api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
+			TrackerID:   "PTP",
+			Readiness:   api.ReadinessStatusReady,
+			UploadReady: true,
+		}}},
+		api.DupeAssessment{Results: []api.TrackerDupeAssessment{{
+			TrackerID: "PTP",
+			Decision:  api.DupeDecisionNoMatch,
+			Status:    api.StageStatusCompleted,
+		}}},
+		workflowDupePrivateEvidence{},
+		api.MediaArtifactSet{},
+		workflowMediaPrivateArtifacts{},
+		api.DescriptionSet{},
+		api.DescriptionInstructions{},
+		releaseworkflow.UploadPlanBuildOptions{},
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("build upload plan: %v", err)
+	}
+	defer func() { _ = execution.Release() }()
+	want, err := api.NewSubmissionContentIdentity(api.SubmissionContentScopeSingleFile, []api.SubmissionContentFile{{
+		Size: int64(len(contents)), SHA256: hex.EncodeToString(digest[:]),
+	}})
+	if err != nil {
+		t.Fatalf("derive expected identity: %v", err)
+	}
+	if retained.subject.SubmissionContentIdentity.Version != want.Version ||
+		retained.subject.SubmissionContentIdentity.Digest != want.Digest ||
+		retained.subject.SubmissionContentIdentity.Scope != want.Scope ||
+		len(retained.subject.SubmissionContentIdentity.Files) != len(want.Files) ||
+		retained.subject.SubmissionContentIdentity.Files[0] != want.Files[0] {
+		t.Fatalf("submission content identity = %#v, want %#v", retained.subject.SubmissionContentIdentity, want)
+	}
+}
+
+func TestWorkflowSubmissionContentIdentityRejectsTorrentOnlySource(t *testing.T) {
+	t.Parallel()
+
+	_, err := workflowSubmissionContentIdentity(api.TorrentSubject{
+		SourcePath:                "C:/private/existing.torrent",
+		ClientTorrentPath:         "C:/private/manual-selection.torrent",
+		ClientTorrentDataVerified: true,
+	}, api.SourceContentIdentity{
+		Version: api.SourceContentIdentityVersion,
+		Digest:  strings.Repeat("a", 64),
+	})
+	if err == nil || !strings.Contains(err.Error(), "scope is unavailable") {
+		t.Fatalf("torrent-only submission scope error = %v", err)
+	}
+}
+
+func TestWorkflowSubmissionHistoryFilterExcludesOnlyConfirmedTracker(t *testing.T) {
+	t.Parallel()
+
+	source := filepath.Join(t.TempDir(), "Example.Release.2026.mkv")
+	contents := []byte("verified release bytes")
+	if err := os.WriteFile(source, contents, 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	digest := sha256.Sum256(contents)
+	subject := api.UploadSubject{
+		SourcePath: source,
+		SourceIdentity: api.SourceContentIdentity{
+			Version: api.SourceContentIdentityVersion,
+			Digest:  strings.Repeat("a", 64),
+			Files: []api.VerifiedSourceFile{{
+				LocalPath: source,
+				Size:      int64(len(contents)),
+				SHA256:    hex.EncodeToString(digest[:]),
+			}},
+		},
+	}
+	identity, err := workflowSubmissionContentIdentity(workflowSubmissionTorrentSubject(subject), subject.SourceIdentity)
+	if err != nil {
+		t.Fatalf("submission identity: %v", err)
+	}
+	site, err := trackers.CanonicalSubmissionTrackerSite("PTP", "https://ptp.example.invalid/")
+	if err != nil {
+		t.Fatalf("tracker site: %v", err)
+	}
+	confirmedAt := time.Now().UTC()
+	filter := workflowSubmissionHistoryFilter{
+		fences: workflowSubmissionFenceRepositoryFake{records: map[string]api.SubmissionFenceRecord{
+			identity.Digest + "|" + site: {Status: api.WorkflowEffectStatusSucceeded, ConfirmedAt: &confirmedAt},
+		}},
+		registry: workflowSubmissionTrackerRegistryFake{
+			"PTP": {Name: "PTP", BaseURL: "https://ptp.example.invalid/"},
+			"BTN": {Name: "BTN", BaseURL: "https://btn.example.invalid/"},
+		},
+	}
+	remaining, exclusions, err := filter.FilterConfirmedSubmissions(context.Background(), subject, []api.TrackerID{"ptp", "BTN"})
+	if err != nil {
+		t.Fatalf("filter submissions: %v", err)
+	}
+	if len(remaining) != 1 || remaining[0] != "BTN" || len(exclusions) != 1 || exclusions[0].TrackerID != "PTP" ||
+		exclusions[0].Reason != "already_uploaded" || !exclusions[0].ConfirmedAt.Equal(confirmedAt) {
+		t.Fatalf("remaining=%#v exclusions=%#v", remaining, exclusions)
+	}
+}
+
+func TestWorkflowSubmissionHistoryFilterRejectsUnknownAttempt(t *testing.T) {
+	t.Parallel()
+
+	source := filepath.Join(t.TempDir(), "Example.Release.2026.mkv")
+	contents := []byte("verified release bytes")
+	if err := os.WriteFile(source, contents, 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	digest := sha256.Sum256(contents)
+	subject := api.UploadSubject{SourcePath: source, SourceIdentity: api.SourceContentIdentity{
+		Version: api.SourceContentIdentityVersion,
+		Digest:  strings.Repeat("a", 64),
+		Files: []api.VerifiedSourceFile{{
+			LocalPath: source,
+			Size:      int64(len(contents)),
+			SHA256:    hex.EncodeToString(digest[:]),
+		}},
+	}}
+	identity, err := workflowSubmissionContentIdentity(workflowSubmissionTorrentSubject(subject), subject.SourceIdentity)
+	if err != nil {
+		t.Fatalf("submission identity: %v", err)
+	}
+	site, err := trackers.CanonicalSubmissionTrackerSite("PTP", "https://ptp.example.invalid/")
+	if err != nil {
+		t.Fatalf("tracker site: %v", err)
+	}
+	filter := workflowSubmissionHistoryFilter{
+		fences: workflowSubmissionFenceRepositoryFake{records: map[string]api.SubmissionFenceRecord{
+			identity.Digest + "|" + site: {Status: api.WorkflowEffectStatusUnknown},
+		}},
+		registry: workflowSubmissionTrackerRegistryFake{
+			"PTP": {Name: "PTP", BaseURL: "https://ptp.example.invalid/"},
+		},
+	}
+	_, _, err = filter.FilterConfirmedSubmissions(context.Background(), subject, []api.TrackerID{"PTP"})
+	if !errors.Is(err, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
+		t.Fatalf("unknown submission fence error = %v", err)
 	}
 }
 

@@ -9,9 +9,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
 	servicedb "github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -61,11 +63,13 @@ func TestUploadRefreshesExpiredAPIKeyAndPersistsIt(t *testing.T) {
 		t.Fatalf("write torrent: %v", err)
 	}
 	dbPath := filepath.Join(root, "upbrr.db")
+	writeRTFWebAuthFixture(t, dbPath)
 	seedRTFConfig(t, dbPath, config.TrackerConfig{
 		APIKey:   "old-token",
 		Username: "user",
 		Password: "pass",
 	})
+	beforeConfig, beforeActivation := loadStoredRTFConfigAndActivation(t, dbPath)
 
 	var testedToken string
 	var loginCalled bool
@@ -118,8 +122,16 @@ func TestUploadRefreshesExpiredAPIKeyAndPersistsIt(t *testing.T) {
 	if uploadToken != "new-token" {
 		t.Fatal("expected upload to use refreshed token")
 	}
-	if got := loadStoredRTFAPIKey(t, dbPath); got != "new-token" {
-		t.Fatal("expected refreshed token persisted")
+	afterConfig, afterActivation := loadStoredRTFConfigAndActivation(t, dbPath)
+	if !reflect.DeepEqual(beforeConfig, afterConfig) {
+		t.Fatal("refreshed API session changed persisted configuration")
+	}
+	if !reflect.DeepEqual(beforeActivation, afterActivation) {
+		t.Fatal("refreshed API session changed config activation")
+	}
+	cached, err := loadCachedRTFAPIKey(context.Background(), dbPath, server.URL, afterConfig.Trackers.Trackers["RTF"])
+	if err != nil || cached != "new-token" {
+		t.Fatal("refreshed API session was not restored from encrypted storage")
 	}
 }
 
@@ -226,7 +238,9 @@ func TestUploadGeneratesMissingAPIKeyFromCredentials(t *testing.T) {
 		t.Fatalf("write torrent: %v", err)
 	}
 	dbPath := filepath.Join(root, "upbrr.db")
+	writeRTFWebAuthFixture(t, dbPath)
 	seedRTFConfig(t, dbPath, config.TrackerConfig{Username: "user", Password: "pass"})
+	beforeConfig, beforeActivation := loadStoredRTFConfigAndActivation(t, dbPath)
 
 	var testCalled bool
 	var uploadToken string
@@ -269,8 +283,16 @@ func TestUploadGeneratesMissingAPIKeyFromCredentials(t *testing.T) {
 	if uploadToken != "generated-token" {
 		t.Fatal("expected upload to use generated token")
 	}
-	if got := loadStoredRTFAPIKey(t, dbPath); got != "generated-token" {
-		t.Fatal("expected generated token persisted")
+	afterConfig, afterActivation := loadStoredRTFConfigAndActivation(t, dbPath)
+	if !reflect.DeepEqual(beforeConfig, afterConfig) {
+		t.Fatal("generated API session changed persisted configuration")
+	}
+	if !reflect.DeepEqual(beforeActivation, afterActivation) {
+		t.Fatal("generated API session changed config activation")
+	}
+	cached, err := loadCachedRTFAPIKey(context.Background(), dbPath, server.URL, afterConfig.Trackers.Trackers["RTF"])
+	if err != nil || cached != "generated-token" {
+		t.Fatal("generated API session was not restored from encrypted storage")
 	}
 }
 
@@ -311,6 +333,34 @@ func seedRTFConfig(t *testing.T, dbPath string, trackerCfg config.TrackerConfig)
 	if err := config.SaveToDatabase(context.Background(), &cfg, repo); err != nil {
 		t.Fatalf("SaveToDatabase: %v", err)
 	}
+}
+
+func writeRTFWebAuthFixture(t *testing.T, dbPath string) {
+	t.Helper()
+	authPath := filepath.Join(filepath.Dir(dbPath), authmaterial.WebAuthFileName)
+	payload := `{"username":"tester","password_hash":"test-password-hash","encryption_key_seed":"rtf-test-encryption-seed"}`
+	if err := os.WriteFile(authPath, []byte(payload), 0o600); err != nil {
+		t.Fatalf("write web auth fixture: %v", err)
+	}
+}
+
+func loadStoredRTFConfigAndActivation(t *testing.T, dbPath string) (config.Config, api.ConfigActivation) {
+	t.Helper()
+
+	repo, err := servicedb.OpenContext(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	defer repo.Close()
+	cfg, err := config.LoadFromDatabase(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("LoadFromDatabase: %v", err)
+	}
+	activation, err := repo.LoadConfigActivation(context.Background())
+	if err != nil {
+		t.Fatalf("LoadConfigActivation: %v", err)
+	}
+	return *cfg, activation
 }
 
 func loadStoredRTFAPIKey(t *testing.T, dbPath string) string {

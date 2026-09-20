@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ApplicationInfo, MetadataPreview, PrepareInput } from "../types";
 import { emptyExternalIdentity } from "../utils/canonicalIdentity";
 import type {
+  ActiveInputSnapshot,
   ContinueReleaseWorkflowRequest,
   DescriptionInstructions,
   DupeDecision,
@@ -33,19 +34,53 @@ const preview = (sourcePath: string, generation: number): MetadataPreview => ({
 
 const createDeferred = <T,>() => {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((resolvePromise) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise;
+    reject = rejectPromise;
   });
-  return { promise, resolve };
+  return { promise, reject, resolve };
 };
 
 type PortOverrides = Readonly<{
   workflow?: ReleaseSessionPorts["workflow"];
+  resumeWorkflowID?: string;
+  activeInput?: Partial<ReleaseSessionPorts["activeInput"]>;
 }>;
 
 const portsFor = (overrides: PortOverrides = {}): ReleaseSessionPorts => {
+  const workflow = overrides.workflow ?? workflowPorts();
   return {
-    workflow: overrides.workflow ?? workflowPorts(),
+    activeInput: {
+      get: async (signal) => {
+        const workflowID = overrides.resumeWorkflowID?.trim();
+        if (!workflowID) return { state: "empty", revision: 0 };
+        return {
+          state: "active",
+          revision: 1,
+          inputId: `input-${workflowID}`,
+          sourceVersion: `source-${workflowID}`,
+          current: await workflow.current(workflowID, signal),
+        };
+      },
+      open: async (request, signal) => ({
+        state: "active",
+        revision: request.expectedRevision + 1,
+        inputId: request.request.intent.preparation?.SourcePath || "input-test",
+        sourceVersion: request.request.intent.preparation?.SourcePath || "source-test",
+        current: await workflow.continue(request.request, signal),
+      }),
+      release: async (request) => ({ state: "empty", revision: request.expectedRevision + 1 }),
+      recover: async (request, signal) => ({
+        state: "recovering",
+        revision: 1,
+        current: await workflow.current(request.workflowId, signal),
+      }),
+      reconcile: async () => ({ state: "empty", revision: 2 }),
+      subscribe: () => () => undefined,
+      ...overrides.activeInput,
+    },
+    workflow,
     descriptions: {
       render: async (raw) => raw,
     },
@@ -712,6 +747,7 @@ describe("useReleaseSession", () => {
     const { result, unmount } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(
         portsFor({
+          resumeWorkflowID: workflowID,
           workflow: workflowPorts({
             current: async () => retained,
             continue: continueWorkflow,
@@ -768,8 +804,8 @@ describe("useReleaseSession", () => {
     unmount();
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
-  it("reloads authoritative workflow state from the retained browser workflow id", async () => {
-    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", "workflow-retained");
+  it("reloads authoritative workflow state from the backend active-input snapshot", async () => {
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", "stale-browser-workflow");
     const sourcePath = "C:\\media\\Example.Release.2026.1080p-GRP.mkv";
     const current = vi.fn(async (workflowID: string) => {
       const restored = workflowCurrentFromPreview(workflowCurrent(workflowID, 7), {
@@ -809,7 +845,12 @@ describe("useReleaseSession", () => {
       } as unknown as ReleaseWorkflowCurrent;
     });
     const { result, unmount } = renderHook(useReleaseSession, {
-      wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ current }) })),
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: "workflow-retained",
+          workflow: workflowPorts({ current }),
+        }),
+      ),
     });
 
     await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
@@ -826,6 +867,539 @@ describe("useReleaseSession", () => {
 
     unmount();
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("refetches the authoritative snapshot for an active-input event hint", async () => {
+    const sourcePath = "C:\\media\\Event.Release.2026.mkv";
+    const active = workflowCurrentFromPreview(
+      workflowCurrent("workflow-event", 3),
+      preview(sourcePath, 1),
+    );
+    const get = vi
+      .fn()
+      .mockResolvedValueOnce({ state: "empty", revision: 1 })
+      .mockResolvedValueOnce({
+        state: "active",
+        revision: 2,
+        inputId: "input-event",
+        sourceVersion: "source-event-v1",
+        current: active,
+      });
+    let inputChanged: () => void = () => undefined;
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          activeInput: {
+            get,
+            subscribe: (callback) => {
+              inputChanged = callback;
+              return () => undefined;
+            },
+          },
+          workflow: workflowPorts({ current: async () => active }),
+        }),
+      ),
+    });
+
+    await waitFor(() => expect(get).toHaveBeenCalledOnce());
+    act(() => inputChanged());
+    await waitFor(() => expect(result.current.identity.view.sourcePath).toBe(sourcePath));
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(result.current.input.view.activeInput).toEqual({
+      state: "active",
+      revision: 2,
+      inputID: "input-event",
+      sourceVersion: "source-event-v1",
+      recoveryWorkflowIDs: [],
+    });
+    unmount();
+  });
+
+  it("correlates source-verification progress to Open and cancels its request", async () => {
+    let onVerification: Parameters<ReleaseSessionPorts["activeInput"]["subscribe"]>[1] = () =>
+      undefined;
+    const open = vi.fn(
+      async (_request, signal: AbortSignal): Promise<never> =>
+        new Promise((_, reject) => {
+          const rejectAbort = () =>
+            reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+          if (signal.aborted) rejectAbort();
+          else signal.addEventListener("abort", rejectAbort, { once: true });
+        }),
+    );
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          activeInput: {
+            open,
+            subscribe: (_onChange, nextVerification) => {
+              onVerification = nextVerification;
+              return () => undefined;
+            },
+          },
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+
+    let preparation!: Promise<boolean>;
+    act(() => {
+      preparation = result.current.input.openSource("C:\\media\\Large.Release.2026.mkv");
+    });
+    await waitFor(() => expect(open).toHaveBeenCalledOnce());
+    const request = open.mock.calls[0][0];
+    act(() =>
+      onVerification({
+        correlationID: request.request.idempotencyKey,
+        completedBytes: 500,
+        totalBytes: 1000,
+        message: "Verifying source content.",
+        status: "running",
+      }),
+    );
+    expect(result.current.input.view.sourceVerification).toMatchObject({
+      correlationID: request.request.idempotencyKey,
+      completedBytes: 500,
+      totalBytes: 1000,
+    });
+
+    act(() => result.current.input.cancelPreparation());
+    await act(async () => expect(await preparation).toBe(false));
+    expect(open.mock.calls[0][1].aborted).toBe(true);
+    expect(result.current.input.view.sourceVerification).toBeNull();
+    expect(result.current.input.view.status).toBe("cancelled");
+    unmount();
+  });
+
+  it("recovers and reconciles only an owner-scoped legacy workflow", async () => {
+    const recoveryAction = {
+      id: "action-reconcile",
+      kind: "reconcile_submission",
+      status: "pending" as const,
+      workflowRevision: 7,
+      trackerId: "AITHER",
+      effectKind: "tracker_submission" as const,
+      effectScopeId: "AITHER",
+      prompt: "Verify whether the interrupted upload completed.",
+      options: [
+        {
+          value: "not_completed",
+          label: "Confirmed not completed; allow a fresh exact attempt",
+        },
+      ],
+      createdAt: "2026-09-19T00:00:00Z",
+    };
+    const baseCurrent = workflowCurrent("workflow-legacy", 7);
+    const recoveryCurrent: ReleaseWorkflowCurrent = {
+      ...baseCurrent,
+      workflow: {
+        ...baseCurrent.workflow,
+        status: "blocked",
+        requiredActions: [recoveryAction],
+      },
+      continuation: {
+        ...baseCurrent.continuation,
+        lifecycle: "waiting",
+        disposition: "needs_action",
+        requiredActions: [recoveryAction],
+        availableGoals: baseCurrent.continuation.availableGoals.map((goal) => ({
+          ...goal,
+          available: false,
+        })),
+      },
+    };
+    const recover = vi.fn(async () => ({
+      state: "recovering" as const,
+      revision: 2,
+      current: recoveryCurrent,
+    }));
+    const reconcile = vi.fn(async () => ({ state: "empty" as const, revision: 3 }));
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          activeInput: {
+            get: async () => ({
+              state: "empty",
+              revision: 1,
+              recoveryWorkflowIds: ["workflow-legacy"],
+            }),
+            recover,
+            reconcile,
+          },
+        }),
+      ),
+    });
+    await waitFor(() =>
+      expect(result.current.input.view.activeInput.recoveryWorkflowIDs).toEqual([
+        "workflow-legacy",
+      ]),
+    );
+
+    await act(() => result.current.input.recoverLegacyWorkflow("workflow-legacy"));
+    expect(recover).toHaveBeenCalledWith(
+      { workflowId: "workflow-legacy" },
+      expect.any(AbortSignal),
+    );
+    expect(result.current.input.view.activeInput.state).toBe("recovering");
+    await act(() => expect(result.current.input.prepare()).resolves.toBe(false));
+
+    await act(() => result.current.workflow.confirmAction(recoveryAction));
+    expect(reconcile).toHaveBeenCalledWith(
+      {
+        authority: { workflowId: "workflow-legacy", expectedRevision: 7 },
+        answer: {
+          actionId: "action-reconcile",
+          workflowRevision: 7,
+          selectedValues: ["not_completed"],
+        },
+        idempotencyKey: expect.any(String),
+      },
+      expect.any(AbortSignal),
+    );
+    expect(result.current.input.view.activeInput.state).toBe("empty");
+    expect(result.current.workflow.view.current).toBeNull();
+    unmount();
+  });
+
+  it("reconciles a current submission action from an active input", async () => {
+    const reconciliationAction = {
+      id: "action-active-reconcile",
+      kind: "reconcile_submission",
+      status: "pending" as const,
+      workflowRevision: 9,
+      trackerId: "AITHER",
+      effectKind: "tracker_submission" as const,
+      effectScopeId: "AITHER",
+      prompt: "Verify whether the interrupted upload completed.",
+      options: [
+        {
+          value: "not_completed",
+          label: "Confirmed not completed; allow a fresh exact attempt",
+        },
+      ],
+      createdAt: "2026-09-19T00:00:00Z",
+    };
+    const baseCurrent = workflowCurrent("workflow-active-reconcile", 9);
+    const activeCurrent: ReleaseWorkflowCurrent = {
+      ...baseCurrent,
+      workflow: {
+        ...baseCurrent.workflow,
+        status: "blocked",
+        requiredActions: [reconciliationAction],
+      },
+      continuation: {
+        ...baseCurrent.continuation,
+        lifecycle: "waiting",
+        disposition: "needs_action",
+        requiredActions: [reconciliationAction],
+        availableGoals: baseCurrent.continuation.availableGoals.map((goal) => ({
+          ...goal,
+          available: false,
+        })),
+      },
+    };
+    const reconcile = vi.fn(async () => ({ state: "empty" as const, revision: 5 }));
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          activeInput: {
+            get: async () => ({
+              state: "active",
+              revision: 4,
+              inputId: "input-active-reconcile",
+              sourceVersion: "source-active-reconcile-v1",
+              current: activeCurrent,
+            }),
+            reconcile,
+          },
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.input.view.activeInput.state).toBe("active"));
+
+    await act(() =>
+      expect(result.current.workflow.confirmAction(reconciliationAction)).resolves.toBe(true),
+    );
+    expect(reconcile).toHaveBeenCalledWith(
+      {
+        authority: { workflowId: "workflow-active-reconcile", expectedRevision: 9 },
+        answer: {
+          actionId: "action-active-reconcile",
+          workflowRevision: 9,
+          selectedValues: ["not_completed"],
+        },
+        idempotencyKey: expect.any(String),
+      },
+      expect.any(AbortSignal),
+    );
+    expect(result.current.input.view.activeInput.state).toBe("empty");
+    expect(result.current.workflow.view.current).toBeNull();
+    unmount();
+  });
+
+  it("resyncs on focus and the visible fifteen-second fallback", async () => {
+    vi.useFakeTimers();
+    const get = vi.fn(async () => ({ state: "empty", revision: 1 }));
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(portsFor({ activeInput: { get } })),
+    });
+    try {
+      await act(async () => Promise.resolve());
+      expect(get).toHaveBeenCalledOnce();
+      act(() => result.current.input.updateSourceDraft("C:\\media\\Unsaved.mkv"));
+
+      window.dispatchEvent(new Event("focus"));
+      await act(async () => Promise.resolve());
+      expect(get).toHaveBeenCalledTimes(2);
+      expect(result.current.input.view.sourceDraft).toBe("C:\\media\\Unsaved.mkv");
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+      expect(get).toHaveBeenCalledTimes(3);
+      expect(result.current.input.view.sourceDraft).toBe("C:\\media\\Unsaved.mkv");
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("surfaces an Open failure after its rollback resync advances the empty slot", async () => {
+    const sourcePath = "Z:\\missing\\Invalid.Release.2026.mkv";
+    const pendingOpen = createDeferred<ActiveInputSnapshot>();
+    let slotRevision = 0;
+    let emitInputChanged: () => void = () => undefined;
+    const get = vi.fn(async () => ({ state: "empty" as const, revision: slotRevision }));
+    const open = vi.fn(() => pendingOpen.promise);
+    const subscribe: ReleaseSessionPorts["activeInput"]["subscribe"] = (onChange) => {
+      emitInputChanged = onChange;
+      return () => undefined;
+    };
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(portsFor({ activeInput: { get, open, subscribe } })),
+    });
+    await waitFor(() => expect(get).toHaveBeenCalledOnce());
+    act(() => result.current.input.updateSourceDraft(sourcePath));
+
+    let preparation!: Promise<boolean>;
+    act(() => {
+      preparation = result.current.input.prepareSource(
+        sourcePath,
+        result.current.input.view.intent,
+      );
+    });
+    await waitFor(() => expect(open).toHaveBeenCalledOnce());
+    expect(result.current.input.view.status).toBe("running");
+
+    const failure = Object.assign(
+      new Error("The source path is unavailable. Recovery: edit input."),
+      {
+        failure: {
+          Code: "invalid_source",
+          Operation: "preparation",
+          Message: "The source path is unavailable.",
+          Recovery: "edit_input",
+        },
+      },
+    );
+    await act(async () => {
+      pendingOpen.reject(failure);
+      expect(await preparation).toBe(false);
+    });
+    expect(result.current.input.view.status).toBe("error");
+
+    slotRevision = 2;
+    act(() => emitInputChanged());
+    await waitFor(() => expect(result.current.input.view.activeInput.revision).toBe(2));
+
+    expect(result.current.input.view.status).toBe("error");
+    expect(result.current.input.view.error).toBe(
+      "The source path is unavailable. Recovery: edit input.",
+    );
+    expect(result.current.input.view.failure?.Code).toBe("invalid_source");
+    expect(result.current.input.view.sourceDraft).toBe(sourcePath);
+    unmount();
+  });
+
+  it("keeps a same-input correction draft for an explicit retry after stale-review resync", async () => {
+    const workflowID = "workflow-stale-correction";
+    const sourcePath = "C:\\media\\Stale.Correction.2026.mkv";
+    const initial = workflowCurrentFromPreview(
+      workflowCurrent(workflowID, 7),
+      preview(sourcePath, 1),
+    );
+    let current: ReleaseWorkflowCurrent = {
+      ...initial,
+      factInstructions: {
+        ...initial.factInstructions!,
+        correctionRevision: 3,
+        instructions: {
+          ...initial.factInstructions!.instructions,
+          Identity: { TMDBID: 777 },
+        },
+      },
+      corrections: {
+        revision: 3,
+        corrections: {
+          version: 1,
+          identity: { TMDBID: 777 },
+          releaseName: {},
+          metadata: {},
+        },
+      },
+    };
+    let getCalls = 0;
+    const get = vi.fn(async (): Promise<ActiveInputSnapshot> => {
+      getCalls += 1;
+      return {
+        state: "active",
+        revision: getCalls === 1 ? 8 : 10,
+        inputId: "input-stale-correction",
+        sourceVersion: "source-stale-correction-v1",
+        current,
+      };
+    });
+    let openCalls = 0;
+    const open = vi.fn(
+      async (
+        _request: Parameters<ReleaseSessionPorts["activeInput"]["open"]>[0],
+      ): Promise<ActiveInputSnapshot> => {
+        openCalls += 1;
+        if (openCalls === 1) {
+          throw Object.assign(new Error("The release changed. Recovery: review again."), {
+            failure: {
+              Code: "stale_review",
+              Operation: "preparation",
+              Message: "The release changed.",
+              Recovery: "review_again",
+            },
+          });
+        }
+        current = {
+          ...current,
+          workflow: { ...current.workflow, revision: 8 },
+          factInstructions: {
+            ...current.factInstructions!,
+            correctionRevision: 4,
+            instructions: {
+              ...current.factInstructions!.instructions,
+              Identity: { TMDBID: 0 },
+            },
+          },
+          corrections: {
+            revision: 4,
+            corrections: {
+              version: 1,
+              identity: { TMDBID: 0 },
+              releaseName: {},
+              metadata: {},
+            },
+          },
+        };
+        return {
+          state: "active",
+          revision: 11,
+          inputId: "input-stale-correction",
+          sourceVersion: "source-stale-correction-v1",
+          current,
+        };
+      },
+    );
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          activeInput: { get, open },
+          workflow: workflowPorts({
+            current: async () => current,
+            continue: async () => current,
+          }),
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.input.view.selectedSource).toBe(sourcePath));
+
+    act(() => result.current.input.changeIdentity({ TMDBID: 0 }));
+    act(() => result.current.input.changeClientSearch({ skip: true, client: "" }));
+    expect(result.current.input.view.correctionDirty).toBe(true);
+
+    await act(async () => expect(await result.current.input.prepare()).toBe(false));
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(open).toHaveBeenCalledOnce();
+    expect(result.current.input.view.status).toBe("ready");
+    expect(result.current.workflow.view.status).toBe("ready");
+    expect(result.current.input.view.activeInput.revision).toBe(10);
+    expect(result.current.input.view.intent.identity.TMDBID).toBe(0);
+    expect(result.current.input.view.intent.search.skip).toBe(true);
+    expect(result.current.input.view.correctionDirty).toBe(true);
+
+    await act(async () => expect(await result.current.input.prepare()).toBe(true));
+    expect(open).toHaveBeenCalledTimes(2);
+    const firstRequest = open.mock.calls[0][0];
+    const retryRequest = open.mock.calls[1][0];
+    expect(firstRequest).toMatchObject({
+      expectedRevision: 8,
+      request: {
+        intent: {
+          correctionPatch: {
+            values: { Identity: { TMDBID: 0 } },
+            expectedRevision: 3,
+          },
+          preparation: { Search: { Skip: true } },
+        },
+      },
+    });
+    expect(retryRequest).toMatchObject({
+      expectedRevision: 10,
+      request: {
+        intent: {
+          correctionPatch: {
+            values: { Identity: { TMDBID: 0 } },
+            expectedRevision: 3,
+          },
+          preparation: { Search: { Skip: true } },
+        },
+      },
+    });
+    unmount();
+  });
+
+  it("releases the active input with its exact slot revision", async () => {
+    const sourcePath = "C:\\media\\Close.Release.2026.mkv";
+    const active = workflowCurrentFromPreview(
+      workflowCurrent("workflow-close", 3),
+      preview(sourcePath, 1),
+    );
+    const release = vi.fn(async () => ({ state: "empty", revision: 8 }));
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          activeInput: {
+            get: async () => ({
+              state: "active",
+              revision: 7,
+              inputId: "input-close",
+              sourceVersion: "source-close-v1",
+              current: active,
+            }),
+            release,
+          },
+          workflow: workflowPorts({ current: async () => active }),
+        }),
+      ),
+    });
+
+    await waitFor(() => expect(result.current.identity.view.sourcePath).toBe(sourcePath));
+    await act(async () => expect(await result.current.input.close()).toBe(true));
+    expect(release).toHaveBeenCalledWith({ expectedRevision: 7 }, expect.any(AbortSignal));
+    expect(result.current.input.view.activeInput).toEqual({
+      state: "empty",
+      revision: 8,
+      inputID: "",
+      sourceVersion: "",
+      recoveryWorkflowIDs: [],
+    });
+    expect(result.current.workflow.view.current).toBeNull();
+    unmount();
   });
 
   it.each([true, false])(
@@ -868,7 +1442,10 @@ describe("useReleaseSession", () => {
       };
       const { result, unmount } = renderHook(useReleaseSession, {
         wrapper: wrapperFor(
-          portsFor({ workflow: workflowPorts({ current: async () => current }) }),
+          portsFor({
+            resumeWorkflowID: workflowID,
+            workflow: workflowPorts({ current: async () => current }),
+          }),
         ),
       });
       await waitFor(() =>
@@ -1043,6 +1620,7 @@ describe("useReleaseSession", () => {
     const { result, unmount } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(
         portsFor({
+          resumeWorkflowID: workflowID,
           workflow: workflowPorts({
             current: async () => current,
             continue: continueWorkflow,
@@ -1090,6 +1668,7 @@ describe("useReleaseSession", () => {
       },
       trackerIds: ["PTP"],
     });
+    expect(requests[correctionIndex].intent.factInstructions).toBeUndefined();
     expect(requests[correctionIndex + 1].intent.correctionPatch).toBeUndefined();
     expect(requests[correctionIndex + 1].intent.preparation?.Instructions.Metadata).toEqual({
       Title: "Edited title",
@@ -1186,6 +1765,7 @@ describe("useReleaseSession", () => {
     const { result, unmount } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(
         portsFor({
+          resumeWorkflowID: workflowID,
           workflow: workflowPorts({
             current: async () => retained,
             dryRunUploads,
@@ -1208,6 +1788,50 @@ describe("useReleaseSession", () => {
 
     unmount();
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("treats an all-uploaded workflow as a successful terminal no-op", async () => {
+    const workflowID = "workflow-all-uploaded";
+    const base = workflowCurrent(workflowID, 7);
+    const retained: ReleaseWorkflowCurrent = {
+      ...base,
+      workflow: {
+        ...base.workflow,
+        status: "completed",
+        submissionExclusions: [
+          {
+            trackerId: "AITHER",
+            reason: "already_uploaded",
+            confirmedAt: "2026-09-18T10:00:00Z",
+          },
+        ],
+      },
+    };
+    const continueWorkflow = vi.fn(async () => retained);
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: workflowID,
+          workflow: workflowPorts({
+            current: async () => retained,
+            continue: continueWorkflow,
+          }),
+        }),
+      ),
+    });
+
+    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+    act(() => result.current.upload.chooseTrackers(["AITHER"]));
+    expect(result.current.upload.view.uploadStatus).toBe("ready");
+    expect(result.current.upload.view.submissionExclusions).toEqual(
+      retained.workflow.submissionExclusions,
+    );
+    await act(async () => {
+      expect(await result.current.upload.runDryRun()).toBe(false);
+      expect(await result.current.upload.start()).toBe(false);
+    });
+    expect(continueWorkflow).not.toHaveBeenCalled();
+    unmount();
   });
 
   it.each([false, true])(
@@ -1233,6 +1857,7 @@ describe("useReleaseSession", () => {
       const { result, unmount } = renderHook(useReleaseSession, {
         wrapper: wrapperFor(
           portsFor({
+            resumeWorkflowID: workflowID,
             workflow: workflowPorts({
               current: async () => retained,
               continue: continueWorkflow,
@@ -1297,6 +1922,7 @@ describe("useReleaseSession", () => {
     const { result, unmount } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(
         portsFor({
+          resumeWorkflowID: workflowID,
           workflow: workflowPorts({
             current: async () => retained,
             continue: continueWorkflow,
@@ -1342,6 +1968,7 @@ describe("useReleaseSession", () => {
     const { result, unmount } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(
         portsFor({
+          resumeWorkflowID: workflowID,
           workflow: workflowPorts({
             current: async () => retained,
             continue: continueWorkflow,
@@ -1369,11 +1996,24 @@ describe("useReleaseSession", () => {
   it("executes a direct upload through one workflow command", async () => {
     const workflowID = "workflow-skipped-upload";
     window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
-    const retained = workflowCurrent(workflowID, 7);
+    const base = workflowCurrent(workflowID, 7);
+    const retained: ReleaseWorkflowCurrent = {
+      ...base,
+      continuation: {
+        ...base.continuation,
+        trackerOutcomes: [
+          {
+            trackerId: "AITHER",
+            uploadEligibility: "eligible",
+          },
+        ] as unknown as NonNullable<WorkflowContinuation["trackerOutcomes"]>,
+      },
+    };
     const executeUploads = vi.fn(async (current: ReleaseWorkflowCurrent) => current);
     const { result, unmount } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(
         portsFor({
+          resumeWorkflowID: workflowID,
           workflow: workflowPorts({
             current: async () => retained,
             executeUploads,
@@ -1383,6 +2023,7 @@ describe("useReleaseSession", () => {
     });
 
     await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+    act(() => result.current.upload.chooseTrackers(["AITHER"]));
     await act(async () => {
       expect(await result.current.upload.start()).toBe(true);
     });
@@ -1394,6 +2035,131 @@ describe("useReleaseSession", () => {
       expect.any(String),
       expect.any(AbortSignal),
     );
+
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("retains an all-failed dry run for retry without executing an empty upload", async () => {
+    const workflowID = "workflow-all-upload-preparation-failed";
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const base = workflowCurrent(workflowID, 7);
+    const retained: ReleaseWorkflowCurrent = {
+      ...base,
+      continuation: {
+        ...base.continuation,
+        trackerOutcomes: [
+          {
+            trackerId: "AITHER",
+            uploadEligibility: "eligible",
+          },
+        ] as unknown as NonNullable<WorkflowContinuation["trackerOutcomes"]>,
+      },
+    };
+    const failedDryRun = {
+      ...retained,
+      workflow: {
+        ...retained.workflow,
+        revision: 8,
+        dryRun: { id: "dry-run-failed", revision: 8 },
+      },
+      continuation: {
+        ...retained.continuation,
+        trackerOutcomes: [
+          {
+            trackerId: "AITHER",
+            uploadEligibility: "skipped",
+            uploadSkipReason: "upload_preparation_failed",
+          },
+        ],
+      },
+      dryRun: {
+        id: "dry-run-failed",
+        workflowId: workflowID,
+        revision: 8,
+        reports: [],
+        status: "failed",
+      },
+    } as unknown as ReleaseWorkflowCurrent;
+    const dryRunUploads = vi.fn(async () => failedDryRun);
+    const executeUploads = vi.fn(async (current: ReleaseWorkflowCurrent) => current);
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: workflowID,
+          workflow: workflowPorts({
+            current: async () => retained,
+            dryRunUploads,
+            executeUploads,
+          }),
+        }),
+      ),
+    });
+
+    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+    act(() => result.current.upload.chooseTrackers(["AITHER"]));
+    await act(async () => {
+      expect(await result.current.upload.start()).toBe(false);
+    });
+    expect(executeUploads).not.toHaveBeenCalled();
+    expect(result.current.upload.view.dryRunResult?.id).toBe("dry-run-failed");
+    await act(async () => {
+      expect(await result.current.upload.runDryRun()).toBe(true);
+    });
+    expect(dryRunUploads).toHaveBeenCalledTimes(2);
+    expect(executeUploads).not.toHaveBeenCalled();
+
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("executes a fully skipped dry-run plan as a completed no-op", async () => {
+    const workflowID = "workflow-all-upload-preparation-skipped";
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const base = workflowCurrent(workflowID, 8);
+    const retained = {
+      ...base,
+      workflow: {
+        ...base.workflow,
+        dryRun: { id: "dry-run-skipped", revision: 8 },
+      },
+      continuation: {
+        ...base.continuation,
+        trackerOutcomes: [
+          {
+            trackerId: "AITHER",
+            uploadEligibility: "skipped",
+            uploadSkipReason: "upload_preparation_skipped",
+          },
+        ],
+      },
+      dryRun: {
+        id: "dry-run-skipped",
+        workflowId: workflowID,
+        revision: 8,
+        reports: [],
+        status: "skipped",
+      },
+    } as unknown as ReleaseWorkflowCurrent;
+    const executeUploads = vi.fn(async (current: ReleaseWorkflowCurrent) => current);
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: workflowID,
+          workflow: workflowPorts({
+            current: async () => retained,
+            executeUploads,
+          }),
+        }),
+      ),
+    });
+
+    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+    act(() => result.current.upload.chooseTrackers(["AITHER"]));
+    await act(async () => {
+      expect(await result.current.upload.start()).toBe(true);
+    });
+    expect(executeUploads).toHaveBeenCalledOnce();
 
     unmount();
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
@@ -1438,7 +2204,12 @@ describe("useReleaseSession", () => {
         .mockResolvedValueOnce(operation("running", 2))
         .mockResolvedValueOnce(operation("completed", 3));
       const { result, unmount } = renderHook(useReleaseSession, {
-        wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ current, operation: poll }) })),
+        wrapper: wrapperFor(
+          portsFor({
+            resumeWorkflowID: "workflow-active",
+            workflow: workflowPorts({ current, operation: poll }),
+          }),
+        ),
       });
 
       await act(async () => vi.advanceTimersByTimeAsync(999));
@@ -1499,7 +2270,12 @@ describe("useReleaseSession", () => {
       .mockResolvedValueOnce({ ...workflowCurrent("workflow-failed", 1), operation: failed });
     const operation = vi.fn().mockResolvedValue(failed);
     const { result, unmount } = renderHook(useReleaseSession, {
-      wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ current, operation }) })),
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: "workflow-failed",
+          workflow: workflowPorts({ current, operation }),
+        }),
+      ),
     });
 
     await waitFor(() => expect(result.current.workflow.view.status).toBe("error"), {
@@ -1528,6 +2304,7 @@ describe("useReleaseSession", () => {
     const { result, unmount } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(
         portsFor({
+          resumeWorkflowID: workflowID,
           workflow: workflowPorts({
             current: async () => withDescription(7, "generated source"),
             saveDescriptionOverride,
@@ -1602,6 +2379,7 @@ describe("useReleaseSession", () => {
     const { result, unmount } = renderHook(useReleaseSession, {
       wrapper: wrapperFor({
         ...portsFor({
+          resumeWorkflowID: workflowID,
           workflow: workflowPorts({
             current: async () => withPreparedDescription(7),
             saveDescriptionOverride,
@@ -1693,7 +2471,92 @@ describe("useReleaseSession", () => {
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
 
-  it("renders and resumes the backend playlist required action", async () => {
+  it("reopens and re-verifies the same source for explicit refresh and reset", async () => {
+    const sourcePath = "C:\\media\\Refresh.Release.2026.mkv";
+    let slotRevision = 1;
+    let workflowRevision = 2;
+    let serverCurrent = workflowCurrentFromPreview(
+      workflowCurrent("workflow-refresh", workflowRevision),
+      preview(sourcePath, 1),
+    );
+    const continueWorkflow = vi.fn(async () => serverCurrent);
+    const workflow = workflowPorts({
+      current: async () => serverCurrent,
+      continue: continueWorkflow,
+    });
+    const open = vi.fn(async (_request) => {
+      slotRevision += 1;
+      workflowRevision += 1;
+      serverCurrent = workflowCurrentFromPreview(
+        workflowCurrent("workflow-refresh", workflowRevision),
+        preview(sourcePath, workflowRevision),
+      );
+      return {
+        state: "active" as const,
+        revision: slotRevision,
+        inputId: "input-refresh",
+        sourceVersion: "source-refresh-v1",
+        current: serverCurrent,
+      };
+    });
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          workflow,
+          activeInput: {
+            get: async () => ({
+              state: "active",
+              revision: slotRevision,
+              inputId: "input-refresh",
+              sourceVersion: "source-refresh-v1",
+              current: serverCurrent,
+            }),
+            open,
+          },
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.identity.view.sourcePath).toBe(sourcePath));
+
+    await act(() => result.current.input.prepare());
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        expectedRevision: 1,
+        request: expect.objectContaining({
+          idempotencyKey: expect.stringMatching(/^preparation-/),
+          intent: expect.objectContaining({
+            preparation: expect.objectContaining({
+              SourcePath: sourcePath,
+              ExternalFreshness: "refresh",
+              Force: false,
+            }),
+          }),
+        }),
+      }),
+    );
+
+    await act(() => result.current.input.reset());
+    expect(open).toHaveBeenCalledTimes(2);
+    expect(open.mock.calls[1][0]).toEqual(
+      expect.objectContaining({
+        expectedRevision: 2,
+        request: expect.objectContaining({
+          idempotencyKey: expect.stringMatching(/^preparation-/),
+          intent: expect.objectContaining({
+            preparation: expect.objectContaining({
+              SourcePath: sourcePath,
+              ExternalFreshness: "refresh",
+              Force: true,
+            }),
+          }),
+        }),
+      }),
+    );
+    unmount();
+  });
+
+  it("resumes the backend playlist required action with the captured draft source", async () => {
     const sourcePath = "C:\\media\\Example Disc";
     const withRelease = (
       current: ReleaseWorkflowCurrent,
@@ -1756,20 +2619,69 @@ describe("useReleaseSession", () => {
       .mockResolvedValueOnce(withRelease(workflowCurrent("workflow-playlist-browser", 4), false));
     const create = vi.fn(async () => workflowCurrent("workflow-playlist-browser", 1));
     const replaceFacts = vi.fn(async () => workflowCurrent("workflow-playlist-browser", 3));
+    const workflow = workflowPorts({
+      create,
+      prepare: prepareWorkflow,
+      replaceFacts,
+    });
+    const openResponse = createDeferred<void>();
+    let activeSnapshot: ActiveInputSnapshot | null = null;
+    let emitInputChanged: () => void = () => undefined;
+    const get = vi.fn(async (): Promise<ActiveInputSnapshot> => {
+      return activeSnapshot || { state: "empty", revision: 0 };
+    });
+    const open = vi.fn(
+      async (
+        request: Parameters<ReleaseSessionPorts["activeInput"]["open"]>[0],
+        signal: AbortSignal,
+      ): Promise<ActiveInputSnapshot> => {
+        const current = await workflow.continue(request.request, signal);
+        const snapshot: ActiveInputSnapshot = {
+          state: "active",
+          revision: 1,
+          inputId: "input-playlist-browser",
+          sourceVersion: "source-playlist-browser-v1",
+          current,
+        };
+        activeSnapshot = snapshot;
+        await openResponse.promise;
+        return snapshot;
+      },
+    );
     const { result, unmount } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(
         portsFor({
-          workflow: workflowPorts({
-            create,
-            prepare: prepareWorkflow,
-            replaceFacts,
-          }),
+          workflow,
+          activeInput: {
+            get,
+            open,
+            subscribe: (onChange) => {
+              emitInputChanged = onChange;
+              return () => undefined;
+            },
+          },
         }),
       ),
     });
 
-    act(() => result.current.input.selectSource(sourcePath));
-    await act(() => result.current.input.prepare());
+    await waitFor(() => expect(get).toHaveBeenCalledOnce());
+    act(() => result.current.input.updateSourceDraft(sourcePath));
+    let preparation!: Promise<boolean>;
+    act(() => {
+      preparation = result.current.input.prepare();
+    });
+    await waitFor(() => expect(open).toHaveBeenCalledOnce());
+    await waitFor(() => expect(activeSnapshot).not.toBeNull());
+
+    act(() => emitInputChanged());
+    await waitFor(() =>
+      expect(result.current.workflow.view.current?.workflow.id).toBe("workflow-playlist-browser"),
+    );
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(result.current.input.view.selectedSource).toBe("");
+
+    openResponse.resolve(undefined);
+    await act(() => preparation);
 
     expect(result.current.input.view.status).toBe("awaiting_input");
     expect(result.current.input.view.playlist).toEqual(
@@ -1814,6 +2726,7 @@ describe("useReleaseSession", () => {
     expect(prepareWorkflow).toHaveBeenLastCalledWith(
       expect.anything(),
       expect.objectContaining({
+        SourcePath: sourcePath,
         Instructions: expect.objectContaining({
           Playlist: {
             Set: true,
@@ -1836,8 +2749,21 @@ describe("useReleaseSession", () => {
 
   it("routes the browser release flow through authoritative workflow commands", async () => {
     let revision = 2;
-    const advance = (current: ReleaseWorkflowCurrent) =>
-      workflowCurrent(current.workflow.id, ++revision);
+    const advance = (current: ReleaseWorkflowCurrent) => {
+      const next = workflowCurrent(current.workflow.id, ++revision);
+      return {
+        ...next,
+        continuation: {
+          ...next.continuation,
+          trackerOutcomes: [
+            {
+              trackerId: "AITHER",
+              uploadEligibility: "eligible",
+            },
+          ] as unknown as NonNullable<WorkflowContinuation["trackerOutcomes"]>,
+        },
+      };
+    };
     const project = vi.fn(async (current: ReleaseWorkflowCurrent) => advance(current));
     const preflight = vi.fn(async (current: ReleaseWorkflowCurrent) => {
       const next = advance(current);
@@ -2227,7 +3153,7 @@ describe("useReleaseSession", () => {
     expect(result.current.identity.view.release).toEqual({ SourcePath: sourcePath, Generation: 1 });
   });
 
-  it("binds exact generations and invalidates dependent facets on N+1", async () => {
+  it("preserves compatible media facets across a same-input N+1 refresh", async () => {
     let generation = 0;
     const ports = portsFor({
       workflow: workflowPorts({
@@ -2245,12 +3171,16 @@ describe("useReleaseSession", () => {
       SourcePath: "C:\\media\\Example",
       Generation: 1,
     });
+    await act(() => result.current.screenshots.load());
+    expect(result.current.screenshots.view.plan).not.toBeNull();
     const firstRevision = result.current.screenshots.view.revision;
+    const firstPlan = result.current.screenshots.view.plan;
 
     await act(() => result.current.input.prepare());
     expect(result.current.identity.view.release?.Generation).toBe(2);
-    expect(result.current.screenshots.view.revision).toBeGreaterThan(firstRevision);
-    expect(result.current.screenshots.view.staleReason).toBe("Prepared generation changed.");
+    expect(result.current.screenshots.view.revision).toBe(firstRevision);
+    expect(result.current.screenshots.view.plan).toBe(firstPlan);
+    expect(result.current.screenshots.view.staleReason).toBe("");
   });
 
   it("aborts and suppresses stale preparation completion after source replacement", async () => {
@@ -2334,7 +3264,7 @@ describe("useReleaseSession", () => {
     expect(result.current.identity.view.release).toEqual({ SourcePath: sourcePath, Generation: 2 });
   });
 
-  it("carries workflow drafts across same-source generations and clears them for another source", async () => {
+  it("carries workflow drafts across refreshes and clears them after another input opens", async () => {
     const { result } = renderHook(useReleaseSession, { wrapper: wrapperFor(portsFor()) });
     await selectAndPrepare(result, "C:\\media\\Example");
     act(() => result.current.upload.chooseTrackers(["AITHER", "BLU"]));
@@ -2348,6 +3278,9 @@ describe("useReleaseSession", () => {
     expect(result.current.upload.view.questionnaireAnswers.AITHER).toEqual({ season: "1" });
 
     act(() => result.current.input.selectSource("C:\\media\\Other"));
+    expect(result.current.upload.view.selectedTrackers).toEqual(["AITHER", "BLU"]);
+    expect(result.current.upload.view.options.noSeed).toBe(true);
+    await act(() => result.current.input.prepare());
     expect(result.current.upload.view.selectedTrackers).toEqual([]);
     expect(result.current.upload.view.options.noSeed).toBe(false);
     expect(result.current.upload.view.options.runLogLevel).toBe("info");
@@ -2392,7 +3325,7 @@ describe("useReleaseSession", () => {
     });
     await act(() => screenshotCommand);
     expect(result.current.screenshots.view.plan).toBeNull();
-    expect(result.current.screenshots.view.staleReason).toBe("Prepared generation changed.");
+    expect(result.current.screenshots.view.staleReason).toBe("Preparation required.");
   });
 
   it("publishes and reorders opaque final screenshots through workflow commands", async () => {
@@ -2568,10 +3501,13 @@ describe("useReleaseSession", () => {
     const baseWorkflow = workflowPorts({ captureMedia });
     const baseContinue = baseWorkflow.continue;
     let duplicateTransitions = 0;
+    let latestCurrent: ReleaseWorkflowCurrent | null = null;
+    let inputChanged: () => void = () => undefined;
     const workflow: ReleaseSessionPorts["workflow"] = {
       ...baseWorkflow,
       continue: async (request, signal) => {
         const current = await baseContinue(request, signal);
+        latestCurrent = current;
         if (request.goal === "duplicates_decided") {
           duplicateTransitions += 1;
           if (duplicateTransitions === 4) await finalTransition.promise;
@@ -2579,9 +3515,31 @@ describe("useReleaseSession", () => {
         return current;
       },
     };
-    const { result } = renderHook(useReleaseSession, {
-      wrapper: wrapperFor(portsFor({ workflow })),
+    const getActiveInput = vi
+      .fn<ReleaseSessionPorts["activeInput"]["get"]>()
+      .mockResolvedValueOnce({ state: "empty", revision: 0 })
+      .mockImplementation(async () => ({
+        state: "active",
+        revision: 1,
+        inputId: "C:\\media\\Example",
+        sourceVersion: "C:\\media\\Example",
+        current: latestCurrent,
+      }));
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          workflow,
+          activeInput: {
+            get: getActiveInput,
+            subscribe: (onChange) => {
+              inputChanged = onChange;
+              return () => undefined;
+            },
+          },
+        }),
+      ),
     });
+    await waitFor(() => expect(getActiveInput).toHaveBeenCalledOnce());
     act(() => result.current.input.selectSource("C:\\media\\Example"));
     act(() => result.current.duplicates.chooseTrackers(["AITHER"]));
     await act(() => result.current.input.prepare());
@@ -2595,6 +3553,11 @@ describe("useReleaseSession", () => {
     expect(await result.current.menuImages.capture()).toBe(false);
     expect(captureMedia).not.toHaveBeenCalled();
 
+    act(() => inputChanged());
+    await waitFor(() => expect(getActiveInput).toHaveBeenCalledTimes(2));
+    expect(result.current.workflow.view.status).toBe("running");
+    expect(result.current.duplicates.view.status).toBe("running");
+
     finalTransition.resolve(true);
     await act(() => duplicateCommand);
     expect(result.current.workflow.view.status).toBe("ready");
@@ -2602,6 +3565,7 @@ describe("useReleaseSession", () => {
       expect(await result.current.menuImages.capture()).toBe(true);
     });
     expect(captureMedia).toHaveBeenCalledOnce();
+    unmount();
   });
 
   it("cancels DVD menu capture as an abortable session media operation", async () => {

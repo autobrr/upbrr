@@ -250,6 +250,154 @@ func TestPrivateArtifactVaultInvalidateWorkflowExceptPersistsPreservedResource(t
 	}
 }
 
+func TestPrivateArtifactVaultDeleteWorkflowRemovesExactDurableScope(t *testing.T) {
+	t.Parallel()
+
+	vault, err := NewPrivateArtifactVault(t.TempDir())
+	if err != nil {
+		t.Fatalf("new private artifact vault: %v", err)
+	}
+	now := time.Date(2026, time.July, 25, 12, 0, 0, 0, time.UTC)
+	targetWorkflow := api.WorkflowID("workflow-delete")
+	targetResource := "preview:target"
+	unrelatedWorkflow := api.WorkflowID("workflow-preserve")
+	unrelatedResource := "preview:unrelated"
+	for _, resource := range []struct {
+		ownerID    string
+		workflowID api.WorkflowID
+		resourceID string
+	}{
+		{
+			ownerID:    testOwnerID,
+			workflowID: targetWorkflow,
+			resourceID: targetResource,
+		},
+		{
+			ownerID:    testOwnerID,
+			workflowID: unrelatedWorkflow,
+			resourceID: unrelatedResource,
+		},
+		{
+			ownerID:    "another-owner",
+			workflowID: targetWorkflow,
+			resourceID: unrelatedResource,
+		},
+	} {
+		if err := vault.Put(
+			resource.ownerID,
+			resource.workflowID,
+			resource.resourceID,
+			MediaPreviewContent{Bytes: []byte(resource.resourceID), ContentType: "image/png"},
+			now.Add(time.Hour),
+		); err != nil {
+			t.Fatalf("put %s: %v", resource.resourceID, err)
+		}
+	}
+	targetKey, err := newPrivateResourceKey(testOwnerID, targetWorkflow, targetResource)
+	if err != nil {
+		t.Fatalf("target key: %v", err)
+	}
+	if err := vault.DeleteWorkflow(testOwnerID, targetWorkflow); err != nil {
+		t.Fatalf("delete workflow: %v", err)
+	}
+	for _, path := range []string{vault.blobFilePath(targetKey), vault.metadataPath(targetKey)} {
+		if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("target durable artifact %s stat error=%v", path, statErr)
+		}
+	}
+	if _, err := vault.Get(testOwnerID, targetWorkflow, targetResource, now); !errors.Is(err, ErrPrivateResourceUnavailable) {
+		t.Fatalf("deleted workflow resource error=%v", err)
+	}
+	if _, err := vault.Get(testOwnerID, unrelatedWorkflow, unrelatedResource, now); err != nil {
+		t.Fatalf("unrelated workflow resource: %v", err)
+	}
+	if _, err := vault.Get("another-owner", targetWorkflow, unrelatedResource, now); err != nil {
+		t.Fatalf("unrelated owner resource: %v", err)
+	}
+}
+
+func TestPrivateArtifactVaultDeleteWorkflowReportsStorageFailure(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	vault, err := NewPrivateArtifactVault(root)
+	if err != nil {
+		t.Fatalf("new private artifact vault: %v", err)
+	}
+	now := time.Date(2026, time.July, 25, 12, 0, 0, 0, time.UTC)
+	workflowID := api.WorkflowID("workflow-storage-failure")
+	resourceID := "preview:retry"
+	if err := vault.Put(
+		testOwnerID,
+		workflowID,
+		resourceID,
+		MediaPreviewContent{Bytes: []byte("retry"), ContentType: "image/png"},
+		now.Add(time.Hour),
+	); err != nil {
+		t.Fatalf("put private resource: %v", err)
+	}
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatalf("remove vault root: %v", err)
+	}
+	if err := vault.DeleteWorkflow(testOwnerID, workflowID); err == nil {
+		t.Fatal("expected durable storage cleanup error")
+	}
+	if _, err := vault.Get(testOwnerID, workflowID, resourceID, now); err != nil {
+		t.Fatalf("failed cleanup discarded retryable in-memory resource: %v", err)
+	}
+}
+
+func TestPrivateArtifactVaultInvalidateWorkflowExceptDropsMemoryAfterMissingRoot(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	vault, err := NewPrivateArtifactVault(root)
+	if err != nil {
+		t.Fatalf("new private artifact vault: %v", err)
+	}
+	now := time.Date(2026, time.July, 25, 12, 0, 0, 0, time.UTC)
+	workflowID := api.WorkflowID("workflow-invalidate-storage-failure")
+	preservedID := "preview:preserved"
+	removedID := "operation:released"
+	if err := vault.Put(
+		testOwnerID,
+		workflowID,
+		preservedID,
+		MediaPreviewContent{Bytes: []byte("preserved"), ContentType: "image/png"},
+		now.Add(time.Hour),
+	); err != nil {
+		t.Fatalf("put preserved private resource: %v", err)
+	}
+	probe := &privateVaultReleaseProbe{}
+	if err := vault.Put(testOwnerID, workflowID, removedID, probe, now.Add(time.Hour)); err != nil {
+		t.Fatalf("put removable private resource: %v", err)
+	}
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatalf("remove vault root: %v", err)
+	}
+
+	vault.InvalidateWorkflowExcept(testOwnerID, workflowID, preservedID)
+
+	if !probe.released {
+		t.Fatal("invalidation did not release the removed in-memory resource")
+	}
+	if _, err := vault.Get(testOwnerID, workflowID, removedID, now); !errors.Is(err, ErrPrivateResourceUnavailable) {
+		t.Fatalf("removed resource error=%v", err)
+	}
+	if _, err := vault.Get(testOwnerID, workflowID, preservedID, now); err != nil {
+		t.Fatalf("preserved resource error=%v", err)
+	}
+}
+
+type privateVaultReleaseProbe struct {
+	released bool
+}
+
+func (p *privateVaultReleaseProbe) Release() error {
+	p.released = true
+	return nil
+}
+
 func TestMemoryPrivateResourceStoreInvalidateWorkflowExcept(t *testing.T) {
 	t.Parallel()
 

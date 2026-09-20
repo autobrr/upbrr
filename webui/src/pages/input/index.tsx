@@ -796,6 +796,9 @@ export default function InputPage(props: Props) {
   const path = view.sourceDraft;
   const sourceLookupURL = view.intent.sourceLookupURL;
   const loading = view.status === "running";
+  const recovering = view.activeInput.state === "recovering";
+  const verification =
+    view.sourceVerification?.status === "running" ? view.sourceVerification : null;
   const metadataResetting = loading;
   const error = view.error;
   const preview = view.preview || emptyMetadataPreview;
@@ -1266,10 +1269,71 @@ export default function InputPage(props: Props) {
               <Button type="button" onClick={handleBrowseFolder}>
                 Browse folder
               </Button>
-              <Button variant="primary" type="button" onClick={handleFetch} disabled={loading}>
+              <Button
+                variant="primary"
+                type="button"
+                onClick={handleFetch}
+                disabled={loading || recovering}
+              >
                 {loading ? "Fetching..." : "Fetch metadata"}
               </Button>
+              {loading ? (
+                <Button type="button" onClick={facet.cancelPreparation}>
+                  {verification ? "Cancel verification" : "Cancel fetch"}
+                </Button>
+              ) : null}
+              <Button
+                type="button"
+                onClick={() => void facet.close()}
+                disabled={loading || view.activeInput.state === "empty" || recovering}
+              >
+                Close input
+              </Button>
             </div>
+            {recovering ? (
+              <p className="muted col-span-full" role="status">
+                Resolve the recovery action above before opening or preparing an input.
+              </p>
+            ) : null}
+            {view.activeInput.recoveryWorkflowIDs.length ? (
+              <section className="col-span-full grid gap-2" aria-label="Legacy workflow recovery">
+                <p className="muted">
+                  Resolve interrupted external effects before opening another input.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {view.activeInput.recoveryWorkflowIDs.map((workflowID) => (
+                    <Button
+                      key={workflowID}
+                      type="button"
+                      disabled={loading}
+                      onClick={() => void facet.recoverLegacyWorkflow(workflowID)}
+                    >
+                      Recover workflow {workflowID}
+                    </Button>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+            {verification ? (
+              <div className="col-span-full grid gap-1" role="status" aria-live="polite">
+                <p>{verification.message || "Verifying source content."}</p>
+                {verification.totalBytes > 0 ? (
+                  <>
+                    <progress
+                      aria-label="Source verification progress"
+                      max={verification.totalBytes}
+                      value={verification.completedBytes}
+                    />
+                    <p className="muted text-sm">
+                      {verification.completedBytes.toLocaleString()} of{" "}
+                      {verification.totalBytes.toLocaleString()} bytes verified
+                    </p>
+                  </>
+                ) : (
+                  <p className="muted text-sm">Calculating source size…</p>
+                )}
+              </div>
+            ) : null}
           </div>
         </div>
         {view.source.discCount > 0 ? (
@@ -1281,7 +1345,8 @@ export default function InputPage(props: Props) {
         {error ? (
           <div className="flex flex-wrap items-center gap-2">
             <p className="error">{error}</p>
-            {view.failure?.Recovery === "confirm" ? (
+            {view.failure?.Code === "confirmation_required" &&
+            view.failure.Recovery === "confirm" ? (
               <Button
                 type="button"
                 variant="primary"

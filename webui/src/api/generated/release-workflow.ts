@@ -8,6 +8,17 @@ export type APIErrorResponse = Readonly<{
   failure?: OperationFailure;
 }>;
 
+export type ActiveInputSnapshot = Readonly<{
+  current?: ReleaseWorkflowCurrent | null;
+  inputId?: string;
+  recoveryWorkflowIds?: readonly WorkflowID[];
+  revision: number;
+  sourceVersion?: string;
+  state: ActiveInputState;
+}>;
+
+export type ActiveInputState = string;
+
 export type AniListAiringEpisode = Readonly<{
   AiringAt: number;
   Episode: number;
@@ -216,6 +227,7 @@ export type CorrectionFieldRef = Readonly<{
 }>;
 
 export type CreateReleaseWorkflowUploadRequest = Readonly<{
+  authority?: WorkflowAuthority | null;
   client?: ReleaseWorkflowUploadClient;
   descriptions?: ReleaseWorkflowUploadDescriptions;
   duplicates?: ReleaseWorkflowUploadDuplicates;
@@ -415,6 +427,8 @@ export type EpisodeFacts = Readonly<{
 }>;
 
 export type EpisodeTitleMode = string;
+
+export type ExternalFreshness = string;
 
 export type ExternalIDOverrides = Readonly<{
   IMDBID?: number | null;
@@ -925,6 +939,11 @@ export type NamingRequirement = string;
 
 export type NamingStatus = string;
 
+export type OpenActiveInputRequest = Readonly<{
+  expectedRevision: number;
+  request: ContinueReleaseWorkflowRequest;
+}>;
+
 export type Operation = Readonly<{
   command: string;
   completed: number;
@@ -1017,6 +1036,7 @@ export type PreparationPolicy = Readonly<{
 
 export type PrepareInput = Readonly<{
   Controls: PreparationControls;
+  ExternalFreshness: ExternalFreshness;
   Force: boolean;
   Instructions: ReleaseFactInstructions;
   Intent: PreparationIntent;
@@ -1115,6 +1135,20 @@ export type ProviderIDSet = Readonly<{
 export type PublicResourceID = string;
 
 export type ReadinessStatus = "unknown" | "ready" | "blocked" | "ineligible" | "stale";
+
+export type ReconcileActiveInputRequest = Readonly<{
+  answer: RequiredActionAnswer;
+  authority: WorkflowAuthority;
+  idempotencyKey: string;
+}>;
+
+export type RecoverLegacyActiveInputRequest = Readonly<{
+  workflowId: WorkflowID;
+}>;
+
+export type ReleaseActiveInputRequest = Readonly<{
+  expectedRevision: number;
+}>;
 
 export type ReleaseAssessments = Readonly<{
   MediaInfoEncodeSettings: EncodeSettingsStatus;
@@ -1269,6 +1303,7 @@ export type ReleaseWorkflow = Readonly<{
   revision: WorkflowRevision;
   selection?: TrackerSelectionRef | null;
   status: WorkflowStatus;
+  submissionExclusions?: readonly SubmissionExclusion[];
   trackerApproval?: TrackerApprovalSnapshotRef | null;
   trackerCatalog?: TrackerCatalogSnapshotRef | null;
   trackerPreflight?: TrackerPreflightAssessmentRef | null;
@@ -1804,6 +1839,12 @@ export type StoredReleaseCorrectionsV1 = Readonly<{
   sourceFingerprint?: string;
   staleContentFields?: readonly CorrectionField[];
   version: number;
+}>;
+
+export type SubmissionExclusion = Readonly<{
+  confirmedAt: string;
+  reason: string;
+  trackerId: TrackerID;
 }>;
 
 export type TIKOverrides = Readonly<{

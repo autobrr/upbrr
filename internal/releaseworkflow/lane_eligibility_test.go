@@ -17,15 +17,15 @@ func laneEligibilityTestCurrent() CommandResult {
 	current.Dupes = &api.DupeAssessment{
 		Results: []api.TrackerDupeAssessment{
 			{
-TrackerID: "ALPHA",
- Decision: api.DupeDecisionNoMatch,
- Status: api.StageStatusCompleted,
-},
+				TrackerID: "ALPHA",
+				Decision:  api.DupeDecisionNoMatch,
+				Status:    api.StageStatusCompleted,
+			},
 			{
-TrackerID: "BETA",
- Decision: api.DupeDecisionNoMatch,
- Status: api.StageStatusCompleted,
-},
+				TrackerID: "BETA",
+				Decision:  api.DupeDecisionNoMatch,
+				Status:    api.StageStatusCompleted,
+			},
 		},
 		Status: api.StageStatusCompleted,
 	}

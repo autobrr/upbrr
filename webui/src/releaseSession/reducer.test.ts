@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { MetadataPreview } from "../types";
+import type { ReleaseWorkflowCurrent } from "../api/generated/release-workflow";
 import { emptyExternalIdentity } from "../utils/canonicalIdentity";
 import { correctionValuesFor, initialSessionState, sessionReducer } from "./reducer";
 
@@ -18,6 +19,12 @@ const preview = (sourcePath: string, generation: number): MetadataPreview => ({
   Diagnostics: [],
   TrackerData: [],
 });
+
+const current = (workflowID: string, revision: number): ReleaseWorkflowCurrent =>
+  ({
+    workflow: { id: workflowID, revision },
+    continuation: { lifecycle: "ready", disposition: "none", refs: {} },
+  }) as unknown as ReleaseWorkflowCurrent;
 
 describe("sessionReducer upload intent", () => {
   it("retains an explicit source ID clear until preparation resolves the source again", () => {
@@ -297,5 +304,384 @@ describe("sessionReducer upload intent", () => {
       selectedTrackers: ["BLU"],
     });
     expect(state.selectedTrackers).toEqual(["BLU"]);
+  });
+});
+
+describe("sessionReducer active input snapshots", () => {
+  it("accepts only correlated source verification progress and clears it on cancellation", () => {
+    const sourcePath = "C:\\media\\Verify.Release.2026.mkv";
+    let state = sessionReducer(initialSessionState(), {
+      type: "preparation_started",
+      sourcePath,
+      commandRevision: 1,
+      inputEditRevision: 0,
+      correlationID: "prepare-current",
+      intent: initialSessionState().preparationIntent,
+    });
+    const running = state;
+    state = sessionReducer(state, {
+      type: "source_verification_progressed",
+      update: {
+        correlationID: "prepare-stale",
+        completedBytes: 50,
+        totalBytes: 100,
+        message: "Stale",
+        status: "running",
+      },
+    });
+    expect(state).toBe(running);
+
+    state = sessionReducer(state, {
+      type: "source_verification_progressed",
+      update: {
+        correlationID: "prepare-current",
+        completedBytes: 50,
+        totalBytes: 100,
+        message: "Verifying source content.",
+        status: "running",
+      },
+    });
+    expect(state.sourceVerification).toMatchObject({ completedBytes: 50, totalBytes: 100 });
+
+    state = sessionReducer(state, {
+      type: "source_verification_progressed",
+      update: {
+        correlationID: "prepare-current",
+        completedBytes: 0,
+        totalBytes: 0,
+        message: "Stage complete.",
+        status: "completed",
+      },
+    });
+    expect(state.sourceVerification).toMatchObject({
+      completedBytes: 50,
+      totalBytes: 100,
+      status: "completed",
+    });
+
+    state = sessionReducer(state, {
+      type: "preparation_cancelled",
+      correlationID: "prepare-current",
+    });
+    expect(state.preparation.status).toBe("cancelled");
+    expect(state.sourceVerification).toBeNull();
+  });
+
+  it("accepts the in-flight preparation failure after an empty-slot resync", () => {
+    const sourcePath = "Z:\\missing\\Invalid.Release.2026.mkv";
+    let state = sessionReducer(initialSessionState(), {
+      type: "draft_changed",
+      value: sourcePath,
+    });
+    state = sessionReducer(state, {
+      type: "preparation_started",
+      sourcePath,
+      commandRevision: 1,
+      inputEditRevision: state.inputEditRevision,
+      correlationID: "prepare-invalid",
+      intent: state.preparationIntent,
+    });
+    state = sessionReducer(state, {
+      type: "source_verification_progressed",
+      update: {
+        correlationID: "prepare-invalid",
+        completedBytes: 0,
+        totalBytes: 0,
+        message: "Verifying source content.",
+        status: "running",
+      },
+    });
+
+    state = sessionReducer(state, {
+      type: "active_input_applied",
+      snapshot: { state: "empty", revision: 2 },
+      status: "ready",
+      preview: null,
+      intent: null,
+      capturedInputEditRevision: state.inputEditRevision,
+    });
+    expect(state.selectedSource).toBe("");
+    expect(state.preparation.status).toBe("running");
+    expect(state.sourceVerification?.correlationID).toBe("prepare-invalid");
+
+    state = sessionReducer(state, {
+      type: "preparation_failed",
+      sourcePath,
+      commandRevision: 1,
+      correlationID: "prepare-invalid",
+      error: "The source path is unavailable. Recovery: edit input.",
+      failure: {
+        Code: "invalid_source",
+        Operation: "preparation",
+        Message: "The source path is unavailable.",
+        Recovery: "edit_input",
+      },
+    });
+    expect(state.preparation).toMatchObject({
+      status: "error",
+      error: "The source path is unavailable. Recovery: edit input.",
+    });
+    expect(state.sourceVerification).toBeNull();
+
+    state = sessionReducer(state, {
+      type: "active_input_applied",
+      snapshot: { state: "empty", revision: 3 },
+      status: "ready",
+      preview: null,
+      intent: null,
+      capturedInputEditRevision: state.inputEditRevision,
+    });
+    expect(state.preparation).toMatchObject({
+      status: "error",
+      error: "The source path is unavailable. Recovery: edit input.",
+    });
+    expect(state.sourceDraft).toBe(sourcePath);
+  });
+
+  it("keeps a legacy recovery workflow while clearing unverified release authority", () => {
+    const initial = initialSessionState();
+    const sourcePath = "C:\\media\\Prior.Release.2026.mkv";
+    const active = sessionReducer(initial, {
+      type: "active_input_applied",
+      snapshot: {
+        state: "active",
+        revision: 1,
+        inputId: "input-prior",
+        sourceVersion: "source-prior-v1",
+        current: current("workflow-prior", 2),
+      },
+      status: "ready",
+      preview: preview(sourcePath, 1),
+      intent: initial.preparationIntent,
+      capturedInputEditRevision: 0,
+      selectedTrackers: ["AITHER"],
+    });
+    const recoveryCurrent = {
+      ...current("workflow-recovery", 8),
+      workflow: {
+        ...current("workflow-recovery", 8).workflow,
+        status: "blocked" as const,
+        requiredActions: [
+          {
+            id: "action-reconcile",
+            kind: "reconcile_submission",
+            status: "pending" as const,
+            workflowRevision: 8,
+            prompt: "Verify the interrupted effect.",
+            options: [{ value: "not_completed", label: "Confirmed not completed" }],
+            createdAt: "2026-09-19T00:00:00Z",
+          },
+        ],
+      },
+    };
+    const recovering = sessionReducer(active, {
+      type: "active_input_applied",
+      snapshot: {
+        state: "recovering",
+        revision: 2,
+        current: recoveryCurrent,
+      },
+      status: "ready",
+      preview: null,
+      intent: null,
+      capturedInputEditRevision: active.inputEditRevision,
+    });
+
+    expect(recovering.activeInput).toEqual({
+      state: "recovering",
+      revision: 2,
+      inputID: "",
+      sourceVersion: "",
+      recoveryWorkflowIDs: [],
+    });
+    expect(recovering.workflowView.current?.workflow.id).toBe("workflow-recovery");
+    expect(recovering.preview).toBeNull();
+    expect(recovering.release).toBeNull();
+    expect(recovering.selectedTrackers).toEqual([]);
+  });
+
+  it("applies workflow authority and its compatibility preview atomically", () => {
+    const state = initialSessionState();
+    const sourcePath = "C:\\media\\Atomic.Release.2026.mkv";
+    const next = sessionReducer(state, {
+      type: "active_input_applied",
+      snapshot: {
+        state: "active",
+        revision: 4,
+        inputId: "input-atomic",
+        sourceVersion: "source-atomic-v1",
+        current: current("workflow-atomic", 6),
+      },
+      status: "ready",
+      preview: preview(sourcePath, 2),
+      intent: state.preparationIntent,
+      capturedInputEditRevision: 0,
+      selectedTrackers: ["AITHER"],
+    });
+
+    expect(next.activeInput).toEqual({
+      state: "active",
+      revision: 4,
+      inputID: "input-atomic",
+      sourceVersion: "source-atomic-v1",
+      recoveryWorkflowIDs: [],
+    });
+    expect(next.workflowView.current?.workflow.id).toBe("workflow-atomic");
+    expect(next.preview?.Release).toEqual({ SourcePath: sourcePath, Generation: 2 });
+    expect(next.release).toEqual({ SourcePath: sourcePath, Generation: 2 });
+  });
+
+  it("preserves a later draft for the same input version and clears it for another version", () => {
+    const sourcePath = "C:\\media\\Draft.Release.2026.mkv";
+    const initial = initialSessionState();
+    let state = sessionReducer(initial, {
+      type: "active_input_applied",
+      snapshot: {
+        state: "active",
+        revision: 1,
+        inputId: "input-draft",
+        sourceVersion: "source-draft-v1",
+        current: current("workflow-draft", 1),
+      },
+      status: "ready",
+      preview: preview(sourcePath, 1),
+      intent: initial.preparationIntent,
+      capturedInputEditRevision: 0,
+    });
+    const capturedRevision = state.inputEditRevision;
+    state = sessionReducer(state, {
+      type: "metadata_changed",
+      value: { Title: "Newer unsaved title" },
+    });
+    state = sessionReducer(state, {
+      type: "active_input_applied",
+      snapshot: {
+        state: "active",
+        revision: 2,
+        inputId: "input-draft",
+        sourceVersion: "source-draft-v1",
+        current: current("workflow-draft", 2),
+      },
+      status: "ready",
+      preview: preview(sourcePath, 2),
+      intent: { ...initial.preparationIntent, metadata: { Title: "Server title" } },
+      capturedInputEditRevision: capturedRevision,
+    });
+    expect(state.preparationIntent.metadata).toEqual({ Title: "Newer unsaved title" });
+    expect(state.preparationDirty).toBe(true);
+
+    state = sessionReducer(state, {
+      type: "active_input_applied",
+      snapshot: {
+        state: "active",
+        revision: 3,
+        inputId: "input-draft",
+        sourceVersion: "source-draft-v2",
+        current: current("workflow-draft-v2", 1),
+      },
+      status: "ready",
+      preview: preview(sourcePath, 1),
+      intent: { ...initial.preparationIntent, metadata: { Title: "New source version" } },
+      capturedInputEditRevision: state.inputEditRevision,
+    });
+    expect(state.preparationIntent.metadata).toEqual({ Title: "New source version" });
+    expect(state.preparationDirty).toBe(false);
+  });
+
+  it("preserves an unaccepted correction during same-input resync and clears it on source switch", () => {
+    const sourcePath = "C:\\media\\Draft.Release.2026.mkv";
+    const initial = initialSessionState();
+    let state = sessionReducer(initial, {
+      type: "active_input_applied",
+      snapshot: {
+        state: "active",
+        revision: 1,
+        inputId: "input-draft",
+        sourceVersion: "source-draft-v1",
+        current: current("workflow-draft", 1),
+      },
+      status: "ready",
+      preview: preview(sourcePath, 1),
+      intent: { ...initial.preparationIntent, identity: { TMDBID: 777 } },
+      capturedInputEditRevision: 0,
+    });
+    state = sessionReducer(state, {
+      type: "identity_changed",
+      value: { TMDBID: 0 },
+    });
+    const editRevision = state.inputEditRevision;
+
+    state = sessionReducer(state, {
+      type: "active_input_applied",
+      snapshot: {
+        state: "active",
+        revision: 2,
+        inputId: "input-draft",
+        sourceVersion: "source-draft-v1",
+        current: current("workflow-draft", 2),
+      },
+      status: "ready",
+      preview: preview(sourcePath, 1),
+      intent: { ...initial.preparationIntent, identity: { TMDBID: 777 } },
+      capturedInputEditRevision: editRevision,
+      preserveInputDraft: true,
+    });
+    expect(state.preparationIntent.identity).toEqual({ TMDBID: 0 });
+    expect(state.correctionDirty).toBe(true);
+    expect(state.inputEditRevision).toBe(editRevision);
+
+    state = sessionReducer(state, {
+      type: "active_input_applied",
+      snapshot: {
+        state: "active",
+        revision: 3,
+        inputId: "input-draft",
+        sourceVersion: "source-draft-v2",
+        current: current("workflow-draft-v2", 1),
+      },
+      status: "ready",
+      preview: preview(sourcePath, 2),
+      intent: { ...initial.preparationIntent, identity: { TMDBID: 888 } },
+      capturedInputEditRevision: state.inputEditRevision,
+      preserveInputDraft: true,
+    });
+    expect(state.preparationIntent.identity).toEqual({ TMDBID: 888 });
+    expect(state.correctionDirty).toBe(false);
+  });
+
+  it("rejects an older active-slot response after a newer source wins", () => {
+    const initial = initialSessionState();
+    const newer = sessionReducer(initial, {
+      type: "active_input_applied",
+      snapshot: {
+        state: "active",
+        revision: 5,
+        inputId: "input-b",
+        sourceVersion: "source-b-v1",
+        current: current("workflow-b", 2),
+      },
+      status: "ready",
+      preview: preview("C:\\media\\B.mkv", 1),
+      intent: initial.preparationIntent,
+      capturedInputEditRevision: 0,
+    });
+    const stale = sessionReducer(newer, {
+      type: "active_input_applied",
+      snapshot: {
+        state: "active",
+        revision: 4,
+        inputId: "input-a",
+        sourceVersion: "source-a-v1",
+        current: current("workflow-a", 9),
+      },
+      status: "ready",
+      preview: preview("C:\\media\\A.mkv", 9),
+      intent: initial.preparationIntent,
+      capturedInputEditRevision: 0,
+    });
+
+    expect(stale).toBe(newer);
+    expect(stale.selectedSource).toBe("C:\\media\\B.mkv");
+    expect(stale.workflowView.current?.workflow.id).toBe("workflow-b");
   });
 });

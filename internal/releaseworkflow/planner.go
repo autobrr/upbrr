@@ -19,6 +19,8 @@ import (
 // Repeated calls plus Current polling are the complete adapter orchestration contract.
 // Matching preparation inputs restore the persisted generation before downstream work;
 // unavailable or incompatible prepared data returns an error instead of being rebuilt.
+// New workflows default to post-dupe-gate tracker decisions unless the context
+// supplies an explicit tracker decision mode.
 func (m *Module) Continue(
 	ctx context.Context,
 	ownerID string,
@@ -43,11 +45,43 @@ func (m *Module) Continue(
 	}
 	request.Intent.TrackerInputAnswers = trackerAnswers
 	if request.Authority == nil {
+		if m.activeInputs != nil {
+			if request.Intent.Preparation == nil {
+				return CommandResult{}, api.ErrPreparationSourceRequired
+			}
+			slot, err := m.ActiveInput(ctx, ownerID)
+			if err != nil {
+				return CommandResult{}, err
+			}
+			request.Intent.Preparation.ExternalFreshness = api.ExternalFreshnessRefresh
+			opened, err := m.OpenInput(ctx, ownerID, OpenInputRequest{
+				ExpectedRevision:    slot.Revision,
+				Input:               *request.Intent.Preparation,
+				IdempotencyKey:      request.IdempotencyKey,
+				TrackerDecisionMode: trackerDecisionModeFromContext(ctx, TrackerDecisionModePostDupeGate),
+			})
+			if err != nil {
+				return CommandResult{}, err
+			}
+			ctx, err = m.activeMutationContext(ctx, ownerID, opened.WorkflowID)
+			if err != nil {
+				return CommandResult{}, err
+			}
+			if err := m.acceptContinuationIntent(ctx, ownerID, opened.WorkflowID, request); err != nil {
+				return CommandResult{}, err
+			}
+			return m.Current(ctx, ownerID, opened.WorkflowID)
+		}
 		instructions := request.Intent.FactInstructions
+		sourcePath := ""
 		if instructions == nil && request.Intent.Preparation != nil {
 			instructions = &request.Intent.Preparation.Instructions
 		}
+		if request.Intent.Preparation != nil {
+			sourcePath = request.Intent.Preparation.SourcePath
+		}
 		created, err := m.Execute(ctx, ownerID, CreateWorkflowCommand{
+			SourcePath:          sourcePath,
 			Instructions:        *instructions,
 			IdempotencyKey:      continuationIdempotencyKey(request.IdempotencyKey, "create", 0),
 			TrackerDecisionMode: trackerDecisionModeFromContext(ctx, TrackerDecisionModePostDupeGate),
@@ -62,6 +96,10 @@ func (m *Module) Continue(
 	}
 
 	authority := *request.Authority
+	ctx, err = m.activeMutationContext(ctx, ownerID, authority.WorkflowID)
+	if err != nil {
+		return CommandResult{}, err
+	}
 	current, err := m.Current(ctx, ownerID, authority.WorkflowID)
 	if err != nil {
 		return CommandResult{}, err
@@ -203,7 +241,7 @@ func (m *Module) Continue(
 	}
 	if current.Release != nil && request.Intent.Preparation != nil &&
 		continuationPreparationSatisfied(current.Release, request.Intent.Preparation) {
-		if err := m.hydrateContinuationPreparedRelease(ctx, current, *request.Intent.Preparation, state.PreparationDemand); err != nil {
+		if err := m.hydrateContinuationPreparedRelease(ctx, ownerID, current, *request.Intent.Preparation, state.PreparationDemand); err != nil {
 			return CommandResult{}, err
 		}
 	}
@@ -259,10 +297,12 @@ func (m *Module) planSelectionDemandRefresh(
 	if input == nil {
 		return PrepareReleaseCommand{}, "", false, nil
 	}
+	selectionInput := *input
+	selectionInput.ExternalFreshness = api.ExternalFreshnessReuse
 	return PrepareReleaseCommand{
 		WorkflowID:       current.Workflow.ID,
 		ExpectedRevision: current.Workflow.Revision,
-		Input:            *input,
+		Input:            selectionInput,
 		TrackerIDs:       trackerIDs,
 		IdempotencyKey: continuationIdempotencyKey(
 			request.IdempotencyKey,
@@ -305,7 +345,7 @@ func (m *Module) recoverPersistedMediaForContinuation(
 		return current, false, false, nil
 	}
 	refreshed := *current.Media
-	refreshMutatedMediaStatus(&refreshed, projections)
+	refreshMutatedMediaStatus(&refreshed, projections, state.Projections[state.Workflow.TrackerProjections.ID].Projections)
 	if refreshed.Status != api.StageStatusCompleted {
 		return current, false, false, nil
 	}
@@ -357,6 +397,7 @@ func persistedMediaRecoveryCandidate(current CommandResult) bool {
 
 func (m *Module) hydrateContinuationPreparedRelease(
 	ctx context.Context,
+	ownerID string,
 	current CommandResult,
 	input api.PrepareInput,
 	requirements api.MetadataRequirementSet,
@@ -364,9 +405,13 @@ func (m *Module) hydrateContinuationPreparedRelease(
 	input.SourcePath = current.Release.Release.Source.SourcePath
 	input.MetadataRequirements = requirements
 	input.Force = false
+	input.ExternalFreshness = api.ExternalFreshnessReuse
 	input.RequirePrepared = true
 	input.Controls.ConfirmBDMVRescan = false
 	input.Controls.ForceRecheck = nil
+	if err := m.attachVerifiedInput(ctx, ownerID, current.Workflow.ID, &input); err != nil {
+		return err
+	}
 	prepared, err := m.preparer.Prepare(ctx, input)
 	if err != nil {
 		return fmt.Errorf("release workflow hydrate continuation prepared release: %w", err)
@@ -874,12 +919,7 @@ func planContinuationCommandWithReadiness(
 	if workflowGoalRank(request.Goal) <= workflowGoalRank(api.WorkflowGoalDescriptionsReady) {
 		return nil, ""
 	}
-	if current.DryRun == nil || current.DryRun.NoSeed != request.Intent.NoSeed ||
-		(len(request.Intent.UploadTrackerIDs) > 0 &&
-			!slices.Equal(
-				normalizeContinuationTrackerIDs(current.DryRun.TrackerIDs),
-				normalizeContinuationTrackerIDs(request.Intent.UploadTrackerIDs),
-			)) {
+	if !dryRunGoalSatisfied(current.DryRun, request.Intent.NoSeed, request.Intent.UploadTrackerIDs) {
 		return DryRunUploadsCommand{
 			WorkflowID:       workflowID,
 			ExpectedRevision: revision,
@@ -1019,7 +1059,7 @@ func trackerIntentMatches(intent api.WorkflowIntent, current CommandResult) bool
 		return false
 	}
 	if len(intent.TrackerIDs) > 0 {
-		desired := normalizeContinuationTrackerIDs(intent.TrackerIDs)
+		desired := normalizeContinuationTrackerIDs(withoutConfirmedSubmissions(intent.TrackerIDs, current.Workflow.SubmissionExclusions))
 		retained := normalizeContinuationTrackerIDs(current.Selection.TrackerIDs)
 		if !slices.Equal(desired, retained) {
 			return false
@@ -1142,6 +1182,10 @@ func normalizeContinuationTrackerIDs(values []api.TrackerID) []api.TrackerID {
 }
 
 func continuationGoalReached(current CommandResult, request api.ContinueReleaseWorkflowRequest) bool {
+	if current.Workflow.AllSelectedTrackersAlreadyUploaded() &&
+		len(withoutConfirmedSubmissions(request.Intent.TrackerIDs, current.Workflow.SubmissionExclusions)) == 0 {
+		return true
+	}
 	if len(request.Intent.TrackerInputAnswers) > 0 {
 		return false
 	}
@@ -1168,17 +1212,23 @@ func continuationGoalReached(current CommandResult, request api.ContinueReleaseW
 	case api.WorkflowGoalDescriptionsReady:
 		return descriptionsHaveViableTracker(current.Descriptions)
 	case api.WorkflowGoalUploadReviewed, api.WorkflowGoalDryRun:
-		return current.DryRun != nil && current.DryRun.NoSeed == request.Intent.NoSeed &&
-			(len(request.Intent.UploadTrackerIDs) == 0 ||
-				slices.Equal(
-					normalizeContinuationTrackerIDs(current.DryRun.TrackerIDs),
-					normalizeContinuationTrackerIDs(request.Intent.UploadTrackerIDs),
-				))
+		return dryRunGoalSatisfied(current.DryRun, request.Intent.NoSeed, request.Intent.UploadTrackerIDs)
 	case api.WorkflowGoalUploaded:
 		return current.UploadResult != nil
 	default:
 		return false
 	}
+}
+
+func dryRunGoalSatisfied(dryRun *api.UploadDryRunResult, noSeed bool, trackerIDs []api.TrackerID) bool {
+	return dryRun != nil &&
+		(dryRun.Status == api.StageStatusCompleted || dryRun.Status == api.StageStatusSkipped) &&
+		dryRun.NoSeed == noSeed &&
+		(len(trackerIDs) == 0 ||
+			slices.Equal(
+				normalizeContinuationTrackerIDs(dryRun.TrackerIDs),
+				normalizeContinuationTrackerIDs(trackerIDs),
+			))
 }
 
 func continuationPreparationSatisfied(current *api.ReleaseSnapshot, desired *api.PrepareInput) bool {
@@ -1188,8 +1238,29 @@ func continuationPreparationSatisfied(current *api.ReleaseSnapshot, desired *api
 	if desired == nil {
 		return true
 	}
-	fingerprint, err := api.CanonicalWorkflowFingerprint(*desired)
+	fingerprint, err := preparationLineageFingerprint(*desired)
 	return err == nil && current.PreparationFingerprint == fingerprint
+}
+
+// preparationLineageFingerprint identifies the facts that a retained prepared
+// generation can satisfy. Intent, freshness, prepared-generation requirements,
+// and controls are consumed while obtaining that generation; carrying them
+// into a later continuation must not request another preparation.
+func preparationLineageFingerprint(input api.PrepareInput) (api.WorkflowFingerprint, error) {
+	input.Intent = ""
+	input.ExternalFreshness = api.ExternalFreshnessReuse
+	input.RequirePrepared = false
+	input.Controls.Interaction = ""
+	input.Controls.ConfirmBDMVRescan = false
+	input.Controls.ForceRecheck = nil
+	if len(input.Instructions.TrackerIDs) == 0 {
+		input.Instructions.TrackerIDs = nil
+	}
+	fingerprint, err := api.CanonicalWorkflowFingerprint(input)
+	if err != nil {
+		return "", fmt.Errorf("canonicalize preparation lineage: %w", err)
+	}
+	return fingerprint, nil
 }
 
 func normalizedDuplicateCheckOrdinal(value uint8) uint8 {

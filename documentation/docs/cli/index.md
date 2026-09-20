@@ -63,6 +63,12 @@ For BDMV, interactive preparation groups playlist choices by disc and requires a
 
 ## Interaction and safety
 
+The CLI shares one active-input slot with every process using its database. Queue entries run serially. If another session owns the input, the command returns a busy error; unattended mode never prompts or takes over a live input. After its terminal result, the CLI closes its owned input. Cancellation uses bounded cleanup; a reported cleanup failure requires recovery before further work.
+
+After an interrupted legacy workflow, check the tracker or torrent client before answering the recovery confirmation. Confirm that the operation did not complete only when you have verified its outcome. Interactive mode and `--unattended_confirm` can ask this question; `--unattended` exits without prompting or starting a new submission. Recovery does not submit anything by itself.
+
+Trackers with a confirmed upload of the same verified submitted content are excluded before duplicate checks. If every selected tracker is already uploaded, the command succeeds without another approval prompt or submission. See [the upload workflow](../workflow/index.md#4-review-duplicate-evidence).
+
 | Option                     | Behavior                                                                                                                                |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `--debug`                  | Runs end-to-end preparation and payload preview without tracker submission. Client injection remains enabled unless `--no-seed` is set. |
@@ -291,6 +297,8 @@ Without `--screens`, the CLI uses `screenshot_handling.screens` when selected tr
 ```text
 upbrr serve [options]
 ```
+
+`--config` seeds an empty database. For an existing database, the server uses its stored settings. Use Settings or configuration import to activate later changes.
 
 | Option                     | Purpose                                                  |
 | -------------------------- | -------------------------------------------------------- |

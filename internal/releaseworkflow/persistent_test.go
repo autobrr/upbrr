@@ -19,6 +19,57 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestWorkflowStateRecordDetachesTransientDescriptionReuse(t *testing.T) {
+	t.Parallel()
+	module, repository := newTestModule(t, testPreparer())
+	created := executeCommand(t, module, CreateWorkflowCommand{})
+	state, err := repository.Load(t.Context(), testOwnerID, created.Workflow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.descriptionReuse = &api.ReusableDescriptionRecord{
+		SourcePath: filepath.Join(t.TempDir(), "Example.Release.mkv"),
+		Description: api.ReusableDescription{
+			CompatibilityFingerprint: testFingerprint(t, "transient-reuse"),
+			Descriptions: []api.RenderedDescription{{
+				GroupKey:           "alpha",
+				TrackerIDs:         []api.TrackerID{"ALPHA"},
+				Source:             "saved source",
+				Rendered:           "saved render",
+				ContentFingerprint: testFingerprint(t, "saved-render"),
+			}},
+			TrackerResults: []api.DescriptionTrackerResult{{TrackerID: "ALPHA", Status: api.StageStatusCompleted}},
+			Overrides:      []api.DescriptionOverrideInput{{GroupKey: "alpha", Source: "edited source"}},
+		},
+	}
+	record, err := workflowStateRecord(testOwnerID, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(record.DescriptionReuse, state.descriptionReuse) {
+		t.Fatalf("pending reuse was not forwarded: %#v", record.DescriptionReuse)
+	}
+	record.DescriptionReuse.Description.Descriptions[0].TrackerIDs[0] = "BETA"
+	record.DescriptionReuse.Description.TrackerResults[0].TrackerID = "BETA"
+	record.DescriptionReuse.Description.Overrides[0].Source = "changed"
+	if state.descriptionReuse.Description.Descriptions[0].TrackerIDs[0] != "ALPHA" ||
+		state.descriptionReuse.Description.TrackerResults[0].TrackerID != "ALPHA" ||
+		state.descriptionReuse.Description.Overrides[0].Source != "edited source" {
+		t.Fatal("persistence record aliases pending reuse data")
+	}
+	loaded, err := decodeWorkflowState(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := workflowStateRecord(testOwnerID, loaded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.descriptionReuse != nil || next.DescriptionReuse != nil || strings.Contains(string(record.Payload), "saved source") {
+		t.Fatal("pending reuse survives reload and could overwrite later cache writes")
+	}
+}
+
 func TestPersistentWorkflowRestartRetriesAuthBlockedProjectionOnce(t *testing.T) {
 	t.Parallel()
 

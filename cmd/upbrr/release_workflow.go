@@ -28,6 +28,10 @@ const cliWorkflowOwnerID = "cli"
 // cliReleaseWorkflowCore is the in-process application seam used by the CLI.
 // It deliberately excludes HTTP and every legacy operation-specific entrypoint.
 type cliReleaseWorkflowCore interface {
+	GetActiveInput(context.Context, string) (api.ActiveInputSnapshot, error)
+	ReleaseActiveInput(context.Context, string, api.ReleaseActiveInputRequest) (api.ActiveInputSnapshot, error)
+	RecoverLegacyActiveInput(context.Context, string, api.RecoverLegacyActiveInputRequest) (api.ActiveInputSnapshot, error)
+	ReconcileActiveInput(context.Context, string, api.ReconcileActiveInputRequest) (api.ActiveInputSnapshot, error)
 	LiveTestEnabled() bool
 	StartLiveTestReleaseWorkflowUpload(context.Context, string, api.CreateReleaseWorkflowUploadRequest) (releaseworkflow.CommandResult, error)
 	ContinueReleaseWorkflow(context.Context, string, api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error)
@@ -79,6 +83,70 @@ type cliWorkflowSession struct {
 	eventLogState      cliWorkflowEventLogState
 	progressWriter     io.Writer
 	streams            cliIO
+	inputBaseline      cliInputSlotBaseline
+	inputClaim         cliInputSlotClaim
+}
+
+type cliInputSlotBaseline struct {
+	captured bool
+	state    api.ActiveInputState
+	revision uint64
+}
+
+type cliInputSlotClaim struct {
+	workflowID api.WorkflowID
+	revision   uint64
+}
+
+func (s *cliWorkflowSession) releaseActiveInput(ctx context.Context) {
+	if s == nil || s.inputClaim.workflowID == "" || s.inputClaim.revision == 0 {
+		return
+	}
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	active, err := s.core.GetActiveInput(cleanup, cliWorkflowOwnerID)
+	if err == nil && active.State == api.ActiveInputActive && active.Revision == s.inputClaim.revision &&
+		active.Current != nil && active.Current.Workflow.ID == s.inputClaim.workflowID {
+		_, err = s.core.ReleaseActiveInput(cleanup, cliWorkflowOwnerID, api.ReleaseActiveInputRequest{ExpectedRevision: s.inputClaim.revision})
+	}
+	if err != nil {
+		s.logger.Warnf("workflow: state=cleanup_failed decision=recovery_required")
+	}
+}
+
+func (s *cliWorkflowSession) captureInputBaseline(ctx context.Context) error {
+	if s.inputBaseline.captured {
+		return nil
+	}
+	active, err := s.core.GetActiveInput(ctx, cliWorkflowOwnerID)
+	if err != nil {
+		return fmt.Errorf("upbrr: inspect initial input: %w", err)
+	}
+	s.inputBaseline = cliInputSlotBaseline{
+		captured: true,
+		state:    active.State,
+		revision: active.Revision,
+	}
+	return nil
+}
+
+func (s *cliWorkflowSession) captureInputClaim(ctx context.Context, workflowID api.WorkflowID, requireChanged bool) {
+	if !s.inputBaseline.captured || s.inputBaseline.state != api.ActiveInputEmpty {
+		return
+	}
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	active, err := s.core.GetActiveInput(cleanup, cliWorkflowOwnerID)
+	if err != nil || active.State != api.ActiveInputActive || active.Current == nil {
+		return
+	}
+	if workflowID == "" {
+		workflowID = active.Current.Workflow.ID
+	}
+	if workflowID == "" || active.Current.Workflow.ID != workflowID || (requireChanged && active.Revision == s.inputBaseline.revision) {
+		return
+	}
+	s.inputClaim = cliInputSlotClaim{workflowID: workflowID, revision: active.Revision}
 }
 
 // cliWorkflowIntent is the detached CLI adapter input retained after the
@@ -104,10 +172,30 @@ func (s *cliWorkflowSession) executeContinuation(
 	ctx context.Context,
 	request api.ContinueReleaseWorkflowRequest,
 ) error {
+	// The first continuation can create a workflow through an active input.
+	// Bind the CLI's post-duplicate approval policy before that creation; later
+	// continuations retain the persisted mode.
+	ctx = releaseworkflow.WithTrackerDecisionMode(ctx, releaseworkflow.TrackerDecisionModePostDupeGate)
+	initial := request.Authority == nil
+	if initial {
+		if err := s.captureInputBaseline(ctx); err != nil {
+			return err
+		}
+	}
 	current, err := s.core.ContinueReleaseWorkflow(ctx, cliWorkflowOwnerID, request)
 	if err != nil {
+		if initial {
+			// OpenInput may have committed the slot before a later continuation
+			// stage fails. Re-read the exact owned snapshot for deferred cleanup.
+			s.captureInputClaim(ctx, "", true)
+		}
 		return fmt.Errorf("upbrr: continue release workflow: %w", err)
 	}
+	if initial {
+		s.captureInputClaim(ctx, current.Workflow.ID, false)
+	}
+	// Retain ownership before polling so canceled waits can close the exact input.
+	s.current = current
 	if current.Operation != nil && !isTerminalCLIWorkflowOperation(current.Operation.Status) {
 		completed, waitErr := s.waitForOperation(ctx, *current.Operation)
 		if waitErr != nil {
@@ -294,6 +382,15 @@ func newCLIWorkflowSession(
 		progressWriter: streams.out,
 		streams:        streams,
 	}
+	ready := false
+	defer func() {
+		if !ready {
+			session.releaseActiveInput(ctx)
+		}
+	}()
+	if err := session.reconcileLegacyInputs(ctx, reader); err != nil {
+		return nil, err
+	}
 	if err := session.continueUntilStable(ctx, api.ContinueReleaseWorkflowRequest{
 		IdempotencyKey: session.nextIdempotencyKey("prepare"),
 		Goal:           api.WorkflowGoalPrepared,
@@ -310,11 +407,13 @@ func newCLIWorkflowSession(
 	}
 	if session.current.Release == nil {
 		if pendingCLIWorkflowAction(session.current.Workflow.RequiredActions, api.RequiredActionConfirmCorrections) != nil {
+			ready = true
 			return session, nil
 		}
 		return nil, errors.New("upbrr: release workflow produced no canonical release")
 	}
 	session.intent.sourcePath = session.current.Release.Release.Source.SourcePath
+	ready = true
 	return session, nil
 }
 
@@ -349,6 +448,10 @@ func (s *cliWorkflowSession) resolvePlaylistAction(
 	instructions := input.Instructions
 	instructions.Playlist = api.PlaylistInstruction{Set: true, Selected: selected}
 	input.Instructions = instructions
+	// The selection is a user instruction accepted while preparing the current
+	// workflow. Retain that raw instruction for the following composite request;
+	// reconstructing it from provider-resolved facts could change other fields.
+	s.uploadRequest.PlaylistInstruction = cloneCLIPlaylistInstruction(instructions.Playlist)
 	return s.continueUntilStable(ctx, api.ContinueReleaseWorkflowRequest{
 		IdempotencyKey: s.nextIdempotencyKey("prepare-playlist"),
 		Goal:           api.WorkflowGoalPrepared,
@@ -455,6 +558,7 @@ func runCLIWorkflowInteractive(
 		inputTracks []api.MediaTrackFacts
 		err         error
 	)
+	defer func() { session.releaseActiveInput(ctx) }()
 	for {
 		if len(currentOpts.TrackLanguages) > 0 && inputTracks == nil {
 			history, historyErr := coreSvc.GetInputHistory(ctx, sourcePath)
@@ -471,10 +575,14 @@ func runCLIWorkflowInteractive(
 			return err
 		}
 		request.PlaylistInstruction = cloneCLIPlaylistInstruction(playlist)
-		session, err = newCLIWorkflowSession(ctx, coreSvc, request, api.PreparationIntentPreview, reader, cfg, streams, logger)
+		replacement, err := newCLIWorkflowSession(ctx, coreSvc, request, api.PreparationIntentPreview, reader, cfg, streams, logger)
 		if err != nil {
 			return err
 		}
+		if session != nil && replacement.inputClaim.workflowID == "" {
+			replacement.inputClaim = session.inputClaim
+		}
+		session = replacement
 		if err := applyCLIInputCorrections(ctx, session, currentOpts, currentVisited, inputTracks); err != nil {
 			return err
 		}
@@ -1192,6 +1300,7 @@ func runCLIWorkflowUploadOnly(
 		if err != nil {
 			return err
 		}
+		defer session.releaseActiveInput(itemCtx)
 		count, err := session.complete(itemCtx, debug, reader, cfg, logger)
 		uploaded += count
 		return err
@@ -1220,6 +1329,7 @@ func runCLIWorkflowSiteCheck(
 	if err != nil {
 		return err
 	}
+	defer session.releaseActiveInput(ctx)
 	fmt.Fprintf(streams.out, "\n[Site Check] %s\n", formatPathLabel(item.originalPath))
 	_, err = session.complete(ctx, true, reader, cfg, logger)
 	return err

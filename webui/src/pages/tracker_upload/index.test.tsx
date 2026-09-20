@@ -26,6 +26,7 @@ const uploadFacet = (
     dryRunResult: null,
     result: null,
     trackerOutcomes: [],
+    submissionExclusions: [],
     error: "",
     ...view,
   },
@@ -79,13 +80,147 @@ describe("TrackerUploadPage", () => {
   it("offers workflow dry run and direct upload without a review step", () => {
     const runDryRun = vi.fn(async () => true);
     const start = vi.fn(async () => true);
-    renderPage(uploadFacet({}, { runDryRun, start }));
+    renderPage(
+      uploadFacet(
+        {
+          trackerOutcomes: [
+            { trackerId: "EXAMPLE", uploadEligibility: "eligible" },
+          ] as unknown as UploadFacet["view"]["trackerOutcomes"],
+        },
+        { runDryRun, start },
+      ),
+    );
 
     expect(screen.queryByRole("heading", { name: "Tracker intent" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Review upload" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Run dry run" }));
     fireEvent.click(screen.getByRole("button", { name: "Start upload" }));
     expect(runDryRun).toHaveBeenCalledOnce();
+    expect(start).toHaveBeenCalledOnce();
+  });
+
+  it("renders submission exclusions and suppresses actions when every tracker is excluded", () => {
+    const runDryRun = vi.fn(async () => true);
+    const start = vi.fn(async () => true);
+    renderPage(
+      uploadFacet(
+        {
+          selectedTrackers: ["AITHER", "BLU"],
+          uploadStatus: "ready",
+          submissionExclusions: [
+            {
+              trackerId: "AITHER",
+              reason: "already_uploaded",
+              confirmedAt: "2026-09-18T10:00:00Z",
+            },
+            {
+              trackerId: "BLU",
+              reason: "already_uploaded",
+              confirmedAt: "2026-09-18T11:00:00Z",
+            },
+          ],
+        },
+        { runDryRun, start },
+      ),
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "All selected trackers were already uploaded. No upload is needed.",
+    );
+    expect(screen.getByLabelText("Submission exclusions")).toHaveTextContent("AITHER");
+    expect(screen.getByLabelText("Submission exclusions")).toHaveTextContent("BLU");
+    for (const name of ["Run dry run", "Start upload"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button).toBeDisabled();
+      fireEvent.click(button);
+    }
+    expect(runDryRun).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("keeps upload actions for selected trackers without submission exclusions", () => {
+    renderPage(
+      uploadFacet({
+        selectedTrackers: ["AITHER", "BLU"],
+        trackerOutcomes: [
+          { trackerId: "AITHER", uploadEligibility: "skipped" },
+          { trackerId: "BLU", uploadEligibility: "eligible" },
+        ] as unknown as UploadFacet["view"]["trackerOutcomes"],
+        submissionExclusions: [
+          {
+            trackerId: "AITHER",
+            reason: "already_uploaded",
+            confirmedAt: "2026-09-18T10:00:00Z",
+          },
+        ],
+      }),
+    );
+
+    expect(screen.getByRole("button", { name: "Run dry run" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Start upload" })).toBeEnabled();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("allows another dry run but blocks upload when every tracker lane failed preparation", () => {
+    const runDryRun = vi.fn(async () => true);
+    const start = vi.fn(async () => true);
+    renderPage(
+      uploadFacet(
+        {
+          selectedTrackers: ["AITHER", "BLU"],
+          trackerOutcomes: [
+            {
+              trackerId: "AITHER",
+              uploadEligibility: "skipped",
+              uploadSkipReason: "upload_preparation_failed",
+            },
+            {
+              trackerId: "BLU",
+              uploadEligibility: "skipped",
+              uploadSkipReason: "upload_preparation_failed",
+            },
+          ] as unknown as UploadFacet["view"]["trackerOutcomes"],
+        },
+        { runDryRun, start },
+      ),
+    );
+
+    const dryRunButton = screen.getByRole("button", { name: "Run dry run" });
+    const uploadButton = screen.getByRole("button", { name: "Start upload" });
+    expect(dryRunButton).toBeEnabled();
+    expect(uploadButton).toBeDisabled();
+    fireEvent.click(dryRunButton);
+    fireEvent.click(uploadButton);
+    expect(runDryRun).toHaveBeenCalledOnce();
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("allows a fully skipped dry-run plan to complete as a no-op", () => {
+    const start = vi.fn(async () => true);
+    renderPage(
+      uploadFacet(
+        {
+          selectedTrackers: ["AITHER", "BLU"],
+          trackerOutcomes: [
+            {
+              trackerId: "AITHER",
+              uploadEligibility: "skipped",
+              uploadSkipReason: "upload_preparation_skipped",
+            },
+            {
+              trackerId: "BLU",
+              uploadEligibility: "skipped",
+              uploadSkipReason: "upload_preparation_skipped",
+            },
+          ] as unknown as UploadFacet["view"]["trackerOutcomes"],
+        },
+        { start },
+      ),
+    );
+
+    const uploadButton = screen.getByRole("button", { name: "Start upload" });
+    expect(uploadButton).toBeEnabled();
+    fireEvent.click(uploadButton);
     expect(start).toHaveBeenCalledOnce();
   });
 
@@ -413,8 +548,6 @@ describe("TrackerUploadPage", () => {
     );
 
     expect(screen.getByText("Will upload")).toBeInTheDocument();
-    // An in-client duplicate cannot be overridden, so the label never sends the
-    // owner back to the Duplicates page.
     expect(screen.getByText("Skipped: duplicate found")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Duplicates/ })).not.toBeInTheDocument();
   });
@@ -434,7 +567,6 @@ describe("TrackerUploadPage", () => {
         uploadEligibility: "skipped",
         uploadSkipReason: "upload_preparation_skipped",
       },
-      // A reason this build has no label for still has to read as skipped.
       {
         trackerId: "THIRD",
         uploadEligibility: "skipped",
@@ -451,8 +583,6 @@ describe("TrackerUploadPage", () => {
 
     expect(screen.getByText("Skipped: skipped during upload preparation")).toBeInTheDocument();
     expect(screen.getByText("Skipped")).toBeInTheDocument();
-    // The unknown card carries its name and no eligibility text of any kind,
-    // which a page-wide query cannot show because siblings are labelled.
     expect(screen.getByText("Example Tracker").parentElement?.textContent).toBe("Example Tracker");
     expect(screen.queryByText("Will upload")).not.toBeInTheDocument();
   });

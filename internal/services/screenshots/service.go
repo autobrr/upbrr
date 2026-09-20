@@ -309,7 +309,10 @@ func (s *Service) planDisc(ctx context.Context, meta api.ScreenshotSubject, coun
 				}
 				kept++
 			}
-			s.logger.Debugf("screenshots: found existing screenshots db=%d disk=%d", len(dbScreenshots), kept)
+			s.logger.Debugf(
+				"screenshots: database inventory generation=%d disc=%s records=%d usable_files_for_disc=%d",
+				meta.MediaBinding.PreparedGeneration, meta.DiscID, len(dbScreenshots), kept,
+			)
 		}
 	}
 
@@ -367,7 +370,7 @@ func (s *Service) planDisc(ctx context.Context, meta api.ScreenshotSubject, coun
 	// Automatically include tracker images in final selections
 	plan.FinalSelections = mergeTrackerImagesIntoFinalSelections(plan.FinalSelections, plan.TrackerImageLinks)
 	s.logger.Tracef(
-		"screenshots: plan result baseline=%d suggested=%d existing=%d tracker_links=%d tracker_existing=%d final=%d",
+		"screenshots: capture plan inventory baseline_frames=%d suggested_frames=%d matching_disk_images=%d tracker_links=%d unlinked_tracker_images=%d planned_final_images=%d",
 		len(baselineSelections),
 		len(plan.SuggestedSelections),
 		len(plan.ExistingScreenshots),

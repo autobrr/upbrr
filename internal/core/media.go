@@ -71,6 +71,7 @@ type mediaModule struct {
 	dvdMenus      mediaDVDMenuService
 	images        mediaImageHostingService
 	repo          mediaRepository
+	mediaReuse    api.MediaReuseRepository
 	registry      *trackers.Registry
 	preparedFacts *preparedrelease.Module
 }
@@ -80,6 +81,7 @@ func newMediaModule(
 	logger api.Logger,
 	services api.ServiceSet,
 	repo mediaRepository,
+	mediaReuse api.MediaReuseRepository,
 	registry *trackers.Registry,
 	preparedFacts *preparedrelease.Module,
 ) *mediaModule {
@@ -89,6 +91,7 @@ func newMediaModule(
 		dvdMenus:      services.DVDMenus,
 		images:        services.Images,
 		repo:          repo,
+		mediaReuse:    mediaReuse,
 		registry:      registry,
 		preparedFacts: preparedFacts,
 	}
@@ -109,6 +112,12 @@ type menuImageContent struct {
 	contentType string
 	bytes       []byte
 	discID      string
+	attachment  api.MediaAttachment
+}
+
+type acceptedMenuImage struct {
+	image      api.ScreenshotImage
+	attachment api.MediaAttachment
 }
 
 // importAcceptedMenuImageContents persists browser/API-uploaded image bytes in
@@ -117,7 +126,7 @@ func (m *mediaModule) importAcceptedMenuImageContents(
 	ctx context.Context,
 	input api.MediaPlanInput,
 	contents []menuImageContent,
-) (api.DVDMenuSubject, []api.ScreenshotImage, error) {
+) (api.DVDMenuSubject, []acceptedMenuImage, error) {
 	if len(contents) == 0 {
 		return api.DVDMenuSubject{}, nil, nil
 	}
@@ -137,7 +146,7 @@ func (m *mediaModule) importAcceptedMenuImageContents(
 		return api.DVDMenuSubject{}, nil, fmt.Errorf("core: create release tmp dir: %w", err)
 	}
 	now := time.Now().UTC()
-	images := make([]api.ScreenshotImage, 0, len(contents))
+	images := make([]acceptedMenuImage, 0, len(contents))
 	records := make([]api.Screenshot, 0, len(contents))
 	selections := make([]api.ScreenshotFinalSelection, 0, len(contents))
 	created := make([]string, 0, len(contents))
@@ -177,7 +186,7 @@ func (m *mediaModule) importAcceptedMenuImageContents(
 			Purpose:   api.ScreenshotPurposeMenu,
 			SizeBytes: int64(len(content.bytes)),
 		}
-		images = append(images, image)
+		images = append(images, acceptedMenuImage{image: image, attachment: content.attachment})
 		records = append(records, api.Screenshot{
 			DiscID:     discID,
 			ImagePath:  destPath,
@@ -287,36 +296,28 @@ func removeMenuImportFiles(paths []string) {
 	}
 }
 
-// uploadAcceptedImages uploads selected images to an explicit host, or plans
-// the required hosts when none is requested. Host uploads run concurrently,
-// tracker-owned hosts use tracker-scoped records, and recoverable host failures
-// are returned in [api.UploadImagesResult].
-func (m *mediaModule) uploadAcceptedImages(
+func (m *mediaModule) resolveAcceptedImageUpload(
 	ctx context.Context,
 	input api.ImageHostingInput,
-	images []api.ScreenshotImage,
-) (api.UploadImagesResult, error) {
+) (api.UploadSubject, []trackers.ImageUploadTarget, error) {
 	if m.images == nil {
-		return api.UploadImagesResult{}, errors.New("core: image hosting service not configured")
+		return api.UploadSubject{}, nil, errors.New("core: image hosting service not configured")
 	}
 	if m.preparedFacts == nil {
-		return api.UploadImagesResult{}, errors.New("core: canonical preparation is not configured")
-	}
-	if len(images) == 0 {
-		return api.UploadImagesResult{}, internalerrors.ErrInvalidInput
+		return api.UploadSubject{}, nil, errors.New("core: canonical preparation is not configured")
 	}
 	subject, err := m.preparedFacts.ResolveUploadSubject(ctx, api.UploadSubjectInput{
 		Release:  input.Release,
 		Trackers: append([]string(nil), input.Trackers...),
 	})
 	if err != nil {
-		return api.UploadImagesResult{}, fmt.Errorf("core: resolve image upload subject: %w", err)
+		return api.UploadSubject{}, nil, fmt.Errorf("core: resolve image upload subject: %w", err)
 	}
 	targets, err := m.resolveImageUploadTargets(input.Trackers, subject, input.Host, input.ExcludedHosts)
 	if err != nil {
-		return api.UploadImagesResult{}, err
+		return api.UploadSubject{}, nil, err
 	}
-	return m.uploadImagesToTargetsWithFallback(ctx, subject, input.Host, input.ExcludedHosts, targets, images)
+	return subject, targets, nil
 }
 
 func (m *mediaModule) resolveImageUploadTargets(
@@ -409,6 +410,8 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 	excludedHosts []string,
 	targets []trackers.ImageUploadTarget,
 	images []api.ScreenshotImage,
+	retainedLinks []api.UploadedImageLink,
+	blockedRetainedLinks []api.UploadedImageLink,
 ) (api.UploadImagesResult, error) {
 	type scheduledAttempt struct {
 		target   trackers.ImageUploadTarget
@@ -462,7 +465,8 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 	}
 	launch := func(target trackers.ImageUploadTarget, fallback bool) bool {
 		target = normalizeImageUploadTarget(target)
-		if target.Host == "" || len(uncoveredTrackers(target.Trackers)) == 0 {
+		target.Trackers = uncoveredTrackers(target.Trackers)
+		if target.Host == "" || len(target.Trackers) == 0 {
 			return false
 		}
 		key := targetKey(target)
@@ -481,7 +485,7 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 		attemptByTarget[key] = attempt
 		pending++
 		go func() {
-			links, err := m.uploadImagesToTarget(ctx, meta, target, images, fallback)
+			links, err := m.uploadImagesToTarget(ctx, meta, target, images, retainedLinks, blockedRetainedLinks, fallback)
 			results <- completedAttempt{
 				index: index,
 				links: links,
@@ -489,6 +493,12 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 			}
 		}()
 		return true
+	}
+	if allowFallback && len(retainedLinks) > 0 {
+		for _, retainedTarget := range m.retainedFallbackImageUploadTargets(host, meta, sortedMapKeys(failedHosts), targets, images, retainedLinks) {
+			launch(retainedTarget, true)
+			markCovered(retainedTarget)
+		}
 	}
 
 	for _, target := range targets {
@@ -658,6 +668,8 @@ func (m *mediaModule) uploadImagesToTarget(
 	meta api.UploadSubject,
 	target trackers.ImageUploadTarget,
 	images []api.ScreenshotImage,
+	retainedLinks []api.UploadedImageLink,
+	blockedRetainedLinks []api.UploadedImageLink,
 	fallback bool,
 ) ([]api.UploadedImageLink, error) {
 	target.Host = strings.ToLower(strings.TrimSpace(target.Host))
@@ -672,43 +684,15 @@ func (m *mediaModule) uploadImagesToTarget(
 	}
 	progressCtx := api.WithImageUploadProgressTarget(ctx, progressTarget)
 	emitCoreImageUploadProgress(progressCtx, progressTarget, api.ImageUploadProgressRunning, 0, 0, 0, "Preparing host upload.")
-	if m.repo == nil {
-		m.logger.Tracef(
-			"core: uploading images host=%s tracker=%s scope=%s trackers=%v count=%d",
-			target.Host,
-			m.imageHostOwnerLogValue(target.Host),
-			target.UsageScope,
-			target.Trackers,
-			len(images),
-		)
-		uploaded, err := m.images.Upload(progressCtx, imageHostingSubject(meta), target.Host, target.UsageScope, images)
-		if err != nil && m.partialHostUploadIsUsable(target, len(images), len(uploaded), err) {
-			emitCoreImageUploadResult(progressCtx, progressTarget, len(uploaded), err)
-			return uploaded, nil
+	results, missing := uploadedImageLinksForTarget(retainedLinks, target, images)
+	if len(missing) > 0 && m.repo != nil {
+		existing, err := m.repo.ListUploadedImagesByPath(ctx, meta.MediaBinding)
+		if err != nil {
+			emitCoreImageUploadProgress(progressCtx, progressTarget, api.ImageUploadProgressFailed, 0, 0, 0, "Existing uploads could not be checked.")
+			return nil, fmt.Errorf("core: %w", err)
 		}
-		emitCoreImageUploadResult(progressCtx, progressTarget, len(uploaded), err)
-		return wrapCoreResult(uploaded, err)
-	}
-
-	existing, err := m.repo.ListUploadedImagesByPath(ctx, meta.MediaBinding)
-	if err != nil {
-		emitCoreImageUploadProgress(progressCtx, progressTarget, api.ImageUploadProgressFailed, 0, 0, 0, "Existing uploads could not be checked.")
-		return nil, fmt.Errorf("core: %w", err)
-	}
-	existingByPath := uploadedImagesByPathForTarget(existing, target)
-	results := make([]api.UploadedImageLink, 0, len(images))
-	missing := make([]api.ScreenshotImage, 0, len(images))
-	for _, image := range images {
-		key := normalizedUploadImagePath(image.Path)
-		if key == "" {
-			missing = append(missing, image)
-			continue
-		}
-		if link, ok := existingByPath[key]; ok {
-			results = append(results, link)
-			continue
-		}
-		missing = append(missing, image)
+		existing = excludeBlockedRetainedImageLinks(existing, blockedRetainedLinks, target)
+		results, missing = uploadedImageLinksForTarget(append(existing, retainedLinks...), target, images)
 	}
 	progressTarget.Reused = len(results)
 	progressCtx = api.WithImageUploadProgressTarget(ctx, progressTarget)
@@ -752,7 +736,7 @@ func (m *mediaModule) uploadImagesToTarget(
 		len(results),
 	)
 	uploaded, err := m.images.Upload(progressCtx, imageHostingSubject(meta), target.Host, target.UsageScope, missing)
-	results = append(results, uploaded...)
+	results = mergeUploadedImageLinks(images, results, uploaded)
 	if err != nil && m.partialHostUploadIsUsable(target, len(images), len(results), err) {
 		emitCoreImageUploadResult(progressCtx, progressTarget, len(uploaded), err)
 		return results, nil
@@ -762,6 +746,144 @@ func (m *mediaModule) uploadImagesToTarget(
 		return results, fmt.Errorf("core: %w", err)
 	}
 	return results, nil
+}
+
+func uploadedImageLinksCoverTarget(
+	links []api.UploadedImageLink,
+	target trackers.ImageUploadTarget,
+	images []api.ScreenshotImage,
+) bool {
+	_, missing := uploadedImageLinksForTarget(links, target, images)
+	return len(missing) == 0
+}
+
+func uploadedImageLinksForTarget(
+	links []api.UploadedImageLink,
+	target trackers.ImageUploadTarget,
+	images []api.ScreenshotImage,
+) ([]api.UploadedImageLink, []api.ScreenshotImage) {
+	linksByPath := uploadedImagesByPathForTarget(links, target)
+	results := make([]api.UploadedImageLink, 0, len(images))
+	missing := make([]api.ScreenshotImage, 0, len(images))
+	for _, image := range images {
+		key := normalizedUploadImagePath(image.Path)
+		if key == "" {
+			missing = append(missing, image)
+			continue
+		}
+		if link, ok := linksByPath[key]; ok {
+			results = append(results, link)
+			continue
+		}
+		missing = append(missing, image)
+	}
+	return results, missing
+}
+
+func excludeBlockedRetainedImageLinks(
+	existing []api.UploadedImageLink,
+	blocked []api.UploadedImageLink,
+	target trackers.ImageUploadTarget,
+) []api.UploadedImageLink {
+	blockedByPath := uploadedImagesByPathForTarget(blocked, target)
+	if len(blockedByPath) == 0 {
+		return existing
+	}
+	filtered := make([]api.UploadedImageLink, 0, len(existing))
+	for _, link := range existing {
+		if !strings.EqualFold(strings.TrimSpace(link.Host), target.Host) ||
+			!strings.EqualFold(normalizeImageUploadUsageScope(link.UsageScope), normalizeImageUploadUsageScope(target.UsageScope)) {
+			filtered = append(filtered, link)
+			continue
+		}
+		if _, isBlocked := blockedByPath[normalizedUploadImagePath(link.ImagePath)]; !isBlocked {
+			filtered = append(filtered, link)
+		}
+	}
+	return filtered
+}
+
+func mergeUploadedImageLinks(
+	images []api.ScreenshotImage,
+	reused []api.UploadedImageLink,
+	uploaded []api.UploadedImageLink,
+) []api.UploadedImageLink {
+	byPath := make(map[string]api.UploadedImageLink, len(reused)+len(uploaded))
+	for _, link := range reused {
+		if pathKey := normalizedUploadImagePath(link.ImagePath); pathKey != "" {
+			byPath[pathKey] = link
+		}
+	}
+	for _, link := range uploaded {
+		if pathKey := normalizedUploadImagePath(link.ImagePath); pathKey != "" {
+			byPath[pathKey] = link
+		}
+	}
+	merged := make([]api.UploadedImageLink, 0, len(reused)+len(uploaded))
+	for _, image := range images {
+		if link, ok := byPath[normalizedUploadImagePath(image.Path)]; ok {
+			merged = append(merged, link)
+			delete(byPath, normalizedUploadImagePath(image.Path))
+		}
+	}
+	for _, links := range [][]api.UploadedImageLink{reused, uploaded} {
+		for _, link := range links {
+			pathKey := normalizedUploadImagePath(link.ImagePath)
+			if _, ok := byPath[pathKey]; !ok {
+				continue
+			}
+			merged = append(merged, link)
+			delete(byPath, pathKey)
+		}
+	}
+	return merged
+}
+
+func (m *mediaModule) retainedFallbackImageUploadTargets(
+	host string,
+	meta api.UploadSubject,
+	excludedHosts []string,
+	targets []trackers.ImageUploadTarget,
+	images []api.ScreenshotImage,
+	retainedLinks []api.UploadedImageLink,
+) []trackers.ImageUploadTarget {
+	covered := make([]trackers.ImageUploadTarget, 0, len(targets))
+	for _, target := range targets {
+		for _, tracker := range target.Trackers {
+			failedHosts := make(map[string]struct{}, len(excludedHosts)+1)
+			for _, excludedHost := range excludedHosts {
+				if normalized := strings.ToLower(strings.TrimSpace(excludedHost)); normalized != "" {
+					failedHosts[normalized] = struct{}{}
+				}
+			}
+			if normalized := strings.ToLower(strings.TrimSpace(target.Host)); normalized != "" {
+				failedHosts[normalized] = struct{}{}
+			}
+			for {
+				fallbackTargets, err := m.resolveFallbackImageUploadTargets(host, []string{tracker}, sortedMapKeys(failedHosts), meta)
+				if err != nil {
+					break
+				}
+				matched, advanced := false, false
+				for _, fallbackTarget := range fallbackTargets {
+					fallbackTarget = normalizeImageUploadTarget(fallbackTarget)
+					if uploadedImageLinksCoverTarget(retainedLinks, fallbackTarget, images) {
+						covered = append(covered, fallbackTarget)
+						matched = true
+						break
+					}
+					if _, seen := failedHosts[fallbackTarget.Host]; !seen && fallbackTarget.Host != "" {
+						failedHosts[fallbackTarget.Host] = struct{}{}
+						advanced = true
+					}
+				}
+				if matched || !advanced {
+					break
+				}
+			}
+		}
+	}
+	return covered
 }
 
 // partialHostUploadIsUsable reports whether a partially failed host batch still

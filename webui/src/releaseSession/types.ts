@@ -31,6 +31,7 @@ import type {
   RequiredAction,
   ReleaseWorkflowCurrent,
   TrackerLaneOutcome,
+  SubmissionExclusion,
   TrackerPreflightAssessment,
   TrackerReleaseProjectionSet,
   TrackerProjectionInstructions,
@@ -59,6 +60,15 @@ export type PreparationStatus =
   | "ready"
   | "error"
   | "cancelled";
+
+/** Advisory byte progress for the source verification performed by an explicit input open. */
+export type SourceVerificationProgress = Readonly<{
+  correlationID: string;
+  completedBytes: number;
+  totalBytes: number;
+  message: string;
+  status: "running" | "completed" | "failed";
+}>;
 
 /** Blu-ray playlist discovery and selection lifecycle within preparation. */
 export type PlaylistStatus =
@@ -109,6 +119,15 @@ export type InputFacet = Readonly<{
     status: PreparationStatus;
     error: string;
     failure: OperationFailure | null;
+    /** Last accepted server slot; its revision fences open and close requests across tabs. */
+    activeInput: Readonly<{
+      state: string;
+      revision: number;
+      inputID: string;
+      sourceVersion: string;
+      recoveryWorkflowIDs: readonly string[];
+    }>;
+    sourceVerification: SourceVerificationProgress | null;
     preparationDirty: boolean;
     correctionDirty: boolean;
     intent: PreparationIntent;
@@ -151,7 +170,15 @@ export type InputFacet = Readonly<{
   choosePlaylists(playlists: readonly string[], useAll: boolean): void;
   confirmPlaylists(): Promise<boolean>;
   cancelPlaylistSelection(): void;
+  /** Aborts local preparation/workflow requests; this does not close the durable active input. */
+  cancelPreparation(): void;
   prepareSource(sourcePath: string, intent: PreparationIntent): Promise<boolean>;
+  /** Explicitly opens or refreshes a source and reports whether its returned state was accepted. */
+  openSource(sourcePath: string): Promise<boolean>;
+  /** Claims a listed legacy workflow for reconciliation only while the input slot is empty. */
+  recoverLegacyWorkflow(workflowID: string): Promise<boolean>;
+  /** Aborts local work and requests a revision-checked close; false includes rejection or cancellation. */
+  close(): Promise<boolean>;
   resetSource(sourcePath: string, intent: PreparationIntent): Promise<boolean>;
   prepare(): Promise<boolean>;
   reset(): Promise<boolean>;
@@ -324,6 +351,8 @@ export type UploadFacet = Readonly<{
     result: UploadResult | null;
     /** Backend-owned per-tracker downstream decision; never derived in views. */
     trackerOutcomes: readonly TrackerLaneOutcome[];
+    /** Backend evidence for tracker lanes excluded because submission was already recorded. */
+    submissionExclusions: readonly SubmissionExclusion[];
     error: string;
   }>;
   chooseTrackers(trackers: readonly string[]): void;

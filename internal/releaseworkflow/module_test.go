@@ -458,6 +458,19 @@ func TestValidateUploadExecutionTrackerIDsOmitsSkippedTrackers(t *testing.T) {
 	if _, err := validateUploadExecutionTrackerIDs(trackers, []api.TrackerID{"GAMMA"}); !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("failed tracker selection error = %v", err)
 	}
+	if _, err := validateUploadExecutionTrackerIDs(
+		[]api.UploadPlanTracker{{TrackerID: "GAMMA", Status: api.StageStatusFailed}},
+		nil,
+	); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("all-failed plan selection error = %v", err)
+	}
+	selected, err = validateUploadExecutionTrackerIDs(
+		[]api.UploadPlanTracker{{TrackerID: "BETA", Status: api.StageStatusSkipped}},
+		nil,
+	)
+	if err != nil || len(selected) != 0 {
+		t.Fatalf("all-skipped plan selection = %#v, %v", selected, err)
+	}
 }
 
 func TestExecuteUploadsPendingTrackerActionRespectsSelectionAndInteraction(t *testing.T) {
@@ -571,6 +584,100 @@ func TestExecuteUploadsPendingTrackerActionRespectsSelectionAndInteraction(t *te
 				result.UploadResult.Results[0].TrackerID != "BTN" || result.UploadResult.Results[0].Status != api.StageStatusSkipped ||
 				result.UploadResult.Results[1].TrackerID != "ALPHA" || result.UploadResult.Results[1].Status != api.StageStatusCompleted {
 				t.Fatalf("lane-aware execution: result=%#v err=%v selected=%v executions=%d", result, err, execution.selected, execution.executions)
+			}
+		})
+	}
+}
+
+func TestExecuteUploadsPublishesFullySkippedPlanAndRejectsAllFailedPlan(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name    string
+		status  api.StageStatus
+		wantErr bool
+	}{
+		{name: "fully skipped no-op", status: api.StageStatusSkipped},
+		{
+			name:    "all failed",
+			status:  api.StageStatusFailed,
+			wantErr: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			now := time.Date(2026, time.July, 23, 12, 0, 0, 0, time.UTC)
+			module, _ := newTestModule(t, testPreparer())
+			projectionRef := api.TrackerReleaseProjectionSetRef{ID: "projections-terminal-plan", Revision: 1}
+			dupeRef := api.DupeAssessmentRef{ID: "dupes-terminal-plan", Revision: 1}
+			mediaRef := api.MediaArtifactSetRef{ID: "media-terminal-plan", Revision: 1}
+			descriptionRef := api.DescriptionSetRef{ID: "descriptions-terminal-plan", Revision: 1}
+			dryRunRef := api.UploadDryRunResultRef{ID: "dry-run-terminal-plan", Revision: 2}
+			execution := &retainedUploadExecutionFake{trackers: []api.TrackerID{"ALPHA"}}
+			prepared := &preparedUploads{
+				projections:  api.TrackerReleaseProjectionSet{ID: projectionRef.ID, Revision: projectionRef.Revision},
+				dupes:        api.DupeAssessment{ID: dupeRef.ID, Revision: dupeRef.Revision},
+				media:        api.MediaArtifactSet{ID: mediaRef.ID, Revision: mediaRef.Revision},
+				descriptions: api.DescriptionSet{ID: descriptionRef.ID, Revision: descriptionRef.Revision},
+				plan: api.UploadPlan{
+					Revision:         dryRunRef.Revision,
+					ProjectionSet:    projectionRef,
+					Dupes:            dupeRef,
+					Media:            &mediaRef,
+					Descriptions:     &descriptionRef,
+					InputFingerprint: testFingerprint(t, "terminal-upload-plan-"+test.name),
+					Trackers: []api.UploadPlanTracker{{
+						TrackerID: "ALPHA",
+						Status:    test.status,
+					}},
+					Status:    test.status,
+					ExpiresAt: now.Add(time.Hour),
+				},
+				execution: execution,
+				dryRun:    true,
+			}
+			state := State{
+				Workflow: api.ReleaseWorkflow{
+					ID:                 api.WorkflowID("workflow-terminal-plan-" + strings.ReplaceAll(test.name, " ", "-")),
+					Revision:           2,
+					Status:             api.WorkflowStatusActive,
+					TrackerProjections: &projectionRef,
+					Dupes:              &dupeRef,
+					Media:              &mediaRef,
+					Descriptions:       &descriptionRef,
+					DryRun:             &dryRunRef,
+				},
+				UploadResults: make(map[api.UploadResultID]api.UploadResult),
+			}
+			if err := module.private.Put(
+				testOwnerID,
+				state.Workflow.ID,
+				uploadPlanPrivateResourceID(dryRunRef.ID),
+				prepared,
+				prepared.plan.ExpiresAt,
+			); err != nil {
+				t.Fatalf("retain terminal upload plan: %v", err)
+			}
+
+			result, err := module.executeUploads(
+				context.Background(),
+				testOwnerID,
+				&state,
+				3,
+				now,
+				ExecuteUploadsCommand{},
+			)
+			if test.wantErr {
+				if !errors.Is(err, ErrInvalidTransition) || result.UploadResult != nil || execution.executions != 0 {
+					t.Fatalf("all-failed execution: result=%#v err=%v executions=%d", result, err, execution.executions)
+				}
+				return
+			}
+			if err != nil || result.UploadResult == nil || execution.executions != 0 ||
+				result.UploadResult.Status != api.StageStatusCompleted || len(result.UploadResult.Results) != 1 ||
+				result.UploadResult.Results[0].Status != api.StageStatusSkipped || state.Workflow.Status != api.WorkflowStatusCompleted {
+				t.Fatalf("fully skipped execution: result=%#v err=%v executions=%d workflow=%#v", result, err, execution.executions, state.Workflow)
 			}
 		})
 	}
@@ -2931,7 +3038,7 @@ func TestModuleInterruptsRecoveredOperationWhenWorkflowAuthorityAdvanced(t *test
 	}
 }
 
-func TestModulePublishesCompletedWorkCheckpointAfterRestart(t *testing.T) {
+func TestModuleRepublishesCompletedWorkCheckpointWithinSameProcess(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.July, 23, 6, 30, 0, 0, time.UTC)
@@ -2968,12 +3075,11 @@ func TestModulePublishesCompletedWorkCheckpointAfterRestart(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("terminal operation save did not fail")
 	}
-	stored, err := repository.LoadOperation(context.Background(), testOwnerID, created.Workflow.ID, operation.ID)
-	if err != nil {
-		t.Fatalf("load operation before restart: %v", err)
-	}
-	if !workflowOperationActive(stored.Status.Status) {
-		t.Fatalf("operation status before restart = %s, want active", stored.Status.Status)
+	stored := waitForWorkflowOperation(t, moduleA, created.Workflow.ID, operation.ID, func(status api.WorkflowOperationStatus) bool {
+		return status.Status == api.StageStatusCompleted
+	})
+	if stored.Status != api.StageStatusCompleted || stored.Result == nil || stored.Result.Kind != api.WorkflowOperationResultRelease {
+		t.Fatalf("operation status after terminal save retry = %#v", stored)
 	}
 	work, err := repository.LoadWork(context.Background(), testOwnerID, created.Workflow.ID, operation.ID)
 	if err != nil {
@@ -3926,7 +4032,7 @@ func TestRefreshMutatedMediaStatusPreservesOnlyGenuineMediaActions(t *testing.T)
 		}},
 	}
 
-	refreshMutatedMediaStatus(&snapshot, projections)
+	refreshMutatedMediaStatus(&snapshot, projections, projections)
 	if snapshot.Status != api.StageStatusBlocked || len(snapshot.RequiredActions) != 1 ||
 		snapshot.RequiredActions[0].Kind != api.RequiredActionProvideTrackerInput {
 		t.Fatalf("genuine missing menu action was not republished: %#v", snapshot)
@@ -3938,7 +4044,7 @@ func TestRefreshMutatedMediaStatusPreservesOnlyGenuineMediaActions(t *testing.T)
 		Purpose:  api.ScreenshotPurposeMenu,
 		Selected: true,
 	})
-	refreshMutatedMediaStatus(&snapshot, projections)
+	refreshMutatedMediaStatus(&snapshot, projections, projections)
 	if snapshot.Status != api.StageStatusCompleted || len(snapshot.RequiredActions) != 0 {
 		t.Fatalf("satisfied media retained stale action: %#v", snapshot)
 	}
@@ -3993,13 +4099,13 @@ func TestRefreshMutatedMediaStatusRequiresHostedScreenshotsPerTracker(t *testing
 		},
 	}
 
-	refreshMutatedMediaStatus(&snapshot, projections)
+	refreshMutatedMediaStatus(&snapshot, projections, projections)
 	if snapshot.Status != api.StageStatusBlocked || len(snapshot.RequiredActions) != 1 {
 		t.Fatalf("three tracker-usable hosted screenshots satisfied six required screenshots: %#v", snapshot)
 	}
 
 	snapshot.HostAttempts[1].UsageScope = "global"
-	refreshMutatedMediaStatus(&snapshot, projections)
+	refreshMutatedMediaStatus(&snapshot, projections, projections)
 	if snapshot.Status != api.StageStatusCompleted || len(snapshot.RequiredActions) != 0 {
 		t.Fatalf("six tracker-usable hosted screenshots did not satisfy the requirement: %#v", snapshot)
 	}
@@ -4066,11 +4172,12 @@ func TestRefreshMutatedMediaStatusExcludesOnlyTrackerScopedHostFailures(t *testi
 	}
 
 	tests := []struct {
-		name        string
-		projections []api.TrackerReleaseProjection
-		failures    []api.WorkflowFailure
-		menu        *api.MediaArtifact
-		wantStatus  api.StageStatus
+		name             string
+		projections      []api.TrackerReleaseProjection
+		knownProjections []api.TrackerReleaseProjection
+		failures         []api.WorkflowFailure
+		menu             *api.MediaArtifact
+		wantStatus       api.StageStatus
 	}{
 		{
 			name: "surviving tracker completes",
@@ -4141,6 +4248,15 @@ func TestRefreshMutatedMediaStatusExcludesOnlyTrackerScopedHostFailures(t *testi
 			wantStatus: api.StageStatusBlocked,
 		},
 		{
+			name: "excluded known tracker failure does not block current trackers",
+			projections: []api.TrackerReleaseProjection{
+				{TrackerID: alpha, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2}},
+			},
+			knownProjections: []api.TrackerReleaseProjection{{TrackerID: alpha}, {TrackerID: beta}},
+			failures:         []api.WorkflowFailure{betaFailure},
+			wantStatus:       api.StageStatusCompleted,
+		},
+		{
 			name: "unknown tracker failure blocks otherwise satisfied requirements",
 			projections: []api.TrackerReleaseProjection{
 				{TrackerID: alpha, Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 2}},
@@ -4161,7 +4277,11 @@ func TestRefreshMutatedMediaStatusExcludesOnlyTrackerScopedHostFailures(t *testi
 				snapshot.Artifacts = append(snapshot.Artifacts, *test.menu)
 			}
 
-			refreshMutatedMediaStatus(&snapshot, test.projections)
+			known := test.knownProjections
+			if known == nil {
+				known = test.projections
+			}
+			refreshMutatedMediaStatus(&snapshot, test.projections, known)
 			if snapshot.Status != test.wantStatus {
 				t.Fatalf("media status = %q, want %q: %#v", snapshot.Status, test.wantStatus, snapshot)
 			}

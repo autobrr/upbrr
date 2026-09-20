@@ -90,6 +90,26 @@ func TestCollectSourceEvidenceKeepsCanonicalSource(t *testing.T) {
 	}
 }
 
+func TestCollectSourceEvidenceCarriesExternalFreshness(t *testing.T) {
+	t.Parallel()
+
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv")
+	if err := os.WriteFile(sourcePath, []byte("video"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	request := testCollectionRequest(t, api.Request{SourcePath: sourcePath})
+	request.Input.ExternalFreshness = api.ExternalFreshnessRefresh
+	service := NewService(&stubRepo{}, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}))
+
+	meta, err := service.collectSourceEvidence(t.Context(), request)
+	if err != nil {
+		t.Fatalf("collect source evidence: %v", err)
+	}
+	if meta.ExternalFreshness != api.ExternalFreshnessRefresh {
+		t.Fatalf("external freshness = %q, want refresh", meta.ExternalFreshness)
+	}
+}
+
 func TestApplyDVDCapacityUsesMeasuredSourceSize(t *testing.T) {
 	t.Parallel()
 

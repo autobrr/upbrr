@@ -21,6 +21,7 @@ import (
 	"github.com/autobrr/upbrr/internal/filesystem"
 	imagehostpolicy "github.com/autobrr/upbrr/internal/imagehosting/policy"
 	"github.com/autobrr/upbrr/internal/logging"
+	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/sourcelayout"
 	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
@@ -36,23 +37,26 @@ func newTrackerAuthService(cfg config.Config, logger api.Logger) *trackerauth.Se
 
 // Backend owns the embedded web API runtime.
 type Backend struct {
-	liveTest          *api.LiveTestPolicy
-	runtimeMu         sync.RWMutex
-	cfg               config.Config
-	runtimeGeneration uint64
-	capabilities      CoreCapabilities
-	coreOwner         LifecycleOwner
-	coreInitErr       error
-	logger            *logging.Logger
-	repo              *db.SQLiteRepository
-	hub               *eventHub
+	liveTest           *api.LiveTestPolicy
+	runtimeMu          sync.RWMutex
+	runtimeAdmissionMu sync.RWMutex
+	cfg                config.Config
+	runtimeGeneration  uint64
+	capabilities       CoreCapabilities
+	coreOwner          LifecycleOwner
+	coreInitErr        error
+	logger             *logging.Logger
+	runtimeBundle      *runtimeBundle
+	repo               *db.SQLiteRepository
+	hub                *eventHub
 
 	streamMu sync.Mutex
 	streams  map[string]*backendLogStream
 	streamWG sync.WaitGroup
 
-	activationInitMu sync.Mutex
-	activator        *RuntimeActivator
+	activationInitMu    sync.Mutex
+	activator           *RuntimeActivator
+	workflowCoordinator *releaseworkflow.Coordinator
 }
 
 type backendLogStream struct {
@@ -113,42 +117,62 @@ func newBackendWithLiveTest(ctx context.Context, cfg config.Config, hub *eventHu
 		return nil, fmt.Errorf("web: %w", err)
 	}
 
+	workflowCoordinator, err := releaseworkflow.NewCoordinator()
+	if err != nil {
+		_ = repo.Close()
+		_ = logger.Close()
+		return nil, fmt.Errorf("web: initialize workflow coordinator: %w", err)
+	}
 	var capabilities CoreCapabilities
 	var coreOwner LifecycleOwner
 	var coreInitErr error
+	initialBundle := newRuntimeBundle(nil, logger)
 	if err := cfg.Validate(); err != nil {
 		coreInitErr = err
 		logger.Warnf("web: config invalid, core disabled until settings are fixed: %v", err)
 	} else {
-		coreSvc, coreErr := core.NewWithContext(ctx, api.CoreDependencies{
+		activation, activationErr := initializeRuntimeConfigActivation(ctx, repo, cfg)
+		if activationErr != nil {
+			_ = repo.Close()
+			_ = logger.Close()
+			return nil, fmt.Errorf("web: initialize runtime config activation: %w", activationErr)
+		}
+		coreSvc, coreErr := core.NewWithContextAndCoordinator(ctx, api.CoreDependencies{
 			LiveTest: policy,
 			Config:   cfg,
 			Logger:   logger,
 			Services: api.ServiceSet{
 				Filesystem: filesystem.NewValidator(),
 			},
-			Repository:      repo.RepositoryCapabilities(),
-			RepositoryOwner: repo,
-		})
+			Repository:                        repo.RepositoryCapabilities(),
+			RepositoryOwner:                   repo,
+			EnforceConfigActivationGeneration: true,
+			ConfigActivationGeneration:        activation.ActiveGeneration,
+			ConfigActivationFingerprint:       activation.Fingerprint,
+		}, workflowCoordinator)
 		if coreErr != nil {
 			_ = repo.Close()
 			_ = logger.Close()
 			return nil, fmt.Errorf("web: %w", coreErr)
 		}
 		capabilities, coreOwner = BindCoreCapabilities(coreSvc)
+		initialBundle.setResources(coreOwner, logger)
+		coreSvc.SetOperationLifetime(initialBundle.borrow)
 	}
 
 	backend := &Backend{
-		liveTest:          policy,
-		cfg:               cfg,
-		runtimeGeneration: AllocateRuntimeGenerationID(),
-		capabilities:      capabilities,
-		coreOwner:         coreOwner,
-		coreInitErr:       coreInitErr,
-		logger:            logger,
-		repo:              repo,
-		hub:               hub,
-		streams:           make(map[string]*backendLogStream),
+		liveTest:            policy,
+		cfg:                 cfg,
+		runtimeGeneration:   AllocateRuntimeGenerationID(),
+		capabilities:        capabilities,
+		coreOwner:           coreOwner,
+		coreInitErr:         coreInitErr,
+		logger:              logger,
+		runtimeBundle:       initialBundle,
+		repo:                repo,
+		hub:                 hub,
+		streams:             make(map[string]*backendLogStream),
+		workflowCoordinator: workflowCoordinator,
 	}
 	if _, err := backend.runtimeActivator(); err != nil {
 		if coreOwner != nil {
@@ -163,16 +187,33 @@ func newBackendWithLiveTest(ctx context.Context, cfg config.Config, hub *eventHu
 
 // Close stops active background work and releases runtime, repository, and log resources.
 func (b *Backend) Close() error {
+	return b.CloseContext(context.Background())
+}
+
+// CloseContext stops active background work and releases runtime, repository, and log resources.
+func (b *Backend) CloseContext(ctx context.Context) error {
+	if ctx == nil {
+		return errors.New("webserver: close context is required")
+	}
 	b.stopAllLogStreams()
-	rt := b.runtimeSnapshot()
-	if rt.coreOwner != nil {
-		_ = rt.coreOwner.Close()
+	shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	runtime := b.runtimeSnapshot()
+	if coreService, ok := runtime.coreOwner.(*core.Core); ok {
+		_ = coreService.ShutdownWorkflowCoordinator(shutdownCtx)
+	} else if b.workflowCoordinator != nil {
+		_ = b.workflowCoordinator.Shutdown(shutdownCtx)
+	}
+	if runtime.bundle != nil {
+		runtime.bundle.retire()
+	} else if runtime.coreOwner != nil {
+		_ = runtime.coreOwner.Close()
 	}
 	if b.repo != nil {
 		_ = b.repo.Close()
 	}
-	if rt.logger != nil {
-		_ = rt.logger.Close()
+	if runtime.bundle == nil && runtime.logger != nil {
+		_ = runtime.logger.Close()
 	}
 	return nil
 }
@@ -576,30 +617,58 @@ func (b *Backend) allowUnencryptedExport(dbPath string) (bool, error) {
 // SaveConfig decodes encrypted browser settings and delegates the complete
 // config/runtime transition to the shared runtime activator.
 func (b *Backend) SaveConfig(payload string) error {
+	_, err := b.SaveConfigActivation(context.Background(), payload)
+	return err
+}
+
+// SaveConfigActivation saves settings and returns whether their effective
+// runtime is active now or durably pending active workflow cleanup.
+func (b *Backend) SaveConfigActivation(ctx context.Context, payload string) (api.ConfigActivation, error) {
+	return b.SaveConfigActivationForOwner(ctx, "system", payload)
+}
+
+// SaveConfigActivationForOwner saves settings for one authenticated session.
+// The owner is retained only on a pending activation; it is never returned in
+// the browser-facing status.
+func (b *Backend) SaveConfigActivationForOwner(ctx context.Context, ownerID, payload string) (api.ConfigActivation, error) {
 	if b.repo == nil {
-		return errors.New("config repository not initialized")
+		return api.ConfigActivation{}, errors.New("config repository not initialized")
 	}
 	cfg, err := config.ImportFromJSONEncrypted(payload)
 	if err != nil {
-		return fmt.Errorf("web: %w", err)
+		return api.ConfigActivation{}, fmt.Errorf("web: %w", err)
 	}
 	activator, err := b.runtimeActivator()
 	if err != nil {
-		return fmt.Errorf("web: %w", err)
+		return api.ConfigActivation{}, fmt.Errorf("web: %w", err)
 	}
-	if err := activator.Activate(context.Background(), *cfg); err != nil {
-		return fmt.Errorf("web: %w", err)
+	result, err := activator.ActivateResultForOwner(ctx, ownerID, *cfg)
+	if err != nil {
+		return api.ConfigActivation{}, fmt.Errorf("web: %w", err)
 	}
-	return nil
+	return result, nil
+}
+
+// ConfigActivation returns the current pollable activation status and attempts
+// its pending candidate only after durable workflow cleanup is complete.
+func (b *Backend) ConfigActivation(ctx context.Context) (api.ConfigActivation, error) {
+	activator, err := b.runtimeActivator()
+	if err != nil {
+		return api.ConfigActivation{}, fmt.Errorf("web: %w", err)
+	}
+	result, err := activator.ActivatePending(ctx)
+	if err != nil {
+		return api.ConfigActivation{}, fmt.Errorf("web: %w", err)
+	}
+	return result, nil
 }
 
 const configImportMaxBytes = importer.MaxFileBytes
 
-// ImportConfig imports browser-uploaded config content, validates the saved and
-// env-applied runtime forms, builds the replacement runtime, migrates shared
-// cookies, then persists the non-env config before installing the runtime.
-// Runtime build, migration, or save failures leave the persisted config and
-// active runtime unchanged.
+// ImportConfig imports browser-uploaded config content only when it can make
+// the replacement runtime active in this call. The browser import response has
+// no activation-status protocol, so active workflow work rejects the import
+// rather than retaining an anonymous pending candidate.
 func (b *Backend) ImportConfig(fileName, fileContent string) (string, []string, error) {
 	if b.repo == nil {
 		return "", nil, errors.New("config repository not initialized")
@@ -620,7 +689,7 @@ func (b *Backend) ImportConfig(fileName, fileContent string) (string, []string, 
 	if err != nil {
 		return "", nil, fmt.Errorf("web: %w", err)
 	}
-	if err := activator.Activate(context.Background(), *cfg); err != nil {
+	if err := activator.ActivateImmediate(context.Background(), *cfg); err != nil {
 		return "", nil, fmt.Errorf("web: %w", err)
 	}
 

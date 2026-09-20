@@ -1,11 +1,59 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { descriptionClient, releaseWorkflowClient } from "../api/app";
+import { activeInputClient, descriptionClient, releaseWorkflowClient } from "../api/app";
+import { subscribeWebEvent, subscribeWebEventConnection } from "../api/client";
 import type { ReleaseSessionPorts } from "./ports";
+import type { SourceVerificationProgress } from "./types";
 
-/** Composes production transports once at the application boundary. */
+const nonnegativeFinite = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0;
+
+const sourceVerificationProgressFromEvent = (
+  payload: unknown,
+): SourceVerificationProgress | null => {
+  if (!payload || typeof payload !== "object") return null;
+  const update = payload as Record<string, unknown>;
+  if (update.phase !== "source_inspection") return null;
+  const correlationID = typeof update.correlationID === "string" ? update.correlationID.trim() : "";
+  const status = update.status;
+  if (!correlationID || (status !== "running" && status !== "completed" && status !== "failed")) {
+    return null;
+  }
+  const totalBytes = nonnegativeFinite(update.totalBytes);
+  return {
+    correlationID,
+    completedBytes: Math.min(nonnegativeFinite(update.completedBytes), totalBytes || Infinity),
+    totalBytes,
+    message: typeof update.message === "string" ? update.message.trim() : "",
+    status,
+  };
+};
+/**
+ * Composes production transports at the application boundary. Input subscriptions also
+ * request resynchronization after reconnecting; their cleanup removes all three listeners.
+ */
 export const productionReleaseSessionPorts = (): ReleaseSessionPorts => ({
+  activeInput: {
+    get: (signal) => activeInputClient.get(signal),
+    open: (request, signal) => activeInputClient.open(request, signal),
+    release: (request, signal) => activeInputClient.release(request, signal),
+    recover: (request, signal) => activeInputClient.recover(request, signal),
+    reconcile: (request, signal) => activeInputClient.reconcile(request, signal),
+    subscribe: (callback, onVerification) => {
+      const unsubscribeChange = subscribeWebEvent("input:changed", callback);
+      const unsubscribeVerification = subscribeWebEvent("input:verification", (payload) => {
+        const update = sourceVerificationProgressFromEvent(payload);
+        if (update) onVerification(update);
+      });
+      const unsubscribeConnection = subscribeWebEventConnection(callback);
+      return () => {
+        unsubscribeChange();
+        unsubscribeVerification();
+        unsubscribeConnection();
+      };
+    },
+  },
   workflow: {
     continue: (request, signal) => releaseWorkflowClient.continue(request, signal),
     current: (workflowID, signal) => releaseWorkflowClient.current(workflowID, signal),

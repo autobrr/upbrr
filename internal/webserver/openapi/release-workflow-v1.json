@@ -148,6 +148,46 @@
           "error"
         ]
       },
+      "ActiveInputSnapshot": {
+        "type": "object",
+        "properties": {
+          "current": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseWorkflowCurrent"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "inputId": {
+            "type": "string"
+          },
+          "recoveryWorkflowIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowID"
+            }
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "sourceVersion": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ActiveInputState"
+          }
+        },
+        "required": [
+          "revision",
+          "state"
+        ]
+      },
+      "ActiveInputState": {
+        "type": "string"
+      },
       "AniListAiringEpisode": {
         "type": "object",
         "properties": {
@@ -949,6 +989,16 @@
       "CreateReleaseWorkflowUploadRequest": {
         "type": "object",
         "properties": {
+          "authority": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkflowAuthority"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "client": {
             "$ref": "#/components/schemas/ReleaseWorkflowUploadClient"
           },
@@ -1648,6 +1698,9 @@
         ]
       },
       "EpisodeTitleMode": {
+        "type": "string"
+      },
+      "ExternalFreshness": {
         "type": "string"
       },
       "ExternalIDOverrides": {
@@ -3678,6 +3731,21 @@
       "NamingStatus": {
         "type": "string"
       },
+      "OpenActiveInputRequest": {
+        "type": "object",
+        "properties": {
+          "expectedRevision": {
+            "type": "integer"
+          },
+          "request": {
+            "$ref": "#/components/schemas/ContinueReleaseWorkflowRequest"
+          }
+        },
+        "required": [
+          "expectedRevision",
+          "request"
+        ]
+      },
       "Operation": {
         "type": "object",
         "properties": {
@@ -3992,6 +4060,9 @@
           "Controls": {
             "$ref": "#/components/schemas/PreparationControls"
           },
+          "ExternalFreshness": {
+            "$ref": "#/components/schemas/ExternalFreshness"
+          },
           "Force": {
             "type": "boolean"
           },
@@ -4016,6 +4087,7 @@
         },
         "required": [
           "Controls",
+          "ExternalFreshness",
           "Force",
           "Instructions",
           "Intent",
@@ -4363,6 +4435,47 @@
           "blocked",
           "ineligible",
           "stale"
+        ]
+      },
+      "ReconcileActiveInputRequest": {
+        "type": "object",
+        "properties": {
+          "answer": {
+            "$ref": "#/components/schemas/RequiredActionAnswer"
+          },
+          "authority": {
+            "$ref": "#/components/schemas/WorkflowAuthority"
+          },
+          "idempotencyKey": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "answer",
+          "authority",
+          "idempotencyKey"
+        ]
+      },
+      "RecoverLegacyActiveInputRequest": {
+        "type": "object",
+        "properties": {
+          "workflowId": {
+            "$ref": "#/components/schemas/WorkflowID"
+          }
+        },
+        "required": [
+          "workflowId"
+        ]
+      },
+      "ReleaseActiveInputRequest": {
+        "type": "object",
+        "properties": {
+          "expectedRevision": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expectedRevision"
         ]
       },
       "ReleaseAssessments": {
@@ -5100,6 +5213,12 @@
           },
           "status": {
             "$ref": "#/components/schemas/WorkflowStatus"
+          },
+          "submissionExclusions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SubmissionExclusion"
+            }
           },
           "trackerApproval": {
             "anyOf": [
@@ -7696,6 +7815,26 @@
           "metadata",
           "releaseName",
           "version"
+        ]
+      },
+      "SubmissionExclusion": {
+        "type": "object",
+        "properties": {
+          "confirmedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "trackerId": {
+            "$ref": "#/components/schemas/TrackerID"
+          }
+        },
+        "required": [
+          "confirmedAt",
+          "reason",
+          "trackerId"
         ]
       },
       "TIKOverrides": {
@@ -11344,6 +11483,16 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "authority": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/WorkflowAuthority"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "client": {
                     "$ref": "#/components/schemas/ReleaseWorkflowUploadClient"
                   },

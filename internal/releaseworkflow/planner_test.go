@@ -334,7 +334,8 @@ func TestHydrateContinuationPreparedReleaseRejectsChangedOrMismatchedGeneration(
 			ConfirmBDMVRescan: true,
 			ForceRecheck:      &forceRecheck,
 		},
-		Force: true,
+		Force:             true,
+		ExternalFreshness: api.ExternalFreshnessRefresh,
 	}
 	requirements := api.MetadataRequirementSet{
 		Version: "hydrate-requirements-v1",
@@ -384,11 +385,12 @@ func TestHydrateContinuationPreparedReleaseRejectsChangedOrMismatchedGeneration(
 				preparedInput = candidate
 				return test.prepare(current.Release.Release)
 			}}}
-			err := module.hydrateContinuationPreparedRelease(t.Context(), current, input, requirements)
+			err := module.hydrateContinuationPreparedRelease(t.Context(), testOwnerID, current, input, requirements)
 			if !errors.Is(err, test.wantError) {
 				t.Fatalf("hydrate error = %v, want %v", err, test.wantError)
 			}
 			if preparedInput.SourcePath != current.Release.Release.Source.SourcePath || preparedInput.Force ||
+				preparedInput.ExternalFreshness != api.ExternalFreshnessReuse ||
 				!preparedInput.RequirePrepared || preparedInput.Controls.ConfirmBDMVRescan || preparedInput.Controls.ForceRecheck != nil {
 				t.Fatalf("hydration input = %#v", preparedInput)
 			}
@@ -426,6 +428,9 @@ func TestContinueCreationPersistsTrustedTrackerDecisionMode(t *testing.T) {
 	if publicState.TrackerDecisionMode != TrackerDecisionModePostDupeGate {
 		t.Fatalf("public continuation tracker mode = %q", publicState.TrackerDecisionMode)
 	}
+	if publicState.SourcePath != request.Intent.Preparation.SourcePath {
+		t.Fatalf("public continuation source path = %q, want %q", publicState.SourcePath, request.Intent.Preparation.SourcePath)
+	}
 
 	appModule, appRepository := newTestModule(t, testPreparer())
 	appCurrent, err := appModule.Continue(
@@ -442,6 +447,55 @@ func TestContinueCreationPersistsTrustedTrackerDecisionMode(t *testing.T) {
 	}
 	if appState.TrackerDecisionMode != TrackerDecisionModeWebUIControls {
 		t.Fatalf("app continuation tracker mode = %q", appState.TrackerDecisionMode)
+	}
+}
+
+func TestContinueActiveInputCreationPersistsTrackerDecisionMode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		mode TrackerDecisionMode
+		want TrackerDecisionMode
+	}{
+		{name: "default", want: TrackerDecisionModePostDupeGate},
+		{
+			name: "webui",
+			mode: TrackerDecisionModeWebUIControls,
+			want: TrackerDecisionModeWebUIControls,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := t.Context()
+			if test.mode != "" {
+				ctx = WithTrackerDecisionMode(ctx, test.mode)
+			}
+			clock := &mutableClock{now: time.Now().UTC()}
+			repository := openActiveInputRecoveryRepository(ctx, t)
+			persistent, err := NewPersistentRepository(repository)
+			if err != nil {
+				t.Fatal(err)
+			}
+			module := newActiveInputRecoveryModule(t, persistent, repository, &hashingActiveInputVerifier{}, clock, "planner-mode")
+			current, err := module.Continue(ctx, testOwnerID, api.ContinueReleaseWorkflowRequest{
+				IdempotencyKey: "continue-active-input-mode-" + test.name,
+				Goal:           api.WorkflowGoalInputReady,
+				Intent: api.WorkflowIntent{Preparation: &api.PrepareInput{
+					SourcePath: writeActiveInputRecoverySource(t, test.name+".mkv", test.name),
+				}},
+			})
+			if err != nil {
+				t.Fatalf("continue active input: %v", err)
+			}
+			state, err := persistent.Load(ctx, testOwnerID, current.Workflow.ID)
+			if err != nil {
+				t.Fatalf("load active-input continuation: %v", err)
+			}
+			if state.TrackerDecisionMode != test.want {
+				t.Fatalf("active-input continuation tracker mode = %q, want %q", state.TrackerDecisionMode, test.want)
+			}
+		})
 	}
 }
 
@@ -691,7 +745,7 @@ func TestRefreshPersistedMediaStatusRejectsEmptyApprovedTrackerSet(t *testing.T)
 	repository.mu.Unlock()
 
 	withoutGuard := media
-	refreshMutatedMediaStatus(&withoutGuard, nil)
+	refreshMutatedMediaStatus(&withoutGuard, nil, nil)
 	if withoutGuard.Status != api.StageStatusCompleted {
 		t.Fatalf("empty tracker fixture remains blocked without guard: %#v", withoutGuard)
 	}
@@ -1432,7 +1486,7 @@ func TestContinuationPlannerForceReprepareIsSatisfiedByRetainedInputLineage(t *t
 		},
 		Force: true,
 	}
-	fingerprint, err := api.CanonicalWorkflowFingerprint(input)
+	fingerprint, err := preparationLineageFingerprint(input)
 	if err != nil {
 		t.Fatalf("fingerprint preparation input: %v", err)
 	}
@@ -1461,6 +1515,58 @@ func TestContinuationPlannerForceReprepareIsSatisfiedByRetainedInputLineage(t *t
 	command, stage = planContinuationCommand(request, current, time.Now())
 	if _, ok := command.(ResetReleaseCommand); !ok || stage != "reprepare" {
 		t.Fatalf("stale preparation planned stage=%q command=%#v", stage, command)
+	}
+}
+
+func TestContinuationPreparationSatisfiedAfterFreshOpen(t *testing.T) {
+	t.Parallel()
+
+	forceRecheck := true
+	opened := api.PrepareInput{
+		SourcePath:        `C:\releases\Example.Release.2026.1080p-GRP`,
+		Intent:            api.PreparationIntentDryRun,
+		ExternalFreshness: api.ExternalFreshnessRefresh,
+		RequirePrepared:   false,
+		Instructions:      api.ReleaseFactInstructions{SourceLookup: "Example Release 2026"},
+		Controls: api.PreparationControls{
+			Interaction:       api.InteractionModeInteractive,
+			ConfirmBDMVRescan: true,
+			ForceRecheck:      &forceRecheck,
+		},
+	}
+	fingerprint, err := preparationLineageFingerprint(opened)
+	if err != nil {
+		t.Fatalf("fingerprint fresh preparation input: %v", err)
+	}
+	current := &api.ReleaseSnapshot{PreparationFingerprint: fingerprint}
+	continued := opened
+	continued.Intent = api.PreparationIntentUpload
+	continued.ExternalFreshness = api.ExternalFreshnessReuse
+	continued.RequirePrepared = true
+	continued.Controls.Interaction = api.InteractionModeUnattendedConfirm
+	continued.Controls.ConfirmBDMVRescan = false
+	continued.Controls.ForceRecheck = nil
+	continued.Instructions.TrackerIDs = map[string]string{}
+	if !continuationPreparationSatisfied(current, &continued) {
+		t.Fatal("fresh prepared generation was not retained for continuation")
+	}
+
+	changed := continued
+	changed.Force = true
+	if continuationPreparationSatisfied(current, &changed) {
+		t.Fatal("forced preparation was incorrectly satisfied by retained generation")
+	}
+
+	changed = continued
+	changed.Instructions.SourceLookup = "Changed Example Release 2026"
+	if continuationPreparationSatisfied(current, &changed) {
+		t.Fatal("changed fact instructions were incorrectly satisfied by retained generation")
+	}
+
+	changed = continued
+	changed.Instructions.TrackerIDs = map[string]string{"BTN": "123"}
+	if continuationPreparationSatisfied(current, &changed) {
+		t.Fatal("changed tracker source IDs were incorrectly satisfied by retained generation")
 	}
 }
 
@@ -1498,6 +1604,48 @@ func readyContinuationPlannerResult(t *testing.T, now time.Time) CommandResult {
 				Decision:  api.DupeDecisionNoMatch,
 			}},
 		},
+	}
+}
+
+func TestContinuationPlannerRetriesFailedDryRunAndAcceptsSkippedNoOp(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.July, 23, 1, 2, 3, 0, time.UTC)
+	current := readyContinuationPlannerResult(t, now)
+	current.Media = &api.MediaArtifactSet{Status: api.StageStatusCompleted}
+	current.Descriptions = &api.DescriptionSet{Status: api.StageStatusSkipped}
+	current.DryRun = &api.UploadDryRunResult{
+		NoSeed:     true,
+		TrackerIDs: []api.TrackerID{"ALPHA"},
+		Status:     api.StageStatusFailed,
+	}
+	request := api.ContinueReleaseWorkflowRequest{
+		IdempotencyKey: "retry-failed-dry-run",
+		Goal:           api.WorkflowGoalDryRun,
+		Intent: api.WorkflowIntent{
+			NoSeed:           true,
+			UploadTrackerIDs: []api.TrackerID{"ALPHA"},
+		},
+	}
+
+	for _, status := range []api.StageStatus{api.StageStatusFailed, api.StageStatusPartial} {
+		current.DryRun.Status = status
+		if continuationGoalReached(current, request) {
+			t.Fatalf("%s retained dry run incorrectly satisfied the dry-run goal", status)
+		}
+		command, stage := planContinuationCommand(request, current, now)
+		if _, ok := command.(DryRunUploadsCommand); !ok || stage != "review-uploads" {
+			t.Fatalf("%s dry-run retry plan: stage=%q command=%#v", status, stage, command)
+		}
+	}
+
+	current.DryRun.Status = api.StageStatusSkipped
+	if !continuationGoalReached(current, request) {
+		t.Fatal("fully skipped retained dry run did not satisfy the dry-run goal")
+	}
+	command, stage := planContinuationCommand(request, current, now)
+	if command != nil || stage != "" {
+		t.Fatalf("skipped dry-run no-op planned stage=%q command=%#v", stage, command)
 	}
 }
 

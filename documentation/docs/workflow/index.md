@@ -11,6 +11,16 @@ upbrr separates source preparation, tracker decisions, media work, payload revie
 
 Provide a release folder or file. upbrr resolves the source layout, finds reusable torrent-client data when enabled, and creates a prepared release generation.
 
+One input can be active per database, shared by the Web UI and CLI. Tabs in the same browser session resume that input. Another session or process receives a busy result while it is owned. Close the active input before handing it to another session. Closing retains history and reusable images.
+
+Switching during local preparation cancels that work and waits for cleanup. A submission or uncertain remote outcome must finish or be reconciled before switching. Closing a browser tab does not release the input.
+
+After upgrading an existing database, an earlier interrupted external effect can require reconciliation before normal input work resumes. Inspect the remote result, then choose **Confirmed not completed; allow a fresh exact attempt** only when that outcome is known. This process never repeats a submission automatically. Resolve every listed workflow before opening a new input.
+
+Every explicit open, history restore, or refresh checks the source path and inventory and hashes at most the first 1 MiB of each file. File sizes and modification times are checked before and after sampling. This is a lightweight identity check, not verification of every source byte. Torrent creation still performs its required piece hashing. A plain page reload reads the current state without starting another verification.
+
+A fresh application start leaves the previous idle input closed while retaining its History and saved corrections. Open it explicitly to continue. Work waiting for API feedback or external-outcome reconciliation remains available through explicit continuation or recovery; startup does not automatically resume it.
+
 Folder handling matters. `--keep-folder` preserves a supplied folder instead of processing only a selected video file.
 
 ### Multi-disc DVD and Blu-ray folders
@@ -44,6 +54,8 @@ Metadata providers and local media inspection produce shared release facts. Revi
 
 Overrides change the prepared generation. Later operations must use that exact generation rather than silently rebuilding it.
 
+Refresh obtains current provider facts and withdraws earlier duplicate decisions and upload approval. It preserves compatible screenshot content and hosted links. Reset requests a new preparation of the source; source or capture changes can make earlier images incompatible. A provider failure is reported rather than presenting old provider data as fresh.
+
 Input readiness evaluates missing release facts and selected tracker metadata before tracker assessment. Correct missing source, type, genre, or languages on Input. A tracker-specific requirement affects that tracker; global missing facts prevent advancement.
 
 Explicit corrections win over history and provider metadata. Auto removes a correction, while an empty list, a zero manual year, or explicit false retains manual authority. Provider failures preserve accepted edits. A changed content identity can require confirmation of saved corrections.
@@ -64,6 +76,8 @@ For warnings that permit an override, use **Upload anyway** on the tracker's **D
 
 Duplicate search results are evidence, not an automatic upload decision. Review candidate names, metadata, and tracker warnings. Where approval is required, select an explicit non-empty tracker subset after the duplicate stage.
 
+Before searching, upbrr excludes trackers with a confirmed upload of the same verified submitted content. These appear as **Already uploaded**. Remaining trackers receive fresh duplicate checks; if every selected tracker is excluded, the operation completes successfully without another approval or upload. Changing metadata or a screenshot playlist does not make a full-disc upload new content. A different actual file subset can be different submitted content.
+
 A complete structured group is preferred for group-policy decisions. When a tracker omits that field, only one unambiguous normalized release-name suffix can prove different-group ownership; conflicting, missing, or multi-group text keeps the normal duplicate review.
 
 ## 5. Prepare media and descriptions
@@ -81,6 +95,8 @@ Automatic screenshot plans distribute the requested images across all prepared d
 
 Inspect image ordering, host URLs, technical blocks, headers, and rendered BBCode.
 
+Compatible images retain their selection and order across refresh. Deleted images stay removed. upbrr verifies local image bytes before reuse and reuses hosted links only for a compatible host account and purpose. A hosted link can remain usable when its local preview is missing. Changed capture settings or stricter tracker requirements can require additional images.
+
 ## 6. Preview immutable tracker operations
 
 Tracker preparation captures an immutable operation. Payload preview and live submission use that captured state rather than regenerating names, rereading mutable prepared input, or uploading images again.
@@ -96,6 +112,8 @@ Short-lived remote tokens can still be acquired at submission time when required
 After confirmed tracker success, upbrr records the tracker result and attempts to retain the tracker-registered torrent. Client injection consumes that registered artifact, not the pre-upload torrent.
 
 A failure to download or persist the registered torrent does not turn a confirmed remote upload into a failed upload. Review the warning and recover the torrent manually when needed.
+
+Deleting a release from History removes its associated local workflow, effect, and submission records along with generated artifacts. This also removes local repeat-submission protection for that release. It does not undo remote uploads or delete source media. Retained unknown outcomes require reconciliation and are never treated as confirmed success.
 
 ## 8. Inject into clients
 

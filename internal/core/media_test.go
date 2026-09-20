@@ -27,6 +27,7 @@ import (
 type imageHostCall struct {
 	host     string
 	fallback bool
+	paths    []string
 }
 
 type imageHostBehavior struct {
@@ -104,7 +105,15 @@ func (s *barrierImageHostingService) Upload(
 	images []api.ScreenshotImage,
 ) ([]api.UploadedImageLink, error) {
 	target, _ := api.ImageUploadProgressTargetFromContext(ctx)
-	s.entered <- imageHostCall{host: host, fallback: target.Fallback}
+	paths := make([]string, 0, len(images))
+	for _, image := range images {
+		paths = append(paths, image.Path)
+	}
+	s.entered <- imageHostCall{
+		host:     host,
+		fallback: target.Fallback,
+		paths:    paths,
+	}
 	behavior := s.behaviors[host]
 	select {
 	case <-behavior.release:
@@ -186,6 +195,8 @@ func TestUploadImagesFallbackStartsBeforeUnrelatedPrimaryCompletes(t *testing.T)
 				},
 			},
 			[]api.ScreenshotImage{{Path: "screen.png"}},
+			nil,
+			nil,
 		)
 		done <- imageUploadCallResult{result: result, err: err}
 	}()
@@ -281,6 +292,8 @@ func TestUploadImagesUnknownOutcomeStopsFallbackAndPartialAcceptance(t *testing.
 			Trackers:   []string{"ONE"},
 		}},
 		[]api.ScreenshotImage{{Path: "screen.png"}},
+		nil,
+		nil,
 	)
 	failure, ok := api.AsOperationFailure(err)
 	if !ok || failure.Code != api.OperationFailureUnknownOutcome {
@@ -320,12 +333,75 @@ func TestUploadImagesExplicitHostDoesNotFallback(t *testing.T) {
 			Trackers:   []string{"ONE"},
 		}},
 		[]api.ScreenshotImage{{Path: "screen.png"}},
+		nil,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("explicit host upload: %v", err)
 	}
 	if len(service.entered) != 1 || len(result.Attempts) != 1 || result.Attempts[0].Host != "pixhost" || result.Attempts[0].Failure == nil {
 		t.Fatalf("explicit host fallback result = %#v, calls=%d", result, len(service.entered))
+	}
+}
+
+func TestUploadImagesReusesPermittedFallbackBeforePrimaryAndUploadsDistinctHost(t *testing.T) {
+	t.Parallel()
+
+	images := []api.ScreenshotImage{{Path: "screen-one.png"}, {Path: "screen-two.png"}}
+	release := make(chan struct{})
+	close(release)
+	service := &barrierImageHostingService{
+		entered: make(chan imageHostCall, 2),
+		behaviors: map[string]imageHostBehavior{
+			"onlyimage": {release: release},
+		},
+	}
+	module := &mediaModule{
+		cfg: config.Config{ImageHosting: config.ImageHostingConfig{
+			Host1: "pixhost",
+			Host2: "imgbb",
+			Host3: "onlyimage",
+		}},
+		images:   service,
+		logger:   &recordingMediaLogger{},
+		registry: mediaImageHostRegistry(t),
+	}
+	result, err := module.uploadImagesToTargetsWithFallback(
+		t.Context(),
+		api.UploadSubject{SourcePath: "Example.Release.2026.mkv"},
+		"",
+		nil,
+		[]trackers.ImageUploadTarget{
+			{
+				Host:       "pixhost",
+				UsageScope: "global",
+				Trackers:   []string{"ONE"},
+			},
+			{
+				Host:       "onlyimage",
+				UsageScope: "global",
+				Trackers:   []string{"TWO"},
+			},
+		},
+		images,
+		reusedImageLinks(images, trackers.ImageUploadTarget{Host: "imgbb", UsageScope: "global"}),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("upload images: %v", err)
+	}
+	if len(result.Failures) != 0 || len(result.Attempts) != 2 || result.Attempts[0].Host != "imgbb" ||
+		!result.Attempts[0].Fallback || len(result.Attempts[0].Links) != len(images) || result.Attempts[1].Host != "onlyimage" {
+		t.Fatalf("upload result = %#v", result)
+	}
+	call := receiveImageHostCall(t, service.entered)
+	if call.host != "onlyimage" || call.fallback || !slices.Equal(call.paths, []string{"screen-one.png", "screen-two.png"}) {
+		t.Fatalf("external host calls = %#v", call)
+	}
+	select {
+	case call := <-service.entered:
+		t.Fatalf("unexpected retained or primary upload = %#v", call)
+	default:
 	}
 }
 
@@ -380,8 +456,8 @@ func TestUploadImagesRealServiceUnknownOutcomeStopsFallbackAndPartialAcceptance(
 				api.UploadSubject{
 					SourcePath: filepath.Join(dir, "Example.Release.2026.mkv"),
 					MediaBinding: api.PreparedMediaBinding{
-						SourcePath: filepath.Join(dir, "Example.Release.2026.mkv"),
-						PreparedGeneration: 1,
+						SourcePath:               filepath.Join(dir, "Example.Release.2026.mkv"),
+						PreparedGeneration:       1,
 						PreparedMediaFingerprint: "test-prepared-media",
 					},
 				},
@@ -393,6 +469,8 @@ func TestUploadImagesRealServiceUnknownOutcomeStopsFallbackAndPartialAcceptance(
 					Trackers:   []string{"ONE"},
 				}},
 				images,
+				nil,
+				nil,
 			)
 			failure, ok := api.AsOperationFailure(err)
 			if !ok || failure.Code != api.OperationFailureUnknownOutcome {
@@ -727,6 +805,8 @@ func TestUploadImagesAcceptsPartialHostBatchAtConfiguredMinimum(t *testing.T) {
 				nil,
 				[]trackers.ImageUploadTarget{target},
 				images,
+				nil,
+				nil,
 			)
 			if err != nil {
 				t.Fatalf("upload images: %v", err)
@@ -762,5 +842,52 @@ func TestUploadImagesAcceptsPartialHostBatchAtConfiguredMinimum(t *testing.T) {
 				t.Fatalf("accepted partial terminal progress = %#v", terminal)
 			}
 		})
+	}
+}
+
+func TestUploadImagesPreservesSourceOrderAcrossRetainedAndNewLinks(t *testing.T) {
+	t.Parallel()
+
+	images := []api.ScreenshotImage{{Path: "screen-one.png"}, {Path: "screen-two.png"}, {Path: "screen-three.png"}}
+	release := make(chan struct{})
+	close(release)
+	service := &barrierImageHostingService{
+		entered: make(chan imageHostCall, 1),
+		behaviors: map[string]imageHostBehavior{
+			"pixhost": {release: release},
+		},
+	}
+	target := trackers.ImageUploadTarget{
+		Host:       "pixhost",
+		UsageScope: "global",
+		Trackers:   []string{"ONE"},
+	}
+	module := &mediaModule{
+		cfg:      config.Config{ImageHosting: config.ImageHostingConfig{Host1: "pixhost"}},
+		images:   service,
+		logger:   &recordingMediaLogger{},
+		registry: mediaImageHostRegistry(t),
+	}
+	result, err := module.uploadImagesToTargetsWithFallback(
+		t.Context(),
+		api.UploadSubject{SourcePath: "Example.Release.2026.mkv"},
+		"pixhost",
+		nil,
+		[]trackers.ImageUploadTarget{target},
+		images,
+		reusedImageLinks([]api.ScreenshotImage{images[0], images[2]}, target),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("upload images: %v", err)
+	}
+	call := receiveImageHostCall(t, service.entered)
+	if !slices.Equal(call.paths, []string{"screen-two.png"}) {
+		t.Fatalf("missing upload paths = %v", call.paths)
+	}
+	if len(result.Links) != len(images) || !slices.EqualFunc(result.Links, images, func(link api.UploadedImageLink, image api.ScreenshotImage) bool {
+		return link.ImagePath == image.Path
+	}) {
+		t.Fatalf("ordered image links = %#v", result.Links)
 	}
 }

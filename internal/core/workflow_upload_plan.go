@@ -20,7 +20,9 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/logging"
+	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
+	"github.com/autobrr/upbrr/internal/torrent"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -65,6 +67,7 @@ type workflowUploadPlanBuilder struct {
 }
 
 type workflowUploadExecution struct {
+	sourceManifest      *api.SourceManifest
 	plan                workflowRetainedUploadPlan
 	clients             api.ClientService
 	clientSubject       api.ClientSubject
@@ -294,19 +297,24 @@ func (b workflowUploadPlanBuilder) Build(
 	skipImageUpload := true
 	subject.ImageHostOverrides.SkipUpload = &skipImageUpload
 	applyWorkflowCrossSeeds(&subject, dupeEvidence, dupes)
+	torrentSubject := workflowSubmissionTorrentSubject(subject)
+	torrentSubject.Trackers = workflowProjectionTrackerNames(eligible)
+	torrentSubject.SkipIfRehashTrackers = workflowSkipIfRehashTrackers(b.config, eligible)
+	torrentSubject.TorrentOverrides = descriptionInstructions.Torrent
+	var sourceManifest *api.SourceManifest
+	if _, active := api.ActiveInputAuthorityFromContext(ctx); active {
+		if err := preparedrelease.VerifySourceManifestStability(ctx, subject.SourceManifest); err != nil {
+			return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: source stability: %w", err)
+		}
+		sourceManifest = &subject.SourceManifest
+		identity, identityErr := workflowSubmissionContentIdentity(torrentSubject, subject.SourceIdentity)
+		if identityErr != nil {
+			return api.UploadPlan{}, nil, identityErr
+		}
+		subject.SubmissionContentIdentity = identity
+	}
 	if len(eligible) > 0 && b.torrents != nil && !descriptionInstructions.Options.SkipAutoTorrent {
-		torrent, err := b.torrents.Create(ctx, api.TorrentSubject{
-			SourcePath:                subject.SourcePath,
-			SourceSize:                subject.SourceSize,
-			FileList:                  append([]string(nil), subject.FileList...),
-			DiscType:                  subject.DiscType,
-			ClientTorrentPath:         subject.ClientTorrentPath,
-			ClientTorrentInfoHash:     subject.InfoHash,
-			ClientTorrentDataVerified: subject.ClientTorrentDataVerified,
-			Trackers:                  workflowProjectionTrackerNames(eligible),
-			SkipIfRehashTrackers:      workflowSkipIfRehashTrackers(b.config, eligible),
-			TorrentOverrides:          descriptionInstructions.Torrent,
-		})
+		torrent, err := b.torrents.Create(ctx, torrentSubject)
 		if err != nil {
 			return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: prepare torrent: %w", err)
 		}
@@ -332,6 +340,11 @@ func (b workflowUploadPlanBuilder) Build(
 		}
 		subject.Trackers = workflowProjectionTrackerNames(eligible)
 		subject.RehashedTrackers = append([]string(nil), torrent.RehashedTrackers...)
+	}
+	if sourceManifest != nil {
+		if err := preparedrelease.VerifySourceManifestStability(ctx, *sourceManifest); err != nil {
+			return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: source changed during torrent preparation: %w", err)
+		}
 	}
 	var retained workflowRetainedUploadPlan
 	if len(eligible) > 0 {
@@ -509,6 +522,7 @@ func (b workflowUploadPlanBuilder) Build(
 		plan.Status = api.StageStatusSkipped
 	}
 	return plan, &workflowUploadExecution{
+		sourceManifest:   sourceManifest,
 		plan:             retained,
 		clients:          b.clients,
 		clientSubject:    clientSubject,
@@ -519,6 +533,24 @@ func (b workflowUploadPlanBuilder) Build(
 		inputFingerprint: inputFingerprint,
 		trackers:         append([]api.UploadPlanTracker(nil), plan.Trackers...),
 	}, nil
+}
+
+func workflowSubmissionContentIdentity(
+	torrentSubject api.TorrentSubject,
+	verified api.SourceContentIdentity,
+) (api.SubmissionContentIdentity, error) {
+	inventory, ok, err := torrent.ResolveSubmissionContentInventory(torrentSubject)
+	if err != nil {
+		return api.SubmissionContentIdentity{}, fmt.Errorf("workflow upload plan: resolve submitted content scope: %w", err)
+	}
+	if !ok {
+		return api.SubmissionContentIdentity{}, errors.New("workflow upload plan: submitted content scope is unavailable")
+	}
+	identity, err := torrent.SubmissionContentIdentity(inventory, verified)
+	if err != nil {
+		return api.SubmissionContentIdentity{}, fmt.Errorf("workflow upload plan: verify submitted content scope: %w", err)
+	}
+	return identity, nil
 }
 
 func workflowProjectionMap(projections []api.TrackerReleaseProjection) map[api.TrackerID]api.TrackerReleaseProjection {
@@ -635,6 +667,7 @@ func workflowDryRunClientFailure(
 		recovery = api.OperationRecoveryConfirm
 		resource = "dry-run:" + string(trackerID)
 	case api.OperationFailureInvalidInput,
+		api.OperationFailureActiveInputBusy,
 		api.OperationFailureInvalidSource,
 		api.OperationFailureConfirmationRequired,
 		api.OperationFailureStaleGeneration,
@@ -1024,6 +1057,13 @@ func (e *workflowUploadExecution) Execute(
 	if e == nil {
 		return nil, nil
 	}
+	if e.sourceManifest != nil {
+		reporter, ok := api.WorkflowExternalEffectReporterFromContext(ctx)
+		if !ok {
+			return nil, errors.New("workflow submission fence reporter is required")
+		}
+		ctx = api.WithWorkflowExternalEffectReporter(ctx, workflowSourceEffectReporter{reporter: reporter, manifest: *e.sourceManifest})
+	}
 	var (
 		results []trackers.RetainedTrackerResult
 		err     error
@@ -1076,6 +1116,13 @@ func (e *workflowUploadExecution) Execute(
 		outcome := api.UploadTrackerResult{
 			TrackerID:        trackerID,
 			SubmissionStatus: api.StageStatusCompleted,
+		}
+		if result.AlreadySucceeded {
+			outcome.ClientInjectionStatus = api.StageStatusSkipped
+			outcome.ClientInjectionMessage = "Client injection skipped because the tracker submission was already completed."
+			outcome.Status = outcome.DerivedStatus()
+			public = append(public, outcome)
+			continue
 		}
 		uploaded, hasUploaded := selectWorkflowRegisteredTorrent(trackerID, result.Summary.UploadedTorrents)
 		if hasUploaded {
@@ -1296,6 +1343,7 @@ func workflowClientFailureRecovery(code api.OperationFailureCode) api.OperationR
 	case api.OperationFailureMissingExactTorrent, api.OperationFailureLiveTestMutationDisabled:
 		return api.OperationRecoveryNone
 	case api.OperationFailureInvalidInput,
+		api.OperationFailureActiveInputBusy,
 		api.OperationFailureInvalidSource,
 		api.OperationFailureConfirmationRequired,
 		api.OperationFailureStaleGeneration,
