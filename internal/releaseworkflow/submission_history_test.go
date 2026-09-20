@@ -25,16 +25,16 @@ func TestConfirmedSubmissionsCompleteWithoutTrackerPreparation(t *testing.T) {
 	module, repository := newTestModule(t, testPreparer(), WithSubmissionHistoryFilter(confirmedSubmissionFilter{}))
 	result := executeCommand(t, module, CreateWorkflowCommand{WorkflowID: "workflow-confirmed"})
 	result = executeCommand(t, module, PrepareReleaseCommand{
-		WorkflowID: result.Workflow.ID,
- ExpectedRevision: result.Workflow.Revision,
-		Input: api.PrepareInput{SourcePath: `C:\releases\Example.Release.2026.1080p-GRP`},
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Input:            api.PrepareInput{SourcePath: `C:\releases\Example.Release.2026.1080p-GRP`},
 	})
 	command := ProjectTrackersCommand{
-WorkflowID: result.Workflow.ID,
- ExpectedRevision: result.Workflow.Revision,
- TrackerIDs: []api.TrackerID{"ALPHA", "BETA"},
- IdempotencyKey: "confirmed",
-}
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		TrackerIDs:       []api.TrackerID{"ALPHA", "BETA"},
+		IdempotencyKey:   "confirmed",
+	}
 	started, err := module.Start(t.Context(), testOwnerID, command)
 	if err != nil {
 		t.Fatal(err)
