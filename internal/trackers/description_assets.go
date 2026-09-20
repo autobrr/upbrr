@@ -235,7 +235,7 @@ func resolveDescriptionAssets(
 		if final {
 			description = strings.TrimSpace(description)
 		} else {
-			description = sanitizeTrackerDescription(tracker, description)
+			description = sanitizeTrackerDescription(tracker, description, registry)
 		}
 		hasDescription := strings.TrimSpace(description) != ""
 		return DescriptionAssets{
@@ -267,7 +267,7 @@ func resolveDescriptionAssets(
 	if final {
 		description = strings.TrimSpace(description)
 	} else {
-		description = sanitizeTrackerDescription(tracker, description)
+		description = sanitizeTrackerDescription(tracker, description, registry)
 	}
 	hasDescription := strings.TrimSpace(description) != ""
 	return DescriptionAssets{
@@ -567,7 +567,7 @@ func resolveTrackerDescription(
 	if filtered := filterTrackerMetadataByName(combined, tracker); len(filtered) > 0 {
 		combined = filtered
 	}
-	result := combineDescriptions(tracker, combined)
+	result := combineDescriptions(tracker, combined, registry)
 	if logger != nil {
 		logger.Tracef(
 			"trackers: description assets description sources db=%d meta=%d combined=%d desc_len=%d",
@@ -1214,7 +1214,7 @@ func isTMDBImageURL(value string) bool {
 	return strings.Contains(lower, "tmdb.org")
 }
 
-func combineDescriptions(tracker string, records []api.TrackerMetadata) string {
+func combineDescriptions(tracker string, records []api.TrackerMetadata, registry *Registry) string {
 	if len(records) == 0 {
 		return ""
 	}
@@ -1236,11 +1236,7 @@ func combineDescriptions(tracker string, records []api.TrackerMetadata) string {
 	seen := make(map[string]struct{})
 	parts := make([]string, 0, len(ordered))
 	for _, record := range ordered {
-		recordTracker := strings.TrimSpace(record.Tracker)
-		if recordTracker == "" {
-			recordTracker = tracker
-		}
-		trimmed := sanitizeTrackerDescription(recordTracker, record.Description)
+		trimmed := sanitizeTrackerDescription(tracker, record.Description, registry)
 		if trimmed == "" {
 			continue
 		}
@@ -1267,14 +1263,26 @@ func stripEmbeddedNFOBlocks(value string) string {
 	return strings.TrimSpace(cleaned)
 }
 
-func sanitizeTrackerDescription(_ string, value string) string {
-	cleaned := stripEmbeddedNFOBlocks(value)
-	cleaned = unit3DBotSignaturePattern.ReplaceAllString(cleaned, "")
+func sanitizeTrackerDescription(tracker string, value string, registry *Registry) string {
+	definition, _ := registry.Lookup(tracker)
+	cleanup, ok := definition.(DescriptionCleanupProvider)
+	if !ok || !cleanup.UseGenericDescriptionCleanup() {
+		return strings.TrimSpace(value)
+	}
+	cleaned := StripDescriptionSignatures(stripEmbeddedNFOBlocks(value))
+	cleaned = emptyCenterPattern.ReplaceAllString(cleaned, "")
+	cleaned = descriptionSpacingPattern.ReplaceAllString(cleaned, "\n\n")
+	return strings.TrimSpace(cleaned)
+}
+
+// StripDescriptionSignatures removes known uploader attribution blocks without
+// rewriting other BBCode or removing tracker-owned NFO and release notes.
+// Tracker builders opt into this independently of general description cleanup.
+func StripDescriptionSignatures(value string) string {
+	cleaned := unit3DBotSignaturePattern.ReplaceAllString(value, "")
 	cleaned = knownBotSignaturePattern.ReplaceAllString(cleaned, "")
 	cleaned = knownBotImagePattern.ReplaceAllString(cleaned, "")
 	cleaned = defaultSignaturePattern.ReplaceAllString(cleaned, "")
-	cleaned = emptyCenterPattern.ReplaceAllString(cleaned, "")
-	cleaned = descriptionSpacingPattern.ReplaceAllString(cleaned, "\n\n")
 	return strings.TrimSpace(cleaned)
 }
 

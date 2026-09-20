@@ -11,10 +11,15 @@ func Profile() unit3d.Profile {
 	return unit3d.Profile{
 		Name:              "OE",
 		BaseURL:           "https://onlyencodes.cc",
+		DescriptionGroup:  "oe",
 		Rules:             Rules(),
 		BannedGroups:      BannedGroups(),
 		ReleaseNamePolicy: namePolicy(),
+		ValidationPolicy:  descriptionValidationPolicy(),
 		Site: unit3d.SiteProfile{
+			BuildDescription:       buildDescription,
+			InputSchema:            inputSchema,
+			InputReadiness:         inputReadiness,
 			ResolveTypeID:          typeID,
 			ApplyAdditionalPayload: additionalPayload,
 		},

@@ -47,6 +47,7 @@ func BuildDescription(
 	default:
 	}
 
+	keptDescription = trackers.StripDescriptionSignatures(keptDescription)
 	parts := make([]string, 0, 8)
 
 	if strings.EqualFold(strings.TrimSpace(meta.Type), "WEBDL") && strings.TrimSpace(meta.ServiceLongName) != "" && strings.TrimSpace(keptDescription) == "" {

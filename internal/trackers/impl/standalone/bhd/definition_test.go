@@ -714,6 +714,18 @@ func TestBuildDescriptionUsesAllSelectedScreenshotsByDefault(t *testing.T) {
 	}
 }
 
+func TestBuildDescriptionReplacesImportedUpbrrSignature(t *testing.T) {
+	const original = "Release notes\n[right][url=https://github.com/autobrr/upbrr][size=4]Uploaded by upbrr[/size][/url][/right]"
+	got := buildDescription(api.UploadSubject{}, config.Config{}, trackers.DescriptionAssets{Description: original})
+	if strings.Count(got, "Uploaded by upbrr") != 1 || strings.Contains(got, "[size=4]") || !strings.Contains(got, "Release notes") {
+		t.Fatalf("unexpected cleaned description: %q", got)
+	}
+	got = buildDescription(api.UploadSubject{}, config.Config{}, trackers.DescriptionAssets{Description: original, Final: true})
+	if got != original {
+		t.Fatalf("reviewed description changed: %q", got)
+	}
+}
+
 func TestBuildDescriptionHonorsExplicitScreenshotLimit(t *testing.T) {
 	images := []api.ScreenshotImage{
 		{RawURL: "https://img.example/1.png", WebURL: "https://img.example/1"},

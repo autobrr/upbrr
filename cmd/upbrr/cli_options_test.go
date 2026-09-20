@@ -1610,3 +1610,34 @@ func TestCLITrackerInputAndTrackLanguageCorrection(t *testing.T) {
 		t.Fatalf("track correction = %#v", track)
 	}
 }
+
+func TestCLITrackerInputPreservesTextEvidence(t *testing.T) {
+	const settings = "SVT-AV1: preset=4, crf=20\nfilm-grain=8"
+	const notes = "Source: Example WEB-DL; original HDR10, no injected DV"
+	opts, _, _, err := parseCLIOptions([]string{
+		"--tracker-input", "oe:encoding_settings=" + settings,
+		"--tracker-input", "OE:source_notes=" + notes,
+		"--tracker-input", "PTP:feature=YES",
+		"example.mkv",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	answers, err := buildCLITrackerInput(opts.TrackerInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answers["OE"]["encoding_settings"] != settings || answers["OE"]["source_notes"] != notes || answers["PTP"]["feature"] != "yes" {
+		t.Fatalf("tracker evidence changed: %#v", answers)
+	}
+	for _, values := range [][]string{
+		{"OE:source_notes= "},
+		{"OE:source_notes"},
+		{"OE:=notes"},
+		{"OE:source_notes=first", "oe:source_notes=second"},
+	} {
+		if _, err := buildCLITrackerInput(values); err == nil {
+			t.Errorf("expected invalid or duplicate input rejected: %q", values)
+		}
+	}
+}

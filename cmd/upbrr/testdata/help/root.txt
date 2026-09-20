@@ -167,7 +167,7 @@ Input Corrections:
   -confirm-input, --confirm-input stringArray
       Confirm a saved content correction field or field:track-id
   -tracker-input, --tracker-input stringArray
-      Set tracker input as TRACKER:field=yes|no|auto
+      Set tracker input as TRACKER:field=value (auto resets the field)
 
 Metadata IDs:
   -tmdb, --tmdb string

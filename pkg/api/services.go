@@ -1441,82 +1441,88 @@ func NewRuleSubject(subject UploadSubject) RuleSubject {
 // DescriptionSubject contains only facts, local resources, and rendering
 // instructions consumed by tracker description builders.
 type DescriptionSubject struct {
-	EffectiveMetadata          EffectiveMetadata
-	ManualLanguages            ManualLanguageFacts
-	HardcodedSubs              bool
-	HardcodedSubtitleLanguages []string
-	MediaBinding               PreparedMediaBinding
-	SourcePath                 string
-	DiscType                   string
-	MediaInfoTextPath          string
-	DVDVOBMediaInfoText        string
-	DescriptionTemplate        string
-	DescriptionGroups          []DescriptionBuilderGroup
-	EpisodeOverview            string
-	Options                    UploadOptions
-	Release                    ReleaseInfo
-	SelectedBDMVPlaylists      []PlaylistInfo
-	Disc                       DiscFacts
-	Discs                      []DiscEvidenceResource
-	Tag                        string
-	Identity                   ExternalIdentity
-	ProviderMetadata           SourceScopedMetadata
-	SeasonInt                  int
-	EpisodeInt                 int
-	Filename                   string
-	ReleaseName                string
-	ReleaseNameNoTag           string
-	ServiceLongName            string
-	Type                       string
-	HDR                        string
-	ArrReleaseGroup            string
-	Trackers                   []string
-	TrackerConfig              TrackerConfigOverrides
-	TrackerSite                TrackerSiteOverrides
-	ImageHost                  ImageHostOverrides
-	TrackerData                []TrackerMetadata
-	ExactMedia                 *ExactMediaAssets
+	VideoCodec                  string
+	HasEncodeSettings           bool
+	TrackerQuestionnaireAnswers map[string]map[string]string
+	EffectiveMetadata           EffectiveMetadata
+	ManualLanguages             ManualLanguageFacts
+	HardcodedSubs               bool
+	HardcodedSubtitleLanguages  []string
+	MediaBinding                PreparedMediaBinding
+	SourcePath                  string
+	DiscType                    string
+	MediaInfoTextPath           string
+	DVDVOBMediaInfoText         string
+	DescriptionTemplate         string
+	DescriptionGroups           []DescriptionBuilderGroup
+	EpisodeOverview             string
+	Options                     UploadOptions
+	Release                     ReleaseInfo
+	SelectedBDMVPlaylists       []PlaylistInfo
+	Disc                        DiscFacts
+	Discs                       []DiscEvidenceResource
+	Tag                         string
+	Identity                    ExternalIdentity
+	ProviderMetadata            SourceScopedMetadata
+	SeasonInt                   int
+	EpisodeInt                  int
+	Filename                    string
+	ReleaseName                 string
+	ReleaseNameNoTag            string
+	ServiceLongName             string
+	Type                        string
+	HDR                         string
+	ArrReleaseGroup             string
+	Trackers                    []string
+	TrackerConfig               TrackerConfigOverrides
+	TrackerSite                 TrackerSiteOverrides
+	ImageHost                   ImageHostOverrides
+	TrackerData                 []TrackerMetadata
+	ExactMedia                  *ExactMediaAssets
 }
 
 // NewDescriptionSubject projects upload state into the description builder's
 // read model and detaches mutable collections.
 func NewDescriptionSubject(subject UploadSubject) DescriptionSubject {
 	projected := DescriptionSubject{
-		EffectiveMetadata:          cloneTrackerValidationValue(subject.EffectiveMetadata),
-		ManualLanguages:            cloneTrackerValidationValue(subject.ManualLanguages),
-		HardcodedSubs:              subject.HardcodedSubs,
-		HardcodedSubtitleLanguages: slices.Clone(subject.HardcodedSubtitleLanguages),
-		MediaBinding:               subject.MediaBinding,
-		SourcePath:                 subject.SourcePath,
-		DiscType:                   subject.DiscType,
-		MediaInfoTextPath:          subject.MediaInfoTextPath,
-		DVDVOBMediaInfoText:        subject.DVDVOBMediaInfoText,
-		DescriptionTemplate:        subject.DescriptionTemplate,
-		DescriptionGroups:          CloneDescriptionBuilderGroups(subject.DescriptionGroups),
-		EpisodeOverview:            subject.EpisodeOverview,
-		Options:                    subject.Options,
-		Release:                    subject.Release,
-		SelectedBDMVPlaylists:      append([]PlaylistInfo(nil), subject.SelectedBDMVPlaylists...),
-		Disc:                       subject.Disc,
-		Discs:                      append([]DiscEvidenceResource(nil), subject.Discs...),
-		Tag:                        subject.Tag,
-		Identity:                   subject.Identity,
-		ProviderMetadata:           subject.ProviderMetadata,
-		SeasonInt:                  subject.SeasonInt,
-		EpisodeInt:                 subject.EpisodeInt,
-		Filename:                   subject.Filename,
-		ReleaseName:                subject.ReleaseName,
-		ReleaseNameNoTag:           subject.ReleaseNameNoTag,
-		ServiceLongName:            subject.ServiceLongName,
-		Type:                       subject.Type,
-		HDR:                        subject.HDR,
-		ArrReleaseGroup:            subject.ArrReleaseGroup,
-		Trackers:                   append([]string(nil), subject.Trackers...),
-		TrackerConfig:              subject.TrackerConfigOverrides,
-		TrackerSite:                subject.TrackerSiteOverrides,
-		ImageHost:                  subject.ImageHostOverrides,
-		TrackerData:                append([]TrackerMetadata(nil), subject.TrackerData...),
-		ExactMedia:                 subject.ExactMedia.Clone(),
+		VideoCodec:                  subject.VideoCodec,
+		HasEncodeSettings:           subject.HasEncodeSettings,
+		TrackerQuestionnaireAnswers: subject.TrackerQuestionnaireAnswers,
+		EffectiveMetadata:           cloneTrackerValidationValue(subject.EffectiveMetadata),
+		ManualLanguages:             cloneTrackerValidationValue(subject.ManualLanguages),
+		HardcodedSubs:               subject.HardcodedSubs,
+		HardcodedSubtitleLanguages:  slices.Clone(subject.HardcodedSubtitleLanguages),
+		MediaBinding:                subject.MediaBinding,
+		SourcePath:                  subject.SourcePath,
+		DiscType:                    subject.DiscType,
+		MediaInfoTextPath:           subject.MediaInfoTextPath,
+		DVDVOBMediaInfoText:         subject.DVDVOBMediaInfoText,
+		DescriptionTemplate:         subject.DescriptionTemplate,
+		DescriptionGroups:           CloneDescriptionBuilderGroups(subject.DescriptionGroups),
+		EpisodeOverview:             subject.EpisodeOverview,
+		Options:                     subject.Options,
+		Release:                     subject.Release,
+		SelectedBDMVPlaylists:       append([]PlaylistInfo(nil), subject.SelectedBDMVPlaylists...),
+		Disc:                        subject.Disc,
+		Discs:                       append([]DiscEvidenceResource(nil), subject.Discs...),
+		Tag:                         subject.Tag,
+		Identity:                    subject.Identity,
+		ProviderMetadata:            subject.ProviderMetadata,
+		SeasonInt:                   subject.SeasonInt,
+		EpisodeInt:                  subject.EpisodeInt,
+		Filename:                    subject.Filename,
+		ReleaseName:                 subject.ReleaseName,
+		ReleaseNameNoTag:            subject.ReleaseNameNoTag,
+		ServiceLongName:             subject.ServiceLongName,
+		Type:                        subject.Type,
+		HDR:                         subject.HDR,
+		ArrReleaseGroup:             subject.ArrReleaseGroup,
+		Trackers:                    append([]string(nil), subject.Trackers...),
+		TrackerConfig:               subject.TrackerConfigOverrides,
+		TrackerSite:                 subject.TrackerSiteOverrides,
+		ImageHost:                   subject.ImageHostOverrides,
+		TrackerData:                 append([]TrackerMetadata(nil), subject.TrackerData...),
+		ExactMedia:                  subject.ExactMedia.Clone(),
 	}
 	cloned, err := clonePreparedValue(projected)
 	if err != nil {

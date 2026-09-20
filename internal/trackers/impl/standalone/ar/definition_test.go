@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -21,6 +22,21 @@ func prepareDryRun(ctx context.Context, input trackers.PreparationInput) (api.Tr
 		return api.TrackerDryRunEntry{}, failure
 	}
 	return plan.DryRun(), nil
+}
+
+func TestBuildDescriptionRemovesKnownSignatures(t *testing.T) {
+	for _, footer := range []string{"[right]Created by Upload Assistant[/right]", "[img]https://files.catbox.moe/5izwmx.svg[/img]"} {
+		for _, notes := range []string{"", "[b]Release notes[/b]\n"} {
+			input := notes + footer
+			got := buildDescription(api.UploadSubject{ReleaseName: "Example"}, "", trackers.DescriptionAssets{Description: input})
+			if strings.Contains(got, "Upload Assistant") || strings.Contains(got, "5izwmx.svg") || notes != "" && !strings.Contains(got, "[b]Release notes[/b]") {
+				t.Fatalf("unexpected cleaned description %q", got)
+			}
+			if final := buildDescription(api.UploadSubject{}, "", trackers.DescriptionAssets{Description: input, Final: true}); final != input {
+				t.Fatalf("final description changed: %q", final)
+			}
+		}
+	}
 }
 
 func TestResolveTypeID(t *testing.T) {

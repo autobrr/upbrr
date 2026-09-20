@@ -248,6 +248,41 @@ func TestResolveVideoSourcePrefersLargestSelectedBDMVPlaylistFile(t *testing.T) 
 	}
 }
 
+func TestSeasonPackScreenshotsUseOnePrimaryEpisode(t *testing.T) {
+	source := t.TempDir()
+	for _, episode := range []string{"Example.Show.S01E10.mkv", "Example.Show.S01E2.mkv"} {
+		if err := os.WriteFile(filepath.Join(source, episode), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Metadata preparation selects the first parsed episode before MediaInfo.
+	// Both capture paths must honor that selection instead of re-sorting paths.
+	firstEpisode := filepath.Join(source, "Example.Show.S01E2.mkv")
+	meta := api.ScreenshotSubject{
+		SourcePath:    source,
+		VideoPath:     firstEpisode,
+		MediaCategory: "TV",
+		TVPack:        true,
+		DefaultCount:  6,
+	}
+	discs := screenshotDiscs(meta)
+	if len(discs) != 1 {
+		t.Fatalf("season pack must have one capture source, got %d", len(discs))
+	}
+	meta = screenshotSubjectForDisc(meta, discs[0])
+	info, err := resolveVideoInfo(t.Context(), meta, "", api.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	previewSource, err := resolveVideoSource(t.Context(), meta, "", api.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.SourcePath != firstEpisode || previewSource != firstEpisode || len(info.Segments) != 0 {
+		t.Fatalf("automatic and manual frames must share the primary episode: info=%+v preview=%q", info, previewSource)
+	}
+}
+
 func TestResolveVideoInfoLogsSeasonPackSourceKind(t *testing.T) {
 	tmpDir := t.TempDir()
 	mediaInfoPath := filepath.Join(tmpDir, "mediainfo.json")

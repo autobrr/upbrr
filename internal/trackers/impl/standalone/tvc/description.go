@@ -18,6 +18,7 @@ func buildDescription(meta api.UploadSubject, cfg config.TrackerConfig, assets t
 	if assets.Final {
 		return strings.TrimSpace(assets.Description)
 	}
+	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
 	parts := make([]string, 0, 6)
 	if logo := strings.TrimSpace(meta.ProviderMetadata.TMDB.Logo); logo != "" {
 		parts = append(parts, fmt.Sprintf("[center][img=%d]%s[/img][/center]", maxInt(cfg.ImageCount, 300), logo))

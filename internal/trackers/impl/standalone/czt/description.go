@@ -44,6 +44,7 @@ func buildDescription(_ trackers.PreparationInput, assets trackers.DescriptionAs
 	if assets.Final {
 		return strings.TrimSpace(assets.Description)
 	}
+	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
 	parts := make([]string, 0, 2)
 	if body := strings.TrimSpace(assets.Description); body != "" {
 		parts = append(parts, body)

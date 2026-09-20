@@ -13,6 +13,10 @@ import (
 
 // SiteProfile contains optional site-owned Unit3D payload callbacks.
 type SiteProfile struct {
+	// InputSchema declares site-specific controls using finalized prepared facts.
+	InputSchema func(api.UploadSubject) *api.TrackerQuestionnaire
+	// InputReadiness evaluates site-specific required evidence without prompting.
+	InputReadiness func(api.UploadSubject) []api.InputReadinessFieldOutcome
 	// BuildName optionally overrides the generic Unit3D release-name builder.
 	BuildName func(meta api.UploadSubject, cfg config.TrackerConfig) string
 	// BuildNameVersion identifies a custom BuildName implementation.

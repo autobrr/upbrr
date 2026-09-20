@@ -16,6 +16,7 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 	if assets.Final {
 		return strings.TrimSpace(assets.Description)
 	}
+	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
 	meta := req.Meta
 	parts := make([]string, 0, 3)
 	// custom header

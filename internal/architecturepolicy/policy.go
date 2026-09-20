@@ -188,6 +188,8 @@ var unit3DCallbackFiles = map[string]string{
 	"BuildDescription":       "description.go",
 	"BuildName":              "name.go",
 	"FinalizeDescription":    "description.go",
+	"InputSchema":            "questionnaire.go",
+	"InputReadiness":         "questionnaire.go",
 	"ResolveCategoryID":      "taxonomy.go",
 	"ResolveKeywords":        "taxonomy.go",
 	"ResolveResolutionID":    "taxonomy.go",

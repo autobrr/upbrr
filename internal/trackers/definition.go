@@ -213,6 +213,12 @@ type DescriptionGroupProvider interface {
 	DescriptionGroup() string
 }
 
+// DescriptionCleanupProvider opts a definition into shared description cleanup.
+// Definitions with tracker-owned markup handling leave this disabled.
+type DescriptionCleanupProvider interface {
+	UseGenericDescriptionCleanup() bool
+}
+
 // AuthSessionResolver validates or refreshes tracker-owned auth material.
 type AuthSessionResolver func(context.Context, config.TrackerConfig, string, api.TrackerAuthLoginRequest) error
 

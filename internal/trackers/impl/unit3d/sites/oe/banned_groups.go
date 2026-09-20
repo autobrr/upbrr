@@ -107,7 +107,6 @@ func BannedGroups() []string {
 		"rubix",
 		"SANTi",
 		"SHUTTERSHIT",
-		"SM737",
 		"SpaceFish",
 		"SPASM",
 		"SSA",

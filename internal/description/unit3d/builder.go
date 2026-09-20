@@ -59,6 +59,30 @@ func BuildDescription(
 	menuImages []api.ScreenshotImage,
 	screenshots []api.ScreenshotImage,
 ) (string, error) {
+	if len(screenshots) > 0 {
+		meta.DescriptionTemplate = StripScreenshotBlocks(meta.DescriptionTemplate)
+		keptDescription = StripScreenshotBlocks(keptDescription)
+	}
+	meta.DescriptionTemplate = stripUnit3DSignature(stripUnit3DNFOBlocks(meta.DescriptionTemplate))
+	keptDescription = stripUnit3DSignature(stripUnit3DNFOBlocks(keptDescription))
+	description, err := ComposeDescription(ctx, meta, appConfig, logger, keptDescription, menuImages, screenshots)
+	if err != nil {
+		return "", err
+	}
+	return finalizeUnit3DDescription(description), nil
+}
+
+// ComposeDescription assembles prepared markup, configured sections, and images
+// without applying Unit3D cleanup or tag conversion to tracker-owned content.
+func ComposeDescription(
+	ctx context.Context,
+	meta api.DescriptionSubject,
+	appConfig config.Config,
+	logger api.Logger,
+	keptDescription string,
+	menuImages []api.ScreenshotImage,
+	screenshots []api.ScreenshotImage,
+) (string, error) {
 	select {
 	case <-ctx.Done():
 		return "", fmt.Errorf("context canceled: %w", ctx.Err())
@@ -67,14 +91,6 @@ func BuildDescription(
 	if logger == nil {
 		logger = api.NopLogger{}
 	}
-
-	if len(screenshots) > 0 {
-		meta.DescriptionTemplate = stripUnit3DScreenshotBlocks(meta.DescriptionTemplate)
-		keptDescription = stripUnit3DScreenshotBlocks(keptDescription)
-	}
-
-	meta.DescriptionTemplate = stripUnit3DNFOBlocks(meta.DescriptionTemplate)
-	keptDescription = stripUnit3DNFOBlocks(keptDescription)
 
 	parts := make([]string, 0, 10)
 	seenParts := make(map[string]struct{}, 4)
@@ -91,11 +107,11 @@ func BuildDescription(
 		seenParts[key] = struct{}{}
 		parts = append(parts, normalized)
 	}
-	if template := stripUnit3DSignature(strings.TrimSpace(meta.DescriptionTemplate)); template != "" {
+	if template := strings.TrimSpace(meta.DescriptionTemplate); template != "" {
 		appendUniquePart(template, "template")
 		logger.Tracef("trackers: unit3d desc part=template len=%d", len(template))
 	}
-	if kept := stripUnit3DSignature(strings.TrimSpace(keptDescription)); kept != "" {
+	if kept := strings.TrimSpace(keptDescription); kept != "" {
 		appendUniquePart(kept, "kept")
 		logger.Tracef("trackers: unit3d desc part=kept len=%d imgs=%d", len(kept), countBBCodeImages(kept))
 	}
@@ -179,7 +195,6 @@ func BuildDescription(
 	}
 
 	description := normalizeDescription(strings.Join(parts, "\n\n"))
-	description = finalizeUnit3DDescription(description)
 	if strings.TrimSpace(description) == "" {
 		return "", nil
 	}
@@ -363,7 +378,10 @@ func stripUnit3DSignature(value string) string {
 	return strings.TrimSpace(unit3DUASignatureTag.ReplaceAllString(trimmed, ""))
 }
 
-func stripUnit3DScreenshotBlocks(value string) string {
+// StripScreenshotBlocks removes prior pure screenshot sections when a builder
+// replaces selected images. Text, comparison sections, and poster-like blocks
+// remain available to the tracker's own markup handling.
+func StripScreenshotBlocks(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
 		return ""
