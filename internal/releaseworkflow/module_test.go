@@ -3598,9 +3598,20 @@ func TestModuleMediaMutationUsesOpaqueIDsAndInvalidatesDownstream(t *testing.T) 
 		Instructions:     api.MediaCaptureInstructions{ScreenshotCount: 1, Purpose: api.ScreenshotPurposeFinal},
 	})
 	mediaRef := *result.Workflow.Media
+	result = executeCommand(t, module, UploadMediaImagesCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Media:            mediaRef,
+		SkipUpload:       true,
+	})
+	if result.Media == nil || !result.Media.ImageRequirementsPrepared || !result.Media.ImageHostUploadSkipped {
+		t.Fatalf("skipped image hosting did not satisfy the media barrier: %#v", result.Media)
+	}
+	mediaRef = *result.Workflow.Media
 	result = executeCommand(t, module, GenerateDescriptionsCommand{
 		WorkflowID:       result.Workflow.ID,
 		ExpectedRevision: result.Workflow.Revision,
+		Instructions:     api.DescriptionInstructions{ImageHost: api.ImageHostOverrides{SkipUpload: new(true)}},
 	})
 	result = executeCommand(t, module, DryRunUploadsCommand{
 		WorkflowID:       result.Workflow.ID,

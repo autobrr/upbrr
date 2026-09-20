@@ -910,11 +910,12 @@ func TestContinuationPlannerInsertsExactImageRequirementBarrier(t *testing.T) {
 		Intent: api.WorkflowIntent{
 			TrackerIDs:             []api.TrackerID{"ALPHA"},
 			ProjectionInstructions: map[api.TrackerID]api.TrackerProjectionInstructions{},
+			SkipImageHostUpload:    true,
 		},
 	}
 	command, stage := planContinuationCommand(request, current, now)
 	upload, ok := command.(UploadMediaImagesCommand)
-	if !ok || stage != "prepare-image-requirements" || upload.Host != "" || upload.Media.ID != current.Media.ID {
+	if !ok || stage != "prepare-image-requirements" || upload.Host != "" || upload.Media.ID != current.Media.ID || !upload.SkipUpload {
 		t.Fatalf("planned image barrier: stage=%q command=%#v", stage, command)
 	}
 

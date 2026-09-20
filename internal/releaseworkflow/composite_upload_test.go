@@ -2036,3 +2036,16 @@ func waitCompositeUploadTestOperation(
 	current.Operation = &operation
 	return current
 }
+
+func TestNormalizeCompositeUploadRequestPropagatesSkipImageHostUpload(t *testing.T) {
+	request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, "skip-image-host-upload")
+	request.ImageHosting.SkipUpload = new(true)
+
+	session, _, err := normalizeCompositeUploadRequest(request)
+	if err != nil {
+		t.Fatalf("normalize composite upload request: %v", err)
+	}
+	if !session.Intent.SkipImageHostUpload {
+		t.Fatalf("skip image-host upload was not retained in workflow intent: %#v", session.Intent)
+	}
+}

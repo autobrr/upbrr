@@ -902,6 +902,7 @@ func planContinuationCommandWithReadiness(
 			ExpectedRevision: revision,
 			Media:            api.MediaArtifactSetRef{ID: current.Media.ID, Revision: current.Media.Revision},
 			ArtifactIDs:      artifactIDs,
+			SkipUpload:       request.Intent.SkipImageHostUpload,
 			IdempotencyKey:   key("prepare-image-requirements"),
 		}, "prepare-image-requirements"
 	}
