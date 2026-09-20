@@ -55,6 +55,10 @@ func TestExtractConfigDict(t *testing.T) {
 			name:  "comment between config and equals",
 			input: "config # the legacy map\n = {\"DEFAULT\": {}}",
 		},
+		{
+			name:  "annotated config assignment",
+			input: `config: dict[str, Any] = {"DEFAULT": {}}`,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

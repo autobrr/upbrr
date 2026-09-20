@@ -67,10 +67,11 @@ func ParseLegacyConfig(data []byte) (*Config, error) {
 	return result, nil
 }
 
-// extractConfigDict finds the `config = { ... }` assignment in the source and
-// returns the dict literal portion starting from `{`. The match requires
-// `config` to appear at the start of a line (after optional whitespace) to
-// avoid false positives inside string literals or comments.
+// extractConfigDict finds the `config = { ... }` assignment (including a
+// Python type annotation) in the source and returns the dict literal portion
+// starting from `{`. The match requires `config` to appear at the start of a
+// line (after optional whitespace) to avoid false positives inside string
+// literals or comments.
 func extractConfigDict(src string) (string, error) {
 	idx := 0
 	for idx < len(src) {
@@ -101,6 +102,14 @@ func extractConfigDict(src string) (string, error) {
 		}
 
 		rest := skipWhitespaceAndComments(src[after:])
+		if len(rest) > 0 && rest[0] == ':' {
+			annotationEnd := strings.IndexByte(rest, '=')
+			if annotationEnd < 0 {
+				idx = after
+				continue
+			}
+			rest = rest[annotationEnd:]
+		}
 		if len(rest) == 0 || rest[0] != '=' {
 			idx = after
 			continue

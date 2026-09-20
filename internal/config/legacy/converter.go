@@ -201,16 +201,50 @@ func Convert(legacy *Config, template *config.Config) (*config.Config, []string,
 	return out, warnings, nil
 }
 
+var legacyTrackerAliases = map[string]string{
+	"AMIGOSSHARE":   "ASC",
+	"DARKPEERS":     "DP",
+	"DIGITALCORE":   "DC",
+	"HDSPACE":       "HDS",
+	"LUMINARR":      "LUME",
+	"MIDNIGHTSCENE": "MNS",
+	"POLISHTORRENT": "PTT",
+	"SAMARITANO":    "SAM",
+	"UNWALLED":      "ULCX",
+	"YUSCENE":       "YUS",
+	"ZENITH":        "ZNTH",
+}
+
+func canonicalLegacyTrackerName(name string) string {
+	name = strings.TrimSpace(name)
+	if alias, ok := legacyTrackerAliases[strings.ToUpper(name)]; ok {
+		return alias
+	}
+	return name
+}
+
 // migrateTrackers copies tracker settings from the legacy config into out.
 func migrateTrackers(legacyTrackers map[string]any, template *config.Config, out *config.Config) []string {
 	var warnings []string
 
 	if dt, ok := legacyTrackers["default_trackers"]; ok && dt != nil {
-		out.Trackers.DefaultTrackers = coerceToStringSlice(dt)
+		trackers := coerceToStringSlice(dt)
+		seen := make(map[string]struct{}, len(trackers))
+		normalized := trackers[:0]
+		for _, trackerName := range trackers {
+			trackerName = canonicalLegacyTrackerName(trackerName)
+			key := strings.ToUpper(trackerName)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			normalized = append(normalized, trackerName)
+		}
+		out.Trackers.DefaultTrackers = normalized
 	}
 
 	if pt, ok := legacyTrackers["preferred_tracker"]; ok && pt != nil {
-		out.Trackers.PreferredTracker = strings.TrimSpace(fmt.Sprintf("%v", pt))
+		out.Trackers.PreferredTracker = canonicalLegacyTrackerName(fmt.Sprintf("%v", pt))
 	}
 
 	// Get known tracker names from the template.
@@ -223,6 +257,7 @@ func migrateTrackers(legacyTrackers map[string]any, template *config.Config, out
 		if trackerName == "default_trackers" || trackerName == "preferred_tracker" {
 			continue
 		}
+		trackerName = canonicalLegacyTrackerName(trackerName)
 		trackerValues, ok := raw.(map[string]any)
 		if !ok {
 			continue

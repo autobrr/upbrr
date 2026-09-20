@@ -5,6 +5,7 @@ package legacy
 
 import (
 	"fmt"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -276,6 +277,32 @@ func TestConvertTrackers(t *testing.T) {
 	}
 	if bhd.BhdRSSKey != "bhd-rss" {
 		t.Errorf("BHD.BhdRSSKey: got %q, want bhd-rss", bhd.BhdRSSKey)
+	}
+}
+
+func TestConvertTrackerAliases(t *testing.T) {
+	legacy := &Config{
+		Trackers: map[string]any{
+			"default_trackers": "HDSPACE, AMIGOSSHARE, AMIGOSSHARE, PEERGARDEN",
+			"HDSPACE":          map[string]any{"api_key": "hds-key"},
+			"AMIGOSSHARE":      map[string]any{"api_key": "asc-key"},
+		},
+		Default:        make(map[string]any),
+		TorrentClients: make(map[string]any),
+	}
+
+	cfg, _, err := ImportFromContent(marshalLegacyConfig(legacy))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got, want := []string(cfg.Trackers.DefaultTrackers), []string{"HDS", "ASC", "PEERGARDEN"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("DefaultTrackers: got %v, want %v", got, want)
+	}
+	if cfg.Trackers.Trackers["HDS"].APIKey != "hds-key" {
+		t.Fatal("HDSPACE API key was not migrated to HDS")
+	}
+	if cfg.Trackers.Trackers["ASC"].APIKey != "asc-key" {
+		t.Fatal("AMIGOSSHARE API key was not migrated to ASC")
 	}
 }
 
