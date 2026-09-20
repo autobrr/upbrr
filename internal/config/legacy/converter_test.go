@@ -308,6 +308,36 @@ func TestConvertTrackerAliases(t *testing.T) {
 	}
 }
 
+func TestConvertCurrentTrackerAliases(t *testing.T) {
+	legacy := &Config{
+		Trackers: map[string]any{
+			"CAPYBARABR":   map[string]any{"api_key": "cbr-key"},
+			"CZTEAM":       map[string]any{"passkey": "czt-key"},
+			"SEEDPOOL":     map[string]any{"api_key": "sp-key"},
+			"TORRENTLEECH": map[string]any{"passkey": "tl-key"},
+		},
+		Default:        make(map[string]any),
+		TorrentClients: make(map[string]any),
+	}
+
+	cfg, _, err := ImportFromContent(marshalLegacyConfig(legacy))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := cfg.Trackers.Trackers["CBR"].APIKey; got != "cbr-key" {
+		t.Fatalf("CBR API key: got %q", got)
+	}
+	if got := cfg.Trackers.Trackers["CZT"].Passkey; got != "czt-key" {
+		t.Fatalf("CZT passkey: got %q", got)
+	}
+	if got := cfg.Trackers.Trackers["SP"].APIKey; got != "sp-key" {
+		t.Fatalf("SP API key: got %q", got)
+	}
+	if got := cfg.Trackers.Trackers["TL"].Passkey; got != "tl-key" {
+		t.Fatalf("TL passkey: got %q", got)
+	}
+}
+
 func TestConvertTrackerAliasCollisionPrefersCanonicalTracker(t *testing.T) {
 	legacy := &Config{
 		Trackers: map[string]any{

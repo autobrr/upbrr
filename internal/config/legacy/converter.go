@@ -204,6 +204,8 @@ func Convert(legacy *Config, template *config.Config) (*config.Config, []string,
 
 var legacyTrackerAliases = map[string]string{
 	"AMIGOSSHARE":   "ASC",
+	"CAPYBARABR":    "CBR",
+	"CZTEAM":        "CZT",
 	"DARKPEERS":     "DP",
 	"DIGITALCORE":   "DC",
 	"HDSPACE":       "HDS",
@@ -211,6 +213,8 @@ var legacyTrackerAliases = map[string]string{
 	"MIDNIGHTSCENE": "MNS",
 	"POLISHTORRENT": "PTT",
 	"SAMARITANO":    "SAM",
+	"SEEDPOOL":      "SP",
+	"TORRENTLEECH":  "TL",
 	"UNWALLED":      "ULCX",
 	"YUSCENE":       "YUS",
 	"ZENITH":        "ZNTH",
