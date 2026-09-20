@@ -2308,6 +2308,7 @@ func (m *Module) MediaPlan(
 			plan.ExistingArtifacts = append([]api.MediaArtifact(nil), media.Artifacts...)
 		}
 	}
+	m.logMediaInventory("plan", plan.ExistingArtifacts)
 	return plan, nil
 }
 

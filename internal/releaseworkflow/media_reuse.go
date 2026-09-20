@@ -51,8 +51,30 @@ func (m *Module) restoreReusableMedia(
 		return err
 	}
 	result.Media = restored.Media
-	m.logger.Debugf("release workflow: media reuse state=restored count=%d", len(snapshot.Artifacts))
+	m.logMediaInventory("restored", snapshot.Artifacts)
 	return nil
+}
+
+func (m *Module) logMediaInventory(stage string, artifacts []api.MediaArtifact) {
+	var localImages, selectedLocalImages, hostedLinks, selectedHostedLinks int
+	for _, artifact := range artifacts {
+		switch artifact.Kind {
+		case api.MediaArtifactScreenshot, api.MediaArtifactDVDMenu:
+			localImages++
+			if artifact.Selected {
+				selectedLocalImages++
+			}
+		case api.MediaArtifactHostedImage:
+			hostedLinks++
+			if artifact.Selected {
+				selectedHostedLinks++
+			}
+		}
+	}
+	m.logger.Debugf(
+		"release workflow: media inventory stage=%s artifacts=%d local_images=%d selected_local_images=%d hosted_links=%d selected_hosted_links=%d",
+		stage, len(artifacts), localImages, selectedLocalImages, hostedLinks, selectedHostedLinks,
+	)
 }
 
 // recordReusableMedia records one committed snapshot unless its exact media
