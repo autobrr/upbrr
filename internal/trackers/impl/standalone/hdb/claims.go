@@ -65,10 +65,9 @@ type hdbClaimRecord struct {
 }
 
 type hdbClaimData struct {
-	Records         []hdbClaimRecord
-	FetchedAt       int64
-	Complete        bool
-	FreshStructured bool
+	Records   []hdbClaimRecord
+	FetchedAt int64
+	Complete  bool
 }
 
 type claimChecker struct {
@@ -100,9 +99,9 @@ func (d *Definition) NewClaimChecker(cfg config.Config, logger api.Logger) track
 
 // HasClaim reports an active HDB TV WEB claim. HDB claim-list access failures
 // are warnings and fail open, while cancellation remains observable by callers.
-// An unambiguous direct ownership match permits a configured internal group to
-// bypass its own claim regardless of list freshness or completeness because HDB
-// allows only one claiming group per title. Relayed or conflicting matches block.
+// An unambiguous ownership match permits a configured internal group to bypass
+// its own claim regardless of list freshness, completeness, or originating site
+// because HDB allows only one claiming group per title. Conflicting matches block.
 func (s *claimChecker) HasClaim(ctx context.Context, meta api.UploadSubject) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, fmt.Errorf("metadata: HDB claim check canceled: %w", err)
@@ -150,13 +149,12 @@ func (s *claimChecker) HasClaim(ctx context.Context, meta api.UploadSubject) (bo
 	}
 
 	s.logger.Warnf(
-		"metadata: HDB claim match found title=%q threshold_hours=%d cache_ttl=%s release_group=%q internal_group=%t fresh_structured=%t own_claim=%t matched_claims=%d",
+		"metadata: HDB claim match found title=%q threshold_hours=%d cache_ttl=%s release_group=%q internal_group=%t own_claim=%t matched_claims=%d",
 		matchedTitle,
 		thresholdHours,
 		hdbClaimsCacheTTL,
 		groupPolicy.Group,
 		groupPolicy.Internal,
-		claims.FreshStructured,
 		ownedByGroup,
 		len(matchedClaims),
 	)
@@ -187,7 +185,6 @@ func (s *claimChecker) loadHDBClaims(ctx context.Context, cachePath string, cach
 	cacheAge := time.Since(time.Unix(cached.FetchedAt, 0))
 	cacheFresh := cached.Complete && cacheAge >= 0 && cacheAge < cacheTTL
 	if cacheFresh {
-		cached.FreshStructured = true
 		s.logger.Debugf(
 			"metadata: HDB claims cache hit path=%s age=%s ttl=%s records=%d",
 			cachePath,
@@ -201,7 +198,6 @@ func (s *claimChecker) loadHDBClaims(ctx context.Context, cachePath string, cach
 	s.logger.Infof("metadata: HDB claims refreshing")
 	fresh, fetchErr := s.fetchClaims(ctx)
 	if fetchErr == nil && fresh.Complete {
-		fresh.FreshStructured = true
 		if err := writeHDBClaimCache(cachePath, s.endpoint, fresh.Records); err != nil {
 			s.logger.Warnf("metadata: HDB claims cache write failed: %v", err)
 		}
@@ -212,7 +208,6 @@ func (s *claimChecker) loadHDBClaims(ctx context.Context, cachePath string, cach
 		return hdbClaimData{}, fetchErr
 	}
 	if fetchErr == nil && len(fresh.Records) > 0 {
-		fresh.FreshStructured = false
 		if cached.Complete {
 			fresh.Records = slices.Concat(fresh.Records, cached.Records)
 		}
@@ -220,7 +215,6 @@ func (s *claimChecker) loadHDBClaims(ctx context.Context, cachePath string, cach
 		return fresh, nil
 	}
 	if cached.Complete {
-		cached.FreshStructured = false
 		s.logger.Warnf("metadata: HDB claims fetch failed; using stale cache: %v", fetchErr)
 		return cached, nil
 	}
@@ -268,10 +262,9 @@ func (s *claimChecker) fetchClaims(ctx context.Context) (hdbClaimData, error) {
 		return hdbClaimData{}, errors.New("metadata: HDB claims list missing; check the stored session")
 	}
 	return hdbClaimData{
-		Records:         records,
-		FetchedAt:       time.Now().Unix(),
-		Complete:        complete,
-		FreshStructured: complete,
+		Records:   records,
+		FetchedAt: time.Now().Unix(),
+		Complete:  complete,
 	}, nil
 }
 
@@ -288,6 +281,7 @@ func parseHDBClaimRecords(text string) ([]hdbClaimRecord, int, bool) {
 	relay := false
 	inList := false
 	records := make([]hdbClaimRecord, 0)
+	references := make(map[string][]string)
 	rowCount := 0
 	complete := true
 	for line := range strings.SplitSeq(text, "\n") {
@@ -315,7 +309,18 @@ func parseHDBClaimRecords(text string) ([]hdbClaimRecord, int, bool) {
 		}
 		title := strings.TrimSpace(parts[0])
 		sites := parseHDBClaimSites(parts[1])
-		if title == "" || len(sites) == 0 {
+		if title == "" {
+			complete = false
+			continue
+		}
+		if len(sites) == 0 {
+			if len(parts) == 4 && strings.Trim(parts[1], " |,\t") == "" && strings.TrimSpace(parts[2]) == "" {
+				if target, ok := hdbClaimReferenceTarget(parts[3]); ok {
+					key := normalizeHDBClaimTitle(target)
+					references[key] = append(references[key], title)
+					continue
+				}
+			}
 			complete = false
 			continue
 		}
@@ -333,6 +338,19 @@ func parseHDBClaimRecords(text string) ([]hdbClaimRecord, int, bool) {
 			RelayedFromBTN: relayed,
 		})
 	}
+	resolvedReferences := make(map[string]struct{}, len(references))
+	for i := range records {
+		key := normalizeHDBClaimTitle(records[i].Title)
+		aliases, ok := references[key]
+		if !ok {
+			continue
+		}
+		records[i].Aliases = normalizeHDBClaimAliases(append(records[i].Aliases, aliases...))
+		resolvedReferences[key] = struct{}{}
+	}
+	if len(resolvedReferences) != len(references) {
+		complete = false
+	}
 	return records, rowCount, rowCount > 0 && complete
 }
 
@@ -340,6 +358,17 @@ func isHDBClaimHeader(line string) bool {
 	parts := strings.Split(line, "--")
 	return len(parts) >= 3 && strings.EqualFold(strings.TrimSpace(parts[0]), "Show") &&
 		strings.EqualFold(strings.TrimSpace(parts[1]), "Site(s) Uploaded To") && strings.EqualFold(strings.TrimSpace(parts[2]), "Group")
+}
+
+// hdbClaimReferenceTarget extracts the target title from an HDB blank claim row's See note.
+func hdbClaimReferenceTarget(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	prefix, target, ok := strings.Cut(value, " ")
+	if !ok || !strings.EqualFold(strings.TrimSuffix(prefix, ":"), "see") {
+		return "", false
+	}
+	target = strings.TrimSpace(strings.Trim(target, `"`))
+	return target, target != ""
 }
 
 func hdbClaimText(rawHTML string) string {
@@ -580,7 +609,7 @@ func hdbClaimsOwnedByGroup(claims []hdbClaimRecord, group string) bool {
 		return false
 	}
 	for _, claim := range claims {
-		if claim.RelayedFromBTN || !slices.Contains(claim.Sites, "HDB") || !strings.EqualFold(normalizeHDBClaimGroup(claim.Group), group) {
+		if !strings.EqualFold(normalizeHDBClaimGroup(claim.Group), group) {
 			return false
 		}
 	}

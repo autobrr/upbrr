@@ -193,15 +193,44 @@ func TestHDBClaimHeaderValidation(t *testing.T) {
 	if records, complete := extractHDBClaimRecords(`<div>Show -- Site(s) Uploaded To<br>Harbor Watch -- HDB -- GRP</div>`); complete || len(records) != 0 {
 		t.Fatalf("incomplete header accepted: %#v, complete=%t", records, complete)
 	}
+	malformedReference := `<div>Show -- Site(s) Uploaded To -- Group<br>Harbor Watch -- HDB -- NTb<br>` +
+		`Alias -- HDBX -- Other -- See "Harbor Watch"</div>`
+	if records, complete := extractHDBClaimRecords(malformedReference); complete || len(records) != 1 {
+		t.Fatalf("malformed reference row accepted: %#v, complete=%t", records, complete)
+	}
 }
 
-func TestHDBEditFooterTerminatesClaimsList(t *testing.T) {
+func TestHDBEditFooterCompletesRefreshAndReplacesInvalidCache(t *testing.T) {
 	t.Parallel()
-	const footer = `<p><font size="1" class="small">Last edited by <a href="/userdetails.php?id=123"><b>editor</b></a> at 2026-09-02 12:54:49 </font></p>`
-	page := `<div class="post">Show -- Site(s) Uploaded To -- Group<br>Harbor Watch -- HDB -- GRP<br>` + footer + `<br>Back to top</div>`
+	const footer = `<p><font size="1" class="small">Last edited by <a href="https://hdbits.org/userdetails.php?id=123"><b>editor</b></a> at 2026-09-02 12:54:49 </font></p>`
+	page := `<div class="post">ALL titles on the list are also claimed for HDB.<br>Show -- Site(s) Uploaded To -- Group<br>` +
+		`Harbor Watch -- BTN -- NTb -- AMZN, PMTP<br>` +
+		`Harbor Watch: Evolution -- | -- -- See "Harbor Watch"<br>` +
+		`Portside Patrol -- BTN -- NTb -- AMZN<br>` +
+		`Harbor Watch Spinoff -- | -- -- See: Portside Patrol<br>` + footer + `<br>Back to top</div>`
 	records, complete := extractHDBClaimRecords(page)
-	if !complete || len(records) != 1 || records[0].Title != "Harbor Watch" {
+	if !complete || len(records) != 2 || records[0].Title != "Harbor Watch" || !records[0].RelayedFromBTN ||
+		!slices.Contains(records[0].Aliases, "Harbor Watch: Evolution") || !slices.Contains(records[1].Aliases, "Harbor Watch Spinoff") {
 		t.Fatalf("footer-bounded list = %#v, complete=%t", records, complete)
+	}
+
+	path := filepath.Join(t.TempDir(), "claims.json")
+	if err := os.WriteFile(path, []byte(`{"version":1,"fetched_at":1,"complete":true,"claims":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	endpoint := "https://hdb.example" + hdbClaimsPath
+	checker := &claimChecker{
+		endpoint: endpoint,
+		logger:   api.NopLogger{},
+		fetchOverride: func(context.Context) (hdbClaimData, error) {
+			return hdbClaimData{Records: records, Complete: complete}, nil
+		},
+	}
+	if claims, err := checker.loadHDBClaims(t.Context(), path, hdbClaimsCacheTTL); err != nil || !claims.Complete {
+		t.Fatalf("complete refresh = %#v, %v", claims, err)
+	}
+	if cached, err := readHDBClaimCache(path, endpoint); err != nil || !cached.Complete || len(cached.Records) != 2 {
+		t.Fatalf("replacement cache = %#v, %v", cached, err)
 	}
 }
 
@@ -537,7 +566,7 @@ func TestHDBCacheReplacement(t *testing.T) {
 	}
 }
 
-func TestHDBInternalGroupBypassRequiresDirectUnambiguousClaim(t *testing.T) {
+func TestHDBInternalGroupBypassRequiresUnambiguousClaimOwner(t *testing.T) {
 	t.Parallel()
 	base := config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
 		"HDB": {InternalGroups: config.CSVList{"NTb"}},
@@ -600,7 +629,7 @@ func TestHDBInternalGroupBypassRequiresDirectUnambiguousClaim(t *testing.T) {
 			want: true,
 		},
 		{
-			name:  "relay cannot prove HDB owner",
+			name:  "relayed own group bypasses",
 			fresh: true,
 			records: []hdbClaimRecord{{
 				Title:          "Harbor Watch",
@@ -608,7 +637,6 @@ func TestHDBInternalGroupBypassRequiresDirectUnambiguousClaim(t *testing.T) {
 				Group:          "NTb",
 				RelayedFromBTN: true,
 			}},
-			want: true,
 		},
 	}
 	for _, tt := range cases {
@@ -713,8 +741,8 @@ func TestInvalidHDBClaimCacheCannotAuthorizeBypass(t *testing.T) {
 					return hdbClaimData{}, errors.New("HDB unavailable")
 				},
 			}
-			if claims, err := checker.loadHDBClaims(t.Context(), path, hdbClaimsCacheTTL); err == nil || claims.FreshStructured {
-				t.Fatalf("invalid cache authorized fresh data: %#v, %v", claims, err)
+			if claims, err := checker.loadHDBClaims(t.Context(), path, hdbClaimsCacheTTL); err == nil || len(claims.Records) != 0 {
+				t.Fatalf("invalid cache returned claims: %#v, %v", claims, err)
 			}
 		})
 	}

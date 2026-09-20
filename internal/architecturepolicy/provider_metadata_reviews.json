@@ -808,8 +808,8 @@
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
   "internal/trackers/impl/standalone/hdb/claims.go:*claimChecker.HasClaim": {
-    "sha256": "3f34ccc888e9ca1fbd07b930140f3028e695a96a1611c1060c16041a84903b24",
-    "reason": "Finalized WEB TV facts scope HDB claims; Scene classification no longer bypasses them. Provider aliases corroborate identity without replacing effective metadata; direct, unambiguous HDB ownership authorizes a configured internal-group bypass even from incomplete or stale data because one group owns each title, while relayed or conflicting evidence blocks."
+    "sha256": "87ddee6c821fcfc2a66ae6766569d5811aaed5aecac9a1d2bb2d1749e2d1c660",
+    "reason": "Finalized WEB TV facts scope HDB claims; Scene classification no longer bypasses them. Provider aliases corroborate identity without replacing effective metadata; unambiguous same-group ownership authorizes a configured internal-group bypass even from incomplete, stale, or BTN-relayed data because one group owns each title, while conflicting owners block."
   },
   "internal/trackers/impl/standalone/hdb/claims.go:hdbCandidateTitles": {
     "sha256": "e7580f5599f36dca3308d5f39a8f41cba4c4f268fd21f49c59f59364d7632724",
