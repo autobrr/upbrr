@@ -316,6 +316,68 @@ describe("web client", () => {
     );
   });
 
+  it.each(["GET", "JSON", "form"] as const)(
+    "preserves %s transport and structured failures across an auth retry",
+    async (kind) => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse({ error: "csrf validation failed" }, { status: 403 }))
+        .mockResolvedValueOnce(jsonResponse({ authenticated: true, csrfToken: "csrf-token" }))
+        .mockResolvedValueOnce(
+          jsonResponse(
+            {
+              failure: {
+                Code: "stale_generation",
+                Operation: "media",
+                Message: "Prepared release changed.",
+                Recovery: "refresh_release",
+              },
+            },
+            { status: 409 },
+          ),
+        );
+      vi.stubGlobal("fetch", fetchMock);
+      const { initializeWebClient, requestApp, requestAppGet, requestAppForm } =
+        await import("./client");
+      initializeWebClient("csrf-token", false);
+      const signal = new AbortController().signal;
+      const options = { signal, correlationID: "request-1" };
+      const form = new FormData();
+      form.append("source", "example");
+      const request =
+        kind === "GET"
+          ? requestAppGet("Example", options)
+          : kind === "JSON"
+            ? requestApp("Example", { source: "example" }, options)
+            : requestAppForm("Example", form, options);
+
+      await expect(request).rejects.toThrow("Prepared release changed. Recovery: refresh release.");
+      const expected = {
+        method: kind === "GET" ? "GET" : "POST",
+        credentials: "include",
+        headers:
+          kind === "JSON"
+            ? {
+                "Content-Type": "application/json",
+                "X-CSRF-Token": "csrf-token",
+                "X-Upbrr-Correlation-Id": "request-1",
+              }
+            : { "X-CSRF-Token": "csrf-token" },
+        signal,
+        ...(kind === "GET" ? {} : { body: kind === "JSON" ? '{"source":"example"}' : form }),
+      };
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/app/Example", expected);
+      expect(fetchMock).toHaveBeenNthCalledWith(3, "/api/app/Example", expected);
+    },
+  );
+
+  it("rejects an empty successful application response", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
+    const { requestAppGet } = await import("./client");
+    await expect(requestAppGet("Example")).rejects.toThrow("Request returned an empty response");
+  });
+
   it("does not adopt a different browser session during auth refresh", async () => {
     const fetchMock = vi
       .fn()

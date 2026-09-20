@@ -28,21 +28,6 @@ func migrateAddReusableDescriptions(ctx context.Context, exec migrationExecutor)
 	return nil
 }
 
-// SaveReusableDescription replaces the safe reusable description record for
-// one canonical source path.
-func (r *SQLiteRepository) SaveReusableDescription(
-	ctx context.Context,
-	sourcePath string,
-	description api.ReusableDescription,
-) error {
-	if r == nil || r.db == nil {
-		return errors.New("db: repository not initialized")
-	}
-	return r.withWriteTx(ctx, "save reusable description", func(tx *sql.Tx) error {
-		return saveReusableDescriptionTx(ctx, tx, sourcePath, description)
-	})
-}
-
 func saveReusableDescriptionTx(
 	ctx context.Context,
 	tx *sql.Tx,

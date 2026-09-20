@@ -36,7 +36,7 @@ func TestConfigImpactsClassifiesEffectiveRoots(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			next := base
 			test.edit(&next)
-			if got := configImpacts(base, next); !slices.Contains(got, test.want) {
+			if got := ConfigImpactDetails(base, next); !slices.ContainsFunc(got, func(detail api.ConfigImpactDetail) bool { return detail.Kind == test.want }) {
 				t.Fatalf("impacts = %v, want %q", got, test.want)
 			}
 		})
@@ -77,7 +77,7 @@ func TestConfigImpactsIgnoresHostDatabasePath(t *testing.T) {
 	previous := config.Config{MainSettings: config.MainSettingsConfig{DBPath: "one"}}
 	next := previous
 	next.MainSettings.DBPath = "two"
-	if got := configImpacts(previous, next); len(got) != 0 {
+	if got := ConfigImpactDetails(previous, next); len(got) != 0 {
 		t.Fatalf("impacts = %v, want none", got)
 	}
 }
@@ -118,12 +118,12 @@ func TestConfigImpactsClassifiesEveryMainSettingsField(t *testing.T) {
 			default:
 				t.Fatalf("add an effective mutation for MainSettings.%s", field.Name)
 			}
-			got := configImpacts(config.Config{}, next)
+			got := ConfigImpactDetails(config.Config{}, next)
 			if want == "" {
 				if len(got) != 0 {
 					t.Fatalf("host-only field impacts = %v", got)
 				}
-			} else if !slices.Equal(got, []api.ConfigImpact{want}) {
+			} else if len(got) != 1 || got[0].Kind != want {
 				t.Fatalf("impacts = %v, want only %s", got, want)
 			}
 		})

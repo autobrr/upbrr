@@ -199,6 +199,23 @@ const dispatchEventBlock = (block: string) => {
   callbacks.get(eventName)?.forEach((callback) => callback(payload));
 };
 
+const requestJSON = async <T>(path: string, requestInit: () => RequestInit): Promise<T> => {
+  let response = await fetch(withBasePath(path), requestInit());
+  let payload = await parseJSONResponse<T & { error?: string; failure?: OperationFailure }>(
+    response,
+  );
+  if (!response.ok && isAuthFailureStatus(response.status) && (await refreshAuthState())) {
+    response = await fetch(withBasePath(path), requestInit());
+    payload = await parseJSONResponse<T & { error?: string; failure?: OperationFailure }>(response);
+  }
+  if (!response.ok) {
+    if (payload?.failure) throw new OperationFailureError(payload.failure);
+    throw new Error(String(payload?.error || response.statusText || "Request failed"));
+  }
+  if (payload === null) throw new Error("Request returned an empty response");
+  return payload as T;
+};
+
 const postJSON = async <T>(
   path: string,
   body?: unknown,
@@ -216,20 +233,7 @@ const postJSON = async <T>(
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: options.signal,
   });
-  let response = await fetch(withBasePath(path), requestInit());
-  let payload = await parseJSONResponse<T & { error?: string; failure?: OperationFailure }>(
-    response,
-  );
-  if (!response.ok && isAuthFailureStatus(response.status) && (await refreshAuthState())) {
-    response = await fetch(withBasePath(path), requestInit());
-    payload = await parseJSONResponse<T & { error?: string }>(response);
-  }
-  if (!response.ok) {
-    if (payload?.failure) throw new OperationFailureError(payload.failure);
-    throw new Error(String(payload?.error || response.statusText || "Request failed"));
-  }
-  if (payload === null) throw new Error("Request returned an empty response");
-  return payload as T;
+  return requestJSON<T>(path, requestInit);
 };
 
 const getJSON = async <T>(path: string, options: AppRequestOptions = {}): Promise<T> => {
@@ -239,20 +243,7 @@ const getJSON = async <T>(path: string, options: AppRequestOptions = {}): Promis
     headers: csrfToken ? { "X-CSRF-Token": csrfToken } : {},
     signal: options.signal,
   });
-  let response = await fetch(withBasePath(path), requestInit());
-  let payload = await parseJSONResponse<T & { error?: string; failure?: OperationFailure }>(
-    response,
-  );
-  if (!response.ok && isAuthFailureStatus(response.status) && (await refreshAuthState())) {
-    response = await fetch(withBasePath(path), requestInit());
-    payload = await parseJSONResponse<T & { error?: string; failure?: OperationFailure }>(response);
-  }
-  if (!response.ok) {
-    if (payload?.failure) throw new OperationFailureError(payload.failure);
-    throw new Error(String(payload?.error || response.statusText || "Request failed"));
-  }
-  if (payload === null) throw new Error("Request returned an empty response");
-  return payload as T;
+  return requestJSON<T>(path, requestInit);
 };
 
 const postForm = async <T>(
@@ -267,20 +258,7 @@ const postForm = async <T>(
     body,
     signal: options.signal,
   });
-  let response = await fetch(withBasePath(path), requestInit());
-  let payload = await parseJSONResponse<T & { error?: string; failure?: OperationFailure }>(
-    response,
-  );
-  if (!response.ok && isAuthFailureStatus(response.status) && (await refreshAuthState())) {
-    response = await fetch(withBasePath(path), requestInit());
-    payload = await parseJSONResponse<T & { error?: string; failure?: OperationFailure }>(response);
-  }
-  if (!response.ok) {
-    if (payload?.failure) throw new OperationFailureError(payload.failure);
-    throw new Error(String(payload?.error || response.statusText || "Request failed"));
-  }
-  if (payload === null) throw new Error("Request returned an empty response");
-  return payload as T;
+  return requestJSON<T>(path, requestInit);
 };
 
 /** Initializes cookie-bound WebUI requests and event delivery for one authenticated session. */

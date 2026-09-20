@@ -101,10 +101,8 @@ func (r ReusableDescription) Valid() bool {
 	return (DescriptionInstructions{Overrides: r.Overrides}).Validate() == nil
 }
 
-// DescriptionReuseRepository persists and retrieves only reusable public
-// descriptions and explicit override text. It never stores private workflow
-// inputs or configuration.
+// DescriptionReuseRepository retrieves reusable public descriptions and
+// explicit override text. Workflow-state persistence owns their atomic save.
 type DescriptionReuseRepository interface {
-	SaveReusableDescription(context.Context, string, ReusableDescription) error
 	LoadReusableDescription(context.Context, string) (ReusableDescription, bool, error)
 }

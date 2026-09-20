@@ -15,6 +15,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -43,22 +44,38 @@ type reusableWorkflowMediaRepository struct {
 	mediaRepository
 	assets           []api.ReusableMediaAsset
 	saved            []api.ReusableMediaAsset
+	commits          map[api.ReusableMediaCommit]bool
 	persistStarted   chan<- struct{}
 	allowPersistence <-chan struct{}
 }
 
-func (r *reusableWorkflowMediaRepository) ReplaceReusableMediaAssets(
+func (r *reusableWorkflowMediaRepository) CommitReusableMedia(
 	_ context.Context,
 	_ api.PreparedMediaBinding,
 	_ api.MediaCompatibilityKey,
 	assets []api.ReusableMediaAsset,
+	commit api.ReusableMediaCommit,
 ) error {
+	if !commit.Valid() {
+		return internalerrors.ErrInvalidInput
+	}
 	r.saved = append([]api.ReusableMediaAsset(nil), assets...)
+	if r.commits == nil {
+		r.commits = make(map[api.ReusableMediaCommit]bool)
+	}
+	r.commits[commit] = true
 	if r.persistStarted != nil {
 		r.persistStarted <- struct{}{}
 		<-r.allowPersistence
 	}
 	return nil
+}
+
+func (r *reusableWorkflowMediaRepository) HasReusableMediaCommit(
+	_ context.Context,
+	commit api.ReusableMediaCommit,
+) (bool, error) {
+	return r.commits[commit], nil
 }
 
 func (r *reusableWorkflowMediaRepository) LoadReusableMediaAssets(
@@ -132,9 +149,6 @@ func TestWorkflowMediaModuleKeepsReusableMediaCapabilityOutsideRepositoryView(t 
 	)
 	if module.mediaReuse == nil {
 		t.Fatal("workflow media module lost reusable-media repository capability")
-	}
-	if _, ok := module.mediaReuse.(api.MediaReuseCommitRepository); !ok {
-		t.Fatalf("workflow media reuse capability = %T, want commit repository", module.mediaReuse)
 	}
 }
 
@@ -221,8 +235,17 @@ func TestWorkflowMediaRestoreCompatibleRebuildsCurrentArtifacts(t *testing.T) {
 		snapshot.Artifacts[1].Source != string(snapshot.Artifacts[0].ID) {
 		t.Fatalf("restored artifacts = %#v", snapshot.Artifacts)
 	}
+	if len(repository.saved) != 0 {
+		t.Fatalf("restored uncommitted association = %#v", repository.saved)
+	}
+	snapshot.WorkflowID = "workflow-restored"
+	snapshot.ID = "media-restored"
+	snapshot.Revision = 1
+	if err := builder.RecordReusableMedia(t.Context(), snapshot, retainedResource); err != nil {
+		t.Fatalf("record restored media: %v", err)
+	}
 	if len(repository.saved) != 1 || repository.saved[0].Binding.PreparedGeneration != currentBinding.PreparedGeneration {
-		t.Fatalf("restored association = %#v", repository.saved)
+		t.Fatalf("recorded restored association = %#v", repository.saved)
 	}
 	retained, ok := retainedResource.(workflowMediaPrivateArtifacts)
 	if !ok || retained.screenshotSubject.MediaBinding.PreparedGeneration != currentBinding.PreparedGeneration {
@@ -532,6 +555,12 @@ func TestWorkflowMediaRestoreCompatibleMaterializesBeforeSourceCleanup(t *testin
 	go func() {
 		snapshot, retained, restoreErr := builder.RestoreCompatible(t.Context(), api.ReleaseRef{SourcePath: secondSource, Generation: 2},
 			api.TrackerReleaseProjectionSet{}, time.Now())
+		if restoreErr == nil {
+			snapshot.WorkflowID = "workflow-media-reuse"
+			snapshot.ID = "restored-media"
+			snapshot.Revision = 2
+			restoreErr = builder.RecordReusableMedia(t.Context(), snapshot, retained)
+		}
 		result <- restoreResult{
 			snapshot: snapshot,
 			retained: retained,
@@ -540,19 +569,14 @@ func TestWorkflowMediaRestoreCompatibleMaterializesBeforeSourceCleanup(t *testin
 	}()
 	select {
 	case <-persistStarted:
-	case <-t.Context().Done():
-		t.Fatal("restore did not reach reusable-media persistence")
+	case restored := <-result:
+		t.Fatalf("record reusable media completed before persistence pause: %#v", restored)
 	}
 	if err := os.RemoveAll(firstTmpDir); err != nil {
 		t.Fatalf("remove first source tmp dir: %v", err)
 	}
 	close(allowPersistence)
-	var restored restoreResult
-	select {
-	case restored = <-result:
-	case <-t.Context().Done():
-		t.Fatal("restore did not complete")
-	}
+	restored := <-result
 	if restored.err != nil {
 		t.Fatalf("restore compatible media: %v", restored.err)
 	}
@@ -659,7 +683,11 @@ func TestWorkflowMediaRestoreCompatiblePersistsDistinctPathsForEqualBytes(t *tes
 	if assets[0].CaptureFingerprint == assets[1].CaptureFingerprint {
 		t.Fatalf("distinct captures share fingerprint %q", assets[0].CaptureFingerprint)
 	}
-	if err := repository.ReplaceReusableMediaAssets(ctx, previousBinding, compatibilityKey, assets); err != nil {
+	if err := repository.CommitReusableMedia(ctx, previousBinding, compatibilityKey, assets, api.ReusableMediaCommit{
+		WorkflowID: "workflow-media-reuse",
+		MediaID:    "seed-media",
+		Revision:   1,
+	}); err != nil {
 		t.Fatalf("seed reusable media: %v", err)
 	}
 
@@ -672,13 +700,19 @@ func TestWorkflowMediaRestoreCompatiblePersistsDistinctPathsForEqualBytes(t *tes
 		media: &mediaModule{repo: repository, mediaReuse: repository},
 	}
 	projections := api.TrackerReleaseProjectionSet{}
-	firstSnapshot, _, err := builder.RestoreCompatible(ctx,
+	firstSnapshot, firstRetained, err := builder.RestoreCompatible(ctx,
 		api.ReleaseRef{SourcePath: secondSource, Generation: currentBinding.PreparedGeneration}, projections, time.Now())
 	if err != nil {
 		t.Fatalf("restore reusable media: %v", err)
 	}
 	if len(firstSnapshot.Artifacts) != len(images) {
 		t.Fatalf("first restored artifacts = %#v", firstSnapshot.Artifacts)
+	}
+	firstSnapshot.WorkflowID = "workflow-media-reuse"
+	firstSnapshot.ID = "restored-media"
+	firstSnapshot.Revision = 2
+	if err := builder.RecordReusableMedia(ctx, firstSnapshot, firstRetained); err != nil {
+		t.Fatalf("record restored reusable media: %v", err)
 	}
 	firstPaths := reusableMediaPathsForBinding(ctx, t, repository, compatibilityKey, currentBinding)
 	if len(firstPaths) != len(images) {
@@ -859,6 +893,10 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 	if err != nil {
 		t.Fatalf("prepare first generation: %v", err)
 	}
+	compatibilityKey, err := firstPrepared.Release.MediaCompatibilityKey()
+	if err != nil {
+		t.Fatalf("derive first compatibility key: %v", err)
+	}
 	firstRelease := api.ReleaseRef{SourcePath: sourcePath, Generation: firstPrepared.Release.Generation}
 	capture := &durableWorkflowScreenshotFake{root: t.TempDir()}
 	host := &countingWorkflowImageHost{}
@@ -888,6 +926,17 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 	if capture.captures != 1 || len(snapshot.Artifacts) != 2 {
 		t.Fatalf("initial capture calls=%d artifacts=%#v", capture.captures, snapshot.Artifacts)
 	}
+	snapshot.WorkflowID = "workflow-media-reuse"
+	snapshot.ID = "persisted-media"
+	snapshot.Revision = 1
+	if err := builder.RecordReusableMedia(ctx, snapshot, retainedAny); err != nil {
+		t.Fatalf("record existing media state: %v", err)
+	}
+	existingSnapshot := snapshot
+	existingAssets, err := repository.LoadReusableMediaAssets(ctx, compatibilityKey)
+	if err != nil {
+		t.Fatalf("load existing reusable media: %v", err)
+	}
 	firstArtifactID, deletedArtifactID := snapshot.Artifacts[0].ID, snapshot.Artifacts[1].ID
 	snapshot, retainedResource, _, err := builder.UploadImages(ctx, firstRelease, projections, snapshot, retainedAny,
 		[]api.PublicResourceID{firstArtifactID}, "imgbb", false, time.Now())
@@ -896,6 +945,17 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 	}
 	if host.uploads != 1 || countMediaArtifacts(snapshot.Artifacts, api.MediaArtifactHostedImage) != 1 {
 		t.Fatalf("initial host uploads=%d artifacts=%#v", host.uploads, snapshot.Artifacts)
+	}
+	existingCommitted, err := builder.HasReusableMediaCommit(ctx, existingSnapshot)
+	if err != nil || !existingCommitted {
+		t.Fatalf("existing reusable media receipt = %v, %v", existingCommitted, err)
+	}
+	assetsBeforePublication, err := repository.LoadReusableMediaAssets(ctx, compatibilityKey)
+	if err != nil {
+		t.Fatalf("load reusable media before publication: %v", err)
+	}
+	if !reflect.DeepEqual(assetsBeforePublication, existingAssets) {
+		t.Fatalf("upload mutated reusable associations before publication: got %#v, want %#v", assetsBeforePublication, existingAssets)
 	}
 	snapshot, retainedResource, reusedAttempts, err := builder.UploadImages(ctx, firstRelease, projections, snapshot, retainedResource,
 		[]api.PublicResourceID{firstArtifactID}, "imgbb", false, time.Now())
@@ -939,15 +999,25 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 	if err := committer.Commit(ctx); err != nil {
 		t.Fatalf("commit local deletion: %v", err)
 	}
-	snapshot.WorkflowID = "workflow-media-reuse"
-	snapshot.ID = "media-reuse"
-	snapshot.Revision = 1
+	snapshot.ID = "published-media"
+	snapshot.Revision = 2
 	if err := builder.RecordReusableMedia(ctx, snapshot, retainedResource); err != nil {
 		t.Fatalf("record final media state: %v", err)
 	}
 	committed, err := builder.HasReusableMediaCommit(ctx, snapshot)
 	if err != nil || !committed {
 		t.Fatalf("recorded media commit = %v, %v", committed, err)
+	}
+	existingCommitted, err = builder.HasReusableMediaCommit(ctx, existingSnapshot)
+	if err != nil || !existingCommitted {
+		t.Fatalf("existing reusable media receipt after publication = %v, %v", existingCommitted, err)
+	}
+	publishedAssets, err := repository.LoadReusableMediaAssets(ctx, compatibilityKey)
+	if err != nil {
+		t.Fatalf("load published reusable media: %v", err)
+	}
+	if len(publishedAssets) != 1 || len(publishedAssets[0].HostedLinks) != 1 {
+		t.Fatalf("published reusable media = %#v", publishedAssets)
 	}
 	uploadsBeforeRestore := host.uploads
 	verified, err = preparedrelease.VerifyInputSource(ctx, api.PrepareInput{SourcePath: sourcePath})
@@ -987,6 +1057,164 @@ func TestWorkflowMediaReuseCapturesHostsThenRestoresFreshGenerationWithoutRepeat
 		if link.AccountScope != currentAccountScope {
 			t.Fatalf("restored hosted account scope = %q, want %q", link.AccountScope, currentAccountScope)
 		}
+	}
+}
+
+func TestWorkflowMediaAttachDefersReusableMediaPersistenceAndPreservesDuplicateAttachmentIdentity(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	baseDir := t.TempDir()
+	sourcePath := filepath.Join(baseDir, "Example.Release.2026.mkv")
+	if err := os.WriteFile(sourcePath, []byte("verified source bytes"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	dbPath := filepath.Join(baseDir, "workflow.db")
+	repository, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	t.Cleanup(func() { _ = repository.Close() })
+	if err := repository.Migrate(); err != nil {
+		t.Fatalf("migrate repository: %v", err)
+	}
+	prepared, err := preparedrelease.New(repository, workflowMediaIdentityResolver{}, workflowMediaCollector{})
+	if err != nil {
+		t.Fatalf("create prepared release module: %v", err)
+	}
+	verified, err := preparedrelease.VerifyInputSource(ctx, api.PrepareInput{SourcePath: sourcePath})
+	if err != nil {
+		t.Fatalf("verify source: %v", err)
+	}
+	preparedResult, err := prepared.Prepare(ctx, api.PrepareInput{SourcePath: sourcePath, VerifiedSource: &verified})
+	if err != nil {
+		t.Fatalf("prepare source: %v", err)
+	}
+	compatibilityKey, err := preparedResult.Release.MediaCompatibilityKey()
+	if err != nil {
+		t.Fatalf("derive compatibility key: %v", err)
+	}
+	release := api.ReleaseRef{SourcePath: sourcePath, Generation: preparedResult.Release.Generation}
+	subject, err := prepared.ResolveScreenshotSubject(ctx, api.MediaPlanInput{Release: release})
+	if err != nil {
+		t.Fatalf("resolve screenshot subject: %v", err)
+	}
+	imagePath := filepath.Join(baseDir, "existing.png")
+	if err := os.WriteFile(imagePath, []byte("existing image"), 0o600); err != nil {
+		t.Fatalf("write existing image: %v", err)
+	}
+	image := api.ScreenshotImage{
+		Path:      imagePath,
+		Purpose:   api.ScreenshotPurposeFinal,
+		SizeBytes: int64(len("existing image")),
+	}
+	existing := api.MediaArtifactSet{
+		WorkflowID:         "workflow-media-attach",
+		ID:                 "persisted-media",
+		Revision:           1,
+		CaptureFingerprint: workflowTestFingerprint(t, "persisted-media-attach"),
+		Status:             api.StageStatusCompleted,
+		Artifacts: []api.MediaArtifact{{
+			ID:       "existing-screen",
+			Kind:     api.MediaArtifactScreenshot,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+		}},
+	}
+	retained := workflowMediaPrivateArtifacts{
+		Screenshots:       []api.ScreenshotImage{image},
+		ArtifactImages:    map[api.PublicResourceID]api.ScreenshotImage{"existing-screen": image},
+		DVDMenuImages:     make(map[api.PublicResourceID]api.DVDMenuCaptureImage),
+		HostedImages:      make(map[api.PublicResourceID]api.UploadedImageLink),
+		HostedSources:     make(map[api.PublicResourceID]api.PublicResourceID),
+		screenshotSubject: subject,
+		mediaReuse:        repository,
+		commitState:       &workflowMediaCommitState{},
+	}
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}
+	builder := workflowMediaBuilder{
+		config: cfg,
+		media: &mediaModule{
+			cfg:           cfg,
+			repo:          repository,
+			mediaReuse:    repository,
+			preparedFacts: prepared,
+			logger:        api.NopLogger{},
+		},
+	}
+	if err := builder.RecordReusableMedia(ctx, existing, retained); err != nil {
+		t.Fatalf("record existing media state: %v", err)
+	}
+	existingAssets, err := repository.LoadReusableMediaAssets(ctx, compatibilityKey)
+	if err != nil {
+		t.Fatalf("load existing reusable media: %v", err)
+	}
+	updated, updatedRetained, err := builder.Attach(ctx, release, api.TrackerReleaseProjectionSet{}, &existing, retained,
+		[]releaseworkflow.StagedMediaAttachment{
+			{
+				Attachment: api.MediaAttachment{
+					Kind:    api.MediaArtifactScreenshot,
+					Purpose: api.ScreenshotPurposeFinal,
+					Order:   1,
+				},
+				Content: releaseworkflow.StagedMediaContent{ContentType: "image/png", Bytes: []byte("duplicate image")},
+			},
+			{
+				Attachment: api.MediaAttachment{
+					Kind:    api.MediaArtifactDVDMenu,
+					Purpose: api.ScreenshotPurposeMenu,
+					Order:   2,
+				},
+				Content: releaseworkflow.StagedMediaContent{ContentType: "image/png", Bytes: []byte("duplicate image")},
+			},
+			{
+				Attachment: api.MediaAttachment{
+					Kind:    api.MediaArtifactScreenshot,
+					Purpose: api.ScreenshotPurposeFinal,
+					Order:   3,
+				},
+				Content: releaseworkflow.StagedMediaContent{ContentType: "image/png", Bytes: []byte("following image")},
+			},
+		}, time.Now())
+	if err != nil {
+		t.Fatalf("attach media: %v", err)
+	}
+	if len(updated.Artifacts) != 3 || updated.Artifacts[1].Kind != api.MediaArtifactScreenshot ||
+		updated.Artifacts[1].Purpose != api.ScreenshotPurposeFinal || updated.Artifacts[1].Order != 1 || updated.Artifacts[1].Index != 0 ||
+		updated.Artifacts[2].Kind != api.MediaArtifactScreenshot || updated.Artifacts[2].Purpose != api.ScreenshotPurposeFinal ||
+		updated.Artifacts[2].Order != 3 || updated.Artifacts[2].Index != 1 {
+		t.Fatalf("attached artifacts = %#v", updated.Artifacts)
+	}
+	existingCommitted, err := builder.HasReusableMediaCommit(ctx, existing)
+	if err != nil || !existingCommitted {
+		t.Fatalf("existing reusable media receipt = %v, %v", existingCommitted, err)
+	}
+	assetsBeforePublication, err := repository.LoadReusableMediaAssets(ctx, compatibilityKey)
+	if err != nil {
+		t.Fatalf("load reusable media before publication: %v", err)
+	}
+	if !reflect.DeepEqual(assetsBeforePublication, existingAssets) {
+		t.Fatalf("attach mutated reusable associations before publication: got %#v, want %#v", assetsBeforePublication, existingAssets)
+	}
+	updated.ID = "published-media"
+	updated.Revision = 2
+	if err := builder.RecordReusableMedia(ctx, updated, updatedRetained); err != nil {
+		t.Fatalf("record published media state: %v", err)
+	}
+	publishedCommitted, err := builder.HasReusableMediaCommit(ctx, updated)
+	if err != nil || !publishedCommitted {
+		t.Fatalf("published reusable media receipt = %v, %v", publishedCommitted, err)
+	}
+	existingCommitted, err = builder.HasReusableMediaCommit(ctx, existing)
+	if err != nil || !existingCommitted {
+		t.Fatalf("existing reusable media receipt after publication = %v, %v", existingCommitted, err)
+	}
+	publishedAssets, err := repository.LoadReusableMediaAssets(ctx, compatibilityKey)
+	if err != nil {
+		t.Fatalf("load published reusable media: %v", err)
+	}
+	if len(publishedAssets) != 3 || reflect.DeepEqual(publishedAssets, existingAssets) {
+		t.Fatalf("published reusable media = %#v", publishedAssets)
 	}
 }
 

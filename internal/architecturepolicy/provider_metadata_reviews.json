@@ -1071,8 +1071,8 @@
     "sha256": "e03f3fa1b98d27ae525839d4d688471ae35156ed0b28f1f1a674d1b3566fee16",
     "reason": "Title-query fallbacks preserve manual authority before text requests; provider-ID query priority remains unchanged."
   },
-  "internal/trackers/impl/standalone/rtf/dupe.go:dupeSearcher.Search": {
-    "sha256": "ea9e363b5d3c6de832b9ae162aa66f8171ac556fef99e5ef6273f34712dd4e33",
+  "internal/trackers/impl/standalone/rtf/dupe.go:*dupeSearcher.Search": {
+    "sha256": "c00ab36dc07df7acbf2e753d499349dbdcc57f1a02644a89d662b133e0c04143",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/rtf/dupe.go:isRTFContentOldEnough": {

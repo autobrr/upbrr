@@ -271,6 +271,12 @@ func TestRTFHandlerRefreshesAndRetriesOn401(t *testing.T) {
 	if searchCalls != 2 {
 		t.Fatalf("expected 2 search calls, got %d", searchCalls)
 	}
+	if _, _, err := adapterEvidence(handler.Search(t.Context(), meta)); err != nil {
+		t.Fatalf("search with cached token: %v", err)
+	}
+	if searchCalls != 3 {
+		t.Fatalf("expected cached token search without another retry, got %d calls", searchCalls)
+	}
 	if loginCalls != 1 {
 		t.Fatalf("expected 1 login call, got %d", loginCalls)
 	}
@@ -283,10 +289,10 @@ func TestRTFHandlerRestoresEncryptedAPISessionInNewAdapter(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
 	writeRTFWebAuthFixture(t, dbPath)
 	trackerCfg := config.TrackerConfig{
-APIKey: "configured-key",
- Username: "user",
- Password: "pass",
-}
+		APIKey:   "configured-key",
+		Username: "user",
+		Password: "pass",
+	}
 	seedRTFConfig(t, dbPath, trackerCfg)
 	if err := persistRefreshedRTFAPIKey(ctx, dbPath, defaultBaseURL, trackerCfg, "restored-session-token"); err != nil {
 		t.Fatalf("persist API session: %v", err)
@@ -303,10 +309,10 @@ APIKey: "configured-key",
 				t.Fatal("new adapter did not use its encrypted API session")
 			}
 			return &http.Response{
-StatusCode: http.StatusOK,
- Body: io.NopCloser(strings.NewReader(`[]`)),
- Header: make(http.Header),
-}, nil
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`[]`)),
+				Header:     make(http.Header),
+			}, nil
 		default:
 			t.Fatalf("unexpected request path %q", req.URL.Path)
 		}

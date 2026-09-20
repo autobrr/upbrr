@@ -23,15 +23,10 @@ type workflowDescriptionReuseRepositoryFake struct {
 	loads      int
 }
 
-func (r *workflowDescriptionReuseRepositoryFake) SaveReusableDescription(
-	_ context.Context,
-	sourcePath string,
-	value api.ReusableDescription,
-) error {
+func (r *workflowDescriptionReuseRepositoryFake) store(sourcePath string, value api.ReusableDescription) {
 	r.sourcePath = sourcePath
 	r.value = value
 	r.saves++
-	return nil
 }
 
 func (r *workflowDescriptionReuseRepositoryFake) LoadReusableDescription(
@@ -89,7 +84,8 @@ func (f *workflowDescriptionReuseFixture) recordReusableDescriptions(t *testing.
 	if err != nil || record == nil {
 		return err
 	}
-	return f.repository.SaveReusableDescription(t.Context(), record.SourcePath, record.Description)
+	f.repository.store(record.SourcePath, record.Description)
+	return nil
 }
 
 func TestWorkflowDescriptionReuseRestoresCurrentGenerationWithoutBuilding(t *testing.T) {

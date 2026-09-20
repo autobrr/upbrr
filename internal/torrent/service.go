@@ -13,6 +13,7 @@ import (
 	"os"
 	slashpath "path" //nolint:depguard // Joins torrent-internal slash-delimited metainfo paths.
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -693,22 +694,13 @@ func wantedFilesWithin(root string, files []string) ([]string, error) {
 			return nil, fmt.Errorf("torrent: wanted file %q is not a regular file", absFile)
 		}
 		cleanFile := filepath.Clean(absFile)
-		if containsSamePath(wanted, cleanFile) {
+		if slices.ContainsFunc(wanted, func(path string) bool { return pathutil.SamePath(path, cleanFile) }) {
 			continue
 		}
 		wanted = append(wanted, cleanFile)
 	}
 	sort.Strings(wanted)
 	return wanted, nil
-}
-
-func containsSamePath(paths []string, candidate string) bool {
-	for _, path := range paths {
-		if pathutil.SamePath(path, candidate) {
-			return true
-		}
-	}
-	return false
 }
 
 func includePatternsForFiles(root string, files []string) ([]string, error) {

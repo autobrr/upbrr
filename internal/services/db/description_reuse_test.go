@@ -16,19 +16,16 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestReusableDescriptionRoundTripReplacesSourceRecord(t *testing.T) {
+func TestReusableDescriptionWorkflowStateSaveReplacesSourceRecord(t *testing.T) {
 	t.Parallel()
 	repo := openMigratedTestRepo(t)
 	ctx := t.Context()
+	state := createReusableDescriptionWorkflowState(t, repo, "round-trip")
 	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.mkv")
 	first := reusableDescriptionForTest("a", "first")
-	if err := repo.SaveReusableDescription(ctx, sourcePath, first); err != nil {
-		t.Fatalf("save first reusable description: %v", err)
-	}
+	state = saveReusableDescriptionWithWorkflowState(t, repo, state, sourcePath, first)
 	second := reusableDescriptionForTest("c", "second")
-	if err := repo.SaveReusableDescription(ctx, "  "+sourcePath+"  ", second); err != nil {
-		t.Fatalf("replace reusable description: %v", err)
-	}
+	_ = saveReusableDescriptionWithWorkflowState(t, repo, state, "  "+sourcePath+"  ", second)
 	loaded, found, err := repo.LoadReusableDescription(ctx, sourcePath)
 	if err != nil || !found {
 		t.Fatalf("load reusable description found=%t err=%v", found, err)
@@ -49,13 +46,16 @@ func TestReusableDescriptionRejectsInvalidInputAndReportsMissing(t *testing.T) {
 	t.Parallel()
 	repo := openMigratedTestRepo(t)
 	ctx := t.Context()
+	state := createReusableDescriptionWorkflowState(t, repo, "invalid")
 	valid := reusableDescriptionForTest("a", "rendered")
-	if err := repo.SaveReusableDescription(ctx, "", valid); !errors.Is(err, internalerrors.ErrInvalidInput) {
-		t.Fatalf("save empty source = %v", err)
+	updated := reusableDescriptionWorkflowStateRecord(state, "", valid)
+	if err := repo.SaveReleaseWorkflowState(ctx, state.Revision, updated); err == nil {
+		t.Fatal("save empty source succeeded")
 	}
 	valid.CompatibilityFingerprint = ""
-	if err := repo.SaveReusableDescription(ctx, filepath.Join(t.TempDir(), "invalid.mkv"), valid); !errors.Is(err, internalerrors.ErrInvalidInput) {
-		t.Fatalf("save invalid record = %v", err)
+	updated = reusableDescriptionWorkflowStateRecord(state, filepath.Join(t.TempDir(), "invalid.mkv"), valid)
+	if err := repo.SaveReleaseWorkflowState(ctx, state.Revision, updated); err == nil {
+		t.Fatal("save invalid record succeeded")
 	}
 	if _, found, err := repo.LoadReusableDescription(ctx, filepath.Join(t.TempDir(), "missing.mkv")); err != nil || found {
 		t.Fatalf("load missing found=%t err=%v", found, err)
@@ -65,47 +65,16 @@ func TestReusableDescriptionRejectsInvalidInputAndReportsMissing(t *testing.T) {
 	}
 }
 
-func TestReusableDescriptionRejectsExpiredCoordinatorWrites(t *testing.T) {
-	t.Parallel()
-	repo := openMigratedTestRepo(t)
-	now := time.Now().UTC()
-	empty, err := repo.LoadActiveInput(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.mkv")
-	opening := api.ActiveInputRecord{
-		State:          api.ActiveInputOpening,
-		Revision:       1,
-		Fence:          1,
-		OwnerID:        "owner",
-		CoordinatorID:  "current",
-		LeaseExpiresAt: now.Add(time.Minute),
-		ReservationID:  "open",
-		RequestedPath:  sourcePath,
-		IdempotencyKey: "open",
-	}
-	if err := repo.CompareAndSwapActiveInput(t.Context(), empty, opening, now); err != nil {
-		t.Fatal(err)
-	}
-	stale := api.WithActiveInputAuthority(t.Context(), api.ActiveInputAuthority{CoordinatorID: "previous", Fence: 1})
-	if err := repo.SaveReusableDescription(stale, sourcePath, reusableDescriptionForTest("a", "rendered")); !errors.Is(err, api.ErrActiveInputLeaseLost) {
-		t.Fatalf("save with expired coordinator = %v", err)
-	}
-}
-
 func TestPurgeContentDataRemovesReusableDescriptionAndListsItsSource(t *testing.T) {
 	t.Parallel()
 	repo := openMigratedTestRepo(t)
 	ctx := t.Context()
 	sourcePath := filepath.Join(t.TempDir(), "reusable-description.mkv")
 	otherPath := filepath.Join(t.TempDir(), "other-description.mkv")
-	if err := repo.SaveReusableDescription(ctx, sourcePath, reusableDescriptionForTest("a", "source")); err != nil {
-		t.Fatalf("save source reusable description: %v", err)
-	}
-	if err := repo.SaveReusableDescription(ctx, otherPath, reusableDescriptionForTest("b", "other")); err != nil {
-		t.Fatalf("save other reusable description: %v", err)
-	}
+	state := createReusableDescriptionWorkflowState(t, repo, "purge-source")
+	_ = saveReusableDescriptionWithWorkflowState(t, repo, state, sourcePath, reusableDescriptionForTest("a", "source"))
+	otherState := createReusableDescriptionWorkflowState(t, repo, "purge-other")
+	_ = saveReusableDescriptionWithWorkflowState(t, repo, otherState, otherPath, reusableDescriptionForTest("b", "other"))
 	paths, err := repo.ListStoredReleasePaths(ctx)
 	if err != nil || !slices.Contains(paths, sourcePath) {
 		t.Fatalf("stored release paths = %#v, %v", paths, err)
@@ -119,6 +88,52 @@ func TestPurgeContentDataRemovesReusableDescriptionAndListsItsSource(t *testing.
 	if loaded, found, err := repo.LoadReusableDescription(ctx, otherPath); err != nil || !found || loaded.Descriptions[0].Rendered != "other" {
 		t.Fatalf("load preserved description = %#v found=%t err=%v", loaded, found, err)
 	}
+}
+
+func createReusableDescriptionWorkflowState(
+	t *testing.T,
+	repo *SQLiteRepository,
+	workflowSuffix string,
+) api.ReleaseWorkflowStateRecord {
+	t.Helper()
+	now := time.Now().UTC().Truncate(time.Second)
+	state := workflowStateRecordForTest(
+		api.WorkflowID("workflow-description-reuse-"+workflowSuffix),
+		api.WorkflowStatusActive,
+		now,
+		`{"revision":1}`,
+	)
+	if _, _, err := repo.CreateReleaseWorkflowState(t.Context(), state); err != nil {
+		t.Fatalf("create reusable description workflow: %v", err)
+	}
+	return state
+}
+
+func saveReusableDescriptionWithWorkflowState(
+	t *testing.T,
+	repo *SQLiteRepository,
+	state api.ReleaseWorkflowStateRecord,
+	sourcePath string,
+	description api.ReusableDescription,
+) api.ReleaseWorkflowStateRecord {
+	t.Helper()
+	updated := reusableDescriptionWorkflowStateRecord(state, sourcePath, description)
+	if err := repo.SaveReleaseWorkflowState(t.Context(), state.Revision, updated); err != nil {
+		t.Fatalf("save reusable description workflow state: %v", err)
+	}
+	return updated
+}
+
+func reusableDescriptionWorkflowStateRecord(
+	state api.ReleaseWorkflowStateRecord,
+	sourcePath string,
+	description api.ReusableDescription,
+) api.ReleaseWorkflowStateRecord {
+	updated := state
+	updated.Revision++
+	updated.UpdatedAt = state.UpdatedAt.Add(time.Minute)
+	updated.DescriptionReuse = &api.ReusableDescriptionRecord{SourcePath: sourcePath, Description: description}
+	return updated
 }
 
 func reusableDescriptionForTest(fingerprintCharacter, rendered string) api.ReusableDescription {

@@ -135,18 +135,6 @@ func migrateAddReusableMediaTombstoneSources(ctx context.Context, exec migration
 	return nil
 }
 
-// ReplaceReusableMediaAssets records only media independently verified under a
-// strong source compatibility key. It replaces the association set for the
-// exact prepared generation without touching historical hosted links.
-func (r *SQLiteRepository) ReplaceReusableMediaAssets(
-	ctx context.Context,
-	binding api.PreparedMediaBinding,
-	compatibilityKey api.MediaCompatibilityKey,
-	assets []api.ReusableMediaAsset,
-) error {
-	return r.replaceReusableMediaAssets(ctx, binding, compatibilityKey, assets, nil)
-}
-
 // CommitReusableMedia atomically records reusable media and the exact durable
 // workflow snapshot it represents.
 func (r *SQLiteRepository) CommitReusableMedia(
@@ -156,21 +144,11 @@ func (r *SQLiteRepository) CommitReusableMedia(
 	assets []api.ReusableMediaAsset,
 	commit api.ReusableMediaCommit,
 ) error {
-	if !commit.Valid() {
-		return internalerrors.ErrInvalidInput
-	}
-	return r.replaceReusableMediaAssets(ctx, binding, compatibilityKey, assets, &commit)
-}
-
-func (r *SQLiteRepository) replaceReusableMediaAssets(
-	ctx context.Context,
-	binding api.PreparedMediaBinding,
-	compatibilityKey api.MediaCompatibilityKey,
-	assets []api.ReusableMediaAsset,
-	commit *api.ReusableMediaCommit,
-) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
+	}
+	if !commit.Valid() {
+		return internalerrors.ErrInvalidInput
 	}
 	bound, err := normalizePreparedMediaBinding(binding)
 	if err != nil || !compatibilityKey.Valid() {
@@ -180,7 +158,7 @@ func (r *SQLiteRepository) replaceReusableMediaAssets(
 	if err != nil {
 		return internalerrors.ErrInvalidInput
 	}
-	return r.withWriteTx(ctx, "replace reusable media assets", func(tx *sql.Tx) error {
+	return r.withWriteTx(ctx, "commit reusable media", func(tx *sql.Tx) error {
 		if err := requireReusableMediaAuthority(ctx, tx, bound.SourcePath); err != nil {
 			return err
 		}
@@ -257,21 +235,19 @@ func (r *SQLiteRepository) replaceReusableMediaAssets(
 				}
 			}
 		}
-		if commit != nil {
-			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO media_reusable_commits (
-					source_path, prepared_media_fingerprint, prepared_generation,
-					workflow_id, media_id, media_revision, committed_at
-				) VALUES (?, ?, ?, ?, ?, ?, ?)
-				ON CONFLICT(workflow_id, media_id, media_revision) DO UPDATE SET
-					source_path = excluded.source_path,
-					prepared_media_fingerprint = excluded.prepared_media_fingerprint,
-					prepared_generation = excluded.prepared_generation,
-					committed_at = excluded.committed_at
-			`, bound.SourcePath, bound.PreparedMediaFingerprint, bound.PreparedGeneration,
-				commit.WorkflowID, commit.MediaID, commit.Revision, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
-				return fmt.Errorf("db reusable media: record commit: %w", err)
-			}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO media_reusable_commits (
+				source_path, prepared_media_fingerprint, prepared_generation,
+				workflow_id, media_id, media_revision, committed_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(workflow_id, media_id, media_revision) DO UPDATE SET
+				source_path = excluded.source_path,
+				prepared_media_fingerprint = excluded.prepared_media_fingerprint,
+				prepared_generation = excluded.prepared_generation,
+				committed_at = excluded.committed_at
+		`, bound.SourcePath, bound.PreparedMediaFingerprint, bound.PreparedGeneration,
+			commit.WorkflowID, commit.MediaID, commit.Revision, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return fmt.Errorf("db reusable media: record commit: %w", err)
 		}
 		return nil
 	})

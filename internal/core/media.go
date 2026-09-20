@@ -112,6 +112,12 @@ type menuImageContent struct {
 	contentType string
 	bytes       []byte
 	discID      string
+	attachment  api.MediaAttachment
+}
+
+type acceptedMenuImage struct {
+	image      api.ScreenshotImage
+	attachment api.MediaAttachment
 }
 
 // importAcceptedMenuImageContents persists browser/API-uploaded image bytes in
@@ -120,7 +126,7 @@ func (m *mediaModule) importAcceptedMenuImageContents(
 	ctx context.Context,
 	input api.MediaPlanInput,
 	contents []menuImageContent,
-) (api.DVDMenuSubject, []api.ScreenshotImage, error) {
+) (api.DVDMenuSubject, []acceptedMenuImage, error) {
 	if len(contents) == 0 {
 		return api.DVDMenuSubject{}, nil, nil
 	}
@@ -140,7 +146,7 @@ func (m *mediaModule) importAcceptedMenuImageContents(
 		return api.DVDMenuSubject{}, nil, fmt.Errorf("core: create release tmp dir: %w", err)
 	}
 	now := time.Now().UTC()
-	images := make([]api.ScreenshotImage, 0, len(contents))
+	images := make([]acceptedMenuImage, 0, len(contents))
 	records := make([]api.Screenshot, 0, len(contents))
 	selections := make([]api.ScreenshotFinalSelection, 0, len(contents))
 	created := make([]string, 0, len(contents))
@@ -180,7 +186,7 @@ func (m *mediaModule) importAcceptedMenuImageContents(
 			Purpose:   api.ScreenshotPurposeMenu,
 			SizeBytes: int64(len(content.bytes)),
 		}
-		images = append(images, image)
+		images = append(images, acceptedMenuImage{image: image, attachment: content.attachment})
 		records = append(records, api.Screenshot{
 			DiscID:     discID,
 			ImagePath:  destPath,

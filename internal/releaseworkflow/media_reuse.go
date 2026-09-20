@@ -69,14 +69,12 @@ func (m *Module) recordReusableMedia(
 	if !ok || media == nil {
 		return nil
 	}
-	if checker, ok := recorder.(ReusableMediaCommitChecker); ok {
-		committed, err := checker.HasReusableMediaCommit(ctx, *media)
-		if err != nil {
-			return fmt.Errorf("release workflow check reusable media receipt: %w", err)
-		}
-		if committed {
-			return nil
-		}
+	committed, err := recorder.HasReusableMediaCommit(ctx, *media)
+	if err != nil {
+		return fmt.Errorf("release workflow check reusable media receipt: %w", err)
+	}
+	if committed {
+		return nil
 	}
 	retained, err := m.private.Get(ownerID, workflowID, mediaPrivateResourceID(media.ID), now)
 	if err != nil {
@@ -107,14 +105,12 @@ func (m *Module) reconcileReusableMedia(ctx context.Context, ownerID string, wor
 	if !ok || media.Revision != state.Workflow.Media.Revision {
 		return fmt.Errorf("%w: committed media snapshot is unavailable", ErrInvalidTransition)
 	}
-	if checker, ok := recorder.(ReusableMediaCommitChecker); ok {
-		committed, checkErr := checker.HasReusableMediaCommit(ctx, media)
-		if checkErr != nil {
-			return fmt.Errorf("release workflow check reusable media reconciliation: %w", checkErr)
-		}
-		if committed {
-			return nil
-		}
+	committed, checkErr := recorder.HasReusableMediaCommit(ctx, media)
+	if checkErr != nil {
+		return fmt.Errorf("release workflow check reusable media reconciliation: %w", checkErr)
+	}
+	if committed {
+		return nil
 	}
 	retained, err := m.private.Get(ownerID, workflowID, mediaPrivateResourceID(media.ID), m.clock.Now().UTC())
 	if err != nil {

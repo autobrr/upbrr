@@ -4,7 +4,6 @@
 package webserver
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -403,8 +402,8 @@ func (a *RuntimeActivator) activateResultLocked(
 	if err != nil {
 		return api.ConfigActivation{}, activationError(ActivationStageNormalize, err)
 	}
-	storedChanged := !storedKnown || !configsEqual(*stored, currentStored)
-	effectiveChanged := !configsEqual(*runtimeCfg, currentRuntime)
+	storedChanged := !storedKnown || !configValueEqual(*stored, currentStored)
+	effectiveChanged := !configValueEqual(*runtimeCfg, currentRuntime)
 	activation, activationKnown, err := a.currentActivation(ctx)
 	if err != nil {
 		return api.ConfigActivation{}, activationError(ActivationStagePersist, err)
@@ -509,12 +508,6 @@ func (a *RuntimeActivator) clearFailedActivation(ctx context.Context, activation
 		return api.ConfigActivation{}, activationError(ActivationStagePersist, fmt.Errorf("clear failed config activation: %w", err))
 	}
 	return cleared, nil
-}
-
-func configsEqual(left, right config.Config) bool {
-	leftJSON, leftErr := json.Marshal(left)
-	rightJSON, rightErr := json.Marshal(right)
-	return leftErr == nil && rightErr == nil && bytes.Equal(leftJSON, rightJSON)
 }
 
 func (a *RuntimeActivator) currentStored(ctx context.Context) (config.Config, bool, error) {

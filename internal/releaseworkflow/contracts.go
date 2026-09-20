@@ -273,14 +273,10 @@ type CompatibleMediaRestorer interface {
 	RestoreCompatible(context.Context, api.ReleaseRef, api.TrackerReleaseProjectionSet, time.Time) (api.MediaArtifactSet, RetainedMediaResource, error)
 }
 
-// ReusableMediaRecorder retains the committed selection and hosted-link state.
+// ReusableMediaRecorder retains the committed selection and hosted-link state,
+// and identifies an exact snapshot already recorded durably.
 type ReusableMediaRecorder interface {
 	RecordReusableMedia(context.Context, api.MediaArtifactSet, any) error
-}
-
-// ReusableMediaCommitChecker reports whether durable reusable associations
-// already represent one exact committed media snapshot.
-type ReusableMediaCommitChecker interface {
 	HasReusableMediaCommit(context.Context, api.MediaArtifactSet) (bool, error)
 }
 

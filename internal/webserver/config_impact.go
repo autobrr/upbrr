@@ -12,20 +12,6 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// configImpacts classifies every effective Config root into the narrowest
-// persisted workflow dependency family. DBPath is host-owned and normalized
-// before this function is called, so it is intentionally not an impact.
-func configImpacts(previous, next config.Config) []api.ConfigImpact {
-	details := configImpactDetails(previous, next)
-	impacts := make([]api.ConfigImpact, 0, len(details))
-	for _, detail := range details {
-		if !slices.Contains(impacts, detail.Kind) {
-			impacts = append(impacts, detail.Kind)
-		}
-	}
-	return impacts
-}
-
 // ConfigImpactDetails classifies an effective configuration change for the
 // durable activation transaction shared by the settings UI and CLI imports.
 func ConfigImpactDetails(previous, next config.Config) []api.ConfigImpactDetail {

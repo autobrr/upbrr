@@ -7,8 +7,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
@@ -453,7 +455,7 @@ func ensureHistoryTempTargetsUnprotected(
 		}
 		protectedRoots = append(protectedRoots, reuseRoot)
 	}
-	for _, target := range append(append([]string(nil), artifactPaths...), mapKeys(tmpDirs)...) {
+	for _, target := range append(append([]string(nil), artifactPaths...), slices.Collect(maps.Keys(tmpDirs))...) {
 		for _, protectedRoot := range protectedRoots {
 			if historyPathsIntersect(target, protectedRoot) {
 				return api.ErrActiveInputBusy
@@ -476,14 +478,6 @@ func ensureHistoryCleanupTargetsDoNotContainSources(files, tmpDirs, sourcePaths 
 
 func historyPathsIntersect(left, right string) bool {
 	return pathutil.SamePath(left, right) || pathutil.IsWithinRoot(left, right) || pathutil.IsWithinRoot(right, left)
-}
-
-func mapKeys(values map[string]struct{}) []string {
-	keys := make([]string, 0, len(values))
-	for value := range values {
-		keys = append(keys, value)
-	}
-	return keys
 }
 
 func compactStrings(values []string) []string {

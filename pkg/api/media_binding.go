@@ -50,10 +50,12 @@ func validReusableMediaPurpose(purpose ScreenshotPurpose) bool {
 	return purpose == ScreenshotPurposeFinal || purpose == ScreenshotPurposeMenu
 }
 
-// MediaReuseRepository persists and retrieves only strong reusable media
-// evidence. It never grants access to prior workflow resources or approvals.
+// MediaReuseRepository atomically records strong reusable-media evidence and
+// its exact final workflow snapshot. It never grants access to prior workflow
+// resources or approvals.
 type MediaReuseRepository interface {
-	ReplaceReusableMediaAssets(context.Context, PreparedMediaBinding, MediaCompatibilityKey, []ReusableMediaAsset) error
+	CommitReusableMedia(context.Context, PreparedMediaBinding, MediaCompatibilityKey, []ReusableMediaAsset, ReusableMediaCommit) error
+	HasReusableMediaCommit(context.Context, ReusableMediaCommit) (bool, error)
 	LoadReusableMediaAssets(context.Context, MediaCompatibilityKey) ([]ReusableMediaAsset, error)
 	DeleteReusableMediaAssets(context.Context, PreparedMediaBinding, []string) error
 }
@@ -69,13 +71,6 @@ type ReusableMediaCommit struct {
 // Valid reports whether the commit can identify one immutable media snapshot.
 func (c ReusableMediaCommit) Valid() bool {
 	return c.WorkflowID != "" && c.MediaID != "" && c.Revision > 0
-}
-
-// MediaReuseCommitRepository atomically records reusable associations and the
-// exact final snapshot that they represent.
-type MediaReuseCommitRepository interface {
-	CommitReusableMedia(context.Context, PreparedMediaBinding, MediaCompatibilityKey, []ReusableMediaAsset, ReusableMediaCommit) error
-	HasReusableMediaCommit(context.Context, ReusableMediaCommit) (bool, error)
 }
 
 // PreparedMediaBinding identifies repository media for one exact prepared generation.

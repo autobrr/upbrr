@@ -137,7 +137,7 @@ func TestApplyConfigImpactTrackerLanesPreservesUnaffectedProjection(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	updated, err := ApplyConfigImpact(record, api.ConfigImpactDetail{Kind: api.ConfigImpactTrackers, TrackerIDs: []api.TrackerID{"ALPHA"}})
+	updated, err := ApplyConfigImpact(record, api.ConfigImpactDetail{Kind: api.ConfigImpactTrackers, TrackerIDs: []api.TrackerID{" alpha ", "ALPHA", " "}})
 	if err != nil {
 		t.Fatal(err)
 	}

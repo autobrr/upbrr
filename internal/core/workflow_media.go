@@ -695,9 +695,6 @@ func (b workflowMediaBuilder) Build(
 		}
 	}
 	indexWorkflowMediaArtifacts(&privateArtifacts, snapshot)
-	if err := b.persistReusableWorkflowMedia(ctx, snapshot, privateArtifacts); err != nil {
-		return api.MediaArtifactSet{}, nil, err
-	}
 	applyWorkflowMediaMinimums(&snapshot, projectedScreenshots, projectedDVDMenus)
 	return snapshot, privateArtifacts, nil
 }
@@ -1058,9 +1055,6 @@ func (b workflowMediaBuilder) RestoreCompatible(
 		return api.MediaArtifactSet{}, nil, nil
 	}
 	rebuildWorkflowMediaLocalSlices(&retained, snapshot)
-	if err := b.persistReusableWorkflowMedia(ctx, snapshot, retained); err != nil {
-		return api.MediaArtifactSet{}, nil, err
-	}
 	requiredScreenshots, requiredMenus := projectedMediaRequirements(projections.Projections)
 	applyWorkflowMediaMinimums(&snapshot, requiredScreenshots, requiredMenus)
 	if attempts, prepared := b.restoredHostedImageAttempts(ctx, release, snapshot, retained, projections.Projections); prepared {
@@ -1272,11 +1266,7 @@ func (b workflowMediaBuilder) HasReusableMediaCommit(ctx context.Context, snapsh
 	if b.media == nil || b.media.mediaReuse == nil {
 		return false, nil
 	}
-	repository, ok := b.media.mediaReuse.(api.MediaReuseCommitRepository)
-	if !ok {
-		return false, nil
-	}
-	committed, err := repository.HasReusableMediaCommit(ctx, api.ReusableMediaCommit{
+	committed, err := b.media.mediaReuse.HasReusableMediaCommit(ctx, api.ReusableMediaCommit{
 		WorkflowID: snapshot.WorkflowID,
 		MediaID:    snapshot.ID,
 		Revision:   snapshot.Revision,
@@ -1398,6 +1388,7 @@ func (b workflowMediaBuilder) Attach(
 			contentType: attachment.Content.ContentType,
 			bytes:       append([]byte(nil), attachment.Content.Bytes...),
 			discID:      attachment.Attachment.DiscID,
+			attachment:  attachment.Attachment,
 		})
 	}
 	subject, images, err := b.media.importAcceptedMenuImageContents(ctx, api.MediaPlanInput{Release: release}, contents)
@@ -1410,12 +1401,13 @@ func (b workflowMediaBuilder) Attach(
 	for _, image := range retained.ArtifactImages {
 		knownPaths[strings.ToLower(filepath.Clean(image.Path))] = struct{}{}
 	}
-	for index, image := range images {
+	for _, accepted := range images {
+		image := accepted.image
 		pathKey := strings.ToLower(filepath.Clean(image.Path))
 		if _, exists := knownPaths[pathKey]; exists {
 			continue
 		}
-		attachment := attachments[index].Attachment
+		attachment := accepted.attachment
 		source := "attached-screenshot"
 		selectionSource := "comparison"
 		if attachment.Kind == api.MediaArtifactDVDMenu {
@@ -1437,9 +1429,6 @@ func (b workflowMediaBuilder) Attach(
 		knownPaths[pathKey] = struct{}{}
 	}
 	rebuildWorkflowMediaLocalSlices(&retained, snapshot)
-	if err := b.persistReusableWorkflowMedia(ctx, snapshot, retained); err != nil {
-		return api.MediaArtifactSet{}, nil, err
-	}
 	return snapshot, retained, nil
 }
 
@@ -1702,9 +1691,6 @@ func (b workflowMediaBuilder) UploadImages(
 		delete(failedHosts, host)
 	}
 	snapshot.FailedHosts = sortedNonEmptyKeys(failedHosts)
-	if err := b.persistReusableWorkflowMedia(ctx, snapshot, retained); err != nil {
-		return api.MediaArtifactSet{}, nil, nil, err
-	}
 	return snapshot, retained, attempts, nil
 }
 
@@ -1772,14 +1758,8 @@ func (b workflowMediaBuilder) persistReusableWorkflowMedia(
 		MediaID:    snapshot.ID,
 		Revision:   snapshot.Revision,
 	}
-	if commitRepository, ok := repository.(api.MediaReuseCommitRepository); ok && commit.Valid() {
-		if err := commitRepository.CommitReusableMedia(ctx, binding, binding.CompatibilityKey, assets, commit); err != nil {
-			return fmt.Errorf("workflow media commit reusable media: %w", err)
-		}
-		return nil
-	}
-	if err := repository.ReplaceReusableMediaAssets(ctx, binding, binding.CompatibilityKey, assets); err != nil {
-		return fmt.Errorf("workflow media save reusable assets: %w", err)
+	if err := repository.CommitReusableMedia(ctx, binding, binding.CompatibilityKey, assets, commit); err != nil {
+		return fmt.Errorf("workflow media commit reusable media: %w", err)
 	}
 	return nil
 }
