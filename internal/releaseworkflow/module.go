@@ -1686,11 +1686,25 @@ func (m *Module) convergeCompletedOperationCheckpoint(
 	if work.CompletedAt == nil {
 		return false, nil
 	}
+	lock := m.operationLock(record.OperationID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	// A completed checkpoint is immutable, but polling may have loaded the
+	// receipt before the worker advanced it. Reload under the completion lock.
+	current, err := m.operations.LoadOperation(ctx, record.OwnerID, record.WorkflowID, record.OperationID)
+	if err != nil {
+		return false, fmt.Errorf("release workflow reload operation for checkpoint convergence: %w", err)
+	}
+	record = current
+	if !workflowOperationActive(record.Status.Status) {
+		return true, nil
+	}
 	checkpoint, err := completedOperationCheckpoint(record, work)
 	if err != nil {
 		return false, err
 	}
-	if err := m.publishCompletedOperationCheckpoint(ctx, record, checkpoint); err != nil {
+	if err := m.publishCompletedOperationCheckpointLocked(ctx, record, checkpoint); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -1705,6 +1719,14 @@ func (m *Module) publishCompletedOperationCheckpoint(
 	lock.Lock()
 	defer lock.Unlock()
 
+	return m.publishCompletedOperationCheckpointLocked(ctx, record, checkpoint)
+}
+
+func (m *Module) publishCompletedOperationCheckpointLocked(
+	ctx context.Context,
+	record api.ReleaseWorkflowOperationRecord,
+	checkpoint api.WorkflowOperationStatus,
+) error {
 	current, err := m.operations.LoadOperation(ctx, record.OwnerID, record.WorkflowID, record.OperationID)
 	if err != nil {
 		return fmt.Errorf("release workflow load completed operation checkpoint: %w", err)
