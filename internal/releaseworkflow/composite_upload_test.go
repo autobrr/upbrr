@@ -2036,3 +2036,16 @@ func waitCompositeUploadTestOperation(
 	current.Operation = &operation
 	return current
 }
+
+func TestCompositeUploadResultFallsBackToDuplicateAssessment(t *testing.T) {
+	result := CommandResult{
+		Workflow: api.ReleaseWorkflow{ID: "workflow-duplicates", Revision: 7},
+		Dupes:    &api.DupeAssessment{ID: "dupes-duplicates", Revision: 6},
+	}
+
+	got := compositeUploadResult(result)
+	if got == nil || got.Kind != api.WorkflowOperationResultDupes || got.RefID != "dupes-duplicates" ||
+		got.RefRevision != 6 || got.WorkflowRevision != 7 {
+		t.Fatalf("duplicate composite result = %#v", got)
+	}
+}

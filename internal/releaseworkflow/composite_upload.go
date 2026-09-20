@@ -1742,6 +1742,13 @@ func compositeUploadResult(result CommandResult) *api.WorkflowOperationResult {
 			RefID:            string(result.DryRun.ID),
 			RefRevision:      result.DryRun.Revision,
 		}
+	case result.Dupes != nil:
+		return &api.WorkflowOperationResult{
+			Kind:             api.WorkflowOperationResultDupes,
+			WorkflowRevision: result.Workflow.Revision,
+			RefID:            string(result.Dupes.ID),
+			RefRevision:      result.Dupes.Revision,
+		}
 	default:
 		return nil
 	}
