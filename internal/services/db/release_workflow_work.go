@@ -81,6 +81,9 @@ func (r *SQLiteRepository) ClaimReleaseWorkflowWork(
 		return err
 	}
 	return r.withWriteTx(ctx, "claim release workflow work", func(tx *sql.Tx) error {
+		if err := requireWorkflowInputMutation(ctx, tx, record.OwnerID, record.WorkflowID, false); err != nil {
+			return err
+		}
 		var leaseOwner string
 		var leaseExpiresAt string
 		var completedAt sql.NullString
@@ -136,7 +139,7 @@ func (r *SQLiteRepository) RenewReleaseWorkflowWork(
 	if err := validateReleaseWorkflowWorkRecord(record, false); err != nil {
 		return err
 	}
-	result, err := r.execWrite(ctx, "renew release workflow work", `
+	result, err := r.execWorkflowInputWrite(ctx, "renew release workflow work", record.OwnerID, record.WorkflowID, `
 		UPDATE release_workflow_work
 		SET lease_expires_at = ?, updated_at = ?
 		WHERE owner_id = ? AND workflow_id = ? AND operation_id = ?
@@ -157,7 +160,7 @@ func (r *SQLiteRepository) CheckpointReleaseWorkflowWork(
 	if err := validateReleaseWorkflowWorkRecord(record, false); err != nil {
 		return err
 	}
-	result, err := r.execWrite(ctx, "checkpoint release workflow work", `
+	result, err := r.execWorkflowInputWrite(ctx, "checkpoint release workflow work", record.OwnerID, record.WorkflowID, `
 		UPDATE release_workflow_work
 		SET lease_expires_at = ?, checkpoint_json = ?, updated_at = ?
 		WHERE owner_id = ? AND workflow_id = ? AND operation_id = ?
@@ -170,7 +173,8 @@ func (r *SQLiteRepository) CheckpointReleaseWorkflowWork(
 	return requireSingleReleaseWorkflowWorkRow(result)
 }
 
-// CompleteReleaseWorkflowWork stores the final checkpoint and releases the work lease.
+// CompleteReleaseWorkflowWork stores the final checkpoint, fences unresolved
+// effects as unknown, and releases the work lease in one transaction.
 func (r *SQLiteRepository) CompleteReleaseWorkflowWork(
 	ctx context.Context,
 	record api.ReleaseWorkflowWorkRecord,
@@ -178,17 +182,25 @@ func (r *SQLiteRepository) CompleteReleaseWorkflowWork(
 	if err := validateReleaseWorkflowWorkRecord(record, true); err != nil {
 		return err
 	}
-	result, err := r.execWrite(ctx, "complete release workflow work", `
+	return r.withWriteTx(ctx, "complete release workflow work", func(tx *sql.Tx) error {
+		if err := requireWorkflowInputMutation(ctx, tx, record.OwnerID, record.WorkflowID, true); err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, `
 		UPDATE release_workflow_work
 		SET lease_expires_at = ?, checkpoint_json = ?, updated_at = ?, completed_at = ?
 		WHERE owner_id = ? AND workflow_id = ? AND operation_id = ?
 			AND lease_owner = ? AND completed_at IS NULL
 	`, formatWorkflowStateTime(record.LeaseExpiresAt), record.Checkpoint, formatWorkflowStateTime(record.UpdatedAt),
-		formatWorkflowStateTime(*record.CompletedAt), record.OwnerID, record.WorkflowID, record.OperationID, record.LeaseOwner)
-	if err != nil {
-		return err
-	}
-	return requireSingleReleaseWorkflowWorkRow(result)
+			formatWorkflowStateTime(*record.CompletedAt), record.OwnerID, record.WorkflowID, record.OperationID, record.LeaseOwner)
+		if err != nil {
+			return fmt.Errorf("db complete release workflow work: %w", err)
+		}
+		if err := requireSingleReleaseWorkflowWorkRow(result); err != nil {
+			return err
+		}
+		return markReleaseWorkflowOperationEffectsUnknown(ctx, tx, record.OwnerID, record.WorkflowID, record.OperationID, *record.CompletedAt)
+	})
 }
 
 func validateReleaseWorkflowWorkRecord(record api.ReleaseWorkflowWorkRecord, terminal bool) error {

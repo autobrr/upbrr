@@ -536,12 +536,24 @@ func (r *secretRoundTripRepo) LoadFullConfig(_ context.Context, dest any) error 
 	if r.saved == nil {
 		return errors.New("no saved config")
 	}
+	if raw, ok := dest.(*json.RawMessage); ok {
+		payload, err := json.Marshal(r.saved)
+		if err != nil {
+			return fmt.Errorf("marshal config snapshot: %w", err)
+		}
+		*raw = payload
+		return nil
+	}
 	out, ok := dest.(*Config)
 	if !ok {
 		return errors.New("unexpected destination type")
 	}
 	*out = *r.saved
 	return nil
+}
+
+func (r *secretRoundTripRepo) SaveFullConfigIfUnchanged(ctx context.Context, cfg any, _ json.RawMessage) error {
+	return r.SaveFullConfig(ctx, cfg)
 }
 
 func (r *jsonRoundTripRepo) SaveFullConfig(_ context.Context, cfg any) error {

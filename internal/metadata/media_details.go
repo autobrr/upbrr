@@ -200,6 +200,9 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	}
 
 	meta = s.applyBlurayMetadata(ctx, meta, bdinfo)
+	if err := ctx.Err(); err != nil {
+		return preparationstate.State{}, fmt.Errorf("metadata: blu-ray provider refresh canceled: %w", err)
+	}
 	if s.logger != nil && meta.ProviderMetadata.Bluray != nil {
 		s.logger.Debugf(
 			"metadata: blu-ray.com candidates=%d selected=%q score=%.1f threshold=%.1f",

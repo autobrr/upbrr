@@ -21,6 +21,10 @@ func (s *Service) CollectPreparationEvidence(ctx context.Context, request prepar
 		return preparationstate.State{}, err
 	}
 	state, err = collectPreparationStage(ctx, api.PreparationPhaseClientDiscovery, func() (preparationstate.State, error) {
+		if request.RetainedClientEvidence != nil {
+			applyClientEvidenceSnapshot(&state, *request.RetainedClientEvidence)
+			return state, nil
+		}
 		return s.collectClientEvidence(ctx, request.Input, state)
 	})
 	if err != nil {

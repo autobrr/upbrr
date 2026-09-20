@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -319,6 +320,7 @@ type stubTMDB struct {
 	searchFn        func(tmdb.SearchInput) (tmdb.SearchOutcome, error)
 	findFn          func(tmdb.FindInput) (tmdb.FindResult, error)
 	metadataFn      func(tmdb.MetadataInput) (tmdb.MetadataResult, error)
+	metadataCtxFn   func(context.Context, tmdb.MetadataInput) (tmdb.MetadataResult, error)
 	dailySeason     int
 	dailyEpisode    int
 	dailyErr        error
@@ -367,9 +369,12 @@ func (s *stubTMDB) SearchID(_ context.Context, input tmdb.SearchInput) (tmdb.Sea
 	return s.searchOutcome, nil
 }
 
-func (s *stubTMDB) FetchMetadata(_ context.Context, input tmdb.MetadataInput) (tmdb.MetadataResult, error) {
+func (s *stubTMDB) FetchMetadata(ctx context.Context, input tmdb.MetadataInput) (tmdb.MetadataResult, error) {
 	s.metaCalls++
 	s.metaInputs = append(s.metaInputs, input)
+	if s.metadataCtxFn != nil {
+		return s.metadataCtxFn(ctx, input)
+	}
 	if s.metadataFn != nil {
 		return s.metadataFn(input)
 	}
@@ -579,6 +584,149 @@ func (s *stubTVmaze) GetEpisodeByNumber(_ context.Context, _, season, episode in
 func (s *stubTVmaze) GetEpisodeByDate(_ context.Context, _ int, _ string) (*tvmaze.EpisodeData, error) {
 	s.episodeDateCalls++
 	return nil, nil
+}
+
+func TestResolveExternalIDsExplicitRefreshReconcilesProvidersWithoutRetainedAuthority(t *testing.T) {
+	const sourcePath = "/media/Example.Movie.2026.1080p-GRP.mkv"
+	cachedIdentity := api.ExternalIdentity{
+		SourcePath: sourcePath,
+		TMDBID:     10,
+		IMDBID:     20,
+		Category:   api.CanonicalCategoryMovie,
+		Provenance: api.IdentityProvenanceSet{
+			TMDB: api.IdentityProvenancePersisted,
+			IMDB: api.IdentityProvenancePersisted,
+		},
+	}
+	cachedMetadata := api.SourceScopedMetadata{
+		SourcePath: sourcePath,
+		TMDB:       &api.TMDBMetadata{
+TMDBID: 10,
+ Category: "MOVIE",
+ Title: "Retained title",
+},
+		IMDB:       &api.IMDBMetadata{IMDBID: 20, Title: "Retained title"},
+	}
+	base := preparationstate.State{
+		SourcePath:        sourcePath,
+		StoredDataFresh:   true,
+		Identity:          cachedIdentity,
+		ProviderMetadata:  cachedMetadata,
+		MediaInfoTMDBID:   10,
+		MediaInfoIMDBID:   20,
+		MediaInfoCategory: "MOVIE",
+		Release:           api.ReleaseInfo{
+Category: "MOVIE",
+ Title: "Example Movie",
+ Year: 2026,
+},
+	}
+
+	retainedTMDB := &stubTMDB{}
+	retainedIMDB := &stubIMDB{}
+	retained, err := NewService(&fakeRepo{}, WithTMDBClient(retainedTMDB), WithIMDBClient(retainedIMDB)).resolveExternalIdentity(t.Context(), base)
+	if err != nil {
+		t.Fatalf("resolve retained data: %v", err)
+	}
+	if retainedTMDB.metaCalls != 0 || retainedIMDB.infoCalls != 0 || retained.ProviderMetadata.TMDB == nil || retained.ProviderMetadata.TMDB.Title != "Retained title" {
+		t.Fatalf("ordinary collection unexpectedly refreshed retained providers: tmdb=%d imdb=%d metadata=%#v", retainedTMDB.metaCalls, retainedIMDB.infoCalls, retained.ProviderMetadata)
+	}
+
+	refreshedTMDB := &stubTMDB{metadata: tmdb.MetadataResult{
+Title: "Current title",
+ Year: 2026,
+ TMDBType: "Movie",
+}}
+	refreshedIMDB := &stubIMDB{info: imdb.Info{
+IMDbID: "tt0000020",
+ Title: "Current title",
+ Year: 2026,
+}}
+	service := NewService(&fakeRepo{}, WithTMDBClient(refreshedTMDB), WithIMDBClient(refreshedIMDB))
+	base.ExternalFreshness = api.ExternalFreshnessRefresh
+
+	for refresh := 1; refresh <= 2; refresh++ {
+		result, resolveErr := service.resolveExternalIdentity(t.Context(), base)
+		if resolveErr != nil {
+			t.Fatalf("refresh %d: %v", refresh, resolveErr)
+		}
+		if refreshedTMDB.metaCalls != refresh || refreshedIMDB.infoCalls != refresh {
+			t.Fatalf("refresh %d provider calls tmdb=%d imdb=%d", refresh, refreshedTMDB.metaCalls, refreshedIMDB.infoCalls)
+		}
+		if result.Identity.Provenance.TMDB != api.IdentityProvenanceMediaInfo || result.Identity.Provenance.IMDB != api.IdentityProvenanceMediaInfo {
+			t.Fatalf("refresh %d retained persisted provider identity: %#v", refresh, result.Identity.Provenance)
+		}
+		if result.ProviderMetadata.TMDB == nil || result.ProviderMetadata.TMDB.Title != "Current title" ||
+			result.ProviderMetadata.IMDB == nil || result.ProviderMetadata.IMDB.Title != "Current title" {
+			t.Fatalf("refresh %d provider metadata = %#v", refresh, result.ProviderMetadata)
+		}
+	}
+}
+
+func TestResolveExternalIDsExplicitRefreshDoesNotRetainFailedProviderAuthority(t *testing.T) {
+	const sourcePath = "/media/Example.Movie.2026.1080p-GRP.mkv"
+	tmdbClient := &stubTMDB{metadataErr: errors.New("provider unavailable")}
+	result, err := NewService(&fakeRepo{}, WithTMDBClient(tmdbClient)).resolveExternalIdentity(t.Context(), preparationstate.State{
+		SourcePath:        sourcePath,
+		ExternalFreshness: api.ExternalFreshnessRefresh,
+		StoredDataFresh:   true,
+		Identity: api.ExternalIdentity{
+			SourcePath: sourcePath,
+			TMDBID:     10,
+			Category:   api.CanonicalCategoryMovie,
+			Provenance: api.IdentityProvenanceSet{TMDB: api.IdentityProvenancePersisted},
+		},
+		ProviderMetadata: api.SourceScopedMetadata{
+			SourcePath: sourcePath,
+			TMDB:       &api.TMDBMetadata{
+TMDBID: 10,
+ Category: "MOVIE",
+ Title: "Retained title",
+},
+		},
+		MediaInfoTMDBID:   10,
+		MediaInfoCategory: "MOVIE",
+		Release:           api.ReleaseInfo{
+Category: "MOVIE",
+ Title: "Example Movie",
+ Year: 2026,
+},
+	})
+	if err != nil {
+		t.Fatalf("refresh outage: %v", err)
+	}
+	if tmdbClient.metaCalls != 1 {
+		t.Fatalf("tmdb refresh calls = %d, want 1", tmdbClient.metaCalls)
+	}
+	if result.Identity.TMDBID != 0 || result.ProviderMetadata.TMDB != nil {
+		t.Fatalf("failed refresh retained TMDB authority: identity=%#v metadata=%#v", result.Identity, result.ProviderMetadata.TMDB)
+	}
+	if !slices.Contains(result.LookupWarnings, "TMDB refresh failed; dependent metadata is unavailable until it succeeds.") {
+		t.Fatalf("refresh outage warnings = %#v", result.LookupWarnings)
+	}
+}
+
+func TestResolveExternalIDsExplicitRefreshPropagatesCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	tmdbClient := &stubTMDB{metadataCtxFn: func(_ context.Context, _ tmdb.MetadataInput) (tmdb.MetadataResult, error) {
+		cancel()
+		return tmdb.MetadataResult{}, context.Canceled
+	}}
+	_, err := NewService(&fakeRepo{}, WithTMDBClient(tmdbClient)).resolveExternalIdentity(ctx, preparationstate.State{
+		SourcePath:        "/media/Example.Movie.2026.1080p-GRP.mkv",
+		ExternalFreshness: api.ExternalFreshnessRefresh,
+		MediaInfoTMDBID:   10,
+		MediaInfoCategory: "MOVIE",
+		Release:           api.ReleaseInfo{
+Category: "MOVIE",
+ Title: "Example Movie",
+ Year: 2026,
+},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("refresh cancellation error = %v, want context canceled", err)
+	}
 }
 
 func TestResolveExternalIDsPrecedence(t *testing.T) {

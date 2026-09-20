@@ -25,6 +25,7 @@ const uploadFacet = (
     uploadStatus: "idle",
     dryRunResult: null,
     result: null,
+    submissionExclusions: [],
     error: "",
     ...view,
   },
@@ -86,6 +87,64 @@ describe("TrackerUploadPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start upload" }));
     expect(runDryRun).toHaveBeenCalledOnce();
     expect(start).toHaveBeenCalledOnce();
+  });
+
+  it("renders submission exclusions and suppresses actions when every tracker is excluded", () => {
+    const runDryRun = vi.fn(async () => true);
+    const start = vi.fn(async () => true);
+    renderPage(
+      uploadFacet(
+        {
+          selectedTrackers: ["AITHER", "BLU"],
+          uploadStatus: "ready",
+          submissionExclusions: [
+            {
+              trackerId: "AITHER",
+              reason: "already_uploaded",
+              confirmedAt: "2026-09-18T10:00:00Z",
+            },
+            {
+              trackerId: "BLU",
+              reason: "already_uploaded",
+              confirmedAt: "2026-09-18T11:00:00Z",
+            },
+          ],
+        },
+        { runDryRun, start },
+      ),
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "All selected trackers were already uploaded. No upload is needed.",
+    );
+    expect(screen.getByLabelText("Submission exclusions")).toHaveTextContent("AITHER");
+    expect(screen.getByLabelText("Submission exclusions")).toHaveTextContent("BLU");
+    for (const name of ["Run dry run", "Start upload"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button).toBeDisabled();
+      fireEvent.click(button);
+    }
+    expect(runDryRun).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("keeps upload actions for selected trackers without submission exclusions", () => {
+    renderPage(
+      uploadFacet({
+        selectedTrackers: ["AITHER", "BLU"],
+        submissionExclusions: [
+          {
+            trackerId: "AITHER",
+            reason: "already_uploaded",
+            confirmedAt: "2026-09-18T10:00:00Z",
+          },
+        ],
+      }),
+    );
+
+    expect(screen.getByRole("button", { name: "Run dry run" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Start upload" })).toBeEnabled();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
   it("collects questionnaire answers from current workflow projections", () => {

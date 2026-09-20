@@ -171,11 +171,19 @@ func isDevelopmentNoAuthHost(host string) bool {
 
 // Close releases session and backend resources owned by the server.
 func (s *Server) Close() error {
+	return s.CloseContext(context.Background())
+}
+
+// CloseContext releases session and backend resources owned by the server.
+func (s *Server) CloseContext(ctx context.Context) error {
+	if ctx == nil {
+		return errors.New("webserver: close context is required")
+	}
 	if s.sessions != nil {
 		s.sessions.Close()
 	}
 	if s.backend != nil {
-		_ = s.backend.Close()
+		_ = s.backend.CloseContext(ctx)
 	}
 	return nil
 }

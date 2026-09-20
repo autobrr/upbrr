@@ -13,6 +13,7 @@ import type {
   TrackerCatalog,
 } from "../types";
 import type {
+  ActiveInputSnapshot,
   AttachReleaseWorkflowMediaRequest,
   CancelReleaseWorkflowRequest,
   ContinueReleaseWorkflowRequest,
@@ -20,8 +21,12 @@ import type {
   FramePreview,
   InvalidateReleaseWorkflowTrackersRequest,
   MediaPlan,
+  OpenActiveInputRequest,
   Operation,
   PreviewReleaseWorkflowFrameRequest,
+  ReconcileActiveInputRequest,
+  RecoverLegacyActiveInputRequest,
+  ReleaseActiveInputRequest,
   ReleaseWorkflowCurrent,
   RemoveReleaseWorkflowHostedImagesRequest,
   ReorderReleaseWorkflowMediaRequest,
@@ -34,7 +39,7 @@ import type {
   UploadReleaseWorkflowImagesRequest,
   WorkflowResourceRef,
 } from "./generated/release-workflow";
-import { requestApp, requestAppForm, withBasePath } from "./client";
+import { requestApp, requestAppForm, requestAppGet, withBasePath } from "./client";
 
 type LogEntry = {
   ID: number;
@@ -44,6 +49,37 @@ type LogEntry = {
 };
 
 type ConfigImportResult = { message: string; warnings: string[] };
+
+/** Workflow projection families affected by the effective configuration change. */
+export type ConfigImpact =
+  | "provider"
+  | "trackers"
+  | "description"
+  | "screenshot_selection"
+  | "screenshot_capture"
+  | "image_hosting"
+  | "client_injection"
+  | "presentation";
+
+/** Safe activation-stage identifiers; underlying candidate data and errors stay on the server. */
+export type ConfigActivationFailureCode =
+  | "normalize"
+  | "validate_stored"
+  | "validate_runtime"
+  | "build"
+  | "cookies"
+  | "persist";
+
+/** Pollable saved-config activation state; pending or failed candidates do not replace the active generation. */
+export type ConfigActivation = Readonly<{
+  status: "active" | "pending" | "failed";
+  activeGeneration: number;
+  pendingGeneration?: number;
+  activationId?: string;
+  failureCode?: ConfigActivationFailureCode;
+  impacts: readonly ConfigImpact[];
+  updatedAt: string;
+}>;
 
 export type APITokenScope = "workflow:read" | "workflow:write" | "workflow:execute";
 
@@ -186,6 +222,19 @@ export const releaseWorkflowClient = {
     ),
 };
 
+/** Owner-scoped controller for the database's single active input. */
+export const activeInputClient = {
+  get: (signal?: AbortSignal) => requestAppGet<ActiveInputSnapshot>("GetActiveInput", { signal }),
+  open: (request: OpenActiveInputRequest, signal?: AbortSignal) =>
+    requestApp<ActiveInputSnapshot>("OpenActiveInput", request, { signal }),
+  release: (request: ReleaseActiveInputRequest, signal?: AbortSignal) =>
+    requestApp<ActiveInputSnapshot>("ReleaseActiveInput", request, { signal }),
+  recover: (request: RecoverLegacyActiveInputRequest, signal?: AbortSignal) =>
+    requestApp<ActiveInputSnapshot>("RecoverLegacyActiveInput", request, { signal }),
+  reconcile: (request: ReconcileActiveInputRequest, signal?: AbortSignal) =>
+    requestApp<ActiveInputSnapshot>("ReconcileActiveInput", request, { signal }),
+};
+
 /** Stateless generic BBCode rendering. */
 export const descriptionClient = {
   render: (raw: string, signal?: AbortSignal) =>
@@ -196,7 +245,10 @@ export const descriptionClient = {
 export const configClient = {
   get: () => requestApp<string>("GetConfig"),
   getDefault: () => requestApp<string>("GetDefaultConfig"),
-  save: (payload: string) => requestApp<void>("SaveConfig", { Payload: payload }),
+  /** Reads activation status without exposing the pending configuration. */
+  getActivation: () => requestApp<ConfigActivation>("GetConfigActivation"),
+  /** Saves a candidate and returns its activation status, which may still be pending. */
+  save: (payload: string) => requestApp<ConfigActivation>("SaveConfig", { Payload: payload }),
   exportDownload: async () => {
     const payload = await requestApp<string>("ExportConfig");
     const blob = new Blob([payload], { type: "application/json" });

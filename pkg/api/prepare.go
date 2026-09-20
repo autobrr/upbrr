@@ -24,10 +24,17 @@ const (
 
 // PrepareInput requests one canonical prepared-release generation.
 type PrepareInput struct {
-	SourcePath   string
-	Intent       PreparationIntent
-	Instructions ReleaseFactInstructions
-	Policy       PreparationPolicy
+	SourcePath string
+	// VerifiedSource is private evidence from one explicit open or refresh. It
+	// never crosses a browser transport boundary and must not be reused there.
+	VerifiedSource *VerifiedInputSource `json:"-"`
+	Intent         PreparationIntent
+	// ExternalFreshness controls whether external provider facts must be
+	// reconciled with current provider responses. It is distinct from Force,
+	// which controls complete prepared-generation reuse.
+	ExternalFreshness ExternalFreshness
+	Instructions      ReleaseFactInstructions
+	Policy            PreparationPolicy
 	// Search contains fact-producing client search choices included in compatibility.
 	Search ClientSearchPolicy
 	// Controls contains one-shot permissions excluded from compatibility.

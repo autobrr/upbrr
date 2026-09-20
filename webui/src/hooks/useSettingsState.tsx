@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import { configClient, trackerCatalogClient } from "../api/app";
+import { configClient, trackerCatalogClient, type ConfigActivationFailureCode } from "../api/app";
 import { Button } from "../components/ui/button";
 import { PillCheckbox } from "../components/ui/checkbox";
 import { Switch } from "../components/ui/switch";
@@ -20,6 +20,22 @@ import { useTrackerCatalog } from "../trackerCatalog";
 import { formatLabel, normalizeDefaultTrackerList } from "../utils/settings";
 
 type SettingsSection = { key: string; jsonKey: string; label: string };
+type ConfigActivation = Awaited<ReturnType<typeof configClient.getActivation>>;
+
+const configActivationPollIntervalMS = 1000;
+const configActivationFailureStage: Record<ConfigActivationFailureCode, string> = {
+  normalize: "configuration normalization",
+  validate_stored: "stored configuration validation",
+  validate_runtime: "runtime configuration validation",
+  build: "runtime construction",
+  cookies: "cookie loading",
+  persist: "activation persistence",
+};
+
+const configActivationFailureMessage = (failureCode?: ConfigActivationFailureCode) =>
+  `Settings could not be applied during ${
+    failureCode ? configActivationFailureStage[failureCode] : "configuration activation"
+  }. Review the settings and save again.`;
 
 const settingsInputClass =
   "h-8 rounded-md border border-white/10 bg-slate-950/45 px-2.5 text-sm text-[var(--text)] outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent-2)] focus:ring-2 focus:ring-[rgba(53,194,193,0.18)]";
@@ -635,7 +651,8 @@ const normalizeTrackersForSave = (input: ConfigMap, catalog: TrackerCatalog | nu
 /**
  * Owns settings-screen state, WebUI config loading, sensitive-value masking,
  * render helpers, and save payload construction for tabs that need config data.
- * Save payloads restore masked secrets before serialization.
+ * Save payloads restore masked secrets before serialization. Deferred activation is polled
+ * separately from saving; completion of an earlier save preserves newer unsaved edits.
  */
 export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsStateResult => {
   const { activeTab } = options;
@@ -660,6 +677,14 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   const [settingsAdvanced, setSettingsAdvanced] = useState<Record<string, boolean>>({});
   const [sensitiveValues, setSensitiveValues] = useState<Record<string, string>>({});
   const settingsMutationVersion = useRef(0);
+  const activationPollRevision = useRef(0);
+
+  useEffect(
+    () => () => {
+      activationPollRevision.current += 1;
+    },
+    [],
+  );
 
   const configuredImageHosts = useMemo(() => {
     if (!configData || !configData.ImageHosting || typeof configData.ImageHosting !== "object") {
@@ -978,7 +1003,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     });
   };
 
-  const loadSettings = useCallback(async () => {
+  const loadSettingsData = useCallback(async () => {
     clearSettingsStatus();
     const getConfig = configClient.get;
     const mutationVersion = settingsMutationVersion.current;
@@ -1012,6 +1037,84 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     }
   }, []);
 
+  const startConfigActivationMonitor = useCallback(
+    (
+      initialActivation: ConfigActivation | null,
+      mutationVersion: number,
+      restoreDraftOnFailure = false,
+    ) => {
+      const pollRevision = activationPollRevision.current + 1;
+      activationPollRevision.current = pollRevision;
+      void (async () => {
+        let current = initialActivation;
+        let sawPending = current?.status === "pending";
+        let pollError = "";
+        const waitForNextPoll = () =>
+          new Promise<void>((resolve) =>
+            window.setTimeout(resolve, configActivationPollIntervalMS),
+          );
+        const clearPollError = () => {
+          if (!pollError) return;
+          const resolvedError = pollError;
+          setSettingsError((existing) => (existing === resolvedError ? "" : existing));
+          pollError = "";
+        };
+
+        while (activationPollRevision.current === pollRevision) {
+          if (!current) {
+            try {
+              current = await configClient.getActivation();
+              if (activationPollRevision.current !== pollRevision) return;
+              clearPollError();
+            } catch (err) {
+              if (activationPollRevision.current !== pollRevision) return;
+              pollError = String(err);
+              setSettingsError(pollError);
+              await waitForNextPoll();
+              continue;
+            }
+          }
+
+          if (current.status === "active") {
+            if (sawPending) {
+              setSettingsSaved(
+                settingsMutationVersion.current === mutationVersion
+                  ? "Settings saved and applied."
+                  : "Earlier changes applied. Newer edits remain unsaved.",
+              );
+            }
+            return;
+          }
+
+          if (current.status === "failed") {
+            clearPollError();
+            setSettingsSaved("");
+            setSettingsError(configActivationFailureMessage(current.failureCode));
+            if (restoreDraftOnFailure && settingsMutationVersion.current === mutationVersion) {
+              setSettingsDirty(true);
+            }
+            return;
+          }
+
+          sawPending = true;
+          setSettingsSaved(
+            settingsMutationVersion.current === mutationVersion
+              ? "Settings saved. Waiting for the active input to close before applying."
+              : "Earlier changes saved. Newer edits remain unsaved.",
+          );
+          await waitForNextPoll();
+          current = null;
+        }
+      })();
+    },
+    [],
+  );
+
+  const loadSettings = useCallback(() => {
+    startConfigActivationMonitor(null, settingsMutationVersion.current);
+    return loadSettingsData();
+  }, [loadSettingsData, startConfigActivationMonitor]);
+
   const handleSaveSettings = async () => {
     clearSettingsStatus();
     const saveConfig = configClient.save;
@@ -1023,14 +1126,31 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     }
     setSettingsLoading(true);
     try {
-      await saveConfig(payload);
+      const activation = await saveConfig(payload);
       if (settingsMutationVersion.current === mutationVersion) {
         const masked = maskSensitiveConfig(JSON.parse(payload) as ConfigMap);
         setConfigData(masked.masked);
         setSensitiveValues(masked.originals);
-        markSettingsSaved("Settings saved and applied.");
+        if (activation.status === "active") {
+          markSettingsSaved("Settings saved and applied.");
+        } else if (activation.status === "pending") {
+          markSettingsSaved(
+            "Settings saved. Waiting for the active input to close before applying.",
+          );
+        } else {
+          setSettingsSaved("");
+          setSettingsDirty(true);
+          setSettingsError(configActivationFailureMessage(activation.failureCode));
+        }
+      } else if (activation.status === "failed") {
+        setSettingsError(configActivationFailureMessage(activation.failureCode));
       } else {
         setSettingsSaved("Earlier changes saved. Newer edits remain unsaved.");
+      }
+      if (activation.status === "pending") {
+        startConfigActivationMonitor(activation, mutationVersion, true);
+      } else {
+        activationPollRevision.current += 1;
       }
     } catch (err) {
       setSettingsError(String(err));
