@@ -59,6 +59,10 @@ func TestExtractConfigDict(t *testing.T) {
 			name:  "annotated config assignment",
 			input: `config: dict[str, Any] = {"DEFAULT": {}}`,
 		},
+		{
+			name:  "annotated config assignment with equals in string literal",
+			input: `config: typing.Annotated[dict[str, Any], "x=y"] = {"DEFAULT": {}}`,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

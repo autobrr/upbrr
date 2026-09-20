@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -253,11 +254,37 @@ func migrateTrackers(legacyTrackers map[string]any, template *config.Config, out
 		knownTrackers[name] = true
 	}
 
-	for trackerName, raw := range legacyTrackers {
-		if trackerName == "default_trackers" || trackerName == "preferred_tracker" {
+	trackerNames := make([]string, 0, len(legacyTrackers))
+	for trackerName := range legacyTrackers {
+		if trackerName != "default_trackers" && trackerName != "preferred_tracker" {
+			trackerNames = append(trackerNames, trackerName)
+		}
+	}
+	sort.Strings(trackerNames)
+
+	selectedTrackers := make(map[string]any, len(trackerNames))
+	selectedSources := make(map[string]string, len(trackerNames))
+	for _, sourceName := range trackerNames {
+		trackerName := canonicalLegacyTrackerName(sourceName)
+		if previousSource, exists := selectedSources[trackerName]; exists {
+			if strings.EqualFold(sourceName, trackerName) {
+				selectedTrackers[trackerName] = legacyTrackers[sourceName]
+				selectedSources[trackerName] = sourceName
+			}
+			warnings = append(warnings, fmt.Sprintf("duplicate legacy tracker entries canonicalized as %s: using %s over %s", trackerName, selectedSources[trackerName], previousSource))
 			continue
 		}
-		trackerName = canonicalLegacyTrackerName(trackerName)
+		selectedTrackers[trackerName] = legacyTrackers[sourceName]
+		selectedSources[trackerName] = sourceName
+	}
+
+	canonicalNames := make([]string, 0, len(selectedTrackers))
+	for trackerName := range selectedTrackers {
+		canonicalNames = append(canonicalNames, trackerName)
+	}
+	sort.Strings(canonicalNames)
+	for _, trackerName := range canonicalNames {
+		raw := selectedTrackers[trackerName]
 		trackerValues, ok := raw.(map[string]any)
 		if !ok {
 			continue

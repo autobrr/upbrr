@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/autobrr/upbrr/internal/config"
 )
 
 func TestCoerceToBool(t *testing.T) {
@@ -303,6 +305,31 @@ func TestConvertTrackerAliases(t *testing.T) {
 	}
 	if cfg.Trackers.Trackers["ASC"].APIKey != "asc-key" {
 		t.Fatal("AMIGOSSHARE API key was not migrated to ASC")
+	}
+}
+
+func TestConvertTrackerAliasCollisionPrefersCanonicalTracker(t *testing.T) {
+	legacy := &Config{
+		Trackers: map[string]any{
+			"AMIGOSSHARE": map[string]any{"api_key": "alias-key"},
+			"ASC":         map[string]any{"api_key": "canonical-key"},
+		},
+		Default:        make(map[string]any),
+		TorrentClients: make(map[string]any),
+	}
+
+	template, err := config.LoadEmbeddedDefaultConfig()
+	if err != nil {
+		t.Fatalf("load template: %v", err)
+	}
+	for range 10 {
+		cfg, _, err := Convert(legacy, template)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got := cfg.Trackers.Trackers["ASC"].APIKey; got != "canonical-key" {
+			t.Fatalf("ASC API key: got %q, want canonical-key", got)
+		}
 	}
 }
 

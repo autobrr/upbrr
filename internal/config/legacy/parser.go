@@ -103,12 +103,12 @@ func extractConfigDict(src string) (string, error) {
 
 		rest := skipWhitespaceAndComments(src[after:])
 		if len(rest) > 0 && rest[0] == ':' {
-			annotationEnd := strings.IndexByte(rest, '=')
-			if annotationEnd < 0 {
+			assignment := findPythonAssignment(rest[1:])
+			if assignment < 0 {
 				idx = after
 				continue
 			}
-			rest = rest[annotationEnd:]
+			rest = rest[assignment+1:]
 		}
 		if len(rest) == 0 || rest[0] != '=' {
 			idx = after
@@ -125,6 +125,45 @@ func extractConfigDict(src string) (string, error) {
 	}
 
 	return "", errors.New("legacy config: could not find 'config = {' assignment")
+}
+
+// findPythonAssignment returns the first assignment operator outside Python
+// annotation brackets, quoted strings, and line comments.
+func findPythonAssignment(src string) int {
+	depth := 0
+	var quote byte
+	for i := 0; i < len(src); i++ {
+		ch := src[i]
+		if quote != 0 {
+			if ch == '\\' {
+				i++
+				continue
+			}
+			if ch == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch ch {
+		case '\'', '"':
+			quote = ch
+		case '#':
+			for i < len(src) && src[i] != '\n' {
+				i++
+			}
+		case '[', '(', '{':
+			depth++
+		case ']', ')', '}':
+			if depth > 0 {
+				depth--
+			}
+		case '=':
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
 }
 
 // skipWhitespaceAndComments returns src with leading ASCII whitespace and
