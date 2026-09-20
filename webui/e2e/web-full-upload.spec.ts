@@ -1016,7 +1016,22 @@ test("embedded web restores captured screens and hosted URLs after reopening an 
     await expect(page.getByAltText("Screenshot 1")).toBeVisible();
     await page.getByRole("button", { name: "Upload Images" }).click();
     await expect(page.getByText("3 saved")).toBeVisible();
+    const reuseResponse = waitForAppMethod(page, "UploadReleaseWorkflowImages");
     await page.getByRole("button", { name: "Prepare required hosts (3)" }).click();
+    const reuseAccepted = await reuseResponse;
+    expect(reuseAccepted.ok()).toBe(true);
+    const reuseStarted = (await reuseAccepted.json()) as ReleaseWorkflowCurrent;
+    expect(reuseStarted.operation?.id).toBeTruthy();
+    const activeInputURL = new URL("api/app/GetActiveInput", app.url).toString();
+    await expect
+      .poll(async () => {
+        const response = await page.request.get(activeInputURL);
+        const current = await activeCurrentFromResponse(response);
+        expect(current.workflow.id).toBe(reuseStarted.workflow.id);
+        expect(current.operation?.id).toBe(reuseStarted.operation?.id);
+        return current.operation?.status;
+      })
+      .toBe("completed");
     await expect(page.getByRole("button", { name: "Prepare required hosts (3)" })).toBeEnabled();
     await expect(page.getByText("3 saved")).toBeVisible();
     expect(workspace.fake.counters.imageUploads).toBe(3);

@@ -27,6 +27,7 @@ import (
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -1093,7 +1094,7 @@ func (b workflowMediaBuilder) RestoreCompatible(
 
 // restoredHostedImageAttempts verifies restored cached links against the
 // current upload target policy without calling the image-host service. It uses
-// the same target resolver as uploadAcceptedImages, so the cache is ready only
+// the same target resolver as UploadImages, so the cache is ready only
 // when every selected local image already has a current host/scope link.
 func (b workflowMediaBuilder) restoredHostedImageAttempts(
 	ctx context.Context,
@@ -1213,27 +1214,16 @@ func (b workflowMediaBuilder) restoredHostedImageAttempt(
 	}
 	coveredSources := make(map[api.PublicResourceID]struct{}, len(selectedSources))
 	results := make([]api.MediaArtifact, 0, len(selectedSources))
-	for _, artifact := range snapshot.Artifacts {
-		if artifact.Kind != api.MediaArtifactHostedImage || !artifact.Selected {
+	for _, candidate := range b.retainedHostedImageCandidates(snapshot, retained, selectedSources) {
+		if !strings.EqualFold(strings.TrimSpace(candidate.link.Host), host) ||
+			normalizeImageUploadUsageScope(candidate.link.UsageScope) != usageScope || candidate.link.AccountScope != accountScope {
 			continue
 		}
-		link, ok := retained.HostedImages[artifact.ID]
-		if !ok || !strings.EqualFold(strings.TrimSpace(link.Host), host) ||
-			normalizeImageUploadUsageScope(link.UsageScope) != usageScope || link.AccountScope != accountScope || hostedImageURL(link) == "" {
+		if _, covered := coveredSources[candidate.sourceID]; covered {
 			continue
 		}
-		sourceID := retained.HostedSources[artifact.ID]
-		if sourceID == "" || artifact.Source != string(sourceID) {
-			continue
-		}
-		if _, selected := selectedSources[sourceID]; !selected {
-			continue
-		}
-		if _, covered := coveredSources[sourceID]; covered {
-			continue
-		}
-		coveredSources[sourceID] = struct{}{}
-		results = append(results, artifact)
+		coveredSources[candidate.sourceID] = struct{}{}
+		results = append(results, candidate.artifact)
 	}
 	if len(coveredSources) != len(selectedSources) {
 		return api.HostedImageAttempt{}, false
@@ -1267,6 +1257,151 @@ func (b workflowMediaBuilder) restoredHostedImageAttempt(
 		ArtifactIDs: slices.Clone(selectedArtifactIDs),
 		Results:     results,
 	}, true
+}
+
+type retainedHostedImageCandidate struct {
+	sourceID api.PublicResourceID
+	artifact api.MediaArtifact
+	link     api.UploadedImageLink
+}
+
+func (b workflowMediaBuilder) retainedHostedImageCandidates(
+	snapshot api.MediaArtifactSet,
+	retained workflowMediaPrivateArtifacts,
+	selectedSources map[api.PublicResourceID]struct{},
+) []retainedHostedImageCandidate {
+	candidates := make([]retainedHostedImageCandidate, 0, len(retained.HostedImages))
+	for _, artifact := range snapshot.Artifacts {
+		if artifact.Kind != api.MediaArtifactHostedImage || !artifact.Selected {
+			continue
+		}
+		link, ok := retained.HostedImages[artifact.ID]
+		if !ok || strings.TrimSpace(link.Host) == "" || hostedImageURL(link) == "" {
+			continue
+		}
+		sourceID := retained.HostedSources[artifact.ID]
+		if sourceID == "" || artifact.Source != string(sourceID) {
+			continue
+		}
+		if _, selected := selectedSources[sourceID]; !selected {
+			continue
+		}
+		accountScope, err := workflowMediaHostAccountScope(b.config, link.Host)
+		if err != nil || link.AccountScope != accountScope {
+			continue
+		}
+		candidates = append(candidates, retainedHostedImageCandidate{
+			sourceID: sourceID,
+			artifact: artifact,
+			link:     link,
+		})
+	}
+	return candidates
+}
+
+func (b workflowMediaBuilder) retainedHostedImageLinks(
+	snapshot api.MediaArtifactSet,
+	retained workflowMediaPrivateArtifacts,
+	selectedSources map[api.PublicResourceID]struct{},
+	sourceByPath map[string]api.PublicResourceID,
+	sourcePaths map[api.PublicResourceID]string,
+	targets []trackers.ImageUploadTarget,
+) ([]api.UploadedImageLink, []api.UploadedImageLink, []api.PublicResourceID) {
+	links := make([]api.UploadedImageLink, 0, len(retained.HostedImages))
+	valid := make(map[api.PublicResourceID]struct{}, len(retained.HostedImages))
+	for _, candidate := range b.retainedHostedImageCandidates(snapshot, retained, selectedSources) {
+		pathKey := strings.ToLower(normalizedUploadImagePath(candidate.link.ImagePath))
+		if pathKey == "" || sourceByPath[pathKey] != candidate.sourceID {
+			continue
+		}
+		hostMatched, scopeMatched := retainedHostedLinkTargetMatch(candidate.link, targets)
+		if hostMatched && !scopeMatched {
+			continue
+		}
+		links = append(links, candidate.link)
+		valid[candidate.artifact.ID] = struct{}{}
+	}
+	blocked := make([]api.UploadedImageLink, 0, len(retained.HostedImages)-len(links))
+	retired := make([]api.PublicResourceID, 0, len(retained.HostedImages)-len(links))
+	for _, artifact := range snapshot.Artifacts {
+		if artifact.Kind != api.MediaArtifactHostedImage {
+			continue
+		}
+		if _, ok := valid[artifact.ID]; ok {
+			continue
+		}
+		link, ok := retained.HostedImages[artifact.ID]
+		if !ok || strings.TrimSpace(link.Host) == "" || hostedImageURL(link) == "" {
+			continue
+		}
+		mappedSource := retained.HostedSources[artifact.ID]
+		publicSource := api.PublicResourceID(artifact.Source)
+		sourceID := publicSource
+		if _, selected := selectedSources[sourceID]; !selected {
+			sourceID = mappedSource
+			if _, selected := selectedSources[sourceID]; !selected {
+				continue
+			}
+		}
+		currentPath := sourcePaths[sourceID]
+		if strings.TrimSpace(currentPath) == "" {
+			continue
+		}
+		accountScope, scopeErr := workflowMediaHostAccountScope(b.config, link.Host)
+		hostMatched, scopeMatched := retainedHostedLinkTargetMatch(link, targets)
+		validAssociation := artifact.Selected && mappedSource == sourceID && artifact.Source == string(sourceID) &&
+			scopeErr == nil && link.AccountScope == accountScope &&
+			strings.EqualFold(normalizedUploadImagePath(link.ImagePath), normalizedUploadImagePath(currentPath)) &&
+			(!hostMatched || scopeMatched)
+		if validAssociation {
+			continue
+		}
+		if artifact.Selected {
+			retired = append(retired, artifact.ID)
+		}
+		if hostMatched {
+			for _, target := range targets {
+				if !strings.EqualFold(strings.TrimSpace(target.Host), strings.TrimSpace(link.Host)) {
+					continue
+				}
+				blockedLink := link
+				blockedLink.ImagePath = currentPath
+				blockedLink.UsageScope = target.UsageScope
+				blocked = append(blocked, blockedLink)
+			}
+			continue
+		}
+		blockedLink := link
+		blockedLink.ImagePath = currentPath
+		blocked = append(blocked, blockedLink)
+	}
+	return links, blocked, retired
+}
+
+func retainedHostedLinkTargetMatch(link api.UploadedImageLink, targets []trackers.ImageUploadTarget) (bool, bool) {
+	hostMatched := false
+	for _, target := range targets {
+		if !strings.EqualFold(strings.TrimSpace(target.Host), strings.TrimSpace(link.Host)) {
+			continue
+		}
+		hostMatched = true
+		if strings.EqualFold(normalizeImageUploadUsageScope(target.UsageScope), normalizeImageUploadUsageScope(link.UsageScope)) {
+			return true, true
+		}
+	}
+	return hostMatched, false
+}
+
+func retireHostedMediaArtifacts(snapshot *api.MediaArtifactSet, artifactIDs []api.PublicResourceID) {
+	retired := make(map[api.PublicResourceID]struct{}, len(artifactIDs))
+	for _, artifactID := range artifactIDs {
+		retired[artifactID] = struct{}{}
+	}
+	for index := range snapshot.Artifacts {
+		if _, retire := retired[snapshot.Artifacts[index].ID]; retire {
+			snapshot.Artifacts[index].Selected = false
+		}
+	}
 }
 
 func mediaArtifactIDs(artifacts []api.MediaArtifact) []api.PublicResourceID {
@@ -1489,6 +1624,7 @@ func (b workflowMediaBuilder) UploadImages(
 	}
 	images := make([]api.ScreenshotImage, 0, len(artifactIDs))
 	sourceByPath := make(map[string]api.PublicResourceID, len(artifactIDs))
+	sourcePaths := make(map[api.PublicResourceID]string, len(artifactIDs))
 	sourcePurposeByPath := make(map[string]api.ScreenshotPurpose, len(artifactIDs))
 	for _, artifact := range snapshot.Artifacts {
 		if _, requested := selected[artifact.ID]; !requested {
@@ -1507,6 +1643,7 @@ func (b workflowMediaBuilder) UploadImages(
 		images = append(images, image)
 		pathKey := strings.ToLower(normalizedUploadImagePath(image.Path))
 		sourceByPath[pathKey] = artifact.ID
+		sourcePaths[artifact.ID] = image.Path
 		sourcePurposeByPath[pathKey] = artifact.Purpose
 	}
 	if len(images) != len(artifactIDs) {
@@ -1522,6 +1659,25 @@ func (b workflowMediaBuilder) UploadImages(
 			return strings.EqualFold(strings.TrimSpace(candidate), host)
 		})
 	}
+	imageInput := api.ImageHostingInput{
+		Release:       release,
+		Trackers:      trackerNames,
+		Host:          host,
+		ExcludedHosts: excludedHosts,
+	}
+	subject, targets, err := b.media.resolveAcceptedImageUpload(ctx, imageInput)
+	if err != nil {
+		return api.MediaArtifactSet{}, nil, nil, err
+	}
+	retainedLinks, blockedRetainedLinks, retiredHostedArtifacts := b.retainedHostedImageLinks(
+		snapshot,
+		retained,
+		selected,
+		sourceByPath,
+		sourcePaths,
+		targets,
+	)
+	retireHostedMediaArtifacts(&snapshot, retiredHostedArtifacts)
 	if !retry {
 		snapshot.Failures = slices.DeleteFunc(snapshot.Failures, func(failure api.WorkflowFailure) bool {
 			return failure.Failure.Operation == api.OperationKindImageHosting &&
@@ -1570,12 +1726,16 @@ func (b workflowMediaBuilder) UploadImages(
 			Recovery:  api.OperationRecoveryConfirm,
 		}, api.ErrReleaseWorkflowEffectAlreadySucceeded)
 	}
-	result, err := b.media.uploadAcceptedImages(ctx, api.ImageHostingInput{
-		Release:       release,
-		Trackers:      trackerNames,
-		Host:          host,
-		ExcludedHosts: excludedHosts,
-	}, images)
+	result, err := b.media.uploadImagesToTargetsWithFallback(
+		ctx,
+		subject,
+		imageInput.Host,
+		imageInput.ExcludedHosts,
+		targets,
+		images,
+		retainedLinks,
+		blockedRetainedLinks,
+	)
 	receiptErr := api.CompleteWorkflowExternalEffect(ctx, effectReceipt, err == nil)
 	if receiptErr != nil {
 		return api.MediaArtifactSet{}, nil, nil, api.NewOperationError(api.OperationFailure{
@@ -1590,11 +1750,16 @@ func (b workflowMediaBuilder) UploadImages(
 	}
 	knownHosted := make(map[string]api.MediaArtifact, len(retained.HostedImages))
 	for id, link := range retained.HostedImages {
+		sourceID := retained.HostedSources[id]
+		if sourceID == "" {
+			continue
+		}
 		for _, artifact := range snapshot.Artifacts {
-			if artifact.ID == id {
-				knownHosted[hostedImageKey(retained.HostedSources[id], link)] = artifact
-				break
+			if artifact.ID != id || artifact.Kind != api.MediaArtifactHostedImage || !artifact.Selected || artifact.Source != string(sourceID) {
+				continue
 			}
+			knownHosted[hostedImageKey(sourceID, link)] = artifact
+			break
 		}
 	}
 	attempts := make([]api.HostedImageAttempt, 0, len(result.Attempts))
@@ -1665,6 +1830,8 @@ func (b workflowMediaBuilder) UploadImages(
 			link.AccountScope = accountScope
 			key := hostedImageKey(sourceID, link)
 			if existing, duplicate := knownHosted[key]; duplicate {
+				retained.HostedImages[existing.ID] = link
+				retained.HostedSources[existing.ID] = sourceID
 				attempt.Results = append(attempt.Results, existing)
 				continue
 			}
@@ -1737,6 +1904,12 @@ func (b workflowMediaBuilder) persistReusableWorkflowMedia(
 	if !binding.Valid() || !binding.CompatibilityKey.Valid() {
 		return nil
 	}
+	hostedArtifacts := make(map[api.PublicResourceID]api.MediaArtifact, len(retained.HostedImages))
+	for _, artifact := range snapshot.Artifacts {
+		if artifact.Kind == api.MediaArtifactHostedImage && artifact.Selected {
+			hostedArtifacts[artifact.ID] = artifact
+		}
+	}
 	assets := make([]api.ReusableMediaAsset, 0, len(retained.ArtifactImages))
 	for _, artifact := range snapshot.Artifacts {
 		if artifact.Kind != api.MediaArtifactScreenshot && artifact.Kind != api.MediaArtifactDVDMenu {
@@ -1772,9 +1945,19 @@ func (b workflowMediaBuilder) persistReusableWorkflowMedia(
 			if !exists {
 				continue
 			}
-			link.AccountScope, err = workflowMediaHostAccountScope(b.config, link.Host)
-			if err != nil {
-				return fmt.Errorf("workflow media fingerprint hosted account scope: %w", err)
+			hosted, active := hostedArtifacts[hostedID]
+			if !active || hosted.Source != string(sourceID) ||
+				!strings.EqualFold(strings.TrimSpace(hosted.Host), strings.TrimSpace(link.Host)) ||
+				hosted.URL != hostedImageURL(link) ||
+				!strings.EqualFold(normalizedUploadImagePath(link.ImagePath), normalizedUploadImagePath(image.Path)) {
+				continue
+			}
+			accountScope, scopeErr := workflowMediaHostAccountScope(b.config, link.Host)
+			if scopeErr != nil {
+				return fmt.Errorf("workflow media fingerprint hosted account scope: %w", scopeErr)
+			}
+			if link.AccountScope != accountScope {
+				continue
 			}
 			asset.HostedLinks = append(asset.HostedLinks, link)
 		}
