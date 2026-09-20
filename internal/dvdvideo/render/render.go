@@ -4,6 +4,7 @@ package render
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -116,13 +117,20 @@ type Capability struct {
 }
 
 // Probe verifies the dvdvideo demuxer and every exact-coordinate menu option.
+// A failed demuxer check still returns the detected FFmpeg version.
 func Probe(ctx context.Context, runner Runner, executable string) (Capability, error) {
 	if runner == nil || strings.TrimSpace(executable) == "" {
 		return Capability{}, fmt.Errorf("%w: FFmpeg runner unavailable", ErrCapability)
 	}
+	versionOutput, versionErr := runner.Run(ctx, executable, []string{"-hide_banner", "-version"}, MaxDiagnosticBytes)
+	if versionErr != nil {
+		return Capability{}, fmt.Errorf("%w: version probe", ErrCapability)
+	}
+	version := cmp.Or(firstLine(string(versionOutput.Stdout)), firstLine(string(versionOutput.Stderr)))
+	capability := Capability{Version: version}
 	help, err := runner.Run(ctx, executable, []string{"-hide_banner", "-h", "demuxer=dvdvideo"}, MaxDiagnosticBytes)
 	if err != nil {
-		return Capability{}, fmt.Errorf("%w: demuxer probe", ErrCapability)
+		return capability, fmt.Errorf("%w: demuxer probe", ErrCapability)
 	}
 	text := string(append(append([]byte(nil), help.Stdout...), help.Stderr...))
 	fields := strings.Fields(text)
@@ -142,18 +150,10 @@ func Probe(ctx context.Context, runner Runner, executable string) (Capability, e
 		options = append(options, option)
 	}
 	if len(missing) > 0 {
-		return Capability{}, fmt.Errorf("%w: missing %s", ErrCapability, strings.Join(missing, ", "))
+		return capability, fmt.Errorf("%w: missing %s", ErrCapability, strings.Join(missing, ", "))
 	}
 	if !strings.Contains(strings.ToLower(text), "dvdvideo") {
-		return Capability{}, fmt.Errorf("%w: dvdvideo demuxer", ErrCapability)
-	}
-	versionOutput, versionErr := runner.Run(ctx, executable, []string{"-hide_banner", "-version"}, MaxDiagnosticBytes)
-	if versionErr != nil {
-		return Capability{}, fmt.Errorf("%w: version probe", ErrCapability)
-	}
-	version := firstLine(string(versionOutput.Stdout))
-	if version == "" {
-		version = firstLine(string(versionOutput.Stderr))
+		return capability, fmt.Errorf("%w: dvdvideo demuxer", ErrCapability)
 	}
 	return Capability{
 		Available: true,

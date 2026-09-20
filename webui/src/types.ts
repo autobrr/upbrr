@@ -736,6 +736,11 @@ export type WebAuthStatus = {
 export type ApplicationInfo = {
   version: string;
   buildIdentifier: string;
+  buildTime: string;
+  dependencies: Array<{
+    path: string;
+    version: string;
+  }>;
   goVersion: string;
   goos: string;
   goarch: string;

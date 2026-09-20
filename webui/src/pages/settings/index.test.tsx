@@ -141,7 +141,14 @@ describe("SettingsPage", () => {
     installAppOperationMocks({
       GetApplicationInfo: vi.fn().mockResolvedValue({
         version: "dev",
-        buildIdentifier: "example-build",
+        buildIdentifier: "abcdef123456-dirty",
+        buildTime: "2026-09-20T01:02:03Z",
+        dependencies: [
+          {
+            path: "github.com/autobrr/go-mediainfo",
+            version: "0b32d930ae1f (2026-09-11 07:21:19 UTC)",
+          },
+        ],
         goVersion: "go1.26.4",
         goos: "windows",
         goarch: "amd64",
@@ -169,6 +176,10 @@ describe("SettingsPage", () => {
     );
 
     await waitFor(() => expect(screen.getByText("phase0a-1")).toBeInTheDocument());
+    expect(screen.getByText("abcdef123456-dirty (2026-09-20)")).toBeInTheDocument();
+    expect(screen.getByText("Autobrr dependencies")).toBeInTheDocument();
+    expect(screen.getByTitle("github.com/autobrr/go-mediainfo")).toHaveTextContent("go-mediainfo");
+    expect(screen.getByText("0b32d930ae1f (2026-09-11 07:21:19 UTC)")).toBeInTheDocument();
     expect(screen.getByText("Available")).toBeInTheDocument();
     expect(screen.getByText("ffmpeg version example")).toBeInTheDocument();
     expect(

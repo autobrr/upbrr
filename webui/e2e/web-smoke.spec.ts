@@ -3,6 +3,7 @@
 
 import { expect, test } from "@playwright/test";
 import { createE2EWorkspace, startApp, type AppServer } from "./helpers/e2eHarness";
+import type { ApplicationInfo } from "../src/types";
 
 test("embedded web boots with dev auth, navigates core pages, and reports invalid paths", async ({
   page,
@@ -11,13 +12,41 @@ test("embedded web boots with dev auth, navigates core pages, and reports invali
   let app: AppServer | undefined;
   try {
     app = await startApp(workspace);
+    const applicationInfoResponse = page.waitForResponse((response) =>
+      response.url().endsWith("/api/app/GetApplicationInfo"),
+    );
     await page.goto(app.url);
     await expect(page.getByRole("heading", { name: "Build Release Name" })).toBeVisible();
+
+    const applicationInfo = (await (await applicationInfoResponse).json()) as ApplicationInfo;
+    const releaseVersion = applicationInfo.version.trim();
+    const developmentBuild = ["", "dev", "(devel)"].includes(releaseVersion.toLowerCase());
+    const expectedVersion = developmentBuild
+      ? `${applicationInfo.buildIdentifier}${applicationInfo.buildTime ? ` (${applicationInfo.buildTime.slice(0, 10)})` : ""}`
+      : releaseVersion;
+    await expect(page.getByTitle(expectedVersion)).toBeVisible();
+    await expect(page.getByRole("link", { name: "Open the autobrr Discord" })).toHaveAttribute(
+      "href",
+      "https://discord.autobrr.com",
+    );
+    await expect(page.getByRole("link", { name: "Open autobrr/upbrr on GitHub" })).toHaveAttribute(
+      "href",
+      "https://github.com/autobrr/upbrr",
+    );
 
     await page.getByRole("button", { name: "Settings" }).click();
     await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
     await page.getByRole("button", { name: "Reload" }).click();
-    await expect(page.getByText("Configuration")).toBeVisible();
+    await expect(page.getByText("Configuration", { exact: true })).toBeVisible();
+
+    const dependency = applicationInfo.dependencies.find(
+      ({ path }) => path === "github.com/autobrr/go-bdinfo",
+    );
+    expect(dependency).toBeDefined();
+    await page.getByRole("button", { name: "Application Details" }).click();
+    const dependencyName = page.getByTitle("github.com/autobrr/go-bdinfo");
+    await expect(dependencyName).toHaveText("go-bdinfo");
+    await expect(dependencyName.locator("..")).toContainText(dependency?.version ?? "");
 
     await page.getByRole("button", { name: "Logging" }).click();
     await expect(page.getByRole("heading", { name: "Logging" })).toBeVisible();

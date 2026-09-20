@@ -496,8 +496,8 @@ func newFakeRunner(t *testing.T) *fakeRunner {
 		t.Fatalf("encode background: %v", err)
 	}
 	return &fakeRunner{outputs: []render.Output{
-		{Stdout: []byte("Demuxer dvdvideo\n-menu -menu_lu -menu_vts -pgc -pg\n")},
 		{Stdout: []byte("ffmpeg version synthetic\n")},
+		{Stdout: []byte("Demuxer dvdvideo\n-menu -menu_lu -menu_vts -pgc -pg\n")},
 		{Stdout: frame.Bytes()},
 	}}
 }
