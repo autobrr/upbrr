@@ -268,8 +268,12 @@ func (s *Service) Validate(ctx context.Context, trackerID string) (status api.Tr
 		return api.TrackerAuthStatus{}, err
 	}
 	status = s.statusForSpec(ctx, spec)
+	if adapter, ok := s.adapterFor(spec.id); ok {
+		if builtIn, ok := adapter.(trackerAdapter); ok && builtIn.resolve == nil {
+			status.Message = "remote auth validation is not supported for this tracker"
+			return status, nil
+		}
 
-	if _, ok := s.adapterFor(spec.id); ok {
 		validationCtx, cancel := context.WithTimeout(ctx, trackerAuthValidationTimeout)
 		defer cancel()
 		session, ensureErr := s.EnsureSession(validationCtx, EnsureRequest{

@@ -1331,23 +1331,21 @@ func TestFFAdvertisesCookieImportWithRemoteLoginAction(t *testing.T) {
 	t.Fatal("FF capability not found")
 }
 
-func TestValidateWithoutAdapterReportsUnsupportedRemoteValidation(t *testing.T) {
-	cfg := config.Config{
-		Trackers: config.TrackersConfig{
-			Trackers: map[string]config.TrackerConfig{
-				"ASC": {},
-			},
-		},
+func TestValidateWithoutRemoteResolverKeepsStoredCookiesReady(t *testing.T) {
+	dbPath := newTrackerAuthTestDB(t)
+	if err := cookies.SaveTrackerCookieMap(context.Background(), dbPath, "ASC", map[string]string{"session": "abc"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
 	}
-	status, err := newTestService(cfg).Validate(context.Background(), "ASC")
+
+	status, err := newTestService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers:     config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"ASC": {}}},
+	}).Validate(context.Background(), "ASC")
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
-	if strings.Contains(status.Message, "succeeded") {
-		t.Fatalf("unexpected remote success message: %#v", status)
-	}
-	if !strings.Contains(status.Message, "not supported") {
-		t.Fatalf("expected unsupported remote validation message, got %#v", status)
+	if !IsReadyStatus(status) || status.LastError != "" || status.State != StateHasCookies {
+		t.Fatalf("stored cookies without remote validation must remain ready, got %#v", status)
 	}
 }
 
