@@ -246,14 +246,13 @@ func (s *Service) ImportCookies(ctx context.Context, trackerID string, fileName 
 	return status, nil
 }
 
-// Validate returns tracker auth status after a remote validation check when the
-// tracker has an adapter. Adapters without a remote resolver retain their local
-// configured or stored-cookie status because no remote validation is available.
-// Confirmed-invalid stored sessions are deleted and reported as login-required
-// status without returning an error. BTN session success remains login-required
-// until the API token needed for torrent resolution is configured. Returned
-// cookie counts and RFC3339 timestamps are rebuilt after login or deletion side
-// effects complete.
+// Validate checks tracker auth remotely when an adapter supports remote validation.
+// Adapters without a remote resolver retain their local configured or stored-cookie
+// status because no remote validation is available. Confirmed-invalid stored
+// sessions are deleted and reported as login-required status without returning
+// an error. BTN session success remains login-required until the API token
+// needed for torrent resolution is configured. Returned cookie counts and
+// RFC3339 timestamps are rebuilt after login or deletion side effects complete.
 func (s *Service) Validate(ctx context.Context, trackerID string) (status api.TrackerAuthStatus, err error) {
 	defer func() {
 		if err != nil {
