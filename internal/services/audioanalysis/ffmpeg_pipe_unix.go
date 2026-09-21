@@ -25,7 +25,7 @@ func newPCMOutputs(count int) ([]pcmOutput, error) {
 		read, write, err := os.Pipe()
 		if err != nil {
 			closePCMOutputs(outputs)
-			return nil, err
+			return nil, fmt.Errorf("create PCM pipe: %w", err)
 		}
 		outputs = append(outputs, pcmOutput{
 			read:  read,
