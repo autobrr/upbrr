@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
@@ -395,7 +396,18 @@ func prepareLiveTestClone(
 	if err := repo.PruneLiveTestState(ctx); err != nil {
 		return fmt.Errorf("live-test prune snapshot: %w", err)
 	}
-	if err := SaveToRepository(ctx, loaded, repo, p.DBPath); err != nil {
+	fingerprint, err := config.EffectiveConfigFingerprint(*loaded)
+	if err != nil {
+		return fmt.Errorf("live-test fingerprint isolated config: %w", err)
+	}
+	activation, err := repo.LoadConfigActivation(ctx)
+	if err != nil {
+		return fmt.Errorf("live-test load config activation: %w", err)
+	}
+	if err := SaveToRepositoryWithPreSave(ctx, loaded, repo, p.DBPath, func(ctx context.Context, tx *sql.Tx, _ []byte) error {
+		_, err := repo.ActivateConfigTx(ctx, tx, activation, fingerprint, nil, nil)
+		return err
+	}); err != nil {
 		return fmt.Errorf("live-test persist isolated config: %w", err)
 	}
 	return nil

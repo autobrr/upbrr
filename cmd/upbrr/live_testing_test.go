@@ -64,6 +64,9 @@ func TestLiveTestCLIProfileStartupAndTerminalCleanup(t *testing.T) {
 	if err := configstore.SaveToDBPath(t.Context(), cfg, source); err != nil {
 		t.Fatal(err)
 	}
+	if _, _, err := cliConfigActivation(t.Context(), *cfg, source); err != nil {
+		t.Fatalf("activate source config: %v", err)
+	}
 	root, err := livetest.PrivateRoot()
 	if err != nil {
 		t.Fatal(err)
@@ -99,6 +102,9 @@ func TestLiveTestCLIProfileStartupAndTerminalCleanup(t *testing.T) {
 	}
 	if len(loaded.Trackers.DefaultTrackers) != 1 || loaded.Trackers.DefaultTrackers[0] != "BHD" {
 		t.Fatalf("isolated profile changed default trackers: %v", loaded.Trackers.DefaultTrackers)
+	}
+	if _, _, err := cliConfigActivation(t.Context(), loaded, profile.DBPath); err != nil {
+		t.Fatalf("live-test config is not activated: %v", err)
 	}
 	sourceAfter, err := configstore.LoadFromDBPath(t.Context(), source)
 	if err != nil {
