@@ -289,10 +289,28 @@ func migrateTorrentClients(legacyClients map[string]any, out *config.Config) []s
 			}
 		}
 
+		if !torrentClientComplete(tc) {
+			warnings = append(warnings, "skipped incomplete torrent client: "+clientName)
+			continue
+		}
 		out.TorrentClients[clientName] = tc
 	}
 
 	return warnings
+}
+
+func torrentClientComplete(client config.TorrentClientConfig) bool {
+	switch strings.ToLower(strings.TrimSpace(client.ClientType())) {
+	case "watch":
+		return strings.TrimSpace(client.WatchFolder) != ""
+	case "qbit", "qbittorrent":
+		return client.UsesQuiProxy() || (strings.TrimSpace(client.QbitHost()) != "" &&
+			strings.TrimSpace(client.QbitUsername()) != "" && strings.TrimSpace(client.QbitPassword()) != "")
+	case "qui":
+		return client.UsesQuiProxy()
+	default:
+		return true
+	}
 }
 
 // coerceValue converts a legacy value to match the type of the template value.
