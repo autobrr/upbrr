@@ -24,15 +24,17 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
     if (
       view.status !== "running" &&
       view.status !== "error" &&
+      !view.mutationBlockedReason &&
       !view.plan &&
       (view.workflowMode || Boolean(view.staleReason))
     ) {
       void loadRef.current();
     }
-  }, [view.plan, view.staleReason, view.status, view.workflowMode]);
+  }, [view.mutationBlockedReason, view.plan, view.staleReason, view.status, view.workflowMode]);
 
   const plan = view.plan;
   const busy = view.status === "running";
+  const mutationsBlocked = busy || Boolean(view.mutationBlockedReason);
   const selections = view.selections;
   const workflowImages = useMemo(
     () =>
@@ -155,14 +157,19 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
           ) : null}
         </div>
         <div className="screens-actions__buttons">
-          <button className="ghost" type="button" onClick={() => void facet.load()} disabled={busy}>
+          <button
+            className="ghost"
+            type="button"
+            onClick={() => void facet.load()}
+            disabled={mutationsBlocked}
+          >
             {busy ? "Loading..." : "Load suggestions"}
           </button>
           <button
             className="primary"
             type="button"
             onClick={() => void facet.generate("final")}
-            disabled={busy || selections.length === 0}
+            disabled={mutationsBlocked || selections.length === 0}
           >
             {busy ? "Capturing..." : "Generate screenshots"}
           </button>
@@ -226,7 +233,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
                           <button
                             className="ghost"
                             type="button"
-                            disabled={busy}
+                            disabled={mutationsBlocked}
                             onClick={() => void facet.generate("preview", [selection])}
                           >
                             {busy ? "Previewing..." : "Preview"}
@@ -252,7 +259,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
             <button
               className="ghost"
               type="button"
-              disabled={busy}
+              disabled={mutationsBlocked}
               onClick={() => {
                 if (globalThis.confirm("Delete all generated screenshots?"))
                   void facet.deleteArtifacts(workflowImages.map((artifact) => artifact.id));
@@ -279,14 +286,14 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
                         <div
                           className="screens-thumb-card"
                           key={artifact.id}
-                          draggable={artifact.selected}
+                          draggable={artifact.selected && !mutationsBlocked}
                           onDragStart={() => setFinalDragIndex(selectedIndex)}
                           onDragOver={(event) => {
                             if (artifact.selected) event.preventDefault();
                           }}
                           onDrop={(event) => {
                             event.preventDefault();
-                            if (artifact.selected && finalDragIndex !== null)
+                            if (!mutationsBlocked && artifact.selected && finalDragIndex !== null)
                               void facet.reorderFinal(finalDragIndex, selectedIndex);
                             setFinalDragIndex(null);
                           }}
@@ -313,7 +320,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
                           <button
                             className="ghost"
                             type="button"
-                            disabled={busy}
+                            disabled={mutationsBlocked}
                             onClick={() =>
                               void facet.selectArtifact(artifact.id, !artifact.selected)
                             }
@@ -323,7 +330,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
                           <button
                             className="screens-thumb-delete"
                             type="button"
-                            disabled={busy}
+                            disabled={mutationsBlocked}
                             onClick={() => void facet.deleteArtifacts([artifact.id])}
                           >
                             Delete
@@ -345,6 +352,11 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
       {view.error ? (
         <p className="error" role="alert">
           {view.error}
+        </p>
+      ) : null}
+      {view.mutationBlockedReason ? (
+        <p className="muted" role="status">
+          {view.mutationBlockedReason}
         </p>
       ) : null}
       {plan?.RequiresManualFrames ? (
@@ -431,7 +443,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
                   className="ghost"
                   type="button"
                   onClick={() => stepLivePreview(-1)}
-                  disabled={previewTimingDisabled || busy}
+                  disabled={previewTimingDisabled || mutationsBlocked}
                 >
                   Prev frame
                 </button>
@@ -439,7 +451,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
                   className="ghost"
                   type="button"
                   onClick={() => stepLivePreview(1)}
-                  disabled={previewTimingDisabled || busy}
+                  disabled={previewTimingDisabled || mutationsBlocked}
                 >
                   Next frame
                 </button>
@@ -447,7 +459,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
                   className="ghost"
                   type="button"
                   onClick={() => void runLivePreviewAt(livePreviewSeconds)}
-                  disabled={previewTimingDisabled || busy}
+                  disabled={previewTimingDisabled || mutationsBlocked}
                 >
                   {busy ? "Loading..." : "Run preview"}
                 </button>
@@ -455,7 +467,7 @@ export default function ScreenshotsPage({ facet, setLightboxImage, setLightboxAl
                   className="primary"
                   type="button"
                   onClick={captureLivePreview}
-                  disabled={previewTimingDisabled || busy}
+                  disabled={previewTimingDisabled || mutationsBlocked}
                 >
                   {busy ? "Capturing..." : "Capture preview"}
                 </button>

@@ -201,7 +201,11 @@ describe("AudioAnalysisPage", () => {
       "href",
       "/audio/waveform-one",
     );
-    fireEvent.click(screen.getByRole("img", { name: /Main audio waveform/ }));
+    const thumbnail = screen.getByRole("button", {
+      name: "Open Track 1: Main audio waveform full size",
+    });
+    expect(thumbnail).toHaveClass("audio-analysis-thumbnail");
+    fireEvent.click(thumbnail);
     expect(setLightboxImage).toHaveBeenCalledWith("/audio/waveform-one");
   });
 

@@ -72,7 +72,8 @@ export type OperationKind =
   | "upload_execute"
   | "media"
   | "description"
-  | "image_hosting";
+  | "image_hosting"
+  | "analyze_audio";
 
 export type OperationFailure = {
   Code: string;

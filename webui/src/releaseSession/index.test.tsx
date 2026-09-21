@@ -647,6 +647,67 @@ const workflowCurrentFromPreview = (
     },
   }) as unknown as ReleaseWorkflowCurrent;
 
+const workflowCurrentWithAudioAnalysis = (
+  workflowID: string,
+  attemptID: string,
+  status: "completed" | "failed" = "completed",
+  failureMessage = "",
+): ReleaseWorkflowCurrent => {
+  const sourcePath = "C:\\media\\Example.mkv";
+  const current = workflowCurrentFromPreview(
+    workflowCurrent(workflowID, 8),
+    preview(sourcePath, 4),
+  );
+  return {
+    ...current,
+    workflow: {
+      ...current.workflow,
+      audioAnalysisEnabled: true,
+      audioAnalysis: { id: "audio-analysis-one", revision: 8 },
+    },
+    audioAnalysis: {
+      id: "audio-analysis-one",
+      workflowId: workflowID,
+      revision: 8,
+      attemptId: attemptID,
+      release: { SourcePath: sourcePath, Generation: 4 },
+      resourceId: "resource-one",
+      manifestFingerprint: "a".repeat(64),
+      selection: "primary",
+      trackIds: ["audio-main"],
+      variants: ["waveform"],
+      profileVersion: "audio-analysis-v1",
+      tracks: [
+        {
+          trackId: "audio-main",
+          ordinal: 1,
+          channels: 2,
+          sampleRate: 48000,
+          sampleFrames: 480000,
+          durationSeconds: 10,
+          status,
+          ...(failureMessage
+            ? { failure: { code: "output_failed", message: failureMessage } }
+            : {}),
+          artifacts: [
+            {
+              id: "audio-waveform-one",
+              variant: "waveform",
+              status: "completed",
+              width: 1600,
+              height: 240,
+            },
+          ],
+        },
+      ],
+      status,
+      createdAt: "2026-09-21T00:00:00Z",
+      completedAt: "2026-09-21T00:00:02Z",
+      expiresAt: "2026-09-22T00:00:00Z",
+    },
+  } as ReleaseWorkflowCurrent;
+};
+
 const liveTestRuntime: ApplicationInfo["testRuntime"] = {
   mode: "live_test",
   runId: "test-run",
@@ -889,6 +950,312 @@ describe("useReleaseSession", () => {
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
 
+  it("retains terminal audio operation failures in the audio facet", async () => {
+    const workflowID = "workflow-audio-failed";
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const current = {
+      ...workflowCurrent(workflowID, 7),
+      operation: {
+        id: "operation-audio-failed",
+        workflowId: workflowID,
+        revision: 7,
+        sequence: 2,
+        command: "analyze_audio",
+        operation: "analyze_audio",
+        status: "failed",
+        progress: 50,
+        completed: 1,
+        total: 2,
+        message: "Audio analysis failed. Retry the failed work.",
+        failures: [
+          {
+            failure: {
+              Code: "audio_analysis_failed",
+              Operation: "analyze_audio",
+              Message: "Audio analysis failed. Retry the failed work.",
+              Recovery: "retry",
+            },
+          },
+        ],
+        startedAt: "2026-09-21T00:00:00Z",
+        updatedAt: "2026-09-21T00:00:02Z",
+        completedAt: "2026-09-21T00:00:02Z",
+      },
+    } as ReleaseWorkflowCurrent;
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: workflowID,
+          workflow: workflowPorts({ current: async () => current }),
+        }),
+      ),
+    });
+
+    await waitFor(() => expect(result.current.audioAnalysis.view.status).toBe("error"));
+    expect(result.current.audioAnalysis.view.completed).toBe(1);
+    expect(result.current.audioAnalysis.view.total).toBe(2);
+    expect(result.current.audioAnalysis.view.error).toBe(
+      "Audio analysis failed. Retry the failed work.",
+    );
+    expect(result.current.screenshots.view.status).toBe("idle");
+    expect(result.current.screenshots.view.error).toBe("");
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("shows a newer audio operation failure instead of a stale retained result failure", async () => {
+    const workflowID = "workflow-audio-newer-failure";
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const retained = workflowCurrentWithAudioAnalysis(
+      workflowID,
+      "operation-audio-old",
+      "failed",
+      "The previous analysis failed while rendering its waveform.",
+    );
+    const current = {
+      ...retained,
+      operation: {
+        id: "operation-audio-new",
+        workflowId: workflowID,
+        revision: 8,
+        sequence: 3,
+        command: "analyze_audio",
+        operation: "analyze_audio",
+        status: "failed",
+        progress: 0,
+        completed: 0,
+        total: 1,
+        message: "The latest audio analysis could not start.",
+        startedAt: "2026-09-21T00:01:00Z",
+        updatedAt: "2026-09-21T00:01:01Z",
+        completedAt: "2026-09-21T00:01:01Z",
+      },
+    } as ReleaseWorkflowCurrent;
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: workflowID,
+          workflow: workflowPorts({ current: async () => current }),
+        }),
+      ),
+    });
+
+    await waitFor(() => expect(result.current.audioAnalysis.view.status).toBe("error"));
+    expect(result.current.audioAnalysis.view.error).toBe(
+      "The latest audio analysis could not start.",
+    );
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("keeps detailed retained audio failures for the matching operation attempt", async () => {
+    const workflowID = "workflow-audio-matching-failure";
+    const operationID = "operation-audio-matching";
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const retained = workflowCurrentWithAudioAnalysis(
+      workflowID,
+      operationID,
+      "failed",
+      "Waveform rendering failed for the selected track.",
+    );
+    const current = {
+      ...retained,
+      operation: {
+        id: operationID,
+        workflowId: workflowID,
+        revision: 8,
+        sequence: 2,
+        command: "analyze_audio",
+        operation: "analyze_audio",
+        status: "failed",
+        progress: 100,
+        completed: 1,
+        total: 1,
+        message: "Audio analysis failed.",
+        startedAt: "2026-09-21T00:00:00Z",
+        updatedAt: "2026-09-21T00:00:02Z",
+        completedAt: "2026-09-21T00:00:02Z",
+      },
+    } as ReleaseWorkflowCurrent;
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: workflowID,
+          workflow: workflowPorts({ current: async () => current }),
+        }),
+      ),
+    });
+
+    await waitFor(() => expect(result.current.audioAnalysis.view.status).toBe("error"));
+    expect(result.current.audioAnalysis.view.error).toBe(
+      "Waveform rendering failed for the selected track.",
+    );
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("does not leak an unrelated workflow failure into completed audio analysis", async () => {
+    const workflowID = "workflow-audio-unrelated-failure";
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const current = workflowCurrentWithAudioAnalysis(workflowID, "operation-audio-completed");
+    const invalidateTrackers = vi.fn(async () => {
+      throw Object.assign(new Error("tracker invalidation rejected"), {
+        failure: {
+          Code: "tracker_invalidation_failed",
+          Operation: "invalidate_trackers",
+          Message: "Tracker invalidation failed.",
+          Recovery: "retry",
+        },
+      });
+    });
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: workflowID,
+          workflow: workflowPorts({ current: async () => current, invalidateTrackers }),
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.audioAnalysis.view.status).toBe("ready"));
+
+    await act(() => result.current.workflow.invalidateTrackers(["AITHER"], "test"));
+
+    expect(result.current.workflow.view.status).toBe("error");
+    expect(result.current.audioAnalysis.view.status).toBe("ready");
+    expect(result.current.audioAnalysis.view.error).toBe("");
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("exposes an audio command rejection without a retained result", async () => {
+    const workflowID = "workflow-audio-rejected";
+    const current = workflowCurrentFromPreview(
+      workflowCurrent(workflowID, 7),
+      preview("C:\\media\\Example.mkv", 4),
+    );
+    const analyzeAudio = vi.fn(async () => {
+      throw Object.assign(new Error("audio analysis request rejected"), {
+        failure: {
+          Code: "audio_analysis_failed",
+          Operation: "analyze_audio",
+          Message: "Audio analysis could not start. Retry the request.",
+          Recovery: "retry",
+        },
+      });
+    });
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: workflowID,
+          workflow: workflowPorts({ current: async () => current, analyzeAudio }),
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.identity.view.release?.Generation).toBe(4));
+
+    await act(() =>
+      result.current.audioAnalysis.generate({
+        resourceID: "resource-one",
+        selection: "primary",
+        trackIDs: ["audio-main"],
+        variants: ["waveform"],
+      }),
+    );
+
+    expect(result.current.audioAnalysis.view.status).toBe("error");
+    expect(result.current.audioAnalysis.view.error).toBe(
+      "Audio analysis could not start. Retry the request.",
+    );
+    unmount();
+  });
+
+  it("uses a stable audio error when a command rejection has no typed failure", async () => {
+    const workflowID = "workflow-audio-untyped-rejection";
+    let current = workflowCurrentFromPreview(
+      workflowCurrent(workflowID, 7),
+      preview("C:\\media\\Example.mkv", 4),
+    );
+    const analyzeAudio = vi.fn(async () => {
+      throw new Error("private transport details");
+    });
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: workflowID,
+          workflow: workflowPorts({ current: async () => current, analyzeAudio }),
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.identity.view.release?.Generation).toBe(4));
+
+    await act(() =>
+      result.current.audioAnalysis.generate({
+        resourceID: "resource-one",
+        selection: "primary",
+        trackIDs: ["audio-main"],
+        variants: ["waveform"],
+      }),
+    );
+
+    expect(result.current.audioAnalysis.view.status).toBe("error");
+    expect(result.current.audioAnalysis.view.error).toBe(
+      "Audio analysis could not start. Retry the request.",
+    );
+    expect(result.current.audioAnalysis.view.error).not.toContain("private transport details");
+
+    current = workflowCurrentWithAudioAnalysis(workflowID, "operation-audio-recovered");
+    await act(() => result.current.workflow.reload());
+
+    expect(result.current.audioAnalysis.view.status).toBe("ready");
+    expect(result.current.audioAnalysis.view.error).toBe("");
+    unmount();
+  });
+
+  it("loads screenshots after an untyped audio command failure without leaking its error", async () => {
+    const analyzeAudio = vi.fn(async () => {
+      throw new Error("private audio transport details");
+    });
+    const mediaPlan = vi.fn(async (workflowID: string) => ({
+      id: `${workflowID}-media-plan`,
+      workflowId: workflowID,
+      revision: 1,
+      release: { id: `${workflowID}-release`, revision: 1 },
+      projectionSet: { id: `${workflowID}-projections`, revision: 1 },
+      durationSeconds: 120,
+      frameRate: 24,
+      suggestedSelections: [],
+      createdAt: "2026-07-20T00:00:00Z",
+    }));
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          workflow: workflowPorts({ analyzeAudio, mediaPlan }),
+        }),
+      ),
+    });
+    await selectAndPrepare(result, "C:\\media\\Example");
+
+    await act(() =>
+      result.current.audioAnalysis.generate({
+        resourceID: "resource-one",
+        selection: "primary",
+        trackIDs: ["audio-main"],
+        variants: ["waveform"],
+      }),
+    );
+
+    expect(result.current.workflow.view.status).toBe("error");
+    expect(result.current.screenshots.view.status).toBe("idle");
+    expect(result.current.screenshots.view.error).toBe("");
+
+    await act(() => result.current.screenshots.load());
+
+    expect(mediaPlan).toHaveBeenCalledOnce();
+    expect(result.current.screenshots.view.status).toBe("ready");
+    expect(result.current.screenshots.view.error).toBe("");
+    expect(result.current.screenshots.view.plan?.DurationSeconds).toBe(120);
+  });
+
   it("recognizes analyze_audio operations and cancels them before disabling", async () => {
     const workflowID = "workflow-audio-running";
     window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
@@ -948,6 +1315,66 @@ describe("useReleaseSession", () => {
     expect(cancelOperation.mock.invocationCallOrder[0]).toBeLessThan(
       setAudioAnalysisEnabled.mock.invocationCallOrder[0],
     );
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("ignores a stale terminal audio operation after disabling and refreshing", async () => {
+    const workflowID = "workflow-audio-disabled";
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const failedOperation = {
+      id: "operation-audio-failed",
+      workflowId: workflowID,
+      revision: 4,
+      sequence: 2,
+      command: "analyze_audio",
+      operation: "analyze_audio",
+      status: "failed",
+      progress: 100,
+      completed: 1,
+      total: 1,
+      message: "Audio analysis failed.",
+      startedAt: "2026-09-21T00:00:00Z",
+      updatedAt: "2026-09-21T00:00:02Z",
+      completedAt: "2026-09-21T00:00:02Z",
+    } as const;
+    const initial = {
+      ...workflowCurrent(workflowID, 4),
+      operation: failedOperation,
+    } as ReleaseWorkflowCurrent;
+    const disabledBase = workflowCurrent(workflowID, 5);
+    const disabled = {
+      ...disabledBase,
+      workflow: {
+        ...disabledBase.workflow,
+        audioAnalysisEnabled: false,
+        audioAnalysis: null,
+      },
+    } as ReleaseWorkflowCurrent;
+    const refreshed = { ...disabled, operation: failedOperation } as ReleaseWorkflowCurrent;
+    const current = vi.fn().mockResolvedValueOnce(initial).mockResolvedValue(refreshed);
+    const setAudioAnalysisEnabled = vi.fn(async () => disabled);
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: workflowID,
+          workflow: workflowPorts({ current, setAudioAnalysisEnabled }),
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.audioAnalysis.view.status).toBe("error"));
+
+    await act(() => result.current.audioAnalysis.disable());
+
+    expect(result.current.audioAnalysis.view.enabled).toBe(false);
+    expect(result.current.audioAnalysis.view.status).toBe("idle");
+    expect(result.current.audioAnalysis.view.error).toBe("");
+
+    await act(() => result.current.workflow.reload());
+
+    expect(result.current.audioAnalysis.view.enabled).toBe(false);
+    expect(result.current.audioAnalysis.view.status).toBe("idle");
+    expect(result.current.audioAnalysis.view.error).toBe("");
     unmount();
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
   });
@@ -3408,6 +3835,307 @@ describe("useReleaseSession", () => {
     await act(() => screenshotCommand);
     expect(result.current.screenshots.view.plan).toBeNull();
     expect(result.current.screenshots.view.staleReason).toBe("Preparation required.");
+  });
+
+  it("retains a failed screenshot plan status so automatic loading stops", async () => {
+    const mediaPlan = vi.fn(async () => {
+      throw new Error("rate limit exceeded");
+    });
+    const invalidateTrackers = vi.fn(async () => {
+      throw new Error("private unrelated workflow details");
+    });
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          workflow: workflowPorts({ invalidateTrackers, mediaPlan }),
+        }),
+      ),
+    });
+    await selectAndPrepare(result, "C:\\media\\Example");
+
+    await act(() => result.current.workflow.invalidateTrackers(["AITHER"], "test"));
+    expect(result.current.workflow.view.error).toBe("Workflow request failed. Retry the request.");
+    expect(result.current.workflow.view.error).not.toContain("private unrelated workflow details");
+
+    await act(() => result.current.screenshots.load());
+
+    expect(mediaPlan).toHaveBeenCalledOnce();
+    expect(result.current.screenshots.view.status).toBe("error");
+    expect(result.current.screenshots.view.error).toBe(
+      "Screenshot request failed. Retry the request.",
+    );
+    expect(result.current.screenshots.view.error).not.toContain(
+      "private unrelated workflow details",
+    );
+  });
+
+  it("blocks cached screenshot mutations while audio analysis owns the workflow", async () => {
+    const audio = createDeferred<ReleaseWorkflowCurrent>();
+    let audioCurrent: ReleaseWorkflowCurrent | null = null;
+    const analyzeAudio = vi.fn(async (current: ReleaseWorkflowCurrent) => {
+      audioCurrent = current;
+      return audio.promise;
+    });
+    const captureMedia = vi.fn(async (current: ReleaseWorkflowCurrent) => current);
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          workflow: workflowPorts({ analyzeAudio, captureMedia }),
+        }),
+      ),
+    });
+    await selectAndPrepare(result, "C:\\media\\Example");
+    await act(() => result.current.screenshots.load());
+    expect(result.current.screenshots.view.plan).not.toBeNull();
+
+    let audioCommand!: Promise<boolean>;
+    act(() => {
+      audioCommand = result.current.audioAnalysis.generate({
+        resourceID: "resource-one",
+        selection: "primary",
+        trackIDs: ["audio-main"],
+        variants: ["waveform"],
+      });
+    });
+    await waitFor(() => expect(analyzeAudio).toHaveBeenCalledOnce());
+    expect(result.current.screenshots.view.status).toBe("ready");
+    expect(result.current.screenshots.view.mutationBlockedReason).toContain(
+      "Another workflow operation is running",
+    );
+
+    await act(async () => {
+      expect(
+        await result.current.screenshots.generate("final", [
+          { Index: 0, TimestampSeconds: 10, Frame: 240, Source: "manual" },
+        ]),
+      ).toBe(false);
+    });
+    expect(captureMedia).not.toHaveBeenCalled();
+
+    if (!audioCurrent) throw new Error("audio command did not receive workflow state");
+    audio.resolve(audioCurrent);
+    await act(() => audioCommand);
+    expect(result.current.screenshots.view.mutationBlockedReason).toBe("");
+
+    await act(async () => {
+      expect(
+        await result.current.screenshots.generate("final", [
+          { Index: 0, TimestampSeconds: 10, Frame: 240, Source: "manual" },
+        ]),
+      ).toBe(true);
+    });
+    expect(captureMedia).toHaveBeenCalledOnce();
+  });
+
+  it("keeps untyped screenshot command failures local and safe", async () => {
+    const captureMedia = vi.fn(async () => {
+      throw new Error("private screenshot transport details");
+    });
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          workflow: workflowPorts({ captureMedia }),
+        }),
+      ),
+    });
+    await selectAndPrepare(result, "C:\\media\\Example");
+
+    await act(() =>
+      result.current.screenshots.generate("final", [
+        {
+          Index: 0,
+          TimestampSeconds: 10,
+          Frame: 240,
+          Source: "manual",
+        },
+      ]),
+    );
+
+    expect(captureMedia).toHaveBeenCalledOnce();
+    expect(result.current.screenshots.view.status).toBe("error");
+    expect(result.current.screenshots.view.error).toBe(
+      "Screenshot request failed. Retry the request.",
+    );
+    expect(result.current.screenshots.view.error).not.toContain(
+      "private screenshot transport details",
+    );
+
+    await act(() => result.current.screenshots.load());
+
+    expect(result.current.screenshots.view.status).toBe("ready");
+    expect(result.current.screenshots.view.error).toBe("");
+  });
+
+  it("replaces a cached plan error with the newer screenshot command state", async () => {
+    const baseMediaPlan = workflowPorts().mediaPlan;
+    const planFailure = Object.assign(new Error("private plan refresh details"), {
+      failure: {
+        Code: "media_plan_failed",
+        Operation: "media_plan",
+        Message: "Screenshot plan could not be refreshed.",
+        Recovery: "retry",
+      },
+    });
+    const mediaPlan = vi
+      .fn<ReleaseSessionPorts["workflow"]["mediaPlan"]>()
+      .mockImplementationOnce(baseMediaPlan)
+      .mockRejectedValue(planFailure);
+    const successfulCapture = createDeferred<ReleaseWorkflowCurrent>();
+    let captureCurrent: ReleaseWorkflowCurrent | null = null;
+    let captureAttempt = 0;
+    const captureMedia = vi.fn(async (current: ReleaseWorkflowCurrent) => {
+      captureAttempt += 1;
+      if (captureAttempt === 1) {
+        captureCurrent = current;
+        return successfulCapture.promise;
+      }
+      throw new Error("private screenshot transport details");
+    });
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          workflow: workflowPorts({ captureMedia, mediaPlan }),
+        }),
+      ),
+    });
+    await selectAndPrepare(result, "C:\\media\\Example");
+    await act(() => result.current.screenshots.load());
+    expect(result.current.screenshots.view.plan).not.toBeNull();
+
+    await act(() => result.current.screenshots.load());
+    expect(result.current.screenshots.view.status).toBe("error");
+    expect(result.current.screenshots.view.error).toBe("Screenshot plan could not be refreshed.");
+
+    let generation!: Promise<boolean>;
+    act(() => {
+      generation = result.current.screenshots.generate("final", [
+        { Index: 0, TimestampSeconds: 10, Frame: 240, Source: "manual" },
+      ]);
+    });
+    await waitFor(() => expect(captureCurrent).not.toBeNull());
+    expect(result.current.screenshots.view.status).toBe("running");
+    successfulCapture.resolve(captureCurrent!);
+    await act(() => generation);
+
+    expect(result.current.screenshots.view.status).toBe("ready");
+    expect(result.current.screenshots.view.error).toBe("");
+    expect(result.current.screenshots.view.plan).not.toBeNull();
+
+    await act(() => result.current.screenshots.load());
+    expect(result.current.screenshots.view.error).toBe("Screenshot plan could not be refreshed.");
+    await act(() =>
+      result.current.screenshots.generate("final", [
+        { Index: 0, TimestampSeconds: 10, Frame: 240, Source: "manual" },
+      ]),
+    );
+
+    expect(result.current.screenshots.view.status).toBe("error");
+    expect(result.current.screenshots.view.error).toBe(
+      "Screenshot request failed. Retry the request.",
+    );
+  });
+
+  it("retains a polled terminal screenshot failure before React commits the operation update", async () => {
+    const startedAt = "2026-09-21T00:00:00Z";
+    const queued = {
+      id: "operation-screenshot-failed",
+      workflowId: "workflow-new",
+      revision: 6,
+      sequence: 1,
+      command: "capture_media",
+      operation: "media",
+      status: "queued",
+      progress: 0,
+      completed: 0,
+      total: 1,
+      startedAt,
+      updatedAt: startedAt,
+    } as const;
+    const failed = {
+      ...queued,
+      sequence: 2,
+      status: "failed",
+      progress: 100,
+      completed: 1,
+      message: "Screenshot capture failed.",
+      completedAt: "2026-09-21T00:00:01Z",
+      updatedAt: "2026-09-21T00:00:01Z",
+    } as const;
+    let terminalCurrent: ReleaseWorkflowCurrent | null = null;
+    const captureMedia = vi.fn(async (current: ReleaseWorkflowCurrent) => {
+      terminalCurrent = { ...current, operation: failed };
+      return { ...current, operation: queued };
+    });
+    const operation = vi.fn(async () => failed);
+    const current = vi.fn(async () => terminalCurrent ?? workflowCurrent("workflow-new", 6));
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          workflow: workflowPorts({ captureMedia, current, operation }),
+        }),
+      ),
+    });
+    await selectAndPrepare(result, "C:\\media\\Example");
+
+    vi.useFakeTimers();
+    try {
+      let generation!: Promise<boolean>;
+      act(() => {
+        generation = result.current.screenshots.generate("final", [
+          { Index: 0, TimestampSeconds: 10, Frame: 240, Source: "manual" },
+        ]);
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(1000));
+      await act(() => generation);
+
+      expect(operation).toHaveBeenCalledOnce();
+      expect(result.current.screenshots.view.status).toBe("error");
+      expect(result.current.screenshots.view.error).toBe(
+        "Screenshot request failed. Retry the request.",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears a running screenshot command when same-workflow preparation aborts it", async () => {
+    const captureMedia = vi.fn(
+      (
+        _current: ReleaseWorkflowCurrent,
+        _instructions: MediaCaptureInstructions,
+        _key: string,
+        signal: AbortSignal,
+      ) =>
+        new Promise<ReleaseWorkflowCurrent>((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => reject(new DOMException("Screenshot capture aborted.", "AbortError")),
+            { once: true },
+          );
+        }),
+    );
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          workflow: workflowPorts({ captureMedia }),
+        }),
+      ),
+    });
+    await selectAndPrepare(result, "C:\\media\\Example");
+
+    let generation!: Promise<boolean>;
+    act(() => {
+      generation = result.current.screenshots.generate("final", [
+        { Index: 0, TimestampSeconds: 10, Frame: 240, Source: "manual" },
+      ]);
+    });
+    await waitFor(() => expect(captureMedia).toHaveBeenCalledOnce());
+    expect(result.current.screenshots.view.status).toBe("running");
+
+    await act(() => result.current.input.prepare());
+    await act(async () => expect(await generation).toBe(false));
+
+    expect(result.current.screenshots.view.status).not.toBe("running");
   });
 
   it("publishes and reorders opaque final screenshots through workflow commands", async () => {

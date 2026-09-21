@@ -256,6 +256,7 @@ export type SessionAction =
       type: "screenshot_final_artifacts_changed";
       artifactIDs: readonly string[];
     }>
+  | Readonly<{ type: "screenshot_command_started" }>
   | Readonly<{ type: "job_command_started"; kind: "duplicates" | "upload" }>
   | Readonly<{ type: "job_command_failed"; kind: "duplicates" | "upload"; error: string }>
   | Readonly<{
@@ -1564,6 +1565,15 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           finalSelectionArtifactIDs: Array.from(
             new Set(action.artifactIDs.map((artifactID) => artifactID.trim()).filter(Boolean)),
           ),
+        },
+      };
+    case "screenshot_command_started":
+      return {
+        ...state,
+        screenshots: {
+          ...state.screenshots,
+          status: state.screenshots.value ? "ready" : "idle",
+          error: "",
         },
       };
     case "job_command_started":

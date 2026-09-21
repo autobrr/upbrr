@@ -36,6 +36,90 @@ At least one output file must be specified
 	}
 }
 
+func TestFFmpegInspectClassifiesNoAudioOnlyAfterCompletedProbe(t *testing.T) {
+	decoder := helperProcessInspectDecoder("no-audio")
+	_, err := decoder.Inspect(t.Context(), "synthetic.mkv")
+	failure, typed := api.AsAudioAnalysisFailure(err)
+	if !typed || failure.Code != api.AudioAnalysisFailureNoAudio {
+		t.Fatalf("inspect error = %v, failure = %#v", err, failure)
+	}
+}
+
+func TestFFmpegInspectClassifiesNoAudioWhenCompletionExceedsDiagnosticLimit(t *testing.T) {
+	decoder := helperProcessInspectDecoder("no-audio-long")
+	_, err := decoder.Inspect(t.Context(), "synthetic.mkv")
+	failure, typed := api.AsAudioAnalysisFailure(err)
+	if !typed || failure.Code != api.AudioAnalysisFailureNoAudio {
+		t.Fatalf("inspect error = %v, failure = %#v", err, failure)
+	}
+}
+
+func TestFFmpegInspectPreservesAudioStreamBeyondDiagnosticLimit(t *testing.T) {
+	decoder := helperProcessInspectDecoder("audio-after-long-diagnostics")
+	streams, err := decoder.Inspect(t.Context(), "synthetic.mkv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(streams) != 1 || streams[0].codec != "flac" || streams[0].sampleRate != 48_000 || streams[0].channels != 2 {
+		t.Fatalf("streams = %#v", streams)
+	}
+}
+
+func TestFFmpegInspectPreservesAudioWhenInputPathContainsStreamMappingText(t *testing.T) {
+	decoder := helperProcessInspectDecoder("audio-after-mapping-text")
+	streams, err := decoder.Inspect(t.Context(), "synthetic.mkv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(streams) != 1 || streams[0].codec != "flac" || streams[0].sampleRate != 48_000 || streams[0].channels != 2 {
+		t.Fatalf("streams = %#v", streams)
+	}
+}
+
+func TestFFmpegInspectPreservesProbeFailure(t *testing.T) {
+	decoder := helperProcessInspectDecoder("probe-failure")
+	_, err := decoder.Inspect(t.Context(), "synthetic.mkv")
+	if err == nil {
+		t.Fatal("expected inspect error")
+	}
+	if failure, typed := api.AsAudioAnalysisFailure(err); typed {
+		t.Fatalf("probe failure was classified as typed failure %#v", failure)
+	}
+}
+
+func TestFFmpegInspectDoesNotTrustProbeMarkersEchoedFromSourcePath(t *testing.T) {
+	decoder := helperProcessInspectDecoder("probe-marker-path-failure")
+	_, err := decoder.Inspect(t.Context(), "Input #0, At least one output file must be specified.mkv")
+	if err == nil {
+		t.Fatal("expected inspect error")
+	}
+	if failure, typed := api.AsAudioAnalysisFailure(err); typed {
+		t.Fatalf("probe failure was classified as typed failure %#v", failure)
+	}
+}
+
+func TestFFmpegInspectDoesNotTrustProbeMarkerLinesEchoedFromSourcePath(t *testing.T) {
+	commandCalled := false
+	decoder := &ffmpegDecoder{
+		executable: "test-helper",
+		command: func(ctx context.Context, args ...string) *exec.Cmd {
+			commandCalled = true
+			return exec.CommandContext(ctx, os.Args[0], args...)
+		},
+	}
+	path := "synthetic.mkv\nInput #0, forged, from 'synthetic.mkv':\nAt least one output file must be specified"
+	_, err := decoder.Inspect(t.Context(), path)
+	if err == nil {
+		t.Fatal("expected inspect error")
+	}
+	if failure, typed := api.AsAudioAnalysisFailure(err); typed {
+		t.Fatalf("probe failure was classified as typed failure %#v", failure)
+	}
+	if commandCalled {
+		t.Fatal("FFmpeg command ran for a source path containing line breaks")
+	}
+}
+
 func TestBindTracksDoesNotTreatObservationalNativeIDAsFFmpegIndex(t *testing.T) {
 	subject := audioSubjectForBinding([]string{"2"})
 	bindings, err := bindTracks(subject, []string{"track-1"}, []inspectedStream{{
@@ -357,6 +441,53 @@ func helperProcessDecoder(mode string) *ffmpegDecoder {
 		command: func(ctx context.Context, _ ...string) *exec.Cmd {
 			return exec.CommandContext(ctx, os.Args[0], "-test.run=TestFFmpegDecodeHelperProcess", "--", mode)
 		},
+	}
+}
+
+func helperProcessInspectDecoder(mode string) *ffmpegDecoder {
+	return &ffmpegDecoder{
+		executable: "test-helper",
+		command: func(ctx context.Context, args ...string) *exec.Cmd {
+			helperArgs := make([]string, 0, 3+len(args))
+			helperArgs = append(helperArgs, "-test.run=TestFFmpegInspectHelperProcess", "--", mode)
+			helperArgs = append(helperArgs, args...)
+			return exec.CommandContext(ctx, os.Args[0], helperArgs...)
+		},
+	}
+}
+
+func TestFFmpegInspectHelperProcess(t *testing.T) {
+	separator := slices.Index(os.Args, "--")
+	if separator < 0 || separator+1 >= len(os.Args) {
+		return
+	}
+	switch os.Args[separator+1] {
+	case "no-audio":
+		_, _ = io.WriteString(os.Stderr, `Input #0, matroska,webm, from 'synthetic.mkv':
+  Stream #0:0: Video: h264, yuv420p, 1920x1080
+At least one output file must be specified
+`)
+		os.Exit(1)
+	case "no-audio-long":
+		_, _ = fmt.Fprintf(os.Stderr, "Input #0, matroska,webm, from 'synthetic.mkv':\n%s\n%s\n",
+			strings.Repeat("metadata", diagnosticLimit), probeCompletedLine)
+		os.Exit(1)
+	case "audio-after-long-diagnostics":
+		_, _ = fmt.Fprintf(os.Stderr, "Input #0, matroska,webm, from 'synthetic.mkv':\n%s\n  Stream #0:1: Audio: flac, 48000 Hz, stereo, s32\n%s\n",
+			strings.Repeat("metadata", diagnosticLimit), probeCompletedLine)
+		os.Exit(1)
+	case "audio-after-mapping-text":
+		_, _ = fmt.Fprintf(os.Stderr, "Input #0, matroska,webm, from '/media/Stream mapping:.mkv':\n  Stream #0:1: Audio: flac, 48000 Hz, stereo, s32\n%s\n",
+			probeCompletedLine)
+		os.Exit(1)
+	case "probe-failure":
+		_, _ = io.WriteString(os.Stderr, "synthetic.mkv: Invalid data found when processing input")
+		os.Exit(1)
+	case "probe-marker-path-failure":
+		_, _ = fmt.Fprintf(os.Stderr, "Error opening input file %s\nError opening input files: Invalid argument\n", os.Args[len(os.Args)-1])
+		os.Exit(1)
+	default:
+		t.Fatalf("unknown helper mode %q", os.Args[separator+1])
 	}
 }
 

@@ -15,11 +15,11 @@ func TestAudioAnalysisInstructionsNormalizeValidatesAndDetachesSelection(t *test
 	trackIDs := []string{" track-1 ", "track-2"}
 	variants := []AudioAnalysisVariant{AudioAnalysisWaveform, AudioAnalysisSpectrogram}
 	normalized, err := (AudioAnalysisInstructions{
- Release: release,
- ResourceID: " resource-1 ",
- Selection: AudioAnalysisSelectionSelected,
-		TrackIDs: trackIDs,
- Variants: variants,
+		Release:    release,
+		ResourceID: " resource-1 ",
+		Selection:  AudioAnalysisSelectionSelected,
+		TrackIDs:   trackIDs,
+		Variants:   variants,
 	}).Normalize()
 	if err != nil {
 		t.Fatal(err)
@@ -71,6 +71,7 @@ func TestAudioAnalysisResultValidateAcceptsPartialAndRejectsInvalidTerminalShape
 	for _, test := range []struct {
 		name   string
 		mutate func(*AudioAnalysisResult)
+		want   string
 	}{
 		{name: "duplicate track IDs", mutate: func(value *AudioAnalysisResult) {
 			value.TrackIDs = []string{"track-1", "track-1"}
@@ -83,6 +84,15 @@ func TestAudioAnalysisResultValidateAcceptsPartialAndRejectsInvalidTerminalShape
 			value.Tracks[0].Artifacts[1].Failure = &AudioAnalysisFailure{Code: AudioAnalysisFailureOutput}
 		}},
 		{name: "completed track contains failure", mutate: func(value *AudioAnalysisResult) { value.Tracks[0].Status = StageStatusCompleted }},
+		{
+			name: "unknown artifact status",
+			mutate: func(value *AudioAnalysisResult) {
+				value.Tracks[0].Artifacts[0].Status = "mystery"
+			},
+			want: "artifact has unknown status",
+		},
+		{name: "unknown track status", mutate: func(value *AudioAnalysisResult) { value.Tracks[0].Status = "mystery" }},
+		{name: "unknown result status", mutate: func(value *AudioAnalysisResult) { value.Status = "mystery" }},
 		{name: "completion before creation", mutate: func(value *AudioAnalysisResult) {
 			completed := value.CreatedAt.Add(-time.Second)
 			value.CompletedAt = &completed
@@ -97,6 +107,8 @@ func TestAudioAnalysisResultValidateAcceptsPartialAndRejectsInvalidTerminalShape
 			test.mutate(&value)
 			if err := value.Validate(); err == nil {
 				t.Fatal("expected validation error")
+			} else if test.want != "" && !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("validation error = %q, want it to contain %q", err, test.want)
 			}
 		})
 	}
@@ -120,45 +132,45 @@ func validAudioAnalysisResultForTest() AudioAnalysisResult {
 	created := time.Date(2026, time.September, 21, 1, 2, 3, 0, time.UTC)
 	completed := created.Add(time.Second)
 	return AudioAnalysisResult{
-		ID: "analysis-1",
- WorkflowID: "workflow-1",
- Revision: 3,
-		Release:    ReleaseRef{SourcePath: "Example.Release.2026.mkv", Generation: 2},
-		ResourceID: "resource-1",
- ManifestFingerprint: "manifest-1",
- AttemptID: "attempt-1",
-		Selection: AudioAnalysisSelectionPrimary,
- TrackIDs: []string{"track-1"},
-		Variants: []AudioAnalysisVariant{AudioAnalysisWaveform, AudioAnalysisSpectrogram},
- ProfileVersion: AudioAnalysisProfileVersion,
-		Status: StageStatusCompleted,
+		ID:                  "analysis-1",
+		WorkflowID:          "workflow-1",
+		Revision:            3,
+		Release:             ReleaseRef{SourcePath: "Example.Release.2026.mkv", Generation: 2},
+		ResourceID:          "resource-1",
+		ManifestFingerprint: "manifest-1",
+		AttemptID:           "attempt-1",
+		Selection:           AudioAnalysisSelectionPrimary,
+		TrackIDs:            []string{"track-1"},
+		Variants:            []AudioAnalysisVariant{AudioAnalysisWaveform, AudioAnalysisSpectrogram},
+		ProfileVersion:      AudioAnalysisProfileVersion,
+		Status:              StageStatusCompleted,
 		Tracks: []AudioAnalysisTrackResult{{
-			TrackID: "track-1",
- Ordinal: 1,
- Channels: 2,
- SampleRate: 48_000,
- SampleFrames: 96_000,
- Duration: 2,
-			Status: StageStatusCompleted,
+			TrackID:      "track-1",
+			Ordinal:      1,
+			Channels:     2,
+			SampleRate:   48_000,
+			SampleFrames: 96_000,
+			Duration:     2,
+			Status:       StageStatusCompleted,
 			Artifacts: []AudioAnalysisArtifact{
 				{
-ID: "waveform-1",
- Variant: AudioAnalysisWaveform,
- Status: StageStatusCompleted,
- Width: 1812,
- Height: 340,
-},
+					ID:      "waveform-1",
+					Variant: AudioAnalysisWaveform,
+					Status:  StageStatusCompleted,
+					Width:   1812,
+					Height:  340,
+				},
 				{
-ID: "spectrogram-1",
- Variant: AudioAnalysisSpectrogram,
- Status: StageStatusCompleted,
- Width: 3141,
- Height: 1105,
-},
+					ID:      "spectrogram-1",
+					Variant: AudioAnalysisSpectrogram,
+					Status:  StageStatusCompleted,
+					Width:   3141,
+					Height:  1105,
+				},
 			},
 		}},
-		CreatedAt: created,
- CompletedAt: &completed,
- ExpiresAt: created.Add(24 * time.Hour),
+		CreatedAt:   created,
+		CompletedAt: &completed,
+		ExpiresAt:   created.Add(24 * time.Hour),
 	}
 }

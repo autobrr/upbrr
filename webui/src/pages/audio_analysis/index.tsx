@@ -275,64 +275,68 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
               {view.result.status} · expires {new Date(view.result.expiresAt).toLocaleString()}
             </span>
           </div>
-          {view.result.tracks.map((track) => (
-            <article key={track.trackId} className="panel grid gap-3">
-              <div>
-                <h3 className="break-words">{trackLabel(track.ordinal, track.title || "")}</h3>
-                <p className="muted">
-                  {[
-                    track.codec,
-                    track.channelLayout || `${track.channels} channels`,
-                    `${track.sampleRate} Hz`,
-                    `${track.durationSeconds.toFixed(2)} s`,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </p>
-              </div>
-              {track.failure ? (
-                <p className="error">
-                  {track.failure.code}: {track.failure.message}
-                </p>
-              ) : null}
-              <div className="grid gap-4">
-                {track.artifacts.map((artifact) => {
-                  const url = artifact.status === "completed" ? facet.artifactURL(artifact.id) : "";
-                  const alt = `${trackLabel(track.ordinal, track.title || "")} ${artifact.variant}`;
-                  return (
-                    <section key={artifact.variant} className="grid gap-2">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <h4 className="capitalize">{artifact.variant}</h4>
+          <div className="audio-analysis-result-grid">
+            {view.result.tracks.map((track) => (
+              <article key={track.trackId} className="panel grid min-w-0 gap-3">
+                <div>
+                  <h3 className="break-words">{trackLabel(track.ordinal, track.title || "")}</h3>
+                  <p className="muted">
+                    {[
+                      track.codec,
+                      track.channelLayout || `${track.channels} channels`,
+                      `${track.sampleRate} Hz`,
+                      `${track.durationSeconds.toFixed(2)} s`,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </p>
+                </div>
+                {track.failure ? (
+                  <p className="error">
+                    {track.failure.code}: {track.failure.message}
+                  </p>
+                ) : null}
+                <div className="audio-analysis-artifact-grid">
+                  {track.artifacts.map((artifact) => {
+                    const url =
+                      artifact.status === "completed" ? facet.artifactURL(artifact.id) : "";
+                    const alt = `${trackLabel(track.ordinal, track.title || "")} ${artifact.variant}`;
+                    return (
+                      <section key={artifact.variant} className="grid min-w-0 gap-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <h4 className="capitalize">{artifact.variant}</h4>
+                          {url ? (
+                            <a href={url} download>
+                              Download native PNG
+                            </a>
+                          ) : null}
+                        </div>
                         {url ? (
-                          <a href={url} download>
-                            Download native PNG
-                          </a>
-                        ) : null}
-                      </div>
-                      {url ? (
-                        <button
-                          type="button"
-                          className="block max-w-full overflow-auto border-0 bg-transparent p-0 text-left"
-                          onClick={() => {
-                            setLightboxImage(url);
-                            setLightboxAlt(alt);
-                          }}
-                        >
-                          <img className="h-auto max-w-full" src={url} alt={alt} loading="lazy" />
-                        </button>
-                      ) : artifact.failure ? (
-                        <p className="error">
-                          {artifact.failure.code}: {artifact.failure.message}
-                        </p>
-                      ) : (
-                        <p className="muted">No retained image is available.</p>
-                      )}
-                    </section>
-                  );
-                })}
-              </div>
-            </article>
-          ))}
+                          <button
+                            type="button"
+                            className="audio-analysis-thumbnail"
+                            aria-label={`Open ${alt} full size`}
+                            onClick={() => {
+                              setLightboxImage(url);
+                              setLightboxAlt(alt);
+                            }}
+                          >
+                            <img src={url} alt={alt} loading="lazy" />
+                          </button>
+                        ) : artifact.failure ? (
+                          <p className="error">
+                            {artifact.failure.code}: {artifact.failure.message}
+                          </p>
+                        ) : (
+                          <p className="muted">No retained image is available.</p>
+                        )}
+                      </section>
+                    );
+                  })}
+                </div>
+              </article>
+            ))}
+          </div>
         </section>
       ) : null}
     </section>

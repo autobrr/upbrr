@@ -19,9 +19,16 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-const diagnosticLimit = 64 << 10
+const (
+	diagnosticLimit    = 64 << 10
+	probeInputPrefix   = "Input #0,"
+	probeCompletedLine = "At least one output file must be specified"
+	inspectLineLimit   = diagnosticLimit
+)
 
 var ffmpegAudioStreamPattern = regexp.MustCompile(`(?m)^\s*Stream #0:\d+(?:\[[^\]\r\n]+\])?(?:\([^\r\n)]*\))?: Audio: ([^,\r\n]+),\s*(\d+) Hz,\s*([^,\r\n]+)`)
+
+var errNoInspectedAudioStreams = errors.New("audio analysis: no audio streams found")
 
 type inspectedStream struct {
 	codec      string
@@ -73,19 +80,34 @@ func (d *ffmpegDecoder) Inspect(ctx context.Context, path string) ([]inspectedSt
 			errors.New("audio analysis: ffmpeg unavailable"),
 		)
 	}
+	if strings.ContainsAny(path, "\r\n") {
+		return nil, errors.New("audio analysis: source path contains an unsupported line break")
+	}
 	args := []string{"-hide_banner", "-nostdin", "-i", path}
-	var stderr limitedBuffer
+	var stderr inspectDiagnosticBuffer
 	cmd := d.commandContext(ctx, args...)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = &stderr
 	err := cmd.Run()
+	stderr.finishProbeLine()
 	if ctx.Err() != nil {
 		return nil, fmt.Errorf("audio analysis: inspect canceled: %w", ctx.Err())
 	}
-	streams, parseErr := parseInspectedStreams(stderr.String())
+	streams, parseErr := parseInspectedStreams(stderr.streamText())
+	if errors.Is(parseErr, errNoInspectedAudioStreams) &&
+		stderr.completedInputProbe() {
+		parseErr = audioAnalysisError(
+			api.AudioAnalysisFailureNoAudio,
+			"the source contains no decodable audio streams",
+			errNoInspectedAudioStreams,
+		)
+	}
 	if parseErr != nil {
 		if err != nil {
-			return nil, fmt.Errorf("audio analysis: inspect streams: %w", err)
+			failure, typed := api.AsAudioAnalysisFailure(parseErr)
+			if !typed || failure.Code != api.AudioAnalysisFailureNoAudio {
+				return nil, fmt.Errorf("audio analysis: inspect streams: %w", err)
+			}
 		}
 		return nil, parseErr
 	}
@@ -112,11 +134,7 @@ func parseInspectedStreams(text string) ([]inspectedStream, error) {
 		})
 	}
 	if len(streams) == 0 {
-		return nil, audioAnalysisError(
-			api.AudioAnalysisFailureNoAudio,
-			"the source contains no decodable audio streams",
-			errors.New("audio analysis: no audio streams found"),
-		)
+		return nil, errNoInspectedAudioStreams
 	}
 	return streams, nil
 }
@@ -222,6 +240,54 @@ func (b *limitedBuffer) Write(value []byte) (int, error) {
 }
 
 func (b *limitedBuffer) String() string { return b.buffer.String() }
+
+type inspectDiagnosticBuffer struct {
+	diagnostics    limitedBuffer
+	streamFacts    limitedBuffer
+	line           []byte
+	lineOverflow   bool
+	inputOpened    bool
+	probeCompleted bool
+	streamMapping  bool
+}
+
+func (b *inspectDiagnosticBuffer) Write(value []byte) (int, error) {
+	_, _ = b.diagnostics.Write(value)
+	for _, character := range value {
+		if character == '\n' {
+			b.finishProbeLine()
+			continue
+		}
+		if len(b.line) < inspectLineLimit {
+			b.line = append(b.line, character)
+		} else {
+			b.lineOverflow = true
+		}
+	}
+	return len(value), nil
+}
+
+func (b *inspectDiagnosticBuffer) finishProbeLine() {
+	line := strings.TrimSuffix(string(b.line), "\r")
+	b.inputOpened = b.inputOpened || strings.HasPrefix(line, probeInputPrefix)
+	b.probeCompleted = b.probeCompleted || (!b.lineOverflow && line == probeCompletedLine)
+	if !b.streamMapping {
+		mappingStarted := strings.TrimSpace(line) == "Stream mapping:"
+		if !mappingStarted && ffmpegAudioStreamPattern.MatchString(line) {
+			_, _ = b.streamFacts.Write([]byte(line))
+			_, _ = b.streamFacts.Write([]byte{'\n'})
+		}
+		b.streamMapping = mappingStarted
+	}
+	b.line = b.line[:0]
+	b.lineOverflow = false
+}
+
+func (b *inspectDiagnosticBuffer) streamText() string { return b.streamFacts.String() }
+
+func (b *inspectDiagnosticBuffer) completedInputProbe() bool {
+	return b.inputOpened && b.probeCompleted
+}
 
 func codecUsesDecoderDRC(codec string) bool {
 	family := audioCodecFamily(codec)

@@ -316,6 +316,8 @@ func (r AudioAnalysisResult) Validate() error {
 				StageStatusPartial, StageStatusSkipped, StageStatusRunning, StageStatusExecuted, StageStatusInterrupted,
 				StageStatusCanceled, StageStatusUnavailable:
 				return fmt.Errorf("audio analysis track %d artifact has invalid terminal status %q", track.Ordinal, artifact.Status)
+			default:
+				return fmt.Errorf("audio analysis track %d artifact has unknown status %q", track.Ordinal, artifact.Status)
 			}
 		}
 		switch track.Status {
@@ -340,6 +342,8 @@ func (r AudioAnalysisResult) Validate() error {
 			StageStatusSkipped, StageStatusRunning, StageStatusExecuted, StageStatusInterrupted, StageStatusCanceled,
 			StageStatusUnavailable:
 			return fmt.Errorf("audio analysis track %d has invalid terminal status %q", track.Ordinal, track.Status)
+		default:
+			return fmt.Errorf("audio analysis track %d has unknown status %q", track.Ordinal, track.Status)
 		}
 	}
 	switch r.Status {
@@ -359,6 +363,8 @@ func (r AudioAnalysisResult) Validate() error {
 	case StageStatusPending, StageStatusQueued, StageStatusReady, StageStatusBlocked, StageStatusStale,
 		StageStatusSkipped, StageStatusRunning, StageStatusExecuted:
 		return errors.New("audio analysis result must be terminal")
+	default:
+		return fmt.Errorf("audio analysis result has unknown status %q", r.Status)
 	}
 	return nil
 }

@@ -230,6 +230,7 @@ export type ScreenshotsFacet = Readonly<{
     finalSelectionArtifactIDs: readonly string[];
     previewImage: string;
     staleReason: string;
+    mutationBlockedReason: string;
     error: string;
   }>;
   load(): Promise<boolean>;
