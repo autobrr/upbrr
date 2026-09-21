@@ -892,7 +892,7 @@ func planContinuationCommandWithReadiness(
 	if workflowGoalRank(request.Goal) <= workflowGoalRank(api.WorkflowGoalMediaReady) {
 		return nil, ""
 	}
-	if !mediaRequirementsPrepared(current.Media) {
+	if !mediaRequirementsPreparedForIntent(current.Media, request.Intent.SkipImageHostUpload) {
 		var artifactIDs []api.PublicResourceID
 		if request.Intent.MediaSelection != nil {
 			artifactIDs = append(artifactIDs, request.Intent.MediaSelection.ArtifactIDs...)
@@ -1296,6 +1296,13 @@ func duplicateDecisionsComplete(dupes *api.DupeAssessment) bool {
 	return !slices.ContainsFunc(dupes.Results, func(result api.TrackerDupeAssessment) bool {
 		return result.Decision == api.DupeDecisionPending
 	})
+}
+
+func mediaRequirementsPreparedForIntent(media *api.MediaArtifactSet, skipImageHostUpload bool) bool {
+	if media != nil && stageSucceeded(media.Status) && media.ImageRequirementsPrepared {
+		return media.ImageHostUploadSkipped == skipImageHostUpload
+	}
+	return mediaRequirementsPrepared(media)
 }
 
 func mediaRequirementsPrepared(media *api.MediaArtifactSet) bool {

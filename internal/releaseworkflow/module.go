@@ -5188,11 +5188,14 @@ func (m *Module) uploadMediaImages(
 		}
 		artifactIDs = selectedArtifactIDs
 	}
+	snapshot, retained, err := m.currentMutableMedia(ctx, ownerID, state, command.Media, artifactIDs, now)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	if strings.TrimSpace(command.Host) == "" && len(command.ArtifactIDs) > 0 {
+		selectExplicitMediaArtifacts(&snapshot, artifactIDs)
+	}
 	if command.SkipUpload {
-		snapshot, retained, err := m.currentMutableMedia(ctx, ownerID, state, command.Media, artifactIDs, now)
-		if err != nil {
-			return CommandResult{}, err
-		}
 		snapshot.ImageRequirementsPrepared = true
 		snapshot.ImageHostUploadSkipped = true
 		return m.publishMediaMutation(ownerID, state, nextRevision, now, snapshot, retained)
@@ -5201,24 +5204,7 @@ func (m *Module) uploadMediaImages(
 	if !ok {
 		return CommandResult{}, fmt.Errorf("%w: workflow image hosting is unavailable", ErrInvalidTransition)
 	}
-	snapshot, retained, err := m.currentMutableMedia(ctx, ownerID, state, command.Media, artifactIDs, now)
-	if err != nil {
-		return CommandResult{}, err
-	}
 	snapshot.ImageHostUploadSkipped = false
-	if strings.TrimSpace(command.Host) == "" && len(command.ArtifactIDs) > 0 {
-		selected := make(map[api.PublicResourceID]struct{}, len(artifactIDs))
-		for _, artifactID := range artifactIDs {
-			selected[artifactID] = struct{}{}
-		}
-		for index := range snapshot.Artifacts {
-			if snapshot.Artifacts[index].Kind != api.MediaArtifactScreenshot &&
-				snapshot.Artifacts[index].Kind != api.MediaArtifactDVDMenu {
-				continue
-			}
-			_, snapshot.Artifacts[index].Selected = selected[snapshot.Artifacts[index].ID]
-		}
-	}
 	release, _, eligible, _, _, err := m.mediaExtensionContext(ctx, ownerID, state, &command.Media, now)
 	if err != nil {
 		return CommandResult{}, err
@@ -5299,6 +5285,19 @@ func selectedLocalMediaArtifactIDs(state *State, mediaRef api.MediaArtifactSetRe
 		return nil, fmt.Errorf("%w: select at least one local media artifact", ErrInvalidTransition)
 	}
 	return artifactIDs, nil
+}
+
+func selectExplicitMediaArtifacts(snapshot *api.MediaArtifactSet, artifactIDs []api.PublicResourceID) {
+	selected := make(map[api.PublicResourceID]struct{}, len(artifactIDs))
+	for _, artifactID := range artifactIDs {
+		selected[artifactID] = struct{}{}
+	}
+	for index := range snapshot.Artifacts {
+		if snapshot.Artifacts[index].Kind != api.MediaArtifactScreenshot && snapshot.Artifacts[index].Kind != api.MediaArtifactDVDMenu {
+			continue
+		}
+		_, snapshot.Artifacts[index].Selected = selected[snapshot.Artifacts[index].ID]
+	}
 }
 
 func (m *Module) removeHostedImages(

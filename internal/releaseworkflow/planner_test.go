@@ -920,6 +920,7 @@ func TestContinuationPlannerInsertsExactImageRequirementBarrier(t *testing.T) {
 	}
 
 	current.Media.ImageRequirementsPrepared = true
+	current.Media.ImageHostUploadSkipped = true
 	current.Media.Artifacts = append(current.Media.Artifacts, api.MediaArtifact{
 		ID:       "hosted-screen-plan",
 		Kind:     api.MediaArtifactHostedImage,
@@ -927,6 +928,13 @@ func TestContinuationPlannerInsertsExactImageRequirementBarrier(t *testing.T) {
 		Selected: true,
 		Source:   "screen-plan",
 	})
+	request.Intent.SkipImageHostUpload = false
+	command, stage = planContinuationCommand(request, current, now)
+	upload, ok = command.(UploadMediaImagesCommand)
+	if !ok || stage != "prepare-image-requirements" || upload.SkipUpload {
+		t.Fatalf("planned image hosting after skip mode changed: stage=%q command=%#v", stage, command)
+	}
+	current.Media.ImageHostUploadSkipped = false
 	request.Intent.Descriptions = &api.DescriptionInstructions{TemplateVersion: "workflow-v1"}
 	command, stage = planContinuationCommand(request, current, now)
 	if _, ok := command.(GenerateDescriptionsCommand); !ok || stage != "generate-descriptions" {
