@@ -1331,8 +1331,10 @@ func TestFFAdvertisesCookieImportWithRemoteLoginAction(t *testing.T) {
 	t.Fatal("FF capability not found")
 }
 
-// TestValidateWithoutRemoteResolverKeepsStoredCookiesReady verifies that local
-// stored-cookie status stays upload-ready when a tracker cannot validate remotely.
+/*
+TestValidateWithoutRemoteResolverKeepsStoredCookiesReady verifies that local
+stored-cookie status stays upload-ready when a tracker cannot validate remotely.
+*/
 func TestValidateWithoutRemoteResolverKeepsStoredCookiesReady(t *testing.T) {
 	dbPath := newTrackerAuthTestDB(t)
 	if err := cookies.SaveTrackerCookieMap(context.Background(), dbPath, "ASC", map[string]string{"session": "abc"}); err != nil {
