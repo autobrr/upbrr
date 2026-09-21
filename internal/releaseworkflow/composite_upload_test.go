@@ -430,6 +430,28 @@ func TestCompositeUploadReleaseNameFeedbackPreservesSiblingProjection(t *testing
 	}
 }
 
+func TestCompositeUploadDefersSingleTrackerNameReviewUntilDuplicateCheck(t *testing.T) {
+	t.Parallel()
+
+	module, _, _ := newCompositeUploadNameReviewTestModule(t)
+	request := compositeUploadTestRequest(true, api.ReleaseWorkflowUploadModeDebug, "composite-single-name-review")
+	request.Trackers.Include = []api.TrackerID{"ALPHA"}
+	started, err := module.StartUpload(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("start single-tracker name review: %v", err)
+	}
+	blocked := waitCompositeUploadTestOperation(t, module, started)
+	if blocked.Dupes == nil {
+		t.Fatalf("single-tracker name review blocked before duplicate check: %#v", blocked)
+	}
+	if !slices.ContainsFunc(blocked.Continuation.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionProvideTrackerInput && action.TrackerID == "ALPHA" &&
+			action.Status == api.RequiredActionStatusPending
+	}) {
+		t.Fatalf("single-tracker name review action = %#v", blocked.Continuation.RequiredActions)
+	}
+}
+
 func TestCompositeUploadTrackerInputRejectsMismatchedTrackerWithoutMutation(t *testing.T) {
 	t.Parallel()
 
