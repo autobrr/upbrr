@@ -2048,4 +2048,9 @@ func TestCompositeUploadResultFallsBackToDuplicateAssessment(t *testing.T) {
 		got.RefRevision != 6 || got.WorkflowRevision != 7 {
 		t.Fatalf("duplicate composite result = %#v", got)
 	}
+
+	result.Continuation.RequiredActions = []api.RequiredAction{{Status: api.RequiredActionStatusPending}}
+	if got := compositeUploadResult(result); got != nil {
+		t.Fatalf("blocked duplicate composite result = %#v, want nil", got)
+	}
 }
