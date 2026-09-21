@@ -101,6 +101,14 @@ func extractConfigDict(src string) (string, error) {
 		}
 
 		rest := skipWhitespaceAndComments(src[after:])
+		if len(rest) > 0 && rest[0] == ':' {
+			annotationEnd := strings.IndexByte(rest, '=')
+			if annotationEnd < 0 {
+				idx = after
+				continue
+			}
+			rest = skipWhitespaceAndComments(rest[annotationEnd:])
+		}
 		if len(rest) == 0 || rest[0] != '=' {
 			idx = after
 			continue

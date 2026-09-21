@@ -39,6 +39,10 @@ func TestExtractConfigDict(t *testing.T) {
 			input: `config = {"DEFAULT": {}}`,
 		},
 		{
+			name:  "type annotated assignment",
+			input: `config: dict[str, Any] = {"DEFAULT": {}}`,
+		},
+		{
 			name:  "with leading comments",
 			input: "# comment\nconfig = {\"DEFAULT\": {}}",
 		},
