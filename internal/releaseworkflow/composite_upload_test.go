@@ -2007,6 +2007,24 @@ func compositeUploadDuplicateBlockedBuilder(
 	})
 }
 
+func TestCompositeUploadResultFallsBackToDuplicateAssessment(t *testing.T) {
+	result := CommandResult{
+		Workflow: api.ReleaseWorkflow{ID: "workflow-duplicates", Revision: 7},
+		Dupes:    &api.DupeAssessment{ID: "dupes-duplicates", Revision: 6},
+	}
+
+	got := compositeUploadResult(result)
+	if got == nil || got.Kind != api.WorkflowOperationResultDupes || got.RefID != "dupes-duplicates" ||
+		got.RefRevision != 6 || got.WorkflowRevision != 7 {
+		t.Fatalf("duplicate composite result = %#v", got)
+	}
+
+	result.Continuation.RequiredActions = []api.RequiredAction{{Status: api.RequiredActionStatusPending}}
+	if got := compositeUploadResult(result); got != nil {
+		t.Fatalf("blocked duplicate composite result = %#v, want nil", got)
+	}
+}
+
 func waitCompositeUploadTestOperation(
 	t *testing.T,
 	module *Module,
