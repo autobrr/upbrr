@@ -2097,11 +2097,13 @@ func applyWorkflowProgress(status *api.WorkflowOperationStatus, update api.Workf
 	}
 	status.Phase = strings.TrimSpace(update.Phase)
 	status.Message = strings.TrimSpace(update.Message)
-	status.Completed = max(status.Completed, max(0, update.Completed))
-	status.Total = max(status.Total, max(0, update.Total))
-	if status.Total > 0 {
-		progress := min(100, status.Completed*100/status.Total)
-		status.Progress = max(status.Progress, progress)
+	if !update.ItemOnly {
+		status.Completed = max(status.Completed, max(0, update.Completed))
+		status.Total = max(status.Total, max(0, update.Total))
+		if status.Total > 0 {
+			progress := min(100, status.Completed*100/status.Total)
+			status.Progress = max(status.Progress, progress)
+		}
 	}
 	if itemID == "" {
 		return
@@ -5346,6 +5348,7 @@ func audioAnalysisRetryCompatible(
 ) bool {
 	return prior.Release == release && prior.ResourceID == instructions.ResourceID &&
 		prior.Selection == instructions.Selection && prior.ProfileVersion == instructions.ProfileVersion &&
+		prior.ResourceLimits == instructions.ResourceLimits &&
 		slices.Equal(prior.TrackIDs, instructions.TrackIDs) && slices.Equal(prior.Variants, instructions.Variants) &&
 		prior.ExpiresAt.After(now)
 }

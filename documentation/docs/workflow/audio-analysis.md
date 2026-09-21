@@ -47,20 +47,32 @@ Analysis runs after preparation and before tracker submission or torrent-client 
 2. Open **Audio Analysis** after its navigation item becomes available.
 3. Choose the primary track, all tracks, or individual tracks.
 4. Choose waveform, spectrogram, or both.
-5. Click **Generate**.
-6. Preview, open, or download each successful PNG.
+5. Adjust **Threads per decoder** if the default does not suit the host.
+6. Click **Generate**.
+7. Preview, open, or download each successful PNG.
 
 Opening the page does not start work. Leaving it unopened or disabled does not block upload.
 
 Use **Cancel** to stop active decoder work. **Disable** waits for active work to stop and then hides the current result. Disabling does not immediately delete retained files; they remain under managed retention until their displayed expiry.
 
+## Tune resource use
+
+The Web UI and CLI default to **2 threads per decoder**. Spectrograms use a fixed 3,000-column, 513-bin Kaiser-window profile.
+
+- **Threads per decoder** controls FFmpeg's threads for each selected audio decoder. Try `1` on a small or shared server if CPU stays busy during analysis. Higher values can help some codecs, but may not shorten the run.
+  API requests can set `resourceLimits.decoderThreads` to a value from 1 to 16; omitting it uses the default of 2.
+
+Up to two audio-analysis requests can run at once. Spectrogram FFT buckets use about 6 MiB per selected channel, plus decoding and image-rendering memory, so plan for the selected track count on a shared host. Changing the decoder thread count starts a fresh analysis rather than reusing completed images from the previous attempt.
+
 ## Understand the images
 
 One waveform and one spectrogram can be produced for each selected audio track. Multi-channel tracks use one vertically stacked panel per channel so channels are not mixed together.
 
-FFmpeg decodes the selected track to 32-bit floating-point PCM and streams it directly to the Go analyzer. upbrr does not save a complete decoded-audio file or hold the complete PCM stream in memory. It performs two streaming decode passes, one selected track at a time, to preserve complete-duration geometry with bounded memory.
+FFmpeg streams decoded audio directly to the Go analyzer. Tracks that need the same image types normally share one pass over the source. If a source reports a missing or inaccurate duration, upbrr may decode an affected track again to use the measured frame count for spectrogram timing; it verifies that the decoded audio matches before publishing. Retrying missing images can also require separate passes.
 
 Samples retain their native sample rate and channel layout. The analysis does not normalize, resample, or downmix the audio.
+
+Waveforms show each pixel column's peak range on a linear amplitude scale. Columns containing a full-scale sample are marked in red, like Audacity's waveform view with clipping display enabled.
 
 ## Retry partial results
 
@@ -74,4 +86,4 @@ Generated PNGs live in upbrr-managed temporary storage and have an explicit expi
 
 Browser and versioned API downloads remain bound to the workflow owner, analysis ID, artifact ID, and exact result revision. Artifact identifiers and URLs are opaque. See the [API reference](../api/index.md#audio-analysis-routes) for the versioned routes.
 
-For decoder, source, or channel-limit failures, see [Audio analysis fails or is incomplete](../troubleshooting/index.md#audio-analysis-fails-or-is-incomplete).
+For decoder, source, or channel-layout failures, see [Audio analysis fails or is incomplete](../troubleshooting/index.md#audio-analysis-fails-or-is-incomplete).

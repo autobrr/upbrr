@@ -83,6 +83,26 @@ func (f *audioAnalysisServiceFake) Analyze(
 	instructions api.AudioAnalysisInstructions,
 	_ string,
 	attemptRoot string,
+) ([]audioanalysis.TrackResult, error) {
+	results := make([]audioanalysis.TrackResult, 0, len(instructions.TrackIDs))
+	for _, trackID := range instructions.TrackIDs {
+		work := instructions
+		work.TrackIDs = []string{trackID}
+		result, err := f.analyzeOne(ctx, work, attemptRoot)
+		if result.Public.TrackID != "" {
+			results = append(results, result)
+		}
+		if err != nil {
+			return results, err
+		}
+	}
+	return results, nil
+}
+
+func (f *audioAnalysisServiceFake) analyzeOne(
+	ctx context.Context,
+	instructions api.AudioAnalysisInstructions,
+	attemptRoot string,
 ) (audioanalysis.TrackResult, error) {
 	f.calls = append(f.calls, instructions)
 	if f.prepare != nil {
@@ -680,7 +700,7 @@ func TestWorkflowAudioAnalysisBuilderRetainsCompletedTrackOnCancellation(t *test
 	select {
 	case got = <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("builder did not stop after canceling the final track count pass")
+		t.Fatal("builder did not stop after canceling the final track decode")
 	}
 	if got.err != nil {
 		t.Fatal(got.err)

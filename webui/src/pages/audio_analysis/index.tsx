@@ -28,6 +28,7 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
   const [selection, setSelection] = useState<AudioAnalysisGenerateInput["selection"]>("primary");
   const [selectedTrackIDs, setSelectedTrackIDs] = useState<readonly string[]>([]);
   const [variants, setVariants] = useState<readonly string[]>(["waveform", "spectrogram"]);
+  const [decoderThreads, setDecoderThreads] = useState(2);
 
   const effectiveResourceID = resourceIDs.includes(resourceID) ? resourceID : primaryResourceID;
   const tracks = view.tracks.filter((track) => track.ResourceID === effectiveResourceID);
@@ -70,6 +71,7 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
       selection,
       trackIDs: requestedTrackIDs,
       variants,
+      resourceLimits: { decoderThreads },
     });
 
   return (
@@ -119,7 +121,7 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
 
         <fieldset className="grid gap-2" disabled={mutationsBlocked}>
           <legend>Tracks</legend>
-          <div className="flex flex-wrap gap-4">
+          <div className="flex flex-wrap items-center gap-4">
             <label>
               <input
                 type="radio"
@@ -150,6 +152,20 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
                 onChange={() => setSelection("selected")}
               />{" "}
               Selected
+            </label>
+            <label className="flex items-center gap-2">
+              <span>Threads per decoder</span>
+              <select
+                className="w-20"
+                value={decoderThreads}
+                onChange={(event) => setDecoderThreads(Number(event.target.value))}
+              >
+                {[1, 2, 4, 8, 16].map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
             </label>
           </div>
           {selection === "selected" && requestedTrackIDs.length === 0 ? (
@@ -248,6 +264,10 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
                 {view.operationItems.map((item) => (
                   <li key={item.id}>
                     {item.label}: {item.status}
+                    {(item.total ?? 0) > 0 &&
+                    (item.status === "running" || item.status === "completed")
+                      ? ` — ${Math.min(100, Math.round(((item.completed ?? 0) * 100) / (item.total ?? 1)))}%`
+                      : ""}
                     {item.message ? ` — ${item.message}` : ""}
                   </li>
                 ))}

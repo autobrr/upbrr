@@ -379,7 +379,11 @@ func TestModuleCancelAudioAnalysisRetainsCompletedResult(t *testing.T) {
 	t.Parallel()
 
 	block := make(chan struct{})
-	builder := &audioAnalysisBuilderFake{block: block, retainOnCancel: true}
+	builder := &audioAnalysisBuilderFake{
+		block:          block,
+		started:        make(chan struct{}),
+		retainOnCancel: true,
+	}
 	module, _ := newTestModule(t, audioAnalysisPreparerForTest(), WithAudioAnalysisBuilder(builder))
 	created := executeCommand(t, module, CreateWorkflowCommand{WorkflowID: "workflow-audio-cancel"})
 	prepared := executeCommand(t, module, PrepareReleaseCommand{
@@ -399,6 +403,11 @@ func TestModuleCancelAudioAnalysisRetainsCompletedResult(t *testing.T) {
 	operation = waitForWorkflowOperation(t, module, prepared.Workflow.ID, operation.ID, func(status api.WorkflowOperationStatus) bool {
 		return status.Status == api.StageStatusRunning
 	})
+	select {
+	case <-builder.started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("audio analysis builder did not start")
+	}
 	canceled, err := module.CancelOperation(t.Context(), testOwnerID, operation.WorkflowID, operation.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -516,6 +525,7 @@ func partialAudioAnalysisForTest(
 		TrackIDs:            append([]string(nil), instructions.TrackIDs...),
 		Variants:            append([]api.AudioAnalysisVariant(nil), instructions.Variants...),
 		ProfileVersion:      instructions.ProfileVersion,
+		ResourceLimits:      instructions.ResourceLimits,
 		Status:              api.StageStatusPartial,
 		Tracks: []api.AudioAnalysisTrackResult{{
 			TrackID:      "audio-track-1",

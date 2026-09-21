@@ -126,6 +126,7 @@ export type AudioAnalysisInstructions = Readonly<{
   profileVersion: string;
   release: ReleaseRef;
   resourceId: string;
+  resourceLimits?: AudioAnalysisResourceLimits;
   selection: AudioAnalysisSelectionMode;
   trackIds: readonly string[];
   variants: readonly AudioAnalysisVariant[];
@@ -134,6 +135,10 @@ export type AudioAnalysisInstructions = Readonly<{
 export type AudioAnalysisRef = Readonly<{
   id: AudioAnalysisResultID;
   revision: WorkflowRevision;
+}>;
+
+export type AudioAnalysisResourceLimits = Readonly<{
+  decoderThreads?: number;
 }>;
 
 export type AudioAnalysisResult = Readonly<{
@@ -146,6 +151,7 @@ export type AudioAnalysisResult = Readonly<{
   profileVersion: string;
   release: ReleaseRef;
   resourceId: string;
+  resourceLimits: AudioAnalysisResourceLimits;
   revision: WorkflowRevision;
   selection: AudioAnalysisSelectionMode;
   status: StageStatus;

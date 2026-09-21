@@ -3090,6 +3090,34 @@ func TestApplyWorkflowProgressConvergesAfterDuplicateAndStaleUpdates(t *testing.
 	}
 }
 
+func TestApplyWorkflowProgressKeepsItemPercentOutOfAggregateCounts(t *testing.T) {
+	t.Parallel()
+
+	status := api.WorkflowOperationStatus{
+Status: api.StageStatusRunning,
+ Completed: 1,
+ Total: 3,
+ Progress: 33,
+}
+	applyWorkflowProgress(&status, api.WorkflowProgressUpdate{
+		Phase: "audio_analysis_decode",
+ ItemID: "track-2",
+ Kind: "audio_track",
+ Label: "Audio track 2",
+		Status: api.StageStatusRunning,
+ Completed: 75,
+ Total: 100,
+ Message: "Decoding audio (75%).",
+ ItemOnly: true,
+	})
+	if status.Completed != 1 || status.Total != 3 || status.Progress != 33 {
+		t.Fatalf("item update changed aggregate progress: %#v", status)
+	}
+	if len(status.Items) != 1 || status.Items[0].Completed != 75 || status.Items[0].Total != 100 {
+		t.Fatalf("item progress = %#v", status.Items)
+	}
+}
+
 func TestReduceUploadDryRunReportsRetainsMixedAndSkippedOutcomes(t *testing.T) {
 	t.Parallel()
 

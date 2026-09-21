@@ -12,7 +12,14 @@ import (
 )
 
 // AudioAnalysisProfileVersion identifies the fixed numerical and raster profile.
-const AudioAnalysisProfileVersion = "audio-analysis-v1"
+const AudioAnalysisProfileVersion = "audio-analysis-v2"
+
+const (
+	// AudioAnalysisDefaultDecoderThreads is used when a request leaves DecoderThreads at zero.
+	AudioAnalysisDefaultDecoderThreads = 2
+	// AudioAnalysisMaxDecoderThreads is the largest accepted decoder thread request.
+	AudioAnalysisMaxDecoderThreads = 16
+)
 
 // AudioAnalysisSelectionMode records how an ordered stable-track selection was requested.
 type AudioAnalysisSelectionMode string
@@ -30,6 +37,23 @@ const (
 	AudioAnalysisWaveform    AudioAnalysisVariant = "waveform"
 	AudioAnalysisSpectrogram AudioAnalysisVariant = "spectrogram"
 )
+
+// AudioAnalysisResourceLimits bounds decoder work for one attempt.
+type AudioAnalysisResourceLimits struct {
+	// DecoderThreads requests FFmpeg decoder threads; zero uses the default.
+	DecoderThreads int `json:"decoderThreads,omitempty"`
+}
+
+func (l AudioAnalysisResourceLimits) normalize() (AudioAnalysisResourceLimits, error) {
+	result := l
+	if result.DecoderThreads == 0 {
+		result.DecoderThreads = AudioAnalysisDefaultDecoderThreads
+	}
+	if result.DecoderThreads < 1 || result.DecoderThreads > AudioAnalysisMaxDecoderThreads {
+		return AudioAnalysisResourceLimits{}, fmt.Errorf("audio analysis decoder threads must be between 1 and %d", AudioAnalysisMaxDecoderThreads)
+	}
+	return result, nil
+}
 
 // AudioAnalysisFailureCode is a stable track- or variant-level failure classification.
 type AudioAnalysisFailureCode string
@@ -102,12 +126,13 @@ func AsAudioAnalysisFailure(err error) (AudioAnalysisFailure, bool) {
 
 // AudioAnalysisInstructions bind one exact prepared resource and ordered track selection.
 type AudioAnalysisInstructions struct {
-	Release        ReleaseRef                 `json:"release"`
-	ResourceID     string                     `json:"resourceId"`
-	Selection      AudioAnalysisSelectionMode `json:"selection"`
-	TrackIDs       []string                   `json:"trackIds"`
-	Variants       []AudioAnalysisVariant     `json:"variants"`
-	ProfileVersion string                     `json:"profileVersion"`
+	Release        ReleaseRef                  `json:"release"`
+	ResourceID     string                      `json:"resourceId"`
+	Selection      AudioAnalysisSelectionMode  `json:"selection"`
+	TrackIDs       []string                    `json:"trackIds"`
+	Variants       []AudioAnalysisVariant      `json:"variants"`
+	ProfileVersion string                      `json:"profileVersion"`
+	ResourceLimits AudioAnalysisResourceLimits `json:"resourceLimits,omitempty"`
 }
 
 // Normalize validates and returns detached deterministic instructions.
@@ -118,6 +143,11 @@ func (i AudioAnalysisInstructions) Normalize() (AudioAnalysisInstructions, error
 	if result.ProfileVersion == "" {
 		result.ProfileVersion = AudioAnalysisProfileVersion
 	}
+	limits, err := result.ResourceLimits.normalize()
+	if err != nil {
+		return AudioAnalysisInstructions{}, err
+	}
+	result.ResourceLimits = limits
 	if result.Release.Generation == 0 || strings.TrimSpace(result.Release.SourcePath) == "" {
 		return AudioAnalysisInstructions{}, errors.New("audio analysis release reference is required")
 	}
@@ -207,22 +237,23 @@ type AudioAnalysisTrackResult struct {
 
 // AudioAnalysisResult is one immutable generation-bound analysis attempt.
 type AudioAnalysisResult struct {
-	ID                  AudioAnalysisResultID      `json:"id"`
-	WorkflowID          WorkflowID                 `json:"workflowId"`
-	Revision            WorkflowRevision           `json:"revision"`
-	Release             ReleaseRef                 `json:"release"`
-	ResourceID          string                     `json:"resourceId"`
-	ManifestFingerprint string                     `json:"manifestFingerprint"`
-	AttemptID           string                     `json:"attemptId"`
-	Selection           AudioAnalysisSelectionMode `json:"selection"`
-	TrackIDs            []string                   `json:"trackIds"`
-	Variants            []AudioAnalysisVariant     `json:"variants"`
-	ProfileVersion      string                     `json:"profileVersion"`
-	Status              StageStatus                `json:"status"`
-	Tracks              []AudioAnalysisTrackResult `json:"tracks"`
-	CreatedAt           time.Time                  `json:"createdAt" ts_type:"string"`
-	CompletedAt         *time.Time                 `json:"completedAt,omitempty" ts_type:"string"`
-	ExpiresAt           time.Time                  `json:"expiresAt" ts_type:"string"`
+	ID                  AudioAnalysisResultID       `json:"id"`
+	WorkflowID          WorkflowID                  `json:"workflowId"`
+	Revision            WorkflowRevision            `json:"revision"`
+	Release             ReleaseRef                  `json:"release"`
+	ResourceID          string                      `json:"resourceId"`
+	ManifestFingerprint string                      `json:"manifestFingerprint"`
+	AttemptID           string                      `json:"attemptId"`
+	Selection           AudioAnalysisSelectionMode  `json:"selection"`
+	TrackIDs            []string                    `json:"trackIds"`
+	Variants            []AudioAnalysisVariant      `json:"variants"`
+	ProfileVersion      string                      `json:"profileVersion"`
+	ResourceLimits      AudioAnalysisResourceLimits `json:"resourceLimits"`
+	Status              StageStatus                 `json:"status"`
+	Tracks              []AudioAnalysisTrackResult  `json:"tracks"`
+	CreatedAt           time.Time                   `json:"createdAt" ts_type:"string"`
+	CompletedAt         *time.Time                  `json:"completedAt,omitempty" ts_type:"string"`
+	ExpiresAt           time.Time                   `json:"expiresAt" ts_type:"string"`
 }
 
 // Validate verifies public identity, authority, and terminal result shape.
@@ -243,6 +274,7 @@ func (r AudioAnalysisResult) Validate() error {
 		TrackIDs:       r.TrackIDs,
 		Variants:       r.Variants,
 		ProfileVersion: r.ProfileVersion,
+		ResourceLimits: r.ResourceLimits,
 	}).Normalize(); err != nil {
 		return fmt.Errorf("audio analysis selection: %w", err)
 	}

@@ -585,6 +585,9 @@
           "resourceId": {
             "type": "string"
           },
+          "resourceLimits": {
+            "$ref": "#/components/schemas/AudioAnalysisResourceLimits"
+          },
           "selection": {
             "$ref": "#/components/schemas/AudioAnalysisSelectionMode"
           },
@@ -625,6 +628,14 @@
           "revision"
         ]
       },
+      "AudioAnalysisResourceLimits": {
+        "type": "object",
+        "properties": {
+          "decoderThreads": {
+            "type": "integer"
+          }
+        }
+      },
       "AudioAnalysisResult": {
         "type": "object",
         "properties": {
@@ -654,6 +665,9 @@
           },
           "resourceId": {
             "type": "string"
+          },
+          "resourceLimits": {
+            "$ref": "#/components/schemas/AudioAnalysisResourceLimits"
           },
           "revision": {
             "$ref": "#/components/schemas/WorkflowRevision"
@@ -695,6 +709,7 @@
           "profileVersion",
           "release",
           "resourceId",
+          "resourceLimits",
           "revision",
           "selection",
           "status",

@@ -676,7 +676,8 @@ const workflowCurrentWithAudioAnalysis = (
       selection: "primary",
       trackIds: ["audio-main"],
       variants: ["waveform"],
-      profileVersion: "audio-analysis-v1",
+      profileVersion: "audio-analysis-v2",
+      resourceLimits: { decoderThreads: 2 },
       tracks: [
         {
           trackId: "audio-main",
@@ -868,7 +869,8 @@ describe("useReleaseSession", () => {
         selection: "primary",
         trackIds: ["audio-main"],
         variants: ["waveform", "spectrogram"],
-        profileVersion: "audio-analysis-v1",
+        profileVersion: "audio-analysis-v2",
+        resourceLimits: { decoderThreads: 2 },
       },
       expect.any(String),
       expect.any(AbortSignal),

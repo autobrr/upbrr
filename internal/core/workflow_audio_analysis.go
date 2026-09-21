@@ -34,7 +34,7 @@ type audioAnalysisSubjectResolver interface {
 
 type audioAnalysisService interface {
 	ValidateSelection(context.Context, api.AudioAnalysisSubject, api.AudioAnalysisInstructions) error
-	Analyze(context.Context, api.AudioAnalysisSubject, api.AudioAnalysisInstructions, string, string) (audioanalysis.TrackResult, error)
+	Analyze(context.Context, api.AudioAnalysisSubject, api.AudioAnalysisInstructions, string, string) ([]audioanalysis.TrackResult, error)
 }
 
 type workflowAudioAnalysisBuilder struct {
@@ -98,6 +98,7 @@ func (b workflowAudioAnalysisBuilder) Build(
 		TrackIDs:            append([]string(nil), normalized.TrackIDs...),
 		Variants:            append([]api.AudioAnalysisVariant(nil), normalized.Variants...),
 		ProfileVersion:      normalized.ProfileVersion,
+		ResourceLimits:      normalized.ResourceLimits,
 		Status:              status,
 		Tracks:              tracks,
 		CreatedAt:           now,
@@ -175,10 +176,14 @@ func (b workflowAudioAnalysisBuilder) buildTracks(
 		reusedByTrack[trackID] = reused
 	}
 
-	tracks := make([]api.AudioAnalysisTrackResult, 0, len(instructions.TrackIDs))
-	var stopFailure *api.AudioAnalysisFailure
-	for index, trackID := range instructions.TrackIDs {
-		previous, hasPrevious := previousTracks[trackID]
+	type workGroup struct {
+		trackIDs []string
+		variants []api.AudioAnalysisVariant
+	}
+	missingByTrack := make(map[string][]api.AudioAnalysisVariant, len(instructions.TrackIDs))
+	groupIndex := make(map[string]int)
+	groups := make([]workGroup, 0, 3)
+	for _, trackID := range instructions.TrackIDs {
 		reused := reusedByTrack[trackID]
 		missing := make([]api.AudioAnalysisVariant, 0, len(instructions.Variants))
 		for _, variant := range instructions.Variants {
@@ -186,50 +191,59 @@ func (b workflowAudioAnalysisBuilder) buildTracks(
 				missing = append(missing, variant)
 			}
 		}
-		if stopFailure == nil && ctx.Err() == nil {
-			if err := b.revalidateSubject(ctx, instructions, subject); err != nil {
-				return nil, nil, "", fmt.Errorf("revalidate audio analysis track boundary: %w", err)
-			}
-		}
+		missingByTrack[trackID] = missing
 		if len(missing) == 0 {
-			previous.Artifacts = orderedAudioArtifacts(instructions.Variants, reused)
-			previous.Status = api.StageStatusCompleted
-			previous.Failure = nil
-			tracks = append(tracks, previous)
-			emitAudioTrackProgress(ctx, previous, index+1, len(instructions.TrackIDs))
 			continue
 		}
-		if stopFailure != nil {
-			failed := failedAudioAnalysisTrack(subject, trackID, missing, *stopFailure)
-			merged := mergeAudioTrack(previous, hasPrevious, failed, instructions.Variants, reused)
-			tracks = append(tracks, merged)
-			emitAudioTrackProgress(ctx, merged, index+1, len(instructions.TrackIDs))
-			continue
+		parts := make([]string, len(missing))
+		for index, variant := range missing {
+			parts[index] = string(variant)
 		}
+		key := strings.Join(parts, "\x00")
+		index, exists := groupIndex[key]
+		if !exists {
+			index = len(groups)
+			groupIndex[key] = index
+			groups = append(groups, workGroup{variants: missing})
+		}
+		groups[index].trackIDs = append(groups[index].trackIDs, trackID)
+	}
 
+	generatedByTrack := make(map[string]api.AudioAnalysisTrackResult, len(instructions.TrackIDs))
+	var stopFailure *api.AudioAnalysisFailure
+	for _, group := range groups {
+		if stopFailure != nil {
+			break
+		}
+		if err := b.revalidateSubject(ctx, instructions, subject); err != nil {
+			return nil, nil, "", fmt.Errorf("revalidate audio analysis pass boundary: %w", err)
+		}
 		work := instructions
 		work.Selection = api.AudioAnalysisSelectionSelected
-		work.TrackIDs = []string{trackID}
-		work.Variants = missing
-		api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
-			Phase:     "audio_analysis",
-			ItemID:    trackID,
-			Kind:      "audio_track",
-			Label:     audioTrackLabel(subject, trackID),
-			Status:    api.StageStatusRunning,
-			Completed: index,
-			Total:     len(instructions.TrackIDs),
-			Message:   "Streaming count and render passes from FFmpeg.",
-		})
+		work.TrackIDs = append([]string(nil), group.trackIDs...)
+		work.Variants = append([]api.AudioAnalysisVariant(nil), group.variants...)
+		for _, trackID := range group.trackIDs {
+			api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
+				Phase:     "audio_analysis",
+				ItemID:    trackID,
+				Kind:      "audio_track",
+				Label:     audioTrackLabel(subject, trackID),
+				Status:    api.StageStatusRunning,
+				Completed: 0,
+				Total:     100,
+				Message:   "Streaming audio from one shared FFmpeg pass.",
+				ItemOnly:  true,
+			})
+		}
 		built, analyzeErr := b.service.Analyze(ctx, subject, work, attemptID, attemptRoot)
 		if analyzeErr == nil && ctx.Err() == nil {
 			if err := b.revalidateSubject(ctx, work, subject); err != nil {
-				return nil, nil, "", fmt.Errorf("revalidate analyzed audio track: %w", err)
+				return nil, nil, "", fmt.Errorf("revalidate analyzed audio tracks: %w", err)
 			}
 		}
-		generated := built.Public
-		if generated.TrackID != "" {
-			for _, artifact := range built.Artifacts {
+		for _, builtTrack := range built {
+			generatedByTrack[builtTrack.Public.TrackID] = builtTrack.Public
+			for _, artifact := range builtTrack.Artifacts {
 				if !pathutil.IsWithinRoot(attemptRoot, artifact.Path) {
 					return nil, nil, "", fmt.Errorf("validate audio-analysis artifact path: %w", api.NewAudioAnalysisError(api.AudioAnalysisFailure{
 						Code:    api.AudioAnalysisFailureResourceUnavailable,
@@ -242,17 +256,43 @@ func (b workflowAudioAnalysisBuilder) buildTracks(
 		if analyzeErr != nil {
 			failure, typed := api.AsAudioAnalysisFailure(analyzeErr)
 			if !typed {
-				return nil, nil, "", fmt.Errorf("analyze audio track: %w", analyzeErr)
+				return nil, nil, "", fmt.Errorf("analyze audio tracks: %w", analyzeErr)
 			}
 			if failure.Code == api.AudioAnalysisFailureStaleSource || failure.Code == api.AudioAnalysisFailureAmbiguousBinding {
 				return nil, nil, "", fmt.Errorf("analyze invalidated audio binding: %w", analyzeErr)
 			}
-			if generated.TrackID == "" {
-				generated = failedAudioAnalysisTrack(subject, trackID, missing, failure)
-			} else {
-				generated = completeFailedAudioVariants(generated, missing, failure)
-			}
 			stopFailure = &failure
+			for _, trackID := range group.trackIDs {
+				generated, ok := generatedByTrack[trackID]
+				if !ok {
+					generatedByTrack[trackID] = failedAudioAnalysisTrack(subject, trackID, group.variants, failure)
+					continue
+				}
+				generatedByTrack[trackID] = completeFailedAudioVariants(generated, group.variants, failure)
+			}
+		}
+	}
+
+	tracks := make([]api.AudioAnalysisTrackResult, 0, len(instructions.TrackIDs))
+	for index, trackID := range instructions.TrackIDs {
+		previous, hasPrevious := previousTracks[trackID]
+		reused := reusedByTrack[trackID]
+		missing := missingByTrack[trackID]
+		if len(missing) == 0 {
+			previous.Artifacts = orderedAudioArtifacts(instructions.Variants, reused)
+			previous.Status = api.StageStatusCompleted
+			previous.Failure = nil
+			tracks = append(tracks, previous)
+			emitAudioTrackProgress(ctx, previous, index+1, len(instructions.TrackIDs))
+			continue
+		}
+		generated, ok := generatedByTrack[trackID]
+		if !ok {
+			failure := api.AudioAnalysisFailure{Code: api.AudioAnalysisFailureInterrupted, Message: "audio analysis stopped before this track was decoded"}
+			if stopFailure != nil {
+				failure = *stopFailure
+			}
+			generated = failedAudioAnalysisTrack(subject, trackID, missing, failure)
 		}
 		merged := mergeAudioTrack(previous, hasPrevious, generated, instructions.Variants, reused)
 		tracks = append(tracks, merged)
@@ -499,6 +539,14 @@ func emitAudioTrackProgress(ctx context.Context, track api.AudioAnalysisTrackRes
 		Kind:      "audio_track",
 		Label:     fmt.Sprintf("Audio track %d", track.Ordinal),
 		Status:    status,
+		Completed: 100,
+		Total:     100,
+		Message:   message,
+		ItemOnly:  true,
+	})
+	api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
+		Phase:     "audio_analysis",
+		Status:    status,
 		Completed: completed,
 		Total:     total,
 		Message:   message,
@@ -514,9 +562,10 @@ func emitAudioTrackProgress(ctx context.Context, track api.AudioAnalysisTrackRes
 			Kind:      "audio_output",
 			Label:     fmt.Sprintf("Track %d %s", track.Ordinal, artifact.Variant),
 			Status:    artifact.Status,
-			Completed: completed,
-			Total:     total,
+			Completed: 1,
+			Total:     1,
 			Message:   artifactMessage,
+			ItemOnly:  true,
 		})
 	}
 }

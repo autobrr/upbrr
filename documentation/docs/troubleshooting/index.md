@@ -62,7 +62,7 @@ For a failed track or image:
 
 Sources with more than eight channels per selected track are unsupported. Malformed or truncated decoded sample data is rejected rather than rendered. Cancellation can leave a partial result; successful PNGs remain visible while failed or missing variants can be retried.
 
-FFmpeg streams decoded float PCM directly to upbrr. No full decoded-audio file is saved, but the source is decoded twice so complete-duration waveform and spectrogram geometry can be produced with bounded memory. Tracks are processed one at a time at their native sample rate and channel layout, without normalization, resampling, or downmixing.
+FFmpeg streams decoded float PCM directly to upbrr; no full decoded-audio file is saved. Selected tracks needing the same image types normally share one pass over the source at their native sample rate and channel layout, without normalization, resampling, or downmixing. Missing or inaccurate duration metadata can require another decode for exact spectrogram timing. If the audio changes between passes, upbrr rejects the result; re-prepare Input before trying again.
 
 ## A multi-disc source is rejected
 

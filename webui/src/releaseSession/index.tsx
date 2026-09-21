@@ -2488,7 +2488,10 @@ export function ReleaseSessionProvider({
           selection: input.selection,
           trackIds: [...input.trackIDs],
           variants: [...input.variants],
-          profileVersion: "audio-analysis-v1",
+          profileVersion: "audio-analysis-v2",
+          resourceLimits: input.resourceLimits ?? {
+            decoderThreads: 2,
+          },
         };
         return activePorts.workflow.analyzeAudio(current, instructions, commandID, signal);
       },
@@ -3059,6 +3062,7 @@ export function ReleaseSessionProvider({
           selection: retainedAudioAnalysis.selection,
           trackIDs: retainedAudioAnalysis.trackIds,
           variants: retainedAudioAnalysis.variants,
+          resourceLimits: retainedAudioAnalysis.resourceLimits,
         });
       },
       cancel: cancelAudioAnalysis,

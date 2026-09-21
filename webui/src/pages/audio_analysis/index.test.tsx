@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AudioAnalysisFacet } from "../../releaseSession/types";
 import AudioAnalysisPage from "./index";
@@ -77,11 +77,14 @@ describe("AudioAnalysisPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Generate" }));
 
+    expect(screen.queryByRole("combobox", { name: /Maximum input rate/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: /Spectrogram detail/ })).not.toBeInTheDocument();
     expect(value.generate).toHaveBeenCalledWith({
       resourceID: "resource-one",
       selection: "primary",
       trackIDs: ["audio-main"],
       variants: ["waveform", "spectrogram"],
+      resourceLimits: { decoderThreads: 2 },
     });
     expect(screen.getByText(/Director commentary/)).toBeInTheDocument();
     expect(screen.getAllByText(/commentary/)).toHaveLength(2);
@@ -102,6 +105,27 @@ describe("AudioAnalysisPage", () => {
     );
   });
 
+  it("submits adjusted decoder threads", () => {
+    const value = facet();
+    render(<AudioAnalysisPage facet={value} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />);
+
+    fireEvent.change(
+      within(screen.getByRole("group", { name: "Tracks" })).getByRole("combobox", {
+        name: /Threads per decoder/,
+      }),
+      {
+        target: { value: "1" },
+      },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Generate" }));
+
+    expect(value.generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resourceLimits: { decoderThreads: 1 },
+      }),
+    );
+  });
+
   it("blocks mutations and shows progress owned by the active workflow operation", () => {
     const value = facet({
       enabled: true,
@@ -114,7 +138,18 @@ describe("AudioAnalysisPage", () => {
           kind: "audio_output",
           label: "Track 1 waveform",
           status: "completed",
+          completed: 1,
+          total: 1,
           message: "Analysis image completed.",
+        },
+        {
+          id: "audio-main:spectrogram",
+          kind: "audio_output",
+          label: "Track 1 spectrogram",
+          status: "failed",
+          completed: 1,
+          total: 1,
+          message: "Analysis image failed.",
         },
       ],
       mutationBlockedReason: "",
@@ -124,7 +159,10 @@ describe("AudioAnalysisPage", () => {
     expect(screen.getByRole("button", { name: "Generate" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
     expect(screen.getByText("Generating audio analysis… 1/2")).toBeInTheDocument();
-    expect(screen.getByText(/Track 1 waveform: completed/)).toBeInTheDocument();
+    expect(screen.getByText(/Track 1 waveform: completed — 100%/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Track 1 spectrogram: failed — Analysis image failed/),
+    ).toBeInTheDocument();
 
     cleanup();
     const blocked = facet({
@@ -159,7 +197,8 @@ describe("AudioAnalysisPage", () => {
         selection: "primary",
         trackIds: ["audio-main"],
         variants: ["waveform"],
-        profileVersion: "audio-analysis-v1",
+        profileVersion: "audio-analysis-v2",
+        resourceLimits: { decoderThreads: 2 },
         status: "completed",
         tracks: [
           {
@@ -224,7 +263,8 @@ describe("AudioAnalysisPage", () => {
         selection: "primary",
         trackIds: ["audio-main"],
         variants: ["waveform", "spectrogram"],
-        profileVersion: "audio-analysis-v1",
+        profileVersion: "audio-analysis-v2",
+        resourceLimits: { decoderThreads: 2 },
         status: "interrupted",
         tracks: [],
         createdAt: "2026-09-21T00:00:00Z",

@@ -19,6 +19,7 @@ import type {
 } from "../types";
 import type {
   AudioAnalysisResult,
+  AudioAnalysisResourceLimits,
   AudioAnalysisSelectionMode,
   AudioAnalysisVariant,
   MediaTrackFacts,
@@ -259,6 +260,7 @@ export type AudioAnalysisGenerateInput = Readonly<{
   selection: AudioAnalysisSelectionMode;
   trackIDs: readonly string[];
   variants: readonly AudioAnalysisVariant[];
+  resourceLimits?: AudioAnalysisResourceLimits;
 }>;
 
 /** Optional exact-generation waveform and spectrogram operation state. */

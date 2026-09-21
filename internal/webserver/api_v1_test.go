@@ -302,18 +302,18 @@ func TestAPIV1AudioAnalysisArtifactRequiresReadScopeAndExactAuthority(t *testing
 	t.Parallel()
 
 	store, err := newAPITokenStore([]APITokenCredential{{
-		Token: apiV1TestToken,
- OwnerID: "reader",
- Scopes: []APITokenScope{APITokenScopeWorkflowRead},
+		Token:   apiV1TestToken,
+		OwnerID: "reader",
+		Scopes:  []APITokenScope{APITokenScopeWorkflowRead},
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	coreFake := &audioAnalysisArtifactCoreFake{expectedOwner: "api:reader"}
 	server := &Server{
-		backend:   &Backend{capabilities: CoreCapabilities{ReleaseWorkflow: coreFake}},
-		apiTokens: store,
- generalLimiter: newFixedWindowLimiter(100, time.Minute),
+		backend:        &Backend{capabilities: CoreCapabilities{ReleaseWorkflow: coreFake}},
+		apiTokens:      store,
+		generalLimiter: newFixedWindowLimiter(100, time.Minute),
 	}
 	mux := http.NewServeMux()
 	server.registerV1Routes(mux)
@@ -347,9 +347,9 @@ func TestAPIV1AudioAnalysisArtifactRequiresReadScopeAndExactAuthority(t *testing
 	}
 
 	otherStore, err := newAPITokenStore([]APITokenCredential{{
-		Token: apiV1TestToken,
- OwnerID: "other",
- Scopes: []APITokenScope{APITokenScopeWorkflowRead},
+		Token:   apiV1TestToken,
+		OwnerID: "other",
+		Scopes:  []APITokenScope{APITokenScopeWorkflowRead},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -673,7 +673,7 @@ func TestAPIV1CommandRoutesDecodeSharedWorkflowRequests(t *testing.T) {
 		want     any
 	}{
 		{"invalidate", http.MethodPost, []string{"workflow-1", "trackers", "invalidate"}, `{"trackerIds":["EXAMPLE"]}`, releaseworkflow.InvalidateTrackersCommand{}},
-		{"analyze audio", http.MethodPost, []string{"workflow-1", "audio-analysis"}, `{"instructions":{"release":{"sourcePath":"Example.Release.2026.mkv","generation":1},"resourceId":"resource-1","selection":"primary","trackIds":["track-1"],"variants":["waveform"],"profileVersion":"audio-analysis-v1"}}`, releaseworkflow.AnalyzeAudioCommand{}},
+		{"analyze audio", http.MethodPost, []string{"workflow-1", "audio-analysis"}, `{"instructions":{"release":{"sourcePath":"Example.Release.2026.mkv","generation":1},"resourceId":"resource-1","selection":"primary","trackIds":["track-1"],"variants":["waveform"],"profileVersion":"audio-analysis-v2"}}`, releaseworkflow.AnalyzeAudioCommand{}},
 		{"disable audio analysis", http.MethodPut, []string{"workflow-1", "audio-analysis", "enabled"}, `{"enabled":false}`, releaseworkflow.SetAudioAnalysisEnabledCommand{}},
 		{"select media", http.MethodPut, []string{"workflow-1", "media", "media-1", "selection"}, `{"media":{"revision":1},"artifactIds":["artifact-1"],"selected":true}`, releaseworkflow.SetMediaSelectionCommand{}},
 		{"delete media", http.MethodPost, []string{"workflow-1", "media", "media-1", "delete"}, `{"media":{"revision":1},"artifactIds":["artifact-1"]}`, releaseworkflow.DeleteMediaArtifactsCommand{}},
@@ -793,8 +793,8 @@ func TestReleaseWorkflowOpenAPICoversRuntimeRoutes(t *testing.T) {
 		"/workflows/{workflowId}/media/{mediaId}/images/upload":                        "post",
 		"/workflows/{workflowId}/media/{mediaId}/images/retry":                         "post",
 		"/workflows/{workflowId}/media/{mediaId}/images/remove":                        "post",
-		"/workflows/{workflowId}/audio-analysis":                                      "post",
-		"/workflows/{workflowId}/audio-analysis/enabled":                              "put",
+		"/workflows/{workflowId}/audio-analysis":                                       "post",
+		"/workflows/{workflowId}/audio-analysis/enabled":                               "put",
 		"/workflows/{workflowId}/audio-analysis/{analysisId}/artifacts/{artifactId}":   "get",
 		"/workflows/{workflowId}/descriptions/{descriptionId}/groups/{groupKey}/save":  "post",
 		"/workflows/{workflowId}/descriptions/{descriptionId}/groups/{groupKey}/reset": "post",

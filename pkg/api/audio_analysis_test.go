@@ -27,7 +27,10 @@ func TestAudioAnalysisInstructionsNormalizeValidatesAndDetachesSelection(t *test
 	trackIDs[0] = "changed"
 	variants[0] = "changed"
 	if normalized.ResourceID != "resource-1" || normalized.ProfileVersion != AudioAnalysisProfileVersion ||
-		normalized.TrackIDs[0] != "track-1" || normalized.Variants[0] != AudioAnalysisWaveform {
+		normalized.TrackIDs[0] != "track-1" || normalized.Variants[0] != AudioAnalysisWaveform ||
+		normalized.ResourceLimits != (AudioAnalysisResourceLimits{
+			DecoderThreads: AudioAnalysisDefaultDecoderThreads,
+		}) {
 		t.Fatalf("normalized instructions = %#v", normalized)
 	}
 
@@ -42,7 +45,10 @@ func TestAudioAnalysisInstructionsNormalizeValidatesAndDetachesSelection(t *test
 		{name: "duplicate variant", mutate: func(value *AudioAnalysisInstructions) {
 			value.Variants = []AudioAnalysisVariant{AudioAnalysisWaveform, AudioAnalysisWaveform}
 		}},
-		{name: "unsupported profile", mutate: func(value *AudioAnalysisInstructions) { value.ProfileVersion = "audio-analysis-v2" }},
+		{name: "unsupported profile", mutate: func(value *AudioAnalysisInstructions) { value.ProfileVersion = "audio-analysis-v1" }},
+		{name: "excessive decoder threads", mutate: func(value *AudioAnalysisInstructions) {
+			value.ResourceLimits.DecoderThreads = AudioAnalysisMaxDecoderThreads + 1
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			value := normalized

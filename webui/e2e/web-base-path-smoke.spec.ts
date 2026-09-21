@@ -96,7 +96,6 @@ test("audio analysis survives reload and serves owner-bound PNGs under a base pa
     await expect(page.getByRole("radio", { name: "Primary" })).toBeChecked();
     await expect(page.getByRole("checkbox", { name: "Waveform" })).toBeChecked();
     await expect(page.getByRole("checkbox", { name: "Spectrogram" })).toBeChecked();
-
     await page.getByRole("button", { name: "Generate", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Results" })).toBeVisible({ timeout: 20_000 });
     const images = page.getByRole("img");
@@ -168,7 +167,7 @@ test("audio analysis survives reload and serves owner-bound PNGs under a base pa
             selection: "primary",
             trackIds: [primaryTrack!.ID],
             variants: ["waveform"],
-            profileVersion: "audio-analysis-v1",
+            profileVersion: "audio-analysis-v2",
           },
         },
       },
@@ -210,6 +209,9 @@ test("audio analysis cancellation publishes terminal status without incomplete P
 
     const cancel = page.getByRole("button", { name: "Cancel", exact: true });
     await expect(cancel).toBeVisible({ timeout: 10_000 });
+    await expect(
+      page.getByRole("listitem").filter({ hasText: /Decoding audio \(\d+%\)\./ }),
+    ).toBeVisible({ timeout: 30_000 });
     await cancel.click();
 
     await expect(page.getByRole("button", { name: "Generate again", exact: true })).toBeEnabled({
