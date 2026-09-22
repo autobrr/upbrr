@@ -203,6 +203,8 @@ type TrackerDuplicateTarget struct {
 	Container      string   `json:"container,omitempty"`
 	VideoCodec     string   `json:"videoCodec,omitempty"`
 	VideoEncode    string   `json:"videoEncode,omitempty"`
+	AudioCodecs    []string `json:"audioCodecs,omitempty"`
+	AudioChannels  []string `json:"audioChannels,omitempty"`
 	AudioLanguages []string `json:"audioLanguages,omitempty"`
 	HDR            HDRFacts `json:"hdr"`
 	Edition        string   `json:"edition,omitempty"`

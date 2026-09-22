@@ -63,13 +63,27 @@ func VideoCodecFromMediaInfoText(value string) string {
 // AudioLanguagesFromMediaInfoText returns the language declared by each audio
 // section in a MediaInfo text dump.
 func AudioLanguagesFromMediaInfoText(value string) []string {
-	var languages []string
+	return mediaInfoAudioValues(value, "Language", "Language_String")
+}
+
+// AudioCodecsFromMediaInfoText returns the format declared by each audio track.
+func AudioCodecsFromMediaInfoText(value string) []string {
+	return mediaInfoAudioValues(value, "Format")
+}
+
+// AudioChannelsFromMediaInfoText returns the channel layout declared by each audio track.
+func AudioChannelsFromMediaInfoText(value string) []string {
+	return mediaInfoAudioValues(value, "Channel(s)", "Channel(s)_Original")
+}
+
+func mediaInfoAudioValues(value string, keys ...string) []string {
+	values := make([]string, 0)
 	for _, track := range mediaInfoTextTracks(value, "audio") {
-		if language := mediaInfoValue(track, "Language", "Language_String"); language != "" {
-			languages = append(languages, language)
+		if value := mediaInfoValue(track, keys...); value != "" {
+			values = append(values, value)
 		}
 	}
-	return languages
+	return values
 }
 
 func firstMediaInfoTextVideoTrack(value string) map[string]any {

@@ -18,6 +18,8 @@ func duplicatePolicy() *trackers.DupePolicy {
 			trackers.DupeDimensionSource,
 			trackers.DupeDimensionResolution,
 			trackers.DupeDimensionCodec,
+			trackers.DupeDimensionAudioCodec,
+			trackers.DupeDimensionAudioChannels,
 		},
 		CoexistenceRules: []trackers.DupeRule{{
 			ID:         "sam_new_audio_languages",

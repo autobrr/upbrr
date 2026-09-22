@@ -2314,6 +2314,8 @@ export type TrackerDuplicateCriteria = Readonly<{
 }>;
 
 export type TrackerDuplicateTarget = Readonly<{
+  audioChannels?: readonly string[];
+  audioCodecs?: readonly string[];
   audioLanguages?: readonly string[];
   category?: string;
   container?: string;

@@ -29,6 +29,8 @@ type DupeEntry struct {
 	Category       string
 	Source         string
 	Codec          string
+	AudioCodecs    []string
+	AudioChannels  []string
 	AudioLanguages []string
 	Container      string
 	Provider       string

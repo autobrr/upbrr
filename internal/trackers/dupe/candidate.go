@@ -35,6 +35,8 @@ type TrackerCandidate struct {
 	Source          string
 	Resolution      string
 	Codec           string
+	AudioCodecs     []string
+	AudioChannels   []string
 	AudioLanguages  []string
 	Container       string
 	Provider        string
@@ -72,6 +74,8 @@ func NormalizeCandidate(entry api.DupeEntry, _ string) TrackerCandidate {
 		Source:          strings.TrimSpace(entry.Source),
 		Resolution:      strings.TrimSpace(entry.Res),
 		Codec:           strings.TrimSpace(entry.Codec),
+		AudioCodecs:     append([]string(nil), entry.AudioCodecs...),
+		AudioChannels:   append([]string(nil), entry.AudioChannels...),
 		AudioLanguages:  append([]string(nil), entry.AudioLanguages...),
 		Container:       strings.TrimSpace(entry.Container),
 		Provider:        strings.TrimSpace(entry.Provider),
