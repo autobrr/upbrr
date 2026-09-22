@@ -577,6 +577,8 @@ const (
 	DupeDimensionSourceFamily   DupeDimension = "source_family"
 	DupeDimensionResolution     DupeDimension = "resolution"
 	DupeDimensionCodec          DupeDimension = "codec"
+	DupeDimensionAudioCodec     DupeDimension = "audio_codec"
+	DupeDimensionAudioChannels  DupeDimension = "audio_channels"
 	DupeDimensionAudioLanguages DupeDimension = "audio_languages"
 	DupeDimensionContainer      DupeDimension = "container"
 	DupeDimensionHDR            DupeDimension = "hdr"

@@ -9173,6 +9173,18 @@
       "TrackerDuplicateTarget": {
         "type": "object",
         "properties": {
+          "audioChannels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "audioCodecs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "audioLanguages": {
             "type": "array",
             "items": {

@@ -99,6 +99,9 @@ type DuplicateSubject struct {
 	Disc                 DiscFacts
 	Type                 string
 	Source               string
+	AudioLanguages       []string
+	Audio                string
+	Channels             string
 	Tag                  string
 	HDR                  string
 	HDRFacts             HDRFacts

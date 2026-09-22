@@ -148,6 +148,8 @@ type normalizedFacts struct {
 	Source         Fact
 	Resolution     Fact
 	Codec          Fact
+	AudioCodec     Fact
+	AudioChannels  Fact
 	AudioLanguages Fact
 	Container      Fact
 	Provider       Fact
@@ -219,6 +221,12 @@ func normalizeTargetFacts(target api.TrackerDuplicateTarget) normalizedFacts {
 			title.Codec,
 			FactOriginTargetMedia,
 			FactOriginContentName,
+		),
+		AudioCodec: completeFact(canonicalAudioCodecs(target.AudioCodecs), FactOriginTargetMedia, "audioCodecs"),
+		AudioChannels: completeFact(
+			canonicalAudioChannels(target.AudioChannels),
+			FactOriginTargetMedia,
+			"audioChannels",
 		),
 		AudioLanguages: mergeStructuredAndTitleFact(
 			canonicalAudioLanguages(target.AudioLanguages),
@@ -354,6 +362,12 @@ func normalizeCandidateFacts(candidate TrackerCandidate) normalizedFacts {
 			title.Codec,
 			FactOriginTrackerAPI,
 			FactOriginTrackerTitle,
+		),
+		AudioCodec: completeFact(canonicalAudioCodecs(candidate.AudioCodecs), FactOriginTrackerAPI, "audioCodecs"),
+		AudioChannels: completeFact(
+			canonicalAudioChannels(candidate.AudioChannels),
+			FactOriginTrackerAPI,
+			"audioChannels",
 		),
 		AudioLanguages: mergeStructuredAndTitleFact(
 			canonicalAudioLanguages(candidate.AudioLanguages),
@@ -898,6 +912,62 @@ func canonicalAudioLanguages(values []string) string {
 	return strings.Join(result, "+")
 }
 
+func canonicalAudioCodecs(values []string) string {
+	return canonicalAudioSet(values, canonicalAudioCodec)
+}
+
+func canonicalAudioChannels(values []string) string {
+	return canonicalAudioSet(values, canonicalAudioChannelLayout)
+}
+
+func canonicalAudioSet(values []string, normalize func(string) string) string {
+	set := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if normalized := normalize(value); normalized != "" {
+			set[normalized] = struct{}{}
+		}
+	}
+	if len(set) == 0 {
+		return ""
+	}
+	result := make([]string, 0, len(set))
+	for value := range set {
+		result = append(result, value)
+	}
+	slices.Sort(result)
+	return strings.Join(result, "+")
+}
+
+func canonicalAudioCodec(value string) string {
+	normalized := compactAlphaNumeric(value)
+	switch normalized {
+	case "ac3", "dolbydigital":
+		return "ac3"
+	case "eac3", "ddp", "dolbydigitalplus":
+		return "eac3"
+	case "dts", "dtshdma", "truehd", "aac", "flac", "opus", "pcm":
+		return normalized
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+}
+
+func canonicalAudioChannelLayout(value string) string {
+	normalized := strings.TrimSuffix(compactAlphaNumeric(value), "channels")
+	switch normalized {
+	case "1":
+		return "10"
+	case "2":
+		return "20"
+	case "6":
+		return "51"
+	case "8":
+		return "71"
+	default:
+		return normalized
+	}
+}
+
 func canonicalContainer(value string) string {
 	normalized := compactAlphaNumeric(value)
 	switch normalized {
@@ -1375,6 +1445,10 @@ func dimensionFact(facts normalizedFacts, dimension trackerspkg.DupeDimension) F
 		return facts.Resolution
 	case trackerspkg.DupeDimensionCodec:
 		return facts.Codec
+	case trackerspkg.DupeDimensionAudioCodec:
+		return facts.AudioCodec
+	case trackerspkg.DupeDimensionAudioChannels:
+		return facts.AudioChannels
 	case trackerspkg.DupeDimensionAudioLanguages:
 		return facts.AudioLanguages
 	case trackerspkg.DupeDimensionContainer:

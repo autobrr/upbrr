@@ -938,24 +938,34 @@ func duplicateTargetForEvaluation(meta api.DuplicateSubject) api.TrackerDuplicat
 		return meta.Projection.DuplicateTarget
 	}
 	return api.TrackerDuplicateTarget{
-		Names:       append([]string(nil), meta.ReleaseName, meta.Filename),
-		Category:    string(meta.Identity.Category),
-		Type:        meta.Type,
-		Source:      meta.Source,
-		Resolution:  meta.Release.Resolution,
-		VideoCodec:  meta.VideoCodec,
-		VideoEncode: meta.VideoEncode,
-		HDR:         cloneHDRFacts(meta.HDRFacts),
-		Edition:     strings.Join(meta.Release.Edition, " "),
-		Region:      meta.Release.Region,
-		Group:       meta.Tag,
-		Season:      meta.SeasonInt,
-		Episode:     meta.EpisodeInt,
-		Date:        meta.DailyEpisodeDate,
-		Pack:        meta.TVPack,
-		SizeBytes:   meta.SourceSize,
-		FileNames:   append([]string(nil), meta.FileList...),
+		Names:          append([]string(nil), meta.ReleaseName, meta.Filename),
+		Category:       string(meta.Identity.Category),
+		Type:           meta.Type,
+		Source:         meta.Source,
+		Resolution:     meta.Release.Resolution,
+		VideoCodec:     meta.VideoCodec,
+		VideoEncode:    meta.VideoEncode,
+		AudioCodecs:    duplicateAudioValues(meta.Audio),
+		AudioChannels:  duplicateAudioValues(meta.Channels),
+		AudioLanguages: append([]string(nil), meta.AudioLanguages...),
+		HDR:            cloneHDRFacts(meta.HDRFacts),
+		Edition:        strings.Join(meta.Release.Edition, " "),
+		Region:         meta.Release.Region,
+		Group:          meta.Tag,
+		Season:         meta.SeasonInt,
+		Episode:        meta.EpisodeInt,
+		Date:           meta.DailyEpisodeDate,
+		Pack:           meta.TVPack,
+		SizeBytes:      meta.SourceSize,
+		FileNames:      append([]string(nil), meta.FileList...),
 	}
+}
+
+func duplicateAudioValues(value string) []string {
+	if value = strings.TrimSpace(value); value != "" {
+		return []string{value}
+	}
+	return nil
 }
 
 func evaluationMatch(evaluation Evaluation) api.DupeMatch {

@@ -14,16 +14,16 @@ import (
 
 func TestSAMNameKeepsTVYearAndDropsUnverifiedAudioMarker(t *testing.T) {
 	subject := samNamedSubject(t, api.ReleaseNameRequest{
-		Category: "TV",
- Type: "WEBDL",
- Title: "A Good Day to Ascend",
- Year: 2026,
-		Season: "S01",
- Resolution: "2160p",
- Source: "Web",
- Audio: "DD+ 5.1",
+		Category:   "TV",
+		Type:       "WEBDL",
+		Title:      "A Good Day to Ascend",
+		Year:       2026,
+		Season:     "S01",
+		Resolution: "2160p",
+		Source:     "Web",
+		Audio:      "DD+ 5.1",
 		VideoCodec: "H.265",
- Tag: "-QHstudIo",
+		Tag:        "-QHstudIo",
 	})
 	subject.Identity.Category = api.CanonicalCategoryTV
 	subject.AudioLanguages = []string{"Korean"}
@@ -132,16 +132,16 @@ func samNamedSubject(t *testing.T, request api.ReleaseNameRequest) api.UploadSub
 		t.Fatal("BuildReleaseName did not produce a structured document")
 	}
 	return api.UploadSubject{
-		ReleaseName: result.Name,
- ReleaseNameNoTag: result.NameNoTag,
- GeneratedName: result.GeneratedName,
-		Identity: api.ExternalIdentity{Category: api.CanonicalCategoryTV},
-		Release:  api.ReleaseInfo{
-Category: request.Category,
- Title: request.Title,
- Year: request.Year,
- Group: request.Tag,
-},
+		ReleaseName:      result.Name,
+		ReleaseNameNoTag: result.NameNoTag,
+		GeneratedName:    result.GeneratedName,
+		Identity:         api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+		Release: api.ReleaseInfo{
+			Category: request.Category,
+			Title:    request.Title,
+			Year:     request.Year,
+			Group:    request.Tag,
+		},
 	}
 }
 
@@ -160,23 +160,26 @@ func samReviewedName(t *testing.T, subject api.UploadSubject) string {
 
 func samPassingSubject() api.TrackerValidationSubject {
 	return api.TrackerValidationSubject{
-		SourcePath: "current",
- Identity: api.ExternalIdentity{Category: api.CanonicalCategoryTV, SourcePath: "current"},
-		SeasonInt: 1,
- TVPack: true,
+		SourcePath:       "current",
+		Identity:         api.ExternalIdentity{Category: api.CanonicalCategoryTV, SourcePath: "current"},
+		SeasonInt:        1,
+		TVPack:           true,
 		ProviderMetadata: api.SourceScopedMetadata{SourcePath: "current", TVDB: &api.TVDBMetadata{Status: "Ended"}},
 		PackageFacts: api.PackageFacts{
-			Status: api.MetadataEvidenceStatusComplete,
- KnownFileCount: 2,
- MediaFileCount: 2,
-			DetectedSeasons: []int{1},
- DetectedEpisodes: []api.SeasonEpisodeFacts{{Season: 1, Episodes: []int{1, 2}}},
+			Status:           api.MetadataEvidenceStatusComplete,
+			KnownFileCount:   2,
+			MediaFileCount:   2,
+			DetectedSeasons:  []int{1},
+			DetectedEpisodes: []api.SeasonEpisodeFacts{{Season: 1, Episodes: []int{1, 2}}},
 		},
 		MediaFileFacts: api.MediaFileFacts{
-			LanguageStatus: api.MetadataEvidenceStatusComplete,
- ExpectedFileCount: 1,
- OriginalLanguage: "Korean",
-			Files: []api.MediaFileFact{{AudioLanguages: []string{"Korean"}, SubtitleLanguages: []string{"Portuguese"}}},
+			LanguageStatus:    api.MetadataEvidenceStatusComplete,
+			ExpectedFileCount: 2,
+			OriginalLanguage:  "Korean",
+			Files: []api.MediaFileFact{
+				{AudioLanguages: []string{"Korean"}, SubtitleLanguages: []string{"Portuguese"}},
+				{AudioLanguages: []string{"Korean"}, SubtitleLanguages: []string{"Portuguese"}},
+			},
 		},
 	}
 }

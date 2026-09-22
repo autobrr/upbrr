@@ -888,6 +888,8 @@ func comparisonFactsForDimension(
 		trackerspkg.DupeDimensionSourceFamily,
 		trackerspkg.DupeDimensionResolution,
 		trackerspkg.DupeDimensionCodec,
+		trackerspkg.DupeDimensionAudioCodec,
+		trackerspkg.DupeDimensionAudioChannels,
 		trackerspkg.DupeDimensionAudioLanguages,
 		trackerspkg.DupeDimensionContainer,
 		trackerspkg.DupeDimensionEdition,

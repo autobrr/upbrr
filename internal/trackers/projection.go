@@ -588,6 +588,8 @@ func duplicateTarget(subject api.UploadSubject) api.TrackerDuplicateTarget {
 		Container:      strings.TrimSpace(subject.Container),
 		VideoCodec:     strings.TrimSpace(subject.VideoCodec),
 		VideoEncode:    strings.TrimSpace(subject.VideoEncode),
+		AudioCodecs:    nonEmptyDuplicateValues(subject.Audio),
+		AudioChannels:  nonEmptyDuplicateValues(subject.Channels),
 		AudioLanguages: append([]string(nil), subject.AudioLanguages...),
 		HDR:            subject.HDRFacts,
 		Edition:        strings.TrimSpace(subject.Edition),
@@ -602,6 +604,13 @@ func duplicateTarget(subject api.UploadSubject) api.TrackerDuplicateTarget {
 		SizeBytes:      subject.SourceSize,
 		FileNames:      append([]string(nil), subject.FileList...),
 	}
+}
+
+func nonEmptyDuplicateValues(value string) []string {
+	if value = strings.TrimSpace(value); value != "" {
+		return []string{value}
+	}
+	return nil
 }
 
 func firstProjectionValue(values ...string) string {
