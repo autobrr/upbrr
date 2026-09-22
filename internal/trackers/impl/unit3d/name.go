@@ -58,6 +58,7 @@ func LocalizedReleaseNamePolicy(id string) trackers.ReleaseNamePolicyBinding {
 	return trackers.StructuredReleaseNamePolicy(id, trackers.StructuredNamePolicy{Defaults: applyLocalizedNameDefaults})
 }
 
+// applyLocalizedNameDefaults adapts the exported defaults for policy bindings.
 func applyLocalizedNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, cfg config.TrackerConfig) error {
 	return ApplyLocalizedNameDefaults(editor, meta, cfg)
 }

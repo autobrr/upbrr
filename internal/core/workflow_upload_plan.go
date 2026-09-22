@@ -628,6 +628,7 @@ func workflowCBRTorrentRootName(eligible []api.TrackerReleaseProjection) string 
 	return strings.ReplaceAll(strings.TrimSpace(eligible[0].UploadReleaseName), " ", ".")
 }
 
+// RetryClientInjections injects registered tracker torrents into configured clients.
 func (b workflowUploadPlanBuilder) RetryClientInjections(
 	ctx context.Context,
 	authority releaseworkflow.RegisteredArtifactAuthority,
