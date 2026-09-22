@@ -13,6 +13,7 @@ import (
 
 	"github.com/autobrr/rls"
 
+	"github.com/autobrr/upbrr/internal/languageutil"
 	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -143,43 +144,45 @@ type contentScope struct {
 }
 
 type normalizedFacts struct {
-	Type          Fact
-	Source        Fact
-	Resolution    Fact
-	Codec         Fact
-	Container     Fact
-	Provider      Fact
-	Group         Fact
-	ReleaseOrigin Fact
-	Pack          Fact
-	Edition       Fact
-	Region        Fact
-	ThreeD        Fact
-	Repack        Fact
-	Size          Fact
-	Files         Fact
-	MediaKind     mediaKind
-	MediaClass    mediaClass
-	SourceFamily  sourceFamily
-	Content       contentScope
-	HDR           api.HDRFacts
+	Type           Fact
+	Source         Fact
+	Resolution     Fact
+	Codec          Fact
+	AudioLanguages Fact
+	Container      Fact
+	Provider       Fact
+	Group          Fact
+	ReleaseOrigin  Fact
+	Pack           Fact
+	Edition        Fact
+	Region         Fact
+	ThreeD         Fact
+	Repack         Fact
+	Size           Fact
+	Files          Fact
+	MediaKind      mediaKind
+	MediaClass     mediaClass
+	SourceFamily   sourceFamily
+	Content        contentScope
+	HDR            api.HDRFacts
 }
 
 type parsedTitleFacts struct {
-	Resolution string
-	MediaKind  mediaKind
-	Source     string
-	Codec      string
-	Container  string
-	Provider   string
-	Group      string
-	Edition    string
-	Metadata   string
-	Region     string
-	Repack     string
-	ThreeD     string
-	Content    contentScope
-	HDR        api.HDRFacts
+	Resolution     string
+	MediaKind      mediaKind
+	Source         string
+	Codec          string
+	AudioLanguages string
+	Container      string
+	Provider       string
+	Group          string
+	Edition        string
+	Metadata       string
+	Region         string
+	Repack         string
+	ThreeD         string
+	Content        contentScope
+	HDR            api.HDRFacts
 }
 
 var (
@@ -214,6 +217,13 @@ func normalizeTargetFacts(target api.TrackerDuplicateTarget) normalizedFacts {
 			canonicalCodec(firstNonEmpty(target.VideoEncode, target.VideoCodec)),
 			"videoCodec",
 			title.Codec,
+			FactOriginTargetMedia,
+			FactOriginContentName,
+		),
+		AudioLanguages: mergeStructuredAndTitleFact(
+			canonicalAudioLanguages(target.AudioLanguages),
+			"audioLanguages",
+			title.AudioLanguages,
 			FactOriginTargetMedia,
 			FactOriginContentName,
 		),
@@ -342,6 +352,13 @@ func normalizeCandidateFacts(candidate TrackerCandidate) normalizedFacts {
 			canonicalCodec(candidate.Codec),
 			"codec",
 			title.Codec,
+			FactOriginTrackerAPI,
+			FactOriginTrackerTitle,
+		),
+		AudioLanguages: mergeStructuredAndTitleFact(
+			canonicalAudioLanguages(candidate.AudioLanguages),
+			"audioLanguages",
+			title.AudioLanguages,
 			FactOriginTrackerAPI,
 			FactOriginTrackerTitle,
 		),
@@ -591,18 +608,19 @@ func parseReleaseTitle(name string, origin FactOrigin) parsedTitleFacts {
 		edition = canonicalTitleEdition(nil, nil, metadata)
 	}
 	parsed := parsedTitleFacts{
-		Resolution: canonicalResolution(candidateResolutionPattern.FindString(name)),
-		MediaKind:  mediaKind,
-		Source:     canonicalSource(release.Source),
-		Codec:      canonicalCodec(firstNonEmpty(release.Codec...)),
-		Container:  canonicalContainer(firstNonEmpty(release.Container, release.Ext)),
-		Provider:   canonicalProvider(release.Collection),
-		Group:      canonicalGroup(release.Group),
-		Edition:    edition,
-		Metadata:   metadata,
-		Region:     canonicalRegion(release.Region),
-		Content:    contentScope{Kind: contentScopeWork, Origin: origin},
-		HDR:        hdrFactsFromCandidateTitle(name),
+		Resolution:     canonicalResolution(candidateResolutionPattern.FindString(name)),
+		MediaKind:      mediaKind,
+		Source:         canonicalSource(release.Source),
+		Codec:          canonicalCodec(firstNonEmpty(release.Codec...)),
+		AudioLanguages: canonicalAudioLanguages(release.Language),
+		Container:      canonicalContainer(firstNonEmpty(release.Container, release.Ext)),
+		Provider:       canonicalProvider(release.Collection),
+		Group:          canonicalGroup(release.Group),
+		Edition:        edition,
+		Metadata:       metadata,
+		Region:         canonicalRegion(release.Region),
+		Content:        contentScope{Kind: contentScopeWork, Origin: origin},
+		HDR:            hdrFactsFromCandidateTitle(name),
 	}
 	if parsed.Source == "" {
 		parsed.Source = sourceFromTitle(upper)
@@ -673,7 +691,7 @@ func parseReleaseTitle(name string, origin FactOrigin) parsedTitleFacts {
 }
 
 func (facts parsedTitleFacts) hasEvidence() bool {
-	return facts.Resolution != "" || facts.MediaKind != mediaKindUnknown || facts.Source != "" || facts.Codec != "" ||
+	return facts.Resolution != "" || facts.MediaKind != mediaKindUnknown || facts.Source != "" || facts.Codec != "" || facts.AudioLanguages != "" ||
 		facts.Container != "" || facts.Provider != "" || facts.Group != "" || facts.Edition != "" || facts.Region != ""
 }
 
@@ -860,6 +878,24 @@ func canonicalCodec(value string) string {
 	default:
 		return strings.ToLower(strings.TrimSpace(value))
 	}
+}
+
+func canonicalAudioLanguages(values []string) string {
+	set := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if normalized := languageutil.NormalizeLanguageCode(value); normalized != "" {
+			set[normalized] = struct{}{}
+		}
+	}
+	if len(set) == 0 {
+		return ""
+	}
+	result := make([]string, 0, len(set))
+	for value := range set {
+		result = append(result, value)
+	}
+	slices.Sort(result)
+	return strings.Join(result, "+")
 }
 
 func canonicalContainer(value string) string {
@@ -1339,6 +1375,8 @@ func dimensionFact(facts normalizedFacts, dimension trackerspkg.DupeDimension) F
 		return facts.Resolution
 	case trackerspkg.DupeDimensionCodec:
 		return facts.Codec
+	case trackerspkg.DupeDimensionAudioLanguages:
+		return facts.AudioLanguages
 	case trackerspkg.DupeDimensionContainer:
 		return facts.Container
 	case trackerspkg.DupeDimensionEdition:

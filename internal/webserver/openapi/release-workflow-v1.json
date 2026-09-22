@@ -9667,6 +9667,12 @@
       "TrackerDuplicateTarget": {
         "type": "object",
         "properties": {
+          "audioLanguages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "category": {
             "type": "string"
           },
