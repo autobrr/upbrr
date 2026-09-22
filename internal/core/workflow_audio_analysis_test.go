@@ -13,9 +13,11 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -134,6 +136,129 @@ func (f *audioAnalysisServiceFake) analyzeOne(
 		},
 		Artifacts: []audioanalysis.Artifact{{Public: artifact, Path: f.path}},
 	}, nil
+}
+
+func TestWorkflowAudioAnalysisStatisticsRetainReloadReuseAndIntegrity(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	release := api.ReleaseRef{SourcePath: "Example.Release.2026.mkv", Generation: 3}
+	subject := api.AudioAnalysisSubject{
+		Release: release,
+ SourcePath: release.SourcePath,
+ VideoPath: "source.mkv",
+		ResourceID: "resource-1",
+ ManifestFingerprint: "manifest-1",
+ PrimaryTrackID: "track-1",
+		Tracks: []api.MediaTrackFacts{{
+ID: "track-1",
+ Kind: api.MediaTrackAudio,
+ Ordinal: 1,
+ Channels: 2,
+ SampleRate: 48_000,
+}},
+	}
+	const report = "             Overall     Left      Right\nDC offset   0.000000  0.000000  0.000000\n"
+	service := &audioAnalysisServiceFake{analyze: func(_ context.Context, _ api.AudioAnalysisInstructions, attemptRoot string) (audioanalysis.TrackResult, error) {
+		if err := os.MkdirAll(attemptRoot, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		pathValue := filepath.Join(attemptRoot, "stats.txt")
+		if err := os.WriteFile(pathValue, []byte(report), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		artifact := api.AudioAnalysisArtifact{
+ID: "stats-1",
+ Variant: api.AudioAnalysisStats,
+ Status: api.StageStatusCompleted,
+ Text: report,
+}
+		return audioanalysis.TrackResult{
+			Public: api.AudioAnalysisTrackResult{
+				TrackID: "track-1",
+ Ordinal: 1,
+ Channels: 2,
+ SampleRate: 48_000,
+ SampleFrames: 96_000,
+ Duration: 2,
+				Status: api.StageStatusCompleted,
+ Artifacts: []api.AudioAnalysisArtifact{artifact},
+			},
+			Artifacts: []audioanalysis.Artifact{{Public: artifact, Path: pathValue}},
+		}, nil
+	}}
+	builder := workflowAudioAnalysisBuilder{
+resolver: audioAnalysisResolverFake{subject: subject},
+ service: service,
+ root: root,
+}
+	instructions := api.AudioAnalysisInstructions{
+		Release: release,
+ ResourceID: subject.ResourceID,
+ Selection: api.AudioAnalysisSelectionPrimary,
+		TrackIDs: []string{"track-1"},
+ Variants: []api.AudioAnalysisVariant{api.AudioAnalysisStats},
+	}
+	now := time.Now()
+	result, resource, err := builder.Build(t.Context(), release, instructions, "stats-attempt", now, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained, ok := resource.(workflowAudioAnalysisResource)
+	if !ok || result.Status != api.StageStatusCompleted {
+		t.Fatalf("result status=%s resource=%T", result.Status, resource)
+	}
+	_, payload, err := retained.MarshalPrivateResource()
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoredValue, err := decodeWorkflowAudioAnalysisResource(root, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, ok := restoredValue.(workflowAudioAnalysisResource)
+	if !ok {
+		t.Fatalf("restored resource=%T", restoredValue)
+	}
+	content, err := restored.OpenArtifact(t.Context(), result, "stats-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, readErr := io.ReadAll(content.Body)
+	closeErr := content.Body.Close()
+	if readErr != nil || closeErr != nil || string(data) != report || content.ContentType != "text/plain; charset=utf-8" {
+		t.Fatalf("statistics content mismatch=%t type=%q errors=%v,%v", string(data) != report, content.ContentType, readErr, closeErr)
+	}
+	retried, retryResource, err := builder.Build(t.Context(), release, instructions, "stats-retry", now, &result, restored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(service.calls) != 1 {
+		t.Fatalf("analysis calls=%d, expected reuse", len(service.calls))
+	}
+	cloned, ok := retryResource.(workflowAudioAnalysisResource)
+	if !ok {
+		t.Fatalf("retry resource=%T", retryResource)
+	}
+	artifact := retried.Tracks[0].Artifacts[0]
+	pathValue, err := cloned.LocalArtifactPath(retried, artifact.ID)
+	if err != nil || filepath.Ext(pathValue) != ".txt" || artifact.Text != report || artifact.ID == "stats-1" {
+		t.Fatalf("cloned statistics artifact=%#v path=%s error=%v", artifact, pathValue, err)
+	}
+	if err := retained.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cloned.LocalArtifactPath(retried, artifact.ID); err != nil {
+		t.Fatalf("releasing old attempt affected cloned report: %v", err)
+	}
+	if err := os.WriteFile(pathValue, []byte(strings.ReplaceAll(report, "0.000000", "1.000000")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cloned.OpenArtifact(t.Context(), retried, artifact.ID); !errors.Is(err, releaseworkflow.ErrPrivateResourceUnavailable) {
+		t.Fatalf("tampered statistics open error=%v", err)
+	}
+	if _, err := cloned.LocalArtifactPath(retried, artifact.ID); !errors.Is(err, releaseworkflow.ErrPrivateResourceUnavailable) {
+		t.Fatalf("tampered statistics local path error=%v", err)
+	}
 }
 
 func TestWorkflowAudioAnalysisBuilderRetriesOnlyMissingVariant(t *testing.T) {

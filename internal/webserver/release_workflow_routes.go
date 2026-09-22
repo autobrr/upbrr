@@ -292,10 +292,17 @@ func (s *Server) registerReleaseWorkflowAppRoutes(mux *http.ServeMux) {
 		s.writeReleaseWorkflowArtifact(
 			w,
 			content,
-			`inline; filename="audio-analysis.png"`,
+			audioAnalysisContentDisposition(content.ContentType),
 			"releaseworkflow: audio analysis response interrupted",
 		)
 	}))
+}
+
+func audioAnalysisContentDisposition(contentType string) string {
+	if contentType == "text/plain; charset=utf-8" {
+		return `inline; filename="audio-analysis-stats.txt"`
+	}
+	return `inline; filename="audio-analysis.png"`
 }
 
 func (s *Server) writeReleaseWorkflowArtifact(

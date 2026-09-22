@@ -70,8 +70,46 @@ const facet = (overrides: Partial<AudioAnalysisFacet["view"]> = {}): AudioAnalys
   artifactURL: (artifactID) => `/audio/${artifactID}`,
 });
 
+type AnalysisResult = NonNullable<AudioAnalysisFacet["view"]["result"]>;
+
+const resultWithArtifacts = (
+  artifacts: AnalysisResult["tracks"][number]["artifacts"],
+): AnalysisResult => ({
+  id: "analysis-one",
+  workflowId: "workflow-one",
+  revision: 8,
+  release: { SourcePath: "C:\\media\\Example.mkv", Generation: 4 },
+  resourceId: "resource-one",
+  manifestFingerprint: "a".repeat(64),
+  attemptId: "attempt-one",
+  selection: "primary",
+  trackIds: ["audio-main"],
+  variants: artifacts.map((artifact) => artifact.variant),
+  profileVersion: "audio-analysis-v2",
+  resourceLimits: { decoderThreads: 2 },
+  status: "completed",
+  tracks: [
+    {
+      trackId: "audio-main",
+      ordinal: 1,
+      title: "Main audio",
+      codec: "FLAC",
+      channelLayout: "5.1",
+      channels: 6,
+      sampleRate: 48000,
+      sampleFrames: 480000,
+      durationSeconds: 10,
+      status: "completed",
+      artifacts,
+    },
+  ],
+  createdAt: "2026-09-21T00:00:00Z",
+  completedAt: "2026-09-21T00:01:00Z",
+  expiresAt: "2026-09-22T00:00:00Z",
+});
+
 describe("AudioAnalysisPage", () => {
-  it("submits the prepared primary track and both image variants by default", () => {
+  it("submits the prepared primary track and all outputs by default", () => {
     const value = facet();
     render(<AudioAnalysisPage facet={value} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />);
 
@@ -83,7 +121,7 @@ describe("AudioAnalysisPage", () => {
       resourceID: "resource-one",
       selection: "primary",
       trackIDs: ["audio-main"],
-      variants: ["waveform", "spectrogram"],
+      variants: ["waveform", "spectrogram", "stats"],
       resourceLimits: { decoderThreads: 2 },
     });
     expect(screen.getByText(/Director commentary/)).toBeInTheDocument();
@@ -186,47 +224,15 @@ describe("AudioAnalysisPage", () => {
     const value = facet({
       enabled: true,
       status: "ready",
-      result: {
-        id: "analysis-one",
-        workflowId: "workflow-one",
-        revision: 8,
-        release: { SourcePath: "C:\\media\\Example.mkv", Generation: 4 },
-        resourceId: "resource-one",
-        manifestFingerprint: "a".repeat(64),
-        attemptId: "attempt-one",
-        selection: "primary",
-        trackIds: ["audio-main"],
-        variants: ["waveform"],
-        profileVersion: "audio-analysis-v2",
-        resourceLimits: { decoderThreads: 2 },
-        status: "completed",
-        tracks: [
-          {
-            trackId: "audio-main",
-            ordinal: 1,
-            title: "Main audio",
-            codec: "FLAC",
-            channelLayout: "5.1",
-            channels: 6,
-            sampleRate: 48000,
-            sampleFrames: 480000,
-            durationSeconds: 10,
-            status: "completed",
-            artifacts: [
-              {
-                id: "waveform-one",
-                variant: "waveform",
-                status: "completed",
-                width: 1812,
-                height: 980,
-              },
-            ],
-          },
-        ],
-        createdAt: "2026-09-21T00:00:00Z",
-        completedAt: "2026-09-21T00:01:00Z",
-        expiresAt: "2026-09-22T00:00:00Z",
-      },
+      result: resultWithArtifacts([
+        {
+          id: "waveform-one",
+          variant: "waveform",
+          status: "completed",
+          width: 1812,
+          height: 980,
+        },
+      ]),
     });
     render(
       <AudioAnalysisPage
@@ -246,6 +252,76 @@ describe("AudioAnalysisPage", () => {
     expect(thumbnail).toHaveClass("audio-analysis-thumbnail");
     fireEvent.click(thumbnail);
     expect(setLightboxImage).toHaveBeenCalledWith("/audio/waveform-one");
+  });
+
+  it("shows retained amplitude statistics as bounded text with a file download", () => {
+    const statistics = "DC offset   0.000000\nRMS lev dB    -29.68\n";
+    const setLightboxImage = vi.fn();
+    const value = facet({
+      enabled: true,
+      status: "ready",
+      result: resultWithArtifacts([
+        { id: "stats-one", variant: "stats", status: "completed", text: statistics },
+      ]),
+    });
+    render(
+      <AudioAnalysisPage
+        facet={value}
+        setLightboxImage={setLightboxImage}
+        setLightboxAlt={vi.fn()}
+      />,
+    );
+
+    const output = screen.getByRole("region", {
+      name: "Track 1: Main audio amplitude statistics",
+    });
+    expect(output.tagName).toBe("PRE");
+    expect(output).toHaveAttribute("tabindex", "0");
+    expect(output.textContent).toBe(statistics);
+    expect(output).toHaveClass("max-h-40", "overflow-auto", "whitespace-pre", "font-mono");
+    expect(screen.getByRole("link", { name: "Download text file" })).toHaveAttribute(
+      "href",
+      "/audio/stats-one",
+    );
+    expect(screen.getByRole("link", { name: "Download text file" })).toHaveAttribute("download");
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Open .* stats full size/ }),
+    ).not.toBeInTheDocument();
+    expect(setLightboxImage).not.toHaveBeenCalled();
+  });
+
+  it("shows a failed statistics artifact while preserving a completed waveform", () => {
+    const value = facet({
+      enabled: true,
+      status: "ready",
+      result: {
+        ...resultWithArtifacts([
+          { id: "waveform-one", variant: "waveform", status: "completed" },
+          {
+            id: "",
+            variant: "stats",
+            status: "failed",
+            failure: { code: "output_failed", message: "Could not publish audio statistics." },
+          },
+        ]),
+        status: "partial",
+      },
+    });
+    render(<AudioAnalysisPage facet={value} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />);
+
+    expect(
+      screen.getByRole("button", { name: "Open Track 1: Main audio waveform full size" }),
+    ).toBeEnabled();
+    expect(screen.getByRole("link", { name: "Download native PNG" })).toHaveAttribute(
+      "href",
+      "/audio/waveform-one",
+    );
+    expect(screen.getByText("output_failed: Could not publish audio statistics.")).toHaveClass(
+      "error",
+    );
+    expect(screen.queryByRole("link", { name: "Download text file" })).not.toBeInTheDocument();
+    expect(screen.queryByText("No retained statistics are available.")).not.toBeInTheDocument();
   });
 
   it("offers the exact retry action for an interrupted retained result", () => {

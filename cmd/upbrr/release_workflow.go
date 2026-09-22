@@ -886,6 +886,7 @@ func (s *cliWorkflowSession) completeAudioAnalysis(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	variants = append(variants, api.AudioAnalysisStats)
 	request := api.AnalyzeReleaseWorkflowAudioRequest{
 		WorkflowID:       s.current.Workflow.ID,
 		ExpectedRevision: s.current.Workflow.Revision,

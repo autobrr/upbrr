@@ -235,7 +235,7 @@ Screenshots and Images:
   -skip-imagehost-upload, --skip-imagehost-upload, -siu
       Skip automatic image host uploads
   -audio-analysis, --audio-analysis
-      Generate local PNGs in managed release temporary storage before upload
+      Generate local audio images and amplitude statistics in managed temporary storage before upload
   -audio-tracks, --audio-tracks string
       Audio tracks: primary (default), all, or comma-separated one-based audio ordinals
   -audio-images, --audio-images string

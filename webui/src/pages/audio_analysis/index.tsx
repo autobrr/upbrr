@@ -13,7 +13,7 @@ type Props = Readonly<{
 const trackLabel = (ordinal: number, title: string) =>
   title.trim() ? `Track ${ordinal}: ${title.trim()}` : `Track ${ordinal}`;
 
-/** Presents opt-in prepared-track selection and retained local analysis images. */
+/** Presents opt-in prepared-track selection and retained local analysis outputs. */
 export default function AudioAnalysisPage({ facet, setLightboxImage, setLightboxAlt }: Props) {
   const { view } = facet;
   const resourceIDs = useMemo(
@@ -27,7 +27,7 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
   const [resourceID, setResourceID] = useState(primaryResourceID);
   const [selection, setSelection] = useState<AudioAnalysisGenerateInput["selection"]>("primary");
   const [selectedTrackIDs, setSelectedTrackIDs] = useState<readonly string[]>([]);
-  const [variants, setVariants] = useState<readonly string[]>(["waveform", "spectrogram"]);
+  const [variants, setVariants] = useState<readonly string[]>(["waveform", "spectrogram", "stats"]);
   const [decoderThreads, setDecoderThreads] = useState(2);
 
   const effectiveResourceID = resourceIDs.includes(resourceID) ? resourceID : primaryResourceID;
@@ -78,10 +78,10 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
     <section className="grid gap-4">
       <header>
         <p className="eyebrow">Audio Analysis</p>
-        <h1>Waveforms &amp; Spectrograms</h1>
+        <h1>Waveforms, Spectrograms &amp; Statistics</h1>
         <p className="subtitle">
-          Stream selected prepared audio tracks through FFmpeg and render local PNG previews in Go.
-          Nothing runs until you choose Generate.
+          Generate waveform, spectrogram, and amplitude statistics outputs for selected prepared
+          audio tracks. Nothing runs until you choose Generate.
         </p>
       </header>
 
@@ -204,11 +204,12 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
         </fieldset>
 
         <fieldset className="grid gap-2" disabled={mutationsBlocked}>
-          <legend>Images</legend>
+          <legend>Outputs</legend>
           <div className="flex flex-wrap gap-4">
             {[
               ["waveform", "Waveform"],
               ["spectrogram", "Spectrogram"],
+              ["stats", "Amplitude statistics"],
             ].map(([variant, label]) => (
               <label key={variant}>
                 <input
@@ -222,7 +223,7 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
           </div>
           {variants.length === 0 ? (
             <p className="error" role="alert">
-              Select at least one image type.
+              Select at least one output type.
             </p>
           ) : null}
         </fieldset>
@@ -324,14 +325,37 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
                     return (
                       <section key={artifact.variant} className="grid min-w-0 gap-2">
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                          <h4 className="capitalize">{artifact.variant}</h4>
+                          <h4 className="capitalize">
+                            {artifact.variant === "stats"
+                              ? "Amplitude statistics"
+                              : artifact.variant}
+                          </h4>
                           {url ? (
                             <a href={url} download>
-                              Download native PNG
+                              {artifact.variant === "stats"
+                                ? "Download text file"
+                                : "Download native PNG"}
                             </a>
                           ) : null}
                         </div>
-                        {url ? (
+                        {artifact.variant === "stats" ? (
+                          artifact.status === "completed" && artifact.text !== undefined ? (
+                            <pre
+                              className="panel max-h-40 max-w-full overflow-auto p-3 font-mono text-xs whitespace-pre"
+                              tabIndex={0}
+                              role="region"
+                              aria-label={`${trackLabel(track.ordinal, track.title || "")} amplitude statistics`}
+                            >
+                              {artifact.text}
+                            </pre>
+                          ) : artifact.failure ? (
+                            <p className="error">
+                              {artifact.failure.code}: {artifact.failure.message}
+                            </p>
+                          ) : (
+                            <p className="muted">No retained statistics are available.</p>
+                          )
+                        ) : url ? (
                           <button
                             type="button"
                             className="audio-analysis-thumbnail"

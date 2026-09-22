@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { expect, test } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 import {
   createE2EAPIToken,
   createE2EWorkspace,
@@ -79,7 +80,7 @@ test("embedded web serves UI, API, assets, manifest, and events under a base pat
   }
 });
 
-test("audio analysis survives reload and serves owner-bound PNGs under a base path", async ({
+test("audio analysis survives reload and serves owner-bound images and statistics under a base path", async ({
   page,
 }) => {
   const workspace = await createE2EWorkspace({ audioAnalysis: true });
@@ -92,10 +93,13 @@ test("audio analysis survives reload and serves owner-bound PNGs under a base pa
     const audioNavigation = page.getByRole("button", { name: "Audio Analysis", exact: true });
     await expect(audioNavigation).toBeEnabled();
     await audioNavigation.click();
-    await expect(page.getByRole("heading", { name: "Waveforms & Spectrograms" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Waveforms, Spectrograms & Statistics" }),
+    ).toBeVisible();
     await expect(page.getByRole("radio", { name: "Primary" })).toBeChecked();
     await expect(page.getByRole("checkbox", { name: "Waveform" })).toBeChecked();
     await expect(page.getByRole("checkbox", { name: "Spectrogram" })).toBeChecked();
+    await expect(page.getByRole("checkbox", { name: "Amplitude statistics" })).toBeChecked();
     await page.getByRole("button", { name: "Generate", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Results" })).toBeVisible({ timeout: 20_000 });
     const images = page.getByRole("img");
@@ -108,10 +112,42 @@ test("audio analysis survives reload and serves owner-bound PNGs under a base pa
     expect(authorized.ok()).toBe(true);
     expect(authorized.headers()["content-type"]).toContain("image/png");
 
+    const statsBox = page.locator("pre").filter({ hasText: "DC offset" });
+    await expect(statsBox).toBeVisible();
+    const statsText = await statsBox.textContent();
+    expect(statsText).toContain("RMS lev dB");
+    expect(statsText).toContain("Bit-depth");
+    expect(statsText).toContain("Window s");
+    const statsLink = page.getByRole("link", { name: "Download text file" });
+    const statsPath = await statsLink.getAttribute("href");
+    const statsURL = new URL(statsPath || "", app.url).toString();
+    const statsResponse = await page.context().request.get(statsURL);
+    expect(statsResponse.headers()["content-type"]).toContain("text/plain");
+    expect(await statsResponse.text()).toBe(statsText);
+    const downloadPromise = page.waitForEvent("download");
+    await statsLink.click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe("audio-analysis-stats.txt");
+    const downloadedPath = await download.path();
+    expect(downloadedPath).toBeTruthy();
+    expect(await readFile(downloadedPath!, "utf8")).toBe(statsText);
+
+    await page.setViewportSize({ width: 375, height: 812 });
+    await expect(statsBox).toBeVisible();
+    const box = await statsBox.boundingBox();
+    expect(box?.height).toBeLessThanOrEqual(160);
+    expect(box?.width).toBeLessThan(375);
+    await page.screenshot({
+      path: test.info().outputPath("audio-statistics-mobile.png"),
+      fullPage: true,
+    });
+    await page.setViewportSize({ width: 1280, height: 720 });
+
     await page.reload();
     await page.getByRole("button", { name: "Audio Analysis", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Results" })).toBeVisible();
     await expect(page.getByRole("img")).toHaveCount(2);
+    await expect(statsBox).toHaveText(statsText || "");
 
     await page.getByRole("button", { name: "Disable", exact: true }).click();
     await expect(page.getByText("Disabled", { exact: true })).toBeVisible();
@@ -166,7 +202,7 @@ test("audio analysis survives reload and serves owner-bound PNGs under a base pa
             resourceId: primaryTrack!.ResourceID,
             selection: "primary",
             trackIds: [primaryTrack!.ID],
-            variants: ["waveform"],
+            variants: ["stats"],
             profileVersion: "audio-analysis-v2",
           },
         },
@@ -179,7 +215,9 @@ test("audio analysis survives reload and serves owner-bound PNGs under a base pa
     const apiArtifactPath = `/workflows/${analyzed.workflow.id}/audio-analysis/${analyzed.audioAnalysis!.id}/artifacts/${retainedArtifact!.id}?revision=${analyzed.audioAnalysis!.revision}`;
     const ownerArtifact = await ownerClient.raw(apiArtifactPath);
     expect(ownerArtifact.status, await ownerArtifact.clone().text()).toBe(200);
-    expect(ownerArtifact.headers.get("content-type")).toContain("image/png");
+    expect(ownerArtifact.headers.get("content-type")).toContain("text/plain");
+    expect(ownerArtifact.headers.get("content-disposition")).toContain("audio-analysis-stats.txt");
+    expect(await ownerArtifact.text()).toBe(retainedArtifact?.text);
 
     const foreignToken = await createE2EAPIToken(workspace, "foreign-audio-analysis-owner");
     const foreignOwner = await new ReleaseWorkflowV1Client(app.url, foreignToken).raw(
@@ -243,7 +281,7 @@ type AudioAnalysisAPICurrent = WorkflowV1Current &
       id: string;
       revision: number;
       tracks: readonly Readonly<{
-        artifacts: readonly Readonly<{ id: string; status: string }>[];
+        artifacts: readonly Readonly<{ id: string; status: string; text?: string }>[];
       }>[];
     }>;
   }>;

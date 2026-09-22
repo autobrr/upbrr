@@ -6,6 +6,7 @@
 package audioanalysis
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -50,9 +51,10 @@ type TrackResult struct {
 
 // Service owns FFmpeg binding, bounded single-pass PCM analysis, and managed PNG publication.
 type Service struct {
-	logger     api.Logger
-	decoder    decoder
-	publishPNG func(string, string, image.Image) error
+	logger      api.Logger
+	decoder     decoder
+	publishPNG  func(string, string, image.Image) error
+	publishText func(string, string, []byte) error
 }
 
 // NewService constructs an analysis service. A nil logger uses [api.NopLogger].
@@ -65,9 +67,10 @@ func newService(logger api.Logger, decoder decoder) *Service {
 		logger = api.NopLogger{}
 	}
 	return &Service{
-		logger:     logger,
-		decoder:    decoder,
-		publishPNG: writePNGAtomic,
+		logger:      logger,
+		decoder:     decoder,
+		publishPNG:  writePNGAtomic,
+		publishText: writeTextAtomic,
 	}
 }
 
@@ -366,6 +369,8 @@ type trackAnalysis struct {
 	waveform           *waveformAnalysis
 	spectrogram        *spectrogramAnalysis
 	wantSpectrogram    bool
+	stats              *statsAnalysis
+	statsText          string
 	totalFrames        int64
 	frames             int64
 	digest             [sha256.Size]byte
@@ -403,6 +408,9 @@ func newTrackAnalysis(
 		analysis.waveform = newWaveformAnalysis(binding.track.Channels)
 	}
 	analysis.wantSpectrogram = slices.Contains(variants, api.AudioAnalysisSpectrogram)
+	if slices.Contains(variants, api.AudioAnalysisStats) {
+		analysis.stats = newStatsAnalysis(binding.track.Channels, binding.track.SampleRate)
+	}
 	return analysis
 }
 
@@ -429,6 +437,9 @@ func (a *trackAnalysis) consume(ctx context.Context, logger api.Logger, reader i
 			parallel.add(frame, samples)
 		} else if a.spectrogram != nil {
 			a.spectrogram.add(frame, samples)
+		}
+		if a.stats != nil {
+			a.stats.add(samples)
 		}
 		percent := min(99, int((frame+1)*100/a.totalFrames))
 		if percent >= a.lastPercent+5 {
@@ -481,6 +492,9 @@ func (a *trackAnalysis) consume(ctx context.Context, logger api.Logger, reader i
 	if a.spectrogram != nil && !a.spectrogram.matchesGeometry(a.binding.track.SampleRate, frames) {
 		a.needsGeometryRetry = true
 		return errSpectrogramGeometryChanged
+	}
+	if a.stats != nil {
+		a.statsText = a.stats.report()
 	}
 	return nil
 }
@@ -645,9 +659,36 @@ func (s *Service) publishTrack(
 	if publishPNG == nil {
 		publishPNG = writePNGAtomic
 	}
+	publishText := s.publishText
+	if publishText == nil {
+		publishText = writeTextAtomic
+	}
 	for _, variant := range variants {
+		artifact := api.AudioAnalysisArtifact{ID: artifactID(attemptID, analysis.binding.track.ID, variant), Variant: variant}
 		var rendered image.Image
 		switch variant {
+		case api.AudioAnalysisStats:
+			path := filepath.Join(trackDirectory, string(variant)+".txt")
+			if err := publishText(trackDirectory, path, []byte(analysis.statsText)); err != nil {
+				failure := api.AudioAnalysisFailure{Code: api.AudioAnalysisFailureOutput, Message: "could not publish audio statistics"}
+				artifact.Status = api.StageStatusFailed
+				artifact.Failure = &failure
+				result.Public.Artifacts = append(result.Public.Artifacts, artifact)
+				if isServiceWideOutputError(err) {
+					result.Public.Status = api.StageStatusFailed
+					return result, audioAnalysisError(
+						api.AudioAnalysisFailureResourceUnavailable,
+						"audio-analysis storage failed while publishing statistics",
+						err,
+					)
+				}
+				continue
+			}
+			artifact.Status = api.StageStatusCompleted
+			artifact.Text = analysis.statsText
+			result.Artifacts = append(result.Artifacts, Artifact{Public: artifact, Path: path})
+			result.Public.Artifacts = append(result.Public.Artifacts, artifact)
+			continue
 		case api.AudioAnalysisWaveform:
 			rendered = renderWaveform(
 				analysis.waveform, analysis.binding.track.SampleRate, analysis.frames, analysis.binding.track.ChannelLayout,
@@ -656,7 +697,6 @@ func (s *Service) publishTrack(
 			rendered = renderSpectrogram(analysis.spectrogram, analysis.binding.track.SampleRate, analysis.binding.track.ChannelLayout)
 		}
 		path := filepath.Join(trackDirectory, string(variant)+".png")
-		artifact := api.AudioAnalysisArtifact{ID: artifactID(attemptID, analysis.binding.track.ID, variant), Variant: variant}
 		if err := publishPNG(trackDirectory, path, rendered); err != nil {
 			failure := api.AudioAnalysisFailure{Code: api.AudioAnalysisFailureOutput, Message: "could not publish analysis image"}
 			artifact.Status = api.StageStatusFailed
@@ -757,6 +797,49 @@ func writePNGAtomic(root string, path string, rendered image.Image) error {
 	}
 	if err := os.Rename(temporaryPath, path); err != nil {
 		return outputStorageError("publish PNG", err)
+	}
+	return nil
+}
+
+func writeTextAtomic(root string, path string, text []byte) error {
+	if len(text) == 0 || len(text) > api.AudioAnalysisStatsMaxBytes || !pathutil.IsWithinRoot(root, path) {
+		return outputStorageError("validate statistics output", errors.New("invalid statistics output"))
+	}
+	temporary, err := os.CreateTemp(root, ".audio-analysis-*.txt.tmp")
+	if err != nil {
+		return outputStorageError("create temporary statistics", err)
+	}
+	temporaryPath := temporary.Name()
+	defer func() { _ = os.Remove(temporaryPath) }()
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return outputStorageError("restrict temporary statistics", err)
+	}
+	if _, err := temporary.Write(text); err != nil {
+		_ = temporary.Close()
+		return outputStorageError("write temporary statistics", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return outputStorageError("sync temporary statistics", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return outputStorageError("close temporary statistics", err)
+	}
+	stored, err := os.ReadFile(temporaryPath)
+	if err != nil {
+		return outputStorageError("read temporary statistics", err)
+	}
+	if !bytes.Equal(stored, text) {
+		return errors.New("audio analysis: statistics output validation failed")
+	}
+	if _, err := os.Stat(path); err == nil {
+		return outputStorageError("inspect statistics destination", errors.New("output already exists"))
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return outputStorageError("inspect statistics destination", err)
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return outputStorageError("publish statistics", err)
 	}
 	return nil
 }

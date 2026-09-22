@@ -35,6 +35,7 @@ type schema struct {
 	Type                 string             `json:"type,omitempty"`
 	Format               string             `json:"format,omitempty"`
 	Minimum              *int               `json:"minimum,omitempty"`
+	Maximum              *int               `json:"maximum,omitempty"`
 	Description          string             `json:"description,omitempty"`
 	Deprecated           bool               `json:"deprecated,omitempty"`
 	Enum                 []any              `json:"enum,omitempty"`
@@ -1242,6 +1243,13 @@ func (b *schemaBuilder) ensureNamed(value reflect.Type) {
 func (b *schemaBuilder) definition(value reflect.Type) *schema {
 	if value == reflect.TypeFor[api.WorkflowPatch[string]]() {
 		return &schema{AnyOf: []*schema{{Type: "string"}, {Type: "null"}}}
+	}
+	if value == reflect.TypeFor[api.AudioAnalysisResourceLimits]() {
+		result := &schema{Type: "object", Properties: map[string]*schema{}}
+		b.addFields(result, value)
+		result.Properties["decoderThreads"].Minimum = new(1)
+		result.Properties["decoderThreads"].Maximum = new(api.AudioAnalysisMaxDecoderThreads)
+		return result
 	}
 	if value == reflect.TypeFor[api.CreateReleaseWorkflowUploadRequest]() {
 		result := &schema{Type: "object", Properties: map[string]*schema{}}

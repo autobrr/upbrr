@@ -281,7 +281,7 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.IntVar(&opts.ComparisonIndex, "comps_index", 0, "Primary comparison index")
 	fs.StringVar(&opts.MenuImages, "menu-images", "", "Path to manually captured disc menu screenshots (Disc releases only)")
 	fs.BoolVar(&opts.GetDVDMenus, "get-dvd-menus", false, "Capture distinct menus from an extracted DVD VIDEO_TS (requires compatible FFmpeg)")
-	fs.BoolVar(&opts.AudioAnalysis, "audio-analysis", false, "Generate local PNGs in managed release temporary storage before upload")
+	fs.BoolVar(&opts.AudioAnalysis, "audio-analysis", false, "Generate local audio images and amplitude statistics in managed temporary storage before upload")
 	fs.StringVar(&opts.AudioTracks, "audio-tracks", "primary", "Audio tracks: primary (default), all, or comma-separated one-based audio ordinals")
 	fs.StringVar(&opts.AudioImages, "audio-images", "both", "Audio images: both (default), waveform, or spectrogram")
 	fs.StringVar(&opts.InfoHash, "torrenthash", "", "Reuse an existing torrent info hash")

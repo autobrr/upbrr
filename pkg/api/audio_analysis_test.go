@@ -120,6 +120,43 @@ func TestAudioAnalysisResultValidateAcceptsPartialAndRejectsInvalidTerminalShape
 	}
 }
 
+func TestAudioAnalysisResultValidatesStatisticsArtifact(t *testing.T) {
+	result := validAudioAnalysisResultForTest()
+	result.Variants = []AudioAnalysisVariant{AudioAnalysisStats}
+	result.Tracks[0].Artifacts = []AudioAnalysisArtifact{{
+		ID: "stats-1",
+ Variant: AudioAnalysisStats,
+ Status: StageStatusCompleted,
+ Text: "DC offset   0.000000\n",
+	}}
+	if err := result.Validate(); err != nil {
+		t.Fatalf("validate statistics result: %v", err)
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*AudioAnalysisArtifact)
+	}{
+		{name: "empty report", mutate: func(a *AudioAnalysisArtifact) { a.Text = "\n" }},
+		{name: "oversized report", mutate: func(a *AudioAnalysisArtifact) { a.Text = strings.Repeat("x", AudioAnalysisStatsMaxBytes+1) }},
+		{name: "image dimensions", mutate: func(a *AudioAnalysisArtifact) { a.Width, a.Height = 10, 10 }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			value := result
+			value.Tracks = append([]AudioAnalysisTrackResult(nil), result.Tracks...)
+			value.Tracks[0].Artifacts = append([]AudioAnalysisArtifact(nil), result.Tracks[0].Artifacts...)
+			test.mutate(&value.Tracks[0].Artifacts[0])
+			if err := value.Validate(); err == nil {
+				t.Fatal("expected invalid statistics artifact")
+			}
+		})
+	}
+	imageResult := validAudioAnalysisResultForTest()
+	imageResult.Tracks[0].Artifacts[0].Text = "unexpected statistics"
+	if err := imageResult.Validate(); err == nil {
+		t.Fatal("expected image to reject statistics text")
+	}
+}
+
 func TestAudioAnalysisResultContainsNoPrivatePathFields(t *testing.T) {
 	result := validAudioAnalysisResultForTest()
 	encodedBytes, err := json.Marshal(result)

@@ -141,6 +141,18 @@ func TestReleaseWorkflowAppAudioAnalysisArtifactUsesAuthenticatedSessionAuthorit
 	}
 
 	unauthorized := httptest.NewRecorder()
+	statsRequest := httptest.NewRequestWithContext(
+		t.Context(), http.MethodGet,
+		"/api/app/release-workflow-audio-analysis?workflowId=workflow-1&analysisId=analysis-1&analysisRevision=4&artifactId=stats-1", nil,
+	)
+	statsRequest.AddCookie(&http.Cookie{Name: sessionCookieName, Value: current.ID})
+	statsResponse := httptest.NewRecorder()
+	mux.ServeHTTP(statsResponse, statsRequest)
+	if statsResponse.Code != http.StatusOK || statsResponse.Body.String() != "DC offset   0.000000\n" ||
+		statsResponse.Header().Get("Content-Type") != "text/plain; charset=utf-8" ||
+		statsResponse.Header().Get("Content-Disposition") != `inline; filename="audio-analysis-stats.txt"` {
+		t.Fatalf("statistics response status=%d headers=%v body=%q", statsResponse.Code, statsResponse.Header(), statsResponse.Body.String())
+	}
 	request = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/app/release-workflow-audio-analysis", nil)
 	mux.ServeHTTP(unauthorized, request)
 	if unauthorized.Code != http.StatusUnauthorized {

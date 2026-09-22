@@ -474,7 +474,7 @@ func (s *Server) handleAPIV1WorkflowRead(
 		s.writeReleaseWorkflowArtifact(
 			w,
 			content,
-			`inline; filename="audio-analysis.png"`,
+			audioAnalysisContentDisposition(content.ContentType),
 			"releaseworkflow: audio analysis API response interrupted",
 		)
 	default:

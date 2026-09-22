@@ -112,6 +112,107 @@ func TestServiceStreamsSinglePassWaveformAndPublishesPNG(t *testing.T) {
 	}
 }
 
+func TestServicePublishesStatsTextAlongsideRequestedImages(t *testing.T) {
+	track := api.MediaTrackFacts{
+		ID:                  "stats-track",
+		Kind:                api.MediaTrackAudio,
+		ResourceID:          "media-one",
+		ManifestFingerprint: "manifest",
+		Ordinal:             1,
+		Codec:               "pcm",
+		ChannelLayout:       "mono",
+		Channels:            1,
+		SampleRate:          48_000,
+	}
+	decoder := &fakeDecoder{
+		streams: []inspectedStream{{
+			codec:      "pcm",
+			sampleRate: track.SampleRate,
+			layout:     track.ChannelLayout,
+			channels:   track.Channels,
+		}},
+		pcm: encodePCM([][]float32{{-0.5}, {-0.5}, {0.5}, {0.5}}),
+	}
+	release := api.ReleaseRef{SourcePath: "Synthetic.Stats.2026.mkv", Generation: 1}
+	results, err := newService(api.NopLogger{}, decoder).Analyze(t.Context(), api.AudioAnalysisSubject{
+		Release:             release,
+		SourcePath:          release.SourcePath,
+		VideoPath:           "synthetic.mkv",
+		ResourceID:          track.ResourceID,
+		ManifestFingerprint: track.ManifestFingerprint,
+		PrimaryTrackID:      track.ID,
+		Tracks:              []api.MediaTrackFacts{track},
+	}, api.AudioAnalysisInstructions{
+		Release:        release,
+		ResourceID:     track.ResourceID,
+		Selection:      api.AudioAnalysisSelectionPrimary,
+		TrackIDs:       []string{track.ID},
+		Variants:       []api.AudioAnalysisVariant{api.AudioAnalysisWaveform, api.AudioAnalysisStats},
+		ProfileVersion: api.AudioAnalysisProfileVersion,
+	}, "attempt_stats", t.TempDir())
+	if err != nil || decoder.decodes != 1 || len(results) != 1 || results[0].Public.Status != api.StageStatusCompleted ||
+		len(results[0].Artifacts) != 2 || len(results[0].Public.Artifacts) != 2 {
+		t.Fatalf("error = %v, decodes = %d, results = %#v", err, decoder.decodes, results)
+	}
+	image := results[0].Public.Artifacts[0]
+	stats := results[0].Public.Artifacts[1]
+	if image.Variant != api.AudioAnalysisWaveform || image.Text != "" || image.Width == 0 || image.Height == 0 ||
+		stats.Variant != api.AudioAnalysisStats || stats.Width != 0 || stats.Height != 0 || stats.Text == "" ||
+		len(stats.Text) > api.AudioAnalysisStatsMaxBytes {
+		t.Fatalf("public artifacts = %#v", results[0].Public.Artifacts)
+	}
+	stored, readErr := os.ReadFile(results[0].Artifacts[1].Path)
+	if readErr != nil || string(stored) != stats.Text || !strings.HasSuffix(results[0].Artifacts[1].Path, "stats.txt") {
+		t.Fatalf("statistics path = %q, read error = %v, bytes = %q, public text = %q",
+			results[0].Artifacts[1].Path, readErr, stored, stats.Text)
+	}
+}
+
+func TestServiceDoesNotPublishStatsForMalformedPCM(t *testing.T) {
+	track := api.MediaTrackFacts{
+		ID:                  "malformed-stats-track",
+		Kind:                api.MediaTrackAudio,
+		ResourceID:          "media-one",
+		ManifestFingerprint: "manifest",
+		Ordinal:             1,
+		Codec:               "pcm",
+		ChannelLayout:       "mono",
+		Channels:            1,
+		SampleRate:          48_000,
+	}
+	decoder := &fakeDecoder{
+		streams: []inspectedStream{{
+			codec:      "pcm",
+			sampleRate: track.SampleRate,
+			layout:     track.ChannelLayout,
+			channels:   track.Channels,
+		}},
+		pcm: []byte{0, 0, 0},
+	}
+	release := api.ReleaseRef{SourcePath: "Synthetic.Malformed.2026.mkv", Generation: 1}
+	results, err := newService(api.NopLogger{}, decoder).Analyze(t.Context(), api.AudioAnalysisSubject{
+		Release:             release,
+		SourcePath:          release.SourcePath,
+		VideoPath:           "synthetic.mkv",
+		ResourceID:          track.ResourceID,
+		ManifestFingerprint: track.ManifestFingerprint,
+		PrimaryTrackID:      track.ID,
+		Tracks:              []api.MediaTrackFacts{track},
+	}, api.AudioAnalysisInstructions{
+		Release:        release,
+		ResourceID:     track.ResourceID,
+		Selection:      api.AudioAnalysisSelectionPrimary,
+		TrackIDs:       []string{track.ID},
+		Variants:       []api.AudioAnalysisVariant{api.AudioAnalysisStats},
+		ProfileVersion: api.AudioAnalysisProfileVersion,
+	}, "attempt_malformed_stats", t.TempDir())
+	if err != nil || len(results) != 1 || results[0].Public.Status != api.StageStatusFailed ||
+		results[0].Public.Failure == nil || results[0].Public.Failure.Code != api.AudioAnalysisFailureMalformedPCM ||
+		len(results[0].Artifacts) != 0 || len(results[0].Public.Artifacts) != 0 {
+		t.Fatalf("error = %v, results = %#v", err, results)
+	}
+}
+
 func TestServiceRetriesSpectrogramWhenDurationChangesGeometry(t *testing.T) {
 	const sampleRate = 48_000
 	pcm := bytes.Repeat([]byte{0, 0, 128, 62}, sampleRate*10)
@@ -1004,7 +1105,7 @@ func TestServiceCancellationInterruptsStreamingDecode(t *testing.T) {
 			ResourceID:     "resource-1",
 			Selection:      api.AudioAnalysisSelectionPrimary,
 			TrackIDs:       []string{"track-1"},
-			Variants:       []api.AudioAnalysisVariant{api.AudioAnalysisWaveform},
+			Variants:       []api.AudioAnalysisVariant{api.AudioAnalysisWaveform, api.AudioAnalysisStats},
 			ProfileVersion: api.AudioAnalysisProfileVersion,
 		}, "attempt-cancel-stream", attemptRoot)
 		done <- outcome{result: result, err: err}
@@ -1019,7 +1120,8 @@ func TestServiceCancellationInterruptsStreamingDecode(t *testing.T) {
 		failure, typed := api.AsAudioAnalysisFailure(got.err)
 		if !typed || failure.Code != api.AudioAnalysisFailureCanceled || len(got.result) != 1 ||
 			got.result[0].Public.Status != api.StageStatusFailed || got.result[0].Public.Failure == nil ||
-			got.result[0].Public.Failure.Code != api.AudioAnalysisFailureCanceled {
+			got.result[0].Public.Failure.Code != api.AudioAnalysisFailureCanceled || len(got.result[0].Artifacts) != 0 ||
+			len(got.result[0].Public.Artifacts) != 0 {
 			t.Fatalf("canceled count-pass result = %#v, failure = %#v", got.result, failure)
 		}
 	case <-time.After(2 * time.Second):

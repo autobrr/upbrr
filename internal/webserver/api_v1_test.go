@@ -293,6 +293,11 @@ func (f *audioAnalysisArtifactCoreFake) OpenReleaseWorkflowAudioAnalysisArtifact
 	if f.expectedOwner != "" && ownerID != f.expectedOwner {
 		return releaseworkflow.MediaArtifactContent{}, releaseworkflow.ErrWorkflowNotFound
 	}
+	if artifactID == "stats-1" {
+		return releaseworkflow.MediaArtifactContent{
+			Body: io.NopCloser(strings.NewReader("DC offset   0.000000\n")), ContentType: "text/plain; charset=utf-8",
+		}, nil
+	}
 	return releaseworkflow.MediaArtifactContent{
 		Body: io.NopCloser(strings.NewReader("synthetic-png")), ContentType: "image/png",
 	}, nil
@@ -344,6 +349,18 @@ func TestAPIV1AudioAnalysisArtifactRequiresReadScopeAndExactAuthority(t *testing
 	mux.ServeHTTP(invalidResponse, invalidRevision)
 	if invalidResponse.Code != http.StatusBadRequest || coreFake.calls != 1 {
 		t.Fatalf("invalid revision status=%d calls=%d", invalidResponse.Code, coreFake.calls)
+	}
+	statsRequest := httptest.NewRequestWithContext(
+		t.Context(), http.MethodGet,
+		"/api/v1/workflows/workflow-1/audio-analysis/analysis-1/artifacts/stats-1?revision=7", nil,
+	)
+	statsRequest.Header.Set("Authorization", "Bearer "+apiV1TestToken)
+	statsResponse := httptest.NewRecorder()
+	mux.ServeHTTP(statsResponse, statsRequest)
+	if statsResponse.Code != http.StatusOK || statsResponse.Body.String() != "DC offset   0.000000\n" ||
+		statsResponse.Header().Get("Content-Type") != "text/plain; charset=utf-8" ||
+		statsResponse.Header().Get("Content-Disposition") != `inline; filename="audio-analysis-stats.txt"` {
+		t.Fatalf("statistics response status=%d headers=%v body=%q", statsResponse.Code, statsResponse.Header(), statsResponse.Body.String())
 	}
 
 	otherStore, err := newAPITokenStore([]APITokenCredential{{

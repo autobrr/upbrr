@@ -775,6 +775,9 @@ func (f *cliWorkflowCoreFake) ReleaseWorkflowAudioAnalysisArtifactPath(
 	_ api.AudioAnalysisRef,
 	artifactID api.PublicResourceID,
 ) (string, error) {
+	if artifactID == "stats-cli" {
+		return filepath.Join("test-output", "stats-cli.txt"), nil
+	}
 	return filepath.Join("test-output", string(artifactID)+".png"), nil
 }
 
@@ -1405,13 +1408,21 @@ func TestCLIWorkflowAudioAnalysisUsesPreparedStableTrackSelectionAndPrintsArtifa
 				SampleFrames: 96_000,
 				Duration:     2,
 				Status:       api.StageStatusCompleted,
-				Artifacts: []api.AudioAnalysisArtifact{{
-					ID:      "waveform-cli",
-					Variant: api.AudioAnalysisWaveform,
-					Status:  api.StageStatusCompleted,
-					Width:   1812,
-					Height:  340,
-				}},
+				Artifacts: []api.AudioAnalysisArtifact{
+					{
+						ID: "waveform-cli",
+ Variant: api.AudioAnalysisWaveform,
+ Status: api.StageStatusCompleted,
+ Width: 1812,
+ Height: 340,
+					},
+					{
+						ID: "stats-cli",
+ Variant: api.AudioAnalysisStats,
+ Status: api.StageStatusCompleted,
+ Text: "DC offset   0.000000\n",
+					},
+				},
 			}},
 			CreatedAt:   now,
 			CompletedAt: &completed,
@@ -1436,11 +1447,12 @@ func TestCLIWorkflowAudioAnalysisUsesPreparedStableTrackSelectionAndPrintsArtifa
 	command, ok := coreSvc.commands[0].(releaseworkflow.AnalyzeAudioCommand)
 	if !ok || command.Instructions.Selection != api.AudioAnalysisSelectionSelected ||
 		!slices.Equal(command.Instructions.TrackIDs, []string{"track-2"}) ||
-		!slices.Equal(command.Instructions.Variants, []api.AudioAnalysisVariant{api.AudioAnalysisWaveform}) {
+		!slices.Equal(command.Instructions.Variants, []api.AudioAnalysisVariant{api.AudioAnalysisWaveform, api.AudioAnalysisStats}) {
 		t.Fatalf("audio analysis command = %#v", coreSvc.commands)
 	}
 	if !strings.Contains(output.String(), "resource 1 track 2 waveform") ||
 		!strings.Contains(output.String(), "waveform-cli.png") || !strings.Contains(output.String(), "retained locally until") ||
+		!strings.Contains(output.String(), "resource 1 track 2 stats") || !strings.Contains(output.String(), "stats-cli.txt") ||
 		errorOutput.Len() != 0 {
 		t.Fatalf("stdout=%q stderr=%q", output.String(), errorOutput.String())
 	}

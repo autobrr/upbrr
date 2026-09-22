@@ -114,7 +114,7 @@ func (b workflowAudioAnalysisBuilder) Build(
 		_ = os.RemoveAll(attemptRoot)
 		return api.AudioAnalysisResult{}, nil, fmt.Errorf("retain audio-analysis artifacts: %w", api.NewAudioAnalysisError(api.AudioAnalysisFailure{
 			Code:    api.AudioAnalysisFailureResourceUnavailable,
-			Message: "an audio-analysis image could not be integrity-bound",
+			Message: "an audio-analysis artifact could not be integrity-bound",
 		}, err))
 	}
 	return result, resource, nil
@@ -152,7 +152,7 @@ func (b workflowAudioAnalysisBuilder) buildTracks(
 				pathValue := previousPaths[artifact.ID]
 				if artifact.Status == api.StageStatusCompleted &&
 					slices.Contains(instructions.Variants, artifact.Variant) &&
-					validAudioAnalysisPNG(b.root, pathValue, artifact.Width, artifact.Height) &&
+					validAudioAnalysisArtifact(b.root, pathValue, artifact) &&
 					validAudioAnalysisIntegrity(pathValue, previousIntegrity[artifact.ID]) {
 					cloned, cloneErr := cloneAudioAnalysisArtifact(
 						attemptRoot,
@@ -163,9 +163,9 @@ func (b workflowAudioAnalysisBuilder) buildTracks(
 						previousIntegrity[artifact.ID],
 					)
 					if cloneErr != nil {
-						return nil, nil, "", fmt.Errorf("clone retained audio-analysis image: %w", api.NewAudioAnalysisError(api.AudioAnalysisFailure{
+						return nil, nil, "", fmt.Errorf("clone retained audio-analysis artifact: %w", api.NewAudioAnalysisError(api.AudioAnalysisFailure{
 							Code:    api.AudioAnalysisFailureResourceUnavailable,
-							Message: "a retained audio-analysis image could not be transferred to the new attempt",
+							Message: "a retained audio-analysis artifact could not be transferred to the new attempt",
 						}, cloneErr))
 					}
 					reused[artifact.Variant] = cloned.Public
@@ -247,7 +247,7 @@ func (b workflowAudioAnalysisBuilder) buildTracks(
 				if !pathutil.IsWithinRoot(attemptRoot, artifact.Path) {
 					return nil, nil, "", fmt.Errorf("validate audio-analysis artifact path: %w", api.NewAudioAnalysisError(api.AudioAnalysisFailure{
 						Code:    api.AudioAnalysisFailureResourceUnavailable,
-						Message: "an audio-analysis image escaped its managed attempt directory",
+						Message: "an audio-analysis artifact escaped its managed attempt directory",
 					}, errors.New("audio analysis service returned an unmanaged artifact path")))
 				}
 				artifactPaths[artifact.Public.ID] = artifact.Path
@@ -417,7 +417,11 @@ func cloneAudioAnalysisArtifact(
 	if err := os.MkdirAll(trackDirectory, 0o700); err != nil {
 		return audioanalysis.Artifact{}, fmt.Errorf("create cloned audio-analysis track directory: %w", err)
 	}
-	destination := filepath.Join(trackDirectory, string(artifact.Variant)+".png")
+	extension := ".png"
+	if artifact.Variant == api.AudioAnalysisStats {
+		extension = ".txt"
+	}
+	destination := filepath.Join(trackDirectory, string(artifact.Variant)+extension)
 	if !pathutil.IsWithinRoot(trackDirectory, destination) {
 		return audioanalysis.Artifact{}, errors.New("audio analysis clone output path escaped the track root")
 	}
@@ -445,10 +449,10 @@ func copyAudioAnalysisFile(
 	}
 	source, err := os.Open(sourcePath)
 	if err != nil {
-		return fmt.Errorf("open retained audio-analysis image: %w", err)
+		return fmt.Errorf("open retained audio-analysis artifact: %w", err)
 	}
 	defer source.Close()
-	temporary, err := os.CreateTemp(root, ".audio-analysis-clone-*.png.tmp")
+	temporary, err := os.CreateTemp(root, ".audio-analysis-clone-*.tmp")
 	if err != nil {
 		return fmt.Errorf("create temporary audio-analysis clone: %w", err)
 	}
@@ -462,18 +466,18 @@ func copyAudioAnalysisFile(
 	written, err := io.Copy(io.MultiWriter(temporary, hasher), source)
 	if err != nil {
 		_ = temporary.Close()
-		return fmt.Errorf("copy retained audio-analysis image: %w", err)
+		return fmt.Errorf("copy retained audio-analysis artifact: %w", err)
 	}
 	if written != integrity.Size || !strings.EqualFold(hex.EncodeToString(hasher.Sum(nil)), integrity.SHA256) {
 		_ = temporary.Close()
-		return errors.New("retained audio-analysis image failed integrity verification")
+		return errors.New("retained audio-analysis artifact failed integrity verification")
 	}
 	if err := temporary.Sync(); err != nil {
 		_ = temporary.Close()
-		return fmt.Errorf("sync retained audio-analysis image: %w", err)
+		return fmt.Errorf("sync retained audio-analysis artifact: %w", err)
 	}
 	if err := temporary.Close(); err != nil {
-		return fmt.Errorf("close retained audio-analysis image: %w", err)
+		return fmt.Errorf("close retained audio-analysis artifact: %w", err)
 	}
 	if err := os.Rename(temporaryPath, destination); err != nil {
 		return fmt.Errorf("publish retained audio-analysis clone: %w", err)
@@ -552,9 +556,9 @@ func emitAudioTrackProgress(ctx context.Context, track api.AudioAnalysisTrackRes
 		Message:   message,
 	})
 	for _, artifact := range track.Artifacts {
-		artifactMessage := "Analysis image completed."
+		artifactMessage := "Analysis output completed."
 		if artifact.Status == api.StageStatusFailed {
-			artifactMessage = "Analysis image failed."
+			artifactMessage = "Analysis output failed."
 		}
 		api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
 			Phase:     "audio_analysis_output",
@@ -659,6 +663,30 @@ func audioAnalysisOutcome(tracks []api.AudioAnalysisTrackResult) api.StageStatus
 	}
 }
 
+func validAudioAnalysisArtifact(root string, pathValue string, artifact api.AudioAnalysisArtifact) bool {
+	if artifact.Variant != api.AudioAnalysisStats {
+		return validAudioAnalysisPNG(root, pathValue, artifact.Width, artifact.Height)
+	}
+	if strings.TrimSpace(pathValue) == "" || !pathutil.IsWithinRoot(root, pathValue) {
+		return false
+	}
+	file, err := os.Open(pathValue)
+	if err != nil {
+		return false
+	}
+	valid := validAudioAnalysisStats(file, artifact)
+	closeErr := file.Close()
+	return valid && closeErr == nil
+}
+
+func validAudioAnalysisStats(reader io.Reader, artifact api.AudioAnalysisArtifact) bool {
+	if strings.TrimSpace(artifact.Text) == "" || len(artifact.Text) > api.AudioAnalysisStatsMaxBytes || artifact.Width != 0 || artifact.Height != 0 {
+		return false
+	}
+	text, err := io.ReadAll(io.LimitReader(reader, api.AudioAnalysisStatsMaxBytes+1))
+	return err == nil && string(text) == artifact.Text
+}
+
 func validAudioAnalysisPNG(root string, pathValue string, width int, height int) bool {
 	if width <= 0 || height <= 0 || strings.TrimSpace(pathValue) == "" || !pathutil.IsWithinRoot(root, pathValue) {
 		return false
@@ -699,19 +727,19 @@ func retainWorkflowAudioAnalysisResource(
 func calculateAudioAnalysisArtifactIntegrity(pathValue string) (workflowAudioAnalysisArtifactIntegrity, error) {
 	file, err := os.Open(pathValue)
 	if err != nil {
-		return workflowAudioAnalysisArtifactIntegrity{}, fmt.Errorf("open audio-analysis image for integrity: %w", err)
+		return workflowAudioAnalysisArtifactIntegrity{}, fmt.Errorf("open audio-analysis artifact for integrity: %w", err)
 	}
 	hasher := sha256.New()
 	size, copyErr := io.Copy(hasher, file)
 	closeErr := file.Close()
 	if copyErr != nil {
-		return workflowAudioAnalysisArtifactIntegrity{}, fmt.Errorf("hash audio-analysis image: %w", copyErr)
+		return workflowAudioAnalysisArtifactIntegrity{}, fmt.Errorf("hash audio-analysis artifact: %w", copyErr)
 	}
 	if closeErr != nil {
-		return workflowAudioAnalysisArtifactIntegrity{}, fmt.Errorf("close hashed audio-analysis image: %w", closeErr)
+		return workflowAudioAnalysisArtifactIntegrity{}, fmt.Errorf("close hashed audio-analysis artifact: %w", closeErr)
 	}
 	if size <= 0 {
-		return workflowAudioAnalysisArtifactIntegrity{}, errors.New("audio-analysis image is empty")
+		return workflowAudioAnalysisArtifactIntegrity{}, errors.New("audio-analysis artifact is empty")
 	}
 	return workflowAudioAnalysisArtifactIntegrity{Size: size, SHA256: hex.EncodeToString(hasher.Sum(nil))}, nil
 }
@@ -857,7 +885,7 @@ func validAudioAnalysisAttemptRoot(root string, attemptRoot string) bool {
 	return root != "." && attemptRoot != "." && root != attemptRoot && pathutil.IsWithinRoot(root, attemptRoot)
 }
 
-// Release removes only this immutable attempt directory. Reused images are
+// Release removes only this immutable attempt directory. Reused artifacts are
 // copied into each new attempt, so no retained resource shares file ownership.
 func (r workflowAudioAnalysisResource) Release() error {
 	if !validAudioAnalysisAttemptRoot(r.root, r.attemptRoot) {
@@ -895,6 +923,15 @@ func (r workflowAudioAnalysisResource) OpenArtifact(
 	if err != nil {
 		return releaseworkflow.MediaArtifactContent{}, releaseworkflow.ErrPrivateResourceUnavailable
 	}
+	if expected.Variant == api.AudioAnalysisStats {
+		valid := validAudioAnalysisStats(file, expected)
+		_, seekErr := file.Seek(0, 0)
+		if !valid || seekErr != nil {
+			_ = file.Close()
+			return releaseworkflow.MediaArtifactContent{}, releaseworkflow.ErrPrivateResourceUnavailable
+		}
+		return releaseworkflow.MediaArtifactContent{Body: file, ContentType: "text/plain; charset=utf-8"}, nil
+	}
 	configuration, format, decodeErr := image.DecodeConfig(file)
 	_, seekErr := file.Seek(0, 0)
 	if decodeErr != nil || seekErr != nil || format != "png" ||
@@ -921,7 +958,7 @@ func (r workflowAudioAnalysisResource) LocalArtifactPath(
 	pathValue, ok := r.paths[artifactID]
 	integrity, integrityOK := r.integrity[artifactID]
 	if expected.ID == "" || !ok || !integrityOK ||
-		!validAudioAnalysisPNG(r.root, pathValue, expected.Width, expected.Height) ||
+		!validAudioAnalysisArtifact(r.root, pathValue, expected) ||
 		!validAudioAnalysisIntegrity(pathValue, integrity) {
 		return "", releaseworkflow.ErrPrivateResourceUnavailable
 	}

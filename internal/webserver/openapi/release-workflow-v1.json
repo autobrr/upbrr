@@ -542,6 +542,9 @@
           "status": {
             "$ref": "#/components/schemas/StageStatus"
           },
+          "text": {
+            "type": "string"
+          },
           "variant": {
             "$ref": "#/components/schemas/AudioAnalysisVariant"
           },
@@ -632,7 +635,9 @@
         "type": "object",
         "properties": {
           "decoderThreads": {
-            "type": "integer"
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 16
           }
         }
       },

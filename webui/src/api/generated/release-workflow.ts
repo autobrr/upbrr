@@ -111,6 +111,7 @@ export type AudioAnalysisArtifact = Readonly<{
   height?: number;
   id: PublicResourceID;
   status: StageStatus;
+  text?: string;
   variant: AudioAnalysisVariant;
   width?: number;
 }>;

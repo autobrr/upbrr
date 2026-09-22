@@ -15,6 +15,9 @@ import (
 const AudioAnalysisProfileVersion = "audio-analysis-v2"
 
 const (
+	// AudioAnalysisStatsMaxBytes bounds the retained amplitude report.
+	AudioAnalysisStatsMaxBytes = 64 << 10
+
 	// AudioAnalysisDefaultDecoderThreads is used when a request leaves DecoderThreads at zero.
 	AudioAnalysisDefaultDecoderThreads = 2
 	// AudioAnalysisMaxDecoderThreads is the largest accepted decoder thread request.
@@ -30,12 +33,13 @@ const (
 	AudioAnalysisSelectionSelected AudioAnalysisSelectionMode = "selected"
 )
 
-// AudioAnalysisVariant identifies one rendered local analysis image.
+// AudioAnalysisVariant identifies one retained local analysis output.
 type AudioAnalysisVariant string
 
 const (
 	AudioAnalysisWaveform    AudioAnalysisVariant = "waveform"
 	AudioAnalysisSpectrogram AudioAnalysisVariant = "spectrogram"
+	AudioAnalysisStats       AudioAnalysisVariant = "stats"
 )
 
 // AudioAnalysisResourceLimits bounds decoder work for one attempt.
@@ -178,7 +182,7 @@ func (i AudioAnalysisInstructions) Normalize() (AudioAnalysisInstructions, error
 	result.Variants = slices.Clone(result.Variants)
 	for _, variant := range result.Variants {
 		switch variant {
-		case AudioAnalysisWaveform, AudioAnalysisSpectrogram:
+		case AudioAnalysisWaveform, AudioAnalysisSpectrogram, AudioAnalysisStats:
 		default:
 			return AudioAnalysisInstructions{}, errors.New("audio analysis output variant is invalid")
 		}
@@ -208,13 +212,14 @@ type AudioAnalysisSubject struct {
 	Tracks              []MediaTrackFacts
 }
 
-// AudioAnalysisArtifact is one opaque, locally retained waveform or spectrogram.
+// AudioAnalysisArtifact is one opaque, locally retained image or amplitude report.
 type AudioAnalysisArtifact struct {
 	ID      PublicResourceID      `json:"id"`
 	Variant AudioAnalysisVariant  `json:"variant"`
 	Status  StageStatus           `json:"status"`
 	Width   int                   `json:"width,omitempty"`
 	Height  int                   `json:"height,omitempty"`
+	Text    string                `json:"text,omitempty"`
 	Failure *AudioAnalysisFailure `json:"failure,omitempty"`
 }
 
@@ -326,8 +331,16 @@ func (r AudioAnalysisResult) Validate() error {
 			seenVariants[artifact.Variant] = struct{}{}
 			switch artifact.Status {
 			case StageStatusCompleted:
-				if artifact.ID == "" || artifact.Width <= 0 || artifact.Height <= 0 || artifact.Failure != nil {
+				if artifact.ID == "" || artifact.Failure != nil {
 					return fmt.Errorf("audio analysis track %d completed artifact is invalid", track.Ordinal)
+				}
+				if artifact.Variant == AudioAnalysisStats {
+					if strings.TrimSpace(artifact.Text) == "" || len(artifact.Text) > AudioAnalysisStatsMaxBytes || artifact.Width != 0 ||
+						artifact.Height != 0 {
+						return fmt.Errorf("audio analysis track %d completed statistics are invalid", track.Ordinal)
+					}
+				} else if artifact.Width <= 0 || artifact.Height <= 0 || artifact.Text != "" {
+					return fmt.Errorf("audio analysis track %d completed image is invalid", track.Ordinal)
 				}
 				if _, duplicate := seenArtifacts[artifact.ID]; duplicate {
 					return errors.New("audio analysis artifact IDs must be unique")
