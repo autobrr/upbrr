@@ -137,6 +137,38 @@ func TestCreateNewTorrent(t *testing.T) {
 	}
 }
 
+func TestCreateUsesRequestedRootName(t *testing.T) {
+	t.Parallel()
+
+	source := filepath.Join(t.TempDir(), "Scissor.Seven.2023.S01.1080p-Wrong")
+	if err := os.Mkdir(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"Scissor.Seven.S01E01.mkv", "Scissor.Seven.S01E02.mkv"} {
+		if err := os.WriteFile(filepath.Join(source, name), []byte(name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := NewService(api.NopLogger{}, t.TempDir()).Create(context.Background(), api.TorrentSubject{
+		SourcePath: source,
+		RootName:   "Scissor.Seven.S01.1080p-Wrong",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	torrentMeta, err := metainfo.LoadFromFile(result.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := torrentMeta.UnmarshalInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := info.BestName(), "Scissor.Seven.S01.1080p-Wrong"; got != want {
+		t.Fatalf("torrent root = %q, want %q", got, want)
+	}
+}
+
 func TestCreateHonorsMaxPieceSizeOverride(t *testing.T) {
 	t.Parallel()
 
@@ -591,9 +623,9 @@ func TestCreateNoHashRequiresVerifiedClientDataToSkipBytes(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
-		name         string
-		verified     bool
-		missingHash  bool
+		name        string
+		verified    bool
+		missingHash bool
 	}{
 		{name: "verified", verified: true},
 		{name: "unverified"},

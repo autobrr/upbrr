@@ -608,6 +608,10 @@ func resolveCreateSpec(meta api.TorrentSubject, source string, tmpRoot string) (
 	if strings.TrimSpace(meta.DiscType) != "" {
 		return createSpec{path: normalizeDiscSource(source)}, nil
 	}
+	rootName, err := torrentRootName(meta, source)
+	if err != nil {
+		return createSpec{}, err
+	}
 
 	wanted, err := wantedFilesWithin(source, meta.FileList)
 	if err != nil {
@@ -624,7 +628,7 @@ func resolveCreateSpec(meta api.TorrentSubject, source string, tmpRoot string) (
 			}
 			return createSpec{
 				path:        stagedRoot,
-				name:        filepath.Base(filepath.Clean(source)),
+				name:        rootName,
 				cleanupPath: cleanupPath,
 			}, nil
 		}
@@ -634,12 +638,22 @@ func resolveCreateSpec(meta api.TorrentSubject, source string, tmpRoot string) (
 		}
 		return createSpec{
 			path:            source,
-			name:            filepath.Base(filepath.Clean(source)),
+			name:            rootName,
 			includePatterns: include,
 		}, nil
 	}
 
-	return createSpec{path: source}, nil
+	return createSpec{path: source, name: rootName}, nil
+}
+
+func torrentRootName(meta api.TorrentSubject, source string) (string, error) {
+	if rootName := strings.TrimSpace(meta.RootName); rootName != "" {
+		if strings.ContainsAny(rootName, `/\\`) || rootName == "." || filepath.IsAbs(rootName) {
+			return "", fmt.Errorf("torrent: invalid requested root name %q", meta.RootName)
+		}
+		return rootName, nil
+	}
+	return safeTorrentRootName(source)
 }
 
 func normalizeDiscSource(source string) string {
@@ -889,7 +903,8 @@ func expectedTorrentName(meta api.TorrentSubject) (string, bool, error) {
 		return filepath.Base(source), true, nil
 	}
 	if len(meta.FileList) == 0 {
-		return filepath.Base(filepath.Clean(source)), true, nil
+		name, err := torrentRootName(meta, source)
+		return name, err == nil, err
 	}
 	wanted, err := wantedFilesWithin(source, meta.FileList)
 	if err != nil {
@@ -901,7 +916,8 @@ func expectedTorrentName(meta api.TorrentSubject) (string, bool, error) {
 	if len(wanted) == 1 {
 		return filepath.Base(wanted[0]), true, nil
 	}
-	return filepath.Base(filepath.Clean(source)), true, nil
+	name, err := torrentRootName(meta, source)
+	return name, err == nil, err
 }
 
 func torrentContentPaths(info metainfo.Info) []contentFile {

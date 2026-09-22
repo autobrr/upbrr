@@ -59,6 +59,11 @@ func LocalizedReleaseNamePolicy(id string) trackers.ReleaseNamePolicyBinding {
 }
 
 func applyLocalizedNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, cfg config.TrackerConfig) error {
+	return ApplyLocalizedNameDefaults(editor, meta, cfg)
+}
+
+// ApplyLocalizedNameDefaults applies the shared Portuguese-localized naming defaults.
+func ApplyLocalizedNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, cfg config.TrackerConfig) error {
 	if err := normalizeLocalizedGroup(editor, meta); err != nil {
 		return fmt.Errorf("normalize localized group: %w", err)
 	}
