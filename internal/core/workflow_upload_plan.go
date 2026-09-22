@@ -153,6 +153,7 @@ func (b workflowUploadPlanBuilder) Fingerprint(
 	return fingerprint, nil
 }
 
+// Build prepares one upload plan and its tracker-specific torrent artifacts.
 func (b workflowUploadPlanBuilder) Build(
 	ctx context.Context,
 	projections api.TrackerReleaseProjectionSet,

@@ -589,6 +589,7 @@ type sourceContentFile struct {
 	contentFile
 }
 
+// resolveCreateSpec selects the source layout and root name for metainfo creation.
 func resolveCreateSpec(meta api.TorrentSubject, source string, tmpRoot string) (createSpec, error) {
 	source = strings.TrimSpace(source)
 	if source == "" {
@@ -646,9 +647,10 @@ func resolveCreateSpec(meta api.TorrentSubject, source string, tmpRoot string) (
 	return createSpec{path: source, name: rootName}, nil
 }
 
+// torrentRootName returns one safe metainfo root component without changing the source path.
 func torrentRootName(meta api.TorrentSubject, source string) (string, error) {
 	if rootName := strings.TrimSpace(meta.RootName); rootName != "" {
-		if strings.ContainsAny(rootName, `/\\`) || rootName == "." || filepath.IsAbs(rootName) {
+		if strings.ContainsAny(rootName, `/\\`) || rootName == "." || rootName == ".." || filepath.IsAbs(rootName) {
 			return "", fmt.Errorf("torrent: invalid requested root name %q", meta.RootName)
 		}
 		return rootName, nil
@@ -887,6 +889,7 @@ func expectedTorrentFiles(meta api.TorrentSubject) ([]sourceContentFile, bool, e
 	return expected, true, nil
 }
 
+// expectedTorrentName returns the root component expected when validating a reusable torrent.
 func expectedTorrentName(meta api.TorrentSubject) (string, bool, error) {
 	source := strings.TrimSpace(meta.SourcePath)
 	if source == "" || strings.EqualFold(filepath.Ext(source), ".torrent") {

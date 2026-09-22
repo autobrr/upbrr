@@ -12,6 +12,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// TestCBRUsesLocalizedStructuredNamePolicy verifies CBR binds its dedicated policy version.
 func TestCBRUsesLocalizedStructuredNamePolicy(t *testing.T) {
 	t.Parallel()
 	policy := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()
@@ -20,6 +21,7 @@ func TestCBRUsesLocalizedStructuredNamePolicy(t *testing.T) {
 	}
 }
 
+// TestCBRNamePolicyRemovesAKAAndUsesTVDBOnlyForTitleCollisions covers the reported CBR release shape.
 func TestCBRNamePolicyRemovesAKAAndUsesTVDBOnlyForTitleCollisions(t *testing.T) {
 	t.Parallel()
 	base := cbrSubject(t)
@@ -48,6 +50,7 @@ func TestCBRNamePolicyRemovesAKAAndUsesTVDBOnlyForTitleCollisions(t *testing.T) 
 	}
 }
 
+// cbrSubject builds the generated Scissor Seven release used by CBR policy tests.
 func cbrSubject(t *testing.T) api.UploadSubject {
 	t.Helper()
 	result := metadata.BuildReleaseName(api.ReleaseNameRequest{
@@ -81,6 +84,7 @@ func cbrSubject(t *testing.T) api.UploadSubject {
 	}
 }
 
+// cbrReviewedName renders a subject through CBR's reviewed-name policy.
 func cbrReviewedName(t *testing.T, subject api.UploadSubject) string {
 	t.Helper()
 	prepared, failure := trackers.PrepareInputWithReleaseNamePolicy(
