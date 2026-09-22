@@ -577,6 +577,7 @@ func projectionDuplicateNames(projection api.TrackerReleaseProjection) []string 
 	return result
 }
 
+// duplicateTarget projects resolved upload facts into local duplicate evidence.
 func duplicateTarget(subject api.UploadSubject) api.TrackerDuplicateTarget {
 	return api.TrackerDuplicateTarget{
 		Names:          []string{SourceReleaseName(subject)},
@@ -606,6 +607,7 @@ func duplicateTarget(subject api.UploadSubject) api.TrackerDuplicateTarget {
 	}
 }
 
+// nonEmptyDuplicateValues preserves one non-empty structured duplicate fact.
 func nonEmptyDuplicateValues(value string) []string {
 	if value = strings.TrimSpace(value); value != "" {
 		return []string{value}

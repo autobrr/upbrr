@@ -9,6 +9,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 )
 
+// TestSAMUsesLocalizedStructuredNamePolicy verifies SAM-specific structured naming.
 func TestSAMUsesLocalizedStructuredNamePolicy(t *testing.T) {
 	t.Parallel()
 	policy := unit3d.NewWithProfile(Profile()).ReleaseNamePolicy()

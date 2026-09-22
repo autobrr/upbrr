@@ -192,6 +192,7 @@ var (
 	titleSeasonPackPattern   = regexp.MustCompile(`(?i)\bS(\d{1,3})(?:[.\-_ ]|$)`)
 )
 
+// normalizeTargetFacts canonicalizes structured and title-derived target evidence.
 func normalizeTargetFacts(target api.TrackerDuplicateTarget) normalizedFacts {
 	title := parseBestTitle(target.Names)
 	facts := normalizedFacts{
@@ -327,6 +328,7 @@ func normalizeTargetFacts(target api.TrackerDuplicateTarget) normalizedFacts {
 	return facts
 }
 
+// normalizeCandidateFacts canonicalizes tracker candidate evidence.
 func normalizeCandidateFacts(candidate TrackerCandidate) normalizedFacts {
 	title := parseReleaseTitle(candidate.Name, FactOriginTrackerTitle)
 	typeValue := candidate.Type
@@ -608,6 +610,7 @@ func TrackerTitleHasSourceAndCodec(metadata string) bool {
 	return false
 }
 
+// parseReleaseTitle extracts duplicate-comparison facts from one release name.
 func parseReleaseTitle(name string, origin FactOrigin) parsedTitleFacts {
 	name = strings.TrimSpace(name)
 	upper := strings.ToUpper(name)
@@ -704,6 +707,7 @@ func parseReleaseTitle(name string, origin FactOrigin) parsedTitleFacts {
 	return parsed
 }
 
+// hasEvidence reports whether parsed title facts contribute duplicate evidence.
 func (facts parsedTitleFacts) hasEvidence() bool {
 	return facts.Resolution != "" || facts.MediaKind != mediaKindUnknown || facts.Source != "" || facts.Codec != "" || facts.AudioLanguages != "" ||
 		facts.Container != "" || facts.Provider != "" || facts.Group != "" || facts.Edition != "" || facts.Region != ""
@@ -894,6 +898,7 @@ func canonicalCodec(value string) string {
 	}
 }
 
+// canonicalAudioLanguages normalizes an audio-language set for comparison.
 func canonicalAudioLanguages(values []string) string {
 	set := make(map[string]struct{}, len(values))
 	for _, value := range values {
@@ -912,14 +917,17 @@ func canonicalAudioLanguages(values []string) string {
 	return strings.Join(result, "+")
 }
 
+// canonicalAudioCodecs normalizes an audio-codec set for comparison.
 func canonicalAudioCodecs(values []string) string {
 	return canonicalAudioSet(values, canonicalAudioCodec)
 }
 
+// canonicalAudioChannels normalizes an audio-channel-layout set for comparison.
 func canonicalAudioChannels(values []string) string {
 	return canonicalAudioSet(values, canonicalAudioChannelLayout)
 }
 
+// canonicalAudioSet deduplicates, sorts, and joins normalized audio facts.
 func canonicalAudioSet(values []string, normalize func(string) string) string {
 	set := make(map[string]struct{}, len(values))
 	for _, value := range values {
@@ -938,6 +946,7 @@ func canonicalAudioSet(values []string, normalize func(string) string) string {
 	return strings.Join(result, "+")
 }
 
+// canonicalAudioCodec maps equivalent audio codec labels to one value.
 func canonicalAudioCodec(value string) string {
 	normalized := compactAlphaNumeric(value)
 	switch normalized {
@@ -952,6 +961,7 @@ func canonicalAudioCodec(value string) string {
 	}
 }
 
+// canonicalAudioChannelLayout maps channel counts and layouts to one value.
 func canonicalAudioChannelLayout(value string) string {
 	normalized := strings.TrimSuffix(compactAlphaNumeric(value), "channels")
 	switch normalized {
@@ -1429,6 +1439,7 @@ func mergeHDRWithTitle(structured api.HDRFacts, title api.HDRFacts) api.HDRFacts
 	return structured
 }
 
+// dimensionFact returns the normalized evidence for one duplicate dimension.
 func dimensionFact(facts normalizedFacts, dimension trackerspkg.DupeDimension) Fact {
 	switch dimension {
 	case trackerspkg.DupeDimensionType:

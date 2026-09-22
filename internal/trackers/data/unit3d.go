@@ -977,6 +977,7 @@ func unit3DTitleHDRFallback(name string, canonicalType string, resolution string
 	return titleHDR
 }
 
+// buildUnit3DSearchEntries projects completed Unit3D search rows into duplicate evidence.
 func buildUnit3DSearchEntries(items []unit3dSearchItem, filterTMDBID int, isDisc bool) ([]api.DupeEntry, int) {
 	entries := make([]api.DupeEntry, 0, len(items))
 	wrongWorkCount := 0
@@ -1056,6 +1057,7 @@ func buildUnit3DSearchEntries(items []unit3dSearchItem, filterTMDBID int, isDisc
 	return entries, wrongWorkCount
 }
 
+// buildUnit3DPendingEntries projects pending Unit3D rows into duplicate evidence.
 func buildUnit3DPendingEntries(items []unit3dPendingSearchItem, endpoint unit3dSearchEndpoint, isDisc bool) ([]api.DupeEntry, int) {
 	entries := make([]api.DupeEntry, 0, len(items))
 	wrongWorkCount := 0

@@ -10,6 +10,7 @@ import (
 
 const samDupeEvidenceID = "sam-upload-rules-slots-v1"
 
+// duplicatePolicy defines the SAM duplicate slot dimensions and coexistence rule.
 func duplicatePolicy() *trackers.DupePolicy {
 	return &trackers.DupePolicy{
 		ID:         "sam/duplicate/v1",
