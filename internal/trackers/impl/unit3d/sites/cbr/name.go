@@ -14,12 +14,14 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// namePolicy applies CBR's localized and TVDB-backed naming rules.
 func namePolicy() trackers.ReleaseNamePolicyBinding {
 	return trackers.StructuredReleaseNamePolicy("unit3d/cbr/v3", trackers.StructuredNamePolicy{
 		Defaults: applyCBRNameDefaults,
 	})
 }
 
+// applyCBRNameDefaults applies shared localized rules before CBR TV title disambiguation.
 func applyCBRNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, cfg config.TrackerConfig) error {
 	if err := unit3d.ApplyLocalizedNameDefaults(editor, meta, cfg); err != nil {
 		return fmt.Errorf("apply CBR localized defaults: %w", err)

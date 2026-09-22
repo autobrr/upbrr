@@ -51,6 +51,7 @@ type workflowSubmissionFenceRepositoryFake struct {
 	records map[string]api.SubmissionFenceRecord
 }
 
+// TestWorkflowCBRTorrentRootName keeps CBR-only torrents separate from shared artifacts.
 func TestWorkflowCBRTorrentRootName(t *testing.T) {
 	t.Parallel()
 	if got, want := workflowCBRTorrentRootName([]api.TrackerReleaseProjection{{

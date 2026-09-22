@@ -137,6 +137,17 @@ func TestCreateNewTorrent(t *testing.T) {
 	}
 }
 
+// TestTorrentRootNameRejectsUnsafeRequestedComponent rejects non-component metainfo names.
+func TestTorrentRootNameRejectsUnsafeRequestedComponent(t *testing.T) {
+	t.Parallel()
+	for _, rootName := range []string{".", "..", "nested/name", `nested\name`} {
+		if _, err := torrentRootName(api.TorrentSubject{RootName: rootName}, "source"); err == nil {
+			t.Errorf("root name %q was accepted", rootName)
+		}
+	}
+}
+
+// TestCreateUsesRequestedRootName preserves files while changing only the metainfo root.
 func TestCreateUsesRequestedRootName(t *testing.T) {
 	t.Parallel()
 
