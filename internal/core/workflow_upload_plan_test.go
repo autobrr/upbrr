@@ -51,6 +51,18 @@ type workflowSubmissionFenceRepositoryFake struct {
 	records map[string]api.SubmissionFenceRecord
 }
 
+func TestWorkflowCBRTorrentRootName(t *testing.T) {
+	t.Parallel()
+	if got, want := workflowCBRTorrentRootName([]api.TrackerReleaseProjection{{
+		TrackerID: "CBR", UploadReleaseName: "Scissor Seven S01 1080p WEB-DL-Mys",
+	}}), "Scissor.Seven.S01.1080p.WEB-DL-Mys"; got != want {
+		t.Fatalf("CBR root name = %q, want %q", got, want)
+	}
+	if got := workflowCBRTorrentRootName([]api.TrackerReleaseProjection{{TrackerID: "CBR"}, {TrackerID: "OTHER"}}); got != "" {
+		t.Fatalf("multiple trackers root name = %q, want empty", got)
+	}
+}
+
 func (f workflowSubmissionFenceRepositoryFake) LoadSubmissionFence(
 	_ context.Context,
 	identity api.SubmissionContentIdentity,
