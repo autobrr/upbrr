@@ -1263,9 +1263,13 @@
     "sha256": "c00ccda59006f108b3c5567502f054bfc4614083f93864b64ca3cc6f01cee3f3",
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
+  "internal/trackers/impl/unit3d/name.go:ApplyLocalizedNameDefaults": {
+    "sha256": "82e109766652173612b4b32ff803a01088c0f7f2a26a9729266d197dc815959e",
+    "reason": "Shared localized defaults retain the established prepared-source and generated-name manual/component precedence."
+  },
   "internal/trackers/impl/unit3d/name.go:applyLocalizedNameDefaults": {
-    "sha256": "cfa1dbff84cec212b964eb4513cbe68f5514e9da2cab28531f5090fe994cdf37",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "277fd9ba235439b5a11efc248831bed7684d5c36fc6aad85419b582b206a7ce7",
+    "reason": "Delegates unchanged localized precedence to the reviewed exported default helper."
   },
   "internal/trackers/impl/unit3d/name.go:resolveOriginalLanguage": {
     "sha256": "c0f484c64ee813d3882d35287040be5bab3a93127022f3c401d505d216766f95",
@@ -1464,8 +1468,24 @@
     "reason": "manual-aware preference or explicit-manual branch; provider evidence remains an input"
   },
   "internal/trackers/impl/unit3d/sites/sam/profile.go:Profile": {
-    "sha256": "a348c14f04c00c764026c491ef34d72f8807ce9ec4916462e60963d4ef3b7747",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+    "sha256": "3e13becf2c2a45c5580e59f78c22372811e8e3f0627bf7bf0ee37210cfef5208",
+    "reason": "SAM wires reviewed naming and provider-status validation without selecting manually-correctable metadata."
+  },
+  "internal/trackers/impl/unit3d/sites/sam/validation.go:ValidationPolicy": {
+    "sha256": "1b31efbdaf25f254b3e2ab81037d9b3c466936cf382805874d0d15a6ea35a634",
+    "reason": "Returns the reviewed SAM validation callback without selecting provider metadata."
+  },
+  "internal/trackers/impl/unit3d/sites/sam/validation.go:checkRequirements": {
+    "sha256": "8566d52e8967ed6bac47f5fb7fa2a08c520ea92238c6c7e487c9cbf524b6b667",
+    "reason": "Delegates content and language checks; provider status is guarded by current source-scoped metadata."
+  },
+  "internal/trackers/impl/unit3d/sites/sam/validation.go:samContentStructureFailures": {
+    "sha256": "9e5102f41937783cbc24f3c6e70e0f7f173f2495f2f66685ffe5261d8f0bc445",
+    "reason": "Season-pack eligibility uses only current provider series status; package structure remains local media evidence."
+  },
+  "internal/trackers/impl/unit3d/sites/sam/validation.go:samSeriesStatus": {
+    "sha256": "856e7d3960cd2159d75f95937e28226bc5f995346b8a53321c800deecc71d1a7",
+    "reason": "Uses current provider TVDB or TVmaze status as provider-only eligibility evidence and fails closed when unavailable."
   },
   "internal/trackers/impl/unit3d/sites/tik/profile.go:Profile": {
     "sha256": "19aba601a96cd1310e1d067fd31f572bd78046dcb6ba323a1ac2c68383402788",

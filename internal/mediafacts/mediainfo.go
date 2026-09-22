@@ -60,6 +60,18 @@ func VideoCodecFromMediaInfoText(value string) string {
 	return format
 }
 
+// AudioLanguagesFromMediaInfoText returns the language declared by each audio
+// section in a MediaInfo text dump.
+func AudioLanguagesFromMediaInfoText(value string) []string {
+	var languages []string
+	for _, track := range mediaInfoTextTracks(value, "audio") {
+		if language := mediaInfoValue(track, "Language", "Language_String"); language != "" {
+			languages = append(languages, language)
+		}
+	}
+	return languages
+}
+
 func firstMediaInfoTextVideoTrack(value string) map[string]any {
 	var track map[string]any
 	inFirstVideo := false
@@ -92,6 +104,38 @@ func firstMediaInfoTextVideoTrack(value string) map[string]any {
 		}
 	}
 	return track
+}
+
+func mediaInfoTextTracks(value string, kind string) []map[string]any {
+	var tracks []map[string]any
+	var current map[string]any
+	for line := range strings.SplitSeq(strings.ReplaceAll(value, "\r\n", "\n"), "\n") {
+		trimmed := strings.TrimSpace(strings.ReplaceAll(strings.TrimSuffix(line, "\r"), "\u00a0", " "))
+		if trimmed == "" {
+			continue
+		}
+		if match := mediaInfoSectionPattern.FindStringSubmatch(trimmed); len(match) == 2 {
+			current = nil
+			if strings.EqualFold(match[1], kind) {
+				current = map[string]any{"@type": kind}
+				tracks = append(tracks, current)
+			}
+			continue
+		}
+		if current == nil {
+			continue
+		}
+		key, fieldValue, ok := strings.Cut(trimmed, ":")
+		if !ok {
+			continue
+		}
+		key = normalizeMediaInfoKey(key)
+		fieldValue = strings.TrimSpace(fieldValue)
+		if key != "" && fieldValue != "" {
+			current[key] = fieldValue
+		}
+	}
+	return tracks
 }
 
 func hdrFromMediaInfoTrack(track map[string]any) api.HDRFacts {
