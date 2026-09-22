@@ -180,6 +180,7 @@ func TestCreateUsesRequestedRootName(t *testing.T) {
 	}
 }
 
+// TestCreateHonorsMaxPieceSizeOverride keeps requested piece-size limits intact.
 func TestCreateHonorsMaxPieceSizeOverride(t *testing.T) {
 	t.Parallel()
 
@@ -630,6 +631,7 @@ func TestCreateNoHashRejectsCaseOnlyMultiFileClientTorrent(t *testing.T) {
 	}
 }
 
+// TestCreateNoHashRequiresVerifiedClientDataToSkipBytes requires verified reusable metadata.
 func TestCreateNoHashRequiresVerifiedClientDataToSkipBytes(t *testing.T) {
 	t.Parallel()
 

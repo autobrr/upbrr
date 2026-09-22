@@ -64,6 +64,7 @@ func TestWorkflowCBRTorrentRootName(t *testing.T) {
 	}
 }
 
+// LoadSubmissionFence returns the fake's fence record for one tracker identity.
 func (f workflowSubmissionFenceRepositoryFake) LoadSubmissionFence(
 	_ context.Context,
 	identity api.SubmissionContentIdentity,
