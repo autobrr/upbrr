@@ -102,7 +102,7 @@ func extractConfigDict(src string) (string, error) {
 
 		rest := skipWhitespaceAndComments(src[after:])
 		if len(rest) > 0 && rest[0] == ':' {
-			annotationEnd := strings.IndexByte(rest, '=')
+			annotationEnd := annotationAssignmentIndex(rest)
 			if annotationEnd < 0 {
 				idx = after
 				continue
@@ -124,6 +124,35 @@ func extractConfigDict(src string) (string, error) {
 	}
 
 	return "", errors.New("legacy config: could not find 'config = {' assignment")
+}
+
+func annotationAssignmentIndex(src string) int {
+	var quote byte
+	escaped := false
+	for i := 0; i < len(src); i++ {
+		ch := src[i]
+		if quote != 0 {
+			if escaped {
+				escaped = false
+			} else if ch == '\\' {
+				escaped = true
+			} else if ch == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch ch {
+		case '\'', '"':
+			quote = ch
+		case '#':
+			for i < len(src) && src[i] != '\n' {
+				i++
+			}
+		case '=':
+			return i
+		}
+	}
+	return -1
 }
 
 // skipWhitespaceAndComments returns src with leading ASCII whitespace and
