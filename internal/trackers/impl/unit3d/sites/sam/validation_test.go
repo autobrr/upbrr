@@ -12,6 +12,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// TestSAMNameKeepsTVYearAndDropsUnverifiedAudioMarker verifies SAM name evidence behavior.
 func TestSAMNameKeepsTVYearAndDropsUnverifiedAudioMarker(t *testing.T) {
 	subject := samNamedSubject(t, api.ReleaseNameRequest{
 		Category:   "TV",
@@ -37,6 +38,7 @@ func TestSAMNameKeepsTVYearAndDropsUnverifiedAudioMarker(t *testing.T) {
 	}
 }
 
+// TestSAMValidation covers SAM eligibility and missing-evidence outcomes.
 func TestSAMValidation(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -125,6 +127,7 @@ func TestSAMValidation(t *testing.T) {
 	}
 }
 
+// samNamedSubject builds a named upload subject for SAM policy tests.
 func samNamedSubject(t *testing.T, request api.ReleaseNameRequest) api.UploadSubject {
 	t.Helper()
 	result := metadata.BuildReleaseName(request, api.NopLogger{})
@@ -145,6 +148,7 @@ func samNamedSubject(t *testing.T, request api.ReleaseNameRequest) api.UploadSub
 	}
 }
 
+// samReviewedName returns the final SAM name for one test subject.
 func samReviewedName(t *testing.T, subject api.UploadSubject) string {
 	t.Helper()
 	prepared, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{Tracker: "SAM", Meta: subject}, namePolicy())
@@ -158,6 +162,7 @@ func samReviewedName(t *testing.T, subject api.UploadSubject) string {
 	return name
 }
 
+// samPassingSubject returns a complete valid SAM season-pack subject.
 func samPassingSubject() api.TrackerValidationSubject {
 	return api.TrackerValidationSubject{
 		SourcePath:       "current",

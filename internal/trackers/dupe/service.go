@@ -933,6 +933,7 @@ func (s *Service) duplicatePolicy(tracker string, meta api.DuplicateSubject) tra
 	return policy
 }
 
+// duplicateTargetForEvaluation returns the projection target or derives it from resolved facts.
 func duplicateTargetForEvaluation(meta api.DuplicateSubject) api.TrackerDuplicateTarget {
 	if meta.Projection != nil {
 		return meta.Projection.DuplicateTarget
@@ -961,6 +962,7 @@ func duplicateTargetForEvaluation(meta api.DuplicateSubject) api.TrackerDuplicat
 	}
 }
 
+// duplicateAudioValues preserves one non-empty resolved audio fact.
 func duplicateAudioValues(value string) []string {
 	if value = strings.TrimSpace(value); value != "" {
 		return []string{value}

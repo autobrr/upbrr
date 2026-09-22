@@ -10,6 +10,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// TestSAMDuplicateAudioRules verifies SAM audio slot separation and coexistence.
 func TestSAMDuplicateAudioRules(t *testing.T) {
 	t.Parallel()
 

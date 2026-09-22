@@ -863,6 +863,7 @@ func findingReason(finding RuleFinding) string {
 	return missingReasonCode(finding.Missing, finding.Contradictions)
 }
 
+// comparisonFactsForDimension collects comparable facts for one duplicate dimension.
 func comparisonFactsForDimension(
 	target api.TrackerDuplicateTarget,
 	targetFacts normalizedFacts,

@@ -19,6 +19,7 @@ func ValidationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{ID: "unit3d-sam-policy-v1", Check: checkRequirements}
 }
 
+// checkRequirements applies SAM content and language eligibility checks.
 func checkRequirements(ctx context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context canceled: %w", err)
@@ -27,6 +28,7 @@ func checkRequirements(ctx context.Context, subject api.TrackerValidationSubject
 	return append(failures, samLanguageFailures(subject)...), nil
 }
 
+// samContentStructureFailures returns structural policy failures for SAM content.
 func samContentStructureFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 	facts := subject.PackageFacts
 	switch subject.Identity.Category {
@@ -78,6 +80,7 @@ func samContentStructureFailures(subject api.TrackerValidationSubject) []api.Rul
 	return nil
 }
 
+// samLanguageFailures requires original audio and Portuguese subtitles when applicable.
 func samLanguageFailures(subject api.TrackerValidationSubject) []api.RuleFailure {
 	facts := subject.MediaFileFacts
 	original := languageutil.NormalizeLanguageCode(facts.OriginalLanguage)
@@ -101,6 +104,7 @@ func samLanguageFailures(subject api.TrackerValidationSubject) []api.RuleFailure
 	return nil
 }
 
+// samEpisodeCount totals detected episodes across season facts.
 func samEpisodeCount(values []api.SeasonEpisodeFacts) int {
 	count := 0
 	for _, value := range values {
@@ -109,6 +113,7 @@ func samEpisodeCount(values []api.SeasonEpisodeFacts) int {
 	return count
 }
 
+// samSeriesStatus returns current provider status for the validated series.
 func samSeriesStatus(subject api.TrackerValidationSubject) (string, bool) {
 	if !subject.ProviderMetadata.IsCurrentFor(subject.SourcePath, subject.Identity) {
 		return "", false
@@ -122,6 +127,7 @@ func samSeriesStatus(subject api.TrackerValidationSubject) (string, bool) {
 	return "", false
 }
 
+// samCompletedSeriesStatus reports whether a provider status allows a season pack.
 func samCompletedSeriesStatus(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "ended", "cancelled", "canceled", "completed", "complete":
@@ -131,16 +137,19 @@ func samCompletedSeriesStatus(value string) bool {
 	}
 }
 
+// samContainsLanguage compares language labels through the shared normalizer.
 func samContainsLanguage(values []string, language string) bool {
 	return slices.ContainsFunc(values, func(value string) bool {
 		return languageutil.NormalizeLanguageCode(value) == language
 	})
 }
 
+// samStrictFailure creates a blocking SAM validation failure.
 func samStrictFailure(rule string, reason string, status api.MetadataEvidenceStatus) api.RuleFailure {
 	return trackers.NewEvidenceRuleFailure(rule, reason, api.RuleDispositionStrict, status)
 }
 
+// samEvidenceFailure creates a failure whose disposition reflects missing evidence.
 func samEvidenceFailure(rule string, reason string, status api.MetadataEvidenceStatus) api.RuleFailure {
 	return trackers.NewEvidenceRuleFailure(rule, reason, api.RuleDispositionAdvisory, status)
 }

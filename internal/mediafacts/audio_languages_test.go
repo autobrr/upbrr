@@ -8,6 +8,7 @@ import (
 	"testing"
 )
 
+// TestAudioLanguagesFromMediaInfoText verifies all audio facts extracted from MediaInfo.
 func TestAudioLanguagesFromMediaInfoText(t *testing.T) {
 	t.Parallel()
 	value := `

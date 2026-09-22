@@ -76,6 +76,7 @@ func AudioChannelsFromMediaInfoText(value string) []string {
 	return mediaInfoAudioValues(value, "Channel(s)", "Channel(s)_Original")
 }
 
+// mediaInfoAudioValues collects one declared value from each audio track.
 func mediaInfoAudioValues(value string, keys ...string) []string {
 	values := make([]string, 0)
 	for _, track := range mediaInfoTextTracks(value, "audio") {
@@ -120,6 +121,7 @@ func firstMediaInfoTextVideoTrack(value string) map[string]any {
 	return track
 }
 
+// mediaInfoTextTracks parses the sections of one requested MediaInfo track kind.
 func mediaInfoTextTracks(value string, kind string) []map[string]any {
 	var tracks []map[string]any
 	var current map[string]any

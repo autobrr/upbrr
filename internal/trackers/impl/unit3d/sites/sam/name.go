@@ -14,12 +14,14 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// namePolicy applies SAM-specific localized release-name defaults.
 func namePolicy() trackers.ReleaseNamePolicyBinding {
 	return trackers.StructuredReleaseNamePolicy("unit3d/sam/v3", trackers.StructuredNamePolicy{
 		Defaults: applySAMNameDefaults,
 	})
 }
 
+// applySAMNameDefaults keeps years and applies Portuguese-audio name markers.
 func applySAMNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, cfg config.TrackerConfig) error {
 	if err := unit3d.ApplyLocalizedNameDefaults(editor, meta, cfg); err != nil {
 		return fmt.Errorf("apply SAM localized defaults: %w", err)
@@ -41,6 +43,7 @@ func applySAMNameDefaults(editor *trackers.NameEditor, meta api.UploadSubject, c
 	return nil
 }
 
+// samHasPortuguese reports whether a normalized audio set contains Portuguese.
 func samHasPortuguese(values []string) bool {
 	for _, value := range values {
 		if languageutil.NormalizeLanguageCode(value) == "pt" {

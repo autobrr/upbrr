@@ -9,6 +9,7 @@ import (
 	"testing"
 )
 
+// TestUnit3DDupeEntriesKeepMediaInfoAudioFacts preserves audio facts for both Unit3D result types.
 func TestUnit3DDupeEntriesKeepMediaInfoAudioFacts(t *testing.T) {
 	t.Parallel()
 	mediaInfo := "Audio #1\nFormat : E-AC-3\nChannel(s) : 6 channels\nLanguage : en\n\nAudio #2\nFormat : AAC\nChannel(s) : 2 channels\nLanguage : pt-BR\n"
