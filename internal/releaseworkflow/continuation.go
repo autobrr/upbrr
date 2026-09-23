@@ -265,6 +265,9 @@ func applyLaneUploadEligibility(
 		}
 		lane.UploadEligibility = eligibility
 		lane.UploadSkipReason = reason
+		if reason == api.UploadSkipReasonNotReady {
+			lane.UploadSkipDetail = TrackerBlockingPolicyMessage(projection)
+		}
 	}
 }
 

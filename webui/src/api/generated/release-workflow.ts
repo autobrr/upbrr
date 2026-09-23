@@ -2222,6 +2222,7 @@ export type TrackerLaneOutcome = Readonly<{
   retryable: boolean;
   trackerId: TrackerID;
   uploadEligibility?: UploadEligibility;
+  uploadSkipDetail?: string;
   uploadSkipReason?: UploadSkipReason;
 }>;
 

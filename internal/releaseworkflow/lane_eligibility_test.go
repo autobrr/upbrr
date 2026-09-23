@@ -307,3 +307,62 @@ func TestLaneUploadEligibilityIsUnknownWhenDryRunOmitsTracker(t *testing.T) {
 	assertLaneEligibility(t, laneOutcome(t, current, "ALPHA"), api.UploadEligibilityEligible, "")
 	assertLaneEligibility(t, laneOutcome(t, current, "BETA"), api.UploadEligibilityUnknown, "")
 }
+
+// A rule-gated projection reports itself as not upload ready, so the lane has
+// to carry the rule message or the page can only say "not ready".
+func TestLaneUploadEligibilityCarriesBlockingRuleMessage(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range []struct {
+		name        string
+		disposition api.RuleDisposition
+	}{
+		{name: "waivable", disposition: api.RuleDispositionWaivable},
+		{name: "strict", disposition: api.RuleDispositionStrict},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			current := laneEligibilityTestCurrent()
+			blocked := &current.Projections.Projections[1]
+			blocked.UploadReady = false
+			blocked.Readiness = api.ReadinessStatusBlocked
+			blocked.PolicyDecisions = []api.TrackerPolicyDecision{
+				{
+Code: "genre_not_accepted",
+ Decision: "ineligible",
+ Blocking: false,
+ Message: "advisory only",
+},
+				{
+					Code:        "genre_not_accepted",
+					Decision:    "ineligible",
+					Blocking:    true,
+					Message:     "Tracker does not accept this genre.",
+					Disposition: testCase.disposition,
+				},
+			}
+			lane := laneOutcome(t, current, "BETA")
+			assertLaneEligibility(t, lane, api.UploadEligibilitySkipped, api.UploadSkipReasonNotReady)
+			if lane.UploadSkipDetail != "Tracker does not accept this genre." {
+				t.Fatalf("tracker=BETA detail=%q want the blocking rule message", lane.UploadSkipDetail)
+			}
+			if sibling := laneOutcome(t, current, "ALPHA"); sibling.UploadSkipDetail != "" {
+				t.Fatalf("tracker=ALPHA detail=%q want empty", sibling.UploadSkipDetail)
+			}
+		})
+	}
+}
+
+// Readiness failures with no rule evidence keep the generic label.
+func TestLaneUploadEligibilityOmitsDetailWithoutBlockingRule(t *testing.T) {
+	t.Parallel()
+
+	current := laneEligibilityTestCurrent()
+	current.Projections.Projections[1].UploadReady = false
+	lane := laneOutcome(t, current, "BETA")
+	assertLaneEligibility(t, lane, api.UploadEligibilitySkipped, api.UploadSkipReasonNotReady)
+	if lane.UploadSkipDetail != "" {
+		t.Fatalf("tracker=BETA detail=%q want empty", lane.UploadSkipDetail)
+	}
+}

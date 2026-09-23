@@ -360,7 +360,10 @@ type TrackerLaneOutcome struct {
 	// tracker, so adapters never derive it from duplicate or media evidence.
 	UploadEligibility UploadEligibility `json:"uploadEligibility,omitempty"`
 	// UploadSkipReason explains a skipped eligibility and is empty otherwise.
-	UploadSkipReason UploadSkipReason  `json:"uploadSkipReason,omitempty"`
+	UploadSkipReason UploadSkipReason `json:"uploadSkipReason,omitempty"`
+	// UploadSkipDetail is the retained backend message behind a skip, when the
+	// reason alone would be too generic to act on.
+	UploadSkipDetail string            `json:"uploadSkipDetail,omitempty"`
 	Refs             WorkflowExactRefs `json:"refs"`
 	RequiredActions  []RequiredAction  `json:"requiredActions,omitempty"`
 	Failures         []WorkflowFailure `json:"failures,omitempty"`

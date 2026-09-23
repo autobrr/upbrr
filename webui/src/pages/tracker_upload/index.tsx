@@ -46,6 +46,9 @@ function uploadEligibilityLabel(outcome?: TrackerLaneOutcome): string {
   if (!outcome) return "";
   if (outcome.uploadEligibility === "eligible") return "Will upload";
   if (outcome.uploadEligibility !== "skipped") return "";
+  // The backend detail names the exact rule, so it replaces the generic label.
+  const detail = outcome.uploadSkipDetail?.trim();
+  if (detail) return `Skipped: ${detail}`;
   const reason = outcome.uploadSkipReason
     ? UPLOAD_SKIP_LABELS[outcome.uploadSkipReason]
     : undefined;

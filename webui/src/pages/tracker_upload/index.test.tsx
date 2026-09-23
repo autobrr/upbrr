@@ -586,4 +586,28 @@ describe("TrackerUploadPage", () => {
     expect(screen.getByText("Example Tracker").parentElement?.textContent).toBe("Example Tracker");
     expect(screen.queryByText("Will upload")).not.toBeInTheDocument();
   });
+
+  it("shows the backend rule message instead of the generic not-ready label", () => {
+    const projections = {
+      projections: [
+        { trackerId: "EXAMPLE", displayName: "Example Tracker" },
+        { trackerId: "OTHER", displayName: "Other Tracker" },
+      ],
+    } as unknown as NonNullable<UploadFacet["view"]["projections"]>;
+    const trackerOutcomes = [
+      {
+        trackerId: "EXAMPLE",
+        uploadEligibility: "skipped",
+        uploadSkipReason: "not_ready",
+        uploadSkipDetail: "Tracker does not accept this genre.",
+      },
+      { trackerId: "OTHER", uploadEligibility: "skipped", uploadSkipReason: "not_ready" },
+    ] as unknown as UploadFacet["view"]["trackerOutcomes"];
+    renderPage(
+      uploadFacet({ selectedTrackers: ["EXAMPLE", "OTHER"], projections, trackerOutcomes }),
+    );
+
+    expect(screen.getByText("Skipped: Tracker does not accept this genre.")).toBeInTheDocument();
+    expect(screen.getByText("Skipped: tracker is not ready to upload")).toBeInTheDocument();
+  });
 });

@@ -9293,6 +9293,9 @@
           "uploadEligibility": {
             "$ref": "#/components/schemas/UploadEligibility"
           },
+          "uploadSkipDetail": {
+            "type": "string"
+          },
           "uploadSkipReason": {
             "$ref": "#/components/schemas/UploadSkipReason"
           }

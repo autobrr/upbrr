@@ -148,6 +148,21 @@ func TrackerDryRunEligibility(
 	return api.UploadEligibilitySkipped, api.UploadSkipReasonUploadPreparationFailed
 }
 
+// TrackerBlockingPolicyMessage returns the retained rule message that blocks
+// one tracker. A rule-gated projection reports itself as not upload ready, so
+// without this the lane can only offer a generic readiness label.
+func TrackerBlockingPolicyMessage(projection api.TrackerReleaseProjection) string {
+	for _, decision := range projection.PolicyDecisions {
+		if !decision.Blocking {
+			continue
+		}
+		if message := strings.TrimSpace(decision.Message); message != "" {
+			return message
+		}
+	}
+	return ""
+}
+
 // DownstreamEligibleProjections applies the shared retained eligibility
 // predicate while preserving projection order and snapshot identity.
 func DownstreamEligibleProjections(
