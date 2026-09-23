@@ -173,7 +173,7 @@ func runUpload(
 	configFlagProvided := visitedFlags["config"]
 
 	if opts.ShowVersion {
-		fmt.Fprintf(streams.out, "upbrr %s\n", version)
+		showCLIVersion(ctx, streams.out)
 		return nil
 	}
 	trackScoped := len(opts.TrackLanguages) > 0

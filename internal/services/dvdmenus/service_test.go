@@ -28,7 +28,8 @@ import (
 )
 
 type capabilityRunner struct {
-	calls int
+	calls              int
+	missingMenuOptions bool
 }
 
 type dvdMenuRecordingLogger struct {
@@ -82,6 +83,9 @@ func (r *capabilityRunner) Run(_ context.Context, _ string, args []string, _ int
 	r.calls++
 	joined := strings.Join(args, " ")
 	if strings.Contains(joined, "demuxer=dvdvideo") {
+		if r.missingMenuOptions {
+			return render.Output{Stdout: []byte("dvdvideo -menu")}, nil
+		}
 		return render.Output{Stdout: []byte("dvdvideo -menu -menu_lu -menu_vts -pgc -pg")}, nil
 	}
 	if strings.Contains(joined, "-version") {
@@ -671,6 +675,23 @@ func TestDeleteFailsWhenMissingRecordAlsoFailsRestore(t *testing.T) {
 	staged, err := filepath.Glob(imagePath + ".delete-*")
 	if err != nil || len(staged) != 1 {
 		t.Fatalf("staged image after failed restore = %v %#v", err, staged)
+	}
+}
+
+func TestCapabilityRetainsFFmpegVersionWithoutMenuSupport(t *testing.T) {
+	t.Parallel()
+	executable := filepath.Join(t.TempDir(), "ffmpeg-example")
+	if err := os.WriteFile(executable, []byte("example"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &capabilityRunner{missingMenuOptions: true}
+	service := newService(api.NopLogger{}, "", nil, runner, func() (string, error) { return executable, nil }, nil)
+	info, err := service.Capability(t.Context())
+	if err == nil || info.FFmpegDVDVideo || info.FFmpegVersion != "ffmpeg version example" {
+		t.Fatalf("incompatible capability = %#v, err=%v", info, err)
+	}
+	if strings.Join(info.MissingFFmpegOptions, ",") != "-menu_lu,-menu_vts,-pgc,-pg" || info.EngineVersion == "" {
+		t.Fatalf("missing engine diagnostics: %#v", info)
 	}
 }
 
