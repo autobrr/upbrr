@@ -529,15 +529,15 @@ func TestTrackersConfigJSONFiltersToTrackerSchema(t *testing.T) {
 		MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
 		ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
 		Trackers: TrackersConfig{
-			DefaultTrackers: CSVList{"A4K"},
+			DefaultTrackers: CSVList{"AITHER"},
 			Trackers: map[string]TrackerConfig{
-				"A4K": {
+				"AITHER": {
 					LinkDirName: "",
 					APIKey:      "abc",
 					AnnounceURL: "https://should-not-be-here",
 					Username:    "should-not-be-here",
 					ImageHost:   "pixhost",
-					FaviconURL:  "https://icons.example/a4k.png",
+					FaviconURL:  "https://icons.example/aither.png",
 					Anon:        true,
 					Unknown: map[string]any{
 						"CustomFlag": "keep",
@@ -562,34 +562,31 @@ func TestTrackersConfigJSONFiltersToTrackerSchema(t *testing.T) {
 	if !ok {
 		t.Fatalf("trackers root missing")
 	}
-	a4kRaw, ok := trackersRoot["Trackers"].(map[string]any)
+	aitherRaw, ok := trackersRoot["Trackers"].(map[string]any)
 	if !ok {
 		t.Fatalf("nested trackers missing")
 	}
-	a4k, ok := a4kRaw["A4K"].(map[string]any)
+	aither, ok := aitherRaw["AITHER"].(map[string]any)
 	if !ok {
-		t.Fatalf("A4K tracker missing")
+		t.Fatal("AITHER tracker missing")
 	}
 
-	if _, exists := a4k["AnnounceURL"]; exists {
-		t.Fatalf("A4K should not include AnnounceURL")
+	if _, exists := aither["AnnounceURL"]; exists {
+		t.Fatal("AITHER should not include AnnounceURL")
 	}
-	if _, exists := a4k["Username"]; exists {
-		t.Fatalf("A4K should not include Username")
+	if _, exists := aither["Username"]; exists {
+		t.Fatal("AITHER should not include Username")
 	}
-	if _, exists := a4k["APIKey"]; !exists {
-		t.Fatalf("A4K should include APIKey")
+	if _, exists := aither["APIKey"]; !exists {
+		t.Fatal("AITHER should include APIKey")
 	}
-	if _, exists := a4k["ModQ"]; !exists {
-		t.Fatalf("A4K should include ModQ from schema defaults")
+	if _, exists := aither["ModQ"]; !exists {
+		t.Fatal("AITHER should include ModQ from schema defaults")
 	}
-	if got := a4k["ImageHost"]; got != "pixhost" {
-		t.Fatalf("A4K should include ImageHost, got %v", got)
+	if got := aither["FaviconURL"]; got != "https://icons.example/aither.png" {
+		t.Fatalf("AITHER should include FaviconURL, got %v", got)
 	}
-	if got := a4k["FaviconURL"]; got != "https://icons.example/a4k.png" {
-		t.Fatalf("A4K should include FaviconURL, got %v", got)
-	}
-	if got := a4k["CustomFlag"]; got != "keep" {
+	if got := aither["CustomFlag"]; got != "keep" {
 		t.Fatalf("custom key not preserved, got %v", got)
 	}
 }
@@ -601,13 +598,12 @@ func TestTrackersConfigYAMLFiltersToTrackerSchema(t *testing.T) {
 		MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
 		ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
 		Trackers: TrackersConfig{
-			DefaultTrackers: CSVList{"A4K"},
+			DefaultTrackers: CSVList{"AITHER"},
 			Trackers: map[string]TrackerConfig{
-				"A4K": {
+				"AITHER": {
 					APIKey:      "abc",
 					AnnounceURL: "https://should-not-be-here",
-					ImageHost:   "pixhost",
-					FaviconURL:  "https://icons.example/a4k.png",
+					FaviconURL:  "https://icons.example/aither.png",
 					Anon:        true,
 					Unknown: map[string]any{
 						"custom_yaml": "keep",
@@ -631,16 +627,13 @@ func TestTrackersConfigYAMLFiltersToTrackerSchema(t *testing.T) {
 	text := string(data)
 
 	if strings.Contains(text, "announce_url: https://should-not-be-here") {
-		t.Fatalf("A4K should not include announce_url in yaml export")
+		t.Fatal("AITHER should not include announce_url in yaml export")
 	}
 	if !regexp.MustCompile(`(?m)^\s*api_key:\s*\S+\s*$`).MatchString(text) {
-		t.Fatalf("A4K should include api_key with non-empty value in yaml export")
+		t.Fatal("AITHER should include api_key with non-empty value in yaml export")
 	}
-	if !strings.Contains(text, "image_host: pixhost") {
-		t.Fatalf("A4K should include image_host in yaml export")
-	}
-	if !strings.Contains(text, "favicon_url: https://icons.example/a4k.png") {
-		t.Fatalf("A4K should include favicon_url in yaml export")
+	if !strings.Contains(text, "favicon_url: https://icons.example/aither.png") {
+		t.Fatal("AITHER should include favicon_url in yaml export")
 	}
 	if !strings.Contains(text, "custom_yaml: keep") {
 		t.Fatalf("unknown custom key should be preserved in yaml export")

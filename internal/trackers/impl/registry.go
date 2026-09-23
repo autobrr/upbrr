@@ -34,7 +34,6 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/tl"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/tvc"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
-	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/a4k"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/acm"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/aither"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/blu"
@@ -101,7 +100,6 @@ func MustNewRegistry() *trackers.Registry {
 
 func unit3DDefinitions() []trackers.Definition {
 	profiles := []unit3d.Profile{
-		a4k.Profile(),
 		acm.Profile(),
 		aither.Profile(),
 		blu.Profile(),

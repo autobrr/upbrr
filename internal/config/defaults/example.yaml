@@ -138,12 +138,6 @@ logging:
 trackers:
   default_trackers: []
   preferred_tracker: ""
-  A4K:
-    link_dir_name: ""
-    api_key: ""
-    image_host: ""
-    anon: false
-    modq: false
   ACM:
     link_dir_name: ""
     api_key: ""
