@@ -4,6 +4,7 @@
 package webserver
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -84,6 +85,128 @@ func TestNewBackendInitializesConfigActivationFingerprint(t *testing.T) {
 	}
 	if activation.ActiveGeneration != 0 || activation.Fingerprint != want {
 		t.Fatalf("initial activation = %#v, want generation=0 fingerprint=%q", activation, want)
+	}
+}
+
+func TestNewBackendKeepsRetiredA4KActivationFingerprint(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	repoPath := filepath.Join(t.TempDir(), "activation.db")
+	repo, err := db.OpenContext(ctx, repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	if err := repo.MigrateContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cfg := backendConfigTestConfig(repoPath)
+	cfg.Trackers.Trackers = map[string]config.TrackerConfig{"A4K": {APIKey: "synthetic-key", Anon: true}}
+	if err := config.SaveToDatabase(ctx, &cfg, repo); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := config.LoadFromDatabase(ctx, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored.MainSettings.DBPath = repoPath
+
+	// Previous releases included A4K in the embedded tracker schema.
+	currentTrackersJSON, err := json.Marshal(stored.Trackers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var trackersDoc struct {
+		DefaultTrackers  config.CSVList            `json:"DefaultTrackers"`
+		PreferredTracker string                    `json:"PreferredTracker"`
+		Trackers         map[string]map[string]any `json:"Trackers"`
+	}
+	if err := json.Unmarshal(currentTrackersJSON, &trackersDoc); err != nil {
+		t.Fatal(err)
+	}
+	trackersDoc.Trackers["A4K"] = map[string]any{
+		"LinkDirName":           "",
+		"APIKey":                "synthetic-key",
+		"ImageHost":             "",
+		"Anon":                  true,
+		"ModQ":                  false,
+		"FaviconURL":            "",
+		"TorrentClient":         "",
+		"Internal":              false,
+		"DupeBypassGroups":      []any{},
+		"PersonalReleaseGroups": []any{},
+		"InternalGroups":        []any{},
+	}
+	legacyTrackersJSON, err := json.Marshal(trackersDoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutDBPath := *stored
+	withoutDBPath.MainSettings.DBPath = ""
+	currentJSON, err := json.Marshal(withoutDBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyJSON := bytes.Replace(currentJSON, currentTrackersJSON, legacyTrackersJSON, 1)
+	if bytes.Equal(legacyJSON, currentJSON) && !bytes.Equal(currentTrackersJSON, legacyTrackersJSON) {
+		t.Fatal("could not substitute prior tracker shape")
+	}
+	legacyFingerprint, err := api.CanonicalWorkflowFingerprint(json.RawMessage(legacyJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.InitializeConfigActivationFingerprint(ctx, legacyFingerprint); err != nil {
+		t.Fatal(err)
+	}
+
+	backend, err := NewBackendWithContext(ctx, *stored, newEventHub())
+	if err != nil {
+		t.Fatalf("retired A4K config blocked startup: %v", err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	activation, err := repo.LoadConfigActivation(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if activation.ActiveGeneration != 0 || activation.Fingerprint != legacyFingerprint {
+		t.Fatalf("startup changed active config generation: %#v", activation)
+	}
+}
+
+func TestNewBackendRejectsChangedConfigActivationFingerprint(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	repoPath := filepath.Join(t.TempDir(), "activation.db")
+	repo, err := db.OpenContext(ctx, repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	if err := repo.MigrateContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cfg := backendConfigTestConfig(repoPath)
+	if err := config.SaveToDatabase(ctx, &cfg, repo); err != nil {
+		t.Fatal(err)
+	}
+	fingerprint, err := config.EffectiveConfigFingerprint(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.InitializeConfigActivationFingerprint(ctx, fingerprint); err != nil {
+		t.Fatal(err)
+	}
+	changed := cfg
+	changed.Metadata.KeepImages = !cfg.Metadata.KeepImages
+	if _, err := NewBackendWithContext(ctx, changed, newEventHub()); !errors.Is(err, api.ErrConfigActivationChanged) {
+		t.Fatalf("changed config startup error = %v, want config activation changed", err)
+	}
+	activation, err := repo.LoadConfigActivation(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if activation.ActiveGeneration != 0 || activation.Fingerprint != fingerprint {
+		t.Fatalf("rejected startup changed active config generation: %#v", activation)
 	}
 }
 
