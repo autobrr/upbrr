@@ -449,17 +449,6 @@ func trackerAllowedYAMLKeys(trackerName string) map[string]struct{} {
 		}
 		return addGlobal(clone)
 	}
-	// Retired trackers can remain in saved user config. Keep their last
-	// supported field shape so an upgrade does not change the fingerprint of
-	// an otherwise unchanged active configuration.
-	if trackerName == "A4K" {
-		return addGlobal(map[string]struct{}{
-			"link_dir_name": {},
-			"api_key":       {},
-			"anon":          {},
-			"modq":          {},
-		})
-	}
 	return nil
 }
 

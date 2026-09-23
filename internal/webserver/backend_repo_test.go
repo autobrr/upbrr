@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -88,7 +89,41 @@ func TestNewBackendInitializesConfigActivationFingerprint(t *testing.T) {
 	}
 }
 
-func TestNewBackendKeepsRetiredA4KActivationFingerprint(t *testing.T) {
+func TestStartupReconcilesNewDefaultsBeforeConfigIsSaved(t *testing.T) {
+	ctx := t.Context()
+	repoPath := filepath.Join(t.TempDir(), "activation.db")
+	repo, err := db.OpenContext(ctx, repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.MigrateContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	previous := backendConfigTestConfig(repoPath)
+	initial, err := InitializeRuntimeConfigActivation(ctx, repo, previous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := previous
+	current.Metadata.KeepImages = !previous.Metadata.KeepImages
+	want, err := config.EffectiveConfigFingerprint(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if initial.Fingerprint == want {
+		t.Fatal("test defaults did not change fingerprint")
+	}
+	activation, err := InitializeRuntimeConfigActivation(ctx, repo, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if activation.ActiveGeneration != 1 || activation.Fingerprint != want {
+		t.Fatalf("default-only upgrade = %#v, want generation=1 fingerprint=%q", activation, want)
+	}
+}
+
+func TestNewBackendReconcilesRetiredA4KActivationFingerprint(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 	repoPath := filepath.Join(t.TempDir(), "activation.db")
@@ -168,8 +203,85 @@ func TestNewBackendKeepsRetiredA4KActivationFingerprint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if activation.ActiveGeneration != 0 || activation.Fingerprint != legacyFingerprint {
-		t.Fatalf("startup changed active config generation: %#v", activation)
+	want, err := config.EffectiveConfigFingerprint(*stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if activation.ActiveGeneration != 1 || activation.Fingerprint != want ||
+		!slices.Equal(activation.Impacts, []api.ConfigImpact{api.ConfigImpactProvider}) {
+		t.Fatalf("startup did not advance activation to current config: %#v", activation)
+	}
+}
+
+func TestStartupReconcilesStoredConfigChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*config.Config)
+	}{
+		{"tracker addition", func(cfg *config.Config) {
+			cfg.Trackers.Trackers = map[string]config.TrackerConfig{"NEW": {APIKey: "synthetic-key"}}
+		}},
+		{"setting change", func(cfg *config.Config) {
+			cfg.Metadata.KeepImages = !cfg.Metadata.KeepImages
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			repoPath := filepath.Join(t.TempDir(), "activation.db")
+			repo, err := db.OpenContext(ctx, repoPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = repo.Close() })
+			if err := repo.MigrateContext(ctx); err != nil {
+				t.Fatal(err)
+			}
+			cfg := backendConfigTestConfig(repoPath)
+			if err := config.SaveToDatabase(ctx, &cfg, repo); err != nil {
+				t.Fatal(err)
+			}
+			previous, err := config.LoadFromDatabase(ctx, repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			previousFingerprint, err := config.EffectiveConfigFingerprint(*previous)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := repo.InitializeConfigActivationFingerprint(ctx, previousFingerprint); err != nil {
+				t.Fatal(err)
+			}
+			tc.change(previous)
+			if err := config.SaveToDatabase(ctx, previous, repo); err != nil {
+				t.Fatal(err)
+			}
+			current, err := config.LoadFromDatabase(ctx, repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			current.MainSettings.DBPath = repoPath
+			want, err := config.EffectiveConfigFingerprint(*current)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want == previousFingerprint {
+				t.Fatal("test config did not change fingerprint")
+			}
+			activation, err := InitializeRuntimeConfigActivation(ctx, repo, *current)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if activation.ActiveGeneration != 1 || activation.Fingerprint != want {
+				t.Fatalf("reconciled activation = %#v, want generation=1 fingerprint=%q", activation, want)
+			}
+			repeat, err := InitializeRuntimeConfigActivation(ctx, repo, *current)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if repeat.ActiveGeneration != 1 || repeat.Fingerprint != want {
+				t.Fatalf("repeated startup changed activation: %#v", repeat)
+			}
+		})
 	}
 }
 

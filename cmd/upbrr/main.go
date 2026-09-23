@@ -1017,16 +1017,11 @@ func loadCLIConfigWithSeed(ctx context.Context, configPath string, configProvide
 }
 
 // cliConfigActivation binds one CLI process to the durable active effective
-// configuration. A config file or environment that differs from the active
-// runtime must be activated through the settings path before it can mutate a
-// workflow.
+// configuration. A config file or environment that differs from the stored
+// runtime cannot mutate a workflow.
 func cliConfigActivation(
 	ctx context.Context, cfg config.Config, dbPath string,
 ) (uint64, api.WorkflowFingerprint, error) {
-	fingerprint, err := config.EffectiveConfigFingerprint(cfg)
-	if err != nil {
-		return 0, "", fmt.Errorf("fingerprint CLI effective config: %w", err)
-	}
 	repo, err := db.OpenContext(ctx, dbPath)
 	if err != nil {
 		return 0, "", fmt.Errorf("open config activation database: %w", err)
@@ -1042,24 +1037,9 @@ func cliConfigActivation(
 	if activation.Status != api.ConfigActivationActive && activation.Status != api.ConfigActivationPending {
 		return 0, "", errors.New("active config activation state is invalid")
 	}
-	if activation.Fingerprint == "" {
-		stored, err := config.LoadFromDatabase(ctx, repo)
-		if err != nil {
-			return 0, "", fmt.Errorf("load durable active config: %w", err)
-		}
-		config.ApplyEnvOverrides(stored)
-		stored.MainSettings.DBPath = dbPath
-		activation.Fingerprint, err = config.EffectiveConfigFingerprint(*stored)
-		if err != nil {
-			return 0, "", fmt.Errorf("fingerprint durable active config: %w", err)
-		}
-	}
-	if activation.Fingerprint != "" && activation.Fingerprint != fingerprint {
-		return 0, "", errors.New("CLI effective config does not match the active durable configuration")
-	}
-	activation, err = repo.InitializeConfigActivationFingerprint(ctx, fingerprint)
+	activation, err = webserver.InitializeRuntimeConfigActivation(ctx, repo, cfg)
 	if err != nil {
-		return 0, "", fmt.Errorf("initialize active config fingerprint: %w", err)
+		return 0, "", fmt.Errorf("initialize CLI config activation: %w", err)
 	}
 	return activation.ActiveGeneration, activation.Fingerprint, nil
 }
