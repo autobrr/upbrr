@@ -1212,7 +1212,7 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/tvc/description.go:buildDescription": {
-    "sha256": "64a616389bed695b105a9b6fa6faf367baf9c794aa4b6aaedf6e1f5c6ee0be31",
+    "sha256": "0ab08db401ed9846c3f3f6d9bccefe8e96b30f497ebb9d6bc286197e0a4d26da",
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
   },
   "internal/trackers/impl/standalone/tvc/description.go:genresText": {

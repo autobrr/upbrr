@@ -14,7 +14,9 @@ import (
 func TestBuildDescriptionPlacesAudioAfterMenusBeforeScreenshots(t *testing.T) {
 	t.Parallel()
 	audio := "[spoiler=source_audio]\n[img]https://img.example/audio.png[/img]\n[code]Peak: -1 dB[/code]\n[/spoiler]"
-	description, err := BuildDescription(t.Context(), api.DescriptionSubject{}, config.Config{},
+	cfg := config.Config{}
+	cfg.Description.ThumbnailSize = 420
+	description, err := BuildDescription(t.Context(), api.DescriptionSubject{}, cfg,
 		config.TrackerConfig{}, api.NopLogger{}, "Base description\n\n"+audio,
 		[]api.ScreenshotImage{{ImgURL: "https://img.example/menu.png"}},
 		[]api.ScreenshotImage{{ImgURL: "https://img.example/screen.png"}})
@@ -27,6 +29,8 @@ func TestBuildDescriptionPlacesAudioAfterMenusBeforeScreenshots(t *testing.T) {
 	screenPos := strings.Index(description, "https://img.example/screen.png")
 	if basePos < 0 || menuPos <= basePos || audioPos <= menuPos || screenPos <= audioPos ||
 		!strings.Contains(description, "[spoiler=source_audio]") ||
+		!strings.Contains(description, "[img=420]https://img.example/audio.png[/img]") ||
+		!strings.Contains(description, "[img=420]https://img.example/screen.png[/img]") ||
 		!strings.Contains(description, "[code]Peak: -1 dB[/code]") {
 		t.Fatalf("audio analysis placement = %q", description)
 	}

@@ -173,6 +173,11 @@ func ComposeDescription(
 
 	logger.Tracef("trackers: unit3d desc part=mediainfo skipped (sent via API)")
 	if audioAnalysis != "" {
+		thumbnailSize := appConfig.Description.ThumbnailSize
+		if thumbnailSize <= 0 {
+			thumbnailSize = 350
+		}
+		audioAnalysis = strings.ReplaceAll(audioAnalysis, "[img]", fmt.Sprintf("[img=%d]", thumbnailSize))
 		appendUniquePart(audioAnalysis, "audio_analysis")
 	}
 

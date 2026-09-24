@@ -48,8 +48,8 @@ func buildDescription(
 		return "", err
 	}
 
-	base := prepareOEText(descriptionunit3d.StripScreenshotBlocks(keptDescription))
-	base, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(base)
+	base, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(descriptionunit3d.StripScreenshotBlocks(keptDescription))
+	base = prepareOEText(base)
 	meta.DescriptionTemplate = oeEvidenceBlockPattern.ReplaceAllString(prepareOEText(descriptionunit3d.StripScreenshotBlocks(meta.DescriptionTemplate)), "")
 	base = appendOEDescriptionEvidence(base, evidence)
 	if audioAnalysis != "" {

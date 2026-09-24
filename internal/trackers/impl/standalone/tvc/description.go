@@ -39,7 +39,7 @@ func buildDescription(meta api.UploadSubject, cfg config.TrackerConfig, assets t
 		parts = append(parts, "[center][b]Notes / Extra Info[/b]\n"+base+"[/center]")
 	}
 	if audioAnalysis != "" {
-		parts = append(parts, audioAnalysis)
+		parts = append(parts, strings.ReplaceAll(audioAnalysis, "[img]", "[img=350]"))
 	}
 	if shots := screenshotBlock(assets.Screenshots, maxInt(cfg.ImageCount, 2)); shots != "" {
 		parts = append(parts, "[center]"+shots+"[/center]")

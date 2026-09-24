@@ -52,7 +52,7 @@ func buildDescription(meta api.UploadSubject, cfg config.Config, assets trackers
 		parts = append(parts, "[b]Disc Menus[/b]\n"+menus)
 	}
 	if audioAnalysis != "" {
-		parts = append(parts, audioAnalysis)
+		parts = append(parts, strings.ReplaceAll(audioAnalysis, "[img]", "[img width=350]"))
 	}
 	if screenshots := buildDiscScreenshotSection(meta, images, screenshotLimit); screenshots != "" {
 		parts = append(parts, screenshots)

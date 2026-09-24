@@ -51,7 +51,7 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 		parts = append(parts, menus)
 	}
 	if audioAnalysis != "" {
-		parts = append(parts, audioAnalysis)
+		parts = append(parts, strings.ReplaceAll(audioAnalysis, "[img]", "[img=350]"))
 	}
 	if shots := screenshotBlock(assets.Screenshots); shots != "" {
 		parts = append(parts, shots)

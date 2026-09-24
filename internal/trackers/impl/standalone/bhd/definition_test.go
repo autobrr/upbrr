@@ -717,18 +717,19 @@ func TestBuildDescriptionUsesAllSelectedScreenshotsByDefault(t *testing.T) {
 func TestBuildDescriptionKeepsAudioGraphsOutOfScreenshots(t *testing.T) {
 	t.Parallel()
 	const audio = "[spoiler=source_audio]\n[img]https://images.example.invalid/audio.png[/img]\n[code]Peak: -1 dB[/code]\n[/spoiler]"
+	const sizedAudio = "[spoiler=source_audio]\n[img width=350]https://images.example.invalid/audio.png[/img]\n[code]Peak: -1 dB[/code]\n[/spoiler]"
 	assets := trackers.DescriptionAssets{
 		Description: "Notes\n\n" + audio,
 		MenuImages:  []api.ScreenshotImage{{RawURL: "https://images.example.invalid/menu.png", WebURL: "https://images.example.invalid/menu"}},
 		Screenshots: []api.ScreenshotImage{{RawURL: "https://images.example.invalid/shot.png", WebURL: "https://images.example.invalid/shot"}},
 	}
 	got := buildDescription(api.UploadSubject{}, config.Config{}, assets)
-	for _, token := range []string{"Notes", "menu.png", audio, "shot.png"} {
+	for _, token := range []string{"Notes", "menu.png", sizedAudio, "shot.png"} {
 		if !strings.Contains(got, token) {
 			t.Fatalf("missing %q in %q", token, got)
 		}
 	}
-	if strings.Index(got, "menu.png") >= strings.Index(got, audio) || strings.Index(got, audio) >= strings.Index(got, "shot.png") {
+	if strings.Index(got, "menu.png") >= strings.Index(got, sizedAudio) || strings.Index(got, sizedAudio) >= strings.Index(got, "shot.png") {
 		t.Fatalf("audio placement = %q", got)
 	}
 	assets.MenuImages = nil

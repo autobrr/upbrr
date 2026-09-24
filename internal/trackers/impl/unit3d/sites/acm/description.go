@@ -34,8 +34,8 @@ func buildACMDescription(
 		keptDescription = descriptionunit3d.StripScreenshotBlocks(keptDescription)
 		meta.DescriptionTemplate = descriptionunit3d.StripScreenshotBlocks(meta.DescriptionTemplate)
 	}
-	base := prepareACMText(keptDescription)
-	base, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(base)
+	base, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(keptDescription)
+	base = prepareACMText(base)
 	meta.DescriptionTemplate = prepareACMText(meta.DescriptionTemplate)
 	base = descriptionunit3d.AppendDVDVOBMediaInfoBlock(base, api.NewDescriptionSubject(meta))
 

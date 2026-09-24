@@ -50,7 +50,8 @@ RawURL: "https://images.example.invalid/menu.png",
 	}
 	if strings.Index(got, "SVT-AV1 preset=4") >= strings.Index(got, "menu.png") ||
 		strings.Index(got, "menu.png") >= strings.Index(got, "audio.png") ||
-		strings.Index(got, "audio.png") >= strings.Index(got, "one.png") {
+		strings.Index(got, "audio.png") >= strings.Index(got, "one.png") ||
+		!strings.Contains(got, "[img=350]https://images.example.invalid/audio.png[/img]") {
 		t.Fatalf("audio analysis placement = %q", got)
 	}
 }

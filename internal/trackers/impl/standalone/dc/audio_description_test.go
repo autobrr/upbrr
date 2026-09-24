@@ -18,7 +18,8 @@ func TestAudioAnalysisFallsBetweenMenusAndScreenshots(t *testing.T) {
 		MenuImages:  []api.ScreenshotImage{{WebURL: "https://images.example.invalid/menu", RawURL: "https://images.example.invalid/menu.png"}},
 		Screenshots: []api.ScreenshotImage{{WebURL: "https://images.example.invalid/shot", RawURL: "https://images.example.invalid/shot.png"}},
 	})
-	if strings.Index(got, "menu.png") >= strings.Index(got, "audio.png") || strings.Index(got, "audio.png") >= strings.Index(got, "shot.png") {
+	if strings.Index(got, "menu.png") >= strings.Index(got, "audio.png") || strings.Index(got, "audio.png") >= strings.Index(got, "shot.png") ||
+		!strings.Contains(got, "[img=350]https://images.example.invalid/audio.png[/img]") {
 		t.Fatalf("audio analysis placement = %q", got)
 	}
 }

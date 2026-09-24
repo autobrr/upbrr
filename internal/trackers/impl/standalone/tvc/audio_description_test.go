@@ -21,7 +21,8 @@ func TestAudioAnalysisPrecedesScreenshots(t *testing.T) {
 			{WebURL: "https://images.example.invalid/shot2", ImgURL: "https://images.example.invalid/shot2.png"},
 		},
 	})
-	if strings.Index(got, "Notes") >= strings.Index(got, "audio.png") || strings.Index(got, "audio.png") >= strings.Index(got, "shot1.png") {
+	if strings.Index(got, "Notes") >= strings.Index(got, "audio.png") || strings.Index(got, "audio.png") >= strings.Index(got, "shot1.png") ||
+		!strings.Contains(got, "[img=350]https://images.example.invalid/audio.png[/img]") {
 		t.Fatalf("audio analysis placement = %q", got)
 	}
 }

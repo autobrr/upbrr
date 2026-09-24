@@ -14,7 +14,9 @@ import (
 func TestDVDAudioAnalysisFollowsMediaInfoAndMenus(t *testing.T) {
 	t.Parallel()
 	meta := api.UploadSubject{DiscType: "DVD", DVDVOBMediaInfoText: "Synthetic VOB MediaInfo"}
-	got, err := buildACMDescription(t.Context(), meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{},
+	cfg := config.Config{}
+	cfg.Description.ThumbnailSize = 420
+	got, err := buildACMDescription(t.Context(), meta, cfg, config.TrackerConfig{}, api.NopLogger{},
 		"Notes\n\n[spoiler=source_audio]\n[img]https://images.example.invalid/audio.png[/img]\n[/spoiler]",
 		[]api.ScreenshotImage{{
 RawURL: "https://images.example.invalid/menu.png",
@@ -31,7 +33,9 @@ RawURL: "https://images.example.invalid/shot.png",
 	}
 	if strings.Index(got, "Synthetic VOB MediaInfo") >= strings.Index(got, "menu.png") ||
 		strings.Index(got, "menu.png") >= strings.Index(got, "audio.png") ||
-		strings.Index(got, "audio.png") >= strings.Index(got, "shot.png") {
+		strings.Index(got, "audio.png") >= strings.Index(got, "shot.png") ||
+		!strings.Contains(got, "[img=420]https://images.example.invalid/audio.png[/img]") ||
+		!strings.Contains(got, "[img=420]https://images.example.invalid/shot.png[/img]") {
 		t.Fatalf("audio analysis placement = %q", got)
 	}
 }
