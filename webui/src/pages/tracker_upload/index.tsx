@@ -117,6 +117,7 @@ export default function TrackerUploadPage({ facet }: Props) {
     view.trackerOutcomes,
     view.selectedTrackers,
     excludedTrackers,
+    view.dryRunResult,
   );
   const failedTrackers = (view.result?.results || [])
     .filter((result) => result.submissionStatus === "failed")

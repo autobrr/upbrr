@@ -1998,6 +1998,7 @@ export function ReleaseSessionProvider({
       current.continuation?.trackerOutcomes || [],
       state.selectedTrackers,
       excluded,
+      current.dryRun || null,
     );
   };
 

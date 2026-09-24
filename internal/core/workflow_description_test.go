@@ -22,6 +22,7 @@ func (f *workflowDescriptionResolverFake) ResolveUploadSubject(
 ) (api.UploadSubject, error) {
 	f.input = input
 	return api.UploadSubject{
+		TrackerQuestionnaireAnswers: input.QuestionnaireAnswers,
 		SourcePath:          input.Release.SourcePath,
 		DescriptionTemplate: "Template v1",
 		DescriptionGroups:   input.DescriptionGroups,
@@ -192,6 +193,9 @@ func TestWorkflowDescriptionBuilderBindsProjectionMediaInputsAndImageFeedback(t 
 	}
 	if service.subject.ImageHost.SkipUpload == nil || !*service.subject.ImageHost.SkipUpload {
 		t.Fatalf("description subject allowed hidden image upload: %#v", service.subject.ImageHost)
+	}
+	if service.subject.TrackerQuestionnaireAnswers["ALPHA"]["edition"] != "theatrical" {
+		t.Fatalf("description stage dropped supplied questionnaire evidence: %+v", service.subject.TrackerQuestionnaireAnswers)
 	}
 	description := snapshot.Descriptions[0]
 	if len(description.TrackerIDs) != 2 || description.TrackerIDs[0] != "ALPHA" || description.TrackerIDs[1] != "BETA" ||

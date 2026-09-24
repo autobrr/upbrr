@@ -213,6 +213,46 @@ describe("TrackerUploadPage", () => {
               uploadSkipReason: "upload_preparation_skipped",
             },
           ] as unknown as UploadFacet["view"]["trackerOutcomes"],
+          dryRunResult: {
+            status: "skipped",
+            reports: [
+              { trackerId: "AITHER", status: "skipped" },
+              { trackerId: "BLU", status: "skipped" },
+            ],
+          } as unknown as NonNullable<UploadFacet["view"]["dryRunResult"]>,
+        },
+        { start },
+      ),
+    );
+
+    const uploadButton = screen.getByRole("button", { name: "Start upload" });
+    expect(uploadButton).toBeEnabled();
+    fireEvent.click(uploadButton);
+    expect(start).toHaveBeenCalledOnce();
+  });
+
+  it("allows a skipped dry-run plan after an earlier tracker exclusion", () => {
+    const start = vi.fn(async () => true);
+    renderPage(
+      uploadFacet(
+        {
+          selectedTrackers: ["AITHER", "BLU"],
+          trackerOutcomes: [
+            {
+              trackerId: "AITHER",
+              uploadEligibility: "skipped",
+              uploadSkipReason: "duplicate_found",
+            },
+            {
+              trackerId: "BLU",
+              uploadEligibility: "skipped",
+              uploadSkipReason: "upload_preparation_skipped",
+            },
+          ] as unknown as UploadFacet["view"]["trackerOutcomes"],
+          dryRunResult: {
+            status: "skipped",
+            reports: [{ trackerId: "BLU", status: "skipped" }],
+          } as unknown as NonNullable<UploadFacet["view"]["dryRunResult"]>,
         },
         { start },
       ),

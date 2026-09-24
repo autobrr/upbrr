@@ -778,12 +778,13 @@ func (f *retainedUploadExecutionFake) Release() error {
 }
 
 type uploadPlanBuilderFake struct {
-	testing       *testing.T
-	builds        int
-	options       []UploadPlanBuildOptions
-	execution     *retainedUploadExecutionFake
-	failed        map[api.TrackerID]bool
-	clientRetries int
+	testing           *testing.T
+	builds            int
+	options           []UploadPlanBuildOptions
+	execution         *retainedUploadExecutionFake
+	failed            map[api.TrackerID]bool
+	preparationFailed map[api.TrackerID]bool
+	clientRetries     int
 }
 
 func (f *uploadPlanBuilderFake) Fingerprint(
@@ -843,7 +844,7 @@ func (f *uploadPlanBuilderFake) Build(
 				clientMessage = "Client injection disabled by the skip option."
 			}
 		}
-		trackers = append(trackers, api.UploadPlanTracker{
+		tracker := api.UploadPlanTracker{
 			TrackerID:              projection.TrackerID,
 			DisplayName:            projection.DisplayName,
 			UploadReleaseName:      projection.UploadReleaseName,
@@ -855,8 +856,15 @@ func (f *uploadPlanBuilderFake) Build(
 			ClientInjectionStatus:  clientStatus,
 			ClientInjectionMessage: clientMessage,
 			SemanticFingerprint:    semantic,
-		})
-		f.execution.trackers = append(f.execution.trackers, projection.TrackerID)
+		}
+		if f.preparationFailed[projection.TrackerID] {
+			tracker.Eligible = false
+			tracker.Status = api.StageStatusFailed
+			tracker.PreparedOperationID = ""
+		} else {
+			f.execution.trackers = append(f.execution.trackers, projection.TrackerID)
+		}
+		trackers = append(trackers, tracker)
 	}
 	return api.UploadPlan{
 		InputFingerprint: fingerprint,

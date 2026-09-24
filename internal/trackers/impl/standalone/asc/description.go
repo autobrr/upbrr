@@ -215,6 +215,7 @@ func buildDescription(ctx context.Context, meta api.UploadSubject, cfg config.Co
 	if assets.Final {
 		return strings.TrimSpace(assets.Description)
 	}
+	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
 	if assets.Override && strings.TrimSpace(assets.Description) != "" {
 		return strings.TrimSpace(assets.Description)
 	}

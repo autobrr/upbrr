@@ -176,7 +176,7 @@ func screenshotsFromReport(images []bbcode.Image) []api.ScreenshotImage {
 }
 
 func stripUASignature(value string) string {
-	trimmed := strings.TrimSpace(value)
+	trimmed := trackers.StripDescriptionSignatures(value)
 	if trimmed == "" {
 		return ""
 	}

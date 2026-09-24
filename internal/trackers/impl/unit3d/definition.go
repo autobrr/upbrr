@@ -82,6 +82,27 @@ func NewWithProfile(profile Profile) *Definition {
 // DescriptionGroup returns the site-specific description override group.
 func (d *Definition) DescriptionGroup() string { return d.profile.DescriptionGroup }
 
+// UseGenericDescriptionCleanup enables shared cleanup only for the default builder.
+func (d *Definition) UseGenericDescriptionCleanup() bool {
+	return d.profile.Site.BuildDescription == nil
+}
+
+// InputSchema returns site-owned controls for required preparation evidence.
+func (d *Definition) InputSchema(subject api.UploadSubject) *api.TrackerQuestionnaire {
+	if d.profile.Site.InputSchema == nil {
+		return nil
+	}
+	return d.profile.Site.InputSchema(subject)
+}
+
+// InputReadiness returns site-owned readiness outcomes for supplied evidence.
+func (d *Definition) InputReadiness(subject api.UploadSubject) []api.InputReadinessFieldOutcome {
+	if d.profile.Site.InputReadiness == nil {
+		return nil
+	}
+	return d.profile.Site.InputReadiness(subject)
+}
+
 // DefaultBaseURL returns the site's endpoint used when configuration supplies none.
 func (d *Definition) DefaultBaseURL() string { return d.profile.BaseURL }
 
@@ -329,8 +350,12 @@ func (d *Definition) prepareDescription(ctx context.Context, req trackers.Prepar
 	if req.Intent == trackers.PreparationIntentDryRun && description != "" {
 		descriptionunit3d.SaveDescriptionDebug(api.NewDescriptionSubject(req.Meta), "unit3d", req.Runtime.DBPath, description, req.Logger)
 	}
+	group := strings.TrimSpace(d.profile.DescriptionGroup)
+	if group == "" {
+		group = "unit3d"
+	}
 	return trackers.DescriptionResult{
-		Group:       "unit3d",
+		Group:       group,
 		Description: description,
 	}, nil
 }

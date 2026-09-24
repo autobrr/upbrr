@@ -321,7 +321,7 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.StringArrayVar(&opts.TrackLanguages, "track-languages", nil, "Override track languages as track-id=language[,language]")
 	fs.StringArrayVar(&opts.ResetInput, "reset-input", nil, "Reset a saved correction field or field:track-id")
 	fs.StringArrayVar(&opts.ConfirmInput, "confirm-input", nil, "Confirm a saved content correction field or field:track-id")
-	fs.StringArrayVar(&opts.TrackerInput, "tracker-input", nil, "Set tracker input as TRACKER:field=yes|no|auto")
+	fs.StringArrayVar(&opts.TrackerInput, "tracker-input", nil, "Set tracker input as TRACKER:field=value (auto resets the field)")
 	fs.BoolVar(&opts.Anon, "a", false, "Upload anonymously")
 	fs.BoolVar(&opts.Anon, "anon", false, "Upload anonymously")
 	fs.BoolVar(&opts.Draft, "dr", false, "Send uploads to drafts where supported")
@@ -1134,9 +1134,13 @@ func buildCLITrackerInput(values []string) (map[string]map[string]string, error)
 		if !ok || tracker == "" || field == "" {
 			return nil, fmt.Errorf("invalid tracker-input %q", raw)
 		}
-		value = strings.ToLower(strings.TrimSpace(value))
-		if value != "yes" && value != "no" && value != "auto" {
+		value = strings.TrimSpace(value)
+		if value == "" {
 			return nil, fmt.Errorf("invalid tracker-input value %q", raw)
+		}
+		switch strings.ToLower(value) {
+		case "yes", "no", "auto":
+			value = strings.ToLower(value)
 		}
 		key := tracker + "\x00" + field
 		if _, duplicate := seen[key]; duplicate {

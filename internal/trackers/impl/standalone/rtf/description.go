@@ -13,7 +13,10 @@ import (
 )
 
 func buildDescription(assets trackers.DescriptionAssets) string {
-	return strings.TrimSpace(assets.Description)
+	if assets.Final {
+		return strings.TrimSpace(assets.Description)
+	}
+	return trackers.StripDescriptionSignatures(assets.Description)
 }
 
 func screenshots(images []api.ScreenshotImage) []string {

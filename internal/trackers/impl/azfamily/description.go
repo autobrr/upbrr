@@ -19,7 +19,7 @@ var (
 )
 
 func buildDescription(raw string) string {
-	trimmed := strings.TrimSpace(raw)
+	trimmed := trackers.StripDescriptionSignatures(raw)
 	if trimmed == "" {
 		return ""
 	}

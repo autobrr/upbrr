@@ -368,6 +368,33 @@ func TestCheckRepositoryRejectsUnit3DCallbackOutsideOwnedFile(t *testing.T) {
 	assertViolationContains(t, violations, "site-local taxonomy.go")
 }
 
+func TestCheckRepositoryUnit3DInputCallbacksBelongInQuestionnaire(t *testing.T) {
+	for _, callback := range []string{"InputSchema", "InputReadiness"} {
+		t.Run(callback, func(t *testing.T) {
+		for _, file := range []string{"questionnaire.go", "description.go"} {
+			t.Run(file, func(t *testing.T) {
+				root := t.TempDir()
+				writePolicyFixture(t, root, "internal/trackers/impl/unit3d/sites/example/profile.go",
+					"package example\nvar site = SiteProfile{"+callback+": siteInput}\n")
+				writePolicyFixture(t, root, filepath.ToSlash(filepath.Join("internal", "trackers", "impl", "unit3d", "sites", "example", file)),
+					"package example\nfunc siteInput() {}\n")
+				violations, err := CheckRepository(root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if file == "questionnaire.go" {
+					if len(violations) != 0 {
+						t.Fatalf("violations = %#v", violations)
+					}
+				} else {
+					assertViolationContains(t, violations, "site-local questionnaire.go")
+				}
+			})
+		}
+		})
+	}
+}
+
 func TestCheckRepositoryRejectsTrackerImportingPresentationOwner(t *testing.T) {
 	root := t.TempDir()
 	writePolicyFixture(

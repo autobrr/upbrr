@@ -2310,7 +2310,7 @@ describe("useReleaseSession", () => {
         id: "dry-run-skipped",
         workflowId: workflowID,
         revision: 8,
-        reports: [],
+        reports: [{ trackerId: "AITHER", status: "skipped" }],
         status: "skipped",
       },
     } as unknown as ReleaseWorkflowCurrent;

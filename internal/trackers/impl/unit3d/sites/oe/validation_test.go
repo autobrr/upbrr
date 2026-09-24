@@ -4,8 +4,10 @@
 package oe
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -164,10 +166,12 @@ func TestUploadGuideValidation(t *testing.T) {
 		{name: "AV1 WEBRip permits description settings fallback", mutate: func(s *api.TrackerValidationSubject) {
 			s.Type = "WEBRIP"
 			s.VideoCodec = "AV1"
+			s.QuestionnaireAnswers = map[string]string{oeEncodingSettingsKey: "SVT-AV1 preset=4 crf=20"}
 		}},
 		{name: "AV1 DVD rip permits description settings fallback", mutate: func(s *api.TrackerValidationSubject) {
 			s.Type = "DVDRIP"
 			s.VideoCodec = "AV1"
+			s.QuestionnaireAnswers = map[string]string{oeEncodingSettingsKey: "SVT-AV1 preset=4 crf=20"}
 		}},
 		{
 			name: "AVC WEBRip requires encode settings",
@@ -201,6 +205,21 @@ func TestUploadGuideValidation(t *testing.T) {
 				t.Fatalf("want %s/%s, got %#v", test.rule, test.disposition, failures)
 			}
 		})
+	}
+}
+
+func TestValidationPolicyCombinesGuideAndDescriptionRequirements(t *testing.T) {
+	subject := oeValidationSubject()
+	subject.Type = "WEBRIP"
+	subject.VideoCodec = "AV1"
+	subject.PackageFacts.ArchiveFileCount = 1
+
+	failures, err := Profile().ValidationPolicy.Check(t.Context(), subject, api.NopLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(failures) != 2 || failures[0].Rule != "oe_package_extras" || failures[1].Rule != "oe_av1_encoding_settings" {
+		t.Fatalf("combined validation failures = %#v", failures)
 	}
 }
 
@@ -305,5 +324,60 @@ func oeValidationSubject() api.TrackerValidationSubject {
 				Count:  1,
 			},
 		},
+	}
+}
+
+func TestDescriptionValidationDoesNotRequireScreenshotsBeforeGeneration(t *testing.T) {
+	meta := api.NewTrackerValidationSubject(oeTestSubject(), "OE")
+	meta.AssetFacts = api.AssetFacts{Status: api.MetadataEvidenceStatusComplete}
+	failures, err := checkDescriptionRequirements(t.Context(), meta, api.NopLogger{})
+	if err != nil || len(failures) != 0 {
+		t.Fatalf("pre-dupe validation blocked screenshot generation: %v %v", failures, err)
+	}
+}
+
+func TestDescriptionValidationRejectsRemovedFinalEvidence(t *testing.T) {
+	meta := oeTestSubject()
+	description, err := buildDescription(t.Context(), meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, "notes", nil, oeTestScreenshots())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ name, remove, rule string }{
+		{"settings", "SVT-AV1 preset=4 crf=20", "oe_av1_encoding_settings_description"},
+		{"source", "Example BluRay source; original HDR10 only", "oe_sm737_source_notes_description"},
+		{"screenshot", "[url=https://images.example/two.png][img=350]https://images.example/two.png[/img][/url]", "oe_description_screenshots"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			meta.DescriptionGroupsFinal = true
+			meta.DescriptionOverride = strings.ReplaceAll(description, tc.remove, "")
+			failures, err := checkDescriptionRequirements(t.Context(), api.NewTrackerValidationSubject(meta, "OE"), api.NopLogger{})
+			if err != nil || len(failures) != 1 || failures[0].Rule != tc.rule || failures[0].Disposition != api.RuleDispositionStrict {
+				t.Fatalf("removed evidence must block upload: %+v %v", failures, err)
+			}
+		})
+	}
+	meta.DescriptionOverride = strings.Repeat("[url=https://images.example/one][img=350]https://images.example/one.png[/img][/url]", 3)
+	meta.Type = "WEBDL"
+	meta.Tag = "GRP"
+	failures, err := checkDescriptionRequirements(t.Context(), api.NewTrackerValidationSubject(meta, "OE"), api.NopLogger{})
+	if err != nil || len(failures) != 1 || failures[0].Rule != "oe_description_screenshots" {
+		t.Fatalf("repeated image must not meet minimum: %+v %v", failures, err)
+	}
+}
+
+func TestDescriptionValidationAcceptsReformattedFinalEvidence(t *testing.T) {
+	meta := oeTestSubject()
+	description, err := buildDescription(t.Context(), meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, "notes", nil, oeTestScreenshots())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The required evidence can be moved into uploader prose; OE does not
+	// require the composer's headings or code blocks in the final description.
+	description = oeEvidenceBlockPattern.ReplaceAllString(description, "")
+	meta.DescriptionOverride = description + "\n\nEncoder: SVT-AV1 preset=4 crf=20\nSource: Example BluRay source; original HDR10 only"
+	meta.DescriptionGroupsFinal = true
+	failures, err := checkDescriptionRequirements(t.Context(), api.NewTrackerValidationSubject(meta, "OE"), api.NopLogger{})
+	if err != nil || len(failures) != 0 {
+		t.Fatalf("reformatted evidence must remain valid: %+v %v", failures, err)
 	}
 }

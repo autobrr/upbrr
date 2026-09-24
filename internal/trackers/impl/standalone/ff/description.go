@@ -16,6 +16,7 @@ func buildDescription(assets trackers.DescriptionAssets) string {
 	if assets.Final {
 		return strings.TrimSpace(assets.Description)
 	}
+	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
 	if strings.TrimSpace(assets.Description) != "" {
 		return finalizeDescription(strings.TrimSpace(assets.Description))
 	}

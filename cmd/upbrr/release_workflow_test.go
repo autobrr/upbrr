@@ -1505,7 +1505,7 @@ func TestCLIInputOnlyReportsReadiness(t *testing.T) {
 }
 
 func TestCLITrackerInputPreservesSetAndAutoIntent(t *testing.T) {
-	for _, value := range []string{"yes", "no", "auto"} {
+	for _, value := range []string{"yes", "no", "auto", "Source: Example WEB-DL; HDR10"} {
 		t.Run(value, func(t *testing.T) {
 			current := releaseworkflow.CommandResult{Workflow: api.ReleaseWorkflow{ID: "workflow-1", Revision: 1}}
 			coreSvc := &cliWorkflowCoreFake{current: current}
@@ -1513,16 +1513,16 @@ func TestCLITrackerInputPreservesSetAndAutoIntent(t *testing.T) {
 			session := &cliWorkflowSession{
 				core:          coreSvc,
 				current:       current,
-				uploadRequest: api.Request{Trackers: []string{"PTP"}},
+				uploadRequest: api.Request{Trackers: []string{"OE"}},
 			}
-			if err := applyCLITrackerInput(t.Context(), session, []string{"PTP:no_english_subtitles=" + value}); err != nil {
+			if err := applyCLITrackerInput(t.Context(), session, []string{"OE:source_notes=" + value}); err != nil {
 				t.Fatal(err)
 			}
 			if len(coreSvc.continuations) != 1 {
 				t.Fatalf("continuations = %d", len(coreSvc.continuations))
 			}
 			request := coreSvc.continuations[0]
-			answer, exists := request.Intent.TrackerInputAnswers["PTP"]["no_english_subtitles"]
+			answer, exists := request.Intent.TrackerInputAnswers["OE"]["source_notes"]
 			if !exists || (value == "auto" && answer != nil) || (value != "auto" && (answer == nil || *answer != value)) {
 				t.Fatalf("answer patch = %#v", request.Intent.TrackerInputAnswers)
 			}

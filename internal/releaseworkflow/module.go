@@ -1669,6 +1669,8 @@ func completedOperationCheckpoint(
 
 // convergeCompletedOperationCheckpoint publishes a terminal durable checkpoint
 // left behind by a transient operation-record write failure in this process.
+// It accepts a stale receipt and returns true when the caller must reload it.
+// Incomplete durable work returns without acquiring the completion lock.
 func (m *Module) convergeCompletedOperationCheckpoint(
 	ctx context.Context,
 	record api.ReleaseWorkflowOperationRecord,
@@ -1690,9 +1692,11 @@ func (m *Module) convergeCompletedOperationCheckpoint(
 	lock.Lock()
 	defer lock.Unlock()
 
+	// A completed checkpoint is immutable, but polling may have loaded the
+	// receipt before the worker advanced it. Reload under the completion lock.
 	current, err := m.operations.LoadOperation(ctx, record.OwnerID, record.WorkflowID, record.OperationID)
 	if err != nil {
-		return false, fmt.Errorf("release workflow reload completed operation: %w", err)
+		return false, fmt.Errorf("release workflow reload operation for checkpoint convergence: %w", err)
 	}
 	if !workflowOperationActive(current.Status.Status) {
 		return true, nil

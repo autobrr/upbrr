@@ -156,7 +156,7 @@ func TestCompositeUploadStrictDebugContinuesWithEligibleTrackers(t *testing.T) {
 	}
 }
 
-func TestCompositeUploadDryRunGoalRequiresSuccessfulTerminalStatus(t *testing.T) {
+func TestCompositeUploadDryRunGoalStopsOnThisAttemptsTerminalResult(t *testing.T) {
 	t.Parallel()
 
 	session := &compositeUploadSession{
@@ -170,16 +170,91 @@ func TestCompositeUploadDryRunGoalRequiresSuccessfulTerminalStatus(t *testing.T)
 		NoSeed:     true,
 		TrackerIDs: []api.TrackerID{"ALPHA"},
 		Status:     api.StageStatusFailed,
+		Revision:   10,
 	}}
-	for _, status := range []api.StageStatus{api.StageStatusFailed, api.StageStatusPartial} {
+	for _, status := range []api.StageStatus{api.StageStatusFailed, api.StageStatusPartial, api.StageStatusSkipped, api.StageStatusCompleted} {
 		current.DryRun.Status = status
-		if compositeUploadGoalReached(current, session) {
-			t.Fatalf("%s retained dry run incorrectly completed the composite goal", status)
+		if compositeUploadGoalReached(current, session, 10) {
+			t.Fatalf("%s prior dry run incorrectly completed the new composite attempt", status)
+		}
+		if !compositeUploadGoalReached(current, session, 9) {
+			t.Fatalf("%s new dry run did not complete the composite attempt", status)
 		}
 	}
-	current.DryRun.Status = api.StageStatusSkipped
-	if !compositeUploadGoalReached(current, session) {
-		t.Fatal("fully skipped retained dry run did not complete the composite goal")
+}
+
+func TestCompositeUploadRechecksPriorCompletedDryRunOnNewAttempt(t *testing.T) {
+	t.Parallel()
+
+	module, repository, uploads := newCompositeUploadTestModule(t)
+	request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, "composite-prior-review")
+	started, err := module.StartUpload(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocked := waitCompositeUploadTestOperation(t, module, started)
+	prior := approveCompositeUploadTrackers(t, module, blocked, []api.TrackerID{"ALPHA", "BETA"}, "approve-prior-review")
+	if prior.DryRun == nil || prior.DryRun.Status != api.StageStatusCompleted || uploads.builds != 1 {
+		t.Fatalf("prior review: dryRun=%#v builds=%d", prior.DryRun, uploads.builds)
+	}
+	state, err := repository.Load(t.Context(), testOwnerID, prior.Workflow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := module.Start(t.Context(), testOwnerID, CompositeUploadCommand{
+		WorkflowID:         prior.Workflow.ID,
+		ExpectedRevision:   prior.Workflow.Revision,
+		SessionFingerprint: state.Composite.RequestFingerprint,
+		Goal:               api.WorkflowGoalDryRun,
+		IdempotencyKey:     "repeat-prior-review",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := waitCompositeUploadTestOperation(t, module, CommandResult{Operation: &operation})
+	if current.Operation.Status != api.StageStatusCompleted || current.DryRun == nil ||
+		current.DryRun.Revision <= prior.DryRun.Revision || uploads.builds != 2 {
+		t.Fatalf("repeated review: operation=%#v dryRun=%#v builds=%d", current.Operation, current.DryRun, uploads.builds)
+	}
+}
+
+func TestCompositeUploadPartialDryRunStopsAfterOneReview(t *testing.T) {
+	t.Parallel()
+
+	module, _, uploads := newCompositeUploadTestModule(t)
+	uploads.preparationFailed = map[api.TrackerID]bool{"BETA": true}
+	request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeDebug, "composite-partial-review")
+	started, err := module.StartUpload(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocked := waitCompositeUploadTestOperation(t, module, started)
+	current := approveCompositeUploadTrackers(t, module, blocked, []api.TrackerID{"ALPHA", "BETA"}, "approve-partial-review")
+	if current.Operation == nil || current.Operation.Status != api.StageStatusCompleted ||
+		current.DryRun == nil || current.DryRun.Status != api.StageStatusPartial || uploads.builds != 1 {
+		t.Fatalf("partial composite review: operation=%#v dryRun=%#v builds=%d", current.Operation, current.DryRun, uploads.builds)
+	}
+}
+
+func TestCompositeUploadFailedDryRunStopsAfterOneReview(t *testing.T) {
+	t.Parallel()
+
+	module, _, uploads := newCompositeUploadTestModule(t)
+	uploads.preparationFailed = map[api.TrackerID]bool{"ALPHA": true, "BETA": true}
+	request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeUpload, "composite-failed-review")
+	started, err := module.StartUpload(t.Context(), testOwnerID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocked := waitCompositeUploadTestOperation(t, module, started)
+	current := approveCompositeUploadTrackers(t, module, blocked, []api.TrackerID{"ALPHA", "BETA"}, "approve-failed-review")
+	if current.Operation == nil || current.Operation.Status != api.StageStatusFailed ||
+		current.DryRun == nil || current.DryRun.Status != api.StageStatusFailed || uploads.builds != 1 {
+		t.Fatalf("failed composite review: operation=%#v dryRun=%#v builds=%d", current.Operation, current.DryRun, uploads.builds)
+	}
+	if len(current.Operation.Failures) == 0 ||
+		current.Operation.Failures[0].Failure.Code != api.OperationFailureMissingPreparedTracker {
+		t.Fatalf("failed composite operation failures = %#v", current.Operation.Failures)
 	}
 }
 
