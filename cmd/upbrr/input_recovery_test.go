@@ -27,21 +27,22 @@ func TestCLIInputRecoveryRequiresExplicitConfirmation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			core := &cliWorkflowCoreFake{activeInput: api.ActiveInputSnapshot{State: api.ActiveInputEmpty, RecoveryWorkflowIDs: []api.WorkflowID{"legacy"}},
 				recoveryInput: api.ActiveInputSnapshot{State: api.ActiveInputRecovering, Current: &api.ReleaseWorkflowCurrent{Workflow: api.ReleaseWorkflow{
-					ID: "legacy",
- Revision: 3,
- RequiredActions: []api.RequiredAction{{
-ID: "reconcile",
- WorkflowRevision: 3,
-						Kind: api.RequiredActionReconcileSubmission,
- Status: api.RequiredActionStatusPending,
- Prompt: "Check the interrupted submission.",
-}},
+					ID:       "legacy",
+					Revision: 3,
+					RequiredActions: []api.RequiredAction{{
+						ID:               "reconcile",
+						WorkflowRevision: 3,
+						Kind:             api.RequiredActionReconcileSubmission,
+						Status:           api.RequiredActionStatusPending,
+						Prompt:           "Check the interrupted submission.",
+					}},
 				}}}}
 			session := &cliWorkflowSession{
-core: core,
- intent: cliWorkflowIntent{interaction: test.mode},
- streams: cliIO{out: io.Discard},
-}
+				core:    core,
+				intent:  cliWorkflowIntent{interaction: test.mode},
+				streams: cliIO{out: io.Discard},
+			}
+
 			err := session.reconcileLegacyInputs(t.Context(), bufio.NewReader(strings.NewReader(test.input)))
 			if (err == nil) != (test.wantCalls > 0) || len(core.reconcileRequests) != test.wantCalls {
 				t.Fatalf("reconcile calls=%d err=%v", len(core.reconcileRequests), err)
@@ -53,5 +54,17 @@ core: core,
 				t.Fatal("wrong reconciliation answer")
 			}
 		})
+	}
+}
+
+func TestCLIInputRecoveryLeavesPreviousProcessInputForVerifiedOpen(t *testing.T) {
+	t.Parallel()
+	core := &cliWorkflowCoreFake{activeInput: api.ActiveInputSnapshot{State: api.ActiveInputRecovering, Revision: 7}}
+	session := &cliWorkflowSession{core: core, intent: cliWorkflowIntent{interaction: api.InteractionModeUnattendedConfirm}}
+	if err := session.reconcileLegacyInputs(t.Context(), bufio.NewReader(strings.NewReader(""))); err != nil {
+		t.Fatalf("inspect previous-process input: %v", err)
+	}
+	if core.recoverCalls != 0 || !session.inputBaseline.captured || session.inputBaseline.revision != 7 {
+		t.Fatalf("previous-process input was claimed as legacy recovery: calls=%d baseline=%#v", core.recoverCalls, session.inputBaseline)
 	}
 }

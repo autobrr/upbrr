@@ -6,6 +6,7 @@ package db
 import (
 	"database/sql"
 	"database/sql/driver"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -404,6 +405,152 @@ func TestInitializeConfigActivationFingerprintOnlyFillsLegacyBlankValue(t *testi
 	if _, err := repo.InitializeConfigActivationFingerprint(ctx, "replacement"); !errors.Is(err, api.ErrConfigActivationChanged) {
 		t.Fatalf("replacement fingerprint error = %v", err)
 	}
+}
+
+func TestReconcileConfigActivationRetainsPendingAndFailure(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		t.Run(fmt.Sprint("failed=", failed), func(t *testing.T) {
+			ctx := t.Context()
+			repo, snapshot, _ := newConfigActivationUpgradeFixture(t)
+			candidate := []byte(`{"stored":"candidate"}`)
+			pending, err := repo.SavePendingConfigActivation(ctx, "owner", candidate, []api.ConfigImpactDetail{{Kind: api.ConfigImpactDescription}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			expected, err := repo.LoadConfigActivation(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if failed {
+				expected, err = repo.FailPendingConfigActivation(ctx, pending.ActivationID, api.ConfigActivationFailureBuild)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			activation, err := repo.ReconcileConfigActivation(ctx, snapshot, expected, "current", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if activation.ActiveGeneration != 1 || activation.Fingerprint != "current" ||
+				activation.Status != expected.Status || activation.ActivationID != expected.ActivationID {
+				t.Fatalf("reconciled activation = %#v", activation)
+			}
+			if failed {
+				if activation.FailureCode != api.ConfigActivationFailureBuild {
+					t.Fatalf("lost failure reason: %#v", activation)
+				}
+				return
+			}
+			if activation.PendingGeneration != 2 {
+				t.Fatalf("pending generation = %d, want 2", activation.PendingGeneration)
+			}
+			storedCandidate, loaded, err := repo.LoadPendingConfigActivationCandidate(ctx)
+			if err != nil || string(storedCandidate) != string(candidate) || loaded.ActivationID != pending.ActivationID {
+				t.Fatalf("pending candidate changed: payload=%q activation=%#v err=%v", storedCandidate, loaded, err)
+			}
+		})
+	}
+}
+
+func TestReconcileConfigActivationRejectsChangedSnapshotAndBusyInput(t *testing.T) {
+	ctx := t.Context()
+	repo, snapshot, expected := newConfigActivationUpgradeFixture(t)
+	stale := json.RawMessage(`{"MainSettings":{"TMDBAPI":"other"}}`)
+	if _, err := repo.ReconcileConfigActivation(ctx, stale, expected, "current", nil); !errors.Is(err, api.ErrConfigActivationChanged) {
+		t.Fatalf("changed stored config error = %v", err)
+	}
+	if _, err := repo.RawDB().ExecContext(ctx, `UPDATE active_input SET record_json = ? WHERE singleton = 1`, `{"State":"opening"}`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ReconcileConfigActivation(ctx, snapshot, expected, "current", nil); !errors.Is(err, api.ErrActiveInputBusy) {
+		t.Fatalf("busy input error = %v", err)
+	}
+	unchanged, err := repo.LoadConfigActivation(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.ActiveGeneration != 0 || unchanged.Fingerprint != "previous" {
+		t.Fatalf("rejected upgrade changed activation: %#v", unchanged)
+	}
+}
+
+func TestReconcileConfigActivationInvalidatesIdleWorkflow(t *testing.T) {
+	ctx := t.Context()
+	repo, snapshot, expected := newConfigActivationUpgradeFixture(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO release_workflow_states (
+		owner_id, workflow_id, revision, status, creation_key, creation_fingerprint, state_json, created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"owner", "workflow", 1, "active", "", "", []byte(`{"safe":"state"}`),
+		formatWorkflowStateTime(now), formatWorkflowStateTime(now)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.RawDB().ExecContext(ctx, `UPDATE active_input SET revision = 5, fence = 1, record_json = ? WHERE singleton = 1`,
+		`{"State":"active","Revision":5,"Fence":1,"CoordinatorID":"test","OwnerID":"owner","WorkflowID":"workflow","InputID":"input","SourceVersion":"version"}`); err != nil {
+		t.Fatal(err)
+	}
+	activation, err := repo.ReconcileConfigActivation(ctx, snapshot, expected, "current",
+		func(record api.ReleaseWorkflowStateRecord, impact api.ConfigImpactDetail) (api.ReleaseWorkflowStateRecord, error) {
+			if impact.Kind != api.ConfigImpactProvider {
+				t.Fatalf("startup impact = %q, want provider", impact.Kind)
+			}
+			record.Revision++
+			record.UpdatedAt = record.UpdatedAt.Add(time.Nanosecond)
+			record.Payload = []byte(`{"safe":"updated"}`)
+			return record, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if activation.ActiveGeneration != 1 || activation.Fingerprint != "current" {
+		t.Fatalf("activation = %#v", activation)
+	}
+	var revision uint64
+	var payload string
+	if err := repo.RawDB().QueryRowContext(ctx, `SELECT revision, state_json FROM release_workflow_states WHERE owner_id = ? AND workflow_id = ?`,
+		"owner", "workflow").Scan(&revision, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if revision != 2 || payload != `{"safe":"updated"}` {
+		t.Fatalf("workflow = revision %d payload %q", revision, payload)
+	}
+	slot, err := repo.LoadActiveInput(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slot.Revision != 6 {
+		t.Fatalf("active input revision = %d, want 6", slot.Revision)
+	}
+}
+
+func newConfigActivationUpgradeFixture(t *testing.T) (*SQLiteRepository, json.RawMessage, api.ConfigActivation) {
+	t.Helper()
+	ctx := t.Context()
+	repo, err := Open(filepath.Join(t.TempDir(), "config-activation-upgrade.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.MigrateContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.RawDB().ExecContext(ctx, `INSERT INTO config_settings (section, data, updated_at) VALUES (?, ?, ?)`,
+		"MainSettings", `{"TMDBAPI":"synthetic-key"}`, "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	var sections map[string]json.RawMessage
+	if err := repo.LoadFullConfig(ctx, &sections); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := json.Marshal(sections)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activation, err := repo.InitializeConfigActivationFingerprint(ctx, "previous")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return repo, snapshot, activation
 }
 
 func TestConfigActivationSafeAllowsIdleWorkflowSlot(t *testing.T) {

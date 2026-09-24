@@ -1686,11 +1686,22 @@ func (m *Module) convergeCompletedOperationCheckpoint(
 	if work.CompletedAt == nil {
 		return false, nil
 	}
-	checkpoint, err := completedOperationCheckpoint(record, work)
+	lock := m.operationLock(record.OperationID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	current, err := m.operations.LoadOperation(ctx, record.OwnerID, record.WorkflowID, record.OperationID)
+	if err != nil {
+		return false, fmt.Errorf("release workflow reload completed operation: %w", err)
+	}
+	if !workflowOperationActive(current.Status.Status) {
+		return true, nil
+	}
+	checkpoint, err := completedOperationCheckpoint(current, work)
 	if err != nil {
 		return false, err
 	}
-	if err := m.publishCompletedOperationCheckpoint(ctx, record, checkpoint); err != nil {
+	if err := m.publishCompletedOperationCheckpointLocked(ctx, current, checkpoint); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -1709,6 +1720,16 @@ func (m *Module) publishCompletedOperationCheckpoint(
 	if err != nil {
 		return fmt.Errorf("release workflow load completed operation checkpoint: %w", err)
 	}
+	return m.publishCompletedOperationCheckpointLocked(ctx, current, checkpoint)
+}
+
+// publishCompletedOperationCheckpointLocked requires the operation lock so the
+// checkpoint sequence is checked against the current operation record.
+func (m *Module) publishCompletedOperationCheckpointLocked(
+	ctx context.Context,
+	current api.ReleaseWorkflowOperationRecord,
+	checkpoint api.WorkflowOperationStatus,
+) error {
 	if !workflowOperationActive(current.Status.Status) {
 		m.private.Delete(current.OwnerID, current.WorkflowID, operationCommandResourceID(current.OperationID))
 		return nil

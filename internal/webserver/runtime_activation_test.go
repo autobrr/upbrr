@@ -511,6 +511,45 @@ func TestRuntimeActivatorMarksDeferredFailuresTerminalAndAcceptsCorrection(t *te
 	}
 }
 
+func TestRuntimeActivatorCompletesPendingCandidateAlreadyEffectiveAfterUpgrade(t *testing.T) {
+	repo := openRuntimeActivationTestRepo(t)
+	installer := &activationTestInstaller{}
+	activator, err := NewRuntimeActivator(repo, repo.DBPath(), installer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := validRuntimeActivationConfig()
+	stored.MainSettings.DBPath = repo.DBPath()
+	activator.deps.loadStored = func(context.Context, *db.SQLiteRepository) (*config.Config, error) { return &stored, nil }
+	activator.deps.loadActivation = func(ctx context.Context, repo *db.SQLiteRepository) (api.ConfigActivation, error) {
+		return repo.LoadConfigActivation(ctx)
+	}
+	activator.deps.savePending = func(ctx context.Context, repo *db.SQLiteRepository, ownerID string, candidate []byte, impacts []api.ConfigImpactDetail) (api.ConfigActivation, error) {
+		return repo.SavePendingConfigActivation(ctx, ownerID, candidate, impacts)
+	}
+	activator.deps.activationSafe = func(context.Context, *db.SQLiteRepository) (bool, error) { return true, nil }
+	activator.deps.build = activationTestBuild(&activationTestOwner{})
+	activator.deps.cookies = activationTestCookies
+	activator.deps.persistActivated = activateRuntimeConfigForTest
+	pending, err := activator.savePending(t.Context(), "owner", &stored, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending.Status != api.ConfigActivationPending {
+		t.Fatalf("pending = %#v", pending)
+	}
+	active, err := activator.ActivatePending(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.Status != api.ConfigActivationActive || active.ActiveGeneration != 1 || len(installer.generations) != 1 {
+		t.Fatalf("matching pending candidate did not complete: activation=%#v installations=%d", active, len(installer.generations))
+	}
+	if _, _, err := repo.LoadPendingConfigActivationCandidate(t.Context()); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("matching pending candidate remained: %v", err)
+	}
+}
+
 func TestRuntimeActivatorPendingReplacementBeforeActivationSnapshotRetainsNewCandidate(t *testing.T) {
 	repo := openRuntimeActivationTestRepo(t)
 	installer := &activationTestInstaller{}

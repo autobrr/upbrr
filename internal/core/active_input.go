@@ -24,6 +24,13 @@ func (c *Core) GetActiveInput(ctx context.Context, owner string) (api.ActiveInpu
 	if slot.State != api.ActiveInputEmpty && !c.workflow.OwnsActiveInput(slot) {
 		// Previous-process work remains protected, but startup must not load
 		// its prepared release or implicitly resume its workflow.
+		if releaseworkflow.IsLegacyRecoverySlot(slot) {
+			return api.ActiveInputSnapshot{
+				State:               api.ActiveInputRecovering,
+				Revision:            slot.Revision,
+				RecoveryWorkflowIDs: []api.WorkflowID{slot.WorkflowID},
+			}, nil
+		}
 		return api.ActiveInputSnapshot{State: api.ActiveInputRecovering, Revision: slot.Revision}, nil
 	}
 	if slot.WorkflowID != "" {

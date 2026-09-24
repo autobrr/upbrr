@@ -63,14 +63,19 @@ func (m *Module) Continue(
 			if err != nil {
 				return CommandResult{}, err
 			}
+			openedResult := CommandResult{Workflow: api.ReleaseWorkflow{ID: opened.WorkflowID}}
 			ctx, err = m.activeMutationContext(ctx, ownerID, opened.WorkflowID)
 			if err != nil {
-				return CommandResult{}, err
+				return openedResult, err
 			}
 			if err := m.acceptContinuationIntent(ctx, ownerID, opened.WorkflowID, request); err != nil {
-				return CommandResult{}, err
+				return openedResult, err
 			}
-			return m.Current(ctx, ownerID, opened.WorkflowID)
+			current, err := m.Current(ctx, ownerID, opened.WorkflowID)
+			if err != nil {
+				return openedResult, err
+			}
+			return current, nil
 		}
 		instructions := request.Intent.FactInstructions
 		sourcePath := ""

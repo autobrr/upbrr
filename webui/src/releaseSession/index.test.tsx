@@ -1061,6 +1061,179 @@ describe("useReleaseSession", () => {
     unmount();
   });
 
+  it("reclaims a legacy recovery slot from a previous process", async () => {
+    const recover = vi.fn(async () => ({
+      state: "recovering" as const,
+      revision: 3,
+      current: workflowCurrent("workflow-legacy", 2),
+    }));
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          activeInput: {
+            get: async () => ({
+              state: "recovering",
+              revision: 2,
+              recoveryWorkflowIds: ["workflow-legacy"],
+            }),
+            recover,
+          },
+        }),
+      ),
+    });
+    await waitFor(() =>
+      expect(result.current.input.view.activeInput.recoveryWorkflowIDs).toEqual([
+        "workflow-legacy",
+      ]),
+    );
+
+    await act(() =>
+      expect(result.current.input.recoverLegacyWorkflow("unrelated")).resolves.toBe(false),
+    );
+    expect(recover).not.toHaveBeenCalled();
+    await act(() =>
+      expect(result.current.input.recoverLegacyWorkflow("workflow-legacy")).resolves.toBe(true),
+    );
+    expect(recover).toHaveBeenCalledWith(
+      { workflowId: "workflow-legacy" },
+      expect.any(AbortSignal),
+    );
+    unmount();
+  });
+
+  it("opens a verified source from an opaque previous-process input", async () => {
+    const sourcePath = "C:\\media\\Example.Release.2026-GRP.mkv";
+    const open = vi.fn(async () => ({
+      state: "active" as const,
+      revision: 6,
+      inputId: "input-new",
+      sourceVersion: "verified-source",
+      current: workflowCurrent("workflow-new", 2),
+    }));
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          activeInput: {
+            get: async () => ({ state: "recovering", revision: 2 }),
+            open,
+          },
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.input.view.activeInput.state).toBe("recovering"));
+    await act(async () => {
+      await result.current.input.openSource(sourcePath);
+    });
+    expect(open).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedRevision: 2,
+        request: expect.objectContaining({
+          intent: expect.objectContaining({
+            preparation: expect.objectContaining({ SourcePath: sourcePath }),
+          }),
+        }),
+      }),
+      expect.any(AbortSignal),
+    );
+    unmount();
+  });
+
+  it("accepts a masked same-revision recovery snapshot after server restart", async () => {
+    let restarted = false;
+    let emitInputChanged: () => void = () => undefined;
+    const get = vi.fn(async () =>
+      restarted
+        ? {
+            state: "recovering" as const,
+            revision: 3,
+            recoveryWorkflowIds: ["workflow-legacy"],
+          }
+        : {
+            state: "recovering" as const,
+            revision: 3,
+            current: workflowCurrent("workflow-legacy", 2),
+          },
+    );
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          activeInput: {
+            get,
+            subscribe: (onChange) => {
+              emitInputChanged = onChange;
+              return () => undefined;
+            },
+          },
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.input.view.activeInput.state).toBe("recovering"));
+    await waitFor(() =>
+      expect(result.current.workflow.view.current?.workflow.id).toBe("workflow-legacy"),
+    );
+    restarted = true;
+    act(() => emitInputChanged());
+    await waitFor(() =>
+      expect(result.current.input.view.activeInput.recoveryWorkflowIDs).toEqual([
+        "workflow-legacy",
+      ]),
+    );
+    expect(result.current.workflow.view.current).toBeNull();
+    unmount();
+  });
+
+  it("clears a prior-process input with the same revision before opening a new source", async () => {
+    let restarted = false;
+    let emitInputChanged: () => void = () => undefined;
+    const get = vi.fn(async () =>
+      restarted
+        ? { state: "recovering" as const, revision: 3 }
+        : {
+            state: "active" as const,
+            revision: 3,
+            inputId: "input-old",
+            sourceVersion: "source-old",
+            current: workflowCurrent("workflow-old", 2),
+          },
+    );
+    const open = vi.fn(async () => ({
+      state: "active" as const,
+      revision: 7,
+      inputId: "input-new",
+      sourceVersion: "source-new",
+      current: workflowCurrent("workflow-new", 2),
+    }));
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          activeInput: {
+            get,
+            open,
+            subscribe: (onChange) => {
+              emitInputChanged = onChange;
+              return () => undefined;
+            },
+          },
+        }),
+      ),
+    });
+    await waitFor(() => expect(result.current.input.view.activeInput.inputID).toBe("input-old"));
+    restarted = true;
+    act(() => emitInputChanged());
+    await waitFor(() => expect(result.current.input.view.activeInput.state).toBe("recovering"));
+    expect(result.current.input.view.activeInput.inputID).toBe("");
+    expect(result.current.workflow.view.current).toBeNull();
+
+    await act(async () => {
+      await result.current.input.openSource("C:\\media\\Example.Release.2026-GRP.mkv");
+    });
+    expect(open).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedRevision: 3 }),
+      expect.any(AbortSignal),
+    );
+    unmount();
+  });
+
   it("reconciles a current submission action from an active input", async () => {
     const reconciliationAction = {
       id: "action-active-reconcile",
