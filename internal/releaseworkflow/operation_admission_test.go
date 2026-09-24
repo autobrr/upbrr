@@ -105,6 +105,14 @@ func TestOperationConvergesCompletedCheckpointAfterRepeatedPublicationFailures(t
 	if !workflowOperationActive(stored.Status.Status) {
 		t.Fatalf("operation before lazy convergence = %#v, want active", stored.Status)
 	}
+	if stored.Status.Sequence < 2 {
+		t.Fatalf("operation sequence before lazy convergence = %d, want at least 2", stored.Status.Sequence)
+	}
+	stale := stored
+	stale.Status.Sequence--
+	if converged, convergeErr := module.convergeCompletedOperationCheckpoint(t.Context(), stale); convergeErr != nil || !converged {
+		t.Fatalf("converge checkpoint with stale operation record: converged=%t err=%v", converged, convergeErr)
+	}
 
 	status, err := module.Operation(t.Context(), testOwnerID, created.Workflow.ID, operation.ID)
 	if err != nil {
