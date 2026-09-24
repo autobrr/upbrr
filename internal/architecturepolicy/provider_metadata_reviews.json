@@ -152,7 +152,7 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/ar/description.go:buildDescription": {
-    "sha256": "ed86bc9e33042ec3fb1bd7ada67410bdddc74e2de986e29b52f4ce4a7c338436",
+    "sha256": "c9cb1cc5c3a1e647205bff122d94fde13b4b35b2b6141ad1f597ec3a093e9e75",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/ar/description.go:resolveOverview": {
@@ -888,7 +888,7 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/hds/description.go:buildDescription": {
-    "sha256": "a21bc9a5d8d1cec411c50851929cf0da23339b18b7674df399a6c022d2108247",
+    "sha256": "be3fc460d57922b119c9226638acd3a247c86460fbeceaa9906a9607cf323c48",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/hds/description.go:prepareDescription": {
@@ -936,7 +936,7 @@
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
   },
   "internal/trackers/impl/standalone/hdt/description.go:buildDescription": {
-    "sha256": "3bbfd0ce938eb97c12767fb588bccfec0dc420b5e759be3f63ca0d34b5724f9c",
+    "sha256": "477ebe3fdc1f267bbd9008020c29c23d00915dc002feaddcd44c12efe701effc",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/hdt/description.go:prepareDescription": {
@@ -1212,7 +1212,7 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/tvc/description.go:buildDescription": {
-    "sha256": "aad4a80ef2cb184e562dcdc8b239e5128fd0fcf6e6592d45400567ddef54c01b",
+    "sha256": "64a616389bed695b105a9b6fa6faf367baf9c794aa4b6aaedf6e1f5c6ee0be31",
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
   },
   "internal/trackers/impl/standalone/tvc/description.go:genresText": {

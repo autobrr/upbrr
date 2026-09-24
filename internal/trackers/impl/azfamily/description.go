@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/description"
 	"github.com/autobrr/upbrr/internal/trackers"
 )
 
@@ -23,6 +24,7 @@ func buildDescription(raw string) string {
 	if trimmed == "" {
 		return ""
 	}
+	trimmed, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(trimmed)
 	trimmed = azNFOStripPattern.ReplaceAllString(trimmed, "")
 	trimmed = azLinkStripPattern.ReplaceAllString(trimmed, "")
 	trimmed = azTagStripPattern.ReplaceAllString(trimmed, "")
@@ -36,7 +38,11 @@ func buildDescription(raw string) string {
 		}
 		cleaned = append(cleaned, value)
 	}
-	return strings.Join(cleaned, "<br>\n")
+	base := strings.Join(cleaned, "<br>\n")
+	if audioAnalysis == "" {
+		return base
+	}
+	return strings.TrimSpace(strings.Join([]string{base, description.Render(audioAnalysis)}, "<br>\n"))
 }
 
 func buildDescriptionFromAssets(_ context.Context, req trackers.PreparationInput) string {

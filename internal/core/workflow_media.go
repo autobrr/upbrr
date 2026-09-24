@@ -477,6 +477,8 @@ func (b workflowMediaBuilder) Build(
 		screenshotCount = max(screenshotCount, len(instructions.ManualFrames))
 	case api.ScreenshotPurposePreview:
 		screenshotCount = max(projectedScreenshots, instructions.ScreenshotCount)
+	case api.ScreenshotPurposeAudioAnalysis:
+		return api.MediaArtifactSet{}, nil, errors.New("workflow media capture: audio analysis is not a screenshot purpose")
 	default:
 		screenshotCount = max(projectedScreenshots, instructions.ScreenshotCount)
 	}

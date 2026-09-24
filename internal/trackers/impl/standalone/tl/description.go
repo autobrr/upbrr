@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/description"
 	descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/providerid"
@@ -20,6 +21,8 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 		return strings.TrimSpace(assets.Description)
 	}
 	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
+	baseDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(assets.Description)
+	assets.Description = baseDescription
 	meta := req.Meta
 	parts := make([]string, 0, 8)
 
@@ -61,6 +64,9 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 		if shots := screenshotBlock(assets.MenuImages); shots != "" {
 			parts = append(parts, shots)
 		}
+	}
+	if audioAnalysis != "" {
+		parts = append(parts, audioAnalysis)
 	}
 	// Screenshot Header
 	if header := strings.TrimSpace(req.Runtime.Description.ScreenshotHeader); header != "" {

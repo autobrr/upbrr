@@ -5179,6 +5179,8 @@ func (m *Module) captureMedia(
 	case "", api.ScreenshotPurposeFinal, api.ScreenshotPurposeMenu:
 	case api.ScreenshotPurposePreview:
 		return CommandResult{}, fmt.Errorf("%w: preview images cannot satisfy retained media requirements", ErrInvalidTransition)
+	case api.ScreenshotPurposeAudioAnalysis:
+		return CommandResult{}, fmt.Errorf("%w: audio analysis images cannot satisfy retained media requirements", ErrInvalidTransition)
 	default:
 		return CommandResult{}, fmt.Errorf("%w: invalid media capture purpose", ErrInvalidTransition)
 	}
@@ -5367,13 +5369,20 @@ func (m *Module) analyzeAudio(
 	state.AudioAnalyses[snapshot.ID] = snapshot
 	state.Workflow.AudioAnalysisEnabled = true
 	state.Workflow.AudioAnalysis = &api.AudioAnalysisRef{ID: snapshot.ID, Revision: snapshot.Revision}
+	state.Workflow.Descriptions = nil
+	invalidateUploadPlan(&state.Workflow)
 	return CommandResult{AudioAnalysis: &snapshot}, nil
 }
 
 func (m *Module) setAudioAnalysisEnabled(state *State, command SetAudioAnalysisEnabledCommand) {
+	changed := state.Workflow.AudioAnalysisEnabled != command.Enabled || (!command.Enabled && state.Workflow.AudioAnalysis != nil)
 	state.Workflow.AudioAnalysisEnabled = command.Enabled
 	if !command.Enabled {
 		state.Workflow.AudioAnalysis = nil
+	}
+	if changed {
+		state.Workflow.Descriptions = nil
+		invalidateUploadPlan(&state.Workflow)
 	}
 }
 
@@ -6173,6 +6182,45 @@ func (m *Module) stampMediaActions(snapshot *api.MediaArtifactSet, revision api.
 	return nil
 }
 
+func (m *Module) descriptionResources(ownerID string, state *State, media any, now time.Time) (any, error) {
+	ref := state.Workflow.AudioAnalysis
+	if !state.Workflow.AudioAnalysisEnabled || ref == nil {
+		return media, nil
+	}
+	analysis, ok := state.AudioAnalyses[ref.ID]
+	if !ok || analysis.Revision != ref.Revision || state.Workflow.Release == nil {
+		return nil, fmt.Errorf("%w: audio analysis is stale", ErrInvalidTransition)
+	}
+	release := state.Releases[state.Workflow.Release.ID]
+	if analysis.Release != (api.ReleaseRef{SourcePath: release.Release.Source.SourcePath, Generation: release.Release.Generation}) {
+		return nil, fmt.Errorf("%w: audio analysis release is stale", ErrInvalidTransition)
+	}
+	hasImages := false
+	for _, track := range analysis.Tracks {
+		for _, artifact := range track.Artifacts {
+			if artifact.Status == api.StageStatusCompleted && artifact.Variant != api.AudioAnalysisStats {
+				hasImages = true
+			}
+		}
+	}
+	if !hasImages {
+		return DescriptionResources{Media: media, AudioAnalysis: analysis}, nil
+	}
+	value, err := m.private.Get(ownerID, state.Workflow.ID, audioAnalysisPrivateResourceID(analysis.AttemptID), now)
+	if err != nil {
+		return nil, fmt.Errorf("release workflow load audio analysis for descriptions: %w", err)
+	}
+	paths, ok := value.(RetainedAudioAnalysisLocalPath)
+	if !ok {
+		return nil, ErrPrivateResourceUnavailable
+	}
+	return DescriptionResources{
+		Media:         media,
+		AudioAnalysis: analysis,
+		AudioPaths:    paths,
+	}, nil
+}
+
 func (m *Module) generateDescriptions(
 	ctx context.Context,
 	ownerID string,
@@ -6209,6 +6257,10 @@ func (m *Module) generateDescriptions(
 	privateMedia, err := m.private.Get(ownerID, workflow.ID, mediaPrivateResourceID(media.ID), now)
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow load media artifacts for descriptions: %w", err)
+	}
+	privateMedia, err = m.descriptionResources(ownerID, state, privateMedia, now)
+	if err != nil {
+		return CommandResult{}, err
 	}
 	inputFingerprint, templateFingerprint, err := m.descriptionBuilder.Fingerprints(
 		ctx,
@@ -6389,6 +6441,10 @@ func (m *Module) mutateDescriptionOverride(
 	privateMedia, err := m.private.Get(ownerID, workflow.ID, mediaPrivateResourceID(media.ID), now)
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow load media artifacts for description override: %w", err)
+	}
+	privateMedia, err = m.descriptionResources(ownerID, state, privateMedia, now)
+	if err != nil {
+		return CommandResult{}, err
 	}
 	targets, err := resolveDownstreamTrackerSet(state, nil, downstreamStageDescriptions, now)
 	if err != nil {

@@ -272,6 +272,14 @@ type RetainedAudioAnalysisLocalPath interface {
 	LocalArtifactPath(api.AudioAnalysisResult, api.PublicResourceID) (string, error)
 }
 
+// DescriptionResources carries the current owner-scoped analysis alongside
+// retained media when a description depends on audio analysis.
+type DescriptionResources struct {
+	Media         any
+	AudioAnalysis api.AudioAnalysisResult
+	AudioPaths    RetainedAudioAnalysisLocalPath
+}
+
 // AudioAnalysisBuilder resolves one exact prepared source and streams selected
 // audio tracks into locally retained artifacts, reusing compatible prior work.
 type AudioAnalysisBuilder interface {

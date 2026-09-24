@@ -764,6 +764,9 @@ func ApplyUploadedVariantsToSlots(slots []api.ScreenshotSlot, uploads []api.Uplo
 	result := SlotUploadAttachmentResult{}
 	seenUploads := make(map[string]struct{}, len(uploads))
 	for _, upload := range uploads {
+		if upload.Purpose == api.ScreenshotPurposeAudioAnalysis {
+			continue
+		}
 		uploadKey := strings.ToLower(
 			strings.TrimSpace(upload.Host),
 		) + "\x00" + normalizeUsageScope(

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/description"
 	descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
 	"github.com/autobrr/upbrr/internal/trackers"
 
@@ -20,6 +21,8 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 		return strings.TrimSpace(assets.Description)
 	}
 	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
+	baseDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(assets.Description)
+	assets.Description = baseDescription
 	meta := req.Meta
 	var parts []string
 
@@ -44,11 +47,13 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 		parts = append(parts, strings.TrimSpace(assets.Description))
 	}
 
-	// Combined Screenshots
-	allShots := make([]api.ScreenshotImage, 0, len(assets.MenuImages)+len(assets.Screenshots))
-	allShots = append(allShots, assets.MenuImages...)
-	allShots = append(allShots, assets.Screenshots...)
-	if shots := screenshotBlock(allShots); shots != "" {
+	if menus := screenshotBlock(assets.MenuImages); menus != "" {
+		parts = append(parts, menus)
+	}
+	if audioAnalysis != "" {
+		parts = append(parts, audioAnalysis)
+	}
+	if shots := screenshotBlock(assets.Screenshots); shots != "" {
 		parts = append(parts, shots)
 	}
 

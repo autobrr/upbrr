@@ -13,6 +13,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/bbcode"
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/description"
 	descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -48,8 +49,12 @@ func buildDescription(
 	}
 
 	base := prepareOEText(descriptionunit3d.StripScreenshotBlocks(keptDescription))
+	base, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(base)
 	meta.DescriptionTemplate = oeEvidenceBlockPattern.ReplaceAllString(prepareOEText(descriptionunit3d.StripScreenshotBlocks(meta.DescriptionTemplate)), "")
 	base = appendOEDescriptionEvidence(base, evidence)
+	if audioAnalysis != "" {
+		base = strings.TrimSpace(strings.Join([]string{base, audioAnalysis}, "\n\n"))
+	}
 
 	cfg := appConfig
 	cfg.Description.AddLogo = false

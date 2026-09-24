@@ -155,6 +155,7 @@ func TestScreenshotLifecyclePreservesCategoriesAndCleansReferences(t *testing.T)
 	if err := repo.SaveUploadedImages(ctx, binding, "example-host", []api.UploadedImageLink{{
 		SourcePath: sourcePath,
 		ImagePath:  manualNew,
+		Purpose:    api.ScreenshotPurposeMenu,
 		Host:       "example-host",
 		UsageScope: "global",
 		RawURL:     "https://example.invalid/manual-new.png",
@@ -218,6 +219,9 @@ func TestScreenshotLifecyclePreservesCategoriesAndCleansReferences(t *testing.T)
 	restoredUpload := false
 	for _, uploaded := range restoredUploads {
 		if uploaded.ImagePath == manualNew {
+			if uploaded.Purpose != api.ScreenshotPurposeMenu {
+				t.Fatalf("restored menu upload purpose = %q", uploaded.Purpose)
+			}
 			restoredUpload = true
 			break
 		}

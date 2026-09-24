@@ -7,8 +7,30 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestBuildDescriptionPlacesAudioAfterMenusBeforeScreenshots(t *testing.T) {
+	t.Parallel()
+	audio := "[spoiler=source_audio]\n[img]https://img.example/audio.png[/img]\n[code]Peak: -1 dB[/code]\n[/spoiler]"
+	description, err := BuildDescription(t.Context(), api.DescriptionSubject{}, config.Config{},
+		config.TrackerConfig{}, api.NopLogger{}, "Base description\n\n"+audio,
+		[]api.ScreenshotImage{{ImgURL: "https://img.example/menu.png"}},
+		[]api.ScreenshotImage{{ImgURL: "https://img.example/screen.png"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	basePos := strings.Index(description, "Base description")
+	menuPos := strings.Index(description, "https://img.example/menu.png")
+	audioPos := strings.Index(description, "https://img.example/audio.png")
+	screenPos := strings.Index(description, "https://img.example/screen.png")
+	if basePos < 0 || menuPos <= basePos || audioPos <= menuPos || screenPos <= audioPos ||
+		!strings.Contains(description, "[spoiler=source_audio]") ||
+		!strings.Contains(description, "[code]Peak: -1 dB[/code]") {
+		t.Fatalf("audio analysis placement = %q", description)
+	}
+}
 
 func TestBuildDiscScreenshotSectionsGroupsPreparedDiscOrder(t *testing.T) {
 	t.Parallel()

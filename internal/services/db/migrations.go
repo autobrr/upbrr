@@ -61,6 +61,11 @@ type migrationExecutor interface {
 var migrationRegistry = []migrationStep{
 	{id: baselineMigrationID, apply: createBaselineSchema},
 	{
+		id:        "2026_09_mark_uploaded_audio_analysis",
+		dependsOn: []string{baselineMigrationID},
+		apply:     migrateMarkUploadedAudioAnalysis,
+	},
+	{
 		id:        "2026_09_add_active_input",
 		dependsOn: []string{baselineMigrationID},
 		apply:     migrateAddActiveInput,
@@ -868,6 +873,24 @@ func migrateBackfillUploadedImageUsageScope(ctx context.Context, exec migrationE
 		}
 	}
 
+	return nil
+}
+
+func migrateMarkUploadedAudioAnalysis(ctx context.Context, exec migrationExecutor) error {
+	present, err := tableExists(ctx, exec, "uploaded_images")
+	if err != nil || !present {
+		return err
+	}
+	exists, err := tableColumnExists(ctx, exec, "uploaded_images", "purpose")
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	if _, err := exec.ExecContext(ctx, `ALTER TABLE uploaded_images ADD COLUMN purpose TEXT NOT NULL DEFAULT 'final'`); err != nil {
+		return fmt.Errorf("db: mark uploaded image purpose: %w", err)
+	}
 	return nil
 }
 
@@ -1740,6 +1763,7 @@ func createBaselineSchema(ctx context.Context, exec migrationExecutor) error {
 			image_path TEXT NOT NULL,
 			host TEXT NOT NULL,
 			usage_scope TEXT NOT NULL DEFAULT "global",
+			purpose TEXT NOT NULL DEFAULT 'final',
 			img_url TEXT NOT NULL DEFAULT "",
 			raw_url TEXT NOT NULL DEFAULT "",
 			web_url TEXT NOT NULL DEFAULT "",

@@ -10,6 +10,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/bbcode"
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/description"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -20,6 +21,7 @@ func buildDescription(meta api.UploadSubject, cfg config.Config, assets trackers
 	if assets.Final {
 		return base
 	}
+	base, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(base)
 
 	cleaned := CleanDescription(base, BBCodeOptions{
 		Framestor: hasGroup(meta.Tag, "framestor"),
@@ -46,8 +48,11 @@ func buildDescription(meta api.UploadSubject, cfg config.Config, assets trackers
 	if descriptionBody != "" {
 		parts = append(parts, descriptionBody)
 	}
-	if menus := buildDiscScreenshotSection(meta, assets.MenuImages, 0); menus != "" {
+	if menus := buildDiscScreenshotSection(meta, assets.MenuImages, len(assets.MenuImages)); menus != "" {
 		parts = append(parts, "[b]Disc Menus[/b]\n"+menus)
+	}
+	if audioAnalysis != "" {
+		parts = append(parts, audioAnalysis)
 	}
 	if screenshots := buildDiscScreenshotSection(meta, images, screenshotLimit); screenshots != "" {
 		parts = append(parts, screenshots)

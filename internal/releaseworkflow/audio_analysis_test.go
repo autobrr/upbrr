@@ -142,6 +142,20 @@ func (p *audioAnalysisReleaseProbe) releaseCount() int {
 	return p.releases
 }
 
+func TestAudioAnalysisSettingInvalidatesDescriptions(t *testing.T) {
+	t.Parallel()
+	state := &State{Workflow: api.ReleaseWorkflow{
+		AudioAnalysisEnabled: true,
+		AudioAnalysis:        &api.AudioAnalysisRef{ID: "analysis-1", Revision: 1},
+		Descriptions:         &api.DescriptionSetRef{ID: "descriptions-1", Revision: 2},
+		DryRun:               &api.UploadDryRunResultRef{ID: "dry-run-1", Revision: 3},
+	}}
+	(&Module{}).setAudioAnalysisEnabled(state, SetAudioAnalysisEnabledCommand{Enabled: false})
+	if state.Workflow.AudioAnalysis != nil || state.Workflow.Descriptions != nil || state.Workflow.DryRun != nil {
+		t.Fatalf("disabled audio analysis retained downstream descriptions: %#v", state.Workflow)
+	}
+}
+
 func TestModuleAudioAnalysisRetriesIncrementallyAndPersistsDisabledIntent(t *testing.T) {
 	t.Parallel()
 

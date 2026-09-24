@@ -679,6 +679,7 @@ func reusedImageLinks(images []api.ScreenshotImage, target trackers.ImageUploadT
 // the batch, mirroring a host that drops individual uploads under load.
 type partialImageHostingService struct {
 	published int
+	failHost  string
 }
 
 func (*partialImageHostingService) ListCandidates(context.Context, api.ImageHostingSubject) ([]api.ScreenshotImage, error) {
@@ -693,10 +694,14 @@ func (s *partialImageHostingService) Upload(
 	images []api.ScreenshotImage,
 ) ([]api.UploadedImageLink, error) {
 	published := min(s.published, len(images))
+	if s.failHost != "" && host != s.failHost {
+		published = len(images)
+	}
 	links := make([]api.UploadedImageLink, 0, published)
 	for _, image := range images[:published] {
 		links = append(links, api.UploadedImageLink{
 			ImagePath:  image.Path,
+			Purpose:    image.Purpose,
 			Host:       host,
 			UsageScope: usageScope,
 			RawURL:     "https://images.example.invalid/" + host,
@@ -706,6 +711,37 @@ func (s *partialImageHostingService) Upload(
 		return links, nil
 	}
 	return links, fmt.Errorf("image hosting: %d of %d uploads failed", len(images)-published, len(images))
+}
+
+func TestAudioAnalysisRequiresCompleteHostBatchAndFallsBack(t *testing.T) {
+	t.Parallel()
+	images := []api.ScreenshotImage{
+		{Path: "audio-1.png", Purpose: api.ScreenshotPurposeAudioAnalysis},
+		{Path: "audio-2.png", Purpose: api.ScreenshotPurposeAudioAnalysis},
+		{Path: "audio-3.png", Purpose: api.ScreenshotPurposeAudioAnalysis},
+	}
+	module := &mediaModule{
+		cfg: config.Config{
+			ImageHosting:       config.ImageHostingConfig{Host1: "pixhost", Host2: "imgbb"},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{MinSuccessfulUploads: 2},
+		},
+		images:   &partialImageHostingService{published: 2, failHost: "pixhost"},
+		logger:   &recordingMediaLogger{},
+		registry: mediaImageHostRegistry(t),
+	}
+	result, err := module.uploadImagesToTargetsWithFallback(t.Context(), api.UploadSubject{}, "", nil,
+		[]trackers.ImageUploadTarget{{
+Host: "pixhost",
+ UsageScope: "global",
+ Trackers: []string{"ONE"},
+}}, images, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Attempts) != 2 || result.Attempts[0].Failure == nil || result.Attempts[1].Failure != nil ||
+		result.Attempts[1].Host != "imgbb" || len(result.Attempts[1].Links) != len(images) || len(result.Failures) != 0 {
+		t.Fatalf("incomplete audio batch was accepted or fallback failed: %#v", result)
+	}
 }
 
 func TestUploadImagesAcceptsPartialHostBatchAtConfiguredMinimum(t *testing.T) {

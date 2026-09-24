@@ -13,6 +13,23 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestBuildDescriptionPreservesAudioAfterMenus(t *testing.T) {
+	t.Parallel()
+	const audio = "[spoiler=source_audio]\n[img]https://images.example.invalid/audio.png[/img]\n[code]Peak: -1 dB[/code]\n[/spoiler]"
+	got := buildDescription(trackers.PreparationInput{}, trackers.DescriptionAssets{
+		Description: "Notes\n\n" + audio,
+		MenuImages:  []api.ScreenshotImage{{RawURL: "https://images.example.invalid/menu.png"}},
+	})
+	for _, token := range []string{"Notes", "menu.png", "audio.png", "Peak: -1 dB"} {
+		if !strings.Contains(got, token) {
+			t.Fatalf("missing %q in %q", token, got)
+		}
+	}
+	if strings.Index(got, "menu.png") >= strings.Index(got, "[spoiler=source_audio]") {
+		t.Fatalf("audio precedes menu: %q", got)
+	}
+}
+
 func TestBuildDescriptionUsesPreparedDiscMenuAssets(t *testing.T) {
 	t.Parallel()
 

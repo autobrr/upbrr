@@ -14,6 +14,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/description"
+	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -30,6 +31,7 @@ type workflowDescriptionBuilder struct {
 	resolver workflowDescriptionSubjectResolver
 	trackers workflowDescriptionTrackerService
 	reuse    api.DescriptionReuseRepository
+	media    *mediaModule
 }
 
 func (b workflowDescriptionBuilder) Fingerprints(
@@ -148,6 +150,9 @@ func (b workflowDescriptionBuilder) Build(
 			TemplateFingerprint: templateFingerprint,
 			Status:              api.StageStatusSkipped,
 		}, nil
+	}
+	if err := b.uploadAudioDescriptionImages(ctx, subject, trackerNames); err != nil {
+		return api.DescriptionSet{}, fmt.Errorf("workflow descriptions: upload audio analysis images: %w", err)
 	}
 	for _, projection := range descriptionTargets {
 		api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
@@ -276,6 +281,53 @@ func (b workflowDescriptionBuilder) Build(
 	return snapshot, nil
 }
 
+func (b workflowDescriptionBuilder) uploadAudioDescriptionImages(ctx context.Context, subject api.UploadSubject, trackerNames []string) error {
+	if subject.ExactMedia == nil {
+		return nil
+	}
+	images := make([]api.ScreenshotImage, 0)
+	for _, track := range subject.ExactMedia.AudioTracks {
+		images = append(images, track.Images...)
+	}
+	if len(images) == 0 {
+		return nil
+	}
+	if b.media == nil {
+		return errors.New("image hosting service is unavailable")
+	}
+	targets, err := b.media.resolveImageUploadTargets(trackerNames, subject, "", nil)
+	if err != nil {
+		return err
+	}
+	if len(targets) == 0 {
+		return errors.New("no image host is available for audio analysis")
+	}
+	result, err := b.media.uploadImagesToTargetsWithFallback(ctx, subject, "", nil, targets, images, nil, nil)
+	if err != nil {
+		return err
+	}
+	subject.ExactMedia.AudioUploads = result.Links
+	hosts := make(map[string]string, len(trackerNames))
+	for _, attempt := range result.Attempts {
+		if attempt.Failure != nil || len(attempt.Links) == 0 {
+			continue
+		}
+		for _, tracker := range attempt.Trackers {
+			hosts[strings.ToUpper(strings.TrimSpace(tracker))] = strings.ToLower(strings.TrimSpace(attempt.Host))
+		}
+	}
+	for _, tracker := range trackerNames {
+		if hosts[strings.ToUpper(strings.TrimSpace(tracker))] == "" {
+			return fmt.Errorf("audio analysis image host is unavailable for %s", tracker)
+		}
+	}
+	subject.ExactMedia.AudioUploadHosts = hosts
+	if err := subject.ExactMedia.Validate(); err != nil {
+		return fmt.Errorf("workflow descriptions: validate hosted audio analysis: %w", err)
+	}
+	return nil
+}
+
 type workflowExactLocalMedia struct {
 	artifact   api.MediaArtifact
 	screenshot api.ScreenshotImage
@@ -286,6 +338,11 @@ func resolveWorkflowExactMedia(
 	privateMedia any,
 	media api.MediaArtifactSet,
 ) (*api.ExactMediaAssets, error) {
+	var audio *releaseworkflow.DescriptionResources
+	if resources, ok := privateMedia.(releaseworkflow.DescriptionResources); ok {
+		audio = &resources
+		privateMedia = resources.Media
+	}
 	privateArtifacts, ok := privateMedia.(workflowMediaPrivateArtifacts)
 	if !ok {
 		return nil, errors.New("workflow exact media: retained artifacts are incompatible")
@@ -404,6 +461,38 @@ func resolveWorkflowExactMedia(
 			exact.DVDMenuUploads = append(exact.DVDMenuUploads, item.upload)
 		case api.MediaArtifactHostedImage:
 			return nil, errors.New("workflow exact media: hosted artifact cannot source another hosted artifact")
+		}
+	}
+	if audio != nil {
+		ref := api.AudioAnalysisRef{ID: audio.AudioAnalysis.ID, Revision: audio.AudioAnalysis.Revision}
+		exact.AudioAnalysis = &ref
+		for _, track := range audio.AudioAnalysis.Tracks {
+			entry := api.AudioDescriptionTrack{Ordinal: track.Ordinal}
+			for _, artifact := range track.Artifacts {
+				if artifact.Status != api.StageStatusCompleted {
+					continue
+				}
+				if artifact.Variant == api.AudioAnalysisStats {
+					entry.Stats = artifact.Text
+					continue
+				}
+				if audio.AudioPaths == nil {
+					return nil, errors.New("workflow exact media: audio analysis paths are unavailable")
+				}
+				pathValue, err := audio.AudioPaths.LocalArtifactPath(audio.AudioAnalysis, artifact.ID)
+				if err != nil {
+					return nil, fmt.Errorf("workflow exact media: audio analysis image: %w", err)
+				}
+				entry.Images = append(entry.Images, api.ScreenshotImage{
+					Path:    pathValue,
+					Purpose: api.ScreenshotPurposeAudioAnalysis,
+					Width:   artifact.Width,
+					Height:  artifact.Height,
+				})
+			}
+			if len(entry.Images) > 0 || strings.TrimSpace(entry.Stats) != "" {
+				exact.AudioTracks = append(exact.AudioTracks, entry)
+			}
 		}
 	}
 	if err := exact.Validate(); err != nil {

@@ -24,6 +24,17 @@ func prepareDryRun(ctx context.Context, input trackers.PreparationInput) (api.Tr
 	return plan.DryRun(), nil
 }
 
+func TestAudioAnalysisPrecedesScreenshots(t *testing.T) {
+	t.Parallel()
+	got := buildDescription(api.UploadSubject{ReleaseName: "Example.Release.2026"}, "", trackers.DescriptionAssets{
+		Description: "Notes\n\n[spoiler=source_audio]\n[img]https://images.example.invalid/audio.png[/img]\n[/spoiler]",
+		Screenshots: []api.ScreenshotImage{{RawURL: "https://images.example.invalid/shot.png", ImgURL: "https://images.example.invalid/shot-thumb.png"}},
+	})
+	if strings.Index(got, "Notes") >= strings.Index(got, "audio.png") || strings.Index(got, "audio.png") >= strings.Index(got, "shot-thumb.png") {
+		t.Fatalf("audio analysis placement = %q", got)
+	}
+}
+
 func TestBuildDescriptionRemovesKnownSignatures(t *testing.T) {
 	for _, footer := range []string{"[right]Created by Upload Assistant[/right]", "[img]https://files.catbox.moe/5izwmx.svg[/img]"} {
 		for _, notes := range []string{"", "[b]Release notes[/b]\n"} {

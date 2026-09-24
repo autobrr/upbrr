@@ -43,6 +43,20 @@ func (d *Definition) submit(ctx context.Context, input trackers.PreparationInput
 	return uploadAt(ctx, input, d.baseURL)
 }
 
+func TestBuildDescriptionPreservesAudioGraphsBeforeScreenshots(t *testing.T) {
+	t.Parallel()
+	const audio = "[spoiler=source_audio]\n[img]https://images.example.invalid/audio.png[/img]\n[code]Peak: -1 dB[/code]\n[/spoiler]"
+	got := buildDescription(api.UploadSubject{}, config.TrackerConfig{}, config.Config{}, trackers.DescriptionAssets{
+		Description: "Notes\n\n" + audio,
+	})
+	if !strings.Contains(got, "[hide=source_audio]") || !strings.Contains(got, "audio.png") || !strings.Contains(got, "Peak: -1 dB") {
+		t.Fatalf("audio graph or stats stripped: %q", got)
+	}
+	if strings.Index(got, "Notes") > strings.Index(got, "[hide=source_audio]") {
+		t.Fatalf("audio precedes notes: %q", got)
+	}
+}
+
 func TestBuildDescriptionRemovesImportedUpbrrSignature(t *testing.T) {
 	const original = "Release notes\n[right][url=https://github.com/autobrr/upbrr][size=4]Uploaded by upbrr[/size][/url][/right]"
 	got := buildDescription(api.UploadSubject{}, config.TrackerConfig{}, config.Config{}, trackers.DescriptionAssets{Description: original})

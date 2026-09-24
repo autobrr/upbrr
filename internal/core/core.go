@@ -424,6 +424,7 @@ func newCoreWithHooks(
 			resolver: preparedFacts,
 			trackers: services.Trackers,
 			reuse:    descriptionReuse,
+			media:    workflowMedia,
 		}),
 		releaseworkflow.WithUploadPlanBuilder(
 			newWorkflowUploadPlanBuilder(cfg, preparedFacts, services.Trackers, services.Torrents, services.Clients, deps.LiveTest),

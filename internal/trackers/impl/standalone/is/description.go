@@ -6,6 +6,7 @@ package is
 import (
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/description"
 	"github.com/autobrr/upbrr/internal/trackers"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -16,6 +17,8 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 		return strings.TrimSpace(assets.Description)
 	}
 	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
+	baseDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(assets.Description)
+	assets.Description = baseDescription
 	meta := req.Meta
 	parts := make([]string, 0, 8)
 	if strings.TrimSpace(meta.EpisodeOverview) != "" {
@@ -40,6 +43,9 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 		if len(menuLines) > 0 {
 			parts = append(parts, strings.Join(menuLines, "\n"))
 		}
+	}
+	if audioAnalysis != "" {
+		parts = append(parts, audioAnalysis)
 	}
 	if len(assets.Screenshots) > 0 {
 		var shotLines []string

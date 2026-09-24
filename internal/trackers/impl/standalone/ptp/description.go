@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/description"
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
@@ -32,6 +33,7 @@ func buildDescription(meta api.UploadSubject, trackerConfig config.TrackerConfig
 	if assets.Final {
 		return baseDescription
 	}
+	baseDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(baseDescription)
 	if baseDescription != "" {
 		baseDescription = trackers.StripDescriptionSignatures(baseDescription)
 		report := CleanDescription(baseDescription, meta.DiscType)
@@ -50,6 +52,9 @@ func buildDescription(meta api.UploadSubject, trackerConfig config.TrackerConfig
 			sections,
 			fmt.Sprintf("[quote][align=center]This release is sourced from %s[/align][/quote]", strings.TrimSpace(meta.ServiceLongName)),
 		)
+	}
+	if audioAnalysis != "" {
+		sections = append(sections, convertDescription(audioAnalysis))
 	}
 	if shots := buildScreenshotSection(meta, assets.Screenshots); shots != "" {
 		sections = append(sections, shots)
