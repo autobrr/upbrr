@@ -156,6 +156,33 @@ func TestCompositeUploadStrictDebugContinuesWithEligibleTrackers(t *testing.T) {
 	}
 }
 
+func TestCompositeUploadDryRunGoalRequiresSuccessfulTerminalStatus(t *testing.T) {
+	t.Parallel()
+
+	session := &compositeUploadSession{
+		Goal: api.WorkflowGoalDryRun,
+		Intent: api.WorkflowIntent{
+			NoSeed:           true,
+			UploadTrackerIDs: []api.TrackerID{"ALPHA"},
+		},
+	}
+	current := CommandResult{DryRun: &api.UploadDryRunResult{
+		NoSeed:     true,
+		TrackerIDs: []api.TrackerID{"ALPHA"},
+		Status:     api.StageStatusFailed,
+	}}
+	for _, status := range []api.StageStatus{api.StageStatusFailed, api.StageStatusPartial} {
+		current.DryRun.Status = status
+		if compositeUploadGoalReached(current, session) {
+			t.Fatalf("%s retained dry run incorrectly completed the composite goal", status)
+		}
+	}
+	current.DryRun.Status = api.StageStatusSkipped
+	if !compositeUploadGoalReached(current, session) {
+		t.Fatal("fully skipped retained dry run did not complete the composite goal")
+	}
+}
+
 func TestCompositeUploadFeedbackHydratesPersistedMetadataDemand(t *testing.T) {
 	t.Parallel()
 

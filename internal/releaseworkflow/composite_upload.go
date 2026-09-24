@@ -259,7 +259,8 @@ func (m *Module) startUpload(
 		return current, nil
 	}
 	if current.Workflow.Status == api.WorkflowStatusCompleted || current.UploadResult != nil ||
-		(session.Goal == api.WorkflowGoalDryRun && current.DryRun != nil) {
+		(session.Goal == api.WorkflowGoalDryRun &&
+			dryRunGoalSatisfied(current.DryRun, session.Intent.NoSeed, session.Intent.UploadTrackerIDs)) {
 		return current, nil
 	}
 	if err := m.ensureCompositeUploadMediaInputs(
@@ -1201,7 +1202,7 @@ func compositeUploadGoalReached(current CommandResult, session *compositeUploadS
 	}
 	switch session.Goal {
 	case api.WorkflowGoalDryRun:
-		return current.DryRun != nil
+		return dryRunGoalSatisfied(current.DryRun, session.Intent.NoSeed, session.Intent.UploadTrackerIDs)
 	case api.WorkflowGoalUploaded:
 		return current.UploadResult != nil
 	case api.WorkflowGoalPrepared,

@@ -63,14 +63,19 @@ func (m *Module) Continue(
 			if err != nil {
 				return CommandResult{}, err
 			}
+			openedResult := CommandResult{Workflow: api.ReleaseWorkflow{ID: opened.WorkflowID}}
 			ctx, err = m.activeMutationContext(ctx, ownerID, opened.WorkflowID)
 			if err != nil {
-				return CommandResult{}, err
+				return openedResult, err
 			}
 			if err := m.acceptContinuationIntent(ctx, ownerID, opened.WorkflowID, request); err != nil {
-				return CommandResult{}, err
+				return openedResult, err
 			}
-			return m.Current(ctx, ownerID, opened.WorkflowID)
+			current, err := m.Current(ctx, ownerID, opened.WorkflowID)
+			if err != nil {
+				return openedResult, err
+			}
+			return current, nil
 		}
 		instructions := request.Intent.FactInstructions
 		sourcePath := ""
@@ -919,12 +924,7 @@ func planContinuationCommandWithReadiness(
 	if workflowGoalRank(request.Goal) <= workflowGoalRank(api.WorkflowGoalDescriptionsReady) {
 		return nil, ""
 	}
-	if current.DryRun == nil || current.DryRun.NoSeed != request.Intent.NoSeed ||
-		(len(request.Intent.UploadTrackerIDs) > 0 &&
-			!slices.Equal(
-				normalizeContinuationTrackerIDs(current.DryRun.TrackerIDs),
-				normalizeContinuationTrackerIDs(request.Intent.UploadTrackerIDs),
-			)) {
+	if !dryRunGoalSatisfied(current.DryRun, request.Intent.NoSeed, request.Intent.UploadTrackerIDs) {
 		return DryRunUploadsCommand{
 			WorkflowID:       workflowID,
 			ExpectedRevision: revision,
@@ -1217,17 +1217,23 @@ func continuationGoalReached(current CommandResult, request api.ContinueReleaseW
 	case api.WorkflowGoalDescriptionsReady:
 		return descriptionsHaveViableTracker(current.Descriptions)
 	case api.WorkflowGoalUploadReviewed, api.WorkflowGoalDryRun:
-		return current.DryRun != nil && current.DryRun.NoSeed == request.Intent.NoSeed &&
-			(len(request.Intent.UploadTrackerIDs) == 0 ||
-				slices.Equal(
-					normalizeContinuationTrackerIDs(current.DryRun.TrackerIDs),
-					normalizeContinuationTrackerIDs(request.Intent.UploadTrackerIDs),
-				))
+		return dryRunGoalSatisfied(current.DryRun, request.Intent.NoSeed, request.Intent.UploadTrackerIDs)
 	case api.WorkflowGoalUploaded:
 		return current.UploadResult != nil
 	default:
 		return false
 	}
+}
+
+func dryRunGoalSatisfied(dryRun *api.UploadDryRunResult, noSeed bool, trackerIDs []api.TrackerID) bool {
+	return dryRun != nil &&
+		(dryRun.Status == api.StageStatusCompleted || dryRun.Status == api.StageStatusSkipped) &&
+		dryRun.NoSeed == noSeed &&
+		(len(trackerIDs) == 0 ||
+			slices.Equal(
+				normalizeContinuationTrackerIDs(dryRun.TrackerIDs),
+				normalizeContinuationTrackerIDs(trackerIDs),
+			))
 }
 
 func continuationPreparationSatisfied(current *api.ReleaseSnapshot, desired *api.PrepareInput) bool {

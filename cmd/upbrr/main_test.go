@@ -242,6 +242,66 @@ func TestCLISeededConfigActivationMatchesServeAndLaterCLI(t *testing.T) {
 	}
 }
 
+func TestCLIConfigActivationReconcilesDurableUpgrade(t *testing.T) {
+	ctx := t.Context()
+	dbPath := filepath.Join(t.TempDir(), "activation.db")
+	cfg := &config.Config{
+		MainSettings:       config.MainSettingsConfig{TMDBAPI: "synthetic-key", DBPath: dbPath},
+		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		Logging:            config.LoggingConfig{Level: "error"},
+	}
+	if err := configstore.SaveToDBPath(ctx, cfg, dbPath); err != nil {
+		t.Fatal(err)
+	}
+	previous, err := configstore.LoadFromDBPath(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousFingerprint, err := config.EffectiveConfigFingerprint(*previous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := db.OpenContext(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if _, err := repo.InitializeConfigActivationFingerprint(ctx, previousFingerprint); err != nil {
+		t.Fatal(err)
+	}
+	previous.Metadata.KeepImages = !previous.Metadata.KeepImages
+	if err := configstore.SaveToDBPath(ctx, previous, dbPath); err != nil {
+		t.Fatal(err)
+	}
+	current, err := configstore.LoadFromDBPath(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := config.EffectiveConfigFingerprint(*current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want == previousFingerprint {
+		t.Fatal("test config did not change fingerprint")
+	}
+	generation, fingerprint, err := cliConfigActivation(ctx, *current, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if generation != 1 || fingerprint != want {
+		t.Fatalf("CLI activation = generation %d fingerprint %q, want 1 and %q", generation, fingerprint, want)
+	}
+	changed := *current
+	changed.Metadata.OnlyID = !current.Metadata.OnlyID
+	if _, _, err := cliConfigActivation(ctx, changed, dbPath); !errors.Is(err, api.ErrConfigActivationChanged) {
+		t.Fatalf("CLI runtime/stored mismatch error = %v", err)
+	}
+	repeatGeneration, repeatFingerprint, err := cliConfigActivation(ctx, *current, dbPath)
+	if err != nil || repeatGeneration != 1 || repeatFingerprint != want {
+		t.Fatalf("repeated CLI activation = generation %d fingerprint %q err %v", repeatGeneration, repeatFingerprint, err)
+	}
+}
+
 func TestActivateImportedConfigCommitsNewGeneration(t *testing.T) {
 	ctx := t.Context()
 	dbPath := filepath.Join(t.TempDir(), "import.db")

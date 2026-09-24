@@ -64,8 +64,8 @@ func TestULCXChannelCount(t *testing.T) {
 func TestDeterministicValidationEvidence(t *testing.T) {
 	t.Parallel()
 	policy := ValidationPolicy()
-	if policy.ID != "unit3d-ulcx-policy-v4" {
-		t.Fatalf("validation policy = %q, want immersive channel policy v4", policy.ID)
+	if policy.ID != "unit3d-ulcx-policy-v5" {
+		t.Fatalf("validation policy = %q, want upload rules policy v5", policy.ID)
 	}
 	tests := []struct {
 		name            string
@@ -75,6 +75,53 @@ func TestDeterministicValidationEvidence(t *testing.T) {
 		wantStatus      api.MetadataEvidenceStatus
 	}{
 		{name: "non encode 1080p HEVC passes"},
+		{
+			name: "concert allowed by upload rules v1.0.2",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.SourcePath = "Example.Concert.2026-GRP"
+				subject.Identity = api.ExternalIdentity{SourcePath: subject.SourcePath, Generation: 1}
+				subject.ProviderMetadata = api.SourceScopedMetadata{
+					SourcePath: subject.SourcePath,
+					Generation: 1,
+					TMDB:       &api.TMDBMetadata{Keywords: "concert"},
+				}
+			},
+		},
+		{
+			name: "SD broadcast requires availability confirmation",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.Type = "HDTV"
+				subject.Release.Resolution = "576i"
+			},
+			wantRule:        "ulcx_sdtv_availability",
+			wantDisposition: api.RuleDispositionWaivable,
+		},
+		{
+			name: "HD broadcast remains allowed",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.Type = "HDTV"
+			},
+		},
+		{
+			name: "broadcast with unknown resolution needs evidence",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.Type = "HDTV"
+				subject.Release.Resolution = ""
+			},
+			wantRule:        "ulcx_encode_resolution_evidence",
+			wantDisposition: api.RuleDispositionAdvisory,
+			wantStatus:      api.MetadataEvidenceStatusComplete,
+		},
+		{
+			name: "SD disc encode remains prohibited",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.Type = "ENCODE"
+				subject.VideoCodec = "AVC"
+				subject.Release.Resolution = "576p"
+			},
+			wantRule:        "encode_min_resolution",
+			wantDisposition: api.RuleDispositionStrict,
+		},
 		{
 			name: "archive is strict",
 			mutate: func(subject *api.TrackerValidationSubject) {

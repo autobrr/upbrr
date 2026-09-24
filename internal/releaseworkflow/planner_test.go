@@ -76,6 +76,43 @@ func TestContinueBeginsAndAdvancesThroughCentralPlanner(t *testing.T) {
 	}
 }
 
+type failingAcceptedIntentRepository struct {
+	DurabilityRepository
+	err error
+}
+
+func (r failingAcceptedIntentRepository) AcceptIntent(context.Context, api.ReleaseWorkflowIntentRecord) (api.ReleaseWorkflowIntentRecord, bool, error) {
+	return api.ReleaseWorkflowIntentRecord{}, false, r.err
+}
+
+func TestContinueReturnsCommittedWorkflowIDAfterAcceptedIntentFailure(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	repo := openActiveInputRecoveryRepository(ctx, t)
+	persistent, err := NewPersistentRepository(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	module := newActiveInputRecoveryModule(t, persistent, repo, &hashingActiveInputVerifier{}, &mutableClock{now: time.Now().UTC()}, "planner-post-open")
+	intentErr := errors.New("synthetic accepted-intent failure")
+	module.durability = failingAcceptedIntentRepository{DurabilityRepository: module.durability, err: intentErr}
+	source := writeActiveInputRecoverySource(t, "Example.Release.2026-GRP.mkv", "verified source")
+	result, err := module.Continue(ctx, testOwnerID, api.ContinueReleaseWorkflowRequest{
+		IdempotencyKey: "post-open-failure",
+		Goal:           api.WorkflowGoalInputReady,
+		Intent: api.WorkflowIntent{Preparation: &api.PrepareInput{
+			SourcePath: source,
+		}},
+	})
+	if !errors.Is(err, intentErr) || result.Workflow.ID == "" {
+		t.Fatalf("post-open result = %#v, err=%v", result, err)
+	}
+	slot, err := module.ActiveInput(ctx, testOwnerID)
+	if err != nil || slot.State != api.ActiveInputActive || slot.WorkflowID != result.Workflow.ID {
+		t.Fatalf("committed input = %#v, err=%v", slot, err)
+	}
+}
+
 func TestContinueHydratesPreparedGenerationBeforeRestartedMediaCapture(t *testing.T) {
 	t.Parallel()
 
@@ -1604,6 +1641,48 @@ func readyContinuationPlannerResult(t *testing.T, now time.Time) CommandResult {
 				Decision:  api.DupeDecisionNoMatch,
 			}},
 		},
+	}
+}
+
+func TestContinuationPlannerRetriesFailedDryRunAndAcceptsSkippedNoOp(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.July, 23, 1, 2, 3, 0, time.UTC)
+	current := readyContinuationPlannerResult(t, now)
+	current.Media = &api.MediaArtifactSet{Status: api.StageStatusCompleted}
+	current.Descriptions = &api.DescriptionSet{Status: api.StageStatusSkipped}
+	current.DryRun = &api.UploadDryRunResult{
+		NoSeed:     true,
+		TrackerIDs: []api.TrackerID{"ALPHA"},
+		Status:     api.StageStatusFailed,
+	}
+	request := api.ContinueReleaseWorkflowRequest{
+		IdempotencyKey: "retry-failed-dry-run",
+		Goal:           api.WorkflowGoalDryRun,
+		Intent: api.WorkflowIntent{
+			NoSeed:           true,
+			UploadTrackerIDs: []api.TrackerID{"ALPHA"},
+		},
+	}
+
+	for _, status := range []api.StageStatus{api.StageStatusFailed, api.StageStatusPartial} {
+		current.DryRun.Status = status
+		if continuationGoalReached(current, request) {
+			t.Fatalf("%s retained dry run incorrectly satisfied the dry-run goal", status)
+		}
+		command, stage := planContinuationCommand(request, current, now)
+		if _, ok := command.(DryRunUploadsCommand); !ok || stage != "review-uploads" {
+			t.Fatalf("%s dry-run retry plan: stage=%q command=%#v", status, stage, command)
+		}
+	}
+
+	current.DryRun.Status = api.StageStatusSkipped
+	if !continuationGoalReached(current, request) {
+		t.Fatal("fully skipped retained dry run did not satisfy the dry-run goal")
+	}
+	command, stage := planContinuationCommand(request, current, now)
+	if command != nil || stage != "" {
+		t.Fatalf("skipped dry-run no-op planned stage=%q command=%#v", stage, command)
 	}
 }
 

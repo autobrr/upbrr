@@ -131,7 +131,8 @@ func (s *cliWorkflowSession) captureInputBaseline(ctx context.Context) error {
 }
 
 func (s *cliWorkflowSession) captureInputClaim(ctx context.Context, workflowID api.WorkflowID, requireChanged bool) {
-	if !s.inputBaseline.captured || s.inputBaseline.state != api.ActiveInputEmpty {
+	if !s.inputBaseline.captured || (s.inputBaseline.state != api.ActiveInputEmpty && s.inputBaseline.state != api.ActiveInputRecovering) ||
+		(s.inputBaseline.state == api.ActiveInputRecovering && requireChanged) {
 		return
 	}
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -144,6 +145,12 @@ func (s *cliWorkflowSession) captureInputClaim(ctx context.Context, workflowID a
 		workflowID = active.Current.Workflow.ID
 	}
 	if workflowID == "" || active.Current.Workflow.ID != workflowID || (requireChanged && active.Revision == s.inputBaseline.revision) {
+		return
+	}
+	// Reclaiming a previous-process slot advances its revision twice before an
+	// explicit open. Only a successful continuation can prove that the CLI
+	// opened this slot rather than merely restoring the previous process's input.
+	if s.inputBaseline.state == api.ActiveInputRecovering && active.Revision <= s.inputBaseline.revision+2 {
 		return
 	}
 	s.inputClaim = cliInputSlotClaim{workflowID: workflowID, revision: active.Revision}
@@ -187,7 +194,11 @@ func (s *cliWorkflowSession) executeContinuation(
 		if initial {
 			// OpenInput may have committed the slot before a later continuation
 			// stage fails. Re-read the exact owned snapshot for deferred cleanup.
-			s.captureInputClaim(ctx, "", true)
+			if current.Workflow.ID != "" {
+				s.captureInputClaim(ctx, current.Workflow.ID, false)
+			} else {
+				s.captureInputClaim(ctx, "", true)
+			}
 		}
 		return fmt.Errorf("upbrr: continue release workflow: %w", err)
 	}

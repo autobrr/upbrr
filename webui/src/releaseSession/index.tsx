@@ -33,6 +33,7 @@ import type {
 import type { ReleaseSessionPorts } from "./ports";
 import { productionReleaseSessionPorts } from "./production";
 import { correctionValuesFor, initialSessionState, sessionReducer } from "./reducer";
+import { canExecuteUpload } from "./uploadEligibility";
 import type {
   PreparationIntent,
   ReleaseRoute,
@@ -535,9 +536,24 @@ export function ReleaseSessionProvider({
     const sourceVersion = snapshot.sourceVersion || "";
     const workflowID = snapshot.current?.workflow.id || "";
     const workflowRevision = snapshot.current?.workflow.revision || 0;
+    const maskedPreviousProcess =
+      snapshot.state === "recovering" &&
+      !snapshot.current &&
+      !snapshot.inputId &&
+      !snapshot.sourceVersion;
     if (snapshot.revision < latest.revision) return false;
     if (
       snapshot.revision === latest.revision &&
+      latest.state === "recovering" &&
+      !latest.workflowID &&
+      workflowID &&
+      !stateRef.current.activeInput.recoveryWorkflowIDs.includes(workflowID)
+    ) {
+      return false;
+    }
+    if (
+      snapshot.revision === latest.revision &&
+      !maskedPreviousProcess &&
       latest.inputID &&
       (inputID !== latest.inputID || sourceVersion !== latest.sourceVersion)
     ) {
@@ -545,6 +561,7 @@ export function ReleaseSessionProvider({
     }
     if (
       snapshot.revision === latest.revision &&
+      !maskedPreviousProcess &&
       latest.workflowID &&
       (workflowID !== latest.workflowID || workflowRevision < latest.workflowRevision)
     ) {
@@ -604,6 +621,11 @@ export function ReleaseSessionProvider({
       current.workflowID === expected.workflowID
     );
   };
+
+  const hasOpaqueRecoveringInput = () =>
+    activeAuthority.current.state === "recovering" &&
+    !activeAuthority.current.workflowID &&
+    stateRef.current.activeInput.recoveryWorkflowIDs.length === 0;
 
   useEffect(() => {
     dispatch({
@@ -887,7 +909,7 @@ export function ReleaseSessionProvider({
     },
     attempt?: Readonly<{ correlationID: string; controller: AbortController }>,
   ): Promise<ReleaseWorkflowCurrent | null> => {
-    if (activeAuthority.current.state === "recovering") return null;
+    if (activeAuthority.current.state === "recovering" && !hasOpaqueRecoveringInput()) return null;
     if (controllers.current.workflow) return null;
     abortController("activeInput");
     const controller = attempt?.controller ?? new AbortController();
@@ -1272,7 +1294,8 @@ export function ReleaseSessionProvider({
   const recoverLegacyWorkflow = async (workflowID: string): Promise<boolean> => {
     const normalizedWorkflowID = workflowID.trim();
     if (
-      activeAuthority.current.state !== "empty" ||
+      (activeAuthority.current.state !== "empty" &&
+        activeAuthority.current.state !== "recovering") ||
       !normalizedWorkflowID ||
       !stateRef.current.activeInput.recoveryWorkflowIDs.includes(normalizedWorkflowID) ||
       controllers.current.activeInput
@@ -1455,7 +1478,7 @@ export function ReleaseSessionProvider({
     requestedIntent: PreparationIntent,
     controls = { confirmBDMVRescan: false },
   ): Promise<boolean> => {
-    if (activeAuthority.current.state === "recovering") return false;
+    if (activeAuthority.current.state === "recovering" && !hasOpaqueRecoveringInput()) return false;
     const sourcePath = requestedSource.trim();
     if (!sourcePath) return false;
     if (sourcePath !== state.selectedSource) {
@@ -1959,7 +1982,7 @@ export function ReleaseSessionProvider({
     descriptions: descriptionInstructions(current),
   });
 
-  const hasUploadEligibleTracker = (current: ReleaseWorkflowCurrent) => {
+  const hasDryRunCandidate = (current: ReleaseWorkflowCurrent) => {
     const exclusions = current.workflow.submissionExclusions || [];
     if (exclusions.length === 0) return true;
     if (state.selectedTrackers.length === 0) return false;
@@ -1967,8 +1990,19 @@ export function ReleaseSessionProvider({
     return state.selectedTrackers.some((tracker) => !excluded.has(tracker));
   };
 
+  const hasUploadEligibleTracker = (current: ReleaseWorkflowCurrent) => {
+    const excluded = new Set(
+      (current.workflow.submissionExclusions || []).map((item) => item.trackerId),
+    );
+    return canExecuteUpload(
+      current.continuation?.trackerOutcomes || [],
+      state.selectedTrackers,
+      excluded,
+    );
+  };
+
   const runDryRun = async (): Promise<boolean> => {
-    if (!workflowView.current || !hasUploadEligibleTracker(workflowView.current)) return false;
+    if (!workflowView.current || !hasDryRunCandidate(workflowView.current)) return false;
     return runBackendWorkflow((current, commandID, signal) =>
       continueBackendGoal(
         current,
@@ -2006,6 +2040,10 @@ export function ReleaseSessionProvider({
       }
       if (!current.dryRun) {
         throw new Error("Exact upload dry run is unavailable.");
+      }
+      if (!hasUploadEligibleTracker(current)) {
+        acceptWorkflowCurrent(current);
+        return false;
       }
       const uploaded = await continueBackendGoal(
         current,
@@ -2784,6 +2822,7 @@ export function ReleaseSessionProvider({
         uploadStatus: workflowUploadStatus,
         dryRunResult: workflowView.current?.dryRun || null,
         result: workflowView.current?.uploadResult || null,
+        trackerOutcomes: workflowView.current?.continuation?.trackerOutcomes || [],
         submissionExclusions: workflowView.current?.workflow.submissionExclusions || [],
         error: workflowView.failure?.Message || workflowView.error || state.uploadError || "",
       },

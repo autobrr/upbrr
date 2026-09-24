@@ -25,6 +25,7 @@ const uploadFacet = (
     uploadStatus: "idle",
     dryRunResult: null,
     result: null,
+    trackerOutcomes: [],
     submissionExclusions: [],
     error: "",
     ...view,
@@ -79,7 +80,16 @@ describe("TrackerUploadPage", () => {
   it("offers workflow dry run and direct upload without a review step", () => {
     const runDryRun = vi.fn(async () => true);
     const start = vi.fn(async () => true);
-    renderPage(uploadFacet({}, { runDryRun, start }));
+    renderPage(
+      uploadFacet(
+        {
+          trackerOutcomes: [
+            { trackerId: "EXAMPLE", uploadEligibility: "eligible" },
+          ] as unknown as UploadFacet["view"]["trackerOutcomes"],
+        },
+        { runDryRun, start },
+      ),
+    );
 
     expect(screen.queryByRole("heading", { name: "Tracker intent" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Review upload" })).not.toBeInTheDocument();
@@ -132,6 +142,10 @@ describe("TrackerUploadPage", () => {
     renderPage(
       uploadFacet({
         selectedTrackers: ["AITHER", "BLU"],
+        trackerOutcomes: [
+          { trackerId: "AITHER", uploadEligibility: "skipped" },
+          { trackerId: "BLU", uploadEligibility: "eligible" },
+        ] as unknown as UploadFacet["view"]["trackerOutcomes"],
         submissionExclusions: [
           {
             trackerId: "AITHER",
@@ -145,6 +159,69 @@ describe("TrackerUploadPage", () => {
     expect(screen.getByRole("button", { name: "Run dry run" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Start upload" })).toBeEnabled();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("allows another dry run but blocks upload when every tracker lane failed preparation", () => {
+    const runDryRun = vi.fn(async () => true);
+    const start = vi.fn(async () => true);
+    renderPage(
+      uploadFacet(
+        {
+          selectedTrackers: ["AITHER", "BLU"],
+          trackerOutcomes: [
+            {
+              trackerId: "AITHER",
+              uploadEligibility: "skipped",
+              uploadSkipReason: "upload_preparation_failed",
+            },
+            {
+              trackerId: "BLU",
+              uploadEligibility: "skipped",
+              uploadSkipReason: "upload_preparation_failed",
+            },
+          ] as unknown as UploadFacet["view"]["trackerOutcomes"],
+        },
+        { runDryRun, start },
+      ),
+    );
+
+    const dryRunButton = screen.getByRole("button", { name: "Run dry run" });
+    const uploadButton = screen.getByRole("button", { name: "Start upload" });
+    expect(dryRunButton).toBeEnabled();
+    expect(uploadButton).toBeDisabled();
+    fireEvent.click(dryRunButton);
+    fireEvent.click(uploadButton);
+    expect(runDryRun).toHaveBeenCalledOnce();
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("allows a fully skipped dry-run plan to complete as a no-op", () => {
+    const start = vi.fn(async () => true);
+    renderPage(
+      uploadFacet(
+        {
+          selectedTrackers: ["AITHER", "BLU"],
+          trackerOutcomes: [
+            {
+              trackerId: "AITHER",
+              uploadEligibility: "skipped",
+              uploadSkipReason: "upload_preparation_skipped",
+            },
+            {
+              trackerId: "BLU",
+              uploadEligibility: "skipped",
+              uploadSkipReason: "upload_preparation_skipped",
+            },
+          ] as unknown as UploadFacet["view"]["trackerOutcomes"],
+        },
+        { start },
+      ),
+    );
+
+    const uploadButton = screen.getByRole("button", { name: "Start upload" });
+    expect(uploadButton).toBeEnabled();
+    fireEvent.click(uploadButton);
+    expect(start).toHaveBeenCalledOnce();
   });
 
   it("collects questionnaire answers from current workflow projections", () => {
@@ -445,5 +522,92 @@ describe("TrackerUploadPage", () => {
     expect(container.textContent?.match(/Exact-torrent client injection failed\./g)).toHaveLength(
       1,
     );
+  });
+
+  it("marks each tracker with the backend upload decision before any dry run", () => {
+    const projections = {
+      projections: [
+        {
+          trackerId: "EXAMPLE",
+          displayName: "Example Tracker",
+          uploadReleaseName: "Example.Release.2026.1080p-GRP",
+        },
+        {
+          trackerId: "OTHER",
+          displayName: "Other Tracker",
+          uploadReleaseName: "Example.Release.2026.1080p-GRP",
+        },
+      ],
+    } as unknown as NonNullable<UploadFacet["view"]["projections"]>;
+    const trackerOutcomes = [
+      { trackerId: "EXAMPLE", uploadEligibility: "eligible" },
+      { trackerId: "OTHER", uploadEligibility: "skipped", uploadSkipReason: "duplicate_found" },
+    ] as unknown as UploadFacet["view"]["trackerOutcomes"];
+    renderPage(
+      uploadFacet({ selectedTrackers: ["EXAMPLE", "OTHER"], projections, trackerOutcomes }),
+    );
+
+    expect(screen.getByText("Will upload")).toBeInTheDocument();
+    expect(screen.getByText("Skipped: duplicate found")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Duplicates/ })).not.toBeInTheDocument();
+  });
+
+  it("stays silent while the decision is unknown and falls back when a reason has no label", () => {
+    const projections = {
+      projections: [
+        { trackerId: "EXAMPLE", displayName: "Example Tracker" },
+        { trackerId: "OTHER", displayName: "Other Tracker" },
+        { trackerId: "THIRD", displayName: "Third Tracker" },
+      ],
+    } as unknown as NonNullable<UploadFacet["view"]["projections"]>;
+    const trackerOutcomes = [
+      { trackerId: "EXAMPLE", uploadEligibility: "unknown" },
+      {
+        trackerId: "OTHER",
+        uploadEligibility: "skipped",
+        uploadSkipReason: "upload_preparation_skipped",
+      },
+      {
+        trackerId: "THIRD",
+        uploadEligibility: "skipped",
+        uploadSkipReason: "reason_from_a_newer_backend",
+      },
+    ] as unknown as UploadFacet["view"]["trackerOutcomes"];
+    renderPage(
+      uploadFacet({
+        selectedTrackers: ["EXAMPLE", "OTHER", "THIRD"],
+        projections,
+        trackerOutcomes,
+      }),
+    );
+
+    expect(screen.getByText("Skipped: skipped during upload preparation")).toBeInTheDocument();
+    expect(screen.getByText("Skipped")).toBeInTheDocument();
+    expect(screen.getByText("Example Tracker").parentElement?.textContent).toBe("Example Tracker");
+    expect(screen.queryByText("Will upload")).not.toBeInTheDocument();
+  });
+
+  it("shows the backend rule message instead of the generic not-ready label", () => {
+    const projections = {
+      projections: [
+        { trackerId: "EXAMPLE", displayName: "Example Tracker" },
+        { trackerId: "OTHER", displayName: "Other Tracker" },
+      ],
+    } as unknown as NonNullable<UploadFacet["view"]["projections"]>;
+    const trackerOutcomes = [
+      {
+        trackerId: "EXAMPLE",
+        uploadEligibility: "skipped",
+        uploadSkipReason: "not_ready",
+        uploadSkipDetail: "Tracker does not accept this genre.",
+      },
+      { trackerId: "OTHER", uploadEligibility: "skipped", uploadSkipReason: "not_ready" },
+    ] as unknown as UploadFacet["view"]["trackerOutcomes"];
+    renderPage(
+      uploadFacet({ selectedTrackers: ["EXAMPLE", "OTHER"], projections, trackerOutcomes }),
+    );
+
+    expect(screen.getByText("Skipped: Tracker does not accept this genre.")).toBeInTheDocument();
+    expect(screen.getByText("Skipped: tracker is not ready to upload")).toBeInTheDocument();
   });
 });

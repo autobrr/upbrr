@@ -299,11 +299,11 @@ func TestImportFromContentRejectsNestedUnknownKeys(t *testing.T) {
 
 func TestImportFromContentPreservesTrackerCustomUnknownKeys(t *testing.T) {
 	payloads := map[string][]byte{
-		"yaml": []byte("trackers:\n  A4K:\n    api_key: tracker-key\n    custom_yaml: keep\n"),
+		"yaml": []byte("trackers:\n  AITHER:\n    api_key: tracker-key\n    custom_yaml: keep\n"),
 		"json": []byte(`{
 			"Trackers": {
 				"Trackers": {
-					"A4K": {
+					"AITHER": {
 						"APIKey": "tracker-key",
 						"custom_json": "keep"
 					}
@@ -318,9 +318,9 @@ func TestImportFromContentPreservesTrackerCustomUnknownKeys(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			tracker := cfg.Trackers.Trackers["A4K"]
+			tracker := cfg.Trackers.Trackers["AITHER"]
 			if tracker.APIKey != "tracker-key" {
-				t.Fatalf("expected A4K api key overlay, got %q", tracker.APIKey)
+				t.Fatalf("expected AITHER api key overlay, got %q", tracker.APIKey)
 			}
 			if got := tracker.Unknown["custom_"+name]; got != "keep" {
 				t.Fatalf("expected tracker custom key to survive, got %#v", got)

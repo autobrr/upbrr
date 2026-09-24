@@ -30,6 +30,7 @@ import type {
   ReleaseCorrectionsSnapshot,
   RequiredAction,
   ReleaseWorkflowCurrent,
+  TrackerLaneOutcome,
   SubmissionExclusion,
   TrackerPreflightAssessment,
   TrackerReleaseProjectionSet,
@@ -348,6 +349,8 @@ export type UploadFacet = Readonly<{
     uploadStatus: FacetStatus;
     dryRunResult: UploadDryRunResult | null;
     result: UploadResult | null;
+    /** Backend-owned per-tracker downstream decision; never derived in views. */
+    trackerOutcomes: readonly TrackerLaneOutcome[];
     /** Backend evidence for tracker lanes excluded because submission was already recorded. */
     submissionExclusions: readonly SubmissionExclusion[];
     error: string;

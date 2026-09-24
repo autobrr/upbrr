@@ -1291,26 +1291,6 @@
     "sha256": "e153f74172d76689217aff458140caed24ec18176775cb05492f3c1b869f16e4",
     "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged."
   },
-  "internal/trackers/impl/unit3d/sites/a4k/name.go:buildAIName": {
-    "sha256": "ca68e6a84cf2117aa9dd2a3df5dd8e445d9d9d966f9a2dd77601478f79434c1d",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
-  },
-  "internal/trackers/impl/unit3d/sites/a4k/name.go:buildFanResName": {
-    "sha256": "9bf29e3a5176467aaf2ea9865ef8323f65503ea6f2cf78ab698934084db82011",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
-  },
-  "internal/trackers/impl/unit3d/sites/a4k/name.go:buildName": {
-    "sha256": "e2dce2fdad53c0987b96c267703f85376a5971d705fab86c1f41d25b82a03123",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
-  },
-  "internal/trackers/impl/unit3d/sites/a4k/name.go:titleAndYear": {
-    "sha256": "860ac17c17d2df9a76bd23994235012512d2b12d2b00b78ff44d8b4d3cb8061d",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
-  },
-  "internal/trackers/impl/unit3d/sites/a4k/profile.go:Profile": {
-    "sha256": "c96a7ad970011228bc5a6728362cdae5b53ce282e3e3d6b9dea0bdba8717a2ec",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
-  },
   "internal/trackers/impl/unit3d/sites/acm/name.go:acmOriginalTitle": {
     "sha256": "442c4f0b0948a94bf00a8925eedd59845f81209efb18a40ec2f8f0de071067b5",
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
@@ -1394,6 +1374,14 @@
   "internal/trackers/impl/unit3d/sites/lume/profile.go:Profile": {
     "sha256": "1e7ccde91e0205d7bc1d049fcfbe36b662cc588749c4e69b8ec25a0a448fd290",
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+  },
+  "internal/trackers/impl/unit3d/sites/oe/validation.go:ValidationPolicy": {
+    "sha256": "f3235edd8033d7b8f2e4f5666dbf629e5aeeed8de66d6656f21b080e66cf1d3e",
+    "reason": "Binds OE validation over finalized prepared facts; no provider-derived defaults replace manual naming or media facts."
+  },
+  "internal/trackers/impl/unit3d/sites/oe/validation.go:checkRules": {
+    "sha256": "21f9048487af1973710aafa41bb57dc2b8311b78262e3868258f844c4cd19d47",
+    "reason": "Uses finalized media/package facts via the shared rule subject projection. No provider keyword is used as content classification, and no manual fact is replaced by a provider default."
   },
   "internal/trackers/impl/unit3d/sites/otw/name.go:buildName": {
     "sha256": "e0ad8fcbaadc5cdd22ada99268edbb3618588ff67b08ff9f2b0df1bfe2712d3a",
@@ -1500,16 +1488,16 @@
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/unit3d/sites/ulcx/validation.go:ValidationPolicy": {
-    "sha256": "a76a96c1427c8823872d23b99136fe2d0d0cb2599baa32640f57471a347e464a",
+    "sha256": "055e5ae26a8e5548316ce1fffa4726405ed78ae04518466191281e6c615ed343",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/unit3d/sites/ulcx/validation.go:checkRules": {
-    "sha256": "ba5f294c233935aaa9e23fde77c2152d0070439413c173253713382eafac24aa",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "d5a4847be8b6a363b8e6a385c0f762077ca3cca10f21000497d47a44c3f54a6a",
+    "reason": "Removes the concert keyword restriction; retained media checks use finalized facts and existing source-bound animation helpers without changing manual precedence."
   },
   "internal/trackers/impl/unit3d/sites/ulcx/validation.go:ulcxEncodeFailures": {
-    "sha256": "2ae873be8cd073d8122018f212532fcfecff36d8c6fb3ebc6ae6832e688e10a3",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "b0ca152d8cd761b869f7cb87f07b19e8a70b244414942791117825ebacf43de9",
+    "reason": "SDTV exception uses finalized type/resolution and manual release-availability confirmation. Existing source-bound animation checks remain unchanged; no provider values replace manual media facts."
   },
   "internal/trackers/impl/unit3d/sites/yus/name.go:applyYUSTVDBDisambiguation": {
     "sha256": "18a67755983cfe6442a72da78c35f0fd824a5e08007573af4b214cf4091272d6",

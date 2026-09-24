@@ -17,7 +17,7 @@ func (s *cliWorkflowSession) reconcileLegacyInputs(ctx context.Context, reader *
 	if err != nil {
 		return fmt.Errorf("upbrr: inspect input recovery: %w", err)
 	}
-	for len(active.RecoveryWorkflowIDs) > 0 || active.State == api.ActiveInputRecovering {
+	for len(active.RecoveryWorkflowIDs) > 0 || (active.State == api.ActiveInputRecovering && active.Current != nil) {
 		if s.intent.interaction == api.InteractionModeUnattended {
 			return errors.New(
 				"upbrr: an interrupted external effect requires reconciliation; rerun interactively or with --unattended_confirm after checking its outcome",

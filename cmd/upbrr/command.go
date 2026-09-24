@@ -12,6 +12,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 type cliIO struct {
@@ -159,6 +161,11 @@ func newUploadRootCommand(streams cliIO, originalArgs []string) *cobra.Command {
 		Args:          cobra.ArbitraryArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
+		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
+			if !bound.ShowVersion {
+				fmt.Fprintf(cmd.ErrOrStderr(), "upbrr %s\n", cliApplicationVersion(api.CurrentApplicationInfo()))
+			}
+		},
 		RunE: func(cmd *cobra.Command, paths []string) error {
 			visited := canonicalChangedFlags(cmd.Flags(), cliFlagAliases())
 			if err := normalizeCLIOptions(&bound, visited); err != nil {

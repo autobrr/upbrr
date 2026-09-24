@@ -14,8 +14,8 @@ import (
 
 func TestProbeRequiresExactMenuOptions(t *testing.T) {
 	runner := &fakeRunner{outputs: []Output{
-		{Stdout: []byte("Demuxer dvdvideo\n-menu -menu_lu -menu_vts -pgc -pg\n")},
 		{Stdout: []byte("ffmpeg version example\n")},
+		{Stdout: []byte("Demuxer dvdvideo\n-menu -menu_lu -menu_vts -pgc -pg\n")},
 	}}
 	capability, err := Probe(context.Background(), runner, "ffmpeg")
 	if err != nil {
@@ -25,8 +25,14 @@ func TestProbeRequiresExactMenuOptions(t *testing.T) {
 		t.Fatalf("capability = %+v", capability)
 	}
 
-	missing := &fakeRunner{outputs: []Output{{Stdout: []byte("Demuxer dvdvideo\n-menu\n")}}}
-	_, err = Probe(context.Background(), missing, "ffmpeg")
+	missing := &fakeRunner{outputs: []Output{
+		{Stdout: []byte("ffmpeg version example\n")},
+		{Stdout: []byte("Demuxer dvdvideo\n-menu\n")},
+	}}
+	capability, err = Probe(context.Background(), missing, "ffmpeg")
+	if capability.Available || capability.Version != "ffmpeg version example" {
+		t.Fatalf("incompatible capability = %+v", capability)
+	}
 	if !errors.Is(err, ErrCapability) {
 		t.Fatalf("Probe error = %v, want ErrCapability", err)
 	}
@@ -34,6 +40,17 @@ func TestProbeRequiresExactMenuOptions(t *testing.T) {
 		if !strings.Contains(err.Error(), option) {
 			t.Fatalf("Probe error = %v, want missing option %s", err, option)
 		}
+	}
+}
+
+func TestProbePreservesVersionOnDemuxerFailure(t *testing.T) {
+	runner := &fakeRunner{
+		outputs: []Output{{Stderr: []byte("ffmpeg version example\nextra diagnostics\n")}},
+		errors:  []error{nil, errors.New("demuxer unavailable")},
+	}
+	capability, err := Probe(t.Context(), runner, "ffmpeg")
+	if !errors.Is(err, ErrCapability) || capability.Available || capability.Version != "ffmpeg version example" {
+		t.Fatalf("demuxer failure capability=%+v err=%v", capability, err)
 	}
 }
 
