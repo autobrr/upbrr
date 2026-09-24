@@ -62,6 +62,41 @@ Restart `upbrr serve` after the command completes. Use `auth password` with the 
 
 `--dev-no-auth` disables browser authentication only on loopback hosts and is intended for local development. Do not use it for a network-accessible deployment.
 
+## Single sign-on (OIDC)
+
+The Web UI can authenticate against an OpenID Connect provider (Authentik, Keycloak, Authelia, Pocket ID, Zitadel, and similar) instead of, or alongside, the built-in username and password.
+
+Register upbrr as a confidential OAuth2/OIDC client with your provider, set the redirect URI to `https://<your-upbrr-host>/api/auth/oidc/callback`, then:
+
+```yaml
+environment:
+  - UPBRR_WEB_OIDC_ENABLED=true
+  - UPBRR_WEB_OIDC_ISSUER=https://auth.example.test/application/o/upbrr/
+  - UPBRR_WEB_OIDC_CLIENT_ID=<client id>
+  - UPBRR_WEB_OIDC_CLIENT_SECRET=<client secret>
+  - UPBRR_WEB_OIDC_REDIRECT_URL=https://upbrr.example.test/api/auth/oidc/callback
+  # Optional. Defaults to "openid profile email".
+  - UPBRR_WEB_OIDC_SCOPES=openid profile email
+  # Optional. Removes the password form and rejects password logins.
+  - UPBRR_WEB_OIDC_DISABLE_BUILT_IN_LOGIN=true
+```
+
+The same settings can live under an `oidc` object in `web-config.json`. Note that `--persist-web-config` writes the client secret to that file; supply the secret by environment on every start to keep it out of files.
+
+`UPBRR_WEB_OIDC_REDIRECT_URL` must be the callback URL as the *browser* reaches it, so a deployment served under a path prefix has to include that prefix, and the same URL must be registered with the provider. Serving upbrr under `/upbrr/` (see [Path-prefix proxy](#path-prefix-proxy)) means:
+
+```yaml
+  - UPBRR_WEB_OIDC_REDIRECT_URL=https://example.test/upbrr/api/auth/oidc/callback
+```
+
+Notes:
+
+- OIDC is **additive by default**. With `UPBRR_WEB_OIDC_DISABLE_BUILT_IN_LOGIN` unset, the login page shows a "Sign in with SSO" button next to the usual password form, so you can verify SSO works before you rely on it.
+- upbrr is a single-user application. A successful OIDC login signs in to the existing local account rather than creating a second identity: that account's username and stored key seed derive the key protecting your tracker credentials. **Any identity that completes the flow against the configured client signs in to that one account, whether or not its username matches** - upbrr authenticates, and the provider authorizes. Scope the application to the users you trust, because upbrr holds your tracker credentials and announce URLs; it has no second permission tier to fall back on.
+- On a **fresh** install with the built-in login disabled, the first successful OIDC login provisions the local account. The first-run setup form is closed in that mode, so it cannot be claimed by an unauthenticated caller.
+- PKCE (S256) is used automatically when the provider advertises support for it.
+- Provider discovery is lazy: if the identity provider is unreachable at start, upbrr still starts and retries discovery on the next sign-in attempt.
+
 ## Subdomain proxy
 
 A dedicated subdomain keeps upbrr at the web root, so no base-path setting is needed:
