@@ -240,7 +240,7 @@ func (m *Module) Continue(
 	); handled || refreshErr != nil {
 		return refreshed, refreshErr
 	}
-	command, stage := m.planContinuationCommand(request, current, m.clock.Now().UTC())
+	command, stage := m.planContinuationCommand(request, current, m.clock.Now().UTC(), 0)
 	if command == nil {
 		return current, nil
 	}
@@ -738,15 +738,16 @@ func planContinuationCommand(
 	current CommandResult,
 	now time.Time,
 ) (Command, string) {
-	return planContinuationCommandWithReadiness(request, current, now, false)
+	return planContinuationCommandWithReadiness(request, current, now, false, 0)
 }
 
 func (m *Module) planContinuationCommand(
 	request api.ContinueReleaseWorkflowRequest,
 	current CommandResult,
 	now time.Time,
+	attemptRevision api.WorkflowRevision,
 ) (Command, string) {
-	return planContinuationCommandWithReadiness(request, current, now, true)
+	return planContinuationCommandWithReadiness(request, current, now, true, attemptRevision)
 }
 
 func planContinuationCommandWithReadiness(
@@ -754,6 +755,7 @@ func planContinuationCommandWithReadiness(
 	current CommandResult,
 	now time.Time,
 	includeInputReadiness bool,
+	attemptRevision api.WorkflowRevision,
 ) (Command, string) {
 	workflowID := current.Workflow.ID
 	revision := current.Workflow.Revision
@@ -924,11 +926,15 @@ func planContinuationCommandWithReadiness(
 	if workflowGoalRank(request.Goal) <= workflowGoalRank(api.WorkflowGoalDescriptionsReady) {
 		return nil, ""
 	}
+	dryRun := current.DryRun
+	if dryRun != nil && dryRun.Revision < attemptRevision {
+		dryRun = nil
+	}
 	partialReadyIDs := []api.TrackerID(nil)
 	if request.Goal == api.WorkflowGoalUploaded {
-		partialReadyIDs = partialDryRunReadyTrackerIDs(current.DryRun, request.Intent.NoSeed, request.Intent.UploadTrackerIDs)
+		partialReadyIDs = partialDryRunReadyTrackerIDs(dryRun, request.Intent.NoSeed, request.Intent.UploadTrackerIDs)
 	}
-	if !dryRunGoalSatisfied(current.DryRun, request.Intent.NoSeed, request.Intent.UploadTrackerIDs) && len(partialReadyIDs) == 0 {
+	if !dryRunGoalSatisfied(dryRun, request.Intent.NoSeed, request.Intent.UploadTrackerIDs) && len(partialReadyIDs) == 0 {
 		return DryRunUploadsCommand{
 			WorkflowID:       workflowID,
 			ExpectedRevision: revision,

@@ -1056,7 +1056,7 @@ func (m *Module) runCompositeUpload(
 			}
 			continue
 		}
-		next, stage := m.planContinuationCommand(request, current, m.clock.Now().UTC())
+		next, stage := m.planContinuationCommand(request, current, m.clock.Now().UTC(), command.ExpectedRevision+1)
 		if next == nil {
 			if stage == "no-eligible-trackers" {
 				failure := compositeNoEligibleTrackersFailure(current, command.operationKind())

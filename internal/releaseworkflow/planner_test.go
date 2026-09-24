@@ -1686,6 +1686,71 @@ func TestContinuationPlannerRetriesFailedDryRunAndAcceptsSkippedNoOp(t *testing.
 	}
 }
 
+func TestContinuationPlannerRequiresDryRunFromCurrentAttempt(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.July, 23, 1, 2, 3, 0, time.UTC)
+	for _, test := range []struct {
+		name   string
+		goal   api.WorkflowGoal
+		status api.StageStatus
+	}{
+		{
+			name:   "completed dry run",
+			goal:   api.WorkflowGoalDryRun,
+			status: api.StageStatusCompleted,
+		},
+		{
+			name:   "skipped dry run",
+			goal:   api.WorkflowGoalDryRun,
+			status: api.StageStatusSkipped,
+		},
+		{
+			name:   "completed upload review",
+			goal:   api.WorkflowGoalUploaded,
+			status: api.StageStatusCompleted,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			current := readyContinuationPlannerResult(t, now)
+			current.Workflow.Revision = 11
+			current.Media = &api.MediaArtifactSet{Status: api.StageStatusCompleted}
+			current.Descriptions = &api.DescriptionSet{Status: api.StageStatusSkipped}
+			current.DryRun = &api.UploadDryRunResult{
+				Revision:   10,
+				NoSeed:     true,
+				TrackerIDs: []api.TrackerID{"ALPHA"},
+				Reports:    []api.TrackerDryRunReport{{TrackerID: "ALPHA", Status: test.status}},
+				Status:     test.status,
+			}
+			request := api.ContinueReleaseWorkflowRequest{
+				Goal: test.goal,
+				Intent: api.WorkflowIntent{
+					NoSeed:           true,
+					UploadTrackerIDs: []api.TrackerID{"ALPHA"},
+				},
+			}
+			command, stage := planContinuationCommandWithReadiness(request, current, now, false, 11)
+			if _, ok := command.(DryRunUploadsCommand); !ok || stage != "review-uploads" {
+				t.Fatalf("stale review plan: stage=%q command=%#v", stage, command)
+			}
+			command, stage = planContinuationCommandWithReadiness(request, current, now, false, 10)
+			if test.goal == api.WorkflowGoalUploaded {
+				if _, ok := command.(ExecuteUploadsCommand); !ok || stage != "execute-uploads" {
+					t.Fatalf("current upload review plan: stage=%q command=%#v", stage, command)
+				}
+			} else if command != nil || stage != "" {
+				t.Fatalf("current dry-run plan: stage=%q command=%#v", stage, command)
+			}
+			request.Intent.NoSeed = false
+			command, stage = planContinuationCommandWithReadiness(request, current, now, false, 10)
+			if _, ok := command.(DryRunUploadsCommand); !ok || stage != "review-uploads" {
+				t.Fatalf("mismatched review plan: stage=%q command=%#v", stage, command)
+			}
+		})
+	}
+}
+
 func TestContinuationPlannerUploadsReadyLaneFromPartialDryRun(t *testing.T) {
 	t.Parallel()
 
