@@ -458,6 +458,19 @@ func TestValidateUploadExecutionTrackerIDsOmitsSkippedTrackers(t *testing.T) {
 	if _, err := validateUploadExecutionTrackerIDs(trackers, []api.TrackerID{"GAMMA"}); !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("failed tracker selection error = %v", err)
 	}
+	if _, err := validateUploadExecutionTrackerIDs(
+		[]api.UploadPlanTracker{{TrackerID: "GAMMA", Status: api.StageStatusFailed}},
+		nil,
+	); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("all-failed plan selection error = %v", err)
+	}
+	selected, err = validateUploadExecutionTrackerIDs(
+		[]api.UploadPlanTracker{{TrackerID: "BETA", Status: api.StageStatusSkipped}},
+		nil,
+	)
+	if err != nil || len(selected) != 0 {
+		t.Fatalf("all-skipped plan selection = %#v, %v", selected, err)
+	}
 }
 
 func TestExecuteUploadsPendingTrackerActionRespectsSelectionAndInteraction(t *testing.T) {
@@ -576,6 +589,100 @@ func TestExecuteUploadsPendingTrackerActionRespectsSelectionAndInteraction(t *te
 	}
 }
 
+func TestExecuteUploadsPublishesFullySkippedPlanAndRejectsAllFailedPlan(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name    string
+		status  api.StageStatus
+		wantErr bool
+	}{
+		{name: "fully skipped no-op", status: api.StageStatusSkipped},
+		{
+			name:    "all failed",
+			status:  api.StageStatusFailed,
+			wantErr: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			now := time.Date(2026, time.July, 23, 12, 0, 0, 0, time.UTC)
+			module, _ := newTestModule(t, testPreparer())
+			projectionRef := api.TrackerReleaseProjectionSetRef{ID: "projections-terminal-plan", Revision: 1}
+			dupeRef := api.DupeAssessmentRef{ID: "dupes-terminal-plan", Revision: 1}
+			mediaRef := api.MediaArtifactSetRef{ID: "media-terminal-plan", Revision: 1}
+			descriptionRef := api.DescriptionSetRef{ID: "descriptions-terminal-plan", Revision: 1}
+			dryRunRef := api.UploadDryRunResultRef{ID: "dry-run-terminal-plan", Revision: 2}
+			execution := &retainedUploadExecutionFake{trackers: []api.TrackerID{"ALPHA"}}
+			prepared := &preparedUploads{
+				projections:  api.TrackerReleaseProjectionSet{ID: projectionRef.ID, Revision: projectionRef.Revision},
+				dupes:        api.DupeAssessment{ID: dupeRef.ID, Revision: dupeRef.Revision},
+				media:        api.MediaArtifactSet{ID: mediaRef.ID, Revision: mediaRef.Revision},
+				descriptions: api.DescriptionSet{ID: descriptionRef.ID, Revision: descriptionRef.Revision},
+				plan: api.UploadPlan{
+					Revision:         dryRunRef.Revision,
+					ProjectionSet:    projectionRef,
+					Dupes:            dupeRef,
+					Media:            &mediaRef,
+					Descriptions:     &descriptionRef,
+					InputFingerprint: testFingerprint(t, "terminal-upload-plan-"+test.name),
+					Trackers: []api.UploadPlanTracker{{
+						TrackerID: "ALPHA",
+						Status:    test.status,
+					}},
+					Status:    test.status,
+					ExpiresAt: now.Add(time.Hour),
+				},
+				execution: execution,
+				dryRun:    true,
+			}
+			state := State{
+				Workflow: api.ReleaseWorkflow{
+					ID:                 api.WorkflowID("workflow-terminal-plan-" + strings.ReplaceAll(test.name, " ", "-")),
+					Revision:           2,
+					Status:             api.WorkflowStatusActive,
+					TrackerProjections: &projectionRef,
+					Dupes:              &dupeRef,
+					Media:              &mediaRef,
+					Descriptions:       &descriptionRef,
+					DryRun:             &dryRunRef,
+				},
+				UploadResults: make(map[api.UploadResultID]api.UploadResult),
+			}
+			if err := module.private.Put(
+				testOwnerID,
+				state.Workflow.ID,
+				uploadPlanPrivateResourceID(dryRunRef.ID),
+				prepared,
+				prepared.plan.ExpiresAt,
+			); err != nil {
+				t.Fatalf("retain terminal upload plan: %v", err)
+			}
+
+			result, err := module.executeUploads(
+				context.Background(),
+				testOwnerID,
+				&state,
+				3,
+				now,
+				ExecuteUploadsCommand{},
+			)
+			if test.wantErr {
+				if !errors.Is(err, ErrInvalidTransition) || result.UploadResult != nil || execution.executions != 0 {
+					t.Fatalf("all-failed execution: result=%#v err=%v executions=%d", result, err, execution.executions)
+				}
+				return
+			}
+			if err != nil || result.UploadResult == nil || execution.executions != 0 ||
+				result.UploadResult.Status != api.StageStatusCompleted || len(result.UploadResult.Results) != 1 ||
+				result.UploadResult.Results[0].Status != api.StageStatusSkipped || state.Workflow.Status != api.WorkflowStatusCompleted {
+				t.Fatalf("fully skipped execution: result=%#v err=%v executions=%d workflow=%#v", result, err, execution.executions, state.Workflow)
+			}
+		})
+	}
+}
+
 func TestValidateUploadPlanBuildRequiresExactDownstreamTrackerSet(t *testing.T) {
 	t.Parallel()
 
@@ -671,12 +778,13 @@ func (f *retainedUploadExecutionFake) Release() error {
 }
 
 type uploadPlanBuilderFake struct {
-	testing       *testing.T
-	builds        int
-	options       []UploadPlanBuildOptions
-	execution     *retainedUploadExecutionFake
-	failed        map[api.TrackerID]bool
-	clientRetries int
+	testing           *testing.T
+	builds            int
+	options           []UploadPlanBuildOptions
+	execution         *retainedUploadExecutionFake
+	failed            map[api.TrackerID]bool
+	preparationFailed map[api.TrackerID]bool
+	clientRetries     int
 }
 
 func (f *uploadPlanBuilderFake) Fingerprint(
@@ -736,7 +844,7 @@ func (f *uploadPlanBuilderFake) Build(
 				clientMessage = "Client injection disabled by the skip option."
 			}
 		}
-		trackers = append(trackers, api.UploadPlanTracker{
+		tracker := api.UploadPlanTracker{
 			TrackerID:              projection.TrackerID,
 			DisplayName:            projection.DisplayName,
 			UploadReleaseName:      projection.UploadReleaseName,
@@ -748,8 +856,15 @@ func (f *uploadPlanBuilderFake) Build(
 			ClientInjectionStatus:  clientStatus,
 			ClientInjectionMessage: clientMessage,
 			SemanticFingerprint:    semantic,
-		})
-		f.execution.trackers = append(f.execution.trackers, projection.TrackerID)
+		}
+		if f.preparationFailed[projection.TrackerID] {
+			tracker.Eligible = false
+			tracker.Status = api.StageStatusFailed
+			tracker.PreparedOperationID = ""
+		} else {
+			f.execution.trackers = append(f.execution.trackers, projection.TrackerID)
+		}
+		trackers = append(trackers, tracker)
 	}
 	return api.UploadPlan{
 		InputFingerprint: fingerprint,

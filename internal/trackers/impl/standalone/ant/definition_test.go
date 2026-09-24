@@ -201,13 +201,15 @@ func TestResolveFlagsIncludesIMAXAndCriterionEdition(t *testing.T) {
 func TestResolveReleaseGroupBansUpdatedGroups(t *testing.T) {
 	t.Parallel()
 
-	for _, group := range []string{"EVO", "SM737"} {
+	for _, group := range []string{"4K4U", "AOC", "EVO", "Flights", "iVy", "MezRips", "QxR", "tigole", "x0r"} {
 		if got, ok := resolveReleaseGroup(group); ok || got != "" {
 			t.Fatalf("expected %s to be banned, got %q ok=%t", group, got, ok)
 		}
 	}
-	if got, ok := resolveReleaseGroup("Flights"); !ok || got != "Flights" {
-		t.Fatalf("expected Flights to be allowed, got %q ok=%t", got, ok)
+	for _, group := range []string{"SM737", "GRP"} {
+		if got, ok := resolveReleaseGroup(group); !ok || got != group {
+			t.Fatalf("expected unlisted group %s to be allowed, got %q ok=%t", group, got, ok)
+		}
 	}
 }
 
@@ -221,6 +223,21 @@ func TestBuildDescriptionRemovesScreenshotOnlyBlockAndDefaultSignature(t *testin
 	})
 	if strings.TrimSpace(description) != "" {
 		t.Fatalf("expected screenshot-only/signature-only description removed, got %q", description)
+	}
+}
+
+func TestBuildDescriptionRemovesKnownSignatures(t *testing.T) {
+	for _, footer := range []string{"[right]Created by Upload Assistant[/right]", "[img]https://files.catbox.moe/5izwmx.svg[/img]"} {
+		for _, notes := range []string{"", "[b]Release notes[/b]\n"} {
+			input := notes + footer
+			got := buildDescription(trackers.PreparationInput{}, trackers.DescriptionAssets{Description: input})
+			if strings.Contains(got, "Upload Assistant") || strings.Contains(got, "5izwmx.svg") || notes != "" && !strings.Contains(got, "[b]Release notes[/b]") {
+				t.Fatalf("unexpected cleaned description %q", got)
+			}
+			if final := buildDescription(trackers.PreparationInput{}, trackers.DescriptionAssets{Description: input, Final: true}); final != input {
+				t.Fatalf("final description changed: %q", final)
+			}
+		}
 	}
 }
 

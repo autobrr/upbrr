@@ -137,6 +137,27 @@ func TestMovieYearProvidersFollowTrackerMetadataAuthority(t *testing.T) {
 	}
 }
 
+func TestDescriptionCleanupRespectsTrackerOwnership(t *testing.T) {
+	registry := MustNewRegistry()
+	const body = "[center][spoiler=Scene NFO:][code]scene nfo[/code][/spoiler][/center]\n\nBody\n[right]Created by Upload Assistant[/right]"
+	for _, tracker := range registry.Names() {
+		t.Run(tracker, func(t *testing.T) {
+			assets, err := trackers.ResolveDescriptionAssets(t.Context(), tracker, api.UploadSubject{DescriptionOverride: body}, nil, api.NopLogger{}, registry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := body
+			family, _ := registry.LookupFamily(tracker)
+			if family == trackers.FamilyUnit3D && tracker != "ACM" && tracker != "OE" {
+				want = "Body"
+			}
+			if assets.Description != want {
+				t.Fatalf("description input = %q, want %q", assets.Description, want)
+			}
+		})
+	}
+}
+
 func TestDescriptionDefinitionsPreserveFinalReviewedDescription(t *testing.T) {
 	t.Parallel()
 
@@ -179,6 +200,52 @@ func TestDescriptionDefinitionsPreserveFinalReviewedDescription(t *testing.T) {
 	}
 }
 
+func TestOERequiredEvidenceUsesSharedInputReadiness(t *testing.T) {
+	registry := MustNewRegistry()
+	subject := api.UploadSubject{
+		Type:       "ENCODE",
+		VideoCodec: "AV1",
+		Tag:        "-SM737",
+	}
+	for _, answered := range []bool{false, true} {
+		if answered {
+			subject.TrackerQuestionnaireAnswers = map[string]map[string]string{"OE": {
+				"encoding_settings": "SVT-AV1 preset=4 crf=20",
+				"source_notes":      "Example BluRay source; original HDR10 only",
+			}}
+		}
+		evaluation, err := trackers.EvaluateInputReadiness(registry, []api.TrackerID{"OE"}, subject)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(evaluation.Schemas) != 1 || evaluation.Schemas[0].Tracker != "OE" || len(evaluation.Schemas[0].Fields) != 2 {
+			t.Fatalf("OE Input schema = %+v", evaluation.Schemas)
+		}
+		for _, field := range evaluation.Schemas[0].Fields {
+			if !field.Required {
+				t.Errorf("OE field %q must require evidence", field.Key)
+			}
+			found := false
+			for _, outcome := range evaluation.Fields {
+				if outcome.Key != "tracker_input."+field.Key {
+					continue
+				}
+				found = true
+				want := api.InputReadinessFieldMissing
+				if answered {
+					want = api.InputReadinessFieldReady
+				}
+				if outcome.Status != want || outcome.Disposition != api.RuleDispositionStrict {
+					t.Errorf("answered=%t field=%+v, want status=%s strict", answered, outcome, want)
+				}
+			}
+			if !found {
+				t.Errorf("missing central readiness outcome for %q", field.Key)
+			}
+		}
+	}
+}
+
 type descriptionPreviewPersistence struct {
 	trackers.UploadPersistence
 }
@@ -195,11 +262,15 @@ func TestCustomDescriptionGroupsIncludeTrackerScreenshots(t *testing.T) {
 	t.Parallel()
 
 	registry := MustNewRegistry()
-	for _, tracker := range []string{"BHD", "AITHER", "PTP"} {
+	for _, tracker := range []string{"BHD", "AITHER", "PTP", "ACM", "OE"} {
 		t.Run(tracker, func(t *testing.T) {
 			const body = "[b]User supplied release notes.[/b]"
 			source := filepath.Join(t.TempDir(), "Example.Release.2026.mkv")
 			media := &api.ExactMediaAssets{}
+			imageHost := "pixhost"
+			if tracker == "OE" {
+				imageHost = "imgbb"
+			}
 			for index := range 6 {
 				imagePath := filepath.Join(t.TempDir(), fmt.Sprintf("screen-%d.png", index))
 				imageURL := fmt.Sprintf("https://images.example/screen-%d.png", index)
@@ -209,7 +280,7 @@ func TestCustomDescriptionGroupsIncludeTrackerScreenshots(t *testing.T) {
 				})
 				media.ScreenshotUploads = append(media.ScreenshotUploads, api.UploadedImageLink{
 					ImagePath:  imagePath,
-					Host:       "pixhost",
+					Host:       imageHost,
 					UsageScope: "global",
 					RawURL:     imageURL,
 					ImgURL:     imageURL,
@@ -228,13 +299,41 @@ func TestCustomDescriptionGroupsIncludeTrackerScreenshots(t *testing.T) {
 					HasOverride:    true,
 				}},
 			}
-			cfg := config.Config{ImageHosting: config.ImageHostingConfig{Host1: "pixhost"}}
+			if tracker == "OE" {
+				meta.Type = "ENCODE"
+				meta.VideoCodec = "AV1"
+				meta.Tag = "SM737"
+				meta.TrackerQuestionnaireAnswers = map[string]map[string]string{"OE": {
+					"encoding_settings": "SVT-AV1 preset=4 crf=20",
+					"source_notes":      "Example BluRay source",
+				}}
+			}
+			cfg := config.Config{ImageHosting: config.ImageHostingConfig{Host1: imageHost}}
 			service := trackers.NewServiceWithRegistry(cfg, api.NopLogger{}, descriptionPreviewPersistence{}, registry)
 			preview, err := service.BuildPreparation(t.Context(), api.NewDescriptionSubject(meta), []string{tracker})
 			if err != nil || len(preview.ContentFailures) != 0 || len(preview.Descriptions) != 1 {
 				t.Fatalf("build custom description: preview=%+v err=%v", preview, err)
 			}
 			got := preview.Descriptions[0].RawDescription
+			if tracker == "OE" || tracker == "ACM" {
+				if !strings.HasPrefix(preview.Descriptions[0].GroupKey, strings.ToLower(tracker)) {
+					t.Fatalf("custom description shared the generic group: %q", preview.Descriptions[0].GroupKey)
+				}
+			}
+			if tracker == "OE" {
+				for _, answer := range meta.TrackerQuestionnaireAnswers["OE"] {
+					if !strings.Contains(got, answer) {
+						t.Fatalf("description preview dropped required evidence %q: %s", answer, got)
+					}
+				}
+				withMediaInfo := meta
+				withMediaInfo.HasEncodeSettings = true
+				withMediaInfo.TrackerQuestionnaireAnswers = map[string]map[string]string{"OE": {"source_notes": "Example BluRay source"}}
+				withSettings, settingsErr := service.BuildPreparation(t.Context(), api.NewDescriptionSubject(withMediaInfo), []string{tracker})
+				if settingsErr != nil || len(withSettings.ContentFailures) != 0 {
+					t.Fatalf("MediaInfo settings were dropped before description composition: %+v %v", withSettings, settingsErr)
+				}
+			}
 			bodyIndex := strings.Index(got, "User supplied release notes.")
 			if bodyIndex < 0 {
 				t.Fatalf("custom body missing: %q", got)
@@ -625,7 +724,7 @@ func TestNewRegistryCapabilityInventory(t *testing.T) {
 	if _, ok := registry.LookupRules("ANT"); !ok {
 		t.Fatal("expected ANT tracker-owned rules")
 	}
-	if groups, ok := registry.LookupBannedGroups("ANT"); !ok || !slices.Contains(groups, "ZMNT") {
+	if groups, ok := registry.LookupBannedGroups("ANT"); !ok || len(groups) != 57 || !slices.Contains(groups, "Flights") || slices.Contains(groups, "ZMNT") {
 		t.Fatalf("ANT banned groups = %#v, %t", groups, ok)
 	}
 	if policy, ok := registry.LookupUploadArtifactPolicy("ANT"); !ok || policy.Source != "ANT" || !policy.RequireAnnounce {
@@ -805,7 +904,7 @@ func TestNewRegistryIncludesUnit3DRuleCapabilities(t *testing.T) {
 	}
 
 	trackersWithRules := []string{
-		"A4K", "AITHER", "BLU", "DP", "HHD", "LST", "LUME", "MNS", "OE", "OTW", "RAS",
+		"AITHER", "BLU", "DP", "HHD", "LST", "LUME", "MNS", "OE", "OTW", "RAS",
 		"RF", "RHD", "SHRI", "SP", "STC", "TIK", "TOS", "TTR", "ULCX", "ZNTH",
 	}
 	for _, name := range trackersWithRules {
@@ -941,7 +1040,6 @@ func TestNewRegistryIncludesImageHostPolicies(t *testing.T) {
 		disableWithoutRehost bool
 		disableWithoutAPI    bool
 	}{
-		{tracker: "A4K", host: "onlyimage"},
 		{
 			tracker:              "HDB",
 			host:                 "hdb",

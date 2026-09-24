@@ -26,7 +26,9 @@ import { ReleaseSessionProvider, useReleaseSession } from "./releaseSession";
 import { TrackerCatalogProvider, useTrackerCatalog } from "./trackerCatalog";
 import type { ReleaseRoute } from "./releaseSession/types";
 import type { ApplicationInfo, BrowseDirectoryResponse, ConfigMap } from "./types";
+import { formatApplicationVersion, getApplicationVersionDisplay } from "./utils/applicationInfo";
 import { cn } from "./utils/cn";
+import { handleExternalLinkClick } from "./utils/externalLinks";
 import {
   addSourcePathHistoryEntry,
   defaultInputHistoryLimit,
@@ -128,6 +130,8 @@ function AppShell({
   const [settingsImporting, setSettingsImporting] = useState(false);
   const [importConfirmOpen, setImportConfirmOpen] = useState(false);
   const [configOpStatus, setConfigOpStatus] = useState<ConfigOpStatus>(null);
+  const applicationVersion = applicationInfo ? getApplicationVersionDisplay(applicationInfo) : null;
+  const applicationVersionLabel = applicationInfo ? formatApplicationVersion(applicationInfo) : "";
 
   const settings = useSettingsState({ activeTab });
   const {
@@ -465,6 +469,64 @@ function AppShell({
             >
               Theme: {theme}
             </button>
+          </div>
+          <div className="mt-1 grid gap-1 rounded-lg border border-[rgba(148,163,184,0.18)] bg-[rgba(148,163,184,0.08)] px-2 py-1.5 text-[0.72rem] leading-tight text-[var(--muted)] max-[960px]:hidden">
+            {applicationVersion ? (
+              <div
+                className="grid min-w-0 font-semibold text-[var(--text)]"
+                title={applicationVersionLabel}
+              >
+                <span>{applicationVersion.version}</span>
+                {applicationVersion.buildDate ? (
+                  <span>({applicationVersion.buildDate})</span>
+                ) : null}
+              </div>
+            ) : null}
+            <div className="flex min-w-0 items-center justify-between gap-1">
+              <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+                © 2026 autobrr
+              </span>
+              <div className="flex items-center gap-1">
+                <a
+                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-white/10 text-[var(--muted)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                  href="https://discord.autobrr.com"
+                  target="_blank"
+                  rel="noreferrer"
+                  onAuxClick={handleExternalLinkClick}
+                  onClick={handleExternalLinkClick}
+                  aria-label="Open the autobrr Discord"
+                  title="autobrr Discord"
+                >
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 24 24"
+                    className="h-4 w-4"
+                    fill="currentColor"
+                  >
+                    <path d="M19.5 5.34A17.3 17.3 0 0 0 15.44 4l-.5 1.02a15.8 15.8 0 0 0-5.86 0L8.55 4A17.5 17.5 0 0 0 4.5 5.35C1.93 9.2 1.23 12.96 1.58 16.67a17.7 17.7 0 0 0 4.98 2.51l1.2-1.64a11.2 11.2 0 0 1-1.88-.9l.46-.36c3.63 1.68 7.57 1.68 11.16 0l.47.36c-.6.36-1.23.66-1.89.9l1.2 1.64a17.6 17.6 0 0 0 4.98-2.51c.42-4.3-.72-8.03-2.76-11.33ZM8.68 14.4c-1.09 0-1.98-1-1.98-2.22 0-1.23.87-2.23 1.98-2.23 1.12 0 2 1 1.98 2.23 0 1.22-.87 2.22-1.98 2.22Zm6.64 0c-1.1 0-1.98-1-1.98-2.22 0-1.23.87-2.23 1.98-2.23 1.12 0 2 1 1.98 2.23 0 1.22-.86 2.22-1.98 2.22Z" />
+                  </svg>
+                </a>
+                <a
+                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-white/10 text-[var(--muted)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                  href="https://github.com/autobrr/upbrr"
+                  target="_blank"
+                  rel="noreferrer"
+                  onAuxClick={handleExternalLinkClick}
+                  onClick={handleExternalLinkClick}
+                  aria-label="Open autobrr/upbrr on GitHub"
+                  title="autobrr/upbrr"
+                >
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 16 16"
+                    className="h-4 w-4"
+                    fill="currentColor"
+                  >
+                    <path d="M8 0C3.58 0 0 3.67 0 8.2c0 3.62 2.29 6.69 5.47 7.78.4.08.55-.18.55-.4l-.01-1.4c-2.22.5-2.69-1.1-2.69-1.1-.36-.95-.89-1.2-.89-1.2-.73-.51.05-.5.05-.5.81.06 1.24.85 1.24.85.72 1.27 1.89.9 2.35.69.07-.53.28-.9.51-1.1-1.78-.21-3.64-.91-3.64-4.04 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .68-.22 2.2.84A7.37 7.37 0 0 1 8 3.99c.68 0 1.36.09 2 .28 1.52-1.06 2.19-.84 2.19-.84.44 1.12.16 1.95.08 2.16.52.57.82 1.3.82 2.19 0 3.14-1.87 3.83-3.65 4.04.29.25.54.76.54 1.54l-.01 2.22c0 .22.14.48.55.4A8.13 8.13 0 0 0 16 8.2C16 3.67 12.42 0 8 0Z" />
+                  </svg>
+                </a>
+              </div>
+            </div>
           </div>
         </aside>
 

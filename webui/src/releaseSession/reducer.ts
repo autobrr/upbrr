@@ -837,6 +837,12 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       if (snapshot.revision < previousActive.revision) return state;
       if (
         snapshot.revision === previousActive.revision &&
+        !(
+          snapshot.state === "recovering" &&
+          !snapshot.current &&
+          !snapshot.inputId &&
+          !snapshot.sourceVersion
+        ) &&
         previousActive.inputID &&
         (snapshot.inputId !== previousActive.inputID ||
           snapshot.sourceVersion !== previousActive.sourceVersion)

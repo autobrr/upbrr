@@ -434,6 +434,47 @@ func TestPrepareCLITVPackPreservesDirectory(t *testing.T) {
 	}
 }
 
+func TestCollectTVPackSelectsFirstEpisodeForMediaInfoAndScreenshots(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		season string
+		files  []string
+		want   string
+	}{
+		{"unpadded episodes", "S01", []string{"Example.Show.S01E10.mkv", "Example.Show.S01E2.mkv"}, "Example.Show.S01E2.mkv"},
+		{"different prefixes", "S01", []string{"A.Show.S01E02.mkv", "Z.Show.S01E01.mkv"}, "Z.Show.S01E01.mkv"},
+		{"unrecognized episodes", "S01", []string{"A.mkv", "Z.mkv"}, "A.mkv"},
+		{"ignore specials in season pack", "S01", []string{"Example.Show.S00E01.mkv", "Example.Show.S01E01.mkv"}, "Example.Show.S01E01.mkv"},
+		{"match pack season", "S02", []string{"Example.Show.S01E01.mkv", "Example.Show.S02E02.mkv"}, "Example.Show.S02E02.mkv"},
+		{"specials pack", "S00", []string{"Example.Show.S00E10.mkv", "Example.Show.S00E2.mkv"}, "Example.Show.S00E2.mkv"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			base := t.TempDir()
+			source := filepath.Join(base, "Example.Show."+test.season+".1080p.WEB-DL-GRP")
+			if err := os.Mkdir(source, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range test.files {
+				if err := os.WriteFile(filepath.Join(source, name), []byte("video"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			mediaInfo := &recordingMediaInfo{}
+			service := NewService(&stubRepo{}, WithMediaInfoExporter(mediaInfo), WithSceneDetector(stubSceneDetector{}),
+				WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}))
+			meta, err := service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{SourcePath: source}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := filepath.Join(source, test.want)
+			if !meta.TVPack || meta.VideoPath != want || mediaInfo.request.VideoPath != want {
+				t.Fatalf("expected pack media/screenshot source %q, got pack=%t video=%q mediainfo=%q", want, meta.TVPack, meta.VideoPath, mediaInfo.request.VideoPath)
+			}
+		})
+	}
+}
+
 func TestResolveServiceDarkroom(t *testing.T) {
 	t.Parallel()
 

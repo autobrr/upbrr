@@ -198,7 +198,7 @@ func (b workflowUploadPlanBuilder) Build(
 	for _, result := range dupes.Results {
 		dupeByTracker[result.TrackerID] = result
 	}
-	descriptionByTracker := workflowDescriptionResultsByTracker(descriptions)
+	descriptionByTracker := releaseworkflow.DescriptionResultsByTracker(descriptions)
 	eligible := make([]api.TrackerReleaseProjection, 0, len(projections.Projections))
 	planProjections := make([]api.TrackerReleaseProjection, 0, len(projections.Projections))
 	trackerStatuses := make(map[api.TrackerID]api.StageStatus, len(projections.Projections))
@@ -230,17 +230,18 @@ func (b workflowUploadPlanBuilder) Build(
 		}
 		if projection.Artifacts.Description {
 			result, hasResult := descriptionByTracker[projection.TrackerID]
-			switch {
-			case !hasResult:
+			// The lane projection renders the same decision, so both read one helper.
+			eligibility, reason := releaseworkflow.TrackerDescriptionEligibility(projection, result, hasResult)
+			if eligibility != api.UploadEligibilityEligible {
+				if reason == api.UploadSkipReasonDescriptionSkipped {
+					continue
+				}
+				message := "Tracker description could not be prepared."
+				if !hasResult {
+					message = "Tracker description outcome is unavailable."
+				}
 				trackerStatuses[projection.TrackerID] = api.StageStatusBlocked
-				trackerReasons[projection.TrackerID] = "Tracker description outcome is unavailable."
-				planProjections = append(planProjections, projection)
-				continue
-			case result.Status == api.StageStatusSkipped:
-				continue
-			case result.Status != api.StageStatusCompleted:
-				trackerStatuses[projection.TrackerID] = api.StageStatusBlocked
-				trackerReasons[projection.TrackerID] = "Tracker description could not be prepared."
+				trackerReasons[projection.TrackerID] = message
 				planProjections = append(planProjections, projection)
 				continue
 			}
@@ -1455,32 +1456,6 @@ func (e *workflowUploadExecution) Release() error {
 		return fmt.Errorf("workflow upload release: %w", err)
 	}
 	return nil
-}
-
-func workflowDescriptionResultsByTracker(descriptions api.DescriptionSet) map[api.TrackerID]api.DescriptionTrackerResult {
-	results := make(map[api.TrackerID]api.DescriptionTrackerResult)
-	for _, description := range descriptions.Descriptions {
-		for _, trackerID := range description.TrackerIDs {
-			results[trackerID] = api.DescriptionTrackerResult{
-				TrackerID: trackerID,
-				Status:    api.StageStatusCompleted,
-			}
-		}
-	}
-	for _, failure := range descriptions.Failures {
-		if failure.TrackerID == "" {
-			continue
-		}
-		results[failure.TrackerID] = api.DescriptionTrackerResult{
-			TrackerID: failure.TrackerID,
-			Status:    api.StageStatusFailed,
-			Message:   strings.TrimSpace(failure.Failure.Message),
-		}
-	}
-	for _, result := range descriptions.TrackerResults {
-		results[result.TrackerID] = result
-	}
-	return results
 }
 
 func workflowUploadDescriptionGroups(

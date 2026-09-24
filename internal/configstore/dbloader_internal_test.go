@@ -537,13 +537,13 @@ func TestMergeNativeConfigPreservesTrackerCustomUnknownKeys(t *testing.T) {
 		{
 			name:    "yaml",
 			format:  "yaml",
-			payload: []byte("trackers:\n  A4K:\n    api_key: tracker-key\n    custom_yaml: keep\n"),
+			payload: []byte("trackers:\n  AITHER:\n    api_key: tracker-key\n    custom_yaml: keep\n"),
 			key:     "custom_yaml",
 		},
 		{
 			name:    "json",
 			format:  "json",
-			payload: []byte(`{"Trackers":{"Trackers":{"A4K":{"APIKey":"tracker-key","custom_json":"keep"}}}}`),
+			payload: []byte(`{"Trackers":{"Trackers":{"AITHER":{"APIKey":"tracker-key","custom_json":"keep"}}}}`),
 			key:     "custom_json",
 		},
 	}
@@ -565,7 +565,7 @@ func TestMergeNativeConfigPreservesTrackerCustomUnknownKeys(t *testing.T) {
 			if err != nil {
 				t.Fatalf("merge native config: %v", err)
 			}
-			tracker := merged.Trackers.Trackers["A4K"]
+			tracker := merged.Trackers.Trackers["AITHER"]
 			if got := tracker.Unknown[tt.key]; got != "keep" {
 				t.Fatalf("expected tracker custom key %q to survive, got %#v", tt.key, got)
 			}

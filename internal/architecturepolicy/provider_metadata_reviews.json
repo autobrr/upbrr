@@ -152,7 +152,7 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/ar/description.go:buildDescription": {
-    "sha256": "697df449e479820e864eba98509839c50b70c5806cf985cd79b6a244303a994b",
+    "sha256": "ed86bc9e33042ec3fb1bd7ada67410bdddc74e2de986e29b52f4ce4a7c338436",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/ar/description.go:resolveOverview": {
@@ -228,7 +228,7 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/asc/description.go:buildDescription": {
-    "sha256": "fb4c9c7600bb66462bf583faf5b42f1493f255ab455d5a15a151a128e0fedc33",
+    "sha256": "9d36eb71b8c179acbb74b60a4d858fb72586932d76b4c3d55d6198c39491bd9c",
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
   },
   "internal/trackers/impl/standalone/asc/description.go:buildProductionCompanies": {
@@ -392,7 +392,7 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/bjs/description.go:buildDescription": {
-    "sha256": "6599078434cf229d2c63f558744187fe857ade6612e21ebdc7ac45a0e30284d3",
+    "sha256": "b7f9b79d1767a877d4b4b2602243c3e27f13cd980782157644c4742cb5129cbd",
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
   },
   "internal/trackers/impl/standalone/bjs/description.go:resolveDirectors": {
@@ -480,7 +480,7 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/bt/description.go:buildDescription": {
-    "sha256": "aa84a59a9e27ac5f1fd424165d6f6a73f4d615ff2b1d8b361146ce730ddfe71e",
+    "sha256": "3fc4d32161436639ebe894760286785201ecaea265e6f363b069021e936524ae",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/bt/description.go:resolveDirectors": {
@@ -888,7 +888,7 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/hds/description.go:buildDescription": {
-    "sha256": "fcee2a651a044b013df9841fb6a6c3e49188932d12e0d528ef721b9b0892fdc5",
+    "sha256": "a21bc9a5d8d1cec411c50851929cf0da23339b18b7674df399a6c022d2108247",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/hds/description.go:prepareDescription": {
@@ -936,7 +936,7 @@
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
   },
   "internal/trackers/impl/standalone/hdt/description.go:buildDescription": {
-    "sha256": "35b4c7f44309c13ee875530949094a37b8e8b090d934c3fffdd00dd5e414b7ae",
+    "sha256": "3bbfd0ce938eb97c12767fb588bccfec0dc420b5e759be3f63ca0d34b5724f9c",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/hdt/description.go:prepareDescription": {
@@ -1156,7 +1156,7 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/thr/description.go:buildDescription": {
-    "sha256": "6d549159f70886c42655b5cccc4cc79e82befae6cec9753bed51f971226a7212",
+    "sha256": "d99afd58b3648abc1aecaa6e9ad8658afa523db3a0a1d6e3127b8d7730a7f965",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/thr/description.go:genresText": {
@@ -1212,7 +1212,7 @@
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/standalone/tvc/description.go:buildDescription": {
-    "sha256": "7e1b3ec6918ed0052ad8d2f0f7e26caab50d2b8a0953e643e07752366e4ae258",
+    "sha256": "aad4a80ef2cb184e562dcdc8b239e5128fd0fcf6e6592d45400567ddef54c01b",
     "reason": "provider-only identity, descriptive, transport, media, policy, or episode evidence; no manually-correctable field selector observed"
   },
   "internal/trackers/impl/standalone/tvc/description.go:genresText": {
@@ -1290,26 +1290,6 @@
   "internal/trackers/impl/unit3d/site_helpers.go:resolveTMDBGenres": {
     "sha256": "e153f74172d76689217aff458140caed24ec18176775cb05492f3c1b869f16e4",
     "reason": "Explicit manual corrections, including empty values, override this field; automatic provider presence, ordering, and tracker-specific fallback policy remain unchanged."
-  },
-  "internal/trackers/impl/unit3d/sites/a4k/name.go:buildAIName": {
-    "sha256": "ca68e6a84cf2117aa9dd2a3df5dd8e445d9d9d966f9a2dd77601478f79434c1d",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
-  },
-  "internal/trackers/impl/unit3d/sites/a4k/name.go:buildFanResName": {
-    "sha256": "9bf29e3a5176467aaf2ea9865ef8323f65503ea6f2cf78ab698934084db82011",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
-  },
-  "internal/trackers/impl/unit3d/sites/a4k/name.go:buildName": {
-    "sha256": "e2dce2fdad53c0987b96c267703f85376a5971d705fab86c1f41d25b82a03123",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
-  },
-  "internal/trackers/impl/unit3d/sites/a4k/name.go:titleAndYear": {
-    "sha256": "860ac17c17d2df9a76bd23994235012512d2b12d2b00b78ff44d8b4d3cb8061d",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
-  },
-  "internal/trackers/impl/unit3d/sites/a4k/profile.go:Profile": {
-    "sha256": "c96a7ad970011228bc5a6728362cdae5b53ce282e3e3d6b9dea0bdba8717a2ec",
-    "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/unit3d/sites/acm/name.go:acmOriginalTitle": {
     "sha256": "442c4f0b0948a94bf00a8925eedd59845f81209efb18a40ec2f8f0de071067b5",
@@ -1394,6 +1374,14 @@
   "internal/trackers/impl/unit3d/sites/lume/profile.go:Profile": {
     "sha256": "1e7ccde91e0205d7bc1d049fcfbe36b662cc588749c4e69b8ec25a0a448fd290",
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
+  },
+  "internal/trackers/impl/unit3d/sites/oe/validation.go:ValidationPolicy": {
+    "sha256": "6858c0102e9fa53640435261f360b0254dd290e3928b7ff5ecb99999070698e0",
+    "reason": "Binds combined OE upload-guide and description validation over finalized facts; no provider-derived default replaces manually corrected naming or media facts."
+  },
+  "internal/trackers/impl/unit3d/sites/oe/validation.go:checkRules": {
+    "sha256": "c25d8a1678bb3dc2fbc6791f60bc204250e0b1b5740aa7d53144744ddc988365",
+    "reason": "Uses finalized media and package facts through the shared rule subject, then checks description evidence without replacing manual facts with provider values. Provider keywords do not classify content."
   },
   "internal/trackers/impl/unit3d/sites/otw/name.go:buildName": {
     "sha256": "e0ad8fcbaadc5cdd22ada99268edbb3618588ff67b08ff9f2b0df1bfe2712d3a",
@@ -1500,16 +1488,16 @@
     "reason": "Structured-name migration review: current prepared-source/generation provider evidence and manual fact/component precedence are preserved; callers and provider-value helpers were reviewed together."
   },
   "internal/trackers/impl/unit3d/sites/ulcx/validation.go:ValidationPolicy": {
-    "sha256": "a76a96c1427c8823872d23b99136fe2d0d0cb2599baa32640f57471a347e464a",
+    "sha256": "055e5ae26a8e5548316ce1fffa4726405ed78ae04518466191281e6c615ed343",
     "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
   },
   "internal/trackers/impl/unit3d/sites/ulcx/validation.go:checkRules": {
-    "sha256": "ba5f294c233935aaa9e23fde77c2152d0070439413c173253713382eafac24aa",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "d5a4847be8b6a363b8e6a385c0f762077ca3cca10f21000497d47a44c3f54a6a",
+    "reason": "Removes the concert keyword restriction; retained media checks use finalized facts and existing source-bound animation helpers without changing manual precedence."
   },
   "internal/trackers/impl/unit3d/sites/ulcx/validation.go:ulcxEncodeFailures": {
-    "sha256": "2ae873be8cd073d8122018f212532fcfecff36d8c6fb3ebc6ae6832e688e10a3",
-    "reason": "Calls reviewed provider consumers; audit this caller together with its provider-value helpers."
+    "sha256": "b0ca152d8cd761b869f7cb87f07b19e8a70b244414942791117825ebacf43de9",
+    "reason": "SDTV exception uses finalized type/resolution and manual release-availability confirmation. Existing source-bound animation checks remain unchanged; no provider values replace manual media facts."
   },
   "internal/trackers/impl/unit3d/sites/yus/name.go:applyYUSTVDBDisambiguation": {
     "sha256": "18a67755983cfe6442a72da78c35f0fd824a5e08007573af4b214cf4091272d6",

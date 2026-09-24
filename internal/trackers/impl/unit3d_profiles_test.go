@@ -11,7 +11,6 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
-	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/a4k"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/aither"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/blu"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/ihd"
@@ -40,12 +39,6 @@ func TestExplicitUnit3DProfilesPreserveResolvers(t *testing.T) {
 		meta    api.UploadSubject
 		want    string
 	}{
-		{
-			name:    "A4K rejects WEBRIP",
-			profile: a4k.Profile(),
-			meta:    api.UploadSubject{Type: "WEBRIP"},
-			want:    "",
-		},
 		{
 			name:    "ITT DLMux",
 			profile: itt.Profile(),

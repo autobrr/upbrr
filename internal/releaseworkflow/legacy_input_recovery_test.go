@@ -46,7 +46,7 @@ func TestRecoverLegacyInputExposesOnlyReconciliationAndReopensAfterClose(t *test
 	if err != nil {
 		t.Fatalf("recover legacy input: %v", err)
 	}
-	if !isLegacyRecoverySlot(slot) || slot.OwnerID != testOwnerID || slot.WorkflowID != created.Workflow.ID {
+	if !IsLegacyRecoverySlot(slot) || slot.OwnerID != testOwnerID || slot.WorkflowID != created.Workflow.ID {
 		t.Fatalf("legacy recovery slot = %#v", slot)
 	}
 	if _, err := module.Execute(ctx, testOwnerID, CancelWorkflowCommand{

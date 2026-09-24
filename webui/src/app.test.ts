@@ -6,7 +6,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./app";
 import { setAppRequestHandlerForTests } from "./api/client";
-import type { MetadataPreview, TrackerCatalog } from "./types";
+import type { ApplicationInfo, MetadataPreview, TrackerCatalog } from "./types";
 import { emptyExternalIdentity } from "./utils/canonicalIdentity";
 import { sourcePathHistoryStorageKey } from "./utils/inputHistory";
 import type { ReleaseWorkflowCurrent } from "./api/generated/release-workflow";
@@ -49,6 +49,29 @@ const trackerCatalog = (): TrackerCatalog => ({
   unsupported: [],
 });
 
+const applicationInfo = (overrides: Partial<ApplicationInfo> = {}): ApplicationInfo => ({
+  version: "dev",
+  buildIdentifier: "abcdef123456",
+  buildTime: "2026-09-20T01:02:03Z",
+  dependencies: [],
+  goVersion: "go1.26.4",
+  goos: "windows",
+  goarch: "amd64",
+  uptime: "1s",
+  uptimeSeconds: 1,
+  dvdMenuEngine: {
+    EngineVersion: "phase0a-1",
+    SchemaVersion: 1,
+    SupportedFeatures: [],
+    FFmpegVersion: "ffmpeg version example",
+    FFmpegDVDVideo: true,
+    MissingFFmpegOptions: [],
+  },
+  dvdMenuCapabilityStatus: "available",
+  dvdMenuCapabilityMessage: "Compatible FFmpeg dvdvideo menu support detected.",
+  ...overrides,
+});
+
 const metadataPreview = (sourcePath: string): MetadataPreview => ({
   SourcePath: sourcePath,
   TrackerName: "",
@@ -64,11 +87,72 @@ const metadataPreview = (sourcePath: string): MetadataPreview => ({
 });
 
 describe("App shell", () => {
+  it.each([
+    {
+      name: "release tag",
+      info: applicationInfo({ version: "v1.2.3", buildIdentifier: "abcdef123456" }),
+      expected: "v1.2.3",
+    },
+    {
+      name: "development revision",
+      info: applicationInfo({ buildIdentifier: "abcdef123456-dirty" }),
+      expected: "abcdef123456-dirty (2026-09-20)",
+    },
+    {
+      name: "development revision without a build date",
+      info: applicationInfo({ buildIdentifier: "abcdef123456", buildTime: "" }),
+      expected: "abcdef123456",
+    },
+  ])("shows the $name and project links in the desktop footer", async ({ info, expected }) => {
+    setAppRequestHandlerForTests(async (method) => {
+      if (method === "GetActiveInput") return { state: "empty", revision: 0 };
+      if (method === "GetApplicationInfo") return info;
+      if (method === "GetConfig" || method === "GetDefaultConfig") return "{}";
+      if (method === "ListTrackerCatalog") return trackerCatalog();
+      throw new Error(`unexpected app request: ${method}`);
+    });
+
+    render(createElement(App));
+
+    expect(await screen.findByTitle(expected)).toBeVisible();
+    expect(screen.getByRole("link", { name: "Open the autobrr Discord" })).toHaveAttribute(
+      "href",
+      "https://discord.autobrr.com",
+    );
+    expect(screen.getByRole("link", { name: "Open autobrr/upbrr on GitHub" })).toHaveAttribute(
+      "href",
+      "https://github.com/autobrr/upbrr",
+    );
+  });
+
   it.each([false, true])("shows the process testing banner with liveTest=%s", async (liveTest) => {
     setAppRequestHandlerForTests(async (method) => {
       if (method === "GetActiveInput") return { state: "empty", revision: 0 };
       if (method === "GetApplicationInfo") {
-        return { testRuntime: liveTest ? { mode: "live_test", runId: "test-run" } : undefined };
+        return applicationInfo({
+          testRuntime: liveTest
+            ? {
+                mode: "live_test",
+                runId: "test-run",
+                trackerSubmissionAllowed: false,
+                clientMutationAllowed: false,
+                imageUploadsRequireJournal: true,
+                imageUploadLimit: 0,
+                trackerSubmission: {
+                  requestsDenied: 0,
+                  mutationCallsDenied: 0,
+                  remoteCallsStarted: 0,
+                  remoteCallsSucceeded: 0,
+                },
+                clientMutation: {
+                  requestsDenied: 0,
+                  mutationCallsDenied: 0,
+                  remoteCallsStarted: 0,
+                  remoteCallsSucceeded: 0,
+                },
+              }
+            : undefined,
+        });
       }
       if (method === "GetConfig" || method === "GetDefaultConfig") return "{}";
       if (method === "GetTrackerCatalog") return trackerCatalog();

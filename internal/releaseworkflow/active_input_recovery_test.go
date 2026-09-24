@@ -75,6 +75,44 @@ func TestActiveInputRecoveryRestoresExpiredIdleWorkflowAndRejectsOldCoordinatorS
 	}
 }
 
+func TestOpenInputReverifiesSourceAfterRecoveringPreviousProcess(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	clock := &mutableClock{now: time.Now().UTC()}
+	repo := openActiveInputRecoveryRepository(ctx, t)
+	persistent, err := NewPersistentRepository(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := newActiveInputRecoveryModule(t, persistent, repo, &hashingActiveInputVerifier{}, clock, "first-coordinator")
+	oldSource := writeActiveInputRecoverySource(t, "Example.Release.2026-GRP.mkv", "original source")
+	opened, err := first.OpenInput(ctx, testOwnerID, OpenInputRequest{
+		Input: api.PrepareInput{SourcePath: oldSource}, IdempotencyKey: "open-original",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock.now = clock.now.Add(workflowWorkLeaseTTL + time.Second)
+	verifier := &hashingActiveInputVerifier{}
+	second := newActiveInputRecoveryModule(t, persistent, repo, verifier, clock, "second-coordinator")
+	newSource := writeActiveInputRecoverySource(t, "Example.Release.2026-GRP.mkv", "different verified source")
+	reopened, err := second.OpenInput(ctx, testOwnerID, OpenInputRequest{
+		ExpectedRevision: opened.Revision,
+		Input:            api.PrepareInput{SourcePath: newSource},
+		IdempotencyKey:   "open-verified-new-source",
+	})
+	if err != nil {
+		t.Fatalf("open with previous-process snapshot: %v", err)
+	}
+	if verifier.calls != 1 || verifier.lastPath != newSource || reopened.SourceVersion != verifier.lastDigest ||
+		reopened.WorkflowID == opened.WorkflowID || reopened.CoordinatorID != "second-coordinator" {
+		t.Fatalf("verified reopen = %#v, verifier = %#v", reopened, verifier)
+	}
+	if _, err := persistent.Load(ctx, testOwnerID, opened.WorkflowID); err != nil {
+		t.Fatalf("original workflow history: %v", err)
+	}
+}
+
 func TestOpenInputForeignExpiredRecoveryDoesNotExposeOwnerState(t *testing.T) {
 	ctx := t.Context()
 	const foreignOwner = "foreign-owner"
@@ -393,6 +431,98 @@ func TestResetIdleInputOnStartupDetachesUncertainInputForLegacyRecovery(t *testi
 	workflowIDs, err := restarted.LegacyRecoveryWorkflowIDs(ctx, testOwnerID)
 	if err != nil || len(workflowIDs) != 1 || workflowIDs[0] != opened.WorkflowID {
 		t.Fatalf("uncertain input legacy recovery workflows = %#v, err=%v", workflowIDs, err)
+	}
+}
+
+func TestOpenInputVerifiesPreInputRecordHistoryWithoutClaimingLegacyWorkflow(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	repo := openActiveInputRecoveryRepository(ctx, t)
+	persistent, err := NewPersistentRepository(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := New(persistent, NewMemoryPrivateResourceStore(), ReleasePreparerFunc{}, WithProcessEpoch("legacy-before-input-records"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = legacy.Shutdown(context.Background()) })
+	source := writeActiveInputRecoverySource(t, "Example.Release.2026-GRP.mkv", "legacy source")
+	otherSource := writeActiveInputRecoverySource(t, "Example.Release.2026-GRP.mkv", "different source with the same tmp basename")
+	for _, path := range []string{source, otherSource} {
+		if err := repo.Save(ctx, db.FileMetadata{
+			Path:       path,
+			Title:      "Example Release",
+			VideoPath:  path,
+			FileList:   []string{path},
+			SourceSize: 123,
+			UpdatedAt:  time.Now().UTC(),
+		}); err != nil {
+			t.Fatalf("save legacy history: %v", err)
+		}
+	}
+	legacyHistory, err := repo.ListHistoryEntries(ctx)
+	if err != nil || len(legacyHistory) != 2 {
+		t.Fatalf("legacy history = %#v, err=%v", legacyHistory, err)
+	}
+	older, err := legacy.Execute(ctx, testOwnerID, CreateWorkflowCommand{SourcePath: source, IdempotencyKey: "legacy-history"})
+	if err != nil {
+		t.Fatalf("create legacy workflow: %v", err)
+	}
+	other, err := legacy.Execute(ctx, testOwnerID, CreateWorkflowCommand{SourcePath: otherSource, IdempotencyKey: "other-legacy-history"})
+	if err != nil {
+		t.Fatalf("create other legacy workflow: %v", err)
+	}
+	if _, err := repo.LoadInputRecord(ctx, source); !errors.Is(err, api.ErrInputRecordNotFound) {
+		t.Fatalf("legacy source input record = %v, want absent", err)
+	}
+	verifier := &hashingActiveInputVerifier{}
+	reopened := newActiveInputRecoveryModule(t, persistent, repo, verifier, &mutableClock{now: time.Now().UTC()}, "after-input-records")
+	input, err := reopened.OpenInput(ctx, testOwnerID, OpenInputRequest{
+		Input: api.PrepareInput{SourcePath: source}, IdempotencyKey: "verified-reopen",
+	})
+	if err != nil {
+		t.Fatalf("reopen legacy source: %v", err)
+	}
+	if verifier.calls != 1 || verifier.lastPath != source || input.SourceVersion != verifier.lastDigest ||
+		input.WorkflowID == older.Workflow.ID || input.WorkflowID == other.Workflow.ID || input.InputID == "" {
+		t.Fatalf("legacy reopen = %#v, verifier = %#v, old workflows = %s, %s", input, verifier, older.Workflow.ID, other.Workflow.ID)
+	}
+	if _, err := persistent.Load(ctx, testOwnerID, older.Workflow.ID); err != nil {
+		t.Fatalf("retained legacy workflow: %v", err)
+	}
+	if _, err := persistent.Load(ctx, testOwnerID, other.Workflow.ID); err != nil {
+		t.Fatalf("retained same-basename workflow: %v", err)
+	}
+	if _, err := repo.LoadInputRecord(ctx, source); err != nil {
+		t.Fatalf("verified input record: %v", err)
+	}
+	currentHistory, err := repo.ListHistoryEntries(ctx)
+	if err != nil || len(currentHistory) != 2 {
+		t.Fatalf("history after verified reopen = %#v, err=%v", currentHistory, err)
+	}
+	historyPaths := map[string]bool{}
+	for _, entry := range currentHistory {
+		historyPaths[entry.SourcePath] = true
+	}
+	if !historyPaths[source] || !historyPaths[otherSource] {
+		t.Fatalf("verified reopen changed legacy history paths: %#v", currentHistory)
+	}
+	if err := os.Remove(otherSource); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reopened.OpenInput(ctx, testOwnerID, OpenInputRequest{
+		ExpectedRevision: input.Revision,
+		Input:            api.PrepareInput{SourcePath: otherSource},
+		IdempotencyKey:   "missing-legacy-source",
+	}); err == nil {
+		t.Fatal("reopened missing legacy source without verification")
+	}
+	if _, err := repo.LoadInputRecord(ctx, otherSource); !errors.Is(err, api.ErrInputRecordNotFound) {
+		t.Fatalf("missing legacy source input record = %v, want absent", err)
+	}
+	if _, err := persistent.Load(ctx, testOwnerID, other.Workflow.ID); err != nil {
+		t.Fatalf("missing-source legacy history was lost: %v", err)
 	}
 }
 

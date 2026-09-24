@@ -42,6 +42,9 @@ func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 	t.Parallel()
 
 	source := UploadSubject{
+		VideoCodec: "AV1",
+		HasEncodeSettings: true,
+		TrackerQuestionnaireAnswers: map[string]map[string]string{"OE": {"source_notes": "Example BluRay source"}},
 		Release: ReleaseInfo{Codec: []string{"H.265"}},
 		ProviderMetadata: SourceScopedMetadata{TMDB: &TMDBMetadata{
 			LocalizedTitles: map[string]string{"en": "Example Release 2026"},
@@ -69,6 +72,13 @@ func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 		},
 	}
 	projected := NewDescriptionSubject(source)
+	if projected.VideoCodec != "AV1" || !projected.HasEncodeSettings || projected.TrackerQuestionnaireAnswers["OE"]["source_notes"] != "Example BluRay source" {
+		t.Fatal("description evidence was not projected")
+	}
+	projected.TrackerQuestionnaireAnswers["OE"]["source_notes"] = "changed"
+	if source.TrackerQuestionnaireAnswers["OE"]["source_notes"] != "Example BluRay source" {
+		t.Fatal("questionnaire evidence shares storage with description subject")
+	}
 	projected.Release.Codec[0] = "changed"
 	projected.ProviderMetadata.TMDB.LocalizedTitles["en"] = "changed"
 	projected.SelectedBDMVPlaylists[0].File = "changed"

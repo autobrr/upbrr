@@ -74,6 +74,10 @@ func (descriptionAssetsTestDefinition) DefaultBaseURL() string {
 
 func (d descriptionAssetsTestDefinition) TrackerFamily() Family { return d.family }
 
+func (d descriptionAssetsTestDefinition) UseGenericDescriptionCleanup() bool {
+	return d.family == FamilyUnit3D
+}
+
 func (descriptionAssetsTestDefinition) Prepare(context.Context, PreparationInput) (TrackerPlan, *PreparationFailure) {
 	return TrackerPlan{}, nil
 }
@@ -1212,14 +1216,62 @@ func TestResolveDescriptionAssetsIgnoresAmbiguousTrackerGroupFallback(t *testing
 	}
 }
 
+func TestResolveDescriptionAssetsPreservesStandaloneMarkup(t *testing.T) {
+	const description = "[center][spoiler=Scene NFO:][code]scene nfo[/code][/spoiler][/center]\n\nBody\n[right]Created by Upload Assistant[/right]"
+	for _, tracker := range []string{"AR", "BHD", "HDB", "PTP", "CUSTOM"} {
+		t.Run(tracker, func(t *testing.T) {
+			registry := NewRegistry()
+			if err := registry.Register(descriptionAssetsTestDefinition{name: tracker, family: FamilyStandalone}); err != nil {
+				t.Fatal(err)
+			}
+			for _, source := range []string{"request", "group", "stored_override", "matching_record", "fallback_record"} {
+				t.Run(source, func(t *testing.T) {
+					meta := api.UploadSubject{}
+					var repo *stubRepo
+					switch source {
+					case "request":
+						meta.DescriptionOverride = description
+					case "group":
+						meta.DescriptionGroups = []api.DescriptionBuilderGroup{{
+							GroupKey:       strings.ToLower(tracker),
+							Trackers:       []string{tracker},
+							RawDescription: description,
+						}}
+					case "stored_override":
+						meta.SourcePath = t.TempDir()
+						repo = &stubRepo{descriptionOverride: description, overrideGroupKey: strings.ToLower(tracker)}
+					case "matching_record":
+						meta.SourcePath = t.TempDir()
+						repo = &stubRepo{trackerRecords: []api.TrackerMetadata{{Tracker: tracker, Description: description}}}
+					case "fallback_record":
+						meta.SourcePath = t.TempDir()
+						repo = &stubRepo{trackerRecords: []api.TrackerMetadata{{Tracker: "AITHER", Description: description}}}
+					}
+					var persistence UploadPersistence
+					if repo != nil {
+						persistence = repo
+					}
+					assets, err := ResolveDescriptionAssets(t.Context(), tracker, meta, persistence, api.NopLogger{}, registry)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if assets.Description != description {
+						t.Fatalf("standalone builder input = %q, want %q", assets.Description, description)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestResolveDescriptionAssetsStripsEmbeddedNFOBlocksFromOverride(t *testing.T) {
 	repo := &stubRepo{
 		descriptionOverride: "[center][spoiler=Scene NFO:][code]scene nfo[/code][/spoiler][/center]\n\nCustom body",
-		overrideGroupKey:    "ant",
+		overrideGroupKey:    "unit3d",
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "ANT", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1386,7 +1438,7 @@ func TestResolveDescriptionAssetsFallbackOtherTrackerDescription(t *testing.T) {
 	}
 }
 
-func TestResolveDescriptionAssetsFallbackSanitizesByRecordTracker(t *testing.T) {
+func TestResolveDescriptionAssetsFallbackSanitizesForDestinationTracker(t *testing.T) {
 	repo := &stubRepo{
 		trackerRecords: []api.TrackerMetadata{
 			{Tracker: "ANT", Description: "[align=right][url=https://github.com/autobrr/upbrr][size=10]upbrr[/size][/url][/align]\n\nBody"},
@@ -1399,7 +1451,7 @@ func TestResolveDescriptionAssetsFallbackSanitizesByRecordTracker(t *testing.T) 
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if assets.Description != "Body" {
-		t.Fatalf("expected fallback description sanitized by source tracker, got %q", assets.Description)
+		t.Fatalf("expected fallback description sanitized for destination tracker, got %q", assets.Description)
 	}
 }
 
@@ -1429,7 +1481,7 @@ func TestResolveDescriptionAssetsStripsEmbeddedNFOBlocksFromTrackerDescriptions(
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "ANT", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1441,6 +1493,24 @@ func TestResolveDescriptionAssetsStripsEmbeddedNFOBlocksFromTrackerDescriptions(
 	}
 }
 
+func TestStripDescriptionSignaturesPreservesTrackerMarkup(t *testing.T) {
+	const body = "[align=left][spoiler=Scene NFO:][code]release notes[/code][/spoiler][/align]\n[right]Personal notes[/right]"
+	for _, signature := range []string{
+		"[right][url=https://github.com/autobrr/upbrr][size=4]Uploaded by upbrr[/size][/url][/right]",
+		"[right]Created by Upload Assistant[/right]",
+		"[center]Powered by Only-Uploader[/center]",
+	} {
+		// The unrecognized plain-text footer remains author-owned content.
+		want := body
+		if signature == "[center]Powered by Only-Uploader[/center]" {
+			want += "\n\n" + signature
+		}
+		if got := StripDescriptionSignatures(body + "\n\n" + signature); got != want {
+			t.Errorf("signature-only cleanup changed tracker markup: %q, want %q", got, want)
+		}
+	}
+}
+
 func TestStripDefaultDescriptionSignature(t *testing.T) {
 	value := "[align=right][url=https://github.com/autobrr/upbrr][size=10]upbrr[/size][/url][/align]\n\nBody"
 	if got := StripDefaultDescriptionSignature(value); got != "Body" {
@@ -1448,7 +1518,7 @@ func TestStripDefaultDescriptionSignature(t *testing.T) {
 	}
 }
 
-func TestResolveDescriptionAssetsStripsDefaultSignatureForNBL(t *testing.T) {
+func TestResolveDescriptionAssetsPreservesDefaultSignatureForStandaloneBuilder(t *testing.T) {
 	repo := &stubRepo{
 		trackerRecords: []api.TrackerMetadata{
 			{Tracker: "NBL", Description: "[align=right][url=https://github.com/autobrr/upbrr][size=10]upbrr[/size][/url][/align]\n\nBody"},
@@ -1460,11 +1530,8 @@ func TestResolveDescriptionAssetsStripsDefaultSignatureForNBL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if strings.Contains(assets.Description, "upbrr") {
-		t.Fatalf("expected default signature removed for NBL, got %q", assets.Description)
-	}
-	if assets.Description != "Body" {
-		t.Fatalf("expected cleaned NBL description, got %q", assets.Description)
+	if assets.Description != repo.trackerRecords[0].Description {
+		t.Fatalf("expected original NBL description for tracker-local cleanup, got %q", assets.Description)
 	}
 }
 
@@ -1511,7 +1578,7 @@ func TestSanitizeTrackerDescriptionKeepsMalformedUNIT3DBoldTags(t *testing.T) {
 	}
 
 	for _, value := range cases {
-		cleaned := sanitizeTrackerDescription("AITHER", value)
+		cleaned := sanitizeTrackerDescription("AITHER", value, descriptionAssetsTestRegistry(t))
 		if !strings.Contains(cleaned, "UNIT3D") {
 			t.Fatalf("expected malformed UNIT3D bold tag to remain, got %q", cleaned)
 		}

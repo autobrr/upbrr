@@ -33,6 +33,7 @@ func buildDescription(meta api.UploadSubject, trackerConfig config.TrackerConfig
 		return baseDescription
 	}
 	if baseDescription != "" {
+		baseDescription = trackers.StripDescriptionSignatures(baseDescription)
 		report := CleanDescription(baseDescription, meta.DiscType)
 		baseDescription = strings.TrimSpace(report.Description)
 	}

@@ -548,6 +548,7 @@ func (s *Service) Delete(ctx context.Context, meta api.DVDMenuSubject, imagePath
 }
 
 // Capability reports path-free engine metadata and FFmpeg dvdvideo support.
+// The detected FFmpeg version remains available when DVD support is incompatible.
 // Successful probes are cached until the resolved executable identity changes.
 func (s *Service) Capability(ctx context.Context) (api.DVDMenuEngineInfo, error) {
 	_, _, info, err := s.resolveCapability(ctx)
@@ -590,6 +591,7 @@ func (s *Service) resolveCapability(ctx context.Context) (string, render.Capabil
 	s.logger.Debugf("DVD menus: FFmpeg capability probe started")
 	capability, err := render.Probe(ctx, s.runner, executable)
 	if err != nil {
+		info = engineInfo(capability)
 		info.MissingFFmpegOptions = missingFFmpegOptions(err)
 		s.logger.Debugf("DVD menus: FFmpeg capability incompatible missing_options=%d", len(info.MissingFFmpegOptions))
 		return "", render.Capability{}, info, fmt.Errorf("DVD menus: FFmpeg capability: %w", err)

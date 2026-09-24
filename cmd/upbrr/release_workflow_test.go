@@ -250,6 +250,77 @@ func TestCLIDoesNotReleasePreexistingInputAfterInitialContinuation(t *testing.T)
 	}
 }
 
+func TestCLIClaimsFreshInputAfterPreviousProcessRecovery(t *testing.T) {
+	core := &cliWorkflowCoreFake{activeInput: api.ActiveInputSnapshot{State: api.ActiveInputRecovering, Revision: 5}}
+	core.continueFn = func(api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) {
+		core.activeInput = api.ActiveInputSnapshot{
+			State:    api.ActiveInputActive,
+			Revision: 9,
+			Current:  &api.ReleaseWorkflowCurrent{Workflow: api.ReleaseWorkflow{ID: "workflow-new"}},
+		}
+		return releaseworkflow.CommandResult{Workflow: api.ReleaseWorkflow{ID: "workflow-new"}}, nil
+	}
+	session := &cliWorkflowSession{core: core, logger: api.NopLogger{}}
+	if err := session.executeContinuation(t.Context(), api.ContinueReleaseWorkflowRequest{IdempotencyKey: "initial", Goal: api.WorkflowGoalInputReady}); err != nil {
+		t.Fatal(err)
+	}
+	if session.inputClaim.workflowID != "workflow-new" || session.inputClaim.revision != 9 {
+		t.Fatalf("fresh input cleanup claim = %#v", session.inputClaim)
+	}
+	session.releaseActiveInput(t.Context())
+	if len(core.releaseRequests) != 1 || core.releaseRequests[0].ExpectedRevision != 9 {
+		t.Fatalf("fresh input cleanup = %#v", core.releaseRequests)
+	}
+}
+
+func TestCLIDoesNotClaimRestoredPriorInputAfterFailedOpen(t *testing.T) {
+	core := &cliWorkflowCoreFake{activeInput: api.ActiveInputSnapshot{State: api.ActiveInputRecovering, Revision: 5}}
+	core.continueFn = func(api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) {
+		// Recovery advances the revision twice, and a failed reserved open can
+		// roll back to the previous workflow at revision 9.
+		core.activeInput = api.ActiveInputSnapshot{
+			State:    api.ActiveInputActive,
+			Revision: 9,
+			Current:  &api.ReleaseWorkflowCurrent{Workflow: api.ReleaseWorkflow{ID: "workflow-old"}},
+		}
+		return releaseworkflow.CommandResult{}, errors.New("synthetic verifier failure")
+	}
+	session := &cliWorkflowSession{core: core, logger: api.NopLogger{}}
+	if err := session.executeContinuation(t.Context(), api.ContinueReleaseWorkflowRequest{IdempotencyKey: "initial", Goal: api.WorkflowGoalInputReady}); err == nil {
+		t.Fatal("expected failed open")
+	}
+	if session.inputClaim.workflowID != "" {
+		t.Fatalf("restored prior input became cleanup claim %#v", session.inputClaim)
+	}
+	session.releaseActiveInput(t.Context())
+	if len(core.releaseRequests) != 0 {
+		t.Fatalf("released restored prior input %#v", core.releaseRequests)
+	}
+}
+
+func TestCLIReleasesCommittedInputAfterPreviousProcessPostOpenFailure(t *testing.T) {
+	core := &cliWorkflowCoreFake{activeInput: api.ActiveInputSnapshot{State: api.ActiveInputRecovering, Revision: 5}}
+	core.continueFn = func(api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) {
+		core.activeInput = api.ActiveInputSnapshot{
+			State:    api.ActiveInputActive,
+			Revision: 9,
+			Current:  &api.ReleaseWorkflowCurrent{Workflow: api.ReleaseWorkflow{ID: "workflow-new"}},
+		}
+		return releaseworkflow.CommandResult{Workflow: api.ReleaseWorkflow{ID: "workflow-new"}}, errors.New("synthetic post-open failure")
+	}
+	session := &cliWorkflowSession{core: core, logger: api.NopLogger{}}
+	if err := session.executeContinuation(t.Context(), api.ContinueReleaseWorkflowRequest{IdempotencyKey: "initial", Goal: api.WorkflowGoalInputReady}); err == nil {
+		t.Fatal("expected post-open failure")
+	}
+	if session.inputClaim.workflowID != "workflow-new" || session.inputClaim.revision != 9 {
+		t.Fatalf("post-open cleanup claim = %#v", session.inputClaim)
+	}
+	session.releaseActiveInput(t.Context())
+	if len(core.releaseRequests) != 1 || core.releaseRequests[0].ExpectedRevision != 9 {
+		t.Fatalf("post-open cleanup = %#v", core.releaseRequests)
+	}
+}
+
 func (f *cliWorkflowCoreFake) LiveTestEnabled() bool { return f.liveTest }
 
 func (f *cliWorkflowCoreFake) GetInputHistory(context.Context, string) (api.InputHistory, error) {
@@ -1642,7 +1713,7 @@ func TestCLIInputOnlyReportsReadiness(t *testing.T) {
 }
 
 func TestCLITrackerInputPreservesSetAndAutoIntent(t *testing.T) {
-	for _, value := range []string{"yes", "no", "auto"} {
+	for _, value := range []string{"yes", "no", "auto", "Source: Example WEB-DL; HDR10"} {
 		t.Run(value, func(t *testing.T) {
 			current := releaseworkflow.CommandResult{Workflow: api.ReleaseWorkflow{ID: "workflow-1", Revision: 1}}
 			coreSvc := &cliWorkflowCoreFake{current: current}
@@ -1650,16 +1721,16 @@ func TestCLITrackerInputPreservesSetAndAutoIntent(t *testing.T) {
 			session := &cliWorkflowSession{
 				core:          coreSvc,
 				current:       current,
-				uploadRequest: api.Request{Trackers: []string{"PTP"}},
+				uploadRequest: api.Request{Trackers: []string{"OE"}},
 			}
-			if err := applyCLITrackerInput(t.Context(), session, []string{"PTP:no_english_subtitles=" + value}); err != nil {
+			if err := applyCLITrackerInput(t.Context(), session, []string{"OE:source_notes=" + value}); err != nil {
 				t.Fatal(err)
 			}
 			if len(coreSvc.continuations) != 1 {
 				t.Fatalf("continuations = %d", len(coreSvc.continuations))
 			}
 			request := coreSvc.continuations[0]
-			answer, exists := request.Intent.TrackerInputAnswers["PTP"]["no_english_subtitles"]
+			answer, exists := request.Intent.TrackerInputAnswers["OE"]["source_notes"]
 			if !exists || (value == "auto" && answer != nil) || (value != "auto" && (answer == nil || *answer != value)) {
 				t.Fatalf("answer patch = %#v", request.Intent.TrackerInputAnswers)
 			}

@@ -454,6 +454,22 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 	}
 
 	applySeasonEpisodeMetadata(&meta, seasonep.Extract(primary, meta), s.logger)
+	if discType == "" && meta.TVPack {
+		// Select before MediaInfo so timing and all screenshot paths use the
+		// same first episode, even with unpadded numbers or differing prefixes.
+		var first api.ReleaseInfo
+		for _, file := range meta.FileList {
+			candidate := ParseReleaseInfo(file)
+			if candidate.Episode <= 0 || meta.SeasonInt > 0 && candidate.Season != meta.SeasonInt {
+				continue
+			}
+			if first.Episode == 0 || candidate.Season < first.Season || candidate.Season == first.Season && candidate.Episode < first.Episode {
+				first = candidate
+				meta.VideoPath = file
+			}
+		}
+		s.logger.Debugf("metadata: TV pack media source selected path=%s season=%d episode=%d", meta.VideoPath, first.Season, first.Episode)
+	}
 	release := ParseReleaseInfo(primary)
 	meta.Release = release
 

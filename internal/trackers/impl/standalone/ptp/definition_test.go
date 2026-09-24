@@ -43,6 +43,18 @@ func (d *Definition) submit(ctx context.Context, input trackers.PreparationInput
 	return uploadAt(ctx, input, d.baseURL)
 }
 
+func TestBuildDescriptionRemovesImportedUpbrrSignature(t *testing.T) {
+	const original = "Release notes\n[right][url=https://github.com/autobrr/upbrr][size=4]Uploaded by upbrr[/size][/url][/right]"
+	got := buildDescription(api.UploadSubject{}, config.TrackerConfig{}, config.Config{}, trackers.DescriptionAssets{Description: original})
+	if got != "Release notes" {
+		t.Fatalf("unexpected cleaned description: %q", got)
+	}
+	got = buildDescription(api.UploadSubject{}, config.TrackerConfig{}, config.Config{}, trackers.DescriptionAssets{Description: original, Final: true})
+	if got != original {
+		t.Fatalf("reviewed description changed: %q", got)
+	}
+}
+
 func TestDefinitionBuildDescriptionUsesPTPGroup(t *testing.T) {
 	result, err := prepareDescription(context.Background(), trackers.PreparationInput{
 		Tracker: "PTP",

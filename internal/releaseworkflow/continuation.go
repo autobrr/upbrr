@@ -221,8 +221,88 @@ func projectTrackerLaneOutcomes(current CommandResult) []api.TrackerLaneOutcome 
 		}
 	}
 
+	applyLaneUploadEligibility(lanes, index, current)
 	applyOperationItems(lanes, index, current.Operation)
 	return lanes
+}
+
+// applyLaneUploadEligibility records the retained downstream decision for every
+// lane so adapters render the exact upload set instead of deriving it from
+// duplicate, approval, media, or description evidence.
+func applyLaneUploadEligibility(
+	lanes []api.TrackerLaneOutcome,
+	index map[api.TrackerID]int,
+	current CommandResult,
+) {
+	if current.Projections == nil {
+		return
+	}
+	dupeByTracker := make(map[api.TrackerID]api.TrackerDupeAssessment)
+	if current.Dupes != nil {
+		for _, result := range current.Dupes.Results {
+			dupeByTracker[result.TrackerID] = result
+		}
+	}
+	descriptionByTracker := make(map[api.TrackerID]api.DescriptionTrackerResult)
+	if current.Descriptions != nil {
+		descriptionByTracker = DescriptionResultsByTracker(*current.Descriptions)
+	}
+	dryRunByTracker := make(map[api.TrackerID]api.TrackerDryRunReport)
+	if current.DryRun != nil {
+		for _, report := range current.DryRun.Reports {
+			dryRunByTracker[report.TrackerID] = report
+		}
+	}
+	for _, projection := range current.Projections.Projections {
+		lane := trackerLane(lanes, index, projection.TrackerID)
+		if lane == nil {
+			continue
+		}
+		dupe, hasDupe := dupeByTracker[projection.TrackerID]
+		eligibility, reason := ProjectionDownstreamEligibility(projection, dupe, hasDupe)
+		if eligibility == api.UploadEligibilityEligible {
+			eligibility, reason = downstreamStageEligibility(current, projection, descriptionByTracker, dryRunByTracker)
+		}
+		lane.UploadEligibility = eligibility
+		lane.UploadSkipReason = reason
+		if reason == api.UploadSkipReasonNotReady {
+			lane.UploadSkipDetail = TrackerBlockingPolicyMessage(projection)
+		}
+	}
+}
+
+// downstreamStageEligibility applies the approval, media, description, and
+// dry-run exclusions that later stages add to an otherwise eligible tracker.
+// Each stage mirrors the decision the upload plan makes for the same evidence,
+// so the rendered label never promises an upload the backend blocks.
+func downstreamStageEligibility(
+	current CommandResult,
+	projection api.TrackerReleaseProjection,
+	descriptionByTracker map[api.TrackerID]api.DescriptionTrackerResult,
+	dryRunByTracker map[api.TrackerID]api.TrackerDryRunReport,
+) (api.UploadEligibility, api.UploadSkipReason) {
+	if current.TrackerApproval != nil &&
+		!slices.Contains(current.TrackerApproval.ApprovedTrackerIDs, projection.TrackerID) {
+		return api.UploadEligibilitySkipped, api.UploadSkipReasonTrackerNotApprovedInGate
+	}
+	if current.Media != nil {
+		if _, failed := TrackerImageHostFailure(*current.Media, projection.TrackerID); failed {
+			return api.UploadEligibilitySkipped, api.UploadSkipReasonImageHostingFailed
+		}
+	}
+	if current.Descriptions != nil {
+		result, hasResult := descriptionByTracker[projection.TrackerID]
+		if eligibility, reason := TrackerDescriptionEligibility(projection, result, hasResult); eligibility != api.UploadEligibilityEligible {
+			return eligibility, reason
+		}
+	}
+	if current.DryRun != nil {
+		report, hasReport := dryRunByTracker[projection.TrackerID]
+		if eligibility, reason := TrackerDryRunEligibility(report, hasReport); eligibility != api.UploadEligibilityEligible {
+			return eligibility, reason
+		}
+	}
+	return api.UploadEligibilityEligible, ""
 }
 
 func exactRefs(workflow api.ReleaseWorkflow) api.WorkflowExactRefs {

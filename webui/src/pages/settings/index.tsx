@@ -17,6 +17,7 @@ import type {
   TrackerAuthCapability,
   TrackerAuthStatus,
 } from "../../types";
+import { formatApplicationVersion } from "../../utils/applicationInfo";
 import APITokensSettings from "./api_tokens";
 
 type SettingsSection = { key: string; jsonKey: string; label: string };
@@ -584,6 +585,7 @@ export default function SettingsPage(props: Props) {
         Math.max(0, Math.floor((uptimeTick - applicationInfoFetchedAt) / 1000))
       : 0;
   const uptimeValue = applicationInfo ? formatApplicationUptime(uptimeSeconds) : "";
+  const applicationVersion = applicationInfo ? formatApplicationVersion(applicationInfo) : "";
   const applicationDetailsPanel = (
     <div className="settings-subgroup settings-subgroup--application">
       <p className="helper">
@@ -609,9 +611,7 @@ export default function SettingsPage(props: Props) {
           <>
             <div className="settings-detail-card">
               <p className="settings-detail-card__label">Version</p>
-              <p className="settings-detail-card__value mono">
-                {applicationInfo.version || "Unavailable"}
-              </p>
+              <p className="settings-detail-card__value mono">{applicationVersion}</p>
             </div>
             <div className="settings-detail-card">
               <p className="settings-detail-card__label">Build</p>
@@ -658,6 +658,26 @@ export default function SettingsPage(props: Props) {
                 {uptimeValue || applicationInfo.uptime}
               </p>
             </div>
+            {applicationInfo.dependencies.length > 0 ? (
+              <div className="settings-detail-card col-span-full">
+                <p className="settings-detail-card__label">Autobrr dependencies</p>
+                <div className="mt-2 grid">
+                  {applicationInfo.dependencies.map((dependency) => (
+                    <div
+                      className="grid gap-1 border-t border-white/10 py-2 first:border-t-0 first:pt-0 last:pb-0 min-[720px]:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] min-[720px]:items-baseline"
+                      key={dependency.path}
+                    >
+                      <p className="settings-detail-card__value mono" title={dependency.path}>
+                        {dependency.path.replace(/^github\.com\/autobrr\//, "")}
+                      </p>
+                      <p className="mono break-words min-[720px]:text-right">
+                        {dependency.version}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </>
         ) : null}
       </div>

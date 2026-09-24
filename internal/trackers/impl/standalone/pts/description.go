@@ -18,6 +18,7 @@ func buildDescription(meta api.UploadSubject, assets trackers.DescriptionAssets)
 	if assets.Final {
 		return strings.TrimSpace(assets.Description)
 	}
+	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
 	parts := make([]string, 0, 4)
 	if info := commonhttp.ReadOptionalFile(strings.TrimSpace(meta.MediaInfoTextPath)); strings.TrimSpace(info) != "" {
 		parts = append(parts, info)

@@ -20,6 +20,7 @@ import (
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/livetest"
 	"github.com/autobrr/upbrr/internal/logging"
+	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -106,22 +107,56 @@ type runtimeCookiePersistenceError struct {
 	err error
 }
 
-// initializeRuntimeConfigActivation binds a runtime built from an existing
-// config store to the durable generation before Core admits any effects.
-func initializeRuntimeConfigActivation(
+type storedConfigSnapshot struct {
+	payload json.RawMessage
+	dbPath  string
+}
+
+func (s storedConfigSnapshot) LoadFullConfig(_ context.Context, dest any) error {
+	if err := json.Unmarshal(s.payload, dest); err != nil {
+		return fmt.Errorf("decode stored config snapshot: %w", err)
+	}
+	return nil
+}
+
+func (s storedConfigSnapshot) DBPath() string { return s.dbPath }
+
+// InitializeRuntimeConfigActivation binds a validated startup config to the
+// durable generation before CLI or WebUI Core admits effects. A changed
+// fingerprint advances the generation only while the stored config matches the
+// caller's runtime and unfinished work can be invalidated safely.
+func InitializeRuntimeConfigActivation(
 	ctx context.Context, repo *db.SQLiteRepository, runtimeCfg config.Config,
 ) (api.ConfigActivation, error) {
 	if repo == nil {
 		return api.ConfigActivation{}, errors.New("runtime activation: repository is required")
 	}
+	if err := runtimeCfg.Validate(); err != nil {
+		return api.ConfigActivation{}, fmt.Errorf("validate runtime config: %w", err)
+	}
 	fingerprint, err := config.EffectiveConfigFingerprint(runtimeCfg)
 	if err != nil {
 		return api.ConfigActivation{}, fmt.Errorf("fingerprint runtime config: %w", err)
 	}
-	stored, err := config.LoadFromDatabase(ctx, repo)
-	if err == nil {
+	var sections map[string]json.RawMessage
+	var snapshot json.RawMessage
+	err = repo.LoadFullConfig(ctx, &sections)
+	switch {
+	case err == nil:
+		payload, marshalErr := json.Marshal(sections)
+		if marshalErr != nil {
+			return api.ConfigActivation{}, fmt.Errorf("snapshot durable config: %w", marshalErr)
+		}
+		snapshot = payload
+		stored, loadErr := config.LoadFromDatabase(ctx, storedConfigSnapshot{payload: snapshot, dbPath: repo.DBPath()})
+		if loadErr != nil {
+			return api.ConfigActivation{}, fmt.Errorf("load durable config: %w", loadErr)
+		}
 		config.ApplyEnvOverrides(stored)
 		stored.MainSettings.DBPath = repo.DBPath()
+		if err := stored.Validate(); err != nil {
+			return api.ConfigActivation{}, fmt.Errorf("validate durable config: %w", err)
+		}
 		storedFingerprint, fingerprintErr := config.EffectiveConfigFingerprint(*stored)
 		if fingerprintErr != nil {
 			return api.ConfigActivation{}, fmt.Errorf("fingerprint durable config: %w", fingerprintErr)
@@ -129,10 +164,23 @@ func initializeRuntimeConfigActivation(
 		if storedFingerprint != fingerprint {
 			return api.ConfigActivation{}, api.ErrConfigActivationChanged
 		}
-	} else if !errors.Is(err, internalerrors.ErrNotFound) {
+	case errors.Is(err, internalerrors.ErrNotFound):
+		snapshot = json.RawMessage(`{}`)
+	default:
 		return api.ConfigActivation{}, fmt.Errorf("load durable config: %w", err)
 	}
-	activation, err := repo.InitializeConfigActivationFingerprint(ctx, fingerprint)
+	activation, err := repo.LoadConfigActivation(ctx)
+	if err != nil {
+		return api.ConfigActivation{}, fmt.Errorf("load config activation: %w", err)
+	}
+	if activation.Fingerprint != "" && activation.Fingerprint != fingerprint {
+		reconciled, reconcileErr := repo.ReconcileConfigActivation(ctx, snapshot, activation, fingerprint, releaseworkflow.ApplyConfigImpact)
+		if reconcileErr != nil {
+			return api.ConfigActivation{}, fmt.Errorf("reconcile runtime config activation: %w", reconcileErr)
+		}
+		return reconciled, nil
+	}
+	activation, err = repo.InitializeConfigActivationFingerprint(ctx, fingerprint)
 	if err != nil {
 		return api.ConfigActivation{}, fmt.Errorf("initialize runtime config activation fingerprint: %w", err)
 	}
@@ -414,13 +462,13 @@ func (a *RuntimeActivator) activateResultLocked(
 	if activation.Status == api.ConfigActivationPending && pendingActivationID == "" {
 		return activation, &api.ConfigActivationPendingError{Activation: activation}
 	}
-	if !storedChanged && !effectiveChanged {
+	if pendingActivationID == "" && !storedChanged && !effectiveChanged {
 		if activation.Status == api.ConfigActivationFailed {
 			return a.clearFailedActivation(ctx, activation)
 		}
 		return activation, nil
 	}
-	if !effectiveChanged {
+	if pendingActivationID == "" && !effectiveChanged {
 		if err := a.persistStored(ctx, stored, nil); err != nil {
 			return api.ConfigActivation{}, err
 		}

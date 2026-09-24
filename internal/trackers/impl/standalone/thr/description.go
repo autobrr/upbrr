@@ -17,6 +17,7 @@ func buildDescription(meta api.UploadSubject, assets trackers.DescriptionAssets)
 	if assets.Final {
 		return strings.TrimSpace(assets.Description)
 	}
+	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
 	parts := []string{
 		"[quote=Info]",
 		"Name: " + strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName)),

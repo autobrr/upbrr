@@ -5,6 +5,7 @@ package releaseworkflow
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync/atomic"
 	"testing"
@@ -104,6 +105,31 @@ func TestOperationConvergesCompletedCheckpointAfterRepeatedPublicationFailures(t
 	}
 	if !workflowOperationActive(stored.Status.Status) {
 		t.Fatalf("operation before lazy convergence = %#v, want active", stored.Status)
+	}
+	work, err := repository.LoadWork(t.Context(), testOwnerID, created.Workflow.ID, operation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checkpoint api.WorkflowOperationStatus
+	if err := json.Unmarshal(work.Checkpoint, &checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	// Refreshing the receipt must not permit a checkpoint that skips
+	// the current receipt, even when the caller's snapshot is stale.
+	checkpoint.Sequence++
+	if err := module.publishCompletedOperationCheckpoint(t.Context(), stored, checkpoint); err == nil {
+		t.Fatal("accepted a checkpoint that skips the current operation sequence")
+	}
+	if stored.Status.Sequence < 2 {
+		t.Fatalf("operation sequence before lazy convergence = %d, want at least 2", stored.Status.Sequence)
+	}
+	// A poll can read the queued receipt before the worker advances to running
+	// and persists its terminal checkpoint. Reproduce that interleaving without
+	// depending on scheduler timing.
+	stale := stored
+	stale.Status = operation
+	if converged, err := module.convergeCompletedOperationCheckpoint(t.Context(), stale); err != nil || !converged {
+		t.Fatalf("converge using stale queued receipt: converged=%t err=%v", converged, err)
 	}
 
 	status, err := module.Operation(t.Context(), testOwnerID, created.Workflow.ID, operation.ID)

@@ -26,6 +26,30 @@ func (d *Definition) submit(ctx context.Context, input trackers.PreparationInput
 	return uploadAt(ctx, input, d.baseURL, d.httpClient)
 }
 
+func TestBuildDescriptionRemovesKnownSignatures(t *testing.T) {
+	for _, footer := range []string{"[right]Created by Upload Assistant[/right]", "[img]https://files.catbox.moe/5izwmx.svg[/img]"} {
+		for _, notes := range []string{"", "[b]Release notes[/b]\n"} {
+			input := notes + footer
+			for _, final := range []bool{false, true} {
+				result, err := prepareDescription(t.Context(), trackers.PreparationInput{
+					Assets: &trackers.DescriptionAssets{Description: input, Final: final},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				got := result.Description
+				if final {
+					if got != input {
+						t.Fatalf("final description changed: %q", got)
+					}
+				} else if strings.Contains(got, "Upload Assistant") || strings.Contains(got, "5izwmx.svg") || notes != "" && !strings.Contains(got, "[b]Release notes[/b]") {
+					t.Fatalf("unexpected cleaned description %q", got)
+				}
+			}
+		}
+	}
+}
+
 func TestDefinitionBuildDescriptionUsesHDBGroup(t *testing.T) {
 	result, err := prepareDescription(context.Background(), trackers.PreparationInput{
 		Tracker: "HDB",

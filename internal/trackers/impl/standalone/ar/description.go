@@ -17,6 +17,7 @@ func buildDescription(meta api.UploadSubject, dbPath string, assets trackers.Des
 	if assets.Final {
 		return strings.TrimSpace(assets.Description)
 	}
+	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
 
 	var parts []string
 	title := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.ReleaseName), strings.TrimSpace(meta.Release.Title), pathutil.Base(meta.SourcePath))

@@ -1742,6 +1742,8 @@ func completedOperationCheckpoint(
 
 // convergeCompletedOperationCheckpoint publishes a terminal durable checkpoint
 // left behind by a transient operation-record write failure in this process.
+// It accepts a stale receipt and returns true when the caller must reload it.
+// Incomplete durable work returns without acquiring the completion lock.
 func (m *Module) convergeCompletedOperationCheckpoint(
 	ctx context.Context,
 	record api.ReleaseWorkflowOperationRecord,
@@ -1759,11 +1761,24 @@ func (m *Module) convergeCompletedOperationCheckpoint(
 	if work.CompletedAt == nil {
 		return false, nil
 	}
-	checkpoint, err := completedOperationCheckpoint(record, work)
+	lock := m.operationLock(record.OperationID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	// A completed checkpoint is immutable, but polling may have loaded the
+	// receipt before the worker advanced it. Reload under the completion lock.
+	current, err := m.operations.LoadOperation(ctx, record.OwnerID, record.WorkflowID, record.OperationID)
+	if err != nil {
+		return false, fmt.Errorf("release workflow reload operation for checkpoint convergence: %w", err)
+	}
+	if !workflowOperationActive(current.Status.Status) {
+		return true, nil
+	}
+	checkpoint, err := completedOperationCheckpoint(current, work)
 	if err != nil {
 		return false, err
 	}
-	if err := m.publishCompletedOperationCheckpoint(ctx, record, checkpoint); err != nil {
+	if err := m.publishCompletedOperationCheckpointLocked(ctx, current, checkpoint); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -1782,6 +1797,16 @@ func (m *Module) publishCompletedOperationCheckpoint(
 	if err != nil {
 		return fmt.Errorf("release workflow load completed operation checkpoint: %w", err)
 	}
+	return m.publishCompletedOperationCheckpointLocked(ctx, current, checkpoint)
+}
+
+// publishCompletedOperationCheckpointLocked requires the operation lock so the
+// checkpoint sequence is checked against the current operation record.
+func (m *Module) publishCompletedOperationCheckpointLocked(
+	ctx context.Context,
+	current api.ReleaseWorkflowOperationRecord,
+	checkpoint api.WorkflowOperationStatus,
+) error {
 	if !workflowOperationActive(current.Status.Status) {
 		m.private.Delete(current.OwnerID, current.WorkflowID, operationCommandResourceID(current.OperationID))
 		return nil
@@ -7505,7 +7530,8 @@ func completeUploadExecutionResults(
 }
 
 // validateUploadExecutionTrackerIDs selects ready, eligible trackers from the retained plan.
-// An empty request selects all; explicit skipped trackers are ignored, while other invalid or duplicate IDs reject the request.
+// An empty request selects all. A fully skipped plan is a valid no-op; a plan with no ready lane is rejected.
+// Explicit skipped trackers are ignored, while other invalid or duplicate IDs reject the request.
 func validateUploadExecutionTrackerIDs(
 	trackers []api.UploadPlanTracker,
 	requested []api.TrackerID,
@@ -7518,6 +7544,9 @@ func validateUploadExecutionTrackerIDs(
 		} else if tracker.Status == api.StageStatusSkipped {
 			skipped[tracker.TrackerID] = struct{}{}
 		}
+	}
+	if len(eligible) == 0 && (len(trackers) == 0 || len(skipped) != len(trackers)) {
+		return nil, fmt.Errorf("%w: retained upload plan has no eligible trackers", ErrInvalidTransition)
 	}
 	if len(requested) == 0 {
 		selected := make([]api.TrackerID, 0, len(eligible))

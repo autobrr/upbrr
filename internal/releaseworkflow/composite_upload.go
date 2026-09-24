@@ -259,7 +259,8 @@ func (m *Module) startUpload(
 		return current, nil
 	}
 	if current.Workflow.Status == api.WorkflowStatusCompleted || current.UploadResult != nil ||
-		(session.Goal == api.WorkflowGoalDryRun && current.DryRun != nil) {
+		(session.Goal == api.WorkflowGoalDryRun &&
+			dryRunGoalSatisfied(current.DryRun, session.Intent.NoSeed, session.Intent.UploadTrackerIDs)) {
 		return current, nil
 	}
 	if err := m.ensureCompositeUploadMediaInputs(
@@ -967,11 +968,24 @@ func (m *Module) runCompositeUpload(
 		if err != nil {
 			return CommandResult{}, err
 		}
-		if compositeUploadGoalReached(current, session) {
+		if compositeUploadGoalReached(current, session, command.ExpectedRevision) {
 			if err := m.finishCompositeSession(ctx, ownerID, command.WorkflowID, operationID, "goal_reached"); err != nil {
 				return CommandResult{}, err
 			}
 			return m.Current(ctx, ownerID, command.WorkflowID)
+		}
+		if session.Goal == api.WorkflowGoalUploaded && current.DryRun != nil &&
+			current.DryRun.Revision > command.ExpectedRevision && current.DryRun.Status == api.StageStatusFailed &&
+			dryRunMatchesIntent(current.DryRun, session.Intent.NoSeed, session.Intent.UploadTrackerIDs) {
+			if err := m.finishCompositeSession(ctx, ownerID, command.WorkflowID, operationID, "dry_run_failed"); err != nil {
+				return CommandResult{}, err
+			}
+			return CommandResult{}, api.NewOperationError(api.OperationFailure{
+				Code:      api.OperationFailureMissingPreparedTracker,
+				Operation: api.OperationKindUploadExecute,
+				Message:   "The dry run did not prepare any tracker for upload. Review its failures and retry.",
+				Recovery:  api.OperationRecoveryReviewAgain,
+			}, ErrInvalidTransition)
 		}
 		if compositeUploadAllTrackersRemoved(current, session) {
 			if err := m.finishCompositeSession(ctx, ownerID, command.WorkflowID, operationID, "no_trackers_remaining"); err != nil {
@@ -1042,7 +1056,7 @@ func (m *Module) runCompositeUpload(
 			}
 			continue
 		}
-		next, stage := m.planContinuationCommand(request, current, m.clock.Now().UTC())
+		next, stage := m.planContinuationCommand(request, current, m.clock.Now().UTC(), command.ExpectedRevision+1)
 		if next == nil {
 			if stage == "no-eligible-trackers" {
 				failure := compositeNoEligibleTrackersFailure(current, command.operationKind())
@@ -1194,14 +1208,15 @@ func (m *Module) currentCompositeUpload(
 	return current, state.Composite, state.PreparationDemand, nil
 }
 
-func compositeUploadGoalReached(current CommandResult, session *compositeUploadSession) bool {
+func compositeUploadGoalReached(current CommandResult, session *compositeUploadSession, startedAt api.WorkflowRevision) bool {
 	if current.Workflow.AllSelectedTrackersAlreadyUploaded() &&
 		len(withoutConfirmedSubmissions(session.Intent.TrackerIDs, current.Workflow.SubmissionExclusions)) == 0 {
 		return true
 	}
 	switch session.Goal {
 	case api.WorkflowGoalDryRun:
-		return current.DryRun != nil
+		return current.DryRun != nil && current.DryRun.Revision > startedAt &&
+			dryRunMatchesIntent(current.DryRun, session.Intent.NoSeed, session.Intent.UploadTrackerIDs)
 	case api.WorkflowGoalUploaded:
 		return current.UploadResult != nil
 	case api.WorkflowGoalPrepared,

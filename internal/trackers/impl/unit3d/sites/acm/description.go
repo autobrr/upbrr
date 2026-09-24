@@ -13,6 +13,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -22,20 +23,18 @@ func buildACMDescription(
 	ctx context.Context,
 	meta api.UploadSubject,
 	appConfig config.Config,
-	trackerConfig config.TrackerConfig,
+	_ config.TrackerConfig,
 	logger api.Logger,
 	keptDescription string,
 	menuImages []api.ScreenshotImage,
 	screenshots []api.ScreenshotImage,
 ) (string, error) {
-	base := acmSceneNFOPattern.ReplaceAllString(strings.TrimSpace(keptDescription), "")
-	base = strings.ReplaceAll(base, "\r\n", "\n")
-	base = strings.ReplaceAll(base, "[pre]", "[code]")
-	base = strings.ReplaceAll(base, "[/pre]", "[/code]")
-	base = strings.ReplaceAll(base, "[hide", "[spoiler")
-	base = strings.ReplaceAll(base, "[/hide]", "[/spoiler]")
-	base = convertACMComparisonToCollapse(base, 1000)
-	base = strings.ReplaceAll(base, "[img]", "[img=300]")
+	if len(screenshots) > 0 {
+		keptDescription = descriptionunit3d.StripScreenshotBlocks(keptDescription)
+		meta.DescriptionTemplate = descriptionunit3d.StripScreenshotBlocks(meta.DescriptionTemplate)
+	}
+	base := prepareACMText(keptDescription)
+	meta.DescriptionTemplate = prepareACMText(meta.DescriptionTemplate)
 	base = descriptionunit3d.AppendDVDVOBMediaInfoBlock(base, api.NewDescriptionSubject(meta))
 
 	cfg := appConfig
@@ -57,11 +56,10 @@ func buildACMDescription(
 		base = strings.TrimSpace(strings.Join([]string{header, base}, "\n"))
 	}
 
-	value, err := descriptionunit3d.BuildDescription(
+	value, err := descriptionunit3d.ComposeDescription(
 		ctx,
 		api.NewDescriptionSubject(meta),
 		cfg,
-		trackerConfig,
 		logger,
 		base,
 		menuImages,
@@ -71,6 +69,17 @@ func buildACMDescription(
 		return "", fmt.Errorf("trackers: %w", err)
 	}
 	return value, nil
+}
+
+func prepareACMText(value string) string {
+	value = acmSceneNFOPattern.ReplaceAllString(trackers.StripDescriptionSignatures(value), "")
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	value = strings.ReplaceAll(value, "[pre]", "[code]")
+	value = strings.ReplaceAll(value, "[/pre]", "[/code]")
+	value = strings.ReplaceAll(value, "[hide", "[spoiler")
+	value = strings.ReplaceAll(value, "[/hide]", "[/spoiler]")
+	value = convertACMComparisonToCollapse(value, 1000)
+	return strings.ReplaceAll(value, "[img]", "[img=300]")
 }
 
 // convertACMComparisonToCollapse rewrites UNIT3D comparison blocks into ACM

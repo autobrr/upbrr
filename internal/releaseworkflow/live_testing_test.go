@@ -4,6 +4,7 @@
 package releaseworkflow
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -142,7 +143,7 @@ func TestLiveTestCompositeUploadDurableReplayRejectsMutationRetries(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	blocked := waitCompositeUploadTestOperation(t, first, started)
+	blocked := waitLiveTestCompositeUploadOperation(t, first, started)
 	action := pendingCompositeTrackerApproval(t, blocked)
 	feedback := api.ReleaseWorkflowUploadFeedback{
 		Action: api.ReleaseWorkflowUploadActionIdentity{ID: action.ID, WorkflowRevision: blocked.Workflow.Revision},
@@ -156,7 +157,7 @@ func TestLiveTestCompositeUploadDurableReplayRejectsMutationRetries(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	completed := waitCompositeUploadTestOperation(t, first, resumed)
+	completed := waitLiveTestCompositeUploadOperation(t, first, resumed)
 	if completed.DryRun == nil || completed.UploadResult != nil || completed.Operation.Status != api.StageStatusCompleted {
 		t.Fatalf("safe result before restart = %#v", completed)
 	}
@@ -235,4 +236,17 @@ func TestLiveTestCompositeUploadDurableReplayRejectsMutationRetries(t *testing.T
 		got.ClientMutation != (api.LiveTestEffectCounts{RequestsDenied: 1}) {
 		t.Fatalf("restarted effect receipt = %#v", got)
 	}
+}
+
+func waitLiveTestCompositeUploadOperation(t *testing.T, module *Module, started CommandResult) CommandResult {
+	t.Helper()
+	if started.Operation == nil {
+		t.Fatalf("composite upload has no operation: %#v", started)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	if err := module.waitForOperationCleanup(ctx, started.Operation.ID); err != nil {
+		t.Fatalf("wait for live-test composite upload: %v", err)
+	}
+	return waitCompositeUploadTestOperation(t, module, started)
 }
