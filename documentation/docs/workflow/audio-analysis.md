@@ -39,7 +39,7 @@ Generate only waveforms for the first and third audio tracks:
 
 `--audio-images` accepts `both`, `waveform`, or `spectrogram`. The default selection is `primary` with `both` image types. The two selection flags require `--audio-analysis` or `--audio-analysis-only`.
 
-Analysis runs after preparation and before tracker submission or torrent-client effects. The CLI prints each successful PNG path and its expiry. A partial or failed result exits nonzero and prevents later effects, even when some PNGs were generated successfully.
+Analysis runs after preparation and before tracker submission or torrent-client effects. The CLI prints each successful PNG path. A partial or failed result exits nonzero and prevents later effects, even when some PNGs were generated successfully.
 
 ### Analyze a file without configuration
 
@@ -65,7 +65,7 @@ Each run creates a separate directory under `--audio-output`, preserving earlier
 
 Opening the page does not start work. Leaving it unopened or disabled does not block upload.
 
-Use **Cancel** to stop active decoder work. **Disable** waits for active work to stop and then hides the current result. Disabling does not immediately delete retained files; they remain under managed retention until their displayed expiry.
+Use **Cancel** to stop active decoder work. **Disable** waits for active work to stop and then hides the current result. Disabling does not immediately delete retained files.
 
 ## Tune resource use
 
@@ -94,7 +94,7 @@ Retry without changing the prepared release, selected tracks, image types, or an
 
 ## Retention and access
 
-Generated PNGs from the upload workflow and Web UI live in upbrr-managed temporary storage and have an explicit expiry. Treat those printed CLI paths and browser download URLs as temporary artifacts rather than stable library locations. Files generated with `--audio-analysis-only` remain in the chosen output location.
+Generated PNGs from the upload workflow and Web UI live in upbrr-managed temporary storage. They have no time-based expiry, but workflow deletion, source changes, replacement analysis, or cleanup of the temporary directory can remove them. Files generated with `--audio-analysis-only` remain in the chosen output location.
 
 Browser and versioned API downloads remain bound to the workflow owner, analysis ID, artifact ID, and exact result revision. Artifact identifiers and URLs are opaque. See the [API reference](../api/index.md#audio-analysis-routes) for the versioned routes.
 

@@ -173,6 +173,15 @@ func TestModuleAudioAnalysisRetriesIncrementallyAndPersistsDisabledIntent(t *tes
 	if builds != 1 || retries != 0 {
 		t.Fatalf("builder counts after replay = builds:%d retries:%d", builds, retries)
 	}
+	module.clock = fixedClock{now: first.AudioAnalysis.CreatedAt.Add(48 * time.Hour)}
+	content, err := module.AudioAnalysisArtifact(t.Context(), testOwnerID, first.Workflow.ID,
+		*first.Workflow.AudioAnalysis, "waveform-first")
+	if err != nil {
+		t.Fatalf("open retained audio artifact after 48 hours: %v", err)
+	}
+	if err := content.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	retry := executeCommand(t, module, AnalyzeAudioCommand{
 		WorkflowID:       first.Workflow.ID,
@@ -205,6 +214,50 @@ func TestModuleAudioAnalysisRetriesIncrementallyAndPersistsDisabledIntent(t *tes
 	}
 	if len(stored.AudioAnalyses) != 2 {
 		t.Fatalf("retained analyses = %d, want 2", len(stored.AudioAnalyses))
+	}
+}
+
+func TestModuleAudioAnalysisReplacesDisabledAttemptResource(t *testing.T) {
+	t.Parallel()
+
+	oldResource := &audioAnalysisReleaseProbe{}
+	newResource := &audioAnalysisReleaseProbe{}
+	builder := &audioAnalysisBuilderFake{resource: oldResource}
+	module, _ := newTestModule(t, audioAnalysisPreparerForTest(), WithAudioAnalysisBuilder(builder))
+	created := executeCommand(t, module, CreateWorkflowCommand{WorkflowID: "workflow-audio-disabled-replacement"})
+	prepared := executeCommand(t, module, PrepareReleaseCommand{
+		WorkflowID:       created.Workflow.ID,
+		ExpectedRevision: created.Workflow.Revision,
+		Input:            api.PrepareInput{SourcePath: "C:\\releases\\Example.Release.2026.mkv"},
+	})
+	instructions := audioAnalysisInstructionsForTest(*prepared.Release)
+	first := executeCommand(t, module, AnalyzeAudioCommand{
+		WorkflowID:       prepared.Workflow.ID,
+		ExpectedRevision: prepared.Workflow.Revision,
+		Instructions:     instructions,
+		IdempotencyKey:   "analyze-before-disable",
+	})
+	disabled := executeCommand(t, module, SetAudioAnalysisEnabledCommand{
+		WorkflowID:       first.Workflow.ID,
+		ExpectedRevision: first.Workflow.Revision,
+		Enabled:          false,
+		IdempotencyKey:   "disable-before-replacement",
+	})
+	if oldResource.releaseCount() != 0 {
+		t.Fatal("disabling audio removed its retained artifact")
+	}
+	builder.resource = newResource
+	replaced := executeCommand(t, module, AnalyzeAudioCommand{
+		WorkflowID:       disabled.Workflow.ID,
+		ExpectedRevision: disabled.Workflow.Revision,
+		Instructions:     instructions,
+		IdempotencyKey:   "analyze-after-disable",
+	})
+	if replaced.AudioAnalysis == nil || replaced.AudioAnalysis.AttemptID == first.AudioAnalysis.AttemptID {
+		t.Fatalf("replacement audio result = %#v", replaced.AudioAnalysis)
+	}
+	if oldResource.releaseCount() != 1 || newResource.releaseCount() != 0 {
+		t.Fatalf("artifact releases after replacement old=%d new=%d", oldResource.releaseCount(), newResource.releaseCount())
 	}
 }
 
@@ -280,8 +333,6 @@ func TestModuleTrackerProjectionPreservesAudioArtifactsUntilReleaseChanges(t *te
 }
 
 func TestModuleRecoveredAudioAnalysisDeletesUncommittedAttemptResource(t *testing.T) {
-	t.Parallel()
-
 	now := time.Date(2026, time.September, 21, 6, 0, 0, 0, time.UTC)
 	repository := NewMemoryRepository()
 	privateStore := NewMemoryPrivateResourceStore()
@@ -552,7 +603,6 @@ func partialAudioAnalysisForTest(
 		}},
 		CreatedAt:   now,
 		CompletedAt: &completed,
-		ExpiresAt:   now.Add(24 * time.Hour),
 	}
 }
 

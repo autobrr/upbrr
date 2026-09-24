@@ -124,10 +124,10 @@ func TestAudioAnalysisResultValidatesStatisticsArtifact(t *testing.T) {
 	result := validAudioAnalysisResultForTest()
 	result.Variants = []AudioAnalysisVariant{AudioAnalysisStats}
 	result.Tracks[0].Artifacts = []AudioAnalysisArtifact{{
-		ID: "stats-1",
- Variant: AudioAnalysisStats,
- Status: StageStatusCompleted,
- Text: "DC offset   0.000000\n",
+		ID:      "stats-1",
+		Variant: AudioAnalysisStats,
+		Status:  StageStatusCompleted,
+		Text:    "DC offset   0.000000\n",
 	}}
 	if err := result.Validate(); err != nil {
 		t.Fatalf("validate statistics result: %v", err)
@@ -164,7 +164,7 @@ func TestAudioAnalysisResultContainsNoPrivatePathFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	encoded := strings.ToLower(string(encodedBytes))
-	for _, forbidden := range []string{"localpath", "filepath", "videopath", "privatepath"} {
+	for _, forbidden := range []string{"localpath", "filepath", "videopath", "privatepath", "expiresat"} {
 		if strings.Contains(encoded, forbidden) {
 			t.Fatalf("serialized result contains private path field %q: %s", forbidden, encoded)
 		}
@@ -214,6 +214,5 @@ func validAudioAnalysisResultForTest() AudioAnalysisResult {
 		}},
 		CreatedAt:   created,
 		CompletedAt: &completed,
-		ExpiresAt:   created.Add(24 * time.Hour),
 	}
 }

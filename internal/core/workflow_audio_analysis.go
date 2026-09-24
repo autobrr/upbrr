@@ -103,7 +103,6 @@ func (b workflowAudioAnalysisBuilder) Build(
 		Tracks:              tracks,
 		CreatedAt:           now,
 		CompletedAt:         &completedAt,
-		ExpiresAt:           now.Add(24 * time.Hour),
 	}
 	if len(artifactPaths) == 0 {
 		_ = os.RemoveAll(attemptRoot)

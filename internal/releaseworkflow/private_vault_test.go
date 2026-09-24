@@ -29,6 +29,9 @@ func TestPrivateArtifactVaultRestartIsolationIntegrityAndConsume(t *testing.T) {
 		Bytes:       []byte("private-image-bytes"),
 		ContentType: "image/png",
 	}
+	if err := vault.PutWithoutExpiry(testOwnerID, workflowID, resourceID, content); err == nil {
+		t.Fatal("staged media accepted retention without expiry")
+	}
 	if err := vault.Put(testOwnerID, workflowID, resourceID, content, now.Add(time.Hour)); err != nil {
 		t.Fatalf("put private artifact: %v", err)
 	}
@@ -237,7 +240,9 @@ func TestPrivateArtifactVaultInvalidateWorkflowExceptPersistsPreservedResource(t
 		t.Fatalf("put removable private artifact: %v", err)
 	}
 
-	vault.InvalidateWorkflowExcept(testOwnerID, workflowID, preservedID)
+	if err := vault.InvalidateWorkflowExcept(testOwnerID, workflowID, preservedID); err != nil {
+		t.Fatalf("invalidate workflow private resources: %v", err)
+	}
 	vault.InvalidateAll()
 	restarted, err := NewPrivateArtifactVault(root)
 	if err != nil {
@@ -348,7 +353,7 @@ func TestPrivateArtifactVaultDeleteWorkflowReportsStorageFailure(t *testing.T) {
 	}
 }
 
-func TestPrivateArtifactVaultInvalidateWorkflowExceptDropsMemoryAfterMissingRoot(t *testing.T) {
+func TestPrivateArtifactVaultInvalidateWorkflowExceptRetriesAfterMissingRoot(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -377,16 +382,29 @@ func TestPrivateArtifactVaultInvalidateWorkflowExceptDropsMemoryAfterMissingRoot
 		t.Fatalf("remove vault root: %v", err)
 	}
 
-	vault.InvalidateWorkflowExcept(testOwnerID, workflowID, preservedID)
-
-	if !probe.released {
-		t.Fatal("invalidation did not release the removed in-memory resource")
+	if err := vault.InvalidateWorkflowExcept(testOwnerID, workflowID, preservedID); err == nil {
+		t.Fatal("invalidation ignored missing vault root")
 	}
-	if _, err := vault.Get(testOwnerID, workflowID, removedID, now); !errors.Is(err, ErrPrivateResourceUnavailable) {
-		t.Fatalf("removed resource error=%v", err)
+	if probe.released {
+		t.Fatal("failed invalidation released the in-memory resource")
+	}
+	if _, err := vault.Get(testOwnerID, workflowID, removedID, now); err != nil {
+		t.Fatalf("resource unavailable for retry: %v", err)
 	}
 	if _, err := vault.Get(testOwnerID, workflowID, preservedID, now); err != nil {
 		t.Fatalf("preserved resource error=%v", err)
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := vault.InvalidateWorkflowExcept(testOwnerID, workflowID, preservedID); err != nil {
+		t.Fatalf("retry invalidation: %v", err)
+	}
+	if !probe.released {
+		t.Fatal("retry did not release the removed in-memory resource")
+	}
+	if _, err := vault.Get(testOwnerID, workflowID, removedID, now); !errors.Is(err, ErrPrivateResourceUnavailable) {
+		t.Fatalf("removed resource error=%v", err)
 	}
 }
 
@@ -404,7 +422,9 @@ func TestPrivateArtifactVaultInvalidateWorkflowExceptReleasesNonDurableResource(
 		t.Fatalf("put removable private resource: %v", err)
 	}
 
-	vault.InvalidateWorkflowExcept(testOwnerID, workflowID)
+	if err := vault.InvalidateWorkflowExcept(testOwnerID, workflowID); err != nil {
+		t.Fatalf("invalidate workflow private resources: %v", err)
+	}
 
 	if !probe.released {
 		t.Fatal("successful invalidation did not release the non-durable resource")
@@ -605,7 +625,9 @@ func TestMemoryPrivateResourceStoreInvalidateWorkflowExcept(t *testing.T) {
 		t.Fatalf("put removable private resource: %v", err)
 	}
 
-	store.InvalidateWorkflowExcept(testOwnerID, workflowID, preservedID)
+	if err := store.InvalidateWorkflowExcept(testOwnerID, workflowID, preservedID); err != nil {
+		t.Fatalf("invalidate workflow private resources: %v", err)
+	}
 	if value, err := store.Get(testOwnerID, workflowID, preservedID, now); err != nil || value != "preserved" {
 		t.Fatalf("preserved private resource value=%v error=%v", value, err)
 	}

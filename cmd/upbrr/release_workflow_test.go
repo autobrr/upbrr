@@ -1481,23 +1481,22 @@ func TestCLIWorkflowAudioAnalysisUsesPreparedStableTrackSelectionAndPrintsArtifa
 				Status:       api.StageStatusCompleted,
 				Artifacts: []api.AudioAnalysisArtifact{
 					{
-						ID: "waveform-cli",
- Variant: api.AudioAnalysisWaveform,
- Status: api.StageStatusCompleted,
- Width: 1812,
- Height: 340,
+						ID:      "waveform-cli",
+						Variant: api.AudioAnalysisWaveform,
+						Status:  api.StageStatusCompleted,
+						Width:   1812,
+						Height:  340,
 					},
 					{
-						ID: "stats-cli",
- Variant: api.AudioAnalysisStats,
- Status: api.StageStatusCompleted,
- Text: "DC offset   0.000000\n",
+						ID:      "stats-cli",
+						Variant: api.AudioAnalysisStats,
+						Status:  api.StageStatusCompleted,
+						Text:    "DC offset   0.000000\n",
 					},
 				},
 			}},
 			CreatedAt:   now,
 			CompletedAt: &completed,
-			ExpiresAt:   now.Add(24 * time.Hour),
 		},
 	}
 	var output bytes.Buffer
@@ -1522,7 +1521,7 @@ func TestCLIWorkflowAudioAnalysisUsesPreparedStableTrackSelectionAndPrintsArtifa
 		t.Fatalf("audio analysis command = %#v", coreSvc.commands)
 	}
 	if !strings.Contains(output.String(), "resource 1 track 2 waveform") ||
-		!strings.Contains(output.String(), "waveform-cli.png") || !strings.Contains(output.String(), "retained locally until") ||
+		!strings.Contains(output.String(), "waveform-cli.png") || strings.Contains(output.String(), "retained locally until") ||
 		!strings.Contains(output.String(), "resource 1 track 2 stats") || !strings.Contains(output.String(), "stats-cli.txt") ||
 		errorOutput.Len() != 0 {
 		t.Fatalf("stdout=%q stderr=%q", output.String(), errorOutput.String())
@@ -1567,7 +1566,6 @@ func TestCLIWorkflowAudioAnalysisPartialStopsBeforeUploadSideEffects(t *testing.
 			}},
 			CreatedAt:   now,
 			CompletedAt: &completed,
-			ExpiresAt:   now.Add(24 * time.Hour),
 		},
 	}
 	var output bytes.Buffer

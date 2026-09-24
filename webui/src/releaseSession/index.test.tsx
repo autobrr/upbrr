@@ -704,7 +704,6 @@ const workflowCurrentWithAudioAnalysis = (
       status,
       createdAt: "2026-09-21T00:00:00Z",
       completedAt: "2026-09-21T00:00:02Z",
-      expiresAt: "2026-09-22T00:00:00Z",
     },
   } as ReleaseWorkflowCurrent;
 };

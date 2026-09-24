@@ -258,7 +258,6 @@ type AudioAnalysisResult struct {
 	Tracks              []AudioAnalysisTrackResult  `json:"tracks"`
 	CreatedAt           time.Time                   `json:"createdAt" ts_type:"string"`
 	CompletedAt         *time.Time                  `json:"completedAt,omitempty" ts_type:"string"`
-	ExpiresAt           time.Time                   `json:"expiresAt" ts_type:"string"`
 }
 
 // Validate verifies public identity, authority, and terminal result shape.
@@ -283,14 +282,11 @@ func (r AudioAnalysisResult) Validate() error {
 	}).Normalize(); err != nil {
 		return fmt.Errorf("audio analysis selection: %w", err)
 	}
-	if !r.ExpiresAt.After(r.CreatedAt) {
-		return errors.New("audio analysis expiry must follow creation")
-	}
 	if r.CompletedAt == nil {
 		return errors.New("terminal audio analysis requires completion time")
 	}
-	if r.CompletedAt.Before(r.CreatedAt) || r.CompletedAt.After(r.ExpiresAt) {
-		return errors.New("audio analysis completion time is outside its retention interval")
+	if r.CompletedAt.Before(r.CreatedAt) {
+		return errors.New("audio analysis completion time precedes creation")
 	}
 	if len(r.Tracks) != len(r.TrackIDs) {
 		return errors.New("audio analysis result must contain one result per selected track")

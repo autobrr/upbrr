@@ -99,11 +99,14 @@ type DurablePrivateResource interface {
 
 // PrivateResourceCodec rehydrates one private resource kind with current process services.
 // DecodeForRelease may omit serviceability checks that are unnecessary for
-// safely releasing owned files; when nil, Decode is used.
+// safely releasing owned files; when nil, Decode is used. NoExpiry allows the
+// resource to remain until workflow invalidation, including legacy entries
+// that were written with an expiry.
 type PrivateResourceCodec struct {
 	Kind             string
 	Decode           func([]byte) (any, error)
 	DecodeForRelease func([]byte) (any, error)
+	NoExpiry         bool
 }
 
 // Clock supplies deterministic workflow timestamps.
@@ -500,12 +503,14 @@ type DurabilityRepository interface {
 // PrivateResourceStore retains owner-scoped resources that must never enter public snapshots.
 type PrivateResourceStore interface {
 	Put(ownerID string, workflowID api.WorkflowID, resourceID string, value any, expiresAt time.Time) error
+	// PutWithoutExpiry is for resources retained until workflow invalidation.
+	PutWithoutExpiry(ownerID string, workflowID api.WorkflowID, resourceID string, value any) error
 	Get(ownerID string, workflowID api.WorkflowID, resourceID string, now time.Time) (any, error)
 	Consume(ownerID string, workflowID api.WorkflowID, resourceID string, now time.Time) (any, error)
 	Delete(ownerID string, workflowID api.WorkflowID, resourceID string)
 	InvalidateWorkflow(ownerID string, workflowID api.WorkflowID)
 	// InvalidateWorkflowExcept invalidates one workflow while retaining named resources.
-	InvalidateWorkflowExcept(ownerID string, workflowID api.WorkflowID, preservedResourceIDs ...string)
+	InvalidateWorkflowExcept(ownerID string, workflowID api.WorkflowID, preservedResourceIDs ...string) error
 	InvalidateAll()
 }
 

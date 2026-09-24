@@ -968,7 +968,6 @@ func (s *cliWorkflowSession) completeAudioAnalysis(ctx context.Context) error {
 			}
 		}
 	}
-	fmt.Fprintf(s.streams.out, "Audio analysis artifacts are retained locally until %s.\n", analysis.ExpiresAt.Local().Format(time.RFC3339))
 	if analysis.Status == api.StageStatusPartial || analysis.Status == api.StageStatusFailed {
 		return fmt.Errorf("upbrr: audio analysis completed with status %s", analysis.Status)
 	}

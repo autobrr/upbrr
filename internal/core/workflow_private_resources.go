@@ -176,7 +176,8 @@ func workflowPrivateResourceCodecs(builder workflowMediaBuilder, audioBuilder wo
 			},
 		},
 		{
-			Kind: workflowPrivateResourceKindAudioAnalysis,
+			Kind:     workflowPrivateResourceKindAudioAnalysis,
+			NoExpiry: true,
 			Decode: func(payload []byte) (any, error) {
 				return decodeWorkflowAudioAnalysisResource(audioBuilder.root, payload)
 			},

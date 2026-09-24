@@ -292,9 +292,7 @@ export default function AudioAnalysisPage({ facet, setLightboxImage, setLightbox
         <section className="grid gap-4" aria-labelledby="audio-analysis-results">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 id="audio-analysis-results">Results</h2>
-            <span className="muted">
-              {view.result.status} · expires {new Date(view.result.expiresAt).toLocaleString()}
-            </span>
+            <span className="muted">{view.result.status}</span>
           </div>
           <div className="audio-analysis-result-grid">
             {view.result.tracks.map((track) => (

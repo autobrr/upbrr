@@ -104,16 +104,35 @@ func (v *PrivateArtifactVault) Put(
 	value any,
 	expiresAt time.Time,
 ) error {
+	if expiresAt.IsZero() {
+		return errors.New("private resource expiry is required")
+	}
+	return v.put(ownerID, workflowID, resourceID, value, expiresAt)
+}
+
+// PutWithoutExpiry retains a durable resource until explicit invalidation.
+func (v *PrivateArtifactVault) PutWithoutExpiry(ownerID string, workflowID api.WorkflowID, resourceID string, value any) error {
+	return v.put(ownerID, workflowID, resourceID, value, time.Time{})
+}
+
+func (v *PrivateArtifactVault) put(
+	ownerID string,
+	workflowID api.WorkflowID,
+	resourceID string,
+	value any,
+	expiresAt time.Time,
+) error {
 	key, err := newPrivateResourceKey(ownerID, workflowID, resourceID)
 	if err != nil {
 		return err
 	}
-	if expiresAt.IsZero() {
-		return errors.New("private resource expiry is required")
-	}
 	kind, payload, durable, err := encodePrivateResource(value)
 	if err != nil {
 		return err
+	}
+	codec, known := v.codecs[kind]
+	if expiresAt.IsZero() && (!durable || !known || !codec.NoExpiry) {
+		return errors.New("private resource does not support retention without expiry")
 	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -129,7 +148,11 @@ func (v *PrivateArtifactVault) Put(
 			return fmt.Errorf("private artifact vault remove stale durable resource: %w", err)
 		}
 	}
-	v.entries[key] = privateResourceEntry{value: value, expiresAt: expiresAt}
+	entryExpiry := expiresAt
+	if known && codec.NoExpiry {
+		entryExpiry = time.Time{}
+	}
+	v.entries[key] = privateResourceEntry{value: value, expiresAt: entryExpiry}
 	delete(v.consumed, key)
 	return nil
 }
@@ -220,14 +243,14 @@ func (v *PrivateArtifactVault) Delete(ownerID string, workflowID api.WorkflowID,
 
 // InvalidateWorkflow removes every private resource owned by one workflow.
 func (v *PrivateArtifactVault) InvalidateWorkflow(ownerID string, workflowID api.WorkflowID) {
-	v.InvalidateWorkflowExcept(ownerID, workflowID)
+	_ = v.InvalidateWorkflowExcept(ownerID, workflowID)
 }
 
 // DeleteWorkflow removes every private resource owned by one workflow and
 // reports durable cleanup failures so callers can keep the owning state for a
 // retry.
 func (v *PrivateArtifactVault) DeleteWorkflow(ownerID string, workflowID api.WorkflowID) error {
-	resources, err := v.deleteWorkflowExcept(ownerID, workflowID, false)
+	resources, err := v.deleteWorkflowExcept(ownerID, workflowID)
 	if err != nil {
 		return err
 	}
@@ -243,17 +266,20 @@ func (v *PrivateArtifactVault) InvalidateWorkflowExcept(
 	ownerID string,
 	workflowID api.WorkflowID,
 	preservedResourceIDs ...string,
-) {
-	resources, _ := v.deleteWorkflowExcept(ownerID, workflowID, true, preservedResourceIDs...)
+) error {
+	resources, err := v.deleteWorkflowExcept(ownerID, workflowID, preservedResourceIDs...)
+	if err != nil {
+		return err
+	}
 	for _, resource := range resources {
 		releasePrivateResource(resource)
 	}
+	return nil
 }
 
 func (v *PrivateArtifactVault) deleteWorkflowExcept(
 	ownerID string,
 	workflowID api.WorkflowID,
-	invalidateMemoryOnFailure bool,
 	preservedResourceIDs ...string,
 ) ([]any, error) {
 	ownerID = strings.TrimSpace(ownerID)
@@ -268,23 +294,12 @@ func (v *PrivateArtifactVault) deleteWorkflowExcept(
 		preservedDigests[privateKeyDigest(key)] = struct{}{}
 	}
 	if ownerID == "" || strings.TrimSpace(string(workflowID)) == "" {
-		if invalidateMemoryOnFailure {
-			return v.removeWorkflowEntries(ownerID, workflowID, preserved),
-				errors.New("private artifact vault workflow scope is required")
-		}
 		return nil, errors.New("private artifact vault workflow scope is required")
 	}
 	scopeDigest := privateScopeDigest(ownerID, workflowID)
 	return func() (resources []any, err error) {
 		v.mu.Lock()
 		defer v.mu.Unlock()
-		if invalidateMemoryOnFailure {
-			defer func() {
-				if err != nil {
-					resources = v.removeWorkflowEntriesLocked(ownerID, workflowID, preserved)
-				}
-			}()
-		}
 		metadataFiles, metadataErr := v.metadataFilesLocked()
 		if metadataErr != nil {
 			return nil, metadataErr
@@ -334,16 +349,6 @@ func (v *PrivateArtifactVault) deleteWorkflowExcept(
 		resources = append(resources, v.removeWorkflowEntriesLocked(ownerID, workflowID, preserved)...)
 		return resources, nil
 	}()
-}
-
-func (v *PrivateArtifactVault) removeWorkflowEntries(
-	ownerID string,
-	workflowID api.WorkflowID,
-	preserved map[privateResourceKey]struct{},
-) []any {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	return v.removeWorkflowEntriesLocked(ownerID, workflowID, preserved)
 }
 
 func (v *PrivateArtifactVault) removeWorkflowEntriesLocked(
@@ -424,11 +429,12 @@ func (v *PrivateArtifactVault) CleanupExpired(now time.Time) error {
 		}
 		base := strings.TrimSuffix(metadataFile, ".json")
 		if metadata.KeyDigest == "" || filepath.Base(base) != metadata.KeyDigest || metadata.ScopeDigest == "" ||
-			metadata.Kind == "" || metadata.Digest == "" || metadata.ExpiresAt.IsZero() || metadata.RefCount == 0 {
+			metadata.Kind == "" || metadata.Digest == "" ||
+			(metadata.ExpiresAt.IsZero() && !v.codecs[metadata.Kind].NoExpiry) || metadata.RefCount == 0 {
 			v.mu.Unlock()
 			return fmt.Errorf("private artifact vault validate cleanup metadata: %w", ErrPrivateResourceIntegrity)
 		}
-		if metadata.ExpiresAt.After(now) && metadata.ConsumedAt.IsZero() {
+		if (v.codecs[metadata.Kind].NoExpiry || metadata.ExpiresAt.After(now)) && metadata.ConsumedAt.IsZero() {
 			continue
 		}
 		resource, decodeErr := v.decodeResourceForReleaseLocked(metadataFile, metadata)
@@ -458,7 +464,7 @@ func (v *PrivateArtifactVault) CleanupExpired(now time.Time) error {
 		}
 	}
 	for key, entry := range v.entries {
-		if !entry.expiresAt.After(now) {
+		if !entry.expiresAt.IsZero() && !entry.expiresAt.After(now) {
 			digest := privateKeyDigest(key)
 			if cleanupErr != nil {
 				if _, removed := expiredDigests[digest]; !removed {
@@ -542,7 +548,7 @@ func (v *PrivateArtifactVault) getLocked(key privateResourceKey, now time.Time) 
 		return nil, ErrPrivateResourceConsumed
 	}
 	if entry, ok := v.entries[key]; ok {
-		if !entry.expiresAt.After(now) {
+		if !entry.expiresAt.IsZero() && !entry.expiresAt.After(now) {
 			delete(v.entries, key)
 			releasePrivateResource(entry.value)
 			_ = removeIfPresent(v.blobFilePath(key))
@@ -559,7 +565,7 @@ func (v *PrivateArtifactVault) getLocked(key privateResourceKey, now time.Time) 
 		v.consumed[key] = struct{}{}
 		return nil, ErrPrivateResourceConsumed
 	}
-	if !metadata.ExpiresAt.After(now) {
+	if !v.codecs[metadata.Kind].NoExpiry && !metadata.ExpiresAt.After(now) {
 		value, decodeErr := v.decodeResourceForReleaseLocked(v.metadataPath(key), metadata)
 		if decodeErr != nil {
 			return nil, decodeErr
@@ -589,7 +595,11 @@ func (v *PrivateArtifactVault) getLocked(key privateResourceKey, now time.Time) 
 	if err != nil {
 		return nil, fmt.Errorf("private artifact vault decode %s: %w", metadata.Kind, err)
 	}
-	v.entries[key] = privateResourceEntry{value: value, expiresAt: metadata.ExpiresAt}
+	entryExpiry := metadata.ExpiresAt
+	if v.codecs[metadata.Kind].NoExpiry {
+		entryExpiry = time.Time{}
+	}
+	v.entries[key] = privateResourceEntry{value: value, expiresAt: entryExpiry}
 	return value, nil
 }
 
@@ -630,7 +640,8 @@ func (v *PrivateArtifactVault) readMetadataLocked(key privateResourceKey) (priva
 		return privateArtifactMetadata{}, ErrPrivateResourceIntegrity
 	}
 	if metadata.KeyDigest != privateKeyDigest(key) || metadata.ScopeDigest != privateScopeDigest(key.ownerID, key.workflowID) ||
-		metadata.Kind == "" || metadata.Digest == "" || metadata.ExpiresAt.IsZero() || metadata.RefCount == 0 {
+		metadata.Kind == "" || metadata.Digest == "" ||
+		(metadata.ExpiresAt.IsZero() && !v.codecs[metadata.Kind].NoExpiry) || metadata.RefCount == 0 {
 		return privateArtifactMetadata{}, ErrPrivateResourceIntegrity
 	}
 	return metadata, nil

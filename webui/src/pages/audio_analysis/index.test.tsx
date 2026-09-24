@@ -105,7 +105,6 @@ const resultWithArtifacts = (
   ],
   createdAt: "2026-09-21T00:00:00Z",
   completedAt: "2026-09-21T00:01:00Z",
-  expiresAt: "2026-09-22T00:00:00Z",
 });
 
 describe("AudioAnalysisPage", () => {
@@ -345,7 +344,6 @@ describe("AudioAnalysisPage", () => {
         tracks: [],
         createdAt: "2026-09-21T00:00:00Z",
         completedAt: "2026-09-21T00:01:00Z",
-        expiresAt: "2026-09-22T00:00:00Z",
       },
     });
     render(<AudioAnalysisPage facet={value} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />);

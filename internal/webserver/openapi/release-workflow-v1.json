@@ -653,9 +653,6 @@
           "createdAt": {
             "type": "string"
           },
-          "expiresAt": {
-            "type": "string"
-          },
           "id": {
             "$ref": "#/components/schemas/AudioAnalysisResultID"
           },
@@ -708,7 +705,6 @@
         "required": [
           "attemptId",
           "createdAt",
-          "expiresAt",
           "id",
           "manifestFingerprint",
           "profileVersion",

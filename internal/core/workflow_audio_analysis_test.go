@@ -143,19 +143,19 @@ func TestWorkflowAudioAnalysisStatisticsRetainReloadReuseAndIntegrity(t *testing
 	root := t.TempDir()
 	release := api.ReleaseRef{SourcePath: "Example.Release.2026.mkv", Generation: 3}
 	subject := api.AudioAnalysisSubject{
-		Release: release,
- SourcePath: release.SourcePath,
- VideoPath: "source.mkv",
-		ResourceID: "resource-1",
- ManifestFingerprint: "manifest-1",
- PrimaryTrackID: "track-1",
+		Release:             release,
+		SourcePath:          release.SourcePath,
+		VideoPath:           "source.mkv",
+		ResourceID:          "resource-1",
+		ManifestFingerprint: "manifest-1",
+		PrimaryTrackID:      "track-1",
 		Tracks: []api.MediaTrackFacts{{
-ID: "track-1",
- Kind: api.MediaTrackAudio,
- Ordinal: 1,
- Channels: 2,
- SampleRate: 48_000,
-}},
+			ID:         "track-1",
+			Kind:       api.MediaTrackAudio,
+			Ordinal:    1,
+			Channels:   2,
+			SampleRate: 48_000,
+		}},
 	}
 	const report = "             Overall     Left      Right\nDC offset   0.000000  0.000000  0.000000\n"
 	service := &audioAnalysisServiceFake{analyze: func(_ context.Context, _ api.AudioAnalysisInstructions, attemptRoot string) (audioanalysis.TrackResult, error) {
@@ -167,36 +167,36 @@ ID: "track-1",
 			t.Fatal(err)
 		}
 		artifact := api.AudioAnalysisArtifact{
-ID: "stats-1",
- Variant: api.AudioAnalysisStats,
- Status: api.StageStatusCompleted,
- Text: report,
-}
+			ID:      "stats-1",
+			Variant: api.AudioAnalysisStats,
+			Status:  api.StageStatusCompleted,
+			Text:    report,
+		}
 		return audioanalysis.TrackResult{
 			Public: api.AudioAnalysisTrackResult{
-				TrackID: "track-1",
- Ordinal: 1,
- Channels: 2,
- SampleRate: 48_000,
- SampleFrames: 96_000,
- Duration: 2,
-				Status: api.StageStatusCompleted,
- Artifacts: []api.AudioAnalysisArtifact{artifact},
+				TrackID:      "track-1",
+				Ordinal:      1,
+				Channels:     2,
+				SampleRate:   48_000,
+				SampleFrames: 96_000,
+				Duration:     2,
+				Status:       api.StageStatusCompleted,
+				Artifacts:    []api.AudioAnalysisArtifact{artifact},
 			},
 			Artifacts: []audioanalysis.Artifact{{Public: artifact, Path: pathValue}},
 		}, nil
 	}}
 	builder := workflowAudioAnalysisBuilder{
-resolver: audioAnalysisResolverFake{subject: subject},
- service: service,
- root: root,
-}
+		resolver: audioAnalysisResolverFake{subject: subject},
+		service:  service,
+		root:     root,
+	}
 	instructions := api.AudioAnalysisInstructions{
-		Release: release,
- ResourceID: subject.ResourceID,
- Selection: api.AudioAnalysisSelectionPrimary,
-		TrackIDs: []string{"track-1"},
- Variants: []api.AudioAnalysisVariant{api.AudioAnalysisStats},
+		Release:    release,
+		ResourceID: subject.ResourceID,
+		Selection:  api.AudioAnalysisSelectionPrimary,
+		TrackIDs:   []string{"track-1"},
+		Variants:   []api.AudioAnalysisVariant{api.AudioAnalysisStats},
 	}
 	now := time.Now()
 	result, resource, err := builder.Build(t.Context(), release, instructions, "stats-attempt", now, nil, nil)
@@ -946,12 +946,13 @@ func TestWorkflowAudioAnalysisBuilderCompletesMissingVariantsAfterStorageFailure
 	}
 }
 
-func TestWorkflowAudioAnalysisVaultReleasesDurableAttemptsAfterRestart(t *testing.T) {
+func TestWorkflowAudioAnalysisVaultDeletesOnlyInvalidatedAttemptsAfterRestart(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
 	codec := workflowAudioAnalysisCodecForTest(root)
-	vault, err := releaseworkflow.NewPrivateArtifactVault(filepath.Join(t.TempDir(), "vault"), codec)
+	vaultRoot := filepath.Join(t.TempDir(), "vault")
+	vault, err := releaseworkflow.NewPrivateArtifactVault(vaultRoot, codec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -983,20 +984,20 @@ func TestWorkflowAudioAnalysisVaultReleasesDurableAttemptsAfterRestart(t *testin
 		t.Fatalf("deleted attempt stat error = %v", err)
 	}
 
-	expiredResource, expiredRoot := newResource("expired")
-	if err := vault.Put("owner", "workflow", "audio-analysis:expired", expiredResource, now.Add(time.Minute)); err != nil {
+	legacyResource, legacyRoot := newResource("legacy")
+	if err := vault.Put("owner", "workflow", "audio-analysis:legacy", legacyResource, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	vault.InvalidateAll()
 	if err := vault.CleanupExpired(now.Add(2 * time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(expiredRoot); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("expired attempt stat error = %v", err)
+	if _, err := os.Stat(legacyRoot); err != nil {
+		t.Fatalf("legacy attempt expired: %v", err)
 	}
 }
 
-func TestWorkflowAudioAnalysisStartupCleanupReleasesCorruptExpiredAttemptAndContinues(t *testing.T) {
+func TestWorkflowAudioAnalysisStartupCleanupPreservesAttemptsAndRejectsCorruptArtifacts(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		corrupt func(*testing.T, string)
@@ -1063,9 +1064,15 @@ func TestWorkflowAudioAnalysisStartupCleanupReleasesCorruptExpiredAttemptAndCont
 			stop()
 			<-done
 			for _, attemptRoot := range []string{corruptRoot, validRoot} {
-				if _, statErr := os.Stat(attemptRoot); !errors.Is(statErr, os.ErrNotExist) {
-					t.Fatalf("expired attempt %q stat error = %v", attemptRoot, statErr)
+				if _, statErr := os.Stat(attemptRoot); statErr != nil {
+					t.Fatalf("retained attempt %q stat error = %v", attemptRoot, statErr)
 				}
+			}
+			if _, err := vault.Get("owner", "workflow", "audio-analysis:corrupt", now); err == nil {
+				t.Fatal("corrupt audio artifact was accepted")
+			}
+			if _, err := vault.Get("owner", "workflow", "audio-analysis:valid", now); err != nil {
+				t.Fatalf("valid audio artifact was rejected: %v", err)
 			}
 		})
 	}
@@ -1108,8 +1115,13 @@ func TestWorkflowAudioAnalysisStartupCleanupPreservesAttemptWhenVaultAuthorityIs
 	}
 
 	stop, done, err := startWorkflowPrivateVaultCleanup(t.Context(), vault, time.Hour, api.NopLogger{})
-	if stop != nil || done != nil || !errors.Is(err, releaseworkflow.ErrPrivateResourceIntegrity) {
-		t.Fatalf("startup cleanup stop=%v done=%v error=%v", stop, done, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop()
+	<-done
+	if _, err := vault.Get("owner", "workflow", "audio-analysis:corrupt-authority", time.Now().UTC()); !errors.Is(err, releaseworkflow.ErrPrivateResourceIntegrity) {
+		t.Fatalf("corrupt audio authority error = %v", err)
 	}
 	for _, pathValue := range []string{attemptRoot, blobPaths[0], metadataPaths[0]} {
 		if _, statErr := os.Stat(pathValue); statErr != nil {
@@ -1118,16 +1130,17 @@ func TestWorkflowAudioAnalysisStartupCleanupPreservesAttemptWhenVaultAuthorityIs
 	}
 }
 
-func TestWorkflowPrivateVaultCleanupLifecycleExpiresAudioAttempt(t *testing.T) {
+func TestWorkflowPrivateVaultCleanupPreservesAudioAttemptWithoutExpiry(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
 	codec := workflowAudioAnalysisCodecForTest(root)
-	vault, err := releaseworkflow.NewPrivateArtifactVault(filepath.Join(t.TempDir(), "vault"), codec)
+	vaultRoot := filepath.Join(t.TempDir(), "vault")
+	vault, err := releaseworkflow.NewPrivateArtifactVault(vaultRoot, codec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	attemptRoot := filepath.Join(root, "release", "audio-analysis", "expiring")
+	attemptRoot := filepath.Join(root, "release", "audio-analysis", "retained")
 	if err := os.MkdirAll(attemptRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -1136,9 +1149,9 @@ func TestWorkflowPrivateVaultCleanupLifecycleExpiresAudioAttempt(t *testing.T) {
 		t,
 		root,
 		attemptRoot,
-		map[api.PublicResourceID]string{"waveform-expiring": pathValue},
+		map[api.PublicResourceID]string{"waveform-retained": pathValue},
 	)
-	if err := vault.Put("owner", "workflow", "audio-analysis:expiring", resource, time.Now().UTC().Add(500*time.Millisecond)); err != nil {
+	if err := vault.PutWithoutExpiry("owner", "workflow", "audio-analysis:retained", resource); err != nil {
 		t.Fatal(err)
 	}
 	stop, done, err := startWorkflowPrivateVaultCleanup(t.Context(), vault, 20*time.Millisecond, api.NopLogger{})
@@ -1149,23 +1162,63 @@ func TestWorkflowPrivateVaultCleanupLifecycleExpiresAudioAttempt(t *testing.T) {
 		stop()
 		<-done
 	}()
-	if _, err := os.Stat(attemptRoot); err != nil {
-		t.Fatalf("startup cleanup removed an unexpired attempt: %v", err)
+	if err := vault.CleanupExpired(time.Now().UTC().Add(48 * time.Hour)); err != nil {
+		t.Fatal(err)
 	}
+	if _, err := os.Stat(attemptRoot); err != nil {
+		t.Fatalf("cleanup removed an unexpiring attempt: %v", err)
+	}
+	if _, err := vault.Get("owner", "workflow", "audio-analysis:retained", time.Now().UTC().Add(48*time.Hour)); err != nil {
+		t.Fatalf("audio resource expired: %v", err)
+	}
+	vault.InvalidateAll()
+	restarted, err := releaseworkflow.NewPrivateArtifactVault(vaultRoot, codec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := restarted.Get("owner", "workflow", "audio-analysis:retained", time.Now().UTC().Add(48*time.Hour)); err != nil {
+		t.Fatalf("restarted audio resource expired: %v", err)
+	}
+}
 
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		_, statErr := os.Stat(attemptRoot)
-		if errors.Is(statErr, os.ErrNotExist) {
-			break
-		}
-		if statErr != nil {
-			t.Fatalf("stat expiring attempt: %v", statErr)
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("periodic private-vault cleanup did not remove the expired audio attempt")
-		}
-		time.Sleep(20 * time.Millisecond)
+func TestWorkflowAudioAnalysisLegacyExpiryDoesNotDeleteArtifacts(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	vaultRoot := filepath.Join(t.TempDir(), "vault")
+	codec := workflowAudioAnalysisCodecForTest(root)
+	vault, err := releaseworkflow.NewPrivateArtifactVault(vaultRoot, codec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attemptRoot := filepath.Join(root, "release", "audio-analysis", "legacy")
+	if err := os.MkdirAll(attemptRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pathValue := writeAudioAnalysisPNGForTest(t, attemptRoot, "waveform.png", 12, 8)
+	resource := retainWorkflowAudioAnalysisResourceForTest(
+		t,
+		root,
+		attemptRoot,
+		map[api.PublicResourceID]string{"waveform-legacy": pathValue},
+	)
+	now := time.Now().UTC()
+	if err := vault.Put("owner", "workflow", "audio-analysis:legacy", resource, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	vault.InvalidateAll()
+	restarted, err := releaseworkflow.NewPrivateArtifactVault(vaultRoot, codec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.CleanupExpired(now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := restarted.Get("owner", "workflow", "audio-analysis:legacy", now); err != nil {
+		t.Fatalf("legacy audio resource expired: %v", err)
+	}
+	if _, err := os.Stat(pathValue); err != nil {
+		t.Fatalf("legacy audio artifact removed: %v", err)
 	}
 }
 
@@ -1252,7 +1305,8 @@ func TestWorkflowAudioAnalysisResourceCodecRejectsEscapeAndServesAuthorizedPNG(t
 
 func workflowAudioAnalysisCodecForTest(root string) releaseworkflow.PrivateResourceCodec {
 	return releaseworkflow.PrivateResourceCodec{
-		Kind: workflowPrivateResourceKindAudioAnalysis,
+		Kind:     workflowPrivateResourceKindAudioAnalysis,
+		NoExpiry: true,
 		Decode: func(payload []byte) (any, error) {
 			return decodeWorkflowAudioAnalysisResource(root, payload)
 		},

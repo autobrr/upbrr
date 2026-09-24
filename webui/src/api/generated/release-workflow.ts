@@ -146,7 +146,6 @@ export type AudioAnalysisResult = Readonly<{
   attemptId: string;
   completedAt?: string;
   createdAt: string;
-  expiresAt: string;
   id: AudioAnalysisResultID;
   manifestFingerprint: string;
   profileVersion: string;
