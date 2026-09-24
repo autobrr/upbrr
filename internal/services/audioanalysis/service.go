@@ -97,6 +97,99 @@ func (s *Service) ValidateSelection(
 	return err
 }
 
+// AnalyzeFile analyzes a media file directly, without a prepared release or
+// workflow storage. Ordinals identify audio streams when selection is selected.
+func (s *Service) AnalyzeFile(
+	ctx context.Context,
+	sourcePath string,
+	selection api.AudioAnalysisSelectionMode,
+	ordinals []int,
+	variants []api.AudioAnalysisVariant,
+	outputRoot string,
+) ([]TrackResult, error) {
+	selectedDecoder, err := s.analysisDecoder()
+	if err != nil {
+		return nil, err
+	}
+	streams, err := selectedDecoder.Inspect(ctx, sourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("audio analysis: inspect input: %w", err)
+	}
+	if len(streams) == 0 {
+		return nil, audioAnalysisError(api.AudioAnalysisFailureNoAudio, "the source contains no decodable audio streams", errNoInspectedAudioStreams)
+	}
+	primaryOrdinal := 1
+	for index, stream := range streams {
+		if !stream.secondaryTitle && !isSecondaryAudioTitle(stream.title) {
+			primaryOrdinal = index + 1
+			break
+		}
+	}
+	selected := make([]string, 0, len(streams))
+	subject := api.AudioAnalysisSubject{
+		Release:        api.ReleaseRef{SourcePath: sourcePath, Generation: 1},
+		SourcePath:     sourcePath,
+		VideoPath:      sourcePath,
+		ResourceID:     "standalone",
+		PrimaryTrackID: fmt.Sprintf("audio-%d", primaryOrdinal),
+		Tracks:         make([]api.MediaTrackFacts, 0, len(streams)),
+	}
+	wanted := make(map[int]bool, len(ordinals))
+	for _, ordinal := range ordinals {
+		wanted[ordinal] = true
+	}
+	for index, stream := range streams {
+		ordinal := index + 1
+		trackID := fmt.Sprintf("audio-%d", ordinal)
+		subject.Tracks = append(subject.Tracks, api.MediaTrackFacts{
+			ID:            trackID,
+			Kind:          api.MediaTrackAudio,
+			ResourceID:    subject.ResourceID,
+			Ordinal:       ordinal,
+			Title:         stream.title,
+			Codec:         stream.codec,
+			ChannelLayout: stream.layout,
+			Channels:      stream.channels,
+			SampleRate:    stream.sampleRate,
+		})
+		if selection == api.AudioAnalysisSelectionAll || selection == api.AudioAnalysisSelectionPrimary && ordinal == primaryOrdinal ||
+			selection == api.AudioAnalysisSelectionSelected && wanted[ordinal] {
+			selected = append(selected, trackID)
+			delete(wanted, ordinal)
+		}
+	}
+	if len(wanted) != 0 || len(selected) == 0 {
+		return nil, errors.New("audio analysis: selected audio ordinal is not present in the source")
+	}
+	if err := os.MkdirAll(outputRoot, 0o700); err != nil {
+		return nil, fmt.Errorf("audio analysis: create output location: %w", err)
+	}
+	runRoot, err := os.MkdirTemp(outputRoot, "analysis-")
+	if err != nil {
+		return nil, fmt.Errorf("audio analysis: create run directory: %w", err)
+	}
+	for _, trackID := range selected {
+		api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
+			Phase:     "audio_analysis_decode",
+			ItemID:    trackID,
+			Kind:      "audio_track",
+			Label:     "Audio track " + strings.TrimPrefix(trackID, "audio-"),
+			Status:    api.StageStatusRunning,
+			Completed: 0,
+			Total:     100,
+			ItemOnly:  true,
+		})
+	}
+	return s.Analyze(ctx, subject, api.AudioAnalysisInstructions{
+		Release:        subject.Release,
+		ResourceID:     subject.ResourceID,
+		Selection:      selection,
+		TrackIDs:       selected,
+		Variants:       variants,
+		ProfileVersion: api.AudioAnalysisProfileVersion,
+	}, "standalone", runRoot)
+}
+
 // Analyze streams the selected tracks into the requested image variants. The
 // workflow owner supplies the validated managed directory for attemptID and
 // owns track scheduling, retention, and aggregate status.
@@ -633,7 +726,11 @@ func (s *Service) publishTrack(
 		public.Failure = &failure
 		return TrackResult{Public: public}, nil
 	}
-	trackDirectory := filepath.Join(attemptRoot, opaquePathPart(analysis.binding.track.ID))
+	trackPathPart := opaquePathPart(analysis.binding.track.ID)
+	if attemptID == "standalone" {
+		trackPathPart = fmt.Sprintf("track_%d", analysis.binding.track.Ordinal)
+	}
+	trackDirectory := filepath.Join(attemptRoot, trackPathPart)
 	if !pathutil.IsWithinRoot(attemptRoot, trackDirectory) {
 		failure := api.AudioAnalysisFailure{Code: api.AudioAnalysisFailureOutput, Message: "managed output path was rejected"}
 		public.Status = api.StageStatusFailed

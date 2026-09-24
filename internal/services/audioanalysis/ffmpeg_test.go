@@ -37,6 +37,24 @@ At least one output file must be specified
 	}
 }
 
+func TestParseInspectedStreamsKeepsEachAudioTitle(t *testing.T) {
+	streams, err := parseInspectedStreams(`
+  Stream #0:0: Audio: aac, 48000 Hz, stereo, fltp
+    Metadata:
+      title           : Commentary
+  Stream #0:1: Video: h264, yuv420p
+    Metadata:
+      title           : Video title
+  Stream #0:2: Audio: ac3, 48000 Hz, stereo, fltp
+    Metadata:
+      title           : Main audio
+At least one output file must be specified
+`)
+	if err != nil || len(streams) != 2 || streams[0].title != "Commentary" || streams[1].title != "Main audio" {
+		t.Fatalf("error=%v streams=%#v", err, streams)
+	}
+}
+
 func TestFFmpegInspectClassifiesNoAudioOnlyAfterCompletedProbe(t *testing.T) {
 	decoder := helperProcessInspectDecoder("no-audio")
 	_, err := decoder.Inspect(t.Context(), "synthetic.mkv")
@@ -63,6 +81,24 @@ func TestFFmpegInspectPreservesAudioStreamBeyondDiagnosticLimit(t *testing.T) {
 	}
 	if len(streams) != 1 || streams[0].codec != "flac" || streams[0].sampleRate != 48_000 || streams[0].channels != 2 {
 		t.Fatalf("streams = %#v", streams)
+	}
+}
+
+func TestFFmpegInspectPreservesTracksAfterLongAudioTitles(t *testing.T) {
+	decoder := helperProcessInspectDecoder("long-audio-titles")
+	streams, err := decoder.Inspect(t.Context(), "synthetic.mkv")
+	if err != nil || len(streams) != 3 || !streams[0].secondaryTitle || !streams[1].secondaryTitle ||
+		streams[2].title != "Main audio" || streams[2].codec != "flac" || len(streams[0].title) > inspectTitleLimit {
+		t.Fatalf("error=%v streams=%#v", err, streams)
+	}
+}
+
+func TestFFmpegInspectClassifiesTitlePastLineLimit(t *testing.T) {
+	decoder := helperProcessInspectDecoder("secondary-title-past-line-limit")
+	streams, err := decoder.Inspect(t.Context(), "synthetic.mkv")
+	if err != nil || len(streams) != 2 || !streams[0].secondaryTitle || streams[1].secondaryTitle ||
+		streams[1].title != "Main audio" {
+		t.Fatalf("error=%v streams=%#v", err, streams)
 	}
 }
 
@@ -774,6 +810,21 @@ At least one output file must be specified
 	case "audio-after-long-diagnostics":
 		_, _ = fmt.Fprintf(os.Stderr, "Input #0, matroska,webm, from 'synthetic.mkv':\n%s\n  Stream #0:1: Audio: flac, 48000 Hz, stereo, s32\n%s\n",
 			strings.Repeat("metadata", diagnosticLimit), probeCompletedLine)
+		os.Exit(1)
+	case "long-audio-titles":
+		_, _ = io.WriteString(os.Stderr, "Input #0, matroska,webm, from 'synthetic.mkv':\n")
+		for ordinal, title := range []string{
+			"Commentary " + strings.Repeat("A", 40<<10),
+			"Compatibility " + strings.Repeat("B", 40<<10),
+			"Main audio",
+		} {
+			_, _ = fmt.Fprintf(os.Stderr, "  Stream #0:%d: Audio: flac, 48000 Hz, stereo, s32\n    Metadata:\n      title : %s\n", ordinal, title)
+		}
+		_, _ = fmt.Fprintln(os.Stderr, probeCompletedLine)
+		os.Exit(1)
+	case "secondary-title-past-line-limit":
+		_, _ = fmt.Fprintf(os.Stderr, "Input #0, matroska,webm, from 'synthetic.mkv':\n  Stream #0:0: Audio: flac, 48000 Hz, stereo, s32\n    Metadata:\n      title : %s Commentary\n  Stream #0:1: Audio: flac, 48000 Hz, stereo, s32\n    Metadata:\n      title : Main audio\n%s\n",
+			strings.Repeat("A", inspectLineLimit+10), probeCompletedLine)
 		os.Exit(1)
 	case "audio-after-mapping-text":
 		_, _ = fmt.Fprintf(os.Stderr, "Input #0, matroska,webm, from '/media/Stream mapping:.mkv':\n  Stream #0:1: Audio: flac, 48000 Hz, stereo, s32\n%s\n",

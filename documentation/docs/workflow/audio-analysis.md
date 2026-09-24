@@ -1,19 +1,19 @@
 ---
 title: Audio analysis
-description: Generate and download local waveform and spectrogram PNGs from prepared audio tracks.
+description: Generate local waveform and spectrogram PNGs from media audio tracks.
 ---
 
 # Audio analysis
 
-Audio analysis generates waveform and spectrogram PNGs from the audio tracks already identified during release preparation. It is optional and local: the images are not uploaded to an image host, inserted into descriptions, or submitted to trackers automatically.
+Audio analysis generates waveform and spectrogram PNGs from media audio tracks. It is optional and local: the images are not uploaded to an image host, inserted into descriptions, or submitted to trackers automatically.
 
 ## Requirements
 
 - FFmpeg must be available to the upbrr process.
-- Input preparation must have identified at least one audio track.
+- The input must contain at least one decodable audio track.
 - Each selected track must have no more than eight channels.
 
-The operation uses the exact prepared source and stable track identities. If the source or its stream mapping changes, prepare Input again before retrying.
+The upload workflow uses the exact prepared source and stable track identities. If the source or its stream mapping changes, prepare Input again before retrying that workflow.
 
 ## Generate from the CLI
 
@@ -37,9 +37,21 @@ Generate only waveforms for the first and third audio tracks:
 
 `--audio-tracks` accepts `primary`, `all`, or comma-separated positive ordinals. These are one-based positions among audio tracks, not container-wide FFmpeg stream indexes. Repeated ordinals are ignored, and selected results retain source track order.
 
-`--audio-images` accepts `both`, `waveform`, or `spectrogram`. The default selection is `primary` with `both` image types. The two selection flags require `--audio-analysis`.
+`--audio-images` accepts `both`, `waveform`, or `spectrogram`. The default selection is `primary` with `both` image types. The two selection flags require `--audio-analysis` or `--audio-analysis-only`.
 
 Analysis runs after preparation and before tracker submission or torrent-client effects. The CLI prints each successful PNG path and its expiry. A partial or failed result exits nonzero and prevents later effects, even when some PNGs were generated successfully.
+
+### Analyze a file without configuration
+
+Use `--audio-analysis-only` with one media file and a required output directory. This runs FFmpeg analysis without release preparation, configuration, a database, or upload:
+
+```powershell
+.\upbrr.exe --audio-analysis-only --audio-output "D:\reports\audio" "D:\releases\Example.Release.2026.1080p-GRP.mkv"
+```
+
+Add `--audio-tracks all` or a list of audio ordinals to choose tracks, and `--audio-images waveform` or `spectrogram` to choose an image type. The default primary selection skips tracks whose FFmpeg title contains `commentary` or `compatibility` when another audio track is available. The command also writes amplitude statistics for each selected track.
+
+Each run creates a separate directory under `--audio-output`, preserving earlier runs. Within it, audio files are grouped by source ordinal in directories such as `track_1` and `track_2`. The CLI shows one progress line on stderr with the overall percentage and each track's percentage. In a terminal, that line updates in place and shortens its labels to fit; `+N` indicates additional tracks when the terminal is too narrow to show every value. Redirected output receives one initial line and a consolidated line at each overall 10% step. The CLI prints the full path of each successful PNG and statistics file on stdout. These files stay in the selected location until you remove them. A failed or partial analysis exits nonzero and reports the affected track or artifact.
 
 ## Generate in the Web UI
 
@@ -82,7 +94,7 @@ Retry without changing the prepared release, selected tracks, image types, or an
 
 ## Retention and access
 
-Generated PNGs live in upbrr-managed temporary storage and have an explicit expiry. Treat printed CLI paths and browser download URLs as temporary artifacts rather than stable library locations.
+Generated PNGs from the upload workflow and Web UI live in upbrr-managed temporary storage and have an explicit expiry. Treat those printed CLI paths and browser download URLs as temporary artifacts rather than stable library locations. Files generated with `--audio-analysis-only` remain in the chosen output location.
 
 Browser and versioned API downloads remain bound to the workflow owner, analysis ID, artifact ID, and exact result revision. Artifact identifiers and URLs are opaque. See the [API reference](../api/index.md#audio-analysis-routes) for the versioned routes.
 

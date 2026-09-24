@@ -277,11 +277,13 @@ Without `--screens`, the CLI uses `screenshot_handling.screens` when selected tr
 
 ### Audio analysis
 
-Audio analysis is disabled unless `--audio-analysis` is present. It runs after release preparation and before tracker submission or client injection.
+Use `--audio-analysis` to analyze prepared audio tracks during the upload workflow, or `--audio-analysis-only` to analyze one file without configuration or upload.
 
 | Option                   | Purpose                                                                   |
 | ------------------------ | ------------------------------------------------------------------------- |
-| `--audio-analysis`       | Generate local audio-analysis PNGs.                                       |
+| `--audio-analysis`       | Generate local images during upload.                                      |
+| `--audio-analysis-only`  | Analyze one media file without configuration or upload.                   |
+| `--audio-output <path>`  | Required output directory for `--audio-analysis-only`.                    |
 | `--audio-tracks <value>` | Select `primary`, `all`, or comma-separated one-based audio ordinals.     |
 | `--audio-images <value>` | Generate `both`, `waveform`, or `spectrogram` images. Defaults to `both`. |
 
@@ -297,9 +299,15 @@ Generate only spectrograms for the first and third audio tracks:
 .\upbrr.exe --audio-analysis --audio-tracks 1,3 --audio-images spectrogram "D:\releases\Example.Release.2026.1080p-GRP.mkv"
 ```
 
-The numeric selectors are audio-only ordinals from the prepared source, not container-wide stream indexes. Repeated ordinals are ignored, and results retain source track order. `--audio-tracks` and `--audio-images` are rejected unless analysis is enabled.
+Analyze only audio and save it outside managed temporary storage:
 
-The CLI prints every successfully retained PNG and its expiry. A partial or failed analysis exits nonzero and stops before tracker or torrent-client effects, even when some images succeeded. See [Audio analysis](../workflow/audio-analysis.md) for output, retry, and retention behavior.
+```powershell
+.\upbrr.exe --audio-analysis-only --audio-output "D:\reports\audio" "D:\releases\Example.Release.2026.1080p-GRP.mkv"
+```
+
+The numeric selectors are audio-only ordinals, not container-wide stream indexes. Repeated ordinals are ignored, and results retain source track order. `--audio-tracks` and `--audio-images` require either analysis mode.
+
+During upload, the CLI prints every successfully retained PNG and its expiry. Standalone analysis prints paths to PNGs and statistics files in a new directory under `--audio-output`. A partial or failed analysis exits nonzero, even when some artifacts succeeded. See [Audio analysis](../workflow/audio-analysis.md) for output, retry, and retention behavior.
 
 ## Client and torrent
 

@@ -13,6 +13,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +27,87 @@ type fakeDecoder struct {
 	retryPCM []byte
 	decodes  int
 	err      error
+}
+
+func TestAnalyzeFileSelectsSourceAudioOrdinalWithoutPreparedRelease(t *testing.T) {
+	decoder := &fakeDecoder{
+		streams: []inspectedStream{
+			{
+				codec:      "pcm",
+				sampleRate: 48_000,
+				layout:     "mono",
+				channels:   1,
+			},
+			{
+				codec:      "pcm",
+				sampleRate: 48_000,
+				layout:     "mono",
+				channels:   1,
+			},
+		},
+		pcm: encodePCM([][]float32{{-0.5}, {0.5}, {-0.5}, {0.5}}),
+	}
+	service := newService(api.NopLogger{}, decoder)
+	output := t.TempDir()
+	results, err := service.AnalyzeFile(t.Context(), "Synthetic.Audio.2026.mkv", api.AudioAnalysisSelectionSelected,
+		[]int{2}, []api.AudioAnalysisVariant{api.AudioAnalysisWaveform, api.AudioAnalysisStats}, output)
+	if err != nil || decoder.decodes != 1 || len(results) != 1 || results[0].Public.Ordinal != 2 ||
+		results[0].Public.Status != api.StageStatusCompleted || len(results[0].Artifacts) != 2 {
+		t.Fatalf("error = %v, decodes = %d, results = %#v", err, decoder.decodes, results)
+	}
+	for _, artifact := range results[0].Artifacts {
+		if name := filepath.Base(filepath.Dir(artifact.Path)); name != "track_2" {
+			t.Fatalf("artifact path has track directory %q, want track_2", name)
+		}
+		if info, statErr := os.Stat(artifact.Path); statErr != nil || info.Size() == 0 {
+			t.Fatalf("artifact %q: info=%v error=%v", artifact.Path, info, statErr)
+		}
+	}
+	repeated, err := service.AnalyzeFile(t.Context(), "Synthetic.Audio.2026.mkv", api.AudioAnalysisSelectionSelected,
+		[]int{2}, []api.AudioAnalysisVariant{api.AudioAnalysisWaveform, api.AudioAnalysisStats}, output)
+	if err != nil || decoder.decodes != 2 || len(repeated) != 1 || repeated[0].Public.Status != api.StageStatusCompleted ||
+		repeated[0].Artifacts[0].Path == results[0].Artifacts[0].Path {
+		t.Fatalf("repeat: error=%v decodes=%d results=%#v", err, decoder.decodes, repeated)
+	}
+	if _, err := os.Stat(results[0].Artifacts[0].Path); err != nil {
+		t.Fatalf("first run artifact missing after repeat: %v", err)
+	}
+	_, err = service.AnalyzeFile(t.Context(), "Synthetic.Audio.2026.mkv", api.AudioAnalysisSelectionSelected,
+		[]int{3}, []api.AudioAnalysisVariant{api.AudioAnalysisWaveform}, output)
+	if err == nil || !strings.Contains(err.Error(), "ordinal is not present") || decoder.decodes != 2 {
+		t.Fatalf("missing ordinal: error=%v decodes=%d", err, decoder.decodes)
+	}
+}
+
+func TestAnalyzeFilePrimarySkipsCommentaryAndCompatibility(t *testing.T) {
+	for _, title := range []string{"Director commentary", "Compatibility track"} {
+		t.Run(title, func(t *testing.T) {
+			decoder := &fakeDecoder{
+				streams: []inspectedStream{
+					{
+						codec:      "pcm",
+						title:      title,
+						sampleRate: 48_000,
+						layout:     "mono",
+						channels:   1,
+					},
+					{
+						codec:      "pcm",
+						title:      "Main",
+						sampleRate: 48_000,
+						layout:     "mono",
+						channels:   1,
+					},
+				},
+				pcm: encodePCM([][]float32{{-0.5}, {0.5}, {-0.5}, {0.5}}),
+			}
+			results, err := newService(api.NopLogger{}, decoder).AnalyzeFile(t.Context(), "Synthetic.Audio.2026.mkv",
+				api.AudioAnalysisSelectionPrimary, nil, []api.AudioAnalysisVariant{api.AudioAnalysisStats}, t.TempDir())
+			if err != nil || len(results) != 1 || results[0].Public.Ordinal != 2 || results[0].Public.Title != "Main" {
+				t.Fatalf("error=%v results=%#v", err, results)
+			}
+		})
+	}
 }
 
 func (d *fakeDecoder) Inspect(context.Context, string) ([]inspectedStream, error) {
@@ -107,6 +189,9 @@ func TestServiceStreamsSinglePassWaveformAndPublishesPNG(t *testing.T) {
 		t.Fatalf("result = %#v", result)
 	}
 	artifact := result[0].Artifacts[0]
+	if name := filepath.Base(filepath.Dir(artifact.Path)); name != opaquePathPart(track.ID) {
+		t.Fatalf("managed artifact path has track directory %q", name)
+	}
 	if info, err := os.Stat(artifact.Path); err != nil || info.Size() == 0 {
 		t.Fatalf("artifact stat = %v, %v", info, err)
 	}

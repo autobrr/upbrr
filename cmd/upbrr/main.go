@@ -176,6 +176,9 @@ func runUpload(
 		showCLIVersion(ctx, streams.out)
 		return nil
 	}
+	if opts.AudioAnalysisOnly {
+		return runAudioAnalysisOnly(ctx, opts, visitedFlags, paths, streams)
+	}
 	trackScoped := len(opts.TrackLanguages) > 0
 	for _, raw := range opts.ResetInput {
 		field, _, _ := strings.Cut(raw, ":")

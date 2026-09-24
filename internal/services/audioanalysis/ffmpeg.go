@@ -22,12 +22,15 @@ import (
 
 const (
 	diagnosticLimit    = 64 << 10
+	inspectTitleLimit  = 512
 	probeInputPrefix   = "Input #0,"
 	probeCompletedLine = "At least one output file must be specified"
 	inspectLineLimit   = diagnosticLimit
 )
 
 var ffmpegAudioStreamPattern = regexp.MustCompile(`(?m)^\s*Stream #0:\d+(?:\[[^\]\r\n]+\])?(?:\([^\r\n)]*\))?: Audio: ([^,\r\n]+),\s*(\d+) Hz,\s*([^,\r\n]+)`)
+var ffmpegStreamHeaderPattern = regexp.MustCompile(`(?m)^\s*Stream #0:\d+`)
+var ffmpegStreamTitlePattern = regexp.MustCompile(`(?mi)^\s*title\s*:\s*([^\r\n]+)`)
 var ffmpegDurationPattern = regexp.MustCompile(`^\s*Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)`)
 var ffmpegStreamDurationPattern = regexp.MustCompile(`(?i)^\s*DURATION(?:-[a-z]+)?\s*:\s*(\d+):(\d+):(\d+(?:\.\d+)?)`)
 
@@ -35,10 +38,17 @@ var errNoInspectedAudioStreams = errors.New("audio analysis: no audio streams fo
 
 type inspectedStream struct {
 	codec           string
+	title           string
+	secondaryTitle  bool
 	sampleRate      int
 	layout          string
 	channels        int
 	durationSeconds float64
+}
+
+func isSecondaryAudioTitle(title string) bool {
+	title = strings.ToLower(title)
+	return strings.Contains(title, "commentary") || strings.Contains(title, "compatibility")
 }
 
 type decoder interface {
@@ -137,6 +147,10 @@ func (d *ffmpegDecoder) Inspect(ctx context.Context, path string) ([]inspectedSt
 	}
 	streamDurations := stderr.streamDurationValues()
 	for index := range streams {
+		if index < len(stderr.streamTitles) {
+			streams[index].title = stderr.streamTitles[index]
+			streams[index].secondaryTitle = stderr.streamSecondary[index]
+		}
 		if index < len(streamDurations) && streamDurations[index] > 0 {
 			streams[index].durationSeconds = streamDurations[index]
 			continue
@@ -150,19 +164,29 @@ func parseInspectedStreams(text string) ([]inspectedStream, error) {
 	if before, _, ok := strings.Cut(text, "Stream mapping:"); ok {
 		text = before
 	}
-	matches := ffmpegAudioStreamPattern.FindAllStringSubmatch(text, -1)
+	matches := ffmpegAudioStreamPattern.FindAllStringSubmatchIndex(text, -1)
 	streams := make([]inspectedStream, 0, len(matches))
 	for _, match := range matches {
-		rate, rateErr := strconv.Atoi(match[2])
+		rate, rateErr := strconv.Atoi(text[match[4]:match[5]])
 		if rateErr != nil || rate <= 0 {
 			return nil, errors.New("audio analysis: ffmpeg returned malformed stream facts")
 		}
-		layout := strings.TrimSpace(match[3])
+		layout := strings.TrimSpace(text[match[6]:match[7]])
+		block := text[match[1]:]
+		if next := ffmpegStreamHeaderPattern.FindStringIndex(block); next != nil {
+			block = block[:next[0]]
+		}
+		title := ""
+		if titleMatch := ffmpegStreamTitlePattern.FindStringSubmatch(block); len(titleMatch) > 1 {
+			title = strings.TrimSpace(titleMatch[1])
+		}
 		streams = append(streams, inspectedStream{
-			codec:      strings.TrimSpace(match[1]),
-			sampleRate: rate,
-			layout:     layout,
-			channels:   channelCountFromFFmpegLayout(layout),
+			codec:          strings.TrimSpace(text[match[2]:match[3]]),
+			title:          title,
+			secondaryTitle: isSecondaryAudioTitle(title),
+			sampleRate:     rate,
+			layout:         layout,
+			channels:       channelCountFromFFmpegLayout(layout),
 		})
 	}
 	if len(streams) == 0 {
@@ -495,6 +519,11 @@ type inspectDiagnosticBuffer struct {
 	capturingAudio  bool
 	durationSeconds float64
 	streamDurations []float64
+	streamTitles    []string
+	streamSecondary []bool
+	keywordWindow   [13]byte
+	keywordLength   int
+	lineSecondary   bool
 }
 
 func (b *inspectDiagnosticBuffer) Write(value []byte) (int, error) {
@@ -503,6 +532,21 @@ func (b *inspectDiagnosticBuffer) Write(value []byte) (int, error) {
 		if character == '\n' {
 			b.finishProbeLine()
 			continue
+		}
+		if !b.lineSecondary {
+			lower := character
+			if lower >= 'A' && lower <= 'Z' {
+				lower += 'a' - 'A'
+			}
+			if b.keywordLength < len(b.keywordWindow) {
+				b.keywordWindow[b.keywordLength] = lower
+				b.keywordLength++
+			} else {
+				copy(b.keywordWindow[:], b.keywordWindow[1:])
+				b.keywordWindow[len(b.keywordWindow)-1] = lower
+			}
+			window := b.keywordWindow[:b.keywordLength]
+			b.lineSecondary = bytes.HasSuffix(window, []byte("commentary")) || bytes.HasSuffix(window, []byte("compatibility"))
 		}
 		if len(b.line) < inspectLineLimit {
 			b.line = append(b.line, character)
@@ -530,6 +574,15 @@ func (b *inspectDiagnosticBuffer) finishProbeLine() {
 					_, _ = b.streamFacts.Write([]byte(line))
 					_, _ = b.streamFacts.Write([]byte{'\n'})
 					b.streamDurations = append(b.streamDurations, 0)
+					b.streamTitles = append(b.streamTitles, "")
+					b.streamSecondary = append(b.streamSecondary, false)
+				}
+			} else if b.capturingAudio {
+				if match := ffmpegStreamTitlePattern.FindStringSubmatch(line); len(match) > 1 {
+					title := strings.TrimSpace(match[1])
+					index := len(b.streamTitles) - 1
+					b.streamTitles[index] = title[:min(len(title), inspectTitleLimit)]
+					b.streamSecondary[index] = b.lineSecondary
 				}
 			}
 			if b.capturingAudio && len(b.streamDurations) > 0 {
@@ -542,6 +595,8 @@ func (b *inspectDiagnosticBuffer) finishProbeLine() {
 	}
 	b.line = b.line[:0]
 	b.lineOverflow = false
+	b.keywordLength = 0
+	b.lineSecondary = false
 }
 
 func (b *inspectDiagnosticBuffer) streamText() string { return b.streamFacts.String() }

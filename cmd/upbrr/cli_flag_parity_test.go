@@ -21,8 +21,8 @@ func TestEveryCanonicalCLIFlagIsClassifiedForCompositeUpload(t *testing.T) {
 
 	registered := commandFlagNames(newUploadRootCommand(cliIO{}, nil).Flags())
 	aliases := cliFlagAliases()
-	if len(registered) != 172 || len(aliases) != 54 {
-		t.Fatalf("upload flag inventory: registered=%d aliases=%d, want 172 and 54", len(registered), len(aliases))
+	if len(registered) != 174 || len(aliases) != 54 {
+		t.Fatalf("upload flag inventory: registered=%d aliases=%d, want 174 and 54", len(registered), len(aliases))
 	}
 	for alias, target := range aliases {
 		if _, exists := registered[alias]; !exists {
@@ -39,8 +39,8 @@ func TestEveryCanonicalCLIFlagIsClassifiedForCompositeUpload(t *testing.T) {
 		}
 		canonical[name] = struct{}{}
 	}
-	if len(canonical) != 118 {
-		t.Fatalf("canonical upload flags=%d, want 118", len(canonical))
+	if len(canonical) != 120 {
+		t.Fatalf("canonical upload flags=%d, want 120", len(canonical))
 	}
 
 	classified := cliCompositeFlagManifest()
@@ -201,6 +201,8 @@ func cliCompositeFlagManifest() map[string]cliCompositeFlagClass {
 		result[name] = cliCompositeFlagClass{kind: "mapped"}
 	}
 	for name, reason := range map[string]string{
+		"audio-analysis-only":     "standalone analysis without upload",
+		"audio-output":            "standalone artifact destination",
 		"cleanup":                 "cross-workflow storage administration",
 		"config":                  "process configuration selection",
 		"console-log-level":       "process console verbosity",

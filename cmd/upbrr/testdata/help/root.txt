@@ -236,6 +236,10 @@ Screenshots and Images:
       Skip automatic image host uploads
   -audio-analysis, --audio-analysis
       Generate local audio images and amplitude statistics in managed temporary storage before upload
+  -audio-analysis-only, --audio-analysis-only
+      Analyze one media file without configuration or upload
+  -audio-output, --audio-output string
+      Output directory for --audio-analysis-only artifacts
   -audio-tracks, --audio-tracks string
       Audio tracks: primary (default), all, or comma-separated one-based audio ordinals
   -audio-images, --audio-images string
