@@ -4,6 +4,7 @@
 package webserver
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -84,6 +86,239 @@ func TestNewBackendInitializesConfigActivationFingerprint(t *testing.T) {
 	}
 	if activation.ActiveGeneration != 0 || activation.Fingerprint != want {
 		t.Fatalf("initial activation = %#v, want generation=0 fingerprint=%q", activation, want)
+	}
+}
+
+func TestStartupReconcilesNewDefaultsBeforeConfigIsSaved(t *testing.T) {
+	ctx := t.Context()
+	repoPath := filepath.Join(t.TempDir(), "activation.db")
+	repo, err := db.OpenContext(ctx, repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.MigrateContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	previous := backendConfigTestConfig(repoPath)
+	initial, err := InitializeRuntimeConfigActivation(ctx, repo, previous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := previous
+	current.Metadata.KeepImages = !previous.Metadata.KeepImages
+	want, err := config.EffectiveConfigFingerprint(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if initial.Fingerprint == want {
+		t.Fatal("test defaults did not change fingerprint")
+	}
+	activation, err := InitializeRuntimeConfigActivation(ctx, repo, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if activation.ActiveGeneration != 1 || activation.Fingerprint != want {
+		t.Fatalf("default-only upgrade = %#v, want generation=1 fingerprint=%q", activation, want)
+	}
+}
+
+func TestNewBackendReconcilesRetiredA4KActivationFingerprint(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	repoPath := filepath.Join(t.TempDir(), "activation.db")
+	repo, err := db.OpenContext(ctx, repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	if err := repo.MigrateContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cfg := backendConfigTestConfig(repoPath)
+	cfg.Trackers.Trackers = map[string]config.TrackerConfig{"A4K": {APIKey: "synthetic-key", Anon: true}}
+	if err := config.SaveToDatabase(ctx, &cfg, repo); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := config.LoadFromDatabase(ctx, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored.MainSettings.DBPath = repoPath
+
+	// Previous releases included A4K in the embedded tracker schema.
+	currentTrackersJSON, err := json.Marshal(stored.Trackers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var trackersDoc struct {
+		DefaultTrackers  config.CSVList            `json:"DefaultTrackers"`
+		PreferredTracker string                    `json:"PreferredTracker"`
+		Trackers         map[string]map[string]any `json:"Trackers"`
+	}
+	if err := json.Unmarshal(currentTrackersJSON, &trackersDoc); err != nil {
+		t.Fatal(err)
+	}
+	trackersDoc.Trackers["A4K"] = map[string]any{
+		"LinkDirName":           "",
+		"APIKey":                "synthetic-key",
+		"ImageHost":             "",
+		"Anon":                  true,
+		"ModQ":                  false,
+		"FaviconURL":            "",
+		"TorrentClient":         "",
+		"Internal":              false,
+		"DupeBypassGroups":      []any{},
+		"PersonalReleaseGroups": []any{},
+		"InternalGroups":        []any{},
+	}
+	legacyTrackersJSON, err := json.Marshal(trackersDoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutDBPath := *stored
+	withoutDBPath.MainSettings.DBPath = ""
+	currentJSON, err := json.Marshal(withoutDBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyJSON := bytes.Replace(currentJSON, currentTrackersJSON, legacyTrackersJSON, 1)
+	if bytes.Equal(legacyJSON, currentJSON) && !bytes.Equal(currentTrackersJSON, legacyTrackersJSON) {
+		t.Fatal("could not substitute prior tracker shape")
+	}
+	legacyFingerprint, err := api.CanonicalWorkflowFingerprint(json.RawMessage(legacyJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.InitializeConfigActivationFingerprint(ctx, legacyFingerprint); err != nil {
+		t.Fatal(err)
+	}
+
+	backend, err := NewBackendWithContext(ctx, *stored, newEventHub())
+	if err != nil {
+		t.Fatalf("retired A4K config blocked startup: %v", err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	activation, err := repo.LoadConfigActivation(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := config.EffectiveConfigFingerprint(*stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if activation.ActiveGeneration != 1 || activation.Fingerprint != want ||
+		!slices.Equal(activation.Impacts, []api.ConfigImpact{api.ConfigImpactProvider}) {
+		t.Fatalf("startup did not advance activation to current config: %#v", activation)
+	}
+}
+
+func TestStartupReconcilesStoredConfigChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*config.Config)
+	}{
+		{"tracker addition", func(cfg *config.Config) {
+			cfg.Trackers.Trackers = map[string]config.TrackerConfig{"NEW": {APIKey: "synthetic-key"}}
+		}},
+		{"setting change", func(cfg *config.Config) {
+			cfg.Metadata.KeepImages = !cfg.Metadata.KeepImages
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			repoPath := filepath.Join(t.TempDir(), "activation.db")
+			repo, err := db.OpenContext(ctx, repoPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = repo.Close() })
+			if err := repo.MigrateContext(ctx); err != nil {
+				t.Fatal(err)
+			}
+			cfg := backendConfigTestConfig(repoPath)
+			if err := config.SaveToDatabase(ctx, &cfg, repo); err != nil {
+				t.Fatal(err)
+			}
+			previous, err := config.LoadFromDatabase(ctx, repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			previousFingerprint, err := config.EffectiveConfigFingerprint(*previous)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := repo.InitializeConfigActivationFingerprint(ctx, previousFingerprint); err != nil {
+				t.Fatal(err)
+			}
+			tc.change(previous)
+			if err := config.SaveToDatabase(ctx, previous, repo); err != nil {
+				t.Fatal(err)
+			}
+			current, err := config.LoadFromDatabase(ctx, repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			current.MainSettings.DBPath = repoPath
+			want, err := config.EffectiveConfigFingerprint(*current)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want == previousFingerprint {
+				t.Fatal("test config did not change fingerprint")
+			}
+			activation, err := InitializeRuntimeConfigActivation(ctx, repo, *current)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if activation.ActiveGeneration != 1 || activation.Fingerprint != want {
+				t.Fatalf("reconciled activation = %#v, want generation=1 fingerprint=%q", activation, want)
+			}
+			repeat, err := InitializeRuntimeConfigActivation(ctx, repo, *current)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if repeat.ActiveGeneration != 1 || repeat.Fingerprint != want {
+				t.Fatalf("repeated startup changed activation: %#v", repeat)
+			}
+		})
+	}
+}
+
+func TestNewBackendRejectsChangedConfigActivationFingerprint(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	repoPath := filepath.Join(t.TempDir(), "activation.db")
+	repo, err := db.OpenContext(ctx, repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	if err := repo.MigrateContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cfg := backendConfigTestConfig(repoPath)
+	if err := config.SaveToDatabase(ctx, &cfg, repo); err != nil {
+		t.Fatal(err)
+	}
+	fingerprint, err := config.EffectiveConfigFingerprint(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.InitializeConfigActivationFingerprint(ctx, fingerprint); err != nil {
+		t.Fatal(err)
+	}
+	changed := cfg
+	changed.Metadata.KeepImages = !cfg.Metadata.KeepImages
+	if _, err := NewBackendWithContext(ctx, changed, newEventHub()); !errors.Is(err, api.ErrConfigActivationChanged) {
+		t.Fatalf("changed config startup error = %v, want config activation changed", err)
+	}
+	activation, err := repo.LoadConfigActivation(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if activation.ActiveGeneration != 0 || activation.Fingerprint != fingerprint {
+		t.Fatalf("rejected startup changed active config generation: %#v", activation)
 	}
 }
 

@@ -904,7 +904,7 @@ func TestNewRegistryIncludesUnit3DRuleCapabilities(t *testing.T) {
 	}
 
 	trackersWithRules := []string{
-		"A4K", "AITHER", "BLU", "DP", "HHD", "LST", "LUME", "MNS", "OE", "OTW", "RAS",
+		"AITHER", "BLU", "DP", "HHD", "LST", "LUME", "MNS", "OE", "OTW", "RAS",
 		"RF", "RHD", "SHRI", "SP", "STC", "TIK", "TOS", "TTR", "ULCX", "ZNTH",
 	}
 	for _, name := range trackersWithRules {
@@ -1040,7 +1040,6 @@ func TestNewRegistryIncludesImageHostPolicies(t *testing.T) {
 		disableWithoutRehost bool
 		disableWithoutAPI    bool
 	}{
-		{tracker: "A4K", host: "onlyimage"},
 		{
 			tracker:              "HDB",
 			host:                 "hdb",

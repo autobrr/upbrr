@@ -736,6 +736,14 @@ export type WebAuthStatus = {
 export type ApplicationInfo = {
   version: string;
   buildIdentifier: string;
+  /** Embedded VCS commit time in RFC3339 UTC, or empty when unavailable. */
+  buildTime: string;
+  /** Linked autobrr modules; empty when module build metadata is unavailable. */
+  dependencies: Array<{
+    path: string;
+    /** Display label, including replacement details without local filesystem paths. */
+    version: string;
+  }>;
   goVersion: string;
   goos: string;
   goarch: string;

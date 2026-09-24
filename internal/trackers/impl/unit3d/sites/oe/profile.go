@@ -13,9 +13,9 @@ func Profile() unit3d.Profile {
 		BaseURL:           "https://onlyencodes.cc",
 		DescriptionGroup:  "oe",
 		Rules:             Rules(),
+		ValidationPolicy:  ValidationPolicy(),
 		BannedGroups:      BannedGroups(),
 		ReleaseNamePolicy: namePolicy(),
-		ValidationPolicy:  descriptionValidationPolicy(),
 		Site: unit3d.SiteProfile{
 			BuildDescription:       buildDescription,
 			InputSchema:            inputSchema,

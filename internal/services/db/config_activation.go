@@ -123,6 +123,76 @@ func (r *SQLiteRepository) InitializeConfigActivationFingerprint(
 	return activation, err
 }
 
+// ReconcileConfigActivation advances an existing fingerprint after a startup
+// config change. It verifies the exact stored config and activation observed by
+// the caller, invalidates unfinished work, and retains a pending candidate.
+func (r *SQLiteRepository) ReconcileConfigActivation(
+	ctx context.Context, expectedConfig json.RawMessage, expected api.ConfigActivation,
+	nextFingerprint api.WorkflowFingerprint, transform ConfigActivationWorkflowTransform,
+) (api.ConfigActivation, error) {
+	if r == nil || r.db == nil {
+		return api.ConfigActivation{}, errors.New("db: repository not initialized")
+	}
+	if strings.TrimSpace(string(nextFingerprint)) == "" {
+		return api.ConfigActivation{}, errors.New("db: config activation fingerprint is required")
+	}
+	var activation api.ConfigActivation
+	err := r.withWriteTx(ctx, "reconcile config activation", func(tx *sql.Tx) error {
+		current, err := loadConfigActivation(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if current.ActiveGeneration != expected.ActiveGeneration || current.Fingerprint != expected.Fingerprint ||
+			current.Status != expected.Status || current.ActivationID != expected.ActivationID {
+			return api.ErrConfigActivationChanged
+		}
+		if current.Fingerprint == "" || current.ActiveGeneration >= math.MaxInt64 {
+			return api.ErrConfigActivationChanged
+		}
+		if err := requireFullConfigUnchanged(ctx, tx, expectedConfig); err != nil {
+			return err
+		}
+		slot, err := requireConfigActivationSafe(ctx, tx)
+		if err != nil {
+			return err
+		}
+		impacts := []api.ConfigImpactDetail{{Kind: api.ConfigImpactProvider}}
+		if slot.State == api.ActiveInputActive {
+			if transform == nil {
+				return errors.New("db: config activation workflow transform is required")
+			}
+			if err := applyConfigActivationWorkflowImpacts(ctx, tx, slot, impacts, transform); err != nil {
+				return err
+			}
+			if slot.Revision >= math.MaxInt64 {
+				return errors.New("db: active input revision exhausted during config activation")
+			}
+			slot.Revision++
+			if err := writeActiveInput(ctx, tx, slot); err != nil {
+				return err
+			}
+		}
+		impactsJSON, err := json.Marshal(impacts)
+		if err != nil {
+			return fmt.Errorf("db encode config activation impacts: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE config_activation
+			SET generation = ?, fingerprint = ?, impacts_json = ?, updated_at = ? WHERE singleton = 1`,
+			current.ActiveGeneration+1, nextFingerprint, impactsJSON, formatWorkflowStateTime(time.Now().UTC())); err != nil {
+			return fmt.Errorf("db reconcile config activation: %w", err)
+		}
+		if current.Status == api.ConfigActivationPending {
+			if _, err := tx.ExecContext(ctx, `UPDATE config_activation_pending SET base_generation = ? WHERE singleton = 1`,
+				current.ActiveGeneration+1); err != nil {
+				return fmt.Errorf("db rebase pending config activation: %w", err)
+			}
+		}
+		activation, err = loadConfigActivation(ctx, tx)
+		return err
+	})
+	return activation, err
+}
+
 func loadConfigActivation(ctx context.Context, query workflowStateQueryer) (api.ConfigActivation, error) {
 	var activation api.ConfigActivation
 	var generation uint64

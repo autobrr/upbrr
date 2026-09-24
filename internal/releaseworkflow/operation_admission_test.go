@@ -120,6 +120,9 @@ func TestOperationConvergesCompletedCheckpointAfterRepeatedPublicationFailures(t
 	if err := module.publishCompletedOperationCheckpoint(t.Context(), stored, checkpoint); err == nil {
 		t.Fatal("accepted a checkpoint that skips the current operation sequence")
 	}
+	if stored.Status.Sequence < 2 {
+		t.Fatalf("operation sequence before lazy convergence = %d, want at least 2", stored.Status.Sequence)
+	}
 	// A poll can read the queued receipt before the worker advances to running
 	// and persists its terminal checkpoint. Reproduce that interleaving without
 	// depending on scheduler timing.

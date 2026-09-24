@@ -89,7 +89,7 @@ func (m *Module) claimLegacyRecoverySlot(
 	if err != nil {
 		return api.ActiveInputRecord{}, fmt.Errorf("release workflow read legacy recovery input: %w", err)
 	}
-	if slot.State == api.ActiveInputRecovering && isLegacyRecoverySlot(slot) &&
+	if slot.State == api.ActiveInputRecovering && IsLegacyRecoverySlot(slot) &&
 		slot.OwnerID == ownerID && slot.WorkflowID == workflowID && slot.CoordinatorID == m.processEpoch && slot.LeaseExpiresAt.After(now) {
 		return slot, nil
 	}
@@ -105,7 +105,7 @@ func (m *Module) claimLegacyRecoverySlot(
 			WorkflowID:     workflowID,
 			LeaseExpiresAt: now.Add(workflowWorkLeaseTTL),
 		}
-	case slot.State == api.ActiveInputRecovering && isLegacyRecoverySlot(slot) &&
+	case slot.State == api.ActiveInputRecovering && IsLegacyRecoverySlot(slot) &&
 		slot.OwnerID == ownerID && slot.WorkflowID == workflowID && !slot.LeaseExpiresAt.After(now):
 		next = slot
 		next.Revision, next.Fence = slot.Revision+1, slot.Fence+1
@@ -120,7 +120,9 @@ func (m *Module) claimLegacyRecoverySlot(
 	return next, nil
 }
 
-func isLegacyRecoverySlot(slot api.ActiveInputRecord) bool {
+// IsLegacyRecoverySlot distinguishes a claimed legacy effect from an input
+// being recovered after a previous process stopped.
+func IsLegacyRecoverySlot(slot api.ActiveInputRecord) bool {
 	return slot.State == api.ActiveInputRecovering && slot.InputID == "" && slot.SourceVersion == "" &&
 		slot.WorkflowID != "" && slot.ReservationID == "" && slot.RequestedPath == ""
 }
@@ -216,7 +218,7 @@ func (m *Module) legacyRecoveryMutationContext(
 	if err != nil {
 		return ctx, true, fmt.Errorf("release workflow read legacy mutation input: %w", err)
 	}
-	if !isLegacyRecoverySlot(slot) || slot.OwnerID != ownerID || slot.WorkflowID != workflowID {
+	if !IsLegacyRecoverySlot(slot) || slot.OwnerID != ownerID || slot.WorkflowID != workflowID {
 		return ctx, false, nil
 	}
 	if _, ok := command.(ResolveActionCommand); !ok {
@@ -259,7 +261,7 @@ func (m *Module) finishLegacyInputRecoveryLocked(ctx context.Context, ownerID st
 	if err != nil {
 		return fmt.Errorf("release workflow read legacy recovery completion input: %w", err)
 	}
-	if !isLegacyRecoverySlot(slot) || slot.OwnerID != ownerID || slot.WorkflowID != workflowID {
+	if !IsLegacyRecoverySlot(slot) || slot.OwnerID != ownerID || slot.WorkflowID != workflowID {
 		return api.ErrActiveInputChanged
 	}
 	empty := api.ActiveInputRecord{

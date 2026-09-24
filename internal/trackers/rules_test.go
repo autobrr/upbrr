@@ -1132,7 +1132,7 @@ func TestEvaluateRulesNonDiscLanguagePoliciesSkipDiscs(t *testing.T) {
 			Assessments:       encodeAssessments(api.EncodeSettingsStatusPresent),
 		},
 	}
-	for _, tracker := range []string{"A4K", "AITHER", "LST", "LUME", "OE", "ULCX"} {
+	for _, tracker := range []string{"AITHER", "LST", "LUME", "OE", "ULCX"} {
 		for _, subject := range subjects {
 			failures := evaluateNonMetadataRulesForTest(context.Background(), tracker, subject)
 			if hasRuleFailure(failures, "language_rule") {
@@ -1445,7 +1445,7 @@ func TestResolutionDependentRulesAreStrict(t *testing.T) {
 	}
 }
 
-func TestCustomRulesReturnMultipleKeyedDispositions(t *testing.T) {
+func TestULCXConcertsAreAllowed(t *testing.T) {
 	t.Parallel()
 	meta := api.RuleSubject{
 		Container:         "mkv",
@@ -1457,9 +1457,9 @@ func TestCustomRulesReturnMultipleKeyedDispositions(t *testing.T) {
 		ProviderMetadata:  api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Keywords: "concert"}},
 	}
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "ULCX", meta)
-	concert, hasConcert := findRuleFailure(failures, "block_concert")
+	_, hasConcert := findRuleFailure(failures, "block_concert")
 	_, hasResolution := findRuleFailure(failures, "hevc_resolution_2160p")
-	if !hasConcert || hasResolution || concert.Disposition != api.RuleDispositionWaivable {
+	if hasConcert || hasResolution {
 		t.Fatalf("custom failures = %#v", failures)
 	}
 }

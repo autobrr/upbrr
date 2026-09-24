@@ -47,6 +47,29 @@ func executeCLIForTest(ctx context.Context, t *testing.T, args []string) cliExec
 	}
 }
 
+func TestCommandStartupPrintsVersion(t *testing.T) {
+	missingConfig := filepath.Join(t.TempDir(), "missing.yaml")
+	for _, args := range [][]string{
+		{},
+		{"--config", missingConfig, "Example.Release.2026.1080p-GRP"},
+		{"serve", "--config", missingConfig},
+		{"api-token", "list", "--config", missingConfig},
+		{"auth", "password", "--config", missingConfig},
+		{"live-test", "cleanup"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			result := executeCLIForTest(t.Context(), t, args)
+			want := "upbrr " + version + "\n"
+			if !strings.HasPrefix(result.stderr, want) || strings.Count(result.stderr, want) != 1 {
+				t.Fatalf("startup stderr=%q, want one leading %q", result.stderr, want)
+			}
+			if result.stdout != "" {
+				t.Fatalf("startup polluted command stdout: %q", result.stdout)
+			}
+		})
+	}
+}
+
 func TestCommandHelpGoldens(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -179,6 +202,10 @@ func TestAuthFirstTokenDispatch(t *testing.T) {
 
 func TestCommandExitCodesAndRouting(t *testing.T) {
 	missingConfig := filepath.Join(t.TempDir(), "missing.yaml")
+	versionResult := executeCLIForTest(t.Context(), t, []string{"--version", "--config", missingConfig})
+	if versionResult.code != 0 || versionResult.stderr != "" || !strings.HasPrefix(versionResult.stdout, "upbrr "+version+"\nBuild: ") {
+		t.Fatalf("version result: %#v", versionResult)
+	}
 	tests := []struct {
 		name       string
 		args       []string
@@ -267,25 +294,25 @@ func TestCommandExitCodesAndRouting(t *testing.T) {
 			name:       "version ignores command word",
 			args:       []string{"--version", "serve"},
 			wantCode:   0,
-			wantStdout: "upbrr " + version + "\n",
+			wantStdout: versionResult.stdout,
 		},
 		{
 			name:       "serve after path stays root",
 			args:       []string{"Example.Release.2026.1080p-GRP", "serve", "--version"},
 			wantCode:   0,
-			wantStdout: "upbrr " + version + "\n",
+			wantStdout: versionResult.stdout,
 		},
 		{
 			name:       "completion stays root path",
 			args:       []string{"completion", "--version"},
 			wantCode:   0,
-			wantStdout: "upbrr " + version + "\n",
+			wantStdout: versionResult.stdout,
 		},
 		{
 			name:       "hidden completion stays root path",
 			args:       []string{"__complete", "--version"},
 			wantCode:   0,
-			wantStdout: "upbrr " + version + "\n",
+			wantStdout: versionResult.stdout,
 		},
 	}
 	for _, test := range tests {
@@ -323,7 +350,7 @@ func TestCommandContextReachesAPITokenHandler(t *testing.T) {
 func TestCommandFactoriesDoNotLeakFlagState(t *testing.T) {
 	first := executeCLIForTest(t.Context(), t, []string{"--version"})
 	second := executeCLIForTest(t.Context(), t, []string{"--version=false"})
-	if first.code != 0 || first.stdout != "upbrr "+version+"\n" {
+	if first.code != 0 || first.stderr != "" || !strings.HasPrefix(first.stdout, "upbrr "+version+"\nBuild: ") {
 		t.Fatalf("first execution: %#v", first)
 	}
 	if second.stdout != "" || second.code == 0 {

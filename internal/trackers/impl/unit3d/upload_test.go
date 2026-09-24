@@ -853,9 +853,9 @@ func unit3DRegisteredTorrentFixture(t *testing.T) []byte {
 	return payload.Bytes()
 }
 
-func TestBuildUnit3DDataOmitsLegacyModQAliasForA4K(t *testing.T) {
+func TestBuildUnit3DDataOmitsLegacyModQAlias(t *testing.T) {
 	req := trackers.PreparationInput{
-		Tracker: "A4K",
+		Tracker: "AITHER",
 		TrackerConfig: config.TrackerConfig{
 			ModQ: true,
 		},
@@ -874,6 +874,6 @@ func TestBuildUnit3DDataOmitsLegacyModQAliasForA4K(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if _, ok := data["modq"]; ok {
-		t.Fatalf("did not expect legacy modq alias for A4K")
+		t.Fatal("did not expect legacy modq alias")
 	}
 }

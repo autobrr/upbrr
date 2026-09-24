@@ -85,7 +85,6 @@ func newTestBannedPolicyRegistry(t *testing.T) *Registry {
 		}
 	}
 	static := map[string][]string{
-		"A4K":  {"TEKNO3D"},
 		"BLU":  {"TheFarm"},
 		"CBR":  {"YTS.MX"},
 		"DP":   {"FGT", "PSA", "HorribleSubs", "Subsplease", "SyncUp", "Trix"},
@@ -166,7 +165,6 @@ func TestBannedGroupCheckerStaticBuiltins(t *testing.T) {
 
 	checker := newTestBannedGroupChecker(t, filepath.Join(t.TempDir(), "db.sqlite"))
 	cases := map[string][]string{
-		"A4K":  {"TEKNO3D"},
 		"BLU":  {"TheFarm"},
 		"CBR":  {"YTS.MX"},
 		"DP":   {"FGT", "PSA", "HorribleSubs", "Subsplease", "SyncUp", "Trix"},

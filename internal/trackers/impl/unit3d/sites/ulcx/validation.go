@@ -19,7 +19,7 @@ import (
 // ValidationPolicy returns ULCX's tracker-specific semantic checks.
 func ValidationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{
-		ID:    "unit3d-ulcx-policy-v4",
+		ID:    "unit3d-ulcx-policy-v5",
 		Check: checkRules,
 	}
 }
@@ -32,9 +32,6 @@ func checkRules(ctx context.Context, meta api.TrackerValidationSubject, _ api.Lo
 	}
 	failures := make([]api.RuleFailure, 0, 10)
 	ruleSubject := unit3d.ValidationRuleSubject(meta)
-	if unit3d.ContainsRuleValue(unit3d.RuleKeywords(ruleSubject), []string{"concert"}) {
-		failures = append(failures, trackers.NewRuleFailure("block_concert", "Concerts not allowed at ULCX.", api.RuleDispositionWaivable))
-	}
 	disc := unit3d.IsDiscType(meta.DiscType)
 	extraKinds := []api.PackageFileKind{
 		api.PackageFileKindExternalSubtitle,
@@ -112,20 +109,29 @@ func ulcxEvidencePolicy(rule string) trackers.EvidencePredicatePolicy {
 func ulcxEncodeFailures(meta api.TrackerValidationSubject, ruleSubject api.RuleSubject) []api.RuleFailure {
 	typeValue := unit3d.RuleType(ruleSubject)
 	resolution := unit3d.RuleResolution(ruleSubject)
-	if resolution == "" && typeValue == "ENCODE" {
+	if resolution == "" && (typeValue == "ENCODE" || typeValue == "HDTV") {
 		return []api.RuleFailure{trackers.NewEvidenceRuleFailure(
 			"ulcx_encode_resolution_evidence",
-			"encode resolution evidence is required",
+			"encode or broadcast resolution evidence is required",
 			api.RuleDispositionAdvisory,
 			meta.MediaFileFacts.TechnicalStatus,
 		)}
 	}
 	failures := make([]api.RuleFailure, 0, 2)
-	if (typeValue == "ENCODE" || typeValue == "HDTV") && unit3d.ResolutionBelow(resolution, "720p") {
+	if typeValue == "ENCODE" && unit3d.ResolutionBelow(resolution, "720p") {
 		failures = append(failures, trackers.NewRuleFailure(
 			"encode_min_resolution",
 			"Encodes must be at least 720p resolution for ULCX.",
 			api.RuleDispositionStrict,
+		))
+	}
+	// Upload rules v1.0.1 allow SDTV only when no HD, disc, or WEB release
+	// exists. Prepared facts cannot establish that release-history condition.
+	if typeValue == "SDTV" || typeValue == "HDTV" && unit3d.IsSDResolution(resolution) {
+		failures = append(failures, trackers.NewRuleFailure(
+			"ulcx_sdtv_availability",
+			"SDTV requires confirmation that the content was never released in HD or on SD disc/WEB.",
+			api.RuleDispositionWaivable,
 		))
 	}
 	if typeValue == "ENCODE" && ulcxX265Encode(meta) {

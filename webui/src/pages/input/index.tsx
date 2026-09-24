@@ -797,6 +797,11 @@ export default function InputPage(props: Props) {
   const sourceLookupURL = view.intent.sourceLookupURL;
   const loading = view.status === "running";
   const recovering = view.activeInput.state === "recovering";
+  const opaqueRecovering =
+    recovering &&
+    !view.activeInput.inputID &&
+    view.activeInput.recoveryWorkflowIDs.length === 0 &&
+    !view.preview;
   const verification =
     view.sourceVerification?.status === "running" ? view.sourceVerification : null;
   const metadataResetting = loading;
@@ -1273,7 +1278,7 @@ export default function InputPage(props: Props) {
                 variant="primary"
                 type="button"
                 onClick={handleFetch}
-                disabled={loading || recovering}
+                disabled={loading || (recovering && !opaqueRecovering)}
               >
                 {loading ? "Fetching..." : "Fetch metadata"}
               </Button>
@@ -1290,7 +1295,7 @@ export default function InputPage(props: Props) {
                 Close input
               </Button>
             </div>
-            {recovering ? (
+            {recovering && !opaqueRecovering ? (
               <p className="muted col-span-full" role="status">
                 Resolve the recovery action above before opening or preparing an input.
               </p>

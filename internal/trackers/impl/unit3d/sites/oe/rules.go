@@ -6,11 +6,13 @@ package oe
 import "github.com/autobrr/upbrr/internal/trackers"
 
 // Rules returns OE's waivable adult-content restriction and strict non-disc
-// English-language restriction.
+// English-language restriction and MediaInfo encode-settings requirement.
 func Rules() *trackers.RuleSet {
 	return &trackers.RuleSet{
-		BlockAdult:   true,
-		AdultMessage: "Porn is not allowed",
+		BlockAdult:            true,
+		AdultMessage:          "Porn is not allowed",
+		RequireValidMISetting: true,
+		BlockGroupUnlessType:  map[string][]string{"EVO": {"WEBDL"}},
 		Language: &trackers.LanguageRule{
 			Languages:      []string{"english", "en", "eng"},
 			RequireAudio:   true,
