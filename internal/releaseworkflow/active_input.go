@@ -132,6 +132,7 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 	if err != nil {
 		return api.ActiveInputRecord{}, fmt.Errorf("release workflow load input admission: %w", err)
 	}
+	admissionRevision := prior.Revision
 	m.logger.Debugf("active input: open admission decision=check state=%s revision=%d", prior.State, prior.Revision)
 	if prior.State != api.ActiveInputEmpty && !prior.LeaseExpiresAt.After(m.clock.Now()) {
 		foreignOwner := prior.OwnerID != owner
@@ -145,6 +146,9 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 			}
 			return api.ActiveInputRecord{}, err
 		}
+		if foreignOwner {
+			admissionRevision = prior.Revision
+		}
 	}
 	if prior.State != api.ActiveInputEmpty && (prior.OwnerID != owner || prior.CoordinatorID != m.processEpoch) {
 		return api.ActiveInputRecord{}, api.ErrActiveInputBusy
@@ -155,7 +159,7 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 		}
 		return prior, nil
 	}
-	if prior.Revision != request.ExpectedRevision {
+	if admissionRevision != request.ExpectedRevision {
 		return api.ActiveInputRecord{}, api.ErrActiveInputChanged
 	}
 	if prior.State != api.ActiveInputActive && prior.State != api.ActiveInputEmpty {

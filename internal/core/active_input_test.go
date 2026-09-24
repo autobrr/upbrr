@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -269,6 +270,25 @@ func TestLegacyActiveInputRecoveryFlowsFromDiscoveryToEmpty(t *testing.T) {
 	if recovered.State != api.ActiveInputRecovering || recovered.Current == nil || len(recovered.Current.Workflow.RequiredActions) != 1 {
 		t.Fatalf("recovered legacy input = %#v", recovered)
 	}
+	restartedWorkflow, err := releaseworkflow.New(
+		persistent,
+		releaseworkflow.NewMemoryPrivateResourceStore(),
+		releaseworkflow.ReleasePreparerFunc{},
+		releaseworkflow.WithActiveInputs(repo, func(context.Context, api.PrepareInput) (api.InputRecord, error) {
+			return api.InputRecord{}, nil
+		}),
+		releaseworkflow.WithProcessEpoch("core-legacy-restarted"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = restartedWorkflow.Shutdown(context.Background()) })
+	restartedCore := &Core{workflow: restartedWorkflow, logger: api.NopLogger{}}
+	restartedView, err := restartedCore.GetActiveInput(t.Context(), "legacy-owner")
+	if err != nil || restartedView.State != api.ActiveInputRecovering || restartedView.Current != nil ||
+		!slices.Equal(restartedView.RecoveryWorkflowIDs, []api.WorkflowID{created.Workflow.ID}) {
+		t.Fatalf("restarted legacy recovery = %#v, err=%v", restartedView, err)
+	}
 	reentered, err := core.RecoverLegacyActiveInput(t.Context(), "legacy-owner", api.RecoverLegacyActiveInputRequest{WorkflowID: created.Workflow.ID})
 	if err != nil || reentered.State != api.ActiveInputRecovering || reentered.Current == nil {
 		t.Fatalf("reenter legacy recovery = %#v, %v", reentered, err)
@@ -288,5 +308,54 @@ func TestLegacyActiveInputRecoveryFlowsFromDiscoveryToEmpty(t *testing.T) {
 	}
 	if resolved.State != api.ActiveInputEmpty || len(resolved.RecoveryWorkflowIDs) != 0 {
 		t.Fatalf("resolved legacy input = %#v", resolved)
+	}
+}
+
+func TestPreviousProcessInputDoesNotAdvertiseLegacyRecovery(t *testing.T) {
+	repo, err := db.Open(filepath.Join(t.TempDir(), "previous-input.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	persistent, err := releaseworkflow.NewPersistentRepository(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier := func(_ context.Context, input api.PrepareInput) (api.InputRecord, error) {
+		return api.InputRecord{
+			CanonicalPath: input.SourcePath,
+			SourceVersion: "verified",
+			Manifest:      []byte(`{}`),
+		}, nil
+	}
+	previous, err := releaseworkflow.New(
+		persistent, releaseworkflow.NewMemoryPrivateResourceStore(), releaseworkflow.ReleasePreparerFunc{},
+		releaseworkflow.WithActiveInputs(repo, verifier), releaseworkflow.WithProcessEpoch("previous-process"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = previous.Shutdown(context.Background()) })
+	opened, err := previous.OpenInput(t.Context(), "cli", releaseworkflow.OpenInputRequest{
+		Input: api.PrepareInput{SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026-GRP.mkv")}, IdempotencyKey: "previous-open",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := releaseworkflow.New(
+		persistent, releaseworkflow.NewMemoryPrivateResourceStore(), releaseworkflow.ReleasePreparerFunc{},
+		releaseworkflow.WithActiveInputs(repo, verifier), releaseworkflow.WithProcessEpoch("restarted-process"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = restarted.Shutdown(context.Background()) })
+	view, err := (&Core{workflow: restarted}).GetActiveInput(t.Context(), "cli")
+	if err != nil || view.State != api.ActiveInputRecovering || view.Revision != opened.Revision ||
+		view.Current != nil || len(view.RecoveryWorkflowIDs) != 0 {
+		t.Fatalf("previous-process input = %#v, err=%v", view, err)
 	}
 }

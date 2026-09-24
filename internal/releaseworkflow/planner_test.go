@@ -76,6 +76,43 @@ func TestContinueBeginsAndAdvancesThroughCentralPlanner(t *testing.T) {
 	}
 }
 
+type failingAcceptedIntentRepository struct {
+	DurabilityRepository
+	err error
+}
+
+func (r failingAcceptedIntentRepository) AcceptIntent(context.Context, api.ReleaseWorkflowIntentRecord) (api.ReleaseWorkflowIntentRecord, bool, error) {
+	return api.ReleaseWorkflowIntentRecord{}, false, r.err
+}
+
+func TestContinueReturnsCommittedWorkflowIDAfterAcceptedIntentFailure(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	repo := openActiveInputRecoveryRepository(ctx, t)
+	persistent, err := NewPersistentRepository(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	module := newActiveInputRecoveryModule(t, persistent, repo, &hashingActiveInputVerifier{}, &mutableClock{now: time.Now().UTC()}, "planner-post-open")
+	intentErr := errors.New("synthetic accepted-intent failure")
+	module.durability = failingAcceptedIntentRepository{DurabilityRepository: module.durability, err: intentErr}
+	source := writeActiveInputRecoverySource(t, "Example.Release.2026-GRP.mkv", "verified source")
+	result, err := module.Continue(ctx, testOwnerID, api.ContinueReleaseWorkflowRequest{
+		IdempotencyKey: "post-open-failure",
+		Goal:           api.WorkflowGoalInputReady,
+		Intent: api.WorkflowIntent{Preparation: &api.PrepareInput{
+			SourcePath: source,
+		}},
+	})
+	if !errors.Is(err, intentErr) || result.Workflow.ID == "" {
+		t.Fatalf("post-open result = %#v, err=%v", result, err)
+	}
+	slot, err := module.ActiveInput(ctx, testOwnerID)
+	if err != nil || slot.State != api.ActiveInputActive || slot.WorkflowID != result.Workflow.ID {
+		t.Fatalf("committed input = %#v, err=%v", slot, err)
+	}
+}
+
 func TestContinueHydratesPreparedGenerationBeforeRestartedMediaCapture(t *testing.T) {
 	t.Parallel()
 
