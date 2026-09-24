@@ -1644,6 +1644,48 @@ func readyContinuationPlannerResult(t *testing.T, now time.Time) CommandResult {
 	}
 }
 
+func TestContinuationPlannerRetriesFailedDryRunAndAcceptsSkippedNoOp(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.July, 23, 1, 2, 3, 0, time.UTC)
+	current := readyContinuationPlannerResult(t, now)
+	current.Media = &api.MediaArtifactSet{Status: api.StageStatusCompleted}
+	current.Descriptions = &api.DescriptionSet{Status: api.StageStatusSkipped}
+	current.DryRun = &api.UploadDryRunResult{
+		NoSeed:     true,
+		TrackerIDs: []api.TrackerID{"ALPHA"},
+		Status:     api.StageStatusFailed,
+	}
+	request := api.ContinueReleaseWorkflowRequest{
+		IdempotencyKey: "retry-failed-dry-run",
+		Goal:           api.WorkflowGoalDryRun,
+		Intent: api.WorkflowIntent{
+			NoSeed:           true,
+			UploadTrackerIDs: []api.TrackerID{"ALPHA"},
+		},
+	}
+
+	for _, status := range []api.StageStatus{api.StageStatusFailed, api.StageStatusPartial} {
+		current.DryRun.Status = status
+		if continuationGoalReached(current, request) {
+			t.Fatalf("%s retained dry run incorrectly satisfied the dry-run goal", status)
+		}
+		command, stage := planContinuationCommand(request, current, now)
+		if _, ok := command.(DryRunUploadsCommand); !ok || stage != "review-uploads" {
+			t.Fatalf("%s dry-run retry plan: stage=%q command=%#v", status, stage, command)
+		}
+	}
+
+	current.DryRun.Status = api.StageStatusSkipped
+	if !continuationGoalReached(current, request) {
+		t.Fatal("fully skipped retained dry run did not satisfy the dry-run goal")
+	}
+	command, stage := planContinuationCommand(request, current, now)
+	if command != nil || stage != "" {
+		t.Fatalf("skipped dry-run no-op planned stage=%q command=%#v", stage, command)
+	}
+}
+
 func TestContinuationPlannerAdvancesRunnableSiblingPastPendingDupe(t *testing.T) {
 	t.Parallel()
 

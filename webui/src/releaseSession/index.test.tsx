@@ -2169,7 +2169,19 @@ describe("useReleaseSession", () => {
   it("executes a direct upload through one workflow command", async () => {
     const workflowID = "workflow-skipped-upload";
     window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
-    const retained = workflowCurrent(workflowID, 7);
+    const base = workflowCurrent(workflowID, 7);
+    const retained: ReleaseWorkflowCurrent = {
+      ...base,
+      continuation: {
+        ...base.continuation,
+        trackerOutcomes: [
+          {
+            trackerId: "AITHER",
+            uploadEligibility: "eligible",
+          },
+        ] as unknown as NonNullable<WorkflowContinuation["trackerOutcomes"]>,
+      },
+    };
     const executeUploads = vi.fn(async (current: ReleaseWorkflowCurrent) => current);
     const { result, unmount } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(
@@ -2184,6 +2196,7 @@ describe("useReleaseSession", () => {
     });
 
     await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+    act(() => result.current.upload.chooseTrackers(["AITHER"]));
     await act(async () => {
       expect(await result.current.upload.start()).toBe(true);
     });
@@ -2195,6 +2208,131 @@ describe("useReleaseSession", () => {
       expect.any(String),
       expect.any(AbortSignal),
     );
+
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("retains an all-failed dry run for retry without executing an empty upload", async () => {
+    const workflowID = "workflow-all-upload-preparation-failed";
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const base = workflowCurrent(workflowID, 7);
+    const retained: ReleaseWorkflowCurrent = {
+      ...base,
+      continuation: {
+        ...base.continuation,
+        trackerOutcomes: [
+          {
+            trackerId: "AITHER",
+            uploadEligibility: "eligible",
+          },
+        ] as unknown as NonNullable<WorkflowContinuation["trackerOutcomes"]>,
+      },
+    };
+    const failedDryRun = {
+      ...retained,
+      workflow: {
+        ...retained.workflow,
+        revision: 8,
+        dryRun: { id: "dry-run-failed", revision: 8 },
+      },
+      continuation: {
+        ...retained.continuation,
+        trackerOutcomes: [
+          {
+            trackerId: "AITHER",
+            uploadEligibility: "skipped",
+            uploadSkipReason: "upload_preparation_failed",
+          },
+        ],
+      },
+      dryRun: {
+        id: "dry-run-failed",
+        workflowId: workflowID,
+        revision: 8,
+        reports: [],
+        status: "failed",
+      },
+    } as unknown as ReleaseWorkflowCurrent;
+    const dryRunUploads = vi.fn(async () => failedDryRun);
+    const executeUploads = vi.fn(async (current: ReleaseWorkflowCurrent) => current);
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: workflowID,
+          workflow: workflowPorts({
+            current: async () => retained,
+            dryRunUploads,
+            executeUploads,
+          }),
+        }),
+      ),
+    });
+
+    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+    act(() => result.current.upload.chooseTrackers(["AITHER"]));
+    await act(async () => {
+      expect(await result.current.upload.start()).toBe(false);
+    });
+    expect(executeUploads).not.toHaveBeenCalled();
+    expect(result.current.upload.view.dryRunResult?.id).toBe("dry-run-failed");
+    await act(async () => {
+      expect(await result.current.upload.runDryRun()).toBe(true);
+    });
+    expect(dryRunUploads).toHaveBeenCalledTimes(2);
+    expect(executeUploads).not.toHaveBeenCalled();
+
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("executes a fully skipped dry-run plan as a completed no-op", async () => {
+    const workflowID = "workflow-all-upload-preparation-skipped";
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const base = workflowCurrent(workflowID, 8);
+    const retained = {
+      ...base,
+      workflow: {
+        ...base.workflow,
+        dryRun: { id: "dry-run-skipped", revision: 8 },
+      },
+      continuation: {
+        ...base.continuation,
+        trackerOutcomes: [
+          {
+            trackerId: "AITHER",
+            uploadEligibility: "skipped",
+            uploadSkipReason: "upload_preparation_skipped",
+          },
+        ],
+      },
+      dryRun: {
+        id: "dry-run-skipped",
+        workflowId: workflowID,
+        revision: 8,
+        reports: [],
+        status: "skipped",
+      },
+    } as unknown as ReleaseWorkflowCurrent;
+    const executeUploads = vi.fn(async (current: ReleaseWorkflowCurrent) => current);
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          resumeWorkflowID: workflowID,
+          workflow: workflowPorts({
+            current: async () => retained,
+            executeUploads,
+          }),
+        }),
+      ),
+    });
+
+    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+    act(() => result.current.upload.chooseTrackers(["AITHER"]));
+    await act(async () => {
+      expect(await result.current.upload.start()).toBe(true);
+    });
+    expect(executeUploads).toHaveBeenCalledOnce();
 
     unmount();
     window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
@@ -2784,8 +2922,21 @@ describe("useReleaseSession", () => {
 
   it("routes the browser release flow through authoritative workflow commands", async () => {
     let revision = 2;
-    const advance = (current: ReleaseWorkflowCurrent) =>
-      workflowCurrent(current.workflow.id, ++revision);
+    const advance = (current: ReleaseWorkflowCurrent) => {
+      const next = workflowCurrent(current.workflow.id, ++revision);
+      return {
+        ...next,
+        continuation: {
+          ...next.continuation,
+          trackerOutcomes: [
+            {
+              trackerId: "AITHER",
+              uploadEligibility: "eligible",
+            },
+          ] as unknown as NonNullable<WorkflowContinuation["trackerOutcomes"]>,
+        },
+      };
+    };
     const project = vi.fn(async (current: ReleaseWorkflowCurrent) => advance(current));
     const preflight = vi.fn(async (current: ReleaseWorkflowCurrent) => {
       const next = advance(current);

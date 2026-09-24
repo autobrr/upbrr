@@ -33,6 +33,7 @@ import type {
 import type { ReleaseSessionPorts } from "./ports";
 import { productionReleaseSessionPorts } from "./production";
 import { correctionValuesFor, initialSessionState, sessionReducer } from "./reducer";
+import { canExecuteUpload } from "./uploadEligibility";
 import type {
   PreparationIntent,
   ReleaseRoute,
@@ -1981,7 +1982,7 @@ export function ReleaseSessionProvider({
     descriptions: descriptionInstructions(current),
   });
 
-  const hasUploadEligibleTracker = (current: ReleaseWorkflowCurrent) => {
+  const hasDryRunCandidate = (current: ReleaseWorkflowCurrent) => {
     const exclusions = current.workflow.submissionExclusions || [];
     if (exclusions.length === 0) return true;
     if (state.selectedTrackers.length === 0) return false;
@@ -1989,8 +1990,19 @@ export function ReleaseSessionProvider({
     return state.selectedTrackers.some((tracker) => !excluded.has(tracker));
   };
 
+  const hasUploadEligibleTracker = (current: ReleaseWorkflowCurrent) => {
+    const excluded = new Set(
+      (current.workflow.submissionExclusions || []).map((item) => item.trackerId),
+    );
+    return canExecuteUpload(
+      current.continuation?.trackerOutcomes || [],
+      state.selectedTrackers,
+      excluded,
+    );
+  };
+
   const runDryRun = async (): Promise<boolean> => {
-    if (!workflowView.current || !hasUploadEligibleTracker(workflowView.current)) return false;
+    if (!workflowView.current || !hasDryRunCandidate(workflowView.current)) return false;
     return runBackendWorkflow((current, commandID, signal) =>
       continueBackendGoal(
         current,
@@ -2028,6 +2040,10 @@ export function ReleaseSessionProvider({
       }
       if (!current.dryRun) {
         throw new Error("Exact upload dry run is unavailable.");
+      }
+      if (!hasUploadEligibleTracker(current)) {
+        acceptWorkflowCurrent(current);
+        return false;
       }
       const uploaded = await continueBackendGoal(
         current,
@@ -2806,6 +2822,7 @@ export function ReleaseSessionProvider({
         uploadStatus: workflowUploadStatus,
         dryRunResult: workflowView.current?.dryRun || null,
         result: workflowView.current?.uploadResult || null,
+        trackerOutcomes: workflowView.current?.continuation?.trackerOutcomes || [],
         submissionExclusions: workflowView.current?.workflow.submissionExclusions || [],
         error: workflowView.failure?.Message || workflowView.error || state.uploadError || "",
       },

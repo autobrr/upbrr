@@ -7198,7 +7198,8 @@ func completeUploadExecutionResults(
 }
 
 // validateUploadExecutionTrackerIDs selects ready, eligible trackers from the retained plan.
-// An empty request selects all; explicit skipped trackers are ignored, while other invalid or duplicate IDs reject the request.
+// An empty request selects all. A fully skipped plan is a valid no-op; a plan with no ready lane is rejected.
+// Explicit skipped trackers are ignored, while other invalid or duplicate IDs reject the request.
 func validateUploadExecutionTrackerIDs(
 	trackers []api.UploadPlanTracker,
 	requested []api.TrackerID,
@@ -7211,6 +7212,9 @@ func validateUploadExecutionTrackerIDs(
 		} else if tracker.Status == api.StageStatusSkipped {
 			skipped[tracker.TrackerID] = struct{}{}
 		}
+	}
+	if len(eligible) == 0 && (len(trackers) == 0 || len(skipped) != len(trackers)) {
+		return nil, fmt.Errorf("%w: retained upload plan has no eligible trackers", ErrInvalidTransition)
 	}
 	if len(requested) == 0 {
 		selected := make([]api.TrackerID, 0, len(eligible))
