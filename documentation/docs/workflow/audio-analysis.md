@@ -5,7 +5,7 @@ description: Generate local waveform and spectrogram PNGs from media audio track
 
 # Audio analysis
 
-Audio analysis generates waveform and spectrogram PNGs from media audio tracks. It is optional and local: the images are not uploaded to an image host, inserted into descriptions, or submitted to trackers automatically.
+Audio analysis generates waveform and spectrogram PNGs from media audio tracks. In the upload workflow, upbrr hosts each tracker's complete set of generated graphs on its selected image host and adds them to the default description in a `[spoiler=source_audio]` block, with statistics in a `[code]` block below the graphs. `--audio-analysis-only` saves the PNGs and statistics files locally without uploading them.
 
 ## Requirements
 
@@ -39,7 +39,7 @@ Generate only waveforms for the first and third audio tracks:
 
 `--audio-images` accepts `both`, `waveform`, or `spectrogram`. The default selection is `primary` with `both` image types. The two selection flags require `--audio-analysis` or `--audio-analysis-only`.
 
-Analysis runs after preparation and before tracker submission or torrent-client effects. The CLI prints each successful PNG path. A partial or failed result exits nonzero and prevents later effects, even when some PNGs were generated successfully.
+Analysis runs after preparation and before tracker submission or torrent-client effects. The CLI prints each successful PNG and statistics-file path. A partial or failed result exits nonzero and prevents later effects, even when some PNGs were generated successfully.
 
 ### Analyze a file without configuration
 

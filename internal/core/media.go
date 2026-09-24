@@ -744,12 +744,12 @@ func (m *mediaModule) uploadImagesToTarget(
 		emitCoreImageUploadResult(progressCtx, progressTarget, len(uploaded), err)
 		return results, nil
 	}
+	if err == nil && strictAudioBatch && !uploadedImageLinksCoverTarget(results, target, images) {
+		err = errors.New("audio analysis image upload is incomplete")
+	}
 	emitCoreImageUploadResult(progressCtx, progressTarget, len(uploaded), err)
 	if err != nil {
 		return results, fmt.Errorf("core: %w", err)
-	}
-	if strictAudioBatch && !uploadedImageLinksCoverTarget(results, target, images) {
-		return results, errors.New("core: audio analysis image upload is incomplete")
 	}
 	return results, nil
 }
