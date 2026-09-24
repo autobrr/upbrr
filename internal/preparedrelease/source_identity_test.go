@@ -215,6 +215,10 @@ func TestPrepareRejectsStaleVerifiedSource(t *testing.T) {
 		t.Fatalf("verify source: %v", err)
 	}
 	writeSourceIdentityFile(t, source, "changed")
+	modified := verified.Manifest.Entries[0].ModifiedAt.Add(time.Hour)
+	if err := os.Chtimes(source, modified, modified); err != nil {
+		t.Fatalf("set changed time: %v", err)
+	}
 	module := newTestModule(t, newMemoryStore(), &recordingCollector{})
 	_, err = module.Prepare(context.Background(), api.PrepareInput{SourcePath: source, VerifiedSource: &verified})
 	if !errors.Is(err, ErrSourceChanged) {

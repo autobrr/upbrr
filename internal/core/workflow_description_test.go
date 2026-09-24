@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,14 +16,19 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-type descriptionAudioHostFake struct{ images []api.ScreenshotImage }
+type descriptionAudioHostFake struct {
+	mu     sync.Mutex
+	images []api.ScreenshotImage
+}
 
 func (*descriptionAudioHostFake) ListCandidates(context.Context, api.ImageHostingSubject) ([]api.ScreenshotImage, error) {
 	return nil, nil
 }
 
 func (f *descriptionAudioHostFake) Upload(_ context.Context, _ api.ImageHostingSubject, host, scope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+	f.mu.Lock()
 	f.images = append(f.images, images...)
+	f.mu.Unlock()
 	links := make([]api.UploadedImageLink, 0, len(images))
 	for _, image := range images {
 		links = append(links, api.UploadedImageLink{
@@ -71,9 +77,9 @@ func TestWorkflowDescriptionKeepsDistinctAudioHostsPerTracker(t *testing.T) {
 		cfg: config.Config{ImageHosting: config.ImageHostingConfig{
 			Host1: "pixhost", Host2: "onlyimage",
 		}},
-		logger: api.NopLogger{},
- registry: mediaImageHostRegistry(t),
- images: host,
+		logger:   api.NopLogger{},
+		registry: mediaImageHostRegistry(t),
+		images:   host,
 	}}
 	subject := api.UploadSubject{ExactMedia: &api.ExactMediaAssets{
 		AudioAnalysis: &api.AudioAnalysisRef{ID: "analysis-1", Revision: 1},
