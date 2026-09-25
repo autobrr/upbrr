@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -112,6 +113,9 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubje
 	if err != nil {
 		return nil, fmt.Errorf("image hosting: %w", err)
 	}
+	uploaded = slices.DeleteFunc(uploaded, func(upload api.UploadedImageLink) bool {
+		return upload.Purpose == api.ScreenshotPurposeAudioAnalysis
+	})
 	selections, err := s.repo.ListFinalSelections(ctx, meta.MediaBinding)
 	if err != nil {
 		s.logger.Debugf("image hosting: final selections unavailable: %v", err)
@@ -133,9 +137,6 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubje
 	// Build a map of uploaded images by path for quick lookup
 	uploadedByPath := make(map[string]api.UploadedImageLink, len(uploaded))
 	for _, upload := range uploaded {
-		if upload.Purpose == api.ScreenshotPurposeAudioAnalysis {
-			continue
-		}
 		uploadedByPath[upload.ImagePath] = upload
 	}
 
@@ -236,9 +237,6 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubje
 	}
 
 	for _, upload := range uploaded {
-		if upload.Purpose == api.ScreenshotPurposeAudioAnalysis {
-			continue
-		}
 		pathValue := strings.TrimSpace(upload.ImagePath)
 		if pathValue == "" || !isAllowedImageExt(pathValue) {
 			continue

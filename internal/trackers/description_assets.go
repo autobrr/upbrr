@@ -968,13 +968,10 @@ func preloadUploadAssetData(
 	}
 	preloaded.selections = selections
 
-	uploads, err := repo.ListUploadedImagesByPath(ctx, meta.MediaBinding)
+	preloaded.uploads, err = uploadedImagesFromSource(ctx, meta, repo, nil)
 	if err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
+		return nil, err
 	}
-	preloaded.uploads = slices.DeleteFunc(uploads, func(upload api.UploadedImageLink) bool {
-		return upload.Purpose == api.ScreenshotPurposeAudioAnalysis
-	})
 
 	slots, err := screenshotSlotsFromSource(ctx, "", meta, repo, nil, preloaded, registry)
 	if err != nil {
