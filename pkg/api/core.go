@@ -54,6 +54,12 @@ type UploadOptions struct {
 	KeepImages      bool
 	// CaptureDVDMenus requests automatic menu capture for DVD inputs before review or upload.
 	CaptureDVDMenus bool
+	// AudioAnalysis requests local waveform/spectrogram and amplitude statistics generation before any upload side effects.
+	AudioAnalysis bool
+	// AudioTracks is primary, all, or a comma-separated list of one-based audio ordinals.
+	AudioTracks string
+	// AudioImages is both, waveform, or spectrogram.
+	AudioImages     string
 	InteractionMode InteractionMode
 }
 

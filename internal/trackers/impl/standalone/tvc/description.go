@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/description"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -19,6 +20,8 @@ func buildDescription(meta api.UploadSubject, cfg config.TrackerConfig, assets t
 		return strings.TrimSpace(assets.Description)
 	}
 	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
+	baseDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(assets.Description)
+	assets.Description = baseDescription
 	parts := make([]string, 0, 6)
 	if logo := strings.TrimSpace(meta.ProviderMetadata.TMDB.Logo); logo != "" {
 		parts = append(parts, fmt.Sprintf("[center][img=%d]%s[/img][/center]", maxInt(cfg.ImageCount, 300), logo))
@@ -32,11 +35,14 @@ func buildDescription(meta api.UploadSubject, cfg config.TrackerConfig, assets t
 	if links := externalLinks(meta); links != "" {
 		parts = append(parts, "[center]"+links+"[/center]")
 	}
-	if shots := screenshotBlock(assets.Screenshots, maxInt(cfg.ImageCount, 2)); shots != "" {
-		parts = append(parts, "[center]"+shots+"[/center]")
-	}
 	if base := strings.TrimSpace(assets.Description); base != "" {
 		parts = append(parts, "[center][b]Notes / Extra Info[/b]\n"+base+"[/center]")
+	}
+	if audioAnalysis != "" {
+		parts = append(parts, strings.ReplaceAll(audioAnalysis, "[img]", "[img=350]"))
+	}
+	if shots := screenshotBlock(assets.Screenshots, maxInt(cfg.ImageCount, 2)); shots != "" {
+		parts = append(parts, "[center]"+shots+"[/center]")
 	}
 	return finalizeDescription(strings.TrimSpace(strings.Join(parts, "\n\n")))
 }

@@ -35,6 +35,7 @@ type schema struct {
 	Type                 string             `json:"type,omitempty"`
 	Format               string             `json:"format,omitempty"`
 	Minimum              *int               `json:"minimum,omitempty"`
+	Maximum              *int               `json:"maximum,omitempty"`
 	Description          string             `json:"description,omitempty"`
 	Deprecated           bool               `json:"deprecated,omitempty"`
 	Enum                 []any              `json:"enum,omitempty"`
@@ -139,6 +140,7 @@ func generate() ([]byte, []byte, error) {
 		"servers":  []any{map[string]any{"url": "/api/v1"}},
 		"security": []any{map[string]any{"bearerAuth": []any{}}},
 		"tags": []any{
+			map[string]any{"name": "Audio Analysis", "description": "Generation-bound local waveform and spectrogram analysis."},
 			map[string]any{"name": "Descriptions", "description": "Description override management."},
 			map[string]any{"name": "Media", "description": "Media planning, previews, artifacts, selection, and image hosting."},
 			map[string]any{"name": "Operations", "description": "Durable long-running operation status and cancellation."},
@@ -222,6 +224,8 @@ func contractRoots() []reflect.Type {
 		api.DeleteReleaseWorkflowMediaRequest{},
 		api.ReorderReleaseWorkflowMediaRequest{},
 		api.AttachReleaseWorkflowMediaRequest{},
+		api.AnalyzeReleaseWorkflowAudioRequest{},
+		api.SetReleaseWorkflowAudioAnalysisEnabledRequest{},
 		api.UploadReleaseWorkflowImagesRequest{},
 		api.RemoveReleaseWorkflowHostedImagesRequest{},
 		api.RetryReleaseWorkflowImageHostRequest{},
@@ -455,6 +459,38 @@ func routeManifest() []route {
 			Request:     reflect.TypeFor[api.InvalidateReleaseWorkflowTrackersRequest](),
 			Success:     jsonSuccess("200", "Workflow state after tracker invalidation.", current, true),
 			Errors:      errorProfileJSONMutation,
+		},
+		{
+			Path:        "/workflows/{workflowId}/audio-analysis",
+			Method:      http.MethodPost,
+			OperationID: "analyzeWorkflowAudio",
+			Tag:         "Audio Analysis",
+			Summary:     "Generate audio analysis images",
+			Description: "Starts durable, generation-bound waveform and spectrogram rendering for selected prepared audio tracks.",
+			Request:     reflect.TypeFor[api.AnalyzeReleaseWorkflowAudioRequest](),
+			Success:     jsonSuccess("202", "Workflow state with the non-terminal audio-analysis operation attached.", current, true),
+			Errors:      errorProfileJSONMutation,
+		},
+		{
+			Path:        "/workflows/{workflowId}/audio-analysis/enabled",
+			Method:      http.MethodPut,
+			OperationID: "setWorkflowAudioAnalysisEnabled",
+			Tag:         "Audio Analysis",
+			Summary:     "Set audio analysis enabled state",
+			Description: "Enables or disables the optional audio-analysis page without starting decoder work.",
+			Request:     reflect.TypeFor[api.SetReleaseWorkflowAudioAnalysisEnabledRequest](),
+			Success:     jsonSuccess("200", "Workflow state after changing audio-analysis enablement.", current, true),
+			Errors:      errorProfileJSONMutation,
+		},
+		{
+			Path:        "/workflows/{workflowId}/audio-analysis/{analysisId}/artifacts/{artifactId}",
+			Method:      http.MethodGet,
+			OperationID: "openWorkflowAudioAnalysisArtifact",
+			Tag:         "Audio Analysis",
+			Summary:     "Open audio analysis artifact",
+			Description: "Streams a retained PNG or statistics text file from the exact requested audio-analysis revision.",
+			Success:     binarySuccess("Audio analysis PNG or statistics text."),
+			Errors:      errorProfileRevisionedRead,
 		},
 		{
 			Path:        "/workflows/{workflowId}/media/plan",
@@ -788,11 +824,15 @@ func routeParameters(item route) []any {
 			"schema":      map[string]any{"type": "string"},
 		})
 	}
-	if item.OperationID == "openWorkflowMediaArtifact" {
+	if item.OperationID == "openWorkflowMediaArtifact" || item.OperationID == "openWorkflowAudioAnalysisArtifact" {
+		description := "Exact positive revision of the route-bound media artifact set."
+		if item.OperationID == "openWorkflowAudioAnalysisArtifact" {
+			description = "Exact positive revision of the route-bound audio-analysis result."
+		}
 		parameters = append(parameters, map[string]any{
 			"name":        "revision",
 			"in":          "query",
-			"description": "Exact positive revision of the route-bound media artifact set.",
+			"description": description,
 			"required":    true,
 			"example":     1,
 			"schema": map[string]any{
@@ -810,12 +850,19 @@ func routeResponses(item route) map[string]any {
 		response := map[string]any{"description": success.Description}
 		if success.Binary {
 			binarySchema := map[string]any{"schema": map[string]any{"type": "string", "format": "binary"}}
-			response["content"] = map[string]any{
+			content := map[string]any{
 				"application/octet-stream": binarySchema,
 				"image/jpeg":               binarySchema,
 				"image/png":                binarySchema,
 				"image/webp":               binarySchema,
 			}
+			if item.OperationID == "openWorkflowAudioAnalysisArtifact" {
+				content = map[string]any{
+					"image/png":  binarySchema,
+					"text/plain": map[string]any{"schema": map[string]any{"type": "string"}},
+				}
+			}
+			response["content"] = content
 		} else if success.Response != nil {
 			response["content"] = map[string]any{
 				"application/json": map[string]any{
@@ -848,6 +895,8 @@ func pathParameterMetadata(name string) (string, string) {
 		return "Owner-scoped workflow identifier.", "workflow-example"
 	case "mediaId":
 		return "Route-bound media artifact-set identifier.", "media-example"
+	case "analysisId":
+		return "Route-bound audio-analysis result identifier.", "audio-analysis-example"
 	case "operationId":
 		return "Durable workflow operation identifier.", "operation-example"
 	case "previewId":
@@ -1201,6 +1250,13 @@ func (b *schemaBuilder) ensureNamed(value reflect.Type) {
 func (b *schemaBuilder) definition(value reflect.Type) *schema {
 	if value == reflect.TypeFor[api.WorkflowPatch[string]]() {
 		return &schema{AnyOf: []*schema{{Type: "string"}, {Type: "null"}}}
+	}
+	if value == reflect.TypeFor[api.AudioAnalysisResourceLimits]() {
+		result := &schema{Type: "object", Properties: map[string]*schema{}}
+		b.addFields(result, value)
+		result.Properties["decoderThreads"].Minimum = new(1)
+		result.Properties["decoderThreads"].Maximum = new(api.AudioAnalysisMaxDecoderThreads)
+		return result
 	}
 	if value == reflect.TypeFor[api.CreateReleaseWorkflowUploadRequest]() {
 		result := &schema{Type: "object", Properties: map[string]*schema{}}

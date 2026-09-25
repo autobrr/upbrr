@@ -46,6 +46,48 @@ func TestCommandFromRequestMapsDirectUploadExactly(t *testing.T) {
 	}
 }
 
+func TestCommandFromRequestMapsAudioAnalysisAndDurableEnabledIntent(t *testing.T) {
+	t.Parallel()
+
+	context := api.ReleaseWorkflowCommandContext{
+WorkflowID: "workflow-1",
+ ExpectedRevision: 7,
+ IdempotencyKey: "audio-1",
+}
+	instructions := api.AudioAnalysisInstructions{
+ Release: api.ReleaseRef{SourcePath: "Example.Release.2026.mkv", Generation: 2},
+		ResourceID: "resource-1",
+ Selection: api.AudioAnalysisSelectionSelected,
+ TrackIDs: []string{"track-1"},
+		Variants: []api.AudioAnalysisVariant{api.AudioAnalysisWaveform},
+ ProfileVersion: api.AudioAnalysisProfileVersion,
+	}
+	mapped, err := CommandFromRequest(api.AnalyzeReleaseWorkflowAudioRequest{
+		ReleaseWorkflowCommandContext: context,
+		Instructions:                  instructions,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	analysis, ok := mapped.(AnalyzeAudioCommand)
+	if !ok || analysis.WorkflowID != context.WorkflowID || analysis.ExpectedRevision != context.ExpectedRevision ||
+		analysis.IdempotencyKey != context.IdempotencyKey || !slices.Equal(analysis.Instructions.TrackIDs, instructions.TrackIDs) {
+		t.Fatalf("mapped analysis command = %#v", mapped)
+	}
+
+	mapped, err = CommandFromRequest(api.SetReleaseWorkflowAudioAnalysisEnabledRequest{
+		ReleaseWorkflowCommandContext: context,
+		Enabled:                       false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	enabled, ok := mapped.(SetAudioAnalysisEnabledCommand)
+	if !ok || enabled.WorkflowID != context.WorkflowID || enabled.ExpectedRevision != context.ExpectedRevision || enabled.Enabled {
+		t.Fatalf("mapped enabled command = %#v", mapped)
+	}
+}
+
 func TestCommandFromRequestRejectsUnsupportedRequest(t *testing.T) {
 	t.Parallel()
 

@@ -72,7 +72,8 @@ export type OperationKind =
   | "upload_execute"
   | "media"
   | "description"
-  | "image_hosting";
+  | "image_hosting"
+  | "analyze_audio";
 
 export type OperationFailure = {
   Code: string;
@@ -1212,6 +1213,7 @@ export type ScreenshotLinkedImage = {
 export type UploadedImageLink = {
   SourcePath: string;
   ImagePath: string;
+  Purpose?: "preview" | "final" | "menu" | "audio_analysis";
   Host: string;
   UsageScope: string;
   ImgURL: string;

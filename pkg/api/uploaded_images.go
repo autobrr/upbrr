@@ -11,6 +11,7 @@ type UploadedImageLink struct {
 	PreparedGeneration       PreparedGeneration
 	DiscID                   string
 	ImagePath                string
+	Purpose                  ScreenshotPurpose
 	Host                     string
 	UsageScope               string
 	// AccountScope is a private configuration fingerprint used only for durable

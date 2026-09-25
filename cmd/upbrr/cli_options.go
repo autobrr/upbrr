@@ -136,6 +136,11 @@ type cliOptions struct {
 	ComparisonIndex            int
 	MenuImages                 string
 	GetDVDMenus                bool
+	AudioAnalysis              bool
+	AudioAnalysisOnly          bool
+	AudioOutput                string
+	AudioTracks                string
+	AudioImages                string
 	InfoHash                   string
 	MaxPieceSize               int
 	NoHash                     bool
@@ -278,6 +283,11 @@ func bindUploadFlags(fs *pflag.FlagSet, opts *cliOptions) {
 	fs.IntVar(&opts.ComparisonIndex, "comps_index", 0, "Primary comparison index")
 	fs.StringVar(&opts.MenuImages, "menu-images", "", "Path to manually captured disc menu screenshots (Disc releases only)")
 	fs.BoolVar(&opts.GetDVDMenus, "get-dvd-menus", false, "Capture distinct menus from an extracted DVD VIDEO_TS (requires compatible FFmpeg)")
+	fs.BoolVar(&opts.AudioAnalysis, "audio-analysis", false, "Generate local audio images and amplitude statistics in managed temporary storage before upload")
+	fs.BoolVar(&opts.AudioAnalysisOnly, "audio-analysis-only", false, "Analyze one media file without configuration or upload")
+	fs.StringVar(&opts.AudioOutput, "audio-output", "", "Output directory for --audio-analysis-only artifacts")
+	fs.StringVar(&opts.AudioTracks, "audio-tracks", "primary", "Audio tracks: primary (default), all, or comma-separated one-based audio ordinals")
+	fs.StringVar(&opts.AudioImages, "audio-images", "both", "Audio images: both (default), waveform, or spectrogram")
 	fs.StringVar(&opts.InfoHash, "torrenthash", "", "Reuse an existing torrent info hash")
 	fs.StringVar(&opts.InfoHash, "th", "", "Reuse an existing torrent info hash")
 	fs.StringVar(&opts.InfoHash, "infohash", "", "Override v1 info hash")
@@ -411,6 +421,20 @@ func normalizeCLIOptions(opts *cliOptions, visited map[string]bool) error {
 		if err := validateComparisonIndex(opts.ComparisonIndex); err != nil {
 			return err
 		}
+	}
+	if (visited["audio-tracks"] || visited["audio-images"]) && !opts.AudioAnalysis && !opts.AudioAnalysisOnly {
+		return errors.New("--audio-tracks and --audio-images require --audio-analysis or --audio-analysis-only")
+	}
+	if opts.AudioAnalysis || opts.AudioAnalysisOnly {
+		if _, _, err := parseCLIAudioTrackSelection(opts.AudioTracks); err != nil {
+			return err
+		}
+		if _, err := parseCLIAudioVariants(opts.AudioImages); err != nil {
+			return err
+		}
+	}
+	if visited["audio-output"] && !opts.AudioAnalysisOnly {
+		return errors.New("--audio-output requires --audio-analysis-only")
 	}
 	if visited["log-level"] {
 		normalized, err := api.ParseLogLevel(opts.LogLevel)
@@ -776,7 +800,7 @@ func cliHelpSections(name string) []helpSection {
 		}},
 		{title: "Screenshots and Images", names: []string{
 			"screens", "manual_frames", "comparison", "comparison_index", "menu-images", "get-dvd-menus", "imghost", "skip-imagehost-upload",
-			"descfile", "desclink",
+			"audio-analysis", "audio-analysis-only", "audio-output", "audio-tracks", "audio-images", "descfile", "desclink",
 		}},
 		{title: "Client and Torrent", names: []string{
 			"client", "qbit-tag", "qbit-cat", "force-recheck", "no-seed", "skip_auto_torrent", "keep-folder", "onlyID", "infohash",
@@ -894,6 +918,9 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, d
 			KeepFolder:      opts.KeepFolder,
 			OnlyID:          opts.OnlyID,
 			CaptureDVDMenus: opts.GetDVDMenus,
+			AudioAnalysis:   opts.AudioAnalysis,
+			AudioTracks:     strings.TrimSpace(opts.AudioTracks),
+			AudioImages:     strings.TrimSpace(opts.AudioImages),
 			InteractionMode: opts.interactionMode(),
 		},
 		ReleaseNameOverrides: buildReleaseNameOverrides(visited, releaseOverrideInput{
@@ -1661,6 +1688,46 @@ func parseManualFrames(raw string) ([]int, error) {
 		return nil, fmt.Errorf("invalid manual_frames %q", raw)
 	}
 	return frames, nil
+}
+
+func parseCLIAudioTrackSelection(raw string) (api.AudioAnalysisSelectionMode, []int, error) {
+	normalized := strings.ToLower(strings.TrimSpace(raw))
+	switch normalized {
+	case "primary":
+		return api.AudioAnalysisSelectionPrimary, nil, nil
+	case "all":
+		return api.AudioAnalysisSelectionAll, nil, nil
+	case "":
+		return "", nil, errors.New("audio-tracks must be primary, all, or comma-separated one-based ordinals")
+	}
+	parts := strings.Split(normalized, ",")
+	ordinals := make([]int, 0, len(parts))
+	seen := make(map[int]struct{}, len(parts))
+	for _, part := range parts {
+		ordinal, err := strconv.Atoi(strings.TrimSpace(part))
+		if err != nil || ordinal <= 0 {
+			return "", nil, errors.New("audio-tracks must be primary, all, or comma-separated one-based ordinals")
+		}
+		if _, duplicate := seen[ordinal]; duplicate {
+			continue
+		}
+		seen[ordinal] = struct{}{}
+		ordinals = append(ordinals, ordinal)
+	}
+	return api.AudioAnalysisSelectionSelected, ordinals, nil
+}
+
+func parseCLIAudioVariants(raw string) ([]api.AudioAnalysisVariant, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "both":
+		return []api.AudioAnalysisVariant{api.AudioAnalysisWaveform, api.AudioAnalysisSpectrogram}, nil
+	case "waveform":
+		return []api.AudioAnalysisVariant{api.AudioAnalysisWaveform}, nil
+	case "spectrogram":
+		return []api.AudioAnalysisVariant{api.AudioAnalysisSpectrogram}, nil
+	default:
+		return nil, errors.New("audio-images must be both, waveform, or spectrogram")
+	}
 }
 
 func parseComparisonPaths(raw string) ([]string, error) {

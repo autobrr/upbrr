@@ -5,6 +5,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -378,14 +379,22 @@ func TestInputRecordPreservesIdentityAcrossVerification(t *testing.T) {
 	if _, err := repo.SaveInputRecord(t.Context(), record); err != nil {
 		t.Fatal(err)
 	}
-	record.ID, record.SourceVersion = "new", "changed"
+	record.ID = "new"
 	updated, err := repo.SaveInputRecord(t.Context(), record)
 	if err != nil || updated.ID != "first" {
 		t.Fatalf("save identity = %#v, %v", updated, err)
 	}
 	loaded, err := repo.LoadInputRecord(t.Context(), record.CanonicalPath)
-	if err != nil || loaded.ID != "first" || loaded.SourceVersion != "changed" {
+	if err != nil || loaded.ID != "first" || loaded.SourceVersion != "old" {
 		t.Fatalf("load identity = %#v, %v", loaded, err)
+	}
+	record.SourceVersion = "changed"
+	if _, err := repo.SaveInputRecord(t.Context(), record); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err = repo.LoadInputRecord(t.Context(), record.CanonicalPath)
+	if err != nil || loaded.SourceVersion != "changed" {
+		t.Fatalf("changed source record = %#v, %v", loaded, err)
 	}
 	loaded, err = repo.LoadInputRecordByID(t.Context(), updated.ID)
 	if err != nil || loaded.ID != updated.ID || loaded.CanonicalPath != record.CanonicalPath {
@@ -393,6 +402,188 @@ func TestInputRecordPreservesIdentityAcrossVerification(t *testing.T) {
 	}
 	if _, err := repo.LoadInputRecordByID(t.Context(), "missing"); !errors.Is(err, api.ErrInputRecordNotFound) {
 		t.Fatalf("load missing ID = %v", err)
+	}
+}
+
+func TestInputWorkflowMigrationFindsRetainedAudioBeforeEmptyReload(t *testing.T) {
+	t.Parallel()
+	repo := openMigratedTestRepo(t)
+	source := filepath.Join(t.TempDir(), "Example.Release.2026.mkv")
+	now := time.Now().UTC()
+	for _, item := range []struct {
+		id      api.WorkflowID
+		owner   string
+		audio   map[string]any
+		updated time.Time
+	}{
+		{
+			id:      "workflow-audio",
+			owner:   "owner-1",
+			audio:   map[string]any{"result": map[string]any{"createdAt": now.Add(time.Second).Format(time.RFC3339Nano)}},
+			updated: now,
+		},
+		{
+			id:      "workflow-empty-reload",
+			owner:   "owner-1",
+			audio:   map[string]any{},
+			updated: now.Add(time.Minute),
+		},
+		{
+			id:      "workflow-other-owner",
+			owner:   "owner-2",
+			audio:   map[string]any{"result": map[string]any{"createdAt": now.Add(3 * time.Second).Format(time.RFC3339Nano)}},
+			updated: now.Add(2 * time.Minute),
+		},
+	} {
+		payload, err := json.Marshal(map[string]any{"SourcePath": source, "AudioAnalyses": item.audio})
+		if err != nil {
+			t.Fatal(err)
+		}
+		state := workflowStateRecordForTest(item.id, api.WorkflowStatusDraft, item.updated, string(payload))
+		state.OwnerID = item.owner
+		if _, _, err := repo.CreateReleaseWorkflowState(t.Context(), state); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := repo.SaveInputRecord(t.Context(), api.InputRecord{
+		ID:            "input",
+		CanonicalPath: source,
+		SourceVersion: "verified",
+		Manifest:      []byte(`{}`),
+		UpdatedAt:     now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateRetainInputWorkflow(t.Context(), repo.RawDB()); err != nil {
+		t.Fatal(err)
+	}
+	for owner, want := range map[string]api.WorkflowID{"owner-1": "workflow-audio", "owner-2": "workflow-other-owner"} {
+		workflowID, audioID, err := repo.LoadInputWorkflowAssociation(t.Context(), source, owner, "verified")
+		if err != nil || workflowID != want || audioID != "result" {
+			t.Fatalf("backfilled owner %s workflow = %q audio = %q, %v", owner, workflowID, audioID, err)
+		}
+	}
+	changedSource := filepath.Join(t.TempDir(), "Changed.Release.2026.mkv")
+	changedPayload, err := json.Marshal(map[string]any{
+		"SourcePath":    changedSource,
+		"AudioAnalyses": map[string]any{"old": map[string]any{"createdAt": now.Add(time.Second).Format(time.RFC3339Nano)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedState := workflowStateRecordForTest("workflow-before-change", api.WorkflowStatusDraft, now, string(changedPayload))
+	if _, _, err := repo.CreateReleaseWorkflowState(t.Context(), changedState); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.SaveInputRecord(t.Context(), api.InputRecord{
+		ID:            "changed-input",
+		CanonicalPath: changedSource,
+		SourceVersion: "new-verified-version",
+		Manifest:      []byte(`{}`),
+		UpdatedAt:     now.Add(2 * time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateRetainInputWorkflow(t.Context(), repo.RawDB()); err != nil {
+		t.Fatal(err)
+	}
+	workflowID, audioID, err := repo.LoadInputWorkflowAssociation(t.Context(), changedSource, "owner-1", "new-verified-version")
+	if err != nil || workflowID != "" || audioID != "" {
+		t.Fatalf("changed bytes backfill = %q audio = %q, %v", workflowID, audioID, err)
+	}
+	subsecondSource := filepath.Join(t.TempDir(), "Subsecond.Release.2026.mkv")
+	subsecondPayload, err := json.Marshal(map[string]any{
+		"SourcePath":    subsecondSource,
+		"AudioAnalyses": map[string]any{"old": map[string]any{"createdAt": "2026-09-25T01:00:00.1Z"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	subsecondState := workflowStateRecordForTest("workflow-subsecond", api.WorkflowStatusDraft, now, string(subsecondPayload))
+	if _, _, err := repo.CreateReleaseWorkflowState(t.Context(), subsecondState); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.SaveInputRecord(t.Context(), api.InputRecord{
+		ID:            "subsecond-input",
+		CanonicalPath: subsecondSource,
+		SourceVersion: "changed-within-second",
+		Manifest:      []byte(`{}`),
+		UpdatedAt:     time.Date(2026, time.September, 25, 1, 0, 0, 110_000_000, time.UTC),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateRetainInputWorkflow(t.Context(), repo.RawDB()); err != nil {
+		t.Fatal(err)
+	}
+	workflowID, audioID, err = repo.LoadInputWorkflowAssociation(t.Context(), subsecondSource, "owner-1", "changed-within-second")
+	if err != nil || workflowID != "" || audioID != "" {
+		t.Fatalf("subsecond changed bytes backfill = %q audio = %q, %v", workflowID, audioID, err)
+	}
+	latestSource := filepath.Join(t.TempDir(), "Latest.Release.2026.mkv")
+	latestPayload, err := json.Marshal(map[string]any{
+		"SourcePath": latestSource,
+		"AudioAnalyses": map[string]any{
+			"older": map[string]any{"createdAt": "2026-09-25T01:00:00.1Z", "revision": 2},
+			"newer": map[string]any{"createdAt": "2026-09-25T01:00:00.11Z", "revision": 3},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	latestState := workflowStateRecordForTest("workflow-latest", api.WorkflowStatusDraft, now, string(latestPayload))
+	if _, _, err := repo.CreateReleaseWorkflowState(t.Context(), latestState); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.SaveInputRecord(t.Context(), api.InputRecord{
+		ID:            "latest-input",
+		CanonicalPath: latestSource,
+		SourceVersion: "verified-before-analysis",
+		Manifest:      []byte(`{}`),
+		UpdatedAt:     time.Date(2026, time.September, 25, 0, 59, 59, 0, time.UTC),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateRetainInputWorkflow(t.Context(), repo.RawDB()); err != nil {
+		t.Fatal(err)
+	}
+	workflowID, audioID, err = repo.LoadInputWorkflowAssociation(t.Context(), latestSource, "owner-1", "verified-before-analysis")
+	if err != nil || workflowID != "workflow-latest" || audioID != "newer" {
+		t.Fatalf("latest audio backfill = %q audio = %q, %v", workflowID, audioID, err)
+	}
+	disabledSource := filepath.Join(t.TempDir(), "Disabled.Release.2026.mkv")
+	disabledPayload, err := json.Marshal(map[string]any{
+		"SourcePath": disabledSource,
+		"AudioAnalyses": map[string]any{
+			"result": map[string]any{"createdAt": "2026-09-25T01:00:00Z", "revision": 2},
+		},
+		"Receipts": map[string]any{
+			"set_audio_analysis_enabled\x00disable": map[string]any{
+				"Result": map[string]any{"workflow": map[string]any{"revision": 3}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabledState := workflowStateRecordForTest("workflow-disabled", api.WorkflowStatusDraft, now, string(disabledPayload))
+	if _, _, err := repo.CreateReleaseWorkflowState(t.Context(), disabledState); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.SaveInputRecord(t.Context(), api.InputRecord{
+		ID:            "disabled-input",
+		CanonicalPath: disabledSource,
+		SourceVersion: "verified-disabled",
+		Manifest:      []byte(`{}`),
+		UpdatedAt:     time.Date(2026, time.September, 25, 0, 59, 59, 0, time.UTC),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateRetainInputWorkflow(t.Context(), repo.RawDB()); err != nil {
+		t.Fatal(err)
+	}
+	workflowID, audioID, err = repo.LoadInputWorkflowAssociation(t.Context(), disabledSource, "owner-1", "verified-disabled")
+	if err != nil || workflowID != "" || audioID != "" {
+		t.Fatalf("disabled audio backfill = %q audio = %q, %v", workflowID, audioID, err)
 	}
 }
 

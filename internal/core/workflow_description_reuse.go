@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -62,6 +63,9 @@ func (b workflowDescriptionBuilder) RestoreCompatibleDescriptions(
 	privateMedia any,
 	instructions api.DescriptionInstructions,
 ) (api.DescriptionSet, api.DescriptionInstructions, error) {
+	if _, hasAudio := privateMedia.(releaseworkflow.DescriptionResources); hasAudio {
+		return api.DescriptionSet{}, instructions, nil
+	}
 	if err := ctx.Err(); err != nil {
 		return api.DescriptionSet{}, instructions, fmt.Errorf("workflow reusable descriptions: %w", err)
 	}

@@ -28,6 +28,34 @@ func classifyOperationError(operation api.OperationKind, err error) error {
 		Message:   "The operation could not be completed.",
 		Recovery:  api.OperationRecoveryRetry,
 	}
+	if operation == api.OperationKindAudioAnalysis {
+		failure.Code = api.OperationFailureAudioAnalysis
+		failure.Message = "Audio analysis could not be completed."
+		if audioFailure, ok := api.AsAudioAnalysisFailure(err); ok {
+			failure.AudioAnalysisCode = audioFailure.Code
+			failure.Message = audioFailure.Message
+			switch audioFailure.Code {
+			case api.AudioAnalysisFailureInvalidSelection:
+				failure.Recovery = api.OperationRecoveryEditInput
+			case api.AudioAnalysisFailureStaleSource, api.AudioAnalysisFailureAmbiguousBinding:
+				failure.Recovery = api.OperationRecoveryRefreshRelease
+			case api.AudioAnalysisFailureNoAudio,
+				api.AudioAnalysisFailureUnsupportedSource,
+				api.AudioAnalysisFailureUnsupportedLayout,
+				api.AudioAnalysisFailureUnsupportedCodec:
+				failure.Recovery = api.OperationRecoveryNone
+			case api.AudioAnalysisFailureFFmpegUnavailable,
+				api.AudioAnalysisFailureDecode,
+				api.AudioAnalysisFailureMalformedPCM,
+				api.AudioAnalysisFailureOutput,
+				api.AudioAnalysisFailureResourceUnavailable,
+				api.AudioAnalysisFailureInterrupted,
+				api.AudioAnalysisFailureCanceled:
+				// Keep the default retry recovery.
+			}
+			return api.NewOperationError(failure, err)
+		}
+	}
 	var stale *preparedrelease.StalePreparationError
 	var incompatible *preparedrelease.IncompatiblePreparationError
 	var missing *api.MissingRequirementError

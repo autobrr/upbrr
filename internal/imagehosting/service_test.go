@@ -769,8 +769,9 @@ func TestUploadImagesSeparatesHDBMenuGalleryWithoutDuplicates(t *testing.T) {
 	tmpDir := t.TempDir()
 	firstPath := filepath.Join(tmpDir, "screen-01.png")
 	menuPath := filepath.Join(tmpDir, "menu-01.png")
+	audioPath := filepath.Join(tmpDir, "audio-01.png")
 	secondPath := filepath.Join(tmpDir, "screen-02.png")
-	for _, imagePath := range []string{firstPath, menuPath, secondPath} {
+	for _, imagePath := range []string{firstPath, menuPath, audioPath, secondPath} {
 		if err := os.WriteFile(imagePath, []byte("testdata"), 0o600); err != nil {
 			t.Fatalf("write temp file: %v", err)
 		}
@@ -794,13 +795,14 @@ func TestUploadImagesSeparatesHDBMenuGalleryWithoutDuplicates(t *testing.T) {
 	}, "hdb", "tracker:HDB", []api.ScreenshotImage{
 		{Path: firstPath, Purpose: api.ScreenshotPurposeFinal},
 		{Path: menuPath, Purpose: api.ScreenshotPurposeMenu},
+		{Path: audioPath, Purpose: api.ScreenshotPurposeAudioAnalysis},
 		{Path: secondPath, Purpose: api.ScreenshotPurposeFinal},
 	})
 	if err != nil {
 		t.Fatalf("upload images: %v", err)
 	}
-	if len(uploaderStub.batches) != 2 {
-		t.Fatalf("expected normal and menu HDB batches, got %#v", uploaderStub.batches)
+	if len(uploaderStub.batches) != 3 {
+		t.Fatalf("expected normal, menu and audio HDB batches, got %#v", uploaderStub.batches)
 	}
 	if !slices.Equal(uploaderStub.batches[0], []string{firstPath, secondPath}) {
 		t.Fatalf("expected normal gallery to exclude menu image, got %#v", uploaderStub.batches[0])
@@ -808,23 +810,51 @@ func TestUploadImagesSeparatesHDBMenuGalleryWithoutDuplicates(t *testing.T) {
 	if !slices.Equal(uploaderStub.batches[1], []string{menuPath}) {
 		t.Fatalf("expected menu gallery to contain only menu image, got %#v", uploaderStub.batches[1])
 	}
+	if !slices.Equal(uploaderStub.batches[2], []string{audioPath}) {
+		t.Fatalf("expected audio gallery to contain only audio image, got %#v", uploaderStub.batches[2])
+	}
 	if !slices.Equal(uploaderStub.galleryNames, []string{
 		"Example.Release.2026.2160p.WEB-DL-GRP",
 		"Example.Release.2026.2160p.WEB-DL-GRP Disc Menus",
+		"Example.Release.2026.2160p.WEB-DL-GRP Audio Analysis",
 	}) {
 		t.Fatalf("unexpected HDB gallery names: %#v", uploaderStub.galleryNames)
 	}
-	if len(result) != 3 || result[0].ImagePath != firstPath || result[1].ImagePath != menuPath || result[2].ImagePath != secondPath {
+	if len(result) != 4 || result[0].ImagePath != firstPath || result[1].ImagePath != menuPath ||
+		result[2].ImagePath != audioPath || result[2].Purpose != api.ScreenshotPurposeAudioAnalysis || result[3].ImagePath != secondPath {
 		t.Fatalf("expected upload results in input order, got %#v", result)
 	}
 	if !logger.contains("host=hdb tracker=HDB") {
 		t.Fatal("expected HDB tracker identity in image-host logs")
 	}
-	if !logger.contains("batches=2 images=3 wall_duration=") {
+	if !logger.contains("batches=3 images=4 wall_duration=") {
 		t.Fatalf("expected batch wall timing and counts, got %#v", logger.messages)
 	}
 	if logger.contains("mean_attempt_duration") {
 		t.Fatalf("batch logs must not claim per-image timing: %#v", logger.messages)
+	}
+}
+
+func TestListCandidatesExcludesHostedAudioAnalysis(t *testing.T) {
+	t.Parallel()
+	pathValue := filepath.Join(t.TempDir(), "audio.png")
+	if err := os.WriteFile(pathValue, []byte("image"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	repo := &recordingRepo{uploads: []api.UploadedImageLink{{
+		ImagePath: pathValue,
+		Purpose:   api.ScreenshotPurposeAudioAnalysis,
+		ImgURL:    "https://img.example/audio.png",
+	}}}
+	service := &Service{repo: repo, logger: &recordingImageHostLogger{}}
+	candidates, err := service.ListCandidates(t.Context(), api.ImageHostingSubject{
+		MediaBinding: imageHostingTestBinding(filepath.Join(t.TempDir(), "Example.Release.2026-GRP.mkv")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 0 {
+		t.Fatalf("audio image became screenshot candidate: %#v", candidates)
 	}
 }
 

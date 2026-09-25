@@ -275,6 +275,40 @@ Without `--screens`, the CLI uses `screenshot_handling.screens` when selected tr
 | `--descfile <path>`          | `-descfile`, `-df`                  | Use a custom description file.                        |
 | `--desclink <url>`           | `-desclink`, `-pb`                  | Use a custom description link.                        |
 
+### Audio analysis
+
+Use `--audio-analysis` to analyze prepared audio tracks during the upload workflow, or `--audio-analysis-only` to analyze one file without configuration or upload.
+
+| Option                   | Purpose                                                                   |
+| ------------------------ | ------------------------------------------------------------------------- |
+| `--audio-analysis`       | Generate local images during upload.                                      |
+| `--audio-analysis-only`  | Analyze one media file without configuration or upload.                   |
+| `--audio-output <path>`  | Required output directory for `--audio-analysis-only`.                    |
+| `--audio-tracks <value>` | Select `primary`, `all`, or comma-separated one-based audio ordinals.     |
+| `--audio-images <value>` | Generate `both`, `waveform`, or `spectrogram` images. Defaults to `both`. |
+
+Generate waveform and spectrogram images for the prepared primary audio track:
+
+```powershell
+.\upbrr.exe --audio-analysis "D:\releases\Example.Release.2026.1080p-GRP.mkv"
+```
+
+Generate only spectrograms for the first and third audio tracks:
+
+```powershell
+.\upbrr.exe --audio-analysis --audio-tracks 1,3 --audio-images spectrogram "D:\releases\Example.Release.2026.1080p-GRP.mkv"
+```
+
+Analyze only audio and save it outside managed temporary storage:
+
+```powershell
+.\upbrr.exe --audio-analysis-only --audio-output "D:\reports\audio" "D:\releases\Example.Release.2026.1080p-GRP.mkv"
+```
+
+The numeric selectors are audio-only ordinals, not container-wide stream indexes. Repeated ordinals are ignored, and results retain source track order. `--audio-tracks` and `--audio-images` require either analysis mode.
+
+During upload, the CLI prints the path of every successfully retained PNG and statistics file. Standalone analysis prints paths to PNGs and statistics files in a new directory under `--audio-output`. A partial or failed analysis exits nonzero, even when some artifacts succeeded. See [Audio analysis](../workflow/audio-analysis.md) for output, retry, and retention behavior.
+
 ## Client and torrent
 
 | Option                   | Aliases                            | Purpose                                                          |

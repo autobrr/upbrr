@@ -123,6 +123,11 @@ type MediaTrackFacts struct {
 	ManifestFingerprint string
 	NativeID            string
 	Ordinal             int
+	Title               string
+	Codec               string
+	ChannelLayout       string
+	Channels            int
+	SampleRate          int
 	DetectedLanguages   []string
 	Languages           []string
 	LanguageProvenance  FactProvenance

@@ -231,6 +231,7 @@ type State struct {
 	TrackAudioLanguages                  []string
 	TrackSubtitleLanguages               []string
 	MediaTracks                          []api.MediaTrackFacts
+	PrimaryAudioTrackID                  string
 	TrackCoverageComplete                bool
 	AudioLanguagesProvenance             api.FactProvenance
 	SubtitleLanguagesProvenance          api.FactProvenance

@@ -695,6 +695,9 @@ func (m *mediaModule) uploadImagesToTarget(
 		results, missing = uploadedImageLinksForTarget(append(existing, retainedLinks...), target, images)
 	}
 	progressTarget.Reused = len(results)
+	strictAudioBatch := slices.ContainsFunc(images, func(image api.ScreenshotImage) bool {
+		return image.Purpose == api.ScreenshotPurposeAudioAnalysis
+	})
 	progressCtx = api.WithImageUploadProgressTarget(ctx, progressTarget)
 	if len(missing) == 0 {
 		m.logger.Tracef(
@@ -737,9 +740,12 @@ func (m *mediaModule) uploadImagesToTarget(
 	)
 	uploaded, err := m.images.Upload(progressCtx, imageHostingSubject(meta), target.Host, target.UsageScope, missing)
 	results = mergeUploadedImageLinks(images, results, uploaded)
-	if err != nil && m.partialHostUploadIsUsable(target, len(images), len(results), err) {
+	if err != nil && !strictAudioBatch && m.partialHostUploadIsUsable(target, len(images), len(results), err) {
 		emitCoreImageUploadResult(progressCtx, progressTarget, len(uploaded), err)
 		return results, nil
+	}
+	if err == nil && strictAudioBatch && !uploadedImageLinksCoverTarget(results, target, images) {
+		err = errors.New("audio analysis image upload is incomplete")
 	}
 	emitCoreImageUploadResult(progressCtx, progressTarget, len(uploaded), err)
 	if err != nil {

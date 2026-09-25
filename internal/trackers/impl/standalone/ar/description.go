@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/description"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -18,6 +19,7 @@ func buildDescription(meta api.UploadSubject, dbPath string, assets trackers.Des
 		return strings.TrimSpace(assets.Description)
 	}
 	assets.Description = trackers.StripDescriptionSignatures(assets.Description)
+	baseDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(assets.Description)
 
 	var parts []string
 	title := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.ReleaseName), strings.TrimSpace(meta.Release.Title), pathutil.Base(meta.SourcePath))
@@ -48,14 +50,17 @@ func buildDescription(meta api.UploadSubject, dbPath string, assets trackers.Des
 	if genres := resolveGenres(meta); genres != "" {
 		parts = append(parts, "[color=red][size=4]Genres[/size][/color]\n"+genres)
 	}
-	if screenshots := buildScreenshotSection(assets.Screenshots); screenshots != "" {
-		parts = append(parts, "[color=red][size=4]Screenshots[/size][/color]\n"+screenshots)
-	}
 	if youtube := resolveYouTube(meta); youtube != "" {
 		parts = append(parts, "[color=red][size=4]Youtube[/size][/color]\n"+youtube)
 	}
-	if notes := cleanNotes(assets.Description); notes != "" {
+	if notes := cleanNotes(baseDescription); notes != "" {
 		parts = append(parts, "[color=red][size=4]Notes[/size][/color]\n"+notes)
+	}
+	if audioAnalysis != "" {
+		parts = append(parts, audioAnalysis)
+	}
+	if screenshots := buildScreenshotSection(assets.Screenshots); screenshots != "" {
+		parts = append(parts, "[color=red][size=4]Screenshots[/size][/color]\n"+screenshots)
 	}
 
 	return strings.TrimSpace(strings.Join(parts, "\n\n"))

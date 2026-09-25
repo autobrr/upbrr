@@ -16,15 +16,18 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func mediaTrackFacts(meta preparationstate.State, doc mediaInfoDoc) ([]api.MediaTrackFacts, []string, []string, error) {
+func mediaTrackFacts(meta preparationstate.State, doc mediaInfoDoc) ([]api.MediaTrackFacts, string, []string, []string, error) {
 	manifest, err := mediaTrackManifestFingerprint(meta, doc)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, "", nil, nil, err
 	}
 	resourceID := mediaTrackResourceID(meta)
 	tracks := make([]api.MediaTrackFacts, 0)
 	ordinals := map[api.MediaTrackKind]int{}
 	nativeCounts := make(map[string]int)
+	_, _, audioTracks := splitMediaInfoTracks(doc)
+	primaryAudioIndex := selectPrimaryAudioTrackIndex(audioTracks)
+	primaryAudioTrackID := ""
 	for _, track := range doc.Media.Track {
 		if kind, ok := mediaTrackKind(track); ok {
 			nativeCounts[string(kind)+":"+trackString(track, "StreamOrder", "ID", "UniqueID")]++
@@ -47,21 +50,39 @@ func mediaTrackFacts(meta preparationstate.State, doc mediaInfoDoc) ([]api.Media
 		}
 		title := trackString(track, "Title", "Title_String", "Title_String2", "Title_String3")
 		detected := languageutil.NormalizeLanguageList([]string{trackString(track, "Language", "Language_String", "Language_String2", "Language_String3")})
-		tracks = append(tracks, api.MediaTrackFacts{
+		facts := api.MediaTrackFacts{
 			ID:                  opaqueMediaTrackID(resourceID, kind, trackKey),
 			Kind:                kind,
 			ResourceID:          resourceID,
 			ManifestFingerprint: manifest,
 			NativeID:            nativeID,
 			Ordinal:             ordinal,
+			Title:               strings.TrimSpace(title),
+			Codec:               strings.TrimSpace(normalizeAudioFormat(track)),
+			ChannelLayout:       trackString(track, "ChannelLayout", "ChannelLayout_Original", "ChannelPositions", "ChannelPositions_Original"),
+			Channels:            mediaTrackPositiveInt(track, "Channels_Original", "Channels", "Channel_s_", "Channel_s__Original"),
+			SampleRate:          mediaTrackPositiveInt(track, "SamplingRate", "SamplingRate_String"),
 			DetectedLanguages:   append([]string(nil), detected...),
 			Languages:           append([]string(nil), detected...),
 			LanguageProvenance:  api.FactProvenanceAutomatic,
 			Default:             mediaTrackDefault(track),
 			Commentary:          isCommentaryOrCompatibilityAudioValue(title),
-		})
+		}
+		tracks = append(tracks, facts)
+		if kind == api.MediaTrackAudio && ordinal-1 == primaryAudioIndex {
+			primaryAudioTrackID = facts.ID
+		}
 	}
-	return tracks, aggregateTrackLanguages(tracks, api.MediaTrackAudio), aggregateTrackLanguages(tracks, api.MediaTrackSubtitle), nil
+	return tracks, primaryAudioTrackID, aggregateTrackLanguages(tracks, api.MediaTrackAudio), aggregateTrackLanguages(tracks, api.MediaTrackSubtitle), nil
+}
+
+func mediaTrackPositiveInt(track map[string]any, keys ...string) int {
+	for _, key := range keys {
+		if value, ok := trackFirstInt(track, key); ok && value > 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func mediaTrackKind(track map[string]any) (api.MediaTrackKind, bool) {

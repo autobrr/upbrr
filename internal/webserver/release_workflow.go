@@ -230,6 +230,28 @@ func (b *Backend) openReleaseWorkflowMediaArtifact(
 	return content, nil
 }
 
+func (b *Backend) openReleaseWorkflowAudioAnalysisArtifact(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+	analysis api.AudioAnalysisRef,
+	artifactID api.PublicResourceID,
+) (releaseworkflow.MediaArtifactContent, error) {
+	runtime, err := b.requireRuntime()
+	if err != nil {
+		return releaseworkflow.MediaArtifactContent{}, err
+	}
+	workflowCore, err := runtime.releaseWorkflowCore()
+	if err != nil {
+		return releaseworkflow.MediaArtifactContent{}, err
+	}
+	content, err := workflowCore.OpenReleaseWorkflowAudioAnalysisArtifact(ctx, ownerID, workflowID, analysis, artifactID)
+	if err != nil {
+		return releaseworkflow.MediaArtifactContent{}, classifyReleaseWorkflowError(err)
+	}
+	return content, nil
+}
+
 func (b *Backend) releaseWorkflowMediaPlan(
 	ctx context.Context,
 	ownerID string,

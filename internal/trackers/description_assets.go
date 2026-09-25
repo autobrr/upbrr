@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"maps"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -269,6 +270,16 @@ func resolveDescriptionAssets(
 	} else {
 		description = sanitizeTrackerDescription(tracker, description, registry)
 	}
+	audioBlock, err := exactAudioDescriptionBlock(tracker, meta.ExactMedia)
+	if err != nil {
+		return DescriptionAssets{}, err
+	}
+	if audioBlock != "" && !final {
+		// An edited generated description may already include the previous block.
+		// Replace that owned section while preserving edits to the surrounding text.
+		description = sourceAudioBlockPattern.ReplaceAllString(description, "")
+		description = strings.TrimSpace(strings.Join([]string{description, audioBlock}, "\n\n"))
+	}
 	hasDescription := strings.TrimSpace(description) != ""
 	return DescriptionAssets{
 		Description: description,
@@ -278,6 +289,48 @@ func resolveDescriptionAssets(
 		Override:    overridden && hasDescription,
 		Final:       final && hasDescription,
 	}, nil
+}
+
+var sourceAudioBlockPattern = regexp.MustCompile(`(?is)\[spoiler=source_audio\].*?\[/spoiler\]`)
+
+func exactAudioDescriptionBlock(tracker string, exact *api.ExactMediaAssets) (string, error) {
+	if exact == nil || len(exact.AudioTracks) == 0 {
+		return "", nil
+	}
+	images := make([]string, 0)
+	stats := make([]string, 0)
+	selectedHost := strings.TrimSpace(exact.AudioUploadHosts[strings.ToUpper(strings.TrimSpace(tracker))])
+	if len(exact.AudioUploadHosts) > 0 && selectedHost == "" {
+		return "", fmt.Errorf("trackers: hosted audio analysis image is unavailable for %s", tracker)
+	}
+	for _, track := range exact.AudioTracks {
+		label := fmt.Sprintf("Audio track %d", track.Ordinal)
+		if len(track.Images) > 0 {
+			images = append(images, "[b]"+label+"[/b]")
+		}
+		for _, image := range track.Images {
+			upload, ok := exactUploadedVariant(tracker, image.Path, exact.AudioUploads, selectedHost)
+			graphURL := strings.TrimSpace(upload.RawURL)
+			if graphURL == "" {
+				graphURL = strings.TrimSpace(upload.ImgURL)
+			}
+			if !ok || graphURL == "" {
+				return "", fmt.Errorf("trackers: hosted audio analysis image is unavailable for %s", tracker)
+			}
+			images = append(images, "[img]"+graphURL+"[/img]")
+		}
+		if text := strings.TrimSpace(track.Stats); text != "" {
+			stats = append(stats, label+"\n"+strings.ReplaceAll(text, "[", "&#91;"))
+		}
+	}
+	parts := images
+	if len(stats) > 0 {
+		parts = append(parts, "[code]"+strings.Join(stats, "\n\n")+"[/code]")
+	}
+	if len(parts) == 0 {
+		return "", nil
+	}
+	return "[spoiler=source_audio]\n" + strings.Join(parts, "\n") + "\n[/spoiler]", nil
 }
 
 func applyResolvedDescriptionScreenshots(
@@ -346,7 +399,7 @@ func exactDescriptionMedia(
 	menuImages := make([]api.ScreenshotImage, 0, len(meta.ExactMedia.DVDMenus))
 	for _, menu := range meta.ExactMedia.DVDMenus {
 		image := menu.ScreenshotImage
-		if upload, ok := exactUploadedVariant(tracker, image.Path, meta.ExactMedia.DVDMenuUploads); ok {
+		if upload, ok := exactUploadedVariant(tracker, image.Path, meta.ExactMedia.DVDMenuUploads, ""); ok {
 			image.Host = upload.Host
 			image.ImgURL = upload.ImgURL
 			image.RawURL = upload.RawURL
@@ -358,12 +411,14 @@ func exactDescriptionMedia(
 	return menuImages, screenshots
 }
 
-func exactUploadedVariant(tracker string, imagePath string, uploads []api.UploadedImageLink) (api.UploadedImageLink, bool) {
+func exactUploadedVariant(tracker string, imagePath string, uploads []api.UploadedImageLink, selectedHost string) (api.UploadedImageLink, bool) {
 	imagePath = strings.TrimSpace(imagePath)
+	host := strings.ToLower(strings.TrimSpace(selectedHost))
 	preferredScopes := []string{trackerImageUsageScope(tracker), globalImageUsageScope}
 	for _, scope := range preferredScopes {
 		for _, upload := range uploads {
-			if strings.TrimSpace(upload.ImagePath) == imagePath && normalizeUsageScope(upload.UsageScope) == scope {
+			if strings.TrimSpace(upload.ImagePath) == imagePath && normalizeUsageScope(upload.UsageScope) == scope &&
+				(host == "" || strings.EqualFold(strings.TrimSpace(upload.Host), host)) {
 				return upload, true
 			}
 		}
@@ -913,11 +968,10 @@ func preloadUploadAssetData(
 	}
 	preloaded.selections = selections
 
-	uploads, err := repo.ListUploadedImagesByPath(ctx, meta.MediaBinding)
+	preloaded.uploads, err = uploadedImagesFromSource(ctx, meta, repo, nil)
 	if err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
+		return nil, err
 	}
-	preloaded.uploads = uploads
 
 	slots, err := screenshotSlotsFromSource(ctx, "", meta, repo, nil, preloaded, registry)
 	if err != nil {
@@ -1027,7 +1081,13 @@ func uploadedImagesFromSource(
 	if preloaded != nil {
 		return preloaded.uploads, nil
 	}
-	return wrapTrackerResult(repo.ListUploadedImagesByPath(ctx, meta.MediaBinding))
+	uploads, err := repo.ListUploadedImagesByPath(ctx, meta.MediaBinding)
+	if err != nil {
+		return nil, fmt.Errorf("trackers: %w", err)
+	}
+	return slices.DeleteFunc(uploads, func(upload api.UploadedImageLink) bool {
+		return upload.Purpose == api.ScreenshotPurposeAudioAnalysis
+	}), nil
 }
 
 func resolveTrackerImageURLs(

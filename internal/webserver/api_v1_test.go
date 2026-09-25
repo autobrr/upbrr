@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -265,6 +266,117 @@ type apiV1CompositeUploadCoreFake struct {
 	startRequest api.CreateReleaseWorkflowUploadRequest
 	feedback     api.ReleaseWorkflowUploadFeedback
 	feedbackID   api.WorkflowID
+}
+
+type audioAnalysisArtifactCoreFake struct {
+	ReleaseWorkflowCapability
+	expectedOwner string
+	owner         string
+	workflowID    api.WorkflowID
+	analysis      api.AudioAnalysisRef
+	artifactID    api.PublicResourceID
+	calls         int
+}
+
+func (f *audioAnalysisArtifactCoreFake) OpenReleaseWorkflowAudioAnalysisArtifact(
+	_ context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+	analysis api.AudioAnalysisRef,
+	artifactID api.PublicResourceID,
+) (releaseworkflow.MediaArtifactContent, error) {
+	f.calls++
+	f.owner = ownerID
+	f.workflowID = workflowID
+	f.analysis = analysis
+	f.artifactID = artifactID
+	if f.expectedOwner != "" && ownerID != f.expectedOwner {
+		return releaseworkflow.MediaArtifactContent{}, releaseworkflow.ErrWorkflowNotFound
+	}
+	if artifactID == "stats-1" {
+		return releaseworkflow.MediaArtifactContent{
+			Body: io.NopCloser(strings.NewReader("DC offset   0.000000\n")), ContentType: "text/plain; charset=utf-8",
+		}, nil
+	}
+	return releaseworkflow.MediaArtifactContent{
+		Body: io.NopCloser(strings.NewReader("synthetic-png")), ContentType: "image/png",
+	}, nil
+}
+
+func TestAPIV1AudioAnalysisArtifactRequiresReadScopeAndExactAuthority(t *testing.T) {
+	t.Parallel()
+
+	store, err := newAPITokenStore([]APITokenCredential{{
+		Token:   apiV1TestToken,
+		OwnerID: "reader",
+		Scopes:  []APITokenScope{APITokenScopeWorkflowRead},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	coreFake := &audioAnalysisArtifactCoreFake{expectedOwner: "api:reader"}
+	server := &Server{
+		backend:        &Backend{capabilities: CoreCapabilities{ReleaseWorkflow: coreFake}},
+		apiTokens:      store,
+		generalLimiter: newFixedWindowLimiter(100, time.Minute),
+	}
+	mux := http.NewServeMux()
+	server.registerV1Routes(mux)
+
+	request := httptest.NewRequestWithContext(
+		t.Context(), http.MethodGet,
+		"/api/v1/workflows/workflow-1/audio-analysis/analysis-1/artifacts/artifact-1?revision=7", nil,
+	)
+	request.Header.Set("Authorization", "Bearer "+apiV1TestToken)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Body.String() != "synthetic-png" ||
+		response.Header().Get("Content-Type") != "image/png" || response.Header().Get("Cache-Control") != "private, no-store" ||
+		response.Header().Get("Content-Disposition") != `inline; filename="audio-analysis.png"` {
+		t.Fatalf("artifact response status=%d headers=%v body=%q", response.Code, response.Header(), response.Body.String())
+	}
+	if coreFake.owner != "api:reader" || coreFake.workflowID != "workflow-1" ||
+		coreFake.analysis != (api.AudioAnalysisRef{ID: "analysis-1", Revision: 7}) || coreFake.artifactID != "artifact-1" {
+		t.Fatalf("artifact authority = owner:%q workflow:%q analysis:%#v artifact:%q", coreFake.owner, coreFake.workflowID, coreFake.analysis, coreFake.artifactID)
+	}
+
+	invalidRevision := httptest.NewRequestWithContext(
+		t.Context(), http.MethodGet,
+		"/api/v1/workflows/workflow-1/audio-analysis/analysis-1/artifacts/artifact-1?revision=0", nil,
+	)
+	invalidRevision.Header.Set("Authorization", "Bearer "+apiV1TestToken)
+	invalidResponse := httptest.NewRecorder()
+	mux.ServeHTTP(invalidResponse, invalidRevision)
+	if invalidResponse.Code != http.StatusBadRequest || coreFake.calls != 1 {
+		t.Fatalf("invalid revision status=%d calls=%d", invalidResponse.Code, coreFake.calls)
+	}
+	statsRequest := httptest.NewRequestWithContext(
+		t.Context(), http.MethodGet,
+		"/api/v1/workflows/workflow-1/audio-analysis/analysis-1/artifacts/stats-1?revision=7", nil,
+	)
+	statsRequest.Header.Set("Authorization", "Bearer "+apiV1TestToken)
+	statsResponse := httptest.NewRecorder()
+	mux.ServeHTTP(statsResponse, statsRequest)
+	if statsResponse.Code != http.StatusOK || statsResponse.Body.String() != "DC offset   0.000000\n" ||
+		statsResponse.Header().Get("Content-Type") != "text/plain; charset=utf-8" ||
+		statsResponse.Header().Get("Content-Disposition") != `inline; filename="audio-analysis-stats.txt"` {
+		t.Fatalf("statistics response status=%d headers=%v body=%q", statsResponse.Code, statsResponse.Header(), statsResponse.Body.String())
+	}
+
+	otherStore, err := newAPITokenStore([]APITokenCredential{{
+		Token:   apiV1TestToken,
+		OwnerID: "other",
+		Scopes:  []APITokenScope{APITokenScopeWorkflowRead},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.apiTokens = otherStore
+	foreignResponse := httptest.NewRecorder()
+	mux.ServeHTTP(foreignResponse, request)
+	if foreignResponse.Code != http.StatusNotFound {
+		t.Fatalf("foreign owner artifact status = %d, want 404", foreignResponse.Code)
+	}
 }
 
 func (f *apiV1CompositeUploadCoreFake) StartReleaseWorkflowUpload(
@@ -578,6 +690,8 @@ func TestAPIV1CommandRoutesDecodeSharedWorkflowRequests(t *testing.T) {
 		want     any
 	}{
 		{"invalidate", http.MethodPost, []string{"workflow-1", "trackers", "invalidate"}, `{"trackerIds":["EXAMPLE"]}`, releaseworkflow.InvalidateTrackersCommand{}},
+		{"analyze audio", http.MethodPost, []string{"workflow-1", "audio-analysis"}, `{"instructions":{"release":{"sourcePath":"Example.Release.2026.mkv","generation":1},"resourceId":"resource-1","selection":"primary","trackIds":["track-1"],"variants":["waveform"],"profileVersion":"audio-analysis-v3"}}`, releaseworkflow.AnalyzeAudioCommand{}},
+		{"disable audio analysis", http.MethodPut, []string{"workflow-1", "audio-analysis", "enabled"}, `{"enabled":false}`, releaseworkflow.SetAudioAnalysisEnabledCommand{}},
 		{"select media", http.MethodPut, []string{"workflow-1", "media", "media-1", "selection"}, `{"media":{"revision":1},"artifactIds":["artifact-1"],"selected":true}`, releaseworkflow.SetMediaSelectionCommand{}},
 		{"delete media", http.MethodPost, []string{"workflow-1", "media", "media-1", "delete"}, `{"media":{"revision":1},"artifactIds":["artifact-1"]}`, releaseworkflow.DeleteMediaArtifactsCommand{}},
 		{"reorder media", http.MethodPut, []string{"workflow-1", "media", "media-1", "reorder"}, `{"media":{"revision":1},"artifactIds":["artifact-1"]}`, releaseworkflow.ReorderMediaArtifactsCommand{}},
@@ -696,6 +810,9 @@ func TestReleaseWorkflowOpenAPICoversRuntimeRoutes(t *testing.T) {
 		"/workflows/{workflowId}/media/{mediaId}/images/upload":                        "post",
 		"/workflows/{workflowId}/media/{mediaId}/images/retry":                         "post",
 		"/workflows/{workflowId}/media/{mediaId}/images/remove":                        "post",
+		"/workflows/{workflowId}/audio-analysis":                                       "post",
+		"/workflows/{workflowId}/audio-analysis/enabled":                               "put",
+		"/workflows/{workflowId}/audio-analysis/{analysisId}/artifacts/{artifactId}":   "get",
 		"/workflows/{workflowId}/descriptions/{descriptionId}/groups/{groupKey}/save":  "post",
 		"/workflows/{workflowId}/descriptions/{descriptionId}/groups/{groupKey}/reset": "post",
 		"/workflows/{workflowId}/uploads/{resultId}/retry":                             "post",

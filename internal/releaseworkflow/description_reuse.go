@@ -24,6 +24,10 @@ func (m *Module) prepareReusableDescriptions(
 	if !ok || snapshot == nil || snapshot.Media == nil {
 		return nil
 	}
+	if state.Workflow.AudioAnalysisEnabled && state.Workflow.AudioAnalysis != nil {
+		state.descriptionReuse = nil
+		return nil
+	}
 	targets, err := resolveDownstreamTrackerSet(state, nil, downstreamStageDescriptions, now)
 	if err != nil {
 		return err

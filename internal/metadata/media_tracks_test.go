@@ -34,15 +34,127 @@ func TestMediaTrackFactsExcludesCommentaryFromAudioAggregate(t *testing.T) {
 			"Language":    "en, fra",
 		},
 	}
-	tracks, audio, subtitles, err := mediaTrackFacts(preparationstate.State{SourcePath: "Example.2026.mkv", VideoPath: "Example.2026.mkv"}, doc)
+	tracks, primaryAudioTrackID, audio, subtitles, err := mediaTrackFacts(
+		preparationstate.State{SourcePath: "Example.2026.mkv", VideoPath: "Example.2026.mkv"},
+		doc,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(tracks) != 3 || tracks[0].ID == "" || tracks[0].ID == "Example.2026.mkv" {
 		t.Fatalf("tracks = %#v", tracks)
 	}
+	if primaryAudioTrackID != tracks[0].ID {
+		t.Fatalf("primary audio track ID = %q, want %q", primaryAudioTrackID, tracks[0].ID)
+	}
 	if !slices.Equal(audio, []string{"English"}) || !slices.Equal(subtitles, []string{"English", "French"}) {
 		t.Fatalf("aggregate languages = %#v/%#v", audio, subtitles)
+	}
+}
+
+func TestMediaTrackFactsPrimaryIdentityUsesExistingPolicyWithDuplicateNativeIDs(t *testing.T) {
+	t.Parallel()
+
+	doc := mediaInfoDoc{}
+	doc.Media.Track = []map[string]any{
+		{
+			"@type":        "Audio",
+			"StreamOrder":  "0",
+			"ID":           "7",
+			"Title":        "Director Commentary",
+			"Format":       "AAC",
+			"Channels":     "2",
+			"SamplingRate": "48000",
+		},
+		{
+			"@type":         "Audio",
+			"StreamOrder":   "2",
+			"ID":            "7",
+			"Title":         "Main",
+			"Format":        "FLAC",
+			"ChannelLayout": "L R",
+			"Channels":      "2",
+			"SamplingRate":  "96000",
+		},
+		{
+			"@type":        "Audio",
+			"StreamOrder":  "1",
+			"ID":           "7",
+			"Title":        "Main Alternate",
+			"Format":       "AC-3",
+			"Channels":     "6",
+			"SamplingRate": "48000",
+		},
+	}
+	tracks, primaryID, _, _, err := mediaTrackFacts(
+		preparationstate.State{SourcePath: "Example.2026.mkv", VideoPath: "Example.2026.mkv"},
+		doc,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tracks) != 3 || primaryID != tracks[2].ID || tracks[0].ID == tracks[1].ID || tracks[1].ID == tracks[2].ID {
+		t.Fatalf("tracks=%#v primary=%q", tracks, primaryID)
+	}
+	if tracks[1].Title != "Main" || tracks[1].Codec != "FLAC" || tracks[1].ChannelLayout != "L R" ||
+		tracks[1].Channels != 2 || tracks[1].SampleRate != 96_000 {
+		t.Fatalf("audio facts = %#v", tracks[1])
+	}
+}
+
+func TestMediaTrackFactsNormalizesDolbyCodecsForAnalysisBinding(t *testing.T) {
+	t.Parallel()
+
+	doc := mediaInfoDoc{Media: struct {
+		Track []map[string]any `json:"track"`
+	}{Track: []map[string]any{
+		{
+			"@type":       "Audio",
+			"Format":      "AC-3",
+			"StreamOrder": "1",
+		},
+		{
+			"@type":       "Audio",
+			"Format":      "E-AC-3",
+			"StreamOrder": "2",
+		},
+	}}}
+	tracks, _, _, _, err := mediaTrackFacts(
+		preparationstate.State{SourcePath: "Example.2026.mkv", VideoPath: "Example.2026.mkv"},
+		doc,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tracks) != 2 || tracks[0].Codec != "DD" || tracks[1].Codec != "DD+" {
+		t.Fatalf("Dolby track facts = %#v", tracks)
+	}
+}
+
+func TestSelectPrimaryAudioTrackFallsBackToNumericIDThenSourceOrder(t *testing.T) {
+	t.Parallel()
+
+	byID := []map[string]any{
+		{
+			"@type": "Audio",
+			"ID":    "9",
+			"Title": "Compatibility",
+		},
+		{
+			"@type": "Audio",
+			"ID":    "3",
+			"Title": "Commentary",
+		},
+	}
+	if index := selectPrimaryAudioTrackIndex(byID); index != 1 {
+		t.Fatalf("numeric ID primary index = %d, want 1", index)
+	}
+	bySourceOrder := []map[string]any{
+		{"@type": "Audio", "Title": "Main A"},
+		{"@type": "Audio", "Title": "Main B"},
+	}
+	if index := selectPrimaryAudioTrackIndex(bySourceOrder); index != 0 {
+		t.Fatalf("source-order primary index = %d, want 0", index)
 	}
 }
 
@@ -84,12 +196,12 @@ func TestTrackOrdinalBindingChangesWithOrderedScanEvidence(t *testing.T) {
 	}
 	doc := mediaInfoDoc{}
 	doc.Media.Track = []map[string]any{{"@type": "Audio", "Language": "eng"}, {"@type": "Audio", "Language": "fra"}}
-	first, _, _, err := mediaTrackFacts(meta, doc)
+	first, _, _, _, err := mediaTrackFacts(meta, doc)
 	if err != nil {
 		t.Fatal(err)
 	}
 	doc.Media.Track[0], doc.Media.Track[1] = doc.Media.Track[1], doc.Media.Track[0]
-	second, _, _, err := mediaTrackFacts(meta, doc)
+	second, _, _, _, err := mediaTrackFacts(meta, doc)
 	if err != nil {
 		t.Fatal(err)
 	}

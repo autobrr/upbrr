@@ -377,6 +377,116 @@ func TestResolveDescriptionAssetsPrefersDBDescription(t *testing.T) {
 	}
 }
 
+func TestAudioAnalysisDescriptionKeepsGraphsOutOfScreenshots(t *testing.T) {
+	t.Parallel()
+	imagePath := filepath.Join(t.TempDir(), "audio-graph.png")
+	exact := &api.ExactMediaAssets{
+		AudioAnalysis: &api.AudioAnalysisRef{ID: "analysis-1", Revision: 3},
+		AudioTracks: []api.AudioDescriptionTrack{{
+			Ordinal: 2,
+			Images:  []api.ScreenshotImage{{Path: imagePath, Purpose: api.ScreenshotPurposeAudioAnalysis}},
+			Stats:   "Peak: -1.0 dB\n[/code]",
+		}},
+		AudioUploads: []api.UploadedImageLink{{
+			ImagePath:  imagePath,
+			Purpose:    api.ScreenshotPurposeAudioAnalysis,
+			UsageScope: "global",
+			ImgURL:     "https://img.example/audio-thumb.png",
+			RawURL:     "https://img.example/audio.png",
+		}},
+	}
+	assets, err := ResolveDescriptionAssets(t.Context(), "AITHER", api.UploadSubject{
+		DescriptionTemplate: "Base description", ExactMedia: exact,
+	}, nil, api.NopLogger{}, descriptionAssetsTestRegistry(t))
+	if err != nil {
+		t.Fatalf("resolve audio description: %v", err)
+	}
+	if len(assets.Screenshots) != 0 || len(assets.MenuImages) != 0 || len(assets.Slots) != 0 {
+		t.Fatalf("audio graph entered screenshot channels: %#v", assets)
+	}
+	if !strings.Contains(assets.Description, "[spoiler=source_audio]") ||
+		!strings.Contains(assets.Description, "[img]https://img.example/audio.png[/img]") ||
+		!strings.Contains(assets.Description, "[code]Audio track 2\nPeak: -1.0 dB\n&#91;/code][/code]") ||
+		strings.Index(assets.Description, "[img]") > strings.Index(assets.Description, "[code]") {
+		t.Fatalf("audio description order or markup = %q", assets.Description)
+	}
+	edited, err := ResolveDescriptionAssets(t.Context(), "AITHER", api.UploadSubject{
+		DescriptionOverride: "Edited body\n\n" + assets.Description, ExactMedia: exact,
+	}, nil, api.NopLogger{}, descriptionAssetsTestRegistry(t))
+	if err != nil {
+		t.Fatalf("resolve edited audio description: %v", err)
+	}
+	if !strings.Contains(edited.Description, "Edited body") || strings.Count(edited.Description, "[spoiler=source_audio]") != 1 {
+		t.Fatalf("edited description duplicated audio section: %q", edited.Description)
+	}
+	exact.AudioUploads[0].Host = "imgbb"
+	pixhost := exact.AudioUploads[0]
+	pixhost.Host = "pixhost"
+	pixhost.ImgURL = "https://pixhost.example.invalid/audio-thumb.png"
+	pixhost.RawURL = "https://pixhost.example.invalid/audio.png"
+	exact.AudioUploads = append(exact.AudioUploads, pixhost)
+	exact.AudioUploadHosts = map[string]string{"AITHER": "imgbb", "PTP": "pixhost"}
+	for tracker, expectedURL := range map[string]string{
+		"AITHER": "https://img.example/audio.png",
+		"PTP":    "https://pixhost.example.invalid/audio.png",
+	} {
+		resolved, resolveErr := ResolveDescriptionAssets(t.Context(), tracker, api.UploadSubject{ExactMedia: exact}, nil,
+			api.NopLogger{}, descriptionAssetsTestRegistry(t))
+		if resolveErr != nil {
+			t.Fatalf("resolve %s audio host: %v", tracker, resolveErr)
+		}
+		if !strings.Contains(resolved.Description, expectedURL) {
+			t.Fatalf("%s audio host selection = %q, want %q", tracker, resolved.Description, expectedURL)
+		}
+	}
+	exact.AudioUploads = nil
+	if _, err := ResolveDescriptionAssets(t.Context(), "AITHER", api.UploadSubject{ExactMedia: exact}, nil,
+		api.NopLogger{}, descriptionAssetsTestRegistry(t)); err == nil {
+		t.Fatal("missing hosted graph must fail description generation")
+	}
+}
+
+func TestPersistedAudioGraphDoesNotFillPathlessScreenshotSlot(t *testing.T) {
+	t.Parallel()
+	repo := &stubRepo{uploads: []api.UploadedImageLink{{
+		ImagePath: "audio-graph.png",
+ Purpose: api.ScreenshotPurposeAudioAnalysis,
+		Host: "imgbb",
+ UsageScope: "global",
+ RawURL: "https://images.example.invalid/audio.png",
+	}}}
+	slots, err := synthesizeScreenshotSlots(t.Context(), "AITHER", api.UploadSubject{
+		SourcePath:          "/synthetic/release",
+		DescriptionOverride: "[img]https://images.example.invalid/shot.png[/img]",
+	}, repo, api.NopLogger{}, nil, descriptionAssetsTestRegistry(t))
+	if err != nil {
+		t.Fatalf("synthesize screenshot slots: %v", err)
+	}
+	if len(slots) != 1 || len(slots[0].Variants) != 0 {
+		t.Fatalf("audio graph filled screenshot slot: %#v", slots)
+	}
+}
+
+func TestAudioGraphUploadDoesNotAttachToScreenshotSlot(t *testing.T) {
+	t.Parallel()
+	slots := []api.ScreenshotSlot{{
+		SourcePath: "/synthetic/release",
+ SlotOrder: 0,
+		OriginalURL: "https://images.example.invalid/shot.png",
+ RenderInScreenshots: true,
+	}}
+	result := ApplyUploadedVariantsToSlots(slots, []api.UploadedImageLink{{
+		ImagePath: "audio-graph.png",
+ Purpose: api.ScreenshotPurposeAudioAnalysis,
+		Host: "imgbb",
+ UsageScope: "global",
+ RawURL: "https://images.example.invalid/audio.png",
+	}})
+	if result.MatchedUploads != 0 || result.FallbackMatched != 0 || len(slots[0].Variants) != 0 || slots[0].ImagePath != "" {
+		t.Fatalf("audio graph attached to screenshot slot: result=%#v slots=%#v", result, slots)
+	}
+}
+
 func TestPreparedDescriptionAssetsReturnsDefensiveCopy(t *testing.T) {
 	t.Parallel()
 

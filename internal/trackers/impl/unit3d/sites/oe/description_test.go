@@ -35,6 +35,27 @@ func oeTestSubject() api.UploadSubject {
 	}
 }
 
+func TestAudioAnalysisFollowsEvidenceAndMenus(t *testing.T) {
+	t.Parallel()
+	got, err := buildDescription(t.Context(), oeTestSubject(), config.Config{}, config.TrackerConfig{}, api.NopLogger{},
+		"Notes\n\n[spoiler=source_audio]\n[img]https://images.example.invalid/audio.png[/img]\n[/spoiler]",
+		[]api.ScreenshotImage{{
+RawURL: "https://images.example.invalid/menu.png",
+ ImgURL: "https://images.example.invalid/menu.png",
+ WebURL: "https://images.example.invalid/menu",
+}},
+		oeTestScreenshots())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Index(got, "SVT-AV1 preset=4") >= strings.Index(got, "menu.png") ||
+		strings.Index(got, "menu.png") >= strings.Index(got, "audio.png") ||
+		strings.Index(got, "audio.png") >= strings.Index(got, "one.png") ||
+		!strings.Contains(got, "[img=350]https://images.example.invalid/audio.png[/img]") {
+		t.Fatalf("audio analysis placement = %q", got)
+	}
+}
+
 func TestDescriptionOwnsOEMarkupEvidenceAndScreenshots(t *testing.T) {
 	meta := oeTestSubject()
 	meta.ProviderMetadata = api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Logo: "https://images.example/title-logo.png"}}

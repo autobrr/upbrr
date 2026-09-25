@@ -45,6 +45,26 @@ type failOncePutPrivateResourceStore struct {
 	failed bool
 }
 
+type failOnceInvalidatePrivateResourceStore struct {
+	PrivateResourceStore
+	failed bool
+}
+
+func (s *failOnceInvalidatePrivateResourceStore) InvalidateWorkflowExcept(
+	ownerID string,
+	workflowID api.WorkflowID,
+	preservedResourceIDs ...string,
+) error {
+	if !s.failed {
+		s.failed = true
+		return errors.New("synthetic private resource invalidation failure")
+	}
+	if err := s.PrivateResourceStore.InvalidateWorkflowExcept(ownerID, workflowID, preservedResourceIDs...); err != nil {
+		return fmt.Errorf("delegate private resource invalidation: %w", err)
+	}
+	return nil
+}
+
 func (s *failOncePutPrivateResourceStore) Put(
 	ownerID string,
 	workflowID api.WorkflowID,
@@ -3205,6 +3225,34 @@ func TestApplyWorkflowProgressConvergesAfterDuplicateAndStaleUpdates(t *testing.
 	}
 }
 
+func TestApplyWorkflowProgressKeepsItemPercentOutOfAggregateCounts(t *testing.T) {
+	t.Parallel()
+
+	status := api.WorkflowOperationStatus{
+		Status:    api.StageStatusRunning,
+		Completed: 1,
+		Total:     3,
+		Progress:  33,
+	}
+	applyWorkflowProgress(&status, api.WorkflowProgressUpdate{
+		Phase:     "audio_analysis_decode",
+		ItemID:    "track-2",
+		Kind:      "audio_track",
+		Label:     "Audio track 2",
+		Status:    api.StageStatusRunning,
+		Completed: 75,
+		Total:     100,
+		Message:   "Decoding audio (75%).",
+		ItemOnly:  true,
+	})
+	if status.Completed != 1 || status.Total != 3 || status.Progress != 33 {
+		t.Fatalf("item update changed aggregate progress: %#v", status)
+	}
+	if len(status.Items) != 1 || status.Items[0].Completed != 75 || status.Items[0].Total != 100 {
+		t.Fatalf("item progress = %#v", status.Items)
+	}
+}
+
 func TestReduceUploadDryRunReportsRetainsMixedAndSkippedOutcomes(t *testing.T) {
 	t.Parallel()
 
@@ -4385,6 +4433,34 @@ func TestModuleCancelWorkflowClearsAuthorityAndIsIdempotent(t *testing.T) {
 	})
 	if !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("second cancellation error = %v, want %v", err, ErrInvalidTransition)
+	}
+}
+
+func TestModuleCancelWorkflowRetriesFailedPrivateResourceInvalidation(t *testing.T) {
+	t.Parallel()
+
+	module, repository := newTestModule(t, testPreparer())
+	created := executeCommand(t, module, CreateWorkflowCommand{WorkflowID: "workflow-cancel-invalidation-retry"})
+	module.private = &failOnceInvalidatePrivateResourceStore{PrivateResourceStore: module.private}
+	command := CancelWorkflowCommand{
+		WorkflowID:       created.Workflow.ID,
+		ExpectedRevision: created.Workflow.Revision,
+		Reason:           "operator request",
+		IdempotencyKey:   "cancel-invalidation-retry",
+	}
+	if _, err := module.execute(t.Context(), testOwnerID, command); err == nil || !strings.Contains(err.Error(), "synthetic private resource invalidation failure") {
+		t.Fatalf("cancel invalidation error = %v", err)
+	}
+	state, err := repository.Load(t.Context(), testOwnerID, created.Workflow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Workflow.Status != created.Workflow.Status || state.Workflow.Revision != created.Workflow.Revision {
+		t.Fatalf("failed cancellation saved workflow = %#v", state.Workflow)
+	}
+	canceled := executeCommand(t, module, command)
+	if canceled.Workflow.Status != api.WorkflowStatusCanceled {
+		t.Fatalf("retried cancellation status = %s", canceled.Workflow.Status)
 	}
 }
 

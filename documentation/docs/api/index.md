@@ -62,6 +62,20 @@ The current API registers these top-level resources:
 
 Methods, request bodies, response schemas, status codes, idempotency rules, and nested workflow routes can change as the alpha API evolves. Generate clients from the OpenAPI document shipped with the binary you run.
 
+### Audio-analysis routes
+
+Audio analysis is a workflow-bound optional operation:
+
+| Route                                                                                   | Scope            | Purpose                                                                          |
+| --------------------------------------------------------------------------------------- | ---------------- | -------------------------------------------------------------------------------- |
+| `POST /api/v1/workflows/{workflowId}/audio-analysis`                                    | `workflow:write` | Start analysis for exact prepared release and track facts.                       |
+| `PUT /api/v1/workflows/{workflowId}/audio-analysis/enabled`                             | `workflow:write` | Enable or disable the optional facet without starting analysis.                  |
+| `GET /api/v1/workflows/{workflowId}/audio-analysis/{analysisId}/artifacts/{artifactId}` | `workflow:read`  | Stream one retained PNG or statistics text file from an exact analysis revision. |
+
+Workflow writes use the general API concurrency and idempotency headers documented by the running OpenAPI contract, including `If-Match` and `Idempotency-Key`. The artifact request requires its positive `revision` query parameter. Treat artifact IDs and URLs as opaque, and authorize each request with the owner that created the workflow.
+
+See [Audio analysis](../workflow/audio-analysis.md) for user-facing behavior. Use the embedded OpenAPI schemas for request and response fields.
+
 One active input is shared by all processes using the same database. Reads do not acquire its lease or recover interrupted work. After a restart, an explicit continuation or workflow command performs authorized recovery. If it returns a revision conflict, fetch the current workflow and review its required actions before sending a new command; do not replay a write with the old revision. Unknown external outcomes require reconciliation before another submission.
 
 ## Base-path example

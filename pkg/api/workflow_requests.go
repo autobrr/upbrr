@@ -234,6 +234,34 @@ type CaptureReleaseWorkflowMediaRequest struct {
 	Instructions MediaCaptureInstructions `json:"instructions"`
 }
 
+// AnalyzeReleaseWorkflowAudioRequest starts local waveform, spectrogram, or
+// statistics generation for an ordered exact-generation audio-track selection.
+type AnalyzeReleaseWorkflowAudioRequest struct {
+	ReleaseWorkflowCommandContext
+	Instructions AudioAnalysisInstructions `json:"instructions"`
+}
+
+// SetReleaseWorkflowAudioAnalysisEnabledRequest changes durable analysis intent
+// without starting decode work. Disabling clears the current analysis reference.
+type SetReleaseWorkflowAudioAnalysisEnabledRequest struct {
+	ReleaseWorkflowCommandContext
+	Enabled bool `json:"enabled"`
+}
+
+// Validate verifies exact revision authority.
+func (r SetReleaseWorkflowAudioAnalysisEnabledRequest) Validate() error {
+	return r.ReleaseWorkflowCommandContext.Validate()
+}
+
+// Validate verifies revision authority and deterministic analysis instructions.
+func (r AnalyzeReleaseWorkflowAudioRequest) Validate() error {
+	if err := r.ReleaseWorkflowCommandContext.Validate(); err != nil {
+		return err
+	}
+	_, err := r.Instructions.Normalize()
+	return err
+}
+
 // Validate verifies exact revision authority.
 func (r CaptureReleaseWorkflowMediaRequest) Validate() error {
 	if err := r.ReleaseWorkflowCommandContext.Validate(); err != nil {

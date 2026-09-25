@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/description"
 	descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -33,7 +34,8 @@ func buildACMDescription(
 		keptDescription = descriptionunit3d.StripScreenshotBlocks(keptDescription)
 		meta.DescriptionTemplate = descriptionunit3d.StripScreenshotBlocks(meta.DescriptionTemplate)
 	}
-	base := prepareACMText(keptDescription)
+	base, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(keptDescription)
+	base = prepareACMText(base)
 	meta.DescriptionTemplate = prepareACMText(meta.DescriptionTemplate)
 	base = descriptionunit3d.AppendDVDVOBMediaInfoBlock(base, api.NewDescriptionSubject(meta))
 
@@ -54,6 +56,9 @@ func buildACMDescription(
 			strings.TrimSpace(meta.ServiceLongName),
 		)
 		base = strings.TrimSpace(strings.Join([]string{header, base}, "\n"))
+	}
+	if audioAnalysis != "" {
+		base = strings.TrimSpace(strings.Join([]string{base, audioAnalysis}, "\n\n"))
 	}
 
 	value, err := descriptionunit3d.ComposeDescription(

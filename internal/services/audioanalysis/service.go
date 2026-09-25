@@ -1,0 +1,990 @@
+// Copyright (c) 2025-2026, Audionut and the autobrr contributors.
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+// Package audioanalysis streams selected FFmpeg audio decodes into waveform and
+// spectrogram PNGs or amplitude reports without retaining complete PCM in memory.
+package audioanalysis
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"image"
+	"image/png"
+	"io"
+	"io/fs"
+	"math"
+	"os"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
+	"syscall"
+
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	"github.com/autobrr/upbrr/pkg/api"
+)
+
+const maxConcurrentAnalyses = 2
+
+var analysisSlots = make(chan struct{}, maxConcurrentAnalyses)
+
+var errOutputStorageUnavailable = errors.New("audio analysis output storage is unavailable")
+var errDecodedSourceChanged = errors.New("decoded audio changed between analysis passes")
+var errSpectrogramGeometryChanged = errors.New("decoded duration requires different spectrogram geometry")
+var errDecodedAudioEmpty = errors.New("decoded audio was empty")
+
+// Artifact pairs public artifact metadata with its private managed local path.
+type Artifact struct {
+	Public api.AudioAnalysisArtifact
+	Path   string
+}
+
+// TrackResult is one decoded track and its retained private artifacts.
+type TrackResult struct {
+	Public    api.AudioAnalysisTrackResult
+	Artifacts []Artifact
+}
+
+// Service owns FFmpeg binding, bounded single-pass PCM analysis, and managed PNG publication.
+type Service struct {
+	logger      api.Logger
+	decoder     decoder
+	publishPNG  func(string, string, image.Image) error
+	publishText func(string, string, []byte) error
+}
+
+// NewService constructs an analysis service. A nil logger uses [api.NopLogger].
+// FFmpeg resolution is deferred until requested validation or analysis so
+// disabled analysis adds no startup prerequisite.
+func NewService(logger api.Logger) *Service { return newService(logger, nil) }
+
+func newService(logger api.Logger, decoder decoder) *Service {
+	if logger == nil {
+		logger = api.NopLogger{}
+	}
+	return &Service{
+		logger:      logger,
+		decoder:     decoder,
+		publishPNG:  writePNGAtomic,
+		publishText: writeTextAtomic,
+	}
+}
+
+// ValidateSelection proves the complete selected track set against the current
+// decoder inventory without decoding PCM or publishing artifacts.
+func (s *Service) ValidateSelection(
+	ctx context.Context,
+	subject api.AudioAnalysisSubject,
+	instructions api.AudioAnalysisInstructions,
+) error {
+	normalized, err := instructions.Normalize()
+	if err != nil {
+		return fmt.Errorf("audio analysis: normalize instructions: %w", err)
+	}
+	selectedDecoder, err := s.analysisDecoder()
+	if err != nil {
+		return err
+	}
+	if err := acquireAnalysisSlot(ctx); err != nil {
+		return err
+	}
+	defer releaseAnalysisSlot()
+	_, err = s.inspectBindings(ctx, selectedDecoder, subject, normalized.TrackIDs)
+	return err
+}
+
+// AnalyzeFile analyzes a media file directly, without a prepared release or
+// workflow storage. Ordinals are one-based audio-stream positions when selection
+// is selected. It creates a new run directory below outputRoot for artifacts.
+func (s *Service) AnalyzeFile(
+	ctx context.Context,
+	sourcePath string,
+	selection api.AudioAnalysisSelectionMode,
+	ordinals []int,
+	variants []api.AudioAnalysisVariant,
+	outputRoot string,
+) ([]TrackResult, error) {
+	selectedDecoder, err := s.analysisDecoder()
+	if err != nil {
+		return nil, err
+	}
+	streams, err := selectedDecoder.Inspect(ctx, sourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("audio analysis: inspect input: %w", err)
+	}
+	if len(streams) == 0 {
+		return nil, audioAnalysisError(api.AudioAnalysisFailureNoAudio, "the source contains no decodable audio streams", errNoInspectedAudioStreams)
+	}
+	primaryOrdinal := 1
+	for index, stream := range streams {
+		if !stream.secondaryTitle && !isSecondaryAudioTitle(stream.title) {
+			primaryOrdinal = index + 1
+			break
+		}
+	}
+	selected := make([]string, 0, len(streams))
+	subject := api.AudioAnalysisSubject{
+		Release:        api.ReleaseRef{SourcePath: sourcePath, Generation: 1},
+		SourcePath:     sourcePath,
+		VideoPath:      sourcePath,
+		ResourceID:     "standalone",
+		PrimaryTrackID: fmt.Sprintf("audio-%d", primaryOrdinal),
+		Tracks:         make([]api.MediaTrackFacts, 0, len(streams)),
+	}
+	wanted := make(map[int]bool, len(ordinals))
+	for _, ordinal := range ordinals {
+		wanted[ordinal] = true
+	}
+	for index, stream := range streams {
+		ordinal := index + 1
+		trackID := fmt.Sprintf("audio-%d", ordinal)
+		subject.Tracks = append(subject.Tracks, api.MediaTrackFacts{
+			ID:            trackID,
+			Kind:          api.MediaTrackAudio,
+			ResourceID:    subject.ResourceID,
+			Ordinal:       ordinal,
+			Title:         stream.title,
+			Codec:         stream.codec,
+			ChannelLayout: stream.layout,
+			Channels:      stream.channels,
+			SampleRate:    stream.sampleRate,
+		})
+		if selection == api.AudioAnalysisSelectionAll || selection == api.AudioAnalysisSelectionPrimary && ordinal == primaryOrdinal ||
+			selection == api.AudioAnalysisSelectionSelected && wanted[ordinal] {
+			selected = append(selected, trackID)
+			delete(wanted, ordinal)
+		}
+	}
+	if len(wanted) != 0 || len(selected) == 0 {
+		return nil, errors.New("audio analysis: selected audio ordinal is not present in the source")
+	}
+	if err := os.MkdirAll(outputRoot, 0o700); err != nil {
+		return nil, fmt.Errorf("audio analysis: create output location: %w", err)
+	}
+	runRoot, err := os.MkdirTemp(outputRoot, "analysis-")
+	if err != nil {
+		return nil, fmt.Errorf("audio analysis: create run directory: %w", err)
+	}
+	for _, trackID := range selected {
+		api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
+			Phase:     "audio_analysis_decode",
+			ItemID:    trackID,
+			Kind:      "audio_track",
+			Label:     "Audio track " + strings.TrimPrefix(trackID, "audio-"),
+			Status:    api.StageStatusRunning,
+			Completed: 0,
+			Total:     100,
+			ItemOnly:  true,
+		})
+	}
+	return s.Analyze(ctx, subject, api.AudioAnalysisInstructions{
+		Release:        subject.Release,
+		ResourceID:     subject.ResourceID,
+		Selection:      selection,
+		TrackIDs:       selected,
+		Variants:       variants,
+		ProfileVersion: api.AudioAnalysisProfileVersion,
+	}, "standalone", runRoot)
+}
+
+// Analyze streams selected tracks into the requested image or statistics
+// variants. The workflow owner supplies the managed directory for attemptID
+// and owns track scheduling, retention, and aggregate status. Returned tracks
+// may include local failures even when err is nil; on cancellation or a
+// service-wide failure, completed tracks may accompany a non-nil err.
+func (s *Service) Analyze(
+	ctx context.Context,
+	subject api.AudioAnalysisSubject,
+	instructions api.AudioAnalysisInstructions,
+	attemptID string,
+	attemptRoot string,
+) ([]TrackResult, error) {
+	normalized, err := instructions.Normalize()
+	if err != nil {
+		s.logger.Warnf("audioanalysis: state=blocked reason=invalid_instructions")
+		return nil, fmt.Errorf("audio analysis: normalize instructions: %w", err)
+	}
+	if len(normalized.TrackIDs) == 0 {
+		s.logger.Warnf("audioanalysis: state=blocked reason=invalid_track_count")
+		return nil, audioAnalysisError(
+			api.AudioAnalysisFailureInvalidSelection,
+			"audio analysis requires at least one scheduled track",
+			errors.New("audio analysis: service requires at least one track"),
+		)
+	}
+	if strings.TrimSpace(attemptRoot) == "" {
+		s.logger.Warnf("audioanalysis: state=blocked reason=storage_unavailable")
+		return nil, audioAnalysisError(
+			api.AudioAnalysisFailureResourceUnavailable,
+			"audio analysis storage is unavailable",
+			errors.New("audio analysis: service is unavailable"),
+		)
+	}
+	selectedDecoder, err := s.analysisDecoder()
+	if err != nil {
+		return nil, err
+	}
+	if err := acquireAnalysisSlot(ctx); err != nil {
+		s.logger.Debugf("audioanalysis: state=stopped phase=admission")
+		return nil, err
+	}
+	defer releaseAnalysisSlot()
+	bindings, err := s.inspectBindings(ctx, selectedDecoder, subject, normalized.TrackIDs)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(attemptRoot, 0o700); err != nil {
+		s.logger.Warnf("audioanalysis: state=blocked reason=storage_unavailable")
+		return nil, audioAnalysisError(
+			api.AudioAnalysisFailureResourceUnavailable,
+			"the managed audio-analysis output root could not be created",
+			fmt.Errorf("audio analysis: create output root: %w", err),
+		)
+	}
+	s.logger.Infof(
+		"audioanalysis: state=started track_count=%d variant_count=%d decoder_threads=%d "+
+			"spectrogram_fft_size=%d spectrogram_window=kaiser spectrogram_columns=%d",
+		len(bindings), len(normalized.Variants), normalized.ResourceLimits.DecoderThreads,
+		spectrogramFFTSize, spectrogramPlotWidth,
+	)
+	if err := ctx.Err(); err != nil {
+		return nil, classifyTopLevelFailure(fmt.Errorf("audio analysis: track scheduling stopped: %w", err))
+	}
+	tracks, analyzeErr := s.analyzeTracks(
+		ctx, selectedDecoder, attemptRoot, subject.VideoPath, bindings, normalized.Variants, normalized.ResourceLimits, attemptID,
+	)
+	if analyzeErr != nil {
+		return tracks, analyzeErr
+	}
+	if err := ctx.Err(); err != nil {
+		return tracks, classifyTopLevelFailure(fmt.Errorf("audio analysis: track stopped: %w", err))
+	}
+	artifactCount := 0
+	for _, track := range tracks {
+		artifactCount += len(track.Artifacts)
+	}
+	s.logger.Infof("audioanalysis: state=completed track_count=%d artifact_count=%d", len(tracks), artifactCount)
+	return tracks, nil
+}
+
+func (s *Service) analysisDecoder() (decoder, error) {
+	if s.decoder != nil {
+		return s.decoder, nil
+	}
+	selectedDecoder, err := newFFmpegDecoder(s.logger)
+	if err != nil {
+		s.logger.Warnf("audioanalysis: state=blocked reason=ffmpeg_unavailable")
+		return nil, err
+	}
+	return selectedDecoder, nil
+}
+
+func acquireAnalysisSlot(ctx context.Context) error {
+	select {
+	case analysisSlots <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return classifyTopLevelFailure(fmt.Errorf("audio analysis: admission stopped: %w", ctx.Err()))
+	}
+}
+
+func releaseAnalysisSlot() { <-analysisSlots }
+
+func (s *Service) inspectBindings(
+	ctx context.Context,
+	selectedDecoder decoder,
+	subject api.AudioAnalysisSubject,
+	selectedTrackIDs []string,
+) ([]trackBinding, error) {
+	streams, err := selectedDecoder.Inspect(ctx, subject.VideoPath)
+	if err != nil {
+		s.logger.Warnf("audioanalysis: state=blocked reason=source_inspection_failed")
+		return nil, classifyTopLevelFailure(err)
+	}
+	bindings, err := bindTracks(subject, selectedTrackIDs, streams)
+	if err != nil {
+		s.logger.Warnf("audioanalysis: state=blocked reason=ambiguous_binding")
+		return nil, err
+	}
+	return bindings, nil
+}
+
+type trackBinding struct {
+	track           api.MediaTrackFacts
+	audioOrdinal    int
+	durationSeconds float64
+}
+
+func bindTracks(subject api.AudioAnalysisSubject, selected []string, streams []inspectedStream) ([]trackBinding, error) {
+	audio := make([]api.MediaTrackFacts, 0, len(subject.Tracks))
+	for _, track := range subject.Tracks {
+		if track.Kind == api.MediaTrackAudio {
+			audio = append(audio, track)
+		}
+	}
+	if len(audio) != len(streams) {
+		return nil, audioAnalysisError(
+			api.AudioAnalysisFailureAmbiguousBinding,
+			"prepared audio tracks no longer match the source",
+			errors.New("audio analysis: prepared track inventory no longer matches the source"),
+		)
+	}
+	byID := make(map[string]trackBinding, len(audio))
+	remainingStreams := streams
+	for index, track := range audio {
+		stream := remainingStreams[0]
+		remainingStreams = remainingStreams[1:]
+		if track.Ordinal != index+1 || (track.SampleRate > 0 && stream.sampleRate != track.SampleRate) ||
+			(track.Channels > 0 && stream.channels > 0 && stream.channels != track.Channels) ||
+			!audioCodecsCompatible(track.Codec, stream.codec) || !audioLayoutsCompatible(track.ChannelLayout, stream.layout) {
+			return nil, audioAnalysisError(
+				api.AudioAnalysisFailureAmbiguousBinding,
+				"prepared audio facts no longer match the decoder stream inventory",
+				errors.New("audio analysis: prepared audio binding is ambiguous"),
+			)
+		}
+		if track.Channels == 0 {
+			track.Channels = stream.channels
+		}
+		if track.SampleRate == 0 {
+			track.SampleRate = stream.sampleRate
+		}
+		if strings.TrimSpace(track.Codec) == "" {
+			track.Codec = stream.codec
+		}
+		if strings.TrimSpace(track.ChannelLayout) == "" {
+			track.ChannelLayout = stream.layout
+		}
+		byID[track.ID] = trackBinding{
+			track:           track,
+			audioOrdinal:    index,
+			durationSeconds: stream.durationSeconds,
+		}
+	}
+	bindings := make([]trackBinding, 0, len(selected))
+	for _, trackID := range selected {
+		binding, ok := byID[trackID]
+		if !ok {
+			return nil, audioAnalysisError(
+				api.AudioAnalysisFailureInvalidSelection,
+				"the selected audio track is not present in the prepared inventory",
+				errors.New("audio analysis: selected track is not present in the prepared inventory"),
+			)
+		}
+		if binding.track.Channels <= 0 || binding.track.Channels > 8 {
+			return nil, audioAnalysisError(
+				api.AudioAnalysisFailureUnsupportedLayout,
+				"the selected audio track has an unsupported channel layout",
+				fmt.Errorf("audio analysis: track %d has an unsupported channel layout", binding.track.Ordinal),
+			)
+		}
+		bindings = append(bindings, binding)
+	}
+	return bindings, nil
+}
+
+func audioCodecsCompatible(prepared string, inspected string) bool {
+	if strings.TrimSpace(prepared) == "" {
+		return true
+	}
+	if strings.TrimSpace(inspected) == "" {
+		return false
+	}
+	preparedFamily := audioCodecFamily(prepared)
+	inspectedFamily := audioCodecFamily(inspected)
+	return preparedFamily != "" && inspectedFamily != "" && preparedFamily == inspectedFamily
+}
+
+func audioCodecFamily(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch {
+	case normalized == "dd+", strings.Contains(normalized, "e-ac-3"), strings.Contains(normalized, "eac3"),
+		strings.Contains(normalized, "dolby digital plus"):
+		return "eac3"
+	case strings.Contains(normalized, "truehd"), strings.Contains(normalized, "mlp fba"):
+		return "truehd"
+	case normalized == "dd", strings.Contains(normalized, "ac-3"), strings.Contains(normalized, "ac3"),
+		strings.Contains(normalized, "dolby digital"):
+		return "ac3"
+	case strings.Contains(normalized, "dts"):
+		return "dts"
+	case strings.Contains(normalized, "adpcm"):
+		return "adpcm"
+	case strings.Contains(normalized, "pcm"):
+		return "pcm"
+	case strings.Contains(normalized, "flac"):
+		return "flac"
+	case strings.Contains(normalized, "aac"):
+		return "aac"
+	case strings.Contains(normalized, "alac"):
+		return "alac"
+	case strings.Contains(normalized, "opus"):
+		return "opus"
+	case strings.Contains(normalized, "vorbis"):
+		return "vorbis"
+	case strings.Contains(normalized, "mp2"):
+		return "mp2"
+	case strings.Contains(normalized, "mp3"):
+		return "mp3"
+	case strings.Contains(normalized, "wavpack"):
+		return "wavpack"
+	default:
+		return ""
+	}
+}
+
+func audioLayoutsCompatible(prepared string, inspected string) bool {
+	preparedPosition := surroundPosition(prepared)
+	inspectedPosition := surroundPosition(inspected)
+	return preparedPosition == "" || inspectedPosition == "" || preparedPosition == inspectedPosition
+}
+
+func surroundPosition(layout string) string {
+	normalized := strings.ToLower(strings.TrimSpace(layout))
+	fields := strings.FieldsFunc(normalized, func(character rune) bool {
+		return character == ' ' || character == ',' || character == '(' || character == ')' || character == '/'
+	})
+	contains := func(value string) bool { return slices.Contains(fields, value) }
+	switch {
+	case strings.Contains(normalized, "side"), contains("ls") && contains("rs"), contains("sl") && contains("sr"):
+		return "side"
+	case strings.Contains(normalized, "back"), contains("lb") && contains("rb"), contains("bl") && contains("br"):
+		return "back"
+	default:
+		return ""
+	}
+}
+
+type trackAnalysis struct {
+	binding            trackBinding
+	public             api.AudioAnalysisTrackResult
+	waveform           *waveformAnalysis
+	spectrogram        *spectrogramAnalysis
+	wantSpectrogram    bool
+	stats              *statsAnalysis
+	statsText          string
+	totalFrames        int64
+	frames             int64
+	digest             [sha256.Size]byte
+	needsGeometryRetry bool
+	lastPercent        int
+}
+
+func newTrackAnalysis(
+	binding trackBinding,
+	variants []api.AudioAnalysisVariant,
+) *trackAnalysis {
+	language := ""
+	if len(binding.track.Languages) > 0 {
+		language = binding.track.Languages[0]
+	}
+	totalFrames := int64(math.Ceil(binding.durationSeconds * float64(binding.track.SampleRate)))
+	if totalFrames <= 0 {
+		totalFrames = int64(binding.track.SampleRate) * 60
+	}
+	analysis := &trackAnalysis{
+		binding: binding,
+		public: api.AudioAnalysisTrackResult{
+			TrackID:       binding.track.ID,
+			Ordinal:       binding.track.Ordinal,
+			Title:         binding.track.Title,
+			Codec:         binding.track.Codec,
+			Language:      language,
+			ChannelLayout: binding.track.ChannelLayout,
+			Channels:      binding.track.Channels,
+			SampleRate:    binding.track.SampleRate,
+		},
+		totalFrames: totalFrames,
+	}
+	if slices.Contains(variants, api.AudioAnalysisWaveform) {
+		analysis.waveform = newWaveformAnalysis(binding.track.Channels)
+	}
+	analysis.wantSpectrogram = slices.Contains(variants, api.AudioAnalysisSpectrogram)
+	if slices.Contains(variants, api.AudioAnalysisStats) {
+		analysis.stats = newStatsAnalysis(binding.track.Channels, binding.track.SampleRate)
+	}
+	return analysis
+}
+
+func (a *trackAnalysis) consume(ctx context.Context, logger api.Logger, reader io.Reader) error {
+	var parallel *parallelSpectrogram
+	if a.wantSpectrogram {
+		if a.binding.track.Channels > 1 && runtime.GOMAXPROCS(0) > 1 {
+			parallel = newParallelSpectrogram(a.binding.track.Channels, a.binding.track.SampleRate, a.totalFrames)
+			defer parallel.close()
+		} else {
+			a.spectrogram = newSpectrogramAnalysis(a.binding.track.Channels, a.binding.track.SampleRate, a.totalFrames)
+		}
+	}
+	hasher := sha256.New()
+	pcmReader := reader
+	if a.wantSpectrogram {
+		pcmReader = io.TeeReader(reader, hasher)
+	}
+	frames, err := consumePCM(pcmReader, a.binding.track.Channels, func(frame int64, samples []float32) error {
+		if a.waveform != nil {
+			a.waveform.add(frame, samples)
+		}
+		if parallel != nil {
+			parallel.add(frame, samples)
+		} else if a.spectrogram != nil {
+			a.spectrogram.add(frame, samples)
+		}
+		if a.stats != nil {
+			a.stats.add(samples)
+		}
+		percent := min(99, int((frame+1)*100/a.totalFrames))
+		if percent >= a.lastPercent+5 {
+			a.lastPercent = percent - percent%5
+			api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
+				Phase:     "audio_analysis_decode",
+				ItemID:    a.binding.track.ID,
+				Kind:      "audio_track",
+				Label:     fmt.Sprintf("Audio track %d", a.binding.track.Ordinal),
+				Status:    api.StageStatusRunning,
+				Completed: a.lastPercent,
+				Total:     100,
+				Message:   fmt.Sprintf("Decoding audio (%d%%).", a.lastPercent),
+				ItemOnly:  true,
+			})
+			if a.lastPercent%25 == 0 {
+				logger.Infof(
+					"audioanalysis: state=running phase=decode track_ordinal=%d progress=%d sample_frames=%d",
+					a.binding.track.Ordinal, a.lastPercent, frame+1,
+				)
+			} else if a.lastPercent%10 == 0 {
+				logger.Debugf(
+					"audioanalysis: state=running phase=decode track_ordinal=%d progress=%d sample_frames=%d",
+					a.binding.track.Ordinal, a.lastPercent, frame+1,
+				)
+			}
+		}
+		return nil
+	})
+	a.frames = frames
+	if a.wantSpectrogram {
+		copy(a.digest[:], hasher.Sum(nil))
+	}
+	if err != nil {
+		return err
+	}
+	if frames == 0 {
+		return errDecodedAudioEmpty
+	}
+	a.public.SampleFrames = frames
+	a.public.Duration = float64(frames) / float64(a.binding.track.SampleRate)
+	if a.waveform != nil {
+		a.waveform.finish(frames)
+	}
+	if parallel != nil {
+		a.spectrogram = parallel.finish(frames)
+	} else if a.spectrogram != nil {
+		a.spectrogram.finish(frames)
+	}
+	if a.spectrogram != nil && !a.spectrogram.matchesGeometry(a.binding.track.SampleRate, frames) {
+		a.needsGeometryRetry = true
+		return errSpectrogramGeometryChanged
+	}
+	if a.stats != nil {
+		a.statsText = a.stats.report()
+	}
+	return nil
+}
+
+func (s *Service) analyzeTracks(
+	ctx context.Context,
+	selectedDecoder decoder,
+	attemptRoot string,
+	sourcePath string,
+	bindings []trackBinding,
+	variants []api.AudioAnalysisVariant,
+	limits api.AudioAnalysisResourceLimits,
+	attemptID string,
+) ([]TrackResult, error) {
+	analyses := make([]*trackAnalysis, len(bindings))
+	request := decodeRequest{path: sourcePath, resourceLimits: limits}
+	consumers := make([]func(io.Reader) error, len(bindings))
+	for index, binding := range bindings {
+		analysis := newTrackAnalysis(binding, variants)
+		analyses[index] = analysis
+		request.streams = append(request.streams, decodeStreamRequest{audioOrdinal: binding.audioOrdinal, codec: binding.track.Codec})
+		consumers[index] = func(reader io.Reader) error { return analysis.consume(ctx, s.logger, reader) }
+	}
+
+	decodeErr := selectedDecoder.Decode(ctx, request, consumers)
+	if decodeErr != nil {
+		completed, processFailure := completedDecodeStreams(decodeErr, len(analyses))
+		trusted := make([]bool, len(analyses))
+		trackErrors := make([]error, len(analyses))
+		for index := range analyses {
+			trusted[index] = completed[index] && !processFailure
+			trackErrors[index] = decodeErr
+		}
+		failure := failureForError(decodeErr)
+		var batchErr *decodeBatchError
+		batchRetry := len(analyses) > 1 && errors.As(decodeErr, &batchErr)
+		geometryRetry := slices.ContainsFunc(analyses, func(analysis *trackAnalysis) bool { return analysis.needsGeometryRetry })
+		if (batchRetry || geometryRetry) && ctx.Err() == nil &&
+			!errors.Is(decodeErr, context.Canceled) && !errors.Is(decodeErr, context.DeadlineExceeded) &&
+			failure.Code != api.AudioAnalysisFailureStaleSource {
+			for index, analysis := range analyses {
+				if trusted[index] {
+					continue
+				}
+				s.logger.Infof("audioanalysis: state=retrying phase=decode track_ordinal=%d reason=batch_incomplete", analysis.binding.track.Ordinal)
+				retry := newTrackAnalysis(analysis.binding, variants)
+				if analysis.needsGeometryRetry {
+					retry.totalFrames = analysis.frames
+				}
+				retryRequest := decodeRequest{
+					path: sourcePath,
+					streams: []decodeStreamRequest{{
+						audioOrdinal: analysis.binding.audioOrdinal,
+						codec:        analysis.binding.track.Codec,
+					}},
+					resourceLimits: limits,
+				}
+				retryErr := selectedDecoder.Decode(ctx, retryRequest, []func(io.Reader) error{
+					func(reader io.Reader) error { return retry.consume(ctx, s.logger, reader) },
+				})
+				if analysis.needsGeometryRetry {
+					changed := retryErr == nil && (retry.frames != analysis.frames || retry.digest != analysis.digest) ||
+						errors.Is(retryErr, errSpectrogramGeometryChanged) && retry.frames != analysis.frames
+					if changed {
+						retryErr = audioAnalysisError(
+							api.AudioAnalysisFailureStaleSource,
+							"decoded audio changed between analysis passes",
+							errDecodedSourceChanged,
+						)
+					}
+				}
+				analyses[index] = retry
+				trackErrors[index] = retryErr
+				trusted[index] = retryErr == nil
+				if errors.Is(retryErr, context.Canceled) || errors.Is(retryErr, context.DeadlineExceeded) {
+					decodeErr = retryErr
+					break
+				}
+				if retryFailure := failureForError(retryErr); retryFailure.Code == api.AudioAnalysisFailureStaleSource {
+					decodeErr = retryErr
+					break
+				}
+				if ctx.Err() != nil {
+					decodeErr = ctx.Err()
+					break
+				}
+			}
+		}
+		results := make([]TrackResult, 0, len(analyses))
+		for index, analysis := range analyses {
+			if trusted[index] {
+				result, publishErr := s.publishTrack(attemptRoot, attemptID, variants, analysis)
+				results = append(results, result)
+				if publishErr != nil {
+					return results, publishErr
+				}
+				continue
+			}
+			analysis.public.Status = api.StageStatusFailed
+			trackFailure := failureForError(trackErrors[index])
+			analysis.public.Failure = &trackFailure
+			results = append(results, TrackResult{Public: analysis.public})
+		}
+		finalFailure := failureForError(decodeErr)
+		if errors.Is(decodeErr, context.Canceled) || errors.Is(decodeErr, context.DeadlineExceeded) ||
+			finalFailure.Code == api.AudioAnalysisFailureStaleSource {
+			return results, audioAnalysisError(finalFailure.Code, finalFailure.Message, decodeErr)
+		}
+		return results, nil
+	}
+
+	results := make([]TrackResult, 0, len(analyses))
+	for _, analysis := range analyses {
+		if err := ctx.Err(); err != nil {
+			return results, classifyTopLevelFailure(fmt.Errorf("audio analysis: publishing stopped: %w", err))
+		}
+		result, err := s.publishTrack(attemptRoot, attemptID, variants, analysis)
+		results = append(results, result)
+		if err != nil {
+			return results, err
+		}
+	}
+	return results, nil
+}
+
+func (s *Service) publishTrack(
+	attemptRoot string,
+	attemptID string,
+	variants []api.AudioAnalysisVariant,
+	analysis *trackAnalysis,
+) (TrackResult, error) {
+	public := analysis.public
+	if analysis.frames == 0 {
+		failure := api.AudioAnalysisFailure{Code: api.AudioAnalysisFailureDecode, Message: "decoded audio was empty"}
+		public.Status = api.StageStatusFailed
+		public.Failure = &failure
+		return TrackResult{Public: public}, nil
+	}
+	trackPathPart := opaquePathPart(analysis.binding.track.ID)
+	if attemptID == "standalone" {
+		trackPathPart = fmt.Sprintf("track_%d", analysis.binding.track.Ordinal)
+	}
+	trackDirectory := filepath.Join(attemptRoot, trackPathPart)
+	if !pathutil.IsWithinRoot(attemptRoot, trackDirectory) {
+		failure := api.AudioAnalysisFailure{Code: api.AudioAnalysisFailureOutput, Message: "managed output path was rejected"}
+		public.Status = api.StageStatusFailed
+		public.Failure = &failure
+		return TrackResult{Public: public}, audioAnalysisError(
+			api.AudioAnalysisFailureResourceUnavailable,
+			"the managed audio-analysis output path was rejected",
+			errors.New("audio analysis: managed track path escaped the attempt root"),
+		)
+	}
+	if err := os.MkdirAll(trackDirectory, 0o700); err != nil {
+		failure := api.AudioAnalysisFailure{Code: api.AudioAnalysisFailureOutput, Message: "could not create managed output directory"}
+		public.Status = api.StageStatusFailed
+		public.Failure = &failure
+		return TrackResult{Public: public}, audioAnalysisError(
+			api.AudioAnalysisFailureResourceUnavailable,
+			"the managed audio-analysis output directory could not be created",
+			fmt.Errorf("audio analysis: create track output directory: %w", err),
+		)
+	}
+	result := TrackResult{Public: public}
+	publishPNG := s.publishPNG
+	if publishPNG == nil {
+		publishPNG = writePNGAtomic
+	}
+	publishText := s.publishText
+	if publishText == nil {
+		publishText = writeTextAtomic
+	}
+	for _, variant := range variants {
+		artifact := api.AudioAnalysisArtifact{ID: artifactID(attemptID, analysis.binding.track.ID, variant), Variant: variant}
+		var rendered image.Image
+		switch variant {
+		case api.AudioAnalysisStats:
+			path := filepath.Join(trackDirectory, string(variant)+".txt")
+			if err := publishText(trackDirectory, path, []byte(analysis.statsText)); err != nil {
+				failure := api.AudioAnalysisFailure{Code: api.AudioAnalysisFailureOutput, Message: "could not publish audio statistics"}
+				artifact.Status = api.StageStatusFailed
+				artifact.Failure = &failure
+				result.Public.Artifacts = append(result.Public.Artifacts, artifact)
+				if isServiceWideOutputError(err) {
+					result.Public.Status = api.StageStatusFailed
+					return result, audioAnalysisError(
+						api.AudioAnalysisFailureResourceUnavailable,
+						"audio-analysis storage failed while publishing statistics",
+						err,
+					)
+				}
+				continue
+			}
+			artifact.Status = api.StageStatusCompleted
+			artifact.Text = analysis.statsText
+			result.Artifacts = append(result.Artifacts, Artifact{Public: artifact, Path: path})
+			result.Public.Artifacts = append(result.Public.Artifacts, artifact)
+			continue
+		case api.AudioAnalysisWaveform:
+			rendered = renderWaveform(
+				analysis.waveform, analysis.binding.track.SampleRate, analysis.frames, analysis.binding.track.ChannelLayout,
+			)
+		case api.AudioAnalysisSpectrogram:
+			rendered = renderSpectrogram(analysis.spectrogram, analysis.binding.track.SampleRate, analysis.binding.track.ChannelLayout)
+		}
+		path := filepath.Join(trackDirectory, string(variant)+".png")
+		if err := publishPNG(trackDirectory, path, rendered); err != nil {
+			failure := api.AudioAnalysisFailure{Code: api.AudioAnalysisFailureOutput, Message: "could not publish analysis image"}
+			artifact.Status = api.StageStatusFailed
+			artifact.Failure = &failure
+			result.Public.Artifacts = append(result.Public.Artifacts, artifact)
+			if isServiceWideOutputError(err) {
+				result.Public.Status = api.StageStatusFailed
+				return result, audioAnalysisError(
+					api.AudioAnalysisFailureResourceUnavailable,
+					"audio-analysis storage failed while publishing an image",
+					err,
+				)
+			}
+			continue
+		}
+		artifact.Status = api.StageStatusCompleted
+		artifact.Width = rendered.Bounds().Dx()
+		artifact.Height = rendered.Bounds().Dy()
+		result.Artifacts = append(result.Artifacts, Artifact{Public: artifact, Path: path})
+		result.Public.Artifacts = append(result.Public.Artifacts, artifact)
+	}
+	completed := 0
+	for _, artifact := range result.Public.Artifacts {
+		if artifact.Status == api.StageStatusCompleted {
+			completed++
+		}
+	}
+	switch {
+	case completed == len(result.Public.Artifacts):
+		result.Public.Status = api.StageStatusCompleted
+	case completed > 0:
+		result.Public.Status = api.StageStatusPartial
+	default:
+		result.Public.Status = api.StageStatusFailed
+	}
+	return result, nil
+}
+
+func isServiceWideOutputError(err error) bool {
+	return errors.Is(err, errOutputStorageUnavailable) || errors.Is(err, fs.ErrPermission) ||
+		errors.Is(err, syscall.ENOSPC) || errors.Is(err, syscall.EROFS) || errors.Is(err, syscall.Errno(112))
+}
+
+func opaquePathPart(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return "track_" + hex.EncodeToString(sum[:12])
+}
+
+func artifactID(attemptID string, trackID string, variant api.AudioAnalysisVariant) api.PublicResourceID {
+	sum := sha256.Sum256([]byte(attemptID + "\x00" + trackID + "\x00" + string(variant)))
+	return api.PublicResourceID("audio_" + hex.EncodeToString(sum[:12]))
+}
+
+func writePNGAtomic(root string, path string, rendered image.Image) error {
+	if rendered == nil || !pathutil.IsWithinRoot(root, path) {
+		return outputStorageError("validate output path", errors.New("invalid output path"))
+	}
+	temporary, err := os.CreateTemp(root, ".audio-analysis-*.png.tmp")
+	if err != nil {
+		return outputStorageError("create temporary PNG", err)
+	}
+	temporaryPath := temporary.Name()
+	defer func() { _ = os.Remove(temporaryPath) }()
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return outputStorageError("restrict temporary PNG", err)
+	}
+	if err := png.Encode(temporary, rendered); err != nil {
+		_ = temporary.Close()
+		if isServiceWideOutputError(err) {
+			return outputStorageError("encode PNG", err)
+		}
+		return fmt.Errorf("audio analysis: encode PNG: %w", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return outputStorageError("sync PNG", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return outputStorageError("close PNG", err)
+	}
+	file, err := os.Open(temporaryPath)
+	if err != nil {
+		return outputStorageError("reopen PNG", err)
+	}
+	configuration, _, decodeErr := image.DecodeConfig(file)
+	closeErr := file.Close()
+	if closeErr != nil {
+		return outputStorageError("close validated PNG", closeErr)
+	}
+	if decodeErr != nil || configuration.Width != rendered.Bounds().Dx() || configuration.Height != rendered.Bounds().Dy() {
+		return errors.New("audio analysis: output PNG validation failed")
+	}
+	if _, err := os.Stat(path); err == nil {
+		return outputStorageError("inspect output destination", errors.New("output already exists"))
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return outputStorageError("inspect output destination", err)
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return outputStorageError("publish PNG", err)
+	}
+	return nil
+}
+
+func writeTextAtomic(root string, path string, text []byte) error {
+	if len(text) == 0 || len(text) > api.AudioAnalysisStatsMaxBytes || !pathutil.IsWithinRoot(root, path) {
+		return outputStorageError("validate statistics output", errors.New("invalid statistics output"))
+	}
+	temporary, err := os.CreateTemp(root, ".audio-analysis-*.txt.tmp")
+	if err != nil {
+		return outputStorageError("create temporary statistics", err)
+	}
+	temporaryPath := temporary.Name()
+	defer func() { _ = os.Remove(temporaryPath) }()
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return outputStorageError("restrict temporary statistics", err)
+	}
+	if _, err := temporary.Write(text); err != nil {
+		_ = temporary.Close()
+		return outputStorageError("write temporary statistics", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return outputStorageError("sync temporary statistics", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return outputStorageError("close temporary statistics", err)
+	}
+	stored, err := os.ReadFile(temporaryPath)
+	if err != nil {
+		return outputStorageError("read temporary statistics", err)
+	}
+	if !bytes.Equal(stored, text) {
+		return errors.New("audio analysis: statistics output validation failed")
+	}
+	if _, err := os.Stat(path); err == nil {
+		return outputStorageError("inspect statistics destination", errors.New("output already exists"))
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return outputStorageError("inspect statistics destination", err)
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return outputStorageError("publish statistics", err)
+	}
+	return nil
+}
+
+func outputStorageError(operation string, err error) error {
+	return fmt.Errorf("audio analysis: %s: %w: %w", operation, errOutputStorageUnavailable, err)
+}
+
+func failureForError(err error) api.AudioAnalysisFailure {
+	if failure, ok := api.AsAudioAnalysisFailure(err); ok {
+		return failure
+	}
+	code := api.AudioAnalysisFailureDecode
+	message := "audio decode failed"
+	switch {
+	case errors.Is(err, context.Canceled):
+		code, message = api.AudioAnalysisFailureCanceled, "audio analysis was canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		code, message = api.AudioAnalysisFailureInterrupted, "audio analysis timed out"
+	case errors.Is(err, errMalformedPCM):
+		code, message = api.AudioAnalysisFailureMalformedPCM, "decoder produced malformed PCM"
+	}
+	return api.AudioAnalysisFailure{Code: code, Message: message}
+}
+
+func classifyTopLevelFailure(err error) error {
+	if _, ok := api.AsAudioAnalysisFailure(err); ok {
+		return err
+	}
+	if errors.Is(err, context.Canceled) {
+		return audioAnalysisError(api.AudioAnalysisFailureCanceled, "audio analysis was canceled", err)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return audioAnalysisError(api.AudioAnalysisFailureInterrupted, "audio analysis timed out", err)
+	}
+	return audioAnalysisError(
+		api.AudioAnalysisFailureUnsupportedSource,
+		"the source audio stream inventory could not be inspected",
+		err,
+	)
+}
+
+func audioAnalysisError(code api.AudioAnalysisFailureCode, message string, cause error) error {
+	return fmt.Errorf(
+		"audio analysis: %w",
+		api.NewAudioAnalysisError(api.AudioAnalysisFailure{Code: code, Message: message}, cause),
+	)
+}

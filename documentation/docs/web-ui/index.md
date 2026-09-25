@@ -29,19 +29,30 @@ The database owns one active input. Tabs in the same session follow its current 
 
 If **Legacy workflow recovery** appears, choose **Recover workflow** and check the tracker or torrent client for the interrupted operation. Use **Confirmed not completed; allow a fresh exact attempt** only after verifying that it did not complete. Recovery does not resubmit anything, and unresolved outcomes keep new inputs blocked.
 
-| Page              | Purpose                                                                  |
-| ----------------- | ------------------------------------------------------------------------ |
-| **Input**         | Choose the source path, trackers, metadata IDs, and preparation options. |
-| **Tracker Data**  | Review tracker-derived metadata when available.                          |
-| **Blu-ray**       | Select Blu-ray playlist or candidate data when the source requires it.   |
-| **Dupe Check**    | Review per-tracker search results, rules, and candidate upload names.    |
-| **Screenshots**   | Generate, import, order, and select screenshots.                         |
-| **Disc Menus**    | Capture DVD menus automatically or import disc-menu images.              |
-| **Upload Images** | Publish selected images through configured hosts.                        |
-| **Descriptions**  | Build and inspect tracker-specific rendered descriptions.                |
-| **Upload**        | Preview payloads, dry run, approve eligible trackers, and submit.        |
+| Page               | Purpose                                                                  |
+| ------------------ | ------------------------------------------------------------------------ |
+| **Input**          | Choose the source path, trackers, metadata IDs, and preparation options. |
+| **Tracker Data**   | Review tracker-derived metadata when available.                          |
+| **Blu-ray**        | Select Blu-ray playlist or candidate data when the source requires it.   |
+| **Dupe Check**     | Review per-tracker search results, rules, and candidate upload names.    |
+| **Audio Analysis** | Generate audio PNGs and amplitude statistics text files.                 |
+| **Screenshots**    | Generate, import, order, and select screenshots.                         |
+| **Disc Menus**     | Capture DVD menus automatically or import disc-menu images.              |
+| **Upload Images**  | Publish selected images through configured hosts.                        |
+| **Descriptions**   | Build and inspect tracker-specific rendered descriptions.                |
+| **Upload**         | Preview payloads, dry run, approve eligible trackers, and submit.        |
 
 Navigation guards prevent later operations from silently using missing or stale prerequisites. When a page is unavailable, read the notice and return to the required stage.
+
+### Generate audio analysis
+
+**Audio Analysis** appears after Input has produced authoritative audio-track facts. Opening the page does not start FFmpeg. Choose the primary track, all tracks, or specific tracks; select waveform, spectrogram, or both; then click **Generate**.
+
+Each successful graph can be previewed, opened at full size, or downloaded as its original PNG. Statistics can be viewed and downloaded as text. Analysis is optional: leaving the page unopened does not block upload. When descriptions are generated from a completed analysis, upbrr hosts the graphs for each tracker and adds them with the statistics to the default description.
+
+**Cancel** stops the active analysis. **Disable** first waits for active work to stop, then hides the result from the current workflow; retained files have no time-based expiry but can be removed when the workflow or source changes. A compatible retry regenerates only missing or failed variants. Results belong to the exact prepared generation, so stale images are not shown after the source facts change.
+
+See [Audio analysis](../workflow/audio-analysis.md) for selection, output, and troubleshooting details.
 
 ### Correct Input facts
 

@@ -19,6 +19,13 @@ export type ActiveInputSnapshot = Readonly<{
 
 export type ActiveInputState = string;
 
+export type AnalyzeReleaseWorkflowAudioRequest = Readonly<{
+  expectedRevision: WorkflowRevision;
+  idempotencyKey: string;
+  instructions: AudioAnalysisInstructions;
+  workflowId: WorkflowID;
+}>;
+
 export type AniListAiringEpisode = Readonly<{
   AiringAt: number;
   Episode: number;
@@ -98,6 +105,83 @@ export type AttachReleaseWorkflowMediaRequest = Readonly<{
   media?: MediaArtifactSetRef | null;
   workflowId: WorkflowID;
 }>;
+
+export type AudioAnalysisArtifact = Readonly<{
+  failure?: AudioAnalysisFailure | null;
+  height?: number;
+  id: PublicResourceID;
+  status: StageStatus;
+  text?: string;
+  variant: AudioAnalysisVariant;
+  width?: number;
+}>;
+
+export type AudioAnalysisFailure = Readonly<{
+  code: AudioAnalysisFailureCode;
+  message: string;
+}>;
+
+export type AudioAnalysisFailureCode = string;
+
+export type AudioAnalysisInstructions = Readonly<{
+  profileVersion: string;
+  release: ReleaseRef;
+  resourceId: string;
+  resourceLimits?: AudioAnalysisResourceLimits;
+  selection: AudioAnalysisSelectionMode;
+  trackIds: readonly string[];
+  variants: readonly AudioAnalysisVariant[];
+}>;
+
+export type AudioAnalysisRef = Readonly<{
+  id: AudioAnalysisResultID;
+  revision: WorkflowRevision;
+}>;
+
+export type AudioAnalysisResourceLimits = Readonly<{
+  decoderThreads?: number;
+}>;
+
+export type AudioAnalysisResult = Readonly<{
+  attemptId: string;
+  completedAt?: string;
+  createdAt: string;
+  id: AudioAnalysisResultID;
+  manifestFingerprint: string;
+  profileVersion: string;
+  release: ReleaseRef;
+  resourceId: string;
+  resourceLimits: AudioAnalysisResourceLimits;
+  revision: WorkflowRevision;
+  selection: AudioAnalysisSelectionMode;
+  status: StageStatus;
+  trackIds: readonly string[];
+  tracks: readonly AudioAnalysisTrackResult[];
+  variants: readonly AudioAnalysisVariant[];
+  workflowId: WorkflowID;
+}>;
+
+export type AudioAnalysisResultID = string;
+
+export type AudioAnalysisSelectionMode = string;
+
+export type AudioAnalysisTrackResult = Readonly<{
+  artifacts: readonly AudioAnalysisArtifact[];
+  channelLayout?: string;
+  channels: number;
+  codec?: string;
+  durationSeconds: number;
+  failure?: AudioAnalysisFailure | null;
+  language?: string;
+  ordinal: number;
+  sampleFrames: number;
+  sampleRate: number;
+  status: StageStatus;
+  title?: string;
+  trackId: string;
+}>;
+
+export type AudioAnalysisVariant = string;
 
 export type BlurayDiscSpec = Readonly<{
   Count: number;
@@ -808,6 +892,7 @@ export type MediaFacts = Readonly<{
   MediaInfoUniqueID: string;
   OriginalLanguage: string;
   OriginalLanguageProvenance: FactProvenance;
+  PrimaryAudioTrackID: string;
   Region: string;
   Repack: string;
   Service: string;
@@ -847,6 +932,9 @@ export type MediaPlan = Readonly<{
 export type MediaPlanID = string;
 
 export type MediaTrackFacts = Readonly<{
+  ChannelLayout: string;
+  Channels: number;
+  Codec: string;
   Commentary: boolean;
   Default: boolean;
   DetectedLanguages: readonly string[];
@@ -858,6 +946,8 @@ export type MediaTrackFacts = Readonly<{
   NativeID: string;
   Ordinal: number;
   ResourceID: string;
+  SampleRate: number;
+  Title: string;
 }>;
 
 export type MediaTrackKind = string;
@@ -968,6 +1058,7 @@ export type Operation = Readonly<{
 }>;
 
 export type OperationFailure = Readonly<{
+  AudioAnalysisCode?: AudioAnalysisFailureCode;
   Code: OperationFailureCode;
   Message: string;
   Operation: OperationKind;
@@ -1288,6 +1379,8 @@ export type ReleaseSnapshotRef = Readonly<{
 }>;
 
 export type ReleaseWorkflow = Readonly<{
+  audioAnalysis?: AudioAnalysisRef | null;
+  audioAnalysisEnabled?: boolean;
   createdAt: string;
   descriptions?: DescriptionSetRef | null;
   dryRun?: UploadDryRunResultRef | null;
@@ -1353,6 +1446,7 @@ export type ReleaseWorkflowCapabilityTracker = Readonly<{
 }>;
 
 export type ReleaseWorkflowCurrent = Readonly<{
+  audioAnalysis?: AudioAnalysisResult | null;
   catalog?: TrackerCatalogSnapshot | null;
   continuation: WorkflowContinuation;
   corrections?: ReleaseCorrectionsSnapshot | null;
@@ -1777,6 +1871,13 @@ export type ScreenshotSelection = Readonly<{
   Index: number;
   Source: string;
   TimestampSeconds: number;
+}>;
+
+export type SetReleaseWorkflowAudioAnalysisEnabledRequest = Readonly<{
+  enabled: boolean;
+  expectedRevision: WorkflowRevision;
+  idempotencyKey: string;
+  workflowId: WorkflowID;
 }>;
 
 export type SetReleaseWorkflowMediaSelectionRequest = Readonly<{
@@ -2521,6 +2622,9 @@ export type UploadDryRunResultRef = Readonly<{
 export type UploadEligibility = string;
 
 export type UploadOptions = Readonly<{
+  AudioAnalysis: boolean;
+  AudioImages: string;
+  AudioTracks: string;
   CaptureDVDMenus: boolean;
   InteractionMode: InteractionMode;
   KeepFolder: boolean;

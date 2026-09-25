@@ -2630,6 +2630,7 @@ func TestSQLiteUploadedImagesPersistUsageScope(t *testing.T) {
 		ImagePath:  "/tmp/a.png",
 		Host:       "hdb",
 		UsageScope: "tracker:HDB",
+		Purpose:    api.ScreenshotPurposeAudioAnalysis,
 		ImgURL:     "https://hdb/a.png",
 		RawURL:     "https://hdb/a.png",
 		WebURL:     "https://hdb/a",
@@ -2647,6 +2648,9 @@ func TestSQLiteUploadedImagesPersistUsageScope(t *testing.T) {
 	}
 	if images[0].UsageScope != "tracker:HDB" {
 		t.Fatalf("expected tracker:HDB usage scope, got %q", images[0].UsageScope)
+	}
+	if images[0].Purpose != api.ScreenshotPurposeAudioAnalysis {
+		t.Fatalf("expected audio analysis purpose, got %q", images[0].Purpose)
 	}
 }
 
@@ -2702,6 +2706,13 @@ func TestSQLiteMigrationBackfillsUploadedImageUsageScope(t *testing.T) {
 	}
 	if usageScope != "global" {
 		t.Fatalf("expected global usage scope after migration, got %q", usageScope)
+	}
+	var purpose string
+	if err := rawDB.QueryRowContext(context.Background(), `SELECT purpose FROM uploaded_images WHERE source_path = "/tmp/source"`).Scan(&purpose); err != nil {
+		t.Fatalf("load migrated image purpose: %v", err)
+	}
+	if purpose != string(api.ScreenshotPurposeFinal) {
+		t.Fatalf("expected final purpose after migration, got %q", purpose)
 	}
 }
 

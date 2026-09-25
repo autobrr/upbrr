@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { applicationClient, configClient, hostBrowser as hostBrowserClient } from "./api/app";
 import { isHostPathCaseInsensitive } from "./api/client";
@@ -15,7 +15,6 @@ import InputPage from "./pages/input";
 import LoggingPage from "./pages/logging";
 import MenuImagesPage from "./pages/menu_images";
 import ScreenshotsPage from "./pages/screenshots";
-import SettingsPage from "./pages/settings";
 import TrackerDataPage from "./pages/tracker_data";
 import TrackerUploadPage from "./pages/tracker_upload";
 import UploadImagesPage from "./pages/upload_images";
@@ -40,6 +39,9 @@ import {
   type SourcePathMode,
 } from "./utils/inputHistory";
 
+const AudioAnalysisPage = lazy(() => import("./pages/audio_analysis"));
+const SettingsPage = lazy(() => import("./pages/settings"));
+
 const appLayoutClass =
   "relative z-[1] block min-h-screen ml-[204px] max-[960px]:ml-0 max-[960px]:pb-[78px]";
 const sidebarClass =
@@ -58,6 +60,7 @@ type ActiveTab =
   | "input"
   | "tracker"
   | "bluray"
+  | "audio_analysis"
   | "dupes"
   | "screenshots"
   | "menu_images"
@@ -72,6 +75,7 @@ type ThemeMode = "light" | "dark" | "auto";
 const releaseRouteTabs: Readonly<Record<ReleaseRoute, ActiveTab>> = {
   input: "input",
   trackerData: "tracker",
+  audioAnalysis: "audio_analysis",
   duplicates: "dupes",
   screenshots: "screenshots",
   menuImages: "menu_images",
@@ -195,6 +199,7 @@ function AppShell({
   const access = releaseSession.navigation.view.access;
   const hasTrackerData = releaseSession.input.view.trackerData.length > 0;
   const hasBlurayData = Boolean(preview?.Bluray);
+  const hasAudioData = releaseSession.audioAnalysis.view.available;
   const currentDiscType =
     releaseSession.workflow.view.current?.release?.release.Source.Classification.DiscType || "";
 
@@ -363,6 +368,17 @@ function AppShell({
                 onClick={() => setActiveTab("bluray")}
               >
                 Blu-ray Candidates
+              </button>
+            ) : null}
+            {hasAudioData ? (
+              <button
+                className={navButtonClass(activeTab === "audio_analysis", true)}
+                type="button"
+                disabled={!access.audioAnalysis.available}
+                title={access.audioAnalysis.reason}
+                onClick={() => openReleaseTab("audio_analysis", "audioAnalysis")}
+              >
+                Audio Analysis
               </button>
             ) : null}
             <button
@@ -548,36 +564,38 @@ function AppShell({
             onNavigate={(route) => openReleaseTab(releaseRouteTabs[route], route)}
           />
           {activeTab === "settings" ? (
-            <SettingsPage
-              configData={settingsConfigData}
-              settingsLoading={settingsLoading}
-              settingsExporting={settingsExporting}
-              settingsImporting={settingsImporting}
-              settingsDirty={settingsDirty}
-              settingsSaved={settingsSaved}
-              settingsError={settingsError}
-              configOpStatus={configOpStatus}
-              dismissConfigOpStatus={() => setConfigOpStatus(null)}
-              settingsSection={settingsSection}
-              settingsSections={settingsSections}
-              trackerSelectionNames={settingsTrackerSelectionNames}
-              showAdvancedToggle={showAdvancedToggle}
-              advancedOpen={advancedOpen}
-              setSettingsSection={setSettingsSection}
-              setSettingsAdvanced={setSettingsAdvanced}
-              loadSettings={loadSettings}
-              handleExportSettings={() => void handleExportSettings()}
-              handleImportConfig={() => setImportConfirmOpen(true)}
-              importConfirmOpen={importConfirmOpen}
-              handleImportConfigConfirm={handleImportConfigConfirm}
-              handleImportConfigCancel={() => !settingsImporting && setImportConfirmOpen(false)}
-              handleSaveSettings={handleSaveSettings}
-              renderImageHostingSection={renderImageHostingSection}
-              renderTrackerSection={renderTrackerSection}
-              renderTorrentClientsSection={renderTorrentClientsSection}
-              renderField={renderField}
-              sectionFieldMeta={sectionFieldMeta}
-            />
+            <Suspense fallback={<p className="muted">Loading settings…</p>}>
+              <SettingsPage
+                configData={settingsConfigData}
+                settingsLoading={settingsLoading}
+                settingsExporting={settingsExporting}
+                settingsImporting={settingsImporting}
+                settingsDirty={settingsDirty}
+                settingsSaved={settingsSaved}
+                settingsError={settingsError}
+                configOpStatus={configOpStatus}
+                dismissConfigOpStatus={() => setConfigOpStatus(null)}
+                settingsSection={settingsSection}
+                settingsSections={settingsSections}
+                trackerSelectionNames={settingsTrackerSelectionNames}
+                showAdvancedToggle={showAdvancedToggle}
+                advancedOpen={advancedOpen}
+                setSettingsSection={setSettingsSection}
+                setSettingsAdvanced={setSettingsAdvanced}
+                loadSettings={loadSettings}
+                handleExportSettings={() => void handleExportSettings()}
+                handleImportConfig={() => setImportConfirmOpen(true)}
+                importConfirmOpen={importConfirmOpen}
+                handleImportConfigConfirm={handleImportConfigConfirm}
+                handleImportConfigCancel={() => !settingsImporting && setImportConfirmOpen(false)}
+                handleSaveSettings={handleSaveSettings}
+                renderImageHostingSection={renderImageHostingSection}
+                renderTrackerSection={renderTrackerSection}
+                renderTorrentClientsSection={renderTorrentClientsSection}
+                renderField={renderField}
+                sectionFieldMeta={sectionFieldMeta}
+              />
+            </Suspense>
           ) : activeTab === "logging" ? (
             <LoggingPage
               configData={settingsConfigData}
@@ -643,6 +661,15 @@ function AppShell({
               setLightboxImage={setLightboxImage}
               setLightboxAlt={setLightboxAlt}
             />
+          ) : activeTab === "audio_analysis" ? (
+            <Suspense fallback={<p className="muted">Loading audio analysis…</p>}>
+              <AudioAnalysisPage
+                key={releaseSession.audioAnalysis.view.releaseGeneration}
+                facet={releaseSession.audioAnalysis}
+                setLightboxImage={setLightboxImage}
+                setLightboxAlt={setLightboxAlt}
+              />
+            </Suspense>
           ) : activeTab === "description_builder" ? (
             <DescriptionBuilderPage
               facet={releaseSession.descriptions}

@@ -65,6 +65,8 @@ func decodeDurableOperationCommand(payload []byte) (any, error) {
 		command = &CheckDuplicatesCommand{}
 	case (CaptureMediaCommand{}).commandName():
 		command = &CaptureMediaCommand{}
+	case (AnalyzeAudioCommand{}).commandName():
+		command = &AnalyzeAudioCommand{}
 	case (UploadMediaImagesCommand{}).commandName():
 		command = &UploadMediaImagesCommand{}
 	case (GenerateDescriptionsCommand{}).commandName():
@@ -110,6 +112,8 @@ func operationCommandValue(command Command) Command {
 	case *CheckDuplicatesCommand:
 		return *typed
 	case *CaptureMediaCommand:
+		return *typed
+	case *AnalyzeAudioCommand:
 		return *typed
 	case *UploadMediaImagesCommand:
 		return *typed

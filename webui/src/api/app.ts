@@ -14,6 +14,7 @@ import type {
 } from "../types";
 import type {
   ActiveInputSnapshot,
+  AnalyzeReleaseWorkflowAudioRequest,
   AttachReleaseWorkflowMediaRequest,
   CancelReleaseWorkflowRequest,
   ContinueReleaseWorkflowRequest,
@@ -36,6 +37,7 @@ import type {
   RetryReleaseWorkflowUploadRequest,
   SaveReleaseWorkflowDescriptionOverrideRequest,
   SetReleaseWorkflowMediaSelectionRequest,
+  SetReleaseWorkflowAudioAnalysisEnabledRequest,
   UploadReleaseWorkflowImagesRequest,
   WorkflowResourceRef,
 } from "./generated/release-workflow";
@@ -149,6 +151,29 @@ export const releaseWorkflowClient = {
       { workflowId: workflowID },
       { signal },
     ),
+  analyzeAudio: (command: AnalyzeReleaseWorkflowAudioRequest, signal?: AbortSignal) =>
+    requestApp<ReleaseWorkflowCurrent>("AnalyzeReleaseWorkflowAudio", command, { signal }),
+  setAudioAnalysisEnabled: (
+    command: SetReleaseWorkflowAudioAnalysisEnabledRequest,
+    signal?: AbortSignal,
+  ) =>
+    requestApp<ReleaseWorkflowCurrent>("SetReleaseWorkflowAudioAnalysisEnabled", command, {
+      signal,
+    }),
+  audioAnalysisURL: (
+    workflowID: string,
+    analysisID: string,
+    analysisRevision: number,
+    artifactID: string,
+  ) => {
+    const query = new URLSearchParams({
+      workflowId: workflowID,
+      analysisId: analysisID,
+      analysisRevision: String(analysisRevision),
+      artifactId: artifactID,
+    });
+    return withBasePath(`/api/app/release-workflow-audio-analysis?${query.toString()}`);
+  },
   setMediaSelection: (command: SetReleaseWorkflowMediaSelectionRequest, signal?: AbortSignal) =>
     requestApp<ReleaseWorkflowCurrent>("SetReleaseWorkflowMediaSelection", command, { signal }),
   deleteMedia: (command: DeleteReleaseWorkflowMediaRequest, signal?: AbortSignal) =>

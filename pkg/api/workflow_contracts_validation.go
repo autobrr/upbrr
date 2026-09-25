@@ -1694,6 +1694,12 @@ func (w ReleaseWorkflow) Validate() error {
 	if (w.Media != nil || w.Descriptions != nil) && w.TrackerProjections == nil {
 		return errors.New("media and descriptions require tracker projections")
 	}
+	if w.AudioAnalysis != nil && w.Release == nil {
+		return errors.New("audio analysis requires a release snapshot")
+	}
+	if w.AudioAnalysis != nil && !w.AudioAnalysisEnabled {
+		return errors.New("audio analysis result requires the feature to be enabled")
+	}
 	if (w.DryRun != nil || w.UploadResult != nil) &&
 		(w.Release == nil || w.TrackerProjections == nil || w.Dupes == nil || w.Media == nil || w.Descriptions == nil) {
 		return errors.New("dry-run and upload results require exact workflow dependencies")

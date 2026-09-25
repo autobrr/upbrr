@@ -11,6 +11,35 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestDVDAudioAnalysisFollowsMediaInfoAndMenus(t *testing.T) {
+	t.Parallel()
+	meta := api.UploadSubject{DiscType: "DVD", DVDVOBMediaInfoText: "Synthetic VOB MediaInfo"}
+	cfg := config.Config{}
+	cfg.Description.ThumbnailSize = 420
+	got, err := buildACMDescription(t.Context(), meta, cfg, config.TrackerConfig{}, api.NopLogger{},
+		"Notes\n\n[spoiler=source_audio]\n[img]https://images.example.invalid/audio.png[/img]\n[/spoiler]",
+		[]api.ScreenshotImage{{
+RawURL: "https://images.example.invalid/menu.png",
+ ImgURL: "https://images.example.invalid/menu.png",
+ WebURL: "https://images.example.invalid/menu",
+}},
+		[]api.ScreenshotImage{{
+RawURL: "https://images.example.invalid/shot.png",
+ ImgURL: "https://images.example.invalid/shot.png",
+ WebURL: "https://images.example.invalid/shot",
+}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Index(got, "Synthetic VOB MediaInfo") >= strings.Index(got, "menu.png") ||
+		strings.Index(got, "menu.png") >= strings.Index(got, "audio.png") ||
+		strings.Index(got, "audio.png") >= strings.Index(got, "shot.png") ||
+		!strings.Contains(got, "[img=420]https://images.example.invalid/audio.png[/img]") ||
+		!strings.Contains(got, "[img=420]https://images.example.invalid/shot.png[/img]") {
+		t.Fatalf("audio analysis placement = %q", got)
+	}
+}
+
 func TestDescriptionUsesOnlyACMMarkupTransforms(t *testing.T) {
 	const body = "[center][spoiler=Scene NFO:][code]scene nfo[/code][/spoiler][/center]\n" +
 		"[right][url=https://github.com/autobrr/upbrr][size=4]Uploaded by upbrr[/size][/url][/right]\n" +

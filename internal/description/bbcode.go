@@ -35,6 +35,27 @@ func normalizeBBCode(value string) string {
 	return strings.TrimSpace(value)
 }
 
+// SplitTrailingSourceAudioSpoiler separates generated audio markup so
+// description builders can place it before their screenshot sections.
+func SplitTrailingSourceAudioSpoiler(value string) (string, string) {
+	trimmed := strings.TrimSpace(value)
+	const opening = "[spoiler=source_audio]"
+	start := strings.LastIndex(trimmed, "\n"+opening)
+	switch {
+	case start >= 0:
+		start++
+	case strings.HasPrefix(trimmed, opening):
+		start = 0
+	default:
+		return trimmed, ""
+	}
+	block := strings.TrimSpace(trimmed[start:])
+	if !strings.HasSuffix(block, "[/spoiler]") {
+		return trimmed, ""
+	}
+	return strings.TrimSpace(trimmed[:start]), block
+}
+
 func compileImg(node *bbcode.BBCodeNode) (*bbcode.HTMLTag, bool) {
 	url := ""
 	width := ""

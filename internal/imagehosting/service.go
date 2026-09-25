@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -112,6 +113,9 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubje
 	if err != nil {
 		return nil, fmt.Errorf("image hosting: %w", err)
 	}
+	uploaded = slices.DeleteFunc(uploaded, func(upload api.UploadedImageLink) bool {
+		return upload.Purpose == api.ScreenshotPurposeAudioAnalysis
+	})
 	selections, err := s.repo.ListFinalSelections(ctx, meta.MediaBinding)
 	if err != nil {
 		s.logger.Debugf("image hosting: final selections unavailable: %v", err)
@@ -409,7 +413,7 @@ func (s *Service) Upload(
 	if batch, ok := uploader.(batchUploader); ok {
 		batchCount := 1
 		if normalizedHost == "hdb" {
-			normalCount, menuCount := imagePurposeCounts(unique)
+			normalCount, menuCount, audioCount := imagePurposeCounts(unique)
 			batchCount = 0
 			if normalCount > 0 {
 				batchCount++
@@ -417,7 +421,17 @@ func (s *Service) Upload(
 			if menuCount > 0 {
 				batchCount++
 			}
-			s.logger.Infof("image hosting: HDB gallery upload plan host=%s tracker=%s normal=%d menu=%d", normalizedHost, logTracker, normalCount, menuCount)
+			if audioCount > 0 {
+				batchCount++
+			}
+			s.logger.Infof(
+				"image hosting: HDB gallery upload plan host=%s tracker=%s normal=%d menu=%d audio=%d",
+				normalizedHost,
+				logTracker,
+				normalCount,
+				menuCount,
+				audioCount,
+			)
 		}
 		s.logger.Debugf("image hosting: starting batch upload host=%s tracker=%s", normalizedHost, logTracker)
 		batchStart := time.Now()
@@ -484,6 +498,7 @@ func (s *Service) Upload(
 				PreparedGeneration:       meta.MediaBinding.PreparedGeneration,
 				DiscID:                   candidate.DiscID,
 				ImagePath:                candidate.Path,
+				Purpose:                  candidate.Purpose,
 				Host:                     normalizedHost,
 				UsageScope:               normalizedScope,
 				ImgURL:                   strings.TrimSpace(uploaded.ImgURL),
@@ -679,6 +694,7 @@ dispatchLoop:
 					PreparedGeneration:       meta.MediaBinding.PreparedGeneration,
 					DiscID:                   candidate.DiscID,
 					ImagePath:                candidate.Path,
+					Purpose:                  candidate.Purpose,
 					Host:                     normalizedHost,
 					UsageScope:               normalizedScope,
 					ImgURL:                   strings.TrimSpace(uploaded.ImgURL),
@@ -874,10 +890,15 @@ func uploadHDBBatchByPurpose(ctx context.Context, batch namedBatchUploader, meta
 	}
 	normal := make([]indexedImage, 0, len(images))
 	menus := make([]indexedImage, 0, len(images))
+	audio := make([]indexedImage, 0, len(images))
 	for idx, image := range images {
 		item := indexedImage{index: idx, path: image.Path}
 		if image.Purpose == api.ScreenshotPurposeMenu {
 			menus = append(menus, item)
+			continue
+		}
+		if image.Purpose == api.ScreenshotPurposeAudioAnalysis {
+			audio = append(audio, item)
 			continue
 		}
 		normal = append(normal, item)
@@ -912,6 +933,9 @@ func uploadHDBBatchByPurpose(ctx context.Context, batch namedBatchUploader, meta
 	if err := uploadGroup(menus, galleryName+" Disc Menus"); err != nil {
 		return nil, err
 	}
+	if err := uploadGroup(audio, galleryName+" Audio Analysis"); err != nil {
+		return nil, err
+	}
 	return results, nil
 }
 
@@ -936,15 +960,19 @@ func (s *Service) imageHostLogTracker(host string) string {
 
 // imagePurposeCounts summarizes the HDB gallery partition without exposing
 // local image paths in operator-visible progress logs.
-func imagePurposeCounts(images []imageCandidate) (normal int, menus int) {
+func imagePurposeCounts(images []imageCandidate) (normal int, menus int, audio int) {
 	for _, image := range images {
 		if image.Purpose == api.ScreenshotPurposeMenu {
 			menus++
 			continue
 		}
+		if image.Purpose == api.ScreenshotPurposeAudioAnalysis {
+			audio++
+			continue
+		}
 		normal++
 	}
-	return normal, menus
+	return normal, menus, audio
 }
 
 type imageCandidate struct {

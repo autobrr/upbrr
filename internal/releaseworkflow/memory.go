@@ -839,12 +839,27 @@ func (s *MemoryPrivateResourceStore) Put(
 	value any,
 	expiresAt time.Time,
 ) error {
+	if expiresAt.IsZero() {
+		return errors.New("private resource expiry is required")
+	}
+	return s.put(ownerID, workflowID, resourceID, value, expiresAt)
+}
+
+// PutWithoutExpiry retains a resource until it is explicitly invalidated.
+func (s *MemoryPrivateResourceStore) PutWithoutExpiry(ownerID string, workflowID api.WorkflowID, resourceID string, value any) error {
+	return s.put(ownerID, workflowID, resourceID, value, time.Time{})
+}
+
+func (s *MemoryPrivateResourceStore) put(
+	ownerID string,
+	workflowID api.WorkflowID,
+	resourceID string,
+	value any,
+	expiresAt time.Time,
+) error {
 	key, err := newPrivateResourceKey(ownerID, workflowID, resourceID)
 	if err != nil {
 		return err
-	}
-	if expiresAt.IsZero() {
-		return errors.New("private resource expiry is required")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -915,7 +930,7 @@ func (s *MemoryPrivateResourceStore) getLocked(key privateResourceKey, now time.
 	if !ok {
 		return nil, ErrPrivateResourceUnavailable
 	}
-	if !entry.expiresAt.After(now) {
+	if !entry.expiresAt.IsZero() && !entry.expiresAt.After(now) {
 		delete(s.entries, key)
 		releasePrivateResource(entry.value)
 		return nil, ErrPrivateResourceUnavailable
@@ -925,7 +940,7 @@ func (s *MemoryPrivateResourceStore) getLocked(key privateResourceKey, now time.
 
 // InvalidateWorkflow removes every private resource owned by one workflow.
 func (s *MemoryPrivateResourceStore) InvalidateWorkflow(ownerID string, workflowID api.WorkflowID) {
-	s.InvalidateWorkflowExcept(ownerID, workflowID)
+	_ = s.InvalidateWorkflowExcept(ownerID, workflowID)
 }
 
 // InvalidateWorkflowExcept removes workflow resources except explicitly
@@ -934,7 +949,7 @@ func (s *MemoryPrivateResourceStore) InvalidateWorkflowExcept(
 	ownerID string,
 	workflowID api.WorkflowID,
 	preservedResourceIDs ...string,
-) {
+) error {
 	ownerID = strings.TrimSpace(ownerID)
 	preserved := make(map[privateResourceKey]struct{}, len(preservedResourceIDs))
 	for _, resourceID := range preservedResourceIDs {
@@ -966,6 +981,7 @@ func (s *MemoryPrivateResourceStore) InvalidateWorkflowExcept(
 	for _, resource := range resources {
 		releasePrivateResource(resource)
 	}
+	return nil
 }
 
 // InvalidateAll models process restart by removing all private execution authority.

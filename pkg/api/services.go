@@ -6,6 +6,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"path/filepath"
@@ -202,13 +203,26 @@ const (
 )
 
 // ExactMediaAssets is one authoritative workflow-owned media revision.
-// Screenshots and DVD menus are independent channels, as are their hosted
-// variants.
+// Screenshots, DVD menus, and audio analysis are independent channels, as are
+// their hosted variants. Audio tracks, uploads, and host choices require an
+// AudioAnalysis reference to the exact revision used for a description.
 type ExactMediaAssets struct {
 	Screenshots       []ScreenshotImage
 	DVDMenus          []DVDMenuCaptureImage
 	ScreenshotUploads []UploadedImageLink
 	DVDMenuUploads    []UploadedImageLink
+	AudioAnalysis     *AudioAnalysisRef
+	AudioTracks       []AudioDescriptionTrack
+	AudioUploads      []UploadedImageLink
+	AudioUploadHosts  map[string]string
+}
+
+// AudioDescriptionTrack is a separate description channel for hosted analysis
+// graphs and the textual statistics of one source audio track.
+type AudioDescriptionTrack struct {
+	Ordinal int
+	Images  []ScreenshotImage
+	Stats   string
 }
 
 // Clone returns a detached exact-media bundle while preserving nil slices.
@@ -216,12 +230,23 @@ func (a *ExactMediaAssets) Clone() *ExactMediaAssets {
 	if a == nil {
 		return nil
 	}
-	return &ExactMediaAssets{
+	cloned := &ExactMediaAssets{
 		Screenshots:       cloneOptionalSlice(a.Screenshots),
 		DVDMenus:          cloneOptionalSlice(a.DVDMenus),
 		ScreenshotUploads: cloneOptionalSlice(a.ScreenshotUploads),
 		DVDMenuUploads:    cloneOptionalSlice(a.DVDMenuUploads),
+		AudioTracks:       cloneOptionalSlice(a.AudioTracks),
+		AudioUploads:      cloneOptionalSlice(a.AudioUploads),
+		AudioUploadHosts:  maps.Clone(a.AudioUploadHosts),
 	}
+	if a.AudioAnalysis != nil {
+		ref := *a.AudioAnalysis
+		cloned.AudioAnalysis = &ref
+	}
+	for index := range cloned.AudioTracks {
+		cloned.AudioTracks[index].Images = cloneOptionalSlice(a.AudioTracks[index].Images)
+	}
+	return cloned
 }
 
 // Validate enforces the normal-screenshot and DVD-menu channel boundary.
@@ -250,7 +275,43 @@ func (a *ExactMediaAssets) Validate() error {
 	if err := validateExactMediaUploads("screenshot", a.ScreenshotUploads, screenshotPaths); err != nil {
 		return err
 	}
-	return validateExactMediaUploads("DVD menu", a.DVDMenuUploads, menuPaths)
+	if err := validateExactMediaUploads("DVD menu", a.DVDMenuUploads, menuPaths); err != nil {
+		return err
+	}
+	if a.AudioAnalysis == nil && (len(a.AudioTracks) > 0 || len(a.AudioUploads) > 0 || len(a.AudioUploadHosts) > 0) {
+		return errors.New("exact media audio analysis reference is required")
+	}
+	if a.AudioAnalysis != nil && (a.AudioAnalysis.ID == "" || a.AudioAnalysis.Revision == 0) {
+		return errors.New("exact media audio analysis reference is invalid")
+	}
+	audioPaths := make(map[string]struct{})
+	ordinals := make(map[int]struct{}, len(a.AudioTracks))
+	for _, track := range a.AudioTracks {
+		if track.Ordinal < 1 {
+			return errors.New("exact media audio track ordinal is invalid")
+		}
+		if _, duplicate := ordinals[track.Ordinal]; duplicate {
+			return errors.New("exact media audio track ordinal is duplicated")
+		}
+		ordinals[track.Ordinal] = struct{}{}
+		for _, image := range track.Images {
+			if image.Purpose != ScreenshotPurposeAudioAnalysis || strings.TrimSpace(image.Path) == "" {
+				return errors.New("exact media audio image has invalid purpose or path")
+			}
+			audioPaths[strings.TrimSpace(image.Path)] = struct{}{}
+		}
+	}
+	for _, upload := range a.AudioUploads {
+		if upload.Purpose != ScreenshotPurposeAudioAnalysis {
+			return fmt.Errorf("exact media audio upload has invalid purpose %q", upload.Purpose)
+		}
+	}
+	for tracker, host := range a.AudioUploadHosts {
+		if strings.TrimSpace(tracker) == "" || strings.TrimSpace(host) == "" {
+			return errors.New("exact media audio upload host mapping is invalid")
+		}
+	}
+	return validateExactMediaUploads("audio analysis", a.AudioUploads, audioPaths)
 }
 
 func validateExactMediaUploads(channel string, uploads []UploadedImageLink, allowedPaths map[string]struct{}) error {

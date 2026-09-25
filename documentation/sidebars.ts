@@ -48,7 +48,12 @@ const sidebars: SidebarsConfig = {
         "web-ui/logging",
       ],
     },
-    "workflow/index",
+    {
+      type: "category",
+      label: "Workflow",
+      link: { type: "doc", id: "workflow/index" },
+      items: ["workflow/audio-analysis"],
+    },
     "trackers/index",
     "troubleshooting/index",
     "api/index",

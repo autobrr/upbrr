@@ -61,6 +61,33 @@ export const productionReleaseSessionPorts = (): ReleaseSessionPorts => ({
       releaseWorkflowClient.operation(workflowID, operationID, signal),
     cancelOperation: (workflowID, operationID, signal) =>
       releaseWorkflowClient.cancelOperation(workflowID, operationID, signal),
+    analyzeAudio: (current, instructions, idempotencyKey, signal) =>
+      releaseWorkflowClient.analyzeAudio(
+        {
+          workflowId: current.workflow.id,
+          expectedRevision: current.workflow.revision,
+          instructions,
+          idempotencyKey,
+        },
+        signal,
+      ),
+    setAudioAnalysisEnabled: (current, enabled, idempotencyKey, signal) =>
+      releaseWorkflowClient.setAudioAnalysisEnabled(
+        {
+          workflowId: current.workflow.id,
+          expectedRevision: current.workflow.revision,
+          enabled,
+          idempotencyKey,
+        },
+        signal,
+      ),
+    audioAnalysisURL: (current, analysisID, analysisRevision, artifactID) =>
+      releaseWorkflowClient.audioAnalysisURL(
+        current.workflow.id,
+        analysisID,
+        analysisRevision,
+        artifactID,
+      ),
     mediaPlan: (workflowID, signal) => releaseWorkflowClient.mediaPlan(workflowID, signal),
     previewFrame: (current, discID, timestampSeconds, idempotencyKey, signal) =>
       releaseWorkflowClient.previewFrame(

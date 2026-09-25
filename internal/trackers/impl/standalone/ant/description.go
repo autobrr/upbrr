@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/bbcode"
+	"github.com/autobrr/upbrr/internal/description"
 	"github.com/autobrr/upbrr/internal/description/unit3d"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -23,6 +24,7 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 
 	// Base description
 	base := strings.TrimSpace(antDefaultSignaturePattern.ReplaceAllString(assets.Description, ""))
+	base, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(base)
 	report := bbcode.CleanPTPDescription(base, meta.DiscType)
 	userDesc := strings.TrimSpace(report.Description)
 	if userDesc == "" && base != "" && len(report.Images) == 0 {
@@ -63,6 +65,9 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 		if len(shotParts) > 0 {
 			parts = append(parts, "[align=center]"+strings.Join(shotParts, " ")+"[/align]")
 		}
+	}
+	if audioAnalysis != "" {
+		parts = append(parts, audioAnalysis)
 	}
 
 	// Tonemapped Header

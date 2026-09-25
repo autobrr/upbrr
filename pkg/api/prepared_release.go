@@ -185,6 +185,7 @@ type MediaFacts struct {
 	TrackAudioLanguages                  []string
 	TrackSubtitleLanguages               []string
 	Tracks                               []MediaTrackFacts
+	PrimaryAudioTrackID                  string
 	TrackCoverageComplete                bool
 	AudioLanguagesProvenance             FactProvenance
 	SubtitleLanguagesProvenance          FactProvenance

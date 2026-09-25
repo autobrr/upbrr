@@ -16,6 +16,8 @@ type WorkflowProgressUpdate struct {
 	Completed int
 	Total     int
 	Message   string
+	// ItemOnly updates the named item without advancing aggregate stage progress.
+	ItemOnly bool
 }
 
 // WorkflowProgressReporter receives generic workflow progress snapshots.

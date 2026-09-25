@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/description"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -48,6 +49,7 @@ func BuildDescription(
 	}
 
 	keptDescription = trackers.StripDescriptionSignatures(keptDescription)
+	keptDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(keptDescription)
 	parts := make([]string, 0, 8)
 
 	if strings.EqualFold(strings.TrimSpace(meta.Type), "WEBDL") && strings.TrimSpace(meta.ServiceLongName) != "" && strings.TrimSpace(keptDescription) == "" {
@@ -73,6 +75,9 @@ func BuildDescription(
 		if section := buildDiscScreenshotSections(meta, menuImages, 0); section != "" {
 			parts = append(parts, section)
 		}
+	}
+	if audioAnalysis != "" {
+		parts = append(parts, transformBaseDescription(audioAnalysis, false))
 	}
 
 	if section := buildDiscScreenshotSections(meta, screenshots, meta.Options.Screens); section != "" {

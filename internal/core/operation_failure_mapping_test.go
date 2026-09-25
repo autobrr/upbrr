@@ -42,6 +42,7 @@ func TestClassifyOperationErrorCanonicalMappings(t *testing.T) {
 		operation api.OperationKind
 		cause     error
 		wantCode  api.OperationFailureCode
+		audioCode api.AudioAnalysisFailureCode
 		message   string
 		recovery  api.OperationRecovery
 	}{
@@ -94,6 +95,18 @@ func TestClassifyOperationErrorCanonicalMappings(t *testing.T) {
 			recovery:  api.OperationRecoveryConfirm,
 		},
 		{
+			name:      "stale audio source",
+			operation: api.OperationKindAudioAnalysis,
+			cause: api.NewAudioAnalysisError(api.AudioAnalysisFailure{
+				Code:    api.AudioAnalysisFailureStaleSource,
+				Message: "the prepared audio source changed and must be refreshed",
+			}, errors.New("stale source")),
+			wantCode:  api.OperationFailureAudioAnalysis,
+			audioCode: api.AudioAnalysisFailureStaleSource,
+			message:   "the prepared audio source changed and must be refreshed",
+			recovery:  api.OperationRecoveryRefreshRelease,
+		},
+		{
 			name:      "client failure",
 			operation: api.OperationKindDuplicateCheck,
 			cause:     errors.New("client secret and private path"),
@@ -109,10 +122,11 @@ func TestClassifyOperationErrorCanonicalMappings(t *testing.T) {
 				t.Fatal("classified error has no operation failure")
 			}
 			want := api.OperationFailure{
-				Code:      test.wantCode,
-				Operation: test.operation,
-				Message:   test.message,
-				Recovery:  test.recovery,
+				Code:              test.wantCode,
+				Operation:         test.operation,
+				Message:           test.message,
+				Recovery:          test.recovery,
+				AudioAnalysisCode: test.audioCode,
 			}
 			if failure != want {
 				t.Fatalf("failure = %#v, want %#v", failure, want)

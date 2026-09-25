@@ -710,6 +710,8 @@ type UploadResult struct {
 }
 
 // ReleaseWorkflow is the revisioned aggregate of immutable stage references.
+// AudioAnalysisEnabled may be true before a result exists; disabling clears the
+// current AudioAnalysis reference.
 type ReleaseWorkflow struct {
 	SubmissionExclusions   []SubmissionExclusion                    `json:"submissionExclusions,omitempty"`
 	ID                     WorkflowID                               `json:"id"`
@@ -726,6 +728,8 @@ type ReleaseWorkflow struct {
 	Dupes                  *DupeAssessmentRef                       `json:"dupes,omitempty"`
 	TrackerApproval        *TrackerApprovalSnapshotRef              `json:"trackerApproval,omitempty"`
 	Media                  *MediaArtifactSetRef                     `json:"media,omitempty"`
+	AudioAnalysisEnabled   bool                                     `json:"audioAnalysisEnabled,omitempty"`
+	AudioAnalysis          *AudioAnalysisRef                        `json:"audioAnalysis,omitempty"`
 	Descriptions           *DescriptionSetRef                       `json:"descriptions,omitempty"`
 	DryRun                 *UploadDryRunResultRef                   `json:"dryRun,omitempty"`
 	UploadResult           *UploadResultRef                         `json:"uploadResult,omitempty"`
@@ -753,6 +757,7 @@ type ReleaseWorkflowCurrent struct {
 	Dupes                  *DupeAssessment                       `json:"dupes,omitempty"`
 	TrackerApproval        *TrackerApprovalSnapshot              `json:"trackerApproval,omitempty"`
 	Media                  *MediaArtifactSet                     `json:"media,omitempty"`
+	AudioAnalysis          *AudioAnalysisResult                  `json:"audioAnalysis,omitempty"`
 	Descriptions           *DescriptionSet                       `json:"descriptions,omitempty"`
 	DryRun                 *UploadDryRunResult                   `json:"dryRun,omitempty"`
 	UploadResult           *UploadResult                         `json:"uploadResult,omitempty"`

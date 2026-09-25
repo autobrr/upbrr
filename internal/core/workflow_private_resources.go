@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	workflowPrivateResourceKindDupes = "upbrr/workflow-dupe-evidence/v1"
-	workflowPrivateResourceKindMedia = "upbrr/workflow-media-artifacts/v1"
+	workflowPrivateResourceKindDupes         = "upbrr/workflow-dupe-evidence/v1"
+	workflowPrivateResourceKindMedia         = "upbrr/workflow-media-artifacts/v1"
+	workflowPrivateResourceKindAudioAnalysis = "upbrr/workflow-audio-analysis/v1"
 )
 
 type persistedWorkflowDupeEvidence struct {
@@ -162,7 +163,7 @@ func decodeWorkflowMediaPrivateArtifacts(builder workflowMediaBuilder, payload [
 	}, nil
 }
 
-func workflowPrivateResourceCodecs(builder workflowMediaBuilder) []releaseworkflow.PrivateResourceCodec {
+func workflowPrivateResourceCodecs(builder workflowMediaBuilder, audioBuilder workflowAudioAnalysisBuilder) []releaseworkflow.PrivateResourceCodec {
 	return []releaseworkflow.PrivateResourceCodec{
 		{
 			Kind:   workflowPrivateResourceKindDupes,
@@ -172,6 +173,16 @@ func workflowPrivateResourceCodecs(builder workflowMediaBuilder) []releaseworkfl
 			Kind: workflowPrivateResourceKindMedia,
 			Decode: func(payload []byte) (any, error) {
 				return decodeWorkflowMediaPrivateArtifacts(builder, payload)
+			},
+		},
+		{
+			Kind:     workflowPrivateResourceKindAudioAnalysis,
+			NoExpiry: true,
+			Decode: func(payload []byte) (any, error) {
+				return decodeWorkflowAudioAnalysisResource(audioBuilder.root, payload)
+			},
+			DecodeForRelease: func(payload []byte) (any, error) {
+				return decodeWorkflowAudioAnalysisResourceForRelease(audioBuilder.root, payload)
 			},
 		},
 	}

@@ -69,6 +69,7 @@ const facet = (): ScreenshotsFacet => {
       finalSelectionArtifactIDs: ["artifact-1"],
       previewImage: "data:image/png;base64,live",
       staleReason: "",
+      mutationBlockedReason: "",
       error: "",
     },
     load: vi.fn(async () => true),
@@ -126,6 +127,39 @@ describe("ScreenshotsPage", () => {
     );
 
     expect(screenshots.load).not.toHaveBeenCalled();
+  });
+
+  it("blocks screenshot mutations while another workflow operation is running", () => {
+    const base = facet();
+    const screenshots: ScreenshotsFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        mutationBlockedReason:
+          "Another workflow operation (analyze audio) is running. Wait for it to finish before changing screenshots.",
+      },
+    };
+
+    render(
+      <ScreenshotsPage facet={screenshots} setLightboxImage={vi.fn()} setLightboxAlt={vi.fn()} />,
+    );
+
+    for (const name of [
+      "Load suggestions",
+      "Generate screenshots",
+      "Delete all",
+      "Unselect",
+      "Delete",
+      "Run preview",
+      "Capture preview",
+    ]) {
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+    }
+    expect(
+      screen.getByText(/Another workflow operation \(analyze audio\) is running/),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Generate screenshots" }));
+    expect(screenshots.generate).not.toHaveBeenCalled();
   });
 
   it("restores the main gallery layout while routing actions through the session facet", async () => {

@@ -28,6 +28,7 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
+	"github.com/autobrr/upbrr/internal/services/audioanalysis"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/services/dvdmenus"
@@ -42,6 +43,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+const workflowPrivateVaultCleanupInterval = time.Hour
+
 // Core composes the upload, prepared-release, duplicate-check, media,
 // description, and history capabilities over one dependency snapshot. It owns
 // the repository only when construction opened that repository internally.
@@ -52,6 +55,8 @@ type Core struct {
 	metadataDefaults config.MetadataConfig
 	repoOwner        api.RepositoryOwner
 	ownsRepo         bool
+	vaultCleanupStop context.CancelFunc
+	vaultCleanupDone <-chan struct{}
 
 	history       *historyModule
 	preparedFacts *preparedrelease.Module
@@ -371,6 +376,15 @@ func newCoreWithHooks(
 		dvdMenus:    services.DVDMenus,
 		media:       workflowMedia,
 	}
+	audioTmpRoot, err := db.Subdir(cfg.MainSettings.DBPath, "tmp")
+	if err != nil {
+		return nil, fmt.Errorf("core: audio analysis tmp dir: %w", err)
+	}
+	workflowAudioAnalysis := newWorkflowAudioAnalysisBuilder(
+		preparedFacts,
+		audioanalysis.NewService(logger),
+		audioTmpRoot,
+	)
 	descriptionReuse, _ := repoOwner.(api.DescriptionReuseRepository)
 	if descriptionReuse == nil {
 		descriptionReuse = repositories.DescriptionReuse()
@@ -380,7 +394,7 @@ func newCoreWithHooks(
 	if sqliteRepo, ok := repoOwner.(*db.SQLiteRepository); ok && strings.TrimSpace(sqliteRepo.DBPath()) != "" {
 		vault, vaultErr := releaseworkflow.NewPrivateArtifactVault(
 			workflowPrivateVaultRoot(sqliteRepo.DBPath()),
-			workflowPrivateResourceCodecs(workflowMediaArtifacts)...,
+			workflowPrivateResourceCodecs(workflowMediaArtifacts, workflowAudioAnalysis)...,
 		)
 		if vaultErr != nil {
 			return nil, fmt.Errorf("core: release workflow private artifact vault: %w", vaultErr)
@@ -404,11 +418,13 @@ func newCoreWithHooks(
 		}),
 		releaseworkflow.WithDupeAssessmentBuilder(workflowDupeBuilder{service: services.Dupes, logger: logger}),
 		releaseworkflow.WithMediaArtifactBuilder(workflowMediaArtifacts),
+		releaseworkflow.WithAudioAnalysisBuilder(workflowAudioAnalysis),
 		releaseworkflow.WithDescriptionBuilder(workflowDescriptionBuilder{
 			config:   cfg,
 			resolver: preparedFacts,
 			trackers: services.Trackers,
 			reuse:    descriptionReuse,
+			media:    workflowMedia,
 		}),
 		releaseworkflow.WithUploadPlanBuilder(
 			newWorkflowUploadPlanBuilder(cfg, preparedFacts, services.Trackers, services.Torrents, services.Clients, deps.LiveTest),
@@ -476,9 +492,63 @@ func newCoreWithHooks(
 			return nil, fmt.Errorf("core: clean orphaned history: %w", err)
 		}
 	}
+	if workflowPrivateVault != nil {
+		cleanupStop, cleanupDone, cleanupErr := startWorkflowPrivateVaultCleanup(
+			ctx,
+			workflowPrivateVault,
+			workflowPrivateVaultCleanupInterval,
+			logger,
+		)
+		if cleanupErr != nil {
+			return nil, fmt.Errorf("core: clean expired workflow private artifacts: %w", cleanupErr)
+		}
+		core.vaultCleanupStop = cleanupStop
+		core.vaultCleanupDone = cleanupDone
+	}
 	core.media = workflowMedia
 	constructionSucceeded = true
 	return core, nil
+}
+
+func startWorkflowPrivateVaultCleanup(
+	ctx context.Context,
+	vault *releaseworkflow.PrivateArtifactVault,
+	interval time.Duration,
+	logger api.Logger,
+) (context.CancelFunc, <-chan struct{}, error) {
+	if ctx == nil {
+		return nil, nil, errors.New("private artifact cleanup context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, fmt.Errorf("private artifact cleanup context: %w", err)
+	}
+	if vault == nil {
+		return nil, nil, errors.New("private artifact vault is required")
+	}
+	if interval <= 0 {
+		return nil, nil, errors.New("private artifact cleanup interval must be positive")
+	}
+	if err := vault.CleanupExpired(time.Now().UTC()); err != nil {
+		return nil, nil, fmt.Errorf("clean expired private artifacts at startup: %w", err)
+	}
+	cleanupCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-cleanupCtx.Done():
+				return
+			case now := <-ticker.C:
+				if err := vault.CleanupExpired(now.UTC()); err != nil {
+					logger.Warnf("core: expired workflow private artifact cleanup failed: %v", err)
+				}
+			}
+		}
+	}()
+	return cancel, done, nil
 }
 
 func configActivationGenerationGuard(
@@ -619,6 +689,8 @@ func releaseWorkflowOperation(command releaseworkflow.Command) api.OperationKind
 		releaseworkflow.AttachMediaArtifactsCommand,
 		releaseworkflow.RemoveHostedImagesCommand:
 		return api.OperationKindMedia
+	case releaseworkflow.AnalyzeAudioCommand:
+		return api.OperationKindAudioAnalysis
 	case releaseworkflow.UploadMediaImagesCommand:
 		return api.OperationKindImageHosting
 	case releaseworkflow.GenerateDescriptionsCommand:
@@ -649,6 +721,38 @@ func (c *Core) OpenReleaseWorkflowMediaArtifact(
 		return releaseworkflow.MediaArtifactContent{}, classifyOperationError(api.OperationKindMedia, err)
 	}
 	return content, nil
+}
+
+// OpenReleaseWorkflowAudioAnalysisArtifact returns one owner-scoped analysis
+// image without exposing its retained filesystem path.
+func (c *Core) OpenReleaseWorkflowAudioAnalysisArtifact(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+	analysis api.AudioAnalysisRef,
+	artifactID api.PublicResourceID,
+) (releaseworkflow.MediaArtifactContent, error) {
+	content, err := c.workflow.AudioAnalysisArtifact(ctx, ownerID, workflowID, analysis, artifactID)
+	if err != nil {
+		return releaseworkflow.MediaArtifactContent{}, classifyOperationError(api.OperationKindAudioAnalysis, err)
+	}
+	return content, nil
+}
+
+// ReleaseWorkflowAudioAnalysisArtifactPath returns the local path for the CLI
+// after owner and exact-revision validation. It is never exposed by HTTP.
+func (c *Core) ReleaseWorkflowAudioAnalysisArtifactPath(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+	analysis api.AudioAnalysisRef,
+	artifactID api.PublicResourceID,
+) (string, error) {
+	pathValue, err := c.workflow.AudioAnalysisArtifactPath(ctx, ownerID, workflowID, analysis, artifactID)
+	if err != nil {
+		return "", classifyOperationError(api.OperationKindAudioAnalysis, err)
+	}
+	return pathValue, nil
 }
 
 // ReleaseWorkflowMediaPlan returns the safe media plan for the workflow's
@@ -862,10 +966,17 @@ func (c *Core) DeleteAllHistoryReleases(ctx context.Context) (int, error) {
 	return c.history.DeleteAll(ctx)
 }
 
-// Close closes the repository only when this Core opened and owns it.
+// Close stops Core-owned background work and closes the repository only when
+// this Core opened and owns it.
 func (c *Core) Close() error {
 	if c == nil {
 		return nil
+	}
+	if c.vaultCleanupStop != nil {
+		c.vaultCleanupStop()
+	}
+	if c.vaultCleanupDone != nil {
+		<-c.vaultCleanupDone
 	}
 	if c.repoOwner == nil || !c.ownsRepo {
 		return nil

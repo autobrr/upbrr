@@ -6,11 +6,175 @@ package core
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+type descriptionAudioHostFake struct {
+	mu     sync.Mutex
+	images []api.ScreenshotImage
+}
+
+func (*descriptionAudioHostFake) ListCandidates(context.Context, api.ImageHostingSubject) ([]api.ScreenshotImage, error) {
+	return nil, nil
+}
+
+func (f *descriptionAudioHostFake) Upload(_ context.Context, _ api.ImageHostingSubject, host, scope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+	f.mu.Lock()
+	f.images = append(f.images, images...)
+	f.mu.Unlock()
+	links := make([]api.UploadedImageLink, 0, len(images))
+	for _, image := range images {
+		links = append(links, api.UploadedImageLink{
+			ImagePath:  image.Path,
+			Purpose:    image.Purpose,
+			Host:       host,
+			UsageScope: scope,
+			ImgURL:     "https://img.example/audio.png",
+			RawURL:     "https://img.example/audio.png",
+		})
+	}
+	return links, nil
+}
+
+func TestWorkflowDescriptionUploadsAudioOnlyThroughAudioChannel(t *testing.T) {
+	t.Parallel()
+	imagePath := filepath.Join(t.TempDir(), "waveform.png")
+	host := &descriptionAudioHostFake{}
+	builder := workflowDescriptionBuilder{media: &mediaModule{
+		cfg:      config.Config{ImageHosting: config.ImageHostingConfig{Host1: "imgbb"}},
+		logger:   api.NopLogger{},
+		registry: mediaImageHostRegistry(t),
+		images:   host,
+	}}
+	subject := api.UploadSubject{ExactMedia: &api.ExactMediaAssets{
+		AudioAnalysis: &api.AudioAnalysisRef{ID: "analysis-1", Revision: 1},
+		AudioTracks: []api.AudioDescriptionTrack{{Ordinal: 1, Images: []api.ScreenshotImage{{
+			Path: imagePath, Purpose: api.ScreenshotPurposeAudioAnalysis,
+		}}}},
+	}}
+	if err := builder.uploadAudioDescriptionImages(t.Context(), subject, []string{"ONE"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(host.images) != 1 || host.images[0].Purpose != api.ScreenshotPurposeAudioAnalysis ||
+		len(subject.ExactMedia.AudioUploads) != 1 || subject.ExactMedia.AudioUploads[0].ImagePath != imagePath ||
+		len(subject.ExactMedia.ScreenshotUploads) != 0 || subject.ExactMedia.AudioUploadHosts["ONE"] != "imgbb" {
+		t.Fatalf("hosted audio channel = %#v host=%#v", subject.ExactMedia, host.images)
+	}
+}
+
+func TestWorkflowDescriptionKeepsDistinctAudioHostsPerTracker(t *testing.T) {
+	t.Parallel()
+	imagePath := filepath.Join(t.TempDir(), "waveform.png")
+	host := &descriptionAudioHostFake{}
+	builder := workflowDescriptionBuilder{media: &mediaModule{
+		cfg: config.Config{ImageHosting: config.ImageHostingConfig{
+			Host1: "pixhost", Host2: "onlyimage",
+		}},
+		logger:   api.NopLogger{},
+		registry: mediaImageHostRegistry(t),
+		images:   host,
+	}}
+	subject := api.UploadSubject{ExactMedia: &api.ExactMediaAssets{
+		AudioAnalysis: &api.AudioAnalysisRef{ID: "analysis-1", Revision: 1},
+		AudioTracks: []api.AudioDescriptionTrack{{Ordinal: 1, Images: []api.ScreenshotImage{{
+			Path: imagePath, Purpose: api.ScreenshotPurposeAudioAnalysis,
+		}}}},
+	}}
+	if err := builder.uploadAudioDescriptionImages(t.Context(), subject, []string{"ONE", "TWO"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(subject.ExactMedia.AudioUploads) != 2 || subject.ExactMedia.AudioUploadHosts["ONE"] != "pixhost" ||
+		subject.ExactMedia.AudioUploadHosts["TWO"] != "onlyimage" {
+		t.Fatalf("audio hosts were not retained per tracker: %#v", subject.ExactMedia)
+	}
+	clone := subject.ExactMedia.Clone()
+	clone.AudioUploadHosts["ONE"] = "changed"
+	if subject.ExactMedia.AudioUploadHosts["ONE"] != "pixhost" {
+		t.Fatal("audio host mapping was not cloned")
+	}
+}
+
+type descriptionAudioPathsFake struct{ path string }
+
+func (f descriptionAudioPathsFake) LocalArtifactPath(_ api.AudioAnalysisResult, _ api.PublicResourceID) (string, error) {
+	return f.path, nil
+}
+
+func TestWorkflowDescriptionUsesExactAudioAnalysisWithoutAddingScreenshots(t *testing.T) {
+	t.Parallel()
+	graphPath := filepath.Join(t.TempDir(), "waveform.png")
+	analysis := api.AudioAnalysisResult{
+		ID:       "analysis-1",
+		Revision: 7,
+		Tracks: []api.AudioAnalysisTrackResult{{
+			Ordinal: 1,
+			Artifacts: []api.AudioAnalysisArtifact{
+				{
+					ID:      "waveform-1",
+					Variant: api.AudioAnalysisWaveform,
+					Status:  api.StageStatusCompleted,
+					Width:   1200,
+					Height:  400,
+				},
+				{
+					ID:      "stats-1",
+					Variant: api.AudioAnalysisStats,
+					Status:  api.StageStatusCompleted,
+					Text:    "Peak: -1.0 dB",
+				},
+			},
+		}},
+	}
+	exact, err := resolveWorkflowExactMedia(releaseworkflow.DescriptionResources{
+		Media:         workflowMediaPrivateArtifacts{},
+		AudioAnalysis: analysis,
+		AudioPaths:    descriptionAudioPathsFake{path: graphPath},
+	}, api.MediaArtifactSet{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exact.AudioAnalysis == nil || exact.AudioAnalysis.Revision != 7 || len(exact.AudioTracks) != 1 ||
+		len(exact.AudioTracks[0].Images) != 1 || exact.AudioTracks[0].Images[0].Path != graphPath ||
+		exact.AudioTracks[0].Images[0].Purpose != api.ScreenshotPurposeAudioAnalysis ||
+		exact.AudioTracks[0].Stats != "Peak: -1.0 dB" || len(exact.Screenshots) != 0 {
+		t.Fatalf("exact audio description assets = %#v", exact)
+	}
+	cloned := exact.Clone()
+	cloned.AudioTracks[0].Images[0].Path = "changed"
+	if exact.AudioTracks[0].Images[0].Path != graphPath {
+		t.Fatal("audio assets were not detached")
+	}
+	analysis.Revision = 8
+	changed, err := resolveWorkflowExactMedia(releaseworkflow.DescriptionResources{
+		Media:         workflowMediaPrivateArtifacts{},
+		AudioAnalysis: analysis,
+		AudioPaths:    descriptionAudioPathsFake{path: graphPath},
+	}, api.MediaArtifactSet{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	release := api.ReleaseRef{SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026-GRP.mkv"), Generation: 1}
+	firstFingerprint, _, err := workflowDescriptionFingerprints(release, api.TrackerReleaseProjectionSet{},
+		api.MediaArtifactSet{}, api.DescriptionInstructions{}, api.UploadSubject{}, exact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedFingerprint, _, err := workflowDescriptionFingerprints(release, api.TrackerReleaseProjectionSet{},
+		api.MediaArtifactSet{}, api.DescriptionInstructions{}, api.UploadSubject{}, changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstFingerprint == changedFingerprint {
+		t.Fatal("analysis revision did not invalidate description input")
+	}
+}
 
 type workflowDescriptionResolverFake struct {
 	input api.UploadSubjectInput
@@ -23,12 +187,12 @@ func (f *workflowDescriptionResolverFake) ResolveUploadSubject(
 	f.input = input
 	return api.UploadSubject{
 		TrackerQuestionnaireAnswers: input.QuestionnaireAnswers,
-		SourcePath:          input.Release.SourcePath,
-		DescriptionTemplate: "Template v1",
-		DescriptionGroups:   input.DescriptionGroups,
-		Trackers:            input.Trackers,
-		Options:             input.Options,
-		ImageHostOverrides:  input.ImageHostOverrides,
+		SourcePath:                  input.Release.SourcePath,
+		DescriptionTemplate:         "Template v1",
+		DescriptionGroups:           input.DescriptionGroups,
+		Trackers:                    input.Trackers,
+		Options:                     input.Options,
+		ImageHostOverrides:          input.ImageHostOverrides,
 	}, nil
 }
 

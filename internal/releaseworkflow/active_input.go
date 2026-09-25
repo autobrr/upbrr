@@ -237,6 +237,52 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 			return api.ActiveInputRecord{}, createErr
 		}
 		workflow = created.Workflow.ID
+		if lookupErr == nil && previousInput.SourceVersion == record.SourceVersion {
+			priorWorkflowID, migratedAudioID, associationErr := m.activeInputs.LoadInputWorkflowAssociation(
+				ctx,
+				record.CanonicalPath,
+				owner,
+				record.SourceVersion,
+			)
+			if associationErr != nil {
+				return api.ActiveInputRecord{}, fmt.Errorf("release workflow load input workflow association: %w", associationErr)
+			}
+			if priorWorkflowID != "" {
+				priorState, loadErr := m.repository.Load(ctx, owner, priorWorkflowID)
+				if loadErr != nil && !errors.Is(loadErr, ErrWorkflowNotFound) {
+					return api.ActiveInputRecord{}, fmt.Errorf("release workflow load prior input workflow: %w", loadErr)
+				}
+				if loadErr == nil {
+					pending := priorState.PendingAudioAnalysis
+					pendingWorkflow := priorState.PendingAudioAnalysisWorkflowID
+					if priorState.Workflow.AudioAnalysis != nil {
+						pending = priorState.Workflow.AudioAnalysis
+						pendingWorkflow = priorState.Workflow.ID
+					}
+					if pending == nil && migratedAudioID != "" {
+						if analysis, exists := priorState.AudioAnalyses[migratedAudioID]; exists {
+							pending = &api.AudioAnalysisRef{ID: analysis.ID, Revision: analysis.Revision}
+							pendingWorkflow = priorState.Workflow.ID
+						}
+					}
+					if pending != nil {
+						state, loadErr := m.repository.Load(ctx, owner, workflow)
+						if loadErr != nil {
+							return api.ActiveInputRecord{}, fmt.Errorf("release workflow load new input workflow: %w", loadErr)
+						}
+						state.PendingAudioAnalysis = pending
+						state.PendingAudioAnalysisWorkflowID = pendingWorkflow
+						state.Workflow.Revision++
+						state.Workflow.UpdatedAt = m.clock.Now()
+						encoded, encodeErr := workflowStateRecord(owner, state)
+						if encodeErr != nil {
+							return api.ActiveInputRecord{}, encodeErr
+						}
+						updatedWorkflow = &encoded
+					}
+				}
+			}
+		}
 	} else {
 		state, loadErr := m.repository.Load(ctx, owner, workflow)
 		if loadErr != nil {
@@ -251,6 +297,13 @@ func (m *Module) OpenInput(ctx context.Context, owner string, request OpenInputR
 		state.Workflow.Status = api.WorkflowStatusDraft
 		state.Workflow.SubmissionExclusions = nil
 		state.Workflow.RequiredActions, state.Workflow.Failures = nil, nil
+		if prior.SourceVersion != record.SourceVersion {
+			state.PendingAudioAnalysis = nil
+			state.PendingAudioAnalysisWorkflowID = ""
+		} else if state.Workflow.AudioAnalysis != nil {
+			state.PendingAudioAnalysis = state.Workflow.AudioAnalysis
+			state.PendingAudioAnalysisWorkflowID = state.Workflow.ID
+		}
 		invalidatePreparedAndDownstream(&state.Workflow)
 		if state.Composite != nil {
 			state.Composite.LastCommittedRevision = state.Workflow.Revision

@@ -18,6 +18,11 @@ import type {
   UploadImageHostFailure,
 } from "../types";
 import type {
+  AudioAnalysisResult,
+  AudioAnalysisResourceLimits,
+  AudioAnalysisSelectionMode,
+  AudioAnalysisVariant,
+  MediaTrackFacts,
   CorrectionFieldRef,
   DupeAssessment,
   DupeDecision,
@@ -37,11 +42,13 @@ import type {
   TrackerProjectionInstructions,
   UploadDryRunResult,
   UploadResult,
+  WorkflowOperationItem,
 } from "../api/generated/release-workflow";
 
 export type ReleaseRoute =
   | "input"
   | "trackerData"
+  | "audioAnalysis"
   | "duplicates"
   | "screenshots"
   | "menuImages"
@@ -225,6 +232,7 @@ export type ScreenshotsFacet = Readonly<{
     finalSelectionArtifactIDs: readonly string[];
     previewImage: string;
     staleReason: string;
+    mutationBlockedReason: string;
     error: string;
   }>;
   load(): Promise<boolean>;
@@ -245,6 +253,45 @@ export type ScreenshotsFacet = Readonly<{
   selectArtifact(artifactID: string, selected: boolean): Promise<boolean>;
   deleteArtifacts(artifactIDs: readonly string[]): Promise<boolean>;
   readImage(artifactID: string): Promise<string>;
+}>;
+
+/** Exact prepared-resource selection submitted for one audio-analysis attempt. */
+export type AudioAnalysisGenerateInput = Readonly<{
+  resourceID: string;
+  selection: AudioAnalysisSelectionMode;
+  trackIDs: readonly string[];
+  variants: readonly AudioAnalysisVariant[];
+  resourceLimits?: AudioAnalysisResourceLimits;
+}>;
+
+/** Optional exact-generation analysis state and backend-owned operation intents. */
+export type AudioAnalysisFacet = Readonly<{
+  view: Readonly<{
+    available: boolean;
+    /** Persisted user intent; it may be true before a result exists. */
+    enabled: boolean;
+    status: FacetStatus;
+    releaseGeneration: number;
+    sourceLabel: string;
+    sourceContext: string;
+    primaryTrackID: string;
+    tracks: readonly MediaTrackFacts[];
+    /** The current retained attempt, including successful work from partial runs. */
+    result: AudioAnalysisResult | null;
+    completed: number;
+    total: number;
+    operationItems: readonly WorkflowOperationItem[];
+    mutationBlockedReason: string;
+    error: string;
+  }>;
+  generate(input: AudioAnalysisGenerateInput): Promise<boolean>;
+  /** Reuses the retained attempt's selection, variants, and resource limits. */
+  retry(): Promise<boolean>;
+  cancel(): Promise<boolean>;
+  /** Cancels active work first, then clears the current analysis reference. */
+  disable(): Promise<boolean>;
+  /** Builds the authenticated URL for an artifact in the current attempt. */
+  artifactURL(artifactID: string): string;
 }>;
 
 export type MediaImageView = Readonly<{
@@ -400,6 +447,7 @@ export type ReleaseSession = Readonly<{
   navigation: NavigationFacet;
   input: InputFacet;
   duplicates: DuplicatesFacet;
+  audioAnalysis: AudioAnalysisFacet;
   screenshots: ScreenshotsFacet;
   menuImages: MenuImagesFacet;
   uploadedImages: UploadedImagesFacet;

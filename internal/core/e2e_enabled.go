@@ -42,22 +42,23 @@ import (
 )
 
 const (
-	e2eEnabledEnv      = "UPBRR_E2E_FAKE_SERVICES"
-	e2eTrackerURLEnv   = "UPBRR_E2E_TRACKER_URL"
-	e2eImageURLEnv     = "UPBRR_E2E_IMAGE_URL"
-	e2eClientURLEnv    = "UPBRR_E2E_CLIENT_URL"
-	e2eShotPathEnv     = "UPBRR_E2E_SCREENSHOT_PATH"
-	e2eMediaInfoEnv    = "UPBRR_E2E_MEDIAINFO_PATH"
-	e2eResolutionEnv   = "UPBRR_E2E_RESOLUTION"
-	e2eDuplicateEnv    = "UPBRR_E2E_DUPLICATE_TRACKERS"
-	e2eDupeScenarioEnv = "UPBRR_E2E_DUPE_SCENARIOS"
-	e2eBlurayEnv       = "UPBRR_E2E_BLURAY_CANDIDATES"
-	e2eAuthNeededEnv   = "UPBRR_E2E_AUTH_REQUIRED_TRACKERS"
-	e2eAuthScenarioEnv = "UPBRR_E2E_AUTH_SCENARIOS"
-	e2eAuthCounterEnv  = "UPBRR_E2E_AUTH_COUNTER_PATH"
-	e2eClockOffsetEnv  = "UPBRR_E2E_CLOCK_OFFSET"
-	e2eMediaKindEnv    = "UPBRR_E2E_MEDIA_KIND"
-	e2eNamingModeEnv   = "UPBRR_E2E_NAMING_MODE"
+	e2eEnabledEnv       = "UPBRR_E2E_FAKE_SERVICES"
+	e2eTrackerURLEnv    = "UPBRR_E2E_TRACKER_URL"
+	e2eImageURLEnv      = "UPBRR_E2E_IMAGE_URL"
+	e2eClientURLEnv     = "UPBRR_E2E_CLIENT_URL"
+	e2eShotPathEnv      = "UPBRR_E2E_SCREENSHOT_PATH"
+	e2eMediaInfoEnv     = "UPBRR_E2E_MEDIAINFO_PATH"
+	e2eResolutionEnv    = "UPBRR_E2E_RESOLUTION"
+	e2eDuplicateEnv     = "UPBRR_E2E_DUPLICATE_TRACKERS"
+	e2eDupeScenarioEnv  = "UPBRR_E2E_DUPE_SCENARIOS"
+	e2eBlurayEnv        = "UPBRR_E2E_BLURAY_CANDIDATES"
+	e2eAuthNeededEnv    = "UPBRR_E2E_AUTH_REQUIRED_TRACKERS"
+	e2eAuthScenarioEnv  = "UPBRR_E2E_AUTH_SCENARIOS"
+	e2eAuthCounterEnv   = "UPBRR_E2E_AUTH_COUNTER_PATH"
+	e2eClockOffsetEnv   = "UPBRR_E2E_CLOCK_OFFSET"
+	e2eMediaKindEnv     = "UPBRR_E2E_MEDIA_KIND"
+	e2eNamingModeEnv    = "UPBRR_E2E_NAMING_MODE"
+	e2eAudioAnalysisEnv = "UPBRR_E2E_AUDIO_ANALYSIS"
 )
 
 // maybeApplyE2EServices replaces only missing runtime capabilities when both
@@ -311,6 +312,30 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 			EpisodeTitle: episodeTitle,
 		},
 		DescriptionTemplate: "E2E description fixture.",
+	}
+	if value := strings.TrimSpace(os.Getenv(e2eAudioAnalysisEnv)); value == "1" || strings.EqualFold(value, "true") {
+		const (
+			audioResourceID = "e2e-audio-resource"
+			audioTrackID    = "e2e-audio-track-primary"
+		)
+		meta.VideoPath = sourcePath
+		meta.MediaTracks = []api.MediaTrackFacts{{
+			ID:                  audioTrackID,
+			Kind:                api.MediaTrackAudio,
+			ResourceID:          audioResourceID,
+			ManifestFingerprint: "e2e-audio-manifest-v1",
+			Ordinal:             1,
+			Codec:               "PCM",
+			ChannelLayout:       "stereo",
+			Channels:            2,
+			SampleRate:          48_000,
+			DetectedLanguages:   []string{"English"},
+			Languages:           []string{"English"},
+			LanguageProvenance:  api.FactProvenanceAutomatic,
+			Default:             true,
+		}}
+		meta.PrimaryAudioTrackID = audioTrackID
+		meta.TrackCoverageComplete = true
 	}
 	if namingFixture {
 		meta.Edition = "Uncut"

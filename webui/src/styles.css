@@ -1082,6 +1082,50 @@ h2 {
   gap: 12px;
 }
 
+.audio-analysis-result-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.audio-analysis-artifact-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+.audio-analysis-artifact-grid > section {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.audio-analysis-thumbnail {
+  justify-self: start;
+  width: fit-content;
+  max-width: 100%;
+  height: auto;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(8, 12, 20, 0.6);
+  cursor: zoom-in;
+}
+
+.audio-analysis-thumbnail img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: 160px;
+}
+
+:root.light .audio-analysis-thumbnail {
+  border-color: rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.95);
+}
+
 .screens-gallery__header {
   display: flex;
   align-items: baseline;

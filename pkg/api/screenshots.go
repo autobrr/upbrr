@@ -21,6 +21,8 @@ const (
 	ScreenshotPurposeFinal ScreenshotPurpose = "final"
 	// ScreenshotPurposeMenu identifies manual or automatic disc-menu images.
 	ScreenshotPurposeMenu ScreenshotPurpose = "menu"
+	// ScreenshotPurposeAudioAnalysis keeps audio graphs out of screenshot galleries.
+	ScreenshotPurposeAudioAnalysis ScreenshotPurpose = "audio_analysis"
 
 	// ScreenshotSelectionSourceMenu identifies manually imported disc-menu selections.
 	ScreenshotSelectionSourceMenu = "menu"

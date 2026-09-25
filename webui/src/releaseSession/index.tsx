@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { ReactNode } from "react";
-import { createContext, useContext, useEffect, useMemo, useReducer, useRef } from "react";
+import { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type {
   ApplicationInfo,
   MetadataPreview,
@@ -16,6 +16,7 @@ import type {
 } from "../types";
 import type {
   ActiveInputSnapshot,
+  AudioAnalysisInstructions,
   DescriptionInstructions,
   ContinueReleaseWorkflowRequest,
   DupeDecision,
@@ -26,6 +27,7 @@ import type {
   ReleaseFactInstructions,
   ReleaseCorrectionPatch,
   ReleaseWorkflowCurrent,
+  MediaTrackFacts,
   WorkflowContinuation,
   WorkflowGoal,
   WorkflowIntent,
@@ -35,6 +37,7 @@ import { productionReleaseSessionPorts } from "./production";
 import { correctionValuesFor, initialSessionState, sessionReducer } from "./reducer";
 import { canExecuteUpload } from "./uploadEligibility";
 import type {
+  AudioAnalysisGenerateInput,
   PreparationIntent,
   ReleaseRoute,
   ReleaseSession,
@@ -51,6 +54,20 @@ type WorkflowCommand = Readonly<{
   release: ReleaseRef;
   sessionRevision: number;
   revision: number;
+}>;
+type BackendCommandAuthority = Readonly<{
+  commandID: string;
+  operationID: string;
+  operationSequence: number;
+  workflowID: string;
+  workflowRevision: number;
+}>;
+type WorkflowCommandFailureAuthority = Omit<BackendCommandAuthority, "commandID">;
+type WorkflowCommandCallbacks = Readonly<{
+  onAbort?: (authority: BackendCommandAuthority) => void;
+  onError?: (error: unknown, authority: BackendCommandAuthority) => void;
+  onStart?: (authority: BackendCommandAuthority) => void;
+  onSuccess?: (current: ReleaseWorkflowCurrent, authority: BackendCommandAuthority) => void;
 }>;
 type ActiveSlotAuthority = Readonly<{
   revision: number;
@@ -99,6 +116,33 @@ const workflowOperationFailureError = (failure: Readonly<{ Message: string; Reco
     ),
     { failure },
   );
+
+const workflowCommandFailureAuthority = Symbol("workflowCommandFailureAuthority");
+
+const withWorkflowCommandFailureAuthority = (
+  error: Error,
+  current: ReleaseWorkflowCurrent,
+  operation: WorkflowOperationStatus,
+) =>
+  Object.assign(error, {
+    [workflowCommandFailureAuthority]: {
+      operationID: operation.id,
+      operationSequence: operation.sequence,
+      workflowID: current.workflow.id,
+      workflowRevision: current.workflow.revision,
+    } satisfies WorkflowCommandFailureAuthority,
+  });
+
+const commandFailureAuthorityFromError = (
+  error: unknown,
+): WorkflowCommandFailureAuthority | null => {
+  if (!error || typeof error !== "object" || !(workflowCommandFailureAuthority in error)) {
+    return null;
+  }
+  return (error as { [workflowCommandFailureAuthority]: WorkflowCommandFailureAuthority })[
+    workflowCommandFailureAuthority
+  ];
+};
 
 const normalizedNames = (values: readonly string[]) =>
   Array.from(new Set(values.map((value) => value.trim().toUpperCase()).filter(Boolean)));
@@ -214,6 +258,7 @@ export const routeAccess = (
   continuation: WorkflowContinuation | null | undefined,
   hasTrackerData: boolean,
   requirements: TrackerWorkflowRequirements,
+  hasAudioData = false,
 ): Readonly<Record<ReleaseRoute, RouteAccess>> => {
   const goal = (name: string): RouteAccess => {
     const availability = continuation?.availableGoals.find((candidate) => candidate.goal === name);
@@ -236,6 +281,10 @@ export const routeAccess = (
       reason: trackerAssessment.available
         ? "No tracker data is available."
         : trackerAssessment.reason,
+    },
+    audioAnalysis: {
+      available: hasAudioData,
+      reason: hasAudioData ? "" : "Prepare a source with authoritative audio-track facts first.",
     },
     duplicates: trackerAssessment,
     screenshots: {
@@ -492,6 +541,23 @@ export function ReleaseSessionProvider({
   children: ReactNode;
 }>) {
   const [state, dispatch] = useReducer(sessionReducer, undefined, initialSessionState);
+  const [audioCommandFailure, setAudioCommandFailure] = useState<Readonly<{
+    workflowID: string;
+    workflowRevision: number;
+    commandID: string;
+    operationID: string;
+    operationSequence: number;
+    message: string;
+  }> | null>(null);
+  const [screenshotCommand, setScreenshotCommand] = useState<Readonly<{
+    workflowID: string;
+    workflowRevision: number;
+    commandID: string;
+    operationID: string;
+    operationSequence: number;
+    status: "running" | "error";
+    message: string;
+  }> | null>(null);
   const liveTest = testRuntime?.mode === "live_test";
   const mutationsAllowed = runtimeInfoReady && !liveTest;
   const uploadOptions = { ...state.uploadOptions, noSeed: liveTest || state.uploadOptions.noSeed };
@@ -520,6 +586,28 @@ export function ReleaseSessionProvider({
   const lastWorkflowError = useRef<unknown>(null);
   const activePorts = useMemo(() => ports ?? productionReleaseSessionPorts(), [ports]);
   const workflowView = state.workflowView;
+
+  const backendCommandAuthority = (
+    commandID: string,
+    current: ReleaseWorkflowCurrent,
+  ): BackendCommandAuthority => ({
+    commandID,
+    operationID: current.operation?.id || "",
+    operationSequence: current.operation?.sequence || 0,
+    workflowID: current.workflow.id,
+    workflowRevision: current.workflow.revision,
+  });
+
+  const commandFailureSuperseded = (
+    failure: BackendCommandAuthority,
+    current: ReleaseWorkflowCurrent,
+  ) => {
+    if (failure.workflowID !== current.workflow.id) return true;
+    if (current.workflow.revision > failure.workflowRevision) return true;
+    if (!failure.operationID) return false;
+    if (current.operation?.id !== failure.operationID) return true;
+    return current.operation.sequence > failure.operationSequence;
+  };
 
   const applyActiveInputSnapshot = (
     snapshot: ActiveInputSnapshot,
@@ -652,6 +740,12 @@ export function ReleaseSessionProvider({
     if (selectedTrackers) {
       dispatch({ type: "trackers_received", trackers: selectedTrackers });
     }
+    setAudioCommandFailure((failure) =>
+      failure && commandFailureSuperseded(failure, current) ? null : failure,
+    );
+    setScreenshotCommand((command) =>
+      command?.status === "error" && commandFailureSuperseded(command, current) ? null : command,
+    );
     dispatch({ type: "workflow_current_published", status, current });
     return current;
   };
@@ -708,12 +802,34 @@ export function ReleaseSessionProvider({
     const terminalOperation = operation as WorkflowOperationStatus | undefined;
     if (terminalOperation && isFailedWorkflowOperation(terminalOperation)) {
       const failure = terminalOperation.failures?.[0]?.failure;
-      if (failure) throw workflowOperationFailureError(failure);
-      throw new Error(
-        terminalOperation.message || `Workflow operation ${terminalOperation.status}.`,
+      if (failure) {
+        throw withWorkflowCommandFailureAuthority(
+          workflowOperationFailureError(failure),
+          current,
+          terminalOperation,
+        );
+      }
+      throw withWorkflowCommandFailureAuthority(
+        new Error(terminalOperation.message || `Workflow operation ${terminalOperation.status}.`),
+        current,
+        terminalOperation,
       );
     }
     return current;
+  };
+
+  const awaitWorkflowOperationTerminal = async (
+    workflowID: string,
+    initial: WorkflowOperationStatus,
+    signal: AbortSignal,
+  ): Promise<WorkflowOperationStatus> => {
+    let operation = initial;
+    while (isActiveWorkflowOperation(operation)) {
+      await waitForWorkflowPoll(signal);
+      operation = await activePorts.workflow.operation(workflowID, operation.id, signal);
+      dispatch({ type: "workflow_operation_updated", workflowID, operation });
+    }
+    return operation;
   };
 
   const failBackendWorkflow = (error: unknown) => {
@@ -721,7 +837,11 @@ export function ReleaseSessionProvider({
     if (failure?.Code === "missing_prerequisite" && failure.Recovery === "refresh_release") {
       storeWorkflowID("");
     }
-    dispatch({ type: "workflow_view_failed", error: errorText(error), failure });
+    dispatch({
+      type: "workflow_view_failed",
+      error: failure?.Message || "Workflow request failed. Retry the request.",
+      failure,
+    });
     return null;
   };
 
@@ -1002,6 +1122,7 @@ export function ReleaseSessionProvider({
       commandID: string,
       signal: AbortSignal,
     ) => Promise<ReleaseWorkflowCurrent>,
+    callbacks: WorkflowCommandCallbacks = {},
   ): Promise<boolean> => {
     if (activeAuthority.current.state === "recovering") return false;
     if (!workflowView.current || controllers.current.workflow) return false;
@@ -1009,18 +1130,36 @@ export function ReleaseSessionProvider({
     controllers.current.workflow = controller;
     dispatch({ type: "active_input_loading" });
     const commandID = `workflow-${Date.now().toString(36)}-${workflowView.current.workflow.revision.toString(36)}`;
+    let commandAuthority = {
+      ...backendCommandAuthority(commandID, workflowView.current),
+      operationID: "",
+      operationSequence: 0,
+    };
+    callbacks.onStart?.(commandAuthority);
     try {
-      const current = await awaitWorkflowCommand(
-        await execute(workflowView.current, commandID, controller.signal),
-        controller.signal,
-      );
+      const initial = await execute(workflowView.current, commandID, controller.signal);
+      commandAuthority = backendCommandAuthority(commandID, initial);
+      const current = await awaitWorkflowCommand(initial, controller.signal);
       releaseWorkflowController(controller);
       if (controller.signal.aborted) return false;
       acceptWorkflowCurrent(current);
+      callbacks.onSuccess?.(current, commandAuthority);
       return true;
     } catch (error) {
       releaseWorkflowController(controller);
-      if (!controller.signal.aborted) failBackendWorkflow(error);
+      if (controller.signal.aborted) {
+        callbacks.onAbort?.(commandAuthority);
+      } else {
+        const failureAuthority = commandFailureAuthorityFromError(error);
+        if (failureAuthority?.workflowID === commandAuthority.workflowID) {
+          commandAuthority = {
+            commandID,
+            ...failureAuthority,
+          };
+        }
+        callbacks.onError?.(error, commandAuthority);
+        failBackendWorkflow(error);
+      }
       return false;
     } finally {
       releaseWorkflowController(controller);
@@ -1624,12 +1763,18 @@ export function ReleaseSessionProvider({
 
   const failWorkflow = (facet: WorkflowFacet, command: WorkflowCommand, error: unknown) => {
     if (!command.controller.signal.aborted) {
+      const fallbackMessage: Readonly<Record<WorkflowFacet, string>> = {
+        screenshots: "Screenshot request failed. Retry the request.",
+        menuImages: "DVD menu image request failed. Retry the request.",
+        uploadedImages: "Image hosting request failed. Retry the request.",
+        descriptions: "Description request failed. Retry the request.",
+      };
       dispatch({
         type: "workflow_failed",
         facet,
         sessionRevision: command.sessionRevision,
         revision: command.revision,
-        error: errorText(error),
+        error: operationFailureFromError(error)?.Message || fallbackMessage[facet],
       });
     }
   };
@@ -1638,7 +1783,54 @@ export function ReleaseSessionProvider({
     if (controllers.current[facet] === command.controller) delete controllers.current[facet];
   };
 
+  const screenshotCommandCallbacks = (expectsMediaOperation = false): WorkflowCommandCallbacks => ({
+    onAbort: (authority) =>
+      setScreenshotCommand((command) =>
+        command?.commandID === authority.commandID ? null : command,
+      ),
+    onError: (error, authority) =>
+      setScreenshotCommand({
+        ...authority,
+        status: "error",
+        message:
+          operationFailureFromError(error)?.Message ||
+          "Screenshot request failed. Retry the request.",
+      }),
+    onStart: (authority) => {
+      dispatch({ type: "screenshot_command_started" });
+      setScreenshotCommand({
+        ...authority,
+        status: "running",
+        message: "",
+      });
+    },
+    onSuccess: (current, authority) => {
+      const operation = current.operation;
+      if (
+        expectsMediaOperation &&
+        operation?.operation === "media" &&
+        isFailedWorkflowOperation(operation)
+      ) {
+        setScreenshotCommand({
+          ...authority,
+          operationID: operation.id,
+          operationSequence: operation.sequence,
+          workflowID: current.workflow.id,
+          workflowRevision: current.workflow.revision,
+          status: "error",
+          message:
+            (operation.failures || []).map((failure) => failure.failure.Message).join(" ") ||
+            operation.message ||
+            `Screenshot operation ${operation.status}.`,
+        });
+        return;
+      }
+      setScreenshotCommand(null);
+    },
+  });
+
   const loadScreenshotPlan = async (): Promise<boolean> => {
+    setScreenshotCommand(null);
     const command = beginWorkflow("screenshots", access.screenshots.reason);
     if (!command || !workflowView.current) return false;
     try {
@@ -1704,22 +1896,24 @@ export function ReleaseSessionProvider({
         ...selection,
         DiscID: selection.DiscID || "",
       }));
-      return runBackendWorkflow((current, commandID, signal) =>
-        continueBackendGoal(
-          current,
-          "media_ready",
-          {
-            media: {
-              screenshotCount: requested.length,
-              purpose,
-              selections: requested,
-              captureDvdMenus: false,
-              maxDvdMenuItems: 0,
+      return runBackendWorkflow(
+        (current, commandID, signal) =>
+          continueBackendGoal(
+            current,
+            "media_ready",
+            {
+              media: {
+                screenshotCount: requested.length,
+                purpose,
+                selections: requested,
+                captureDvdMenus: false,
+                maxDvdMenuItems: 0,
+              },
             },
-          },
-          commandID,
-          signal,
-        ),
+            commandID,
+            signal,
+          ),
+        screenshotCommandCallbacks(true),
       );
     }
     return false;
@@ -1734,19 +1928,26 @@ export function ReleaseSessionProvider({
       artifactIDs: normalizedArtifactIDs,
     });
     if (!workflowView.current?.media || normalizedArtifactIDs.length === 0) return false;
-    return runBackendWorkflow((current, commandID, signal) =>
-      activePorts.workflow.reorderMedia(current, normalizedArtifactIDs, commandID, signal),
+    return runBackendWorkflow(
+      (current, commandID, signal) =>
+        activePorts.workflow.reorderMedia(current, normalizedArtifactIDs, commandID, signal),
+      screenshotCommandCallbacks(),
     );
   };
 
-  const removeMediaArtifacts = async (artifactIDs: readonly string[]) => {
+  const removeMediaArtifacts = async (
+    artifactIDs: readonly string[],
+    callbacks: WorkflowCommandCallbacks = {},
+  ) => {
     const normalizedArtifactIDs = Array.from(
       new Set(artifactIDs.map((artifactID) => artifactID.trim()).filter(Boolean)),
     );
     if (normalizedArtifactIDs.length === 0) return false;
     if (!workflowView.current?.media) return false;
-    return runBackendWorkflow((current, commandID, signal) =>
-      activePorts.workflow.deleteMedia(current, normalizedArtifactIDs, commandID, signal),
+    return runBackendWorkflow(
+      (current, commandID, signal) =>
+        activePorts.workflow.deleteMedia(current, normalizedArtifactIDs, commandID, signal),
+      callbacks,
     );
   };
 
@@ -1754,6 +1955,7 @@ export function ReleaseSessionProvider({
     discID: string,
     timestampSeconds: number,
   ): Promise<boolean> => {
+    setScreenshotCommand(null);
     const command = beginWorkflow("screenshots", access.screenshots.reason);
     if (!command || !workflowView.current) return false;
     try {
@@ -1886,6 +2088,9 @@ export function ReleaseSessionProvider({
       RunLogLevel: state.uploadOptions.runLogLevel,
       Screens: workflowDescriptionScreenshotCount(current),
       NoSeed: uploadOptions.noSeed,
+      AudioAnalysis: false,
+      AudioTracks: "primary",
+      AudioImages: "both",
       SkipAutoTorrent: false,
       OnlyID: false,
       KeepFolder: false,
@@ -2094,6 +2299,7 @@ export function ReleaseSessionProvider({
       ? {
           input: { available: true, reason: "" },
           trackerData: { available: false, reason: "Resolve recovery actions first." },
+          audioAnalysis: { available: false, reason: "Resolve recovery actions first." },
           duplicates: { available: false, reason: "Resolve recovery actions first." },
           screenshots: { available: false, reason: "Resolve recovery actions first." },
           menuImages: { available: false, reason: "Resolve recovery actions first." },
@@ -2105,6 +2311,11 @@ export function ReleaseSessionProvider({
           workflowView.current?.continuation,
           Boolean(state.preview?.TrackerData?.length),
           requirements,
+          Boolean(
+            workflowView.current?.release?.release.Media?.Tracks?.some(
+              (track) => track.Kind === "audio",
+            ),
+          ),
         );
   const workflowMedia = workflowView.current?.media;
   const workflowMediaURL = (artifactID: string) =>
@@ -2194,7 +2405,235 @@ export function ReleaseSessionProvider({
             (workflowView.current.workflow.submissionExclusions?.length || 0) > 0
           ? "ready"
           : "idle";
+  const preparedRelease = workflowView.current?.release?.release;
+  const preparedAudioTracks = (preparedRelease?.Media?.Tracks || []).filter(
+    (track) => track.Kind === "audio",
+  );
+  const retainedAudioAnalysis = (() => {
+    const current = workflowView.current;
+    const result = current?.audioAnalysis;
+    const reference = current?.workflow.audioAnalysis;
+    if (
+      !current?.release ||
+      !result ||
+      !reference ||
+      reference.id !== result.id ||
+      reference.revision !== result.revision ||
+      result.release.Generation !== current.release.release.Generation ||
+      result.release.SourcePath !== current.release.release.Source.SourcePath
+    ) {
+      return null;
+    }
+    return result;
+  })();
+  const activeWorkflowOperation = isActiveWorkflowOperation(workflowView.current?.operation)
+    ? workflowView.current?.operation || null
+    : null;
+  const latestWorkflowOperation = workflowView.current?.operation;
+  const latestWorkflowOperationIsActive =
+    latestWorkflowOperation?.status === "queued" || latestWorkflowOperation?.status === "running";
+  const audioOperation =
+    latestWorkflowOperation?.operation === "analyze_audio" &&
+    (latestWorkflowOperationIsActive ||
+      (latestWorkflowOperation.resultRevision ?? latestWorkflowOperation.revision) >=
+        (workflowView.current?.workflow.revision ?? 0))
+      ? latestWorkflowOperation
+      : null;
+  const retainedAudioMatchesOperation = Boolean(
+    audioOperation && retainedAudioAnalysis?.attemptId === audioOperation.id,
+  );
+  const retainedAudioError =
+    retainedAudioAnalysis?.tracks
+      .flatMap((track) => [
+        track.failure?.message,
+        ...track.artifacts.map((artifact) => artifact.failure?.message),
+      ])
+      .filter((message): message is string => Boolean(message))
+      .join(" ") || "";
+  const audioOperationError =
+    (audioOperation?.failures || []).map((failure) => failure.failure.Message).join(" ") ||
+    (audioOperation && isFailedWorkflowOperation(audioOperation)
+      ? audioOperation.message || `Audio analysis ${audioOperation.status}.`
+      : "");
+  const workflowAudioFailure =
+    workflowView.failure?.Operation === "analyze_audio" ? workflowView.failure : null;
+  const audioCommandError =
+    audioCommandFailure &&
+    workflowView.current &&
+    !commandFailureSuperseded(audioCommandFailure, workflowView.current)
+      ? audioCommandFailure.message
+      : "";
+  const currentAudioError = retainedAudioMatchesOperation
+    ? retainedAudioError ||
+      audioOperationError ||
+      workflowAudioFailure?.Message ||
+      audioCommandError
+    : audioOperation
+      ? audioOperationError || workflowAudioFailure?.Message || audioCommandError
+      : workflowAudioFailure?.Message || audioCommandError || retainedAudioError;
+  const audioMutationBlockedReason =
+    activeWorkflowOperation && !audioOperation
+      ? `Another workflow operation (${activeWorkflowOperation.operation.replaceAll("_", " ")}) is running. Wait for it to finish before changing audio analysis.`
+      : "";
+  const audioAnalysisStatus = isActiveWorkflowOperation(audioOperation ?? undefined)
+    ? "running"
+    : (audioOperation && isFailedWorkflowOperation(audioOperation)) ||
+        Boolean(workflowAudioFailure || audioCommandError) ||
+        ((!audioOperation || retainedAudioMatchesOperation) &&
+          retainedAudioAnalysis?.status === "failed")
+      ? "error"
+      : retainedAudioAnalysis
+        ? "ready"
+        : "idle";
+  const currentScreenshotCommand =
+    screenshotCommand &&
+    workflowView.current &&
+    screenshotCommand.workflowID === workflowView.current.workflow.id &&
+    (screenshotCommand.status === "running" ||
+      !commandFailureSuperseded(screenshotCommand, workflowView.current))
+      ? screenshotCommand
+      : null;
+  const screenshotStatus =
+    currentScreenshotCommand?.status === "running"
+      ? "running"
+      : currentScreenshotCommand?.status === "error"
+        ? "error"
+        : state.screenshots.status;
+  const screenshotError =
+    currentScreenshotCommand?.status === "error"
+      ? currentScreenshotCommand.message
+      : state.screenshots.status === "error"
+        ? state.screenshots.error
+        : "";
+  const screenshotMutationBlockedReason =
+    workflowView.status === "running" && screenshotStatus !== "running"
+      ? activeWorkflowOperation
+        ? `Another workflow operation (${activeWorkflowOperation.operation.replaceAll("_", " ")}) is running. Wait for it to finish before changing screenshots.`
+        : "Another workflow operation is running. Wait for it to finish before changing screenshots."
+      : "";
   const trackerInputAnswers = state.trackerInputAnswers;
+
+  const runAudioAnalysis = (input: AudioAnalysisGenerateInput): Promise<boolean> =>
+    runBackendWorkflow(
+      (current, commandID, signal) => {
+        const release = current.release?.release;
+        if (!release) throw new Error("Prepare the release before generating audio analysis.");
+        const instructions: AudioAnalysisInstructions = {
+          release: {
+            SourcePath: release.Source.SourcePath,
+            Generation: release.Generation,
+          },
+          resourceId: input.resourceID,
+          selection: input.selection,
+          trackIds: [...input.trackIDs],
+          variants: [...input.variants],
+          profileVersion: "audio-analysis-v3",
+          resourceLimits: input.resourceLimits ?? {
+            decoderThreads: 2,
+          },
+        };
+        return activePorts.workflow.analyzeAudio(current, instructions, commandID, signal);
+      },
+      {
+        onError: (error, authority) =>
+          setAudioCommandFailure({
+            ...authority,
+            message:
+              operationFailureFromError(error)?.Message ||
+              "Audio analysis could not start. Retry the request.",
+          }),
+        onStart: () => setAudioCommandFailure(null),
+      },
+    );
+
+  const cancelAudioAnalysis = async (): Promise<boolean> => {
+    const current = stateRef.current.workflowView.current;
+    const operation = current?.operation;
+    if (
+      !current ||
+      operation?.operation !== "analyze_audio" ||
+      !isActiveWorkflowOperation(operation)
+    ) {
+      return false;
+    }
+    abortController("workflow");
+    setAudioCommandFailure(null);
+    const controller = new AbortController();
+    controllers.current.workflow = controller;
+    dispatch({ type: "active_input_loading" });
+    const commandID = `audio-analysis-cancel-${operation.id}`;
+    try {
+      const canceled = await activePorts.workflow.cancelOperation(
+        current.workflow.id,
+        operation.id,
+        controller.signal,
+      );
+      await awaitWorkflowOperationTerminal(current.workflow.id, canceled, controller.signal);
+      const latest = await activePorts.workflow.current(current.workflow.id, controller.signal);
+      if (controller.signal.aborted) return false;
+      acceptWorkflowCurrent(latest);
+      return true;
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setAudioCommandFailure({
+          ...backendCommandAuthority(commandID, current),
+          message:
+            operationFailureFromError(error)?.Message ||
+            "Audio analysis could not be canceled. Retry the request.",
+        });
+        failBackendWorkflow(error);
+      }
+      return false;
+    } finally {
+      releaseWorkflowController(controller);
+    }
+  };
+
+  const disableAudioAnalysis = async (): Promise<boolean> => {
+    let current = stateRef.current.workflowView.current;
+    if (!current) return false;
+    abortController("workflow");
+    setAudioCommandFailure(null);
+    const controller = new AbortController();
+    controllers.current.workflow = controller;
+    dispatch({ type: "active_input_loading" });
+    const commandID = timestampedCommandID("audio-analysis-disable", current.workflow.revision);
+    try {
+      const operation = current.operation;
+      if (operation?.operation === "analyze_audio" && isActiveWorkflowOperation(operation)) {
+        const canceled = await activePorts.workflow.cancelOperation(
+          current.workflow.id,
+          operation.id,
+          controller.signal,
+        );
+        await awaitWorkflowOperationTerminal(current.workflow.id, canceled, controller.signal);
+        current = await activePorts.workflow.current(current.workflow.id, controller.signal);
+      }
+      const disabled = await activePorts.workflow.setAudioAnalysisEnabled(
+        current,
+        false,
+        commandID,
+        controller.signal,
+      );
+      if (controller.signal.aborted) return false;
+      acceptWorkflowCurrent(disabled);
+      setAudioCommandFailure(null);
+      return true;
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setAudioCommandFailure({
+          ...backendCommandAuthority(commandID, current),
+          message:
+            operationFailureFromError(error)?.Message ||
+            "Audio analysis could not be disabled. Retry the request.",
+        });
+        failBackendWorkflow(error);
+      }
+      return false;
+    } finally {
+      releaseWorkflowController(controller);
+    }
+  };
 
   const session: ReleaseSession = {
     workflow: {
@@ -2629,10 +3068,58 @@ export function ReleaseSessionProvider({
         );
       },
     },
+    audioAnalysis: {
+      view: {
+        available: access.audioAnalysis.available,
+        enabled: workflowView.current?.workflow.audioAnalysisEnabled === true,
+        status: audioAnalysisStatus,
+        releaseGeneration: Number(preparedRelease?.Generation || 0),
+        sourceLabel:
+          workflowView.current?.release?.display.ReleaseName ||
+          preparedRelease?.Naming.ReleaseName ||
+          "Prepared source",
+        sourceContext: [
+          preparedRelease?.Source.Classification?.DiscType,
+          preparedRelease?.Source.Classification?.Container,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        primaryTrackID: preparedRelease?.Media?.PrimaryAudioTrackID || "",
+        tracks: preparedAudioTracks as readonly MediaTrackFacts[],
+        result: retainedAudioAnalysis,
+        completed: audioOperation?.completed || 0,
+        total: audioOperation?.total || retainedAudioAnalysis?.tracks.length || 0,
+        operationItems: audioOperation?.items || [],
+        mutationBlockedReason: audioMutationBlockedReason,
+        error: currentAudioError,
+      },
+      generate: runAudioAnalysis,
+      retry: () => {
+        if (!retainedAudioAnalysis) return Promise.resolve(false);
+        return runAudioAnalysis({
+          resourceID: retainedAudioAnalysis.resourceId,
+          selection: retainedAudioAnalysis.selection,
+          trackIDs: retainedAudioAnalysis.trackIds,
+          variants: retainedAudioAnalysis.variants,
+          resourceLimits: retainedAudioAnalysis.resourceLimits,
+        });
+      },
+      cancel: cancelAudioAnalysis,
+      disable: disableAudioAnalysis,
+      artifactURL: (artifactID) =>
+        workflowView.current && retainedAudioAnalysis
+          ? activePorts.workflow.audioAnalysisURL(
+              workflowView.current,
+              retainedAudioAnalysis.id,
+              retainedAudioAnalysis.revision,
+              artifactID,
+            )
+          : "",
+    },
     screenshots: {
       view: {
         revision: state.screenshots.revision,
-        status: state.screenshots.status === "running" ? "running" : workflowView.status,
+        status: screenshotStatus,
         plan: state.screenshots.value,
         artifacts: workflowView.current?.media
           ? {
@@ -2648,25 +3135,28 @@ export function ReleaseSessionProvider({
         finalSelectionArtifactIDs: selectedScreenshotIDs,
         previewImage: state.screenshots.previewImage,
         staleReason: state.screenshots.staleReason,
-        error: workflowView.failure?.Message || workflowView.error || state.screenshots.error,
+        mutationBlockedReason: screenshotMutationBlockedReason,
+        error: screenshotError,
       },
       load: loadScreenshotPlan,
       changeSelection: (index, value) =>
         dispatch({ type: "screenshot_selection_changed", index, value }),
       generate: generateScreenshots,
       previewFrame: previewWorkflowFrame,
-      remove: (artifactID) => removeMediaArtifacts([artifactID]),
-      removeMany: removeMediaArtifacts,
+      remove: (artifactID) => removeMediaArtifacts([artifactID], screenshotCommandCallbacks()),
+      removeMany: (artifactIDs) => removeMediaArtifacts(artifactIDs, screenshotCommandCallbacks()),
       selectFinal: (artifactID, selected) => {
         if (!workflowView.current?.media) return Promise.resolve(false);
-        return runBackendWorkflow((current, commandID, signal) =>
-          activePorts.workflow.setMediaSelection(
-            current,
-            [artifactID],
-            selected,
-            commandID,
-            signal,
-          ),
+        return runBackendWorkflow(
+          (current, commandID, signal) =>
+            activePorts.workflow.setMediaSelection(
+              current,
+              [artifactID],
+              selected,
+              commandID,
+              signal,
+            ),
+          screenshotCommandCallbacks(),
         );
       },
       reorderFinal: (fromIndex, toIndex) => {
@@ -2687,20 +3177,24 @@ export function ReleaseSessionProvider({
       saveFinal: () => persistFinalScreenshotArtifacts(selectedScreenshotIDs),
       selectArtifact: (artifactID, selected) => {
         if (!workflowView.current) return Promise.resolve(false);
-        return runBackendWorkflow((current, commandID, signal) =>
-          activePorts.workflow.setMediaSelection(
-            current,
-            [artifactID],
-            selected,
-            commandID,
-            signal,
-          ),
+        return runBackendWorkflow(
+          (current, commandID, signal) =>
+            activePorts.workflow.setMediaSelection(
+              current,
+              [artifactID],
+              selected,
+              commandID,
+              signal,
+            ),
+          screenshotCommandCallbacks(),
         );
       },
       deleteArtifacts: (artifactIDs) => {
         if (!workflowView.current) return Promise.resolve(false);
-        return runBackendWorkflow((current, commandID, signal) =>
-          activePorts.workflow.deleteMedia(current, artifactIDs, commandID, signal),
+        return runBackendWorkflow(
+          (current, commandID, signal) =>
+            activePorts.workflow.deleteMedia(current, artifactIDs, commandID, signal),
+          screenshotCommandCallbacks(),
         );
       },
       readImage: async (artifactID) => workflowMediaURL(artifactID),

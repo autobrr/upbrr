@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/description"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -94,6 +95,7 @@ func ComposeDescription(
 	if logger == nil {
 		logger = api.NopLogger{}
 	}
+	keptDescription, audioAnalysis := description.SplitTrailingSourceAudioSpoiler(keptDescription)
 
 	parts := make([]string, 0, 10)
 	seenParts := make(map[string]struct{}, 4)
@@ -170,6 +172,14 @@ func ComposeDescription(
 	}
 
 	logger.Tracef("trackers: unit3d desc part=mediainfo skipped (sent via API)")
+	if audioAnalysis != "" {
+		thumbnailSize := appConfig.Description.ThumbnailSize
+		if thumbnailSize <= 0 {
+			thumbnailSize = 350
+		}
+		audioAnalysis = strings.ReplaceAll(audioAnalysis, "[img]", fmt.Sprintf("[img=%d]", thumbnailSize))
+		appendUniquePart(audioAnalysis, "audio_analysis")
+	}
 
 	filteredScreenshots := filterScreenshotDuplicates(screenshots, keptDescription, menuImages)
 	logger.Tracef("trackers: unit3d desc screenshots total=%d filtered=%d", len(screenshots), len(filteredScreenshots))

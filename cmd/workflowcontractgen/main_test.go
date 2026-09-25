@@ -273,6 +273,7 @@ func TestOpenAPIRoutesUseProjectedBodiesAndAccurateResponses(t *testing.T) {
 	}
 
 	for _, requestPath := range []string{
+		"/workflows/{workflowId}/audio-analysis",
 		"/workflows/{workflowId}/media/{mediaId}/images/upload",
 		"/workflows/{workflowId}/media/{mediaId}/images/retry",
 		"/workflows/{workflowId}/uploads/{resultId}/retry",
@@ -300,6 +301,30 @@ func TestOpenAPIRoutesUseProjectedBodiesAndAccurateResponses(t *testing.T) {
 	revisionSchema := requireType[map[string]any](t, revision["schema"])
 	if revisionSchema["minimum"] != 1 {
 		t.Fatalf("media revision schema = %#v", revisionSchema)
+	}
+	audioArtifact := operationAt(
+		t,
+		paths,
+		"/workflows/{workflowId}/audio-analysis/{analysisId}/artifacts/{artifactId}",
+		"get",
+	)
+	audioRevision := parameterAt(t, audioArtifact, "query", "revision")
+	if audioRevision["required"] != true || audioRevision["example"] != 1 {
+		t.Fatalf("audio analysis revision parameter = %#v", audioRevision)
+	}
+	audioResponses := requireType[map[string]any](t, audioArtifact["responses"])
+	audioOK := requireType[map[string]any](t, audioResponses["200"])
+	audioContent := requireType[map[string]any](t, audioOK["content"])
+	if len(audioContent) != 2 {
+		t.Fatalf("audio analysis artifact content types = %#v", audioContent)
+	}
+	png := requireType[map[string]any](t, audioContent["image/png"])
+	pngSchema := requireType[map[string]any](t, png["schema"])
+	stats := requireType[map[string]any](t, audioContent["text/plain"])
+	statsSchema := requireType[map[string]any](t, stats["schema"])
+	if pngSchema["type"] != "string" || pngSchema["format"] != "binary" ||
+		statsSchema["type"] != "string" || statsSchema["format"] != nil {
+		t.Fatalf("audio analysis artifact schemas = png:%#v stats:%#v", pngSchema, statsSchema)
 	}
 }
 
