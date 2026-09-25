@@ -193,69 +193,48 @@ func TestHDBClaimHeaderValidation(t *testing.T) {
 	if records, complete := extractHDBClaimRecords(`<div>Show -- Site(s) Uploaded To<br>Harbor Watch -- HDB -- GRP</div>`); complete || len(records) != 0 {
 		t.Fatalf("incomplete header accepted: %#v, complete=%t", records, complete)
 	}
-}
-
-func TestHDBEditFooterAllowsConfiguredOwnClaim(t *testing.T) {
-	t.Parallel()
-	const footer = `<p><font size="1" class="small">Last edited by <a href="/userdetails.php?id=123"><b>editor</b></a> at 2026-09-02 12:54:49 </font></p>`
-	for _, tt := range []struct {
-		name           string
-		internalGroups config.CSVList
-		extra          string
-		wantClaim      bool
-		wantComplete   bool
-	}{
-		{
-name: "configured owner",
- internalGroups: config.CSVList{"-grp"},
- wantComplete: true,
-},
-		{
-name: "unconfigured owner",
- wantClaim: true,
- wantComplete: true,
-},
-		{
-name: "malformed row before footer",
- internalGroups: config.CSVList{"GRP"},
- extra: "Unrecognized claim row<br>",
- wantClaim: true,
-},
-		{
-name: "conflicting owner before footer",
- internalGroups: config.CSVList{"GRP"},
- extra: "Harbor Watch -- HDB -- Other<br>",
- wantClaim: true,
- wantComplete: true,
-},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			page := `<div class="post">Show -- Site(s) Uploaded To -- Group<br>Harbor Watch -- HDB -- GRP<br>` + tt.extra + footer + `</div>`
-			if _, complete := extractHDBClaimRecords(page); complete != tt.wantComplete {
-				t.Fatalf("complete=%t want=%t", complete, tt.wantComplete)
-			}
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				_, _ = w.Write([]byte(page))
-			}))
-			defer server.Close()
-			cfg := hdbClaimConfig(t)
-			cfg.Trackers.Trackers = map[string]config.TrackerConfig{"HDB": {InternalGroups: tt.internalGroups}}
-			d := New()
-			d.baseURL, d.httpClient = server.URL, server.Client()
-			meta := hdbClaimSubject()
-			meta.Tag = "GRP"
-			checker := d.NewClaimChecker(cfg, nil)
-			for range 2 {
-				if claimed, err := checker.HasClaim(t.Context(), meta); err != nil || claimed != tt.wantClaim {
-					t.Fatalf("claimed=%t want=%t err=%v", claimed, tt.wantClaim, err)
-				}
-			}
-		})
+	malformedReference := `<div>Show -- Site(s) Uploaded To -- Group<br>Harbor Watch -- HDB -- NTb<br>` +
+		`Alias -- HDBX -- Other -- See "Harbor Watch"</div>`
+	if records, complete := extractHDBClaimRecords(malformedReference); complete || len(records) != 1 {
+		t.Fatalf("malformed reference row accepted: %#v, complete=%t", records, complete)
 	}
 }
 
-func TestHDBTrailingTextRetainsBlockingEvidence(t *testing.T) {
+func TestHDBEditFooterCompletesRefreshAndReplacesInvalidCache(t *testing.T) {
+	t.Parallel()
+	const footer = `<p><font size="1" class="small">Last edited by <a href="https://hdbits.org/userdetails.php?id=123"><b>editor</b></a> at 2026-09-02 12:54:49 </font></p>`
+	page := `<div class="post">ALL titles on the list are also claimed for HDB.<br>Show -- Site(s) Uploaded To -- Group<br>` +
+		`Harbor Watch -- BTN -- NTb -- AMZN, PMTP<br>` +
+		`Harbor Watch: Evolution -- | -- -- See "Harbor Watch"<br>` +
+		`Portside Patrol -- BTN -- NTb -- AMZN<br>` +
+		`Harbor Watch Spinoff -- | -- -- See: Portside Patrol<br>` + footer + `<br>Back to top</div>`
+	records, complete := extractHDBClaimRecords(page)
+	if !complete || len(records) != 2 || records[0].Title != "Harbor Watch" || !records[0].RelayedFromBTN ||
+		!slices.Contains(records[0].Aliases, "Harbor Watch: Evolution") || !slices.Contains(records[1].Aliases, "Harbor Watch Spinoff") {
+		t.Fatalf("footer-bounded list = %#v, complete=%t", records, complete)
+	}
+
+	path := filepath.Join(t.TempDir(), "claims.json")
+	if err := os.WriteFile(path, []byte(`{"version":1,"fetched_at":1,"complete":true,"claims":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	endpoint := "https://hdb.example" + hdbClaimsPath
+	checker := &claimChecker{
+		endpoint: endpoint,
+		logger:   api.NopLogger{},
+		fetchOverride: func(context.Context) (hdbClaimData, error) {
+			return hdbClaimData{Records: records, Complete: complete}, nil
+		},
+	}
+	if claims, err := checker.loadHDBClaims(t.Context(), path, hdbClaimsCacheTTL); err != nil || !claims.Complete {
+		t.Fatalf("complete refresh = %#v, %v", claims, err)
+	}
+	if cached, err := readHDBClaimCache(path, endpoint); err != nil || !cached.Complete || len(cached.Records) != 2 {
+		t.Fatalf("replacement cache = %#v, %v", cached, err)
+	}
+}
+
+func TestHDBTrailingTextRetainsClaimEvidence(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
 		name   string
@@ -291,8 +270,8 @@ func TestHDBTrailingTextRetainsBlockingEvidence(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if claimed, err := d.NewClaimChecker(cfg, nil).HasClaim(t.Context(), meta); err != nil || !claimed {
-				t.Fatalf("partial evidence = %t, %v; want blocked", claimed, err)
+			if claimed, err := d.NewClaimChecker(cfg, nil).HasClaim(t.Context(), meta); err != nil || claimed {
+				t.Fatalf("partial evidence = %t, %v; want own-group bypass", claimed, err)
 			}
 			after, err := os.ReadFile(path)
 			if tt.cached {
@@ -587,7 +566,7 @@ func TestHDBCacheReplacement(t *testing.T) {
 	}
 }
 
-func TestHDBInternalGroupBypassRequiresFreshDirectUnambiguousClaim(t *testing.T) {
+func TestHDBInternalGroupBypassRequiresUnambiguousClaimOwner(t *testing.T) {
 	t.Parallel()
 	base := config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
 		"HDB": {InternalGroups: config.CSVList{"NTb"}},
@@ -611,13 +590,12 @@ func TestHDBInternalGroupBypassRequiresFreshDirectUnambiguousClaim(t *testing.T)
 			}},
 		},
 		{
-			name: "stale direct own group blocks",
+			name: "stale direct own group bypasses",
 			records: []hdbClaimRecord{{
 				Title: "Harbor Watch",
 				Sites: []string{"HDB"},
 				Group: "NTb",
 			}},
-			want: true,
 		},
 		{
 			name:  "conflicting owner blocks",
@@ -651,7 +629,7 @@ func TestHDBInternalGroupBypassRequiresFreshDirectUnambiguousClaim(t *testing.T)
 			want: true,
 		},
 		{
-			name:  "relay cannot prove HDB owner",
+			name:  "relayed own group bypasses",
 			fresh: true,
 			records: []hdbClaimRecord{{
 				Title:          "Harbor Watch",
@@ -659,7 +637,6 @@ func TestHDBInternalGroupBypassRequiresFreshDirectUnambiguousClaim(t *testing.T)
 				Group:          "NTb",
 				RelayedFromBTN: true,
 			}},
-			want: true,
 		},
 	}
 	for _, tt := range cases {
@@ -764,8 +741,8 @@ func TestInvalidHDBClaimCacheCannotAuthorizeBypass(t *testing.T) {
 					return hdbClaimData{}, errors.New("HDB unavailable")
 				},
 			}
-			if claims, err := checker.loadHDBClaims(t.Context(), path, hdbClaimsCacheTTL); err == nil || claims.FreshStructured {
-				t.Fatalf("invalid cache authorized fresh data: %#v, %v", claims, err)
+			if claims, err := checker.loadHDBClaims(t.Context(), path, hdbClaimsCacheTTL); err == nil || len(claims.Records) != 0 {
+				t.Fatalf("invalid cache returned claims: %#v, %v", claims, err)
 			}
 		})
 	}
