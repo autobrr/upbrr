@@ -76,6 +76,14 @@ ACM duplicate searches gather the full TMDB work within the movie or TV category
 
 For an ACM report, enable `--log-level trace` for the affected run. Search diagnostics include the work query and pagination decisions. Payload diagnostics include numeric classification IDs and evidence byte counts, without copying descriptions or MediaInfo into these messages. Review all logs before sharing and remove credentials, private URLs, and identifying release details. A successful local preparation does not confirm that ACM accepted an upload.
 
+## SAM upload rules
+
+For SAM, movie torrents require exactly one main video file. TV uploads require one detected season matching the selected season when known; a non-pack TV upload must contain one video file and one episode. Season packs require a current TVDB or TVmaze status of ended, cancelled, or completed (TVDB takes precedence when both report a status). Missing package evidence produces a warning; a missing or ineligible series status blocks a season pack.
+
+When the original language is not Portuguese, each media file must have original-language audio and Portuguese subtitles. Missing language evidence produces a warning; a known mismatch blocks the upload. SAM's generated TV and anime names retain the year when known. A `DUAL` marker is omitted when the resolved audio languages do not include Portuguese.
+
+SAM duplicate comparison uses source, resolution, video codec, audio codec, and channel layout as slot dimensions. A different known audio-language set can coexist; missing languages alone do not establish this exception. The comparison uses audio tracks from Unit3D search MediaInfo when present. Review incomplete or conflicting duplicate evidence rather than assuming it is a separate slot.
+
 ## Image hosts and clients
 
 Trackers can restrict usable image hosts or select tracker-specific image/client overrides. Configure a compatible host before media preparation. Confirm the final hosted links and client injection settings per tracker.
