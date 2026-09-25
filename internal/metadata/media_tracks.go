@@ -46,22 +46,52 @@ func mediaTrackFacts(meta preparationstate.State, doc mediaInfoDoc) ([]api.Media
 			trackKey = manifest + ":" + strconv.Itoa(ordinal)
 		}
 		title := trackString(track, "Title", "Title_String", "Title_String2", "Title_String3")
-		detected := languageutil.NormalizeLanguageList([]string{trackString(track, "Language", "Language_String", "Language_String2", "Language_String3")})
+		rawLanguage := trackString(track, "Language", "Language_String", "Language_String2", "Language_String3")
+		detected := languageutil.NormalizeLanguageList([]string{rawLanguage})
 		tracks = append(tracks, api.MediaTrackFacts{
-			ID:                  opaqueMediaTrackID(resourceID, kind, trackKey),
-			Kind:                kind,
-			ResourceID:          resourceID,
-			ManifestFingerprint: manifest,
-			NativeID:            nativeID,
-			Ordinal:             ordinal,
-			DetectedLanguages:   append([]string(nil), detected...),
-			Languages:           append([]string(nil), detected...),
-			LanguageProvenance:  api.FactProvenanceAutomatic,
-			Default:             mediaTrackDefault(track),
-			Commentary:          isCommentaryOrCompatibilityAudioValue(title),
+			ID:                     opaqueMediaTrackID(resourceID, kind, trackKey),
+			Kind:                   kind,
+			ResourceID:             resourceID,
+			ManifestFingerprint:    manifest,
+			NativeID:               nativeID,
+			Ordinal:                ordinal,
+			DetectedLanguages:      append([]string(nil), detected...),
+			DetectedLanguageRegion: explicitPortugueseTrackRegion(rawLanguage, title, detected),
+			Languages:              append([]string(nil), detected...),
+			LanguageProvenance:     api.FactProvenanceAutomatic,
+			Default:                mediaTrackDefault(track),
+			Commentary:             isCommentaryOrCompatibilityAudioValue(title),
 		})
 	}
 	return tracks, aggregateTrackLanguages(tracks, api.MediaTrackAudio), aggregateTrackLanguages(tracks, api.MediaTrackSubtitle), nil
+}
+
+// ponytail: only explicit Portuguese locales; expand when another track locale has evidence.
+func explicitPortugueseTrackRegion(rawLanguage, title string, detected []string) string {
+	if len(detected) != 1 || detected[0] != "Portuguese" {
+		return ""
+	}
+	code := ""
+	switch strings.ToLower(strings.TrimSpace(rawLanguage)) {
+	case "pt-br":
+		code = "pt-BR"
+	case "pt-pt":
+		code = "pt-PT"
+	}
+	titleRegion := ""
+	switch strings.ToLower(strings.TrimSpace(title)) {
+	case "portuguese (brazil)", "pt-br":
+		titleRegion = "pt-BR"
+	case "portuguese (portugal)", "pt-pt":
+		titleRegion = "pt-PT"
+	}
+	if code != "" && titleRegion != "" && code != titleRegion {
+		return ""
+	}
+	if code != "" {
+		return code
+	}
+	return titleRegion
 }
 
 func mediaTrackKind(track map[string]any) (api.MediaTrackKind, bool) {

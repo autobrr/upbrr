@@ -46,6 +46,56 @@ func TestMediaTrackFactsExcludesCommentaryFromAudioAggregate(t *testing.T) {
 	}
 }
 
+func TestMediaTrackFactsPreservesExplicitPortugueseRegionOnly(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, language, title, region string
+	}{
+		{"brazil-code", "pt-BR", "", "pt-BR"},
+		{"portugal-code", "pt-PT", "", "pt-PT"},
+		{"brazil-title", "por", "Portuguese (Brazil)", "pt-BR"},
+		{"portugal-title", "por", "Portuguese (Portugal)", "pt-PT"},
+		{"brazil-title-code", "por", "pt-BR", "pt-BR"},
+		{"portugal-title-code", "por", "pt-PT", "pt-PT"},
+		{"conflicting-evidence", "pt-BR", "Portuguese (Portugal)", ""},
+		{"generic-code", "por", "", ""},
+		{"generic-title", "por", "Portuguese", ""},
+		{"unrelated-title", "jpn", "Portuguese (Brazil)", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := mediaInfoDoc{}
+			doc.Media.Track = []map[string]any{{"@type": "Audio", "Language": tc.language, "Title": tc.title}, {"@type": "Text", "Language": tc.language, "Title": tc.title}}
+			tracks, audio, subtitles, err := mediaTrackFacts(preparationstate.State{VideoPath: "episode.mkv"}, doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantLanguage := "Portuguese"
+			if tc.language == "jpn" {
+				wantLanguage = "Japanese"
+			}
+			for _, track := range tracks {
+				if !slices.Equal(track.DetectedLanguages, []string{wantLanguage}) || !slices.Equal(track.Languages, []string{wantLanguage}) || track.DetectedLanguageRegion != tc.region {
+					t.Errorf("track=%+v, want region %q and display %q", track, tc.region, wantLanguage)
+				}
+			}
+			if !slices.Equal(audio, []string{wantLanguage}) || !slices.Equal(subtitles, []string{wantLanguage}) {
+				t.Fatalf("aggregates=%v/%v, want %q", audio, subtitles, wantLanguage)
+			}
+		})
+	}
+}
+
+func TestManualTrackLanguageCorrectionDoesNotInventRegion(t *testing.T) {
+	t.Parallel()
+	meta := preparationstate.State{MediaTracks: []api.MediaTrackFacts{{ID: "track", Kind: api.MediaTrackSubtitle, ManifestFingerprint: "scan", DetectedLanguages: []string{"Portuguese"}, Languages: []string{"Portuguese"}}}}
+	if err := applyTrackLanguageOverrides(&meta, []api.TrackLanguageCorrection{{TrackID: "track", ManifestFingerprint: "scan", Languages: []string{"por"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if meta.MediaTracks[0].DetectedLanguageRegion != "" || !slices.Equal(meta.MediaTracks[0].Languages, []string{"Portuguese"}) {
+		t.Fatalf("generic correction invented region: %+v", meta.MediaTracks[0])
+	}
+}
+
 func TestApplyTrackLanguageOverridesRequiresCurrentManifest(t *testing.T) {
 	t.Parallel()
 

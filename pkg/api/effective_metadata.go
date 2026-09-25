@@ -124,10 +124,12 @@ type MediaTrackFacts struct {
 	NativeID            string
 	Ordinal             int
 	DetectedLanguages   []string
-	Languages           []string
-	LanguageProvenance  FactProvenance
-	Default             bool
-	Commentary          bool
+	// DetectedLanguageRegion records an explicit track locale, not a release-wide language claim.
+	DetectedLanguageRegion string
+	Languages              []string
+	LanguageProvenance     FactProvenance
+	Default                bool
+	Commentary             bool
 }
 
 // ManualLanguageFacts contains the resolved manual lists used in generated descriptions.
