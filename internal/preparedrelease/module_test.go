@@ -875,6 +875,41 @@ func TestOperationSubjectsUseExactGenerationAndDetachedFacts(t *testing.T) {
 	}
 }
 
+func TestAnimeCorrectionReachesPreparedAndOperationSubjects(t *testing.T) {
+	for _, anime := range []bool{true, false} {
+		t.Run(strconv.FormatBool(anime), func(t *testing.T) {
+			path := writePreparedTestFile(t, "source.mkv", "source")
+			store := newMemoryStore()
+			module := newTestModule(t, store, &recordingCollector{facts: &CollectedFacts{
+				Media: api.MediaFacts{Anime: !anime},
+			}})
+			input := api.PrepareInput{SourcePath: path, Instructions: api.ReleaseFactInstructions{
+				Metadata: api.MetadataOverrides{Anime: new(anime)},
+			}}
+			prepared, err := module.Prepare(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if prepared.EffectiveInstructions.Metadata.Anime == nil || *prepared.EffectiveInstructions.Metadata.Anime != anime || prepared.Release.Media.Anime != anime {
+				t.Fatalf("effective anime = %v, prepared anime = %t, want %t", prepared.EffectiveInstructions.Metadata.Anime, prepared.Release.Media.Anime, anime)
+			}
+			persisted, err := store.LoadPreparedRelease(t.Context(), path)
+			if err != nil || persisted.Media.Anime != anime {
+				t.Fatalf("persisted anime = %t, err = %v, want %t", persisted.Media.Anime, err, anime)
+			}
+			ref := api.ReleaseRef{SourcePath: path, Generation: prepared.Release.Generation}
+			upload, err := module.ResolveUploadSubject(t.Context(), api.UploadSubjectInput{Release: ref})
+			if err != nil || upload.Anime != anime {
+				t.Fatalf("upload anime = %t, err = %v, want %t", upload.Anime, err, anime)
+			}
+			duplicate, err := module.ResolveDuplicateSubject(t.Context(), api.DuplicateCheckInput{Release: ref})
+			if err != nil || duplicate.Anime != anime {
+				t.Fatalf("duplicate anime = %t, err = %v, want %t", duplicate.Anime, err, anime)
+			}
+		})
+	}
+}
+
 func TestOperationSubjectsCarryCorrectedFactsConsistently(t *testing.T) {
 	t.Parallel()
 
