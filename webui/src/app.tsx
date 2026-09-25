@@ -1,13 +1,12 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { applicationClient, configClient, hostBrowser as hostBrowserClient } from "./api/app";
 import { isHostPathCaseInsensitive } from "./api/client";
 import { WorkflowOperationProgress } from "./components/WorkflowOperationProgress";
 import { WorkflowRequiredActions } from "./components/WorkflowRequiredActions";
-import AudioAnalysisPage from "./pages/audio_analysis";
 import BlurayCandidatesPage from "./pages/bluray_candidates";
 import DescriptionBuilderPage from "./pages/description_builder";
 import DupeCheckPage from "./pages/dupe_check";
@@ -16,7 +15,6 @@ import InputPage from "./pages/input";
 import LoggingPage from "./pages/logging";
 import MenuImagesPage from "./pages/menu_images";
 import ScreenshotsPage from "./pages/screenshots";
-import SettingsPage from "./pages/settings";
 import TrackerDataPage from "./pages/tracker_data";
 import TrackerUploadPage from "./pages/tracker_upload";
 import UploadImagesPage from "./pages/upload_images";
@@ -40,6 +38,9 @@ import {
   type SourcePathHistoryEntry,
   type SourcePathMode,
 } from "./utils/inputHistory";
+
+const AudioAnalysisPage = lazy(() => import("./pages/audio_analysis"));
+const SettingsPage = lazy(() => import("./pages/settings"));
 
 const appLayoutClass =
   "relative z-[1] block min-h-screen ml-[204px] max-[960px]:ml-0 max-[960px]:pb-[78px]";
@@ -563,36 +564,38 @@ function AppShell({
             onNavigate={(route) => openReleaseTab(releaseRouteTabs[route], route)}
           />
           {activeTab === "settings" ? (
-            <SettingsPage
-              configData={settingsConfigData}
-              settingsLoading={settingsLoading}
-              settingsExporting={settingsExporting}
-              settingsImporting={settingsImporting}
-              settingsDirty={settingsDirty}
-              settingsSaved={settingsSaved}
-              settingsError={settingsError}
-              configOpStatus={configOpStatus}
-              dismissConfigOpStatus={() => setConfigOpStatus(null)}
-              settingsSection={settingsSection}
-              settingsSections={settingsSections}
-              trackerSelectionNames={settingsTrackerSelectionNames}
-              showAdvancedToggle={showAdvancedToggle}
-              advancedOpen={advancedOpen}
-              setSettingsSection={setSettingsSection}
-              setSettingsAdvanced={setSettingsAdvanced}
-              loadSettings={loadSettings}
-              handleExportSettings={() => void handleExportSettings()}
-              handleImportConfig={() => setImportConfirmOpen(true)}
-              importConfirmOpen={importConfirmOpen}
-              handleImportConfigConfirm={handleImportConfigConfirm}
-              handleImportConfigCancel={() => !settingsImporting && setImportConfirmOpen(false)}
-              handleSaveSettings={handleSaveSettings}
-              renderImageHostingSection={renderImageHostingSection}
-              renderTrackerSection={renderTrackerSection}
-              renderTorrentClientsSection={renderTorrentClientsSection}
-              renderField={renderField}
-              sectionFieldMeta={sectionFieldMeta}
-            />
+            <Suspense fallback={<p className="muted">Loading settings…</p>}>
+              <SettingsPage
+                configData={settingsConfigData}
+                settingsLoading={settingsLoading}
+                settingsExporting={settingsExporting}
+                settingsImporting={settingsImporting}
+                settingsDirty={settingsDirty}
+                settingsSaved={settingsSaved}
+                settingsError={settingsError}
+                configOpStatus={configOpStatus}
+                dismissConfigOpStatus={() => setConfigOpStatus(null)}
+                settingsSection={settingsSection}
+                settingsSections={settingsSections}
+                trackerSelectionNames={settingsTrackerSelectionNames}
+                showAdvancedToggle={showAdvancedToggle}
+                advancedOpen={advancedOpen}
+                setSettingsSection={setSettingsSection}
+                setSettingsAdvanced={setSettingsAdvanced}
+                loadSettings={loadSettings}
+                handleExportSettings={() => void handleExportSettings()}
+                handleImportConfig={() => setImportConfirmOpen(true)}
+                importConfirmOpen={importConfirmOpen}
+                handleImportConfigConfirm={handleImportConfigConfirm}
+                handleImportConfigCancel={() => !settingsImporting && setImportConfirmOpen(false)}
+                handleSaveSettings={handleSaveSettings}
+                renderImageHostingSection={renderImageHostingSection}
+                renderTrackerSection={renderTrackerSection}
+                renderTorrentClientsSection={renderTorrentClientsSection}
+                renderField={renderField}
+                sectionFieldMeta={sectionFieldMeta}
+              />
+            </Suspense>
           ) : activeTab === "logging" ? (
             <LoggingPage
               configData={settingsConfigData}
@@ -659,12 +662,14 @@ function AppShell({
               setLightboxAlt={setLightboxAlt}
             />
           ) : activeTab === "audio_analysis" ? (
-            <AudioAnalysisPage
-              key={releaseSession.audioAnalysis.view.releaseGeneration}
-              facet={releaseSession.audioAnalysis}
-              setLightboxImage={setLightboxImage}
-              setLightboxAlt={setLightboxAlt}
-            />
+            <Suspense fallback={<p className="muted">Loading audio analysis…</p>}>
+              <AudioAnalysisPage
+                key={releaseSession.audioAnalysis.view.releaseGeneration}
+                facet={releaseSession.audioAnalysis}
+                setLightboxImage={setLightboxImage}
+                setLightboxAlt={setLightboxAlt}
+              />
+            </Suspense>
           ) : activeTab === "description_builder" ? (
             <DescriptionBuilderPage
               facet={releaseSession.descriptions}
