@@ -83,6 +83,24 @@ func TestBuildUnit3DSearchParamsUsesEMUWTrackerMappings(t *testing.T) {
 	}
 }
 
+func TestBuildUnit3DSearchParamsUsesCBRAnimeCategory(t *testing.T) {
+	t.Parallel()
+	meta := api.DuplicateSubject{
+		Identity:    api.ExternalIdentity{TMDBID: 270603, Category: "TV"},
+		Anime:       true,
+		ReleaseName: "The.Exiled.Heavy.Knight.S01E13.1080p.WEB-DL",
+		SeasonInt:   1,
+		EpisodeInt:  13,
+	}
+	if got := buildDupeSearchParams(meta, "CBR").Get("categories[]"); got != "4" {
+		t.Fatalf("CBR anime upload category is 4, duplicate search used %q", got)
+	}
+	meta.Anime = false
+	if got := buildDupeSearchParams(meta, "CBR").Get("categories[]"); got != "2" {
+		t.Fatalf("CBR non-anime TV category is 2, got %q", got)
+	}
+}
+
 func TestBuildUnit3DSearchParamsUsesEMUWPaired1080Resolution(t *testing.T) {
 	t.Parallel()
 
