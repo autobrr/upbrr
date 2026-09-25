@@ -132,11 +132,12 @@ func annotationAssignmentIndex(src string) int {
 	for i := 0; i < len(src); i++ {
 		ch := src[i]
 		if quote != 0 {
-			if escaped {
+			switch {
+			case escaped:
 				escaped = false
-			} else if ch == '\\' {
+			case ch == '\\':
 				escaped = true
-			} else if ch == quote {
+			case ch == quote:
 				quote = 0
 			}
 			continue
