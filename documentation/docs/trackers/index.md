@@ -58,6 +58,14 @@ upbrr resolves tracker-specific upload and search names before duplicate checkin
 
 Tracker-specific categories, source/type mappings, descriptions, media selection, questionnaires, and auth flows remain owned by the tracker adapter. A successful mapping does not prove the upload complies with every current site rule.
 
+## SAM upload rules
+
+For SAM, movie torrents require exactly one main video file. TV uploads require one detected season matching the selected season when known; a non-pack TV upload must contain one video file and one episode. Season packs require a current TVDB or TVmaze status of ended, cancelled, or completed (TVDB takes precedence when both report a status). Missing package evidence produces a warning; a missing or ineligible series status blocks a season pack.
+
+When the original language is not Portuguese, each media file must have original-language audio and Portuguese subtitles. Missing language evidence produces a warning; a known mismatch blocks the upload. SAM's generated TV and anime names retain the year when known. A `DUAL` marker is omitted when the resolved audio languages do not include Portuguese.
+
+SAM duplicate comparison uses source, resolution, video codec, audio codec, and channel layout as slot dimensions. A different known audio-language set can coexist; missing languages alone do not establish this exception. The comparison uses audio tracks from Unit3D search MediaInfo when present. Review incomplete or conflicting duplicate evidence rather than assuming it is a separate slot.
+
 ## Image hosts and clients
 
 Trackers can restrict usable image hosts or select tracker-specific image/client overrides. Configure a compatible host before media preparation. Confirm the final hosted links and client injection settings per tracker.
