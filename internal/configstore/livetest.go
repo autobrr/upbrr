@@ -406,7 +406,10 @@ func prepareLiveTestClone(
 	}
 	if err := SaveToRepositoryWithPreSave(ctx, loaded, repo, p.DBPath, func(ctx context.Context, tx *sql.Tx, _ []byte) error {
 		_, err := repo.ActivateConfigTx(ctx, tx, activation, fingerprint, nil, nil)
-		return err
+		if err != nil {
+			return fmt.Errorf("live-test activate isolated config: %w", err)
+		}
+		return nil
 	}); err != nil {
 		return fmt.Errorf("live-test persist isolated config: %w", err)
 	}
