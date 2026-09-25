@@ -203,8 +203,9 @@ const (
 )
 
 // ExactMediaAssets is one authoritative workflow-owned media revision.
-// Screenshots and DVD menus are independent channels, as are their hosted
-// variants.
+// Screenshots, DVD menus, and audio analysis are independent channels, as are
+// their hosted variants. Audio tracks, uploads, and host choices require an
+// AudioAnalysis reference to the exact revision used for a description.
 type ExactMediaAssets struct {
 	Screenshots       []ScreenshotImage
 	DVDMenus          []DVDMenuCaptureImage

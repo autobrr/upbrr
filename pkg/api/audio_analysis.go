@@ -11,7 +11,9 @@ import (
 	"time"
 )
 
-// AudioAnalysisProfileVersion identifies the fixed numerical and raster profile.
+// AudioAnalysisProfileVersion identifies the numerical, report, and raster
+// profile required for new analysis attempts. Historical v2 results remain
+// readable, but new instructions must use this version.
 const AudioAnalysisProfileVersion = "audio-analysis-v3"
 
 const (
@@ -128,7 +130,10 @@ func AsAudioAnalysisFailure(err error) (AudioAnalysisFailure, bool) {
 	return typed.Failure, true
 }
 
-// AudioAnalysisInstructions bind one exact prepared resource and ordered track selection.
+// AudioAnalysisInstructions request variants for an ordered selection of stable
+// track IDs from one resource within a prepared generation. TrackIDs use
+// prepared source order, not FFmpeg stream indexes; the preparation owner
+// verifies them against the referenced generation.
 type AudioAnalysisInstructions struct {
 	Release        ReleaseRef                  `json:"release"`
 	ResourceID     string                      `json:"resourceId"`
@@ -139,7 +144,9 @@ type AudioAnalysisInstructions struct {
 	ResourceLimits AudioAnalysisResourceLimits `json:"resourceLimits,omitempty"`
 }
 
-// Normalize validates and returns detached deterministic instructions.
+// Normalize validates request shape, fills the current profile and default
+// decoder thread count, and returns detached track and variant slices. It does
+// not verify the track IDs against a prepared release or decoder inventory.
 func (i AudioAnalysisInstructions) Normalize() (AudioAnalysisInstructions, error) {
 	result := i
 	result.ResourceID = strings.TrimSpace(result.ResourceID)
@@ -201,6 +208,7 @@ func (i AudioAnalysisInstructions) Normalize() (AudioAnalysisInstructions, error
 }
 
 // AudioAnalysisSubject is the private exact-generation input used by the decoder.
+// VideoPath is a host filesystem path and must not enter public workflow state.
 type AudioAnalysisSubject struct {
 	Release             ReleaseRef
 	SourcePath          string
@@ -213,6 +221,8 @@ type AudioAnalysisSubject struct {
 }
 
 // AudioAnalysisArtifact is one opaque, locally retained image or amplitude report.
+// Text is populated only for completed statistics; image dimensions are
+// populated only for completed PNG variants.
 type AudioAnalysisArtifact struct {
 	ID      PublicResourceID      `json:"id"`
 	Variant AudioAnalysisVariant  `json:"variant"`
@@ -223,7 +233,9 @@ type AudioAnalysisArtifact struct {
 	Failure *AudioAnalysisFailure `json:"failure,omitempty"`
 }
 
-// AudioAnalysisTrackResult reports the exact decoded frame and format facts for one track.
+// AudioAnalysisTrackResult reports decoded facts and variant outcomes for one
+// selected track. SampleFrames counts frames per channel, and Duration is in
+// seconds, derived from SampleFrames and SampleRate.
 type AudioAnalysisTrackResult struct {
 	TrackID       string                  `json:"trackId"`
 	Ordinal       int                     `json:"ordinal"`
@@ -241,6 +253,8 @@ type AudioAnalysisTrackResult struct {
 }
 
 // AudioAnalysisResult is one immutable generation-bound analysis attempt.
+// A partial result retains successful artifacts alongside failed tracks or
+// variants; canceled and interrupted attempts may also retain completed work.
 type AudioAnalysisResult struct {
 	ID                  AudioAnalysisResultID       `json:"id"`
 	WorkflowID          WorkflowID                  `json:"workflowId"`
@@ -260,7 +274,9 @@ type AudioAnalysisResult struct {
 	CompletedAt         *time.Time                  `json:"completedAt,omitempty" ts_type:"string"`
 }
 
-// Validate verifies public identity, authority, and terminal result shape.
+// Validate verifies public identity, authority, and terminal result shape,
+// including ordered track results and artifact status consistency. It does not
+// inspect retained artifact bytes or their private paths.
 func (r AudioAnalysisResult) Validate() error {
 	if err := validateSnapshotIdentity(string(r.ID), r.Revision, r.CreatedAt); err != nil {
 		return fmt.Errorf("audio analysis: %w", err)

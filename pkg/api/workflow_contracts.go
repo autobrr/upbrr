@@ -710,6 +710,8 @@ type UploadResult struct {
 }
 
 // ReleaseWorkflow is the revisioned aggregate of immutable stage references.
+// AudioAnalysisEnabled may be true before a result exists; disabling clears the
+// current AudioAnalysis reference.
 type ReleaseWorkflow struct {
 	SubmissionExclusions   []SubmissionExclusion                    `json:"submissionExclusions,omitempty"`
 	ID                     WorkflowID                               `json:"id"`

@@ -264,10 +264,11 @@ export type AudioAnalysisGenerateInput = Readonly<{
   resourceLimits?: AudioAnalysisResourceLimits;
 }>;
 
-/** Optional exact-generation waveform and spectrogram operation state. */
+/** Optional exact-generation analysis state and backend-owned operation intents. */
 export type AudioAnalysisFacet = Readonly<{
   view: Readonly<{
     available: boolean;
+    /** Persisted user intent; it may be true before a result exists. */
     enabled: boolean;
     status: FacetStatus;
     releaseGeneration: number;
@@ -275,6 +276,7 @@ export type AudioAnalysisFacet = Readonly<{
     sourceContext: string;
     primaryTrackID: string;
     tracks: readonly MediaTrackFacts[];
+    /** The current retained attempt, including successful work from partial runs. */
     result: AudioAnalysisResult | null;
     completed: number;
     total: number;
@@ -283,9 +285,12 @@ export type AudioAnalysisFacet = Readonly<{
     error: string;
   }>;
   generate(input: AudioAnalysisGenerateInput): Promise<boolean>;
+  /** Reuses the retained attempt's selection, variants, and resource limits. */
   retry(): Promise<boolean>;
   cancel(): Promise<boolean>;
+  /** Cancels active work first, then clears the current analysis reference. */
   disable(): Promise<boolean>;
+  /** Builds the authenticated URL for an artifact in the current attempt. */
   artifactURL(artifactID: string): string;
 }>;
 

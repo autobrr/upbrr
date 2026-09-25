@@ -260,8 +260,8 @@ type MediaArtifactBuilder interface {
 	) (api.MediaArtifactSet, any, error)
 }
 
-// RetainedAudioAnalysisResource opens owner-scoped analysis images without
-// exposing their filesystem paths through workflow snapshots.
+// RetainedAudioAnalysisResource opens an owner-scoped analysis image or
+// statistics report without exposing its filesystem path in workflow snapshots.
 type RetainedAudioAnalysisResource interface {
 	OpenArtifact(context.Context, api.AudioAnalysisResult, api.PublicResourceID) (MediaArtifactContent, error)
 }
@@ -282,6 +282,8 @@ type DescriptionResources struct {
 
 // AudioAnalysisBuilder resolves one exact prepared source and streams selected
 // audio tracks into locally retained artifacts, reusing compatible prior work.
+// Build may return a terminal result without a resource when no artifact was
+// completed. Errors before publication return no result or retained resource.
 type AudioAnalysisBuilder interface {
 	Build(
 		context.Context,
@@ -940,8 +942,8 @@ type AnalyzeAudioCommand struct {
 	IdempotencyKey   string
 }
 
-// SetAudioAnalysisEnabledCommand changes optional audio-analysis visibility
-// without running the decoder.
+// SetAudioAnalysisEnabledCommand changes durable audio-analysis intent without
+// running the decoder. Disabling clears the current analysis reference.
 type SetAudioAnalysisEnabledCommand struct {
 	WorkflowID       api.WorkflowID
 	ExpectedRevision api.WorkflowRevision

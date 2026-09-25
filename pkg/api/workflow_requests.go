@@ -234,15 +234,15 @@ type CaptureReleaseWorkflowMediaRequest struct {
 	Instructions MediaCaptureInstructions `json:"instructions"`
 }
 
-// AnalyzeReleaseWorkflowAudioRequest starts exact-generation local waveform
-// and spectrogram generation for an ordered prepared audio-track selection.
+// AnalyzeReleaseWorkflowAudioRequest starts local waveform, spectrogram, or
+// statistics generation for an ordered exact-generation audio-track selection.
 type AnalyzeReleaseWorkflowAudioRequest struct {
 	ReleaseWorkflowCommandContext
 	Instructions AudioAnalysisInstructions `json:"instructions"`
 }
 
-// SetReleaseWorkflowAudioAnalysisEnabledRequest changes the optional page's
-// durable enabled state without starting decode work.
+// SetReleaseWorkflowAudioAnalysisEnabledRequest changes durable analysis intent
+// without starting decode work. Disabling clears the current analysis reference.
 type SetReleaseWorkflowAudioAnalysisEnabledRequest struct {
 	ReleaseWorkflowCommandContext
 	Enabled bool `json:"enabled"`

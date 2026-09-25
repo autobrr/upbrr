@@ -46,18 +46,21 @@ export type ReleaseWorkflowPorts = Readonly<{
   current(workflowID: string, signal: AbortSignal): Promise<ReleaseWorkflowCurrent>;
   operation(workflowID: string, operationID: string, signal: AbortSignal): Promise<Operation>;
   cancelOperation(workflowID: string, operationID: string, signal: AbortSignal): Promise<Operation>;
+  /** Submits one prepared generation and ordered track selection for analysis. */
   analyzeAudio(
     current: ReleaseWorkflowCurrent,
     instructions: AudioAnalysisInstructions,
     idempotencyKey: string,
     signal: AbortSignal,
   ): Promise<ReleaseWorkflowCurrent>;
+  /** Persists analysis intent without starting a decode. */
   setAudioAnalysisEnabled(
     current: ReleaseWorkflowCurrent,
     enabled: boolean,
     idempotencyKey: string,
     signal: AbortSignal,
   ): Promise<ReleaseWorkflowCurrent>;
+  /** Addresses one artifact by its exact retained analysis revision. */
   audioAnalysisURL(
     current: ReleaseWorkflowCurrent,
     analysisID: string,

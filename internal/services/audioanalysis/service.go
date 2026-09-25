@@ -1,8 +1,8 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-// Package audioanalysis streams selected FFmpeg audio decodes into deterministic
-// waveform and spectrogram PNGs without retaining complete PCM in memory.
+// Package audioanalysis streams selected FFmpeg audio decodes into waveform and
+// spectrogram PNGs or amplitude reports without retaining complete PCM in memory.
 package audioanalysis
 
 import (
@@ -98,7 +98,8 @@ func (s *Service) ValidateSelection(
 }
 
 // AnalyzeFile analyzes a media file directly, without a prepared release or
-// workflow storage. Ordinals identify audio streams when selection is selected.
+// workflow storage. Ordinals are one-based audio-stream positions when selection
+// is selected. It creates a new run directory below outputRoot for artifacts.
 func (s *Service) AnalyzeFile(
 	ctx context.Context,
 	sourcePath string,
@@ -190,9 +191,11 @@ func (s *Service) AnalyzeFile(
 	}, "standalone", runRoot)
 }
 
-// Analyze streams the selected tracks into the requested image variants. The
-// workflow owner supplies the validated managed directory for attemptID and
-// owns track scheduling, retention, and aggregate status.
+// Analyze streams selected tracks into the requested image or statistics
+// variants. The workflow owner supplies the managed directory for attemptID
+// and owns track scheduling, retention, and aggregate status. Returned tracks
+// may include local failures even when err is nil; on cancellation or a
+// service-wide failure, completed tracks may accompany a non-nil err.
 func (s *Service) Analyze(
 	ctx context.Context,
 	subject api.AudioAnalysisSubject,

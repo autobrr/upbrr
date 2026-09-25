@@ -2628,8 +2628,9 @@ func (m *Module) MediaArtifact(
 	return content, nil
 }
 
-// AudioAnalysisArtifact returns one owner-scoped retained waveform or
-// spectrogram addressed by its exact analysis revision and opaque artifact ID.
+// AudioAnalysisArtifact returns one owner-scoped retained PNG or statistics
+// report addressed by its current analysis revision and opaque artifact ID.
+// It rejects stale references and artifacts that fail retained-file checks.
 func (m *Module) AudioAnalysisArtifact(
 	ctx context.Context,
 	ownerID string,

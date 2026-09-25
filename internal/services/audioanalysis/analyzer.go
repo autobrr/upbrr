@@ -299,6 +299,8 @@ func (p *parallelSpectrogram) close() {
 	p.workers.Wait()
 }
 
+// newSpectrogramAnalysis fixes SoX-compatible window and bucket geometry from
+// the estimated frame count; callers must verify it against the decoded count.
 func newSpectrogramAnalysis(channels int, sampleRate int, estimatedTotal int64) *spectrogramAnalysis {
 	analysis := &spectrogramAnalysis{
 		channels:    channels,
@@ -341,6 +343,8 @@ func spectrogramGeometry(sampleRate int, total int64, windowSum float64) (int64,
 	return hop, blockSteps
 }
 
+// matchesGeometry rejects a first pass whose measured duration changes the
+// hop, windows per column, or initial bucket grouping.
 func (a *spectrogramAnalysis) matchesGeometry(sampleRate int, total int64) bool {
 	hop, blockSteps := spectrogramGeometry(sampleRate, total, a.windowSum)
 	return !a.compacted && a.hop == hop && a.blockSteps == blockSteps
@@ -404,6 +408,8 @@ func (a *spectrogramAnalysis) compact() {
 	a.bucketFrames *= 2
 }
 
+// windowForRange rebuilds and scales the shortened Kaiser window at stream
+// edges; padding the full interior window would yield different power.
 func (a *spectrogramAnalysis) windowForRange(start int64, available int64) []float64 {
 	left := int(min(max(-start, 0), spectrogramFFTSize))
 	right := int(min(max(start+spectrogramFFTSize-available, 0), int64(spectrogramFFTSize-left)))
