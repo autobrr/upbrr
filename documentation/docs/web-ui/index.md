@@ -35,7 +35,7 @@ If **Legacy workflow recovery** appears, choose **Recover workflow** and check t
 | **Tracker Data**   | Review tracker-derived metadata when available.                          |
 | **Blu-ray**        | Select Blu-ray playlist or candidate data when the source requires it.   |
 | **Dupe Check**     | Review per-tracker search results, rules, and candidate upload names.    |
-| **Audio Analysis** | Generate local waveform and spectrogram PNGs for prepared audio tracks.  |
+| **Audio Analysis** | Generate audio PNGs and amplitude statistics text files.                 |
 | **Screenshots**    | Generate, import, order, and select screenshots.                         |
 | **Disc Menus**     | Capture DVD menus automatically or import disc-menu images.              |
 | **Upload Images**  | Publish selected images through configured hosts.                        |

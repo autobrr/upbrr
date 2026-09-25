@@ -1,6 +1,6 @@
 ---
 title: Audio analysis
-description: Generate local waveform and spectrogram PNGs from media audio tracks.
+description: Generate waveform and spectrogram PNGs and amplitude statistics text from media audio tracks.
 ---
 
 # Audio analysis
@@ -61,7 +61,7 @@ Each run creates a separate directory under `--audio-output`, preserving earlier
 4. Choose waveform, spectrogram, or both.
 5. Adjust **Threads per decoder** if the default does not suit the host.
 6. Click **Generate**.
-7. Preview, open, or download each successful PNG.
+7. Preview, open, or download each successful PNG, and view or download any generated amplitude statistics text file.
 
 Opening the page does not start work. Leaving it unopened or disabled does not block upload.
 
@@ -94,7 +94,7 @@ Retry without changing the prepared release, selected tracks, image types, or an
 
 ## Retention and access
 
-Generated PNGs from the upload workflow and Web UI live in upbrr-managed temporary storage. They have no time-based expiry, but workflow deletion, source changes, replacement analysis, or cleanup of the temporary directory can remove them. Files generated with `--audio-analysis-only` remain in the chosen output location.
+Generated PNGs and amplitude statistics text files from the upload workflow and Web UI live in upbrr-managed temporary storage. They have no time-based expiry, but workflow deletion, source changes, replacement analysis, or cleanup of the temporary directory can remove them. Files generated with `--audio-analysis-only` remain in the chosen output location.
 
 Browser and versioned API downloads remain bound to the workflow owner, analysis ID, artifact ID, and exact result revision. Artifact identifiers and URLs are opaque. See the [API reference](../api/index.md#audio-analysis-routes) for the versioned routes.
 
