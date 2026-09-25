@@ -490,7 +490,7 @@ type SeasonEpisodeFacts struct {
 }
 
 // PackageFacts contains source-layout facts derived without filesystem I/O.
-// Status remains partial until the caller supplies a complete all-file list.
+// Status is complete only for a verified manifest matching the selected files.
 type PackageFacts struct {
 	Status                    MetadataEvidenceStatus
 	KnownFileCount            int
@@ -687,7 +687,7 @@ func NewTrackerValidationSubject(subject UploadSubject, tracker string) TrackerV
 		BDInfoCount:          bdInfoEvidence.Count,
 		SceneNFO:             strings.TrimSpace(subject.SceneNFOPath) != "",
 	})
-	packageFacts := deriveValidationPackageFacts(subject.SourcePath, subject.FileList)
+	packageFacts := deriveUploadPackageFacts(subject)
 	mediaFacts := deriveValidationMediaFileFacts(subject, packageFacts.MediaFileCount)
 	assetFacts := deriveValidationAssetFacts(subject)
 	availabilityFacts := deriveValidationAvailabilityFacts(subject.ProviderMetadata)
@@ -938,6 +938,81 @@ func deriveValidationPackageFacts(sourcePath string, fileList []string) PackageF
 			Season:   season,
 			Episodes: episodes,
 		})
+	}
+	return facts
+}
+
+// Torrent creation selects FileList for directories and the source for a file.
+// A video-only selection cannot establish completeness of the source package.
+func deriveUploadPackageFacts(subject UploadSubject) PackageFacts {
+	fallback := deriveValidationPackageFacts(subject.SourcePath, subject.FileList)
+	manifest := subject.SourceManifest
+	identity := subject.SourceIdentity
+	if subject.SourcePath == "" || subject.DiscType != "" ||
+		!validationLocalPathsEqual(subject.SourcePath, manifest.SourcePath) ||
+		identity.Version != SourceContentIdentityVersion || !validSHA256(identity.Digest) ||
+		!validSHA256(identity.ManifestFingerprint) || len(manifest.Entries) == 0 {
+		return fallback
+	}
+	files := make([]string, 0, len(manifest.Entries))
+	verified := make(map[string]int64, len(identity.Files))
+	for _, file := range identity.Files {
+		key := filepath.Clean(file.LocalPath)
+		if key == "." || !validSHA256(file.SHA256) {
+			return fallback
+		}
+		if _, exists := verified[key]; exists {
+			return fallback
+		}
+		verified[key] = file.Size
+	}
+	rootFile, rootDirectory := false, false
+	for _, entry := range manifest.Entries {
+		if validationLocalPathsEqual(entry.Path, subject.SourcePath) {
+			rootFile = entry.Type == SourceEntryTypeFile
+			rootDirectory = entry.Type == SourceEntryTypeDirectory
+		}
+		if entry.Type != SourceEntryTypeFile && entry.Type != SourceEntryTypePlaylist {
+			if entry.Type != SourceEntryTypeDirectory {
+				return fallback
+			}
+			continue
+		}
+		if entry.Path == "" || entry.Size < 0 {
+			return fallback
+		}
+		if _, external, _ := validationPackagePathFacts(subject.SourcePath, entry.Path); external {
+			return fallback
+		}
+		if size, ok := verified[filepath.Clean(entry.Path)]; !ok || size != entry.Size {
+			return fallback
+		}
+		files = append(files, entry.Path)
+	}
+	if len(files) == 0 || len(files) != len(verified) || (!rootFile && !rootDirectory) ||
+		(rootFile && (len(files) != 1 || !validationLocalPathsEqual(files[0], subject.SourcePath))) {
+		return fallback
+	}
+	if len(subject.FileList) > 0 {
+		selected := make(map[string]struct{}, len(subject.FileList))
+		for _, file := range subject.FileList {
+			if file == "" {
+				return fallback
+			}
+			selected[filepath.Clean(file)] = struct{}{}
+		}
+		if len(selected) != len(files) {
+			return fallback
+		}
+		for _, file := range files {
+			if _, ok := selected[filepath.Clean(file)]; !ok {
+				return fallback
+			}
+		}
+	}
+	facts := deriveValidationPackageFacts(subject.SourcePath, files)
+	if facts.KnownFileCount == len(files) {
+		facts.Status = MetadataEvidenceStatusComplete
 	}
 	return facts
 }

@@ -6,6 +6,8 @@ package api
 import (
 	"encoding/json"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -42,10 +44,10 @@ func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 	t.Parallel()
 
 	source := UploadSubject{
-		VideoCodec: "AV1",
-		HasEncodeSettings: true,
+		VideoCodec:                  "AV1",
+		HasEncodeSettings:           true,
 		TrackerQuestionnaireAnswers: map[string]map[string]string{"OE": {"source_notes": "Example BluRay source"}},
-		Release: ReleaseInfo{Codec: []string{"H.265"}},
+		Release:                     ReleaseInfo{Codec: []string{"H.265"}},
 		ProviderMetadata: SourceScopedMetadata{TMDB: &TMDBMetadata{
 			LocalizedTitles: map[string]string{"en": "Example Release 2026"},
 		}},
@@ -343,6 +345,81 @@ func TestNewTrackerValidationSubjectDerivesFailSafeEvidence(t *testing.T) {
 	if projected.ProvenanceFacts.Status != MetadataEvidenceStatusUnavailable {
 		t.Fatalf("provenance status = %q", projected.ProvenanceFacts.Status)
 	}
+}
+
+func TestVerifiedSourcePackageInventory(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "Example.Show")
+	video := filepath.Join(root, "Season 01", "Example.Show.S01E01.mkv")
+	subtitle := filepath.Join(root, "Season 01", "Example.Show.S01E01.srt")
+	archive := filepath.Join(root, "release.rar")
+	playlist := filepath.Join(root, "BDMV", "PLAYLIST", "00001.mpls")
+	sample := filepath.Join(root, "Sample", "sample.mkv")
+	extra := filepath.Join(root, "notes.txt")
+	files := []string{video, subtitle, archive, playlist, sample, extra}
+	manifest := SourceManifest{SourcePath: root, Entries: []SourceManifestEntry{
+		{Path: root, Type: SourceEntryTypeDirectory},
+		{Path: filepath.Join(root, "Season 01"), Type: SourceEntryTypeDirectory},
+		{Path: filepath.Join(root, "Sample"), Type: SourceEntryTypeDirectory},
+	}}
+	identity := SourceContentIdentity{Version: SourceContentIdentityVersion, Digest: strings.Repeat("a", 64), ManifestFingerprint: strings.Repeat("b", 64)}
+	for _, file := range files {
+		kind := SourceEntryTypeFile
+		if file == playlist {
+			kind = SourceEntryTypePlaylist
+		}
+		manifest.Entries = append(manifest.Entries, SourceManifestEntry{Path: file, Type: kind, Size: 1})
+		identity.Files = append(identity.Files, VerifiedSourceFile{LocalPath: file, Size: 1, SHA256: strings.Repeat("c", 64)})
+	}
+	base := UploadSubject{SourcePath: root, SourceManifest: manifest, SourceIdentity: identity, FileList: files}
+	check := func(name string, subject UploadSubject, status MetadataEvidenceStatus, count int) {
+		t.Helper()
+		t.Run(name, func(t *testing.T) {
+			facts := NewTrackerValidationSubject(subject, "TEST").PackageFacts
+			if facts.Status != status || facts.KnownFileCount != count {
+				t.Fatalf("package facts = %+v, want %s / %d", facts, status, count)
+			}
+		})
+	}
+	check("full season", base, MetadataEvidenceStatusComplete, 6)
+	facts := NewTrackerValidationSubject(base, "TEST").PackageFacts
+	if facts.MediaFileCount != 2 || facts.ExternalSubtitleFileCount != 1 || facts.ArchiveFileCount != 1 ||
+		facts.NestedFileCount != 4 || len(facts.DetectedSeasons) != 1 || facts.DetectedSeasons[0] != 1 ||
+		!slices.Contains(facts.ExtraKinds, PackageFileKindSample) || !slices.Contains(facts.ExtraKinds, PackageFileKindText) {
+		t.Fatalf("complete package contents = %+v", facts)
+	}
+	selected := base
+	selected.FileList = []string{video}
+	check("video subset", selected, MetadataEvidenceStatusPartial, 1)
+	selected.FileList = []string{video, filepath.Join(root, "unknown.mkv")}
+	check("mismatched selection", selected, MetadataEvidenceStatusPartial, 2)
+	selected = base
+	selected.SourceManifest.SourcePath = filepath.Join(root, "other")
+	check("mismatched root", selected, MetadataEvidenceStatusPartial, 6)
+	selected = base
+	selected.SourceIdentity.Files = selected.SourceIdentity.Files[:1]
+	check("unverified inventory", selected, MetadataEvidenceStatusPartial, 6)
+	selected = base
+	selected.SourceIdentity = SourceContentIdentity{}
+	check("no verified binding", selected, MetadataEvidenceStatusPartial, 6)
+	selected = base
+	selected.SourceManifest.Entries = append([]SourceManifestEntry(nil), base.SourceManifest.Entries...)
+	selected.SourceManifest.Entries[3].Size = 2
+	check("mismatched file size", selected, MetadataEvidenceStatusPartial, 6)
+	selected = base
+	selected.DiscType = "BDMV"
+	check("disc submission scope not established", selected, MetadataEvidenceStatusPartial, 6)
+	selected = base
+	selected.FileList = nil // an empty directory selection means the entire tree
+	check("implicit full tree", selected, MetadataEvidenceStatusComplete, 6)
+
+	single := filepath.Join(t.TempDir(), "Movie.mkv")
+	selected = UploadSubject{
+		SourcePath:     single,
+		SourceManifest: SourceManifest{SourcePath: single, Entries: []SourceManifestEntry{{Path: single, Type: SourceEntryTypeFile, Size: 1}}},
+		SourceIdentity: SourceContentIdentity{Version: SourceContentIdentityVersion, Digest: strings.Repeat("a", 64), ManifestFingerprint: strings.Repeat("b", 64), Files: []VerifiedSourceFile{{LocalPath: single, Size: 1, SHA256: strings.Repeat("c", 64)}}},
+		FileList:       []string{single},
+	}
+	check("single file", selected, MetadataEvidenceStatusComplete, 1)
 }
 
 func TestNewTrackerValidationSubjectProjectsFinalTrackerDescription(t *testing.T) {
