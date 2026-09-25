@@ -86,9 +86,9 @@ func TestBuildUnit3DSearchParamsUsesEMUWTrackerMappings(t *testing.T) {
 func TestBuildUnit3DSearchParamsUsesSAMAnimeCategory(t *testing.T) {
 	t.Parallel()
 	meta := api.DuplicateSubject{
-		Identity:    api.ExternalIdentity{TMDBID: 65942, Category: "TV"},
+		Identity:    api.ExternalIdentity{TMDBID: 12345, Category: "TV"},
 		Anime:       true,
-		ReleaseName: "Re.ZERO.S03E01.1080p.WEB-DL",
+		ReleaseName: "Example.Series.S03E01.1080p.WEB-DL",
 		SeasonInt:   3,
 		EpisodeInt:  1,
 	}
