@@ -48,9 +48,9 @@ Navigation guards prevent later operations from silently using missing or stale 
 
 **Audio Analysis** appears after Input has produced authoritative audio-track facts. Opening the page does not start FFmpeg. Choose the primary track, all tracks, or specific tracks; select waveform, spectrogram, or both; then click **Generate**.
 
-Each successful result can be previewed, opened at full size, or downloaded as its original PNG. Analysis is optional: leaving the page unopened does not block upload, and the images are not automatically hosted or inserted into descriptions.
+Each successful graph can be previewed, opened at full size, or downloaded as its original PNG. Statistics can be viewed and downloaded as text. Analysis is optional: leaving the page unopened does not block upload. When descriptions are generated from a completed analysis, upbrr hosts the graphs for each tracker and adds them with the statistics to the default description.
 
-**Cancel** stops the active analysis. **Disable** first waits for active work to stop, then hides the result from the current workflow; already generated files remain managed until their displayed expiry. A compatible retry regenerates only missing or failed variants. Results belong to the exact prepared generation, so stale images are not shown after the source facts change.
+**Cancel** stops the active analysis. **Disable** first waits for active work to stop, then hides the result from the current workflow; retained files have no time-based expiry but can be removed when the workflow or source changes. A compatible retry regenerates only missing or failed variants. Results belong to the exact prepared generation, so stale images are not shown after the source facts change.
 
 See [Audio analysis](../workflow/audio-analysis.md) for selection, output, and troubleshooting details.
 

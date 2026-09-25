@@ -12444,7 +12444,7 @@
     },
     "/workflows/{workflowId}/audio-analysis/{analysisId}/artifacts/{artifactId}": {
       "get": {
-        "description": "Streams a retained PNG from the exact requested audio-analysis revision.",
+        "description": "Streams a retained PNG or statistics text file from the exact requested audio-analysis revision.",
         "operationId": "openWorkflowAudioAnalysisArtifact",
         "parameters": [
           {
@@ -12492,32 +12492,19 @@
         "responses": {
           "200": {
             "content": {
-              "application/octet-stream": {
-                "schema": {
-                  "format": "binary",
-                  "type": "string"
-                }
-              },
-              "image/jpeg": {
-                "schema": {
-                  "format": "binary",
-                  "type": "string"
-                }
-              },
               "image/png": {
                 "schema": {
                   "format": "binary",
                   "type": "string"
                 }
               },
-              "image/webp": {
+              "text/plain": {
                 "schema": {
-                  "format": "binary",
                   "type": "string"
                 }
               }
             },
-            "description": "Audio analysis PNG bytes."
+            "description": "Audio analysis PNG or statistics text."
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"

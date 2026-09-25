@@ -66,11 +66,11 @@ Methods, request bodies, response schemas, status codes, idempotency rules, and 
 
 Audio analysis is a workflow-bound optional operation:
 
-| Route                                                                                   | Scope            | Purpose                                                         |
-| --------------------------------------------------------------------------------------- | ---------------- | --------------------------------------------------------------- |
-| `POST /api/v1/workflows/{workflowId}/audio-analysis`                                    | `workflow:write` | Start analysis for exact prepared release and track facts.      |
-| `PUT /api/v1/workflows/{workflowId}/audio-analysis/enabled`                             | `workflow:write` | Enable or disable the optional facet without starting analysis. |
-| `GET /api/v1/workflows/{workflowId}/audio-analysis/{analysisId}/artifacts/{artifactId}` | `workflow:read`  | Stream one retained PNG from an exact analysis revision.        |
+| Route                                                                                   | Scope            | Purpose                                                                          |
+| --------------------------------------------------------------------------------------- | ---------------- | -------------------------------------------------------------------------------- |
+| `POST /api/v1/workflows/{workflowId}/audio-analysis`                                    | `workflow:write` | Start analysis for exact prepared release and track facts.                       |
+| `PUT /api/v1/workflows/{workflowId}/audio-analysis/enabled`                             | `workflow:write` | Enable or disable the optional facet without starting analysis.                  |
+| `GET /api/v1/workflows/{workflowId}/audio-analysis/{analysisId}/artifacts/{artifactId}` | `workflow:read`  | Stream one retained PNG or statistics text file from an exact analysis revision. |
 
 Workflow writes use the general API concurrency and idempotency headers documented by the running OpenAPI contract, including `If-Match` and `Idempotency-Key`. The artifact request requires its positive `revision` query parameter. Treat artifact IDs and URLs as opaque, and authorize each request with the owner that created the workflow.
 

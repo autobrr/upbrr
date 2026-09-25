@@ -98,7 +98,7 @@ Inspect image ordering, host URLs, technical blocks, headers, and rendered BBCod
 
 Compatible images retain their selection and order across refresh. Deleted images stay removed. upbrr verifies local image bytes before reuse and reuses hosted links only for a compatible host account and purpose. A hosted link can remain usable when its local preview is missing. Changed capture settings or stricter tracker requirements can require additional images.
 
-[Audio analysis](audio-analysis.md) is a separate, optional local operation. It streams decoded samples from FFmpeg into Go without writing a full decoded-audio file. Its PNGs are retained for preview and download but are not image-hosted or added to tracker descriptions automatically.
+[Audio analysis](audio-analysis.md) is a separate, optional operation. It streams decoded samples from FFmpeg into Go without writing a full decoded-audio file. Its PNGs are retained for preview and download. When descriptions are generated from a completed analysis, upbrr hosts the graphs for each tracker and adds them with the statistics to the default description.
 
 ## 6. Preview immutable tracker operations
 

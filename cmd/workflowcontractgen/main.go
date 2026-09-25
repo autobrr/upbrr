@@ -488,8 +488,8 @@ func routeManifest() []route {
 			OperationID: "openWorkflowAudioAnalysisArtifact",
 			Tag:         "Audio Analysis",
 			Summary:     "Open audio analysis artifact",
-			Description: "Streams a retained PNG from the exact requested audio-analysis revision.",
-			Success:     binarySuccess("Audio analysis PNG bytes."),
+			Description: "Streams a retained PNG or statistics text file from the exact requested audio-analysis revision.",
+			Success:     binarySuccess("Audio analysis PNG or statistics text."),
 			Errors:      errorProfileRevisionedRead,
 		},
 		{
@@ -850,12 +850,19 @@ func routeResponses(item route) map[string]any {
 		response := map[string]any{"description": success.Description}
 		if success.Binary {
 			binarySchema := map[string]any{"schema": map[string]any{"type": "string", "format": "binary"}}
-			response["content"] = map[string]any{
+			content := map[string]any{
 				"application/octet-stream": binarySchema,
 				"image/jpeg":               binarySchema,
 				"image/png":                binarySchema,
 				"image/webp":               binarySchema,
 			}
+			if item.OperationID == "openWorkflowAudioAnalysisArtifact" {
+				content = map[string]any{
+					"image/png":  binarySchema,
+					"text/plain": map[string]any{"schema": map[string]any{"type": "string"}},
+				}
+			}
+			response["content"] = content
 		} else if success.Response != nil {
 			response["content"] = map[string]any{
 				"application/json": map[string]any{
